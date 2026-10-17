@@ -188,13 +188,16 @@ export default function CustomEndpointTab() {
       const id = m.id.trim();
       if (id) existingMap.set(id, m);
     }
+    const newlyAdded: string[] = [];
     for (const rm of chosen) {
       if (!existingMap.has(rm.id)) {
         existingMap.set(rm.id, guessFetchedModelDraft(rm));
+        newlyAdded.push(rm.id);
       }
     }
     setModels(Array.from(existingMap.values()));
     setFetchedModels([]);
+    for (const mid of newlyAdded.slice(0, 3)) void onProbeModel(mid);
   };
 
   const onProbeModel = async (mid: string) => {
