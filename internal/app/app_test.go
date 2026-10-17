@@ -126,3 +126,28 @@ func TestDesktopAppLifecycleMethods(t *testing.T) {
 	cancel()
 	dapp.BootstrapOpenCodeAsync(ctx, 0, "testpass")
 }
+
+func TestResolveIdentity(t *testing.T) {
+	t.Setenv("HOXI_VARIANT", "")
+
+	rel := ResolveIdentity("release", "/Applications/Hoxi.app/Contents/MacOS/Hoxi")
+	if rel.Variant != "release" || rel.Title != "Hoxi" || rel.BundleID != "ai.hoxi.desktop" || rel.DefaultBridgeAddr != "127.0.0.1:5088" {
+		t.Fatalf("unexpected release identity: %+v", rel)
+	}
+
+	devByFlag := ResolveIdentity("dev", "/Applications/Hoxi.app/Contents/MacOS/Hoxi")
+	if devByFlag.Variant != "dev" || devByFlag.Title != "Hoxi Dev" || devByFlag.BundleID != "ai.hoxi.desktop.dev" || devByFlag.DefaultBridgeAddr != "127.0.0.1:5089" {
+		t.Fatalf("unexpected dev identity from variant flag: %+v", devByFlag)
+	}
+
+	devByPath := ResolveIdentity("release", "/Users/dev/build/bin/Hoxi Dev.app/Contents/MacOS/Hoxi")
+	if devByPath.Variant != "dev" || devByPath.BundleID != "ai.hoxi.desktop.dev" {
+		t.Fatalf("unexpected dev identity from app bundle path: %+v", devByPath)
+	}
+
+	t.Setenv("HOXI_VARIANT", "dev")
+	devByEnv := ResolveIdentity("release", "/Applications/Hoxi.app/Contents/MacOS/Hoxi")
+	if devByEnv.Variant != "dev" || devByEnv.BundleID != "ai.hoxi.desktop.dev" {
+		t.Fatalf("unexpected dev identity from env: %+v", devByEnv)
+	}
+}

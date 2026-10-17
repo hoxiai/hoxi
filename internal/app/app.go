@@ -30,6 +30,42 @@ import (
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
+var (
+	// BuildVariant can be injected at compile time via -ldflags "-X github.com/hoxiai/hoxi/internal/app.BuildVariant=dev".
+	BuildVariant = "release"
+)
+
+type AppIdentity struct {
+	Variant           string
+	Title             string
+	BundleID          string
+	DefaultBridgeAddr string
+}
+
+func ResolveIdentity(variant, exePath string) AppIdentity {
+	v := strings.ToLower(strings.TrimSpace(variant))
+	if envV := strings.ToLower(strings.TrimSpace(os.Getenv("HOXI_VARIANT"))); envV != "" {
+		v = envV
+	}
+	if v != "dev" && (strings.Contains(exePath, "Hoxi Dev.app") || strings.Contains(exePath, "Hoxi-Dev.app")) {
+		v = "dev"
+	}
+	if v == "dev" {
+		return AppIdentity{
+			Variant:           "dev",
+			Title:             "Hoxi Dev",
+			BundleID:          "ai.hoxi.desktop.dev",
+			DefaultBridgeAddr: "127.0.0.1:5089",
+		}
+	}
+	return AppIdentity{
+		Variant:           "release",
+		Title:             "Hoxi",
+		BundleID:          "ai.hoxi.desktop",
+		DefaultBridgeAddr: "127.0.0.1:5088",
+	}
+}
+
 type Config struct {
 	Address   string
 	OpenCode  string
@@ -51,9 +87,12 @@ type DesktopApp struct {
 func Run(distFS fs.FS) {
 	opencode.EnrichSystemPath()
 
+	exePath, _ := os.Executable()
+	identity := ResolveIdentity(BuildVariant, exePath)
+
 	var cfg Config
 	cwd, _ := os.Getwd()
-	flag.StringVar(&cfg.Address, "address", envOr("HOXI_BRIDGE_ADDR", "127.0.0.1:5088"), "address for the hoxi loopback bridge / headless server")
+	flag.StringVar(&cfg.Address, "address", envOr("HOXI_BRIDGE_ADDR", identity.DefaultBridgeAddr), "address for the hoxi loopback bridge / headless server")
 	flag.StringVar(&cfg.OpenCode, "opencode", envOr("HOXI_OPENCODE", "opencode"), "path to the opencode executable")
 	flag.StringVar(&cfg.RootDir, "dir", envOr("HOXI_ROOT_DIR", cwd), "workspace root directory")
 	flag.BoolVar(&cfg.NoDesktop, "no-desktop", os.Getenv("HOXI_NO_DESKTOP") == "1", "run in headless HTTP mode without Wails desktop window")
@@ -163,7 +202,7 @@ func Run(distFS fs.FS) {
 	})
 
 	err = wails.Run(&options.App{
-		Title:                    "Hoxi",
+		Title:                    identity.Title,
 		Width:                    1200,
 		Height:                   760,
 		MinWidth:                 880,
@@ -180,12 +219,12 @@ func Run(distFS fs.FS) {
 			WebviewIsTransparent: true,
 			WindowIsTranslucent:  true,
 			About: &mac.AboutInfo{
-				Title:   "Hoxi",
+				Title:   identity.Title,
 				Message: "Native AI Agentic Engineering Workspace (https://hoxi.ai)",
 			},
 		},
 		SingleInstanceLock: &options.SingleInstanceLock{
-			UniqueId:               "ai.hoxi.desktop",
+			UniqueId:               identity.BundleID,
 			OnSecondInstanceLaunch: app.onSecondInstance,
 		},
 		OnStartup:  app.startup,

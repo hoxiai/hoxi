@@ -50,7 +50,17 @@ export function sessionDirectory(sessionID: string | null): string | undefined {
   if (!sessionID) return undefined;
   const meta = workspace.worktreeBySession[sessionID];
   const session = workspace.sessions.find((s) => s.id === sessionID);
-  return meta?.directory || session?.directory || workspace.rootDir || undefined;
+  if (meta?.directory || session?.directory) {
+    return meta?.directory || session?.directory;
+  }
+  if (session?.parentID) {
+    const parentMeta = workspace.worktreeBySession[session.parentID];
+    const parentSession = workspace.sessions.find((s) => s.id === session.parentID);
+    if (parentMeta?.directory || parentSession?.directory) {
+      return parentMeta?.directory || parentSession?.directory;
+    }
+  }
+  return workspace.rootDir || undefined;
 }
 
 export function activeDirectory(): string | undefined {
@@ -125,18 +135,31 @@ export async function loadSessionMessagesOnly(sessionID: string): Promise<void> 
 
 export async function loadSessionMessages(sessionID: string): Promise<void> {
   const directory = sessionDirectory(sessionID);
-  const isChildSession = Boolean(
-    workspace.sessions.find((s) => s.id === sessionID)?.parentID
-  );
+  const isChildSession = Boolean(workspace.sessions.find((s) => s.id === sessionID)?.parentID);
   if (!isChildSession) {
     scheduleRefreshWorktreeStatus(sessionID, 120);
   }
-  const turns = await hoxiAPI.getMessages(sessionID, directory);
-  setWorkspace(
-    "messagesBySession",
-    sessionID,
-    turns.map((t) => ({ info: t.info, parts: t.parts }))
-  );
+  const shouldMarkLoading = workspace.messagesBySession[sessionID] === undefined;
+  if (shouldMarkLoading) {
+    setWorkspace("loadingMessagesBySession", sessionID, true);
+  }
+  try {
+    const turns = await hoxiAPI.getMessages(sessionID, directory);
+    setWorkspace(
+      "messagesBySession",
+      sessionID,
+      turns.map((t) => ({ info: t.info, parts: t.parts }))
+    );
+  } catch (err) {
+    if (workspace.messagesBySession[sessionID] === undefined) {
+      setWorkspace("messagesBySession", sessionID, []);
+    }
+    throw err;
+  } finally {
+    if (shouldMarkLoading) {
+      setWorkspace("loadingMessagesBySession", sessionID, false);
+    }
+  }
   if (isChildSession && sessionID !== workspace.activeSessionID) {
     return;
   }
@@ -149,12 +172,17 @@ export async function loadSessionMessages(sessionID: string): Promise<void> {
 }
 
 export async function selectSession(sessionID: string): Promise<void> {
+  if (workspace.messagesBySession[sessionID] === undefined) {
+    setWorkspace("loadingMessagesBySession", sessionID, true);
+  }
   setWorkspace("activeSessionID", sessionID);
   setWorkspace("unreadCompletedBySession", sessionID, false);
   try {
     await loadSessionMessages(sessionID);
   } catch (err) {
     console.error("load session messages failed:", err);
+  } finally {
+    setWorkspace("loadingMessagesBySession", sessionID, false);
   }
 }
 
@@ -162,18 +190,11 @@ export async function newIsolatedSession(
   title?: string,
   options?: { isolated?: boolean }
 ): Promise<string> {
-  const session = await hoxiAPI.createSession(
-    title,
-    workspace.rootDir || undefined
-  );
-  const shouldIsolate =
-    options?.isolated ?? appSettings.defaultSandboxMode === "worktree";
+  const session = await hoxiAPI.createSession(title, workspace.rootDir || undefined);
+  const shouldIsolate = options?.isolated ?? appSettings.defaultSandboxMode === "worktree";
   if (shouldIsolate) {
     try {
-      const meta = await hoxiAPI.createWorktree(
-        session.id,
-        workspace.rootDir || undefined
-      );
+      const meta = await hoxiAPI.createWorktree(session.id, workspace.rootDir || undefined);
       setWorkspace("worktreeBySession", session.id, meta);
     } catch (err) {
       console.error("create worktree failed:", err);
@@ -187,28 +208,22 @@ export async function newIsolatedSession(
       createdAt: new Date().toISOString(),
     });
   }
+  setWorkspace("messagesBySession", session.id, []);
   replaceSession(session);
   await selectSession(session.id);
   return session.id;
 }
 
-export async function switchActiveSessionSandboxMode(
-  mode: "local" | "worktree"
-): Promise<void> {
+export async function switchActiveSessionSandboxMode(mode: "local" | "worktree"): Promise<void> {
   const id = workspace.activeSessionID;
   if (!id) {
     await newIsolatedSession(undefined, { isolated: mode === "worktree" });
     return;
   }
-  const currentMeta = workspace.worktreeBySession[id];
-  const isCurrentlyIsolated = Boolean(currentMeta?.isolated);
-
+  const isCurrentlyIsolated = Boolean(workspace.worktreeBySession[id]?.isolated);
   if (mode === "worktree" && !isCurrentlyIsolated) {
     try {
-      const meta = await hoxiAPI.createWorktree(
-        id,
-        workspace.rootDir || undefined
-      );
+      const meta = await hoxiAPI.createWorktree(id, workspace.rootDir || undefined);
       setWorkspace("worktreeBySession", id, meta);
       await refreshWorktreeStatus(id);
     } catch (err) {
@@ -244,33 +259,20 @@ export async function applyAndExitSessionWorktree(
   await refreshWorktreeStatus("__root__");
 }
 
-export async function exitSessionWorktree(
-  sessionID: string,
-  keepBranch = false
-): Promise<void> {
+export async function exitSessionWorktree(sessionID: string, keepBranch = false): Promise<void> {
   await hoxiAPI.removeWorktree(sessionID, true, keepBranch);
   await refreshWorktreeStatus(sessionID);
   await refreshWorktreeStatus("__root__");
 }
 
-export async function renameSessionBranch(
-  sessionID: string,
-  newBranch: string
-): Promise<string> {
-  const res = await hoxiAPI.renameBranch(
-    sessionID,
-    newBranch,
-    workspace.rootDir || undefined
-  );
+export async function renameSessionBranch(sessionID: string, newBranch: string): Promise<string> {
+  const res = await hoxiAPI.renameBranch(sessionID, newBranch, workspace.rootDir || undefined);
   await refreshWorktreeStatus(sessionID);
   await refreshWorktreeStatus("__root__");
   return res.branch;
 }
 
-export async function checkoutLocalBranch(
-  branch: string,
-  create = false
-): Promise<void> {
+export async function checkoutLocalBranch(branch: string, create = false): Promise<void> {
   await hoxiAPI.checkoutBranch(branch, create, workspace.rootDir || undefined);
   await refreshWorktreeStatus("__root__");
   if (workspace.activeSessionID) {

@@ -18,7 +18,11 @@ import {
 import { hoxiAPI } from "../../services/api";
 import type { SessionInfo } from "../../services/sse-types";
 import { Icon, Spinner } from "../icons";
-import { buildAllProjects, findProjectDropTarget } from "./left-nav-helpers";
+import {
+  buildAllProjects,
+  collectPendingSessionIDs,
+  findProjectDropTarget,
+} from "./left-nav-helpers";
 import MultiProjectTreeItem from "./MultiProjectItem";
 import SingleProjectNavView, { RecentTasksNavView } from "./SingleProjectNavView";
 import UserAccountMenu from "./UserAccountMenu";
@@ -119,7 +123,7 @@ export default function LeftNav() {
     );
   });
 
-  const pendingSessions = createMemo(() => new Set(workspace.pendingPermissions.map((p) => p.sessionID)));
+  const pendingSessions = createMemo(() => collectPendingSessionIDs());
   const isExpanded = (path: string) => expandedProjects().has(path);
 
   const loadSessionsForProject = async (path: string) => {

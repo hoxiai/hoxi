@@ -4,20 +4,20 @@ on:
   push:
     branches: ["main", "master"]
   pull_request:
+    branches: ["main", "master"]
+
+# Cancel obsolete in-flight runs when new commits are pushed to the same PR/branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  verify:
-    name: Verify Go & Web Workspace
-    runs-on: macos-latest
+  frontend-lint:
+    name: "Frontend: TypeCheck, i18n & 500-Line Lint"
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -29,19 +29,78 @@ jobs:
       - name: Install frontend dependencies
         run: npm --prefix web ci
 
-      - name: Frontend TypeScript, i18n parity & 500-line lint
+      - name: Run TypeScript, i18n parity & 500-line limit check
         run: npm --prefix web run lint
 
-      - name: Frontend unit tests
+  frontend-build:
+    name: "Frontend: Unit Tests & Bundle Build"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm --prefix web ci
+
+      - name: Run frontend unit tests
         run: npm --prefix web test
 
-      - name: Build frontend bundle
+      - name: Build frontend production bundle
         run: npm --prefix web run build
 
-      - name: Go vet & build
-        run: |
-          go vet ./...
-          go build ./...
+  backend-linux:
+    name: "Go Backend: Linux Build & Fast Tests"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Go unit tests
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Prepare embedded asset placeholder
+        run: mkdir -p web/dist && touch web/dist/placeholder
+
+      - name: Run Go vet
+        run: go vet ./...
+
+      - name: Run Go tests with race detector
         run: go test -v -race ./...
+
+      - name: Build headless CLI daemon binary
+        run: go build -v ./cmd/hoxi
+
+  macos-native:
+    name: "macOS Native: Darwin CGo & Desktop Host"
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Prepare embedded asset placeholder
+        run: mkdir -p web/dist && touch web/dist/placeholder
+
+      - name: Run Go vet (Darwin & Cocoa CGo)
+        run: go vet ./...
+
+      - name: Run Darwin native Go tests with race detector
+        run: go test -v -race ./...
+
+      - name: Build root desktop entrypoint
+        run: go build -v .

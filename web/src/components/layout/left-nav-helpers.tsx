@@ -8,6 +8,7 @@ import {
   workspace,
   workspacePrimaryFolder,
 } from "../../store/workspace";
+import { resolveRootSessionID } from "../timeline/AgentStackPill";
 import { t } from "../../i18n";
 
 export interface ProjectNavEntry {
@@ -58,6 +59,21 @@ export function dayLabel(ts: number): string {
   if (ts >= startOfToday) return t("common.today");
   if (ts >= startOfToday - dayMs) return t("common.yesterday");
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+export function collectPendingSessionIDs(): Set<string> {
+  const set = new Set<string>();
+  for (const p of workspace.pendingPermissions) {
+    set.add(p.sessionID);
+    const root = resolveRootSessionID(p.sessionID);
+    if (root) set.add(root);
+  }
+  for (const q of workspace.pendingQuestions) {
+    set.add(q.sessionID);
+    const root = resolveRootSessionID(q.sessionID);
+    if (root) set.add(root);
+  }
+  return set;
 }
 
 export function badgeFor(

@@ -246,6 +246,7 @@ export function purgeSessionsFromStoreState(
     lastPromptDispatchAtBySession.delete(id);
     loadedChildSessionIDs.delete(id);
     delete state.messagesBySession[id];
+    delete state.loadingMessagesBySession[id];
     delete state.statusBySession[id];
     delete state.sessionFinishedAt[id];
     delete state.unreadCompletedBySession[id];

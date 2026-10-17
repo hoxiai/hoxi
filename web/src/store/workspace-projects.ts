@@ -231,6 +231,7 @@ export async function switchWorkspace(directory: string): Promise<void> {
     rootDir: cleaned,
     activeInspectorFolder: null,
     activeSessionID: null,
+    bootstrappingSessions: true,
   });
 
   try {
@@ -244,9 +245,14 @@ export async function switchWorkspace(directory: string): Promise<void> {
     const unarchived = sessions.filter((s) => !s.parentID && !isSessionArchived(s));
     if (unarchived.length > 0) {
       const mostRecent = sortSessionsByActivity(unarchived)[0];
-      await selectSession(mostRecent.id);
+      const p = selectSession(mostRecent.id);
+      setWorkspace("bootstrappingSessions", false);
+      await p;
+    } else {
+      setWorkspace("bootstrappingSessions", false);
     }
   } catch (err) {
+    setWorkspace("bootstrappingSessions", false);
     console.error("switch workspace error:", err);
   }
 

@@ -61,9 +61,14 @@ export default function App() {
       const unarchived = sessions.filter((s) => !s.parentID && !isSessionArchived(s));
       if (unarchived.length > 0) {
         const mostRecent = sortSessionsByActivity(unarchived)[0];
-        await selectSession(mostRecent.id);
+        const p = selectSession(mostRecent.id);
+        setWorkspace("bootstrappingSessions", false);
+        await p;
+      } else {
+        setWorkspace("bootstrappingSessions", false);
       }
     } catch (err) {
+      setWorkspace("bootstrappingSessions", false);
       console.error("Bootstrap error:", err);
     }
 

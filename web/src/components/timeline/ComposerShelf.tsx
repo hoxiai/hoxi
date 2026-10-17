@@ -19,7 +19,7 @@ import {
 import ApprovalGateCard from "../approval/ApprovalGateCard";
 import QuestionDock from "../approval/QuestionDock";
 import { FileIcon, Spinner, TextShimmer } from "../icons";
-import AgentStackPill from "./AgentStackPill";
+import AgentStackPill, { resolveRootSessionID } from "./AgentStackPill";
 import PlanFollowupBar from "./PlanFollowupBar";
 import RevertBanner from "./RevertBanner";
 import { t } from "../../i18n";
@@ -41,12 +41,18 @@ export default function ComposerShelf() {
 
   const pendingPermissions = createMemo(() => {
     const id = sessionID();
-    return id ? workspace.pendingPermissions.filter((p) => p.sessionID === id) : [];
+    if (!id) return [];
+    return workspace.pendingPermissions.filter(
+      (p) => p.sessionID === id || resolveRootSessionID(p.sessionID) === id
+    );
   });
 
   const pendingQuestions = createMemo(() => {
     const id = sessionID();
-    return id ? workspace.pendingQuestions.filter((q) => q.sessionID === id) : [];
+    if (!id) return [];
+    return workspace.pendingQuestions.filter(
+      (q) => q.sessionID === id || resolveRootSessionID(q.sessionID) === id
+    );
   });
 
   const reviewComments = createMemo(() => {

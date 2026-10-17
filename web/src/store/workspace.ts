@@ -87,6 +87,8 @@ export interface WorkspaceState {
   favoriteModels: SelectedModel[];
   recentModels: SelectedModel[];
   messagesBySession: Record<string, MessageTurn[]>;
+  loadingMessagesBySession: Record<string, boolean>;
+  bootstrappingSessions: boolean;
   statusBySession: Record<string, SessionStatus>;
   diffsBySession: Record<string, SnapshotFileDiff[]>;
   worktreeBySession: Record<string, WorktreeMeta>;
@@ -291,6 +293,8 @@ export const [workspace, setWorkspace] = createStore<WorkspaceState>({
   favoriteModels: initialModelList(FAVORITE_MODELS_KEY),
   recentModels: initialModelList(RECENT_MODELS_KEY),
   messagesBySession: {},
+  loadingMessagesBySession: {},
+  bootstrappingSessions: true,
   statusBySession: {},
   diffsBySession: {},
   worktreeBySession: {},
