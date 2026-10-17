@@ -73,7 +73,7 @@ export const hoxiAPI = {
 
   // Sessions
   listSessions(directory?: string): Promise<SessionInfo[]> {
-    return requestJSON(withDir("/session?limit=50", directory));
+    return requestJSON(withDir("/session?limit=200", directory));
   },
 
   getSessionStatuses(directory?: string): Promise<Record<string, SessionStatus>> {

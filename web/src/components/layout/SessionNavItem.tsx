@@ -1,13 +1,13 @@
 // web/src/components/layout/SessionNavItem.tsx
 import { createEffect, createSignal, onCleanup, Show } from "solid-js";
-import { Pause, Pencil, Square } from "lucide-solid";
+import { Pencil, Square } from "lucide-solid";
 import {
   isPlaceholderSessionTitle,
   renameSessionTitle,
   setWorkspace,
   workspace,
 } from "../../store/workspace";
-import { pauseSessionTask, stopSessionTask } from "../../store/workspace-session-messages";
+import { stopSessionTask } from "../../store/workspace-session-messages";
 import type { SessionInfo } from "../../services/sse-types";
 import { DiffChanges, Icon, Spinner } from "../icons";
 import { t } from "../../i18n";
@@ -47,7 +47,11 @@ export function SessionNavItem(props: SessionNavItemProps) {
       workspace.sessions.some((s) => s.id === props.session.id) &&
       resolveRootSessionID(workspace.activeSessionID) === props.session.id);
   const status = () => workspace.statusBySession[props.session.id]?.type;
-  const isBusy = () => status() === "busy";
+  const isBusy = () => status() === "busy" || status() === "retry";
+  const isInterrupted = () =>
+    !isBusy() && Boolean(workspace.interruptedBySession[props.session.id]);
+  const queuedCount = () =>
+    workspace.queuedPromptsBySession[props.session.id]?.length ?? 0;
   const badge = () => badgeFor(props.session.id, props.pendingSessions, status());
   const wt = () => workspace.worktreeBySession[props.session.id];
   const stats = () => diffStats(props.session.id);
@@ -108,27 +112,16 @@ export function SessionNavItem(props: SessionNavItemProps) {
     }
   };
 
-  const [actionState, setActionState] = createSignal<"pause" | "stop" | null>(null);
-
-  const handlePause = async (ev: MouseEvent) => {
-    ev.stopPropagation();
-    if (actionState()) return;
-    setActionState("pause");
-    try {
-      await pauseSessionTask(props.session.id);
-    } finally {
-      setActionState(null);
-    }
-  };
+  const [stopping, setStopping] = createSignal(false);
 
   const handleStop = async (ev: MouseEvent) => {
     ev.stopPropagation();
-    if (actionState()) return;
-    setActionState("stop");
+    if (stopping()) return;
+    setStopping(true);
     try {
       await stopSessionTask(props.session.id);
     } finally {
-      setActionState(null);
+      setStopping(false);
     }
   };
 
@@ -171,6 +164,12 @@ export function SessionNavItem(props: SessionNavItemProps) {
             title={t("timeline.turnCompleted")}
           />
         </Show>
+        <Show when={badge() === "idle" && isInterrupted()}>
+          <span
+            class="shrink-0 w-1.5 h-1.5 rounded-full bg-[var(--warn)]/75"
+            title={t("timeline.turnPaused")}
+          />
+        </Show>
         <Show
           when={!editing()}
           fallback={
@@ -208,7 +207,7 @@ export function SessionNavItem(props: SessionNavItemProps) {
         </Show>
       </div>
 
-      {/* Static Badges (Branch, Diff, Time or Loading) shown when not hovered and not confirming delete */}
+      {/* Static Badges (Branch, Diff, Queue, Time or Loading) shown when not hovered and not confirming delete */}
       <Show when={!confirmingDelete() && !editing()}>
         <div class="flex items-center gap-1.5 shrink-0 text-[11.5px] font-mono group-hover/row:opacity-0 transition-opacity">
           <Show when={wt()?.isolated && wt()?.branch}>
@@ -222,6 +221,15 @@ export function SessionNavItem(props: SessionNavItemProps) {
 
           <Show when={stats()}>
             <DiffChanges changes={stats()!} />
+          </Show>
+
+          <Show when={queuedCount() > 0}>
+            <span
+              class="inline-flex items-center rounded px-1 py-0.2 text-[10px] font-medium bg-[var(--accent-surface)] text-[var(--accent-primary)] border border-[var(--accent-border)]/60 shrink-0"
+              title={t("timeline.queueCountBadge", { count: queuedCount() })}
+            >
+              +{queuedCount()}
+            </span>
           </Show>
 
           {/* Right-side status: Spinner icon when running / busy; relative time when finished / idle */}
@@ -296,29 +304,13 @@ export function SessionNavItem(props: SessionNavItemProps) {
                 <div class="flex items-center gap-1 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-1.5 py-0.5 shadow-md">
                   <button
                     type="button"
-                    disabled={actionState() !== null}
-                    onClick={(ev) => void handlePause(ev)}
-                    class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium text-[var(--text-secondary)] hover:text-[var(--warn-text)] hover:bg-[var(--warn-surface)] transition-colors cursor-pointer disabled:opacity-50"
-                    title={t("leftNav.pauseTooltip")}
-                  >
-                    <Show
-                      when={actionState() !== "pause"}
-                      fallback={<Spinner class="w-2.5 h-2.5 text-[var(--warn-text)]" />}
-                    >
-                      <Pause size={10.5} class="shrink-0 fill-current" />
-                    </Show>
-                    <span>{t("leftNav.pauseSession")}</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    disabled={actionState() !== null}
+                    disabled={stopping()}
                     onClick={(ev) => void handleStop(ev)}
                     class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium text-[var(--text-secondary)] hover:text-[var(--danger-text)] hover:bg-[var(--danger-surface)] transition-colors cursor-pointer disabled:opacity-50"
                     title={t("leftNav.stopTooltip")}
                   >
                     <Show
-                      when={actionState() !== "stop"}
+                      when={!stopping()}
                       fallback={<Spinner class="w-2.5 h-2.5 text-[var(--danger-text)]" />}
                     >
                       <Square size={9.5} class="shrink-0 fill-current" />

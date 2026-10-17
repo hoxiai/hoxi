@@ -11,7 +11,9 @@ import {
   openHandoffModal,
   openManageWorkspacesModal,
   selectSession,
+  sessionActivityTime,
   setWorkspace,
+  sortSessionsByActivity,
   switchWorkspace,
   workspace,
   workspaceDisplayName,
@@ -73,12 +75,12 @@ export default function SingleProjectNavView(props: {
 
   const filteredSessions = createMemo(() => {
     const q = props.filterQuery.trim().toLowerCase();
-    const raw = workspace.sessions
-      .filter((s) => !s.parentID)
-      .sort((a, b) => b.time.created - a.time.created);
+    const raw = sortSessionsByActivity(
+      workspace.sessions.filter((s) => !s.parentID)
+    );
     if (!q) return raw;
     return raw.filter(
-      (s) => (s.title || "").toLowerCase().includes(q) || (s.slug || "").toLowerCase( ).includes(q)
+      (s) => (s.title || "").toLowerCase().includes(q) || (s.slug || "").toLowerCase().includes(q)
     );
   });
 
@@ -86,7 +88,7 @@ export default function SingleProjectNavView(props: {
     const list = filteredSessions().filter((s) => !isSessionArchived(s));
     const groups: Array<{ label: string; items: SessionInfo[] }> = [];
     for (const item of list) {
-      const label = dayLabel(item.time.created);
+      const label = dayLabel(sessionActivityTime(item));
       const last = groups[groups.length - 1];
       if (last && last.label === label) last.items.push(item);
       else groups.push({ label, items: [item] });

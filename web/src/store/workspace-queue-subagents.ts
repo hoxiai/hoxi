@@ -219,9 +219,7 @@ export function ensureChildSubagentSessionLoaded(
   }
 }
 
-export async function abortChildSubagentSessions(
-  parentSessionID: string
-): Promise<void> {
+export function collectChildSubagentSessionIDs(parentSessionID: string): string[] {
   const childIDs = new Set<string>();
   for (const s of workspace.sessions) {
     if (s.parentID === parentSessionID) childIDs.add(s.id);
@@ -235,8 +233,68 @@ export async function abortChildSubagentSessions(
       }
     }
   }
+  return Array.from(childIDs);
+}
+
+export function purgeSessionsFromStoreState(
+  state: typeof workspace,
+  allIDs: string[]
+) {
+  const idSet = new Set(allIDs);
+  for (const id of allIDs) {
+    drainingBySession.delete(id);
+    lastPromptDispatchAtBySession.delete(id);
+    loadedChildSessionIDs.delete(id);
+    delete state.messagesBySession[id];
+    delete state.statusBySession[id];
+    delete state.sessionFinishedAt[id];
+    delete state.unreadCompletedBySession[id];
+    delete state.diffsBySession[id];
+    delete state.worktreeBySession[id];
+    delete state.reviewCommentsBySession[id];
+    delete state.auditsBySession[id];
+    delete state.auditingBySession[id];
+    delete state.interruptedBySession[id];
+    delete state.queuedPromptsBySession[id];
+    delete state.composerDraftEditBySession[id];
+  }
+  state.sessions = state.sessions.filter(
+    (s) => !idSet.has(s.id) && (!s.parentID || !idSet.has(s.parentID))
+  );
+  state.pendingPermissions = state.pendingPermissions.filter(
+    (p) => !idSet.has(p.sessionID)
+  );
+  state.pendingQuestions = state.pendingQuestions.filter(
+    (q) => !idSet.has(q.sessionID)
+  );
+}
+
+export async function deleteChildSubagentSessionsBackend(
+  childIDs: string[],
+  targetDir?: string
+): Promise<void> {
   await Promise.all(
-    Array.from(childIDs).map(async (cid) => {
+    childIDs.map(async (cid) => {
+      try {
+        await hoxiAPI.abortSession(cid, targetDir);
+      } catch {
+        /* ignore */
+      }
+      try {
+        await hoxiAPI.deleteSession(cid, targetDir);
+      } catch {
+        /* ignore */
+      }
+    })
+  );
+}
+
+export async function abortChildSubagentSessions(
+  parentSessionID: string
+): Promise<void> {
+  const childIDs = collectChildSubagentSessionIDs(parentSessionID);
+  await Promise.all(
+    childIDs.map(async (cid) => {
       setWorkspace("statusBySession", cid, { type: "idle" });
       try {
         await hoxiAPI.abortSession(cid, sessionDirectory(parentSessionID));

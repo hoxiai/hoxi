@@ -1,6 +1,9 @@
 package statusbar
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 func TestStatusTrackerInspectSSELine(t *testing.T) {
 	tracker := NewTracker()
@@ -33,17 +36,74 @@ func TestStatusTrackerInspectSSELine(t *testing.T) {
 		t.Fatalf("expected Attention=2 after question.asked, got %+v", snap)
 	}
 
-	// 5. Permission and question replied -> Attention = 0
+	// 5. Permission replied and question replied/rejected -> Attention = 0
 	tracker.InspectSSELine(`data: {"type":"permission.replied","properties":{"requestID":"perm_1"}}`)
-	tracker.InspectSSELine(`data: {"type":"question.rejected","properties":{"requestID":"q_1"}}`)
+	tracker.InspectSSELine(`data: {"type":"question.replied","properties":{"requestID":"q_1"}}`)
 	if snap := tracker.Snapshot(); snap.Attention != 0 {
 		t.Fatalf("expected Attention=0 after replies, got %+v", snap)
 	}
 
+	// Ask and reject another question to verify question.rejected path
+	tracker.InspectSSELine(`data: {"type":"question.asked","properties":{"id":"q_2","sessionID":"ses_2"}}`)
+	tracker.InspectSSELine(`data: {"type":"question.rejected","properties":{"requestID":"q_2"}}`)
+	if snap := tracker.Snapshot(); snap.Attention != 0 {
+		t.Fatalf("expected Attention=0 after question.rejected, got %+v", snap)
+	}
+
 	// 6. Sessions become idle / error -> Running = 0
 	tracker.InspectSSELine(`data: {"type":"session.idle","properties":{"sessionID":"ses_1"}}`)
-	tracker.InspectSSELine(`data: {"type":"session.status","properties":{"sessionID":"ses_2","status":{"type":"idle"}}}`)
+	tracker.InspectSSELine(`data: {"type":"session.error","properties":{"sessionID":"ses_2"}}`)
 	if snap := tracker.Snapshot(); snap.Running != 0 {
-		t.Fatalf("expected Running=0 after idle events, got %+v", snap)
+		t.Fatalf("expected Running=0 after idle and error events, got %+v", snap)
 	}
+
+	// Re-mark ses_1 busy then transition via session.status idle
+	tracker.InspectSSELine(`data: {"type":"session.status","properties":{"sessionID":"ses_1","status":{"type":"busy"}}}`)
+	tracker.InspectSSELine(`data: {"type":"session.status","properties":{"sessionID":"ses_1","status":{"type":"idle"}}}`)
+	if snap := tracker.Snapshot(); snap.Running != 0 {
+		t.Fatalf("expected Running=0 after session.status idle, got %+v", snap)
+	}
+}
+
+func TestStatusTrackerFiltersAndAvailability(t *testing.T) {
+	Start(context.Background())
+	defer Stop()
+
+	tracker := NewTracker()
+
+	// Toggle availability false and true
+	tracker.SetAvailable(false)
+	if snap := tracker.Snapshot(); snap.Available {
+		t.Fatalf("expected Available=false, got %+v", snap)
+	}
+	Update(tracker.Snapshot())
+
+	tracker.SetAvailable(true)
+	if snap := tracker.Snapshot(); !snap.Available {
+		t.Fatalf("expected Available=true, got %+v", snap)
+	}
+	Update(tracker.Snapshot())
+
+	// Non-data SSE lines, empty data lines, and non-JSON payloads should be ignored
+	tracker.InspectSSELine("")
+	tracker.InspectSSELine(": ping")
+	tracker.InspectSSELine("event: message")
+	tracker.InspectSSELine("data:   ")
+	tracker.InspectSSELine("data: [1,2,3]")
+
+	// High-frequency token deltas and unrelated events should be skipped by fast pre-filter
+	tracker.InspectSSELine(`data: {"type":"message.part.delta","properties":{"delta":"hello"}}`)
+	tracker.InspectSSELine(`data: {"type":"message.part.updated","properties":{"part":{"type":"text"}}}`)
+
+	// Malformed JSON that passes pre-filter should be safely ignored
+	tracker.InspectSSELine(`data: {"type":"session.status","properties":{broken`)
+
+	if snap := tracker.Snapshot(); snap.Running != 0 || snap.Attention != 0 {
+		t.Fatalf("expected no state change from filtered/malformed lines, got %+v", snap)
+	}
+
+	// Stop clears context; exported callbacks should safely no-op when context is nil
+	Stop()
+	HoxiShowMainWindow()
+	HoxiQuitApplication()
 }

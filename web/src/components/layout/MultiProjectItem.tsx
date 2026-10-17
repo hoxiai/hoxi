@@ -9,6 +9,7 @@ import {
   openManageWorkspacesModal,
   quickAddFolderToWorkspace,
   setWorkspace,
+  sortSessionsByActivity,
   switchWorkspace,
   workspace,
 } from "../../store/workspace";
@@ -168,7 +169,7 @@ export default function MultiProjectTreeItem(props: {
     const list = (isActive() ? workspace.sessions : props.cachedSessions).filter(
       (s) => !s.parentID
     );
-    const sorted = [...list].sort((a, b) => b.time.created - a.time.created);
+    const sorted = sortSessionsByActivity(list);
     if (!q) return sorted;
     return sorted.filter(
       (s) =>

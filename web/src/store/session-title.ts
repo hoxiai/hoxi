@@ -1,10 +1,22 @@
 // web/src/store/session-title.ts
 import { dictionaries, locale } from "../i18n";
 import { hoxiAPI } from "../services/api";
+import type { SessionInfo } from "../services/sse-types";
 import { workspace, type SelectedModel } from "./workspace";
 
 const customTitledSessions = new Map<string, string>();
 const inFlightSummaries = new Set<string>();
+
+export function sessionActivityTime(s: SessionInfo): number {
+  const local = workspace.sessionFinishedAt[s.id] || 0;
+  const updated = s.time?.updated || 0;
+  const created = s.time?.created || 0;
+  return Math.max(local, updated, created);
+}
+
+export function sortSessionsByActivity(list: SessionInfo[]): SessionInfo[] {
+  return [...list].sort((a, b) => sessionActivityTime(b) - sessionActivityTime(a));
+}
 
 export function recordCustomSessionTitle(sessionID: string, title: string): void {
   const cleaned = title.trim();

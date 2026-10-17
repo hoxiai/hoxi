@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -203,16 +204,21 @@ func cleanSummarizedTitle(raw, locale string) string {
 		return ""
 	}
 
-	// Take the first non-empty line
+	found := false
+	// Take the first non-empty line with meaningful content
 	for _, line := range strings.Split(text, "\n") {
 		l := strings.TrimSpace(line)
 		l = strings.TrimLeft(l, "#*-•> \t")
 		l = titlePrefixRegex.ReplaceAllString(l, "")
 		l = strings.Trim(l, "\"'`“”‘’「」『』《》【】[]()（）.。!！?？;；,，:： \t")
-		if l != "" {
+		if hasMeaningfulRune(l) {
 			text = l
+			found = true
 			break
 		}
+	}
+	if !found || !hasMeaningfulRune(text) {
+		return ""
 	}
 
 	isZh := strings.HasPrefix(strings.ToLower(locale), "zh")
@@ -220,6 +226,15 @@ func cleanSummarizedTitle(raw, locale string) string {
 		return truncateRunes(text, 22)
 	}
 	return truncateRunes(text, 50)
+}
+
+func hasMeaningfulRune(s string) bool {
+	for _, r := range s {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			return true
+		}
+	}
+	return false
 }
 
 func fallbackSummarizeTitle(prompt, locale string) string {

@@ -31,6 +31,7 @@ import {
   createImageAttachments,
   createPasteCollapse,
   createPromptHistory,
+  createSessionDraftSync,
   expandContextMentions,
 } from "./composer-hooks";
 import { t } from "../../i18n";
@@ -80,8 +81,19 @@ export default function Composer() {
   const imgAttach = createImageAttachments();
   const pasteCollapse = createPasteCollapse();
   const promptHistory = createPromptHistory(sessionID);
+  const draftSync = createSessionDraftSync({
+    sessionID,
+    text,
+    setText,
+    imgAttach,
+    pasteCollapse,
+    onAfterRestore: () => {
+      ac.reset();
+      requestAnimationFrame(() => adjustHeight());
+    },
+  });
 
-  // Restore draft when user clicks "Edit (修改)" on a queued prompt
+  // Restore draft when user clicks "Edit" on a queued prompt or reverts a user message
   createEffect(() => {
     const id = sessionID();
     if (!id) return;
@@ -146,6 +158,7 @@ export default function Composer() {
     setText("");
     pasteCollapse.clearPastes();
     imgAttach.clearImages();
+    draftSync.clearCurrentDraft();
     ac.reset();
     if (textareaRef) {
       textareaRef.style.height = "48px";

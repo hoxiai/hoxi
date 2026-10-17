@@ -22,6 +22,7 @@ import {
   scheduleRefreshWorktreeStatus,
   selectSession,
   setWorkspace,
+  sortSessionsByActivity,
   syncSessionStatuses,
   triggerDesktopNotification,
   upsertMessageInfo,
@@ -54,12 +55,12 @@ export default function App() {
         })
         .catch(() => {});
 
-      const sessions = await hoxiAPI.listSessions();
+      const sessions = await hoxiAPI.listSessions(boot.rootDir);
       setWorkspace("sessions", sessions);
 
       const unarchived = sessions.filter((s) => !s.parentID && !isSessionArchived(s));
       if (unarchived.length > 0) {
-        const mostRecent = [...unarchived].sort((a, b) => b.time.created - a.time.created)[0];
+        const mostRecent = sortSessionsByActivity(unarchived)[0];
         await selectSession(mostRecent.id);
       }
     } catch (err) {

@@ -13,6 +13,8 @@ import {
   workspace,
 } from "./workspace";
 import { loadAgents, loadProviders } from "./workspace-providers";
+import { sortSessionsByActivity } from "./session-title";
+import { syncSessionStatuses } from "./workspace-queue-subagents";
 import {
   isSessionDeleted,
   refreshWorktreeStatus,
@@ -229,11 +231,6 @@ export async function switchWorkspace(directory: string): Promise<void> {
     rootDir: cleaned,
     activeInspectorFolder: null,
     activeSessionID: null,
-    messagesBySession: {},
-    diffsBySession: {},
-    worktreeBySession: {},
-    reviewCommentsBySession: {},
-    pendingPermissions: [],
   });
 
   try {
@@ -242,10 +239,11 @@ export async function switchWorkspace(directory: string): Promise<void> {
     setWorkspace("sessions", sessions);
 
     void refreshWorktreeStatus("__root__");
+    void syncSessionStatuses(cleaned);
 
     const unarchived = sessions.filter((s) => !s.parentID && !isSessionArchived(s));
     if (unarchived.length > 0) {
-      const mostRecent = [...unarchived].sort((a, b) => b.time.created - a.time.created)[0];
+      const mostRecent = sortSessionsByActivity(unarchived)[0];
       await selectSession(mostRecent.id);
     }
   } catch (err) {

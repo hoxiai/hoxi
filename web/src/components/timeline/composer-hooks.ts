@@ -1,5 +1,5 @@
 // web/src/components/timeline/composer-hooks.ts
-import { type Accessor, createSignal } from "solid-js";
+import { type Accessor, createEffect, createSignal, type Setter } from "solid-js";
 import type { PromptAttachment } from "../../services/api";
 import {
   createComposerAutocomplete,
@@ -117,12 +117,15 @@ export function createImageAttachments() {
     ]);
   };
 
+  const replaceImages = (items: ImageItem[]) => setImages(items);
+
   return {
     images,
     dragging,
     addFile,
     removeImage,
     clearImages,
+    replaceImages,
     handleClipboardPaste,
     handleDragOver,
     handleDragLeave,
@@ -168,6 +171,7 @@ export function createPasteCollapse() {
   };
 
   const clearPastes = () => setPastes([]);
+  const replacePastes = (items: CollapsedPasteItem[]) => setPastes(items);
 
   const expandIntoPrompt = (typedText: string): string => {
     const blocks = pastes().map((p) => p.content.trim());
@@ -183,6 +187,7 @@ export function createPasteCollapse() {
     handleTextPaste,
     removePaste,
     clearPastes,
+    replacePastes,
     expandIntoPrompt,
   };
 }
@@ -284,3 +289,54 @@ export function createPromptHistory(sessionID: Accessor<string | null>) {
     resetHistoryCursor: () => setCursorIdx(-1),
   };
 }
+
+interface SessionComposerDraft {
+  text: string;
+  images: ImageItem[];
+  pastes: CollapsedPasteItem[];
+}
+
+const sessionDrafts = new Map<string, SessionComposerDraft>();
+
+export function createSessionDraftSync(params: {
+  sessionID: Accessor<string | null>;
+  text: Accessor<string>;
+  setText: Setter<string>;
+  imgAttach: ReturnType<typeof createImageAttachments>;
+  pasteCollapse: ReturnType<typeof createPasteCollapse>;
+  onAfterRestore: () => void;
+}) {
+  let activeKey = params.sessionID() || "__new__";
+
+  createEffect(() => {
+    const nextKey = params.sessionID() || "__new__";
+    if (nextKey === activeKey) return;
+
+    const prevText = params.text();
+    const prevImages = params.imgAttach.images();
+    const prevPastes = params.pasteCollapse.pastes();
+    if (prevText.trim() || prevImages.length > 0 || prevPastes.length > 0) {
+      sessionDrafts.set(activeKey, {
+        text: prevText,
+        images: prevImages,
+        pastes: prevPastes,
+      });
+    } else {
+      sessionDrafts.delete(activeKey);
+    }
+
+    activeKey = nextKey;
+    const saved = sessionDrafts.get(nextKey);
+    params.setText(saved?.text ?? "");
+    params.imgAttach.replaceImages(saved?.images ?? []);
+    params.pasteCollapse.replacePastes(saved?.pastes ?? []);
+    params.onAfterRestore();
+  });
+
+  const clearCurrentDraft = () => {
+    sessionDrafts.delete(params.sessionID() || "__new__");
+  };
+
+  return { clearCurrentDraft };
+}
+

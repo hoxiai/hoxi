@@ -12,7 +12,13 @@ import {
   getCustomSessionTitle,
   isPlaceholderSessionTitle,
   recordCustomSessionTitle,
+  sortSessionsByActivity,
 } from "./session-title";
+import {
+  collectChildSubagentSessionIDs,
+  deleteChildSubagentSessionsBackend,
+  purgeSessionsFromStoreState,
+} from "./workspace-queue-subagents";
 
 const deletedSessionIDs = new Set<string>();
 
@@ -33,7 +39,7 @@ function nextActiveSessionCandidate(excludeID?: string): SessionInfo | undefined
     (s) => s.id !== excludeID && !s.parentID && !isSessionArchived(s)
   );
   if (candidates.length === 0) return undefined;
-  return [...candidates].sort((a, b) => b.time.created - a.time.created)[0];
+  return sortSessionsByActivity(candidates)[0];
 }
 
 export function activeSession(): SessionInfo | undefined {
@@ -410,30 +416,16 @@ export async function unarchiveSession(sessionID: string, directory?: string): P
 }
 
 export function removeSessionFromStore(sessionID: string): SessionInfo | undefined {
-  deletedSessionIDs.add(sessionID);
+  const childIDs = collectChildSubagentSessionIDs(sessionID);
+  const allIDs = [sessionID, ...childIDs];
+  for (const id of allIDs) deletedSessionIDs.add(id);
   const nextCandidate = nextActiveSessionCandidate(sessionID);
-  if (workspace.archivedSessionIDs.includes(sessionID)) {
-    const nextArchived = workspace.archivedSessionIDs.filter((id) => id !== sessionID);
+  if (workspace.archivedSessionIDs.some((id) => allIDs.includes(id))) {
+    const nextArchived = workspace.archivedSessionIDs.filter((id) => !allIDs.includes(id));
     setWorkspace("archivedSessionIDs", nextArchived);
     persistArchivedSessionIDs(nextArchived);
   }
-  setWorkspace(
-    produce((state) => {
-      state.sessions = state.sessions.filter((s) => s.id !== sessionID);
-      delete state.messagesBySession[sessionID];
-      delete state.statusBySession[sessionID];
-      delete state.sessionFinishedAt[sessionID];
-      delete state.unreadCompletedBySession[sessionID];
-      delete state.diffsBySession[sessionID];
-      delete state.worktreeBySession[sessionID];
-      delete state.reviewCommentsBySession[sessionID];
-      delete state.auditsBySession[sessionID];
-      delete state.auditingBySession[sessionID];
-      delete state.interruptedBySession[sessionID];
-      state.pendingPermissions = state.pendingPermissions.filter((p) => p.sessionID !== sessionID);
-      state.pendingQuestions = state.pendingQuestions.filter((q) => q.sessionID !== sessionID);
-    })
-  );
+  setWorkspace(produce((state) => purgeSessionsFromStoreState(state, allIDs)));
   return nextCandidate;
 }
 
@@ -445,7 +437,10 @@ export async function discardSession(
   const existing = workspace.sessions.find((s) => s.id === sessionID);
   const targetDir =
     directory || existing?.directory || sessionDirectory(sessionID) || workspace.rootDir || undefined;
-  const wasActive = workspace.activeSessionID === sessionID;
+  const childIDs = collectChildSubagentSessionIDs(sessionID);
+  const wasActive =
+    workspace.activeSessionID === sessionID ||
+    (Boolean(workspace.activeSessionID) && childIDs.includes(workspace.activeSessionID!));
   const wasBusy = isSessionBusy(sessionID);
 
   // Optimistically remove from UI and switch active session immediately
@@ -456,6 +451,10 @@ export async function discardSession(
     } else {
       setWorkspace("activeSessionID", null);
     }
+  }
+
+  if (childIDs.length > 0) {
+    void deleteChildSubagentSessionsBackend(childIDs, targetDir);
   }
 
   if (wasBusy) {
@@ -488,4 +487,3 @@ export async function discardSession(
 }
 
 export * from "./workspace-session-messages";
-
