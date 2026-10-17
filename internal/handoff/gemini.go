@@ -3,6 +3,7 @@ package handoff
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -119,7 +120,12 @@ func scanGeminiAntigravitySessions(targetDir, query string) ([]ExternalSessionSu
 			continue
 		}
 
-		if countOut, err := exec.Command("sqlite3", dbPath, "SELECT count(*) FROM conversation_summaries WHERE nesting_depth = 0 AND killed = 0;").Output(); err == nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		countCmd := exec.CommandContext(ctx, "sqlite3", dbPath, "SELECT count(*) FROM conversation_summaries WHERE nesting_depth = 0 AND killed = 0;")
+		countCmd.WaitDelay = time.Second
+		countOut, countErr := countCmd.Output()
+		cancel()
+		if countErr == nil {
 			if n, err := strconv.Atoi(strings.TrimSpace(string(countOut))); err == nil && n > stats.SessionCount {
 				stats.SessionCount = n
 			}
@@ -131,7 +137,11 @@ WHERE nesting_depth = 0 AND killed = 0
 ORDER BY last_modified_time DESC
 LIMIT 120;`
 
-		rawOut, err := exec.Command("sqlite3", "-json", dbPath, sqlQuery).Output()
+		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+		queryCmd := exec.CommandContext(ctx, "sqlite3", "-json", dbPath, sqlQuery)
+		queryCmd.WaitDelay = time.Second
+		rawOut, err := queryCmd.Output()
+		cancel()
 		if err != nil || len(bytes.TrimSpace(rawOut)) == 0 {
 			continue
 		}

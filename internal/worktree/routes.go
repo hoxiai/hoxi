@@ -36,10 +36,7 @@ func (m *worktreeManager) registerRoutes(mux *http.ServeMux) {
 			writeJSONError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		if body.Directory != "" {
-			m.SetRootDir(body.Directory)
-		}
-		meta, err := m.Create(body.SessionID)
+		meta, err := m.scoped(body.Directory, body.SessionID).Create(body.SessionID)
 		if err != nil {
 			writeJSONError(w, http.StatusInternalServerError, err.Error())
 			return
@@ -49,10 +46,7 @@ func (m *worktreeManager) registerRoutes(mux *http.ServeMux) {
 
 	mux.HandleFunc("/api/hoxi/worktree/status", func(w http.ResponseWriter, r *http.Request) {
 		sessionID := r.URL.Query().Get("sessionID")
-		if dir := r.URL.Query().Get("directory"); dir != "" && (sessionID == "" || sessionID == "__root__") {
-			m.SetRootDir(dir)
-		}
-		st, err := m.Status(sessionID)
+		st, err := m.scoped(r.URL.Query().Get("directory"), sessionID).Status(sessionID)
 		if err != nil {
 			writeJSONError(w, http.StatusInternalServerError, err.Error())
 			return
@@ -62,10 +56,7 @@ func (m *worktreeManager) registerRoutes(mux *http.ServeMux) {
 
 	mux.HandleFunc("/api/hoxi/worktree/diff", func(w http.ResponseWriter, r *http.Request) {
 		sessionID := r.URL.Query().Get("sessionID")
-		if dir := r.URL.Query().Get("directory"); dir != "" && (sessionID == "" || sessionID == "__root__") {
-			m.SetRootDir(dir)
-		}
-		diffs, err := m.Diff(sessionID)
+		diffs, err := m.scoped(r.URL.Query().Get("directory"), sessionID).Diff(sessionID)
 		if err != nil {
 			writeJSONError(w, http.StatusInternalServerError, err.Error())
 			return
@@ -86,7 +77,7 @@ func (m *worktreeManager) registerRoutes(mux *http.ServeMux) {
 			writeJSONError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		if err := m.Apply(body.SessionID, body.Mode); err != nil {
+		if err := m.scoped(r.URL.Query().Get("directory"), body.SessionID).Apply(body.SessionID, body.Mode); err != nil {
 			writeJSONError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
@@ -106,7 +97,7 @@ func (m *worktreeManager) registerRoutes(mux *http.ServeMux) {
 			writeJSONError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		if err := m.RevertFile(body.SessionID, body.File); err != nil {
+		if err := m.scoped(r.URL.Query().Get("directory"), body.SessionID).RevertFile(body.SessionID, body.File); err != nil {
 			writeJSONError(w, http.StatusBadRequest, err.Error())
 			return
 		}
@@ -126,7 +117,7 @@ func (m *worktreeManager) registerRoutes(mux *http.ServeMux) {
 			writeJSONError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		hash, err := m.CommitWorktree(body.SessionID, body.Message)
+		hash, err := m.scoped(r.URL.Query().Get("directory"), body.SessionID).CommitWorktree(body.SessionID, body.Message)
 		if err != nil {
 			writeJSONError(w, http.StatusBadRequest, err.Error())
 			return
@@ -139,10 +130,7 @@ func (m *worktreeManager) registerRoutes(mux *http.ServeMux) {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		if dir := r.URL.Query().Get("directory"); dir != "" {
-			m.SetRootDir(dir)
-		}
-		res, err := m.ListBranches()
+		res, err := m.ForDirectory(r.URL.Query().Get("directory")).ListBranches()
 		if err != nil {
 			writeJSONError(w, http.StatusInternalServerError, err.Error())
 			return
@@ -164,10 +152,7 @@ func (m *worktreeManager) registerRoutes(mux *http.ServeMux) {
 			writeJSONError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		if body.Directory != "" {
-			m.SetRootDir(body.Directory)
-		}
-		st, err := m.CheckoutBranch(body.Branch, body.Create)
+		st, err := m.ForDirectory(body.Directory).CheckoutBranch(body.Branch, body.Create)
 		if err != nil {
 			writeJSONError(w, http.StatusBadRequest, err.Error())
 			return
@@ -189,10 +174,7 @@ func (m *worktreeManager) registerRoutes(mux *http.ServeMux) {
 			writeJSONError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		if body.Directory != "" {
-			m.SetRootDir(body.Directory)
-		}
-		br, err := m.RenameBranch(body.SessionID, body.NewBranch)
+		br, err := m.scoped(body.Directory, body.SessionID).RenameBranch(body.SessionID, body.NewBranch)
 		if err != nil {
 			writeJSONError(w, http.StatusBadRequest, err.Error())
 			return
@@ -210,10 +192,7 @@ func (m *worktreeManager) registerRoutes(mux *http.ServeMux) {
 			Directory        string `json:"directory"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
-		if body.Directory != "" {
-			m.SetRootDir(body.Directory)
-		}
-		removed, err := m.PruneSandboxes(body.ExcludeSessionID)
+		removed, err := m.ForDirectory(body.Directory).PruneSandboxes(body.ExcludeSessionID)
 		if err != nil {
 			writeJSONError(w, http.StatusBadRequest, err.Error())
 			return
@@ -229,7 +208,7 @@ func (m *worktreeManager) registerRoutes(mux *http.ServeMux) {
 		sessionID := strings.TrimPrefix(r.URL.Path, "/api/hoxi/worktree/")
 		force := r.URL.Query().Get("force") == "true"
 		keepBranch := r.URL.Query().Get("keepBranch") == "true"
-		if err := m.RemoveWithOptions(sessionID, force, keepBranch); err != nil {
+		if err := m.scoped(r.URL.Query().Get("directory"), sessionID).RemoveWithOptions(sessionID, force, keepBranch); err != nil {
 			writeJSONError(w, http.StatusBadRequest, err.Error())
 			return
 		}

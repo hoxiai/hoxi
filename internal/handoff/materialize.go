@@ -155,7 +155,7 @@ func (g *desktopGateway) createOpenCodeSessionInDir(ctx context.Context, targetD
 	req.Header.Set("Content-Type", "application/json")
 	req.SetBasicAuth("opencode", g.password)
 
-	client := &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{Proxy: nil}}
+	client := &http.Client{Timeout: 10 * time.Second, Transport: localTransport}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
@@ -414,7 +414,10 @@ func insertNormalizedTurnsToOpenCodeDB(
 
 	sqlBuf.WriteString("COMMIT;\n")
 
-	cmd := exec.Command("sqlite3", dbPath)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "sqlite3", dbPath)
+	cmd.WaitDelay = time.Second
 	cmd.Stdin = strings.NewReader(sqlBuf.String())
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("sqlite3 error: %v (%s)", err, strings.TrimSpace(string(out)))

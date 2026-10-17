@@ -115,6 +115,8 @@ func sanitizeBranchName(name string) (string, error) {
 }
 
 func (m *worktreeManager) CheckoutBranch(branch string, create bool) (worktreeStatus, error) {
+	m.ops.Lock()
+	defer m.ops.Unlock()
 	cleaned, err := sanitizeBranchName(branch)
 	if err != nil {
 		return worktreeStatus{}, err
@@ -138,11 +140,13 @@ func (m *worktreeManager) RenameBranch(sessionID, newBranch string) (string, err
 	}
 	sessionID = sanitizeSessionID(sessionID)
 
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.ops.Lock()
+	defer m.ops.Unlock()
 
 	workDir := m.rootDir
+	m.mu.RLock()
 	meta, ok := m.sessions[sessionID]
+	m.mu.RUnlock()
 	if ok && meta.Isolated && meta.Directory != "" {
 		workDir = meta.Directory
 	} else if sessionID != "" && sessionID != "__root__" {
@@ -163,12 +167,14 @@ func (m *worktreeManager) RenameBranch(sessionID, newBranch string) (string, err
 	}
 	if ok {
 		meta.Branch = cleaned
-		m.sessions[sessionID] = meta
+		m.storeMeta(meta)
 	}
 	return cleaned, nil
 }
 
 func (m *worktreeManager) PruneSandboxes(excludeSessionID string) (int, error) {
+	m.ops.Lock()
+	defer m.ops.Unlock()
 	excludeSessionID = sanitizeSessionID(excludeSessionID)
 	removed := 0
 
@@ -213,6 +219,8 @@ func (m *worktreeManager) PruneSandboxes(excludeSessionID string) (int, error) {
 }
 
 func (m *worktreeManager) RevertFile(sessionID, relPath string) error {
+	m.ops.Lock()
+	defer m.ops.Unlock()
 	sessionID = sanitizeSessionID(sessionID)
 	cleaned := filepath.Clean(strings.TrimPrefix(strings.TrimSpace(relPath), "./"))
 	if cleaned == "" || cleaned == "." || strings.HasPrefix(cleaned, "..") || filepath.IsAbs(cleaned) {
@@ -246,12 +254,29 @@ func (m *worktreeManager) RevertFile(sessionID, relPath string) error {
 	return nil
 }
 
+const HoxiCoAuthorTrailer = "Co-authored-by: Hoxi AI <code@hoxi.ai>"
+
+func appendHoxiCoAuthor(msg string) string {
+	msg = strings.TrimSpace(msg)
+	if msg == "" {
+		return msg
+	}
+	lower := strings.ToLower(msg)
+	if strings.Contains(lower, "co-authored-by:") && strings.Contains(lower, "code@hoxi.ai") {
+		return msg
+	}
+	return msg + "\n\n" + HoxiCoAuthorTrailer
+}
+
 func (m *worktreeManager) CommitWorktree(sessionID, message string) (string, error) {
+	m.ops.Lock()
+	defer m.ops.Unlock()
 	sessionID = sanitizeSessionID(sessionID)
 	msg := strings.TrimSpace(message)
 	if msg == "" {
 		return "", errors.New("commit message is required")
 	}
+	commitMsg := appendHoxiCoAuthor(msg)
 
 	m.mu.RLock()
 	meta, ok := m.sessions[sessionID]
@@ -270,9 +295,10 @@ func (m *worktreeManager) CommitWorktree(sessionID, message string) (string, err
 	if _, err := runGit(workDir, "add", "-A"); err != nil {
 		return "", err
 	}
-	if _, err := runGit(workDir, "commit", "-m", msg); err != nil {
+	if _, err := runGit(workDir, "commit", "-m", commitMsg); err != nil {
 		return "", err
 	}
 	hash, _ := runGit(workDir, "rev-parse", "--short", "HEAD")
 	return hash, nil
 }
+

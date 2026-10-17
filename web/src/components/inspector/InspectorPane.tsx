@@ -1,11 +1,12 @@
-import { createMemo, For, Show } from "solid-js";
+import { createMemo, For, lazy, Show, Suspense } from "solid-js";
 import { Maximize2, Minimize2 } from "lucide-solid";
-import PierreDiffViewer from "./PierreDiffViewer";
 import MemoryBankView from "./MemoryBankView";
 import FileTreeView from "./FileTreeView";
-import WebGLTerminal from "../terminal/WebGLTerminal";
 import { setWorkspace, workspace } from "../../store/workspace";
 import { t } from "../../i18n";
+
+const PierreDiffViewer = lazy(() => import("./PierreDiffViewer"));
+const WebGLTerminal = lazy(() => import("../terminal/WebGLTerminal"));
 
 type TabID = "diffs" | "memory" | "files" | "terminal";
 
@@ -83,6 +84,7 @@ export default function InspectorPane() {
       </div>
 
       <div class="flex-1 min-h-0">
+        <Suspense>
         <Show when={workspace.inspectorTab === "diffs"}>
           <PierreDiffViewer />
         </Show>
@@ -95,6 +97,7 @@ export default function InspectorPane() {
         <Show when={workspace.inspectorTab === "terminal"}>
           <WebGLTerminal />
         </Show>
+        </Suspense>
       </div>
     </aside>
   );

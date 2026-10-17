@@ -124,6 +124,8 @@ export const timeline: TimelineI18n = {
   retryingInSeconds: "Retrying in {seconds}s",
   retryAttempt: "Attempt #{attempt}",
   filesUpdatedCount: "{count} files updated",
+  changesSummary: "{files} files · +{additions} -{deletions}",
+  viewChanges: "View changes",
   copyResponse: "Copy response",
   subagentLiveActivity: "Subagent Live Activity ({count})",
   openChildSession: "Open child session →",
@@ -153,6 +155,10 @@ export const timeline: TimelineI18n = {
   turnPaused: "Paused",
   turnStopped: "Stopped",
   executing: "Executing…",
+  executionPreparing: "Preparing the next step…",
+  executionStillWorking: "Still working through the task",
+  executionElapsed: "Working for {time}s",
+  executionStepsDone: "{count} steps completed",
   pausedPlaceholder:
     "Task is paused. Click Resume to continue directly, or type additional instructions first...",
   resumeDefaultPrompt:
@@ -184,5 +190,10 @@ export const timeline: TimelineI18n = {
   queueDelete: "Delete",
   queueDeleteTooltip: "Remove from queue",
   queueCountBadge: "{count} queued",
+  taskProgressActiveOnly: "Task Progress",
+  currentStepPrefix: "Running:",
+  lastStepPrefix: "Latest:",
+  codeChangesHeader: "Modified Files",
+  liveStepsHeader: "Execution Steps",
+  todoStepsHeader: "Task Checklist",
 };
-

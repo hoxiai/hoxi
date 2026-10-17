@@ -197,4 +197,5 @@ Never fork or modify OpenCode internals. OpenCode executes as an external, prist
 8. **修改后必验闭环 (Verification Before Done)**
    - 每次代码变更完成后，必须通过类型检查、语言包校验与构建验证（前端执行 `npx --prefix web tsc -p web/tsconfig.json --noEmit`、`npm --prefix web run check:i18n` 与 `npm --prefix web run build`，后端执行 `go build ./...`），确保零编译错误与零词条缺失。
 
-
+9. **Git 提交共同作者署名规范 (Git Commit Co-Author Attribution)**
+   - 凡由 Hoxi 参与开发的项目（包括当前仓库本身及通过 Hoxi 开发的任意工作区），在执行 Git 提交时（含 Worktree UI 提交、会话合并提交及 Agent 执行 `git commit`），必须在 Commit Message 尾部追加共同作者尾注：`Co-authored-by: Hoxi AI <code@hoxi.ai>`。

@@ -64,6 +64,7 @@ export interface WorkspaceState {
   inspectorOpen: boolean;
   inspectorMaximized: boolean;
   inspectedFilePath: string | null;
+  inspectedFileLine: number | null;
   inspectedDiffFile: string | null;
   activeInspectorFolder: string | null;
   workspaceModalMode: WorkspaceModalMode;
@@ -270,6 +271,7 @@ export const [workspace, setWorkspace] = createStore<WorkspaceState>({
   inspectorOpen: false,
   inspectorMaximized: false,
   inspectedFilePath: null,
+  inspectedFileLine: null,
   inspectedDiffFile: null,
   activeInspectorFolder: null,
   workspaceModalMode: null,
@@ -386,12 +388,38 @@ export function setSidebarProjectMode(mode: "single" | "multi" | "recent") {
   }
 }
 
-export function openFileInInspector(filePath: string) {
+function firstChangedLine(patch?: string): number | null {
+  if (!patch) return null;
+  const hunk = patch.match(/^@@\s+-\d+(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s+@@/m);
+  if (!hunk) return null;
+  let line = Number(hunk[1]);
+  for (const entry of patch.slice(patch.indexOf(hunk[0]) + hunk[0].length).split("\n")) {
+    if (entry.startsWith("@@")) break;
+    if (entry.startsWith("+")) return line;
+    if (!entry.startsWith("-")) line++;
+  }
+  return line;
+}
+
+export function openFileInInspector(filePath: string, line?: number | null) {
   const cleaned = filePath.replace(/^\.\//, "").replace(/:\d+(?::\d+)?$/, "").trim();
   if (!cleaned) return;
   setWorkspace("inspectedFilePath", cleaned);
+  setWorkspace("inspectedFileLine", line && line > 0 ? line : null);
   setWorkspace("inspectorTab", "files");
   setWorkspace("inspectorOpen", true);
+}
+
+export function openChangedFileInInspector(diff: Pick<SnapshotFileDiff, "file" | "patch"> | string) {
+  const file = typeof diff === "string" ? diff : diff.file;
+  const knownDiff = Object.values(workspace.diffsBySession)
+    .flat()
+    .find((item) => item.file === file || item.file.endsWith(`/${file}`) || file.endsWith(`/${item.file}`));
+  openFileInInspector(
+    file,
+    firstChangedLine(typeof diff === "string" ? knownDiff?.patch : diff.patch) ??
+      (knownDiff ? firstChangedLine(knownDiff.patch) : null)
+  );
 }
 
 export function openDiffInInspector(filePath?: string) {
@@ -463,6 +491,4 @@ export * from "./provider-telemetry";
 export * from "./provider-audit";
 export * from "./settings";
 export * from "./daily-pulse";
-
-
 

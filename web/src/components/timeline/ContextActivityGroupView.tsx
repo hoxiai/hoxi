@@ -3,7 +3,7 @@ import type { MessagePart } from "../../services/sse-types";
 import { openFileInInspector } from "../../store/workspace";
 import { FileIcon, Icon, Spinner, TextShimmer, ToolStatusTitle } from "../icons";
 import { extractTargetFile, kiloToolIconName } from "./tool-card-helpers";
-import { t } from "../../i18n";
+import { t as tI18n } from "../../i18n";
 
 function basename(p: string): string {
   const parts = p.split("/").filter(Boolean);
@@ -81,7 +81,7 @@ function summarizeContextTool(part: Extract<MessagePart, { type: "tool" }>): {
   if (t.includes("read")) {
     const file = extractTargetFile(part) || "";
     return {
-      action: "Read",
+      action: tI18n("toolCard.actionRead"),
       target: basename(file) || file || "file",
       filePath: file || undefined,
       detail: file.includes("/") ? file.slice(0, file.lastIndexOf("/")) : undefined,
@@ -90,7 +90,7 @@ function summarizeContextTool(part: Extract<MessagePart, { type: "tool" }>): {
   }
   if (t === "grep") {
     return {
-      action: "Search",
+      action: tI18n("toolCard.actionSearch"),
       target: typeof input.pattern === "string" ? `"${input.pattern}"` : "pattern",
       detail: typeof input.path === "string" ? basename(input.path) : undefined,
       pills,
@@ -98,7 +98,7 @@ function summarizeContextTool(part: Extract<MessagePart, { type: "tool" }>): {
   }
   if (t === "glob") {
     return {
-      action: "Find",
+      action: tI18n("toolCard.actionFind"),
       target: typeof input.pattern === "string" ? input.pattern : "files",
       detail: typeof input.path === "string" ? basename(input.path) : undefined,
       pills,
@@ -106,7 +106,7 @@ function summarizeContextTool(part: Extract<MessagePart, { type: "tool" }>): {
   }
   const dir = typeof input.path === "string" ? basename(input.path) : ".";
   return {
-    action: "List",
+    action: tI18n("toolCard.actionList"),
     target: dir,
     pills,
   };
@@ -142,10 +142,10 @@ export default function ContextActivityGroupView(props: {
       }
     }
     const tokens: string[] = [];
-    if (reads > 0) tokens.push(t("timeline.reads", { count: reads }));
-    if (searches > 0) tokens.push(t("timeline.searches", { count: searches }));
-    if (lists > 0) tokens.push(t("timeline.lists", { count: lists }));
-    if (thoughts > 0) tokens.push(t("timeline.thoughts", { count: thoughts }));
+    if (reads > 0) tokens.push(tI18n("timeline.reads", { count: reads }));
+    if (searches > 0) tokens.push(tI18n("timeline.searches", { count: searches }));
+    if (lists > 0) tokens.push(tI18n("timeline.lists", { count: lists }));
+    if (thoughts > 0) tokens.push(tI18n("timeline.thoughts", { count: thoughts }));
     return tokens.join(", ");
   });
 
@@ -184,8 +184,8 @@ export default function ContextActivityGroupView(props: {
         >
           <ToolStatusTitle
             active={isRunning()}
-            activeText="Gathering context"
-            doneText="Gathered context"
+            activeText={tI18n("toolCard.gatheringContext")}
+            doneText={tI18n("toolCard.gatheredContext")}
           />
         </span>
 

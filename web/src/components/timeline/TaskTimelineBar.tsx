@@ -4,6 +4,7 @@ import { ListTree, Search } from "lucide-solid";
 import type { MessagePart, ToolPart } from "../../services/sse-types";
 import type { MessageTurn } from "../../store/workspace";
 import { SubagentSessionBanner } from "./AgentStackPill";
+import { formatToolDisplayName } from "./tool-card-helpers";
 import { t } from "../../i18n";
 
 export interface ActivityBarSegment {
@@ -65,21 +66,22 @@ function classifyPart(
   if (part.type === "tool") {
     const tp = part as ToolPart;
     const name = (tp.tool || "").toLowerCase();
+    const displayTool = formatToolDisplayName(tp.tool);
     if (name === "todowrite" || name === "todoread") return null;
     if (tp.state.status === "error") {
       return {
         kind: "error",
         color: "var(--status-danger)",
-        label: `Error: ${tp.tool}`,
+        label: `${t("toolCard.stateError")}: ${displayTool}`,
         weight: 95,
       };
     }
     if (name === "edit" || name === "write" || name === "patch" || name === "multiedit" || name === "apply_patch") {
-      const target = String(tp.state.input?.filePath || tp.state.input?.path || tp.tool);
+      const target = String(tp.state.input?.filePath || tp.state.input?.path || displayTool);
       return {
         kind: "edit",
         color: "#34d399",
-        label: `Edit: ${target.split("/").pop() || target}`,
+        label: `${displayTool}: ${target.split("/").pop() || target}`,
         weight: 85,
       };
     }
@@ -88,7 +90,7 @@ function classifyPart(
       return {
         kind: "shell",
         color: "#fbbf24",
-        label: `Shell: ${cmd}`,
+        label: `${displayTool}: ${cmd}`,
         weight: 75,
       };
     }
@@ -96,14 +98,14 @@ function classifyPart(
       return {
         kind: "task",
         color: "#38bdf8",
-        label: `Subagent: ${String(tp.state.input?.description || "task")}`,
+        label: `${displayTool}: ${String(tp.state.input?.description || "task")}`,
         weight: 90,
       };
     }
     return {
       kind: "explore",
       color: "#60a5fa",
-      label: `${tp.tool}: ${String(tp.state.input?.filePath || tp.state.input?.pattern || "").split("/").pop() || tp.tool}`,
+      label: `${displayTool}: ${String(tp.state.input?.filePath || tp.state.input?.pattern || "").split("/").pop() || displayTool}`,
       weight: 50,
     };
   }

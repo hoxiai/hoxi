@@ -112,10 +112,6 @@ func (g *desktopGateway) handleDevPulse(w http.ResponseWriter, r *http.Request) 
 	}
 
 	dir := strings.TrimSpace(r.URL.Query().Get("directory"))
-	if dir != "" && g.worktrees != nil {
-		g.worktrees.SetRootDir(dir)
-	}
-
 	workDir := g.rootDir
 	if g.worktrees != nil {
 		if rt := g.worktrees.RootDir(); rt != "" {

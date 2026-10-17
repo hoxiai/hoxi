@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -163,19 +162,13 @@ func (g *desktopGateway) handleFetchProviderModels(w http.ResponseWriter, r *htt
 	}
 
 	client := &http.Client{
-		Timeout: 15 * time.Second,
-		Transport: &http.Transport{
-			Proxy: http.ProxyFromEnvironment,
-			DialContext: (&net.Dialer{
-				Timeout:   5 * time.Second,
-				KeepAlive: 15 * time.Second,
-			}).DialContext,
-		},
+		Timeout:   15 * time.Second,
+		Transport: providerTransport,
 	}
 
 	// For loopback addresses, bypass proxy to avoid 502 from local proxy tools
 	if strings.Contains(modelsURL, "://127.0.0.1") || strings.Contains(modelsURL, "://localhost") {
-		client.Transport = &http.Transport{Proxy: nil}
+		client.Transport = localTransport
 	}
 
 	resp, err := client.Do(outReq)
@@ -260,7 +253,7 @@ func (g *desktopGateway) resolveStoredProviderKey(providerID, requestedBaseURL s
 		req, err := http.NewRequest(http.MethodGet, u, nil)
 		if err == nil {
 			req.SetBasicAuth("opencode", g.password)
-			client := &http.Client{Timeout: 3 * time.Second, Transport: &http.Transport{Proxy: nil}}
+			client := &http.Client{Timeout: 3 * time.Second, Transport: localTransport}
 			if resp, err := client.Do(req); err == nil {
 				defer resp.Body.Close()
 				var payload struct {

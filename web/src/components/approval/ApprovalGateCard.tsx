@@ -15,12 +15,12 @@ import {
 import type { PermissionRequest } from "../../services/sse-types";
 import { hoxiAPI } from "../../services/api";
 import {
-  openDiffInInspector,
+  openChangedFileInInspector,
   sessionDirectory,
   workspace,
 } from "../../store/workspace";
 import { DiffChanges, FileIcon } from "../icons";
-import { FileDiffBlock } from "../inspector/PierreDiffViewer";
+import FileDiffBlock from "../inspector/LazyFileDiffBlock";
 import { t } from "../../i18n";
 import { deriveHierarchicalRules, extractPermissionDiffs } from "./approval-helpers";
 
@@ -177,7 +177,7 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
                       </Show>
                       <button
                         type="button"
-                        onClick={() => openDiffInInspector(item.file)}
+                         onClick={() => openChangedFileInInspector(item)}
                         class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10.5px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer"
                         title={t("approval.openDiffInInspector")}
                       >

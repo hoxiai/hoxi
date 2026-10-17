@@ -1,5 +1,6 @@
 import { onCleanup, onMount } from "solid-js";
 import ThreePaneShell from "./components/layout/ThreePaneShell";
+import { resolveParentSessionID } from "./components/timeline/SubagentSessionBanner";
 import { hoxiAPI } from "./services/api";
 import { connectEventStream } from "./services/sse";
 import {
@@ -118,8 +119,15 @@ export default function App() {
               setWorkspace("unreadCompletedBySession", sid, false);
             } else if (evt.properties.status.type === "idle") {
               setWorkspace("sessionFinishedAt", sid, Date.now());
+              const parentID = resolveParentSessionID(sid);
+              if (wasBusy && parentID) {
+                void loadSessionMessagesOnly(sid);
+                void loadSessionMessagesOnly(parentID);
+                scheduleRefreshWorktreeStatus(parentID, 600);
+              }
               if (
                 wasBusy &&
+                !parentID &&
                 sid !== workspace.activeSessionID &&
                 !workspace.interruptedBySession[sid]
               ) {
@@ -139,9 +147,11 @@ export default function App() {
             const sid = evt.properties.sessionID;
             setWorkspace("statusBySession", sid, { type: "idle" });
             setWorkspace("sessionFinishedAt", sid, Date.now());
-            const isChild = Boolean(workspace.sessions.find((s) => s.id === sid)?.parentID);
-            if (isChild) {
+            const parentID = resolveParentSessionID(sid);
+            if (parentID) {
               void loadSessionMessagesOnly(sid);
+              void loadSessionMessagesOnly(parentID);
+              scheduleRefreshWorktreeStatus(parentID, 600);
             } else {
               if (
                 sid !== workspace.activeSessionID &&

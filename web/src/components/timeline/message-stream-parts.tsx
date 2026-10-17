@@ -1,5 +1,5 @@
 // web/src/components/timeline/message-stream-parts.tsx
-import { createMemo, createSignal, Show } from "solid-js";
+import { createMemo, createSignal, For, Show } from "solid-js";
 import ThoughtBox from "./ThoughtBox";
 import ToolCard from "./ToolCard";
 import MarkdownView from "./MarkdownView";
@@ -13,14 +13,18 @@ import ContextActivityGroupComponent, {
 import type { MessageInfo, MessagePart } from "../../services/sse-types";
 import {
   isUserAbortError,
+  openChangedFileInInspector,
   resumePausedSession,
   retryLastUserPrompt,
   workspace,
 } from "../../store/workspace";
 import { ObserverAuditBadge } from "../inspector/ObserverAuditBanner";
-import { Icon, Spinner, TextShimmer } from "../icons";
+import { DiffChanges, FileIcon, Icon, Spinner, TextShimmer } from "../icons";
 import { t } from "../../i18n";
 import { AssistantErrorCard, SessionRetryCard } from "./assistant-error-card";
+import { getFilename } from "./tool-card-helpers";
+import { collectCycleChangedFiles } from "./tool-card-state";
+import ExecutionWaitingIndicator from "./ExecutionWaitingIndicator";
 
 export {
   AssistantErrorCard,
@@ -55,14 +59,7 @@ export function PartView(props: { part: MessagePart }) {
       if (isTodoTool(part())) return null;
       return <ToolCard part={part() as Extract<MessagePart, { type: "tool" }>} />;
     case "patch":
-      return (
-        <div class="inline-flex items-center gap-2 self-start rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-3 py-1.5 font-mono text-[11px] text-[var(--text-secondary)]">
-          <Icon name="code-lines" size="small" class="text-[var(--text-muted)]" />
-          <span>patch {(part() as any).hash?.slice(0, 8)}</span>
-          <span class="text-[var(--text-faint)]">·</span>
-          <span>{t("timeline.filesUpdatedCount", { count: ((part() as any).files || []).length })}</span>
-        </div>
-      );
+      return null;
     case "text":
       return (
         <div>
@@ -118,8 +115,6 @@ export function AssistantTurnFooter(props: {
       const next = list[idx + 1];
       // Intermediate step in a multi-step assistant response cycle
       if (next && next.info.role === "assistant") return null;
-      // Latest turn in session: wait until session is no longer busy
-      if (!next && props.isSessionBusy) return null;
       if (
         !next &&
         !props.info.time?.completed &&
@@ -170,10 +165,10 @@ export function AssistantTurnFooter(props: {
         completed,
         toolCount,
         finalText: textChunks.join("\n\n").trim(),
+        changedFiles: collectCycleChangedFiles(cycleTurns, props.info.sessionID),
       };
     }
 
-    if (!props.info.time?.completed && !interruptMode()) return null;
     const texts = props.parts
       .filter((p): p is Extract<MessagePart, { type: "text" }> => p.type === "text")
       .map((t) => t.text)
@@ -185,6 +180,10 @@ export function AssistantTurnFooter(props: {
       completed: props.info.time?.completed,
       toolCount,
       finalText: texts,
+      changedFiles: collectCycleChangedFiles(
+        [{ info: props.info, parts: props.parts }],
+        props.info.sessionID
+      ),
     };
   });
 
@@ -222,85 +221,135 @@ export function AssistantTurnFooter(props: {
   return (
     <Show when={cycleSummary()}>
       {(summary) => (
-        <div class="mt-2 flex items-center gap-2 flex-wrap text-[12px] text-[var(--text-faint)] select-none">
-          <Show
-            when={interruptMode()}
-            fallback={
-              <span class="inline-flex items-center gap-1 text-[var(--ok-text)]/85">
-                <Icon name="circle-check" size="small" />
-                <span>{t("timeline.turnCompleted")}</span>
+        <div class="mt-2 space-y-2 select-none">
+          {/* Changed files summary chips with +additions / -deletions & click-to-preview */}
+          <Show when={summary().changedFiles.length > 0}>
+            <div class="space-y-2">
+              <div class="flex items-center gap-1.5 flex-wrap">
+                <For each={summary().changedFiles}>
+                  {(diff) => {
+                    return (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          openChangedFileInInspector(diff);
+                        }}
+                        title={diff.file}
+                        class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-2.5 py-1 font-mono text-[11.5px] text-[var(--text-secondary)] transition-colors cursor-pointer hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+                      >
+                        <FileIcon
+                          node={{ path: diff.file, type: "file" }}
+                          class="w-3.5 h-3.5 shrink-0"
+                        />
+                        <span class="truncate max-w-[220px]">{getFilename(diff.file)}</span>
+                        <Show when={diff.additions > 0 || diff.deletions > 0}>
+                          <DiffChanges
+                            changes={{ additions: diff.additions, deletions: diff.deletions }}
+                          />
+                        </Show>
+                      </button>
+                    );
+                  }}
+                </For>
+              </div>
+
+            </div>
+          </Show>
+
+          <div class="flex items-center gap-2 flex-wrap text-[12px] text-[var(--text-faint)]">
+            <Show
+              when={props.isSessionBusy && !interruptMode()}
+              fallback={
+                <Show
+                  when={interruptMode()}
+                  fallback={
+                    <span class="inline-flex items-center gap-1 text-[var(--ok-text)]/85">
+                      <Icon name="circle-check" size="small" />
+                      <span>{t("timeline.turnCompleted")}</span>
+                    </span>
+                  }
+                >
+                  {(mode) => (
+                    <span
+                      class={`inline-flex items-center gap-1 font-medium ${
+                        mode() === "paused"
+                          ? "text-[var(--warn-text)]"
+                          : "text-[var(--danger-text)]"
+                      }`}
+                    >
+                      <span class="font-mono text-[10px] leading-none">
+                        {mode() === "paused" ? "⏸" : "■"}
+                      </span>
+                      <span>
+                        {mode() === "paused"
+                          ? t("timeline.turnPaused")
+                          : t("timeline.turnStopped")}
+                      </span>
+                    </span>
+                  )}
+                </Show>
+              }
+            >
+              <span class="inline-flex items-center gap-1 text-[var(--accent-primary)]/90">
+                <Spinner class="w-3.5 h-3.5" />
+                <span>{t("timeline.executing")}</span>
               </span>
-            }
-          >
-            {(mode) => (
-              <span
-                class={`inline-flex items-center gap-1 font-medium ${
-                  mode() === "paused" ? "text-[var(--warn-text)]" : "text-[var(--danger-text)]"
-                }`}
+            </Show>
+
+            <Show when={durationLabel()}>
+              <span>·</span>
+              <span class="font-mono tabular-nums text-[var(--text-muted)]">
+                {durationLabel()}
+              </span>
+            </Show>
+
+            <Show when={summary().toolCount > 0}>
+              <span>·</span>
+              <span class="font-mono tabular-nums text-[var(--text-muted)]">
+                {t("timeline.stepsCompleted", { count: summary().toolCount })}
+              </span>
+            </Show>
+
+            <Show when={isLatestTurn() && interruptMode() && !props.isSessionBusy}>
+              <button
+                type="button"
+                disabled={resuming()}
+                onClick={() => void onResume()}
+                title={t("timeline.resumeTooltip")}
+                class="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[12px] font-medium text-[var(--accent-primary)] hover:bg-[var(--accent-surface)] disabled:opacity-50 transition-colors cursor-pointer"
               >
-                <span class="font-mono text-[10px] leading-none">
-                  {mode() === "paused" ? "⏸" : "■"}
-                </span>
-                <span>
-                  {mode() === "paused" ? t("timeline.turnPaused") : t("timeline.turnStopped")}
-                </span>
-              </span>
-            )}
-          </Show>
+                <span class="text-[10px] leading-none">▶</span>
+                <span>{t("timeline.resume")}</span>
+              </button>
 
-          <Show when={durationLabel()}>
-            <span>·</span>
-            <span class="font-mono tabular-nums text-[var(--text-muted)]">
-              {durationLabel()}
-            </span>
-          </Show>
+              <button
+                type="button"
+                onClick={() => void retryLastUserPrompt(props.info.sessionID)}
+                class="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[12px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+              >
+                <span>↺</span>
+                <span>{t("timeline.retryTask")}</span>
+              </button>
+            </Show>
 
-          <Show when={summary().toolCount > 0}>
-            <span>·</span>
-            <span class="font-mono tabular-nums text-[var(--text-muted)]">
-              {t("timeline.stepsCompleted", { count: summary().toolCount })}
-            </span>
-          </Show>
+            <Show when={isLatestTurn()}>
+              <ObserverAuditBadge sessionID={props.info.sessionID} />
+            </Show>
 
-          <Show when={isLatestTurn() && interruptMode() && !props.isSessionBusy}>
-            <button
-              type="button"
-              disabled={resuming()}
-              onClick={() => void onResume()}
-              title={t("timeline.resumeTooltip")}
-              class="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[12px] font-medium text-[var(--accent-primary)] hover:bg-[var(--accent-surface)] disabled:opacity-50 transition-colors cursor-pointer"
-            >
-              <span class="text-[10px] leading-none">▶</span>
-              <span>{t("timeline.resume")}</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => void retryLastUserPrompt(props.info.sessionID)}
-              class="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[12px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
-            >
-              <span>↺</span>
-              <span>{t("timeline.retryTask")}</span>
-            </button>
-          </Show>
-
-          <Show when={isLatestTurn()}>
-            <ObserverAuditBadge sessionID={props.info.sessionID} />
-          </Show>
-
-          <Show when={summary().finalText.length > 0}>
-            <button
-              type="button"
-              onClick={() => void copyResponse()}
-              title={copied() ? t("common.copied") : t("timeline.copyResponse")}
-              class="ml-auto inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[12px] text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
-            >
-              <Show when={copied()} fallback={<Icon name="copy" size="small" />}>
-                <Icon name="check" size="small" class="text-[var(--ok-text)]" />
-              </Show>
-              <span>{copied() ? t("common.copied") : t("common.copy")}</span>
-            </button>
-          </Show>
+            <Show when={summary().finalText.length > 0}>
+              <button
+                type="button"
+                onClick={() => void copyResponse()}
+                title={copied() ? t("common.copied") : t("timeline.copyResponse")}
+                class="ml-auto inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[12px] text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+              >
+                <Show when={copied()} fallback={<Icon name="copy" size="small" />}>
+                  <Icon name="check" size="small" class="text-[var(--ok-text)]" />
+                </Show>
+                <span>{copied() ? t("common.copied") : t("common.copy")}</span>
+              </button>
+            </Show>
+          </div>
         </div>
       )}
     </Show>
@@ -311,6 +360,7 @@ export function LiveExecutionControlBar(props: {
   sessionID: string | null;
   isSessionBusy: boolean;
   showThinking: boolean;
+  completedSteps?: number;
   lastTurnRole?: string;
 }) {
   const [busyAction, setBusyAction] = createSignal(false);
@@ -333,10 +383,7 @@ export function LiveExecutionControlBar(props: {
   return (
     <>
       <Show when={props.showThinking}>
-        <div class="mt-4 flex items-center gap-2 px-1 text-[13px] text-[var(--accent-primary)]">
-          <Spinner class="w-4 h-4 shrink-0" />
-          <TextShimmer text={t("timeline.thinking")} active={true} class="font-medium" />
-        </div>
+        <ExecutionWaitingIndicator completedSteps={props.completedSteps ?? 0} />
       </Show>
 
       <Show

@@ -1,4 +1,5 @@
 import { produce } from "solid-js/store";
+import { findMessageIndex, findPartIndex } from "./message-lookup";
 import { t } from "../i18n";
 import { hoxiAPI } from "../services/api";
 import type { StreamFrameBatch } from "../services/sse";
@@ -39,12 +40,26 @@ export { forkFromMessage, revertToHere, undoRevert };
 
 const lastInterruptAtBySession = new Map<string, number>();
 
+export function markSessionInterrupted(
+  sessionID: string,
+  kind: "paused" | "stopped" = "stopped"
+) {
+  if (!sessionID) return;
+  lastInterruptAtBySession.set(sessionID, Date.now());
+  setWorkspace("interruptedBySession", sessionID, kind);
+  setWorkspace("statusBySession", sessionID, { type: "idle" });
+}
+
+export function clearSessionInterrupted(sessionID: string) {
+  if (!sessionID) return;
+  lastInterruptAtBySession.delete(sessionID);
+  setWorkspace("interruptedBySession", sessionID, undefined);
+}
+
 export async function pauseSessionTask(sessionID?: string | null): Promise<void> {
   const id = sessionID ?? workspace.activeSessionID;
   if (!id) return;
-  lastInterruptAtBySession.set(id, Date.now());
-  setWorkspace("interruptedBySession", id, "paused");
-  setWorkspace("statusBySession", id, { type: "idle" });
+  markSessionInterrupted(id, "paused");
   try {
     await hoxiAPI.abortSession(id, sessionDirectory(id));
   } catch (err) {
@@ -58,9 +73,7 @@ export async function stopSessionTask(sessionID?: string | null): Promise<void> 
   const id = sessionID ?? workspace.activeSessionID;
   if (!id) return;
   recordUserAbortAction(id);
-  lastInterruptAtBySession.set(id, Date.now());
-  setWorkspace("interruptedBySession", id, "stopped");
-  setWorkspace("statusBySession", id, { type: "idle" });
+  markSessionInterrupted(id, "stopped");
   try {
     await hoxiAPI.abortSession(id, sessionDirectory(id));
   } catch (err) {
@@ -249,7 +262,7 @@ function mutateUpsertInfo(state: typeof workspace, info: MessageInfo) {
       list.splice(optIdx, 1);
     }
   }
-  const idx = list.findIndex((m) => m.info.id === info.id);
+  const idx = findMessageIndex(list, info.id);
   if (idx >= 0) {
     Object.assign(list[idx].info, info);
   } else {
@@ -259,7 +272,7 @@ function mutateUpsertInfo(state: typeof workspace, info: MessageInfo) {
 
 function mutateUpsertPart(state: typeof workspace, part: MessagePart) {
   const list = (state.messagesBySession[part.sessionID] ||= []);
-  let turn = list.find((m) => m.info.id === part.messageID);
+  let turn = list[findMessageIndex(list, part.messageID)];
   if (!turn) {
     turn = {
       info: {
@@ -272,7 +285,7 @@ function mutateUpsertPart(state: typeof workspace, part: MessagePart) {
     };
     list.push(turn);
   }
-  const pIdx = turn.parts.findIndex((p) => p.id === part.id);
+  const pIdx = findPartIndex(turn.parts, part.id);
   if (pIdx >= 0) {
     Object.assign(turn.parts[pIdx], part);
   } else {
@@ -296,11 +309,13 @@ export function upsertMessagePart(part: MessagePart) {
   }
   if (
     part.type === "tool" &&
-    part.state.status === "completed" &&
-    part.sessionID === workspace.activeSessionID &&
-    isMutatingTool(part.tool)
-  ) {
-    scheduleRefreshWorktreeStatus(part.sessionID, 900);
+      (part.state.status === "pending" ||
+        part.state.status === "running" ||
+        part.state.status === "completed") &&
+      part.sessionID === workspace.activeSessionID &&
+      isMutatingTool(part.tool)
+    ) {
+      scheduleRefreshWorktreeStatus(part.sessionID, 250);
   }
   const interruptedAt = lastInterruptAtBySession.get(part.sessionID) || 0;
   const isActivelyStreamingPart =
@@ -326,8 +341,7 @@ export function applyPartDeltaBatch(
     delta: string;
   }>
 ) {
-  if (batches.length > 0) {
-    const sid = batches[0].sessionID;
+  for (const sid of new Set(batches.map((batch) => batch.sessionID))) {
     recordFirstToken(sid);
     const interruptedAt = lastInterruptAtBySession.get(sid) || 0;
     if (
@@ -342,9 +356,9 @@ export function applyPartDeltaBatch(
       for (const b of batches) {
         const list = state.messagesBySession[b.sessionID];
         if (!list) continue;
-        const turn = list.find((m) => m.info.id === b.messageID);
+        const turn = list[findMessageIndex(list, b.messageID)];
         if (!turn) continue;
-        const part = turn.parts.find((p) => p.id === b.partID) as any;
+        const part = turn.parts[findPartIndex(turn.parts, b.partID)] as any;
         if (part && typeof part[b.field] === "string") {
           part[b.field] += b.delta;
         }
@@ -372,11 +386,13 @@ export function applyStreamFrameBatch(batch: StreamFrameBatch) {
     }
     if (
       part.type === "tool" &&
-      part.state.status === "completed" &&
+      (part.state.status === "pending" ||
+        part.state.status === "running" ||
+        part.state.status === "completed") &&
       part.sessionID === workspace.activeSessionID &&
       isMutatingTool(part.tool)
     ) {
-      scheduleRefreshWorktreeStatus(part.sessionID, 900);
+      scheduleRefreshWorktreeStatus(part.sessionID, 250);
     }
     const isActivelyStreamingPart =
       (part.type === "tool" &&
@@ -413,9 +429,9 @@ export function applyStreamFrameBatch(batch: StreamFrameBatch) {
       for (const b of batch.deltas) {
         const list = state.messagesBySession[b.sessionID];
         if (!list) continue;
-        const turn = list.find((m) => m.info.id === b.messageID);
+        const turn = list[findMessageIndex(list, b.messageID)];
         if (!turn) continue;
-        const part = turn.parts.find((p) => p.id === b.partID) as any;
+        const part = turn.parts[findPartIndex(turn.parts, b.partID)] as any;
         if (part && typeof part[b.field] === "string") {
           part[b.field] += b.delta;
         }
@@ -423,4 +439,3 @@ export function applyStreamFrameBatch(batch: StreamFrameBatch) {
     })
   );
 }
-

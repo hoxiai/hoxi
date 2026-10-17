@@ -102,7 +102,7 @@ export default function ModeSwitcher() {
           {modeIcon(currentMode())}
         </span>
         <span>
-          {currentAgent() ? formatAgentLabel(currentAgent()!) : currentMode()}
+          {formatAgentLabel(currentAgent() || currentMode())}
         </span>
         <ChevronDown
           size={11}

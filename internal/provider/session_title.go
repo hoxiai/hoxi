@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"regexp"
 	"strings"
@@ -165,17 +164,11 @@ User task request:
 	}
 
 	client := &http.Client{
-		Timeout: 12 * time.Second,
-		Transport: &http.Transport{
-			Proxy: http.ProxyFromEnvironment,
-			DialContext: (&net.Dialer{
-				Timeout:   4 * time.Second,
-				KeepAlive: 15 * time.Second,
-			}).DialContext,
-		},
+		Timeout:   12 * time.Second,
+		Transport: titleTransport,
 	}
 	if strings.Contains(targetURL, "://127.0.0.1") || strings.Contains(targetURL, "://localhost") {
-		client.Transport = &http.Transport{Proxy: nil}
+		client.Transport = localTransport
 	}
 
 	resp, err := client.Do(outReq)

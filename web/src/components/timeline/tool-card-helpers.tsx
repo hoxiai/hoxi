@@ -3,7 +3,7 @@ import { createMemo, For, Show } from "solid-js";
 import type { MessagePart, SnapshotFileDiff, ToolState } from "../../services/sse-types";
 import { openDiffInInspector, setWorkspace, workspace } from "../../store/workspace";
 import { Icon, type IconName } from "../icons";
-import { FileDiffBlock } from "../inspector/PierreDiffViewer";
+import FileDiffBlock from "../inspector/LazyFileDiffBlock";
 import { t } from "../../i18n";
 
 export type ToolPart = Extract<MessagePart, { type: "tool" }>;
@@ -76,6 +76,33 @@ export function kiloToolIconName(tool: string): IconName {
   return "mcp";
 }
 
+export function formatToolDisplayName(tool: string): string {
+  if (!tool) return "";
+  const lower = tool.toLowerCase();
+  if (isReadTool(lower)) return t("toolCard.actionRead");
+  if (lower.includes("write") && !isTodoTool(lower)) return t("toolCard.actionWrite");
+  if (lower.includes("patch")) return t("toolCard.actionPatch");
+  if (lower.includes("edit")) return t("toolCard.actionEdit");
+  if (lower === "grep" || lower.includes("search")) return t("toolCard.actionSearch");
+  if (lower === "glob" || lower === "find") return t("toolCard.actionFind");
+  if (lower === "list" || lower === "ls") return t("toolCard.actionList");
+  if (isShellTool(lower)) return t("toolCard.actionShell");
+  if (isTaskTool(lower)) return t("toolCard.actionSubagent");
+  if (isTodoTool(lower)) return t("toolCard.actionTodo");
+  if (lower.includes("webfetch") || lower.includes("fetch")) return t("toolCard.actionWebFetch");
+  if (lower === "skill") return t("toolCard.actionSkill");
+  if (lower === "question") return t("toolCard.actionQuestion");
+  return tool;
+}
+
+export function formatToolStatusLabel(status: string): string {
+  if (status === "pending") return t("toolCard.statePending");
+  if (status === "running") return t("toolCard.stateRunning");
+  if (status === "completed") return t("toolCard.stateCompleted");
+  if (status === "error") return t("toolCard.stateError");
+  return status;
+}
+
 export function getFilename(p: string): string {
   if (!p) return "";
   const clean = p.replace(/[/\\]+$/, "");
@@ -98,12 +125,23 @@ export function getDirectory(p: string): string {
 
 export function extractTargetFile(part: ToolPart): string | null {
   const input = part.state.input || {};
+  const metaFiles = part.state.status !== "pending" ? part.state.metadata?.files : undefined;
+  const firstMetaFile = Array.isArray(metaFiles) && metaFiles[0]
+    ? metaFiles[0].relativePath || metaFiles[0].filePath || metaFiles[0].file || metaFiles[0].path
+    : undefined;
+  let patchHeaderFile: string | undefined;
+  if (typeof input.patchText === "string") {
+    const m = input.patchText.match(/^\*\*\*\s+(?:Update|Add|Delete)\s+File:\s*(.+)$/m);
+    if (m?.[1]) patchHeaderFile = m[1].trim();
+  }
   const raw =
     input.filePath ||
     input.path ||
     input.file ||
     input.filename ||
     input.targetFile ||
+    firstMetaFile ||
+    patchHeaderFile ||
     (part.state.status !== "pending"
       ? part.state.metadata?.filePath || part.state.metadata?.filepath
       : undefined);
@@ -251,8 +289,13 @@ export function ToolCardExpandedBody(props: {
   setOutputRef: (el: HTMLPreElement | undefined) => void;
   todoItems: Array<{ content: string; status: string }>;
   fileDiff: SnapshotFileDiff | undefined;
+  fileDiffs?: SnapshotFileDiff[];
 }) {
   const status = () => props.part.state.status;
+  const diffs = createMemo(() => {
+    if (props.fileDiffs && props.fileDiffs.length > 0) return props.fileDiffs;
+    return props.fileDiff ? [props.fileDiff] : [];
+  });
 
   return (
     <div class="border-t border-[var(--border-subtle)] bg-[var(--bg-elevated)]/45">
@@ -295,8 +338,8 @@ export function ToolCardExpandedBody(props: {
             fallback={
               <div class="px-3.5 py-2.5 text-[11.5px] text-[#8b949e] italic">
                 {status() === "running"
-                  ? "Waiting for output…"
-                  : "Command completed with no output."}
+                  ? t("toolCard.waitingForOutput")
+                  : t("toolCard.noOutput")}
               </div>
             }
           >
@@ -349,33 +392,35 @@ export function ToolCardExpandedBody(props: {
 
       {/* Case 3: File Edit / Write / Patch Tool -> Inline Diff Preview */}
       <Show when={props.isEdit}>
-        <div class="p-3 space-y-2">
+        <div class="p-3 space-y-3">
           <Show
-            when={props.fileDiff}
+            when={diffs().length > 0}
             fallback={
               <pre class="text-[11.5px] font-mono bg-[var(--bg-code)] p-2.5 rounded-lg overflow-x-auto max-h-48 text-[var(--text-secondary)] selectable-text">
                 {JSON.stringify(props.part.state.input, null, 2)}
               </pre>
             }
           >
-            {(diff) => (
-              <div>
-                <div class="flex items-center justify-between mb-1.5">
-                  <span class="text-[11px] font-medium text-[var(--text-muted)]">
-                    {t("toolCard.inlineChangePreview")}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => openDiffInInspector(diff().file)}
-                    class="inline-flex items-center gap-1 text-[11px] font-medium text-[var(--accent-primary)] hover:underline cursor-pointer"
-                  >
-                    <Icon name="code-lines" size="small" />
-                    {t("toolCard.openInDiffInspector")}
-                  </button>
+            <For each={diffs()}>
+              {(diff) => (
+                <div>
+                  <div class="flex items-center justify-between mb-1.5">
+                    <span class="text-[11px] font-medium text-[var(--text-muted)] font-mono truncate">
+                      {diffs().length > 1 ? diff.file : t("toolCard.inlineChangePreview")}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => openDiffInInspector(diff.file)}
+                      class="inline-flex items-center gap-1 text-[11px] font-medium text-[var(--accent-primary)] hover:underline cursor-pointer shrink-0"
+                    >
+                      <Icon name="code-lines" size="small" />
+                      {t("toolCard.openInDiffInspector")}
+                    </button>
+                  </div>
+                  <FileDiffBlock diff={diff} defaultExpanded={true} compact={true} />
                 </div>
-                <FileDiffBlock diff={diff()} defaultExpanded={true} compact={true} />
-              </div>
-            )}
+              )}
+            </For>
           </Show>
         </div>
       </Show>

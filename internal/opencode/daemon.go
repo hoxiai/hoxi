@@ -81,6 +81,7 @@ func StartDaemonWithBin(
 
 	if err := WaitForHealth(ctx, port, password, 15*time.Second); err != nil {
 		_ = child.Process.Kill()
+		_ = child.Wait()
 		return nil, err
 	}
 	return child, nil
@@ -91,6 +92,7 @@ func WaitForHealth(ctx context.Context, port int, password string, timeout time.
 		Timeout:   1500 * time.Millisecond,
 		Transport: &http.Transport{Proxy: nil},
 	}
+	defer client.CloseIdleConnections()
 	healthURL := "http://127.0.0.1:" + strconv.Itoa(port) + "/global/health"
 	deadline := time.Now().Add(timeout)
 

@@ -82,7 +82,7 @@ func (g *desktopGateway) importGeminiCLIProvider() LocalCLIImportResponse {
 		if req, err := http.NewRequest(http.MethodPut, u, bytes.NewReader(b)); err == nil {
 			req.Header.Set("Content-Type", "application/json")
 			req.SetBasicAuth("opencode", g.password)
-			client := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{Proxy: nil}}
+			client := &http.Client{Timeout: 5 * time.Second, Transport: localTransport}
 			if resp, err := client.Do(req); err == nil {
 				_ = resp.Body.Close()
 			}
@@ -277,7 +277,7 @@ func (g *desktopGateway) importCodexCLIProvider() LocalCLIImportResponse {
 		if err == nil {
 			req.Header.Set("Content-Type", "application/json")
 			req.SetBasicAuth("opencode", g.password)
-			client := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{Proxy: nil}}
+			client := &http.Client{Timeout: 5 * time.Second, Transport: localTransport}
 			if resp, err := client.Do(req); err == nil {
 				_ = resp.Body.Close()
 			}

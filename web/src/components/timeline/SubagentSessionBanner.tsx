@@ -12,20 +12,29 @@ import {
 import type { ToolPart } from "../../services/sse-types";
 import { hoxiAPI } from "../../services/api";
 import {
+  ensureChildSubagentSessionLoaded,
   extractChildSubagentSessionId,
   isPlaceholderSessionTitle,
   isSessionBusy,
   isSubagentToolAlive,
   isSubagentToolInterrupted,
   loadSessionMessagesOnly,
+  markSessionInterrupted,
   resumeSubagentTask,
   selectSession,
   sessionDirectory,
-  setWorkspace,
   workspace,
 } from "../../store/workspace";
-import { Spinner } from "../icons";
+import { DiffChanges, Spinner } from "../icons";
 import { t } from "../../i18n";
+import {
+  extractCommand,
+  extractDescription,
+  extractTargetFile,
+  formatToolDisplayName,
+  getFilename,
+} from "./tool-card-helpers";
+import { collectCycleChangedFiles } from "./tool-card-state";
 
 export interface SubagentStackItem {
   sessionID: string;
@@ -33,6 +42,52 @@ export interface SubagentStackItem {
   agentType: string;
   status: "running" | "interrupted" | "completed" | "error";
   needsAttention: boolean;
+  stepCount: number;
+  currentStepLabel?: string;
+  changedFilesCount: number;
+  additions: number;
+  deletions: number;
+}
+
+function summarizeSubagentTelemetry(subId: string) {
+  const childTurns = workspace.messagesBySession[subId] ?? [];
+  const tools: ToolPart[] = [];
+  for (const turn of childTurns) {
+    for (const part of turn.parts ?? []) {
+      if (part.type === "tool") tools.push(part as ToolPart);
+    }
+  }
+  const activeTool =
+    [...tools]
+      .reverse()
+      .find((tp) => tp.state.status === "running" || tp.state.status === "pending") ??
+    tools[tools.length - 1];
+
+  let currentStepLabel: string | undefined;
+  if (activeTool) {
+    const file = extractTargetFile(activeTool);
+    const cmd = extractCommand(activeTool);
+    const desc = extractDescription(activeTool);
+    const detail = file ? getFilename(file) : cmd ? `$ ${cmd}` : desc || "";
+    const toolLabel = formatToolDisplayName(activeTool.tool);
+    currentStepLabel = detail ? `${toolLabel} ${detail}` : toolLabel;
+  }
+
+  const changed = collectCycleChangedFiles(childTurns, subId);
+  let additions = 0;
+  let deletions = 0;
+  for (const d of changed) {
+    additions += d.additions ?? 0;
+    deletions += d.deletions ?? 0;
+  }
+
+  return {
+    stepCount: tools.length,
+    currentStepLabel,
+    changedFilesCount: changed.length,
+    additions,
+    deletions,
+  };
 }
 
 /**
@@ -83,9 +138,22 @@ export function resolveRootSessionID(sessionID: string | null | undefined): stri
 export function collectSubagentsForSession(parentID: string | null): SubagentStackItem[] {
   if (!parentID) return [];
   const map = new Map<string, SubagentStackItem>();
+  const isViewingChild =
+    Boolean(workspace.activeSessionID) && workspace.activeSessionID !== parentID;
 
-  // 1. Scan `task` tool parts in the parent session
-  const turns = workspace.messagesBySession[parentID] ?? [];
+  // 1. Scan `task` tool parts in the parent session (current cycle unless viewing a child session)
+  const allTurns = workspace.messagesBySession[parentID] ?? [];
+  let startIdx = 0;
+  if (!isViewingChild && allTurns.length > 0) {
+    for (let i = allTurns.length - 1; i >= 0; i--) {
+      if (allTurns[i].info.role === "user") {
+        startIdx = i;
+        break;
+      }
+    }
+  }
+  const turns = allTurns.slice(startIdx);
+
   for (const turn of turns) {
     for (const part of turn.parts ?? []) {
       if (part.type !== "tool") continue;
@@ -93,6 +161,8 @@ export function collectSubagentsForSession(parentID: string | null): SubagentSta
       if ((tp.tool || "").toLowerCase() !== "task") continue;
       const subId = extractChildSubagentSessionId(tp);
       if (!subId) continue;
+
+      ensureChildSubagentSessionLoaded(subId, parentID);
 
       const alive = isSubagentToolAlive(tp, parentID);
       const interrupted = isSubagentToolInterrupted(tp, parentID);
@@ -109,29 +179,36 @@ export function collectSubagentsForSession(parentID: string | null): SubagentSta
         workspace.pendingPermissions.some((p) => p.sessionID === subId) ||
         workspace.pendingQuestions.some((q) => q.sessionID === subId);
 
+      const telemetry = summarizeSubagentTelemetry(subId);
       map.set(subId, {
         sessionID: subId,
         description: String(tp.state.input?.description || tp.state.title || "Subagent Task"),
         agentType: String(tp.state.input?.subagent_type || "general"),
         status,
         needsAttention,
+        ...telemetry,
       });
     }
   }
 
-  // 2. Also include any child sessions whose `parentID === parentID`
+  // 2. Also include active/attention/viewed child sessions whose `parentID === parentID`
   for (const s of workspace.sessions) {
     if (s.parentID !== parentID || map.has(s.id)) continue;
     const childBusy = isSessionBusy(s.id);
+    const childInterrupted = Boolean(workspace.interruptedBySession[s.id]);
     const needsAttention =
       workspace.pendingPermissions.some((p) => p.sessionID === s.id) ||
       workspace.pendingQuestions.some((q) => q.sessionID === s.id);
+    if (!isViewingChild && !childBusy && !childInterrupted && !needsAttention) continue;
+    ensureChildSubagentSessionLoaded(s.id, parentID);
+    const telemetry = summarizeSubagentTelemetry(s.id);
     map.set(s.id, {
       sessionID: s.id,
       description: s.title || s.id.slice(0, 10),
       agentType: "subagent",
-      status: childBusy ? "running" : "completed",
+      status: childBusy ? "running" : childInterrupted ? "interrupted" : "completed",
       needsAttention,
+      ...telemetry,
     });
   }
 
@@ -202,7 +279,7 @@ export function SubagentSessionBanner() {
     const id = activeID();
     if (!id || stopping()) return;
     setStopping(true);
-    setWorkspace("statusBySession", id, { type: "idle" });
+    markSessionInterrupted(id, "stopped");
     try {
       await hoxiAPI.abortSession(id, sessionDirectory(id));
     } catch (err) {
@@ -285,6 +362,22 @@ export function SubagentSessionBanner() {
               >
                 {currentTitle()}
               </span>
+
+              <Show
+                when={
+                  currentSub() &&
+                  (currentSub()!.additions > 0 || currentSub()!.deletions > 0)
+                }
+              >
+                <span class="shrink-0">
+                  <DiffChanges
+                    changes={{
+                      additions: currentSub()!.additions,
+                      deletions: currentSub()!.deletions,
+                    }}
+                  />
+                </span>
+              </Show>
             </div>
           </div>
 

@@ -46,8 +46,10 @@ type worktreeStatus struct {
 
 type worktreeManager struct {
 	mu       sync.RWMutex
+	ops      sync.Mutex
 	rootDir  string
 	sessions map[string]worktreeMeta
+	roots    *managerRoots
 }
 
 type Manager = worktreeManager
@@ -61,33 +63,17 @@ func newWorktreeManager(rootDir string) *worktreeManager {
 	if err != nil {
 		absRoot = rootDir
 	}
-	return &worktreeManager{
+	m := &worktreeManager{
 		rootDir:  absRoot,
 		sessions: make(map[string]worktreeMeta),
+		roots:    &managerRoots{managers: make(map[string]*worktreeManager)},
 	}
+	m.roots.managers[absRoot] = m
+	return m
 }
 
 func (m *worktreeManager) RootDir() string {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
 	return m.rootDir
-}
-
-func (m *worktreeManager) SetRootDir(dir string) {
-	trimmed := strings.TrimSpace(dir)
-	if trimmed == "" {
-		return
-	}
-	if info, err := os.Stat(trimmed); err != nil || !info.IsDir() {
-		return
-	}
-	absDir, err := filepath.Abs(trimmed)
-	if err != nil {
-		absDir = trimmed
-	}
-	m.mu.Lock()
-	m.rootDir = absDir
-	m.mu.Unlock()
 }
 
 func (m *worktreeManager) Create(sessionID string) (worktreeMeta, error) {
@@ -96,10 +82,13 @@ func (m *worktreeManager) Create(sessionID string) (worktreeMeta, error) {
 		return worktreeMeta{}, errors.New("sessionID is required")
 	}
 
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.ops.Lock()
+	defer m.ops.Unlock()
 
-	if existing, ok := m.sessions[sessionID]; ok {
+	m.mu.RLock()
+	existing, ok := m.sessions[sessionID]
+	m.mu.RUnlock()
+	if ok {
 		if _, err := os.Stat(existing.Directory); err == nil {
 			return existing, nil
 		}
@@ -113,7 +102,7 @@ func (m *worktreeManager) Create(sessionID string) (worktreeMeta, error) {
 			Directory: m.rootDir,
 			CreatedAt: time.Now().UTC().Format(time.RFC3339),
 		}
-		m.sessions[sessionID] = meta
+		m.storeMeta(meta)
 		return meta, nil
 	}
 
@@ -126,7 +115,7 @@ func (m *worktreeManager) Create(sessionID string) (worktreeMeta, error) {
 			Directory: repoRoot,
 			CreatedAt: time.Now().UTC().Format(time.RFC3339),
 		}
-		m.sessions[sessionID] = meta
+		m.storeMeta(meta)
 		return meta, nil
 	}
 
@@ -167,7 +156,7 @@ func (m *worktreeManager) Create(sessionID string) (worktreeMeta, error) {
 		BaseCommit: strings.TrimSpace(baseCommit),
 		CreatedAt:  time.Now().UTC().Format(time.RFC3339),
 	}
-	m.sessions[sessionID] = meta
+	m.storeMeta(meta)
 	return meta, nil
 }
 
@@ -323,6 +312,8 @@ func (m *worktreeManager) Status(sessionID string) (worktreeStatus, error) {
 }
 
 func (m *worktreeManager) Apply(sessionID, mode string) error {
+	m.ops.Lock()
+	defer m.ops.Unlock()
 	sessionID = sanitizeSessionID(sessionID)
 	m.mu.RLock()
 	meta, ok := m.sessions[sessionID]
@@ -351,11 +342,11 @@ func (m *worktreeManager) Apply(sessionID, mode string) error {
 	statusOut, err := runGit(meta.Directory, "status", "--porcelain")
 	if err == nil && strings.TrimSpace(statusOut) != "" {
 		_, _ = runGit(meta.Directory, "add", "-A")
-		_, _ = runGit(meta.Directory, "commit", "-m", "chore(hoxi): snapshot before apply ("+sessionID+")")
+		_, _ = runGit(meta.Directory, "commit", "-m", appendHoxiCoAuthor("chore(hoxi): snapshot before apply ("+sessionID+")"))
 	}
 
 	if mode == "merge" {
-		_, err := runGit(m.rootDir, "merge", "--no-ff", "-m", "Merge hoxi session "+sessionID, meta.Branch)
+		_, err := runGit(m.rootDir, "merge", "--no-ff", "-m", appendHoxiCoAuthor("Merge hoxi session "+sessionID), meta.Branch)
 		return err
 	}
 
@@ -389,8 +380,11 @@ func (m *worktreeManager) Remove(sessionID string, force bool) error {
 
 func (m *worktreeManager) RemoveWithOptions(sessionID string, force bool, keepBranch bool) error {
 	sessionID = sanitizeSessionID(sessionID)
-	m.mu.Lock()
+	m.ops.Lock()
+	defer m.ops.Unlock()
+	m.mu.RLock()
 	meta, ok := m.sessions[sessionID]
+	m.mu.RUnlock()
 	if !ok {
 		candidate := filepath.Join(m.rootDir, ".hoxi", "worktrees", sessionID)
 		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
@@ -405,14 +399,13 @@ func (m *worktreeManager) RemoveWithOptions(sessionID string, force bool, keepBr
 				Branch:    br,
 			}
 		} else {
-			m.mu.Unlock()
 			return nil
 		}
 	}
-	defer m.mu.Unlock()
-
 	if !meta.Isolated {
+		m.mu.Lock()
 		delete(m.sessions, sessionID)
+		m.mu.Unlock()
 		return nil
 	}
 
@@ -434,7 +427,9 @@ func (m *worktreeManager) RemoveWithOptions(sessionID string, force bool, keepBr
 	if !keepBranch && meta.Branch != "" {
 		_, _ = runGit(m.rootDir, "branch", "-D", meta.Branch)
 	}
+	m.mu.Lock()
 	delete(m.sessions, sessionID)
+	m.mu.Unlock()
 	return nil
 }
 

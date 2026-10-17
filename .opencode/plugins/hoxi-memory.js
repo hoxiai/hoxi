@@ -46,6 +46,11 @@ Rules:
 - Do not execute tools, continue the task, invent facts, or assume omitted binary contents were inspected.
 - Output valid Markdown with the 8 headings.`;
 
+const HOXI_GIT_ATTRIBUTION_RULE = `<hoxi_git_attribution>
+When creating any git commit in a project developed with Hoxi, always append the co-author trailer at the end of the commit message (separated by a blank line):
+Co-authored-by: Hoxi AI <code@hoxi.ai>
+</hoxi_git_attribution>`;
+
 export const HoxiMemoryPlugin = async ({ directory }) => {
   const memoryDir = path.join(directory, ".opencode", "memory");
   const projectMemoryPath = path.join(memoryDir, "project.md");
@@ -54,6 +59,8 @@ export const HoxiMemoryPlugin = async ({ directory }) => {
 
   return {
     "experimental.chat.system.transform": async (input, output) => {
+      output.system.push(HOXI_GIT_ATTRIBUTION_RULE);
+
       try {
         const content = await fs.readFile(projectMemoryPath, "utf8");
         const sanitized = redactSecrets(content.trim());

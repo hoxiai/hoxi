@@ -6,47 +6,25 @@ import {
   isSessionBusy,
   isSubagentToolAlive,
   isSubagentToolInterrupted,
-  openDiffInInspector,
+   openChangedFileInInspector,
   openFileInInspector,
   resumeSubagentTask,
   revertToHere,
   selectSession,
 } from "../../store/workspace";
 import { t } from "../../i18n";
+import { DiffChanges, FileIcon, Icon, Spinner, TextShimmer, ToolStatusTitle } from "../icons";
+import SubagentInlineTimeline, { useSubagentTelemetry } from "./SubagentInlineTimeline";
 import {
-  DiffChanges,
-  FileIcon,
-  Icon,
-  Spinner,
-  TextShimmer,
-  ToolStatusTitle,
-} from "../icons";
-import SubagentInlineTimeline from "./SubagentInlineTimeline";
-import {
-  extractCommand,
-  extractDescription,
-  extractExitCode,
-  extractRollingShellLines,
-  extractShellOutput,
-  extractTargetFile,
-  getDirectory,
-  getFilename,
-  InlineDiagnosticsDisplay,
-  isEditingTool,
-  isReadTool,
-  isShellTool,
-  isTaskTool,
-  isTodoTool,
-  kiloToolIconName,
-  processCarriageReturns,
-  ToolCardExpandedBody,
-  type ToolPart,
+  extractCommand, extractDescription, extractExitCode, extractRollingShellLines,
+  extractShellOutput, extractTargetFile, formatToolDisplayName, getDirectory, getFilename,
+  InlineDiagnosticsDisplay, isEditingTool, isReadTool, isShellTool,
+  isTaskTool, isTodoTool, kiloToolIconName, processCarriageReturns,
+  ToolCardExpandedBody, type ToolPart,
 } from "./tool-card-helpers";
 import {
-  resolveLoadedContextFiles,
-  resolveToolArgPills,
-  resolveToolFileDiagnostics,
-  resolveToolFileDiff,
+  extractTargetFiles, resolveLoadedContextFiles, resolveToolArgPills,
+  resolveToolFileDiagnostics, resolveToolFileDiff, resolveToolFileDiffs,
   resolveToolTodoItems,
 } from "./tool-card-state";
 
@@ -78,6 +56,7 @@ export default function ToolCard(props: { part: ToolPart }) {
   );
 
   const targetFile = createMemo(() => extractTargetFile(props.part));
+  const extraTargetFiles = createMemo(() => extractTargetFiles(props.part).slice(1));
   const shellCmd = createMemo(() => (isShell() ? extractCommand(props.part) : ""));
   const description = createMemo(() => extractDescription(props.part));
   const shellOut = createMemo(() =>
@@ -90,23 +69,29 @@ export default function ToolCard(props: { part: ToolPart }) {
     isShell() && isRunning() && !expanded() ? extractRollingShellLines(props.part.state) : []
   );
 
-  const loadedFiles = createMemo(() =>
-    isRead() ? resolveLoadedContextFiles(props.part) : []
-  );
+  const loadedFiles = createMemo(() => (isRead() ? resolveLoadedContextFiles(props.part) : []));
   const toolArgPills = createMemo(() => resolveToolArgPills(props.part));
-  const todoItems = createMemo(() =>
-    isTodo() ? resolveToolTodoItems(props.part) : []
+  const todoItems = createMemo(() => (isTodo() ? resolveToolTodoItems(props.part) : []));
+  const childSessionID = createMemo<string | undefined>(() =>
+    isTask() ? extractChildSubagentSessionId(props.part) : undefined
   );
-
-  // Subagent task child session ID
-  const childSessionID = createMemo<string | undefined>(() => {
-    if (!isTask()) return undefined;
-    return extractChildSubagentSessionId(props.part);
+  const subagentTelemetry = useSubagentTelemetry(childSessionID, isRunning);
+  const fileDiff = createMemo(() => resolveToolFileDiff(props.part, isEdit(), targetFile() || ""));
+  const fileDiffs = createMemo(() =>
+    resolveToolFileDiffs(props.part, isEdit(), targetFile() || "")
+  );
+  const totalDiffStats = createMemo(() => {
+    if (isTask()) return subagentTelemetry().diffStats;
+    const list = fileDiffs();
+    if (!list.length) return undefined;
+    return list.reduce(
+      (acc, d) => ({
+        additions: acc.additions + (d.additions || 0),
+        deletions: acc.deletions + (d.deletions || 0),
+      }),
+      { additions: 0, deletions: 0 }
+    );
   });
-
-  const fileDiff = createMemo(() =>
-    resolveToolFileDiff(props.part, isEdit(), targetFile() || "")
-  );
   const fileDiagnostics = createMemo(() =>
     resolveToolFileDiagnostics(props.part, isEdit(), targetFile() || "")
   );
@@ -114,11 +99,7 @@ export default function ToolCard(props: { part: ToolPart }) {
   // Auto-scroll shell output while streaming
   createEffect(() => {
     if (!isShell() || !isRunning()) return;
-    if (expanded()) {
-      void shellOut();
-    } else {
-      void rollingShellLines();
-    }
+    expanded() ? void shellOut() : void rollingShellLines();
     requestAnimationFrame(() => {
       if (outputRef) outputRef.scrollTop = outputRef.scrollHeight;
       if (rollingShellRef) rollingShellRef.scrollTop = rollingShellRef.scrollHeight;
@@ -131,9 +112,7 @@ export default function ToolCard(props: { part: ToolPart }) {
     if (s.status === "running" && isRunning()) {
       const start = s.time.start;
       setElapsed(Math.max(0, (Date.now() - start) / 1000));
-      const timer = setInterval(() => {
-        setElapsed(Math.max(0, (Date.now() - start) / 1000));
-      }, 100);
+      const timer = setInterval(() => setElapsed(Math.max(0, (Date.now() - start) / 1000)), 100);
       onCleanup(() => clearInterval(timer));
     } else if (s.status === "completed" || s.status === "error") {
       setElapsed(Math.max(0, (s.time.end - s.time.start) / 1000));
@@ -155,22 +134,16 @@ export default function ToolCard(props: { part: ToolPart }) {
     }
   };
 
-  const editVerb = () => {
-    const t = props.part.tool.toLowerCase();
-    if (t.includes("write")) return "Write";
-    if (t.includes("patch")) return "Patch";
-    return "Edit";
-  };
+  const isSubagentPopoverMode = () => Boolean(isTask() && childSessionID());
 
   const hasBody = () =>
-    expanded() ||
-    Boolean(isTask() && childSessionID()) ||
+    (expanded() && !isSubagentPopoverMode()) ||
     Boolean(isShell() && isRunning() && rollingShellLines().length > 0) ||
     fileDiagnostics().length > 0;
 
   return (
     <div>
-      <div class="group/tool">
+      <div class="group/tool relative">
         {/* Clean borderless single-line tool trigger */}
         <div
           class={`flex items-center justify-between px-2 py-1.5 -mx-2 rounded-lg cursor-pointer select-none transition-colors gap-2 ${
@@ -215,7 +188,7 @@ export default function ToolCard(props: { part: ToolPart }) {
                 <div class="flex items-center gap-2 min-w-0 flex-1">
                   <span class="text-[13px] font-medium text-[var(--text-secondary)] truncate">
                     <TextShimmer
-                      text={description() || (shellCmd() ? `$ ${shellCmd()}` : "Run command")}
+                      text={description() || (shellCmd() ? `$ ${shellCmd()}` : t("toolCard.actionShell"))}
                       active={isRunning()}
                     />
                   </span>
@@ -236,21 +209,26 @@ export default function ToolCard(props: { part: ToolPart }) {
                         when={isTodo()}
                         fallback={
                           <TextShimmer
-                            text={isTask() ? "Subagent" : props.part.tool}
+                            text={formatToolDisplayName(props.part.tool)}
                             active={isRunning()}
                           />
                         }
                       >
                         <ToolStatusTitle
                           active={isRunning()}
-                          activeText="Updating to-dos"
-                          doneText="To-dos"
+                          activeText={t("toolCard.updatingTodos")}
+                          doneText={t("toolCard.actionTodo")}
                         />
                       </Show>
                     </span>
                     <Show when={description()}>
                       <span class="text-[12.5px] text-[var(--text-muted)] truncate">
                         {description()}
+                      </span>
+                    </Show>
+                    <Show when={isTask() && isRunning() && subagentTelemetry().currentStepLabel}>
+                      <span class="hidden md:inline-block font-mono text-[11px] text-[var(--text-faint)] truncate max-w-[200px]">
+                        · {subagentTelemetry().currentStepLabel}
                       </span>
                     </Show>
                     <Show when={todoItems().length > 0}>
@@ -273,7 +251,7 @@ export default function ToolCard(props: { part: ToolPart }) {
                   <div class="flex items-center gap-1.5 min-w-0 flex-1">
                     <span class="text-[12.5px] font-medium text-[var(--text-secondary)] shrink-0">
                       <TextShimmer
-                        text={isEdit() ? editVerb() : isRead() ? "Read" : props.part.tool}
+                        text={formatToolDisplayName(props.part.tool)}
                         active={isRunning()}
                       />
                     </span>
@@ -282,22 +260,34 @@ export default function ToolCard(props: { part: ToolPart }) {
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation();
-                        if (isEdit()) {
-                          openDiffInInspector(file());
-                        } else {
-                          openFileInInspector(file());
-                        }
+                        isEdit() ? openChangedFileInInspector(file()) : openFileInInspector(file());
                       }}
                       class="font-mono text-[12.5px] font-medium text-[var(--text-primary)] hover:text-[var(--accent-primary)] hover:underline truncate cursor-pointer"
                       title={file()}
                     >
                       {getFilename(file())}
                     </button>
-                    <Show when={getDirectory(file())}>
+                    <Show when={extraTargetFiles().length === 0 && getDirectory(file())}>
                       <span class="hidden md:inline truncate font-mono text-[11.5px] text-[var(--text-faint)]">
                         {getDirectory(file())}/
                       </span>
                     </Show>
+                    <For each={extraTargetFiles()}>
+                      {(extraFile) => (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openChangedFileInInspector(extraFile);
+                          }}
+                          class="hidden sm:inline-flex items-center gap-1 font-mono text-[12px] font-medium text-[var(--text-secondary)] hover:text-[var(--accent-primary)] hover:underline truncate cursor-pointer"
+                          title={extraFile}
+                        >
+                          <span>·</span>
+                          <span>{getFilename(extraFile)}</span>
+                        </button>
+                      )}
+                    </For>
                     <For each={toolArgPills()}>
                       {(pill) => (
                         <span class="hidden sm:inline-block font-mono text-[11.5px] text-[var(--text-faint)] truncate max-w-[200px]">
@@ -313,6 +303,12 @@ export default function ToolCard(props: { part: ToolPart }) {
 
           {/* Right side: Subagent Resume / link / Diff +/- stats / Exit code / Revert / Duration / Chevron */}
           <div class="flex items-center gap-2 shrink-0">
+            <Show when={isTask() && subagentTelemetry().stepCount > 0}>
+              <span class="rounded bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[10.5px] text-[var(--text-muted)]">
+                {t("timeline.stepsCompleted", { count: subagentTelemetry().stepCount })}
+              </span>
+            </Show>
+
             <Show when={isInterruptedSubagent() && childSessionID()}>
               {(subId) => (
                 <button
@@ -352,10 +348,8 @@ export default function ToolCard(props: { part: ToolPart }) {
               )}
             </Show>
 
-            <Show when={fileDiff()}>
-              {(d) => (
-                <DiffChanges changes={{ additions: d().additions, deletions: d().deletions }} />
-              )}
+            <Show when={totalDiffStats()}>
+              {(stats) => <DiffChanges changes={stats()} />}
             </Show>
 
             <Show when={isShell() && exitCode() !== undefined && exitCode() !== 0}>
@@ -391,16 +385,22 @@ export default function ToolCard(props: { part: ToolPart }) {
           </div>
         </div>
 
+        {/* Floating Popover for Subagent `task` tool calls */}
+        <Show when={expanded() && isTask() && childSessionID()}>
+          {(subId) => (
+            <SubagentInlineTimeline
+              childSessionID={subId()}
+              parentRunning={isRunning()}
+              description={description()}
+              agentType={String((props.part.state.input as any)?.subagent_type || "")}
+              onClose={() => setExpanded(false)}
+            />
+          )}
+        </Show>
+
         {/* Collapsible / Live Body Container (only bordered when visible) */}
         <Show when={hasBody()}>
           <div class="mt-1 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] overflow-hidden">
-            {/* Kilo TaskToolExpanded: Live child subagent tool calls inline */}
-            <Show when={isTask() && childSessionID()}>
-              {(subId) => (
-                <SubagentInlineTimeline childSessionID={subId()} parentRunning={isRunning()} />
-              )}
-            </Show>
-
             {/* Kilo ShellRollingResults: Live 5-line rolling output preview while bash command is running & collapsed */}
             <Show when={isShell() && isRunning() && !expanded() && rollingShellLines().length > 0}>
               <div
@@ -440,6 +440,7 @@ export default function ToolCard(props: { part: ToolPart }) {
                 }}
                 todoItems={todoItems()}
                 fileDiff={fileDiff()}
+                fileDiffs={fileDiffs()}
               />
             </Show>
           </div>

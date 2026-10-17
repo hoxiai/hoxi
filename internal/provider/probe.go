@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"strconv"
@@ -139,17 +138,11 @@ func (g *desktopGateway) handleTestProviderModel(w http.ResponseWriter, r *http.
 	}
 
 	client := &http.Client{
-		Timeout: 15 * time.Second,
-		Transport: &http.Transport{
-			Proxy: http.ProxyFromEnvironment,
-			DialContext: (&net.Dialer{
-				Timeout:   5 * time.Second,
-				KeepAlive: 15 * time.Second,
-			}).DialContext,
-		},
+		Timeout:   15 * time.Second,
+		Transport: providerTransport,
 	}
 	if strings.Contains(targetURL, "://127.0.0.1") || strings.Contains(targetURL, "://localhost") {
-		client.Transport = &http.Transport{Proxy: nil}
+		client.Transport = localTransport
 	}
 
 	start := time.Now()

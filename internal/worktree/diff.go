@@ -55,50 +55,41 @@ func (m *worktreeManager) Diff(sessionID string) ([]worktreeFileDiff, error) {
 		diffTarget = strings.TrimSpace(meta.BaseCommit)
 	}
 
-	numstat, err := runGit(meta.Directory, "diff", "--numstat", diffTarget)
+	numstat, err := runGitRaw(meta.Directory, "diff", "--no-renames", "--numstat", "-z", diffTarget)
 	if err != nil && diffTarget != "HEAD" {
 		diffTarget = "HEAD"
-		numstat, _ = runGit(meta.Directory, "diff", "--numstat", "HEAD")
+		numstat, _ = runGitRaw(meta.Directory, "diff", "--no-renames", "--numstat", "-z", "HEAD")
 	}
 
-	nameStatusRaw, _ := runGit(meta.Directory, "diff", "--name-status", diffTarget)
-	statusByFile := make(map[string]string)
-	for _, line := range strings.Split(strings.TrimSpace(nameStatusRaw), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 2 {
-			continue
-		}
-		code := fields[0]
-		file := fields[len(fields)-1]
-		switch {
-		case strings.HasPrefix(code, "A"):
-			statusByFile[file] = "added"
-		case strings.HasPrefix(code, "D"):
-			statusByFile[file] = "deleted"
-		default:
-			statusByFile[file] = "modified"
-		}
+	patchesRaw, _ := runGitRaw(meta.Directory, "diff", "--no-renames", "--no-ext-diff", "--no-textconv", "--no-color", "-U3", diffTarget)
+	patches := strings.Split("\n"+patchesRaw, "\ndiff --git ")
+	if len(patches) > 0 {
+		patches = patches[1:]
 	}
 
 	results := make([]worktreeFileDiff, 0)
 	seen := make(map[string]struct{})
 
-	for _, line := range strings.Split(strings.TrimSpace(numstat), "\n") {
-		fields := strings.Fields(line)
+	for i, line := range strings.Split(strings.TrimSuffix(numstat, "\x00"), "\x00") {
+		fields := strings.SplitN(line, "\t", 3)
 		if len(fields) < 3 {
 			continue
 		}
-		file := fields[len(fields)-1]
+		file := fields[2]
 		if file == "" || strings.HasPrefix(file, ".hoxi/") {
 			continue
 		}
 		add, _ := strconv.Atoi(fields[0])
 		del, _ := strconv.Atoi(fields[1])
-		patch, _ := runGitRaw(meta.Directory, "diff", "--no-color", "-U3", diffTarget, "--", file)
-
-		st := statusByFile[file]
-		if st == "" {
-			st = "modified"
+		patch := ""
+		if i < len(patches) {
+			patch = "diff --git " + patches[i]
+		}
+		st := "modified"
+		if strings.Contains(patch, "\nnew file mode ") {
+			st = "added"
+		} else if strings.Contains(patch, "\ndeleted file mode ") {
+			st = "deleted"
 		}
 		seen[file] = struct{}{}
 		results = append(results, worktreeFileDiff{
@@ -110,12 +101,8 @@ func (m *worktreeManager) Diff(sessionID string) ([]worktreeFileDiff, error) {
 		})
 	}
 
-	porcelain, _ := runGitRaw(meta.Directory, "status", "--porcelain")
-	for _, rawLine := range strings.Split(porcelain, "\n") {
-		if !strings.HasPrefix(rawLine, "?? ") {
-			continue
-		}
-		rel := strings.TrimSpace(rawLine[3:])
+	untracked, _ := runGitRaw(meta.Directory, "ls-files", "--others", "--exclude-standard", "-z")
+	for _, rel := range strings.Split(untracked, "\x00") {
 		if rel == "" || strings.HasPrefix(rel, ".hoxi/") {
 			continue
 		}

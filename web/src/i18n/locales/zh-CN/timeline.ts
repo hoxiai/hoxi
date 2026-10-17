@@ -121,6 +121,8 @@ export const timeline: TimelineI18n = {
   retryingInSeconds: "{seconds} 秒后重试",
   retryAttempt: "第 {attempt} 次尝试",
   filesUpdatedCount: "已更新 {count} 个文件",
+  changesSummary: "{files} 个文件 · 新增 {additions} · 删除 {deletions}",
+  viewChanges: "查看变更",
   copyResponse: "复制回复",
   subagentLiveActivity: "子智能体实时动态 ({count})",
   openChildSession: "打开子会话 →",
@@ -150,6 +152,10 @@ export const timeline: TimelineI18n = {
   turnPaused: "已暂停",
   turnStopped: "已停止",
   executing: "执行中…",
+  executionPreparing: "正在准备下一步…",
+  executionStillWorking: "仍在持续处理任务",
+  executionElapsed: "已工作 {time} 秒",
+  executionStepsDone: "已完成 {count} 步",
   pausedPlaceholder:
     "任务已暂停。可直接点击「继续执行」，或输入补充说明后按 Enter 继续...",
   resumeDefaultPrompt:
@@ -181,5 +187,10 @@ export const timeline: TimelineI18n = {
   queueDelete: "删除",
   queueDeleteTooltip: "取消发送并从队列移除",
   queueCountBadge: "{count} 条排队中",
+  taskProgressActiveOnly: "任务进度",
+  currentStepPrefix: "正在执行：",
+  lastStepPrefix: "最新步骤：",
+  codeChangesHeader: "代码变更文件",
+  liveStepsHeader: "实时执行轨迹",
+  todoStepsHeader: "任务阶段清单",
 };
-

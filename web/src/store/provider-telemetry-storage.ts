@@ -93,19 +93,26 @@ export function ensureModelStats(
 }
 
 export function schedulePersistTelemetry() {
-  try {
-    localStorage.setItem(
-      PROVIDER_TELEMETRY_KEY,
-      JSON.stringify(workspace.providerTelemetry)
-    );
-  } catch {
-    /* ignore */
-  }
   if (syncDebounceTimer) clearTimeout(syncDebounceTimer);
   syncDebounceTimer = setTimeout(() => {
     syncDebounceTimer = null;
+    persistLocalTelemetry();
     void hoxiAPI.saveProviderTelemetry(workspace.providerTelemetry).catch(() => {});
   }, 600);
+}
+
+function persistLocalTelemetry() {
+  try {
+    localStorage.setItem(PROVIDER_TELEMETRY_KEY, JSON.stringify(workspace.providerTelemetry));
+  } catch {
+    /* ignore */
+  }
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener("pagehide", () => {
+    if (syncDebounceTimer !== null) persistLocalTelemetry();
+  });
 }
 
 export async function loadProviderTelemetry(): Promise<void> {

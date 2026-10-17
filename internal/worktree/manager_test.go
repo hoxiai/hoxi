@@ -63,13 +63,13 @@ func TestSanitizeSessionIDAndPorcelainHeader(t *testing.T) {
 	}
 
 	headerCases := map[string]string{
-		"## ":                                    "",
-		"## No commits yet on main":              "main",
-		"## Initial commit on dev":               "dev",
-		"## HEAD (no branch)":                    "HEAD",
-		"## feat/ui...origin/feat/ui [ahead 1]":  "feat/ui",
-		"## fix-bug [behind 2]":                  "fix-bug",
-		"## main":                                "main",
+		"## ":                                   "",
+		"## No commits yet on main":             "main",
+		"## Initial commit on dev":              "dev",
+		"## HEAD (no branch)":                   "HEAD",
+		"## feat/ui...origin/feat/ui [ahead 1]": "feat/ui",
+		"## fix-bug [behind 2]":                 "fix-bug",
+		"## main":                               "main",
 	}
 	for input, want := range headerCases {
 		if got := ParseBranchFromPorcelainHeader(input); got != want {
@@ -88,18 +88,22 @@ func TestRootDirAndNonGitCreate(t *testing.T) {
 	}
 
 	// Ignore empty, non-existent, or file paths
-	mgr.SetRootDir("   ")
-	mgr.SetRootDir(filepath.Join(dir1, "non-existent"))
+	mgr.ForDirectory("   ")
+	mgr.ForDirectory(filepath.Join(dir1, "non-existent"))
 	filePath := filepath.Join(dir1, "file.txt")
 	_ = os.WriteFile(filePath, []byte("x"), 0o644)
-	mgr.SetRootDir(filePath)
+	mgr.ForDirectory(filePath)
 	if mgr.RootDir() != dir1 {
 		t.Fatalf("RootDir() changed unexpectedly to %q", mgr.RootDir())
 	}
 
-	mgr.SetRootDir(dir2)
+	original := mgr
+	mgr = mgr.ForDirectory(dir2)
+	if original.RootDir() != dir1 {
+		t.Fatal("scoping changed original root")
+	}
 	if mgr.RootDir() != dir2 {
-		t.Fatalf("SetRootDir failed: got %q, want %q", mgr.RootDir(), dir2)
+		t.Fatalf("ForDirectory failed: got %q, want %q", mgr.RootDir(), dir2)
 	}
 
 	if _, err := mgr.Create(""); err == nil {
@@ -197,6 +201,13 @@ func TestWorktreeLifecycleCreateDiffRevertApplyRemove(t *testing.T) {
 	if err != nil || hash == "" {
 		t.Fatalf("CommitWorktree failed: err=%v, hash=%q", err, hash)
 	}
+	commitBody, err := RunGit(info.Directory, "log", "-1", "--format=%B")
+	if err != nil || !strings.Contains(commitBody, HoxiCoAuthorTrailer) {
+		t.Fatalf("expected commit message to contain %q, got %q (err=%v)", HoxiCoAuthorTrailer, commitBody, err)
+	}
+	if got := appendHoxiCoAuthor("feat: x\n\n" + HoxiCoAuthorTrailer); strings.Count(got, "code@hoxi.ai") != 1 {
+		t.Fatalf("expected appendHoxiCoAuthor to be idempotent, got %q", got)
+	}
 	if err := mgr.Apply("ses_unit_01", "patch"); err != nil {
 		t.Fatalf("Apply failed: %v", err)
 	}
@@ -261,6 +272,10 @@ func TestBranchesCheckoutRenameApplyMergeAndPrune(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(repoDir, "merged.txt")); err != nil {
 		t.Fatalf("expected merged.txt in main repo after merge apply: %v", err)
+	}
+	mergeBody, err := RunGit(repoDir, "log", "-1", "--format=%B")
+	if err != nil || !strings.Contains(mergeBody, HoxiCoAuthorTrailer) {
+		t.Fatalf("expected merge commit message to contain %q, got %q (err=%v)", HoxiCoAuthorTrailer, mergeBody, err)
 	}
 
 	// CheckoutBranch create=true and existing

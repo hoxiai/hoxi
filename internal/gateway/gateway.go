@@ -12,6 +12,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hoxiai/hoxi/internal/handoff"
@@ -34,6 +35,7 @@ type Gateway struct {
 	providers             *provider.Service
 	handoff               *handoff.Service
 	onOpenDirectoryDialog func() (string, error)
+	dialogMu              sync.RWMutex
 }
 
 type desktopGateway = Gateway
@@ -50,6 +52,9 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 			KeepAlive: 30 * time.Second,
 		}).DialContext,
 		ResponseHeaderTimeout: 0,
+		IdleConnTimeout:       90 * time.Second,
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   32,
 	}
 	// Instant flush for /event SSE streaming
 	proxy.FlushInterval = -1
@@ -101,6 +106,8 @@ func (g *Gateway) SetWSBaseURL(wsURL string) {
 }
 
 func (g *Gateway) SetOpenDirectoryDialog(fn func() (string, error)) {
+	g.dialogMu.Lock()
+	defer g.dialogMu.Unlock()
 	g.onOpenDirectoryDialog = fn
 }
 
@@ -161,11 +168,14 @@ func (g *Gateway) registerRoutes(distFS fs.FS) {
 	})
 
 	g.mux.HandleFunc("/api/hoxi/dialog/open-directory", func(w http.ResponseWriter, _ *http.Request) {
-		if g.onOpenDirectoryDialog == nil {
+		g.dialogMu.RLock()
+		openDialog := g.onOpenDirectoryDialog
+		g.dialogMu.RUnlock()
+		if openDialog == nil {
 			writeJSON(w, http.StatusOK, map[string]any{"path": ""})
 			return
 		}
-		dirPath, err := g.onOpenDirectoryDialog()
+		dirPath, err := openDialog()
 		if err != nil {
 			writeJSON(w, http.StatusOK, map[string]any{"path": "", "error": err.Error()})
 			return
@@ -242,10 +252,13 @@ func spaStaticHandler(distFS fs.FS) http.Handler {
 }
 
 type sseTapReadCloser struct {
-	rc     io.ReadCloser
-	onLine func(string)
-	buf    bytes.Buffer
+	rc       io.ReadCloser
+	onLine   func(string)
+	buf      []byte
+	dropping bool
 }
+
+const maxSSETapLineSize = 64 * 1024
 
 func newSSETapReadCloser(rc io.ReadCloser, onLine func(string)) io.ReadCloser {
 	return &sseTapReadCloser{rc: rc, onLine: onLine}
@@ -254,15 +267,29 @@ func newSSETapReadCloser(rc io.ReadCloser, onLine func(string)) io.ReadCloser {
 func (t *sseTapReadCloser) Read(p []byte) (int, error) {
 	n, err := t.rc.Read(p)
 	if n > 0 && t.onLine != nil {
-		t.buf.Write(p[:n])
-		for {
-			line, readErr := t.buf.ReadString('\n')
-			if readErr != nil {
-				// Put incomplete line back into buffer
-				t.buf.WriteString(line)
+		for remaining := p[:n]; len(remaining) > 0; {
+			end := bytes.IndexByte(remaining, '\n')
+			fragment := remaining
+			if end >= 0 {
+				fragment = remaining[:end]
+			}
+			if !t.dropping {
+				if len(t.buf)+len(fragment) > maxSSETapLineSize {
+					t.dropping = true
+					t.buf = t.buf[:0]
+				} else {
+					t.buf = append(t.buf, fragment...)
+				}
+			}
+			if end < 0 {
 				break
 			}
-			t.onLine(strings.TrimRight(line, "\r\n"))
+			if !t.dropping {
+				t.onLine(strings.TrimRight(string(t.buf), "\r"))
+			}
+			t.buf = t.buf[:0]
+			t.dropping = false
+			remaining = remaining[end+1:]
 		}
 	}
 	return n, err

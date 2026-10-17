@@ -1,5 +1,5 @@
 // web/src/components/timeline/TranscriptSearchBar.tsx
-import { createEffect, createMemo, createSignal, onMount, Show } from "solid-js";
+import { createDeferred, createEffect, createMemo, createSignal, mapArray, onMount, Show } from "solid-js";
 import { ChevronDown, ChevronUp, Search, X } from "lucide-solid";
 import type { MessageTurn } from "../../store/workspace";
 import { t } from "../../i18n";
@@ -43,6 +43,11 @@ export default function TranscriptSearchBar(props: {
   const [wholeWord, setWholeWord] = createSignal(false);
   const [useRegex, setUseRegex] = createSignal(false);
   const [currentIndex, setCurrentIndex] = createSignal(0);
+  const deferredQuery = createDeferred(query, { timeoutMs: 150 });
+  const searchableTurns = mapArray(
+    () => props.open && query().trim() ? props.turns : [],
+    (turn) => ({ id: () => turn.info.id, text: createMemo(() => turnSearchableText(turn)) })
+  );
 
   let inputRef: HTMLInputElement | undefined;
 
@@ -58,7 +63,8 @@ export default function TranscriptSearchBar(props: {
     matchedTurnIDs: string[];
     invalidRegex: boolean;
   }>(() => {
-    const q = query().trim();
+    if (!props.open) return { matchedTurnIDs: [], invalidRegex: false };
+    const q = deferredQuery().trim();
     if (!q) return { matchedTurnIDs: [], invalidRegex: false };
 
     let pattern = useRegex() ? q : escapeRegExp(q);
@@ -75,11 +81,11 @@ export default function TranscriptSearchBar(props: {
     }
 
     const matched: string[] = [];
-    for (const turn of props.turns) {
-      const text = turnSearchableText(turn);
+    for (const turn of searchableTurns()) {
+      const text = turn.text();
       regex.lastIndex = 0;
       if (regex.test(text)) {
-        matched.push(turn.info.id);
+        matched.push(turn.id());
       }
     }
     return { matchedTurnIDs: matched, invalidRegex: false };

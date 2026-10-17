@@ -27,6 +27,8 @@ export default function FileTreeView() {
   const [previewContent, setPreviewContent] = createSignal("");
   const [previewError, setPreviewError] = createSignal<string | null>(null);
   const [loadingPreview, setLoadingPreview] = createSignal(false);
+  const [highlightedLine, setHighlightedLine] = createSignal<number | null>(null);
+  let sourceContainer: HTMLDivElement | undefined;
 
   const folders = createMemo(() => activeWorkspaceFolders());
   const targetDirectory = createMemo(
@@ -67,6 +69,7 @@ export default function FileTreeView() {
 
   const openPreview = async (path: string) => {
     setPreviewPath(path);
+    setHighlightedLine(workspace.inspectedFileLine);
     setLoadingPreview(true);
     setPreviewError(null);
     try {
@@ -79,6 +82,8 @@ export default function FileTreeView() {
       setLoadingPreview(false);
     }
   };
+
+  const sourceLines = createMemo(() => previewContent().split("\n"));
 
   onMount(() => {
     void loadInitialFiles();
@@ -99,6 +104,17 @@ export default function FileTreeView() {
       void openPreview(target);
       setWorkspace("inspectedFilePath", null);
     }
+  });
+
+  createEffect(() => {
+    const path = previewPath();
+    const line = workspace.inspectedFileLine;
+    if (!path || !line || loadingPreview() || !sourceContainer) return;
+    requestAnimationFrame(() => {
+      const target = sourceContainer?.querySelector<HTMLElement>(`[data-line="${line}"]`);
+      target?.scrollIntoView({ block: "center", behavior: "smooth" });
+    });
+    setWorkspace("inspectedFileLine", null);
   });
 
   const onKeyDown = (ev: KeyboardEvent) => {
@@ -240,7 +256,7 @@ export default function FileTreeView() {
               {previewPath()}
             </span>
           </div>
-          <div class="flex-1 min-h-0 overflow-auto bg-[var(--bg-code)]">
+          <div ref={sourceContainer} class="flex-1 min-h-0 overflow-auto bg-[var(--bg-code)]">
             <Show when={loadingPreview()}>
               <div class="flex items-center justify-center py-8 text-[var(--text-muted)]">
                 <LoaderCircle size={16} class="animate-spin" />
@@ -252,8 +268,20 @@ export default function FileTreeView() {
               </div>
             </Show>
             <Show when={!loadingPreview() && !previewError()}>
-              <pre class="p-3 font-mono text-[11.5px] leading-relaxed text-[var(--text-primary)] whitespace-pre selectable-text">
-                {previewContent()}
+              <pre class="py-3 font-mono text-[11.5px] leading-relaxed text-[var(--text-primary)] whitespace-pre selectable-text">
+                <For each={sourceLines()}>
+                  {(line, index) => (
+                    <div
+                      data-line={index() + 1}
+                      class={`flex min-h-[1.55em] px-3 ${highlightedLine() === index() + 1 ? "bg-[var(--accent-surface)]" : ""}`}
+                    >
+                      <span class="mr-4 w-10 shrink-0 select-none text-right text-[var(--text-faint)]">
+                        {index() + 1}
+                      </span>
+                      <span>{line || " "}</span>
+                    </div>
+                  )}
+                </For>
               </pre>
             </Show>
           </div>

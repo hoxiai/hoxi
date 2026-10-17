@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -362,17 +361,11 @@ Return ONLY valid JSON matching this schema:
 	}
 
 	client := &http.Client{
-		Timeout: 20 * time.Second,
-		Transport: &http.Transport{
-			Proxy: http.ProxyFromEnvironment,
-			DialContext: (&net.Dialer{
-				Timeout:   5 * time.Second,
-				KeepAlive: 15 * time.Second,
-			}).DialContext,
-		},
+		Timeout:   20 * time.Second,
+		Transport: providerTransport,
 	}
 	if strings.Contains(targetURL, "://127.0.0.1") || strings.Contains(targetURL, "://localhost") {
-		client.Transport = &http.Transport{Proxy: nil}
+		client.Transport = localTransport
 	}
 
 	resp, err := client.Do(outReq)

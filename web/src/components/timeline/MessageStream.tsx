@@ -40,6 +40,7 @@ import { t } from "../../i18n";
 export default function MessageStream() {
   let scroller: HTMLDivElement | undefined;
   let stickToBottom = true;
+  let programmaticScroll = false;
   const [copiedUserMsgId, setCopiedUserMsgId] = createSignal<string | null>(null);
   const [searchOpen, setSearchOpen] = createSignal(false);
   const [activeMatchTurnID, setActiveMatchTurnID] = createSignal<string | null>(null);
@@ -65,6 +66,27 @@ export default function MessageStream() {
   const isSessionBusy = createMemo(() => {
     const st = activeStatus();
     return st.type === "busy" || st.type === "retry";
+  });
+
+  // The active execution can be above the stream's absolute bottom when queued
+  // prompts, retry controls, or other session UI are rendered below it.
+  const activeExecutionTurnID = createMemo(() => {
+    const list = turns();
+    for (let i = list.length - 1; i >= 0; i--) {
+      const turn = list[i];
+      if (turn.info.role !== "assistant" || turn.info.time?.completed) continue;
+      const hasActivePart = turn.parts.some((part) => {
+        if (isTodoTool(part)) return false;
+        if (part.type === "reasoning") return !part.time?.end;
+        if (part.type === "tool") {
+          return part.state.status === "pending" || part.state.status === "running";
+        }
+        if (part.type === "text") return part.text.length > 0;
+        return false;
+      });
+      if (hasActivePart || isSessionBusy()) return turn.info.id;
+    }
+    return undefined;
   });
 
   const pendingForSession = createMemo(() => {
@@ -119,6 +141,16 @@ export default function MessageStream() {
     return !hasActivePart;
   });
 
+  const completedExecutionSteps = createMemo(() =>
+    turns().reduce(
+      (count, turn) =>
+        count + turn.parts.filter(
+          (part) => part.type === "tool" && !isTodoTool(part) && part.state.status === "completed"
+        ).length,
+      0
+    )
+  );
+
   // Reactivity key that changes as tokens stream in or prompts are queued, driving auto-scroll.
   const streamKey = createMemo(() => {
     const list = turns();
@@ -136,16 +168,44 @@ export default function MessageStream() {
     return n;
   });
 
+  let previousSessionID: string | null = null;
+  let wasBusy = false;
+
+  createEffect(() => {
+    const sessionID = workspace.activeSessionID;
+    const busy = isSessionBusy();
+    if (sessionID !== previousSessionID || (busy && !wasBusy)) {
+      stickToBottom = true;
+    }
+    previousSessionID = sessionID;
+    wasBusy = busy;
+  });
+
   createEffect(() => {
     streamKey();
     if (!appSettings.autoScrollStream || !stickToBottom || !scroller) return;
-    queueMicrotask(() => {
-      if (scroller && stickToBottom) scroller.scrollTop = scroller.scrollHeight;
+    activeExecutionTurnID();
+    requestAnimationFrame(() => {
+      if (!scroller || !stickToBottom) return;
+      const activeID = activeExecutionTurnID();
+      const activeTurn = activeID
+        ? scroller.querySelector(`[data-turn-id="${CSS.escape(activeID)}"]`)
+        : undefined;
+      programmaticScroll = true;
+      if (activeTurn instanceof HTMLElement) {
+        activeTurn.scrollIntoView({ behavior: "auto", block: "end" });
+      } else {
+        scroller.scrollTop = scroller.scrollHeight;
+      }
+      requestAnimationFrame(() => {
+        programmaticScroll = false;
+      });
     });
   });
 
   const onScroll = () => {
     if (!scroller) return;
+    if (programmaticScroll) return;
     const distance = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
     stickToBottom = distance < 64;
     if (!stickToBottom) {
@@ -389,12 +449,13 @@ export default function MessageStream() {
             </For>
 
             {/* Live Execution Control Bar (Thinking / Executing + Pause / Stop / Resume) */}
-            <LiveExecutionControlBar
-              sessionID={workspace.activeSessionID}
-              isSessionBusy={isSessionBusy()}
-              showThinking={showThinkingPlaceholder()}
-              lastTurnRole={turns()[turns().length - 1]?.info.role}
-            />
+              <LiveExecutionControlBar
+                sessionID={workspace.activeSessionID}
+                isSessionBusy={isSessionBusy()}
+                showThinking={showThinkingPlaceholder()}
+                completedSteps={completedExecutionSteps()}
+                lastTurnRole={turns()[turns().length - 1]?.info.role}
+              />
 
             {/* Queued Follow-Up Prompts (Send Now | Edit | Delete) */}
             <QueuedPromptsList sessionID={workspace.activeSessionID} />
@@ -411,4 +472,3 @@ export default function MessageStream() {
     </div>
   );
 }
-

@@ -207,7 +207,7 @@ func (g *desktopGateway) reloadOpenCodeGlobalConfig() {
 	if g.openCodePort <= 0 {
 		return
 	}
-	client := &http.Client{Timeout: 4 * time.Second, Transport: &http.Transport{Proxy: nil}}
+	client := &http.Client{Timeout: 4 * time.Second, Transport: localTransport}
 	base := "http://127.0.0.1:" + strconv.Itoa(g.openCodePort)
 
 	if req, err := http.NewRequest(http.MethodPost, base+"/global/dispose", strings.NewReader("{}")); err == nil {
@@ -380,7 +380,7 @@ func (g *desktopGateway) handleGlobalConfigProxy(w http.ResponseWriter, r *http.
 		}
 	}
 
-	client := &http.Client{Timeout: 8 * time.Second, Transport: &http.Transport{Proxy: nil}}
+	client := &http.Client{Timeout: 8 * time.Second, Transport: localTransport}
 	target := "http://127.0.0.1:" + strconv.Itoa(g.openCodePort) + "/global/config"
 	req, err := http.NewRequest(http.MethodGet, target, nil)
 	if err != nil {
@@ -418,7 +418,7 @@ func (g *desktopGateway) handleProviderProxy(w http.ResponseWriter, r *http.Requ
 		g.proxy.ServeHTTP(w, r)
 		return
 	}
-	client := &http.Client{Timeout: 8 * time.Second, Transport: &http.Transport{Proxy: nil}}
+	client := &http.Client{Timeout: 8 * time.Second, Transport: localTransport}
 	target := "http://127.0.0.1:" + strconv.Itoa(g.openCodePort) + r.URL.RequestURI()
 	req, err := http.NewRequest(http.MethodGet, target, nil)
 	if err != nil {

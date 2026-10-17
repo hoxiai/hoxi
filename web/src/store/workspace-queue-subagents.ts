@@ -3,11 +3,7 @@ import { t } from "../i18n";
 import { hoxiAPI } from "../services/api";
 import type { MessagePart, ToolPart } from "../services/sse-types";
 import { recordUserRevertAction } from "./provider-telemetry";
-import {
-  type SelectedModel,
-  setWorkspace,
-  workspace,
-} from "./workspace";
+import { type SelectedModel, setWorkspace, workspace } from "./workspace";
 import {
   activeDirectory,
   isSessionBusy,
@@ -17,7 +13,11 @@ import {
   selectSession,
   sessionDirectory,
 } from "./workspace-sessions";
-import { submitSessionPrompt } from "./workspace-session-messages";
+import {
+  clearSessionInterrupted,
+  markSessionInterrupted,
+  submitSessionPrompt,
+} from "./workspace-session-messages";
 
 export interface QueuedPromptAttachment {
   type: "file";
@@ -53,11 +53,7 @@ export function markSessionPromptDispatched(sessionID: string) {
 export function enqueueSessionPrompt(
   sessionID: string,
   text: string,
-  options?: {
-    agent?: string;
-    model?: SelectedModel;
-    attachments?: QueuedPromptAttachment[];
-  }
+  options?: { agent?: string; model?: SelectedModel; attachments?: QueuedPromptAttachment[] }
 ): QueuedPromptItem {
   const item: QueuedPromptItem = {
     id: `q_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
@@ -75,11 +71,7 @@ export function enqueueSessionPrompt(
 
 export function removeQueuedPrompt(sessionID: string, itemID: string) {
   const current = workspace.queuedPromptsBySession[sessionID] ?? [];
-  setWorkspace(
-    "queuedPromptsBySession",
-    sessionID,
-    current.filter((item) => item.id !== itemID)
-  );
+  setWorkspace("queuedPromptsBySession", sessionID, current.filter((item) => item.id !== itemID));
 }
 
 export function editQueuedPrompt(sessionID: string, itemID: string) {
@@ -98,10 +90,7 @@ export function consumeComposerDraftEdit(sessionID: string) {
   setWorkspace("composerDraftEditBySession", sessionID, undefined);
 }
 
-export async function sendQueuedPromptNow(
-  sessionID: string,
-  itemID: string
-): Promise<void> {
+export async function sendQueuedPromptNow(sessionID: string, itemID: string): Promise<void> {
   const current = workspace.queuedPromptsBySession[sessionID] ?? [];
   const target = current.find((item) => item.id === itemID);
   if (!target) return;
@@ -164,32 +153,54 @@ export function extractChildSubagentSessionId(tp: ToolPart): string | undefined 
   return undefined;
 }
 
+function isChildSubagentTurnCompletedCleanly(childSessionID?: string): boolean {
+  if (!childSessionID || workspace.interruptedBySession[childSessionID]) return false;
+  const turns = workspace.messagesBySession[childSessionID];
+  if (!turns || turns.length === 0) return false;
+  const lastTurn = turns[turns.length - 1];
+  if (lastTurn.info.role !== "assistant") return false;
+  if (!lastTurn.info.time?.completed || Boolean(lastTurn.info.error)) return false;
+  return !(lastTurn.parts ?? []).some(
+    (p) => p.type === "tool" && (p.state.status === "running" || p.state.status === "pending")
+  );
+}
+
 export function isSubagentToolAlive(
   tp: ToolPart,
   parentSessionID?: string | null
 ): boolean {
+  const childSessionID = extractChildSubagentSessionId(tp);
+  if (childSessionID && isSessionBusy(childSessionID)) return true;
+
   const rawStatus = tp.state.status;
   if (rawStatus !== "running" && rawStatus !== "pending") return false;
-  const childSessionID = extractChildSubagentSessionId(tp);
+
+  if (childSessionID) {
+    if (workspace.interruptedBySession[childSessionID]) return false;
+    if (workspace.statusBySession[childSessionID]?.type === "idle") return false;
+    if (isChildSubagentTurnCompletedCleanly(childSessionID)) return false;
+  }
+
   const parentID = parentSessionID ?? tp.sessionID;
-  const childBusy = childSessionID ? isSessionBusy(childSessionID) : false;
-  const parentBusy = parentID ? isSessionBusy(parentID) : false;
-  return childBusy || parentBusy;
+  return parentID ? isSessionBusy(parentID) : false;
 }
 
 export function isSubagentToolInterrupted(
   tp: ToolPart,
   parentSessionID?: string | null
 ): boolean {
-  const rawStatus = tp.state.status;
+  if (isSubagentToolAlive(tp, parentSessionID)) return false;
   const childSessionID = extractChildSubagentSessionId(tp);
+  if (childSessionID && workspace.interruptedBySession[childSessionID]) return true;
+
+  const rawStatus = tp.state.status;
   if (rawStatus === "running" || rawStatus === "pending") {
-    return !isSubagentToolAlive(tp, parentSessionID);
-  }
-  if (rawStatus === "error" && Boolean(childSessionID)) {
+    if (childSessionID && isChildSubagentTurnCompletedCleanly(childSessionID)) {
+      return false;
+    }
     return true;
   }
-  return false;
+  return rawStatus === "error" && Boolean(childSessionID);
 }
 
 export function ensureChildSubagentSessionLoaded(
@@ -296,7 +307,7 @@ export async function abortChildSubagentSessions(
   const childIDs = collectChildSubagentSessionIDs(parentSessionID);
   await Promise.all(
     childIDs.map(async (cid) => {
-      setWorkspace("statusBySession", cid, { type: "idle" });
+      markSessionInterrupted(cid, "stopped");
       try {
         await hoxiAPI.abortSession(cid, sessionDirectory(parentSessionID));
       } catch {
@@ -349,6 +360,7 @@ export async function resumeSubagentTask(params: {
 }): Promise<void> {
   const { parentSessionID, childSessionID, agentType, description } = params;
   if (!parentSessionID || !childSessionID) return;
+  clearSessionInterrupted(childSessionID);
   const prompt = t("timeline.resumeSubagentPrompt", {
     taskId: childSessionID,
     agentType: agentType || "general",
@@ -371,6 +383,9 @@ export async function resumeAllInterruptedSubagents(
   if (items.length === 1) {
     await resumeSubagentTask({ parentSessionID, ...items[0] });
     return;
+  }
+  for (const item of items) {
+    clearSessionInterrupted(item.childSessionID);
   }
   const lines = items.map((item) =>
     t("timeline.resumeSubagentPrompt", {

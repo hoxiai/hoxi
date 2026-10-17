@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 type ExternalToolID string
@@ -221,10 +222,22 @@ func (g *desktopGateway) handleHandoffSessions(w http.ResponseWriter, r *http.Re
 		limit = l
 	}
 
-	grokSessions, grokStats := scanGrokSessions(targetDir, query)
-	claudeSessions, claudeStats := scanClaudeSessions(targetDir, query)
-	codexSessions, codexStats := scanCodexSessions(targetDir, query)
-	geminiSessions, geminiStats := scanGeminiAntigravitySessions(targetDir, query)
+	var grokSessions, claudeSessions, codexSessions, geminiSessions []ExternalSessionSummary
+	var grokStats, claudeStats, codexStats, geminiStats ExternalSourceStats
+	var scans sync.WaitGroup
+	for _, scan := range []func(){
+		func() { grokSessions, grokStats = scanGrokSessions(targetDir, query) },
+		func() { claudeSessions, claudeStats = scanClaudeSessions(targetDir, query) },
+		func() { codexSessions, codexStats = scanCodexSessions(targetDir, query) },
+		func() { geminiSessions, geminiStats = scanGeminiAntigravitySessions(targetDir, query) },
+	} {
+		scans.Add(1)
+		go func(scan func()) {
+			defer scans.Done()
+			scan()
+		}(scan)
+	}
+	scans.Wait()
 
 	var combined []ExternalSessionSummary
 	if sourceFilter == "" || sourceFilter == "all" || sourceFilter == ExternalToolGrok {
@@ -312,21 +325,6 @@ func (g *desktopGateway) handleHandoffImport(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	writeJSON(w, http.StatusOK, resp)
-}
-
-func (g *desktopGateway) handleLocalCLIStatus(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeJSONError(w, http.StatusMethodNotAllowed, "GET required")
-		return
-	}
-	hoxiMap := g.loadHoxiProvidersMap()
-	tools := []LocalCLIStatusItem{
-		detectGrokCLIStatus(hoxiMap),
-		detectClaudeCLIStatus(hoxiMap),
-		detectCodexCLIStatus(g, hoxiMap),
-		detectGeminiCLIStatus(g, hoxiMap),
-	}
-	writeJSON(w, http.StatusOK, LocalCLIStatusResponse{Tools: tools})
 }
 
 func (g *desktopGateway) handleLocalCLIImport(w http.ResponseWriter, r *http.Request) {

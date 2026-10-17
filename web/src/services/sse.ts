@@ -41,15 +41,21 @@ export function connectEventStream(handlers: SSEHandlers, directory?: string): (
     { sessionID: string; messageID: string; partID: string; field: string; delta: string }
   >();
   let rafID: number | null = null;
+  let flushTimer: ReturnType<typeof setTimeout> | null = null;
 
   const scheduleFlush = () => {
     if (rafID === null) {
       rafID = requestAnimationFrame(flushFrame);
+      // WebViews may suspend rAF while hidden; keep draining the stream in batches.
+      flushTimer = setTimeout(flushFrame, 100);
     }
   };
 
   const flushFrame = () => {
+    if (rafID !== null) cancelAnimationFrame(rafID);
+    if (flushTimer !== null) clearTimeout(flushTimer);
     rafID = null;
+    flushTimer = null;
     if (infoMap.size === 0 && partMap.size === 0 && deltaMap.size === 0) return;
 
     const infos = Array.from(infoMap.values());
@@ -102,11 +108,10 @@ export function connectEventStream(handlers: SSEHandlers, directory?: string): (
       if (evt.type === "message.part.updated") {
         const part = evt.properties.part;
         partMap.set(`${part.sessionID}:${part.messageID}:${part.id}`, part);
-        // If this full part snapshot already contains text, clear any earlier delta queued in the same frame
+        // A full snapshot supersedes earlier deltas, including when text is reset.
         if (
           (part.type === "text" || part.type === "reasoning") &&
-          typeof part.text === "string" &&
-          part.text.length > 0
+          typeof part.text === "string"
         ) {
           deltaMap.delete(`${part.sessionID}:${part.messageID}:${part.id}:text`);
         }
@@ -127,6 +132,8 @@ export function connectEventStream(handlers: SSEHandlers, directory?: string): (
         return;
       }
 
+      // Preserve stream ordering before status/removal events observe the store.
+      flushFrame();
       handlers.onEvent(evt);
     } catch {
       // Ignore malformed keepalive frames
@@ -137,6 +144,10 @@ export function connectEventStream(handlers: SSEHandlers, directory?: string): (
     if (rafID !== null) {
       cancelAnimationFrame(rafID);
     }
+    if (flushTimer !== null) clearTimeout(flushTimer);
+    infoMap.clear();
+    partMap.clear();
+    deltaMap.clear();
     source.close();
   };
 }

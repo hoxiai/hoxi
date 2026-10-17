@@ -31,8 +31,10 @@ import (
 )
 
 var (
-	// BuildVariant can be injected at compile time via -ldflags "-X github.com/hoxiai/hoxi/internal/app.BuildVariant=dev".
-	BuildVariant = "release"
+	// BuildVariant defaults to "dev" so `wails dev` and `go run` automatically run as Hoxi Dev
+	// without colliding with an installed production `/Applications/Hoxi.app`.
+	// Production builds override this via -ldflags "-X github.com/hoxiai/hoxi/internal/app.BuildVariant=release".
+	BuildVariant = "dev"
 )
 
 type AppIdentity struct {
@@ -46,23 +48,24 @@ func ResolveIdentity(variant, exePath string) AppIdentity {
 	v := strings.ToLower(strings.TrimSpace(variant))
 	if envV := strings.ToLower(strings.TrimSpace(os.Getenv("HOXI_VARIANT"))); envV != "" {
 		v = envV
-	}
-	if v != "dev" && (strings.Contains(exePath, "Hoxi Dev.app") || strings.Contains(exePath, "Hoxi-Dev.app")) {
+	} else if strings.Contains(exePath, "Hoxi Dev.app") || strings.Contains(exePath, "Hoxi-Dev.app") {
+		v = "dev"
+	} else if v == "" {
 		v = "dev"
 	}
-	if v == "dev" {
+	if v == "release" {
 		return AppIdentity{
-			Variant:           "dev",
-			Title:             "Hoxi Dev",
-			BundleID:          "ai.hoxi.desktop.dev",
-			DefaultBridgeAddr: "127.0.0.1:5089",
+			Variant:           "release",
+			Title:             "Hoxi",
+			BundleID:          "ai.hoxi.desktop",
+			DefaultBridgeAddr: "127.0.0.1:5088",
 		}
 	}
 	return AppIdentity{
-		Variant:           "release",
-		Title:             "Hoxi",
-		BundleID:          "ai.hoxi.desktop",
-		DefaultBridgeAddr: "127.0.0.1:5088",
+		Variant:           "dev",
+		Title:             "Hoxi Dev",
+		BundleID:          "ai.hoxi.desktop.dev",
+		DefaultBridgeAddr: "127.0.0.1:5089",
 	}
 }
 
@@ -74,14 +77,17 @@ type Config struct {
 }
 
 type DesktopApp struct {
-	context  context.Context
-	cfg      Config
-	logger   *slog.Logger
-	childMu  sync.Mutex
-	child    *exec.Cmd
-	gateway  *gateway.Gateway
-	status   *statusbar.Tracker
-	wsServer *http.Server
+	contextMu    sync.RWMutex
+	context      context.Context
+	cfg          Config
+	logger       *slog.Logger
+	childMu      sync.Mutex
+	child        *exec.Cmd
+	childDone    chan struct{}
+	childStopped bool
+	gateway      *gateway.Gateway
+	status       *statusbar.Tracker
+	wsServer     *http.Server
 }
 
 func Run(distFS fs.FS) {
@@ -139,7 +145,6 @@ func Run(distFS fs.FS) {
 			go app.BootstrapOpenCodeAsync(ctx, port, password)
 		} else {
 			app.setChild(child)
-			statusTracker.SetAvailable(true)
 		}
 	} else if cfg.NoDesktop {
 		binPath, dlErr := opencode.ResolveOrInstall(ctx, cfg.OpenCode, logger)
@@ -177,6 +182,7 @@ func Run(distFS fs.FS) {
 	wsServer := &http.Server{
 		Handler:           gw,
 		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       90 * time.Second,
 	}
 	app.wsServer = wsServer
 	go func() {
@@ -193,10 +199,11 @@ func Run(distFS fs.FS) {
 	}
 
 	gw.SetOpenDirectoryDialog(func() (string, error) {
-		if app.context == nil {
+		ctx := app.desktopContext()
+		if ctx == nil {
 			return "", fmt.Errorf("desktop window context not ready")
 		}
-		return wailsruntime.OpenDirectoryDialog(app.context, wailsruntime.OpenDialogOptions{
+		return wailsruntime.OpenDirectoryDialog(ctx, wailsruntime.OpenDialogOptions{
 			Title: "Select Workspace Project Folder",
 		})
 	})
@@ -239,15 +246,45 @@ func Run(distFS fs.FS) {
 func (a *DesktopApp) setChild(c *exec.Cmd) {
 	a.childMu.Lock()
 	defer a.childMu.Unlock()
+	if a.childStopped {
+		_ = c.Process.Kill()
+		_ = c.Wait()
+		return
+	}
 	a.child = c
+	if a.status != nil {
+		a.status.SetAvailable(true)
+	}
+	done := make(chan struct{})
+	a.childDone = done
+	go func() {
+		_ = c.Wait()
+		a.childMu.Lock()
+		if a.child == c {
+			a.child = nil
+			if a.status != nil {
+				a.status.SetAvailable(false)
+			}
+		}
+		a.childMu.Unlock()
+		close(done)
+	}()
 }
 
 func (a *DesktopApp) killChild() {
 	a.childMu.Lock()
-	defer a.childMu.Unlock()
+	a.childStopped = true
+	if a.status != nil {
+		a.status.SetAvailable(false)
+	}
+	done := a.childDone
 	if a.child != nil && a.child.Process != nil {
 		_ = a.child.Process.Kill()
 		a.child = nil
+	}
+	a.childMu.Unlock()
+	if done != nil {
+		<-done
 	}
 }
 
@@ -264,11 +301,12 @@ func (a *DesktopApp) BootstrapOpenCodeAsync(ctx context.Context, port int, passw
 		return
 	}
 	a.setChild(child)
-	a.status.SetAvailable(true)
 }
 
 func (a *DesktopApp) startup(ctx context.Context) {
+	a.contextMu.Lock()
 	a.context = ctx
+	a.contextMu.Unlock()
 	statusbar.Start(ctx)
 	statusbar.Update(a.status.Snapshot())
 }
@@ -284,10 +322,16 @@ func (a *DesktopApp) shutdown(_ context.Context) {
 }
 
 func (a *DesktopApp) onSecondInstance(_ options.SecondInstanceData) {
-	if a.context != nil {
-		wailsruntime.WindowShow(a.context)
-		wailsruntime.WindowUnminimise(a.context)
+	if ctx := a.desktopContext(); ctx != nil {
+		wailsruntime.WindowShow(ctx)
+		wailsruntime.WindowUnminimise(ctx)
 	}
+}
+
+func (a *DesktopApp) desktopContext() context.Context {
+	a.contextMu.RLock()
+	defer a.contextMu.RUnlock()
+	return a.context
 }
 
 func chooseFreePort() (int, error) {

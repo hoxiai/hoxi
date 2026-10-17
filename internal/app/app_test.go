@@ -89,6 +89,7 @@ func TestDesktopAppLifecycleMethods(t *testing.T) {
 
 	// killChild when child is nil should be a safe no-op
 	dapp.killChild()
+	dapp.childStopped = false
 
 	// Start a dummy long-running sleep process and register via setChild
 	cmd := exec.Command("sleep", "30")
@@ -105,13 +106,14 @@ func TestDesktopAppLifecycleMethods(t *testing.T) {
 	if dapp.child != nil {
 		t.Fatal("expected dapp.child to be nil after killChild")
 	}
-	_ = cmd.Wait()
+	<-dapp.childDone
 
 	// Start another dummy process to verify shutdown cleans up both wsServer and child
 	cmd2 := exec.Command("sleep", "30")
 	if err := cmd2.Start(); err != nil {
 		t.Fatalf("failed to start second dummy sleep process: %v", err)
 	}
+	dapp.childStopped = false
 	dapp.setChild(cmd2)
 
 	dapp.startup(context.Background())
@@ -119,7 +121,7 @@ func TestDesktopAppLifecycleMethods(t *testing.T) {
 	if dapp.child != nil {
 		t.Fatal("expected shutdown to clear child process")
 	}
-	_ = cmd2.Wait()
+	<-dapp.childDone
 
 	// BootstrapOpenCodeAsync with an immediately cancelled context and failing binary returns cleanly
 	ctx, cancel := context.WithCancel(context.Background())
@@ -129,6 +131,11 @@ func TestDesktopAppLifecycleMethods(t *testing.T) {
 
 func TestResolveIdentity(t *testing.T) {
 	t.Setenv("HOXI_VARIANT", "")
+
+	def := ResolveIdentity(BuildVariant, "/Users/dev/code/hoxi/build/bin/Hoxi.app/Contents/MacOS/Hoxi")
+	if def.Variant != "dev" || def.Title != "Hoxi Dev" || def.BundleID != "ai.hoxi.desktop.dev" || def.DefaultBridgeAddr != "127.0.0.1:5089" {
+		t.Fatalf("expected default BuildVariant to resolve to dev identity for wails dev, got: %+v", def)
+	}
 
 	rel := ResolveIdentity("release", "/Applications/Hoxi.app/Contents/MacOS/Hoxi")
 	if rel.Variant != "release" || rel.Title != "Hoxi" || rel.BundleID != "ai.hoxi.desktop" || rel.DefaultBridgeAddr != "127.0.0.1:5088" {

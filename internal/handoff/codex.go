@@ -3,6 +3,7 @@ package handoff
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func codexHomeDir() string {
@@ -66,7 +68,7 @@ func scanCodexSessions(targetDir, query string) ([]ExternalSessionSummary, Exter
 	}
 
 	// Count total threads and fetch top 100 recent threads
-	countOut, err := exec.Command("sqlite3", dbPath, "SELECT count(*) FROM threads WHERE archived = 0;").Output()
+	countOut, err := codexCommandOutput("sqlite3", dbPath, "SELECT count(*) FROM threads WHERE archived = 0;")
 	if err == nil {
 		if n, err := strconv.Atoi(strings.TrimSpace(string(countOut))); err == nil {
 			stats.SessionCount = n
@@ -79,7 +81,7 @@ WHERE archived = 0 AND title != 'Guardian review'
 ORDER BY updated_at DESC
 LIMIT 120;`
 
-	rawJSON, err := exec.Command("sqlite3", "-json", dbPath, sqlQuery).Output()
+	rawJSON, err := codexCommandOutput("sqlite3", "-json", dbPath, sqlQuery)
 	if err != nil || len(bytes.TrimSpace(rawJSON)) == 0 {
 		return nil, stats
 	}
@@ -144,7 +146,7 @@ func loadCodexSessionDetail(sessionID, hintCWD, activeRoot string) (*ExternalSes
 	sqlQuery := fmt.Sprintf(`SELECT id, rollout_path, created_at, updated_at, cwd, title, COALESCE(git_branch,''), COALESCE(git_sha,''), COALESCE(model,''), COALESCE(first_user_message,'')
 FROM threads WHERE id = '%s' LIMIT 1;`, safeID)
 
-	rawJSON, err := exec.Command("sqlite3", "-json", dbPath, sqlQuery).Output()
+	rawJSON, err := codexCommandOutput("sqlite3", "-json", dbPath, sqlQuery)
 	if err != nil {
 		return nil, err
 	}
@@ -197,14 +199,21 @@ FROM threads WHERE id = '%s' LIMIT 1;`, safeID)
 
 func openCodexRolloutReader(rolloutPath string) (io.ReadCloser, error) {
 	if strings.HasSuffix(rolloutPath, ".zst") {
-		cmd := exec.Command("zstd", "-dc", rolloutPath)
-		out, err := cmd.Output()
+		out, err := codexCommandOutput("zstd", "-dc", rolloutPath)
 		if err != nil {
 			return nil, err
 		}
 		return io.NopCloser(bytes.NewReader(out)), nil
 	}
 	return os.Open(rolloutPath)
+}
+
+func codexCommandOutput(name string, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.WaitDelay = time.Second
+	return cmd.Output()
 }
 
 func isSyntheticCodexUserPrompt(txt string) bool {

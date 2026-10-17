@@ -199,6 +199,12 @@ export interface TimelineI18n {
   queueDelete: string;
   queueDeleteTooltip: string;
   queueCountBadge: string;
+  taskProgressActiveOnly: string;
+  currentStepPrefix: string;
+  lastStepPrefix: string;
+  codeChangesHeader: string;
+  liveStepsHeader: string;
+  todoStepsHeader: string;
   stopAllSubagents: string;
   stopSubagentTooltip: string;
   openSubagent: string;
@@ -228,6 +234,8 @@ export interface TimelineI18n {
   retryingInSeconds: string;
   retryAttempt: string;
   filesUpdatedCount: string;
+  changesSummary: string;
+  viewChanges: string;
   copyResponse: string;
   subagentLiveActivity: string;
   openChildSession: string;
@@ -255,6 +263,10 @@ export interface TimelineI18n {
   turnPaused: string;
   turnStopped: string;
   executing: string;
+  executionPreparing: string;
+  executionStillWorking: string;
+  executionElapsed: string;
+  executionStepsDone: string;
   pausedPlaceholder: string;
   resumeDefaultPrompt: string;
   resumePromptPrefix: string;
@@ -288,6 +300,24 @@ export interface ToolCardI18n {
   inlineChangePreview: string;
   openInDiffInspector: string;
   revertTooltip: string;
+  actionRead: string;
+  actionEdit: string;
+  actionWrite: string;
+  actionPatch: string;
+  actionSearch: string;
+  actionFind: string;
+  actionList: string;
+  actionShell: string;
+  actionSubagent: string;
+  actionTodo: string;
+  updatingTodos: string;
+  actionWebFetch: string;
+  actionSkill: string;
+  actionQuestion: string;
+  gatheringContext: string;
+  gatheredContext: string;
+  waitingForOutput: string;
+  noOutput: string;
 }
 
 export interface ApprovalI18n {
@@ -428,5 +458,3 @@ export interface InspectorI18n {
 
 export * from "./domain-models-types";
 export * from "./domain-settings-types";
-
-
