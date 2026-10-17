@@ -23,12 +23,14 @@ import {
   normalizeFolderPath,
   refreshProviders,
   replaceSession,
+  selectModel,
   selectSession,
   switchWorkspace,
   workspace,
 } from "../../store/workspace";
 import { shortenPath } from "./left-nav-helpers";
 import ExternalHandoffPreviewPane, {
+  defaultSourceModel,
   handoffSourceBadgeClass,
 } from "./ExternalHandoffPreviewPane";
 import { t } from "../../i18n";
@@ -40,6 +42,7 @@ export default function ExternalHandoffModal() {
   const [sourceFilter, setSourceFilter] = createSignal<"all" | ExternalToolID>("all");
   const [onlyCurrent, setOnlyCurrent] = createSignal(false);
   const [query, setQuery] = createSignal("");
+  const [modelMode, setModelMode] = createSignal<"original" | "local">("original");
 
   const [selectedItem, setSelectedItem] = createSignal<ExternalSessionSummary | null>(null);
   const [detail, setDetail] = createSignal<ExternalSessionDetail | null>(null);
@@ -107,15 +110,40 @@ export default function ExternalHandoffModal() {
     setImportingSession(true);
     setErrorMsg(null);
     try {
+      const useOriginal = modelMode() === "original";
+      if (useOriginal) {
+        const cli = cliTools().find((c) => c.id === item.source);
+        if (cli && cli.authenticated && !cli.connected) {
+          await hoxiAPI.importLocalCLI(item.source).catch(() => null);
+          await refreshProviders().catch(() => null);
+        }
+      }
+      const preferredProviderID = useOriginal
+        ? item.source === "codex-cli"
+          ? "openai"
+          : item.source
+        : workspace.selectedModel?.providerID;
+      const preferredModelID = useOriginal
+        ? defaultSourceModel(item.source, item.model)
+        : workspace.selectedModel?.modelID;
+
       const res = await hoxiAPI.importExternalSession({
         source: item.source,
         sessionID: item.id,
         sourceCwd: item.cwd,
         targetDirectory: item.cwd || workspace.rootDir || undefined,
+        preferredProviderID,
+        preferredModelID,
       });
       if (!res.ok || !res.session?.id) {
         setErrorMsg(res.error || t("common.error"));
         return;
+      }
+      if (res.resolvedProviderID && res.resolvedModelID) {
+        selectModel({
+          providerID: res.resolvedProviderID,
+          modelID: res.resolvedModelID,
+        });
       }
       const targetDir = res.targetDirectory || item.cwd || workspace.rootDir;
       if (
@@ -402,6 +430,9 @@ export default function ExternalHandoffModal() {
               detail={detail()}
               loadingDetail={loadingDetail()}
               importingSession={importingSession()}
+              modelMode={modelMode()}
+              onChangeModelMode={setModelMode}
+              localModelLabel={workspace.selectedModel?.modelID || "default"}
               onTakeOver={() => void onTakeOver()}
             />
           </div>

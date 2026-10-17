@@ -1,4 +1,5 @@
 import { createMemo, For, Show } from "solid-js";
+import { Maximize2, Minimize2 } from "lucide-solid";
 import PierreDiffViewer from "./PierreDiffViewer";
 import MemoryBankView from "./MemoryBankView";
 import FileTreeView from "./FileTreeView";
@@ -57,6 +58,28 @@ export default function InspectorPane() {
             </button>
           )}
         </For>
+
+        <button
+          type="button"
+          class={`ml-auto inline-flex items-center justify-center w-6.5 h-6.5 rounded-lg transition-colors cursor-pointer ${
+            workspace.inspectorMaximized
+              ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]"
+              : "text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
+          }`}
+          onClick={() => setWorkspace("inspectorMaximized", !workspace.inspectorMaximized)}
+          title={
+            workspace.inspectorMaximized
+              ? t("inspector.tabs.restore")
+              : t("inspector.tabs.maximize")
+          }
+        >
+          <Show
+            when={workspace.inspectorMaximized}
+            fallback={<Maximize2 size={13} />}
+          >
+            <Minimize2 size={13} />
+          </Show>
+        </button>
       </div>
 
       <div class="flex-1 min-h-0">

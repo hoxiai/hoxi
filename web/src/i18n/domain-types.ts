@@ -58,6 +58,43 @@ export interface HeaderI18n {
   sandboxBadge: string;
   langZh: string;
   langEn: string;
+  pulseBtnLabel: string;
+  pulseTooltip: string;
+  pulseTitle: string;
+  pulseRefreshTooltip: string;
+  pulseTodayTokens: string;
+  pulseTokensSub: string;
+  pulseTodayCost: string;
+  pulseCostSub: string;
+  pulseLinesAdded: string;
+  pulseLinesAddedSub: string;
+  pulseLinesDeleted: string;
+  pulseLinesDeletedSub: string;
+  pulseSectionCode: string;
+  pulseCommitsToday: string;
+  pulseWorkingFiles: string;
+  pulseNetLoc: string;
+  pulseSectionTokens: string;
+  pulseCacheHitRate: string;
+  pulseReasoningRatio: string;
+  pulseLegendInput: string;
+  pulseLegendCache: string;
+  pulseLegendOutput: string;
+  pulseLegendReasoning: string;
+  pulseSectionTelemetry: string;
+  pulseMetricTurns: string;
+  pulseMetricTurnsVal: string;
+  pulseMetricTools: string;
+  pulseMetricToolsSub: string;
+  pulseMetricSpeed: string;
+  pulseMetricSpeedSub: string;
+  pulseMetricQuality: string;
+  pulseMetricQualitySub: string;
+  pulseSectionModels: string;
+  pulseModelTurns: string;
+  pulseNoModelActivity: string;
+  pulseConfigureModelsBtn: string;
+  pulseConnectedProviders: string;
 }
 
 export interface LeftNavI18n {
@@ -142,6 +179,8 @@ export interface LeftNavI18n {
   handoffCliImporting: string;
   handoffCliConnected: string;
   handoffCliSessionsBadge: string;
+  handoffModelModeOriginal: string;
+  handoffModelModeLocal: string;
 }
 
 export interface TimelineI18n {
@@ -339,6 +378,8 @@ export interface InspectorTabsI18n {
   memory: string;
   files: string;
   terminal: string;
+  maximize: string;
+  restore: string;
 }
 
 export interface InspectorDiffsI18n {

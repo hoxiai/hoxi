@@ -5,6 +5,7 @@ import {
   type WorkspaceProfile,
 } from "../services/api";
 import {
+  DISMISSED_PROJECTS_KEY,
   isSessionArchived,
   PROJECT_ORDER_KEY,
   RECENT_PROJECTS_KEY,
@@ -36,6 +37,50 @@ export function normalizeWorkspaceIdentityColor(value?: string | null): string {
   const trimmed = (value || "").trim().toUpperCase();
   if (HEX_COLOR_RE.test(trimmed)) return trimmed;
   return DEFAULT_WORKSPACE_IDENTITY_COLOR;
+}
+
+export function isDismissedProjectPath(pathOrID?: string | null): boolean {
+  if (!pathOrID) return false;
+  const clean = pathOrID.trim();
+  const norm = normalizeFolderPath(clean);
+  const list = workspace.dismissedProjects || [];
+  return list.some((item) => {
+    if (!item) return false;
+    if (item === clean) return true;
+    const itemNorm = normalizeFolderPath(item);
+    return Boolean(itemNorm && norm && itemNorm === norm);
+  });
+}
+
+export function recordDismissedProject(pathOrID?: string | null): void {
+  if (!pathOrID) return;
+  const clean = pathOrID.trim();
+  const norm = normalizeFolderPath(clean);
+  const current = workspace.dismissedProjects || [];
+  const next = [...current];
+  if (clean && !next.includes(clean)) next.push(clean);
+  if (norm && !next.includes(norm)) next.push(norm);
+  setWorkspace("dismissedProjects", next);
+  try {
+    localStorage.setItem(DISMISSED_PROJECTS_KEY, JSON.stringify(next));
+  } catch {
+    /* ignore */
+  }
+}
+
+export function unrecordDismissedProject(pathOrID?: string | null): void {
+  if (!pathOrID) return;
+  const clean = pathOrID.trim();
+  const norm = normalizeFolderPath(clean);
+  const next = (workspace.dismissedProjects || []).filter(
+    (item) => item !== clean && normalizeFolderPath(item) !== norm
+  );
+  setWorkspace("dismissedProjects", next);
+  try {
+    localStorage.setItem(DISMISSED_PROJECTS_KEY, JSON.stringify(next));
+  } catch {
+    /* ignore */
+  }
 }
 
 export function normalizeFolderPath(p?: string | null): string {
@@ -137,6 +182,11 @@ export async function loadSavedWorkspaces(): Promise<void> {
     if (Array.isArray(res?.workspaces)) {
       setWorkspace("savedWorkspaces", res.workspaces);
     }
+    if (Array.isArray(res?.dismissed)) {
+      for (const d of res.dismissed) {
+        recordDismissedProject(d);
+      }
+    }
   } catch (err) {
     console.error("Failed to load saved workspaces:", err);
   }
@@ -145,7 +195,9 @@ export async function loadSavedWorkspaces(): Promise<void> {
 export async function loadProjects(): Promise<void> {
   try {
     const remote = await hoxiAPI.listProjects();
-    const list = Array.isArray(remote) ? remote : [];
+    const list = (Array.isArray(remote) ? remote : []).filter(
+      (p) => !isDismissedProjectPath(p.worktree)
+    );
     setWorkspace("projects", list);
   } catch (err) {
     console.error("Failed to load projects:", err);
@@ -282,6 +334,12 @@ export async function saveWorkspaceProfile(
   if (primaryPath) {
     recordRecentProject(primaryPath);
   }
+  if (saved?.id) {
+    unrecordDismissedProject(saved.id);
+    for (const f of saved.folders || []) {
+      unrecordDismissedProject(f.path);
+    }
+  }
   return saved;
 }
 
@@ -329,27 +387,48 @@ export async function quickAddFolderToWorkspace(dirOrWorkspaceID: string): Promi
 }
 
 export async function removeWorkspaceProfile(dirOrWorkspaceID: string): Promise<void> {
+  const normInput = normalizeFolderPath(dirOrWorkspaceID);
   const existing =
     findWorkspaceProfileById(dirOrWorkspaceID) ??
     findWorkspaceProfileByDir(dirOrWorkspaceID);
 
-  const removedDirs = new Set<string>();
-  const normInput = normalizeFolderPath(dirOrWorkspaceID);
-  if (normInput) removedDirs.add(normInput);
+  const removedKeys = new Set<string>();
+  if (dirOrWorkspaceID) removedKeys.add(dirOrWorkspaceID);
+  if (normInput) removedKeys.add(normInput);
+
   if (existing) {
+    removedKeys.add(existing.id);
     for (const f of existing.folders) {
-      removedDirs.add(normalizeFolderPath(f.path));
+      const nf = normalizeFolderPath(f.path);
+      if (nf) removedKeys.add(nf);
     }
-    try {
-      await hoxiAPI.deleteWorkspace(existing.id);
-    } catch (err) {
-      console.warn("deleteWorkspace API warning:", err);
-    }
-    setWorkspace("savedWorkspaces", (prev) => prev.filter((w) => w.id !== existing.id));
   }
 
+  for (const k of removedKeys) {
+    recordDismissedProject(k);
+  }
+
+  try {
+    const target = existing?.id || normInput || dirOrWorkspaceID;
+    await hoxiAPI.deleteWorkspace(target);
+  } catch (err) {
+    console.warn("deleteWorkspace API warning:", err);
+  }
+
+  setWorkspace("savedWorkspaces", (prev) =>
+    prev.filter(
+      (w) =>
+        !removedKeys.has(w.id) &&
+        !w.folders.some((f) => removedKeys.has(normalizeFolderPath(f.path)))
+    )
+  );
+
+  setWorkspace("projects", (prev) =>
+    prev.filter((p) => !removedKeys.has(normalizeFolderPath(p.worktree)))
+  );
+
   const nextRecents = workspace.recentProjects.filter(
-    (p) => !removedDirs.has(normalizeFolderPath(p))
+    (p) => !removedKeys.has(normalizeFolderPath(p))
   );
   setWorkspace("recentProjects", nextRecents);
   try {
@@ -359,7 +438,7 @@ export async function removeWorkspaceProfile(dirOrWorkspaceID: string): Promise<
   }
 
   const nextOrder = workspace.projectOrder.filter(
-    (p) => !removedDirs.has(normalizeFolderPath(p))
+    (p) => !removedKeys.has(normalizeFolderPath(p))
   );
   setWorkspace("projectOrder", nextOrder);
   try {
@@ -368,11 +447,16 @@ export async function removeWorkspaceProfile(dirOrWorkspaceID: string): Promise<
     /* ignore */
   }
 
-  if (removedDirs.has(normalizeFolderPath(workspace.rootDir))) {
+  if (removedKeys.has(normalizeFolderPath(workspace.rootDir))) {
+    const remainingSaved = workspace.savedWorkspaces.filter(
+      (w) =>
+        !removedKeys.has(w.id) &&
+        !w.folders.some((f) => removedKeys.has(normalizeFolderPath(f.path)))
+    );
     const nextCandidate =
-      workspacePrimaryFolder(workspace.savedWorkspaces[0]) ||
-      nextRecents[0] ||
-      workspace.projects.find((p) => !removedDirs.has(normalizeFolderPath(p.worktree)))?.worktree;
+      workspacePrimaryFolder(remainingSaved[0]) ||
+      nextRecents.find((p) => !removedKeys.has(normalizeFolderPath(p))) ||
+      workspace.projects.find((p) => !removedKeys.has(normalizeFolderPath(p.worktree)))?.worktree;
     if (nextCandidate) {
       await switchWorkspace(nextCandidate);
     }

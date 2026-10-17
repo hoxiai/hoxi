@@ -83,5 +83,7 @@ export const leftNav: LeftNavI18n = {
   handoffCliImporting: "Importing…",
   handoffCliConnected: "Connected",
   handoffCliSessionsBadge: "{count} sessions",
+  handoffModelModeOriginal: "Original Model ({model})",
+  handoffModelModeLocal: "Local Model ({model})",
 };
 

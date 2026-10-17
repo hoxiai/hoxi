@@ -46,7 +46,13 @@ export default function ThreePaneShell() {
     <div class="h-screen w-screen flex flex-col bg-[var(--bg-canvas)] text-[var(--text-primary)] overflow-hidden">
       <CompactHeader
         inspectorOpen={workspace.inspectorOpen}
-        onToggleInspector={() => setWorkspace("inspectorOpen", !workspace.inspectorOpen)}
+        onToggleInspector={() => {
+          const next = !workspace.inspectorOpen;
+          setWorkspace("inspectorOpen", next);
+          if (!next) {
+            setWorkspace("inspectorMaximized", false);
+          }
+        }}
       />
 
       <main class="flex-1 flex min-h-0 pb-2 pr-2">
@@ -62,18 +68,33 @@ export default function ThreePaneShell() {
         />
 
         {/* Center Chat Island (Kilo-style rounded pane-island) */}
-        <section class="pane-island relative flex-1 min-w-0 flex flex-col h-full overflow-hidden">
+        <section
+          class={`pane-island relative flex-1 min-w-0 flex flex-col h-full overflow-hidden ${
+            workspace.inspectorOpen && workspace.inspectorMaximized ? "hidden" : ""
+          }`}
+        >
           <MessageStream />
           <Composer />
         </section>
 
         {/* Right Inspector Island */}
         <Show when={workspace.inspectorOpen}>
+          <Show when={!workspace.inspectorMaximized}>
+            <div
+              class="w-1.5 shrink-0 cursor-col-resize rounded-full hover:bg-[var(--accent-border)] transition-colors my-2"
+              onPointerDown={(ev) => startResize("right", ev)}
+            />
+          </Show>
           <div
-            class="w-1.5 shrink-0 cursor-col-resize rounded-full hover:bg-[var(--accent-border)] transition-colors my-2"
-            onPointerDown={(ev) => startResize("right", ev)}
-          />
-          <div class="pane-island shrink-0 h-full overflow-hidden" style={{ width: `${rightWidth()}px` }}>
+            class={`pane-island h-full overflow-hidden ${
+              workspace.inspectorMaximized ? "flex-1 min-w-0" : "shrink-0"
+            }`}
+            style={
+              workspace.inspectorMaximized
+                ? undefined
+                : { width: `${rightWidth()}px` }
+            }
+          >
             <InspectorPane />
           </div>
         </Show>

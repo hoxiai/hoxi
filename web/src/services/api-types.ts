@@ -335,7 +335,7 @@ export interface CodeAuditRequest {
   locale?: string;
 }
 
-export type ExternalToolID = "grok-cli" | "claude-code" | "codex-cli";
+export type ExternalToolID = "grok-cli" | "claude-code" | "codex-cli" | "codex";
 
 export interface ExternalSessionSummary {
   id: string;
@@ -401,6 +401,8 @@ export interface HandoffImportResponse {
   importedTurns: number;
   memoryPath?: string;
   targetDirectory?: string;
+  resolvedProviderID?: string;
+  resolvedModelID?: string;
   error?: string;
 }
 
@@ -429,6 +431,20 @@ export interface LocalCLIImportResponse {
   models?: string[];
   error?: string;
 }
+
+export interface GitDailyPulseResponse {
+  todayCommits: number;
+  committedAdditions: number;
+  committedDeletions: number;
+  committedFiles: number;
+  uncommittedAdditions: number;
+  uncommittedDeletions: number;
+  uncommittedFiles: number;
+  branch?: string;
+  headCommit?: string;
+  headSubject?: string;
+}
+
 
 
 

@@ -3,6 +3,7 @@ import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 import { Pencil } from "lucide-solid";
 import {
   DEFAULT_WORKSPACE_IDENTITY_COLOR,
+  isDismissedProjectPath,
   isPlaceholderSessionTitle,
   normalizeFolderPath,
   normalizeWorkspaceIdentityColor,
@@ -107,7 +108,7 @@ export function buildAllProjects(): ProjectNavEntry[] {
 
   for (const saved of workspace.savedWorkspaces) {
     const primary = normalizeFolderPath(workspacePrimaryFolder(saved));
-    if (!primary) continue;
+    if (!primary || isDismissedProjectPath(saved.id) || isDismissedProjectPath(primary)) continue;
     for (const f of saved.folders) {
       const fp = normalizeFolderPath(f.path);
       if (fp && fp !== primary) secondaryPaths.add(fp);
@@ -126,41 +127,39 @@ export function buildAllProjects(): ProjectNavEntry[] {
 
   for (const p of workspace.projects) {
     const wt = normalizeFolderPath(p.worktree);
-    if (wt && wt !== "/" && !secondaryPaths.has(wt)) {
-      const existing = map.get(wt);
-      if (!existing) {
-        map.set(wt, {
-          name: basename(wt),
-          path: wt,
-          color: normalizeWorkspaceIdentityColor(p.icon?.color),
-          folders: [{ path: wt, isPrimary: true }],
-          sandboxes: (p.sandboxes || []).length,
-          vcs: p.vcs === "git",
-          isPinned: wt === normalizeFolderPath(workspace.rootDir),
-        });
-      } else {
-        existing.sandboxes = Math.max(existing.sandboxes, (p.sandboxes || []).length);
-      }
+    if (!wt || wt === "/" || isDismissedProjectPath(wt) || secondaryPaths.has(wt)) continue;
+    const existing = map.get(wt);
+    if (!existing) {
+      map.set(wt, {
+        name: basename(wt),
+        path: wt,
+        color: normalizeWorkspaceIdentityColor(p.icon?.color),
+        folders: [{ path: wt, isPrimary: true }],
+        sandboxes: (p.sandboxes || []).length,
+        vcs: p.vcs === "git",
+        isPinned: wt === normalizeFolderPath(workspace.rootDir),
+      });
+    } else {
+      existing.sandboxes = Math.max(existing.sandboxes, (p.sandboxes || []).length);
     }
   }
 
   for (const p of workspace.recentProjects) {
     const clean = normalizeFolderPath(p);
-    if (clean && !map.has(clean) && !secondaryPaths.has(clean)) {
-      map.set(clean, {
-        name: basename(clean),
-        path: clean,
-        color: DEFAULT_WORKSPACE_IDENTITY_COLOR,
-        folders: [{ path: clean, isPrimary: true }],
-        sandboxes: 0,
-        vcs: true,
-        isPinned: clean === normalizeFolderPath(workspace.rootDir),
-      });
-    }
+    if (!clean || isDismissedProjectPath(clean) || map.has(clean) || secondaryPaths.has(clean)) continue;
+    map.set(clean, {
+      name: basename(clean),
+      path: clean,
+      color: DEFAULT_WORKSPACE_IDENTITY_COLOR,
+      folders: [{ path: clean, isPrimary: true }],
+      sandboxes: 0,
+      vcs: true,
+      isPinned: clean === normalizeFolderPath(workspace.rootDir),
+    });
   }
 
   const rootClean = normalizeFolderPath(workspace.rootDir);
-  if (rootClean && !map.has(rootClean) && !secondaryPaths.has(rootClean)) {
+  if (rootClean && !isDismissedProjectPath(rootClean) && !map.has(rootClean) && !secondaryPaths.has(rootClean)) {
     map.set(rootClean, {
       name: basename(rootClean),
       path: rootClean,

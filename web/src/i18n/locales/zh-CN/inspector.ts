@@ -7,6 +7,8 @@ export const inspector: InspectorI18n = {
     memory: "记忆库",
     files: "文件",
     terminal: "终端",
+    maximize: "全屏展开右侧栏 (覆盖对话区)",
+    restore: "退出全屏 (恢复分栏)",
   },
   diffs: {
     empty: "当前暂无代码变更",

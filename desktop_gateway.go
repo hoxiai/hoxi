@@ -155,6 +155,7 @@ func (g *desktopGateway) registerRoutes(distFS fs.FS) {
 	g.mux.HandleFunc("/api/hoxi/provider/summarize-title", g.handleSummarizeSessionTitle)
 	g.mux.HandleFunc("/api/hoxi/models-config", g.handleModelsConfig)
 	g.mux.HandleFunc("/api/hoxi/system-info", g.handleSystemRuntimeInfo)
+	g.mux.HandleFunc("/api/hoxi/dev-pulse", g.handleDevPulse)
 	g.mux.HandleFunc("/api/hoxi/handoff/sessions", g.handleHandoffSessions)
 	g.mux.HandleFunc("/api/hoxi/handoff/preview", g.handleHandoffPreview)
 	g.mux.HandleFunc("/api/hoxi/handoff/import", g.handleHandoffImport)

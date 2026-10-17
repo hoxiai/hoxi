@@ -83,5 +83,7 @@ export const leftNav: LeftNavI18n = {
   handoffCliImporting: "导入中…",
   handoffCliConnected: "已接入",
   handoffCliSessionsBadge: "{count} 个会话",
+  handoffModelModeOriginal: "原会话模型继续 ({model})",
+  handoffModelModeLocal: "本地当前模型 ({model})",
 };
 

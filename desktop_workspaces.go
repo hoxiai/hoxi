@@ -7,53 +7,16 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
-	"runtime"
-	"sort"
 	"strings"
 	"sync"
 	"time"
 )
 
-const defaultWorkspaceIdentityColor = "#5EA0F7"
-
-var (
-	shortHexColorRE = regexp.MustCompile(`^#([0-9a-fA-F]{3})$`)
-	longHexColorRE  = regexp.MustCompile(`^#([0-9a-fA-F]{6})$`)
-)
-
-type workspaceFolderInput struct {
-	Path      string `json:"path"`
-	IsPrimary bool   `json:"isPrimary"`
-}
-
-type workspaceFolder struct {
-	ID        string `json:"id"`
-	Path      string `json:"path"`
-	IsPrimary bool   `json:"isPrimary"`
-	Position  int    `json:"position"`
-}
-
-type workspaceProfile struct {
-	ID        string            `json:"id"`
-	Name      string            `json:"name"`
-	Color     string            `json:"color,omitempty"`
-	Folders   []workspaceFolder `json:"folders"`
-	CreatedAt string            `json:"createdAt"`
-	UpdatedAt string            `json:"updatedAt"`
-}
-
-type saveWorkspaceRequest struct {
-	ID      string                 `json:"id,omitempty"`
-	Name    string                 `json:"name,omitempty"`
-	Color   string                 `json:"color,omitempty"`
-	Folders []workspaceFolderInput `json:"folders"`
-}
-
 type workspaceStore struct {
 	mu          sync.RWMutex
 	storagePath string
 	workspaces  []workspaceProfile
+	dismissed   []string
 }
 
 func newWorkspaceStore(rootDir string) *workspaceStore {
@@ -64,59 +27,10 @@ func newWorkspaceStore(rootDir string) *workspaceStore {
 	s := &workspaceStore{
 		storagePath: storagePath,
 		workspaces:  []workspaceProfile{},
+		dismissed:   []string{},
 	}
 	s.loadFromDisk(rootDir)
 	return s
-}
-
-func userHoxiWorkspacesPath() string {
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		return ""
-	}
-	return filepath.Join(home, ".hoxi", "workspaces.json")
-}
-
-func normalizeWorkspaceIdentityColor(raw string) string {
-	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" {
-		return ""
-	}
-	if m := shortHexColorRE.FindStringSubmatch(trimmed); len(m) == 2 {
-		d := strings.ToUpper(m[1])
-		return fmt.Sprintf("#%c%c%c%c%c%c", d[0], d[0], d[1], d[1], d[2], d[2])
-	}
-	if m := longHexColorRE.FindStringSubmatch(trimmed); len(m) == 2 {
-		return "#" + strings.ToUpper(m[1])
-	}
-	return ""
-}
-
-func comparableFolderPath(p string) string {
-	cleaned := filepath.Clean(strings.TrimSpace(p))
-	if runtime.GOOS == "windows" {
-		return strings.ToLower(cleaned)
-	}
-	return cleaned
-}
-
-func canonicalHomeDir() string {
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		return ""
-	}
-	if resolved, err := filepath.EvalSymlinks(home); err == nil && resolved != "" {
-		return filepath.Clean(resolved)
-	}
-	return filepath.Clean(home)
-}
-
-func generateWorkspaceUUID() string {
-	if hexStr, err := generateRandomHex(16); err == nil && len(hexStr) == 32 {
-		return fmt.Sprintf("%s-%s-%s-%s-%s",
-			hexStr[0:8], hexStr[8:12], hexStr[12:16], hexStr[16:20], hexStr[20:32])
-	}
-	return fmt.Sprintf("ws_%d", time.Now().UnixNano())
 }
 
 func (s *workspaceStore) loadFromDisk(seedRootDir string) {
@@ -126,11 +40,14 @@ func (s *workspaceStore) loadFromDisk(seedRootDir string) {
 	loaded := false
 	if s.storagePath != "" {
 		if data, err := os.ReadFile(s.storagePath); err == nil {
-			var parsed struct {
-				Workspaces []workspaceProfile `json:"workspaces"`
-			}
-			if err := json.Unmarshal(data, &parsed); err == nil && parsed.Workspaces != nil {
-				s.workspaces = parsed.Workspaces
+			var parsed workspaceStoreFile
+			if err := json.Unmarshal(data, &parsed); err == nil {
+				if parsed.Workspaces != nil {
+					s.workspaces = parsed.Workspaces
+				}
+				if parsed.Dismissed != nil {
+					s.dismissed = parsed.Dismissed
+				}
 				loaded = true
 			}
 		}
@@ -167,10 +84,42 @@ func (s *workspaceStore) persistLocked() {
 		return
 	}
 	_ = os.MkdirAll(filepath.Dir(s.storagePath), 0o755)
-	payload := map[string]any{"workspaces": s.workspaces}
+	payload := workspaceStoreFile{
+		Workspaces: s.workspaces,
+		Dismissed:  s.dismissed,
+	}
 	if raw, err := json.MarshalIndent(payload, "", "  "); err == nil {
 		_ = os.WriteFile(s.storagePath, append(raw, '\n'), 0o644)
 	}
+}
+
+func (s *workspaceStore) addDismissedLocked(target string) {
+	clean := strings.TrimSpace(target)
+	if clean == "" {
+		return
+	}
+	comp := comparableFolderPath(clean)
+	for _, d := range s.dismissed {
+		if d == clean || comparableFolderPath(d) == comp {
+			return
+		}
+	}
+	s.dismissed = append(s.dismissed, clean)
+}
+
+func (s *workspaceStore) removeDismissedLocked(target string) {
+	clean := strings.TrimSpace(target)
+	if clean == "" {
+		return
+	}
+	comp := comparableFolderPath(clean)
+	next := make([]string, 0, len(s.dismissed))
+	for _, d := range s.dismissed {
+		if d != clean && comparableFolderPath(d) != comp {
+			next = append(next, d)
+		}
+	}
+	s.dismissed = next
 }
 
 func validateWorkspaceFolders(inputs []workspaceFolderInput) ([]workspaceFolderInput, error) {
@@ -178,44 +127,29 @@ func validateWorkspaceFolders(inputs []workspaceFolderInput) ([]workspaceFolderI
 		return nil, errors.New("A workspace needs at least one folder.")
 	}
 	home := comparableFolderPath(canonicalHomeDir())
-	seen := make(map[string]struct{}, len(inputs))
 	canonical := make([]workspaceFolderInput, 0, len(inputs))
-	primaryCount := 0
+	seen := make(map[string]struct{}, len(inputs))
 
 	for _, item := range inputs {
-		rawPath := strings.TrimSpace(item.Path)
-		if rawPath == "" {
+		trimmed := strings.TrimSpace(item.Path)
+		if trimmed == "" {
 			continue
 		}
-		if strings.HasPrefix(rawPath, "~/") {
-			if h := canonicalHomeDir(); h != "" {
-				rawPath = filepath.Join(h, strings.TrimPrefix(rawPath, "~/"))
-			}
+		resolved := filepath.Clean(trimmed)
+		if realPath, err := filepath.EvalSymlinks(resolved); err == nil && realPath != "" {
+			resolved = filepath.Clean(realPath)
 		}
-		if !filepath.IsAbs(rawPath) {
-			return nil, errors.New("Workspace folders must use absolute paths.")
-		}
-		resolved, err := filepath.EvalSymlinks(rawPath)
-		if err != nil {
-			resolved = filepath.Clean(rawPath)
-		} else {
-			resolved = filepath.Clean(resolved)
-		}
-		info, statErr := os.Stat(resolved)
-		if statErr != nil || !info.IsDir() {
-			return nil, fmt.Errorf("Workspace folder does not exist or is not a directory: %s", item.Path)
+		stat, err := os.Stat(resolved)
+		if err != nil || !stat.IsDir() {
+			continue
 		}
 		comp := comparableFolderPath(resolved)
-		vol := filepath.VolumeName(resolved)
-		if resolved == vol+string(filepath.Separator) || (home != "" && comp == home) {
-			return nil, errors.New("Filesystem roots and the home directory cannot be workspace folders.")
-		}
-		if _, exists := seen[comp]; exists {
-			return nil, errors.New("Workspace folders must be unique.")
+		if _, ok := seen[comp]; ok {
+			continue
 		}
 		seen[comp] = struct{}{}
-		if item.IsPrimary {
-			primaryCount++
+		if comp == home || comp == "/" || comp == "\\" || filepath.Dir(resolved) == resolved {
+			return nil, errors.New("Filesystem roots and the home directory cannot be workspace folders.")
 		}
 		canonical = append(canonical, workspaceFolderInput{Path: resolved, IsPrimary: item.IsPrimary})
 	}
@@ -223,31 +157,29 @@ func validateWorkspaceFolders(inputs []workspaceFolderInput) ([]workspaceFolderI
 	if len(canonical) == 0 {
 		return nil, errors.New("A workspace needs at least one folder.")
 	}
-	if primaryCount == 0 {
-		canonical[0].IsPrimary = true
-	}
-
 	var primary workspaceFolderInput
 	others := make([]workspaceFolderInput, 0, len(canonical)-1)
-	foundPrimary := false
 	for _, f := range canonical {
-		if f.IsPrimary && !foundPrimary {
+		if f.IsPrimary && primary.Path == "" {
 			primary = workspaceFolderInput{Path: f.Path, IsPrimary: true}
-			foundPrimary = true
 		} else {
 			others = append(others, workspaceFolderInput{Path: f.Path, IsPrimary: false})
 		}
+	}
+	if primary.Path == "" && len(others) > 0 {
+		primary = workspaceFolderInput{Path: others[0].Path, IsPrimary: true}
+		others = others[1:]
 	}
 	return append([]workspaceFolderInput{primary}, others...), nil
 }
 
 func (s *workspaceStore) resolveNameLocked(rawName, primaryPath, excludeID string) string {
-	if supplied := strings.TrimSpace(rawName); supplied != "" {
-		return supplied
+	candidate := strings.TrimSpace(rawName)
+	if candidate == "" {
+		candidate = filepath.Base(primaryPath)
 	}
-	baseName := filepath.Base(primaryPath)
-	if baseName == "" || baseName == "." || baseName == string(filepath.Separator) {
-		baseName = "Workspace"
+	if candidate == "" || candidate == "." || candidate == "/" {
+		candidate = "Workspace"
 	}
 	occupied := make(map[string]struct{}, len(s.workspaces))
 	for _, ws := range s.workspaces {
@@ -255,29 +187,16 @@ func (s *workspaceStore) resolveNameLocked(rawName, primaryPath, excludeID strin
 			occupied[strings.ToLower(ws.Name)] = struct{}{}
 		}
 	}
-	if _, exists := occupied[strings.ToLower(baseName)]; !exists {
-		return baseName
+	if _, ok := occupied[strings.ToLower(candidate)]; !ok {
+		return candidate
 	}
-	for suffix := 2; ; suffix++ {
-		candidate := fmt.Sprintf("%s (%d)", baseName, suffix)
-		if _, exists := occupied[strings.ToLower(candidate)]; !exists {
-			return candidate
+	for i := 2; i < 1000; i++ {
+		gen := fmt.Sprintf("%s (%d)", candidate, i)
+		if _, ok := occupied[strings.ToLower(gen)]; !ok {
+			return gen
 		}
 	}
-}
-
-func resolveColorOrDefault(raw, fallback string) (string, error) {
-	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" {
-		if fallback != "" {
-			return fallback, nil
-		}
-		return defaultWorkspaceIdentityColor, nil
-	}
-	if hex := normalizeWorkspaceIdentityColor(trimmed); hex != "" {
-		return hex, nil
-	}
-	return "", errors.New("Invalid identity color.")
+	return candidate
 }
 
 func (s *workspaceStore) List() []workspaceProfile {
@@ -285,9 +204,14 @@ func (s *workspaceStore) List() []workspaceProfile {
 	defer s.mu.RUnlock()
 	out := make([]workspaceProfile, len(s.workspaces))
 	copy(out, s.workspaces)
-	sort.Slice(out, func(i, j int) bool {
-		return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
-	})
+	return out
+}
+
+func (s *workspaceStore) ListDismissed() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]string, len(s.dismissed))
+	copy(out, s.dismissed)
 	return out
 }
 
@@ -296,21 +220,22 @@ func (s *workspaceStore) Create(input saveWorkspaceRequest) (workspaceProfile, e
 	if err != nil {
 		return workspaceProfile{}, err
 	}
-	color, err := resolveColorOrDefault(input.Color, defaultWorkspaceIdentityColor)
-	if err != nil {
-		return workspaceProfile{}, err
-	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	name := s.resolveNameLocked(input.Name, folders[0].Path, "")
+	primaryPath := folders[0].Path
+	name := s.resolveNameLocked(input.Name, primaryPath, "")
+	color := normalizeWorkspaceIdentityColor(input.Color)
+	if color == "" {
+		color = defaultWorkspaceIdentityColor
+	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	wsFolders := make([]workspaceFolder, len(folders))
 	for idx, f := range folders {
 		wsFolders[idx] = workspaceFolder{
 			ID:        generateWorkspaceUUID(),
 			Path:      f.Path,
-			IsPrimary: idx == 0,
+			IsPrimary: f.IsPrimary,
 			Position:  idx,
 		}
 	}
@@ -323,47 +248,61 @@ func (s *workspaceStore) Create(input saveWorkspaceRequest) (workspaceProfile, e
 		UpdatedAt: now,
 	}
 	s.workspaces = append(s.workspaces, created)
+	for _, f := range created.Folders {
+		s.removeDismissedLocked(f.Path)
+	}
+	s.removeDismissedLocked(created.ID)
 	s.persistLocked()
 	return created, nil
 }
 
 func (s *workspaceStore) Update(id string, input saveWorkspaceRequest) (workspaceProfile, error) {
-	folders, err := validateWorkspaceFolders(input.Folders)
-	if err != nil {
-		return workspaceProfile{}, err
+	cleanID := strings.TrimSpace(id)
+	if cleanID == "" {
+		return workspaceProfile{}, errors.New("workspace ID is required")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	targetIdx := -1
 	for i, ws := range s.workspaces {
-		if ws.ID == id {
+		if ws.ID == cleanID {
 			targetIdx = i
 			break
 		}
 	}
-	if targetIdx < 0 && len(folders) > 0 {
-		primaryComp := comparableFolderPath(folders[0].Path)
+	if targetIdx == -1 {
+		compTarget := comparableFolderPath(cleanID)
 		for i, ws := range s.workspaces {
-			if len(ws.Folders) > 0 && comparableFolderPath(ws.Folders[0].Path) == primaryComp {
-				targetIdx = i
+			for _, f := range ws.Folders {
+				if comparableFolderPath(f.Path) == compTarget {
+					targetIdx = i
+					break
+				}
+			}
+			if targetIdx != -1 {
 				break
 			}
 		}
 	}
-	if targetIdx < 0 {
-		color, err := resolveColorOrDefault(input.Color, defaultWorkspaceIdentityColor)
+	if targetIdx == -1 {
+		folders, err := validateWorkspaceFolders(input.Folders)
 		if err != nil {
 			return workspaceProfile{}, err
 		}
-		name := s.resolveNameLocked(input.Name, folders[0].Path, "")
+		primaryPath := folders[0].Path
+		name := s.resolveNameLocked(input.Name, primaryPath, "")
+		color := normalizeWorkspaceIdentityColor(input.Color)
+		if color == "" {
+			color = defaultWorkspaceIdentityColor
+		}
 		now := time.Now().UTC().Format(time.RFC3339)
 		wsFolders := make([]workspaceFolder, len(folders))
 		for idx, f := range folders {
 			wsFolders[idx] = workspaceFolder{
 				ID:        generateWorkspaceUUID(),
 				Path:      f.Path,
-				IsPrimary: idx == 0,
+				IsPrimary: f.IsPrimary,
 				Position:  idx,
 			}
 		}
@@ -376,33 +315,42 @@ func (s *workspaceStore) Update(id string, input saveWorkspaceRequest) (workspac
 			UpdatedAt: now,
 		}
 		s.workspaces = append(s.workspaces, created)
+		for _, f := range created.Folders {
+			s.removeDismissedLocked(f.Path)
+		}
+		s.removeDismissedLocked(created.ID)
 		s.persistLocked()
 		return created, nil
 	}
 
 	before := s.workspaces[targetIdx]
-	color, err := resolveColorOrDefault(input.Color, before.Color)
+	folders, err := validateWorkspaceFolders(input.Folders)
 	if err != nil {
 		return workspaceProfile{}, err
 	}
-	name := before.Name
-	if strings.TrimSpace(input.Name) != "" {
-		name = s.resolveNameLocked(input.Name, folders[0].Path, before.ID)
+	primaryPath := folders[0].Path
+	name := s.resolveNameLocked(input.Name, primaryPath, before.ID)
+	color := normalizeWorkspaceIdentityColor(input.Color)
+	if color == "" {
+		color = before.Color
 	}
-	retainedIDs := make(map[string]string, len(before.Folders))
-	for _, f := range before.Folders {
-		retainedIDs[comparableFolderPath(f.Path)] = f.ID
+	if color == "" {
+		color = defaultWorkspaceIdentityColor
 	}
 	wsFolders := make([]workspaceFolder, len(folders))
+	existingMap := make(map[string]workspaceFolder, len(before.Folders))
+	for _, f := range before.Folders {
+		existingMap[comparableFolderPath(f.Path)] = f
+	}
 	for idx, f := range folders {
-		fID := retainedIDs[comparableFolderPath(f.Path)]
-		if fID == "" {
-			fID = generateWorkspaceUUID()
+		foundID := generateWorkspaceUUID()
+		if old, ok := existingMap[comparableFolderPath(f.Path)]; ok && old.ID != "" {
+			foundID = old.ID
 		}
 		wsFolders[idx] = workspaceFolder{
-			ID:        fID,
+			ID:        foundID,
 			Path:      f.Path,
-			IsPrimary: idx == 0,
+			IsPrimary: f.IsPrimary,
 			Position:  idx,
 		}
 	}
@@ -415,6 +363,10 @@ func (s *workspaceStore) Update(id string, input saveWorkspaceRequest) (workspac
 		UpdatedAt: time.Now().UTC().Format(time.RFC3339),
 	}
 	s.workspaces[targetIdx] = updated
+	for _, f := range updated.Folders {
+		s.removeDismissedLocked(f.Path)
+	}
+	s.removeDismissedLocked(updated.ID)
 	s.persistLocked()
 	return updated, nil
 }
@@ -431,17 +383,27 @@ func (s *workspaceStore) Remove(idOrPath string) bool {
 	next := make([]workspaceProfile, 0, len(s.workspaces))
 	removed := false
 	for _, ws := range s.workspaces {
-		matchPath := len(ws.Folders) > 0 && comparableFolderPath(ws.Folders[0].Path) == compTarget
+		matchPath := false
+		for _, f := range ws.Folders {
+			if comparableFolderPath(f.Path) == compTarget {
+				matchPath = true
+				break
+			}
+		}
 		if ws.ID == target || matchPath {
 			removed = true
+			s.addDismissedLocked(ws.ID)
+			for _, f := range ws.Folders {
+				s.addDismissedLocked(f.Path)
+			}
 			continue
 		}
 		next = append(next, ws)
 	}
-	if removed {
-		s.workspaces = next
-		s.persistLocked()
-	}
+
+	s.addDismissedLocked(target)
+	s.workspaces = next
+	s.persistLocked()
 	return removed
 }
 
@@ -451,7 +413,10 @@ func (s *workspaceStore) registerRoutes(mux *http.ServeMux) {
 		pathID = strings.TrimPrefix(pathID, "/")
 		switch r.Method {
 		case http.MethodGet:
-			writeJSON(w, http.StatusOK, map[string]any{"workspaces": s.List()})
+			writeJSON(w, http.StatusOK, map[string]any{
+				"workspaces": s.List(),
+				"dismissed":  s.ListDismissed(),
+			})
 		case http.MethodPost:
 			var req saveWorkspaceRequest
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -489,7 +454,11 @@ func (s *workspaceStore) registerRoutes(mux *http.ServeMux) {
 				id = strings.TrimSpace(r.URL.Query().Get("path"))
 			}
 			deleted := s.Remove(id)
-			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "deleted": deleted})
+			writeJSON(w, http.StatusOK, map[string]any{
+				"ok":        true,
+				"deleted":   deleted,
+				"dismissed": s.ListDismissed(),
+			})
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}

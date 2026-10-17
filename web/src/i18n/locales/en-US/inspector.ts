@@ -7,6 +7,8 @@ export const inspector: InspectorI18n = {
     memory: "Memory",
     files: "Files",
     terminal: "Terminal",
+    maximize: "Maximize Inspector (cover chat area)",
+    restore: "Restore split view",
   },
   diffs: {
     empty: "No code changes yet",

@@ -77,19 +77,23 @@ type HandoffSessionsResponse struct {
 }
 
 type HandoffImportRequest struct {
-	Source          ExternalToolID `json:"source"`
-	SessionID       string         `json:"sessionID"`
-	SourceCWD       string         `json:"sourceCwd,omitempty"`
-	TargetDirectory string         `json:"targetDirectory,omitempty"`
+	Source              ExternalToolID `json:"source"`
+	SessionID           string         `json:"sessionID"`
+	SourceCWD           string         `json:"sourceCwd,omitempty"`
+	TargetDirectory     string         `json:"targetDirectory,omitempty"`
+	PreferredProviderID string         `json:"preferredProviderID,omitempty"`
+	PreferredModelID    string         `json:"preferredModelID,omitempty"`
 }
 
 type HandoffImportResponse struct {
-	OK              bool                   `json:"ok"`
-	Session         map[string]interface{} `json:"session,omitempty"`
-	ImportedTurns   int                    `json:"importedTurns"`
-	MemoryPath      string                 `json:"memoryPath,omitempty"`
-	TargetDirectory string                 `json:"targetDirectory,omitempty"`
-	Error           string                 `json:"error,omitempty"`
+	OK                 bool                   `json:"ok"`
+	Session            map[string]interface{} `json:"session,omitempty"`
+	ImportedTurns      int                    `json:"importedTurns"`
+	MemoryPath         string                 `json:"memoryPath,omitempty"`
+	TargetDirectory    string                 `json:"targetDirectory,omitempty"`
+	ResolvedProviderID string                 `json:"resolvedProviderID,omitempty"`
+	ResolvedModelID    string                 `json:"resolvedModelID,omitempty"`
+	Error              string                 `json:"error,omitempty"`
 }
 
 type LocalCLIStatusItem struct {

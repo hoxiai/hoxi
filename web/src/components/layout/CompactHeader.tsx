@@ -1,10 +1,8 @@
 import { createMemo, createSignal, onCleanup, onMount, Show } from "solid-js";
 import {
   Activity,
-  KeyRound,
   Moon,
-  PanelRightClose,
-  PanelRightOpen,
+  PanelRight,
   RotateCcw,
   Sun,
 } from "lucide-solid";
@@ -12,7 +10,6 @@ import {
   activeSession,
   isSessionBusy,
   openEditWorkspaceModal,
-  setWorkspace,
   toggleTheme,
   undoRevert,
   workspace,
@@ -22,6 +19,7 @@ import { hoxiAPI } from "../../services/api";
 import { Spinner, TextShimmer } from "../icons";
 import { t } from "../../i18n";
 import BranchManagerPopover from "./BranchManagerPopover";
+import DevPulsePopover from "./DevPulsePopover";
 
 interface CompactHeaderProps {
   inspectorOpen: boolean;
@@ -124,20 +122,7 @@ export default function CompactHeader(props: CompactHeaderProps) {
           </span>
         </Show>
 
-        <button
-          class="inline-flex items-center gap-1.5 rounded-full bg-[var(--bg-inset)] hover:bg-[var(--bg-hover)] px-2.5 py-1 text-[11px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
-          style={{ "--wails-draggable": "no-drag" } as any}
-          onClick={() => setWorkspace("providerModalOpen", true)}
-          title={t("header.modelsTooltip")}
-        >
-          <KeyRound size={11.5} class="text-[var(--accent-primary)]" />
-          <span>{t("header.modelsBtn")}</span>
-          <Show when={workspace.connectedProviders.length > 0}>
-            <span class="rounded-full bg-[var(--accent-surface)] px-1.5 py-[0.5px] font-mono text-[10px] text-[var(--accent-text)]">
-              {workspace.connectedProviders.length}
-            </span>
-          </Show>
-        </button>
+        <DevPulsePopover />
 
         <div class="flex items-center gap-1.5 rounded-full bg-[var(--bg-inset)] px-2.5 py-1">
           <Show
@@ -178,7 +163,7 @@ export default function CompactHeader(props: CompactHeaderProps) {
         </button>
 
         <button
-          class={`inline-flex items-center gap-1.5 h-7 px-2 rounded-lg text-[11px] font-medium transition-colors ${
+          class={`inline-flex items-center gap-1.5 h-7 px-2 rounded-lg text-[11px] font-medium transition-colors cursor-pointer ${
             props.inspectorOpen
               ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]"
               : "text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
@@ -187,7 +172,7 @@ export default function CompactHeader(props: CompactHeaderProps) {
           onClick={props.onToggleInspector}
           title={props.inspectorOpen ? t("header.inspectorHide") : t("header.inspectorShow")}
         >
-          {props.inspectorOpen ? <PanelRightClose size={14} /> : <PanelRightOpen size={14} />}
+          <PanelRight size={15} />
           <Show when={diffCount() > 0}>
             <span class="rounded-full bg-[var(--accent-surface)] px-1.5 py-[1px] font-mono text-[10px] text-[var(--accent-primary)]">
               {diffCount()}

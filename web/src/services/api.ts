@@ -59,6 +59,17 @@ export const hoxiAPI = {
     return requestJSON("/api/hoxi/system-info");
   },
 
+  getGitDailyPulse(
+    directory?: string,
+    sessionID?: string
+  ): Promise<import("./api-types").GitDailyPulseResponse> {
+    const params = new URLSearchParams();
+    if (directory) params.set("directory", directory);
+    if (sessionID) params.set("sessionID", sessionID);
+    const qs = params.toString();
+    return requestJSON(`/api/hoxi/dev-pulse${qs ? `?${qs}` : ""}`);
+  },
+
   // Sessions
   listSessions(directory?: string): Promise<SessionInfo[]> {
     return requestJSON(withDir("/session?limit=50", directory));
@@ -363,7 +374,7 @@ export const hoxiAPI = {
   listProjects(): Promise<ProjectInfo[]> {
     return requestJSON("/project");
   },
-  listWorkspaces(): Promise<{ workspaces: WorkspaceProfile[] }> {
+  listWorkspaces(): Promise<{ workspaces: WorkspaceProfile[]; dismissed?: string[] }> {
     return requestJSON("/api/hoxi/workspaces");
   },
   createWorkspace(input: SaveWorkspaceInput): Promise<WorkspaceProfile> {
@@ -372,7 +383,7 @@ export const hoxiAPI = {
   updateWorkspace(id: string, input: SaveWorkspaceInput): Promise<WorkspaceProfile> {
     return requestJSON(`/api/hoxi/workspaces/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(input) });
   },
-  deleteWorkspace(id: string): Promise<{ ok: boolean }> {
+  deleteWorkspace(id: string): Promise<{ ok: boolean; deleted?: boolean; dismissed?: string[] }> {
     return requestJSON(`/api/hoxi/workspaces/${encodeURIComponent(id)}`, { method: "DELETE" });
   },
   openDirectoryDialog(): Promise<{ path: string; error?: string }> {
@@ -440,6 +451,8 @@ export const hoxiAPI = {
     sessionID: string;
     sourceCwd?: string;
     targetDirectory?: string;
+    preferredProviderID?: string;
+    preferredModelID?: string;
   }): Promise<import("./api-types").HandoffImportResponse> {
     return requestJSON("/api/hoxi/handoff/import", { method: "POST", body: JSON.stringify(req) });
   },

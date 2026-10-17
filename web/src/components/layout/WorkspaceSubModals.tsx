@@ -4,6 +4,7 @@ import type { WorkspaceFolderInput, WorkspaceProfile } from "../../services/api"
 import {
   closeWorkspaceModal,
   DEFAULT_WORKSPACE_IDENTITY_COLOR,
+  isDismissedProjectPath,
   normalizeFolderPath,
   normalizeWorkspaceIdentityColor,
   openCreateWorkspaceModal,
@@ -104,7 +105,9 @@ export function ManageWorkspacesModalView() {
     const coveredDirs = new Set<string>();
 
     for (const saved of workspace.savedWorkspaces) {
+      if (isDismissedProjectPath(saved.id)) continue;
       const primary = workspacePrimaryFolder(saved);
+      if (isDismissedProjectPath(primary)) continue;
       for (const f of saved.folders) {
         coveredDirs.add(normalizeFolderPath(f.path));
       }
@@ -124,7 +127,7 @@ export function ManageWorkspacesModalView() {
     for (const p of workspace.projects) extraDirs.add(normalizeFolderPath(p.worktree));
 
     for (const dir of extraDirs) {
-      if (!dir || coveredDirs.has(dir)) continue;
+      if (!dir || isDismissedProjectPath(dir) || coveredDirs.has(dir)) continue;
       const proj = workspace.projects.find(
         (p) => normalizeFolderPath(p.worktree) === dir
       );

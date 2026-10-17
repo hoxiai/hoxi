@@ -103,7 +103,7 @@ func (g *desktopGateway) materializeExternalSession(ctx context.Context, req Han
 		return HandoffImportResponse{}, fmt.Errorf("opencode returned empty session id")
 	}
 
-	providerID, modelID := g.resolveDefaultHandoffModel(detail.Summary)
+	providerID, modelID := g.resolveDefaultHandoffModel(detail.Summary, req)
 	if err := insertNormalizedTurnsToOpenCodeDB(newSessionID, targetDir, providerID, modelID, detail); err != nil {
 		return HandoffImportResponse{}, fmt.Errorf("insert session history: %w", err)
 	}
@@ -113,20 +113,19 @@ func (g *desktopGateway) materializeExternalSession(ctx context.Context, req Han
 	_ = writeEightDimHandoffMemory(absMemPath, newSessionID, targetDir, detail)
 
 	return HandoffImportResponse{
-		OK:              true,
-		Session:         sessionObj,
-		ImportedTurns:   len(detail.Turns),
-		MemoryPath:      relMemPath,
-		TargetDirectory: targetDir,
+		OK:                 true,
+		Session:            sessionObj,
+		ImportedTurns:      len(detail.Turns),
+		MemoryPath:         relMemPath,
+		TargetDirectory:    targetDir,
+		ResolvedProviderID: providerID,
+		ResolvedModelID:    modelID,
 	}, nil
 }
 
 func dirExists(p string) bool {
-	if p == "" {
-		return false
-	}
 	st, err := os.Stat(p)
-	return err == nil && st.IsDir()
+	return p != "" && err == nil && st.IsDir()
 }
 
 func (g *desktopGateway) createOpenCodeSessionInDir(ctx context.Context, targetDir, title string) (map[string]interface{}, error) {
@@ -159,27 +158,20 @@ func (g *desktopGateway) createOpenCodeSessionInDir(ctx context.Context, targetD
 	return sessionObj, nil
 }
 
-func (g *desktopGateway) resolveDefaultHandoffModel(sum ExternalSessionSummary) (string, string) {
-	hoxiMap := g.loadHoxiProvidersMap()
-	if sum.Source == ExternalToolGrok {
-		if _, ok := hoxiMap["grok-cli"]; ok {
-			m := sum.Model
-			if m == "" {
-				m = "grok-4.7"
-			}
-			return "grok-cli", m
-		}
+func (g *desktopGateway) resolveDefaultHandoffModel(sum ExternalSessionSummary, req HandoffImportRequest) (string, string) {
+	if strings.TrimSpace(req.PreferredProviderID) != "" && strings.TrimSpace(req.PreferredModelID) != "" {
+		return strings.TrimSpace(req.PreferredProviderID), strings.TrimSpace(req.PreferredModelID)
 	}
-	if sum.Source == ExternalToolClaude {
-		if _, ok := hoxiMap["claude-code"]; ok {
-			m := sum.Model
-			if m == "" {
-				m = "claude-sonnet-4-6"
-			}
-			return "claude-code", m
-		}
+	switch sum.Source {
+	case ExternalToolGrok:
+		return "grok-cli", firstNonEmpty(sum.Model, "grok-4.7")
+	case ExternalToolClaude:
+		return "claude-code", firstNonEmpty(sum.Model, "claude-sonnet-4-6")
+	case ExternalToolCodex:
+		return "openai", firstNonEmpty(sum.Model, "gpt-5.3-codex")
+	default:
+		return "opencode", "deepseek-v4.1-flash-free"
 	}
-	return "opencode", "deepseek-v4.1-flash-free"
 }
 
 func insertNormalizedTurnsToOpenCodeDB(

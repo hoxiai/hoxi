@@ -50,6 +50,7 @@ export interface WorkspaceState {
   wsBaseURL: string;
   projects: ProjectInfo[];
   savedWorkspaces: WorkspaceProfile[];
+  dismissedProjects: string[];
   recentProjects: string[];
   projectOrder: string[];
   sessions: SessionInfo[];
@@ -61,6 +62,7 @@ export interface WorkspaceState {
   sidebarProjectMode: "single" | "multi";
   inspectorTab: "diffs" | "memory" | "files" | "terminal";
   inspectorOpen: boolean;
+  inspectorMaximized: boolean;
   inspectedFilePath: string | null;
   inspectedDiffFile: string | null;
   activeInspectorFolder: string | null;
@@ -110,6 +112,19 @@ export const PROJECT_ORDER_KEY = "hoxi-project-order:v1";
 export const SIDEBAR_PROJECT_MODE_KEY = "hoxi-sidebar-project-mode:v1";
 export const SESSION_SANDBOX_MODE_KEY = "hoxi-session-sandbox-mode:v1";
 export const ARCHIVED_SESSIONS_KEY = "hoxi-archived-sessions:v1";
+export const DISMISSED_PROJECTS_KEY = "hoxi-dismissed-projects:v1";
+
+function initialDismissedProjects(): string[] {
+  try {
+    const raw = localStorage.getItem(DISMISSED_PROJECTS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed.map((p) => String(p));
+  } catch {
+    /* ignore */
+  }
+  return [];
+}
 
 function initialTheme(): "light" | "dark" {
   try {
@@ -229,6 +244,7 @@ export const [workspace, setWorkspace] = createStore<WorkspaceState>({
   wsBaseURL: "",
   projects: [],
   savedWorkspaces: [],
+  dismissedProjects: initialDismissedProjects(),
   recentProjects: initialRecentProjects(),
   projectOrder: initialProjectOrder(),
   sessions: [],
@@ -240,6 +256,7 @@ export const [workspace, setWorkspace] = createStore<WorkspaceState>({
   sidebarProjectMode: initialSidebarProjectMode(),
   inspectorTab: "diffs",
   inspectorOpen: false,
+  inspectorMaximized: false,
   inspectedFilePath: null,
   inspectedDiffFile: null,
   activeInspectorFolder: null,
@@ -426,5 +443,7 @@ export * from "./session-title";
 export * from "./provider-telemetry";
 export * from "./provider-audit";
 export * from "./settings";
+export * from "./daily-pulse";
+
 
 

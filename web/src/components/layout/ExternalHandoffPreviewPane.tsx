@@ -23,11 +23,21 @@ export function handoffSourceBadgeClass(source: ExternalToolID): string {
   return "bg-emerald-500/15 text-emerald-400 border-emerald-500/30";
 }
 
+export function defaultSourceModel(source: ExternalToolID, rawModel?: string): string {
+  if (rawModel) return rawModel;
+  if (source === "grok-cli") return "grok-4.7";
+  if (source === "claude-code") return "claude-sonnet-4-6";
+  return "gpt-5.3-codex";
+}
+
 export default function ExternalHandoffPreviewPane(props: {
   selectedItem: ExternalSessionSummary | null;
   detail: ExternalSessionDetail | null;
   loadingDetail: boolean;
   importingSession: boolean;
+  modelMode: "original" | "local";
+  onChangeModelMode: (mode: "original" | "local") => void;
+  localModelLabel: string;
   onTakeOver: () => void;
 }) {
   return (
@@ -194,9 +204,34 @@ export default function ExternalHandoffPreviewPane(props: {
             </div>
 
             {/* Footer Action Bar */}
-            <div class="flex items-center justify-between border-t border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-5 py-3">
-              <div class="text-[11.5px] text-[var(--text-muted)] truncate">
-                {shortenPath(cur().cwd)}
+            <div class="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-5 py-3">
+              <div class="inline-flex rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)] p-0.5 text-[11px]">
+                <button
+                  type="button"
+                  onClick={() => props.onChangeModelMode("original")}
+                  class={`rounded-lg px-2.5 py-1 font-medium transition-colors cursor-pointer ${
+                    props.modelMode === "original"
+                      ? "bg-[var(--bg-elevated)] text-[var(--text-primary)] shadow-2xs"
+                      : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                  }`}
+                >
+                  {t("leftNav.handoffModelModeOriginal", {
+                    model: defaultSourceModel(cur().source, cur().model),
+                  })}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => props.onChangeModelMode("local")}
+                  class={`rounded-lg px-2.5 py-1 font-medium transition-colors cursor-pointer ${
+                    props.modelMode === "local"
+                      ? "bg-[var(--bg-elevated)] text-[var(--text-primary)] shadow-2xs"
+                      : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                  }`}
+                >
+                  {t("leftNav.handoffModelModeLocal", {
+                    model: props.localModelLabel,
+                  })}
+                </button>
               </div>
               <button
                 type="button"
