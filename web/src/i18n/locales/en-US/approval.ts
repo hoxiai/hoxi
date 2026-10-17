@@ -22,4 +22,8 @@ export const approval: ApprovalI18n = {
   confirmHint: "Select options and confirm to proceed",
   skipQuestion: "Skip",
   submitAnswer: "Submit Answer",
+  openDiffInInspector: "Open in Diff Inspector",
+  autoApproveRules: "Auto-approve rules ({count})",
+  ruleAlwaysAllow: "Always Allow",
+  ruleAlwaysDeny: "Always Deny",
 };

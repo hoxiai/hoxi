@@ -26,6 +26,12 @@ export const inspector: InspectorI18n = {
     noPatch: "(no patch payload for this file)",
     revertFileTooltip: "Revert changes to this file",
     revertFileBtn: "Revert",
+    commitPlaceholder: "Commit message (e.g. feat: add worktree isolation)…",
+    generateCommitTooltip: "Generate Conventional Commit message from diffs",
+    generateCommitBtn: "AI Message",
+    commitBtn: "Commit ({count})",
+    committing: "Committing…",
+    commitSuccess: "Committed {hash}",
   },
   memory: {
     title: "8-Dimension Structured Memory",

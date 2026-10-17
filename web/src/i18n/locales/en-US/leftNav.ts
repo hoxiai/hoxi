@@ -19,4 +19,6 @@ export const leftNav: LeftNavI18n = {
   switchSidebarMode: "Switch sidebar mode",
   filterPlaceholder: "Filter projects or sessions",
   deleteSessionTooltip: "Delete session",
+  renameSessionTooltip: "Rename session (or double-click title)",
+  renamePlaceholder: "Session title…",
 };

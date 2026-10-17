@@ -50,9 +50,9 @@ export default function AgentPolicyMcpTab() {
         webfetch: permWebfetch(),
       };
       await hoxiAPI.updateGlobalConfig({ ...cfg, permission: nextPerm });
-      setFeedback({ ok: true, text: "Updated Auto-Approve permission policy!" });
+      setFeedback({ ok: true, text: t("models.policyUpdated") });
     } catch (err: any) {
-      setFeedback({ ok: false, text: err?.message || "Failed to update permissions." });
+      setFeedback({ ok: false, text: err?.message || t("models.policyUpdateFailed") });
     } finally {
       setSaving(false);
     }
@@ -76,9 +76,9 @@ export default function AgentPolicyMcpTab() {
       setMcpServers(nextMcp);
       setMcpName("");
       setMcpTarget("");
-      setFeedback({ ok: true, text: `Added MCP server "${id}"!` });
+      setFeedback({ ok: true, text: t("models.mcpAdded", { id }) });
     } catch (err: any) {
-      setFeedback({ ok: false, text: err?.message || "Failed to add MCP server." });
+      setFeedback({ ok: false, text: err?.message || t("models.mcpAddFailed") });
     } finally {
       setSaving(false);
     }
@@ -93,9 +93,9 @@ export default function AgentPolicyMcpTab() {
       delete nextMcp[id];
       await hoxiAPI.updateGlobalConfig({ ...cfg, mcp: nextMcp });
       setMcpServers(nextMcp);
-      setFeedback({ ok: true, text: `Removed MCP server "${id}".` });
+      setFeedback({ ok: true, text: t("models.mcpRemoved", { id }) });
     } catch (err: any) {
-      setFeedback({ ok: false, text: err?.message || "Failed to remove MCP server." });
+      setFeedback({ ok: false, text: err?.message || t("models.mcpRemoveFailed") });
     } finally {
       setSaving(false);
     }
@@ -131,7 +131,7 @@ export default function AgentPolicyMcpTab() {
             <div class="text-[12px] font-medium text-[var(--text-primary)]">
               {t("models.fileEdits")}
             </div>
-            <div class="text-[11px] text-[var(--text-muted)]">edit, write, patch</div>
+            <div class="text-[11px] text-[var(--text-muted)]">{t("models.fileEditsHint")}</div>
             <div class="inline-flex rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-0.5 w-full">
               <For each={["allow", "ask"] as PermMode[]}>
                 {(m) => (
@@ -156,7 +156,7 @@ export default function AgentPolicyMcpTab() {
             <div class="text-[12px] font-medium text-[var(--text-primary)]">
               {t("models.shellCommands")}
             </div>
-            <div class="text-[11px] text-[var(--text-muted)]">bash, terminal execution</div>
+            <div class="text-[11px] text-[var(--text-muted)]">{t("models.shellCommandsHint")}</div>
             <div class="inline-flex rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-0.5 w-full">
               <For each={["allow", "ask"] as PermMode[]}>
                 {(m) => (
@@ -179,7 +179,7 @@ export default function AgentPolicyMcpTab() {
           {/* WebFetch Policy */}
           <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)] p-3 space-y-2">
             <div class="text-[12px] font-medium text-[var(--text-primary)]">{t("models.webFetch")}</div>
-            <div class="text-[11px] text-[var(--text-muted)]">webfetch, external docs</div>
+            <div class="text-[11px] text-[var(--text-muted)]">{t("models.webFetchHint")}</div>
             <div class="inline-flex rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-0.5 w-full">
               <For each={["allow", "ask"] as PermMode[]}>
                 {(m) => (
@@ -276,7 +276,7 @@ export default function AgentPolicyMcpTab() {
                     type="button"
                     onClick={() => void onRemoveMcpServer(id)}
                     class="text-[var(--text-muted)] hover:text-[var(--danger-text)] p-1 cursor-pointer"
-                    title="Remove MCP server"
+                    title={t("models.removeMcpTooltip")}
                   >
                     <Trash2 size={13} />
                   </button>

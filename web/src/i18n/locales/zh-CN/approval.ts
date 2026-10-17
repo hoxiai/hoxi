@@ -21,4 +21,8 @@ export const approval: ApprovalI18n = {
   confirmHint: "选择后点击确认继续执行",
   skipQuestion: "跳过",
   submitAnswer: "提交回答",
+  openDiffInInspector: "在右侧 Diff 检视器中查看",
+  autoApproveRules: "细粒度放行规则 ({count})",
+  ruleAlwaysAllow: "总是允许",
+  ruleAlwaysDeny: "总是拒绝",
 };

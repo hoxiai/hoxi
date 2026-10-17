@@ -22,7 +22,9 @@ import {
 import ApprovalGateCard from "../approval/ApprovalGateCard";
 import QuestionDock from "../approval/QuestionDock";
 import { DiffChanges, FileIcon, Spinner, TextShimmer } from "../icons";
+import AgentStackPill from "./AgentStackPill";
 import PlanFollowupBar from "./PlanFollowupBar";
+import RevertBanner from "./RevertBanner";
 import { t } from "../../i18n";
 
 interface TodoItem {
@@ -124,6 +126,12 @@ export default function ComposerShelf() {
         </div>
       </Show>
 
+      {/* Kilo RevertBanner: Checkpoint Time-Travel Status & Redo Bar */}
+      <div class="mb-2 space-y-2">
+        <RevertBanner />
+        <AgentStackPill />
+      </div>
+
       {/* Kilo Plan Follow-up Suggestion Bar */}
       <PlanFollowupBar />
 
@@ -147,12 +155,13 @@ export default function ComposerShelf() {
                 >
                   <MessageSquareText size={13} class="text-[var(--accent-primary)] shrink-0" />
                   <span class="font-semibold text-[var(--text-primary)]">
-                    {reviewComments().length}{" "}
-                    {reviewComments().length === 1 ? "review comment" : "review comments"}
+                    {reviewComments().length === 1
+                      ? t("timeline.reviewCommentSingular", { count: reviewComments().length })
+                      : t("timeline.reviewCommentPlural", { count: reviewComments().length })}
                   </span>
                   <Show when={reviewFileCount() > 1}>
                     <span class="text-[11px] text-[var(--text-muted)]">
-                      · {reviewFileCount()} files
+                      {t("timeline.filesCount", { count: reviewFileCount() })}
                     </span>
                   </Show>
                   <span class="text-[var(--text-muted)]">
@@ -169,7 +178,7 @@ export default function ComposerShelf() {
                       if (id) clearReviewComments(id);
                     }}
                   >
-                    Clear all
+                    {t("timeline.clearAll")}
                   </button>
                 </div>
               </div>
@@ -235,7 +244,10 @@ export default function ComposerShelf() {
                     </span>
                   </Show>
                   <span class="font-medium text-[var(--text-primary)] shrink-0">
-                    Tasks · {completedTodoCount()}/{todos().length}
+                    {t("timeline.tasksProgress", {
+                      completed: completedTodoCount(),
+                      total: todos().length,
+                    })}
                   </span>
                   <Show when={!todosExpanded() && activeTodo()}>
                     <span class="text-[var(--text-muted)] truncate inline-flex items-center gap-1 min-w-0">
@@ -309,8 +321,7 @@ export default function ComposerShelf() {
               <div class="flex items-center gap-2 text-[var(--text-secondary)]">
                 <FileDiff size={13} class="text-[var(--accent-primary)]" />
                 <span class="font-medium text-[var(--text-primary)]">
-                  {sessionDiffs().length}{" "}
-                  {sessionDiffs().length === 1 ? "file changed" : "files changed"}
+                  {t("timeline.filesChangedCount", { count: sessionDiffs().length })}
                 </span>
                 <DiffChanges changes={diffTotals()} />
                 <DiffChanges changes={diffTotals()} variant="bars" />
@@ -320,7 +331,7 @@ export default function ComposerShelf() {
                 class="inline-flex items-center gap-1 rounded-lg px-2 py-0.5 text-[11px] font-medium text-[var(--accent-primary)] hover:bg-[var(--accent-surface)] transition-colors cursor-pointer"
                 onClick={() => openDiffInInspector()}
               >
-                Review Diffs
+                {t("timeline.reviewDiffs")}
               </button>
             </div>
           </Show>

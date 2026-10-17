@@ -104,6 +104,13 @@ Never fork or modify OpenCode internals. OpenCode executes as an external, prist
 │   │   │   │   └── WebGLTerminal.tsx     # GPU-accelerated Xterm connected to /pty WS
 │   │   │   └── approval/
 │   │   │       └── ApprovalGateCard.tsx  # Inline permission.asked confirmation card
+│   │   ├── i18n/
+│   │   │   ├── index.ts                  # Reactive t(key, params) & locale signal
+│   │   │   ├── types.ts                  # Strongly-typed domain i18n interfaces (TxKey)
+│   │   │   ├── validator.ts              # Key & placeholder parity validator
+│   │   │   └── locales/
+│   │   │       ├── en-US/                # Modular English dictionaries by domain
+│   │   │       └── zh-CN/                # Modular Chinese dictionaries by domain
 │   │   ├── services/
 │   │   │   ├── sse-types.ts              # OpenCode v1.18+ event & part TypeScript contracts
 │   │   │   ├── sse.ts                    # /event SSE client with rAF batching
@@ -112,6 +119,8 @@ Never fork or modify OpenCode internals. OpenCode executes as an external, prist
 │   │   │   └── workspace.ts              # SolidJS reactive store
 │   │   ├── App.tsx                       # Root layout assembly
 │   │   └── index.tsx                     # SolidJS entry
+│   ├── scripts/
+│   │   └── check-i18n.ts                 # CLI parity checker for all locales
 │   ├── package.json
 │   ├── vite.config.ts
 │   └── dist/                             # Compiled web bundle for Wails embed
@@ -146,9 +155,9 @@ Never fork or modify OpenCode internals. OpenCode executes as an external, prist
   ```bash
   go run ./cmd/hoxi --no-desktop
   ```
-- **Sync Web Build**:
+- **Sync Web Build & Validate i18n**:
   ```bash
-  npm --prefix web run build
+  npm --prefix web run check:i18n && npm --prefix web run build
   ```
 
 ---
@@ -177,6 +186,12 @@ Never fork or modify OpenCode internals. OpenCode executes as an external, prist
    - 包含破坏性指令（`rm`, `sudo`, `chmod`, `chown`, `diskutil`, `mkfs`, `git push --force`, `git reset --hard`）的 Shell 操作严禁自动放行，必须在 `hoxi-permissions.js` 中返回 `"ask"`，触发状态栏 `Attention` 与 `<ApprovalGateCard />` 人工确认。
    - Go 网关仅监听 `127.0.0.1`，反向代理 `http.Transport` 必须配置 `Proxy: nil`（防系统代理 502）与 `FlushInterval: -1`（SSE 零缓冲），并在进程内自动注入随机生成的 `OPENCODE_SERVER_PASSWORD`。
 
-7. **修改后必验闭环 (Verification Before Done)**
-   - 每次代码变更完成后，必须通过类型检查与构建验证（前端执行 `npx --prefix web tsc --noEmit` 与 `npm --prefix web run build`，后端执行 `go build ./...`），确保零编译错误。
+7. **多语言包模块化与强类型对齐规范 (Modular i18n & Parity Constraint)**
+   - **禁止内联硬编码文案**：严禁在 UI 组件中使用 `locale() === "zh-CN" ? "..." : "..."` 三元硬编码或裸写中英文文案；所有用户可见文案必须统一通过 `web/src/i18n` 的 `t("domain.key", params)` 调用。
+   - **按领域模块化拆分**：语言包按领域拆分存放在 `web/src/i18n/locales/en-US/<domain>.ts` 与 `web/src/i18n/locales/zh-CN/<domain>.ts`（如 `common`, `header`, `leftNav`, `timeline`, `toolCard`, `approval`, `inspector`, `models`），禁止退化为巨型单文件字典。
+   - **强类型契约与双语 100% 对齐**：新增或修改任何翻译词条时，必须同步更新 `web/src/i18n/types.ts` 接口定义以及 `en-US` / `zh-CN` 对应模块，确保键名与 `{param}` 插值占位符完全一致，并通过 `npm --prefix web run check:i18n` 校验。
+
+8. **修改后必验闭环 (Verification Before Done)**
+   - 每次代码变更完成后，必须通过类型检查、语言包校验与构建验证（前端执行 `npx --prefix web tsc -p web/tsconfig.json --noEmit`、`npm --prefix web run check:i18n` 与 `npm --prefix web run build`，后端执行 `go build ./...`），确保零编译错误与零词条缺失。
+
 

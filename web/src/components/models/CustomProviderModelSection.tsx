@@ -16,6 +16,37 @@ interface CustomProviderModelSectionProps {
   setHeaders: Setter<Array<{ key: string; value: string }>>;
 }
 
+export function guessFetchedModelDraft(rm: { id: string; name: string }): CustomProviderModelDraft {
+  const lower = rm.id.toLowerCase();
+  const reasoning =
+    lower.includes("reason") ||
+    lower.includes("r1") ||
+    lower.includes("thinking") ||
+    lower.includes("opus") ||
+    lower.includes("sonnet") ||
+    lower.includes("o1") ||
+    lower.includes("o3") ||
+    lower.includes("gpt-5") ||
+    lower.includes("gpt-6") ||
+    lower.includes("gemini") ||
+    lower.includes("deepseek") ||
+    lower.includes("glm");
+  const image =
+    lower.includes("vision") ||
+    lower.includes("vl") ||
+    lower.includes("claude") ||
+    lower.includes("gpt-4") ||
+    lower.includes("gpt-5") ||
+    lower.includes("gpt-6") ||
+    lower.includes("gemini");
+  return {
+    id: rm.id,
+    name: rm.name || rm.id,
+    reasoning,
+    image,
+  };
+}
+
 export default function CustomProviderModelSection(props: CustomProviderModelSectionProps) {
   const [fetchSearch, setFetchSearch] = createSignal("");
 
@@ -184,7 +215,7 @@ export default function CustomProviderModelSection(props: CustomProviderModelSec
               <div class="flex items-center gap-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/50 px-2.5 py-1.5">
                 <input
                   type="text"
-                  placeholder={t("models.modelId") + " (如 deepseek-v4.1-flash)"}
+                  placeholder={`${t("models.modelId")} (${t("models.modelIdPlaceholder")})`}
                   value={row.id}
                   onInput={(e) => {
                     const val = e.currentTarget.value;

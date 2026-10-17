@@ -3,12 +3,9 @@ import { createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-j
 import {
   Check,
   ChevronDown,
-  Clock,
   Cpu,
   Image,
   KeyRound,
-  Pencil,
-  Plus,
   Search,
   Sparkles,
   Star,
@@ -28,6 +25,7 @@ import {
   extractFlattenedModels,
   formatTokenLimit,
   ModelPreviewFooter,
+  ModelSelectorRail,
   rankModelSearch,
   type FlattenedModel,
 } from "./model-selector-utils";
@@ -54,11 +52,9 @@ export default function ModelSelector() {
     extractFlattenedModels(workspace.providers, connectedSet(), workspace.globalConfig)
   );
 
-  // Only show connected providers' models by default (Kilo pattern)
   const connectedModels = createMemo<FlattenedModel[]>(() => {
     const conn = allModels().filter((m) => m.connected);
     if (conn.length > 0) return conn;
-    // Fallback to free opencode models or first 30 models if nothing connected yet
     const freeModels = allModels().filter((m) => m.providerID === "opencode" || m.free);
     return freeModels.length > 0 ? freeModels : allModels().slice(0, 30);
   });
@@ -189,7 +185,6 @@ export default function ModelSelector() {
 
   return (
     <div ref={containerRef} class="relative">
-      {/* Trigger Pill inside Composer */}
       <button
         type="button"
         onClick={toggleOpen}
@@ -213,145 +208,24 @@ export default function ModelSelector() {
         <ChevronDown size={12} class="shrink-0 opacity-60" />
       </button>
 
-      {/* Kilo Two-Column Model Selector Popover */}
       <Show when={open()}>
         <div
           onKeyDown={handleKeyDown}
           class="absolute bottom-full left-0 z-40 mb-2 flex h-[410px] w-[520px] flex-col overflow-hidden rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-panel)] shadow-2xl"
         >
           <div class="flex flex-1 min-h-0">
-            {/* Left Provider Rail */}
-            <div class="w-[172px] shrink-0 border-r border-[var(--border-subtle)] bg-[var(--bg-elevated)]/40 flex flex-col justify-between p-1.5">
-              <div class="overflow-y-auto space-y-0.5 pr-0.5">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setRail("connected");
-                    setActiveIndex(0);
-                  }}
-                  class={`w-full flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[11.5px] transition-colors cursor-pointer ${
-                    rail() === "connected" && !query()
-                      ? "bg-[var(--accent-surface)] text-[var(--accent-primary)] font-medium"
-                      : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
-                  }`}
-                >
-                  <span class="flex items-center gap-2 truncate">
-                    <span class="h-1.5 w-1.5 rounded-full bg-[var(--ok)] shrink-0" />
-                    <span class="truncate">{t("models.allConnected")}</span>
-                  </span>
-                  <span class="font-mono text-[10px] opacity-70">{connectedModels().length}</span>
-                </button>
+            <ModelSelectorRail
+              rail={rail()}
+              hasQuery={Boolean(query().trim())}
+              connectedTotal={connectedModels().length}
+              providers={connectedProviderRails()}
+              onSelectRail={(r) => {
+                setRail(r);
+                setActiveIndex(0);
+              }}
+              onClosePopover={() => setOpen(false)}
+            />
 
-                <button
-                  type="button"
-                  onClick={() => {
-                    setRail("favorites");
-                    setActiveIndex(0);
-                  }}
-                  class={`w-full flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[11.5px] transition-colors cursor-pointer ${
-                    rail() === "favorites" && !query()
-                      ? "bg-[var(--accent-surface)] text-[var(--accent-primary)] font-medium"
-                      : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
-                  }`}
-                >
-                  <span class="flex items-center gap-2 truncate">
-                    <Star size={12} class="shrink-0 text-amber-500" />
-                    <span class="truncate">{t("models.favorites")}</span>
-                  </span>
-                  <span class="font-mono text-[10px] opacity-70">
-                    {workspace.favoriteModels.length}
-                  </span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setRail("recent");
-                    setActiveIndex(0);
-                  }}
-                  class={`w-full flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[11.5px] transition-colors cursor-pointer ${
-                    rail() === "recent" && !query()
-                      ? "bg-[var(--accent-surface)] text-[var(--accent-primary)] font-medium"
-                      : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
-                  }`}
-                >
-                  <span class="flex items-center gap-2 truncate">
-                    <Clock size={12} class="shrink-0 text-[var(--text-muted)]" />
-                    <span class="truncate">{t("models.recent")}</span>
-                  </span>
-                  <span class="font-mono text-[10px] opacity-70">
-                    {workspace.recentModels.length}
-                  </span>
-                </button>
-
-                <div class="my-1 border-t border-[var(--border-subtle)]" />
-
-                <For each={connectedProviderRails()}>
-                  {(prov) => (
-                    <div
-                      class={`group flex items-center justify-between gap-1 rounded-lg px-2 py-1.5 text-[11.5px] transition-colors cursor-pointer ${
-                        rail() === prov.id && !query()
-                          ? "bg-[var(--accent-surface)] text-[var(--accent-primary)] font-medium"
-                          : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
-                      }`}
-                      onClick={() => {
-                        setRail(prov.id);
-                        setActiveIndex(0);
-                      }}
-                    >
-                      <span class="flex items-center gap-1.5 min-w-0 truncate">
-                        <ProviderIcon id={prov.id} class="w-3.5 h-3.5 shrink-0" />
-                        <span class="truncate">{prov.name}</span>
-                      </span>
-                      <span class="flex items-center gap-1 shrink-0">
-                        <Show when={prov.isCustom}>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setOpen(false);
-                              openProviderModal("custom", prov.id);
-                            }}
-                            class="opacity-0 group-hover:opacity-100 rounded p-0.5 hover:bg-[var(--bg-panel)] text-[var(--text-muted)] hover:text-[var(--accent-primary)] cursor-pointer"
-                            title={t("models.editProvider")}
-                          >
-                            <Pencil size={10} />
-                          </button>
-                        </Show>
-                        <span class="font-mono text-[10px] opacity-65">{prov.count}</span>
-                      </span>
-                    </div>
-                  )}
-                </For>
-              </div>
-
-              <div class="mt-1 space-y-1 pt-1 border-t border-[var(--border-subtle)]">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setOpen(false);
-                    openProviderModal("custom", null);
-                  }}
-                  class="w-full inline-flex items-center justify-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2 py-1 text-[11px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
-                >
-                  <Plus size={11} />
-                  {t("models.tabCustom")}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setOpen(false);
-                    openProviderModal("providers", null);
-                  }}
-                  class="w-full inline-flex items-center justify-center gap-1.5 rounded-lg border border-[var(--accent-border)] bg-[var(--accent-surface)] px-2 py-1.5 text-[11px] font-medium text-[var(--accent-primary)] hover:opacity-90 transition-opacity cursor-pointer"
-                >
-                  <KeyRound size={11} />
-                  {t("models.manageKeys")}
-                </button>
-              </div>
-            </div>
-
-            {/* Right Models Search & List */}
             <div class="flex-1 flex flex-col min-w-0">
               <div class="flex items-center gap-2 border-b border-[var(--border-subtle)] px-3 py-2">
                 <Search size={13} class="text-[var(--text-faint)] shrink-0" />
@@ -477,7 +351,6 @@ export default function ModelSelector() {
                 </Show>
               </div>
 
-              {/* Kilo Model Preview Details Panel */}
               <Show when={previewTarget()}>
                 {(model) => (
                   <ModelPreviewFooter
@@ -490,7 +363,6 @@ export default function ModelSelector() {
                 )}
               </Show>
 
-              {/* Bottom Reasoning Effort Bar */}
               <div class="flex items-center justify-between border-t border-[var(--border-subtle)] bg-[var(--bg-elevated)]/40 px-3 py-1.5 text-[11px]">
                 <span class="text-[var(--text-muted)]">{t("models.reasoningEffort")}</span>
                 <div class="inline-flex items-center gap-0.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] p-0.5">

@@ -20,4 +20,5 @@ export const common: CommonI18n = {
   loading: "加载中…",
   error: "错误",
   success: "成功",
+  new: "新建",
 };

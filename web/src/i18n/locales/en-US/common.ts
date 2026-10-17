@@ -20,4 +20,5 @@ export const common: CommonI18n = {
   loading: "Loading…",
   error: "Error",
   success: "Success",
+  new: "New",
 };

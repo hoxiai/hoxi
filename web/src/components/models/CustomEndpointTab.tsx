@@ -11,9 +11,8 @@ import {
   workspace,
   type CustomProviderModelDraft,
 } from "../../store/workspace";
-import { ProviderIcon } from "../icons";
 import { t } from "../../i18n";
-import CustomProviderModelSection from "./CustomProviderModelSection";
+import CustomProviderModelSection, { guessFetchedModelDraft } from "./CustomProviderModelSection";
 
 const PROVIDER_VARIANTS = [
   {
@@ -50,19 +49,14 @@ export default function CustomEndpointTab() {
   const [feedback, setFeedback] = createSignal<{ ok: boolean; text: string } | null>(null);
 
   const existingCustomProviders = createMemo(() => {
-    const map = new Map<string, { id: string; name: string }>();
+    const out: Array<{ id: string; name: string }> = [];
     const cfgProviders = workspace.globalConfig?.provider ?? {};
     for (const [id, cfg] of Object.entries<any>(cfgProviders)) {
-      if (cfg && typeof cfg === "object") {
-        map.set(id, { id, name: cfg.name || id });
+      if (cfg && typeof cfg === "object" && isCustomOrConfiguredProvider(id)) {
+        out.push({ id, name: cfg.name || id });
       }
     }
-    for (const p of workspace.providers) {
-      if (isCustomOrConfiguredProvider(p) && !map.has(p.id)) {
-        map.set(p.id, { id: p.id, name: p.name || p.id });
-      }
-    }
-    return Array.from(map.values());
+    return out;
   });
 
   const isEditing = createMemo(() => Boolean(workspace.editingProviderID));
@@ -150,7 +144,7 @@ export default function CustomEndpointTab() {
   const onFetchModels = async () => {
     const url = baseURL().trim();
     if (!url) {
-      setFeedback({ ok: false, text: "请先填写基础 URL (Base URL)。" });
+      setFeedback({ ok: false, text: t("models.fillBaseUrlPrompt") });
       return;
     }
     setFetching(true);
@@ -170,7 +164,7 @@ export default function CustomEndpointTab() {
         directory: workspace.rootDir || undefined,
       });
       if (res.error || res.ok === false) {
-        setFeedback({ ok: false, text: res.error || "获取模型失败" });
+        setFeedback({ ok: false, text: res.error || t("models.fetchModelsFailed") });
         return;
       }
       const remoteList = Array.isArray(res.models) ? res.models : [];
@@ -182,7 +176,7 @@ export default function CustomEndpointTab() {
       }
       setSelectedFetched(initialSel);
     } catch (err: any) {
-      setFeedback({ ok: false, text: err?.message || "获取模型失败" });
+      setFeedback({ ok: false, text: err?.message || t("models.fetchModelsFailed") });
     } finally {
       setFetching(false);
     }
@@ -198,40 +192,11 @@ export default function CustomEndpointTab() {
       const id = m.id.trim();
       if (id) existingMap.set(id, m);
     }
-
     for (const rm of chosen) {
       if (!existingMap.has(rm.id)) {
-        const lower = rm.id.toLowerCase();
-        const guessReasoning =
-          lower.includes("reason") ||
-          lower.includes("r1") ||
-          lower.includes("thinking") ||
-          lower.includes("opus") ||
-          lower.includes("sonnet") ||
-          lower.includes("o1") ||
-          lower.includes("o3") ||
-          lower.includes("gpt-5") ||
-          lower.includes("gpt-6") ||
-          lower.includes("gemini") ||
-          lower.includes("deepseek") ||
-          lower.includes("glm");
-        const guessImage =
-          lower.includes("vision") ||
-          lower.includes("vl") ||
-          lower.includes("claude") ||
-          lower.includes("gpt-4") ||
-          lower.includes("gpt-5") ||
-          lower.includes("gpt-6") ||
-          lower.includes("gemini");
-        existingMap.set(rm.id, {
-          id: rm.id,
-          name: rm.name || rm.id,
-          reasoning: guessReasoning,
-          image: guessImage,
-        });
+        existingMap.set(rm.id, guessFetchedModelDraft(rm));
       }
     }
-
     setModels(Array.from(existingMap.values()));
     setFetchedModels([]);
   };
@@ -246,18 +211,15 @@ export default function CustomEndpointTab() {
     const validModels = models().filter((m) => m.id.trim().length > 0);
 
     if (!pid || !/^[a-zA-Z0-9._-]+$/.test(pid)) {
-      setFeedback({
-        ok: false,
-        text: "提供商 ID 必填，且仅允许包含字母、数字、点、下划线或连字符。",
-      });
+      setFeedback({ ok: false, text: t("models.providerIdRequired") });
       return;
     }
     if (!url || !/^https?:\/\/.+/.test(url)) {
-      setFeedback({ ok: false, text: "请输入以 http:// 或 https:// 开头的有效 Base URL。" });
+      setFeedback({ ok: false, text: t("models.validBaseUrlRequired") });
       return;
     }
     if (validModels.length === 0) {
-      setFeedback({ ok: false, text: "请至少添加或拉取一个模型。" });
+      setFeedback({ ok: false, text: t("models.atLeastOneModelRequired") });
       return;
     }
 
@@ -284,10 +246,10 @@ export default function CustomEndpointTab() {
       setWorkspace("editingProviderID", pid);
       setFeedback({
         ok: true,
-        text: `已保存提供商 "${name}"（共 ${validModels.length} 个模型）！`,
+        text: t("models.providerSaved", { name, count: validModels.length }),
       });
     } catch (err: any) {
-      setFeedback({ ok: false, text: err?.message || "保存自定义提供商失败" });
+      setFeedback({ ok: false, text: err?.message || t("models.saveCustomProviderFailed") });
     } finally {
       setSaving(false);
     }
@@ -309,43 +271,48 @@ export default function CustomEndpointTab() {
   return (
     <form onSubmit={onSave} class="flex-1 flex flex-col min-h-0 overflow-hidden">
       <div class="flex-1 overflow-y-auto p-5 space-y-4">
-        {/* Existing Custom Providers Quick Switcher */}
-        <Show when={existingCustomProviders().length > 0}>
-          <div class="flex items-center gap-1.5 flex-wrap rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/50 px-3 py-2">
-            <span class="text-[11px] font-medium text-[var(--text-muted)] mr-1">
-              已配置自定义提供商:
-            </span>
-            <For each={existingCustomProviders()}>
-              {(item) => (
+        {/* Clean Single-Line Header + Compact Switcher */}
+        <div class="flex items-center justify-between gap-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/50 px-3.5 py-2.5">
+          <div class="min-w-0">
+            <div class="text-[12.5px] font-semibold text-[var(--text-primary)]">
+              {isEditing() ? t("models.editCustomEndpoint") : t("models.addCustomEndpoint")}
+            </div>
+            <div class="text-[11px] text-[var(--text-muted)] truncate">
+              {t("models.customEndpointIntro")}
+            </div>
+          </div>
+
+          <Show when={existingCustomProviders().length > 0}>
+            <div class="flex items-center gap-2 shrink-0">
+              <select
+                value={workspace.editingProviderID || ""}
+                onChange={(e) =>
+                  setWorkspace("editingProviderID", e.currentTarget.value || null)
+                }
+                class="max-w-[210px] rounded-lg border border-[var(--border-strong)] bg-[var(--bg-panel)] px-2.5 py-1 text-[11.5px] font-medium text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]"
+              >
+                <option value="">+ {t("models.newCustomProvider")}</option>
+                <For each={existingCustomProviders()}>
+                  {(item) => (
+                    <option value={item.id}>
+                      {item.name} ({item.id})
+                    </option>
+                  )}
+                </For>
+              </select>
+              <Show when={isEditing()}>
                 <button
                   type="button"
-                  onClick={() => setWorkspace("editingProviderID", item.id)}
-                  class={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[11.5px] font-medium transition-colors cursor-pointer ${
-                    workspace.editingProviderID === item.id
-                      ? "bg-[var(--accent-primary)] text-white"
-                      : "bg-[var(--bg-panel)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] border border-[var(--border-subtle)]"
-                  }`}
+                  onClick={() => setWorkspace("editingProviderID", null)}
+                  class="inline-flex items-center gap-1 rounded-lg border border-[var(--accent-border)] bg-[var(--accent-surface)] px-2.5 py-1 text-[11.5px] font-medium text-[var(--accent-primary)] hover:opacity-90 cursor-pointer"
                 >
-                  <ProviderIcon id={item.id} class="w-3.5 h-3.5 shrink-0" />
-                  <span>{item.name}</span>
-                  <span class="opacity-70 font-mono text-[10px]">({item.id})</span>
+                  <Plus size={12} />
+                  {t("models.newCustomProvider")}
                 </button>
-              )}
-            </For>
-            <button
-              type="button"
-              onClick={() => setWorkspace("editingProviderID", null)}
-              class={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-[11.5px] font-medium transition-colors cursor-pointer ${
-                !workspace.editingProviderID
-                  ? "bg-[var(--accent-surface)] text-[var(--accent-primary)] border border-[var(--accent-border)]"
-                  : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
-              }`}
-            >
-              <Plus size={12} />
-              新建
-            </button>
-          </div>
-        </Show>
+              </Show>
+            </div>
+          </Show>
+        </div>
 
         {/* Row 1: Provider ID, Display Name, Provider API */}
         <div class="grid grid-cols-3 gap-3">
@@ -356,7 +323,7 @@ export default function CustomEndpointTab() {
             <input
               type="text"
               disabled={isEditing()}
-              placeholder="例如 ainode 或 deepseek-custom"
+              placeholder={t("models.providerIdPlaceholder")}
               value={providerID()}
               onInput={(e) => setProviderID(e.currentTarget.value)}
               class="w-full rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] px-3 py-2 font-mono text-[12.5px] text-[var(--text-primary)] disabled:opacity-60 outline-none focus:border-[var(--accent-primary)] selectable-text"
@@ -368,7 +335,7 @@ export default function CustomEndpointTab() {
             </label>
             <input
               type="text"
-              placeholder="例如 AINode"
+              placeholder={t("models.displayNamePlaceholder")}
               value={displayName()}
               onInput={(e) => setDisplayName(e.currentTarget.value)}
               class="w-full rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] px-3 py-2 text-[12.5px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)] selectable-text"
@@ -410,7 +377,7 @@ export default function CustomEndpointTab() {
             </label>
             <input
               type="password"
-              placeholder="sk-... 或 {env:API_KEY}"
+              placeholder={t("models.customApiKeyPlaceholder")}
               value={apiKey()}
               onFocus={() => {
                 if (apiKey() === MASKED_SECRET) setApiKey("");

@@ -131,7 +131,7 @@ export default function LeftNav() {
       <div class="px-2 pt-1 pb-1.5 flex items-center justify-between gap-1">
         <div
           class="inline-flex items-center rounded-lg bg-[var(--bg-inset)] p-0.5"
-          title="Switch sidebar mode"
+          title={t("leftNav.switchSidebarMode")}
         >
           <button
             type="button"
@@ -167,7 +167,7 @@ export default function LeftNav() {
             class={`p-1 rounded-md text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer ${
               showSearch() ? "bg-[var(--bg-hover)] text-[var(--text-primary)]" : ""
             }`}
-            title="Filter projects or sessions"
+            title={t("leftNav.filterPlaceholder")}
           >
             <Icon name="magnifying-glass" size="small" />
           </button>

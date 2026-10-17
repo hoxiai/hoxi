@@ -1,5 +1,14 @@
 // web/src/components/timeline/MessageStream.tsx
-import { createEffect, createMemo, createSignal, For, Index, Show } from "solid-js";
+import {
+  createEffect,
+  createMemo,
+  createSignal,
+  For,
+  Index,
+  onCleanup,
+  onMount,
+  Show,
+} from "solid-js";
 import type { MessagePart, SessionStatus } from "../../services/sse-types";
 import {
   forkFromMessage,
@@ -19,6 +28,8 @@ import {
   PartView,
   SessionRetryCard,
 } from "./message-stream-parts";
+import TaskTimelineBar from "./TaskTimelineBar";
+import TranscriptSearchBar from "./TranscriptSearchBar";
 import { t } from "../../i18n";
 
 export default function MessageStream() {
@@ -26,6 +37,8 @@ export default function MessageStream() {
   let stickToBottom = true;
   const [launchingPrompt, setLaunchingPrompt] = createSignal(false);
   const [copiedUserMsgId, setCopiedUserMsgId] = createSignal<string | null>(null);
+  const [searchOpen, setSearchOpen] = createSignal(false);
+  const [activeMatchTurnID, setActiveMatchTurnID] = createSignal<string | null>(null);
 
   const turns = createMemo(() => {
     const id = workspace.activeSessionID;
@@ -154,6 +167,28 @@ export default function MessageStream() {
     }
   };
 
+  const scrollToTurn = (messageID: string) => {
+    if (!scroller) return;
+    const el = scroller.querySelector(`[data-turn-id="${CSS.escape(messageID)}"]`);
+    if (el instanceof HTMLElement) {
+      stickToBottom = false;
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  };
+
+  onMount(() => {
+    const onWindowKeyDown = (ev: KeyboardEvent) => {
+      if ((ev.metaKey || ev.ctrlKey) && ev.key.toLowerCase() === "f") {
+        if (turns().length > 0) {
+          ev.preventDefault();
+          setSearchOpen(true);
+        }
+      }
+    };
+    window.addEventListener("keydown", onWindowKeyDown);
+    onCleanup(() => window.removeEventListener("keydown", onWindowKeyDown));
+  });
+
   const isEmpty = () => turns().length === 0 && pendingForSession().length === 0;
 
   return (
@@ -162,6 +197,31 @@ export default function MessageStream() {
       onScroll={onScroll}
       class="relative flex-1 min-h-0 overflow-y-auto overflow-x-hidden scroll-smooth"
     >
+      {/* Kilo TaskTimeline + MessageNav Turn Jump + TranscriptSearch */}
+      <TaskTimelineBar
+        turns={turns()}
+        activeMatchTurnID={activeMatchTurnID()}
+        onJumpToTurn={(msgID) => {
+          setActiveMatchTurnID(msgID);
+          scrollToTurn(msgID);
+        }}
+        onToggleSearch={() => setSearchOpen((v) => !v)}
+        searchOpen={searchOpen()}
+      />
+
+      <TranscriptSearchBar
+        open={searchOpen()}
+        turns={turns()}
+        onClose={() => {
+          setSearchOpen(false);
+          setActiveMatchTurnID(null);
+        }}
+        onActiveTurnChange={(msgID) => {
+          setActiveMatchTurnID(msgID);
+          if (msgID) scrollToTurn(msgID);
+        }}
+      />
+
       {/* Top Soft Scroll Fade (Kilo style) */}
       <div
         aria-hidden="true"
@@ -224,7 +284,14 @@ export default function MessageStream() {
                   when={turn.info.role === "user"}
                   fallback={
                     /* Kilo-style Open Assistant Turn with Grouped Exploration Steps */
-                    <div class="px-1">
+                    <div
+                      data-turn-id={turn.info.id}
+                      class={`px-1 rounded-xl transition-all ${
+                        activeMatchTurnID() === turn.info.id
+                          ? "ring-2 ring-[var(--accent-primary)] bg-[var(--accent-surface)]/20 p-2"
+                          : ""
+                      }`}
+                    >
                       <For each={groupAssistantParts(turn.parts)}>
                         {(item) =>
                           item.kind === "activity-group" ? (
@@ -240,7 +307,14 @@ export default function MessageStream() {
                   }
                 >
                   {/* Kilo-style Right-Aligned User Message Bubble */}
-                  <div class="group/turn flex flex-col items-end">
+                  <div
+                    data-turn-id={turn.info.id}
+                    class={`group/turn flex flex-col items-end rounded-xl transition-all ${
+                      activeMatchTurnID() === turn.info.id
+                        ? "ring-2 ring-[var(--accent-primary)] p-1.5"
+                        : ""
+                    }`}
+                  >
                     <div class="max-w-[85%] rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-subtle)] px-4 py-2.5 shadow-2xs space-y-2">
                       <Index each={turn.parts}>
                         {(part) => (
@@ -277,33 +351,33 @@ export default function MessageStream() {
                         type="button"
                         class="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
                         onClick={() => void onCopyUserMessage(turn.info.id, turn.parts)}
-                        title="Copy prompt"
+                        title={t("timeline.copyPromptTooltip")}
                       >
                         <Icon
                           name={copiedUserMsgId() === turn.info.id ? "check" : "copy"}
                           size="small"
                         />
-                        <span>{copiedUserMsgId() === turn.info.id ? "Copied" : "Copy"}</span>
+                        <span>{copiedUserMsgId() === turn.info.id ? t("common.copied") : t("common.copy")}</span>
                       </button>
 
                       <button
                         type="button"
                         class="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
                         onClick={() => void onForkFromMessage(turn.info.id)}
-                        title="Fork session from this message"
+                        title={t("timeline.forkTooltip")}
                       >
                         <Icon name="fork" size="small" />
-                        <span>Fork</span>
+                        <span>{t("timeline.forkBtn")}</span>
                       </button>
 
                       <button
                         type="button"
                         class="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-[var(--text-muted)] hover:text-[var(--warn-text)] hover:bg-[var(--warn-surface)] transition-colors cursor-pointer"
                         onClick={() => void onRevertToMessage(turn.info.id)}
-                        title="Revert conversation and code changes to just before this message"
+                        title={t("timeline.revertTooltip")}
                       >
                         <Icon name="arrow-undo-down" size="small" />
-                        <span>Revert</span>
+                        <span>{t("timeline.revertBtn")}</span>
                       </button>
                     </div>
                   </div>

@@ -28,6 +28,7 @@ export interface CommonI18n {
   loading: string;
   error: string;
   success: string;
+  new: string;
 }
 
 export interface HeaderI18n {
@@ -67,6 +68,8 @@ export interface LeftNavI18n {
   switchSidebarMode: string;
   filterPlaceholder: string;
   deleteSessionTooltip: string;
+  renameSessionTooltip: string;
+  renamePlaceholder: string;
 }
 
 export interface TimelineI18n {
@@ -129,6 +132,48 @@ export interface TimelineI18n {
   revertBtn: string;
   openTerminalTooltip: string;
   terminalBtn: string;
+  reviewCommentSingular: string;
+  reviewCommentPlural: string;
+  filesCount: string;
+  clearAll: string;
+  tasksProgress: string;
+  filesChangedCount: string;
+  reviewDiffs: string;
+  modeTooltip: string;
+  agentModes: string;
+  agentsAvailable: string;
+  timelineLabel: string;
+  turnsCount: string;
+  turnsMenuTooltip: string;
+  turnsMenuTitle: string;
+  searchTrigger: string;
+  searchTooltip: string;
+  searchPlaceholder: string;
+  matchCaseTooltip: string;
+  wholeWordTooltip: string;
+  regexTooltip: string;
+  invalidRegex: string;
+  noResults: string;
+  prevMatchTooltip: string;
+  nextMatchTooltip: string;
+  subagentStack: string;
+  subagentsRunning: string;
+  subagentsDone: string;
+  subagentsWaiting: string;
+  stopAllSubagents: string;
+  stopSubagentTooltip: string;
+  openSubagent: string;
+  revertBannerCount: string;
+  redoOneTurn: string;
+  redoAll: string;
+  revertBannerHint: string;
+  mentionChangesDetail: string;
+  mentionSessionDetail: string;
+  mentionWorktreeDetail: string;
+  mentionWorkspaceFile: string;
+  pastedLinesChip: string;
+  slashCommandsHeader: string;
+  mentionFileOrContextHeader: string;
 }
 
 export interface ToolCardI18n {
@@ -144,6 +189,10 @@ export interface ToolCardI18n {
   inspectSubagent: string;
   undo: string;
   loaded: string;
+  arguments: string;
+  error: string;
+  inlineChangePreview: string;
+  openInDiffInspector: string;
 }
 
 export interface ApprovalI18n {
@@ -164,6 +213,10 @@ export interface ApprovalI18n {
   confirmHint: string;
   skipQuestion: string;
   submitAnswer: string;
+  openDiffInInspector: string;
+  autoApproveRules: string;
+  ruleAlwaysAllow: string;
+  ruleAlwaysDeny: string;
 }
 
 export interface InspectorTabsI18n {
@@ -190,6 +243,12 @@ export interface InspectorDiffsI18n {
   noPatch: string;
   revertFileTooltip: string;
   revertFileBtn: string;
+  commitPlaceholder: string;
+  generateCommitTooltip: string;
+  generateCommitBtn: string;
+  commitBtn: string;
+  committing: string;
+  commitSuccess: string;
 }
 
 export interface InspectorMemoryI18n {
@@ -304,6 +363,86 @@ export interface ModelsI18n {
   shellCommandsHint: string;
   webFetchHint: string;
   removeMcpTooltip: string;
+  fetchedModelsCount: string;
+  selectAll: string;
+  deselectAll: string;
+  addSelectedModels: string;
+  modelsListTitle: string;
+  toggleAllReasoning: string;
+  toggleAllImage: string;
+  addModelRow: string;
+  reasoningCap: string;
+  imageCap: string;
+  toolsCap: string;
+  headersTitle: string;
+  addHeader: string;
+  headerName: string;
+  headerValue: string;
+  modelIdPlaceholder: string;
+  editProvider: string;
+  contextWindow: string;
+  maxOutput: string;
+  freeModel: string;
+  providerApi: string;
+  fetchModels: string;
+  fetchingModels: string;
+  fillBaseUrlPrompt: string;
+  fetchModelsFailed: string;
+  providerIdRequired: string;
+  validBaseUrlRequired: string;
+  atLeastOneModelRequired: string;
+  providerSaved: string;
+  saveCustomProviderFailed: string;
+  configuredCustomProviders: string;
+  newCustomProvider: string;
+  providerIdPlaceholder: string;
+  displayNamePlaceholder: string;
+  customApiKeyPlaceholder: string;
+  policyUpdated: string;
+  policyUpdateFailed: string;
+  mcpAdded: string;
+  mcpAddFailed: string;
+  mcpRemoved: string;
+  mcpRemoveFailed: string;
+  enterApiKeyOrCustomConfig: string;
+  connectFailed: string;
+  oauthFailed: string;
+  oauthVerificationFailed: string;
+  oauthLogin: string;
+  pasteAuthCodePlaceholder: string;
+  editCustomEndpoint: string;
+  useGlobalDefault: string;
+  rolesTitle: string;
+  rolesSubtitle: string;
+  defaultModelTitle: string;
+  defaultModelDesc: string;
+  smallModelTitle: string;
+  smallModelDesc: string;
+  subagentModelTitle: string;
+  subagentModelDesc: string;
+  compactionModelTitle: string;
+  compactionModelDesc: string;
+  modeModelsTitle: string;
+  modeModelsDesc: string;
+  sourceCustom: string;
+  sourceEnv: string;
+  sourceConfig: string;
+  sourceApi: string;
+  customProviderCardTitle: string;
+  customProviderCardDesc: string;
+  configureCustom: string;
+  connectedSection: string;
+  noConnectedProviders: string;
+  modelsCount: string;
+  changeKey: string;
+  disableProvider: string;
+  popularSection: string;
+  viewAllProviders: string;
+  disabledSection: string;
+  enableProvider: string;
+  tabModels: string;
+  allConnected: string;
+  recent: string;
 }
 
 export interface I18nDictionary {

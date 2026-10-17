@@ -19,4 +19,6 @@ export const leftNav: LeftNavI18n = {
   switchSidebarMode: "切换侧边栏模式",
   filterPlaceholder: "筛选项目或会话",
   deleteSessionTooltip: "删除会话",
+  renameSessionTooltip: "重命名会话 (或双击标题)",
+  renamePlaceholder: "输入会话标题…",
 };

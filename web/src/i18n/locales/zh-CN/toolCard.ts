@@ -14,4 +14,8 @@ export const toolCard: ToolCardI18n = {
   inspectSubagent: "检视子 Agent",
   undo: "撤销",
   loaded: "已加载",
+  arguments: "调用参数",
+  error: "执行错误",
+  inlineChangePreview: "文件变更预览",
+  openInDiffInspector: "在差异检查器中打开",
 };

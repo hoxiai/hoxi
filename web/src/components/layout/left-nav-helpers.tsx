@@ -163,7 +163,7 @@ export function SessionNavItem(props: {
             type="button"
             class="opacity-0 group-hover/row:opacity-100 text-[var(--text-faint)] hover:text-[var(--danger-text)] transition-opacity p-0.5 cursor-pointer"
             onClick={(ev) => props.onDiscard(ev, props.session.id)}
-            title="Delete session"
+            title={t("leftNav.deleteSessionTooltip")}
           >
             <Icon name="trash" size="small" class="w-3 h-3" />
           </button>

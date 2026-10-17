@@ -4,6 +4,7 @@ import type { MessagePart, SnapshotFileDiff, ToolState } from "../../services/ss
 import { openDiffInInspector, setWorkspace, workspace } from "../../store/workspace";
 import { Icon, type IconName } from "../icons";
 import { FileDiffBlock } from "../inspector/PierreDiffViewer";
+import { t } from "../../i18n";
 
 export type ToolPart = Extract<MessagePart, { type: "tool" }>;
 
@@ -202,7 +203,7 @@ export function InlineDiagnosticsDisplay(props: { diagnostics: DiagnosticItem[] 
           {(d) => (
             <div class="flex items-baseline gap-2 text-[11.5px] leading-snug font-mono">
               <span class="shrink-0 font-semibold uppercase tracking-wider text-[10px] text-[var(--danger-text)]">
-                Error
+                {t("toolCard.error")}
               </span>
               <span class="shrink-0 text-[var(--text-faint)] tabular-nums">
                 [{(d.range?.start?.line ?? 0) + 1}:{(d.range?.start?.character ?? 0) + 1}]
@@ -250,10 +251,10 @@ export function ToolCardExpandedBody(props: {
                   setWorkspace("inspectorTab", "terminal");
                 }}
                 class="inline-flex items-center gap-1 rounded px-2 py-0.5 text-[10.5px] text-[#8b949e] hover:bg-white/10 hover:text-white transition-colors cursor-pointer"
-                title="Open interactive terminal in Inspector"
+                title={t("timeline.openTerminalTooltip")}
               >
                 <Icon name="console" size="small" />
-                <span>Terminal</span>
+                <span>{t("timeline.terminalBtn")}</span>
               </button>
               <button
                 type="button"
@@ -263,7 +264,7 @@ export function ToolCardExpandedBody(props: {
                 <Show when={props.copiedCmd} fallback={<Icon name="copy" size="small" />}>
                   <Icon name="check" size="small" class="text-[#3fb950]" />
                 </Show>
-                <span>{props.copiedCmd ? "Copied" : "Copy"}</span>
+                <span>{props.copiedCmd ? t("common.copied") : t("common.copy")}</span>
               </button>
             </div>
           </div>
@@ -339,7 +340,7 @@ export function ToolCardExpandedBody(props: {
               <div>
                 <div class="flex items-center justify-between mb-1.5">
                   <span class="text-[11px] font-medium text-[var(--text-muted)]">
-                    Inline Change Preview
+                    {t("toolCard.inlineChangePreview")}
                   </span>
                   <button
                     type="button"
@@ -347,7 +348,7 @@ export function ToolCardExpandedBody(props: {
                     class="inline-flex items-center gap-1 text-[11px] font-medium text-[var(--accent-primary)] hover:underline cursor-pointer"
                   >
                     <Icon name="code-lines" size="small" />
-                    Open in Diff Inspector
+                    {t("toolCard.openInDiffInspector")}
                   </button>
                 </div>
                 <FileDiffBlock diff={diff()} defaultExpanded={true} compact={true} />
@@ -363,7 +364,7 @@ export function ToolCardExpandedBody(props: {
           <Show when={Object.keys(props.part.state.input || {}).length > 0}>
             <div>
               <div class="text-[10.5px] font-medium text-[var(--text-muted)] mb-1">
-                Arguments
+                {t("toolCard.arguments")}
               </div>
               <pre class="text-[11.5px] font-mono bg-[var(--bg-code)] border border-[var(--border-subtle)] p-2.5 rounded-lg overflow-x-auto max-h-40 text-[var(--text-secondary)] selectable-text">
                 {JSON.stringify(props.part.state.input, null, 2)}
@@ -374,7 +375,7 @@ export function ToolCardExpandedBody(props: {
           <Show when={props.part.state.status === "completed" && props.part.state.output}>
             <div>
               <div class="text-[10.5px] font-medium text-[var(--text-muted)] mb-1">
-                Output
+                {t("toolCard.output")}
               </div>
               <pre class="text-[11.5px] font-mono bg-[var(--bg-code)] border border-[var(--border-subtle)] p-2.5 rounded-lg overflow-x-auto max-h-56 text-[var(--text-secondary)] whitespace-pre-wrap break-all selectable-text">
                 {processCarriageReturns(
@@ -387,7 +388,7 @@ export function ToolCardExpandedBody(props: {
           <Show when={props.part.state.status === "error"}>
             <div>
               <div class="text-[10.5px] font-medium text-[var(--danger-text)] mb-1">
-                Error
+                {t("toolCard.error")}
               </div>
               <pre class="text-[11.5px] font-mono bg-[var(--danger-surface)] border border-[var(--danger-border)] p-2.5 rounded-lg overflow-x-auto text-[var(--danger-text)] whitespace-pre-wrap selectable-text">
                 {(props.part.state as Extract<ToolState, { status: "error" }>).error}

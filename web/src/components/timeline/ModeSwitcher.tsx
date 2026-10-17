@@ -96,7 +96,7 @@ export default function ModeSwitcher() {
               ? "border-[var(--violet-border)] bg-[var(--violet-surface)] text-[var(--violet-text)] hover:brightness-105"
               : "border-[var(--border-subtle)] bg-[var(--bg-panel)] text-[var(--text-primary)] hover:bg-[var(--bg-hover)] hover:border-[var(--border-strong)]"
         }`}
-        title={`Mode: ${currentMode()} (Click to change)`}
+        title={t("timeline.modeTooltip", { mode: currentMode() })}
       >
         <span class="text-[var(--accent-primary)]">
           {modeIcon(currentMode())}
@@ -120,10 +120,10 @@ export default function ModeSwitcher() {
         >
           <div class="px-2.5 py-1.5 flex items-center justify-between border-b border-[var(--border-subtle)] mb-1">
             <span class="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
-              Agent Modes
+              {t("timeline.agentModes")}
             </span>
             <span class="text-[10.5px] text-[var(--text-muted)] font-mono">
-              {agents().length} available
+              {t("timeline.agentsAvailable", { count: agents().length })}
             </span>
           </div>
 

@@ -14,4 +14,8 @@ export const toolCard: ToolCardI18n = {
   inspectSubagent: "Inspect Subagent",
   undo: "Undo",
   loaded: "Loaded",
+  arguments: "Arguments",
+  error: "Error",
+  inlineChangePreview: "Inline Change Preview",
+  openInDiffInspector: "Open in Diff Inspector",
 };

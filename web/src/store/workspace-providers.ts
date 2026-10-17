@@ -162,14 +162,8 @@ export function toggleFavoriteModel(providerID: string, modelID: string) {
 export function isCustomOrConfiguredProvider(provider: ProviderInfo | string): boolean {
   const pid = typeof provider === "string" ? provider : provider.id;
   const cfgProv = workspace.globalConfig?.provider?.[pid];
-  if (cfgProv && (cfgProv.options?.baseURL || cfgProv.models || cfgProv.npm)) {
-    return true;
-  }
-  if (typeof provider !== "string") {
-    if (provider.source === "custom") return true;
-    if (provider.options?.baseURL) return true;
-  }
-  return false;
+  if (!cfgProv || typeof cfgProv !== "object") return false;
+  return Boolean(cfgProv.npm || cfgProv.options?.baseURL || cfgProv.models);
 }
 
 export function parseModelString(val?: string | null): SelectedModel | null {

@@ -62,6 +62,8 @@ export type ToolState =
       status: "pending";
       input: Record<string, any>;
       raw: string;
+      title?: string;
+      metadata?: Record<string, any>;
     }
   | {
       status: "running";
@@ -82,6 +84,7 @@ export type ToolState =
       status: "error";
       input: Record<string, any>;
       error: string;
+      title?: string;
       metadata?: Record<string, any>;
       time: { start: number; end: number };
     };
@@ -129,9 +132,13 @@ export type MessagePart =
       files: string[];
     };
 
+export type ToolPart = Extract<MessagePart, { type: "tool" }>;
+
 export interface SnapshotFileDiff {
   file: string;
   patch?: string;
+  before?: string;
+  after?: string;
   additions: number;
   deletions: number;
   status?: "added" | "deleted" | "modified";

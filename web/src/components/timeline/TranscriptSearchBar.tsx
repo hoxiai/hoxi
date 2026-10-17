@@ -1,0 +1,236 @@
+// web/src/components/timeline/TranscriptSearchBar.tsx
+import { createEffect, createMemo, createSignal, onMount, Show } from "solid-js";
+import { ChevronDown, ChevronUp, Search, X } from "lucide-solid";
+import type { MessageTurn } from "../../store/workspace";
+import { t } from "../../i18n";
+
+function turnSearchableText(turn: MessageTurn): string {
+  const chunks: string[] = [];
+  for (const part of turn.parts) {
+    if (part.type === "text" || part.type === "reasoning") {
+      if (part.text) chunks.push(part.text);
+    } else if (part.type === "tool") {
+      chunks.push(part.tool || "");
+      if (part.state.input) chunks.push(JSON.stringify(part.state.input));
+      if (part.state.status === "completed" && part.state.output) {
+        chunks.push(part.state.output);
+      }
+      if (part.state.status === "error" && part.state.error) {
+        chunks.push(part.state.error);
+      }
+    }
+  }
+  return chunks.join("\n");
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Ported from kilocode TranscriptSearch.tsx:
+ * Floating in-session transcript search bar supporting Case-Sensitive (`Aa`),
+ * Whole-Word (`ab`), and Regex (`.*`) matching with Enter / Shift+Enter navigation.
+ */
+export default function TranscriptSearchBar(props: {
+  open: boolean;
+  turns: MessageTurn[];
+  onClose: () => void;
+  onActiveTurnChange: (messageID: string | null) => void;
+}) {
+  const [query, setQuery] = createSignal("");
+  const [matchCase, setMatchCase] = createSignal(false);
+  const [wholeWord, setWholeWord] = createSignal(false);
+  const [useRegex, setUseRegex] = createSignal(false);
+  const [currentIndex, setCurrentIndex] = createSignal(0);
+
+  let inputRef: HTMLInputElement | undefined;
+
+  createEffect(() => {
+    if (props.open) {
+      queueMicrotask(() => inputRef?.focus());
+    } else {
+      props.onActiveTurnChange(null);
+    }
+  });
+
+  const searchResult = createMemo<{
+    matchedTurnIDs: string[];
+    invalidRegex: boolean;
+  }>(() => {
+    const q = query().trim();
+    if (!q) return { matchedTurnIDs: [], invalidRegex: false };
+
+    let pattern = useRegex() ? q : escapeRegExp(q);
+    if (wholeWord()) {
+      pattern = `\\b(?:${pattern})\\b`;
+    }
+    const flags = matchCase() ? "g" : "gi";
+
+    let regex: RegExp;
+    try {
+      regex = new RegExp(pattern, flags);
+    } catch {
+      return { matchedTurnIDs: [], invalidRegex: true };
+    }
+
+    const matched: string[] = [];
+    for (const turn of props.turns) {
+      const text = turnSearchableText(turn);
+      regex.lastIndex = 0;
+      if (regex.test(text)) {
+        matched.push(turn.info.id);
+      }
+    }
+    return { matchedTurnIDs: matched, invalidRegex: false };
+  });
+
+  createEffect(() => {
+    const ids = searchResult().matchedTurnIDs;
+    if (ids.length === 0) {
+      setCurrentIndex(0);
+      props.onActiveTurnChange(null);
+      return;
+    }
+    const clamped = Math.min(currentIndex(), ids.length - 1);
+    if (clamped !== currentIndex()) setCurrentIndex(clamped);
+    props.onActiveTurnChange(ids[clamped] ?? null);
+  });
+
+  const goNext = () => {
+    const ids = searchResult().matchedTurnIDs;
+    if (ids.length === 0) return;
+    const next = (currentIndex() + 1) % ids.length;
+    setCurrentIndex(next);
+    props.onActiveTurnChange(ids[next] ?? null);
+  };
+
+  const goPrev = () => {
+    const ids = searchResult().matchedTurnIDs;
+    if (ids.length === 0) return;
+    const prev = (currentIndex() - 1 + ids.length) % ids.length;
+    setCurrentIndex(prev);
+    props.onActiveTurnChange(ids[prev] ?? null);
+  };
+
+  onMount(() => {
+    inputRef?.focus();
+  });
+
+  return (
+    <Show when={props.open}>
+      <div class="sticky top-9 z-30 mx-auto mt-2 flex w-full max-w-[38rem] items-center gap-2 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] px-3 py-1.5 shadow-xl">
+        <Search size={13} class="text-[var(--text-muted)] shrink-0" />
+        <input
+          ref={inputRef}
+          type="text"
+          value={query()}
+          onInput={(ev) => {
+            setQuery(ev.currentTarget.value);
+            setCurrentIndex(0);
+          }}
+          onKeyDown={(ev) => {
+            if (ev.key === "Enter") {
+              ev.preventDefault();
+              if (ev.shiftKey) goPrev();
+              else goNext();
+            } else if (ev.key === "Escape") {
+              ev.preventDefault();
+              props.onClose();
+            }
+          }}
+          placeholder={t("timeline.searchPlaceholder")}
+          class="flex-1 min-w-0 bg-transparent text-[12.5px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none"
+        />
+
+        {/* Match Options: Aa / ab / .* */}
+        <div class="flex items-center gap-0.5 shrink-0">
+          <button
+            type="button"
+            onClick={() => setMatchCase((v) => !v)}
+            class={`rounded px-1.5 py-0.5 font-mono text-[10.5px] font-semibold transition-colors cursor-pointer ${
+              matchCase()
+                ? "bg-[var(--accent-surface)] text-[var(--accent-text)] border border-[var(--accent-border)]"
+                : "text-[var(--text-muted)] hover:bg-[var(--bg-hover)]"
+            }`}
+            title={t("timeline.matchCaseTooltip")}
+          >
+            Aa
+          </button>
+          <button
+            type="button"
+            onClick={() => setWholeWord((v) => !v)}
+            class={`rounded px-1.5 py-0.5 font-mono text-[10.5px] font-semibold transition-colors cursor-pointer ${
+              wholeWord()
+                ? "bg-[var(--accent-surface)] text-[var(--accent-text)] border border-[var(--accent-border)]"
+                : "text-[var(--text-muted)] hover:bg-[var(--bg-hover)]"
+            }`}
+            title={t("timeline.wholeWordTooltip")}
+          >
+            ab
+          </button>
+          <button
+            type="button"
+            onClick={() => setUseRegex((v) => !v)}
+            class={`rounded px-1.5 py-0.5 font-mono text-[10.5px] font-semibold transition-colors cursor-pointer ${
+              useRegex()
+                ? "bg-[var(--accent-surface)] text-[var(--accent-text)] border border-[var(--accent-border)]"
+                : "text-[var(--text-muted)] hover:bg-[var(--bg-hover)]"
+            }`}
+            title={t("timeline.regexTooltip")}
+          >
+            .*
+          </button>
+        </div>
+
+        {/* Match Counter */}
+        <Show
+          when={!searchResult().invalidRegex}
+          fallback={
+            <span class="shrink-0 font-mono text-[11px] text-[var(--danger-text)]">
+              {t("timeline.invalidRegex")}
+            </span>
+          }
+        >
+          <Show when={query().trim().length > 0}>
+            <span class="shrink-0 font-mono text-[11px] text-[var(--text-muted)] tabular-nums">
+              {searchResult().matchedTurnIDs.length > 0
+                ? `${currentIndex() + 1} / ${searchResult().matchedTurnIDs.length}`
+                : t("timeline.noResults")}
+            </span>
+          </Show>
+        </Show>
+
+        {/* Prev / Next / Close */}
+        <div class="flex items-center gap-0.5 shrink-0 border-l border-[var(--border-subtle)] pl-1.5">
+          <button
+            type="button"
+            disabled={searchResult().matchedTurnIDs.length === 0}
+            onClick={goPrev}
+            class="rounded p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] disabled:opacity-30 cursor-pointer"
+            title={t("timeline.prevMatchTooltip")}
+          >
+            <ChevronUp size={13} />
+          </button>
+          <button
+            type="button"
+            disabled={searchResult().matchedTurnIDs.length === 0}
+            onClick={goNext}
+            class="rounded p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] disabled:opacity-30 cursor-pointer"
+            title={t("timeline.nextMatchTooltip")}
+          >
+            <ChevronDown size={13} />
+          </button>
+          <button
+            type="button"
+            onClick={props.onClose}
+            class="rounded p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer"
+            title={t("common.close")}
+          >
+            <X size={13} />
+          </button>
+        </div>
+      </div>
+    </Show>
+  );
+}

@@ -220,7 +220,7 @@ export function openFileInInspector(filePath: string) {
   setWorkspace("inspectorOpen", true);
 }
 
-export function openDiffInInspector() {
+export function openDiffInInspector(_filePath?: string) {
   setWorkspace("inspectorTab", "diffs");
   setWorkspace("inspectorOpen", true);
 }

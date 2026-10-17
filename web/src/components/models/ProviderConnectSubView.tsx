@@ -49,7 +49,7 @@ export function ProviderConnectView(props: {
     ev.preventDefault();
     if (busy()) return;
     if (!apiKey().trim() && !baseURL().trim() && !extraModelID().trim()) {
-      setFeedback({ ok: false, text: "请输入 API 密钥或自定义配置。" });
+      setFeedback({ ok: false, text: t("models.enterApiKeyOrCustomConfig") });
       return;
     }
     setBusy(true);
@@ -64,7 +64,7 @@ export function ProviderConnectView(props: {
       setApiKey("");
       props.onBack();
     } catch (err: any) {
-      setFeedback({ ok: false, text: err?.message || "连接失败" });
+      setFeedback({ ok: false, text: err?.message || t("models.connectFailed") });
     } finally {
       setBusy(false);
     }
@@ -97,7 +97,7 @@ export function ProviderConnectView(props: {
         props.onBack();
       }
     } catch (err: any) {
-      setFeedback({ ok: false, text: err?.message || "OAuth 授权失败" });
+      setFeedback({ ok: false, text: err?.message || t("models.oauthFailed") });
     } finally {
       setBusy(false);
     }
@@ -119,7 +119,7 @@ export function ProviderConnectView(props: {
       await loadProviders();
       props.onBack();
     } catch (err: any) {
-      setFeedback({ ok: false, text: err?.message || "OAuth 验证失败" });
+      setFeedback({ ok: false, text: err?.message || t("models.oauthVerificationFailed") });
     } finally {
       setBusy(false);
     }
@@ -202,7 +202,7 @@ export function ProviderConnectView(props: {
                     class="inline-flex items-center gap-2 rounded-xl bg-[var(--accent-primary)] px-4 py-2 text-[12.5px] font-medium text-white hover:opacity-90 cursor-pointer"
                   >
                     <ExternalLink size={14} />
-                    {authMethods()[authMethodIndex()]?.label || "OAuth 登录"}
+                    {authMethods()[authMethodIndex()]?.label || t("models.oauthLogin")}
                   </button>
                 }
               >
@@ -213,7 +213,7 @@ export function ProviderConnectView(props: {
                       <div class="flex gap-2">
                         <input
                           type="text"
-                          placeholder="粘贴授权码 (Authorization Code)…"
+                          placeholder={t("models.pasteAuthCodePlaceholder")}
                           value={oauthCode()}
                           onInput={(e) => setOauthCode(e.currentTarget.value)}
                           class="flex-1 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] px-3 py-2 font-mono text-[12.5px] text-[var(--text-primary)] outline-none"

@@ -25,6 +25,12 @@ export const inspector: InspectorI18n = {
     noPatch: "(该文件暂无补丁详情)",
     revertFileTooltip: "还原该文件的改动 (Revert File)",
     revertFileBtn: "还原",
+    commitPlaceholder: "输入提交信息 (例如 feat: 新增工作树隔离)…",
+    generateCommitTooltip: "根据代码变更自动生成规范 Commit Message",
+    generateCommitBtn: "AI 生成",
+    commitBtn: "提交 ({count})",
+    committing: "提交中…",
+    commitSuccess: "已提交 {hash}",
   },
   memory: {
     title: "8 维结构化记忆库",
