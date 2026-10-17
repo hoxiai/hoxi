@@ -1,7 +1,7 @@
 // web/src/components/layout/left-nav-helpers.tsx
 import { createSignal, Show } from "solid-js";
 import { Pencil } from "lucide-solid";
-import { renameSessionTitle, workspace } from "../../store/workspace";
+import { isPlaceholderSessionTitle, renameSessionTitle, workspace } from "../../store/workspace";
 import type { SessionInfo } from "../../services/sse-types";
 import { DiffChanges, Icon, Spinner } from "../icons";
 
@@ -191,7 +191,9 @@ export function SessionNavItem(props: {
           }
         >
           <span class="truncate text-[12px] flex-1">
-            {props.session.title || "New Session"}
+            {isPlaceholderSessionTitle(props.session.title)
+              ? t("leftNav.newThread")
+              : props.session.title}
           </span>
         </Show>
       </div>

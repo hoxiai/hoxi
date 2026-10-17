@@ -148,7 +148,7 @@ export async function selectSession(sessionID: string): Promise<void> {
 
 export async function newIsolatedSession(title?: string): Promise<string> {
   const session = await hoxiAPI.createSession(
-    title || t("leftNav.newThread"),
+    title,
     workspace.rootDir || undefined
   );
   try {

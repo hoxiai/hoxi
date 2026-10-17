@@ -59,7 +59,7 @@ export const hoxiAPI = {
   createSession(title?: string, directory?: string): Promise<SessionInfo> {
     return requestJSON(withDir("/session", directory), {
       method: "POST",
-      body: JSON.stringify({ title }),
+      body: JSON.stringify(title ? { title } : {}),
     });
   },
 

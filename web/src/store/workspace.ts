@@ -288,6 +288,7 @@ export function toggleTheme() {
 
 export * from "./workspace-providers";
 export * from "./workspace-sessions";
+export * from "./session-title";
 export * from "./provider-telemetry";
 export * from "./provider-audit";
 
