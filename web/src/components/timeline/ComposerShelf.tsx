@@ -1,5 +1,5 @@
 // web/src/components/timeline/ComposerShelf.tsx
-import { createMemo, createSignal, For, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 import {
   CheckCircle2,
   ChevronDown,
@@ -33,6 +33,9 @@ interface TodoItem {
 export default function ComposerShelf() {
   const [todosExpanded, setTodosExpanded] = createSignal(false);
   const [reviewsExpanded, setReviewsExpanded] = createSignal(true);
+  const [dismissedTodoSigBySession, setDismissedTodoSigBySession] = createSignal<
+    Record<string, string>
+  >({});
 
   const sessionID = () => workspace.activeSessionID;
 
@@ -87,6 +90,57 @@ export default function ComposerShelf() {
       todos().find((t) => t.status === "pending")
   );
 
+  const todoSignature = createMemo(() =>
+    todos()
+      .map((item) => `${item.id || item.content}:${item.status}`)
+      .join("|")
+  );
+
+  const allTodosCompleted = createMemo(
+    () =>
+      todos().length > 0 &&
+      completedTodoCount() === todos().length &&
+      !activeTodo()
+  );
+
+  const isTodosDismissed = createMemo(() => {
+    const id = sessionID();
+    if (!id || !allTodosCompleted()) return false;
+    return dismissedTodoSigBySession()[id] === todoSignature();
+  });
+
+  const dismissTodos = () => {
+    const id = sessionID();
+    const sig = todoSignature();
+    if (!id || !sig) return;
+    setTodosExpanded(false);
+    setDismissedTodoSigBySession((prev) => ({ ...prev, [id]: sig }));
+  };
+
+  createEffect(() => {
+    const id = sessionID();
+    const sig = todoSignature();
+    if (!id || !sig) return;
+    if (!allTodosCompleted()) {
+      if (dismissedTodoSigBySession()[id]) {
+        setDismissedTodoSigBySession((prev) => {
+          const next = { ...prev };
+          delete next[id];
+          return next;
+        });
+      }
+      return;
+    }
+    if (!todosExpanded() && dismissedTodoSigBySession()[id] !== sig) {
+      const timer = setTimeout(() => {
+        setDismissedTodoSigBySession((prev) => ({ ...prev, [id]: sig }));
+      }, 3000);
+      onCleanup(() => clearTimeout(timer));
+    }
+  });
+
+  const visibleTodos = createMemo(() => todos().length > 0 && !isTodosDismissed());
+
   return (
     <>
       {/* Kilo QuestionDock: Docked Interactive Questions (question.asked) */}
@@ -117,7 +171,7 @@ export default function ComposerShelf() {
       <PlanFollowupBar />
 
       {/* Kilo Contextual Shelf: ReviewComments & TodoWrite Checklist */}
-      <Show when={reviewComments().length > 0 || todos().length > 0}>
+      <Show when={reviewComments().length > 0 || visibleTodos()}>
         <div class="mb-2 flex flex-col gap-1.5">
           {/* 1. Ported from kilocode ReviewComments.tsx: Queued Inline Diff Comments */}
           <Show when={reviewComments().length > 0}>
@@ -202,14 +256,14 @@ export default function ComposerShelf() {
           </Show>
 
           {/* 2. TodoWrite Task Progress Bar */}
-          <Show when={todos().length > 0}>
+          <Show when={visibleTodos()}>
             <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)]/80 px-3 py-2 text-xs transition-all">
-              <button
-                type="button"
-                class="flex w-full items-center justify-between gap-2 text-left cursor-pointer"
-                onClick={() => setTodosExpanded((v) => !v)}
-              >
-                <div class="flex items-center gap-2 min-w-0">
+              <div class="flex w-full items-center justify-between gap-2">
+                <button
+                  type="button"
+                  class="flex flex-1 min-w-0 items-center gap-2 text-left cursor-pointer"
+                  onClick={() => setTodosExpanded((v) => !v)}
+                >
                   <Show
                     when={activeTodo()?.status === "in_progress"}
                     fallback={<ListTodo size={13} class="text-[var(--accent-primary)] shrink-0" />}
@@ -234,11 +288,30 @@ export default function ComposerShelf() {
                       />
                     </span>
                   </Show>
+                </button>
+                <div class="flex items-center gap-1 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setTodosExpanded((v) => !v)}
+                    class="p-0.5 rounded text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+                  >
+                    {todosExpanded() ? <ChevronDown size={13} /> : <ChevronUp size={13} />}
+                  </button>
+                  <Show when={allTodosCompleted()}>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        dismissTodos();
+                      }}
+                      class="p-0.5 rounded text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+                      title={t("common.close")}
+                    >
+                      <X size={13} />
+                    </button>
+                  </Show>
                 </div>
-                <span class="text-[var(--text-muted)] shrink-0">
-                  {todosExpanded() ? <ChevronDown size={13} /> : <ChevronUp size={13} />}
-                </span>
-              </button>
+              </div>
 
               <Show when={todosExpanded()}>
                 <div class="mt-2 space-y-1.5 border-t border-[var(--border-subtle)] pt-2 max-h-40 overflow-y-auto">

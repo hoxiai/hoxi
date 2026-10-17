@@ -1,5 +1,5 @@
 // web/src/components/timeline/AgentStackPill.tsx
-import { createMemo, createSignal, For, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 import {
   ArrowLeft,
   Bot,
@@ -11,6 +11,7 @@ import {
   RotateCcw,
   ShieldAlert,
   Square,
+  X,
 } from "lucide-solid";
 import { hoxiAPI } from "../../services/api";
 import {
@@ -48,6 +49,9 @@ export default function AgentStackPill() {
   const [expanded, setExpanded] = createSignal(false);
   const [stoppingID, setStoppingID] = createSignal<string | null>(null);
   const [resumingID, setResumingID] = createSignal<string | null>(null);
+  const [dismissedSigBySession, setDismissedSigBySession] = createSignal<
+    Record<string, string>
+  >({});
 
   const rootID = createMemo(() => resolveRootSessionID(workspace.activeSessionID));
   const isViewingSubagent = createMemo(
@@ -69,6 +73,58 @@ export default function AgentStackPill() {
   const attentionCount = createMemo(
     () => subagents().filter((s) => s.needsAttention).length
   );
+
+  const stackSignature = createMemo(() =>
+    subagents()
+      .map((s) => `${s.sessionID}:${s.status}`)
+      .join("|")
+  );
+
+  const isActionable = createMemo(
+    () =>
+      runningCount() > 0 ||
+      interruptedList().length > 0 ||
+      attentionCount() > 0 ||
+      isViewingSubagent()
+  );
+
+  const isAllDone = createMemo(() => subagents().length > 0 && !isActionable());
+
+  const isDismissed = createMemo(() => {
+    const rid = rootID();
+    if (!rid || isActionable()) return false;
+    return dismissedSigBySession()[rid] === stackSignature();
+  });
+
+  const dismissStack = () => {
+    const rid = rootID();
+    const sig = stackSignature();
+    if (!rid || !sig) return;
+    setExpanded(false);
+    setDismissedSigBySession((prev) => ({ ...prev, [rid]: sig }));
+  };
+
+  createEffect(() => {
+    const rid = rootID();
+    const sig = stackSignature();
+    if (!rid || !sig) return;
+    if (isActionable()) {
+      if (dismissedSigBySession()[rid]) {
+        setDismissedSigBySession((prev) => {
+          const next = { ...prev };
+          delete next[rid];
+          return next;
+        });
+      }
+      return;
+    }
+    if (isAllDone() && !expanded() && dismissedSigBySession()[rid] !== sig) {
+      const timer = setTimeout(() => {
+        setDismissedSigBySession((prev) => ({ ...prev, [rid]: sig }));
+      }, 3000);
+      onCleanup(() => clearTimeout(timer));
+    }
+  });
 
   const stopSubagent = async (subID: string) => {
     if (stoppingID()) return;
@@ -139,7 +195,7 @@ export default function AgentStackPill() {
   };
 
   return (
-    <Show when={subagents().length > 0}>
+    <Show when={subagents().length > 0 && !isDismissed()}>
       <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)]/85 px-3 py-2">
         <div class="flex items-center justify-between gap-2 text-[12px]">
           <button
@@ -218,10 +274,23 @@ export default function AgentStackPill() {
             <button
               type="button"
               onClick={() => setExpanded((v) => !v)}
-              class="text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
+              class="p-0.5 rounded text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
             >
               {expanded() ? <ChevronDown size={13} /> : <ChevronUp size={13} />}
             </button>
+            <Show when={isAllDone()}>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  dismissStack();
+                }}
+                class="p-0.5 rounded text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+                title={t("common.close")}
+              >
+                <X size={13} />
+              </button>
+            </Show>
           </div>
         </div>
 
