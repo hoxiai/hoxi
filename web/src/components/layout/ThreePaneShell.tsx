@@ -11,14 +11,14 @@ import MultiModelArenaModal from "../models/MultiModelArenaModal";
 import SettingsModal from "../settings/SettingsModal";
 import { setWorkspace, workspace } from "../../store/workspace";
 
-const LEFT_MIN = 210;
-const LEFT_MAX = 340;
-const RIGHT_MIN = 320;
+const LEFT_MIN = 220;
+const LEFT_MAX = 360;
+const RIGHT_MIN = 340;
 const RIGHT_MAX = 640;
 
 export default function ThreePaneShell() {
-  const [leftWidth, setLeftWidth] = createSignal(248);
-  const [rightWidth, setRightWidth] = createSignal(400);
+  const [leftWidth, setLeftWidth] = createSignal(268);
+  const [rightWidth, setRightWidth] = createSignal(420);
 
   const startResize = (side: "left" | "right", ev: PointerEvent) => {
     ev.preventDefault();

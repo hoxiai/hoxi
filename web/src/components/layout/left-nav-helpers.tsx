@@ -307,7 +307,7 @@ export function SessionNavItem(props: {
   return (
     <div
       ref={rowRef}
-      class={`group/row relative flex items-center justify-between gap-1 rounded-lg px-2 py-1 cursor-pointer transition-colors overflow-hidden ${
+      class={`group/row relative flex items-center justify-between gap-1 rounded-lg px-2.5 py-1.5 cursor-pointer transition-colors overflow-hidden ${
         confirmingDelete()
           ? "bg-[var(--danger-surface)] text-[var(--text-primary)] ring-1 ring-[var(--danger-border)]"
           : props.active
@@ -348,12 +348,12 @@ export function SessionNavItem(props: {
                   setEditing(false);
                 }
               }}
-              class="flex-1 min-w-0 rounded border border-[var(--accent-border)] bg-[var(--bg-panel)] px-1.5 py-0.5 text-[12.5px] text-[var(--text-primary)] outline-none"
+              class="flex-1 min-w-0 rounded border border-[var(--accent-border)] bg-[var(--bg-panel)] px-1.5 py-0.5 text-[13px] text-[var(--text-primary)] outline-none"
             />
           }
         >
           <span
-            class={`truncate text-[13.5px] flex-1 leading-snug ${
+            class={`truncate text-[13px] flex-1 leading-snug ${
               props.isArchived ? "text-[var(--text-muted)]" : ""
             }`}
             title={props.session.title || ""}
@@ -367,9 +367,9 @@ export function SessionNavItem(props: {
 
       {/* Static Badges (Branch & Diff) shown when not hovered and not confirming delete */}
       <Show when={!confirmingDelete() && !editing()}>
-        <div class="flex items-center gap-1 shrink-0 text-[11px] font-mono group-hover/row:opacity-0 transition-opacity">
+        <div class="flex items-center gap-1 shrink-0 text-[11.5px] font-mono group-hover/row:opacity-0 transition-opacity">
           <Show when={wt()?.isolated && wt()?.branch}>
-            <span class="inline-flex items-center gap-0.5 text-[var(--text-faint)] truncate max-w-[64px]">
+            <span class="inline-flex items-center gap-0.5 text-[var(--text-faint)] truncate max-w-[68px]">
               <Show when={props.showBranchIcon}>
                 <Icon name="branch" size="small" class="w-3 h-3" />
               </Show>
@@ -401,7 +401,7 @@ export function SessionNavItem(props: {
                   type="button"
                   disabled={deleting()}
                   onClick={(ev) => void handleConfirmDelete(ev)}
-                  class="inline-flex items-center gap-0.5 rounded bg-[var(--danger-text)] px-1.5 py-0.5 text-[11px] font-medium text-white hover:opacity-90 transition-opacity cursor-pointer shadow-xs"
+                  class="inline-flex items-center gap-0.5 rounded bg-[var(--danger-text)] px-1.5 py-0.5 text-[11.5px] font-medium text-white hover:opacity-90 transition-opacity cursor-pointer shadow-xs"
                   title={t("leftNav.discardConfirm")}
                 >
                   <Show
@@ -418,7 +418,7 @@ export function SessionNavItem(props: {
                     ev.stopPropagation();
                     setConfirmingDelete(false);
                   }}
-                  class="rounded px-1.5 py-0.5 text-[11px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+                  class="rounded px-1.5 py-0.5 text-[11.5px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
                 >
                   {t("leftNav.cancelDelete")}
                 </button>

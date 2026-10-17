@@ -68,12 +68,12 @@ export default function CompactHeader(props: CompactHeaderProps) {
 
   return (
     <header
-      class={`h-[52px] shrink-0 bg-transparent flex items-center justify-between px-4 ${
+      class={`h-[44px] shrink-0 bg-transparent flex items-center justify-between px-4 ${
         isMac ? "pl-[96px]" : "pl-4"
       } select-none`}
       style={{ "--wails-draggable": "drag" } as any}
     >
-      <div class="flex items-center gap-2.5 text-xs font-medium min-w-0">
+      <div class="flex items-center gap-2.5 text-[12px] font-medium min-w-0">
         <div class="flex items-center gap-2 shrink-0">
           <svg viewBox="0 0 64 64" fill="none" class="w-4.5 h-4.5 text-[var(--accent-primary)] shrink-0">
             <path d="M32 8L52 21H44L32 13L20 21H12L32 8Z" fill="currentColor" />
@@ -92,7 +92,7 @@ export default function CompactHeader(props: CompactHeaderProps) {
             type="button"
             style={{ "--wails-draggable": "no-drag" } as any}
             onClick={() => openEditWorkspaceModal(workspace.rootDir)}
-            class="text-[var(--text-secondary)] hover:text-[var(--text-primary)] font-mono text-[11px] truncate max-w-[180px] transition-colors cursor-pointer"
+            class="text-[var(--text-secondary)] hover:text-[var(--text-primary)] font-mono text-[12px] truncate max-w-[180px] transition-colors cursor-pointer"
             title={`${workspace.rootDir} (${t("leftNav.editWorkspace")})`}
           >
             {projectName()}
@@ -102,22 +102,22 @@ export default function CompactHeader(props: CompactHeaderProps) {
         <BranchManagerPopover />
       </div>
 
-      <div class="flex items-center gap-2 text-xs">
+      <div class="flex items-center gap-2 text-[12px]">
         <Show when={session()?.revert}>
           <button
-            class="inline-flex items-center gap-1 rounded-lg border border-[var(--warn-border)] bg-[var(--warn-surface)] px-2.5 py-1 text-[11px] text-[var(--warn-text)] hover:opacity-90 transition-opacity"
+            class="inline-flex items-center gap-1 rounded-lg border border-[var(--warn-border)] bg-[var(--warn-surface)] px-2.5 py-1 text-[12px] text-[var(--warn-text)] hover:opacity-90 transition-opacity"
             style={{ "--wails-draggable": "no-drag" } as any}
             onClick={onUndoRevert}
             title={t("header.undoRevertTooltip")}
           >
-            <RotateCcw size={11} />
+            <RotateCcw size={12} />
             {t("header.undoRevert")}
           </button>
         </Show>
 
         <Show when={lspCount() !== null}>
           <span
-            class="inline-flex items-center gap-1 rounded-full bg-[var(--bg-inset)] px-2 py-0.5 text-[10px] font-mono text-[var(--text-muted)]"
+            class="inline-flex items-center gap-1 rounded-full bg-[var(--bg-inset)] px-2.5 py-0.5 text-[11.5px] font-mono text-[var(--text-muted)]"
             title={t("header.lspTooltip")}
           >
             <Activity
@@ -142,7 +142,7 @@ export default function CompactHeader(props: CompactHeaderProps) {
                       : "bg-[var(--warn)] animate-pulse"
                   }`}
                 />
-                <span class="text-[11px] text-[var(--text-secondary)]">
+                <span class="text-[12px] text-[var(--text-secondary)]">
                   {workspace.connected ? t("common.ready") : t("common.connecting")}
                 </span>
               </>
@@ -154,7 +154,7 @@ export default function CompactHeader(props: CompactHeaderProps) {
             <TextShimmer
               text={t("common.working")}
               active={true}
-              class="text-[11px] font-medium text-[var(--accent-primary)]"
+              class="text-[12px] font-medium text-[var(--accent-primary)]"
             />
           </Show>
         </div>
@@ -169,7 +169,7 @@ export default function CompactHeader(props: CompactHeaderProps) {
         </button>
 
         <button
-          class={`inline-flex items-center gap-1.5 h-7 px-2 rounded-lg text-[11px] font-medium transition-colors cursor-pointer ${
+          class={`inline-flex items-center gap-1.5 h-7 px-2 rounded-lg text-[12px] font-medium transition-colors cursor-pointer ${
             props.inspectorOpen
               ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]"
               : "text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
@@ -180,7 +180,7 @@ export default function CompactHeader(props: CompactHeaderProps) {
         >
           <PanelRight size={15} />
           <Show when={diffCount() > 0}>
-            <span class="rounded-full bg-[var(--accent-surface)] px-1.5 py-[1px] font-mono text-[10px] text-[var(--accent-primary)]">
+            <span class="rounded-full bg-[var(--accent-surface)] px-1.5 py-[1px] font-mono text-[11px] text-[var(--accent-primary)]">
               {diffCount()}
             </span>
           </Show>

@@ -16,6 +16,7 @@ const (
 	ExternalToolGrok   ExternalToolID = "grok-cli"
 	ExternalToolClaude ExternalToolID = "claude-code"
 	ExternalToolCodex  ExternalToolID = "codex-cli"
+	ExternalToolGemini ExternalToolID = "gemini-antigravity"
 )
 
 type ExternalSessionSummary struct {
@@ -223,6 +224,7 @@ func (g *desktopGateway) handleHandoffSessions(w http.ResponseWriter, r *http.Re
 	grokSessions, grokStats := scanGrokSessions(targetDir, query)
 	claudeSessions, claudeStats := scanClaudeSessions(targetDir, query)
 	codexSessions, codexStats := scanCodexSessions(targetDir, query)
+	geminiSessions, geminiStats := scanGeminiAntigravitySessions(targetDir, query)
 
 	var combined []ExternalSessionSummary
 	if sourceFilter == "" || sourceFilter == "all" || sourceFilter == ExternalToolGrok {
@@ -233,6 +235,9 @@ func (g *desktopGateway) handleHandoffSessions(w http.ResponseWriter, r *http.Re
 	}
 	if sourceFilter == "" || sourceFilter == "all" || sourceFilter == ExternalToolCodex {
 		combined = append(combined, codexSessions...)
+	}
+	if sourceFilter == "" || sourceFilter == "all" || sourceFilter == ExternalToolGemini {
+		combined = append(combined, geminiSessions...)
 	}
 
 	if onlyCurrent && targetDir != "" {
@@ -262,6 +267,7 @@ func (g *desktopGateway) handleHandoffSessions(w http.ResponseWriter, r *http.Re
 			ExternalToolGrok:   grokStats,
 			ExternalToolClaude: claudeStats,
 			ExternalToolCodex:  codexStats,
+			ExternalToolGemini: geminiStats,
 		},
 	})
 }
@@ -318,6 +324,7 @@ func (g *desktopGateway) handleLocalCLIStatus(w http.ResponseWriter, r *http.Req
 		detectGrokCLIStatus(hoxiMap),
 		detectClaudeCLIStatus(hoxiMap),
 		detectCodexCLIStatus(g, hoxiMap),
+		detectGeminiCLIStatus(g, hoxiMap),
 	}
 	writeJSON(w, http.StatusOK, LocalCLIStatusResponse{Tools: tools})
 }
@@ -340,6 +347,8 @@ func (g *desktopGateway) handleLocalCLIImport(w http.ResponseWriter, r *http.Req
 		resp = g.importClaudeCLIProvider()
 	case ExternalToolCodex:
 		resp = g.importCodexCLIProvider()
+	case ExternalToolGemini:
+		resp = g.importGeminiCLIProvider()
 	default:
 		resp = LocalCLIImportResponse{Error: "Unsupported toolID: " + string(req.ToolID)}
 	}
@@ -354,6 +363,8 @@ func loadExternalSessionDetail(source ExternalToolID, sessionID, hintCWD, active
 		return loadClaudeSessionDetail(sessionID, hintCWD, activeRoot)
 	case ExternalToolCodex:
 		return loadCodexSessionDetail(sessionID, hintCWD, activeRoot)
+	case ExternalToolGemini:
+		return loadGeminiAntigravitySessionDetail(sessionID, hintCWD, activeRoot)
 	default:
 		return loadGrokSessionDetail(sessionID, hintCWD, activeRoot)
 	}

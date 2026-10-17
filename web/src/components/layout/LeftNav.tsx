@@ -287,7 +287,7 @@ export default function LeftNav() {
   return (
     <aside class="relative h-full w-full flex flex-col bg-transparent pl-2 pr-1 select-none">
       {/* Minimal Header: Mode Toggle + Search + New Workspace */}
-      <div class="px-2 pt-1 pb-1.5 flex items-center justify-between gap-1">
+      <div class="px-2 pt-1 pb-2 flex items-center justify-between gap-1">
         <div
           class="inline-flex items-center rounded-lg bg-[var(--bg-inset)] p-0.5"
           title={t("leftNav.switchSidebarMode")}
@@ -295,7 +295,7 @@ export default function LeftNav() {
           <button
             type="button"
             onClick={() => setSidebarProjectMode("multi")}
-            class={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11.5px] font-medium transition-colors cursor-pointer ${
+            class={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[12px] font-medium transition-colors cursor-pointer ${
               workspace.sidebarProjectMode === "multi"
                 ? "bg-[var(--bg-panel)] text-[var(--text-primary)] shadow-2xs"
                 : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
@@ -308,7 +308,7 @@ export default function LeftNav() {
           <button
             type="button"
             onClick={() => setSidebarProjectMode("single")}
-            class={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11.5px] font-medium transition-colors cursor-pointer ${
+            class={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[12px] font-medium transition-colors cursor-pointer ${
               workspace.sidebarProjectMode === "single"
                 ? "bg-[var(--bg-panel)] text-[var(--text-primary)] shadow-2xs"
                 : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
@@ -351,15 +351,15 @@ export default function LeftNav() {
 
       {/* Collapsible Search Filter */}
       <Show when={showSearch()}>
-        <div class="px-2 pb-1.5">
-          <div class="flex items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-2 py-1 text-[11.5px]">
+        <div class="px-2 pb-2">
+          <div class="flex items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-2.5 py-1.5 text-[12px]">
             <Icon name="magnifying-glass" size="small" class="text-[var(--text-muted)]" />
             <input
               type="text"
               placeholder={t("leftNav.filterPlaceholder")}
               value={filterQuery()}
               onInput={(e) => setFilterQuery(e.currentTarget.value)}
-              class="w-full bg-transparent text-[11.5px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none"
+              class="w-full bg-transparent text-[12px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none"
             />
             <Show when={filterQuery()}>
               <button
@@ -375,12 +375,12 @@ export default function LeftNav() {
       </Show>
 
       {/* Prominent New Thread Button above all projects */}
-      <div class="px-2 pb-1.5 shrink-0">
+      <div class="px-2 pb-2 shrink-0">
         <button
           type="button"
           onClick={onCreateGlobalNewThread}
           disabled={creatingGlobal()}
-          class="w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] hover:bg-[var(--bg-hover)] text-[var(--text-primary)] hover:border-[var(--accent-border)] transition-all cursor-pointer shadow-2xs group"
+          class="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] hover:bg-[var(--bg-hover)] text-[var(--text-primary)] hover:border-[var(--accent-border)] transition-all cursor-pointer shadow-2xs group"
           title={t("leftNav.newThread")}
         >
           <div class="flex items-center gap-2 min-w-0">
@@ -390,11 +390,11 @@ export default function LeftNav() {
             >
               <Icon name="new-session" size="small" class="text-[var(--accent-primary)]" />
             </Show>
-            <span class="text-[13.5px] font-medium truncate">
+            <span class="text-[13px] font-medium truncate">
               {t("leftNav.newThread")}
             </span>
           </div>
-          <span class="text-[11px] font-mono text-[var(--text-faint)] group-hover:text-[var(--text-muted)]">
+          <span class="text-[11.5px] font-mono text-[var(--text-faint)] group-hover:text-[var(--text-muted)]">
             ⌘N
           </span>
         </button>
@@ -404,7 +404,7 @@ export default function LeftNav() {
       <Show when={workspace.sidebarProjectMode === "multi"}>
         <div
           ref={projectListContainerRef}
-          class="flex-1 min-h-0 overflow-y-auto px-1 py-1 space-y-0.5"
+          class="flex-1 min-h-0 overflow-y-auto px-1 py-1 space-y-1"
         >
           <For each={projectList()}>
             {(proj) => (

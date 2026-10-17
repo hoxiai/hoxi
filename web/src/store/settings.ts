@@ -254,15 +254,16 @@ export function resolveEffectiveTheme(mode: ThemeMode): "light" | "dark" {
 
 export function applyFontScaleToDOM(scale: FontScale) {
   if (typeof document === "undefined") return;
-  const map: Record<FontScale, { ui: string; chat: string }> = {
-    compact: { ui: "12px", chat: "13px" },
-    default: { ui: "13px", chat: "14px" },
-    comfortable: { ui: "13.5px", chat: "15px" },
-    large: { ui: "14px", chat: "16px" },
+  const map: Record<FontScale, { ui: string; chat: string; code: string }> = {
+    compact: { ui: "12.5px", chat: "13.5px", code: "12px" },
+    default: { ui: "13px", chat: "14.5px", code: "13px" },
+    comfortable: { ui: "13.5px", chat: "15.5px", code: "13.5px" },
+    large: { ui: "14px", chat: "16.5px", code: "14px" },
   };
   const chosen = map[scale] || map.default;
   document.documentElement.style.setProperty("--app-ui-text-size", chosen.ui);
   document.documentElement.style.setProperty("--app-chat-text-size", chosen.chat);
+  document.documentElement.style.setProperty("--app-code-text-size", chosen.code);
 }
 
 export function syncSettingsSideEffects() {

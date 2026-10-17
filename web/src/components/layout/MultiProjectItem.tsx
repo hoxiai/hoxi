@@ -208,7 +208,7 @@ export default function MultiProjectTreeItem(props: {
             ? props.proj.folders.map((f) => shortenPath(f.path)).join("\n")
             : shortenPath(props.proj.path)
         }
-        class={`group/proj flex items-center justify-between gap-1.5 rounded-lg px-2 py-1.5 cursor-pointer active:cursor-grabbing transition-colors ${
+        class={`group/proj flex items-center justify-between gap-1.5 rounded-lg px-2.5 py-1.5 cursor-pointer active:cursor-grabbing transition-colors ${
           props.isDraggingThis
             ? "opacity-55 bg-[var(--accent-surface)] ring-1 ring-[var(--accent-border)]"
             : "hover:bg-[var(--bg-hover)]/70"
@@ -231,7 +231,7 @@ export default function MultiProjectTreeItem(props: {
           />
 
           <span
-            class={`truncate text-[14px] ${
+            class={`truncate text-[13px] ${
               isActive()
                 ? "font-semibold text-[var(--text-primary)]"
                 : "font-medium text-[var(--text-secondary)] group-hover/proj:text-[var(--text-primary)]"
@@ -242,7 +242,7 @@ export default function MultiProjectTreeItem(props: {
 
           <Show when={props.proj.folders.length > 1}>
             <span
-              class="shrink-0 rounded px-1.5 py-0.2 text-[10.5px] font-mono bg-[var(--bg-inset)] text-[var(--text-muted)]"
+              class="shrink-0 rounded px-1.5 py-0.2 text-[11px] font-mono bg-[var(--bg-inset)] text-[var(--text-muted)]"
               title={t("leftNav.folderCountBadge", {
                 count: props.proj.folders.length,
               })}
@@ -283,7 +283,7 @@ export default function MultiProjectTreeItem(props: {
 
       {/* Expanded Workspace Folders & Sessions */}
       <Show when={props.expanded}>
-        <div class="ml-3.5 pl-2 border-l border-[var(--border-subtle)]/60 my-0.5 space-y-0.5">
+        <div class="ml-3.5 pl-2 border-l border-[var(--border-subtle)]/60 my-1 space-y-1">
           {/* Multi-Folder Workspace Directory List */}
           <Show when={props.proj.folders.length > 1}>
             <div class="pb-1 mb-0.5 border-b border-[var(--border-subtle)]/40 space-y-0.5">
@@ -293,7 +293,7 @@ export default function MultiProjectTreeItem(props: {
                     type="button"
                     onClick={() => void inspectWorkspaceFolder(folder.path)}
                     title={folder.path}
-                    class="w-full flex items-center justify-between gap-1.5 rounded-md px-2 py-0.5 text-[12px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]/50 transition-colors cursor-pointer"
+                    class="w-full flex items-center justify-between gap-1.5 rounded-md px-2 py-1 text-[12px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]/50 transition-colors cursor-pointer"
                   >
                     <div class="flex items-center gap-1.5 min-w-0">
                       <FolderIcon
@@ -306,7 +306,7 @@ export default function MultiProjectTreeItem(props: {
                       </span>
                     </div>
                     <Show when={folder.isPrimary}>
-                      <span class="shrink-0 text-[10px] px-1 rounded bg-[var(--bg-inset)] text-[var(--text-faint)]">
+                      <span class="shrink-0 text-[11px] px-1.5 rounded bg-[var(--bg-inset)] text-[var(--text-faint)]">
                         {t("leftNav.primaryBadge")}
                       </span>
                     </Show>
@@ -358,7 +358,7 @@ export default function MultiProjectTreeItem(props: {
                   ev.stopPropagation();
                   props.onToggleArchived(props.proj.path);
                 }}
-                class="w-full flex items-center justify-between gap-1.5 rounded-lg px-2 py-0.5 text-[11.5px] text-[var(--text-faint)] hover:text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]/40 transition-colors cursor-pointer"
+                class="w-full flex items-center justify-between gap-1.5 rounded-lg px-2 py-1 text-[12px] text-[var(--text-faint)] hover:text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]/40 transition-colors cursor-pointer"
               >
                 <div class="flex items-center gap-1">
                   <Show
@@ -372,13 +372,13 @@ export default function MultiProjectTreeItem(props: {
                   <Icon name="archive" size="small" class="w-3 h-3" />
                   <span>{t("leftNav.archivedSessions")}</span>
                 </div>
-                <span class="text-[10.5px] font-mono">
+                <span class="text-[11px] font-mono">
                   {archivedSessions().length}
                 </span>
               </button>
 
               <Show when={props.isArchivedOpen}>
-                <div class="mt-0.5 space-y-0.5">
+                <div class="mt-1 space-y-1">
                   <For each={archivedSessions()}>
                     {(session) => (
                       <SessionNavItem

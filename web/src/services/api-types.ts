@@ -335,7 +335,12 @@ export interface CodeAuditRequest {
   locale?: string;
 }
 
-export type ExternalToolID = "grok-cli" | "claude-code" | "codex-cli" | "codex";
+export type ExternalToolID =
+  | "grok-cli"
+  | "claude-code"
+  | "codex-cli"
+  | "gemini-antigravity"
+  | "codex";
 
 export interface ExternalSessionSummary {
   id: string;

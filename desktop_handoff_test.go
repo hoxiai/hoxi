@@ -24,8 +24,8 @@ func TestHandoffDiscoveryAndPreview(t *testing.T) {
 	if err := json.Unmarshal(recStatus.Body.Bytes(), &statusResp); err != nil {
 		t.Fatalf("unmarshal status response: %v", err)
 	}
-	if len(statusResp.Tools) != 3 {
-		t.Fatalf("expected 3 CLI tools in status response, got %d", len(statusResp.Tools))
+	if len(statusResp.Tools) != 4 {
+		t.Fatalf("expected 4 CLI tools in status response, got %d", len(statusResp.Tools))
 	}
 	for _, tool := range statusResp.Tools {
 		t.Logf("CLI Tool: id=%s installed=%v auth=%v sessions=%d models=%v",

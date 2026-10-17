@@ -9,8 +9,9 @@
 
   /* App typography & layout metrics (aligned with Kilo Desktop) */
   --app-ui-text-size: 13px;
-  --app-chat-text-size: 14px;
-  --thread-max-width: 48rem;
+  --app-chat-text-size: 14.5px;
+  --app-code-text-size: 13px;
+  --thread-max-width: 54rem;
   --composer-radius: 1rem;
 
   /* Surfaces (Soft Mist palette for natural visual breathing room) */

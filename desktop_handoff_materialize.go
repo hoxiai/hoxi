@@ -186,6 +186,9 @@ func (g *desktopGateway) resolveDefaultHandoffModel(sum ExternalSessionSummary, 
 	case ExternalToolCodex:
 		defModel, _, _ := readCodexLocalConfig()
 		return "openai", firstNonEmpty(sum.Model, defModel)
+	case ExternalToolGemini:
+		_, defModel, _ := readGeminiLocalKeyAndModels()
+		return "google", firstNonEmpty(sum.Model, defModel)
 	default:
 		return string(sum.Source), sum.Model
 	}

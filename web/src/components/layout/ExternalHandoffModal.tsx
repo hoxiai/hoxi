@@ -123,7 +123,12 @@ export default function ExternalHandoffModal() {
         await refreshProviders().catch(() => null);
       }
       const preferredProviderID = useOriginal
-        ? cli?.providerID || (item.source === "codex-cli" ? "openai" : item.source)
+        ? cli?.providerID ||
+          (item.source === "codex-cli"
+            ? "openai"
+            : item.source === "gemini-antigravity"
+            ? "google"
+            : item.source)
         : workspace.selectedModel?.providerID;
       const preferredModelID = useOriginal
         ? currentOriginalModel()
@@ -301,7 +306,9 @@ export default function ExternalHandoffModal() {
               </div>
 
               <div class="inline-flex rounded-lg bg-[var(--bg-inset)] p-0.5 text-[11px]">
-                {(["all", "grok-cli", "claude-code", "codex-cli"] as const).map((src) => (
+                {(
+                  ["all", "grok-cli", "claude-code", "codex-cli", "gemini-antigravity"] as const
+                ).map((src) => (
                   <button
                     type="button"
                     onClick={() => setSourceFilter(src)}
@@ -317,7 +324,9 @@ export default function ExternalHandoffModal() {
                       ? "Grok CLI"
                       : src === "claude-code"
                       ? "Claude Code"
-                      : "Codex"}
+                      : src === "codex-cli"
+                      ? "Codex"
+                      : "Antigravity"}
                   </button>
                 ))}
               </div>
