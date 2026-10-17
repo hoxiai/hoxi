@@ -4,10 +4,10 @@ import { hoxiAPI } from "../services/api";
 import {
   ARCHIVED_SESSIONS_KEY,
   isSessionArchived,
-  setSessionSandboxMode,
   setWorkspace,
   workspace,
 } from "./workspace";
+import { appSettings } from "./settings";
 import {
   getCustomSessionTitle,
   isPlaceholderSessionTitle,
@@ -141,7 +141,7 @@ export async function newIsolatedSession(
     workspace.rootDir || undefined
   );
   const shouldIsolate =
-    options?.isolated ?? workspace.sessionSandboxMode === "worktree";
+    options?.isolated ?? appSettings.defaultSandboxMode === "worktree";
   if (shouldIsolate) {
     try {
       const meta = await hoxiAPI.createWorktree(
@@ -155,6 +155,17 @@ export async function newIsolatedSession(
     } catch (err) {
       console.error("create worktree failed:", err);
     }
+  } else {
+    setWorkspace("worktreeBySession", (prev) => ({
+      ...prev,
+      [session.id]: {
+        sessionID: session.id,
+        isolated: false,
+        directory: workspace.rootDir,
+        branch: prev["__root__"]?.branch,
+        createdAt: new Date().toISOString(),
+      },
+    }));
   }
   replaceSession(session);
   await selectSession(session.id);
@@ -164,9 +175,11 @@ export async function newIsolatedSession(
 export async function switchActiveSessionSandboxMode(
   mode: "local" | "worktree"
 ): Promise<void> {
-  setSessionSandboxMode(mode);
   const id = workspace.activeSessionID;
-  if (!id) return;
+  if (!id) {
+    await newIsolatedSession(undefined, { isolated: mode === "worktree" });
+    return;
+  }
   const currentMeta = workspace.worktreeBySession[id];
   const isCurrentlyIsolated = Boolean(currentMeta?.isolated);
 
@@ -182,14 +195,11 @@ export async function switchActiveSessionSandboxMode(
       console.error("enable session worktree failed:", err);
     }
   } else if (mode === "local" && isCurrentlyIsolated) {
-    const turnCount = workspace.messagesBySession[id]?.length ?? 0;
-    if (turnCount === 0 || !currentMeta?.dirty) {
-      try {
-        await hoxiAPI.removeWorktree(id, true);
-        await refreshWorktreeStatus(id);
-      } catch (err) {
-        console.error("remove session worktree failed:", err);
-      }
+    try {
+      await hoxiAPI.removeWorktree(id, true);
+      await refreshWorktreeStatus(id);
+    } catch (err) {
+      console.error("remove session worktree failed:", err);
     }
   }
 }
@@ -210,7 +220,6 @@ export async function applyAndExitSessionWorktree(
 ): Promise<void> {
   await hoxiAPI.applyWorktree(sessionID, mode);
   await hoxiAPI.removeWorktree(sessionID, true, keepBranch);
-  setSessionSandboxMode("local");
   await refreshWorktreeStatus(sessionID);
   await refreshWorktreeStatus("__root__");
 }
@@ -220,7 +229,6 @@ export async function exitSessionWorktree(
   keepBranch = false
 ): Promise<void> {
   await hoxiAPI.removeWorktree(sessionID, true, keepBranch);
-  setSessionSandboxMode("local");
   await refreshWorktreeStatus(sessionID);
   await refreshWorktreeStatus("__root__");
 }

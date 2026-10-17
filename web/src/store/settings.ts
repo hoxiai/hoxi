@@ -15,12 +15,18 @@ export interface AppSettingsState {
   activeTab: SettingsTab;
   themeMode: ThemeMode;
   fontScale: FontScale;
+  userLoggedIn: boolean;
   userDisplayName: string;
+  userEmail: string;
+  detectedSystemUsername: string;
+  detectedGitUserName: string;
+  detectedGitUserEmail: string;
   sendShortcut: SendShortcutMode;
   reasoningDisplay: ReasoningDisplayMode;
   autoScrollStream: boolean;
   confirmBeforeRevert: boolean;
   customSystemPrompt: string;
+  defaultSandboxMode: "local" | "worktree";
   defaultDiffStyle: DiffLayoutMode;
   worktreeApplyMode: WorktreeApplyStrategy;
   terminalFontSize: number;
@@ -30,15 +36,27 @@ export interface AppSettingsState {
 
 export const APP_SETTINGS_KEY = "hoxi-app-settings:v1";
 
-const DEFAULT_SETTINGS: Omit<AppSettingsState, "modalOpen" | "activeTab"> = {
+type PersistedSettings = Omit<
+  AppSettingsState,
+  | "modalOpen"
+  | "activeTab"
+  | "detectedSystemUsername"
+  | "detectedGitUserName"
+  | "detectedGitUserEmail"
+>;
+
+const DEFAULT_SETTINGS: PersistedSettings = {
   themeMode: "light",
   fontScale: "default",
+  userLoggedIn: true,
   userDisplayName: "",
+  userEmail: "",
   sendShortcut: "enter",
   reasoningDisplay: "auto-collapse",
   autoScrollStream: true,
   confirmBeforeRevert: true,
   customSystemPrompt: "",
+  defaultSandboxMode: "local",
   defaultDiffStyle: "unified",
   worktreeApplyMode: "patch",
   terminalFontSize: 12,
@@ -46,7 +64,7 @@ const DEFAULT_SETTINGS: Omit<AppSettingsState, "modalOpen" | "activeTab"> = {
   desktopNotifications: true,
 };
 
-function loadInitialSettings(): Omit<AppSettingsState, "modalOpen" | "activeTab"> {
+function loadInitialSettings(): PersistedSettings {
   let baseTheme: ThemeMode = "light";
   try {
     const savedLegacyTheme = localStorage.getItem(THEME_KEY);
@@ -80,8 +98,14 @@ function loadInitialSettings(): Omit<AppSettingsState, "modalOpen" | "activeTab"
         parsed.fontScale === "large"
           ? parsed.fontScale
           : DEFAULT_SETTINGS.fontScale,
+      userLoggedIn:
+        typeof parsed.userLoggedIn === "boolean"
+          ? parsed.userLoggedIn
+          : DEFAULT_SETTINGS.userLoggedIn,
       userDisplayName:
         typeof parsed.userDisplayName === "string" ? parsed.userDisplayName : "",
+      userEmail:
+        typeof parsed.userEmail === "string" ? parsed.userEmail : "",
       sendShortcut:
         parsed.sendShortcut === "enter" || parsed.sendShortcut === "mod-enter"
           ? parsed.sendShortcut
@@ -104,6 +128,10 @@ function loadInitialSettings(): Omit<AppSettingsState, "modalOpen" | "activeTab"
         typeof parsed.customSystemPrompt === "string"
           ? parsed.customSystemPrompt
           : DEFAULT_SETTINGS.customSystemPrompt,
+      defaultSandboxMode:
+        parsed.defaultSandboxMode === "local" || parsed.defaultSandboxMode === "worktree"
+          ? parsed.defaultSandboxMode
+          : DEFAULT_SETTINGS.defaultSandboxMode,
       defaultDiffStyle:
         parsed.defaultDiffStyle === "unified" || parsed.defaultDiffStyle === "split"
           ? parsed.defaultDiffStyle
@@ -135,20 +163,26 @@ function loadInitialSettings(): Omit<AppSettingsState, "modalOpen" | "activeTab"
 export const [appSettings, setAppSettings] = createStore<AppSettingsState>({
   modalOpen: false,
   activeTab: "general",
+  detectedSystemUsername: "",
+  detectedGitUserName: "",
+  detectedGitUserEmail: "",
   ...loadInitialSettings(),
 });
 
 function persistAppSettings() {
   try {
-    const payload = {
+    const payload: PersistedSettings = {
       themeMode: appSettings.themeMode,
       fontScale: appSettings.fontScale,
+      userLoggedIn: appSettings.userLoggedIn,
       userDisplayName: appSettings.userDisplayName,
+      userEmail: appSettings.userEmail,
       sendShortcut: appSettings.sendShortcut,
       reasoningDisplay: appSettings.reasoningDisplay,
       autoScrollStream: appSettings.autoScrollStream,
       confirmBeforeRevert: appSettings.confirmBeforeRevert,
       customSystemPrompt: appSettings.customSystemPrompt,
+      defaultSandboxMode: appSettings.defaultSandboxMode,
       defaultDiffStyle: appSettings.defaultDiffStyle,
       worktreeApplyMode: appSettings.worktreeApplyMode,
       terminalFontSize: appSettings.terminalFontSize,
@@ -159,6 +193,55 @@ function persistAppSettings() {
   } catch {
     /* ignore */
   }
+}
+
+export function hydrateLocalUserIdentity(info: {
+  systemUsername?: string;
+  gitUserName?: string;
+  gitUserEmail?: string;
+}) {
+  setAppSettings({
+    detectedSystemUsername: info.systemUsername?.trim() || "",
+    detectedGitUserName: info.gitUserName?.trim() || "",
+    detectedGitUserEmail: info.gitUserEmail?.trim() || "",
+  });
+}
+
+export function resolvedUserDisplayName(): string {
+  const custom = appSettings.userDisplayName.trim();
+  if (custom) return custom;
+  if (appSettings.detectedGitUserName) return appSettings.detectedGitUserName;
+  if (appSettings.detectedSystemUsername) return appSettings.detectedSystemUsername;
+  const root = workspace.rootDir || "";
+  const match = root.match(/^\/(?:Users|home)\/([^/]+)/);
+  if (match?.[1]) return match[1];
+  return "developer";
+}
+
+export function resolvedUserEmail(): string {
+  const custom = appSettings.userEmail.trim();
+  if (custom) return custom;
+  if (appSettings.detectedGitUserEmail) return appSettings.detectedGitUserEmail;
+  const nameSlug = resolvedUserDisplayName()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]/g, "");
+  return `${nameSlug || "user"}@hoxi.local`;
+}
+
+export function signInUserAccount(name?: string, email?: string) {
+  if (typeof name === "string") {
+    setAppSettings("userDisplayName", name.trim());
+  }
+  if (typeof email === "string") {
+    setAppSettings("userEmail", email.trim());
+  }
+  setAppSettings("userLoggedIn", true);
+  persistAppSettings();
+}
+
+export function signOutUserAccount() {
+  setAppSettings("userLoggedIn", false);
+  persistAppSettings();
 }
 
 export function resolveEffectiveTheme(mode: ThemeMode): "light" | "dark" {
@@ -185,6 +268,7 @@ export function applyFontScaleToDOM(scale: FontScale) {
 export function syncSettingsSideEffects() {
   const effective = resolveEffectiveTheme(appSettings.themeMode);
   setWorkspace("theme", effective);
+  setWorkspace("sessionSandboxMode", appSettings.defaultSandboxMode);
   applyThemeClass(effective);
   try {
     localStorage.setItem(THEME_KEY, effective);
@@ -212,12 +296,13 @@ export function closeSettingsModal() {
   setAppSettings("modalOpen", false);
 }
 
-export function updateAppSetting<
-  K extends keyof Omit<AppSettingsState, "modalOpen" | "activeTab">
->(key: K, value: AppSettingsState[K]) {
+export function updateAppSetting<K extends keyof PersistedSettings>(
+  key: K,
+  value: PersistedSettings[K]
+) {
   setAppSettings(key as any, value as any);
   persistAppSettings();
-  if (key === "themeMode" || key === "fontScale") {
+  if (key === "themeMode" || key === "fontScale" || key === "defaultSandboxMode") {
     syncSettingsSideEffects();
   }
 }

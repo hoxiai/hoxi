@@ -71,6 +71,7 @@ export interface WorkspaceState {
   providerModalTab: ProviderModalTab;
   editingProviderID: string | null;
   arenaModalOpen: boolean;
+  handoffModalOpen: boolean;
   theme: "light" | "dark";
   providers: ProviderInfo[];
   connectedProviders: string[];
@@ -196,8 +197,14 @@ function initialSidebarProjectMode(): "single" | "multi" {
 
 function initialSessionSandboxMode(): "local" | "worktree" {
   try {
-    const saved = localStorage.getItem(SESSION_SANDBOX_MODE_KEY);
-    if (saved === "local" || saved === "worktree") return saved;
+    localStorage.removeItem(SESSION_SANDBOX_MODE_KEY);
+    const raw = localStorage.getItem("hoxi-app-settings:v1");
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed?.defaultSandboxMode === "local" || parsed?.defaultSandboxMode === "worktree") {
+        return parsed.defaultSandboxMode;
+      }
+    }
   } catch {
     /* ignore */
   }
@@ -243,6 +250,7 @@ export const [workspace, setWorkspace] = createStore<WorkspaceState>({
   providerModalTab: "providers",
   editingProviderID: null,
   arenaModalOpen: false,
+  handoffModalOpen: false,
   theme: initialTheme(),
   providers: [],
   connectedProviders: [],
@@ -324,6 +332,14 @@ export function openProviderModal(
   setWorkspace("providerModalTab", tab);
   setWorkspace("editingProviderID", editProviderID);
   setWorkspace("providerModalOpen", true);
+}
+
+export function openHandoffModal() {
+  setWorkspace("handoffModalOpen", true);
+}
+
+export function closeHandoffModal() {
+  setWorkspace("handoffModalOpen", false);
 }
 
 export function setSidebarProjectMode(mode: "single" | "multi") {

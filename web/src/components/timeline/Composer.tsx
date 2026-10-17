@@ -61,12 +61,12 @@ export default function Composer() {
     if (id && workspace.worktreeBySession[id]) {
       return workspace.worktreeBySession[id].isolated ? "worktree" : "local";
     }
-    return workspace.sessionSandboxMode;
+    return appSettings.defaultSandboxMode;
   });
 
   const onToggleSandbox = async (mode: "local" | "worktree") => {
     if (switchingSandbox() || busy()) return;
-    if (effectiveSandboxMode() === mode && workspace.sessionSandboxMode === mode) return;
+    if (effectiveSandboxMode() === mode) return;
     setSwitchingSandbox(true);
     try {
       await switchActiveSessionSandboxMode(mode);
