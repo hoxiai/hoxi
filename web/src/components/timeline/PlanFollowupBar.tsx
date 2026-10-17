@@ -82,7 +82,7 @@ export default function PlanFollowupBar() {
       setWorkspace("dismissedPlanFollowups", info.dismissKey, true);
       setWorkspace("activeMode", "build");
       const title = t("timeline.implementPlanSessionTitle");
-      const newId = await newIsolatedSession(title);
+      const newId = await newIsolatedSession(title, { isolated: true });
       const excerpt =
         info.planText.length > 3500
           ? `${info.planText.slice(0, 3500)}\n...(truncated)`

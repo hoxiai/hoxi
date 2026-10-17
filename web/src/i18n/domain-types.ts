@@ -68,6 +68,37 @@ export interface LeftNavI18n {
   renamePlaceholder: string;
   accountAndProviders: string;
   settingsAndProviders: string;
+  dragToReorder: string;
+  workspaceActions: string;
+  newWorkspace: string;
+  editWorkspace: string;
+  deleteWorkspace: string;
+  manageWorkspaces: string;
+  addFolderToWorkspace: string;
+  createWorkspaceTitle: string;
+  createWorkspaceDesc: string;
+  editWorkspaceTitle: string;
+  editWorkspaceDesc: string;
+  deleteWorkspaceTitle: string;
+  deleteWorkspaceDesc: string;
+  manageWorkspacesTitle: string;
+  manageWorkspacesDesc: string;
+  workspaceNameLabel: string;
+  workspaceNamePlaceholder: string;
+  workspaceColorLabel: string;
+  customColor: string;
+  workspaceFoldersLabel: string;
+  primaryBadge: string;
+  makePrimary: string;
+  removeFolder: string;
+  addFolder: string;
+  addFolderByPathPlaceholder: string;
+  addFolderBtn: string;
+  noFoldersSelected: string;
+  createWorkspaceSubmit: string;
+  saveWorkspaceChanges: string;
+  savingWorkspace: string;
+  folderCountBadge: string;
 }
 
 export interface TimelineI18n {
@@ -210,6 +241,10 @@ export interface TimelineI18n {
   pausedPlaceholder: string;
   resumeDefaultPrompt: string;
   resumePromptPrefix: string;
+  sandboxLocalMode: string;
+  sandboxWorktreeMode: string;
+  sandboxLocalTooltip: string;
+  sandboxWorktreeTooltip: string;
 }
 
 export interface ToolCardI18n {
@@ -266,6 +301,24 @@ export interface InspectorTabsI18n {
 export interface InspectorDiffsI18n {
   empty: string;
   emptyDesc: string;
+  busyEmptyTitle: string;
+  busyEmptyDesc: string;
+  cleanStatus: string;
+  envCardTitle: string;
+  envStatusLabel: string;
+  envStatusClean: string;
+  envBranchLabel: string;
+  envModeIsolated: string;
+  envModeMain: string;
+  envCommitLabel: string;
+  envDirLabel: string;
+  planModeTipTitle: string;
+  planModeTipDesc: string;
+  switchToBuildBtn: string;
+  checkChangesBtn: string;
+  checkingChangesBtn: string;
+  browseFilesBtn: string;
+  openTerminalBtn: string;
   filesChanged: string;
   files: string;
   unified: string;

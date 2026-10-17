@@ -9,6 +9,7 @@ import {
   loadProjects,
   loadProviders,
   loadProviderTelemetry,
+  loadSavedWorkspaces,
   loadSessionMessages,
   recordSessionRetry,
   refreshWorktreeStatus,
@@ -31,8 +32,9 @@ export default function App() {
         wsBaseURL: boot.wsBaseURL,
       });
 
-      // Load OpenCode projects, providers, models, agents, telemetry & pending questions in parallel
+      // Load OpenCode projects, saved workspaces, providers, models, agents, telemetry & pending questions in parallel
       void loadProjects();
+      void loadSavedWorkspaces();
       void loadProviders();
       void loadProviderTelemetry();
       void loadAgents();

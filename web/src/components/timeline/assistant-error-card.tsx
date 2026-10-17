@@ -4,6 +4,7 @@ import type { MessageInfo, SessionStatus } from "../../services/sse-types";
 import {
   computeProviderHealth,
   findBestFallbackModel,
+  isUserAbortError,
   retryLastUserPrompt,
   selectModel,
   setWorkspace,
@@ -40,7 +41,7 @@ export function AssistantErrorCard(props: { info: MessageInfo }) {
   );
 
   return (
-    <Show when={props.info.error}>
+    <Show when={props.info.error && !isUserAbortError(props.info)}>
       <div class="my-2 rounded-xl border border-[var(--danger-border)] bg-[var(--danger-surface)] px-3.5 py-3 text-[12.5px] text-[var(--danger-text)]">
         <div class="flex items-start gap-2.5">
           <Icon name="circle-ban-sign" size="small" class="mt-0.5 shrink-0" />

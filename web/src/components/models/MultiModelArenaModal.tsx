@@ -96,7 +96,7 @@ export default function MultiModelArenaModal() {
         models.map(async (model, idx) => {
           const shortModel = model.modelID.split("/").pop() || model.modelID;
           const title = `[Arena · ${shortModel}] ${baseTitle}`;
-          const sessionID = await newIsolatedSession(title);
+          const sessionID = await newIsolatedSession(title, { isolated: true });
           if (idx === 0) firstSessionID = sessionID;
           await submitSessionPrompt(taskPrompt, sessionID, {
             agent: workspace.activeMode,

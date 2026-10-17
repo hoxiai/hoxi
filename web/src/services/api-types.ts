@@ -12,6 +12,8 @@ export interface WorktreeMeta {
   directory: string;
   branch?: string;
   baseCommit?: string;
+  headCommit?: string;
+  headSubject?: string;
   createdAt: string;
   dirty?: boolean;
   changedFiles?: number;
@@ -32,12 +34,41 @@ export interface ProjectInfo {
   sandboxes?: string[];
 }
 
+export interface WorkspaceFolderInput {
+  path: string;
+  isPrimary?: boolean;
+}
+
+export interface WorkspaceFolder {
+  id: string;
+  path: string;
+  isPrimary: boolean;
+  position: number;
+}
+
+export interface WorkspaceProfile {
+  id: string;
+  name: string;
+  color: string;
+  folders: WorkspaceFolder[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SaveWorkspaceInput {
+  name?: string;
+  color?: string;
+  folders: WorkspaceFolderInput[];
+}
+
 export interface WorktreeStatus {
   sessionID: string;
   isolated: boolean;
   directory: string;
   branch?: string;
   baseCommit?: string;
+  headCommit?: string;
+  headSubject?: string;
   dirty: boolean;
   changedFiles: number;
   uncommittedLines: number;
@@ -48,6 +79,25 @@ export interface WorktreeStatus {
 export interface BootstrapInfo {
   rootDir: string;
   wsBaseURL: string;
+  status: {
+    attention: number;
+    running: number;
+    queued: number;
+    available: boolean;
+  };
+}
+
+export interface SystemRuntimeInfo {
+  openCodeBinPath: string;
+  openCodeVersion: string;
+  openCodePort: number;
+  wsBaseURL: string;
+  rootDir: string;
+  userConfigPath: string;
+  workspaceConfigPath: string;
+  os: string;
+  arch: string;
+  goVersion: string;
   status: {
     attention: number;
     running: number;

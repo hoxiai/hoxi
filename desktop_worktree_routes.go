@@ -14,10 +14,14 @@ func (m *worktreeManager) registerRoutes(mux *http.ServeMux) {
 		}
 		var body struct {
 			SessionID string `json:"sessionID"`
+			Directory string `json:"directory"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeJSONError(w, http.StatusBadRequest, err.Error())
 			return
+		}
+		if body.Directory != "" {
+			m.SetRootDir(body.Directory)
 		}
 		meta, err := m.Create(body.SessionID)
 		if err != nil {
@@ -29,12 +33,28 @@ func (m *worktreeManager) registerRoutes(mux *http.ServeMux) {
 
 	mux.HandleFunc("/api/hoxi/worktree/status", func(w http.ResponseWriter, r *http.Request) {
 		sessionID := r.URL.Query().Get("sessionID")
+		if dir := r.URL.Query().Get("directory"); dir != "" && (sessionID == "" || sessionID == "__root__") {
+			m.SetRootDir(dir)
+		}
 		st, err := m.Status(sessionID)
 		if err != nil {
 			writeJSONError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 		writeJSON(w, http.StatusOK, st)
+	})
+
+	mux.HandleFunc("/api/hoxi/worktree/diff", func(w http.ResponseWriter, r *http.Request) {
+		sessionID := r.URL.Query().Get("sessionID")
+		if dir := r.URL.Query().Get("directory"); dir != "" && (sessionID == "" || sessionID == "__root__") {
+			m.SetRootDir(dir)
+		}
+		diffs, err := m.Diff(sessionID)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, diffs)
 	})
 
 	mux.HandleFunc("/api/hoxi/worktree/apply", func(w http.ResponseWriter, r *http.Request) {

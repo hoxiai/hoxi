@@ -1,14 +1,13 @@
 import { produce } from "solid-js/store";
-import type { SessionInfo } from "../services/sse-types";
+import type { SessionInfo, SnapshotFileDiff } from "../services/sse-types";
 import { hoxiAPI } from "../services/api";
 import {
   ARCHIVED_SESSIONS_KEY,
   isSessionArchived,
-  RECENT_PROJECTS_KEY,
+  setSessionSandboxMode,
   setWorkspace,
   workspace,
 } from "./workspace";
-import { loadAgents, loadProviders } from "./workspace-providers";
 import {
   getCustomSessionTitle,
   isPlaceholderSessionTitle,
@@ -16,6 +15,10 @@ import {
 } from "./session-title";
 
 const deletedSessionIDs = new Set<string>();
+
+export function isSessionDeleted(id: string): boolean {
+  return deletedSessionIDs.has(id);
+}
 
 function persistArchivedSessionIDs(ids: string[]) {
   try {
@@ -31,74 +34,6 @@ function nextActiveSessionCandidate(excludeID?: string): SessionInfo | undefined
   );
   if (candidates.length === 0) return undefined;
   return [...candidates].sort((a, b) => b.time.created - a.time.created)[0];
-}
-
-export async function loadProjects(): Promise<void> {
-  try {
-    const remote = await hoxiAPI.listProjects();
-    const list = Array.isArray(remote) ? remote : [];
-    setWorkspace("projects", list);
-  } catch (err) {
-    console.error("Failed to load projects:", err);
-  }
-}
-
-export async function switchWorkspace(directory: string): Promise<void> {
-  const cleaned = directory.trim();
-  if (!cleaned) return;
-
-  // Persist to recent projects
-  const recents = workspace.recentProjects.filter((p) => p !== cleaned);
-  const updatedRecents = [cleaned, ...recents].slice(0, 15);
-  setWorkspace("recentProjects", updatedRecents);
-  try {
-    localStorage.setItem(RECENT_PROJECTS_KEY, JSON.stringify(updatedRecents));
-  } catch {
-    /* ignore */
-  }
-
-  setWorkspace({
-    rootDir: cleaned,
-    activeSessionID: null,
-    messagesBySession: {},
-    diffsBySession: {},
-    worktreeBySession: {},
-    reviewCommentsBySession: {},
-    pendingPermissions: [],
-  });
-
-  try {
-    const rawSessions = await hoxiAPI.listSessions(cleaned);
-    const sessions = rawSessions.filter((s) => !deletedSessionIDs.has(s.id));
-    setWorkspace("sessions", sessions);
-
-    // Restore worktree & git branch/diff status for root and all sessions
-    void refreshWorktreeStatus("__root__");
-    await Promise.allSettled(sessions.map((s) => refreshWorktreeStatus(s.id)));
-
-    const unarchived = sessions.filter((s) => !isSessionArchived(s));
-    if (unarchived.length > 0) {
-      const mostRecent = [...unarchived].sort((a, b) => b.time.created - a.time.created)[0];
-      await selectSession(mostRecent.id);
-    }
-  } catch (err) {
-    console.error("switch workspace error:", err);
-  }
-
-  void loadProviders();
-  void loadProjects();
-  void loadAgents(cleaned);
-}
-
-export async function openWorkspaceFolder(): Promise<void> {
-  try {
-    const res = await hoxiAPI.openDirectoryDialog();
-    if (res?.path && res.path.trim()) {
-      await switchWorkspace(res.path.trim());
-    }
-  } catch (err) {
-    console.error("open directory dialog error:", err);
-  }
 }
 
 export function activeSession(): SessionInfo | undefined {
@@ -118,7 +53,8 @@ export function activeDirectory(): string | undefined {
 
 export function isSessionBusy(sessionID: string | null): boolean {
   if (!sessionID) return false;
-  return workspace.statusBySession[sessionID]?.type === "busy";
+  const st = workspace.statusBySession[sessionID]?.type;
+  return st === "busy" || st === "retry";
 }
 
 export function sessionsWithPendingPermission(): Set<string> {
@@ -144,6 +80,33 @@ export function replaceSession(info: SessionInfo) {
   });
 }
 
+function mergeSessionAndWorktreeDiffs(
+  sessionDiffs: SnapshotFileDiff[],
+  worktreeDiffs: SnapshotFileDiff[]
+): SnapshotFileDiff[] {
+  const byFile = new Map<string, SnapshotFileDiff>();
+  for (const d of sessionDiffs || []) {
+    if (!d?.file) continue;
+    byFile.set(d.file, { ...d });
+  }
+  for (const wd of worktreeDiffs || []) {
+    if (!wd?.file) continue;
+    const existing = byFile.get(wd.file);
+    if (existing) {
+      byFile.set(wd.file, {
+        ...existing,
+        patch: existing.patch || wd.patch,
+        additions: existing.additions || wd.additions,
+        deletions: existing.deletions || wd.deletions,
+        status: existing.status || wd.status,
+      });
+    } else {
+      byFile.set(wd.file, { ...wd });
+    }
+  }
+  return Array.from(byFile.values());
+}
+
 export async function loadSessionMessages(sessionID: string): Promise<void> {
   const directory = sessionDirectory(sessionID);
   void refreshWorktreeStatus(sessionID);
@@ -152,8 +115,12 @@ export async function loadSessionMessages(sessionID: string): Promise<void> {
     ...prev,
     [sessionID]: turns.map((t) => ({ info: t.info, parts: t.parts })),
   }));
-  const diffs = await hoxiAPI.getSessionDiff(sessionID, directory);
-  setWorkspace("diffsBySession", (prev) => ({ ...prev, [sessionID]: diffs }));
+  const [sessionDiffs, worktreeDiffs] = await Promise.all([
+    hoxiAPI.getSessionDiff(sessionID, directory).catch(() => [] as SnapshotFileDiff[]),
+    hoxiAPI.getWorktreeDiff(sessionID).catch(() => [] as SnapshotFileDiff[]),
+  ]);
+  const merged = mergeSessionAndWorktreeDiffs(sessionDiffs, worktreeDiffs);
+  setWorkspace("diffsBySession", (prev) => ({ ...prev, [sessionID]: merged }));
 }
 
 export async function selectSession(sessionID: string): Promise<void> {
@@ -165,20 +132,66 @@ export async function selectSession(sessionID: string): Promise<void> {
   }
 }
 
-export async function newIsolatedSession(title?: string): Promise<string> {
+export async function newIsolatedSession(
+  title?: string,
+  options?: { isolated?: boolean }
+): Promise<string> {
   const session = await hoxiAPI.createSession(
     title,
     workspace.rootDir || undefined
   );
-  try {
-    const meta = await hoxiAPI.createWorktree(session.id);
-    setWorkspace("worktreeBySession", (prev) => ({ ...prev, [session.id]: meta }));
-  } catch (err) {
-    console.error("create worktree failed:", err);
+  const shouldIsolate =
+    options?.isolated ?? workspace.sessionSandboxMode === "worktree";
+  if (shouldIsolate) {
+    try {
+      const meta = await hoxiAPI.createWorktree(
+        session.id,
+        workspace.rootDir || undefined
+      );
+      setWorkspace("worktreeBySession", (prev) => ({
+        ...prev,
+        [session.id]: meta,
+      }));
+    } catch (err) {
+      console.error("create worktree failed:", err);
+    }
   }
   replaceSession(session);
   await selectSession(session.id);
   return session.id;
+}
+
+export async function switchActiveSessionSandboxMode(
+  mode: "local" | "worktree"
+): Promise<void> {
+  setSessionSandboxMode(mode);
+  const id = workspace.activeSessionID;
+  if (!id) return;
+  const currentMeta = workspace.worktreeBySession[id];
+  const isCurrentlyIsolated = Boolean(currentMeta?.isolated);
+
+  if (mode === "worktree" && !isCurrentlyIsolated) {
+    try {
+      const meta = await hoxiAPI.createWorktree(
+        id,
+        workspace.rootDir || undefined
+      );
+      setWorkspace("worktreeBySession", (prev) => ({ ...prev, [id]: meta }));
+      await refreshWorktreeStatus(id);
+    } catch (err) {
+      console.error("enable session worktree failed:", err);
+    }
+  } else if (mode === "local" && isCurrentlyIsolated) {
+    const turnCount = workspace.messagesBySession[id]?.length ?? 0;
+    if (turnCount === 0 || !currentMeta?.dirty) {
+      try {
+        await hoxiAPI.removeWorktree(id, true);
+        await refreshWorktreeStatus(id);
+      } catch (err) {
+        console.error("remove session worktree failed:", err);
+      }
+    }
+  }
 }
 
 export async function applySessionWorktree(
@@ -192,8 +205,9 @@ export async function applySessionWorktree(
 
 export async function refreshWorktreeStatus(sessionID?: string | null): Promise<void> {
   const key = sessionID || "__root__";
+  const dirArg = key === "__root__" ? workspace.rootDir || undefined : undefined;
   try {
-    const st = await hoxiAPI.getWorktreeStatus(key);
+    const st = await hoxiAPI.getWorktreeStatus(key, dirArg);
     setWorkspace("worktreeBySession", (prev) => ({
       ...prev,
       [key]: {
@@ -202,6 +216,8 @@ export async function refreshWorktreeStatus(sessionID?: string | null): Promise<
         directory: st.directory || workspace.rootDir,
         branch: st.branch || prev[key]?.branch,
         baseCommit: st.baseCommit || prev[key]?.baseCommit,
+        headCommit: st.headCommit || prev[key]?.headCommit,
+        headSubject: st.headSubject || prev[key]?.headSubject,
         createdAt: prev[key]?.createdAt || new Date().toISOString(),
         dirty: st.dirty,
         changedFiles: st.changedFiles,
@@ -210,6 +226,20 @@ export async function refreshWorktreeStatus(sessionID?: string | null): Promise<
         deletions: st.deletions,
       },
     }));
+
+    if (key === "__root__" || key === workspace.activeSessionID) {
+      const wtDiffs = st.dirty
+        ? await hoxiAPI.getWorktreeDiff(key, dirArg).catch(() => [] as SnapshotFileDiff[])
+        : [];
+      setWorkspace("diffsBySession", (prev) => {
+        if (key === "__root__") {
+          return { ...prev, __root__: wtDiffs };
+        }
+        const existing = prev[key] ?? [];
+        const merged = st.dirty ? mergeSessionAndWorktreeDiffs(existing, wtDiffs) : existing;
+        return { ...prev, [key]: merged };
+      });
+    }
   } catch (err) {
     console.error("refresh worktree status failed:", err);
   }
@@ -315,6 +345,7 @@ export function removeSessionFromStore(sessionID: string): SessionInfo | undefin
       delete state.reviewCommentsBySession[sessionID];
       delete state.auditsBySession[sessionID];
       delete state.auditingBySession[sessionID];
+      delete state.interruptedBySession[sessionID];
       state.pendingPermissions = state.pendingPermissions.filter((p) => p.sessionID !== sessionID);
       state.pendingQuestions = state.pendingQuestions.filter((q) => q.sessionID !== sessionID);
     })
@@ -375,9 +406,12 @@ export async function discardSession(
 export {
   applyPartDeltaBatch,
   forkFromMessage,
-   retryLastUserPrompt,
+  pauseSessionTask,
+  resumePausedSession,
+  retryLastUserPrompt,
   revertToHere,
   sendPrompt,
+  stopSessionTask,
   submitSessionPrompt,
   undoRevert,
   upsertMessageInfo,

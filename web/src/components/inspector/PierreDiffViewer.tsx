@@ -1,9 +1,8 @@
 // web/src/components/inspector/PierreDiffViewer.tsx
-import { createMemo, createSignal, For, Show } from "solid-js";
+import { createMemo, createSignal, For, onMount, Show } from "solid-js";
 import { Check, GitCommitHorizontal, RefreshCw, ShieldCheck, Sparkles } from "lucide-solid";
 import { hoxiAPI } from "../../services/api";
 import {
-  activeDirectory,
   loadSessionMessages,
   refreshWorktreeStatus,
   runSessionCodeAudit,
@@ -11,6 +10,7 @@ import {
 } from "../../store/workspace";
 import { t } from "../../i18n";
 import ObserverAuditBanner from "./ObserverAuditBanner";
+import DiffEmptyState from "./pierre-diff-empty";
 import { DiffCard, FileDiffBlock, synthesizeAICommitMessage } from "./pierre-diff-parts";
 
 export { FileDiffBlock };
@@ -22,9 +22,15 @@ export default function PierreDiffViewer() {
   const [committing, setCommitting] = createSignal(false);
   const [committedHash, setCommittedHash] = createSignal<string | null>(null);
 
+  const sessionKey = () => workspace.activeSessionID || "__root__";
+
   const diffs = createMemo(() => {
     const id = workspace.activeSessionID;
-    return id ? workspace.diffsBySession[id] ?? [] : [];
+    if (id) {
+      const sDiffs = workspace.diffsBySession[id];
+      if (sDiffs && sDiffs.length > 0) return sDiffs;
+    }
+    return workspace.diffsBySession[sessionKey()] ?? [];
   });
 
   const isAuditing = () =>
@@ -40,12 +46,20 @@ export default function PierreDiffViewer() {
     return { add, del };
   });
 
+  onMount(() => {
+    void refreshWorktreeStatus(workspace.activeSessionID);
+  });
+
   const onRefresh = async () => {
-    const id = workspace.activeSessionID;
-    if (!id || refreshing()) return;
+    if (refreshing()) return;
     setRefreshing(true);
     try {
-      await loadSessionMessages(id);
+      const id = workspace.activeSessionID;
+      if (id) {
+        await loadSessionMessages(id);
+      } else {
+        await refreshWorktreeStatus("__root__");
+      }
     } catch (err) {
       console.error(err);
     } finally {
@@ -59,17 +73,19 @@ export default function PierreDiffViewer() {
   };
 
   const onCommitWorktree = async () => {
-    const id = workspace.activeSessionID;
+    const id = sessionKey();
     const msg = commitMsg().trim();
-    if (!id || !msg || committing()) return;
+    if (!msg || committing()) return;
     setCommitting(true);
     try {
       const res = await hoxiAPI.commitWorktree(id, msg);
       setCommitMsg("");
       setCommittedHash(res.commit || "HEAD");
       setTimeout(() => setCommittedHash(null), 4000);
-      await refreshWorktreeStatus(id);
-      await loadSessionMessages(id);
+      await refreshWorktreeStatus(workspace.activeSessionID);
+      if (workspace.activeSessionID) {
+        await loadSessionMessages(workspace.activeSessionID);
+      }
     } catch (err) {
       console.error("commitWorktree failed:", err);
     } finally {
@@ -80,45 +96,64 @@ export default function PierreDiffViewer() {
   return (
     <div class="flex flex-col h-full">
       <div class="shrink-0 flex items-center justify-between px-3 py-2 border-b border-[var(--border-subtle)]">
-        <div class="flex items-center gap-2 text-[11.5px] text-[var(--text-secondary)]">
-          <span class="font-mono">
-            <span class="text-[var(--ok-text)]">+{totals().add}</span>{" "}
-            <span class="text-[var(--danger-text)]">-{totals().del}</span>
-          </span>
-          <span class="text-[var(--text-faint)]">·</span>
-          <span>
-            {diffs().length} {t("inspector.diffs.files")}
-          </span>
-        </div>
-        <div class="flex items-center gap-1.5">
-          <div class="flex rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] p-0.5">
-            <button
-              type="button"
-              class={`rounded-md px-2 py-0.5 text-[10.5px] font-medium transition-colors cursor-pointer ${
-                diffStyle() === "unified"
-                  ? "bg-[var(--bg-panel)] text-[var(--accent-primary)] shadow-2xs"
-                  : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
-              }`}
-              onClick={() => setDiffStyle("unified")}
-            >
-              {t("inspector.diffs.unified")}
-            </button>
-            <button
-              type="button"
-              class={`rounded-md px-2 py-0.5 text-[10.5px] font-medium transition-colors cursor-pointer ${
-                diffStyle() === "split"
-                  ? "bg-[var(--bg-panel)] text-[var(--accent-primary)] shadow-2xs"
-                  : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
-              }`}
-              onClick={() => setDiffStyle("split")}
-            >
-              {t("inspector.diffs.split")}
-            </button>
+        <Show
+          when={diffs().length > 0}
+          fallback={
+            <div class="flex items-center gap-2 text-[11.5px] text-[var(--text-secondary)]">
+              <span class="inline-flex items-center gap-1.5 text-[var(--ok-text)] font-medium">
+                <span class="inline-block h-1.5 w-1.5 rounded-full bg-[var(--ok)]" />
+                <span>{t("inspector.diffs.cleanStatus")}</span>
+              </span>
+              <span class="text-[var(--text-faint)]">·</span>
+              <span class="text-[var(--text-muted)]">
+                0 {t("inspector.diffs.files")}
+              </span>
+            </div>
+          }
+        >
+          <div class="flex items-center gap-2 text-[11.5px] text-[var(--text-secondary)]">
+            <span class="font-mono">
+              <span class="text-[var(--ok-text)]">+{totals().add}</span>{" "}
+              <span class="text-[var(--danger-text)]">-{totals().del}</span>
+            </span>
+            <span class="text-[var(--text-faint)]">·</span>
+            <span>
+              {diffs().length} {t("inspector.diffs.files")}
+            </span>
           </div>
+        </Show>
+
+        <div class="flex items-center gap-1.5">
+          <Show when={diffs().length > 0}>
+            <div class="flex rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] p-0.5">
+              <button
+                type="button"
+                class={`rounded-md px-2 py-0.5 text-[10.5px] font-medium transition-colors cursor-pointer ${
+                  diffStyle() === "unified"
+                    ? "bg-[var(--bg-panel)] text-[var(--accent-primary)] shadow-2xs"
+                    : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                }`}
+                onClick={() => setDiffStyle("unified")}
+              >
+                {t("inspector.diffs.unified")}
+              </button>
+              <button
+                type="button"
+                class={`rounded-md px-2 py-0.5 text-[10.5px] font-medium transition-colors cursor-pointer ${
+                  diffStyle() === "split"
+                    ? "bg-[var(--bg-panel)] text-[var(--accent-primary)] shadow-2xs"
+                    : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                }`}
+                onClick={() => setDiffStyle("split")}
+              >
+                {t("inspector.diffs.split")}
+              </button>
+            </div>
+          </Show>
           <button
             type="button"
             class="p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
-            onClick={onRefresh}
+            onClick={() => void onRefresh()}
             title={t("inspector.diffs.refresh")}
           >
             <RefreshCw size={13} class={refreshing() ? "animate-spin" : ""} />
@@ -127,7 +162,7 @@ export default function PierreDiffViewer() {
       </div>
 
       {/* Kilo AI Commit Message Generator & Worktree Commit Bar */}
-      <Show when={diffs().length > 0 || committedHash()}>
+      <Show when={diffs().length > 0}>
         <div class="shrink-0 flex items-center gap-1.5 px-2.5 py-2 border-b border-[var(--border-subtle)] bg-[var(--bg-inset)]/60">
           <input
             type="text"
@@ -182,14 +217,15 @@ export default function PierreDiffViewer() {
             </span>
           </button>
         </div>
-        <Show when={committedHash()}>
-          {(hash) => (
-            <div class="shrink-0 flex items-center gap-1.5 px-3 py-1 bg-[var(--ok-surface)] text-[11px] font-mono text-[var(--ok-text)] border-b border-[var(--ok-border)]">
-              <Check size={11} />
-              <span>{t("inspector.diffs.commitSuccess", { hash: hash() })}</span>
-            </div>
-          )}
-        </Show>
+      </Show>
+
+      <Show when={committedHash()}>
+        {(hash) => (
+          <div class="shrink-0 flex items-center gap-1.5 px-3 py-1.5 bg-[var(--ok-surface)] text-[11px] font-mono text-[var(--ok-text)] border-b border-[var(--ok-border)]">
+            <Check size={11} />
+            <span>{t("inspector.diffs.commitSuccess", { hash: hash() })}</span>
+          </div>
+        )}
       </Show>
 
       <Show when={workspace.activeSessionID}>
@@ -200,12 +236,10 @@ export default function PierreDiffViewer() {
         <Show
           when={diffs().length > 0}
           fallback={
-            <div class="px-3 py-10 text-center text-[12px] text-[var(--text-muted)]">
-              {t("inspector.diffs.empty")}
-              <div class="mt-1 text-[10.5px] text-[var(--text-faint)] font-mono truncate">
-                {activeDirectory() || "—"}
-              </div>
-            </div>
+            <DiffEmptyState
+              refreshing={refreshing()}
+              onRefresh={() => void onRefresh()}
+            />
           }
         >
           <For each={diffs()}>

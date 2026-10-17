@@ -31,6 +31,8 @@ type worktreeStatus struct {
 	Directory        string `json:"directory"`
 	Branch           string `json:"branch,omitempty"`
 	BaseCommit       string `json:"baseCommit,omitempty"`
+	HeadCommit       string `json:"headCommit,omitempty"`
+	HeadSubject      string `json:"headSubject,omitempty"`
 	Dirty            bool   `json:"dirty"`
 	ChangedFiles     int    `json:"changedFiles"`
 	UncommittedLines int    `json:"uncommittedLines"`
@@ -53,6 +55,23 @@ func newWorktreeManager(rootDir string) *worktreeManager {
 		rootDir:  absRoot,
 		sessions: make(map[string]worktreeMeta),
 	}
+}
+
+func (m *worktreeManager) SetRootDir(dir string) {
+	trimmed := strings.TrimSpace(dir)
+	if trimmed == "" {
+		return
+	}
+	if info, err := os.Stat(trimmed); err != nil || !info.IsDir() {
+		return
+	}
+	absDir, err := filepath.Abs(trimmed)
+	if err != nil {
+		absDir = trimmed
+	}
+	m.mu.Lock()
+	m.rootDir = absDir
+	m.mu.Unlock()
 }
 
 func (m *worktreeManager) Create(sessionID string) (worktreeMeta, error) {
@@ -230,12 +249,23 @@ func (m *worktreeManager) Status(sessionID string) (worktreeStatus, error) {
 		changedFiles = len(diffFileSet)
 	}
 
+	var headCommit, headSubject string
+	if logLine, err := runGit(meta.Directory, "log", "-1", "--format=%h\t%s"); err == nil && logLine != "" {
+		parts := strings.SplitN(logLine, "\t", 2)
+		headCommit = strings.TrimSpace(parts[0])
+		if len(parts) > 1 {
+			headSubject = strings.TrimSpace(parts[1])
+		}
+	}
+
 	return worktreeStatus{
 		SessionID:        meta.SessionID,
 		Isolated:         meta.Isolated,
 		Directory:        meta.Directory,
 		Branch:           meta.Branch,
 		BaseCommit:       meta.BaseCommit,
+		HeadCommit:       headCommit,
+		HeadSubject:      headSubject,
 		Dirty:            changedFiles > 0 || additions > 0 || deletions > 0,
 		ChangedFiles:     changedFiles,
 		UncommittedLines: additions + deletions,
@@ -294,11 +324,17 @@ func (m *worktreeManager) Remove(sessionID string, force bool) error {
 	m.mu.Lock()
 	meta, ok := m.sessions[sessionID]
 	if !ok {
-		meta = worktreeMeta{
-			SessionID: sessionID,
-			Isolated:  true,
-			Directory: filepath.Join(m.rootDir, ".hoxi", "worktrees", sessionID),
-			Branch:    "hoxi/" + sessionID,
+		candidate := filepath.Join(m.rootDir, ".hoxi", "worktrees", sessionID)
+		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+			meta = worktreeMeta{
+				SessionID: sessionID,
+				Isolated:  true,
+				Directory: candidate,
+				Branch:    "hoxi/" + sessionID,
+			}
+		} else {
+			m.mu.Unlock()
+			return nil
 		}
 	}
 	defer m.mu.Unlock()

@@ -23,6 +23,7 @@ type desktopGateway struct {
 	mux                   *http.ServeMux
 	status                *desktopStatusTracker
 	worktrees             *worktreeManager
+	workspaces            *workspaceStore
 	telemetry             *providerTelemetryStore
 	onOpenDirectoryDialog func() (string, error)
 }
@@ -70,6 +71,7 @@ func newDesktopGateway(openCodePort int, password, rootDir string, distFS fs.FS,
 		mux:          http.NewServeMux(),
 		status:       status,
 		worktrees:    newWorktreeManager(rootDir),
+		workspaces:   newWorkspaceStore(rootDir),
 		telemetry:    newProviderTelemetryStore(rootDir),
 	}
 
@@ -151,11 +153,13 @@ func (g *desktopGateway) registerRoutes(distFS fs.FS) {
 	g.mux.HandleFunc("/api/hoxi/provider/audit", g.handleAuditProviderCode)
 	g.mux.HandleFunc("/api/hoxi/provider/summarize-title", g.handleSummarizeSessionTitle)
 	g.mux.HandleFunc("/api/hoxi/models-config", g.handleModelsConfig)
+	g.mux.HandleFunc("/api/hoxi/system-info", g.handleSystemRuntimeInfo)
 	g.mux.HandleFunc("/global/config", g.handleGlobalConfigProxy)
 	g.mux.HandleFunc("/provider", g.handleProviderProxy)
 	g.mux.Handle("/provider/", g.proxy)
 
 	g.worktrees.registerRoutes(g.mux)
+	g.workspaces.registerRoutes(g.mux)
 	g.telemetry.registerRoutes(g.mux)
 
 	// OpenCode API prefixes

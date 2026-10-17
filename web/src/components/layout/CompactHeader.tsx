@@ -15,10 +15,12 @@ import {
   activeSession,
   applySessionWorktree,
   isSessionBusy,
+  openEditWorkspaceModal,
   setWorkspace,
   toggleTheme,
   undoRevert,
   workspace,
+  workspaceDisplayName,
 } from "../../store/workspace";
 import { hoxiAPI } from "../../services/api";
 import { Spinner, TextShimmer } from "../icons";
@@ -27,11 +29,6 @@ import { t, toggleLocale, currentLocaleMetadata } from "../../i18n";
 interface CompactHeaderProps {
   inspectorOpen: boolean;
   onToggleInspector: () => void;
-}
-
-function basename(p: string): string {
-  const parts = p.split("/").filter(Boolean);
-  return parts.length ? parts[parts.length - 1] : p || "workspace";
 }
 
 export default function CompactHeader(props: CompactHeaderProps) {
@@ -50,7 +47,7 @@ export default function CompactHeader(props: CompactHeaderProps) {
     return id ? (workspace.diffsBySession[id] ?? []).length : 0;
   });
 
-  const projectName = createMemo(() => basename(workspace.rootDir));
+  const projectName = createMemo(() => workspaceDisplayName(workspace.rootDir));
 
   const onApply = async () => {
     const s = session();
@@ -113,12 +110,15 @@ export default function CompactHeader(props: CompactHeaderProps) {
 
         <Show when={projectName().toLowerCase() !== "hoxi"}>
           <span class="text-[var(--text-faint)]">/</span>
-          <span
-            class="text-[var(--text-secondary)] font-mono text-[11px] truncate max-w-[180px]"
-            title={workspace.rootDir}
+          <button
+            type="button"
+            style={{ "--wails-draggable": "no-drag" } as any}
+            onClick={() => openEditWorkspaceModal(workspace.rootDir)}
+            class="text-[var(--text-secondary)] hover:text-[var(--text-primary)] font-mono text-[11px] truncate max-w-[180px] transition-colors cursor-pointer"
+            title={`${workspace.rootDir} (${t("leftNav.editWorkspace")})`}
           >
             {projectName()}
-          </span>
+          </button>
         </Show>
 
         <Show when={worktree()?.branch}>

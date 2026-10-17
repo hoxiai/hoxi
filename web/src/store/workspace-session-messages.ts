@@ -12,6 +12,7 @@ import {
 } from "./provider-telemetry";
 import { isPlaceholderSessionTitle, summarizeAndRenameSession } from "./session-title";
 import { setWorkspace, workspace } from "./workspace";
+import { buildWorkspaceFoldersSystemPrompt } from "./workspace-projects";
 import {
   loadSessionMessages,
   newIsolatedSession,
@@ -181,6 +182,7 @@ export async function submitSessionPrompt(
       model: effectiveModel,
       variant: workspace.reasoningEffort || undefined,
       directory: sessionDirectory(id),
+      system: buildWorkspaceFoldersSystemPrompt(),
       attachments,
     });
     // Sync server messages immediately and follow up shortly after
@@ -245,6 +247,18 @@ export function upsertMessagePart(part: MessagePart) {
   if (part.type === "tool" && part.state.status === "completed") {
     void refreshWorktreeStatus(part.sessionID);
   }
+  const interruptedAt = lastInterruptAtBySession.get(part.sessionID) || 0;
+  const isActivelyStreamingPart =
+    (part.type === "tool" &&
+      (part.state.status === "pending" || part.state.status === "running")) ||
+    (part.type === "reasoning" && !part.time?.end);
+  if (
+    isActivelyStreamingPart &&
+    Date.now() - interruptedAt > 2500 &&
+    workspace.statusBySession[part.sessionID]?.type !== "busy"
+  ) {
+    setWorkspace("statusBySession", part.sessionID, { type: "busy" });
+  }
   setWorkspace(
     produce((state) => {
       const list = (state.messagesBySession[part.sessionID] ||= []);
@@ -281,7 +295,15 @@ export function applyPartDeltaBatch(
   }>
 ) {
   if (batches.length > 0) {
-    recordFirstToken(batches[0].sessionID);
+    const sid = batches[0].sessionID;
+    recordFirstToken(sid);
+    const interruptedAt = lastInterruptAtBySession.get(sid) || 0;
+    if (
+      Date.now() - interruptedAt > 2500 &&
+      workspace.statusBySession[sid]?.type !== "busy"
+    ) {
+      setWorkspace("statusBySession", sid, { type: "busy" });
+    }
   }
   setWorkspace(
     produce((state) => {

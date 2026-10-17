@@ -1,21 +1,59 @@
 // web/src/components/layout/left-nav-helpers.tsx
 import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 import { Pencil } from "lucide-solid";
-import { isPlaceholderSessionTitle, renameSessionTitle, workspace } from "../../store/workspace";
+import {
+  DEFAULT_WORKSPACE_IDENTITY_COLOR,
+  isPlaceholderSessionTitle,
+  normalizeFolderPath,
+  normalizeWorkspaceIdentityColor,
+  renameSessionTitle,
+  workspace,
+  workspacePrimaryFolder,
+} from "../../store/workspace";
 import type { SessionInfo } from "../../services/sse-types";
 import { DiffChanges, Icon, Spinner } from "../icons";
 
 import { t } from "../../i18n";
 
 export interface ProjectNavEntry {
+  workspaceId?: string;
   name: string;
   path: string;
+  color: string;
+  folders: Array<{ path: string; isPrimary: boolean }>;
   sandboxes: number;
   vcs: boolean;
   isPinned: boolean;
 }
 
 export type SessionBadge = "running" | "approval" | "idle";
+
+export function FolderIcon(props: { open?: boolean; color?: string; class?: string }) {
+  const fill = () => props.color || DEFAULT_WORKSPACE_IDENTITY_COLOR;
+  return (
+    <svg
+      class={props.class || "w-4 h-4 shrink-0"}
+      viewBox="0 0 20 20"
+      fill="none"
+    >
+      <path
+        d={
+          props.open
+            ? "M2 5.5A1.5 1.5 0 013.5 4h3.879a1.5 1.5 0 011.06.44l1.122 1.12A1.5 1.5 0 0010.62 6H16.5A1.5 1.5 0 0118 7.5v1H3.25A1.25 1.25 0 002 9.75V5.5z"
+            : "M2 5.5A1.5 1.5 0 013.5 4h3.879a1.5 1.5 0 011.06.44l1.122 1.12A1.5 1.5 0 0010.62 6H16.5A1.5 1.5 0 0118 7.5v7a1.5 1.5 0 01-1.5 1.5h-13A1.5 1.5 0 012 14.5v-9z"
+        }
+        fill={fill()}
+        fill-opacity={props.open ? "0.85" : "0.9"}
+      />
+      <Show when={props.open}>
+        <path
+          d="M2.288 9.81A1 1 0 013.25 9h13.5a1 1 0 01.962 1.275l-1.428 5A1 1 0 0115.322 16H3.716a1 1 0 01-.962-.725l-1.428-5a1 1 0 01.962-1.275z"
+          fill={fill()}
+        />
+      </Show>
+    </svg>
+  );
+}
 
 export function dayLabel(ts: number): string {
   const d = new Date(ts);
@@ -65,27 +103,40 @@ export function diffStats(sessionID: string): { additions: number; deletions: nu
 
 export function buildAllProjects(): ProjectNavEntry[] {
   const map = new Map<string, ProjectNavEntry>();
+  const secondaryPaths = new Set<string>();
 
-  if (workspace.rootDir) {
-    map.set(workspace.rootDir, {
-      name: basename(workspace.rootDir),
-      path: workspace.rootDir,
+  for (const saved of workspace.savedWorkspaces) {
+    const primary = normalizeFolderPath(workspacePrimaryFolder(saved));
+    if (!primary) continue;
+    for (const f of saved.folders) {
+      const fp = normalizeFolderPath(f.path);
+      if (fp && fp !== primary) secondaryPaths.add(fp);
+    }
+    map.set(primary, {
+      workspaceId: saved.id,
+      name: saved.name || basename(primary),
+      path: primary,
+      color: normalizeWorkspaceIdentityColor(saved.color),
+      folders: saved.folders.map((f) => ({ path: f.path, isPrimary: f.isPrimary })),
       sandboxes: 0,
       vcs: true,
-      isPinned: true,
+      isPinned: primary === normalizeFolderPath(workspace.rootDir),
     });
   }
 
   for (const p of workspace.projects) {
-    if (p.worktree && p.worktree !== "/") {
-      const existing = map.get(p.worktree);
+    const wt = normalizeFolderPath(p.worktree);
+    if (wt && wt !== "/" && !secondaryPaths.has(wt)) {
+      const existing = map.get(wt);
       if (!existing) {
-        map.set(p.worktree, {
-          name: basename(p.worktree),
-          path: p.worktree,
+        map.set(wt, {
+          name: basename(wt),
+          path: wt,
+          color: normalizeWorkspaceIdentityColor(p.icon?.color),
+          folders: [{ path: wt, isPrimary: true }],
           sandboxes: (p.sandboxes || []).length,
           vcs: p.vcs === "git",
-          isPinned: false,
+          isPinned: wt === normalizeFolderPath(workspace.rootDir),
         });
       } else {
         existing.sandboxes = Math.max(existing.sandboxes, (p.sandboxes || []).length);
@@ -94,18 +145,50 @@ export function buildAllProjects(): ProjectNavEntry[] {
   }
 
   for (const p of workspace.recentProjects) {
-    if (p && !map.has(p)) {
-      map.set(p, {
-        name: basename(p),
-        path: p,
+    const clean = normalizeFolderPath(p);
+    if (clean && !map.has(clean) && !secondaryPaths.has(clean)) {
+      map.set(clean, {
+        name: basename(clean),
+        path: clean,
+        color: DEFAULT_WORKSPACE_IDENTITY_COLOR,
+        folders: [{ path: clean, isPrimary: true }],
         sandboxes: 0,
         vcs: true,
-        isPinned: false,
+        isPinned: clean === normalizeFolderPath(workspace.rootDir),
       });
     }
   }
 
-  return Array.from(map.values());
+  const rootClean = normalizeFolderPath(workspace.rootDir);
+  if (rootClean && !map.has(rootClean) && !secondaryPaths.has(rootClean)) {
+    map.set(rootClean, {
+      name: basename(rootClean),
+      path: rootClean,
+      color: DEFAULT_WORKSPACE_IDENTITY_COLOR,
+      folders: [{ path: rootClean, isPrimary: true }],
+      sandboxes: 0,
+      vcs: true,
+      isPinned: true,
+    });
+  }
+
+  const orderIndex = new Map<string, number>();
+  workspace.projectOrder.forEach((p, idx) => {
+    const clean = normalizeFolderPath(p);
+    if (!orderIndex.has(clean)) orderIndex.set(clean, idx);
+  });
+
+  const entries = Array.from(map.values());
+  entries.sort((a, b) => {
+    const idxA = orderIndex.get(a.path);
+    const idxB = orderIndex.get(b.path);
+    if (idxA !== undefined && idxB !== undefined) return idxA - idxB;
+    if (idxA !== undefined) return -1;
+    if (idxB !== undefined) return 1;
+    return 0;
+  });
+
+  return entries;
 }
 
 export function SessionNavItem(props: {
@@ -280,7 +363,7 @@ export function SessionNavItem(props: {
         }
       >
         <div class="flex items-center gap-1 shrink-0 text-[10px] font-mono">
-          <Show when={wt()?.branch && !editing()}>
+          <Show when={wt()?.isolated && wt()?.branch && !editing()}>
             <span class="inline-flex items-center gap-0.5 text-[var(--text-faint)] truncate max-w-[72px] group-hover/row:hidden">
               <Show when={props.showBranchIcon}>
                 <Icon name="branch" size="small" class="w-3 h-3" />
@@ -298,18 +381,18 @@ export function SessionNavItem(props: {
           <Show when={!editing()}>
             <button
               type="button"
-              class="opacity-0 group-hover/row:opacity-100 text-[var(--text-faint)] hover:text-[var(--text-primary)] transition-opacity p-0.5 cursor-pointer"
+              class="inline-flex h-5 w-5 items-center justify-center rounded opacity-0 group-hover/row:opacity-100 text-[var(--text-faint)] hover:text-[var(--text-primary)] transition-opacity cursor-pointer"
               onClick={(ev) => startEditing(ev)}
               title={t("leftNav.renameSessionTooltip")}
             >
-              <Pencil size={11} />
+              <Pencil size={11} class="shrink-0 block" />
             </button>
           </Show>
 
           <Show when={!editing() && !props.isArchived && props.onArchive}>
             <button
               type="button"
-              class="opacity-0 group-hover/row:opacity-100 text-[var(--text-faint)] hover:text-[var(--text-primary)] transition-opacity p-0.5 cursor-pointer"
+              class="inline-flex h-5 w-5 items-center justify-center rounded opacity-0 group-hover/row:opacity-100 text-[var(--text-faint)] hover:text-[var(--text-primary)] transition-opacity cursor-pointer"
               onClick={(ev) => {
                 ev.stopPropagation();
                 props.onArchive?.(ev, props.session.id);
@@ -323,7 +406,7 @@ export function SessionNavItem(props: {
           <Show when={!editing() && props.isArchived && props.onUnarchive}>
             <button
               type="button"
-              class="opacity-0 group-hover/row:opacity-100 text-[var(--text-faint)] hover:text-[var(--text-primary)] transition-opacity p-0.5 cursor-pointer"
+              class="inline-flex h-5 w-5 items-center justify-center rounded opacity-0 group-hover/row:opacity-100 text-[var(--text-faint)] hover:text-[var(--text-primary)] transition-opacity cursor-pointer"
               onClick={(ev) => {
                 ev.stopPropagation();
                 props.onUnarchive?.(ev, props.session.id);
@@ -337,7 +420,7 @@ export function SessionNavItem(props: {
           <Show when={props.canDelete && !editing()}>
             <button
               type="button"
-              class="opacity-0 group-hover/row:opacity-100 text-[var(--text-faint)] hover:text-[var(--danger-text)] transition-opacity p-0.5 cursor-pointer"
+              class="inline-flex h-5 w-5 items-center justify-center rounded opacity-0 group-hover/row:opacity-100 text-[var(--text-faint)] hover:text-[var(--danger-text)] transition-opacity cursor-pointer"
               onClick={(ev) => {
                 ev.stopPropagation();
                 setConfirmingDelete(true);

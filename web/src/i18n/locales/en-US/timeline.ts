@@ -154,5 +154,9 @@ export const timeline: TimelineI18n = {
     "Please continue executing the paused task from where you left off and complete the remaining steps.",
   resumePromptPrefix:
     "Please continue the paused task with the following additional instructions:",
+  sandboxLocalMode: "Local",
+  sandboxWorktreeMode: "Worktree",
+  sandboxLocalTooltip: "Work directly in the current local branch (no new branch created)",
+  sandboxWorktreeTooltip: "Create an isolated Git branch & worktree sandbox for this session",
 };
 

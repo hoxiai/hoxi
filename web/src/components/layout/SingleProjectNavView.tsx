@@ -1,21 +1,32 @@
 // web/src/components/layout/SingleProjectNavView.tsx
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
+import { Plus, Pencil, Layers } from "lucide-solid";
 import {
+  activeWorkspaceFolders,
   isSessionArchived,
   newIsolatedSession,
+  normalizeFolderPath,
+  openCreateWorkspaceModal,
+  openEditWorkspaceModal,
+  openManageWorkspacesModal,
   selectSession,
+  setWorkspace,
   switchWorkspace,
   workspace,
+  workspaceDisplayName,
+  workspaceIdentityColor,
 } from "../../store/workspace";
 import type { SessionInfo } from "../../services/sse-types";
 import { Icon, Spinner } from "../icons";
 import {
   basename,
   dayLabel,
+  FolderIcon,
   SessionNavItem,
   shortenPath,
   type ProjectNavEntry,
 } from "./left-nav-helpers";
+import { WorkspaceActionMenu } from "./MultiProjectItem";
 import { t } from "../../i18n";
 
 export default function SingleProjectNavView(props: {
@@ -50,13 +61,22 @@ export default function SingleProjectNavView(props: {
     onCleanup(() => window.removeEventListener("pointerdown", handleClick));
   });
 
-  const currentProjectName = createMemo(() => basename(workspace.rootDir));
+  const currentProjectName = createMemo(() =>
+    workspaceDisplayName(workspace.rootDir)
+  );
+  const currentProjectColor = createMemo(() =>
+    workspaceIdentityColor(workspace.rootDir)
+  );
+  const currentFolders = createMemo(() => activeWorkspaceFolders());
 
   const dropdownProjectList = createMemo(() => {
     const q = dropdownFilter().trim().toLowerCase();
     if (!q) return props.allProjects;
     return props.allProjects.filter(
-      (item) => item.name.toLowerCase().includes(q) || item.path.toLowerCase().includes(q)
+      (item) =>
+        item.name.toLowerCase().includes(q) ||
+        item.path.toLowerCase().includes(q) ||
+        item.folders.some((f) => f.path.toLowerCase().includes(q))
     );
   });
 
@@ -89,7 +109,7 @@ export default function SingleProjectNavView(props: {
 
   const onSelectProjectSingle = async (path: string) => {
     setProjectMenuOpen(false);
-    if (path !== workspace.rootDir) {
+    if (normalizeFolderPath(path) !== normalizeFolderPath(workspace.rootDir)) {
       await switchWorkspace(path);
     }
   };
@@ -106,22 +126,41 @@ export default function SingleProjectNavView(props: {
     }
   };
 
+  const inspectFolder = (folderPath: string) => {
+    setWorkspace("activeInspectorFolder", folderPath);
+    setWorkspace("inspectorTab", "files");
+    setWorkspace("inspectorOpen", true);
+  };
+
   return (
     <>
-      {/* Clean Project Switcher Row + New Session */}
-      <div class="px-1.5 pb-1.5 flex items-center gap-1">
+      {/* Project Switcher Row + Workspace Settings + New Session */}
+      <div class="px-1.5 pb-1.5 flex items-center gap-0.5">
         <button
           ref={buttonRef}
           type="button"
           onClick={() => setProjectMenuOpen((v) => !v)}
           class="flex-1 min-w-0 flex items-center justify-between gap-1.5 rounded-lg px-2 py-1.5 hover:bg-[var(--bg-hover)] transition-colors cursor-pointer text-left"
-          title={shortenPath(workspace.rootDir || "—")}
+          title={
+            currentFolders().length > 1
+              ? currentFolders().map((f) => shortenPath(f.path)).join("\n")
+              : shortenPath(workspace.rootDir || "—")
+          }
         >
           <div class="flex items-center gap-1.5 min-w-0 flex-1">
-            <Icon name="folder" size="small" class="text-[var(--text-muted)]" />
+            <FolderIcon
+              open={true}
+              color={currentProjectColor()}
+              class="w-3.5 h-3.5 shrink-0"
+            />
             <span class="truncate text-[12.5px] font-semibold text-[var(--text-primary)]">
               {currentProjectName()}
             </span>
+            <Show when={currentFolders().length > 1}>
+              <span class="shrink-0 rounded px-1 py-0.2 text-[9.5px] font-mono bg-[var(--bg-inset)] text-[var(--text-muted)]">
+                {currentFolders().length}
+              </span>
+            </Show>
           </div>
           <Icon
             name="chevron-down"
@@ -131,6 +170,11 @@ export default function SingleProjectNavView(props: {
             }`}
           />
         </button>
+
+        <WorkspaceActionMenu
+          dirOrWorkspaceID={workspace.rootDir}
+          alwaysVisible={true}
+        />
 
         <button
           type="button"
@@ -148,11 +192,34 @@ export default function SingleProjectNavView(props: {
         </button>
       </div>
 
+      {/* Multi-Folder Pills when active workspace has >1 folder */}
+      <Show when={currentFolders().length > 1}>
+        <div class="px-2 pb-1.5 flex flex-wrap gap-1">
+          <For each={currentFolders()}>
+            {(folder) => (
+              <button
+                type="button"
+                onClick={() => inspectFolder(folder.path)}
+                title={folder.path}
+                class="inline-flex items-center gap-1 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-inset)]/70 px-1.5 py-0.5 text-[10.5px] font-mono text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+              >
+                <FolderIcon
+                  open={folder.isPrimary}
+                  color={currentProjectColor()}
+                  class="w-2.5 h-2.5 shrink-0"
+                />
+                <span class="truncate max-w-[110px]">{basename(folder.path)}</span>
+              </button>
+            )}
+          </For>
+        </div>
+      </Show>
+
       {/* Floating Project Switcher Popover */}
       <Show when={projectMenuOpen()}>
         <div
           ref={menuRef}
-          class="absolute left-3 top-18 w-[240px] rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-1.5 shadow-xl z-50 animate-in fade-in zoom-in-95 duration-100"
+          class="absolute left-3 top-18 w-[248px] rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-1.5 shadow-xl z-50 animate-in fade-in zoom-in-95 duration-100"
         >
           <div class="mb-1 px-1">
             <div class="flex items-center gap-1.5 rounded-lg bg-[var(--bg-inset)] px-2 py-1 text-[11.5px]">
@@ -170,7 +237,9 @@ export default function SingleProjectNavView(props: {
           <div class="max-h-56 overflow-y-auto space-y-0.5">
             <For each={dropdownProjectList()}>
               {(proj) => {
-                const isActive = () => proj.path === workspace.rootDir;
+                const isActive = () =>
+                  normalizeFolderPath(proj.path) ===
+                  normalizeFolderPath(workspace.rootDir);
                 return (
                   <button
                     type="button"
@@ -182,7 +251,19 @@ export default function SingleProjectNavView(props: {
                     }`}
                     title={shortenPath(proj.path)}
                   >
-                    <span class="truncate text-[12px]">{proj.name}</span>
+                    <div class="flex items-center gap-1.5 min-w-0">
+                      <FolderIcon
+                        open={isActive()}
+                        color={proj.color}
+                        class="w-3.5 h-3.5 shrink-0"
+                      />
+                      <span class="truncate text-[12px]">{proj.name}</span>
+                      <Show when={proj.folders.length > 1}>
+                        <span class="shrink-0 rounded px-1 py-0.2 text-[9.5px] font-mono bg-[var(--bg-inset)] text-[var(--text-muted)]">
+                          {proj.folders.length}
+                        </span>
+                      </Show>
+                    </div>
                     <Show when={isActive()}>
                       <Icon name="check-small" size="small" class="text-[var(--accent-primary)]" />
                     </Show>
@@ -190,6 +271,42 @@ export default function SingleProjectNavView(props: {
                 );
               }}
             </For>
+          </div>
+
+          <div class="mt-1 pt-1 border-t border-[var(--border-subtle)]/60 space-y-0.5">
+            <button
+              type="button"
+              onClick={() => {
+                setProjectMenuOpen(false);
+                openEditWorkspaceModal(workspace.rootDir);
+              }}
+              class="w-full flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[11.5px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+            >
+              <Pencil size={12} />
+              <span>{t("leftNav.editWorkspace")}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setProjectMenuOpen(false);
+                openCreateWorkspaceModal();
+              }}
+              class="w-full flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[11.5px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+            >
+              <Plus size={12} />
+              <span>{t("leftNav.newWorkspace")}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setProjectMenuOpen(false);
+                openManageWorkspacesModal();
+              }}
+              class="w-full flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[11.5px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+            >
+              <Layers size={12} />
+              <span>{t("leftNav.manageWorkspaces")}</span>
+            </button>
           </div>
         </div>
       </Show>
@@ -254,7 +371,7 @@ export default function SingleProjectNavView(props: {
             </button>
 
             <Show when={showArchived() || Boolean(props.filterQuery.trim())}>
-              <div class="mt-0.5 space-y-0.5">
+              <div class="mt-1 space-y-0.5">
                 <For each={archivedSessions()}>
                   {(session) => (
                     <SessionNavItem

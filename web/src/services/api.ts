@@ -17,7 +17,10 @@ import type {
   ProviderAuthMethod,
   ProviderListResponse,
   ProviderTelemetryStats,
+  SaveWorkspaceInput,
   SlashCommandInfo,
+  SystemRuntimeInfo,
+  WorkspaceProfile,
   WorktreeMeta,
   WorktreeStatus,
 } from "./api-types";
@@ -49,6 +52,10 @@ async function requestJSON<T>(url: string, init?: RequestInit): Promise<T> {
 export const hoxiAPI = {
   getBootstrap(): Promise<BootstrapInfo> {
     return requestJSON("/api/hoxi/bootstrap");
+  },
+
+  getSystemInfo(): Promise<SystemRuntimeInfo> {
+    return requestJSON("/api/hoxi/system-info");
   },
 
   // Sessions
@@ -105,6 +112,7 @@ export const hoxiAPI = {
       model?: { providerID: string; modelID: string };
       variant?: string;
       directory?: string;
+      system?: string;
       attachments?: PromptAttachment[];
     }
   ): Promise<void> {
@@ -121,6 +129,7 @@ export const hoxiAPI = {
         agent: options?.agent || "build",
         ...(options?.model ? { model: options.model } : {}),
         ...(options?.variant ? { variant: options.variant } : {}),
+        ...(options?.system ? { system: options.system } : {}),
         parts,
       }),
     });
@@ -359,15 +368,21 @@ export const hoxiAPI = {
   },
 
   // Git Worktree Sandbox Manager
-  createWorktree(sessionID: string): Promise<WorktreeMeta> {
+  createWorktree(sessionID: string, directory?: string): Promise<WorktreeMeta> {
     return requestJSON("/api/hoxi/worktree/create", {
       method: "POST",
-      body: JSON.stringify({ sessionID }),
+      body: JSON.stringify({ sessionID, ...(directory ? { directory } : {}) }),
     });
   },
 
-  getWorktreeStatus(sessionID: string): Promise<WorktreeStatus> {
-    return requestJSON(`/api/hoxi/worktree/status?sessionID=${encodeURIComponent(sessionID)}`);
+  getWorktreeStatus(sessionID: string, directory?: string): Promise<WorktreeStatus> {
+    const q = `sessionID=${encodeURIComponent(sessionID)}${directory ? `&directory=${encodeURIComponent(directory)}` : ""}`;
+    return requestJSON(`/api/hoxi/worktree/status?${q}`);
+  },
+
+  getWorktreeDiff(sessionID: string, directory?: string): Promise<SnapshotFileDiff[]> {
+    const q = `sessionID=${encodeURIComponent(sessionID)}${directory ? `&directory=${encodeURIComponent(directory)}` : ""}`;
+    return requestJSON(`/api/hoxi/worktree/diff?${q}`);
   },
 
   applyWorktree(sessionID: string, mode: "patch" | "merge" = "patch"): Promise<{ ok: boolean }> {
@@ -401,6 +416,25 @@ export const hoxiAPI = {
   // OpenCode Project / Workspace Manager (Kilo Desktop)
   listProjects(): Promise<ProjectInfo[]> {
     return requestJSON("/project");
+  },
+
+  listWorkspaces(): Promise<{ workspaces: WorkspaceProfile[] }> {
+    return requestJSON("/api/hoxi/workspaces");
+  },
+
+  createWorkspace(input: SaveWorkspaceInput): Promise<WorkspaceProfile> {
+    return requestJSON("/api/hoxi/workspaces", { method: "POST", body: JSON.stringify(input) });
+  },
+
+  updateWorkspace(id: string, input: SaveWorkspaceInput): Promise<WorkspaceProfile> {
+    return requestJSON(`/api/hoxi/workspaces/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      body: JSON.stringify(input),
+    });
+  },
+
+  deleteWorkspace(id: string): Promise<{ ok: boolean }> {
+    return requestJSON(`/api/hoxi/workspaces/${encodeURIComponent(id)}`, { method: "DELETE" });
   },
 
   openDirectoryDialog(): Promise<{ path: string; error?: string }> {

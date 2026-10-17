@@ -1,6 +1,7 @@
 import { createSignal, onCleanup, Show } from "solid-js";
 import CompactHeader from "./CompactHeader";
 import LeftNav from "./LeftNav";
+import WorkspaceModal from "./WorkspaceModal";
 import MessageStream from "../timeline/MessageStream";
 import Composer from "../timeline/Composer";
 import InspectorPane from "../inspector/InspectorPane";
@@ -76,7 +77,8 @@ export default function ThreePaneShell() {
         </Show>
       </main>
 
-      {/* Provider & Custom Model Configuration Modal */}
+      {/* Provider, Custom Model & Workspace Configuration Modals */}
+      <WorkspaceModal />
       <ProviderModal />
       <MultiModelArenaModal />
     </div>

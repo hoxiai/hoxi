@@ -93,7 +93,12 @@ export default function ComposerShelf() {
   // Session Diff Summary + Git Worktree Status
   const sessionDiffs = createMemo(() => {
     const id = sessionID();
-    return id ? (workspace.diffsBySession[id] ?? []) : [];
+    if (id) {
+      const sDiffs = workspace.diffsBySession[id];
+      if (sDiffs && sDiffs.length > 0) return sDiffs;
+    }
+    const key = id || "__root__";
+    return workspace.diffsBySession[key] ?? [];
   });
 
   const activeWorktree = createMemo(() => {
@@ -384,7 +389,13 @@ export default function ComposerShelf() {
 
               <button
                 type="button"
-                class="shrink-0 inline-flex items-center gap-1 rounded-lg px-2 py-0.5 text-[11px] font-medium text-[var(--accent-primary)] hover:bg-[var(--accent-surface)] transition-colors cursor-pointer"
+                class={`shrink-0 inline-flex items-center gap-1 rounded-lg px-2 py-0.5 text-[11px] font-medium transition-colors cursor-pointer ${
+                  changedFileCount() > 0 ||
+                  diffTotals().additions > 0 ||
+                  diffTotals().deletions > 0
+                    ? "text-[var(--accent-primary)] hover:bg-[var(--accent-surface)]"
+                    : "text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
+                }`}
                 onClick={() => openDiffInInspector()}
               >
                 {t("timeline.reviewDiffs")}

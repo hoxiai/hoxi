@@ -11,9 +11,17 @@ import ContextActivityGroupComponent, {
   type TurnRenderItem,
 } from "./ContextActivityGroupView";
 import type { MessageInfo, MessagePart } from "../../services/sse-types";
+import {
+  isUserAbortError,
+  pauseSessionTask,
+  resumePausedSession,
+  retryLastUserPrompt,
+  stopSessionTask,
+  workspace,
+} from "../../store/workspace";
 import { ProviderHealthBadge } from "../models/ProviderHealthBadge";
 import { ObserverAuditBadge } from "../inspector/ObserverAuditBanner";
-import { Icon } from "../icons";
+import { Icon, Spinner, TextShimmer } from "../icons";
 import { t } from "../../i18n";
 import { AssistantErrorCard, SessionRetryCard } from "./assistant-error-card";
 
@@ -86,9 +94,26 @@ export function AssistantTurnFooter(props: {
   isSessionBusy?: boolean;
 }) {
   const [copied, setCopied] = createSignal(false);
+  const [resuming, setResuming] = createSignal(false);
+
+  const isLatestTurn = createMemo(() => {
+    if (!props.turns || typeof props.turnIndex !== "number") return true;
+    return props.turnIndex === props.turns.length - 1;
+  });
+
+  const interruptMode = createMemo<"paused" | "stopped" | null>(() => {
+    const sessionInterrupt = workspace.interruptedBySession[props.info.sessionID];
+    if (isLatestTurn() && sessionInterrupt) {
+      return sessionInterrupt;
+    }
+    if (isUserAbortError(props.info)) {
+      return sessionInterrupt === "paused" ? "paused" : "stopped";
+    }
+    return null;
+  });
 
   const cycleSummary = createMemo(() => {
-    if (props.info.error) return null;
+    if (props.info.error && !isUserAbortError(props.info)) return null;
     const list = props.turns;
     const idx = props.turnIndex;
 
@@ -98,7 +123,14 @@ export function AssistantTurnFooter(props: {
       if (next && next.info.role === "assistant") return null;
       // Latest turn in session: wait until session is no longer busy
       if (!next && props.isSessionBusy) return null;
-      if (!next && !props.info.time?.completed && props.parts.length === 0) return null;
+      if (
+        !next &&
+        !props.info.time?.completed &&
+        props.parts.length === 0 &&
+        !interruptMode()
+      ) {
+        return null;
+      }
 
       let startIdx = idx;
       while (startIdx > 0 && list[startIdx - 1]?.info.role === "assistant") {
@@ -144,7 +176,7 @@ export function AssistantTurnFooter(props: {
       };
     }
 
-    if (!props.info.time?.completed) return null;
+    if (!props.info.time?.completed && !interruptMode()) return null;
     const texts = props.parts
       .filter((p): p is Extract<MessagePart, { type: "text" }> => p.type === "text")
       .map((t) => t.text)
@@ -180,14 +212,68 @@ export function AssistantTurnFooter(props: {
     }
   };
 
+  const onResume = async () => {
+    if (resuming()) return;
+    setResuming(true);
+    try {
+      await resumePausedSession(props.info.sessionID);
+    } finally {
+      setResuming(false);
+    }
+  };
+
   return (
     <Show when={cycleSummary()}>
       {(summary) => (
         <div class="mt-2.5 pt-2 border-t border-[var(--border-subtle)]/60 flex items-center gap-2 flex-wrap text-[11px] text-[var(--text-muted)]">
-          <span class="inline-flex items-center gap-1 rounded-full border border-[var(--ok-border)] bg-[var(--ok-surface)] px-2 py-0.5 text-[11px] font-medium text-[var(--ok-text)]">
-            <Icon name="circle-check" size="small" />
-            <span>{t("timeline.turnCompleted")}</span>
-          </span>
+          <Show
+            when={interruptMode()}
+            fallback={
+              <span class="inline-flex items-center gap-1 rounded-full border border-[var(--ok-border)] bg-[var(--ok-surface)] px-2 py-0.5 text-[11px] font-medium text-[var(--ok-text)]">
+                <Icon name="circle-check" size="small" />
+                <span>{t("timeline.turnCompleted")}</span>
+              </span>
+            }
+          >
+            {(mode) => (
+              <span
+                class={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium ${
+                  mode() === "paused"
+                    ? "border-[var(--warn-border)] bg-[var(--warn-surface)] text-[var(--warn-text)]"
+                    : "border-[var(--danger-border)] bg-[var(--danger-surface)] text-[var(--danger-text)]"
+                }`}
+              >
+                <span class="font-mono text-[10px] leading-none">
+                  {mode() === "paused" ? "⏸" : "■"}
+                </span>
+                <span>
+                  {mode() === "paused" ? t("timeline.turnPaused") : t("timeline.turnStopped")}
+                </span>
+              </span>
+            )}
+          </Show>
+
+          <Show when={isLatestTurn() && interruptMode() && !props.isSessionBusy}>
+            <button
+              type="button"
+              disabled={resuming()}
+              onClick={() => void onResume()}
+              title={t("timeline.resumeTooltip")}
+              class="inline-flex items-center gap-1 rounded-full bg-[var(--accent-primary)] px-2.5 py-0.5 text-[11px] font-medium text-white hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
+            >
+              <span class="text-[9.5px] leading-none">▶</span>
+              <span>{t("timeline.resume")}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => void retryLastUserPrompt(props.info.sessionID)}
+              class="inline-flex items-center gap-1 rounded-full border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-2 py-0.5 text-[11px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+            >
+              <span>↺</span>
+              <span>{t("timeline.retryTask")}</span>
+            </button>
+          </Show>
 
           <Show when={durationLabel()}>
             <span class="font-mono tabular-nums text-[var(--text-secondary)]">
@@ -220,13 +306,7 @@ export function AssistantTurnFooter(props: {
             />
           </Show>
 
-          <Show
-            when={
-              !props.turns ||
-              typeof props.turnIndex !== "number" ||
-              props.turnIndex === props.turns.length - 1
-            }
-          >
+          <Show when={isLatestTurn()}>
             <ObserverAuditBadge sessionID={props.info.sessionID} />
           </Show>
 
@@ -246,5 +326,138 @@ export function AssistantTurnFooter(props: {
         </div>
       )}
     </Show>
+  );
+}
+
+export function LiveExecutionControlBar(props: {
+  sessionID: string | null;
+  isSessionBusy: boolean;
+  showThinking: boolean;
+  lastTurnRole?: string;
+}) {
+  const [busyAction, setBusyAction] = createSignal(false);
+
+  const interruptedMode = createMemo(() => {
+    const id = props.sessionID;
+    return id ? workspace.interruptedBySession[id] : undefined;
+  });
+
+  const onPause = async () => {
+    if (!props.sessionID || busyAction()) return;
+    setBusyAction(true);
+    try {
+      await pauseSessionTask(props.sessionID);
+    } finally {
+      setBusyAction(false);
+    }
+  };
+
+  const onStop = async () => {
+    if (!props.sessionID || busyAction()) return;
+    setBusyAction(true);
+    try {
+      await stopSessionTask(props.sessionID);
+    } finally {
+      setBusyAction(false);
+    }
+  };
+
+  const onResume = async () => {
+    if (!props.sessionID || busyAction()) return;
+    setBusyAction(true);
+    try {
+      await resumePausedSession(props.sessionID);
+    } finally {
+      setBusyAction(false);
+    }
+  };
+
+  return (
+    <>
+      <Show when={props.isSessionBusy}>
+        <div class="mt-4 flex items-center justify-between gap-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/80 px-3 py-2 text-[12.5px]">
+          <div class="flex items-center gap-2.5 text-[var(--accent-primary)] min-w-0">
+            <Spinner class="w-4 h-4 shrink-0" />
+            <TextShimmer
+              text={props.showThinking ? t("timeline.thinking") : t("timeline.executing")}
+              active={true}
+              class="font-medium truncate"
+            />
+          </div>
+
+          <div class="flex items-center gap-1.5 shrink-0">
+            <button
+              type="button"
+              disabled={busyAction()}
+              onClick={() => void onPause()}
+              title={t("timeline.pauseTooltip")}
+              class="inline-flex items-center gap-1 rounded-full border border-[var(--warn-border)] bg-[var(--warn-surface)] px-2.5 py-1 text-[11px] font-medium text-[var(--warn-text)] hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
+            >
+              <span class="font-mono text-[10px] leading-none">⏸</span>
+              <span>{t("timeline.pause")}</span>
+            </button>
+
+            <button
+              type="button"
+              disabled={busyAction()}
+              onClick={() => void onStop()}
+              title={t("timeline.stopTooltip")}
+              class="inline-flex items-center gap-1 rounded-full border border-[var(--danger-border)] bg-[var(--danger-surface)] px-2.5 py-1 text-[11px] font-medium text-[var(--danger-text)] hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
+            >
+              <span class="font-mono text-[10px] leading-none">■</span>
+              <span>{t("timeline.stop")}</span>
+              <span class="font-mono text-[10px] opacity-70">Esc</span>
+            </button>
+          </div>
+        </div>
+      </Show>
+
+      <Show
+        when={
+          !props.isSessionBusy &&
+          interruptedMode() &&
+          props.lastTurnRole === "user"
+        }
+      >
+        <div class="mt-3 flex items-center gap-2 flex-wrap px-1 text-[11px] text-[var(--text-muted)]">
+          <span
+            class={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium ${
+              interruptedMode() === "paused"
+                ? "border-[var(--warn-border)] bg-[var(--warn-surface)] text-[var(--warn-text)]"
+                : "border-[var(--danger-border)] bg-[var(--danger-surface)] text-[var(--danger-text)]"
+            }`}
+          >
+            <span class="font-mono text-[10px] leading-none">
+              {interruptedMode() === "paused" ? "⏸" : "■"}
+            </span>
+            <span>
+              {interruptedMode() === "paused"
+                ? t("timeline.turnPaused")
+                : t("timeline.turnStopped")}
+            </span>
+          </span>
+
+          <button
+            type="button"
+            disabled={busyAction()}
+            onClick={() => void onResume()}
+            title={t("timeline.resumeTooltip")}
+            class="inline-flex items-center gap-1 rounded-full bg-[var(--accent-primary)] px-2.5 py-0.5 text-[11px] font-medium text-white hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
+          >
+            <span class="text-[9.5px] leading-none">▶</span>
+            <span>{t("timeline.resume")}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => void retryLastUserPrompt(props.sessionID)}
+            class="inline-flex items-center gap-1 rounded-full border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-2 py-0.5 text-[11px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+          >
+            <span>↺</span>
+            <span>{t("timeline.retryTask")}</span>
+          </button>
+        </div>
+      </Show>
+    </>
   );
 }

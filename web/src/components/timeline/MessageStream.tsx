@@ -13,10 +13,11 @@ import type { MessagePart, SessionStatus } from "../../services/sse-types";
 import {
   forkFromMessage,
   revertToHere,
+  stopSessionTask,
   submitSessionPrompt,
   workspace,
 } from "../../store/workspace";
-import { Icon, Spinner, TextShimmer } from "../icons";
+import { Icon } from "../icons";
 import {
   AssistantErrorCard,
   AssistantTurnFooter,
@@ -25,6 +26,7 @@ import {
   formatMessageTime,
   groupAssistantParts,
   isTodoTool,
+  LiveExecutionControlBar,
   PartView,
   SessionRetryCard,
 } from "./message-stream-parts";
@@ -193,6 +195,18 @@ export default function MessageStream() {
           ev.preventDefault();
           setSearchOpen(true);
         }
+        return;
+      }
+      if (
+        isSessionBusy() &&
+        !ev.defaultPrevented &&
+        !searchOpen() &&
+        !workspace.providerModalOpen &&
+        !workspace.arenaModalOpen &&
+        (ev.key === "Escape" || ((ev.metaKey || ev.ctrlKey) && ev.key === "."))
+      ) {
+        ev.preventDefault();
+        void stopSessionTask(workspace.activeSessionID);
       }
     };
     window.addEventListener("keydown", onWindowKeyDown);
@@ -413,13 +427,13 @@ export default function MessageStream() {
               )}
             </For>
 
-            {/* Kilo Thinking Placeholder before first visible part arrives */}
-            <Show when={showThinkingPlaceholder()}>
-              <div class="mt-4 px-1 py-1 flex items-center gap-2.5 text-[13px] text-[var(--accent-primary)]">
-                <Spinner class="w-4 h-4" />
-                <TextShimmer text={t("timeline.thinking")} active={true} class="font-medium" />
-              </div>
-            </Show>
+            {/* Live Execution Control Bar (Thinking / Executing + Pause / Stop / Resume) */}
+            <LiveExecutionControlBar
+              sessionID={workspace.activeSessionID}
+              isSessionBusy={isSessionBusy()}
+              showThinking={showThinkingPlaceholder()}
+              lastTurnRole={turns()[turns().length - 1]?.info.role}
+            />
 
             {/* Kilo SessionRetry Countdown Card */}
             <Show when={activeStatus().type === "retry"}>

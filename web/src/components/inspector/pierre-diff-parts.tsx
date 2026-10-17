@@ -7,12 +7,13 @@ import {
   MessageSquarePlus,
   RotateCcw,
 } from "lucide-solid";
-import { DIFFS_TAG_NAME, FileDiff, getSingularPatch } from "@pierre/diffs";
+import { DIFFS_TAG_NAME, FileDiff, getSingularPatch, parseDiffFromFile } from "@pierre/diffs";
 import { hoxiAPI } from "../../services/api";
 import {
   addReviewComment,
   loadSessionMessages,
   openFileInInspector,
+  refreshWorktreeStatus,
   workspace,
 } from "../../store/workspace";
 import type { MessagePart, SnapshotFileDiff } from "../../services/sse-types";
@@ -90,11 +91,15 @@ export function FileDiffBlock(props: {
 
   createEffect(() => {
     const patch = props.patch ?? props.diff?.patch ?? "";
+    const diffObj = props.diff;
+    const hasBeforeAfter =
+      Boolean(diffObj) &&
+      (typeof diffObj?.before === "string" || typeof diffObj?.after === "string");
     const diffStyle = props.diffStyle ?? "unified";
     const themeType = workspace.theme === "dark" ? "dark" : "light";
     host.innerHTML = "";
-    if (!patch) {
-      host.textContent = "(diff preview available in Diff Inspector)";
+    if (!patch && !hasBeforeAfter) {
+      host.textContent = t("inspector.diffs.noPatch");
       return;
     }
 
@@ -104,7 +109,12 @@ export function FileDiffBlock(props: {
 
     let instance: FileDiff<undefined, undefined> | undefined;
     try {
-      const meta = getSingularPatch(patch);
+      const meta = patch
+        ? getSingularPatch(patch)
+        : parseDiffFromFile(
+            { name: diffObj?.file || "file", contents: diffObj?.before ?? "" },
+            { name: diffObj?.file || "file", contents: diffObj?.after ?? "" }
+          );
       instance = new FileDiff({
         theme: { dark: "pierre-dark", light: "pierre-light" },
         themeType,
@@ -116,7 +126,7 @@ export function FileDiffBlock(props: {
       instance.hydrate({ fileDiff: meta, fileContainer: el });
     } catch (err) {
       console.error("PierreDiff render failed:", err);
-      el.textContent = patch;
+      el.textContent = patch || diffObj?.after || "";
     }
 
     onCleanup(() => {
@@ -145,12 +155,16 @@ export function DiffCard(props: { diff: SnapshotFileDiff; diffStyle: "unified" |
   const [commentBody, setCommentBody] = createSignal("");
 
   const onRevertFile = async () => {
-    const sessionID = workspace.activeSessionID;
-    if (!sessionID || reverting()) return;
+    const sessionID = workspace.activeSessionID || "__root__";
+    if (reverting()) return;
     setReverting(true);
     try {
       await hoxiAPI.revertWorktreeFile(sessionID, props.diff.file);
-      await loadSessionMessages(sessionID);
+      if (workspace.activeSessionID) {
+        await loadSessionMessages(workspace.activeSessionID);
+      } else {
+        await refreshWorktreeStatus("__root__");
+      }
     } catch (err) {
       console.error("revertWorktreeFile failed:", err);
     } finally {
@@ -288,14 +302,23 @@ export function DiffCard(props: { diff: SnapshotFileDiff; diffStyle: "unified" |
       <Show when={open()}>
         <div class="px-2 pb-2 pt-1">
           <Show
-            when={props.diff.patch}
+            when={
+              props.diff.patch ||
+              typeof props.diff.before === "string" ||
+              typeof props.diff.after === "string"
+            }
             fallback={
               <div class="px-2 py-2 text-[11px] text-[var(--text-muted)] font-mono">
                 {t("inspector.diffs.noPatch")}
               </div>
             }
           >
-            <FileDiffBlock patch={props.diff.patch!} diffStyle={props.diffStyle} maxHeight={320} />
+            <FileDiffBlock
+              diff={props.diff}
+              patch={props.diff.patch}
+              diffStyle={props.diffStyle}
+              maxHeight={320}
+            />
           </Show>
         </div>
       </Show>

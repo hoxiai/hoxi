@@ -47,7 +47,7 @@ export function resolveToolFileDiff(
   part: ToolPart,
   isEdit: boolean,
   file: string
-): { file: string; patch?: string; additions: number; deletions: number } | undefined {
+): { file: string; patch?: string; before?: string; after?: string; additions: number; deletions: number } | undefined {
   if (!isEdit || !file) return undefined;
   const diffs = workspace.diffsBySession[part.sessionID] ?? [];
   const sessionDiff = diffs.find(
@@ -69,6 +69,8 @@ export function resolveToolFileDiff(
     return {
       file,
       patch: typeof patch === "string" ? patch : undefined,
+      before: typeof before === "string" ? before : undefined,
+      after: typeof after === "string" ? after : undefined,
       additions: meta?.filediff?.additions ?? counts.additions,
       deletions: meta?.filediff?.deletions ?? counts.deletions,
     };

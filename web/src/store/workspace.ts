@@ -16,6 +16,7 @@ import type {
   ProviderAuthMethod,
   ProviderInfo,
   ProviderTelemetryStats,
+  WorkspaceProfile,
   WorktreeMeta,
 } from "../services/api";
 import { DEFAULT_AGENTS } from "./workspace-providers";
@@ -41,22 +42,31 @@ export interface ReviewCommentItem {
 }
 
 export type ProviderModalTab = "providers" | "custom" | "models" | "policy";
+export type WorkspaceModalMode = "create" | "edit" | "delete" | "manage" | null;
 
 export interface WorkspaceState {
   connected: boolean;
   rootDir: string;
   wsBaseURL: string;
   projects: ProjectInfo[];
+  savedWorkspaces: WorkspaceProfile[];
   recentProjects: string[];
+  projectOrder: string[];
   sessions: SessionInfo[];
   archivedSessionIDs: string[];
   activeSessionID: string | null;
   agents: AgentInfo[];
   activeMode: string;
+  sessionSandboxMode: "local" | "worktree";
   sidebarProjectMode: "single" | "multi";
   inspectorTab: "diffs" | "memory" | "files" | "terminal";
   inspectorOpen: boolean;
   inspectedFilePath: string | null;
+  inspectedDiffFile: string | null;
+  activeInspectorFolder: string | null;
+  workspaceModalMode: WorkspaceModalMode;
+  editingWorkspaceID: string | null;
+  editingWorkspaceDir: string | null;
   providerModalOpen: boolean;
   providerModalTab: ProviderModalTab;
   editingProviderID: string | null;
@@ -95,7 +105,9 @@ export const FAVORITE_MODELS_KEY = "hoxi-model-favorites:v1";
 export const RECENT_MODELS_KEY = "hoxi-recent-models:v1";
 export const EFFORT_KEY = "hoxi-reasoning-effort:v1";
 export const RECENT_PROJECTS_KEY = "hoxi-recent-projects:v1";
+export const PROJECT_ORDER_KEY = "hoxi-project-order:v1";
 export const SIDEBAR_PROJECT_MODE_KEY = "hoxi-sidebar-project-mode:v1";
+export const SESSION_SANDBOX_MODE_KEY = "hoxi-session-sandbox-mode:v1";
 export const ARCHIVED_SESSIONS_KEY = "hoxi-archived-sessions:v1";
 
 function initialTheme(): "light" | "dark" {
@@ -160,6 +172,18 @@ function initialRecentProjects(): string[] {
   return [];
 }
 
+function initialProjectOrder(): string[] {
+  try {
+    const raw = localStorage.getItem(PROJECT_ORDER_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed.filter((p) => typeof p === "string");
+  } catch {
+    /* ignore */
+  }
+  return [];
+}
+
 function initialSidebarProjectMode(): "single" | "multi" {
   try {
     const saved = localStorage.getItem(SIDEBAR_PROJECT_MODE_KEY);
@@ -168,6 +192,16 @@ function initialSidebarProjectMode(): "single" | "multi" {
     /* ignore */
   }
   return "multi";
+}
+
+function initialSessionSandboxMode(): "local" | "worktree" {
+  try {
+    const saved = localStorage.getItem(SESSION_SANDBOX_MODE_KEY);
+    if (saved === "local" || saved === "worktree") return saved;
+  } catch {
+    /* ignore */
+  }
+  return "local";
 }
 
 function initialArchivedSessions(): string[] {
@@ -187,16 +221,23 @@ export const [workspace, setWorkspace] = createStore<WorkspaceState>({
   rootDir: "",
   wsBaseURL: "",
   projects: [],
+  savedWorkspaces: [],
   recentProjects: initialRecentProjects(),
+  projectOrder: initialProjectOrder(),
   sessions: [],
   archivedSessionIDs: initialArchivedSessions(),
   activeSessionID: null,
   agents: DEFAULT_AGENTS,
   activeMode: "build",
+  sessionSandboxMode: initialSessionSandboxMode(),
   sidebarProjectMode: initialSidebarProjectMode(),
   inspectorTab: "diffs",
   inspectorOpen: false,
   inspectedFilePath: null,
+  activeInspectorFolder: null,
+  workspaceModalMode: null,
+  editingWorkspaceID: null,
+  editingWorkspaceDir: null,
   providerModalOpen: false,
   providerModalTab: "providers",
   editingProviderID: null,
@@ -232,6 +273,47 @@ export const [workspace, setWorkspace] = createStore<WorkspaceState>({
 export function isSessionArchived(session: SessionInfo): boolean {
   if (session.time?.archived && session.time.archived > 0) return true;
   return workspace.archivedSessionIDs.includes(session.id);
+}
+
+export function setSessionSandboxMode(mode: "local" | "worktree") {
+  setWorkspace("sessionSandboxMode", mode);
+  try {
+    localStorage.setItem(SESSION_SANDBOX_MODE_KEY, mode);
+  } catch {
+    /* ignore */
+  }
+}
+
+export function setProjectOrder(order: string[]) {
+  const unique = Array.from(new Set(order.filter(Boolean)));
+  setWorkspace("projectOrder", unique);
+  try {
+    localStorage.setItem(PROJECT_ORDER_KEY, JSON.stringify(unique));
+  } catch {
+    /* ignore */
+  }
+}
+
+export function reorderProjects(
+  currentPaths: string[],
+  fromPath: string,
+  toPath: string,
+  position: "before" | "after"
+) {
+  if (!fromPath || !toPath || fromPath === toPath) return;
+  const list = Array.from(new Set(currentPaths.filter(Boolean)));
+  const fromIdx = list.indexOf(fromPath);
+  if (fromIdx < 0) return;
+  list.splice(fromIdx, 1);
+
+  const toIdx = list.indexOf(toPath);
+  if (toIdx < 0) {
+    list.push(fromPath);
+  } else {
+    const insertIdx = position === "after" ? toIdx + 1 : toIdx;
+    list.splice(insertIdx, 0, fromPath);
+  }
+  setProjectOrder(list);
 }
 
 export function openProviderModal(
@@ -309,6 +391,7 @@ export function toggleTheme() {
 }
 
 export * from "./workspace-providers";
+export * from "./workspace-projects";
 export * from "./workspace-sessions";
 export * from "./session-title";
 export * from "./provider-telemetry";

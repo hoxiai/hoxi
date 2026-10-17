@@ -4,10 +4,11 @@ import { User } from "lucide-solid";
 import {
   archiveSession,
   discardSession,
-  isSessionArchived,
   newIsolatedSession,
-  openWorkspaceFolder,
+  openCreateWorkspaceModal,
+  reorderProjects,
   selectSession,
+  setProjectOrder,
   setSidebarProjectMode,
   setWorkspace,
   switchWorkspace,
@@ -16,12 +17,9 @@ import {
 } from "../../store/workspace";
 import { hoxiAPI } from "../../services/api";
 import type { SessionInfo } from "../../services/sse-types";
-import { Icon, Spinner } from "../icons";
-import {
-  buildAllProjects,
-  SessionNavItem,
-  shortenPath,
-} from "./left-nav-helpers";
+import { Icon } from "../icons";
+import { buildAllProjects } from "./left-nav-helpers";
+import MultiProjectTreeItem from "./MultiProjectItem";
 import SingleProjectNavView from "./SingleProjectNavView";
 import { t } from "../../i18n";
 
@@ -29,6 +27,15 @@ export default function LeftNav() {
   const [filterQuery, setFilterQuery] = createSignal("");
   const [showSearch, setShowSearch] = createSignal(false);
   const [creatingForPath, setCreatingForPath] = createSignal<string | null>(null);
+
+  // Drag-and-drop state for reordering projects
+  const [draggingProjectPath, setDraggingProjectPath] = createSignal<string | null>(null);
+  const [dropTarget, setDropTarget] = createSignal<{
+    path: string;
+    position: "before" | "after";
+  } | null>(null);
+  let projectListContainerRef: HTMLDivElement | undefined;
+  let suppressNextProjectClick = false;
 
   // Expanded projects set (by path) for Multi-Project mode
   const [expandedProjects, setExpandedProjects] = createSignal<Set<string>>(
@@ -52,12 +59,31 @@ export default function LeftNav() {
 
   const allProjects = createMemo(() => buildAllProjects());
 
+  // Ensure newly discovered projects are recorded into projectOrder so switching projects never scrambles order
+  createEffect(() => {
+    const current = allProjects().map((p) => p.path);
+    if (current.length === 0) return;
+    const saved = workspace.projectOrder;
+    const missing = current.filter((p) => !saved.includes(p));
+    if (missing.length > 0) {
+      if (saved.length === 0 && workspace.rootDir && current.includes(workspace.rootDir)) {
+        const rest = current.filter((p) => p !== workspace.rootDir);
+        setProjectOrder([workspace.rootDir, ...rest]);
+      } else {
+        setProjectOrder([...saved, ...missing]);
+      }
+    }
+  });
+
   const projectList = createMemo(() => {
     const all = allProjects();
     const q = filterQuery().trim().toLowerCase();
     if (!q) return all;
     return all.filter(
-      (item) => item.name.toLowerCase().includes(q) || item.path.toLowerCase().includes(q)
+      (item) =>
+        item.name.toLowerCase().includes(q) ||
+        item.path.toLowerCase().includes(q) ||
+        item.folders.some((f) => f.path.toLowerCase().includes(q))
     );
   });
 
@@ -80,6 +106,10 @@ export default function LeftNav() {
   };
 
   const toggleProject = async (path: string) => {
+    if (suppressNextProjectClick) {
+      suppressNextProjectClick = false;
+      return;
+    }
     const next = new Set(expandedProjects());
     if (next.has(path)) {
       next.delete(path);
@@ -91,6 +121,89 @@ export default function LeftNav() {
         await loadSessionsForProject(path);
       }
     }
+  };
+
+  const onProjectPointerDown = (ev: PointerEvent, fromPath: string) => {
+    if (ev.button !== 0) return;
+    const targetEl = ev.target as HTMLElement | null;
+    if (targetEl?.closest("button")) return;
+
+    const startY = ev.clientY;
+    let isDragging = false;
+
+    const handlePointerMove = (moveEv: PointerEvent) => {
+      if (!isDragging) {
+        if (Math.abs(moveEv.clientY - startY) < 5) return;
+        isDragging = true;
+        setDraggingProjectPath(fromPath);
+      }
+
+      if (!projectListContainerRef) return;
+      const items = Array.from(
+        projectListContainerRef.querySelectorAll<HTMLElement>("[data-project-item]")
+      );
+      if (items.length === 0) return;
+
+      let matchedPath: string | null = null;
+      let matchedPos: "before" | "after" = "after";
+
+      for (const itemEl of items) {
+        const itemPath = itemEl.getAttribute("data-project-item");
+        if (!itemPath) continue;
+        const headerEl =
+          itemEl.querySelector<HTMLElement>("[data-project-header]") || itemEl;
+        const rect = headerEl.getBoundingClientRect();
+        const itemRect = itemEl.getBoundingClientRect();
+
+        if (moveEv.clientY <= itemRect.bottom) {
+          matchedPath = itemPath;
+          const midY = rect.top + rect.height / 2;
+          matchedPos = moveEv.clientY < midY ? "before" : "after";
+          break;
+        }
+      }
+
+      if (!matchedPath) {
+        const lastEl = items[items.length - 1];
+        matchedPath = lastEl.getAttribute("data-project-item");
+        matchedPos = "after";
+      }
+
+      if (matchedPath && matchedPath !== fromPath) {
+        setDropTarget({ path: matchedPath, position: matchedPos });
+      } else {
+        setDropTarget(null);
+      }
+    };
+
+    const handlePointerUp = () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+      window.removeEventListener("pointercancel", handlePointerUp);
+
+      if (isDragging) {
+        suppressNextProjectClick = true;
+        setTimeout(() => {
+          suppressNextProjectClick = false;
+        }, 80);
+
+        const target = dropTarget();
+        if (target && target.path !== fromPath) {
+          reorderProjects(
+            allProjects().map((p) => p.path),
+            fromPath,
+            target.path,
+            target.position
+          );
+        }
+        setDraggingProjectPath(null);
+        setDropTarget(null);
+      }
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    window.addEventListener("pointercancel", handlePointerUp);
   };
 
   const toggleArchivedForProject = (path: string) => {
@@ -177,10 +290,6 @@ export default function LeftNav() {
     await discardSession(sessionID, true, projPath);
   };
 
-  const onOpenFolderClick = async () => {
-    await openWorkspaceFolder();
-  };
-
   const currentUsername = createMemo(() => {
     const parts = (workspace.rootDir || "").split("/").filter(Boolean);
     if (parts[0] === "Users" && parts[1]) return parts[1];
@@ -189,7 +298,7 @@ export default function LeftNav() {
 
   return (
     <aside class="relative h-full w-full flex flex-col bg-transparent pl-2 pr-1 select-none">
-      {/* Minimal Header: Mode Toggle + Search + Open Folder */}
+      {/* Minimal Header: Mode Toggle + Search + New Workspace */}
       <div class="px-2 pt-1 pb-1.5 flex items-center justify-between gap-1">
         <div
           class="inline-flex items-center rounded-lg bg-[var(--bg-inset)] p-0.5"
@@ -235,9 +344,9 @@ export default function LeftNav() {
           </button>
           <button
             type="button"
-            onClick={() => void onOpenFolderClick()}
+            onClick={() => openCreateWorkspaceModal()}
             class="p-1 rounded-md text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
-            title={t("leftNav.addProjectFolder")}
+            title={t("leftNav.newWorkspace")}
           >
             <Icon name="folder-add-left" size="small" />
           </button>
@@ -269,191 +378,43 @@ export default function LeftNav() {
         </div>
       </Show>
 
-      {/* MODE A: CLAUDE CODE-STYLE MINIMAL MULTI-PROJECT TREE */}
+      {/* MODE A: MULTI-PROJECT TREE */}
       <Show when={workspace.sidebarProjectMode === "multi"}>
-        <div class="flex-1 min-h-0 overflow-y-auto px-1 py-1 space-y-0.5">
+        <div
+          ref={projectListContainerRef}
+          class="flex-1 min-h-0 overflow-y-auto px-1 py-1 space-y-0.5"
+        >
           <For each={projectList()}>
-            {(proj) => {
-              const isActive = () => proj.path === workspace.rootDir;
-              const expanded = () => isExpanded(proj.path);
-              const isCreating = () => creatingForPath() === proj.path;
-              const isLoadingSessions = () => loadingProjects()[proj.path];
-              const isArchivedOpen = () =>
-                Boolean(expandedArchivedByProject()[proj.path]) ||
-                Boolean(filterQuery().trim());
-
-              const allFilteredSessions = createMemo(() => {
-                const q = filterQuery().trim().toLowerCase();
-                const list = isActive()
-                  ? workspace.sessions
-                  : projectSessions()[proj.path] || [];
-                const sorted = [...list].sort((a, b) => b.time.created - a.time.created);
-                if (!q) return sorted;
-                return sorted.filter(
-                  (s) =>
-                    (s.title || "").toLowerCase().includes(q) ||
-                    (s.slug || "").toLowerCase().includes(q)
-                );
-              });
-
-              const activeSessions = createMemo(() =>
-                allFilteredSessions().filter((s) => !isSessionArchived(s))
-              );
-
-              const archivedSessions = createMemo(() =>
-                allFilteredSessions().filter((s) => isSessionArchived(s))
-              );
-
-              return (
-                <div>
-                  {/* Flat Minimal Project Row (No card, no border, single line) */}
-                  <div
-                    class="group/proj flex items-center justify-between gap-1.5 rounded-lg px-2 py-1.5 hover:bg-[var(--bg-hover)]/70 cursor-pointer transition-colors"
-                    onClick={() => void toggleProject(proj.path)}
-                    title={shortenPath(proj.path)}
-                  >
-                    <div class="flex items-center gap-1.5 min-w-0 flex-1">
-                      <span class="shrink-0 text-[var(--text-faint)] group-hover/proj:text-[var(--text-muted)] transition-colors inline-flex items-center">
-                        <Show
-                          when={expanded()}
-                          fallback={<Icon name="chevron-right" size="small" class="w-3.5 h-3.5" />}
-                        >
-                          <Icon name="chevron-down" size="small" class="w-3.5 h-3.5" />
-                        </Show>
-                      </span>
-
-                      <span
-                        class={`truncate text-[12.5px] ${
-                          isActive()
-                            ? "font-semibold text-[var(--text-primary)]"
-                            : "font-medium text-[var(--text-secondary)] group-hover/proj:text-[var(--text-primary)]"
-                        }`}
-                      >
-                        {proj.name}
-                      </span>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={(e) => void onCreateThreadInProject(e, proj.path)}
-                      disabled={isCreating()}
-                      class="shrink-0 p-0.5 rounded text-[var(--accent-primary)] hover:bg-[var(--accent-surface)] opacity-0 group-hover/proj:opacity-100 transition-opacity cursor-pointer"
-                      title={`New session in ${proj.name}`}
-                    >
-                      <Show
-                        when={!isCreating()}
-                        fallback={<Spinner class="w-3.5 h-3.5 text-[var(--accent-primary)]" />}
-                      >
-                        <Icon name="plus-small" size="small" />
-                      </Show>
-                    </button>
-                  </div>
-
-                  {/* Indented Session Rows */}
-                  <Show when={expanded()}>
-                    <div class="ml-3.5 pl-2 border-l border-[var(--border-subtle)]/60 my-0.5 space-y-0.5">
-                      <Show when={isLoadingSessions()}>
-                        <div class="flex items-center gap-1.5 px-2 py-1 text-[11px] text-[var(--text-faint)]">
-                          <Spinner class="w-3 h-3" />
-                          <span>{t("common.loading")}</span>
-                        </div>
-                      </Show>
-
-                      <Show when={!isLoadingSessions()}>
-                        <button
-                          type="button"
-                          onClick={(e) => void onCreateThreadInProject(e, proj.path)}
-                          disabled={isCreating()}
-                          class="w-full flex items-center gap-1 text-left px-2 py-1 rounded-lg text-[11.5px] font-medium text-[var(--accent-primary)] hover:bg-[var(--accent-surface)] transition-colors cursor-pointer"
-                        >
-                          <Show
-                            when={!isCreating()}
-                            fallback={<Spinner class="w-3 h-3 text-[var(--accent-primary)]" />}
-                          >
-                            <Icon name="plus-small" size="small" class="w-3.5 h-3.5" />
-                          </Show>
-                          <span>{t("leftNav.newThread")}</span>
-                        </button>
-                      </Show>
-
-                      <Show when={!isLoadingSessions() && activeSessions().length > 0}>
-                        <For each={activeSessions()}>
-                          {(session) => (
-                            <SessionNavItem
-                              session={session}
-                              active={isActive() && workspace.activeSessionID === session.id}
-                              canDelete={true}
-                              isArchived={false}
-                              pendingSessions={pendingSessions()}
-                              onSelect={() => void onSelectSessionInProject(proj.path, session.id)}
-                              onArchive={(ev, id) => void onArchiveInProject(proj.path, ev, id)}
-                              onDiscard={(ev, id) => onDiscardInProject(proj.path, ev, id)}
-                            />
-                          )}
-                        </For>
-                      </Show>
-
-                      {/* Collapsible Archived Section for this project */}
-                      <Show when={!isLoadingSessions() && archivedSessions().length > 0}>
-                        <div class="pt-0.5">
-                          <button
-                            type="button"
-                            onClick={(ev) => {
-                              ev.stopPropagation();
-                              toggleArchivedForProject(proj.path);
-                            }}
-                            class="w-full flex items-center justify-between gap-1.5 rounded-lg px-2 py-0.5 text-[11px] text-[var(--text-faint)] hover:text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]/40 transition-colors cursor-pointer"
-                          >
-                            <div class="flex items-center gap-1">
-                              <Show
-                                when={isArchivedOpen()}
-                                fallback={
-                                  <Icon name="chevron-right" size="small" class="w-3 h-3" />
-                                }
-                              >
-                                <Icon name="chevron-down" size="small" class="w-3 h-3" />
-                              </Show>
-                              <Icon name="archive" size="small" class="w-3 h-3" />
-                              <span>{t("leftNav.archivedSessions")}</span>
-                            </div>
-                            <span class="text-[10px] font-mono">
-                              {archivedSessions().length}
-                            </span>
-                          </button>
-
-                          <Show when={isArchivedOpen()}>
-                            <div class="mt-0.5 space-y-0.5">
-                              <For each={archivedSessions()}>
-                                {(session) => (
-                                  <SessionNavItem
-                                    session={session}
-                                    active={
-                                      isActive() && workspace.activeSessionID === session.id
-                                    }
-                                    canDelete={true}
-                                    isArchived={true}
-                                    pendingSessions={pendingSessions()}
-                                    onSelect={() =>
-                                      void onSelectSessionInProject(proj.path, session.id)
-                                    }
-                                    onUnarchive={(ev, id) =>
-                                      void onUnarchiveInProject(proj.path, ev, id)
-                                    }
-                                    onDiscard={(ev, id) =>
-                                      onDiscardInProject(proj.path, ev, id)
-                                    }
-                                  />
-                                )}
-                              </For>
-                            </div>
-                          </Show>
-                        </div>
-                      </Show>
-                    </div>
-                  </Show>
-                </div>
-              );
-            }}
+            {(proj) => (
+              <MultiProjectTreeItem
+                proj={proj}
+                expanded={isExpanded(proj.path)}
+                isCreating={creatingForPath() === proj.path}
+                isLoadingSessions={Boolean(loadingProjects()[proj.path])}
+                isDraggingThis={draggingProjectPath() === proj.path}
+                isDropBefore={
+                  dropTarget()?.path === proj.path && dropTarget()?.position === "before"
+                }
+                isDropAfter={
+                  dropTarget()?.path === proj.path && dropTarget()?.position === "after"
+                }
+                isArchivedOpen={
+                  Boolean(expandedArchivedByProject()[proj.path]) ||
+                  Boolean(filterQuery().trim())
+                }
+                filterQuery={filterQuery()}
+                cachedSessions={projectSessions()[proj.path] || []}
+                pendingSessions={pendingSessions()}
+                onPointerDown={onProjectPointerDown}
+                onToggleProject={(p) => void toggleProject(p)}
+                onToggleArchived={toggleArchivedForProject}
+                onCreateThread={(e, p) => void onCreateThreadInProject(e, p)}
+                onSelectSession={(p, id) => void onSelectSessionInProject(p, id)}
+                onArchiveSession={(p, ev, id) => void onArchiveInProject(p, ev, id)}
+                onUnarchiveSession={(p, ev, id) => void onUnarchiveInProject(p, ev, id)}
+                onDiscardSession={(p, ev, id) => onDiscardInProject(p, ev, id)}
+              />
+            )}
           </For>
         </div>
       </Show>

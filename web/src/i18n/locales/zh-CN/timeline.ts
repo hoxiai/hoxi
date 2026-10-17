@@ -151,5 +151,9 @@ export const timeline: TimelineI18n = {
     "请从刚才暂停的位置继续往下执行，完成剩余的任务步骤。",
   resumePromptPrefix:
     "请结合以下补充要求，从刚才暂停的位置继续执行任务：",
+  sandboxLocalMode: "本地",
+  sandboxWorktreeMode: "分支沙盒",
+  sandboxLocalTooltip: "直接在当前本地分支修改代码（不新建分支）",
+  sandboxWorktreeTooltip: "为会话创建独立的 Git 分支与 Worktree 沙盒",
 };
 

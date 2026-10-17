@@ -1,9 +1,23 @@
-import { createEffect, createSignal, For, onMount, Show } from "solid-js";
-import { ArrowLeft, FolderOpen, LoaderCircle, Search } from "lucide-solid";
+import { createEffect, createMemo, createSignal, For, onMount, Show } from "solid-js";
+import { ArrowLeft, FolderOpen, FolderPlus, LoaderCircle, Search } from "lucide-solid";
 import { hoxiAPI } from "../../services/api";
-import { activeDirectory, setWorkspace, workspace } from "../../store/workspace";
+import {
+  activeDirectory,
+  activeWorkspaceFolders,
+  normalizeFolderPath,
+  openEditWorkspaceModal,
+  setWorkspace,
+  workspace,
+  workspaceIdentityColor,
+} from "../../store/workspace";
 import { FileIcon } from "../icons";
+import { FolderIcon } from "../layout/left-nav-helpers";
 import { t } from "../../i18n";
+
+function baseName(p: string): string {
+  const parts = normalizeFolderPath(p).split(/[\\/]/).filter(Boolean);
+  return parts[parts.length - 1] || p;
+}
 
 export default function FileTreeView() {
   const [query, setQuery] = createSignal("");
@@ -14,10 +28,15 @@ export default function FileTreeView() {
   const [previewError, setPreviewError] = createSignal<string | null>(null);
   const [loadingPreview, setLoadingPreview] = createSignal(false);
 
-  const loadInitialFiles = async () => {
+  const folders = createMemo(() => activeWorkspaceFolders());
+  const targetDirectory = createMemo(
+    () => workspace.activeInspectorFolder || activeDirectory()
+  );
+
+  const loadInitialFiles = async (dir = targetDirectory()) => {
     setSearching(true);
     try {
-      const nodes = await hoxiAPI.listFiles("", activeDirectory());
+      const nodes = await hoxiAPI.listFiles("", dir);
       const paths = (nodes ?? []).map((n) => n.path);
       setResults(paths);
     } catch {
@@ -36,7 +55,7 @@ export default function FileTreeView() {
     if (searching()) return;
     setSearching(true);
     try {
-      const files = await hoxiAPI.findFiles(q, activeDirectory());
+      const files = await hoxiAPI.findFiles(q, targetDirectory());
       setResults(Array.isArray(files) ? files : []);
     } catch (err) {
       console.error("find files failed:", err);
@@ -51,7 +70,7 @@ export default function FileTreeView() {
     setLoadingPreview(true);
     setPreviewError(null);
     try {
-      const res = await hoxiAPI.readFileContent(path, activeDirectory());
+      const res = await hoxiAPI.readFileContent(path, targetDirectory());
       setPreviewContent(res?.content ?? "");
     } catch (err) {
       setPreviewError(String(err));
@@ -63,6 +82,14 @@ export default function FileTreeView() {
 
   onMount(() => {
     void loadInitialFiles();
+  });
+
+  createEffect(() => {
+    const dir = targetDirectory();
+    if (dir) {
+      setPreviewPath(null);
+      void loadInitialFiles(dir);
+    }
   });
 
   // React to file links clicked in chat, ToolCard, or ReviewComments
@@ -81,6 +108,43 @@ export default function FileTreeView() {
   return (
     <div class="flex flex-col h-full">
       <div class="shrink-0 px-3 py-2 border-b border-[var(--border-subtle)]">
+        {/* Multi-Folder Workspace Switcher Bar */}
+        <Show when={folders().length > 1}>
+          <div class="mb-2 flex items-center gap-1 overflow-x-auto pb-0.5">
+            <For each={folders()}>
+              {(folder) => {
+                const isSelected = () =>
+                  normalizeFolderPath(targetDirectory()) ===
+                  normalizeFolderPath(folder.path);
+                return (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setWorkspace(
+                        "activeInspectorFolder",
+                        folder.isPrimary ? null : folder.path
+                      )
+                    }
+                    title={folder.path}
+                    class={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-mono transition-colors cursor-pointer shrink-0 ${
+                      isSelected()
+                        ? "bg-[var(--accent-surface)] text-[var(--accent-primary)] border border-[var(--accent-border)] font-medium"
+                        : "bg-[var(--bg-inset)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] border border-transparent"
+                    }`}
+                  >
+                    <FolderIcon
+                      open={isSelected()}
+                      color={workspaceIdentityColor(workspace.rootDir)}
+                      class="w-3 h-3 shrink-0"
+                    />
+                    <span>{baseName(folder.path)}</span>
+                  </button>
+                );
+              }}
+            </For>
+          </div>
+        </Show>
+
         <div class="flex items-center gap-2 rounded-lg border border-[var(--border-strong)] bg-[var(--bg-inset)] px-2.5 py-1.5 focus-within:border-[var(--accent-border)]">
           <Search size={13} class="shrink-0 text-[var(--text-muted)]" />
           <input
@@ -97,11 +161,22 @@ export default function FileTreeView() {
             <LoaderCircle size={12} class="shrink-0 animate-spin text-[var(--text-muted)]" />
           </Show>
         </div>
-        <div class="mt-1.5 flex items-center gap-1 text-[10px] text-[var(--text-faint)] font-mono truncate">
-          <FolderOpen size={10} class="shrink-0" />
-          <span class="truncate" title={activeDirectory()}>
-            {activeDirectory() || "—"}
-          </span>
+        <div class="mt-1.5 flex items-center justify-between gap-1 text-[10px] text-[var(--text-faint)] font-mono">
+          <div class="flex items-center gap-1 min-w-0 truncate">
+            <FolderOpen size={10} class="shrink-0" />
+            <span class="truncate" title={targetDirectory()}>
+              {targetDirectory() || "—"}
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => openEditWorkspaceModal(workspace.rootDir)}
+            class="shrink-0 inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[10px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+            title={t("leftNav.editWorkspace")}
+          >
+            <FolderPlus size={10} />
+            <span>{t("leftNav.editWorkspace")}</span>
+          </button>
         </div>
       </div>
 

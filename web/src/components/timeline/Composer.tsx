@@ -1,31 +1,34 @@
 // web/src/components/timeline/Composer.tsx
-import { createMemo, createSignal, For, Show } from "solid-js";
+import { createMemo, createSignal, Show } from "solid-js";
 import {
   ArrowUp,
-  ClipboardPaste,
+  Folder,
+  GitBranch,
   GitFork,
   ImagePlus,
   LoaderCircle,
-  Slash,
   Square,
   Swords,
   WandSparkles,
-  X,
 } from "lucide-solid";
-import { hoxiAPI } from "../../services/api";
 import {
   clearReviewComments,
   forkFromMessage,
   isSessionBusy,
-  recordUserAbortAction,
-  sessionDirectory,
+  pauseSessionTask,
+  resumePausedSession,
   setWorkspace,
+  stopSessionTask,
   submitSessionPrompt,
+  switchActiveSessionSandboxMode,
   workspace,
 } from "../../store/workspace";
 import ModelSelector from "../models/ModelSelector";
-import { FileIcon } from "../icons";
 import ComposerShelf from "./ComposerShelf";
+import {
+  ComposerAttachmentChips,
+  ComposerAutocompletePopover,
+} from "./composer-subcomponents";
 import ContextProgressPill from "./ContextProgressPill";
 import ModeSwitcher from "./ModeSwitcher";
 import {
@@ -42,12 +45,35 @@ export default function Composer() {
   const [sending, setSending] = createSignal(false);
   const [stopping, setStopping] = createSignal(false);
   const [forking, setForking] = createSignal(false);
+  const [switchingSandbox, setSwitchingSandbox] = createSignal(false);
 
   let textareaRef: HTMLTextAreaElement | undefined;
   let fileInputRef: HTMLInputElement | undefined;
 
   const sessionID = () => workspace.activeSessionID;
   const busy = createMemo(() => isSessionBusy(sessionID()));
+  const isPaused = createMemo(() => {
+    const id = sessionID();
+    return id ? workspace.interruptedBySession[id] === "paused" : false;
+  });
+  const effectiveSandboxMode = createMemo<"local" | "worktree">(() => {
+    const id = sessionID();
+    if (id && workspace.worktreeBySession[id]) {
+      return workspace.worktreeBySession[id].isolated ? "worktree" : "local";
+    }
+    return workspace.sessionSandboxMode;
+  });
+
+  const onToggleSandbox = async (mode: "local" | "worktree") => {
+    if (switchingSandbox() || busy()) return;
+    if (effectiveSandboxMode() === mode && workspace.sessionSandboxMode === mode) return;
+    setSwitchingSandbox(true);
+    try {
+      await switchActiveSessionSandboxMode(mode);
+    } finally {
+      setSwitchingSandbox(false);
+    }
+  };
 
   const adjustHeight = () => {
     if (!textareaRef) return;
@@ -126,17 +152,48 @@ export default function Composer() {
     }
   };
 
+  const onPause = async () => {
+    const id = sessionID();
+    if (!id || stopping()) return;
+    setStopping(true);
+    try {
+      await pauseSessionTask(id);
+    } finally {
+      setStopping(false);
+    }
+  };
+
   const onStop = async () => {
     const id = sessionID();
     if (!id || stopping()) return;
-    recordUserAbortAction(id);
     setStopping(true);
     try {
-      await hoxiAPI.abortSession(id, sessionDirectory(id));
-    } catch (err) {
-      console.error("abort failed:", err);
+      await stopSessionTask(id);
     } finally {
       setStopping(false);
+    }
+  };
+
+  const onResume = async () => {
+    const id = sessionID();
+    if (!id || sending()) return;
+    const extra = buildPayloadWithReviews();
+    if (text().trim()) {
+      promptHistory.recordPrompt(text().trim());
+    }
+    setSending(true);
+    setText("");
+    pasteCollapse.clearPastes();
+    imgAttach.clearImages();
+    ac.reset();
+    if (textareaRef) {
+      textareaRef.style.height = "48px";
+    }
+    try {
+      await resumePausedSession(id, extra);
+      clearReviewComments(id);
+    } finally {
+      setSending(false);
     }
   };
 
@@ -179,6 +236,12 @@ export default function Composer() {
       }
     }
 
+    if (ev.key === "Escape" && busy()) {
+      ev.preventDefault();
+      void onStop();
+      return;
+    }
+
     // Kilo PromptHistory Up/Down arrow navigation
     if (
       (ev.key === "ArrowUp" || ev.key === "ArrowDown") &&
@@ -203,6 +266,10 @@ export default function Composer() {
 
     if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) {
       ev.preventDefault();
+      if (!busy() && isPaused() && !canSend()) {
+        void onResume();
+        return;
+      }
       void onSend();
     }
   };
@@ -211,51 +278,13 @@ export default function Composer() {
     <div class="shrink-0 w-full px-6 pb-4 pt-1">
       <div class="relative mx-auto w-full max-w-[62rem]">
         {/* Floating @file / @changes / /command Autocomplete Popover */}
-        <Show when={ac.triggerMode() && ac.suggestions().length > 0}>
-          <div class="absolute bottom-full left-0 mb-2 w-full max-w-[32rem] rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-1.5 shadow-xl z-40">
-            <div class="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
-              {ac.triggerMode() === "command"
-                ? t("timeline.slashCommandsHeader")
-                : t("timeline.mentionFileOrContextHeader")}
-            </div>
-            <div class="max-h-56 overflow-y-auto space-y-0.5">
-              <For each={ac.suggestions()}>
-                {(item, idx) => (
-                  <button
-                    type="button"
-                    class={`w-full flex items-center justify-between gap-3 rounded-lg px-2.5 py-1.5 text-left text-[12.5px] transition-colors cursor-pointer ${
-                      idx() === ac.selectedIndex()
-                        ? "bg-[var(--accent-surface)] text-[var(--accent-text)]"
-                        : "text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
-                    }`}
-                    onMouseEnter={() => ac.setSelectedIndex(idx())}
-                    onClick={() => ac.applySuggestion(item)}
-                  >
-                    <span class="inline-flex items-center gap-2 min-w-0 font-mono truncate">
-                      {item.type === "command" || item.type === "context" ? (
-                        <Slash size={12} class="text-[var(--accent-primary)] shrink-0" />
-                      ) : (
-                        <FileIcon
-                          node={{
-                            path: item.label,
-                            type: item.label.endsWith("/") ? "directory" : "file",
-                          }}
-                          class="w-3.5 h-3.5 shrink-0"
-                        />
-                      )}
-                      <span class="truncate">{item.label}</span>
-                    </span>
-                    <Show when={item.detail}>
-                      <span class="text-[11px] text-[var(--text-muted)] truncate max-w-[180px]">
-                        {item.detail}
-                      </span>
-                    </Show>
-                  </button>
-                )}
-              </For>
-            </div>
-          </div>
-        </Show>
+        <ComposerAutocompletePopover
+          triggerMode={ac.triggerMode()}
+          suggestions={ac.suggestions()}
+          selectedIndex={ac.selectedIndex()}
+          onSelectIndex={(idx) => ac.setSelectedIndex(idx)}
+          onApply={(item) => ac.applySuggestion(item)}
+        />
 
         {/* Docked Questions, Approvals, Plan Follow-ups + Contextual Shelf */}
         <ComposerShelf />
@@ -270,54 +299,12 @@ export default function Composer() {
           onDrop={imgAttach.handleDrop}
         >
           {/* Kilo Attachment & Collapsed Paste Chips Shelf */}
-          <Show
-            when={imgAttach.images().length > 0 || pasteCollapse.pastes().length > 0}
-          >
-            <div class="mb-2 flex flex-wrap items-center gap-1.5">
-              <For each={imgAttach.images()}>
-                {(img) => (
-                  <div class="group relative flex items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] pl-1 pr-2 py-1 text-[11px]">
-                    <img
-                      src={img.dataUrl}
-                      alt={img.filename}
-                      class="h-6 w-6 rounded object-cover"
-                    />
-                    <span class="max-w-[110px] truncate font-mono text-[var(--text-secondary)]">
-                      {img.filename}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => imgAttach.removeImage(img.id)}
-                      class="text-[var(--text-muted)] hover:text-[var(--danger-text)] cursor-pointer"
-                    >
-                      <X size={11} />
-                    </button>
-                  </div>
-                )}
-              </For>
-
-              <For each={pasteCollapse.pastes()}>
-                {(p) => (
-                  <div
-                    class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--accent-border)] bg-[var(--accent-surface)]/50 px-2.5 py-1 text-[11px] text-[var(--accent-text)]"
-                    title={p.preview}
-                  >
-                    <ClipboardPaste size={11} class="shrink-0" />
-                    <span class="font-mono font-medium">
-                      {t("timeline.pastedLinesChip", { count: p.lines })}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => pasteCollapse.removePaste(p.id)}
-                      class="hover:text-[var(--danger-text)] cursor-pointer"
-                    >
-                      <X size={11} />
-                    </button>
-                  </div>
-                )}
-              </For>
-            </div>
-          </Show>
+          <ComposerAttachmentChips
+            images={imgAttach.images()}
+            pastes={pasteCollapse.pastes()}
+            onRemoveImage={(id) => imgAttach.removeImage(id)}
+            onRemovePaste={(id) => pasteCollapse.removePaste(id)}
+          />
 
           <input
             ref={fileInputRef}
@@ -341,7 +328,9 @@ export default function Composer() {
             placeholder={
               busy()
                 ? t("timeline.steerPlaceholder")
-                : t("timeline.inputPlaceholder")
+                : isPaused()
+                  ? t("timeline.pausedPlaceholder")
+                  : t("timeline.inputPlaceholder")
             }
             value={text()}
             onPaste={(ev) => {
@@ -361,6 +350,42 @@ export default function Composer() {
             <div class="flex items-center gap-1.5 flex-wrap">
               <ModeSwitcher />
               <ModelSelector />
+
+              <div class="inline-flex items-center rounded-full border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-0.5 text-[11px] font-medium select-none">
+                <button
+                  type="button"
+                  disabled={switchingSandbox() || busy()}
+                  onClick={() => void onToggleSandbox("local")}
+                  class={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 transition-all cursor-pointer disabled:opacity-50 ${
+                    effectiveSandboxMode() === "local"
+                      ? "bg-[var(--bg-hover)] text-[var(--text-primary)] shadow-2xs"
+                      : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                  }`}
+                  title={t("timeline.sandboxLocalTooltip")}
+                >
+                  <Folder size={11} class="shrink-0" />
+                  <span>{t("timeline.sandboxLocalMode")}</span>
+                </button>
+                <button
+                  type="button"
+                  disabled={switchingSandbox() || busy()}
+                  onClick={() => void onToggleSandbox("worktree")}
+                  class={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 transition-all cursor-pointer disabled:opacity-50 ${
+                    effectiveSandboxMode() === "worktree"
+                      ? "bg-[var(--accent-surface)] text-[var(--accent-primary)] shadow-2xs"
+                      : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                  }`}
+                  title={t("timeline.sandboxWorktreeTooltip")}
+                >
+                  <Show
+                    when={!switchingSandbox()}
+                    fallback={<LoaderCircle size={11} class="animate-spin shrink-0" />}
+                  >
+                    <GitBranch size={11} class="shrink-0" />
+                  </Show>
+                  <span>{t("timeline.sandboxWorktreeMode")}</span>
+                </button>
+              </div>
 
               <button
                 type="button"
@@ -402,8 +427,8 @@ export default function Composer() {
               <ContextProgressPill />
             </div>
 
-            {/* Right Send / Stop / Steer Actions */}
-            <div class="flex items-center gap-2">
+            {/* Right Send / Pause / Stop / Resume / Steer Actions */}
+            <div class="flex items-center gap-1.5">
               <Show when={busy()}>
                 <button
                   type="button"
@@ -423,21 +448,48 @@ export default function Composer() {
 
                 <button
                   type="button"
-                  class="inline-flex h-7 w-7 items-center justify-center rounded-full bg-[var(--status-danger)] text-white hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
+                  class="inline-flex items-center gap-1 rounded-full border border-[var(--warn-border)] bg-[var(--warn-surface)] px-2.5 py-1 text-[11.5px] font-medium text-[var(--warn-text)] hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
+                  disabled={stopping()}
+                  onClick={onPause}
+                  title={t("timeline.pauseTooltip")}
+                >
+                  <span class="font-mono text-[10px] leading-none">⏸</span>
+                  <span>{t("timeline.pause")}</span>
+                </button>
+
+                <button
+                  type="button"
+                  class="inline-flex items-center gap-1 rounded-full bg-[var(--status-danger)] px-2.5 py-1 text-[11.5px] font-medium text-white hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
                   disabled={stopping()}
                   onClick={onStop}
-                  title={t("timeline.stop")}
+                  title={t("timeline.stopTooltip")}
                 >
                   <Show
                     when={!stopping()}
-                    fallback={<LoaderCircle size={13} class="animate-spin" />}
+                    fallback={<LoaderCircle size={12} class="animate-spin" />}
                   >
-                    <Square size={11} class="fill-current" />
+                    <Square size={10} class="fill-current" />
                   </Show>
+                  <span>{t("timeline.stop")}</span>
                 </button>
               </Show>
 
               <Show when={!busy()}>
+                <Show when={isPaused()}>
+                  <button
+                    type="button"
+                    class="inline-flex items-center gap-1.5 rounded-full border border-[var(--ok-border)] bg-[var(--ok-surface)] px-3 py-1 text-[11.5px] font-medium text-[var(--ok-text)] hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
+                    disabled={sending()}
+                    onClick={onResume}
+                    title={t("timeline.resumeTooltip")}
+                  >
+                    <span class="text-[10px] leading-none">▶</span>
+                    <span>
+                      {canSend() ? t("timeline.resumeWithNote") : t("timeline.resume")}
+                    </span>
+                  </button>
+                </Show>
+
                 <button
                   type="button"
                   class="inline-flex h-7 w-7 items-center justify-center rounded-full bg-[var(--accent-primary)] text-white shadow-xs hover:opacity-90 disabled:opacity-30 disabled:cursor-not-allowed transition-all cursor-pointer"

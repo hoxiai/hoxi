@@ -18,7 +18,12 @@ const TABS: Array<{ id: TabID }> = [
 export default function InspectorPane() {
   const diffCount = createMemo(() => {
     const id = workspace.activeSessionID;
-    return id ? (workspace.diffsBySession[id] ?? []).length : 0;
+    if (id) {
+      const sDiffs = workspace.diffsBySession[id];
+      if (sDiffs && sDiffs.length > 0) return sDiffs.length;
+    }
+    const key = id || "__root__";
+    return (workspace.diffsBySession[key] ?? []).length;
   });
 
   const tabLabel = (id: TabID) => {
