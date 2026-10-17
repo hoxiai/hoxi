@@ -1,11 +1,12 @@
 // web/src/components/layout/SessionNavItem.tsx
 import { createEffect, createSignal, onCleanup, Show } from "solid-js";
-import { Pencil } from "lucide-solid";
+import { Pause, Pencil, Square } from "lucide-solid";
 import {
   isPlaceholderSessionTitle,
   renameSessionTitle,
   workspace,
 } from "../../store/workspace";
+import { pauseSessionTask, stopSessionTask } from "../../store/workspace-session-messages";
 import type { SessionInfo } from "../../services/sse-types";
 import { DiffChanges, Icon, Spinner } from "../icons";
 import { t } from "../../i18n";

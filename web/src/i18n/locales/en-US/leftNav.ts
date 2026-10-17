@@ -88,5 +88,9 @@ export const leftNav: LeftNavI18n = {
   handoffModelModeLocal: "Current ({model})",
   sessionLoading: "loading",
   timeNow: "now",
+  pauseSession: "Pause",
+  stopSession: "Stop",
+  pauseTooltip: "Pause this task",
+  stopTooltip: "Stop this task",
 };
 

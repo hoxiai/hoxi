@@ -87,4 +87,8 @@ export interface LeftNavI18n {
   handoffModelModeLocal: string;
   sessionLoading: string;
   timeNow: string;
+  pauseSession: string;
+  stopSession: string;
+  pauseTooltip: string;
+  stopTooltip: string;
 }
