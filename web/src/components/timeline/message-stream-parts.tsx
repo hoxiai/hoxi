@@ -218,6 +218,18 @@ export function AssistantTurnFooter(props: {
     }
   };
 
+  const isTurnExecuting = createMemo(() => {
+    if (!props.isSessionBusy || interruptMode()) return false;
+    if (!isLatestTurn()) return false;
+    const hasRunningPart = props.parts.some(
+      (p) =>
+        (p.type === "tool" &&
+          (p.state.status === "pending" || p.state.status === "running")) ||
+        (p.type === "reasoning" && !p.time?.end)
+    );
+    return !props.info.time?.completed || hasRunningPart;
+  });
+
   return (
     <Show when={cycleSummary()}>
       {(summary) => (
@@ -258,7 +270,7 @@ export function AssistantTurnFooter(props: {
 
           <div class="flex items-center gap-2 flex-wrap text-[12px] text-[var(--text-faint)]">
             <Show
-              when={props.isSessionBusy && !interruptMode()}
+              when={isTurnExecuting()}
               fallback={
                 <Show
                   when={interruptMode()}

@@ -132,55 +132,27 @@ func (s *workspaceStore) removeDismissedLocked(target string) {
 	s.dismissed = next
 }
 
-func validateWorkspaceFolders(inputs []workspaceFolderInput) ([]workspaceFolderInput, error) {
-	if len(inputs) == 0 {
-		return nil, errors.New("A workspace needs at least one folder.")
+func (s *workspaceStore) PrimaryRootDir(fallback string) string {
+	if valid := CleanValidProjectDir(fallback); valid != "" {
+		return valid
 	}
-	home := comparableFolderPath(canonicalHomeDir())
-	canonical := make([]workspaceFolderInput, 0, len(inputs))
-	seen := make(map[string]struct{}, len(inputs))
-
-	for _, item := range inputs {
-		trimmed := strings.TrimSpace(item.Path)
-		if trimmed == "" {
-			continue
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, ws := range s.workspaces {
+		for _, f := range ws.Folders {
+			if f.IsPrimary {
+				if valid := CleanValidProjectDir(f.Path); valid != "" {
+					return valid
+				}
+			}
 		}
-		resolved := filepath.Clean(trimmed)
-		if realPath, err := filepath.EvalSymlinks(resolved); err == nil && realPath != "" {
-			resolved = filepath.Clean(realPath)
-		}
-		stat, err := os.Stat(resolved)
-		if err != nil || !stat.IsDir() {
-			continue
-		}
-		comp := comparableFolderPath(resolved)
-		if _, ok := seen[comp]; ok {
-			continue
-		}
-		seen[comp] = struct{}{}
-		if comp == home || comp == "/" || comp == "\\" || filepath.Dir(resolved) == resolved {
-			return nil, errors.New("Filesystem roots and the home directory cannot be workspace folders.")
-		}
-		canonical = append(canonical, workspaceFolderInput{Path: resolved, IsPrimary: item.IsPrimary})
-	}
-
-	if len(canonical) == 0 {
-		return nil, errors.New("A workspace needs at least one folder.")
-	}
-	var primary workspaceFolderInput
-	others := make([]workspaceFolderInput, 0, len(canonical)-1)
-	for _, f := range canonical {
-		if f.IsPrimary && primary.Path == "" {
-			primary = workspaceFolderInput{Path: f.Path, IsPrimary: true}
-		} else {
-			others = append(others, workspaceFolderInput{Path: f.Path, IsPrimary: false})
+		for _, f := range ws.Folders {
+			if valid := CleanValidProjectDir(f.Path); valid != "" {
+				return valid
+			}
 		}
 	}
-	if primary.Path == "" && len(others) > 0 {
-		primary = workspaceFolderInput{Path: others[0].Path, IsPrimary: true}
-		others = others[1:]
-	}
-	return append([]workspaceFolderInput{primary}, others...), nil
+	return ""
 }
 
 func (s *workspaceStore) resolveNameLocked(rawName, primaryPath, excludeID string) string {

@@ -207,4 +207,12 @@ export interface ModelsI18n {
   forkToHoxiEdit: string;
   forkToHoxiSuccess: string;
   freeModelsCount: string;
+  hoverProviderLabel: string;
+  hoverSourceLabel: string;
+  hoverModelIdLabel: string;
+  hoverEndpointLabel: string;
+  hoverPricingLabel: string;
+  hoverCapabilitiesLabel: string;
+  sourceBuiltInFree: string;
 }
+

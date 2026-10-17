@@ -1,5 +1,10 @@
 import { produce } from "solid-js/store";
-import { findMessageIndex, findPartIndex } from "./message-lookup";
+import {
+  findMessageIndex,
+  findPartIndex,
+  upsertTurnInfo,
+  upsertTurnPart,
+} from "./message-lookup";
 import { t } from "../i18n";
 import { hoxiAPI } from "../services/api";
 import type { StreamFrameBatch } from "../services/sse";
@@ -104,20 +109,17 @@ export async function submitSessionPrompt(
     model?: { providerID: string; modelID: string };
     attachments?: Array<{ type: "file"; mime: string; filename?: string; url: string }>;
     forceImmediate?: boolean;
+    beforeSend?: () => Promise<void>;
   }
 ): Promise<string> {
   let id = targetSessionID ?? workspace.activeSessionID;
   const isBrandNewSession = !id;
-  if (!id) {
-    id = await newIsolatedSession();
-  }
-
   const effectiveAgent = options?.agent || workspace.activeMode;
   const effectiveModel = options?.model || workspace.selectedModel || undefined;
   const attachments = options?.attachments ?? [];
 
   // If the session is currently busy and not forced immediate, enqueue the message!
-  if (!isBrandNewSession && !options?.forceImmediate && isSessionBusy(id)) {
+  if (id && !options?.forceImmediate && isSessionBusy(id)) {
     enqueueSessionPrompt(id, promptText, {
       agent: effectiveAgent,
       model: effectiveModel,
@@ -126,79 +128,86 @@ export async function submitSessionPrompt(
     return id;
   }
 
-  const existingTurns = workspace.messagesBySession[id] ?? [];
-  const hasPriorUserTurn = existingTurns.some((m) => m.info.role === "user");
-  const currentSessionObj = workspace.sessions.find((s) => s.id === id);
-  const revertBoundary = currentSessionObj?.revert;
-  if (currentSessionObj && revertBoundary) {
-    replaceSession({ ...currentSessionObj, revert: undefined });
-  }
-  const shouldSummarizeTitle =
-    isBrandNewSession ||
-    !hasPriorUserTurn ||
-    isPlaceholderSessionTitle(currentSessionObj?.title);
-
   const now = Date.now();
   const optimisticMsgID = `optimistic_${now}`;
+  let shouldSummarizeTitle = isBrandNewSession;
+  let stagedOptimistic = false;
 
-  markSessionPromptDispatched(id);
-  recordPromptDispatched(id, effectiveModel?.providerID, effectiveModel?.modelID);
-  if (shouldSummarizeTitle) {
-    void summarizeAndRenameSession(
-      id,
-      promptText || t("timeline.imagePromptSessionTitle"),
-      effectiveModel,
-      renameSessionTitle
-    );
-  }
+  const stageOptimisticTurn = (sessionID: string) => {
+    if (stagedOptimistic) return;
+    stagedOptimistic = true;
+    const existingTurns = workspace.messagesBySession[sessionID] ?? [];
+    const hasPriorUserTurn = existingTurns.some((m) => m.info.role === "user");
+    const currentSessionObj = workspace.sessions.find((s) => s.id === sessionID);
+    const revertBoundary = currentSessionObj?.revert;
+    if (currentSessionObj && revertBoundary) {
+      replaceSession({ ...currentSessionObj, revert: undefined });
+    }
+    shouldSummarizeTitle =
+      isBrandNewSession ||
+      !hasPriorUserTurn ||
+      isPlaceholderSessionTitle(currentSessionObj?.title);
 
-  // Optimistically show user prompt & busy status immediately (0ms perceived latency)
-  lastInterruptAtBySession.delete(id);
-  setWorkspace("interruptedBySession", id, undefined);
-  setWorkspace("statusBySession", id, { type: "busy" });
-  setWorkspace(
-    produce((state) => {
-      let list = (state.messagesBySession[id!] ||= []);
-      if (revertBoundary?.messageID) {
-        const bIdx = list.findIndex((m) => m.info.id === revertBoundary.messageID);
-        if (bIdx >= 0) {
-          list.splice(revertBoundary.partID ? bIdx + 1 : bIdx);
+    lastInterruptAtBySession.delete(sessionID);
+    setWorkspace("interruptedBySession", sessionID, undefined);
+    setWorkspace(
+      produce((state) => {
+        const list = (state.messagesBySession[sessionID] ||= []);
+        if (revertBoundary?.messageID) {
+          const bIdx = list.findIndex((m) => m.info.id === revertBoundary.messageID);
+          if (bIdx >= 0) {
+            list.splice(revertBoundary.partID ? bIdx + 1 : bIdx);
+          }
         }
-      }
-      const optimisticParts: MessagePart[] = attachments.map((att, idx) => ({
-        id: `prt_file_${now}_${idx}`,
-        sessionID: id!,
-        messageID: optimisticMsgID,
-        type: "file",
-        mime: att.mime,
-        filename: att.filename,
-        url: att.url,
-      }));
-      if (promptText || optimisticParts.length === 0) {
-        optimisticParts.push({
-          id: `prt_${now}`,
-          sessionID: id!,
+        const optimisticParts: MessagePart[] = attachments.map((att, idx) => ({
+          id: `prt_file_${now}_${idx}`,
+          sessionID,
           messageID: optimisticMsgID,
-          type: "text",
-          text: promptText,
+          type: "file",
+          mime: att.mime,
+          filename: att.filename,
+          url: att.url,
+        }));
+        if (promptText || optimisticParts.length === 0) {
+          optimisticParts.push({
+            id: `prt_${now}`,
+            sessionID,
+            messageID: optimisticMsgID,
+            type: "text",
+            text: promptText,
+          });
+        }
+        list.push({
+          info: {
+            id: optimisticMsgID,
+            sessionID,
+            role: "user",
+            time: { created: now },
+            agent: effectiveAgent,
+            modelID: effectiveModel?.modelID,
+            providerID: effectiveModel?.providerID,
+          },
+          parts: optimisticParts,
         });
-      }
-      list.push({
-        info: {
-          id: optimisticMsgID,
-          sessionID: id!,
-          role: "user",
-          time: { created: now },
-          agent: effectiveAgent,
-          modelID: effectiveModel?.modelID,
-          providerID: effectiveModel?.providerID,
-        },
-        parts: optimisticParts,
-      });
-    })
-  );
+      })
+    );
+    markSessionPromptDispatched(sessionID);
+    recordPromptDispatched(sessionID, effectiveModel?.providerID, effectiveModel?.modelID);
+    setWorkspace("statusBySession", sessionID, { type: "busy" });
+  };
+
+  if (!id) {
+    id = await newIsolatedSession(undefined, {
+      onSessionCreated: stageOptimisticTurn,
+    });
+  }
+  stageOptimisticTurn(id);
 
   try {
+    if (options?.beforeSend) {
+      await options.beforeSend();
+    }
+    markSessionPromptDispatched(id);
     await hoxiAPI.sendPromptAsync(id, promptText, {
       agent: effectiveAgent,
       model: effectiveModel,
@@ -207,12 +216,32 @@ export async function submitSessionPrompt(
       system: buildCombinedSystemPrompt(buildWorkspaceFoldersSystemPrompt()),
       attachments,
     });
-    // Sync server messages immediately and follow up shortly after
-    void loadSessionMessages(id);
+    if (!lastInterruptAtBySession.has(id)) {
+      markSessionPromptDispatched(id);
+      if (workspace.statusBySession[id]?.type !== "busy") {
+        setWorkspace("statusBySession", id, { type: "busy" });
+      }
+    }
+    if (shouldSummarizeTitle) {
+      void summarizeAndRenameSession(
+        id,
+        promptText || t("timeline.imagePromptSessionTitle"),
+        effectiveModel,
+        renameSessionTitle
+      );
+    }
     setTimeout(() => {
       void loadSessionMessages(id!);
     }, 900);
   } catch (err) {
+    setWorkspace(
+      produce((state) => {
+        const list = state.messagesBySession[id!];
+        if (!list) return;
+        const optIdx = list.findIndex((m) => m.info.id === optimisticMsgID);
+        if (optIdx >= 0) list.splice(optIdx, 1);
+      })
+    );
     setWorkspace("statusBySession", id, { type: "idle" });
     throw err;
   }
@@ -256,41 +285,29 @@ function isMutatingTool(toolName?: string): boolean {
 
 function mutateUpsertInfo(state: typeof workspace, info: MessageInfo) {
   const list = (state.messagesBySession[info.sessionID] ||= []);
-  if (info.role === "user" && !info.id.startsWith("optimistic_")) {
-    const optIdx = list.findIndex((m) => m.info.id.startsWith("optimistic_"));
-    if (optIdx >= 0) {
-      list.splice(optIdx, 1);
-    }
-  }
-  const idx = findMessageIndex(list, info.id);
-  if (idx >= 0) {
-    Object.assign(list[idx].info, info);
-  } else {
-    list.push({ info, parts: [] });
-  }
+  upsertTurnInfo(list, info);
 }
 
 function mutateUpsertPart(state: typeof workspace, part: MessagePart) {
   const list = (state.messagesBySession[part.sessionID] ||= []);
-  let turn = list[findMessageIndex(list, part.messageID)];
-  if (!turn) {
-    turn = {
-      info: {
-        id: part.messageID,
-        sessionID: part.sessionID,
-        role: "assistant",
-        time: { created: Date.now() },
-      },
-      parts: [],
-    };
-    list.push(turn);
-  }
-  const pIdx = findPartIndex(turn.parts, part.id);
-  if (pIdx >= 0) {
-    Object.assign(turn.parts[pIdx], part);
-  } else {
-    turn.parts.push(part);
-  }
+  upsertTurnPart(list, part);
+}
+
+function isMessageTurnAlreadyFinished(
+  sessionID: string,
+  messageID: string,
+  batchInfos?: MessageInfo[]
+): boolean {
+  const fromBatch = batchInfos?.find(
+    (i) => i.sessionID === sessionID && i.id === messageID
+  );
+  if (fromBatch && (fromBatch.time?.completed || fromBatch.error)) return true;
+  const list = workspace.messagesBySession[sessionID];
+  if (!list) return false;
+  const idx = findMessageIndex(list, messageID);
+  if (idx < 0) return false;
+  const info = list[idx].info;
+  return Boolean(info.time?.completed || info.error);
 }
 
 export function upsertMessageInfo(info: MessageInfo) {
@@ -319,9 +336,10 @@ export function upsertMessagePart(part: MessagePart) {
   }
   const interruptedAt = lastInterruptAtBySession.get(part.sessionID) || 0;
   const isActivelyStreamingPart =
-    (part.type === "tool" &&
+    ((part.type === "tool" &&
       (part.state.status === "pending" || part.state.status === "running")) ||
-    (part.type === "reasoning" && !part.time?.end);
+      (part.type === "reasoning" && !part.time?.end)) &&
+    !isMessageTurnAlreadyFinished(part.sessionID, part.messageID);
   if (
     isActivelyStreamingPart &&
     Date.now() - interruptedAt > 2500 &&
@@ -341,14 +359,15 @@ export function applyPartDeltaBatch(
     delta: string;
   }>
 ) {
-  for (const sid of new Set(batches.map((batch) => batch.sessionID))) {
-    recordFirstToken(sid);
-    const interruptedAt = lastInterruptAtBySession.get(sid) || 0;
+  for (const b of batches) {
+    recordFirstToken(b.sessionID);
+    const interruptedAt = lastInterruptAtBySession.get(b.sessionID) || 0;
     if (
       Date.now() - interruptedAt > 2500 &&
-      workspace.statusBySession[sid]?.type !== "busy"
+      !isMessageTurnAlreadyFinished(b.sessionID, b.messageID) &&
+      workspace.statusBySession[b.sessionID]?.type !== "busy"
     ) {
-      setWorkspace("statusBySession", sid, { type: "busy" });
+      setWorkspace("statusBySession", b.sessionID, { type: "busy" });
     }
   }
   setWorkspace(
@@ -395,9 +414,10 @@ export function applyStreamFrameBatch(batch: StreamFrameBatch) {
       scheduleRefreshWorktreeStatus(part.sessionID, 250);
     }
     const isActivelyStreamingPart =
-      (part.type === "tool" &&
+      ((part.type === "tool" &&
         (part.state.status === "pending" || part.state.status === "running")) ||
-      (part.type === "reasoning" && !part.time?.end);
+        (part.type === "reasoning" && !part.time?.end)) &&
+      !isMessageTurnAlreadyFinished(part.sessionID, part.messageID, batch.infos);
     if (isActivelyStreamingPart) {
       busySessionsToMark.add(part.sessionID);
     }
@@ -405,7 +425,9 @@ export function applyStreamFrameBatch(batch: StreamFrameBatch) {
 
   for (const d of batch.deltas) {
     recordFirstToken(d.sessionID);
-    busySessionsToMark.add(d.sessionID);
+    if (!isMessageTurnAlreadyFinished(d.sessionID, d.messageID, batch.infos)) {
+      busySessionsToMark.add(d.sessionID);
+    }
   }
 
   for (const sid of busySessionsToMark) {

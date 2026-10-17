@@ -30,6 +30,7 @@ import {
   type FlattenedModel,
 } from "./model-selector-utils";
 import { ProviderHealthBadge } from "./ProviderQualityCard";
+import { SelectedModelHoverCard } from "./SelectedModelHoverCard";
 
 const EFFORT_OPTIONS: Array<{ value: "" | "low" | "medium" | "high"; label: string }> = [
   { value: "", label: "Auto" },
@@ -40,6 +41,7 @@ const EFFORT_OPTIONS: Array<{ value: "" | "low" | "medium" | "high"; label: stri
 
 export default function ModelSelector() {
   const [open, setOpen] = createSignal(false);
+  const [triggerHovered, setTriggerHovered] = createSignal(false);
   const [rail, setRail] = createSignal<string>("connected");
   const [query, setQuery] = createSignal("");
   const [hoveredModel, setHoveredModel] = createSignal<FlattenedModel | null>(null);
@@ -88,13 +90,22 @@ export default function ModelSelector() {
       (m) => m.providerID === sel.providerID && m.modelID === sel.modelID
     );
     if (found) return found;
+    const prov = workspace.providers.find((p) => p.id === sel.providerID);
+    const hoxiProv = workspace.hoxiProviders?.[sel.providerID];
+    const cfgProv = workspace.globalConfig?.provider?.[sel.providerID];
+    const baseURL =
+      hoxiProv?.options?.baseURL ||
+      cfgProv?.options?.baseURL ||
+      prov?.options?.baseURL;
     return {
       providerID: sel.providerID,
-      providerName: sel.providerID,
+      providerName: hoxiProv?.name || cfgProv?.name || prov?.name || sel.providerID,
       modelID: sel.modelID,
       modelName: sel.modelID,
       connected: connectedSet().has(sel.providerID),
       isCustom: isCustomOrConfiguredProvider(sel.providerID),
+      source: prov?.source,
+      baseURL,
       reasoning: false,
       image: false,
       toolcall: true,
@@ -143,6 +154,7 @@ export default function ModelSelector() {
   const toggleOpen = () => {
     const next = !open();
     setOpen(next);
+    setTriggerHovered(false);
     if (next) {
       setActiveIndex(0);
       setHoveredModel(null);
@@ -190,12 +202,14 @@ export default function ModelSelector() {
       <button
         type="button"
         onClick={toggleOpen}
+        onMouseEnter={() => setTriggerHovered(true)}
+        onMouseLeave={() => setTriggerHovered(false)}
         class={`inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[12px] font-medium transition-colors cursor-pointer max-w-[260px] ${
           open()
             ? "bg-[var(--bg-hover)] text-[var(--text-primary)]"
             : "text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
         }`}
-        title={t("timeline.selectModel")}
+        title={activeModelInfo() ? undefined : t("timeline.selectModel")}
       >
         <Show
           when={activeModelInfo()?.providerID}
@@ -218,6 +232,10 @@ export default function ModelSelector() {
         </Show>
         <ChevronDown size={12} class="shrink-0 opacity-60" />
       </button>
+
+      <Show when={!open() && triggerHovered() && activeModelInfo()}>
+        {(info) => <SelectedModelHoverCard model={info()} />}
+      </Show>
 
       <Show when={open()}>
         <div

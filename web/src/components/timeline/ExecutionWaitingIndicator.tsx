@@ -12,7 +12,7 @@ export default function ExecutionWaitingIndicator(props: { completedSteps: numbe
     setElapsed(0);
     const timer = setInterval(() => {
       setElapsed((Date.now() - startedAt) / 1000);
-    }, 250);
+    }, 100);
     onCleanup(() => clearInterval(timer));
   });
 

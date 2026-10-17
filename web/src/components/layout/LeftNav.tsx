@@ -4,6 +4,7 @@ import { ArrowRightLeft, Check, Clock, Folder, Layers, Plus } from "lucide-solid
 import {
   archiveSession,
   discardSession,
+  isInvalidProjectPath,
   newIsolatedSession,
   openCreateWorkspaceModal,
   openHandoffModal,
@@ -75,7 +76,7 @@ export default function LeftNav() {
 
   // Expanded projects set (by path) for Multi-Project mode
   const [expandedProjects, setExpandedProjects] = createSignal<Set<string>>(
-    new Set([workspace.rootDir])
+    new Set(workspace.rootDir && !isInvalidProjectPath(workspace.rootDir) ? [workspace.rootDir] : [])
   );
 
   // Expanded archived sections per project (by path) for Multi-Project mode
@@ -88,7 +89,7 @@ export default function LeftNav() {
   const [loadingProjects, setLoadingProjects] = createSignal<Record<string, boolean>>({});
 
   createEffect(() => {
-    if (workspace.rootDir) {
+    if (workspace.rootDir && !isInvalidProjectPath(workspace.rootDir)) {
       setExpandedProjects((prev) => new Set([...prev, workspace.rootDir]));
     }
   });
@@ -97,17 +98,13 @@ export default function LeftNav() {
 
   // Ensure newly discovered projects are recorded into projectOrder so switching projects never scrambles order
   createEffect(() => {
+    if (workspace.bootstrappingSessions) return;
     const current = allProjects().map((p) => p.path);
     if (current.length === 0) return;
     const saved = workspace.projectOrder;
     const missing = current.filter((p) => !saved.includes(p));
     if (missing.length > 0) {
-      if (saved.length === 0 && workspace.rootDir && current.includes(workspace.rootDir)) {
-        const rest = current.filter((p) => p !== workspace.rootDir);
-        setProjectOrder([workspace.rootDir, ...rest]);
-      } else {
-        setProjectOrder([...saved, ...missing]);
-      }
+      setProjectOrder([...saved, ...missing]);
     }
   });
 

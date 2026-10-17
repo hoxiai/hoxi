@@ -3,6 +3,7 @@ import { Show } from "solid-js";
 import {
   DEFAULT_WORKSPACE_IDENTITY_COLOR,
   isDismissedProjectPath,
+  isInvalidProjectPath,
   normalizeFolderPath,
   normalizeWorkspaceIdentityColor,
   workspace,
@@ -124,7 +125,14 @@ export function buildAllProjects(): ProjectNavEntry[] {
 
   for (const saved of workspace.savedWorkspaces) {
     const primary = normalizeFolderPath(workspacePrimaryFolder(saved));
-    if (!primary || isDismissedProjectPath(saved.id) || isDismissedProjectPath(primary)) continue;
+    if (
+      !primary ||
+      isInvalidProjectPath(primary) ||
+      isDismissedProjectPath(saved.id) ||
+      isDismissedProjectPath(primary)
+    ) {
+      continue;
+    }
     for (const f of saved.folders) {
       const fp = normalizeFolderPath(f.path);
       if (fp && fp !== primary) secondaryPaths.add(fp);
@@ -143,7 +151,7 @@ export function buildAllProjects(): ProjectNavEntry[] {
 
   for (const p of workspace.projects) {
     const wt = normalizeFolderPath(p.worktree);
-    if (!wt || wt === "/" || isDismissedProjectPath(wt) || secondaryPaths.has(wt)) continue;
+    if (!wt || isInvalidProjectPath(wt) || isDismissedProjectPath(wt) || secondaryPaths.has(wt)) continue;
     const existing = map.get(wt);
     if (!existing) {
       map.set(wt, {
@@ -162,7 +170,15 @@ export function buildAllProjects(): ProjectNavEntry[] {
 
   for (const p of workspace.recentProjects) {
     const clean = normalizeFolderPath(p);
-    if (!clean || isDismissedProjectPath(clean) || map.has(clean) || secondaryPaths.has(clean)) continue;
+    if (
+      !clean ||
+      isInvalidProjectPath(clean) ||
+      isDismissedProjectPath(clean) ||
+      map.has(clean) ||
+      secondaryPaths.has(clean)
+    ) {
+      continue;
+    }
     map.set(clean, {
       name: basename(clean),
       path: clean,
@@ -175,7 +191,13 @@ export function buildAllProjects(): ProjectNavEntry[] {
   }
 
   const rootClean = normalizeFolderPath(workspace.rootDir);
-  if (rootClean && !isDismissedProjectPath(rootClean) && !map.has(rootClean) && !secondaryPaths.has(rootClean)) {
+  if (
+    rootClean &&
+    !isInvalidProjectPath(rootClean) &&
+    !isDismissedProjectPath(rootClean) &&
+    !map.has(rootClean) &&
+    !secondaryPaths.has(rootClean)
+  ) {
     map.set(rootClean, {
       name: basename(rootClean),
       path: rootClean,

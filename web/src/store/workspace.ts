@@ -189,12 +189,25 @@ function initialEffort(): "" | "low" | "medium" | "high" {
   return "";
 }
 
+function isValidStoredProjectPath(p: unknown): p is string {
+  if (typeof p !== "string") return false;
+  const clean = p.trim().replace(/[\\/]+$/, "");
+  return Boolean(
+    clean &&
+      clean !== "." &&
+      clean !== "/" &&
+      clean !== "\\" &&
+      !/^[A-Za-z]:$/.test(clean) &&
+      !clean.includes(".app/Contents")
+  );
+}
+
 function initialRecentProjects(): string[] {
   try {
     const raw = localStorage.getItem(RECENT_PROJECTS_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) return parsed.filter((p) => typeof p === "string");
+    if (Array.isArray(parsed)) return parsed.filter(isValidStoredProjectPath);
   } catch {
     /* ignore */
   }
@@ -206,7 +219,7 @@ function initialProjectOrder(): string[] {
     const raw = localStorage.getItem(PROJECT_ORDER_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) return parsed.filter((p) => typeof p === "string");
+    if (Array.isArray(parsed)) return parsed.filter(isValidStoredProjectPath);
   } catch {
     /* ignore */
   }
@@ -331,7 +344,7 @@ export function setSessionSandboxMode(mode: "local" | "worktree") {
 }
 
 export function setProjectOrder(order: string[]) {
-  const unique = Array.from(new Set(order.filter(Boolean)));
+  const unique = Array.from(new Set(order.filter(isValidStoredProjectPath)));
   setWorkspace("projectOrder", unique);
   try {
     localStorage.setItem(PROJECT_ORDER_KEY, JSON.stringify(unique));
@@ -347,7 +360,7 @@ export function reorderProjects(
   position: "before" | "after"
 ) {
   if (!fromPath || !toPath || fromPath === toPath) return;
-  const list = Array.from(new Set(currentPaths.filter(Boolean)));
+  const list = Array.from(new Set(currentPaths.filter(isValidStoredProjectPath)));
   const fromIdx = list.indexOf(fromPath);
   if (fromIdx < 0) return;
   list.splice(fromIdx, 1);
@@ -356,8 +369,7 @@ export function reorderProjects(
   if (toIdx < 0) {
     list.push(fromPath);
   } else {
-    const insertIdx = position === "after" ? toIdx + 1 : toIdx;
-    list.splice(insertIdx, 0, fromPath);
+    list.splice(position === "after" ? toIdx + 1 : toIdx, 0, fromPath);
   }
   setProjectOrder(list);
 }
@@ -366,9 +378,7 @@ export function openProviderModal(
   tab: ProviderModalTab = "providers",
   editProviderID: string | null = null
 ) {
-  setWorkspace("providerModalTab", tab);
-  setWorkspace("editingProviderID", editProviderID);
-  setWorkspace("providerModalOpen", true);
+  setWorkspace({ providerModalTab: tab, editingProviderID: editProviderID, providerModalOpen: true });
 }
 
 export function openHandoffModal() {
@@ -404,10 +414,12 @@ function firstChangedLine(patch?: string): number | null {
 export function openFileInInspector(filePath: string, line?: number | null) {
   const cleaned = filePath.replace(/^\.\//, "").replace(/:\d+(?::\d+)?$/, "").trim();
   if (!cleaned) return;
-  setWorkspace("inspectedFilePath", cleaned);
-  setWorkspace("inspectedFileLine", line && line > 0 ? line : null);
-  setWorkspace("inspectorTab", "files");
-  setWorkspace("inspectorOpen", true);
+  setWorkspace({
+    inspectedFilePath: cleaned,
+    inspectedFileLine: line && line > 0 ? line : null,
+    inspectorTab: "files",
+    inspectorOpen: true,
+  });
 }
 
 export function openChangedFileInInspector(diff: Pick<SnapshotFileDiff, "file" | "patch"> | string) {
@@ -423,32 +435,26 @@ export function openChangedFileInInspector(diff: Pick<SnapshotFileDiff, "file" |
 }
 
 export function openDiffInInspector(filePath?: string) {
-  const cleaned = filePath
-    ? filePath.replace(/^\.\//, "").replace(/:\d+(?::\d+)?$/, "").trim()
-    : "";
-  setWorkspace("inspectedDiffFile", cleaned || null);
-  setWorkspace("inspectorTab", "diffs");
-  setWorkspace("inspectorOpen", true);
+  const cleaned = filePath ? filePath.replace(/^\.\//, "").replace(/:\d+(?::\d+)?$/, "").trim() : "";
+  setWorkspace({ inspectedDiffFile: cleaned || null, inspectorTab: "diffs", inspectorOpen: true });
 }
 
-export function addReviewComment(
-  sessionID: string,
-  comment: Omit<ReviewCommentItem, "id">
-) {
+export function addReviewComment(sessionID: string, comment: Omit<ReviewCommentItem, "id">) {
   const item: ReviewCommentItem = {
     ...comment,
     id: `rc_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
   };
-  const current = workspace.reviewCommentsBySession[sessionID] ?? [];
-  setWorkspace("reviewCommentsBySession", sessionID, [...current, item]);
+  setWorkspace("reviewCommentsBySession", sessionID, [
+    ...(workspace.reviewCommentsBySession[sessionID] ?? []),
+    item,
+  ]);
 }
 
 export function removeReviewComment(sessionID: string, commentID: string) {
-  const current = workspace.reviewCommentsBySession[sessionID] ?? [];
   setWorkspace(
     "reviewCommentsBySession",
     sessionID,
-    current.filter((c) => c.id !== commentID)
+    (workspace.reviewCommentsBySession[sessionID] ?? []).filter((c) => c.id !== commentID)
   );
 }
 
@@ -473,9 +479,7 @@ export function setTheme(theme: "light" | "dark") {
         localStorage.setItem("hoxi-app-settings:v1", JSON.stringify(parsed));
       }
     }
-  } catch {
-    /* storage unavailable */
-  }
+  } catch { /* storage unavailable */ }
 }
 
 export function toggleTheme() {

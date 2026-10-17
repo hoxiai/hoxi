@@ -228,5 +228,13 @@ export const models: ModelsI18n = {
   forkToHoxiEdit: "转存到 .hoxi 编辑",
   forkToHoxiSuccess: "已将「{name}」转存至 .hoxi/models.json，现在可以自由修改模型列表。",
   freeModelsCount: "{count} 免费",
+  hoverProviderLabel: "服务商",
+  hoverSourceLabel: "来源",
+  hoverModelIdLabel: "模型 ID",
+  hoverEndpointLabel: "接口地址",
+  hoverPricingLabel: "计费价格",
+  hoverCapabilitiesLabel: "模型能力",
+  sourceBuiltInFree: "OpenCode 内置免费",
 };
+
 

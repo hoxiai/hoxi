@@ -7,6 +7,7 @@ import {
   applyPartDeltaBatch,
   applyStreamFrameBatch,
   drainNextQueuedPrompt,
+  isInvalidProjectPath,
   isSessionArchived,
   loadAgents,
   loadProjects,
@@ -15,10 +16,12 @@ import {
   loadSavedWorkspaces,
   loadSessionMessages,
   loadSessionMessagesOnly,
+  normalizeFolderPath,
   recordSessionRetry,
   refreshWorktreeStatus,
   removeSessionFromStore,
   replaceSession,
+  resolveDefaultProjectDir,
   runSessionCodeAudit,
   scheduleRefreshWorktreeStatus,
   selectSession,
@@ -36,19 +39,18 @@ export default function App() {
   onMount(async () => {
     try {
       const boot = await hoxiAPI.getBootstrap();
+      const bootRoot = isInvalidProjectPath(boot.rootDir)
+        ? ""
+        : normalizeFolderPath(boot.rootDir);
       setWorkspace({
-        rootDir: boot.rootDir,
+        rootDir: bootRoot,
         wsBaseURL: boot.wsBaseURL,
       });
 
-      // Load OpenCode projects, saved workspaces, providers, models, agents, telemetry & pending questions in parallel
-      void loadProjects();
-      void loadSavedWorkspaces();
+      // Kick off non-blocking background loads while awaiting saved workspaces & projects
       void loadProviders();
       void loadProviderTelemetry();
       void loadAgents();
-      void refreshWorktreeStatus("__root__");
-      void syncSessionStatuses(boot.rootDir);
       void hoxiAPI
         .listQuestions()
         .then((qs) => {
@@ -56,15 +58,29 @@ export default function App() {
         })
         .catch(() => {});
 
-      const sessions = await hoxiAPI.listSessions(boot.rootDir);
-      setWorkspace("sessions", sessions);
+      await Promise.all([loadSavedWorkspaces(), loadProjects()]);
 
-      const unarchived = sessions.filter((s) => !s.parentID && !isSessionArchived(s));
-      if (unarchived.length > 0) {
-        const mostRecent = sortSessionsByActivity(unarchived)[0];
-        const p = selectSession(mostRecent.id);
-        setWorkspace("bootstrappingSessions", false);
-        await p;
+      const activeRoot = resolveDefaultProjectDir(bootRoot);
+      if (activeRoot && activeRoot !== workspace.rootDir) {
+        setWorkspace("rootDir", activeRoot);
+      }
+
+      if (activeRoot) {
+        void refreshWorktreeStatus("__root__");
+        void syncSessionStatuses(activeRoot);
+
+        const sessions = await hoxiAPI.listSessions(activeRoot);
+        setWorkspace("sessions", sessions);
+
+        const unarchived = sessions.filter((s) => !s.parentID && !isSessionArchived(s));
+        if (unarchived.length > 0) {
+          const mostRecent = sortSessionsByActivity(unarchived)[0];
+          const p = selectSession(mostRecent.id);
+          setWorkspace("bootstrappingSessions", false);
+          await p;
+        } else {
+          setWorkspace("bootstrappingSessions", false);
+        }
       } else {
         setWorkspace("bootstrappingSessions", false);
       }

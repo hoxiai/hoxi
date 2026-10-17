@@ -94,23 +94,24 @@ export async function sendQueuedPromptNow(sessionID: string, itemID: string): Pr
   const current = workspace.queuedPromptsBySession[sessionID] ?? [];
   const target = current.find((item) => item.id === itemID);
   if (!target) return;
+  const wasBusy = isSessionBusy(sessionID);
   removeQueuedPrompt(sessionID, itemID);
-
-  if (isSessionBusy(sessionID)) {
-    try {
-      await hoxiAPI.abortSession(sessionID, sessionDirectory(sessionID));
-    } catch (err) {
-      console.warn("abort before sendQueuedPromptNow warning:", err);
-    }
-    await abortChildSubagentSessions(sessionID);
-    setWorkspace("statusBySession", sessionID, { type: "idle" });
-  }
 
   await submitSessionPrompt(target.text, sessionID, {
     agent: target.agent,
     model: target.model,
     attachments: target.attachments,
     forceImmediate: true,
+    beforeSend: wasBusy
+      ? async () => {
+          try {
+            await hoxiAPI.abortSession(sessionID, sessionDirectory(sessionID));
+          } catch (err) {
+            console.warn("abort before sendQueuedPromptNow warning:", err);
+          }
+          await abortChildSubagentSessions(sessionID);
+        }
+      : undefined,
   });
 }
 
@@ -327,6 +328,12 @@ export async function syncSessionStatuses(directory?: string): Promise<void> {
     setWorkspace(
       produce((state) => {
         for (const [sid, status] of Object.entries(remoteStatuses || {})) {
+          if (
+            status?.type === "idle" &&
+            now - (lastPromptDispatchAtBySession.get(sid) || 0) <= 3500
+          ) {
+            continue;
+          }
           state.statusBySession[sid] = status;
         }
         for (const [sid, current] of Object.entries(state.statusBySession)) {
@@ -335,7 +342,7 @@ export async function syncSessionStatuses(directory?: string): Promise<void> {
             !remoteStatuses?.[sid]
           ) {
             const dispatchedAt = lastPromptDispatchAtBySession.get(sid) || 0;
-            if (now - dispatchedAt > 2500) {
+            if (now - dispatchedAt > 3500) {
               state.statusBySession[sid] = { type: "idle" };
               newlyIdleSessions.push(sid);
             }

@@ -1,5 +1,12 @@
 // web/src/components/timeline/TaskProgressCard.tsx
-import { createEffect, createMemo, createSignal, onCleanup, Show } from "solid-js";
+import {
+  createEffect,
+  createMemo,
+  createSignal,
+  onCleanup,
+  Show,
+  untrack,
+} from "solid-js";
 import {
   CheckCircle2,
   ChevronDown,
@@ -38,6 +45,12 @@ export default function TaskProgressCard() {
     Record<string, boolean>
   >({});
   const wasAliveSessions = new Set<string>();
+  const finishTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+  onCleanup(() => {
+    for (const timer of finishTimers.values()) clearTimeout(timer);
+    finishTimers.clear();
+  });
 
   const sessionID = () => workspace.activeSessionID;
   const isBusy = createMemo(() => isSessionBusy(sessionID()));
@@ -129,10 +142,19 @@ export default function TaskProgressCard() {
     return dismissedSigBySession()[id] === progressSignature();
   });
 
+  const clearFinishTimer = (id: string) => {
+    const existing = finishTimers.get(id);
+    if (existing) {
+      clearTimeout(existing);
+      finishTimers.delete(id);
+    }
+  };
+
   const dismissCard = () => {
     const id = sessionID();
     const sig = progressSignature();
     if (!id || !sig) return;
+    clearFinishTimer(id);
     setExpanded(false);
     setJustFinishedBySession((prev) => ({ ...prev, [id]: false }));
     setDismissedSigBySession((prev) => ({ ...prev, [id]: sig }));
@@ -146,10 +168,11 @@ export default function TaskProgressCard() {
     const alive = isSessionAlive();
     if (alive) {
       wasAliveSessions.add(id);
-      if (justFinishedBySession()[id]) {
+      clearFinishTimer(id);
+      if (untrack(() => justFinishedBySession()[id])) {
         setJustFinishedBySession((prev) => ({ ...prev, [id]: false }));
       }
-      if (dismissedSigBySession()[id]) {
+      if (untrack(() => dismissedSigBySession()[id])) {
         setDismissedSigBySession((prev) => {
           const next = { ...prev };
           delete next[id];
@@ -161,13 +184,15 @@ export default function TaskProgressCard() {
 
     if (wasAliveSessions.has(id)) {
       wasAliveSessions.delete(id);
-      if (!interruptedState()) {
+      clearFinishTimer(id);
+      if (!untrack(() => interruptedState())) {
         setJustFinishedBySession((prev) => ({ ...prev, [id]: true }));
         const timer = setTimeout(() => {
+          finishTimers.delete(id);
           setExpanded(false);
           setJustFinishedBySession((prev) => ({ ...prev, [id]: false }));
         }, 3000);
-        onCleanup(() => clearTimeout(timer));
+        finishTimers.set(id, timer);
       }
     }
   });
@@ -199,14 +224,14 @@ export default function TaskProgressCard() {
   const shouldShow = createMemo(() => {
     const id = sessionID();
     if (!id || isDismissed()) return false;
+    const hasContent =
+      todos().length > 0 || cycleSteps().length > 0 || changedFiles().length > 0;
+    if (!hasContent) return false;
     if (isSessionAlive()) return true;
     if (interruptedState() === "paused") {
       return todos().length > 0 || cycleSteps().length > 0;
     }
-    if (justFinishedBySession()[id]) {
-      return todos().length > 0 || cycleSteps().length > 0 || changedFiles().length > 0;
-    }
-    return false;
+    return Boolean(justFinishedBySession()[id]);
   });
 
   return (

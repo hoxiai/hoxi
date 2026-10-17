@@ -59,9 +59,13 @@ func NewManager(rootDir string) *Manager {
 }
 
 func newWorktreeManager(rootDir string) *worktreeManager {
-	absRoot, err := filepath.Abs(rootDir)
-	if err != nil {
-		absRoot = rootDir
+	var absRoot string
+	if trimmed := strings.TrimSpace(rootDir); trimmed != "" {
+		if resolved, err := filepath.Abs(trimmed); err == nil {
+			absRoot = resolved
+		} else {
+			absRoot = trimmed
+		}
 	}
 	m := &worktreeManager{
 		rootDir:  absRoot,

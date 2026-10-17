@@ -68,27 +68,6 @@ export default function MessageStream() {
     return st.type === "busy" || st.type === "retry";
   });
 
-  // The active execution can be above the stream's absolute bottom when queued
-  // prompts, retry controls, or other session UI are rendered below it.
-  const activeExecutionTurnID = createMemo(() => {
-    const list = turns();
-    for (let i = list.length - 1; i >= 0; i--) {
-      const turn = list[i];
-      if (turn.info.role !== "assistant" || turn.info.time?.completed) continue;
-      const hasActivePart = turn.parts.some((part) => {
-        if (isTodoTool(part)) return false;
-        if (part.type === "reasoning") return !part.time?.end;
-        if (part.type === "tool") {
-          return part.state.status === "pending" || part.state.status === "running";
-        }
-        if (part.type === "text") return part.text.length > 0;
-        return false;
-      });
-      if (hasActivePart || isSessionBusy()) return turn.info.id;
-    }
-    return undefined;
-  });
-
   const pendingForSession = createMemo(() => {
     const id = workspace.activeSessionID;
     return id ? workspace.pendingPermissions.filter((p) => p.sessionID === id) : [];
@@ -108,10 +87,22 @@ export default function MessageStream() {
   const showThinkingPlaceholder = createMemo(() => {
     if (activeStatus().type !== "busy") return false;
     const list = turns();
-    if (list.length === 0) return true;
+    if (list.length === 0) return false;
 
-    // Check if any assistant turn currently has a running/pending tool or open reasoning part
+    let lastUserIdx = -1;
     for (let i = list.length - 1; i >= 0; i--) {
+      if (list[i].info.role === "user") {
+        lastUserIdx = i;
+        break;
+      }
+    }
+    if (lastUserIdx < 0) return false;
+
+    const last = list[list.length - 1];
+    if (last.info.role === "assistant" && last.info.error) return false;
+
+    // Check if any assistant turn in the current cycle has a running/pending tool or open reasoning part
+    for (let i = list.length - 1; i > lastUserIdx; i--) {
       const turn = list[i];
       if (turn.info.role !== "assistant" || turn.info.time?.completed) continue;
       const hasRunningWork = turn.parts.some(
@@ -124,40 +115,39 @@ export default function MessageStream() {
       if (hasRunningWork) return false;
     }
 
-    const last = list[list.length - 1];
-    if (last.info.role === "user") return true;
-    if (last.info.error) return false;
-    if (last.info.time?.completed) return true;
-    const visible = last.parts.filter((p) => !isTodoTool(p));
-    if (visible.length === 0) return true;
-    const hasActivePart = visible.some((p) => {
-      if (p.type === "reasoning") return !p.time?.end;
-      if (p.type === "tool") {
-        return p.state.status === "pending" || p.state.status === "running";
-      }
-      if (p.type === "text") return p.text.trim().length > 0;
-      return false;
-    });
-    return !hasActivePart;
+    return true;
   });
 
-  const completedExecutionSteps = createMemo(() =>
-    turns().reduce(
-      (count, turn) =>
-        count + turn.parts.filter(
-          (part) => part.type === "tool" && !isTodoTool(part) && part.state.status === "completed"
-        ).length,
-      0
-    )
-  );
+  const completedExecutionSteps = createMemo(() => {
+    const list = turns();
+    let lastUserIdx = -1;
+    for (let i = list.length - 1; i >= 0; i--) {
+      if (list[i].info.role === "user") {
+        lastUserIdx = i;
+        break;
+      }
+    }
+    if (lastUserIdx < 0) return 0;
+    let count = 0;
+    for (let i = lastUserIdx + 1; i < list.length; i++) {
+      for (const part of list[i].parts) {
+        if (part.type === "tool" && !isTodoTool(part) && part.state.status === "completed") {
+          count++;
+        }
+      }
+    }
+    return count;
+  });
 
   // Reactivity key that changes as tokens stream in or prompts are queued, driving auto-scroll.
   const streamKey = createMemo(() => {
     const list = turns();
     const id = workspace.activeSessionID;
     const queuedLen = id ? (workspace.queuedPromptsBySession[id]?.length ?? 0) : 0;
+    const busyScore = isSessionBusy() ? 50_000 : 0;
+    const thinkingScore = showThinkingPlaceholder() ? 25_000 : 0;
     const last = list[list.length - 1];
-    let n = list.length * 1_000_000 + queuedLen * 100_000;
+    let n = list.length * 1_000_000 + queuedLen * 100_000 + busyScore + thinkingScore;
     if (last) {
       n += last.parts.length * 1000;
       if (last.info.error) n += 500;
@@ -170,33 +160,40 @@ export default function MessageStream() {
 
   let previousSessionID: string | null = null;
   let wasBusy = false;
+  let prevUserTurnCount = 0;
+  let prevQueuedLen = 0;
 
   createEffect(() => {
     const sessionID = workspace.activeSessionID;
     const busy = isSessionBusy();
-    if (sessionID !== previousSessionID || (busy && !wasBusy)) {
+    const userTurnCount = turns().reduce(
+      (acc, t) => (t.info.role === "user" ? acc + 1 : acc),
+      0
+    );
+    const queuedLen = sessionID
+      ? (workspace.queuedPromptsBySession[sessionID]?.length ?? 0)
+      : 0;
+    if (
+      sessionID !== previousSessionID ||
+      (busy && !wasBusy) ||
+      userTurnCount > prevUserTurnCount ||
+      queuedLen > prevQueuedLen
+    ) {
       stickToBottom = true;
     }
     previousSessionID = sessionID;
     wasBusy = busy;
+    prevUserTurnCount = userTurnCount;
+    prevQueuedLen = queuedLen;
   });
 
   createEffect(() => {
     streamKey();
     if (!appSettings.autoScrollStream || !stickToBottom || !scroller) return;
-    activeExecutionTurnID();
     requestAnimationFrame(() => {
       if (!scroller || !stickToBottom) return;
-      const activeID = activeExecutionTurnID();
-      const activeTurn = activeID
-        ? scroller.querySelector(`[data-turn-id="${CSS.escape(activeID)}"]`)
-        : undefined;
       programmaticScroll = true;
-      if (activeTurn instanceof HTMLElement) {
-        activeTurn.scrollIntoView({ behavior: "auto", block: "end" });
-      } else {
-        scroller.scrollTop = scroller.scrollHeight;
-      }
+      scroller.scrollTop = scroller.scrollHeight;
       requestAnimationFrame(() => {
         programmaticScroll = false;
       });

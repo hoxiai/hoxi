@@ -1,5 +1,5 @@
 // web/src/components/timeline/AgentStackPill.tsx
-import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, Show, untrack } from "solid-js";
 import {
   ArrowLeft, Bot, CheckCircle2, ChevronDown, ChevronUp, ExternalLink,
   LoaderCircle, RotateCcw, ShieldAlert, Square, X,
@@ -21,11 +21,6 @@ export {
   SubagentSessionBanner, type SubagentStackItem,
 };
 
-/**
- * Ported from kilocode AgentStack.tsx & background-agents.ts:
- * Tracks active, interrupted (resumable via task_id), and completed child subagents
- * spawned from the current root session.
- */
 export default function AgentStackPill() {
   const [expanded, setExpanded] = createSignal(false);
   const [stoppingID, setStoppingID] = createSignal<string | null>(null);
@@ -33,6 +28,12 @@ export default function AgentStackPill() {
   const [dismissedSigBySession, setDismissedSigBySession] = createSignal<Record<string, string>>({});
   const [justFinishedBySession, setJustFinishedBySession] = createSignal<Record<string, boolean>>({});
   const wasRunningSessions = new Set<string>();
+  const finishTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+  onCleanup(() => {
+    for (const timer of finishTimers.values()) clearTimeout(timer);
+    finishTimers.clear();
+  });
 
   const rootID = createMemo(() => resolveRootSessionID(workspace.activeSessionID));
   const isViewingSubagent = createMemo(
@@ -71,10 +72,19 @@ export default function AgentStackPill() {
     return dismissedSigBySession()[rid] === stackSignature();
   });
 
+  const clearFinishTimer = (rid: string) => {
+    const existing = finishTimers.get(rid);
+    if (existing) {
+      clearTimeout(existing);
+      finishTimers.delete(rid);
+    }
+  };
+
   const dismissStack = () => {
     const rid = rootID();
     const sig = stackSignature();
     if (!rid || !sig) return;
+    clearFinishTimer(rid);
     setExpanded(false);
     setJustFinishedBySession((prev) => ({ ...prev, [rid]: false }));
     setDismissedSigBySession((prev) => ({ ...prev, [rid]: sig }));
@@ -85,10 +95,11 @@ export default function AgentStackPill() {
     if (!rid) return;
     if (runningCount() > 0) {
       wasRunningSessions.add(rid);
-      if (justFinishedBySession()[rid]) {
+      clearFinishTimer(rid);
+      if (untrack(() => justFinishedBySession()[rid])) {
         setJustFinishedBySession((prev) => ({ ...prev, [rid]: false }));
       }
-      if (dismissedSigBySession()[rid]) {
+      if (untrack(() => dismissedSigBySession()[rid])) {
         setDismissedSigBySession((prev) => {
           const next = { ...prev };
           delete next[rid];
@@ -99,13 +110,15 @@ export default function AgentStackPill() {
     }
     if (wasRunningSessions.has(rid)) {
       wasRunningSessions.delete(rid);
-      if (!isActionable()) {
+      clearFinishTimer(rid);
+      if (!untrack(() => isActionable())) {
         setJustFinishedBySession((prev) => ({ ...prev, [rid]: true }));
         const timer = setTimeout(() => {
+          finishTimers.delete(rid);
           setExpanded(false);
           setJustFinishedBySession((prev) => ({ ...prev, [rid]: false }));
         }, 3000);
-        onCleanup(() => clearTimeout(timer));
+        finishTimers.set(rid, timer);
       }
     }
   });
@@ -134,9 +147,7 @@ export default function AgentStackPill() {
     const running = subagents().filter((s) => s.status === "running");
     if (running.length === 0 || stoppingID()) return;
     setStoppingID("all");
-    for (const s of running) {
-      markSessionInterrupted(s.sessionID, "stopped");
-    }
+    for (const s of running) markSessionInterrupted(s.sessionID, "stopped");
     try {
       await Promise.all(
         running.map((s) =>
@@ -188,9 +199,7 @@ export default function AgentStackPill() {
   createEffect(() => {
     if (!expanded()) return;
     const onPointerDown = (e: PointerEvent) => {
-      if (containerRef && !containerRef.contains(e.target as Node)) {
-        setExpanded(false);
-      }
+      if (containerRef && !containerRef.contains(e.target as Node)) setExpanded(false);
     };
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") setExpanded(false);

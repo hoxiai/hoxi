@@ -32,6 +32,9 @@
   /* Shadows */
   --island-shadow: 0 1px 3px rgba(15, 23, 42, 0.03), 0 1px 2px rgba(15, 23, 42, 0.02);
   --composer-shadow: 0 14px 32px -16px rgba(15, 23, 42, 0.14), 0 2px 6px -1px rgba(15, 23, 42, 0.05);
+  --bg-glass-pill: rgba(255, 255, 255, 0.66);
+  --border-glass-pill: rgba(255, 255, 255, 0.72);
+  --shadow-glass-pill: 0 4px 14px -4px rgba(15, 23, 42, 0.1), 0 0 0 1px rgba(15, 23, 42, 0.06);
 
   /* Text */
   --text-primary: #14181f;
@@ -97,6 +100,9 @@
   /* Shadows */
   --island-shadow: 0 2px 8px rgba(0, 0, 0, 0.24);
   --composer-shadow: 0 16px 36px -16px rgba(0, 0, 0, 0.55);
+  --bg-glass-pill: rgba(24, 30, 40, 0.64);
+  --border-glass-pill: rgba(255, 255, 255, 0.09);
+  --shadow-glass-pill: 0 6px 16px -4px rgba(0, 0, 0, 0.42), 0 0 0 1px rgba(255, 255, 255, 0.05);
 
   /* Text */
   --text-primary: #e5e9f0;
@@ -180,6 +186,23 @@ body {
 
 .chat-composer-glass:focus-within {
   border-color: var(--border-focus);
+}
+
+/* Frosted Glass Pill for Session Row Hover Actions */
+.session-action-glass {
+  background-color: var(--bg-glass-pill);
+  -webkit-backdrop-filter: blur(12px) saturate(1.35);
+  backdrop-filter: blur(12px) saturate(1.35);
+  border: 1px solid var(--border-glass-pill);
+  box-shadow: var(--shadow-glass-pill);
+}
+
+.session-action-danger-glass {
+  background-color: color-mix(in srgb, var(--danger-surface) 75%, var(--bg-glass-pill));
+  -webkit-backdrop-filter: blur(14px) saturate(1.35);
+  backdrop-filter: blur(14px) saturate(1.35);
+  border: 1px solid var(--danger-border);
+  box-shadow: var(--shadow-glass-pill);
 }
 
 /* Subtle custom scrollbars */

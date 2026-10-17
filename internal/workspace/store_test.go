@@ -110,6 +110,39 @@ func TestValidateWorkspaceFolders(t *testing.T) {
 	}
 }
 
+func TestCleanValidProjectDirAndResolveInitialRootDir(t *testing.T) {
+	homeDir := setupTestEnv(t)
+	projA := mkdirTempProject(t, homeDir, "proj-alpha")
+	appBundleDir := mkdirTempProject(t, homeDir, "Hoxi.app/Contents/MacOS")
+
+	if got := CleanValidProjectDir("/"); got != "" {
+		t.Fatalf("expected / to be rejected, got %q", got)
+	}
+	if got := CleanValidProjectDir(homeDir); got != "" {
+		t.Fatalf("expected homeDir to be rejected, got %q", got)
+	}
+	if got := CleanValidProjectDir(appBundleDir); got != "" {
+		t.Fatalf("expected .app/Contents path to be rejected, got %q", got)
+	}
+	if got := CleanValidProjectDir(projA); got != projA {
+		t.Fatalf("expected %q to be valid, got %q", projA, got)
+	}
+
+	// With no saved workspaces, ResolveInitialRootDir("/") should return ""
+	if got := ResolveInitialRootDir("/"); got != "" {
+		t.Fatalf("expected empty rootDir when no workspaces saved and candidate is /, got %q", got)
+	}
+
+	// Seed a workspace and verify ResolveInitialRootDir("/") falls back to projA
+	_ = NewStore(projA)
+	if got := ResolveInitialRootDir("/"); got != projA {
+		t.Fatalf("expected ResolveInitialRootDir(/) to fall back to %q, got %q", projA, got)
+	}
+	if got := ResolveInitialRootDir(homeDir); got != projA {
+		t.Fatalf("expected ResolveInitialRootDir(homeDir) to fall back to %q, got %q", projA, got)
+	}
+}
+
 func TestStoreLifecycleAndPersistence(t *testing.T) {
 	homeDir := setupTestEnv(t)
 	seedDir := mkdirTempProject(t, homeDir, "seed-project")

@@ -209,7 +209,7 @@ export function SessionNavItem(props: SessionNavItemProps) {
 
       {/* Static Badges (Branch, Diff, Queue, Time or Loading) shown when not hovered and not confirming delete */}
       <Show when={!confirmingDelete() && !editing()}>
-        <div class="flex items-center gap-1.5 shrink-0 text-[11.5px] font-mono group-hover/row:opacity-0 transition-opacity">
+        <div class="flex items-center gap-1.5 shrink-0 text-[11.5px] font-mono group-hover/row:opacity-0 group-hover/row:translate-x-0.5 transition-all duration-150 ease-out">
           <Show when={wt()?.isolated && wt()?.branch}>
             <span class="inline-flex items-center gap-0.5 text-[var(--text-faint)] truncate max-w-[68px]">
               <Show when={props.showBranchIcon}>
@@ -256,25 +256,31 @@ export function SessionNavItem(props: SessionNavItemProps) {
         </div>
       </Show>
 
-      {/* Hover Actions / Delete Gate Overlay: solid floating action pill covering text cleanly */}
+      {/* Hover Actions / Delete Gate Overlay: frosted glass pill with soft left fade */}
       <Show when={!editing()}>
         <div
-          class={`absolute right-1 top-1/2 -translate-y-1/2 flex items-center z-10 transition-all ${
+          class={`absolute right-1 top-1/2 -translate-y-1/2 flex items-center z-10 transition-all duration-150 ease-out ${
             confirmingDelete()
-              ? "opacity-100 pointer-events-auto"
-              : "opacity-0 pointer-events-none group-hover/row:opacity-100 group-hover/row:pointer-events-auto"
+              ? "opacity-100 translate-x-0 scale-100 pointer-events-auto"
+              : "opacity-0 translate-x-1 scale-[0.97] pointer-events-none group-hover/row:opacity-100 group-hover/row:translate-x-0 group-hover/row:scale-100 group-hover/row:pointer-events-auto"
           }`}
           onClick={(ev) => ev.stopPropagation()}
         >
+          {/* Soft horizontal feather mask to prevent hard visual cut over long session titles */}
+          <div
+            aria-hidden="true"
+            class="pointer-events-none h-6 w-5 -mr-1.5 bg-gradient-to-l from-[var(--bg-canvas)]/75 via-[var(--bg-canvas)]/35 to-transparent rounded-l-lg"
+          />
+
           <Show
             when={!confirmingDelete()}
             fallback={
-              <div class="flex items-center gap-1 rounded-md border border-[var(--danger-border)] bg-[var(--danger-surface)] px-1.5 py-0.5 shadow-md">
+              <div class="session-action-danger-glass flex items-center gap-1 rounded-lg px-1.5 py-0.5">
                 <button
                   type="button"
                   disabled={deleting()}
                   onClick={(ev) => void handleConfirmDelete(ev)}
-                  class="inline-flex items-center gap-0.5 rounded bg-[var(--danger-text)] px-1.5 py-0.5 text-[11px] font-medium text-white hover:opacity-90 transition-opacity cursor-pointer shadow-xs"
+                  class="inline-flex items-center gap-0.5 rounded-md bg-[var(--danger-text)] px-1.5 py-0.5 text-[11px] font-medium text-white hover:opacity-90 transition-opacity cursor-pointer shadow-xs"
                   title={t("leftNav.discardConfirm")}
                 >
                   <Show
@@ -291,7 +297,7 @@ export function SessionNavItem(props: SessionNavItemProps) {
                     ev.stopPropagation();
                     setConfirmingDelete(false);
                   }}
-                  class="rounded px-1.5 py-0.5 text-[11px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+                  class="rounded-md px-1.5 py-0.5 text-[11px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
                 >
                   {t("leftNav.cancelDelete")}
                 </button>
@@ -301,12 +307,12 @@ export function SessionNavItem(props: SessionNavItemProps) {
             <Show
               when={!isBusy()}
               fallback={
-                <div class="flex items-center gap-1 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-1.5 py-0.5 shadow-md">
+                <div class="session-action-glass flex items-center gap-1 rounded-lg px-1.5 py-0.5">
                   <button
                     type="button"
                     disabled={stopping()}
                     onClick={(ev) => void handleStop(ev)}
-                    class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium text-[var(--text-secondary)] hover:text-[var(--danger-text)] hover:bg-[var(--danger-surface)] transition-colors cursor-pointer disabled:opacity-50"
+                    class="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium text-[var(--text-secondary)] hover:text-[var(--danger-text)] hover:bg-[var(--danger-surface)] transition-colors cursor-pointer disabled:opacity-50"
                     title={t("leftNav.stopTooltip")}
                   >
                     <Show
@@ -320,10 +326,10 @@ export function SessionNavItem(props: SessionNavItemProps) {
                 </div>
               }
             >
-              <div class="flex items-center gap-0.5 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-1 py-0.5 shadow-md">
+              <div class="session-action-glass flex items-center gap-0.5 rounded-lg px-1 py-0.5">
                 <button
                   type="button"
-                  class="inline-flex h-5 w-5 items-center justify-center rounded text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+                  class="inline-flex h-5 w-5 items-center justify-center rounded-md text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
                   onClick={(ev) => startEditing(ev)}
                   title={t("leftNav.renameSessionTooltip")}
                 >
@@ -333,7 +339,7 @@ export function SessionNavItem(props: SessionNavItemProps) {
                 <Show when={!props.isArchived && props.onArchive}>
                   <button
                     type="button"
-                    class="inline-flex h-5 w-5 items-center justify-center rounded text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+                    class="inline-flex h-5 w-5 items-center justify-center rounded-md text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
                     onClick={(ev) => {
                       ev.stopPropagation();
                       props.onArchive?.(ev, props.session.id);
@@ -347,7 +353,7 @@ export function SessionNavItem(props: SessionNavItemProps) {
                 <Show when={props.isArchived && props.onUnarchive}>
                   <button
                     type="button"
-                    class="inline-flex h-5 w-5 items-center justify-center rounded text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+                    class="inline-flex h-5 w-5 items-center justify-center rounded-md text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
                     onClick={(ev) => {
                       ev.stopPropagation();
                       props.onUnarchive?.(ev, props.session.id);
@@ -361,7 +367,7 @@ export function SessionNavItem(props: SessionNavItemProps) {
                 <Show when={props.canDelete}>
                   <button
                     type="button"
-                    class="inline-flex h-5 w-5 items-center justify-center rounded text-[var(--text-muted)] hover:text-[var(--danger-text)] hover:bg-[var(--danger-surface)] transition-colors cursor-pointer"
+                    class="inline-flex h-5 w-5 items-center justify-center rounded-md text-[var(--text-secondary)] hover:text-[var(--danger-text)] hover:bg-[var(--danger-surface)] transition-colors cursor-pointer"
                     onClick={(ev) => {
                       ev.stopPropagation();
                       setConfirmingDelete(true);

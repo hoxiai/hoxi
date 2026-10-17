@@ -231,5 +231,13 @@ export const models: ModelsI18n = {
   forkToHoxiEdit: "Copy to .hoxi & Edit",
   forkToHoxiSuccess: "Copied '{name}' to .hoxi/models.json — you can now freely edit its models.",
   freeModelsCount: "{count} Free",
+  hoverProviderLabel: "Provider",
+  hoverSourceLabel: "Source",
+  hoverModelIdLabel: "Model ID",
+  hoverEndpointLabel: "Endpoint",
+  hoverPricingLabel: "Pricing",
+  hoverCapabilitiesLabel: "Capabilities",
+  sourceBuiltInFree: "OpenCode Free",
 };
+
 

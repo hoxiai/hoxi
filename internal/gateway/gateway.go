@@ -78,6 +78,9 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 		writeJSONError(w, http.StatusBadGateway, "opencode service unavailable: "+err.Error())
 	}
 
+	workspaces := workspace.NewStore(rootDir)
+	rootDir = workspaces.PrimaryRootDir(rootDir)
+
 	providers := provider.NewService(openCodePort, password, rootDir, proxy)
 	handoffSvc := handoff.NewService(openCodePort, password, rootDir, providers)
 
@@ -89,7 +92,7 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 		mux:          http.NewServeMux(),
 		status:       status,
 		worktrees:    worktree.NewManager(rootDir),
-		workspaces:   workspace.NewStore(rootDir),
+		workspaces:   workspaces,
 		providers:    providers,
 		handoff:      handoffSvc,
 	}

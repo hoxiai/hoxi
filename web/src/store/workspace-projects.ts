@@ -92,6 +92,41 @@ export function normalizeFolderPath(p?: string | null): string {
   return trimmed.replace(/[\\/]+$/, "");
 }
 
+export function isInvalidProjectPath(p?: string | null): boolean {
+  const norm = normalizeFolderPath(p);
+  if (!norm || norm === "." || norm === "/" || norm === "\\") return true;
+  if (/^[A-Za-z]:$/.test(norm)) return true;
+  if (norm.includes(".app/Contents")) return true;
+  return false;
+}
+
+export function resolveDefaultProjectDir(preferredRoot?: string | null): string {
+  const pref = normalizeFolderPath(preferredRoot);
+  if (pref && !isInvalidProjectPath(pref) && !isDismissedProjectPath(pref)) {
+    return pref;
+  }
+  for (const saved of workspace.savedWorkspaces) {
+    if (isDismissedProjectPath(saved.id)) continue;
+    const primary = normalizeFolderPath(workspacePrimaryFolder(saved));
+    if (primary && !isInvalidProjectPath(primary) && !isDismissedProjectPath(primary)) {
+      return primary;
+    }
+  }
+  for (const recent of workspace.recentProjects) {
+    const clean = normalizeFolderPath(recent);
+    if (clean && !isInvalidProjectPath(clean) && !isDismissedProjectPath(clean)) {
+      return clean;
+    }
+  }
+  for (const proj of workspace.projects) {
+    const wt = normalizeFolderPath(proj.worktree);
+    if (wt && !isInvalidProjectPath(wt) && !isDismissedProjectPath(wt)) {
+      return wt;
+    }
+  }
+  return "";
+}
+
 export function findWorkspaceProfileById(id?: string | null): WorkspaceProfile | undefined {
   if (!id) return undefined;
   return workspace.savedWorkspaces.find((w) => w.id === id);
@@ -124,7 +159,7 @@ export function activeWorkspaceFolders(): WorkspaceFolder[] {
   if (profile && profile.folders.length > 0) {
     return profile.folders;
   }
-  if (!workspace.rootDir) return [];
+  if (!workspace.rootDir || isInvalidProjectPath(workspace.rootDir)) return [];
   return [
     {
       id: "primary",
@@ -141,7 +176,7 @@ export function workspaceFoldersForDir(dir: string): WorkspaceFolder[] {
     return profile.folders;
   }
   const cleaned = normalizeFolderPath(dir);
-  if (!cleaned) return [];
+  if (!cleaned || isInvalidProjectPath(cleaned)) return [];
   return [{ id: "primary", path: cleaned, isPrimary: true, position: 0 }];
 }
 
@@ -198,7 +233,7 @@ export async function loadProjects(): Promise<void> {
   try {
     const remote = await hoxiAPI.listProjects();
     const list = (Array.isArray(remote) ? remote : []).filter(
-      (p) => !isDismissedProjectPath(p.worktree)
+      (p) => !isInvalidProjectPath(p.worktree) && !isDismissedProjectPath(p.worktree)
     );
     setWorkspace("projects", list);
   } catch (err) {
@@ -208,9 +243,9 @@ export async function loadProjects(): Promise<void> {
 
 export function recordRecentProject(directory: string) {
   const cleaned = normalizeFolderPath(directory);
-  if (!cleaned) return;
+  if (!cleaned || isInvalidProjectPath(cleaned)) return;
   const recents = workspace.recentProjects.filter(
-    (p) => normalizeFolderPath(p) !== cleaned
+    (p) => normalizeFolderPath(p) !== cleaned && !isInvalidProjectPath(p)
   );
   const updatedRecents = [cleaned, ...recents].slice(0, 20);
   setWorkspace("recentProjects", updatedRecents);
@@ -223,7 +258,7 @@ export function recordRecentProject(directory: string) {
 
 export async function switchWorkspace(directory: string): Promise<void> {
   const cleaned = normalizeFolderPath(directory);
-  if (!cleaned) return;
+  if (!cleaned || isInvalidProjectPath(cleaned)) return;
 
   recordRecentProject(cleaned);
 
@@ -265,9 +300,7 @@ export async function switchWorkspace(directory: string): Promise<void> {
 export async function openWorkspaceFolder(): Promise<void> {
   try {
     const res = await hoxiAPI.openDirectoryDialog();
-    if (res?.path && res.path.trim()) {
-      await switchWorkspace(res.path.trim());
-    }
+    if (res?.path?.trim()) await switchWorkspace(res.path.trim());
   } catch (err) {
     console.error("open directory dialog error:", err);
   }
@@ -282,8 +315,7 @@ export function openCreateWorkspaceModal(initialFolderPath?: string) {
 }
 
 export function openEditWorkspaceModal(dirOrWorkspaceID: string) {
-  const byId = findWorkspaceProfileById(dirOrWorkspaceID);
-  const byDir = byId ?? findWorkspaceProfileByDir(dirOrWorkspaceID);
+  const byDir = findWorkspaceProfileById(dirOrWorkspaceID) ?? findWorkspaceProfileByDir(dirOrWorkspaceID);
   setWorkspace({
     workspaceModalMode: "edit",
     editingWorkspaceID: byDir?.id ?? null,
@@ -292,8 +324,7 @@ export function openEditWorkspaceModal(dirOrWorkspaceID: string) {
 }
 
 export function openDeleteWorkspaceModal(dirOrWorkspaceID: string) {
-  const byId = findWorkspaceProfileById(dirOrWorkspaceID);
-  const byDir = byId ?? findWorkspaceProfileByDir(dirOrWorkspaceID);
+  const byDir = findWorkspaceProfileById(dirOrWorkspaceID) ?? findWorkspaceProfileByDir(dirOrWorkspaceID);
   setWorkspace({
     workspaceModalMode: "delete",
     editingWorkspaceID: byDir?.id ?? null,
@@ -302,19 +333,11 @@ export function openDeleteWorkspaceModal(dirOrWorkspaceID: string) {
 }
 
 export function openManageWorkspacesModal() {
-  setWorkspace({
-    workspaceModalMode: "manage",
-    editingWorkspaceID: null,
-    editingWorkspaceDir: null,
-  });
+  setWorkspace({ workspaceModalMode: "manage", editingWorkspaceID: null, editingWorkspaceDir: null });
 }
 
 export function closeWorkspaceModal() {
-  setWorkspace({
-    workspaceModalMode: null,
-    editingWorkspaceID: null,
-    editingWorkspaceDir: null,
-  });
+  setWorkspace({ workspaceModalMode: null, editingWorkspaceID: null, editingWorkspaceDir: null });
 }
 
 export async function saveWorkspaceProfile(
@@ -334,14 +357,10 @@ export async function saveWorkspaceProfile(
   });
 
   const primaryPath = workspacePrimaryFolder(saved);
-  if (primaryPath) {
-    recordRecentProject(primaryPath);
-  }
+  if (primaryPath) recordRecentProject(primaryPath);
   if (saved?.id) {
     unrecordDismissedProject(saved.id);
-    for (const f of saved.folders || []) {
-      unrecordDismissedProject(f.path);
-    }
+    for (const f of saved.folders || []) unrecordDismissedProject(f.path);
   }
   return saved;
 }
@@ -350,33 +369,22 @@ export async function quickAddFolderToWorkspace(dirOrWorkspaceID: string): Promi
   try {
     const picked = await hoxiAPI.openDirectoryDialog();
     const newPath = normalizeFolderPath(picked?.path);
-    if (!newPath) return;
+    if (!newPath || isInvalidProjectPath(newPath)) return;
 
     const existing =
-      findWorkspaceProfileById(dirOrWorkspaceID) ??
-      findWorkspaceProfileByDir(dirOrWorkspaceID);
+      findWorkspaceProfileById(dirOrWorkspaceID) ?? findWorkspaceProfileByDir(dirOrWorkspaceID);
 
     if (existing) {
-      const alreadyIn = existing.folders.some(
-        (f) => normalizeFolderPath(f.path) === newPath
-      );
-      if (alreadyIn) return;
+      if (existing.folders.some((f) => normalizeFolderPath(f.path) === newPath)) return;
       const folders = [
         ...existing.folders.map((f) => ({ path: f.path, isPrimary: f.isPrimary })),
         { path: newPath, isPrimary: false },
       ];
-      await saveWorkspaceProfile(
-        {
-          name: existing.name,
-          color: existing.color,
-          folders,
-        },
-        existing.id
-      );
+      await saveWorkspaceProfile({ name: existing.name, color: existing.color, folders }, existing.id);
     } else {
       const primaryDir = normalizeFolderPath(dirOrWorkspaceID) || workspace.rootDir;
       const folders =
-        primaryDir && primaryDir !== newPath
+        primaryDir && !isInvalidProjectPath(primaryDir) && primaryDir !== newPath
           ? [
               { path: primaryDir, isPrimary: true },
               { path: newPath, isPrimary: false },
@@ -392,8 +400,7 @@ export async function quickAddFolderToWorkspace(dirOrWorkspaceID: string): Promi
 export async function removeWorkspaceProfile(dirOrWorkspaceID: string): Promise<void> {
   const normInput = normalizeFolderPath(dirOrWorkspaceID);
   const existing =
-    findWorkspaceProfileById(dirOrWorkspaceID) ??
-    findWorkspaceProfileByDir(dirOrWorkspaceID);
+    findWorkspaceProfileById(dirOrWorkspaceID) ?? findWorkspaceProfileByDir(dirOrWorkspaceID);
 
   const removedKeys = new Set<string>();
   if (dirOrWorkspaceID) removedKeys.add(dirOrWorkspaceID);
@@ -406,62 +413,43 @@ export async function removeWorkspaceProfile(dirOrWorkspaceID: string): Promise<
       if (nf) removedKeys.add(nf);
     }
   }
-
-  for (const k of removedKeys) {
-    recordDismissedProject(k);
-  }
+  for (const k of removedKeys) recordDismissedProject(k);
 
   try {
-    const target = existing?.id || normInput || dirOrWorkspaceID;
-    await hoxiAPI.deleteWorkspace(target);
+    await hoxiAPI.deleteWorkspace(existing?.id || normInput || dirOrWorkspaceID);
   } catch (err) {
     console.warn("deleteWorkspace API warning:", err);
   }
 
   setWorkspace("savedWorkspaces", (prev) =>
     prev.filter(
-      (w) =>
-        !removedKeys.has(w.id) &&
-        !w.folders.some((f) => removedKeys.has(normalizeFolderPath(f.path)))
+      (w) => !removedKeys.has(w.id) && !w.folders.some((f) => removedKeys.has(normalizeFolderPath(f.path)))
     )
   );
-
   setWorkspace("projects", (prev) =>
     prev.filter((p) => !removedKeys.has(normalizeFolderPath(p.worktree)))
   );
 
-  const nextRecents = workspace.recentProjects.filter(
-    (p) => !removedKeys.has(normalizeFolderPath(p))
-  );
+  const nextRecents = workspace.recentProjects.filter((p) => !removedKeys.has(normalizeFolderPath(p)));
   setWorkspace("recentProjects", nextRecents);
   try {
     localStorage.setItem(RECENT_PROJECTS_KEY, JSON.stringify(nextRecents));
-  } catch {
-    /* ignore */
-  }
+  } catch { /* ignore */ }
 
-  const nextOrder = workspace.projectOrder.filter(
-    (p) => !removedKeys.has(normalizeFolderPath(p))
-  );
+  const nextOrder = workspace.projectOrder.filter((p) => !removedKeys.has(normalizeFolderPath(p)));
   setWorkspace("projectOrder", nextOrder);
   try {
     localStorage.setItem(PROJECT_ORDER_KEY, JSON.stringify(nextOrder));
-  } catch {
-    /* ignore */
-  }
+  } catch { /* ignore */ }
 
   if (removedKeys.has(normalizeFolderPath(workspace.rootDir))) {
     const remainingSaved = workspace.savedWorkspaces.filter(
-      (w) =>
-        !removedKeys.has(w.id) &&
-        !w.folders.some((f) => removedKeys.has(normalizeFolderPath(f.path)))
+      (w) => !removedKeys.has(w.id) && !w.folders.some((f) => removedKeys.has(normalizeFolderPath(f.path)))
     );
     const nextCandidate =
       workspacePrimaryFolder(remainingSaved[0]) ||
       nextRecents.find((p) => !removedKeys.has(normalizeFolderPath(p))) ||
       workspace.projects.find((p) => !removedKeys.has(normalizeFolderPath(p.worktree)))?.worktree;
-    if (nextCandidate) {
-      await switchWorkspace(nextCandidate);
-    }
+    if (nextCandidate) await switchWorkspace(nextCandidate);
   }
 }

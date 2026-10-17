@@ -60,7 +60,15 @@ func StartDaemonWithBin(
 ) (*exec.Cmd, error) {
 	args := []string{"serve", "--hostname", "127.0.0.1", "--port", strconv.Itoa(port)}
 	child := exec.CommandContext(ctx, binPath, args...)
-	child.Dir = rootDir
+	daemonDir := strings.TrimSpace(rootDir)
+	if daemonDir == "" || daemonDir == "/" {
+		if home, err := os.UserHomeDir(); err == nil && home != "" {
+			daemonDir = home
+		} else {
+			daemonDir = os.TempDir()
+		}
+	}
+	child.Dir = daemonDir
 	child.Stdout = os.Stdout
 	child.Stderr = os.Stderr
 	child.Env = append(os.Environ(),

@@ -1,6 +1,7 @@
 import { produce } from "solid-js/store";
 import type { SessionInfo, SnapshotFileDiff } from "../services/sse-types";
 import { hoxiAPI } from "../services/api";
+import { mergeServerTurns } from "./message-lookup";
 import {
   ARCHIVED_SESSIONS_KEY,
   isSessionArchived,
@@ -126,11 +127,7 @@ function mergeSessionAndWorktreeDiffs(
 export async function loadSessionMessagesOnly(sessionID: string): Promise<void> {
   const directory = sessionDirectory(sessionID);
   const turns = await hoxiAPI.getMessages(sessionID, directory);
-  setWorkspace(
-    "messagesBySession",
-    sessionID,
-    turns.map((t) => ({ info: t.info, parts: t.parts }))
-  );
+  setWorkspace("messagesBySession", sessionID, (prev) => mergeServerTurns(prev, turns));
 }
 
 export async function loadSessionMessages(sessionID: string): Promise<void> {
@@ -145,11 +142,7 @@ export async function loadSessionMessages(sessionID: string): Promise<void> {
   }
   try {
     const turns = await hoxiAPI.getMessages(sessionID, directory);
-    setWorkspace(
-      "messagesBySession",
-      sessionID,
-      turns.map((t) => ({ info: t.info, parts: t.parts }))
-    );
+    setWorkspace("messagesBySession", sessionID, (prev) => mergeServerTurns(prev, turns));
   } catch (err) {
     if (workspace.messagesBySession[sessionID] === undefined) {
       setWorkspace("messagesBySession", sessionID, []);
@@ -188,10 +181,17 @@ export async function selectSession(sessionID: string): Promise<void> {
 
 export async function newIsolatedSession(
   title?: string,
-  options?: { isolated?: boolean }
+  options?: { isolated?: boolean; onSessionCreated?: (sessionID: string) => void }
 ): Promise<string> {
   const session = await hoxiAPI.createSession(title, workspace.rootDir || undefined);
   const shouldIsolate = options?.isolated ?? appSettings.defaultSandboxMode === "worktree";
+  setWorkspace("messagesBySession", session.id, []);
+  setWorkspace("diffsBySession", session.id, []);
+  setWorkspace("loadingMessagesBySession", session.id, false);
+  setWorkspace("unreadCompletedBySession", session.id, false);
+  replaceSession(session);
+  setWorkspace("activeSessionID", session.id);
+  options?.onSessionCreated?.(session.id);
   if (shouldIsolate) {
     try {
       const meta = await hoxiAPI.createWorktree(session.id, workspace.rootDir || undefined);
@@ -208,9 +208,6 @@ export async function newIsolatedSession(
       createdAt: new Date().toISOString(),
     });
   }
-  setWorkspace("messagesBySession", session.id, []);
-  replaceSession(session);
-  await selectSession(session.id);
   return session.id;
 }
 

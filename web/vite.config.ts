@@ -2,7 +2,7 @@ import { defineConfig } from "vite";
 import solidPlugin from "vite-plugin-solid";
 import tailwindcss from "@tailwindcss/vite";
 
-const target = process.env.HOXI_BACKEND_URL || "http://127.0.0.1:5088";
+const target = process.env.HOXI_BACKEND_URL || "http://127.0.0.1:5089";
 
 export default defineConfig({
   plugins: [tailwindcss(), solidPlugin()],

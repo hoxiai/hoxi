@@ -13,6 +13,8 @@ import {
 import type { ProviderInfo } from "../../services/api";
 import {
   isCustomOrConfiguredProvider,
+  isHoxiCustomProvider,
+  isImportedOpenCodeProvider,
   openProviderModal,
   workspace,
 } from "../../store/workspace";
@@ -27,6 +29,8 @@ export interface FlattenedModel {
   modelName: string;
   connected: boolean;
   isCustom: boolean;
+  source?: string;
+  baseURL?: string;
   reasoning: boolean;
   image: boolean;
   toolcall: boolean;
@@ -35,6 +39,49 @@ export interface FlattenedModel {
   inputCost?: number;
   outputCost?: number;
   free: boolean;
+}
+
+export interface ModelSourceInfo {
+  label: string;
+  configHint?: string;
+  isImported: boolean;
+}
+
+export function getModelSourceInfo(model: FlattenedModel): ModelSourceInfo {
+  const pid = model.providerID;
+  if (isHoxiCustomProvider(pid)) {
+    return {
+      label: t("models.sourceHoxi"),
+      configHint: ".hoxi/models.json",
+      isImported: false,
+    };
+  }
+  if (isImportedOpenCodeProvider(pid)) {
+    return {
+      label: t("models.sourceOpenCode"),
+      configHint: "opencode",
+      isImported: true,
+    };
+  }
+  if (model.isCustom) {
+    return {
+      label: t("models.sourceCustom"),
+      isImported: false,
+    };
+  }
+  if (pid === "opencode" && model.free && !workspace.connectedProviders.includes("opencode")) {
+    return {
+      label: t("models.sourceBuiltInFree"),
+      isImported: false,
+    };
+  }
+  if (model.source === "env") {
+    return { label: t("models.sourceEnv"), isImported: false };
+  }
+  if (model.source === "config") {
+    return { label: t("models.sourceConfig"), isImported: false };
+  }
+  return { label: t("models.sourceApi"), isImported: false };
 }
 
 export function formatTokenLimit(n?: number): string | null {
@@ -79,6 +126,10 @@ export function extractFlattenedModels(
     if (disabledSet.has(p.id)) continue;
     const isCustom = isCustomOrConfiguredProvider(p);
     const baseConn = connectedIds.has(p.id) || Boolean(cfgProviders[p.id]);
+    const baseURL =
+      workspace.hoxiProviders?.[p.id]?.options?.baseURL ||
+      cfgProviders?.[p.id]?.options?.baseURL ||
+      p.options?.baseURL;
 
     for (const [mID, mInfo] of Object.entries(p.models || {})) {
       if (!mInfo || typeof mInfo !== "object") continue;
@@ -105,6 +156,8 @@ export function extractFlattenedModels(
         modelName: mInfo.name || cfgModel?.name || mID,
         connected: isConn,
         isCustom,
+        source: p.source,
+        baseURL,
         reasoning,
         image,
         toolcall,
@@ -283,6 +336,7 @@ export function ModelPreviewFooter(props: {
   const outText = () => formatTokenLimit(props.model.outputLimit);
   const inPrice = () => formatPricePerMillion(props.model.inputCost);
   const outPrice = () => formatPricePerMillion(props.model.outputCost);
+  const srcInfo = () => getModelSourceInfo(props.model);
 
   return (
     <div class="border-t border-[var(--border-subtle)] bg-[var(--bg-elevated)]/60 px-3 py-2 text-[11px] space-y-1">
@@ -290,6 +344,20 @@ export function ModelPreviewFooter(props: {
         <div class="min-w-0 flex items-center gap-1.5">
           <span class="font-semibold text-[var(--text-primary)] truncate">
             {props.model.modelName}
+          </span>
+          <span
+            class={`shrink-0 inline-flex items-center gap-1 rounded-full px-1.5 py-[1px] text-[9.5px] font-medium ${
+              srcInfo().isImported
+                ? "bg-amber-500/10 text-amber-400"
+                : "bg-[var(--ok-surface)] text-[var(--ok-text)]"
+            }`}
+          >
+            <span
+              class={`h-1.5 w-1.5 rounded-full ${
+                srcInfo().isImported ? "bg-amber-400" : "bg-[var(--ok)]"
+              }`}
+            />
+            {srcInfo().label}
           </span>
           <ProviderHealthBadge
             providerID={props.model.providerID}
@@ -363,3 +431,5 @@ export function ModelPreviewFooter(props: {
     </div>
   );
 }
+
+
