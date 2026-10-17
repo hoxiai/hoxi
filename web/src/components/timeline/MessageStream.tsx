@@ -11,6 +11,7 @@ import {
 } from "solid-js";
 import type { MessagePart, SessionStatus } from "../../services/sse-types";
 import {
+  appSettings,
   forkFromMessage,
   revertToHere,
   stopSessionTask,
@@ -116,7 +117,7 @@ export default function MessageStream() {
 
   createEffect(() => {
     streamKey();
-    if (!stickToBottom || !scroller) return;
+    if (!appSettings.autoScrollStream || !stickToBottom || !scroller) return;
     queueMicrotask(() => {
       if (scroller && stickToBottom) scroller.scrollTop = scroller.scrollHeight;
     });
@@ -131,7 +132,7 @@ export default function MessageStream() {
   const onRevertToMessage = async (messageID: string) => {
     const id = workspace.activeSessionID;
     if (!id) return;
-    if (!confirm(t("timeline.revertConfirm"))) return;
+    if (appSettings.confirmBeforeRevert && !confirm(t("timeline.revertConfirm"))) return;
     try {
       await revertToHere(id, messageID);
     } catch (err) {

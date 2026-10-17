@@ -11,7 +11,7 @@ import {
   recordUserRevertAction,
 } from "./provider-telemetry";
 import { isPlaceholderSessionTitle, summarizeAndRenameSession } from "./session-title";
-import { setWorkspace, workspace } from "./workspace";
+import { buildCombinedSystemPrompt, setWorkspace, workspace } from "./workspace";
 import { buildWorkspaceFoldersSystemPrompt } from "./workspace-projects";
 import {
   loadSessionMessages,
@@ -182,7 +182,7 @@ export async function submitSessionPrompt(
       model: effectiveModel,
       variant: workspace.reasoningEffort || undefined,
       directory: sessionDirectory(id),
-      system: buildWorkspaceFoldersSystemPrompt(),
+      system: buildCombinedSystemPrompt(buildWorkspaceFoldersSystemPrompt()),
       attachments,
     });
     // Sync server messages immediately and follow up shortly after

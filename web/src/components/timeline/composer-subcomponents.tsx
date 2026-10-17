@@ -1,6 +1,6 @@
 // web/src/components/timeline/composer-subcomponents.tsx
 import { For, Show } from "solid-js";
-import { ClipboardPaste, Slash, X } from "lucide-solid";
+import { ClipboardPaste, Folder, GitBranch, LoaderCircle, Slash, X } from "lucide-solid";
 import { FileIcon } from "../icons";
 import { t } from "../../i18n";
 import type {
@@ -8,6 +8,51 @@ import type {
   CollapsedPasteItem,
   ImageItem,
 } from "./composer-hooks";
+
+export function ComposerSandboxPill(props: {
+  mode: "local" | "worktree";
+  switching: boolean;
+  busy: boolean;
+  onToggle: (target: "local" | "worktree") => void;
+}) {
+  return (
+    <div class="inline-flex items-center rounded-full border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-0.5 text-[11px] font-medium select-none">
+      <button
+        type="button"
+        disabled={props.switching || props.busy}
+        onClick={() => props.onToggle("local")}
+        class={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 transition-all cursor-pointer disabled:opacity-50 ${
+          props.mode === "local"
+            ? "bg-[var(--bg-hover)] text-[var(--text-primary)] shadow-2xs"
+            : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+        }`}
+        title={t("timeline.sandboxLocalTooltip")}
+      >
+        <Folder size={11} class="shrink-0" />
+        <span>{t("timeline.sandboxLocalMode")}</span>
+      </button>
+      <button
+        type="button"
+        disabled={props.switching || props.busy}
+        onClick={() => props.onToggle("worktree")}
+        class={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 transition-all cursor-pointer disabled:opacity-50 ${
+          props.mode === "worktree"
+            ? "bg-[var(--accent-surface)] text-[var(--accent-primary)] shadow-2xs"
+            : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+        }`}
+        title={t("timeline.sandboxWorktreeTooltip")}
+      >
+        <Show
+          when={!props.switching}
+          fallback={<LoaderCircle size={11} class="animate-spin shrink-0" />}
+        >
+          <GitBranch size={11} class="shrink-0" />
+        </Show>
+        <span>{t("timeline.sandboxWorktreeMode")}</span>
+      </button>
+    </div>
+  );
+}
 
 export function ComposerAutocompletePopover(props: {
   triggerMode: "file" | "command" | null;

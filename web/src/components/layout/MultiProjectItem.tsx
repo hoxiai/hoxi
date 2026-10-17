@@ -322,22 +322,10 @@ export default function MultiProjectTreeItem(props: {
               <span>{t("common.loading")}</span>
             </div>
           </Show>
-
-          <Show when={!props.isLoadingSessions}>
-            <button
-              type="button"
-              onClick={(e) => props.onCreateThread(e, props.proj.path)}
-              disabled={props.isCreating}
-              class="w-full flex items-center gap-1 text-left px-2 py-1 rounded-lg text-[11.5px] font-medium text-[var(--accent-primary)] hover:bg-[var(--accent-surface)] transition-colors cursor-pointer"
-            >
-              <Show
-                when={!props.isCreating}
-                fallback={<Spinner class="w-3 h-3 text-[var(--accent-primary)]" />}
-              >
-                <Icon name="plus-small" size="small" class="w-3.5 h-3.5" />
-              </Show>
-              <span>{t("leftNav.newThread")}</span>
-            </button>
+          <Show when={!props.isLoadingSessions && activeSessions().length === 0}>
+            <div class="px-2 py-1.5 text-[11px] text-[var(--text-faint)] italic">
+              {t("leftNav.noThreads")}
+            </div>
           </Show>
 
           <Show when={!props.isLoadingSessions && activeSessions().length > 0}>

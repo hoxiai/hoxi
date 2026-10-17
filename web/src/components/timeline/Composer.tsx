@@ -2,8 +2,6 @@
 import { createMemo, createSignal, Show } from "solid-js";
 import {
   ArrowUp,
-  Folder,
-  GitBranch,
   GitFork,
   ImagePlus,
   LoaderCircle,
@@ -12,6 +10,7 @@ import {
   WandSparkles,
 } from "lucide-solid";
 import {
+  appSettings,
   clearReviewComments,
   forkFromMessage,
   isSessionBusy,
@@ -28,6 +27,7 @@ import ComposerShelf from "./ComposerShelf";
 import {
   ComposerAttachmentChips,
   ComposerAutocompletePopover,
+  ComposerSandboxPill,
 } from "./composer-subcomponents";
 import ContextProgressPill from "./ContextProgressPill";
 import ModeSwitcher from "./ModeSwitcher";
@@ -264,13 +264,19 @@ export default function Composer() {
       }
     }
 
-    if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) {
-      ev.preventDefault();
-      if (!busy() && isPaused() && !canSend()) {
-        void onResume();
-        return;
+    if (ev.key === "Enter" && !ev.isComposing) {
+      const shouldSend =
+        appSettings.sendShortcut === "mod-enter"
+          ? ev.metaKey || ev.ctrlKey
+          : !ev.shiftKey;
+      if (shouldSend) {
+        ev.preventDefault();
+        if (!busy() && isPaused() && !canSend()) {
+          void onResume();
+          return;
+        }
+        void onSend();
       }
-      void onSend();
     }
   };
 
@@ -323,7 +329,8 @@ export default function Composer() {
 
           <textarea
             ref={textareaRef}
-            class="w-full min-h-[48px] max-h-[180px] resize-none bg-transparent text-[14px] leading-relaxed text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none selectable-text"
+            style={{ "font-size": "var(--app-chat-text-size)" }}
+            class="w-full min-h-[48px] max-h-[180px] resize-none bg-transparent leading-relaxed text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none selectable-text"
             rows={1}
             placeholder={
               busy()
@@ -346,46 +353,17 @@ export default function Composer() {
           />
 
           <div class="mt-2 flex items-center justify-between gap-2 flex-wrap">
-            {/* Left Action Pills: Agent Mode, Model Selector, Image Attach, Arena, Fork, Context Progress */}
+            {/* Left Action Pills: Agent Mode, Model Selector, Sandbox, Image Attach, Arena, Fork, Context Progress */}
             <div class="flex items-center gap-1.5 flex-wrap">
               <ModeSwitcher />
               <ModelSelector />
 
-              <div class="inline-flex items-center rounded-full border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-0.5 text-[11px] font-medium select-none">
-                <button
-                  type="button"
-                  disabled={switchingSandbox() || busy()}
-                  onClick={() => void onToggleSandbox("local")}
-                  class={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 transition-all cursor-pointer disabled:opacity-50 ${
-                    effectiveSandboxMode() === "local"
-                      ? "bg-[var(--bg-hover)] text-[var(--text-primary)] shadow-2xs"
-                      : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
-                  }`}
-                  title={t("timeline.sandboxLocalTooltip")}
-                >
-                  <Folder size={11} class="shrink-0" />
-                  <span>{t("timeline.sandboxLocalMode")}</span>
-                </button>
-                <button
-                  type="button"
-                  disabled={switchingSandbox() || busy()}
-                  onClick={() => void onToggleSandbox("worktree")}
-                  class={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 transition-all cursor-pointer disabled:opacity-50 ${
-                    effectiveSandboxMode() === "worktree"
-                      ? "bg-[var(--accent-surface)] text-[var(--accent-primary)] shadow-2xs"
-                      : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
-                  }`}
-                  title={t("timeline.sandboxWorktreeTooltip")}
-                >
-                  <Show
-                    when={!switchingSandbox()}
-                    fallback={<LoaderCircle size={11} class="animate-spin shrink-0" />}
-                  >
-                    <GitBranch size={11} class="shrink-0" />
-                  </Show>
-                  <span>{t("timeline.sandboxWorktreeMode")}</span>
-                </button>
-              </div>
+              <ComposerSandboxPill
+                mode={effectiveSandboxMode()}
+                switching={switchingSandbox()}
+                busy={busy()}
+                onToggle={(m) => void onToggleSandbox(m)}
+              />
 
               <button
                 type="button"
@@ -495,7 +473,9 @@ export default function Composer() {
                   class="inline-flex h-7 w-7 items-center justify-center rounded-full bg-[var(--accent-primary)] text-white shadow-xs hover:opacity-90 disabled:opacity-30 disabled:cursor-not-allowed transition-all cursor-pointer"
                   disabled={!canSend()}
                   onClick={onSend}
-                  title={`${t("timeline.send")} (Enter)`}
+                  title={`${t("timeline.send")} (${
+                    appSettings.sendShortcut === "mod-enter" ? "⌘/Ctrl+Enter" : "Enter"
+                  })`}
                 >
                   <Show
                     when={!sending()}

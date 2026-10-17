@@ -53,7 +53,7 @@ export const HoxiMemoryPlugin = async ({ directory }) => {
   const changedFilesBySession = new Map();
 
   return {
-    "experimental.chat.system.transform": async (_input, output) => {
+    "experimental.chat.system.transform": async (input, output) => {
       try {
         const content = await fs.readFile(projectMemoryPath, "utf8");
         const sanitized = redactSecrets(content.trim());
@@ -62,6 +62,22 @@ export const HoxiMemoryPlugin = async ({ directory }) => {
         }
       } catch {
         // Ignore if project.md does not exist yet
+      }
+
+      const sessionID = input?.sessionID;
+      if (typeof sessionID === "string" && sessionID.trim()) {
+        try {
+          const sessionMemoryPath = path.join(sessionsMemoryDir, `${sessionID.trim()}.md`);
+          const sessionContent = await fs.readFile(sessionMemoryPath, "utf8");
+          const sanitizedSession = redactSecrets(sessionContent.trim());
+          if (sanitizedSession) {
+            output.system.push(
+              `<session_handoff_memory>\n${sanitizedSession}\n</session_handoff_memory>`
+            );
+          }
+        } catch {
+          // Ignore if session-specific memory does not exist yet
+        }
       }
     },
 

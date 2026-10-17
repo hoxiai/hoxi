@@ -3,10 +3,12 @@ import { createMemo, createSignal, onMount, Show } from "solid-js";
 import { Check, GitCommitHorizontal, RefreshCw, ShieldCheck, Sparkles } from "lucide-solid";
 import { hoxiAPI } from "../../services/api";
 import {
+  appSettings,
   loadSessionMessages,
   refreshWorktreeStatus,
   runSessionCodeAudit,
   setWorkspace,
+  updateAppSetting,
   workspace,
 } from "../../store/workspace";
 import { t } from "../../i18n";
@@ -22,7 +24,9 @@ import {
 export { FileDiffBlock };
 
 export default function PierreDiffViewer() {
-  const [diffStyle, setDiffStyle] = createSignal<"unified" | "split">("unified");
+  const diffStyle = () => appSettings.defaultDiffStyle;
+  const setDiffStyle = (mode: "unified" | "split") =>
+    updateAppSetting("defaultDiffStyle", mode);
   const [refreshing, setRefreshing] = createSignal(false);
   const [commitMsg, setCommitMsg] = createSignal("");
   const [committing, setCommitting] = createSignal(false);

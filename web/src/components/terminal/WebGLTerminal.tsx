@@ -1,11 +1,11 @@
-import { createSignal, onCleanup, onMount, Show } from "solid-js";
+import { createEffect, createSignal, onCleanup, onMount, Show } from "solid-js";
 import { LoaderCircle, RefreshCw } from "lucide-solid";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
 import { hoxiAPI } from "../../services/api";
-import { activeDirectory, workspace } from "../../store/workspace";
+import { activeDirectory, appSettings, workspace } from "../../store/workspace";
 import { t } from "../../i18n";
 
 function wsEndpoint(ptyID: string, directory?: string): string {
@@ -38,6 +38,22 @@ export default function WebGLTerminal() {
   const [status, setStatus] = createSignal<"connecting" | "ready" | "error">("connecting");
   const [errorMsg, setErrorMsg] = createSignal<string | null>(null);
   let teardown: (() => void) | null = null;
+  let activeTerm: Terminal | null = null;
+  let activeFit: FitAddon | null = null;
+
+  createEffect(() => {
+    const fz = appSettings.terminalFontSize;
+    const blink = appSettings.terminalCursorBlink;
+    if (activeTerm) {
+      activeTerm.options.fontSize = fz;
+      activeTerm.options.cursorBlink = blink;
+      try {
+        activeFit?.fit();
+      } catch {
+        /* ignore */
+      }
+    }
+  });
 
   const boot = async () => {
     teardown?.();
@@ -47,8 +63,8 @@ export default function WebGLTerminal() {
 
     const term = new Terminal({
       fontFamily: '"JetBrains Mono", "SF Mono", Menlo, monospace',
-      fontSize: 12,
-      cursorBlink: true,
+      fontSize: appSettings.terminalFontSize,
+      cursorBlink: appSettings.terminalCursorBlink,
       convertEol: true,
       theme: {
         background: "#0b0d12",
@@ -60,6 +76,8 @@ export default function WebGLTerminal() {
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(container);
+    activeTerm = term;
+    activeFit = fit;
     try {
       const webgl = new WebglAddon();
       webgl.onContextLoss(() => webgl.dispose());

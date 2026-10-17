@@ -1,5 +1,6 @@
 import { createEffect, createMemo, createSignal, Show } from "solid-js";
 import type { MessagePart } from "../../services/sse-types";
+import { appSettings } from "../../store/workspace";
 import { Icon, TextShimmer } from "../icons";
 import MarkdownView from "./MarkdownView";
 import { t } from "../../i18n";
@@ -98,21 +99,32 @@ export default function ThoughtBox(props: { part: ReasoningPart }) {
   const streaming = () => props.part.time?.end == null;
   const rawText = () => (props.part.text ?? "").replace(/\[REDACTED\]/g, "").trim();
 
-  const initialOpen = () => {
+  const resolveDefaultOpen = () => {
     const id = props.part.id;
     if (userOpened.has(id)) return true;
     if (userCollapsed.has(id)) return false;
+    const mode = appSettings.reasoningDisplay;
+    if (mode === "expanded") return true;
+    if (mode === "collapsed") return false;
     return streaming();
   };
 
-  const [open, setOpen] = createSignal(initialOpen());
+  const [open, setOpen] = createSignal(resolveDefaultOpen());
   let bodyRef: HTMLDivElement | undefined;
 
-  // Auto-collapse once reasoning completes unless the user manually opened it
+  // Respect user's global reasoningDisplay setting unless manually toggled on this card
   createEffect(() => {
     const id = props.part.id;
+    const mode = appSettings.reasoningDisplay;
+    const isStreaming = streaming();
     if (userOpened.has(id) || userCollapsed.has(id)) return;
-    setOpen(streaming());
+    if (mode === "expanded") {
+      setOpen(true);
+    } else if (mode === "collapsed") {
+      setOpen(false);
+    } else {
+      setOpen(isStreaming);
+    }
   });
 
   // Auto-scroll reasoning viewport while tokens stream in

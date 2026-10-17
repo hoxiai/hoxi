@@ -1,5 +1,5 @@
 // web/src/components/layout/LeftNav.tsx
-import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 import { User } from "lucide-solid";
 import {
   appSettings,
@@ -18,8 +18,8 @@ import {
 } from "../../store/workspace";
 import { hoxiAPI } from "../../services/api";
 import type { SessionInfo } from "../../services/sse-types";
-import { Icon } from "../icons";
-import { buildAllProjects } from "./left-nav-helpers";
+import { Icon, Spinner } from "../icons";
+import { buildAllProjects, findProjectDropTarget } from "./left-nav-helpers";
 import MultiProjectTreeItem from "./MultiProjectItem";
 import SingleProjectNavView from "./SingleProjectNavView";
 import { t } from "../../i18n";
@@ -28,6 +28,34 @@ export default function LeftNav() {
   const [filterQuery, setFilterQuery] = createSignal("");
   const [showSearch, setShowSearch] = createSignal(false);
   const [creatingForPath, setCreatingForPath] = createSignal<string | null>(null);
+  const [creatingGlobal, setCreatingGlobal] = createSignal(false);
+
+  // Global shortcut: Cmd+N (or Ctrl+N) creates a new thread
+  createEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "n" && !e.shiftKey && !e.altKey) {
+        const activeTag = (document.activeElement as HTMLElement)?.tagName?.toLowerCase();
+        if (activeTag !== "input" && activeTag !== "textarea") {
+          e.preventDefault();
+          void onCreateGlobalNewThread();
+        }
+      }
+    };
+    window.addEventListener("keydown", handleGlobalKeyDown);
+    onCleanup(() => window.removeEventListener("keydown", handleGlobalKeyDown));
+  });
+
+  const onCreateGlobalNewThread = async () => {
+    if (creatingGlobal()) return;
+    setCreatingGlobal(true);
+    try {
+      await newIsolatedSession();
+    } catch (err) {
+      console.error("Failed to create new thread:", err);
+    } finally {
+      setCreatingGlobal(false);
+    }
+  };
 
   // Drag-and-drop state for reordering projects
   const [draggingProjectPath, setDraggingProjectPath] = createSignal<string | null>(null);
@@ -138,43 +166,8 @@ export default function LeftNav() {
         isDragging = true;
         setDraggingProjectPath(fromPath);
       }
-
       if (!projectListContainerRef) return;
-      const items = Array.from(
-        projectListContainerRef.querySelectorAll<HTMLElement>("[data-project-item]")
-      );
-      if (items.length === 0) return;
-
-      let matchedPath: string | null = null;
-      let matchedPos: "before" | "after" = "after";
-
-      for (const itemEl of items) {
-        const itemPath = itemEl.getAttribute("data-project-item");
-        if (!itemPath) continue;
-        const headerEl =
-          itemEl.querySelector<HTMLElement>("[data-project-header]") || itemEl;
-        const rect = headerEl.getBoundingClientRect();
-        const itemRect = itemEl.getBoundingClientRect();
-
-        if (moveEv.clientY <= itemRect.bottom) {
-          matchedPath = itemPath;
-          const midY = rect.top + rect.height / 2;
-          matchedPos = moveEv.clientY < midY ? "before" : "after";
-          break;
-        }
-      }
-
-      if (!matchedPath) {
-        const lastEl = items[items.length - 1];
-        matchedPath = lastEl.getAttribute("data-project-item");
-        matchedPos = "after";
-      }
-
-      if (matchedPath && matchedPath !== fromPath) {
-        setDropTarget({ path: matchedPath, position: matchedPos });
-      } else {
-        setDropTarget(null);
-      }
+      setDropTarget(findProjectDropTarget(projectListContainerRef, moveEv.clientY, fromPath));
     };
 
     const handlePointerUp = () => {
@@ -380,6 +373,32 @@ export default function LeftNav() {
           </div>
         </div>
       </Show>
+
+      {/* Prominent New Thread Button above all projects */}
+      <div class="px-2 pb-1.5 shrink-0">
+        <button
+          type="button"
+          onClick={onCreateGlobalNewThread}
+          disabled={creatingGlobal()}
+          class="w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] hover:bg-[var(--bg-hover)] text-[var(--text-primary)] hover:border-[var(--accent-border)] transition-all cursor-pointer shadow-2xs group"
+          title={t("leftNav.newThread")}
+        >
+          <div class="flex items-center gap-2 min-w-0">
+            <Show
+              when={!creatingGlobal()}
+              fallback={<Spinner class="w-3.5 h-3.5 text-[var(--accent-primary)]" />}
+            >
+              <Icon name="new-session" size="small" class="text-[var(--accent-primary)]" />
+            </Show>
+            <span class="text-[12px] font-medium truncate">
+              {t("leftNav.newThread")}
+            </span>
+          </div>
+          <span class="text-[10px] font-mono text-[var(--text-faint)] group-hover:text-[var(--text-muted)]">
+            ⌘N
+          </span>
+        </button>
+      </div>
 
       {/* MODE A: MULTI-PROJECT TREE */}
       <Show when={workspace.sidebarProjectMode === "multi"}>

@@ -37,7 +37,6 @@ export default function SingleProjectNavView(props: {
   onUnarchive: (ev: MouseEvent, sessionID: string) => void;
   onDiscard: (ev: MouseEvent, sessionID: string) => Promise<void> | void;
 }) {
-  const [creatingSingle, setCreatingSingle] = createSignal(false);
   const [projectMenuOpen, setProjectMenuOpen] = createSignal(false);
   const [dropdownFilter, setDropdownFilter] = createSignal("");
   const [showArchived, setShowArchived] = createSignal(false);
@@ -114,18 +113,6 @@ export default function SingleProjectNavView(props: {
     }
   };
 
-  const onCreateThreadSingle = async () => {
-    if (creatingSingle()) return;
-    setCreatingSingle(true);
-    try {
-      await newIsolatedSession();
-    } catch (err) {
-      console.error("new session failed:", err);
-    } finally {
-      setCreatingSingle(false);
-    }
-  };
-
   const inspectFolder = (folderPath: string) => {
     setWorkspace("activeInspectorFolder", folderPath);
     setWorkspace("inspectorTab", "files");
@@ -175,21 +162,6 @@ export default function SingleProjectNavView(props: {
           dirOrWorkspaceID={workspace.rootDir}
           alwaysVisible={true}
         />
-
-        <button
-          type="button"
-          onClick={onCreateThreadSingle}
-          disabled={creatingSingle()}
-          class="shrink-0 p-1.5 rounded-lg text-[var(--accent-primary)] hover:bg-[var(--accent-surface)] transition-colors cursor-pointer"
-          title={t("leftNav.newThread")}
-        >
-          <Show
-            when={!creatingSingle()}
-            fallback={<Spinner class="w-3.5 h-3.5 text-[var(--accent-primary)]" />}
-          >
-            <Icon name="new-session" size="small" />
-          </Show>
-        </button>
       </div>
 
       {/* Multi-Folder Pills when active workspace has >1 folder */}

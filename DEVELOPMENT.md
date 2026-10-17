@@ -772,3 +772,20 @@ Go 网关在转发 `/event` SSE 流时，旁路解析事件并实时更新 `desk
   - 验收记录（构建侧已完成 ✅）：`npm install && npm run build` 与 `npx tsc --noEmit` 均零报错；`./build-desktop.sh` 成功产出 `build/bin/Hoxi.app`（21 MB）；headless 网关经真实浏览器实测，三栏壳 / 顶栏状态 / 左栏新建会话 / 右栏四标签页均正常渲染，零控制台报错，`/api/hoxi/bootstrap`、`/session`、`/event` 请求无失败。
   - 待人工确认：DoD 第 1~5 项的人机交互验收（毛玻璃窗口呈现、Worktree 分支胶囊、流式 `ThoughtBox`/`ToolCard`、`ApprovalGateCard` 拦截、`Apply to Main`）需在 GUI 下逐项走查。
   - 已知偏差：`MemoryBankView.tsx` 为只读视图（OpenCode 未暴露文件写入 HTTP 端点，`GET /file/content` 仅可读，`PUT/POST /file/content` 无路由），故“读写 `project.md`”仅实现读取与刷新。
+
+---
+
+## 12. 跨软件会话接管与本地 CLI 桥接 (`Phase 5`)
+
+详见专项设计蓝图 [`HANDOFF_AND_CLI_BRIDGE.md`](HANDOFF_AND_CLI_BRIDGE.md)。核心能力包含：
+1. **三大本地 CLI 会话扫描与统一 IR (`NormalizedExternalSession`)**：
+   - **Grok CLI (`~/.grok`)**：扫描 `session_search.sqlite`、`summary.json`、`plan.json`、`chat_history.jsonl` 与 `updates.jsonl`。
+   - **Claude Code (`~/.claude`)**：扫描 `~/.claude/projects/<dash-cwd>/*.jsonl`，提取 `user`、`assistant`、`thinking`、`tool_use`、`tool_result`。
+   - **OpenAI Codex (`~/.codex`)**：扫描 `~/.codex/state_*.sqlite` (`threads` 表) 与 `rollout-*.jsonl[.zst]`。
+2. **OpenCode 无损物化与 8 维交接记忆生成 (`desktop_handoff_materialize.go`)**：
+   - 调用 `POST /session?directory=<cwd>` 创建新会话，并将归一化后的历史消息与工具调用写入 OpenCode SQLite (`opencode.db` 的 `message` 与 `part` 表)。
+   - 自动提炼源会话的目标、文件变更、任务计划与最新进展，生成 `.opencode/memory/sessions/<sessionID>.md`，由 `hoxi-memory.js` 在 `experimental.chat.system.transform` 中自动注入 System Prompt，实现跨工具无缝续做任务。
+3. **本地 CLI 模型与协议网关桥接 (`/api/hoxi/local-cli/*` & `/api/hoxi/bridge/grok-cli/v1/*`)**：
+   - 自动探测本机 Grok CLI、Claude Code、Codex 的登录态与模型缓存，支持一键导入。
+   - 内置 Grok CLI 协议转换网关（自动注入 `X-XAI-Token-Auth: xai-grok-cli`、`x-grok-client-version`、`x-grok-model-override`，并支持非流式与流式自适应转换）。
+

@@ -191,6 +191,39 @@ export function buildAllProjects(): ProjectNavEntry[] {
   return entries;
 }
 
+export function findProjectDropTarget(
+  container: HTMLElement,
+  clientY: number,
+  fromPath: string
+): { path: string; position: "before" | "after" } | null {
+  const items = Array.from(
+    container.querySelectorAll<HTMLElement>("[data-project-item]")
+  );
+  if (items.length === 0) return null;
+
+  for (const itemEl of items) {
+    const itemPath = itemEl.getAttribute("data-project-item");
+    if (!itemPath) continue;
+    const headerEl =
+      itemEl.querySelector<HTMLElement>("[data-project-header]") || itemEl;
+    const rect = headerEl.getBoundingClientRect();
+    const itemRect = itemEl.getBoundingClientRect();
+
+    if (clientY <= itemRect.bottom) {
+      const midY = rect.top + rect.height / 2;
+      const position = clientY < midY ? "before" : "after";
+      return itemPath !== fromPath ? { path: itemPath, position } : null;
+    }
+  }
+
+  const lastEl = items[items.length - 1];
+  const lastPath = lastEl.getAttribute("data-project-item");
+  if (lastPath && lastPath !== fromPath) {
+    return { path: lastPath, position: "after" };
+  }
+  return null;
+}
+
 export function SessionNavItem(props: {
   session: SessionInfo;
   active: boolean;

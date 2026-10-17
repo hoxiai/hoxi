@@ -18,10 +18,12 @@ import {
   runSessionCodeAudit,
   selectSession,
   setWorkspace,
+  triggerDesktopNotification,
   upsertMessageInfo,
   upsertMessagePart,
   workspace,
 } from "./store/workspace";
+import { t } from "./i18n";
 
 export default function App() {
   onMount(async () => {
@@ -109,6 +111,7 @@ export default function App() {
             break;
           case "session.idle":
             setWorkspace("statusBySession", evt.properties.sessionID, { type: "idle" });
+            triggerDesktopNotification("Hoxi", t("timeline.turnCompleted"));
             void loadSessionMessages(evt.properties.sessionID).then(() => {
               void runSessionCodeAudit(evt.properties.sessionID, false);
             });
@@ -121,6 +124,7 @@ export default function App() {
             setWorkspace("pendingPermissions", (prev) =>
               prev.some((p) => p.id === evt.properties.id) ? prev : [...prev, evt.properties]
             );
+            triggerDesktopNotification("Hoxi", t("approval.title"));
             break;
           case "permission.replied":
             setWorkspace("pendingPermissions", (prev) =>
@@ -132,6 +136,7 @@ export default function App() {
             setWorkspace("pendingQuestions", (prev) =>
               prev.some((q) => q.id === evt.properties.id) ? prev : [...prev, evt.properties]
             );
+            triggerDesktopNotification("Hoxi", t("approval.questionTitle"));
             break;
           case "question.replied":
           case "question.v2.replied":
