@@ -111,7 +111,7 @@ export default function ContextProgressPill() {
           <button
             type="button"
             onClick={() => setOpen((v) => !v)}
-            class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-mono text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+            class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11.5px] font-mono text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
             title={t("timeline.contextTooltip")}
           >
             {/* Kilo ProgressCircle SVG */}

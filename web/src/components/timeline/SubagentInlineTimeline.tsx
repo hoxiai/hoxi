@@ -1,8 +1,7 @@
 // web/src/components/timeline/SubagentInlineTimeline.tsx
 import { createEffect, createMemo, For, Show } from "solid-js";
-import type { MessagePart } from "../../services/sse-types";
 import {
-  loadSessionMessages,
+  loadSessionMessagesOnly,
   openFileInInspector,
   selectSession,
   workspace,
@@ -27,18 +26,19 @@ export default function SubagentInlineTimeline(props: {
   childSessionID: string;
   parentRunning: boolean;
 }) {
-  // Fetch child session messages on mount and when parent finishes
+  let prevRunning = false;
+
+  // Fetch child session messages once on mount (if not already in store via SSE)
+  // and once when parent task finishes. Live updates arrive via /global/event SSE.
   createEffect(() => {
     const id = props.childSessionID;
     const running = props.parentRunning;
     if (!id) return;
-    void loadSessionMessages(id);
-    if (running) {
-      const timer = setInterval(() => {
-        void loadSessionMessages(id);
-      }, 1500);
-      return () => clearInterval(timer);
+    const existing = workspace.messagesBySession[id];
+    if (!existing || existing.length === 0 || (prevRunning && !running)) {
+      void loadSessionMessagesOnly(id);
     }
+    prevRunning = running;
   });
 
   const childToolParts = createMemo<ToolPart[]>(() => {

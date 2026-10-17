@@ -1,7 +1,19 @@
 // web/src/components/timeline/composer-subcomponents.tsx
-import { For, Show } from "solid-js";
-import { ClipboardPaste, Folder, GitBranch, LoaderCircle, Slash, X } from "lucide-solid";
+import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
+import {
+  Check,
+  ChevronDown,
+  ClipboardPaste,
+  FileDiff,
+  Folder,
+  GitBranch,
+  GitFork,
+  LoaderCircle,
+  Slash,
+  X,
+} from "lucide-solid";
 import { FileIcon } from "../icons";
+import { openDiffInInspector, workspace } from "../../store/workspace";
 import { t } from "../../i18n";
 import type {
   AutocompleteItem,
@@ -14,42 +26,208 @@ export function ComposerSandboxPill(props: {
   switching: boolean;
   busy: boolean;
   onToggle: (target: "local" | "worktree") => void;
+  sessionID?: string | null;
+  forking?: boolean;
+  onFork?: () => void;
 }) {
+  const [open, setOpen] = createSignal(false);
+  let buttonRef: HTMLButtonElement | undefined;
+  let menuRef: HTMLDivElement | undefined;
+
+  createEffect(() => {
+    if (!open()) return;
+    const handleClick = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (
+        menuRef &&
+        !menuRef.contains(target) &&
+        buttonRef &&
+        !buttonRef.contains(target)
+      ) {
+        setOpen(false);
+      }
+    };
+    window.addEventListener("pointerdown", handleClick);
+    onCleanup(() => window.removeEventListener("pointerdown", handleClick));
+  });
+
+  const activeWorktree = createMemo(() => {
+    const id = props.sessionID;
+    return (id && workspace.worktreeBySession[id]) || workspace.worktreeBySession["__root__"];
+  });
+
+  const gitBranch = createMemo(() => activeWorktree()?.branch || "");
+
   return (
-    <div class="inline-flex items-center rounded-full border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-0.5 text-[11px] font-medium select-none">
+    <div class="relative inline-block select-none">
       <button
+        ref={buttonRef}
         type="button"
-        disabled={props.switching || props.busy}
-        onClick={() => props.onToggle("local")}
-        class={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 transition-all cursor-pointer disabled:opacity-50 ${
-          props.mode === "local"
-            ? "bg-[var(--bg-hover)] text-[var(--text-primary)] shadow-2xs"
-            : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+        onClick={() => setOpen((v) => !v)}
+        class={`inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[12px] font-medium transition-colors cursor-pointer ${
+          open()
+            ? "bg-[var(--bg-hover)] text-[var(--text-primary)]"
+            : props.mode === "worktree"
+              ? "text-[var(--accent-primary)] hover:bg-[var(--accent-surface)]"
+              : "text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
         }`}
-        title={t("timeline.sandboxLocalTooltip")}
-      >
-        <Folder size={11} class="shrink-0" />
-        <span>{t("timeline.sandboxLocalMode")}</span>
-      </button>
-      <button
-        type="button"
-        disabled={props.switching || props.busy}
-        onClick={() => props.onToggle("worktree")}
-        class={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 transition-all cursor-pointer disabled:opacity-50 ${
+        title={
           props.mode === "worktree"
-            ? "bg-[var(--accent-surface)] text-[var(--accent-primary)] shadow-2xs"
-            : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
-        }`}
-        title={t("timeline.sandboxWorktreeTooltip")}
+            ? t("timeline.sandboxWorktreeTooltip")
+            : t("timeline.sandboxLocalTooltip")
+        }
       >
         <Show
           when={!props.switching}
-          fallback={<LoaderCircle size={11} class="animate-spin shrink-0" />}
+          fallback={<LoaderCircle size={12} class="animate-spin shrink-0" />}
         >
-          <GitBranch size={11} class="shrink-0" />
+          <Show
+            when={props.mode === "worktree"}
+            fallback={<Folder size={12.5} class="shrink-0 text-[var(--text-muted)]" />}
+          >
+            <GitBranch size={12.5} class="shrink-0 text-[var(--accent-primary)]" />
+          </Show>
         </Show>
-        <span>{t("timeline.sandboxWorktreeMode")}</span>
+
+        <span>
+          {props.mode === "worktree"
+            ? t("timeline.sandboxWorktreeMode")
+            : t("timeline.sandboxLocalMode")}
+        </span>
+
+        <ChevronDown
+          size={11}
+          class={`text-[var(--text-muted)] transition-transform duration-200 ${
+            open() ? "rotate-180" : ""
+          }`}
+        />
       </button>
+
+      <Show when={open()}>
+        <div
+          ref={menuRef}
+          class="absolute bottom-full left-0 mb-2 w-[268px] rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-1.5 shadow-2xl z-50 animate-in fade-in zoom-in-95 duration-100"
+        >
+          {/* Mode Options */}
+          <div class="space-y-0.5">
+            <button
+              type="button"
+              disabled={props.switching || props.busy}
+              onClick={() => {
+                props.onToggle("local");
+                setOpen(false);
+              }}
+              class={`w-full flex items-start gap-2.5 rounded-xl px-2.5 py-2 text-left transition-colors cursor-pointer disabled:opacity-50 ${
+                props.mode === "local"
+                  ? "bg-[var(--accent-surface)] text-[var(--text-primary)]"
+                  : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+              }`}
+            >
+              <div
+                class={`mt-0.5 p-1 rounded-lg shrink-0 ${
+                  props.mode === "local"
+                    ? "bg-[var(--accent-primary)] text-white"
+                    : "bg-[var(--bg-inset)] text-[var(--text-muted)]"
+                }`}
+              >
+                <Folder size={12} />
+              </div>
+              <div class="flex-1 min-w-0">
+                <div class="text-[12px] font-medium">
+                  {t("timeline.sandboxLocalMode")}
+                </div>
+                <p class="mt-0.5 text-[11px] leading-snug text-[var(--text-muted)]">
+                  {t("timeline.sandboxLocalTooltip")}
+                </p>
+              </div>
+              <Show when={props.mode === "local"}>
+                <Check size={14} class="shrink-0 text-[var(--accent-primary)] mt-1" />
+              </Show>
+            </button>
+
+            <button
+              type="button"
+              disabled={props.switching || props.busy}
+              onClick={() => {
+                props.onToggle("worktree");
+                setOpen(false);
+              }}
+              class={`w-full flex items-start gap-2.5 rounded-xl px-2.5 py-2 text-left transition-colors cursor-pointer disabled:opacity-50 ${
+                props.mode === "worktree"
+                  ? "bg-[var(--accent-surface)] text-[var(--text-primary)]"
+                  : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+              }`}
+            >
+              <div
+                class={`mt-0.5 p-1 rounded-lg shrink-0 ${
+                  props.mode === "worktree"
+                    ? "bg-[var(--accent-primary)] text-white"
+                    : "bg-[var(--bg-inset)] text-[var(--text-muted)]"
+                }`}
+              >
+                <GitBranch size={12} />
+              </div>
+              <div class="flex-1 min-w-0">
+                <div class="text-[12px] font-medium">
+                  {t("timeline.sandboxWorktreeMode")}
+                </div>
+                <p class="mt-0.5 text-[11px] leading-snug text-[var(--text-muted)]">
+                  {t("timeline.sandboxWorktreeTooltip")}
+                </p>
+              </div>
+              <Show when={props.mode === "worktree"}>
+                <Check size={14} class="shrink-0 text-[var(--accent-primary)] mt-1" />
+              </Show>
+            </button>
+          </div>
+
+          {/* Git Branch, Diff Review & Session Fork */}
+          <Show when={gitBranch() || props.sessionID}>
+            <div class="mt-1.5 pt-1.5 border-t border-[var(--border-subtle)] space-y-0.5">
+              <Show when={gitBranch()}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    openDiffInInspector();
+                    setOpen(false);
+                  }}
+                  class="w-full flex items-center justify-between gap-2 rounded-xl px-2.5 py-1.5 text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+                >
+                  <div class="flex items-center gap-2 min-w-0">
+                    <FileDiff size={13} class="text-[var(--accent-primary)] shrink-0" />
+                    <span class="truncate">{t("timeline.reviewDiffs")}</span>
+                  </div>
+                  <span class="truncate max-w-[120px] font-mono text-[11px] text-[var(--text-muted)]">
+                    {gitBranch()}
+                  </span>
+                </button>
+              </Show>
+
+              <Show when={props.sessionID && props.onFork}>
+                <button
+                  type="button"
+                  disabled={props.forking}
+                  onClick={() => {
+                    props.onFork?.();
+                    setOpen(false);
+                  }}
+                  class="w-full flex items-center justify-between gap-2 rounded-xl px-2.5 py-1.5 text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] disabled:opacity-50 transition-colors cursor-pointer"
+                >
+                  <div class="flex items-center gap-2 min-w-0">
+                    <Show
+                      when={!props.forking}
+                      fallback={<LoaderCircle size={13} class="animate-spin shrink-0" />}
+                    >
+                      <GitFork size={13} class="text-[var(--text-muted)] shrink-0" />
+                    </Show>
+                    <span class="truncate">{t("timeline.forkHere")}</span>
+                  </div>
+                </button>
+              </Show>
+            </div>
+          </Show>
+        </div>
+      </Show>
     </div>
   );
 }

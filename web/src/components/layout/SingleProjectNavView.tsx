@@ -81,7 +81,9 @@ export default function SingleProjectNavView(props: {
 
   const filteredSessions = createMemo(() => {
     const q = props.filterQuery.trim().toLowerCase();
-    const raw = [...workspace.sessions].sort((a, b) => b.time.created - a.time.created);
+    const raw = workspace.sessions
+      .filter((s) => !s.parentID)
+      .sort((a, b) => b.time.created - a.time.created);
     if (!q) return raw;
     return raw.filter(
       (s) =>

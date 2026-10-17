@@ -1,18 +1,9 @@
 import { createEffect, createMemo, createSignal, Index, onCleanup, onMount, Show } from "solid-js";
-import {
-  BarChart3,
-  ChevronDown,
-  Coins,
-  FileCode2,
-  KeyRound,
-  RefreshCw,
-  Zap,
-} from "lucide-solid";
+import { BarChart3, RefreshCw } from "lucide-solid";
 import {
   computeDailyDevPulseStats,
   isDailyPulseSyncing,
   openDiffInInspector,
-  openProviderModal,
   refreshDailyDevPulse,
   workspace,
 } from "../../store/workspace";
@@ -34,10 +25,6 @@ function formatUsd(amount: number): string {
   return "<$0.001";
 }
 
-function formatNetLoc(net: number): string {
-  return net > 0 ? `+${net.toLocaleString()}` : net.toLocaleString();
-}
-
 export default function DevPulsePopover() {
   const [open, setOpen] = createSignal(false);
   let triggerRef: HTMLDivElement | undefined;
@@ -46,7 +33,7 @@ export default function DevPulsePopover() {
   const stats = createMemo(() => computeDailyDevPulseStats());
 
   const modelsUsed = createMemo(
-    () => stats().modelsUsed,
+    () => stats().modelsUsed.slice(0, 5),
     [],
     {
       equals: (prev, next) =>
@@ -55,9 +42,7 @@ export default function DevPulsePopover() {
           (item, i) =>
             item.providerID === next[i].providerID &&
             item.modelID === next[i].modelID &&
-            item.totalTokens === next[i].totalTokens &&
-            item.cost === next[i].cost &&
-            item.turns === next[i].turns
+            item.totalTokens === next[i].totalTokens
         ),
     }
   );
@@ -75,7 +60,7 @@ export default function DevPulsePopover() {
 
   createEffect(() => {
     if (!open()) return;
-    void refreshDailyDevPulse(true);
+    void refreshDailyDevPulse(false);
 
     const handlePointerDown = (ev: MouseEvent) => {
       const target = ev.target as Node;
@@ -100,52 +85,38 @@ export default function DevPulsePopover() {
       class="relative inline-flex items-center"
       style={{ "--wails-draggable": "no-drag" } as any}
     >
-      {/* Clean Header Pill */}
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        class={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] transition-colors cursor-pointer ${
+        class={`inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[12px] transition-colors cursor-pointer ${
           open()
-            ? "border-[var(--accent-border)] bg-[var(--accent-surface)] text-[var(--text-primary)]"
-            : "border-transparent bg-[var(--bg-inset)] hover:bg-[var(--bg-hover)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+            ? "bg-[var(--bg-hover)] text-[var(--text-primary)]"
+            : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
         }`}
         title={t("header.pulseTooltip")}
       >
-        <BarChart3 size={11.5} class="text-[var(--accent-primary)] shrink-0" />
-        <Show when={stats().totalTokens > 0} fallback={<span>{t("header.pulseBtnLabel")}</span>}>
-          <span class="font-mono font-medium text-[var(--text-primary)]">
+        <BarChart3 size={13.5} class="text-[var(--accent-primary)] shrink-0" />
+        <Show when={stats().totalTokens > 0}>
+          <span class="font-mono text-[11.5px] font-medium text-[var(--text-secondary)]">
             {formatCompactTokens(stats().totalTokens)}
           </span>
-          <Show when={stats().totalCost > 0}>
-            <span class="text-[var(--text-faint)]">·</span>
-            <span class="font-mono text-[var(--text-secondary)]">
-              {formatUsd(stats().totalCost)}
-            </span>
-          </Show>
         </Show>
-        <ChevronDown size={11} class="opacity-65 shrink-0" />
       </button>
 
-      {/* Clean, Spacious Daily Stats Popover */}
       <Show when={open()}>
         <div
           ref={popoverRef}
-          class="absolute right-0 top-full mt-2 z-50 w-[348px] rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-4 shadow-2xl text-xs space-y-3.5 select-text"
+          class="absolute right-0 top-full mt-2 z-50 w-[264px] rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-3.5 shadow-xl text-xs space-y-3 select-text"
         >
           {/* Header */}
           <div class="flex items-center justify-between">
-            <div class="flex items-center gap-2">
-              <span class="font-semibold text-[13px] text-[var(--text-primary)]">
-                {t("header.pulseTitle")}
-              </span>
-              <span class="rounded-md bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[10.5px] text-[var(--text-muted)]">
-                {stats().dateKey}
-              </span>
-            </div>
+            <span class="font-medium text-[12.5px] text-[var(--text-primary)]">
+              {t("header.pulseTitle")}
+            </span>
             <button
               type="button"
               onClick={() => void refreshDailyDevPulse(true)}
-              class="inline-flex items-center justify-center h-6 w-6 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+              class="inline-flex items-center justify-center h-6 w-6 rounded-md text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
               title={t("header.pulseRefreshTooltip")}
             >
               <RefreshCw
@@ -155,138 +126,72 @@ export default function DevPulsePopover() {
             </button>
           </div>
 
-          {/* 2x2 Core Stat Cards */}
-          <div class="grid grid-cols-2 gap-2.5">
-            {/* 1. Today's Tokens */}
-            <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)]/60 p-3">
-              <div class="flex items-center justify-between text-[11px] text-[var(--text-muted)]">
-                <span>{t("header.pulseTodayTokens")}</span>
-                <Zap size={12} class="text-[var(--accent-primary)]" />
-              </div>
+          {/* 2x2 Minimal Metrics */}
+          <div class="grid grid-cols-2 gap-2">
+            <div class="rounded-lg bg-[var(--bg-inset)]/60 px-2.5 py-2">
+              <div class="text-[11px] text-[var(--text-muted)]">{t("header.pulseTodayTokens")}</div>
               <div
-                class="mt-1.5 font-mono text-[20px] font-bold tracking-tight text-[var(--text-primary)] leading-none"
+                class="mt-1 font-mono text-[16px] font-semibold text-[var(--text-primary)] leading-tight"
                 title={stats().totalTokens.toLocaleString()}
               >
                 {formatCompactTokens(stats().totalTokens)}
               </div>
-              <div class="mt-2 font-mono text-[10.5px] text-[var(--text-muted)] truncate">
-                {t("header.pulseCacheHitRate", { rate: stats().cacheHitRate })} ·{" "}
-                {t("header.pulseModelTurns", { count: stats().todayTurnsCount })}
-              </div>
             </div>
 
-            {/* 2. Today's Spend */}
-            <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)]/60 p-3">
-              <div class="flex items-center justify-between text-[11px] text-[var(--text-muted)]">
-                <span>{t("header.pulseTodayCost")}</span>
-                <Coins size={12} class="text-amber-500" />
-              </div>
-              <div class="mt-1.5 font-mono text-[20px] font-bold tracking-tight text-[var(--text-primary)] leading-none">
+            <div class="rounded-lg bg-[var(--bg-inset)]/60 px-2.5 py-2">
+              <div class="text-[11px] text-[var(--text-muted)]">{t("header.pulseTodayCost")}</div>
+              <div class="mt-1 font-mono text-[16px] font-semibold text-[var(--text-primary)] leading-tight">
                 {formatUsd(stats().totalCost)}
               </div>
-              <div class="mt-2 font-mono text-[10.5px] text-[var(--text-muted)] truncate">
-                {t("header.pulseLegendInput", { val: formatCompactTokens(stats().inputTokens) })} ·{" "}
-                {t("header.pulseLegendOutput", {
-                  val: formatCompactTokens(stats().outputTokens + stats().reasoningTokens),
-                })}
-              </div>
             </div>
 
-            {/* 3. Lines Added */}
             <button
               type="button"
               onClick={() => {
                 setOpen(false);
                 openDiffInInspector();
               }}
-              class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)]/60 hover:bg-[var(--bg-hover)] p-3 text-left transition-colors cursor-pointer"
+              class="rounded-lg bg-[var(--bg-inset)]/60 hover:bg-[var(--bg-hover)] px-2.5 py-2 text-left transition-colors cursor-pointer"
             >
-              <div class="flex items-center justify-between text-[11px] text-[var(--text-muted)]">
-                <span>{t("header.pulseLinesAdded")}</span>
-                <FileCode2 size={12} class="text-emerald-500" />
-              </div>
-              <div class="mt-1.5 font-mono text-[20px] font-bold tracking-tight text-emerald-500 leading-none">
+              <div class="text-[11px] text-[var(--text-muted)]">{t("header.pulseLinesAdded")}</div>
+              <div class="mt-1 font-mono text-[16px] font-semibold text-emerald-500 leading-tight">
                 +{stats().totalAdditions.toLocaleString()}
               </div>
-              <div class="mt-2 font-mono text-[10.5px] text-[var(--text-muted)] truncate">
-                {t("header.pulseCommitsToday", { count: stats().todayCommits })}
-              </div>
             </button>
 
-            {/* 4. Lines Deleted */}
             <button
               type="button"
               onClick={() => {
                 setOpen(false);
                 openDiffInInspector();
               }}
-              class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)]/60 hover:bg-[var(--bg-hover)] p-3 text-left transition-colors cursor-pointer"
+              class="rounded-lg bg-[var(--bg-inset)]/60 hover:bg-[var(--bg-hover)] px-2.5 py-2 text-left transition-colors cursor-pointer"
             >
-              <div class="flex items-center justify-between text-[11px] text-[var(--text-muted)]">
-                <span>{t("header.pulseLinesDeleted")}</span>
-                <FileCode2 size={12} class="text-rose-500" />
-              </div>
-              <div class="mt-1.5 font-mono text-[20px] font-bold tracking-tight text-rose-500 leading-none">
+              <div class="text-[11px] text-[var(--text-muted)]">{t("header.pulseLinesDeleted")}</div>
+              <div class="mt-1 font-mono text-[16px] font-semibold text-rose-500 leading-tight">
                 -{stats().totalDeletions.toLocaleString()}
               </div>
-              <div class="mt-2 font-mono text-[10.5px] text-[var(--text-muted)] truncate">
-                {t("header.pulseLinesDeletedSub", {
-                  net: formatNetLoc(stats().netLines),
-                  files: stats().changedFilesCount,
-                })}
-              </div>
             </button>
           </div>
 
-          {/* Models Used Today (Clean & Minimal) */}
+          {/* Compact Models List */}
           <Show when={modelsUsed().length > 0}>
-            <div class="space-y-1.5 pt-0.5">
-              <div class="flex items-center justify-between px-0.5 text-[11px] text-[var(--text-muted)]">
-                <span>{t("header.pulseSectionModels")}</span>
-                <Show when={stats().toolCallsTotal > 0}>
-                  <span class="font-mono text-[10.5px]">
-                    {t("header.pulseMetricTools")}: {stats().toolSuccessRate}% ({stats().toolCallsTotal})
-                  </span>
-                </Show>
-              </div>
-              <div class="space-y-1">
-                <Index each={modelsUsed()}>
-                  {(m) => (
-                    <div class="flex items-center justify-between gap-2 rounded-xl bg-[var(--bg-inset)]/50 px-3 py-2 text-[11.5px]">
-                      <div class="flex items-center gap-2 min-w-0 flex-1">
-                        <ProviderIcon id={m().providerID} class="w-3.5 h-3.5 shrink-0" />
-                        <span class="font-mono truncate text-[var(--text-primary)]">{m().modelID}</span>
-                      </div>
-                      <div class="flex items-center gap-2.5 shrink-0 font-mono text-[11px] text-[var(--text-muted)]">
-                        <span class="text-[var(--text-secondary)] font-medium">
-                          {formatCompactTokens(m().totalTokens)}
-                        </span>
-                        <span class="text-amber-500 w-12 text-right">{formatUsd(m().cost)}</span>
-                      </div>
+            <div class="pt-2.5 border-t border-[var(--border-subtle)] space-y-1">
+              <Index each={modelsUsed()}>
+                {(m) => (
+                  <div class="flex items-center justify-between gap-2 px-1 py-1 text-[11.5px]">
+                    <div class="flex items-center gap-1.5 min-w-0 flex-1">
+                      <ProviderIcon id={m().providerID} class="w-3.5 h-3.5 shrink-0" />
+                      <span class="font-mono truncate text-[var(--text-secondary)]">{m().modelID}</span>
                     </div>
-                  )}
-                </Index>
-              </div>
+                    <span class="font-mono text-[11px] text-[var(--text-muted)] shrink-0">
+                      {formatCompactTokens(m().totalTokens)}
+                    </span>
+                  </div>
+                )}
+              </Index>
             </div>
           </Show>
-
-          {/* Footer: Quick link to Models & Providers Configuration */}
-          <div class="pt-2.5 border-t border-[var(--border-subtle)] flex items-center justify-between gap-2">
-            <span class="text-[11px] text-[var(--text-muted)]">
-              {t("header.pulseConnectedProviders", { count: workspace.connectedProviders.length })}
-            </span>
-            <button
-              type="button"
-              onClick={() => {
-                setOpen(false);
-                openProviderModal("providers");
-              }}
-              class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-strong)] bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] px-2.5 py-1 text-[11px] font-medium text-[var(--text-primary)] transition-colors cursor-pointer"
-            >
-              <KeyRound size={11} class="text-[var(--accent-primary)]" />
-              <span>{t("header.pulseConfigureModelsBtn")}</span>
-            </button>
-          </div>
         </div>
       </Show>
     </div>

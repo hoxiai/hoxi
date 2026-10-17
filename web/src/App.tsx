@@ -4,6 +4,7 @@ import { hoxiAPI } from "./services/api";
 import { connectEventStream } from "./services/sse";
 import {
   applyPartDeltaBatch,
+  applyStreamFrameBatch,
   isSessionArchived,
   loadAgents,
   loadProjects,
@@ -16,6 +17,7 @@ import {
   removeSessionFromStore,
   replaceSession,
   runSessionCodeAudit,
+  scheduleRefreshWorktreeStatus,
   selectSession,
   setWorkspace,
   triggerDesktopNotification,
@@ -51,10 +53,7 @@ export default function App() {
       const sessions = await hoxiAPI.listSessions();
       setWorkspace("sessions", sessions);
 
-      // Restore each session's worktree & git branch/diff status
-      await Promise.allSettled(sessions.map((session) => refreshWorktreeStatus(session.id)));
-
-      const unarchived = sessions.filter((s) => !isSessionArchived(s));
+      const unarchived = sessions.filter((s) => !s.parentID && !isSessionArchived(s));
       if (unarchived.length > 0) {
         const mostRecent = [...unarchived].sort((a, b) => b.time.created - a.time.created)[0];
         await selectSession(mostRecent.id);
@@ -72,6 +71,7 @@ export default function App() {
         }
       },
       onDeltaBatch: applyPartDeltaBatch,
+      onFrameBatch: applyStreamFrameBatch,
       onEvent: (evt) => {
         switch (evt.type) {
           case "message.updated":
@@ -109,16 +109,23 @@ export default function App() {
               );
             }
             break;
-          case "session.idle":
-            setWorkspace("statusBySession", evt.properties.sessionID, { type: "idle" });
-            triggerDesktopNotification("Hoxi", t("timeline.turnCompleted"));
-            void loadSessionMessages(evt.properties.sessionID).then(() => {
-              void runSessionCodeAudit(evt.properties.sessionID, false);
-            });
+          case "session.idle": {
+            const sid = evt.properties.sessionID;
+            setWorkspace("statusBySession", sid, { type: "idle" });
+            const isChild = Boolean(workspace.sessions.find((s) => s.id === sid)?.parentID);
+            if (!isChild) {
+              triggerDesktopNotification("Hoxi", t("timeline.turnCompleted"));
+              void loadSessionMessages(sid).then(() => {
+                void runSessionCodeAudit(sid, false);
+              });
+            }
             break;
+          }
           case "session.diff":
             setWorkspace("diffsBySession", evt.properties.sessionID, evt.properties.diff);
-            void refreshWorktreeStatus(evt.properties.sessionID);
+            if (evt.properties.sessionID === workspace.activeSessionID) {
+              scheduleRefreshWorktreeStatus(evt.properties.sessionID, 600);
+            }
             break;
           case "permission.asked":
             setWorkspace("pendingPermissions", (prev) =>

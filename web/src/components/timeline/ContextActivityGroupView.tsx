@@ -213,7 +213,7 @@ export default function ContextActivityGroupView(props: {
               const partRunning =
                 toolPart.state.status === "pending" || toolPart.state.status === "running";
               return (
-                <div class="flex items-center gap-2 text-[12px] kilo-rolling-row min-w-0">
+                <div class="flex items-center gap-2 text-[12.5px] kilo-rolling-row min-w-0">
                   <Show
                     when={info.filePath}
                     fallback={
@@ -231,11 +231,11 @@ export default function ContextActivityGroupView(props: {
                   <span class="text-[var(--text-muted)] shrink-0">
                     <TextShimmer text={info.action} active={partRunning} />
                   </span>
-                  <span class="font-mono text-[11.5px] font-medium text-[var(--text-primary)] truncate">
+                  <span class="font-mono text-[12px] font-medium text-[var(--text-primary)] truncate">
                     {info.target}
                   </span>
                   <Show when={info.detail}>
-                    <span class="font-mono text-[11px] text-[var(--text-faint)] truncate">
+                    <span class="font-mono text-[11.5px] text-[var(--text-faint)] truncate">
                       {info.detail}/
                     </span>
                   </Show>
@@ -259,7 +259,7 @@ export default function ContextActivityGroupView(props: {
                       onClick={() => {
                         if (info.filePath) openFileInInspector(info.filePath);
                       }}
-                      class={`flex items-center justify-between gap-2 rounded-lg px-2.5 py-1 text-[12px] hover:bg-[var(--bg-hover)] transition-colors ${
+                      class={`flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-[12.5px] hover:bg-[var(--bg-hover)] transition-colors ${
                         info.filePath ? "cursor-pointer" : ""
                       }`}
                     >
@@ -282,11 +282,11 @@ export default function ContextActivityGroupView(props: {
                           )}
                         </Show>
                         <span class="text-[var(--text-secondary)] shrink-0">{info.action}</span>
-                        <span class="font-mono text-[11.5px] font-medium text-[var(--text-primary)] hover:text-[var(--accent-primary)] truncate">
+                        <span class="font-mono text-[12px] font-medium text-[var(--text-primary)] hover:text-[var(--accent-primary)] truncate">
                           {info.target}
                         </span>
                         <Show when={info.detail}>
-                          <span class="hidden sm:inline font-mono text-[11px] text-[var(--text-faint)] truncate">
+                          <span class="hidden sm:inline font-mono text-[11.5px] text-[var(--text-faint)] truncate">
                             {info.detail}/
                           </span>
                         </Show>
@@ -294,7 +294,7 @@ export default function ContextActivityGroupView(props: {
                       <div class="flex items-center gap-1.5 shrink-0">
                         <For each={info.pills}>
                           {(pill) => (
-                            <span class="rounded bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-muted)]">
+                            <span class="rounded bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[11px] text-[var(--text-muted)]">
                               {pill}
                             </span>
                           )}

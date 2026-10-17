@@ -50,22 +50,16 @@ export default function BranchManagerPopover() {
     const id = sessionID();
     return id ? workspace.worktreeBySession[id] : undefined;
   });
-
   const rootWorktree = createMemo(() => workspace.worktreeBySession["__root__"]);
-
   const isIsolated = createMemo(() => Boolean(activeWorktree()?.isolated));
 
-  const displayBranch = createMemo(() => {
-    if (isIsolated()) {
-      return activeWorktree()?.branch || "";
-    }
-    return activeWorktree()?.branch || rootWorktree()?.branch || rootBranch() || "";
-  });
-
-  const regularBranches = createMemo(() =>
-    branches().filter((b) => !b.isSandbox)
+  const displayBranch = createMemo(() =>
+    isIsolated()
+      ? activeWorktree()?.branch || ""
+      : activeWorktree()?.branch || rootWorktree()?.branch || rootBranch() || ""
   );
 
+  const regularBranches = createMemo(() => branches().filter((b) => !b.isSandbox));
   const isPromotedBranch = createMemo(() => {
     const br = activeWorktree()?.branch || "";
     return Boolean(br && !br.startsWith("hoxi/"));
@@ -91,32 +85,19 @@ export default function BranchManagerPopover() {
     }
   };
 
-  // Refresh root worktree status on mount or when rootDir changes
   createEffect(() => {
-    const dir = workspace.rootDir;
-    if (dir) {
-      void refreshWorktreeStatus("__root__");
-    }
+    if (workspace.rootDir) void refreshWorktreeStatus("__root__");
   });
 
   createEffect(() => {
     if (!open()) return;
     void fetchBranchList();
     const curBr = activeWorktree()?.branch || "";
-    if (curBr && !curBr.startsWith("hoxi/")) {
-      setRenameDraft(curBr);
-    } else {
-      setRenameDraft("");
-    }
+    setRenameDraft(curBr && !curBr.startsWith("hoxi/") ? curBr : "");
 
     const handlePointerDown = (ev: MouseEvent) => {
       const target = ev.target as Node;
-      if (
-        popoverRef &&
-        !popoverRef.contains(target) &&
-        triggerRef &&
-        !triggerRef.contains(target)
-      ) {
+      if (popoverRef && !popoverRef.contains(target) && triggerRef && !triggerRef.contains(target)) {
         setOpen(false);
       }
     };
@@ -131,187 +112,134 @@ export default function BranchManagerPopover() {
     });
   });
 
-  const onQuickApply = async () => {
-    const s = session();
-    if (!s || busyAction()) return;
-    setBusyAction("quick-apply");
+  const runAction = async (key: string, fn: () => Promise<void>, fallbackErr: string) => {
+    if (busyAction()) return;
+    setBusyAction(key);
     setErrorMsg(null);
     try {
-      await applySessionWorktree(s.id, appSettings.worktreeApplyMode);
-      showToast(t("header.appliedSuccess"));
+      await fn();
     } catch (err: any) {
-      console.error(err);
-      showToast(t("header.applyFailed"));
+      setErrorMsg(err?.message || fallbackErr);
     } finally {
       setBusyAction(null);
     }
   };
 
-  const onApplyAndExit = async () => {
+  const onApplyAndExit = () => {
     const s = session();
-    if (!s || busyAction()) return;
-    setBusyAction("apply-exit");
-    setErrorMsg(null);
-    try {
-      await applyAndExitSessionWorktree(
-        s.id,
-        appSettings.worktreeApplyMode,
-        isPromotedBranch()
-      );
-      setOpen(false);
-      showToast(t("header.appliedSuccess"));
-    } catch (err: any) {
-      setErrorMsg(err?.message || t("header.applyFailed"));
-    } finally {
-      setBusyAction(null);
-    }
+    if (!s) return;
+    return runAction(
+      "apply-exit",
+      async () => {
+        await applyAndExitSessionWorktree(s.id, appSettings.worktreeApplyMode, isPromotedBranch());
+        setOpen(false);
+        showToast(t("header.appliedSuccess"));
+      },
+      t("header.applyFailed")
+    );
   };
 
-  const onApplyKeepSandbox = async () => {
+  const onApplyKeepSandbox = () => {
     const s = session();
-    if (!s || busyAction()) return;
-    setBusyAction("apply-keep");
-    setErrorMsg(null);
-    try {
-      await applySessionWorktree(s.id, appSettings.worktreeApplyMode);
-      setOpen(false);
-      showToast(t("header.appliedSuccess"));
-    } catch (err: any) {
-      setErrorMsg(err?.message || t("header.applyFailed"));
-    } finally {
-      setBusyAction(null);
-    }
+    if (!s) return;
+    return runAction(
+      "apply-keep",
+      async () => {
+        await applySessionWorktree(s.id, appSettings.worktreeApplyMode);
+        setOpen(false);
+        showToast(t("header.appliedSuccess"));
+      },
+      t("header.applyFailed")
+    );
   };
 
-  const onRenameSandboxBranch = async () => {
+  const onRenameSandboxBranch = () => {
     const s = session();
     const cleaned = renameDraft().trim();
-    if (!s || !cleaned || busyAction()) return;
-    setBusyAction("rename");
-    setErrorMsg(null);
-    try {
-      await renameSessionBranch(s.id, cleaned);
-      await fetchBranchList();
-    } catch (err: any) {
-      setErrorMsg(err?.message || "Rename failed");
-    } finally {
-      setBusyAction(null);
-    }
+    if (!s || !cleaned) return;
+    return runAction(
+      "rename",
+      async () => {
+        await renameSessionBranch(s.id, cleaned);
+        await fetchBranchList();
+      },
+      "Rename failed"
+    );
   };
 
-  const onExitSandbox = async (keepBranch: boolean) => {
+  const onExitSandbox = (keepBranch: boolean) => {
     const s = session();
-    if (!s || busyAction()) return;
-    setBusyAction(keepBranch ? "keep-exit" : "discard-exit");
-    setErrorMsg(null);
-    try {
-      await exitSessionWorktree(s.id, keepBranch);
-      setOpen(false);
-    } catch (err: any) {
-      setErrorMsg(err?.message || "Exit sandbox failed");
-    } finally {
-      setBusyAction(null);
-    }
+    if (!s) return;
+    return runAction(
+      keepBranch ? "keep-exit" : "discard-exit",
+      async () => {
+        await exitSessionWorktree(s.id, keepBranch);
+        setOpen(false);
+      },
+      "Exit sandbox failed"
+    );
   };
 
-  const onCheckoutBranch = async (branchName: string, create = false) => {
+  const onCheckoutBranch = (branchName: string, create = false) => {
     const cleaned = branchName.trim();
-    if (!cleaned || busyAction()) return;
-    setBusyAction(create ? "create-branch" : `checkout:${cleaned}`);
-    setErrorMsg(null);
-    try {
-      await checkoutLocalBranch(cleaned, create);
-      if (create) setNewBranchName("");
-      await fetchBranchList();
-      setOpen(false);
-    } catch (err: any) {
-      setErrorMsg(err?.message || "Checkout failed");
-    } finally {
-      setBusyAction(null);
-    }
+    if (!cleaned) return;
+    return runAction(
+      create ? "create-branch" : `checkout:${cleaned}`,
+      async () => {
+        await checkoutLocalBranch(cleaned, create);
+        if (create) setNewBranchName("");
+        await fetchBranchList();
+        setOpen(false);
+      },
+      "Checkout failed"
+    );
   };
 
-  const onEnableSandbox = async () => {
-    if (busyAction()) return;
-    setBusyAction("enable-sandbox");
-    setErrorMsg(null);
-    try {
-      await switchActiveSessionSandboxMode("worktree");
-      setOpen(false);
-    } catch (err: any) {
-      setErrorMsg(err?.message || "Enable sandbox failed");
-    } finally {
-      setBusyAction(null);
-    }
-  };
+  const onEnableSandbox = () =>
+    runAction(
+      "enable-sandbox",
+      async () => {
+        await switchActiveSessionSandboxMode("worktree");
+        setOpen(false);
+      },
+      "Enable sandbox failed"
+    );
 
-  const onPruneSandboxes = async () => {
-    if (busyAction()) return;
-    setBusyAction("prune");
-    setErrorMsg(null);
-    try {
-      const exclude = isIsolated() ? sessionID() || undefined : undefined;
-      const res = await hoxiAPI.pruneSandboxes(exclude, workspace.rootDir || undefined);
-      await fetchBranchList();
-      await refreshWorktreeStatus("__root__");
-      showToast(t("header.prunedSuccess", { count: res.removedCount }));
-    } catch (err: any) {
-      setErrorMsg(err?.message || "Clean up failed");
-    } finally {
-      setBusyAction(null);
-    }
-  };
+  const onPruneSandboxes = () =>
+    runAction(
+      "prune",
+      async () => {
+        const exclude = isIsolated() ? sessionID() || undefined : undefined;
+        const res = await hoxiAPI.pruneSandboxes(exclude, workspace.rootDir || undefined);
+        await fetchBranchList();
+        await refreshWorktreeStatus("__root__");
+        showToast(t("header.prunedSuccess", { count: res.removedCount }));
+      },
+      "Clean up failed"
+    );
 
   return (
     <Show when={displayBranch()}>
+      <span class="text-[var(--text-faint)]">/</span>
       <div
         ref={triggerRef}
         class="relative inline-flex items-center gap-1.5"
         style={{ "--wails-draggable": "no-drag" } as any}
       >
-        {/* Unified Branch / Sandbox Trigger Pill */}
         <button
           type="button"
           onClick={() => setOpen((v) => !v)}
-          class={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-mono transition-colors cursor-pointer ${
+          class={`inline-flex items-center gap-1 rounded-lg px-2 py-0.5 text-[12px] font-mono transition-colors cursor-pointer ${
             isIsolated()
-              ? "border-[var(--accent-border)] bg-[var(--accent-surface)] text-[var(--accent-primary)] hover:opacity-90"
-              : "border-[var(--border-subtle)] bg-[var(--bg-inset)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
+              ? "text-[var(--accent-primary)] hover:bg-[var(--accent-surface)]"
+              : "text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
           }`}
           title={t("header.branchMenuTooltip")}
         >
-          <GitBranch size={11} class="shrink-0" />
-          <Show when={isIsolated()}>
-            <span class="rounded bg-[var(--accent-primary)]/15 px-1 py-[0.5px] font-sans text-[9.5px] font-semibold leading-tight text-[var(--accent-primary)]">
-              {t("header.sandboxBadge")}
-            </span>
-          </Show>
+          <GitBranch size={12} class="shrink-0" />
           <span class="truncate max-w-[160px]">{displayBranch()}</span>
-          <ChevronDown size={11} class="shrink-0 opacity-70" />
+          <ChevronDown size={11} class="shrink-0 opacity-65" />
         </button>
-
-        {/* Quick Apply Button — ONLY shown when active session is an isolated Worktree Sandbox */}
-        <Show when={isIsolated()}>
-          <button
-            type="button"
-            class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-strong)] bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] px-2.5 py-1 text-[11px] text-[var(--text-primary)] disabled:opacity-50 transition-colors shadow-2xs cursor-pointer"
-            disabled={!!busyAction()}
-            onClick={() => void onQuickApply()}
-            title={t("header.applyTooltip")}
-          >
-            <Show
-              when={busyAction() !== "quick-apply"}
-              fallback={<LoaderCircle size={11} class="animate-spin" />}
-            >
-              <GitMerge size={11} />
-            </Show>
-            <span>
-              {busyAction() === "quick-apply"
-                ? t("header.applying")
-                : t("header.applyToMain")}
-            </span>
-          </button>
-        </Show>
 
         <Show when={toastNote()}>
           <span class="text-[11px] text-[var(--ok-text)] whitespace-nowrap">

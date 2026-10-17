@@ -7,7 +7,6 @@ import MessageStream from "../timeline/MessageStream";
 import Composer from "../timeline/Composer";
 import InspectorPane from "../inspector/InspectorPane";
 import ProviderModal from "../models/ProviderModal";
-import MultiModelArenaModal from "../models/MultiModelArenaModal";
 import SettingsModal from "../settings/SettingsModal";
 import { setWorkspace, workspace } from "../../store/workspace";
 
@@ -104,7 +103,6 @@ export default function ThreePaneShell() {
       <WorkspaceModal />
       <ExternalHandoffModal />
       <ProviderModal />
-      <MultiModelArenaModal />
       <SettingsModal />
     </div>
   );

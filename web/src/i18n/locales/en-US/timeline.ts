@@ -158,5 +158,11 @@ export const timeline: TimelineI18n = {
   sandboxWorktreeMode: "Worktree",
   sandboxLocalTooltip: "Work directly in the current local branch (no new branch created)",
   sandboxWorktreeTooltip: "Create an isolated Git branch & worktree sandbox for this session",
+  loadEarlierTurns: "Load {count} earlier messages",
+  loadAllEarlierTurns: "Show all ({total})",
+  hiddenTurnsHint: "{count} earlier messages hidden for performance · Scroll up or click to load",
+  completedWorkSummary: "Executed {count} intermediate steps",
+  expandTurnSteps: "Show steps",
+  collapseTurnSteps: "Hide steps",
 };
 

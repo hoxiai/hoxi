@@ -1,6 +1,7 @@
 import { produce } from "solid-js/store";
 import { t } from "../i18n";
 import { hoxiAPI } from "../services/api";
+import type { StreamFrameBatch } from "../services/sse";
 import type { MessageInfo, MessagePart } from "../services/sse-types";
 import {
   recordAssistantTurnUpdated,
@@ -16,9 +17,9 @@ import { buildWorkspaceFoldersSystemPrompt } from "./workspace-projects";
 import {
   loadSessionMessages,
   newIsolatedSession,
-  refreshWorktreeStatus,
   renameSessionTitle,
   replaceSession,
+  scheduleRefreshWorktreeStatus,
   selectSession,
   sessionDirectory,
 } from "./workspace-sessions";
@@ -219,33 +220,73 @@ export async function retryLastUserPrompt(sessionID?: string | null): Promise<vo
   }
 }
 
+function isMutatingTool(toolName?: string): boolean {
+  const t = (toolName || "").toLowerCase();
+  return (
+    t === "edit" ||
+    t === "write" ||
+    t === "patch" ||
+    t === "multiedit" ||
+    t === "apply_patch" ||
+    t === "bash" ||
+    t === "shell"
+  );
+}
+
+function mutateUpsertInfo(state: typeof workspace, info: MessageInfo) {
+  const list = (state.messagesBySession[info.sessionID] ||= []);
+  if (info.role === "user" && !info.id.startsWith("optimistic_")) {
+    const optIdx = list.findIndex((m) => m.info.id.startsWith("optimistic_"));
+    if (optIdx >= 0) {
+      list.splice(optIdx, 1);
+    }
+  }
+  const idx = list.findIndex((m) => m.info.id === info.id);
+  if (idx >= 0) {
+    Object.assign(list[idx].info, info);
+  } else {
+    list.push({ info, parts: [] });
+  }
+}
+
+function mutateUpsertPart(state: typeof workspace, part: MessagePart) {
+  const list = (state.messagesBySession[part.sessionID] ||= []);
+  let turn = list.find((m) => m.info.id === part.messageID);
+  if (!turn) {
+    turn = {
+      info: {
+        id: part.messageID,
+        sessionID: part.sessionID,
+        role: "assistant",
+        time: { created: Date.now() },
+      },
+      parts: [],
+    };
+    list.push(turn);
+  }
+  const pIdx = turn.parts.findIndex((p) => p.id === part.id);
+  if (pIdx >= 0) {
+    Object.assign(turn.parts[pIdx], part);
+  } else {
+    turn.parts.push(part);
+  }
+}
+
 export function upsertMessageInfo(info: MessageInfo) {
   recordAssistantTurnUpdated(info);
-  setWorkspace(
-    produce((state) => {
-      const list = (state.messagesBySession[info.sessionID] ||= []);
-      // Remove any temporary optimistic user message once real user message arrives
-      if (info.role === "user" && !info.id.startsWith("optimistic_")) {
-        const optIdx = list.findIndex((m) => m.info.id.startsWith("optimistic_"));
-        if (optIdx >= 0) {
-          list.splice(optIdx, 1);
-        }
-      }
-      const idx = list.findIndex((m) => m.info.id === info.id);
-      if (idx >= 0) {
-        Object.assign(list[idx].info, info);
-      } else {
-        list.push({ info, parts: [] });
-      }
-    })
-  );
+  setWorkspace(produce((state) => mutateUpsertInfo(state, info)));
 }
 
 export function upsertMessagePart(part: MessagePart) {
   recordFirstToken(part.sessionID);
   recordToolPartUpdate(part);
-  if (part.type === "tool" && part.state.status === "completed") {
-    void refreshWorktreeStatus(part.sessionID);
+  if (
+    part.type === "tool" &&
+    part.state.status === "completed" &&
+    part.sessionID === workspace.activeSessionID &&
+    isMutatingTool(part.tool)
+  ) {
+    scheduleRefreshWorktreeStatus(part.sessionID, 900);
   }
   const interruptedAt = lastInterruptAtBySession.get(part.sessionID) || 0;
   const isActivelyStreamingPart =
@@ -259,30 +300,7 @@ export function upsertMessagePart(part: MessagePart) {
   ) {
     setWorkspace("statusBySession", part.sessionID, { type: "busy" });
   }
-  setWorkspace(
-    produce((state) => {
-      const list = (state.messagesBySession[part.sessionID] ||= []);
-      let turn = list.find((m) => m.info.id === part.messageID);
-      if (!turn) {
-        turn = {
-          info: {
-            id: part.messageID,
-            sessionID: part.sessionID,
-            role: "assistant",
-            time: { created: Date.now() },
-          },
-          parts: [],
-        };
-        list.push(turn);
-      }
-      const pIdx = turn.parts.findIndex((p) => p.id === part.id);
-      if (pIdx >= 0) {
-        Object.assign(turn.parts[pIdx], part);
-      } else {
-        turn.parts.push(part);
-      }
-    })
-  );
+  setWorkspace(produce((state) => mutateUpsertPart(state, part)));
 }
 
 export function applyPartDeltaBatch(
@@ -320,3 +338,69 @@ export function applyPartDeltaBatch(
     })
   );
 }
+
+export function applyStreamFrameBatch(batch: StreamFrameBatch) {
+  const now = Date.now();
+  const busySessionsToMark = new Set<string>();
+
+  for (const info of batch.infos) {
+    recordAssistantTurnUpdated(info);
+  }
+
+  for (const part of batch.parts) {
+    recordFirstToken(part.sessionID);
+    recordToolPartUpdate(part);
+    if (
+      part.type === "tool" &&
+      part.state.status === "completed" &&
+      part.sessionID === workspace.activeSessionID &&
+      isMutatingTool(part.tool)
+    ) {
+      scheduleRefreshWorktreeStatus(part.sessionID, 900);
+    }
+    const isActivelyStreamingPart =
+      (part.type === "tool" &&
+        (part.state.status === "pending" || part.state.status === "running")) ||
+      (part.type === "reasoning" && !part.time?.end);
+    if (isActivelyStreamingPart) {
+      busySessionsToMark.add(part.sessionID);
+    }
+  }
+
+  for (const d of batch.deltas) {
+    recordFirstToken(d.sessionID);
+    busySessionsToMark.add(d.sessionID);
+  }
+
+  for (const sid of busySessionsToMark) {
+    const interruptedAt = lastInterruptAtBySession.get(sid) || 0;
+    if (
+      now - interruptedAt > 2500 &&
+      workspace.statusBySession[sid]?.type !== "busy"
+    ) {
+      setWorkspace("statusBySession", sid, { type: "busy" });
+    }
+  }
+
+  setWorkspace(
+    produce((state) => {
+      for (const info of batch.infos) {
+        mutateUpsertInfo(state, info);
+      }
+      for (const part of batch.parts) {
+        mutateUpsertPart(state, part);
+      }
+      for (const b of batch.deltas) {
+        const list = state.messagesBySession[b.sessionID];
+        if (!list) continue;
+        const turn = list.find((m) => m.info.id === b.messageID);
+        if (!turn) continue;
+        const part = turn.parts.find((p) => p.id === b.partID) as any;
+        if (part && typeof part[b.field] === "string") {
+          part[b.field] += b.delta;
+        }
+      }
+    })
+  );
+}
+

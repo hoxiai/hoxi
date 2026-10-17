@@ -140,21 +140,31 @@ export default function ToolCard(props: { part: ToolPart }) {
     return "Edit";
   };
 
+  const hasBody = () =>
+    expanded() ||
+    Boolean(isTask() && childSessionID()) ||
+    Boolean(isShell() && isRunning() && rollingShellLines().length > 0) ||
+    fileDiagnostics().length > 0;
+
   return (
     <div>
-      <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] transition-all overflow-hidden shadow-[var(--island-shadow)]">
-        {/* Compact Kilo-style single-line tool trigger */}
+      <div class="group/tool">
+        {/* Clean borderless single-line tool trigger */}
         <div
-          class="flex items-center justify-between px-3 py-2 cursor-pointer select-none hover:bg-[var(--bg-hover)] transition-colors gap-2"
+          class={`flex items-center justify-between px-2 py-1.5 -mx-2 rounded-lg cursor-pointer select-none transition-colors gap-2 ${
+            expanded()
+              ? "bg-[var(--bg-hover)]/70"
+              : "hover:bg-[var(--bg-hover)]/60"
+          }`}
           onClick={() => setExpanded(!expanded())}
         >
           <div class="flex items-center gap-2 min-w-0 flex-1">
-            {/* Status / Tool Icon (Kilo Spinner when running, Semantic Icon when done) */}
+            {/* Status / Tool Icon */}
             <Show
               when={!isRunning()}
               fallback={
                 <span class="shrink-0 text-[var(--accent-primary)] inline-flex items-center">
-                  <Spinner class="w-4 h-4" />
+                  <Spinner class="w-3.5 h-3.5" />
                 </span>
               }
             >
@@ -181,14 +191,14 @@ export default function ToolCard(props: { part: ToolPart }) {
               when={!isShell()}
               fallback={
                 <div class="flex items-center gap-2 min-w-0 flex-1">
-                  <span class="text-[12.5px] font-medium text-[var(--text-primary)] truncate">
+                  <span class="text-[13px] font-medium text-[var(--text-secondary)] truncate">
                     <TextShimmer
                       text={description() || (shellCmd() ? `$ ${shellCmd()}` : "Run command")}
                       active={isRunning()}
                     />
                   </span>
                   <Show when={description() && shellCmd()}>
-                    <code class="hidden sm:inline-block truncate max-w-[420px] rounded bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[11px] text-[var(--text-muted)]">
+                    <code class="hidden sm:inline-block truncate max-w-[420px] font-mono text-[12px] text-[var(--text-faint)]">
                       $ {shellCmd()}
                     </code>
                   </Show>
@@ -199,7 +209,7 @@ export default function ToolCard(props: { part: ToolPart }) {
                 when={targetFile()}
                 fallback={
                   <div class="flex items-center gap-2 min-w-0 flex-1">
-                    <span class="text-[12.5px] font-medium text-[var(--text-primary)] shrink-0">
+                    <span class="text-[13px] font-medium text-[var(--text-secondary)] shrink-0">
                       <Show
                         when={isTodo()}
                         fallback={
@@ -217,19 +227,19 @@ export default function ToolCard(props: { part: ToolPart }) {
                       </Show>
                     </span>
                     <Show when={description()}>
-                      <span class="text-[12px] text-[var(--text-muted)] truncate">
+                      <span class="text-[12.5px] text-[var(--text-muted)] truncate">
                         {description()}
                       </span>
                     </Show>
                     <Show when={todoItems().length > 0}>
-                      <span class="rounded-md bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[10.5px] text-[var(--text-muted)]">
+                      <span class="font-mono text-[11.5px] text-[var(--text-faint)]">
                         {todoItems().filter((t) => t.status === "completed").length}/
                         {todoItems().length}
                       </span>
                     </Show>
                     <For each={toolArgPills()}>
                       {(pill) => (
-                        <span class="hidden sm:inline-block rounded-md border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[10.5px] text-[var(--text-muted)]">
+                        <span class="hidden sm:inline-block font-mono text-[11.5px] text-[var(--text-faint)] truncate max-w-[240px]">
                           {pill}
                         </span>
                       )}
@@ -239,7 +249,7 @@ export default function ToolCard(props: { part: ToolPart }) {
               >
                 {(file) => (
                   <div class="flex items-center gap-1.5 min-w-0 flex-1">
-                    <span class="text-[12px] font-medium text-[var(--text-secondary)] shrink-0">
+                    <span class="text-[12.5px] font-medium text-[var(--text-secondary)] shrink-0">
                       <TextShimmer
                         text={isEdit() ? editVerb() : isRead() ? "Read" : props.part.tool}
                         active={isRunning()}
@@ -256,19 +266,19 @@ export default function ToolCard(props: { part: ToolPart }) {
                           openFileInInspector(file());
                         }
                       }}
-                      class="font-mono text-[12px] font-medium text-[var(--text-primary)] hover:text-[var(--accent-primary)] hover:underline truncate cursor-pointer"
+                      class="font-mono text-[12.5px] font-medium text-[var(--text-primary)] hover:text-[var(--accent-primary)] hover:underline truncate cursor-pointer"
                       title={file()}
                     >
                       {getFilename(file())}
                     </button>
                     <Show when={getDirectory(file())}>
-                      <span class="hidden md:inline truncate font-mono text-[11px] text-[var(--text-faint)]">
+                      <span class="hidden md:inline truncate font-mono text-[11.5px] text-[var(--text-faint)]">
                         {getDirectory(file())}/
                       </span>
                     </Show>
                     <For each={toolArgPills()}>
                       {(pill) => (
-                        <span class="hidden sm:inline-block rounded-md border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[10.5px] text-[var(--text-muted)]">
+                        <span class="hidden sm:inline-block font-mono text-[11.5px] text-[var(--text-faint)] truncate max-w-[200px]">
                           {pill}
                         </span>
                       )}
@@ -289,7 +299,7 @@ export default function ToolCard(props: { part: ToolPart }) {
                     e.stopPropagation();
                     void selectSession(subId());
                   }}
-                  class="inline-flex items-center gap-1 rounded-md border border-[var(--accent-border)] bg-[var(--accent-surface)] px-2 py-0.5 text-[11px] font-medium text-[var(--accent-text)] hover:opacity-90 transition-opacity cursor-pointer"
+                  class="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[12px] font-medium text-[var(--accent-primary)] hover:bg-[var(--accent-surface)] transition-colors cursor-pointer"
                 >
                   <Icon name="task" size="small" />
                   <span>{t("toolCard.inspectSubagent")}</span>
@@ -299,18 +309,12 @@ export default function ToolCard(props: { part: ToolPart }) {
 
             <Show when={fileDiff()}>
               {(d) => (
-                <div class="flex items-center gap-1.5">
-                  <DiffChanges changes={{ additions: d().additions, deletions: d().deletions }} />
-                  <DiffChanges
-                    changes={{ additions: d().additions, deletions: d().deletions }}
-                    variant="bars"
-                  />
-                </div>
+                <DiffChanges changes={{ additions: d().additions, deletions: d().deletions }} />
               )}
             </Show>
 
             <Show when={isShell() && exitCode() !== undefined && exitCode() !== 0}>
-              <span class="rounded bg-[var(--danger-surface)] px-1.5 py-0.5 font-mono text-[10.5px] font-medium text-[var(--danger-text)]">
+              <span class="rounded bg-[var(--danger-surface)] px-1.5 py-0.5 font-mono text-[11px] font-medium text-[var(--danger-text)]">
                 exit {exitCode()}
               </span>
             </Show>
@@ -323,7 +327,7 @@ export default function ToolCard(props: { part: ToolPart }) {
                   void revertToHere(props.part.sessionID, props.part.messageID, props.part.id);
                 }}
                 title={t("toolCard.revertTooltip")}
-                class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[11px] text-[var(--text-muted)] hover:text-[var(--warn-text)] hover:bg-[var(--warn-surface)] transition-colors cursor-pointer"
+                class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[12px] text-[var(--text-muted)] hover:text-[var(--warn-text)] hover:bg-[var(--warn-surface)] opacity-0 group-hover/tool:opacity-100 transition-opacity cursor-pointer"
               >
                 <Icon name="arrow-undo-down" size="small" />
                 <span class="hidden sm:inline">{t("toolCard.undo")}</span>
@@ -331,64 +335,69 @@ export default function ToolCard(props: { part: ToolPart }) {
             </Show>
 
             <Show when={elapsed() > 0}>
-              <span class="font-mono text-[11px] text-[var(--text-faint)] tabular-nums">
+              <span class="font-mono text-[11.5px] text-[var(--text-faint)] tabular-nums">
                 {elapsed().toFixed(1)}s
               </span>
             </Show>
 
-            <span class="text-[var(--text-faint)] inline-flex items-center">
+            <span class="text-[var(--text-faint)] opacity-0 group-hover/tool:opacity-100 transition-opacity inline-flex items-center">
               <Icon name={expanded() ? "chevron-down" : "chevron-right"} size="small" />
             </span>
           </div>
         </div>
 
-        {/* Kilo TaskToolExpanded: Live child subagent tool calls inline */}
-        <Show when={isTask() && childSessionID()}>
-          {(subId) => (
-            <SubagentInlineTimeline childSessionID={subId()} parentRunning={isRunning()} />
-          )}
-        </Show>
+        {/* Collapsible / Live Body Container (only bordered when visible) */}
+        <Show when={hasBody()}>
+          <div class="mt-1 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] overflow-hidden">
+            {/* Kilo TaskToolExpanded: Live child subagent tool calls inline */}
+            <Show when={isTask() && childSessionID()}>
+              {(subId) => (
+                <SubagentInlineTimeline childSessionID={subId()} parentRunning={isRunning()} />
+              )}
+            </Show>
 
-        {/* Kilo ShellRollingResults: Live 5-line rolling output preview while bash command is running & collapsed */}
-        <Show when={isShell() && isRunning() && !expanded() && rollingShellLines().length > 0}>
-          <div
-            ref={rollingShellRef}
-            onClick={() => setExpanded(true)}
-            class="border-t border-[var(--border-subtle)] bg-[#0d1117]/95 px-3.5 py-2 font-mono text-[11.5px] leading-[1.55] text-[#c9d1d9] max-h-[104px] overflow-hidden cursor-pointer relative"
-            style={{
-              "-webkit-mask-image":
-                "linear-gradient(to bottom, transparent 0%, black 24%, black 100%)",
-              "mask-image": "linear-gradient(to bottom, transparent 0%, black 24%, black 100%)",
-            }}
-          >
-            <For each={rollingShellLines()}>
-              {(line) => <div class="truncate kilo-rolling-row">{line || " "}</div>}
-            </For>
+            {/* Kilo ShellRollingResults: Live 5-line rolling output preview while bash command is running & collapsed */}
+            <Show when={isShell() && isRunning() && !expanded() && rollingShellLines().length > 0}>
+              <div
+                ref={rollingShellRef}
+                onClick={() => setExpanded(true)}
+                class="bg-[#0d1117]/95 px-3.5 py-2 font-mono text-[12px] leading-[1.55] text-[#c9d1d9] max-h-[104px] overflow-hidden cursor-pointer relative"
+                style={{
+                  "-webkit-mask-image":
+                    "linear-gradient(to bottom, transparent 0%, black 24%, black 100%)",
+                  "mask-image": "linear-gradient(to bottom, transparent 0%, black 24%, black 100%)",
+                }}
+              >
+                <For each={rollingShellLines()}>
+                  {(line) => <div class="truncate kilo-rolling-row">{line || " "}</div>}
+                </For>
+              </div>
+            </Show>
+
+            {/* Inline Post-Edit LSP Compiler/Type Diagnostics */}
+            <Show when={fileDiagnostics().length > 0}>
+              <InlineDiagnosticsDisplay diagnostics={fileDiagnostics()} />
+            </Show>
+
+            {/* Expanded Body */}
+            <Show when={expanded()}>
+              <ToolCardExpandedBody
+                part={props.part}
+                isShell={isShell()}
+                isEdit={isEdit()}
+                isTodo={isTodo()}
+                shellCmd={shellCmd()}
+                shellOut={shellOut()}
+                copiedCmd={copiedCmd()}
+                onCopyCommand={(e) => void copyCommand(e)}
+                setOutputRef={(el) => {
+                  outputRef = el;
+                }}
+                todoItems={todoItems()}
+                fileDiff={fileDiff()}
+              />
+            </Show>
           </div>
-        </Show>
-
-        {/* Inline Post-Edit LSP Compiler/Type Diagnostics (Kilo DiagnosticsDisplay) */}
-        <Show when={fileDiagnostics().length > 0}>
-          <InlineDiagnosticsDisplay diagnostics={fileDiagnostics()} />
-        </Show>
-
-        {/* Expanded Body */}
-        <Show when={expanded()}>
-          <ToolCardExpandedBody
-            part={props.part}
-            isShell={isShell()}
-            isEdit={isEdit()}
-            isTodo={isTodo()}
-            shellCmd={shellCmd()}
-            shellOut={shellOut()}
-            copiedCmd={copiedCmd()}
-            onCopyCommand={(e) => void copyCommand(e)}
-            setOutputRef={(el) => {
-              outputRef = el;
-            }}
-            todoItems={todoItems()}
-            fileDiff={fileDiff()}
-          />
         </Show>
       </div>
 
@@ -400,12 +409,12 @@ export default function ToolCard(props: { part: ToolPart }) {
               <button
                 type="button"
                 onClick={() => openFileInInspector(filePath)}
-                class="flex items-center gap-1.5 text-[11.5px] text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors cursor-pointer py-0.5"
+                class="flex items-center gap-1.5 text-[12px] text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors cursor-pointer py-0.5"
               >
                 <Icon name="enter" size="small" class="text-[var(--text-faint)]" />
                 <span>{t("toolCard.loaded")}</span>
                 <FileIcon node={{ path: filePath, type: "file" }} class="w-3.5 h-3.5 shrink-0" />
-                <span class="font-mono text-[11px] hover:underline truncate max-w-[360px]">
+                <span class="font-mono text-[11.5px] hover:underline truncate max-w-[360px]">
                   {filePath}
                 </span>
               </button>

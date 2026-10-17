@@ -190,7 +190,11 @@ export default function ModelSelector() {
       <button
         type="button"
         onClick={toggleOpen}
-        class="inline-flex items-center gap-1.5 rounded-full border border-[var(--border-subtle)] bg-[var(--bg-inset)] hover:bg-[var(--bg-hover)] hover:border-[var(--border-strong)] px-2.5 py-1 text-[11.5px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-all cursor-pointer max-w-[250px]"
+        class={`inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[12px] font-medium transition-colors cursor-pointer max-w-[260px] ${
+          open()
+            ? "bg-[var(--bg-hover)] text-[var(--text-primary)]"
+            : "text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
+        }`}
         title={t("timeline.selectModel")}
       >
         <Show
@@ -203,12 +207,12 @@ export default function ModelSelector() {
           {activeModelInfo()?.modelName || t("models.selectModel")}
         </span>
         <Show when={activeModelInfo()?.free}>
-          <span class="shrink-0 rounded bg-[var(--ok-surface)] px-1.5 py-[1px] text-[9.5px] font-semibold text-[var(--ok-text)]">
+          <span class="shrink-0 rounded bg-[var(--ok-surface)] px-1.5 py-[1px] text-[10.5px] font-semibold text-[var(--ok-text)]">
             {t("models.freeModel")}
           </span>
         </Show>
         <Show when={workspace.reasoningEffort}>
-          <span class="shrink-0 rounded bg-[var(--accent-surface)] px-1 py-[1px] text-[9.5px] uppercase font-mono text-[var(--accent-primary)]">
+          <span class="shrink-0 rounded bg-[var(--accent-surface)] px-1 py-[1px] text-[10.5px] uppercase font-mono text-[var(--accent-primary)]">
             {workspace.reasoningEffort}
           </span>
         </Show>

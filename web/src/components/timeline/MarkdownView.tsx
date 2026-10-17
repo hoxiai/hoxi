@@ -187,8 +187,59 @@ function parseInline(text: string): InlineSpan[] {
   return spans;
 }
 
+function isSameInlineSpan(a: InlineSpan | undefined, b: InlineSpan): boolean {
+  if (!a || a.type !== b.type || a.text !== b.text) return false;
+  if (a.type === "link" && b.type === "link") return a.href === b.href;
+  return true;
+}
+
+function isSameStringArray(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
+function isSameBlockToken(a: BlockToken | undefined, b: BlockToken): boolean {
+  if (!a || a.type !== b.type) return false;
+  switch (b.type) {
+    case "hr":
+      return true;
+    case "paragraph":
+    case "blockquote":
+      return (a as typeof b).text === b.text;
+    case "heading":
+      return (a as typeof b).level === b.level && (a as typeof b).text === b.text;
+    case "code":
+      return (a as typeof b).lang === b.lang && (a as typeof b).code === b.code;
+    case "ul":
+    case "ol":
+      return isSameStringArray((a as typeof b).items, b.items);
+    case "table": {
+      const prev = a as typeof b;
+      if (!isSameStringArray(prev.headers, b.headers) || prev.rows.length !== b.rows.length) {
+        return false;
+      }
+      for (let r = 0; r < b.rows.length; r++) {
+        if (!isSameStringArray(prev.rows[r], b.rows[r])) return false;
+      }
+      return true;
+    }
+  }
+}
+
 function InlineRenderer(props: { text: string }) {
-  const spans = createMemo(() => parseInline(props.text));
+  const text = createMemo(() => props.text);
+  const spans = createMemo<InlineSpan[]>((prev) => {
+    const next = parseInline(text());
+    for (let i = 0; i < next.length; i++) {
+      if (isSameInlineSpan(prev[i], next[i])) {
+        next[i] = prev[i];
+      }
+    }
+    return next;
+  }, []);
   return (
     <Index each={spans()}>
       {(span) => (
@@ -201,7 +252,7 @@ function InlineRenderer(props: { text: string }) {
                   type="button"
                   onClick={() => openFileInInspector(span().text)}
                   title={t("timeline.openInInspectorTooltip")}
-                  class="inline-flex items-center gap-1.5 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-elevated)] hover:border-[var(--accent-border)] hover:bg-[var(--accent-surface)] px-1.5 py-0.5 font-mono text-[0.85em] text-[var(--text-primary)] hover:text-[var(--accent-text)] transition-colors cursor-pointer align-baseline"
+                  class="inline-flex items-center gap-1.5 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-elevated)] hover:border-[var(--accent-border)] hover:bg-[var(--accent-surface)] px-1.5 py-0.5 font-mono text-[0.88em] text-[var(--text-primary)] hover:text-[var(--accent-text)] transition-colors cursor-pointer align-baseline"
                 >
                   <FileIcon node={{ path: cleanPath(), type: "file" }} class="w-3.5 h-3.5 shrink-0" />
                   <span>{span().text}</span>
@@ -210,7 +261,7 @@ function InlineRenderer(props: { text: string }) {
             }}
           </Match>
           <Match when={span().type === "code"}>
-            <code class="rounded-md border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-1.5 py-0.5 font-mono text-[0.86em] text-[var(--text-primary)]">
+            <code class="rounded-md border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-1.5 py-0.5 font-mono text-[0.88em] text-[var(--text-primary)]">
               {span().text}
             </code>
           </Match>
@@ -251,7 +302,7 @@ function CodeBlockCard(props: { lang: string; code: string }) {
 
   return (
     <div class="my-1 overflow-hidden rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-code)]">
-      <div class="flex items-center justify-between border-b border-[var(--border-subtle)] bg-[var(--bg-elevated)]/70 px-3.5 py-1.5 text-[11px] font-mono text-[var(--text-muted)]">
+      <div class="flex items-center justify-between border-b border-[var(--border-subtle)] bg-[var(--bg-elevated)]/70 px-3.5 py-2 text-[12px] font-mono text-[var(--text-muted)]">
         <span class="inline-flex items-center gap-1.5">
           <Icon name="code-lines" size="small" class="text-[var(--text-faint)]" />
           {props.lang || "code"}
@@ -259,7 +310,7 @@ function CodeBlockCard(props: { lang: string; code: string }) {
         <button
           type="button"
           onClick={() => void onCopy()}
-          class="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+          class="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
         >
           <Show when={copied()} fallback={<Icon name="copy" size="small" />}>
             <Icon name="check" size="small" class="text-[var(--ok-text)]" />
@@ -267,7 +318,10 @@ function CodeBlockCard(props: { lang: string; code: string }) {
           {copied() ? t("common.copied") : t("common.copy")}
         </button>
       </div>
-      <pre class="overflow-x-auto p-3.5 font-mono text-[12.5px] leading-[1.6] text-[var(--text-primary)] selectable-text">
+      <pre
+        class="overflow-x-auto p-4 font-mono leading-[1.65] text-[var(--text-primary)] selectable-text"
+        style={{ "font-size": "var(--app-code-text-size)" }}
+      >
         <code>{props.code}</code>
       </pre>
     </div>
@@ -275,10 +329,21 @@ function CodeBlockCard(props: { lang: string; code: string }) {
 }
 
 export default function MarkdownView(props: { content: string }) {
-  const blocks = createMemo(() => parseMarkdownBlocks(props.content || ""));
+  const blocks = createMemo<BlockToken[]>((prev) => {
+    const next = parseMarkdownBlocks(props.content || "");
+    for (let i = 0; i < next.length; i++) {
+      if (isSameBlockToken(prev[i], next[i])) {
+        next[i] = prev[i];
+      }
+    }
+    return next;
+  }, []);
 
   return (
-    <div class="flex flex-col gap-y-3.5 text-[14px] leading-[1.72] text-[var(--text-primary)] selectable-text">
+    <div
+      class="flex flex-col gap-y-4 leading-[1.7] text-[var(--text-primary)] selectable-text"
+      style={{ "font-size": "var(--app-chat-text-size)" }}
+    >
       <Index each={blocks()}>
         {(block) => (
           <Switch>
@@ -294,7 +359,7 @@ export default function MarkdownView(props: { content: string }) {
                 (block() as Extract<BlockToken, { type: "heading" }>).level === 1
               }
             >
-              <h1 class="first:mt-0 mt-3.5 -mb-1 text-[18px] font-semibold tracking-tight text-[var(--text-primary)]">
+              <h1 class="first:mt-0 mt-3.5 -mb-1 text-[1.28em] font-semibold tracking-tight text-[var(--text-primary)]">
                 <InlineRenderer text={(block() as Extract<BlockToken, { type: "heading" }>).text} />
               </h1>
             </Match>
@@ -304,12 +369,12 @@ export default function MarkdownView(props: { content: string }) {
                 (block() as Extract<BlockToken, { type: "heading" }>).level === 2
               }
             >
-              <h2 class="first:mt-0 mt-3 -mb-1 text-[16px] font-semibold tracking-tight text-[var(--text-primary)]">
+              <h2 class="first:mt-0 mt-3 -mb-1 text-[1.15em] font-semibold tracking-tight text-[var(--text-primary)]">
                 <InlineRenderer text={(block() as Extract<BlockToken, { type: "heading" }>).text} />
               </h2>
             </Match>
             <Match when={block().type === "heading"}>
-              <h3 class="first:mt-0 mt-2.5 -mb-1 text-[14.5px] font-semibold text-[var(--text-primary)]">
+              <h3 class="first:mt-0 mt-2.5 -mb-1 text-[1.05em] font-semibold text-[var(--text-primary)]">
                 <InlineRenderer text={(block() as Extract<BlockToken, { type: "heading" }>).text} />
               </h3>
             </Match>
@@ -336,7 +401,7 @@ export default function MarkdownView(props: { content: string }) {
               </ol>
             </Match>
             <Match when={block().type === "blockquote"}>
-              <blockquote class="my-0.5 border-l-2 border-[var(--accent-border)] bg-[var(--bg-inset)] px-3.5 py-2.5 text-[13.5px] leading-[1.68] text-[var(--text-secondary)] rounded-r-lg">
+              <blockquote class="my-0.5 border-l-2 border-[var(--accent-border)] bg-[var(--bg-inset)] px-3.5 py-2.5 text-[0.95em] leading-[1.68] text-[var(--text-secondary)] rounded-r-lg">
                 <InlineRenderer
                   text={(block() as Extract<BlockToken, { type: "blockquote" }>).text}
                 />
@@ -344,7 +409,7 @@ export default function MarkdownView(props: { content: string }) {
             </Match>
             <Match when={block().type === "table"}>
               <div class="my-1 overflow-x-auto rounded-xl border border-[var(--border-subtle)]">
-                <table class="w-full border-collapse text-left text-[12.5px]">
+                <table class="w-full border-collapse text-left text-[0.92em]">
                   <thead>
                     <tr class="border-b border-[var(--border-subtle)] bg-[var(--bg-elevated)]">
                       <Index each={(block() as Extract<BlockToken, { type: "table" }>).headers}>
@@ -378,7 +443,7 @@ export default function MarkdownView(props: { content: string }) {
               <hr class="my-2 border-[var(--border-subtle)]" />
             </Match>
             <Match when={block().type === "paragraph"}>
-              <p class="whitespace-pre-wrap break-words leading-[1.72]">
+              <p class="whitespace-pre-wrap break-words leading-[1.7]">
                 <InlineRenderer
                   text={(block() as Extract<BlockToken, { type: "paragraph" }>).text}
                 />

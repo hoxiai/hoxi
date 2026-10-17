@@ -242,9 +242,8 @@ export async function switchWorkspace(directory: string): Promise<void> {
     setWorkspace("sessions", sessions);
 
     void refreshWorktreeStatus("__root__");
-    await Promise.allSettled(sessions.map((s) => refreshWorktreeStatus(s.id)));
 
-    const unarchived = sessions.filter((s) => !isSessionArchived(s));
+    const unarchived = sessions.filter((s) => !s.parentID && !isSessionArchived(s));
     if (unarchived.length > 0) {
       const mostRecent = [...unarchived].sort((a, b) => b.time.created - a.time.created)[0];
       await selectSession(mostRecent.id);

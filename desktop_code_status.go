@@ -61,6 +61,12 @@ func (t *desktopStatusTracker) inspectSSELine(line string) {
 	if payload == "" || payload[0] != '{' {
 		return
 	}
+	// Fast pre-filter: skip JSON unmarshaling on high-frequency token deltas and tool output events
+	if !strings.Contains(payload, `"session.`) &&
+		!strings.Contains(payload, `"permission.`) &&
+		!strings.Contains(payload, `"question.`) {
+		return
+	}
 
 	var raw struct {
 		Type       string          `json:"type"`

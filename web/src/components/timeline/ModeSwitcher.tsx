@@ -89,12 +89,12 @@ export default function ModeSwitcher() {
         ref={buttonRef}
         type="button"
         onClick={() => setOpen((v) => !v)}
-        class={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11.5px] font-medium transition-all cursor-pointer shadow-2xs select-none ${
+        class={`inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[12px] font-medium transition-colors cursor-pointer select-none ${
           open()
-            ? "border-[var(--accent-primary)] bg-[var(--accent-surface)] text-[var(--accent-primary)]"
+            ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]"
             : currentMode() === "plan"
-              ? "border-[var(--violet-border)] bg-[var(--violet-surface)] text-[var(--violet-text)] hover:brightness-105"
-              : "border-[var(--border-subtle)] bg-[var(--bg-panel)] text-[var(--text-primary)] hover:bg-[var(--bg-hover)] hover:border-[var(--border-strong)]"
+              ? "bg-[var(--violet-surface)] text-[var(--violet-text)] hover:brightness-105"
+              : "text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
         }`}
         title={t("timeline.modeTooltip", { mode: currentMode() })}
       >

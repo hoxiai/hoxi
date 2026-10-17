@@ -327,6 +327,12 @@ export interface TimelineI18n {
   sandboxWorktreeMode: string;
   sandboxLocalTooltip: string;
   sandboxWorktreeTooltip: string;
+  loadEarlierTurns: string;
+  loadAllEarlierTurns: string;
+  hiddenTurnsHint: string;
+  completedWorkSummary: string;
+  expandTurnSteps: string;
+  collapseTurnSteps: string;
 }
 
 export interface ToolCardI18n {

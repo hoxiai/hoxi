@@ -2,12 +2,9 @@
 import { createMemo, createSignal, Show } from "solid-js";
 import {
   ArrowUp,
-  GitFork,
-  ImagePlus,
   LoaderCircle,
+  Plus,
   Square,
-  Swords,
-  WandSparkles,
 } from "lucide-solid";
 import {
   appSettings,
@@ -16,7 +13,6 @@ import {
   isSessionBusy,
   pauseSessionTask,
   resumePausedSession,
-  setWorkspace,
   stopSessionTask,
   submitSessionPrompt,
   switchActiveSessionSandboxMode,
@@ -282,7 +278,7 @@ export default function Composer() {
 
   return (
     <div class="shrink-0 w-full px-6 pb-4 pt-1">
-      <div class="relative mx-auto w-full max-w-[62rem]">
+      <div class="relative mx-auto w-full max-w-[var(--thread-max-width)]">
         {/* Floating @file / @changes / /command Autocomplete Popover */}
         <ComposerAutocompletePopover
           triggerMode={ac.triggerMode()}
@@ -297,7 +293,7 @@ export default function Composer() {
 
         {/* Main Glass Composer Box */}
         <div
-          class={`chat-composer-glass flex w-full flex-col rounded-2xl px-4 pt-3 pb-2.5 transition-colors ${
+          class={`chat-composer-glass flex w-full flex-col rounded-2xl px-4 pt-3.5 pb-3 transition-colors ${
             imgAttach.dragging() ? "ring-2 ring-[var(--accent-primary)]" : ""
           }`}
           onDragOver={imgAttach.handleDragOver}
@@ -330,7 +326,7 @@ export default function Composer() {
           <textarea
             ref={textareaRef}
             style={{ "font-size": "var(--app-chat-text-size)" }}
-            class="w-full min-h-[48px] max-h-[180px] resize-none bg-transparent leading-relaxed text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none selectable-text"
+            class="w-full min-h-[48px] max-h-[180px] resize-none bg-transparent leading-[1.65] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none selectable-text"
             rows={1}
             placeholder={
               busy()
@@ -353,8 +349,17 @@ export default function Composer() {
           />
 
           <div class="mt-2 flex items-center justify-between gap-2 flex-wrap">
-            {/* Left Action Pills: Agent Mode, Model Selector, Sandbox, Image Attach, Arena, Fork, Context Progress */}
-            <div class="flex items-center gap-1.5 flex-wrap">
+            {/* Left Action Pills: Attach (+), Agent Mode, Model Selector, Git Dropdown, Context Progress */}
+            <div class="flex items-center gap-1 flex-wrap">
+              <button
+                type="button"
+                onClick={() => fileInputRef?.click()}
+                class="inline-flex items-center justify-center rounded-lg p-1.5 text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+                title={t("timeline.attachImageTooltip")}
+              >
+                <Plus size={15} />
+              </button>
+
               <ModeSwitcher />
               <ModelSelector />
 
@@ -362,45 +367,11 @@ export default function Composer() {
                 mode={effectiveSandboxMode()}
                 switching={switchingSandbox()}
                 busy={busy()}
+                sessionID={sessionID()}
+                forking={forking()}
                 onToggle={(m) => void onToggleSandbox(m)}
+                onFork={onFork}
               />
-
-              <button
-                type="button"
-                onClick={() => fileInputRef?.click()}
-                class="inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11.5px] font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
-                title={t("timeline.attachImageTooltip")}
-              >
-                <ImagePlus size={13} />
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setWorkspace("arenaModalOpen", true)}
-                class="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11.5px] font-medium text-[var(--text-muted)] hover:text-[var(--accent-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
-                title={t("timeline.arenaTooltip")}
-              >
-                <Swords size={12} />
-                <span class="hidden sm:inline">{t("timeline.arenaBtn")}</span>
-              </button>
-
-              <Show when={sessionID()}>
-                <button
-                  type="button"
-                  class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11.5px] font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] disabled:opacity-50 transition-colors cursor-pointer"
-                  disabled={forking()}
-                  onClick={onFork}
-                  title={t("timeline.forkConfirm")}
-                >
-                  <Show
-                    when={!forking()}
-                    fallback={<LoaderCircle size={12} class="animate-spin" />}
-                  >
-                    <GitFork size={12} />
-                  </Show>
-                  {t("timeline.forkHere")}
-                </button>
-              </Show>
 
               <ContextProgressPill />
             </div>
@@ -408,25 +379,25 @@ export default function Composer() {
             {/* Right Send / Pause / Stop / Resume / Steer Actions */}
             <div class="flex items-center gap-1.5">
               <Show when={busy()}>
-                <button
-                  type="button"
-                  class="inline-flex items-center gap-1.5 rounded-full border border-[var(--violet-border)] bg-[var(--violet-surface)] px-3 py-1 text-[11.5px] font-medium text-[var(--violet-text)] disabled:opacity-40 transition-all cursor-pointer"
-                  disabled={!canSend()}
-                  onClick={onSend}
-                  title={t("timeline.steer")}
-                >
-                  <Show
-                    when={!sending()}
-                    fallback={<LoaderCircle size={12} class="animate-spin" />}
+                <Show when={canSend()}>
+                  <button
+                    type="button"
+                    class="inline-flex h-7 w-7 items-center justify-center rounded-full bg-[var(--accent-primary)] text-white shadow-xs hover:opacity-90 transition-all cursor-pointer"
+                    onClick={onSend}
+                    title={t("timeline.steer")}
                   >
-                    <WandSparkles size={12} />
-                  </Show>
-                  {t("timeline.steer")}
-                </button>
+                    <Show
+                      when={!sending()}
+                      fallback={<LoaderCircle size={14} class="animate-spin" />}
+                    >
+                      <ArrowUp size={15} strokeWidth={2.5} />
+                    </Show>
+                  </button>
+                </Show>
 
                 <button
                   type="button"
-                  class="inline-flex items-center gap-1 rounded-full border border-[var(--warn-border)] bg-[var(--warn-surface)] px-2.5 py-1 text-[11.5px] font-medium text-[var(--warn-text)] hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
+                  class="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[12px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] disabled:opacity-50 transition-colors cursor-pointer"
                   disabled={stopping()}
                   onClick={onPause}
                   title={t("timeline.pauseTooltip")}
@@ -437,7 +408,7 @@ export default function Composer() {
 
                 <button
                   type="button"
-                  class="inline-flex items-center gap-1 rounded-full bg-[var(--status-danger)] px-2.5 py-1 text-[11.5px] font-medium text-white hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
+                  class="inline-flex items-center gap-1.5 rounded-full bg-[var(--bg-inset)] px-2.5 py-1 text-[12px] font-medium text-[var(--text-secondary)] hover:bg-[var(--danger-surface)] hover:text-[var(--danger-text)] disabled:opacity-50 transition-colors cursor-pointer"
                   disabled={stopping()}
                   onClick={onStop}
                   title={t("timeline.stopTooltip")}
@@ -446,7 +417,7 @@ export default function Composer() {
                     when={!stopping()}
                     fallback={<LoaderCircle size={12} class="animate-spin" />}
                   >
-                    <Square size={10} class="fill-current" />
+                    <Square size={9.5} class="fill-current" />
                   </Show>
                   <span>{t("timeline.stop")}</span>
                 </button>
@@ -456,7 +427,7 @@ export default function Composer() {
                 <Show when={isPaused()}>
                   <button
                     type="button"
-                    class="inline-flex items-center gap-1.5 rounded-full border border-[var(--ok-border)] bg-[var(--ok-surface)] px-3 py-1 text-[11.5px] font-medium text-[var(--ok-text)] hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
+                    class="inline-flex items-center gap-1.5 rounded-full bg-[var(--bg-inset)] px-3 py-1 text-[12px] font-medium text-[var(--accent-primary)] hover:bg-[var(--accent-surface)] disabled:opacity-50 transition-colors cursor-pointer"
                     disabled={sending()}
                     onClick={onResume}
                     title={t("timeline.resumeTooltip")}

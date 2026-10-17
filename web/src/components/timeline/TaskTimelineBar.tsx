@@ -14,13 +14,26 @@ export interface ActivityBarSegment {
   heightPct: number;
 }
 
-function classifyPart(part: MessagePart): {
+const MAX_VISIBLE_SEGMENTS = 80;
+
+function classifyPart(
+  part: MessagePart,
+  isTurnCompleted: boolean
+): {
   kind: ActivityBarSegment["kind"];
   color: string;
   label: string;
   weight: number;
 } | null {
   if (part.type === "reasoning") {
+    if (!isTurnCompleted && !part.time?.end) {
+      return {
+        kind: "reasoning",
+        color: "#a78bfa",
+        label: t("timeline.thinking"),
+        weight: 60,
+      };
+    }
     const len = part.text?.length ?? 0;
     if (len === 0) return null;
     return {
@@ -31,6 +44,14 @@ function classifyPart(part: MessagePart): {
     };
   }
   if (part.type === "text") {
+    if (!isTurnCompleted) {
+      return {
+        kind: "text",
+        color: "var(--text-muted)",
+        label: "Text",
+        weight: 55,
+      };
+    }
     const len = part.text?.length ?? 0;
     if (len === 0) return null;
     return {
@@ -101,15 +122,30 @@ export default function TaskTimelineBar(props: {
 }) {
   const [hoveredSeg, setHoveredSeg] = createSignal<ActivityBarSegment | null>(null);
   const [navOpen, setNavOpen] = createSignal(false);
+  const completedTurnCache = new Map<
+    string,
+    { partCount: number; segments: ActivityBarSegment[] }
+  >();
 
   const segments = createMemo<ActivityBarSegment[]>(() => {
     const out: ActivityBarSegment[] = [];
-    for (const turn of props.turns) {
+    const list = props.turns;
+    for (let i = 0; i < list.length; i++) {
+      const turn = list[i];
       if (turn.info.role === "user") continue;
+      const isCompleted = Boolean(turn.info.time?.completed) && i < list.length - 1;
+      if (isCompleted) {
+        const cached = completedTurnCache.get(turn.info.id);
+        if (cached && cached.partCount === turn.parts.length) {
+          out.push(...cached.segments);
+          continue;
+        }
+      }
+      const turnSegs: ActivityBarSegment[] = [];
       for (const part of turn.parts) {
-        const meta = classifyPart(part);
+        const meta = classifyPart(part, isCompleted);
         if (!meta) continue;
-        out.push({
+        turnSegs.push({
           id: part.id,
           messageID: turn.info.id,
           kind: meta.kind,
@@ -118,8 +154,17 @@ export default function TaskTimelineBar(props: {
           heightPct: meta.weight,
         });
       }
+      if (isCompleted) {
+        completedTurnCache.set(turn.info.id, {
+          partCount: turn.parts.length,
+          segments: turnSegs,
+        });
+      }
+      out.push(...turnSegs);
     }
-    return out;
+    return out.length > MAX_VISIBLE_SEGMENTS
+      ? out.slice(-MAX_VISIBLE_SEGMENTS)
+      : out;
   });
 
   const userTurns = createMemo(() => {

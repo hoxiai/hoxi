@@ -30,7 +30,7 @@ function persistArchivedSessionIDs(ids: string[]) {
 
 function nextActiveSessionCandidate(excludeID?: string): SessionInfo | undefined {
   const candidates = workspace.sessions.filter(
-    (s) => s.id !== excludeID && !isSessionArchived(s)
+    (s) => s.id !== excludeID && !s.parentID && !isSessionArchived(s)
   );
   if (candidates.length === 0) return undefined;
   return [...candidates].sort((a, b) => b.time.created - a.time.created)[0];
@@ -107,20 +107,39 @@ function mergeSessionAndWorktreeDiffs(
   return Array.from(byFile.values());
 }
 
+export async function loadSessionMessagesOnly(sessionID: string): Promise<void> {
+  const directory = sessionDirectory(sessionID);
+  const turns = await hoxiAPI.getMessages(sessionID, directory);
+  setWorkspace(
+    "messagesBySession",
+    sessionID,
+    turns.map((t) => ({ info: t.info, parts: t.parts }))
+  );
+}
+
 export async function loadSessionMessages(sessionID: string): Promise<void> {
   const directory = sessionDirectory(sessionID);
-  void refreshWorktreeStatus(sessionID);
+  const isChildSession = Boolean(
+    workspace.sessions.find((s) => s.id === sessionID)?.parentID
+  );
+  if (!isChildSession) {
+    scheduleRefreshWorktreeStatus(sessionID, 120);
+  }
   const turns = await hoxiAPI.getMessages(sessionID, directory);
-  setWorkspace("messagesBySession", (prev) => ({
-    ...prev,
-    [sessionID]: turns.map((t) => ({ info: t.info, parts: t.parts })),
-  }));
+  setWorkspace(
+    "messagesBySession",
+    sessionID,
+    turns.map((t) => ({ info: t.info, parts: t.parts }))
+  );
+  if (isChildSession && sessionID !== workspace.activeSessionID) {
+    return;
+  }
   const [sessionDiffs, worktreeDiffs] = await Promise.all([
     hoxiAPI.getSessionDiff(sessionID, directory).catch(() => [] as SnapshotFileDiff[]),
     hoxiAPI.getWorktreeDiff(sessionID).catch(() => [] as SnapshotFileDiff[]),
   ]);
   const merged = mergeSessionAndWorktreeDiffs(sessionDiffs, worktreeDiffs);
-  setWorkspace("diffsBySession", (prev) => ({ ...prev, [sessionID]: merged }));
+  setWorkspace("diffsBySession", sessionID, merged);
 }
 
 export async function selectSession(sessionID: string): Promise<void> {
@@ -148,24 +167,18 @@ export async function newIsolatedSession(
         session.id,
         workspace.rootDir || undefined
       );
-      setWorkspace("worktreeBySession", (prev) => ({
-        ...prev,
-        [session.id]: meta,
-      }));
+      setWorkspace("worktreeBySession", session.id, meta);
     } catch (err) {
       console.error("create worktree failed:", err);
     }
   } else {
-    setWorkspace("worktreeBySession", (prev) => ({
-      ...prev,
-      [session.id]: {
-        sessionID: session.id,
-        isolated: false,
-        directory: workspace.rootDir,
-        branch: prev["__root__"]?.branch,
-        createdAt: new Date().toISOString(),
-      },
-    }));
+    setWorkspace("worktreeBySession", session.id, {
+      sessionID: session.id,
+      isolated: false,
+      directory: workspace.rootDir,
+      branch: workspace.worktreeBySession["__root__"]?.branch,
+      createdAt: new Date().toISOString(),
+    });
   }
   replaceSession(session);
   await selectSession(session.id);
@@ -189,7 +202,7 @@ export async function switchActiveSessionSandboxMode(
         id,
         workspace.rootDir || undefined
       );
-      setWorkspace("worktreeBySession", (prev) => ({ ...prev, [id]: meta }));
+      setWorkspace("worktreeBySession", id, meta);
       await refreshWorktreeStatus(id);
     } catch (err) {
       console.error("enable session worktree failed:", err);
@@ -258,42 +271,55 @@ export async function checkoutLocalBranch(
   }
 }
 
+const worktreeRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+export function scheduleRefreshWorktreeStatus(
+  sessionID?: string | null,
+  delayMs = 900
+): void {
+  const key = sessionID || "__root__";
+  const existing = worktreeRefreshTimers.get(key);
+  if (existing) clearTimeout(existing);
+  const timer = setTimeout(() => {
+    worktreeRefreshTimers.delete(key);
+    void refreshWorktreeStatus(key);
+  }, delayMs);
+  worktreeRefreshTimers.set(key, timer);
+}
+
 export async function refreshWorktreeStatus(sessionID?: string | null): Promise<void> {
   const key = sessionID || "__root__";
   const dirArg = key === "__root__" ? workspace.rootDir || undefined : undefined;
   try {
     const st = await hoxiAPI.getWorktreeStatus(key, dirArg);
-    setWorkspace("worktreeBySession", (prev) => ({
-      ...prev,
-      [key]: {
-        sessionID: key,
-        isolated: st.isolated,
-        directory: st.directory || workspace.rootDir,
-        branch: st.branch || prev[key]?.branch,
-        baseCommit: st.baseCommit || prev[key]?.baseCommit,
-        headCommit: st.headCommit || prev[key]?.headCommit,
-        headSubject: st.headSubject || prev[key]?.headSubject,
-        createdAt: prev[key]?.createdAt || new Date().toISOString(),
-        dirty: st.dirty,
-        changedFiles: st.changedFiles,
-        uncommittedLines: st.uncommittedLines,
-        additions: st.additions,
-        deletions: st.deletions,
-      },
-    }));
+    const prevMeta = workspace.worktreeBySession[key];
+    setWorkspace("worktreeBySession", key, {
+      sessionID: key,
+      isolated: st.isolated,
+      directory: st.directory || workspace.rootDir,
+      branch: st.branch || prevMeta?.branch,
+      baseCommit: st.baseCommit || prevMeta?.baseCommit,
+      headCommit: st.headCommit || prevMeta?.headCommit,
+      headSubject: st.headSubject || prevMeta?.headSubject,
+      createdAt: prevMeta?.createdAt || new Date().toISOString(),
+      dirty: st.dirty,
+      changedFiles: st.changedFiles,
+      uncommittedLines: st.uncommittedLines,
+      additions: st.additions,
+      deletions: st.deletions,
+    });
 
     if (key === "__root__" || key === workspace.activeSessionID) {
       const wtDiffs = st.dirty
         ? await hoxiAPI.getWorktreeDiff(key, dirArg).catch(() => [] as SnapshotFileDiff[])
         : [];
-      setWorkspace("diffsBySession", (prev) => {
-        if (key === "__root__") {
-          return { ...prev, __root__: wtDiffs };
-        }
-        const existing = prev[key] ?? [];
+      if (key === "__root__") {
+        setWorkspace("diffsBySession", "__root__", wtDiffs);
+      } else {
+        const existing = workspace.diffsBySession[key] ?? [];
         const merged = st.dirty ? mergeSessionAndWorktreeDiffs(existing, wtDiffs) : existing;
-        return { ...prev, [key]: merged };
-      });
+        setWorkspace("diffsBySession", key, merged);
+      }
     }
   } catch (err) {
     console.error("refresh worktree status failed:", err);
@@ -458,17 +484,5 @@ export async function discardSession(
   }
 }
 
-export {
-  applyPartDeltaBatch,
-  forkFromMessage,
-  pauseSessionTask,
-  resumePausedSession,
-  retryLastUserPrompt,
-  revertToHere,
-  sendPrompt,
-  stopSessionTask,
-  submitSessionPrompt,
-  undoRevert,
-  upsertMessageInfo,
-  upsertMessagePart,
-} from "./workspace-session-messages";
+export * from "./workspace-session-messages";
+

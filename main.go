@@ -94,6 +94,8 @@ func main() {
 	}
 	defer app.killChild()
 
+	reapOrphanedOpenCodeDaemons(logger)
+
 	// Fast path: if opencode binary is already present locally (or bundled in Hoxi.app), start it immediately.
 	// Slow path: if opencode is missing on the user's machine, launch the UI window without crashing and
 	// auto-download official opencode into ~/.hoxi/bin in the background.
@@ -340,4 +342,39 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func reapOrphanedOpenCodeDaemons(logger *slog.Logger) {
+	if runtime.GOOS == "windows" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "ps", "-ax", "-o", "pid=,ppid=,command=").Output()
+	if err != nil {
+		return
+	}
+	reaped := 0
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			continue
+		}
+		pid, errPid := strconv.Atoi(fields[0])
+		ppid, errPpid := strconv.Atoi(fields[1])
+		if errPid != nil || errPpid != nil || ppid != 1 || pid <= 1 {
+			continue
+		}
+		cmdStr := strings.Join(fields[2:], " ")
+		if strings.Contains(cmdStr, "opencode serve --hostname 127.0.0.1") {
+			if proc, err := os.FindProcess(pid); err == nil {
+				if err := proc.Kill(); err == nil {
+					reaped++
+				}
+			}
+		}
+	}
+	if reaped > 0 && logger != nil {
+		logger.Info("reaped orphaned opencode serve daemons", "count", reaped)
+	}
 }

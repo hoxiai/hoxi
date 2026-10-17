@@ -47,7 +47,7 @@ export default function InspectorPane() {
           {(tab) => (
             <button
               type="button"
-              class={`relative rounded-lg px-2.5 py-1 text-[11.5px] font-medium transition-all cursor-pointer ${
+              class={`relative rounded-lg px-3 py-1.5 text-[12.5px] font-medium transition-all cursor-pointer ${
                 workspace.inspectorTab === tab.id
                   ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]"
                   : "text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"

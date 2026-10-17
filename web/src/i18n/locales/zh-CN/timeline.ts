@@ -155,5 +155,11 @@ export const timeline: TimelineI18n = {
   sandboxWorktreeMode: "分支沙盒",
   sandboxLocalTooltip: "直接在当前本地分支修改代码（不新建分支）",
   sandboxWorktreeTooltip: "为会话创建独立的 Git 分支与 Worktree 沙盒",
+  loadEarlierTurns: "加载更早的 {count} 条消息",
+  loadAllEarlierTurns: "显示全部 ({total})",
+  hiddenTurnsHint: "已隐藏更早的 {count} 条历史消息以保障流畅度 · 上滑或点击加载",
+  completedWorkSummary: "已执行 {count} 个中间步骤",
+  expandTurnSteps: "展开步骤",
+  collapseTurnSteps: "收起步骤",
 };
 

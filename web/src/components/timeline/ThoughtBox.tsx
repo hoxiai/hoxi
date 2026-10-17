@@ -97,7 +97,10 @@ const userCollapsed = new Set<string>();
 
 export default function ThoughtBox(props: { part: ReasoningPart }) {
   const streaming = () => props.part.time?.end == null;
-  const rawText = () => (props.part.text ?? "").replace(/\[REDACTED\]/g, "").trim();
+  const hasContent = () => Boolean(props.part.text && props.part.text.trim().length > 0);
+  const headSlice = createMemo(() =>
+    (props.part.text ?? "").slice(0, 360).replace(/\[REDACTED\]/g, "").trim()
+  );
 
   const resolveDefaultOpen = () => {
     const id = props.part.id;
@@ -129,21 +132,29 @@ export default function ThoughtBox(props: { part: ReasoningPart }) {
 
   // Auto-scroll reasoning viewport while tokens stream in
   createEffect(() => {
-    void rawText();
-    if (open() && streaming() && bodyRef) {
-      requestAnimationFrame(() => {
+    if (!open() || !streaming()) return;
+    void props.part.text;
+    if (bodyRef) {
+      queueMicrotask(() => {
         if (bodyRef) bodyRef.scrollTop = bodyRef.scrollHeight;
       });
     }
   });
 
-  const view = createMemo(() => reasoningHeading(rawText(), streaming()));
+  const headView = createMemo(() => reasoningHeading(headSlice(), streaming()));
 
   const headerTitle = createMemo(() => {
-    const t = view().title;
+    const t = headView().title;
     if (t) return t;
-    if (!streaming() && !open()) return reasoningSummary(view().body);
+    if (!streaming() && !open()) return reasoningSummary(headView().body);
     return "";
+  });
+
+  const bodyContent = createMemo(() => {
+    if (!open()) return "";
+    const full = (props.part.text ?? "").replace(/\[REDACTED\]/g, "").trim();
+    const parsed = reasoningHeading(full, streaming());
+    return parsed.body || full;
   });
 
   const durationSec = () => {
@@ -166,11 +177,11 @@ export default function ThoughtBox(props: { part: ReasoningPart }) {
   };
 
   return (
-    <Show when={rawText().length > 0 || streaming()}>
+    <Show when={hasContent() || streaming()}>
       <div>
         <button
           type="button"
-          class="group/trigger inline-flex max-w-full items-center gap-2 rounded-lg py-1 text-[13px] text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+          class="group/trigger inline-flex max-w-full items-center gap-2 rounded-lg py-1.5 text-[13px] text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
           onClick={toggleOpen}
         >
           <span
@@ -195,7 +206,7 @@ export default function ThoughtBox(props: { part: ReasoningPart }) {
             </span>
           </Show>
           <Show when={!streaming() && durationSec() > 0}>
-            <span class="shrink-0 font-mono text-[11px] tabular-nums text-[var(--text-faint)]">
+            <span class="shrink-0 font-mono text-[11.5px] tabular-nums text-[var(--text-faint)]">
               {durationSec().toFixed(1)}s
             </span>
           </Show>
@@ -207,9 +218,18 @@ export default function ThoughtBox(props: { part: ReasoningPart }) {
         <Show when={open()}>
           <div
             ref={bodyRef}
-            class="mt-1.5 max-h-[220px] overflow-y-auto rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-4 py-3 text-[12.5px] leading-relaxed text-[var(--text-secondary)] selectable-text"
+            class="mt-1.5 max-h-[240px] overflow-y-auto rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-4 py-3 text-[13px] leading-relaxed text-[var(--text-secondary)] selectable-text"
           >
-            <MarkdownView content={view().body || rawText()} />
+            <Show
+              when={!streaming() || bodyContent().length < 2400}
+              fallback={
+                <div class="whitespace-pre-wrap break-words leading-relaxed">
+                  {bodyContent()}
+                </div>
+              }
+            >
+              <MarkdownView content={bodyContent()} />
+            </Show>
           </div>
         </Show>
       </div>

@@ -20,17 +20,18 @@ import {
 } from "../../store/workspace";
 import { Icon } from "../icons";
 import {
-  AssistantErrorCard,
-  AssistantTurnFooter,
   basename,
-  ContextActivityGroupView,
   formatMessageTime,
-  groupAssistantParts,
   isTodoTool,
   LiveExecutionControlBar,
-  PartView,
   SessionRetryCard,
 } from "./message-stream-parts";
+import {
+  AssistantTurnItem,
+  createTurnWindow,
+  EarlierTurnsBanner,
+  turnContentVisibilityClass,
+} from "./turn-window";
 import TaskTimelineBar from "./TaskTimelineBar";
 import TranscriptSearchBar from "./TranscriptSearchBar";
 import { t } from "../../i18n";
@@ -47,6 +48,8 @@ export default function MessageStream() {
     const id = workspace.activeSessionID;
     return id ? workspace.messagesBySession[id] ?? [] : [];
   });
+
+  const turnWindow = createTurnWindow(() => workspace.activeSessionID, turns);
 
   const activeStatus = createMemo<SessionStatus>(() => {
     const id = workspace.activeSessionID;
@@ -127,6 +130,9 @@ export default function MessageStream() {
     if (!scroller) return;
     const distance = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
     stickToBottom = distance < 64;
+    if (!stickToBottom) {
+      turnWindow.handleTopScroll(scroller);
+    }
   };
 
   const onRevertToMessage = async (messageID: string) => {
@@ -181,12 +187,15 @@ export default function MessageStream() {
   };
 
   const scrollToTurn = (messageID: string) => {
-    if (!scroller) return;
-    const el = scroller.querySelector(`[data-turn-id="${CSS.escape(messageID)}"]`);
-    if (el instanceof HTMLElement) {
-      stickToBottom = false;
-      el.scrollIntoView({ behavior: "smooth", block: "center" });
-    }
+    turnWindow.ensureTurnVisible(messageID);
+    queueMicrotask(() => {
+      if (!scroller) return;
+      const el = scroller.querySelector(`[data-turn-id="${CSS.escape(messageID)}"]`);
+      if (el instanceof HTMLElement) {
+        stickToBottom = false;
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    });
   };
 
   onMount(() => {
@@ -220,7 +229,7 @@ export default function MessageStream() {
     <div
       ref={scroller}
       onScroll={onScroll}
-      class="relative flex-1 min-h-0 overflow-y-auto overflow-x-hidden scroll-smooth"
+      class="relative flex-1 min-h-0 overflow-y-auto overflow-x-hidden"
     >
       {/* Kilo TaskTimeline + MessageNav Turn Jump + TranscriptSearch */}
       <TaskTimelineBar
@@ -253,7 +262,7 @@ export default function MessageStream() {
         class="pointer-events-none sticky top-0 z-10 -mb-6 h-6 w-full shrink-0 bg-gradient-to-b from-[var(--bg-panel)] to-transparent"
       />
 
-      <div class="mx-auto flex w-full max-w-[62rem] min-h-full flex-col px-6 pt-8 pb-8">
+      <div class="mx-auto flex w-full max-w-[var(--thread-max-width)] min-h-full flex-col px-6 pt-8 pb-8">
         <Show
           when={!isEmpty()}
           fallback={
@@ -280,18 +289,18 @@ export default function MessageStream() {
                 </span>
                 {welcomeTitleParts().after}
               </h1>
-              <p class="mt-2 max-w-lg text-[13px] text-[var(--text-muted)]">
+              <p class="mt-2 max-w-lg text-[13.5px] text-[var(--text-muted)]">
                 {t("timeline.welcomeSubtitle")}
               </p>
 
-              <div class="mt-7 flex flex-wrap items-center justify-center gap-2 max-w-[52rem]">
+              <div class="mt-7 flex flex-wrap items-center justify-center gap-2 max-w-[50rem]">
                 <For each={quickSuggestions()}>
                   {(suggestion) => (
                     <button
                       type="button"
                       disabled={launchingPrompt()}
                       onClick={() => void onRunSuggestion(suggestion)}
-                      class="inline-flex items-center gap-1.5 rounded-full border border-[var(--border-subtle)] bg-[var(--bg-elevated)] hover:bg-[var(--bg-hover)] hover:border-[var(--border-strong)] px-3.5 py-1.5 text-[12.5px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-all cursor-pointer disabled:opacity-50"
+                      class="inline-flex items-center gap-1.5 rounded-full border border-[var(--border-subtle)] bg-[var(--bg-elevated)] hover:bg-[var(--bg-hover)] hover:border-[var(--border-strong)] px-3.5 py-1.5 text-[13px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-all cursor-pointer disabled:opacity-50"
                     >
                       <span>{suggestion}</span>
                       <Icon name="arrow-up" size="small" class="rotate-45 text-[var(--text-faint)]" />
@@ -303,129 +312,115 @@ export default function MessageStream() {
           }
         >
           <div class="flex flex-col">
-            <For each={turns()}>
-              {(turn, idx) => (
-                <Show
-                  when={turn.info.role === "user"}
-                  fallback={
-                    /* Kilo-style Open Assistant Turn with Grouped Exploration Steps */
+            <EarlierTurnsBanner
+              hiddenCount={turnWindow.hiddenCount()}
+              totalCount={turns().length}
+              onLoadBatch={() => turnWindow.loadEarlierBatch(scroller)}
+              onLoadAll={() => turnWindow.loadAllEarlier(scroller)}
+            />
+
+            <For each={turnWindow.visibleTurns()}>
+              {(turn, idx) => {
+                const globalIndex = () => turnWindow.startIndex() + idx();
+                return (
+                  <Show
+                    when={turn.info.role === "user"}
+                    fallback={
+                      <AssistantTurnItem
+                        turn={turn}
+                        globalIndex={globalIndex()}
+                        allTurns={turns()}
+                        isSessionBusy={isSessionBusy()}
+                        isHighlighted={activeMatchTurnID() === turn.info.id}
+                      />
+                    }
+                  >
+                    {/* Kilo-style Right-Aligned User Message Bubble */}
                     <div
                       data-turn-id={turn.info.id}
-                      class={`flex flex-col gap-y-3 px-1 rounded-xl transition-all ${
-                        idx() === 0
-                          ? "mt-0"
-                          : turns()[idx() - 1]?.info.role === "assistant"
-                            ? "mt-3"
-                            : "mt-6"
+                      class={`group/turn flex flex-col items-end rounded-xl transition-colors ${turnContentVisibilityClass(
+                        globalIndex(),
+                        turns().length
+                      )} ${
+                        idx() === 0 ? "mt-0" : "mt-7"
                       } ${
                         activeMatchTurnID() === turn.info.id
-                          ? "ring-2 ring-[var(--accent-primary)] bg-[var(--accent-surface)]/20 p-2"
+                          ? "ring-2 ring-[var(--accent-primary)] p-1.5"
                           : ""
                       }`}
                     >
-                      <Index each={groupAssistantParts(turn.parts)}>
-                        {(item) =>
-                          item().kind === "activity-group" ? (
-                            <ContextActivityGroupView
-                              parts={(item() as Extract<typeof item extends () => infer T ? T : never, { kind: "activity-group" }>).parts}
-                            />
-                          ) : (
-                            <PartView
-                              part={(item() as Extract<typeof item extends () => infer T ? T : never, { kind: "single" }>).part}
-                            />
-                          )
-                        }
-                      </Index>
-                      <AssistantErrorCard info={turn.info} />
-                      <AssistantTurnFooter
-                        info={turn.info}
-                        parts={turn.parts}
-                        turns={turns()}
-                        turnIndex={idx()}
-                        isSessionBusy={isSessionBusy()}
-                      />
+                      <div class="max-w-[85%] rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-subtle)] px-4 py-3 shadow-2xs space-y-2">
+                        <Index each={turn.parts}>
+                          {(part) => (
+                            <>
+                              <Show when={part().type === "file"}>
+                                <div class="overflow-hidden rounded-lg border border-[var(--border-subtle)] max-w-[260px]">
+                                  <img
+                                    src={(part() as Extract<MessagePart, { type: "file" }>).url}
+                                    alt={
+                                      (part() as Extract<MessagePart, { type: "file" }>).filename ||
+                                      "attachment"
+                                    }
+                                    class="max-h-48 w-auto object-contain block"
+                                  />
+                                </div>
+                              </Show>
+                              <Show when={part().type === "text"}>
+                                <div
+                                  class="whitespace-pre-wrap break-words leading-[1.65] text-[var(--text-primary)] selectable-text"
+                                  style={{ "font-size": "var(--app-chat-text-size)" }}
+                                >
+                                  {(part() as Extract<MessagePart, { type: "text" }>).text}
+                                </div>
+                              </Show>
+                            </>
+                          )}
+                        </Index>
+                      </div>
+
+                      {/* Kilo-style User Message Hover Actions & Metadata */}
+                      <div class="mt-1 flex items-center justify-end gap-2 px-1 text-[12px] text-[var(--text-faint)] opacity-0 group-hover/turn:opacity-100 transition-opacity">
+                        <Show when={formatMessageTime(turn.info.time?.created)}>
+                          <span class="font-mono text-[11.5px]">{formatMessageTime(turn.info.time?.created)}</span>
+                        </Show>
+
+                        <button
+                          type="button"
+                          class="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[12px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+                          onClick={() => void onCopyUserMessage(turn.info.id, turn.parts)}
+                          title={t("timeline.copyPromptTooltip")}
+                        >
+                          <Icon
+                            name={copiedUserMsgId() === turn.info.id ? "check" : "copy"}
+                            size="small"
+                          />
+                          <span>{copiedUserMsgId() === turn.info.id ? t("common.copied") : t("common.copy")}</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          class="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[12px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+                          onClick={() => void onForkFromMessage(turn.info.id)}
+                          title={t("timeline.forkTooltip")}
+                        >
+                          <Icon name="fork" size="small" />
+                          <span>{t("timeline.forkBtn")}</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          class="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[12px] text-[var(--text-muted)] hover:text-[var(--warn-text)] hover:bg-[var(--warn-surface)] transition-colors cursor-pointer"
+                          onClick={() => void onRevertToMessage(turn.info.id)}
+                          title={t("timeline.revertTooltip")}
+                        >
+                          <Icon name="arrow-undo-down" size="small" />
+                          <span>{t("timeline.revertBtn")}</span>
+                        </button>
+                      </div>
                     </div>
-                  }
-                >
-                  {/* Kilo-style Right-Aligned User Message Bubble */}
-                  <div
-                    data-turn-id={turn.info.id}
-                    class={`group/turn flex flex-col items-end rounded-xl transition-all ${
-                      idx() === 0 ? "mt-0" : "mt-7"
-                    } ${
-                      activeMatchTurnID() === turn.info.id
-                        ? "ring-2 ring-[var(--accent-primary)] p-1.5"
-                        : ""
-                    }`}
-                  >
-                    <div class="max-w-[85%] rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-subtle)] px-4 py-2.5 shadow-2xs space-y-2">
-                      <Index each={turn.parts}>
-                        {(part) => (
-                          <>
-                            <Show when={part().type === "file"}>
-                              <div class="overflow-hidden rounded-lg border border-[var(--border-subtle)] max-w-[260px]">
-                                <img
-                                  src={(part() as Extract<MessagePart, { type: "file" }>).url}
-                                  alt={
-                                    (part() as Extract<MessagePart, { type: "file" }>).filename ||
-                                    "attachment"
-                                  }
-                                  class="max-h-48 w-auto object-contain block"
-                                />
-                              </div>
-                            </Show>
-                            <Show when={part().type === "text"}>
-                              <div class="whitespace-pre-wrap break-words text-[14px] leading-relaxed text-[var(--text-primary)] selectable-text">
-                                {(part() as Extract<MessagePart, { type: "text" }>).text}
-                              </div>
-                            </Show>
-                          </>
-                        )}
-                      </Index>
-                    </div>
-
-                    {/* Kilo-style User Message Hover Actions & Metadata */}
-                    <div class="mt-1 flex items-center justify-end gap-2 px-1 text-[11px] text-[var(--text-faint)] opacity-0 group-hover/turn:opacity-100 transition-opacity">
-                      <Show when={formatMessageTime(turn.info.time?.created)}>
-                        <span class="font-mono">{formatMessageTime(turn.info.time?.created)}</span>
-                      </Show>
-
-                      <button
-                        type="button"
-                        class="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
-                        onClick={() => void onCopyUserMessage(turn.info.id, turn.parts)}
-                        title={t("timeline.copyPromptTooltip")}
-                      >
-                        <Icon
-                          name={copiedUserMsgId() === turn.info.id ? "check" : "copy"}
-                          size="small"
-                        />
-                        <span>{copiedUserMsgId() === turn.info.id ? t("common.copied") : t("common.copy")}</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        class="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
-                        onClick={() => void onForkFromMessage(turn.info.id)}
-                        title={t("timeline.forkTooltip")}
-                      >
-                        <Icon name="fork" size="small" />
-                        <span>{t("timeline.forkBtn")}</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        class="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-[var(--text-muted)] hover:text-[var(--warn-text)] hover:bg-[var(--warn-surface)] transition-colors cursor-pointer"
-                        onClick={() => void onRevertToMessage(turn.info.id)}
-                        title={t("timeline.revertTooltip")}
-                      >
-                        <Icon name="arrow-undo-down" size="small" />
-                        <span>{t("timeline.revertBtn")}</span>
-                      </button>
-                    </div>
-                  </div>
-                </Show>
-              )}
+                  </Show>
+                );
+              }}
             </For>
 
             {/* Live Execution Control Bar (Thinking / Executing + Pause / Stop / Resume) */}
@@ -448,3 +443,4 @@ export default function MessageStream() {
     </div>
   );
 }
+

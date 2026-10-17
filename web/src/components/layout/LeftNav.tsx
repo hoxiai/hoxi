@@ -10,7 +10,6 @@ import {
   reorderProjects,
   selectSession,
   setProjectOrder,
-  setSidebarProjectMode,
   switchWorkspace,
   unarchiveSession,
   workspace,
@@ -20,7 +19,6 @@ import type { SessionInfo } from "../../services/sse-types";
 import { Icon, Spinner } from "../icons";
 import { buildAllProjects, findProjectDropTarget } from "./left-nav-helpers";
 import MultiProjectTreeItem from "./MultiProjectItem";
-import SingleProjectNavView from "./SingleProjectNavView";
 import UserAccountMenu from "./UserAccountMenu";
 import { t } from "../../i18n";
 
@@ -286,52 +284,42 @@ export default function LeftNav() {
 
   return (
     <aside class="relative h-full w-full flex flex-col bg-transparent pl-2 pr-1 select-none">
-      {/* Minimal Header: Mode Toggle + Search + New Workspace */}
-      <div class="px-2 pt-1 pb-2 flex items-center justify-between gap-1">
-        <div
-          class="inline-flex items-center rounded-lg bg-[var(--bg-inset)] p-0.5"
-          title={t("leftNav.switchSidebarMode")}
+      {/* Unified Minimal Header: New Thread + Quick Actions */}
+      <div class="px-1.5 pt-1 pb-1.5 flex items-center justify-between gap-1 shrink-0">
+        <button
+          type="button"
+          onClick={onCreateGlobalNewThread}
+          disabled={creatingGlobal()}
+          class="inline-flex items-center gap-2 rounded-lg px-2 py-1.5 text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer group min-w-0"
+          title={`${t("leftNav.newThread")} (⌘N)`}
         >
-          <button
-            type="button"
-            onClick={() => setSidebarProjectMode("multi")}
-            class={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[12px] font-medium transition-colors cursor-pointer ${
-              workspace.sidebarProjectMode === "multi"
-                ? "bg-[var(--bg-panel)] text-[var(--text-primary)] shadow-2xs"
-                : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
-            }`}
+          <Show
+            when={!creatingGlobal()}
+            fallback={<Spinner class="w-3.5 h-3.5 text-[var(--accent-primary)] shrink-0" />}
           >
-            <Icon name="layers" size="small" class="w-3 h-3" />
-            <span>{t("leftNav.multiProject")}</span>
-          </button>
+            <Icon name="new-session" size="small" class="text-[var(--accent-primary)] shrink-0" />
+          </Show>
+          <span class="text-[13px] font-medium truncate">
+            {t("leftNav.newThread")}
+          </span>
+          <span class="text-[11px] font-mono text-[var(--text-faint)] group-hover:text-[var(--text-muted)]">
+            ⌘N
+          </span>
+        </button>
 
-          <button
-            type="button"
-            onClick={() => setSidebarProjectMode("single")}
-            class={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[12px] font-medium transition-colors cursor-pointer ${
-              workspace.sidebarProjectMode === "single"
-                ? "bg-[var(--bg-panel)] text-[var(--text-primary)] shadow-2xs"
-                : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
-            }`}
-          >
-            <Icon name="folder" size="small" class="w-3 h-3" />
-            <span>{t("leftNav.singleProject")}</span>
-          </button>
-        </div>
-
-        <div class="flex items-center gap-0.5">
+        <div class="flex items-center gap-0.5 shrink-0">
           <button
             type="button"
             onClick={() => openHandoffModal()}
-            class="p-1 rounded-md text-[var(--accent-primary)] hover:bg-[var(--accent-surface)] transition-colors cursor-pointer"
+            class="p-1.5 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
             title={t("leftNav.handoffTooltip")}
           >
-            <ArrowRightLeft size={14} />
+            <ArrowRightLeft size={13.5} />
           </button>
           <button
             type="button"
             onClick={() => setShowSearch((v) => !v)}
-            class={`p-1 rounded-md text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer ${
+            class={`p-1.5 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer ${
               showSearch() ? "bg-[var(--bg-hover)] text-[var(--text-primary)]" : ""
             }`}
             title={t("leftNav.filterPlaceholder")}
@@ -341,7 +329,7 @@ export default function LeftNav() {
           <button
             type="button"
             onClick={() => openCreateWorkspaceModal()}
-            class="p-1 rounded-md text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+            class="p-1.5 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
             title={t("leftNav.newWorkspace")}
           >
             <Icon name="folder-add-left" size="small" />
@@ -351,7 +339,7 @@ export default function LeftNav() {
 
       {/* Collapsible Search Filter */}
       <Show when={showSearch()}>
-        <div class="px-2 pb-2">
+        <div class="px-2 pb-2 shrink-0">
           <div class="flex items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-2.5 py-1.5 text-[12px]">
             <Icon name="magnifying-glass" size="small" class="text-[var(--text-muted)]" />
             <input
@@ -374,86 +362,46 @@ export default function LeftNav() {
         </div>
       </Show>
 
-      {/* Prominent New Thread Button above all projects */}
-      <div class="px-2 pb-2 shrink-0">
-        <button
-          type="button"
-          onClick={onCreateGlobalNewThread}
-          disabled={creatingGlobal()}
-          class="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] hover:bg-[var(--bg-hover)] text-[var(--text-primary)] hover:border-[var(--accent-border)] transition-all cursor-pointer shadow-2xs group"
-          title={t("leftNav.newThread")}
-        >
-          <div class="flex items-center gap-2 min-w-0">
-            <Show
-              when={!creatingGlobal()}
-              fallback={<Spinner class="w-3.5 h-3.5 text-[var(--accent-primary)]" />}
-            >
-              <Icon name="new-session" size="small" class="text-[var(--accent-primary)]" />
-            </Show>
-            <span class="text-[13px] font-medium truncate">
-              {t("leftNav.newThread")}
-            </span>
-          </div>
-          <span class="text-[11.5px] font-mono text-[var(--text-faint)] group-hover:text-[var(--text-muted)]">
-            ⌘N
-          </span>
-        </button>
+      {/* Unified Project & Session Tree */}
+      <div
+        ref={projectListContainerRef}
+        class="flex-1 min-h-0 overflow-y-auto px-1 py-1 space-y-1"
+      >
+        <For each={projectList()}>
+          {(proj) => (
+            <MultiProjectTreeItem
+              proj={proj}
+              expanded={isExpanded(proj.path)}
+              isCreating={creatingForPath() === proj.path}
+              isLoadingSessions={Boolean(loadingProjects()[proj.path])}
+              isDraggingThis={draggingProjectPath() === proj.path}
+              isDropBefore={
+                dropTarget()?.path === proj.path && dropTarget()?.position === "before"
+              }
+              isDropAfter={
+                dropTarget()?.path === proj.path && dropTarget()?.position === "after"
+              }
+              isArchivedOpen={
+                Boolean(expandedArchivedByProject()[proj.path]) ||
+                Boolean(filterQuery().trim())
+              }
+              filterQuery={filterQuery()}
+              cachedSessions={projectSessions()[proj.path] || []}
+              pendingSessions={pendingSessions()}
+              onPointerDown={onProjectPointerDown}
+              onToggleProject={(p) => void toggleProject(p)}
+              onToggleArchived={toggleArchivedForProject}
+              onCreateThread={(e, p) => void onCreateThreadInProject(e, p)}
+              onSelectSession={(p, id) => void onSelectSessionInProject(p, id)}
+              onArchiveSession={(p, ev, id) => void onArchiveInProject(p, ev, id)}
+              onUnarchiveSession={(p, ev, id) => void onUnarchiveInProject(p, ev, id)}
+              onDiscardSession={(p, ev, id) => onDiscardInProject(p, ev, id)}
+            />
+          )}
+        </For>
       </div>
 
-      {/* MODE A: MULTI-PROJECT TREE */}
-      <Show when={workspace.sidebarProjectMode === "multi"}>
-        <div
-          ref={projectListContainerRef}
-          class="flex-1 min-h-0 overflow-y-auto px-1 py-1 space-y-1"
-        >
-          <For each={projectList()}>
-            {(proj) => (
-              <MultiProjectTreeItem
-                proj={proj}
-                expanded={isExpanded(proj.path)}
-                isCreating={creatingForPath() === proj.path}
-                isLoadingSessions={Boolean(loadingProjects()[proj.path])}
-                isDraggingThis={draggingProjectPath() === proj.path}
-                isDropBefore={
-                  dropTarget()?.path === proj.path && dropTarget()?.position === "before"
-                }
-                isDropAfter={
-                  dropTarget()?.path === proj.path && dropTarget()?.position === "after"
-                }
-                isArchivedOpen={
-                  Boolean(expandedArchivedByProject()[proj.path]) ||
-                  Boolean(filterQuery().trim())
-                }
-                filterQuery={filterQuery()}
-                cachedSessions={projectSessions()[proj.path] || []}
-                pendingSessions={pendingSessions()}
-                onPointerDown={onProjectPointerDown}
-                onToggleProject={(p) => void toggleProject(p)}
-                onToggleArchived={toggleArchivedForProject}
-                onCreateThread={(e, p) => void onCreateThreadInProject(e, p)}
-                onSelectSession={(p, id) => void onSelectSessionInProject(p, id)}
-                onArchiveSession={(p, ev, id) => void onArchiveInProject(p, ev, id)}
-                onUnarchiveSession={(p, ev, id) => void onUnarchiveInProject(p, ev, id)}
-                onDiscardSession={(p, ev, id) => onDiscardInProject(p, ev, id)}
-              />
-            )}
-          </For>
-        </div>
-      </Show>
-
-      {/* MODE B: SINGLE-PROJECT FOCUSED VIEW */}
-      <Show when={workspace.sidebarProjectMode === "single"}>
-        <SingleProjectNavView
-          allProjects={allProjects()}
-          filterQuery={filterQuery()}
-          pendingSessions={pendingSessions()}
-          onArchive={(ev, id) => void onArchiveInProject(workspace.rootDir, ev, id)}
-          onUnarchive={(ev, id) => void onUnarchiveInProject(workspace.rootDir, ev, id)}
-          onDiscard={(ev, id) => onDiscardInProject(workspace.rootDir, ev, id)}
-        />
-      </Show>
-
-      {/* Kilo-style Bottom Bar: Account Popover + Settings Gear */}
+      {/* Bottom Bar: Account Popover + Settings Gear */}
       <UserAccountMenu />
     </aside>
   );

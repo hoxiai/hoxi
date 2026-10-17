@@ -63,11 +63,13 @@ const [gitDailyPulse, setGitDailyPulse] = createSignal<GitDailyPulseResponse>({
 });
 const [syncingPulse, setSyncingPulse] = createSignal(false);
 
+let pulseInFlight = false;
 let lastPulseSignature = "";
 
-export async function refreshDailyDevPulse(_force = false): Promise<void> {
-  if (syncingPulse()) return;
-  setSyncingPulse(true);
+export async function refreshDailyDevPulse(manual = false): Promise<void> {
+  if (pulseInFlight && !manual) return;
+  pulseInFlight = true;
+  if (manual) setSyncingPulse(true);
   try {
     const res = await hoxiAPI.getGitDailyPulse(
       workspace.rootDir || undefined,
@@ -83,7 +85,8 @@ export async function refreshDailyDevPulse(_force = false): Promise<void> {
   } catch {
     /* ignore */
   } finally {
-    setSyncingPulse(false);
+    pulseInFlight = false;
+    if (manual) setSyncingPulse(false);
   }
 }
 

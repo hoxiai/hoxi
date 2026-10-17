@@ -13,13 +13,10 @@ import ContextActivityGroupComponent, {
 import type { MessageInfo, MessagePart } from "../../services/sse-types";
 import {
   isUserAbortError,
-  pauseSessionTask,
   resumePausedSession,
   retryLastUserPrompt,
-  stopSessionTask,
   workspace,
 } from "../../store/workspace";
-import { ProviderHealthBadge } from "../models/ProviderHealthBadge";
 import { ObserverAuditBadge } from "../inspector/ObserverAuditBanner";
 import { Icon, Spinner, TextShimmer } from "../icons";
 import { t } from "../../i18n";
@@ -225,11 +222,11 @@ export function AssistantTurnFooter(props: {
   return (
     <Show when={cycleSummary()}>
       {(summary) => (
-        <div class="mt-2.5 pt-2 border-t border-[var(--border-subtle)]/60 flex items-center gap-2 flex-wrap text-[11px] text-[var(--text-muted)]">
+        <div class="mt-2 flex items-center gap-2 flex-wrap text-[12px] text-[var(--text-faint)] select-none">
           <Show
             when={interruptMode()}
             fallback={
-              <span class="inline-flex items-center gap-1 rounded-full border border-[var(--ok-border)] bg-[var(--ok-surface)] px-2 py-0.5 text-[11px] font-medium text-[var(--ok-text)]">
+              <span class="inline-flex items-center gap-1 text-[var(--ok-text)]/85">
                 <Icon name="circle-check" size="small" />
                 <span>{t("timeline.turnCompleted")}</span>
               </span>
@@ -237,10 +234,8 @@ export function AssistantTurnFooter(props: {
           >
             {(mode) => (
               <span
-                class={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium ${
-                  mode() === "paused"
-                    ? "border-[var(--warn-border)] bg-[var(--warn-surface)] text-[var(--warn-text)]"
-                    : "border-[var(--danger-border)] bg-[var(--danger-surface)] text-[var(--danger-text)]"
+                class={`inline-flex items-center gap-1 font-medium ${
+                  mode() === "paused" ? "text-[var(--warn-text)]" : "text-[var(--danger-text)]"
                 }`}
               >
                 <span class="font-mono text-[10px] leading-none">
@@ -253,57 +248,40 @@ export function AssistantTurnFooter(props: {
             )}
           </Show>
 
+          <Show when={durationLabel()}>
+            <span>·</span>
+            <span class="font-mono tabular-nums text-[var(--text-muted)]">
+              {durationLabel()}
+            </span>
+          </Show>
+
+          <Show when={summary().toolCount > 0}>
+            <span>·</span>
+            <span class="font-mono tabular-nums text-[var(--text-muted)]">
+              {t("timeline.stepsCompleted", { count: summary().toolCount })}
+            </span>
+          </Show>
+
           <Show when={isLatestTurn() && interruptMode() && !props.isSessionBusy}>
             <button
               type="button"
               disabled={resuming()}
               onClick={() => void onResume()}
               title={t("timeline.resumeTooltip")}
-              class="inline-flex items-center gap-1 rounded-full bg-[var(--accent-primary)] px-2.5 py-0.5 text-[11px] font-medium text-white hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
+              class="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[12px] font-medium text-[var(--accent-primary)] hover:bg-[var(--accent-surface)] disabled:opacity-50 transition-colors cursor-pointer"
             >
-              <span class="text-[9.5px] leading-none">▶</span>
+              <span class="text-[10px] leading-none">▶</span>
               <span>{t("timeline.resume")}</span>
             </button>
 
             <button
               type="button"
               onClick={() => void retryLastUserPrompt(props.info.sessionID)}
-              class="inline-flex items-center gap-1 rounded-full border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-2 py-0.5 text-[11px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+              class="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[12px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
             >
               <span>↺</span>
               <span>{t("timeline.retryTask")}</span>
             </button>
-          </Show>
-
-          <Show when={durationLabel()}>
-            <span class="font-mono tabular-nums text-[var(--text-secondary)]">
-              {durationLabel()}
-            </span>
-          </Show>
-
-          <Show when={summary().toolCount > 0}>
-            <span class="text-[var(--text-faint)]">·</span>
-            <span class="font-mono tabular-nums">
-              {t("timeline.stepsCompleted", { count: summary().toolCount })}
-            </span>
-          </Show>
-
-          <Show when={props.info.agent}>
-            <span class="text-[var(--text-faint)]">·</span>
-            <span class="capitalize">{props.info.agent}</span>
-          </Show>
-
-          <Show when={props.info.modelID}>
-            <span class="text-[var(--text-faint)]">·</span>
-            <span class="font-mono text-[var(--text-faint)]">{props.info.modelID}</span>
-          </Show>
-
-          <Show when={props.info.providerID}>
-            <ProviderHealthBadge
-              providerID={props.info.providerID!}
-              modelID={props.info.modelID}
-              compact
-            />
           </Show>
 
           <Show when={isLatestTurn()}>
@@ -315,7 +293,7 @@ export function AssistantTurnFooter(props: {
               type="button"
               onClick={() => void copyResponse()}
               title={copied() ? t("common.copied") : t("timeline.copyResponse")}
-              class="ml-auto inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+              class="ml-auto inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[12px] text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
             >
               <Show when={copied()} fallback={<Icon name="copy" size="small" />}>
                 <Icon name="check" size="small" class="text-[var(--ok-text)]" />
@@ -342,26 +320,6 @@ export function LiveExecutionControlBar(props: {
     return id ? workspace.interruptedBySession[id] : undefined;
   });
 
-  const onPause = async () => {
-    if (!props.sessionID || busyAction()) return;
-    setBusyAction(true);
-    try {
-      await pauseSessionTask(props.sessionID);
-    } finally {
-      setBusyAction(false);
-    }
-  };
-
-  const onStop = async () => {
-    if (!props.sessionID || busyAction()) return;
-    setBusyAction(true);
-    try {
-      await stopSessionTask(props.sessionID);
-    } finally {
-      setBusyAction(false);
-    }
-  };
-
   const onResume = async () => {
     if (!props.sessionID || busyAction()) return;
     setBusyAction(true);
@@ -374,41 +332,10 @@ export function LiveExecutionControlBar(props: {
 
   return (
     <>
-      <Show when={props.isSessionBusy}>
-        <div class="mt-4 flex items-center justify-between gap-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/80 px-3 py-2 text-[12.5px]">
-          <div class="flex items-center gap-2.5 text-[var(--accent-primary)] min-w-0">
-            <Spinner class="w-4 h-4 shrink-0" />
-            <TextShimmer
-              text={props.showThinking ? t("timeline.thinking") : t("timeline.executing")}
-              active={true}
-              class="font-medium truncate"
-            />
-          </div>
-
-          <div class="flex items-center gap-1.5 shrink-0">
-            <button
-              type="button"
-              disabled={busyAction()}
-              onClick={() => void onPause()}
-              title={t("timeline.pauseTooltip")}
-              class="inline-flex items-center gap-1 rounded-full border border-[var(--warn-border)] bg-[var(--warn-surface)] px-2.5 py-1 text-[11px] font-medium text-[var(--warn-text)] hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
-            >
-              <span class="font-mono text-[10px] leading-none">⏸</span>
-              <span>{t("timeline.pause")}</span>
-            </button>
-
-            <button
-              type="button"
-              disabled={busyAction()}
-              onClick={() => void onStop()}
-              title={t("timeline.stopTooltip")}
-              class="inline-flex items-center gap-1 rounded-full border border-[var(--danger-border)] bg-[var(--danger-surface)] px-2.5 py-1 text-[11px] font-medium text-[var(--danger-text)] hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
-            >
-              <span class="font-mono text-[10px] leading-none">■</span>
-              <span>{t("timeline.stop")}</span>
-              <span class="font-mono text-[10px] opacity-70">Esc</span>
-            </button>
-          </div>
+      <Show when={props.showThinking}>
+        <div class="mt-4 flex items-center gap-2 px-1 text-[13px] text-[var(--accent-primary)]">
+          <Spinner class="w-4 h-4 shrink-0" />
+          <TextShimmer text={t("timeline.thinking")} active={true} class="font-medium" />
         </div>
       </Show>
 
@@ -419,12 +346,12 @@ export function LiveExecutionControlBar(props: {
           props.lastTurnRole === "user"
         }
       >
-        <div class="mt-3 flex items-center gap-2 flex-wrap px-1 text-[11px] text-[var(--text-muted)]">
+        <div class="mt-3 flex items-center gap-2 flex-wrap px-1 text-[12px] text-[var(--text-faint)] select-none">
           <span
-            class={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium ${
+            class={`inline-flex items-center gap-1 font-medium ${
               interruptedMode() === "paused"
-                ? "border-[var(--warn-border)] bg-[var(--warn-surface)] text-[var(--warn-text)]"
-                : "border-[var(--danger-border)] bg-[var(--danger-surface)] text-[var(--danger-text)]"
+                ? "text-[var(--warn-text)]"
+                : "text-[var(--danger-text)]"
             }`}
           >
             <span class="font-mono text-[10px] leading-none">
@@ -442,16 +369,16 @@ export function LiveExecutionControlBar(props: {
             disabled={busyAction()}
             onClick={() => void onResume()}
             title={t("timeline.resumeTooltip")}
-            class="inline-flex items-center gap-1 rounded-full bg-[var(--accent-primary)] px-2.5 py-0.5 text-[11px] font-medium text-white hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
+            class="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[12px] font-medium text-[var(--accent-primary)] hover:bg-[var(--accent-surface)] disabled:opacity-50 transition-colors cursor-pointer"
           >
-            <span class="text-[9.5px] leading-none">▶</span>
+            <span class="text-[10px] leading-none">▶</span>
             <span>{t("timeline.resume")}</span>
           </button>
 
           <button
             type="button"
             onClick={() => void retryLastUserPrompt(props.sessionID)}
-            class="inline-flex items-center gap-1 rounded-full border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-2 py-0.5 text-[11px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+            class="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[12px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
           >
             <span>↺</span>
             <span>{t("timeline.retryTask")}</span>
