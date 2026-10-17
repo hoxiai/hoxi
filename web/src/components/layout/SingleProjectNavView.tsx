@@ -1,20 +1,13 @@
 // web/src/components/layout/SingleProjectNavView.tsx
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 import {
-  Check,
-  ChevronDown,
-  Folder,
-  LoaderCircle,
-  MessageSquarePlus,
-  Search,
-} from "lucide-solid";
-import {
   newIsolatedSession,
   selectSession,
   switchWorkspace,
   workspace,
 } from "../../store/workspace";
 import type { SessionInfo } from "../../services/sse-types";
+import { Icon, Spinner } from "../icons";
 import {
   basename,
   dayLabel,
@@ -103,24 +96,25 @@ export default function SingleProjectNavView(props: {
 
   return (
     <>
-      {/* Clean Project Switcher Row + New Thread */}
+      {/* Clean Project Switcher Row + New Session */}
       <div class="px-1.5 pb-1.5 flex items-center gap-1">
         <button
           ref={buttonRef}
           type="button"
           onClick={() => setProjectMenuOpen((v) => !v)}
-          class="flex-1 min-w-0 flex items-center justify-between gap-1.5 rounded-lg px-2.5 py-1.5 hover:bg-[var(--bg-hover)] transition-colors cursor-pointer text-left"
+          class="flex-1 min-w-0 flex items-center justify-between gap-1.5 rounded-lg px-2 py-1.5 hover:bg-[var(--bg-hover)] transition-colors cursor-pointer text-left"
           title={shortenPath(workspace.rootDir || "—")}
         >
-          <div class="flex items-center gap-2 min-w-0 flex-1">
-            <Folder size={13} class="shrink-0 text-[var(--text-muted)]" />
+          <div class="flex items-center gap-1.5 min-w-0 flex-1">
+            <Icon name="folder" size="small" class="text-[var(--text-muted)]" />
             <span class="truncate text-[12.5px] font-semibold text-[var(--text-primary)]">
               {currentProjectName()}
             </span>
           </div>
-          <ChevronDown
-            size={13}
-            class={`shrink-0 text-[var(--text-muted)] transition-transform duration-150 ${
+          <Icon
+            name="chevron-down"
+            size="small"
+            class={`text-[var(--text-muted)] transition-transform duration-150 ${
               projectMenuOpen() ? "rotate-180" : ""
             }`}
           />
@@ -135,9 +129,9 @@ export default function SingleProjectNavView(props: {
         >
           <Show
             when={!creatingSingle()}
-            fallback={<LoaderCircle size={13} class="animate-spin" />}
+            fallback={<Spinner class="w-3.5 h-3.5 text-[var(--accent-primary)]" />}
           >
-            <MessageSquarePlus size={14} />
+            <Icon name="new-session" size="small" />
           </Show>
         </button>
       </div>
@@ -150,7 +144,7 @@ export default function SingleProjectNavView(props: {
         >
           <div class="mb-1 px-1">
             <div class="flex items-center gap-1.5 rounded-lg bg-[var(--bg-inset)] px-2 py-1 text-[11.5px]">
-              <Search size={11} class="text-[var(--text-muted)] shrink-0" />
+              <Icon name="magnifying-glass" size="small" class="text-[var(--text-muted)]" />
               <input
                 type="text"
                 placeholder="Switch project…"
@@ -178,7 +172,7 @@ export default function SingleProjectNavView(props: {
                   >
                     <span class="truncate text-[12px]">{proj.name}</span>
                     <Show when={isActive()}>
-                      <Check size={12} class="shrink-0 text-[var(--accent-primary)]" />
+                      <Icon name="check-small" size="small" class="text-[var(--accent-primary)]" />
                     </Show>
                   </button>
                 );

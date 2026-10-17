@@ -1,9 +1,8 @@
 // web/src/components/layout/left-nav-helpers.tsx
 import { Show } from "solid-js";
-import { GitBranch, Trash2 } from "lucide-solid";
 import { workspace } from "../../store/workspace";
 import type { SessionInfo } from "../../services/sse-types";
-import { Spinner } from "../icons";
+import { DiffChanges, Icon, Spinner } from "../icons";
 
 export interface ProjectNavEntry {
   name: string;
@@ -48,16 +47,17 @@ export function shortenPath(p: string): string {
   return p;
 }
 
-export function diffStats(sessionID: string): { add: number; del: number } | null {
+export function diffStats(sessionID: string): { additions: number; deletions: number } | null {
   const diffs = workspace.diffsBySession[sessionID];
   if (!diffs || diffs.length === 0) return null;
-  let add = 0;
-  let del = 0;
+  let additions = 0;
+  let deletions = 0;
   for (const d of diffs) {
-    add += d.additions || 0;
-    del += d.deletions || 0;
+    additions += d.additions || 0;
+    deletions += d.deletions || 0;
   }
-  return { add, del };
+  if (additions === 0 && deletions === 0) return null;
+  return { additions, deletions };
 }
 
 export function buildAllProjects(): ProjectNavEntry[] {
@@ -142,29 +142,28 @@ export function SessionNavItem(props: {
         </span>
       </div>
 
-      <div class="flex items-center gap-1 shrink-0 text-[10px] font-mono">
+      <div class="flex items-center gap-1.5 shrink-0 text-[10px] font-mono">
         <Show when={wt()?.branch}>
-          <span class="text-[var(--text-faint)] truncate max-w-[68px]">
+          <span class="inline-flex items-center gap-0.5 text-[var(--text-faint)] truncate max-w-[72px]">
             <Show when={props.showBranchIcon}>
-              <GitBranch size={9} class="inline mr-0.5" />
+              <Icon name="branch" size="small" class="w-3 h-3" />
             </Show>
-            {wt()?.branch}
+            <span class="truncate">{wt()?.branch}</span>
           </span>
         </Show>
 
         <Show when={stats()}>
-          <span class="text-[var(--ok-text)]">+{stats()!.add}</span>
-          <span class="text-[var(--danger-text)]">-{stats()!.del}</span>
+          <DiffChanges changes={stats()!} />
         </Show>
 
         <Show when={props.canDelete}>
           <button
             type="button"
-            class="opacity-0 group-hover/row:opacity-100 text-[var(--text-faint)] hover:text-[var(--danger-text)] transition-opacity p-0.5"
+            class="opacity-0 group-hover/row:opacity-100 text-[var(--text-faint)] hover:text-[var(--danger-text)] transition-opacity p-0.5 cursor-pointer"
             onClick={(ev) => props.onDiscard(ev, props.session.id)}
             title="Delete session"
           >
-            <Trash2 size={11} />
+            <Icon name="trash" size="small" class="w-3 h-3" />
           </button>
         </Show>
       </div>

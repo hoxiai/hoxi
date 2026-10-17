@@ -20,7 +20,7 @@ import {
   workspace,
 } from "../../store/workspace";
 import ApprovalGateCard from "../approval/ApprovalGateCard";
-import { FileIcon } from "../icons";
+import { DiffChanges, FileIcon, Spinner, TextShimmer } from "../icons";
 
 interface TodoItem {
   id?: string;
@@ -206,13 +206,25 @@ export default function ComposerShelf() {
                 onClick={() => setTodosExpanded((v) => !v)}
               >
                 <div class="flex items-center gap-2 min-w-0">
-                  <ListTodo size={13} class="text-[var(--accent-primary)] shrink-0" />
+                  <Show
+                    when={activeTodo()?.status === "in_progress"}
+                    fallback={<ListTodo size={13} class="text-[var(--accent-primary)] shrink-0" />}
+                  >
+                    <span class="text-[var(--accent-primary)] shrink-0 inline-flex items-center">
+                      <Spinner class="w-3.5 h-3.5" />
+                    </span>
+                  </Show>
                   <span class="font-medium text-[var(--text-primary)] shrink-0">
                     Tasks · {completedTodoCount()}/{todos().length}
                   </span>
                   <Show when={!todosExpanded() && activeTodo()}>
-                    <span class="text-[var(--text-muted)] truncate">
-                      — {activeTodo()!.content}
+                    <span class="text-[var(--text-muted)] truncate inline-flex items-center gap-1 min-w-0">
+                      <span>—</span>
+                      <TextShimmer
+                        text={activeTodo()!.content}
+                        active={activeTodo()!.status === "in_progress"}
+                        class="truncate"
+                      />
                     </span>
                   </Show>
                 </div>
@@ -238,10 +250,9 @@ export default function ComposerShelf() {
                                 />
                               }
                             >
-                              <LoaderCircle
-                                size={12}
-                                class="mt-0.5 animate-spin text-[var(--accent-primary)] shrink-0"
-                              />
+                              <span class="mt-0.5 text-[var(--accent-primary)] shrink-0 inline-flex items-center">
+                                <Spinner class="w-3 h-3" />
+                              </span>
                             </Show>
                           }
                         >
@@ -259,7 +270,10 @@ export default function ComposerShelf() {
                                 : "text-[var(--text-secondary)]"
                           }
                         >
-                          {todo.content}
+                          <TextShimmer
+                            text={todo.content}
+                            active={todo.status === "in_progress"}
+                          />
                         </span>
                       </div>
                     )}
@@ -278,12 +292,8 @@ export default function ComposerShelf() {
                   {sessionDiffs().length}{" "}
                   {sessionDiffs().length === 1 ? "file changed" : "files changed"}
                 </span>
-                <span class="font-mono text-[11px] text-[var(--ok-text)]">
-                  +{diffTotals().additions}
-                </span>
-                <span class="font-mono text-[11px] text-[var(--danger-text)]">
-                  -{diffTotals().deletions}
-                </span>
+                <DiffChanges changes={diffTotals()} />
+                <DiffChanges changes={diffTotals()} variant="bars" />
               </div>
               <button
                 type="button"

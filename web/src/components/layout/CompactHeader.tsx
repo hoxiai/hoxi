@@ -13,12 +13,14 @@ import {
 import {
   activeSession,
   applySessionWorktree,
+  isSessionBusy,
   setWorkspace,
   toggleTheme,
   undoRevert,
   workspace,
 } from "../../store/workspace";
 import { hoxiAPI } from "../../services/api";
+import { Spinner, TextShimmer } from "../icons";
 
 interface CompactHeaderProps {
   inspectorOpen: boolean;
@@ -181,16 +183,32 @@ export default function CompactHeader(props: CompactHeaderProps) {
         </button>
 
         <div class="flex items-center gap-1.5 rounded-full bg-[var(--bg-inset)] px-2.5 py-1">
-          <span
-            class={`inline-block w-1.5 h-1.5 rounded-full ${
-              workspace.connected
-                ? "bg-[var(--ok)]"
-                : "bg-[var(--warn)] animate-pulse"
-            }`}
-          />
-          <span class="text-[11px] text-[var(--text-secondary)]">
-            {workspace.connected ? "Ready" : "Connecting"}
-          </span>
+          <Show
+            when={workspace.connected && isSessionBusy(workspace.activeSessionID)}
+            fallback={
+              <>
+                <span
+                  class={`inline-block w-1.5 h-1.5 rounded-full ${
+                    workspace.connected
+                      ? "bg-[var(--ok)]"
+                      : "bg-[var(--warn)] animate-pulse"
+                  }`}
+                />
+                <span class="text-[11px] text-[var(--text-secondary)]">
+                  {workspace.connected ? "Ready" : "Connecting"}
+                </span>
+              </>
+            }
+          >
+            <span class="text-[var(--accent-primary)] inline-flex items-center">
+              <Spinner class="w-3.5 h-3.5" />
+            </span>
+            <TextShimmer
+              text="Working"
+              active={true}
+              class="text-[11px] font-medium text-[var(--accent-primary)]"
+            />
+          </Show>
         </div>
 
         <button
