@@ -145,3 +145,29 @@ func TestParseOpenAIModelsPayloadAndExtractAPIError(t *testing.T) {
 		t.Errorf("unexpected error message: %q", errMsg)
 	}
 }
+
+func TestEvaluateStaticCodeRulesAndParseObserverAudit(t *testing.T) {
+	diffs := []auditDiffFile{
+		{
+			File:      "web/src/App.tsx",
+			Before:    "const a = 1;\n",
+			After:     "const a = 2;\n// TODO: implement rest of logic\n",
+			Additions: 2,
+			Deletions: 1,
+		},
+	}
+
+	deduction, issues := evaluateStaticCodeRules(diffs, 1, "TS2322 type mismatch", "zh-CN")
+	if deduction < 30 {
+		t.Fatalf("expected deduction >= 30 for LSP error + lazy TODO placeholder, got %d", deduction)
+	}
+	if len(issues) < 2 {
+		t.Fatalf("expected at least 2 static issues, got %v", issues)
+	}
+
+	score, summary, parsedIssues := parseObserverAuditJSON("```json\n{\"score\": 68, \"pass\": false, \"summary\": \"Missing error handling\", \"issues\": [\"Unchecked null pointer\"]}\n```")
+	if score != 68 || summary != "Missing error handling" || len(parsedIssues) != 1 {
+		t.Fatalf("unexpected parsed observer JSON: score=%d summary=%q issues=%v", score, summary, parsedIssues)
+	}
+}
+

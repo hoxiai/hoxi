@@ -11,6 +11,12 @@ import {
   recordUserRevertAction,
 } from "./provider-telemetry";
 import { t } from "../i18n";
+import {
+  getCustomSessionTitle,
+  isPlaceholderSessionTitle,
+  recordCustomSessionTitle,
+  summarizeAndRenameSession,
+} from "./session-title";
 
 export async function loadProjects(): Promise<void> {
   try {
@@ -104,12 +110,17 @@ export function sessionsWithPendingPermission(): Set<string> {
   return set;
 }
 
-function replaceSession(info: SessionInfo) {
+export function replaceSession(info: SessionInfo) {
+  const customTitle = getCustomSessionTitle(info.id);
+  const effectiveInfo =
+    customTitle && (isPlaceholderSessionTitle(info.title) || info.title !== customTitle)
+      ? { ...info, title: customTitle }
+      : info;
   setWorkspace("sessions", (prev) => {
-    const idx = prev.findIndex((s) => s.id === info.id);
-    if (idx < 0) return [info, ...prev];
+    const idx = prev.findIndex((s) => s.id === effectiveInfo.id);
+    if (idx < 0) return [effectiveInfo, ...prev];
     const next = prev.slice();
-    next[idx] = info;
+    next[idx] = effectiveInfo;
     return next;
   });
 }
@@ -188,6 +199,7 @@ export async function refreshWorktreeStatus(sessionID?: string | null): Promise<
 export async function renameSessionTitle(sessionID: string, title: string): Promise<void> {
   const cleaned = title.trim();
   if (!cleaned) return;
+  recordCustomSessionTitle(sessionID, cleaned);
   // Optimistically update local session title
   setWorkspace(
     "sessions",
@@ -198,7 +210,7 @@ export async function renameSessionTitle(sessionID: string, title: string): Prom
   try {
     const updated = await hoxiAPI.renameSession(sessionID, cleaned, sessionDirectory(sessionID));
     if (updated?.id) {
-      replaceSession(updated);
+      replaceSession({ ...updated, title: cleaned });
     }
   } catch (err) {
     console.error("rename session failed:", err);
@@ -267,11 +279,18 @@ export async function submitSessionPrompt(
   }
 ): Promise<string> {
   let id = targetSessionID ?? workspace.activeSessionID;
+  const isBrandNewSession = !id;
   if (!id) {
-    id = await newIsolatedSession(
-      promptText.slice(0, 48) || t("timeline.imagePromptSessionTitle")
-    );
+    id = await newIsolatedSession();
   }
+
+  const existingTurns = workspace.messagesBySession[id] ?? [];
+  const hasPriorUserTurn = existingTurns.some((m) => m.info.role === "user");
+  const currentSessionObj = workspace.sessions.find((s) => s.id === id);
+  const shouldSummarizeTitle =
+    isBrandNewSession ||
+    !hasPriorUserTurn ||
+    isPlaceholderSessionTitle(currentSessionObj?.title);
 
   const now = Date.now();
   const optimisticMsgID = `optimistic_${now}`;
@@ -280,6 +299,14 @@ export async function submitSessionPrompt(
   const attachments = options?.attachments ?? [];
 
   recordPromptDispatched(id, effectiveModel?.providerID, effectiveModel?.modelID);
+  if (shouldSummarizeTitle) {
+    void summarizeAndRenameSession(
+      id,
+      promptText || t("timeline.imagePromptSessionTitle"),
+      effectiveModel,
+      renameSessionTitle
+    );
+  }
 
   // Optimistically show user prompt & busy status immediately (0ms perceived latency)
   setWorkspace("statusBySession", id, { type: "busy" });
@@ -340,6 +367,8 @@ export async function submitSessionPrompt(
   return id;
 }
 
+export const sendPrompt = submitSessionPrompt;
+
 export async function retryLastUserPrompt(sessionID?: string | null): Promise<void> {
   const id = sessionID ?? workspace.activeSessionID;
   if (!id) return;
@@ -373,7 +402,7 @@ export function upsertMessageInfo(info: MessageInfo) {
       }
       const idx = list.findIndex((m) => m.info.id === info.id);
       if (idx >= 0) {
-        list[idx].info = info;
+        Object.assign(list[idx].info, info);
       } else {
         list.push({ info, parts: [] });
       }
@@ -405,7 +434,7 @@ export function upsertMessagePart(part: MessagePart) {
       }
       const pIdx = turn.parts.findIndex((p) => p.id === part.id);
       if (pIdx >= 0) {
-        turn.parts[pIdx] = part;
+        Object.assign(turn.parts[pIdx], part);
       } else {
         turn.parts.push(part);
       }

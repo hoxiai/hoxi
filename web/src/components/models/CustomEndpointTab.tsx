@@ -1,9 +1,10 @@
 // web/src/components/models/CustomEndpointTab.tsx
 import { createEffect, createMemo, createSignal, For, Show, untrack } from "solid-js";
-import { Check, LoaderCircle, Plus, RefreshCw, Trash2 } from "lucide-solid";
+import { Check, LoaderCircle, Lock, Plus, RefreshCw, Trash2 } from "lucide-solid";
 import { hoxiAPI } from "../../services/api";
 import {
   disconnectProvider,
+  isImportedOpenCodeProvider,
   MASKED_SECRET,
   recordProbeTelemetry,
   saveCustomProvider,
@@ -46,6 +47,9 @@ export default function CustomEndpointTab() {
   const existingCustomProviders = createMemo(() => listExistingCustomProviders());
 
   const isEditing = createMemo(() => Boolean(workspace.editingProviderID));
+  const isReadOnlyImported = createMemo(() =>
+    Boolean(workspace.editingProviderID && isImportedOpenCodeProvider(workspace.editingProviderID))
+  );
 
   const loadProviderIntoForm = (editID: string | null) => {
     setFeedback(null);
@@ -206,6 +210,36 @@ export default function CustomEndpointTab() {
     }
   };
 
+  const onForkToHoxiEdit = async () => {
+    const pid = providerID().trim();
+    if (!pid || saving()) return;
+    const name = displayName().trim() || pid;
+    const url = baseURL().trim();
+    const validModels = models().filter((m) => m.id.trim().length > 0);
+    const hdrMap: Record<string, string> = {};
+    for (const h of headers()) if (h.key.trim() && h.value.trim()) hdrMap[h.key.trim()] = h.value.trim();
+
+    setSaving(true);
+    setFeedback(null);
+    try {
+      await saveCustomProvider({
+        providerID: pid,
+        name,
+        npm: npmPkg(),
+        baseURL: url,
+        apiKey: apiKey(),
+        preserveExistingKey: true,
+        headers: hdrMap,
+        models: validModels,
+      });
+      setFeedback({ ok: true, text: t("models.forkToHoxiSuccess", { name }) });
+    } catch (err: any) {
+      setFeedback({ ok: false, text: err?.message || t("models.saveCustomProviderFailed") });
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const onDeleteProvider = async () => {
     const pid = providerID().trim();
     if (!pid || saving()) return;
@@ -226,7 +260,11 @@ export default function CustomEndpointTab() {
         <div class="flex items-center justify-between gap-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/50 px-3.5 py-2.5">
           <div class="min-w-0">
             <div class="text-[12.5px] font-semibold text-[var(--text-primary)]">
-              {isEditing() ? t("models.editCustomEndpoint") : t("models.addCustomEndpoint")}
+              {isReadOnlyImported()
+                ? t("models.viewImportedEndpoint")
+                : isEditing()
+                ? t("models.editCustomEndpoint")
+                : t("models.addCustomEndpoint")}
             </div>
             <div class="text-[11px] text-[var(--text-muted)] truncate">
               {t("models.customEndpointIntro")}
@@ -238,11 +276,16 @@ export default function CustomEndpointTab() {
               <select
                 value={workspace.editingProviderID || ""}
                 onChange={(e) => setWorkspace("editingProviderID", e.currentTarget.value || null)}
-                class="max-w-[210px] rounded-lg border border-[var(--border-strong)] bg-[var(--bg-panel)] px-2.5 py-1 text-[11.5px] font-medium text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]"
+                class="max-w-[240px] rounded-lg border border-[var(--border-strong)] bg-[var(--bg-panel)] px-2.5 py-1 text-[11.5px] font-medium text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]"
               >
                 <option value="">+ {t("models.newCustomProvider")}</option>
                 <For each={existingCustomProviders()}>
-                  {(item) => <option value={item.id}>{item.name} ({item.id})</option>}
+                  {(item) => (
+                    <option value={item.id}>
+                      {item.name} ({item.id}) ·{" "}
+                      {item.imported ? t("models.sourceOpenCode") : t("models.sourceHoxi")}
+                    </option>
+                  )}
                 </For>
               </select>
               <Show when={isEditing()}>
@@ -259,6 +302,23 @@ export default function CustomEndpointTab() {
           </Show>
         </div>
 
+        <Show when={isReadOnlyImported()}>
+          <div class="flex items-center justify-between gap-3 rounded-xl border border-amber-500/35 bg-amber-500/10 px-3.5 py-2.5 text-[12px] text-amber-600 dark:text-amber-300">
+            <div class="flex items-start gap-2.5 min-w-0">
+              <Lock size={14} class="shrink-0 mt-0.5" />
+              <span>{t("models.importedOpenCodeReadonlyBanner")}</span>
+            </div>
+            <button
+              type="button"
+              disabled={saving()}
+              onClick={() => void onForkToHoxiEdit()}
+              class="shrink-0 inline-flex items-center gap-1.5 rounded-lg bg-[var(--accent-primary)] px-3 py-1.5 text-[11.5px] font-medium text-white hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
+            >
+              {t("models.forkToHoxiEdit")}
+            </button>
+          </div>
+        </Show>
+
         <ProviderQualityCard providerID={providerID()} />
 
         {/* Row 1: Provider ID, Display Name, Provider API */}
@@ -270,6 +330,9 @@ export default function CustomEndpointTab() {
             <input
               type="text"
               disabled={isEditing()}
+              autocapitalize="off"
+              autocorrect="off"
+              spellcheck={false}
               placeholder={t("models.providerIdPlaceholder")}
               value={providerID()}
               onInput={(e) => setProviderID(e.currentTarget.value)}
@@ -282,10 +345,11 @@ export default function CustomEndpointTab() {
             </label>
             <input
               type="text"
+              disabled={isReadOnlyImported()}
               placeholder={t("models.displayNamePlaceholder")}
               value={displayName()}
               onInput={(e) => setDisplayName(e.currentTarget.value)}
-              class="w-full rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] px-3 py-2 text-[12.5px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)] selectable-text"
+              class="w-full rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] px-3 py-2 text-[12.5px] text-[var(--text-primary)] disabled:opacity-60 outline-none focus:border-[var(--accent-primary)] selectable-text"
             />
           </div>
           <div>
@@ -293,9 +357,10 @@ export default function CustomEndpointTab() {
               {t("models.providerApi")}
             </label>
             <select
+              disabled={isReadOnlyImported()}
               value={npmPkg()}
               onChange={(e) => setNpmPkg(e.currentTarget.value)}
-              class="w-full rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] px-2.5 py-2 text-[12px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]"
+              class="w-full rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] px-2.5 py-2 text-[12px] text-[var(--text-primary)] disabled:opacity-60 outline-none focus:border-[var(--accent-primary)]"
             >
               <For each={PROVIDER_VARIANTS}>
                 {(v) => <option value={v.value}>{v.label}</option>}
@@ -312,10 +377,14 @@ export default function CustomEndpointTab() {
             </label>
             <input
               type="text"
+              disabled={isReadOnlyImported()}
+              autocapitalize="off"
+              autocorrect="off"
+              spellcheck={false}
               placeholder="https://api.ainode.run/v1"
               value={baseURL()}
               onInput={(e) => setBaseURL(e.currentTarget.value)}
-              class="w-full rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] px-3 py-2 font-mono text-[12px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)] selectable-text"
+              class="w-full rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] px-3 py-2 font-mono text-[12px] text-[var(--text-primary)] disabled:opacity-60 outline-none focus:border-[var(--accent-primary)] selectable-text"
             />
           </div>
           <div class="col-span-4">
@@ -324,6 +393,7 @@ export default function CustomEndpointTab() {
             </label>
             <input
               type="password"
+              disabled={isReadOnlyImported()}
               placeholder={t("models.customApiKeyPlaceholder")}
               value={apiKey()}
               onFocus={() => {
@@ -333,13 +403,13 @@ export default function CustomEndpointTab() {
                 if (!apiKey().trim() && preserveExistingKey()) setApiKey(MASKED_SECRET);
               }}
               onInput={(e) => setApiKey(e.currentTarget.value)}
-              class="w-full rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] px-3 py-2 font-mono text-[12px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)] selectable-text"
+              class="w-full rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] px-3 py-2 font-mono text-[12px] text-[var(--text-primary)] disabled:opacity-60 outline-none focus:border-[var(--accent-primary)] selectable-text"
             />
           </div>
           <div class="col-span-2">
             <button
               type="button"
-              disabled={fetching() || !baseURL().trim()}
+              disabled={isReadOnlyImported() || fetching() || !baseURL().trim()}
               onClick={() => void onFetchModels()}
               class="w-full inline-flex items-center justify-center gap-1.5 rounded-xl border border-[var(--accent-border)] bg-[var(--accent-surface)] px-3 py-2 text-[12px] font-medium text-[var(--accent-primary)] hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
             >
@@ -363,6 +433,7 @@ export default function CustomEndpointTab() {
           setHeaders={setHeaders}
           modelProbes={modelProbes}
           onProbeModel={onProbeModel}
+          readOnly={isReadOnlyImported}
         />
 
         <Show when={feedback()}>
@@ -380,8 +451,8 @@ export default function CustomEndpointTab() {
 
       {/* Footer */}
       <div class="flex items-center justify-between border-t border-[var(--border-subtle)] bg-[var(--bg-elevated)]/30 px-5 py-3">
-        <div>
-          <Show when={isEditing()}>
+        <div class="flex items-center gap-3">
+          <Show when={isEditing() && !isReadOnlyImported()}>
             <button
               type="button"
               disabled={saving()}
@@ -392,17 +463,22 @@ export default function CustomEndpointTab() {
               {t("common.delete")}
             </button>
           </Show>
+          <span class="font-mono text-[11px] text-[var(--text-faint)]">
+            {isReadOnlyImported() ? t("models.openCodeReadonlyNote") : t("models.hoxiConfigNote")}
+          </span>
         </div>
-        <button
-          type="submit"
-          disabled={saving()}
-          class="inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] px-4 py-2 text-[12.5px] font-medium text-white hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
-        >
-          <Show when={!saving()} fallback={<LoaderCircle size={14} class="animate-spin" />}>
-            <Check size={14} />
-          </Show>
-          {t("models.saveAndSelectModel")}
-        </button>
+        <Show when={!isReadOnlyImported()}>
+          <button
+            type="submit"
+            disabled={saving()}
+            class="inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] px-4 py-2 text-[12.5px] font-medium text-white hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
+          >
+            <Show when={!saving()} fallback={<LoaderCircle size={14} class="animate-spin" />}>
+              <Check size={14} />
+            </Show>
+            {t("models.saveAndSelectModel")}
+          </button>
+        </Show>
       </div>
     </form>
   );

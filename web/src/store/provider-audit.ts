@@ -1,0 +1,269 @@
+// web/src/store/provider-audit.ts
+import { produce } from "solid-js/store";
+import { locale, t } from "../i18n";
+import { hoxiAPI, type CodeAuditResult } from "../services/api";
+import { findBestFallbackModel } from "./provider-health";
+import {
+  emptyStats,
+  pushIncident,
+  pushSample,
+  schedulePersistTelemetry,
+} from "./provider-telemetry-storage";
+import {
+  selectModel,
+  sendPrompt,
+  setWorkspace,
+  workspace,
+  type SelectedModel,
+} from "./workspace";
+
+export const OBSERVER_MODEL_KEY = "hoxi-observer-model:v1";
+export const OBSERVER_AUTO_AUDIT_KEY = "hoxi-observer-auto-audit:v1";
+
+const auditedFingerprintsBySession = new Map<string, string>();
+
+export function initialObserverModel(): string {
+  try {
+    return localStorage.getItem(OBSERVER_MODEL_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
+export function initialObserverAutoAudit(): boolean {
+  try {
+    const raw = localStorage.getItem(OBSERVER_AUTO_AUDIT_KEY);
+    if (raw === "false") return false;
+    return true;
+  } catch {
+    return true;
+  }
+}
+
+export function setObserverModelRole(fullKey: string) {
+  const trimmed = fullKey.trim();
+  setWorkspace("observerModel", trimmed);
+  try {
+    if (trimmed) {
+      localStorage.setItem(OBSERVER_MODEL_KEY, trimmed);
+    } else {
+      localStorage.removeItem(OBSERVER_MODEL_KEY);
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+export function setObserverAutoAudit(enabled: boolean) {
+  setWorkspace("observerAutoAudit", enabled);
+  try {
+    localStorage.setItem(OBSERVER_AUTO_AUDIT_KEY, enabled ? "true" : "false");
+  } catch {
+    /* ignore */
+  }
+}
+
+function parseProviderModelKey(fullKey: string): SelectedModel | null {
+  const trimmed = fullKey.trim();
+  if (!trimmed || !trimmed.includes("/")) return null;
+  const idx = trimmed.indexOf("/");
+  const providerID = trimmed.slice(0, idx).trim();
+  const modelID = trimmed.slice(idx + 1).trim();
+  if (!providerID || !modelID) return null;
+  return { providerID, modelID };
+}
+
+export function resolveObserverModel(workerProviderID: string): {
+  providerID: string;
+  modelID: string;
+  baseURL?: string;
+  npm?: string;
+} | null {
+  const configured =
+    parseProviderModelKey(workspace.observerModel) ||
+    parseProviderModelKey(
+      typeof workspace.globalConfig?.observer_model === "string"
+        ? workspace.globalConfig.observer_model
+        : ""
+    ) ||
+    parseProviderModelKey(
+      typeof workspace.globalConfig?.small_model === "string"
+        ? workspace.globalConfig.small_model
+        : ""
+    ) ||
+    findBestFallbackModel(workerProviderID) ||
+    workspace.selectedModel;
+
+  if (!configured) return null;
+
+  const provInfo = workspace.providers.find((p) => p.id === configured.providerID);
+  const cfgBaseURL =
+    workspace.globalConfig?.provider?.[configured.providerID]?.options?.baseURL ||
+    provInfo?.options?.baseURL;
+  const cfgNPM =
+    workspace.globalConfig?.provider?.[configured.providerID]?.npm || provInfo?.npm;
+
+  return {
+    providerID: configured.providerID,
+    modelID: configured.modelID,
+    baseURL: typeof cfgBaseURL === "string" ? cfgBaseURL : undefined,
+    npm: typeof cfgNPM === "string" ? cfgNPM : undefined,
+  };
+}
+
+function resolveSessionWorkerAndPrompt(sessionID: string): {
+  workerProviderID: string;
+  workerModelID: string;
+  userPrompt: string;
+} {
+  const turns = workspace.messagesBySession[sessionID] ?? [];
+  let workerProviderID = workspace.selectedModel?.providerID || "";
+  let workerModelID = workspace.selectedModel?.modelID || "";
+  let userPrompt = "";
+
+  for (let i = turns.length - 1; i >= 0; i--) {
+    const turn = turns[i];
+    if (turn.info.role === "assistant" && turn.info.providerID && !workerProviderID) {
+      workerProviderID = turn.info.providerID;
+      workerModelID = turn.info.modelID || "";
+    }
+    if (turn.info.role === "assistant" && turn.info.providerID) {
+      workerProviderID = turn.info.providerID;
+      workerModelID = turn.info.modelID || workerModelID;
+      break;
+    }
+  }
+
+  for (let i = turns.length - 1; i >= 0; i--) {
+    const turn = turns[i];
+    if (turn.info.role === "user") {
+      const texts = turn.parts
+        .filter((p): p is Extract<typeof p, { type: "text" }> => p.type === "text")
+        .map((p) => p.text.trim())
+        .filter(Boolean);
+      if (texts.length > 0) {
+        userPrompt = texts.join("\n");
+        break;
+      }
+    }
+  }
+
+  return { workerProviderID, workerModelID, userPrompt };
+}
+
+export async function runSessionCodeAudit(
+  sessionID: string,
+  force = false
+): Promise<CodeAuditResult | null> {
+  if (!sessionID) return null;
+  if (!force && !workspace.observerAutoAudit) return null;
+  if (workspace.auditingBySession[sessionID]) return null;
+
+  const diffs = workspace.diffsBySession[sessionID] ?? [];
+  if (diffs.length === 0) return null;
+
+  const fingerprint = diffs
+    .map((d) => `${d.file}:${d.additions}:${d.deletions}:${(d.after || "").length}`)
+    .join("|");
+
+  if (!force && auditedFingerprintsBySession.get(sessionID) === fingerprint) {
+    return workspace.auditsBySession[sessionID] ?? null;
+  }
+
+  const { workerProviderID, workerModelID, userPrompt } =
+    resolveSessionWorkerAndPrompt(sessionID);
+  if (!workerProviderID) return null;
+
+  const observer = resolveObserverModel(workerProviderID);
+  if (!observer) return null;
+
+  auditedFingerprintsBySession.set(sessionID, fingerprint);
+  setWorkspace("auditingBySession", sessionID, true);
+
+  try {
+    const res = await hoxiAPI.auditProviderCode({
+      sessionID,
+      workerProviderID,
+      workerModelID,
+      observerProviderID: observer.providerID,
+      observerModelID: observer.modelID,
+      observerBaseURL: observer.baseURL,
+      observerNPM: observer.npm,
+      userPrompt,
+      diffs: diffs.slice(0, 8).map((d) => ({
+        file: d.file,
+        before: d.before,
+        after: d.after,
+        additions: d.additions,
+        deletions: d.deletions,
+      })),
+      lspErrorCount: 0,
+      locale: locale(),
+    });
+
+    if (!res.ok) return null;
+
+    const enriched: CodeAuditResult = {
+      ...res,
+      timestamp: Date.now(),
+      workerProviderID,
+      workerModelID,
+    };
+
+    setWorkspace("auditsBySession", sessionID, enriched);
+
+    setWorkspace(
+      produce((state) => {
+        const rec = (state.providerTelemetry[workerProviderID] ||=
+          emptyStats(workerProviderID));
+        rec.auditTotalCount = (rec.auditTotalCount ?? 0) + 1;
+        if (res.pass) {
+          rec.auditPassCount = (rec.auditPassCount ?? 0) + 1;
+        } else {
+          rec.hallucinationFlags += 1;
+          rec.recentIncidents = pushIncident(
+            rec.recentIncidents,
+            "code_audit_fail",
+            res.summary || `Audit score ${res.score}/100`,
+            workerModelID
+          );
+        }
+        rec.auditScores = pushSample(rec.auditScores, res.score);
+        rec.lastAuditScore = res.score;
+        rec.lastAuditPass = res.pass;
+        rec.lastAuditSummary = res.summary;
+        rec.updatedAt = Date.now();
+      })
+    );
+    schedulePersistTelemetry();
+    return enriched;
+  } catch {
+    return null;
+  } finally {
+    setWorkspace("auditingBySession", sessionID, false);
+  }
+}
+
+export async function applyAuditFeedbackToSession(
+  sessionID: string,
+  switchModel?: SelectedModel
+) {
+  const audit = workspace.auditsBySession[sessionID];
+  if (!audit) return;
+
+  if (switchModel) {
+    selectModel(switchModel, false);
+  }
+
+  const issueLines =
+    audit.issues && audit.issues.length > 0
+      ? audit.issues.map((iss, idx) => `${idx + 1}. ${iss}`)
+      : [`1. ${audit.summary}`];
+
+  const promptText = [
+    t("timeline.auditFeedbackPromptPrefix", { score: audit.score }),
+    ...issueLines,
+  ].join("\n");
+
+  await sendPrompt(promptText);
+}

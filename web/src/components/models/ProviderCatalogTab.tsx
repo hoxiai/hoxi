@@ -4,6 +4,7 @@ import {
   Ban,
   ChevronDown,
   ChevronRight,
+  Eye,
   KeyRound,
   Pencil,
   Plus,
@@ -15,6 +16,8 @@ import type { ProviderInfo } from "../../services/api";
 import {
   disconnectProvider,
   isCustomOrConfiguredProvider,
+  isHoxiCustomProvider,
+  isImportedOpenCodeProvider,
   openProviderModal,
   POPULAR_PROVIDER_IDS,
   toggleDisabledProvider,
@@ -117,6 +120,8 @@ export default function ProviderCatalogTab() {
   };
 
   const sourceLabel = (p: ProviderInfo) => {
+    if (isHoxiCustomProvider(p.id)) return t("models.sourceHoxi");
+    if (isImportedOpenCodeProvider(p.id)) return t("models.sourceOpenCode");
     if (isCustomOrConfiguredProvider(p)) return t("models.sourceCustom");
     if (p.source === "env") return t("models.sourceEnv");
     if (p.source === "config") return t("models.sourceConfig");
@@ -192,8 +197,10 @@ export default function ProviderCatalogTab() {
                 <For each={connectedProviders()}>
                   {(item) => {
                     const isCustom = () => isCustomOrConfiguredProvider(item);
+                    const isImported = () => isImportedOpenCodeProvider(item.id);
                     const modelCount = () => Object.keys(item.models || {}).length;
                     const customUrl = () =>
+                      workspace.hoxiProviders?.[item.id]?.options?.baseURL ||
                       workspace.globalConfig?.provider?.[item.id]?.options?.baseURL ||
                       item.options?.baseURL;
 
@@ -209,8 +216,18 @@ export default function ProviderCatalogTab() {
                               <span class="rounded-md bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-muted)]">
                                 {item.id}
                               </span>
-                              <span class="inline-flex items-center gap-1 rounded-full bg-[var(--ok-surface)] px-2 py-0.5 text-[10px] font-medium text-[var(--ok-text)]">
-                                <span class="h-1.5 w-1.5 rounded-full bg-[var(--ok)]" />
+                              <span
+                                class={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                                  isImported()
+                                    ? "bg-amber-500/10 text-amber-400"
+                                    : "bg-[var(--ok-surface)] text-[var(--ok-text)]"
+                                }`}
+                              >
+                                <span
+                                  class={`h-1.5 w-1.5 rounded-full ${
+                                    isImported() ? "bg-amber-400" : "bg-[var(--ok)]"
+                                  }`}
+                                />
                                 {sourceLabel(item)}
                               </span>
                               <ProviderHealthBadge providerID={item.id} />
@@ -232,21 +249,31 @@ export default function ProviderCatalogTab() {
                               type="button"
                               onClick={() => openProviderModal("custom", item.id)}
                               class="inline-flex items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[11.5px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--border-strong)] transition-colors cursor-pointer"
-                              title={t("models.editProvider")}
+                              title={
+                                isImported()
+                                  ? t("models.viewImportedEndpoint")
+                                  : t("models.editProvider")
+                              }
                             >
-                              <Pencil size={11} />
-                              {t("models.editProvider")}
+                              <Show when={isImported()} fallback={<Pencil size={11} />}>
+                                <Eye size={11} />
+                              </Show>
+                              {isImported()
+                                ? t("models.viewImportedEndpoint")
+                                : t("models.editProvider")}
                             </button>
                           </Show>
-                          <button
-                            type="button"
-                            onClick={() => openConnectView(item.id)}
-                            class="inline-flex items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[11.5px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--border-strong)] transition-colors cursor-pointer"
-                            title={t("models.changeKey")}
-                          >
-                            <KeyRound size={11} />
-                            {t("models.changeKey")}
-                          </button>
+                          <Show when={!isImported()}>
+                            <button
+                              type="button"
+                              onClick={() => openConnectView(item.id)}
+                              class="inline-flex items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[11.5px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--border-strong)] transition-colors cursor-pointer"
+                              title={t("models.changeKey")}
+                            >
+                              <KeyRound size={11} />
+                              {t("models.changeKey")}
+                            </button>
+                          </Show>
                           <button
                             type="button"
                             disabled={busyID() === item.id}
@@ -256,15 +283,17 @@ export default function ProviderCatalogTab() {
                           >
                             <Ban size={13} />
                           </button>
-                          <button
-                            type="button"
-                            disabled={busyID() === item.id}
-                            onClick={() => void onDisconnect(item.id)}
-                            class="rounded-lg p-1.5 text-[var(--text-faint)] hover:bg-[var(--danger-surface)] hover:text-[var(--danger-text)] transition-colors cursor-pointer"
-                            title={t("models.disconnect")}
-                          >
-                            <Trash2 size={13} />
-                          </button>
+                          <Show when={!isImported()}>
+                            <button
+                              type="button"
+                              disabled={busyID() === item.id}
+                              onClick={() => void onDisconnect(item.id)}
+                              class="rounded-lg p-1.5 text-[var(--text-faint)] hover:bg-[var(--danger-surface)] hover:text-[var(--danger-text)] transition-colors cursor-pointer"
+                              title={t("models.disconnect")}
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          </Show>
                         </div>
                       </div>
                     );

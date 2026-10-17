@@ -364,11 +364,7 @@ export async function connectProviderWithKey(opts: {
 
 export async function saveCustomProvider(input: SaveCustomProviderInput): Promise<void> {
   const pid = input.providerID.trim();
-  if (isImportedOpenCodeProvider(pid)) {
-    throw new Error("OpenCode imported provider is read-only");
-  }
-
-  const previous = workspace.hoxiProviders?.[pid] ?? {};
+  const previous = workspace.hoxiProviders?.[pid] ?? workspace.globalConfig?.provider?.[pid] ?? {};
 
   // Build exact models map for .hoxi/models.json (no null sentinels)
   const nextModels: Record<string, any> = {};

@@ -128,5 +128,12 @@ export const timeline: TimelineI18n = {
   stepsCompleted: "{count} 个步骤",
   worktreeClean: "工作区干净",
   worktreeIsolatedBadge: "隔离工作树",
+  auditRunningBadge: "观察者审核中…",
+  auditPassedBadge: "审查合格 · {score}分",
+  auditFailedBadge: "审查不合格 · {score}分",
+  auditFixWithFeedbackBtn: "按审查意见修复",
+  auditSwitchAndFixBtn: "换 {model} 修复",
+  auditFeedbackPromptPrefix:
+    "独立代码审查观察者对刚才的代码变更进行了审核（得分：{score}/100），发现以下问题，请立即修复：",
 };
 

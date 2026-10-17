@@ -9,6 +9,8 @@ import type {
 import type {
   AgentInfo,
   BootstrapInfo,
+  CodeAuditRequest,
+  CodeAuditResult,
   ProjectInfo,
   PromptAttachment,
   ProviderAuthAuthorization,
@@ -423,6 +425,27 @@ export const hoxiAPI = {
     const q = providerID ? `?providerID=${encodeURIComponent(providerID)}` : "";
     return requestJSON(`/api/hoxi/provider/telemetry${q}`, {
       method: "DELETE",
+    });
+  },
+
+  auditProviderCode(req: CodeAuditRequest): Promise<CodeAuditResult> {
+    return requestJSON("/api/hoxi/provider/audit", {
+      method: "POST",
+      body: JSON.stringify(req),
+    });
+  },
+
+  summarizeSessionTitle(req: {
+    providerID: string;
+    modelID: string;
+    baseURL?: string;
+    npm?: string;
+    prompt: string;
+    locale: string;
+  }): Promise<{ ok: boolean; title: string; error?: string }> {
+    return requestJSON("/api/hoxi/provider/summarize-title", {
+      method: "POST",
+      body: JSON.stringify(req),
     });
   },
 };

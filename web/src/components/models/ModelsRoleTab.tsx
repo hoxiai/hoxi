@@ -3,6 +3,8 @@ import { createMemo, createSignal, For, Show } from "solid-js";
 import { Check, LoaderCircle, RotateCcw, SlidersHorizontal } from "lucide-solid";
 import {
   isCustomOrConfiguredProvider,
+  setObserverAutoAudit,
+  setObserverModelRole,
   updateGlobalModelConfig,
   workspace,
 } from "../../store/workspace";
@@ -247,6 +249,42 @@ export default function ModelsRoleTab() {
                   },
                 },
               }),
+          })}
+        </div>
+
+        {/* Observer / Code Auditor Model */}
+        <div class="flex items-center justify-between gap-4 px-4 py-3.5 bg-[var(--accent-surface)]/25">
+          <div class="min-w-0 space-y-1">
+            <div class="flex items-center gap-2 flex-wrap">
+              <span class="text-[13px] font-semibold text-[var(--text-primary)]">
+                {t("models.observerModelTitle")}
+              </span>
+              <label class="inline-flex items-center gap-1.5 rounded-full border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2 py-0.5 text-[10.5px] text-[var(--text-secondary)] cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={workspace.observerAutoAudit}
+                  onChange={(e) => setObserverAutoAudit(e.currentTarget.checked)}
+                  class="rounded accent-[var(--accent-primary)] cursor-pointer"
+                />
+                <span>{t("models.observerAutoAuditLabel")}</span>
+              </label>
+            </div>
+            <div class="text-[11.5px] text-[var(--text-muted)]">
+              {t("models.observerModelDesc")}
+            </div>
+          </div>
+          {renderModelSelect({
+            roleKey: "observer_model",
+            value: workspace.observerModel,
+            allowEmpty: true,
+            emptyLabel: t("models.useGlobalDefault"),
+            onChange: (val) => {
+              setObserverModelRole(val);
+              setSavedKey("observer_model");
+              setTimeout(() => {
+                if (savedKey() === "observer_model") setSavedKey(null);
+              }, 1500);
+            },
           })}
         </div>
       </div>

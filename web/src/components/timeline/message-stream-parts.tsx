@@ -12,6 +12,7 @@ import ContextActivityGroupComponent, {
 } from "./ContextActivityGroupView";
 import type { MessageInfo, MessagePart } from "../../services/sse-types";
 import { ProviderHealthBadge } from "../models/ProviderHealthBadge";
+import { ObserverAuditBadge } from "../inspector/ObserverAuditBanner";
 import { Icon } from "../icons";
 import { t } from "../../i18n";
 import { AssistantErrorCard, SessionRetryCard } from "./assistant-error-card";
@@ -213,6 +214,16 @@ export function AssistantTurnFooter(props: {
 
           <Show when={props.info.providerID}>
             <ProviderHealthBadge providerID={props.info.providerID!} compact />
+          </Show>
+
+          <Show
+            when={
+              !props.turns ||
+              typeof props.turnIndex !== "number" ||
+              props.turnIndex === props.turns.length - 1
+            }
+          >
+            <ObserverAuditBadge sessionID={props.info.sessionID} />
           </Show>
 
           <Show when={summary().finalText.length > 0}>

@@ -15,7 +15,7 @@ const maxTelemetryIncidents = 10
 
 type providerIncident struct {
 	Timestamp int64  `json:"timestamp"`
-	Type      string `json:"type"` // "timeout" | "api_error" | "retry" | "tool_error" | "hallucination_loop" | "user_revert"
+	Type      string `json:"type"` // "timeout" | "api_error" | "retry" | "tool_error" | "hallucination_loop" | "user_revert" | "code_audit_fail"
 	ModelID   string `json:"modelID,omitempty"`
 	Detail    string `json:"detail,omitempty"`
 }
@@ -33,6 +33,12 @@ type providerTelemetryStats struct {
 	RevertCount        int                `json:"revertCount"`
 	CacheHitTurns      int                `json:"cacheHitTurns"`
 	ReasoningTurns     int                `json:"reasoningTurns"`
+	AuditTotalCount    int                `json:"auditTotalCount"`
+	AuditPassCount     int                `json:"auditPassCount"`
+	AuditScores        []int              `json:"auditScores,omitempty"`
+	LastAuditScore     int                `json:"lastAuditScore,omitempty"`
+	LastAuditPass      *bool              `json:"lastAuditPass,omitempty"`
+	LastAuditSummary   string             `json:"lastAuditSummary,omitempty"`
 	TtftSamplesMs      []int64            `json:"ttftSamplesMs,omitempty"`
 	TpsSamples         []float64          `json:"tpsSamples,omitempty"`
 	LastProbeLatencyMs int64              `json:"lastProbeLatencyMs,omitempty"`
@@ -136,6 +142,41 @@ func (s *providerTelemetryStore) recordProbeResult(providerID string, ok bool, l
 	s.saveToDiskLocked()
 }
 
+func (s *providerTelemetryStore) recordAuditResult(providerID, modelID string, score int, pass bool, summary string) {
+	providerID = strings.TrimSpace(providerID)
+	if providerID == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	rec := s.ensureRecordLocked(providerID)
+	rec.AuditTotalCount++
+	if pass {
+		rec.AuditPassCount++
+	}
+	rec.AuditScores = appendIntSample(rec.AuditScores, score)
+	rec.LastAuditScore = score
+	rec.LastAuditPass = &pass
+	rec.LastAuditSummary = summary
+	rec.UpdatedAt = time.Now().UnixMilli()
+
+	if !pass {
+		rec.HallucinationFlags++
+		detail := summary
+		if detail == "" {
+			detail = "Observer audit failed"
+		}
+		appendIncidentLocked(rec, providerIncident{
+			Timestamp: rec.UpdatedAt,
+			Type:      "code_audit_fail",
+			ModelID:   modelID,
+			Detail:    detail,
+		})
+	}
+	s.saveToDiskLocked()
+}
+
 func appendIncidentLocked(rec *providerTelemetryStats, inc providerIncident) {
 	rec.RecentIncidents = append([]providerIncident{inc}, rec.RecentIncidents...)
 	if len(rec.RecentIncidents) > maxTelemetryIncidents {
@@ -143,20 +184,9 @@ func appendIncidentLocked(rec *providerTelemetryStats, inc providerIncident) {
 	}
 }
 
-func appendInt64Sample(list []int64, val int64) []int64 {
-	if val <= 0 {
-		return list
-	}
-	next := append(list, val)
-	if len(next) > maxTelemetrySamples {
-		next = next[len(next)-maxTelemetrySamples:]
-	}
-	return next
-}
-
-func appendFloat64Sample(list []float64, val float64) []float64 {
-	if val <= 0 {
-		return list
+func appendIntSample(list []int, val int) []int {
+	if val < 0 {
+		val = 0
 	}
 	next := append(list, val)
 	if len(next) > maxTelemetrySamples {
@@ -199,6 +229,9 @@ func (s *providerTelemetryStore) registerRoutes(mux *http.ServeMux) {
 				}
 				if len(incoming.TpsSamples) > maxTelemetrySamples {
 					incoming.TpsSamples = incoming.TpsSamples[len(incoming.TpsSamples)-maxTelemetrySamples:]
+				}
+				if len(incoming.AuditScores) > maxTelemetrySamples {
+					incoming.AuditScores = incoming.AuditScores[len(incoming.AuditScores)-maxTelemetrySamples:]
 				}
 				if len(incoming.RecentIncidents) > maxTelemetryIncidents {
 					incoming.RecentIncidents = incoming.RecentIncidents[:maxTelemetryIncidents]

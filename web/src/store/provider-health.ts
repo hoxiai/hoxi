@@ -7,7 +7,8 @@ export type ProviderRiskTag =
   | "slow_ttft"
   | "high_hallucination"
   | "tool_instability"
-  | "frequent_retry";
+  | "frequent_retry"
+  | "low_pass_rate";
 
 export interface ProviderHealthSummary {
   providerID: string;
@@ -21,6 +22,10 @@ export interface ProviderHealthSummary {
   avgTtftMs: number | null;
   avgTps: number | null;
   cacheHitRate: number | null;
+  auditTotalCount: number;
+  auditPassCount: number;
+  codePassRate: number | null;
+  avgAuditScore: number | null;
   hallucinationFlags: number;
   revertCount: number;
   retryCount: number;
@@ -32,7 +37,14 @@ export interface ProviderHealthSummary {
 
 export function computeProviderHealth(providerID: string): ProviderHealthSummary {
   const rec = workspace.providerTelemetry[providerID];
-  if (!rec || (rec.totalTurns === 0 && rec.lastProbeOk === undefined && rec.retryCount === 0)) {
+  const auditTotal = rec?.auditTotalCount ?? 0;
+  if (
+    !rec ||
+    (rec.totalTurns === 0 &&
+      rec.lastProbeOk === undefined &&
+      rec.retryCount === 0 &&
+      auditTotal === 0)
+  ) {
     return {
       providerID,
       score: 100,
@@ -45,6 +57,10 @@ export function computeProviderHealth(providerID: string): ProviderHealthSummary
       avgTtftMs: null,
       avgTps: null,
       cacheHitRate: null,
+      auditTotalCount: 0,
+      auditPassCount: 0,
+      codePassRate: null,
+      avgAuditScore: null,
       hallucinationFlags: 0,
       revertCount: 0,
       retryCount: 0,
@@ -69,6 +85,16 @@ export function computeProviderHealth(providerID: string): ProviderHealthSummary
   const timeoutRate = Math.min(100, Math.round((rec.timeoutTurns / turns) * 100));
   const cacheHitRate =
     rec.successTurns > 0 ? Math.round((rec.cacheHitTurns / rec.successTurns) * 100) : null;
+
+  const auditPass = rec.auditPassCount ?? 0;
+  const codePassRate =
+    auditTotal > 0 ? Math.round((auditPass / auditTotal) * 100) : null;
+
+  const auditScoreList = rec.auditScores ?? [];
+  const avgAuditScore =
+    auditScoreList.length > 0
+      ? Math.round(auditScoreList.reduce((a, b) => a + b, 0) / auditScoreList.length)
+      : rec.lastAuditScore ?? null;
 
   const ttftList = rec.ttftSamplesMs ?? [];
   const avgTtftMs =
@@ -96,6 +122,11 @@ export function computeProviderHealth(providerID: string): ProviderHealthSummary
   score -= Math.min(25, Math.round(toolFailRatio * 35));
   score -= Math.min(25, Math.round(hallucinationRatio * 30));
 
+  if (codePassRate !== null && auditTotal > 0) {
+    const failAuditRatio = (auditTotal - auditPass) / auditTotal;
+    score -= Math.min(35, Math.round(failAuditRatio * 38));
+  }
+
   if (rec.lastProbeOk === false && rec.totalTurns === 0) {
     score -= 45;
   }
@@ -110,6 +141,9 @@ export function computeProviderHealth(providerID: string): ProviderHealthSummary
   score = Math.max(10, Math.min(100, score));
 
   const riskTags: ProviderRiskTag[] = [];
+  if (codePassRate !== null && codePassRate < 65 && auditTotal > auditPass) {
+    riskTags.push("low_pass_rate");
+  }
   if (rec.timeoutTurns >= 1 && (timeoutRatio >= 0.15 || rec.timeoutTurns >= 2)) {
     riskTags.push("timeout_prone");
   }
@@ -131,7 +165,9 @@ export function computeProviderHealth(providerID: string): ProviderHealthSummary
   const status: "healthy" | "warning" | "degraded" =
     score >= 82 && riskTags.length === 0
       ? "healthy"
-      : score >= 62 && !riskTags.includes("high_hallucination")
+      : score >= 62 &&
+        !riskTags.includes("high_hallucination") &&
+        !(riskTags.includes("low_pass_rate") && (codePassRate ?? 100) <= 50)
       ? "warning"
       : "degraded";
 
@@ -147,6 +183,10 @@ export function computeProviderHealth(providerID: string): ProviderHealthSummary
     avgTtftMs,
     avgTps,
     cacheHitRate,
+    auditTotalCount: auditTotal,
+    auditPassCount: auditPass,
+    codePassRate,
+    avgAuditScore,
     hallucinationFlags: rec.hallucinationFlags,
     revertCount: rec.revertCount,
     retryCount: rec.retryCount,

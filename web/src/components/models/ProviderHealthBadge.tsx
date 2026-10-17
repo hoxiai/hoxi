@@ -16,6 +16,8 @@ export function formatTtftLabel(ms: number | null | undefined): string {
 
 export function riskTagLabel(tag: ProviderRiskTag): string {
   switch (tag) {
+    case "low_pass_rate":
+      return t("models.qualityRiskLowPassRate");
     case "timeout_prone":
       return t("models.qualityRiskTimeout");
     case "slow_ttft":
@@ -31,6 +33,8 @@ export function riskTagLabel(tag: ProviderRiskTag): string {
 
 export function incidentTypeLabel(type: ProviderIncidentType): string {
   switch (type) {
+    case "code_audit_fail":
+      return t("models.qualityIncidentAuditFail");
     case "timeout":
       return t("models.qualityIncidentTimeout");
     case "api_error":
@@ -91,6 +95,7 @@ export function ProviderHealthBadge(props: {
 
   const primaryRisk = createMemo(() => {
     const tags = health().riskTags;
+    if (tags.includes("low_pass_rate")) return riskTagLabel("low_pass_rate");
     if (tags.includes("high_hallucination")) return riskTagLabel("high_hallucination");
     if (tags.includes("timeout_prone")) return riskTagLabel("timeout_prone");
     if (tags.length > 0) return riskTagLabel(tags[0]);
@@ -102,6 +107,10 @@ export function ProviderHealthBadge(props: {
       <span
         class={`inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-medium leading-none ${colors().pill}`}
         title={`${statusText()} · ${t("models.qualityScoreBadge", { score: health().score })}${
+          health().codePassRate !== null
+            ? ` · Pass ${health().codePassRate}%`
+            : ""
+        }${
           health().avgTtftMs ? ` · TTFT ${formatTtftLabel(health().avgTtftMs)}` : ""
         }`}
       >
@@ -113,10 +122,12 @@ export function ProviderHealthBadge(props: {
           <Show
             when={primaryRisk()}
             fallback={
-              <Show when={health().avgTps || health().avgTtftMs}>
+              <Show when={health().codePassRate !== null || health().avgTps || health().avgTtftMs}>
                 <span class="opacity-85 font-mono">
                   ·{" "}
-                  {health().avgTps
+                  {health().codePassRate !== null
+                    ? `${health().codePassRate}%`
+                    : health().avgTps
                     ? `${health().avgTps}t/s`
                     : formatTtftLabel(health().avgTtftMs)}
                 </span>

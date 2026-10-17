@@ -308,15 +308,19 @@ export default function MessageStream() {
                           : ""
                       }`}
                     >
-                      <For each={groupAssistantParts(turn.parts)}>
+                      <Index each={groupAssistantParts(turn.parts)}>
                         {(item) =>
-                          item.kind === "activity-group" ? (
-                            <ContextActivityGroupView parts={item.parts} />
+                          item().kind === "activity-group" ? (
+                            <ContextActivityGroupView
+                              parts={(item() as Extract<typeof item extends () => infer T ? T : never, { kind: "activity-group" }>).parts}
+                            />
                           ) : (
-                            <PartView part={item.part} />
+                            <PartView
+                              part={(item() as Extract<typeof item extends () => infer T ? T : never, { kind: "single" }>).part}
+                            />
                           )
                         }
-                      </For>
+                      </Index>
                       <AssistantErrorCard info={turn.info} />
                       <AssistantTurnFooter
                         info={turn.info}

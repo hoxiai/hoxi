@@ -208,12 +208,24 @@ export const models: ModelsI18n = {
   qualityIncidentToolError: "工具失败",
   qualityIncidentHallucination: "连续失误(疑似幻觉)",
   qualityIncidentRevert: "人工回滚",
+  qualityIncidentAuditFail: "代码审查未过",
+  observerModelTitle: "代码审查观察者模型 (Observer)",
+  observerModelDesc:
+    "独立裁判模型，在代码修改完成后对 Git Diff 与 LSP 结果打分，用于统计中转站与模型的真实代码合格率",
+  observerAutoAuditLabel: "代码变更后自动静默审查",
+  observerDisabledOption: "未配置观察者模型（仅静态检查或手动触发）",
+  qualityMetricPassRate: "代码合格率 (观察者审核)",
+  qualityPassRateSub: "{passed}/{total} 合格 · 均分 {avgScore}",
+  qualityNoAuditYet: "暂未触发代码审核",
+  qualityRiskLowPassRate: "疑似降智/低合格率",
   sourceOpenCode: "OpenCode 导入",
   sourceHoxi: ".hoxi 配置",
   importedOpenCodeReadonlyBanner:
-    "该服务商导入自 OpenCode 全局配置（只读），不可直接修改或删除。如需自定义模型列表，请点击右上角「+ 新建服务商」创建 Hoxi 专属配置（保存在 .hoxi/models.json）。",
+    "该服务商导入自 OpenCode 全局配置（默认只读）。点击右侧「转存到 .hoxi 编辑」即可在不修改 OpenCode 原文件的前提下，将其接管至 .hoxi/models.json 自由增删模型。",
   hoxiConfigNote: "配置文件：.hoxi/models.json",
   openCodeReadonlyNote: "配置文件：OpenCode 导入（只读）",
   viewImportedEndpoint: "查看导入配置",
+  forkToHoxiEdit: "转存到 .hoxi 编辑",
+  forkToHoxiSuccess: "已将「{name}」转存至 .hoxi/models.json，现在可以自由修改模型列表。",
 };
 

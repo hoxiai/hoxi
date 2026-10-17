@@ -1,14 +1,16 @@
 // web/src/components/inspector/PierreDiffViewer.tsx
 import { createMemo, createSignal, For, Show } from "solid-js";
-import { Check, GitCommitHorizontal, RefreshCw, Sparkles } from "lucide-solid";
+import { Check, GitCommitHorizontal, RefreshCw, ShieldCheck, Sparkles } from "lucide-solid";
 import { hoxiAPI } from "../../services/api";
 import {
   activeDirectory,
   loadSessionMessages,
   refreshWorktreeStatus,
+  runSessionCodeAudit,
   workspace,
 } from "../../store/workspace";
 import { t } from "../../i18n";
+import ObserverAuditBanner from "./ObserverAuditBanner";
 import { DiffCard, FileDiffBlock, synthesizeAICommitMessage } from "./pierre-diff-parts";
 
 export { FileDiffBlock };
@@ -24,6 +26,9 @@ export default function PierreDiffViewer() {
     const id = workspace.activeSessionID;
     return id ? workspace.diffsBySession[id] ?? [] : [];
   });
+
+  const isAuditing = () =>
+    Boolean(workspace.activeSessionID && workspace.auditingBySession[workspace.activeSessionID]);
 
   const totals = createMemo(() => {
     let add = 0;
@@ -139,6 +144,23 @@ export default function PierreDiffViewer() {
           />
           <button
             type="button"
+            disabled={isAuditing() || !workspace.activeSessionID}
+            onClick={() =>
+              workspace.activeSessionID &&
+              void runSessionCodeAudit(workspace.activeSessionID, true)
+            }
+            class="shrink-0 inline-flex items-center gap-1 rounded-lg border border-[var(--accent-border)] bg-[var(--accent-surface)] px-2 py-1 text-[11px] font-medium text-[var(--accent-primary)] hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
+            title={t("inspector.diffs.auditTooltip")}
+          >
+            <ShieldCheck size={11} />
+            <span>
+              {isAuditing()
+                ? t("inspector.diffs.auditingBtn")
+                : t("inspector.diffs.auditBtn")}
+            </span>
+          </button>
+          <button
+            type="button"
             onClick={onGenerateAICommit}
             class="shrink-0 inline-flex items-center gap-1 rounded-lg border border-[var(--violet-border)] bg-[var(--violet-surface)] px-2 py-1 text-[11px] font-medium text-[var(--violet-text)] hover:opacity-90 transition-opacity cursor-pointer"
             title={t("inspector.diffs.generateCommitTooltip")}
@@ -168,6 +190,10 @@ export default function PierreDiffViewer() {
             </div>
           )}
         </Show>
+      </Show>
+
+      <Show when={workspace.activeSessionID}>
+        {(sid) => <ObserverAuditBanner sessionID={sid()} />}
       </Show>
 
       <div class="flex-1 min-h-0 overflow-y-auto px-2.5 py-2.5 space-y-2.5">

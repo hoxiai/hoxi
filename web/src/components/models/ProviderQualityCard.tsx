@@ -167,18 +167,26 @@ export default function ProviderQualityCard(props: { providerID: string }) {
               </div>
             </div>
 
-            {/* 4. Cache Hit & Honesty */}
+            {/* 4. Observer Code Pass Rate & Quality Score */}
             <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-2 space-y-0.5">
               <div class="flex items-center gap-1 text-[10.5px] text-[var(--text-muted)]">
                 <CheckCircle2 size={11} class="text-[var(--accent-primary)]" />
-                <span class="truncate">{t("models.qualityMetricCache")}</span>
+                <span class="truncate">{t("models.qualityMetricPassRate")}</span>
               </div>
               <div class="font-mono text-[13px] font-semibold text-[var(--text-primary)]">
-                {health().cacheHitRate !== null ? `${health().cacheHitRate}%` : "—"}
-                <span class="text-[11px] font-normal text-[var(--text-secondary)]">
-                  {" "}
-                  / {health().revertCount}
-                </span>
+                {health().codePassRate !== null ? `${health().codePassRate}%` : "—"}
+              </div>
+              <div class="text-[10px] font-mono text-[var(--text-faint)] truncate">
+                <Show
+                  when={health().auditTotalCount > 0}
+                  fallback={<span>{t("models.qualityNoAuditYet")}</span>}
+                >
+                  {t("models.qualityPassRateSub", {
+                    passed: health().auditPassCount,
+                    total: health().auditTotalCount,
+                    avgScore: health().avgAuditScore ?? 0,
+                  })}
+                </Show>
               </div>
             </div>
           </div>

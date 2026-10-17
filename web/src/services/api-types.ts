@@ -168,7 +168,8 @@ export type ProviderIncidentType =
   | "retry"
   | "tool_error"
   | "hallucination_loop"
-  | "user_revert";
+  | "user_revert"
+  | "code_audit_fail";
 
 export interface ProviderIncident {
   timestamp: number;
@@ -190,6 +191,12 @@ export interface ProviderTelemetryStats {
   revertCount: number;
   cacheHitTurns: number;
   reasoningTurns: number;
+  auditTotalCount?: number;
+  auditPassCount?: number;
+  auditScores?: number[];
+  lastAuditScore?: number;
+  lastAuditPass?: boolean;
+  lastAuditSummary?: string;
   ttftSamplesMs?: number[];
   tpsSamples?: number[];
   lastProbeLatencyMs?: number;
@@ -197,4 +204,41 @@ export interface ProviderTelemetryStats {
   recentIncidents?: ProviderIncident[];
   updatedAt: number;
 }
+
+export interface CodeAuditResult {
+  ok: boolean;
+  score: number;
+  pass: boolean;
+  summary: string;
+  issues?: string[];
+  observerProvider: string;
+  observerModel: string;
+  latencyMs?: number;
+  error?: string;
+  timestamp?: number;
+  workerProviderID?: string;
+  workerModelID?: string;
+}
+
+export interface CodeAuditRequest {
+  sessionID?: string;
+  workerProviderID: string;
+  workerModelID: string;
+  observerProviderID: string;
+  observerModelID: string;
+  observerBaseURL?: string;
+  observerNPM?: string;
+  userPrompt: string;
+  diffs: Array<{
+    file: string;
+    before?: string;
+    after?: string;
+    additions: number;
+    deletions: number;
+  }>;
+  lspErrorCount: number;
+  lspErrorsSummary?: string;
+  locale?: string;
+}
+
 

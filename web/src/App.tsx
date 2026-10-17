@@ -11,6 +11,7 @@ import {
   loadSessionMessages,
   recordSessionRetry,
   refreshWorktreeStatus,
+  runSessionCodeAudit,
   selectSession,
   setWorkspace,
   upsertMessageInfo,
@@ -70,6 +71,9 @@ export default function App() {
           case "message.part.updated":
             upsertMessagePart(evt.properties.part);
             break;
+          case "session.updated":
+            replaceSession(evt.properties.info);
+            break;
           case "session.status":
             setWorkspace("statusBySession", evt.properties.sessionID, evt.properties.status);
             if (evt.properties.status.type === "retry") {
@@ -82,7 +86,9 @@ export default function App() {
             break;
           case "session.idle":
             setWorkspace("statusBySession", evt.properties.sessionID, { type: "idle" });
-            void loadSessionMessages(evt.properties.sessionID);
+            void loadSessionMessages(evt.properties.sessionID).then(() => {
+              void runSessionCodeAudit(evt.properties.sessionID, false);
+            });
             break;
           case "session.diff":
             setWorkspace("diffsBySession", evt.properties.sessionID, evt.properties.diff);

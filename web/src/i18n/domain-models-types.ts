@@ -189,10 +189,21 @@ export interface ModelsI18n {
   qualityIncidentToolError: string;
   qualityIncidentHallucination: string;
   qualityIncidentRevert: string;
+  qualityIncidentAuditFail: string;
+  observerModelTitle: string;
+  observerModelDesc: string;
+  observerAutoAuditLabel: string;
+  observerDisabledOption: string;
+  qualityMetricPassRate: string;
+  qualityPassRateSub: string;
+  qualityNoAuditYet: string;
+  qualityRiskLowPassRate: string;
   sourceOpenCode: string;
   sourceHoxi: string;
   importedOpenCodeReadonlyBanner: string;
   hoxiConfigNote: string;
   openCodeReadonlyNote: string;
   viewImportedEndpoint: string;
+  forkToHoxiEdit: string;
+  forkToHoxiSuccess: string;
 }

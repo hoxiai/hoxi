@@ -131,5 +131,12 @@ export const timeline: TimelineI18n = {
   stepsCompleted: "{count} steps",
   worktreeClean: "Clean",
   worktreeIsolatedBadge: "Worktree",
+  auditRunningBadge: "Observer auditing…",
+  auditPassedBadge: "Audit Pass · {score} pts",
+  auditFailedBadge: "Audit Fail · {score} pts",
+  auditFixWithFeedbackBtn: "Fix Issues",
+  auditSwitchAndFixBtn: "Switch to {model} & Fix",
+  auditFeedbackPromptPrefix:
+    "The independent code auditor reviewed your latest changes (Score: {score}/100) and found the following issues that must be fixed:",
 };
 

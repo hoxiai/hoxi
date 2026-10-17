@@ -32,6 +32,12 @@ export const inspector: InspectorI18n = {
     commitBtn: "Commit ({count})",
     committing: "Committing…",
     commitSuccess: "Committed {hash}",
+    auditBtn: "Audit",
+    auditingBtn: "Auditing…",
+    auditTooltip: "Run Observer model code quality audit on current diffs",
+    auditCardTitlePass: "Observer Code Audit Passed ({score}/100)",
+    auditCardTitleFail: "Observer Code Audit Failed ({score}/100)",
+    auditObserverBy: "Audited by {observer}",
   },
   memory: {
     title: "8-Dimension Structured Memory",

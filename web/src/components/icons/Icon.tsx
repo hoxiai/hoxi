@@ -161,6 +161,7 @@ export interface IconProps extends ComponentProps<"svg"> {
 
 export function Icon(props: IconProps) {
   const [local, others] = splitProps(props, ["name", "size", "class", "classList"])
+  ensureSprite()
   onMount(ensureSprite)
 
   return (

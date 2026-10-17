@@ -11,6 +11,7 @@ import type {
 } from "../services/sse-types";
 import type {
   AgentInfo,
+  CodeAuditResult,
   ProjectInfo,
   ProviderAuthMethod,
   ProviderInfo,
@@ -19,6 +20,7 @@ import type {
 } from "../services/api";
 import { DEFAULT_AGENTS } from "./workspace-providers";
 import { initialProviderTelemetry } from "./provider-telemetry";
+import { initialObserverAutoAudit, initialObserverModel } from "./provider-audit";
 
 export interface MessageTurn {
   info: MessageInfo;
@@ -79,6 +81,10 @@ export interface WorkspaceState {
   pendingQuestions: QuestionRequest[];
   dismissedPlanFollowups: Record<string, boolean>;
   providerTelemetry: Record<string, ProviderTelemetryStats>;
+  observerModel: string;
+  observerAutoAudit: boolean;
+  auditsBySession: Record<string, CodeAuditResult>;
+  auditingBySession: Record<string, boolean>;
 }
 
 export const THEME_KEY = "hoxi-theme";
@@ -200,6 +206,10 @@ export const [workspace, setWorkspace] = createStore<WorkspaceState>({
   pendingQuestions: [],
   dismissedPlanFollowups: {},
   providerTelemetry: initialProviderTelemetry(),
+  observerModel: initialObserverModel(),
+  observerAutoAudit: initialObserverAutoAudit(),
+  auditsBySession: {},
+  auditingBySession: {},
 });
 
 export function openProviderModal(
@@ -279,4 +289,5 @@ export function toggleTheme() {
 export * from "./workspace-providers";
 export * from "./workspace-sessions";
 export * from "./provider-telemetry";
+export * from "./provider-audit";
 

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -12,11 +11,6 @@ import (
 	"strings"
 	"time"
 )
-
-type hoxiModelsFile struct {
-	Schema   string                 `json:"$schema,omitempty"`
-	Provider map[string]interface{} `json:"provider"`
-}
 
 type hoxiModelsConfigResponse struct {
 	HoxiProviders     map[string]interface{} `json:"hoxiProviders"`
@@ -85,8 +79,7 @@ func writeJSONMapFile(path string, payload interface{}) error {
 	return os.WriteFile(path, append(raw, '\n'), 0o644)
 }
 
-// loadOpenCodeImportedProviders returns provider IDs defined in OpenCode's own base opencode.json / config.json.
-func (g *desktopGateway) loadOpenCodeImportedProviderMap() map[string]interface{} {
+func loadOpenCodeImportedProvidersFromDisk() map[string]interface{} {
 	dir := openCodeConfigDir()
 	if dir == "" {
 		return map[string]interface{}{}
@@ -105,81 +98,97 @@ func (g *desktopGateway) loadOpenCodeImportedProviderMap() map[string]interface{
 	return result
 }
 
-func (g *desktopGateway) loadHoxiProvidersMap() map[string]interface{} {
-	providers := map[string]interface{}{}
+// ensureHoxiModelsConfig initializes ~/.hoxi/models.json and <rootDir>/.hoxi/models.json,
+// cleans up any legacy ~/.config/opencode/opencode.jsonc created by earlier versions,
+// and returns the path to pass via OPENCODE_CONFIG.
+func ensureHoxiModelsConfig(rootDir string) string {
+	uPath := userHoxiModelsPath()
+	if strings.TrimSpace(rootDir) == "" {
+		rootDir, _ = os.Getwd()
+	}
+	wPath := filepath.Join(rootDir, ".hoxi", "models.json")
 
-	for _, p := range []string{userHoxiModelsPath(), g.workspaceHoxiModelsPath()} {
-		parsed := readJSONMapFile(p)
-		if provMap, ok := parsed["provider"].(map[string]interface{}); ok {
-			for k, v := range provMap {
-				if vm, ok := v.(map[string]interface{}); ok {
-					providers[k] = vm
-				}
-			}
+	doc := map[string]interface{}{
+		"$schema":  "https://opencode.ai/config.json",
+		"provider": map[string]interface{}{},
+	}
+	for _, p := range []string{uPath, wPath} {
+		if parsed := readJSONMapFile(p); parsed != nil {
+			deepMergeMap(doc, parsed)
 		}
 	}
 
-	// Migrate any non-OpenCode-base provider from opencode.jsonc into .hoxi/models.json on first load
-	if len(providers) == 0 {
-		imported := g.loadOpenCodeImportedProviderMap()
-		dir := openCodeConfigDir()
-		if dir != "" {
-			overlay := readJSONMapFile(filepath.Join(dir, "opencode.jsonc"))
-			if provMap, ok := overlay["provider"].(map[string]interface{}); ok {
-				migrated := false
-				for k, v := range provMap {
-					if _, isImported := imported[k]; !isImported {
-						if vm, ok := v.(map[string]interface{}); ok {
-							providers[k] = vm
-							migrated = true
+	// Clean up legacy ~/.config/opencode/opencode.jsonc so ~/.config/opencode stays 100% untouched
+	if dir := openCodeConfigDir(); dir != "" {
+		legacyOverlay := filepath.Join(dir, "opencode.jsonc")
+		if overlay := readJSONMapFile(legacyOverlay); overlay != nil {
+			imported := loadOpenCodeImportedProvidersFromDisk()
+			provMap, _ := doc["provider"].(map[string]interface{})
+			if provMap == nil {
+				provMap = map[string]interface{}{}
+			}
+			if oProv, ok := overlay["provider"].(map[string]interface{}); ok {
+				for k, v := range oProv {
+					if _, isImp := imported[k]; !isImp {
+						if _, exists := provMap[k]; !exists {
+							if vm, ok := v.(map[string]interface{}); ok {
+								provMap[k] = vm
+							}
 						}
 					}
 				}
-				if migrated {
-					_ = g.persistHoxiProvidersMap(providers)
-				}
 			}
+			doc["provider"] = provMap
+			_ = os.Remove(legacyOverlay)
 		}
 	}
 
-	return providers
+	if uPath != "" {
+		_ = writeJSONMapFile(uPath, doc)
+	}
+	_ = writeJSONMapFile(wPath, doc)
+	if uPath != "" {
+		return uPath
+	}
+	return wPath
 }
 
-func (g *desktopGateway) persistHoxiProvidersMap(providers map[string]interface{}) error {
-	doc := hoxiModelsFile{
-		Schema:   "https://opencode.ai/config.json",
-		Provider: providers,
+func (g *desktopGateway) loadOpenCodeImportedProviderMap() map[string]interface{} {
+	return loadOpenCodeImportedProvidersFromDisk()
+}
+
+func (g *desktopGateway) loadHoxiConfigDoc() map[string]interface{} {
+	doc := map[string]interface{}{
+		"$schema":  "https://opencode.ai/config.json",
+		"provider": map[string]interface{}{},
 	}
+	for _, p := range []string{userHoxiModelsPath(), g.workspaceHoxiModelsPath()} {
+		if parsed := readJSONMapFile(p); parsed != nil {
+			deepMergeMap(doc, parsed)
+		}
+	}
+	if _, ok := doc["provider"].(map[string]interface{}); !ok {
+		doc["provider"] = map[string]interface{}{}
+	}
+	return doc
+}
+
+func (g *desktopGateway) loadHoxiProvidersMap() map[string]interface{} {
+	doc := g.loadHoxiConfigDoc()
+	if provMap, ok := doc["provider"].(map[string]interface{}); ok && provMap != nil {
+		return provMap
+	}
+	return map[string]interface{}{}
+}
+
+func (g *desktopGateway) persistHoxiConfigDoc(doc map[string]interface{}) error {
+	doc["$schema"] = "https://opencode.ai/config.json"
 	if uPath := userHoxiModelsPath(); uPath != "" {
 		_ = writeJSONMapFile(uPath, doc)
 	}
-	return writeJSONMapFile(g.workspaceHoxiModelsPath(), doc)
-}
-
-func (g *desktopGateway) syncHoxiProviderToOpenCodeOverlay(providerID string, cfg map[string]interface{}) {
-	dir := openCodeConfigDir()
-	if dir == "" {
-		return
-	}
-	overlayPath := filepath.Join(dir, "opencode.jsonc")
-	overlay := readJSONMapFile(overlayPath)
-	if overlay == nil {
-		overlay = map[string]interface{}{
-			"$schema": "https://opencode.ai/config.json",
-		}
-	}
-	provMap, ok := overlay["provider"].(map[string]interface{})
-	if !ok || provMap == nil {
-		provMap = map[string]interface{}{}
-	}
-	if cfg == nil {
-		delete(provMap, providerID)
-	} else {
-		provMap[providerID] = stripNullsMap(cfg)
-	}
-	overlay["provider"] = provMap
-	_ = writeJSONMapFile(overlayPath, overlay)
+	err := writeJSONMapFile(g.workspaceHoxiModelsPath(), doc)
 	g.reloadOpenCodeGlobalConfig()
+	return err
 }
 
 func (g *desktopGateway) reloadOpenCodeGlobalConfig() {
@@ -196,18 +205,15 @@ func (g *desktopGateway) reloadOpenCodeGlobalConfig() {
 			_ = resp.Body.Close()
 		}
 	}
-	if req, err := http.NewRequest(http.MethodPatch, base+"/global/config", strings.NewReader("{}")); err == nil {
-		req.Header.Set("Content-Type", "application/json")
-		req.SetBasicAuth("opencode", g.password)
-		if resp, err := client.Do(req); err == nil {
-			_ = resp.Body.Close()
-		}
-	}
 }
 
 func (g *desktopGateway) handleModelsConfig(w http.ResponseWriter, r *http.Request) {
 	importedMap := g.loadOpenCodeImportedProviderMap()
-	hoxiMap := g.loadHoxiProvidersMap()
+	doc := g.loadHoxiConfigDoc()
+	hoxiMap, _ := doc["provider"].(map[string]interface{})
+	if hoxiMap == nil {
+		hoxiMap = map[string]interface{}{}
+	}
 
 	switch r.Method {
 	case http.MethodGet:
@@ -235,19 +241,30 @@ func (g *desktopGateway) handleModelsConfig(w http.ResponseWriter, r *http.Reque
 			writeJSONError(w, http.StatusBadRequest, "providerID and config are required")
 			return
 		}
-		if _, isImported := importedMap[pid]; isImported {
-			if _, inHoxi := hoxiMap[pid]; !inHoxi {
-				writeJSONError(w, http.StatusForbidden, "OpenCode imported provider is read-only")
-				return
+		cleaned := stripNullsMap(req.Config)
+
+		// If taking over an OpenCode-imported provider and apiKey wasn't re-entered, inherit apiKey from imported config
+		if impProv, ok := importedMap[pid].(map[string]interface{}); ok {
+			if impOpts, ok := impProv["options"].(map[string]interface{}); ok {
+				if impKey, ok := impOpts["apiKey"].(string); ok && strings.TrimSpace(impKey) != "" {
+					opts, _ := cleaned["options"].(map[string]interface{})
+					if opts == nil {
+						opts = map[string]interface{}{}
+					}
+					if curKey, _ := opts["apiKey"].(string); strings.TrimSpace(curKey) == "" {
+						opts["apiKey"] = impKey
+					}
+					cleaned["options"] = opts
+				}
 			}
 		}
-		cleaned := stripNullsMap(req.Config)
+
 		hoxiMap[pid] = cleaned
-		if err := g.persistHoxiProvidersMap(hoxiMap); err != nil {
+		doc["provider"] = hoxiMap
+		if err := g.persistHoxiConfigDoc(doc); err != nil {
 			writeJSONError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		g.syncHoxiProviderToOpenCodeOverlay(pid, cleaned)
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"ok":            true,
 			"hoxiProviders": hoxiMap,
@@ -260,15 +277,15 @@ func (g *desktopGateway) handleModelsConfig(w http.ResponseWriter, r *http.Reque
 			writeJSONError(w, http.StatusBadRequest, "providerID is required")
 			return
 		}
-		if _, isImported := importedMap[pid]; isImported {
-			if _, inHoxi := hoxiMap[pid]; !inHoxi {
+		if _, inHoxi := hoxiMap[pid]; !inHoxi {
+			if _, isImported := importedMap[pid]; isImported {
 				writeJSONError(w, http.StatusForbidden, "OpenCode imported provider is read-only")
 				return
 			}
 		}
 		delete(hoxiMap, pid)
-		_ = g.persistHoxiProvidersMap(hoxiMap)
-		g.syncHoxiProviderToOpenCodeOverlay(pid, nil)
+		doc["provider"] = hoxiMap
+		_ = g.persistHoxiConfigDoc(doc)
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"ok":            true,
 			"hoxiProviders": hoxiMap,
@@ -279,26 +296,20 @@ func (g *desktopGateway) handleModelsConfig(w http.ResponseWriter, r *http.Reque
 	}
 }
 
-func applyNullDeletionsMap(target, patch map[string]interface{}) bool {
-	mutated := false
-	for k, v := range patch {
+func deepMergeMap(dst, src map[string]interface{}) {
+	for k, v := range src {
 		if v == nil {
-			if _, exists := target[k]; exists {
-				delete(target, k)
-				mutated = true
-			}
+			delete(dst, k)
 			continue
 		}
 		if vMap, ok := v.(map[string]interface{}); ok {
-			if tMap, ok := target[k].(map[string]interface{}); ok {
-				if applyNullDeletionsMap(tMap, vMap) {
-					mutated = true
-				}
+			if dMap, ok := dst[k].(map[string]interface{}); ok {
+				deepMergeMap(dMap, vMap)
+				continue
 			}
 		}
+		dst[k] = v
 	}
-	returnated := mutated
-	return returnated
 }
 
 func stripNullsMap(in map[string]interface{}) map[string]interface{} {
@@ -316,33 +327,129 @@ func stripNullsMap(in map[string]interface{}) map[string]interface{} {
 	return out
 }
 
-// handleGlobalConfigProxy intercepts PATCH /global/config to safely process null key deletions on disk
-// and strip null values before forwarding to OpenCode so Zod never throws "Expected object, got null".
+func filterProviderModelsByHoxi(provMap, hoxiMap map[string]interface{}) {
+	for pid, hVal := range hoxiMap {
+		hProv, ok := hVal.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		hModels, hasHModels := hProv["models"].(map[string]interface{})
+		if !hasHModels {
+			continue
+		}
+		pObj, ok := provMap[pid].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		pModels, ok := pObj["models"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		for mid := range pModels {
+			if _, keep := hModels[mid]; !keep {
+				delete(pModels, mid)
+			}
+		}
+	}
+}
+
+// handleGlobalConfigProxy persists PATCH /global/config directly to .hoxi/models.json (never touching ~/.config/opencode)
+// and filters GET /global/config so Hoxi-managed providers strictly reflect .hoxi/models.json's model keys.
 func (g *desktopGateway) handleGlobalConfigProxy(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPatch {
 		raw, err := io.ReadAll(r.Body)
 		if err == nil && len(raw) > 0 {
 			var patch map[string]interface{}
 			if json.Unmarshal(raw, &patch) == nil && patch != nil {
-				dir := openCodeConfigDir()
-				if dir != "" {
-					overlayPath := filepath.Join(dir, "opencode.jsonc")
-					if overlay := readJSONMapFile(overlayPath); overlay != nil {
-						if applyNullDeletionsMap(overlay, patch) {
-							_ = writeJSONMapFile(overlayPath, overlay)
-							g.reloadOpenCodeGlobalConfig()
-						}
-					}
-				}
-				cleaned := stripNullsMap(patch)
-				if cleanBytes, err := json.Marshal(cleaned); err == nil {
-					r.Body = io.NopCloser(bytes.NewReader(cleanBytes))
-					r.ContentLength = int64(len(cleanBytes))
-				}
-			} else {
-				r.Body = io.NopCloser(bytes.NewReader(raw))
+				doc := g.loadHoxiConfigDoc()
+				deepMergeMap(doc, patch)
+				_ = g.persistHoxiConfigDoc(doc)
 			}
 		}
 	}
-	g.proxy.ServeHTTP(w, r)
+
+	client := &http.Client{Timeout: 8 * time.Second, Transport: &http.Transport{Proxy: nil}}
+	target := "http://127.0.0.1:" + strconv.Itoa(g.openCodePort) + "/global/config"
+	req, err := http.NewRequest(http.MethodGet, target, nil)
+	if err != nil {
+		g.proxy.ServeHTTP(w, r)
+		return
+	}
+	req.SetBasicAuth("opencode", g.password)
+	resp, err := client.Do(req)
+	if err != nil {
+		g.proxy.ServeHTTP(w, r)
+		return
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		writeJSONError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	var cfg map[string]interface{}
+	if json.Unmarshal(body, &cfg) == nil {
+		if provMap, ok := cfg["provider"].(map[string]interface{}); ok {
+			filterProviderModelsByHoxi(provMap, g.loadHoxiProvidersMap())
+		}
+		writeJSON(w, resp.StatusCode, cfg)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	_, _ = w.Write(body)
+}
+
+// handleProviderProxy filters GET /provider so any provider managed in .hoxi/models.json only exposes its .hoxi models.
+func (g *desktopGateway) handleProviderProxy(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		g.proxy.ServeHTTP(w, r)
+		return
+	}
+	client := &http.Client{Timeout: 8 * time.Second, Transport: &http.Transport{Proxy: nil}}
+	target := "http://127.0.0.1:" + strconv.Itoa(g.openCodePort) + r.URL.RequestURI()
+	req, err := http.NewRequest(http.MethodGet, target, nil)
+	if err != nil {
+		g.proxy.ServeHTTP(w, r)
+		return
+	}
+	req.SetBasicAuth("opencode", g.password)
+	resp, err := client.Do(req)
+	if err != nil {
+		g.proxy.ServeHTTP(w, r)
+		return
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		writeJSONError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	var payload map[string]interface{}
+	if json.Unmarshal(body, &payload) == nil {
+		hoxiMap := g.loadHoxiProvidersMap()
+		if allArr, ok := payload["all"].([]interface{}); ok {
+			for _, item := range allArr {
+				if pObj, ok := item.(map[string]interface{}); ok {
+					pid, _ := pObj["id"].(string)
+					if hProv, ok := hoxiMap[pid].(map[string]interface{}); ok {
+						if hModels, ok := hProv["models"].(map[string]interface{}); ok {
+							if pModels, ok := pObj["models"].(map[string]interface{}); ok {
+								for mid := range pModels {
+									if _, keep := hModels[mid]; !keep {
+										delete(pModels, mid)
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		writeJSON(w, resp.StatusCode, payload)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	_, _ = w.Write(body)
 }

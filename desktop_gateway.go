@@ -148,8 +148,12 @@ func (g *desktopGateway) registerRoutes(distFS fs.FS) {
 
 	g.mux.HandleFunc("/api/hoxi/provider/fetch-models", g.handleFetchProviderModels)
 	g.mux.HandleFunc("/api/hoxi/provider/test-model", g.handleTestProviderModel)
+	g.mux.HandleFunc("/api/hoxi/provider/audit", g.handleAuditProviderCode)
+	g.mux.HandleFunc("/api/hoxi/provider/summarize-title", g.handleSummarizeSessionTitle)
 	g.mux.HandleFunc("/api/hoxi/models-config", g.handleModelsConfig)
 	g.mux.HandleFunc("/global/config", g.handleGlobalConfigProxy)
+	g.mux.HandleFunc("/provider", g.handleProviderProxy)
+	g.mux.Handle("/provider/", g.proxy)
 
 	g.worktrees.registerRoutes(g.mux)
 	g.telemetry.registerRoutes(g.mux)
@@ -165,7 +169,6 @@ func (g *desktopGateway) registerRoutes(distFS fs.FS) {
 		"/vcs",
 		"/file",
 		"/find",
-		"/provider",
 		"/config",
 		"/command",
 		"/agent",

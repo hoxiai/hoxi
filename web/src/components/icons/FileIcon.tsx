@@ -1,8 +1,44 @@
 import type { Component, JSX } from "solid-js"
-import { createMemo, createUniqueId, splitProps, Show } from "solid-js"
+import { createMemo, createSignal, createUniqueId, onMount, splitProps, Show } from "solid-js"
 import sprite from "./file-icons/sprite.svg"
 import type { IconName } from "./file-icons/types"
 import { ICON_MAPS } from "./file-icons/icon-maps"
+
+const FILE_SPRITE_ID = "hoxi-file-icon-sprite"
+const [fileSpriteInlined, setFileSpriteInlined] = createSignal(false)
+let fileSpriteLoading = false
+
+function ensureFileIconSprite() {
+  if (fileSpriteInlined() || fileSpriteLoading) return
+  if (typeof document === "undefined") return
+  if (document.getElementById(FILE_SPRITE_ID)) {
+    setFileSpriteInlined(true)
+    return
+  }
+  fileSpriteLoading = true
+  void fetch(sprite)
+    .then((res) => res.text())
+    .then((raw) => {
+      if (document.getElementById(FILE_SPRITE_ID)) {
+        setFileSpriteInlined(true)
+        return
+      }
+      const wrapper = document.createElement("div")
+      wrapper.id = FILE_SPRITE_ID
+      wrapper.setAttribute("aria-hidden", "true")
+      wrapper.style.position = "absolute"
+      wrapper.style.width = "0"
+      wrapper.style.height = "0"
+      wrapper.style.overflow = "hidden"
+      wrapper.style.display = "none"
+      wrapper.innerHTML = raw.replace(/^<\?xml[^>]*\?>\s*/i, "")
+      document.body?.insertBefore(wrapper, document.body.firstChild)
+      setFileSpriteInlined(true)
+    })
+    .catch(() => {
+      fileSpriteLoading = false
+    })
+}
 
 export type FileIconProps = JSX.GSVGAttributes<SVGSVGElement> & {
   node: { path: string; type: "file" | "directory" }
@@ -12,7 +48,10 @@ export type FileIconProps = JSX.GSVGAttributes<SVGSVGElement> & {
 
 export const FileIcon: Component<FileIconProps> = (props) => {
   const [local, rest] = splitProps(props, ["node", "class", "classList", "expanded", "mono"])
+  ensureFileIconSprite()
+  onMount(ensureFileIconSprite)
   const name = createMemo(() => chooseIconName(local.node.path, local.node.type, local.expanded || false))
+  const href = createMemo(() => (fileSpriteInlined() ? `#${name()}` : `${sprite}#${name()}`))
   const id = `file-icon-mono-${createUniqueId()}`
   return (
     <svg
@@ -23,10 +62,10 @@ export const FileIcon: Component<FileIconProps> = (props) => {
         [local.class ?? ""]: !!local.class,
       }}
     >
-      <Show when={local.mono} fallback={<use href={`${sprite}#${name()}`} />}>
+      <Show when={local.mono} fallback={<use href={href()} />}>
         <defs>
           <mask id={id} mask-type="alpha">
-            <use href={`${sprite}#${name()}`} />
+            <use href={href()} />
           </mask>
         </defs>
         <rect width="100%" height="100%" fill="currentColor" mask={`url(#${id})`} />

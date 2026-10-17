@@ -211,12 +211,24 @@ export const models: ModelsI18n = {
   qualityIncidentToolError: "Tool Failed",
   qualityIncidentHallucination: "Hallucination Loop",
   qualityIncidentRevert: "User Revert",
+  qualityIncidentAuditFail: "Code Audit Failed",
+  observerModelTitle: "Observer / Code Auditor Model",
+  observerModelDesc:
+    "Independent referee model that audits code diffs after edits to score quality and track model pass rate",
+  observerAutoAuditLabel: "Auto-audit when code changes",
+  observerDisabledOption: "Disabled (Static checks / Manual audit only)",
+  qualityMetricPassRate: "Code Pass Rate (Observer)",
+  qualityPassRateSub: "{passed}/{total} passed · avg {avgScore} pts",
+  qualityNoAuditYet: "No code audits yet",
+  qualityRiskLowPassRate: "Low Code Pass Rate",
   sourceOpenCode: "OpenCode Imported",
   sourceHoxi: ".hoxi Config",
   importedOpenCodeReadonlyBanner:
-    "This provider is imported from OpenCode global config (read-only) and cannot be modified or deleted. Click '+ New Provider' above to create a Hoxi custom provider (saved in .hoxi/models.json).",
+    "This provider is imported from OpenCode global config (read-only). Click 'Copy to .hoxi & Edit' to customize models in .hoxi/models.json without modifying OpenCode's original file.",
   hoxiConfigNote: "Config file: .hoxi/models.json",
   openCodeReadonlyNote: "Config file: Imported from OpenCode (Read-only)",
   viewImportedEndpoint: "View Imported",
+  forkToHoxiEdit: "Copy to .hoxi & Edit",
+  forkToHoxiSuccess: "Copied '{name}' to .hoxi/models.json — you can now freely edit its models.",
 };
 

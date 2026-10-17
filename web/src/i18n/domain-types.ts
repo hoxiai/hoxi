@@ -186,6 +186,12 @@ export interface TimelineI18n {
   stepsCompleted: string;
   worktreeClean: string;
   worktreeIsolatedBadge: string;
+  auditRunningBadge: string;
+  auditPassedBadge: string;
+  auditFailedBadge: string;
+  auditFixWithFeedbackBtn: string;
+  auditSwitchAndFixBtn: string;
+  auditFeedbackPromptPrefix: string;
 }
 
 export interface ToolCardI18n {
@@ -262,6 +268,12 @@ export interface InspectorDiffsI18n {
   commitBtn: string;
   committing: string;
   commitSuccess: string;
+  auditBtn: string;
+  auditingBtn: string;
+  auditTooltip: string;
+  auditCardTitlePass: string;
+  auditCardTitleFail: string;
+  auditObserverBy: string;
 }
 
 export interface InspectorMemoryI18n {

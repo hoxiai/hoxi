@@ -96,5 +96,36 @@ describe("provider telemetry health scoring", () => {
     assertTrue(healthy.score >= 90, "expected healthy provider score >= 90");
     assertEqual(healthy.grade, "S");
     assertEqual(healthy.avgTtftMs, 450);
+
+    setWorkspace("providerTelemetry", "relay_downgraded", {
+      providerID: "relay_downgraded",
+      totalTurns: 6,
+      successTurns: 6,
+      errorTurns: 0,
+      timeoutTurns: 0,
+      retryCount: 0,
+      revertCount: 0,
+      hallucinationFlags: 2,
+      toolCallsTotal: 6,
+      toolCallsFailed: 0,
+      cacheHitTurns: 0,
+      reasoningTurns: 0,
+      auditTotalCount: 4,
+      auditPassCount: 1,
+      auditScores: [85, 52, 48, 55],
+      ttftSamplesMs: [380, 410],
+      tpsSamples: [70, 80],
+      recentIncidents: [],
+      updatedAt: Date.now(),
+    });
+
+    const downgraded = computeProviderHealth("relay_downgraded");
+    assertEqual(downgraded.codePassRate, 25);
+    assertEqual(downgraded.avgAuditScore, 60);
+    assertTrue(
+      downgraded.riskTags.includes("low_pass_rate"),
+      "expected low_pass_rate risk tag when codePassRate < 65%"
+    );
+    assertEqual(downgraded.status, "degraded");
   });
 });

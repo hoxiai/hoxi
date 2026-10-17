@@ -206,6 +206,8 @@ func startOpenCodeDaemon(ctx context.Context, cfg appConfig, logger *slog.Logger
 		return nil, 0, "", err
 	}
 
+	hoxiConfigPath := ensureHoxiModelsConfig(cfg.RootDir)
+
 	args := []string{"serve", "--hostname", "127.0.0.1", "--port", strconv.Itoa(port)}
 	child := exec.CommandContext(ctx, binPath, args...)
 	child.Dir = cfg.RootDir
@@ -219,6 +221,9 @@ func startOpenCodeDaemon(ctx context.Context, cfg appConfig, logger *slog.Logger
 		"OPENCODE_DISABLE_CONFIG_DEPENDENCY_INSTALL=1",
 		"NO_PROXY=127.0.0.1,localhost",
 	)
+	if hoxiConfigPath != "" {
+		child.Env = append(child.Env, "OPENCODE_CONFIG="+hoxiConfigPath)
+	}
 	if err := child.Start(); err != nil {
 		return nil, 0, "", fmt.Errorf("start opencode serve: %w", err)
 	}

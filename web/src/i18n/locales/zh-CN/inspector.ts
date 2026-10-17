@@ -31,6 +31,12 @@ export const inspector: InspectorI18n = {
     commitBtn: "提交 ({count})",
     committing: "提交中…",
     commitSuccess: "已提交 {hash}",
+    auditBtn: "观察者审核",
+    auditingBtn: "审核中…",
+    auditTooltip: "调用观察者模型对当前代码变更进行质量打分与合格率审核",
+    auditCardTitlePass: "观察者代码审核合格 ({score}/100)",
+    auditCardTitleFail: "观察者代码审核不合格 ({score}/100)",
+    auditObserverBy: "审查模型：{observer}",
   },
   memory: {
     title: "8 维结构化记忆库",

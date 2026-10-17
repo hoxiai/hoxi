@@ -1,4 +1,4 @@
-import { createMemo, createSignal, For, Show } from "solid-js";
+import { createMemo, createSignal, For, Index, Match, Show, Switch } from "solid-js";
 import { openFileInInspector } from "../../store/workspace";
 import { FileIcon, Icon } from "../icons";
 import { t } from "../../i18n";
@@ -149,7 +149,7 @@ type InlineSpan =
   | { type: "code"; text: string }
   | { type: "bold"; text: string }
   | { type: "italic"; text: string }
-  | { type: "link"; label: string; href: string };
+  | { type: "link"; text: string; href: string };
 
 function parseInline(text: string): InlineSpan[] {
   const spans: InlineSpan[] = [];
@@ -169,7 +169,7 @@ function parseInline(text: string): InlineSpan[] {
     } else if (token.startsWith("[")) {
       const m = token.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
       if (m) {
-        spans.push({ type: "link", label: m[1], href: m[2] });
+        spans.push({ type: "link", text: m[1], href: m[2] });
       } else {
         spans.push({ type: "text", text: token });
       }
@@ -190,49 +190,49 @@ function parseInline(text: string): InlineSpan[] {
 function InlineRenderer(props: { text: string }) {
   const spans = createMemo(() => parseInline(props.text));
   return (
-    <For each={spans()}>
-      {(span) => {
-        switch (span.type) {
-          case "code":
-            if (isLikelyFilePath(span.text)) {
-              const cleanPath = span.text.replace(/:\d+(?::\d+)?$/, "");
+    <Index each={spans()}>
+      {(span) => (
+        <Switch fallback={<>{span().text}</>}>
+          <Match when={span().type === "code" && isLikelyFilePath(span().text)}>
+            {(_) => {
+              const cleanPath = () => span().text.replace(/:\d+(?::\d+)?$/, "");
               return (
                 <button
                   type="button"
-                  onClick={() => openFileInInspector(span.text)}
+                  onClick={() => openFileInInspector(span().text)}
                   title={t("timeline.openInInspectorTooltip")}
                   class="inline-flex items-center gap-1.5 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-elevated)] hover:border-[var(--accent-border)] hover:bg-[var(--accent-surface)] px-1.5 py-0.5 font-mono text-[0.85em] text-[var(--text-primary)] hover:text-[var(--accent-text)] transition-colors cursor-pointer align-baseline"
                 >
-                  <FileIcon node={{ path: cleanPath, type: "file" }} class="w-3.5 h-3.5 shrink-0" />
-                  <span>{span.text}</span>
+                  <FileIcon node={{ path: cleanPath(), type: "file" }} class="w-3.5 h-3.5 shrink-0" />
+                  <span>{span().text}</span>
                 </button>
               );
-            }
-            return (
-              <code class="rounded-md border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-1.5 py-0.5 font-mono text-[0.86em] text-[var(--text-primary)]">
-                {span.text}
-              </code>
-            );
-          case "bold":
-            return <strong class="font-semibold text-[var(--text-primary)]">{span.text}</strong>;
-          case "italic":
-            return <em class="italic">{span.text}</em>;
-          case "link":
-            return (
-              <a
-                href={span.href}
-                target="_blank"
-                rel="noreferrer"
-                class="text-[var(--accent-primary)] underline decoration-[var(--accent-border)] underline-offset-2 hover:opacity-85"
-              >
-                {span.label}
-              </a>
-            );
-          default:
-            return <>{span.text}</>;
-        }
-      }}
-    </For>
+            }}
+          </Match>
+          <Match when={span().type === "code"}>
+            <code class="rounded-md border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-1.5 py-0.5 font-mono text-[0.86em] text-[var(--text-primary)]">
+              {span().text}
+            </code>
+          </Match>
+          <Match when={span().type === "bold"}>
+            <strong class="font-semibold text-[var(--text-primary)]">{span().text}</strong>
+          </Match>
+          <Match when={span().type === "italic"}>
+            <em class="italic">{span().text}</em>
+          </Match>
+          <Match when={span().type === "link"}>
+            <a
+              href={(span() as Extract<InlineSpan, { type: "link" }>).href}
+              target="_blank"
+              rel="noreferrer"
+              class="text-[var(--accent-primary)] underline decoration-[var(--accent-border)] underline-offset-2 hover:opacity-85"
+            >
+              {span().text}
+            </a>
+          </Match>
+        </Switch>
+      )}
+    </Index>
   );
 }
 
@@ -279,105 +279,114 @@ export default function MarkdownView(props: { content: string }) {
 
   return (
     <div class="flex flex-col gap-y-3.5 text-[14px] leading-[1.72] text-[var(--text-primary)] selectable-text">
-      <For each={blocks()}>
-        {(block) => {
-          switch (block.type) {
-            case "code":
-              return <CodeBlockCard lang={block.lang} code={block.code} />;
-            case "heading":
-              if (block.level === 1) {
-                return (
-                  <h1 class="first:mt-0 mt-3.5 -mb-1 text-[18px] font-semibold tracking-tight text-[var(--text-primary)]">
-                    <InlineRenderer text={block.text} />
-                  </h1>
-                );
+      <Index each={blocks()}>
+        {(block) => (
+          <Switch>
+            <Match when={block().type === "code"}>
+              <CodeBlockCard
+                lang={(block() as Extract<BlockToken, { type: "code" }>).lang}
+                code={(block() as Extract<BlockToken, { type: "code" }>).code}
+              />
+            </Match>
+            <Match
+              when={
+                block().type === "heading" &&
+                (block() as Extract<BlockToken, { type: "heading" }>).level === 1
               }
-              if (block.level === 2) {
-                return (
-                  <h2 class="first:mt-0 mt-3 -mb-1 text-[16px] font-semibold tracking-tight text-[var(--text-primary)]">
-                    <InlineRenderer text={block.text} />
-                  </h2>
-                );
+            >
+              <h1 class="first:mt-0 mt-3.5 -mb-1 text-[18px] font-semibold tracking-tight text-[var(--text-primary)]">
+                <InlineRenderer text={(block() as Extract<BlockToken, { type: "heading" }>).text} />
+              </h1>
+            </Match>
+            <Match
+              when={
+                block().type === "heading" &&
+                (block() as Extract<BlockToken, { type: "heading" }>).level === 2
               }
-              return (
-                <h3 class="first:mt-0 mt-2.5 -mb-1 text-[14.5px] font-semibold text-[var(--text-primary)]">
-                  <InlineRenderer text={block.text} />
-                </h3>
-              );
-            case "ul":
-              return (
-                <ul class="my-0.5 list-disc space-y-2 pl-5 text-[var(--text-primary)]">
-                  <For each={block.items}>
-                    {(item) => (
-                      <li class="leading-[1.68]">
-                        <InlineRenderer text={item} />
-                      </li>
-                    )}
-                  </For>
-                </ul>
-              );
-            case "ol":
-              return (
-                <ol class="my-0.5 list-decimal space-y-2 pl-5 text-[var(--text-primary)]">
-                  <For each={block.items}>
-                    {(item) => (
-                      <li class="leading-[1.68]">
-                        <InlineRenderer text={item} />
-                      </li>
-                    )}
-                  </For>
-                </ol>
-              );
-            case "blockquote":
-              return (
-                <blockquote class="my-0.5 border-l-2 border-[var(--accent-border)] bg-[var(--bg-inset)] px-3.5 py-2.5 text-[13.5px] leading-[1.68] text-[var(--text-secondary)] rounded-r-lg">
-                  <InlineRenderer text={block.text} />
-                </blockquote>
-              );
-            case "table":
-              return (
-                <div class="my-1 overflow-x-auto rounded-xl border border-[var(--border-subtle)]">
-                  <table class="w-full border-collapse text-left text-[12.5px]">
-                    <thead>
-                      <tr class="border-b border-[var(--border-subtle)] bg-[var(--bg-elevated)]">
-                        <For each={block.headers}>
-                          {(h) => (
-                            <th class="px-3 py-2 font-semibold text-[var(--text-primary)]">
-                              <InlineRenderer text={h} />
-                            </th>
-                          )}
-                        </For>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <For each={block.rows}>
-                        {(row) => (
-                          <tr class="border-b last:border-b-0 border-[var(--border-subtle)]">
-                            <For each={row}>
-                              {(cell) => (
-                                <td class="px-3 py-2 text-[var(--text-secondary)]">
-                                  <InlineRenderer text={cell} />
-                                </td>
-                              )}
-                            </For>
-                          </tr>
+            >
+              <h2 class="first:mt-0 mt-3 -mb-1 text-[16px] font-semibold tracking-tight text-[var(--text-primary)]">
+                <InlineRenderer text={(block() as Extract<BlockToken, { type: "heading" }>).text} />
+              </h2>
+            </Match>
+            <Match when={block().type === "heading"}>
+              <h3 class="first:mt-0 mt-2.5 -mb-1 text-[14.5px] font-semibold text-[var(--text-primary)]">
+                <InlineRenderer text={(block() as Extract<BlockToken, { type: "heading" }>).text} />
+              </h3>
+            </Match>
+            <Match when={block().type === "ul"}>
+              <ul class="my-0.5 list-disc space-y-2 pl-5 text-[var(--text-primary)]">
+                <Index each={(block() as Extract<BlockToken, { type: "ul" }>).items}>
+                  {(item) => (
+                    <li class="leading-[1.68]">
+                      <InlineRenderer text={item()} />
+                    </li>
+                  )}
+                </Index>
+              </ul>
+            </Match>
+            <Match when={block().type === "ol"}>
+              <ol class="my-0.5 list-decimal space-y-2 pl-5 text-[var(--text-primary)]">
+                <Index each={(block() as Extract<BlockToken, { type: "ol" }>).items}>
+                  {(item) => (
+                    <li class="leading-[1.68]">
+                      <InlineRenderer text={item()} />
+                    </li>
+                  )}
+                </Index>
+              </ol>
+            </Match>
+            <Match when={block().type === "blockquote"}>
+              <blockquote class="my-0.5 border-l-2 border-[var(--accent-border)] bg-[var(--bg-inset)] px-3.5 py-2.5 text-[13.5px] leading-[1.68] text-[var(--text-secondary)] rounded-r-lg">
+                <InlineRenderer
+                  text={(block() as Extract<BlockToken, { type: "blockquote" }>).text}
+                />
+              </blockquote>
+            </Match>
+            <Match when={block().type === "table"}>
+              <div class="my-1 overflow-x-auto rounded-xl border border-[var(--border-subtle)]">
+                <table class="w-full border-collapse text-left text-[12.5px]">
+                  <thead>
+                    <tr class="border-b border-[var(--border-subtle)] bg-[var(--bg-elevated)]">
+                      <Index each={(block() as Extract<BlockToken, { type: "table" }>).headers}>
+                        {(h) => (
+                          <th class="px-3 py-2 font-semibold text-[var(--text-primary)]">
+                            <InlineRenderer text={h()} />
+                          </th>
                         )}
-                      </For>
-                    </tbody>
-                  </table>
-                </div>
-              );
-            case "hr":
-              return <hr class="my-2 border-[var(--border-subtle)]" />;
-            case "paragraph":
-              return (
-                <p class="whitespace-pre-wrap break-words leading-[1.72]">
-                  <InlineRenderer text={block.text} />
-                </p>
-              );
-          }
-        }}
-      </For>
+                      </Index>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <Index each={(block() as Extract<BlockToken, { type: "table" }>).rows}>
+                      {(row) => (
+                        <tr class="border-b last:border-b-0 border-[var(--border-subtle)]">
+                          <Index each={row()}>
+                            {(cell) => (
+                              <td class="px-3 py-2 text-[var(--text-secondary)]">
+                                <InlineRenderer text={cell()} />
+                              </td>
+                            )}
+                          </Index>
+                        </tr>
+                      )}
+                    </Index>
+                  </tbody>
+                </table>
+              </div>
+            </Match>
+            <Match when={block().type === "hr"}>
+              <hr class="my-2 border-[var(--border-subtle)]" />
+            </Match>
+            <Match when={block().type === "paragraph"}>
+              <p class="whitespace-pre-wrap break-words leading-[1.72]">
+                <InlineRenderer
+                  text={(block() as Extract<BlockToken, { type: "paragraph" }>).text}
+                />
+              </p>
+            </Match>
+          </Switch>
+        )}
+      </Index>
     </div>
   );
 }
