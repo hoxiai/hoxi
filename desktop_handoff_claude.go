@@ -11,8 +11,11 @@ import (
 )
 
 func claudeHomeDir() string {
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
+	if env := strings.TrimSpace(os.Getenv("CLAUDE_CONFIG_DIR")); env != "" {
+		return filepath.Clean(env)
+	}
+	home, _ := os.UserHomeDir()
+	if home == "" {
 		return ""
 	}
 	return filepath.Join(home, ".claude")

@@ -20,17 +20,32 @@ import (
 const base62Alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 
 func openCodeDataDBPath() string {
+	home, _ := os.UserHomeDir()
+	var candidates []string
 	if xdg := strings.TrimSpace(os.Getenv("XDG_DATA_HOME")); xdg != "" {
-		p := filepath.Join(xdg, "opencode", "opencode.db")
+		candidates = append(candidates, filepath.Join(xdg, "opencode", "opencode.db"))
+	}
+	if home != "" {
+		candidates = append(candidates, filepath.Join(home, ".local", "share", "opencode", "opencode.db"))
+	}
+	if localApp := strings.TrimSpace(os.Getenv("LOCALAPPDATA")); localApp != "" {
+		candidates = append(candidates,
+			filepath.Join(localApp, "opencode", "opencode.db"),
+			filepath.Join(localApp, "opencode", "Data", "opencode.db"),
+		)
+	}
+	if appData := strings.TrimSpace(os.Getenv("APPDATA")); appData != "" {
+		candidates = append(candidates, filepath.Join(appData, "opencode", "opencode.db"))
+	}
+	for _, p := range candidates {
 		if _, err := os.Stat(p); err == nil {
 			return p
 		}
 	}
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		return ""
+	if len(candidates) > 0 {
+		return candidates[0]
 	}
-	return filepath.Join(home, ".local", "share", "opencode", "opencode.db")
+	return ""
 }
 
 func makeAscendingOpenCodeID(prefix string, tsMs int64, seq int) string {

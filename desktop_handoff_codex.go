@@ -16,8 +16,11 @@ import (
 )
 
 func codexHomeDir() string {
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
+	if env := strings.TrimSpace(os.Getenv("CODEX_HOME")); env != "" {
+		return filepath.Clean(env)
+	}
+	home, _ := os.UserHomeDir()
+	if home == "" {
 		return ""
 	}
 	return filepath.Join(home, ".codex")

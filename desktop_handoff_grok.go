@@ -12,6 +12,9 @@ import (
 )
 
 func grokHomeDir() string {
+	if env := strings.TrimSpace(os.Getenv("GROK_HOME")); env != "" {
+		return filepath.Clean(env)
+	}
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
 		return ""

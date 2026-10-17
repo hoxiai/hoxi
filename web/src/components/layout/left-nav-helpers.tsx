@@ -77,14 +77,19 @@ export function badgeFor(
 }
 
 export function basename(p: string): string {
-  const parts = p.split("/").filter(Boolean);
+  const parts = p.split(/[\\/]+/).filter(Boolean);
   return parts.length ? parts[parts.length - 1] : p || "workspace";
 }
 
 export function shortenPath(p: string): string {
-  const home = "/Users/" + (p.split("/")[2] || "");
-  if (p.startsWith(home)) {
-    return "~" + p.slice(home.length);
+  if (!p) return "";
+  const winMatch = p.match(/^[A-Za-z]:[\\/]Users[\\/]([^\\/]+)([\\/].*)?$/);
+  if (winMatch) {
+    return "~" + (winMatch[2] || "");
+  }
+  const unixMatch = p.match(/^\/(?:Users|home)\/([^/]+)(\/.*)?$/);
+  if (unixMatch) {
+    return "~" + (unixMatch[2] || "");
   }
   return p;
 }

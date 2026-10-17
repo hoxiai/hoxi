@@ -62,9 +62,15 @@ export default function CompactHeader(props: CompactHeaderProps) {
     onCleanup(() => clearInterval(timer));
   });
 
+  const isMac =
+    typeof navigator !== "undefined" &&
+    /Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent);
+
   return (
     <header
-      class="h-[52px] shrink-0 bg-transparent flex items-center justify-between px-4 pl-[96px] select-none"
+      class={`h-[52px] shrink-0 bg-transparent flex items-center justify-between px-4 ${
+        isMac ? "pl-[96px]" : "pl-4"
+      } select-none`}
       style={{ "--wails-draggable": "drag" } as any}
     >
       <div class="flex items-center gap-2.5 text-xs font-medium min-w-0">

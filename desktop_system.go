@@ -42,7 +42,11 @@ var (
 func resolveLocalUserIdentity() (sysUser, gitName, gitEmail string) {
 	cachedUserIdentityOnce.Do(func() {
 		if u, err := user.Current(); err == nil && u != nil {
-			cachedSystemUsername = strings.TrimSpace(u.Username)
+			uname := strings.TrimSpace(u.Username)
+			if idx := strings.LastIndex(uname, `\`); idx >= 0 && idx < len(uname)-1 {
+				uname = uname[idx+1:]
+			}
+			cachedSystemUsername = uname
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
 		defer cancel()

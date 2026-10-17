@@ -43,11 +43,23 @@ func openCodeConfigDir() string {
 	if xdg := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME")); xdg != "" {
 		return filepath.Join(xdg, "opencode")
 	}
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		return ""
+	home, _ := os.UserHomeDir()
+	if home != "" {
+		p := filepath.Join(home, ".config", "opencode")
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
 	}
-	return filepath.Join(home, ".config", "opencode")
+	if appData := strings.TrimSpace(os.Getenv("APPDATA")); appData != "" {
+		p := filepath.Join(appData, "opencode")
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	if home != "" {
+		return filepath.Join(home, ".config", "opencode")
+	}
+	return ""
 }
 
 func readJSONMapFile(path string) map[string]interface{} {

@@ -45,17 +45,30 @@ func enrichSystemPath() {
 			filepath.Join(home, ".bun", "bin"),
 			filepath.Join(home, ".local", "bin"),
 			filepath.Join(home, ".cargo", "bin"),
+			filepath.Join(home, "scoop", "shims"),
 		)
 	}
-	extra = append(extra,
-		"/opt/homebrew/bin",
-		"/opt/homebrew/sbin",
-		"/usr/local/bin",
-		"/usr/bin",
-		"/bin",
-		"/usr/sbin",
-		"/sbin",
-	)
+	if localApp := strings.TrimSpace(os.Getenv("LOCALAPPDATA")); localApp != "" {
+		extra = append(extra,
+			filepath.Join(localApp, "opencode", "bin"),
+			filepath.Join(localApp, "Programs", "opencode"),
+			filepath.Join(localApp, "Microsoft", "WinGet", "Links"),
+		)
+	}
+	if appData := strings.TrimSpace(os.Getenv("APPDATA")); appData != "" {
+		extra = append(extra, filepath.Join(appData, "npm"))
+	}
+	if runtime.GOOS != "windows" {
+		extra = append(extra,
+			"/opt/homebrew/bin",
+			"/opt/homebrew/sbin",
+			"/usr/local/bin",
+			"/usr/bin",
+			"/bin",
+			"/usr/sbin",
+			"/sbin",
+		)
+	}
 
 	// Prepend missing extra directories so bundled sidecars and Homebrew tools take precedence
 	var combined []string
@@ -85,9 +98,9 @@ func isExecutableFile(path string) bool {
 
 // findOpenCodeBinary searches for the opencode binary across:
 // 1. Explicit flag / HOXI_OPENCODE path
-// 2. App bundle sidecar (Hoxi.app/Contents/MacOS/opencode or Contents/Resources/opencode)
+// 2. App bundle sidecar (Hoxi.app/Contents/MacOS/opencode or Hoxi.exe directory)
 // 3. Hoxi managed bin (~/.hoxi/bin/opencode)
-// 4. Common install paths (~/.opencode/bin, /opt/homebrew/bin, /usr/local/bin, ~/.bun/bin)
+// 4. Common install paths (~/.opencode/bin, %LOCALAPPDATA%\opencode\bin, /opt/homebrew/bin, etc.)
 // 5. System PATH
 func findOpenCodeBinary(configured string) string {
 	binName := "opencode"
@@ -123,13 +136,22 @@ func findOpenCodeBinary(configured string) string {
 			filepath.Join(home, ".opencode", "bin", binName),
 			filepath.Join(home, ".bun", "bin", binName),
 			filepath.Join(home, ".local", "bin", binName),
+			filepath.Join(home, "scoop", "shims", binName),
 		)
 	}
-
-	candidates = append(candidates,
-		filepath.Join("/opt/homebrew/bin", binName),
-		filepath.Join("/usr/local/bin", binName),
-	)
+	if localApp := strings.TrimSpace(os.Getenv("LOCALAPPDATA")); localApp != "" {
+		candidates = append(candidates,
+			filepath.Join(localApp, "opencode", "bin", binName),
+			filepath.Join(localApp, "Programs", "opencode", binName),
+			filepath.Join(localApp, "Microsoft", "WinGet", "Links", binName),
+		)
+	}
+	if runtime.GOOS != "windows" {
+		candidates = append(candidates,
+			filepath.Join("/opt/homebrew/bin", binName),
+			filepath.Join("/usr/local/bin", binName),
+		)
+	}
 
 	for _, c := range candidates {
 		if isExecutableFile(c) {

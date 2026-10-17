@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
-	"path/filepath"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -207,7 +207,7 @@ func (g *desktopGateway) registerRoutes(distFS fs.FS) {
 func spaStaticHandler(distFS fs.FS) http.Handler {
 	fileServer := http.FileServer(http.FS(distFS))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		cleanPath := strings.TrimPrefix(filepath.Clean(r.URL.Path), "/")
+		cleanPath := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
 		if cleanPath == "" || cleanPath == "." {
 			cleanPath = "index.html"
 		}

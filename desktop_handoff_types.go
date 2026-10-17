@@ -169,18 +169,16 @@ func cleanDirPath(p string) string {
 }
 
 func sameOrSubPath(candidate, target string) bool {
-	c := cleanDirPath(candidate)
-	t := cleanDirPath(target)
-	if c == "" || t == "" {
+	c := comparableFolderPath(candidate)
+	t := comparableFolderPath(target)
+	if c == "" || t == "" || c == "." || t == "." {
 		return false
 	}
 	if c == t {
 		return true
 	}
-	if strings.HasPrefix(c, t+string(os.PathSeparator)) || strings.HasPrefix(t, c+string(os.PathSeparator)) {
-		return true
-	}
-	return false
+	sep := string(os.PathSeparator)
+	return strings.HasPrefix(c, t+sep) || strings.HasPrefix(t, c+sep)
 }
 
 func extractChangedFilesFromTurns(turns []NormalizedTurn) []string {
