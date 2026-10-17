@@ -1,6 +1,6 @@
 # hoxi 开发者全景与工程实现手册 (DEVELOPMENT.md)
 
-本文档是 `hoxi` 的**生产级工程实现规范（Implementation-Ready Blueprint）**。文档中的所有接口路径、SSE 事件载荷、插件 Hook 签名、Git Worktree 状态机及 Wails/CGo 原生宿主代码均已对齐 **OpenCode `v1.18+` 真实 OpenAPI 规范**、**`gopanel_v2` 桌面宿主实现**、**`sailry-harness` 三栏工作区架构** 以及 **`Kilo Code` SolidJS 任务执行引擎**，可直接作为开发与验收的唯一事实来源（Single Source of Truth）。
+本文档是 `hoxi` 的**生产级工程实现规范（Implementation-Ready Blueprint）**。文档中的所有接口路径、SSE 事件载荷、插件 Hook 签名、Git Worktree 状态机及 Wails/CGo 原生宿主代码均已对齐 **OpenCode `v1.18+` 真实 OpenAPI 规范**、**`gopanel_v2` 桌面宿主实现**、**三栏工作区架构** 以及 **`Kilo Code` SolidJS 任务执行引擎**，可直接作为开发与验收的唯一事实来源（Single Source of Truth）。
 
 ---
 
@@ -20,20 +20,20 @@
 5. [SSE `/event` 实时事件流与前端状态机](#5-sse-event-实时事件流与前端状态机)
    - [5.1 真实 SSE 事件类型与 TypeScript 定义](#51-真实-sse-事件类型与-typescript-定义)
    - [5.2 120Hz `requestAnimationFrame` 流式批处理引擎](#52-120hz-requestanimationframe-流式批处理引擎)
-6. [前端 UI 架构：Sailry 三栏外壳 + Kilo 任务流](#6-前端-ui-架构sailry-三栏外壳--kilo-任务流)
+6. [前端 UI 架构：三栏工作区外壳 + Kilo 任务流](#6-前端-ui-架构三栏工作区外壳--kilo-任务流)
    - [6.1 视觉 Token 与低饱和暗黑规范](#61-视觉-token-与低饱和暗黑规范)
-   - [6.2 Sailry 三栏工作区布局 (`ThreePaneShell`)](#62-sailry-三栏工作区布局-threepaneshell)
+   - [6.2 三栏工作区布局 (`ThreePaneShell`)](#62-三栏工作区布局-threepaneshell)
    - [6.3 Kilo Code 风格动态工具卡片 (`ToolCard`)](#63-kilo-code-风格动态工具卡片-toolcard)
    - [6.4 独立推理抽屉 (`ThoughtBox`) 与内联审批门控 (`ApprovalGateCard`)](#64-独立推理抽屉-thoughtbox-与内联审批门控-approvalgatecard)
    - [6.5 Pierre Diff 审查器与 WebGL Xterm 终端集成](#65-pierre-diff-审查器与-webgl-xterm-终端集成)
-   - [6.6 超越 `sailry-harness` 的三大高阶控制能力](#66-超越-sailry-harness-的三大高阶控制能力)
+   - [6.6 三大高阶控制能力](#66-三大高阶控制能力)
 7. [Git Worktree 物理会话隔离与合并生命周期](#7-git-worktree-物理会话隔离与合并生命周期)
    - [7.1 Worktree 沙箱状态机](#71-worktree-沙箱状态机)
    - [7.2 Go Worktree 管理器完整实现规范 (`desktop_worktree.go`)](#72-go-worktree-管理器完整实现规范-desktop_worktreego)
 8. [OpenCode 插件体系：安全门控与 8 维记忆沉淀](#8-opencode-插件体系安全门控与-8-维记忆沉淀)
    - [8.1 真实 `@opencode-ai/plugin` Hook 签名](#81-真实-opencode-aiplugin-hook-签名)
    - [8.2 权限智能分流插件 (`hoxi-permissions.js`)](#82-权限智能分流插件-hoxi-permissionsjs)
-   - [8.3 Sailry 8 维度结构化记忆插件 (`hoxi-memory.js`)](#83-sailry-8-维度结构化记忆插件-hoxi-memoryjs)
+   - [8.3 8 维度结构化记忆插件 (`hoxi-memory.js`)](#83-8-维度结构化记忆插件-hoxi-memoryjs)
 9. [macOS 原生宿主与状态栏托盘 (`gopanel_v2` 移植)](#9-macos-原生宿主与状态栏托盘-gopanel_v2-移植)
    - [9.1 Wails 窗口配置与单实例锁](#91-wails-窗口配置与单实例锁)
    - [9.2 Objective-C `NSStatusBar` 状态机联动](#92-objective-c-nsstatusbar-状态机联动)
@@ -44,7 +44,7 @@
 
 ## 1. 架构全景与设计哲学
 
-`hoxi` 的核心定位是：**专为全功能 AI Agent 打造的高颜值、轻量化、原生质感桌面工作台**。项目通过四层解耦架构，将四个标杆项目的精华融为一体：
+`hoxi` 的核心定位是：**专为全功能 AI Agent 打造的高颜值、轻量化、原生质感桌面工作台**。项目通过四层解耦架构，将核心工程能力融为一体：
 
 ```text
 ┌────────────────────────────────────────────────────────────────────────┐
@@ -54,8 +54,8 @@
 │    - Objective-C 状态栏常驻图标 (Running 忙碌计数 / Attention 待审批)   │
 │    - 单实例运行锁 (SingleInstanceLock) + 点红叉仅隐藏窗口后台常驻       │
 ├────────────────────────────────────────────────────────────────────────┤
-│ 2. 前端工作区 (Frontend UI) —— Sailry 三栏外壳 + Kilo Code 任务流       │
-│    - 外壳布局：Sailry 经典三栏 (左侧项目/工作树 + 中间对话 + 右侧审查)  │
+│ 2. 前端工作区 (Frontend UI) —— 三栏工作区外壳 + Kilo Code 任务流         │
+│    - 外壳布局：经典三栏 (左侧项目/工作树 + 中间对话 + 右侧审查)          │
 │    - 任务交互：Kilo Code 动态工具卡片、独立 Reasoning 抽屉、内联审批门控│
 │    - 核心引擎：Vite + SolidJS + Tailwind CSS (零 VDOM，120Hz 满帧流式)  │
 │    - 审查与终端：@pierre/diffs Hunk 级代码对比 + @xterm/addon-webgl     │
@@ -84,7 +84,7 @@
 | :--- | :--- | :--- |
 | **桌面宿主** | Go `>= 1.23` + Wails `v2.13+` + CGo (Cocoa) | 复用 `gopanel_v2` 的 `desktop_*.go` 与 `desktop_statusbar_darwin.m`，摒弃其粗糙的 Vue/NaiveUI 管理后台界面。 |
 | **前端视图层** | SolidJS `^1.9` + TypeScript `^5.7` + Vite `^6.0` | 与 `Kilo Code` (`packages/kilo-ui`) 同源技术栈；细粒度 Signal 响应式直接操作真实 DOM，流式渲染零虚拟 DOM 开销。 |
-| **样式系统** | Tailwind CSS `^4.0` + CSS Variables | 复刻 `sailry-harness` 的深邃暗黑极简调性（`#0b0d12` 底色 + `1px` 微光边框 + 等宽数值对齐）。 |
+| **样式系统** | Tailwind CSS `^4.0` + CSS Variables | 深邃暗黑极简调性（`#0b0d12` 底色 + `1px` 微光边框 + 等宽数值对齐）。 |
 | **代码 Diff** | `@pierre/diffs` | 渲染 OpenCode 返回的 `SnapshotFileDiff` / Unified Patch，支持 Inline 与 Side-by-Side 切换。 |
 | **终端组件** | `@xterm/xterm` + `@xterm/addon-webgl` + `@xterm/addon-fit` | 直连 OpenCode 内置的 `/pty/{ptyID}/connect` WebSocket 终端流，支持 GPU 加速与窗口自适应。 |
 | **Agent 内核** | `opencode serve` (`>= v1.18.0`) | 提供 `/session`、`/event`、`/permission`、`/pty`、`/vcs`、`/file` 全套能力。 |
@@ -391,10 +391,10 @@ function scheduleFlush(applyDeltaToStore: (key: string, delta: string) => void) 
 
 ---
 
-## 6. 前端 UI 架构：Sailry 三栏外壳 + Kilo 任务流
+## 6. 前端 UI 架构：三栏工作区外壳 + Kilo 任务流
 
 ### 6.1 视觉 Token 与低饱和暗黑规范
-复刻 `sailry-harness` 的深色工业质感与 `Kilo Code` 的状态语义色：
+采用深色工业质感与 `Kilo Code` 的状态语义色：
 
 ```css
 :root {
@@ -416,7 +416,7 @@ function scheduleFlush(applyDeltaToStore: (key: string, delta: string) => void) 
 }
 ```
 
-### 6.2 Sailry 三栏工作区布局 (`ThreePaneShell`)
+### 6.2 三栏工作区布局 (`ThreePaneShell`)
 1. **顶栏 (`CompactHeader` - 高度 `38px`)**：
    - 左侧预留 `76px` 空白区供 macOS 原生红绿灯（Traffic Lights）嵌入，整栏设置 `style="--wails-draggable: drag"` 支持拖拽窗口。
    - 中间展示当前项目名、Git Worktree 沙箱分支胶囊（如 `hoxi/ses_01J...`）以及一键合入按钮 `Apply to Main`。
@@ -451,8 +451,8 @@ function scheduleFlush(applyDeltaToStore: (key: string, delta: string) => void) 
 - **`PierreDiffViewer`**：监听 `session.diff` 事件或轮询 `GET /session/{sessionID}/diff`，将返回的 `SnapshotFileDiff[]` 渲染为可折叠的文件变更卡片列表，支持一键切換 `Unified` 与 `Split` 视图。
 - **`WebGLTerminal`**：基于 `@xterm/xterm` + `@xterm/addon-webgl` 初始化，挂载时自动请求 `POST /pty` 获取 `ptyID` 并连接 WebSocket，确保在桌面工作台内拥有接近 iTerm2 的零延迟命令行体验。
 
-### 6.6 超越 `sailry-harness` 的三大高阶控制能力
-为确保在执行控制力上实现对 `sailry-harness` 的全维度超越（Strict Superset），前端与插件层额外集成以下三项高阶机制：
+### 6.6 三大高阶控制能力
+为确保在执行控制力上提供全维度闭环体验，前端与插件层额外集成以下三项高阶机制：
 
 1. **执行中途“实时插话纠偏”（Live Guidance / Steering）**：
    - 当会话处于 `session.status.type === "busy"`（Agent 正在连续调用工具）时，底部 `Composer` 输入框**保持可输入状态**，右侧主按钮切换为紫色的 **`[Steer 实时纠偏]`**（旁边保留独立的红色 `[Stop]` 按钮）。
@@ -469,7 +469,7 @@ function scheduleFlush(applyDeltaToStore: (key: string, delta: string) => void) 
 
 ## 7. Git Worktree 物理会话隔离与合并生命周期
 
-借鉴 `sailry-harness` 与 `gopanel_v2/app/api/code_worktree.go` 的成熟工程实践，每个会话默认运行在独立的 Git Worktree 沙箱中，支持多个 Agent 会话同时重构不同模块而互不踩踏。
+借鉴 `gopanel_v2/app/api/code_worktree.go` 的成熟工程实践，每个会话默认运行在独立的 Git Worktree 沙箱中，支持多个 Agent 会话同时重构不同模块而互不踩踏。
 
 ### 7.1 Worktree 沙箱状态机
 
@@ -565,8 +565,8 @@ export const HoxiPermissionsPlugin = async () => {
 export default HoxiPermissionsPlugin;
 ```
 
-### 8.3 Sailry 8 维度结构化记忆插件 (`hoxi-memory.js`)
-放置在 `.opencode/plugins/hoxi-memory.js`，融合 `sailry-harness` (`crates/node-runtime/src/agent/compaction.rs`) 的 **8 维度上下文压缩协议**：
+### 8.3 8 维度结构化记忆插件 (`hoxi-memory.js`)
+放置在 `.opencode/plugins/hoxi-memory.js`，实现 **8 维度上下文压缩协议**：
 1. 在每次对话构造 System Prompt 时（`experimental.chat.system.transform`），自动把 `.opencode/memory/project.md` 注入模型上下文。
 2. 在会话触发上下文压缩时（`experimental.session.compacting`），将压缩 Prompt 替换为标准 8 维度结构化模板。
 3. 在会话进入空闲状态时（`event` 收到 `session.idle`），将会话关键进展归档至 `.opencode/memory/sessions/<sessionID>.md`。
@@ -605,7 +605,7 @@ export const HoxiMemoryPlugin = async ({ directory }) => {
       }
     },
 
-    // 2. 注入 Sailry 8 维度结构化上下文压缩提示词
+    // 2. 注入 8 维度结构化上下文压缩提示词
     "experimental.session.compacting": async (_input, output) => {
       output.prompt = EIGHT_DIM_COMPACTION_PROMPT;
     },
@@ -691,7 +691,7 @@ Go 网关在转发 `/event` SSE 流时，旁路解析事件并实时更新 `desk
 │   ├── src/
 │   │   ├── components/
 │   │   │   ├── layout/
-│   │   │   │   ├── ThreePaneShell.tsx    # Sailry 风格三栏主框架
+│   │   │   │   ├── ThreePaneShell.tsx    # 三栏工作区主框架
 │   │   │   │   ├── CompactHeader.tsx     # 融合 macOS 交通灯的 38px 顶栏
 │   │   │   │   └── LeftNav.tsx           # 会话列表、Worktree 标识与新建入口
 │   │   │   ├── timeline/
@@ -724,7 +724,7 @@ Go 网关在转发 `/event` SSE 流时，旁路解析事件并实时更新 `desk
 │   ├── package.json                      # 锁定 @opencode-ai/plugin 避免冷启动联网阻塞
 │   ├── plugins/
 │   │   ├── hoxi-permissions.js         # 安全命令免批与高危命令拦截
-│   │   └── hoxi-memory.js              # Sailry 8 维度结构化记忆注入与压缩
+│   │   └── hoxi-memory.js              # 8 维度结构化记忆注入与压缩
 │   └── memory/
 │       ├── project.md                    # 跨会话长期工程记忆库
 │       └── sessions/                     # 按会话归档的 8 维记忆快照

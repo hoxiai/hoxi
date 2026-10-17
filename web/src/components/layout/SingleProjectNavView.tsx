@@ -15,6 +15,7 @@ import {
   shortenPath,
   type ProjectNavEntry,
 } from "./left-nav-helpers";
+import { t } from "../../i18n";
 
 export default function SingleProjectNavView(props: {
   allProjects: ProjectNavEntry[];
@@ -125,7 +126,7 @@ export default function SingleProjectNavView(props: {
           onClick={onCreateThreadSingle}
           disabled={creatingSingle()}
           class="shrink-0 p-1.5 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
-          title="New Session"
+          title={t("leftNav.newThread")}
         >
           <Show
             when={!creatingSingle()}
@@ -147,7 +148,7 @@ export default function SingleProjectNavView(props: {
               <Icon name="magnifying-glass" size="small" class="text-[var(--text-muted)]" />
               <input
                 type="text"
-                placeholder="Switch project…"
+                placeholder={t("leftNav.switchProject")}
                 value={dropdownFilter()}
                 onInput={(e) => setDropdownFilter(e.currentTarget.value)}
                 class="w-full bg-transparent text-[11.5px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none"
@@ -188,7 +189,7 @@ export default function SingleProjectNavView(props: {
           when={groupedSingleSessions().length > 0}
           fallback={
             <div class="px-3 py-6 text-center text-[11.5px] text-[var(--text-faint)]">
-              No sessions yet.
+              {t("leftNav.noThreads")}
             </div>
           }
         >

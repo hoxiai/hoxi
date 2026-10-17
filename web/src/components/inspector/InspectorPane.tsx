@@ -4,14 +4,15 @@ import MemoryBankView from "./MemoryBankView";
 import FileTreeView from "./FileTreeView";
 import WebGLTerminal from "../terminal/WebGLTerminal";
 import { setWorkspace, workspace } from "../../store/workspace";
+import { t } from "../../i18n";
 
 type TabID = "diffs" | "memory" | "files" | "terminal";
 
-const TABS: Array<{ id: TabID; label: string }> = [
-  { id: "diffs", label: "Diffs" },
-  { id: "memory", label: "Memory" },
-  { id: "files", label: "Files" },
-  { id: "terminal", label: "Terminal" },
+const TABS: Array<{ id: TabID }> = [
+  { id: "diffs" },
+  { id: "memory" },
+  { id: "files" },
+  { id: "terminal" },
 ];
 
 export default function InspectorPane() {
@@ -20,8 +21,18 @@ export default function InspectorPane() {
     return id ? (workspace.diffsBySession[id] ?? []).length : 0;
   });
 
-  const tabLabel = (tab: { id: TabID; label: string }) =>
-    tab.id === "diffs" ? `${tab.label} (${diffCount()})` : tab.label;
+  const tabLabel = (id: TabID) => {
+    switch (id) {
+      case "diffs":
+        return `${t("inspector.tabs.diffs")} (${diffCount()})`;
+      case "memory":
+        return t("inspector.tabs.memory");
+      case "files":
+        return t("inspector.tabs.files");
+      case "terminal":
+        return t("inspector.tabs.terminal");
+    }
+  };
 
   return (
     <aside class="h-full w-full flex flex-col bg-transparent">
@@ -37,7 +48,7 @@ export default function InspectorPane() {
               }`}
               onClick={() => setWorkspace("inspectorTab", tab.id)}
             >
-              {tabLabel(tab)}
+              {tabLabel(tab.id)}
             </button>
           )}
         </For>

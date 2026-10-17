@@ -2,28 +2,41 @@
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
 import {
   ArrowUp,
+  ClipboardPaste,
   GitFork,
+  ImagePlus,
   LoaderCircle,
   Slash,
   Square,
+  Swords,
   WandSparkles,
+  X,
 } from "lucide-solid";
 import { hoxiAPI, type CommandInfo } from "../../services/api";
 import {
   clearReviewComments,
   forkFromMessage,
   isSessionBusy,
-  newIsolatedSession,
   sessionDirectory,
+  setWorkspace,
+  submitSessionPrompt,
   workspace,
 } from "../../store/workspace";
 import ModelSelector from "../models/ModelSelector";
 import { FileIcon } from "../icons";
 import ComposerShelf from "./ComposerShelf";
+import ContextProgressPill from "./ContextProgressPill";
 import ModeSwitcher from "./ModeSwitcher";
+import {
+  createImageAttachments,
+  createPasteCollapse,
+  createPromptHistory,
+  expandContextMentions,
+} from "./composer-hooks";
+import { locale, t } from "../../i18n";
 
 interface AutocompleteItem {
-  type: "file" | "command";
+  type: "file" | "command" | "context";
   label: string;
   detail?: string;
   insertText: string;
@@ -35,17 +48,22 @@ export default function Composer() {
   const [stopping, setStopping] = createSignal(false);
   const [forking, setForking] = createSignal(false);
 
-  // Autocomplete (@file and /command) state
+  // Autocomplete (@file, @changes, and /command) state
   const [suggestions, setSuggestions] = createSignal<AutocompleteItem[]>([]);
   const [selectedIndex, setSelectedIndex] = createSignal(0);
   const [triggerMode, setTriggerMode] = createSignal<"file" | "command" | null>(null);
   const [cachedCommands, setCachedCommands] = createSignal<CommandInfo[] | null>(null);
 
   let textareaRef: HTMLTextAreaElement | undefined;
+  let fileInputRef: HTMLInputElement | undefined;
 
   const sessionID = () => workspace.activeSessionID;
   const busy = createMemo(() => isSessionBusy(sessionID()));
-  const mode = () => workspace.activeMode;
+
+  // Kilo Composer Hooks: Image attachments, Paste Collapse, Prompt History
+  const imgAttach = createImageAttachments();
+  const pasteCollapse = createPasteCollapse();
+  const promptHistory = createPromptHistory(sessionID);
 
   const reviewComments = createMemo(() => {
     const id = sessionID();
@@ -61,7 +79,11 @@ export default function Composer() {
   });
 
   const canSend = () =>
-    (text().trim().length > 0 || reviewComments().length > 0) && !sending();
+    (text().trim().length > 0 ||
+      reviewComments().length > 0 ||
+      imgAttach.images().length > 0 ||
+      pasteCollapse.pastes().length > 0) &&
+    !sending();
 
   const adjustHeight = () => {
     if (!textareaRef) return;
@@ -69,7 +91,7 @@ export default function Composer() {
     textareaRef.style.height = `${Math.min(180, Math.max(48, textareaRef.scrollHeight))}px`;
   };
 
-  // Detect @file or /command trigger in text
+  // Detect @file / @changes or /command trigger in text
   createEffect(() => {
     const val = text();
     const dir = sessionDirectory(sessionID());
@@ -108,7 +130,7 @@ export default function Composer() {
       return;
     }
 
-    // 2. Check @file mention at end of input
+    // 2. Check @file or @changes mention at end of input
     const fileMatch = val.match(/(?:^|\s)@([^\s@]*)$/);
     if (fileMatch) {
       const query = fileMatch[1];
@@ -122,14 +144,24 @@ export default function Composer() {
             const nodes = await hoxiAPI.listFiles("", dir);
             files = (nodes ?? []).map((n) => n.path);
           }
-          setSuggestions(
-            (files ?? []).slice(0, 8).map((f) => ({
+          const contextItems: AutocompleteItem[] = [];
+          if ("changes".includes(query.trim().toLowerCase())) {
+            contextItems.push({
+              type: "context",
+              label: "@changes",
+              detail: "Attach current session git diff summary",
+              insertText: "@changes ",
+            });
+          }
+          setSuggestions([
+            ...contextItems,
+            ...(files ?? []).slice(0, 7).map((f) => ({
               type: "file" as const,
               label: f,
               detail: "Workspace file",
               insertText: `@${f} `,
-            }))
-          );
+            })),
+          ]);
           setSelectedIndex(0);
         } catch {
           setSuggestions([]);
@@ -160,7 +192,8 @@ export default function Composer() {
   };
 
   const buildPayloadWithReviews = (): string => {
-    const raw = text().trim();
+    const withPastes = pasteCollapse.expandIntoPrompt(text());
+    const raw = expandContextMentions(withPastes, sessionID());
     const comments = reviewComments();
     if (comments.length === 0) return raw;
 
@@ -176,26 +209,24 @@ export default function Composer() {
 
   const onSend = async () => {
     const payload = buildPayloadWithReviews();
-    if (!payload || sending()) return;
+    const attachments = imgAttach.toPromptAttachments();
+    if ((!payload && attachments.length === 0) || sending()) return;
+
+    if (text().trim()) {
+      promptHistory.recordPrompt(text().trim());
+    }
     setSending(true);
+    setText("");
+    pasteCollapse.clearPastes();
+    imgAttach.clearImages();
+    setTriggerMode(null);
+    setSuggestions([]);
+    if (textareaRef) {
+      textareaRef.style.height = "48px";
+    }
     try {
-      let id = sessionID();
-      if (!id) {
-        id = await newIsolatedSession(payload.slice(0, 48));
-      }
-      await hoxiAPI.sendPromptAsync(id, payload, {
-        agent: mode(),
-        model: workspace.selectedModel || undefined,
-        variant: workspace.reasoningEffort || undefined,
-        directory: sessionDirectory(id),
-      });
-      setText("");
+      const id = await submitSessionPrompt(payload, sessionID(), { attachments });
       clearReviewComments(id);
-      setTriggerMode(null);
-      setSuggestions([]);
-      if (textareaRef) {
-        textareaRef.style.height = "48px";
-      }
     } catch (err) {
       console.error("send prompt failed:", err);
     } finally {
@@ -256,6 +287,28 @@ export default function Composer() {
       }
     }
 
+    // Kilo PromptHistory Up/Down arrow navigation
+    if (
+      (ev.key === "ArrowUp" || ev.key === "ArrowDown") &&
+      !ev.shiftKey &&
+      !ev.metaKey &&
+      !ev.ctrlKey &&
+      !ev.isComposing
+    ) {
+      const dir = ev.key === "ArrowUp" ? "up" : "down";
+      const next = promptHistory.navigateHistory(
+        dir,
+        text(),
+        textareaRef?.selectionStart ?? 0
+      );
+      if (next !== null) {
+        ev.preventDefault();
+        setText(next);
+        requestAnimationFrame(adjustHeight);
+        return;
+      }
+    }
+
     if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) {
       ev.preventDefault();
       void onSend();
@@ -265,11 +318,11 @@ export default function Composer() {
   return (
     <div class="shrink-0 w-full px-6 pb-4 pt-1">
       <div class="relative mx-auto w-full max-w-[48rem]">
-        {/* Floating @file / /command Autocomplete Popover */}
+        {/* Floating @file / @changes / /command Autocomplete Popover */}
         <Show when={triggerMode() && suggestions().length > 0}>
           <div class="absolute bottom-full left-0 mb-2 w-full max-w-[28rem] rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-1.5 shadow-xl z-40">
             <div class="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
-              {triggerMode() === "command" ? "Slash Commands" : "Mention Workspace File"}
+              {triggerMode() === "command" ? "Slash Commands" : "Mention Workspace File or Context"}
             </div>
             <div class="max-h-56 overflow-y-auto space-y-0.5">
               <For each={suggestions()}>
@@ -285,7 +338,7 @@ export default function Composer() {
                     onClick={() => applySuggestion(item)}
                   >
                     <span class="inline-flex items-center gap-2 min-w-0 font-mono truncate">
-                      {item.type === "command" ? (
+                      {item.type === "command" || item.type === "context" ? (
                         <Slash size={12} class="text-[var(--accent-primary)] shrink-0" />
                       ) : (
                         <FileIcon
@@ -299,7 +352,7 @@ export default function Composer() {
                       <span class="truncate">{item.label}</span>
                     </span>
                     <Show when={item.detail}>
-                      <span class="text-[11px] text-[var(--text-muted)] truncate max-w-[160px]">
+                      <span class="text-[11px] text-[var(--text-muted)] truncate max-w-[180px]">
                         {item.detail}
                       </span>
                     </Show>
@@ -310,24 +363,99 @@ export default function Composer() {
           </div>
         </Show>
 
-        {/* Docked Approvals + Contextual Shelf (Reviews, Todos, Diffs) */}
+        {/* Docked Questions, Approvals, Plan Follow-ups + Contextual Shelf */}
         <ComposerShelf />
 
         {/* Main Glass Composer Box */}
-        <div class="chat-composer-glass flex w-full flex-col rounded-2xl px-4 pt-3 pb-2.5">
+        <div
+          class={`chat-composer-glass flex w-full flex-col rounded-2xl px-4 pt-3 pb-2.5 transition-colors ${
+            imgAttach.dragging() ? "ring-2 ring-[var(--accent-primary)]" : ""
+          }`}
+          onDragOver={imgAttach.handleDragOver}
+          onDragLeave={imgAttach.handleDragLeave}
+          onDrop={imgAttach.handleDrop}
+        >
+          {/* Kilo Attachment & Collapsed Paste Chips Shelf */}
+          <Show
+            when={imgAttach.images().length > 0 || pasteCollapse.pastes().length > 0}
+          >
+            <div class="mb-2 flex flex-wrap items-center gap-1.5">
+              <For each={imgAttach.images()}>
+                {(img) => (
+                  <div class="group relative flex items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] pl-1 pr-2 py-1 text-[11px]">
+                    <img
+                      src={img.dataUrl}
+                      alt={img.filename}
+                      class="h-6 w-6 rounded object-cover"
+                    />
+                    <span class="max-w-[110px] truncate font-mono text-[var(--text-secondary)]">
+                      {img.filename}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => imgAttach.removeImage(img.id)}
+                      class="text-[var(--text-muted)] hover:text-[var(--danger-text)] cursor-pointer"
+                    >
+                      <X size={11} />
+                    </button>
+                  </div>
+                )}
+              </For>
+
+              <For each={pasteCollapse.pastes()}>
+                {(p) => (
+                  <div
+                    class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--accent-border)] bg-[var(--accent-surface)]/50 px-2.5 py-1 text-[11px] text-[var(--accent-text)]"
+                    title={p.preview}
+                  >
+                    <ClipboardPaste size={11} class="shrink-0" />
+                    <span class="font-mono font-medium">
+                      Pasted {p.lines} lines
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => pasteCollapse.removePaste(p.id)}
+                      class="hover:text-[var(--danger-text)] cursor-pointer"
+                    >
+                      <X size={11} />
+                    </button>
+                  </div>
+                )}
+              </For>
+            </div>
+          </Show>
+
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/gif"
+            multiple
+            class="hidden"
+            onChange={(ev) => {
+              const files = ev.currentTarget.files;
+              if (files) {
+                for (const f of Array.from(files)) imgAttach.addFile(f);
+              }
+              ev.currentTarget.value = "";
+            }}
+          />
+
           <textarea
             ref={textareaRef}
             class="w-full min-h-[48px] max-h-[180px] resize-none bg-transparent text-[14px] leading-relaxed text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none selectable-text"
             rows={1}
             placeholder={
               busy()
-                ? "Steer the agent mid-run…"
-                : reviewComments().length > 0
-                  ? "Add optional overall instructions, or press Enter to send review comments…"
-                  : "Send a message, @ to mention files, or / for commands…"
+                ? t("timeline.steerPlaceholder")
+                : t("timeline.inputPlaceholder")
             }
             value={text()}
+            onPaste={(ev) => {
+              if (imgAttach.handleClipboardPaste(ev)) return;
+              pasteCollapse.handleTextPaste(ev);
+            }}
             onInput={(ev) => {
+              promptHistory.resetHistoryCursor();
               setText(ev.currentTarget.value);
               adjustHeight();
             }}
@@ -335,10 +463,37 @@ export default function Composer() {
           />
 
           <div class="mt-2 flex items-center justify-between gap-2 flex-wrap">
-            {/* Left Action Pills: Agent Mode, Model Selector, Fork */}
+            {/* Left Action Pills: Agent Mode, Model Selector, Image Attach, Arena, Fork, Context Progress */}
             <div class="flex items-center gap-1.5 flex-wrap">
               <ModeSwitcher />
               <ModelSelector />
+
+              <button
+                type="button"
+                onClick={() => fileInputRef?.click()}
+                class="inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11.5px] font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+                title={
+                  locale() === "zh-CN"
+                    ? "添加截图或图片 (支持 Cmd+V 直接粘贴)"
+                    : "Attach image (or paste with Cmd+V)"
+                }
+              >
+                <ImagePlus size={13} />
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setWorkspace("arenaModalOpen", true)}
+                class="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11.5px] font-medium text-[var(--text-muted)] hover:text-[var(--accent-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+                title={
+                  locale() === "zh-CN"
+                    ? "开启多模型 Worktree 赛马对比 (Multi-Model Arena)"
+                    : "Multi-Model Worktree Arena"
+                }
+              >
+                <Swords size={12} />
+                <span class="hidden sm:inline">Arena</span>
+              </button>
 
               <Show when={sessionID()}>
                 <button
@@ -346,7 +501,7 @@ export default function Composer() {
                   class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11.5px] font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] disabled:opacity-50 transition-colors cursor-pointer"
                   disabled={forking()}
                   onClick={onFork}
-                  title="Fork a new thread from the latest message"
+                  title={t("timeline.forkConfirm")}
                 >
                   <Show
                     when={!forking()}
@@ -354,9 +509,11 @@ export default function Composer() {
                   >
                     <GitFork size={12} />
                   </Show>
-                  Fork
+                  {t("timeline.forkHere")}
                 </button>
               </Show>
+
+              <ContextProgressPill />
             </div>
 
             {/* Right Send / Stop / Steer Actions */}
@@ -367,7 +524,7 @@ export default function Composer() {
                   class="inline-flex items-center gap-1.5 rounded-full border border-[var(--violet-border)] bg-[var(--violet-surface)] px-3 py-1 text-[11.5px] font-medium text-[var(--violet-text)] disabled:opacity-40 transition-all cursor-pointer"
                   disabled={!canSend()}
                   onClick={onSend}
-                  title="Send a live course-correction without aborting"
+                  title={t("timeline.steer")}
                 >
                   <Show
                     when={!sending()}
@@ -375,7 +532,7 @@ export default function Composer() {
                   >
                     <WandSparkles size={12} />
                   </Show>
-                  Steer
+                  {t("timeline.steer")}
                 </button>
 
                 <button
@@ -383,7 +540,7 @@ export default function Composer() {
                   class="inline-flex h-7 w-7 items-center justify-center rounded-full bg-[var(--status-danger)] text-white hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
                   disabled={stopping()}
                   onClick={onStop}
-                  title="Stop generation"
+                  title={t("timeline.stop")}
                 >
                   <Show
                     when={!stopping()}
@@ -400,7 +557,7 @@ export default function Composer() {
                   class="inline-flex h-7 w-7 items-center justify-center rounded-full bg-[var(--accent-primary)] text-white shadow-xs hover:opacity-90 disabled:opacity-30 disabled:cursor-not-allowed transition-all cursor-pointer"
                   disabled={!canSend()}
                   onClick={onSend}
-                  title="Send message (Enter)"
+                  title={`${t("timeline.send")} (Enter)`}
                 >
                   <Show
                     when={!sending()}

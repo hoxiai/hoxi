@@ -264,6 +264,40 @@ func (m *worktreeManager) Remove(sessionID string, force bool) error {
 	return nil
 }
 
+func (m *worktreeManager) RevertFile(sessionID, relPath string) error {
+	sessionID = sanitizeSessionID(sessionID)
+	cleaned := filepath.Clean(strings.TrimPrefix(strings.TrimSpace(relPath), "./"))
+	if cleaned == "" || cleaned == "." || strings.HasPrefix(cleaned, "..") || filepath.IsAbs(cleaned) {
+		return errors.New("invalid relative file path")
+	}
+
+	m.mu.RLock()
+	meta, ok := m.sessions[sessionID]
+	m.mu.RUnlock()
+
+	workDir := m.rootDir
+	base := "HEAD"
+	if ok && meta.Isolated && meta.Directory != "" {
+		workDir = meta.Directory
+		if meta.BaseCommit != "" {
+			base = meta.BaseCommit
+		}
+	} else {
+		candidate := filepath.Join(m.rootDir, ".hoxi", "worktrees", sessionID)
+		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+			workDir = candidate
+		}
+	}
+
+	// Try restoring from base commit or HEAD; if untracked in base, remove the newly added file
+	if _, err := runGit(workDir, "checkout", base, "--", cleaned); err != nil {
+		if _, headErr := runGit(workDir, "checkout", "HEAD", "--", cleaned); headErr != nil {
+			_ = os.Remove(filepath.Join(workDir, cleaned))
+		}
+	}
+	return nil
+}
+
 func (m *worktreeManager) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/hoxi/worktree/create", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -310,6 +344,26 @@ func (m *worktreeManager) registerRoutes(mux *http.ServeMux) {
 		}
 		if err := m.Apply(body.SessionID, body.Mode); err != nil {
 			writeJSONError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	})
+
+	mux.HandleFunc("/api/hoxi/worktree/revert-file", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var body struct {
+			SessionID string `json:"sessionID"`
+			File      string `json:"file"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err := m.RevertFile(body.SessionID, body.File); err != nil {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})

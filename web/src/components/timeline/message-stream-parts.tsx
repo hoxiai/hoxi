@@ -11,6 +11,12 @@ import ContextActivityGroupComponent, {
   type TurnRenderItem,
 } from "./ContextActivityGroupView";
 import type { MessageInfo, MessagePart, SessionStatus } from "../../services/sse-types";
+import {
+  retryLastUserPrompt,
+  selectModel,
+  setWorkspace,
+  workspace,
+} from "../../store/workspace";
 import { Icon } from "../icons";
 
 export { groupAssistantParts, isContextTool, isExplorationPart, isTodoTool, type TurnRenderItem };
@@ -26,6 +32,104 @@ export function ContextActivityGroupView(props: { parts: MessagePart[] }) {
       parts={props.parts}
       renderFallbackPart={(part) => <PartView part={part} />}
     />
+  );
+}
+
+/**
+ * Renders provider / model API errors returned on an assistant turn (`info.error`)
+ * with one-click recovery actions.
+ */
+export function AssistantErrorCard(props: { info: MessageInfo }) {
+  const errMessage = () =>
+    props.info.error?.data?.message ||
+    props.info.error?.name ||
+    "Model request failed";
+
+  const statusCode = () => props.info.error?.data?.statusCode;
+
+  const hasFreeOpenCodeModel = createMemo(() =>
+    workspace.providers.some(
+      (p) => p.id === "opencode" && p.models && p.models["deepseek-v4.1-flash-free"]
+    )
+  );
+
+  return (
+    <Show when={props.info.error}>
+      <div class="my-2 rounded-xl border border-[var(--danger-border)] bg-[var(--danger-surface)] px-3.5 py-3 text-[12.5px] text-[var(--danger-text)]">
+        <div class="flex items-start gap-2.5">
+          <Icon name="circle-ban-sign" size="small" class="mt-0.5 shrink-0" />
+          <div class="min-w-0 flex-1 space-y-1.5">
+            <div class="flex items-center gap-2 flex-wrap">
+              <span class="font-semibold">
+                {props.info.error?.name || "API Error"}
+                {statusCode() ? ` (${statusCode()})` : ""}
+              </span>
+              <Show when={props.info.providerID || props.info.modelID}>
+                <span class="rounded bg-black/10 dark:bg-white/10 px-1.5 py-0.5 font-mono text-[11px]">
+                  {[props.info.providerID, props.info.modelID].filter(Boolean).join(" / ")}
+                </span>
+              </Show>
+            </div>
+
+            <div class="font-mono text-[11.5px] leading-relaxed break-words opacity-95">
+              {errMessage()}
+            </div>
+
+            <div class="pt-1 flex items-center gap-2 flex-wrap">
+              <Show when={workspace.selectedModel}>
+                {(sel) => (
+                  <button
+                    type="button"
+                    onClick={() => void retryLastUserPrompt(props.info.sessionID)}
+                    class="inline-flex items-center gap-1.5 rounded-lg bg-[var(--accent-primary)] px-2.5 py-1 text-[11px] font-medium text-white hover:opacity-90 transition-opacity cursor-pointer"
+                  >
+                    <Icon name="arrow-up" size="small" />
+                    <span>Retry with {sel().modelID}</span>
+                  </button>
+                )}
+              </Show>
+
+              <Show
+                when={
+                  hasFreeOpenCodeModel() &&
+                  !(
+                    workspace.selectedModel?.providerID === "opencode" &&
+                    workspace.selectedModel?.modelID === "deepseek-v4.1-flash-free"
+                  )
+                }
+              >
+                <button
+                  type="button"
+                  onClick={() => {
+                    selectModel(
+                      {
+                        providerID: "opencode",
+                        modelID: "deepseek-v4.1-flash-free",
+                      },
+                      false
+                    );
+                    void retryLastUserPrompt(props.info.sessionID);
+                  }}
+                  class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--accent-border)] bg-[var(--accent-surface)] px-2.5 py-1 text-[11px] font-medium text-[var(--accent-text)] hover:opacity-90 transition-opacity cursor-pointer"
+                >
+                  <Icon name="check-small" size="small" />
+                  <span>Switch & Retry (deepseek-v4.1-flash-free)</span>
+                </button>
+              </Show>
+
+              <button
+                type="button"
+                onClick={() => setWorkspace("providerModalOpen", true)}
+                class="inline-flex items-center gap-1 rounded-lg border border-[var(--danger-border)] bg-[var(--bg-panel)]/80 px-2.5 py-1 text-[11px] font-medium text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+              >
+                <Icon name="sliders" size="small" />
+                <span>Configure Models & API Keys</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Show>
   );
 }
 

@@ -107,7 +107,10 @@ export function isSessionBusy(sessionID: string | null): boolean {
 }
 
 export function sessionsWithPendingPermission(): Set<string> {
-  return new Set(workspace.pendingPermissions.map((p) => p.sessionID));
+  const set = new Set<string>();
+  for (const p of workspace.pendingPermissions) set.add(p.sessionID);
+  for (const q of workspace.pendingQuestions) set.add(q.sessionID);
+  return set;
 }
 
 function replaceSession(info: SessionInfo) {
@@ -211,10 +214,115 @@ export async function forkFromMessage(
   return forked.id;
 }
 
+export async function submitSessionPrompt(
+  promptText: string,
+  targetSessionID?: string | null,
+  options?: {
+    agent?: string;
+    model?: { providerID: string; modelID: string };
+    attachments?: Array<{ type: "file"; mime: string; filename?: string; url: string }>;
+  }
+): Promise<string> {
+  let id = targetSessionID ?? workspace.activeSessionID;
+  if (!id) {
+    id = await newIsolatedSession(promptText.slice(0, 48) || "Image Prompt");
+  }
+
+  const now = Date.now();
+  const optimisticMsgID = `optimistic_${now}`;
+  const effectiveAgent = options?.agent || workspace.activeMode;
+  const effectiveModel = options?.model || workspace.selectedModel || undefined;
+  const attachments = options?.attachments ?? [];
+
+  // Optimistically show user prompt & busy status immediately (0ms perceived latency)
+  setWorkspace("statusBySession", id, { type: "busy" });
+  setWorkspace(
+    produce((state) => {
+      const list = (state.messagesBySession[id!] ||= []);
+      const optimisticParts: MessagePart[] = attachments.map((att, idx) => ({
+        id: `prt_file_${now}_${idx}`,
+        sessionID: id!,
+        messageID: optimisticMsgID,
+        type: "file",
+        mime: att.mime,
+        filename: att.filename,
+        url: att.url,
+      }));
+      if (promptText || optimisticParts.length === 0) {
+        optimisticParts.push({
+          id: `prt_${now}`,
+          sessionID: id!,
+          messageID: optimisticMsgID,
+          type: "text",
+          text: promptText,
+        });
+      }
+      list.push({
+        info: {
+          id: optimisticMsgID,
+          sessionID: id!,
+          role: "user",
+          time: { created: now },
+          agent: effectiveAgent,
+          modelID: effectiveModel?.modelID,
+          providerID: effectiveModel?.providerID,
+        },
+        parts: optimisticParts,
+      });
+    })
+  );
+
+  try {
+    await hoxiAPI.sendPromptAsync(id, promptText, {
+      agent: effectiveAgent,
+      model: effectiveModel,
+      variant: workspace.reasoningEffort || undefined,
+      directory: sessionDirectory(id),
+      attachments,
+    });
+    // Sync server messages immediately and follow up shortly after
+    void loadSessionMessages(id);
+    setTimeout(() => {
+      void loadSessionMessages(id!);
+    }, 900);
+  } catch (err) {
+    setWorkspace("statusBySession", id, { type: "idle" });
+    throw err;
+  }
+
+  return id;
+}
+
+export async function retryLastUserPrompt(sessionID?: string | null): Promise<void> {
+  const id = sessionID ?? workspace.activeSessionID;
+  if (!id) return;
+  const turns = workspace.messagesBySession[id] ?? [];
+  for (let i = turns.length - 1; i >= 0; i--) {
+    if (turns[i].info.role === "user") {
+      const text = turns[i].parts
+        .filter((p): p is Extract<MessagePart, { type: "text" }> => p.type === "text")
+        .map((p) => p.text)
+        .join("\n")
+        .trim();
+      if (text) {
+        await submitSessionPrompt(text, id);
+      }
+      return;
+    }
+  }
+}
+
 export function upsertMessageInfo(info: MessageInfo) {
   setWorkspace(
     produce((state) => {
       const list = (state.messagesBySession[info.sessionID] ||= []);
+      // Remove any temporary optimistic user message once real user message arrives
+      if (info.role === "user" && !info.id.startsWith("optimistic_")) {
+        const optIdx = list.findIndex((m) => m.info.id.startsWith("optimistic_"));
+        if (optIdx >= 0) {
+          list.splice(optIdx, 1);
+        }
+      }
       const idx = list.findIndex((m) => m.info.id === info.id);
       if (idx >= 0) {
         list[idx].info = info;

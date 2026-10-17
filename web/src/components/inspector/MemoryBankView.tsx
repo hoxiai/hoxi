@@ -2,6 +2,7 @@ import { createMemo, createSignal, onMount, Show } from "solid-js";
 import { Brain, LoaderCircle, RefreshCw } from "lucide-solid";
 import { hoxiAPI } from "../../services/api";
 import { activeDirectory } from "../../store/workspace";
+import { t } from "../../i18n";
 
 const MEMORY_FILE = ".opencode/memory/project.md";
 
@@ -26,7 +27,7 @@ export default function MemoryBankView() {
       setContent(res?.content ?? "");
     } catch (err) {
       console.error("read memory failed:", err);
-      setError("project.md not found yet — it is created on the first compaction.");
+      setError(t("inspector.memory.notFound"));
       setContent("");
     } finally {
       setLoading(false);
@@ -47,9 +48,9 @@ export default function MemoryBankView() {
           </span>
         </div>
         <button
-          class="shrink-0 text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+          class="shrink-0 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
           onClick={() => void load()}
-          title="Reload memory"
+          title={t("inspector.memory.reload")}
         >
           <RefreshCw size={13} class={loading() ? "animate-spin" : ""} />
         </button>

@@ -5,8 +5,10 @@ import {
   ExternalLink,
   MessageSquarePlus,
   RefreshCw,
+  RotateCcw,
 } from "lucide-solid";
 import { DIFFS_TAG_NAME, FileDiff, getSingularPatch } from "@pierre/diffs";
+import { hoxiAPI } from "../../services/api";
 import {
   activeDirectory,
   addReviewComment,
@@ -16,6 +18,7 @@ import {
 } from "../../store/workspace";
 import type { SnapshotFileDiff } from "../../services/sse-types";
 import { DiffChanges, FileIcon } from "../icons";
+import { t, locale } from "../../i18n";
 
 /**
  * Renders a single unified/split code diff using the @pierre/diffs vanilla
@@ -83,8 +86,23 @@ export function FileDiffBlock(props: {
 function DiffCard(props: { diff: SnapshotFileDiff; diffStyle: "unified" | "split" }) {
   const [open, setOpen] = createSignal(true);
   const [commenting, setCommenting] = createSignal(false);
+  const [reverting, setReverting] = createSignal(false);
   const [lineNum, setLineNum] = createSignal("");
   const [commentBody, setCommentBody] = createSignal("");
+
+  const onRevertFile = async () => {
+    const sessionID = workspace.activeSessionID;
+    if (!sessionID || reverting()) return;
+    setReverting(true);
+    try {
+      await hoxiAPI.revertWorktreeFile(sessionID, props.diff.file);
+      await loadSessionMessages(sessionID);
+    } catch (err) {
+      console.error("revertWorktreeFile failed:", err);
+    } finally {
+      setReverting(false);
+    }
+  };
 
   const onSaveComment = () => {
     const sessionID = workspace.activeSessionID;
@@ -133,19 +151,34 @@ function DiffCard(props: { diff: SnapshotFileDiff; diffStyle: "unified" | "split
 
         <button
           type="button"
+          class="shrink-0 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10.5px] text-[var(--text-muted)] hover:text-[var(--warn-text)] hover:bg-[var(--warn-surface)] transition-colors cursor-pointer disabled:opacity-50"
+          disabled={reverting()}
+          onClick={() => void onRevertFile()}
+          title={
+            locale() === "zh-CN"
+              ? "还原该文件的改动 (Revert File)"
+              : "Revert changes in this file"
+          }
+        >
+          <RotateCcw size={11} />
+          <span>{locale() === "zh-CN" ? "还原" : "Revert"}</span>
+        </button>
+
+        <button
+          type="button"
           class="shrink-0 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10.5px] text-[var(--text-muted)] hover:text-[var(--accent-primary)] hover:bg-[var(--bg-panel)] transition-colors cursor-pointer"
           onClick={() => setCommenting((v) => !v)}
-          title="Add inline review comment for the agent"
+          title={t("inspector.diffs.comment")}
         >
           <MessageSquarePlus size={12} />
-          Comment
+          {t("inspector.diffs.comment")}
         </button>
 
         <button
           type="button"
           class="shrink-0 text-[var(--text-muted)] hover:text-[var(--text-primary)] p-0.5 cursor-pointer"
           onClick={() => openFileInInspector(props.diff.file)}
-          title="Open file in Inspector"
+          title={t("inspector.diffs.openFile")}
         >
           <ExternalLink size={12} />
         </button>
@@ -156,14 +189,15 @@ function DiffCard(props: { diff: SnapshotFileDiff; diffStyle: "unified" | "split
         <div class="border-t border-[var(--border-subtle)] bg-[var(--bg-panel)] px-3 py-2.5 space-y-2">
           <div class="flex items-center gap-2">
             <span class="text-[11px] font-medium text-[var(--text-secondary)]">
-              Review note on <code class="font-mono text-[var(--accent-text)]">{props.diff.file}</code>
+              {t("inspector.diffs.reviewNoteOn")}{" "}
+              <code class="font-mono text-[var(--accent-text)]">{props.diff.file}</code>
             </span>
             <input
               type="number"
               min="1"
               value={lineNum()}
               onInput={(ev) => setLineNum(ev.currentTarget.value)}
-              placeholder="Line # (opt)"
+              placeholder={t("inspector.diffs.lineNumPlaceholder")}
               class="ml-auto w-24 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-2 py-0.5 font-mono text-[11px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-border)]"
             />
           </div>
@@ -179,7 +213,7 @@ function DiffCard(props: { diff: SnapshotFileDiff; diffStyle: "unified" | "split
                 setCommenting(false);
               }
             }}
-            placeholder="Describe what to change on this file/line (Enter to queue)…"
+            placeholder={t("inspector.diffs.commentPlaceholder")}
             class="w-full rounded-lg border border-[var(--border-strong)] bg-[var(--bg-inset)] px-2.5 py-1.5 text-[12px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none focus:border-[var(--accent-border)]"
           />
           <div class="flex items-center justify-end gap-1.5">
@@ -188,7 +222,7 @@ function DiffCard(props: { diff: SnapshotFileDiff; diffStyle: "unified" | "split
               onClick={() => setCommenting(false)}
               class="rounded-md px-2.5 py-1 text-[11px] text-[var(--text-muted)] hover:bg-[var(--bg-hover)] cursor-pointer"
             >
-              Cancel
+              {t("common.cancel")}
             </button>
             <button
               type="button"
@@ -196,7 +230,7 @@ function DiffCard(props: { diff: SnapshotFileDiff; diffStyle: "unified" | "split
               onClick={onSaveComment}
               class="rounded-md bg-[var(--accent-primary)] px-2.5 py-1 text-[11px] font-medium text-white disabled:opacity-40 cursor-pointer"
             >
-              Add to Review
+              {t("inspector.diffs.addToReview")}
             </button>
           </div>
         </div>
@@ -208,7 +242,7 @@ function DiffCard(props: { diff: SnapshotFileDiff; diffStyle: "unified" | "split
             when={props.diff.patch}
             fallback={
               <div class="px-2 py-2 text-[11px] text-[var(--text-muted)] font-mono">
-                (no patch payload for this file)
+                {t("inspector.diffs.noPatch")}
               </div>
             }
           >
@@ -261,7 +295,7 @@ export default function PierreDiffViewer() {
             <span class="text-[var(--danger-text)]">-{totals().del}</span>
           </span>
           <span class="text-[var(--text-faint)]">·</span>
-          <span>{diffs().length} files</span>
+          <span>{diffs().length} {t("inspector.diffs.files")}</span>
         </div>
         <div class="flex items-center gap-1.5">
           <div class="flex rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] p-0.5">
@@ -274,7 +308,7 @@ export default function PierreDiffViewer() {
               }`}
               onClick={() => setDiffStyle("unified")}
             >
-              Unified
+              {t("inspector.diffs.unified")}
             </button>
             <button
               type="button"
@@ -285,14 +319,14 @@ export default function PierreDiffViewer() {
               }`}
               onClick={() => setDiffStyle("split")}
             >
-              Split
+              {t("inspector.diffs.split")}
             </button>
           </div>
           <button
             type="button"
             class="p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
             onClick={onRefresh}
-            title="Refresh session diff"
+            title={t("inspector.diffs.refresh")}
           >
             <RefreshCw size={13} class={refreshing() ? "animate-spin" : ""} />
           </button>
@@ -304,7 +338,7 @@ export default function PierreDiffViewer() {
           when={diffs().length > 0}
           fallback={
             <div class="px-3 py-10 text-center text-[12px] text-[var(--text-muted)]">
-              No code changes recorded for this session yet.
+              {t("inspector.diffs.empty")}
               <div class="mt-1 text-[10.5px] text-[var(--text-faint)] font-mono truncate">
                 {activeDirectory() || "—"}
               </div>

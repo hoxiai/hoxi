@@ -12,10 +12,15 @@ import {
 } from "lucide-solid";
 import { setWorkspace, workspace } from "../../store/workspace";
 import type { AgentInfo } from "../../services/api";
+import { t } from "../../i18n";
 
-function formatAgentLabel(agent: AgentInfo): string {
-  if (!agent.name) return "Agent";
-  return agent.name
+function formatAgentLabel(agentOrName: AgentInfo | string): string {
+  const name = typeof agentOrName === "string" ? agentOrName : agentOrName.name;
+  if (!name) return "Agent";
+  const lower = name.toLowerCase();
+  if (lower === "build") return t("timeline.buildMode");
+  if (lower === "plan") return t("timeline.planMode");
+  return name
     .split(/[-_]/)
     .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
     .join(" ");
@@ -31,8 +36,8 @@ function modeIcon(name: string) {
 
 function modeBadge(name: string): string | null {
   const lower = name.toLowerCase();
-  if (lower === "build") return "Full Access";
-  if (lower === "plan") return "Read-Only";
+  if (lower === "build") return t("timeline.buildMode");
+  if (lower === "plan") return t("timeline.planMode");
   return null;
 }
 

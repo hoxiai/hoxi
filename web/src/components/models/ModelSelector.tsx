@@ -17,6 +17,7 @@ import {
   workspace,
 } from "../../store/workspace";
 import { ProviderIcon } from "../icons";
+import { t } from "../../i18n";
 
 interface FlattenedModel {
   providerID: string;
@@ -156,7 +157,7 @@ export default function ModelSelector() {
         type="button"
         onClick={toggleOpen}
         class="inline-flex items-center gap-1.5 rounded-full border border-[var(--border-subtle)] bg-[var(--bg-inset)] hover:bg-[var(--bg-hover)] hover:border-[var(--border-strong)] px-2.5 py-1 text-[11.5px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-all cursor-pointer max-w-[230px]"
-        title="Select model or configure providers"
+        title={t("timeline.selectModel")}
       >
         <Show
           when={activeModelInfo()?.providerID}
@@ -165,7 +166,7 @@ export default function ModelSelector() {
           {(provID) => <ProviderIcon id={provID()} class="w-3.5 h-3.5 shrink-0" />}
         </Show>
         <span class="truncate">
-          {activeModelInfo()?.modelName || "Select model"}
+          {activeModelInfo()?.modelName || t("models.selectModel")}
         </span>
         <Show when={workspace.reasoningEffort}>
           <span class="shrink-0 rounded bg-[var(--accent-surface)] px-1 py-[1px] text-[9.5px] uppercase font-mono text-[var(--accent-primary)]">
@@ -192,7 +193,7 @@ export default function ModelSelector() {
                   }`}
                 >
                   <Star size={12} class="shrink-0 text-amber-500" />
-                  <span class="truncate">Favorites</span>
+                  <span class="truncate">{t("models.favorites")}</span>
                 </button>
 
                 <button
@@ -205,7 +206,7 @@ export default function ModelSelector() {
                   }`}
                 >
                   <span class="h-1.5 w-1.5 rounded-full bg-[var(--ok)] shrink-0" />
-                  <span class="truncate">Connected</span>
+                  <span class="truncate">{t("models.connected")}</span>
                 </button>
 
                 <div class="my-1 border-t border-[var(--border-subtle)]" />
@@ -245,7 +246,7 @@ export default function ModelSelector() {
                 class="mt-1 w-full inline-flex items-center justify-center gap-1.5 rounded-xl border border-[var(--accent-border)] bg-[var(--accent-surface)] px-2.5 py-1.5 text-[11px] font-medium text-[var(--accent-primary)] hover:opacity-90 transition-opacity cursor-pointer"
               >
                 <KeyRound size={11} />
-                Manage Keys
+                {t("models.manageKeys")}
               </button>
             </div>
 
@@ -256,7 +257,7 @@ export default function ModelSelector() {
                 <input
                   ref={searchInputRef}
                   type="text"
-                  placeholder="Search models…"
+                  placeholder={t("models.searchModels")}
                   value={query()}
                   onInput={(e) => setQuery(e.currentTarget.value)}
                   class="w-full bg-transparent text-[12.5px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none selectable-text"
@@ -268,7 +269,7 @@ export default function ModelSelector() {
                   when={filteredModels().length > 0}
                   fallback={
                     <div class="flex h-full flex-col items-center justify-center p-4 text-center text-[12px] text-[var(--text-muted)]">
-                      <p>No models found in this view.</p>
+                      <p>{t("models.noModelsFound")}</p>
                       <button
                         type="button"
                         onClick={() => {
@@ -278,7 +279,7 @@ export default function ModelSelector() {
                         class="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-strong)] bg-[var(--bg-elevated)] px-3 py-1.5 text-[11.5px] text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer"
                       >
                         <KeyRound size={12} />
-                        Connect Provider / Add Custom Model
+                        {t("models.connectProviderOrAdd")}
                       </button>
                     </div>
                   }
@@ -314,7 +315,7 @@ export default function ModelSelector() {
                               <Show when={item.reasoning}>
                                 <span
                                   class="inline-flex items-center rounded bg-[var(--bg-inset)] px-1 py-[1px] text-[9.5px] font-mono text-[var(--text-muted)]"
-                                  title="Supports extended reasoning"
+                                  title={t("models.supportsReasoning")}
                                 >
                                   <Sparkles size={9} class="mr-0.5 text-[var(--accent-primary)]" />
                                   Reason
@@ -329,7 +330,7 @@ export default function ModelSelector() {
                             <div class="flex items-center gap-1.5 text-[10.5px] text-[var(--text-muted)]">
                               <span class="truncate">{item.providerName}</span>
                               <Show when={!item.connected}>
-                                <span class="text-[var(--warn-text)]">· Needs API Key</span>
+                                <span class="text-[var(--warn-text)]">{t("models.needsApiKey")}</span>
                               </Show>
                             </div>
                           </div>
@@ -363,7 +364,7 @@ export default function ModelSelector() {
 
               {/* Bottom Reasoning Effort Bar */}
               <div class="flex items-center justify-between border-t border-[var(--border-subtle)] bg-[var(--bg-elevated)]/40 px-3 py-1.5 text-[11px]">
-                <span class="text-[var(--text-muted)]">Reasoning Effort</span>
+                <span class="text-[var(--text-muted)]">{t("models.reasoningEffort")}</span>
                 <div class="inline-flex items-center gap-0.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] p-0.5">
                   <For each={EFFORT_OPTIONS}>
                     {(opt) => (

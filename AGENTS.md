@@ -5,8 +5,8 @@
 `Hoxi` is a high-performance, native-feel desktop workspace for AI agentic engineering. It merges four core architectural pillars:
 1. **Desktop Shell & Native Host (Borrowed from `gopanel_v2`)**: Built on Wails v2 with native macOS integration—including `WKWebView` with vibrancy/acrylic backdrop, macOS `NSStatusBar` tray with live status badges (`Running` / `Attention`), single-instance lock, window hide-on-close, and in-process reverse proxy (zero external browser popup).
 2. **Core Agent Runtime (Upstream Zero-Fork)**: Official pristine `opencode` (`anomalyco/opencode`, `v1.18+`) running as a supervised subprocess via `opencode serve`. The Go daemon manages lifecycle, random password generation (`OPENCODE_SERVER_PASSWORD`), and transparent HTTP Basic Auth (`opencode:<password>`) injection.
-3. **Workspace Outer Shell & Task Execution Engine (`sailry-harness` + `Kilo-Org/kilocode`)**:
-   - **Outer Shell (from `sailry-harness`)**: Three-pane dark minimalist workspace (Left Nav: Projects, Worktrees & Sessions; Center Canvas: Conversation & Composer; Right Inspector: Diffs, 8-Dim Memory, Files, Terminal).
+3. **Workspace Outer Shell & Task Execution Engine**:
+   - **Outer Shell**: Three-pane dark minimalist workspace (Left Nav: Projects, Worktrees & Sessions; Center Canvas: Conversation & Composer; Right Inspector: Diffs, 8-Dim Memory, Files, Terminal).
    - **Reactivity & Fluidity (from `Kilo Code`)**: Built on Vite + SolidJS + Tailwind CSS (zero-VDOM, 120Hz `requestAnimationFrame`-batched token rendering).
    - **Kilo Task Execution Experience**:
      - Real-time `/event` SSE streaming (`message.part.updated`, `message.part.delta`, `permission.asked`, `session.status`, `session.diff`).
@@ -14,7 +14,7 @@
      - Dynamic tool status cards (`type: "tool"`, states: `pending`, `running`, `completed`, `error`) displaying live elapsed timers, inputs, stdout/stderr, and inline file diffs.
      - Inline interactive approval gates (`POST /permission/{requestID}/reply` with `once` / `always` / `reject`) for destructive shell commands.
      - Unified hunk-level diff viewer (`@pierre/diffs`) and WebGL-accelerated Xterm terminal (`@xterm/xterm` + `/pty/{ptyID}/connect` WebSocket).
-4. **Architectural Innovations (Surpassing `sailry-harness` & `gopanel_v2`)**:
+4. **Architectural Innovations**:
    - **Git Worktree Session Isolation**: Each session operates inside an isolated Git worktree (`.hoxi/worktrees/<session-id>`) scoped via OpenCode's `?directory=<worktree-path>` query parameter so multi-agent workflows run concurrently without branch collision.
    - **8-Dimension Structured Memory Compaction**: `.opencode/plugins/hoxi-memory.js` hooks into `experimental.chat.system.transform`, `experimental.session.compacting`, and `session.idle` to maintain structured session knowledge (Goals, Constraints, Key Facts, Changed Files, Errors & Fixes, Todo, Progress, Next Steps) in `.opencode/memory/`.
    - **Mid-Stream Live Steering (`Steer`)**: While a session is `busy`, the composer remains active with a `[Steer]` action (`POST /session/{id}/prompt_async`), injecting live course-corrections before the next tool step without aborting progress.
@@ -34,7 +34,7 @@
 │  - Objective-C status bar badge: Running (busy) / Attention (approval)  │
 │  - Single-instance lock, window hide-on-close                           │
 ├────────────────────────────────────────────────────────────────────────┤
-│ Frontend UI: Vite + SolidJS (Sailry 3-Pane Shell + Kilo Task UX)       │
+│ Frontend UI: Vite + SolidJS (3-Pane Workspace Shell + Kilo Task UX)    │
 │  - Timeline: SSE event stream, collapsible reasoning, tool call cards   │
 │  - Inspection: Pierre Diff Viewer, 8-Dim Memory Bank, file tree         │
 │  - Terminal: WebGL-accelerated @xterm/xterm via /pty/{id}/connect WS   │
@@ -62,7 +62,7 @@ Never fork or modify OpenCode internals. OpenCode executes as an external, prist
   - `Attention`: Pending `permission.asked` or `question.asked` count.
 - **Git Worktree Isolation**: Provisions `.hoxi/worktrees/<session-id>` on branch `hoxi/<session-id>`, passes `?directory=<worktree-path>` to OpenCode endpoints, and supports one-click `Apply to Main` (`git apply --3way` or `git merge`).
 
-### 3. Frontend & Task Execution Feel (from `sailry-harness` & `kilocode`)
+### 3. Frontend & Task Execution Feel
 - **Execution Visibility**: Every `ToolPart` (`type: "tool"`) renders as an animated status card (`pending` -> `running` -> `completed` / `error`) with live elapsed duration (`0.1s` ticker), collapsible input/output, and embedded Pierre Diffs for file edits.
 - **Reasoning Stream**: `ReasoningPart` (`type: "reasoning"`) tokens stream into a dedicated collapsible `<ThoughtBox />` with elapsed thought duration (`Thought for X.Xs`), keeping final answers clean.
 - **Interactive Permission Approval**: Safe read/search/test commands auto-pass via `hoxi-permissions.js`; destructive commands trigger `permission.asked` and render an inline `<ApprovalGateCard />` calling `POST /permission/{requestID}/reply` (`once` | `always` | `reject`).
@@ -87,7 +87,7 @@ Never fork or modify OpenCode internals. OpenCode executes as an external, prist
 │   ├── src/
 │   │   ├── components/
 │   │   │   ├── layout/
-│   │   │   │   ├── ThreePaneShell.tsx    # Sailry-style 3-pane workspace shell
+│   │   │   │   ├── ThreePaneShell.tsx    # 3-pane workspace shell
 │   │   │   │   ├── CompactHeader.tsx     # 38px header with macOS traffic light inset
 │   │   │   │   └── LeftNav.tsx           # Sessions & worktrees navigation
 │   │   │   ├── timeline/

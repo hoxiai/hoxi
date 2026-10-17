@@ -6,6 +6,7 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
 import { hoxiAPI } from "../../services/api";
 import { activeDirectory, workspace } from "../../store/workspace";
+import { t } from "../../i18n";
 
 function wsEndpoint(ptyID: string, directory?: string): string {
   const base =
@@ -155,12 +156,16 @@ export default function WebGLTerminal() {
           }`}
         />
         <span class="text-[11px] text-gray-400">
-          {status() === "ready" ? "PTY connected" : status() === "error" ? "PTY error" : "Connecting PTY…"}
+          {status() === "ready"
+            ? t("inspector.terminal.connected")
+            : status() === "error"
+              ? t("inspector.terminal.error")
+              : t("inspector.terminal.connecting")}
         </span>
         <button
-          class="ml-auto text-gray-500 hover:text-gray-200"
+          class="ml-auto text-gray-500 hover:text-gray-200 cursor-pointer"
           onClick={() => void boot()}
-          title="Reconnect terminal"
+          title={t("inspector.terminal.reconnect")}
         >
           <RefreshCw size={13} />
         </button>

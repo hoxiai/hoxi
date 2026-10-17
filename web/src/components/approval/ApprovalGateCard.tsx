@@ -4,6 +4,7 @@ import type { PermissionRequest } from "../../services/sse-types";
 import { hoxiAPI } from "../../services/api";
 import { sessionDirectory, workspace } from "../../store/workspace";
 import { FileDiffBlock } from "../inspector/PierreDiffViewer";
+import { t } from "../../i18n";
 
 /**
  * Ported from kilocode PermissionDock.tsx:
@@ -64,7 +65,7 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
       <div class="flex items-center gap-2 px-3.5 py-2 border-b border-[var(--warn-border)]">
         <ShieldAlert size={14} class="text-[var(--warn-text)] shrink-0" />
         <span class="text-[12px] font-semibold text-[var(--warn-text)]">
-          Permission required
+          {t("approval.title")}
         </span>
         <span class="ml-auto rounded-md bg-[var(--bg-panel)]/70 px-2 py-0.5 font-mono text-[10.5px] text-[var(--warn-text)]">
           {props.request.permission || "tool"}
@@ -113,7 +114,7 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
                   void reply("reject");
                 }
               }}
-              placeholder="Optional: tell Hoxi what to do differently (Enter to reject)…"
+              placeholder={t("approval.rejectFeedbackPlaceholder")}
               class="w-full rounded-lg border border-[var(--border-strong)] bg-[var(--bg-panel)] px-2.5 py-1.5 text-[12px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none"
             />
           </div>
@@ -138,7 +139,7 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
                 <Show when={busy() !== "once"} fallback={<LoaderCircle size={12} class="animate-spin" />}>
                   <Check size={12} />
                 </Show>
-                Allow Once
+                {t("approval.allowOnce")}
               </button>
               <button
                 type="button"
@@ -149,7 +150,7 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
                 <Show when={busy() !== "always"} fallback={<LoaderCircle size={12} class="animate-spin" />}>
                   <Zap size={12} />
                 </Show>
-                Always Allow
+                {t("approval.allowAlways")}
               </button>
               <button
                 type="button"
@@ -158,7 +159,7 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
                 onClick={() => setRejecting(true)}
               >
                 <X size={12} />
-                Deny…
+                {t("approval.reject")}…
               </button>
             </>
           }
@@ -172,7 +173,9 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
             <Show when={busy() !== "reject"} fallback={<LoaderCircle size={12} class="animate-spin" />}>
               <X size={12} />
             </Show>
-            {feedback().trim() ? "Reject & Send Feedback" : "Confirm Reject"}
+            {feedback().trim()
+              ? t("approval.rejectWithFeedback")
+              : t("approval.reject")}
           </button>
           <button
             type="button"
@@ -180,7 +183,7 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
             disabled={!!busy()}
             onClick={() => setRejecting(false)}
           >
-            Cancel
+            {t("common.cancel")}
           </button>
         </Show>
       </div>

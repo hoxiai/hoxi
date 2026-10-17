@@ -1,0 +1,60 @@
+// web/src/i18n/locales/zh-CN/inspector.ts
+import type { InspectorI18n } from "../../types";
+
+export const inspector: InspectorI18n = {
+  tabs: {
+    diffs: "变更",
+    memory: "记忆库",
+    files: "文件",
+    terminal: "终端",
+  },
+  diffs: {
+    empty: "当前会话暂无文件变更。",
+    emptyDesc: "Agent 产生的文件修改将在此实时以 Hunk 差异展现。",
+    filesChanged: "共更改 {count} 个文件",
+    files: "个文件",
+    unified: "统一",
+    split: "分栏",
+    refresh: "刷新差异",
+    comment: "批注",
+    openFile: "在检视器中打开文件",
+    reviewNoteOn: "批注于",
+    lineNumPlaceholder: "行号 (可选)",
+    commentPlaceholder: "描述需要在此文件/行修改的内容 (Enter 提交)…",
+    addToReview: "加入评审",
+    noPatch: "(该文件暂无补丁详情)",
+  },
+  memory: {
+    title: "8 维结构化记忆库",
+    empty: "暂未生成结构化记忆。",
+    emptyDesc:
+      "Agent 长期记忆、核心目标、约束与修复记录将持久化在此。",
+    goals: "项目目标",
+    constraints: "约束条件",
+    keyFacts: "关键事实",
+    changedFiles: "已改动文件",
+    errorsAndFixes: "错误与修复记录",
+    todo: "待办事项",
+    progress: "当前进度",
+    nextSteps: "后续计划",
+    save: "保存记忆",
+    notFound:
+      "project.md 暂未生成 — 将在第一次会话整理压缩时自动创建。",
+    reload: "重新加载记忆",
+  },
+  files: {
+    searchPlaceholder: "搜索工作区文件 (Enter)…",
+    noFiles: "工作区中暂无文件",
+    noMatchingFiles: "未找到匹配的文件。",
+    noFilesInWorkspace: "工作区中暂无文件。",
+    back: "返回",
+  },
+  terminal: {
+    connected: "PTY 已连接",
+    disconnected: "PTY 已断开",
+    reconnect: "重新连接终端",
+    clear: "清屏",
+    connecting: "正在连接 PTY…",
+    error: "PTY 错误",
+  },
+};

@@ -4,6 +4,8 @@ import { workspace } from "../../store/workspace";
 import type { SessionInfo } from "../../services/sse-types";
 import { DiffChanges, Icon, Spinner } from "../icons";
 
+import { t } from "../../i18n";
+
 export interface ProjectNavEntry {
   name: string;
   path: string;
@@ -19,8 +21,8 @@ export function dayLabel(ts: number): string {
   const now = new Date();
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   const dayMs = 86400000;
-  if (ts >= startOfToday) return "Today";
-  if (ts >= startOfToday - dayMs) return "Yesterday";
+  if (ts >= startOfToday) return t("common.today");
+  if (ts >= startOfToday - dayMs) return t("common.yesterday");
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 

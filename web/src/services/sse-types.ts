@@ -19,6 +19,27 @@ export interface SessionInfo {
   };
 }
 
+export interface MessageError {
+  name: string;
+  data?: {
+    message?: string;
+    statusCode?: number;
+    isRetryable?: boolean;
+    [key: string]: any;
+  };
+}
+
+export interface MessageTokens {
+  total?: number;
+  input: number;
+  output: number;
+  reasoning: number;
+  cache: {
+    read: number;
+    write: number;
+  };
+}
+
 export interface MessageInfo {
   id: string;
   sessionID: string;
@@ -30,6 +51,10 @@ export interface MessageInfo {
   modelID?: string;
   providerID?: string;
   agent?: string;
+  mode?: string;
+  cost?: number;
+  tokens?: MessageTokens;
+  error?: MessageError;
 }
 
 export type ToolState =
@@ -68,6 +93,15 @@ export type MessagePart =
       messageID: string;
       type: "text";
       text: string;
+    }
+  | {
+      id: string;
+      sessionID: string;
+      messageID: string;
+      type: "file";
+      mime: string;
+      filename?: string;
+      url: string;
     }
   | {
       id: string;
@@ -116,6 +150,29 @@ export interface PermissionRequest {
   };
 }
 
+export interface QuestionOption {
+  label: string;
+  description: string;
+}
+
+export interface QuestionInfo {
+  question: string;
+  header: string;
+  options: QuestionOption[];
+  multiple?: boolean;
+  custom?: boolean;
+}
+
+export interface QuestionRequest {
+  id: string;
+  sessionID: string;
+  questions: QuestionInfo[];
+  tool?: {
+    messageID: string;
+    callID: string;
+  };
+}
+
 export type SessionStatus =
   | { type: "idle" }
   | { type: "busy" }
@@ -150,6 +207,25 @@ export type OpenCodeEvent =
         sessionID: string;
         requestID: string;
         reply: "once" | "always" | "reject";
+      };
+    }
+  | {
+      type: "question.asked" | "question.v2.asked";
+      properties: QuestionRequest;
+    }
+  | {
+      type: "question.replied" | "question.v2.replied";
+      properties: {
+        sessionID: string;
+        requestID: string;
+        answers: string[][];
+      };
+    }
+  | {
+      type: "question.rejected" | "question.v2.rejected";
+      properties: {
+        sessionID: string;
+        requestID: string;
       };
     }
   | {

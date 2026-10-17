@@ -7,6 +7,7 @@ import {
   loadAgents,
   loadProjects,
   loadProviders,
+  loadSessionMessages,
   selectSession,
   setWorkspace,
   upsertMessageInfo,
@@ -22,10 +23,16 @@ export default function App() {
         wsBaseURL: boot.wsBaseURL,
       });
 
-      // Load OpenCode projects, providers, models & agents in parallel
+      // Load OpenCode projects, providers, models, agents & pending questions in parallel
       void loadProjects();
       void loadProviders();
       void loadAgents();
+      void hoxiAPI
+        .listQuestions()
+        .then((qs) => {
+          if (Array.isArray(qs)) setWorkspace("pendingQuestions", qs);
+        })
+        .catch(() => {});
 
       const sessions = await hoxiAPI.listSessions();
       setWorkspace("sessions", sessions);
@@ -78,6 +85,7 @@ export default function App() {
             break;
           case "session.idle":
             setWorkspace("statusBySession", evt.properties.sessionID, { type: "idle" });
+            void loadSessionMessages(evt.properties.sessionID);
             break;
           case "session.diff":
             setWorkspace("diffsBySession", evt.properties.sessionID, evt.properties.diff);
@@ -92,7 +100,25 @@ export default function App() {
               prev.filter((p) => p.id !== evt.properties.requestID)
             );
             break;
+          case "question.asked":
+          case "question.v2.asked":
+            setWorkspace("pendingQuestions", (prev) =>
+              prev.some((q) => q.id === evt.properties.id) ? prev : [...prev, evt.properties]
+            );
+            break;
+          case "question.replied":
+          case "question.v2.replied":
+          case "question.rejected":
+          case "question.v2.rejected":
+            setWorkspace("pendingQuestions", (prev) =>
+              prev.filter((q) => q.id !== evt.properties.requestID)
+            );
+            break;
           case "session.error":
+            if (evt.properties.sessionID) {
+              setWorkspace("statusBySession", evt.properties.sessionID, { type: "idle" });
+              void loadSessionMessages(evt.properties.sessionID);
+            }
             console.error("session error:", evt.properties);
             break;
         }

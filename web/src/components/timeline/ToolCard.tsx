@@ -7,6 +7,7 @@ import {
   selectSession,
   workspace,
 } from "../../store/workspace";
+import { t } from "../../i18n";
 import {
   DiffChanges,
   FileIcon,
@@ -15,6 +16,7 @@ import {
   TextShimmer,
   ToolStatusTitle,
 } from "../icons";
+import SubagentInlineTimeline from "./SubagentInlineTimeline";
 import {
   countDiffLines,
   extractCommand,
@@ -367,7 +369,7 @@ export default function ToolCard(props: { part: ToolPart }) {
                   class="inline-flex items-center gap-1 rounded-md border border-[var(--accent-border)] bg-[var(--accent-surface)] px-2 py-0.5 text-[11px] font-medium text-[var(--accent-text)] hover:opacity-90 transition-opacity cursor-pointer"
                 >
                   <Icon name="task" size="small" />
-                  <span>Inspect Subagent</span>
+                  <span>{t("toolCard.inspectSubagent")}</span>
                 </button>
               )}
             </Show>
@@ -401,7 +403,7 @@ export default function ToolCard(props: { part: ToolPart }) {
                 class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[11px] text-[var(--text-muted)] hover:text-[var(--warn-text)] hover:bg-[var(--warn-surface)] transition-colors cursor-pointer"
               >
                 <Icon name="arrow-undo-down" size="small" />
-                <span class="hidden sm:inline">Undo</span>
+                <span class="hidden sm:inline">{t("toolCard.undo")}</span>
               </button>
             </Show>
 
@@ -416,6 +418,13 @@ export default function ToolCard(props: { part: ToolPart }) {
             </span>
           </div>
         </div>
+
+        {/* Kilo TaskToolExpanded: Live child subagent tool calls inline */}
+        <Show when={isTask() && childSessionID()}>
+          {(subId) => (
+            <SubagentInlineTimeline childSessionID={subId()} parentRunning={isRunning()} />
+          )}
+        </Show>
 
         {/* Kilo ShellRollingResults: Live 5-line rolling output preview while bash command is running & collapsed */}
         <Show when={isShell() && isRunning() && !expanded() && rollingShellLines().length > 0}>
@@ -471,7 +480,7 @@ export default function ToolCard(props: { part: ToolPart }) {
                 class="flex items-center gap-1.5 text-[11.5px] text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors cursor-pointer py-0.5"
               >
                 <Icon name="enter" size="small" class="text-[var(--text-faint)]" />
-                <span>Loaded</span>
+                <span>{t("toolCard.loaded")}</span>
                 <FileIcon node={{ path: filePath, type: "file" }} class="w-3.5 h-3.5 shrink-0" />
                 <span class="font-mono text-[11px] hover:underline truncate max-w-[360px]">
                   {filePath}

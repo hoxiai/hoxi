@@ -2,6 +2,7 @@
 import { createSignal, Show } from "solid-js";
 import { KeyRound, Plus, ShieldCheck, X } from "lucide-solid";
 import { setWorkspace, workspace } from "../../store/workspace";
+import { t } from "../../i18n";
 import AgentPolicyMcpTab from "./AgentPolicyMcpTab";
 import CustomEndpointTab from "./CustomEndpointTab";
 import ProviderCatalogTab from "./ProviderCatalogTab";
@@ -27,10 +28,10 @@ export default function ProviderModal() {
               </div>
               <div>
                 <h2 class="text-[14px] font-semibold text-[var(--text-primary)]">
-                  Models, Auto-Approve & MCP
+                  {t("models.modalTitle")}
                 </h2>
                 <p class="text-[11.5px] text-[var(--text-muted)]">
-                  Configure AI providers, custom endpoints, auto-approve permissions & MCP tools
+                  {t("models.modalSubtitle")}
                 </p>
               </div>
             </div>
@@ -46,7 +47,7 @@ export default function ProviderModal() {
                   }`}
                   onClick={() => setTab("catalog")}
                 >
-                  Providers
+                  {t("models.tabCatalog")}
                 </button>
                 <button
                   type="button"
@@ -58,7 +59,7 @@ export default function ProviderModal() {
                   onClick={() => setTab("custom")}
                 >
                   <Plus size={12} />
-                  Custom Endpoint
+                  {t("models.tabCustom")}
                 </button>
                 <button
                   type="button"
@@ -70,7 +71,7 @@ export default function ProviderModal() {
                   onClick={() => setTab("agent")}
                 >
                   <ShieldCheck size={12} />
-                  Auto-Approve & MCP
+                  {t("models.tabPolicy")}
                 </button>
               </div>
 

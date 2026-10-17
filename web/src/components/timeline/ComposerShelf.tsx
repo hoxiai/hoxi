@@ -20,7 +20,9 @@ import {
   workspace,
 } from "../../store/workspace";
 import ApprovalGateCard from "../approval/ApprovalGateCard";
+import QuestionDock from "../approval/QuestionDock";
 import { DiffChanges, FileIcon, Spinner, TextShimmer } from "../icons";
+import PlanFollowupBar from "./PlanFollowupBar";
 
 interface TodoItem {
   id?: string;
@@ -37,6 +39,11 @@ export default function ComposerShelf() {
   const pendingPermissions = createMemo(() => {
     const id = sessionID();
     return id ? workspace.pendingPermissions.filter((p) => p.sessionID === id) : [];
+  });
+
+  const pendingQuestions = createMemo(() => {
+    const id = sessionID();
+    return id ? workspace.pendingQuestions.filter((q) => q.sessionID === id) : [];
   });
 
   const reviewComments = createMemo(() => {
@@ -98,6 +105,15 @@ export default function ComposerShelf() {
 
   return (
     <>
+      {/* Kilo QuestionDock: Docked Interactive Questions (question.asked) */}
+      <Show when={pendingQuestions().length > 0}>
+        <div class="mb-2.5 space-y-2">
+          <For each={pendingQuestions()}>
+            {(request) => <QuestionDock request={request} />}
+          </For>
+        </div>
+      </Show>
+
       {/* Kilo SessionDock: Docked Permission Approvals (Never scrolls out of view) */}
       <Show when={pendingPermissions().length > 0}>
         <div class="mb-2.5 space-y-2">
@@ -106,6 +122,9 @@ export default function ComposerShelf() {
           </For>
         </div>
       </Show>
+
+      {/* Kilo Plan Follow-up Suggestion Bar */}
+      <PlanFollowupBar />
 
       {/* Kilo Contextual Shelf: ReviewComments, TodoWrite Checklist & Session Diff Summary */}
       <Show

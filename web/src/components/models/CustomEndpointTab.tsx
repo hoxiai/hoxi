@@ -2,6 +2,7 @@
 import { createSignal, Show } from "solid-js";
 import { LoaderCircle, Server } from "lucide-solid";
 import { connectProviderWithKey } from "../../store/workspace";
+import { t } from "../../i18n";
 
 export default function CustomEndpointTab() {
   const [customID, setCustomID] = createSignal("");
@@ -51,15 +52,13 @@ export default function CustomEndpointTab() {
   return (
     <form onSubmit={onSaveCustomProvider} class="flex-1 overflow-y-auto p-6 space-y-4">
       <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/60 p-3.5 text-[12px] text-[var(--text-secondary)]">
-        Add any OpenAI-compatible API endpoint (such as private{" "}
-        <strong>DeepSeek-v4.1-Flash</strong>, local{" "}
-        <strong>Ollama / vLLM / LM Studio</strong>, or enterprise gateways).
+        {t("models.customEndpointIntro")}
       </div>
 
       <div class="grid grid-cols-2 gap-4">
         <div>
           <label class="block text-[11.5px] font-medium text-[var(--text-secondary)] mb-1">
-            Provider ID *
+            {t("models.providerId")}
           </label>
           <input
             type="text"
@@ -71,7 +70,7 @@ export default function CustomEndpointTab() {
         </div>
         <div>
           <label class="block text-[11.5px] font-medium text-[var(--text-secondary)] mb-1">
-            Display Name
+            {t("models.displayName")}
           </label>
           <input
             type="text"
@@ -86,7 +85,7 @@ export default function CustomEndpointTab() {
       <div class="grid grid-cols-2 gap-4">
         <div>
           <label class="block text-[11.5px] font-medium text-[var(--text-secondary)] mb-1">
-            Base URL (OpenAI-compatible) *
+            {t("models.baseUrl")}
           </label>
           <input
             type="text"
@@ -98,7 +97,7 @@ export default function CustomEndpointTab() {
         </div>
         <div>
           <label class="block text-[11.5px] font-medium text-[var(--text-secondary)] mb-1">
-            Model ID *
+            {t("models.modelId")}
           </label>
           <input
             type="text"
@@ -112,7 +111,7 @@ export default function CustomEndpointTab() {
 
       <div>
         <label class="block text-[11.5px] font-medium text-[var(--text-secondary)] mb-1">
-          API Key (optional for local Ollama)
+          {t("models.apiKeyOptional")}
         </label>
         <input
           type="password"
@@ -144,7 +143,7 @@ export default function CustomEndpointTab() {
           <Show when={!saving()} fallback={<LoaderCircle size={14} class="animate-spin" />}>
             <Server size={14} />
           </Show>
-          Save & Select Model
+          {t("models.saveAndSelectModel")}
         </button>
       </div>
     </form>

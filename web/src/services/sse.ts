@@ -8,7 +8,9 @@ export interface SSEHandlers {
 }
 
 export function connectEventStream(handlers: SSEHandlers, directory?: string): () => void {
-  const url = directory ? `/event?directory=${encodeURIComponent(directory)}` : "/event";
+  const url = directory
+    ? `/event?directory=${encodeURIComponent(directory)}`
+    : "/global/event";
   const source = new EventSource(url);
 
   const deltaMap = new Map<
@@ -36,7 +38,13 @@ export function connectEventStream(handlers: SSEHandlers, directory?: string): (
   source.onmessage = (msg) => {
     if (!msg.data) return;
     try {
-      const evt = JSON.parse(msg.data) as OpenCodeEvent;
+      const parsed = JSON.parse(msg.data);
+      // `/global/event` wraps events in `{ directory, payload: { type, properties } }`
+      const evt = (parsed?.payload && typeof parsed.payload.type === "string"
+        ? parsed.payload
+        : parsed) as OpenCodeEvent;
+      if (!evt || typeof evt.type !== "string") return;
+
       if (evt.type === "message.part.delta") {
         const { sessionID, messageID, partID, field, delta } = evt.properties;
         const key = `${sessionID}:${messageID}:${partID}:${field}`;

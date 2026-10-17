@@ -1,7 +1,7 @@
-// web/src/components/models/AgentPolicyMcpTab.tsx
 import { createSignal, For, onMount, Show } from "solid-js";
 import { Check, Cpu, Plus, Trash2 } from "lucide-solid";
 import { hoxiAPI } from "../../services/api";
+import { t } from "../../i18n";
 
 type PermMode = "ask" | "allow" | "deny";
 
@@ -108,10 +108,10 @@ export default function AgentPolicyMcpTab() {
         <div class="flex items-center justify-between">
           <div>
             <h3 class="text-[13.5px] font-semibold text-[var(--text-primary)]">
-              Auto-Approve Tool Policy
+              {t("models.policyTitle")}
             </h3>
             <p class="text-[11.5px] text-[var(--text-muted)]">
-              Control whether Hoxi asks for confirmation before executing tools
+              {t("models.policySubtitle")}
             </p>
           </div>
           <button
@@ -121,7 +121,7 @@ export default function AgentPolicyMcpTab() {
             class="inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] px-3.5 py-1.5 text-[12px] font-medium text-white hover:opacity-90 disabled:opacity-50 cursor-pointer"
           >
             <Check size={13} />
-            Save Policy
+            {t("models.savePolicy")}
           </button>
         </div>
 
@@ -129,7 +129,7 @@ export default function AgentPolicyMcpTab() {
           {/* Edit / Write Policy */}
           <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)] p-3 space-y-2">
             <div class="text-[12px] font-medium text-[var(--text-primary)]">
-              File Edits & Writes
+              {t("models.fileEdits")}
             </div>
             <div class="text-[11px] text-[var(--text-muted)]">edit, write, patch</div>
             <div class="inline-flex rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-0.5 w-full">
@@ -144,7 +144,7 @@ export default function AgentPolicyMcpTab() {
                         : "text-[var(--text-muted)]"
                     }`}
                   >
-                    {m === "allow" ? "Auto-Allow" : "Ask"}
+                    {m === "allow" ? t("models.autoAllow") : t("models.ask")}
                   </button>
                 )}
               </For>
@@ -154,7 +154,7 @@ export default function AgentPolicyMcpTab() {
           {/* Shell / Bash Policy */}
           <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)] p-3 space-y-2">
             <div class="text-[12px] font-medium text-[var(--text-primary)]">
-              Shell Commands
+              {t("models.shellCommands")}
             </div>
             <div class="text-[11px] text-[var(--text-muted)]">bash, terminal execution</div>
             <div class="inline-flex rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-0.5 w-full">
@@ -169,7 +169,7 @@ export default function AgentPolicyMcpTab() {
                         : "text-[var(--text-muted)]"
                     }`}
                   >
-                    {m === "allow" ? "Auto-Allow" : "Ask"}
+                    {m === "allow" ? t("models.autoAllow") : t("models.ask")}
                   </button>
                 )}
               </For>
@@ -178,7 +178,7 @@ export default function AgentPolicyMcpTab() {
 
           {/* WebFetch Policy */}
           <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)] p-3 space-y-2">
-            <div class="text-[12px] font-medium text-[var(--text-primary)]">Web Fetch</div>
+            <div class="text-[12px] font-medium text-[var(--text-primary)]">{t("models.webFetch")}</div>
             <div class="text-[11px] text-[var(--text-muted)]">webfetch, external docs</div>
             <div class="inline-flex rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-0.5 w-full">
               <For each={["allow", "ask"] as PermMode[]}>
@@ -192,7 +192,7 @@ export default function AgentPolicyMcpTab() {
                         : "text-[var(--text-muted)]"
                     }`}
                   >
-                    {m === "allow" ? "Auto-Allow" : "Ask"}
+                    {m === "allow" ? t("models.autoAllow") : t("models.ask")}
                   </button>
                 )}
               </For>
@@ -205,17 +205,17 @@ export default function AgentPolicyMcpTab() {
       <div class="border-t border-[var(--border-subtle)] pt-5 space-y-3">
         <div>
           <h3 class="text-[13.5px] font-semibold text-[var(--text-primary)]">
-            MCP Servers (Model Context Protocol)
+            {t("models.mcpTitle")}
           </h3>
           <p class="text-[11.5px] text-[var(--text-muted)]">
-            Connect local stdio or remote SSE/HTTP MCP tool servers
+            {t("models.mcpSubtitle")}
           </p>
         </div>
 
         <form onSubmit={onAddMcpServer} class="flex items-center gap-2">
           <input
             type="text"
-            placeholder="Server ID (e.g. filesystem)"
+            placeholder={t("models.mcpServerId")}
             value={mcpName()}
             onInput={(e) => setMcpName(e.currentTarget.value)}
             class="w-40 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] px-3 py-1.5 font-mono text-[12px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]"
@@ -225,8 +225,8 @@ export default function AgentPolicyMcpTab() {
             onChange={(e) => setMcpType(e.currentTarget.value as "local" | "remote")}
             class="rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] px-2.5 py-1.5 text-[12px] text-[var(--text-primary)] outline-none"
           >
-            <option value="local">Local Command</option>
-            <option value="remote">Remote URL</option>
+            <option value="local">{t("models.localCommand")}</option>
+            <option value="remote">{t("models.remoteUrl")}</option>
           </select>
           <input
             type="text"
@@ -245,7 +245,7 @@ export default function AgentPolicyMcpTab() {
             class="inline-flex items-center gap-1 rounded-xl bg-[var(--accent-primary)] px-3.5 py-1.5 text-[12px] font-medium text-white disabled:opacity-40 cursor-pointer"
           >
             <Plus size={13} />
-            Add
+            {t("models.add")}
           </button>
         </form>
 
@@ -254,7 +254,7 @@ export default function AgentPolicyMcpTab() {
             when={Object.keys(mcpServers()).length > 0}
             fallback={
               <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-3.5 py-3 text-[12px] text-[var(--text-muted)]">
-                No MCP servers configured yet.
+                {t("models.noMcpServers")}
               </div>
             }
           >

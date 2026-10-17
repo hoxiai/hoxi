@@ -1,16 +1,15 @@
 // web/src/components/timeline/MessageStream.tsx
 import { createEffect, createMemo, createSignal, For, Index, Show } from "solid-js";
 import type { MessagePart, SessionStatus } from "../../services/sse-types";
-import { hoxiAPI } from "../../services/api";
 import {
   forkFromMessage,
-  newIsolatedSession,
   revertToHere,
-  sessionDirectory,
+  submitSessionPrompt,
   workspace,
 } from "../../store/workspace";
 import { Icon, Spinner, TextShimmer } from "../icons";
 import {
+  AssistantErrorCard,
   AssistantTurnFooter,
   basename,
   ContextActivityGroupView,
@@ -20,13 +19,7 @@ import {
   PartView,
   SessionRetryCard,
 } from "./message-stream-parts";
-
-const QUICK_SUGGESTIONS = [
-  "Explore the codebase architecture",
-  "Review uncommitted Git changes",
-  "Find and fix failing tests or lint issues",
-  "Draft an implementation plan for a new feature",
-];
+import { t, locale } from "../../i18n";
 
 export default function MessageStream() {
   let scroller: HTMLDivElement | undefined;
@@ -56,6 +49,12 @@ export default function MessageStream() {
 
   const projectName = createMemo(() => basename(workspace.rootDir));
 
+  const quickSuggestions = createMemo(() => [
+    t("timeline.welcomePrompt1"),
+    t("timeline.welcomePrompt2"),
+    t("timeline.welcomePrompt3"),
+  ]);
+
   // Whether we should show Kilo's bottom `Thinking...` shimmer indicator
   const showThinkingPlaceholder = createMemo(() => {
     if (!isSessionBusy()) return false;
@@ -63,6 +62,7 @@ export default function MessageStream() {
     if (list.length === 0) return true;
     const last = list[list.length - 1];
     if (last.info.role === "user") return true;
+    if (last.info.error) return false;
     // Assistant turn exists but has no visible parts yet
     const visible = last.parts.filter((p) => !isTodoTool(p));
     return visible.length === 0;
@@ -75,6 +75,7 @@ export default function MessageStream() {
     let n = list.length * 1_000_000;
     if (last) {
       n += last.parts.length * 1000;
+      if (last.info.error) n += 500;
       for (const part of last.parts) {
         if (part.type === "text" || part.type === "reasoning") n += part.text.length;
       }
@@ -139,16 +140,7 @@ export default function MessageStream() {
     if (launchingPrompt()) return;
     setLaunchingPrompt(true);
     try {
-      let id = workspace.activeSessionID;
-      if (!id) {
-        id = await newIsolatedSession(prompt.slice(0, 48));
-      }
-      await hoxiAPI.sendPromptAsync(id, prompt, {
-        agent: workspace.activeMode,
-        model: workspace.selectedModel || undefined,
-        variant: workspace.reasoningEffort || undefined,
-        directory: sessionDirectory(id),
-      });
+      await submitSessionPrompt(prompt, workspace.activeSessionID);
     } catch (err) {
       console.error("suggestion prompt failed:", err);
     } finally {
@@ -191,19 +183,31 @@ export default function MessageStream() {
               </div>
 
               <h1 class="text-[22px] font-medium tracking-tight text-[var(--text-primary)]">
-                What should we work on in{" "}
-                <span class="border-b border-dotted border-[var(--text-muted)] font-semibold">
-                  {projectName()}
-                </span>
-                ?
+                <Show
+                  when={locale() === "zh-CN"}
+                  fallback={
+                    <>
+                      What should we work on in{" "}
+                      <span class="border-b border-dotted border-[var(--text-muted)] font-semibold">
+                        {projectName()}
+                      </span>
+                      ?
+                    </>
+                  }
+                >
+                  在{" "}
+                  <span class="border-b border-dotted border-[var(--text-muted)] font-semibold">
+                    {projectName()}
+                  </span>{" "}
+                  中开启何种研发任务？
+                </Show>
               </h1>
               <p class="mt-2 max-w-md text-[13px] text-[var(--text-muted)]">
-                Each thread runs in its own isolated Git worktree so you can explore, build, and
-                review safely.
+                {t("timeline.welcomeSubtitle")}
               </p>
 
               <div class="mt-7 flex flex-wrap items-center justify-center gap-2 max-w-[40rem]">
-                <For each={QUICK_SUGGESTIONS}>
+                <For each={quickSuggestions()}>
                   {(suggestion) => (
                     <button
                       type="button"
@@ -237,20 +241,35 @@ export default function MessageStream() {
                           )
                         }
                       </For>
+                      <AssistantErrorCard info={turn.info} />
                       <AssistantTurnFooter info={turn.info} parts={turn.parts} />
                     </div>
                   }
                 >
                   {/* Kilo-style Right-Aligned User Message Bubble */}
                   <div class="group/turn flex flex-col items-end">
-                    <div class="max-w-[85%] rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-subtle)] px-4 py-2.5 shadow-2xs">
+                    <div class="max-w-[85%] rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-subtle)] px-4 py-2.5 shadow-2xs space-y-2">
                       <Index each={turn.parts}>
                         {(part) => (
-                          <Show when={part().type === "text"}>
-                            <div class="whitespace-pre-wrap break-words text-[14px] leading-relaxed text-[var(--text-primary)] selectable-text">
-                              {(part() as Extract<MessagePart, { type: "text" }>).text}
-                            </div>
-                          </Show>
+                          <>
+                            <Show when={part().type === "file"}>
+                              <div class="overflow-hidden rounded-lg border border-[var(--border-subtle)] max-w-[260px]">
+                                <img
+                                  src={(part() as Extract<MessagePart, { type: "file" }>).url}
+                                  alt={
+                                    (part() as Extract<MessagePart, { type: "file" }>).filename ||
+                                    "attachment"
+                                  }
+                                  class="max-h-48 w-auto object-contain block"
+                                />
+                              </div>
+                            </Show>
+                            <Show when={part().type === "text"}>
+                              <div class="whitespace-pre-wrap break-words text-[14px] leading-relaxed text-[var(--text-primary)] selectable-text">
+                                {(part() as Extract<MessagePart, { type: "text" }>).text}
+                              </div>
+                            </Show>
+                          </>
                         )}
                       </Index>
                     </div>

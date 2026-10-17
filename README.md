@@ -2,7 +2,7 @@
 
 **Hoxi** ([hoxi.ai](https://hoxi.ai)) is a high-performance, native-feel desktop workspace for AI agentic engineering.
 
-It combines the battle-tested **OpenCode** agent runtime with a **Sailry-inspired three-pane workspace**, **Kilo Code-style task execution flow**, and a **lightweight Wails v2 desktop shell** (borrowed from `gopanel_v2`).
+It combines the battle-tested **OpenCode** agent runtime with a **three-pane workspace**, **Kilo Code-style task execution flow**, and a **lightweight Wails v2 desktop shell** (borrowed from `gopanel_v2`).
 
 ---
 
@@ -15,7 +15,7 @@ It combines the battle-tested **OpenCode** agent runtime with a **Sailry-inspire
 │  - Objective-C system tray with live Running/Attention badge│
 ├─────────────────────────────────────────────────────────────┤
 │ Frontend UI: Vite + SolidJS (Zero-VDOM, 120Hz high refresh) │
-│  - Shell Layout: Sailry 3-Pane (Left Nav + Chat + Inspector)│
+│  - Shell Layout: 3-Pane Workspace (Left Nav + Chat + Inspect)│
 │  - Task Execution: Kilo-style tool cards & thinking drawer  │
 │  - Code Inspection: Real-time Pierre Diff & WebGL Xterm     │
 ├─────────────────────────────────────────────────────────────┤
@@ -36,7 +36,7 @@ It combines the battle-tested **OpenCode** agent runtime with a **Sailry-inspire
 
 1. **Upstream Zero-Fork**: Never forks OpenCode. Runs pristine `opencode serve` as a supervised daemon—upgrade effortlessly by swapping the binary.
 2. **Kilo-Style Task Execution**: Every tool call (`read_file`, `edit_file`, `run_command`) displays as an animated status card with live elapsed time, stdout streaming, and inline permission approval gates.
-3. **Sailry 3-Pane Shell**: Dedicated left navigation for sessions and worktrees, central conversation canvas, and persistent right inspector for live Pierre Diffs and 8-dimension memory reflections.
+3. **3-Pane Workspace Shell**: Dedicated left navigation for sessions and worktrees, central conversation canvas, and persistent right inspector for live Pierre Diffs and 8-dimension memory reflections.
 4. **Git Worktree Isolation & Time-Travel Revert**: Sessions run in physical Git worktrees (`.hoxi/worktrees/<session-id>`), with single-step code + conversation rollback (`/revert` & `/unrevert`) and session branching (`/fork`).
 5. **Live Mid-Stream Steering & Auto LSP Diagnostics**: Steer running agents on the fly without aborting progress, backed by millisecond post-edit LSP compiler diagnostics.
 6. **Native macOS Integration**: Built with Wails v2 and Objective-C bindings—includes native window vibrancy, single instance lock (`ai.hoxi.desktop`), window hide-on-close, and status bar badges.

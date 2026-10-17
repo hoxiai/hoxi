@@ -2,6 +2,7 @@ import { createEffect, createMemo, createSignal, Show } from "solid-js";
 import type { MessagePart } from "../../services/sse-types";
 import { Icon, TextShimmer } from "../icons";
 import MarkdownView from "./MarkdownView";
+import { t, locale } from "../../i18n";
 
 type ReasoningPart = Extract<MessagePart, { type: "reasoning" }>;
 
@@ -170,7 +171,10 @@ export default function ThoughtBox(props: { part: ReasoningPart }) {
             <Icon name="brain" size="small" />
           </span>
           <span class={streaming() ? "shrink-0 text-[var(--accent-primary)] font-medium" : "shrink-0 font-medium"}>
-            <TextShimmer text={streaming() ? "Thinking" : "Thought"} active={streaming()} />
+            <TextShimmer
+              text={streaming() ? t("timeline.thinking") : locale() === "zh-CN" ? "深度思考" : "Thought"}
+              active={streaming()}
+            />
           </span>
           <Show when={headerTitle()}>
             <span class="truncate text-[12.5px] font-normal text-[var(--text-muted)] max-w-[380px] inline-flex items-center gap-1">

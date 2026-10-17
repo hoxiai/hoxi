@@ -1,39 +1,30 @@
 // web/src/components/layout/LeftNav.tsx
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
-import {
-  ChevronDown,
-  ChevronRight,
-  Folder,
-  FolderOpen,
-  Layers,
-  LoaderCircle,
-  Plus,
-  Search,
-  X,
-} from "lucide-solid";
+import { User } from "lucide-solid";
 import {
   discardSession,
   newIsolatedSession,
   openWorkspaceFolder,
   selectSession,
   setSidebarProjectMode,
+  setWorkspace,
   switchWorkspace,
   workspace,
 } from "../../store/workspace";
 import { hoxiAPI } from "../../services/api";
 import type { SessionInfo } from "../../services/sse-types";
+import { Icon, Spinner } from "../icons";
 import {
   buildAllProjects,
   SessionNavItem,
   shortenPath,
 } from "./left-nav-helpers";
 import SingleProjectNavView from "./SingleProjectNavView";
+import { t } from "../../i18n";
 
 export default function LeftNav() {
   const [filterQuery, setFilterQuery] = createSignal("");
   const [showSearch, setShowSearch] = createSignal(false);
-  const [manualPath, setManualPath] = createSignal("");
-  const [showManualInput, setShowManualInput] = createSignal(false);
   const [creatingForPath, setCreatingForPath] = createSignal<string | null>(null);
 
   // Expanded projects set (by path) for Multi-Project mode
@@ -120,7 +111,7 @@ export default function LeftNav() {
 
   const onDiscard = async (ev: MouseEvent, sessionID: string) => {
     ev.stopPropagation();
-    if (!confirm("Discard this session's sandbox and delete the session?")) return;
+    if (!confirm(t("leftNav.discardConfirm"))) return;
     await discardSession(sessionID, true);
   };
 
@@ -128,14 +119,11 @@ export default function LeftNav() {
     await openWorkspaceFolder();
   };
 
-  const onSubmitManualPath = async (e: Event) => {
-    e.preventDefault();
-    const p = manualPath().trim();
-    if (!p) return;
-    setShowManualInput(false);
-    setManualPath("");
-    await switchWorkspace(p);
-  };
+  const currentUsername = createMemo(() => {
+    const parts = (workspace.rootDir || "").split("/").filter(Boolean);
+    if (parts[0] === "Users" && parts[1]) return parts[1];
+    return "User";
+  });
 
   return (
     <aside class="relative h-full w-full flex flex-col bg-transparent pl-2 pr-1 select-none">
@@ -154,8 +142,8 @@ export default function LeftNav() {
                 : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
             }`}
           >
-            <Layers size={11} />
-            <span>多项目</span>
+            <Icon name="layers" size="small" class="w-3 h-3" />
+            <span>{t("leftNav.multiProject")}</span>
           </button>
 
           <button
@@ -167,8 +155,8 @@ export default function LeftNav() {
                 : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
             }`}
           >
-            <Folder size={11} />
-            <span>单项目</span>
+            <Icon name="folder" size="small" class="w-3 h-3" />
+            <span>{t("leftNav.singleProject")}</span>
           </button>
         </div>
 
@@ -179,17 +167,17 @@ export default function LeftNav() {
             class={`p-1 rounded-md text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer ${
               showSearch() ? "bg-[var(--bg-hover)] text-[var(--text-primary)]" : ""
             }`}
-            title="Filter"
+            title="Filter projects or sessions"
           >
-            <Search size={13} />
+            <Icon name="magnifying-glass" size="small" />
           </button>
           <button
             type="button"
             onClick={() => void onOpenFolderClick()}
             class="p-1 rounded-md text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
-            title="Open folder…"
+            title={t("leftNav.addProjectFolder")}
           >
-            <Plus size={14} />
+            <Icon name="folder-add-left" size="small" />
           </button>
         </div>
       </div>
@@ -198,7 +186,7 @@ export default function LeftNav() {
       <Show when={showSearch()}>
         <div class="px-2 pb-1.5">
           <div class="flex items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-2 py-1 text-[11.5px]">
-            <Search size={11} class="text-[var(--text-muted)] shrink-0" />
+            <Icon name="magnifying-glass" size="small" class="text-[var(--text-muted)]" />
             <input
               type="text"
               placeholder="Filter…"
@@ -210,16 +198,16 @@ export default function LeftNav() {
               <button
                 type="button"
                 onClick={() => setFilterQuery("")}
-                class="text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                class="text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
               >
-                <X size={11} />
+                <Icon name="close-small" size="small" />
               </button>
             </Show>
           </div>
         </div>
       </Show>
 
-      {/* MODE A: MULTI-PROJECT TREE */}
+      {/* MODE A: CLAUDE CODE-STYLE MINIMAL MULTI-PROJECT TREE */}
       <Show when={workspace.sidebarProjectMode === "multi"}>
         <div class="flex-1 min-h-0 overflow-y-auto px-1 py-1 space-y-0.5">
           <For each={projectList()}>
@@ -245,15 +233,19 @@ export default function LeftNav() {
 
               return (
                 <div>
+                  {/* Flat Minimal Project Row (No card, no border, single line) */}
                   <div
                     class="group/proj flex items-center justify-between gap-1.5 rounded-lg px-2 py-1.5 hover:bg-[var(--bg-hover)]/70 cursor-pointer transition-colors"
                     onClick={() => void toggleProject(proj.path)}
                     title={shortenPath(proj.path)}
                   >
                     <div class="flex items-center gap-1.5 min-w-0 flex-1">
-                      <span class="shrink-0 text-[var(--text-faint)] group-hover/proj:text-[var(--text-muted)] transition-colors">
-                        <Show when={expanded()} fallback={<ChevronRight size={13} />}>
-                          <ChevronDown size={13} />
+                      <span class="shrink-0 text-[var(--text-faint)] group-hover/proj:text-[var(--text-muted)] transition-colors inline-flex items-center">
+                        <Show
+                          when={expanded()}
+                          fallback={<Icon name="chevron-right" size="small" class="w-3.5 h-3.5" />}
+                        >
+                          <Icon name="chevron-down" size="small" class="w-3.5 h-3.5" />
                         </Show>
                       </span>
 
@@ -277,19 +269,20 @@ export default function LeftNav() {
                     >
                       <Show
                         when={!isCreating()}
-                        fallback={<LoaderCircle size={12} class="animate-spin" />}
+                        fallback={<Spinner class="w-3.5 h-3.5 text-[var(--accent-primary)]" />}
                       >
-                        <Plus size={13} />
+                        <Icon name="plus-small" size="small" />
                       </Show>
                     </button>
                   </div>
 
+                  {/* Indented Session Rows */}
                   <Show when={expanded()}>
                     <div class="ml-3.5 pl-2 border-l border-[var(--border-subtle)]/60 my-0.5 space-y-0.5">
                       <Show when={isLoadingSessions()}>
                         <div class="flex items-center gap-1.5 px-2 py-1 text-[11px] text-[var(--text-faint)]">
-                          <LoaderCircle size={10} class="animate-spin" />
-                          <span>Loading…</span>
+                          <Spinner class="w-3 h-3" />
+                          <span>{t("common.loading")}</span>
                         </div>
                       </Show>
 
@@ -302,7 +295,7 @@ export default function LeftNav() {
                               onClick={(e) => void onCreateThreadInProject(e, proj.path)}
                               class="w-full text-left px-2 py-1 rounded-md text-[11.5px] text-[var(--text-faint)] hover:text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]/40 transition-colors cursor-pointer"
                             >
-                              + New session
+                              + {t("leftNav.newThread")}
                             </button>
                           </Show>
                         }
@@ -339,55 +332,30 @@ export default function LeftNav() {
         />
       </Show>
 
-      {/* Minimal Bottom Footer */}
-      <div class="mt-auto pt-1 pb-2 px-1.5">
-        <Show
-          when={showManualInput()}
-          fallback={
-            <div class="flex items-center justify-between">
-              <button
-                type="button"
-                onClick={() => void onOpenFolderClick()}
-                class="flex-1 flex items-center gap-1.5 rounded-lg px-2 py-1 text-left text-[11.5px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]/60 transition-colors cursor-pointer"
-              >
-                <FolderOpen size={12} class="shrink-0" />
-                <span>Add project…</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowManualInput(true)}
-                class="px-1.5 py-1 rounded-lg text-[10.5px] text-[var(--text-faint)] hover:text-[var(--text-secondary)] transition-colors cursor-pointer"
-                title="Enter path manually"
-              >
-                Path
-              </button>
-            </div>
-          }
+      {/* Kilo-style Bottom Bar: Left User Profile, Right Settings Icon */}
+      <div class="mt-auto border-t border-[var(--border-subtle)]/50 pt-2 pb-2.5 px-2 flex items-center justify-between">
+        <button
+          type="button"
+          onClick={() => setWorkspace("providerModalOpen", true)}
+          class="flex items-center gap-2 rounded-lg px-1.5 py-1 text-left text-[12px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]/60 transition-colors cursor-pointer min-w-0"
+          title="Account & Providers"
         >
-          <form onSubmit={onSubmitManualPath} class="flex items-center gap-1">
-            <input
-              type="text"
-              placeholder="/Users/.../project"
-              value={manualPath()}
-              onInput={(e) => setManualPath(e.currentTarget.value)}
-              class="flex-1 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-2 py-1 font-mono text-[11px] text-[var(--text-primary)] outline-none"
-              autofocus
-            />
-            <button
-              type="submit"
-              class="rounded-md bg-[var(--accent-primary)] px-2 py-1 text-[11px] font-medium text-white cursor-pointer"
-            >
-              Go
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowManualInput(false)}
-              class="p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
-            >
-              <X size={11} />
-            </button>
-          </form>
-        </Show>
+          <div class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--bg-inset)] text-[var(--text-secondary)]">
+            <User size={13} />
+          </div>
+          <span class="truncate font-medium">
+            {currentUsername()}
+          </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setWorkspace("providerModalOpen", true)}
+          class="p-1.5 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]/60 transition-colors cursor-pointer shrink-0"
+          title="Settings & Providers"
+        >
+          <Icon name="settings-gear" size="small" />
+        </button>
       </div>
     </aside>
   );

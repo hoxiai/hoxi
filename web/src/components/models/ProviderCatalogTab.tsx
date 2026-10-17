@@ -7,6 +7,7 @@ import {
   workspace,
 } from "../../store/workspace";
 import { ProviderIcon } from "../icons";
+import { t } from "../../i18n";
 
 const POPULAR_PROVIDER_IDS = [
   { id: "deepseek", name: "DeepSeek", hint: "deepseek-chat, deepseek-reasoner, v4.1-flash" },
@@ -131,7 +132,7 @@ export default function ProviderCatalogTab() {
             <Search size={13} class="text-[var(--text-faint)] shrink-0" />
             <input
               type="text"
-              placeholder="Filter providers…"
+              placeholder={t("models.searchProviders")}
               value={search()}
               onInput={(e) => setSearch(e.currentTarget.value)}
               class="w-full bg-transparent text-[12px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none selectable-text"
@@ -164,7 +165,7 @@ export default function ProviderCatalogTab() {
                 <Show when={item.connected}>
                   <span class="shrink-0 inline-flex items-center gap-1 rounded-full bg-[var(--ok-surface)] px-2 py-0.5 text-[10px] font-medium text-[var(--ok-text)]">
                     <span class="h-1.5 w-1.5 rounded-full bg-[var(--ok)]" />
-                    Active
+                    {t("models.active")}
                   </span>
                 </Show>
               </button>
@@ -199,21 +200,21 @@ export default function ProviderCatalogTab() {
                 class="inline-flex items-center gap-1.5 rounded-xl border border-[var(--danger-border)] bg-[var(--danger-surface)] px-3 py-1.5 text-[11.5px] font-medium text-[var(--danger-text)] hover:opacity-90 transition-opacity cursor-pointer"
               >
                 <Trash2 size={12} />
-                Disconnect
+                {t("models.disconnect")}
               </button>
             </Show>
           </div>
 
           <div>
             <label class="block text-[11.5px] font-medium text-[var(--text-secondary)] mb-1.5">
-              API Key
+              {t("models.apiKey")}
             </label>
             <input
               type="password"
               placeholder={
                 activeProvider().connected
-                  ? "•••••••••••••••• (Connected — enter new key to replace)"
-                  : `Enter your ${activeProvider().name} API key…`
+                  ? t("models.apiKeyConnectedPlaceholder")
+                  : t("models.apiKeyPlaceholder", { provider: activeProvider().name })
               }
               value={apiKey()}
               onInput={(e) => setApiKey(e.currentTarget.value)}
@@ -223,11 +224,12 @@ export default function ProviderCatalogTab() {
 
           <div>
             <label class="block text-[11.5px] font-medium text-[var(--text-secondary)] mb-1.5">
-              Custom Base URL <span class="text-[var(--text-faint)] font-normal">(Optional)</span>
+              {t("models.customBaseUrl")}{" "}
+              <span class="text-[var(--text-faint)] font-normal">({t("models.optional")})</span>
             </label>
             <input
               type="text"
-              placeholder="Leave blank for official endpoint, or enter proxy/gateway URL"
+              placeholder={t("models.customBaseUrlHint")}
               value={baseURL()}
               onInput={(e) => setBaseURL(e.currentTarget.value)}
               class="w-full rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3.5 py-2 font-mono text-[12px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)] selectable-text"
@@ -236,14 +238,14 @@ export default function ProviderCatalogTab() {
 
           <div>
             <label class="block text-[11.5px] font-medium text-[var(--text-secondary)] mb-1.5">
-              Register Additional Model ID{" "}
+              {t("models.registerExtraModel")}{" "}
               <span class="text-[var(--text-faint)] font-normal">
-                (Optional, e.g. deepseek-v4.1-flash)
+                ({t("models.optional")}, e.g. deepseek-v4.1-flash)
               </span>
             </label>
             <input
               type="text"
-              placeholder="e.g. deepseek-v4.1-flash"
+              placeholder={t("models.extraModelPlaceholder")}
               value={extraModelID()}
               onInput={(e) => setExtraModelID(e.currentTarget.value)}
               class="w-full rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3.5 py-2 font-mono text-[12px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)] selectable-text"
@@ -265,7 +267,7 @@ export default function ProviderCatalogTab() {
 
         <div class="flex items-center justify-between border-t border-[var(--border-subtle)] pt-4 mt-4">
           <span class="text-[11px] text-[var(--text-faint)]">
-            Keys are stored locally in OpenCode's encrypted auth store.
+            {t("models.keysStoreNote")}
           </span>
           <button
             type="submit"
@@ -275,7 +277,7 @@ export default function ProviderCatalogTab() {
             <Show when={!saving()} fallback={<LoaderCircle size={14} class="animate-spin" />}>
               <Check size={14} />
             </Show>
-            Save & Connect
+            {t("models.saveAndConnect")}
           </button>
         </div>
       </form>

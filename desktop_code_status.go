@@ -62,17 +62,27 @@ func (t *desktopStatusTracker) inspectSSELine(line string) {
 		return
 	}
 
-	var evt struct {
+	var raw struct {
 		Type       string          `json:"type"`
 		Properties json.RawMessage `json:"properties"`
+		Payload    *struct {
+			Type       string          `json:"type"`
+			Properties json.RawMessage `json:"properties"`
+		} `json:"payload"`
 	}
-	if err := json.Unmarshal([]byte(payload), &evt); err != nil {
+	if err := json.Unmarshal([]byte(payload), &raw); err != nil {
 		return
+	}
+	evtType := raw.Type
+	evtProps := raw.Properties
+	if raw.Payload != nil && raw.Payload.Type != "" {
+		evtType = raw.Payload.Type
+		evtProps = raw.Payload.Properties
 	}
 
 	changed := false
 	t.mu.Lock()
-	switch evt.Type {
+	switch evtType {
 	case "session.status":
 		var p struct {
 			SessionID string `json:"sessionID"`
@@ -80,7 +90,7 @@ func (t *desktopStatusTracker) inspectSSELine(line string) {
 				Type string `json:"type"`
 			} `json:"status"`
 		}
-		if json.Unmarshal(evt.Properties, &p) == nil && p.SessionID != "" {
+		if json.Unmarshal(evtProps, &p) == nil && p.SessionID != "" {
 			if p.Status.Type == "busy" || p.Status.Type == "retry" {
 				t.busySessions[p.SessionID] = true
 			} else {
@@ -88,11 +98,11 @@ func (t *desktopStatusTracker) inspectSSELine(line string) {
 			}
 			changed = true
 		}
-	case "session.idle":
+	case "session.idle", "session.error":
 		var p struct {
 			SessionID string `json:"sessionID"`
 		}
-		if json.Unmarshal(evt.Properties, &p) == nil && p.SessionID != "" {
+		if json.Unmarshal(evtProps, &p) == nil && p.SessionID != "" {
 			delete(t.busySessions, p.SessionID)
 			changed = true
 		}
@@ -101,7 +111,7 @@ func (t *desktopStatusTracker) inspectSSELine(line string) {
 			ID        string `json:"id"`
 			SessionID string `json:"sessionID"`
 		}
-		if json.Unmarshal(evt.Properties, &p) == nil && p.ID != "" {
+		if json.Unmarshal(evtProps, &p) == nil && p.ID != "" {
 			t.pendingApprovals[p.ID] = p.SessionID
 			changed = true
 		}
@@ -109,7 +119,7 @@ func (t *desktopStatusTracker) inspectSSELine(line string) {
 		var p struct {
 			RequestID string `json:"requestID"`
 		}
-		if json.Unmarshal(evt.Properties, &p) == nil && p.RequestID != "" {
+		if json.Unmarshal(evtProps, &p) == nil && p.RequestID != "" {
 			delete(t.pendingApprovals, p.RequestID)
 			changed = true
 		}

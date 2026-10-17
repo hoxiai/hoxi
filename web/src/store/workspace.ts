@@ -4,11 +4,18 @@ import type {
   MessageInfo,
   MessagePart,
   PermissionRequest,
+  QuestionRequest,
   SessionInfo,
   SessionStatus,
   SnapshotFileDiff,
 } from "../services/sse-types";
-import type { AgentInfo, ProjectInfo, ProviderInfo, WorktreeMeta } from "../services/api";
+import type {
+  AgentInfo,
+  ProjectInfo,
+  ProviderAuthMethod,
+  ProviderInfo,
+  WorktreeMeta,
+} from "../services/api";
 import { DEFAULT_AGENTS } from "./workspace-providers";
 
 export interface MessageTurn {
@@ -29,6 +36,8 @@ export interface ReviewCommentItem {
   snippet?: string;
 }
 
+export type ProviderModalTab = "providers" | "custom" | "models" | "policy";
+
 export interface WorkspaceState {
   connected: boolean;
   rootDir: string;
@@ -44,24 +53,33 @@ export interface WorkspaceState {
   inspectorOpen: boolean;
   inspectedFilePath: string | null;
   providerModalOpen: boolean;
+  providerModalTab: ProviderModalTab;
+  editingProviderID: string | null;
+  arenaModalOpen: boolean;
   theme: "light" | "dark";
   providers: ProviderInfo[];
   connectedProviders: string[];
   defaultModels: Record<string, string>;
+  globalConfig: Record<string, any>;
+  providerAuthMethods: Record<string, ProviderAuthMethod[]>;
   selectedModel: SelectedModel | null;
   reasoningEffort: "" | "low" | "medium" | "high";
   favoriteModels: SelectedModel[];
+  recentModels: SelectedModel[];
   messagesBySession: Record<string, MessageTurn[]>;
   statusBySession: Record<string, SessionStatus>;
   diffsBySession: Record<string, SnapshotFileDiff[]>;
   worktreeBySession: Record<string, WorktreeMeta>;
   reviewCommentsBySession: Record<string, ReviewCommentItem[]>;
   pendingPermissions: PermissionRequest[];
+  pendingQuestions: QuestionRequest[];
+  dismissedPlanFollowups: Record<string, boolean>;
 }
 
 export const THEME_KEY = "hoxi-theme";
 export const SELECTED_MODEL_KEY = "hoxi-selected-model:v1";
 export const FAVORITE_MODELS_KEY = "hoxi-model-favorites:v1";
+export const RECENT_MODELS_KEY = "hoxi-recent-models:v1";
 export const EFFORT_KEY = "hoxi-reasoning-effort:v1";
 export const RECENT_PROJECTS_KEY = "hoxi-recent-projects:v1";
 export const SIDEBAR_PROJECT_MODE_KEY = "hoxi-sidebar-project-mode:v1";
@@ -90,9 +108,9 @@ function initialSelectedModel(): SelectedModel | null {
   return null;
 }
 
-function initialFavorites(): SelectedModel[] {
+function initialModelList(storageKey: string): SelectedModel[] {
   try {
-    const raw = localStorage.getItem(FAVORITE_MODELS_KEY);
+    const raw = localStorage.getItem(storageKey);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) {
@@ -153,20 +171,37 @@ export const [workspace, setWorkspace] = createStore<WorkspaceState>({
   inspectorOpen: false,
   inspectedFilePath: null,
   providerModalOpen: false,
+  providerModalTab: "providers",
+  editingProviderID: null,
+  arenaModalOpen: false,
   theme: initialTheme(),
   providers: [],
   connectedProviders: [],
   defaultModels: {},
+  globalConfig: {},
+  providerAuthMethods: {},
   selectedModel: initialSelectedModel(),
   reasoningEffort: initialEffort(),
-  favoriteModels: initialFavorites(),
+  favoriteModels: initialModelList(FAVORITE_MODELS_KEY),
+  recentModels: initialModelList(RECENT_MODELS_KEY),
   messagesBySession: {},
   statusBySession: {},
   diffsBySession: {},
   worktreeBySession: {},
   reviewCommentsBySession: {},
   pendingPermissions: [],
+  pendingQuestions: [],
+  dismissedPlanFollowups: {},
 });
+
+export function openProviderModal(
+  tab: ProviderModalTab = "providers",
+  editProviderID: string | null = null
+) {
+  setWorkspace("providerModalTab", tab);
+  setWorkspace("editingProviderID", editProviderID);
+  setWorkspace("providerModalOpen", true);
+}
 
 export function setSidebarProjectMode(mode: "single" | "multi") {
   setWorkspace("sidebarProjectMode", mode);

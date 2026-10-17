@@ -4,6 +4,7 @@ import {
   GitBranch,
   GitMerge,
   KeyRound,
+  Languages,
   Moon,
   PanelRightClose,
   PanelRightOpen,
@@ -21,6 +22,7 @@ import {
 } from "../../store/workspace";
 import { hoxiAPI } from "../../services/api";
 import { Spinner, TextShimmer } from "../icons";
+import { t, locale, toggleLocale } from "../../i18n";
 
 interface CompactHeaderProps {
   inspectorOpen: boolean;
@@ -57,10 +59,10 @@ export default function CompactHeader(props: CompactHeaderProps) {
     setApplyNote(null);
     try {
       await applySessionWorktree(s.id, "patch");
-      setApplyNote("Applied to main ✓");
+      setApplyNote(t("header.appliedSuccess"));
     } catch (err) {
       console.error(err);
-      setApplyNote("Apply failed");
+      setApplyNote(t("header.applyFailed"));
     } finally {
       setApplying(false);
       setTimeout(() => setApplyNote(null), 4000);
@@ -129,10 +131,10 @@ export default function CompactHeader(props: CompactHeaderProps) {
             style={{ "--wails-draggable": "no-drag" } as any}
             disabled={applying()}
             onClick={onApply}
-            title="git apply --3way onto the main workspace"
+            title={t("header.applyTooltip")}
           >
             <GitMerge size={11} />
-            {applying() ? "Applying…" : "Apply to Main"}
+            {applying() ? t("header.applying") : t("header.applyToMain")}
           </button>
         </Show>
 
@@ -147,17 +149,17 @@ export default function CompactHeader(props: CompactHeaderProps) {
             class="inline-flex items-center gap-1 rounded-lg border border-[var(--warn-border)] bg-[var(--warn-surface)] px-2.5 py-1 text-[11px] text-[var(--warn-text)] hover:opacity-90 transition-opacity"
             style={{ "--wails-draggable": "no-drag" } as any}
             onClick={onUndoRevert}
-            title="Restore conversation and code changes reverted earlier"
+            title={t("header.undoRevertTooltip")}
           >
             <RotateCcw size={11} />
-            Undo Revert
+            {t("header.undoRevert")}
           </button>
         </Show>
 
         <Show when={lspCount() !== null}>
           <span
             class="inline-flex items-center gap-1 rounded-full bg-[var(--bg-inset)] px-2 py-0.5 text-[10px] font-mono text-[var(--text-muted)]"
-            title="Language server diagnostics"
+            title={t("header.lspTooltip")}
           >
             <Activity
               size={11}
@@ -171,10 +173,10 @@ export default function CompactHeader(props: CompactHeaderProps) {
           class="inline-flex items-center gap-1.5 rounded-full bg-[var(--bg-inset)] hover:bg-[var(--bg-hover)] px-2.5 py-1 text-[11px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
           style={{ "--wails-draggable": "no-drag" } as any}
           onClick={() => setWorkspace("providerModalOpen", true)}
-          title="Connect AI Providers, API Keys & Custom Models"
+          title={t("header.modelsTooltip")}
         >
           <KeyRound size={11.5} class="text-[var(--accent-primary)]" />
-          <span>Models</span>
+          <span>{t("header.modelsBtn")}</span>
           <Show when={workspace.connectedProviders.length > 0}>
             <span class="rounded-full bg-[var(--accent-surface)] px-1.5 py-[0.5px] font-mono text-[10px] text-[var(--accent-text)]">
               {workspace.connectedProviders.length}
@@ -195,7 +197,7 @@ export default function CompactHeader(props: CompactHeaderProps) {
                   }`}
                 />
                 <span class="text-[11px] text-[var(--text-secondary)]">
-                  {workspace.connected ? "Ready" : "Connecting"}
+                  {workspace.connected ? t("common.ready") : t("common.connecting")}
                 </span>
               </>
             }
@@ -204,18 +206,30 @@ export default function CompactHeader(props: CompactHeaderProps) {
               <Spinner class="w-3.5 h-3.5" />
             </span>
             <TextShimmer
-              text="Working"
+              text={t("common.working")}
               active={true}
               class="text-[11px] font-medium text-[var(--accent-primary)]"
             />
           </Show>
         </div>
 
+        {/* Language Switcher */}
+        <button
+          type="button"
+          class="inline-flex items-center justify-center gap-1 h-7 px-2 rounded-lg text-[11.5px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+          style={{ "--wails-draggable": "no-drag" } as any}
+          onClick={toggleLocale}
+          title={t("header.langTooltip")}
+        >
+          <Languages size={13.5} />
+          <span>{locale() === "zh-CN" ? "中文" : "EN"}</span>
+        </button>
+
         <button
           class="inline-flex items-center justify-center w-7 h-7 rounded-lg text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors"
           style={{ "--wails-draggable": "no-drag" } as any}
           onClick={toggleTheme}
-          title={workspace.theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+          title={workspace.theme === "dark" ? t("header.themeLightTooltip") : t("header.themeDarkTooltip")}
         >
           {workspace.theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
         </button>
@@ -228,7 +242,7 @@ export default function CompactHeader(props: CompactHeaderProps) {
           }`}
           style={{ "--wails-draggable": "no-drag" } as any}
           onClick={props.onToggleInspector}
-          title={props.inspectorOpen ? "Hide Inspector" : "Show Inspector (Diffs, Files, Terminal)"}
+          title={props.inspectorOpen ? t("header.inspectorHide") : t("header.inspectorShow")}
         >
           {props.inspectorOpen ? <PanelRightClose size={14} /> : <PanelRightOpen size={14} />}
           <Show when={diffCount() > 0}>

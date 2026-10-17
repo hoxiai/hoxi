@@ -1,5 +1,18 @@
 // web/src/services/api.ts
-import type { MessageInfo, MessagePart, SessionInfo, SnapshotFileDiff } from "./sse-types";
+import type {
+  MessageInfo,
+  MessagePart,
+  QuestionRequest,
+  SessionInfo,
+  SnapshotFileDiff,
+} from "./sse-types";
+
+export interface PromptAttachment {
+  type: "file";
+  mime: string;
+  filename?: string;
+  url: string;
+}
 
 export interface WorktreeMeta {
   sessionID: string;
@@ -47,27 +60,83 @@ export interface BootstrapInfo {
 export interface ProviderModelInfo {
   id: string;
   name?: string;
+  family?: string;
   reasoning?: boolean;
   attachment?: boolean;
   temperature?: boolean;
   tool_call?: boolean;
+  release_date?: string;
+  modalities?: {
+    input?: string[];
+    output?: string[];
+  };
+  capabilities?: {
+    temperature?: boolean;
+    reasoning?: boolean;
+    attachment?: boolean;
+    toolcall?: boolean;
+    input?: {
+      text?: boolean;
+      audio?: boolean;
+      image?: boolean;
+      video?: boolean;
+      pdf?: boolean;
+    };
+    output?: {
+      text?: boolean;
+      audio?: boolean;
+      image?: boolean;
+      video?: boolean;
+      pdf?: boolean;
+    };
+  };
   cost?: {
     input?: number;
     output?: number;
+    cache?: {
+      read?: number;
+      write?: number;
+    };
   };
   limit?: {
     context?: number;
+    input?: number;
     output?: number;
   };
+  options?: Record<string, any>;
   variants?: Record<string, any>;
 }
 
 export interface ProviderInfo {
   id: string;
   name: string;
+  source?: "env" | "config" | "custom" | "api";
   env?: string[];
+  key?: string;
   npm?: string;
+  options?: Record<string, any>;
   models: Record<string, ProviderModelInfo>;
+}
+
+export interface ProviderAuthPrompt {
+  type: "text" | "select";
+  key: string;
+  message: string;
+  placeholder?: string;
+  options?: Array<{ label: string; value: string; hint?: string }>;
+  when?: { key: string; op: "eq" | "neq"; value: string };
+}
+
+export interface ProviderAuthMethod {
+  type: "oauth" | "api";
+  label: string;
+  prompts?: ProviderAuthPrompt[];
+}
+
+export interface ProviderAuthAuthorization {
+  url: string;
+  method: "auto" | "code";
+  instructions: string;
 }
 
 export interface ProviderListResponse {
@@ -155,15 +224,23 @@ export const hoxiAPI = {
       model?: { providerID: string; modelID: string };
       variant?: string;
       directory?: string;
+      attachments?: PromptAttachment[];
     }
   ): Promise<void> {
+    const parts: Array<{ type: "text"; text: string } | PromptAttachment> = [];
+    if (options?.attachments && options.attachments.length > 0) {
+      parts.push(...options.attachments);
+    }
+    if (text || parts.length === 0) {
+      parts.push({ type: "text", text });
+    }
     return requestJSON(withDir(`/session/${sessionID}/prompt_async`, options?.directory), {
       method: "POST",
       body: JSON.stringify({
         agent: options?.agent || "build",
         ...(options?.model ? { model: options.model } : {}),
         ...(options?.variant ? { variant: options.variant } : {}),
-        parts: [{ type: "text", text }],
+        parts,
       }),
     });
   },
@@ -172,6 +249,18 @@ export const hoxiAPI = {
     return requestJSON(withDir(`/session/${sessionID}/abort`, directory), {
       method: "POST",
       body: JSON.stringify({}),
+    });
+  },
+
+  summarizeSession(
+    sessionID: string,
+    providerID: string,
+    modelID: string,
+    directory?: string
+  ): Promise<boolean> {
+    return requestJSON(withDir(`/session/${sessionID}/summarize`, directory), {
+      method: "POST",
+      body: JSON.stringify({ providerID, modelID }),
     });
   },
 
@@ -219,21 +308,92 @@ export const hoxiAPI = {
     });
   },
 
+  // Interactive Question Dock (Kilo QuestionDock)
+  listQuestions(directory?: string): Promise<QuestionRequest[]> {
+    return requestJSON(withDir("/question", directory));
+  },
+
+  replyQuestion(requestID: string, answers: string[][], directory?: string): Promise<void> {
+    return requestJSON(withDir(`/question/${requestID}/reply`, directory), {
+      method: "POST",
+      body: JSON.stringify({ answers }),
+    });
+  },
+
+  rejectQuestion(requestID: string, directory?: string): Promise<void> {
+    return requestJSON(withDir(`/question/${requestID}/reject`, directory), {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+  },
+
   // Providers, Models & Auth (Direct OpenCode endpoints used by Kilo)
   listProviders(directory?: string): Promise<ProviderListResponse> {
     return requestJSON(withDir("/provider", directory));
   },
 
-  setProviderAuth(providerID: string, apiKey: string): Promise<void> {
+  getProviderAuthMethods(directory?: string): Promise<Record<string, ProviderAuthMethod[]>> {
+    return requestJSON(withDir("/provider/auth", directory));
+  },
+
+  authorizeProviderOAuth(
+    providerID: string,
+    method: number,
+    inputs?: Record<string, string>,
+    directory?: string
+  ): Promise<ProviderAuthAuthorization> {
+    return requestJSON(
+      withDir(`/provider/${encodeURIComponent(providerID)}/oauth/authorize`, directory),
+      {
+        method: "POST",
+        body: JSON.stringify({ method, ...(inputs ? { inputs } : {}) }),
+      }
+    );
+  },
+
+  completeProviderOAuth(
+    providerID: string,
+    method: number,
+    code?: string,
+    directory?: string
+  ): Promise<boolean> {
+    return requestJSON(
+      withDir(`/provider/${encodeURIComponent(providerID)}/oauth/callback`, directory),
+      {
+        method: "POST",
+        body: JSON.stringify({ method, ...(code ? { code } : {}) }),
+      }
+    );
+  },
+
+  setProviderAuth(
+    providerID: string,
+    apiKey: string,
+    metadata?: Record<string, string>
+  ): Promise<void> {
     return requestJSON(`/auth/${encodeURIComponent(providerID)}`, {
       method: "PUT",
-      body: JSON.stringify({ type: "api", key: apiKey.trim() }),
+      body: JSON.stringify({
+        type: "api",
+        key: apiKey.trim(),
+        ...(metadata && Object.keys(metadata).length > 0 ? { metadata } : {}),
+      }),
     });
   },
 
   removeProviderAuth(providerID: string): Promise<void> {
-    return requestJSON(`/auth/${encodeURIComponent(providerID)}`, {
-      method: "DELETE",
+    return requestJSON(`/auth/${encodeURIComponent(providerID)}`, { method: "DELETE" });
+  },
+
+  fetchCustomProviderModels(opts: {
+    baseURL: string;
+    apiKey?: string;
+    providerID?: string;
+    headers?: Record<string, string>;
+  }): Promise<{ models?: Array<{ id: string; name: string }>; error?: string; auth?: boolean }> {
+    return requestJSON("/api/hoxi/provider/fetch-models", {
+      method: "POST",
+      body: JSON.stringify(opts),
     });
   },
 
@@ -242,17 +402,11 @@ export const hoxiAPI = {
   },
 
   updateGlobalConfig(config: Record<string, any>): Promise<Record<string, any>> {
-    return requestJSON("/global/config", {
-      method: "PATCH",
-      body: JSON.stringify(config),
-    });
+    return requestJSON("/global/config", { method: "PATCH", body: JSON.stringify(config) });
   },
 
   disposeGlobal(): Promise<void> {
-    return requestJSON("/global/dispose", {
-      method: "POST",
-      body: JSON.stringify({}),
-    });
+    return requestJSON("/global/dispose", { method: "POST", body: JSON.stringify({}) });
   },
 
   // Agents / Modes (Kilo Mode Switcher)
@@ -269,10 +423,7 @@ export const hoxiAPI = {
     return requestJSON(withDir("/lsp", directory));
   },
 
-  listFiles(
-    path = "",
-    directory?: string
-  ): Promise<Array<{ path: string; name?: string; type?: string }>> {
+  listFiles(path = "", directory?: string): Promise<Array<{ path: string; name?: string; type?: string }>> {
     return requestJSON(withDir(`/file?path=${encodeURIComponent(path)}`, directory));
   },
 
@@ -315,6 +466,13 @@ export const hoxiAPI = {
     return requestJSON("/api/hoxi/worktree/apply", {
       method: "POST",
       body: JSON.stringify({ sessionID, mode }),
+    });
+  },
+
+  revertWorktreeFile(sessionID: string, file: string): Promise<{ ok: boolean }> {
+    return requestJSON("/api/hoxi/worktree/revert-file", {
+      method: "POST",
+      body: JSON.stringify({ sessionID, file }),
     });
   },
 

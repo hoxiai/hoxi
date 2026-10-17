@@ -11,6 +11,7 @@ export default defineConfig({
     strictPort: false,
     proxy: {
       "/api": { target, changeOrigin: true, ws: true },
+      "/healthz": { target, changeOrigin: true },
       "/session": { target, changeOrigin: true },
       "/event": { target, changeOrigin: true },
       "/pty": { target, changeOrigin: true, ws: true },
@@ -27,6 +28,12 @@ export default defineConfig({
       "/command": { target, changeOrigin: true },
       "/agent": { target, changeOrigin: true },
       "/lsp": { target, changeOrigin: true },
+      "/mcp": { target, changeOrigin: true },
+      "/formatter": { target, changeOrigin: true },
+      "/skill": { target, changeOrigin: true },
+      "/experimental": { target, changeOrigin: true },
+      "/path": { target, changeOrigin: true },
+      "/project": { target, changeOrigin: true },
     },
   },
   build: {

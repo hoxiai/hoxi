@@ -3,6 +3,7 @@ import { ArrowLeft, FolderOpen, LoaderCircle, Search } from "lucide-solid";
 import { hoxiAPI } from "../../services/api";
 import { activeDirectory, setWorkspace, workspace } from "../../store/workspace";
 import { FileIcon } from "../icons";
+import { t } from "../../i18n";
 
 export default function FileTreeView() {
   const [query, setQuery] = createSignal("");
@@ -84,7 +85,7 @@ export default function FileTreeView() {
           <Search size={13} class="shrink-0 text-[var(--text-muted)]" />
           <input
             class="flex-1 bg-transparent text-[11.5px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none selectable-text"
-            placeholder="Search workspace files (Enter)…"
+            placeholder={t("inspector.files.searchPlaceholder")}
             value={query()}
             onInput={(ev) => {
               setQuery(ev.currentTarget.value);
@@ -112,7 +113,9 @@ export default function FileTreeView() {
               when={results().length > 0}
               fallback={
                 <div class="px-2 py-8 text-center text-[11.5px] text-[var(--text-muted)]">
-                  {query().trim() ? "No matching files." : "No files found in workspace."}
+                  {query().trim()
+                    ? t("inspector.files.noMatchingFiles")
+                    : t("inspector.files.noFilesInWorkspace")}
                 </div>
               }
             >
@@ -149,10 +152,10 @@ export default function FileTreeView() {
               type="button"
               class="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer"
               onClick={() => setPreviewPath(null)}
-              title="Back to file list"
+              title={t("inspector.files.back")}
             >
               <ArrowLeft size={12} />
-              Back
+              {t("inspector.files.back")}
             </button>
             <FileIcon node={{ path: previewPath()!, type: "file" }} class="w-4 h-4 shrink-0" />
             <span

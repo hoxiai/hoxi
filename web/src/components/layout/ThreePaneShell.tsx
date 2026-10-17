@@ -5,6 +5,7 @@ import MessageStream from "../timeline/MessageStream";
 import Composer from "../timeline/Composer";
 import InspectorPane from "../inspector/InspectorPane";
 import ProviderModal from "../models/ProviderModal";
+import MultiModelArenaModal from "../models/MultiModelArenaModal";
 import { setWorkspace, workspace } from "../../store/workspace";
 
 const LEFT_MIN = 210;
@@ -77,6 +78,7 @@ export default function ThreePaneShell() {
 
       {/* Provider & Custom Model Configuration Modal */}
       <ProviderModal />
+      <MultiModelArenaModal />
     </div>
   );
 }

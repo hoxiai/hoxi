@@ -120,6 +120,8 @@ func (g *desktopGateway) registerRoutes(distFS fs.FS) {
 		writeJSON(w, http.StatusOK, map[string]any{"path": dirPath})
 	})
 
+	g.mux.HandleFunc("/api/hoxi/provider/fetch-models", g.handleFetchProviderModels)
+
 	g.worktrees.registerRoutes(g.mux)
 
 	// OpenCode API prefixes
