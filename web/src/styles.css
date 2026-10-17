@@ -1,0 +1,421 @@
+@import "tailwindcss";
+
+/*
+ * Hoxi Semantic Design Tokens — Kilo-inspired spacious & breathable aesthetic.
+ * Light is the default theme; `.dark` on <html> switches every surface to dark.
+ */
+:root {
+  color-scheme: light;
+
+  /* App typography & layout metrics (aligned with Kilo Desktop) */
+  --app-ui-text-size: 13px;
+  --app-chat-text-size: 14px;
+  --thread-max-width: 48rem;
+  --composer-radius: 1rem;
+
+  /* Surfaces (Soft Mist palette for natural visual breathing room) */
+  --bg-canvas: #f1f3f6;
+  --bg-panel: #ffffff;
+  --bg-elevated: #f4f6f9;
+  --bg-composer: rgba(255, 255, 255, 0.88);
+  --bg-inset: rgba(15, 23, 42, 0.04);
+  --bg-hover: rgba(15, 23, 42, 0.045);
+  --bg-selected: rgba(37, 99, 235, 0.08);
+  --bg-code: #f4f6f9;
+
+  /* Lines & Strokes */
+  --border-subtle: rgba(15, 23, 42, 0.075);
+  --border-strong: rgba(15, 23, 42, 0.13);
+  --border-focus: rgba(37, 99, 235, 0.45);
+
+  /* Shadows */
+  --island-shadow: 0 1px 3px rgba(15, 23, 42, 0.03), 0 1px 2px rgba(15, 23, 42, 0.02);
+  --composer-shadow: 0 14px 32px -16px rgba(15, 23, 42, 0.14), 0 2px 6px -1px rgba(15, 23, 42, 0.05);
+
+  /* Text */
+  --text-primary: #14181f;
+  --text-secondary: #475467;
+  --text-muted: #667085;
+  --text-faint: #98a2b3;
+
+  /* Primary Brand Accent (Hoxi Blue) */
+  --accent-primary: #2563eb;
+  --accent-text: #1d4ed8;
+  --accent-surface: rgba(37, 99, 235, 0.09);
+  --accent-border: rgba(37, 99, 235, 0.26);
+
+  /* Semantic Status */
+  --status-running: #2563eb;
+  --info-text: #1d4ed8;
+  --info-surface: rgba(37, 99, 235, 0.08);
+  --info-border: rgba(37, 99, 235, 0.24);
+
+  --status-success: #10b981;
+  --ok: #10b981;
+  --ok-text: #047857;
+  --ok-surface: rgba(16, 185, 129, 0.1);
+  --ok-border: rgba(16, 185, 129, 0.28);
+
+  --status-warning: #f59e0b;
+  --warn: #f59e0b;
+  --warn-text: #b45309;
+  --warn-surface: rgba(245, 158, 11, 0.11);
+  --warn-border: rgba(245, 158, 11, 0.34);
+
+  --status-danger: #ef4444;
+  --danger-text: #b91c1c;
+  --danger-surface: rgba(239, 68, 68, 0.08);
+  --danger-border: rgba(239, 68, 68, 0.26);
+
+  --violet-text: #6d28d9;
+  --violet-surface: rgba(139, 92, 246, 0.1);
+  --violet-border: rgba(139, 92, 246, 0.3);
+
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", Menlo, monospace;
+}
+
+:root.dark {
+  color-scheme: dark;
+
+  /* Surfaces (Kilo Mist Dark) */
+  --bg-canvas: #0c0e12;
+  --bg-panel: #12161d;
+  --bg-elevated: #1a202b;
+  --bg-composer: rgba(24, 30, 40, 0.86);
+  --bg-inset: rgba(255, 255, 255, 0.04);
+  --bg-hover: rgba(255, 255, 255, 0.055);
+  --bg-selected: rgba(59, 130, 246, 0.14);
+  --bg-code: rgba(0, 0, 0, 0.28);
+
+  /* Lines & Strokes */
+  --border-subtle: rgba(208, 214, 216, 0.075);
+  --border-strong: rgba(208, 214, 216, 0.13);
+  --border-focus: rgba(59, 130, 246, 0.5);
+
+  /* Shadows */
+  --island-shadow: 0 2px 8px rgba(0, 0, 0, 0.24);
+  --composer-shadow: 0 16px 36px -16px rgba(0, 0, 0, 0.55);
+
+  /* Text */
+  --text-primary: #e5e9f0;
+  --text-secondary: #9ba3b0;
+  --text-muted: #6e7785;
+  --text-faint: #525a68;
+
+  /* Primary Brand Accent (Hoxi Blue) */
+  --accent-primary: #3b82f6;
+  --accent-text: #93c5fd;
+  --accent-surface: rgba(59, 130, 246, 0.13);
+  --accent-border: rgba(59, 130, 246, 0.32);
+
+  /* Semantic Status */
+  --status-running: #3b82f6;
+  --info-text: #60a5fa;
+  --info-surface: rgba(59, 130, 246, 0.1);
+  --info-border: rgba(59, 130, 246, 0.28);
+
+  --status-success: #10b981;
+  --ok: #10b981;
+  --ok-text: #34d399;
+  --ok-surface: rgba(16, 185, 129, 0.11);
+  --ok-border: rgba(16, 185, 129, 0.3);
+
+  --status-warning: #f59e0b;
+  --warn: #f59e0b;
+  --warn-text: #fcd34d;
+  --warn-surface: rgba(245, 158, 11, 0.1);
+  --warn-border: rgba(245, 158, 11, 0.35);
+
+  --status-danger: #ef4444;
+  --danger-text: #f87171;
+  --danger-surface: rgba(239, 68, 68, 0.11);
+  --danger-border: rgba(239, 68, 68, 0.32);
+
+  --violet-text: #ddd6fe;
+  --violet-surface: rgba(139, 92, 246, 0.14);
+  --violet-border: rgba(139, 92, 246, 0.36);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  border: none;
+  outline: none;
+  background-color: var(--bg-canvas);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: var(--app-ui-text-size);
+  line-height: 1.5;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+.selectable-text {
+  user-select: text;
+}
+
+/* Kilo-style Floating Island Pane */
+.pane-island {
+  background-color: var(--bg-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: 0.75rem;
+  box-shadow: var(--island-shadow);
+}
+
+/* Kilo-style Translucent Glass Composer */
+.chat-composer-glass {
+  background-color: var(--bg-composer);
+  -webkit-backdrop-filter: blur(16px) saturate(1.14);
+  backdrop-filter: blur(16px) saturate(1.14);
+  border: 1px solid var(--border-strong);
+  box-shadow: var(--composer-shadow);
+  transition: border-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.chat-composer-glass:focus-within {
+  border-color: var(--border-focus);
+}
+
+/* Subtle custom scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(150, 160, 175, 0.22);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(150, 160, 175, 0.42);
+}
+
+/* ============================================================================
+ * Kilo Icon System (Icon, FileIcon, ProviderIcon, Spinner, TextShimmer, DiffChanges)
+ * ============================================================================ */
+
+[data-component="icon"] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  aspect-ratio: 1 / 1;
+  color: currentColor;
+}
+
+[data-component="icon"][data-size="small"] {
+  width: 15px;
+  height: 15px;
+}
+
+[data-component="icon"][data-size="normal"] {
+  width: 18px;
+  height: 18px;
+}
+
+[data-component="icon"][data-size="medium"],
+[data-component="icon"][data-size="large"] {
+  width: 22px;
+  height: 22px;
+}
+
+[data-component="icon"] [data-slot="icon-svg"] {
+  width: 100%;
+  height: auto;
+}
+
+[data-component="file-icon"] {
+  display: inline-block;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+}
+
+[data-component="provider-icon"] {
+  display: inline-block;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+}
+
+/* Kilo 5x5 Grid Spinner */
+[data-component="spinner"] {
+  color: inherit;
+  flex-shrink: 0;
+  width: 16px;
+  aspect-ratio: 1;
+}
+
+[data-component="spinner"][data-paused] > * {
+  animation: none !important;
+}
+
+@keyframes pulse-opacity {
+  0%, 100% {
+    opacity: 0.16;
+  }
+  50% {
+    opacity: 0.98;
+  }
+}
+
+@keyframes pulse-opacity-dim {
+  0%, 100% {
+    opacity: 0.06;
+  }
+  50% {
+    opacity: 0.48;
+  }
+}
+
+/* Kilo Zero-Timer CSS TextShimmer */
+[data-component="text-shimmer"] {
+  --text-shimmer-step: 45ms;
+  --text-shimmer-duration: 1200ms;
+  --text-shimmer-swap: 220ms;
+  --text-shimmer-index: 0;
+  --text-shimmer-angle: 90deg;
+  --text-shimmer-spread: 5.2ch;
+  --text-shimmer-size: 360%;
+  --text-shimmer-base-color: var(--text-muted);
+  --text-shimmer-peak-color: var(--text-primary);
+  --text-shimmer-sweep: linear-gradient(
+    var(--text-shimmer-angle),
+    transparent calc(50% - var(--text-shimmer-spread)),
+    var(--text-shimmer-peak-color) 50%,
+    transparent calc(50% + var(--text-shimmer-spread))
+  );
+  --text-shimmer-base: linear-gradient(var(--text-shimmer-base-color), var(--text-shimmer-base-color));
+
+  display: inline-flex;
+  align-items: baseline;
+  font: inherit;
+  letter-spacing: inherit;
+  line-height: inherit;
+  white-space: pre;
+}
+
+[data-component="text-shimmer"] [data-slot="text-shimmer-char"] {
+  display: inline-grid;
+  white-space: pre;
+  font: inherit;
+  letter-spacing: inherit;
+  line-height: inherit;
+}
+
+[data-component="text-shimmer"] [data-slot="text-shimmer-char-base"],
+[data-component="text-shimmer"] [data-slot="text-shimmer-char-shimmer"] {
+  grid-area: 1 / 1;
+  white-space: pre;
+  transition: opacity var(--text-shimmer-swap) ease-out;
+  font: inherit;
+  letter-spacing: inherit;
+  line-height: inherit;
+}
+
+[data-component="text-shimmer"] [data-slot="text-shimmer-char-base"] {
+  color: inherit;
+  opacity: 1;
+}
+
+[data-component="text-shimmer"] [data-slot="text-shimmer-char-shimmer"] {
+  color: var(--text-faint);
+  opacity: 0;
+}
+
+[data-component="text-shimmer"][data-active="true"] [data-slot="text-shimmer-char-shimmer"] {
+  opacity: 1;
+  animation-name: text-shimmer-sweep;
+  animation-duration: var(--text-shimmer-duration);
+  animation-iteration-count: infinite;
+  animation-timing-function: linear;
+  animation-fill-mode: both;
+  animation-delay: calc(var(--text-shimmer-step) * var(--text-shimmer-index) * -1);
+  will-change: background-position;
+}
+
+@keyframes text-shimmer-sweep {
+  0% {
+    background-position: 100% 0, 0 0;
+  }
+  100% {
+    background-position: 0% 0, 0 0;
+  }
+}
+
+@supports ((-webkit-background-clip: text) or (background-clip: text)) {
+  [data-component="text-shimmer"] [data-slot="text-shimmer-char-shimmer"] {
+    color: transparent;
+    -webkit-text-fill-color: transparent;
+    background-image: var(--text-shimmer-sweep), var(--text-shimmer-base);
+    background-size: var(--text-shimmer-size) 100%, 100% 100%;
+    background-position: 100% 0, 0 0;
+    background-repeat: no-repeat;
+    -webkit-background-clip: text;
+    background-clip: text;
+  }
+
+  [data-component="text-shimmer"][data-active="true"] [data-slot="text-shimmer-char-base"] {
+    opacity: 0;
+  }
+}
+
+/* Kilo DiffChanges */
+[data-component="diff-changes"] {
+  display: inline-flex;
+  direction: ltr;
+  unicode-bidi: isolate;
+  gap: 6px;
+  justify-content: flex-end;
+  align-items: center;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+[data-component="diff-changes"] [data-slot="diff-changes-additions"] {
+  color: var(--ok-text);
+}
+
+[data-component="diff-changes"] [data-slot="diff-changes-deletions"] {
+  color: var(--danger-text);
+}
+
+[data-component="diff-changes"][data-variant="bars"] {
+  width: 18px;
+  height: 12px;
+  flex-shrink: 0;
+}
+
+[data-component="diff-changes"][data-variant="bars"] svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* Kilo Horizontal Row Wipe Animation for Live Context Gathering */
+@keyframes kilo-row-wipe {
+  0% {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.kilo-rolling-row {
+  animation: kilo-row-wipe 200ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+

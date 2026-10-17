@@ -1,0 +1,18 @@
+# macOS & OS files
+.DS_Store
+
+# Node & Frontend build artifacts
+node_modules/
+web/node_modules/
+web/dist/
+.opencode/node_modules/
+.opencode/bun.lock
+
+# Go & Wails build binaries
+/hoxi
+/cmd/hoxi/hoxi
+build/bin/
+
+# Local session worktrees & runtime state
+.hoxi/
+.opencode/memory/sessions/

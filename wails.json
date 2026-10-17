@@ -1,0 +1,24 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "Hoxi",
+  "outputfilename": "Hoxi",
+  "frontend:dir": "web",
+  "frontend:install": "npm install",
+  "frontend:build": "npm run build",
+  "frontend:dev:watcher": "npm run dev",
+  "frontend:dev:serverUrl": "auto",
+  "assetdir": "web/dist",
+  "build:dir": "build",
+  "build:tags": "desktop",
+  "author": {
+    "name": "Hoxi",
+    "email": "support@hoxi.ai"
+  },
+  "info": {
+    "companyName": "Hoxi (hoxi.ai)",
+    "productName": "Hoxi",
+    "productVersion": "0.2.0",
+    "copyright": "Copyright © 2026 Hoxi (https://hoxi.ai)",
+    "comments": "Hoxi Native AI Agentic Engineering Workspace (https://hoxi.ai)"
+  }
+}

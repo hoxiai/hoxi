@@ -1,0 +1,106 @@
+import { onCleanup, onMount } from "solid-js";
+import ThreePaneShell from "./components/layout/ThreePaneShell";
+import { hoxiAPI } from "./services/api";
+import { connectEventStream } from "./services/sse";
+import {
+  applyPartDeltaBatch,
+  loadAgents,
+  loadProjects,
+  loadProviders,
+  selectSession,
+  setWorkspace,
+  upsertMessageInfo,
+  upsertMessagePart,
+} from "./store/workspace";
+
+export default function App() {
+  onMount(async () => {
+    try {
+      const boot = await hoxiAPI.getBootstrap();
+      setWorkspace({
+        rootDir: boot.rootDir,
+        wsBaseURL: boot.wsBaseURL,
+      });
+
+      // Load OpenCode projects, providers, models & agents in parallel
+      void loadProjects();
+      void loadProviders();
+      void loadAgents();
+
+      const sessions = await hoxiAPI.listSessions();
+      setWorkspace("sessions", sessions);
+
+      // Restore each session's isolated worktree directory so scoped OpenCode
+      // requests keep targeting the right sandbox after a reload.
+      await Promise.allSettled(
+        sessions.map(async (session) => {
+          const status = await hoxiAPI.getWorktreeStatus(session.id);
+          if (status.isolated && status.directory) {
+            setWorkspace("worktreeBySession", (prev) => ({
+              ...prev,
+              [session.id]: {
+                sessionID: session.id,
+                isolated: true,
+                directory: status.directory,
+                branch: status.branch,
+                baseCommit: status.baseCommit,
+                createdAt: new Date().toISOString(),
+              },
+            }));
+          }
+        })
+      );
+
+      if (sessions.length > 0) {
+        const mostRecent = [...sessions].sort((a, b) => b.time.created - a.time.created)[0];
+        await selectSession(mostRecent.id);
+      }
+    } catch (err) {
+      console.error("Bootstrap error:", err);
+    }
+
+    const disconnect = connectEventStream({
+      onConnectionChange: (connected) => {
+        setWorkspace("connected", connected);
+        if (connected) void loadProviders();
+      },
+      onDeltaBatch: applyPartDeltaBatch,
+      onEvent: (evt) => {
+        switch (evt.type) {
+          case "message.updated":
+            upsertMessageInfo(evt.properties.info);
+            break;
+          case "message.part.updated":
+            upsertMessagePart(evt.properties.part);
+            break;
+          case "session.status":
+            setWorkspace("statusBySession", evt.properties.sessionID, evt.properties.status);
+            break;
+          case "session.idle":
+            setWorkspace("statusBySession", evt.properties.sessionID, { type: "idle" });
+            break;
+          case "session.diff":
+            setWorkspace("diffsBySession", evt.properties.sessionID, evt.properties.diff);
+            break;
+          case "permission.asked":
+            setWorkspace("pendingPermissions", (prev) =>
+              prev.some((p) => p.id === evt.properties.id) ? prev : [...prev, evt.properties]
+            );
+            break;
+          case "permission.replied":
+            setWorkspace("pendingPermissions", (prev) =>
+              prev.filter((p) => p.id !== evt.properties.requestID)
+            );
+            break;
+          case "session.error":
+            console.error("session error:", evt.properties);
+            break;
+        }
+      },
+    });
+
+    onCleanup(disconnect);
+  });
+
+  return <ThreePaneShell />;
+}
