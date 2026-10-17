@@ -22,7 +22,7 @@ import {
 } from "../../store/workspace";
 import { hoxiAPI } from "../../services/api";
 import { Spinner, TextShimmer } from "../icons";
-import { t, locale, toggleLocale } from "../../i18n";
+import { t, toggleLocale, currentLocaleMetadata } from "../../i18n";
 
 interface CompactHeaderProps {
   inspectorOpen: boolean;
@@ -222,7 +222,7 @@ export default function CompactHeader(props: CompactHeaderProps) {
           title={t("header.langTooltip")}
         >
           <Languages size={13.5} />
-          <span>{locale() === "zh-CN" ? "中文" : "EN"}</span>
+          <span>{currentLocaleMetadata().shortLabel}</span>
         </button>
 
         <button

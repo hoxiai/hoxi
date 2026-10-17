@@ -16,4 +16,7 @@ export const leftNav: LeftNavI18n = {
   removeProjectConfirm: "Remove this project folder from the workspace list?",
   activeWorkspaces: "Active Workspaces",
   switchProject: "Switch project…",
+  switchSidebarMode: "Switch sidebar mode",
+  filterPlaceholder: "Filter projects or sessions",
+  deleteSessionTooltip: "Delete session",
 };

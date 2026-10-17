@@ -3,6 +3,7 @@ import type { MessagePart } from "../../services/sse-types";
 import { openFileInInspector } from "../../store/workspace";
 import { FileIcon, Icon, Spinner, TextShimmer, ToolStatusTitle } from "../icons";
 import { extractTargetFile, kiloToolIconName } from "./tool-card-helpers";
+import { t } from "../../i18n";
 
 function basename(p: string): string {
   const parts = p.split("/").filter(Boolean);
@@ -141,10 +142,10 @@ export default function ContextActivityGroupView(props: {
       }
     }
     const tokens: string[] = [];
-    if (reads > 0) tokens.push(`${reads} ${reads === 1 ? "read" : "reads"}`);
-    if (searches > 0) tokens.push(`${searches} ${searches === 1 ? "search" : "searches"}`);
-    if (lists > 0) tokens.push(`${lists} ${lists === 1 ? "list" : "lists"}`);
-    if (thoughts > 0) tokens.push(`${thoughts} ${thoughts === 1 ? "thought" : "thoughts"}`);
+    if (reads > 0) tokens.push(t("timeline.reads", { count: reads }));
+    if (searches > 0) tokens.push(t("timeline.searches", { count: searches }));
+    if (lists > 0) tokens.push(t("timeline.lists", { count: lists }));
+    if (thoughts > 0) tokens.push(t("timeline.thoughts", { count: thoughts }));
     return tokens.join(", ");
   });
 

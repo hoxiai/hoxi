@@ -18,7 +18,7 @@ import {
 } from "../../store/workspace";
 import type { SnapshotFileDiff } from "../../services/sse-types";
 import { DiffChanges, FileIcon } from "../icons";
-import { t, locale } from "../../i18n";
+import { locale, t } from "../../i18n";
 
 /**
  * Renders a single unified/split code diff using the @pierre/diffs vanilla
@@ -154,14 +154,10 @@ function DiffCard(props: { diff: SnapshotFileDiff; diffStyle: "unified" | "split
           class="shrink-0 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10.5px] text-[var(--text-muted)] hover:text-[var(--warn-text)] hover:bg-[var(--warn-surface)] transition-colors cursor-pointer disabled:opacity-50"
           disabled={reverting()}
           onClick={() => void onRevertFile()}
-          title={
-            locale() === "zh-CN"
-              ? "还原该文件的改动 (Revert File)"
-              : "Revert changes in this file"
-          }
+          title={t("inspector.diffs.revertFileTooltip")}
         >
           <RotateCcw size={11} />
-          <span>{locale() === "zh-CN" ? "还原" : "Revert"}</span>
+          <span>{t("inspector.diffs.revertFileBtn")}</span>
         </button>
 
         <button

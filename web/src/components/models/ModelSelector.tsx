@@ -1,33 +1,36 @@
+// web/src/components/models/ModelSelector.tsx
 import { createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import {
   Check,
   ChevronDown,
+  Clock,
   Cpu,
+  Image,
   KeyRound,
+  Pencil,
+  Plus,
   Search,
   Sparkles,
   Star,
 } from "lucide-solid";
 import {
+  isCustomOrConfiguredProvider,
   isFavoriteModel,
+  openProviderModal,
   selectModel,
   setReasoningEffort,
-  setWorkspace,
   toggleFavoriteModel,
   workspace,
 } from "../../store/workspace";
 import { ProviderIcon } from "../icons";
 import { t } from "../../i18n";
-
-interface FlattenedModel {
-  providerID: string;
-  providerName: string;
-  modelID: string;
-  modelName: string;
-  connected: boolean;
-  reasoning?: boolean;
-  contextLimit?: number;
-}
+import {
+  extractFlattenedModels,
+  formatTokenLimit,
+  ModelPreviewFooter,
+  rankModelSearch,
+  type FlattenedModel,
+} from "./model-selector-utils";
 
 const EFFORT_OPTIONS: Array<{ value: "" | "low" | "medium" | "high"; label: string }> = [
   { value: "", label: "Auto" },
@@ -36,52 +39,49 @@ const EFFORT_OPTIONS: Array<{ value: "" | "low" | "medium" | "high"; label: stri
   { value: "high", label: "High" },
 ];
 
-function formatContext(n?: number): string | null {
-  if (!n || n <= 0) return null;
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(0)}M`;
-  if (n >= 1_000) return `${Math.round(n / 1_000)}k`;
-  return String(n);
-}
-
 export default function ModelSelector() {
   const [open, setOpen] = createSignal(false);
   const [rail, setRail] = createSignal<string>("connected");
   const [query, setQuery] = createSignal("");
+  const [hoveredModel, setHoveredModel] = createSignal<FlattenedModel | null>(null);
+  const [activeIndex, setActiveIndex] = createSignal(0);
   let containerRef: HTMLDivElement | undefined;
   let searchInputRef: HTMLInputElement | undefined;
 
   const connectedSet = createMemo(() => new Set(workspace.connectedProviders));
 
-  const allModels = createMemo<FlattenedModel[]>(() => {
-    const out: FlattenedModel[] = [];
-    const connected = connectedSet();
-    for (const p of workspace.providers) {
-      const isConn = connected.has(p.id);
-      for (const [mID, mInfo] of Object.entries(p.models || {})) {
-        out.push({
-          providerID: p.id,
-          providerName: p.name || p.id,
-          modelID: mID,
-          modelName: mInfo?.name || mID,
-          connected: isConn,
-          reasoning: mInfo?.reasoning,
-          contextLimit: mInfo?.limit?.context,
+  const allModels = createMemo<FlattenedModel[]>(() =>
+    extractFlattenedModels(workspace.providers, connectedSet(), workspace.globalConfig)
+  );
+
+  // Only show connected providers' models by default (Kilo pattern)
+  const connectedModels = createMemo<FlattenedModel[]>(() => {
+    const conn = allModels().filter((m) => m.connected);
+    if (conn.length > 0) return conn;
+    // Fallback to free opencode models or first 30 models if nothing connected yet
+    const freeModels = allModels().filter((m) => m.providerID === "opencode" || m.free);
+    return freeModels.length > 0 ? freeModels : allModels().slice(0, 30);
+  });
+
+  const connectedProviderRails = createMemo(() => {
+    const counts = new Map<string, { id: string; name: string; count: number; isCustom: boolean }>();
+    for (const m of connectedModels()) {
+      const existing = counts.get(m.providerID);
+      if (existing) {
+        existing.count += 1;
+      } else {
+        counts.set(m.providerID, {
+          id: m.providerID,
+          name: m.providerName,
+          count: 1,
+          isCustom: isCustomOrConfiguredProvider(m.providerID),
         });
       }
     }
-    return out;
-  });
-
-  const providerRails = createMemo(() => {
-    const connected = connectedSet();
-    return [...workspace.providers]
-      .filter((p) => Object.keys(p.models || {}).length > 0)
-      .sort((a, b) => {
-        const ca = connected.has(a.id);
-        const cb = connected.has(b.id);
-        if (ca !== cb) return ca ? -1 : 1;
-        return (a.name || a.id).localeCompare(b.name || b.id);
-      });
+    return Array.from(counts.values()).sort((a, b) => {
+      if (a.isCustom !== b.isCustom) return a.isCustom ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
   });
 
   const activeModelInfo = createMemo<FlattenedModel | null>(() => {
@@ -97,45 +97,82 @@ export default function ModelSelector() {
       modelID: sel.modelID,
       modelName: sel.modelID,
       connected: connectedSet().has(sel.providerID),
+      isCustom: isCustomOrConfiguredProvider(sel.providerID),
+      reasoning: false,
+      image: false,
+      toolcall: true,
+      free: false,
     };
   });
 
-  const filteredModels = createMemo(() => {
-    const q = query().trim().toLowerCase();
-    const list = allModels();
+  const filteredModels = createMemo<FlattenedModel[]>(() => {
+    const q = query().trim();
+    const pool = connectedModels();
 
-    // If user is typing a search query, search across all models
     if (q) {
-      return list.filter(
-        (m) =>
-          m.modelID.toLowerCase().includes(q) ||
-          m.modelName.toLowerCase().includes(q) ||
-          m.providerName.toLowerCase().includes(q) ||
-          m.providerID.toLowerCase().includes(q)
-      );
+      return rankModelSearch(pool, q);
     }
 
     const r = rail();
     if (r === "favorites") {
-      return list.filter((m) => isFavoriteModel(m.providerID, m.modelID));
+      return pool.filter((m) => isFavoriteModel(m.providerID, m.modelID));
+    }
+    if (r === "recent") {
+      const out: FlattenedModel[] = [];
+      for (const rm of workspace.recentModels) {
+        const found = pool.find(
+          (m) => m.providerID === rm.providerID && m.modelID === rm.modelID
+        );
+        if (found) out.push(found);
+      }
+      return out;
     }
     if (r === "connected") {
-      const conn = list.filter((m) => m.connected);
-      return conn.length > 0 ? conn : list.slice(0, 40);
+      return [...pool].sort((a, b) => {
+        const aFav = isFavoriteModel(a.providerID, a.modelID);
+        const bFav = isFavoriteModel(b.providerID, b.modelID);
+        if (aFav !== bFav) return aFav ? -1 : 1;
+        if (a.isCustom !== b.isCustom) return a.isCustom ? -1 : 1;
+        return a.providerName.localeCompare(b.providerName);
+      });
     }
-    return list.filter((m) => m.providerID === r);
+    return pool.filter((m) => m.providerID === r);
   });
+
+  const previewTarget = createMemo<FlattenedModel | null>(
+    () => hoveredModel() || filteredModels()[activeIndex()] || activeModelInfo()
+  );
 
   const toggleOpen = () => {
     const next = !open();
     setOpen(next);
     if (next) {
-      if (workspace.favoriteModels.length > 0 && rail() === "connected" && workspace.connectedProviders.length === 0) {
-        setRail("favorites");
-      }
+      setActiveIndex(0);
+      setHoveredModel(null);
       setTimeout(() => searchInputRef?.focus(), 20);
     } else {
       setQuery("");
+    }
+  };
+
+  const handleKeyDown = (e: KeyboardEvent) => {
+    const list = filteredModels();
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      if (list.length > 0) setActiveIndex((i) => (i + 1) % list.length);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      if (list.length > 0) setActiveIndex((i) => (i - 1 + list.length) % list.length);
+    } else if (e.key === "Enter") {
+      const target = list[activeIndex()];
+      if (target) {
+        e.preventDefault();
+        selectModel({ providerID: target.providerID, modelID: target.modelID });
+        setOpen(false);
+      }
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      setOpen(false);
     }
   };
 
@@ -156,7 +193,7 @@ export default function ModelSelector() {
       <button
         type="button"
         onClick={toggleOpen}
-        class="inline-flex items-center gap-1.5 rounded-full border border-[var(--border-subtle)] bg-[var(--bg-inset)] hover:bg-[var(--bg-hover)] hover:border-[var(--border-strong)] px-2.5 py-1 text-[11.5px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-all cursor-pointer max-w-[230px]"
+        class="inline-flex items-center gap-1.5 rounded-full border border-[var(--border-subtle)] bg-[var(--bg-inset)] hover:bg-[var(--bg-hover)] hover:border-[var(--border-strong)] px-2.5 py-1 text-[11.5px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-all cursor-pointer max-w-[250px]"
         title={t("timeline.selectModel")}
       >
         <Show
@@ -178,76 +215,140 @@ export default function ModelSelector() {
 
       {/* Kilo Two-Column Model Selector Popover */}
       <Show when={open()}>
-        <div class="absolute bottom-full left-0 z-40 mb-2 flex h-[340px] w-[460px] flex-col overflow-hidden rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-panel)] shadow-2xl">
+        <div
+          onKeyDown={handleKeyDown}
+          class="absolute bottom-full left-0 z-40 mb-2 flex h-[410px] w-[520px] flex-col overflow-hidden rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-panel)] shadow-2xl"
+        >
           <div class="flex flex-1 min-h-0">
             {/* Left Provider Rail */}
-            <div class="w-[152px] shrink-0 border-r border-[var(--border-subtle)] bg-[var(--bg-elevated)]/40 flex flex-col justify-between p-1.5">
+            <div class="w-[172px] shrink-0 border-r border-[var(--border-subtle)] bg-[var(--bg-elevated)]/40 flex flex-col justify-between p-1.5">
               <div class="overflow-y-auto space-y-0.5 pr-0.5">
                 <button
                   type="button"
-                  onClick={() => setRail("favorites")}
-                  class={`w-full flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[11.5px] transition-colors cursor-pointer ${
-                    rail() === "favorites" && !query()
-                      ? "bg-[var(--accent-surface)] text-[var(--accent-primary)] font-medium"
-                      : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
-                  }`}
-                >
-                  <Star size={12} class="shrink-0 text-amber-500" />
-                  <span class="truncate">{t("models.favorites")}</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setRail("connected")}
-                  class={`w-full flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[11.5px] transition-colors cursor-pointer ${
+                  onClick={() => {
+                    setRail("connected");
+                    setActiveIndex(0);
+                  }}
+                  class={`w-full flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[11.5px] transition-colors cursor-pointer ${
                     rail() === "connected" && !query()
                       ? "bg-[var(--accent-surface)] text-[var(--accent-primary)] font-medium"
                       : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
                   }`}
                 >
-                  <span class="h-1.5 w-1.5 rounded-full bg-[var(--ok)] shrink-0" />
-                  <span class="truncate">{t("models.connected")}</span>
+                  <span class="flex items-center gap-2 truncate">
+                    <span class="h-1.5 w-1.5 rounded-full bg-[var(--ok)] shrink-0" />
+                    <span class="truncate">{t("models.allConnected")}</span>
+                  </span>
+                  <span class="font-mono text-[10px] opacity-70">{connectedModels().length}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRail("favorites");
+                    setActiveIndex(0);
+                  }}
+                  class={`w-full flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[11.5px] transition-colors cursor-pointer ${
+                    rail() === "favorites" && !query()
+                      ? "bg-[var(--accent-surface)] text-[var(--accent-primary)] font-medium"
+                      : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+                  }`}
+                >
+                  <span class="flex items-center gap-2 truncate">
+                    <Star size={12} class="shrink-0 text-amber-500" />
+                    <span class="truncate">{t("models.favorites")}</span>
+                  </span>
+                  <span class="font-mono text-[10px] opacity-70">
+                    {workspace.favoriteModels.length}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRail("recent");
+                    setActiveIndex(0);
+                  }}
+                  class={`w-full flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[11.5px] transition-colors cursor-pointer ${
+                    rail() === "recent" && !query()
+                      ? "bg-[var(--accent-surface)] text-[var(--accent-primary)] font-medium"
+                      : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+                  }`}
+                >
+                  <span class="flex items-center gap-2 truncate">
+                    <Clock size={12} class="shrink-0 text-[var(--text-muted)]" />
+                    <span class="truncate">{t("models.recent")}</span>
+                  </span>
+                  <span class="font-mono text-[10px] opacity-70">
+                    {workspace.recentModels.length}
+                  </span>
                 </button>
 
                 <div class="my-1 border-t border-[var(--border-subtle)]" />
 
-                <For each={providerRails()}>
-                  {(prov) => {
-                    const isConn = () => connectedSet().has(prov.id);
-                    return (
-                      <button
-                        type="button"
-                        onClick={() => setRail(prov.id)}
-                        class={`w-full flex items-center justify-between gap-1.5 rounded-lg px-2.5 py-1.5 text-left text-[11.5px] transition-colors cursor-pointer ${
-                          rail() === prov.id && !query()
-                            ? "bg-[var(--accent-surface)] text-[var(--accent-primary)] font-medium"
-                            : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
-                        }`}
-                      >
-                        <span class="flex items-center gap-1.5 min-w-0 truncate">
-                          <ProviderIcon id={prov.id} class="w-3.5 h-3.5 shrink-0" />
-                          <span class="truncate">{prov.name || prov.id}</span>
-                        </span>
-                        <Show when={isConn()}>
-                          <span class="h-1.5 w-1.5 rounded-full bg-[var(--ok)] shrink-0" />
+                <For each={connectedProviderRails()}>
+                  {(prov) => (
+                    <div
+                      class={`group flex items-center justify-between gap-1 rounded-lg px-2 py-1.5 text-[11.5px] transition-colors cursor-pointer ${
+                        rail() === prov.id && !query()
+                          ? "bg-[var(--accent-surface)] text-[var(--accent-primary)] font-medium"
+                          : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+                      }`}
+                      onClick={() => {
+                        setRail(prov.id);
+                        setActiveIndex(0);
+                      }}
+                    >
+                      <span class="flex items-center gap-1.5 min-w-0 truncate">
+                        <ProviderIcon id={prov.id} class="w-3.5 h-3.5 shrink-0" />
+                        <span class="truncate">{prov.name}</span>
+                      </span>
+                      <span class="flex items-center gap-1 shrink-0">
+                        <Show when={prov.isCustom}>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setOpen(false);
+                              openProviderModal("custom", prov.id);
+                            }}
+                            class="opacity-0 group-hover:opacity-100 rounded p-0.5 hover:bg-[var(--bg-panel)] text-[var(--text-muted)] hover:text-[var(--accent-primary)] cursor-pointer"
+                            title={t("models.editProvider")}
+                          >
+                            <Pencil size={10} />
+                          </button>
                         </Show>
-                      </button>
-                    );
-                  }}
+                        <span class="font-mono text-[10px] opacity-65">{prov.count}</span>
+                      </span>
+                    </div>
+                  )}
                 </For>
               </div>
 
-              <button
-                type="button"
-                onClick={() => {
-                  setOpen(false);
-                  setWorkspace("providerModalOpen", true);
-                }}
-                class="mt-1 w-full inline-flex items-center justify-center gap-1.5 rounded-xl border border-[var(--accent-border)] bg-[var(--accent-surface)] px-2.5 py-1.5 text-[11px] font-medium text-[var(--accent-primary)] hover:opacity-90 transition-opacity cursor-pointer"
-              >
-                <KeyRound size={11} />
-                {t("models.manageKeys")}
-              </button>
+              <div class="mt-1 space-y-1 pt-1 border-t border-[var(--border-subtle)]">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOpen(false);
+                    openProviderModal("custom", null);
+                  }}
+                  class="w-full inline-flex items-center justify-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2 py-1 text-[11px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+                >
+                  <Plus size={11} />
+                  {t("models.tabCustom")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOpen(false);
+                    openProviderModal("providers", null);
+                  }}
+                  class="w-full inline-flex items-center justify-center gap-1.5 rounded-lg border border-[var(--accent-border)] bg-[var(--accent-surface)] px-2 py-1.5 text-[11px] font-medium text-[var(--accent-primary)] hover:opacity-90 transition-opacity cursor-pointer"
+                >
+                  <KeyRound size={11} />
+                  {t("models.manageKeys")}
+                </button>
+              </div>
             </div>
 
             {/* Right Models Search & List */}
@@ -259,7 +360,10 @@ export default function ModelSelector() {
                   type="text"
                   placeholder={t("models.searchModels")}
                   value={query()}
-                  onInput={(e) => setQuery(e.currentTarget.value)}
+                  onInput={(e) => {
+                    setQuery(e.currentTarget.value);
+                    setActiveIndex(0);
+                  }}
                   class="w-full bg-transparent text-[12.5px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none selectable-text"
                 />
               </div>
@@ -274,7 +378,7 @@ export default function ModelSelector() {
                         type="button"
                         onClick={() => {
                           setOpen(false);
-                          setWorkspace("providerModalOpen", true);
+                          openProviderModal("providers", null);
                         }}
                         class="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-strong)] bg-[var(--bg-elevated)] px-3 py-1.5 text-[11.5px] text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer"
                       >
@@ -285,18 +389,24 @@ export default function ModelSelector() {
                   }
                 >
                   <For each={filteredModels()}>
-                    {(item) => {
+                    {(item, idx) => {
                       const isSelected = () =>
                         workspace.selectedModel?.providerID === item.providerID &&
                         workspace.selectedModel?.modelID === item.modelID;
                       const fav = () => isFavoriteModel(item.providerID, item.modelID);
-                      const ctxBadge = () => formatContext(item.contextLimit);
+                      const ctxBadge = () => formatTokenLimit(item.contextLimit);
 
                       return (
                         <div
-                          class={`group flex items-center justify-between gap-2 rounded-xl px-2.5 py-2 transition-colors cursor-pointer ${
+                          onMouseEnter={() => {
+                            setHoveredModel(item);
+                            setActiveIndex(idx());
+                          }}
+                          class={`group flex items-center justify-between gap-2 rounded-xl px-2.5 py-1.5 transition-colors cursor-pointer ${
                             isSelected()
                               ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]"
+                              : activeIndex() === idx()
+                              ? "bg-[var(--bg-hover)] text-[var(--text-primary)]"
                               : "hover:bg-[var(--bg-hover)] text-[var(--text-primary)]"
                           }`}
                           onClick={() => {
@@ -318,7 +428,13 @@ export default function ModelSelector() {
                                   title={t("models.supportsReasoning")}
                                 >
                                   <Sparkles size={9} class="mr-0.5 text-[var(--accent-primary)]" />
-                                  Reason
+                                  {t("models.reasoningCap")}
+                                </span>
+                              </Show>
+                              <Show when={item.image}>
+                                <span class="inline-flex items-center rounded bg-[var(--bg-inset)] px-1 py-[1px] text-[9.5px] font-mono text-[var(--text-muted)]">
+                                  <Image size={9} class="mr-0.5" />
+                                  {t("models.imageCap")}
                                 </span>
                               </Show>
                               <Show when={ctxBadge()}>
@@ -329,9 +445,9 @@ export default function ModelSelector() {
                             </div>
                             <div class="flex items-center gap-1.5 text-[10.5px] text-[var(--text-muted)]">
                               <span class="truncate">{item.providerName}</span>
-                              <Show when={!item.connected}>
-                                <span class="text-[var(--warn-text)]">{t("models.needsApiKey")}</span>
-                              </Show>
+                              <span class="font-mono text-[10px] text-[var(--text-faint)] truncate">
+                                · {item.modelID}
+                              </span>
                             </div>
                           </div>
 
@@ -347,7 +463,6 @@ export default function ModelSelector() {
                                   ? "text-amber-500 opacity-100"
                                   : "text-[var(--text-faint)] opacity-0 group-hover:opacity-100 hover:text-[var(--text-primary)]"
                               }`}
-                              title={fav() ? "Remove from favorites" : "Add to favorites"}
                             >
                               <Star size={12} class={fav() ? "fill-current" : ""} />
                             </button>
@@ -361,6 +476,19 @@ export default function ModelSelector() {
                   </For>
                 </Show>
               </div>
+
+              {/* Kilo Model Preview Details Panel */}
+              <Show when={previewTarget()}>
+                {(model) => (
+                  <ModelPreviewFooter
+                    model={model()}
+                    onEditCustom={(pid) => {
+                      setOpen(false);
+                      openProviderModal("custom", pid);
+                    }}
+                  />
+                )}
+              </Show>
 
               {/* Bottom Reasoning Effort Bar */}
               <div class="flex items-center justify-between border-t border-[var(--border-subtle)] bg-[var(--bg-elevated)]/40 px-3 py-1.5 text-[11px]">

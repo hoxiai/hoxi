@@ -13,4 +13,13 @@ export const approval: ApprovalI18n = {
     "Optional: tell Hoxi what to do differently (Enter to reject)…",
   command: "Command",
   path: "Target Path",
+  questionTitle: "Agent Question",
+  skipQuestionTooltip: "Skip / Dismiss",
+  multiSelect: "Multi-select",
+  customAnswerLabel: "Add custom answer…",
+  customAnswerPlaceholder:
+    "Type additional details or alternative (Enter to submit)…",
+  confirmHint: "Select options and confirm to proceed",
+  skipQuestion: "Skip",
+  submitAnswer: "Submit Answer",
 };

@@ -4,7 +4,7 @@ import { Check, HelpCircle, LoaderCircle, MessageSquarePlus, X } from "lucide-so
 import type { QuestionInfo, QuestionRequest } from "../../services/sse-types";
 import { hoxiAPI } from "../../services/api";
 import { sessionDirectory, setWorkspace } from "../../store/workspace";
-import { locale } from "../../i18n";
+import { locale, t } from "../../i18n";
 
 /**
  * Ported from kilocode QuestionDock.tsx:
@@ -110,7 +110,7 @@ export default function QuestionDock(props: { request: QuestionRequest }) {
         <div class="flex items-center gap-2 min-w-0">
           <HelpCircle size={14} class="text-[var(--accent-primary)] shrink-0" />
           <span class="text-[12px] font-semibold text-[var(--text-primary)] truncate">
-            {locale() === "zh-CN" ? "Agent 需要确认方案细节" : "Agent Question"}
+            {t("approval.questionTitle")}
           </span>
         </div>
 
@@ -146,7 +146,7 @@ export default function QuestionDock(props: { request: QuestionRequest }) {
           onClick={() => void onDismiss()}
           disabled={sending() || rejecting()}
           class="text-[var(--text-muted)] hover:text-[var(--text-primary)] p-0.5 rounded cursor-pointer"
-          title={locale() === "zh-CN" ? "跳过提问" : "Skip / Dismiss"}
+          title={t("approval.skipQuestionTooltip")}
         >
           <X size={13} />
         </button>
@@ -165,7 +165,7 @@ export default function QuestionDock(props: { request: QuestionRequest }) {
                 </p>
                 <Show when={q().multiple}>
                   <span class="shrink-0 text-[10.5px] text-[var(--text-muted)]">
-                    {locale() === "zh-CN" ? "可多选" : "Multi-select"}
+                    {t("approval.multiSelect")}
                   </span>
                 </Show>
               </div>
@@ -228,7 +228,7 @@ export default function QuestionDock(props: { request: QuestionRequest }) {
                     >
                       <MessageSquarePlus size={12} />
                       <span>
-                        {locale() === "zh-CN" ? "输入自定义回答..." : "Add custom answer…"}
+                        {t("approval.customAnswerLabel")}
                       </span>
                     </button>
                   }
@@ -248,11 +248,7 @@ export default function QuestionDock(props: { request: QuestionRequest }) {
                         void onSubmit();
                       }
                     }}
-                    placeholder={
-                      locale() === "zh-CN"
-                        ? "输入补充说明或其它方案 (Enter 提交)..."
-                        : "Type your custom response (Enter to submit)…"
-                    }
+                    placeholder={t("approval.customAnswerPlaceholder")}
                     class="w-full rounded-lg border border-[var(--border-strong)] bg-[var(--bg-panel)] px-2.5 py-1.5 text-[12px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none"
                   />
                 </Show>
@@ -271,9 +267,7 @@ export default function QuestionDock(props: { request: QuestionRequest }) {
         <span class="text-[11px] text-[var(--text-muted)]">
           {questions().length > 1
             ? `${activeTab() + 1} / ${questions().length}`
-            : locale() === "zh-CN"
-              ? "选择后点击确认继续执行"
-              : "Select an option to continue"}
+            : t("approval.confirmHint")}
         </span>
 
         <div class="flex items-center gap-2">
@@ -283,7 +277,7 @@ export default function QuestionDock(props: { request: QuestionRequest }) {
             disabled={sending() || rejecting()}
             class="rounded-lg px-2.5 py-1 text-[11.5px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] disabled:opacity-50 cursor-pointer"
           >
-            {locale() === "zh-CN" ? "跳过" : "Skip"}
+            {t("approval.skipQuestion")}
           </button>
           <button
             type="button"
@@ -294,7 +288,7 @@ export default function QuestionDock(props: { request: QuestionRequest }) {
             <Show when={!sending()} fallback={<LoaderCircle size={12} class="animate-spin" />}>
               <Check size={12} />
             </Show>
-            <span>{locale() === "zh-CN" ? "提交回答" : "Submit Answer"}</span>
+            <span>{t("approval.submitAnswer")}</span>
           </button>
         </div>
       </div>

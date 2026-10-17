@@ -10,7 +10,7 @@ import {
   type SelectedModel,
 } from "../../store/workspace";
 import { ProviderIcon } from "../icons";
-import { locale } from "../../i18n";
+import { t } from "../../i18n";
 
 interface FlatModelOption {
   providerID: string;
@@ -131,14 +131,10 @@ export default function MultiModelArenaModal() {
               </div>
               <div>
                 <h3 class="text-[13.5px] font-semibold text-[var(--text-primary)]">
-                  {locale() === "zh-CN"
-                    ? "多模型 Worktree 赛马场 (Multi-Model Arena)"
-                    : "Multi-Model Worktree Arena"}
+                  {t("models.arenaTitle")}
                 </h3>
                 <p class="text-[11px] text-[var(--text-muted)]">
-                  {locale() === "zh-CN"
-                    ? "为每个选中模型自动创建独立 Git Worktree 沙箱并同时执行同一任务"
-                    : "Spawn isolated Git Worktrees in parallel across up to 4 models"}
+                  {t("models.arenaSubtitle")}
                 </p>
               </div>
             </div>
@@ -156,17 +152,13 @@ export default function MultiModelArenaModal() {
             {/* Prompt Input */}
             <div class="space-y-1.5">
               <label class="text-[11.5px] font-semibold text-[var(--text-secondary)]">
-                {locale() === "zh-CN" ? "1. 输入并行对比任务指令" : "1. Task Prompt"}
+                {t("models.stepPrompt")}
               </label>
               <textarea
                 rows={3}
                 value={prompt()}
                 onInput={(ev) => setPrompt(ev.currentTarget.value)}
-                placeholder={
-                  locale() === "zh-CN"
-                    ? "例如：重构认证中间件并补充单元测试，对比不同模型的实现质量..."
-                    : "e.g., Refactor the auth middleware and add unit tests…"
-                }
+                placeholder={t("models.promptPlaceholder")}
                 class="w-full rounded-xl border border-[var(--border-strong)] bg-[var(--bg-panel)] px-3 py-2 text-[12.5px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none resize-none"
               />
             </div>
@@ -175,15 +167,13 @@ export default function MultiModelArenaModal() {
             <div class="space-y-2">
               <div class="flex items-center justify-between">
                 <label class="text-[11.5px] font-semibold text-[var(--text-secondary)]">
-                  {locale() === "zh-CN"
-                    ? `2. 选择参赛模型 (${selectedKeys().length}/4)`
-                    : `2. Select Competing Models (${selectedKeys().length}/4)`}
+                  {t("models.stepSelectModels", { count: selectedKeys().length })}
                 </label>
                 <input
                   type="text"
                   value={search()}
                   onInput={(ev) => setSearch(ev.currentTarget.value)}
-                  placeholder={locale() === "zh-CN" ? "搜索模型..." : "Filter models…"}
+                  placeholder={t("models.filterModelsPlaceholder")}
                   class="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[11.5px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none w-44"
                 />
               </div>
@@ -237,9 +227,7 @@ export default function MultiModelArenaModal() {
             <div class="flex items-center gap-1.5 text-[11px] text-[var(--text-muted)]">
               <GitBranchPlus size={13} class="text-[var(--accent-primary)]" />
               <span>
-                {locale() === "zh-CN"
-                  ? `将创建 ${selectedKeys().length} 个隔离 Worktree 分支并行运行`
-                  : `Will spawn ${selectedKeys().length} isolated Worktree branches`}
+                {t("models.worktreePlanNotice", { count: selectedKeys().length })}
               </span>
             </div>
 
@@ -249,7 +237,7 @@ export default function MultiModelArenaModal() {
                 onClick={close}
                 class="rounded-lg px-3 py-1.5 text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] cursor-pointer"
               >
-                {locale() === "zh-CN" ? "取消" : "Cancel"}
+                {t("common.cancel")}
               </button>
               <button
                 type="button"
@@ -264,9 +252,7 @@ export default function MultiModelArenaModal() {
                   <Sparkles size={13} />
                 </Show>
                 <span>
-                  {locale() === "zh-CN"
-                    ? `并发启动 (${selectedKeys().length})`
-                    : `Launch Arena (${selectedKeys().length})`}
+                  {t("models.launchArena", { count: selectedKeys().length })}
                 </span>
               </button>
             </div>

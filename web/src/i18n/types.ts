@@ -64,6 +64,9 @@ export interface LeftNavI18n {
   removeProjectConfirm: string;
   activeWorkspaces: string;
   switchProject: string;
+  switchSidebarMode: string;
+  filterPlaceholder: string;
+  deleteSessionTooltip: string;
 }
 
 export interface TimelineI18n {
@@ -98,6 +101,34 @@ export interface TimelineI18n {
   searches: string;
   lists: string;
   thoughts: string;
+  contextTooltip: string;
+  contextWatermark: string;
+  compactAction: string;
+  inputTokens: string;
+  outputTokens: string;
+  reasoningTokens: string;
+  cacheReadTokens: string;
+  sessionCost: string;
+  planPromptText: string;
+  implementPlanSessionTitle: string;
+  worktreePromptTemplate: string;
+  planReadyTitle: string;
+  implementNow: string;
+  worktreeTooltip: string;
+  newWorktree: string;
+  dismiss: string;
+  attachImageTooltip: string;
+  arenaTooltip: string;
+  arenaBtn: string;
+  openInInspectorTooltip: string;
+  removeCommentTooltip: string;
+  copyPromptTooltip: string;
+  forkTooltip: string;
+  forkBtn: string;
+  revertTooltip: string;
+  revertBtn: string;
+  openTerminalTooltip: string;
+  terminalBtn: string;
 }
 
 export interface ToolCardI18n {
@@ -125,6 +156,14 @@ export interface ApprovalI18n {
   rejectFeedbackPlaceholder: string;
   command: string;
   path: string;
+  questionTitle: string;
+  skipQuestionTooltip: string;
+  multiSelect: string;
+  customAnswerLabel: string;
+  customAnswerPlaceholder: string;
+  confirmHint: string;
+  skipQuestion: string;
+  submitAnswer: string;
 }
 
 export interface InspectorTabsI18n {
@@ -149,6 +188,8 @@ export interface InspectorDiffsI18n {
   commentPlaceholder: string;
   addToReview: string;
   noPatch: string;
+  revertFileTooltip: string;
+  revertFileBtn: string;
 }
 
 export interface InspectorMemoryI18n {
@@ -251,6 +292,18 @@ export interface ModelsI18n {
   needsApiKey: string;
   reasoningEffort: string;
   supportsReasoning: string;
+  arenaTitle: string;
+  arenaSubtitle: string;
+  stepPrompt: string;
+  promptPlaceholder: string;
+  stepSelectModels: string;
+  filterModelsPlaceholder: string;
+  worktreePlanNotice: string;
+  launchArena: string;
+  fileEditsHint: string;
+  shellCommandsHint: string;
+  webFetchHint: string;
+  removeMcpTooltip: string;
 }
 
 export interface I18nDictionary {

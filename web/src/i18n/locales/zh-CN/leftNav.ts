@@ -16,4 +16,7 @@ export const leftNav: LeftNavI18n = {
   removeProjectConfirm: "确认从工作区列表中移除该项目文件夹？",
   activeWorkspaces: "活跃工作区",
   switchProject: "切换项目…",
+  switchSidebarMode: "切换侧边栏模式",
+  filterPlaceholder: "筛选项目或会话",
+  deleteSessionTooltip: "删除会话",
 };

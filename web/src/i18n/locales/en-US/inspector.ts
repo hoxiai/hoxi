@@ -24,6 +24,8 @@ export const inspector: InspectorI18n = {
       "Describe what to change on this file/line (Enter to queue)…",
     addToReview: "Add to Review",
     noPatch: "(no patch payload for this file)",
+    revertFileTooltip: "Revert changes to this file",
+    revertFileBtn: "Revert",
   },
   memory: {
     title: "8-Dimension Structured Memory",

@@ -390,7 +390,8 @@ export const hoxiAPI = {
     apiKey?: string;
     providerID?: string;
     headers?: Record<string, string>;
-  }): Promise<{ models?: Array<{ id: string; name: string }>; error?: string; auth?: boolean }> {
+    directory?: string;
+  }): Promise<{ ok?: boolean; models?: Array<{ id: string; name: string }>; error?: string; auth?: boolean }> {
     return requestJSON("/api/hoxi/provider/fetch-models", {
       method: "POST",
       body: JSON.stringify(opts),

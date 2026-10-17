@@ -8,7 +8,7 @@ import {
   sessionDirectory,
   workspace,
 } from "../../store/workspace";
-import { locale } from "../../i18n";
+import { t } from "../../i18n";
 
 function formatCompactNumber(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -112,11 +112,7 @@ export default function ContextProgressPill() {
             type="button"
             onClick={() => setOpen((v) => !v)}
             class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-mono text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
-            title={
-              locale() === "zh-CN"
-                ? "查看上下文 Token 占用与一键压缩"
-                : "Context window usage & 8-Dim Compaction"
-            }
+            title={t("timeline.contextTooltip")}
           >
             {/* Kilo ProgressCircle SVG */}
             <svg width="15" height="15" viewBox="0 0 16 16" class="-rotate-90 shrink-0">
@@ -158,7 +154,7 @@ export default function ContextProgressPill() {
             <div class="absolute bottom-full left-0 mb-2 w-64 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-3 shadow-xl z-40 text-xs space-y-2">
               <div class="flex items-center justify-between font-semibold text-[var(--text-primary)]">
                 <span>
-                  {locale() === "zh-CN" ? "上下文水位" : "Context Window"}
+                  {t("timeline.contextWatermark")}
                 </span>
                 <span class="font-mono text-[11px] text-[var(--accent-primary)]">
                   {formatCompactNumber(s().used)} / {formatCompactNumber(s().limit)} ({s().percent}%)
@@ -167,28 +163,28 @@ export default function ContextProgressPill() {
 
               <div class="space-y-1 border-t border-[var(--border-subtle)] pt-2 font-mono text-[11px] text-[var(--text-secondary)]">
                 <div class="flex justify-between">
-                  <span>Input tokens</span>
+                  <span>{t("timeline.inputTokens")}</span>
                   <span>{s().input.toLocaleString()}</span>
                 </div>
                 <div class="flex justify-between">
-                  <span>Output tokens</span>
+                  <span>{t("timeline.outputTokens")}</span>
                   <span>{s().output.toLocaleString()}</span>
                 </div>
                 <Show when={s().reasoning > 0}>
                   <div class="flex justify-between">
-                    <span>Reasoning</span>
+                    <span>{t("timeline.reasoningTokens")}</span>
                     <span>{s().reasoning.toLocaleString()}</span>
                   </div>
                 </Show>
                 <Show when={s().cacheRead > 0 || s().cacheWrite > 0}>
                   <div class="flex justify-between text-[var(--ok-text)]">
-                    <span>Cache hit (read)</span>
+                    <span>{t("timeline.cacheReadTokens")}</span>
                     <span>{s().cacheRead.toLocaleString()}</span>
                   </div>
                 </Show>
                 <Show when={s().totalCost > 0}>
                   <div class="flex justify-between border-t border-[var(--border-subtle)] pt-1 font-semibold text-[var(--text-primary)]">
-                    <span>Session Cost</span>
+                    <span>{t("timeline.sessionCost")}</span>
                     <span>${s().totalCost.toFixed(4)}</span>
                   </div>
                 </Show>
@@ -207,9 +203,7 @@ export default function ContextProgressPill() {
                   <Minimize2 size={12} />
                 </Show>
                 <span>
-                  {locale() === "zh-CN"
-                    ? "8 维记忆压缩 (/compact)"
-                    : "Compact Session (8-Dim)"}
+                  {t("timeline.compactAction")}
                 </span>
               </button>
             </div>

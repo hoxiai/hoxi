@@ -23,6 +23,8 @@ export const inspector: InspectorI18n = {
     commentPlaceholder: "描述需要在此文件/行修改的内容 (Enter 提交)…",
     addToReview: "加入评审",
     noPatch: "(该文件暂无补丁详情)",
+    revertFileTooltip: "还原该文件的改动 (Revert File)",
+    revertFileBtn: "还原",
   },
   memory: {
     title: "8 维结构化记忆库",

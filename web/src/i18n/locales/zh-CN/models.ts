@@ -64,4 +64,18 @@ export const models: ModelsI18n = {
   needsApiKey: "· 需要 API Key",
   reasoningEffort: "思考深度",
   supportsReasoning: "支持深度思考",
+  arenaTitle: "多模型 Worktree 赛马场 (Multi-Model Arena)",
+  arenaSubtitle:
+    "为同一任务并行拉起多个独立 Git Worktree，让不同模型同时编码并对比 Diff 效果，零分支冲突。",
+  stepPrompt: "1. 任务指令 (Task Prompt)",
+  promptPlaceholder: "输入要让多个模型同时挑战的需求、重构或 Bug 修复指令…",
+  stepSelectModels: "2. 选择 2–4 个参赛模型 (已选 {count}/4)",
+  filterModelsPlaceholder: "筛选模型…",
+  worktreePlanNotice:
+    "每个选中的模型都会自动分配独立 `.hoxi/worktrees/<session-id>` 分支并同时开始执行。",
+  launchArena: "同时启动 {count} 个模型赛马",
+  fileEditsHint: "edit, write, patch, multiedit",
+  shellCommandsHint: "bash (rm/sudo 等高危指令始终会拦截询问)",
+  webFetchHint: "webfetch, websearch",
+  removeMcpTooltip: "移除此 MCP 服务",
 };

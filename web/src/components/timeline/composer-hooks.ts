@@ -1,7 +1,14 @@
 // web/src/components/timeline/composer-hooks.ts
-import { type Accessor, createSignal } from "solid-js";
-import type { PromptAttachment } from "../../services/api";
-import { workspace } from "../../store/workspace";
+import { type Accessor, createEffect, createSignal, type Setter } from "solid-js";
+import { hoxiAPI, type CommandInfo, type PromptAttachment } from "../../services/api";
+import { sessionDirectory, workspace } from "../../store/workspace";
+
+export interface AutocompleteItem {
+  type: "file" | "command" | "context";
+  label: string;
+  detail?: string;
+  insertText: string;
+}
 
 const ACCEPTED_IMAGE_MIMES = new Set([
   "image/png",
@@ -283,3 +290,131 @@ export function expandContextMentions(rawPrompt: string, sessionID: string | nul
   const contextBlock = `\n\n<git_changes_context>\nCurrent session changed files:\n${summary}\n</git_changes_context>`;
   return `${rawPrompt}${contextBlock}`;
 }
+
+/**
+ * Autocomplete hook for @file, @changes, and /command triggers in Composer.
+ */
+export function createComposerAutocomplete(
+  text: Accessor<string>,
+  setText: Setter<string>,
+  sessionID: Accessor<string | null>,
+  onApplied?: () => void
+) {
+  const [suggestions, setSuggestions] = createSignal<AutocompleteItem[]>([]);
+  const [selectedIndex, setSelectedIndex] = createSignal(0);
+  const [triggerMode, setTriggerMode] = createSignal<"file" | "command" | null>(null);
+  const [cachedCommands, setCachedCommands] = createSignal<CommandInfo[] | null>(null);
+
+  createEffect(() => {
+    const val = text();
+    const dir = sessionDirectory(sessionID());
+
+    // 1. Check slash command at start: `/cmd`
+    const cmdMatch = val.match(/^\/([^\s]*)$/);
+    if (cmdMatch) {
+      const query = cmdMatch[1].toLowerCase();
+      setTriggerMode("command");
+      void (async () => {
+        let cmds = cachedCommands();
+        if (!cmds) {
+          try {
+            cmds = await hoxiAPI.listCommands(dir);
+            setCachedCommands(cmds);
+          } catch {
+            cmds = [];
+          }
+        }
+        const filtered = (cmds ?? [])
+          .filter(
+            (c) =>
+              c.name.toLowerCase().includes(query) ||
+              (c.description ?? "").toLowerCase().includes(query)
+          )
+          .slice(0, 8)
+          .map((c) => ({
+            type: "command" as const,
+            label: `/${c.name}`,
+            detail: c.description || "Run command",
+            insertText: `/${c.name} `,
+          }));
+        setSuggestions(filtered);
+        setSelectedIndex(0);
+      })();
+      return;
+    }
+
+    // 2. Check @file or @changes mention at end of input
+    const fileMatch = val.match(/(?:^|\s)@([^\s@]*)$/);
+    if (fileMatch) {
+      const query = fileMatch[1];
+      setTriggerMode("file");
+      const timer = setTimeout(async () => {
+        try {
+          let files: string[] = [];
+          if (query.trim().length > 0) {
+            files = await hoxiAPI.findFiles(query.trim(), dir);
+          } else {
+            const nodes = await hoxiAPI.listFiles("", dir);
+            files = (nodes ?? []).map((n) => n.path);
+          }
+          const contextItems: AutocompleteItem[] = [];
+          if ("changes".includes(query.trim().toLowerCase())) {
+            contextItems.push({
+              type: "context",
+              label: "@changes",
+              detail: "Attach current session git diff summary",
+              insertText: "@changes ",
+            });
+          }
+          setSuggestions([
+            ...contextItems,
+            ...(files ?? []).slice(0, 7).map((f) => ({
+              type: "file" as const,
+              label: f,
+              detail: "Workspace file",
+              insertText: `@${f} `,
+            })),
+          ]);
+          setSelectedIndex(0);
+        } catch {
+          setSuggestions([]);
+        }
+      }, 90);
+      return () => clearTimeout(timer);
+    }
+
+    setTriggerMode(null);
+    setSuggestions([]);
+  });
+
+  const applySuggestion = (item: AutocompleteItem) => {
+    const val = text();
+    if (item.type === "command") {
+      setText(item.insertText);
+    } else {
+      const next = val.replace(/(?:^|\s)@([^\s@]*)$/, (m) => {
+        const prefix = m.startsWith(" ") ? " " : "";
+        return `${prefix}${item.insertText}`;
+      });
+      setText(next);
+    }
+    setTriggerMode(null);
+    setSuggestions([]);
+    onApplied?.();
+  };
+
+  const reset = () => {
+    setTriggerMode(null);
+    setSuggestions([]);
+  };
+
+  return {
+    suggestions,
+    selectedIndex,
+    setSelectedIndex,
+    triggerMode,
+    applySuggestion,
+    reset,
+  };
+}
+

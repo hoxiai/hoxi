@@ -1,5 +1,5 @@
 // web/src/components/timeline/Composer.tsx
-import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
+import { createMemo, createSignal, For, Show } from "solid-js";
 import {
   ArrowUp,
   ClipboardPaste,
@@ -12,7 +12,7 @@ import {
   WandSparkles,
   X,
 } from "lucide-solid";
-import { hoxiAPI, type CommandInfo } from "../../services/api";
+import { hoxiAPI } from "../../services/api";
 import {
   clearReviewComments,
   forkFromMessage,
@@ -28,19 +28,13 @@ import ComposerShelf from "./ComposerShelf";
 import ContextProgressPill from "./ContextProgressPill";
 import ModeSwitcher from "./ModeSwitcher";
 import {
+  createComposerAutocomplete,
   createImageAttachments,
   createPasteCollapse,
   createPromptHistory,
   expandContextMentions,
 } from "./composer-hooks";
-import { locale, t } from "../../i18n";
-
-interface AutocompleteItem {
-  type: "file" | "command" | "context";
-  label: string;
-  detail?: string;
-  insertText: string;
-}
+import { t } from "../../i18n";
 
 export default function Composer() {
   const [text, setText] = createSignal("");
@@ -48,19 +42,23 @@ export default function Composer() {
   const [stopping, setStopping] = createSignal(false);
   const [forking, setForking] = createSignal(false);
 
-  // Autocomplete (@file, @changes, and /command) state
-  const [suggestions, setSuggestions] = createSignal<AutocompleteItem[]>([]);
-  const [selectedIndex, setSelectedIndex] = createSignal(0);
-  const [triggerMode, setTriggerMode] = createSignal<"file" | "command" | null>(null);
-  const [cachedCommands, setCachedCommands] = createSignal<CommandInfo[] | null>(null);
-
   let textareaRef: HTMLTextAreaElement | undefined;
   let fileInputRef: HTMLInputElement | undefined;
 
   const sessionID = () => workspace.activeSessionID;
   const busy = createMemo(() => isSessionBusy(sessionID()));
 
-  // Kilo Composer Hooks: Image attachments, Paste Collapse, Prompt History
+  const adjustHeight = () => {
+    if (!textareaRef) return;
+    textareaRef.style.height = "auto";
+    textareaRef.style.height = `${Math.min(180, Math.max(48, textareaRef.scrollHeight))}px`;
+  };
+
+  // Kilo Composer Hooks: Autocomplete, Image attachments, Paste Collapse, Prompt History
+  const ac = createComposerAutocomplete(text, setText, sessionID, () => {
+    textareaRef?.focus();
+    adjustHeight();
+  });
   const imgAttach = createImageAttachments();
   const pasteCollapse = createPasteCollapse();
   const promptHistory = createPromptHistory(sessionID);
@@ -84,112 +82,6 @@ export default function Composer() {
       imgAttach.images().length > 0 ||
       pasteCollapse.pastes().length > 0) &&
     !sending();
-
-  const adjustHeight = () => {
-    if (!textareaRef) return;
-    textareaRef.style.height = "auto";
-    textareaRef.style.height = `${Math.min(180, Math.max(48, textareaRef.scrollHeight))}px`;
-  };
-
-  // Detect @file / @changes or /command trigger in text
-  createEffect(() => {
-    const val = text();
-    const dir = sessionDirectory(sessionID());
-
-    // 1. Check slash command at start: `/cmd`
-    const cmdMatch = val.match(/^\/([^\s]*)$/);
-    if (cmdMatch) {
-      const query = cmdMatch[1].toLowerCase();
-      setTriggerMode("command");
-      void (async () => {
-        let cmds = cachedCommands();
-        if (!cmds) {
-          try {
-            cmds = await hoxiAPI.listCommands(dir);
-            setCachedCommands(cmds);
-          } catch {
-            cmds = [];
-          }
-        }
-        const filtered = (cmds ?? [])
-          .filter(
-            (c) =>
-              c.name.toLowerCase().includes(query) ||
-              (c.description ?? "").toLowerCase().includes(query)
-          )
-          .slice(0, 8)
-          .map((c) => ({
-            type: "command" as const,
-            label: `/${c.name}`,
-            detail: c.description || "Run command",
-            insertText: `/${c.name} `,
-          }));
-        setSuggestions(filtered);
-        setSelectedIndex(0);
-      })();
-      return;
-    }
-
-    // 2. Check @file or @changes mention at end of input
-    const fileMatch = val.match(/(?:^|\s)@([^\s@]*)$/);
-    if (fileMatch) {
-      const query = fileMatch[1];
-      setTriggerMode("file");
-      const timer = setTimeout(async () => {
-        try {
-          let files: string[] = [];
-          if (query.trim().length > 0) {
-            files = await hoxiAPI.findFiles(query.trim(), dir);
-          } else {
-            const nodes = await hoxiAPI.listFiles("", dir);
-            files = (nodes ?? []).map((n) => n.path);
-          }
-          const contextItems: AutocompleteItem[] = [];
-          if ("changes".includes(query.trim().toLowerCase())) {
-            contextItems.push({
-              type: "context",
-              label: "@changes",
-              detail: "Attach current session git diff summary",
-              insertText: "@changes ",
-            });
-          }
-          setSuggestions([
-            ...contextItems,
-            ...(files ?? []).slice(0, 7).map((f) => ({
-              type: "file" as const,
-              label: f,
-              detail: "Workspace file",
-              insertText: `@${f} `,
-            })),
-          ]);
-          setSelectedIndex(0);
-        } catch {
-          setSuggestions([]);
-        }
-      }, 90);
-      return () => clearTimeout(timer);
-    }
-
-    setTriggerMode(null);
-    setSuggestions([]);
-  });
-
-  const applySuggestion = (item: AutocompleteItem) => {
-    const val = text();
-    if (item.type === "command") {
-      setText(item.insertText);
-    } else {
-      const next = val.replace(/(?:^|\s)@([^\s@]*)$/, (m) => {
-        const prefix = m.startsWith(" ") ? " " : "";
-        return `${prefix}${item.insertText}`;
-      });
-      setText(next);
-    }
-    setTriggerMode(null);
-    setSuggestions([]);
-    textareaRef?.focus();
-    adjustHeight();
-  };
 
   const buildPayloadWithReviews = (): string => {
     const withPastes = pasteCollapse.expandIntoPrompt(text());
@@ -219,8 +111,7 @@ export default function Composer() {
     setText("");
     pasteCollapse.clearPastes();
     imgAttach.clearImages();
-    setTriggerMode(null);
-    setSuggestions([]);
+    ac.reset();
     if (textareaRef) {
       textareaRef.style.height = "48px";
     }
@@ -261,28 +152,27 @@ export default function Composer() {
   };
 
   const onKeyDown = (ev: KeyboardEvent) => {
-    const list = suggestions();
-    if (triggerMode() && list.length > 0) {
+    const list = ac.suggestions();
+    if (ac.triggerMode() && list.length > 0) {
       if (ev.key === "ArrowDown") {
         ev.preventDefault();
-        setSelectedIndex((i) => (i + 1) % list.length);
+        ac.setSelectedIndex((i) => (i + 1) % list.length);
         return;
       }
       if (ev.key === "ArrowUp") {
         ev.preventDefault();
-        setSelectedIndex((i) => (i - 1 + list.length) % list.length);
+        ac.setSelectedIndex((i) => (i - 1 + list.length) % list.length);
         return;
       }
       if (ev.key === "Tab" || (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing)) {
         ev.preventDefault();
-        const chosen = list[selectedIndex()];
-        if (chosen) applySuggestion(chosen);
+        const chosen = list[ac.selectedIndex()];
+        if (chosen) ac.applySuggestion(chosen);
         return;
       }
       if (ev.key === "Escape") {
         ev.preventDefault();
-        setTriggerMode(null);
-        setSuggestions([]);
+        ac.reset();
         return;
       }
     }
@@ -319,23 +209,23 @@ export default function Composer() {
     <div class="shrink-0 w-full px-6 pb-4 pt-1">
       <div class="relative mx-auto w-full max-w-[48rem]">
         {/* Floating @file / @changes / /command Autocomplete Popover */}
-        <Show when={triggerMode() && suggestions().length > 0}>
+        <Show when={ac.triggerMode() && ac.suggestions().length > 0}>
           <div class="absolute bottom-full left-0 mb-2 w-full max-w-[28rem] rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-1.5 shadow-xl z-40">
             <div class="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
-              {triggerMode() === "command" ? "Slash Commands" : "Mention Workspace File or Context"}
+              {ac.triggerMode() === "command" ? "Slash Commands" : "Mention Workspace File or Context"}
             </div>
             <div class="max-h-56 overflow-y-auto space-y-0.5">
-              <For each={suggestions()}>
+              <For each={ac.suggestions()}>
                 {(item, idx) => (
                   <button
                     type="button"
                     class={`w-full flex items-center justify-between gap-3 rounded-lg px-2.5 py-1.5 text-left text-[12.5px] transition-colors cursor-pointer ${
-                      idx() === selectedIndex()
+                      idx() === ac.selectedIndex()
                         ? "bg-[var(--accent-surface)] text-[var(--accent-text)]"
                         : "text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
                     }`}
-                    onMouseEnter={() => setSelectedIndex(idx())}
-                    onClick={() => applySuggestion(item)}
+                    onMouseEnter={() => ac.setSelectedIndex(idx())}
+                    onClick={() => ac.applySuggestion(item)}
                   >
                     <span class="inline-flex items-center gap-2 min-w-0 font-mono truncate">
                       {item.type === "command" || item.type === "context" ? (
@@ -472,11 +362,7 @@ export default function Composer() {
                 type="button"
                 onClick={() => fileInputRef?.click()}
                 class="inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11.5px] font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
-                title={
-                  locale() === "zh-CN"
-                    ? "添加截图或图片 (支持 Cmd+V 直接粘贴)"
-                    : "Attach image (or paste with Cmd+V)"
-                }
+                title={t("timeline.attachImageTooltip")}
               >
                 <ImagePlus size={13} />
               </button>
@@ -485,14 +371,10 @@ export default function Composer() {
                 type="button"
                 onClick={() => setWorkspace("arenaModalOpen", true)}
                 class="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11.5px] font-medium text-[var(--text-muted)] hover:text-[var(--accent-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
-                title={
-                  locale() === "zh-CN"
-                    ? "开启多模型 Worktree 赛马对比 (Multi-Model Arena)"
-                    : "Multi-Model Worktree Arena"
-                }
+                title={t("timeline.arenaTooltip")}
               >
                 <Swords size={12} />
-                <span class="hidden sm:inline">Arena</span>
+                <span class="hidden sm:inline">{t("timeline.arenaBtn")}</span>
               </button>
 
               <Show when={sessionID()}>

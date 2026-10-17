@@ -19,7 +19,7 @@ import {
   PartView,
   SessionRetryCard,
 } from "./message-stream-parts";
-import { t, locale } from "../../i18n";
+import { t } from "../../i18n";
 
 export default function MessageStream() {
   let scroller: HTMLDivElement | undefined;
@@ -48,6 +48,12 @@ export default function MessageStream() {
   });
 
   const projectName = createMemo(() => basename(workspace.rootDir));
+
+  const welcomeTitleParts = createMemo(() => {
+    const full = t("timeline.welcomeQuestion", { project: "\u0000" });
+    const [before = "", after = ""] = full.split("\u0000");
+    return { before, after };
+  });
 
   const quickSuggestions = createMemo(() => [
     t("timeline.welcomePrompt1"),
@@ -183,24 +189,11 @@ export default function MessageStream() {
               </div>
 
               <h1 class="text-[22px] font-medium tracking-tight text-[var(--text-primary)]">
-                <Show
-                  when={locale() === "zh-CN"}
-                  fallback={
-                    <>
-                      What should we work on in{" "}
-                      <span class="border-b border-dotted border-[var(--text-muted)] font-semibold">
-                        {projectName()}
-                      </span>
-                      ?
-                    </>
-                  }
-                >
-                  在{" "}
-                  <span class="border-b border-dotted border-[var(--text-muted)] font-semibold">
-                    {projectName()}
-                  </span>{" "}
-                  中开启何种研发任务？
-                </Show>
+                {welcomeTitleParts().before}
+                <span class="border-b border-dotted border-[var(--text-muted)] font-semibold">
+                  {projectName()}
+                </span>
+                {welcomeTitleParts().after}
               </h1>
               <p class="mt-2 max-w-md text-[13px] text-[var(--text-muted)]">
                 {t("timeline.welcomeSubtitle")}

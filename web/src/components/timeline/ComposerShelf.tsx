@@ -23,6 +23,7 @@ import ApprovalGateCard from "../approval/ApprovalGateCard";
 import QuestionDock from "../approval/QuestionDock";
 import { DiffChanges, FileIcon, Spinner, TextShimmer } from "../icons";
 import PlanFollowupBar from "./PlanFollowupBar";
+import { t } from "../../i18n";
 
 interface TodoItem {
   id?: string;
@@ -183,7 +184,7 @@ export default function ComposerShelf() {
                             type="button"
                             onClick={() => openFileInInspector(item.file)}
                             class="inline-flex items-center gap-1.5 font-mono text-[11px] font-medium text-[var(--accent-text)] hover:underline shrink-0 cursor-pointer"
-                            title="Open file in Inspector"
+                            title={t("timeline.openInInspectorTooltip")}
                           >
                             <FileIcon
                               node={{ path: item.file, type: "file" }}
@@ -204,7 +205,7 @@ export default function ComposerShelf() {
                             if (id) removeReviewComment(id, item.id);
                           }}
                           class="text-[var(--text-muted)] hover:text-[var(--danger-text)] p-0.5 cursor-pointer"
-                          title="Remove comment"
+                          title={t("timeline.removeCommentTooltip")}
                         >
                           <X size={12} />
                         </button>

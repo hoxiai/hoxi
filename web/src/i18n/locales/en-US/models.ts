@@ -65,4 +65,19 @@ export const models: ModelsI18n = {
   needsApiKey: "· Needs API Key",
   reasoningEffort: "Reasoning Effort",
   supportsReasoning: "Supports extended reasoning",
+  arenaTitle: "Multi-Model Worktree Arena",
+  arenaSubtitle:
+    "Spawn isolated Git Worktrees in parallel so multiple models tackle the same task side-by-side without branch collision.",
+  stepPrompt: "1. Task Prompt",
+  promptPlaceholder:
+    "Describe the feature, refactor, or bugfix to benchmark across models…",
+  stepSelectModels: "2. Select 2–4 Competing Models ({count}/4 selected)",
+  filterModelsPlaceholder: "Filter models…",
+  worktreePlanNotice:
+    "Each selected model will get its own isolated `.hoxi/worktrees/<session-id>` branch and run concurrently.",
+  launchArena: "Launch {count}-Model Arena",
+  fileEditsHint: "edit, write, patch, multiedit",
+  shellCommandsHint: "bash (destructive commands like rm/sudo always ask)",
+  webFetchHint: "webfetch, websearch",
+  removeMcpTooltip: "Remove MCP server",
 };

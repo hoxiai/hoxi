@@ -8,7 +8,7 @@ import {
   submitSessionPrompt,
   workspace,
 } from "../../store/workspace";
-import { locale } from "../../i18n";
+import { t } from "../../i18n";
 
 /**
  * Ported from kilocode plan-followup.ts & SuggestBar.tsx:
@@ -67,10 +67,7 @@ export default function PlanFollowupBar() {
     try {
       setWorkspace("dismissedPlanFollowups", info.dismissKey, true);
       setWorkspace("activeMode", "build");
-      const prompt =
-        locale() === "zh-CN"
-          ? "请按照上面制定的方案（Plan），在 Build 模式下逐步完成代码实现并验证。"
-          : "Proceed with implementing the plan above step by step.";
+      const prompt = t("timeline.planPromptText");
       await submitSessionPrompt(prompt, info.sessionID, { agent: "build" });
     } finally {
       setRunningAction(null);
@@ -84,17 +81,13 @@ export default function PlanFollowupBar() {
     try {
       setWorkspace("dismissedPlanFollowups", info.dismissKey, true);
       setWorkspace("activeMode", "build");
-      const title =
-        locale() === "zh-CN" ? "执行方案 (Worktree)" : "Implement Plan (Worktree)";
+      const title = t("timeline.implementPlanSessionTitle");
       const newId = await newIsolatedSession(title);
       const excerpt =
         info.planText.length > 3500
           ? `${info.planText.slice(0, 3500)}\n...(truncated)`
           : info.planText;
-      const prompt =
-        locale() === "zh-CN"
-          ? `请基于以下架构规划方案进行完整代码实现与验证：\n\n${excerpt}`
-          : `Implement the following architectural plan step by step:\n\n${excerpt}`;
+      const prompt = t("timeline.worktreePromptTemplate", { excerpt });
       await submitSessionPrompt(prompt, newId, { agent: "build" });
     } finally {
       setRunningAction(null);
@@ -107,9 +100,7 @@ export default function PlanFollowupBar() {
         <div class="flex items-center gap-2 min-w-0">
           <Sparkles size={13} class="text-[var(--accent-primary)] shrink-0" />
           <span class="font-medium text-[var(--text-primary)] truncate">
-            {locale() === "zh-CN"
-              ? "规划方案已就绪 — 是否立即切换至 Build 模式执行？"
-              : "Plan ready — ready to implement in Build mode?"}
+            {t("timeline.planReadyTitle")}
           </span>
         </div>
 
@@ -126,7 +117,7 @@ export default function PlanFollowupBar() {
             >
               <Play size={11} class="fill-current" />
             </Show>
-            <span>{locale() === "zh-CN" ? "转 Build 执行" : "Implement Now"}</span>
+            <span>{t("timeline.implementNow")}</span>
           </button>
 
           <button
@@ -134,11 +125,7 @@ export default function PlanFollowupBar() {
             disabled={!!runningAction()}
             onClick={() => void implementInNewWorktree()}
             class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-strong)] bg-[var(--bg-panel)] px-2.5 py-1 text-[11px] font-medium text-[var(--text-primary)] hover:bg-[var(--bg-hover)] disabled:opacity-50 transition-colors cursor-pointer"
-            title={
-              locale() === "zh-CN"
-                ? "新建独立 Git Worktree 沙箱执行该计划"
-                : "Create a new isolated Git Worktree to implement this plan"
-            }
+            title={t("timeline.worktreeTooltip")}
           >
             <Show
               when={runningAction() !== "worktree"}
@@ -146,14 +133,14 @@ export default function PlanFollowupBar() {
             >
               <GitBranchPlus size={11} class="text-[var(--accent-primary)]" />
             </Show>
-            <span>{locale() === "zh-CN" ? "新开 Worktree 执行" : "New Worktree"}</span>
+            <span>{t("timeline.newWorktree")}</span>
           </button>
 
           <button
             type="button"
             onClick={dismiss}
             class="p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] rounded cursor-pointer"
-            title="Dismiss"
+            title={t("timeline.dismiss")}
           >
             <X size={12} />
           </button>
