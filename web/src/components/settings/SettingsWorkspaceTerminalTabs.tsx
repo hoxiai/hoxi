@@ -141,9 +141,9 @@ export function WorkspaceGitSettingsTab() {
               closeSettingsModal();
               openProviderModal("models");
             }}
-            class="inline-flex items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] px-2 py-0.5 text-[11px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+            class="inline-flex items-center gap-1.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] px-3 py-1 text-[12.5px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
           >
-            <SlidersHorizontal size={11} />
+            <SlidersHorizontal size={13} />
             {t("settings.configureObserverBtn")}
           </button>
         }
@@ -211,7 +211,7 @@ export function TerminalSafetySettingsTab() {
   };
 
   return (
-    <div class="space-y-5">
+    <div class="space-y-6">
       {/* 1. Terminal Preferences */}
       <SettingGroup
         title={t("settings.sectionTerminalTitle")}
@@ -222,13 +222,13 @@ export function TerminalSafetySettingsTab() {
           label={t("settings.terminalFontSizeLabel")}
           tip={t("settings.terminalFontSizeDesc")}
         >
-          <div class="inline-flex rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] p-0.5">
+          <div class="inline-flex gap-0.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)] p-1">
             <For each={[11, 12, 13, 14, 15, 16]}>
               {(sz) => (
                 <button
                   type="button"
                   onClick={() => updateAppSetting("terminalFontSize", sz)}
-                  class={`rounded-md px-2 py-0.5 font-mono text-[11px] font-medium transition-colors cursor-pointer ${
+                  class={`rounded-lg px-3 py-1 font-mono text-[12.5px] font-medium transition-colors cursor-pointer ${
                     appSettings.terminalFontSize === sz
                       ? "bg-[var(--bg-panel)] text-[var(--accent-primary)] shadow-2xs"
                       : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
@@ -263,9 +263,9 @@ export function TerminalSafetySettingsTab() {
               closeSettingsModal();
               openProviderModal("policy");
             }}
-            class="inline-flex items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] px-2 py-0.5 text-[11px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+            class="inline-flex items-center gap-1.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] px-3 py-1 text-[12.5px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
           >
-            <ShieldCheck size={11} class="text-[var(--accent-primary)]" />
+            <ShieldCheck size={13} class="text-[var(--accent-primary)]" />
             {t("settings.openFullPolicyModalBtn")}
           </button>
         }

@@ -67,7 +67,7 @@ export function SystemRuntimeSettingsTab() {
   };
 
   return (
-    <div class="space-y-5">
+    <div class="space-y-6">
       {/* 1. OpenCode Runtime Diagnostics */}
       <SettingGroup
         title={t("settings.sectionRuntimeTitle")}
@@ -76,17 +76,17 @@ export function SystemRuntimeSettingsTab() {
           <button
             type="button"
             onClick={() => void fetchInfo()}
-            class="rounded-md p-1 text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+            class="rounded-lg p-1.5 text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
             title={t("common.refresh")}
           >
-            <RefreshCw size={12} />
+            <RefreshCw size={14} />
           </button>
         }
       >
         <SettingRow label={t("settings.runtimeStatusLabel")}>
-          <span class="inline-flex items-center gap-1.5 text-[12px] font-medium text-[var(--text-primary)]">
+          <span class="inline-flex items-center gap-2 text-[13.5px] font-medium text-[var(--text-primary)]">
             <span
-              class={`h-2 w-2 rounded-full ${
+              class={`h-2.5 w-2.5 rounded-full ${
                 workspace.connected
                   ? "bg-[var(--ok)]"
                   : "bg-[var(--warn)] animate-pulse"
@@ -94,7 +94,7 @@ export function SystemRuntimeSettingsTab() {
             />
             {workspace.connected ? t("common.ready") : t("common.connecting")}
             <Show when={sysInfo()?.openCodeVersion}>
-              <span class="ml-1 rounded bg-[var(--bg-panel)] px-1.5 py-0.2 font-mono text-[10.5px] text-[var(--text-muted)]">
+              <span class="ml-1 rounded-md bg-[var(--bg-panel)] px-2 py-0.5 font-mono text-[12px] text-[var(--text-muted)]">
                 {sysInfo()?.openCodeVersion}
               </span>
             </Show>
@@ -102,14 +102,14 @@ export function SystemRuntimeSettingsTab() {
         </SettingRow>
 
         <SettingRow label={t("settings.runtimePortLabel")}>
-          <span class="font-mono text-[11.5px] text-[var(--text-secondary)]">
+          <span class="font-mono text-[13px] text-[var(--text-secondary)]">
             127.0.0.1:{sysInfo()?.openCodePort || "—"}
           </span>
         </SettingRow>
 
         <SettingRow label={t("settings.runtimeBinaryLabel")}>
           <span
-            class="max-w-[280px] truncate font-mono text-[11px] text-[var(--text-secondary)] selectable-text"
+            class="max-w-[320px] truncate font-mono text-[12.5px] text-[var(--text-secondary)] selectable-text"
             title={sysInfo()?.openCodeBinPath}
           >
             {sysInfo()?.openCodeBinPath || t("settings.runtimeNotDetected")}
@@ -118,7 +118,7 @@ export function SystemRuntimeSettingsTab() {
 
         <SettingRow label={t("settings.runtimeConfigPathLabel")}>
           <span
-            class="max-w-[280px] truncate font-mono text-[11px] text-[var(--text-secondary)] selectable-text"
+            class="max-w-[320px] truncate font-mono text-[12.5px] text-[var(--text-secondary)] selectable-text"
             title={sysInfo()?.userConfigPath}
           >
             {sysInfo()?.userConfigPath || "~/.hoxi/models.json"}
@@ -126,7 +126,7 @@ export function SystemRuntimeSettingsTab() {
         </SettingRow>
 
         <SettingRow label={t("settings.runtimePlatformLabel")}>
-          <span class="font-mono text-[11px] text-[var(--text-secondary)]">
+          <span class="font-mono text-[12.5px] text-[var(--text-secondary)]">
             {sysInfo()
               ? `${sysInfo()!.os}/${sysInfo()!.arch} (${sysInfo()!.goVersion})`
               : "—"}
@@ -139,14 +139,14 @@ export function SystemRuntimeSettingsTab() {
         title={t("settings.sectionMaintenanceTitle")}
         tip={t("settings.sectionMaintenanceDesc")}
       >
-        <div class="p-3 flex flex-wrap items-center gap-2">
+        <div class="p-4 flex flex-wrap items-center gap-3">
           <button
             type="button"
             disabled={reloading()}
             onClick={() => void onReloadEngine()}
-            class="inline-flex items-center gap-1.5 rounded-lg bg-[var(--accent-primary)] px-3 py-1.5 text-[11.5px] font-medium text-white hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
+            class="inline-flex items-center gap-2 rounded-xl bg-[var(--accent-primary)] px-4 py-2 text-[13px] font-medium text-white hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
           >
-            <Cpu size={12} />
+            <Cpu size={14} />
             {reloading()
               ? t("settings.reloadingEngineBtn")
               : t("settings.reloadEngineBtn")}
@@ -158,34 +158,34 @@ export function SystemRuntimeSettingsTab() {
               closeSettingsModal();
               openProviderModal("providers");
             }}
-            class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] px-3 py-1.5 text-[11.5px] font-medium text-[var(--text-primary)] transition-colors cursor-pointer"
+            class="inline-flex items-center gap-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] px-4 py-2 text-[13px] font-medium text-[var(--text-primary)] transition-colors cursor-pointer"
           >
-            <KeyRound size={12} class="text-[var(--accent-primary)]" />
+            <KeyRound size={14} class="text-[var(--accent-primary)]" />
             {t("settings.manageModelsAndKeysBtn")}
           </button>
 
           <button
             type="button"
             onClick={() => void onClearTelemetry()}
-            class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] px-3 py-1.5 text-[11.5px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+            class="inline-flex items-center gap-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] px-4 py-2 text-[13px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
           >
-            <Activity size={12} />
+            <Activity size={14} />
             {t("settings.resetTelemetryBtn")}
           </button>
 
           <button
             type="button"
             onClick={onResetSettings}
-            class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--danger-border)] bg-[var(--danger-surface)] px-3 py-1.5 text-[11.5px] font-medium text-[var(--danger-text)] hover:opacity-90 transition-opacity cursor-pointer"
+            class="inline-flex items-center gap-2 rounded-xl border border-[var(--danger-border)] bg-[var(--danger-surface)] px-4 py-2 text-[13px] font-medium text-[var(--danger-text)] hover:opacity-90 transition-opacity cursor-pointer"
           >
-            <RotateCcw size={12} />
+            <RotateCcw size={14} />
             {t("settings.resetSettingsBtn")}
           </button>
         </div>
       </SettingGroup>
 
       <Show when={actionToast()}>
-        <div class="rounded-xl border border-[var(--ok-border)] bg-[var(--ok-surface)] px-3 py-2 text-[11.5px] text-[var(--ok-text)]">
+        <div class="rounded-xl border border-[var(--ok-border)] bg-[var(--ok-surface)] px-4 py-2.5 text-[13px] text-[var(--ok-text)]">
           {actionToast()}
         </div>
       </Show>

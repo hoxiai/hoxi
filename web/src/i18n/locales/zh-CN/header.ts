@@ -35,4 +35,6 @@ export const header: HeaderI18n = {
   pruneSandboxesBtn: "一键清理残留 hoxi/* 沙盒分支 ({count})",
   prunedSuccess: "已清理 {count} 个残留沙盒 ✓",
   sandboxBadge: "沙盒",
+  langZh: "简体中文",
+  langEn: "English",
 };

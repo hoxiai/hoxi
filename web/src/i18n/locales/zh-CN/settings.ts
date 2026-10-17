@@ -13,6 +13,8 @@ export const settings: SettingsI18n = {
   // General & Appearance
   sectionLanguageTitle: "界面语言 (Language)",
   sectionLanguageDesc: "选择工作区菜单、工具卡片、状态栏提示及代码质量审计报告的显示语言。",
+  langZhLabel: "简体中文",
+  langEnLabel: "English",
   langZhDesc: "简体中文界面与本地化工程提示",
   langEnDesc: "English interface & developer terminology",
   sectionThemeTitle: "外观主题",

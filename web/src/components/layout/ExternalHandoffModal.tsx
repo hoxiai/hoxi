@@ -3,15 +3,12 @@ import { createEffect, createSignal, For, Show } from "solid-js";
 import {
   ArrowRightLeft,
   Check,
-  FileCode2,
   FolderGit2,
   GitBranch,
-  ListTodo,
   LoaderCircle,
   Search,
   Sparkles,
   Terminal,
-  Wrench,
   X,
 } from "lucide-solid";
 import {
@@ -31,6 +28,9 @@ import {
   workspace,
 } from "../../store/workspace";
 import { shortenPath } from "./left-nav-helpers";
+import ExternalHandoffPreviewPane, {
+  handoffSourceBadgeClass,
+} from "./ExternalHandoffPreviewPane";
 import { t } from "../../i18n";
 
 export default function ExternalHandoffModal() {
@@ -154,12 +154,6 @@ export default function ExternalHandoffModal() {
     }
   };
 
-  const sourceBadgeClass = (source: ExternalToolID) => {
-    if (source === "grok-cli") return "bg-purple-500/15 text-purple-400 border-purple-500/30";
-    if (source === "claude-code") return "bg-amber-500/15 text-amber-400 border-amber-500/30";
-    return "bg-emerald-500/15 text-emerald-400 border-emerald-500/30";
-  };
-
   const formatTime = (ms: number) => {
     if (!ms) return "";
     return new Date(ms).toLocaleString([], {
@@ -251,7 +245,6 @@ export default function ExternalHandoffModal() {
           {/* Filter & Search Toolbar */}
           <div class="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border-subtle)] px-5 py-2.5">
             <div class="flex items-center gap-1.5">
-              {/* Scope toggle */}
               <div class="inline-flex rounded-lg bg-[var(--bg-inset)] p-0.5 text-[11px]">
                 <button
                   type="button"
@@ -277,7 +270,6 @@ export default function ExternalHandoffModal() {
                 </button>
               </div>
 
-              {/* Source filter pills */}
               <div class="inline-flex rounded-lg bg-[var(--bg-inset)] p-0.5 text-[11px]">
                 {(["all", "grok-cli", "claude-code", "codex-cli"] as const).map((src) => (
                   <button
@@ -301,7 +293,6 @@ export default function ExternalHandoffModal() {
               </div>
             </div>
 
-            {/* Search Input */}
             <div class="flex flex-1 max-w-xs items-center gap-1.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-2.5 py-1 text-[12px]">
               <Search size={13} class="text-[var(--text-muted)] shrink-0" />
               <input
@@ -323,9 +314,8 @@ export default function ExternalHandoffModal() {
             </div>
           </Show>
 
-          {/* Main Split View: Left Session List, Right Detail Preview */}
+          {/* Main Split View */}
           <div class="flex flex-1 min-h-0 overflow-hidden">
-            {/* Left List */}
             <div class="w-[360px] shrink-0 border-r border-[var(--border-subtle)] overflow-y-auto p-2.5 space-y-1.5">
               <Show
                 when={!loadingList()}
@@ -360,7 +350,7 @@ export default function ExternalHandoffModal() {
                           <div class="flex items-center justify-between gap-1.5 mb-1">
                             <div class="flex items-center gap-1.5 min-w-0">
                               <span
-                                class={`rounded-md border px-1.5 py-0.2 text-[10px] font-semibold ${sourceBadgeClass(
+                                class={`rounded-md border px-1.5 py-0.2 text-[10px] font-semibold ${handoffSourceBadgeClass(
                                   item.source
                                 )}`}
                               >
@@ -407,195 +397,13 @@ export default function ExternalHandoffModal() {
               </Show>
             </div>
 
-            {/* Right Preview & Handoff Action */}
-            <div class="flex-1 flex flex-col min-w-0 overflow-hidden bg-[var(--bg-canvas)]/40">
-              <Show
-                when={selectedItem()}
-                fallback={
-                  <div class="flex flex-1 items-center justify-center p-8 text-center text-[12.5px] text-[var(--text-muted)]">
-                    {t("leftNav.handoffSelectHint")}
-                  </div>
-                }
-              >
-                {(cur) => (
-                  <>
-                    <div class="flex-1 overflow-y-auto p-5 space-y-4">
-                      {/* Title & Metadata Card */}
-                      <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-4 space-y-2">
-                        <div class="flex items-center justify-between gap-2">
-                          <div class="flex items-center gap-2">
-                            <span
-                              class={`rounded-md border px-2 py-0.5 text-[10.5px] font-semibold ${sourceBadgeClass(
-                                cur().source
-                              )}`}
-                            >
-                              {cur().sourceLabel}
-                            </span>
-                            <Show when={cur().model}>
-                              <span class="rounded bg-[var(--bg-inset)] px-2 py-0.5 font-mono text-[10.5px] text-[var(--text-secondary)]">
-                                {cur().model}
-                              </span>
-                            </Show>
-                            <Show when={detail()?.turns}>
-                              <span class="text-[11px] text-[var(--text-muted)]">
-                                {t("leftNav.handoffTurnsCount", {
-                                  count: detail()?.turns.length || 0,
-                                })}
-                              </span>
-                            </Show>
-                          </div>
-                          <span class="font-mono text-[11px] text-[var(--text-faint)]">
-                            {cur().id.slice(0, 12)}
-                          </span>
-                        </div>
-
-                        <h3 class="text-[15px] font-semibold text-[var(--text-primary)]">
-                          {cur().title}
-                        </h3>
-
-                        <div class="flex flex-wrap items-center gap-3 text-[11.5px] font-mono text-[var(--text-secondary)]">
-                          <span class="inline-flex items-center gap-1">
-                            <FolderGit2 size={12} class="text-[var(--accent-primary)]" />
-                            {cur().cwd}
-                          </span>
-                          <Show when={cur().gitBranch}>
-                            <span class="inline-flex items-center gap-1 rounded bg-[var(--bg-inset)] px-2 py-0.5">
-                              <GitBranch size={11} />
-                              {cur().gitBranch}
-                              <Show when={cur().gitCommit}>
-                                <span class="text-[var(--text-faint)]">({cur().gitCommit})</span>
-                              </Show>
-                            </span>
-                          </Show>
-                        </div>
-
-                        <Show when={cur().summary || detail()?.lastTurnSummary}>
-                          <div class="mt-2 rounded-lg bg-[var(--bg-inset)]/70 p-3 text-[11.5px] leading-relaxed text-[var(--text-secondary)] whitespace-pre-wrap">
-                            <div class="mb-1 text-[10.5px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
-                              {t("leftNav.handoffSummaryTitle")}
-                            </div>
-                            {cur().summary || detail()?.lastTurnSummary}
-                          </div>
-                        </Show>
-                      </div>
-
-                      {/* Plan & Changed Files */}
-                      <Show
-                        when={
-                          (detail()?.planSteps?.length || 0) > 0 ||
-                          (detail()?.changedFiles?.length || 0) > 0
-                        }
-                      >
-                        <div class="grid grid-cols-2 gap-3">
-                          <Show when={(detail()?.planSteps?.length || 0) > 0}>
-                            <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-3.5 space-y-2">
-                              <div class="flex items-center gap-1.5 text-[11px] font-semibold text-[var(--text-secondary)]">
-                                <ListTodo size={13} class="text-[var(--accent-primary)]" />
-                                {t("leftNav.handoffPlanTitle")}
-                              </div>
-                              <div class="space-y-1 max-h-36 overflow-y-auto">
-                                <For each={detail()?.planSteps}>
-                                  {(step) => (
-                                    <div class="flex items-start gap-1.5 text-[11px] text-[var(--text-secondary)]">
-                                      <span class="font-mono text-[10px] text-[var(--text-muted)]">
-                                        [{step.status || "todo"}]
-                                      </span>
-                                      <span class="line-clamp-2">{step.title}</span>
-                                    </div>
-                                  )}
-                                </For>
-                              </div>
-                            </div>
-                          </Show>
-
-                          <Show when={(detail()?.changedFiles?.length || 0) > 0}>
-                            <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-3.5 space-y-2">
-                              <div class="flex items-center gap-1.5 text-[11px] font-semibold text-[var(--text-secondary)]">
-                                <FileCode2 size={13} class="text-[var(--accent-primary)]" />
-                                {t("leftNav.handoffChangedFilesTitle")} (
-                                {detail()?.changedFiles?.length})
-                              </div>
-                              <div class="space-y-1 max-h-36 overflow-y-auto font-mono text-[10.5px] text-[var(--text-secondary)]">
-                                <For each={detail()?.changedFiles}>
-                                  {(f) => <div class="truncate">{shortenPath(f)}</div>}
-                                </For>
-                              </div>
-                            </div>
-                          </Show>
-                        </div>
-                      </Show>
-
-                      {/* Conversation Turns Preview */}
-                      <div class="space-y-2">
-                        <div class="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-muted)] px-1">
-                          {t("leftNav.handoffConversationTitle")}
-                        </div>
-                        <Show
-                          when={!loadingDetail()}
-                          fallback={
-                            <div class="flex items-center justify-center py-10 text-[var(--text-muted)]">
-                              <LoaderCircle size={16} class="animate-spin" />
-                            </div>
-                          }
-                        >
-                          <div class="space-y-2">
-                            <For each={detail()?.turns || []}>
-                              {(turn) => (
-                                <div
-                                  class={`rounded-xl border p-3 text-[12px] ${
-                                    turn.role === "user"
-                                      ? "border-[var(--accent-border)]/40 bg-[var(--accent-surface)]/20"
-                                      : "border-[var(--border-subtle)] bg-[var(--bg-elevated)]"
-                                  }`}
-                                >
-                                  <div class="mb-1 flex items-center justify-between text-[10.5px] font-semibold text-[var(--text-muted)]">
-                                    <span>{turn.role === "user" ? "USER" : "ASSISTANT"}</span>
-                                    <Show when={(turn.tools?.length || 0) > 0}>
-                                      <span class="inline-flex items-center gap-1 font-mono text-[10px] text-[var(--accent-primary)]">
-                                        <Wrench size={10} />
-                                        {turn.tools?.length} tools
-                                      </span>
-                                    </Show>
-                                  </div>
-                                  <Show when={turn.text}>
-                                    <div class="whitespace-pre-wrap break-words text-[var(--text-primary)] line-clamp-6">
-                                      {turn.text}
-                                    </div>
-                                  </Show>
-                                </div>
-                              )}
-                            </For>
-                          </div>
-                        </Show>
-                      </div>
-                    </div>
-
-                    {/* Footer Action Bar */}
-                    <div class="flex items-center justify-between border-t border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-5 py-3">
-                      <div class="text-[11.5px] text-[var(--text-muted)] truncate">
-                        {shortenPath(cur().cwd)}
-                      </div>
-                      <button
-                        type="button"
-                        disabled={importingSession()}
-                        onClick={() => void onTakeOver()}
-                        class="inline-flex items-center gap-2 rounded-xl bg-[var(--accent-primary)] px-4 py-2 text-[12.5px] font-semibold text-white shadow-sm hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
-                      >
-                        <Show
-                          when={!importingSession()}
-                          fallback={<LoaderCircle size={14} class="animate-spin" />}
-                        >
-                          <ArrowRightLeft size={14} />
-                        </Show>
-                        {importingSession()
-                          ? t("leftNav.handoffTakingOver")
-                          : t("leftNav.handoffTakeOverBtn")}
-                      </button>
-                    </div>
-                  </>
-                )}
-              </Show>
-            </div>
+            <ExternalHandoffPreviewPane
+              selectedItem={selectedItem()}
+              detail={detail()}
+              loadingDetail={loadingDetail()}
+              importingSession={importingSession()}
+              onTakeOver={() => void onTakeOver()}
+            />
           </div>
         </div>
       </div>

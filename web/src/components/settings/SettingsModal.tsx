@@ -32,10 +32,10 @@ export function HelpTip(props: { text: string }) {
   return (
     <span class="relative inline-flex items-center group/tip shrink-0">
       <CircleHelp
-        size={13}
+        size={15}
         class="text-[var(--text-faint)] hover:text-[var(--text-secondary)] transition-colors cursor-help"
       />
-      <span class="pointer-events-none invisible opacity-0 group-hover/tip:visible group-hover/tip:opacity-100 transition-all duration-150 absolute left-1/2 -translate-x-1/2 bottom-full mb-2 z-50 w-60 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-panel)] px-3 py-2 text-[11px] font-normal leading-relaxed text-[var(--text-secondary)] shadow-xl">
+      <span class="pointer-events-none invisible opacity-0 group-hover/tip:visible group-hover/tip:opacity-100 transition-all duration-150 absolute left-1/2 -translate-x-1/2 bottom-full mb-2.5 z-50 w-68 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-panel)] px-3.5 py-2.5 text-[12.5px] font-normal leading-relaxed text-[var(--text-secondary)] shadow-xl">
         {props.text}
       </span>
     </span>
@@ -49,12 +49,12 @@ export function SettingGroup(props: {
   children: JSX.Element;
 }) {
   return (
-    <section class="space-y-2">
+    <section class="space-y-2.5">
       <Show when={props.title || props.action}>
         <div class="flex items-center justify-between px-1">
-          <div class="flex items-center gap-1.5">
+          <div class="flex items-center gap-2">
             <Show when={props.title}>
-              <h3 class="text-[11.5px] font-semibold text-[var(--text-secondary)]">
+              <h3 class="text-[13px] font-semibold text-[var(--text-secondary)]">
                 {props.title}
               </h3>
             </Show>
@@ -65,7 +65,7 @@ export function SettingGroup(props: {
           <Show when={props.action}>{props.action}</Show>
         </div>
       </Show>
-      <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)]/35 divide-y divide-[var(--border-subtle)]/60">
+      <div class="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-inset)]/35 divide-y divide-[var(--border-subtle)]/60">
         {props.children}
       </div>
     </section>
@@ -80,19 +80,19 @@ export function SettingRow(props: {
 }) {
   const IconComp = props.icon;
   return (
-    <div class="flex items-center justify-between gap-4 px-3.5 py-2.5">
-      <div class="flex items-center gap-2 min-w-0">
+    <div class="flex items-center justify-between gap-6 px-5 py-4">
+      <div class="flex items-center gap-2.5 min-w-0">
         <Show when={IconComp}>
-          <IconComp size={14} class="text-[var(--text-muted)] shrink-0" />
+          <IconComp size={16} class="text-[var(--text-muted)] shrink-0" />
         </Show>
-        <span class="text-[12.5px] font-medium text-[var(--text-primary)] truncate">
+        <span class="text-[14px] font-medium text-[var(--text-primary)] truncate">
           {props.label}
         </span>
         <Show when={props.tip}>
           <HelpTip text={props.tip!} />
         </Show>
       </div>
-      <div class="flex items-center gap-2 shrink-0">{props.children}</div>
+      <div class="flex items-center gap-2.5 shrink-0">{props.children}</div>
     </div>
   );
 }
@@ -103,7 +103,7 @@ export function SegmentedPills<T extends string>(props: {
   onChange: (val: T) => void;
 }) {
   return (
-    <div class="inline-flex items-center rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] p-0.5">
+    <div class="inline-flex items-center gap-0.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)] p-1">
       <For each={props.options}>
         {(opt) => {
           const IconComp = opt.icon;
@@ -113,14 +113,14 @@ export function SegmentedPills<T extends string>(props: {
               type="button"
               onClick={() => props.onChange(opt.id)}
               title={opt.tip ? opt.tip() : undefined}
-              class={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[11.5px] font-medium transition-all cursor-pointer ${
+              class={`inline-flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-[13px] font-medium transition-all cursor-pointer ${
                 active()
                   ? "bg-[var(--bg-panel)] text-[var(--accent-primary)] shadow-2xs"
                   : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
               }`}
             >
               <Show when={IconComp}>
-                <IconComp size={12} />
+                <IconComp size={14} />
               </Show>
               <span>{opt.label()}</span>
             </button>
@@ -141,13 +141,13 @@ export function ToggleSwitch(props: {
       role="switch"
       aria-checked={props.checked}
       onClick={() => props.onChange(!props.checked)}
-      class={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out ${
+      class={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out ${
         props.checked ? "bg-[var(--accent-primary)]" : "bg-[var(--border-strong)]"
       }`}
     >
       <span
-        class={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-xs transition duration-200 ease-in-out ${
-          props.checked ? "translate-x-4" : "translate-x-0"
+        class={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-xs transition duration-200 ease-in-out ${
+          props.checked ? "translate-x-5" : "translate-x-0"
         }`}
       />
     </button>
@@ -190,39 +190,39 @@ export default function SettingsModal() {
         onClick={closeSettingsModal}
       >
         <div
-          class="flex h-[540px] w-full max-w-[760px] flex-col overflow-hidden rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-panel)] shadow-2xl"
+          class="flex h-[620px] w-full max-w-[860px] flex-col overflow-hidden rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-panel)] shadow-2xl"
           onClick={(e) => e.stopPropagation()}
         >
-          {/* Compact Header */}
-          <div class="flex items-center justify-between border-b border-[var(--border-subtle)] px-4 py-3">
-            <div class="flex items-center gap-2.5 min-w-0">
-              <div class="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-[var(--accent-surface)] text-[var(--accent-primary)]">
-                <Settings size={15} />
+          {/* Header */}
+          <div class="flex items-center justify-between border-b border-[var(--border-subtle)] px-6 py-4">
+            <div class="flex items-center gap-3 min-w-0">
+              <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[var(--accent-surface)] text-[var(--accent-primary)]">
+                <Settings size={17} />
               </div>
-              <h2 class="truncate text-[13.5px] font-semibold text-[var(--text-primary)]">
+              <h2 class="truncate text-[15px] font-semibold text-[var(--text-primary)]">
                 {t("settings.modalTitle")}
               </h2>
               <HelpTip text={t("settings.modalSubtitle")} />
             </div>
 
-            <div class="flex items-center gap-2 shrink-0">
-              <span class="hidden sm:inline-block rounded-md border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-faint)]">
+            <div class="flex items-center gap-2.5 shrink-0">
+              <span class="hidden sm:inline-block rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-2.5 py-1 font-mono text-[11.5px] text-[var(--text-faint)]">
                 {t("settings.shortcutHint")}
               </span>
               <button
                 type="button"
                 onClick={closeSettingsModal}
-                class="rounded-lg p-1 text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+                class="rounded-lg p-1.5 text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
               >
-                <X size={15} />
+                <X size={17} />
               </button>
             </div>
           </div>
 
           {/* Body: Left Category Sidebar + Right Active Pane */}
           <div class="flex flex-1 min-h-0">
-            <nav class="w-44 shrink-0 border-r border-[var(--border-subtle)] bg-[var(--bg-inset)]/35 p-2.5 flex flex-col justify-between">
-              <div class="space-y-0.5">
+            <nav class="w-52 shrink-0 border-r border-[var(--border-subtle)] bg-[var(--bg-inset)]/35 p-3.5 flex flex-col justify-between">
+              <div class="space-y-1">
                 <For each={navItems}>
                   {(item) => {
                     const IconComp = item.icon;
@@ -231,13 +231,13 @@ export default function SettingsModal() {
                       <button
                         type="button"
                         onClick={() => setAppSettings("activeTab", item.id)}
-                        class={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] font-medium transition-colors cursor-pointer ${
+                        class={`flex w-full items-center gap-2.5 rounded-xl px-3.5 py-2.5 text-left text-[13.5px] font-medium transition-colors cursor-pointer ${
                           isActive()
                             ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]"
                             : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
                         }`}
                       >
-                        <IconComp size={13} class="shrink-0" />
+                        <IconComp size={16} class="shrink-0" />
                         <span class="truncate">{item.label()}</span>
                       </button>
                     );
@@ -246,21 +246,21 @@ export default function SettingsModal() {
               </div>
 
               {/* Bottom shortcut to Models & Providers Modal */}
-              <div class="border-t border-[var(--border-subtle)] pt-2">
+              <div class="border-t border-[var(--border-subtle)] pt-3">
                 <button
                   type="button"
                   onClick={() => {
                     closeSettingsModal();
                     openProviderModal("providers");
                   }}
-                  class="flex w-full items-center justify-between gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] px-2.5 py-1.5 text-left text-[11.5px] font-medium text-[var(--text-primary)] transition-colors cursor-pointer shadow-2xs"
+                  class="flex w-full items-center justify-between gap-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] px-3.5 py-2.5 text-left text-[13px] font-medium text-[var(--text-primary)] transition-colors cursor-pointer shadow-2xs"
                 >
-                  <span class="inline-flex items-center gap-1.5 truncate">
-                    <KeyRound size={12} class="text-[var(--accent-primary)] shrink-0" />
+                  <span class="inline-flex items-center gap-2 truncate">
+                    <KeyRound size={14} class="text-[var(--accent-primary)] shrink-0" />
                     <span class="truncate">{t("settings.manageModelsAndKeysBtn")}</span>
                   </span>
                   <Show when={workspace.connectedProviders.length > 0}>
-                    <span class="rounded-full bg-[var(--accent-surface)] px-1.5 py-0.2 font-mono text-[9.5px] text-[var(--accent-text)]">
+                    <span class="rounded-full bg-[var(--accent-surface)] px-2 py-0.5 font-mono text-[11px] text-[var(--accent-text)]">
                       {workspace.connectedProviders.length}
                     </span>
                   </Show>
@@ -268,7 +268,7 @@ export default function SettingsModal() {
               </div>
             </nav>
 
-            <div class="flex-1 overflow-y-auto p-5">
+            <div class="flex-1 overflow-y-auto p-7">
               <Show when={appSettings.activeTab === "general"}>
                 <GeneralAppearanceTab />
               </Show>

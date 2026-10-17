@@ -31,7 +31,7 @@ import {
 
 export function GeneralAppearanceTab() {
   return (
-    <div class="space-y-5">
+    <div class="space-y-6">
       {/* 1. Appearance & Language Group */}
       <SettingGroup>
         <SettingRow
@@ -44,12 +44,12 @@ export function GeneralAppearanceTab() {
             options={[
               {
                 id: "zh-CN",
-                label: () => t("header.langZh"),
+                label: () => t("settings.langZhLabel"),
                 tip: () => t("settings.langZhDesc"),
               },
               {
                 id: "en-US",
-                label: () => t("header.langEn"),
+                label: () => t("settings.langEnLabel"),
                 tip: () => t("settings.langEnDesc"),
               },
             ]}
@@ -119,7 +119,7 @@ export function GeneralAppearanceTab() {
             onInput={(ev) =>
               updateAppSetting("userDisplayName", ev.currentTarget.value)
             }
-            class="w-56 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[12px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none focus:border-[var(--accent-primary)]"
+            class="w-64 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-3.5 py-2 text-[13.5px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none focus:border-[var(--accent-primary)]"
           />
         </SettingRow>
 
@@ -131,7 +131,7 @@ export function GeneralAppearanceTab() {
               email: appSettings.detectedGitUserEmail || "you@example.com",
             })}
             onInput={(ev) => updateAppSetting("userEmail", ev.currentTarget.value)}
-            class="w-56 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 font-mono text-[11.5px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none focus:border-[var(--accent-primary)]"
+            class="w-64 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-3.5 py-2 font-mono text-[13px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none focus:border-[var(--accent-primary)]"
           />
         </SettingRow>
       </SettingGroup>
@@ -156,7 +156,7 @@ export function ChatComposerTab() {
   };
 
   return (
-    <div class="space-y-5">
+    <div class="space-y-6">
       {/* 1. Composer & Stream Preferences */}
       <SettingGroup>
         <SettingRow
@@ -239,7 +239,7 @@ export function ChatComposerTab() {
           <button
             type="button"
             onClick={testDesktopNotification}
-            class="rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2 py-0.5 text-[11px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+            class="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-3 py-1 text-[12.5px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
           >
             Test
           </button>
@@ -251,9 +251,9 @@ export function ChatComposerTab() {
       </SettingGroup>
 
       {/* 2. Global Custom Instructions */}
-      <section class="space-y-1.5">
-        <div class="flex items-center gap-1.5 px-1">
-          <h3 class="text-[11.5px] font-semibold text-[var(--text-secondary)]">
+      <section class="space-y-2">
+        <div class="flex items-center gap-2 px-1">
+          <h3 class="text-[13px] font-semibold text-[var(--text-secondary)]">
             {t("settings.sectionCustomInstructionsTitle")}
           </h3>
           <HelpTip text={t("settings.sectionCustomInstructionsDesc")} />
@@ -265,7 +265,7 @@ export function ChatComposerTab() {
           onInput={(ev) =>
             updateAppSetting("customSystemPrompt", ev.currentTarget.value)
           }
-          class="w-full rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)]/35 p-3 font-mono text-[11.5px] leading-relaxed text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none focus:border-[var(--accent-primary)] resize-y"
+          class="w-full rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-inset)]/35 p-4 font-mono text-[13px] leading-relaxed text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none focus:border-[var(--accent-primary)] resize-y"
         />
       </section>
     </div>

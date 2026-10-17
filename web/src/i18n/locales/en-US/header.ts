@@ -35,4 +35,6 @@ export const header: HeaderI18n = {
   pruneSandboxesBtn: "Clean up stale hoxi/* sandboxes ({count})",
   prunedSuccess: "Cleaned {count} sandbox branches ✓",
   sandboxBadge: "Sandbox",
+  langZh: "简体中文",
+  langEn: "English",
 };

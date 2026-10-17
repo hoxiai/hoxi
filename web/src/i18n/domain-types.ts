@@ -56,6 +56,8 @@ export interface HeaderI18n {
   pruneSandboxesBtn: string;
   prunedSuccess: string;
   sandboxBadge: string;
+  langZh: string;
+  langEn: string;
 }
 
 export interface LeftNavI18n {

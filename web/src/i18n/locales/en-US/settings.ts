@@ -13,6 +13,8 @@ export const settings: SettingsI18n = {
   // General & Appearance
   sectionLanguageTitle: "Interface Language",
   sectionLanguageDesc: "Choose the display language for menus, status cards, and code audit reports.",
+  langZhLabel: "简体中文",
+  langEnLabel: "English",
   langZhDesc: "Simplified Chinese interface & localized prompts",
   langEnDesc: "English interface & developer terminology",
   sectionThemeTitle: "Color Theme",
