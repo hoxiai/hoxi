@@ -18,4 +18,5 @@ export const toolCard: ToolCardI18n = {
   error: "Error",
   inlineChangePreview: "Inline Change Preview",
   openInDiffInspector: "Open in Diff Inspector",
+  revertTooltip: "Revert file & conversation to before this edit",
 };

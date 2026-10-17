@@ -1,11 +1,14 @@
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 import {
+  Check,
   ChevronDown,
   ChevronRight,
   ExternalLink,
+  GitCommitHorizontal,
   MessageSquarePlus,
   RefreshCw,
   RotateCcw,
+  Sparkles,
 } from "lucide-solid";
 import { DIFFS_TAG_NAME, FileDiff, getSingularPatch } from "@pierre/diffs";
 import { hoxiAPI } from "../../services/api";
@@ -14,11 +17,65 @@ import {
   addReviewComment,
   loadSessionMessages,
   openFileInInspector,
+  refreshWorktreeStatus,
   workspace,
 } from "../../store/workspace";
-import type { SnapshotFileDiff } from "../../services/sse-types";
+import type { MessagePart, SnapshotFileDiff } from "../../services/sse-types";
 import { DiffChanges, FileIcon } from "../icons";
-import { locale, t } from "../../i18n";
+import { t } from "../../i18n";
+
+function synthesizeAICommitMessage(
+  sessionID: string | null | undefined,
+  diffs: SnapshotFileDiff[]
+): string {
+  const files = diffs.map((d) => d.file);
+  const topDirs = Array.from(
+    new Set(
+      files.map((f) => {
+        const parts = f.split("/").filter(Boolean);
+        return parts.length > 1 ? parts[parts.length - 2] : parts[0]?.replace(/\.[^.]+$/, "") || "core";
+      })
+    )
+  ).slice(0, 2);
+  const scope = topDirs.join(",") || "workspace";
+
+  // Inspect session title or latest user prompt for intent
+  const session = workspace.sessions.find((s) => s.id === sessionID);
+  const turns = sessionID ? workspace.messagesBySession[sessionID] ?? [] : [];
+  let rawIntent = session?.title || "";
+  if (!rawIntent || rawIntent === "New Session" || rawIntent.startsWith("Session")) {
+    for (let i = turns.length - 1; i >= 0; i--) {
+      if (turns[i].info.role === "user") {
+        const textPart = turns[i].parts.find(
+          (p): p is Extract<MessagePart, { type: "text" }> => p.type === "text"
+        );
+        if (textPart?.text) {
+          rawIntent = textPart.text.split("\n")[0].trim();
+          break;
+        }
+      }
+    }
+  }
+
+  const lower = rawIntent.toLowerCase();
+  let prefix = "feat";
+  if (/\b(fix|bug|error|issue|crash|repair)\b/.test(lower)) prefix = "fix";
+  else if (/\b(refactor|clean|split|modular)\b/.test(lower)) prefix = "refactor";
+  else if (/\b(doc|readme|agents\.md)\b/.test(lower)) prefix = "docs";
+  else if (/\b(test|spec)\b/.test(lower)) prefix = "test";
+
+  const cleanSummary = rawIntent
+    ? rawIntent
+        .replace(/^(please\s+|can you\s+|help me\s+)/i, "")
+        .replace(/[.!?]+$/, "")
+        .slice(0, 64)
+        .trim()
+    : `update ${files.slice(0, 2).map((f) => f.split("/").pop()).join(", ")}${
+        files.length > 2 ? ` and ${files.length - 2} more` : ""
+      }`;
+
+  return `${prefix}(${scope}): ${cleanSummary}`;
+}
 
 /**
  * Renders a single unified/split code diff using the @pierre/diffs vanilla
@@ -253,6 +310,9 @@ function DiffCard(props: { diff: SnapshotFileDiff; diffStyle: "unified" | "split
 export default function PierreDiffViewer() {
   const [diffStyle, setDiffStyle] = createSignal<"unified" | "split">("unified");
   const [refreshing, setRefreshing] = createSignal(false);
+  const [commitMsg, setCommitMsg] = createSignal("");
+  const [committing, setCommitting] = createSignal(false);
+  const [committedHash, setCommittedHash] = createSignal<string | null>(null);
 
   const diffs = createMemo(() => {
     const id = workspace.activeSessionID;
@@ -279,6 +339,30 @@ export default function PierreDiffViewer() {
       console.error(err);
     } finally {
       setRefreshing(false);
+    }
+  };
+
+  const onGenerateAICommit = () => {
+    const generated = synthesizeAICommitMessage(workspace.activeSessionID, diffs());
+    setCommitMsg(generated);
+  };
+
+  const onCommitWorktree = async () => {
+    const id = workspace.activeSessionID;
+    const msg = commitMsg().trim();
+    if (!id || !msg || committing()) return;
+    setCommitting(true);
+    try {
+      const res = await hoxiAPI.commitWorktree(id, msg);
+      setCommitMsg("");
+      setCommittedHash(res.commit || "HEAD");
+      setTimeout(() => setCommittedHash(null), 4000);
+      await refreshWorktreeStatus(id);
+      await loadSessionMessages(id);
+    } catch (err) {
+      console.error("commitWorktree failed:", err);
+    } finally {
+      setCommitting(false);
     }
   };
 
@@ -328,6 +412,55 @@ export default function PierreDiffViewer() {
           </button>
         </div>
       </div>
+
+      {/* Kilo AI Commit Message Generator & Worktree Commit Bar */}
+      <Show when={diffs().length > 0 || committedHash()}>
+        <div class="shrink-0 flex items-center gap-1.5 px-2.5 py-2 border-b border-[var(--border-subtle)] bg-[var(--bg-inset)]/60">
+          <input
+            type="text"
+            value={commitMsg()}
+            onInput={(ev) => setCommitMsg(ev.currentTarget.value)}
+            onKeyDown={(ev) => {
+              if (ev.key === "Enter" && !ev.isComposing) {
+                ev.preventDefault();
+                void onCommitWorktree();
+              }
+            }}
+            placeholder={t("inspector.diffs.commitPlaceholder")}
+            class="flex-1 min-w-0 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[11.5px] font-mono text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none focus:border-[var(--accent-border)]"
+          />
+          <button
+            type="button"
+            onClick={onGenerateAICommit}
+            class="shrink-0 inline-flex items-center gap-1 rounded-lg border border-[var(--violet-border)] bg-[var(--violet-surface)] px-2 py-1 text-[11px] font-medium text-[var(--violet-text)] hover:opacity-90 transition-opacity cursor-pointer"
+            title={t("inspector.diffs.generateCommitTooltip")}
+          >
+            <Sparkles size={11} />
+            <span>{t("inspector.diffs.generateCommitBtn")}</span>
+          </button>
+          <button
+            type="button"
+            disabled={!commitMsg().trim() || committing()}
+            onClick={() => void onCommitWorktree()}
+            class="shrink-0 inline-flex items-center gap-1 rounded-lg bg-[var(--accent-primary)] px-2.5 py-1 text-[11px] font-semibold text-white hover:opacity-90 disabled:opacity-40 transition-opacity cursor-pointer"
+          >
+            <GitCommitHorizontal size={12} />
+            <span>
+              {committing()
+                ? t("inspector.diffs.committing")
+                : t("inspector.diffs.commitBtn", { count: diffs().length })}
+            </span>
+          </button>
+        </div>
+        <Show when={committedHash()}>
+          {(hash) => (
+            <div class="shrink-0 flex items-center gap-1.5 px-3 py-1 bg-[var(--ok-surface)] text-[11px] font-mono text-[var(--ok-text)] border-b border-[var(--ok-border)]">
+              <Check size={11} />
+              <span>{t("inspector.diffs.commitSuccess", { hash: hash() })}</span>
+            </div>
+          )}
+        </Show>
+      </Show>
 
       <div class="flex-1 min-h-0 overflow-y-auto px-2.5 py-2.5 space-y-2.5">
         <Show

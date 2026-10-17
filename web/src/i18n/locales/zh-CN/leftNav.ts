@@ -21,4 +21,6 @@ export const leftNav: LeftNavI18n = {
   deleteSessionTooltip: "删除会话",
   renameSessionTooltip: "重命名会话 (或双击标题)",
   renamePlaceholder: "输入会话标题…",
+  accountAndProviders: "账户与服务商",
+  settingsAndProviders: "设置与服务商",
 };

@@ -163,6 +163,47 @@ export async function applySessionWorktree(
   await hoxiAPI.applyWorktree(sessionID, mode);
 }
 
+export async function refreshWorktreeStatus(sessionID: string): Promise<void> {
+  try {
+    const st = await hoxiAPI.getWorktreeStatus(sessionID);
+    if (st.isolated && st.directory) {
+      setWorkspace("worktreeBySession", (prev) => ({
+        ...prev,
+        [sessionID]: {
+          sessionID,
+          isolated: true,
+          directory: st.directory,
+          branch: st.branch,
+          baseCommit: st.baseCommit,
+          createdAt: prev[sessionID]?.createdAt || new Date().toISOString(),
+        },
+      }));
+    }
+  } catch (err) {
+    console.error("refresh worktree status failed:", err);
+  }
+}
+
+export async function renameSessionTitle(sessionID: string, title: string): Promise<void> {
+  const cleaned = title.trim();
+  if (!cleaned) return;
+  // Optimistically update local session title
+  setWorkspace(
+    "sessions",
+    (s) => s.id === sessionID,
+    "title",
+    cleaned
+  );
+  try {
+    const updated = await hoxiAPI.renameSession(sessionID, cleaned, sessionDirectory(sessionID));
+    if (updated?.id) {
+      replaceSession(updated);
+    }
+  } catch (err) {
+    console.error("rename session failed:", err);
+  }
+}
+
 export async function discardSession(sessionID: string, force = false): Promise<void> {
   try {
     await hoxiAPI.removeWorktree(sessionID, force);

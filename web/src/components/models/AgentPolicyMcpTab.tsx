@@ -1,6 +1,7 @@
 import { createSignal, For, onMount, Show } from "solid-js";
-import { Check, Cpu, Plus, Trash2 } from "lucide-solid";
+import { Bot, Check, Cpu, Plus, Trash2 } from "lucide-solid";
 import { hoxiAPI } from "../../services/api";
+import { loadAgents, workspace } from "../../store/workspace";
 import { t } from "../../i18n";
 
 type PermMode = "ask" | "allow" | "deny";
@@ -13,6 +14,10 @@ export default function AgentPolicyMcpTab() {
   const [mcpName, setMcpName] = createSignal("");
   const [mcpType, setMcpType] = createSignal<"local" | "remote">("local");
   const [mcpTarget, setMcpTarget] = createSignal("");
+  const [customAgents, setCustomAgents] = createSignal<Record<string, any>>({});
+  const [agentId, setAgentId] = createSignal("");
+  const [agentDesc, setAgentDesc] = createSignal("");
+  const [agentPrompt, setAgentPrompt] = createSignal("");
   const [saving, setSaving] = createSignal(false);
   const [feedback, setFeedback] = createSignal<{ ok: boolean; text: string } | null>(null);
 
@@ -31,6 +36,15 @@ export default function AgentPolicyMcpTab() {
       }
       if (cfg?.mcp && typeof cfg.mcp === "object") {
         setMcpServers(cfg.mcp);
+      }
+      if (cfg?.agent && typeof cfg.agent === "object") {
+        const filtered: Record<string, any> = {};
+        for (const [k, v] of Object.entries(cfg.agent)) {
+          if (k !== "build" && k !== "plan" && v && typeof v === "object" && (v as any).prompt) {
+            filtered[k] = v;
+          }
+        }
+        setCustomAgents(filtered);
       }
     } catch {
       /* ignore */
@@ -96,6 +110,62 @@ export default function AgentPolicyMcpTab() {
       setFeedback({ ok: true, text: t("models.mcpRemoved", { id }) });
     } catch (err: any) {
       setFeedback({ ok: false, text: err?.message || t("models.mcpRemoveFailed") });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const onAddCustomAgent = async (ev: Event) => {
+    ev.preventDefault();
+    const id = agentId()
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]/g, "-");
+    const prompt = agentPrompt().trim();
+    if (!id || id === "build" || id === "plan" || !prompt || saving()) return;
+    setSaving(true);
+    setFeedback(null);
+    try {
+      const cfg = await hoxiAPI.getGlobalConfig();
+      const existing = cfg?.agent?.[id] ?? {};
+      const entry = {
+        ...existing,
+        mode: "primary",
+        description: agentDesc().trim() || `Custom ${id} mode`,
+        prompt,
+      };
+      const nextAgent = { ...(cfg?.agent ?? {}), [id]: entry };
+      await hoxiAPI.updateGlobalConfig({ ...cfg, agent: nextAgent });
+      setCustomAgents((prev) => ({ ...prev, [id]: entry }));
+      setAgentId("");
+      setAgentDesc("");
+      setAgentPrompt("");
+      await loadAgents(workspace.rootDir || undefined);
+      setFeedback({ ok: true, text: t("models.agentSaved", { id }) });
+    } catch (err: any) {
+      setFeedback({ ok: false, text: err?.message || t("models.agentSaveFailed") });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const onRemoveCustomAgent = async (id: string) => {
+    if (saving()) return;
+    setSaving(true);
+    try {
+      const cfg = await hoxiAPI.getGlobalConfig();
+      const nextAgent = { ...(cfg?.agent ?? {}) };
+      delete nextAgent[id];
+      await hoxiAPI.updateGlobalConfig({ ...cfg, agent: nextAgent });
+      setCustomAgents((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      await loadAgents(workspace.rootDir || undefined);
+      setFeedback({ ok: true, text: t("models.agentRemoved", { id }) });
+    } catch (err: any) {
+      setFeedback({ ok: false, text: err?.message || t("models.agentSaveFailed") });
     } finally {
       setSaving(false);
     }
@@ -277,6 +347,87 @@ export default function AgentPolicyMcpTab() {
                     onClick={() => void onRemoveMcpServer(id)}
                     class="text-[var(--text-muted)] hover:text-[var(--danger-text)] p-1 cursor-pointer"
                     title={t("models.removeMcpTooltip")}
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              )}
+            </For>
+          </Show>
+        </div>
+      </div>
+
+      {/* Section 3: Custom Agent Modes (Kilo Custom Modes) */}
+      <div class="border-t border-[var(--border-subtle)] pt-5 space-y-3">
+        <div>
+          <h3 class="text-[13.5px] font-semibold text-[var(--text-primary)]">
+            {t("models.customAgentsTitle")}
+          </h3>
+          <p class="text-[11.5px] text-[var(--text-muted)]">
+            {t("models.customAgentsSubtitle")}
+          </p>
+        </div>
+
+        <form onSubmit={onAddCustomAgent} class="space-y-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)] p-3">
+          <div class="flex items-center gap-2">
+            <input
+              type="text"
+              placeholder={t("models.agentIdPlaceholder")}
+              value={agentId()}
+              onInput={(e) => setAgentId(e.currentTarget.value)}
+              class="w-40 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] px-3 py-1.5 font-mono text-[12px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]"
+            />
+            <input
+              type="text"
+              placeholder={t("models.agentDescPlaceholder")}
+              value={agentDesc()}
+              onInput={(e) => setAgentDesc(e.currentTarget.value)}
+              class="flex-1 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] px-3 py-1.5 text-[12px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]"
+            />
+            <button
+              type="submit"
+              disabled={saving() || !agentId().trim() || !agentPrompt().trim()}
+              class="inline-flex items-center gap-1 rounded-xl bg-[var(--accent-primary)] px-3.5 py-1.5 text-[12px] font-medium text-white disabled:opacity-40 cursor-pointer"
+            >
+              <Plus size={13} />
+              {t("models.addAgentMode")}
+            </button>
+          </div>
+          <textarea
+            rows={2}
+            placeholder={t("models.agentPromptPlaceholder")}
+            value={agentPrompt()}
+            onInput={(e) => setAgentPrompt(e.currentTarget.value)}
+            class="w-full rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] px-3 py-2 text-[12px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none focus:border-[var(--accent-primary)] resize-y"
+          />
+        </form>
+
+        <div class="space-y-1.5">
+          <Show
+            when={Object.keys(customAgents()).length > 0}
+            fallback={
+              <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-3.5 py-3 text-[12px] text-[var(--text-muted)]">
+                {t("models.noCustomAgents")}
+              </div>
+            }
+          >
+            <For each={Object.entries(customAgents())}>
+              {([id, ag]) => (
+                <div class="flex items-center justify-between gap-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-3.5 py-2">
+                  <div class="flex items-center gap-2.5 min-w-0 flex-1">
+                    <Bot size={14} class="text-[var(--violet-text)] shrink-0" />
+                    <span class="font-mono text-[12px] font-semibold text-[var(--text-primary)] capitalize">
+                      {id}
+                    </span>
+                    <span class="truncate text-[11.5px] text-[var(--text-muted)]">
+                      {ag?.description || ag?.prompt}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void onRemoveCustomAgent(id)}
+                    class="text-[var(--text-muted)] hover:text-[var(--danger-text)] p-1 cursor-pointer"
+                    title={t("models.removeAgentTooltip")}
                   >
                     <Trash2 size={13} />
                   </button>

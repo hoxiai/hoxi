@@ -121,6 +121,7 @@ func (g *desktopGateway) registerRoutes(distFS fs.FS) {
 	})
 
 	g.mux.HandleFunc("/api/hoxi/provider/fetch-models", g.handleFetchProviderModels)
+	g.mux.HandleFunc("/api/hoxi/provider/test-model", g.handleTestProviderModel)
 
 	g.worktrees.registerRoutes(g.mux)
 

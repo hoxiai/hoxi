@@ -314,7 +314,7 @@ export function expandContextMentions(rawPrompt: string, sessionID: string | nul
 
   for (const match of rawPrompt.matchAll(/@worktree:([a-zA-Z0-9_-]+)/g)) {
     const refID = match[1];
-    const wt = workspace.worktreesBySession[refID];
+    const wt = workspace.worktreeBySession[refID];
     const diffs = workspace.diffsBySession[refID] ?? [];
     if (wt) {
       const diffLines = diffs
@@ -322,7 +322,7 @@ export function expandContextMentions(rawPrompt: string, sessionID: string | nul
         .map((d) => `- \`${d.file}\` (+${d.additions} -${d.deletions})`)
         .join("\n");
       blocks.push(
-        `<worktree_context session="${refID}" branch="${wt.branch}" path="${wt.worktreePath}">\n${diffLines || "Isolated worktree branch"}\n</worktree_context>`
+        `<worktree_context session="${refID}" branch="${wt.branch || refID}" path="${wt.directory}">\n${diffLines || "Isolated worktree branch"}\n</worktree_context>`
       );
     }
   }
@@ -408,13 +408,14 @@ export function createComposerAutocomplete(
           }
 
           // Cross-Worktree mentions (@worktree:<id>)
-          for (const [sid, wt] of Object.entries(workspace.worktreesBySession)) {
+          for (const [sid, wt] of Object.entries(workspace.worktreeBySession)) {
             if (sid === sessionID()) continue;
-            if (!qLower || "worktree".includes(qLower) || wt.branch.toLowerCase().includes(qLower)) {
+            const branchName = wt.branch || sid;
+            if (!qLower || "worktree".includes(qLower) || branchName.toLowerCase().includes(qLower)) {
               contextItems.push({
                 type: "context",
                 label: `@worktree:${sid}`,
-                detail: t("timeline.mentionWorktreeDetail", { branch: wt.branch }),
+                detail: t("timeline.mentionWorktreeDetail", { branch: branchName }),
                 insertText: `@worktree:${sid} `,
               });
             }

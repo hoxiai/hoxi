@@ -18,4 +18,5 @@ export const toolCard: ToolCardI18n = {
   error: "执行错误",
   inlineChangePreview: "文件变更预览",
   openInDiffInspector: "在差异检查器中打开",
+  revertTooltip: "将文件与对话回滚至此次修改之前",
 };

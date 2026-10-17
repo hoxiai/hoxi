@@ -24,10 +24,7 @@ export default function ProviderModal() {
 
   return (
     <Show when={workspace.providerModalOpen}>
-      <div
-        class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4"
-        onClick={() => setWorkspace("providerModalOpen", false)}
-      >
+      <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4">
         <div
           class="flex h-[620px] w-full max-w-[860px] flex-col overflow-hidden rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-panel)] shadow-2xl"
           onClick={(e) => e.stopPropagation()}

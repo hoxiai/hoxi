@@ -212,7 +212,9 @@ export default function Composer() {
         <Show when={ac.triggerMode() && ac.suggestions().length > 0}>
           <div class="absolute bottom-full left-0 mb-2 w-full max-w-[28rem] rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-1.5 shadow-xl z-40">
             <div class="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
-              {ac.triggerMode() === "command" ? "Slash Commands" : "Mention Workspace File or Context"}
+              {ac.triggerMode() === "command"
+                ? t("timeline.slashCommandsHeader")
+                : t("timeline.mentionFileOrContextHeader")}
             </div>
             <div class="max-h-56 overflow-y-auto space-y-0.5">
               <For each={ac.suggestions()}>
@@ -300,7 +302,7 @@ export default function Composer() {
                   >
                     <ClipboardPaste size={11} class="shrink-0" />
                     <span class="font-mono font-medium">
-                      Pasted {p.lines} lines
+                      {t("timeline.pastedLinesChip", { count: p.lines })}
                     </span>
                     <button
                       type="button"

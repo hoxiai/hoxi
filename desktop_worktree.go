@@ -298,6 +298,37 @@ func (m *worktreeManager) RevertFile(sessionID, relPath string) error {
 	return nil
 }
 
+func (m *worktreeManager) CommitWorktree(sessionID, message string) (string, error) {
+	sessionID = sanitizeSessionID(sessionID)
+	msg := strings.TrimSpace(message)
+	if msg == "" {
+		return "", errors.New("commit message is required")
+	}
+
+	m.mu.RLock()
+	meta, ok := m.sessions[sessionID]
+	m.mu.RUnlock()
+
+	workDir := m.rootDir
+	if ok && meta.Isolated && meta.Directory != "" {
+		workDir = meta.Directory
+	} else if sessionID != "" {
+		candidate := filepath.Join(m.rootDir, ".hoxi", "worktrees", sessionID)
+		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+			workDir = candidate
+		}
+	}
+
+	if _, err := runGit(workDir, "add", "-A"); err != nil {
+		return "", err
+	}
+	if _, err := runGit(workDir, "commit", "-m", msg); err != nil {
+		return "", err
+	}
+	hash, _ := runGit(workDir, "rev-parse", "--short", "HEAD")
+	return hash, nil
+}
+
 func (m *worktreeManager) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/hoxi/worktree/create", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -367,6 +398,27 @@ func (m *worktreeManager) registerRoutes(mux *http.ServeMux) {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	})
+
+	mux.HandleFunc("/api/hoxi/worktree/commit", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var body struct {
+			SessionID string `json:"sessionID"`
+			Message   string `json:"message"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		hash, err := m.CommitWorktree(body.SessionID, body.Message)
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "commit": hash})
 	})
 
 	mux.HandleFunc("/api/hoxi/worktree/", func(w http.ResponseWriter, r *http.Request) {

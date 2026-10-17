@@ -168,4 +168,19 @@ export const models: ModelsI18n = {
   tabModels: "Roles & Models",
   allConnected: "All Connected",
   recent: "Recent",
+  customAgentsTitle: "Custom Agent Modes (Kilo Modes)",
+  customAgentsSubtitle:
+    "Create specialized agent modes (e.g. Reviewer, Architect, Security Auditor) with custom system prompts",
+  agentIdPlaceholder: "Mode ID (e.g. reviewer)",
+  agentDescPlaceholder:
+    "Short description (e.g. Strict code review & security audit)",
+  agentPromptPlaceholder: "System prompt instructions for this mode…",
+  addAgentMode: "Save Mode",
+  noCustomAgents:
+    "No custom agent modes defined yet. Built-in Build & Plan modes are always active.",
+  agentSaved: "Saved custom agent mode \"{id}\"!",
+  agentSaveFailed: "Failed to save custom agent mode.",
+  agentRemoved: "Removed custom agent mode \"{id}\".",
+  removeAgentTooltip: "Remove custom agent mode",
+  modeBadge: "mode",
 };

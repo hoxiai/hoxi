@@ -175,7 +175,8 @@ export default function ModelSelector() {
   onMount(() => {
     const onDocClick = (e: MouseEvent) => {
       if (!open() || !containerRef) return;
-      if (!containerRef.contains(e.target as Node)) {
+      const path = typeof e.composedPath === "function" ? e.composedPath() : [];
+      if (!path.includes(containerRef) && !containerRef.contains(e.target as Node)) {
         setOpen(false);
       }
     };

@@ -1,6 +1,7 @@
 // web/src/components/layout/left-nav-helpers.tsx
-import { Show } from "solid-js";
-import { workspace } from "../../store/workspace";
+import { createSignal, Show } from "solid-js";
+import { Pencil } from "lucide-solid";
+import { renameSessionTitle, workspace } from "../../store/workspace";
 import type { SessionInfo } from "../../services/sse-types";
 import { DiffChanges, Icon, Spinner } from "../icons";
 
@@ -116,10 +117,33 @@ export function SessionNavItem(props: {
   onSelect: () => void;
   onDiscard: (ev: MouseEvent, sessionID: string) => void;
 }) {
+  const [editing, setEditing] = createSignal(false);
+  const [draftTitle, setDraftTitle] = createSignal("");
+  let inputRef: HTMLInputElement | undefined;
+
   const status = () => workspace.statusBySession[props.session.id]?.type;
   const badge = () => badgeFor(props.session.id, props.pendingSessions, status());
   const wt = () => workspace.worktreeBySession[props.session.id];
   const stats = () => diffStats(props.session.id);
+
+  const startEditing = (ev?: MouseEvent) => {
+    ev?.stopPropagation();
+    setDraftTitle(props.session.title || "");
+    setEditing(true);
+    requestAnimationFrame(() => {
+      inputRef?.focus();
+      inputRef?.select();
+    });
+  };
+
+  const commitEdit = () => {
+    if (!editing()) return;
+    setEditing(false);
+    const next = draftTitle().trim();
+    if (next && next !== props.session.title) {
+      void renameSessionTitle(props.session.id, next);
+    }
+  };
 
   return (
     <div
@@ -128,7 +152,10 @@ export function SessionNavItem(props: {
           ? "bg-[var(--bg-hover)] text-[var(--text-primary)] font-medium"
           : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]/50 hover:text-[var(--text-primary)]"
       }`}
-      onClick={() => props.onSelect()}
+      onClick={() => {
+        if (!editing()) props.onSelect();
+      }}
+      onDblClick={(ev) => startEditing(ev)}
     >
       <div class="flex items-center gap-1.5 min-w-0 flex-1">
         <Show when={badge() === "approval"}>
@@ -139,13 +166,38 @@ export function SessionNavItem(props: {
             <Spinner class="w-3.5 h-3.5" />
           </span>
         </Show>
-        <span class="truncate text-[12px] flex-1">
-          {props.session.title || "New Session"}
-        </span>
+        <Show
+          when={!editing()}
+          fallback={
+            <input
+              ref={inputRef}
+              type="text"
+              value={draftTitle()}
+              placeholder={t("leftNav.renamePlaceholder")}
+              onInput={(ev) => setDraftTitle(ev.currentTarget.value)}
+              onClick={(ev) => ev.stopPropagation()}
+              onBlur={commitEdit}
+              onKeyDown={(ev) => {
+                if (ev.key === "Enter" && !ev.isComposing) {
+                  ev.preventDefault();
+                  commitEdit();
+                } else if (ev.key === "Escape") {
+                  ev.preventDefault();
+                  setEditing(false);
+                }
+              }}
+              class="flex-1 min-w-0 rounded border border-[var(--accent-border)] bg-[var(--bg-panel)] px-1.5 py-0.5 text-[11.5px] text-[var(--text-primary)] outline-none"
+            />
+          }
+        >
+          <span class="truncate text-[12px] flex-1">
+            {props.session.title || "New Session"}
+          </span>
+        </Show>
       </div>
 
-      <div class="flex items-center gap-1.5 shrink-0 text-[10px] font-mono">
-        <Show when={wt()?.branch}>
+      <div class="flex items-center gap-1 shrink-0 text-[10px] font-mono">
+        <Show when={wt()?.branch && !editing()}>
           <span class="inline-flex items-center gap-0.5 text-[var(--text-faint)] truncate max-w-[72px]">
             <Show when={props.showBranchIcon}>
               <Icon name="branch" size="small" class="w-3 h-3" />
@@ -154,11 +206,22 @@ export function SessionNavItem(props: {
           </span>
         </Show>
 
-        <Show when={stats()}>
+        <Show when={stats() && !editing()}>
           <DiffChanges changes={stats()!} />
         </Show>
 
-        <Show when={props.canDelete}>
+        <Show when={!editing()}>
+          <button
+            type="button"
+            class="opacity-0 group-hover/row:opacity-100 text-[var(--text-faint)] hover:text-[var(--text-primary)] transition-opacity p-0.5 cursor-pointer"
+            onClick={(ev) => startEditing(ev)}
+            title={t("leftNav.renameSessionTooltip")}
+          >
+            <Pencil size={11} />
+          </button>
+        </Show>
+
+        <Show when={props.canDelete && !editing()}>
           <button
             type="button"
             class="opacity-0 group-hover/row:opacity-100 text-[var(--text-faint)] hover:text-[var(--danger-text)] transition-opacity p-0.5 cursor-pointer"

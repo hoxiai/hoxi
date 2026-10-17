@@ -166,4 +166,18 @@ export const models: ModelsI18n = {
   tabModels: "角色与模型",
   allConnected: "全部已连接",
   recent: "最近使用",
+  customAgentsTitle: "自定义智能体模式 (Custom Agent Modes)",
+  customAgentsSubtitle:
+    "创建带专属系统提示词的自定义智能体模式（如 Reviewer 代码审查、Architect 架构师、安全审计等）",
+  agentIdPlaceholder: "模式 ID (例如 reviewer)",
+  agentDescPlaceholder: "简短描述 (例如 严格代码审查与安全漏洞审计)",
+  agentPromptPlaceholder: "输入该模式的专属系统提示词 (System Prompt)…",
+  addAgentMode: "保存模式",
+  noCustomAgents:
+    "尚未创建自定义智能体模式（内置 Build 与 Plan 模式始终可用）。",
+  agentSaved: "已保存自定义智能体模式 \"{id}\"！",
+  agentSaveFailed: "保存自定义智能体模式失败。",
+  agentRemoved: "已移除自定义智能体模式 \"{id}\"。",
+  removeAgentTooltip: "移除此自定义模式",
+  modeBadge: "模式",
 };
