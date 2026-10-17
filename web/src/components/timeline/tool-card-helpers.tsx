@@ -132,22 +132,44 @@ export function extractDescription(part: ToolPart): string {
   return "";
 }
 
-export function extractShellOutput(state: ToolState): string {
+const MAX_EXPANDED_TOOL_OUTPUT_CHARS = 64 * 1024;
+const ROLLING_SHELL_TAIL_CHARS = 2048;
+
+export function truncateToolOutput(text: string): string {
+  if (!text || text.length <= MAX_EXPANDED_TOOL_OUTPUT_CHARS) return text;
+  const omitted = text.length - MAX_EXPANDED_TOOL_OUTPUT_CHARS;
+  return `${text.slice(0, MAX_EXPANDED_TOOL_OUTPUT_CHARS)}\n\n… [${omitted.toLocaleString()} chars truncated]`;
+}
+
+function rawShellOutputFromState(state: ToolState): string {
   if (state.status === "completed") {
     const metaOut = state.metadata?.output ?? state.metadata?.stdout;
-    return processCarriageReturns(typeof metaOut === "string" ? metaOut : state.output || "");
+    return typeof metaOut === "string" ? metaOut : state.output || "";
   }
   if (state.status === "running") {
     const metaOut = state.metadata?.output ?? state.metadata?.stdout;
-    return processCarriageReturns(typeof metaOut === "string" ? metaOut : "");
+    return typeof metaOut === "string" ? metaOut : "";
   }
   if (state.status === "error") {
     const metaOut = state.metadata?.output ?? state.metadata?.stderr;
-    return processCarriageReturns(
-      typeof metaOut === "string" ? `${metaOut}\n${state.error}` : state.error || ""
-    );
+    return typeof metaOut === "string" ? `${metaOut}\n${state.error}` : state.error || "";
   }
   return "";
+}
+
+export function extractShellOutput(state: ToolState): string {
+  const raw = rawShellOutputFromState(state);
+  if (!raw) return "";
+  return processCarriageReturns(truncateToolOutput(raw));
+}
+
+export function extractRollingShellLines(state: ToolState): string[] {
+  const raw = rawShellOutputFromState(state);
+  if (!raw) return [];
+  const tail = raw.length > ROLLING_SHELL_TAIL_CHARS ? raw.slice(-ROLLING_SHELL_TAIL_CHARS) : raw;
+  const cleaned = processCarriageReturns(tail).trim();
+  if (!cleaned) return [];
+  return cleaned.split("\n").slice(-5);
 }
 
 export function extractExitCode(state: ToolState): number | undefined {
@@ -379,7 +401,9 @@ export function ToolCardExpandedBody(props: {
               </div>
               <pre class="text-[11.5px] font-mono bg-[var(--bg-code)] border border-[var(--border-subtle)] p-2.5 rounded-lg overflow-x-auto max-h-56 text-[var(--text-secondary)] whitespace-pre-wrap break-all selectable-text">
                 {processCarriageReturns(
-                  (props.part.state as Extract<ToolState, { status: "completed" }>).output
+                  truncateToolOutput(
+                    (props.part.state as Extract<ToolState, { status: "completed" }>).output
+                  )
                 )}
               </pre>
             </div>

@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
@@ -445,89 +444,4 @@ func loadGeminiAntigravitySessionDetail(sessionID, hintCWD, activeRoot string) (
 		ChangedFiles:    extractChangedFilesFromTurns(turns),
 		LastTurnSummary: truncateRunes(lastAssistantText, 400),
 	}, nil
-}
-
-func readGeminiLocalKeyAndModels() (apiKey, defaultModel string, models []string) {
-	apiKey = firstNonEmpty(
-		strings.TrimSpace(os.Getenv("GEMINI_API_KEY")),
-		strings.TrimSpace(os.Getenv("GOOGLE_GENERATIVE_AI_API_KEY")),
-		strings.TrimSpace(os.Getenv("GOOGLE_API_KEY")),
-	)
-	gRoot := geminiRootDir()
-	if gRoot != "" {
-		if raw, err := os.ReadFile(filepath.Join(gRoot, "settings.json")); err == nil {
-			var doc map[string]interface{}
-			if json.Unmarshal(raw, &doc) == nil {
-				if m := strings.TrimSpace(asString(doc["model"])); m != "" {
-					defaultModel = m
-					models = appendUniqueString(models, m)
-				}
-				if envMap, ok := doc["env"].(map[string]interface{}); ok && apiKey == "" {
-					apiKey = firstNonEmpty(
-						asString(envMap["GEMINI_API_KEY"]),
-						asString(envMap["GOOGLE_GENERATIVE_AI_API_KEY"]),
-					)
-				}
-			}
-		}
-	}
-	return apiKey, defaultModel, models
-}
-
-func detectGeminiCLIStatus(g *desktopGateway, hoxiMap map[string]interface{}) LocalCLIStatusItem {
-	_, stats := scanGeminiAntigravitySessions("", "")
-	apiKey, defaultModel, models := readGeminiLocalKeyAndModels()
-	_, inHoxi := hoxiMap["google"]
-	hasGoogleKey := g.resolveStoredProviderKey("google", "") != "" || inHoxi
-	hasOAuth := false
-	if gRoot := geminiRootDir(); gRoot != "" {
-		if _, err := os.Stat(filepath.Join(gRoot, "jetski-standalone-oauth-token")); err == nil {
-			hasOAuth = true
-		}
-	}
-	return LocalCLIStatusItem{
-		ID:            ExternalToolGemini,
-		Name:          "Antigravity / Gemini",
-		Installed:     stats.Installed,
-		Authenticated: apiKey != "" || hasGoogleKey || hasOAuth || stats.SessionCount > 0,
-		Connected:     hasGoogleKey,
-		DefaultModel:  defaultModel,
-		Models:        models,
-		SessionCount:  stats.SessionCount,
-		AuthMode:      "antigravity",
-		ProviderID:    "google",
-	}
-}
-
-func (g *desktopGateway) importGeminiCLIProvider() LocalCLIImportResponse {
-	apiKey, _, models := readGeminiLocalKeyAndModels()
-	if apiKey == "" {
-		apiKey = g.resolveStoredProviderKey("google", "")
-	}
-	if apiKey == "" {
-		return LocalCLIImportResponse{
-			OK:     false,
-			ToolID: string(ExternalToolGemini),
-			Error:  "No GEMINI_API_KEY or GOOGLE_GENERATIVE_AI_API_KEY found in environment or ~/.gemini/settings.json",
-		}
-	}
-	if g.openCodePort > 0 {
-		b, _ := json.Marshal(map[string]string{"type": "api", "key": apiKey})
-		u := "http://127.0.0.1:" + strconv.Itoa(g.openCodePort) + "/auth/google"
-		if req, err := http.NewRequest(http.MethodPut, u, bytes.NewReader(b)); err == nil {
-			req.Header.Set("Content-Type", "application/json")
-			req.SetBasicAuth("opencode", g.password)
-			client := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{Proxy: nil}}
-			if resp, err := client.Do(req); err == nil {
-				_ = resp.Body.Close()
-			}
-		}
-		g.reloadOpenCodeGlobalConfig()
-	}
-	return LocalCLIImportResponse{
-		OK:         true,
-		ToolID:     string(ExternalToolGemini),
-		ProviderID: "google",
-		Models:     models,
-	}
 }

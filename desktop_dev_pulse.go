@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -87,6 +88,15 @@ func isGeneratedOrLockFile(relPath string) bool {
 	return false
 }
 
+var (
+	pulseCacheMu   sync.Mutex
+	cachedPulseDir string
+	cachedPulseAt  time.Time
+	cachedPulseRes gitDailyPulseResponse
+)
+
+const devPulseCacheTTL = 15 * time.Second
+
 func (g *desktopGateway) handleDevPulse(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSONError(w, http.StatusMethodNotAllowed, "GET required")
@@ -111,6 +121,15 @@ func (g *desktopGateway) handleDevPulse(w http.ResponseWriter, r *http.Request) 
 	}
 
 	now := time.Now()
+	pulseCacheMu.Lock()
+	if cachedPulseDir == workDir && !cachedPulseAt.IsZero() && now.Sub(cachedPulseAt) < devPulseCacheTTL {
+		cached := cachedPulseRes
+		pulseCacheMu.Unlock()
+		writeJSON(w, http.StatusOK, cached)
+		return
+	}
+	pulseCacheMu.Unlock()
+
 	startOfToday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	startOfTodayMs := startOfToday.UnixMilli()
 
@@ -125,6 +144,12 @@ func (g *desktopGateway) handleDevPulse(w http.ResponseWriter, r *http.Request) 
 	if workDir != "" {
 		collectGitDailyStats(workDir, startOfToday, &res)
 	}
+
+	pulseCacheMu.Lock()
+	cachedPulseDir = workDir
+	cachedPulseAt = time.Now()
+	cachedPulseRes = res
+	pulseCacheMu.Unlock()
 
 	writeJSON(w, http.StatusOK, res)
 }
@@ -184,8 +209,15 @@ func collectGitDailyStats(workDir string, startOfToday time.Time, res *gitDailyP
 		}
 	}
 
-	if porcelain, err := runGitRaw(workDir, "status", "--porcelain"); err == nil {
+	untrackedReadCount := 0
+	if porcelain, err := runGitRaw(workDir, "status", "--porcelain", "-b"); err == nil {
 		for _, rawLine := range strings.Split(porcelain, "\n") {
+			if strings.HasPrefix(rawLine, "## ") {
+				if br := parseBranchFromPorcelainHeader(rawLine); br != "" {
+					res.Branch = br
+				}
+				continue
+			}
 			if !strings.HasPrefix(rawLine, "?? ") {
 				continue
 			}
@@ -193,24 +225,24 @@ func collectGitDailyStats(workDir string, startOfToday time.Time, res *gitDailyP
 			if isGeneratedOrLockFile(rel) {
 				continue
 			}
+			uncommittedFileSet[rel] = struct{}{}
+			if untrackedReadCount >= maxUntrackedFilesToCount {
+				continue
+			}
 			full := filepath.Join(workDir, rel)
-			if info, err := os.Stat(full); err == nil && !info.IsDir() && info.Size() <= 512*1024 {
+			if info, err := os.Stat(full); err == nil && !info.IsDir() && info.Size() <= maxUntrackedFileSize {
+				untrackedReadCount++
 				if data, err := os.ReadFile(full); err == nil && len(data) > 0 && bytes.IndexByte(data, 0) == -1 {
 					cnt := bytes.Count(data, []byte{'\n'})
 					if data[len(data)-1] != '\n' {
 						cnt++
 					}
 					res.UncommittedAdditions += cnt
-					uncommittedFileSet[rel] = struct{}{}
 				}
 			}
 		}
 	}
 	res.UncommittedFiles = len(uncommittedFileSet)
-
-	if br, err := runGit(workDir, "rev-parse", "--abbrev-ref", "HEAD"); err == nil {
-		res.Branch = br
-	}
 }
 
 func queryOpenCodeDailyDB(startOfTodayMs int64, res *gitDailyPulseResponse) {
@@ -255,7 +287,7 @@ SELECT json_object(
         SELECT
           COALESCE(json_extract(m.data, '$.providerID'), 'unknown') as provider_id,
           COALESCE(json_extract(m.data, '$.modelID'), 'unknown') as model_id,
-          CAST(COALESCE(json_extract(m.data, '$.time.created'), m.time_created) AS INTEGER) as msg_ts,
+          m.time_created as msg_ts,
           CAST(COALESCE(json_extract(m.data, '$.cost'), 0) AS REAL) as cost,
           CAST(COALESCE(json_extract(m.data, '$.tokens.input'), 0) AS INTEGER) as tok_in,
           CAST(COALESCE(json_extract(m.data, '$.tokens.output'), 0) AS INTEGER) as tok_out,
@@ -264,7 +296,7 @@ SELECT json_object(
           CAST(COALESCE(json_extract(m.data, '$.tokens.cache.write'), 0) AS INTEGER) as cache_write
         FROM message m
         JOIN session s ON s.id = m.session_id
-        WHERE CAST(COALESCE(json_extract(m.data, '$.time.created'), m.time_created) AS INTEGER) >= %d
+        WHERE m.time_created >= %d
           AND json_extract(m.data, '$.role') = 'assistant'
           AND s.title NOT LIKE '[Grok CLI]%%'
           AND s.title NOT LIKE '[Claude Code]%%'
@@ -275,7 +307,7 @@ SELECT json_object(
             OR CAST(COALESCE(json_extract(m.data, '$.tokens.cache.read'), 0) AS INTEGER) > 0
           )
         GROUP BY
-          CAST(COALESCE(json_extract(m.data, '$.time.created'), m.time_created) AS INTEGER),
+          m.time_created,
           COALESCE(json_extract(m.data, '$.modelID'), ''),
           CAST(COALESCE(json_extract(m.data, '$.tokens.input'), 0) AS INTEGER),
           CAST(COALESCE(json_extract(m.data, '$.tokens.output'), 0) AS INTEGER)
@@ -288,30 +320,13 @@ SELECT json_object(
     SELECT COUNT(DISTINCT s.id)
     FROM session s
     JOIN message m ON m.session_id = s.id
-    WHERE CAST(COALESCE(json_extract(m.data, '$.time.created'), m.time_created) AS INTEGER) >= %d
+    WHERE m.time_created >= %d
       AND s.title NOT LIKE '[Grok CLI]%%'
       AND s.title NOT LIKE '[Claude Code]%%'
       AND s.title NOT LIKE '[Codex%%'
       AND s.title NOT LIKE '%%(fork #%%'
-  ),
-  'toolsTotal', (
-    SELECT COUNT(*) FROM (
-      SELECT 1 FROM part p JOIN session s ON s.id = p.session_id
-      WHERE p.time_created >= %d AND json_extract(p.data, '$.type') = 'tool'
-        AND s.title NOT LIKE '[Grok CLI]%%' AND s.title NOT LIKE '[Claude Code]%%' AND s.title NOT LIKE '[Codex%%'
-      GROUP BY COALESCE(json_extract(p.data, '$.callID'), p.id)
-    )
-  ),
-  'toolsFailed', (
-    SELECT COUNT(*) FROM (
-      SELECT 1 FROM part p JOIN session s ON s.id = p.session_id
-      WHERE p.time_created >= %d AND json_extract(p.data, '$.type') = 'tool'
-        AND json_extract(p.data, '$.state.status') = 'error'
-        AND s.title NOT LIKE '[Grok CLI]%%' AND s.title NOT LIKE '[Claude Code]%%' AND s.title NOT LIKE '[Codex%%'
-      GROUP BY COALESCE(json_extract(p.data, '$.callID'), p.id)
-    )
   )
-);`, startOfTodayMs, startOfTodayMs, startOfTodayMs, startOfTodayMs)
+);`, startOfTodayMs, startOfTodayMs)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 	defer cancel()

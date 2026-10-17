@@ -120,54 +120,54 @@ export function computeDailyDevPulseStats(): DailyDevPulseStats {
     });
   }
 
-  // Merge any live in-memory turns newer than the last SQLite snapshot
+  // Merge any live in-memory turns from the active session newer than the last SQLite snapshot
   const seenLiveTurnKeys = new Set<string>();
-  for (const turns of Object.values(workspace.messagesBySession)) {
-    for (const turn of turns || []) {
-      const info = turn.info;
-      if (info.role !== "assistant") continue;
-      const createdTs = normalizeTs(info.time?.created);
-      if (createdTs < startOfToday || (latestDbTs > 0 && createdTs <= latestDbTs)) continue;
+  const activeSid = workspace.activeSessionID;
+  const recentActiveTurns = activeSid ? (workspace.messagesBySession[activeSid] ?? []).slice(-4) : [];
+  for (const turn of recentActiveTurns) {
+    const info = turn.info;
+    if (info.role !== "assistant") continue;
+    const createdTs = normalizeTs(info.time?.created);
+    if (createdTs < startOfToday || (latestDbTs > 0 && createdTs <= latestDbTs)) continue;
 
-      const tk = info.tokens;
-      if (!tk || ((tk.input || 0) === 0 && (tk.output || 0) === 0 && (tk.cache?.read || 0) === 0)) {
-        continue;
-      }
-      const dedupKey = `${createdTs}:${info.modelID || ""}:${tk.input || 0}:${tk.output || 0}`;
-      if (seenLiveTurnKeys.has(dedupKey)) continue;
-      seenLiveTurnKeys.add(dedupKey);
-
-      const inTok = tk.input || 0;
-      const outTok = tk.output || 0;
-      const reasonTok = tk.reasoning || 0;
-      const cRead = tk.cache?.read || 0;
-      const cWrite = tk.cache?.write || 0;
-      const turnTotal = inTok + outTok + reasonTok + cRead + cWrite;
-      const turnCost = typeof info.cost === "number" && info.cost > 0 ? info.cost : 0;
-
-      inputTokens += inTok;
-      outputTokens += outTok;
-      reasoningTokens += reasonTok;
-      cacheReadTokens += cRead;
-      cacheWriteTokens += cWrite;
-      totalCost += turnCost;
-      todayTurnsCount += 1;
-
-      const pid = info.providerID || workspace.selectedModel?.providerID || "unknown";
-      const mid = info.modelID || workspace.selectedModel?.modelID || "auto";
-      const mKey = `${pid}/${mid}`;
-      const existing = byModel.get(mKey) || {
-        providerID: pid,
-        modelID: mid,
-        turns: 0,
-        totalTokens: 0,
-        cost: 0,
-      };
-      existing.turns += 1;
-      existing.totalTokens += turnTotal;
-      existing.cost += turnCost;
-      byModel.set(mKey, existing);
+    const tk = info.tokens;
+    if (!tk || ((tk.input || 0) === 0 && (tk.output || 0) === 0 && (tk.cache?.read || 0) === 0)) {
+      continue;
     }
+    const dedupKey = `${createdTs}:${info.modelID || ""}:${tk.input || 0}:${tk.output || 0}`;
+    if (seenLiveTurnKeys.has(dedupKey)) continue;
+    seenLiveTurnKeys.add(dedupKey);
+
+    const inTok = tk.input || 0;
+    const outTok = tk.output || 0;
+    const reasonTok = tk.reasoning || 0;
+    const cRead = tk.cache?.read || 0;
+    const cWrite = tk.cache?.write || 0;
+    const turnTotal = inTok + outTok + reasonTok + cRead + cWrite;
+    const turnCost = typeof info.cost === "number" && info.cost > 0 ? info.cost : 0;
+
+    inputTokens += inTok;
+    outputTokens += outTok;
+    reasoningTokens += reasonTok;
+    cacheReadTokens += cRead;
+    cacheWriteTokens += cWrite;
+    totalCost += turnCost;
+    todayTurnsCount += 1;
+
+    const pid = info.providerID || workspace.selectedModel?.providerID || "unknown";
+    const mid = info.modelID || workspace.selectedModel?.modelID || "auto";
+    const mKey = `${pid}/${mid}`;
+    const existing = byModel.get(mKey) || {
+      providerID: pid,
+      modelID: mid,
+      turns: 0,
+      totalTokens: 0,
+      cost: 0,
+    };
+    existing.turns += 1;
+    existing.totalTokens += turnTotal;
+    existing.cost += turnCost;
+    byModel.set(mKey, existing);
   }
 
   const totalTokens = inputTokens + outputTokens + reasoningTokens + cacheReadTokens + cacheWriteTokens;

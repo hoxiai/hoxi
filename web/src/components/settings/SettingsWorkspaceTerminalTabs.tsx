@@ -65,7 +65,7 @@ export function WorkspaceGitSettingsTab() {
           label={t("settings.sectionSidebarModeTitle")}
           tip={t("settings.sectionSidebarModeDesc")}
         >
-          <SegmentedPills<"multi" | "single">
+          <SegmentedPills<"multi" | "single" | "recent">
             value={workspace.sidebarProjectMode}
             options={[
               {
@@ -77,6 +77,11 @@ export function WorkspaceGitSettingsTab() {
                 id: "single",
                 label: () => t("leftNav.singleProject"),
                 tip: () => t("settings.sidebarSingleDesc"),
+              },
+              {
+                id: "recent",
+                label: () => t("leftNav.recentTasks"),
+                tip: () => t("leftNav.recentTasks"),
               },
             ]}
             onChange={(val) => setSidebarProjectMode(val)}

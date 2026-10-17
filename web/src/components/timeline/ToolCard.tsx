@@ -21,6 +21,7 @@ import {
   extractCommand,
   extractDescription,
   extractExitCode,
+  extractRollingShellLines,
   extractShellOutput,
   extractTargetFile,
   getDirectory,
@@ -62,25 +63,29 @@ export default function ToolCard(props: { part: ToolPart }) {
   const isTask = () => isTaskTool(props.part.tool);
 
   const targetFile = createMemo(() => extractTargetFile(props.part));
-  const shellCmd = createMemo(() => extractCommand(props.part));
+  const shellCmd = createMemo(() => (isShell() ? extractCommand(props.part) : ""));
   const description = createMemo(() => extractDescription(props.part));
-  const shellOut = createMemo(() => extractShellOutput(props.part.state));
-  const exitCode = createMemo(() => extractExitCode(props.part.state));
+  const shellOut = createMemo(() =>
+    isShell() && expanded() ? extractShellOutput(props.part.state) : ""
+  );
+  const exitCode = createMemo(() => (isShell() ? extractExitCode(props.part.state) : undefined));
 
   // Rolling 5 lines of shell output while running & collapsed (ported from Kilo ShellRollingResults)
-  const rollingShellLines = createMemo(() => {
-    const out = shellOut().trim();
-    if (!out) return [];
-    return out.split("\n").slice(-5);
-  });
+  const rollingShellLines = createMemo(() =>
+    isShell() && isRunning() && !expanded() ? extractRollingShellLines(props.part.state) : []
+  );
 
-  const loadedFiles = createMemo(() => resolveLoadedContextFiles(props.part));
+  const loadedFiles = createMemo(() =>
+    isRead() ? resolveLoadedContextFiles(props.part) : []
+  );
   const toolArgPills = createMemo(() => resolveToolArgPills(props.part));
-  const todoItems = createMemo(() => resolveToolTodoItems(props.part));
+  const todoItems = createMemo(() =>
+    isTodo() ? resolveToolTodoItems(props.part) : []
+  );
 
   // Subagent task child session ID
   const childSessionID = createMemo<string | undefined>(() => {
-    if (props.part.state.status === "pending") return undefined;
+    if (!isTask() || props.part.state.status === "pending") return undefined;
     const id = props.part.state.metadata?.sessionId || props.part.state.metadata?.sessionID;
     return typeof id === "string" && id ? id : undefined;
   });
@@ -94,13 +99,16 @@ export default function ToolCard(props: { part: ToolPart }) {
 
   // Auto-scroll shell output while streaming
   createEffect(() => {
-    void shellOut();
-    if (isShell() && status() === "running") {
-      requestAnimationFrame(() => {
-        if (outputRef) outputRef.scrollTop = outputRef.scrollHeight;
-        if (rollingShellRef) rollingShellRef.scrollTop = rollingShellRef.scrollHeight;
-      });
+    if (!isShell() || status() !== "running") return;
+    if (expanded()) {
+      void shellOut();
+    } else {
+      void rollingShellLines();
     }
+    requestAnimationFrame(() => {
+      if (outputRef) outputRef.scrollTop = outputRef.scrollHeight;
+      if (rollingShellRef) rollingShellRef.scrollTop = rollingShellRef.scrollHeight;
+    });
   });
 
   // 0.1s live duration ticker while running

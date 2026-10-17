@@ -1,14 +1,6 @@
 // web/src/components/layout/ExternalHandoffPreviewPane.tsx
 import { For, Show } from "solid-js";
-import {
-  ArrowRightLeft,
-  FileCode2,
-  FolderGit2,
-  GitBranch,
-  ListTodo,
-  LoaderCircle,
-  Wrench,
-} from "lucide-solid";
+import { ArrowRightLeft, GitBranch, LoaderCircle, Wrench } from "lucide-solid";
 import type {
   ExternalSessionDetail,
   ExternalSessionSummary,
@@ -51,175 +43,101 @@ export default function ExternalHandoffPreviewPane(props: {
   onTakeOver: () => void;
 }) {
   return (
-    <div class="flex-1 flex flex-col min-w-0 overflow-hidden bg-[var(--bg-canvas)]/40">
+    <div class="flex-1 flex flex-col min-w-0 overflow-hidden bg-[var(--bg-canvas)]/30">
       <Show
         when={props.selectedItem}
         fallback={
-          <div class="flex flex-1 items-center justify-center p-8 text-center text-[12.5px] text-[var(--text-muted)]">
+          <div class="flex flex-1 items-center justify-center p-8 text-center text-[12px] text-[var(--text-muted)]">
             {t("leftNav.handoffSelectHint")}
           </div>
         }
       >
         {(cur) => (
           <>
-            <div class="flex-1 overflow-y-auto p-5 space-y-4">
-              {/* Title & Metadata Card */}
-              <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-4 space-y-2">
-                <div class="flex items-center justify-between gap-2">
-                  <div class="flex items-center gap-2">
-                    <span
-                      class={`rounded-md border px-2 py-0.5 text-[10.5px] font-semibold ${handoffSourceBadgeClass(
-                        cur().source
-                      )}`}
-                    >
-                      {cur().sourceLabel}
-                    </span>
-                    <Show when={cur().model}>
-                      <span class="rounded bg-[var(--bg-inset)] px-2 py-0.5 font-mono text-[10.5px] text-[var(--text-secondary)]">
-                        {cur().model}
-                      </span>
-                    </Show>
-                    <Show when={props.detail?.turns}>
-                      <span class="text-[11px] text-[var(--text-muted)]">
-                        {t("leftNav.handoffTurnsCount", {
-                          count: props.detail?.turns.length || 0,
-                        })}
-                      </span>
-                    </Show>
-                  </div>
-                  <span class="font-mono text-[11px] text-[var(--text-faint)]">
-                    {cur().id.slice(0, 12)}
-                  </span>
-                </div>
-
-                <h3 class="text-[15px] font-semibold text-[var(--text-primary)]">
-                  {cur().title}
-                </h3>
-
-                <div class="flex flex-wrap items-center gap-3 text-[11.5px] font-mono text-[var(--text-secondary)]">
-                  <span class="inline-flex items-center gap-1">
-                    <FolderGit2 size={12} class="text-[var(--accent-primary)]" />
-                    {cur().cwd}
-                  </span>
-                  <Show when={cur().gitBranch}>
-                    <span class="inline-flex items-center gap-1 rounded bg-[var(--bg-inset)] px-2 py-0.5">
-                      <GitBranch size={11} />
-                      {cur().gitBranch}
-                      <Show when={cur().gitCommit}>
-                        <span class="text-[var(--text-faint)]">({cur().gitCommit})</span>
-                      </Show>
-                    </span>
-                  </Show>
-                </div>
-
-                <Show when={cur().summary || props.detail?.lastTurnSummary}>
-                  <div class="mt-2 rounded-lg bg-[var(--bg-inset)]/70 p-3 text-[11.5px] leading-relaxed text-[var(--text-secondary)] whitespace-pre-wrap">
-                    <div class="mb-1 text-[10.5px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
-                      {t("leftNav.handoffSummaryTitle")}
-                    </div>
-                    {cur().summary || props.detail?.lastTurnSummary}
-                  </div>
-                </Show>
+            {/* Compact Session Header */}
+            <div class="border-b border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-5 py-3 space-y-1.5">
+              <div class="text-[14px] font-semibold text-[var(--text-primary)] truncate">
+                {cur().title}
               </div>
 
-              {/* Plan & Changed Files */}
-              <Show
-                when={
-                  (props.detail?.planSteps?.length || 0) > 0 ||
-                  (props.detail?.changedFiles?.length || 0) > 0
-                }
-              >
-                <div class="grid grid-cols-2 gap-3">
-                  <Show when={(props.detail?.planSteps?.length || 0) > 0}>
-                    <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-3.5 space-y-2">
-                      <div class="flex items-center gap-1.5 text-[11px] font-semibold text-[var(--text-secondary)]">
-                        <ListTodo size={13} class="text-[var(--accent-primary)]" />
-                        {t("leftNav.handoffPlanTitle")}
-                      </div>
-                      <div class="space-y-1 max-h-36 overflow-y-auto">
-                        <For each={props.detail?.planSteps}>
-                          {(step) => (
-                            <div class="flex items-start gap-1.5 text-[11px] text-[var(--text-secondary)]">
-                              <span class="font-mono text-[10px] text-[var(--text-muted)]">
-                                [{step.status || "todo"}]
-                              </span>
-                              <span class="line-clamp-2">{step.title}</span>
-                            </div>
-                          )}
-                        </For>
-                      </div>
-                    </div>
-                  </Show>
-
-                  <Show when={(props.detail?.changedFiles?.length || 0) > 0}>
-                    <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-3.5 space-y-2">
-                      <div class="flex items-center gap-1.5 text-[11px] font-semibold text-[var(--text-secondary)]">
-                        <FileCode2 size={13} class="text-[var(--accent-primary)]" />
-                        {t("leftNav.handoffChangedFilesTitle")} (
-                        {props.detail?.changedFiles?.length})
-                      </div>
-                      <div class="space-y-1 max-h-36 overflow-y-auto font-mono text-[10.5px] text-[var(--text-secondary)]">
-                        <For each={props.detail?.changedFiles}>
-                          {(f) => <div class="truncate">{shortenPath(f)}</div>}
-                        </For>
-                      </div>
-                    </div>
-                  </Show>
-                </div>
-              </Show>
-
-              {/* Conversation Turns Preview */}
-              <div class="space-y-2">
-                <div class="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-muted)] px-1">
-                  {t("leftNav.handoffConversationTitle")}
-                </div>
-                <Show
-                  when={!props.loadingDetail}
-                  fallback={
-                    <div class="flex items-center justify-center py-10 text-[var(--text-muted)]">
-                      <LoaderCircle size={16} class="animate-spin" />
-                    </div>
-                  }
+              <div class="flex flex-wrap items-center gap-2 text-[11px] font-mono text-[var(--text-muted)]">
+                <span
+                  class={`rounded border px-1.5 py-0.2 text-[10px] font-sans font-medium ${handoffSourceBadgeClass(
+                    cur().source
+                  )}`}
                 >
-                  <div class="space-y-2">
-                    <For each={props.detail?.turns || []}>
-                      {(turn) => (
-                        <div
-                          class={`rounded-xl border p-3 text-[12px] ${
-                            turn.role === "user"
-                              ? "border-[var(--accent-border)]/40 bg-[var(--accent-surface)]/20"
-                              : "border-[var(--border-subtle)] bg-[var(--bg-elevated)]"
-                          }`}
-                        >
-                          <div class="mb-1 flex items-center justify-between text-[10.5px] font-semibold text-[var(--text-muted)]">
-                            <span>{turn.role === "user" ? "USER" : "ASSISTANT"}</span>
-                            <Show when={(turn.tools?.length || 0) > 0}>
-                              <span class="inline-flex items-center gap-1 font-mono text-[10px] text-[var(--accent-primary)]">
-                                <Wrench size={10} />
-                                {turn.tools?.length} tools
-                              </span>
-                            </Show>
-                          </div>
-                          <Show when={turn.text}>
-                            <div class="whitespace-pre-wrap break-words text-[var(--text-primary)] line-clamp-6">
-                              {turn.text}
-                            </div>
-                          </Show>
-                        </div>
-                      )}
-                    </For>
-                  </div>
+                  {cur().sourceLabel}
+                </span>
+                <span class="truncate max-w-[260px]" title={cur().cwd}>
+                  {shortenPath(cur().cwd)}
+                </span>
+                <Show when={cur().gitBranch}>
+                  <span class="inline-flex items-center gap-1 rounded bg-[var(--bg-inset)] px-1.5 py-0.2 text-[var(--text-secondary)]">
+                    <GitBranch size={10} />
+                    {cur().gitBranch}
+                  </span>
+                </Show>
+                <Show when={props.detail?.turns}>
+                  <span class="font-sans">
+                    · {t("leftNav.handoffTurnsCount", { count: props.detail?.turns.length || 0 })}
+                  </span>
+                </Show>
+                <Show when={(props.detail?.changedFiles?.length || 0) > 0}>
+                  <span class="font-sans">
+                    · {t("leftNav.handoffChangedFilesTitle")} {props.detail?.changedFiles?.length}
+                  </span>
                 </Show>
               </div>
             </div>
 
+            {/* Streamlined Conversation Preview */}
+            <div class="flex-1 overflow-y-auto px-5 py-3.5">
+              <Show
+                when={!props.loadingDetail}
+                fallback={
+                  <div class="flex items-center justify-center py-12 text-[var(--text-muted)]">
+                    <LoaderCircle size={16} class="animate-spin" />
+                  </div>
+                }
+              >
+                <div class="space-y-2.5">
+                  <For each={props.detail?.turns || []}>
+                    {(turn) => (
+                      <div
+                        class={`rounded-xl px-3.5 py-2.5 text-[12px] ${
+                          turn.role === "user"
+                            ? "bg-[var(--accent-surface)]/25 border border-[var(--accent-border)]/30"
+                            : "bg-[var(--bg-elevated)] border border-[var(--border-subtle)]"
+                        }`}
+                      >
+                        <div class="mb-1 flex items-center justify-between text-[10.5px] font-medium text-[var(--text-muted)]">
+                          <span>{turn.role === "user" ? "User" : cur().sourceLabel}</span>
+                          <Show when={(turn.tools?.length || 0) > 0}>
+                            <span class="inline-flex items-center gap-1 font-mono text-[10px] text-[var(--text-muted)]">
+                              <Wrench size={10} />
+                              {turn.tools?.length}
+                            </span>
+                          </Show>
+                        </div>
+                        <Show when={turn.text}>
+                          <div class="whitespace-pre-wrap break-words text-[var(--text-primary)] line-clamp-5 leading-relaxed">
+                            {turn.text}
+                          </div>
+                        </Show>
+                      </div>
+                    )}
+                  </For>
+                </div>
+              </Show>
+            </div>
+
             {/* Footer Action Bar */}
-            <div class="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-5 py-3">
-              <div class="inline-flex rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)] p-0.5 text-[11px]">
+            <div class="flex items-center justify-between gap-2 border-t border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-5 py-2.5">
+              <div class="inline-flex rounded-lg bg-[var(--bg-inset)] p-0.5 text-[11px]">
                 <button
                   type="button"
                   onClick={() => props.onChangeModelMode("original")}
-                  class={`rounded-lg px-2.5 py-1 font-medium transition-colors cursor-pointer ${
+                  class={`rounded-md px-2.5 py-1 font-medium transition-colors cursor-pointer ${
                     props.modelMode === "original"
                       ? "bg-[var(--bg-elevated)] text-[var(--text-primary)] shadow-2xs"
                       : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
@@ -232,7 +150,7 @@ export default function ExternalHandoffPreviewPane(props: {
                 <button
                   type="button"
                   onClick={() => props.onChangeModelMode("local")}
-                  class={`rounded-lg px-2.5 py-1 font-medium transition-colors cursor-pointer ${
+                  class={`rounded-md px-2.5 py-1 font-medium transition-colors cursor-pointer ${
                     props.modelMode === "local"
                       ? "bg-[var(--bg-elevated)] text-[var(--text-primary)] shadow-2xs"
                       : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
@@ -247,13 +165,13 @@ export default function ExternalHandoffPreviewPane(props: {
                 type="button"
                 disabled={props.importingSession}
                 onClick={props.onTakeOver}
-                class="inline-flex items-center gap-2 rounded-xl bg-[var(--accent-primary)] px-4 py-2 text-[12.5px] font-semibold text-white shadow-sm hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
+                class="inline-flex items-center gap-1.5 rounded-lg bg-[var(--accent-primary)] px-3.5 py-1.5 text-[12px] font-medium text-white hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
               >
                 <Show
                   when={!props.importingSession}
-                  fallback={<LoaderCircle size={14} class="animate-spin" />}
+                  fallback={<LoaderCircle size={13} class="animate-spin" />}
                 >
-                  <ArrowRightLeft size={14} />
+                  <ArrowRightLeft size={13} />
                 </Show>
                 {props.importingSession
                   ? t("leftNav.handoffTakingOver")

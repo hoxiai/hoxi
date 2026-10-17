@@ -56,8 +56,6 @@ export const timeline: TimelineI18n = {
   newWorktree: "New Worktree",
   dismiss: "Dismiss",
   attachImageTooltip: "Attach image or screenshot (Cmd+V to paste)",
-  arenaTooltip: "Launch Multi-Model Worktree Arena",
-  arenaBtn: "Arena",
   openInInspectorTooltip: "Open file in Inspector",
   removeCommentTooltip: "Remove comment",
   copyPromptTooltip: "Copy prompt",

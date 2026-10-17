@@ -8,6 +8,7 @@ import {
   normalizeFolderPath,
   openCreateWorkspaceModal,
   openEditWorkspaceModal,
+  openHandoffModal,
   openManageWorkspacesModal,
   selectSession,
   setWorkspace,
@@ -47,12 +48,7 @@ export default function SingleProjectNavView(props: {
     if (!projectMenuOpen()) return;
     const handleClick = (e: MouseEvent) => {
       const target = e.target as Node;
-      if (
-        menuRef &&
-        !menuRef.contains(target) &&
-        buttonRef &&
-        !buttonRef.contains(target)
-      ) {
+      if (menuRef && !menuRef.contains(target) && buttonRef && !buttonRef.contains(target)) {
         setProjectMenuOpen(false);
       }
     };
@@ -60,12 +56,8 @@ export default function SingleProjectNavView(props: {
     onCleanup(() => window.removeEventListener("pointerdown", handleClick));
   });
 
-  const currentProjectName = createMemo(() =>
-    workspaceDisplayName(workspace.rootDir)
-  );
-  const currentProjectColor = createMemo(() =>
-    workspaceIdentityColor(workspace.rootDir)
-  );
+  const currentProjectName = createMemo(() => workspaceDisplayName(workspace.rootDir));
+  const currentProjectColor = createMemo(() => workspaceIdentityColor(workspace.rootDir));
   const currentFolders = createMemo(() => activeWorkspaceFolders());
 
   const dropdownProjectList = createMemo(() => {
@@ -86,9 +78,7 @@ export default function SingleProjectNavView(props: {
       .sort((a, b) => b.time.created - a.time.created);
     if (!q) return raw;
     return raw.filter(
-      (s) =>
-        (s.title || "").toLowerCase().includes(q) ||
-        (s.slug || "").toLowerCase().includes(q)
+      (s) => (s.title || "").toLowerCase().includes(q) || (s.slug || "").toLowerCase( ).includes(q)
     );
   });
 
@@ -104,9 +94,7 @@ export default function SingleProjectNavView(props: {
     return groups;
   });
 
-  const archivedSessions = createMemo(() =>
-    filteredSessions().filter((s) => isSessionArchived(s))
-  );
+  const archivedSessions = createMemo(() => filteredSessions().filter((s) => isSessionArchived(s)));
 
   const onSelectProjectSingle = async (path: string) => {
     setProjectMenuOpen(false);
@@ -365,7 +353,135 @@ export default function SingleProjectNavView(props: {
             </Show>
           </div>
         </Show>
+
+        {/* Bottom + Import External Task Button */}
+        <div class="pt-1">
+          <button
+            type="button"
+            onClick={() => openHandoffModal()}
+            class="w-full flex items-center gap-2 rounded-lg px-2 py-1.5 text-[12px] text-[var(--text-faint)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]/60 transition-colors cursor-pointer"
+            title={t("leftNav.handoffTooltip")}
+          >
+            <Plus size={13.5} class="shrink-0 text-[var(--accent-primary)]" />
+            <span>{t("leftNav.handoffBtn")}</span>
+          </button>
+        </div>
       </div>
     </>
+  );
+}
+
+export function RecentTasksNavView(props: {
+  allProjects: ProjectNavEntry[];
+  projectSessions: Record<string, SessionInfo[]>;
+  filterQuery: string;
+  pendingSessions: Set<string>;
+  onSelectSession: (path: string, sessionID: string) => void;
+  onArchiveSession: (path: string, ev: MouseEvent, sessionID: string) => void;
+  onDiscardSession: (path: string, ev: MouseEvent, sessionID: string) => Promise<void> | void;
+}) {
+  const recentGroups = createMemo(() => {
+    const q = props.filterQuery.trim().toLowerCase();
+    const items: Array<{ session: SessionInfo; proj: ProjectNavEntry }> = [];
+
+    for (const proj of props.allProjects) {
+      const isActive =
+        normalizeFolderPath(proj.path) === normalizeFolderPath(workspace.rootDir);
+      const list = isActive ? workspace.sessions : props.projectSessions[proj.path] || [];
+      for (const s of list) {
+        if (s.parentID || isSessionArchived(s)) continue;
+        if (
+          q &&
+          !(s.title || "").toLowerCase().includes(q) &&
+          !(s.slug || "").toLowerCase().includes(q) &&
+          !proj.name.toLowerCase().includes(q)
+        ) {
+          continue;
+        }
+        items.push({ session: s, proj });
+      }
+    }
+
+    items.sort(
+      (a, b) =>
+        (b.session.time.updated || b.session.time.created) -
+        (a.session.time.updated || a.session.time.created)
+    );
+
+    const groups: Array<{
+      label: string;
+      entries: Array<{ session: SessionInfo; proj: ProjectNavEntry }>;
+    }> = [];
+    for (const entry of items) {
+      const label = dayLabel(entry.session.time.updated || entry.session.time.created);
+      const last = groups[groups.length - 1];
+      if (last && last.label === label) last.entries.push(entry);
+      else groups.push({ label, entries: [entry] });
+    }
+    return groups;
+  });
+
+  return (
+    <div class="flex-1 min-h-0 overflow-y-auto px-1 py-1 space-y-2.5">
+      <Show
+        when={recentGroups().length > 0}
+        fallback={
+          <div class="px-3 py-6 text-center text-[12px] text-[var(--text-faint)]">
+            {t("leftNav.noThreads")}
+          </div>
+        }
+      >
+        <For each={recentGroups()}>
+          {(group) => (
+            <div class="space-y-0.5">
+              <div class="px-2 py-0.5 text-[11px] font-medium text-[var(--text-faint)]">
+                {group.label}
+              </div>
+              <For each={group.entries}>
+                {(entry) => {
+                  const isActiveProj = () =>
+                    normalizeFolderPath(entry.proj.path) ===
+                    normalizeFolderPath(workspace.rootDir);
+                  return (
+                    <SessionNavItem
+                      session={entry.session}
+                      active={
+                        isActiveProj() && workspace.activeSessionID === entry.session.id
+                      }
+                      canDelete={true}
+                      isArchived={false}
+                      showBranchIcon={true}
+                      pendingSessions={props.pendingSessions}
+                      onSelect={() =>
+                        props.onSelectSession(entry.proj.path, entry.session.id)
+                      }
+                      onArchive={(ev, id) =>
+                        props.onArchiveSession(entry.proj.path, ev, id)
+                      }
+                      onDiscard={(ev, id) =>
+                        props.onDiscardSession(entry.proj.path, ev, id)
+                      }
+                    />
+                  );
+                }}
+              </For>
+            </div>
+          )}
+        </For>
+      </Show>
+
+      {/* Bottom + Import External Task Button */}
+      <div class="pt-1">
+        <button
+          type="button"
+          onClick={() => openHandoffModal()}
+          class="w-full flex items-center gap-2 rounded-lg px-2 py-1.5 text-[12px] text-[var(--text-faint)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]/60 transition-colors cursor-pointer"
+          title={t("leftNav.handoffTooltip")}
+        >
+          <Plus size={13.5} class="shrink-0 text-[var(--accent-primary)]" />
+          <span>{t("leftNav.handoffBtn")}</span>
+        </button>
+      </div>
+    </div>
   );
 }

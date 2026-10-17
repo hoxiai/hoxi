@@ -55,8 +55,6 @@ export const timeline: TimelineI18n = {
   newWorktree: "新开 Worktree 执行",
   dismiss: "忽略",
   attachImageTooltip: "添加截图或图片 (支持 Cmd+V 直接粘贴)",
-  arenaTooltip: "开启多模型 Worktree 赛马对比 (Multi-Model Arena)",
-  arenaBtn: "赛马对比",
   openInInspectorTooltip: "在检视器中打开文件",
   removeCommentTooltip: "删除批注",
   copyPromptTooltip: "复制提示词",

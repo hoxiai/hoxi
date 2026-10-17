@@ -1,6 +1,6 @@
 // web/src/components/layout/LeftNav.tsx
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
-import { ArrowRightLeft } from "lucide-solid";
+import { ArrowRightLeft, Check, Clock, Folder, Layers, Plus } from "lucide-solid";
 import {
   archiveSession,
   discardSession,
@@ -10,6 +10,7 @@ import {
   reorderProjects,
   selectSession,
   setProjectOrder,
+  setSidebarProjectMode,
   switchWorkspace,
   unarchiveSession,
   workspace,
@@ -19,14 +20,18 @@ import type { SessionInfo } from "../../services/sse-types";
 import { Icon, Spinner } from "../icons";
 import { buildAllProjects, findProjectDropTarget } from "./left-nav-helpers";
 import MultiProjectTreeItem from "./MultiProjectItem";
+import SingleProjectNavView, { RecentTasksNavView } from "./SingleProjectNavView";
 import UserAccountMenu from "./UserAccountMenu";
 import { t } from "../../i18n";
 
 export default function LeftNav() {
   const [filterQuery, setFilterQuery] = createSignal("");
   const [showSearch, setShowSearch] = createSignal(false);
+  const [modeMenuOpen, setModeMenuOpen] = createSignal(false);
   const [creatingForPath, setCreatingForPath] = createSignal<string | null>(null);
   const [creatingGlobal, setCreatingGlobal] = createSignal(false);
+  let modeBtnRef: HTMLButtonElement | undefined;
+  let modeMenuRef: HTMLDivElement | undefined;
 
   // Global shortcut: Cmd+N (or Ctrl+N) creates a new thread
   createEffect(() => {
@@ -114,10 +119,7 @@ export default function LeftNav() {
     );
   });
 
-  const pendingSessions = createMemo(
-    () => new Set(workspace.pendingPermissions.map((p) => p.sessionID))
-  );
-
+  const pendingSessions = createMemo(() => new Set(workspace.pendingPermissions.map((p) => p.sessionID)));
   const isExpanded = (path: string) => expandedProjects().has(path);
 
   const loadSessionsForProject = async (path: string) => {
@@ -151,10 +153,7 @@ export default function LeftNav() {
   };
 
   const onProjectPointerDown = (ev: PointerEvent, fromPath: string) => {
-    if (ev.button !== 0) return;
-    const targetEl = ev.target as HTMLElement | null;
-    if (targetEl?.closest("button")) return;
-
+    if (ev.button !== 0 || (ev.target as HTMLElement | null)?.closest("button")) return;
     const startY = ev.clientY;
     let isDragging = false;
 
@@ -164,33 +163,24 @@ export default function LeftNav() {
         isDragging = true;
         setDraggingProjectPath(fromPath);
       }
-      if (!projectListContainerRef) return;
-      setDropTarget(findProjectDropTarget(projectListContainerRef, moveEv.clientY, fromPath));
+      if (projectListContainerRef) {
+        setDropTarget(findProjectDropTarget(projectListContainerRef, moveEv.clientY, fromPath));
+      }
     };
 
     const handlePointerUp = () => {
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerup", handlePointerUp);
       window.removeEventListener("pointercancel", handlePointerUp);
-
-      if (isDragging) {
-        suppressNextProjectClick = true;
-        setTimeout(() => {
-          suppressNextProjectClick = false;
-        }, 80);
-
-        const target = dropTarget();
-        if (target && target.path !== fromPath) {
-          reorderProjects(
-            allProjects().map((p) => p.path),
-            fromPath,
-            target.path,
-            target.position
-          );
-        }
-        setDraggingProjectPath(null);
-        setDropTarget(null);
+      if (!isDragging) return;
+      suppressNextProjectClick = true;
+      setTimeout(() => { suppressNextProjectClick = false; }, 80);
+      const target = dropTarget();
+      if (target && target.path !== fromPath) {
+        reorderProjects(allProjects().map((p) => p.path), fromPath, target.path, target.position);
       }
+      setDraggingProjectPath(null);
+      setDropTarget(null);
     };
 
     window.addEventListener("pointermove", handlePointerMove);
@@ -198,21 +188,15 @@ export default function LeftNav() {
     window.addEventListener("pointercancel", handlePointerUp);
   };
 
-  const toggleArchivedForProject = (path: string) => {
-    setExpandedArchivedByProject((prev) => ({
-      ...prev,
-      [path]: !prev[path],
-    }));
-  };
+  const toggleArchivedForProject = (path: string) =>
+    setExpandedArchivedByProject((prev) => ({ ...prev, [path]: !prev[path] }));
 
   const onCreateThreadInProject = async (e: MouseEvent, path: string) => {
     e.stopPropagation();
     if (creatingForPath()) return;
     setCreatingForPath(path);
     try {
-      if (path !== workspace.rootDir) {
-        await switchWorkspace(path);
-      }
+      if (path !== workspace.rootDir) await switchWorkspace(path);
       setExpandedProjects((prev) => new Set([...prev, path]));
       await newIsolatedSession();
     } catch (err) {
@@ -223,17 +207,11 @@ export default function LeftNav() {
   };
 
   const onSelectSessionInProject = async (path: string, sessionID: string) => {
-    if (path !== workspace.rootDir) {
-      await switchWorkspace(path);
-    }
+    if (path !== workspace.rootDir) await switchWorkspace(path);
     await selectSession(sessionID);
   };
 
-  const onArchiveInProject = async (
-    projPath: string,
-    ev: MouseEvent,
-    sessionID: string
-  ) => {
+  const onArchiveInProject = async (projPath: string, ev: MouseEvent, sessionID: string) => {
     ev.stopPropagation();
     const now = Date.now();
     if (projPath !== workspace.rootDir) {
@@ -247,11 +225,7 @@ export default function LeftNav() {
     await archiveSession(sessionID, projPath);
   };
 
-  const onUnarchiveInProject = async (
-    projPath: string,
-    ev: MouseEvent,
-    sessionID: string
-  ) => {
+  const onUnarchiveInProject = async (projPath: string, ev: MouseEvent, sessionID: string) => {
     ev.stopPropagation();
     if (projPath !== workspace.rootDir) {
       setProjectSessions((prev) => ({
@@ -267,11 +241,7 @@ export default function LeftNav() {
     await unarchiveSession(sessionID, projPath);
   };
 
-  const onDiscardInProject = async (
-    projPath: string,
-    ev: MouseEvent,
-    sessionID: string
-  ) => {
+  const onDiscardInProject = async (projPath: string, ev: MouseEvent, sessionID: string) => {
     ev.stopPropagation();
     if (projPath !== workspace.rootDir) {
       setProjectSessions((prev) => ({
@@ -282,9 +252,40 @@ export default function LeftNav() {
     await discardSession(sessionID, true, projPath);
   };
 
+  createEffect(() => {
+    if (!modeMenuOpen()) return;
+    const handlePointerDown = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (modeMenuRef && !modeMenuRef.contains(target) && modeBtnRef && !modeBtnRef.contains(target)) {
+        setModeMenuOpen(false);
+      }
+    };
+    window.addEventListener("pointerdown", handlePointerDown);
+    onCleanup(() => window.removeEventListener("pointerdown", handlePointerDown));
+  });
+
+  createEffect(() => {
+    if (workspace.sidebarProjectMode !== "recent") return;
+    for (const p of allProjects()) {
+      if (p.path !== workspace.rootDir && !projectSessions()[p.path] && !loadingProjects()[p.path]) {
+        void loadSessionsForProject(p.path);
+      }
+    }
+  });
+
+  const modeOptions: Array<{
+    id: "single" | "multi" | "recent";
+    label: () => string;
+    icon: typeof Folder;
+  }> = [
+    { id: "single", label: () => t("leftNav.singleProject"), icon: Folder },
+    { id: "multi", label: () => t("leftNav.multiProject"), icon: Layers },
+    { id: "recent", label: () => t("leftNav.recentTasks"), icon: Clock },
+  ];
+
   return (
     <aside class="relative h-full w-full flex flex-col bg-transparent pl-2 pr-1 select-none">
-      {/* Unified Minimal Header: New Thread + Quick Actions */}
+      {/* Unified Minimal Header: New Thread + Mode Switcher + Search + New Workspace */}
       <div class="px-1.5 pt-1 pb-1.5 flex items-center justify-between gap-1 shrink-0">
         <button
           type="button"
@@ -299,23 +300,65 @@ export default function LeftNav() {
           >
             <Icon name="new-session" size="small" class="text-[var(--accent-primary)] shrink-0" />
           </Show>
-          <span class="text-[13px] font-medium truncate">
-            {t("leftNav.newThread")}
-          </span>
+          <span class="text-[13px] font-medium truncate">{t("leftNav.newThread")}</span>
           <span class="text-[11px] font-mono text-[var(--text-faint)] group-hover:text-[var(--text-muted)]">
             ⌘N
           </span>
         </button>
 
         <div class="flex items-center gap-0.5 shrink-0">
-          <button
-            type="button"
-            onClick={() => openHandoffModal()}
-            class="p-1.5 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
-            title={t("leftNav.handoffTooltip")}
-          >
-            <ArrowRightLeft size={13.5} />
-          </button>
+          {/* Sidebar Mode Switcher (Single / Multi / Recent Tasks) */}
+          <div class="relative">
+            <button
+              ref={modeBtnRef}
+              type="button"
+              onClick={() => setModeMenuOpen((v) => !v)}
+              class={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+                modeMenuOpen()
+                  ? "bg-[var(--bg-hover)] text-[var(--text-primary)]"
+                  : "text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
+              }`}
+              title={t("leftNav.switchSidebarMode")}
+            >
+              <ArrowRightLeft size={13.5} />
+            </button>
+
+            <Show when={modeMenuOpen()}>
+              <div
+                ref={modeMenuRef}
+                class="absolute right-0 top-full mt-1 w-36 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-1 shadow-xl z-50 animate-in fade-in zoom-in-95 duration-100 space-y-0.5"
+              >
+                <For each={modeOptions}>
+                  {(opt) => {
+                    const OptIcon = opt.icon;
+                    return (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSidebarProjectMode(opt.id);
+                          setModeMenuOpen(false);
+                        }}
+                        class={`w-full flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-[12px] transition-colors cursor-pointer ${
+                          workspace.sidebarProjectMode === opt.id
+                            ? "bg-[var(--accent-surface)] text-[var(--text-primary)] font-medium"
+                            : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+                        }`}
+                      >
+                        <span class="inline-flex items-center gap-2">
+                          <OptIcon size={13} class="text-[var(--text-muted)]" />
+                          <span>{opt.label()}</span>
+                        </span>
+                        <Show when={workspace.sidebarProjectMode === opt.id}>
+                          <Check size={13} class="text-[var(--accent-primary)]" />
+                        </Show>
+                      </button>
+                    );
+                  }}
+                </For>
+              </div>
+            </Show>
+          </div>
+
           <button
             type="button"
             onClick={() => setShowSearch((v) => !v)}
@@ -362,44 +405,84 @@ export default function LeftNav() {
         </div>
       </Show>
 
-      {/* Unified Project & Session Tree */}
-      <div
-        ref={projectListContainerRef}
-        class="flex-1 min-h-0 overflow-y-auto px-1 py-1 space-y-1"
-      >
-        <For each={projectList()}>
-          {(proj) => (
-            <MultiProjectTreeItem
-              proj={proj}
-              expanded={isExpanded(proj.path)}
-              isCreating={creatingForPath() === proj.path}
-              isLoadingSessions={Boolean(loadingProjects()[proj.path])}
-              isDraggingThis={draggingProjectPath() === proj.path}
-              isDropBefore={
-                dropTarget()?.path === proj.path && dropTarget()?.position === "before"
-              }
-              isDropAfter={
-                dropTarget()?.path === proj.path && dropTarget()?.position === "after"
-              }
-              isArchivedOpen={
-                Boolean(expandedArchivedByProject()[proj.path]) ||
-                Boolean(filterQuery().trim())
-              }
-              filterQuery={filterQuery()}
-              cachedSessions={projectSessions()[proj.path] || []}
-              pendingSessions={pendingSessions()}
-              onPointerDown={onProjectPointerDown}
-              onToggleProject={(p) => void toggleProject(p)}
-              onToggleArchived={toggleArchivedForProject}
-              onCreateThread={(e, p) => void onCreateThreadInProject(e, p)}
-              onSelectSession={(p, id) => void onSelectSessionInProject(p, id)}
-              onArchiveSession={(p, ev, id) => void onArchiveInProject(p, ev, id)}
-              onUnarchiveSession={(p, ev, id) => void onUnarchiveInProject(p, ev, id)}
-              onDiscardSession={(p, ev, id) => onDiscardInProject(p, ev, id)}
-            />
-          )}
-        </For>
-      </div>
+      {/* MODE A: MULTI-PROJECT TREE */}
+      <Show when={workspace.sidebarProjectMode === "multi"}>
+        <div
+          ref={projectListContainerRef}
+          class="flex-1 min-h-0 overflow-y-auto px-1 py-1 space-y-1"
+        >
+          <For each={projectList()}>
+            {(proj) => (
+              <MultiProjectTreeItem
+                proj={proj}
+                expanded={isExpanded(proj.path)}
+                isCreating={creatingForPath() === proj.path}
+                isLoadingSessions={Boolean(loadingProjects()[proj.path])}
+                isDraggingThis={draggingProjectPath() === proj.path}
+                isDropBefore={
+                  dropTarget()?.path === proj.path && dropTarget()?.position === "before"
+                }
+                isDropAfter={
+                  dropTarget()?.path === proj.path && dropTarget()?.position === "after"
+                }
+                isArchivedOpen={
+                  Boolean(expandedArchivedByProject()[proj.path]) ||
+                  Boolean(filterQuery().trim())
+                }
+                filterQuery={filterQuery()}
+                cachedSessions={projectSessions()[proj.path] || []}
+                pendingSessions={pendingSessions()}
+                onPointerDown={onProjectPointerDown}
+                onToggleProject={(p) => void toggleProject(p)}
+                onToggleArchived={toggleArchivedForProject}
+                onCreateThread={(e, p) => void onCreateThreadInProject(e, p)}
+                onSelectSession={(p, id) => void onSelectSessionInProject(p, id)}
+                onArchiveSession={(p, ev, id) => void onArchiveInProject(p, ev, id)}
+                onUnarchiveSession={(p, ev, id) => void onUnarchiveInProject(p, ev, id)}
+                onDiscardSession={(p, ev, id) => onDiscardInProject(p, ev, id)}
+              />
+            )}
+          </For>
+
+          {/* Bottom + Import External Task Button */}
+          <div class="pt-1">
+            <button
+              type="button"
+              onClick={() => openHandoffModal()}
+              class="w-full flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-[12px] text-[var(--text-faint)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]/60 transition-colors cursor-pointer"
+              title={t("leftNav.handoffTooltip")}
+            >
+              <Plus size={13.5} class="shrink-0 text-[var(--accent-primary)]" />
+              <span>{t("leftNav.handoffBtn")}</span>
+            </button>
+          </div>
+        </div>
+      </Show>
+
+      {/* MODE B: SINGLE-PROJECT FOCUSED VIEW */}
+      <Show when={workspace.sidebarProjectMode === "single"}>
+        <SingleProjectNavView
+          allProjects={allProjects()}
+          filterQuery={filterQuery()}
+          pendingSessions={pendingSessions()}
+          onArchive={(ev, id) => void onArchiveInProject(workspace.rootDir, ev, id)}
+          onUnarchive={(ev, id) => void onUnarchiveInProject(workspace.rootDir, ev, id)}
+          onDiscard={(ev, id) => onDiscardInProject(workspace.rootDir, ev, id)}
+        />
+      </Show>
+
+      {/* MODE C: RECENT TASKS FLAT VIEW */}
+      <Show when={workspace.sidebarProjectMode === "recent"}>
+        <RecentTasksNavView
+          allProjects={allProjects()}
+          projectSessions={projectSessions()}
+          filterQuery={filterQuery()}
+          pendingSessions={pendingSessions()}
+          onSelectSession={(p, id) => void onSelectSessionInProject(p, id)}
+          onArchiveSession={(p, ev, id) => void onArchiveInProject(p, ev, id)}
+          onDiscardSession={(p, ev, id) => onDiscardInProject(p, ev, id)}
+        />
+      </Show>
 
       {/* Bottom Bar: Account Popover + Settings Gear */}
       <UserAccountMenu />

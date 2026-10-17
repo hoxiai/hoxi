@@ -421,6 +421,7 @@ export function removeSessionFromStore(sessionID: string): SessionInfo | undefin
       state.sessions = state.sessions.filter((s) => s.id !== sessionID);
       delete state.messagesBySession[sessionID];
       delete state.statusBySession[sessionID];
+      delete state.sessionFinishedAt[sessionID];
       delete state.diffsBySession[sessionID];
       delete state.worktreeBySession[sessionID];
       delete state.reviewCommentsBySession[sessionID];

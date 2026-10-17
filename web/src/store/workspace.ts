@@ -59,7 +59,7 @@ export interface WorkspaceState {
   agents: AgentInfo[];
   activeMode: string;
   sessionSandboxMode: "local" | "worktree";
-  sidebarProjectMode: "single" | "multi";
+  sidebarProjectMode: "single" | "multi" | "recent";
   inspectorTab: "diffs" | "memory" | "files" | "terminal";
   inspectorOpen: boolean;
   inspectorMaximized: boolean;
@@ -100,6 +100,7 @@ export interface WorkspaceState {
   auditsBySession: Record<string, CodeAuditResult>;
   auditingBySession: Record<string, boolean>;
   interruptedBySession: Record<string, "paused" | "stopped" | undefined>;
+  sessionFinishedAt: Record<string, number>;
 }
 
 export const THEME_KEY = "hoxi-theme";
@@ -200,10 +201,10 @@ function initialProjectOrder(): string[] {
   return [];
 }
 
-function initialSidebarProjectMode(): "single" | "multi" {
+function initialSidebarProjectMode(): "single" | "multi" | "recent" {
   try {
     const saved = localStorage.getItem(SIDEBAR_PROJECT_MODE_KEY);
-    if (saved === "single" || saved === "multi") return saved;
+    if (saved === "single" || saved === "multi" || saved === "recent") return saved;
   } catch {
     /* ignore */
   }
@@ -294,6 +295,7 @@ export const [workspace, setWorkspace] = createStore<WorkspaceState>({
   auditsBySession: {},
   auditingBySession: {},
   interruptedBySession: {},
+  sessionFinishedAt: {},
 });
 
 export function isSessionArchived(session: SessionInfo): boolean {
@@ -359,7 +361,7 @@ export function closeHandoffModal() {
   setWorkspace("handoffModalOpen", false);
 }
 
-export function setSidebarProjectMode(mode: "single" | "multi") {
+export function setSidebarProjectMode(mode: "single" | "multi" | "recent") {
   setWorkspace("sidebarProjectMode", mode);
   try {
     localStorage.setItem(SIDEBAR_PROJECT_MODE_KEY, mode);

@@ -101,6 +101,9 @@ export default function App() {
           }
           case "session.status":
             setWorkspace("statusBySession", evt.properties.sessionID, evt.properties.status);
+            if (evt.properties.status.type === "idle") {
+              setWorkspace("sessionFinishedAt", evt.properties.sessionID, Date.now());
+            }
             if (evt.properties.status.type === "retry") {
               recordSessionRetry(
                 evt.properties.sessionID,
@@ -112,6 +115,7 @@ export default function App() {
           case "session.idle": {
             const sid = evt.properties.sessionID;
             setWorkspace("statusBySession", sid, { type: "idle" });
+            setWorkspace("sessionFinishedAt", sid, Date.now());
             const isChild = Boolean(workspace.sessions.find((s) => s.id === sid)?.parentID);
             if (!isChild) {
               triggerDesktopNotification("Hoxi", t("timeline.turnCompleted"));

@@ -48,8 +48,10 @@ export default function DevPulsePopover() {
   );
 
   onMount(() => {
-    void refreshDailyDevPulse(false);
-    const timer = setInterval(() => void refreshDailyDevPulse(false), 20_000);
+    const timer = setInterval(() => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      void refreshDailyDevPulse(false);
+    }, 45_000);
     onCleanup(() => clearInterval(timer));
   });
 
