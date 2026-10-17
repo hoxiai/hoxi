@@ -236,6 +236,12 @@ export type OpenCodeEvent =
       };
     }
   | {
+      type: "session.updated" | "session.created";
+      properties: {
+        info: SessionInfo;
+      };
+    }
+  | {
       type: "session.status";
       properties: {
         sessionID: string;

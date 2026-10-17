@@ -51,14 +51,16 @@ export function extractLocalFallbackTitle(promptText: string, currentLocale = lo
       .find((l) => l.length > 0) || "";
 
   let clause = firstLine.replace(/^[#*\->\s]+/, "").trim();
-  for (const sep of ["。", "；", "！", "？", ". ", "? ", "! "]) {
+  for (const sep of ["\u3002", "\uff1b", "\uff01", "\uff1f", ". ", "? ", "! "]) {
     const idx = clause.indexOf(sep);
     if (idx > 6) {
       clause = clause.slice(0, idx);
       break;
     }
   }
-  clause = clause.replace(/^["'`“”‘’「」【】]+|["'`“”‘’「」【】。！!？?，,；;：:]+$/g, "").trim();
+  clause = clause
+    .replace(/^["'`\u201c\u201d\u2018\u2019\u300c\u300d\u3010\u3011]+|["'`\u201c\u201d\u2018\u2019\u300c\u300d\u3010\u3011\u3002\uff01!\uff1f?\uff0c,\uff1b;\uff1a:]+$/g, "")
+    .trim();
 
   const maxChars = currentLocale.startsWith("zh") ? 18 : 42;
   if (!clause) {
@@ -98,7 +100,7 @@ export async function summarizeAndRenameSession(
     const currentLocale = locale();
     const currentSession = workspace.sessions.find((s) => s.id === sessionID);
 
-    // 1. Immediately replace placeholder title ("新建会话" / "New Thread") with a clean local summary
+    // 1. Immediately replace placeholder title with a clean local summary
     // so the user sees an instant title update while the LLM generates the polished localized title
     if (isPlaceholderSessionTitle(currentSession?.title)) {
       const immediateTitle = extractLocalFallbackTitle(promptText, currentLocale);

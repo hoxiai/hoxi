@@ -55,4 +55,20 @@ describe("i18n translation & parity", () => {
     assertEqual(res.missingInBase.length, 1);
     assertEqual(res.paramMismatches.length, 1);
   });
+
+  it("identifies placeholder session titles across locales and extracts clean fallback titles", async () => {
+    const { isPlaceholderSessionTitle, extractLocalFallbackTitle } = await import(
+      "../store/session-title"
+    );
+    assertTrue(isPlaceholderSessionTitle(dictionaries["zh-CN"].leftNav.newThread));
+    assertTrue(isPlaceholderSessionTitle(dictionaries["en-US"].leftNav.newThread));
+    assertTrue(isPlaceholderSessionTitle("New session - 2026-10-17"));
+    assertEqual(isPlaceholderSessionTitle("Refactor SSE Stream"), false);
+
+    const extracted = extractLocalFallbackTitle(
+      '### "Implement Worktree Isolation. Also add tests."',
+      "en-US"
+    );
+    assertEqual(extracted, "Implement Worktree Isolation");
+  });
 });

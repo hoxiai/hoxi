@@ -11,6 +11,7 @@ import {
   loadSessionMessages,
   recordSessionRetry,
   refreshWorktreeStatus,
+  replaceSession,
   runSessionCodeAudit,
   selectSession,
   setWorkspace,

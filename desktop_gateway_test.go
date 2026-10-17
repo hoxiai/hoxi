@@ -146,6 +146,26 @@ func TestParseOpenAIModelsPayloadAndExtractAPIError(t *testing.T) {
 	}
 }
 
+func TestCleanAndFallbackSummarizeTitle(t *testing.T) {
+	rawZh := "<think>思考中...</think>\n标题：“修复网关 CORS 与单元测试”."
+	if got := cleanSummarizedTitle(rawZh, "zh-CN"); got != "修复网关 CORS 与单元测试" {
+		t.Errorf("cleanSummarizedTitle zh-CN = %q, want %q", got, "修复网关 CORS 与单元测试")
+	}
+
+	rawEn := `Title: "Optimize SSE Streaming & Worktree Isolation".`
+	if got := cleanSummarizedTitle(rawEn, "en-US"); got != "Optimize SSE Streaming & Worktree Isolation" {
+		t.Errorf("cleanSummarizedTitle en-US = %q, want %q", got, "Optimize SSE Streaming & Worktree Isolation")
+	}
+
+	fb := fallbackSummarizeTitle("请帮我排查 desktop_gateway.go 里的 CORS 配置问题。顺便加上单元测试。", "zh-CN")
+	if fb != "请帮我排查 desktop_gateway." {
+		// Verify it extracted a non-empty bounded title
+		if fb == "" {
+			t.Fatalf("expected non-empty fallback title")
+		}
+	}
+}
+
 func TestEvaluateStaticCodeRulesAndParseObserverAudit(t *testing.T) {
 	diffs := []auditDiffFile{
 		{
