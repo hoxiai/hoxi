@@ -12,21 +12,15 @@ import {
   type CustomProviderModelDraft,
 } from "../../store/workspace";
 import { t } from "../../i18n";
-import CustomProviderModelSection, { guessFetchedModelDraft } from "./CustomProviderModelSection";
+import CustomProviderModelSection, {
+  guessFetchedModelDraft,
+  type ModelProbeResult,
+} from "./CustomProviderModelSection";
 
 const PROVIDER_VARIANTS = [
-  {
-    value: "@ai-sdk/openai-compatible",
-    label: "OpenAI Compatible (/v1/chat/completions)",
-  },
-  {
-    value: "@ai-sdk/openai",
-    label: "OpenAI Responses (/v1/responses)",
-  },
-  {
-    value: "@ai-sdk/anthropic",
-    label: "Anthropic Messages (/v1/messages)",
-  },
+  { value: "@ai-sdk/openai-compatible", label: "OpenAI Compatible (/v1/chat/completions)" },
+  { value: "@ai-sdk/openai", label: "OpenAI Responses (/v1/responses)" },
+  { value: "@ai-sdk/anthropic", label: "Anthropic Messages (/v1/messages)" },
 ] as const;
 
 export default function CustomEndpointTab() {
@@ -41,10 +35,11 @@ export default function CustomEndpointTab() {
   ]);
   const [headers, setHeaders] = createSignal<Array<{ key: string; value: string }>>([]);
 
-  // Fetch models state
+  // Fetch & probe models state
   const [fetching, setFetching] = createSignal(false);
   const [fetchedModels, setFetchedModels] = createSignal<Array<{ id: string; name: string }>>([]);
   const [selectedFetched, setSelectedFetched] = createSignal<Record<string, boolean>>({});
+  const [modelProbes, setModelProbes] = createSignal<Record<string, ModelProbeResult>>({});
   const [saving, setSaving] = createSignal(false);
   const [feedback, setFeedback] = createSignal<{ ok: boolean; text: string } | null>(null);
 
@@ -65,6 +60,7 @@ export default function CustomEndpointTab() {
     setFeedback(null);
     setFetchedModels([]);
     setSelectedFetched({});
+    setModelProbes({});
 
     if (!editID) {
       setProviderID("");
@@ -199,6 +195,29 @@ export default function CustomEndpointTab() {
     }
     setModels(Array.from(existingMap.values()));
     setFetchedModels([]);
+  };
+
+  const onProbeModel = async (mid: string) => {
+    if (!mid.trim()) return;
+    setModelProbes((prev) => ({ ...prev, [mid]: { status: "testing" } }));
+    const hdrs: Record<string, string> = {};
+    for (const h of headers()) if (h.key.trim() && h.value.trim()) hdrs[h.key.trim()] = h.value.trim();
+    try {
+      const res = await hoxiAPI.testProviderModel({
+        providerID: providerID().trim() || undefined,
+        baseURL: baseURL().trim() || undefined,
+        apiKey: apiKey().trim() === MASKED_SECRET ? undefined : apiKey().trim() || undefined,
+        npm: npmPkg(),
+        modelID: mid.trim(),
+        headers: Object.keys(hdrs).length ? hdrs : undefined,
+      });
+      setModelProbes((prev) => ({
+        ...prev,
+        [mid]: res.ok ? { status: "ok", latencyMs: res.latencyMs } : { status: "error", error: res.error || "Failed" },
+      }));
+    } catch (err: any) {
+      setModelProbes((prev) => ({ ...prev, [mid]: { status: "error", error: err?.message || String(err) } }));
+    }
   };
 
   const onSave = async (ev: Event) => {
@@ -419,6 +438,8 @@ export default function CustomEndpointTab() {
           onApplyFetchedModels={applyFetchedModels}
           headers={headers}
           setHeaders={setHeaders}
+          modelProbes={modelProbes}
+          onProbeModel={onProbeModel}
         />
 
         <Show when={feedback()}>

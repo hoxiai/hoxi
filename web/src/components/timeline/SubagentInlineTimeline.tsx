@@ -8,6 +8,7 @@ import {
   workspace,
 } from "../../store/workspace";
 import { FileIcon, Icon, Spinner } from "../icons";
+import { t } from "../../i18n";
 import {
   extractCommand,
   extractDescription,
@@ -57,7 +58,7 @@ export default function SubagentInlineTimeline(props: {
     <Show when={childToolParts().length > 0}>
       <div class="border-t border-[var(--border-subtle)] bg-[var(--bg-inset)]/65 px-3 py-2 space-y-1 max-h-44 overflow-y-auto">
         <div class="flex items-center justify-between text-[10.5px] font-semibold uppercase tracking-wider text-[var(--text-faint)] mb-1">
-          <span>Subagent Live Activity ({childToolParts().length})</span>
+          <span>{t("timeline.subagentLiveActivity", { count: childToolParts().length })}</span>
           <button
             type="button"
             onClick={(e) => {
@@ -66,7 +67,7 @@ export default function SubagentInlineTimeline(props: {
             }}
             class="text-[var(--accent-primary)] hover:underline font-normal normal-case cursor-pointer"
           >
-            Open child session →
+            {t("timeline.openChildSession")}
           </button>
         </div>
 

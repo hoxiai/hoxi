@@ -399,7 +399,7 @@ export default function ToolCard(props: { part: ToolPart }) {
                   e.stopPropagation();
                   void revertToHere(props.part.sessionID, props.part.messageID, props.part.id);
                 }}
-                title="Revert file & conversation to before this edit"
+                title={t("toolCard.revertTooltip")}
                 class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[11px] text-[var(--text-muted)] hover:text-[var(--warn-text)] hover:bg-[var(--warn-surface)] transition-colors cursor-pointer"
               >
                 <Icon name="arrow-undo-down" size="small" />

@@ -304,12 +304,12 @@ export async function connectProviderWithKey(opts: {
   await loadProviders();
 
   if (opts.customModelID?.trim()) {
-    selectModel({ providerID: pid, modelID: opts.customModelID.trim() });
-  } else {
+    selectModel({ providerID: pid, modelID: opts.customModelID.trim() }, false);
+  } else if (!workspace.selectedModel) {
     const prov = workspace.providers.find((p) => p.id === pid);
     const defModel = workspace.defaultModels[pid] || Object.keys(prov?.models || {})[0];
     if (defModel) {
-      selectModel({ providerID: pid, modelID: defModel });
+      selectModel({ providerID: pid, modelID: defModel }, false);
     }
   }
 }
@@ -403,8 +403,12 @@ export async function saveCustomProvider(input: SaveCustomProviderInput): Promis
   await loadProviders();
 
   const firstModelID = input.models[0]?.id?.trim();
-  if (firstModelID) {
-    selectModel({ providerID: pid, modelID: firstModelID });
+  const cur = workspace.selectedModel;
+  const curStillExists =
+    cur &&
+    (cur.providerID !== pid || Boolean(nextModels[cur.modelID]));
+  if (firstModelID && !curStillExists) {
+    selectModel({ providerID: pid, modelID: firstModelID }, false);
   }
 }
 

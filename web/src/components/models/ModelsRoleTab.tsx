@@ -277,7 +277,7 @@ export default function ModelsRoleTab() {
                         {agent.name}
                       </span>
                       <span class="rounded bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-muted)]">
-                        mode
+                        {t("models.modeBadge")}
                       </span>
                     </div>
                     <Show when={agent.description}>

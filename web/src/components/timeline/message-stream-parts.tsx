@@ -18,6 +18,7 @@ import {
   workspace,
 } from "../../store/workspace";
 import { Icon } from "../icons";
+import { t } from "../../i18n";
 
 export { groupAssistantParts, isContextTool, isExplorationPart, isTodoTool, type TurnRenderItem };
 
@@ -43,7 +44,7 @@ export function AssistantErrorCard(props: { info: MessageInfo }) {
   const errMessage = () =>
     props.info.error?.data?.message ||
     props.info.error?.name ||
-    "Model request failed";
+    t("timeline.modelRequestFailed");
 
   const statusCode = () => props.info.error?.data?.statusCode;
 
@@ -61,7 +62,7 @@ export function AssistantErrorCard(props: { info: MessageInfo }) {
           <div class="min-w-0 flex-1 space-y-1.5">
             <div class="flex items-center gap-2 flex-wrap">
               <span class="font-semibold">
-                {props.info.error?.name || "API Error"}
+                {props.info.error?.name || t("timeline.apiError")}
                 {statusCode() ? ` (${statusCode()})` : ""}
               </span>
               <Show when={props.info.providerID || props.info.modelID}>
@@ -84,7 +85,7 @@ export function AssistantErrorCard(props: { info: MessageInfo }) {
                     class="inline-flex items-center gap-1.5 rounded-lg bg-[var(--accent-primary)] px-2.5 py-1 text-[11px] font-medium text-white hover:opacity-90 transition-opacity cursor-pointer"
                   >
                     <Icon name="arrow-up" size="small" />
-                    <span>Retry with {sel().modelID}</span>
+                    <span>{t("timeline.retryWithModel", { model: sel().modelID })}</span>
                   </button>
                 )}
               </Show>
@@ -113,7 +114,7 @@ export function AssistantErrorCard(props: { info: MessageInfo }) {
                   class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--accent-border)] bg-[var(--accent-surface)] px-2.5 py-1 text-[11px] font-medium text-[var(--accent-text)] hover:opacity-90 transition-opacity cursor-pointer"
                 >
                   <Icon name="check-small" size="small" />
-                  <span>Switch & Retry (deepseek-v4.1-flash-free)</span>
+                  <span>{t("timeline.switchAndRetryFree")}</span>
                 </button>
               </Show>
 
@@ -123,7 +124,7 @@ export function AssistantErrorCard(props: { info: MessageInfo }) {
                 class="inline-flex items-center gap-1 rounded-lg border border-[var(--danger-border)] bg-[var(--bg-panel)]/80 px-2.5 py-1 text-[11px] font-medium text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
               >
                 <Icon name="sliders" size="small" />
-                <span>Configure Models & API Keys</span>
+                <span>{t("timeline.configureModels")}</span>
               </button>
             </div>
           </div>
@@ -156,8 +157,10 @@ export function SessionRetryCard(props: { status: Extract<SessionStatus, { type:
       <Icon name="warning" size="small" class="mt-0.5 shrink-0" />
       <div class="min-w-0 flex-1 space-y-0.5">
         <div class="font-medium">
-          Retrying in {seconds()}s{" "}
-          <span class="font-mono text-[11px] opacity-80">(Attempt #{props.status.attempt})</span>
+          {t("timeline.retryingInSeconds", { seconds: seconds() })}{" "}
+          <span class="font-mono text-[11px] opacity-80">
+            ({t("timeline.retryAttempt", { attempt: props.status.attempt })})
+          </span>
         </div>
         <Show when={props.status.message}>
           <div class="text-[11.5px] opacity-90 break-words font-mono">{props.status.message}</div>
@@ -181,7 +184,7 @@ export function PartView(props: { part: MessagePart }) {
           <Icon name="code-lines" size="small" class="text-[var(--text-muted)]" />
           <span>patch {(part() as any).hash?.slice(0, 8)}</span>
           <span class="text-[var(--text-faint)]">·</span>
-          <span>{((part() as any).files || []).length} files updated</span>
+          <span>{t("timeline.filesUpdatedCount", { count: ((part() as any).files || []).length })}</span>
         </div>
       );
     case "text":
@@ -239,13 +242,13 @@ export function AssistantTurnFooter(props: { info: MessageInfo; parts: MessagePa
         <button
           type="button"
           onClick={() => void copyResponse()}
-          title={copied() ? "Copied" : "Copy response"}
+          title={copied() ? t("common.copied") : t("timeline.copyResponse")}
           class="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
         >
           <Show when={copied()} fallback={<Icon name="copy" size="small" />}>
             <Icon name="check" size="small" class="text-[var(--ok-text)]" />
           </Show>
-          <span>{copied() ? "Copied" : "Copy"}</span>
+          <span>{copied() ? t("common.copied") : t("common.copy")}</span>
         </button>
 
         <Show when={props.info.agent}>

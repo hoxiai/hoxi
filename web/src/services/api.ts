@@ -364,4 +364,18 @@ export const hoxiAPI = {
   openDirectoryDialog(): Promise<{ path: string; error?: string }> {
     return requestJSON("/api/hoxi/dialog/open-directory", { method: "POST" });
   },
+
+  testProviderModel(opts: {
+    providerID?: string;
+    baseURL?: string;
+    apiKey?: string;
+    npm?: string;
+    modelID: string;
+    headers?: Record<string, string>;
+  }): Promise<{ ok: boolean; latencyMs?: number; error?: string }> {
+    return requestJSON("/api/hoxi/provider/test-model", {
+      method: "POST",
+      body: JSON.stringify(opts),
+    });
+  },
 };

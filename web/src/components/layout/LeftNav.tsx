@@ -189,7 +189,7 @@ export default function LeftNav() {
             <Icon name="magnifying-glass" size="small" class="text-[var(--text-muted)]" />
             <input
               type="text"
-              placeholder="Filter…"
+              placeholder={t("leftNav.filterPlaceholder")}
               value={filterQuery()}
               onInput={(e) => setFilterQuery(e.currentTarget.value)}
               class="w-full bg-transparent text-[11.5px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none"
@@ -338,7 +338,7 @@ export default function LeftNav() {
           type="button"
           onClick={() => setWorkspace("providerModalOpen", true)}
           class="flex items-center gap-2 rounded-lg px-1.5 py-1 text-left text-[12px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]/60 transition-colors cursor-pointer min-w-0"
-          title="Account & Providers"
+          title={t("leftNav.accountAndProviders")}
         >
           <div class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--bg-inset)] text-[var(--text-secondary)]">
             <User size={13} />
@@ -352,7 +352,7 @@ export default function LeftNav() {
           type="button"
           onClick={() => setWorkspace("providerModalOpen", true)}
           class="p-1.5 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]/60 transition-colors cursor-pointer shrink-0"
-          title="Settings & Providers"
+          title={t("leftNav.settingsAndProviders")}
         >
           <Icon name="settings-gear" size="small" />
         </button>

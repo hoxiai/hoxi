@@ -4,6 +4,7 @@ import type { MessageInfo, MessagePart, SessionInfo } from "../services/sse-type
 import { hoxiAPI } from "../services/api";
 import { RECENT_PROJECTS_KEY, setWorkspace, workspace } from "./workspace";
 import { loadAgents, loadProviders } from "./workspace-providers";
+import { t } from "../i18n";
 
 export async function loadProjects(): Promise<void> {
   try {
@@ -143,8 +144,11 @@ export async function selectSession(sessionID: string): Promise<void> {
   }
 }
 
-export async function newIsolatedSession(title = "New Session"): Promise<string> {
-  const session = await hoxiAPI.createSession(title, workspace.rootDir || undefined);
+export async function newIsolatedSession(title?: string): Promise<string> {
+  const session = await hoxiAPI.createSession(
+    title || t("leftNav.newThread"),
+    workspace.rootDir || undefined
+  );
   try {
     const meta = await hoxiAPI.createWorktree(session.id);
     setWorkspace("worktreeBySession", (prev) => ({ ...prev, [session.id]: meta }));
@@ -266,7 +270,9 @@ export async function submitSessionPrompt(
 ): Promise<string> {
   let id = targetSessionID ?? workspace.activeSessionID;
   if (!id) {
-    id = await newIsolatedSession(promptText.slice(0, 48) || "Image Prompt");
+    id = await newIsolatedSession(
+      promptText.slice(0, 48) || t("timeline.imagePromptSessionTitle")
+    );
   }
 
   const now = Date.now();

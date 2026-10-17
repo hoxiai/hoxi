@@ -1,8 +1,26 @@
 // web/src/components/models/CustomProviderModelSection.tsx
 import { createMemo, createSignal, For, Show, type Accessor, type Setter } from "solid-js";
-import { Download, Image, Plus, Search, Sparkles, Trash2, X } from "lucide-solid";
+import {
+  AlertCircle,
+  Check,
+  Download,
+  Image,
+  LoaderCircle,
+  Play,
+  Plus,
+  Search,
+  Sparkles,
+  Trash2,
+  X,
+} from "lucide-solid";
 import type { CustomProviderModelDraft } from "../../store/workspace";
 import { t } from "../../i18n";
+
+export interface ModelProbeResult {
+  status: "testing" | "ok" | "error";
+  latencyMs?: number;
+  error?: string;
+}
 
 interface CustomProviderModelSectionProps {
   models: Accessor<CustomProviderModelDraft[]>;
@@ -14,6 +32,8 @@ interface CustomProviderModelSectionProps {
   onApplyFetchedModels: () => void;
   headers: Accessor<Array<{ key: string; value: string }>>;
   setHeaders: Setter<Array<{ key: string; value: string }>>;
+  modelProbes?: Accessor<Record<string, ModelProbeResult>>;
+  onProbeModel?: (modelID: string) => void;
 }
 
 export function guessFetchedModelDraft(rm: { id: string; name: string }): CustomProviderModelDraft {
@@ -209,64 +229,114 @@ export default function CustomProviderModelSection(props: CustomProviderModelSec
           </div>
         </div>
 
-        <div class="space-y-1.5 max-h-[210px] overflow-y-auto pr-1">
+        <div class="space-y-1.5 max-h-[215px] overflow-y-auto pr-1">
           <For each={props.models()}>
-            {(row, idx) => (
-              <div class="flex items-center gap-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/50 px-2.5 py-1.5">
-                <input
-                  type="text"
-                  placeholder={`${t("models.modelId")} (${t("models.modelIdPlaceholder")})`}
-                  value={row.id}
-                  onInput={(e) => {
-                    const val = e.currentTarget.value;
-                    updateModelRow(idx(), {
-                      id: val,
-                      ...(row.name === "" || row.name === row.id ? { name: val } : {}),
-                    });
-                  }}
-                  class="flex-1 min-w-0 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 font-mono text-[12px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]"
-                />
-                <input
-                  type="text"
-                  placeholder={t("models.modelName")}
-                  value={row.name}
-                  onInput={(e) => updateModelRow(idx(), { name: e.currentTarget.value })}
-                  class="w-[170px] shrink-0 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[12px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]"
-                />
-                <button
-                  type="button"
-                  onClick={() => updateModelRow(idx(), { reasoning: !row.reasoning })}
-                  class={`shrink-0 inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] font-medium transition-colors cursor-pointer ${
-                    row.reasoning
-                      ? "border-[var(--accent-border)] bg-[var(--accent-surface)] text-[var(--accent-primary)]"
-                      : "border-[var(--border-subtle)] bg-[var(--bg-panel)] text-[var(--text-faint)]"
-                  }`}
-                  title={t("models.supportsReasoning")}
-                >
-                  <Sparkles size={11} />
-                  {t("models.reasoningCap")}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => updateModelRow(idx(), { image: !row.image })}
-                  class={`shrink-0 inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] font-medium transition-colors cursor-pointer ${
-                    row.image
-                      ? "border-[var(--accent-border)] bg-[var(--accent-surface)] text-[var(--accent-primary)]"
-                      : "border-[var(--border-subtle)] bg-[var(--bg-panel)] text-[var(--text-faint)]"
-                  }`}
-                >
-                  <Image size={11} />
-                  {t("models.imageCap")}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => removeModelRow(idx())}
-                  class="shrink-0 rounded-lg p-1 text-[var(--text-faint)] hover:bg-[var(--danger-surface)] hover:text-[var(--danger-text)] cursor-pointer"
-                >
-                  <Trash2 size={13} />
-                </button>
-              </div>
-            )}
+            {(row, idx) => {
+              const probe = () => (props.modelProbes ? props.modelProbes()[row.id.trim()] : undefined);
+              return (
+                <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/50 px-2.5 py-1.5 space-y-1">
+                  <div class="flex items-center gap-2">
+                    <input
+                      type="text"
+                      placeholder={`${t("models.modelId")} (${t("models.modelIdPlaceholder")})`}
+                      value={row.id}
+                      onInput={(e) => {
+                        const val = e.currentTarget.value;
+                        updateModelRow(idx(), {
+                          id: val,
+                          ...(row.name === "" || row.name === row.id ? { name: val } : {}),
+                        });
+                      }}
+                      onBlur={(e) => {
+                        const mid = e.currentTarget.value.trim();
+                        if (mid && props.onProbeModel && (!props.modelProbes || !props.modelProbes()[mid])) {
+                          props.onProbeModel(mid);
+                        }
+                      }}
+                      class="flex-1 min-w-0 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 font-mono text-[12px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]"
+                    />
+                    <input
+                      type="text"
+                      placeholder={t("models.modelName")}
+                      value={row.name}
+                      onInput={(e) => updateModelRow(idx(), { name: e.currentTarget.value })}
+                      class="w-[145px] shrink-0 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[12px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => updateModelRow(idx(), { reasoning: !row.reasoning })}
+                      class={`shrink-0 inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] font-medium transition-colors cursor-pointer ${
+                        row.reasoning
+                          ? "border-[var(--accent-border)] bg-[var(--accent-surface)] text-[var(--accent-primary)]"
+                          : "border-[var(--border-subtle)] bg-[var(--bg-panel)] text-[var(--text-faint)]"
+                      }`}
+                      title={t("models.supportsReasoning")}
+                    >
+                      <Sparkles size={11} />
+                      {t("models.reasoningCap")}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => updateModelRow(idx(), { image: !row.image })}
+                      class={`shrink-0 inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] font-medium transition-colors cursor-pointer ${
+                        row.image
+                          ? "border-[var(--accent-border)] bg-[var(--accent-surface)] text-[var(--accent-primary)]"
+                          : "border-[var(--border-subtle)] bg-[var(--bg-panel)] text-[var(--text-faint)]"
+                      }`}
+                    >
+                      <Image size={11} />
+                      {t("models.imageCap")}
+                    </button>
+
+                    {/* Per-Model Test Button & Status Badge */}
+                    <button
+                      type="button"
+                      disabled={!row.id.trim() || probe()?.status === "testing"}
+                      onClick={() => props.onProbeModel?.(row.id.trim())}
+                      title={probe()?.error || t("models.testConnection")}
+                      class={`shrink-0 inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] font-medium transition-colors cursor-pointer disabled:opacity-50 ${
+                        probe()?.status === "ok"
+                          ? "border-[var(--ok-border)] bg-[var(--ok-surface)] text-[var(--ok-text)]"
+                          : probe()?.status === "error"
+                          ? "border-[var(--danger-border)] bg-[var(--danger-surface)] text-[var(--danger-text)]"
+                          : "border-[var(--border-subtle)] bg-[var(--bg-panel)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                      }`}
+                    >
+                      <Show when={probe()?.status === "testing"}>
+                        <LoaderCircle size={11} class="animate-spin" />
+                        <span>{t("models.testing")}</span>
+                      </Show>
+                      <Show when={probe()?.status === "ok"}>
+                        <Check size={11} />
+                        <span class="font-mono">{probe()?.latencyMs ?? 0}ms</span>
+                      </Show>
+                      <Show when={probe()?.status === "error"}>
+                        <AlertCircle size={11} />
+                        <span>{t("common.error")}</span>
+                      </Show>
+                      <Show when={!probe()}>
+                        <Play size={10} />
+                        <span>{t("models.testConnection")}</span>
+                      </Show>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => removeModelRow(idx())}
+                      class="shrink-0 rounded-lg p-1 text-[var(--text-faint)] hover:bg-[var(--danger-surface)] hover:text-[var(--danger-text)] cursor-pointer"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+
+                  <Show when={probe()?.status === "error" && probe()?.error}>
+                    <div class="text-[11px] text-[var(--danger-text)] font-mono px-1 truncate">
+                      {probe()!.error}
+                    </div>
+                  </Show>
+                </div>
+              );
+            }}
           </For>
         </div>
       </div>
