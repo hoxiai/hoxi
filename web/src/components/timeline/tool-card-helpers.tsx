@@ -344,7 +344,7 @@ export function ToolCardExpandedBody(props: {
                   </span>
                   <button
                     type="button"
-                    onClick={() => openDiffInInspector()}
+                    onClick={() => openDiffInInspector(diff().file)}
                     class="inline-flex items-center gap-1 text-[11px] font-medium text-[var(--accent-primary)] hover:underline cursor-pointer"
                   >
                     <Icon name="code-lines" size="small" />

@@ -8,6 +8,7 @@ import { toolCard } from "./toolCard";
 import { approval } from "./approval";
 import { inspector } from "./inspector";
 import { models } from "./models";
+import { settings } from "./settings";
 
 export const zhCN: I18nDictionary = {
   common,
@@ -18,6 +19,7 @@ export const zhCN: I18nDictionary = {
   approval,
   inspector,
   models,
+  settings,
 };
 
 export default zhCN;

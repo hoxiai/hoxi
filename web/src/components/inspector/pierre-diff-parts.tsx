@@ -1,7 +1,8 @@
 // web/src/components/inspector/pierre-diff-parts.tsx
 import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 import {
-  ChevronDown,
+  ArrowLeft,
+  ChevronLeft,
   ChevronRight,
   ExternalLink,
   MessageSquarePlus,
@@ -19,6 +20,7 @@ import {
 import type { MessagePart, SnapshotFileDiff } from "../../services/sse-types";
 import { DiffChanges, FileIcon } from "../icons";
 import { t } from "../../i18n";
+import { DiffStatusBadge } from "./diff-file-tree";
 
 export function synthesizeAICommitMessage(
   sessionID: string | null | undefined,
@@ -84,6 +86,7 @@ export function FileDiffBlock(props: {
   diff?: SnapshotFileDiff;
   diffStyle?: "unified" | "split";
   maxHeight?: number;
+  fillHeight?: boolean;
   defaultExpanded?: boolean;
   compact?: boolean;
 }) {
@@ -142,17 +145,43 @@ export function FileDiffBlock(props: {
     <div
       ref={host}
       class="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-code)] overflow-auto text-[11px]"
-      style={{ "max-height": `${props.maxHeight ?? (props.compact ? 240 : 360)}px` }}
+      style={
+        props.fillHeight
+          ? undefined
+          : { "max-height": `${props.maxHeight ?? (props.compact ? 240 : 360)}px` }
+      }
     />
   );
 }
 
-export function DiffCard(props: { diff: SnapshotFileDiff; diffStyle: "unified" | "split" }) {
-  const [open, setOpen] = createSignal(true);
+/**
+ * Single-File Diff Detail View:
+ * Mounts only 1 @pierre/diffs instance for the selected file, with back-to-tree
+ * navigation, prev/next file stepper, inline review comment drawer, and file revert.
+ */
+export function SelectedDiffDetail(props: {
+  diff: SnapshotFileDiff;
+  diffStyle: "unified" | "split";
+  currentIndex: number;
+  totalFiles: number;
+  onBack: () => void;
+  onPrev: () => void;
+  onNext: () => void;
+}) {
   const [commenting, setCommenting] = createSignal(false);
   const [reverting, setReverting] = createSignal(false);
   const [lineNum, setLineNum] = createSignal("");
   const [commentBody, setCommentBody] = createSignal("");
+
+  const dirPart = () => {
+    const idx = props.diff.file.lastIndexOf("/");
+    return idx >= 0 ? props.diff.file.slice(0, idx + 1) : "";
+  };
+
+  const baseName = () => {
+    const idx = props.diff.file.lastIndexOf("/");
+    return idx >= 0 ? props.diff.file.slice(idx + 1) : props.diff.file;
+  };
 
   const onRevertFile = async () => {
     const sessionID = workspace.activeSessionID || "__root__";
@@ -189,67 +218,103 @@ export function DiffCard(props: { diff: SnapshotFileDiff; diffStyle: "unified" |
 
   return (
     <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)] overflow-hidden">
-      <div class="flex items-center gap-2 px-3 py-2 hover:bg-[var(--bg-hover)] transition-colors">
+      {/* Row 1: Back to Tree & Prev/Next Stepper + File Actions */}
+      <div class="flex items-center justify-between gap-2 px-3 py-2 border-b border-[var(--border-subtle)] bg-[var(--bg-panel)]/70">
         <button
           type="button"
-          class="flex items-center gap-2 flex-1 min-w-0 text-left cursor-pointer"
-          onClick={() => setOpen((v) => !v)}
+          onClick={() => props.onBack()}
+          class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-2 py-1 text-[11px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
         >
-          {open() ? (
-            <ChevronDown size={13} class="text-[var(--text-muted)] shrink-0" />
-          ) : (
-            <ChevronRight size={13} class="text-[var(--text-muted)] shrink-0" />
-          )}
-          <FileIcon node={{ path: props.diff.file, type: "file" }} class="w-4 h-4 shrink-0" />
-          <span
-            class="flex-1 truncate font-mono text-[11.5px] font-medium text-[var(--text-primary)]"
-            title={props.diff.file}
+          <ArrowLeft size={12} />
+          <span>{t("inspector.diffs.backToTree")}</span>
+        </button>
+
+        <div class="flex items-center gap-1.5">
+          <Show when={props.totalFiles > 1}>
+            <div class="inline-flex items-center rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] p-0.5">
+              <button
+                type="button"
+                disabled={props.currentIndex <= 0}
+                onClick={() => props.onPrev()}
+                class="rounded p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] disabled:opacity-35 transition-colors cursor-pointer"
+                title={t("inspector.diffs.prevFileTooltip")}
+              >
+                <ChevronLeft size={12} />
+              </button>
+              <span class="px-1.5 font-mono text-[10.5px] text-[var(--text-secondary)]">
+                {props.currentIndex + 1} / {props.totalFiles}
+              </span>
+              <button
+                type="button"
+                disabled={props.currentIndex >= props.totalFiles - 1}
+                onClick={() => props.onNext()}
+                class="rounded p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] disabled:opacity-35 transition-colors cursor-pointer"
+                title={t("inspector.diffs.nextFileTooltip")}
+              >
+                <ChevronRight size={12} />
+              </button>
+            </div>
+          </Show>
+
+          <button
+            type="button"
+            class="shrink-0 inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[10.5px] text-[var(--text-muted)] hover:text-[var(--warn-text)] hover:bg-[var(--warn-surface)] transition-colors cursor-pointer disabled:opacity-50"
+            disabled={reverting()}
+            onClick={() => void onRevertFile()}
+            title={t("inspector.diffs.revertFileTooltip")}
           >
-            {props.diff.file}
-          </span>
-        </button>
+            <RotateCcw size={11} />
+            <span>{t("inspector.diffs.revertFileBtn")}</span>
+          </button>
 
-        <DiffChanges
-          changes={{ additions: props.diff.additions, deletions: props.diff.deletions }}
-        />
-        <DiffChanges
-          changes={{ additions: props.diff.additions, deletions: props.diff.deletions }}
-          variant="bars"
-        />
+          <button
+            type="button"
+            class="shrink-0 inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[10.5px] text-[var(--text-muted)] hover:text-[var(--accent-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+            onClick={() => setCommenting((v) => !v)}
+            title={t("inspector.diffs.comment")}
+          >
+            <MessageSquarePlus size={12} />
+            <span>{t("inspector.diffs.comment")}</span>
+          </button>
 
-        <button
-          type="button"
-          class="shrink-0 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10.5px] text-[var(--text-muted)] hover:text-[var(--warn-text)] hover:bg-[var(--warn-surface)] transition-colors cursor-pointer disabled:opacity-50"
-          disabled={reverting()}
-          onClick={() => void onRevertFile()}
-          title={t("inspector.diffs.revertFileTooltip")}
-        >
-          <RotateCcw size={11} />
-          <span>{t("inspector.diffs.revertFileBtn")}</span>
-        </button>
-
-        <button
-          type="button"
-          class="shrink-0 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10.5px] text-[var(--text-muted)] hover:text-[var(--accent-primary)] hover:bg-[var(--bg-panel)] transition-colors cursor-pointer"
-          onClick={() => setCommenting((v) => !v)}
-          title={t("inspector.diffs.comment")}
-        >
-          <MessageSquarePlus size={12} />
-          {t("inspector.diffs.comment")}
-        </button>
-
-        <button
-          type="button"
-          class="shrink-0 text-[var(--text-muted)] hover:text-[var(--text-primary)] p-0.5 cursor-pointer"
-          onClick={() => openFileInInspector(props.diff.file)}
-          title={t("inspector.diffs.openFile")}
-        >
-          <ExternalLink size={12} />
-        </button>
+          <button
+            type="button"
+            class="shrink-0 text-[var(--text-muted)] hover:text-[var(--text-primary)] p-1 cursor-pointer"
+            onClick={() => openFileInInspector(props.diff.file)}
+            title={t("inspector.diffs.openFile")}
+          >
+            <ExternalLink size={12} />
+          </button>
+        </div>
       </div>
 
+      {/* Row 2: Active File Path & Line Changes Summary */}
+      <div class="flex items-center justify-between gap-2 px-3 py-2 border-b border-[var(--border-subtle)] bg-[var(--bg-inset)]">
+        <div class="flex items-center gap-2 min-w-0 flex-1">
+          <FileIcon node={{ path: props.diff.file, type: "file" }} class="w-4 h-4 shrink-0" />
+          <div class="truncate font-mono text-[11.5px]" title={props.diff.file}>
+            <Show when={dirPart()}>
+              <span class="text-[var(--text-muted)]">{dirPart()}</span>
+            </Show>
+            <span class="font-semibold text-[var(--text-primary)]">{baseName()}</span>
+          </div>
+          <DiffStatusBadge status={props.diff.status} />
+        </div>
+
+        <div class="flex items-center gap-2 shrink-0">
+          <DiffChanges
+            changes={{ additions: props.diff.additions, deletions: props.diff.deletions }}
+          />
+          <DiffChanges
+            changes={{ additions: props.diff.additions, deletions: props.diff.deletions }}
+            variant="bars"
+          />
+        </div>
+      </div>
+
+      {/* Optional Inline Review Comment Form */}
       <Show when={commenting()}>
-        <div class="border-t border-[var(--border-subtle)] bg-[var(--bg-panel)] px-3 py-2.5 space-y-2">
+        <div class="border-b border-[var(--border-subtle)] bg-[var(--bg-panel)] px-3 py-2.5 space-y-2">
           <div class="flex items-center gap-2">
             <span class="text-[11px] font-medium text-[var(--text-secondary)]">
               {t("inspector.diffs.reviewNoteOn")}{" "}
@@ -299,29 +364,28 @@ export function DiffCard(props: { diff: SnapshotFileDiff; diffStyle: "unified" |
         </div>
       </Show>
 
-      <Show when={open()}>
-        <div class="px-2 pb-2 pt-1">
-          <Show
-            when={
-              props.diff.patch ||
-              typeof props.diff.before === "string" ||
-              typeof props.diff.after === "string"
-            }
-            fallback={
-              <div class="px-2 py-2 text-[11px] text-[var(--text-muted)] font-mono">
-                {t("inspector.diffs.noPatch")}
-              </div>
-            }
-          >
-            <FileDiffBlock
-              diff={props.diff}
-              patch={props.diff.patch}
-              diffStyle={props.diffStyle}
-              maxHeight={320}
-            />
-          </Show>
-        </div>
-      </Show>
+      {/* Single File Diff Body */}
+      <div class="p-2">
+        <Show
+          when={
+            props.diff.patch ||
+            typeof props.diff.before === "string" ||
+            typeof props.diff.after === "string"
+          }
+          fallback={
+            <div class="px-2 py-3 text-[11px] text-[var(--text-muted)] font-mono">
+              {t("inspector.diffs.noPatch")}
+            </div>
+          }
+        >
+          <FileDiffBlock
+            diff={props.diff}
+            patch={props.diff.patch}
+            diffStyle={props.diffStyle}
+            fillHeight={true}
+          />
+        </Show>
+      </div>
     </div>
   );
 }

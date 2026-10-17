@@ -345,6 +345,16 @@ export interface InspectorDiffsI18n {
   auditCardTitlePass: string;
   auditCardTitleFail: string;
   auditObserverBy: string;
+  treeTitle: string;
+  clickFileHint: string;
+  backToTree: string;
+  prevFileTooltip: string;
+  nextFileTooltip: string;
+  expandAll: string;
+  collapseAll: string;
+  statusAdded: string;
+  statusModified: string;
+  statusDeleted: string;
 }
 
 export interface InspectorMemoryI18n {
@@ -390,4 +400,6 @@ export interface InspectorI18n {
 }
 
 export * from "./domain-models-types";
+export * from "./domain-settings-types";
+
 

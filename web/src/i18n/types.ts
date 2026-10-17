@@ -6,6 +6,7 @@ import type {
   InspectorI18n,
   LeftNavI18n,
   ModelsI18n,
+  SettingsI18n,
   TimelineI18n,
   ToolCardI18n,
 } from "./domain-types";
@@ -30,6 +31,7 @@ export interface I18nDictionary {
   approval: ApprovalI18n;
   inspector: InspectorI18n;
   models: ModelsI18n;
+  settings: SettingsI18n;
 }
 
 type Join<K, P> = K extends string | number

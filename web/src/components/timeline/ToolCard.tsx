@@ -251,7 +251,7 @@ export default function ToolCard(props: { part: ToolPart }) {
                       onClick={(e) => {
                         e.stopPropagation();
                         if (isEdit()) {
-                          openDiffInInspector();
+                          openDiffInInspector(file());
                         } else {
                           openFileInInspector(file());
                         }

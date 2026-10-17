@@ -1,17 +1,23 @@
 // web/src/components/inspector/PierreDiffViewer.tsx
-import { createMemo, createSignal, For, onMount, Show } from "solid-js";
+import { createMemo, createSignal, onMount, Show } from "solid-js";
 import { Check, GitCommitHorizontal, RefreshCw, ShieldCheck, Sparkles } from "lucide-solid";
 import { hoxiAPI } from "../../services/api";
 import {
   loadSessionMessages,
   refreshWorktreeStatus,
   runSessionCodeAudit,
+  setWorkspace,
   workspace,
 } from "../../store/workspace";
 import { t } from "../../i18n";
 import ObserverAuditBanner from "./ObserverAuditBanner";
 import DiffEmptyState from "./pierre-diff-empty";
-import { DiffCard, FileDiffBlock, synthesizeAICommitMessage } from "./pierre-diff-parts";
+import DiffFileTree from "./diff-file-tree";
+import {
+  FileDiffBlock,
+  SelectedDiffDetail,
+  synthesizeAICommitMessage,
+} from "./pierre-diff-parts";
 
 export { FileDiffBlock };
 
@@ -31,6 +37,23 @@ export default function PierreDiffViewer() {
       if (sDiffs && sDiffs.length > 0) return sDiffs;
     }
     return workspace.diffsBySession[sessionKey()] ?? [];
+  });
+
+  const selectedIndex = createMemo(() => {
+    const target = workspace.inspectedDiffFile;
+    if (!target) return -1;
+    const list = diffs();
+    return list.findIndex(
+      (d) =>
+        d.file === target ||
+        d.file.endsWith(`/${target}`) ||
+        target.endsWith(`/${d.file}`)
+    );
+  });
+
+  const selectedDiff = createMemo(() => {
+    const idx = selectedIndex();
+    return idx >= 0 ? diffs()[idx] : null;
   });
 
   const isAuditing = () =>
@@ -81,6 +104,7 @@ export default function PierreDiffViewer() {
       const res = await hoxiAPI.commitWorktree(id, msg);
       setCommitMsg("");
       setCommittedHash(res.commit || "HEAD");
+      setWorkspace("inspectedDiffFile", null);
       setTimeout(() => setCommittedHash(null), 4000);
       await refreshWorktreeStatus(workspace.activeSessionID);
       if (workspace.activeSessionID) {
@@ -111,7 +135,12 @@ export default function PierreDiffViewer() {
             </div>
           }
         >
-          <div class="flex items-center gap-2 text-[11.5px] text-[var(--text-secondary)]">
+          <button
+            type="button"
+            onClick={() => setWorkspace("inspectedDiffFile", null)}
+            class="flex items-center gap-2 text-[11.5px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+            title={t("inspector.diffs.backToTree")}
+          >
             <span class="font-mono">
               <span class="text-[var(--ok-text)]">+{totals().add}</span>{" "}
               <span class="text-[var(--danger-text)]">-{totals().del}</span>
@@ -120,11 +149,11 @@ export default function PierreDiffViewer() {
             <span>
               {diffs().length} {t("inspector.diffs.files")}
             </span>
-          </div>
+          </button>
         </Show>
 
         <div class="flex items-center gap-1.5">
-          <Show when={diffs().length > 0}>
+          <Show when={selectedDiff()}>
             <div class="flex rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] p-0.5">
               <button
                 type="button"
@@ -242,9 +271,33 @@ export default function PierreDiffViewer() {
             />
           }
         >
-          <For each={diffs()}>
-            {(diff) => <DiffCard diff={diff} diffStyle={diffStyle()} />}
-          </For>
+          <Show
+            when={selectedDiff()}
+            fallback={
+              <DiffFileTree
+                diffs={diffs()}
+                onSelectFile={(file) => setWorkspace("inspectedDiffFile", file)}
+              />
+            }
+          >
+            {(activeDiff) => (
+              <SelectedDiffDetail
+                diff={activeDiff()}
+                diffStyle={diffStyle()}
+                currentIndex={selectedIndex()}
+                totalFiles={diffs().length}
+                onBack={() => setWorkspace("inspectedDiffFile", null)}
+                onPrev={() => {
+                  const prev = diffs()[selectedIndex() - 1];
+                  if (prev) setWorkspace("inspectedDiffFile", prev.file);
+                }}
+                onNext={() => {
+                  const next = diffs()[selectedIndex() + 1];
+                  if (next) setWorkspace("inspectedDiffFile", next.file);
+                }}
+              />
+            )}
+          </Show>
         </Show>
       </div>
     </div>

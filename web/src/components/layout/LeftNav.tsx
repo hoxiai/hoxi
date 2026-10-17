@@ -2,15 +2,16 @@
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
 import { User } from "lucide-solid";
 import {
+  appSettings,
   archiveSession,
   discardSession,
   newIsolatedSession,
   openCreateWorkspaceModal,
+  openSettingsModal,
   reorderProjects,
   selectSession,
   setProjectOrder,
   setSidebarProjectMode,
-  setWorkspace,
   switchWorkspace,
   unarchiveSession,
   workspace,
@@ -291,6 +292,8 @@ export default function LeftNav() {
   };
 
   const currentUsername = createMemo(() => {
+    const custom = appSettings.userDisplayName.trim();
+    if (custom) return custom;
     const parts = (workspace.rootDir || "").split("/").filter(Boolean);
     if (parts[0] === "Users" && parts[1]) return parts[1];
     return "User";
@@ -435,9 +438,9 @@ export default function LeftNav() {
       <div class="mt-auto border-t border-[var(--border-subtle)]/50 pt-2 pb-2.5 px-2 flex items-center justify-between">
         <button
           type="button"
-          onClick={() => setWorkspace("providerModalOpen", true)}
+          onClick={() => openSettingsModal("general")}
           class="flex items-center gap-2 rounded-lg px-1.5 py-1 text-left text-[12px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]/60 transition-colors cursor-pointer min-w-0"
-          title={t("leftNav.accountAndProviders")}
+          title={t("settings.modalTitle")}
         >
           <div class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--bg-inset)] text-[var(--text-secondary)]">
             <User size={13} />
@@ -449,9 +452,9 @@ export default function LeftNav() {
 
         <button
           type="button"
-          onClick={() => setWorkspace("providerModalOpen", true)}
+          onClick={() => openSettingsModal("general")}
           class="p-1.5 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]/60 transition-colors cursor-pointer shrink-0"
-          title={t("leftNav.settingsAndProviders")}
+          title={`${t("settings.modalTitle")} (⌘,)`}
         >
           <Icon name="settings-gear" size="small" />
         </button>

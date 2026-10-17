@@ -234,6 +234,7 @@ export const [workspace, setWorkspace] = createStore<WorkspaceState>({
   inspectorTab: "diffs",
   inspectorOpen: false,
   inspectedFilePath: null,
+  inspectedDiffFile: null,
   activeInspectorFolder: null,
   workspaceModalMode: null,
   editingWorkspaceID: null,
@@ -342,7 +343,11 @@ export function openFileInInspector(filePath: string) {
   setWorkspace("inspectorOpen", true);
 }
 
-export function openDiffInInspector(_filePath?: string) {
+export function openDiffInInspector(filePath?: string) {
+  const cleaned = filePath
+    ? filePath.replace(/^\.\//, "").replace(/:\d+(?::\d+)?$/, "").trim()
+    : "";
+  setWorkspace("inspectedDiffFile", cleaned || null);
   setWorkspace("inspectorTab", "diffs");
   setWorkspace("inspectorOpen", true);
 }
@@ -381,6 +386,14 @@ export function setTheme(theme: "light" | "dark") {
   applyThemeClass(theme);
   try {
     localStorage.setItem(THEME_KEY, theme);
+    const rawSettings = localStorage.getItem("hoxi-app-settings:v1");
+    if (rawSettings) {
+      const parsed = JSON.parse(rawSettings);
+      if (parsed && typeof parsed === "object") {
+        parsed.themeMode = theme;
+        localStorage.setItem("hoxi-app-settings:v1", JSON.stringify(parsed));
+      }
+    }
   } catch {
     /* storage unavailable */
   }
@@ -396,4 +409,6 @@ export * from "./workspace-sessions";
 export * from "./session-title";
 export * from "./provider-telemetry";
 export * from "./provider-audit";
+export * from "./settings";
+
 

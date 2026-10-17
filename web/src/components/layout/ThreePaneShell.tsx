@@ -7,6 +7,7 @@ import Composer from "../timeline/Composer";
 import InspectorPane from "../inspector/InspectorPane";
 import ProviderModal from "../models/ProviderModal";
 import MultiModelArenaModal from "../models/MultiModelArenaModal";
+import SettingsModal from "../settings/SettingsModal";
 import { setWorkspace, workspace } from "../../store/workspace";
 
 const LEFT_MIN = 210;
@@ -77,10 +78,11 @@ export default function ThreePaneShell() {
         </Show>
       </main>
 
-      {/* Provider, Custom Model & Workspace Configuration Modals */}
+      {/* Provider, Custom Model, Workspace & System Settings Modals */}
       <WorkspaceModal />
       <ProviderModal />
       <MultiModelArenaModal />
+      <SettingsModal />
     </div>
   );
 }

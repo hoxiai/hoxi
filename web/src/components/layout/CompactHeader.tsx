@@ -4,7 +4,6 @@ import {
   GitBranch,
   GitMerge,
   KeyRound,
-  Languages,
   Moon,
   PanelRightClose,
   PanelRightOpen,
@@ -13,6 +12,7 @@ import {
 } from "lucide-solid";
 import {
   activeSession,
+  appSettings,
   applySessionWorktree,
   isSessionBusy,
   openEditWorkspaceModal,
@@ -24,7 +24,7 @@ import {
 } from "../../store/workspace";
 import { hoxiAPI } from "../../services/api";
 import { Spinner, TextShimmer } from "../icons";
-import { t, toggleLocale, currentLocaleMetadata } from "../../i18n";
+import { t } from "../../i18n";
 
 interface CompactHeaderProps {
   inspectorOpen: boolean;
@@ -55,7 +55,7 @@ export default function CompactHeader(props: CompactHeaderProps) {
     setApplying(true);
     setApplyNote(null);
     try {
-      await applySessionWorktree(s.id, "patch");
+      await applySessionWorktree(s.id, appSettings.worktreeApplyMode);
       setApplyNote(t("header.appliedSuccess"));
     } catch (err) {
       console.error(err);
@@ -213,20 +213,8 @@ export default function CompactHeader(props: CompactHeaderProps) {
           </Show>
         </div>
 
-        {/* Language Switcher */}
         <button
-          type="button"
-          class="inline-flex items-center justify-center gap-1 h-7 px-2 rounded-lg text-[11.5px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
-          style={{ "--wails-draggable": "no-drag" } as any}
-          onClick={toggleLocale}
-          title={t("header.langTooltip")}
-        >
-          <Languages size={13.5} />
-          <span>{currentLocaleMetadata().shortLabel}</span>
-        </button>
-
-        <button
-          class="inline-flex items-center justify-center w-7 h-7 rounded-lg text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors"
+          class="inline-flex items-center justify-center w-7 h-7 rounded-lg text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
           style={{ "--wails-draggable": "no-drag" } as any}
           onClick={toggleTheme}
           title={workspace.theme === "dark" ? t("header.themeLightTooltip") : t("header.themeDarkTooltip")}

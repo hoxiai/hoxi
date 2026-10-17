@@ -1,9 +1,10 @@
 import { render } from "solid-js/web";
 import App from "./App";
-import { applyThemeClass, workspace } from "./store/workspace";
+import { applyThemeClass, syncSettingsSideEffects, workspace } from "./store/workspace";
 import "./styles.css";
 
-// Light is the default; reflect the persisted/detected theme before first paint.
+// Reflect the persisted/detected theme and font scale before first paint.
+syncSettingsSideEffects();
 applyThemeClass(workspace.theme);
 
 const root = document.getElementById("root");
