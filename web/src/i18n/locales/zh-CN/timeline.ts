@@ -28,7 +28,7 @@ export const timeline: TimelineI18n = {
   inputPlaceholder:
     "输入任务指令或问题... (Enter 发送，Shift+Enter 换行)",
   steerPlaceholder:
-    "Agent 正在执行中。输入实时纠偏建议，无需中断进度...",
+    "任务执行中，输入补充指令将加入排队（可随时立即发送、修改或删除）...",
   filesAttached: "{count} 个文件",
   addContext: "添加上下文",
   selectModel: "选择模型",
@@ -95,6 +95,13 @@ export const timeline: TimelineI18n = {
   stopAllSubagents: "全部停止",
   stopSubagentTooltip: "停止该子智能体",
   openSubagent: "查看",
+  switchSubagent: "切换",
+  viewingSubagentBadge: "当前查看",
+  backToMainSession: "返回主会话",
+  backToMainSessionShort: "主会话",
+  subagentBreadcrumbLabel: "子智能体",
+  prevSubagentTooltip: "上一个子智能体",
+  nextSubagentTooltip: "下一个子智能体",
   revertBannerCount: "已回滚 {count} 轮对话与代码修改",
   redoOneTurn: "重做下一轮",
   redoAll: "全部恢复",
@@ -159,5 +166,20 @@ export const timeline: TimelineI18n = {
   completedWorkSummary: "已执行 {count} 个中间步骤",
   expandTurnSteps: "展开步骤",
   collapseTurnSteps: "收起步骤",
+  subagentsInterrupted: "{count} 个待续接",
+  subagentInterruptedBadge: "待续接",
+  resumeSubagentBtn: "续接",
+  resumeSubagentTooltip: "复用该子智能体会话上下文 (task_id) 继续执行并同步结果回主任务",
+  resumeAllSubagentsBtn: "一键续接 ({count})",
+  resumeSubagentPrompt:
+    "主任务此前中断，请立即调用 `task` 工具并传入 `task_id=\"{taskId}\"`（`subagent_type=\"{agentType}\"`，任务：\"{description}\"）续接该子智能体会话（其历史上下文与工具输出已完整保留），获取或完成其结果后继续完成当前主任务。",
+  queuedBadge: "排队中…",
+  queueSendNow: "立即发送",
+  queueSendNowTooltip: "立即打断当前步骤并发送此消息",
+  queueEdit: "修改",
+  queueEditTooltip: "退回输入框修改内容",
+  queueDelete: "删除",
+  queueDeleteTooltip: "取消发送并从队列移除",
+  queueCountBadge: "{count} 条排队中",
 };
 

@@ -28,7 +28,7 @@ export const timeline: TimelineI18n = {
   inputPlaceholder:
     "Ask a question or describe a task... (Enter to send, Shift+Enter for newline)",
   steerPlaceholder:
-    "Session is busy. Type to steer the agent in real time without stopping...",
+    "Task is running. New messages will be queued (Send Now, Edit, or Delete anytime)...",
   filesAttached: "{count} files",
   addContext: "Add Context",
   selectModel: "Select Model",
@@ -97,6 +97,13 @@ export const timeline: TimelineI18n = {
   stopAllSubagents: "Stop All",
   stopSubagentTooltip: "Stop subagent",
   openSubagent: "Open",
+  switchSubagent: "Switch",
+  viewingSubagentBadge: "Viewing",
+  backToMainSession: "Back to Main Session",
+  backToMainSessionShort: "Main Session",
+  subagentBreadcrumbLabel: "Subagent",
+  prevSubagentTooltip: "Previous subagent",
+  nextSubagentTooltip: "Next subagent",
   revertBannerCount: "{count} turns reverted",
   redoOneTurn: "Redo 1 Turn",
   redoAll: "Restore All",
@@ -162,5 +169,20 @@ export const timeline: TimelineI18n = {
   completedWorkSummary: "Executed {count} intermediate steps",
   expandTurnSteps: "Show steps",
   collapseTurnSteps: "Hide steps",
+  subagentsInterrupted: "{count} resumable",
+  subagentInterruptedBadge: "Interrupted",
+  resumeSubagentBtn: "Resume",
+  resumeSubagentTooltip: "Resume this subagent session (task_id) with its preserved context and sync results back",
+  resumeAllSubagentsBtn: "Resume All ({count})",
+  resumeSubagentPrompt:
+    "The parent task was interrupted. Please call the `task` tool with `task_id=\"{taskId}\"` (`subagent_type=\"{agentType}\"`, description: \"{description}\") to resume that subagent session with its preserved context, collect or finish its work, and continue the main task.",
+  queuedBadge: "Queued…",
+  queueSendNow: "Send Now",
+  queueSendNowTooltip: "Interrupt current step and send this message immediately",
+  queueEdit: "Edit",
+  queueEditTooltip: "Move back to composer to edit",
+  queueDelete: "Delete",
+  queueDeleteTooltip: "Remove from queue",
+  queueCountBadge: "{count} queued",
 };
 

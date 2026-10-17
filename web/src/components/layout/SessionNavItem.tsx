@@ -4,6 +4,7 @@ import { Pause, Pencil, Square } from "lucide-solid";
 import {
   isPlaceholderSessionTitle,
   renameSessionTitle,
+  setWorkspace,
   workspace,
 } from "../../store/workspace";
 import { pauseSessionTask, stopSessionTask } from "../../store/workspace-session-messages";
@@ -11,6 +12,7 @@ import type { SessionInfo } from "../../services/sse-types";
 import { DiffChanges, Icon, Spinner } from "../icons";
 import { t } from "../../i18n";
 import { badgeFor, diffStats } from "./left-nav-helpers";
+import { resolveRootSessionID } from "../timeline/AgentStackPill";
 import {
   formatCompactRelativeTime,
   formatExactTime,
@@ -39,11 +41,22 @@ export function SessionNavItem(props: SessionNavItemProps) {
   let inputRef: HTMLInputElement | undefined;
 
   const nowTick = useNowTicker(30000);
+  const isEffectiveActive = () =>
+    props.active ||
+    (Boolean(workspace.activeSessionID) &&
+      workspace.sessions.some((s) => s.id === props.session.id) &&
+      resolveRootSessionID(workspace.activeSessionID) === props.session.id);
   const status = () => workspace.statusBySession[props.session.id]?.type;
   const isBusy = () => status() === "busy";
   const badge = () => badgeFor(props.session.id, props.pendingSessions, status());
   const wt = () => workspace.worktreeBySession[props.session.id];
   const stats = () => diffStats(props.session.id);
+
+  createEffect(() => {
+    if (isEffectiveActive() && workspace.unreadCompletedBySession[props.session.id]) {
+      setWorkspace("unreadCompletedBySession", props.session.id, false);
+    }
+  });
 
   const finishedTimestamp = () => {
     const local = workspace.sessionFinishedAt[props.session.id];
@@ -95,6 +108,30 @@ export function SessionNavItem(props: SessionNavItemProps) {
     }
   };
 
+  const [actionState, setActionState] = createSignal<"pause" | "stop" | null>(null);
+
+  const handlePause = async (ev: MouseEvent) => {
+    ev.stopPropagation();
+    if (actionState()) return;
+    setActionState("pause");
+    try {
+      await pauseSessionTask(props.session.id);
+    } finally {
+      setActionState(null);
+    }
+  };
+
+  const handleStop = async (ev: MouseEvent) => {
+    ev.stopPropagation();
+    if (actionState()) return;
+    setActionState("stop");
+    try {
+      await stopSessionTask(props.session.id);
+    } finally {
+      setActionState(null);
+    }
+  };
+
   const handleConfirmDelete = async (ev: MouseEvent) => {
     ev.stopPropagation();
     if (deleting()) return;
@@ -113,9 +150,11 @@ export function SessionNavItem(props: SessionNavItemProps) {
       class={`group/row relative flex items-center justify-between gap-1 rounded-lg px-2.5 py-1.5 cursor-pointer transition-colors overflow-hidden ${
         confirmingDelete()
           ? "bg-[var(--danger-surface)] text-[var(--text-primary)] ring-1 ring-[var(--danger-border)]"
-          : props.active
+          : isEffectiveActive()
             ? "bg-[var(--bg-hover)] text-[var(--text-primary)] font-medium"
-            : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]/60 hover:text-[var(--text-primary)]"
+            : badge() === "completed"
+              ? "text-[var(--text-primary)] font-medium hover:bg-[var(--bg-hover)]/60"
+              : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]/60 hover:text-[var(--text-primary)]"
       }`}
       onClick={() => {
         if (!editing() && !confirmingDelete()) props.onSelect();
@@ -125,6 +164,12 @@ export function SessionNavItem(props: SessionNavItemProps) {
       <div class="flex items-center gap-1.5 min-w-0 flex-1 mr-1">
         <Show when={badge() === "approval"}>
           <span class="shrink-0 w-2 h-2 rounded-full bg-[var(--warn)] animate-pulse" />
+        </Show>
+        <Show when={badge() === "completed"}>
+          <span
+            class="shrink-0 w-2 h-2 rounded-full bg-blue-500 shadow-[0_0_6px_rgba(59,130,246,0.5)]"
+            title={t("timeline.turnCompleted")}
+          />
         </Show>
         <Show
           when={!editing()}
@@ -179,16 +224,15 @@ export function SessionNavItem(props: SessionNavItemProps) {
             <DiffChanges changes={stats()!} />
           </Show>
 
-          {/* Right-side status: Loading when running / busy; relative time when finished / idle */}
+          {/* Right-side status: Spinner icon when running / busy; relative time when finished / idle */}
           <Show
             when={!isBusy()}
             fallback={
               <span
-                class="inline-flex items-center gap-1 text-[11px] text-[var(--status-running)] font-mono shrink-0 select-none"
-                title={t("leftNav.sessionLoading")}
+                class="inline-flex items-center text-[var(--status-running)] shrink-0 select-none"
+                title={t("common.working")}
               >
-                <Spinner class="w-2.5 h-2.5 text-[var(--status-running)]" />
-                <span>{t("leftNav.sessionLoading")}</span>
+                <Spinner class="w-3 h-3 text-[var(--status-running)]" />
               </span>
             }
           >
@@ -246,58 +290,97 @@ export function SessionNavItem(props: SessionNavItemProps) {
               </div>
             }
           >
-            <div class="flex items-center gap-0.5 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-1 py-0.5 shadow-md">
-              <button
-                type="button"
-                class="inline-flex h-5 w-5 items-center justify-center rounded text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
-                onClick={(ev) => startEditing(ev)}
-                title={t("leftNav.renameSessionTooltip")}
-              >
-                <Pencil size={11} class="shrink-0 block" />
-              </button>
+            <Show
+              when={!isBusy()}
+              fallback={
+                <div class="flex items-center gap-1 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-1.5 py-0.5 shadow-md">
+                  <button
+                    type="button"
+                    disabled={actionState() !== null}
+                    onClick={(ev) => void handlePause(ev)}
+                    class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium text-[var(--text-secondary)] hover:text-[var(--warn-text)] hover:bg-[var(--warn-surface)] transition-colors cursor-pointer disabled:opacity-50"
+                    title={t("leftNav.pauseTooltip")}
+                  >
+                    <Show
+                      when={actionState() !== "pause"}
+                      fallback={<Spinner class="w-2.5 h-2.5 text-[var(--warn-text)]" />}
+                    >
+                      <Pause size={10.5} class="shrink-0 fill-current" />
+                    </Show>
+                    <span>{t("leftNav.pauseSession")}</span>
+                  </button>
 
-              <Show when={!props.isArchived && props.onArchive}>
+                  <button
+                    type="button"
+                    disabled={actionState() !== null}
+                    onClick={(ev) => void handleStop(ev)}
+                    class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium text-[var(--text-secondary)] hover:text-[var(--danger-text)] hover:bg-[var(--danger-surface)] transition-colors cursor-pointer disabled:opacity-50"
+                    title={t("leftNav.stopTooltip")}
+                  >
+                    <Show
+                      when={actionState() !== "stop"}
+                      fallback={<Spinner class="w-2.5 h-2.5 text-[var(--danger-text)]" />}
+                    >
+                      <Square size={9.5} class="shrink-0 fill-current" />
+                    </Show>
+                    <span>{t("leftNav.stopSession")}</span>
+                  </button>
+                </div>
+              }
+            >
+              <div class="flex items-center gap-0.5 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-1 py-0.5 shadow-md">
                 <button
                   type="button"
                   class="inline-flex h-5 w-5 items-center justify-center rounded text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
-                  onClick={(ev) => {
-                    ev.stopPropagation();
-                    props.onArchive?.(ev, props.session.id);
-                  }}
-                  title={t("leftNav.archiveSessionTooltip")}
+                  onClick={(ev) => startEditing(ev)}
+                  title={t("leftNav.renameSessionTooltip")}
                 >
-                  <Icon name="archive" size="small" class="w-3 h-3" />
+                  <Pencil size={11} class="shrink-0 block" />
                 </button>
-              </Show>
 
-              <Show when={props.isArchived && props.onUnarchive}>
-                <button
-                  type="button"
-                  class="inline-flex h-5 w-5 items-center justify-center rounded text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
-                  onClick={(ev) => {
-                    ev.stopPropagation();
-                    props.onUnarchive?.(ev, props.session.id);
-                  }}
-                  title={t("leftNav.unarchiveSessionTooltip")}
-                >
-                  <Icon name="reset" size="small" class="w-3 h-3" />
-                </button>
-              </Show>
+                <Show when={!props.isArchived && props.onArchive}>
+                  <button
+                    type="button"
+                    class="inline-flex h-5 w-5 items-center justify-center rounded text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+                    onClick={(ev) => {
+                      ev.stopPropagation();
+                      props.onArchive?.(ev, props.session.id);
+                    }}
+                    title={t("leftNav.archiveSessionTooltip")}
+                  >
+                    <Icon name="archive" size="small" class="w-3 h-3" />
+                  </button>
+                </Show>
 
-              <Show when={props.canDelete}>
-                <button
-                  type="button"
-                  class="inline-flex h-5 w-5 items-center justify-center rounded text-[var(--text-muted)] hover:text-[var(--danger-text)] hover:bg-[var(--danger-surface)] transition-colors cursor-pointer"
-                  onClick={(ev) => {
-                    ev.stopPropagation();
-                    setConfirmingDelete(true);
-                  }}
-                  title={t("leftNav.deleteSessionTooltip")}
-                >
-                  <Icon name="trash" size="small" class="w-3 h-3" />
-                </button>
-              </Show>
-            </div>
+                <Show when={props.isArchived && props.onUnarchive}>
+                  <button
+                    type="button"
+                    class="inline-flex h-5 w-5 items-center justify-center rounded text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+                    onClick={(ev) => {
+                      ev.stopPropagation();
+                      props.onUnarchive?.(ev, props.session.id);
+                    }}
+                    title={t("leftNav.unarchiveSessionTooltip")}
+                  >
+                    <Icon name="reset" size="small" class="w-3 h-3" />
+                  </button>
+                </Show>
+
+                <Show when={props.canDelete}>
+                  <button
+                    type="button"
+                    class="inline-flex h-5 w-5 items-center justify-center rounded text-[var(--text-muted)] hover:text-[var(--danger-text)] hover:bg-[var(--danger-surface)] transition-colors cursor-pointer"
+                    onClick={(ev) => {
+                      ev.stopPropagation();
+                      setConfirmingDelete(true);
+                    }}
+                    title={t("leftNav.deleteSessionTooltip")}
+                  >
+                    <Icon name="trash" size="small" class="w-3 h-3" />
+                  </button>
+                </Show>
+              </div>
+            </Show>
           </Show>
         </div>
       </Show>

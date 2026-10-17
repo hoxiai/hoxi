@@ -1,11 +1,16 @@
 // web/src/components/timeline/ToolCard.tsx
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
+import { RotateCcw } from "lucide-solid";
 import {
+  extractChildSubagentSessionId,
+  isSessionBusy,
+  isSubagentToolAlive,
+  isSubagentToolInterrupted,
   openDiffInInspector,
   openFileInInspector,
+  resumeSubagentTask,
   revertToHere,
   selectSession,
-  workspace,
 } from "../../store/workspace";
 import { t } from "../../i18n";
 import {
@@ -55,12 +60,22 @@ export default function ToolCard(props: { part: ToolPart }) {
   let rollingShellRef: HTMLDivElement | undefined;
 
   const status = () => props.part.state.status;
-  const isRunning = () => status() === "pending" || status() === "running";
   const isShell = () => isShellTool(props.part.tool);
   const isEdit = () => isEditingTool(props.part.tool);
   const isRead = () => isReadTool(props.part.tool);
   const isTodo = () => isTodoTool(props.part.tool);
   const isTask = () => isTaskTool(props.part.tool);
+
+  const isRunning = createMemo(() => {
+    const s = status();
+    if (s !== "pending" && s !== "running") return false;
+    if (isTask()) return isSubagentToolAlive(props.part, props.part.sessionID);
+    return isSessionBusy(props.part.sessionID);
+  });
+
+  const isInterruptedSubagent = createMemo(
+    () => isTask() && isSubagentToolInterrupted(props.part, props.part.sessionID)
+  );
 
   const targetFile = createMemo(() => extractTargetFile(props.part));
   const shellCmd = createMemo(() => (isShell() ? extractCommand(props.part) : ""));
@@ -85,9 +100,8 @@ export default function ToolCard(props: { part: ToolPart }) {
 
   // Subagent task child session ID
   const childSessionID = createMemo<string | undefined>(() => {
-    if (!isTask() || props.part.state.status === "pending") return undefined;
-    const id = props.part.state.metadata?.sessionId || props.part.state.metadata?.sessionID;
-    return typeof id === "string" && id ? id : undefined;
+    if (!isTask()) return undefined;
+    return extractChildSubagentSessionId(props.part);
   });
 
   const fileDiff = createMemo(() =>
@@ -99,7 +113,7 @@ export default function ToolCard(props: { part: ToolPart }) {
 
   // Auto-scroll shell output while streaming
   createEffect(() => {
-    if (!isShell() || status() !== "running") return;
+    if (!isShell() || !isRunning()) return;
     if (expanded()) {
       void shellOut();
     } else {
@@ -111,10 +125,10 @@ export default function ToolCard(props: { part: ToolPart }) {
     });
   });
 
-  // 0.1s live duration ticker while running
+  // 0.1s live duration ticker while actively running
   createEffect(() => {
     const s = props.part.state;
-    if (s.status === "running") {
+    if (s.status === "running" && isRunning()) {
       const start = s.time.start;
       setElapsed(Math.max(0, (Date.now() - start) / 1000));
       const timer = setInterval(() => {
@@ -297,8 +311,31 @@ export default function ToolCard(props: { part: ToolPart }) {
             </Show>
           </div>
 
-          {/* Right side: Subagent link / Diff +/- stats / Exit code / Revert / Duration / Chevron */}
+          {/* Right side: Subagent Resume / link / Diff +/- stats / Exit code / Revert / Duration / Chevron */}
           <div class="flex items-center gap-2 shrink-0">
+            <Show when={isInterruptedSubagent() && childSessionID()}>
+              {(subId) => (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const inp = props.part.state.input as Record<string, any> | undefined;
+                    void resumeSubagentTask({
+                      parentSessionID: props.part.sessionID,
+                      childSessionID: subId(),
+                      agentType: String(inp?.subagent_type || "general"),
+                      description: description() || subId(),
+                    });
+                  }}
+                  title={t("timeline.resumeSubagentTooltip")}
+                  class="inline-flex items-center gap-1 rounded-md border border-[var(--accent-border)] bg-[var(--accent-surface)] px-2 py-0.5 text-[11.5px] font-medium text-[var(--accent-primary)] hover:opacity-90 transition-opacity cursor-pointer"
+                >
+                  <RotateCcw size={11} />
+                  <span>{t("timeline.resumeSubagentBtn")}</span>
+                </button>
+              )}
+            </Show>
+
             <Show when={childSessionID()}>
               {(subId) => (
                 <button

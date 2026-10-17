@@ -23,6 +23,28 @@ import {
 export const INITIAL_VISIBLE_TURNS = 10;
 export const TURN_BATCH_SIZE = 12;
 
+export function filterVisibleTurnsByRevert(
+  rawTurns: MessageTurn[],
+  revert?: { messageID: string; partID?: string }
+): MessageTurn[] {
+  if (!revert?.messageID) return rawTurns;
+  const idx = rawTurns.findIndex((t) => t.info.id === revert.messageID);
+  if (idx >= 0) {
+    if (!revert.partID) {
+      return rawTurns.slice(0, idx);
+    }
+    const boundaryTurn = rawTurns[idx];
+    const pIdx = boundaryTurn.parts.findIndex((p) => p.id === revert.partID);
+    const slicedParts =
+      pIdx >= 0 ? boundaryTurn.parts.slice(0, pIdx) : boundaryTurn.parts;
+    return [
+      ...rawTurns.slice(0, idx),
+      { info: boundaryTurn.info, parts: slicedParts },
+    ];
+  }
+  return rawTurns.filter((t) => t.info.id < revert.messageID);
+}
+
 export interface TurnWindowController {
   visibleTurns: Accessor<MessageTurn[]>;
   hiddenCount: Accessor<number>;

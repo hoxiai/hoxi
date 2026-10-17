@@ -4,6 +4,7 @@ import type {
   MessagePart,
   QuestionRequest,
   SessionInfo,
+  SessionStatus,
   SnapshotFileDiff,
 } from "./sse-types";
 import type {
@@ -73,6 +74,14 @@ export const hoxiAPI = {
   // Sessions
   listSessions(directory?: string): Promise<SessionInfo[]> {
     return requestJSON(withDir("/session?limit=50", directory));
+  },
+
+  getSessionStatuses(directory?: string): Promise<Record<string, SessionStatus>> {
+    return requestJSON(withDir("/session/status", directory));
+  },
+
+  getSession(sessionID: string, directory?: string): Promise<SessionInfo> {
+    return requestJSON(withDir(`/session/${sessionID}`, directory));
   },
 
   createSession(title?: string, directory?: string): Promise<SessionInfo> {

@@ -104,6 +104,19 @@ export function createImageAttachments() {
       url: img.dataUrl,
     }));
 
+  const restoreFromAttachments = (atts: PromptAttachment[]) => {
+    if (!atts || atts.length === 0) return;
+    setImages((prev) => [
+      ...prev,
+      ...atts.map((a, idx) => ({
+        id: `img_restored_${Date.now()}_${idx}`,
+        filename: a.filename || "image.png",
+        mime: a.mime,
+        dataUrl: a.url,
+      })),
+    ]);
+  };
+
   return {
     images,
     dragging,
@@ -115,6 +128,7 @@ export function createImageAttachments() {
     handleDragLeave,
     handleDrop,
     toPromptAttachments,
+    restoreFromAttachments,
   };
 }
 

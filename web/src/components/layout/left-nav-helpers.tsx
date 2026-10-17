@@ -21,7 +21,7 @@ export interface ProjectNavEntry {
   isPinned: boolean;
 }
 
-export type SessionBadge = "running" | "approval" | "idle";
+export type SessionBadge = "running" | "approval" | "completed" | "idle";
 
 export function FolderIcon(props: { open?: boolean; color?: string; class?: string }) {
   const fill = () => props.color || DEFAULT_WORKSPACE_IDENTITY_COLOR;
@@ -67,6 +67,7 @@ export function badgeFor(
 ): SessionBadge {
   if (pendingSessions.has(sessionID)) return "approval";
   if (status === "busy") return "running";
+  if (workspace.unreadCompletedBySession[sessionID]) return "completed";
   return "idle";
 }
 

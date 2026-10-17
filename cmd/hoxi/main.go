@@ -1,17 +1,17 @@
 package main
 
 import (
+	"io/fs"
 	"os"
-	"os/exec"
+	"path/filepath"
+
+	"github.com/hoxiai/hoxi/internal/app"
 )
 
 func main() {
-	args := append([]string{"run", "."}, os.Args[1:]...)
-	cmd := exec.Command("go", args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	cmd.Stdin = os.Stdin
-	if err := cmd.Run(); err != nil {
-		os.Exit(1)
+	var distFS fs.FS
+	if info, err := os.Stat(filepath.Join("web", "dist")); err == nil && info.IsDir() {
+		distFS = os.DirFS(filepath.Join("web", "dist"))
 	}
+	app.Run(distFS)
 }

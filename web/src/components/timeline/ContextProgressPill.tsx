@@ -151,7 +151,7 @@ export default function ContextProgressPill() {
 
           {/* Breakdown Popover */}
           <Show when={open()}>
-            <div class="absolute bottom-full left-0 mb-2 w-64 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-3 shadow-xl z-40 text-xs space-y-2">
+            <div class="absolute bottom-full right-0 mb-2 w-64 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-3 shadow-xl z-40 text-xs space-y-2">
               <div class="flex items-center justify-between font-semibold text-[var(--text-primary)]">
                 <span>
                   {t("timeline.contextWatermark")}

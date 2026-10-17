@@ -15,6 +15,7 @@ import { isPlaceholderSessionTitle, summarizeAndRenameSession } from "./session-
 import { buildCombinedSystemPrompt, setWorkspace, workspace } from "./workspace";
 import { buildWorkspaceFoldersSystemPrompt } from "./workspace-projects";
 import {
+  isSessionBusy,
   loadSessionMessages,
   newIsolatedSession,
   renameSessionTitle,
@@ -23,6 +24,18 @@ import {
   selectSession,
   sessionDirectory,
 } from "./workspace-sessions";
+import {
+  abortChildSubagentSessions,
+  enqueueSessionPrompt,
+  ensureChildSubagentSessionLoaded,
+  extractChildSubagentSessionId,
+  forkFromMessage,
+  markSessionPromptDispatched,
+  revertToHere,
+  undoRevert,
+} from "./workspace-queue-subagents";
+
+export { forkFromMessage, revertToHere, undoRevert };
 
 const lastInterruptAtBySession = new Map<string, number>();
 
@@ -37,6 +50,7 @@ export async function pauseSessionTask(sessionID?: string | null): Promise<void>
   } catch (err) {
     console.warn("pause session abort warning:", err);
   }
+  void abortChildSubagentSessions(id);
   void loadSessionMessages(id);
 }
 
@@ -52,6 +66,7 @@ export async function stopSessionTask(sessionID?: string | null): Promise<void> 
   } catch (err) {
     console.warn("stop session abort warning:", err);
   }
+  void abortChildSubagentSessions(id);
   void loadSessionMessages(id);
 }
 
@@ -65,37 +80,7 @@ export async function resumePausedSession(
   const prompt = note
     ? `${t("timeline.resumePromptPrefix")}\n\n${note}`
     : t("timeline.resumeDefaultPrompt");
-  await submitSessionPrompt(prompt, id);
-}
-
-export async function revertToHere(
-  sessionID: string,
-  messageID: string,
-  partID?: string
-): Promise<void> {
-  recordUserRevertAction(sessionID, messageID);
-  const info = await hoxiAPI.revertSession(
-    sessionID,
-    messageID,
-    partID,
-    sessionDirectory(sessionID)
-  );
-  replaceSession(info);
-}
-
-export async function undoRevert(sessionID: string): Promise<void> {
-  const info = await hoxiAPI.unrevertSession(sessionID, sessionDirectory(sessionID));
-  replaceSession(info);
-}
-
-export async function forkFromMessage(
-  sessionID: string,
-  messageID?: string
-): Promise<string> {
-  const forked = await hoxiAPI.forkSession(sessionID, messageID, sessionDirectory(sessionID));
-  replaceSession(forked);
-  await selectSession(forked.id);
-  return forked.id;
+  await submitSessionPrompt(prompt, id, { forceImmediate: true });
 }
 
 export async function submitSessionPrompt(
@@ -105,6 +90,7 @@ export async function submitSessionPrompt(
     agent?: string;
     model?: { providerID: string; modelID: string };
     attachments?: Array<{ type: "file"; mime: string; filename?: string; url: string }>;
+    forceImmediate?: boolean;
   }
 ): Promise<string> {
   let id = targetSessionID ?? workspace.activeSessionID;
@@ -113,9 +99,27 @@ export async function submitSessionPrompt(
     id = await newIsolatedSession();
   }
 
+  const effectiveAgent = options?.agent || workspace.activeMode;
+  const effectiveModel = options?.model || workspace.selectedModel || undefined;
+  const attachments = options?.attachments ?? [];
+
+  // If the session is currently busy and not forced immediate, enqueue the message!
+  if (!isBrandNewSession && !options?.forceImmediate && isSessionBusy(id)) {
+    enqueueSessionPrompt(id, promptText, {
+      agent: effectiveAgent,
+      model: effectiveModel,
+      attachments,
+    });
+    return id;
+  }
+
   const existingTurns = workspace.messagesBySession[id] ?? [];
   const hasPriorUserTurn = existingTurns.some((m) => m.info.role === "user");
   const currentSessionObj = workspace.sessions.find((s) => s.id === id);
+  const revertBoundary = currentSessionObj?.revert;
+  if (currentSessionObj && revertBoundary) {
+    replaceSession({ ...currentSessionObj, revert: undefined });
+  }
   const shouldSummarizeTitle =
     isBrandNewSession ||
     !hasPriorUserTurn ||
@@ -123,10 +127,8 @@ export async function submitSessionPrompt(
 
   const now = Date.now();
   const optimisticMsgID = `optimistic_${now}`;
-  const effectiveAgent = options?.agent || workspace.activeMode;
-  const effectiveModel = options?.model || workspace.selectedModel || undefined;
-  const attachments = options?.attachments ?? [];
 
+  markSessionPromptDispatched(id);
   recordPromptDispatched(id, effectiveModel?.providerID, effectiveModel?.modelID);
   if (shouldSummarizeTitle) {
     void summarizeAndRenameSession(
@@ -143,7 +145,13 @@ export async function submitSessionPrompt(
   setWorkspace("statusBySession", id, { type: "busy" });
   setWorkspace(
     produce((state) => {
-      const list = (state.messagesBySession[id!] ||= []);
+      let list = (state.messagesBySession[id!] ||= []);
+      if (revertBoundary?.messageID) {
+        const bIdx = list.findIndex((m) => m.info.id === revertBoundary.messageID);
+        if (bIdx >= 0) {
+          list.splice(revertBoundary.partID ? bIdx + 1 : bIdx);
+        }
+      }
       const optimisticParts: MessagePart[] = attachments.map((att, idx) => ({
         id: `prt_file_${now}_${idx}`,
         sessionID: id!,
@@ -280,6 +288,12 @@ export function upsertMessageInfo(info: MessageInfo) {
 export function upsertMessagePart(part: MessagePart) {
   recordFirstToken(part.sessionID);
   recordToolPartUpdate(part);
+  if (part.type === "tool" && part.tool.toLowerCase() === "task") {
+    ensureChildSubagentSessionLoaded(
+      extractChildSubagentSessionId(part),
+      part.sessionID
+    );
+  }
   if (
     part.type === "tool" &&
     part.state.status === "completed" &&
@@ -350,6 +364,12 @@ export function applyStreamFrameBatch(batch: StreamFrameBatch) {
   for (const part of batch.parts) {
     recordFirstToken(part.sessionID);
     recordToolPartUpdate(part);
+    if (part.type === "tool" && part.tool.toLowerCase() === "task") {
+      ensureChildSubagentSessionLoaded(
+        extractChildSubagentSessionId(part),
+        part.sessionID
+      );
+    }
     if (
       part.type === "tool" &&
       part.state.status === "completed" &&

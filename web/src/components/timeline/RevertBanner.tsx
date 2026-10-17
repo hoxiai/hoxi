@@ -26,6 +26,24 @@ export default function RevertBanner() {
 
   const revertBoundary = createMemo(() => activeSession()?.revert?.messageID ?? null);
 
+  const revertedTurnCount = createMemo(() => {
+    const id = workspace.activeSessionID;
+    const boundary = revertBoundary();
+    if (!id || !boundary) return 0;
+    const turns = workspace.messagesBySession[id] ?? [];
+    const idx = turns.findIndex((t) => t.info.id === boundary);
+    if (idx >= 0) {
+      const userCount = turns
+        .slice(idx)
+        .filter((t) => t.info.role === "user").length;
+      return Math.max(1, userCount);
+    }
+    const count = turns.filter(
+      (t) => t.info.role === "user" && t.info.id >= boundary
+    ).length;
+    return Math.max(1, count);
+  });
+
   const sessionDiffs = createMemo(() => {
     const id = workspace.activeSessionID;
     return id ? workspace.diffsBySession[id] ?? [] : [];
@@ -39,9 +57,11 @@ export default function RevertBanner() {
     setBusy(true);
     try {
       const turns = workspace.messagesBySession[id] ?? [];
-      const nextUser = turns.find(
-        (turn) => turn.info.role === "user" && turn.info.id > boundary
-      );
+      const bIdx = turns.findIndex((t) => t.info.id === boundary);
+      const nextUser =
+        bIdx >= 0
+          ? turns.slice(bIdx + 1).find((turn) => turn.info.role === "user")
+          : turns.find((turn) => turn.info.role === "user" && turn.info.id > boundary);
       if (nextUser) {
         await revertToHere(id, nextUser.info.id);
       } else {
@@ -74,7 +94,7 @@ export default function RevertBanner() {
           <div class="flex items-center gap-2 min-w-0">
             <Undo2 size={14} class="text-[var(--warn-text)] shrink-0" />
             <span class="truncate text-[12px] font-medium text-[var(--warn-text)]">
-              {t("timeline.revertBannerCount", { count: 1 })}
+              {t("timeline.revertBannerCount", { count: revertedTurnCount() })}
             </span>
           </div>
 

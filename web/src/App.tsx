@@ -5,6 +5,7 @@ import { connectEventStream } from "./services/sse";
 import {
   applyPartDeltaBatch,
   applyStreamFrameBatch,
+  drainNextQueuedPrompt,
   isSessionArchived,
   loadAgents,
   loadProjects,
@@ -12,6 +13,7 @@ import {
   loadProviderTelemetry,
   loadSavedWorkspaces,
   loadSessionMessages,
+  loadSessionMessagesOnly,
   recordSessionRetry,
   refreshWorktreeStatus,
   removeSessionFromStore,
@@ -20,6 +22,7 @@ import {
   scheduleRefreshWorktreeStatus,
   selectSession,
   setWorkspace,
+  syncSessionStatuses,
   triggerDesktopNotification,
   upsertMessageInfo,
   upsertMessagePart,
@@ -43,6 +46,7 @@ export default function App() {
       void loadProviderTelemetry();
       void loadAgents();
       void refreshWorktreeStatus("__root__");
+      void syncSessionStatuses(boot.rootDir);
       void hoxiAPI
         .listQuestions()
         .then((qs) => {
@@ -68,6 +72,7 @@ export default function App() {
         if (connected) {
           void loadProviders();
           void loadProviderTelemetry();
+          void syncSessionStatuses();
         }
       },
       onDeltaBatch: applyPartDeltaBatch,
@@ -99,27 +104,48 @@ export default function App() {
             }
             break;
           }
-          case "session.status":
-            setWorkspace("statusBySession", evt.properties.sessionID, evt.properties.status);
-            if (evt.properties.status.type === "idle") {
-              setWorkspace("sessionFinishedAt", evt.properties.sessionID, Date.now());
-            }
-            if (evt.properties.status.type === "retry") {
+          case "session.status": {
+            const sid = evt.properties.sessionID;
+            const wasBusy = workspace.statusBySession[sid]?.type === "busy";
+            setWorkspace("statusBySession", sid, evt.properties.status);
+            if (evt.properties.status.type === "busy") {
+              setWorkspace("unreadCompletedBySession", sid, false);
+            } else if (evt.properties.status.type === "idle") {
+              setWorkspace("sessionFinishedAt", sid, Date.now());
+              if (
+                wasBusy &&
+                sid !== workspace.activeSessionID &&
+                !workspace.interruptedBySession[sid]
+              ) {
+                setWorkspace("unreadCompletedBySession", sid, true);
+              }
+              void drainNextQueuedPrompt(sid);
+            } else if (evt.properties.status.type === "retry") {
               recordSessionRetry(
-                evt.properties.sessionID,
+                sid,
                 evt.properties.status.attempt,
                 evt.properties.status.message
               );
             }
             break;
+          }
           case "session.idle": {
             const sid = evt.properties.sessionID;
             setWorkspace("statusBySession", sid, { type: "idle" });
             setWorkspace("sessionFinishedAt", sid, Date.now());
             const isChild = Boolean(workspace.sessions.find((s) => s.id === sid)?.parentID);
-            if (!isChild) {
+            if (isChild) {
+              void loadSessionMessagesOnly(sid);
+            } else {
+              if (
+                sid !== workspace.activeSessionID &&
+                !workspace.interruptedBySession[sid]
+              ) {
+                setWorkspace("unreadCompletedBySession", sid, true);
+              }
               triggerDesktopNotification("Hoxi", t("timeline.turnCompleted"));
               void loadSessionMessages(sid).then(() => {
+                void drainNextQueuedPrompt(sid);
                 void runSessionCodeAudit(sid, false);
               });
             }
@@ -160,6 +186,7 @@ export default function App() {
           case "session.error":
             if (evt.properties.sessionID) {
               setWorkspace("statusBySession", evt.properties.sessionID, { type: "idle" });
+              setWorkspace("unreadCompletedBySession", evt.properties.sessionID, false);
               void loadSessionMessages(evt.properties.sessionID);
             }
             console.error("session error:", evt.properties);

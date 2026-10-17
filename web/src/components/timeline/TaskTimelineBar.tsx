@@ -3,6 +3,7 @@ import { createMemo, createSignal, For, Show } from "solid-js";
 import { ListTree, Search } from "lucide-solid";
 import type { MessagePart, ToolPart } from "../../services/sse-types";
 import type { MessageTurn } from "../../store/workspace";
+import { SubagentSessionBanner } from "./AgentStackPill";
 import { t } from "../../i18n";
 
 export interface ActivityBarSegment {
@@ -185,8 +186,10 @@ export default function TaskTimelineBar(props: {
   });
 
   return (
-    <Show when={segments().length > 0 || userTurns().length > 1}>
-      <div class="sticky top-0 z-20 flex items-center justify-between gap-3 border-b border-[var(--border-subtle)] bg-[var(--bg-panel)]/90 px-5 py-1.5 backdrop-blur-md">
+    <div class="sticky top-0 z-20 flex flex-col empty:hidden">
+      <SubagentSessionBanner />
+      <Show when={segments().length > 0 || userTurns().length > 1}>
+        <div class="flex items-center justify-between gap-3 border-b border-[var(--border-subtle)] bg-[var(--bg-panel)]/90 px-5 py-1.5 backdrop-blur-md">
         {/* Left: Color-coded SVG/Bar Activity Strip (Kilo TaskTimeline) */}
         <div class="flex items-center gap-2 min-w-0 flex-1">
           <span class="shrink-0 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
@@ -282,6 +285,7 @@ export default function TaskTimelineBar(props: {
           </Show>
         </div>
       </div>
-    </Show>
+      </Show>
+    </div>
   );
 }

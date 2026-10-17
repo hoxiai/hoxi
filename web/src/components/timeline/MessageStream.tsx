@@ -30,10 +30,12 @@ import {
   AssistantTurnItem,
   createTurnWindow,
   EarlierTurnsBanner,
+  filterVisibleTurnsByRevert,
   turnContentVisibilityClass,
 } from "./turn-window";
 import TaskTimelineBar from "./TaskTimelineBar";
 import TranscriptSearchBar from "./TranscriptSearchBar";
+import QueuedPromptsList from "./QueuedPromptsList";
 import { t } from "../../i18n";
 
 export default function MessageStream() {
@@ -44,9 +46,15 @@ export default function MessageStream() {
   const [searchOpen, setSearchOpen] = createSignal(false);
   const [activeMatchTurnID, setActiveMatchTurnID] = createSignal<string | null>(null);
 
+  const activeSession = createMemo(() => {
+    const id = workspace.activeSessionID;
+    return id ? workspace.sessions.find((s) => s.id === id) : undefined;
+  });
+
   const turns = createMemo(() => {
     const id = workspace.activeSessionID;
-    return id ? workspace.messagesBySession[id] ?? [] : [];
+    const raw = id ? workspace.messagesBySession[id] ?? [] : [];
+    return filterVisibleTurnsByRevert(raw, activeSession()?.revert);
   });
 
   const turnWindow = createTurnWindow(() => workspace.activeSessionID, turns);
@@ -85,10 +93,24 @@ export default function MessageStream() {
     if (activeStatus().type !== "busy") return false;
     const list = turns();
     if (list.length === 0) return true;
+
+    // Check if any assistant turn currently has a running/pending tool or open reasoning part
+    for (let i = list.length - 1; i >= 0; i--) {
+      const turn = list[i];
+      if (turn.info.role !== "assistant" || turn.info.time?.completed) continue;
+      const hasRunningWork = turn.parts.some(
+        (p) =>
+          !isTodoTool(p) &&
+          ((p.type === "tool" &&
+            (p.state.status === "pending" || p.state.status === "running")) ||
+            (p.type === "reasoning" && !p.time?.end))
+      );
+      if (hasRunningWork) return false;
+    }
+
     const last = list[list.length - 1];
     if (last.info.role === "user") return true;
     if (last.info.error) return false;
-    // If the previous assistant step completed while session is still busy, show thinking for next step
     if (last.info.time?.completed) return true;
     const visible = last.parts.filter((p) => !isTodoTool(p));
     if (visible.length === 0) return true;
@@ -103,11 +125,13 @@ export default function MessageStream() {
     return !hasActivePart;
   });
 
-  // Reactivity key that changes as tokens stream in, driving auto-scroll.
+  // Reactivity key that changes as tokens stream in or prompts are queued, driving auto-scroll.
   const streamKey = createMemo(() => {
     const list = turns();
+    const id = workspace.activeSessionID;
+    const queuedLen = id ? (workspace.queuedPromptsBySession[id]?.length ?? 0) : 0;
     const last = list[list.length - 1];
-    let n = list.length * 1_000_000;
+    let n = list.length * 1_000_000 + queuedLen * 100_000;
     if (last) {
       n += last.parts.length * 1000;
       if (last.info.error) n += 500;
@@ -138,7 +162,6 @@ export default function MessageStream() {
   const onRevertToMessage = async (messageID: string) => {
     const id = workspace.activeSessionID;
     if (!id) return;
-    if (appSettings.confirmBeforeRevert && !confirm(t("timeline.revertConfirm"))) return;
     try {
       await revertToHere(id, messageID);
     } catch (err) {
@@ -430,6 +453,9 @@ export default function MessageStream() {
               showThinking={showThinkingPlaceholder()}
               lastTurnRole={turns()[turns().length - 1]?.info.role}
             />
+
+            {/* Queued Follow-Up Prompts (Send Now | Edit | Delete) */}
+            <QueuedPromptsList sessionID={workspace.activeSessionID} />
 
             {/* Kilo SessionRetry Countdown Card */}
             <Show when={activeStatus().type === "retry"}>

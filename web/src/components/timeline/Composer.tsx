@@ -1,5 +1,5 @@
 // web/src/components/timeline/Composer.tsx
-import { createMemo, createSignal, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, Show } from "solid-js";
 import {
   ArrowUp,
   LoaderCircle,
@@ -9,10 +9,9 @@ import {
 import {
   appSettings,
   clearReviewComments,
+  consumeComposerDraftEdit,
   forkFromMessage,
   isSessionBusy,
-  pauseSessionTask,
-  resumePausedSession,
   stopSessionTask,
   submitSessionPrompt,
   switchActiveSessionSandboxMode,
@@ -48,10 +47,6 @@ export default function Composer() {
 
   const sessionID = () => workspace.activeSessionID;
   const busy = createMemo(() => isSessionBusy(sessionID()));
-  const isPaused = createMemo(() => {
-    const id = sessionID();
-    return id ? workspace.interruptedBySession[id] === "paused" : false;
-  });
   const effectiveSandboxMode = createMemo<"local" | "worktree">(() => {
     const id = sessionID();
     if (id && workspace.worktreeBySession[id]) {
@@ -85,6 +80,23 @@ export default function Composer() {
   const imgAttach = createImageAttachments();
   const pasteCollapse = createPasteCollapse();
   const promptHistory = createPromptHistory(sessionID);
+
+  // Restore draft when user clicks "Edit (修改)" on a queued prompt
+  createEffect(() => {
+    const id = sessionID();
+    if (!id) return;
+    const draft = workspace.composerDraftEditBySession[id];
+    if (!draft) return;
+    consumeComposerDraftEdit(id);
+    setText((prev) => (prev.trim() ? `${prev}\n${draft.text}` : draft.text));
+    if (draft.attachments?.length) {
+      imgAttach.restoreFromAttachments(draft.attachments);
+    }
+    requestAnimationFrame(() => {
+      adjustHeight();
+      textareaRef?.focus();
+    });
+  });
 
   const reviewComments = createMemo(() => {
     const id = sessionID();
@@ -148,17 +160,6 @@ export default function Composer() {
     }
   };
 
-  const onPause = async () => {
-    const id = sessionID();
-    if (!id || stopping()) return;
-    setStopping(true);
-    try {
-      await pauseSessionTask(id);
-    } finally {
-      setStopping(false);
-    }
-  };
-
   const onStop = async () => {
     const id = sessionID();
     if (!id || stopping()) return;
@@ -167,29 +168,6 @@ export default function Composer() {
       await stopSessionTask(id);
     } finally {
       setStopping(false);
-    }
-  };
-
-  const onResume = async () => {
-    const id = sessionID();
-    if (!id || sending()) return;
-    const extra = buildPayloadWithReviews();
-    if (text().trim()) {
-      promptHistory.recordPrompt(text().trim());
-    }
-    setSending(true);
-    setText("");
-    pasteCollapse.clearPastes();
-    imgAttach.clearImages();
-    ac.reset();
-    if (textareaRef) {
-      textareaRef.style.height = "48px";
-    }
-    try {
-      await resumePausedSession(id, extra);
-      clearReviewComments(id);
-    } finally {
-      setSending(false);
     }
   };
 
@@ -267,10 +245,6 @@ export default function Composer() {
           : !ev.shiftKey;
       if (shouldSend) {
         ev.preventDefault();
-        if (!busy() && isPaused() && !canSend()) {
-          void onResume();
-          return;
-        }
         void onSend();
       }
     }
@@ -329,11 +303,7 @@ export default function Composer() {
             class="w-full min-h-[48px] max-h-[180px] resize-none bg-transparent leading-[1.65] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none selectable-text"
             rows={1}
             placeholder={
-              busy()
-                ? t("timeline.steerPlaceholder")
-                : isPaused()
-                  ? t("timeline.pausedPlaceholder")
-                  : t("timeline.inputPlaceholder")
+              busy() ? t("timeline.steerPlaceholder") : t("timeline.inputPlaceholder")
             }
             value={text()}
             onPaste={(ev) => {
@@ -349,7 +319,7 @@ export default function Composer() {
           />
 
           <div class="mt-2 flex items-center justify-between gap-2 flex-wrap">
-            {/* Left Action Pills: Attach (+), Agent Mode, Model Selector, Git Dropdown, Context Progress */}
+            {/* Left Action Pills: Attach (+), Agent Mode, Model Selector, Git Dropdown */}
             <div class="flex items-center gap-1 flex-wrap">
               <button
                 type="button"
@@ -372,12 +342,12 @@ export default function Composer() {
                 onToggle={(m) => void onToggleSandbox(m)}
                 onFork={onFork}
               />
-
-              <ContextProgressPill />
             </div>
 
-            {/* Right Send / Pause / Stop / Resume / Steer Actions */}
+            {/* Right Context Progress + Unified Circular Send / Steer / Stop Button */}
             <div class="flex items-center gap-1.5">
+              <ContextProgressPill />
+
               <Show when={busy()}>
                 <Show when={canSend()}>
                   <button
@@ -397,48 +367,21 @@ export default function Composer() {
 
                 <button
                   type="button"
-                  class="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[12px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] disabled:opacity-50 transition-colors cursor-pointer"
-                  disabled={stopping()}
-                  onClick={onPause}
-                  title={t("timeline.pauseTooltip")}
-                >
-                  <span class="font-mono text-[10px] leading-none">⏸</span>
-                  <span>{t("timeline.pause")}</span>
-                </button>
-
-                <button
-                  type="button"
-                  class="inline-flex items-center gap-1.5 rounded-full bg-[var(--bg-inset)] px-2.5 py-1 text-[12px] font-medium text-[var(--text-secondary)] hover:bg-[var(--danger-surface)] hover:text-[var(--danger-text)] disabled:opacity-50 transition-colors cursor-pointer"
+                  class="inline-flex h-7 w-7 items-center justify-center rounded-full bg-[var(--bg-inset)] text-[var(--text-secondary)] hover:bg-[var(--danger-surface)] hover:text-[var(--danger-text)] disabled:opacity-50 transition-colors cursor-pointer"
                   disabled={stopping()}
                   onClick={onStop}
                   title={t("timeline.stopTooltip")}
                 >
                   <Show
                     when={!stopping()}
-                    fallback={<LoaderCircle size={12} class="animate-spin" />}
+                    fallback={<LoaderCircle size={13} class="animate-spin" />}
                   >
-                    <Square size={9.5} class="fill-current" />
+                    <Square size={10} class="fill-current" />
                   </Show>
-                  <span>{t("timeline.stop")}</span>
                 </button>
               </Show>
 
               <Show when={!busy()}>
-                <Show when={isPaused()}>
-                  <button
-                    type="button"
-                    class="inline-flex items-center gap-1.5 rounded-full bg-[var(--bg-inset)] px-3 py-1 text-[12px] font-medium text-[var(--accent-primary)] hover:bg-[var(--accent-surface)] disabled:opacity-50 transition-colors cursor-pointer"
-                    disabled={sending()}
-                    onClick={onResume}
-                    title={t("timeline.resumeTooltip")}
-                  >
-                    <span class="text-[10px] leading-none">▶</span>
-                    <span>
-                      {canSend() ? t("timeline.resumeWithNote") : t("timeline.resume")}
-                    </span>
-                  </button>
-                </Show>
-
                 <button
                   type="button"
                   class="inline-flex h-7 w-7 items-center justify-center rounded-full bg-[var(--accent-primary)] text-white shadow-xs hover:opacity-90 disabled:opacity-30 disabled:cursor-not-allowed transition-all cursor-pointer"

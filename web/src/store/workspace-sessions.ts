@@ -144,6 +144,7 @@ export async function loadSessionMessages(sessionID: string): Promise<void> {
 
 export async function selectSession(sessionID: string): Promise<void> {
   setWorkspace("activeSessionID", sessionID);
+  setWorkspace("unreadCompletedBySession", sessionID, false);
   try {
     await loadSessionMessages(sessionID);
   } catch (err) {
@@ -422,6 +423,7 @@ export function removeSessionFromStore(sessionID: string): SessionInfo | undefin
       delete state.messagesBySession[sessionID];
       delete state.statusBySession[sessionID];
       delete state.sessionFinishedAt[sessionID];
+      delete state.unreadCompletedBySession[sessionID];
       delete state.diffsBySession[sessionID];
       delete state.worktreeBySession[sessionID];
       delete state.reviewCommentsBySession[sessionID];

@@ -101,6 +101,15 @@ export interface WorkspaceState {
   auditingBySession: Record<string, boolean>;
   interruptedBySession: Record<string, "paused" | "stopped" | undefined>;
   sessionFinishedAt: Record<string, number>;
+  unreadCompletedBySession: Record<string, boolean>;
+  queuedPromptsBySession: Record<
+    string,
+    import("./workspace-queue-subagents").QueuedPromptItem[]
+  >;
+  composerDraftEditBySession: Record<
+    string,
+    import("./workspace-queue-subagents").ComposerDraftEdit | undefined
+  >;
 }
 
 export const THEME_KEY = "hoxi-theme";
@@ -296,6 +305,9 @@ export const [workspace, setWorkspace] = createStore<WorkspaceState>({
   auditingBySession: {},
   interruptedBySession: {},
   sessionFinishedAt: {},
+  unreadCompletedBySession: {},
+  queuedPromptsBySession: {},
+  composerDraftEditBySession: {},
 });
 
 export function isSessionArchived(session: SessionInfo): boolean {
@@ -441,6 +453,7 @@ export function toggleTheme() {
 export * from "./workspace-providers";
 export * from "./workspace-projects";
 export * from "./workspace-sessions";
+export * from "./workspace-queue-subagents";
 export * from "./session-title";
 export * from "./provider-telemetry";
 export * from "./provider-audit";

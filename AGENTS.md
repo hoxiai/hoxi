@@ -56,8 +56,8 @@ Never fork or modify OpenCode internals. OpenCode executes as an external, prist
 
 ### 2. Go Daemon & Desktop Shell (from `gopanel_v2`)
 - **Process Supervision**: Spawns `opencode serve --hostname 127.0.0.1 --port <free-port> --print-logs` with `OPENCODE_SERVER_PASSWORD=<random-hex>`, `OPENCODE_SERVER_USERNAME=opencode`, and `OPENCODE_DISABLE_CONFIG_DEPENDENCY_INSTALL=1`, polling `GET /global/health` until ready.
-- **Zero-Port Internal Gateway**: Uses Wails `AssetServer.Handler` (`desktop_gateway.go`) with `Transport: &http.Transport{Proxy: nil}` (preventing system HTTP proxies like Clash/Surge from returning `502` on `127.0.0.1`), `FlushInterval: -1` (instant SSE streaming), and `req.SetBasicAuth("opencode", password)`.
-- **macOS Status Bar Integration**: Employs native Objective-C (`NSStatusBar` in `desktop_statusbar_darwin.m`) driven by `desktop_code_status.go`:
+- **Zero-Port Internal Gateway**: Uses Wails `AssetServer.Handler` (`internal/gateway/gateway.go`) with `Transport: &http.Transport{Proxy: nil}` (preventing system HTTP proxies like Clash/Surge from returning `502` on `127.0.0.1`), `FlushInterval: -1` (instant SSE streaming), and `req.SetBasicAuth("opencode", password)`.
+- **macOS Status Bar Integration**: Employs native Objective-C (`NSStatusBar` in `internal/statusbar/statusbar_darwin.m`) driven by `internal/statusbar/tracker.go`:
   - `Running`: Active `session.status` (`busy`) count.
   - `Attention`: Pending `permission.asked` or `question.asked` count.
 - **Git Worktree Isolation**: Provisions `.hoxi/worktrees/<session-id>` on branch `hoxi/<session-id>`, passes `?directory=<worktree-path>` to OpenCode endpoints, and supports one-click `Apply to Main` (`git apply --3way` or `git merge`).
@@ -73,16 +73,19 @@ Never fork or modify OpenCode internals. OpenCode executes as an external, prist
 
 ```text
 /
-├── main.go                           # Wails entrypoint, OpenCode supervisor & headless mode
-├── desktop_gateway.go                # In-process reverse proxy, Basic Auth & WS bridge
-├── desktop_statusbar_darwin.go       # macOS status bar Go CGo binding
-├── desktop_statusbar_darwin.m        # Objective-C NSStatusBar implementation
-├── desktop_statusbar_stub.go         # Non-darwin stub
-├── desktop_worktree.go               # Git worktree session sandbox manager
-├── desktop_code_status.go            # Running/Attention status aggregator
+├── main.go                           # Thin Wails embed.FS entrypoint delegating to internal/app
 ├── cmd/
 │   └── hoxi/
-│       └── main.go                   # CLI forwarding wrapper
+│       └── main.go                   # CLI / headless entrypoint calling internal/app
+├── internal/
+│   ├── app/                          # DesktopApp lifecycle, Wails bindings & signal handling
+│   ├── opencode/                     # OpenCode binary resolver, installer & daemon supervision
+│   ├── gateway/                      # In-process reverse proxy, Basic Auth, WS bridge & pulse
+│   ├── worktree/                     # Git worktree session sandbox manager, diffs & branches
+│   ├── workspace/                    # Multi-workspace profile store & HTTP handlers
+│   ├── provider/                     # Provider config, model probing, code audit & telemetry
+│   ├── handoff/                      # External CLI (Claude/Codex/Gemini/Grok) session handoff
+│   └── statusbar/                    # Running/Attention tracker & macOS NSStatusBar (CGo)
 ├── web/                              # Frontend workspace (Vite + SolidJS + Tailwind)
 │   ├── src/
 │   │   ├── components/
