@@ -443,7 +443,27 @@ export interface GitDailyPulseResponse {
   branch?: string;
   headCommit?: string;
   headSubject?: string;
+  dbTotalTokens?: number;
+  dbInputTokens?: number;
+  dbOutputTokens?: number;
+  dbReasoningTokens?: number;
+  dbCacheReadTokens?: number;
+  dbCacheWriteTokens?: number;
+  dbTotalCost?: number;
+  dbTurnsCount?: number;
+  dbSessionsCount?: number;
+  dbToolCallsTotal?: number;
+  dbToolCallsFailed?: number;
+  dbLatestTurnTs?: number;
+  dbModels?: Array<{
+    providerID: string;
+    modelID: string;
+    turns: number;
+    totalTokens: number;
+    cost: number;
+  }>;
 }
+
 
 
 
