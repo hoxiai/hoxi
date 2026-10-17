@@ -63,6 +63,8 @@ const [gitDailyPulse, setGitDailyPulse] = createSignal<GitDailyPulseResponse>({
 });
 const [syncingPulse, setSyncingPulse] = createSignal(false);
 
+let lastPulseSignature = "";
+
 export async function refreshDailyDevPulse(_force = false): Promise<void> {
   if (syncingPulse()) return;
   setSyncingPulse(true);
@@ -72,7 +74,11 @@ export async function refreshDailyDevPulse(_force = false): Promise<void> {
       workspace.activeSessionID || undefined
     );
     if (res) {
-      setGitDailyPulse(res);
+      const sig = JSON.stringify(res);
+      if (sig !== lastPulseSignature) {
+        lastPulseSignature = sig;
+        setGitDailyPulse(res);
+      }
     }
   } catch {
     /* ignore */

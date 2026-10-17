@@ -1,5 +1,4 @@
-// web/src/components/layout/DevPulsePopover.tsx
-import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, Index, onCleanup, onMount, Show } from "solid-js";
 import {
   BarChart3,
   ChevronDown,
@@ -46,6 +45,23 @@ export default function DevPulsePopover() {
 
   const stats = createMemo(() => computeDailyDevPulseStats());
 
+  const modelsUsed = createMemo(
+    () => stats().modelsUsed,
+    [],
+    {
+      equals: (prev, next) =>
+        prev.length === next.length &&
+        prev.every(
+          (item, i) =>
+            item.providerID === next[i].providerID &&
+            item.modelID === next[i].modelID &&
+            item.totalTokens === next[i].totalTokens &&
+            item.cost === next[i].cost &&
+            item.turns === next[i].turns
+        ),
+    }
+  );
+
   onMount(() => {
     void refreshDailyDevPulse(false);
     const timer = setInterval(() => void refreshDailyDevPulse(false), 20_000);
@@ -53,9 +69,8 @@ export default function DevPulsePopover() {
   });
 
   createEffect(() => {
-    const _dir = workspace.rootDir;
-    const _len = workspace.sessions.length;
-    if (_dir || _len >= 0) void refreshDailyDevPulse(false);
+    const dir = workspace.rootDir;
+    if (dir) void refreshDailyDevPulse(false);
   });
 
   createEffect(() => {
@@ -224,7 +239,7 @@ export default function DevPulsePopover() {
           </div>
 
           {/* Models Used Today (Clean & Minimal) */}
-          <Show when={stats().modelsUsed.length > 0}>
+          <Show when={modelsUsed().length > 0}>
             <div class="space-y-1.5 pt-0.5">
               <div class="flex items-center justify-between px-0.5 text-[11px] text-[var(--text-muted)]">
                 <span>{t("header.pulseSectionModels")}</span>
@@ -235,22 +250,22 @@ export default function DevPulsePopover() {
                 </Show>
               </div>
               <div class="space-y-1">
-                <For each={stats().modelsUsed}>
+                <Index each={modelsUsed()}>
                   {(m) => (
                     <div class="flex items-center justify-between gap-2 rounded-xl bg-[var(--bg-inset)]/50 px-3 py-2 text-[11.5px]">
                       <div class="flex items-center gap-2 min-w-0 flex-1">
-                        <ProviderIcon id={m.providerID} class="w-3.5 h-3.5 shrink-0" />
-                        <span class="font-mono truncate text-[var(--text-primary)]">{m.modelID}</span>
+                        <ProviderIcon id={m().providerID} class="w-3.5 h-3.5 shrink-0" />
+                        <span class="font-mono truncate text-[var(--text-primary)]">{m().modelID}</span>
                       </div>
                       <div class="flex items-center gap-2.5 shrink-0 font-mono text-[11px] text-[var(--text-muted)]">
                         <span class="text-[var(--text-secondary)] font-medium">
-                          {formatCompactTokens(m.totalTokens)}
+                          {formatCompactTokens(m().totalTokens)}
                         </span>
-                        <span class="text-amber-500 w-12 text-right">{formatUsd(m.cost)}</span>
+                        <span class="text-amber-500 w-12 text-right">{formatUsd(m().cost)}</span>
                       </div>
                     </div>
                   )}
-                </For>
+                </Index>
               </div>
             </div>
           </Show>
