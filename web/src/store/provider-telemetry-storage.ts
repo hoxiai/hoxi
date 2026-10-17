@@ -2,13 +2,14 @@
 import { produce } from "solid-js/store";
 import {
   hoxiAPI,
+  type ModelTelemetryStats,
   type ProviderIncident,
   type ProviderIncidentType,
   type ProviderTelemetryStats,
 } from "../services/api";
 import { setWorkspace, workspace } from "./workspace";
 
-export const PROVIDER_TELEMETRY_KEY = "hoxi-provider-telemetry:v1";
+export const PROVIDER_TELEMETRY_KEY = "hoxi-provider-telemetry:v2";
 
 const MAX_SAMPLES = 30;
 const MAX_INCIDENTS = 10;
@@ -47,9 +48,48 @@ export function emptyStats(providerID: string): ProviderTelemetryStats {
     auditScores: [],
     ttftSamplesMs: [],
     tpsSamples: [],
+    models: {},
     recentIncidents: [],
     updatedAt: Date.now(),
   };
+}
+
+export function emptyModelStats(modelID: string): ModelTelemetryStats {
+  return {
+    modelID,
+    totalTurns: 0,
+    successTurns: 0,
+    errorTurns: 0,
+    timeoutTurns: 0,
+    retryCount: 0,
+    toolCallsTotal: 0,
+    toolCallsFailed: 0,
+    hallucinationFlags: 0,
+    revertCount: 0,
+    cacheHitTurns: 0,
+    reasoningTurns: 0,
+    auditTotalCount: 0,
+    auditPassCount: 0,
+    auditScores: [],
+    ttftSamplesMs: [],
+    tpsSamples: [],
+    updatedAt: Date.now(),
+  };
+}
+
+export function ensureModelStats(
+  rec: ProviderTelemetryStats,
+  modelID?: string
+): ModelTelemetryStats | null {
+  const mid = (modelID || "").trim();
+  if (!mid) return null;
+  if (!rec.models) {
+    rec.models = {};
+  }
+  if (!rec.models[mid]) {
+    rec.models[mid] = emptyModelStats(mid);
+  }
+  return rec.models[mid];
 }
 
 export function schedulePersistTelemetry() {

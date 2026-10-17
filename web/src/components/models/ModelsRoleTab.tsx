@@ -9,11 +9,12 @@ import {
   workspace,
 } from "../../store/workspace";
 import { t } from "../../i18n";
+import { isModelFree } from "./model-selector-utils";
 
 interface ConnectedProviderGroup {
   providerID: string;
   providerName: string;
-  models: Array<{ id: string; name: string; fullKey: string }>;
+  models: Array<{ id: string; name: string; fullKey: string; free: boolean }>;
 }
 
 export default function ModelsRoleTab() {
@@ -39,6 +40,7 @@ export default function ModelsRoleTab() {
         id: mID,
         name: mInfo?.name || mID,
         fullKey: `${p.id}/${mID}`,
+        free: isModelFree(p.id, mID, mInfo),
       }));
 
       if (models.length > 0) {
@@ -121,7 +123,11 @@ export default function ModelsRoleTab() {
             {(grp) => (
               <optgroup label={`${grp.providerName} (${grp.providerID})`}>
                 <For each={grp.models}>
-                  {(m) => <option value={m.fullKey}>{m.name} ({m.id})</option>}
+                  {(m) => (
+                    <option value={m.fullKey}>
+                      {m.name} ({m.id}){m.free ? ` · [${t("models.freeModel")}]` : ""}
+                    </option>
+                  )}
                 </For>
               </optgroup>
             )}

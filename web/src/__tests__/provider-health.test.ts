@@ -128,4 +128,76 @@ describe("provider telemetry health scoring", () => {
     );
     assertEqual(downgraded.status, "degraded");
   });
+
+  it("isolates per-model scores and hides scores for un-run or probe-only models", () => {
+    setWorkspace("providerTelemetry", "probe_only_provider", {
+      providerID: "probe_only_provider",
+      totalTurns: 0,
+      successTurns: 0,
+      errorTurns: 0,
+      timeoutTurns: 0,
+      retryCount: 0,
+      revertCount: 0,
+      hallucinationFlags: 0,
+      toolCallsTotal: 0,
+      toolCallsFailed: 0,
+      cacheHitTurns: 0,
+      ttftSamplesMs: [],
+      tpsSamples: [],
+      lastProbeOk: true,
+      lastProbeLatencyMs: 220,
+      recentIncidents: [],
+      updatedAt: Date.now(),
+    });
+
+    const probeOnly = computeProviderHealth("probe_only_provider");
+    assertEqual(probeOnly.status, "untested");
+    assertEqual(probeOnly.score, 0);
+
+    setWorkspace("providerTelemetry", "multi_model_provider", {
+      providerID: "multi_model_provider",
+      totalTurns: 5,
+      successTurns: 5,
+      errorTurns: 0,
+      timeoutTurns: 0,
+      retryCount: 0,
+      revertCount: 0,
+      hallucinationFlags: 0,
+      toolCallsTotal: 4,
+      toolCallsFailed: 0,
+      cacheHitTurns: 2,
+      ttftSamplesMs: [350],
+      tpsSamples: [60],
+      models: {
+        "model-scored": {
+          modelID: "model-scored",
+          totalTurns: 5,
+          successTurns: 5,
+          errorTurns: 0,
+          timeoutTurns: 0,
+          retryCount: 0,
+          revertCount: 0,
+          hallucinationFlags: 0,
+          toolCallsTotal: 4,
+          toolCallsFailed: 0,
+          cacheHitTurns: 2,
+          ttftSamplesMs: [350],
+          tpsSamples: [60],
+          updatedAt: Date.now(),
+        },
+      },
+      recentIncidents: [],
+      updatedAt: Date.now(),
+    });
+
+    const scoredModel = computeProviderHealth("multi_model_provider", "model-scored");
+    assertEqual(scoredModel.status, "healthy");
+    assertTrue(scoredModel.score >= 90, "expected scored model to have score >= 90");
+
+    const unscoredSiblingModel = computeProviderHealth("multi_model_provider", "model-never-run");
+    assertEqual(unscoredSiblingModel.status, "untested");
+    assertEqual(unscoredSiblingModel.score, 0);
+    assertEqual(unscoredSiblingModel.grade, "—");
+  });
 });
+

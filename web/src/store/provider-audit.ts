@@ -5,6 +5,7 @@ import { hoxiAPI, type CodeAuditResult } from "../services/api";
 import { findBestFallbackModel } from "./provider-health";
 import {
   emptyStats,
+  ensureModelStats,
   pushIncident,
   pushSample,
   schedulePersistTelemetry,
@@ -217,10 +218,16 @@ export async function runSessionCodeAudit(
         const rec = (state.providerTelemetry[workerProviderID] ||=
           emptyStats(workerProviderID));
         rec.auditTotalCount = (rec.auditTotalCount ?? 0) + 1;
+        const m = ensureModelStats(rec, workerModelID);
+        if (m) {
+          m.auditTotalCount = (m.auditTotalCount ?? 0) + 1;
+        }
         if (res.pass) {
           rec.auditPassCount = (rec.auditPassCount ?? 0) + 1;
+          if (m) m.auditPassCount = (m.auditPassCount ?? 0) + 1;
         } else {
           rec.hallucinationFlags += 1;
+          if (m) m.hallucinationFlags += 1;
           rec.recentIncidents = pushIncident(
             rec.recentIncidents,
             "code_audit_fail",
@@ -233,6 +240,13 @@ export async function runSessionCodeAudit(
         rec.lastAuditPass = res.pass;
         rec.lastAuditSummary = res.summary;
         rec.updatedAt = Date.now();
+        if (m) {
+          m.auditScores = pushSample(m.auditScores, res.score);
+          m.lastAuditScore = res.score;
+          m.lastAuditPass = res.pass;
+          m.lastAuditSummary = res.summary;
+          m.updatedAt = rec.updatedAt;
+        }
       })
     );
     schedulePersistTelemetry();

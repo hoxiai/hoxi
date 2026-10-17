@@ -80,9 +80,10 @@ export function statusColors(status: ProviderHealthSummary["status"]) {
  */
 export function ProviderHealthBadge(props: {
   providerID: string;
+  modelID?: string;
   compact?: boolean;
 }) {
-  const health = createMemo(() => computeProviderHealth(props.providerID));
+  const health = createMemo(() => computeProviderHealth(props.providerID, props.modelID));
   const colors = createMemo(() => statusColors(health().status));
 
   const statusText = createMemo(() => {

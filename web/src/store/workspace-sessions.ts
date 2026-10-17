@@ -1,22 +1,37 @@
 import { produce } from "solid-js/store";
-import type { MessageInfo, MessagePart, SessionInfo } from "../services/sse-types";
+import type { SessionInfo } from "../services/sse-types";
 import { hoxiAPI } from "../services/api";
-import { RECENT_PROJECTS_KEY, setWorkspace, workspace } from "./workspace";
-import { loadAgents, loadProviders } from "./workspace-providers";
 import {
-  recordAssistantTurnUpdated,
-  recordFirstToken,
-  recordPromptDispatched,
-  recordToolPartUpdate,
-  recordUserRevertAction,
-} from "./provider-telemetry";
-import { t } from "../i18n";
+  ARCHIVED_SESSIONS_KEY,
+  isSessionArchived,
+  RECENT_PROJECTS_KEY,
+  setWorkspace,
+  workspace,
+} from "./workspace";
+import { loadAgents, loadProviders } from "./workspace-providers";
 import {
   getCustomSessionTitle,
   isPlaceholderSessionTitle,
   recordCustomSessionTitle,
-  summarizeAndRenameSession,
 } from "./session-title";
+
+const deletedSessionIDs = new Set<string>();
+
+function persistArchivedSessionIDs(ids: string[]) {
+  try {
+    localStorage.setItem(ARCHIVED_SESSIONS_KEY, JSON.stringify(ids));
+  } catch {
+    /* ignore */
+  }
+}
+
+function nextActiveSessionCandidate(excludeID?: string): SessionInfo | undefined {
+  const candidates = workspace.sessions.filter(
+    (s) => s.id !== excludeID && !isSessionArchived(s)
+  );
+  if (candidates.length === 0) return undefined;
+  return [...candidates].sort((a, b) => b.time.created - a.time.created)[0];
+}
 
 export async function loadProjects(): Promise<void> {
   try {
@@ -53,15 +68,17 @@ export async function switchWorkspace(directory: string): Promise<void> {
   });
 
   try {
-    const sessions = await hoxiAPI.listSessions(cleaned);
+    const rawSessions = await hoxiAPI.listSessions(cleaned);
+    const sessions = rawSessions.filter((s) => !deletedSessionIDs.has(s.id));
     setWorkspace("sessions", sessions);
 
     // Restore worktree & git branch/diff status for root and all sessions
     void refreshWorktreeStatus("__root__");
     await Promise.allSettled(sessions.map((s) => refreshWorktreeStatus(s.id)));
 
-    if (sessions.length > 0) {
-      const mostRecent = [...sessions].sort((a, b) => b.time.created - a.time.created)[0];
+    const unarchived = sessions.filter((s) => !isSessionArchived(s));
+    if (unarchived.length > 0) {
+      const mostRecent = [...unarchived].sort((a, b) => b.time.created - a.time.created)[0];
       await selectSession(mostRecent.id);
     }
   } catch (err) {
@@ -91,7 +108,8 @@ export function activeSession(): SessionInfo | undefined {
 export function sessionDirectory(sessionID: string | null): string | undefined {
   if (!sessionID) return undefined;
   const meta = workspace.worktreeBySession[sessionID];
-  return meta?.directory || workspace.rootDir || undefined;
+  const session = workspace.sessions.find((s) => s.id === sessionID);
+  return meta?.directory || session?.directory || workspace.rootDir || undefined;
 }
 
 export function activeDirectory(): string | undefined {
@@ -111,6 +129,7 @@ export function sessionsWithPendingPermission(): Set<string> {
 }
 
 export function replaceSession(info: SessionInfo) {
+  if (deletedSessionIDs.has(info.id)) return;
   const customTitle = getCustomSessionTitle(info.id);
   const effectiveInfo =
     customTitle && (isPlaceholderSessionTitle(info.title) || info.title !== customTitle)
@@ -217,255 +236,150 @@ export async function renameSessionTitle(sessionID: string, title: string): Prom
   }
 }
 
-export async function discardSession(sessionID: string, force = false): Promise<void> {
+export async function archiveSession(sessionID: string, directory?: string): Promise<void> {
+  const existing = workspace.sessions.find((s) => s.id === sessionID);
+  const targetDir =
+    directory || existing?.directory || sessionDirectory(sessionID) || workspace.rootDir || undefined;
+
+  if (!workspace.archivedSessionIDs.includes(sessionID)) {
+    const nextArchived = [...workspace.archivedSessionIDs, sessionID];
+    setWorkspace("archivedSessionIDs", nextArchived);
+    persistArchivedSessionIDs(nextArchived);
+  }
+
+  const now = Date.now();
+  setWorkspace("sessions", (prev) =>
+    prev.map((s) =>
+      s.id === sessionID ? { ...s, time: { ...s.time, archived: now } } : s
+    )
+  );
+
+  if (workspace.activeSessionID === sessionID) {
+    const next = nextActiveSessionCandidate(sessionID);
+    if (next) {
+      await selectSession(next.id);
+    } else {
+      setWorkspace("activeSessionID", null);
+    }
+  }
+
+  try {
+    await hoxiAPI.archiveSession(sessionID, true, targetDir);
+  } catch (err) {
+    console.warn("archive session backend sync warning:", err);
+  }
+}
+
+export async function unarchiveSession(sessionID: string, directory?: string): Promise<void> {
+  const existing = workspace.sessions.find((s) => s.id === sessionID);
+  const targetDir =
+    directory || existing?.directory || sessionDirectory(sessionID) || workspace.rootDir || undefined;
+
+  if (workspace.archivedSessionIDs.includes(sessionID)) {
+    const nextArchived = workspace.archivedSessionIDs.filter((id) => id !== sessionID);
+    setWorkspace("archivedSessionIDs", nextArchived);
+    persistArchivedSessionIDs(nextArchived);
+  }
+
+  setWorkspace("sessions", (prev) =>
+    prev.map((s) => {
+      if (s.id !== sessionID) return s;
+      const nextTime = { ...s.time };
+      delete nextTime.archived;
+      return { ...s, time: nextTime };
+    })
+  );
+
+  try {
+    await hoxiAPI.archiveSession(sessionID, false, targetDir);
+  } catch (err) {
+    console.warn("unarchive session backend sync warning:", err);
+  }
+}
+
+export function removeSessionFromStore(sessionID: string): SessionInfo | undefined {
+  deletedSessionIDs.add(sessionID);
+  const nextCandidate = nextActiveSessionCandidate(sessionID);
+  if (workspace.archivedSessionIDs.includes(sessionID)) {
+    const nextArchived = workspace.archivedSessionIDs.filter((id) => id !== sessionID);
+    setWorkspace("archivedSessionIDs", nextArchived);
+    persistArchivedSessionIDs(nextArchived);
+  }
+  setWorkspace(
+    produce((state) => {
+      state.sessions = state.sessions.filter((s) => s.id !== sessionID);
+      delete state.messagesBySession[sessionID];
+      delete state.statusBySession[sessionID];
+      delete state.diffsBySession[sessionID];
+      delete state.worktreeBySession[sessionID];
+      delete state.reviewCommentsBySession[sessionID];
+      delete state.auditsBySession[sessionID];
+      delete state.auditingBySession[sessionID];
+      state.pendingPermissions = state.pendingPermissions.filter((p) => p.sessionID !== sessionID);
+      state.pendingQuestions = state.pendingQuestions.filter((q) => q.sessionID !== sessionID);
+    })
+  );
+  return nextCandidate;
+}
+
+export async function discardSession(
+  sessionID: string,
+  force = true,
+  directory?: string
+): Promise<void> {
+  const existing = workspace.sessions.find((s) => s.id === sessionID);
+  const targetDir =
+    directory || existing?.directory || sessionDirectory(sessionID) || workspace.rootDir || undefined;
+  const wasActive = workspace.activeSessionID === sessionID;
+  const wasBusy = isSessionBusy(sessionID);
+
+  // Optimistically remove from UI and switch active session immediately
+  const nextCandidate = removeSessionFromStore(sessionID);
+  if (wasActive) {
+    if (nextCandidate) {
+      void selectSession(nextCandidate.id);
+    } else {
+      setWorkspace("activeSessionID", null);
+    }
+  }
+
+  if (wasBusy) {
+    try {
+      await hoxiAPI.abortSession(sessionID, targetDir);
+    } catch {
+      /* ignore abort error */
+    }
+  }
+
   try {
     await hoxiAPI.removeWorktree(sessionID, force);
   } catch (err) {
-    console.error("remove worktree failed:", err);
+    console.warn("remove worktree warning:", err);
   }
+
   try {
-    await hoxiAPI.deleteSession(sessionID, workspace.rootDir || undefined);
+    await hoxiAPI.deleteSession(sessionID, targetDir);
   } catch (err) {
+    if (workspace.rootDir && targetDir !== workspace.rootDir) {
+      try {
+        await hoxiAPI.deleteSession(sessionID, workspace.rootDir);
+        return;
+      } catch {
+        /* ignore fallback error */
+      }
+    }
     console.error("delete session failed:", err);
   }
-  setWorkspace("sessions", (prev) => prev.filter((s) => s.id !== sessionID));
-  setWorkspace("worktreeBySession", (prev) => {
-    const next = { ...prev };
-    delete next[sessionID];
-    return next;
-  });
-  if (workspace.activeSessionID === sessionID) {
-    setWorkspace("activeSessionID", workspace.sessions[0]?.id ?? null);
-  }
 }
 
-export async function revertToHere(
-  sessionID: string,
-  messageID: string,
-  partID?: string
-): Promise<void> {
-  recordUserRevertAction(sessionID, messageID);
-  const info = await hoxiAPI.revertSession(
-    sessionID,
-    messageID,
-    partID,
-    sessionDirectory(sessionID)
-  );
-  replaceSession(info);
-}
-
-export async function undoRevert(sessionID: string): Promise<void> {
-  const info = await hoxiAPI.unrevertSession(sessionID, sessionDirectory(sessionID));
-  replaceSession(info);
-}
-
-export async function forkFromMessage(
-  sessionID: string,
-  messageID?: string
-): Promise<string> {
-  const forked = await hoxiAPI.forkSession(sessionID, messageID, sessionDirectory(sessionID));
-  replaceSession(forked);
-  await selectSession(forked.id);
-  return forked.id;
-}
-
-export async function submitSessionPrompt(
-  promptText: string,
-  targetSessionID?: string | null,
-  options?: {
-    agent?: string;
-    model?: { providerID: string; modelID: string };
-    attachments?: Array<{ type: "file"; mime: string; filename?: string; url: string }>;
-  }
-): Promise<string> {
-  let id = targetSessionID ?? workspace.activeSessionID;
-  const isBrandNewSession = !id;
-  if (!id) {
-    id = await newIsolatedSession();
-  }
-
-  const existingTurns = workspace.messagesBySession[id] ?? [];
-  const hasPriorUserTurn = existingTurns.some((m) => m.info.role === "user");
-  const currentSessionObj = workspace.sessions.find((s) => s.id === id);
-  const shouldSummarizeTitle =
-    isBrandNewSession ||
-    !hasPriorUserTurn ||
-    isPlaceholderSessionTitle(currentSessionObj?.title);
-
-  const now = Date.now();
-  const optimisticMsgID = `optimistic_${now}`;
-  const effectiveAgent = options?.agent || workspace.activeMode;
-  const effectiveModel = options?.model || workspace.selectedModel || undefined;
-  const attachments = options?.attachments ?? [];
-
-  recordPromptDispatched(id, effectiveModel?.providerID, effectiveModel?.modelID);
-  if (shouldSummarizeTitle) {
-    void summarizeAndRenameSession(
-      id,
-      promptText || t("timeline.imagePromptSessionTitle"),
-      effectiveModel,
-      renameSessionTitle
-    );
-  }
-
-  // Optimistically show user prompt & busy status immediately (0ms perceived latency)
-  setWorkspace("statusBySession", id, { type: "busy" });
-  setWorkspace(
-    produce((state) => {
-      const list = (state.messagesBySession[id!] ||= []);
-      const optimisticParts: MessagePart[] = attachments.map((att, idx) => ({
-        id: `prt_file_${now}_${idx}`,
-        sessionID: id!,
-        messageID: optimisticMsgID,
-        type: "file",
-        mime: att.mime,
-        filename: att.filename,
-        url: att.url,
-      }));
-      if (promptText || optimisticParts.length === 0) {
-        optimisticParts.push({
-          id: `prt_${now}`,
-          sessionID: id!,
-          messageID: optimisticMsgID,
-          type: "text",
-          text: promptText,
-        });
-      }
-      list.push({
-        info: {
-          id: optimisticMsgID,
-          sessionID: id!,
-          role: "user",
-          time: { created: now },
-          agent: effectiveAgent,
-          modelID: effectiveModel?.modelID,
-          providerID: effectiveModel?.providerID,
-        },
-        parts: optimisticParts,
-      });
-    })
-  );
-
-  try {
-    await hoxiAPI.sendPromptAsync(id, promptText, {
-      agent: effectiveAgent,
-      model: effectiveModel,
-      variant: workspace.reasoningEffort || undefined,
-      directory: sessionDirectory(id),
-      attachments,
-    });
-    // Sync server messages immediately and follow up shortly after
-    void loadSessionMessages(id);
-    setTimeout(() => {
-      void loadSessionMessages(id!);
-    }, 900);
-  } catch (err) {
-    setWorkspace("statusBySession", id, { type: "idle" });
-    throw err;
-  }
-
-  return id;
-}
-
-export const sendPrompt = submitSessionPrompt;
-
-export async function retryLastUserPrompt(sessionID?: string | null): Promise<void> {
-  const id = sessionID ?? workspace.activeSessionID;
-  if (!id) return;
-  const turns = workspace.messagesBySession[id] ?? [];
-  for (let i = turns.length - 1; i >= 0; i--) {
-    if (turns[i].info.role === "user") {
-      const text = turns[i].parts
-        .filter((p): p is Extract<MessagePart, { type: "text" }> => p.type === "text")
-        .map((p) => p.text)
-        .join("\n")
-        .trim();
-      if (text) {
-        await submitSessionPrompt(text, id);
-      }
-      return;
-    }
-  }
-}
-
-export function upsertMessageInfo(info: MessageInfo) {
-  recordAssistantTurnUpdated(info);
-  setWorkspace(
-    produce((state) => {
-      const list = (state.messagesBySession[info.sessionID] ||= []);
-      // Remove any temporary optimistic user message once real user message arrives
-      if (info.role === "user" && !info.id.startsWith("optimistic_")) {
-        const optIdx = list.findIndex((m) => m.info.id.startsWith("optimistic_"));
-        if (optIdx >= 0) {
-          list.splice(optIdx, 1);
-        }
-      }
-      const idx = list.findIndex((m) => m.info.id === info.id);
-      if (idx >= 0) {
-        Object.assign(list[idx].info, info);
-      } else {
-        list.push({ info, parts: [] });
-      }
-    })
-  );
-}
-
-export function upsertMessagePart(part: MessagePart) {
-  recordFirstToken(part.sessionID);
-  recordToolPartUpdate(part);
-  if (part.type === "tool" && part.state.status === "completed") {
-    void refreshWorktreeStatus(part.sessionID);
-  }
-  setWorkspace(
-    produce((state) => {
-      const list = (state.messagesBySession[part.sessionID] ||= []);
-      let turn = list.find((m) => m.info.id === part.messageID);
-      if (!turn) {
-        turn = {
-          info: {
-            id: part.messageID,
-            sessionID: part.sessionID,
-            role: "assistant",
-            time: { created: Date.now() },
-          },
-          parts: [],
-        };
-        list.push(turn);
-      }
-      const pIdx = turn.parts.findIndex((p) => p.id === part.id);
-      if (pIdx >= 0) {
-        Object.assign(turn.parts[pIdx], part);
-      } else {
-        turn.parts.push(part);
-      }
-    })
-  );
-}
-
-export function applyPartDeltaBatch(
-  batches: Array<{
-    sessionID: string;
-    messageID: string;
-    partID: string;
-    field: string;
-    delta: string;
-  }>
-) {
-  if (batches.length > 0) {
-    recordFirstToken(batches[0].sessionID);
-  }
-  setWorkspace(
-    produce((state) => {
-      for (const b of batches) {
-        const list = state.messagesBySession[b.sessionID];
-        if (!list) continue;
-        const turn = list.find((m) => m.info.id === b.messageID);
-        if (!turn) continue;
-        const part = turn.parts.find((p) => p.id === b.partID) as any;
-        if (part && typeof part[b.field] === "string") {
-          part[b.field] += b.delta;
-        }
-      }
-    })
-  );
-}
+export {
+  applyPartDeltaBatch,
+  forkFromMessage,
+   retryLastUserPrompt,
+  revertToHere,
+  sendPrompt,
+  submitSessionPrompt,
+  undoRevert,
+  upsertMessageInfo,
+  upsertMessagePart,
+} from "./workspace-session-messages";

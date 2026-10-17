@@ -202,6 +202,11 @@ export default function ModelSelector() {
         <span class="truncate">
           {activeModelInfo()?.modelName || t("models.selectModel")}
         </span>
+        <Show when={activeModelInfo()?.free}>
+          <span class="shrink-0 rounded bg-[var(--ok-surface)] px-1.5 py-[1px] text-[9.5px] font-semibold text-[var(--ok-text)]">
+            {t("models.freeModel")}
+          </span>
+        </Show>
         <Show when={workspace.reasoningEffort}>
           <span class="shrink-0 rounded bg-[var(--accent-surface)] px-1 py-[1px] text-[9.5px] uppercase font-mono text-[var(--accent-primary)]">
             {workspace.reasoningEffort}
@@ -298,6 +303,11 @@ export default function ModelSelector() {
                               <span class="truncate text-[12.5px] font-medium">
                                 {item.modelName}
                               </span>
+                              <Show when={item.free}>
+                                <span class="shrink-0 inline-flex items-center rounded bg-[var(--ok-surface)] px-1.5 py-[1px] text-[9.5px] font-semibold text-[var(--ok-text)]">
+                                  {t("models.freeModel")}
+                                </span>
+                              </Show>
                               <Show when={item.reasoning}>
                                 <span
                                   class="inline-flex items-center rounded bg-[var(--bg-inset)] px-1 py-[1px] text-[9.5px] font-mono text-[var(--text-muted)]"
@@ -321,7 +331,11 @@ export default function ModelSelector() {
                             </div>
                             <div class="flex items-center gap-1.5 text-[10.5px] text-[var(--text-muted)]">
                               <span class="truncate">{item.providerName}</span>
-                              <ProviderHealthBadge providerID={item.providerID} compact />
+                              <ProviderHealthBadge
+                                providerID={item.providerID}
+                                modelID={item.modelID}
+                                compact
+                              />
                               <span class="font-mono text-[10px] text-[var(--text-faint)] truncate">
                                 · {item.modelID}
                               </span>

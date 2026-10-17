@@ -25,8 +25,9 @@ export function AssistantErrorCard(props: { info: MessageInfo }) {
 
   const statusCode = () => props.info.error?.data?.statusCode;
   const providerID = () => props.info.providerID || workspace.selectedModel?.providerID || "";
+  const modelID = () => props.info.modelID || workspace.selectedModel?.modelID || "";
   const providerHealth = createMemo(() =>
-    providerID() ? computeProviderHealth(providerID()) : null
+    providerID() ? computeProviderHealth(providerID(), modelID() || undefined) : null
   );
   const recommendedFallback = createMemo(() =>
     providerID() ? findBestFallbackModel(providerID()) : null
@@ -55,7 +56,7 @@ export function AssistantErrorCard(props: { info: MessageInfo }) {
                 </span>
               </Show>
               <Show when={providerID()}>
-                <ProviderHealthBadge providerID={providerID()} />
+                <ProviderHealthBadge providerID={providerID()} modelID={modelID() || undefined} />
               </Show>
             </div>
 

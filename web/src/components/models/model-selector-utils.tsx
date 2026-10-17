@@ -54,6 +54,16 @@ export function formatPricePerMillion(cost?: number): string | null {
   return `$${val < 1 ? val.toFixed(2) : val.toFixed(2).replace(/\.00$/, "")}/M`;
 }
 
+export function isModelFree(
+  providerID: string,
+  modelID: string,
+  mInfo?: Record<string, any> | null
+): boolean {
+  if (providerID !== "opencode") return false;
+  const inCost = mInfo?.cost?.input;
+  return !mInfo?.cost || inCost === 0 || modelID.endsWith("-free");
+}
+
 export function extractFlattenedModels(
   providers: ProviderInfo[],
   connectedIds: Set<string>,
@@ -68,7 +78,7 @@ export function extractFlattenedModels(
   for (const p of providers) {
     if (disabledSet.has(p.id)) continue;
     const isCustom = isCustomOrConfiguredProvider(p);
-    const isConn = connectedIds.has(p.id) || Boolean(cfgProviders[p.id]);
+    const baseConn = connectedIds.has(p.id) || Boolean(cfgProviders[p.id]);
 
     for (const [mID, mInfo] of Object.entries(p.models || {})) {
       if (!mInfo || typeof mInfo !== "object") continue;
@@ -83,9 +93,10 @@ export function extractFlattenedModels(
             cfgModel.modalities.input.includes("image"))
       );
       const toolcall = Boolean(mInfo.capabilities?.toolcall ?? mInfo.tool_call ?? true);
-      const inCost = mInfo.cost?.input;
-      const outCost = mInfo.cost?.output;
-      const free = mID.endsWith("-free") || (inCost === 0 && outCost === 0);
+      const inCost = mInfo.cost?.input ?? cfgModel?.cost?.input;
+      const outCost = mInfo.cost?.output ?? cfgModel?.cost?.output;
+      const free = isModelFree(p.id, mID, mInfo);
+      const isConn = baseConn || (p.id === "opencode" && free);
 
       out.push({
         providerID: p.id,
@@ -118,7 +129,8 @@ export function rankModelSearch(models: FlattenedModel[], rawQuery: string): Fla
     const idLower = m.modelID.toLowerCase();
     const nameLower = m.modelName.toLowerCase();
     const provLower = `${m.providerName} ${m.providerID}`.toLowerCase();
-    const haystack = `${idLower} ${nameLower} ${provLower}`;
+    const freeTag = m.free ? `free ${t("models.freeModel").toLowerCase()}` : "";
+    const haystack = `${idLower} ${nameLower} ${provLower} ${freeTag}`;
 
     if (!tokens.every((tok) => haystack.includes(tok))) continue;
 
@@ -127,6 +139,7 @@ export function rankModelSearch(models: FlattenedModel[], rawQuery: string): Fla
     else if (idLower.startsWith(q) || nameLower.startsWith(q)) score += 120;
     else if (idLower.includes(q) || nameLower.includes(q)) score += 70;
     if (m.connected) score += 40;
+    if (m.free) score += 25;
     if (m.isCustom) score += 20;
 
     scored.push({ item: m, score });
@@ -278,7 +291,10 @@ export function ModelPreviewFooter(props: {
           <span class="font-semibold text-[var(--text-primary)] truncate">
             {props.model.modelName}
           </span>
-          <ProviderHealthBadge providerID={props.model.providerID} />
+          <ProviderHealthBadge
+            providerID={props.model.providerID}
+            modelID={props.model.modelID}
+          />
           <span class="font-mono text-[10px] text-[var(--text-faint)] truncate">
             ({props.model.providerID}/{props.model.modelID})
           </span>

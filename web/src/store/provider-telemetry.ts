@@ -4,6 +4,7 @@ import type { MessageInfo, MessagePart } from "../services/sse-types";
 import { setWorkspace, workspace } from "./workspace";
 import {
   emptyStats,
+  ensureModelStats,
   initialProviderTelemetry,
   isTimeoutErrorText,
   loadProviderTelemetry,
@@ -84,8 +85,13 @@ export function recordFirstToken(sessionID: string) {
     produce((state) => {
       const rec = (state.providerTelemetry[ctx.providerID] ||= emptyStats(ctx.providerID));
       rec.ttftSamplesMs = pushSample(rec.ttftSamplesMs, ttftMs);
+      const m = ensureModelStats(rec, ctx.modelID);
+      if (m) {
+        m.ttftSamplesMs = pushSample(m.ttftSamplesMs, ttftMs);
+      }
       if (ttftMs >= SLOW_TTFT_THRESHOLD_MS) {
         rec.timeoutTurns += 1;
+        if (m) m.timeoutTurns += 1;
         rec.recentIncidents = pushIncident(
           rec.recentIncidents,
           "timeout",
@@ -94,6 +100,7 @@ export function recordFirstToken(sessionID: string) {
         );
       }
       rec.updatedAt = Date.now();
+      if (m) m.updatedAt = rec.updatedAt;
     })
   );
   schedulePersistTelemetry();
@@ -114,6 +121,12 @@ export function recordSessionRetry(sessionID: string, attempt: number, message?:
       ));
       rec.retryCount += 1;
       if (isTimeout) rec.timeoutTurns += 1;
+      const m = ensureModelStats(rec, resolved.modelID);
+      if (m) {
+        m.retryCount += 1;
+        if (isTimeout) m.timeoutTurns += 1;
+        m.updatedAt = Date.now();
+      }
       rec.recentIncidents = pushIncident(
         rec.recentIncidents,
         isTimeout ? "timeout" : "retry",
@@ -157,11 +170,17 @@ export function recordToolPartUpdate(part: MessagePart) {
         resolved.providerID
       ));
       rec.toolCallsTotal += 1;
+      const m = ensureModelStats(rec, resolved.modelID);
+      if (m) {
+        m.toolCallsTotal += 1;
+      }
       if (status === "error") {
         rec.toolCallsFailed += 1;
+        if (m) m.toolCallsFailed += 1;
         const errDetail = `${part.tool}: ${part.state.error || "failed"}`;
         if (isHallucinationLoop) {
           rec.hallucinationFlags += 1;
+          if (m) m.hallucinationFlags += 1;
           rec.recentIncidents = pushIncident(
             rec.recentIncidents,
             "hallucination_loop",
@@ -178,9 +197,17 @@ export function recordToolPartUpdate(part: MessagePart) {
         }
       }
       rec.updatedAt = Date.now();
+      if (m) m.updatedAt = rec.updatedAt;
     })
   );
   schedulePersistTelemetry();
+}
+
+export function isUserAbortError(info?: MessageInfo | null): boolean {
+  if (!info?.error) return false;
+  const name = (info.error.name || "").toLowerCase();
+  const msg = (info.error.data?.message || "").toLowerCase();
+  return name.includes("abort") || msg.includes("aborted") || msg.includes("abort");
 }
 
 export function recordAssistantTurnUpdated(info: MessageInfo) {
@@ -196,6 +223,7 @@ export function recordAssistantTurnUpdated(info: MessageInfo) {
   }
 
   if (info.error) {
+    if (isUserAbortError(info)) return;
     const errKey = `${info.id}:error`;
     if (processedMessageKeys.has(errKey)) return;
     processedMessageKeys.add(errKey);
@@ -210,6 +238,13 @@ export function recordAssistantTurnUpdated(info: MessageInfo) {
         rec.totalTurns += 1;
         rec.errorTurns += 1;
         if (isTimeout) rec.timeoutTurns += 1;
+        const m = ensureModelStats(rec, mid);
+        if (m) {
+          m.totalTurns += 1;
+          m.errorTurns += 1;
+          if (isTimeout) m.timeoutTurns += 1;
+          m.updatedAt = Date.now();
+        }
         rec.recentIncidents = pushIncident(
           rec.recentIncidents,
           isTimeout ? "timeout" : "api_error",
@@ -246,7 +281,18 @@ export function recordAssistantTurnUpdated(info: MessageInfo) {
           rec.tpsSamples = pushSample(rec.tpsSamples, tps);
         }
         if (hasCacheHit) rec.cacheHitTurns += 1;
-        if (hasReasoning) rec.reasoningTurns += 1;
+        if (hasReasoning) rec.reasoningTurns = (rec.reasoningTurns || 0) + 1;
+        const m = ensureModelStats(rec, mid);
+        if (m) {
+          m.totalTurns += 1;
+          m.successTurns += 1;
+          if (tps > 0 && tps < 800) {
+            m.tpsSamples = pushSample(m.tpsSamples, tps);
+          }
+          if (hasCacheHit) m.cacheHitTurns += 1;
+          if (hasReasoning) m.reasoningTurns = (m.reasoningTurns || 0) + 1;
+          m.updatedAt = Date.now();
+        }
         rec.updatedAt = Date.now();
       })
     );
@@ -281,6 +327,12 @@ export function recordUserRevertAction(sessionID: string, messageID?: string) {
       const rec = (state.providerTelemetry[targetProviderID] ||= emptyStats(targetProviderID));
       rec.revertCount += 1;
       rec.hallucinationFlags += 1;
+      const m = ensureModelStats(rec, targetModelID);
+      if (m) {
+        m.revertCount += 1;
+        m.hallucinationFlags += 1;
+        m.updatedAt = Date.now();
+      }
       rec.recentIncidents = pushIncident(
         rec.recentIncidents,
         "user_revert",
@@ -303,6 +355,11 @@ export function recordUserAbortAction(sessionID: string) {
     produce((state) => {
       const rec = (state.providerTelemetry[ctx.providerID] ||= emptyStats(ctx.providerID));
       rec.timeoutTurns += 1;
+      const m = ensureModelStats(rec, ctx.modelID);
+      if (m) {
+        m.timeoutTurns += 1;
+        m.updatedAt = Date.now();
+      }
       rec.recentIncidents = pushIncident(
         rec.recentIncidents,
         "timeout",

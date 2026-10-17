@@ -230,5 +230,6 @@ export const models: ModelsI18n = {
   viewImportedEndpoint: "View Imported",
   forkToHoxiEdit: "Copy to .hoxi & Edit",
   forkToHoxiSuccess: "Copied '{name}' to .hoxi/models.json — you can now freely edit its models.",
+  freeModelsCount: "{count} Free",
 };
 

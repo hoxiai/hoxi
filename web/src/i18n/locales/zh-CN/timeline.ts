@@ -135,5 +135,21 @@ export const timeline: TimelineI18n = {
   auditSwitchAndFixBtn: "换 {model} 修复",
   auditFeedbackPromptPrefix:
     "独立代码审查观察者对刚才的代码变更进行了审核（得分：{score}/100），发现以下问题，请立即修复：",
+  pause: "暂停",
+  pauseTooltip: "暂停当前任务，方便检查中间改动并随时继续执行",
+  stopTooltip: "立即停止当前任务 (Esc)",
+  resume: "继续执行",
+  resumeWithNote: "携带补充继续",
+  resumeTooltip: "从刚才暂停的位置接着往下执行剩余步骤",
+  retryTask: "重新执行",
+  turnPaused: "已暂停",
+  turnStopped: "已停止",
+  executing: "执行中…",
+  pausedPlaceholder:
+    "任务已暂停。可直接点击「继续执行」，或输入补充说明后按 Enter 继续...",
+  resumeDefaultPrompt:
+    "请从刚才暂停的位置继续往下执行，完成剩余的任务步骤。",
+  resumePromptPrefix:
+    "请结合以下补充要求，从刚才暂停的位置继续执行任务：",
 };
 

@@ -33,6 +33,7 @@ export interface CustomProviderModelDraft {
   name: string;
   reasoning: boolean;
   image: boolean;
+  free?: boolean;
 }
 
 export interface SaveCustomProviderInput {

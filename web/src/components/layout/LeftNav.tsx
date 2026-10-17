@@ -2,13 +2,16 @@
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
 import { User } from "lucide-solid";
 import {
+  archiveSession,
   discardSession,
+  isSessionArchived,
   newIsolatedSession,
   openWorkspaceFolder,
   selectSession,
   setSidebarProjectMode,
   setWorkspace,
   switchWorkspace,
+  unarchiveSession,
   workspace,
 } from "../../store/workspace";
 import { hoxiAPI } from "../../services/api";
@@ -31,6 +34,11 @@ export default function LeftNav() {
   const [expandedProjects, setExpandedProjects] = createSignal<Set<string>>(
     new Set([workspace.rootDir])
   );
+
+  // Expanded archived sections per project (by path) for Multi-Project mode
+  const [expandedArchivedByProject, setExpandedArchivedByProject] = createSignal<
+    Record<string, boolean>
+  >({});
 
   // Cached sessions for inactive projects: Record<path, SessionInfo[]>
   const [projectSessions, setProjectSessions] = createSignal<Record<string, SessionInfo[]>>({});
@@ -85,6 +93,13 @@ export default function LeftNav() {
     }
   };
 
+  const toggleArchivedForProject = (path: string) => {
+    setExpandedArchivedByProject((prev) => ({
+      ...prev,
+      [path]: !prev[path],
+    }));
+  };
+
   const onCreateThreadInProject = async (e: MouseEvent, path: string) => {
     e.stopPropagation();
     if (creatingForPath()) return;
@@ -109,10 +124,57 @@ export default function LeftNav() {
     await selectSession(sessionID);
   };
 
-  const onDiscard = async (ev: MouseEvent, sessionID: string) => {
+  const onArchiveInProject = async (
+    projPath: string,
+    ev: MouseEvent,
+    sessionID: string
+  ) => {
     ev.stopPropagation();
-    if (!confirm(t("leftNav.discardConfirm"))) return;
-    await discardSession(sessionID, true);
+    const now = Date.now();
+    if (projPath !== workspace.rootDir) {
+      setProjectSessions((prev) => ({
+        ...prev,
+        [projPath]: (prev[projPath] || []).map((s) =>
+          s.id === sessionID ? { ...s, time: { ...s.time, archived: now } } : s
+        ),
+      }));
+    }
+    await archiveSession(sessionID, projPath);
+  };
+
+  const onUnarchiveInProject = async (
+    projPath: string,
+    ev: MouseEvent,
+    sessionID: string
+  ) => {
+    ev.stopPropagation();
+    if (projPath !== workspace.rootDir) {
+      setProjectSessions((prev) => ({
+        ...prev,
+        [projPath]: (prev[projPath] || []).map((s) => {
+          if (s.id !== sessionID) return s;
+          const nextTime = { ...s.time };
+          delete nextTime.archived;
+          return { ...s, time: nextTime };
+        }),
+      }));
+    }
+    await unarchiveSession(sessionID, projPath);
+  };
+
+  const onDiscardInProject = async (
+    projPath: string,
+    ev: MouseEvent,
+    sessionID: string
+  ) => {
+    ev.stopPropagation();
+    if (projPath !== workspace.rootDir) {
+      setProjectSessions((prev) => ({
+        ...prev,
+        [projPath]: (prev[projPath] || []).filter((s) => s.id !== sessionID),
+      }));
+    }
+    await discardSession(sessionID, true, projPath);
   };
 
   const onOpenFolderClick = async () => {
@@ -216,8 +278,11 @@ export default function LeftNav() {
               const expanded = () => isExpanded(proj.path);
               const isCreating = () => creatingForPath() === proj.path;
               const isLoadingSessions = () => loadingProjects()[proj.path];
+              const isArchivedOpen = () =>
+                Boolean(expandedArchivedByProject()[proj.path]) ||
+                Boolean(filterQuery().trim());
 
-              const sessions = createMemo(() => {
+              const allFilteredSessions = createMemo(() => {
                 const q = filterQuery().trim().toLowerCase();
                 const list = isActive()
                   ? workspace.sessions
@@ -230,6 +295,14 @@ export default function LeftNav() {
                     (s.slug || "").toLowerCase().includes(q)
                 );
               });
+
+              const activeSessions = createMemo(() =>
+                allFilteredSessions().filter((s) => !isSessionArchived(s))
+              );
+
+              const archivedSessions = createMemo(() =>
+                allFilteredSessions().filter((s) => isSessionArchived(s))
+              );
 
               return (
                 <div>
@@ -264,7 +337,7 @@ export default function LeftNav() {
                       type="button"
                       onClick={(e) => void onCreateThreadInProject(e, proj.path)}
                       disabled={isCreating()}
-                      class="shrink-0 p-0.5 rounded text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] opacity-0 group-hover/proj:opacity-100 transition-opacity cursor-pointer"
+                      class="shrink-0 p-0.5 rounded text-[var(--accent-primary)] hover:bg-[var(--accent-surface)] opacity-0 group-hover/proj:opacity-100 transition-opacity cursor-pointer"
                       title={`New session in ${proj.name}`}
                     >
                       <Show
@@ -286,32 +359,95 @@ export default function LeftNav() {
                         </div>
                       </Show>
 
-                      <Show
-                        when={!isLoadingSessions() && sessions().length > 0}
-                        fallback={
-                          <Show when={!isLoadingSessions()}>
-                            <button
-                              type="button"
-                              onClick={(e) => void onCreateThreadInProject(e, proj.path)}
-                              class="w-full text-left px-2 py-1 rounded-md text-[11.5px] text-[var(--text-faint)] hover:text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]/40 transition-colors cursor-pointer"
-                            >
-                              + {t("leftNav.newThread")}
-                            </button>
+                      <Show when={!isLoadingSessions()}>
+                        <button
+                          type="button"
+                          onClick={(e) => void onCreateThreadInProject(e, proj.path)}
+                          disabled={isCreating()}
+                          class="w-full flex items-center gap-1 text-left px-2 py-1 rounded-lg text-[11.5px] font-medium text-[var(--accent-primary)] hover:bg-[var(--accent-surface)] transition-colors cursor-pointer"
+                        >
+                          <Show
+                            when={!isCreating()}
+                            fallback={<Spinner class="w-3 h-3 text-[var(--accent-primary)]" />}
+                          >
+                            <Icon name="plus-small" size="small" class="w-3.5 h-3.5" />
                           </Show>
-                        }
-                      >
-                        <For each={sessions()}>
+                          <span>{t("leftNav.newThread")}</span>
+                        </button>
+                      </Show>
+
+                      <Show when={!isLoadingSessions() && activeSessions().length > 0}>
+                        <For each={activeSessions()}>
                           {(session) => (
                             <SessionNavItem
                               session={session}
                               active={isActive() && workspace.activeSessionID === session.id}
-                              canDelete={isActive()}
+                              canDelete={true}
+                              isArchived={false}
                               pendingSessions={pendingSessions()}
                               onSelect={() => void onSelectSessionInProject(proj.path, session.id)}
-                              onDiscard={onDiscard}
+                              onArchive={(ev, id) => void onArchiveInProject(proj.path, ev, id)}
+                              onDiscard={(ev, id) => onDiscardInProject(proj.path, ev, id)}
                             />
                           )}
                         </For>
+                      </Show>
+
+                      {/* Collapsible Archived Section for this project */}
+                      <Show when={!isLoadingSessions() && archivedSessions().length > 0}>
+                        <div class="pt-0.5">
+                          <button
+                            type="button"
+                            onClick={(ev) => {
+                              ev.stopPropagation();
+                              toggleArchivedForProject(proj.path);
+                            }}
+                            class="w-full flex items-center justify-between gap-1.5 rounded-lg px-2 py-0.5 text-[11px] text-[var(--text-faint)] hover:text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]/40 transition-colors cursor-pointer"
+                          >
+                            <div class="flex items-center gap-1">
+                              <Show
+                                when={isArchivedOpen()}
+                                fallback={
+                                  <Icon name="chevron-right" size="small" class="w-3 h-3" />
+                                }
+                              >
+                                <Icon name="chevron-down" size="small" class="w-3 h-3" />
+                              </Show>
+                              <Icon name="archive" size="small" class="w-3 h-3" />
+                              <span>{t("leftNav.archivedSessions")}</span>
+                            </div>
+                            <span class="text-[10px] font-mono">
+                              {archivedSessions().length}
+                            </span>
+                          </button>
+
+                          <Show when={isArchivedOpen()}>
+                            <div class="mt-0.5 space-y-0.5">
+                              <For each={archivedSessions()}>
+                                {(session) => (
+                                  <SessionNavItem
+                                    session={session}
+                                    active={
+                                      isActive() && workspace.activeSessionID === session.id
+                                    }
+                                    canDelete={true}
+                                    isArchived={true}
+                                    pendingSessions={pendingSessions()}
+                                    onSelect={() =>
+                                      void onSelectSessionInProject(proj.path, session.id)
+                                    }
+                                    onUnarchive={(ev, id) =>
+                                      void onUnarchiveInProject(proj.path, ev, id)
+                                    }
+                                    onDiscard={(ev, id) =>
+                                      onDiscardInProject(proj.path, ev, id)
+                                    }
+                                  />
+                                )}
+                              </For>
+                            </div>
+                          </Show>
+                        </div>
                       </Show>
                     </div>
                   </Show>
@@ -328,7 +464,9 @@ export default function LeftNav() {
           allProjects={allProjects()}
           filterQuery={filterQuery()}
           pendingSessions={pendingSessions()}
-          onDiscard={onDiscard}
+          onArchive={(ev, id) => void onArchiveInProject(workspace.rootDir, ev, id)}
+          onUnarchive={(ev, id) => void onUnarchiveInProject(workspace.rootDir, ev, id)}
+          onDiscard={(ev, id) => onDiscardInProject(workspace.rootDir, ev, id)}
         />
       </Show>
 

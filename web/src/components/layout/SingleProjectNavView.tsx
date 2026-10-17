@@ -1,6 +1,7 @@
 // web/src/components/layout/SingleProjectNavView.tsx
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 import {
+  isSessionArchived,
   newIsolatedSession,
   selectSession,
   switchWorkspace,
@@ -21,11 +22,14 @@ export default function SingleProjectNavView(props: {
   allProjects: ProjectNavEntry[];
   filterQuery: string;
   pendingSessions: Set<string>;
-  onDiscard: (ev: MouseEvent, sessionID: string) => void;
+  onArchive: (ev: MouseEvent, sessionID: string) => void;
+  onUnarchive: (ev: MouseEvent, sessionID: string) => void;
+  onDiscard: (ev: MouseEvent, sessionID: string) => Promise<void> | void;
 }) {
   const [creatingSingle, setCreatingSingle] = createSignal(false);
   const [projectMenuOpen, setProjectMenuOpen] = createSignal(false);
   const [dropdownFilter, setDropdownFilter] = createSignal("");
+  const [showArchived, setShowArchived] = createSignal(false);
   let menuRef: HTMLDivElement | undefined;
   let buttonRef: HTMLButtonElement | undefined;
 
@@ -56,16 +60,19 @@ export default function SingleProjectNavView(props: {
     );
   });
 
-  const groupedSingleSessions = createMemo(() => {
+  const filteredSessions = createMemo(() => {
     const q = props.filterQuery.trim().toLowerCase();
     const raw = [...workspace.sessions].sort((a, b) => b.time.created - a.time.created);
-    const list = q
-      ? raw.filter(
-          (s) =>
-            (s.title || "").toLowerCase().includes(q) ||
-            (s.slug || "").toLowerCase().includes(q)
-        )
-      : raw;
+    if (!q) return raw;
+    return raw.filter(
+      (s) =>
+        (s.title || "").toLowerCase().includes(q) ||
+        (s.slug || "").toLowerCase().includes(q)
+    );
+  });
+
+  const groupedSingleSessions = createMemo(() => {
+    const list = filteredSessions().filter((s) => !isSessionArchived(s));
     const groups: Array<{ label: string; items: SessionInfo[] }> = [];
     for (const item of list) {
       const label = dayLabel(item.time.created);
@@ -75,6 +82,10 @@ export default function SingleProjectNavView(props: {
     }
     return groups;
   });
+
+  const archivedSessions = createMemo(() =>
+    filteredSessions().filter((s) => isSessionArchived(s))
+  );
 
   const onSelectProjectSingle = async (path: string) => {
     setProjectMenuOpen(false);
@@ -125,7 +136,7 @@ export default function SingleProjectNavView(props: {
           type="button"
           onClick={onCreateThreadSingle}
           disabled={creatingSingle()}
-          class="shrink-0 p-1.5 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+          class="shrink-0 p-1.5 rounded-lg text-[var(--accent-primary)] hover:bg-[var(--accent-surface)] transition-colors cursor-pointer"
           title={t("leftNav.newThread")}
         >
           <Show
@@ -205,9 +216,11 @@ export default function SingleProjectNavView(props: {
                       session={session}
                       active={workspace.activeSessionID === session.id}
                       canDelete={true}
+                      isArchived={false}
                       showBranchIcon={true}
                       pendingSessions={props.pendingSessions}
                       onSelect={() => void selectSession(session.id)}
+                      onArchive={props.onArchive}
                       onDiscard={props.onDiscard}
                     />
                   )}
@@ -215,6 +228,51 @@ export default function SingleProjectNavView(props: {
               </div>
             )}
           </For>
+        </Show>
+
+        {/* Collapsible Archived Sessions Section */}
+        <Show when={archivedSessions().length > 0}>
+          <div class="pt-1 border-t border-[var(--border-subtle)]/40">
+            <button
+              type="button"
+              onClick={() => setShowArchived((v) => !v)}
+              class="w-full flex items-center justify-between gap-1.5 rounded-lg px-2 py-1 text-[11px] font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]/50 transition-colors cursor-pointer"
+            >
+              <div class="flex items-center gap-1.5">
+                <Show
+                  when={showArchived() || Boolean(props.filterQuery.trim())}
+                  fallback={<Icon name="chevron-right" size="small" class="w-3 h-3" />}
+                >
+                  <Icon name="chevron-down" size="small" class="w-3 h-3" />
+                </Show>
+                <Icon name="archive" size="small" class="w-3 h-3 text-[var(--text-faint)]" />
+                <span>{t("leftNav.archivedSessions")}</span>
+              </div>
+              <span class="rounded-full bg-[var(--bg-inset)] px-1.5 py-0.2 text-[10px] font-mono text-[var(--text-faint)]">
+                {archivedSessions().length}
+              </span>
+            </button>
+
+            <Show when={showArchived() || Boolean(props.filterQuery.trim())}>
+              <div class="mt-0.5 space-y-0.5">
+                <For each={archivedSessions()}>
+                  {(session) => (
+                    <SessionNavItem
+                      session={session}
+                      active={workspace.activeSessionID === session.id}
+                      canDelete={true}
+                      isArchived={true}
+                      showBranchIcon={true}
+                      pendingSessions={props.pendingSessions}
+                      onSelect={() => void selectSession(session.id)}
+                      onUnarchive={props.onUnarchive}
+                      onDiscard={props.onDiscard}
+                    />
+                  )}
+                </For>
+              </div>
+            </Show>
+          </div>
         </Show>
       </div>
     </>

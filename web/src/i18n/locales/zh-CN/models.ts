@@ -227,5 +227,6 @@ export const models: ModelsI18n = {
   viewImportedEndpoint: "查看导入配置",
   forkToHoxiEdit: "转存到 .hoxi 编辑",
   forkToHoxiSuccess: "已将「{name}」转存至 .hoxi/models.json，现在可以自由修改模型列表。",
+  freeModelsCount: "{count} 免费",
 };
 

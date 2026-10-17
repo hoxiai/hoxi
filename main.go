@@ -17,6 +17,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -41,6 +42,7 @@ type desktopApp struct {
 	context  context.Context
 	cfg      appConfig
 	logger   *slog.Logger
+	childMu  sync.Mutex
 	child    *exec.Cmd
 	gateway  *desktopGateway
 	status   *desktopStatusTracker
@@ -49,6 +51,8 @@ type desktopApp struct {
 }
 
 func main() {
+	enrichSystemPath()
+
 	var cfg appConfig
 	cwd, _ := os.Getwd()
 	flag.StringVar(&cfg.Address, "address", envOr("HOXI_BRIDGE_ADDR", "127.0.0.1:5088"), "address for the hoxi loopback bridge / headless server")
@@ -68,19 +72,57 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	child, port, password, err := startOpenCodeDaemon(ctx, cfg, logger)
+	port, err := chooseFreePort()
 	if err != nil {
-		logger.Error("failed to start opencode daemon", "error", err)
+		logger.Error("failed to allocate free port for opencode", "error", err)
 		os.Exit(1)
 	}
-	defer func() {
-		if child != nil && child.Process != nil {
-			_ = child.Process.Kill()
-		}
-	}()
+	password, err := generateRandomHex(16)
+	if err != nil {
+		logger.Error("failed to generate opencode password", "error", err)
+		os.Exit(1)
+	}
 
 	statusTracker := newDesktopStatusTracker()
 	gateway := newDesktopGateway(port, password, cfg.RootDir, distFS, statusTracker)
+
+	app := &desktopApp{
+		cfg:     cfg,
+		logger:  logger,
+		gateway: gateway,
+		status:  statusTracker,
+	}
+	defer app.killChild()
+
+	// Fast path: if opencode binary is already present locally (or bundled in Hoxi.app), start it immediately.
+	// Slow path: if opencode is missing on the user's machine, launch the UI window without crashing and
+	// auto-download official opencode into ~/.hoxi/bin in the background.
+	if localBin := findOpenCodeBinary(cfg.OpenCode); localBin != "" {
+		child, startErr := startOpenCodeDaemonWithBin(ctx, localBin, cfg.RootDir, port, password, logger)
+		if startErr != nil {
+			logger.Warn("initial opencode start failed; will retry in background", "error", startErr)
+			statusTracker.setAvailable(false)
+			go app.BootstrapOpenCodeAsync(ctx, port, password)
+		} else {
+			app.setChild(child)
+			statusTracker.setAvailable(true)
+		}
+	} else if cfg.NoDesktop {
+		binPath, dlErr := resolveOrInstallOpenCode(ctx, cfg.OpenCode, logger)
+		if dlErr != nil {
+			logger.Error("failed to resolve or install opencode", "error", dlErr)
+			os.Exit(1)
+		}
+		child, startErr := startOpenCodeDaemonWithBin(ctx, binPath, cfg.RootDir, port, password, logger)
+		if startErr != nil {
+			logger.Error("failed to start opencode daemon", "error", startErr)
+			os.Exit(1)
+		}
+		app.setChild(child)
+	} else {
+		statusTracker.setAvailable(false)
+		go app.BootstrapOpenCodeAsync(ctx, port, password)
+	}
 
 	// Start local loopback HTTP/WS bridge so WebSocket (/pty/{id}/connect) and headless mode work seamlessly
 	listener, err := net.Listen("tcp", cfg.Address)
@@ -101,6 +143,7 @@ func main() {
 		Handler:           gateway,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
+	app.wsServer = wsServer
 	go func() {
 		_ = wsServer.Serve(listener)
 	}()
@@ -112,15 +155,6 @@ func main() {
 		defer cancel()
 		_ = wsServer.Shutdown(shutdownCtx)
 		return
-	}
-
-	app := &desktopApp{
-		cfg:      cfg,
-		logger:   logger,
-		child:    child,
-		gateway:  gateway,
-		status:   statusTracker,
-		wsServer: wsServer,
 	}
 
 	gateway.onOpenDirectoryDialog = func() (string, error) {
@@ -167,6 +201,36 @@ func main() {
 	}
 }
 
+func (a *desktopApp) setChild(c *exec.Cmd) {
+	a.childMu.Lock()
+	defer a.childMu.Unlock()
+	a.child = c
+}
+
+func (a *desktopApp) killChild() {
+	a.childMu.Lock()
+	defer a.childMu.Unlock()
+	if a.child != nil && a.child.Process != nil {
+		_ = a.child.Process.Kill()
+		a.child = nil
+	}
+}
+
+func (a *desktopApp) BootstrapOpenCodeAsync(ctx context.Context, port int, password string) {
+	binPath, err := resolveOrInstallOpenCode(ctx, a.cfg.OpenCode, a.logger)
+	if err != nil {
+		a.logger.Error("background opencode resolution failed", "error", err)
+		return
+	}
+	child, err := startOpenCodeDaemonWithBin(ctx, binPath, a.cfg.RootDir, port, password, a.logger)
+	if err != nil {
+		a.logger.Error("background opencode daemon start failed", "error", err)
+		return
+	}
+	a.setChild(child)
+	a.status.setAvailable(true)
+}
+
 func (a *desktopApp) startup(ctx context.Context) {
 	a.context = ctx
 	startDesktopStatusBar(a)
@@ -180,9 +244,7 @@ func (a *desktopApp) shutdown(_ context.Context) {
 		defer cancel()
 		_ = a.wsServer.Shutdown(ctx)
 	}
-	if a.child != nil && a.child.Process != nil {
-		_ = a.child.Process.Kill()
-	}
+	a.killChild()
 }
 
 func (a *desktopApp) onSecondInstance(_ options.SecondInstanceData) {
@@ -192,25 +254,18 @@ func (a *desktopApp) onSecondInstance(_ options.SecondInstanceData) {
 	}
 }
 
-func startOpenCodeDaemon(ctx context.Context, cfg appConfig, logger *slog.Logger) (*exec.Cmd, int, string, error) {
-	binPath, err := exec.LookPath(cfg.OpenCode)
-	if err != nil {
-		return nil, 0, "", fmt.Errorf("find opencode executable %q: %w", cfg.OpenCode, err)
-	}
-	port, err := chooseFreePort()
-	if err != nil {
-		return nil, 0, "", err
-	}
-	password, err := generateRandomHex(16)
-	if err != nil {
-		return nil, 0, "", err
-	}
-
-	hoxiConfigPath := ensureHoxiModelsConfig(cfg.RootDir)
+func startOpenCodeDaemonWithBin(
+	ctx context.Context,
+	binPath, rootDir string,
+	port int,
+	password string,
+	logger *slog.Logger,
+) (*exec.Cmd, error) {
+	hoxiConfigPath := ensureHoxiModelsConfig(rootDir)
 
 	args := []string{"serve", "--hostname", "127.0.0.1", "--port", strconv.Itoa(port)}
 	child := exec.CommandContext(ctx, binPath, args...)
-	child.Dir = cfg.RootDir
+	child.Dir = rootDir
 	child.Stdout = os.Stdout
 	child.Stderr = os.Stderr
 	child.Env = append(os.Environ(),
@@ -225,15 +280,15 @@ func startOpenCodeDaemon(ctx context.Context, cfg appConfig, logger *slog.Logger
 		child.Env = append(child.Env, "OPENCODE_CONFIG="+hoxiConfigPath)
 	}
 	if err := child.Start(); err != nil {
-		return nil, 0, "", fmt.Errorf("start opencode serve: %w", err)
+		return nil, fmt.Errorf("start opencode serve (%s): %w", binPath, err)
 	}
-	logger.Info("started opencode daemon", "pid", child.Process.Pid, "port", port)
+	logger.Info("started opencode daemon", "bin", binPath, "pid", child.Process.Pid, "port", port)
 
 	if err := waitForOpenCodeHealth(ctx, port, password, 15*time.Second); err != nil {
 		_ = child.Process.Kill()
-		return nil, 0, "", err
+		return nil, err
 	}
-	return child, port, password, nil
+	return child, nil
 }
 
 func waitForOpenCodeHealth(ctx context.Context, port int, password string, timeout time.Duration) error {

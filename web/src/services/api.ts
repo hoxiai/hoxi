@@ -70,6 +70,19 @@ export const hoxiAPI = {
     });
   },
 
+  archiveSession(
+    sessionID: string,
+    archived: boolean,
+    directory?: string
+  ): Promise<SessionInfo> {
+    return requestJSON(withDir(`/session/${sessionID}`, directory), {
+      method: "PATCH",
+      body: JSON.stringify({
+        time: { archived: archived ? Date.now() : 0 },
+      }),
+    });
+  },
+
   deleteSession(sessionID: string, directory?: string): Promise<void> {
     return requestJSON(withDir(`/session/${sessionID}`, directory), {
       method: "DELETE",

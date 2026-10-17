@@ -206,4 +206,5 @@ export interface ModelsI18n {
   viewImportedEndpoint: string;
   forkToHoxiEdit: string;
   forkToHoxiSuccess: string;
+  freeModelsCount: string;
 }

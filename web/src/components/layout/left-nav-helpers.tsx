@@ -1,5 +1,5 @@
 // web/src/components/layout/left-nav-helpers.tsx
-import { createSignal, Show } from "solid-js";
+import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 import { Pencil } from "lucide-solid";
 import { isPlaceholderSessionTitle, renameSessionTitle, workspace } from "../../store/workspace";
 import type { SessionInfo } from "../../services/sse-types";
@@ -112,13 +112,19 @@ export function SessionNavItem(props: {
   session: SessionInfo;
   active: boolean;
   canDelete: boolean;
+  isArchived?: boolean;
   showBranchIcon?: boolean;
   pendingSessions: Set<string>;
   onSelect: () => void;
-  onDiscard: (ev: MouseEvent, sessionID: string) => void;
+  onArchive?: (ev: MouseEvent, sessionID: string) => void;
+  onUnarchive?: (ev: MouseEvent, sessionID: string) => void;
+  onDiscard: (ev: MouseEvent, sessionID: string) => Promise<void> | void;
 }) {
   const [editing, setEditing] = createSignal(false);
   const [draftTitle, setDraftTitle] = createSignal("");
+  const [confirmingDelete, setConfirmingDelete] = createSignal(false);
+  const [deleting, setDeleting] = createSignal(false);
+  let rowRef: HTMLDivElement | undefined;
   let inputRef: HTMLInputElement | undefined;
 
   const status = () => workspace.statusBySession[props.session.id]?.type;
@@ -126,8 +132,29 @@ export function SessionNavItem(props: {
   const wt = () => workspace.worktreeBySession[props.session.id];
   const stats = () => diffStats(props.session.id);
 
+  createEffect(() => {
+    if (!confirmingDelete()) return;
+    const handlePointerDown = (ev: MouseEvent) => {
+      if (rowRef && !rowRef.contains(ev.target as Node)) {
+        setConfirmingDelete(false);
+      }
+    };
+    const handleKeyDown = (ev: KeyboardEvent) => {
+      if (ev.key === "Escape") {
+        setConfirmingDelete(false);
+      }
+    };
+    window.addEventListener("pointerdown", handlePointerDown);
+    window.addEventListener("keydown", handleKeyDown);
+    onCleanup(() => {
+      window.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("keydown", handleKeyDown);
+    });
+  });
+
   const startEditing = (ev?: MouseEvent) => {
     ev?.stopPropagation();
+    setConfirmingDelete(false);
     setDraftTitle(props.session.title || "");
     setEditing(true);
     requestAnimationFrame(() => {
@@ -145,15 +172,30 @@ export function SessionNavItem(props: {
     }
   };
 
+  const handleConfirmDelete = async (ev: MouseEvent) => {
+    ev.stopPropagation();
+    if (deleting()) return;
+    setDeleting(true);
+    try {
+      await props.onDiscard(ev, props.session.id);
+    } finally {
+      setDeleting(false);
+      setConfirmingDelete(false);
+    }
+  };
+
   return (
     <div
+      ref={rowRef}
       class={`group/row flex items-center justify-between gap-1.5 rounded-lg px-2 py-1 cursor-pointer transition-colors ${
-        props.active
-          ? "bg-[var(--bg-hover)] text-[var(--text-primary)] font-medium"
-          : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]/50 hover:text-[var(--text-primary)]"
+        confirmingDelete()
+          ? "bg-[var(--danger-surface)] text-[var(--text-primary)] ring-1 ring-[var(--danger-border)]"
+          : props.active
+            ? "bg-[var(--bg-hover)] text-[var(--text-primary)] font-medium"
+            : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]/50 hover:text-[var(--text-primary)]"
       }`}
       onClick={() => {
-        if (!editing()) props.onSelect();
+        if (!editing() && !confirmingDelete()) props.onSelect();
       }}
       onDblClick={(ev) => startEditing(ev)}
     >
@@ -190,7 +232,11 @@ export function SessionNavItem(props: {
             />
           }
         >
-          <span class="truncate text-[12px] flex-1">
+          <span
+            class={`truncate text-[12px] flex-1 ${
+              props.isArchived ? "text-[var(--text-muted)]" : ""
+            }`}
+          >
             {isPlaceholderSessionTitle(props.session.title)
               ? t("leftNav.newThread")
               : props.session.title}
@@ -198,42 +244,111 @@ export function SessionNavItem(props: {
         </Show>
       </div>
 
-      <div class="flex items-center gap-1 shrink-0 text-[10px] font-mono">
-        <Show when={wt()?.branch && !editing()}>
-          <span class="inline-flex items-center gap-0.5 text-[var(--text-faint)] truncate max-w-[72px]">
-            <Show when={props.showBranchIcon}>
-              <Icon name="branch" size="small" class="w-3 h-3" />
-            </Show>
-            <span class="truncate">{wt()?.branch}</span>
-          </span>
-        </Show>
-
-        <Show when={stats() && !editing()}>
-          <DiffChanges changes={stats()!} />
-        </Show>
-
-        <Show when={!editing()}>
-          <button
-            type="button"
-            class="opacity-0 group-hover/row:opacity-100 text-[var(--text-faint)] hover:text-[var(--text-primary)] transition-opacity p-0.5 cursor-pointer"
-            onClick={(ev) => startEditing(ev)}
-            title={t("leftNav.renameSessionTooltip")}
+      <Show
+        when={!confirmingDelete()}
+        fallback={
+          <div
+            class="flex items-center gap-1 shrink-0"
+            onClick={(ev) => ev.stopPropagation()}
           >
-            <Pencil size={11} />
-          </button>
-        </Show>
+            <button
+              type="button"
+              disabled={deleting()}
+              onClick={(ev) => void handleConfirmDelete(ev)}
+              class="inline-flex items-center gap-0.5 rounded bg-[var(--danger-text)] px-1.5 py-0.5 text-[10.5px] font-medium text-white hover:opacity-90 transition-opacity cursor-pointer"
+              title={t("leftNav.discardConfirm")}
+            >
+              <Show
+                when={!deleting()}
+                fallback={<Spinner class="w-2.5 h-2.5 text-white" />}
+              >
+                <span>{t("leftNav.confirmDelete")}</span>
+              </Show>
+            </button>
+            <button
+              type="button"
+              disabled={deleting()}
+              onClick={(ev) => {
+                ev.stopPropagation();
+                setConfirmingDelete(false);
+              }}
+              class="rounded px-1.5 py-0.5 text-[10.5px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+            >
+              {t("leftNav.cancelDelete")}
+            </button>
+          </div>
+        }
+      >
+        <div class="flex items-center gap-1 shrink-0 text-[10px] font-mono">
+          <Show when={wt()?.branch && !editing()}>
+            <span class="inline-flex items-center gap-0.5 text-[var(--text-faint)] truncate max-w-[72px] group-hover/row:hidden">
+              <Show when={props.showBranchIcon}>
+                <Icon name="branch" size="small" class="w-3 h-3" />
+              </Show>
+              <span class="truncate">{wt()?.branch}</span>
+            </span>
+          </Show>
 
-        <Show when={props.canDelete && !editing()}>
-          <button
-            type="button"
-            class="opacity-0 group-hover/row:opacity-100 text-[var(--text-faint)] hover:text-[var(--danger-text)] transition-opacity p-0.5 cursor-pointer"
-            onClick={(ev) => props.onDiscard(ev, props.session.id)}
-            title={t("leftNav.deleteSessionTooltip")}
-          >
-            <Icon name="trash" size="small" class="w-3 h-3" />
-          </button>
-        </Show>
-      </div>
+          <Show when={stats() && !editing()}>
+            <span class="group-hover/row:hidden">
+              <DiffChanges changes={stats()!} />
+            </span>
+          </Show>
+
+          <Show when={!editing()}>
+            <button
+              type="button"
+              class="opacity-0 group-hover/row:opacity-100 text-[var(--text-faint)] hover:text-[var(--text-primary)] transition-opacity p-0.5 cursor-pointer"
+              onClick={(ev) => startEditing(ev)}
+              title={t("leftNav.renameSessionTooltip")}
+            >
+              <Pencil size={11} />
+            </button>
+          </Show>
+
+          <Show when={!editing() && !props.isArchived && props.onArchive}>
+            <button
+              type="button"
+              class="opacity-0 group-hover/row:opacity-100 text-[var(--text-faint)] hover:text-[var(--text-primary)] transition-opacity p-0.5 cursor-pointer"
+              onClick={(ev) => {
+                ev.stopPropagation();
+                props.onArchive?.(ev, props.session.id);
+              }}
+              title={t("leftNav.archiveSessionTooltip")}
+            >
+              <Icon name="archive" size="small" class="w-3 h-3" />
+            </button>
+          </Show>
+
+          <Show when={!editing() && props.isArchived && props.onUnarchive}>
+            <button
+              type="button"
+              class="opacity-0 group-hover/row:opacity-100 text-[var(--text-faint)] hover:text-[var(--text-primary)] transition-opacity p-0.5 cursor-pointer"
+              onClick={(ev) => {
+                ev.stopPropagation();
+                props.onUnarchive?.(ev, props.session.id);
+              }}
+              title={t("leftNav.unarchiveSessionTooltip")}
+            >
+              <Icon name="reset" size="small" class="w-3 h-3" />
+            </button>
+          </Show>
+
+          <Show when={props.canDelete && !editing()}>
+            <button
+              type="button"
+              class="opacity-0 group-hover/row:opacity-100 text-[var(--text-faint)] hover:text-[var(--danger-text)] transition-opacity p-0.5 cursor-pointer"
+              onClick={(ev) => {
+                ev.stopPropagation();
+                setConfirmingDelete(true);
+              }}
+              title={t("leftNav.deleteSessionTooltip")}
+            >
+              <Icon name="trash" size="small" class="w-3 h-3" />
+            </button>
+          </Show>
+        </div>
+      </Show>
     </div>
   );
 }

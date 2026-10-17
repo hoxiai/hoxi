@@ -191,3 +191,17 @@ func TestEvaluateStaticCodeRulesAndParseObserverAudit(t *testing.T) {
 	}
 }
 
+func TestOpenCodeResolverAndPathEnrichment(t *testing.T) {
+	enrichSystemPath()
+
+	dlURL, isZip, err := officialOpenCodeReleaseURL("darwin", "arm64")
+	if err != nil || !isZip || !strings.HasSuffix(dlURL, "/opencode-darwin-arm64.zip") {
+		t.Fatalf("unexpected darwin-arm64 release URL: url=%q isZip=%v err=%v", dlURL, isZip, err)
+	}
+
+	linuxURL, linuxZip, err := officialOpenCodeReleaseURL("linux", "amd64")
+	if err != nil || linuxZip || !strings.HasSuffix(linuxURL, "/opencode-linux-x64.tar.gz") {
+		t.Fatalf("unexpected linux-amd64 release URL: url=%q isZip=%v err=%v", linuxURL, linuxZip, err)
+	}
+}
+

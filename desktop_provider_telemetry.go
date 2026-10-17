@@ -20,31 +20,56 @@ type providerIncident struct {
 	Detail    string `json:"detail,omitempty"`
 }
 
+type modelTelemetryStats struct {
+	ModelID            string    `json:"modelID"`
+	TotalTurns         int       `json:"totalTurns"`
+	SuccessTurns       int       `json:"successTurns"`
+	ErrorTurns         int       `json:"errorTurns"`
+	TimeoutTurns       int       `json:"timeoutTurns"`
+	RetryCount         int       `json:"retryCount"`
+	ToolCallsTotal     int       `json:"toolCallsTotal"`
+	ToolCallsFailed    int       `json:"toolCallsFailed"`
+	HallucinationFlags int       `json:"hallucinationFlags"`
+	RevertCount        int       `json:"revertCount"`
+	CacheHitTurns      int       `json:"cacheHitTurns"`
+	ReasoningTurns     int       `json:"reasoningTurns"`
+	AuditTotalCount    int       `json:"auditTotalCount"`
+	AuditPassCount     int       `json:"auditPassCount"`
+	AuditScores        []int     `json:"auditScores,omitempty"`
+	LastAuditScore     int       `json:"lastAuditScore,omitempty"`
+	LastAuditPass      *bool     `json:"lastAuditPass,omitempty"`
+	LastAuditSummary   string    `json:"lastAuditSummary,omitempty"`
+	TtftSamplesMs      []int64   `json:"ttftSamplesMs,omitempty"`
+	TpsSamples         []float64 `json:"tpsSamples,omitempty"`
+	UpdatedAt          int64     `json:"updatedAt"`
+}
+
 type providerTelemetryStats struct {
-	ProviderID         string             `json:"providerID"`
-	TotalTurns         int                `json:"totalTurns"`
-	SuccessTurns       int                `json:"successTurns"`
-	ErrorTurns         int                `json:"errorTurns"`
-	TimeoutTurns       int                `json:"timeoutTurns"`
-	RetryCount         int                `json:"retryCount"`
-	ToolCallsTotal     int                `json:"toolCallsTotal"`
-	ToolCallsFailed    int                `json:"toolCallsFailed"`
-	HallucinationFlags int                `json:"hallucinationFlags"`
-	RevertCount        int                `json:"revertCount"`
-	CacheHitTurns      int                `json:"cacheHitTurns"`
-	ReasoningTurns     int                `json:"reasoningTurns"`
-	AuditTotalCount    int                `json:"auditTotalCount"`
-	AuditPassCount     int                `json:"auditPassCount"`
-	AuditScores        []int              `json:"auditScores,omitempty"`
-	LastAuditScore     int                `json:"lastAuditScore,omitempty"`
-	LastAuditPass      *bool              `json:"lastAuditPass,omitempty"`
-	LastAuditSummary   string             `json:"lastAuditSummary,omitempty"`
-	TtftSamplesMs      []int64            `json:"ttftSamplesMs,omitempty"`
-	TpsSamples         []float64          `json:"tpsSamples,omitempty"`
-	LastProbeLatencyMs int64              `json:"lastProbeLatencyMs,omitempty"`
-	LastProbeOk        *bool              `json:"lastProbeOk,omitempty"`
-	RecentIncidents    []providerIncident `json:"recentIncidents,omitempty"`
-	UpdatedAt          int64              `json:"updatedAt"`
+	ProviderID         string                          `json:"providerID"`
+	TotalTurns         int                             `json:"totalTurns"`
+	SuccessTurns       int                             `json:"successTurns"`
+	ErrorTurns         int                             `json:"errorTurns"`
+	TimeoutTurns       int                             `json:"timeoutTurns"`
+	RetryCount         int                             `json:"retryCount"`
+	ToolCallsTotal     int                             `json:"toolCallsTotal"`
+	ToolCallsFailed    int                             `json:"toolCallsFailed"`
+	HallucinationFlags int                             `json:"hallucinationFlags"`
+	RevertCount        int                             `json:"revertCount"`
+	CacheHitTurns      int                             `json:"cacheHitTurns"`
+	ReasoningTurns     int                             `json:"reasoningTurns"`
+	AuditTotalCount    int                             `json:"auditTotalCount"`
+	AuditPassCount     int                             `json:"auditPassCount"`
+	AuditScores        []int                           `json:"auditScores,omitempty"`
+	LastAuditScore     int                             `json:"lastAuditScore,omitempty"`
+	LastAuditPass      *bool                           `json:"lastAuditPass,omitempty"`
+	LastAuditSummary   string                          `json:"lastAuditSummary,omitempty"`
+	TtftSamplesMs      []int64                         `json:"ttftSamplesMs,omitempty"`
+	TpsSamples         []float64                       `json:"tpsSamples,omitempty"`
+	LastProbeLatencyMs int64                           `json:"lastProbeLatencyMs,omitempty"`
+	LastProbeOk        *bool                           `json:"lastProbeOk,omitempty"`
+	Models             map[string]*modelTelemetryStats `json:"models,omitempty"`
+	RecentIncidents    []providerIncident              `json:"recentIncidents,omitempty"`
+	UpdatedAt          int64                           `json:"updatedAt"`
 }
 
 type providerTelemetryStore struct {
@@ -85,7 +110,12 @@ func (s *providerTelemetryStore) loadFromDisk() {
 	}
 	var loaded map[string]*providerTelemetryStats
 	if err := json.Unmarshal(data, &loaded); err == nil && loaded != nil {
-		s.records = loaded
+		for pid, rec := range loaded {
+			if rec == nil || len(rec.Models) == 0 {
+				continue
+			}
+			s.records[pid] = rec
+		}
 	}
 }
 
@@ -106,11 +136,34 @@ func (s *providerTelemetryStore) ensureRecordLocked(providerID string) *provider
 	if !ok || rec == nil {
 		rec = &providerTelemetryStats{
 			ProviderID: providerID,
+			Models:     make(map[string]*modelTelemetryStats),
 			UpdatedAt:  time.Now().UnixMilli(),
 		}
 		s.records[providerID] = rec
 	}
+	if rec.Models == nil {
+		rec.Models = make(map[string]*modelTelemetryStats)
+	}
 	return rec
+}
+
+func ensureModelRecordLocked(rec *providerTelemetryStats, modelID string) *modelTelemetryStats {
+	modelID = strings.TrimSpace(modelID)
+	if modelID == "" {
+		return nil
+	}
+	if rec.Models == nil {
+		rec.Models = make(map[string]*modelTelemetryStats)
+	}
+	m, ok := rec.Models[modelID]
+	if !ok || m == nil {
+		m = &modelTelemetryStats{
+			ModelID:   modelID,
+			UpdatedAt: time.Now().UnixMilli(),
+		}
+		rec.Models[modelID] = m
+	}
+	return m
 }
 
 func (s *providerTelemetryStore) recordProbeResult(providerID string, ok bool, latencyMs int64, errMsg string, modelID string) {
@@ -160,6 +213,20 @@ func (s *providerTelemetryStore) recordAuditResult(providerID, modelID string, s
 	rec.LastAuditPass = &pass
 	rec.LastAuditSummary = summary
 	rec.UpdatedAt = time.Now().UnixMilli()
+
+	if m := ensureModelRecordLocked(rec, modelID); m != nil {
+		m.AuditTotalCount++
+		if pass {
+			m.AuditPassCount++
+		} else {
+			m.HallucinationFlags++
+		}
+		m.AuditScores = appendIntSample(m.AuditScores, score)
+		m.LastAuditScore = score
+		m.LastAuditPass = &pass
+		m.LastAuditSummary = summary
+		m.UpdatedAt = rec.UpdatedAt
+	}
 
 	if !pass {
 		rec.HallucinationFlags++

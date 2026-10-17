@@ -11,6 +11,7 @@ import {
 } from "../../store/workspace";
 import { ProviderIcon } from "../icons";
 import { t } from "../../i18n";
+import { isModelFree } from "./model-selector-utils";
 
 interface FlatModelOption {
   providerID: string;
@@ -18,6 +19,7 @@ interface FlatModelOption {
   modelID: string;
   modelName: string;
   key: string;
+  free: boolean;
 }
 
 /**
@@ -35,14 +37,17 @@ export default function MultiModelArenaModal() {
     const connected = new Set(workspace.connectedProviders);
     const list: FlatModelOption[] = [];
     for (const p of workspace.providers) {
-      if (connected.size > 0 && !connected.has(p.id)) continue;
+      if (connected.size > 0 && !connected.has(p.id) && p.id !== "opencode") continue;
       for (const [mId, mInfo] of Object.entries(p.models || {})) {
+        const free = isModelFree(p.id, mId, mInfo);
+        if (!connected.has(p.id) && !(p.id === "opencode" && free)) continue;
         list.push({
           providerID: p.id,
           providerName: p.name || p.id,
           modelID: mId,
           modelName: mInfo.name || mId,
           key: `${p.id}/${mId}`,
+          free,
         });
       }
     }
@@ -195,8 +200,13 @@ export default function MultiModelArenaModal() {
                         <div class="flex items-center gap-2 min-w-0">
                           <ProviderIcon id={m.providerID} class="w-4 h-4 shrink-0" />
                           <div class="min-w-0">
-                            <div class="text-[12px] font-medium truncate text-[var(--text-primary)]">
-                              {m.modelName}
+                            <div class="flex items-center gap-1.5 text-[12px] font-medium text-[var(--text-primary)]">
+                              <span class="truncate">{m.modelName}</span>
+                              <Show when={m.free}>
+                                <span class="shrink-0 rounded bg-[var(--ok-surface)] px-1 py-[1px] text-[9px] font-semibold text-[var(--ok-text)]">
+                                  {t("models.freeModel")}
+                                </span>
+                              </Show>
                             </div>
                             <div class="text-[10.5px] text-[var(--text-muted)] truncate">
                               {m.providerName}

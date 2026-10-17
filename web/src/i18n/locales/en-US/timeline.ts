@@ -138,5 +138,21 @@ export const timeline: TimelineI18n = {
   auditSwitchAndFixBtn: "Switch to {model} & Fix",
   auditFeedbackPromptPrefix:
     "The independent code auditor reviewed your latest changes (Score: {score}/100) and found the following issues that must be fixed:",
+  pause: "Pause",
+  pauseTooltip: "Pause current task so you can inspect intermediate results and resume anytime",
+  stopTooltip: "Stop task execution immediately (Esc)",
+  resume: "Resume",
+  resumeWithNote: "Resume with Note",
+  resumeTooltip: "Continue executing the paused task from where it left off",
+  retryTask: "Retry",
+  turnPaused: "Paused",
+  turnStopped: "Stopped",
+  executing: "Executing…",
+  pausedPlaceholder:
+    "Task is paused. Click Resume to continue directly, or type additional instructions first...",
+  resumeDefaultPrompt:
+    "Please continue executing the paused task from where you left off and complete the remaining steps.",
+  resumePromptPrefix:
+    "Please continue the paused task with the following additional instructions:",
 };
 

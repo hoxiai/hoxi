@@ -49,6 +49,7 @@ export interface WorkspaceState {
   projects: ProjectInfo[];
   recentProjects: string[];
   sessions: SessionInfo[];
+  archivedSessionIDs: string[];
   activeSessionID: string | null;
   agents: AgentInfo[];
   activeMode: string;
@@ -85,6 +86,7 @@ export interface WorkspaceState {
   observerAutoAudit: boolean;
   auditsBySession: Record<string, CodeAuditResult>;
   auditingBySession: Record<string, boolean>;
+  interruptedBySession: Record<string, "paused" | "stopped" | undefined>;
 }
 
 export const THEME_KEY = "hoxi-theme";
@@ -94,6 +96,7 @@ export const RECENT_MODELS_KEY = "hoxi-recent-models:v1";
 export const EFFORT_KEY = "hoxi-reasoning-effort:v1";
 export const RECENT_PROJECTS_KEY = "hoxi-recent-projects:v1";
 export const SIDEBAR_PROJECT_MODE_KEY = "hoxi-sidebar-project-mode:v1";
+export const ARCHIVED_SESSIONS_KEY = "hoxi-archived-sessions:v1";
 
 function initialTheme(): "light" | "dark" {
   try {
@@ -167,6 +170,18 @@ function initialSidebarProjectMode(): "single" | "multi" {
   return "multi";
 }
 
+function initialArchivedSessions(): string[] {
+  try {
+    const raw = localStorage.getItem(ARCHIVED_SESSIONS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed.filter((id) => typeof id === "string");
+  } catch {
+    /* ignore */
+  }
+  return [];
+}
+
 export const [workspace, setWorkspace] = createStore<WorkspaceState>({
   connected: false,
   rootDir: "",
@@ -174,6 +189,7 @@ export const [workspace, setWorkspace] = createStore<WorkspaceState>({
   projects: [],
   recentProjects: initialRecentProjects(),
   sessions: [],
+  archivedSessionIDs: initialArchivedSessions(),
   activeSessionID: null,
   agents: DEFAULT_AGENTS,
   activeMode: "build",
@@ -210,7 +226,13 @@ export const [workspace, setWorkspace] = createStore<WorkspaceState>({
   observerAutoAudit: initialObserverAutoAudit(),
   auditsBySession: {},
   auditingBySession: {},
+  interruptedBySession: {},
 });
+
+export function isSessionArchived(session: SessionInfo): boolean {
+  if (session.time?.archived && session.time.archived > 0) return true;
+  return workspace.archivedSessionIDs.includes(session.id);
+}
 
 export function openProviderModal(
   tab: ProviderModalTab = "providers",

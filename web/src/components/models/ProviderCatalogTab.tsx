@@ -27,6 +27,7 @@ import { ProviderIcon } from "../icons";
 import { t } from "../../i18n";
 import { ProviderConnectView, ProviderSelectAllView } from "./ProviderConnectSubView";
 import { ProviderHealthBadge } from "./ProviderQualityCard";
+import { isModelFree } from "./model-selector-utils";
 
 type SubView = "list" | "connect" | "select-all";
 
@@ -199,6 +200,10 @@ export default function ProviderCatalogTab() {
                     const isCustom = () => isCustomOrConfiguredProvider(item);
                     const isImported = () => isImportedOpenCodeProvider(item.id);
                     const modelCount = () => Object.keys(item.models || {}).length;
+                    const freeCount = () =>
+                      Object.entries(item.models || {}).filter(([mID, mInfo]) =>
+                        isModelFree(item.id, mID, mInfo)
+                      ).length;
                     const customUrl = () =>
                       workspace.hoxiProviders?.[item.id]?.options?.baseURL ||
                       workspace.globalConfig?.provider?.[item.id]?.options?.baseURL ||
@@ -234,6 +239,11 @@ export default function ProviderCatalogTab() {
                               <span class="text-[11px] text-[var(--text-faint)]">
                                 {t("models.modelsCount", { count: modelCount() })}
                               </span>
+                              <Show when={freeCount() > 0}>
+                                <span class="rounded-full bg-[var(--ok-surface)] px-2 py-0.5 text-[10px] font-semibold text-[var(--ok-text)]">
+                                  {t("models.freeModelsCount", { count: freeCount() })}
+                                </span>
+                              </Show>
                             </div>
                             <Show when={customUrl()}>
                               <div class="mt-0.5 font-mono text-[10.5px] text-[var(--text-faint)] truncate">

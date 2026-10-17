@@ -178,6 +178,30 @@ export interface ProviderIncident {
   detail?: string;
 }
 
+export interface ModelTelemetryStats {
+  modelID: string;
+  totalTurns: number;
+  successTurns: number;
+  errorTurns: number;
+  timeoutTurns: number;
+  retryCount: number;
+  toolCallsTotal: number;
+  toolCallsFailed: number;
+  hallucinationFlags: number;
+  revertCount: number;
+  cacheHitTurns: number;
+  reasoningTurns?: number;
+  auditTotalCount?: number;
+  auditPassCount?: number;
+  auditScores?: number[];
+  lastAuditScore?: number;
+  lastAuditPass?: boolean;
+  lastAuditSummary?: string;
+  ttftSamplesMs?: number[];
+  tpsSamples?: number[];
+  updatedAt: number;
+}
+
 export interface ProviderTelemetryStats {
   providerID: string;
   totalTurns: number;
@@ -190,7 +214,7 @@ export interface ProviderTelemetryStats {
   hallucinationFlags: number;
   revertCount: number;
   cacheHitTurns: number;
-  reasoningTurns: number;
+  reasoningTurns?: number;
   auditTotalCount?: number;
   auditPassCount?: number;
   auditScores?: number[];
@@ -201,6 +225,7 @@ export interface ProviderTelemetryStats {
   tpsSamples?: number[];
   lastProbeLatencyMs?: number;
   lastProbeOk?: boolean;
+  models?: Record<string, ModelTelemetryStats>;
   recentIncidents?: ProviderIncident[];
   updatedAt: number;
 }

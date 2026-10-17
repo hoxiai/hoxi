@@ -59,6 +59,11 @@ export interface LeftNavI18n {
   switchSidebarMode: string;
   filterPlaceholder: string;
   deleteSessionTooltip: string;
+  archiveSessionTooltip: string;
+  unarchiveSessionTooltip: string;
+  archivedSessions: string;
+  confirmDelete: string;
+  cancelDelete: string;
   renameSessionTooltip: string;
   renamePlaceholder: string;
   accountAndProviders: string;
@@ -192,6 +197,19 @@ export interface TimelineI18n {
   auditFixWithFeedbackBtn: string;
   auditSwitchAndFixBtn: string;
   auditFeedbackPromptPrefix: string;
+  pause: string;
+  pauseTooltip: string;
+  stopTooltip: string;
+  resume: string;
+  resumeWithNote: string;
+  resumeTooltip: string;
+  retryTask: string;
+  turnPaused: string;
+  turnStopped: string;
+  executing: string;
+  pausedPlaceholder: string;
+  resumeDefaultPrompt: string;
+  resumePromptPrefix: string;
 }
 
 export interface ToolCardI18n {

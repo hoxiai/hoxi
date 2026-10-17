@@ -10,6 +10,7 @@ export interface SessionInfo {
   time: {
     created: number;
     updated: number;
+    archived?: number;
   };
   revert?: {
     messageID: string;
@@ -239,6 +240,13 @@ export type OpenCodeEvent =
       type: "session.updated" | "session.created";
       properties: {
         info: SessionInfo;
+      };
+    }
+  | {
+      type: "session.deleted";
+      properties: {
+        info?: SessionInfo;
+        sessionID?: string;
       };
     }
   | {

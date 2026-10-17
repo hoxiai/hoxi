@@ -213,7 +213,11 @@ export function AssistantTurnFooter(props: {
           </Show>
 
           <Show when={props.info.providerID}>
-            <ProviderHealthBadge providerID={props.info.providerID!} compact />
+            <ProviderHealthBadge
+              providerID={props.info.providerID!}
+              modelID={props.info.modelID}
+              compact
+            />
           </Show>
 
           <Show

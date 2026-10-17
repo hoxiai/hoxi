@@ -4,6 +4,7 @@ import { hoxiAPI } from "./services/api";
 import { connectEventStream } from "./services/sse";
 import {
   applyPartDeltaBatch,
+  isSessionArchived,
   loadAgents,
   loadProjects,
   loadProviders,
@@ -11,12 +12,14 @@ import {
   loadSessionMessages,
   recordSessionRetry,
   refreshWorktreeStatus,
+  removeSessionFromStore,
   replaceSession,
   runSessionCodeAudit,
   selectSession,
   setWorkspace,
   upsertMessageInfo,
   upsertMessagePart,
+  workspace,
 } from "./store/workspace";
 
 export default function App() {
@@ -47,8 +50,9 @@ export default function App() {
       // Restore each session's worktree & git branch/diff status
       await Promise.allSettled(sessions.map((session) => refreshWorktreeStatus(session.id)));
 
-      if (sessions.length > 0) {
-        const mostRecent = [...sessions].sort((a, b) => b.time.created - a.time.created)[0];
+      const unarchived = sessions.filter((s) => !isSessionArchived(s));
+      if (unarchived.length > 0) {
+        const mostRecent = [...unarchived].sort((a, b) => b.time.created - a.time.created)[0];
         await selectSession(mostRecent.id);
       }
     } catch (err) {
@@ -73,8 +77,24 @@ export default function App() {
             upsertMessagePart(evt.properties.part);
             break;
           case "session.updated":
+          case "session.created":
             replaceSession(evt.properties.info);
             break;
+          case "session.deleted": {
+            const delID = evt.properties.sessionID || evt.properties.info?.id;
+            if (delID) {
+              const wasActive = workspace.activeSessionID === delID;
+              const nextCandidate = removeSessionFromStore(delID);
+              if (wasActive) {
+                if (nextCandidate) {
+                  void selectSession(nextCandidate.id);
+                } else {
+                  setWorkspace("activeSessionID", null);
+                }
+              }
+            }
+            break;
+          }
           case "session.status":
             setWorkspace("statusBySession", evt.properties.sessionID, evt.properties.status);
             if (evt.properties.status.type === "retry") {
