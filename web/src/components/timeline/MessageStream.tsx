@@ -76,15 +76,25 @@ export default function MessageStream() {
 
   // Whether we should show Kilo's bottom `Thinking...` shimmer indicator
   const showThinkingPlaceholder = createMemo(() => {
-    if (!isSessionBusy()) return false;
+    if (activeStatus().type !== "busy") return false;
     const list = turns();
     if (list.length === 0) return true;
     const last = list[list.length - 1];
     if (last.info.role === "user") return true;
     if (last.info.error) return false;
-    // Assistant turn exists but has no visible parts yet
+    // If the previous assistant step completed while session is still busy, show thinking for next step
+    if (last.info.time?.completed) return true;
     const visible = last.parts.filter((p) => !isTodoTool(p));
-    return visible.length === 0;
+    if (visible.length === 0) return true;
+    const hasActivePart = visible.some((p) => {
+      if (p.type === "reasoning") return !p.time?.end;
+      if (p.type === "tool") {
+        return p.state.status === "pending" || p.state.status === "running";
+      }
+      if (p.type === "text") return p.text.trim().length > 0;
+      return false;
+    });
+    return !hasActivePart;
   });
 
   // Reactivity key that changes as tokens stream in, driving auto-scroll.
@@ -228,7 +238,7 @@ export default function MessageStream() {
         class="pointer-events-none sticky top-0 z-10 -mb-6 h-6 w-full shrink-0 bg-gradient-to-b from-[var(--bg-panel)] to-transparent"
       />
 
-      <div class="mx-auto flex w-full max-w-[48rem] min-h-full flex-col px-6 pt-8 pb-8">
+      <div class="mx-auto flex w-full max-w-[62rem] min-h-full flex-col px-6 pt-8 pb-8">
         <Show
           when={!isEmpty()}
           fallback={
@@ -255,11 +265,11 @@ export default function MessageStream() {
                 </span>
                 {welcomeTitleParts().after}
               </h1>
-              <p class="mt-2 max-w-md text-[13px] text-[var(--text-muted)]">
+              <p class="mt-2 max-w-lg text-[13px] text-[var(--text-muted)]">
                 {t("timeline.welcomeSubtitle")}
               </p>
 
-              <div class="mt-7 flex flex-wrap items-center justify-center gap-2 max-w-[40rem]">
+              <div class="mt-7 flex flex-wrap items-center justify-center gap-2 max-w-[52rem]">
                 <For each={quickSuggestions()}>
                   {(suggestion) => (
                     <button
@@ -277,16 +287,22 @@ export default function MessageStream() {
             </div>
           }
         >
-          <div class="flex flex-col gap-y-6">
+          <div class="flex flex-col">
             <For each={turns()}>
-              {(turn) => (
+              {(turn, idx) => (
                 <Show
                   when={turn.info.role === "user"}
                   fallback={
                     /* Kilo-style Open Assistant Turn with Grouped Exploration Steps */
                     <div
                       data-turn-id={turn.info.id}
-                      class={`px-1 rounded-xl transition-all ${
+                      class={`flex flex-col gap-y-3 px-1 rounded-xl transition-all ${
+                        idx() === 0
+                          ? "mt-0"
+                          : turns()[idx() - 1]?.info.role === "assistant"
+                            ? "mt-3"
+                            : "mt-6"
+                      } ${
                         activeMatchTurnID() === turn.info.id
                           ? "ring-2 ring-[var(--accent-primary)] bg-[var(--accent-surface)]/20 p-2"
                           : ""
@@ -302,7 +318,13 @@ export default function MessageStream() {
                         }
                       </For>
                       <AssistantErrorCard info={turn.info} />
-                      <AssistantTurnFooter info={turn.info} parts={turn.parts} />
+                      <AssistantTurnFooter
+                        info={turn.info}
+                        parts={turn.parts}
+                        turns={turns()}
+                        turnIndex={idx()}
+                        isSessionBusy={isSessionBusy()}
+                      />
                     </div>
                   }
                 >
@@ -310,6 +332,8 @@ export default function MessageStream() {
                   <div
                     data-turn-id={turn.info.id}
                     class={`group/turn flex flex-col items-end rounded-xl transition-all ${
+                      idx() === 0 ? "mt-0" : "mt-7"
+                    } ${
                       activeMatchTurnID() === turn.info.id
                         ? "ring-2 ring-[var(--accent-primary)] p-1.5"
                         : ""
@@ -387,9 +411,9 @@ export default function MessageStream() {
 
             {/* Kilo Thinking Placeholder before first visible part arrives */}
             <Show when={showThinkingPlaceholder()}>
-              <div class="px-1 py-1 flex items-center gap-2.5 text-[13px] text-[var(--accent-primary)]">
+              <div class="mt-4 px-1 py-1 flex items-center gap-2.5 text-[13px] text-[var(--accent-primary)]">
                 <Spinner class="w-4 h-4" />
-                <TextShimmer text="Thinking..." active={true} class="font-medium" />
+                <TextShimmer text={t("timeline.thinking")} active={true} class="font-medium" />
               </div>
             </Show>
 

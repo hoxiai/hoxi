@@ -18,7 +18,7 @@ import { validateAllDictionaries } from "./validator";
 const LOCALE_STORAGE_KEY = "hoxi-locale";
 
 function flattenDictionary(
-  obj: Record<string, any>,
+  obj: object,
   prefix = ""
 ): Record<string, string> {
   const result: Record<string, string> = {};
@@ -86,7 +86,7 @@ export function t(key: TxKey, params?: InterpolationParams): string {
   let text = dict[key] ?? flatDictionaries["en-US"]?.[key] ?? flatDictionaries["zh-CN"]?.[key];
 
   if (text === undefined) {
-    if (import.meta.env.DEV) {
+    if (import.meta.env?.DEV) {
       console.warn(`[i18n] Missing translation key: "${key}" for locale "${currentLang}"`);
     }
     text = key;
@@ -102,7 +102,7 @@ export function t(key: TxKey, params?: InterpolationParams): string {
 }
 
 // Development parity assertion: report any missing keys or parameter mismatches in dev console
-if (import.meta.env.DEV) {
+if (import.meta.env?.DEV) {
   try {
     const parityResults = validateAllDictionaries(dictionaries);
     for (const [loc, res] of Object.entries(parityResults)) {

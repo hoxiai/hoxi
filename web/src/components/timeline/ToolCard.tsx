@@ -18,7 +18,6 @@ import {
 } from "../icons";
 import SubagentInlineTimeline from "./SubagentInlineTimeline";
 import {
-  countDiffLines,
   extractCommand,
   extractDescription,
   extractExitCode,
@@ -35,9 +34,15 @@ import {
   kiloToolIconName,
   processCarriageReturns,
   ToolCardExpandedBody,
-  type DiagnosticItem,
   type ToolPart,
 } from "./tool-card-helpers";
+import {
+  resolveLoadedContextFiles,
+  resolveToolArgPills,
+  resolveToolFileDiagnostics,
+  resolveToolFileDiff,
+  resolveToolTodoItems,
+} from "./tool-card-state";
 
 export { extractTargetFile, kiloToolIconName, processCarriageReturns };
 
@@ -69,46 +74,9 @@ export default function ToolCard(props: { part: ToolPart }) {
     return out.split("\n").slice(-5);
   });
 
-  // Loaded context files from `read` tool metadata (ported from Kilo read tool view)
-  const loadedFiles = createMemo<string[]>(() => {
-    const state = props.part.state;
-    if (state.status !== "completed") return [];
-    const loaded = state.metadata?.loaded;
-    if (!Array.isArray(loaded)) return [];
-    const root = workspace.rootDir;
-    return loaded
-      .filter((entry): entry is string => typeof entry === "string")
-      .map((entry) =>
-        root && entry.startsWith(root) ? entry.slice(root.length).replace(/^\/+/, "") : entry
-      );
-  });
-
-  // Argument pills for read / grep / glob / list (ported from Kilo message-part.tsx)
-  const toolArgPills = createMemo<string[]>(() => {
-    const input = props.part.state.input || {};
-    const pills: string[] = [];
-    if (typeof input.offset === "number") pills.push(`offset=${input.offset}`);
-    if (typeof input.limit === "number") pills.push(`limit=${input.limit}`);
-    if (typeof input.pattern === "string" && input.pattern) pills.push(`pattern=${input.pattern}`);
-    if (typeof input.include === "string" && input.include) pills.push(`include=${input.include}`);
-    if (props.part.state.status === "completed") {
-      const matches = props.part.state.metadata?.matches ?? props.part.state.metadata?.count;
-      if (typeof matches === "number") {
-        pills.push(`${matches} ${matches === 1 ? "match" : "matches"}`);
-      }
-    }
-    return pills;
-  });
-
-  // Todo list items for `todowrite` / `todoread`
-  const todoItems = createMemo<Array<{ content: string; status: string }>>(() => {
-    const state = props.part.state;
-    const raw =
-      (state.status !== "pending" ? state.metadata?.todos : undefined) ??
-      state.input?.todos;
-    if (!Array.isArray(raw)) return [];
-    return raw.filter((item) => item && typeof item.content === "string");
-  });
+  const loadedFiles = createMemo(() => resolveLoadedContextFiles(props.part));
+  const toolArgPills = createMemo(() => resolveToolArgPills(props.part));
+  const todoItems = createMemo(() => resolveToolTodoItems(props.part));
 
   // Subagent task child session ID
   const childSessionID = createMemo<string | undefined>(() => {
@@ -117,57 +85,12 @@ export default function ToolCard(props: { part: ToolPart }) {
     return typeof id === "string" && id ? id : undefined;
   });
 
-  // Inline diff lookup for editing tools
-  const fileDiff = createMemo(() => {
-    if (!isEdit()) return undefined;
-    const file = targetFile();
-    if (!file) return undefined;
-    const diffs = workspace.diffsBySession[props.part.sessionID] ?? [];
-    const sessionDiff = diffs.find(
-      (d) => d.file === file || d.file.endsWith(`/${file}`) || file.endsWith(`/${d.file}`)
-    );
-    if (sessionDiff) return sessionDiff;
-
-    const state = props.part.state;
-    const meta = state.status !== "pending" ? state.metadata : undefined;
-    const patch = meta?.diff || meta?.patch;
-    const before = meta?.filediff?.before ?? state.input?.oldString;
-    const after = meta?.filediff?.after ?? state.input?.newString ?? state.input?.content;
-    if (patch || typeof after === "string") {
-      const counts = countDiffLines(
-        typeof patch === "string" ? patch : undefined,
-        typeof before === "string" ? before : undefined,
-        typeof after === "string" ? after : undefined
-      );
-      return {
-        file,
-        patch: typeof patch === "string" ? patch : undefined,
-        additions: meta?.filediff?.additions ?? counts.additions,
-        deletions: meta?.filediff?.deletions ?? counts.deletions,
-      };
-    }
-    return undefined;
-  });
-
-  // Inline post-edit LSP diagnostics (ported from Kilo DiagnosticsDisplay)
-  const fileDiagnostics = createMemo<DiagnosticItem[]>(() => {
-    if (!isEdit()) return [];
-    const file = targetFile();
-    if (!file) return [];
-    const state = props.part.state;
-    const metaDiag = state.status !== "pending" ? state.metadata?.diagnostics : undefined;
-    if (metaDiag && typeof metaDiag === "object") {
-      for (const [k, list] of Object.entries(metaDiag)) {
-        if (
-          (k === file || k.endsWith(`/${file}`) || file.endsWith(`/${k}`)) &&
-          Array.isArray(list)
-        ) {
-          return list as DiagnosticItem[];
-        }
-      }
-    }
-    return [];
-  });
+  const fileDiff = createMemo(() =>
+    resolveToolFileDiff(props.part, isEdit(), targetFile() || "")
+  );
+  const fileDiagnostics = createMemo(() =>
+    resolveToolFileDiagnostics(props.part, isEdit(), targetFile() || "")
+  );
 
   // Auto-scroll shell output while streaming
   createEffect(() => {
@@ -218,7 +141,7 @@ export default function ToolCard(props: { part: ToolPart }) {
   };
 
   return (
-    <div class="my-1.5">
+    <div>
       <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] transition-all overflow-hidden shadow-[var(--island-shadow)]">
         {/* Compact Kilo-style single-line tool trigger */}
         <div
@@ -265,7 +188,7 @@ export default function ToolCard(props: { part: ToolPart }) {
                     />
                   </span>
                   <Show when={description() && shellCmd()}>
-                    <code class="hidden sm:inline-block truncate max-w-[280px] rounded bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[11px] text-[var(--text-muted)]">
+                    <code class="hidden sm:inline-block truncate max-w-[420px] rounded bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[11px] text-[var(--text-muted)]">
                       $ {shellCmd()}
                     </code>
                   </Show>

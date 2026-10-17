@@ -123,4 +123,13 @@ export const timeline: TimelineI18n = {
   subagentLiveActivity: "Subagent Live Activity ({count})",
   openChildSession: "Open child session →",
   imagePromptSessionTitle: "Image Prompt",
+  relayDegradedWarningTitle: "Relay Quality Alert: {provider} (Health {score}/100)",
+  relayDegradedWarningDesc:
+    "High latency, timeouts, or repeated tool errors detected on this endpoint, which may cause context truncation and task hallucinations.",
+  switchRecommendedModel: "Switch to {provider}/{model} (Recommended)",
+  turnCompleted: "Completed",
+  stepsCompleted: "{count} steps",
+  worktreeClean: "Clean",
+  worktreeIsolatedBadge: "Worktree",
 };
+

@@ -1,6 +1,7 @@
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { openFileInInspector } from "../../store/workspace";
 import { FileIcon, Icon } from "../icons";
+import { t } from "../../i18n";
 
 const FILE_PATH_PATTERN =
   /^(?:\.\/)?(?:[\w@-]+\/)*[\w.-]+\.(?:ts|tsx|js|jsx|go|py|rs|md|json|yaml|yml|toml|css|html|sh|sql|vue|svelte|c|cpp|h|java|rb|php)(?::\d+(?::\d+)?)?$/i;
@@ -199,7 +200,7 @@ function InlineRenderer(props: { text: string }) {
                 <button
                   type="button"
                   onClick={() => openFileInInspector(span.text)}
-                  title={`Open ${span.text} in Inspector`}
+                  title={t("timeline.openInInspectorTooltip")}
                   class="inline-flex items-center gap-1.5 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-elevated)] hover:border-[var(--accent-border)] hover:bg-[var(--accent-surface)] px-1.5 py-0.5 font-mono text-[0.85em] text-[var(--text-primary)] hover:text-[var(--accent-text)] transition-colors cursor-pointer align-baseline"
                 >
                   <FileIcon node={{ path: cleanPath, type: "file" }} class="w-3.5 h-3.5 shrink-0" />
@@ -249,7 +250,7 @@ function CodeBlockCard(props: { lang: string; code: string }) {
   };
 
   return (
-    <div class="my-3 overflow-hidden rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-code)]">
+    <div class="my-1 overflow-hidden rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-code)]">
       <div class="flex items-center justify-between border-b border-[var(--border-subtle)] bg-[var(--bg-elevated)]/70 px-3.5 py-1.5 text-[11px] font-mono text-[var(--text-muted)]">
         <span class="inline-flex items-center gap-1.5">
           <Icon name="code-lines" size="small" class="text-[var(--text-faint)]" />
@@ -263,7 +264,7 @@ function CodeBlockCard(props: { lang: string; code: string }) {
           <Show when={copied()} fallback={<Icon name="copy" size="small" />}>
             <Icon name="check" size="small" class="text-[var(--ok-text)]" />
           </Show>
-          {copied() ? "Copied" : "Copy"}
+          {copied() ? t("common.copied") : t("common.copy")}
         </button>
       </div>
       <pre class="overflow-x-auto p-3.5 font-mono text-[12.5px] leading-[1.6] text-[var(--text-primary)] selectable-text">
@@ -277,7 +278,7 @@ export default function MarkdownView(props: { content: string }) {
   const blocks = createMemo(() => parseMarkdownBlocks(props.content || ""));
 
   return (
-    <div class="space-y-2.5 text-[14px] leading-[1.68] text-[var(--text-primary)] selectable-text">
+    <div class="flex flex-col gap-y-3.5 text-[14px] leading-[1.72] text-[var(--text-primary)] selectable-text">
       <For each={blocks()}>
         {(block) => {
           switch (block.type) {
@@ -286,29 +287,29 @@ export default function MarkdownView(props: { content: string }) {
             case "heading":
               if (block.level === 1) {
                 return (
-                  <h1 class="mt-4 mb-1.5 text-[18px] font-semibold tracking-tight text-[var(--text-primary)]">
+                  <h1 class="first:mt-0 mt-3.5 -mb-1 text-[18px] font-semibold tracking-tight text-[var(--text-primary)]">
                     <InlineRenderer text={block.text} />
                   </h1>
                 );
               }
               if (block.level === 2) {
                 return (
-                  <h2 class="mt-3.5 mb-1 text-[16px] font-semibold tracking-tight text-[var(--text-primary)]">
+                  <h2 class="first:mt-0 mt-3 -mb-1 text-[16px] font-semibold tracking-tight text-[var(--text-primary)]">
                     <InlineRenderer text={block.text} />
                   </h2>
                 );
               }
               return (
-                <h3 class="mt-3 mb-1 text-[14.5px] font-semibold text-[var(--text-primary)]">
+                <h3 class="first:mt-0 mt-2.5 -mb-1 text-[14.5px] font-semibold text-[var(--text-primary)]">
                   <InlineRenderer text={block.text} />
                 </h3>
               );
             case "ul":
               return (
-                <ul class="my-1.5 list-disc space-y-1 pl-5 text-[var(--text-primary)]">
+                <ul class="my-0.5 list-disc space-y-2 pl-5 text-[var(--text-primary)]">
                   <For each={block.items}>
                     {(item) => (
-                      <li class="leading-relaxed">
+                      <li class="leading-[1.68]">
                         <InlineRenderer text={item} />
                       </li>
                     )}
@@ -317,10 +318,10 @@ export default function MarkdownView(props: { content: string }) {
               );
             case "ol":
               return (
-                <ol class="my-1.5 list-decimal space-y-1 pl-5 text-[var(--text-primary)]">
+                <ol class="my-0.5 list-decimal space-y-2 pl-5 text-[var(--text-primary)]">
                   <For each={block.items}>
                     {(item) => (
-                      <li class="leading-relaxed">
+                      <li class="leading-[1.68]">
                         <InlineRenderer text={item} />
                       </li>
                     )}
@@ -329,13 +330,13 @@ export default function MarkdownView(props: { content: string }) {
               );
             case "blockquote":
               return (
-                <blockquote class="my-2 border-l-2 border-[var(--accent-border)] bg-[var(--bg-inset)] px-3.5 py-2 text-[13.5px] text-[var(--text-secondary)] rounded-r-lg">
+                <blockquote class="my-0.5 border-l-2 border-[var(--accent-border)] bg-[var(--bg-inset)] px-3.5 py-2.5 text-[13.5px] leading-[1.68] text-[var(--text-secondary)] rounded-r-lg">
                   <InlineRenderer text={block.text} />
                 </blockquote>
               );
             case "table":
               return (
-                <div class="my-2.5 overflow-x-auto rounded-xl border border-[var(--border-subtle)]">
+                <div class="my-1 overflow-x-auto rounded-xl border border-[var(--border-subtle)]">
                   <table class="w-full border-collapse text-left text-[12.5px]">
                     <thead>
                       <tr class="border-b border-[var(--border-subtle)] bg-[var(--bg-elevated)]">
@@ -367,10 +368,10 @@ export default function MarkdownView(props: { content: string }) {
                 </div>
               );
             case "hr":
-              return <hr class="my-3 border-[var(--border-subtle)]" />;
+              return <hr class="my-2 border-[var(--border-subtle)]" />;
             case "paragraph":
               return (
-                <p class="whitespace-pre-wrap break-words leading-[1.68]">
+                <p class="whitespace-pre-wrap break-words leading-[1.72]">
                   <InlineRenderer text={block.text} />
                 </p>
               );

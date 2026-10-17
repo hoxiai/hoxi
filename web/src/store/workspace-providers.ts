@@ -88,37 +88,13 @@ function pushRecentModel(model: SelectedModel) {
   }
 }
 
-export function selectModel(model: SelectedModel, autoRetryOnError = true) {
-  const prev = workspace.selectedModel;
-  const changed =
-    !prev || prev.providerID !== model.providerID || prev.modelID !== model.modelID;
-
+export function selectModel(model: SelectedModel, _autoRetryOnError = false) {
   setWorkspace("selectedModel", model);
   pushRecentModel(model);
   try {
     localStorage.setItem(SELECTED_MODEL_KEY, JSON.stringify(model));
   } catch {
     /* ignore */
-  }
-
-  // If the user switches models mid-conversation right after an API error or during retry backoff,
-  // immediately re-run the last user prompt with the newly selected model.
-  if (changed && autoRetryOnError && workspace.activeSessionID) {
-    const sid = workspace.activeSessionID;
-    const turns = workspace.messagesBySession[sid] ?? [];
-    const lastTurn = turns[turns.length - 1];
-    const status = workspace.statusBySession[sid];
-    if (
-      (lastTurn && lastTurn.info.role === "assistant" && lastTurn.info.error) ||
-      status?.type === "retry"
-    ) {
-      void import("./workspace-sessions").then(async ({ retryLastUserPrompt, sessionDirectory }) => {
-        if (status?.type === "retry") {
-          await hoxiAPI.abortSession(sid, sessionDirectory(sid)).catch(() => {});
-        }
-        await retryLastUserPrompt(sid);
-      });
-    }
   }
 }
 
@@ -159,11 +135,22 @@ export function toggleFavoriteModel(providerID: string, modelID: string) {
   }
 }
 
-export function isCustomOrConfiguredProvider(provider: ProviderInfo | string): boolean {
+export function isHoxiCustomProvider(provider: ProviderInfo | string): boolean {
   const pid = typeof provider === "string" ? provider : provider.id;
+  return Boolean(workspace.hoxiProviders?.[pid]);
+}
+
+export function isImportedOpenCodeProvider(provider: ProviderInfo | string): boolean {
+  const pid = typeof provider === "string" ? provider : provider.id;
+  if (workspace.hoxiProviders?.[pid]) return false;
+  if (workspace.openCodeImportedProviders.includes(pid)) return true;
   const cfgProv = workspace.globalConfig?.provider?.[pid];
   if (!cfgProv || typeof cfgProv !== "object") return false;
   return Boolean(cfgProv.npm || cfgProv.options?.baseURL || cfgProv.models);
+}
+
+export function isCustomOrConfiguredProvider(provider: ProviderInfo | string): boolean {
+  return isHoxiCustomProvider(provider) || isImportedOpenCodeProvider(provider);
 }
 
 export function parseModelString(val?: string | null): SelectedModel | null {
@@ -179,33 +166,101 @@ export function parseModelString(val?: string | null): SelectedModel | null {
 export async function loadProviders(): Promise<void> {
   try {
     const dir = workspace.rootDir || undefined;
-    const [res, cfg, authMethods] = await Promise.all([
+    const [res, cfg, authMethods, hoxiCfg] = await Promise.all([
       hoxiAPI.listProviders(dir),
       hoxiAPI.getGlobalConfig().catch(() => ({} as Record<string, any>)),
       hoxiAPI.getProviderAuthMethods(dir).catch(() => ({})),
+      hoxiAPI.getHoxiModelsConfig().catch(() => ({
+        hoxiProviders: {} as Record<string, any>,
+        openCodeProviders: [] as string[],
+        configPath: ".hoxi/models.json",
+      })),
     ]);
 
-    const all = Array.isArray(res?.all) ? res.all : [];
-    const connected = Array.isArray(res?.connected) ? res.connected : [];
+    const hoxiMap = hoxiCfg?.hoxiProviders ?? {};
+    const openCodeList = Array.isArray(hoxiCfg?.openCodeProviders)
+      ? hoxiCfg.openCodeProviders
+      : [];
+
+    const mergedCfg: Record<string, any> = {
+      ...(cfg || {}),
+      provider: {
+        ...(cfg?.provider || {}),
+        ...hoxiMap,
+      },
+    };
+
+    const rawAll = Array.isArray(res?.all) ? res.all : [];
+    const connected = Array.isArray(res?.connected) ? [...res.connected] : [];
     const defaults = res?.default ?? {};
+
+    // Ensure Hoxi-managed providers in .hoxi/models.json reflect their exact configured models
+    const byId = new Map<string, ProviderInfo>();
+    for (const p of rawAll) {
+      byId.set(p.id, { ...p, models: { ...(p.models || {}) } });
+    }
+    for (const [pid, hProv] of Object.entries<any>(hoxiMap)) {
+      if (!hProv || typeof hProv !== "object") continue;
+      const rawModels = hProv.models || {};
+      const existingProv = byId.get(pid);
+      const exactModels: Record<string, any> = {};
+      for (const [mid, mCfg] of Object.entries<any>(rawModels)) {
+        if (!mCfg || typeof mCfg !== "object") continue;
+        const rtModel = existingProv?.models?.[mid];
+        exactModels[mid] = {
+          ...(rtModel || {}),
+          id: mid,
+          name: mCfg.name || rtModel?.name || mid,
+          reasoning: Boolean(mCfg.reasoning ?? rtModel?.reasoning),
+          capabilities: {
+            ...(rtModel?.capabilities || {}),
+            reasoning: Boolean(mCfg.reasoning ?? rtModel?.capabilities?.reasoning),
+            input: {
+              ...(rtModel?.capabilities?.input || {}),
+              image: Boolean(
+                Array.isArray(mCfg.modalities?.input) &&
+                  mCfg.modalities.input.includes("image")
+              ),
+            },
+          },
+        };
+      }
+      byId.set(pid, {
+        ...(existingProv || { id: pid, name: hProv.name || pid }),
+        id: pid,
+        name: hProv.name || existingProv?.name || pid,
+        npm: hProv.npm || existingProv?.npm || "@ai-sdk/openai-compatible",
+        options: {
+          ...(existingProv?.options || {}),
+          ...(hProv.options || {}),
+        },
+        models: exactModels,
+      });
+      if (!connected.includes(pid)) {
+        connected.push(pid);
+      }
+    }
+
+    const all = Array.from(byId.values());
 
     setWorkspace({
       providers: all,
       connectedProviders: connected,
       defaultModels: defaults,
-      globalConfig: cfg || {},
+      globalConfig: mergedCfg,
+      hoxiProviders: hoxiMap,
+      openCodeImportedProviders: openCodeList,
       providerAuthMethods: authMethods || {},
     });
 
-    // Ensure a valid selectedModel is active if none is chosen yet
+    // Ensure a valid selectedModel is active
     const current = workspace.selectedModel;
     const isValid =
       current &&
       all.some((p) => p.id === current.providerID && p.models && p.models[current.modelID]);
 
     if (!isValid && all.length > 0) {
-      // 1. Prefer configured global default model (`cfg.model`) if valid
-      const cfgModel = parseModelString(cfg?.model);
+      const cfgModel = parseModelString(mergedCfg?.model);
       if (
         cfgModel &&
         all.some((p) => p.id === cfgModel.providerID && p.models?.[cfgModel.modelID])
@@ -214,7 +269,6 @@ export async function loadProviders(): Promise<void> {
         return;
       }
 
-      // 2. Prefer connected providers' default models
       for (const pid of connected) {
         const defModel = defaults[pid];
         const prov = all.find((p) => p.id === pid);
@@ -231,14 +285,12 @@ export async function loadProviders(): Promise<void> {
         }
       }
 
-      // 3. Fallback to OpenCode free model if present
       const openCodeProv = all.find((p) => p.id === "opencode");
       if (openCodeProv?.models?.["deepseek-v4.1-flash-free"]) {
         selectModel({ providerID: "opencode", modelID: "deepseek-v4.1-flash-free" }, false);
         return;
       }
 
-      // 4. Fallback to first provider with models
       for (const prov of all) {
         const firstKey = Object.keys(prov.models || {})[0];
         if (firstKey) {
@@ -267,8 +319,7 @@ export async function connectProviderWithKey(opts: {
   }
 
   if (opts.baseURL?.trim() || opts.customModelID?.trim()) {
-    const currentCfg: Record<string, any> = await hoxiAPI.getGlobalConfig().catch(() => ({}));
-    const existingProvider = currentCfg?.provider?.[pid] ?? {};
+    const existingProvider = workspace.hoxiProviders?.[pid] ?? {};
     const updatedProvider: Record<string, any> = {
       ...existingProvider,
       ...(opts.customName ? { name: opts.customName.trim() } : {}),
@@ -293,14 +344,11 @@ export async function connectProviderWithKey(opts: {
         : {}),
     };
 
-    await hoxiAPI.updateGlobalConfig({
-      provider: {
-        [pid]: updatedProvider,
-      },
-    });
+    await hoxiAPI.saveHoxiProviderConfig(pid, updatedProvider);
+  } else {
+    await hoxiAPI.disposeGlobal().catch(() => {});
   }
 
-  await hoxiAPI.disposeGlobal().catch(() => {});
   await loadProviders();
 
   if (opts.customModelID?.trim()) {
@@ -316,10 +364,13 @@ export async function connectProviderWithKey(opts: {
 
 export async function saveCustomProvider(input: SaveCustomProviderInput): Promise<void> {
   const pid = input.providerID.trim();
-  const currentCfg: Record<string, any> = await hoxiAPI.getGlobalConfig().catch(() => ({}));
-  const previous = currentCfg?.provider?.[pid] ?? {};
+  if (isImportedOpenCodeProvider(pid)) {
+    throw new Error("OpenCode imported provider is read-only");
+  }
 
-  // Build next models map + null deletion sentinels for removed models (Kilo's withCustomProviderDeletions)
+  const previous = workspace.hoxiProviders?.[pid] ?? {};
+
+  // Build exact models map for .hoxi/models.json (no null sentinels)
   const nextModels: Record<string, any> = {};
   for (const m of input.models) {
     const mid = m.id.trim();
@@ -333,15 +384,9 @@ export async function saveCustomProvider(input: SaveCustomProviderInput): Promis
       },
     };
   }
-  const prevModels = previous?.models ?? {};
-  for (const oldModelID of Object.keys(prevModels)) {
-    if (!(oldModelID in nextModels)) {
-      nextModels[oldModelID] = null;
-    }
-  }
 
-  // Build next headers map + null deletion sentinels for removed headers
-  const nextHeaders: Record<string, string | null> = {};
+  // Build exact headers map
+  const nextHeaders: Record<string, string> = {};
   if (input.headers) {
     for (const [k, v] of Object.entries(input.headers)) {
       const hk = k.trim();
@@ -349,21 +394,12 @@ export async function saveCustomProvider(input: SaveCustomProviderInput): Promis
       if (hk && hv) nextHeaders[hk] = hv;
     }
   }
-  const prevHeaders = previous?.options?.headers ?? {};
-  for (const oldHeaderKey of Object.keys(prevHeaders)) {
-    if (!(oldHeaderKey in nextHeaders)) {
-      nextHeaders[oldHeaderKey] = null;
-    }
-  }
 
   const nextOptions: Record<string, any> = {
-    ...(previous?.options || {}),
     baseURL: input.baseURL.trim(),
   };
   if (Object.keys(nextHeaders).length > 0) {
     nextOptions.headers = nextHeaders;
-  } else if (previous?.options?.headers) {
-    nextOptions.headers = null;
   }
 
   // Handle API key updates
@@ -373,58 +409,39 @@ export async function saveCustomProvider(input: SaveCustomProviderInput): Promis
       nextOptions.apiKey = rawKey;
       await hoxiAPI.removeProviderAuth(pid).catch(() => {});
     } else {
-      if (previous?.options?.apiKey) {
-        nextOptions.apiKey = null;
-      }
       await hoxiAPI.setProviderAuth(pid, rawKey);
     }
+  } else if (input.preserveExistingKey && typeof previous?.options?.apiKey === "string") {
+    nextOptions.apiKey = previous.options.apiKey;
   } else if (!rawKey && !input.preserveExistingKey) {
-    if (previous?.options?.apiKey) {
-      nextOptions.apiKey = null;
-    }
     await hoxiAPI.removeProviderAuth(pid).catch(() => {});
   }
 
   const nextProviderConfig: Record<string, any> = {
-    ...previous,
     name: input.name.trim() || pid,
     npm: input.npm || "@ai-sdk/openai-compatible",
     options: nextOptions,
     models: nextModels,
   };
 
-  await hoxiAPI.updateGlobalConfig({
-    provider: {
-      [pid]: nextProviderConfig,
-    },
-  });
-
-  await hoxiAPI.disposeGlobal().catch(() => {});
+  await hoxiAPI.saveHoxiProviderConfig(pid, nextProviderConfig);
   await loadProviders();
 
   const firstModelID = input.models[0]?.id?.trim();
   const cur = workspace.selectedModel;
-  const curStillExists =
-    cur &&
-    (cur.providerID !== pid || Boolean(nextModels[cur.modelID]));
-  if (firstModelID && !curStillExists) {
-    selectModel({ providerID: pid, modelID: firstModelID }, false);
+  if (firstModelID && (!cur || cur.providerID === pid || !nextModels[cur.modelID])) {
+    const targetModelID =
+      cur?.providerID === pid && nextModels[cur.modelID] ? cur.modelID : firstModelID;
+    selectModel({ providerID: pid, modelID: targetModelID }, false);
   }
 }
 
 export async function disconnectProvider(providerID: string): Promise<void> {
-  await hoxiAPI.removeProviderAuth(providerID).catch(() => {});
-  const currentCfg: Record<string, any> = await hoxiAPI.getGlobalConfig().catch(() => ({}));
-  if (currentCfg?.provider && providerID in currentCfg.provider) {
-    await hoxiAPI
-      .updateGlobalConfig({
-        provider: {
-          [providerID]: null,
-        },
-      })
-      .catch(() => {});
+  if (isImportedOpenCodeProvider(providerID)) {
+    throw new Error("OpenCode imported provider is read-only");
   }
-  await hoxiAPI.disposeGlobal().catch(() => {});
+  await hoxiAPI.removeProviderAuth(providerID).catch(() => {});
+  await hoxiAPI.deleteHoxiProviderConfig(providerID).catch(() => {});
   await loadProviders();
 }
 

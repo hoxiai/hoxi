@@ -4,6 +4,7 @@ export function DiffChanges(props: {
   class?: string
   changes: { additions: number; deletions: number } | Array<{ additions: number; deletions: number }>
   variant?: "default" | "bars"
+  showZero?: boolean
 }) {
   const variant = () => props.variant ?? "default"
 
@@ -88,7 +89,7 @@ export function DiffChanges(props: {
         </svg>
       </Match>
       <Match when={variant() === "default"}>
-        <Show when={total() > 0}>
+        <Show when={total() > 0 || props.showZero}>
           <div data-component="diff-changes" class={props.class}>
             <span data-slot="diff-changes-additions">{`+${additions()}`}</span>
             <span data-slot="diff-changes-deletions">{`-${deletions()}`}</span>

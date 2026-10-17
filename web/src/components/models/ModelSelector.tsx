@@ -29,6 +29,7 @@ import {
   rankModelSearch,
   type FlattenedModel,
 } from "./model-selector-utils";
+import { ProviderHealthBadge } from "./ProviderQualityCard";
 
 const EFFORT_OPTIONS: Array<{ value: "" | "low" | "medium" | "high"; label: string }> = [
   { value: "", label: "Auto" },
@@ -320,6 +321,7 @@ export default function ModelSelector() {
                             </div>
                             <div class="flex items-center gap-1.5 text-[10.5px] text-[var(--text-muted)]">
                               <span class="truncate">{item.providerName}</span>
+                              <ProviderHealthBadge providerID={item.providerID} compact />
                               <span class="font-mono text-[10px] text-[var(--text-faint)] truncate">
                                 · {item.modelID}
                               </span>

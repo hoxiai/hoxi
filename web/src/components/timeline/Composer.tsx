@@ -17,6 +17,7 @@ import {
   clearReviewComments,
   forkFromMessage,
   isSessionBusy,
+  recordUserAbortAction,
   sessionDirectory,
   setWorkspace,
   submitSessionPrompt,
@@ -128,6 +129,7 @@ export default function Composer() {
   const onStop = async () => {
     const id = sessionID();
     if (!id || stopping()) return;
+    recordUserAbortAction(id);
     setStopping(true);
     try {
       await hoxiAPI.abortSession(id, sessionDirectory(id));
@@ -207,10 +209,10 @@ export default function Composer() {
 
   return (
     <div class="shrink-0 w-full px-6 pb-4 pt-1">
-      <div class="relative mx-auto w-full max-w-[48rem]">
+      <div class="relative mx-auto w-full max-w-[62rem]">
         {/* Floating @file / @changes / /command Autocomplete Popover */}
         <Show when={ac.triggerMode() && ac.suggestions().length > 0}>
-          <div class="absolute bottom-full left-0 mb-2 w-full max-w-[28rem] rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-1.5 shadow-xl z-40">
+          <div class="absolute bottom-full left-0 mb-2 w-full max-w-[32rem] rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-1.5 shadow-xl z-40">
             <div class="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
               {ac.triggerMode() === "command"
                 ? t("timeline.slashCommandsHeader")

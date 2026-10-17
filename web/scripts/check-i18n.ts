@@ -48,7 +48,7 @@ for (const [locale, res] of Object.entries(results)) {
 }
 
 // Flatten canonical dictionary
-function flatten(obj: Record<string, any>, prefix = ""): Set<string> {
+function flatten(obj: object, prefix = ""): Set<string> {
   const keys = new Set<string>();
   for (const [k, v] of Object.entries(obj)) {
     const full = prefix ? `${prefix}.${k}` : k;

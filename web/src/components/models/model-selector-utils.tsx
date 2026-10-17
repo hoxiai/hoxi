@@ -18,6 +18,7 @@ import {
 } from "../../store/workspace";
 import { ProviderIcon } from "../icons";
 import { t } from "../../i18n";
+import { ProviderHealthBadge } from "./ProviderQualityCard";
 
 export interface FlattenedModel {
   providerID: string;
@@ -277,6 +278,7 @@ export function ModelPreviewFooter(props: {
           <span class="font-semibold text-[var(--text-primary)] truncate">
             {props.model.modelName}
           </span>
+          <ProviderHealthBadge providerID={props.model.providerID} />
           <span class="font-mono text-[10px] text-[var(--text-faint)] truncate">
             ({props.model.providerID}/{props.model.modelID})
           </span>

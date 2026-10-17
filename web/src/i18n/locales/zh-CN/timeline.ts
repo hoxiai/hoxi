@@ -120,4 +120,13 @@ export const timeline: TimelineI18n = {
   subagentLiveActivity: "子智能体实时动态 ({count})",
   openChildSession: "打开子会话 →",
   imagePromptSessionTitle: "图像提示词",
+  relayDegradedWarningTitle: "中转站质量预警：{provider}（健康度 {score}/100）",
+  relayDegradedWarningDesc:
+    "检测到该中转站近期耗时过长、频繁超时或工具连续调用失误，极易引发上下文丢失与任务幻觉。",
+  switchRecommendedModel: "一键切换至稳健渠道 {provider}/{model}",
+  turnCompleted: "已完成",
+  stepsCompleted: "{count} 个步骤",
+  worktreeClean: "工作区干净",
+  worktreeIsolatedBadge: "隔离工作树",
 };
+

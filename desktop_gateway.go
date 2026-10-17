@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"io"
 	"io/fs"
@@ -24,6 +23,7 @@ type desktopGateway struct {
 	mux                   *http.ServeMux
 	status                *desktopStatusTracker
 	worktrees             *worktreeManager
+	telemetry             *providerTelemetryStore
 	onOpenDirectoryDialog func() (string, error)
 }
 
@@ -70,6 +70,7 @@ func newDesktopGateway(openCodePort int, password, rootDir string, distFS fs.FS,
 		mux:          http.NewServeMux(),
 		status:       status,
 		worktrees:    newWorktreeManager(rootDir),
+		telemetry:    newProviderTelemetryStore(rootDir),
 	}
 
 	g.registerRoutes(distFS)
@@ -80,14 +81,39 @@ func (g *desktopGateway) setWSBaseURL(wsURL string) {
 	g.wsBaseURL = wsURL
 }
 
+func isAllowedLocalOrigin(origin string) bool {
+	if origin == "" {
+		return false
+	}
+	lower := strings.ToLower(origin)
+	if strings.HasPrefix(lower, "wails://") {
+		return true
+	}
+	parsed, err := url.Parse(lower)
+	if err != nil {
+		return false
+	}
+	host := parsed.Hostname()
+	return host == "127.0.0.1" ||
+		host == "localhost" ||
+		host == "::1" ||
+		host == "wails.localhost" ||
+		strings.HasSuffix(host, ".wails.localhost")
+}
+
 func (g *desktopGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// Allow local CORS for WebSocket / loopback bridge
 	if origin := r.Header.Get("Origin"); origin != "" {
-		w.Header().Set("Access-Control-Allow-Origin", origin)
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
+		if isAllowedLocalOrigin(origin) {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+			if r.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+		} else if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusForbidden)
 			return
 		}
 	}
@@ -122,8 +148,11 @@ func (g *desktopGateway) registerRoutes(distFS fs.FS) {
 
 	g.mux.HandleFunc("/api/hoxi/provider/fetch-models", g.handleFetchProviderModels)
 	g.mux.HandleFunc("/api/hoxi/provider/test-model", g.handleTestProviderModel)
+	g.mux.HandleFunc("/api/hoxi/models-config", g.handleModelsConfig)
+	g.mux.HandleFunc("/global/config", g.handleGlobalConfigProxy)
 
 	g.worktrees.registerRoutes(g.mux)
+	g.telemetry.registerRoutes(g.mux)
 
 	// OpenCode API prefixes
 	openCodePrefixes := []string{
@@ -206,10 +235,7 @@ func (t *sseTapReadCloser) Read(p []byte) (int, error) {
 				t.buf.WriteString(line)
 				break
 			}
-			s := bufio.NewScanner(strings.NewReader(line))
-			for s.Scan() {
-				t.onLine(s.Text())
-			}
+			t.onLine(strings.TrimRight(line, "\r\n"))
 		}
 	}
 	return n, err

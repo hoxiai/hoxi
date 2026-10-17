@@ -7,7 +7,10 @@ import {
   loadAgents,
   loadProjects,
   loadProviders,
+  loadProviderTelemetry,
   loadSessionMessages,
+  recordSessionRetry,
+  refreshWorktreeStatus,
   selectSession,
   setWorkspace,
   upsertMessageInfo,
@@ -23,10 +26,12 @@ export default function App() {
         wsBaseURL: boot.wsBaseURL,
       });
 
-      // Load OpenCode projects, providers, models, agents & pending questions in parallel
+      // Load OpenCode projects, providers, models, agents, telemetry & pending questions in parallel
       void loadProjects();
       void loadProviders();
+      void loadProviderTelemetry();
       void loadAgents();
+      void refreshWorktreeStatus("__root__");
       void hoxiAPI
         .listQuestions()
         .then((qs) => {
@@ -37,26 +42,8 @@ export default function App() {
       const sessions = await hoxiAPI.listSessions();
       setWorkspace("sessions", sessions);
 
-      // Restore each session's isolated worktree directory so scoped OpenCode
-      // requests keep targeting the right sandbox after a reload.
-      await Promise.allSettled(
-        sessions.map(async (session) => {
-          const status = await hoxiAPI.getWorktreeStatus(session.id);
-          if (status.isolated && status.directory) {
-            setWorkspace("worktreeBySession", (prev) => ({
-              ...prev,
-              [session.id]: {
-                sessionID: session.id,
-                isolated: true,
-                directory: status.directory,
-                branch: status.branch,
-                baseCommit: status.baseCommit,
-                createdAt: new Date().toISOString(),
-              },
-            }));
-          }
-        })
-      );
+      // Restore each session's worktree & git branch/diff status
+      await Promise.allSettled(sessions.map((session) => refreshWorktreeStatus(session.id)));
 
       if (sessions.length > 0) {
         const mostRecent = [...sessions].sort((a, b) => b.time.created - a.time.created)[0];
@@ -69,7 +56,10 @@ export default function App() {
     const disconnect = connectEventStream({
       onConnectionChange: (connected) => {
         setWorkspace("connected", connected);
-        if (connected) void loadProviders();
+        if (connected) {
+          void loadProviders();
+          void loadProviderTelemetry();
+        }
       },
       onDeltaBatch: applyPartDeltaBatch,
       onEvent: (evt) => {
@@ -82,6 +72,13 @@ export default function App() {
             break;
           case "session.status":
             setWorkspace("statusBySession", evt.properties.sessionID, evt.properties.status);
+            if (evt.properties.status.type === "retry") {
+              recordSessionRetry(
+                evt.properties.sessionID,
+                evt.properties.status.attempt,
+                evt.properties.status.message
+              );
+            }
             break;
           case "session.idle":
             setWorkspace("statusBySession", evt.properties.sessionID, { type: "idle" });
@@ -89,6 +86,7 @@ export default function App() {
             break;
           case "session.diff":
             setWorkspace("diffsBySession", evt.properties.sessionID, evt.properties.diff);
+            void refreshWorktreeStatus(evt.properties.sessionID);
             break;
           case "permission.asked":
             setWorkspace("pendingPermissions", (prev) =>

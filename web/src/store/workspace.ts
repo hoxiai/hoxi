@@ -14,9 +14,11 @@ import type {
   ProjectInfo,
   ProviderAuthMethod,
   ProviderInfo,
+  ProviderTelemetryStats,
   WorktreeMeta,
 } from "../services/api";
 import { DEFAULT_AGENTS } from "./workspace-providers";
+import { initialProviderTelemetry } from "./provider-telemetry";
 
 export interface MessageTurn {
   info: MessageInfo;
@@ -61,6 +63,8 @@ export interface WorkspaceState {
   connectedProviders: string[];
   defaultModels: Record<string, string>;
   globalConfig: Record<string, any>;
+  hoxiProviders: Record<string, any>;
+  openCodeImportedProviders: string[];
   providerAuthMethods: Record<string, ProviderAuthMethod[]>;
   selectedModel: SelectedModel | null;
   reasoningEffort: "" | "low" | "medium" | "high";
@@ -74,6 +78,7 @@ export interface WorkspaceState {
   pendingPermissions: PermissionRequest[];
   pendingQuestions: QuestionRequest[];
   dismissedPlanFollowups: Record<string, boolean>;
+  providerTelemetry: Record<string, ProviderTelemetryStats>;
 }
 
 export const THEME_KEY = "hoxi-theme";
@@ -179,6 +184,8 @@ export const [workspace, setWorkspace] = createStore<WorkspaceState>({
   connectedProviders: [],
   defaultModels: {},
   globalConfig: {},
+  hoxiProviders: {},
+  openCodeImportedProviders: [],
   providerAuthMethods: {},
   selectedModel: initialSelectedModel(),
   reasoningEffort: initialEffort(),
@@ -192,6 +199,7 @@ export const [workspace, setWorkspace] = createStore<WorkspaceState>({
   pendingPermissions: [],
   pendingQuestions: [],
   dismissedPlanFollowups: {},
+  providerTelemetry: initialProviderTelemetry(),
 });
 
 export function openProviderModal(
@@ -270,3 +278,5 @@ export function toggleTheme() {
 
 export * from "./workspace-providers";
 export * from "./workspace-sessions";
+export * from "./provider-telemetry";
+

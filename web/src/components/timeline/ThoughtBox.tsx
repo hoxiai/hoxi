@@ -155,7 +155,7 @@ export default function ThoughtBox(props: { part: ReasoningPart }) {
 
   return (
     <Show when={rawText().length > 0 || streaming()}>
-      <div class="my-1.5">
+      <div>
         <button
           type="button"
           class="group/trigger inline-flex max-w-full items-center gap-2 rounded-lg py-1 text-[13px] text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
@@ -177,7 +177,7 @@ export default function ThoughtBox(props: { part: ReasoningPart }) {
             />
           </span>
           <Show when={headerTitle()}>
-            <span class="truncate text-[12.5px] font-normal text-[var(--text-muted)] max-w-[380px] inline-flex items-center gap-1">
+            <span class="truncate text-[12.5px] font-normal text-[var(--text-muted)] max-w-[540px] inline-flex items-center gap-1">
               <span>·</span>
               <TextShimmer text={headerTitle()} active={streaming()} offset={9} />
             </span>

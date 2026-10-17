@@ -7,7 +7,10 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "check:i18n": "esbuild scripts/check-i18n.ts --bundle --platform=node --format=esm | node --input-type=module -"
+    "test": "esbuild scripts/run-tests.ts --bundle --platform=node --format=esm --loader:.svg=text | node --input-type=module -",
+    "check:i18n": "esbuild scripts/check-i18n.ts --bundle --platform=node --format=esm | node --input-type=module -",
+    "check:lines": "esbuild scripts/check-lines.ts --bundle --platform=node --format=esm | node --input-type=module -",
+    "lint": "tsc --noEmit && npm run check:i18n && npm run check:lines"
   },
   "dependencies": {
     "@pierre/diffs": "^1.5.2",

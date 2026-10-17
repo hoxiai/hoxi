@@ -19,8 +19,8 @@ function extractParams(str: string): string[] {
  * Validates key parity, missing keys, and placeholder parameters between two dictionaries.
  */
 export function validateLocaleParity(
-  base: Record<string, any>,
-  target: Record<string, any>,
+  base: object,
+  target: object,
   baseName = "base",
   targetName = "target",
   prefix = ""
@@ -30,18 +30,20 @@ export function validateLocaleParity(
   const paramMismatches: string[] = [];
   const emptyKeys: string[] = [];
 
-  const baseKeys = Object.keys(base);
-  const targetKeys = Object.keys(target);
+  const baseObj = base as Record<string, unknown>;
+  const targetObj = target as Record<string, unknown>;
+  const baseKeys = Object.keys(baseObj);
+  const targetKeys = Object.keys(targetObj);
 
   for (const key of baseKeys) {
     const fullPath = prefix ? `${prefix}.${key}` : key;
-    if (!(key in target)) {
+    if (!(key in targetObj)) {
       missingInTarget.push(fullPath);
       continue;
     }
 
-    const bVal = base[key];
-    const tVal = target[key];
+    const bVal = baseObj[key];
+    const tVal = targetObj[key];
 
     if (typeof bVal === "object" && bVal !== null && !Array.isArray(bVal)) {
       if (typeof tVal !== "object" || tVal === null || Array.isArray(tVal)) {

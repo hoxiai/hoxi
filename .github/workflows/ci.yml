@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: ["main", "master"]
+  pull_request:
+
+jobs:
+  verify:
+    name: Verify Go & Web Workspace
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm --prefix web ci
+
+      - name: Frontend TypeScript, i18n parity & 500-line lint
+        run: npm --prefix web run lint
+
+      - name: Frontend unit tests
+        run: npm --prefix web test
+
+      - name: Build frontend bundle
+        run: npm --prefix web run build
+
+      - name: Go vet & build
+        run: |
+          go vet ./...
+          go build ./...
+
+      - name: Go unit tests
+        run: go test -v -race ./...

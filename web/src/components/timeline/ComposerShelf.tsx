@@ -21,7 +21,7 @@ import {
 } from "../../store/workspace";
 import ApprovalGateCard from "../approval/ApprovalGateCard";
 import QuestionDock from "../approval/QuestionDock";
-import { DiffChanges, FileIcon, Spinner, TextShimmer } from "../icons";
+import { DiffChanges, FileIcon, Icon, Spinner, TextShimmer } from "../icons";
 import AgentStackPill from "./AgentStackPill";
 import PlanFollowupBar from "./PlanFollowupBar";
 import RevertBanner from "./RevertBanner";
@@ -90,11 +90,19 @@ export default function ComposerShelf() {
       todos().find((t) => t.status === "pending")
   );
 
-  // Session Diff Summary
+  // Session Diff Summary + Git Worktree Status
   const sessionDiffs = createMemo(() => {
     const id = sessionID();
     return id ? (workspace.diffsBySession[id] ?? []) : [];
   });
+
+  const activeWorktree = createMemo(() => {
+    const id = sessionID();
+    return (id && workspace.worktreeBySession[id]) || workspace.worktreeBySession["__root__"];
+  });
+
+  const gitBranch = createMemo(() => activeWorktree()?.branch || "");
+  const isIsolatedWorktree = createMemo(() => Boolean(activeWorktree()?.isolated));
 
   const diffTotals = createMemo(() => {
     let additions = 0;
@@ -103,8 +111,24 @@ export default function ComposerShelf() {
       additions += d.additions || 0;
       deletions += d.deletions || 0;
     }
-    return { additions, deletions };
+    const wt = activeWorktree();
+    return {
+      additions: Math.max(additions, wt?.additions ?? 0),
+      deletions: Math.max(deletions, wt?.deletions ?? 0),
+    };
   });
+
+  const changedFileCount = createMemo(() =>
+    Math.max(sessionDiffs().length, activeWorktree()?.changedFiles ?? 0)
+  );
+
+  const hasGitActivity = createMemo(
+    () =>
+      Boolean(gitBranch()) ||
+      changedFileCount() > 0 ||
+      diffTotals().additions > 0 ||
+      diffTotals().deletions > 0
+  );
 
   return (
     <>
@@ -135,12 +159,12 @@ export default function ComposerShelf() {
       {/* Kilo Plan Follow-up Suggestion Bar */}
       <PlanFollowupBar />
 
-      {/* Kilo Contextual Shelf: ReviewComments, TodoWrite Checklist & Session Diff Summary */}
+      {/* Kilo Contextual Shelf: ReviewComments, TodoWrite Checklist & Git Branch / Diff Summary */}
       <Show
         when={
           reviewComments().length > 0 ||
           todos().length > 0 ||
-          sessionDiffs().length > 0
+          hasGitActivity()
         }
       >
         <div class="mb-2 flex flex-col gap-1.5">
@@ -315,20 +339,52 @@ export default function ComposerShelf() {
             </div>
           </Show>
 
-          {/* 3. Changed Files Summary Shelf */}
-          <Show when={sessionDiffs().length > 0}>
+          {/* 3. Git Branch & Changed Files / Line Additions-Deletions Summary Shelf */}
+          <Show when={hasGitActivity()}>
             <div class="flex items-center justify-between gap-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)]/80 px-3 py-1.5 text-[11.5px]">
-              <div class="flex items-center gap-2 text-[var(--text-secondary)]">
-                <FileDiff size={13} class="text-[var(--accent-primary)]" />
-                <span class="font-medium text-[var(--text-primary)]">
-                  {t("timeline.filesChangedCount", { count: sessionDiffs().length })}
-                </span>
-                <DiffChanges changes={diffTotals()} />
-                <DiffChanges changes={diffTotals()} variant="bars" />
+              <div class="flex items-center gap-2 min-w-0 flex-wrap text-[var(--text-secondary)]">
+                {/* Git Branch Badge */}
+                <Show when={gitBranch()}>
+                  <span class="inline-flex items-center gap-1 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2 py-0.5 font-mono text-[11px] font-medium text-[var(--text-primary)]">
+                    <Icon name="branch" size="small" class="text-[var(--accent-primary)] shrink-0" />
+                    <span class="truncate max-w-[220px]">{gitBranch()}</span>
+                  </span>
+                </Show>
+
+                <Show when={isIsolatedWorktree()}>
+                  <span class="rounded-md border border-[var(--accent-border)] bg-[var(--accent-surface)]/50 px-1.5 py-0.5 text-[10.5px] font-medium text-[var(--accent-text)]">
+                    {t("timeline.worktreeIsolatedBadge")}
+                  </span>
+                </Show>
+
+                {/* Changed Files + Line Additions / Deletions */}
+                <Show
+                  when={
+                    changedFileCount() > 0 ||
+                    diffTotals().additions > 0 ||
+                    diffTotals().deletions > 0
+                  }
+                  fallback={
+                    <div class="inline-flex items-center gap-1.5 text-[11px] text-[var(--text-muted)]">
+                      <span>{t("timeline.worktreeClean")}</span>
+                      <DiffChanges changes={{ additions: 0, deletions: 0 }} showZero={true} />
+                    </div>
+                  }
+                >
+                  <div class="inline-flex items-center gap-2">
+                    <FileDiff size={13} class="text-[var(--accent-primary)] shrink-0" />
+                    <span class="font-medium text-[var(--text-primary)]">
+                      {t("timeline.filesChangedCount", { count: changedFileCount() })}
+                    </span>
+                    <DiffChanges changes={diffTotals()} showZero={true} />
+                    <DiffChanges changes={diffTotals()} variant="bars" />
+                  </div>
+                </Show>
               </div>
+
               <button
                 type="button"
-                class="inline-flex items-center gap-1 rounded-lg px-2 py-0.5 text-[11px] font-medium text-[var(--accent-primary)] hover:bg-[var(--accent-surface)] transition-colors cursor-pointer"
+                class="shrink-0 inline-flex items-center gap-1 rounded-lg px-2 py-0.5 text-[11px] font-medium text-[var(--accent-primary)] hover:bg-[var(--accent-surface)] transition-colors cursor-pointer"
                 onClick={() => openDiffInInspector()}
               >
                 {t("timeline.reviewDiffs")}

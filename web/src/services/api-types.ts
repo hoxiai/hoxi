@@ -13,6 +13,11 @@ export interface WorktreeMeta {
   branch?: string;
   baseCommit?: string;
   createdAt: string;
+  dirty?: boolean;
+  changedFiles?: number;
+  uncommittedLines?: number;
+  additions?: number;
+  deletions?: number;
 }
 
 export interface ProjectInfo {
@@ -36,6 +41,8 @@ export interface WorktreeStatus {
   dirty: boolean;
   changedFiles: number;
   uncommittedLines: number;
+  additions: number;
+  deletions: number;
 }
 
 export interface BootstrapInfo {
@@ -154,3 +161,40 @@ export interface AgentInfo {
   prompt?: string;
   temperature?: number;
 }
+
+export type ProviderIncidentType =
+  | "timeout"
+  | "api_error"
+  | "retry"
+  | "tool_error"
+  | "hallucination_loop"
+  | "user_revert";
+
+export interface ProviderIncident {
+  timestamp: number;
+  type: ProviderIncidentType;
+  modelID?: string;
+  detail?: string;
+}
+
+export interface ProviderTelemetryStats {
+  providerID: string;
+  totalTurns: number;
+  successTurns: number;
+  errorTurns: number;
+  timeoutTurns: number;
+  retryCount: number;
+  toolCallsTotal: number;
+  toolCallsFailed: number;
+  hallucinationFlags: number;
+  revertCount: number;
+  cacheHitTurns: number;
+  reasoningTurns: number;
+  ttftSamplesMs?: number[];
+  tpsSamples?: number[];
+  lastProbeLatencyMs?: number;
+  lastProbeOk?: boolean;
+  recentIncidents?: ProviderIncident[];
+  updatedAt: number;
+}
+

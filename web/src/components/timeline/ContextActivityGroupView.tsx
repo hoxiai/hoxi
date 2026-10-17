@@ -156,7 +156,7 @@ export default function ContextActivityGroupView(props: {
   );
 
   return (
-    <div class="my-2">
+    <div>
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}

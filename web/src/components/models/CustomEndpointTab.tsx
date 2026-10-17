@@ -1,11 +1,11 @@
 // web/src/components/models/CustomEndpointTab.tsx
-import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, Show, untrack } from "solid-js";
 import { Check, LoaderCircle, Plus, RefreshCw, Trash2 } from "lucide-solid";
 import { hoxiAPI } from "../../services/api";
 import {
   disconnectProvider,
-  isCustomOrConfiguredProvider,
   MASKED_SECRET,
+  recordProbeTelemetry,
   saveCustomProvider,
   setWorkspace,
   workspace,
@@ -16,12 +16,12 @@ import CustomProviderModelSection, {
   guessFetchedModelDraft,
   type ModelProbeResult,
 } from "./CustomProviderModelSection";
-
-const PROVIDER_VARIANTS = [
-  { value: "@ai-sdk/openai-compatible", label: "OpenAI Compatible (/v1/chat/completions)" },
-  { value: "@ai-sdk/openai", label: "OpenAI Responses (/v1/responses)" },
-  { value: "@ai-sdk/anthropic", label: "Anthropic Messages (/v1/messages)" },
-] as const;
+import ProviderQualityCard from "./ProviderQualityCard";
+import {
+  extractCustomProviderFormState,
+  listExistingCustomProviders,
+  PROVIDER_VARIANTS,
+} from "./custom-endpoint-helpers";
 
 export default function CustomEndpointTab() {
   const [providerID, setProviderID] = createSignal("");
@@ -43,16 +43,7 @@ export default function CustomEndpointTab() {
   const [saving, setSaving] = createSignal(false);
   const [feedback, setFeedback] = createSignal<{ ok: boolean; text: string } | null>(null);
 
-  const existingCustomProviders = createMemo(() => {
-    const out: Array<{ id: string; name: string }> = [];
-    const cfgProviders = workspace.globalConfig?.provider ?? {};
-    for (const [id, cfg] of Object.entries<any>(cfgProviders)) {
-      if (cfg && typeof cfg === "object" && isCustomOrConfiguredProvider(id)) {
-        out.push({ id, name: cfg.name || id });
-      }
-    }
-    return out;
-  });
+  const existingCustomProviders = createMemo(() => listExistingCustomProviders());
 
   const isEditing = createMemo(() => Boolean(workspace.editingProviderID));
 
@@ -62,79 +53,20 @@ export default function CustomEndpointTab() {
     setSelectedFetched({});
     setModelProbes({});
 
-    if (!editID) {
-      setProviderID("");
-      setDisplayName("");
-      setNpmPkg("@ai-sdk/openai-compatible");
-      setBaseURL("");
-      setApiKey("");
-      setPreserveExistingKey(false);
-      setModels([{ id: "", name: "", reasoning: false, image: false }]);
-      setHeaders([]);
-      return;
-    }
-
-    const cfgProv = workspace.globalConfig?.provider?.[editID] ?? {};
-    const runtimeProv = workspace.providers.find((p) => p.id === editID);
-    const hasConnectedAuth =
-      workspace.connectedProviders.includes(editID) ||
-      Boolean(runtimeProv?.key) ||
-      Boolean(cfgProv?.options?.apiKey);
-
-    setProviderID(editID);
-    setDisplayName(cfgProv.name || runtimeProv?.name || editID);
-    setNpmPkg(cfgProv.npm || runtimeProv?.npm || "@ai-sdk/openai-compatible");
-    setBaseURL(cfgProv?.options?.baseURL || runtimeProv?.options?.baseURL || "");
-
-    if (typeof cfgProv?.options?.apiKey === "string" && cfgProv.options.apiKey.startsWith("{env:")) {
-      setApiKey(cfgProv.options.apiKey);
-      setPreserveExistingKey(false);
-    } else if (hasConnectedAuth) {
-      setApiKey(MASKED_SECRET);
-      setPreserveExistingKey(true);
-    } else {
-      setApiKey("");
-      setPreserveExistingKey(false);
-    }
-
-    const rawModels = cfgProv.models || runtimeProv?.models || {};
-    const loadedModels: CustomProviderModelDraft[] = [];
-    for (const [mID, mVal] of Object.entries<any>(rawModels)) {
-      if (!mVal || typeof mVal !== "object") continue;
-      const rtModel = runtimeProv?.models?.[mID];
-      const reasoning = Boolean(
-        mVal.reasoning ??
-          mVal.capabilities?.reasoning ??
-          rtModel?.capabilities?.reasoning ??
-          rtModel?.reasoning
-      );
-      const image = Boolean(
-        (Array.isArray(mVal.modalities?.input) && mVal.modalities.input.includes("image")) ||
-          mVal.capabilities?.input?.image ||
-          rtModel?.capabilities?.input?.image
-      );
-      loadedModels.push({
-        id: mID,
-        name: mVal.name || rtModel?.name || mID,
-        reasoning,
-        image,
-      });
-    }
-    setModels(
-      loadedModels.length > 0
-        ? loadedModels
-        : [{ id: "", name: "", reasoning: false, image: false }]
-    );
-
-    const rawHeaders = cfgProv?.options?.headers || runtimeProv?.options?.headers || {};
-    const loadedHeaders = Object.entries<any>(rawHeaders)
-      .filter(([, v]) => typeof v === "string")
-      .map(([k, v]) => ({ key: k, value: String(v) }));
-    setHeaders(loadedHeaders);
+    const next = extractCustomProviderFormState(editID);
+    setProviderID(next.providerID);
+    setDisplayName(next.displayName);
+    setNpmPkg(next.npmPkg);
+    setBaseURL(next.baseURL);
+    setApiKey(next.apiKey);
+    setPreserveExistingKey(next.preserveExistingKey);
+    setModels(next.models);
+    setHeaders(next.headers);
   };
 
   createEffect(() => {
-    loadProviderIntoForm(workspace.editingProviderID);
+    const editID = workspace.editingProviderID;
+    untrack(() => loadProviderIntoForm(editID));
   });
 
   const onFetchModels = async () => {
@@ -205,21 +137,25 @@ export default function CustomEndpointTab() {
     setModelProbes((prev) => ({ ...prev, [mid]: { status: "testing" } }));
     const hdrs: Record<string, string> = {};
     for (const h of headers()) if (h.key.trim() && h.value.trim()) hdrs[h.key.trim()] = h.value.trim();
+    const pid = providerID().trim();
     try {
       const res = await hoxiAPI.testProviderModel({
-        providerID: providerID().trim() || undefined,
+        providerID: pid || undefined,
         baseURL: baseURL().trim() || undefined,
         apiKey: apiKey().trim() === MASKED_SECRET ? undefined : apiKey().trim() || undefined,
         npm: npmPkg(),
         modelID: mid.trim(),
         headers: Object.keys(hdrs).length ? hdrs : undefined,
       });
+      if (pid) recordProbeTelemetry(pid, res.ok, res.latencyMs, res.error, mid.trim());
       setModelProbes((prev) => ({
         ...prev,
         [mid]: res.ok ? { status: "ok", latencyMs: res.latencyMs } : { status: "error", error: res.error || "Failed" },
       }));
     } catch (err: any) {
-      setModelProbes((prev) => ({ ...prev, [mid]: { status: "error", error: err?.message || String(err) } }));
+      const errMsg = err?.message || String(err);
+      if (pid) recordProbeTelemetry(pid, false, undefined, errMsg, mid.trim());
+      setModelProbes((prev) => ({ ...prev, [mid]: { status: "error", error: errMsg } }));
     }
   };
 
@@ -246,11 +182,7 @@ export default function CustomEndpointTab() {
     }
 
     const hdrMap: Record<string, string> = {};
-    for (const h of headers()) {
-      if (h.key.trim() && h.value.trim()) {
-        hdrMap[h.key.trim()] = h.value.trim();
-      }
-    }
+    for (const h of headers()) if (h.key.trim() && h.value.trim()) hdrMap[h.key.trim()] = h.value.trim();
 
     setSaving(true);
     setFeedback(null);
@@ -266,10 +198,7 @@ export default function CustomEndpointTab() {
         models: validModels,
       });
       setWorkspace("editingProviderID", pid);
-      setFeedback({
-        ok: true,
-        text: t("models.providerSaved", { name, count: validModels.length }),
-      });
+      setFeedback({ ok: true, text: t("models.providerSaved", { name, count: validModels.length }) });
     } catch (err: any) {
       setFeedback({ ok: false, text: err?.message || t("models.saveCustomProviderFailed") });
     } finally {
@@ -308,18 +237,12 @@ export default function CustomEndpointTab() {
             <div class="flex items-center gap-2 shrink-0">
               <select
                 value={workspace.editingProviderID || ""}
-                onChange={(e) =>
-                  setWorkspace("editingProviderID", e.currentTarget.value || null)
-                }
+                onChange={(e) => setWorkspace("editingProviderID", e.currentTarget.value || null)}
                 class="max-w-[210px] rounded-lg border border-[var(--border-strong)] bg-[var(--bg-panel)] px-2.5 py-1 text-[11.5px] font-medium text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]"
               >
                 <option value="">+ {t("models.newCustomProvider")}</option>
                 <For each={existingCustomProviders()}>
-                  {(item) => (
-                    <option value={item.id}>
-                      {item.name} ({item.id})
-                    </option>
-                  )}
+                  {(item) => <option value={item.id}>{item.name} ({item.id})</option>}
                 </For>
               </select>
               <Show when={isEditing()}>
@@ -335,6 +258,8 @@ export default function CustomEndpointTab() {
             </div>
           </Show>
         </div>
+
+        <ProviderQualityCard providerID={providerID()} />
 
         {/* Row 1: Provider ID, Display Name, Provider API */}
         <div class="grid grid-cols-3 gap-3">
@@ -405,9 +330,7 @@ export default function CustomEndpointTab() {
                 if (apiKey() === MASKED_SECRET) setApiKey("");
               }}
               onBlur={() => {
-                if (!apiKey().trim() && preserveExistingKey()) {
-                  setApiKey(MASKED_SECRET);
-                }
+                if (!apiKey().trim() && preserveExistingKey()) setApiKey(MASKED_SECRET);
               }}
               onInput={(e) => setApiKey(e.currentTarget.value)}
               class="w-full rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] px-3 py-2 font-mono text-[12px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)] selectable-text"
@@ -420,10 +343,7 @@ export default function CustomEndpointTab() {
               onClick={() => void onFetchModels()}
               class="w-full inline-flex items-center justify-center gap-1.5 rounded-xl border border-[var(--accent-border)] bg-[var(--accent-surface)] px-3 py-2 text-[12px] font-medium text-[var(--accent-primary)] hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
             >
-              <Show
-                when={!fetching()}
-                fallback={<LoaderCircle size={13} class="animate-spin" />}
-              >
+              <Show when={!fetching()} fallback={<LoaderCircle size={13} class="animate-spin" />}>
                 <RefreshCw size={13} />
               </Show>
               {fetching() ? t("models.fetchingModels") : t("models.fetchModels")}

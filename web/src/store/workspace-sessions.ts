@@ -1,9 +1,15 @@
-// web/src/store/workspace-sessions.ts
 import { produce } from "solid-js/store";
 import type { MessageInfo, MessagePart, SessionInfo } from "../services/sse-types";
 import { hoxiAPI } from "../services/api";
 import { RECENT_PROJECTS_KEY, setWorkspace, workspace } from "./workspace";
 import { loadAgents, loadProviders } from "./workspace-providers";
+import {
+  recordAssistantTurnUpdated,
+  recordFirstToken,
+  recordPromptDispatched,
+  recordToolPartUpdate,
+  recordUserRevertAction,
+} from "./provider-telemetry";
 import { t } from "../i18n";
 
 export async function loadProjects(): Promise<void> {
@@ -44,25 +50,9 @@ export async function switchWorkspace(directory: string): Promise<void> {
     const sessions = await hoxiAPI.listSessions(cleaned);
     setWorkspace("sessions", sessions);
 
-    // Restore isolated worktree sandboxes
-    await Promise.allSettled(
-      sessions.map(async (s) => {
-        const st = await hoxiAPI.getWorktreeStatus(s.id);
-        if (st.isolated && st.directory) {
-          setWorkspace("worktreeBySession", (prev) => ({
-            ...prev,
-            [s.id]: {
-              sessionID: s.id,
-              isolated: true,
-              directory: st.directory,
-              branch: st.branch,
-              baseCommit: st.baseCommit,
-              createdAt: new Date().toISOString(),
-            },
-          }));
-        }
-      })
-    );
+    // Restore worktree & git branch/diff status for root and all sessions
+    void refreshWorktreeStatus("__root__");
+    await Promise.allSettled(sessions.map((s) => refreshWorktreeStatus(s.id)));
 
     if (sessions.length > 0) {
       const mostRecent = [...sessions].sort((a, b) => b.time.created - a.time.created)[0];
@@ -126,6 +116,7 @@ function replaceSession(info: SessionInfo) {
 
 export async function loadSessionMessages(sessionID: string): Promise<void> {
   const directory = sessionDirectory(sessionID);
+  void refreshWorktreeStatus(sessionID);
   const turns = await hoxiAPI.getMessages(sessionID, directory);
   setWorkspace("messagesBySession", (prev) => ({
     ...prev,
@@ -165,24 +156,30 @@ export async function applySessionWorktree(
   mode: "patch" | "merge" = "patch"
 ): Promise<void> {
   await hoxiAPI.applyWorktree(sessionID, mode);
+  await refreshWorktreeStatus(sessionID);
+  await refreshWorktreeStatus("__root__");
 }
 
-export async function refreshWorktreeStatus(sessionID: string): Promise<void> {
+export async function refreshWorktreeStatus(sessionID?: string | null): Promise<void> {
+  const key = sessionID || "__root__";
   try {
-    const st = await hoxiAPI.getWorktreeStatus(sessionID);
-    if (st.isolated && st.directory) {
-      setWorkspace("worktreeBySession", (prev) => ({
-        ...prev,
-        [sessionID]: {
-          sessionID,
-          isolated: true,
-          directory: st.directory,
-          branch: st.branch,
-          baseCommit: st.baseCommit,
-          createdAt: prev[sessionID]?.createdAt || new Date().toISOString(),
-        },
-      }));
-    }
+    const st = await hoxiAPI.getWorktreeStatus(key);
+    setWorkspace("worktreeBySession", (prev) => ({
+      ...prev,
+      [key]: {
+        sessionID: key,
+        isolated: st.isolated,
+        directory: st.directory || workspace.rootDir,
+        branch: st.branch || prev[key]?.branch,
+        baseCommit: st.baseCommit || prev[key]?.baseCommit,
+        createdAt: prev[key]?.createdAt || new Date().toISOString(),
+        dirty: st.dirty,
+        changedFiles: st.changedFiles,
+        uncommittedLines: st.uncommittedLines,
+        additions: st.additions,
+        deletions: st.deletions,
+      },
+    }));
   } catch (err) {
     console.error("refresh worktree status failed:", err);
   }
@@ -235,6 +232,7 @@ export async function revertToHere(
   messageID: string,
   partID?: string
 ): Promise<void> {
+  recordUserRevertAction(sessionID, messageID);
   const info = await hoxiAPI.revertSession(
     sessionID,
     messageID,
@@ -280,6 +278,8 @@ export async function submitSessionPrompt(
   const effectiveAgent = options?.agent || workspace.activeMode;
   const effectiveModel = options?.model || workspace.selectedModel || undefined;
   const attachments = options?.attachments ?? [];
+
+  recordPromptDispatched(id, effectiveModel?.providerID, effectiveModel?.modelID);
 
   // Optimistically show user prompt & busy status immediately (0ms perceived latency)
   setWorkspace("statusBySession", id, { type: "busy" });
@@ -360,6 +360,7 @@ export async function retryLastUserPrompt(sessionID?: string | null): Promise<vo
 }
 
 export function upsertMessageInfo(info: MessageInfo) {
+  recordAssistantTurnUpdated(info);
   setWorkspace(
     produce((state) => {
       const list = (state.messagesBySession[info.sessionID] ||= []);
@@ -381,6 +382,11 @@ export function upsertMessageInfo(info: MessageInfo) {
 }
 
 export function upsertMessagePart(part: MessagePart) {
+  recordFirstToken(part.sessionID);
+  recordToolPartUpdate(part);
+  if (part.type === "tool" && part.state.status === "completed") {
+    void refreshWorktreeStatus(part.sessionID);
+  }
   setWorkspace(
     produce((state) => {
       const list = (state.messagesBySession[part.sessionID] ||= []);
@@ -416,6 +422,9 @@ export function applyPartDeltaBatch(
     delta: string;
   }>
 ) {
+  if (batches.length > 0) {
+    recordFirstToken(batches[0].sessionID);
+  }
   setWorkspace(
     produce((state) => {
       for (const b of batches) {

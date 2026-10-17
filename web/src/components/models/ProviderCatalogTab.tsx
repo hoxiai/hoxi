@@ -23,6 +23,7 @@ import {
 import { ProviderIcon } from "../icons";
 import { t } from "../../i18n";
 import { ProviderConnectView, ProviderSelectAllView } from "./ProviderConnectSubView";
+import { ProviderHealthBadge } from "./ProviderQualityCard";
 
 type SubView = "list" | "connect" | "select-all";
 
@@ -212,6 +213,7 @@ export default function ProviderCatalogTab() {
                                 <span class="h-1.5 w-1.5 rounded-full bg-[var(--ok)]" />
                                 {sourceLabel(item)}
                               </span>
+                              <ProviderHealthBadge providerID={item.id} />
                               <span class="text-[11px] text-[var(--text-faint)]">
                                 {t("models.modelsCount", { count: modelCount() })}
                               </span>

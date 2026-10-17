@@ -14,6 +14,7 @@ import type {
   ProviderAuthAuthorization,
   ProviderAuthMethod,
   ProviderListResponse,
+  ProviderTelemetryStats,
   SlashCommandInfo,
   WorktreeMeta,
   WorktreeStatus,
@@ -271,6 +272,32 @@ export const hoxiAPI = {
     return requestJSON("/global/config", { method: "PATCH", body: JSON.stringify(config) });
   },
 
+  getHoxiModelsConfig(): Promise<{
+    hoxiProviders: Record<string, any>;
+    openCodeProviders: string[];
+    configPath: string;
+  }> {
+    return requestJSON("/api/hoxi/models-config");
+  },
+
+  saveHoxiProviderConfig(
+    providerID: string,
+    config: Record<string, any>
+  ): Promise<{ ok: boolean; hoxiProviders: Record<string, any>; configPath: string }> {
+    return requestJSON("/api/hoxi/models-config", {
+      method: "POST",
+      body: JSON.stringify({ providerID, config }),
+    });
+  },
+
+  deleteHoxiProviderConfig(
+    providerID: string
+  ): Promise<{ ok: boolean; hoxiProviders: Record<string, any> }> {
+    return requestJSON(`/api/hoxi/models-config?providerID=${encodeURIComponent(providerID)}`, {
+      method: "DELETE",
+    });
+  },
+
   disposeGlobal(): Promise<void> {
     return requestJSON("/global/dispose", { method: "POST", body: JSON.stringify({}) });
   },
@@ -378,4 +405,25 @@ export const hoxiAPI = {
       body: JSON.stringify(opts),
     });
   },
+
+  getProviderTelemetry(): Promise<{ providers: Record<string, ProviderTelemetryStats> }> {
+    return requestJSON("/api/hoxi/provider/telemetry");
+  },
+
+  saveProviderTelemetry(
+    providers: Record<string, ProviderTelemetryStats>
+  ): Promise<{ ok: boolean }> {
+    return requestJSON("/api/hoxi/provider/telemetry", {
+      method: "POST",
+      body: JSON.stringify({ providers }),
+    });
+  },
+
+  clearProviderTelemetry(providerID?: string): Promise<{ ok: boolean }> {
+    const q = providerID ? `?providerID=${encodeURIComponent(providerID)}` : "";
+    return requestJSON(`/api/hoxi/provider/telemetry${q}`, {
+      method: "DELETE",
+    });
+  },
 };
+

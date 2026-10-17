@@ -1,14 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -34,6 +34,8 @@ type worktreeStatus struct {
 	Dirty            bool   `json:"dirty"`
 	ChangedFiles     int    `json:"changedFiles"`
 	UncommittedLines int    `json:"uncommittedLines"`
+	Additions        int    `json:"additions"`
+	Deletions        int    `json:"deletions"`
 }
 
 type worktreeManager struct {
@@ -142,28 +144,90 @@ func (m *worktreeManager) Status(sessionID string) (worktreeStatus, error) {
 
 	if !ok {
 		candidate := filepath.Join(m.rootDir, ".hoxi", "worktrees", sessionID)
-		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
-			meta = worktreeMeta{
-				SessionID: sessionID,
-				Isolated:  true,
-				Directory: candidate,
-				Branch:    "hoxi/" + sessionID,
+		if sessionID != "" && sessionID != "__root__" {
+			if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+				meta = worktreeMeta{
+					SessionID: sessionID,
+					Isolated:  true,
+					Directory: candidate,
+					Branch:    "hoxi/" + sessionID,
+				}
+				ok = true
 			}
-		} else {
-			return worktreeStatus{
+		}
+		if !ok {
+			meta = worktreeMeta{
 				SessionID: sessionID,
 				Isolated:  false,
 				Directory: m.rootDir,
-			}, nil
+			}
 		}
 	}
 
-	porcelain, _ := runGit(meta.Directory, "status", "--porcelain")
-	lines := 0
-	for _, l := range strings.Split(strings.TrimSpace(porcelain), "\n") {
-		if strings.TrimSpace(l) != "" {
-			lines++
+	if meta.Branch == "" {
+		if br, err := runGit(meta.Directory, "rev-parse", "--abbrev-ref", "HEAD"); err == nil && br != "" {
+			meta.Branch = br
 		}
+	}
+
+	porcelain, _ := runGitRaw(meta.Directory, "status", "--porcelain")
+	changedFiles := 0
+	var untrackedFiles []string
+	for _, rawLine := range strings.Split(porcelain, "\n") {
+		trimmed := strings.TrimSpace(rawLine)
+		if trimmed == "" {
+			continue
+		}
+		changedFiles++
+		if strings.HasPrefix(rawLine, "?? ") {
+			rel := strings.TrimSpace(rawLine[3:])
+			if rel != "" {
+				untrackedFiles = append(untrackedFiles, rel)
+			}
+		}
+	}
+
+	diffTarget := "HEAD"
+	if meta.Isolated && strings.TrimSpace(meta.BaseCommit) != "" {
+		diffTarget = strings.TrimSpace(meta.BaseCommit)
+	}
+	numstat, err := runGit(meta.Directory, "diff", "--numstat", diffTarget)
+	if err != nil && diffTarget != "HEAD" {
+		numstat, _ = runGit(meta.Directory, "diff", "--numstat", "HEAD")
+	}
+
+	additions := 0
+	deletions := 0
+	diffFileSet := make(map[string]struct{})
+	for _, line := range strings.Split(strings.TrimSpace(numstat), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			continue
+		}
+		if a, err := strconv.Atoi(fields[0]); err == nil {
+			additions += a
+		}
+		if d, err := strconv.Atoi(fields[1]); err == nil {
+			deletions += d
+		}
+		diffFileSet[fields[len(fields)-1]] = struct{}{}
+	}
+
+	for _, rel := range untrackedFiles {
+		full := filepath.Join(meta.Directory, rel)
+		if info, err := os.Stat(full); err == nil && !info.IsDir() && info.Size() <= 512*1024 {
+			if data, err := os.ReadFile(full); err == nil && len(data) > 0 {
+				cnt := bytes.Count(data, []byte{'\n'})
+				if data[len(data)-1] != '\n' {
+					cnt++
+				}
+				additions += cnt
+			}
+		}
+	}
+
+	if len(diffFileSet) > changedFiles {
+		changedFiles = len(diffFileSet)
 	}
 
 	return worktreeStatus{
@@ -172,9 +236,11 @@ func (m *worktreeManager) Status(sessionID string) (worktreeStatus, error) {
 		Directory:        meta.Directory,
 		Branch:           meta.Branch,
 		BaseCommit:       meta.BaseCommit,
-		Dirty:            lines > 0,
-		ChangedFiles:     lines,
-		UncommittedLines: lines,
+		Dirty:            changedFiles > 0 || additions > 0 || deletions > 0,
+		ChangedFiles:     changedFiles,
+		UncommittedLines: additions + deletions,
+		Additions:        additions,
+		Deletions:        deletions,
 	}, nil
 }
 
@@ -329,113 +395,6 @@ func (m *worktreeManager) CommitWorktree(sessionID, message string) (string, err
 	return hash, nil
 }
 
-func (m *worktreeManager) registerRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("/api/hoxi/worktree/create", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		var body struct {
-			SessionID string `json:"sessionID"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			writeJSONError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		meta, err := m.Create(body.SessionID)
-		if err != nil {
-			writeJSONError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		writeJSON(w, http.StatusOK, meta)
-	})
-
-	mux.HandleFunc("/api/hoxi/worktree/status", func(w http.ResponseWriter, r *http.Request) {
-		sessionID := r.URL.Query().Get("sessionID")
-		st, err := m.Status(sessionID)
-		if err != nil {
-			writeJSONError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		writeJSON(w, http.StatusOK, st)
-	})
-
-	mux.HandleFunc("/api/hoxi/worktree/apply", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		var body struct {
-			SessionID string `json:"sessionID"`
-			Mode      string `json:"mode"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			writeJSONError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		if err := m.Apply(body.SessionID, body.Mode); err != nil {
-			writeJSONError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
-	})
-
-	mux.HandleFunc("/api/hoxi/worktree/revert-file", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		var body struct {
-			SessionID string `json:"sessionID"`
-			File      string `json:"file"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			writeJSONError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		if err := m.RevertFile(body.SessionID, body.File); err != nil {
-			writeJSONError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
-	})
-
-	mux.HandleFunc("/api/hoxi/worktree/commit", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		var body struct {
-			SessionID string `json:"sessionID"`
-			Message   string `json:"message"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			writeJSONError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		hash, err := m.CommitWorktree(body.SessionID, body.Message)
-		if err != nil {
-			writeJSONError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "commit": hash})
-	})
-
-	mux.HandleFunc("/api/hoxi/worktree/", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodDelete {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		sessionID := strings.TrimPrefix(r.URL.Path, "/api/hoxi/worktree/")
-		force := r.URL.Query().Get("force") == "true"
-		if err := m.Remove(sessionID, force); err != nil {
-			writeJSONError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
-	})
-}
-
 func sanitizeSessionID(id string) string {
 	id = strings.TrimSpace(id)
 	var b strings.Builder
@@ -471,14 +430,4 @@ func runGitRaw(workDir string, args ...string) (string, error) {
 		return "", fmt.Errorf("%s: %w", strings.TrimSpace(string(output)), err)
 	}
 	return string(output), nil
-}
-
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
-}
-
-func writeJSONError(w http.ResponseWriter, status int, msg string) {
-	writeJSON(w, status, map[string]any{"error": msg})
 }
