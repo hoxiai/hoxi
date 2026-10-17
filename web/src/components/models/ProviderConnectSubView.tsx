@@ -37,6 +37,7 @@ export function ProviderConnectView(props: {
   const [oauthState, setOauthState] = createSignal<ProviderAuthAuthorization | null>(null);
   const [oauthCode, setOauthCode] = createSignal("");
   const [busy, setBusy] = createSignal(false);
+  const [probingModel, setProbingModel] = createSignal(false);
   const [feedback, setFeedback] = createSignal<{ ok: boolean; text: string } | null>(null);
 
   const authMethods = createMemo(() => {
@@ -44,6 +45,33 @@ export function ProviderConnectView(props: {
     if (Array.isArray(methods) && methods.length > 0) return methods;
     return [{ type: "api" as const, label: t("models.apiKey") }];
   });
+
+  const onProbeExtraModel = async () => {
+    const mid = extraModelID().trim();
+    if (!mid || probingModel()) return true;
+    setProbingModel(true);
+    setFeedback(null);
+    try {
+      const res = await hoxiAPI.testProviderModel({
+        providerID: props.provider.id,
+        baseURL: baseURL().trim() || undefined,
+        apiKey: apiKey().trim() || undefined,
+        npm: props.provider.npm,
+        modelID: mid,
+      });
+      if (!res.ok) {
+        setFeedback({ ok: false, text: `${mid}: ${res.error || t("models.connectFailed")}` });
+        return false;
+      }
+      setFeedback({ ok: true, text: `✓ ${mid} (${res.latencyMs ?? 0}ms)` });
+      return true;
+    } catch (err: any) {
+      setFeedback({ ok: false, text: err?.message || t("models.connectFailed") });
+      return false;
+    } finally {
+      setProbingModel(false);
+    }
+  };
 
   const onSaveConnect = async (ev: Event) => {
     ev.preventDefault();
@@ -55,6 +83,10 @@ export function ProviderConnectView(props: {
     setBusy(true);
     setFeedback(null);
     try {
+      if (extraModelID().trim()) {
+        const ok = await onProbeExtraModel();
+        if (!ok) return;
+      }
       await connectProviderWithKey({
         providerID: props.provider.id,
         apiKey: apiKey(),
@@ -271,13 +303,28 @@ export function ProviderConnectView(props: {
               {t("models.registerExtraModel")}{" "}
               <span class="text-[var(--text-faint)] font-normal">({t("models.optional")})</span>
             </label>
-            <input
-              type="text"
-              placeholder={t("models.extraModelPlaceholder")}
-              value={extraModelID()}
-              onInput={(e) => setExtraModelID(e.currentTarget.value)}
-              class="w-full rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3.5 py-2 font-mono text-[12px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)] selectable-text"
-            />
+            <div class="flex items-center gap-2">
+              <input
+                type="text"
+                placeholder={t("models.extraModelPlaceholder")}
+                value={extraModelID()}
+                onInput={(e) => setExtraModelID(e.currentTarget.value)}
+                onBlur={() => {
+                  if (extraModelID().trim()) void onProbeExtraModel();
+                }}
+                class="flex-1 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3.5 py-2 font-mono text-[12px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)] selectable-text"
+              />
+              <Show when={extraModelID().trim()}>
+                <button
+                  type="button"
+                  disabled={probingModel()}
+                  onClick={() => void onProbeExtraModel()}
+                  class="shrink-0 rounded-xl border border-[var(--accent-border)] bg-[var(--accent-surface)] px-3 py-2 text-[11.5px] font-medium text-[var(--accent-primary)] hover:opacity-90 disabled:opacity-50 cursor-pointer"
+                >
+                  {probingModel() ? t("models.testing") : t("models.testConnection")}
+                </button>
+              </Show>
+            </div>
           </div>
         </Show>
 
