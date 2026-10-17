@@ -30,8 +30,8 @@ import {
 } from "../../store/workspace";
 import { shortenPath } from "./left-nav-helpers";
 import ExternalHandoffPreviewPane, {
-  defaultSourceModel,
   handoffSourceBadgeClass,
+  resolveOriginalModel,
 } from "./ExternalHandoffPreviewPane";
 import { t } from "../../i18n";
 
@@ -104,6 +104,12 @@ export default function ExternalHandoffModal() {
     void loadSessionsAndStatus();
   });
 
+  const currentOriginalModel = () => {
+    const item = selectedItem();
+    const cli = cliTools().find((c) => c.id === item?.source);
+    return resolveOriginalModel(item, detail(), cli?.defaultModel || cli?.models?.[0]);
+  };
+
   const onTakeOver = async () => {
     const item = selectedItem();
     if (!item || importingSession()) return;
@@ -111,20 +117,16 @@ export default function ExternalHandoffModal() {
     setErrorMsg(null);
     try {
       const useOriginal = modelMode() === "original";
-      if (useOriginal) {
-        const cli = cliTools().find((c) => c.id === item.source);
-        if (cli && cli.authenticated && !cli.connected) {
-          await hoxiAPI.importLocalCLI(item.source).catch(() => null);
-          await refreshProviders().catch(() => null);
-        }
+      const cli = cliTools().find((c) => c.id === item.source);
+      if (useOriginal && cli && cli.authenticated && !cli.connected) {
+        await hoxiAPI.importLocalCLI(item.source).catch(() => null);
+        await refreshProviders().catch(() => null);
       }
       const preferredProviderID = useOriginal
-        ? item.source === "codex-cli"
-          ? "openai"
-          : item.source
+        ? cli?.providerID || (item.source === "codex-cli" ? "openai" : item.source)
         : workspace.selectedModel?.providerID;
       const preferredModelID = useOriginal
-        ? defaultSourceModel(item.source, item.model)
+        ? currentOriginalModel()
         : workspace.selectedModel?.modelID;
 
       const res = await hoxiAPI.importExternalSession({
@@ -432,6 +434,7 @@ export default function ExternalHandoffModal() {
               importingSession={importingSession()}
               modelMode={modelMode()}
               onChangeModelMode={setModelMode}
+              originalModelLabel={currentOriginalModel()}
               localModelLabel={workspace.selectedModel?.modelID || "default"}
               onTakeOver={() => void onTakeOver()}
             />

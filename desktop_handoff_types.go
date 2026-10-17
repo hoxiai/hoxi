@@ -361,32 +361,49 @@ func loadExternalSessionDetail(source ExternalToolID, sessionID, hintCWD, active
 	}
 }
 
-func readClaudeSettingsEnv() (baseURL, apiKey, model string) {
+func readClaudeSettingsEnv() (baseURL, apiKey, defaultModel string, models []string) {
 	cDir := claudeHomeDir()
 	if cDir != "" {
 		if raw, err := os.ReadFile(filepath.Join(cDir, "settings.json")); err == nil {
 			var doc map[string]interface{}
 			if json.Unmarshal(raw, &doc) == nil {
-				model = asString(doc["model"])
+				defaultModel = strings.TrimSpace(asString(doc["model"]))
+				if defaultModel != "" {
+					models = appendUniqueString(models, defaultModel)
+				}
 				if envMap, ok := doc["env"].(map[string]interface{}); ok {
 					baseURL = asString(envMap["ANTHROPIC_BASE_URL"])
 					apiKey = firstNonEmpty(asString(envMap["ANTHROPIC_AUTH_TOKEN"]), asString(envMap["ANTHROPIC_API_KEY"]))
+					for _, k := range []string{"ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_SMALL_FAST_MODEL"} {
+						if m := strings.TrimSpace(asString(envMap[k])); m != "" {
+							models = appendUniqueString(models, m)
+							if defaultModel == "" {
+								defaultModel = m
+							}
+						}
+					}
 				}
 			}
 		}
 	}
-	if model == "" {
-		model = "claude-sonnet-4-6"
+	sessions, _ := scanClaudeSessions("", "")
+	for _, s := range sessions {
+		if m := strings.TrimSpace(s.Model); m != "" && !strings.HasPrefix(m, "<") {
+			models = appendUniqueString(models, m)
+			if defaultModel == "" {
+				defaultModel = m
+			}
+		}
 	}
 	if baseURL == "" {
 		baseURL = "https://api.anthropic.com/v1"
 	}
-	return baseURL, apiKey, model
+	return baseURL, apiKey, defaultModel, models
 }
 
 func detectClaudeCLIStatus(hoxiMap map[string]interface{}) LocalCLIStatusItem {
 	_, stats := scanClaudeSessions("", "")
-	_, apiKey, model := readClaudeSettingsEnv()
+	_, apiKey, defaultModel, models := readClaudeSettingsEnv()
 	_, connected := hoxiMap["claude-code"]
 	return LocalCLIStatusItem{
 		ID:            ExternalToolClaude,
@@ -394,8 +411,8 @@ func detectClaudeCLIStatus(hoxiMap map[string]interface{}) LocalCLIStatusItem {
 		Installed:     stats.Installed,
 		Authenticated: apiKey != "" || stats.SessionCount > 0,
 		Connected:     connected,
-		DefaultModel:  model,
-		Models:        []string{model, "claude-opus-4-6", "claude-sonnet-4-6"},
+		DefaultModel:  defaultModel,
+		Models:        models,
 		SessionCount:  stats.SessionCount,
 		AuthMode:      "claude-settings",
 		ProviderID:    "claude-code",
@@ -403,7 +420,7 @@ func detectClaudeCLIStatus(hoxiMap map[string]interface{}) LocalCLIStatusItem {
 }
 
 func (g *desktopGateway) importClaudeCLIProvider() LocalCLIImportResponse {
-	baseURL, apiKey, model := readClaudeSettingsEnv()
+	baseURL, apiKey, _, models := readClaudeSettingsEnv()
 	if apiKey == "" {
 		return LocalCLIImportResponse{
 			OK:     false,
@@ -411,7 +428,6 @@ func (g *desktopGateway) importClaudeCLIProvider() LocalCLIImportResponse {
 			Error:  "No ANTHROPIC_AUTH_TOKEN or ANTHROPIC_API_KEY found in ~/.claude/settings.json",
 		}
 	}
-	models := []string{model, "claude-opus-4-6", "claude-sonnet-4-6"}
 	modelsMap := map[string]interface{}{}
 	for _, m := range models {
 		modelsMap[m] = map[string]interface{}{"name": m + " (Claude Code)", "tool_call": true, "reasoning": true}

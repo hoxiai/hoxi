@@ -88,6 +88,7 @@ LIMIT 120;`
 		return nil, stats
 	}
 
+	cfgDefaultModel, _, _ := readCodexLocalConfig()
 	qLower := strings.ToLower(strings.TrimSpace(query))
 	var results []ExternalSessionSummary
 
@@ -122,7 +123,7 @@ LIMIT 120;`
 			CWD:         r.CWD,
 			Title:       title,
 			Summary:     truncateRunes(summary, 240),
-			Model:       r.Model,
+			Model:       firstNonEmpty(r.Model, cfgDefaultModel),
 			GitBranch:   r.GitBranch,
 			GitCommit:   shortCommit(r.GitSHA),
 			CreatedAt:   createdMs,
@@ -391,7 +392,16 @@ func extractCodexMessageText(content interface{}) string {
 
 func detectCodexCLIStatus(g *desktopGateway, hoxiMap map[string]interface{}) LocalCLIStatusItem {
 	cDir := codexHomeDir()
-	_, stats := scanCodexSessions("", "")
+	sessions, stats := scanCodexSessions("", "")
+	defaultModel, version, models := readCodexLocalConfig()
+	for _, s := range sessions {
+		if s.Model != "" {
+			models = appendUniqueString(models, s.Model)
+			if defaultModel == "" {
+				defaultModel = s.Model
+			}
+		}
+	}
 	var authMode, accessToken, apiKey string
 	if cDir != "" {
 		if raw, err := os.ReadFile(filepath.Join(cDir, "auth.json")); err == nil {
@@ -413,8 +423,9 @@ func detectCodexCLIStatus(g *desktopGateway, hoxiMap map[string]interface{}) Loc
 		Installed:     stats.Installed,
 		Authenticated: accessToken != "" || apiKey != "",
 		Connected:     hasOpenAIKey,
-		DefaultModel:  "gpt-5.3-codex",
-		Models:        []string{"gpt-5.3-codex", "gpt-5.2-codex", "o4-mini"},
+		Version:       version,
+		DefaultModel:  defaultModel,
+		Models:        models,
 		SessionCount:  stats.SessionCount,
 		AuthMode:      authMode,
 		ProviderID:    "openai",
@@ -437,10 +448,7 @@ func (g *desktopGateway) importCodexCLIProvider() LocalCLIImportResponse {
 
 	var authBody map[string]interface{}
 	if apiKey := strings.TrimSpace(asString(doc["OPENAI_API_KEY"])); apiKey != "" {
-		authBody = map[string]interface{}{
-			"type": "api",
-			"key":  apiKey,
-		}
+		authBody = map[string]interface{}{"type": "api", "key": apiKey}
 	} else if tokens, ok := doc["tokens"].(map[string]interface{}); ok {
 		access := asString(tokens["access_token"])
 		refresh := asString(tokens["refresh_token"])
@@ -474,10 +482,11 @@ func (g *desktopGateway) importCodexCLIProvider() LocalCLIImportResponse {
 		g.reloadOpenCodeGlobalConfig()
 	}
 
+	_, _, models := readCodexLocalConfig()
 	return LocalCLIImportResponse{
 		OK:         true,
 		ToolID:     string(ExternalToolCodex),
 		ProviderID: "openai",
-		Models:     []string{"gpt-5.3-codex", "gpt-5.2-codex"},
+		Models:     models,
 	}
 }

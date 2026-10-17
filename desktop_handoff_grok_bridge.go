@@ -23,12 +23,70 @@ type grokLocalCredentials struct {
 	Models       []string
 }
 
-func loadGrokLocalCredentials() grokLocalCredentials {
-	out := grokLocalCredentials{
-		Version:      "1.0.52",
-		DefaultModel: "grok-4.7",
-		Models:       []string{"grok-4.7", "grok-4.7-build-fast", "grok-4.6", "grok-4.5"},
+func appendUniqueString(list []string, items ...string) []string {
+	for _, it := range items {
+		it = strings.TrimSpace(it)
+		if it == "" {
+			continue
+		}
+		exists := false
+		for _, cur := range list {
+			if cur == it {
+				exists = true
+				break
+			}
+		}
+		if !exists {
+			list = append(list, it)
+		}
 	}
+	return list
+}
+
+func readCodexLocalConfig() (defaultModel, version string, models []string) {
+	cDir := codexHomeDir()
+	if cDir == "" {
+		return "", "", nil
+	}
+	if tomlBytes, err := os.ReadFile(filepath.Join(cDir, "config.toml")); err == nil {
+		for _, line := range strings.Split(string(tomlBytes), "\n") {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "model") && strings.Contains(trimmed, "=") {
+				parts := strings.SplitN(trimmed, "=", 2)
+				if strings.TrimSpace(parts[0]) == "model" {
+					if m := strings.Trim(strings.TrimSpace(parts[1]), `"'`); m != "" {
+						defaultModel = m
+						models = appendUniqueString(models, m)
+					}
+					break
+				}
+			}
+		}
+	}
+	if modBytes, err := os.ReadFile(filepath.Join(cDir, "models_cache.json")); err == nil {
+		var modDoc struct {
+			ClientVersion string `json:"client_version"`
+			Models        []struct {
+				Slug string `json:"slug"`
+			} `json:"models"`
+		}
+		if json.Unmarshal(modBytes, &modDoc) == nil {
+			version = strings.TrimSpace(modDoc.ClientVersion)
+			for _, item := range modDoc.Models {
+				if s := strings.TrimSpace(item.Slug); s != "" {
+					models = appendUniqueString(models, s)
+				}
+			}
+		}
+	}
+	if defaultModel == "" && len(models) > 0 {
+		defaultModel = models[0]
+	}
+	return defaultModel, version, models
+}
+
+func loadGrokLocalCredentials() grokLocalCredentials {
+	out := grokLocalCredentials{}
 	gDir := grokHomeDir()
 	if gDir == "" {
 		return out
@@ -57,26 +115,69 @@ func loadGrokLocalCredentials() grokLocalCredentials {
 		}
 	}
 
+	if setBytes, err := os.ReadFile(filepath.Join(gDir, "settings.json")); err == nil {
+		var setDoc map[string]interface{}
+		if json.Unmarshal(setBytes, &setDoc) == nil {
+			out.DefaultModel = firstNonEmpty(asString(setDoc["model"]), asString(setDoc["default_model"]), asString(setDoc["current_model_id"]))
+		}
+	}
+
 	if modData, err := os.ReadFile(filepath.Join(gDir, "models_cache.json")); err == nil {
-		var modObj struct {
-			Models       []string `json:"models"`
-			DefaultModel string   `json:"default_model"`
-		}
-		if json.Unmarshal(modData, &modObj) == nil {
-			if len(modObj.Models) > 0 {
-				out.Models = modObj.Models
+		var rawDoc map[string]interface{}
+		if json.Unmarshal(modData, &rawDoc) == nil {
+			if out.Version == "" {
+				out.Version = strings.TrimSpace(asString(rawDoc["grok_version"]))
 			}
-			if strings.TrimSpace(modObj.DefaultModel) != "" {
-				out.DefaultModel = strings.TrimSpace(modObj.DefaultModel)
+			if dm := strings.TrimSpace(asString(rawDoc["default_model"])); dm != "" && out.DefaultModel == "" {
+				out.DefaultModel = dm
+			}
+			switch mv := rawDoc["models"].(type) {
+			case []interface{}:
+				for _, item := range mv {
+					if s := strings.TrimSpace(asString(item)); s != "" {
+						out.Models = appendUniqueString(out.Models, s)
+					}
+				}
+			case map[string]interface{}:
+				for k, v := range mv {
+					if vm, ok := v.(map[string]interface{}); ok {
+						if info, ok := vm["info"].(map[string]interface{}); ok {
+							if hidden, _ := info["hidden"].(bool); hidden {
+								continue
+							}
+							if id := strings.TrimSpace(asString(info["id"])); id != "" {
+								out.Models = appendUniqueString(out.Models, id)
+								continue
+							}
+						}
+					}
+					if strings.TrimSpace(k) != "" {
+						out.Models = appendUniqueString(out.Models, strings.TrimSpace(k))
+					}
+				}
 			}
 		}
+	}
+	if out.DefaultModel == "" && len(out.Models) > 0 {
+		out.DefaultModel = out.Models[0]
+	}
+	if out.DefaultModel != "" {
+		out.Models = appendUniqueString([]string{out.DefaultModel}, out.Models...)
 	}
 	return out
 }
 
 func detectGrokCLIStatus(hoxiMap map[string]interface{}) LocalCLIStatusItem {
 	creds := loadGrokLocalCredentials()
-	_, stats := scanGrokSessions("", "")
+	sessions, stats := scanGrokSessions("", "")
+	for _, s := range sessions {
+		if s.Model != "" {
+			creds.Models = appendUniqueString(creds.Models, s.Model)
+			if creds.DefaultModel == "" {
+				creds.DefaultModel = s.Model
+			}
+		}
+	}
 	_, connected := hoxiMap["grok-cli"]
 	return LocalCLIStatusItem{
 		ID:            ExternalToolGrok,
@@ -328,3 +429,4 @@ func (g *desktopGateway) handleGrokCLIBridge(w http.ResponseWriter, r *http.Requ
 		},
 	})
 }
+

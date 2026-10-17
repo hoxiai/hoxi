@@ -23,11 +23,19 @@ export function handoffSourceBadgeClass(source: ExternalToolID): string {
   return "bg-emerald-500/15 text-emerald-400 border-emerald-500/30";
 }
 
-export function defaultSourceModel(source: ExternalToolID, rawModel?: string): string {
-  if (rawModel) return rawModel;
-  if (source === "grok-cli") return "grok-4.7";
-  if (source === "claude-code") return "claude-sonnet-4-6";
-  return "gpt-5.3-codex";
+export function resolveOriginalModel(
+  item: ExternalSessionSummary | null,
+  detail: ExternalSessionDetail | null,
+  cliDefaultModel?: string
+): string {
+  if (!item) return "";
+  return (
+    detail?.summary?.model ||
+    item.model ||
+    detail?.turns?.find((t) => t.modelID)?.modelID ||
+    cliDefaultModel ||
+    item.sourceLabel
+  );
 }
 
 export default function ExternalHandoffPreviewPane(props: {
@@ -37,6 +45,7 @@ export default function ExternalHandoffPreviewPane(props: {
   importingSession: boolean;
   modelMode: "original" | "local";
   onChangeModelMode: (mode: "original" | "local") => void;
+  originalModelLabel: string;
   localModelLabel: string;
   onTakeOver: () => void;
 }) {
@@ -216,7 +225,7 @@ export default function ExternalHandoffPreviewPane(props: {
                   }`}
                 >
                   {t("leftNav.handoffModelModeOriginal", {
-                    model: defaultSourceModel(cur().source, cur().model),
+                    model: props.originalModelLabel,
                   })}
                 </button>
                 <button

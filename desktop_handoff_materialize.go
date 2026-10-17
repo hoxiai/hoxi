@@ -164,13 +164,15 @@ func (g *desktopGateway) resolveDefaultHandoffModel(sum ExternalSessionSummary, 
 	}
 	switch sum.Source {
 	case ExternalToolGrok:
-		return "grok-cli", firstNonEmpty(sum.Model, "grok-4.7")
+		return "grok-cli", firstNonEmpty(sum.Model, loadGrokLocalCredentials().DefaultModel)
 	case ExternalToolClaude:
-		return "claude-code", firstNonEmpty(sum.Model, "claude-sonnet-4-6")
+		_, _, defModel, _ := readClaudeSettingsEnv()
+		return "claude-code", firstNonEmpty(sum.Model, defModel)
 	case ExternalToolCodex:
-		return "openai", firstNonEmpty(sum.Model, "gpt-5.3-codex")
+		defModel, _, _ := readCodexLocalConfig()
+		return "openai", firstNonEmpty(sum.Model, defModel)
 	default:
-		return "opencode", "deepseek-v4.1-flash-free"
+		return string(sum.Source), sum.Model
 	}
 }
 
