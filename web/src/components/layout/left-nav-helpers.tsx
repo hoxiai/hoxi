@@ -344,12 +344,12 @@ export function SessionNavItem(props: {
                   setEditing(false);
                 }
               }}
-              class="flex-1 min-w-0 rounded border border-[var(--accent-border)] bg-[var(--bg-panel)] px-1.5 py-0.5 text-[11.5px] text-[var(--text-primary)] outline-none"
+              class="flex-1 min-w-0 rounded border border-[var(--accent-border)] bg-[var(--bg-panel)] px-1.5 py-0.5 text-[12.5px] text-[var(--text-primary)] outline-none"
             />
           }
         >
           <span
-            class={`truncate text-[12px] flex-1 ${
+            class={`truncate text-[13.5px] flex-1 ${
               props.isArchived ? "text-[var(--text-muted)]" : ""
             }`}
           >
@@ -371,7 +371,7 @@ export function SessionNavItem(props: {
               type="button"
               disabled={deleting()}
               onClick={(ev) => void handleConfirmDelete(ev)}
-              class="inline-flex items-center gap-0.5 rounded bg-[var(--danger-text)] px-1.5 py-0.5 text-[10.5px] font-medium text-white hover:opacity-90 transition-opacity cursor-pointer"
+              class="inline-flex items-center gap-0.5 rounded bg-[var(--danger-text)] px-1.5 py-0.5 text-[11px] font-medium text-white hover:opacity-90 transition-opacity cursor-pointer"
               title={t("leftNav.discardConfirm")}
             >
               <Show
@@ -388,14 +388,14 @@ export function SessionNavItem(props: {
                 ev.stopPropagation();
                 setConfirmingDelete(false);
               }}
-              class="rounded px-1.5 py-0.5 text-[10.5px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+              class="rounded px-1.5 py-0.5 text-[11px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
             >
               {t("leftNav.cancelDelete")}
             </button>
           </div>
         }
       >
-        <div class="flex items-center gap-1 shrink-0 text-[10px] font-mono">
+        <div class="flex items-center gap-1 shrink-0 text-[11px] font-mono">
           <Show when={wt()?.isolated && wt()?.branch && !editing()}>
             <span class="inline-flex items-center gap-0.5 text-[var(--text-faint)] truncate max-w-[72px] group-hover/row:hidden">
               <Show when={props.showBranchIcon}>

@@ -81,6 +81,7 @@ func newDesktopGateway(openCodePort int, password, rootDir string, distFS fs.FS,
 
 func (g *desktopGateway) setWSBaseURL(wsURL string) {
 	g.wsBaseURL = wsURL
+	g.syncLocalCLIBridgeURLs()
 }
 
 func isAllowedLocalOrigin(origin string) bool {
@@ -154,6 +155,12 @@ func (g *desktopGateway) registerRoutes(distFS fs.FS) {
 	g.mux.HandleFunc("/api/hoxi/provider/summarize-title", g.handleSummarizeSessionTitle)
 	g.mux.HandleFunc("/api/hoxi/models-config", g.handleModelsConfig)
 	g.mux.HandleFunc("/api/hoxi/system-info", g.handleSystemRuntimeInfo)
+	g.mux.HandleFunc("/api/hoxi/handoff/sessions", g.handleHandoffSessions)
+	g.mux.HandleFunc("/api/hoxi/handoff/preview", g.handleHandoffPreview)
+	g.mux.HandleFunc("/api/hoxi/handoff/import", g.handleHandoffImport)
+	g.mux.HandleFunc("/api/hoxi/local-cli/status", g.handleLocalCLIStatus)
+	g.mux.HandleFunc("/api/hoxi/local-cli/import", g.handleLocalCLIImport)
+	g.mux.HandleFunc("/api/hoxi/bridge/grok-cli/", g.handleGrokCLIBridge)
 	g.mux.HandleFunc("/global/config", g.handleGlobalConfigProxy)
 	g.mux.HandleFunc("/provider", g.handleProviderProxy)
 	g.mux.Handle("/provider/", g.proxy)

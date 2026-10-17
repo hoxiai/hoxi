@@ -471,3 +471,5 @@ export async function updateGlobalModelConfig(patch: Record<string, any>): Promi
     }
   }
 }
+
+export const refreshProviders = loadProviders;

@@ -83,6 +83,8 @@ export const inspector: InspectorI18n = {
     notFound:
       "project.md 暂未生成 — 将在第一次会话整理压缩时自动创建。",
     reload: "重新加载记忆",
+    sessionMemoryTab: "当前会话交接记忆",
+    projectMemoryTab: "工程长期记忆",
   },
   files: {
     searchPlaceholder: "搜索工作区文件 (Enter)…",

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"os/exec"
+	"os/user"
 	"runtime"
 	"strings"
 	"sync"
@@ -11,16 +12,19 @@ import (
 )
 
 type systemRuntimeInfoResponse struct {
-	OpenCodeBinPath     string        `json:"openCodeBinPath"`
-	OpenCodeVersion     string        `json:"openCodeVersion"`
-	OpenCodePort        int           `json:"openCodePort"`
-	WSBaseURL           string        `json:"wsBaseURL"`
-	RootDir             string        `json:"rootDir"`
-	UserConfigPath      string        `json:"userConfigPath"`
-	WorkspaceConfigPath string        `json:"workspaceConfigPath"`
-	OS                  string        `json:"os"`
-	Arch                string        `json:"arch"`
+	OpenCodeBinPath     string             `json:"openCodeBinPath"`
+	OpenCodeVersion     string             `json:"openCodeVersion"`
+	OpenCodePort        int                `json:"openCodePort"`
+	WSBaseURL           string             `json:"wsBaseURL"`
+	RootDir             string             `json:"rootDir"`
+	UserConfigPath      string             `json:"userConfigPath"`
+	WorkspaceConfigPath string             `json:"workspaceConfigPath"`
+	OS                  string             `json:"os"`
+	Arch                string             `json:"arch"`
 	GoVersion           string             `json:"goVersion"`
+	SystemUsername      string             `json:"systemUsername"`
+	GitUserName         string             `json:"gitUserName"`
+	GitUserEmail        string             `json:"gitUserEmail"`
 	Status              desktopCodeSummary `json:"status"`
 }
 
@@ -28,7 +32,29 @@ var (
 	cachedOpenCodeVerMu   sync.Mutex
 	cachedOpenCodeVerPath string
 	cachedOpenCodeVerStr  string
+
+	cachedUserIdentityOnce sync.Once
+	cachedSystemUsername   string
+	cachedGitUserName      string
+	cachedGitUserEmail     string
 )
+
+func resolveLocalUserIdentity() (sysUser, gitName, gitEmail string) {
+	cachedUserIdentityOnce.Do(func() {
+		if u, err := user.Current(); err == nil && u != nil {
+			cachedSystemUsername = strings.TrimSpace(u.Username)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+		defer cancel()
+		if out, err := exec.CommandContext(ctx, "git", "config", "--global", "user.name").Output(); err == nil {
+			cachedGitUserName = strings.TrimSpace(string(out))
+		}
+		if out, err := exec.CommandContext(ctx, "git", "config", "--global", "user.email").Output(); err == nil {
+			cachedGitUserEmail = strings.TrimSpace(string(out))
+		}
+	})
+	return cachedSystemUsername, cachedGitUserName, cachedGitUserEmail
+}
 
 func resolveOpenCodeVersion(binPath string) string {
 	if binPath == "" {
@@ -68,6 +94,7 @@ func (g *desktopGateway) handleSystemRuntimeInfo(w http.ResponseWriter, r *http.
 	}
 	binPath := findOpenCodeBinary("opencode")
 	ver := resolveOpenCodeVersion(binPath)
+	sysUser, gitName, gitEmail := resolveLocalUserIdentity()
 
 	var st desktopCodeSummary
 	if g.status != nil {
@@ -85,6 +112,9 @@ func (g *desktopGateway) handleSystemRuntimeInfo(w http.ResponseWriter, r *http.
 		OS:                  runtime.GOOS,
 		Arch:                runtime.GOARCH,
 		GoVersion:           runtime.Version(),
+		SystemUsername:      sysUser,
+		GitUserName:         gitName,
+		GitUserEmail:        gitEmail,
 		Status:              st,
 	})
 }

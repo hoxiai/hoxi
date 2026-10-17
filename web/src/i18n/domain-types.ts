@@ -116,6 +116,30 @@ export interface LeftNavI18n {
   saveWorkspaceChanges: string;
   savingWorkspace: string;
   folderCountBadge: string;
+  handoffBtn: string;
+  handoffTooltip: string;
+  handoffModalTitle: string;
+  handoffModalSubtitle: string;
+  handoffSearchPlaceholder: string;
+  handoffScopeCurrent: string;
+  handoffScopeAll: string;
+  handoffSourceAll: string;
+  handoffNoSessions: string;
+  handoffMatchesCurrent: string;
+  handoffTurnsCount: string;
+  handoffSelectHint: string;
+  handoffSummaryTitle: string;
+  handoffPlanTitle: string;
+  handoffChangedFilesTitle: string;
+  handoffConversationTitle: string;
+  handoffTakeOverBtn: string;
+  handoffTakingOver: string;
+  handoffCliBannerTitle: string;
+  handoffCliBannerDesc: string;
+  handoffCliImportBtn: string;
+  handoffCliImporting: string;
+  handoffCliConnected: string;
+  handoffCliSessionsBadge: string;
 }
 
 export interface TimelineI18n {
@@ -389,6 +413,8 @@ export interface InspectorMemoryI18n {
   save: string;
   notFound: string;
   reload: string;
+  sessionMemoryTab: string;
+  projectMemoryTab: string;
 }
 
 export interface InspectorFilesI18n {

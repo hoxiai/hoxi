@@ -84,6 +84,8 @@ export const inspector: InspectorI18n = {
     notFound:
       "project.md not found yet — it is created on the first compaction.",
     reload: "Reload memory",
+    sessionMemoryTab: "Session Handoff",
+    projectMemoryTab: "Project Memory",
   },
   files: {
     searchPlaceholder: "Search workspace files (Enter)…",

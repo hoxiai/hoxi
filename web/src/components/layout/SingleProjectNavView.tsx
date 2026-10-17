@@ -140,11 +140,11 @@ export default function SingleProjectNavView(props: {
               color={currentProjectColor()}
               class="w-3.5 h-3.5 shrink-0"
             />
-            <span class="truncate text-[12.5px] font-semibold text-[var(--text-primary)]">
+            <span class="truncate text-[14px] font-semibold text-[var(--text-primary)]">
               {currentProjectName()}
             </span>
             <Show when={currentFolders().length > 1}>
-              <span class="shrink-0 rounded px-1 py-0.2 text-[9.5px] font-mono bg-[var(--bg-inset)] text-[var(--text-muted)]">
+              <span class="shrink-0 rounded px-1.5 py-0.2 text-[10.5px] font-mono bg-[var(--bg-inset)] text-[var(--text-muted)]">
                 {currentFolders().length}
               </span>
             </Show>
@@ -173,7 +173,7 @@ export default function SingleProjectNavView(props: {
                 type="button"
                 onClick={() => inspectFolder(folder.path)}
                 title={folder.path}
-                class="inline-flex items-center gap-1 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-inset)]/70 px-1.5 py-0.5 text-[10.5px] font-mono text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+                class="inline-flex items-center gap-1 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-inset)]/70 px-1.5 py-0.5 text-[11.5px] font-mono text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
               >
                 <FolderIcon
                   open={folder.isPrimary}
@@ -229,9 +229,9 @@ export default function SingleProjectNavView(props: {
                         color={proj.color}
                         class="w-3.5 h-3.5 shrink-0"
                       />
-                      <span class="truncate text-[12px]">{proj.name}</span>
+                      <span class="truncate text-[13px]">{proj.name}</span>
                       <Show when={proj.folders.length > 1}>
-                        <span class="shrink-0 rounded px-1 py-0.2 text-[9.5px] font-mono bg-[var(--bg-inset)] text-[var(--text-muted)]">
+                        <span class="shrink-0 rounded px-1.5 py-0.2 text-[10.5px] font-mono bg-[var(--bg-inset)] text-[var(--text-muted)]">
                           {proj.folders.length}
                         </span>
                       </Show>
@@ -288,7 +288,7 @@ export default function SingleProjectNavView(props: {
         <Show
           when={groupedSingleSessions().length > 0}
           fallback={
-            <div class="px-3 py-6 text-center text-[11.5px] text-[var(--text-faint)]">
+            <div class="px-3 py-6 text-center text-[12px] text-[var(--text-faint)]">
               {t("leftNav.noThreads")}
             </div>
           }
@@ -296,7 +296,7 @@ export default function SingleProjectNavView(props: {
           <For each={groupedSingleSessions()}>
             {(group) => (
               <div class="space-y-0.5">
-                <div class="px-2 py-0.5 text-[10px] font-medium text-[var(--text-faint)]">
+                <div class="px-2 py-0.5 text-[11px] font-medium text-[var(--text-faint)]">
                   {group.label}
                 </div>
                 <For each={group.items}>
@@ -325,7 +325,7 @@ export default function SingleProjectNavView(props: {
             <button
               type="button"
               onClick={() => setShowArchived((v) => !v)}
-              class="w-full flex items-center justify-between gap-1.5 rounded-lg px-2 py-1 text-[11px] font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]/50 transition-colors cursor-pointer"
+              class="w-full flex items-center justify-between gap-1.5 rounded-lg px-2 py-1 text-[11.5px] font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]/50 transition-colors cursor-pointer"
             >
               <div class="flex items-center gap-1.5">
                 <Show
@@ -337,7 +337,7 @@ export default function SingleProjectNavView(props: {
                 <Icon name="archive" size="small" class="w-3 h-3 text-[var(--text-faint)]" />
                 <span>{t("leftNav.archivedSessions")}</span>
               </div>
-              <span class="rounded-full bg-[var(--bg-inset)] px-1.5 py-0.2 text-[10px] font-mono text-[var(--text-faint)]">
+              <span class="rounded-full bg-[var(--bg-inset)] px-1.5 py-0.2 text-[10.5px] font-mono text-[var(--text-faint)]">
                 {archivedSessions().length}
               </span>
             </button>

@@ -1,389 +1,271 @@
 // web/src/components/settings/SettingsGeneralChatTabs.tsx
-import { For, Show } from "solid-js";
-import { Check, Languages, Monitor, Moon, Sun, User } from "lucide-solid";
+import {
+  Bell,
+  CornerDownLeft,
+  Globe,
+  Mail,
+  Monitor,
+  Moon,
+  RotateCcw,
+  Sparkles,
+  Sun,
+  Type,
+  User,
+} from "lucide-solid";
 import {
   appSettings,
   updateAppSetting,
   type FontScale,
   type ReasoningDisplayMode,
+  type SendShortcutMode,
   type ThemeMode,
 } from "../../store/workspace";
-import { locale, LOCALE_METADATA, setLocale, SUPPORTED_LOCALES, t } from "../../i18n";
+import { locale, setLocale, t } from "../../i18n";
+import {
+  HelpTip,
+  SegmentedPills,
+  SettingGroup,
+  SettingRow,
+  ToggleSwitch,
+} from "./SettingsModal";
 
 export function GeneralAppearanceTab() {
   return (
-    <div class="space-y-6">
-      {/* 1. Interface Language */}
-      <section class="space-y-2.5">
-        <div>
-          <h3 class="flex items-center gap-1.5 text-[13.5px] font-semibold text-[var(--text-primary)]">
-            <Languages size={14} class="text-[var(--accent-primary)]" />
-            {t("settings.sectionLanguageTitle")}
-          </h3>
-          <p class="text-[11.5px] text-[var(--text-muted)]">
-            {t("settings.sectionLanguageDesc")}
-          </p>
-        </div>
-
-        <div class="grid grid-cols-2 gap-3">
-          <For each={SUPPORTED_LOCALES}>
-            {(loc) => {
-              const meta = LOCALE_METADATA[loc];
-              const isSelected = () => locale() === loc;
-              return (
-                <button
-                  type="button"
-                  onClick={() => setLocale(loc)}
-                  class={`flex flex-col items-start gap-1 rounded-xl border p-3.5 text-left transition-all cursor-pointer ${
-                    isSelected()
-                      ? "border-[var(--accent-border)] bg-[var(--accent-surface)]"
-                      : "border-[var(--border-subtle)] bg-[var(--bg-inset)] hover:border-[var(--border-strong)]"
-                  }`}
-                >
-                  <div class="flex w-full items-center justify-between">
-                    <span class="text-[13px] font-semibold text-[var(--text-primary)]">
-                      {meta.label}
-                    </span>
-                    <div class="flex items-center gap-1.5">
-                      <span class="rounded-md bg-[var(--bg-panel)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-muted)]">
-                        {meta.langTag}
-                      </span>
-                      <Show when={isSelected()}>
-                        <Check size={14} class="text-[var(--accent-primary)]" />
-                      </Show>
-                    </div>
-                  </div>
-                  <span class="text-[11px] text-[var(--text-muted)]">
-                    {loc === "zh-CN" ? t("settings.langZhDesc") : t("settings.langEnDesc")}
-                  </span>
-                </button>
-              );
-            }}
-          </For>
-        </div>
-      </section>
-
-      {/* 2. Color Theme */}
-      <section class="border-t border-[var(--border-subtle)] pt-5 space-y-2.5">
-        <div>
-          <h3 class="text-[13.5px] font-semibold text-[var(--text-primary)]">
-            {t("settings.sectionThemeTitle")}
-          </h3>
-          <p class="text-[11.5px] text-[var(--text-muted)]">
-            {t("settings.sectionThemeDesc")}
-          </p>
-        </div>
-
-        <div class="grid grid-cols-3 gap-3">
-          <For
-            each={[
+    <div class="space-y-5">
+      {/* 1. Appearance & Language Group */}
+      <SettingGroup>
+        <SettingRow
+          icon={Globe}
+          label={t("settings.sectionLanguageTitle")}
+          tip={t("settings.sectionLanguageDesc")}
+        >
+          <SegmentedPills
+            value={locale()}
+            options={[
               {
-                mode: "light" as ThemeMode,
+                id: "zh-CN",
+                label: () => t("header.langZh"),
+                tip: () => t("settings.langZhDesc"),
+              },
+              {
+                id: "en-US",
+                label: () => t("header.langEn"),
+                tip: () => t("settings.langEnDesc"),
+              },
+            ]}
+            onChange={(val) => setLocale(val)}
+          />
+        </SettingRow>
+
+        <SettingRow
+          icon={Sun}
+          label={t("settings.sectionThemeTitle")}
+          tip={t("settings.sectionThemeDesc")}
+        >
+          <SegmentedPills<ThemeMode>
+            value={appSettings.themeMode}
+            options={[
+              {
+                id: "light",
                 label: () => t("settings.themeLight"),
-                desc: () => t("settings.themeLightDesc"),
+                tip: () => t("settings.themeLightDesc"),
                 icon: Sun,
               },
               {
-                mode: "dark" as ThemeMode,
+                id: "dark",
                 label: () => t("settings.themeDark"),
-                desc: () => t("settings.themeDarkDesc"),
+                tip: () => t("settings.themeDarkDesc"),
                 icon: Moon,
               },
               {
-                mode: "system" as ThemeMode,
+                id: "system",
                 label: () => t("settings.themeSystem"),
-                desc: () => t("settings.themeSystemDesc"),
+                tip: () => t("settings.themeSystemDesc"),
                 icon: Monitor,
               },
             ]}
-          >
-            {(item) => {
-              const IconComp = item.icon;
-              const active = () => appSettings.themeMode === item.mode;
-              return (
-                <button
-                  type="button"
-                  onClick={() => updateAppSetting("themeMode", item.mode)}
-                  class={`flex flex-col items-start gap-1.5 rounded-xl border p-3 text-left transition-all cursor-pointer ${
-                    active()
-                      ? "border-[var(--accent-border)] bg-[var(--accent-surface)]"
-                      : "border-[var(--border-subtle)] bg-[var(--bg-inset)] hover:border-[var(--border-strong)]"
-                  }`}
-                >
-                  <div class="flex w-full items-center justify-between">
-                    <span class="inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-[var(--text-primary)]">
-                      <IconComp size={13.5} class="text-[var(--accent-primary)]" />
-                      {item.label()}
-                    </span>
-                    <Show when={active()}>
-                      <Check size={13} class="text-[var(--accent-primary)]" />
-                    </Show>
-                  </div>
-                  <span class="text-[11px] text-[var(--text-muted)] leading-snug">
-                    {item.desc()}
-                  </span>
-                </button>
-              );
-            }}
-          </For>
-        </div>
-      </section>
+            onChange={(val) => updateAppSetting("themeMode", val)}
+          />
+        </SettingRow>
 
-      {/* 3. Font Scale */}
-      <section class="border-t border-[var(--border-subtle)] pt-5 space-y-2.5">
-        <div>
-          <h3 class="text-[13.5px] font-semibold text-[var(--text-primary)]">
-            {t("settings.sectionFontScaleTitle")}
-          </h3>
-          <p class="text-[11.5px] text-[var(--text-muted)]">
-            {t("settings.sectionFontScaleDesc")}
-          </p>
-        </div>
-
-        <div class="grid grid-cols-4 gap-2.5">
-          <For
-            each={[
-              { id: "compact" as FontScale, label: () => t("settings.fontCompact") },
-              { id: "default" as FontScale, label: () => t("settings.fontDefault") },
-              { id: "comfortable" as FontScale, label: () => t("settings.fontComfortable") },
-              { id: "large" as FontScale, label: () => t("settings.fontLarge") },
+        <SettingRow
+          icon={Type}
+          label={t("settings.sectionFontScaleTitle")}
+          tip={t("settings.sectionFontScaleDesc")}
+        >
+          <SegmentedPills<FontScale>
+            value={appSettings.fontScale}
+            options={[
+              { id: "compact", label: () => t("settings.fontCompact") },
+              { id: "default", label: () => t("settings.fontDefault") },
+              { id: "comfortable", label: () => t("settings.fontComfortable") },
+              { id: "large", label: () => t("settings.fontLarge") },
             ]}
-          >
-            {(opt) => (
-              <button
-                type="button"
-                onClick={() => updateAppSetting("fontScale", opt.id)}
-                class={`rounded-xl border px-3 py-2.5 text-center text-[12px] font-medium transition-all cursor-pointer ${
-                  appSettings.fontScale === opt.id
-                    ? "border-[var(--accent-border)] bg-[var(--accent-surface)] text-[var(--accent-primary)]"
-                    : "border-[var(--border-subtle)] bg-[var(--bg-inset)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
-                }`}
-              >
-                {opt.label()}
-              </button>
-            )}
-          </For>
-        </div>
-      </section>
+            onChange={(val) => updateAppSetting("fontScale", val)}
+          />
+        </SettingRow>
+      </SettingGroup>
 
-      {/* 4. Local User Display Name */}
-      <section class="border-t border-[var(--border-subtle)] pt-5 space-y-2.5">
-        <div>
-          <h3 class="flex items-center gap-1.5 text-[13.5px] font-semibold text-[var(--text-primary)]">
-            <User size={14} class="text-[var(--accent-primary)]" />
-            {t("settings.sectionProfileTitle")}
-          </h3>
-          <p class="text-[11.5px] text-[var(--text-muted)]">
-            {t("settings.sectionProfileDesc")}
-          </p>
-        </div>
-        <input
-          type="text"
-          value={appSettings.userDisplayName}
-          placeholder={t("settings.profileNamePlaceholder")}
-          onInput={(ev) => updateAppSetting("userDisplayName", ev.currentTarget.value)}
-          class="w-full max-w-sm rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] px-3.5 py-2 text-[12.5px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none focus:border-[var(--accent-primary)]"
-        />
-      </section>
+      {/* 2. Account & Developer Profile Group */}
+      <SettingGroup
+        title={t("settings.sectionProfileTitle")}
+        tip={t("settings.sectionProfileDesc")}
+      >
+        <SettingRow icon={User} label={t("settings.accountNameInputLabel")}>
+          <input
+            type="text"
+            value={appSettings.userDisplayName}
+            placeholder={t("settings.profileNamePlaceholder")}
+            onInput={(ev) =>
+              updateAppSetting("userDisplayName", ev.currentTarget.value)
+            }
+            class="w-56 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[12px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none focus:border-[var(--accent-primary)]"
+          />
+        </SettingRow>
+
+        <SettingRow icon={Mail} label={t("settings.profileEmailLabel")}>
+          <input
+            type="email"
+            value={appSettings.userEmail}
+            placeholder={t("settings.profileEmailPlaceholder", {
+              email: appSettings.detectedGitUserEmail || "you@example.com",
+            })}
+            onInput={(ev) => updateAppSetting("userEmail", ev.currentTarget.value)}
+            class="w-56 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 font-mono text-[11.5px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none focus:border-[var(--accent-primary)]"
+          />
+        </SettingRow>
+      </SettingGroup>
     </div>
   );
 }
 
 export function ChatComposerTab() {
+  const testDesktopNotification = () => {
+    if (typeof window === "undefined" || !("Notification" in window)) return;
+    if (Notification.permission === "granted") {
+      new Notification("Hoxi", { body: t("settings.desktopNotificationsDesc") });
+    } else {
+      void Notification.requestPermission().then((perm) => {
+        if (perm === "granted") {
+          new Notification("Hoxi", {
+            body: t("settings.desktopNotificationsDesc"),
+          });
+        }
+      });
+    }
+  };
+
   return (
-    <div class="space-y-6">
-      {/* 1. Send Prompt Shortcut */}
-      <section class="space-y-2.5">
-        <div>
-          <h3 class="text-[13.5px] font-semibold text-[var(--text-primary)]">
-            {t("settings.sectionSendShortcutTitle")}
-          </h3>
-          <p class="text-[11.5px] text-[var(--text-muted)]">
-            {t("settings.sectionSendShortcutDesc")}
-          </p>
-        </div>
-
-        <div class="grid grid-cols-2 gap-3">
-          <button
-            type="button"
-            onClick={() => updateAppSetting("sendShortcut", "enter")}
-            class={`flex flex-col items-start gap-1 rounded-xl border p-3.5 text-left transition-all cursor-pointer ${
-              appSettings.sendShortcut === "enter"
-                ? "border-[var(--accent-border)] bg-[var(--accent-surface)]"
-                : "border-[var(--border-subtle)] bg-[var(--bg-inset)] hover:border-[var(--border-strong)]"
-            }`}
-          >
-            <div class="flex w-full items-center justify-between">
-              <span class="text-[12.5px] font-semibold text-[var(--text-primary)]">
-                {t("settings.shortcutEnterTitle")}
-              </span>
-              <Show when={appSettings.sendShortcut === "enter"}>
-                <Check size={14} class="text-[var(--accent-primary)]" />
-              </Show>
-            </div>
-            <span class="text-[11px] text-[var(--text-muted)]">
-              {t("settings.shortcutEnterDesc")}
-            </span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => updateAppSetting("sendShortcut", "mod-enter")}
-            class={`flex flex-col items-start gap-1 rounded-xl border p-3.5 text-left transition-all cursor-pointer ${
-              appSettings.sendShortcut === "mod-enter"
-                ? "border-[var(--accent-border)] bg-[var(--accent-surface)]"
-                : "border-[var(--border-subtle)] bg-[var(--bg-inset)] hover:border-[var(--border-strong)]"
-            }`}
-          >
-            <div class="flex w-full items-center justify-between">
-              <span class="text-[12.5px] font-semibold text-[var(--text-primary)]">
-                {t("settings.shortcutModEnterTitle")}
-              </span>
-              <Show when={appSettings.sendShortcut === "mod-enter"}>
-                <Check size={14} class="text-[var(--accent-primary)]" />
-              </Show>
-            </div>
-            <span class="text-[11px] text-[var(--text-muted)]">
-              {t("settings.shortcutModEnterDesc")}
-            </span>
-          </button>
-        </div>
-      </section>
-
-      {/* 2. Reasoning Stream Display */}
-      <section class="border-t border-[var(--border-subtle)] pt-5 space-y-2.5">
-        <div>
-          <h3 class="text-[13.5px] font-semibold text-[var(--text-primary)]">
-            {t("settings.sectionReasoningTitle")}
-          </h3>
-          <p class="text-[11.5px] text-[var(--text-muted)]">
-            {t("settings.sectionReasoningDesc")}
-          </p>
-        </div>
-
-        <div class="grid grid-cols-3 gap-3">
-          <For
-            each={[
+    <div class="space-y-5">
+      {/* 1. Composer & Stream Preferences */}
+      <SettingGroup>
+        <SettingRow
+          icon={CornerDownLeft}
+          label={t("settings.sectionSendShortcutTitle")}
+          tip={t("settings.sectionSendShortcutDesc")}
+        >
+          <SegmentedPills<SendShortcutMode>
+            value={appSettings.sendShortcut}
+            options={[
               {
-                mode: "auto-collapse" as ReasoningDisplayMode,
-                title: () => t("settings.reasoningAutoCollapse"),
-                desc: () => t("settings.reasoningAutoCollapseDesc"),
+                id: "enter",
+                label: () => "Enter",
+                tip: () => t("settings.shortcutEnterDesc"),
               },
               {
-                mode: "expanded" as ReasoningDisplayMode,
-                title: () => t("settings.reasoningExpanded"),
-                desc: () => t("settings.reasoningExpandedDesc"),
-              },
-              {
-                mode: "collapsed" as ReasoningDisplayMode,
-                title: () => t("settings.reasoningCollapsed"),
-                desc: () => t("settings.reasoningCollapsedDesc"),
+                id: "mod-enter",
+                label: () => "⌘/Ctrl + Enter",
+                tip: () => t("settings.shortcutModEnterDesc"),
               },
             ]}
-          >
-            {(item) => (
-              <button
-                type="button"
-                onClick={() => updateAppSetting("reasoningDisplay", item.mode)}
-                class={`flex flex-col items-start gap-1 rounded-xl border p-3 text-left transition-all cursor-pointer ${
-                  appSettings.reasoningDisplay === item.mode
-                    ? "border-[var(--accent-border)] bg-[var(--accent-surface)]"
-                    : "border-[var(--border-subtle)] bg-[var(--bg-inset)] hover:border-[var(--border-strong)]"
-                }`}
-              >
-                <div class="flex w-full items-center justify-between">
-                  <span class="text-[12px] font-semibold text-[var(--text-primary)]">
-                    {item.title()}
-                  </span>
-                  <Show when={appSettings.reasoningDisplay === item.mode}>
-                    <Check size={13} class="text-[var(--accent-primary)]" />
-                  </Show>
-                </div>
-                <span class="text-[11px] text-[var(--text-muted)] leading-snug">
-                  {item.desc()}
-                </span>
-              </button>
-            )}
-          </For>
-        </div>
-      </section>
+            onChange={(val) => updateAppSetting("sendShortcut", val)}
+          />
+        </SettingRow>
 
-      {/* 3. Timeline & Interaction Toggles */}
-      <section class="border-t border-[var(--border-subtle)] pt-5 space-y-2.5">
-        <h3 class="text-[13.5px] font-semibold text-[var(--text-primary)]">
-          {t("settings.sectionStreamPrefsTitle")}
-        </h3>
+        <SettingRow
+          icon={Sparkles}
+          label={t("settings.sectionReasoningTitle")}
+          tip={t("settings.sectionReasoningDesc")}
+        >
+          <SegmentedPills<ReasoningDisplayMode>
+            value={appSettings.reasoningDisplay}
+            options={[
+              {
+                id: "auto-collapse",
+                label: () => t("settings.reasoningAutoCollapse"),
+                tip: () => t("settings.reasoningAutoCollapseDesc"),
+              },
+              {
+                id: "expanded",
+                label: () => t("settings.reasoningExpanded"),
+                tip: () => t("settings.reasoningExpandedDesc"),
+              },
+              {
+                id: "collapsed",
+                label: () => t("settings.reasoningCollapsed"),
+                tip: () => t("settings.reasoningCollapsedDesc"),
+              },
+            ]}
+            onChange={(val) => updateAppSetting("reasoningDisplay", val)}
+          />
+        </SettingRow>
 
-        <label class="flex items-center justify-between gap-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-4 py-2.5 cursor-pointer">
-          <div class="min-w-0">
-            <div class="text-[12.5px] font-medium text-[var(--text-primary)]">
-              {t("settings.autoScrollLabel")}
-            </div>
-            <div class="text-[11px] text-[var(--text-muted)]">
-              {t("settings.autoScrollDesc")}
-            </div>
-          </div>
-          <input
-            type="checkbox"
+        <SettingRow
+          label={t("settings.autoScrollLabel")}
+          tip={t("settings.autoScrollDesc")}
+        >
+          <ToggleSwitch
             checked={appSettings.autoScrollStream}
-            onChange={(ev) => updateAppSetting("autoScrollStream", ev.currentTarget.checked)}
-            class="h-4 w-4 accent-[var(--accent-primary)] cursor-pointer shrink-0"
+            onChange={(val) => updateAppSetting("autoScrollStream", val)}
           />
-        </label>
+        </SettingRow>
 
-        <label class="flex items-center justify-between gap-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-4 py-2.5 cursor-pointer">
-          <div class="min-w-0">
-            <div class="text-[12.5px] font-medium text-[var(--text-primary)]">
-              {t("settings.confirmRevertLabel")}
-            </div>
-            <div class="text-[11px] text-[var(--text-muted)]">
-              {t("settings.confirmRevertDesc")}
-            </div>
-          </div>
-          <input
-            type="checkbox"
+        <SettingRow
+          icon={RotateCcw}
+          label={t("settings.confirmRevertLabel")}
+          tip={t("settings.confirmRevertDesc")}
+        >
+          <ToggleSwitch
             checked={appSettings.confirmBeforeRevert}
-            onChange={(ev) => updateAppSetting("confirmBeforeRevert", ev.currentTarget.checked)}
-            class="h-4 w-4 accent-[var(--accent-primary)] cursor-pointer shrink-0"
+            onChange={(val) => updateAppSetting("confirmBeforeRevert", val)}
           />
-        </label>
+        </SettingRow>
 
-        <label class="flex items-center justify-between gap-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-4 py-2.5 cursor-pointer">
-          <div class="min-w-0">
-            <div class="text-[12.5px] font-medium text-[var(--text-primary)]">
-              {t("settings.desktopNotificationsLabel")}
-            </div>
-            <div class="text-[11px] text-[var(--text-muted)]">
-              {t("settings.desktopNotificationsDesc")}
-            </div>
-          </div>
-          <input
-            type="checkbox"
+        <SettingRow
+          icon={Bell}
+          label={t("settings.desktopNotificationsLabel")}
+          tip={t("settings.desktopNotificationsDesc")}
+        >
+          <button
+            type="button"
+            onClick={testDesktopNotification}
+            class="rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2 py-0.5 text-[11px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+          >
+            Test
+          </button>
+          <ToggleSwitch
             checked={appSettings.desktopNotifications}
-            onChange={(ev) =>
-              updateAppSetting("desktopNotifications", ev.currentTarget.checked)
-            }
-            class="h-4 w-4 accent-[var(--accent-primary)] cursor-pointer shrink-0"
+            onChange={(val) => updateAppSetting("desktopNotifications", val)}
           />
-        </label>
-      </section>
+        </SettingRow>
+      </SettingGroup>
 
-      {/* 4. Global Custom Instructions */}
-      <section class="border-t border-[var(--border-subtle)] pt-5 space-y-2">
-        <div>
-          <h3 class="text-[13.5px] font-semibold text-[var(--text-primary)]">
+      {/* 2. Global Custom Instructions */}
+      <section class="space-y-1.5">
+        <div class="flex items-center gap-1.5 px-1">
+          <h3 class="text-[11.5px] font-semibold text-[var(--text-secondary)]">
             {t("settings.sectionCustomInstructionsTitle")}
           </h3>
-          <p class="text-[11.5px] text-[var(--text-muted)]">
-            {t("settings.sectionCustomInstructionsDesc")}
-          </p>
+          <HelpTip text={t("settings.sectionCustomInstructionsDesc")} />
         </div>
         <textarea
           rows={3}
           value={appSettings.customSystemPrompt}
           placeholder={t("settings.customInstructionsPlaceholder")}
-          onInput={(ev) => updateAppSetting("customSystemPrompt", ev.currentTarget.value)}
-          class="w-full rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] px-3.5 py-2.5 text-[12px] leading-relaxed text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none focus:border-[var(--accent-primary)] resize-y selectable-text"
+          onInput={(ev) =>
+            updateAppSetting("customSystemPrompt", ev.currentTarget.value)
+          }
+          class="w-full rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)]/35 p-3 font-mono text-[11.5px] leading-relaxed text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none focus:border-[var(--accent-primary)] resize-y"
         />
       </section>
     </div>

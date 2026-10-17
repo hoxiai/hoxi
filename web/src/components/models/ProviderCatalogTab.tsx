@@ -28,6 +28,7 @@ import { t } from "../../i18n";
 import { ProviderConnectView, ProviderSelectAllView } from "./ProviderConnectSubView";
 import { ProviderHealthBadge } from "./ProviderQualityCard";
 import { isModelFree } from "./model-selector-utils";
+import LocalCliBridgeBanner from "./LocalCliBridgeBanner";
 
 type SubView = "list" | "connect" | "select-all";
 
@@ -153,6 +154,8 @@ export default function ProviderCatalogTab() {
     <div class="flex flex-1 flex-col min-h-0 overflow-hidden">
       <Show when={subView() === "list"}>
         <div class="flex-1 overflow-y-auto p-5 space-y-6">
+          <LocalCliBridgeBanner />
+
           {/* Custom Provider Quick Card */}
           <div class="flex items-center justify-between gap-4 rounded-2xl border border-[var(--accent-border)] bg-[var(--accent-surface)]/40 px-4 py-3.5">
             <div class="flex items-center gap-3 min-w-0">

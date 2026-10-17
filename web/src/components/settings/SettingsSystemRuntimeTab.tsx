@@ -12,6 +12,7 @@ import {
   workspace,
 } from "../../store/workspace";
 import { t } from "../../i18n";
+import { SettingGroup, SettingRow } from "./SettingsModal";
 
 export function SystemRuntimeSettingsTab() {
   const [sysInfo, setSysInfo] = createSignal<SystemRuntimeInfo | null>(null);
@@ -66,104 +67,89 @@ export function SystemRuntimeSettingsTab() {
   };
 
   return (
-    <div class="space-y-6">
-      <section class="space-y-3">
-        <div class="flex items-center justify-between">
-          <div>
-            <h3 class="text-[13.5px] font-semibold text-[var(--text-primary)]">
-              {t("settings.sectionRuntimeTitle")}
-            </h3>
-            <p class="text-[11.5px] text-[var(--text-muted)]">
-              {t("settings.sectionRuntimeDesc")}
-            </p>
-          </div>
+    <div class="space-y-5">
+      {/* 1. OpenCode Runtime Diagnostics */}
+      <SettingGroup
+        title={t("settings.sectionRuntimeTitle")}
+        tip={t("settings.sectionRuntimeDesc")}
+        action={
           <button
             type="button"
             onClick={() => void fetchInfo()}
-            class="rounded-lg p-1.5 text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+            class="rounded-md p-1 text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
             title={t("common.refresh")}
           >
-            <RefreshCw size={13} />
+            <RefreshCw size={12} />
           </button>
-        </div>
+        }
+      >
+        <SettingRow label={t("settings.runtimeStatusLabel")}>
+          <span class="inline-flex items-center gap-1.5 text-[12px] font-medium text-[var(--text-primary)]">
+            <span
+              class={`h-2 w-2 rounded-full ${
+                workspace.connected
+                  ? "bg-[var(--ok)]"
+                  : "bg-[var(--warn)] animate-pulse"
+              }`}
+            />
+            {workspace.connected ? t("common.ready") : t("common.connecting")}
+            <Show when={sysInfo()?.openCodeVersion}>
+              <span class="ml-1 rounded bg-[var(--bg-panel)] px-1.5 py-0.2 font-mono text-[10.5px] text-[var(--text-muted)]">
+                {sysInfo()?.openCodeVersion}
+              </span>
+            </Show>
+          </span>
+        </SettingRow>
 
-        <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)] divide-y divide-[var(--border-subtle)] text-[12px]">
-          <div class="flex items-center justify-between px-4 py-2.5">
-            <span class="text-[var(--text-muted)]">{t("settings.runtimeStatusLabel")}</span>
-            <span class="inline-flex items-center gap-1.5 font-medium text-[var(--text-primary)]">
-              <span
-                class={`h-2 w-2 rounded-full ${
-                  workspace.connected ? "bg-[var(--ok)]" : "bg-[var(--warn)] animate-pulse"
-                }`}
-              />
-              {workspace.connected ? t("common.ready") : t("common.connecting")}
-            </span>
-          </div>
+        <SettingRow label={t("settings.runtimePortLabel")}>
+          <span class="font-mono text-[11.5px] text-[var(--text-secondary)]">
+            127.0.0.1:{sysInfo()?.openCodePort || "—"}
+          </span>
+        </SettingRow>
 
-          <div class="flex items-center justify-between gap-4 px-4 py-2.5">
-            <span class="text-[var(--text-muted)] shrink-0">{t("settings.runtimeVersionLabel")}</span>
-            <span class="font-mono text-[11.5px] text-[var(--text-primary)] truncate">
-              {sysInfo()?.openCodeVersion || t("settings.runtimeNotDetected")}
-            </span>
-          </div>
+        <SettingRow label={t("settings.runtimeBinaryLabel")}>
+          <span
+            class="max-w-[280px] truncate font-mono text-[11px] text-[var(--text-secondary)] selectable-text"
+            title={sysInfo()?.openCodeBinPath}
+          >
+            {sysInfo()?.openCodeBinPath || t("settings.runtimeNotDetected")}
+          </span>
+        </SettingRow>
 
-          <div class="flex items-center justify-between gap-4 px-4 py-2.5">
-            <span class="text-[var(--text-muted)] shrink-0">{t("settings.runtimeBinaryLabel")}</span>
-            <span class="font-mono text-[11px] text-[var(--text-secondary)] truncate selectable-text">
-              {sysInfo()?.openCodeBinPath || t("settings.runtimeNotDetected")}
-            </span>
-          </div>
+        <SettingRow label={t("settings.runtimeConfigPathLabel")}>
+          <span
+            class="max-w-[280px] truncate font-mono text-[11px] text-[var(--text-secondary)] selectable-text"
+            title={sysInfo()?.userConfigPath}
+          >
+            {sysInfo()?.userConfigPath || "~/.hoxi/models.json"}
+          </span>
+        </SettingRow>
 
-          <div class="flex items-center justify-between gap-4 px-4 py-2.5">
-            <span class="text-[var(--text-muted)] shrink-0">{t("settings.runtimePortLabel")}</span>
-            <span class="font-mono text-[11.5px] text-[var(--text-primary)]">
-              127.0.0.1:{sysInfo()?.openCodePort || "—"}
-            </span>
-          </div>
+        <SettingRow label={t("settings.runtimePlatformLabel")}>
+          <span class="font-mono text-[11px] text-[var(--text-secondary)]">
+            {sysInfo()
+              ? `${sysInfo()!.os}/${sysInfo()!.arch} (${sysInfo()!.goVersion})`
+              : "—"}
+          </span>
+        </SettingRow>
+      </SettingGroup>
 
-          <div class="flex items-center justify-between gap-4 px-4 py-2.5">
-            <span class="text-[var(--text-muted)] shrink-0">{t("settings.runtimeGatewayLabel")}</span>
-            <span class="font-mono text-[11px] text-[var(--text-secondary)] truncate selectable-text">
-              {sysInfo()?.wsBaseURL || workspace.wsBaseURL || "—"}
-            </span>
-          </div>
-
-          <div class="flex items-center justify-between gap-4 px-4 py-2.5">
-            <span class="text-[var(--text-muted)] shrink-0">{t("settings.runtimeConfigPathLabel")}</span>
-            <span class="font-mono text-[11px] text-[var(--text-secondary)] truncate selectable-text">
-              {sysInfo()?.userConfigPath || "~/.hoxi/models.json"}
-            </span>
-          </div>
-
-          <div class="flex items-center justify-between gap-4 px-4 py-2.5">
-            <span class="text-[var(--text-muted)] shrink-0">{t("settings.runtimePlatformLabel")}</span>
-            <span class="font-mono text-[11.5px] text-[var(--text-primary)]">
-              {sysInfo() ? `${sysInfo()!.os}/${sysInfo()!.arch} (${sysInfo()!.goVersion})` : "—"}
-            </span>
-          </div>
-        </div>
-      </section>
-
-      {/* Maintenance Actions */}
-      <section class="border-t border-[var(--border-subtle)] pt-5 space-y-3">
-        <div>
-          <h3 class="text-[13.5px] font-semibold text-[var(--text-primary)]">
-            {t("settings.sectionMaintenanceTitle")}
-          </h3>
-          <p class="text-[11.5px] text-[var(--text-muted)]">
-            {t("settings.sectionMaintenanceDesc")}
-          </p>
-        </div>
-
-        <div class="flex flex-wrap items-center gap-2.5">
+      {/* 2. Maintenance Actions */}
+      <SettingGroup
+        title={t("settings.sectionMaintenanceTitle")}
+        tip={t("settings.sectionMaintenanceDesc")}
+      >
+        <div class="p-3 flex flex-wrap items-center gap-2">
           <button
             type="button"
             disabled={reloading()}
             onClick={() => void onReloadEngine()}
-            class="inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] px-3.5 py-2 text-[12px] font-medium text-white hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
+            class="inline-flex items-center gap-1.5 rounded-lg bg-[var(--accent-primary)] px-3 py-1.5 text-[11.5px] font-medium text-white hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
           >
-            <Cpu size={13} />
-            {reloading() ? t("settings.reloadingEngineBtn") : t("settings.reloadEngineBtn")}
+            <Cpu size={12} />
+            {reloading()
+              ? t("settings.reloadingEngineBtn")
+              : t("settings.reloadEngineBtn")}
           </button>
 
           <button
@@ -172,37 +158,37 @@ export function SystemRuntimeSettingsTab() {
               closeSettingsModal();
               openProviderModal("providers");
             }}
-            class="inline-flex items-center gap-1.5 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] hover:bg-[var(--bg-hover)] px-3.5 py-2 text-[12px] font-medium text-[var(--text-primary)] transition-colors cursor-pointer"
+            class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] px-3 py-1.5 text-[11.5px] font-medium text-[var(--text-primary)] transition-colors cursor-pointer"
           >
-            <KeyRound size={13} class="text-[var(--accent-primary)]" />
+            <KeyRound size={12} class="text-[var(--accent-primary)]" />
             {t("settings.manageModelsAndKeysBtn")}
           </button>
 
           <button
             type="button"
             onClick={() => void onClearTelemetry()}
-            class="inline-flex items-center gap-1.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)] hover:bg-[var(--bg-hover)] px-3.5 py-2 text-[12px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+            class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] px-3 py-1.5 text-[11.5px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
           >
-            <Activity size={13} />
+            <Activity size={12} />
             {t("settings.resetTelemetryBtn")}
           </button>
 
           <button
             type="button"
             onClick={onResetSettings}
-            class="inline-flex items-center gap-1.5 rounded-xl border border-[var(--danger-border)] bg-[var(--danger-surface)] px-3.5 py-2 text-[12px] font-medium text-[var(--danger-text)] hover:opacity-90 transition-opacity cursor-pointer"
+            class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--danger-border)] bg-[var(--danger-surface)] px-3 py-1.5 text-[11.5px] font-medium text-[var(--danger-text)] hover:opacity-90 transition-opacity cursor-pointer"
           >
-            <RotateCcw size={13} />
+            <RotateCcw size={12} />
             {t("settings.resetSettingsBtn")}
           </button>
         </div>
+      </SettingGroup>
 
-        <Show when={actionToast()}>
-          <div class="rounded-xl border border-[var(--ok-border)] bg-[var(--ok-surface)] px-3.5 py-2 text-[12px] text-[var(--ok-text)]">
-            {actionToast()}
-          </div>
-        </Show>
-      </section>
+      <Show when={actionToast()}>
+        <div class="rounded-xl border border-[var(--ok-border)] bg-[var(--ok-surface)] px-3 py-2 text-[11.5px] text-[var(--ok-text)]">
+          {actionToast()}
+        </div>
+      </Show>
     </div>
   );
 }

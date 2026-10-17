@@ -1,13 +1,12 @@
 // web/src/components/layout/LeftNav.tsx
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
-import { User } from "lucide-solid";
+import { ArrowRightLeft } from "lucide-solid";
 import {
-  appSettings,
   archiveSession,
   discardSession,
   newIsolatedSession,
   openCreateWorkspaceModal,
-  openSettingsModal,
+  openHandoffModal,
   reorderProjects,
   selectSession,
   setProjectOrder,
@@ -22,6 +21,7 @@ import { Icon, Spinner } from "../icons";
 import { buildAllProjects, findProjectDropTarget } from "./left-nav-helpers";
 import MultiProjectTreeItem from "./MultiProjectItem";
 import SingleProjectNavView from "./SingleProjectNavView";
+import UserAccountMenu from "./UserAccountMenu";
 import { t } from "../../i18n";
 
 export default function LeftNav() {
@@ -284,14 +284,6 @@ export default function LeftNav() {
     await discardSession(sessionID, true, projPath);
   };
 
-  const currentUsername = createMemo(() => {
-    const custom = appSettings.userDisplayName.trim();
-    if (custom) return custom;
-    const parts = (workspace.rootDir || "").split("/").filter(Boolean);
-    if (parts[0] === "Users" && parts[1]) return parts[1];
-    return "User";
-  });
-
   return (
     <aside class="relative h-full w-full flex flex-col bg-transparent pl-2 pr-1 select-none">
       {/* Minimal Header: Mode Toggle + Search + New Workspace */}
@@ -303,7 +295,7 @@ export default function LeftNav() {
           <button
             type="button"
             onClick={() => setSidebarProjectMode("multi")}
-            class={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-medium transition-colors cursor-pointer ${
+            class={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11.5px] font-medium transition-colors cursor-pointer ${
               workspace.sidebarProjectMode === "multi"
                 ? "bg-[var(--bg-panel)] text-[var(--text-primary)] shadow-2xs"
                 : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
@@ -316,7 +308,7 @@ export default function LeftNav() {
           <button
             type="button"
             onClick={() => setSidebarProjectMode("single")}
-            class={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-medium transition-colors cursor-pointer ${
+            class={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11.5px] font-medium transition-colors cursor-pointer ${
               workspace.sidebarProjectMode === "single"
                 ? "bg-[var(--bg-panel)] text-[var(--text-primary)] shadow-2xs"
                 : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
@@ -328,6 +320,14 @@ export default function LeftNav() {
         </div>
 
         <div class="flex items-center gap-0.5">
+          <button
+            type="button"
+            onClick={() => openHandoffModal()}
+            class="p-1 rounded-md text-[var(--accent-primary)] hover:bg-[var(--accent-surface)] transition-colors cursor-pointer"
+            title={t("leftNav.handoffTooltip")}
+          >
+            <ArrowRightLeft size={14} />
+          </button>
           <button
             type="button"
             onClick={() => setShowSearch((v) => !v)}
@@ -390,11 +390,11 @@ export default function LeftNav() {
             >
               <Icon name="new-session" size="small" class="text-[var(--accent-primary)]" />
             </Show>
-            <span class="text-[12px] font-medium truncate">
+            <span class="text-[13.5px] font-medium truncate">
               {t("leftNav.newThread")}
             </span>
           </div>
-          <span class="text-[10px] font-mono text-[var(--text-faint)] group-hover:text-[var(--text-muted)]">
+          <span class="text-[11px] font-mono text-[var(--text-faint)] group-hover:text-[var(--text-muted)]">
             ⌘N
           </span>
         </button>
@@ -453,31 +453,8 @@ export default function LeftNav() {
         />
       </Show>
 
-      {/* Kilo-style Bottom Bar: Left User Profile, Right Settings Icon */}
-      <div class="mt-auto border-t border-[var(--border-subtle)]/50 pt-2 pb-2.5 px-2 flex items-center justify-between">
-        <button
-          type="button"
-          onClick={() => openSettingsModal("general")}
-          class="flex items-center gap-2 rounded-lg px-1.5 py-1 text-left text-[12px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]/60 transition-colors cursor-pointer min-w-0"
-          title={t("settings.modalTitle")}
-        >
-          <div class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--bg-inset)] text-[var(--text-secondary)]">
-            <User size={13} />
-          </div>
-          <span class="truncate font-medium">
-            {currentUsername()}
-          </span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => openSettingsModal("general")}
-          class="p-1.5 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]/60 transition-colors cursor-pointer shrink-0"
-          title={`${t("settings.modalTitle")} (⌘,)`}
-        >
-          <Icon name="settings-gear" size="small" />
-        </button>
-      </div>
+      {/* Kilo-style Bottom Bar: Account Popover + Settings Gear */}
+      <UserAccountMenu />
     </aside>
   );
 }

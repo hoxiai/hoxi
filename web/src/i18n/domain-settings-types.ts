@@ -12,6 +12,8 @@ export interface SettingsI18n {
   // General & Appearance
   sectionLanguageTitle: string;
   sectionLanguageDesc: string;
+  langZhLabel: string;
+  langEnLabel: string;
   langZhDesc: string;
   langEnDesc: string;
   sectionThemeTitle: string;
@@ -31,6 +33,21 @@ export interface SettingsI18n {
   sectionProfileTitle: string;
   sectionProfileDesc: string;
   profileNamePlaceholder: string;
+  profileEmailLabel: string;
+  profileEmailPlaceholder: string;
+  accountMenuTitle: string;
+  accountPlanBadge: string;
+  accountGuestBadge: string;
+  accountSignInBtn: string;
+  accountSignOutBtn: string;
+  accountEditProfileBtn: string;
+  accountSaveProfileBtn: string;
+  accountUseGitIdentityBtn: string;
+  accountConnectedProviders: string;
+  accountSignInTitle: string;
+  accountSignInDesc: string;
+  accountNameInputLabel: string;
+  accountEmailInputLabel: string;
 
   // Chat & Composer
   sectionSendShortcutTitle: string;

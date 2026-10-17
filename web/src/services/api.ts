@@ -188,94 +188,52 @@ export const hoxiAPI = {
   },
 
   // Interactive Permission Approval Gate
-  replyPermission(
-    requestID: string,
-    reply: "once" | "always" | "reject",
-    directory?: string
-  ): Promise<void> {
-    return requestJSON(withDir(`/permission/${requestID}/reply`, directory), {
-      method: "POST",
-      body: JSON.stringify({ reply }),
-    });
+  replyPermission(requestID: string, reply: "once" | "always" | "reject", directory?: string): Promise<void> {
+    return requestJSON(withDir(`/permission/${requestID}/reply`, directory), { method: "POST", body: JSON.stringify({ reply }) });
   },
-
   // Interactive Question Dock (Kilo QuestionDock)
   listQuestions(directory?: string): Promise<QuestionRequest[]> {
     return requestJSON(withDir("/question", directory));
   },
-
   replyQuestion(requestID: string, answers: string[][], directory?: string): Promise<void> {
-    return requestJSON(withDir(`/question/${requestID}/reply`, directory), {
-      method: "POST",
-      body: JSON.stringify({ answers }),
-    });
+    return requestJSON(withDir(`/question/${requestID}/reply`, directory), { method: "POST", body: JSON.stringify({ answers }) });
   },
-
   rejectQuestion(requestID: string, directory?: string): Promise<void> {
-    return requestJSON(withDir(`/question/${requestID}/reject`, directory), {
-      method: "POST",
-      body: JSON.stringify({}),
-    });
+    return requestJSON(withDir(`/question/${requestID}/reject`, directory), { method: "POST", body: JSON.stringify({}) });
   },
-
   // Providers, Models & Auth (Direct OpenCode endpoints used by Kilo)
   listProviders(directory?: string): Promise<ProviderListResponse> {
     return requestJSON(withDir("/provider", directory));
   },
-
   getProviderAuthMethods(directory?: string): Promise<Record<string, ProviderAuthMethod[]>> {
     return requestJSON(withDir("/provider/auth", directory));
   },
-
   authorizeProviderOAuth(
     providerID: string,
     method: number,
     inputs?: Record<string, string>,
     directory?: string
   ): Promise<ProviderAuthAuthorization> {
-    return requestJSON(
-      withDir(`/provider/${encodeURIComponent(providerID)}/oauth/authorize`, directory),
-      {
-        method: "POST",
-        body: JSON.stringify({ method, ...(inputs ? { inputs } : {}) }),
-      }
-    );
-  },
-
-  completeProviderOAuth(
-    providerID: string,
-    method: number,
-    code?: string,
-    directory?: string
-  ): Promise<boolean> {
-    return requestJSON(
-      withDir(`/provider/${encodeURIComponent(providerID)}/oauth/callback`, directory),
-      {
-        method: "POST",
-        body: JSON.stringify({ method, ...(code ? { code } : {}) }),
-      }
-    );
-  },
-
-  setProviderAuth(
-    providerID: string,
-    apiKey: string,
-    metadata?: Record<string, string>
-  ): Promise<void> {
-    return requestJSON(`/auth/${encodeURIComponent(providerID)}`, {
-      method: "PUT",
-      body: JSON.stringify({
-        type: "api",
-        key: apiKey.trim(),
-        ...(metadata && Object.keys(metadata).length > 0 ? { metadata } : {}),
-      }),
+    return requestJSON(withDir(`/provider/${encodeURIComponent(providerID)}/oauth/authorize`, directory), {
+      method: "POST",
+      body: JSON.stringify({ method, ...(inputs ? { inputs } : {}) }),
     });
   },
-
+  completeProviderOAuth(providerID: string, method: number, code?: string, directory?: string): Promise<boolean> {
+    return requestJSON(withDir(`/provider/${encodeURIComponent(providerID)}/oauth/callback`, directory), {
+      method: "POST",
+      body: JSON.stringify({ method, ...(code ? { code } : {}) }),
+    });
+  },
+  setProviderAuth(providerID: string, apiKey: string, metadata?: Record<string, string>): Promise<void> {
+    return requestJSON(`/auth/${encodeURIComponent(providerID)}`, {
+      method: "PUT",
+      body: JSON.stringify({ type: "api", key: apiKey.trim(), ...(metadata && Object.keys(metadata).length > 0 ? { metadata } : {}) }),
+    });
+  },
   removeProviderAuth(providerID: string): Promise<void> {
     return requestJSON(`/auth/${encodeURIComponent(providerID)}`, { method: "DELETE" });
   },
-
   fetchCustomProviderModels(opts: {
     baseURL: string;
     apiKey?: string;
@@ -283,46 +241,26 @@ export const hoxiAPI = {
     headers?: Record<string, string>;
     directory?: string;
   }): Promise<{ ok?: boolean; models?: Array<{ id: string; name: string }>; error?: string; auth?: boolean }> {
-    return requestJSON("/api/hoxi/provider/fetch-models", {
-      method: "POST",
-      body: JSON.stringify(opts),
-    });
+    return requestJSON("/api/hoxi/provider/fetch-models", { method: "POST", body: JSON.stringify(opts) });
   },
-
   getGlobalConfig(): Promise<Record<string, any>> {
     return requestJSON("/global/config");
   },
-
   updateGlobalConfig(config: Record<string, any>): Promise<Record<string, any>> {
     return requestJSON("/global/config", { method: "PATCH", body: JSON.stringify(config) });
   },
-
-  getHoxiModelsConfig(): Promise<{
-    hoxiProviders: Record<string, any>;
-    openCodeProviders: string[];
-    configPath: string;
-  }> {
+  getHoxiModelsConfig(): Promise<{ hoxiProviders: Record<string, any>; openCodeProviders: string[]; configPath: string }> {
     return requestJSON("/api/hoxi/models-config");
   },
-
   saveHoxiProviderConfig(
     providerID: string,
     config: Record<string, any>
   ): Promise<{ ok: boolean; hoxiProviders: Record<string, any>; configPath: string }> {
-    return requestJSON("/api/hoxi/models-config", {
-      method: "POST",
-      body: JSON.stringify({ providerID, config }),
-    });
+    return requestJSON("/api/hoxi/models-config", { method: "POST", body: JSON.stringify({ providerID, config }) });
   },
-
-  deleteHoxiProviderConfig(
-    providerID: string
-  ): Promise<{ ok: boolean; hoxiProviders: Record<string, any> }> {
-    return requestJSON(`/api/hoxi/models-config?providerID=${encodeURIComponent(providerID)}`, {
-      method: "DELETE",
-    });
+  deleteHoxiProviderConfig(providerID: string): Promise<{ ok: boolean; hoxiProviders: Record<string, any> }> {
+    return requestJSON(`/api/hoxi/models-config?providerID=${encodeURIComponent(providerID)}`, { method: "DELETE" });
   },
-
   disposeGlobal(): Promise<void> {
     return requestJSON("/global/dispose", { method: "POST", body: JSON.stringify({}) });
   },
@@ -375,78 +313,49 @@ export const hoxiAPI = {
       body: JSON.stringify({ sessionID, ...(directory ? { directory } : {}) }),
     });
   },
-
   getWorktreeStatus(sessionID: string, directory?: string): Promise<WorktreeStatus> {
     const q = `sessionID=${encodeURIComponent(sessionID)}${directory ? `&directory=${encodeURIComponent(directory)}` : ""}`;
     return requestJSON(`/api/hoxi/worktree/status?${q}`);
   },
-
   getWorktreeDiff(sessionID: string, directory?: string): Promise<SnapshotFileDiff[]> {
     const q = `sessionID=${encodeURIComponent(sessionID)}${directory ? `&directory=${encodeURIComponent(directory)}` : ""}`;
     return requestJSON(`/api/hoxi/worktree/diff?${q}`);
   },
-
   applyWorktree(sessionID: string, mode: "patch" | "merge" = "patch"): Promise<{ ok: boolean }> {
-    return requestJSON("/api/hoxi/worktree/apply", {
-      method: "POST",
-      body: JSON.stringify({ sessionID, mode }),
-    });
+    return requestJSON("/api/hoxi/worktree/apply", { method: "POST", body: JSON.stringify({ sessionID, mode }) });
   },
-
   revertWorktreeFile(sessionID: string, file: string): Promise<{ ok: boolean }> {
-    return requestJSON("/api/hoxi/worktree/revert-file", {
-      method: "POST",
-      body: JSON.stringify({ sessionID, file }),
-    });
+    return requestJSON("/api/hoxi/worktree/revert-file", { method: "POST", body: JSON.stringify({ sessionID, file }) });
   },
-
   commitWorktree(sessionID: string, message: string): Promise<{ ok: boolean; commit?: string }> {
-    return requestJSON("/api/hoxi/worktree/commit", {
-      method: "POST",
-      body: JSON.stringify({ sessionID, message }),
-    });
+    return requestJSON("/api/hoxi/worktree/commit", { method: "POST", body: JSON.stringify({ sessionID, message }) });
   },
-
   removeWorktree(sessionID: string, force = false, keepBranch = false): Promise<{ ok: boolean }> {
     return requestJSON(
       `/api/hoxi/worktree/${encodeURIComponent(sessionID)}?force=${force ? "true" : "false"}&keepBranch=${keepBranch ? "true" : "false"}`,
       { method: "DELETE" }
     );
   },
-
   listBranches(directory?: string): Promise<BranchListResponse> {
     const q = directory ? `?directory=${encodeURIComponent(directory)}` : "";
     return requestJSON(`/api/hoxi/worktree/branches${q}`);
   },
-
   checkoutBranch(branch: string, create = false, directory?: string): Promise<WorktreeStatus> {
     return requestJSON("/api/hoxi/worktree/checkout", {
       method: "POST",
       body: JSON.stringify({ branch, create, ...(directory ? { directory } : {}) }),
     });
   },
-
-  renameBranch(
-    sessionID: string,
-    newBranch: string,
-    directory?: string
-  ): Promise<{ ok: boolean; branch: string }> {
+  renameBranch(sessionID: string, newBranch: string, directory?: string): Promise<{ ok: boolean; branch: string }> {
     return requestJSON("/api/hoxi/worktree/rename-branch", {
       method: "POST",
       body: JSON.stringify({ sessionID, newBranch, ...(directory ? { directory } : {}) }),
     });
   },
-
-  pruneSandboxes(
-    excludeSessionID?: string,
-    directory?: string
-  ): Promise<{ ok: boolean; removedCount: number }> {
+  pruneSandboxes(excludeSessionID?: string, directory?: string): Promise<{ ok: boolean; removedCount: number }> {
     return requestJSON("/api/hoxi/worktree/prune-sandboxes", {
       method: "POST",
-      body: JSON.stringify({
-        ...(excludeSessionID ? { excludeSessionID } : {}),
-        ...(directory ? { directory } : {}),
-      }),
+      body: JSON.stringify({ ...(excludeSessionID ? { excludeSessionID } : {}), ...(directory ? { directory } : {}) }),
     });
   },
 
@@ -454,30 +363,21 @@ export const hoxiAPI = {
   listProjects(): Promise<ProjectInfo[]> {
     return requestJSON("/project");
   },
-
   listWorkspaces(): Promise<{ workspaces: WorkspaceProfile[] }> {
     return requestJSON("/api/hoxi/workspaces");
   },
-
   createWorkspace(input: SaveWorkspaceInput): Promise<WorkspaceProfile> {
     return requestJSON("/api/hoxi/workspaces", { method: "POST", body: JSON.stringify(input) });
   },
-
   updateWorkspace(id: string, input: SaveWorkspaceInput): Promise<WorkspaceProfile> {
-    return requestJSON(`/api/hoxi/workspaces/${encodeURIComponent(id)}`, {
-      method: "PUT",
-      body: JSON.stringify(input),
-    });
+    return requestJSON(`/api/hoxi/workspaces/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(input) });
   },
-
   deleteWorkspace(id: string): Promise<{ ok: boolean }> {
     return requestJSON(`/api/hoxi/workspaces/${encodeURIComponent(id)}`, { method: "DELETE" });
   },
-
   openDirectoryDialog(): Promise<{ path: string; error?: string }> {
     return requestJSON("/api/hoxi/dialog/open-directory", { method: "POST" });
   },
-
   testProviderModel(opts: {
     providerID?: string;
     baseURL?: string;
@@ -486,39 +386,21 @@ export const hoxiAPI = {
     modelID: string;
     headers?: Record<string, string>;
   }): Promise<{ ok: boolean; latencyMs?: number; error?: string }> {
-    return requestJSON("/api/hoxi/provider/test-model", {
-      method: "POST",
-      body: JSON.stringify(opts),
-    });
+    return requestJSON("/api/hoxi/provider/test-model", { method: "POST", body: JSON.stringify(opts) });
   },
-
   getProviderTelemetry(): Promise<{ providers: Record<string, ProviderTelemetryStats> }> {
     return requestJSON("/api/hoxi/provider/telemetry");
   },
-
-  saveProviderTelemetry(
-    providers: Record<string, ProviderTelemetryStats>
-  ): Promise<{ ok: boolean }> {
-    return requestJSON("/api/hoxi/provider/telemetry", {
-      method: "POST",
-      body: JSON.stringify({ providers }),
-    });
+  saveProviderTelemetry(providers: Record<string, ProviderTelemetryStats>): Promise<{ ok: boolean }> {
+    return requestJSON("/api/hoxi/provider/telemetry", { method: "POST", body: JSON.stringify({ providers }) });
   },
-
   clearProviderTelemetry(providerID?: string): Promise<{ ok: boolean }> {
     const q = providerID ? `?providerID=${encodeURIComponent(providerID)}` : "";
-    return requestJSON(`/api/hoxi/provider/telemetry${q}`, {
-      method: "DELETE",
-    });
+    return requestJSON(`/api/hoxi/provider/telemetry${q}`, { method: "DELETE" });
   },
-
   auditProviderCode(req: CodeAuditRequest): Promise<CodeAuditResult> {
-    return requestJSON("/api/hoxi/provider/audit", {
-      method: "POST",
-      body: JSON.stringify(req),
-    });
+    return requestJSON("/api/hoxi/provider/audit", { method: "POST", body: JSON.stringify(req) });
   },
-
   summarizeSessionTitle(req: {
     providerID: string;
     modelID: string;
@@ -527,10 +409,46 @@ export const hoxiAPI = {
     prompt: string;
     locale: string;
   }): Promise<{ ok: boolean; title: string; error?: string }> {
-    return requestJSON("/api/hoxi/provider/summarize-title", {
-      method: "POST",
-      body: JSON.stringify(req),
-    });
+    return requestJSON("/api/hoxi/provider/summarize-title", { method: "POST", body: JSON.stringify(req) });
+  },
+
+  // Cross-Tool Session Handoff & Local CLI Bridge
+  listExternalSessions(opts?: {
+    directory?: string;
+    query?: string;
+    source?: string;
+    onlyCurrent?: boolean;
+  }): Promise<import("./api-types").HandoffSessionsResponse> {
+    const params = new URLSearchParams();
+    if (opts?.directory) params.set("directory", opts.directory);
+    if (opts?.query) params.set("query", opts.query);
+    if (opts?.source) params.set("source", opts.source);
+    if (opts?.onlyCurrent) params.set("onlyCurrent", "1");
+    return requestJSON(`/api/hoxi/handoff/sessions?${params.toString()}`);
+  },
+  getExternalSessionPreview(
+    source: string,
+    id: string,
+    cwd?: string
+  ): Promise<import("./api-types").ExternalSessionDetail> {
+    const params = new URLSearchParams({ source, id });
+    if (cwd) params.set("cwd", cwd);
+    return requestJSON(`/api/hoxi/handoff/preview?${params.toString()}`);
+  },
+  importExternalSession(req: {
+    source: string;
+    sessionID: string;
+    sourceCwd?: string;
+    targetDirectory?: string;
+  }): Promise<import("./api-types").HandoffImportResponse> {
+    return requestJSON("/api/hoxi/handoff/import", { method: "POST", body: JSON.stringify(req) });
+  },
+  getLocalCLIStatus(): Promise<import("./api-types").LocalCLIStatusResponse> {
+    return requestJSON("/api/hoxi/local-cli/status");
+  },
+  importLocalCLI(toolID: string): Promise<import("./api-types").LocalCLIImportResponse> {
+    return requestJSON("/api/hoxi/local-cli/import", { method: "POST", body: JSON.stringify({ toolID }) });
   },
 };
+
 

@@ -2,6 +2,7 @@ import { createSignal, onCleanup, Show } from "solid-js";
 import CompactHeader from "./CompactHeader";
 import LeftNav from "./LeftNav";
 import WorkspaceModal from "./WorkspaceModal";
+import ExternalHandoffModal from "./ExternalHandoffModal";
 import MessageStream from "../timeline/MessageStream";
 import Composer from "../timeline/Composer";
 import InspectorPane from "../inspector/InspectorPane";
@@ -78,8 +79,9 @@ export default function ThreePaneShell() {
         </Show>
       </main>
 
-      {/* Provider, Custom Model, Workspace & System Settings Modals */}
+      {/* Provider, Custom Model, Workspace, Session Handoff & System Settings Modals */}
       <WorkspaceModal />
+      <ExternalHandoffModal />
       <ProviderModal />
       <MultiModelArenaModal />
       <SettingsModal />
