@@ -165,12 +165,19 @@ func (m *worktreeManager) Status(sessionID string) (worktreeStatus, error) {
 		candidate := filepath.Join(m.rootDir, ".hoxi", "worktrees", sessionID)
 		if sessionID != "" && sessionID != "__root__" {
 			if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+				br, _ := runGit(candidate, "rev-parse", "--abbrev-ref", "HEAD")
+				if br == "" {
+					br = "hoxi/" + sessionID
+				}
 				meta = worktreeMeta{
 					SessionID: sessionID,
 					Isolated:  true,
 					Directory: candidate,
-					Branch:    "hoxi/" + sessionID,
+					Branch:    br,
 				}
+				m.mu.Lock()
+				m.sessions[sessionID] = meta
+				m.mu.Unlock()
 				ok = true
 			}
 		}
@@ -183,10 +190,8 @@ func (m *worktreeManager) Status(sessionID string) (worktreeStatus, error) {
 		}
 	}
 
-	if meta.Branch == "" {
-		if br, err := runGit(meta.Directory, "rev-parse", "--abbrev-ref", "HEAD"); err == nil && br != "" {
-			meta.Branch = br
-		}
+	if br, err := runGit(meta.Directory, "rev-parse", "--abbrev-ref", "HEAD"); err == nil && br != "" {
+		meta.Branch = br
 	}
 
 	porcelain, _ := runGitRaw(meta.Directory, "status", "--porcelain")
@@ -279,6 +284,22 @@ func (m *worktreeManager) Apply(sessionID, mode string) error {
 	m.mu.RLock()
 	meta, ok := m.sessions[sessionID]
 	m.mu.RUnlock()
+	if !ok {
+		candidate := filepath.Join(m.rootDir, ".hoxi", "worktrees", sessionID)
+		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+			br, _ := runGit(candidate, "rev-parse", "--abbrev-ref", "HEAD")
+			if br == "" {
+				br = "hoxi/" + sessionID
+			}
+			meta = worktreeMeta{
+				SessionID: sessionID,
+				Isolated:  true,
+				Directory: candidate,
+				Branch:    br,
+			}
+			ok = true
+		}
+	}
 	if !ok || !meta.Isolated {
 		return errors.New("session does not have an isolated worktree")
 	}
@@ -320,17 +341,25 @@ func (m *worktreeManager) Apply(sessionID, mode string) error {
 }
 
 func (m *worktreeManager) Remove(sessionID string, force bool) error {
+	return m.RemoveWithOptions(sessionID, force, false)
+}
+
+func (m *worktreeManager) RemoveWithOptions(sessionID string, force bool, keepBranch bool) error {
 	sessionID = sanitizeSessionID(sessionID)
 	m.mu.Lock()
 	meta, ok := m.sessions[sessionID]
 	if !ok {
 		candidate := filepath.Join(m.rootDir, ".hoxi", "worktrees", sessionID)
 		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+			br, _ := runGit(candidate, "rev-parse", "--abbrev-ref", "HEAD")
+			if br == "" {
+				br = "hoxi/" + sessionID
+			}
 			meta = worktreeMeta{
 				SessionID: sessionID,
 				Isolated:  true,
 				Directory: candidate,
-				Branch:    "hoxi/" + sessionID,
+				Branch:    br,
 			}
 		} else {
 			m.mu.Unlock()
@@ -359,11 +388,216 @@ func (m *worktreeManager) Remove(sessionID string, force bool) error {
 	if _, err := runGit(m.rootDir, args...); err != nil {
 		_, _ = runGit(m.rootDir, "worktree", "prune")
 	}
-	if meta.Branch != "" {
+	if !keepBranch && meta.Branch != "" {
 		_, _ = runGit(m.rootDir, "branch", "-D", meta.Branch)
 	}
 	delete(m.sessions, sessionID)
 	return nil
+}
+
+type gitBranchInfo struct {
+	Name       string `json:"name"`
+	Current    bool   `json:"current"`
+	IsSandbox  bool   `json:"isSandbox"`
+	Worktree   string `json:"worktree,omitempty"`
+	SessionID  string `json:"sessionID,omitempty"`
+	HeadCommit string `json:"headCommit,omitempty"`
+	Subject    string `json:"subject,omitempty"`
+}
+
+type branchListResponse struct {
+	CurrentBranch string          `json:"currentBranch"`
+	Branches      []gitBranchInfo `json:"branches"`
+	SandboxCount  int             `json:"sandboxCount"`
+}
+
+func (m *worktreeManager) ListBranches() (branchListResponse, error) {
+	currentBranch, _ := runGit(m.rootDir, "rev-parse", "--abbrev-ref", "HEAD")
+
+	// Map checked-out branches to their worktree directory
+	wtByBranch := make(map[string]string)
+	if wtRaw, err := runGitRaw(m.rootDir, "worktree", "list", "--porcelain"); err == nil {
+		var curWT string
+		for _, line := range strings.Split(wtRaw, "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "worktree ") {
+				curWT = strings.TrimSpace(strings.TrimPrefix(line, "worktree "))
+			} else if strings.HasPrefix(line, "branch refs/heads/") {
+				br := strings.TrimSpace(strings.TrimPrefix(line, "branch refs/heads/"))
+				if curWT != "" && br != "" {
+					wtByBranch[br] = curWT
+				}
+			} else if line == "" {
+				curWT = ""
+			}
+		}
+	}
+
+	refOut, err := runGitRaw(
+		m.rootDir,
+		"for-each-ref",
+		"--sort=-committerdate",
+		"--format=%(refname:short)\t%(objectname:short)\t%(contents:subject)",
+		"refs/heads",
+	)
+	if err != nil {
+		return branchListResponse{CurrentBranch: currentBranch, Branches: []gitBranchInfo{}}, nil
+	}
+
+	var branches []gitBranchInfo
+	sandboxCount := 0
+	for _, line := range strings.Split(strings.TrimSpace(refOut), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		parts := strings.SplitN(line, "\t", 3)
+		name := strings.TrimSpace(parts[0])
+		if name == "" {
+			continue
+		}
+		var commit, subject string
+		if len(parts) > 1 {
+			commit = strings.TrimSpace(parts[1])
+		}
+		if len(parts) > 2 {
+			subject = strings.TrimSpace(parts[2])
+		}
+		wtDir := wtByBranch[name]
+		isSandbox := strings.HasPrefix(name, "hoxi/") || strings.Contains(wtDir, filepath.Join(".hoxi", "worktrees"))
+		var sid string
+		if strings.HasPrefix(name, "hoxi/") {
+			sid = strings.TrimPrefix(name, "hoxi/")
+		} else if idx := strings.Index(wtDir, filepath.Join(".hoxi", "worktrees")+string(filepath.Separator)); idx >= 0 {
+			sid = wtDir[idx+len(filepath.Join(".hoxi", "worktrees"))+1:]
+		}
+		if isSandbox {
+			sandboxCount++
+		}
+		branches = append(branches, gitBranchInfo{
+			Name:       name,
+			Current:    name == currentBranch,
+			IsSandbox:  isSandbox,
+			Worktree:   wtDir,
+			SessionID:  sid,
+			HeadCommit: commit,
+			Subject:    subject,
+		})
+	}
+
+	return branchListResponse{
+		CurrentBranch: currentBranch,
+		Branches:      branches,
+		SandboxCount:  sandboxCount,
+	}, nil
+}
+
+func sanitizeBranchName(name string) (string, error) {
+	cleaned := strings.TrimSpace(name)
+	if cleaned == "" {
+		return "", errors.New("branch name is required")
+	}
+	if strings.HasPrefix(cleaned, "-") || strings.Contains(cleaned, "..") || strings.ContainsAny(cleaned, " \t\n~^:?*[\\") {
+		return "", errors.New("invalid git branch name")
+	}
+	return cleaned, nil
+}
+
+func (m *worktreeManager) CheckoutBranch(branch string, create bool) (worktreeStatus, error) {
+	cleaned, err := sanitizeBranchName(branch)
+	if err != nil {
+		return worktreeStatus{}, err
+	}
+	if create {
+		if _, err := runGit(m.rootDir, "checkout", "-b", cleaned); err != nil {
+			return worktreeStatus{}, err
+		}
+	} else {
+		if _, err := runGit(m.rootDir, "checkout", cleaned); err != nil {
+			return worktreeStatus{}, err
+		}
+	}
+	return m.Status("__root__")
+}
+
+func (m *worktreeManager) RenameBranch(sessionID, newBranch string) (string, error) {
+	cleaned, err := sanitizeBranchName(newBranch)
+	if err != nil {
+		return "", err
+	}
+	sessionID = sanitizeSessionID(sessionID)
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	workDir := m.rootDir
+	meta, ok := m.sessions[sessionID]
+	if ok && meta.Isolated && meta.Directory != "" {
+		workDir = meta.Directory
+	} else if sessionID != "" && sessionID != "__root__" {
+		candidate := filepath.Join(m.rootDir, ".hoxi", "worktrees", sessionID)
+		if info, statErr := os.Stat(candidate); statErr == nil && info.IsDir() {
+			workDir = candidate
+			meta = worktreeMeta{
+				SessionID: sessionID,
+				Isolated:  true,
+				Directory: candidate,
+			}
+			ok = true
+		}
+	}
+
+	if _, err := runGit(workDir, "branch", "-m", cleaned); err != nil {
+		return "", err
+	}
+	if ok {
+		meta.Branch = cleaned
+		m.sessions[sessionID] = meta
+	}
+	return cleaned, nil
+}
+
+func (m *worktreeManager) PruneSandboxes(excludeSessionID string) (int, error) {
+	excludeSessionID = sanitizeSessionID(excludeSessionID)
+	removed := 0
+
+	worktreesRoot := filepath.Join(m.rootDir, ".hoxi", "worktrees")
+	if entries, err := os.ReadDir(worktreesRoot); err == nil {
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			sid := entry.Name()
+			if excludeSessionID != "" && sid == excludeSessionID {
+				continue
+			}
+			wtDir := filepath.Join(worktreesRoot, sid)
+			if _, err := runGit(m.rootDir, "worktree", "remove", "--force", wtDir); err != nil {
+				_ = os.RemoveAll(wtDir)
+			}
+			m.mu.Lock()
+			delete(m.sessions, sid)
+			m.mu.Unlock()
+			removed++
+		}
+	}
+	_, _ = runGit(m.rootDir, "worktree", "prune")
+
+	if refOut, err := runGitRaw(m.rootDir, "for-each-ref", "--format=%(refname:short)", "refs/heads/hoxi"); err == nil {
+		for _, line := range strings.Split(strings.TrimSpace(refOut), "\n") {
+			br := strings.TrimSpace(line)
+			if br == "" {
+				continue
+			}
+			if excludeSessionID != "" && br == "hoxi/"+excludeSessionID {
+				continue
+			}
+			if _, err := runGit(m.rootDir, "branch", "-D", br); err == nil {
+				removed++
+			}
+		}
+	}
+
+	return removed, nil
 }
 
 func (m *worktreeManager) RevertFile(sessionID, relPath string) error {

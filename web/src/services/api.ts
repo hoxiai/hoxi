@@ -9,6 +9,7 @@ import type {
 import type {
   AgentInfo,
   BootstrapInfo,
+  BranchListResponse,
   CodeAuditRequest,
   CodeAuditResult,
   ProjectInfo,
@@ -406,11 +407,47 @@ export const hoxiAPI = {
     });
   },
 
-  removeWorktree(sessionID: string, force = false): Promise<{ ok: boolean }> {
+  removeWorktree(sessionID: string, force = false, keepBranch = false): Promise<{ ok: boolean }> {
     return requestJSON(
-      `/api/hoxi/worktree/${encodeURIComponent(sessionID)}?force=${force ? "true" : "false"}`,
+      `/api/hoxi/worktree/${encodeURIComponent(sessionID)}?force=${force ? "true" : "false"}&keepBranch=${keepBranch ? "true" : "false"}`,
       { method: "DELETE" }
     );
+  },
+
+  listBranches(directory?: string): Promise<BranchListResponse> {
+    const q = directory ? `?directory=${encodeURIComponent(directory)}` : "";
+    return requestJSON(`/api/hoxi/worktree/branches${q}`);
+  },
+
+  checkoutBranch(branch: string, create = false, directory?: string): Promise<WorktreeStatus> {
+    return requestJSON("/api/hoxi/worktree/checkout", {
+      method: "POST",
+      body: JSON.stringify({ branch, create, ...(directory ? { directory } : {}) }),
+    });
+  },
+
+  renameBranch(
+    sessionID: string,
+    newBranch: string,
+    directory?: string
+  ): Promise<{ ok: boolean; branch: string }> {
+    return requestJSON("/api/hoxi/worktree/rename-branch", {
+      method: "POST",
+      body: JSON.stringify({ sessionID, newBranch, ...(directory ? { directory } : {}) }),
+    });
+  },
+
+  pruneSandboxes(
+    excludeSessionID?: string,
+    directory?: string
+  ): Promise<{ ok: boolean; removedCount: number }> {
+    return requestJSON("/api/hoxi/worktree/prune-sandboxes", {
+      method: "POST",
+      body: JSON.stringify({
+        ...(excludeSessionID ? { excludeSessionID } : {}),
+        ...(directory ? { directory } : {}),
+      }),
+    });
   },
 
   // OpenCode Project / Workspace Manager (Kilo Desktop)

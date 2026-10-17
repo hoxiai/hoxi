@@ -76,6 +76,22 @@ export interface WorktreeStatus {
   deletions: number;
 }
 
+export interface GitBranchInfo {
+  name: string;
+  current: boolean;
+  isSandbox: boolean;
+  worktree?: string;
+  sessionID?: string;
+  headCommit?: string;
+  subject?: string;
+}
+
+export interface BranchListResponse {
+  currentBranch: string;
+  branches: GitBranchInfo[];
+  sandboxCount: number;
+}
+
 export interface BootstrapInfo {
   rootDir: string;
   wsBaseURL: string;
@@ -98,6 +114,9 @@ export interface SystemRuntimeInfo {
   os: string;
   arch: string;
   goVersion: string;
+  systemUsername?: string;
+  gitUserName?: string;
+  gitUserEmail?: string;
   status: {
     attention: number;
     running: number;

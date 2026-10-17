@@ -1,8 +1,6 @@
 import { createMemo, createSignal, onCleanup, onMount, Show } from "solid-js";
 import {
   Activity,
-  GitBranch,
-  GitMerge,
   KeyRound,
   Moon,
   PanelRightClose,
@@ -12,8 +10,6 @@ import {
 } from "lucide-solid";
 import {
   activeSession,
-  appSettings,
-  applySessionWorktree,
   isSessionBusy,
   openEditWorkspaceModal,
   setWorkspace,
@@ -25,6 +21,7 @@ import {
 import { hoxiAPI } from "../../services/api";
 import { Spinner, TextShimmer } from "../icons";
 import { t } from "../../i18n";
+import BranchManagerPopover from "./BranchManagerPopover";
 
 interface CompactHeaderProps {
   inspectorOpen: boolean;
@@ -32,15 +29,9 @@ interface CompactHeaderProps {
 }
 
 export default function CompactHeader(props: CompactHeaderProps) {
-  const [applying, setApplying] = createSignal(false);
-  const [applyNote, setApplyNote] = createSignal<string | null>(null);
   const [lspCount, setLspCount] = createSignal<number | null>(null);
 
   const session = createMemo(() => activeSession());
-  const worktree = createMemo(() => {
-    const id = workspace.activeSessionID;
-    return id ? workspace.worktreeBySession[id] : undefined;
-  });
 
   const diffCount = createMemo(() => {
     const id = workspace.activeSessionID;
@@ -48,23 +39,6 @@ export default function CompactHeader(props: CompactHeaderProps) {
   });
 
   const projectName = createMemo(() => workspaceDisplayName(workspace.rootDir));
-
-  const onApply = async () => {
-    const s = session();
-    if (!s || applying()) return;
-    setApplying(true);
-    setApplyNote(null);
-    try {
-      await applySessionWorktree(s.id, appSettings.worktreeApplyMode);
-      setApplyNote(t("header.appliedSuccess"));
-    } catch (err) {
-      console.error(err);
-      setApplyNote(t("header.applyFailed"));
-    } finally {
-      setApplying(false);
-      setTimeout(() => setApplyNote(null), 4000);
-    }
-  };
 
   const onUndoRevert = async () => {
     const s = session();
@@ -121,26 +95,7 @@ export default function CompactHeader(props: CompactHeaderProps) {
           </button>
         </Show>
 
-        <Show when={worktree()?.branch}>
-          <span class="ml-1 inline-flex items-center gap-1 rounded-full border border-[var(--accent-border)] bg-[var(--accent-surface)] px-2.5 py-0.5 text-[11px] font-mono text-[var(--accent-text)]">
-            <GitBranch size={11} />
-            {worktree()?.branch}
-          </span>
-          <button
-            class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-strong)] bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] px-2.5 py-1 text-[11px] text-[var(--text-primary)] disabled:opacity-50 transition-colors shadow-2xs"
-            style={{ "--wails-draggable": "no-drag" } as any}
-            disabled={applying()}
-            onClick={onApply}
-            title={t("header.applyTooltip")}
-          >
-            <GitMerge size={11} />
-            {applying() ? t("header.applying") : t("header.applyToMain")}
-          </button>
-        </Show>
-
-        <Show when={applyNote()}>
-          <span class="text-[11px] text-[var(--ok-text)]">{applyNote()}</span>
-        </Show>
+        <BranchManagerPopover />
       </div>
 
       <div class="flex items-center gap-2 text-xs">

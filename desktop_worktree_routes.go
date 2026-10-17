@@ -118,6 +118,93 @@ func (m *worktreeManager) registerRoutes(mux *http.ServeMux) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "commit": hash})
 	})
 
+	mux.HandleFunc("/api/hoxi/worktree/branches", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if dir := r.URL.Query().Get("directory"); dir != "" {
+			m.SetRootDir(dir)
+		}
+		res, err := m.ListBranches()
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, res)
+	})
+
+	mux.HandleFunc("/api/hoxi/worktree/checkout", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var body struct {
+			Branch    string `json:"branch"`
+			Create    bool   `json:"create"`
+			Directory string `json:"directory"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if body.Directory != "" {
+			m.SetRootDir(body.Directory)
+		}
+		st, err := m.CheckoutBranch(body.Branch, body.Create)
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, st)
+	})
+
+	mux.HandleFunc("/api/hoxi/worktree/rename-branch", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var body struct {
+			SessionID string `json:"sessionID"`
+			NewBranch string `json:"newBranch"`
+			Directory string `json:"directory"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if body.Directory != "" {
+			m.SetRootDir(body.Directory)
+		}
+		br, err := m.RenameBranch(body.SessionID, body.NewBranch)
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "branch": br})
+	})
+
+	mux.HandleFunc("/api/hoxi/worktree/prune-sandboxes", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var body struct {
+			ExcludeSessionID string `json:"excludeSessionID"`
+			Directory        string `json:"directory"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if body.Directory != "" {
+			m.SetRootDir(body.Directory)
+		}
+		removed, err := m.PruneSandboxes(body.ExcludeSessionID)
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "removedCount": removed})
+	})
+
 	mux.HandleFunc("/api/hoxi/worktree/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodDelete {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -125,7 +212,8 @@ func (m *worktreeManager) registerRoutes(mux *http.ServeMux) {
 		}
 		sessionID := strings.TrimPrefix(r.URL.Path, "/api/hoxi/worktree/")
 		force := r.URL.Query().Get("force") == "true"
-		if err := m.Remove(sessionID, force); err != nil {
+		keepBranch := r.URL.Query().Get("keepBranch") == "true"
+		if err := m.RemoveWithOptions(sessionID, force, keepBranch); err != nil {
 			writeJSONError(w, http.StatusBadRequest, err.Error())
 			return
 		}

@@ -39,6 +39,23 @@ export interface HeaderI18n {
   inspectorShow: string;
   inspectorHide: string;
   switchFolder: string;
+  branchMenuTooltip: string;
+  localBranchesTitle: string;
+  sandboxHeaderTitle: string;
+  newBranchPlaceholder: string;
+  createBranchBtn: string;
+  applyAndExitBtn: string;
+  applyAndExitDesc: string;
+  applyKeepSandboxBtn: string;
+  renameBranchLabel: string;
+  renameBranchPlaceholder: string;
+  renameBranchBtn: string;
+  keepBranchExitBtn: string;
+  discardSandboxBtn: string;
+  enableSandboxBtn: string;
+  pruneSandboxesBtn: string;
+  prunedSuccess: string;
+  sandboxBadge: string;
 }
 
 export interface LeftNavI18n {
