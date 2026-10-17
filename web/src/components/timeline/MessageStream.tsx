@@ -119,7 +119,7 @@ export default function MessageStream() {
   const onRevertToMessage = async (messageID: string) => {
     const id = workspace.activeSessionID;
     if (!id) return;
-    if (!confirm("Revert conversation and code changes to just before this message?")) return;
+    if (!confirm(t("timeline.revertConfirm"))) return;
     try {
       await revertToHere(id, messageID);
     } catch (err) {
