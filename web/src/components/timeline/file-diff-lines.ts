@@ -1,15 +1,17 @@
+// web/src/components/timeline/file-diff-lines.ts
 import type { SnapshotFileDiff } from "../../services/sse-types";
 import { workspace } from "../../store/workspace";
 import { collectCycleChangedFiles, normalizeWorkspaceRelPath } from "./tool-card-state";
 
 /**
  * Resolves the best available SnapshotFileDiff for `filePath` in `sessionID`
- * by checking `diffsBySession` first and falling back to tool edit/write/patch parts
- * across the session's message history.
+ * by checking `inspectedFileDiff`, `diffsBySession`, and falling back to tool
+ * edit/write/patch parts across the session's message history.
  */
 export function resolveSessionDiffForFile(
   filePath: string,
-  sessionID?: string | null
+  sessionID?: string | null,
+  fallbackDiff?: SnapshotFileDiff | null
 ): SnapshotFileDiff | undefined {
   const norm = normalizeWorkspaceRelPath(filePath.replace(/:\d+(?::\d+)?$/, ""));
   if (!norm) return undefined;
@@ -18,6 +20,14 @@ export function resolveSessionDiffForFile(
     candidate === norm ||
     candidate.endsWith(`/${norm}`) ||
     norm.endsWith(`/${candidate}`);
+
+  if (
+    fallbackDiff &&
+    matchesPath(normalizeWorkspaceRelPath(fallbackDiff.file)) &&
+    (fallbackDiff.patch || fallbackDiff.before !== undefined || fallbackDiff.after !== undefined)
+  ) {
+    return fallbackDiff;
+  }
 
   const sid = sessionID || workspace.activeSessionID;
   if (sid) {

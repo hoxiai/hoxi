@@ -119,12 +119,16 @@ export function FileDiffBlock(props: {
 
     let instance: FileDiff<undefined, undefined> | undefined;
     try {
-      const meta = patch
-        ? getSingularPatch(patch)
-        : parseDiffFromFile(
-            { name: diffObj?.file || "file", contents: diffObj?.before ?? "" },
-            { name: diffObj?.file || "file", contents: diffObj?.after ?? "" }
-          );
+      let meta = patch ? getSingularPatch(patch) : undefined;
+      if ((!meta || !meta.hunks?.length) && hasBeforeAfter) {
+        meta = parseDiffFromFile(
+          { name: diffObj?.file || "file", contents: diffObj?.before ?? "" },
+          { name: diffObj?.file || "file", contents: diffObj?.after ?? "" }
+        );
+      }
+      if (!meta) {
+        meta = getSingularPatch(patch);
+      }
       instance = new FileDiff({
         theme: { dark: "pierre-dark", light: "pierre-light" },
         themeType,

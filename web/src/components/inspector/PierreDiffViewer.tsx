@@ -21,6 +21,7 @@ import {
   SelectedDiffDetail,
   synthesizeAICommitMessage,
 } from "./pierre-diff-parts";
+import { collectCycleChangedFiles } from "../timeline/tool-card-state";
 
 export { FileDiffBlock };
 
@@ -37,11 +38,24 @@ export default function PierreDiffViewer() {
 
   const diffs = createMemo(() => {
     const id = workspace.activeSessionID;
-    if (id) {
-      const sDiffs = workspace.diffsBySession[id];
-      if (sDiffs && sDiffs.length > 0) return sDiffs;
+    const base = id
+      ? workspace.diffsBySession[id]?.length
+        ? workspace.diffsBySession[id]
+        : collectCycleChangedFiles(workspace.messagesBySession[id] ?? [], id)
+      : workspace.diffsBySession[sessionKey()] ?? [];
+    const extra = workspace.inspectedFileDiff;
+    if (
+      extra &&
+      !base.some(
+        (d) =>
+          d.file === extra.file ||
+          d.file.endsWith(`/${extra.file}`) ||
+          extra.file.endsWith(`/${d.file}`)
+      )
+    ) {
+      return [...base, extra];
     }
-    return workspace.diffsBySession[sessionKey()] ?? [];
+    return base;
   });
 
   const selectedIndex = createMemo(() => {

@@ -260,7 +260,9 @@ export default function ToolCard(props: { part: ToolPart }) {
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation();
-                        isEdit() ? openChangedFileInInspector(file()) : openFileInInspector(file());
+                        isEdit()
+                          ? openChangedFileInInspector(fileDiff() ?? file())
+                          : openFileInInspector(file());
                       }}
                       class="font-mono text-[12.5px] font-medium text-[var(--text-primary)] hover:text-[var(--accent-primary)] hover:underline truncate cursor-pointer"
                       title={file()}
@@ -278,7 +280,13 @@ export default function ToolCard(props: { part: ToolPart }) {
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            openChangedFileInInspector(extraFile);
+                            const matched = fileDiffs().find(
+                              (d) =>
+                                d.file === extraFile ||
+                                d.file.endsWith(`/${extraFile}`) ||
+                                extraFile.endsWith(`/${d.file}`)
+                            );
+                            openChangedFileInInspector(matched ?? extraFile);
                           }}
                           class="hidden sm:inline-flex items-center gap-1 font-mono text-[12px] font-medium text-[var(--text-secondary)] hover:text-[var(--accent-primary)] hover:underline truncate cursor-pointer"
                           title={extraFile}

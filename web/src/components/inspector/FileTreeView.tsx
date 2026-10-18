@@ -1,17 +1,20 @@
 import { createEffect, createMemo, createSignal, For, onMount, Show } from "solid-js";
 import { ArrowLeft, FolderOpen, FolderPlus, LoaderCircle, Search } from "lucide-solid";
 import { hoxiAPI } from "../../services/api";
+import type { SnapshotFileDiff } from "../../services/sse-types";
 import {
   activeDirectory,
   activeWorkspaceFolders,
   normalizeFolderPath,
+  openDiffInInspector,
   openEditWorkspaceModal,
   setWorkspace,
   workspace,
   workspaceIdentityColor,
 } from "../../store/workspace";
-import { FileIcon } from "../icons";
+import { DiffChanges, FileIcon } from "../icons";
 import { FolderIcon } from "../layout/left-nav-helpers";
+import { computeChangedFileLines, resolveSessionDiffForFile } from "../timeline/file-diff-lines";
 import { t } from "../../i18n";
 
 function baseName(p: string): string {
@@ -24,11 +27,13 @@ export default function FileTreeView() {
   const [results, setResults] = createSignal<string[]>([]);
   const [searching, setSearching] = createSignal(false);
   const [previewPath, setPreviewPath] = createSignal<string | null>(null);
+  const [previewDiff, setPreviewDiff] = createSignal<SnapshotFileDiff | null>(null);
   const [previewContent, setPreviewContent] = createSignal("");
   const [previewError, setPreviewError] = createSignal<string | null>(null);
   const [loadingPreview, setLoadingPreview] = createSignal(false);
   const [highlightedLine, setHighlightedLine] = createSignal<number | null>(null);
   let sourceContainer: HTMLDivElement | undefined;
+  let lastLoadedDir = "";
 
   const folders = createMemo(() => activeWorkspaceFolders());
   const targetDirectory = createMemo(
@@ -67,8 +72,9 @@ export default function FileTreeView() {
     }
   };
 
-  const openPreview = async (path: string) => {
+  const openPreview = async (path: string, diffOverride?: SnapshotFileDiff | null) => {
     setPreviewPath(path);
+    setPreviewDiff(diffOverride ?? workspace.inspectedFileDiff);
     setHighlightedLine(workspace.inspectedFileLine);
     setLoadingPreview(true);
     setPreviewError(null);
@@ -84,6 +90,14 @@ export default function FileTreeView() {
   };
 
   const sourceLines = createMemo(() => previewContent().split("\n"));
+  const activeDiff = createMemo(() => {
+    const p = previewPath();
+    if (!p) return undefined;
+    return resolveSessionDiffForFile(p, workspace.activeSessionID, previewDiff());
+  });
+  const changedLines = createMemo(() =>
+    computeChangedFileLines(activeDiff(), sourceLines())
+  );
 
   onMount(() => {
     void loadInitialFiles();
@@ -91,8 +105,12 @@ export default function FileTreeView() {
 
   createEffect(() => {
     const dir = targetDirectory();
-    if (dir) {
-      setPreviewPath(null);
+    if (dir && dir !== lastLoadedDir) {
+      const hadPrev = Boolean(lastLoadedDir);
+      lastLoadedDir = dir;
+      if (hadPrev && !workspace.inspectedFilePath) {
+        setPreviewPath(null);
+      }
       void loadInitialFiles(dir);
     }
   });
@@ -101,20 +119,26 @@ export default function FileTreeView() {
   createEffect(() => {
     const target = workspace.inspectedFilePath;
     if (target) {
-      void openPreview(target);
+      const diff = workspace.inspectedFileDiff;
+      void openPreview(target, diff);
       setWorkspace("inspectedFilePath", null);
     }
   });
 
   createEffect(() => {
     const path = previewPath();
-    const line = workspace.inspectedFileLine;
-    if (!path || !line || loadingPreview() || !sourceContainer) return;
+    if (!path || loadingPreview() || !sourceContainer) return;
+    const changed = changedLines();
+    const firstChanged = changed.size > 0 ? Math.min(...changed) : null;
+    const line = workspace.inspectedFileLine || highlightedLine() || firstChanged;
+    if (!line) return;
     requestAnimationFrame(() => {
       const target = sourceContainer?.querySelector<HTMLElement>(`[data-line="${line}"]`);
       target?.scrollIntoView({ block: "center", behavior: "smooth" });
     });
-    setWorkspace("inspectedFileLine", null);
+    if (workspace.inspectedFileLine) {
+      setWorkspace("inspectedFileLine", null);
+    }
   });
 
   const onKeyDown = (ev: KeyboardEvent) => {
@@ -255,6 +279,26 @@ export default function FileTreeView() {
             >
               {previewPath()}
             </span>
+            <Show
+              when={
+                activeDiff() &&
+                ((activeDiff()!.additions ?? 0) > 0 || (activeDiff()!.deletions ?? 0) > 0)
+              }
+            >
+              <button
+                type="button"
+                onClick={() => openDiffInInspector(previewPath()!)}
+                class="shrink-0 inline-flex items-center gap-1.5 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2 py-0.5 text-[11px] text-[var(--text-secondary)] hover:text-[var(--accent-primary)] hover:border-[var(--accent-border)] transition-colors cursor-pointer"
+                title={t("toolCard.openInDiffInspector")}
+              >
+                <DiffChanges
+                  changes={{
+                    additions: activeDiff()!.additions ?? 0,
+                    deletions: activeDiff()!.deletions ?? 0,
+                  }}
+                />
+              </button>
+            </Show>
           </div>
           <div ref={sourceContainer} class="flex-1 min-h-0 overflow-auto bg-[var(--bg-code)]">
             <Show when={loadingPreview()}>
@@ -270,17 +314,43 @@ export default function FileTreeView() {
             <Show when={!loadingPreview() && !previewError()}>
               <pre class="py-3 font-mono text-[11.5px] leading-relaxed text-[var(--text-primary)] whitespace-pre selectable-text">
                 <For each={sourceLines()}>
-                  {(line, index) => (
-                    <div
-                      data-line={index() + 1}
-                      class={`flex min-h-[1.55em] px-3 ${highlightedLine() === index() + 1 ? "bg-[var(--accent-surface)]" : ""}`}
-                    >
-                      <span class="mr-4 w-10 shrink-0 select-none text-right text-[var(--text-faint)]">
-                        {index() + 1}
-                      </span>
-                      <span>{line || " "}</span>
-                    </div>
-                  )}
+                  {(line, index) => {
+                    const lineNo = () => index() + 1;
+                    const isChanged = () => changedLines().has(lineNo());
+                    const isTarget = () => highlightedLine() === lineNo();
+                    return (
+                      <div
+                        data-line={lineNo()}
+                        class={`flex min-h-[1.55em] px-3 ${
+                          isChanged()
+                            ? "bg-emerald-500/18 border-l-[3px] border-emerald-400"
+                            : isTarget()
+                              ? "bg-[var(--accent-surface)] border-l-[3px] border-[var(--accent-primary)]"
+                              : "border-l-[3px] border-transparent"
+                        }`}
+                      >
+                        <span
+                          class={`mr-2 w-10 shrink-0 select-none text-right ${
+                            isChanged()
+                              ? "text-[var(--ok-text)] font-semibold"
+                              : "text-[var(--text-faint)]"
+                          }`}
+                        >
+                          {lineNo()}
+                        </span>
+                        <span
+                          class={`mr-2 w-3 shrink-0 select-none text-center font-bold ${
+                            isChanged() ? "text-[var(--ok-text)]" : "text-transparent"
+                          }`}
+                        >
+                          +
+                        </span>
+                        <span class={isChanged() ? "text-[var(--text-primary)]" : ""}>
+                          {line || " "}
+                        </span>
+                      </div>
+                    );
+                  }}
                 </For>
               </pre>
             </Show>

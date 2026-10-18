@@ -67,6 +67,7 @@ export interface WorkspaceState {
   inspectorMaximized: boolean;
   inspectedFilePath: string | null;
   inspectedFileLine: number | null;
+  inspectedFileDiff: SnapshotFileDiff | null;
   inspectedDiffFile: string | null;
   activeInspectorFolder: string | null;
   workspaceModalMode: WorkspaceModalMode;
@@ -264,6 +265,7 @@ export const [workspace, setWorkspace] = createStore<WorkspaceState>({
   inspectorMaximized: false,
   inspectedFilePath: null,
   inspectedFileLine: null,
+  inspectedFileDiff: null,
   inspectedDiffFile: null,
   activeInspectorFolder: null,
   workspaceModalMode: null,
@@ -315,21 +317,13 @@ export function isSessionArchived(session: SessionInfo): boolean {
 
 export function setSessionSandboxMode(mode: "local" | "worktree") {
   setWorkspace("sessionSandboxMode", mode);
-  try {
-    localStorage.setItem(SESSION_SANDBOX_MODE_KEY, mode);
-  } catch {
-    /* ignore */
-  }
+  try { localStorage.setItem(SESSION_SANDBOX_MODE_KEY, mode); } catch { /* ignore */ }
 }
 
 export function setProjectOrder(order: string[]) {
   const unique = Array.from(new Set(order.filter(isValidStoredProjectPath)));
   setWorkspace("projectOrder", unique);
-  try {
-    localStorage.setItem(PROJECT_ORDER_KEY, JSON.stringify(unique));
-  } catch {
-    /* ignore */
-  }
+  try { localStorage.setItem(PROJECT_ORDER_KEY, JSON.stringify(unique)); } catch { /* ignore */ }
 }
 
 export function reorderProjects(
@@ -343,13 +337,9 @@ export function reorderProjects(
   const fromIdx = list.indexOf(fromPath);
   if (fromIdx < 0) return;
   list.splice(fromIdx, 1);
-
   const toIdx = list.indexOf(toPath);
-  if (toIdx < 0) {
-    list.push(fromPath);
-  } else {
-    list.splice(position === "after" ? toIdx + 1 : toIdx, 0, fromPath);
-  }
+  if (toIdx < 0) list.push(fromPath);
+  else list.splice(position === "after" ? toIdx + 1 : toIdx, 0, fromPath);
   setProjectOrder(list);
 }
 
@@ -360,21 +350,12 @@ export function openProviderModal(
   setWorkspace({ providerModalTab: tab, editingProviderID: editProviderID, providerModalOpen: true });
 }
 
-export function openHandoffModal() {
-  setWorkspace("handoffModalOpen", true);
-}
-
-export function closeHandoffModal() {
-  setWorkspace("handoffModalOpen", false);
-}
+export function openHandoffModal() { setWorkspace("handoffModalOpen", true); }
+export function closeHandoffModal() { setWorkspace("handoffModalOpen", false); }
 
 export function setSidebarProjectMode(mode: "single" | "multi" | "recent") {
   setWorkspace("sidebarProjectMode", mode);
-  try {
-    localStorage.setItem(SIDEBAR_PROJECT_MODE_KEY, mode);
-  } catch {
-    /* ignore */
-  }
+  try { localStorage.setItem(SIDEBAR_PROJECT_MODE_KEY, mode); } catch { /* ignore */ }
 }
 
 function firstChangedLine(patch?: string): number | null {
@@ -390,10 +371,11 @@ function firstChangedLine(patch?: string): number | null {
   return line;
 }
 
-export function openFileInInspector(filePath: string, line?: number | null) {
+export function openFileInInspector(filePath: string, line?: number | null, diff?: SnapshotFileDiff | null) {
   const cleaned = filePath.replace(/^\.\//, "").replace(/:\d+(?::\d+)?$/, "").trim();
   if (!cleaned) return;
   setWorkspace({
+    inspectedFileDiff: diff ?? null,
     inspectedFilePath: cleaned,
     inspectedFileLine: line && line > 0 ? line : null,
     inspectorTab: "files",
@@ -401,15 +383,16 @@ export function openFileInInspector(filePath: string, line?: number | null) {
   });
 }
 
-export function openChangedFileInInspector(diff: Pick<SnapshotFileDiff, "file" | "patch"> | string) {
+export function openChangedFileInInspector(diff: SnapshotFileDiff | string) {
   const file = typeof diff === "string" ? diff : diff.file;
   const knownDiff = Object.values(workspace.diffsBySession)
     .flat()
     .find((item) => item.file === file || item.file.endsWith(`/${file}`) || file.endsWith(`/${item.file}`));
+  const resolvedDiff = typeof diff === "string" ? knownDiff ?? null : { ...knownDiff, ...diff };
   openFileInInspector(
     file,
-    firstChangedLine(typeof diff === "string" ? knownDiff?.patch : diff.patch) ??
-      (knownDiff ? firstChangedLine(knownDiff.patch) : null)
+    firstChangedLine(resolvedDiff?.patch) ?? (knownDiff ? firstChangedLine(knownDiff.patch) : null),
+    resolvedDiff
   );
 }
 

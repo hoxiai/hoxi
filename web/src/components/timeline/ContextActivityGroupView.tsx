@@ -2,7 +2,7 @@ import { createMemo, createSignal, For, Show, type JSX } from "solid-js";
 import type { MessagePart } from "../../services/sse-types";
 import { openFileInInspector } from "../../store/workspace";
 import { FileIcon, Icon, Spinner, TextShimmer, ToolStatusTitle } from "../icons";
-import { extractTargetFile, kiloToolIconName } from "./tool-card-helpers";
+import { extractTargetFile, kiloToolIconName, resolveToolInput } from "./tool-card-helpers";
 import { t as tI18n } from "../../i18n";
 
 function basename(p: string): string {
@@ -12,6 +12,11 @@ function basename(p: string): string {
 
 export function isTodoToolPart(part: MessagePart): boolean {
   return part.type === "tool" && part.tool.toLowerCase() === "todowrite";
+}
+
+function isRenderableAssistantPart(part: MessagePart): boolean {
+  if (isTodoToolPart(part)) return false;
+  return part.type === "reasoning" || part.type === "tool" || part.type === "text";
 }
 
 export function isContextToolPart(part: MessagePart): part is Extract<MessagePart, { type: "tool" }> {
@@ -52,7 +57,7 @@ export function groupAssistantParts(parts: MessagePart[]): TurnRenderItem[] {
   };
 
   for (const part of parts) {
-    if (isTodoToolPart(part)) continue;
+    if (!isRenderableAssistantPart(part)) continue;
     if (isExplorationPart(part)) {
       buffer.push(part);
     } else {
@@ -72,7 +77,7 @@ function summarizeContextTool(part: Extract<MessagePart, { type: "tool" }>): {
   pills: string[];
 } {
   const t = part.tool.toLowerCase();
-  const input = part.state.input || {};
+  const input = resolveToolInput(part);
   const pills: string[] = [];
   if (typeof input.offset === "number") pills.push(`offset=${input.offset}`);
   if (typeof input.limit === "number") pills.push(`limit=${input.limit}`);
@@ -82,7 +87,7 @@ function summarizeContextTool(part: Extract<MessagePart, { type: "tool" }>): {
     const file = extractTargetFile(part) || "";
     return {
       action: tI18n("toolCard.actionRead"),
-      target: basename(file) || file || "file",
+      target: basename(file) || file || "…",
       filePath: file || undefined,
       detail: file.includes("/") ? file.slice(0, file.lastIndexOf("/")) : undefined,
       pills,
@@ -91,7 +96,7 @@ function summarizeContextTool(part: Extract<MessagePart, { type: "tool" }>): {
   if (t === "grep") {
     return {
       action: tI18n("toolCard.actionSearch"),
-      target: typeof input.pattern === "string" ? `"${input.pattern}"` : "pattern",
+      target: typeof input.pattern === "string" && input.pattern ? `"${input.pattern}"` : "…",
       detail: typeof input.path === "string" ? basename(input.path) : undefined,
       pills,
     };
@@ -99,12 +104,12 @@ function summarizeContextTool(part: Extract<MessagePart, { type: "tool" }>): {
   if (t === "glob") {
     return {
       action: tI18n("toolCard.actionFind"),
-      target: typeof input.pattern === "string" ? input.pattern : "files",
+      target: typeof input.pattern === "string" && input.pattern ? input.pattern : "…",
       detail: typeof input.path === "string" ? basename(input.path) : undefined,
       pills,
     };
   }
-  const dir = typeof input.path === "string" ? basename(input.path) : ".";
+  const dir = typeof input.path === "string" && input.path ? basename(input.path) : ".";
   return {
     action: tI18n("toolCard.actionList"),
     target: dir,
@@ -149,6 +154,20 @@ export default function ContextActivityGroupView(props: {
     return tokens.join(", ");
   });
 
+  const targetPreview = createMemo(() => {
+    const names: string[] = [];
+    for (const p of props.parts) {
+      if (p.type !== "tool") continue;
+      const info = summarizeContextTool(p);
+      if (info.target && info.target !== "…" && !names.includes(info.target)) {
+        names.push(info.target);
+      }
+    }
+    if (names.length === 0) return "";
+    const head = names.slice(0, 3).join(", ");
+    return names.length > 3 ? `${head} +${names.length - 3}` : head;
+  });
+
   const rollingContextTools = createMemo(() =>
     props.parts
       .filter((p): p is Extract<MessagePart, { type: "tool" }> => p.type === "tool")
@@ -160,17 +179,17 @@ export default function ContextActivityGroupView(props: {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        class="group/activity inline-flex items-center gap-2 rounded-xl border border-transparent hover:border-[var(--border-subtle)] hover:bg-[var(--bg-inset)] px-2.5 py-1.5 text-[13px] text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-all cursor-pointer"
+        class="group/activity inline-flex max-w-full items-center gap-2 rounded-xl border border-transparent hover:border-[var(--border-subtle)] hover:bg-[var(--bg-inset)] px-2.5 py-1.5 text-[13px] text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-all cursor-pointer"
       >
         <Show
           when={isRunning()}
           fallback={
-            <span class="text-[var(--text-muted)] group-hover/activity:text-[var(--accent-primary)] inline-flex items-center">
+            <span class="text-[var(--text-muted)] group-hover/activity:text-[var(--accent-primary)] inline-flex items-center shrink-0">
               <Icon name="magnifying-glass-menu" size="small" />
             </span>
           }
         >
-          <span class="text-[var(--accent-primary)] inline-flex items-center">
+          <span class="text-[var(--accent-primary)] inline-flex items-center shrink-0">
             <Spinner class="w-4 h-4" />
           </span>
         </Show>
@@ -178,8 +197,8 @@ export default function ContextActivityGroupView(props: {
         <span
           class={
             isRunning()
-              ? "font-medium text-[var(--accent-primary)]"
-              : "font-medium text-[var(--text-secondary)]"
+              ? "font-medium text-[var(--accent-primary)] shrink-0"
+              : "font-medium text-[var(--text-secondary)] shrink-0"
           }
         >
           <ToolStatusTitle
@@ -190,10 +209,16 @@ export default function ContextActivityGroupView(props: {
         </span>
 
         <Show when={counts()}>
-          <span class="text-[12px] text-[var(--text-muted)]">· {counts()}</span>
+          <span class="text-[12px] text-[var(--text-muted)] shrink-0">· {counts()}</span>
         </Show>
 
-        <span class="text-[var(--text-faint)] inline-flex items-center">
+        <Show when={!open() && targetPreview()}>
+          <span class="hidden sm:inline font-mono text-[11.5px] text-[var(--text-faint)] truncate max-w-[340px]">
+            ({targetPreview()})
+          </span>
+        </Show>
+
+        <span class="text-[var(--text-faint)] inline-flex items-center shrink-0">
           <Icon name={open() ? "chevron-down" : "chevron-right"} size="small" />
         </span>
       </button>
@@ -209,13 +234,13 @@ export default function ContextActivityGroupView(props: {
         >
           <For each={rollingContextTools()}>
             {(toolPart) => {
-              const info = summarizeContextTool(toolPart);
-              const partRunning =
+              const info = createMemo(() => summarizeContextTool(toolPart));
+              const partRunning = () =>
                 toolPart.state.status === "pending" || toolPart.state.status === "running";
               return (
                 <div class="flex items-center gap-2 text-[12.5px] kilo-rolling-row min-w-0">
                   <Show
-                    when={info.filePath}
+                    when={info().filePath}
                     fallback={
                       <Icon
                         name={kiloToolIconName(toolPart.tool)}
@@ -229,14 +254,14 @@ export default function ContextActivityGroupView(props: {
                     )}
                   </Show>
                   <span class="text-[var(--text-muted)] shrink-0">
-                    <TextShimmer text={info.action} active={partRunning} />
+                    <TextShimmer text={info().action} active={partRunning()} />
                   </span>
                   <span class="font-mono text-[12px] font-medium text-[var(--text-primary)] truncate">
-                    {info.target}
+                    {info().target}
                   </span>
-                  <Show when={info.detail}>
+                  <Show when={info().detail}>
                     <span class="font-mono text-[11.5px] text-[var(--text-faint)] truncate">
-                      {info.detail}/
+                      {info().detail}/
                     </span>
                   </Show>
                 </div>
@@ -253,19 +278,20 @@ export default function ContextActivityGroupView(props: {
               <Show when={isContextToolPart(part)} fallback={props.renderFallbackPart(part)}>
                 {(_) => {
                   const toolPart = part as Extract<MessagePart, { type: "tool" }>;
-                  const info = summarizeContextTool(toolPart);
+                  const info = createMemo(() => summarizeContextTool(toolPart));
                   return (
                     <div
                       onClick={() => {
-                        if (info.filePath) openFileInInspector(info.filePath);
+                        const fp = info().filePath;
+                        if (fp) openFileInInspector(fp);
                       }}
                       class={`flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-[12.5px] hover:bg-[var(--bg-hover)] transition-colors ${
-                        info.filePath ? "cursor-pointer" : ""
+                        info().filePath ? "cursor-pointer" : ""
                       }`}
                     >
                       <div class="flex items-center gap-2 min-w-0">
                         <Show
-                          when={info.filePath}
+                          when={info().filePath}
                           fallback={
                             <Icon
                               name={kiloToolIconName(toolPart.tool)}
@@ -281,18 +307,18 @@ export default function ContextActivityGroupView(props: {
                             />
                           )}
                         </Show>
-                        <span class="text-[var(--text-secondary)] shrink-0">{info.action}</span>
+                        <span class="text-[var(--text-secondary)] shrink-0">{info().action}</span>
                         <span class="font-mono text-[12px] font-medium text-[var(--text-primary)] hover:text-[var(--accent-primary)] truncate">
-                          {info.target}
+                          {info().target}
                         </span>
-                        <Show when={info.detail}>
+                        <Show when={info().detail}>
                           <span class="hidden sm:inline font-mono text-[11.5px] text-[var(--text-faint)] truncate">
-                            {info.detail}/
+                            {info().detail}/
                           </span>
                         </Show>
                       </div>
                       <div class="flex items-center gap-1.5 shrink-0">
-                        <For each={info.pills}>
+                        <For each={info().pills}>
                           {(pill) => (
                             <span class="rounded bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[11px] text-[var(--text-muted)]">
                               {pill}

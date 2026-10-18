@@ -309,7 +309,8 @@ export default function SubagentInlineTimeline(props: {
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            fileDiff() ? openChangedFileInInspector(f()) : openFileInInspector(f());
+                            const diff = fileDiff();
+                            diff ? openChangedFileInInspector(diff) : openFileInInspector(f());
                           }}
                           class="inline-flex items-center gap-1 font-mono text-[11px] text-[var(--text-primary)] hover:text-[var(--accent-primary)] truncate cursor-pointer"
                         >
