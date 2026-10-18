@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v0.2.1)"
+        required: true
+        default: "v0.2.1"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -36,7 +42,7 @@ jobs:
       - name: Validate release version
         shell: bash
         env:
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
           VERSION="$(node scripts/release-artifact.mjs version "$RELEASE_TAG")"
           echo "RELEASE_VERSION=$VERSION" >> "$GITHUB_ENV"
@@ -55,16 +61,27 @@ jobs:
           wails build -platform windows/amd64 -s -m -nosyncgomod \
             -ldflags "-X github.com/hoxiai/hoxi/internal/app.BuildVariant=release -X github.com/hoxiai/hoxi/internal/buildinfo.Version=${RELEASE_VERSION}"
 
+      - name: Bundle OpenCode Runtime
+        shell: bash
+        run: |
+          OPENCODE_ZIP="opencode-windows-x64.zip"
+          curl -fsSL -o "$OPENCODE_ZIP" https://github.com/anomalyco/opencode/releases/latest/download/opencode-windows-x64.zip
+          7z e "$OPENCODE_ZIP" opencode.exe -obuild/bin/
+          rm -f "$OPENCODE_ZIP"
+          test -f build/bin/opencode.exe
+          echo "Bundled standalone opencode.exe into build/bin/"
+
       - name: Package Windows Release Archive
         shell: bash
         run: |
           ZIP_NAME="Hoxi-${RELEASE_VERSION}-windows-amd64.zip"
           cd build/bin
-          7z a "$ZIP_NAME" Hoxi.exe
+          7z a "$ZIP_NAME" Hoxi.exe opencode.exe
 
       - name: Upload Windows Artifact to Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           files: |
             build/bin/Hoxi-${{ env.RELEASE_VERSION }}-windows-amd64.zip
           draft: false
@@ -100,7 +117,7 @@ jobs:
 
       - name: Validate release version
         env:
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
           VERSION="$(node scripts/release-artifact.mjs version "$RELEASE_TAG")"
           echo "RELEASE_VERSION=$VERSION" >> "$GITHUB_ENV"
@@ -118,15 +135,26 @@ jobs:
           wails build -platform linux/amd64 -tags webkit2_41 -s -m -nosyncgomod \
             -ldflags "-X github.com/hoxiai/hoxi/internal/app.BuildVariant=release -X github.com/hoxiai/hoxi/internal/buildinfo.Version=${RELEASE_VERSION}"
 
+      - name: Bundle OpenCode Runtime
+        run: |
+          OPENCODE_TAR="opencode-linux-x64.tar.gz"
+          curl -fsSL -o "$OPENCODE_TAR" https://github.com/anomalyco/opencode/releases/latest/download/opencode-linux-x64.tar.gz
+          tar -xzf "$OPENCODE_TAR" -C build/bin/ opencode
+          rm -f "$OPENCODE_TAR"
+          chmod +x build/bin/opencode
+          test -x build/bin/opencode
+          echo "Bundled standalone opencode into build/bin/"
+
       - name: Package Linux Release Archive
         run: |
           TAR_NAME="Hoxi-${RELEASE_VERSION}-linux-amd64.tar.gz"
           cd build/bin
-          tar -czf "$TAR_NAME" Hoxi
+          tar -czf "$TAR_NAME" Hoxi opencode
 
       - name: Upload Linux Artifact to Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           files: |
             build/bin/Hoxi-${{ env.RELEASE_VERSION }}-linux-amd64.tar.gz
           draft: false
