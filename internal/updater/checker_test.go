@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/hoxiai/hoxi/internal/buildinfo"
 )
 
 func TestUpdaterCheckerWithMockServer(t *testing.T) {
@@ -53,5 +55,25 @@ func TestUpdaterCheckerWithMockServer(t *testing.T) {
 	}
 	if res.SHA256 != "abcdef1234567890" {
 		t.Errorf("expected sha256 abcdef1234567890, got %s", res.SHA256)
+	}
+}
+
+func TestDefaultCheckerReportsEmbeddedVersion(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("version") != buildinfo.Version {
+			t.Errorf("update request version = %q, want %q", r.URL.Query().Get("version"), buildinfo.Version)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"version":"0.2.1","needUpdate":false}`))
+	}))
+	defer ts.Close()
+	checker := NewChecker("", nil)
+	checker.serverBaseURL = ts.URL
+	result, err := checker.Check(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.CurrentVersion != buildinfo.Version {
+		t.Fatalf("reported current version = %q, want %q", result.CurrentVersion, buildinfo.Version)
 	}
 }

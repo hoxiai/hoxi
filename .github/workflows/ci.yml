@@ -13,7 +13,7 @@ concurrency:
 
 jobs:
   frontend-lint:
-    name: "Frontend: TypeCheck, i18n & 500-Line Lint"
+    name: "Frontend: TypeCheck, i18n & Architecture Lint"
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -29,7 +29,7 @@ jobs:
       - name: Install frontend dependencies
         run: npm --prefix web ci
 
-      - name: Run TypeScript, i18n parity & 500-line limit check
+      - name: Run TypeScript, i18n parity & architecture checks
         run: npm --prefix web run lint
 
   frontend-build:
@@ -51,6 +51,12 @@ jobs:
 
       - name: Run frontend unit tests
         run: npm --prefix web test
+
+      - name: Run release pipeline regression tests
+        run: node --test scripts/release.test.mjs
+
+      - name: Run browser plugin tests
+        run: node --test internal/opencode/browser_plugin_test.mjs
 
       - name: Build frontend production bundle
         run: npm --prefix web run build

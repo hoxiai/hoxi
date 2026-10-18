@@ -11,10 +11,16 @@ BUILD_DMG=0
 NOTARIZE=0
 NOTARY_PROFILE="${NOTARY_PROFILE:-hoxi-notary}"
 SIGN_IDENTITY=""
+BUILD_VERSION="${HOXI_BUILD_VERSION:-}"
 EXTRA_WAILS_ARGS=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --version)
+      [[ $# -ge 2 && -n "$2" ]] || { echo "--version requires a value" >&2; exit 1; }
+      BUILD_VERSION="$2"
+      shift 2
+      ;;
     --release-only)
       BUILD_DEV=0
       shift
@@ -51,6 +57,13 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ -n "${BUILD_VERSION}" ]]; then
+  BUILD_VERSION="$(node scripts/release-artifact.mjs version "${BUILD_VERSION}")"
+else
+  BUILD_VERSION="$(node scripts/release-artifact.mjs default-version)"
+fi
+export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-13.0}"
 
 if [[ ! -d web/node_modules ]]; then
   npm --prefix web install
@@ -104,6 +117,10 @@ resolve_signing_identity() {
 }
 
 CURRENT_IDENTITY="$(resolve_signing_identity)"
+if [[ "${NOTARIZE}" -eq 1 && "${CURRENT_IDENTITY}" == "-" ]]; then
+  echo "Notarization requires a Developer ID Application signing identity." >&2
+  exit 1
+fi
 
 bundle_and_sign_macos_app() {
   local app_path="$1"
@@ -126,6 +143,8 @@ bundle_and_sign_macos_app() {
     chmod 0755 "${app_path}/Contents/MacOS/opencode"
     echo "✅ Bundled standalone opencode sidecar (${OPENCODE_SRC}) into ${app_path}/Contents/MacOS/opencode"
   fi
+
+  node scripts/release-artifact.mjs configure-app "${app_path}" "${BUILD_VERSION}"
 
   local target_identity="-"
   if [[ "${is_release}" -eq 1 && "${CURRENT_IDENTITY}" != "-" ]]; then
@@ -153,6 +172,10 @@ bundle_and_sign_macos_app() {
     codesign --force --deep --sign - "${app_path}"
   fi
 
+  if [[ "${is_release}" -eq 1 ]]; then
+    node scripts/release-artifact.mjs verify-app "${app_path}" "${BUILD_VERSION}"
+  fi
+
   local actual_id
   actual_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${app_path}/Contents/Info.plist")"
   test "${actual_id}" = "${bundle_id}"
@@ -173,7 +196,7 @@ if [[ "${BUILD_DEV}" -eq 1 ]]; then
     -skipbindings \
     -debug \
     -nosyncgomod \
-    -ldflags "-X github.com/hoxiai/hoxi/internal/app.BuildVariant=dev" \
+    -ldflags "-X github.com/hoxiai/hoxi/internal/app.BuildVariant=dev -X github.com/hoxiai/hoxi/internal/buildinfo.Version=${BUILD_VERSION}" \
     "${EXTRA_WAILS_ARGS[@]+"${EXTRA_WAILS_ARGS[@]}"}"
 
   if [[ "$(uname -s)" == "Darwin" ]]; then
@@ -192,7 +215,7 @@ if [[ "${BUILD_RELEASE}" -eq 1 ]]; then
     -s \
     -m \
     -nosyncgomod \
-    -ldflags "-X github.com/hoxiai/hoxi/internal/app.BuildVariant=release" \
+    -ldflags "-X github.com/hoxiai/hoxi/internal/app.BuildVariant=release -X github.com/hoxiai/hoxi/internal/buildinfo.Version=${BUILD_VERSION}" \
     "${EXTRA_WAILS_ARGS[@]+"${EXTRA_WAILS_ARGS[@]}"}"
 
   if [[ "$(uname -s)" == "Darwin" ]]; then
@@ -207,8 +230,10 @@ if [[ "${BUILD_RELEASE}" -eq 1 ]]; then
         echo "☁️  Submitting ${DMG_PATH} to Apple Notary Service (profile: ${NOTARY_PROFILE})..."
         xcrun notarytool submit "${DMG_PATH}" --keychain-profile "${NOTARY_PROFILE}" --wait
         echo "📎 Stapling notarization ticket to ${DMG_PATH} and ${APP_PATH}..."
-        xcrun stapler staple "${DMG_PATH}" || true
-        xcrun stapler staple "${APP_PATH}" || true
+        xcrun stapler staple "${DMG_PATH}"
+        xcrun stapler validate "${DMG_PATH}"
+        xcrun stapler staple "${APP_PATH}"
+        xcrun stapler validate "${APP_PATH}"
         echo "🎉 Notarization and Stapling complete! Distribution DMG is ready."
       fi
     fi

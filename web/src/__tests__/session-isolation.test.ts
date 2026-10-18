@@ -6,6 +6,7 @@ import { newIsolatedSession, switchActiveSessionSandboxMode } from "../store/ses
 import { submitSessionPrompt } from "../store/workspace-session-messages";
 import {
   applySessionDiffEvent,
+  cancelScheduledWorktreeStatus,
   loadSessionMessages,
   refreshSessionDiff,
   refreshWorktreeStatus,
@@ -36,6 +37,7 @@ async function withSessionFixture(run: (id: string, meta: WorktreeMeta) => Promi
   try {
     await run(id, meta);
   } finally {
+    cancelScheduledWorktreeStatus(id);
     Object.assign(hoxiAPI, originalAPI);
     setAppSettings("defaultSandboxMode", sandboxMode);
     setWorkspace(reconcile(saved));

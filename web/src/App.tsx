@@ -48,6 +48,7 @@ export default function App() {
         ? ""
         : normalizeFolderPath(boot.rootDir);
       setWorkspace({
+        appVersion: boot.appVersion,
         rootDir: bootRoot,
         wsBaseURL: boot.wsBaseURL,
       });

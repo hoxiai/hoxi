@@ -47,6 +47,7 @@ It combines the battle-tested **OpenCode** agent runtime with a **three-pane wor
 
 - **[DEVELOPMENT.md](DEVELOPMENT.md)**: Full technical architecture, communication protocols, implementation specs, and packaging guidelines.
 - **[AGENTS.md](AGENTS.md)**: Engineering rules, project constraints, and conventions for AI assistants.
+- **[docs/releases.md](docs/releases.md)**: Versioned builds, DMG verification, dry runs, signing, notarization, and publication.
 
 ---
 

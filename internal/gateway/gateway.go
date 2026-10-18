@@ -17,6 +17,7 @@ import (
 
 	"github.com/hoxiai/hoxi/internal/auth"
 	"github.com/hoxiai/hoxi/internal/browser"
+	"github.com/hoxiai/hoxi/internal/buildinfo"
 	"github.com/hoxiai/hoxi/internal/handoff"
 	"github.com/hoxiai/hoxi/internal/leaderboard"
 	"github.com/hoxiai/hoxi/internal/provider"
@@ -96,7 +97,7 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 	handoffSvc := handoff.NewService(openCodePort, password, rootDir, providers)
 	runnerSvc := runner.NewService(rootDir, wtMgr, status, "")
 	authSvc := auth.NewService(nil)
-	updaterSvc := updater.NewChecker("0.1.0", nil)
+	updaterSvc := updater.NewChecker(buildinfo.Version, nil)
 	leaderboardSvc := leaderboard.NewService("", nil)
 
 	g := &Gateway{
@@ -174,9 +175,10 @@ func (g *Gateway) registerRoutes(distFS fs.FS) {
 			st = g.status.Snapshot()
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"rootDir":   g.rootDir,
-			"wsBaseURL": g.wsBaseURL,
-			"status":    st,
+			"appVersion": buildinfo.Version,
+			"rootDir":    g.rootDir,
+			"wsBaseURL":  g.wsBaseURL,
+			"status":     st,
 		})
 	})
 

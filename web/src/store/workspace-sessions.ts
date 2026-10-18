@@ -240,13 +240,19 @@ export async function checkoutLocalBranch(branch: string, create = false): Promi
 const worktreeRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const worktreeRevisions = new Map<string, number>();
 
+export function cancelScheduledWorktreeStatus(sessionID?: string | null): void {
+  const key = sessionID || "__root__";
+  const timer = worktreeRefreshTimers.get(key);
+  if (timer !== undefined) clearTimeout(timer);
+  worktreeRefreshTimers.delete(key);
+}
+
 export function scheduleRefreshWorktreeStatus(
   sessionID?: string | null,
   delayMs = 900
 ): void {
   const key = sessionID || "__root__";
-  const existing = worktreeRefreshTimers.get(key);
-  if (existing) clearTimeout(existing);
+  cancelScheduledWorktreeStatus(key);
   const timer = setTimeout(() => {
     worktreeRefreshTimers.delete(key);
     void refreshWorktreeStatus(key);
@@ -385,7 +391,10 @@ export async function unarchiveSession(sessionID: string, directory?: string): P
 export function removeSessionFromStore(sessionID: string): SessionInfo | undefined {
   const childIDs = collectChildSubagentSessionIDs(sessionID);
   const allIDs = [sessionID, ...childIDs];
-  for (const id of allIDs) deletedSessionIDs.add(id);
+  for (const id of allIDs) {
+    cancelScheduledWorktreeStatus(id);
+    deletedSessionIDs.add(id);
+  }
   forgetSessionTitles(allIDs);
   const nextCandidate = nextActiveSessionCandidate(sessionID);
   if (workspace.archivedSessionIDs.some((id) => allIDs.includes(id))) {

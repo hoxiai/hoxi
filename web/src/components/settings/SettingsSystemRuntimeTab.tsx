@@ -212,7 +212,9 @@ export function SystemRuntimeSettingsTab() {
         <SettingRow label={t("settings.updaterCurrentVersion")}>
           <span class="inline-flex items-center gap-2 font-mono text-[13px] font-semibold text-[var(--text-primary)]">
             <ArrowUpCircle size={15} class="text-[var(--accent-primary)]" />
-            v0.2.0
+            {workspace.appVersion || sysInfo()?.appVersion
+              ? `v${workspace.appVersion || sysInfo()?.appVersion}`
+              : t("common.loading")}
           </span>
         </SettingRow>
 

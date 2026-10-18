@@ -106,6 +106,7 @@ export interface BranchListResponse {
 }
 
 export interface BootstrapInfo {
+  appVersion: string;
   rootDir: string;
   wsBaseURL: string;
   status: {
@@ -117,6 +118,7 @@ export interface BootstrapInfo {
 }
 
 export interface SystemRuntimeInfo {
+  appVersion: string;
   openCodeBinPath: string;
   openCodeVersion: string;
   openCodePort: number;

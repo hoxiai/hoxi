@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/buildinfo"
 )
 
 type Checker struct {
@@ -21,7 +23,7 @@ type Checker struct {
 	currentVersion string
 	httpClient     *http.Client
 
-	lastResult     *UpdateCheckResult
+	lastResult *UpdateCheckResult
 }
 
 func NewChecker(currentVersion string, logger *slog.Logger) *Checker {
@@ -31,7 +33,7 @@ func NewChecker(currentVersion string, logger *slog.Logger) *Checker {
 	}
 
 	if currentVersion == "" {
-		currentVersion = "0.1.0"
+		currentVersion = buildinfo.Version
 	}
 
 	return &Checker{

@@ -46,6 +46,7 @@ export type ProviderModalTab = "providers" | "custom" | "models" | "policy";
 export type WorkspaceModalMode = "create" | "edit" | "delete" | "manage" | null;
 
 export interface WorkspaceState {
+  appVersion: string;
   connected: boolean;
   rootDir: string;
   wsBaseURL: string;
@@ -273,6 +274,7 @@ function initialSessionSandboxMode(): "local" | "worktree" {
 }
 
 export const [workspace, setWorkspace] = createStore<WorkspaceState>({
+  appVersion: "",
   connected: false,
   rootDir: "",
   wsBaseURL: "",

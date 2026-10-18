@@ -7,6 +7,7 @@ import "../src/__tests__/memory.test";
 import "../src/__tests__/merge-turns.test";
 import "../src/__tests__/task-progress.test";
 import "../src/__tests__/session-isolation.test";
+import "../src/__tests__/worktree-refresh.test";
 import "../src/__tests__/new-thread.test";
 import "../src/__tests__/session-ai.test";
 import "../src/__tests__/session-title.test";

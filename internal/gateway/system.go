@@ -10,12 +10,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hoxiai/hoxi/internal/buildinfo"
 	"github.com/hoxiai/hoxi/internal/opencode"
 	"github.com/hoxiai/hoxi/internal/provider"
 	"github.com/hoxiai/hoxi/internal/statusbar"
 )
 
 type systemRuntimeInfoResponse struct {
+	AppVersion          string            `json:"appVersion"`
 	OpenCodeBinPath     string            `json:"openCodeBinPath"`
 	OpenCodeVersion     string            `json:"openCodeVersion"`
 	OpenCodePort        int               `json:"openCodePort"`
@@ -80,6 +82,7 @@ func (g *Gateway) handleSystemRuntimeInfo(w http.ResponseWriter, r *http.Request
 	}
 
 	writeJSON(w, http.StatusOK, systemRuntimeInfoResponse{
+		AppVersion:          buildinfo.Version,
 		OpenCodeBinPath:     binPath,
 		OpenCodeVersion:     ver,
 		OpenCodePort:        g.openCodePort,
