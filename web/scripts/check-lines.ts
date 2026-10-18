@@ -54,11 +54,31 @@ for (const file of files) {
     console.error(`  ✗ [${MAX_LINES}-line limit] ${rel}: ${lineCount} lines (max ${MAX_LINES})`);
     violations++;
   }
+
+  // Enforce unidirectional frontend layering: components -> store -> services
+  if (rel.startsWith("web/src/services/")) {
+    const badImport = content.match(/from\s+["'][^"']*(?:\/store\/|\/components\/)[^"']*["']/);
+    if (badImport) {
+      console.error(`  ✗ [layering violation] ${rel} must not import from store/ or components/ (${badImport[0]})`);
+      violations++;
+    }
+  } else if (rel.startsWith("web/src/store/")) {
+    const badImport = content.match(/from\s+["'][^"']*\/components\/[^"']*["']/);
+    if (badImport) {
+      console.error(`  ✗ [layering violation] ${rel} must not import from components/ (${badImport[0]})`);
+      violations++;
+    }
+  } else if (rel.startsWith("internal/") && rel.endsWith(".go")) {
+    if (/type\s+desktopGateway\s*=/.test(content)) {
+      console.error(`  ✗ [boundary violation] ${rel} must not define legacy 'type desktopGateway =' alias`);
+      violations++;
+    }
+  }
 }
 
 if (violations > 0) {
-  console.error(`\n[lint:lines] ✗ ${violations} file(s) exceeded the ${MAX_LINES}-line hard limit.`);
+  console.error(`\n[lint:lines] ✗ ${violations} architectural or line-limit violation(s) found.`);
   process.exit(1);
 } else {
-  console.log(`[lint:lines] ✓ All ${files.length} source files comply with the ${MAX_LINES}-line limit.`);
+  console.log(`[lint:lines] ✓ All ${files.length} source files comply with the ${MAX_LINES}-line limit and layering boundaries.`);
 }

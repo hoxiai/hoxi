@@ -30,11 +30,11 @@
 │   └── statusbar/                    # Running/Attention tracker & macOS NSStatusBar (CGo)
 ├── web/                              # Frontend workspace (Vite + SolidJS + Tailwind)
 │   ├── src/
-│   │   ├── components/               # Modular UI (layout, timeline, inspector, terminal, approval, models)
+│   │   ├── components/               # Modular UI (layout, timeline, inspector, models, handoff, approval, terminal, settings)
 │   │   ├── i18n/                     # Reactive t(key, params), auto-inferred types & en-US/zh-CN locales
-│   │   ├── services/                 # OpenCode SSE client (rAF batching) & REST/Worktree API client
-│   │   └── store/                    # SolidJS reactive store & domain modules
-│   └── scripts/                      # check-i18n.ts, check-lines.ts, run-tests.ts
+│   │   ├── services/                 # Pure HTTP/REST/SSE/Browser transport clients (api.ts, sse.ts, browser.ts)
+│   │   └── store/                    # SolidJS reactive store & domain modules (flat barrel export in workspace.ts)
+│   └── scripts/                      # check-i18n.ts, check-lines.ts (line & boundary lint), run-tests.ts
 ├── .opencode/
 │   ├── plugins/                      # hoxi-permissions.js & hoxi-memory.js
 │   └── memory/                       # Long-term project.md & session compaction records
@@ -71,10 +71,14 @@
 
 ## Engineering & Functional Constraints (工程与功能约束)
 
-1. **按领域高内聚与单文件 800 行上限 (Domain Cohesion & 800-Line Limit)**
-   - 模块拆分以**单一职责与业务领域高内聚**为第一原则，**严禁为了凑行数把属于模块 A 的函数跨文件塞进无关的模块 B**（如禁止把 Codex/Gemini 逻辑塞进 Grok 或通用 helper 文件）。
-   - 任何源码文件（`.go`, `.ts`, `.tsx`, `.js`, `.m`）上限为 **800 行**（纯静态图标 SVG 字典或自动生成常量表除外）。当文件接近 800 行时，应按正交子领域或独立子组件/Hook 拆分。
-   - 视图层（`components/`）、通信层（`services/`）与状态层（`store/`）职责分离，禁止在 UI 组件内直接编写复杂的协议解析或长篇数据转换逻辑。
+1. **按领域高内聚、单向分层边界与单文件 800 行上限 (Domain Cohesion, Unidirectional Layering & 800-Line Limit)**
+   - **领域高内聚与禁止张冠李戴**：模块拆分以**单一职责与业务领域高内聚**为第一原则，**严禁为了凑行数把属于模块 A 的函数跨文件塞进无关的模块 B**（如禁止把 Codex/Gemini/Claude 逻辑塞进 Grok 或 `types.go`/`helpers.go`），也禁止拆分出仅几十行的 `*-storage.ts` 脚手架文件。
+   - **单文件 800 行上限**：任何源码文件（`.go`, `.ts`, `.tsx`, `.js`, `.m`）上限为 **800 行**（纯静态图标 SVG 字典或自动生成常量表除外）。当文件接近 800 行时，应按正交子领域或独立子组件/Hook 拆分。
+   - **前端严格单向分层 (`components/ -> store/ -> services/`)**：
+     - `services/` 仅负责 HTTP/REST/SSE 网络通信与协议传输，**严禁**反向 `import` 任何 `store/` 或 `components/` 模块，也不得混入纯 UI 渲染工具。
+     - `store/` 负责响应式状态、领域数据计算与本地持久化，**严禁**反向 `import` 任何 `components/` 模块；所有子模块统一在 [`web/src/store/workspace.ts`](web/src/store/workspace.ts) 底部扁平重导出，禁止在子模块末尾做二级链式 `export *`。
+     - `components/` 按业务域正交归位（`layout` 仅放窗口骨架与导航栏，独立业务弹窗归入 `models`、`handoff`、`settings`、`approval` 等对应目录）。
+   - **Go 后端包边界与 Receiver 规范**：各子包（`gateway`、`provider`、`handoff`、`worktree` 等）必须使用各自明确的 Receiver 类型（`*Gateway` / `*Service` / `*Manager`），严禁定义跨包伪装别名（如 `type desktopGateway = Service`）；Hoxi 内部自发 LLM 请求统一复用 `internal/provider/http.go` 的 `callSimpleLLM`。
 
 2. **OpenCode 上游零侵入 (Upstream Zero-Fork)**
    - 严禁 Fork 或修改 `opencode` 内部源码；所有定制能力仅通过 Go 进程监管、反向代理或 `.opencode/plugins/` 插件钩子扩展。
