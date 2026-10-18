@@ -1,5 +1,5 @@
 // web/src/components/timeline/message-stream-parts.tsx
-import { createMemo, createSignal, For, Show } from "solid-js";
+import { createMemo, createSignal, For, Match, Show, Switch } from "solid-js";
 import ThoughtBox from "./ThoughtBox";
 import ToolCard from "./ToolCard";
 import MarkdownView from "./MarkdownView";
@@ -52,23 +52,21 @@ export function ContextActivityGroupView(props: { parts: MessagePart[] }) {
 
 export function PartView(props: { part: MessagePart }) {
   const part = () => props.part;
-  switch (part().type) {
-    case "reasoning":
-      return <ThoughtBox part={part() as Extract<MessagePart, { type: "reasoning" }>} />;
-    case "tool":
-      if (isTodoTool(part())) return null;
-      return <ToolCard part={part() as Extract<MessagePart, { type: "tool" }>} />;
-    case "patch":
-      return null;
-    case "text":
-      return (
+  return (
+    <Switch>
+      <Match when={part()?.type === "reasoning"}>
+        <ThoughtBox part={part() as Extract<MessagePart, { type: "reasoning" }>} />
+      </Match>
+      <Match when={part()?.type === "tool" && !isTodoTool(part())}>
+        <ToolCard part={part() as Extract<MessagePart, { type: "tool" }>} />
+      </Match>
+      <Match when={part()?.type === "text"}>
         <div>
           <MarkdownView content={(part() as Extract<MessagePart, { type: "text" }>).text} />
         </div>
-      );
-    default:
-      return null;
-  }
+      </Match>
+    </Switch>
+  );
 }
 
 export function formatMessageTime(ts?: number): string {

@@ -390,20 +390,39 @@ func extractLLMTextContent(raw []byte) string {
 			Message struct {
 				Content string `json:"content"`
 			} `json:"message"`
+			Text string `json:"text"`
 		} `json:"choices"`
 		Content []struct {
+			Type string `json:"type"`
 			Text string `json:"text"`
 		} `json:"content"`
 	}
 	if json.Unmarshal(raw, &parsed) == nil {
-		if len(parsed.Choices) > 0 && parsed.Choices[0].Message.Content != "" {
-			return parsed.Choices[0].Message.Content
+		if len(parsed.Choices) > 0 {
+			if c := strings.TrimSpace(parsed.Choices[0].Message.Content); c != "" {
+				return c
+			}
+			if t := strings.TrimSpace(parsed.Choices[0].Text); t != "" {
+				return t
+			}
+			// Choices array exists but content is empty (e.g. finish_reason="length" during reasoning):
+			// never fall through to returning the raw JSON envelope.
+			return ""
 		}
-		if len(parsed.Content) > 0 && parsed.Content[0].Text != "" {
-			return parsed.Content[0].Text
+		if len(parsed.Content) > 0 {
+			for _, block := range parsed.Content {
+				if (block.Type == "" || block.Type == "text") && strings.TrimSpace(block.Text) != "" {
+					return strings.TrimSpace(block.Text)
+				}
+			}
+			return ""
 		}
 	}
-	return string(raw)
+	trimmed := strings.TrimSpace(string(raw))
+	if strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[") {
+		return ""
+	}
+	return trimmed
 }
 
 func parseObserverAuditJSON(text string) (int, string, []string) {

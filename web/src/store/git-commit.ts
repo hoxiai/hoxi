@@ -64,6 +64,19 @@ function parseProviderModelKey(raw?: unknown): SelectedModel | null {
   return exists ? { providerID, modelID } : null;
 }
 
+export function isMalformedLLMText(text?: string | null): boolean {
+  if (!text) return true;
+  const t = text.trim();
+  if (!t) return true;
+  return (
+    t.startsWith("{") ||
+    t.startsWith("[") ||
+    t.includes('"choices"') ||
+    t.includes('"finish_reason"') ||
+    t.includes('"logprobs"')
+  );
+}
+
 export function resolveEffectiveCommitModel(): SelectedModel | null {
   const spec = commitModelSpecSignal();
   if (spec === "none") return null;
@@ -77,28 +90,34 @@ export function resolveEffectiveCommitModel(): SelectedModel | null {
   const small = parseProviderModelKey(workspace.globalConfig?.small_model);
   if (small) return small;
 
-  // 2. Look for a connected free or lightweight/flash/mini/haiku model
+  // 2. Look for a connected non-reasoning fast/cheap/free model first
   const connSet = new Set(workspace.connectedProviders);
   const cfgProviders = workspace.globalConfig?.provider ?? {};
   const cheapKeywords = ["flash", "mini", "haiku", "lite", "nano", "small", "fast"];
 
-  for (const p of workspace.providers) {
-    const isConn = connSet.has(p.id) || Boolean(cfgProviders[p.id]) || p.id === "opencode";
-    if (!isConn || !p.models) continue;
-    for (const [mID, mInfo] of Object.entries(p.models)) {
-      if (isModelFree(p.id, mID, mInfo)) {
-        return { providerID: p.id, modelID: mID };
+  for (const allowReasoning of [false, true]) {
+    for (const p of workspace.providers) {
+      const isConn = connSet.has(p.id) || Boolean(cfgProviders[p.id]) || p.id === "opencode";
+      if (!isConn || !p.models) continue;
+      for (const [mID, mInfo] of Object.entries(p.models)) {
+        const isReasoning = Boolean(mInfo?.reasoning || mInfo?.capabilities?.reasoning);
+        if (!allowReasoning && isReasoning) continue;
+        if (isModelFree(p.id, mID, mInfo)) {
+          return { providerID: p.id, modelID: mID };
+        }
       }
     }
-  }
 
-  for (const p of workspace.providers) {
-    const isConn = connSet.has(p.id) || Boolean(cfgProviders[p.id]) || p.id === "opencode";
-    if (!isConn || !p.models) continue;
-    for (const mID of Object.keys(p.models)) {
-      const lower = mID.toLowerCase();
-      if (cheapKeywords.some((kw) => lower.includes(kw))) {
-        return { providerID: p.id, modelID: mID };
+    for (const p of workspace.providers) {
+      const isConn = connSet.has(p.id) || Boolean(cfgProviders[p.id]) || p.id === "opencode";
+      if (!isConn || !p.models) continue;
+      for (const [mID, mInfo] of Object.entries(p.models)) {
+        const isReasoning = Boolean(mInfo?.reasoning || mInfo?.capabilities?.reasoning);
+        if (!allowReasoning && isReasoning) continue;
+        const lower = mID.toLowerCase();
+        if (cheapKeywords.some((kw) => lower.includes(kw))) {
+          return { providerID: p.id, modelID: mID };
+        }
       }
     }
   }
@@ -126,7 +145,13 @@ export function synthesizeLocalCommitMessage(
   const session = workspace.sessions.find((s) => s.id === sessionID);
   const turns = sessionID ? workspace.messagesBySession[sessionID] ?? [] : [];
   let rawIntent = session?.title || "";
-  if (!rawIntent || rawIntent === "New Session" || rawIntent.startsWith("Session")) {
+  if (
+    !rawIntent ||
+    rawIntent === "New Session" ||
+    rawIntent.startsWith("Session") ||
+    isMalformedLLMText(rawIntent)
+  ) {
+    rawIntent = "";
     for (let i = turns.length - 1; i >= 0; i--) {
       if (turns[i].info.role === "user") {
         const textPart = turns[i].parts.find(
@@ -222,6 +247,7 @@ export async function generateSmartCommitMessage(
   const baseURL = cfgProv?.options?.baseURL || runtimeProv?.options?.baseURL || undefined;
   const npm = cfgProv?.npm || runtimeProv?.npm || undefined;
   const session = workspace.sessions.find((s) => s.id === (sessionID ?? workspace.activeSessionID));
+  const rawTitle = session?.title || "";
 
   try {
     const res = await hoxiAPI.generateCommitMessage({
@@ -229,13 +255,14 @@ export async function generateSmartCommitMessage(
       modelID: modID,
       baseURL,
       npm,
-      sessionTitle: session?.title || "",
+      sessionTitle: isMalformedLLMText(rawTitle) ? "" : rawTitle,
       lastPrompt: extractLastUserPrompt(sessionID ?? workspace.activeSessionID),
       diffSummary: buildCompactDiffSummary(diffs),
       locale: locale(),
     });
-    if (res?.ok && res.message?.trim()) {
-      return res.message.trim();
+    const candidate = res?.message?.trim() || "";
+    if (res?.ok && candidate && !isMalformedLLMText(candidate)) {
+      return candidate;
     }
   } catch (err) {
     console.warn("LLM commit message synthesis failed, using local fallback:", err);

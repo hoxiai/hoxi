@@ -4,10 +4,12 @@ import { resolveParentSessionID } from "./components/timeline/SubagentSessionBan
 import { hoxiAPI } from "./services/api";
 import { connectEventStream } from "./services/sse";
 import {
+  appSettings,
   applyPartDeltaBatch,
   applyStreamFrameBatch,
   bootstrapProjectSessions,
   drainNextQueuedPrompt,
+  handleIncomingPermissionRequest,
   handleSessionErrorEvent,
   isDismissedProjectPath,
   isInvalidProjectPath,
@@ -27,6 +29,8 @@ import {
   scheduleRefreshWorktreeStatus,
   selectSession,
   setWorkspace,
+  syncApprovalModeToOpenCodeConfig,
+  syncPendingPermissions,
   syncSessionStatuses,
   triggerDesktopNotification,
   upsertMessageInfo,
@@ -60,6 +64,8 @@ export default function App() {
       void loadProviders();
       void loadProviderTelemetry();
       void loadAgents();
+      void syncApprovalModeToOpenCodeConfig(appSettings.approvalMode);
+      void syncPendingPermissions(eagerBootRoot || undefined);
       void hoxiAPI
         .listQuestions()
         .then((qs) => {
@@ -98,6 +104,7 @@ export default function App() {
           void loadProviders();
           void loadProviderTelemetry();
           void syncSessionStatuses();
+          void syncPendingPermissions();
           if (
             workspace.rootDir &&
             workspace.sessions.length === 0 &&
@@ -199,10 +206,7 @@ export default function App() {
             }
             break;
           case "permission.asked":
-            setWorkspace("pendingPermissions", (prev) =>
-              prev.some((p) => p.id === evt.properties.id) ? prev : [...prev, evt.properties]
-            );
-            triggerDesktopNotification("Hoxi", t("approval.title"));
+            handleIncomingPermissionRequest(evt.properties);
             break;
           case "permission.replied":
             setWorkspace("pendingPermissions", (prev) =>

@@ -25,4 +25,23 @@ export const approval: ApprovalI18n = {
   autoApproveRules: "细粒度放行规则 ({count})",
   ruleAlwaysAllow: "总是允许",
   ruleAlwaysDeny: "总是拒绝",
+  modeMenuTitle: "确认模式",
+  modeMenuBadge: "高危始终拦截",
+  modeAutoLabel: "自动确认",
+  modeAutoShort: "自动确认",
+  modeAutoBadge: "推荐",
+  modeAutoDesc:
+    "自动放行文件读写与常规命令，仅高危破坏性指令（rm / sudo / --force 等）需手动确认",
+  modeSmartLabel: "智能确认",
+  modeSmartShort: "智能确认",
+  modeSmartDesc:
+    "自动放行文件修改与只读/构建测试命令，其余终端命令需手动确认",
+  modeManualLabel: "手动确认",
+  modeManualShort: "手动确认",
+  modeManualDesc:
+    "所有文件修改、终端命令与网络请求执行前均需手动点击确认",
+  modeTooltip: "执行确认模式：{mode}（点击切换）",
+  openPolicySettings: "细粒度权限与 MCP 策略…",
+  highRiskBadge: "高危操作拦截",
+  switchToAutoApprove: "切换为自动确认",
 };

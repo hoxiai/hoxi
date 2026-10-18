@@ -25,6 +25,7 @@ import {
   ComposerSandboxPill,
 } from "./composer-subcomponents";
 import ContextProgressPill from "./ContextProgressPill";
+import ApprovalModePill from "./ApprovalModePill";
 import ModeSwitcher from "./ModeSwitcher";
 import {
   createComposerAutocomplete,
@@ -360,9 +361,10 @@ export default function Composer() {
               />
             </div>
 
-            {/* Right Context Progress + Unified Circular Send / Steer / Stop Button */}
+            {/* Right Context Progress + Approval Mode + Unified Circular Send / Steer / Stop Button */}
             <div class="flex items-center gap-1.5">
               <ContextProgressPill />
+              <ApprovalModePill />
 
               <Show when={busy()}>
                 <Show when={canSend()}>

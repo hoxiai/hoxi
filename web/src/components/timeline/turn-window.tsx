@@ -238,12 +238,24 @@ export function AssistantTurnItem(props: {
     setStepsExpanded(next);
   };
 
+  const isInLatestUserCycle = createMemo(() => {
+    const list = props.allTurns;
+    for (let i = list.length - 1; i >= 0; i--) {
+      if (list[i]?.info.role === "user") {
+        return props.globalIndex > i;
+      }
+    }
+    return true;
+  });
+
   const isRecentTurn = createMemo(
-    () => props.globalIndex >= props.allTurns.length - 2
+    () => isInLatestUserCycle() || props.globalIndex >= props.allTurns.length - 2
   );
 
   const workParts = createMemo(() =>
-    props.turn.parts.filter((p) => p.type !== "text" && !isTodoTool(p))
+    props.turn.parts.filter(
+      (p) => p.type === "reasoning" || (p.type === "tool" && !isTodoTool(p))
+    )
   );
 
   const textParts = createMemo(() =>
@@ -263,7 +275,7 @@ export function AssistantTurnItem(props: {
     })
   );
 
-  // Fold intermediate tool/reasoning work on older completed turns unless manually expanded
+  // Fold intermediate tool/reasoning work only on historical turns from prior user prompt cycles
   const shouldFoldWork = createMemo(
     () =>
       !isRecentTurn() &&
@@ -299,31 +311,31 @@ export function AssistantTurnItem(props: {
         when={shouldFoldWork()}
         fallback={
           <Index each={groupedAll()}>
-            {(item) =>
-              item().kind === "activity-group" ? (
+            {(item) => (
+              <Show
+                when={item().kind === "activity-group"}
+                fallback={
+                  <Show
+                    when={
+                      item().kind === "single"
+                        ? (item() as Extract< ReturnType<typeof item>, { kind: "single" } >).part
+                        : undefined
+                    }
+                  >
+                    {(part) => <PartView part={part()} />}
+                  </Show>
+                }
+              >
                 <ContextActivityGroupView
                   parts={
-                    (
-                      item() as Extract<
-                        typeof item extends () => infer T ? T : never,
-                        { kind: "activity-group" }
-                      >
-                    ).parts
+                    item().kind === "activity-group"
+                      ? (item() as Extract< ReturnType<typeof item>, { kind: "activity-group" } >)
+                          .parts
+                      : []
                   }
                 />
-              ) : (
-                <PartView
-                  part={
-                    (
-                      item() as Extract<
-                        typeof item extends () => infer T ? T : never,
-                        { kind: "single" }
-                      >
-                    ).part
-                  }
-                />
-              )
-            }
+              </Show>
+            )}
           </Index>
         }
       >
@@ -351,31 +363,40 @@ export function AssistantTurnItem(props: {
           <Show when={stepsExpanded()}>
             <div class="mt-2 ml-2 border-l-2 border-[var(--border-subtle)] pl-3.5 flex flex-col gap-y-3">
               <Index each={groupedWorkOnly()}>
-                {(item) =>
-                  item().kind === "activity-group" ? (
+                {(item) => (
+                  <Show
+                    when={item().kind === "activity-group"}
+                    fallback={
+                      <Show
+                        when={
+                          item().kind === "single"
+                            ? (
+                                item() as Extract<
+                                  ReturnType<typeof item>,
+                                  { kind: "single" }
+                                >
+                              ).part
+                            : undefined
+                        }
+                      >
+                        {(part) => <PartView part={part()} />}
+                      </Show>
+                    }
+                  >
                     <ContextActivityGroupView
                       parts={
-                        (
-                          item() as Extract<
-                            typeof item extends () => infer T ? T : never,
-                            { kind: "activity-group" }
-                          >
-                        ).parts
+                        item().kind === "activity-group"
+                          ? (
+                              item() as Extract<
+                                ReturnType<typeof item>,
+                                { kind: "activity-group" }
+                              >
+                            ).parts
+                          : []
                       }
                     />
-                  ) : (
-                    <PartView
-                      part={
-                        (
-                          item() as Extract<
-                            typeof item extends () => infer T ? T : never,
-                            { kind: "single" }
-                          >
-                        ).part
-                      }
-                    />
-                  )
-                }
+                  </Show>
+                )}
               </Index>
             </div>
           </Show>

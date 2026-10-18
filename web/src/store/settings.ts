@@ -1,5 +1,6 @@
 // web/src/store/settings.ts
 import { createStore } from "solid-js/store";
+import type { ApprovalMode } from "./approval-mode";
 import { applyThemeClass, setWorkspace, THEME_KEY, workspace } from "./workspace";
 
 export type SettingsTab = "general" | "chat" | "workspace" | "terminal" | "system";
@@ -22,6 +23,7 @@ export interface AppSettingsState {
   detectedGitUserName: string;
   detectedGitUserEmail: string;
   sendShortcut: SendShortcutMode;
+  approvalMode: ApprovalMode;
   reasoningDisplay: ReasoningDisplayMode;
   autoScrollStream: boolean;
   confirmBeforeRevert: boolean;
@@ -52,6 +54,7 @@ const DEFAULT_SETTINGS: PersistedSettings = {
   userDisplayName: "",
   userEmail: "",
   sendShortcut: "enter",
+  approvalMode: "auto",
   reasoningDisplay: "auto-collapse",
   autoScrollStream: true,
   confirmBeforeRevert: true,
@@ -110,6 +113,12 @@ function loadInitialSettings(): PersistedSettings {
         parsed.sendShortcut === "enter" || parsed.sendShortcut === "mod-enter"
           ? parsed.sendShortcut
           : DEFAULT_SETTINGS.sendShortcut,
+      approvalMode:
+        parsed.approvalMode === "auto" ||
+        parsed.approvalMode === "smart" ||
+        parsed.approvalMode === "manual"
+          ? parsed.approvalMode
+          : DEFAULT_SETTINGS.approvalMode,
       reasoningDisplay:
         parsed.reasoningDisplay === "auto-collapse" ||
         parsed.reasoningDisplay === "expanded" ||
@@ -178,6 +187,7 @@ function persistAppSettings() {
       userDisplayName: appSettings.userDisplayName,
       userEmail: appSettings.userEmail,
       sendShortcut: appSettings.sendShortcut,
+      approvalMode: appSettings.approvalMode,
       reasoningDisplay: appSettings.reasoningDisplay,
       autoScrollStream: appSettings.autoScrollStream,
       confirmBeforeRevert: appSettings.confirmBeforeRevert,
@@ -346,3 +356,6 @@ export function buildCombinedSystemPrompt(
   }
   return parts.length > 0 ? parts.join("\n\n") : undefined;
 }
+
+export * from "./approval-mode";
+

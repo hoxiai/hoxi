@@ -15,8 +15,11 @@ import {
 import type { PermissionRequest } from "../../services/sse-types";
 import { hoxiAPI } from "../../services/api";
 import {
+  appSettings,
+  isDestructivePermissionRequest,
   openChangedFileInInspector,
   sessionDirectory,
+  setApprovalMode,
   workspace,
 } from "../../store/workspace";
 import { DiffChanges, FileIcon } from "../icons";
@@ -48,6 +51,7 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
 
   const diffs = createMemo(() => extractPermissionDiffs(props.request));
   const rules = createMemo(() => deriveHierarchicalRules(props.request, command()));
+  const isDestructive = createMemo(() => isDestructivePermissionRequest(props.request));
 
   const toggleRuleDecision = (rule: string, decision: "allow" | "deny") => {
     setSelectedRules((prev) => {
@@ -120,6 +124,11 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
         <span class="text-[12px] font-semibold text-[var(--warn-text)]">
           {t("approval.title")}
         </span>
+        <Show when={isDestructive()}>
+          <span class="rounded-md border border-[var(--danger-border)] bg-[var(--danger-surface)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--danger-text)]">
+            {t("approval.highRiskBadge")}
+          </span>
+        </Show>
         <Show when={props.request.metadata?.description}>
           <span class="truncate text-[11px] text-[var(--text-secondary)]">
             · {String(props.request.metadata?.description)}
@@ -319,6 +328,17 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
                 <X size={12} />
                 {t("approval.reject")}…
               </button>
+              <Show when={!isDestructive() && appSettings.approvalMode !== "auto"}>
+                <button
+                  type="button"
+                  class="ml-auto inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+                  disabled={!!busy()}
+                  onClick={() => setApprovalMode("auto")}
+                >
+                  <Zap size={11} class="text-[var(--ok-text)]" />
+                  {t("approval.switchToAutoApprove")}
+                </button>
+              </Show>
             </>
           }
         >

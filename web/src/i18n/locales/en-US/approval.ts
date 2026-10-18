@@ -26,4 +26,23 @@ export const approval: ApprovalI18n = {
   autoApproveRules: "Auto-approve rules ({count})",
   ruleAlwaysAllow: "Always Allow",
   ruleAlwaysDeny: "Always Deny",
+  modeMenuTitle: "Approval Mode",
+  modeMenuBadge: "Destructive Gated",
+  modeAutoLabel: "Auto Approve",
+  modeAutoShort: "Auto",
+  modeAutoBadge: "Default",
+  modeAutoDesc:
+    "Auto-approves file edits and normal commands; destructive commands (rm / sudo / --force) always require confirmation",
+  modeSmartLabel: "Smart Ask",
+  modeSmartShort: "Smart",
+  modeSmartDesc:
+    "Auto-approves file edits and safe read/build/test commands; asks before other shell commands",
+  modeManualLabel: "Manual Ask",
+  modeManualShort: "Manual",
+  modeManualDesc:
+    "Requires manual confirmation before every file edit, shell command, or external action",
+  modeTooltip: "Approval mode: {mode} (click to switch)",
+  openPolicySettings: "Fine-grained Policy & MCP…",
+  highRiskBadge: "High-Risk Gate",
+  switchToAutoApprove: "Switch to Auto Approve",
 };

@@ -2,6 +2,7 @@
 import type {
   MessageInfo,
   MessagePart,
+  PermissionRequest,
   QuestionRequest,
   SessionInfo,
   SessionStatus,
@@ -208,6 +209,9 @@ export const hoxiAPI = {
   },
 
   // Interactive Permission Approval Gate
+  listPermissions(directory?: string): Promise<PermissionRequest[]> {
+    return requestJSON(withDir("/permission", directory));
+  },
   replyPermission(requestID: string, reply: "once" | "always" | "reject", directory?: string): Promise<void> {
     return requestJSON(withDir(`/permission/${requestID}/reply`, directory), { method: "POST", body: JSON.stringify({ reply }) });
   },

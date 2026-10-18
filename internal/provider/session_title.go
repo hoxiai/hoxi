@@ -122,7 +122,7 @@ User task request:
 		}
 		bodyMap = map[string]any{
 			"model":      modelID,
-			"max_tokens": 120,
+			"max_tokens": 512,
 			"messages": []map[string]string{
 				{"role": "user", "content": instruction},
 			},
@@ -131,7 +131,7 @@ User task request:
 		targetURL = trimmedBase + "/chat/completions"
 		bodyMap = map[string]any{
 			"model":       modelID,
-			"max_tokens":  120,
+			"max_tokens":  512,
 			"temperature": 0.2,
 			"messages": []map[string]string{
 				{"role": "user", "content": instruction},
@@ -193,7 +193,7 @@ User task request:
 func cleanSummarizedTitle(raw, locale string) string {
 	text := thinkBlockRegex.ReplaceAllString(raw, "")
 	text = strings.TrimSpace(text)
-	if text == "" {
+	if text == "" || strings.HasPrefix(text, "{") || strings.HasPrefix(text, "[") || strings.Contains(text, `"choices"`) {
 		return ""
 	}
 
@@ -201,6 +201,9 @@ func cleanSummarizedTitle(raw, locale string) string {
 	// Take the first non-empty line with meaningful content
 	for _, line := range strings.Split(text, "\n") {
 		l := strings.TrimSpace(line)
+		if strings.HasPrefix(l, "{") || strings.HasPrefix(l, "[") || strings.Contains(l, `"finish_reason"`) {
+			continue
+		}
 		l = strings.TrimLeft(l, "#*-•> \t")
 		l = titlePrefixRegex.ReplaceAllString(l, "")
 		l = strings.Trim(l, "\"'`“”‘’「」『』《》【】[]()（）.。!！?？;；,，:： \t")

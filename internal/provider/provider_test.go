@@ -280,3 +280,26 @@ func TestProviderTelemetryStorePersistenceAndRecording(t *testing.T) {
 		t.Errorf("unexpected persisted model telemetry stats: %+v", reloadedRec.Models["gpt-4o"])
 	}
 }
+
+func TestExtractLLMTextContentNeverLeaksRawJSON(t *testing.T) {
+	truncatedReasoningJSON := []byte(`{"choices":[{"finish_reason":"length","index":0,"logprobs":null,"message":{"content":"","reasoning_content":"The user wants a git commit message..."}}]}`)
+
+	extracted := extractLLMTextContent(truncatedReasoningJSON)
+	if extracted != "" {
+		t.Fatalf("expected empty string when choices[0].message.content is empty, got %q", extracted)
+	}
+
+	if msg := cleanGeneratedCommitMessage(string(truncatedReasoningJSON)); msg != "" {
+		t.Fatalf("expected cleanGeneratedCommitMessage to reject raw JSON, got %q", msg)
+	}
+
+	if title := cleanSummarizedTitle(string(truncatedReasoningJSON), "zh-CN"); title != "" {
+		t.Fatalf("expected cleanSummarizedTitle to reject raw JSON, got %q", title)
+	}
+
+	validResp := []byte(`{"choices":[{"finish_reason":"stop","index":0,"message":{"content":"feat(git): 新增底部一键提交并推送功能"}}]}`)
+	if got := cleanGeneratedCommitMessage(extractLLMTextContent(validResp)); got != "feat(git): 新增底部一键提交并推送功能" {
+		t.Fatalf("unexpected cleaned commit message: %q", got)
+	}
+}
+

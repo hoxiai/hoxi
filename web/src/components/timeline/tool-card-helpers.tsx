@@ -123,50 +123,75 @@ export function getDirectory(p: string): string {
   return dir;
 }
 
+function extractRawField(raw: string, key: string): string | undefined {
+  const m = raw.match(new RegExp(`"${key}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)`));
+  return m?.[1] ? m[1].replace(/\\"/g, '"').replace(/\\n/g, " ").trim() : undefined;
+}
+
+const RAW_KEYS = [
+  "filePath", "file_path", "path", "file", "command", "cmd",
+  "description", "pattern", "include", "url", "subagent_type", "patchText",
+] as const;
+
+export function resolveToolInput(part: ToolPart): Record<string, any> {
+  const input = part.state.input;
+  if (input && Object.keys(input).length > 0) return input;
+  const raw = part.state.status === "pending" ? part.state.raw : "";
+  if (typeof raw === "string" && raw.length > 0) {
+    const out: Record<string, any> = {};
+    for (const k of RAW_KEYS) {
+      const v = extractRawField(raw, k);
+      if (v) out[k] = v;
+    }
+    if (!out.filePath && out.file_path) out.filePath = out.file_path;
+    if (!out.command && out.cmd) out.command = out.cmd;
+    return out;
+  }
+  return input || {};
+}
+
 export function extractTargetFile(part: ToolPart): string | null {
-  const input = part.state.input || {};
+  const toolLower = (part.tool || "").toLowerCase();
+  if (toolLower === "glob" || toolLower === "grep") return null;
+  const input = resolveToolInput(part);
   const metaFiles = part.state.status !== "pending" ? part.state.metadata?.files : undefined;
   const firstMetaFile = Array.isArray(metaFiles) && metaFiles[0]
     ? metaFiles[0].relativePath || metaFiles[0].filePath || metaFiles[0].file || metaFiles[0].path
     : undefined;
-  let patchHeaderFile: string | undefined;
-  if (typeof input.patchText === "string") {
-    const m = input.patchText.match(/^\*\*\*\s+(?:Update|Add|Delete)\s+File:\s*(.+)$/m);
-    if (m?.[1]) patchHeaderFile = m[1].trim();
-  }
+  const patchMatch =
+    typeof input.patchText === "string"
+      ? input.patchText.match(/^\*\*\*\s+(?:Update|Add|Delete)\s+File:\s*(.+)$/m)
+      : null;
   const raw =
-    input.filePath ||
-    input.path ||
-    input.file ||
-    input.filename ||
-    input.targetFile ||
-    firstMetaFile ||
-    patchHeaderFile ||
+    input.filePath || input.file_path || input.path || input.file ||
+    input.filename || input.targetFile || firstMetaFile || patchMatch?.[1]?.trim() ||
     (part.state.status !== "pending"
       ? part.state.metadata?.filePath || part.state.metadata?.filepath
       : undefined);
   if (typeof raw === "string" && raw.trim()) {
     const root = workspace.rootDir;
-    if (root && raw.startsWith(root)) {
-      return raw.slice(root.length).replace(/^\/+/, "");
-    }
+    if (root && raw.startsWith(root)) return raw.slice(root.length).replace(/^\/+/, "") || ".";
     return raw.trim();
   }
   return null;
 }
 
 export function extractCommand(part: ToolPart): string {
-  const input = part.state.input || {};
+  const input = resolveToolInput(part);
   return String(input.command || input.cmd || input.script || "");
 }
 
 export function extractDescription(part: ToolPart): string {
-  const input = part.state.input || {};
+  const input = resolveToolInput(part);
   if (typeof input.description === "string" && input.description.trim()) {
     return input.description.trim();
   }
-  if (part.state.status === "running" && part.state.title) return part.state.title;
-  if (part.state.status === "completed" && part.state.title) return part.state.title;
+  if (typeof input.pattern === "string" && input.pattern.trim()) {
+    const dir = typeof input.path === "string" && input.path.trim() ? getFilename(input.path) : "";
+    return dir ? `${input.pattern.trim()} (${dir})` : input.pattern.trim();
+  }
+  if (typeof input.url === "string" && input.url.trim()) return input.url.trim();
+  if (part.state.title) return part.state.title;
   return "";
 }
 
@@ -197,8 +222,7 @@ function rawShellOutputFromState(state: ToolState): string {
 
 export function extractShellOutput(state: ToolState): string {
   const raw = rawShellOutputFromState(state);
-  if (!raw) return "";
-  return processCarriageReturns(truncateToolOutput(raw));
+  return raw ? processCarriageReturns(truncateToolOutput(raw)) : "";
 }
 
 export function extractRollingShellLines(state: ToolState): string[] {
@@ -206,8 +230,7 @@ export function extractRollingShellLines(state: ToolState): string[] {
   if (!raw) return [];
   const tail = raw.length > ROLLING_SHELL_TAIL_CHARS ? raw.slice(-ROLLING_SHELL_TAIL_CHARS) : raw;
   const cleaned = processCarriageReturns(tail).trim();
-  if (!cleaned) return [];
-  return cleaned.split("\n").slice(-5);
+  return cleaned ? cleaned.split("\n").slice(-5) : [];
 }
 
 export function extractExitCode(state: ToolState): number | undefined {
@@ -222,8 +245,7 @@ export function countDiffLines(
   after?: string
 ): { additions: number; deletions: number } {
   if (patch) {
-    let additions = 0;
-    let deletions = 0;
+    let additions = 0, deletions = 0;
     for (const line of patch.split("\n")) {
       if (line.startsWith("+") && !line.startsWith("+++")) additions++;
       else if (line.startsWith("-") && !line.startsWith("---")) deletions++;

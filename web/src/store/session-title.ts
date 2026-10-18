@@ -45,6 +45,9 @@ export function isPlaceholderSessionTitle(title?: string | null): boolean {
   ]);
 
   if (knownPlaceholders.has(trimmed)) return true;
+  if (trimmed.startsWith("{") || trimmed.startsWith("[") || trimmed.includes('"choices"')) {
+    return true;
+  }
   const lower = trimmed.toLowerCase();
   return (
     lower.startsWith("new session -") ||

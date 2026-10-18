@@ -121,7 +121,7 @@ Git diff summary:
 		}
 		bodyMap = map[string]any{
 			"model":      modelID,
-			"max_tokens": 140,
+			"max_tokens": 600,
 			"messages": []map[string]string{
 				{"role": "user", "content": instruction},
 			},
@@ -130,7 +130,7 @@ Git diff summary:
 		targetURL = trimmedBase + "/chat/completions"
 		bodyMap = map[string]any{
 			"model":       modelID,
-			"max_tokens":  140,
+			"max_tokens":  600,
 			"temperature": 0.2,
 			"messages": []map[string]string{
 				{"role": "user", "content": instruction},
@@ -193,12 +193,15 @@ func cleanGeneratedCommitMessage(raw string) string {
 	text := thinkBlockRegex.ReplaceAllString(raw, "")
 	text = codeFenceRegex.ReplaceAllString(text, "")
 	text = strings.TrimSpace(text)
-	if text == "" {
+	if text == "" || strings.HasPrefix(text, "{") || strings.HasPrefix(text, "[") || strings.Contains(text, `"choices"`) {
 		return ""
 	}
 
 	for _, line := range strings.Split(text, "\n") {
 		l := strings.TrimSpace(line)
+		if strings.HasPrefix(l, "{") || strings.HasPrefix(l, "[") || strings.Contains(l, `"finish_reason"`) || strings.Contains(l, `"choices"`) {
+			continue
+		}
 		l = strings.TrimLeft(l, "#*-•> \t")
 		l = commitPrefixRegex.ReplaceAllString(l, "")
 		l = strings.Trim(l, "\"'`“”‘’「」『』.。;； \t")

@@ -42,7 +42,14 @@ export function synthesizeAICommitMessage(
   const session = workspace.sessions.find((s) => s.id === sessionID);
   const turns = sessionID ? workspace.messagesBySession[sessionID] ?? [] : [];
   let rawIntent = session?.title || "";
-  if (!rawIntent || rawIntent === "New Session" || rawIntent.startsWith("Session")) {
+  if (
+    !rawIntent ||
+    rawIntent === "New Session" ||
+    rawIntent.startsWith("Session") ||
+    rawIntent.trim().startsWith("{") ||
+    rawIntent.includes('"choices"')
+  ) {
+    rawIntent = "";
     for (let i = turns.length - 1; i >= 0; i--) {
       if (turns[i].info.role === "user") {
         const textPart = turns[i].parts.find(

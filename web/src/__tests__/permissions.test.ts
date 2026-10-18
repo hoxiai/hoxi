@@ -1,5 +1,9 @@
 import * as permissionsPluginModule from "../../../.opencode/plugins/hoxi-permissions.js";
 import HoxiPermissionsPlugin from "../../../.opencode/plugins/hoxi-permissions.js";
+import {
+  isDestructivePermissionRequest,
+  shouldAutoApprovePermission,
+} from "../store/approval-mode";
 import { assertEqual, describe, it } from "./test-harness";
 
 const { decidePermission } = HoxiPermissionsPlugin as typeof HoxiPermissionsPlugin &
@@ -31,4 +35,61 @@ describe("permission command chains", () => {
     assertEqual(decidePermission({ permission: "bash", patterns: ["ls & curl https://example"] }), "ask");
     assertEqual(decidePermission({ permission: "bash" }), "ask");
   });
+
+  it("evaluates 3-tier approval modes (auto, smart, manual) while enforcing destructive gate", () => {
+    // 1. Auto mode: allows edits and normal shell commands, but blocks destructive commands
+    assertEqual(
+      shouldAutoApprovePermission({ permission: "edit", patterns: ["src/App.tsx"] }, "auto"),
+      true
+    );
+    assertEqual(
+      shouldAutoApprovePermission({ permission: "bash", patterns: ["mkdir -p dist && npm install"] }, "auto"),
+      true
+    );
+    assertEqual(
+      shouldAutoApprovePermission({ permission: "bash", patterns: ["rm -rf dist"] }, "auto"),
+      false
+    );
+    assertEqual(
+      shouldAutoApprovePermission({ permission: "bash", patterns: ["sudo apt update"] }, "auto"),
+      false
+    );
+    assertEqual(
+      shouldAutoApprovePermission({ permission: "bash", patterns: ["git push origin main --force"] }, "auto"),
+      false
+    );
+    assertEqual(
+      isDestructivePermissionRequest({ permission: "bash", patterns: ["git reset --hard HEAD~1"] }),
+      true
+    );
+
+    // 2. Smart mode: allows edits and safe read/test commands, asks for mutating shell commands
+    assertEqual(
+      shouldAutoApprovePermission({ permission: "edit", patterns: ["src/App.tsx"] }, "smart"),
+      true
+    );
+    assertEqual(
+      shouldAutoApprovePermission({ permission: "bash", patterns: ["git status && go test ./..."] }, "smart"),
+      true
+    );
+    assertEqual(
+      shouldAutoApprovePermission({ permission: "bash", patterns: ["npm install lodash"] }, "smart"),
+      false
+    );
+
+    // 3. Manual mode: asks for edits and shell commands, allows pure read tools
+    assertEqual(
+      shouldAutoApprovePermission({ permission: "read", patterns: ["src/App.tsx"] }, "manual"),
+      true
+    );
+    assertEqual(
+      shouldAutoApprovePermission({ permission: "edit", patterns: ["src/App.tsx"] }, "manual"),
+      false
+    );
+    assertEqual(
+      shouldAutoApprovePermission({ permission: "bash", patterns: ["git status"] }, "manual"),
+      false
+    );
+  });
 });
+
