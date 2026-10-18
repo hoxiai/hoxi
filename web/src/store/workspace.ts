@@ -385,20 +385,26 @@ export function openFileInInspector(filePath: string, line?: number | null, diff
 
 export function openChangedFileInInspector(diff: SnapshotFileDiff | string) {
   const file = typeof diff === "string" ? diff : diff.file;
-  const knownDiff = Object.values(workspace.diffsBySession)
-    .flat()
-    .find((item) => item.file === file || item.file.endsWith(`/${file}`) || file.endsWith(`/${item.file}`));
-  const resolvedDiff = typeof diff === "string" ? knownDiff ?? null : { ...knownDiff, ...diff };
+  const resolvedDiff = typeof diff === "string"
+    ? (workspace.activeSessionID ? workspace.diffsBySession[workspace.activeSessionID] ?? [] : [])
+        .find((item) => item.file === file || item.file.endsWith(`/${file}`) || file.endsWith(`/${item.file}`)) ?? null
+    : diff;
   openFileInInspector(
     file,
-    firstChangedLine(resolvedDiff?.patch) ?? (knownDiff ? firstChangedLine(knownDiff.patch) : null),
+    firstChangedLine(resolvedDiff?.patch),
     resolvedDiff
   );
 }
 
-export function openDiffInInspector(filePath?: string) {
+export function openDiffInInspector(file?: string | SnapshotFileDiff) {
+  const filePath = typeof file === "string" ? file : file?.file;
   const cleaned = filePath ? filePath.replace(/^\.\//, "").replace(/:\d+(?::\d+)?$/, "").trim() : "";
-  setWorkspace({ inspectedDiffFile: cleaned || null, inspectorTab: "diffs", inspectorOpen: true });
+  setWorkspace({
+    inspectedFileDiff: typeof file === "object" ? file : null,
+    inspectedDiffFile: cleaned || null,
+    inspectorTab: "diffs",
+    inspectorOpen: true,
+  });
 }
 
 export function addReviewComment(sessionID: string, comment: Omit<ReviewCommentItem, "id">) {
@@ -458,4 +464,3 @@ export * from "./provider-telemetry";
 export * from "./provider-audit";
 export * from "./settings";
 export * from "./daily-pulse";
-

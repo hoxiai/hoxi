@@ -319,11 +319,6 @@ body {
   }
 }
 
-@keyframes execution-progress {
-  0% { transform: translateX(-120%); }
-  55%, 100% { transform: translateX(320%); }
-}
-
 @media (prefers-reduced-motion: reduce) {
   [data-component="spinner"],
   [data-component="spinner"] > * {

@@ -62,13 +62,11 @@ export function ComposerSandboxPill(props: {
 
   const activeWorktree = createMemo(() => {
     const id = props.sessionID;
-    return (id && workspace.worktreeBySession[id]) || workspace.worktreeBySession["__root__"];
+    return workspace.worktreeBySession[id || "__root__"];
   });
 
   const gitBranch = createMemo(() => activeWorktree()?.branch || "");
   const changedFilesCount = createMemo(() => {
-    const wt = activeWorktree();
-    if (wt?.changedFiles && wt.changedFiles > 0) return wt.changedFiles;
     const key = props.sessionID || "__root__";
     return (workspace.diffsBySession[key] ?? []).length;
   });

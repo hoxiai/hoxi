@@ -289,6 +289,10 @@ export async function switchWorkspace(directory: string): Promise<void> {
   setWorkspace({
     rootDir: cleaned,
     activeInspectorFolder: null,
+    inspectedFilePath: null,
+    inspectedFileLine: null,
+    inspectedFileDiff: null,
+    inspectedDiffFile: null,
     activeSessionID: null,
     bootstrappingSessions: true,
   });

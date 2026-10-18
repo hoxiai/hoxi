@@ -9,7 +9,7 @@ import {
   onMount,
   Show,
 } from "solid-js";
-import type { MessagePart, SessionStatus } from "../../services/sse-types";
+import type { MessagePart, SessionStatus, ToolPart } from "../../services/sse-types";
 import {
   appSettings,
   forkFromMessage,
@@ -22,6 +22,7 @@ import {
   formatMessageTime,
   isTodoTool,
   LiveExecutionControlBar,
+  resolveActiveCycleStepLabel,
   SessionRetryCard,
 } from "./message-stream-parts";
 import {
@@ -36,11 +37,12 @@ import TranscriptSearchBar from "./TranscriptSearchBar";
 import QueuedPromptsList from "./QueuedPromptsList";
 import { SessionSkeleton, SessionWelcomeHero } from "./SessionSkeleton";
 import { t } from "../../i18n";
+import { createTimelineScroll } from "./timeline-scroll";
 
 export default function MessageStream() {
   let scroller: HTMLDivElement | undefined;
-  let stickToBottom = true;
-  let programmaticScroll = false;
+  let content: HTMLDivElement | undefined;
+  const scroll = createTimelineScroll(() => scroller, () => appSettings.autoScrollStream);
   const [copiedUserMsgId, setCopiedUserMsgId] = createSignal<string | null>(null);
   const [searchOpen, setSearchOpen] = createSignal(false);
   const [activeMatchTurnID, setActiveMatchTurnID] = createSignal<string | null>(null);
@@ -83,7 +85,7 @@ export default function MessageStream() {
     );
   });
 
-  // Whether we should show Kilo's bottom `Thinking...` shimmer indicator
+  // Keep the bottom live execution status bar continuously visible ("不断档") while busy
   const showThinkingPlaceholder = createMemo(() => {
     if (activeStatus().type !== "busy") return false;
     const list = turns();
@@ -101,20 +103,6 @@ export default function MessageStream() {
     const last = list[list.length - 1];
     if (last.info.role === "assistant" && last.info.error) return false;
 
-    // Hide waiting indicator while any tool is pending/running, reasoning is open, or text is streaming
-    for (let i = list.length - 1; i > lastUserIdx; i--) {
-      const turn = list[i];
-      if (turn.info.role !== "assistant" || turn.info.time?.completed) continue;
-      const hasRunningWork = turn.parts.some(
-        (p) =>
-          (p.type === "tool" &&
-            (p.state.status === "pending" || p.state.status === "running")) ||
-          (p.type === "reasoning" && !p.time?.end) ||
-          (p.type === "text" && p.text.trim().length > 0)
-      );
-      if (hasRunningWork) return false;
-    }
-
     return true;
   });
 
@@ -127,37 +115,31 @@ export default function MessageStream() {
         break;
       }
     }
-    if (lastUserIdx < 0) return { count: 0, startedAt: undefined as number | undefined };
+    if (lastUserIdx < 0) {
+      return {
+        count: 0,
+        steps: [] as ToolPart[],
+        startedAt: undefined as number | undefined,
+        activeStepLabel: undefined as string | undefined,
+      };
+    }
     const startedAt =
       list[lastUserIdx].info.time?.created || list[lastUserIdx + 1]?.info.time?.created;
-    let count = 0;
-    for (let i = lastUserIdx + 1; i < list.length; i++) {
-      for (const part of list[i].parts) {
-        if (part.type === "tool" && !isTodoTool(part) && part.state.status === "completed") {
-          count++;
+    const cycleTurns = list.slice(lastUserIdx + 1);
+    const steps: ToolPart[] = [];
+    for (const turn of cycleTurns) {
+      for (const part of turn.parts) {
+        if (part.type === "tool" && !isTodoTool(part)) {
+          steps.push(part);
         }
       }
     }
-    return { count, startedAt };
-  });
-
-  // Reactivity key that changes as tokens stream in or prompts are queued, driving auto-scroll.
-  const streamKey = createMemo(() => {
-    const list = turns();
-    const id = workspace.activeSessionID;
-    const queuedLen = id ? (workspace.queuedPromptsBySession[id]?.length ?? 0) : 0;
-    const busyScore = isSessionBusy() ? 50_000 : 0;
-    const thinkingScore = showThinkingPlaceholder() ? 25_000 : 0;
-    const last = list[list.length - 1];
-    let n = list.length * 1_000_000 + queuedLen * 100_000 + busyScore + thinkingScore;
-    if (last) {
-      n += last.parts.length * 1000;
-      if (last.info.error) n += 500;
-      for (const part of last.parts) {
-        if (part.type === "text" || part.type === "reasoning") n += part.text.length;
-      }
-    }
-    return n;
+    return {
+      count: steps.filter((part) => part.state.status === "completed").length,
+      steps,
+      startedAt,
+      activeStepLabel: resolveActiveCycleStepLabel(cycleTurns),
+    };
   });
 
   let previousSessionID: string | null = null;
@@ -181,7 +163,7 @@ export default function MessageStream() {
       userTurnCount > prevUserTurnCount ||
       queuedLen > prevQueuedLen
     ) {
-      stickToBottom = true;
+      scroll.resume();
     }
     previousSessionID = sessionID;
     wasBusy = busy;
@@ -190,24 +172,12 @@ export default function MessageStream() {
   });
 
   createEffect(() => {
-    streamKey();
-    if (!appSettings.autoScrollStream || !stickToBottom || !scroller) return;
-    requestAnimationFrame(() => {
-      if (!scroller || !stickToBottom) return;
-      programmaticScroll = true;
-      scroller.scrollTop = scroller.scrollHeight;
-      requestAnimationFrame(() => {
-        programmaticScroll = false;
-      });
-    });
+    if (appSettings.autoScrollStream) scroll.schedule();
   });
 
   const onScroll = () => {
     if (!scroller) return;
-    if (programmaticScroll) return;
-    const distance = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
-    stickToBottom = distance < 64;
-    if (!stickToBottom) {
+    if (scroll.onScroll()) {
       turnWindow.handleTopScroll(scroller);
     }
   };
@@ -251,18 +221,19 @@ export default function MessageStream() {
   };
 
   const scrollToTurn = (messageID: string) => {
+    scroll.pause();
     turnWindow.ensureTurnVisible(messageID);
     queueMicrotask(() => {
       if (!scroller) return;
       const el = scroller.querySelector(`[data-turn-id="${CSS.escape(messageID)}"]`);
       if (el instanceof HTMLElement) {
-        stickToBottom = false;
         el.scrollIntoView({ behavior: "smooth", block: "center" });
       }
     });
   };
 
   onMount(() => {
+    if (content) onCleanup(scroll.observe(content));
     const onWindowKeyDown = (ev: KeyboardEvent) => {
       if ((ev.metaKey || ev.ctrlKey) && ev.key.toLowerCase() === "f") {
         if (turns().length > 0) {
@@ -326,7 +297,7 @@ export default function MessageStream() {
         class="pointer-events-none sticky top-0 z-10 -mb-6 h-6 w-full shrink-0 bg-gradient-to-b from-[var(--bg-panel)] to-transparent"
       />
 
-      <div class="mx-auto flex w-full max-w-[var(--thread-max-width)] min-h-full flex-col px-6 pt-8 pb-8">
+      <div ref={content} class="mx-auto flex w-full max-w-[var(--thread-max-width)] min-h-full flex-col px-6 pt-8 pb-8">
         <Show
           when={!isEmpty()}
           fallback={
@@ -453,7 +424,9 @@ export default function MessageStream() {
                 isSessionBusy={isSessionBusy()}
                 showThinking={showThinkingPlaceholder()}
                 completedSteps={executionCycleMeta().count}
+                steps={executionCycleMeta().steps}
                 startedAt={executionCycleMeta().startedAt}
+                activeStepLabel={executionCycleMeta().activeStepLabel}
                 lastTurnRole={turns()[turns().length - 1]?.info.role}
               />
 

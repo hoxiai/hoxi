@@ -280,7 +280,7 @@ export default function Composer() {
 
   return (
     <div class="shrink-0 w-full px-6 pb-4 pt-1">
-      <div class="relative mx-auto w-full max-w-[var(--thread-max-width)]">
+      <div class="relative mx-auto w-full max-w-[calc(var(--thread-max-width)-100px)]">
         {/* Floating @file / @changes / /command Autocomplete Popover */}
         <ComposerAutocompletePopover
           triggerMode={ac.triggerMode()}

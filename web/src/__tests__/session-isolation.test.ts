@@ -1,9 +1,12 @@
 import { reconcile, unwrap } from "solid-js/store";
 import { hoxiAPI, type WorktreeMeta } from "../services/api";
 import { appSettings, setAppSettings } from "../store/settings";
-import { setWorkspace, workspace } from "../store/workspace";
+import { openDiffInInspector, setWorkspace, workspace } from "../store/workspace";
 import {
   newIsolatedSession,
+  loadSessionMessages,
+  refreshWorktreeStatus,
+  selectSession,
   sessionDirectory,
   submitSessionPrompt,
   switchActiveSessionSandboxMode,
@@ -21,7 +24,7 @@ async function withSessionFixture(run: (id: string, meta: WorktreeMeta) => Promi
     sessionID: id, isolated: true, directory: `/repo/.hoxi/worktrees/${id}`, createdAt: "test",
   };
   setWorkspace({ rootDir: "/repo", activeSessionID: "existing", sessions: [],
-    worktreeBySession: {}, messagesBySession: {}, statusBySession: {} });
+    worktreeBySession: {}, messagesBySession: {}, statusBySession: {}, diffsBySession: {} });
   setAppSettings("defaultSandboxMode", "worktree");
   hoxiAPI.createSession = async () => ({
     id, title: "Isolation test", directory: "/repo", time: { created: 1, updated: 1 },
@@ -45,6 +48,92 @@ async function rejection(task: Promise<unknown>): Promise<Error> {
 }
 
 describe("session worktree isolation", () => {
+  it("opens changed-file statistics as a diff and preserves the clicked patch without changing live diffs", async () => {
+    await withSessionFixture(async (id) => {
+      setWorkspace({ activeSessionID: id, diffsBySession: { [id]: [] }, inspectorOpen: false });
+      const diff = { file: "src/example.ts", additions: 1, deletions: 1,
+        patch: "--- a/src/example.ts\n+++ b/src/example.ts\n@@ -1 +1 @@\n-old\n+new\n" };
+      openDiffInInspector(diff);
+      assertEqual(workspace.inspectorTab, "diffs");
+      assertEqual(workspace.inspectorOpen, true);
+      assertEqual(workspace.inspectedDiffFile, diff.file);
+      assertEqual(workspace.inspectedFileDiff?.patch, diff.patch);
+      assertEqual(workspace.diffsBySession[id].length, 0);
+      openDiffInInspector("another.ts");
+      assertEqual(workspace.inspectedFileDiff, null);
+      assertEqual(workspace.inspectedDiffFile, "another.ts");
+    });
+  });
+
+  it("keeps each session's files and counts separate from shared Git changes", async () => {
+    await withSessionFixture(async (id) => {
+      const otherID = `${id}_other`;
+      setWorkspace("sessions", [id, otherID].map((sessionID) => ({
+        id: sessionID, parentID: "parent", title: "test", directory: "/other-repo",
+        time: { created: 1, updated: 1 },
+      })));
+      hoxiAPI.getMessages = async () => [];
+      hoxiAPI.getSessionDiff = async (sessionID, directory) => {
+        assertEqual(directory, "/other-repo");
+        return [{ file: sessionID === id ? "a.ts" : "b.ts", additions: sessionID === id ? 3 : 7, deletions: 0 }];
+      };
+      let gitDiffCalls = 0;
+      hoxiAPI.getWorktreeDiff = async () => { gitDiffCalls++; return [
+        { file: "manual.ts", additions: 100, deletions: 50 },
+      ]; };
+      await selectSession(id);
+      await selectSession(otherID);
+      assertEqual(workspace.diffsBySession[id].length, 1);
+      assertEqual(workspace.diffsBySession[id][0].file, "a.ts");
+      assertEqual(workspace.diffsBySession[id][0].additions, 3);
+      assertEqual(workspace.diffsBySession[otherID][0].file, "b.ts");
+      assertEqual(workspace.diffsBySession[otherID][0].additions, 7);
+      assertEqual(gitDiffCalls, 0);
+    });
+  });
+
+  it("scopes status requests and preserves session changes when Git is clean", async () => {
+    await withSessionFixture(async (id) => {
+      setWorkspace({ activeSessionID: id, sessions: [{
+        id, title: "test", directory: "/other-repo", time: { created: 1, updated: 1 },
+      }] });
+      hoxiAPI.getWorktreeStatus = async (sessionID, directory) => {
+        assertEqual(sessionID, id);
+        assertEqual(directory, "/other-repo");
+        return { sessionID: id, directory: "/other-repo", isolated: false, dirty: false,
+          changedFiles: 0, uncommittedLines: 0, additions: 0, deletions: 0 };
+      };
+      hoxiAPI.getSessionDiff = async () => [{ file: "owned.ts", additions: 0, deletions: 4 }];
+      await refreshWorktreeStatus(id);
+      assertEqual(sessionDirectory(id), "/other-repo");
+      assertEqual(workspace.diffsBySession[id][0].deletions, 4);
+      hoxiAPI.getMessages = async () => [];
+      // Child sessions do not schedule a background Git status refresh.
+      setWorkspace("sessions", 0, "parentID", "parent");
+      hoxiAPI.getSessionDiff = async () => [];
+      await loadSessionMessages(id);
+      assertEqual(workspace.diffsBySession[id].length, 0);
+    });
+  });
+
+  it("clears the previous session's file preview when selecting another session", async () => {
+    await withSessionFixture(async (id) => {
+      setWorkspace({
+        inspectedFilePath: "previous.ts", inspectedFileLine: 5,
+        inspectedFileDiff: { file: "previous.ts", additions: 9, deletions: 2 },
+        inspectedDiffFile: "previous.ts", activeInspectorFolder: "/previous",
+        sessions: [{ id, parentID: "parent", title: "test", directory: "/repo", time: { created: 1, updated: 1 } }],
+      });
+      hoxiAPI.getMessages = async () => [];
+      hoxiAPI.getSessionDiff = async () => [];
+      await selectSession(id);
+      assertEqual(workspace.inspectedFileDiff, null);
+      assertEqual(workspace.inspectedFilePath, null);
+      assertEqual(workspace.inspectedDiffFile, null);
+      assertEqual(workspace.activeInspectorFolder, null);
+    });
+  });
+
   it("rejects failed provisioning, removes the incomplete session and never dispatches a prompt", async () => {
     await withSessionFixture(async (id) => {
       let callbackCount = 0;

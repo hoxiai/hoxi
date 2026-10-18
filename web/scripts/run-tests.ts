@@ -7,6 +7,7 @@ import "../src/__tests__/memory.test";
 import "../src/__tests__/merge-turns.test";
 import "../src/__tests__/task-progress.test";
 import "../src/__tests__/session-isolation.test";
+import "../src/__tests__/timeline-scroll.test";
 import { runAllTests } from "../src/__tests__/test-harness";
 
 console.log("[test] Running Hoxi frontend unit tests...");

@@ -146,6 +146,23 @@ export function extractChildSubagentSessionId(tp: ToolPart): string | undefined 
     const m = out.match(/session_id:\s*([a-zA-Z0-9_-]+)/);
     if (m?.[1]) return m[1];
   }
+  let desc = typeof input?.description === "string" ? input.description.trim() : "";
+  if (!desc) {
+    const raw = (tp.state as { raw?: string }).raw;
+    if (typeof raw === "string") {
+      const m = raw.match(/"description"\s*:\s*"((?:\\.|[^"\\])*)"/);
+      if (m?.[1]) desc = m[1].trim();
+    }
+  }
+  if (tp.sessionID && desc) {
+    const matched = workspace.sessions.find(
+      (s) =>
+        s.parentID === tp.sessionID &&
+        typeof s.title === "string" &&
+        (s.title === desc || s.title.startsWith(`${desc} (`) || s.title.includes(desc))
+    );
+    if (matched?.id) return matched.id;
+  }
   return undefined;
 }
 

@@ -272,6 +272,8 @@ export interface TimelineI18n {
   executionStillWorking: string;
   executionElapsed: string;
   executionStepsDone: string;
+  executionStepNumber: string;
+  executionStepDetails: string;
   pausedPlaceholder: string;
   resumeDefaultPrompt: string;
   resumePromptPrefix: string;
@@ -389,4 +391,3 @@ export interface ApprovalI18n {
 export * from "./domain-inspector-types";
 export * from "./domain-models-types";
 export * from "./domain-settings-types";
-

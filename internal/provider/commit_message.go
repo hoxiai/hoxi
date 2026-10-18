@@ -12,14 +12,15 @@ import (
 )
 
 type generateCommitMessageRequest struct {
-	ProviderID   string `json:"providerID"`
-	ModelID      string `json:"modelID"`
-	BaseURL      string `json:"baseURL,omitempty"`
-	NPM          string `json:"npm,omitempty"`
-	SessionTitle string `json:"sessionTitle,omitempty"`
-	LastPrompt   string `json:"lastPrompt,omitempty"`
-	DiffSummary  string `json:"diffSummary"`
-	Locale       string `json:"locale,omitempty"`
+	ProviderID    string `json:"providerID"`
+	ModelID       string `json:"modelID"`
+	BaseURL       string `json:"baseURL,omitempty"`
+	NPM           string `json:"npm,omitempty"`
+	SessionDigest string `json:"sessionDigest,omitempty"`
+	SessionTitle  string `json:"sessionTitle,omitempty"`
+	LastPrompt    string `json:"lastPrompt,omitempty"`
+	DiffSummary   string `json:"diffSummary"`
+	Locale        string `json:"locale,omitempty"`
 }
 
 type generateCommitMessageResponse struct {
@@ -28,7 +29,10 @@ type generateCommitMessageResponse struct {
 	Error   string `json:"error,omitempty"`
 }
 
-var commitPrefixRegex = regexp.MustCompile(`(?i)^(commit\s*message|git\s*commit|提交信息|提交说明|信息)\s*[:：\-]\s*`)
+var (
+	commitPrefixRegex       = regexp.MustCompile(`(?i)^(commit\s*message|git\s*commit|subject|summary|提交信息|提交说明|信息)\s*[:：\-]\s*`)
+	conventionalCommitRegex = regexp.MustCompile(`^(feat|fix|refactor|perf|style|docs|test|build|ci|chore|revert)(\([a-zA-Z0-9_.\-,/]+\))?!?:\s+.+`)
+)
 
 func (g *desktopGateway) handleGenerateCommitMessage(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -43,14 +47,9 @@ func (g *desktopGateway) handleGenerateCommitMessage(w http.ResponseWriter, r *h
 	}
 
 	diffSummary := strings.TrimSpace(req.DiffSummary)
-	if diffSummary == "" && strings.TrimSpace(req.SessionTitle) == "" && strings.TrimSpace(req.LastPrompt) == "" {
+	if diffSummary == "" && strings.TrimSpace(req.SessionDigest) == "" && strings.TrimSpace(req.LastPrompt) == "" {
 		writeJSON(w, http.StatusOK, generateCommitMessageResponse{OK: false, Error: "Diff summary or session context is required"})
 		return
-	}
-
-	locale := strings.TrimSpace(req.Locale)
-	if locale == "" {
-		locale = "zh-CN"
 	}
 
 	pid := strings.TrimSpace(req.ProviderID)
@@ -58,7 +57,7 @@ func (g *desktopGateway) handleGenerateCommitMessage(w http.ResponseWriter, r *h
 	baseURL, apiKey, npm, headers := g.resolveProviderConnection(pid, req.BaseURL, req.NPM)
 
 	if pid != "" && mid != "" && (strings.HasPrefix(baseURL, "http://") || strings.HasPrefix(baseURL, "https://")) {
-		if msg, err := g.invokeCommitMessageLLM(r.Context(), pid, mid, baseURL, apiKey, npm, headers, req, locale); err == nil && msg != "" {
+		if msg, err := g.invokeCommitMessageLLM(r.Context(), pid, mid, baseURL, apiKey, npm, headers, req); err == nil && msg != "" {
 			writeJSON(w, http.StatusOK, generateCommitMessageResponse{
 				OK:      true,
 				Message: msg,
@@ -78,41 +77,37 @@ func (g *desktopGateway) invokeCommitMessageLLM(
 	providerID, modelID, baseURL, apiKey, npm string,
 	headers map[string]string,
 	req generateCommitMessageRequest,
-	locale string,
 ) (string, error) {
-	isZh := strings.HasPrefix(strings.ToLower(locale), "zh")
-	diffSnippet := truncateRunes(strings.TrimSpace(req.DiffSummary), 1800)
-	titleSnippet := truncateRunes(strings.TrimSpace(req.SessionTitle), 120)
-	promptSnippet := truncateRunes(strings.TrimSpace(codeFenceRegex.ReplaceAllString(req.LastPrompt, " ")), 300)
-
-	var instruction string
-	if isZh {
-		instruction = fmt.Sprintf(`请根据以下任务上下文与 Git 变更摘要，生成一条精炼的单行 Conventional Commit 提交信息（格式：<type>(<scope>): <简明中文说明>，例如 feat(timeline): 新增底部 Git 一键提交并推送功能）。
-严格要求：
-1. <type> 必须从 feat, fix, refactor, perf, style, docs, test, build, chore 中选择。
-2. 只输出单行提交信息本身（总长度控制在 60 字以内），严禁包含引号、代码块、句号、“提交信息：”前缀或任何额外解释。
-
-会话主题：%s
-用户指令：%s
-Git 变更文件与摘要：
-%s`, titleSnippet, promptSnippet, diffSnippet)
-	} else {
-		instruction = fmt.Sprintf(`Generate a concise single-line Conventional Commit message (<type>(<scope>): <summary>, max 72 characters) based on the task context and Git diff summary below.
-Strict rules:
-1. <type> must be one of: feat, fix, refactor, perf, style, docs, test, build, chore.
-2. Output ONLY the single-line commit message itself — no quotes, no markdown fences, no trailing period, and no explanation.
-
-Session title: %s
-User prompt: %s
-Git diff summary:
-%s`, titleSnippet, promptSnippet, diffSnippet)
+	diffSnippet := truncateRunes(strings.TrimSpace(req.DiffSummary), 2400)
+	digestSnippet := truncateRunes(strings.TrimSpace(codeFenceRegex.ReplaceAllString(req.SessionDigest, " ")), 1200)
+	if digestSnippet == "" {
+		digestSnippet = truncateRunes(strings.TrimSpace(codeFenceRegex.ReplaceAllString(req.LastPrompt, " ")), 500)
 	}
+
+	instruction := fmt.Sprintf(`You are an expert software engineer generating a Git commit message for the changes completed in the current session.
+Analyze the Current Session Conversation Context and the Git Diff Summary below, then write a concise, accurate single-line English Conventional Commit message.
+
+Strict requirements:
+1. Format MUST be: <type>(<scope>): <concise imperative English description> (e.g., "feat(timeline): add one-click git commit and push in composer dropdown").
+2. MUST be written strictly in English — even if the session conversation is in Chinese or another language, translate the technical intent into natural, idiomatic English.
+3. <type> must be one of: feat, fix, refactor, perf, style, docs, test, build, chore.
+4. Summarize WHAT code change was implemented and WHY based on the conversation and diff; NEVER copy conversational phrases or raw user questions.
+5. Keep the line under 72 characters, imperative mood ("add", "fix", "refactor", not "added" or "adds"), no trailing period.
+6. Output ONLY the single-line commit message itself — no quotes, no markdown fences, no explanation.
+
+Current Session Conversation Context:
+%s
+
+Git Diff Summary:
+%s`, digestSnippet, diffSnippet)
 
 	isAnthropic := npm == "@ai-sdk/anthropic" || providerID == "anthropic"
 	trimmedBase := strings.TrimRight(baseURL, "/")
 	var targetURL string
 	var bodyMap map[string]any
 
+	// Use 2048 max_tokens so reasoning models (DeepSeek, Qwen, GLM, o-series) can finish their
+	// internal reasoning_content without hitting finish_reason="length" before emitting content.
 	if isAnthropic {
 		if strings.HasSuffix(trimmedBase, "/v1") {
 			targetURL = trimmedBase + "/messages"
@@ -121,7 +116,7 @@ Git diff summary:
 		}
 		bodyMap = map[string]any{
 			"model":      modelID,
-			"max_tokens": 600,
+			"max_tokens": 2048,
 			"messages": []map[string]string{
 				{"role": "user", "content": instruction},
 			},
@@ -130,7 +125,7 @@ Git diff summary:
 		targetURL = trimmedBase + "/chat/completions"
 		bodyMap = map[string]any{
 			"model":       modelID,
-			"max_tokens":  600,
+			"max_tokens":  2048,
 			"temperature": 0.2,
 			"messages": []map[string]string{
 				{"role": "user", "content": instruction},
@@ -139,7 +134,7 @@ Git diff summary:
 	}
 
 	payloadBytes, _ := json.Marshal(bodyMap)
-	ctx, cancel := context.WithTimeout(parentCtx, 10*time.Second)
+	ctx, cancel := context.WithTimeout(parentCtx, 20*time.Second)
 	defer cancel()
 
 	outReq, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, strings.NewReader(string(payloadBytes)))
@@ -163,7 +158,7 @@ Git diff summary:
 	}
 
 	client := &http.Client{
-		Timeout:   10 * time.Second,
+		Timeout:   20 * time.Second,
 		Transport: titleTransport,
 	}
 	if strings.Contains(targetURL, "://127.0.0.1") || strings.Contains(targetURL, "://localhost") {
@@ -197,6 +192,7 @@ func cleanGeneratedCommitMessage(raw string) string {
 		return ""
 	}
 
+	var firstCandidate string
 	for _, line := range strings.Split(text, "\n") {
 		l := strings.TrimSpace(line)
 		if strings.HasPrefix(l, "{") || strings.HasPrefix(l, "[") || strings.Contains(l, `"finish_reason"`) || strings.Contains(l, `"choices"`) {
@@ -205,9 +201,15 @@ func cleanGeneratedCommitMessage(raw string) string {
 		l = strings.TrimLeft(l, "#*-•> \t")
 		l = commitPrefixRegex.ReplaceAllString(l, "")
 		l = strings.Trim(l, "\"'`“”‘’「」『』.。;； \t")
-		if hasMeaningfulRune(l) {
+		if !hasMeaningfulRune(l) {
+			continue
+		}
+		if conventionalCommitRegex.MatchString(l) {
 			return truncateRunes(l, 88)
 		}
+		if firstCandidate == "" {
+			firstCandidate = truncateRunes(l, 88)
+		}
 	}
-	return ""
+	return firstCandidate
 }

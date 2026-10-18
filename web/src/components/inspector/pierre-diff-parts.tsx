@@ -15,9 +15,10 @@ import {
   loadSessionMessages,
   openFileInInspector,
   refreshWorktreeStatus,
+  synthesizeLocalCommitMessage,
   workspace,
 } from "../../store/workspace";
-import type { MessagePart, SnapshotFileDiff } from "../../services/sse-types";
+import type { SnapshotFileDiff } from "../../services/sse-types";
 import { DiffChanges, FileIcon } from "../icons";
 import { t } from "../../i18n";
 import { DiffStatusBadge } from "./diff-file-tree";
@@ -26,62 +27,7 @@ export function synthesizeAICommitMessage(
   sessionID: string | null | undefined,
   diffs: SnapshotFileDiff[]
 ): string {
-  const files = diffs.map((d) => d.file);
-  const topDirs = Array.from(
-    new Set(
-      files.map((f) => {
-        const parts = f.split("/").filter(Boolean);
-        return parts.length > 1
-          ? parts[parts.length - 2]
-          : parts[0]?.replace(/\.[^.]+$/, "") || "core";
-      })
-    )
-  ).slice(0, 2);
-  const scope = topDirs.join(",") || "workspace";
-
-  const session = workspace.sessions.find((s) => s.id === sessionID);
-  const turns = sessionID ? workspace.messagesBySession[sessionID] ?? [] : [];
-  let rawIntent = session?.title || "";
-  if (
-    !rawIntent ||
-    rawIntent === "New Session" ||
-    rawIntent.startsWith("Session") ||
-    rawIntent.trim().startsWith("{") ||
-    rawIntent.includes('"choices"')
-  ) {
-    rawIntent = "";
-    for (let i = turns.length - 1; i >= 0; i--) {
-      if (turns[i].info.role === "user") {
-        const textPart = turns[i].parts.find(
-          (p): p is Extract<MessagePart, { type: "text" }> => p.type === "text"
-        );
-        if (textPart?.text) {
-          rawIntent = textPart.text.split("\n")[0].trim();
-          break;
-        }
-      }
-    }
-  }
-
-  const lower = rawIntent.toLowerCase();
-  let prefix = "feat";
-  if (/\b(fix|bug|error|issue|crash|repair)\b/.test(lower)) prefix = "fix";
-  else if (/\b(refactor|clean|split|modular)\b/.test(lower)) prefix = "refactor";
-  else if (/\b(doc|readme|agents\.md)\b/.test(lower)) prefix = "docs";
-  else if (/\b(test|spec)\b/.test(lower)) prefix = "test";
-
-  const cleanSummary = rawIntent
-    ? rawIntent
-        .replace(/^(please\s+|can you\s+|help me\s+)/i, "")
-        .replace(/[.!?]+$/, "")
-        .slice(0, 64)
-        .trim()
-    : `update ${files
-        .slice(0, 2)
-        .map((f) => f.split("/").pop())
-        .join(", ")}${files.length > 2 ? ` and ${files.length - 2} more` : ""}`;
-
-  return `${prefix}(${scope}): ${cleanSummary}`;
+  return synthesizeLocalCommitMessage(sessionID, diffs);
 }
 
 /**

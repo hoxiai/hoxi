@@ -38,30 +38,29 @@ export default function PierreDiffViewer() {
 
   const diffs = createMemo(() => {
     const id = workspace.activeSessionID;
-    const base = id
-      ? workspace.diffsBySession[id]?.length
-        ? workspace.diffsBySession[id]
-        : collectCycleChangedFiles(workspace.messagesBySession[id] ?? [], id)
+    return id
+      ? workspace.diffsBySession[id] ?? collectCycleChangedFiles(workspace.messagesBySession[id] ?? [], id)
       : workspace.diffsBySession[sessionKey()] ?? [];
-    const extra = workspace.inspectedFileDiff;
-    if (
-      extra &&
-      !base.some(
-        (d) =>
-          d.file === extra.file ||
-          d.file.endsWith(`/${extra.file}`) ||
-          extra.file.endsWith(`/${d.file}`)
-      )
-    ) {
-      return [...base, extra];
-    }
-    return base;
+  });
+
+  // The clicked turn may describe a historical edit absent from the current Git diff.
+  // Keep that preview separate from the live diff list used for totals and commits.
+  const previewDiffs = createMemo(() => {
+    const list = diffs();
+    const clicked = workspace.inspectedFileDiff;
+    if (!clicked || !workspace.inspectedDiffFile) return list;
+    const index = list.findIndex((item) => item.file === clicked.file ||
+      item.file.endsWith(`/${clicked.file}`) || clicked.file.endsWith(`/${item.file}`));
+    if (index < 0) return [...list, clicked];
+    const current = list[index];
+    if (current.patch || typeof current.before === "string" || typeof current.after === "string") return list;
+    return list.map((item, i) => i === index ? clicked : item);
   });
 
   const selectedIndex = createMemo(() => {
     const target = workspace.inspectedDiffFile;
     if (!target) return -1;
-    const list = diffs();
+    const list = previewDiffs();
     return list.findIndex(
       (d) =>
         d.file === target ||
@@ -72,7 +71,7 @@ export default function PierreDiffViewer() {
 
   const selectedDiff = createMemo(() => {
     const idx = selectedIndex();
-    return idx >= 0 ? diffs()[idx] : null;
+    return idx >= 0 ? previewDiffs()[idx] : null;
   });
 
   const isAuditing = () =>
@@ -141,7 +140,7 @@ export default function PierreDiffViewer() {
     <div class="flex flex-col h-full">
       <div class="shrink-0 flex items-center justify-between px-3 py-2 border-b border-[var(--border-subtle)]">
         <Show
-          when={diffs().length > 0}
+          when={previewDiffs().length > 0}
           fallback={
             <div class="flex items-center gap-2 text-[11.5px] text-[var(--text-secondary)]">
               <span class="inline-flex items-center gap-1.5 text-[var(--ok-text)] font-medium">
@@ -295,7 +294,7 @@ export default function PierreDiffViewer() {
             when={selectedDiff()}
             fallback={
               <DiffFileTree
-                diffs={diffs()}
+                diffs={previewDiffs()}
                 onSelectFile={(file) => setWorkspace("inspectedDiffFile", file)}
               />
             }
@@ -305,14 +304,14 @@ export default function PierreDiffViewer() {
                 diff={activeDiff()}
                 diffStyle={diffStyle()}
                 currentIndex={selectedIndex()}
-                totalFiles={diffs().length}
+                totalFiles={previewDiffs().length}
                 onBack={() => setWorkspace("inspectedDiffFile", null)}
                 onPrev={() => {
-                  const prev = diffs()[selectedIndex() - 1];
+                  const prev = previewDiffs()[selectedIndex() - 1];
                   if (prev) setWorkspace("inspectedDiffFile", prev.file);
                 }}
                 onNext={() => {
-                  const next = diffs()[selectedIndex() + 1];
+                  const next = previewDiffs()[selectedIndex() + 1];
                   if (next) setWorkspace("inspectedDiffFile", next.file);
                 }}
               />

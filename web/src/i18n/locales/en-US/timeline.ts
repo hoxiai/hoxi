@@ -162,8 +162,10 @@ export const timeline: TimelineI18n = {
   executing: "Executing…",
   executionPreparing: "Preparing the next step…",
   executionStillWorking: "Still working through the task",
-  executionElapsed: "Working for {time}s",
-  executionStepsDone: "{count} steps completed",
+  executionElapsed: "{time}s",
+  executionStepsDone: "{count} steps",
+  executionStepNumber: "{count} steps",
+  executionStepDetails: "Execution step details",
   pausedPlaceholder:
     "Task is paused. Click Resume to continue directly, or type additional instructions first...",
   resumeDefaultPrompt:

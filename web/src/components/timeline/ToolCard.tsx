@@ -14,7 +14,10 @@ import {
 } from "../../store/workspace";
 import { t } from "../../i18n";
 import { DiffChanges, FileIcon, Icon, Spinner, TextShimmer, ToolStatusTitle } from "../icons";
-import SubagentInlineTimeline, { useSubagentTelemetry } from "./SubagentInlineTimeline";
+import SubagentInlineTimeline, {
+  SubagentRollingPreview,
+  useSubagentTelemetry,
+} from "./SubagentInlineTimeline";
 import {
   extractCommand, extractDescription, extractExitCode, extractRollingShellLines,
   extractShellOutput, extractTargetFile, formatToolDisplayName, getDirectory, getFilename,
@@ -30,8 +33,8 @@ import {
 
 export { extractTargetFile, kiloToolIconName, processCarriageReturns };
 
-export default function ToolCard(props: { part: ToolPart }) {
-  const [expanded, setExpanded] = createSignal(false);
+export default function ToolCard(props: { part: ToolPart; defaultExpanded?: boolean }) {
+  const [expanded, setExpanded] = createSignal(props.defaultExpanded ?? false);
   const [elapsed, setElapsed] = createSignal(0);
   const [copiedCmd, setCopiedCmd] = createSignal(false);
   let outputRef: HTMLPreElement | undefined;
@@ -227,7 +230,7 @@ export default function ToolCard(props: { part: ToolPart }) {
                       </span>
                     </Show>
                     <Show when={isTask() && isRunning() && subagentTelemetry().currentStepLabel}>
-                      <span class="hidden md:inline-block font-mono text-[11px] text-[var(--text-faint)] truncate max-w-[200px]">
+                      <span class="inline-block font-mono text-[11px] text-[var(--text-faint)] truncate max-w-[220px]">
                         · {subagentTelemetry().currentStepLabel}
                       </span>
                     </Show>
@@ -392,6 +395,13 @@ export default function ToolCard(props: { part: ToolPart }) {
             </span>
           </div>
         </div>
+
+        <Show when={isTask() && isRunning() && !expanded()}>
+          <SubagentRollingPreview
+            tools={subagentTelemetry().recentTools}
+            onExpand={() => setExpanded(true)}
+          />
+        </Show>
 
         {/* Floating Popover for Subagent `task` tool calls */}
         <Show when={expanded() && isTask() && childSessionID()}>

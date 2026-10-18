@@ -1,5 +1,5 @@
 import { produce } from "solid-js/store";
-import type { SessionInfo, SnapshotFileDiff } from "../services/sse-types";
+import type { SessionInfo } from "../services/sse-types";
 import { hoxiAPI } from "../services/api";
 import { mergeServerTurnsInto } from "./message-lookup";
 import {
@@ -96,33 +96,6 @@ export function replaceSession(info: SessionInfo) {
   });
 }
 
-function mergeSessionAndWorktreeDiffs(
-  sessionDiffs: SnapshotFileDiff[],
-  worktreeDiffs: SnapshotFileDiff[]
-): SnapshotFileDiff[] {
-  const byFile = new Map<string, SnapshotFileDiff>();
-  for (const d of sessionDiffs || []) {
-    if (!d?.file) continue;
-    byFile.set(d.file, { ...d });
-  }
-  for (const wd of worktreeDiffs || []) {
-    if (!wd?.file) continue;
-    const existing = byFile.get(wd.file);
-    if (existing) {
-      byFile.set(wd.file, {
-        ...existing,
-        patch: existing.patch || wd.patch,
-        additions: existing.additions || wd.additions,
-        deletions: existing.deletions || wd.deletions,
-        status: existing.status || wd.status,
-      });
-    } else {
-      byFile.set(wd.file, { ...wd });
-    }
-  }
-  return Array.from(byFile.values());
-}
-
 export async function loadSessionMessagesOnly(sessionID: string): Promise<void> {
   const directory = sessionDirectory(sessionID);
   const turns = await hoxiAPI.getMessages(sessionID, directory);
@@ -163,15 +136,22 @@ export async function loadSessionMessages(sessionID: string): Promise<void> {
   if (isChildSession && sessionID !== workspace.activeSessionID) {
     return;
   }
-  const [sessionDiffs, worktreeDiffs] = await Promise.all([
-    hoxiAPI.getSessionDiff(sessionID, directory).catch(() => [] as SnapshotFileDiff[]),
-    hoxiAPI.getWorktreeDiff(sessionID).catch(() => [] as SnapshotFileDiff[]),
-  ]);
-  const merged = mergeSessionAndWorktreeDiffs(sessionDiffs, worktreeDiffs);
-  setWorkspace("diffsBySession", sessionID, merged);
+  const sessionDiffs = await hoxiAPI.getSessionDiff(sessionID, directory).catch(() => undefined);
+  if (sessionDiffs && sessionDirectory(sessionID) === directory && !isSessionDeleted(sessionID)) {
+    setWorkspace("diffsBySession", sessionID, sessionDiffs);
+  }
 }
 
 export async function selectSession(sessionID: string): Promise<void> {
+  if (workspace.activeSessionID !== sessionID) {
+    setWorkspace({
+      inspectedFilePath: null,
+      inspectedFileLine: null,
+      inspectedFileDiff: null,
+      inspectedDiffFile: null,
+      activeInspectorFolder: null,
+    });
+  }
   if (workspace.messagesBySession[sessionID] === undefined) {
     setWorkspace("loadingMessagesBySession", sessionID, true);
   }
@@ -245,14 +225,17 @@ export function scheduleRefreshWorktreeStatus(
 
 export async function refreshWorktreeStatus(sessionID?: string | null): Promise<void> {
   const key = sessionID || "__root__";
-  const dirArg = key === "__root__" ? workspace.rootDir || undefined : undefined;
+  const dirArg = key === "__root__" ? workspace.rootDir || undefined : sessionDirectory(key);
+  const isCurrentScope = () => !isSessionDeleted(key) && dirArg ===
+    (key === "__root__" ? workspace.rootDir || undefined : sessionDirectory(key));
   try {
     const st = await hoxiAPI.getWorktreeStatus(key, dirArg);
+    if (!isCurrentScope()) return;
     const prevMeta = workspace.worktreeBySession[key];
     setWorkspace("worktreeBySession", key, {
       sessionID: key,
       isolated: st.isolated,
-      directory: st.directory || workspace.rootDir,
+      directory: st.directory || dirArg || "",
       branch: st.branch || prevMeta?.branch,
       baseCommit: st.baseCommit || prevMeta?.baseCommit,
       headCommit: st.headCommit || prevMeta?.headCommit,
@@ -267,15 +250,11 @@ export async function refreshWorktreeStatus(sessionID?: string | null): Promise<
       hasUpstream: st.hasUpstream,
     });
     if (key === "__root__" || key === workspace.activeSessionID) {
-      const wtDiffs = st.dirty
-        ? await hoxiAPI.getWorktreeDiff(key, dirArg).catch(() => [] as SnapshotFileDiff[])
-        : [];
-      const existing = workspace.diffsBySession[key] ?? [];
-      setWorkspace(
-        "diffsBySession",
-        key,
-        key === "__root__" ? wtDiffs : st.dirty ? mergeSessionAndWorktreeDiffs(existing, wtDiffs) : []
-      );
+      // Git status describes the whole directory, not the files owned by a session.
+      const diffs = key === "__root__"
+        ? st.dirty ? await hoxiAPI.getWorktreeDiff(key, dirArg) : []
+        : await hoxiAPI.getSessionDiff(key, dirArg);
+      if (isCurrentScope()) setWorkspace("diffsBySession", key, diffs);
     }
   } catch (err) {
     console.error("refresh worktree status failed:", err);

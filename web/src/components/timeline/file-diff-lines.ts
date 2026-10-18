@@ -5,7 +5,7 @@ import { collectCycleChangedFiles, normalizeWorkspaceRelPath } from "./tool-card
 
 /**
  * Resolves the best available SnapshotFileDiff for `filePath` in `sessionID`
- * by checking `inspectedFileDiff`, `diffsBySession`, and falling back to tool
+ * by checking the explicit fallback diff, session-scoped diffs, and tool
  * edit/write/patch parts across the session's message history.
  */
 export function resolveSessionDiffForFile(
@@ -43,10 +43,6 @@ export function resolveSessionDiffForFile(
     if (direct) return direct;
   }
 
-  for (const list of Object.values(workspace.diffsBySession)) {
-    const found = (list ?? []).find((d) => matchesPath(d.file));
-    if (found) return found;
-  }
   return undefined;
 }
 

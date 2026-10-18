@@ -1,5 +1,5 @@
 // web/src/components/timeline/TranscriptSearchBar.tsx
-import { createDeferred, createEffect, createMemo, createSignal, mapArray, onMount, Show } from "solid-js";
+import { createDeferred, createEffect, createMemo, createSignal, mapArray, on, onMount, Show } from "solid-js";
 import { ChevronDown, ChevronUp, Search, X } from "lucide-solid";
 import type { MessageTurn } from "../../store/workspace";
 import { t } from "../../i18n";
@@ -91,32 +91,37 @@ export default function TranscriptSearchBar(props: {
     return { matchedTurnIDs: matched, invalidRegex: false };
   });
 
+  const activeTurnID = createMemo(() => {
+    const ids = searchResult().matchedTurnIDs;
+    return ids[Math.min(currentIndex(), ids.length - 1)] ?? null;
+  });
+
   createEffect(() => {
     const ids = searchResult().matchedTurnIDs;
     if (ids.length === 0) {
       setCurrentIndex(0);
-      props.onActiveTurnChange(null);
       return;
     }
     const clamped = Math.min(currentIndex(), ids.length - 1);
     if (clamped !== currentIndex()) setCurrentIndex(clamped);
-    props.onActiveTurnChange(ids[clamped] ?? null);
   });
+
+  createEffect(on(activeTurnID, (id) => props.onActiveTurnChange(id)));
 
   const goNext = () => {
     const ids = searchResult().matchedTurnIDs;
     if (ids.length === 0) return;
     const next = (currentIndex() + 1) % ids.length;
+    if (next === currentIndex()) props.onActiveTurnChange(ids[next] ?? null);
     setCurrentIndex(next);
-    props.onActiveTurnChange(ids[next] ?? null);
   };
 
   const goPrev = () => {
     const ids = searchResult().matchedTurnIDs;
     if (ids.length === 0) return;
     const prev = (currentIndex() - 1 + ids.length) % ids.length;
+    if (prev === currentIndex()) props.onActiveTurnChange(ids[prev] ?? null);
     setCurrentIndex(prev);
-    props.onActiveTurnChange(ids[prev] ?? null);
   };
 
   onMount(() => {

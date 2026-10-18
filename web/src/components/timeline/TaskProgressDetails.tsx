@@ -2,7 +2,7 @@
 import { For, Show } from "solid-js";
 import { CheckCircle2, Circle, ExternalLink, PauseCircle } from "lucide-solid";
 import type { SnapshotFileDiff } from "../../services/sse-types";
-import { openChangedFileInInspector, openFileInInspector } from "../../store/workspace";
+import { openChangedFileInInspector, openDiffInInspector, openFileInInspector } from "../../store/workspace";
 import { DiffChanges, FileIcon, Icon, Spinner, TextShimmer } from "../icons";
 import { t } from "../../i18n";
 import {
@@ -233,7 +233,7 @@ export default function TaskProgressDetails(props: {
             </div>
             <button
               type="button"
-               onClick={() => openChangedFileInInspector(props.changedFiles[0]?.file ?? "")}
+               onClick={() => openDiffInInspector(props.changedFiles[0])}
               class="inline-flex items-center gap-1 text-[11px] font-medium text-[var(--accent-primary)] hover:underline cursor-pointer"
             >
               <span>{t("timeline.reviewDiffs")}</span>
@@ -246,7 +246,7 @@ export default function TaskProgressDetails(props: {
               {(item) => (
                 <button
                   type="button"
-                   onClick={() => openChangedFileInInspector(item)}
+                   onClick={() => openDiffInInspector(item)}
                   class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)]/85 px-2 py-1 font-mono text-[11px] text-[var(--text-primary)] hover:border-[var(--accent-border)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
                   title={item.file}
                 >

@@ -106,19 +106,6 @@ export function shortenPath(p: string): string {
   return p;
 }
 
-export function diffStats(sessionID: string): { additions: number; deletions: number } | null {
-  const diffs = workspace.diffsBySession[sessionID];
-  if (!diffs || diffs.length === 0) return null;
-  let additions = 0;
-  let deletions = 0;
-  for (const d of diffs) {
-    additions += d.additions || 0;
-    deletions += d.deletions || 0;
-  }
-  if (additions === 0 && deletions === 0) return null;
-  return { additions, deletions };
-}
-
 export function buildAllProjects(): ProjectNavEntry[] {
   const map = new Map<string, ProjectNavEntry>();
   const secondaryPaths = new Set<string>();
@@ -263,4 +250,3 @@ export function findProjectDropTarget(
 
 export { SessionNavItem } from "./SessionNavItem";
 export type { SessionNavItemProps } from "./SessionNavItem";
-

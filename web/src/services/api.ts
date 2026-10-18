@@ -445,7 +445,7 @@ export const hoxiAPI = {
   },
   generateCommitMessage(req: {
     providerID: string; modelID: string; baseURL?: string; npm?: string;
-    sessionTitle?: string; lastPrompt?: string; diffSummary: string; locale: string;
+    sessionDigest?: string; sessionTitle?: string; lastPrompt?: string; diffSummary: string; locale: string;
   }): Promise<{ ok: boolean; message: string; error?: string }> {
     return requestJSON("/api/hoxi/provider/generate-commit-message", { method: "POST", body: JSON.stringify(req) });
   },

@@ -9,9 +9,9 @@ import {
 } from "../../store/workspace";
 import { stopSessionTask } from "../../store/workspace-session-messages";
 import type { SessionInfo } from "../../services/sse-types";
-import { DiffChanges, Icon, Spinner } from "../icons";
+import { Icon, Spinner } from "../icons";
 import { t } from "../../i18n";
-import { badgeFor, diffStats } from "./left-nav-helpers";
+import { badgeFor } from "./left-nav-helpers";
 import { resolveRootSessionID } from "../timeline/AgentStackPill";
 import {
   formatCompactRelativeTime,
@@ -54,7 +54,6 @@ export function SessionNavItem(props: SessionNavItemProps) {
     workspace.queuedPromptsBySession[props.session.id]?.length ?? 0;
   const badge = () => badgeFor(props.session.id, props.pendingSessions, status());
   const wt = () => workspace.worktreeBySession[props.session.id];
-  const stats = () => diffStats(props.session.id);
 
   createEffect(() => {
     if (isEffectiveActive() && workspace.unreadCompletedBySession[props.session.id]) {
@@ -207,7 +206,7 @@ export function SessionNavItem(props: SessionNavItemProps) {
         </Show>
       </div>
 
-      {/* Static Badges (Branch, Diff, Queue, Time or Loading) shown when not hovered and not confirming delete */}
+      {/* Static Badges (Branch, Queue, Time or Loading) shown when not hovered and not confirming delete */}
       <Show when={!confirmingDelete() && !editing()}>
         <div class="flex items-center gap-1.5 shrink-0 text-[11.5px] font-mono group-hover/row:opacity-0 group-hover/row:translate-x-0.5 transition-all duration-150 ease-out">
           <Show when={wt()?.isolated && wt()?.branch}>
@@ -217,10 +216,6 @@ export function SessionNavItem(props: SessionNavItemProps) {
               </Show>
               <span class="truncate">{wt()?.branch}</span>
             </span>
-          </Show>
-
-          <Show when={stats()}>
-            <DiffChanges changes={stats()!} />
           </Show>
 
           <Show when={queuedCount() > 0}>

@@ -159,8 +159,10 @@ export const timeline: TimelineI18n = {
   executing: "执行中…",
   executionPreparing: "正在准备下一步…",
   executionStillWorking: "仍在持续处理任务",
-  executionElapsed: "已工作 {time} 秒",
-  executionStepsDone: "已完成 {count} 步",
+  executionElapsed: "{time}s",
+  executionStepsDone: "{count} 步",
+  executionStepNumber: "{count} 步",
+  executionStepDetails: "执行步骤详情",
   pausedPlaceholder:
     "任务已暂停。可直接点击「继续执行」，或输入补充说明后按 Enter 继续...",
   resumeDefaultPrompt:

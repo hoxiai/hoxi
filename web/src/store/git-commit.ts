@@ -30,9 +30,9 @@ const [commitModelSpecSignal, setCommitModelSpecSignal] = createSignal<string>(
 
 /**
  * Commit message generation model specification:
- * - `""` (default): Follow `small_model` (or auto-pick cheap/fast model, fallback to local rule)
- * - `"none"`: Never use LLM; synthesize commit message purely from session title & file paths (0ms)
- * - `"<providerID>/<modelID>"`: Use a specific designated cheap model
+ * - `""` (default): Follow `small_model` or active provider's fast/working model
+ * - `"none"`: Never use LLM; synthesize English commit message from changed file paths (0ms)
+ * - `"<providerID>/<modelID>"`: Use a specific designated model
  */
 export function commitModelSpec(): string {
   return commitModelSpecSignal();
@@ -90,32 +90,42 @@ export function resolveEffectiveCommitModel(): SelectedModel | null {
   const small = parseProviderModelKey(workspace.globalConfig?.small_model);
   if (small) return small;
 
-  // 2. Look for a connected non-reasoning fast/cheap/free model first
-  const connSet = new Set(workspace.connectedProviders);
-  const cfgProviders = workspace.globalConfig?.provider ?? {};
   const cheapKeywords = ["flash", "mini", "haiku", "lite", "nano", "small", "fast"];
 
-  for (const allowReasoning of [false, true]) {
-    for (const p of workspace.providers) {
-      const isConn = connSet.has(p.id) || Boolean(cfgProviders[p.id]) || p.id === "opencode";
-      if (!isConn || !p.models) continue;
-      for (const [mID, mInfo] of Object.entries(p.models)) {
+  // 2. Check the user's currently active provider first (guaranteed to be authenticated & working)
+  if (workspace.selectedModel?.providerID) {
+    const activeProv = workspace.providers.find(
+      (p) => p.id === workspace.selectedModel?.providerID
+    );
+    if (activeProv?.models) {
+      for (const [mID, mInfo] of Object.entries(activeProv.models)) {
         const isReasoning = Boolean(mInfo?.reasoning || mInfo?.capabilities?.reasoning);
-        if (!allowReasoning && isReasoning) continue;
-        if (isModelFree(p.id, mID, mInfo)) {
-          return { providerID: p.id, modelID: mID };
+        if (!isReasoning && cheapKeywords.some((kw) => mID.toLowerCase().includes(kw))) {
+          return { providerID: activeProv.id, modelID: mID };
         }
       }
+      return workspace.selectedModel;
     }
+  }
 
-    for (const p of workspace.providers) {
-      const isConn = connSet.has(p.id) || Boolean(cfgProviders[p.id]) || p.id === "opencode";
+  // 3. Otherwise scan connected non-opencode providers, then opencode
+  const connSet = new Set(workspace.connectedProviders);
+  const cfgProviders = workspace.globalConfig?.provider ?? {};
+  const orderedProviders = [...workspace.providers].sort((a, b) =>
+    a.id === "opencode" ? 1 : b.id === "opencode" ? -1 : 0
+  );
+
+  for (const allowReasoning of [false, true]) {
+    for (const p of orderedProviders) {
+      const isConn = connSet.has(p.id) || Boolean(cfgProviders[p.id]);
       if (!isConn || !p.models) continue;
       for (const [mID, mInfo] of Object.entries(p.models)) {
         const isReasoning = Boolean(mInfo?.reasoning || mInfo?.capabilities?.reasoning);
         if (!allowReasoning && isReasoning) continue;
-        const lower = mID.toLowerCase();
-        if (cheapKeywords.some((kw) => lower.includes(kw))) {
+        if (
+          cheapKeywords.some((kw) => mID.toLowerCase().includes(kw)) ||
+          isModelFree(p.id, mID, mInfo)
+        ) {
           return { providerID: p.id, modelID: mID };
         }
       }
@@ -125,11 +135,19 @@ export function resolveEffectiveCommitModel(): SelectedModel | null {
   return workspace.selectedModel || null;
 }
 
+/**
+ * Pure English structural fallback commit message derived strictly from modified file paths
+ * and statuses (never copies raw user chat prompts or Chinese session titles).
+ */
 export function synthesizeLocalCommitMessage(
-  sessionID: string | null | undefined,
+  _sessionID: string | null | undefined,
   diffs: SnapshotFileDiff[]
 ): string {
-  const files = diffs.map((d) => d.file);
+  const files = diffs.map((d) => d.file).filter(Boolean);
+  if (files.length === 0) {
+    return "chore(workspace): update project files";
+  }
+
   const topDirs = Array.from(
     new Set(
       files.map((f) => {
@@ -142,48 +160,53 @@ export function synthesizeLocalCommitMessage(
   ).slice(0, 2);
   const scope = topDirs.join(",") || "workspace";
 
-  const session = workspace.sessions.find((s) => s.id === sessionID);
-  const turns = sessionID ? workspace.messagesBySession[sessionID] ?? [] : [];
-  let rawIntent = session?.title || "";
-  if (
-    !rawIntent ||
-    rawIntent === "New Session" ||
-    rawIntent.startsWith("Session") ||
-    isMalformedLLMText(rawIntent)
-  ) {
-    rawIntent = "";
-    for (let i = turns.length - 1; i >= 0; i--) {
-      if (turns[i].info.role === "user") {
-        const textPart = turns[i].parts.find(
-          (p): p is Extract<MessagePart, { type: "text" }> => p.type === "text"
-        );
-        if (textPart?.text) {
-          rawIntent = textPart.text.split("\n")[0].trim();
-          break;
-        }
+  const allTests = files.every((f) => /(test|spec)\./i.test(f) || f.includes("__tests__"));
+  const allDocs = files.every((f) => /\.(md|txt|rst)$/i.test(f));
+  const anyAdded = diffs.some((d) => d.status === "added");
+  const allDeleted = diffs.length > 0 && diffs.every((d) => d.status === "deleted");
+
+  let prefix = "feat";
+  if (allTests) prefix = "test";
+  else if (allDocs) prefix = "docs";
+  else if (allDeleted) prefix = "chore";
+
+  const verb = allDeleted ? "remove" : anyAdded && diffs.length <= 3 ? "add and update" : "update";
+  const baseNames = Array.from(
+    new Set(
+      files.map((f) => {
+        const name = f.split("/").pop() || f;
+        return name.replace(/\.(tsx|ts|jsx|js|go|py|rs|md|json|css)$/i, "");
+      })
+    )
+  );
+
+  const listed = baseNames.slice(0, 3).join(", ");
+  const suffix = baseNames.length > 3 ? ` and ${baseNames.length - 3} more files` : "";
+  return `${prefix}(${scope}): ${verb} ${listed}${suffix}`;
+}
+
+function buildSessionConversationDigest(sessionID?: string | null): string {
+  if (!sessionID) return "";
+  const turns = workspace.messagesBySession[sessionID] ?? [];
+  if (turns.length === 0) return "";
+
+  const recentTurns = turns.slice(-6);
+  const entries: string[] = [];
+
+  for (const turn of recentTurns) {
+    const role = turn.info.role === "user" ? "User" : "Assistant";
+    const textParts: string[] = [];
+    for (const p of turn.parts) {
+      if (p.type === "text" && p.text?.trim()) {
+        textParts.push(p.text.trim().slice(0, 320));
       }
+    }
+    if (textParts.length > 0) {
+      entries.push(`[${role}]: ${textParts.join(" ").replace(/\s+/g, " ").slice(0, 360)}`);
     }
   }
 
-  const lower = rawIntent.toLowerCase();
-  let prefix = "feat";
-  if (/\b(fix|bug|error|issue|crash|repair)\b|\u4fee\u590d|\u62a5\u9519|\u95ee\u9898|\u5d29\u6e83/.test(lower)) prefix = "fix";
-  else if (/\b(refactor|clean|split|modular)\b|\u91cd\u6784|\u62c6\u5206|\u6e05\u7406/.test(lower)) prefix = "refactor";
-  else if (/\b(doc|readme|agents\.md)\b|\u6587\u6863/.test(lower)) prefix = "docs";
-  else if (/\b(test|spec)\b|\u6d4b\u8bd5/.test(lower)) prefix = "test";
-
-  const cleanSummary = rawIntent
-    ? rawIntent
-        .replace(/^(please\s+|can you\s+|help me\s+)/i, "")
-        .replace(/[.!?\u3002\uff01\uff1f]+$/, "")
-        .slice(0, 64)
-        .trim()
-    : `update ${files
-        .slice(0, 2)
-        .map((f) => f.split("/").pop())
-        .join(", ")}${files.length > 2 ? ` and ${files.length - 2} more` : ""}`;
-
-  return `${prefix}(${scope}): ${cleanSummary}`;
+  return entries.slice(-4).join("\n");
 }
 
 function extractLastUserPrompt(sessionID?: string | null): string {
@@ -217,24 +240,25 @@ function buildCompactDiffSummary(diffs: SnapshotFileDiff[]): string {
       .join("\n");
     if (snippet) {
       patchExcerpt += `\n[${d.file}]\n${snippet}\n`;
-      if (patchExcerpt.length > 1000) break;
+      if (patchExcerpt.length > 1200) break;
     }
   }
-  return `${lines.join("\n")}${patchExcerpt ? `\n${patchExcerpt.slice(0, 1000)}` : ""}`;
+  return `${lines.join("\n")}${patchExcerpt ? `\n${patchExcerpt.slice(0, 1200)}` : ""}`;
 }
 
 export async function generateSmartCommitMessage(
   sessionID?: string | null,
   providedDiffs?: SnapshotFileDiff[]
 ): Promise<string> {
-  const key = sessionID || workspace.activeSessionID || "__root__";
+  const activeID = sessionID ?? workspace.activeSessionID;
+  const key = activeID || "__root__";
   let diffs = providedDiffs ?? workspace.diffsBySession[key] ?? [];
   if (diffs.length === 0) {
     const dirArg = key === "__root__" ? workspace.rootDir || undefined : undefined;
     diffs = await hoxiAPI.getWorktreeDiff(key, dirArg).catch(() => [] as SnapshotFileDiff[]);
   }
 
-  const fallback = synthesizeLocalCommitMessage(sessionID ?? workspace.activeSessionID, diffs);
+  const fallback = synthesizeLocalCommitMessage(activeID, diffs);
   const targetModel = resolveEffectiveCommitModel();
   if (!targetModel) {
     return fallback;
@@ -244,10 +268,11 @@ export async function generateSmartCommitMessage(
   const modID = targetModel.modelID;
   const runtimeProv = workspace.providers.find((p) => p.id === provID);
   const cfgProv = workspace.globalConfig?.provider?.[provID];
-  const baseURL = cfgProv?.options?.baseURL || runtimeProv?.options?.baseURL || undefined;
+  const baseURL =
+    cfgProv?.options?.baseURL ||
+    runtimeProv?.options?.baseURL ||
+    undefined;
   const npm = cfgProv?.npm || runtimeProv?.npm || undefined;
-  const session = workspace.sessions.find((s) => s.id === (sessionID ?? workspace.activeSessionID));
-  const rawTitle = session?.title || "";
 
   try {
     const res = await hoxiAPI.generateCommitMessage({
@@ -255,8 +280,8 @@ export async function generateSmartCommitMessage(
       modelID: modID,
       baseURL,
       npm,
-      sessionTitle: isMalformedLLMText(rawTitle) ? "" : rawTitle,
-      lastPrompt: extractLastUserPrompt(sessionID ?? workspace.activeSessionID),
+      sessionDigest: buildSessionConversationDigest(activeID),
+      lastPrompt: extractLastUserPrompt(activeID),
       diffSummary: buildCompactDiffSummary(diffs),
       locale: locale(),
     });

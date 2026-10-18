@@ -13,7 +13,7 @@ import ContextActivityGroupComponent, {
 import type { MessageInfo, MessagePart } from "../../services/sse-types";
 import {
   isUserAbortError,
-  openChangedFileInInspector,
+  openDiffInInspector,
   resumePausedSession,
   retryLastUserPrompt,
   workspace,
@@ -22,7 +22,14 @@ import { ObserverAuditBadge } from "../inspector/ObserverAuditBanner";
 import { DiffChanges, FileIcon, Icon, Spinner, TextShimmer } from "../icons";
 import { t } from "../../i18n";
 import { AssistantErrorCard, SessionRetryCard } from "./assistant-error-card";
-import { getFilename } from "./tool-card-helpers";
+import {
+  extractCommand,
+  extractDescription,
+  extractTargetFile,
+  formatToolDisplayName,
+  getFilename,
+  type ToolPart,
+} from "./tool-card-helpers";
 import { collectCycleChangedFiles } from "./tool-card-state";
 import ExecutionWaitingIndicator from "./ExecutionWaitingIndicator";
 
@@ -35,6 +42,41 @@ export {
   SessionRetryCard,
   type TurnRenderItem,
 };
+
+export function resolveActiveCycleStepLabel(
+  cycleTurns: Array<{ info: MessageInfo; parts: MessagePart[] }>
+): string | undefined {
+  const runningTools: ToolPart[] = [];
+  for (const turn of cycleTurns) {
+    for (const part of turn.parts) {
+      if (
+        part.type === "tool" &&
+        !isTodoTool(part) &&
+        (part.state.status === "pending" || part.state.status === "running")
+      ) {
+        runningTools.push(part as ToolPart);
+      }
+    }
+  }
+  if (runningTools.length > 0) {
+    const active = runningTools[runningTools.length - 1];
+    const toolName = formatToolDisplayName(active.tool);
+    const file = extractTargetFile(active);
+    const cmd = extractCommand(active);
+    const desc = extractDescription(active);
+    const detail = file ? getFilename(file) : cmd ? `$ ${cmd}` : desc || "";
+    const base = detail ? `${toolName} · ${detail}` : toolName;
+    return runningTools.length > 1 ? `${base} (+${runningTools.length - 1})` : base;
+  }
+  const lastTurn = cycleTurns[cycleTurns.length - 1];
+  if (lastTurn && !lastTurn.info.time?.completed) {
+    const hasOpenReasoning = lastTurn.parts.some(
+      (p) => p.type === "reasoning" && !p.time?.end
+    );
+    if (hasOpenReasoning) return t("timeline.thinking");
+  }
+  return undefined;
+}
 
 export function basename(p: string): string {
   const parts = p.split("/").filter(Boolean);
@@ -216,60 +258,50 @@ export function AssistantTurnFooter(props: {
     }
   };
 
-  const isTurnExecuting = createMemo(() => {
-    if (!props.isSessionBusy || interruptMode()) return false;
-    if (!isLatestTurn()) return false;
-    const hasRunningPart = props.parts.some(
-      (p) =>
-        (p.type === "tool" &&
-          (p.state.status === "pending" || p.state.status === "running")) ||
-        (p.type === "reasoning" && !p.time?.end)
-    );
-    return !props.info.time?.completed || hasRunningPart;
-  });
+  const isTurnExecuting = createMemo(() =>
+    Boolean(props.isSessionBusy && !interruptMode() && isLatestTurn())
+  );
 
   return (
     <Show when={cycleSummary()}>
       {(summary) => (
-        <div class="mt-2 space-y-2 select-none">
-          {/* Changed files summary chips with +additions / -deletions & click-to-preview */}
-          <Show when={summary().changedFiles.length > 0}>
-            <div class="space-y-2">
-              <div class="flex items-center gap-1.5 flex-wrap">
-                <For each={summary().changedFiles}>
-                  {(diff) => {
-                    return (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          openChangedFileInInspector(diff);
-                        }}
-                        title={diff.file}
-                        class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-2.5 py-1 font-mono text-[11.5px] text-[var(--text-secondary)] transition-colors cursor-pointer hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
-                      >
-                        <FileIcon
-                          node={{ path: diff.file, type: "file" }}
-                          class="w-3.5 h-3.5 shrink-0"
-                        />
-                        <span class="truncate max-w-[220px]">{getFilename(diff.file)}</span>
-                        <Show when={diff.additions > 0 || diff.deletions > 0}>
-                          <DiffChanges
-                            changes={{ additions: diff.additions, deletions: diff.deletions }}
+        <Show when={!isTurnExecuting() || summary().changedFiles.length > 0}>
+          <div class="mt-2 space-y-2 select-none">
+            {/* Changed files summary chips with +additions / -deletions & click-to-preview */}
+            <Show when={summary().changedFiles.length > 0}>
+              <div class="space-y-2">
+                <div class="flex items-center gap-1.5 flex-wrap">
+                  <For each={summary().changedFiles}>
+                    {(diff) => {
+                      return (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            openDiffInInspector(diff);
+                          }}
+                          title={diff.file}
+                          class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-2.5 py-1 font-mono text-[11.5px] text-[var(--text-secondary)] transition-colors cursor-pointer hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+                        >
+                          <FileIcon
+                            node={{ path: diff.file, type: "file" }}
+                            class="w-3.5 h-3.5 shrink-0"
                           />
-                        </Show>
-                      </button>
-                    );
-                  }}
-                </For>
+                          <span class="truncate max-w-[220px]">{getFilename(diff.file)}</span>
+                          <Show when={diff.additions > 0 || diff.deletions > 0}>
+                            <DiffChanges
+                              changes={{ additions: diff.additions, deletions: diff.deletions }}
+                            />
+                          </Show>
+                        </button>
+                      );
+                    }}
+                  </For>
+                </div>
               </div>
+            </Show>
 
-            </div>
-          </Show>
-
-          <div class="flex items-center gap-2 flex-wrap text-[12px] text-[var(--text-faint)]">
-            <Show
-              when={isTurnExecuting()}
-              fallback={
+            <Show when={!isTurnExecuting()}>
+              <div class="flex items-center gap-2 flex-wrap text-[12px] text-[var(--text-faint)]">
                 <Show
                   when={interruptMode()}
                   fallback={
@@ -298,69 +330,64 @@ export function AssistantTurnFooter(props: {
                     </span>
                   )}
                 </Show>
-              }
-            >
-              <span class="inline-flex items-center gap-1 text-[var(--accent-primary)]/90">
-                <Spinner class="w-3.5 h-3.5" />
-                <span>{t("timeline.executing")}</span>
-              </span>
-            </Show>
 
-            <Show when={durationLabel()}>
-              <span>·</span>
-              <span class="font-mono tabular-nums text-[var(--text-muted)]">
-                {durationLabel()}
-              </span>
-            </Show>
-
-            <Show when={summary().toolCount > 0}>
-              <span>·</span>
-              <span class="font-mono tabular-nums text-[var(--text-muted)]">
-                {t("timeline.stepsCompleted", { count: summary().toolCount })}
-              </span>
-            </Show>
-
-            <Show when={isLatestTurn() && interruptMode() && !props.isSessionBusy}>
-              <button
-                type="button"
-                disabled={resuming()}
-                onClick={() => void onResume()}
-                title={t("timeline.resumeTooltip")}
-                class="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[12px] font-medium text-[var(--accent-primary)] hover:bg-[var(--accent-surface)] disabled:opacity-50 transition-colors cursor-pointer"
-              >
-                <span class="text-[10px] leading-none">▶</span>
-                <span>{t("timeline.resume")}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => void retryLastUserPrompt(props.info.sessionID)}
-                class="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[12px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
-              >
-                <span>↺</span>
-                <span>{t("timeline.retryTask")}</span>
-              </button>
-            </Show>
-
-            <Show when={isLatestTurn()}>
-              <ObserverAuditBadge sessionID={props.info.sessionID} />
-            </Show>
-
-            <Show when={summary().finalText.length > 0}>
-              <button
-                type="button"
-                onClick={() => void copyResponse()}
-                title={copied() ? t("common.copied") : t("timeline.copyResponse")}
-                class="ml-auto inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[12px] text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
-              >
-                <Show when={copied()} fallback={<Icon name="copy" size="small" />}>
-                  <Icon name="check" size="small" class="text-[var(--ok-text)]" />
+                <Show when={durationLabel()}>
+                  <span>·</span>
+                  <span class="font-mono tabular-nums text-[var(--text-muted)]">
+                    {durationLabel()}
+                  </span>
                 </Show>
-                <span>{copied() ? t("common.copied") : t("common.copy")}</span>
-              </button>
+
+                <Show when={summary().toolCount > 0}>
+                  <span>·</span>
+                  <span class="font-mono tabular-nums text-[var(--text-muted)]">
+                    {t("timeline.stepsCompleted", { count: summary().toolCount })}
+                  </span>
+                </Show>
+
+                <Show when={isLatestTurn() && interruptMode() && !props.isSessionBusy}>
+                  <button
+                    type="button"
+                    disabled={resuming()}
+                    onClick={() => void onResume()}
+                    title={t("timeline.resumeTooltip")}
+                    class="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[12px] font-medium text-[var(--accent-primary)] hover:bg-[var(--accent-surface)] disabled:opacity-50 transition-colors cursor-pointer"
+                  >
+                    <span class="text-[10px] leading-none">▶</span>
+                    <span>{t("timeline.resume")}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => void retryLastUserPrompt(props.info.sessionID)}
+                    class="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[12px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+                  >
+                    <span>↺</span>
+                    <span>{t("timeline.retryTask")}</span>
+                  </button>
+                </Show>
+
+                <Show when={isLatestTurn()}>
+                  <ObserverAuditBadge sessionID={props.info.sessionID} />
+                </Show>
+
+                <Show when={summary().finalText.length > 0}>
+                  <button
+                    type="button"
+                    onClick={() => void copyResponse()}
+                    title={copied() ? t("common.copied") : t("timeline.copyResponse")}
+                    class="ml-auto inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[12px] text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+                  >
+                    <Show when={copied()} fallback={<Icon name="copy" size="small" />}>
+                      <Icon name="check" size="small" class="text-[var(--ok-text)]" />
+                    </Show>
+                    <span>{copied() ? t("common.copied") : t("common.copy")}</span>
+                  </button>
+                </Show>
+              </div>
             </Show>
           </div>
-        </div>
+        </Show>
       )}
     </Show>
   );
@@ -371,7 +398,9 @@ export function LiveExecutionControlBar(props: {
   isSessionBusy: boolean;
   showThinking: boolean;
   completedSteps?: number;
+  steps?: import("../../services/sse-types").ToolPart[];
   startedAt?: number;
+  activeStepLabel?: string;
   lastTurnRole?: string;
 }) {
   const [busyAction, setBusyAction] = createSignal(false);
@@ -396,7 +425,9 @@ export function LiveExecutionControlBar(props: {
       <Show when={props.showThinking}>
         <ExecutionWaitingIndicator
           completedSteps={props.completedSteps ?? 0}
+          steps={props.steps ?? []}
           startedAt={props.startedAt}
+          activeStepLabel={props.activeStepLabel}
         />
       </Show>
 

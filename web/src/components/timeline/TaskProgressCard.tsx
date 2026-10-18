@@ -21,9 +21,8 @@ import {
   openDiffInInspector,
   workspace,
 } from "../../store/workspace";
-import { DiffChanges, Spinner, TextShimmer } from "../icons";
+import { Spinner, TextShimmer } from "../icons";
 import { t } from "../../i18n";
-import { formatToolDisplayName } from "./tool-card-helpers";
 import {
   collectCycleStepItems,
   collectTaskCycleTurns,
@@ -127,15 +126,6 @@ export default function TaskProgressCard() {
       !isSessionAlive()
   );
 
-  const isCompletedSummary = createMemo(
-    () =>
-      !isSessionAlive() &&
-      !interruptedState() &&
-      Boolean(sessionID() && justFinishedBySession()[sessionID()!]) &&
-      changedFiles().length > 0 &&
-      todos().length === 0
-  );
-
   const progressSignature = createMemo(() => {
     const todoPart = todos()
       .map((item) => `${item.id || item.content}:${item.status}`)
@@ -224,19 +214,14 @@ export default function TaskProgressCard() {
 
   let containerRef: HTMLDivElement | undefined;
 
-  // Strictly show TaskProgressCard ONLY when:
-  // 1. The active session is currently running (`isSessionAlive()`), OR
-  // 2. The active session was explicitly paused by the user (`interruptedState() === "paused"`), OR
-  // 3. The active session just transitioned from running -> completed within the last 3 seconds.
+  // Tool activity alone belongs in the conversation, not the task shelf.
   const shouldShow = createMemo(() => {
     const id = sessionID();
     if (!id || isDismissed()) return false;
-    const hasContent =
-      todos().length > 0 || cycleSteps().length > 0 || changedFiles().length > 0;
-    if (!hasContent) return false;
+    if (todos().length === 0) return false;
     if (isSessionAlive()) return true;
     if (interruptedState() === "paused") {
-      return todos().length > 0 || cycleSteps().length > 0;
+      return true;
     }
     return Boolean(justFinishedBySession()[id]);
   });
@@ -256,116 +241,53 @@ export default function TaskProgressCard() {
             type="button"
             class="inline-flex items-center gap-1.5 text-left min-w-0 cursor-pointer"
             onClick={() => {
-              if (isCompletedSummary()) {
-                openDiffInInspector(changedFiles()[0]?.file);
-                return;
-              }
               setExpanded((v) => !v);
             }}
-            title={isCompletedSummary() ? t("timeline.viewChanges") : undefined}
           >
             <Show
-              when={isCompletedSummary()}
+              when={isSessionAlive()}
               fallback={
-                <>
-                  <Show
-                    when={isSessionAlive()}
-                    fallback={
-                      <Show
-                        when={interruptedState()}
-                        fallback={
-                          <Show
-                            when={allTodosCompleted()}
-                            fallback={<ListTodo size={12.5} class="text-[var(--accent-primary)] shrink-0" />}
-                          >
-                            <CheckCircle2 size={12.5} class="text-[var(--ok-text)] shrink-0" />
-                          </Show>
-                        }
-                      >
-                        <PauseCircle size={12.5} class="text-[var(--warn-text)] shrink-0" />
-                      </Show>
-                    }
-                  >
-                    <span class="text-[var(--accent-primary)] shrink-0 inline-flex items-center">
-                      <Spinner class="w-3 h-3" />
-                    </span>
-                  </Show>
-
-                  <span class="font-medium text-[var(--text-primary)] shrink-0">
-                    {todos().length > 0
-                      ? t("timeline.tasksProgress", {
-                          completed: completedTodoCount(),
-                          total: todos().length,
-                        })
-                      : t("timeline.taskProgressActiveOnly")}
-                  </span>
-
-                  <Show when={!expanded() && isTodoStale()}>
-                    <TaskProgressStaleHint
-                      compact
-                      activeTodo={activeTodo()}
-                      summary={todoActivity()}
-                      isSessionAlive={isSessionAlive()}
-                    />
-                  </Show>
-
-                  <Show
-                    when={!expanded() && !isTodoStale() && currentStep()}
-                    fallback={
-                      <Show when={!expanded() && !isTodoStale() && activeTodo()}>
-                        <span class="hidden sm:inline-flex items-center gap-1 text-[var(--text-muted)] truncate max-w-[200px]">
-                          <span>—</span>
-                          <TextShimmer
-                            text={activeTodo()!.content}
-                            active={isSessionAlive() && activeTodo()!.status === "in_progress"}
-                            class="truncate"
-                          />
-                        </span>
-                      </Show>
-                    }
-                  >
-                    {(step) => (
-                      <span class="hidden sm:inline-flex items-center gap-1 text-[var(--text-muted)] truncate max-w-[220px]">
-                        <span class="text-[var(--text-faint)]">·</span>
-                        <span class="font-mono text-[10.5px] text-[var(--text-secondary)] shrink-0">
-                          {formatToolDisplayName(step().tool)}
-                        </span>
-                        <TextShimmer
-                          text={step().label}
-                          active={step().status === "running"}
-                          class="font-mono text-[11px] truncate"
-                        />
-                      </span>
-                    )}
-                  </Show>
-
-                  <Show when={diffTotals().additions > 0 || diffTotals().deletions > 0}>
-                    <span class="shrink-0">
-                      <DiffChanges
-                        changes={{
-                          additions: diffTotals().additions,
-                          deletions: diffTotals().deletions,
-                        }}
-                      />
-                    </span>
-                  </Show>
-
-                  <span class="text-[var(--text-muted)] inline-flex items-center">
-                    {expanded() ? <ChevronDown size={12} /> : <ChevronUp size={12} />}
-                  </span>
-                </>
+                <Show
+                  when={interruptedState()}
+                  fallback={
+                    <Show
+                      when={allTodosCompleted()}
+                      fallback={<ListTodo size={12.5} class="text-[var(--accent-primary)] shrink-0" />}
+                    >
+                      <CheckCircle2 size={12.5} class="text-[var(--ok-text)] shrink-0" />
+                    </Show>
+                  }
+                >
+                  <PauseCircle size={12.5} class="text-[var(--warn-text)] shrink-0" />
+                </Show>
               }
             >
-              <CheckCircle2 size={12.5} class="text-[var(--ok-text)] shrink-0" />
-              <span class="font-medium text-[var(--text-primary)]">
-                {t("timeline.changesSummary", {
-                  files: changedFiles().length,
-                  additions: diffTotals().additions,
-                  deletions: diffTotals().deletions,
-                })}
+              <span class="text-[var(--accent-primary)] shrink-0 inline-flex items-center">
+                <Spinner class="w-3 h-3" />
               </span>
-              <span class="text-[var(--accent-primary)]">{t("timeline.viewChanges")}</span>
             </Show>
+
+            <span class="font-medium text-[var(--text-primary)] shrink-0">
+              {t("timeline.tasksProgress", {
+                completed: completedTodoCount(),
+                total: todos().length,
+              })}
+            </span>
+
+            <Show when={!expanded() && activeTodo()}>
+              <span class="hidden sm:inline-flex items-center gap-1 text-[var(--text-muted)] truncate max-w-[200px]">
+                <span>·</span>
+                <TextShimmer
+                  text={activeTodo()!.content}
+                  active={isSessionAlive() && activeTodo()!.status === "in_progress"}
+                  class="truncate"
+                />
+              </span>
+            </Show>
+
+            <span class="text-[var(--text-muted)] inline-flex items-center">
+              {expanded() ? <ChevronDown size={12} /> : <ChevronUp size={12} />}
+            </span>
           </button>
 
           <Show when={!isSessionAlive()}>
@@ -390,12 +312,10 @@ export default function TaskProgressCard() {
               <div class="flex items-center gap-2 font-medium text-[var(--text-primary)]">
                 <ListTodo size={13} class="text-[var(--accent-primary)]" />
                 <span>
-                  {todos().length > 0
-                    ? t("timeline.tasksProgress", {
-                        completed: completedTodoCount(),
-                        total: todos().length,
-                      })
-                    : t("timeline.taskProgressActiveOnly")}
+                  {t("timeline.tasksProgress", {
+                    completed: completedTodoCount(),
+                    total: todos().length,
+                  })}
                 </span>
                 <Show when={cycleSteps().length > 0}>
                   <span class="rounded bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-muted)]">

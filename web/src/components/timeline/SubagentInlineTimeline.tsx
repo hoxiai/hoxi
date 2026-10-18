@@ -49,6 +49,14 @@ export function useSubagentTelemetry(
       void loadSessionMessagesOnly(id);
     }
     prevRunning = running;
+    if (running) {
+      const timer = setInterval(() => {
+        if ((workspace.messagesBySession[id]?.length ?? 0) === 0) {
+          void loadSessionMessagesOnly(id);
+        }
+      }, 2000);
+      onCleanup(() => clearInterval(timer));
+    }
   });
 
   return createMemo(() => {
@@ -57,6 +65,7 @@ export function useSubagentTelemetry(
       return {
         stepCount: 0,
         currentStepLabel: undefined as string | undefined,
+        recentTools: [] as ToolPart[],
         changedFiles: [],
         diffStats: undefined as { additions: number; deletions: number } | undefined,
       };
@@ -95,11 +104,65 @@ export function useSubagentTelemetry(
     return {
       stepCount: tools.length,
       currentStepLabel,
+      recentTools: tools.slice(-3),
       changedFiles,
       diffStats:
         additions > 0 || deletions > 0 ? { additions, deletions } : undefined,
     };
   });
+}
+
+export function SubagentRollingPreview(props: {
+  tools: ToolPart[];
+  onExpand: () => void;
+}) {
+  return (
+    <Show when={props.tools.length > 0}>
+      <div
+        onClick={(e) => {
+          e.stopPropagation();
+          props.onExpand();
+        }}
+        class="mt-1 ml-3.5 pl-2.5 border-l-2 border-[var(--accent-border)]/50 space-y-1 py-0.5 cursor-pointer select-none"
+      >
+        <For each={props.tools}>
+          {(tp) => {
+            const running = () =>
+              tp.state.status === "running" || tp.state.status === "pending";
+            const file = () => extractTargetFile(tp);
+            const cmd = () => extractCommand(tp);
+            const desc = () => extractDescription(tp);
+            const detail = () =>
+              file() ? getFilename(file()!) : cmd() ? `$ ${cmd()}` : desc() || "";
+            return (
+              <div class="flex items-center gap-1.5 text-[11.5px] text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors">
+                <Show
+                  when={running()}
+                  fallback={
+                    <span class="text-[var(--ok-text)]/80 shrink-0 inline-flex items-center">
+                      <Icon name="check" size="small" />
+                    </span>
+                  }
+                >
+                  <span class="text-[var(--accent-primary)] shrink-0 inline-flex items-center">
+                    <Spinner class="w-3 h-3" />
+                  </span>
+                </Show>
+                <span class="font-medium text-[var(--text-secondary)] shrink-0">
+                  {formatToolDisplayName(tp.tool)}
+                </span>
+                <Show when={detail()}>
+                  <span class="font-mono text-[11px] text-[var(--text-faint)] truncate max-w-[360px]">
+                    {detail()}
+                  </span>
+                </Show>
+              </div>
+            );
+          }}
+        </For>
+      </div>
+    </Show>
+  );
 }
 
 /**
