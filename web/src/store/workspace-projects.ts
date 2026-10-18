@@ -1,7 +1,7 @@
 import { hoxiAPI, type SaveWorkspaceInput, type WorkspaceFolder, type WorkspaceProfile } from "../services/api";
 import { DISMISSED_PROJECTS_KEY, isSessionArchived, PROJECT_ORDER_KEY, RECENT_PROJECTS_KEY, setWorkspace, workspace } from "./workspace";
 import { loadAgents, loadProviders } from "./workspace-providers";
-import { isPlaceholderSessionTitle, sortSessionsByActivity } from "./session-title";
+import { isPlaceholderSessionTitle, preserveSessionTitle, sortSessionsByActivity } from "./session-title";
 import { syncSessionStatuses } from "./session-status-sync";
 import { isSessionBusy, isSessionDeleted, loadSessionMessagesOnly, refreshWorktreeStatus, selectSession } from "./workspace-sessions";
 import type { SessionInfo } from "../services/sse-types";
@@ -257,7 +257,7 @@ export async function selectInitialProjectSession(
   }
 }
 
-export async function bootstrapProjectSessions(directory: string): Promise<void> {
+export async function bootstrapProjectSessions(directory: string, selectInitial = true): Promise<void> {
   const cleaned = normalizeFolderPath(directory);
   if (!cleaned || isInvalidProjectPath(cleaned)) {
     setWorkspace("bootstrappingSessions", false);
@@ -274,13 +274,15 @@ export async function bootstrapProjectSessions(directory: string): Promise<void>
   const sessions = (Array.isArray(rawSessions) ? rawSessions : []).filter(
     (s) => !isSessionDeleted(s.id)
   );
-  setWorkspace("sessions", sessions);
+  const titledSessions = sessions.map(preserveSessionTitle);
+  setWorkspace("sessions", titledSessions);
   void refreshWorktreeStatus("__root__");
   void syncSessionStatuses(cleaned);
-  await selectInitialProjectSession(sessions, cleaned);
+  if (selectInitial) await selectInitialProjectSession(titledSessions, cleaned);
+  else setWorkspace("bootstrappingSessions", false);
 }
 
-export async function switchWorkspace(directory: string): Promise<void> {
+export async function switchWorkspace(directory: string, selectInitial = true): Promise<void> {
   const cleaned = normalizeFolderPath(directory);
   if (!cleaned || isInvalidProjectPath(cleaned)) return;
 
@@ -298,7 +300,7 @@ export async function switchWorkspace(directory: string): Promise<void> {
   });
 
   try {
-    await bootstrapProjectSessions(cleaned);
+    await bootstrapProjectSessions(cleaned, selectInitial);
   } catch (err) {
     setWorkspace("bootstrappingSessions", false);
     console.error("switch workspace error:", err);

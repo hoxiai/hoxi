@@ -1,12 +1,12 @@
 // web/src/components/layout/LeftNav.tsx
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
-import { ArrowRightLeft, Check, Clock, Folder, Layers, Plus } from "lucide-solid";
+import { ArrowRightLeft, Check, Clock, Folder, FolderPlus, Layers, Plus, Search } from "lucide-solid";
 import {
   archiveSession,
   bootstrapProjectSessions,
   discardSession,
   isInvalidProjectPath,
-  newIsolatedSession,
+  startNewThreadDraft,
   normalizeFolderPath,
   openCreateWorkspaceModal,
   openHandoffModal,
@@ -55,7 +55,7 @@ export default function LeftNav() {
     if (creatingGlobal()) return;
     setCreatingGlobal(true);
     try {
-      await newIsolatedSession();
+      startNewThreadDraft();
     } catch (err) {
       console.error("Failed to create new thread:", err);
     } finally {
@@ -204,9 +204,9 @@ export default function LeftNav() {
     if (creatingForPath()) return;
     setCreatingForPath(path);
     try {
-      if (path !== workspace.rootDir) await switchWorkspace(path);
+      if (path !== workspace.rootDir) await switchWorkspace(path, false);
       setExpandedProjects((prev) => new Set([...prev, path]));
-      await newIsolatedSession();
+      startNewThreadDraft();
     } catch (err) {
       console.error("Failed to create thread in project:", err);
     } finally {
@@ -300,7 +300,7 @@ export default function LeftNav() {
           onClick={onCreateGlobalNewThread}
           disabled={creatingGlobal()}
           class="inline-flex items-center gap-2 rounded-lg px-2 py-1.5 text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer group min-w-0"
-          title={`${t("leftNav.newThread")} (⌘N)`}
+          title={`${t("leftNav.newThread")}`}
         >
           <Show
             when={!creatingGlobal()}
@@ -309,26 +309,23 @@ export default function LeftNav() {
             <Icon name="new-session" size="small" class="text-[var(--accent-primary)] shrink-0" />
           </Show>
           <span class="text-[13px] font-medium truncate">{t("leftNav.newThread")}</span>
-          <span class="text-[11px] font-mono text-[var(--text-faint)] group-hover:text-[var(--text-muted)]">
-            ⌘N
-          </span>
         </button>
 
         <div class="flex items-center gap-0.5 shrink-0">
           {/* Sidebar Mode Switcher (Single / Multi / Recent Tasks) */}
-          <div class="relative">
+          <div class="relative flex items-center">
             <button
               ref={modeBtnRef}
               type="button"
               onClick={() => setModeMenuOpen((v) => !v)}
-              class={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+              class={`inline-flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-lg transition-colors cursor-pointer ${
                 modeMenuOpen()
                   ? "bg-[var(--bg-hover)] text-[var(--text-primary)]"
                   : "text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
               }`}
               title={t("leftNav.switchSidebarMode")}
             >
-              <ArrowRightLeft size={13.5} />
+              <ArrowRightLeft size={14} class="block shrink-0" />
             </button>
 
             <Show when={modeMenuOpen()}>
@@ -370,20 +367,20 @@ export default function LeftNav() {
           <button
             type="button"
             onClick={() => setShowSearch((v) => !v)}
-            class={`p-1.5 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer ${
+            class={`inline-flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-lg text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer ${
               showSearch() ? "bg-[var(--bg-hover)] text-[var(--text-primary)]" : ""
             }`}
             title={t("leftNav.filterPlaceholder")}
           >
-            <Icon name="magnifying-glass" size="small" />
+            <Search size={14} class="block shrink-0" />
           </button>
           <button
             type="button"
             onClick={() => openCreateWorkspaceModal()}
-            class="p-1.5 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+            class="inline-flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-lg text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
             title={t("leftNav.newWorkspace")}
           >
-            <Icon name="folder-add-left" size="small" />
+            <FolderPlus size={14} class="block shrink-0" />
           </button>
         </div>
       </div>

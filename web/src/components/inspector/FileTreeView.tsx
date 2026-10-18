@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, For, onMount, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 import { ArrowLeft, FolderOpen, FolderPlus, LoaderCircle, Search } from "lucide-solid";
 import { hoxiAPI } from "../../services/api";
 import type { SnapshotFileDiff } from "../../services/sse-types";
@@ -16,6 +16,8 @@ import { DiffChanges, FileIcon } from "../icons";
 import { FolderIcon } from "../layout/left-nav-helpers";
 import { computeChangedFileLines, resolveSessionDiffForFile } from "../timeline/file-diff-lines";
 import { t } from "../../i18n";
+import FileTreeNodes, { type FileTreeNode } from "./FileTreeNodes";
+import { highlightCode, fileLanguage, type HighlightedCode } from "../../services/syntax-highlight";
 
 function baseName(p: string): string {
   const parts = normalizeFolderPath(p).split(/[\\/]/).filter(Boolean);
@@ -24,7 +26,9 @@ function baseName(p: string): string {
 
 export default function FileTreeView() {
   const [query, setQuery] = createSignal("");
-  const [results, setResults] = createSignal<string[]>([]);
+  const [results, setResults] = createSignal<FileTreeNode[]>([]);
+  const [selectedPath, setSelectedPath] = createSignal<string | null>(null);
+  const [highlighted, setHighlighted] = createSignal<HighlightedCode>();
   const [searching, setSearching] = createSignal(false);
   const [previewPath, setPreviewPath] = createSignal<string | null>(null);
   const [previewDiff, setPreviewDiff] = createSignal<SnapshotFileDiff | null>(null);
@@ -34,6 +38,9 @@ export default function FileTreeView() {
   const [highlightedLine, setHighlightedLine] = createSignal<number | null>(null);
   let sourceContainer: HTMLDivElement | undefined;
   let lastLoadedDir = "";
+  let listRequest = 0;
+  let previewRequest = 0;
+  onCleanup(() => { listRequest++; previewRequest++; });
 
   const folders = createMemo(() => activeWorkspaceFolders());
   const targetDirectory = createMemo(
@@ -41,15 +48,15 @@ export default function FileTreeView() {
   );
 
   const loadInitialFiles = async (dir = targetDirectory()) => {
+    const request = ++listRequest;
     setSearching(true);
     try {
       const nodes = await hoxiAPI.listFiles("", dir);
-      const paths = (nodes ?? []).map((n) => n.path);
-      setResults(paths);
+      if (request === listRequest) setResults(nodes ?? []);
     } catch {
-      setResults([]);
+      if (request === listRequest) setResults([]);
     } finally {
-      setSearching(false);
+      if (request === listRequest) setSearching(false);
     }
   };
 
@@ -59,33 +66,38 @@ export default function FileTreeView() {
       await loadInitialFiles();
       return;
     }
-    if (searching()) return;
+    const request = ++listRequest;
     setSearching(true);
     try {
       const files = await hoxiAPI.findFiles(q, targetDirectory());
-      setResults(Array.isArray(files) ? files : []);
+      if (request === listRequest) setResults(Array.isArray(files)
+        ? files.map((path) => ({ path, name: path, type: path.endsWith("/") ? "directory" : "file" })) : []);
     } catch (err) {
       console.error("find files failed:", err);
-      setResults([]);
+      if (request === listRequest) setResults([]);
     } finally {
-      setSearching(false);
+      if (request === listRequest) setSearching(false);
     }
   };
 
   const openPreview = async (path: string, diffOverride?: SnapshotFileDiff | null) => {
+    const request = ++previewRequest;
+    setSelectedPath(path);
+    setPreviewContent("");
     setPreviewPath(path);
-    setPreviewDiff(diffOverride ?? workspace.inspectedFileDiff);
+    setPreviewDiff(diffOverride === undefined ? workspace.inspectedFileDiff : diffOverride);
     setHighlightedLine(workspace.inspectedFileLine);
     setLoadingPreview(true);
     setPreviewError(null);
     try {
       const res = await hoxiAPI.readFileContent(path, targetDirectory());
-      setPreviewContent(res?.content ?? "");
+      if (request === previewRequest) setPreviewContent(res?.content ?? "");
     } catch (err) {
+      if (request !== previewRequest) return;
       setPreviewError(String(err));
       setPreviewContent("");
     } finally {
-      setLoadingPreview(false);
+      if (request === previewRequest) setLoadingPreview(false);
     }
   };
 
@@ -99,8 +111,16 @@ export default function FileTreeView() {
     computeChangedFileLines(activeDiff(), sourceLines())
   );
 
-  onMount(() => {
-    void loadInitialFiles();
+  createEffect(() => {
+    const code = previewContent();
+    const language = fileLanguage(previewPath() ?? "");
+    const theme = workspace.theme === "dark" ? "dark" : "light";
+    let cancelled = false;
+    setHighlighted(undefined);
+    void highlightCode(code, language, theme).then((result) => {
+      if (!cancelled) setHighlighted(result);
+    });
+    onCleanup(() => { cancelled = true; });
   });
 
   createEffect(() => {
@@ -108,6 +128,11 @@ export default function FileTreeView() {
     if (dir && dir !== lastLoadedDir) {
       const hadPrev = Boolean(lastLoadedDir);
       lastLoadedDir = dir;
+      listRequest++;
+      previewRequest++;
+      setResults([]);
+      setQuery("");
+      setSelectedPath(null);
       if (hadPrev && !workspace.inspectedFilePath) {
         setPreviewPath(null);
       }
@@ -220,10 +245,7 @@ export default function FileTreeView() {
         </div>
       </div>
 
-      <Show
-        when={previewPath()}
-        fallback={
-          <div class="flex-1 min-h-0 overflow-y-auto px-2 py-2 space-y-0.5">
+          <div style={{ display: previewPath() ? "none" : undefined }} class="flex-1 min-h-0 overflow-y-auto px-2 py-2 space-y-0.5">
             <Show
               when={results().length > 0}
               fallback={
@@ -234,33 +256,10 @@ export default function FileTreeView() {
                 </div>
               }
             >
-              <For each={results()}>
-                {(path) => (
-                  <button
-                    type="button"
-                    class="w-full flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-left hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
-                    onClick={() => void openPreview(path)}
-                  >
-                    <FileIcon
-                      node={{
-                        path,
-                        type: path.endsWith("/") ? "directory" : "file",
-                      }}
-                      class="w-4 h-4 shrink-0"
-                    />
-                    <span
-                      class="truncate font-mono text-[11.5px] text-[var(--text-primary)]"
-                      title={path}
-                    >
-                      {path}
-                    </span>
-                  </button>
-                )}
-              </For>
+              <FileTreeNodes nodes={results()} directory={targetDirectory()} selected={selectedPath()} onOpen={(path) => void openPreview(path, null)} />
             </Show>
           </div>
-        }
-      >
+      <Show when={previewPath()}>
         <div class="flex-1 min-h-0 flex flex-col">
           <div class="shrink-0 flex items-center gap-2 px-3 py-2 border-b border-[var(--border-subtle)] bg-[var(--bg-inset)]/60">
             <button
@@ -346,7 +345,14 @@ export default function FileTreeView() {
                           +
                         </span>
                         <span class={isChanged() ? "text-[var(--text-primary)]" : ""}>
-                          {line || " "}
+                          <Show when={highlighted()?.tokens[index()]} fallback={line || " "}>
+                            {(tokens) => <For each={tokens()}>{(token) => <span style={{
+                              color: token.color,
+                              "font-style": (token.fontStyle ?? 0) & 1 ? "italic" : undefined,
+                              "font-weight": (token.fontStyle ?? 0) & 2 ? "bold" : undefined,
+                              "text-decoration": (token.fontStyle ?? 0) & 4 ? "underline" : undefined,
+                            }}>{token.content}</span>}</For>}
+                          </Show>
                         </span>
                       </div>
                     );

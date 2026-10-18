@@ -30,6 +30,14 @@ export interface SettingsI18n {
   fontDefault: string;
   fontComfortable: string;
   fontLarge: string;
+  sectionSidebarHistoryTitle: string;
+  sectionSidebarHistoryDesc: string;
+  sidebarAutoCollapseLabel: string;
+  sidebarAutoCollapseDesc: string;
+  sidebarMinSessionsLabel: string;
+  sidebarMinSessionsDesc: string;
+  sidebarRecentMinutesLabel: string;
+  sidebarRecentMinutesDesc: string;
   sectionProfileTitle: string;
   sectionProfileDesc: string;
   profileNamePlaceholder: string;
@@ -48,6 +56,29 @@ export interface SettingsI18n {
   accountSignInDesc: string;
   accountNameInputLabel: string;
   accountEmailInputLabel: string;
+  accountOneClickLoginBtn: string;
+  accountWaitingBrowserAuth: string;
+  accountWaitingBrowserShort: string;
+  accountCancelAuthBtn: string;
+  accountAuthExpiredOrFailed: string;
+  accountAuthSuccess: string;
+  accountOfficialAccountTitle: string;
+  accountOfficialAccountDesc: string;
+  accountLoginWithBrowserHint: string;
+
+  // Software Update
+  sectionUpdaterTitle: string;
+  sectionUpdaterDesc: string;
+  updaterCurrentVersion: string;
+  updaterCheckNowBtn: string;
+  updaterCheckingBtn: string;
+  updaterAlreadyLatest: string;
+  updaterNewVersionFound: string;
+  updaterDownloadFromGitCodeBtn: string;
+  updaterDownloadFromGitHubBtn: string;
+  updaterDownloadNowBtn: string;
+  updaterReleaseNotesTitle: string;
+  updaterCheckFailed: string;
 
   // Chat & Composer
   sectionSendShortcutTitle: string;

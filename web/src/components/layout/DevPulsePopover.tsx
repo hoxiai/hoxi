@@ -1,9 +1,10 @@
 import { createEffect, createMemo, createSignal, Index, onCleanup, onMount, Show } from "solid-js";
-import { BarChart3, RefreshCw } from "lucide-solid";
+import { BarChart3, ChevronRight, RefreshCw, Trophy } from "lucide-solid";
 import {
   computeDailyDevPulseStats,
   isDailyPulseSyncing,
   openDiffInInspector,
+  openLeaderboardModal,
   refreshDailyDevPulse,
   workspace,
 } from "../../store/workspace";
@@ -90,19 +91,16 @@ export default function DevPulsePopover() {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        class={`inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[12px] transition-colors cursor-pointer ${
+        class={`inline-flex items-center justify-center rounded-lg px-2 py-1 text-[12px] transition-colors cursor-pointer ${
           open()
             ? "bg-[var(--bg-hover)] text-[var(--text-primary)]"
             : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
         }`}
         title={t("header.pulseTooltip")}
+        aria-label={t("header.pulseTooltip")}
+        aria-expanded={open()}
       >
         <BarChart3 size={13.5} class="text-[var(--accent-primary)] shrink-0" />
-        <Show when={stats().totalTokens > 0}>
-          <span class="font-mono text-[11.5px] font-medium text-[var(--text-secondary)]">
-            {formatCompactTokens(stats().totalTokens)}
-          </span>
-        </Show>
       </button>
 
       <Show when={open()}>
@@ -194,6 +192,24 @@ export default function DevPulsePopover() {
               </Index>
             </div>
           </Show>
+
+          {/* Global Leaderboard & Direct Gateways Entry */}
+          <div class="pt-2 border-t border-[var(--border-subtle)]">
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                openLeaderboardModal();
+              }}
+              class="w-full flex items-center justify-between rounded-lg px-2 py-1.5 text-[11.5px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer group"
+            >
+              <div class="flex items-center gap-1.5 truncate">
+                <Trophy size={13} class="text-amber-500 shrink-0" />
+                <span class="truncate font-medium">{t("header.pulseLeaderboardEntry")}</span>
+              </div>
+              <ChevronRight size={13} class="text-[var(--text-muted)] group-hover:translate-x-0.5 transition-transform shrink-0" />
+            </button>
+          </div>
         </div>
       </Show>
     </div>

@@ -1,7 +1,7 @@
 import { t } from "../i18n";
 import { hoxiAPI, type WorktreeMeta } from "../services/api";
 import type { SessionInfo } from "../services/sse-types";
-import { appSettings } from "./settings";
+import { appSettings, updateAppSetting } from "./settings";
 import { setWorkspace, workspace } from "./workspace";
 import { initializeSessionAI } from "./session-ai";
 import {
@@ -12,6 +12,11 @@ import {
 } from "./workspace-sessions";
 
 const pendingSandboxChanges = new Map<string, Promise<void>>();
+
+export function startNewThreadDraft(): void {
+  setWorkspace({ activeSessionID: null, sessionSetupError: null,
+    newThreadRequest: workspace.newThreadRequest + 1 });
+}
 
 export async function waitForSessionSandbox(sessionID: string): Promise<void> {
   await pendingSandboxChanges.get(sessionID);
@@ -65,6 +70,7 @@ export async function newIsolatedSession(
   let session: SessionInfo | undefined;
   setWorkspace("sessionSetupError", null);
   try {
+    if (!directory) throw new Error(t("timeline.selectFolderHint"));
     session = await hoxiAPI.createSession(title, directory || undefined);
     if (shouldIsolate) {
       await prepareWorktree(session.id, directory);
@@ -98,7 +104,8 @@ export async function newIsolatedSession(
 export async function switchActiveSessionSandboxMode(mode: "local" | "worktree"): Promise<void> {
   const id = workspace.activeSessionID;
   if (!id) {
-    await newIsolatedSession(undefined, { isolated: mode === "worktree" });
+    // Draft sandbox selection must not provision a session before the first send.
+    updateAppSetting("defaultSandboxMode", mode);
     return;
   }
   const directory = workspace.rootDir;

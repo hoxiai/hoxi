@@ -1,9 +1,11 @@
 // web/src/components/settings/SettingsSystemRuntimeTab.tsx
 import { createSignal, onMount, Show } from "solid-js";
-import { Activity, Cpu, KeyRound, RefreshCw, RotateCcw } from "lucide-solid";
+import { Activity, ArrowUpCircle, Cpu, Download, ExternalLink, KeyRound, RefreshCw, RotateCcw } from "lucide-solid";
 import { hoxiAPI, type SystemRuntimeInfo } from "../../services/api";
 import {
+  checkDesktopUpdate,
   closeSettingsModal,
+  desktopUpdater,
   loadAgents,
   loadProviders,
   openProviderModal,
@@ -11,6 +13,7 @@ import {
   resetProviderTelemetry,
   workspace,
 } from "../../store/workspace";
+import { Spinner } from "../icons";
 import { t } from "../../i18n";
 import { SettingGroup, SettingRow } from "./SettingsModal";
 
@@ -182,6 +185,115 @@ export function SystemRuntimeSettingsTab() {
             {t("settings.resetSettingsBtn")}
           </button>
         </div>
+      </SettingGroup>
+
+      {/* 3. Desktop Version & Online Updates */}
+      <SettingGroup
+        title={t("settings.sectionUpdaterTitle")}
+        tip={t("settings.sectionUpdaterDesc")}
+        action={
+          <button
+            type="button"
+            disabled={desktopUpdater.isChecking}
+            onClick={() => void checkDesktopUpdate(true)}
+            class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[12px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer disabled:opacity-50"
+          >
+            <Show when={desktopUpdater.isChecking} fallback={<RefreshCw size={12} />}>
+              <Spinner class="h-3.5 w-3.5" />
+            </Show>
+            <span>
+              {desktopUpdater.isChecking
+                ? t("settings.updaterCheckingBtn")
+                : t("settings.updaterCheckNowBtn")}
+            </span>
+          </button>
+        }
+      >
+        <SettingRow label={t("settings.updaterCurrentVersion")}>
+          <span class="inline-flex items-center gap-2 font-mono text-[13px] font-semibold text-[var(--text-primary)]">
+            <ArrowUpCircle size={15} class="text-[var(--accent-primary)]" />
+            v0.2.0
+          </span>
+        </SettingRow>
+
+        <Show when={desktopUpdater.result}>
+          {(res) => (
+            <div class="p-3.5 border-t border-[var(--border-subtle)]/70 bg-[var(--bg-inset)]/40 space-y-3">
+              <Show
+                when={res().needUpdate}
+                fallback={
+                  <div class="flex items-center gap-2 text-[12px] text-emerald-500 font-medium">
+                    <span class="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                    <span>{t("settings.updaterAlreadyLatest")}</span>
+                  </div>
+                }
+              >
+                <div class="flex items-center justify-between">
+                  <span class="text-[12.5px] font-semibold text-amber-500">
+                    {t("settings.updaterNewVersionFound", {
+                      version: `v${res().latestVersion}`,
+                    })}
+                  </span>
+                  <span class="text-[11px] font-mono text-[var(--text-faint)]">
+                    {res().checkedAt ? new Date(res().checkedAt).toLocaleDateString() : ""}
+                  </span>
+                </div>
+
+                <Show when={res().releaseNotes}>
+                  <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-3 text-[11.5px] leading-relaxed text-[var(--text-secondary)] max-h-[160px] overflow-y-auto whitespace-pre-wrap font-sans">
+                    <div class="font-medium text-[var(--text-primary)] mb-1">
+                      {res().title || t("settings.updaterReleaseNotesTitle")}
+                    </div>
+                    {res().releaseNotes}
+                  </div>
+                </Show>
+
+                {/* Mirror download buttons: CN GitCode / Global GitHub */}
+                <div class="flex flex-wrap items-center gap-2 pt-1">
+                  <Show when={res().mirrors.cn}>
+                    <a
+                      href={res().mirrors.cn}
+                      target="_blank"
+                      rel="noreferrer"
+                      class="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 px-3 py-1.5 text-[11.5px] font-semibold text-white shadow-xs transition-all cursor-pointer"
+                    >
+                      <Download size={13} />
+                      <span>{t("settings.updaterDownloadFromGitCodeBtn")}</span>
+                    </a>
+                  </Show>
+                  <Show when={res().mirrors.global}>
+                    <a
+                      href={res().mirrors.global}
+                      target="_blank"
+                      rel="noreferrer"
+                      class="inline-flex items-center gap-1.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] px-3 py-1.5 text-[11.5px] font-medium text-[var(--text-primary)] transition-colors cursor-pointer"
+                    >
+                      <ExternalLink size={12} />
+                      <span>{t("settings.updaterDownloadFromGitHubBtn")}</span>
+                    </a>
+                  </Show>
+                  <Show when={!res().mirrors.cn && !res().mirrors.global && res().downloadUrl}>
+                    <a
+                      href={res().downloadUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      class="inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] px-3 py-1.5 text-[11.5px] font-medium text-white transition-opacity hover:opacity-90 cursor-pointer"
+                    >
+                      <Download size={13} />
+                      <span>{t("settings.updaterDownloadNowBtn")}</span>
+                    </a>
+                  </Show>
+                </div>
+              </Show>
+            </div>
+          )}
+        </Show>
+
+        <Show when={desktopUpdater.error}>
+          <div class="p-3 border-t border-[var(--border-subtle)]/70 text-[11.5px] text-rose-500">
+            {t("settings.updaterCheckFailed")} ({desktopUpdater.error})
+          </div>
+        </Show>
       </SettingGroup>
 
       <Show when={actionToast()}>

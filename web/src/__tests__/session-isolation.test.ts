@@ -4,7 +4,9 @@ import { appSettings, setAppSettings } from "../store/settings";
 import { openDiffInInspector, setWorkspace, workspace } from "../store/workspace";
 import {
   newIsolatedSession,
+  applySessionDiffEvent,
   loadSessionMessages,
+  refreshSessionDiff,
   refreshWorktreeStatus,
   selectSession,
   sessionDirectory,
@@ -24,7 +26,8 @@ async function withSessionFixture(run: (id: string, meta: WorktreeMeta) => Promi
     sessionID: id, isolated: true, directory: `/repo/.hoxi/worktrees/${id}`, createdAt: "test",
   };
   setWorkspace({ rootDir: "/repo", activeSessionID: "existing", sessions: [],
-    worktreeBySession: {}, messagesBySession: {}, statusBySession: {}, diffsBySession: {} });
+    worktreeBySession: {}, messagesBySession: {}, statusBySession: {}, diffsBySession: {},
+    worktreeDiffsBySession: {} });
   setAppSettings("defaultSandboxMode", "worktree");
   hoxiAPI.createSession = async () => ({
     id, title: "Isolation test", directory: "/repo", time: { created: 1, updated: 1 },
@@ -48,6 +51,108 @@ async function rejection(task: Promise<unknown>): Promise<Error> {
 }
 
 describe("session worktree isolation", () => {
+  it("shows shared directory Git changes separately from empty session changes and clears them when clean", async () => {
+    await withSessionFixture(async (id) => {
+      setWorkspace({ activeSessionID: id, sessions: [{
+        id, title: "test", directory: "/repo", time: { created: 1, updated: 1 },
+      }] });
+      let dirty = true;
+      hoxiAPI.getWorktreeStatus = async (sessionID, directory) => {
+        assertEqual(sessionID, id);
+        assertEqual(directory, "/repo");
+        return { sessionID: id, directory: "/repo", isolated: false, dirty,
+          changedFiles: dirty ? 1 : 0, uncommittedLines: 2, additions: 2, deletions: 0 };
+      };
+      hoxiAPI.getSessionDiff = async () => [];
+      hoxiAPI.getWorktreeDiff = async (sessionID, directory) => {
+        assertEqual(sessionID, id);
+        assertEqual(directory, "/repo");
+        return [{ file: "manual.ts", additions: 2, deletions: 0 }];
+      };
+      await refreshWorktreeStatus(id);
+      assertEqual(workspace.worktreeDiffsBySession[id][0].file, "manual.ts");
+      assertEqual(workspace.diffsBySession[id].length, 0);
+      applySessionDiffEvent(id, []);
+      assertEqual(workspace.worktreeDiffsBySession[id].length, 1);
+      dirty = false;
+      await refreshWorktreeStatus(id);
+      assertEqual(workspace.worktreeDiffsBySession[id].length, 0);
+    });
+  });
+
+  it("recovers empty session diffs from a dirty isolated worktree, but not a shared directory", async () => {
+    await withSessionFixture(async (id, meta) => {
+      setWorkspace({ activeSessionID: id, worktreeBySession: { [id]: { ...meta, dirty: true } } });
+      hoxiAPI.getSessionDiff = async () => [];
+      let gitDiffCalls = 0;
+      hoxiAPI.getWorktreeDiff = async (sessionID, directory) => {
+        assertEqual(sessionID, id);
+        assertEqual(directory, meta.directory);
+        gitDiffCalls++;
+        return [{ file: "owned.ts", additions: 2, deletions: 1 }];
+      };
+      await refreshSessionDiff(id);
+      assertEqual(workspace.diffsBySession[id][0].file, "owned.ts");
+      setWorkspace("worktreeBySession", id, "isolated", false);
+      await refreshSessionDiff(id);
+      assertEqual(gitDiffCalls, 1);
+      assertEqual(workspace.diffsBySession[id].length, 0);
+    });
+  });
+
+  it("ignores stale Git diff responses after a newer refresh reports a clean directory", async () => {
+    await withSessionFixture(async (id, meta) => {
+      setWorkspace({ activeSessionID: id, worktreeBySession: { [id]: meta } });
+      let dirty = true;
+      hoxiAPI.getWorktreeStatus = async () => ({
+        sessionID: id, directory: meta.directory, isolated: true, dirty,
+        changedFiles: 1, uncommittedLines: 1, additions: 1, deletions: 0,
+      });
+      hoxiAPI.getSessionDiff = async () => [];
+      let resolveDiff!: (diffs: Awaited<ReturnType<typeof hoxiAPI.getWorktreeDiff>>) => void;
+      hoxiAPI.getWorktreeDiff = () => new Promise((resolve) => { resolveDiff = resolve; });
+      const pending = refreshWorktreeStatus(id);
+      await Promise.resolve();
+      dirty = false;
+      await refreshWorktreeStatus(id);
+      resolveDiff([{ file: "stale.ts", additions: 1, deletions: 0 }]);
+      await pending;
+      assertEqual(workspace.worktreeDiffsBySession[id].length, 0);
+      assertEqual(workspace.worktreeBySession[id].dirty, false);
+    });
+  });
+
+  it("does not let an old REST response overwrite a newer SSE diff, including an empty diff", async () => {
+    await withSessionFixture(async (id) => {
+      let resolveDiff!: (diffs: Awaited<ReturnType<typeof hoxiAPI.getSessionDiff>>) => void;
+      hoxiAPI.getSessionDiff = () => new Promise((resolve) => { resolveDiff = resolve; });
+      const pending = refreshSessionDiff(id);
+      applySessionDiffEvent(id, [{ file: "latest.ts", additions: 1, deletions: 0 }]);
+      resolveDiff([]);
+      await pending;
+      assertEqual(workspace.diffsBySession[id][0].file, "latest.ts");
+      const nextPending = refreshSessionDiff(id);
+      applySessionDiffEvent(id, []);
+      resolveDiff([{ file: "stale.ts", additions: 1, deletions: 0 }]);
+      await nextPending;
+      assertEqual(workspace.diffsBySession[id].length, 0);
+    });
+  });
+
+  it("keeps the newest REST diff when overlapping requests finish out of order", async () => {
+    await withSessionFixture(async (id) => {
+      const resolvers: Array<(diffs: Awaited<ReturnType<typeof hoxiAPI.getSessionDiff>>) => void> = [];
+      hoxiAPI.getSessionDiff = () => new Promise((resolve) => { resolvers.push(resolve); });
+      const first = refreshSessionDiff(id);
+      const second = refreshSessionDiff(id);
+      resolvers[1]([{ file: "latest.ts", additions: 1, deletions: 0 }]);
+      await second;
+      resolvers[0]([]);
+      await first;
+      assertEqual(workspace.diffsBySession[id][0].file, "latest.ts");
+    });
+  });
+
   it("opens changed-file statistics as a diff and preserves the clicked patch without changing live diffs", async () => {
     await withSessionFixture(async (id) => {
       setWorkspace({ activeSessionID: id, diffsBySession: { [id]: [] }, inspectorOpen: false });

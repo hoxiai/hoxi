@@ -330,6 +330,10 @@ export const hoxiAPI = {
     });
   },
 
+  deletePTY(ptyID: string, directory?: string): Promise<void> {
+    return requestJSON(withDir(`/pty/${encodeURIComponent(ptyID)}`, directory), { method: "DELETE" });
+  },
+
   // Git Worktree Sandbox Manager
   createWorktree(sessionID: string, directory?: string): Promise<WorktreeMeta> {
     return requestJSON("/api/hoxi/worktree/create", {
@@ -480,3 +484,9 @@ export const hoxiAPI = {
   },
 };
 
+export { authAPI } from "./auth-api";
+export type { AuthStatusSnapshot, AuthUserProfile, StartAuthResponse } from "./auth-api";
+export { updaterAPI } from "./updater-api";
+export type { UpdateCheckResult, UpdateMirrors } from "./updater-api";
+export { leaderboardAPI } from "./leaderboard-api";
+export type { LeaderboardModelItem, ConnectableGatewayItem } from "./leaderboard-api";

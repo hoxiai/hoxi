@@ -1,4 +1,4 @@
-import { createEffect, createSignal, onCleanup, onMount, Show } from "solid-js";
+import { createEffect, createSignal, on, onCleanup, Show } from "solid-js";
 import { LoaderCircle, RefreshCw } from "lucide-solid";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
@@ -7,13 +7,14 @@ import "@xterm/xterm/css/xterm.css";
 import { hoxiAPI } from "../../services/api";
 import { activeDirectory, appSettings, workspace } from "../../store/workspace";
 import { t } from "../../i18n";
+import { startTerminalConnection } from "./terminal-connection";
 
 function wsEndpoint(ptyID: string, directory?: string): string {
   const base =
     workspace.wsBaseURL ||
     `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}`;
   const dir = directory ? `?directory=${encodeURIComponent(directory)}` : "";
-  return `${base}/pty/${ptyID}/connect${dir}`;
+  return `${base}/pty/${encodeURIComponent(ptyID)}/connect${dir}`;
 }
 
 // OpenCode streams raw PTY bytes; tolerate JSON-framed frames as well.
@@ -36,8 +37,8 @@ function decodeFrame(data: string | ArrayBuffer): string {
 export default function WebGLTerminal() {
   let container!: HTMLDivElement;
   const [status, setStatus] = createSignal<"connecting" | "ready" | "error">("connecting");
-  const [errorMsg, setErrorMsg] = createSignal<string | null>(null);
-  let teardown: (() => void) | null = null;
+  const [errorKey, setErrorKey] = createSignal<"error" | "disconnected">("error");
+  const [retry, setRetry] = createSignal(0);
   let activeTerm: Terminal | null = null;
   let activeFit: FitAddon | null = null;
 
@@ -55,11 +56,16 @@ export default function WebGLTerminal() {
     }
   });
 
-  const boot = async () => {
-    teardown?.();
+  const boot = (directory: string | undefined) => {
     setStatus("connecting");
-    setErrorMsg(null);
+    setErrorKey("error");
     container.innerHTML = "";
+    // Never let an unresolved session directory fall back to the server's cwd.
+    if (!directory) {
+      setStatus("error");
+      setErrorKey("disconnected");
+      return;
+    }
 
     const term = new Terminal({
       fontFamily: '"JetBrains Mono", "SF Mono", Menlo, monospace',
@@ -91,75 +97,45 @@ export default function WebGLTerminal() {
       /* container not measurable yet */
     }
 
-    const directory = activeDirectory();
-    let socket: WebSocket | null = null;
-    let ptyID: string | null = null;
-    let disposed = false;
-
-    const onData = term.onData((chunk) => {
-      if (socket && socket.readyState === WebSocket.OPEN) socket.send(chunk);
-    });
-
-    const syncSize = () => {
+    const fitSize = () => {
       try {
         fit.fit();
       } catch {
-        return;
+        return { cols: 0, rows: 0 };
       }
-      if (socket && socket.readyState === WebSocket.OPEN && ptyID && term.cols && term.rows) {
-        void hoxiAPI.resizePTY(ptyID, term.cols, term.rows, directory).catch(() => undefined);
-      }
+      return { cols: term.cols, rows: term.rows };
     };
 
-    const resizeObserver = new ResizeObserver(() => syncSize());
+    let connection: ReturnType<typeof startTerminalConnection> | undefined;
+    const onData = term.onData((chunk) => connection?.send(chunk));
+    const resizeObserver = new ResizeObserver(() => {
+      fitSize();
+      connection?.resize();
+    });
+    connection = startTerminalConnection({
+      directory,
+      api: hoxiAPI,
+      connect: (id, dir) => new WebSocket(wsEndpoint(id, dir)),
+      size: fitSize,
+      write: (data) => term.write(decodeFrame(data)),
+      ready: () => setStatus("ready"),
+      error: (reason) => { setErrorKey(reason); setStatus("error"); },
+      disposeView: () => {
+        resizeObserver.disconnect();
+        onData.dispose();
+        activeTerm = null;
+        activeFit = null;
+        term.dispose();
+      },
+    });
+    onCleanup(connection.dispose);
     resizeObserver.observe(container);
-
-    try {
-      const pty = await hoxiAPI.createPTY(directory);
-      ptyID = pty.id;
-    } catch (err) {
-      console.error("create PTY failed:", err);
-      if (!disposed) {
-        setStatus("error");
-        setErrorMsg("Failed to create PTY session");
-      }
-    }
-
-    if (ptyID && !disposed) {
-      socket = new WebSocket(wsEndpoint(ptyID, directory));
-      socket.onopen = () => {
-        setStatus("ready");
-        syncSize();
-      };
-      socket.onmessage = (evt) => term.write(decodeFrame(evt.data));
-      socket.onerror = () => {
-        if (!disposed) {
-          setStatus("error");
-          setErrorMsg("Terminal WebSocket error");
-        }
-      };
-      socket.onclose = () => {
-        if (!disposed) setStatus("connecting");
-      };
-    }
-
-    teardown = () => {
-      disposed = true;
-      resizeObserver.disconnect();
-      onData.dispose();
-      try {
-        socket?.close();
-      } catch {
-        /* noop */
-      }
-      term.dispose();
-    };
   };
 
-  onMount(() => {
-    void boot();
-    onCleanup(() => teardown?.());
-  });
+  createEffect(on(
+    () => [workspace.activeSessionID, activeDirectory(), retry()] as const,
+    ([, directory]) => boot(directory),
+  ));
 
   return (
     <div class="flex flex-col h-full">
@@ -182,7 +158,7 @@ export default function WebGLTerminal() {
         </span>
         <button
           class="ml-auto text-gray-500 hover:text-gray-200 cursor-pointer"
-          onClick={() => void boot()}
+          onClick={() => setRetry((value) => value + 1)}
           title={t("inspector.terminal.reconnect")}
         >
           <RefreshCw size={13} />
@@ -194,7 +170,7 @@ export default function WebGLTerminal() {
         <Show when={status() !== "ready"}>
           <div class="absolute inset-0 flex flex-col items-center justify-center gap-2 text-[11px] text-gray-500 pointer-events-none">
             <Show when={status() === "error"} fallback={<LoaderCircle size={16} class="animate-spin" />}>
-              <span class="text-red-400">{errorMsg()}</span>
+              <span class="text-red-400">{t(`inspector.terminal.${errorKey()}`)}</span>
             </Show>
           </div>
         </Show>

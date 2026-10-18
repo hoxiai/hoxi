@@ -283,6 +283,7 @@ export function purgeSessionsFromStoreState(
     delete state.sessionFinishedAt[id];
     delete state.unreadCompletedBySession[id];
     delete state.diffsBySession[id];
+    delete state.worktreeDiffsBySession[id];
     delete state.worktreeBySession[id];
     delete state.reviewCommentsBySession[id];
     delete state.auditsBySession[id];

@@ -111,7 +111,7 @@ func scanGeminiAntigravitySessions(targetDir, query string) ([]ExternalSessionSu
 	}
 
 	qLower := strings.ToLower(strings.TrimSpace(query))
-	seen := map[string]struct{}{}
+	seenIdx := map[string]int{}
 	var results []ExternalSessionSummary
 
 	for _, aDir := range dirs {
@@ -156,20 +156,25 @@ LIMIT 120;`
 			if id == "" {
 				continue
 			}
-			if _, ok := seen[id]; ok {
+			explicitTitle := strings.TrimSpace(r.Title)
+			if idx, ok := seenIdx[id]; ok {
+				if explicitTitle != "" {
+					results[idx].Title = explicitTitle
+				}
 				continue
 			}
-			seen[id] = struct{}{}
 
 			cwd := parseFileURIListFirstPath(r.WorkspaceURIs)
-			title := strings.TrimSpace(r.Title)
+			cleanPreview, _ := extractAntigravityUserPrompt(r.Preview)
+			cleanPreview = strings.TrimSpace(strings.TrimPrefix(cleanPreview, "[user]:"))
+			title := explicitTitle
 			if title == "" {
-				title = truncateRunes(firstLineText(r.Preview), 80)
+				title = truncateRunes(firstLineText(cleanPreview), 80)
 			}
 			if title == "" {
 				title = "Antigravity " + id[:minInt(8, len(id))]
 			}
-			summary := strings.TrimSpace(r.Preview)
+			summary := firstNonEmpty(cleanPreview, strings.TrimSpace(r.Preview))
 
 			if qLower != "" {
 				haystack := strings.ToLower(title + " " + summary + " " + cwd)
@@ -184,6 +189,7 @@ LIMIT 120;`
 				createdMs = updatedMs
 			}
 
+			seenIdx[id] = len(results)
 			results = append(results, ExternalSessionSummary{
 				ID:          id,
 				Source:      ExternalToolGemini,
@@ -216,11 +222,12 @@ func extractAntigravityUserPrompt(raw string) (promptText, modelChange string) {
 		rest := raw[idx:]
 		if toIdx := strings.Index(rest, " to "); toIdx >= 0 && toIdx < 60 {
 			afterTo := rest[toIdx+4:]
-			if dotIdx := strings.Index(afterTo, "."); dotIdx > 0 && dotIdx < 60 {
-				candidate := strings.TrimSpace(afterTo[:dotIdx])
-				if candidate != "" && candidate != "None" && !strings.ContainsAny(candidate, "\n\r\"\\") {
-					modelChange = candidate
-				}
+			if nl := strings.IndexAny(afterTo, "\r\n<"); nl >= 0 {
+				afterTo = afterTo[:nl]
+			}
+			candidate := strings.TrimSpace(strings.TrimRight(afterTo, ". \t"))
+			if candidate != "" && candidate != "None" && len(candidate) < 64 && !strings.ContainsAny(candidate, "\n\r\"\\") {
+				modelChange = normalizeAntigravityModelID(candidate)
 			}
 		}
 	}

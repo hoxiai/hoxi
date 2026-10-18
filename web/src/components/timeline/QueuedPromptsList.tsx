@@ -64,7 +64,7 @@ export default function QueuedPromptsList(props: { sessionID: string | null }) {
 
                 {/* Queued Status & Action Bar: Queued | Send Now | Edit | Delete */}
                 <div class="mt-1.5 flex items-center justify-end gap-1.5 px-1 text-[12px]">
-                  <span class="inline-flex items-center gap-1 rounded-full bg-[var(--accent-surface)]/80 px-2 py-0.5 text-[11.5px] font-medium text-[var(--accent-primary)]">
+                  <span class="inline-flex items-center gap-1 px-1.5 py-0.5 text-[11.5px] text-[var(--text-muted)]">
                     <Clock size={11} class="shrink-0" />
                     <TextShimmer text={t("timeline.queuedBadge")} active={true} />
                   </span>
@@ -73,7 +73,7 @@ export default function QueuedPromptsList(props: { sessionID: string | null }) {
                     type="button"
                     onClick={() => void sendQueuedPromptNow(sid(), item.id)}
                     title={t("timeline.queueSendNowTooltip")}
-                    class="inline-flex items-center gap-1 rounded-md border border-[var(--accent-border)] bg-[var(--accent-surface)] px-2 py-0.5 text-[11.5px] font-medium text-[var(--accent-primary)] hover:opacity-90 transition-opacity cursor-pointer"
+                    class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11.5px] text-[var(--text-muted)] hover:text-[var(--accent-primary)] transition-colors cursor-pointer"
                   >
                     <ArrowUp size={11} />
                     <span>{t("timeline.queueSendNow")}</span>
@@ -83,7 +83,7 @@ export default function QueuedPromptsList(props: { sessionID: string | null }) {
                     type="button"
                     onClick={() => editQueuedPrompt(sid(), item.id)}
                     title={t("timeline.queueEditTooltip")}
-                    class="inline-flex items-center gap-1 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-2 py-0.5 text-[11.5px] font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+                    class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11.5px] text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
                   >
                     <Pencil size={10.5} />
                     <span>{t("timeline.queueEdit")}</span>
@@ -93,7 +93,7 @@ export default function QueuedPromptsList(props: { sessionID: string | null }) {
                     type="button"
                     onClick={() => removeQueuedPrompt(sid(), item.id)}
                     title={t("timeline.queueDeleteTooltip")}
-                    class="inline-flex items-center gap-1 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-2 py-0.5 text-[11.5px] font-medium text-[var(--text-muted)] hover:border-[var(--danger-border)] hover:bg-[var(--danger-surface)] hover:text-[var(--danger-text)] transition-colors cursor-pointer"
+                    class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11.5px] text-[var(--text-muted)] hover:text-[var(--danger-text)] transition-colors cursor-pointer"
                   >
                     <Trash2 size={10.5} />
                     <span>{t("timeline.queueDelete")}</span>

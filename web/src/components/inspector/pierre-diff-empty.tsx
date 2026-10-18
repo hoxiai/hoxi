@@ -26,14 +26,24 @@ export default function DiffEmptyState(props: {
   onRefresh: () => void;
 }) {
   const busy = createMemo(() => isSessionBusy(workspace.activeSessionID));
+  const sessionScope = () => workspace.diffScope === "session";
 
-  const worktree = createMemo(() => {
-    const id = workspace.activeSessionID;
-    return (
-      (id ? workspace.worktreeBySession[id] : undefined) ||
-      workspace.worktreeBySession["__root__"]
-    );
-  });
+  const worktree = createMemo(
+    () => workspace.worktreeBySession[workspace.activeSessionID || "__root__"]
+  );
+  const dirty = () => worktree()?.dirty;
+  const emptyTitle = () => sessionScope()
+    ? t("inspector.diffs.sessionEmpty")
+    : dirty() === false
+      ? t("inspector.diffs.cleanStatus")
+      : t("inspector.diffs.empty");
+  const emptyDescription = () => sessionScope()
+    ? t("inspector.diffs.sessionEmptyDesc")
+    : dirty() === true
+      ? t("inspector.diffs.worktreeDirtyEmptyDesc")
+      : dirty() === false
+        ? t("inspector.diffs.emptyDesc")
+        : t("inspector.diffs.worktreeUnknownEmptyDesc");
 
   const commitHash = createMemo(() => {
     const wt = worktree();
@@ -42,7 +52,7 @@ export default function DiffEmptyState(props: {
   });
 
   const dirPath = createMemo(
-    () => worktree()?.directory || activeDirectory() || workspace.rootDir || "—"
+    () => worktree()?.directory || activeDirectory() || "—"
   );
 
   return (
@@ -59,17 +69,19 @@ export default function DiffEmptyState(props: {
         >
           <div class="relative mb-3 flex h-12 w-12 items-center justify-center rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-inset)] text-[var(--accent-primary)] shadow-2xs">
             <FileDiff size={22} />
-            <span class="absolute -bottom-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full border-2 border-[var(--bg-panel)] bg-[var(--ok-surface)] text-[var(--ok-text)]">
-              <CheckCircle2 size={11} />
-            </span>
+            <Show when={!sessionScope() && dirty() === false}>
+              <span class="absolute -bottom-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full border-2 border-[var(--bg-panel)] bg-[var(--ok-surface)] text-[var(--ok-text)]">
+                <CheckCircle2 size={11} />
+              </span>
+            </Show>
           </div>
         </Show>
 
         <h3 class="text-[13px] font-semibold text-[var(--text-primary)]">
-          {busy() ? t("inspector.diffs.busyEmptyTitle") : t("inspector.diffs.empty")}
+          {emptyTitle()}
         </h3>
         <p class="mt-1 text-[11.5px] leading-relaxed text-[var(--text-muted)]">
-          {busy() ? t("inspector.diffs.busyEmptyDesc") : t("inspector.diffs.emptyDesc")}
+          {emptyDescription()}
         </p>
       </div>
 
@@ -86,21 +98,27 @@ export default function DiffEmptyState(props: {
                 : "border border-[var(--border-subtle)] bg-[var(--bg-panel)] text-[var(--text-secondary)]"
             }`}
           >
-            {worktree()?.isolated
+            {worktree()?.isolated === true
               ? t("inspector.diffs.envModeIsolated")
-              : t("inspector.diffs.envModeMain")}
+              : worktree()?.isolated === false
+                ? t("inspector.diffs.envModeMain")
+                : t("inspector.diffs.envModeUnknown")}
           </span>
         </div>
 
-        {/* Working Tree Clean Status */}
+        {/* Git status is independent of the selected diff scope. */}
         <div class="flex items-center justify-between gap-2 text-[11.5px]">
           <span class="text-[var(--text-muted)] shrink-0">
             {t("inspector.diffs.envStatusLabel")}
           </span>
-          <div class="inline-flex items-center gap-1.5 font-medium text-[var(--ok-text)]">
-            <span class="inline-block h-1.5 w-1.5 rounded-full bg-[var(--ok)]" />
-            <span>{t("inspector.diffs.envStatusClean")}</span>
-            <span class="font-mono text-[10.5px] text-[var(--text-faint)]">+0 -0</span>
+          <div class={`inline-flex items-center gap-1.5 font-medium ${
+            dirty() === false ? "text-[var(--ok-text)]" : "text-[var(--text-secondary)]"
+          }`}>
+            <span>{dirty() === true
+              ? t("inspector.diffs.envStatusDirty")
+              : dirty() === false
+                ? t("inspector.diffs.envStatusClean")
+                : t("inspector.diffs.envStatusUnknown")}</span>
           </div>
         </div>
 

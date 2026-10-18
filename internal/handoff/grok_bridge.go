@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -121,6 +122,22 @@ func loadGrokLocalCredentials() grokLocalCredentials {
 			out.DefaultModel = firstNonEmpty(asString(setDoc["model"]), asString(setDoc["default_model"]), asString(setDoc["current_model_id"]))
 		}
 	}
+	if tomlBytes, err := os.ReadFile(filepath.Join(gDir, "config.toml")); err == nil {
+		for _, line := range strings.Split(string(tomlBytes), "\n") {
+			trimmed := strings.TrimSpace(line)
+			if strings.Contains(trimmed, "=") {
+				parts := strings.SplitN(trimmed, "=", 2)
+				k := strings.TrimSpace(parts[0])
+				v := strings.Trim(strings.TrimSpace(parts[1]), `"'`)
+				if (k == "model" || k == "default_model" || k == "fork_secondary_model") && v != "" {
+					out.Models = appendUniqueString(out.Models, v)
+					if k != "fork_secondary_model" && out.DefaultModel == "" {
+						out.DefaultModel = v
+					}
+				}
+			}
+		}
+	}
 
 	if modData, err := os.ReadFile(filepath.Join(gDir, "models_cache.json")); err == nil {
 		var rawDoc map[string]interface{}
@@ -139,6 +156,7 @@ func loadGrokLocalCredentials() grokLocalCredentials {
 					}
 				}
 			case map[string]interface{}:
+				var mapModels []string
 				for k, v := range mv {
 					if vm, ok := v.(map[string]interface{}); ok {
 						if info, ok := vm["info"].(map[string]interface{}); ok {
@@ -146,15 +164,17 @@ func loadGrokLocalCredentials() grokLocalCredentials {
 								continue
 							}
 							if id := strings.TrimSpace(asString(info["id"])); id != "" {
-								out.Models = appendUniqueString(out.Models, id)
+								mapModels = appendUniqueString(mapModels, id)
 								continue
 							}
 						}
 					}
 					if strings.TrimSpace(k) != "" {
-						out.Models = appendUniqueString(out.Models, strings.TrimSpace(k))
+						mapModels = appendUniqueString(mapModels, strings.TrimSpace(k))
 					}
 				}
+				sort.Slice(mapModels, func(i, j int) bool { return mapModels[i] > mapModels[j] })
+				out.Models = appendUniqueString(out.Models, mapModels...)
 			}
 		}
 	}
@@ -201,6 +221,12 @@ func (g *desktopGateway) importGrokCLIProvider() LocalCLIImportResponse {
 			OK:     false,
 			ToolID: string(ExternalToolGrok),
 			Error:  "Grok CLI credentials not found in ~/.grok/auth.json",
+		}
+	}
+	sessions, _ := scanGrokSessions("", "")
+	for _, s := range sessions {
+		if s.Model != "" {
+			creds.Models = appendUniqueString(creds.Models, s.Model)
 		}
 	}
 
@@ -272,6 +298,15 @@ func (g *desktopGateway) syncLocalCLIBridgeURLs() {
 			continue
 		}
 		expected := g.httpBridgeBaseURL() + suffix
+		if cur, _ := opts["baseURL"].(string); pid != "grok-cli" && strings.Contains(cur, suffix) {
+			models, _ := pObj["models"].(map[string]interface{})
+			for _, model := range models {
+				if m, ok := model.(map[string]interface{}); ok && m["tool_call"] != false {
+					m["tool_call"] = false
+					changed = true
+				}
+			}
+		}
 		if cur, _ := opts["baseURL"].(string); strings.Contains(cur, suffix) && cur != expected {
 			opts["baseURL"] = expected
 			pObj["options"] = opts
@@ -440,4 +475,3 @@ func (g *desktopGateway) handleGrokCLIBridge(w http.ResponseWriter, r *http.Requ
 		},
 	})
 }
-

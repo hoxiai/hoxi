@@ -285,7 +285,7 @@ export async function submitSessionPrompt(
         id,
         promptText || t("timeline.imagePromptSessionTitle"),
         effectiveModel,
-        renameSessionTitle
+        (sessionID, title) => renameSessionTitle(sessionID, title, "automatic")
       );
     }
     setTimeout(() => {
@@ -359,6 +359,10 @@ export function upsertMessageInfo(info: MessageInfo) {
 export function upsertMessagePart(part: MessagePart) {
   recordFirstToken(part.sessionID);
   recordToolPartUpdate(part);
+  if (part.type === "tool" && part.tool === "hoxi_browser" &&
+      part.state.status === "running" && part.sessionID === workspace.activeSessionID) {
+    setWorkspace({ inspectorOpen: true, inspectorTab: "browser" });
+  }
   if (part.type === "tool" && part.tool.toLowerCase() === "task") {
     ensureChildSubagentSessionLoaded(
       extractChildSubagentSessionId(part),

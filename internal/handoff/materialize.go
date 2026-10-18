@@ -118,6 +118,7 @@ func (g *desktopGateway) materializeExternalSession(ctx context.Context, req Han
 	}
 
 	providerID, modelID := g.resolveDefaultHandoffModel(detail.Summary, req)
+	g.ensureHandoffModelReady(detail.Summary.Source, providerID, modelID, detail)
 	if err := insertNormalizedTurnsToOpenCodeDB(newSessionID, targetDir, providerID, modelID, detail); err != nil {
 		return HandoffImportResponse{}, fmt.Errorf("insert session history: %w", err)
 	}
@@ -135,6 +136,68 @@ func (g *desktopGateway) materializeExternalSession(ctx context.Context, req Han
 		ResolvedProviderID: providerID,
 		ResolvedModelID:    modelID,
 	}, nil
+}
+
+func (g *desktopGateway) ensureHandoffModelReady(source ExternalToolID, providerID, modelID string, detail *ExternalSessionDetail) {
+	if providerID == "" {
+		return
+	}
+	provMap, _ := g.loadHoxiConfigDoc()["provider"].(map[string]interface{})
+	existingProv, hasProv := provMap[providerID].(map[string]interface{})
+	existingName, _ := existingProv["name"].(string)
+	isLocal := !hasProv || strings.Contains(existingName, "Local") || strings.Contains(existingName, "Antigravity") || strings.Contains(existingName, "Codex")
+	switch {
+	case providerID == "claude-code":
+		_ = g.importClaudeCLIProvider()
+	case providerID == "grok-cli":
+		_ = g.importGrokCLIProvider()
+	case providerID == "google" && isLocal:
+		_ = g.importGeminiCLIProvider()
+	case providerID == "openai" && isLocal:
+		_ = g.importCodexCLIProvider()
+	}
+
+	doc := g.loadHoxiConfigDoc()
+	provMap, _ = doc["provider"].(map[string]interface{})
+	pObj, ok := provMap[providerID].(map[string]interface{})
+	if !ok {
+		return
+	}
+	modelsMap, _ := pObj["models"].(map[string]interface{})
+	opts, _ := pObj["options"].(map[string]interface{})
+	baseURL, _ := opts["baseURL"].(string)
+	textOnly := strings.Contains(baseURL, "/api/hoxi/bridge/claude-code/v1") || strings.Contains(baseURL, "/api/hoxi/bridge/gemini-antigravity/v1")
+	if modelsMap == nil {
+		modelsMap = map[string]interface{}{}
+	}
+	candidates := []string{modelID}
+	if detail != nil && isNativeCLIProvider(source, providerID) {
+		candidates = appendUniqueString(candidates, detail.Summary.Model)
+		for _, t := range detail.Turns {
+			candidates = appendUniqueString(candidates, t.ModelID)
+		}
+	}
+	changed := false
+	for _, mID := range candidates {
+		if mID = strings.TrimSpace(mID); mID != "" && modelsMap[mID] == nil {
+			modelsMap[mID] = map[string]interface{}{
+				"name": mID, "tool_call": !textOnly, "reasoning": true, "attachment": true,
+				"limit": map[string]interface{}{"context": 200000, "output": 32768},
+			}
+			changed = true
+		}
+	}
+	if changed {
+		pObj["models"] = modelsMap
+		provMap[providerID] = pObj
+		doc["provider"] = provMap
+		_ = g.persistHoxiConfigDoc(doc)
+	}
+}
+
+func isNativeCLIProvider(source ExternalToolID, providerID string) bool {
+	return (source == ExternalToolGemini && providerID == "google") || (source == ExternalToolClaude && providerID == "claude-code") ||
+		(source == ExternalToolCodex && providerID == "openai") || (source == ExternalToolGrok && providerID == "grok-cli")
 }
 
 func dirExists(p string) bool {

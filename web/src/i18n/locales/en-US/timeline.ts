@@ -2,6 +2,7 @@
 import type { TimelineI18n } from "../../types";
 
 export const timeline: TimelineI18n = {
+  scrollToBottom: "Scroll to bottom",
   welcomeTitle: "Native AI Agentic Engineering",
   welcomeSubtitle:
     "Powered by OpenCode runtime, 8-dimension memory, and git worktree isolation.",
@@ -12,6 +13,11 @@ export const timeline: TimelineI18n = {
   thoughtFor: "Thought for {time}s",
   thinking: "Thinking…",
   thought: "Thought",
+  activityResponse: "Response",
+  scrollActivityUp: "Scroll activity up",
+  scrollActivityDown: "Scroll activity down",
+  searchOptions: "Search options",
+  activityLength: "{label} ({count} characters)",
   showThought: "Expand reasoning",
   hideThought: "Collapse reasoning",
   revertHere: "Revert to here",
@@ -27,6 +33,8 @@ export const timeline: TimelineI18n = {
   planDesc: "Read-only architectural planning and exploration",
   inputPlaceholder:
     "Ask a question or describe a task... (Enter to send, Shift+Enter for newline)",
+  selectFolder: "Choose folder",
+  selectFolderHint: "Choose a folder before starting a project task.",
   queuePlaceholder:
     "Task is running. Messages will be queued. You can send them now, edit, or delete them from the queue.",
   filesAttached: "{count} files",

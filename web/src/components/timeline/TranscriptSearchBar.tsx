@@ -1,6 +1,6 @@
 // web/src/components/timeline/TranscriptSearchBar.tsx
 import { createDeferred, createEffect, createMemo, createSignal, mapArray, on, onMount, Show } from "solid-js";
-import { ChevronDown, ChevronUp, Search, X } from "lucide-solid";
+import { ChevronDown, ChevronUp, Search, SlidersHorizontal, X } from "lucide-solid";
 import type { MessageTurn } from "../../store/workspace";
 import { t } from "../../i18n";
 
@@ -130,7 +130,14 @@ export default function TranscriptSearchBar(props: {
 
   return (
     <Show when={props.open}>
-      <div class="sticky top-9 z-30 mx-auto mt-2 flex w-full max-w-[38rem] items-center gap-2 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] px-3 py-1.5 shadow-xl">
+      <div class="transcript-search-panel flex items-center gap-1.5 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] px-2.5 py-2 shadow-xl"
+        role="search" onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            event.stopPropagation();
+            props.onClose();
+          }
+        }}>
         <Search size={13} class="text-[var(--text-muted)] shrink-0" />
         <input
           ref={inputRef}
@@ -147,15 +154,22 @@ export default function TranscriptSearchBar(props: {
               else goNext();
             } else if (ev.key === "Escape") {
               ev.preventDefault();
+              ev.stopPropagation();
               props.onClose();
             }
           }}
           placeholder={t("timeline.searchPlaceholder")}
+          aria-label={t("timeline.searchPlaceholder")}
           class="flex-1 min-w-0 bg-transparent text-[12.5px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none"
         />
 
         {/* Match Options: Aa / ab / .* */}
-        <div class="flex items-center gap-0.5 shrink-0">
+        <details class="relative shrink-0">
+          <summary class="flex list-none cursor-pointer rounded p-1 text-[var(--text-muted)] hover:bg-[var(--bg-hover)] [&::-webkit-details-marker]:hidden"
+            title={t("timeline.searchOptions")} aria-label={t("timeline.searchOptions")}>
+            <SlidersHorizontal size={13} />
+          </summary>
+        <div class="transcript-search-options flex items-center gap-0.5 rounded-lg border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-1.5 shadow-lg">
           <button
             type="button"
             onClick={() => setMatchCase((v) => !v)}
@@ -193,6 +207,7 @@ export default function TranscriptSearchBar(props: {
             .*
           </button>
         </div>
+        </details>
 
         {/* Match Counter */}
         <Show

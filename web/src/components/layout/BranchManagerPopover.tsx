@@ -220,10 +220,9 @@ export default function BranchManagerPopover() {
 
   return (
     <Show when={displayBranch()}>
-      <span class="text-[var(--text-faint)]">/</span>
       <div
         ref={triggerRef}
-        class="relative inline-flex items-center gap-1.5"
+        class="relative inline-flex shrink-0 items-center gap-1.5"
         style={{ "--wails-draggable": "no-drag" } as any}
       >
         <button
@@ -234,11 +233,13 @@ export default function BranchManagerPopover() {
               ? "text-[var(--accent-primary)] hover:bg-[var(--accent-surface)]"
               : "text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
           }`}
-          title={t("header.branchMenuTooltip")}
+          title={`${displayBranch()} (${t("header.branchMenuTooltip")})`}
+          aria-label={`${displayBranch()} (${t("header.branchMenuTooltip")})`}
+          aria-expanded={open()}
         >
           <GitBranch size={12} class="shrink-0" />
-          <span class="truncate max-w-[160px]">{displayBranch()}</span>
-          <ChevronDown size={11} class="shrink-0 opacity-65" />
+          <span class="hidden md:inline truncate max-w-[100px] lg:max-w-[160px]">{displayBranch()}</span>
+          <ChevronDown size={11} class="hidden md:block shrink-0 opacity-65" />
         </button>
 
         <Show when={toastNote()}>
@@ -251,7 +252,7 @@ export default function BranchManagerPopover() {
         <Show when={open()}>
           <div
             ref={popoverRef}
-            class="absolute left-0 top-full mt-2 z-50 w-[320px] rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-2.5 shadow-xl text-xs"
+            class="absolute right-0 top-full mt-2 z-50 w-[320px] max-w-[calc(100vw-2rem)] rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-2.5 shadow-xl text-xs"
           >
             <Show when={errorMsg()}>
               <div class="mb-2 rounded-lg border border-[var(--danger-border)] bg-[var(--danger-surface)] px-2.5 py-1.5 text-[11px] text-[var(--danger-text)] break-words">

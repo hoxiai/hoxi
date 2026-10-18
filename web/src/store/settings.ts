@@ -16,6 +16,9 @@ export interface AppSettingsState {
   activeTab: SettingsTab;
   themeMode: ThemeMode;
   fontScale: FontScale;
+  sidebarAutoCollapse: boolean;
+  sidebarMinSessions: number;
+  sidebarRecentMinutes: number;
   userLoggedIn: boolean;
   userDisplayName: string;
   userEmail: string;
@@ -50,7 +53,10 @@ type PersistedSettings = Omit<
 const DEFAULT_SETTINGS: PersistedSettings = {
   themeMode: "light",
   fontScale: "default",
-  userLoggedIn: true,
+  sidebarAutoCollapse: true,
+  sidebarMinSessions: 7,
+  sidebarRecentMinutes: 60,
+  userLoggedIn: false,
   userDisplayName: "",
   userEmail: "",
   sendShortcut: "enter",
@@ -101,6 +107,22 @@ function loadInitialSettings(): PersistedSettings {
         parsed.fontScale === "large"
           ? parsed.fontScale
           : DEFAULT_SETTINGS.fontScale,
+      sidebarAutoCollapse:
+        typeof parsed.sidebarAutoCollapse === "boolean"
+          ? parsed.sidebarAutoCollapse
+          : DEFAULT_SETTINGS.sidebarAutoCollapse,
+      sidebarMinSessions:
+        Number.isInteger(parsed.sidebarMinSessions) &&
+        parsed.sidebarMinSessions >= 1 &&
+        parsed.sidebarMinSessions <= 100
+          ? parsed.sidebarMinSessions
+          : DEFAULT_SETTINGS.sidebarMinSessions,
+      sidebarRecentMinutes:
+        Number.isInteger(parsed.sidebarRecentMinutes) &&
+        parsed.sidebarRecentMinutes >= 0 &&
+        parsed.sidebarRecentMinutes <= 10080
+          ? parsed.sidebarRecentMinutes
+          : DEFAULT_SETTINGS.sidebarRecentMinutes,
       userLoggedIn:
         typeof parsed.userLoggedIn === "boolean"
           ? parsed.userLoggedIn
@@ -183,6 +205,9 @@ function persistAppSettings() {
     const payload: PersistedSettings = {
       themeMode: appSettings.themeMode,
       fontScale: appSettings.fontScale,
+      sidebarAutoCollapse: appSettings.sidebarAutoCollapse,
+      sidebarMinSessions: appSettings.sidebarMinSessions,
+      sidebarRecentMinutes: appSettings.sidebarRecentMinutes,
       userLoggedIn: appSettings.userLoggedIn,
       userDisplayName: appSettings.userDisplayName,
       userEmail: appSettings.userEmail,
@@ -358,4 +383,3 @@ export function buildCombinedSystemPrompt(
 }
 
 export * from "./approval-mode";
-

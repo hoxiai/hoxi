@@ -179,6 +179,15 @@ func ResolveOrInstall(ctx context.Context, configured string, logger *slog.Logge
 }
 
 func OfficialReleaseURL(goos, goarch string) (url string, isZip bool, err error) {
+	urls, zip, err := OfficialReleaseURLs(goos, goarch)
+	if err != nil || len(urls) == 0 {
+		return "", zip, err
+	}
+	// 默认返回官方 GitHub 源（列表最后一个）或首选源
+	return urls[len(urls)-1], zip, nil
+}
+
+func OfficialReleaseURLs(goos, goarch string) (urls []string, isZip bool, err error) {
 	var osName string
 	switch goos {
 	case "darwin":
@@ -191,7 +200,7 @@ func OfficialReleaseURL(goos, goarch string) (url string, isZip bool, err error)
 		osName = "windows"
 		isZip = true
 	default:
-		return "", false, fmt.Errorf("unsupported OS: %s", goos)
+		return nil, false, fmt.Errorf("unsupported OS: %s", goos)
 	}
 
 	var archName string
@@ -201,7 +210,7 @@ func OfficialReleaseURL(goos, goarch string) (url string, isZip bool, err error)
 	case "amd64":
 		archName = "x64"
 	default:
-		return "", false, fmt.Errorf("unsupported architecture: %s", goarch)
+		return nil, false, fmt.Errorf("unsupported architecture: %s", goarch)
 	}
 
 	ext := ".tar.gz"
@@ -209,7 +218,18 @@ func OfficialReleaseURL(goos, goarch string) (url string, isZip bool, err error)
 		ext = ".zip"
 	}
 	asset := fmt.Sprintf("opencode-%s-%s%s", osName, archName, ext)
-	return "https://github.com/anomalyco/opencode/releases/latest/download/" + asset, isZip, nil
+
+	// 支持通过环境变量指定镜像加速
+	var candidates []string
+	if custom := strings.TrimRight(os.Getenv("HOXI_OPENCODE_MIRROR"), "/"); custom != "" {
+		candidates = append(candidates, custom+"/"+asset)
+	}
+	// GitCode / 国内镜像候选
+	candidates = append(candidates, "https://gitcode.com/hoxiai/hoxi/releases/download/latest/"+asset)
+	// GitHub 官方源
+	candidates = append(candidates, "https://github.com/anomalyco/opencode/releases/latest/download/"+asset)
+
+	return candidates, isZip, nil
 }
 
 func downloadOfficialOpenCode(ctx context.Context, logger *slog.Logger) (string, error) {
@@ -228,32 +248,47 @@ func downloadOfficialOpenCode(ctx context.Context, logger *slog.Logger) (string,
 	}
 	targetPath := filepath.Join(binDir, binName)
 
-	dlURL, isZip, err := OfficialReleaseURL(runtime.GOOS, runtime.GOARCH)
+	dlURLs, isZip, err := OfficialReleaseURLs(runtime.GOOS, runtime.GOARCH)
 	if err != nil {
 		return "", err
 	}
 
-	dlCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-	defer cancel()
+	client := &http.Client{Timeout: 90 * time.Second}
+	var archiveBytes []byte
 
-	req, err := http.NewRequestWithContext(dlCtx, http.MethodGet, dlURL, nil)
-	if err != nil {
-		return "", err
-	}
-	client := &http.Client{Timeout: 2 * time.Minute}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
+	// 顺序尝试镜像源，直到成功
+	var lastErr error
+	for _, dlURL := range dlURLs {
+		req, reqErr := http.NewRequestWithContext(ctx, http.MethodGet, dlURL, nil)
+		if reqErr != nil {
+			lastErr = reqErr
+			continue
+		}
+		resp, doErr := client.Do(req)
+		if doErr != nil {
+			lastErr = doErr
+			continue
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			resp.Body.Close()
+			lastErr = fmt.Errorf("download %s returned HTTP %d", dlURL, resp.StatusCode)
+			continue
+		}
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("download %s returned HTTP %d", dlURL, resp.StatusCode)
+		data, readErr := io.ReadAll(io.LimitReader(resp.Body, 250*1024*1024))
+		resp.Body.Close()
+		if readErr != nil {
+			lastErr = readErr
+			continue
+		}
+
+		archiveBytes = data
+		lastErr = nil
+		break
 	}
 
-	archiveBytes, err := io.ReadAll(io.LimitReader(resp.Body, 250*1024*1024))
-	if err != nil {
-		return "", err
+	if len(archiveBytes) == 0 {
+		return "", fmt.Errorf("failed to download opencode from all mirrors: %w", lastErr)
 	}
 
 	var binBytes []byte

@@ -2,6 +2,7 @@
 import type { TimelineI18n } from "../../types";
 
 export const timeline: TimelineI18n = {
+  scrollToBottom: "回到底部",
   welcomeTitle: "原生 AI 智能体研发工作台",
   welcomeSubtitle:
     "基于 OpenCode 原生运行时、8 维结构化记忆与 Git 工作树强隔离。",
@@ -12,6 +13,11 @@ export const timeline: TimelineI18n = {
   thoughtFor: "深度思考用时 {time} 秒",
   thinking: "思考中…",
   thought: "深度思考",
+  activityResponse: "回复",
+  scrollActivityUp: "向上滚动轨迹",
+  scrollActivityDown: "向下滚动轨迹",
+  searchOptions: "搜索选项",
+  activityLength: "{label}（{count} 字符）",
   showThought: "展开思考过程",
   hideThought: "折叠思考过程",
   revertHere: "回滚到此处",
@@ -27,6 +33,8 @@ export const timeline: TimelineI18n = {
   planDesc: "只读探索代码与规划架构，不产生实际文件改动",
   inputPlaceholder:
     "输入任务指令或问题... (Enter 发送，Shift+Enter 换行)",
+  selectFolder: "选择文件夹",
+  selectFolderHint: "开始工程任务前，请先选择文件夹。",
   queuePlaceholder:
     "任务执行中，发送的消息将先排队。你可以在队列中立即发送、修改或删除。",
   filesAttached: "{count} 个文件",

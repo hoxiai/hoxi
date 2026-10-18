@@ -1,4 +1,4 @@
-import { createSignal, onCleanup, Show } from "solid-js";
+import { createMemo, createSignal, onCleanup, Show } from "solid-js";
 import CompactHeader from "./CompactHeader";
 import LeftNav from "./LeftNav";
 import WorkspaceModal from "./WorkspaceModal";
@@ -8,6 +8,7 @@ import Composer from "../timeline/Composer";
 import InspectorPane from "../inspector/InspectorPane";
 import ProviderModal from "../models/ProviderModal";
 import SettingsModal from "../settings/SettingsModal";
+import ModelLeaderboardModal from "./ModelLeaderboardModal";
 import { setWorkspace, workspace } from "../../store/workspace";
 
 const LEFT_MIN = 220;
@@ -16,8 +17,21 @@ const RIGHT_MIN = 340;
 const RIGHT_MAX = 640;
 
 export default function ThreePaneShell() {
+  const [leftNavOpen, setLeftNavOpen] = createSignal(true);
   const [leftWidth, setLeftWidth] = createSignal(268);
   const [rightWidth, setRightWidth] = createSignal(420);
+  const isNewConversation = createMemo(() => {
+    if (workspace.bootstrappingSessions) return false;
+    const id = workspace.activeSessionID;
+    if (!id) return true;
+    const status = workspace.statusBySession[id];
+    return !workspace.loadingMessagesBySession[id]
+      && (workspace.messagesBySession[id]?.length ?? 0) === 0
+      && (!status || status.type === "idle")
+      && !workspace.sessions.find((session) => session.id === id)?.revert
+      && !workspace.pendingPermissions.some((permission) => permission.sessionID === id)
+      && !workspace.pendingQuestions.some((question) => question.sessionID === id);
+  });
 
   const startResize = (side: "left" | "right", ev: PointerEvent) => {
     ev.preventDefault();
@@ -44,6 +58,8 @@ export default function ThreePaneShell() {
   return (
     <div class="h-screen w-screen flex flex-col bg-[var(--bg-canvas)] text-[var(--text-primary)] overflow-hidden">
       <CompactHeader
+        leftNavOpen={leftNavOpen()}
+        onToggleLeftNav={() => setLeftNavOpen((open) => !open)}
         inspectorOpen={workspace.inspectorOpen}
         onToggleInspector={() => {
           const next = !workspace.inspectorOpen;
@@ -54,15 +70,15 @@ export default function ThreePaneShell() {
         }}
       />
 
-      <main class="flex-1 flex min-h-0 pb-2 pr-2">
+      <main class={`flex-1 flex min-h-0 pb-2 pr-2 ${leftNavOpen() ? "" : "pl-2"}`}>
         {/* Left Navigation Sidebar */}
-        <div class="shrink-0 h-full" style={{ width: `${leftWidth()}px` }}>
+        <div id="workspace-left-nav" class={`shrink-0 h-full ${leftNavOpen() ? "" : "hidden"}`} style={{ width: `${leftWidth()}px` }}>
           <LeftNav />
         </div>
 
         {/* Invisible / Subtle Resize Handle */}
         <div
-          class="w-1.5 shrink-0 cursor-col-resize rounded-full hover:bg-[var(--accent-border)] transition-colors my-2"
+          class={`w-1.5 shrink-0 cursor-col-resize rounded-full hover:bg-[var(--accent-border)] transition-colors my-2 ${leftNavOpen() ? "" : "hidden"}`}
           onPointerDown={(ev) => startResize("left", ev)}
         />
 
@@ -72,8 +88,10 @@ export default function ThreePaneShell() {
             workspace.inspectorOpen && workspace.inspectorMaximized ? "hidden" : ""
           }`}
         >
-          <MessageStream />
-          <Composer />
+          <MessageStream hidden={isNewConversation()} />
+          <div class={`flex flex-col shrink-0 ${isNewConversation() ? "flex-1 min-h-0 justify-center overflow-y-auto" : ""}`}>
+            <Composer />
+          </div>
         </section>
 
         {/* Right Inspector Island */}
@@ -104,6 +122,7 @@ export default function ThreePaneShell() {
       <ExternalHandoffModal />
       <ProviderModal />
       <SettingsModal />
+      <ModelLeaderboardModal />
     </div>
   );
 }

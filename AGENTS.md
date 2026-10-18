@@ -162,6 +162,11 @@ Never fork or modify OpenCode internals. OpenCode executes as an external, prist
   ```bash
   npm --prefix web run check:i18n && npm --prefix web run build
   ```
+- **AI One-Click Release (一键发版上线与同步官网发版记录)**:
+  ```bash
+  ./scripts/ai-release.sh <version> "<release-notes>"
+  # 示例: ./scripts/ai-release.sh 0.2.0 "支持官网一键授权登录与双镜像在线更新"
+  ```
 
 ---
 

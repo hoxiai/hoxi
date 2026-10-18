@@ -150,16 +150,16 @@ func (g *desktopGateway) importClaudeCLIProvider() LocalCLIImportResponse {
 			Error:  "No ANTHROPIC_AUTH_TOKEN, ANTHROPIC_API_KEY, or Claude OAuth credentials found in ~/.claude",
 		}
 	}
+	isOAuthBridge := strings.HasPrefix(apiKey, "sk-ant-oat") || apiKey == "claude-code-local-oauth"
 	modelsMap := map[string]interface{}{}
 	for _, m := range models {
-		modelsMap[m] = map[string]interface{}{"name": m + " (Claude Code)", "tool_call": true, "reasoning": true}
+		modelsMap[m] = map[string]interface{}{"name": m + " (Claude Code)", "tool_call": !isOAuthBridge, "reasoning": true}
 	}
 	doc := g.loadHoxiConfigDoc()
 	provMap, _ := doc["provider"].(map[string]interface{})
 	if provMap == nil {
 		provMap = map[string]interface{}{}
 	}
-	isOAuthBridge := strings.HasPrefix(apiKey, "sk-ant-oat") || apiKey == "claude-code-local-oauth"
 	if isOAuthBridge {
 		provMap["claude-code"] = map[string]interface{}{
 			"name": "Claude Code (Local)",

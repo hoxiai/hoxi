@@ -22,6 +22,8 @@ export interface LeftNavI18n {
   archiveSessionTooltip: string;
   unarchiveSessionTooltip: string;
   archivedSessions: string;
+  olderSessions: string;
+  collapseSessions: string;
   confirmDelete: string;
   cancelDelete: string;
   renameSessionTooltip: string;

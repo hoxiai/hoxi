@@ -300,6 +300,7 @@ const sessionDrafts = new Map<string, SessionComposerDraft>();
 
 export function createSessionDraftSync(params: {
   sessionID: Accessor<string | null>;
+  resetRequest?: Accessor<number>;
   text: Accessor<string>;
   setText: Setter<string>;
   imgAttach: ReturnType<typeof createImageAttachments>;
@@ -307,10 +308,14 @@ export function createSessionDraftSync(params: {
   onAfterRestore: () => void;
 }) {
   let activeKey = params.sessionID() || "__new__";
+  let resetRequest = params.resetRequest?.();
 
   createEffect(() => {
     const nextKey = params.sessionID() || "__new__";
-    if (nextKey === activeKey) return;
+    const request = params.resetRequest?.();
+    const reset = request !== resetRequest;
+    resetRequest = request;
+    if (nextKey === activeKey && !reset) return;
 
     const prevText = params.text();
     const prevImages = params.imgAttach.images();
@@ -326,6 +331,7 @@ export function createSessionDraftSync(params: {
     }
 
     activeKey = nextKey;
+    if (reset) sessionDrafts.delete(nextKey);
     const saved = sessionDrafts.get(nextKey);
     params.setText(saved?.text ?? "");
     params.imgAttach.replaceImages(saved?.images ?? []);
@@ -339,4 +345,3 @@ export function createSessionDraftSync(params: {
 
   return { clearCurrentDraft };
 }
-

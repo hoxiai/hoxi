@@ -12,6 +12,7 @@ import type { SessionInfo } from "../../services/sse-types";
 import { Icon, Spinner } from "../icons";
 import { t } from "../../i18n";
 import { badgeFor } from "./left-nav-helpers";
+import { SessionRenamePopover } from "./SessionRenamePopover";
 import { resolveRootSessionID } from "../timeline/AgentStackPill";
 import {
   formatCompactRelativeTime,
@@ -34,11 +35,9 @@ export interface SessionNavItemProps {
 
 export function SessionNavItem(props: SessionNavItemProps) {
   const [editing, setEditing] = createSignal(false);
-  const [draftTitle, setDraftTitle] = createSignal("");
   const [confirmingDelete, setConfirmingDelete] = createSignal(false);
   const [deleting, setDeleting] = createSignal(false);
   let rowRef: HTMLDivElement | undefined;
-  let inputRef: HTMLInputElement | undefined;
 
   const nowTick = useNowTicker(30000);
   const isEffectiveActive = () =>
@@ -50,6 +49,8 @@ export function SessionNavItem(props: SessionNavItemProps) {
   const isBusy = () => status() === "busy" || status() === "retry";
   const isInterrupted = () =>
     !isBusy() && Boolean(workspace.interruptedBySession[props.session.id]);
+  const isPaused = () =>
+    !isBusy() && workspace.interruptedBySession[props.session.id] === "paused";
   const queuedCount = () =>
     workspace.queuedPromptsBySession[props.session.id]?.length ?? 0;
   const badge = () => badgeFor(props.session.id, props.pendingSessions, status());
@@ -94,18 +95,12 @@ export function SessionNavItem(props: SessionNavItemProps) {
   const startEditing = (ev?: MouseEvent) => {
     ev?.stopPropagation();
     setConfirmingDelete(false);
-    setDraftTitle(props.session.title || "");
     setEditing(true);
-    requestAnimationFrame(() => {
-      inputRef?.focus();
-      inputRef?.select();
-    });
   };
 
-  const commitEdit = () => {
+  const commitEdit = (next: string) => {
     if (!editing()) return;
     setEditing(false);
-    const next = draftTitle().trim();
     if (next && next !== props.session.title) {
       void renameSessionTitle(props.session.id, next);
     }
@@ -151,7 +146,6 @@ export function SessionNavItem(props: SessionNavItemProps) {
       onClick={() => {
         if (!editing() && !confirmingDelete()) props.onSelect();
       }}
-      onDblClick={(ev) => startEditing(ev)}
     >
       <div class="flex items-center gap-1.5 min-w-0 flex-1 mr-1">
         <Show when={badge() === "approval"}>
@@ -163,51 +157,31 @@ export function SessionNavItem(props: SessionNavItemProps) {
             title={t("timeline.turnCompleted")}
           />
         </Show>
-        <Show when={badge() === "idle" && isInterrupted()}>
+        <Show when={badge() === "idle" && isInterrupted() && !isPaused()}>
           <span
             class="shrink-0 w-1.5 h-1.5 rounded-full bg-[var(--warn)]/75"
             title={t("timeline.turnPaused")}
           />
         </Show>
-        <Show
-          when={!editing()}
-          fallback={
-            <input
-              ref={inputRef}
-              type="text"
-              value={draftTitle()}
-              placeholder={t("leftNav.renamePlaceholder")}
-              onInput={(ev) => setDraftTitle(ev.currentTarget.value)}
-              onClick={(ev) => ev.stopPropagation()}
-              onBlur={commitEdit}
-              onKeyDown={(ev) => {
-                if (ev.key === "Enter" && !ev.isComposing) {
-                  ev.preventDefault();
-                  commitEdit();
-                } else if (ev.key === "Escape") {
-                  ev.preventDefault();
-                  setEditing(false);
-                }
-              }}
-              class="flex-1 min-w-0 rounded border border-[var(--accent-border)] bg-[var(--bg-panel)] px-1.5 py-0.5 text-[13px] text-[var(--text-primary)] outline-none"
-            />
-          }
-        >
-          <span
-            class={`truncate text-[13px] flex-1 leading-snug ${
-              props.isArchived ? "text-[var(--text-muted)]" : ""
-            }`}
-            title={props.session.title || ""}
-          >
-            {isPlaceholderSessionTitle(props.session.title)
-              ? t("leftNav.newThread")
-              : props.session.title}
+        <Show when={isPaused()}>
+          <span class="shrink-0 rounded border border-[var(--border-subtle)] bg-[var(--bg-hover)] px-1 py-0.5 text-[10px] font-medium leading-none text-[var(--text-muted)]">
+            {t("timeline.turnPaused")}
           </span>
         </Show>
+        <span
+          class={`truncate text-[13px] flex-1 leading-snug ${
+            props.isArchived ? "text-[var(--text-muted)]" : ""
+          }`}
+          title={props.session.title || ""}
+        >
+          {isPlaceholderSessionTitle(props.session.title)
+            ? t("leftNav.newThread")
+            : props.session.title}
+        </span>
       </div>
 
       {/* Static Badges (Branch, Queue, Time or Loading) shown when not hovered and not confirming delete */}
-      <Show when={!confirmingDelete() && !editing()}>
+      <Show when={!confirmingDelete()}>
         <div class="flex items-center gap-1.5 shrink-0 text-[11.5px] font-mono group-hover/row:opacity-0 group-hover/row:translate-x-0.5 transition-all duration-150 ease-out">
           <Show when={wt()?.isolated && wt()?.branch}>
             <span class="inline-flex items-center gap-0.5 text-[var(--text-faint)] truncate max-w-[68px]">
@@ -299,10 +273,18 @@ export function SessionNavItem(props: SessionNavItemProps) {
               </div>
             }
           >
-            <Show
-              when={!isBusy()}
-              fallback={
-                <div class="session-action-glass flex items-center gap-1 rounded-lg px-1.5 py-0.5">
+            <div class="session-action-glass flex items-center gap-0.5 rounded-lg px-1 py-0.5">
+              <button
+                type="button"
+                class="inline-flex h-5 w-5 items-center justify-center rounded-md text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+                onClick={(ev) => startEditing(ev)}
+                title={t("leftNav.renameSessionTooltip")}
+              >
+                <Pencil size={11} class="shrink-0 block" />
+              </button>
+              <Show
+                when={!isBusy()}
+                fallback={
                   <button
                     type="button"
                     disabled={stopping()}
@@ -318,19 +300,8 @@ export function SessionNavItem(props: SessionNavItemProps) {
                     </Show>
                     <span>{t("leftNav.stopSession")}</span>
                   </button>
-                </div>
-              }
-            >
-              <div class="session-action-glass flex items-center gap-0.5 rounded-lg px-1 py-0.5">
-                <button
-                  type="button"
-                  class="inline-flex h-5 w-5 items-center justify-center rounded-md text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
-                  onClick={(ev) => startEditing(ev)}
-                  title={t("leftNav.renameSessionTooltip")}
-                >
-                  <Pencil size={11} class="shrink-0 block" />
-                </button>
-
+                }
+              >
                 <Show when={!props.isArchived && props.onArchive}>
                   <button
                     type="button"
@@ -372,10 +343,18 @@ export function SessionNavItem(props: SessionNavItemProps) {
                     <Icon name="trash" size="small" class="w-3 h-3" />
                   </button>
                 </Show>
-              </div>
-            </Show>
+              </Show>
+            </div>
           </Show>
         </div>
+      </Show>
+      <Show when={editing() && rowRef}>
+        <SessionRenamePopover
+          anchor={rowRef!}
+          title={props.session.title || ""}
+          onSave={commitEdit}
+          onClose={() => setEditing(false)}
+        />
       </Show>
     </div>
   );

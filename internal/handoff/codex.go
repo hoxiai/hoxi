@@ -426,13 +426,13 @@ func detectCodexCLIStatus(g *desktopGateway, hoxiMap map[string]interface{}) Loc
 		}
 	}
 	_, inHoxi := hoxiMap["openai"]
-	hasOpenAIKey := g.resolveStoredProviderKey("openai", "") != "" || inHoxi
+	hasStoredAuth := g.resolveStoredProviderKey("openai", "") != ""
 	return LocalCLIStatusItem{
 		ID:            ExternalToolCodex,
 		Name:          "OpenAI Codex",
 		Installed:     stats.Installed,
-		Authenticated: accessToken != "" || apiKey != "",
-		Connected:     hasOpenAIKey,
+		Authenticated: accessToken != "" || apiKey != "" || hasStoredAuth,
+		Connected:     inHoxi,
 		Version:       version,
 		DefaultModel:  defaultModel,
 		Models:        models,

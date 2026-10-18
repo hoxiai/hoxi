@@ -15,9 +15,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hoxiai/hoxi/internal/auth"
+	"github.com/hoxiai/hoxi/internal/browser"
 	"github.com/hoxiai/hoxi/internal/handoff"
+	"github.com/hoxiai/hoxi/internal/leaderboard"
 	"github.com/hoxiai/hoxi/internal/provider"
 	"github.com/hoxiai/hoxi/internal/statusbar"
+	"github.com/hoxiai/hoxi/internal/updater"
 	"github.com/hoxiai/hoxi/internal/workspace"
 	"github.com/hoxiai/hoxi/internal/worktree"
 )
@@ -34,6 +38,10 @@ type Gateway struct {
 	workspaces            *workspace.Store
 	providers             *provider.Service
 	handoff               *handoff.Service
+	browser               *browser.Service
+	auth                  *auth.Service
+	updater               *updater.Checker
+	leaderboard           *leaderboard.Service
 	onOpenDirectoryDialog func() (string, error)
 	dialogMu              sync.RWMutex
 }
@@ -83,6 +91,9 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 
 	providers := provider.NewService(openCodePort, password, rootDir, proxy)
 	handoffSvc := handoff.NewService(openCodePort, password, rootDir, providers)
+	authSvc := auth.NewService(nil)
+	updaterSvc := updater.NewChecker("0.1.0", nil)
+	leaderboardSvc := leaderboard.NewService("", nil)
 
 	g := &Gateway{
 		openCodePort: openCodePort,
@@ -95,11 +106,21 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 		workspaces:   workspaces,
 		providers:    providers,
 		handoff:      handoffSvc,
+		browser:      browser.New(),
+		auth:         authSvc,
+		updater:      updaterSvc,
+		leaderboard:  leaderboardSvc,
 	}
 
 	g.registerRoutes(distFS)
 	return g
 }
+
+func (g *Gateway) SetBrowserAgentToken(token string) { g.browser.SetAgentToken(token) }
+
+func (g *Gateway) SetBrowserUIOrigins(origins ...string) { g.browser.SetUIOrigins(origins...) }
+
+func (g *Gateway) CloseBrowser() { g.browser.Close() }
 
 func (g *Gateway) SetWSBaseURL(wsURL string) {
 	g.wsBaseURL = wsURL
@@ -140,7 +161,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Vary", "Origin")
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Hoxi-Browser")
 			if r.Method == http.MethodOptions {
 				w.WriteHeader(http.StatusNoContent)
 				return
@@ -194,6 +215,23 @@ func (g *Gateway) registerRoutes(distFS fs.FS) {
 	g.handoff.RegisterRoutes(g.mux)
 	g.worktrees.RegisterRoutes(g.mux)
 	g.workspaces.RegisterRoutes(g.mux)
+	g.browser.RegisterRoutes(g.mux)
+
+	if g.auth != nil {
+		g.mux.Handle("/api/hoxi/auth", auth.NewHTTPHandler(g.auth))
+		g.mux.Handle("/api/hoxi/auth/", auth.NewHTTPHandler(g.auth))
+	}
+	if g.updater != nil {
+		g.mux.Handle("/api/hoxi/updater", updater.NewHTTPHandler(g.updater))
+		g.mux.Handle("/api/hoxi/updater/", updater.NewHTTPHandler(g.updater))
+	}
+	if g.leaderboard != nil {
+		h := leaderboard.NewHTTPHandler(g.leaderboard)
+		g.mux.Handle("/api/hoxi/models/leaderboard", h)
+		g.mux.Handle("/api/hoxi/models/leaderboard/", h)
+		g.mux.Handle("/api/hoxi/gateways/connectable", h)
+		g.mux.Handle("/api/hoxi/gateways/connectable/", h)
+	}
 
 	// OpenCode API prefixes
 	openCodePrefixes := []string{

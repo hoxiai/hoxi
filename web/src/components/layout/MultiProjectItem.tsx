@@ -23,6 +23,7 @@ import {
   type ProjectNavEntry,
 } from "./left-nav-helpers";
 import { t } from "../../i18n";
+import { SessionHistoryList, useSessionHistory } from "./SessionHistory";
 
 export function WorkspaceActionMenu(props: {
   dirOrWorkspaceID: string;
@@ -50,7 +51,7 @@ export function WorkspaceActionMenu(props: {
   });
 
   return (
-    <div class="relative shrink-0" onClick={(e) => e.stopPropagation()}>
+    <div class="relative inline-flex items-center shrink-0" onClick={(e) => e.stopPropagation()}>
       <button
         ref={btnRef}
         type="button"
@@ -58,14 +59,14 @@ export function WorkspaceActionMenu(props: {
           e.stopPropagation();
           setOpen((v) => !v);
         }}
-        class={`p-0.5 rounded text-[var(--text-faint)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-opacity cursor-pointer ${
+        class={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-[var(--text-faint)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-opacity cursor-pointer ${
           props.alwaysVisible || open()
             ? "opacity-100"
             : "opacity-0 group-hover/proj:opacity-100"
         }`}
         title={t("leftNav.workspaceActions")}
       >
-        <MoreHorizontal size={13} />
+        <MoreHorizontal size={13} class="block shrink-0" />
       </button>
 
       <Show when={open()}>
@@ -184,6 +185,8 @@ export default function MultiProjectTreeItem(props: {
   const archivedSessions = createMemo(() =>
     allFilteredSessions().filter((s) => isSessionArchived(s))
   );
+  const history = useSessionHistory(activeSessions, () => props.proj.path,
+    () => props.pendingSessions, () => props.filterQuery);
 
   const inspectWorkspaceFolder = async (folderPath: string) => {
     if (!isActive()) {
@@ -256,10 +259,10 @@ export default function MultiProjectTreeItem(props: {
 
         <div class="flex items-center gap-0.5 shrink-0">
           <span
-            class="p-0.5 rounded text-[var(--text-faint)] hover:text-[var(--text-muted)] opacity-0 group-hover/proj:opacity-100 transition-opacity cursor-grab active:cursor-grabbing"
+            class="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-[var(--text-faint)] hover:text-[var(--text-muted)] opacity-0 group-hover/proj:opacity-100 transition-opacity cursor-grab active:cursor-grabbing"
             title={t("leftNav.dragToReorder")}
           >
-            <GripVertical size={12} />
+            <GripVertical size={13} class="block shrink-0" />
           </span>
 
           <WorkspaceActionMenu
@@ -270,14 +273,14 @@ export default function MultiProjectTreeItem(props: {
             type="button"
             onClick={(e) => props.onCreateThread(e, props.proj.path)}
             disabled={props.isCreating}
-            class="shrink-0 p-0.5 rounded text-[var(--accent-primary)] hover:bg-[var(--accent-surface)] opacity-0 group-hover/proj:opacity-100 transition-opacity cursor-pointer"
+            class="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-[var(--accent-primary)] hover:bg-[var(--accent-surface)] opacity-0 group-hover/proj:opacity-100 transition-opacity cursor-pointer"
             title={t("leftNav.newThread")}
           >
             <Show
               when={!props.isCreating}
               fallback={<Spinner class="w-3.5 h-3.5 text-[var(--accent-primary)]" />}
             >
-              <Icon name="plus-small" size="small" />
+              <Plus size={13} class="block shrink-0" />
             </Show>
           </button>
         </div>
@@ -331,7 +334,7 @@ export default function MultiProjectTreeItem(props: {
           </Show>
 
           <Show when={!props.isLoadingSessions && activeSessions().length > 0}>
-            <For each={activeSessions()}>
+            <SessionHistoryList history={history}>
               {(session) => (
                 <SessionNavItem
                   session={session}
@@ -348,7 +351,7 @@ export default function MultiProjectTreeItem(props: {
                   }
                 />
               )}
-            </For>
+            </SessionHistoryList>
           </Show>
 
           {/* Collapsible Archived Section for this project */}

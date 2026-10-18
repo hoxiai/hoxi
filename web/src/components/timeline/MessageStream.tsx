@@ -33,16 +33,19 @@ import {
   turnContentVisibilityClass,
 } from "./turn-window";
 import TaskTimelineBar from "./TaskTimelineBar";
-import TranscriptSearchBar from "./TranscriptSearchBar";
+import { SubagentSessionBanner } from "./AgentStackPill";
 import QueuedPromptsList from "./QueuedPromptsList";
-import { SessionSkeleton, SessionWelcomeHero } from "./SessionSkeleton";
+import { SessionSkeleton } from "./SessionSkeleton";
 import { t } from "../../i18n";
 import { createTimelineScroll } from "./timeline-scroll";
+import { createTranscriptControls } from "./transcript-controls";
+import { createReadingPositionTracker } from "./reading-position";
 
-export default function MessageStream() {
+export default function MessageStream(props: { hidden?: boolean }) {
   let scroller: HTMLDivElement | undefined;
   let content: HTMLDivElement | undefined;
   const scroll = createTimelineScroll(() => scroller, () => appSettings.autoScrollStream);
+  const transcriptControls = createTranscriptControls(() => workspace.activeSessionID);
   const [copiedUserMsgId, setCopiedUserMsgId] = createSignal<string | null>(null);
   const [searchOpen, setSearchOpen] = createSignal(false);
   const [activeMatchTurnID, setActiveMatchTurnID] = createSignal<string | null>(null);
@@ -59,6 +62,15 @@ export default function MessageStream() {
   });
 
   const turnWindow = createTurnWindow(() => workspace.activeSessionID, turns);
+  const readingPosition = createReadingPositionTracker({
+    scroller: () => scroller,
+    content: () => content,
+    sessionID: () => workspace.activeSessionID,
+    assistantTurnIDs: () =>
+      turns()
+        .filter((turn) => turn.info.role === "assistant")
+        .map((turn) => turn.info.id),
+  });
 
   const activeStatus = createMemo<SessionStatus>(() => {
     const id = workspace.activeSessionID;
@@ -177,6 +189,8 @@ export default function MessageStream() {
 
   const onScroll = () => {
     if (!scroller) return;
+    readingPosition.schedule();
+    transcriptControls.onScroll(scroller.scrollTop);
     if (scroll.onScroll()) {
       turnWindow.handleTopScroll(scroller);
     }
@@ -234,6 +248,7 @@ export default function MessageStream() {
 
   onMount(() => {
     if (content) onCleanup(scroll.observe(content));
+    onCleanup(readingPosition.observe());
     const onWindowKeyDown = (ev: KeyboardEvent) => {
       if ((ev.metaKey || ev.ctrlKey) && ev.key.toLowerCase() === "f") {
         if (turns().length > 0) {
@@ -261,35 +276,45 @@ export default function MessageStream() {
   const isEmpty = () => turns().length === 0 && pendingForSession().length === 0;
 
   return (
+    <div class="relative flex flex-1 min-h-0 flex-col" style={{ display: props.hidden ? "none" : undefined }}>
+      <SubagentSessionBanner />
+      <div class="relative flex-1 min-h-0" style={{ "container-type": "inline-size" }}>
+        <TaskTimelineBar
+          sessionID={workspace.activeSessionID}
+           turns={turns()}
+           readingTurnID={readingPosition.readingTurnID()}
+          activeMatchTurnID={activeMatchTurnID()}
+          onJumpToTurn={(msgID) => {
+            setActiveMatchTurnID(msgID);
+            scrollToTurn(msgID);
+          }}
+          onToggleSearch={() => setSearchOpen((v) => !v)}
+          searchOpen={searchOpen()}
+          controlsVisible={transcriptControls.visible()}
+          onCloseSearch={() => {
+            setSearchOpen(false);
+            setActiveMatchTurnID(null);
+          }}
+          onSearchMatch={(msgID) => {
+            setActiveMatchTurnID(msgID);
+            if (msgID) scrollToTurn(msgID);
+          }}
+        />
     <div
       ref={scroller}
       onScroll={onScroll}
-      class="relative flex-1 min-h-0 overflow-y-auto overflow-x-hidden"
+      onWheel={() => transcriptControls.markIntent()}
+      onTouchMove={() => transcriptControls.markIntent()}
+      onPointerDown={() => transcriptControls.startPointer()}
+      onPointerUp={() => transcriptControls.endPointer()}
+      onPointerCancel={() => transcriptControls.endPointer()}
+      onKeyDown={(event) => {
+        if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) {
+          transcriptControls.markIntent();
+        }
+      }}
+      class="relative h-full min-h-0 overflow-y-auto overflow-x-hidden pr-12"
     >
-      {/* Kilo TaskTimeline + MessageNav Turn Jump + TranscriptSearch */}
-      <TaskTimelineBar
-        turns={turns()}
-        activeMatchTurnID={activeMatchTurnID()}
-        onJumpToTurn={(msgID) => {
-          setActiveMatchTurnID(msgID);
-          scrollToTurn(msgID);
-        }}
-        onToggleSearch={() => setSearchOpen((v) => !v)}
-        searchOpen={searchOpen()}
-      />
-
-      <TranscriptSearchBar
-        open={searchOpen()}
-        turns={turns()}
-        onClose={() => {
-          setSearchOpen(false);
-          setActiveMatchTurnID(null);
-        }}
-        onActiveTurnChange={(msgID) => {
-          setActiveMatchTurnID(msgID);
-          if (msgID) scrollToTurn(msgID);
-        }}
-      />
 
       {/* Top Soft Scroll Fade (Kilo style) */}
       <div
@@ -297,11 +322,11 @@ export default function MessageStream() {
         class="pointer-events-none sticky top-0 z-10 -mb-6 h-6 w-full shrink-0 bg-gradient-to-b from-[var(--bg-panel)] to-transparent"
       />
 
-      <div ref={content} class="mx-auto flex w-full max-w-[var(--thread-max-width)] min-h-full flex-col px-6 pt-8 pb-8">
+      <div ref={content} class="mx-auto flex w-full max-w-[calc(var(--thread-max-width)+3rem)] min-h-full flex-col px-6 pt-8 pb-8">
         <Show
           when={!isEmpty()}
           fallback={
-            <Show when={isLoadingSession()} fallback={<SessionWelcomeHero />}>
+            <Show when={isLoadingSession()}>
               <SessionSkeleton />
             </Show>
           }
@@ -441,6 +466,24 @@ export default function MessageStream() {
             </Show>
           </div>
         </Show>
+      </div>
+    </div>
+          <button
+            type="button"
+            onClick={() => scroll.jumpToBottom()}
+            title={t("timeline.scrollToBottom")}
+            aria-label={t("timeline.scrollToBottom")}
+            aria-hidden={!scroll.awayFromBottom()}
+            disabled={!scroll.awayFromBottom()}
+            tabIndex={scroll.awayFromBottom() ? 0 : -1}
+            class="absolute bottom-3 left-1/2 z-20 flex h-9 w-9 -translate-x-1/2 items-center justify-center rounded-full border border-[var(--border-subtle)] bg-[var(--bg-elevated)] text-[var(--text-secondary)] shadow-lg transition-[opacity,translate,scale,background-color,color,box-shadow] duration-200 ease-out motion-safe:enabled:hover:-translate-y-0.5 motion-safe:enabled:hover:scale-105 enabled:hover:shadow-xl enabled:hover:bg-[var(--bg-hover)] enabled:hover:text-[var(--text-primary)] motion-safe:enabled:active:translate-y-0 motion-safe:enabled:active:scale-95 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent-primary)] motion-reduce:transition-none motion-reduce:translate-y-0 motion-reduce:scale-100 cursor-pointer"
+            classList={{
+              "opacity-100 translate-y-0 scale-100": scroll.awayFromBottom(),
+              "opacity-0 translate-y-2 scale-90 pointer-events-none": !scroll.awayFromBottom(),
+            }}
+          >
+            <Icon name="arrow-down-to-line" />
+          </button>
       </div>
     </div>
   );

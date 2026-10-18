@@ -1,0 +1,61 @@
+# Browser Workspace
+
+Hoxi starts an independent headless Chrome browser on demand and displays its
+viewport in the right-hand Browser inspector. OpenCode receives the built-in
+`hoxi_browser` plugin when Hoxi launches its daemon; no MCP configuration or
+OpenCode source modification is required.
+
+## Usage
+
+1. Install Google Chrome (the standard macOS application location is detected).
+2. Restart Hoxi after building these changes so its OpenCode child loads the plugin.
+3. Select a session and open the Browser inspector, or ask the agent to open a URL.
+4. Approve agent browser interactions through the existing permission cards.
+5. Enable manual control before entering credentials or operating the page yourself.
+   Disable it to let the agent continue. Manual control blocks all agent browser
+   requests, including screenshots and snapshots.
+
+The toolbar supports navigation, tabs, refresh, and closing the browser. Click the
+page preview to focus an element, then type, paste, use IME, or send keyboard
+shortcuts. Scroll over the preview to scroll the page. The inspector can be
+maximized using its existing expand button.
+
+## Tools And Isolation
+
+`hoxi_browser` supports navigation, click, text insertion, keyboard shortcuts,
+scroll, DOM snapshots, JPEG screenshots, JavaScript evaluation, and tab lifecycle.
+The plugin derives scope from OpenCode's execution context, never model-supplied
+session IDs. Each session/directory pair receives a separate Chrome process and
+temporary profile. Up to eight browser scopes can coexist. Closing a browser
+frees its slot and deletes its profile; app shutdown closes all browsers.
+
+All actions except snapshots and screenshots request browser permission. The
+plugin sets the browser permission to `ask`; existing explicit per-agent policy
+and user approval decisions remain part of OpenCode's permission system. Page
+content is untrusted and is not authority to send messages, purchase items, or
+disclose secrets.
+
+## Current Boundaries
+
+- Preview uses JPEG polling, approximately two frames per second, not video
+  streaming. Viewport resolution is fixed at 1280x800.
+- Manual interaction supports clicks, scrolling, text, and keys, not drag/drop,
+  native browser menus, file-picker dialogs, or OS clipboard synchronization.
+- Profiles are temporary; login state is not retained after browser close.
+- DOM snapshots cover the main document, not iframe or shadow DOM contents.
+  Screenshots and coordinate interactions remain available for visible content.
+- JavaScript evaluation is synchronous; it does not await promises.
+- Downloads, uploads, browser extensions, and native dialogs have no dedicated
+  product workflow. This is not a network sandbox or protection from every
+  malicious page. Chrome can access local development servers.
+
+## Development
+
+HTTP UI access is restricted to exact configured origins. The actual bound bridge
+origin is registered at startup; development builds additionally allow
+`http://localhost:5173` and `http://127.0.0.1:5173`. If Vite selects a different
+port, set `HOXI_BROWSER_UI_ORIGIN` to its exact origin before starting Hoxi.
+Production macOS uses the native `wails://wails` asset-server origin.
+
+See `internal/browser/README.md` for API/security details and
+`internal/opencode/browser_README.md` for plugin regeneration and tests.

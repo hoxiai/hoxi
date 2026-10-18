@@ -1,7 +1,8 @@
-import { createMemo, createSignal, For, Index, Match, Show, Switch } from "solid-js";
+import { createMemo, Index, Match, Switch } from "solid-js";
 import { openFileInInspector } from "../../store/workspace";
-import { FileIcon, Icon } from "../icons";
+import { FileIcon } from "../icons";
 import { t } from "../../i18n";
+import CodeBlockCard from "./CodeBlockCard";
 
 const FILE_PATH_PATTERN =
   /^(?:\.\/)?(?:[\w@-]+\/)*[\w.-]+\.(?:ts|tsx|js|jsx|go|py|rs|md|json|yaml|yml|toml|css|html|sh|sql|vue|svelte|c|cpp|h|java|rb|php)(?::\d+(?::\d+)?)?$/i;
@@ -284,47 +285,6 @@ function InlineRenderer(props: { text: string }) {
         </Switch>
       )}
     </Index>
-  );
-}
-
-function CodeBlockCard(props: { lang: string; code: string }) {
-  const [copied, setCopied] = createSignal(false);
-
-  const onCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(props.code);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1800);
-    } catch {
-      /* ignore */
-    }
-  };
-
-  return (
-    <div class="my-1 overflow-hidden rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-code)]">
-      <div class="flex items-center justify-between border-b border-[var(--border-subtle)] bg-[var(--bg-elevated)]/70 px-3.5 py-2 text-[12px] font-mono text-[var(--text-muted)]">
-        <span class="inline-flex items-center gap-1.5">
-          <Icon name="code-lines" size="small" class="text-[var(--text-faint)]" />
-          {props.lang || "code"}
-        </span>
-        <button
-          type="button"
-          onClick={() => void onCopy()}
-          class="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
-        >
-          <Show when={copied()} fallback={<Icon name="copy" size="small" />}>
-            <Icon name="check" size="small" class="text-[var(--ok-text)]" />
-          </Show>
-          {copied() ? t("common.copied") : t("common.copy")}
-        </button>
-      </div>
-      <pre
-        class="overflow-x-auto p-4 font-mono leading-[1.65] text-[var(--text-primary)] selectable-text"
-        style={{ "font-size": "var(--app-code-text-size)" }}
-      >
-        <code>{props.code}</code>
-      </pre>
-    </div>
   );
 }
 

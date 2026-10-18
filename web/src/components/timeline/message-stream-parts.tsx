@@ -1,5 +1,5 @@
 // web/src/components/timeline/message-stream-parts.tsx
-import { createMemo, createSignal, For, Match, Show, Switch } from "solid-js";
+import { createMemo, createSignal, Match, Show, Switch } from "solid-js";
 import ThoughtBox from "./ThoughtBox";
 import ToolCard from "./ToolCard";
 import MarkdownView from "./MarkdownView";
@@ -13,13 +13,12 @@ import ContextActivityGroupComponent, {
 import type { MessageInfo, MessagePart } from "../../services/sse-types";
 import {
   isUserAbortError,
-  openDiffInInspector,
   resumePausedSession,
   retryLastUserPrompt,
   workspace,
 } from "../../store/workspace";
 import { ObserverAuditBadge } from "../inspector/ObserverAuditBanner";
-import { DiffChanges, FileIcon, Icon, Spinner, TextShimmer } from "../icons";
+import { Icon, Spinner, TextShimmer } from "../icons";
 import { t } from "../../i18n";
 import { AssistantErrorCard, SessionRetryCard } from "./assistant-error-card";
 import {
@@ -32,6 +31,7 @@ import {
 } from "./tool-card-helpers";
 import { collectCycleChangedFiles } from "./tool-card-state";
 import ExecutionWaitingIndicator from "./ExecutionWaitingIndicator";
+import ChangedFilesSummary from "./ChangedFilesSummary";
 
 export {
   AssistantErrorCard,
@@ -267,38 +267,7 @@ export function AssistantTurnFooter(props: {
       {(summary) => (
         <Show when={!isTurnExecuting() || summary().changedFiles.length > 0}>
           <div class="mt-2 space-y-2 select-none">
-            {/* Changed files summary chips with +additions / -deletions & click-to-preview */}
-            <Show when={summary().changedFiles.length > 0}>
-              <div class="space-y-2">
-                <div class="flex items-center gap-1.5 flex-wrap">
-                  <For each={summary().changedFiles}>
-                    {(diff) => {
-                      return (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            openDiffInInspector(diff);
-                          }}
-                          title={diff.file}
-                          class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-2.5 py-1 font-mono text-[11.5px] text-[var(--text-secondary)] transition-colors cursor-pointer hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
-                        >
-                          <FileIcon
-                            node={{ path: diff.file, type: "file" }}
-                            class="w-3.5 h-3.5 shrink-0"
-                          />
-                          <span class="truncate max-w-[220px]">{getFilename(diff.file)}</span>
-                          <Show when={diff.additions > 0 || diff.deletions > 0}>
-                            <DiffChanges
-                              changes={{ additions: diff.additions, deletions: diff.deletions }}
-                            />
-                          </Show>
-                        </button>
-                      );
-                    }}
-                  </For>
-                </div>
-              </div>
-            </Show>
+            <ChangedFilesSummary files={summary().changedFiles} />
 
             <Show when={!isTurnExecuting()}>
               <div class="flex items-center gap-2 flex-wrap text-[12px] text-[var(--text-faint)]">

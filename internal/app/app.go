@@ -89,6 +89,7 @@ type DesktopApp struct {
 	gateway      *gateway.Gateway
 	status       *statusbar.Tracker
 	wsServer     *http.Server
+	browserEnv   []string
 }
 
 func Run(distFS fs.FS) {
@@ -125,6 +126,7 @@ func Run(distFS fs.FS) {
 
 	statusTracker := statusbar.NewTracker()
 	gw := gateway.New(port, password, cfg.RootDir, distFS, statusTracker)
+	defer gw.CloseBrowser()
 
 	app := &DesktopApp{
 		cfg:     cfg,
@@ -134,6 +136,53 @@ func Run(distFS fs.FS) {
 	}
 	defer app.killChild()
 
+	// The plugin must know the actual fallback port before OpenCode starts.
+	host, _, addrErr := net.SplitHostPort(cfg.Address)
+	if addrErr != nil || net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback() {
+		logger.Error("bridge address must use a loopback IP", "address", cfg.Address)
+		return
+	}
+	listener, err := net.Listen("tcp", cfg.Address)
+	if err != nil {
+		logger.Warn("failed to bind preferred loopback address, falling back to random port", "addr", cfg.Address, "error", err)
+		listener, err = net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			logger.Error("failed to bind loopback listener", "error", err)
+			return
+		}
+	}
+	defer listener.Close()
+	loopbackAddr := listener.Addr().String()
+	gw.SetWSBaseURL("ws://" + loopbackAddr)
+	uiOrigins := []string{"http://" + loopbackAddr}
+	if identity.Variant == "dev" {
+		uiOrigins = append(uiOrigins, "http://localhost:5173", "http://127.0.0.1:5173")
+	}
+	if origin := os.Getenv("HOXI_BROWSER_UI_ORIGIN"); origin != "" {
+		uiOrigins = append(uiOrigins, origin)
+	}
+	gw.SetBrowserUIOrigins(uiOrigins...)
+	browserToken, err := generateRandomHex(32)
+	if err != nil {
+		logger.Error("failed to generate browser credential", "error", err)
+		return
+	}
+	gw.SetBrowserAgentToken(browserToken)
+	browserEnv, cleanupPlugin, err := opencode.PrepareBrowserPlugin("http://"+loopbackAddr, browserToken)
+	if err != nil {
+		logger.Error("failed to prepare browser tools", "error", err)
+		return
+	}
+	defer func() {
+		app.killChild()
+		cleanupPlugin()
+	}()
+	app.browserEnv = browserEnv
+	wsServer := &http.Server{Handler: gw, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 90 * time.Second}
+	app.wsServer = wsServer
+	defer wsServer.Close()
+	go func() { _ = wsServer.Serve(listener) }()
+
 	opencode.ReapOrphanedDaemons(logger)
 
 	// Fast path: if opencode binary is already present locally (or bundled in Hoxi.app), start it immediately.
@@ -141,7 +190,7 @@ func Run(distFS fs.FS) {
 	// auto-download official opencode into ~/.hoxi/bin in the background.
 	if localBin := opencode.FindBinary(cfg.OpenCode); localBin != "" {
 		cfgPath := provider.EnsureHoxiModelsConfig(cfg.RootDir)
-		child, startErr := opencode.StartDaemonWithBin(ctx, localBin, cfg.RootDir, cfgPath, port, password, logger)
+		child, startErr := opencode.StartDaemonWithBin(ctx, localBin, cfg.RootDir, cfgPath, port, password, logger, app.browserEnv...)
 		if startErr != nil {
 			logger.Warn("initial opencode start failed; will retry in background", "error", startErr)
 			statusTracker.SetAvailable(false)
@@ -156,7 +205,7 @@ func Run(distFS fs.FS) {
 			os.Exit(1)
 		}
 		cfgPath := provider.EnsureHoxiModelsConfig(cfg.RootDir)
-		child, startErr := opencode.StartDaemonWithBin(ctx, binPath, cfg.RootDir, cfgPath, port, password, logger)
+		child, startErr := opencode.StartDaemonWithBin(ctx, binPath, cfg.RootDir, cfgPath, port, password, logger, app.browserEnv...)
 		if startErr != nil {
 			logger.Error("failed to start opencode daemon", "error", startErr)
 			os.Exit(1)
@@ -166,31 +215,6 @@ func Run(distFS fs.FS) {
 		statusTracker.SetAvailable(false)
 		go app.BootstrapOpenCodeAsync(ctx, port, password)
 	}
-
-	// Start local loopback HTTP/WS bridge so WebSocket (/pty/{id}/connect) and headless mode work seamlessly
-	listener, err := net.Listen("tcp", cfg.Address)
-	if err != nil {
-		logger.Warn("failed to bind preferred loopback address, falling back to random port", "addr", cfg.Address, "error", err)
-		listener, err = net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			logger.Error("failed to bind loopback listener", "error", err)
-			os.Exit(1)
-		}
-	}
-	defer listener.Close()
-
-	loopbackAddr := listener.Addr().String()
-	gw.SetWSBaseURL("ws://" + loopbackAddr)
-
-	wsServer := &http.Server{
-		Handler:           gw,
-		ReadHeaderTimeout: 10 * time.Second,
-		IdleTimeout:       90 * time.Second,
-	}
-	app.wsServer = wsServer
-	go func() {
-		_ = wsServer.Serve(listener)
-	}()
 
 	if cfg.NoDesktop {
 		logger.Info("hoxi headless server is ready", "url", "http://"+loopbackAddr, "opencodePort", port)
@@ -298,7 +322,7 @@ func (a *DesktopApp) BootstrapOpenCodeAsync(ctx context.Context, port int, passw
 		return
 	}
 	cfgPath := provider.EnsureHoxiModelsConfig(a.cfg.RootDir)
-	child, err := opencode.StartDaemonWithBin(ctx, binPath, a.cfg.RootDir, cfgPath, port, password, a.logger)
+	child, err := opencode.StartDaemonWithBin(ctx, binPath, a.cfg.RootDir, cfgPath, port, password, a.logger, a.browserEnv...)
 	if err != nil {
 		a.logger.Error("background opencode daemon start failed", "error", err)
 		return
@@ -322,6 +346,9 @@ func (a *DesktopApp) shutdown(_ context.Context) {
 		_ = a.wsServer.Shutdown(ctx)
 	}
 	a.killChild()
+	if a.gateway != nil {
+		a.gateway.CloseBrowser()
+	}
 }
 
 func (a *DesktopApp) onSecondInstance(_ options.SecondInstanceData) {

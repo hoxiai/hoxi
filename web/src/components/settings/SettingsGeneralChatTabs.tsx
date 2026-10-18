@@ -3,14 +3,12 @@ import {
   Bell,
   CornerDownLeft,
   Globe,
-  Mail,
   Monitor,
   Moon,
   RotateCcw,
   Sparkles,
   Sun,
   Type,
-  User,
 } from "lucide-solid";
 import {
   appSettings,
@@ -106,32 +104,63 @@ export function GeneralAppearanceTab() {
         </SettingRow>
       </SettingGroup>
 
-      {/* 2. Account & Developer Profile Group */}
       <SettingGroup
-        title={t("settings.sectionProfileTitle")}
-        tip={t("settings.sectionProfileDesc")}
+        title={t("settings.sectionSidebarHistoryTitle")}
+        tip={t("settings.sectionSidebarHistoryDesc")}
       >
-        <SettingRow icon={User} label={t("settings.accountNameInputLabel")}>
-          <input
-            type="text"
-            value={appSettings.userDisplayName}
-            placeholder={t("settings.profileNamePlaceholder")}
-            onInput={(ev) =>
-              updateAppSetting("userDisplayName", ev.currentTarget.value)
-            }
-            class="w-64 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-3.5 py-2 text-[13.5px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none focus:border-[var(--accent-primary)]"
+        <SettingRow
+          label={t("settings.sidebarAutoCollapseLabel")}
+          tip={t("settings.sidebarAutoCollapseDesc")}
+        >
+          <ToggleSwitch
+            checked={appSettings.sidebarAutoCollapse}
+            onChange={(val) => updateAppSetting("sidebarAutoCollapse", val)}
           />
         </SettingRow>
-
-        <SettingRow icon={Mail} label={t("settings.profileEmailLabel")}>
+        <SettingRow
+          label={t("settings.sidebarMinSessionsLabel")}
+          tip={t("settings.sidebarMinSessionsDesc")}
+        >
           <input
-            type="email"
-            value={appSettings.userEmail}
-            placeholder={t("settings.profileEmailPlaceholder", {
-              email: appSettings.detectedGitUserEmail || "you@example.com",
-            })}
-            onInput={(ev) => updateAppSetting("userEmail", ev.currentTarget.value)}
-            class="w-64 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-3.5 py-2 font-mono text-[13px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none focus:border-[var(--accent-primary)]"
+            type="number"
+            min={1}
+            max={100}
+            step={1}
+            aria-label={t("settings.sidebarMinSessionsLabel")}
+            value={appSettings.sidebarMinSessions}
+            disabled={!appSettings.sidebarAutoCollapse}
+            onChange={(ev) => {
+              const input = ev.currentTarget;
+              if (input.validity.valid && Number.isInteger(input.valueAsNumber)) {
+                updateAppSetting("sidebarMinSessions", input.valueAsNumber);
+              } else {
+                input.value = String(appSettings.sidebarMinSessions);
+              }
+            }}
+            class="w-24 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-3.5 py-2 text-[13.5px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)] disabled:opacity-50 disabled:cursor-not-allowed"
+          />
+        </SettingRow>
+        <SettingRow
+          label={t("settings.sidebarRecentMinutesLabel")}
+          tip={t("settings.sidebarRecentMinutesDesc")}
+        >
+          <input
+            type="number"
+            min={0}
+            max={10080}
+            step={1}
+            aria-label={t("settings.sidebarRecentMinutesLabel")}
+            value={appSettings.sidebarRecentMinutes}
+            disabled={!appSettings.sidebarAutoCollapse}
+            onChange={(ev) => {
+              const input = ev.currentTarget;
+              if (input.validity.valid && Number.isInteger(input.valueAsNumber)) {
+                updateAppSetting("sidebarRecentMinutes", input.valueAsNumber);
+              } else {
+                input.value = String(appSettings.sidebarRecentMinutes);
+              }
+            }}
+            class="w-24 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-3.5 py-2 text-[13.5px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)] disabled:opacity-50 disabled:cursor-not-allowed"
           />
         </SettingRow>
       </SettingGroup>

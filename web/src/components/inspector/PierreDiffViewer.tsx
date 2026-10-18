@@ -1,5 +1,5 @@
 // web/src/components/inspector/PierreDiffViewer.tsx
-import { createMemo, createSignal, onMount, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, on, onCleanup, Show } from "solid-js";
 import { Check, GitCommitHorizontal, RefreshCw, ShieldCheck, Sparkles } from "lucide-solid";
 import { hoxiAPI } from "../../services/api";
 import {
@@ -21,7 +21,6 @@ import {
   SelectedDiffDetail,
   synthesizeAICommitMessage,
 } from "./pierre-diff-parts";
-import { collectCycleChangedFiles } from "../timeline/tool-card-state";
 
 export { FileDiffBlock };
 
@@ -38,8 +37,11 @@ export default function PierreDiffViewer() {
 
   const diffs = createMemo(() => {
     const id = workspace.activeSessionID;
+    if (workspace.diffScope === "worktree") {
+      return workspace.worktreeDiffsBySession[sessionKey()] ?? [];
+    }
     return id
-      ? workspace.diffsBySession[id] ?? collectCycleChangedFiles(workspace.messagesBySession[id] ?? [], id)
+      ? workspace.diffsBySession[id] ?? []
       : workspace.diffsBySession[sessionKey()] ?? [];
   });
 
@@ -87,9 +89,14 @@ export default function PierreDiffViewer() {
     return { add, del };
   });
 
-  onMount(() => {
-    void refreshWorktreeStatus(workspace.activeSessionID);
-  });
+  createEffect(on(() => [workspace.activeSessionID, workspace.rootDir] as const, ([id, root]) => {
+    if (!root && !id) return;
+    void refreshWorktreeStatus(id);
+    const timer = setInterval(() => {
+      if (!document.hidden) void refreshWorktreeStatus(id);
+    }, 5000);
+    onCleanup(() => clearInterval(timer));
+  }));
 
   const onRefresh = async () => {
     if (refreshing()) return;
@@ -98,9 +105,8 @@ export default function PierreDiffViewer() {
       const id = workspace.activeSessionID;
       if (id) {
         await loadSessionMessages(id);
-      } else {
-        await refreshWorktreeStatus("__root__");
       }
+      await refreshWorktreeStatus(id);
     } catch (err) {
       console.error(err);
     } finally {
@@ -138,14 +144,26 @@ export default function PierreDiffViewer() {
 
   return (
     <div class="flex flex-col h-full">
+      <div class="shrink-0 flex gap-1 px-3 py-2 border-b border-[var(--border-subtle)]">
+        <button type="button" class={`rounded-md px-2 py-1 text-[11px] cursor-pointer ${workspace.diffScope === "worktree" ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]" : "text-[var(--text-muted)]"}`}
+          onClick={() => setWorkspace("diffScope", "worktree")}>
+          {t("inspector.diffs.scopeWorktree")}
+        </button>
+        <button type="button" class={`rounded-md px-2 py-1 text-[11px] cursor-pointer ${workspace.diffScope === "session" ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]" : "text-[var(--text-muted)]"}`}
+          onClick={() => setWorkspace("diffScope", "session")}>
+          {t("inspector.diffs.scopeSession")}
+        </button>
+      </div>
       <div class="shrink-0 flex items-center justify-between px-3 py-2 border-b border-[var(--border-subtle)]">
         <Show
           when={previewDiffs().length > 0}
           fallback={
             <div class="flex items-center gap-2 text-[11.5px] text-[var(--text-secondary)]">
-              <span class="inline-flex items-center gap-1.5 text-[var(--ok-text)] font-medium">
-                <span class="inline-block h-1.5 w-1.5 rounded-full bg-[var(--ok)]" />
-                <span>{t("inspector.diffs.cleanStatus")}</span>
+              <span class="inline-flex items-center gap-1.5 font-medium">
+                <span>{workspace.diffScope === "session" ? t("inspector.diffs.sessionEmpty")
+                  : workspace.worktreeBySession[sessionKey()]?.dirty === false ? t("inspector.diffs.cleanStatus")
+                  : workspace.worktreeBySession[sessionKey()]?.dirty ? t("inspector.diffs.envStatusDirty")
+                  : t("inspector.diffs.envStatusUnknown")}</span>
               </span>
               <span class="text-[var(--text-faint)]">·</span>
               <span class="text-[var(--text-muted)]">
@@ -282,7 +300,7 @@ export default function PierreDiffViewer() {
 
       <div class="flex-1 min-h-0 overflow-y-auto px-2.5 py-2.5 space-y-2.5">
         <Show
-          when={diffs().length > 0}
+          when={previewDiffs().length > 0}
           fallback={
             <DiffEmptyState
               refreshing={refreshing()}

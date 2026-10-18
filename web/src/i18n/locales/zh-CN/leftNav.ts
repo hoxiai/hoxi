@@ -2,7 +2,7 @@
 import type { LeftNavI18n } from "../../types";
 
 export const leftNav: LeftNavI18n = {
-  newThread: "新建对话",
+  newThread: "新对话",
   creating: "创建中…",
   multiProject: "多项目",
   singleProject: "单项目",
@@ -23,6 +23,8 @@ export const leftNav: LeftNavI18n = {
   archiveSessionTooltip: "归档会话",
   unarchiveSessionTooltip: "取消归档",
   archivedSessions: "已归档",
+  olderSessions: "更早的会话（{count}）",
+  collapseSessions: "收起",
   confirmDelete: "确认",
   cancelDelete: "取消",
   renameSessionTooltip: "重命名会话 (或双击标题)",
@@ -93,4 +95,3 @@ export const leftNav: LeftNavI18n = {
   pauseTooltip: "暂停该任务",
   stopTooltip: "停止该任务",
 };
-

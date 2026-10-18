@@ -74,22 +74,8 @@ func readGeminiLocalKeyAndModels() (apiKey, defaultModel string, models []string
 			}
 		}
 	}
-	if len(antigravityDataDirs()) > 0 {
-		models = appendUniqueString(
-			models,
-			"gemini-4-argon-high",
-			"gemini-4-argon-medium",
-			"gemini-4-argon-low",
-			"gemini-3.8-flash-high",
-			"gemini-3.8-flash-medium",
-			"gemini-3.8-flash-low",
-			"claude-opus-5-5-high",
-			"claude-sonnet-5-5-high",
-			"gpt-oss-120b-medium",
-		)
-	}
-	if len(models) == 0 {
-		models = []string{"gemini-2.5-pro", "gemini-2.5-flash"}
+	if cliSlugs, _, _ := discoverAntigravityCLIModels(); len(cliSlugs) > 0 {
+		models = appendUniqueString(models, cliSlugs...)
 	}
 	if defaultModel == "" && len(models) > 0 {
 		defaultModel = models[0]
@@ -101,7 +87,7 @@ func detectGeminiCLIStatus(g *desktopGateway, hoxiMap map[string]interface{}) Lo
 	_, stats := scanGeminiAntigravitySessions("", "")
 	apiKey, defaultModel, models := readGeminiLocalKeyAndModels()
 	_, inHoxi := hoxiMap["google"]
-	hasGoogleKey := g.resolveStoredProviderKey("google", "") != "" || inHoxi
+	hasStoredKey := g.resolveStoredProviderKey("google", "") != ""
 	hasOAuth := false
 	if gRoot := geminiRootDir(); gRoot != "" {
 		if _, err := os.Stat(filepath.Join(gRoot, "jetski-standalone-oauth-token")); err == nil {
@@ -112,8 +98,8 @@ func detectGeminiCLIStatus(g *desktopGateway, hoxiMap map[string]interface{}) Lo
 		ID:            ExternalToolGemini,
 		Name:          "Antigravity / Gemini",
 		Installed:     stats.Installed,
-		Authenticated: apiKey != "" || hasGoogleKey || hasOAuth || stats.SessionCount > 0,
-		Connected:     hasGoogleKey,
+		Authenticated: apiKey != "" || hasStoredKey || hasOAuth || stats.SessionCount > 0,
+		Connected:     inHoxi,
 		DefaultModel:  defaultModel,
 		Models:        models,
 		SessionCount:  stats.SessionCount,
@@ -151,11 +137,17 @@ func (g *desktopGateway) importGeminiCLIProvider() LocalCLIImportResponse {
 			}
 		}
 	}
+	_, displayBySlug, _ := discoverAntigravityCLIModels()
+	isOAuthBridge := strings.HasPrefix(apiKey, "ya29.") || apiKey == "antigravity-local-oauth"
 	modelsMap := map[string]interface{}{}
 	for _, m := range models {
+		label := m
+		if disp, ok := displayBySlug[m]; ok && disp != "" {
+			label = disp
+		}
 		modelsMap[m] = map[string]interface{}{
-			"name":       m + " (Antigravity / Gemini)",
-			"tool_call":  true,
+			"name":       label + " (Antigravity / Gemini)",
+			"tool_call":  !isOAuthBridge,
 			"reasoning":  true,
 			"attachment": true,
 		}
@@ -165,7 +157,6 @@ func (g *desktopGateway) importGeminiCLIProvider() LocalCLIImportResponse {
 	if provMap == nil {
 		provMap = map[string]interface{}{}
 	}
-	isOAuthBridge := strings.HasPrefix(apiKey, "ya29.") || apiKey == "antigravity-local-oauth"
 	if isOAuthBridge {
 		provMap["google"] = map[string]interface{}{
 			"name": "Antigravity / Gemini (Local)",

@@ -59,13 +59,14 @@ export interface WorkspaceState {
   archivedSessionIDs: string[];
   activeSessionID: string | null;
   sessionSetupError: string | null;
+  newThreadRequest: number;
   agents: AgentInfo[];
   activeMode: string;
   defaultAI: SessionAIConfig;
   aiBySession: Record<string, SessionAIConfig>;
   sessionSandboxMode: "local" | "worktree";
   sidebarProjectMode: "single" | "multi" | "recent";
-  inspectorTab: "diffs" | "memory" | "files" | "terminal";
+  inspectorTab: "diffs" | "memory" | "files" | "terminal" | "browser";
   inspectorOpen: boolean;
   inspectorMaximized: boolean;
   inspectedFilePath: string | null;
@@ -98,6 +99,8 @@ export interface WorkspaceState {
   bootstrappingSessions: boolean;
   statusBySession: Record<string, SessionStatus>;
   diffsBySession: Record<string, SnapshotFileDiff[]>;
+  worktreeDiffsBySession: Record<string, SnapshotFileDiff[]>;
+  diffScope: "worktree" | "session";
   worktreeBySession: Record<string, WorktreeMeta>;
   reviewCommentsBySession: Record<string, ReviewCommentItem[]>;
   pendingPermissions: PermissionRequest[];
@@ -259,6 +262,7 @@ export const [workspace, setWorkspace] = createStore<WorkspaceState>({
   archivedSessionIDs: initialArchivedSessions(ARCHIVED_SESSIONS_KEY),
   activeSessionID: null,
   sessionSetupError: null,
+  newThreadRequest: 0,
   agents: DEFAULT_AGENTS,
   defaultAI: { model: initialSelectedModel(), agent: initialDefaultAgent(), effort: initialEffort() },
   aiBySession: initialSessionAI(),
@@ -304,6 +308,8 @@ export const [workspace, setWorkspace] = createStore<WorkspaceState>({
   bootstrappingSessions: true,
   statusBySession: {},
   diffsBySession: {},
+  worktreeDiffsBySession: {},
+  diffScope: "worktree",
   worktreeBySession: {},
   reviewCommentsBySession: {},
   pendingPermissions: [],
@@ -476,3 +482,6 @@ export * from "./provider-telemetry";
 export * from "./provider-audit";
 export * from "./settings";
 export * from "./daily-pulse";
+export * from "./auth-state";
+export * from "./updater-state";
+export * from "./leaderboard-state";

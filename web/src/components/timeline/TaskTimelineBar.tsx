@@ -1,9 +1,10 @@
 // web/src/components/timeline/TaskTimelineBar.tsx
-import { createMemo, createSignal, For, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show } from "solid-js";
 import { ListTree, Search } from "lucide-solid";
 import type { MessagePart, ToolPart } from "../../services/sse-types";
 import type { MessageTurn } from "../../store/workspace";
-import { SubagentSessionBanner } from "./AgentStackPill";
+import "./task-timeline.css";
+import TranscriptSearchBar from "./TranscriptSearchBar";
 import { formatToolDisplayName } from "./tool-card-helpers";
 import { t } from "../../i18n";
 
@@ -14,9 +15,8 @@ export interface ActivityBarSegment {
   color: string;
   label: string;
   heightPct: number;
+  duration?: number;
 }
-
-const MAX_VISIBLE_SEGMENTS = 80;
 
 function classifyPart(
   part: MessagePart,
@@ -41,7 +41,7 @@ function classifyPart(
     return {
       kind: "reasoning",
       color: "#a78bfa",
-      label: `${t("timeline.thought")} (${Math.max(1, Math.round(len / 100) / 10)}k chars)`,
+      label: t("timeline.activityLength", { label: t("timeline.thought"), count: len }),
       weight: Math.min(100, Math.max(30, Math.round(len / 25))),
     };
   }
@@ -50,7 +50,7 @@ function classifyPart(
       return {
         kind: "text",
         color: "var(--text-muted)",
-        label: "Text",
+        label: t("timeline.activityResponse"),
         weight: 55,
       };
     }
@@ -59,7 +59,7 @@ function classifyPart(
     return {
       kind: "text",
       color: "var(--text-muted)",
-      label: `Text (${Math.max(1, Math.round(len / 100) / 10)}k chars)`,
+      label: t("timeline.activityLength", { label: t("timeline.activityResponse"), count: len }),
       weight: Math.min(90, Math.max(25, Math.round(len / 30))),
     };
   }
@@ -81,12 +81,12 @@ function classifyPart(
       return {
         kind: "edit",
         color: "#34d399",
-        label: `${displayTool}: ${target.split("/").pop() || target}`,
+        label: `${displayTool}: ${target}`,
         weight: 85,
       };
     }
     if (name === "bash" || name === "shell") {
-      const cmd = String(tp.state.input?.command || "bash").slice(0, 48);
+      const cmd = String(tp.state.input?.command || "bash");
       return {
         kind: "shell",
         color: "#fbbf24",
@@ -105,31 +105,75 @@ function classifyPart(
     return {
       kind: "explore",
       color: "#60a5fa",
-      label: `${displayTool}: ${String(tp.state.input?.filePath || tp.state.input?.pattern || "").split("/").pop() || displayTool}`,
+      label: `${displayTool}: ${String(tp.state.input?.filePath || tp.state.input?.path || tp.state.input?.pattern || "") || displayTool}`,
       weight: 50,
     };
   }
   return null;
 }
 
-/**
- * Ported from kilocode TaskTimeline.tsx & MessageNav.tsx:
- * Horizontal color-grouped activity timeline bar + User Turn quick-jump menu + Search trigger.
- */
+/** On-demand transcript navigation and activity history. */
 export default function TaskTimelineBar(props: {
+  sessionID: string | null;
   turns: MessageTurn[];
   activeMatchTurnID?: string | null;
+  readingTurnID?: string | null;
   onJumpToTurn: (messageID: string) => void;
   onToggleSearch: () => void;
   searchOpen: boolean;
+  controlsVisible: boolean;
+  onCloseSearch: () => void;
+  onSearchMatch: (messageID: string | null) => void;
 }) {
-  const [hoveredSeg, setHoveredSeg] = createSignal<ActivityBarSegment | null>(null);
+  const [activeSegment, setActiveSegment] = createSignal<string | null>(null);
+  const [interacting, setInteracting] = createSignal(false);
+  let rail: HTMLDivElement | undefined;
+  let resumeTimer: ReturnType<typeof setTimeout> | undefined;
+  onCleanup(() => clearTimeout(resumeTimer));
+  const pauseFollowing = () => {
+    setInteracting(true);
+    clearTimeout(resumeTimer);
+    resumeTimer = setTimeout(() => setInteracting(false), 1500);
+  };
+  const [now, setNow] = createSignal(Date.now());
+  createEffect(() => {
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    onCleanup(() => clearInterval(timer));
+  });
   const [navOpen, setNavOpen] = createSignal(false);
-  const completedTurnCache = new Map<
-    string,
-    { partCount: number; segments: ActivityBarSegment[] }
-  >();
-
+  let actions: HTMLDivElement | undefined;
+  let navButton: HTMLButtonElement | undefined;
+  const onRailKeyDown = (event: KeyboardEvent) => {
+    if (event.key === "Escape" && (navOpen() || props.searchOpen)) {
+      event.preventDefault();
+      event.stopPropagation();
+      const button = navButton;
+      setNavOpen(false);
+      props.onCloseSearch();
+      button?.focus();
+    }
+  };
+  createEffect(on(() => props.sessionID, () => {
+    setNavOpen(false);
+    setActiveSegment(null);
+    props.onCloseSearch();
+  }));
+  createEffect(() => {
+    if (props.searchOpen) setNavOpen(false);
+  });
+  onMount(() => {
+    const dismiss = (event: PointerEvent) => {
+      if (actions && !actions.contains(event.target as Node)) {
+        setNavOpen(false);
+        props.onCloseSearch();
+      }
+    };
+    document.addEventListener("pointerdown", dismiss);
+    onCleanup(() => {
+      document.removeEventListener("pointerdown", dismiss);
+    });
+  });
   const segments = createMemo<ActivityBarSegment[]>(() => {
     const out: ActivityBarSegment[] = [];
     const list = props.turns;
@@ -137,17 +181,13 @@ export default function TaskTimelineBar(props: {
       const turn = list[i];
       if (turn.info.role === "user") continue;
       const isCompleted = Boolean(turn.info.time?.completed) && i < list.length - 1;
-      if (isCompleted) {
-        const cached = completedTurnCache.get(turn.info.id);
-        if (cached && cached.partCount === turn.parts.length) {
-          out.push(...cached.segments);
-          continue;
-        }
-      }
       const turnSegs: ActivityBarSegment[] = [];
       for (const part of turn.parts) {
         const meta = classifyPart(part, isCompleted);
         if (!meta) continue;
+        const time: { start: number; end?: number } | undefined = part.type === "reasoning" ? part.time
+          : part.type === "tool" && part.state.status !== "pending" ? part.state.time : undefined;
+        const duration = time ? Math.max(0, (time.end ?? now()) - time.start) : undefined;
         turnSegs.push({
           id: part.id,
           messageID: turn.info.id,
@@ -155,19 +195,36 @@ export default function TaskTimelineBar(props: {
           color: meta.color,
           label: meta.label,
           heightPct: meta.weight,
-        });
-      }
-      if (isCompleted) {
-        completedTurnCache.set(turn.info.id, {
-          partCount: turn.parts.length,
-          segments: turnSegs,
+          duration,
         });
       }
       out.push(...turnSegs);
     }
-    return out.length > MAX_VISIBLE_SEGMENTS
-      ? out.slice(-MAX_VISIBLE_SEGMENTS)
-      : out;
+    return out;
+  });
+
+  const maxDuration = createMemo(() => Math.max(1, ...segments().map((seg) => seg.duration ?? 0)));
+  const focusedSegment = createMemo(() => segments().filter((seg) => seg.messageID === props.readingTurnID).at(-1)?.id);
+  const detailSegment = createMemo(() => segments().find((seg) => seg.id === activeSegment()));
+  const [detailTop, setDetailTop] = createSignal(0);
+  const showDetail = (id: string, element: HTMLButtonElement) => {
+    setActiveSegment(id);
+    const bounds = element.getBoundingClientRect();
+    setDetailTop(bounds.top + bounds.height / 2 - (rail?.getBoundingClientRect().top ?? 0));
+  };
+  createEffect(() => {
+    const id = focusedSegment();
+    if (interacting() || activeSegment()) return;
+    queueMicrotask(() => {
+      const node = rail?.querySelector<HTMLButtonElement>(`[data-segment-id="${CSS.escape(id ?? "")}"]`);
+      const scroller = node?.parentElement;
+      if (node && scroller) {
+        const top = node.offsetTop;
+        if (top < scroller.scrollTop || top + node.offsetHeight > scroller.scrollTop + scroller.clientHeight) {
+          scroller.scrollTop = top - scroller.clientHeight / 2;
+        }
+      }
+    });
   });
 
   const userTurns = createMemo(() => {
@@ -188,79 +245,38 @@ export default function TaskTimelineBar(props: {
   });
 
   return (
-    <div class="sticky top-0 z-20 flex flex-col empty:hidden">
-      <SubagentSessionBanner />
-      <Show when={segments().length > 0 || userTurns().length > 1}>
-        <div class="flex items-center justify-between gap-3 border-b border-[var(--border-subtle)] bg-[var(--bg-panel)]/90 px-5 py-1.5 backdrop-blur-md">
-        {/* Left: Color-coded SVG/Bar Activity Strip (Kilo TaskTimeline) */}
-        <div class="flex items-center gap-2 min-w-0 flex-1">
-          <span class="shrink-0 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
-            {t("timeline.timelineLabel")}
-          </span>
-
-          <div
-            class="flex items-end gap-[2px] h-4 overflow-x-auto no-scrollbar py-0.5 max-w-[340px]"
-            onMouseLeave={() => setHoveredSeg(null)}
-          >
-            <For each={segments()}>
-              {(seg) => (
-                <button
-                  type="button"
-                  onMouseEnter={() => setHoveredSeg(seg)}
-                  onClick={() => props.onJumpToTurn(seg.messageID)}
-                  class="w-1.5 shrink-0 rounded-t-[1.5px] transition-all hover:opacity-100 opacity-80 cursor-pointer"
-                  style={{
-                    height: `${Math.max(25, seg.heightPct)}%`,
-                    "background-color": seg.color,
-                  }}
-                  title={seg.label}
-                />
-              )}
-            </For>
-          </div>
-
-          <Show when={hoveredSeg()}>
-            {(seg) => (
-              <span class="truncate font-mono text-[11px] text-[var(--text-secondary)]">
-                {seg().label}
-              </span>
-            )}
-          </Show>
-        </div>
-
-        {/* Right: MessageNav Turn Jump Menu & Transcript Search Trigger */}
-        <div class="flex items-center gap-1.5 shrink-0 relative">
+    <Show when={props.turns.length > 0}>
+      <nav onKeyDown={onRailKeyDown} class="task-transcript-navigation" aria-label={t("timeline.timelineLabel")}>
+        <div ref={actions} class="task-activity-actions"
+          classList={{ "is-visible": props.controlsVisible || navOpen() || props.searchOpen }}>
+          <TranscriptSearchBar open={props.searchOpen} turns={props.turns}
+            onClose={props.onCloseSearch} onActiveTurnChange={props.onSearchMatch} />
+          <button type="button" onClick={() => { setNavOpen(false); props.onToggleSearch(); }}
+            class="task-activity-icon" classList={{ "is-active": props.searchOpen }}
+            aria-label={t("timeline.searchTooltip")} aria-expanded={props.searchOpen}
+            title={t("timeline.searchTooltip")}>
+            <Search size={13} />
+          </button>
           <Show when={userTurns().length > 0}>
             <button
+              ref={navButton}
               type="button"
-              onClick={() => setNavOpen((v) => !v)}
-              class="inline-flex items-center gap-1 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-2 py-0.5 text-[11px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
-              title={t("timeline.turnsMenuTooltip")}
+              onClick={() => {
+                props.onCloseSearch();
+                setNavOpen((v) => !v);
+              }}
+              class="task-activity-icon" classList={{ "is-active": navOpen() }}
+              aria-label={`${t("timeline.turnsMenuTooltip")} (${t("timeline.turnsCount", { count: userTurns().length })})`}
+              aria-expanded={navOpen()}
+              title={t("timeline.turnsCount", { count: userTurns().length })}
             >
-              <ListTree size={11} class="text-[var(--accent-primary)]" />
-              <span class="font-mono">
-                {t("timeline.turnsCount", { count: userTurns().length })}
-              </span>
+              <ListTree size={13} />
             </button>
           </Show>
 
-          <button
-            type="button"
-            onClick={props.onToggleSearch}
-            class={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] transition-colors cursor-pointer ${
-              props.searchOpen
-                ? "border-[var(--accent-border)] bg-[var(--accent-surface)] text-[var(--accent-text)]"
-                : "border-[var(--border-subtle)] bg-[var(--bg-elevated)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
-            }`}
-            title={t("timeline.searchTooltip")}
-          >
-            <Search size={11} />
-            <span class="hidden sm:inline">{t("timeline.searchTrigger")}</span>
-          </button>
-
           {/* MessageNav Dropdown */}
           <Show when={navOpen()}>
-            <div class="absolute right-0 top-full mt-1.5 w-72 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-1.5 shadow-xl z-40">
+            <div class="task-activity-menu rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-1.5 shadow-xl">
               <div class="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
                 {t("timeline.turnsMenuTitle")}
               </div>
@@ -286,8 +302,29 @@ export default function TaskTimelineBar(props: {
             </div>
           </Show>
         </div>
-      </div>
-      </Show>
-    </div>
+        <div ref={rail} class="task-reading-rail" aria-label={t("timeline.timelineLabel")}
+          onMouseLeave={() => setActiveSegment(null)}>
+          <div class="task-reading-nodes" onWheel={pauseFollowing} onPointerDown={pauseFollowing}
+            onTouchMove={pauseFollowing} onKeyDown={pauseFollowing} onScroll={() => setActiveSegment(null)}>
+            <For each={segments()}>{(seg) => {
+              const highlighted = () => (activeSegment() ?? focusedSegment()) === seg.id;
+              return <button type="button" class="task-reading-node" data-segment-id={seg.id}
+                aria-label={seg.label} aria-current={focusedSegment() === seg.id ? "step" : undefined}
+                onMouseEnter={(event) => showDetail(seg.id, event.currentTarget)}
+                onFocus={(event) => showDetail(seg.id, event.currentTarget)} onBlur={() => setActiveSegment(null)}
+                onClick={() => props.onJumpToTurn(seg.messageID)}>
+                <span style={{ background: highlighted() ? seg.color : "var(--text-faint)",
+                  width: highlighted() ? `${seg.duration === undefined ? 45 : 20 + 80 * Math.sqrt(seg.duration / maxDuration())}%` : "30%",
+                  opacity: highlighted() ? 1 : 0.4 }} />
+              </button>;
+            }}</For>
+          </div>
+          <Show when={detailSegment()}>{(seg) => <div class="task-reading-detail" style={{ top: `${detailTop()}px` }}>
+            {seg().label}
+            <Show when={seg().duration !== undefined}><span class="task-activity-history-duration">{((seg().duration ?? 0) / 1000).toFixed(1)}s</span></Show>
+          </div>}</Show>
+        </div>
+      </nav>
+    </Show>
   );
 }

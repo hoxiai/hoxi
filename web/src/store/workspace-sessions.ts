@@ -1,5 +1,5 @@
 import { produce } from "solid-js/store";
-import type { SessionInfo } from "../services/sse-types";
+import type { SnapshotFileDiff, SessionInfo } from "../services/sse-types";
 import { hoxiAPI } from "../services/api";
 import { mergeServerTurnsInto } from "./message-lookup";
 import { persistSessionAI, restoreSessionAI } from "./session-ai";
@@ -10,9 +10,11 @@ import {
   workspace,
 } from "./workspace";
 import {
-  getCustomSessionTitle,
-  isPlaceholderSessionTitle,
+  forgetSessionTitles,
+  hasManualSessionTitle,
+  preserveSessionTitle,
   recordCustomSessionTitle,
+  recordManualSessionTitle,
   sortSessionsByActivity,
 } from "./session-title";
 import {
@@ -83,11 +85,7 @@ export function sessionsWithPendingPermission(): Set<string> {
 
 export function replaceSession(info: SessionInfo) {
   if (deletedSessionIDs.has(info.id)) return;
-  const customTitle = getCustomSessionTitle(info.id);
-  const effectiveInfo =
-    customTitle && (isPlaceholderSessionTitle(info.title) || info.title !== customTitle)
-      ? { ...info, title: customTitle }
-      : info;
+  const effectiveInfo = preserveSessionTitle(info);
   setWorkspace("sessions", (prev) => {
     const idx = prev.findIndex((s) => s.id === effectiveInfo.id);
     if (idx < 0) return [effectiveInfo, ...prev];
@@ -139,9 +137,34 @@ export async function loadSessionMessages(sessionID: string): Promise<void> {
   if (isChildSession && sessionID !== workspace.activeSessionID) {
     return;
   }
-  const sessionDiffs = await hoxiAPI.getSessionDiff(sessionID, directory).catch(() => undefined);
-  if (sessionDiffs && sessionDirectory(sessionID) === directory && !isSessionDeleted(sessionID)) {
-    setWorkspace("diffsBySession", sessionID, sessionDiffs);
+  await refreshSessionDiff(sessionID);
+}
+
+const diffRevisions = new Map<string, number>();
+
+export function applySessionDiffEvent(sessionID: string, diffs: SnapshotFileDiff[]): void {
+  if (isSessionDeleted(sessionID)) return;
+  diffRevisions.set(sessionID, (diffRevisions.get(sessionID) ?? 0) + 1);
+  setWorkspace("diffsBySession", sessionID, diffs);
+}
+
+export async function refreshSessionDiff(sessionID: string): Promise<void> {
+  const directory = sessionDirectory(sessionID);
+  const revision = (diffRevisions.get(sessionID) ?? 0) + 1;
+  diffRevisions.set(sessionID, revision);
+  const isCurrent = () => diffRevisions.get(sessionID) === revision &&
+    sessionDirectory(sessionID) === directory && !isSessionDeleted(sessionID);
+  try {
+    let diffs = await hoxiAPI.getSessionDiff(sessionID, directory);
+    if (!isCurrent()) return;
+    const meta = workspace.worktreeBySession[sessionID];
+    // Only an isolated worktree can safely attribute directory-wide changes to this session.
+    if (!diffs.length && meta?.isolated && meta.dirty && meta.directory === directory) {
+      diffs = await hoxiAPI.getWorktreeDiff(sessionID, directory);
+    }
+    if (isCurrent()) setWorkspace("diffsBySession", sessionID, diffs);
+  } catch (err) {
+    console.error("refresh session diff failed:", err);
   }
 }
 
@@ -211,6 +234,7 @@ export async function checkoutLocalBranch(branch: string, create = false): Promi
 }
 
 const worktreeRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const worktreeRevisions = new Map<string, number>();
 
 export function scheduleRefreshWorktreeStatus(
   sessionID?: string | null,
@@ -229,7 +253,9 @@ export function scheduleRefreshWorktreeStatus(
 export async function refreshWorktreeStatus(sessionID?: string | null): Promise<void> {
   const key = sessionID || "__root__";
   const dirArg = key === "__root__" ? workspace.rootDir || undefined : sessionDirectory(key);
-  const isCurrentScope = () => !isSessionDeleted(key) && dirArg ===
+  const revision = (worktreeRevisions.get(key) ?? 0) + 1;
+  worktreeRevisions.set(key, revision);
+  const isCurrentScope = () => worktreeRevisions.get(key) === revision && !isSessionDeleted(key) && dirArg ===
     (key === "__root__" ? workspace.rootDir || undefined : sessionDirectory(key));
   try {
     const st = await hoxiAPI.getWorktreeStatus(key, dirArg);
@@ -253,20 +279,26 @@ export async function refreshWorktreeStatus(sessionID?: string | null): Promise<
       hasUpstream: st.hasUpstream,
     });
     if (key === "__root__" || key === workspace.activeSessionID) {
-      // Git status describes the whole directory, not the files owned by a session.
-      const diffs = key === "__root__"
-        ? st.dirty ? await hoxiAPI.getWorktreeDiff(key, dirArg) : []
-        : await hoxiAPI.getSessionDiff(key, dirArg);
-      if (isCurrentScope()) setWorkspace("diffsBySession", key, diffs);
+      const diffs = st.dirty ? await hoxiAPI.getWorktreeDiff(key, dirArg) : [];
+      if (!isCurrentScope()) return;
+      setWorkspace("worktreeDiffsBySession", key, diffs);
+      if (key === "__root__") {
+        setWorkspace("diffsBySession", key, diffs);
+      } else {
+        await refreshSessionDiff(key);
+      }
     }
   } catch (err) {
     console.error("refresh worktree status failed:", err);
   }
 }
 
-export async function renameSessionTitle(sessionID: string, title: string): Promise<void> {
+export async function renameSessionTitle(
+  sessionID: string, title: string, source: "manual" | "automatic" = "manual"
+): Promise<void> {
   const cleaned = title.trim();
-  if (!cleaned) return;
+  if (!cleaned || (source === "automatic" && hasManualSessionTitle(sessionID))) return;
+  if (source === "manual") recordManualSessionTitle(sessionID, cleaned);
   recordCustomSessionTitle(sessionID, cleaned);
   // Optimistically update local session title
   setWorkspace(
@@ -350,6 +382,7 @@ export function removeSessionFromStore(sessionID: string): SessionInfo | undefin
   const childIDs = collectChildSubagentSessionIDs(sessionID);
   const allIDs = [sessionID, ...childIDs];
   for (const id of allIDs) deletedSessionIDs.add(id);
+  forgetSessionTitles(allIDs);
   const nextCandidate = nextActiveSessionCandidate(sessionID);
   if (workspace.archivedSessionIDs.some((id) => allIDs.includes(id))) {
     const nextArchived = workspace.archivedSessionIDs.filter((id) => !allIDs.includes(id));

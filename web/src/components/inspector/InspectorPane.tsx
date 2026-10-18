@@ -7,19 +7,24 @@ import { t } from "../../i18n";
 
 const PierreDiffViewer = lazy(() => import("./PierreDiffViewer"));
 const WebGLTerminal = lazy(() => import("../terminal/WebGLTerminal"));
+const BrowserInspector = lazy(() => import("./BrowserInspector"));
 
-type TabID = "diffs" | "memory" | "files" | "terminal";
+type TabID = "diffs" | "memory" | "files" | "terminal" | "browser";
 
 const TABS: Array<{ id: TabID }> = [
   { id: "diffs" },
   { id: "memory" },
   { id: "files" },
   { id: "terminal" },
+  { id: "browser" },
 ];
 
 export default function InspectorPane() {
   const diffCount = createMemo(() => {
     const id = workspace.activeSessionID;
+    if (workspace.diffScope === "worktree") {
+      return (workspace.worktreeDiffsBySession[id || "__root__"] ?? []).length;
+    }
     if (id) {
       const sDiffs = workspace.diffsBySession[id];
       if (sDiffs && sDiffs.length > 0) return sDiffs.length;
@@ -38,12 +43,14 @@ export default function InspectorPane() {
         return t("inspector.tabs.files");
       case "terminal":
         return t("inspector.tabs.terminal");
+      case "browser":
+        return t("inspector.tabs.browser");
     }
   };
 
   return (
     <aside class="h-full w-full flex flex-col bg-transparent">
-      <div class="shrink-0 flex items-center gap-1 px-3 py-2 border-b border-[var(--border-subtle)]">
+      <div class="shrink-0 flex flex-wrap items-center gap-1 px-3 py-2 border-b border-[var(--border-subtle)]">
         <For each={TABS}>
           {(tab) => (
             <button
@@ -96,6 +103,9 @@ export default function InspectorPane() {
         </Show>
         <Show when={workspace.inspectorTab === "terminal"}>
           <WebGLTerminal />
+        </Show>
+        <Show when={workspace.inspectorTab === "browser"}>
+          <BrowserInspector />
         </Show>
         </Suspense>
       </div>

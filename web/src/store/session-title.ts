@@ -3,6 +3,7 @@ import { dictionaries, locale } from "../i18n";
 import { hoxiAPI } from "../services/api";
 import type { SessionInfo } from "../services/sse-types";
 import { workspace, type SelectedModel } from "./workspace";
+import { manualSessionTitles, persistManualSessionTitles } from "./session-title-storage";
 
 const customTitledSessions = new Map<string, string>();
 const inFlightSummaries = new Set<string>();
@@ -26,7 +27,29 @@ export function recordCustomSessionTitle(sessionID: string, title: string): void
 }
 
 export function getCustomSessionTitle(sessionID: string): string | undefined {
-  return customTitledSessions.get(sessionID);
+  return manualSessionTitles.get(sessionID) ?? customTitledSessions.get(sessionID);
+}
+
+export function hasManualSessionTitle(sessionID: string): boolean {
+  return manualSessionTitles.has(sessionID);
+}
+
+export function recordManualSessionTitle(sessionID: string, title: string): void {
+  manualSessionTitles.set(sessionID, title.trim());
+  persistManualSessionTitles();
+}
+
+export function forgetSessionTitles(sessionIDs: string[]): void {
+  for (const id of sessionIDs) {
+    customTitledSessions.delete(id);
+    manualSessionTitles.delete(id);
+  }
+  persistManualSessionTitles();
+}
+
+export function preserveSessionTitle(info: SessionInfo): SessionInfo {
+  const title = getCustomSessionTitle(info.id);
+  return title && title !== info.title ? { ...info, title } : info;
 }
 
 export function isPlaceholderSessionTitle(title?: string | null): boolean {
@@ -45,7 +68,12 @@ export function isPlaceholderSessionTitle(title?: string | null): boolean {
   ]);
 
   if (knownPlaceholders.has(trimmed)) return true;
-  if (trimmed.startsWith("{") || trimmed.startsWith("[") || trimmed.includes('"choices"')) {
+  if (
+    trimmed.startsWith("{") ||
+    trimmed.startsWith("[{") ||
+    trimmed.startsWith('["') ||
+    trimmed.includes('"choices"')
+  ) {
     return true;
   }
   const lower = trimmed.toLowerCase();
@@ -108,7 +136,7 @@ export async function summarizeAndRenameSession(
   modelHint: SelectedModel | undefined,
   renameFn: (id: string, title: string) => Promise<void>
 ): Promise<void> {
-  if (!sessionID || inFlightSummaries.has(sessionID)) return;
+  if (!sessionID || hasManualSessionTitle(sessionID) || inFlightSummaries.has(sessionID)) return;
   inFlightSummaries.add(sessionID);
 
   try {
@@ -124,6 +152,7 @@ export async function summarizeAndRenameSession(
       }
     }
 
+    if (hasManualSessionTitle(sessionID)) return;
     // 2. Request LLM-summarized session title strictly in the current UI language (`locale()`)
     const targetModel = resolveTitleModel(modelHint);
     const provID = targetModel?.providerID || "";
@@ -145,7 +174,7 @@ export async function summarizeAndRenameSession(
     });
 
     const summarized = res?.title?.trim();
-    if (summarized && !isPlaceholderSessionTitle(summarized)) {
+    if (!hasManualSessionTitle(sessionID) && summarized && !isPlaceholderSessionTitle(summarized)) {
       await renameFn(sessionID, summarized);
     }
   } catch (err) {

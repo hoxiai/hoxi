@@ -380,4 +380,20 @@ func TestHelperFunctions(t *testing.T) {
 	if got := truncateRunes("short", 10); got != "short" {
 		t.Fatalf("truncateRunes short = %q", got)
 	}
+
+	// 9. parseAgyModelsOutput & normalizeAntigravityModelID
+	slugs, dMap, rMap := parseAgyModelsOutput("\r⠋ Fetching available models...\rgemini-4-argon-high     Gemini 4 Argon (High)\nclaude-opus-5-5-medium  Claude Opus 5.5 (Medium)\n")
+	if len(slugs) != 2 || dMap["gemini-4-argon-high"] != "Gemini 4 Argon (High)" || rMap["claude opus 5.5 (medium)"] != "claude-opus-5-5-medium" {
+		t.Fatalf("parseAgyModelsOutput unexpected: slugs=%v dMap=%v rMap=%v", slugs, dMap, rMap)
+	}
+	if got := normalizeAntigravityModelID("Gemini 4 Argon (High)"); got != "gemini-4-argon-high" {
+		t.Fatalf("normalizeAntigravityModelID = %q, want gemini-4-argon-high", got)
+	}
+	if got := normalizeAntigravityModelID("Claude Opus 5.5 (Medium)"); got != "claude-opus-5-5-medium" {
+		t.Fatalf("normalizeAntigravityModelID = %q, want claude-opus-5-5-medium", got)
+	}
+	_, extractedModel := extractAntigravityUserPrompt("User changed setting `Model Selection` to Gemini 4 Argon (Medium).\n<USER_REQUEST>\nhi\n</USER_REQUEST>")
+	if extractedModel != "gemini-4-argon-medium" {
+		t.Fatalf("extractAntigravityUserPrompt model = %q, want gemini-4-argon-medium", extractedModel)
+	}
 }

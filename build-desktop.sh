@@ -7,22 +7,47 @@ cd "${PROJECT_ROOT}"
 BUILD_RELEASE=1
 BUILD_DEV=1
 INSTALL_RELEASE=1
+BUILD_DMG=0
+NOTARIZE=0
+NOTARY_PROFILE="${NOTARY_PROFILE:-hoxi-notary}"
+SIGN_IDENTITY=""
 EXTRA_WAILS_ARGS=()
 
-for arg in "$@"; do
-  case "${arg}" in
+while [[ $# -gt 0 ]]; do
+  case "$1" in
     --release-only)
       BUILD_DEV=0
+      shift
       ;;
     --dev-only)
       BUILD_RELEASE=0
       INSTALL_RELEASE=0
+      shift
       ;;
     --no-install)
       INSTALL_RELEASE=0
+      shift
+      ;;
+    --dmg)
+      BUILD_DMG=1
+      shift
+      ;;
+    --notarize)
+      BUILD_DMG=1
+      NOTARIZE=1
+      shift
+      ;;
+    --notary-profile)
+      NOTARY_PROFILE="$2"
+      shift 2
+      ;;
+    --identity)
+      SIGN_IDENTITY="$2"
+      shift 2
       ;;
     *)
-      EXTRA_WAILS_ARGS+=("${arg}")
+      EXTRA_WAILS_ARGS+=("$1")
+      shift
       ;;
   esac
 done
@@ -59,10 +84,32 @@ if [[ -z "${OPENCODE_SRC}" && "$(uname -s)" == "Darwin" ]]; then
   OPENCODE_SRC="${HOME}/.opencode/bin/opencode"
 fi
 
+resolve_signing_identity() {
+  if [[ -n "${SIGN_IDENTITY}" ]]; then
+    echo "${SIGN_IDENTITY}"
+    return 0
+  fi
+  if [[ -n "${HOXI_SIGN_IDENTITY:-}" ]]; then
+    echo "${HOXI_SIGN_IDENTITY}"
+    return 0
+  fi
+  # Auto-detect Developer ID Application in Keychain
+  local id
+  id="$(security find-identity -p codesigning -v 2>/dev/null | grep 'Developer ID Application:' | head -n 1 | sed -E 's/.*"([^"]+)".*/\1/' || true)"
+  if [[ -n "${id}" ]]; then
+    echo "${id}"
+    return 0
+  fi
+  echo "-"
+}
+
+CURRENT_IDENTITY="$(resolve_signing_identity)"
+
 bundle_and_sign_macos_app() {
   local app_path="$1"
   local bundle_id="$2"
   local display_name="$3"
+  local is_release="$4"
 
   test -x "${app_path}/Contents/MacOS/Hoxi"
 
@@ -80,7 +127,31 @@ bundle_and_sign_macos_app() {
     echo "✅ Bundled standalone opencode sidecar (${OPENCODE_SRC}) into ${app_path}/Contents/MacOS/opencode"
   fi
 
-  codesign --force --deep --sign - "${app_path}"
+  local target_identity="-"
+  if [[ "${is_release}" -eq 1 && "${CURRENT_IDENTITY}" != "-" ]]; then
+    target_identity="${CURRENT_IDENTITY}"
+  fi
+
+  local entitlements="build/darwin/entitlements.plist"
+
+  if [[ "${target_identity}" != "-" ]]; then
+    echo "🔏 Signing with Apple Developer ID: '${target_identity}' (Hardened Runtime enabled)..."
+    if [[ -f "${app_path}/Contents/MacOS/opencode" ]]; then
+      codesign --force --timestamp --options runtime \
+        --entitlements "${entitlements}" \
+        --sign "${target_identity}" \
+        "${app_path}/Contents/MacOS/opencode"
+    fi
+    codesign --force --timestamp --options runtime \
+      --entitlements "${entitlements}" \
+      --sign "${target_identity}" \
+      "${app_path}"
+    codesign --verify --deep --strict --verbose=1 "${app_path}"
+    echo "✅ Verified signature for ${app_path}"
+  else
+    echo "ℹ️  Signing with Ad-hoc signature (local use only)..."
+    codesign --force --deep --sign - "${app_path}"
+  fi
 
   local actual_id
   actual_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${app_path}/Contents/Info.plist")"
@@ -96,7 +167,7 @@ if [[ "${BUILD_DEV}" -eq 0 && -d "build/bin/Hoxi Dev.app" ]]; then
 fi
 
 if [[ "${BUILD_DEV}" -eq 1 ]]; then
-  echo "🔨 Building Local Development App (Hoxi Dev.app with DevTools & independent instance lock)..."
+  echo "🔨 Building Local Development App (Hoxi Dev.app with DevTools)..."
   go run github.com/wailsapp/wails/v2/cmd/wails@v2.13.0 build \
     -clean \
     -skipbindings \
@@ -109,7 +180,7 @@ if [[ "${BUILD_DEV}" -eq 1 ]]; then
     DEV_STAGE_APP="${STAGE_DIR}/Hoxi Dev.app"
     rm -rf "${DEV_STAGE_APP}"
     mv "build/bin/Hoxi.app" "${DEV_STAGE_APP}"
-    bundle_and_sign_macos_app "${DEV_STAGE_APP}" "ai.hoxi.desktop.dev" "Hoxi Dev"
+    bundle_and_sign_macos_app "${DEV_STAGE_APP}" "ai.hoxi.desktop.dev" "Hoxi Dev" 0
   fi
 fi
 
@@ -126,7 +197,21 @@ if [[ "${BUILD_RELEASE}" -eq 1 ]]; then
 
   if [[ "$(uname -s)" == "Darwin" ]]; then
     APP_PATH="build/bin/Hoxi.app"
-    bundle_and_sign_macos_app "${APP_PATH}" "ai.hoxi.desktop" "Hoxi"
+    bundle_and_sign_macos_app "${APP_PATH}" "ai.hoxi.desktop" "Hoxi" 1
+
+    if [[ "${BUILD_DMG}" -eq 1 ]]; then
+      DMG_PATH="build/bin/Hoxi.dmg"
+      ./scripts/package-dmg.sh "${APP_PATH}" "${DMG_PATH}" "Hoxi" "${CURRENT_IDENTITY}"
+
+      if [[ "${NOTARIZE}" -eq 1 ]]; then
+        echo "☁️  Submitting ${DMG_PATH} to Apple Notary Service (profile: ${NOTARY_PROFILE})..."
+        xcrun notarytool submit "${DMG_PATH}" --keychain-profile "${NOTARY_PROFILE}" --wait
+        echo "📎 Stapling notarization ticket to ${DMG_PATH} and ${APP_PATH}..."
+        xcrun stapler staple "${DMG_PATH}" || true
+        xcrun stapler staple "${APP_PATH}" || true
+        echo "🎉 Notarization and Stapling complete! Distribution DMG is ready."
+      fi
+    fi
 
     if [[ "${INSTALL_RELEASE}" -eq 1 && -d "/Applications" && -w "/Applications" ]]; then
       INSTALL_PATH="/Applications/Hoxi.app"
@@ -143,4 +228,3 @@ if [[ -d "${STAGE_DIR}/Hoxi Dev.app" && "$(uname -s)" == "Darwin" ]]; then
   mv "${STAGE_DIR}/Hoxi Dev.app" "${DEV_APP_PATH}"
   echo "✅ Local Development App ready at ${DEV_APP_PATH} (ai.hoxi.desktop.dev)"
 fi
-

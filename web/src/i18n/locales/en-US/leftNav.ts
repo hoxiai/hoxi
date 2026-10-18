@@ -23,6 +23,8 @@ export const leftNav: LeftNavI18n = {
   archiveSessionTooltip: "Archive session",
   unarchiveSessionTooltip: "Unarchive session",
   archivedSessions: "Archived",
+  olderSessions: "Older sessions ({count})",
+  collapseSessions: "Collapse",
   confirmDelete: "Delete",
   cancelDelete: "Cancel",
   renameSessionTooltip: "Rename session (or double-click title)",
@@ -93,4 +95,3 @@ export const leftNav: LeftNavI18n = {
   pauseTooltip: "Pause this task",
   stopTooltip: "Stop this task",
 };
-

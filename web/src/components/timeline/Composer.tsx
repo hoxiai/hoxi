@@ -2,6 +2,7 @@
 import { createEffect, createMemo, createSignal, Show } from "solid-js";
 import {
   ArrowUp,
+  FolderOpen,
   LoaderCircle,
   Plus,
   Square,
@@ -15,6 +16,8 @@ import {
   stopSessionTask,
   submitSessionPrompt,
   switchActiveSessionSandboxMode,
+  switchWorkspace,
+  setWorkspace,
   workspace,
 } from "../../store/workspace";
 import ModelSelector from "../models/ModelSelector";
@@ -36,6 +39,8 @@ import {
   expandContextMentions,
 } from "./composer-hooks";
 import { t } from "../../i18n";
+import { isComposerIMEEvent } from "./composer-keyboard";
+import { hoxiAPI } from "../../services/api";
 
 export default function Composer() {
   const [text, setText] = createSignal("");
@@ -43,9 +48,30 @@ export default function Composer() {
   const [stopping, setStopping] = createSignal(false);
   const [forking, setForking] = createSignal(false);
   const [switchingSandbox, setSwitchingSandbox] = createSignal(false);
+  const [choosingFolder, setChoosingFolder] = createSignal(false);
+  const chooseFolder = async () => {
+    if (choosingFolder()) return;
+    const request = workspace.newThreadRequest;
+    const directory = workspace.rootDir;
+    const id = workspace.activeSessionID;
+    setChoosingFolder(true);
+    try {
+      const result = await hoxiAPI.openDirectoryDialog();
+      if (result?.path && workspace.newThreadRequest === request
+        && workspace.rootDir === directory && workspace.activeSessionID === id) {
+        await switchWorkspace(result.path, false);
+        requestAnimationFrame(() => textareaRef?.focus());
+      }
+    } catch (error) {
+      setWorkspace("sessionSetupError", String(error));
+    } finally {
+      setChoosingFolder(false);
+    }
+  };
 
   let textareaRef: HTMLTextAreaElement | undefined;
   let fileInputRef: HTMLInputElement | undefined;
+  let composing = false;
 
   const sessionID = () => workspace.activeSessionID;
   const busy = createMemo(() => isSessionBusy(sessionID()));
@@ -86,13 +112,17 @@ export default function Composer() {
   const promptHistory = createPromptHistory(sessionID);
   const draftSync = createSessionDraftSync({
     sessionID,
+    resetRequest: () => workspace.newThreadRequest,
     text,
     setText,
     imgAttach,
     pasteCollapse,
     onAfterRestore: () => {
       ac.reset();
-      requestAnimationFrame(() => adjustHeight());
+      requestAnimationFrame(() => {
+        adjustHeight();
+        if (!sessionID()) textareaRef?.focus();
+      });
     },
   });
 
@@ -131,7 +161,7 @@ export default function Composer() {
       reviewComments().length > 0 ||
       imgAttach.images().length > 0 ||
       pasteCollapse.pastes().length > 0) &&
-    !sending() && !switchingSandbox();
+    !sending() && !switchingSandbox() && !choosingFolder();
 
   const buildPayloadWithReviews = (): string => {
     const withPastes = pasteCollapse.expandIntoPrompt(text());
@@ -150,6 +180,11 @@ export default function Composer() {
   };
 
   const onSend = async () => {
+    if (choosingFolder()) return;
+    if (!sessionID() && !workspace.rootDir) {
+      await chooseFolder();
+      return;
+    }
     const payload = buildPayloadWithReviews();
     const attachments = imgAttach.toPromptAttachments();
     if ((!payload && attachments.length === 0) || sending() || switchingSandbox()) return;
@@ -212,6 +247,8 @@ export default function Composer() {
   };
 
   const onKeyDown = (ev: KeyboardEvent) => {
+    if (isComposerIMEEvent(ev, composing)) return;
+
     const list = ac.suggestions();
     if (ac.triggerMode() && list.length > 0) {
       if (ev.key === "ArrowDown") {
@@ -278,8 +315,8 @@ export default function Composer() {
   };
 
   return (
-    <div class="shrink-0 w-full px-6 pb-4 pt-1">
-      <div class="relative mx-auto w-full max-w-[calc(var(--thread-max-width)-100px)]">
+    <div class="my-auto shrink-0 w-full px-6 pb-4 pt-1">
+      <div class="relative mx-auto w-full max-w-[var(--thread-max-width)]">
         {/* Floating @file / @changes / /command Autocomplete Popover */}
         <ComposerAutocompletePopover
           triggerMode={ac.triggerMode()}
@@ -343,6 +380,9 @@ export default function Composer() {
               adjustHeight();
             }}
             onKeyDown={onKeyDown}
+            onCompositionStart={() => { composing = true; }}
+            onCompositionEnd={() => { composing = false; }}
+            onBlur={() => { composing = false; }}
           />
 
           <div class="mt-2 flex items-center justify-between gap-2 flex-wrap">
@@ -360,6 +400,13 @@ export default function Composer() {
               <ModeSwitcher />
               <ModelSelector />
 
+              <Show when={workspace.rootDir} fallback={
+                <button type="button" onClick={() => void chooseFolder()} disabled={choosingFolder()}
+                  title={t("timeline.selectFolderHint")}
+                  class="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs text-[var(--text-muted)] hover:bg-[var(--bg-hover)] disabled:opacity-50 cursor-pointer">
+                  <FolderOpen size={14} />{t("timeline.selectFolder")}
+                </button>
+              }>
               <ComposerSandboxPill
                 mode={effectiveSandboxMode()}
                 switching={switchingSandbox()}
@@ -369,6 +416,7 @@ export default function Composer() {
                 onToggle={(m) => void onToggleSandbox(m)}
                 onFork={onFork}
               />
+              </Show>
             </div>
 
             {/* Right Context Progress + Approval Mode + Send / Queue / Stop Buttons */}
@@ -430,6 +478,9 @@ export default function Composer() {
             </div>
           </div>
         </div>
+        <Show when={!workspace.rootDir}>
+          <p class="mt-2 px-1 text-xs text-[var(--text-faint)]">{t("timeline.selectFolderHint")}</p>
+        </Show>
       </div>
     </div>
   );

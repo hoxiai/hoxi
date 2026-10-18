@@ -11,7 +11,7 @@
   --app-ui-text-size: 13px;
   --app-chat-text-size: 14.5px;
   --app-code-text-size: 13px;
-  --thread-max-width: 68rem;
+  --thread-max-width: calc(68rem - 100px);
   --composer-radius: 1rem;
 
   /* Surfaces (Soft Mist palette for natural visual breathing room) */

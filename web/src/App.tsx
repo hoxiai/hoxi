@@ -5,6 +5,7 @@ import { hoxiAPI } from "./services/api";
 import { connectEventStream } from "./services/sse";
 import {
   appSettings,
+  applySessionDiffEvent,
   applyPartDeltaBatch,
   applyStreamFrameBatch,
   bootstrapProjectSessions,
@@ -145,7 +146,8 @@ export default function App() {
           }
           case "session.status": {
             const sid = evt.properties.sessionID;
-            const wasBusy = workspace.statusBySession[sid]?.type === "busy";
+            const previousStatus = workspace.statusBySession[sid]?.type;
+            const wasBusy = previousStatus === "busy" || previousStatus === "retry";
             setWorkspace("statusBySession", sid, evt.properties.status);
             if (evt.properties.status.type === "busy") {
               setWorkspace("unreadCompletedBySession", sid, false);
@@ -156,6 +158,8 @@ export default function App() {
                 void loadSessionMessagesOnly(sid);
                 void loadSessionMessagesOnly(parentID);
                 scheduleRefreshWorktreeStatus(parentID, 600);
+              } else if (wasBusy) {
+                void loadSessionMessages(sid).catch(console.error);
               }
               if (
                 wasBusy &&
@@ -200,7 +204,7 @@ export default function App() {
             break;
           }
           case "session.diff":
-            setWorkspace("diffsBySession", evt.properties.sessionID, evt.properties.diff);
+            applySessionDiffEvent(evt.properties.sessionID, evt.properties.diff);
             if (evt.properties.sessionID === workspace.activeSessionID) {
               scheduleRefreshWorktreeStatus(evt.properties.sessionID, 600);
             }

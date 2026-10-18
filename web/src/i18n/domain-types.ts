@@ -38,6 +38,8 @@ export interface HeaderI18n {
   langTooltip: string;
   inspectorShow: string;
   inspectorHide: string;
+  leftNavShow: string;
+  leftNavHide: string;
   switchFolder: string;
   branchMenuTooltip: string;
   localBranchesTitle: string;
@@ -63,6 +65,19 @@ export interface HeaderI18n {
   pulseTitle: string;
   pulseRefreshTooltip: string;
   pulseTodayTokens: string;
+
+  // Online Update Badge & Modal (Kilo-style)
+  updateAvailableBadge: string;
+  updateAvailableTooltip: string;
+  updateModalTitle: string;
+  updateModalSubtitle: string;
+  updateModalCurrentVer: string;
+  updateModalLatestVer: string;
+  updateModalDownloadGitCode: string;
+  updateModalDownloadGitHub: string;
+  updateModalDownloadDirect: string;
+  updateModalDismiss: string;
+  updateModalMandatoryNotice: string;
   pulseTokensSub: string;
   pulseTodayCost: string;
   pulseCostSub: string;
@@ -93,13 +108,35 @@ export interface HeaderI18n {
   pulseSectionModels: string;
   pulseModelTurns: string;
   pulseNoModelActivity: string;
-  pulseConfigureModelsBtn: string;
   pulseConnectedProviders: string;
+  pulseLeaderboardEntry: string;
+  leaderboardModalTitle: string;
+  leaderboardModalSubtitle: string;
+  leaderboardTabOverall: string;
+  leaderboardTabCoding: string;
+  leaderboardTabSpeed: string;
+  leaderboardTabPrice: string;
+  leaderboardTabGateways: string;
+  leaderboardSetAsActiveModel: string;
+  leaderboardActiveModelBadge: string;
+  leaderboardScoreIndex: string;
+  leaderboardSpeedTps: string;
+  leaderboardPerMTokens: string;
+  leaderboardConnectBtn: string;
+  leaderboardViewOnWeb: string;
+  leaderboardOfflineNote: string;
+  gatewayDirectConnectTitle: string;
+  gatewayDirectConnectDesc: string;
+  gatewayConnectNowBtn: string;
+  gatewaySavingsLabel: string;
+  gatewayUptimeLabel: string;
+  gatewayLatencyLabel: string;
 }
 
 export * from "./domain-leftnav-types";
 
 export interface TimelineI18n {
+  scrollToBottom: string;
   welcomeTitle: string;
   welcomeSubtitle: string;
   welcomeQuestion: string;
@@ -123,6 +160,13 @@ export interface TimelineI18n {
   buildDesc: string;
   planDesc: string;
   inputPlaceholder: string;
+  activityResponse: string;
+  scrollActivityUp: string;
+  scrollActivityDown: string;
+  searchOptions: string;
+  activityLength: string;
+  selectFolder: string;
+  selectFolderHint: string;
   queuePlaceholder: string;
   filesAttached: string;
   addContext: string;

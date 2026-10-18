@@ -5,11 +5,18 @@ export interface InspectorTabsI18n {
   memory: string;
   files: string;
   terminal: string;
+  browser: string;
   maximize: string;
   restore: string;
 }
 
 export interface InspectorDiffsI18n {
+  scopeWorktree: string;
+  scopeSession: string;
+  sessionEmpty: string;
+  sessionEmptyDesc: string;
+  worktreeDirtyEmptyDesc: string;
+  worktreeUnknownEmptyDesc: string;
   empty: string;
   emptyDesc: string;
   busyEmptyTitle: string;
@@ -18,9 +25,12 @@ export interface InspectorDiffsI18n {
   envCardTitle: string;
   envStatusLabel: string;
   envStatusClean: string;
+  envStatusDirty: string;
+  envStatusUnknown: string;
   envBranchLabel: string;
   envModeIsolated: string;
   envModeMain: string;
+  envModeUnknown: string;
   envCommitLabel: string;
   envDirLabel: string;
   planModeTipTitle: string;
@@ -104,7 +114,32 @@ export interface InspectorTerminalI18n {
   error: string;
 }
 
+export interface InspectorBrowserI18n {
+  noSession: string;
+  back: string;
+  forward: string;
+  reload: string;
+  url: string;
+  go: string;
+  start: string;
+  close: string;
+  tabs: string;
+  untitled: string;
+  closeTab: string;
+  newTab: string;
+  manual: string;
+  manualHint: string;
+  agentHint: string;
+  error: string;
+  working: string;
+  waiting: string;
+  empty: string;
+  viewport: string;
+  keyboard: string;
+}
+
 export interface InspectorI18n {
+  browser: InspectorBrowserI18n;
   tabs: InspectorTabsI18n;
   diffs: InspectorDiffsI18n;
   memory: InspectorMemoryI18n;

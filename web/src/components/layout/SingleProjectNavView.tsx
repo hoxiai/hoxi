@@ -11,7 +11,6 @@ import {
   openHandoffModal,
   openManageWorkspacesModal,
   selectSession,
-  sessionActivityTime,
   setWorkspace,
   sortSessionsByActivity,
   switchWorkspace,
@@ -31,6 +30,8 @@ import {
 } from "./left-nav-helpers";
 import { WorkspaceActionMenu } from "./MultiProjectItem";
 import { t } from "../../i18n";
+import { SessionHistoryList, useSessionHistory } from "./SessionHistory";
+import { compareSessionRunning } from "./session-history";
 
 export default function SingleProjectNavView(props: {
   allProjects: ProjectNavEntry[];
@@ -84,17 +85,9 @@ export default function SingleProjectNavView(props: {
     );
   });
 
-  const groupedSingleSessions = createMemo(() => {
-    const list = filteredSessions().filter((s) => !isSessionArchived(s));
-    const groups: Array<{ label: string; items: SessionInfo[] }> = [];
-    for (const item of list) {
-      const label = dayLabel(sessionActivityTime(item));
-      const last = groups[groups.length - 1];
-      if (last && last.label === label) last.items.push(item);
-      else groups.push({ label, items: [item] });
-    }
-    return groups;
-  });
+  const history = useSessionHistory(
+    () => filteredSessions().filter((s) => !isSessionArchived(s)),
+    () => workspace.rootDir, () => props.pendingSessions, () => props.filterQuery);
 
   const archivedSessions = createMemo(() => filteredSessions().filter((s) => isSessionArchived(s)));
 
@@ -133,7 +126,7 @@ export default function SingleProjectNavView(props: {
               class="w-3.5 h-3.5 shrink-0"
             />
             <span class="truncate text-[14px] font-semibold text-[var(--text-primary)]">
-              {currentProjectName()}
+              {currentProjectName() || t("timeline.selectFolder")}
             </span>
             <Show when={currentFolders().length > 1}>
               <span class="shrink-0 rounded px-1.5 py-0.2 text-[10.5px] font-mono bg-[var(--bg-inset)] text-[var(--text-muted)]">
@@ -150,10 +143,10 @@ export default function SingleProjectNavView(props: {
           />
         </button>
 
-        <WorkspaceActionMenu
+        <Show when={workspace.rootDir}><WorkspaceActionMenu
           dirOrWorkspaceID={workspace.rootDir}
           alwaysVisible={true}
-        />
+        /></Show>
       </div>
 
       {/* Multi-Folder Pills when active workspace has >1 folder */}
@@ -278,7 +271,7 @@ export default function SingleProjectNavView(props: {
       {/* Chronological Session Stream */}
       <div class="flex-1 min-h-0 overflow-y-auto px-1 pb-4 space-y-3">
         <Show
-          when={groupedSingleSessions().length > 0}
+          when={history.sessions().length > 0}
           fallback={
             <div class="px-3 py-6 flex items-center justify-center gap-1.5 text-[12px] text-[var(--text-faint)]">
               <Show when={workspace.bootstrappingSessions} fallback={<span>{t("leftNav.noThreads")}</span>}>
@@ -288,13 +281,7 @@ export default function SingleProjectNavView(props: {
             </div>
           }
         >
-          <For each={groupedSingleSessions()}>
-            {(group) => (
-              <div class="space-y-0.5">
-                <div class="px-2 py-0.5 text-[11px] font-medium text-[var(--text-faint)]">
-                  {group.label}
-                </div>
-                <For each={group.items}>
+          <SessionHistoryList history={history} grouped>
                   {(session) => (
                     <SessionNavItem
                       session={session}
@@ -308,13 +295,9 @@ export default function SingleProjectNavView(props: {
                       onDiscard={props.onDiscard}
                     />
                   )}
-                </For>
-              </div>
-            )}
-          </For>
+          </SessionHistoryList>
         </Show>
 
-        {/* Collapsible Archived Sessions Section */}
         <Show when={archivedSessions().length > 0}>
           <div class="pt-1 border-t border-[var(--border-subtle)]/40">
             <button
@@ -409,6 +392,7 @@ export function RecentTasksNavView(props: {
 
     items.sort(
       (a, b) =>
+        compareSessionRunning(a.session, b.session, workspace.statusBySession) ||
         (b.session.time.updated || b.session.time.created) -
         (a.session.time.updated || a.session.time.created)
     );

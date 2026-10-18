@@ -57,6 +57,7 @@ func StartDaemonWithBin(
 	port int,
 	password string,
 	logger *slog.Logger,
+	extraEnv ...string,
 ) (*exec.Cmd, error) {
 	args := []string{"serve", "--hostname", "127.0.0.1", "--port", strconv.Itoa(port)}
 	child := exec.CommandContext(ctx, binPath, args...)
@@ -82,6 +83,7 @@ func StartDaemonWithBin(
 	if configPath != "" {
 		child.Env = append(child.Env, "OPENCODE_CONFIG="+configPath)
 	}
+	child.Env = append(child.Env, extraEnv...)
 	if err := child.Start(); err != nil {
 		return nil, fmt.Errorf("start opencode serve (%s): %w", binPath, err)
 	}

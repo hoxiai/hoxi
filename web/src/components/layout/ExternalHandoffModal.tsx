@@ -18,6 +18,7 @@ import {
   switchWorkspace,
   workspace,
 } from "../../store/workspace";
+import { recordCustomSessionTitle } from "../../store/session-title";
 import { shortenPath } from "./left-nav-helpers";
 import ExternalHandoffPreviewPane, {
   handoffSourceBadgeClass,
@@ -109,7 +110,6 @@ export default function ExternalHandoffModal() {
       const cli = cliTools().find((c) => c.id === item.source);
       if (useOriginal && cli && cli.authenticated && !cli.connected) {
         await hoxiAPI.importLocalCLI(item.source).catch(() => null);
-        await refreshProviders().catch(() => null);
       }
       const preferredProviderID = useOriginal
         ? cli?.providerID ||
@@ -135,6 +135,7 @@ export default function ExternalHandoffModal() {
         setErrorMsg(res.error || t("common.error"));
         return;
       }
+      await refreshProviders().catch(() => null);
       if (res.resolvedProviderID && res.resolvedModelID) {
         selectModel({
           providerID: res.resolvedProviderID,
@@ -147,6 +148,9 @@ export default function ExternalHandoffModal() {
         normalizeFolderPath(targetDir) !== normalizeFolderPath(workspace.rootDir)
       ) {
         await switchWorkspace(targetDir);
+      }
+      if (res.session.title) {
+        recordCustomSessionTitle(res.session.id, res.session.title);
       }
       replaceSession(res.session);
       await selectSession(res.session.id);
