@@ -28,13 +28,16 @@ import {
   collectCycleStepItems,
   collectTaskCycleTurns,
   type CycleStepItem,
-  findLatestTodoContext,
+  findLatestTodoPart,
   hasActiveSubagentInCycle,
+  isTodoListStale,
   type NormalizedTodoItem,
   normalizeTodoItems,
   resolveTaskChangedFiles,
+  summarizeTodoActivity,
 } from "./task-progress-helpers";
 import TaskProgressDetails from "./TaskProgressDetails";
+import TaskProgressStaleHint from "./TaskProgressStaleHint";
 
 export default function TaskProgressCard() {
   const [expanded, setExpanded] = createSignal(false);
@@ -61,7 +64,8 @@ export default function TaskProgressCard() {
 
   const cycleTurns = createMemo(() => collectTaskCycleTurns(sessionID()));
 
-  const rawTodos = createMemo(() => findLatestTodoContext(cycleTurns()));
+  const latestTodo = createMemo(() => findLatestTodoPart(cycleTurns()));
+  const rawTodos = createMemo(() => latestTodo()?.todos ?? []);
 
   const hasRunningSubagent = createMemo(() =>
     hasActiveSubagentInCycle(cycleTurns(), sessionID())
@@ -78,8 +82,11 @@ export default function TaskProgressCard() {
   );
 
   const cycleSteps = createMemo<CycleStepItem[]>(() =>
-    collectCycleStepItems(cycleTurns(), sessionID(), isSessionAlive())
+    collectCycleStepItems(cycleTurns(), sessionID(), isSessionAlive(), latestTodo()?.partID)
   );
+
+  const todoActivity = createMemo(() => summarizeTodoActivity(cycleSteps()));
+  const isTodoStale = createMemo(() => isTodoListStale(todos(), todoActivity()));
 
   const currentStep = createMemo<CycleStepItem | undefined>(() => {
     const list = cycleSteps();
@@ -293,10 +300,19 @@ export default function TaskProgressCard() {
                       : t("timeline.taskProgressActiveOnly")}
                   </span>
 
+                  <Show when={!expanded() && isTodoStale()}>
+                    <TaskProgressStaleHint
+                      compact
+                      activeTodo={activeTodo()}
+                      summary={todoActivity()}
+                      isSessionAlive={isSessionAlive()}
+                    />
+                  </Show>
+
                   <Show
-                    when={!expanded() && currentStep()}
+                    when={!expanded() && !isTodoStale() && currentStep()}
                     fallback={
-                      <Show when={!expanded() && activeTodo()}>
+                      <Show when={!expanded() && !isTodoStale() && activeTodo()}>
                         <span class="hidden sm:inline-flex items-center gap-1 text-[var(--text-muted)] truncate max-w-[200px]">
                           <span>—</span>
                           <TextShimmer
@@ -407,6 +423,14 @@ export default function TaskProgressCard() {
                 </button>
               </div>
             </div>
+
+            <Show when={isTodoStale()}>
+              <TaskProgressStaleHint
+                activeTodo={activeTodo()}
+                summary={todoActivity()}
+                isSessionAlive={isSessionAlive()}
+              />
+            </Show>
 
             <TaskProgressDetails
               todos={todos()}

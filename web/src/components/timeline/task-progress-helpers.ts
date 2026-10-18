@@ -38,7 +38,19 @@ export interface CycleStepItem {
   status: "running" | "completed" | "interrupted" | "error";
   additions: number;
   deletions: number;
+  /** Step happened after the latest `todowrite`, i.e. progress the todo list does not reflect yet. */
+  sinceTodo: boolean;
 }
+
+export interface TodoActivitySummary {
+  stepsDone: number;
+  stepsSinceTodo: number;
+  subagentsRunning: number;
+  subagentsTotal: number;
+}
+
+/** Finished tool steps after the last todo update before the list is considered stale. */
+export const TODO_STALE_STEP_THRESHOLD = 3;
 
 /**
  * Collects turns belonging to the latest user task cycle in `sessionID`.
@@ -63,7 +75,9 @@ export function collectTaskCycleTurns(sessionID: string | null): MessageTurn[] {
 /**
  * Finds the latest `todowrite` tool call strictly within the current task cycle turns.
  */
-export function findLatestTodoContext(cycleTurns: MessageTurn[]): RawTodoItem[] {
+export function findLatestTodoPart(
+  cycleTurns: MessageTurn[]
+): { partID: string; todos: RawTodoItem[] } | undefined {
   for (let i = cycleTurns.length - 1; i >= 0; i--) {
     const parts = cycleTurns[i].parts ?? [];
     for (let j = parts.length - 1; j >= 0; j--) {
@@ -73,12 +87,16 @@ export function findLatestTodoContext(cycleTurns: MessageTurn[]): RawTodoItem[] 
           (part.state?.input?.todos as RawTodoItem[] | undefined) ??
           ((part.state as any)?.metadata?.todos as RawTodoItem[] | undefined);
         if (Array.isArray(raw) && raw.length > 0) {
-          return raw;
+          return { partID: part.id, todos: raw };
         }
       }
     }
   }
-  return [];
+  return undefined;
+}
+
+export function findLatestTodoContext(cycleTurns: MessageTurn[]): RawTodoItem[] {
+  return findLatestTodoPart(cycleTurns)?.todos ?? [];
 }
 
 export function hasActiveSubagentInCycle(
@@ -112,9 +130,8 @@ export function normalizeTodoItems(
         status: st === "in_progress" ? "interrupted" : "pending",
       };
     }
-    if (!alive) {
-      return { ...item, status: "completed" };
-    }
+    // A finished session keeps the statuses the model actually recorded; items it never
+    // marked done are not promoted to completed.
     return {
       ...item,
       status: st === "in_progress" ? "in_progress" : "pending",
@@ -125,14 +142,19 @@ export function normalizeTodoItems(
 export function collectCycleStepItems(
   cycleTurns: MessageTurn[],
   sessionID: string | null,
-  alive: boolean
+  alive: boolean,
+  latestTodoPartID?: string
 ): CycleStepItem[] {
   if (!sessionID) return [];
   const steps: CycleStepItem[] = [];
+  let seenLatestTodo = false;
 
   const pushToolPart = (tp: ToolPart, ownerAlive: boolean) => {
     const toolName = (tp.tool ?? "").toLowerCase();
-    if (toolName === "todowrite") return;
+    if (toolName === "todowrite") {
+      if (tp.id === latestTodoPartID) seenLatestTodo = true;
+      return;
+    }
 
     const rawStatus = tp.state.status;
     const isTask = isTaskTool(tp.tool);
@@ -178,6 +200,7 @@ export function collectCycleStepItems(
       status,
       additions,
       deletions,
+      sinceTodo: seenLatestTodo,
     });
 
     if (isTask) {
@@ -205,6 +228,35 @@ export function collectCycleStepItems(
   }
 
   return steps;
+}
+
+export function summarizeTodoActivity(steps: CycleStepItem[]): TodoActivitySummary {
+  const summary: TodoActivitySummary = {
+    stepsDone: 0,
+    stepsSinceTodo: 0,
+    subagentsRunning: 0,
+    subagentsTotal: 0,
+  };
+  for (const step of steps) {
+    const finished = step.status === "completed" || step.status === "error";
+    if (finished) summary.stepsDone++;
+    if (finished && step.sinceTodo) summary.stepsSinceTodo++;
+    if (isTaskTool(step.tool)) {
+      summary.subagentsTotal++;
+      if (step.status === "running") summary.subagentsRunning++;
+    }
+  }
+  return summary;
+}
+
+/** The model kept working well past its last todo update while items remain open. */
+export function isTodoListStale(
+  todos: NormalizedTodoItem[],
+  summary: TodoActivitySummary
+): boolean {
+  if (todos.length === 0) return false;
+  const hasOpenItem = todos.some((t) => t.status !== "completed" && t.status !== "cancelled");
+  return hasOpenItem && summary.stepsSinceTodo >= TODO_STALE_STEP_THRESHOLD;
 }
 
 export function resolveTaskChangedFiles(

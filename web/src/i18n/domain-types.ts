@@ -245,6 +245,11 @@ export interface TimelineI18n {
   switchRecommendedModel: string;
   turnCompleted: string;
   stepsCompleted: string;
+  todoStaleBadge: string;
+  todoStaleTitle: string;
+  todoStaleActive: string;
+  todoStaleStepsDone: string;
+  todoStaleSubagents: string;
   worktreeClean: string;
   worktreeIsolatedBadge: string;
   auditRunningBadge: string;
