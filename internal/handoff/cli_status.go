@@ -159,11 +159,24 @@ func (g *desktopGateway) importClaudeCLIProvider() LocalCLIImportResponse {
 	if provMap == nil {
 		provMap = map[string]interface{}{}
 	}
-	provMap["claude-code"] = map[string]interface{}{
-		"name":    "Claude Code (Local)",
-		"npm":     "@ai-sdk/anthropic",
-		"options": map[string]interface{}{"baseURL": baseURL, "apiKey": apiKey},
-		"models":  modelsMap,
+	isOAuthBridge := strings.HasPrefix(apiKey, "sk-ant-oat") || apiKey == "claude-code-local-oauth"
+	if isOAuthBridge {
+		provMap["claude-code"] = map[string]interface{}{
+			"name": "Claude Code (Local)",
+			"npm":  "@ai-sdk/openai-compatible",
+			"options": map[string]interface{}{
+				"baseURL": g.httpBridgeBaseURL() + "/api/hoxi/bridge/claude-code/v1",
+				"apiKey":  "hoxi-local-claude-code-bridge",
+			},
+			"models": modelsMap,
+		}
+	} else {
+		provMap["claude-code"] = map[string]interface{}{
+			"name":    "Claude Code (Local)",
+			"npm":     "@ai-sdk/anthropic",
+			"options": map[string]interface{}{"baseURL": baseURL, "apiKey": apiKey},
+			"models":  modelsMap,
+		}
 	}
 	doc["provider"] = provMap
 	if err := g.persistHoxiConfigDoc(doc); err != nil {

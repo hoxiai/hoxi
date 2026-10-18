@@ -42,6 +42,8 @@ func (g *Service) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/hoxi/local-cli/status", g.handleLocalCLIStatus)
 	mux.HandleFunc("/api/hoxi/local-cli/import", g.handleLocalCLIImport)
 	mux.HandleFunc("/api/hoxi/bridge/grok-cli/", g.handleGrokCLIBridge)
+	mux.HandleFunc("/api/hoxi/bridge/gemini-antigravity/", g.handleAntigravityCLIBridge)
+	mux.HandleFunc("/api/hoxi/bridge/claude-code/", g.handleClaudeCLIBridge)
 }
 
 func OpenCodeDataDBPath() string {

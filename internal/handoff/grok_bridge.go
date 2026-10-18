@@ -256,19 +256,30 @@ func (g *desktopGateway) syncLocalCLIBridgeURLs() {
 	if provMap == nil {
 		return
 	}
-	grokProv, ok := provMap["grok-cli"].(map[string]interface{})
-	if !ok {
-		return
+	bridges := map[string]string{
+		"grok-cli":    "/api/hoxi/bridge/grok-cli/v1",
+		"claude-code": "/api/hoxi/bridge/claude-code/v1",
+		"google":      "/api/hoxi/bridge/gemini-antigravity/v1",
 	}
-	opts, _ := grokProv["options"].(map[string]interface{})
-	if opts == nil {
-		return
+	changed := false
+	for pid, suffix := range bridges {
+		pObj, ok := provMap[pid].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		opts, _ := pObj["options"].(map[string]interface{})
+		if opts == nil {
+			continue
+		}
+		expected := g.httpBridgeBaseURL() + suffix
+		if cur, _ := opts["baseURL"].(string); strings.Contains(cur, suffix) && cur != expected {
+			opts["baseURL"] = expected
+			pObj["options"] = opts
+			provMap[pid] = pObj
+			changed = true
+		}
 	}
-	expected := g.httpBridgeBaseURL() + "/api/hoxi/bridge/grok-cli/v1"
-	if cur, _ := opts["baseURL"].(string); strings.Contains(cur, "/api/hoxi/bridge/grok-cli/v1") && cur != expected {
-		opts["baseURL"] = expected
-		grokProv["options"] = opts
-		provMap["grok-cli"] = grokProv
+	if changed {
 		doc["provider"] = provMap
 		_ = g.persistHoxiConfigDoc(doc)
 	}

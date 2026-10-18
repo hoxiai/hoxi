@@ -165,11 +165,24 @@ func (g *desktopGateway) importGeminiCLIProvider() LocalCLIImportResponse {
 	if provMap == nil {
 		provMap = map[string]interface{}{}
 	}
-	provMap["google"] = map[string]interface{}{
-		"name":    "Antigravity / Gemini (Local)",
-		"npm":     "@ai-sdk/google",
-		"options": map[string]interface{}{"apiKey": apiKey},
-		"models":  modelsMap,
+	isOAuthBridge := strings.HasPrefix(apiKey, "ya29.") || apiKey == "antigravity-local-oauth"
+	if isOAuthBridge {
+		provMap["google"] = map[string]interface{}{
+			"name": "Antigravity / Gemini (Local)",
+			"npm":  "@ai-sdk/openai-compatible",
+			"options": map[string]interface{}{
+				"baseURL": g.httpBridgeBaseURL() + "/api/hoxi/bridge/gemini-antigravity/v1",
+				"apiKey":  "hoxi-local-antigravity-bridge",
+			},
+			"models": modelsMap,
+		}
+	} else {
+		provMap["google"] = map[string]interface{}{
+			"name":    "Antigravity / Gemini (Local)",
+			"npm":     "@ai-sdk/google",
+			"options": map[string]interface{}{"apiKey": apiKey},
+			"models":  modelsMap,
+		}
 	}
 	doc["provider"] = provMap
 	if err := g.persistHoxiConfigDoc(doc); err != nil {
