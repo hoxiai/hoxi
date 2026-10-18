@@ -118,12 +118,12 @@ export default function TaskTimelineBar(props: {
   turns: MessageTurn[];
   activeMatchTurnID?: string | null;
   readingTurnID?: string | null;
-  onJumpToTurn: (messageID: string) => void;
+  onJumpToTurn: (messageID: string, partID?: string) => void;
   onToggleSearch: () => void;
   searchOpen: boolean;
   controlsVisible: boolean;
   onCloseSearch: () => void;
-  onSearchMatch: (messageID: string | null) => void;
+  onSearchMatch: (messageID: string | null, partID?: string) => void;
 }) {
   const [activeSegment, setActiveSegment] = createSignal<string | null>(null);
   const [interacting, setInteracting] = createSignal(false);
@@ -312,7 +312,7 @@ export default function TaskTimelineBar(props: {
                 aria-label={seg.label} aria-current={focusedSegment() === seg.id ? "step" : undefined}
                 onMouseEnter={(event) => showDetail(seg.id, event.currentTarget)}
                 onFocus={(event) => showDetail(seg.id, event.currentTarget)} onBlur={() => setActiveSegment(null)}
-                onClick={() => props.onJumpToTurn(seg.messageID)}>
+                onClick={() => props.onJumpToTurn(seg.messageID, seg.id)}>
                 <span style={{ background: highlighted() ? seg.color : "var(--text-faint)",
                   width: highlighted() ? `${seg.duration === undefined ? 45 : 20 + 80 * Math.sqrt(seg.duration / maxDuration())}%` : "30%",
                   opacity: highlighted() ? 1 : 0.4 }} />

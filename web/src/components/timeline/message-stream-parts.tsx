@@ -6,24 +6,27 @@ import MarkdownView from "./MarkdownView";
 import ContextActivityGroupComponent, {
   groupAssistantParts,
   hasLiveTailWorkGroup,
-  resolveMergedTurnParts,
   isContextToolPart as isContextTool,
   isExplorationPart,
   isTodoToolPart as isTodoTool,
+  resolveMergedTurnParts,
   type TurnRenderItem,
 } from "./ContextActivityGroupView";
 import type { MessageInfo, MessagePart } from "../../services/sse-types";
+import { isRunnerSessionID } from "../../services/api";
 import {
   isUserAbortError,
-  resumePausedSession,
+   resumePausedSession,
   retryLastUserPrompt,
+  revertToHere,
   workspace,
 } from "../../store/workspace";
 import { ObserverAuditBadge } from "../inspector/ObserverAuditBanner";
-import { Icon, Spinner, TextShimmer } from "../icons";
+import { Icon } from "../icons";
 import { t } from "../../i18n";
 import { AssistantErrorCard, SessionRetryCard } from "./assistant-error-card";
 import {
+  ActionIconButton,
   extractCommand,
   extractDescription,
   extractTargetFile,
@@ -35,14 +38,16 @@ import { collectCycleChangedFiles } from "./tool-card-state";
 import ExecutionWaitingIndicator from "./ExecutionWaitingIndicator";
 import ChangedFilesSummary from "./ChangedFilesSummary";
 
+
 export {
+  ActionIconButton,
   AssistantErrorCard,
   groupAssistantParts,
   hasLiveTailWorkGroup,
-  resolveMergedTurnParts,
   isContextTool,
   isExplorationPart,
   isTodoTool,
+  resolveMergedTurnParts,
   SessionRetryCard,
   type TurnRenderItem,
 };
@@ -87,11 +92,18 @@ export function basename(p: string): string {
   return parts.length ? parts[parts.length - 1] : "this project";
 }
 
-export function ContextActivityGroupView(props: { parts: MessagePart[]; isLiveTail?: boolean }) {
+export function ContextActivityGroupView(props: {
+  parts: MessagePart[];
+  isLiveTail?: boolean;
+  startedAt?: number;
+  revealKey?: string;
+}) {
   return (
     <ContextActivityGroupComponent
       parts={props.parts}
       isLiveTail={props.isLiveTail}
+      startedAt={props.startedAt}
+      revealKey={props.revealKey}
       renderFallbackPart={(part) => <PartView part={part} />}
     />
   );
@@ -104,7 +116,7 @@ export function PartView(props: { part: MessagePart }) {
       <Match when={part()?.type === "reasoning"}>
         <ThoughtBox part={part() as Extract<MessagePart, { type: "reasoning" }>} />
       </Match>
-      <Match when={part()?.type === "tool" && !isTodoTool(part())}>
+      <Match when={part()?.type === "tool"}>
         <ToolCard part={part() as Extract<MessagePart, { type: "tool" }>} />
       </Match>
       <Match when={part()?.type === "text"}>
@@ -205,12 +217,18 @@ export function AssistantTurnFooter(props: {
         }
       }
 
+      const revertMessageID =
+        (startIdx > 0 && list[startIdx - 1]?.info.role === "user"
+          ? list[startIdx - 1]?.info.id
+          : cycleTurns[0]?.info.id) || props.info.id;
+
       return {
         created,
         completed,
         toolCount,
         finalText: textChunks.join("\n\n").trim(),
         changedFiles: collectCycleChangedFiles(cycleTurns, props.info.sessionID),
+        revertMessageID,
       };
     }
 
@@ -229,6 +247,7 @@ export function AssistantTurnFooter(props: {
         [{ info: props.info, parts: props.parts }],
         props.info.sessionID
       ),
+      revertMessageID: props.info.id,
     };
   });
 
@@ -270,100 +289,104 @@ export function AssistantTurnFooter(props: {
   return (
     <Show when={cycleSummary()}>
       {(summary) => (
-        <Show when={!isTurnExecuting() || summary().changedFiles.length > 0}>
-          <div class="mt-2 space-y-2 select-none">
-            <ChangedFilesSummary files={summary().changedFiles} />
+        <Show when={!isTurnExecuting()}>
+          <div class="mt-2 space-y-2.5 select-none">
+            <ChangedFilesSummary
+              files={summary().changedFiles}
+              onUndo={
+                !isRunnerSessionID(props.info.sessionID)
+                  ? () => void revertToHere(props.info.sessionID, summary().revertMessageID)
+                  : undefined
+              }
+            />
 
-            <Show when={!isTurnExecuting()}>
-              <div class="flex items-center gap-2 flex-wrap text-[12px] text-[var(--text-faint)]">
-                <Show
-                  when={interruptMode()}
-                  fallback={
-                    <span class="inline-flex items-center gap-1 text-[var(--ok-text)]/85">
-                      <Icon name="circle-check" size="small" />
-                      <span>{t("timeline.turnCompleted")}</span>
-                    </span>
-                  }
+            <div class="flex items-center gap-2 flex-wrap text-[12px] text-[var(--text-faint)]">
+
+              <Show when={summary().finalText.length > 0}>
+                <ActionIconButton
+                  label={copied() ? t("common.copied") : t("common.copy")}
+                  onClick={() => void copyResponse()}
                 >
-                  {(mode) => (
-                    <span
-                      class={`inline-flex items-center gap-1 font-medium ${
-                        mode() === "paused"
-                          ? "text-[var(--warn-text)]"
-                          : "text-[var(--danger-text)]"
-                      }`}
-                    >
-                      <span class="font-mono text-[10px] leading-none">
-                        {mode() === "paused" ? "⏸" : "■"}
-                      </span>
-                      <span>
-                        {mode() === "paused"
-                          ? t("timeline.turnPaused")
-                          : t("timeline.turnStopped")}
-                      </span>
+                  <Show when={copied()} fallback={<Icon name="copy" size="small" />}>
+                    <Icon name="check" size="small" class="text-[var(--ok-text)]" />
+                  </Show>
+                </ActionIconButton>
+              </Show>
+
+              <Show
+                when={interruptMode()}
+                fallback={
+                  <span class="inline-flex items-center gap-1 text-[var(--ok-text)]/85">
+                    <Icon name="circle-check" size="small" />
+                    <span>{t("timeline.turnCompleted")}</span>
+                  </span>
+                }
+              >
+                {(mode) => (
+                  <span
+                    class={`inline-flex items-center gap-1 font-medium ${
+                      mode() === "paused"
+                        ? "text-[var(--warn-text)]"
+                        : "text-[var(--danger-text)]"
+                    }`}
+                  >
+                    <span class="font-mono text-[10px] leading-none">
+                      {mode() === "paused" ? "⏸" : "■"}
                     </span>
-                  )}
-                </Show>
-
-                <Show when={durationLabel()}>
-                  <span>·</span>
-                  <span class="font-mono tabular-nums text-[var(--text-muted)]">
-                    {durationLabel()}
+                    <span>
+                      {mode() === "paused"
+                        ? t("timeline.turnPaused")
+                        : t("timeline.turnStopped")}
+                    </span>
                   </span>
-                </Show>
+                )}
+              </Show>
 
-                <Show when={summary().toolCount > 0}>
-                  <span>·</span>
-                  <span class="font-mono tabular-nums text-[var(--text-muted)]">
-                    {t("timeline.stepsCompleted", { count: summary().toolCount })}
-                  </span>
-                </Show>
+              <Show when={durationLabel()}>
+                <span>·</span>
+                <span class="font-mono tabular-nums text-[var(--text-muted)]">
+                  {durationLabel()}
+                </span>
+              </Show>
 
-                <Show when={isLatestTurn() && interruptMode() && !props.isSessionBusy}>
-                  <button
-                    type="button"
-                    disabled={resuming()}
-                    onClick={() => void onResume()}
-                    title={t("timeline.resumeTooltip")}
-                    class="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[12px] font-medium text-[var(--accent-primary)] hover:bg-[var(--accent-surface)] disabled:opacity-50 transition-colors cursor-pointer"
-                  >
-                    <span class="text-[10px] leading-none">▶</span>
-                    <span>{t("timeline.resume")}</span>
-                  </button>
+              <Show when={summary().toolCount > 0}>
+                <span>·</span>
+                <span class="font-mono tabular-nums text-[var(--text-muted)]">
+                  {t("timeline.stepsCompleted", { count: summary().toolCount })}
+                </span>
+              </Show>
 
-                  <button
-                    type="button"
-                    onClick={() => void retryLastUserPrompt(props.info.sessionID)}
-                    class="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[12px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
-                  >
-                    <span>↺</span>
-                    <span>{t("timeline.retryTask")}</span>
-                  </button>
-                </Show>
+              <Show when={isLatestTurn() && interruptMode() && !props.isSessionBusy}>
+                <button
+                  type="button"
+                  disabled={resuming()}
+                  onClick={() => void onResume()}
+                  title={t("timeline.resumeTooltip")}
+                  class="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[12px] font-medium text-[var(--accent-primary)] hover:bg-[var(--accent-surface)] disabled:opacity-50 transition-colors cursor-pointer"
+                >
+                  <span class="text-[10px] leading-none">▶</span>
+                  <span>{t("timeline.resume")}</span>
+                </button>
 
-                <Show when={isLatestTurn()}>
-                  <ObserverAuditBadge sessionID={props.info.sessionID} />
-                </Show>
+                <button
+                  type="button"
+                  onClick={() => void retryLastUserPrompt(props.info.sessionID)}
+                  class="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[12px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+                >
+                  <span>↺</span>
+                  <span>{t("timeline.retryTask")}</span>
+                </button>
+              </Show>
 
-                <Show when={summary().finalText.length > 0}>
-                  <button
-                    type="button"
-                    onClick={() => void copyResponse()}
-                    title={copied() ? t("common.copied") : t("timeline.copyResponse")}
-                    class="ml-auto inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[12px] text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
-                  >
-                    <Show when={copied()} fallback={<Icon name="copy" size="small" />}>
-                      <Icon name="check" size="small" class="text-[var(--ok-text)]" />
-                    </Show>
-                    <span>{copied() ? t("common.copied") : t("common.copy")}</span>
-                  </button>
-                </Show>
-              </div>
-            </Show>
+              <Show when={isLatestTurn()}>
+                <ObserverAuditBadge sessionID={props.info.sessionID} />
+              </Show>
+            </div>
           </div>
         </Show>
       )}
     </Show>
+
   );
 }
 

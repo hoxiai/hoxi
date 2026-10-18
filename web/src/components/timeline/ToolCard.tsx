@@ -15,10 +15,11 @@ import {
 import { t } from "../../i18n";
 import { DiffChanges, FileIcon, Icon, Spinner, TextShimmer, ToolStatusTitle } from "../icons";
 import SubagentInlineTimeline, {
-  SubagentRollingPreview,
   useSubagentTelemetry,
 } from "./SubagentInlineTimeline";
+
 import {
+  ActionIconButton,
   extractCommand, extractDescription, extractExitCode, extractRollingShellLines,
   extractShellOutput, extractTargetFile, formatToolDisplayName, getDirectory, getFilename,
   InlineDiagnosticsDisplay, isEditingTool, isReadTool, isShellTool,
@@ -272,33 +273,16 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
                     >
                       {getFilename(file())}
                     </button>
-                    <Show when={extraTargetFiles().length === 0 && getDirectory(file())}>
+                    <Show when={getDirectory(file())}>
                       <span class="hidden md:inline truncate font-mono text-[11.5px] text-[var(--text-faint)]">
                         {getDirectory(file())}/
                       </span>
                     </Show>
-                    <For each={extraTargetFiles()}>
-                      {(extraFile) => (
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            const matched = fileDiffs().find(
-                              (d) =>
-                                d.file === extraFile ||
-                                d.file.endsWith(`/${extraFile}`) ||
-                                extraFile.endsWith(`/${d.file}`)
-                            );
-                            openChangedFileInInspector(matched ?? extraFile);
-                          }}
-                          class="hidden sm:inline-flex items-center gap-1 font-mono text-[12px] font-medium text-[var(--text-secondary)] hover:text-[var(--accent-primary)] hover:underline truncate cursor-pointer"
-                          title={extraFile}
-                        >
-                          <span>·</span>
-                          <span>{getFilename(extraFile)}</span>
-                        </button>
-                      )}
-                    </For>
+                    <Show when={extraTargetFiles().length > 0}>
+                      <span class="rounded bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[10.5px] font-medium text-[var(--text-muted)] shrink-0">
+                        +{extraTargetFiles().length}
+                      </span>
+                    </Show>
                     <For each={toolArgPills()}>
                       {(pill) => (
                         <span class="hidden sm:inline-block font-mono text-[11.5px] text-[var(--text-faint)] truncate max-w-[200px]">
@@ -345,16 +329,16 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
 
             <Show when={childSessionID()}>
               {(subId) => (
-                <button
-                  type="button"
+                <ActionIconButton
+                  variant="accent"
+                  label={t("timeline.openSubagent")}
                   onClick={(e) => {
                     e.stopPropagation();
                     void selectSession(subId());
                   }}
-                  class="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[12px] font-medium text-[var(--accent-primary)] hover:bg-[var(--accent-surface)] transition-colors cursor-pointer"
                 >
                   <Icon name="task" size="small" />
-                </button>
+                </ActionIconButton>
               )}
             </Show>
 
@@ -369,18 +353,17 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
             </Show>
 
             <Show when={isEdit() && status() === "completed"}>
-              <button
-                type="button"
+              <ActionIconButton
+                variant="warn"
+                label={t("toolCard.undo")}
                 onClick={(e) => {
                   e.stopPropagation();
                   void revertToHere(props.part.sessionID, props.part.messageID, props.part.id);
                 }}
-                title={t("toolCard.revertTooltip")}
-                class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[12px] text-[var(--text-muted)] hover:text-[var(--warn-text)] hover:bg-[var(--warn-surface)] opacity-0 group-hover/tool:opacity-100 transition-opacity cursor-pointer"
+                class="opacity-0 group-hover/tool:opacity-100"
               >
                 <Icon name="arrow-undo-down" size="small" />
-                <span class="hidden sm:inline">{t("toolCard.undo")}</span>
-              </button>
+              </ActionIconButton>
             </Show>
 
             <Show when={elapsed() > 0}>
@@ -395,25 +378,16 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
           </div>
         </div>
 
-        <Show when={isTask() && isRunning() && !expanded()}>
-          <SubagentRollingPreview
-            tools={subagentTelemetry().recentTools}
-            onExpand={() => setExpanded(true)}
-          />
-        </Show>
-
-        {/* Floating Popover for Subagent `task` tool calls */}
+        {/* Inline nested step list for Subagent `task` tool calls */}
         <Show when={expanded() && isTask() && childSessionID()}>
           {(subId) => (
             <SubagentInlineTimeline
               childSessionID={subId()}
               parentRunning={isRunning()}
-              description={description()}
-              agentType={String((props.part.state.input as any)?.subagent_type || "")}
-              onClose={() => setExpanded(false)}
             />
           )}
         </Show>
+
 
         {/* Collapsible / Live Body Container (only bordered when visible) */}
         <Show when={hasBody()}>
@@ -465,7 +439,7 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
       </div>
 
       {/* Kilo `Loaded` context files sub-rows under `read` tool */}
-      <Show when={loadedFiles().length > 0}>
+      <Show when={expanded() && loadedFiles().length > 0}>
         <div class="mt-1 pl-3 space-y-0.5">
           <For each={loadedFiles()}>
             {(filePath) => (

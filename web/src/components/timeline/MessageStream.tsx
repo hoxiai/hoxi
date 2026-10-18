@@ -20,6 +20,7 @@ import {
 } from "../../store/workspace";
 import { Icon } from "../icons";
 import {
+  ActionIconButton,
   formatMessageTime,
   hasLiveTailWorkGroup,
   isTodoTool,
@@ -43,6 +44,7 @@ import { createTimelineScroll } from "./timeline-scroll";
 import { createTranscriptControls } from "./transcript-controls";
 import { createReadingPositionTracker } from "./reading-position";
 import { createSessionScroll } from "./session-scroll";
+import { resolveTurnNavigationTarget } from "./ContextActivityGroupView";
 
 export default function MessageStream(props: { hidden?: boolean }) {
   let scroller: HTMLDivElement | undefined;
@@ -52,6 +54,7 @@ export default function MessageStream(props: { hidden?: boolean }) {
   const [copiedUserMsgId, setCopiedUserMsgId] = createSignal<string | null>(null);
   const [searchOpen, setSearchOpen] = createSignal(false);
   const [activeMatchTurnID, setActiveMatchTurnID] = createSignal<string | null>(null);
+  const [navigationRevision, setNavigationRevision] = createSignal(0);
 
   const activeSession = createMemo(() => {
     const id = workspace.activeSessionID;
@@ -118,7 +121,10 @@ export default function MessageStream(props: { hidden?: boolean }) {
     const last = list[list.length - 1];
     if (last.info.role === "assistant" && last.info.error) return false;
 
-    return !hasLiveTailWorkGroup(list.slice(lastUserIdx + 1));
+    const cycleTurns = list.slice(lastUserIdx + 1);
+    if (hasLiveTailWorkGroup(cycleTurns)) return false;
+
+    return true;
   });
 
   const executionCycleMeta = createMemo(() => {
@@ -232,13 +238,15 @@ export default function MessageStream(props: { hidden?: boolean }) {
     }
   };
 
-  const scrollToTurn = (messageID: string) => {
+  const scrollToTurn = (messageID: string, partID?: string) => {
     sessionScroll.interrupt();
     scroll.pause();
-    turnWindow.ensureTurnVisible(messageID);
+    const targetID = resolveTurnNavigationTarget(turns(), messageID, partID);
+    setNavigationRevision((value) => value + 1);
+    turnWindow.ensureTurnVisible(targetID);
     queueMicrotask(() => {
       if (!scroller) return;
-      const el = scroller.querySelector(`[data-turn-id="${CSS.escape(messageID)}"]`);
+      const el = scroller.querySelector(`[data-turn-id="${CSS.escape(targetID)}"]`);
       if (el instanceof HTMLElement) {
         el.scrollIntoView({ behavior: "smooth", block: "center" });
       }
@@ -283,9 +291,9 @@ export default function MessageStream(props: { hidden?: boolean }) {
            turns={turns()}
            readingTurnID={readingPosition.readingTurnID()}
           activeMatchTurnID={activeMatchTurnID()}
-          onJumpToTurn={(msgID) => {
+          onJumpToTurn={(msgID, partID) => {
             setActiveMatchTurnID(msgID);
-            scrollToTurn(msgID);
+            scrollToTurn(msgID, partID);
           }}
           onToggleSearch={() => setSearchOpen((v) => !v)}
           searchOpen={searchOpen()}
@@ -294,9 +302,9 @@ export default function MessageStream(props: { hidden?: boolean }) {
             setSearchOpen(false);
             setActiveMatchTurnID(null);
           }}
-          onSearchMatch={(msgID) => {
+          onSearchMatch={(msgID, partID) => {
             setActiveMatchTurnID(msgID);
-            if (msgID) scrollToTurn(msgID);
+            if (msgID) scrollToTurn(msgID, partID);
           }}
         />
     <div
@@ -350,8 +358,12 @@ export default function MessageStream(props: { hidden?: boolean }) {
                         turn={turn}
                         globalIndex={globalIndex()}
                         allTurns={turns()}
+                        windowStartIndex={turnWindow.startIndex()}
                         isSessionBusy={isSessionBusy()}
+                        activeMatchTurnID={activeMatchTurnID()}
+                        navigationRevision={navigationRevision()}
                         isHighlighted={activeMatchTurnID() === turn.info.id}
+                        cycleStartedAt={executionCycleMeta().startedAt}
                       />
                     }
                   >
@@ -399,45 +411,47 @@ export default function MessageStream(props: { hidden?: boolean }) {
                       </div>
 
                       {/* Kilo-style User Message Hover Actions & Metadata */}
-                      <div class="mt-1 flex items-center justify-end gap-2 px-1 text-[12px] text-[var(--text-faint)] opacity-0 group-hover/turn:opacity-100 transition-opacity">
+                      <div class="mt-1 flex items-center justify-end gap-1 px-1 text-[12px] text-[var(--text-faint)] opacity-0 group-hover/turn:opacity-100 transition-opacity">
                         <Show when={formatMessageTime(turn.info.time?.created)}>
-                          <span class="font-mono text-[11.5px]">{formatMessageTime(turn.info.time?.created)}</span>
+                          <span class="mr-1 font-mono text-[11.5px]">{formatMessageTime(turn.info.time?.created)}</span>
                         </Show>
 
-                        <button
-                          type="button"
-                          class="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[12px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+                        <ActionIconButton
+                          label={copiedUserMsgId() === turn.info.id ? t("common.copied") : t("common.copy")}
                           onClick={() => void onCopyUserMessage(turn.info.id, turn.parts)}
-                          title={t("timeline.copyPromptTooltip")}
                         >
-                          <Icon
-                            name={copiedUserMsgId() === turn.info.id ? "check" : "copy"}
-                            size="small"
-                          />
-                          <span>{copiedUserMsgId() === turn.info.id ? t("common.copied") : t("common.copy")}</span>
-                        </button>
+                          <Show
+                            when={copiedUserMsgId() === turn.info.id}
+                            fallback={<Icon name="copy" size="small" />}
+                          >
+                            <Icon name="check" size="small" class="text-[var(--ok-text)]" />
+                          </Show>
+                        </ActionIconButton>
 
-                        <button
-                          type="button"
+                        <ActionIconButton
                           disabled={isRunnerSessionID(workspace.activeSessionID)}
-                          class="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[12px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                          label={
+                            isRunnerSessionID(workspace.activeSessionID)
+                              ? t("timeline.runnerFeatureUnsupported")
+                              : t("timeline.forkBtn")
+                          }
                           onClick={() => void onForkFromMessage(turn.info.id)}
-                          title={isRunnerSessionID(workspace.activeSessionID) ? t("timeline.runnerFeatureUnsupported") : t("timeline.forkTooltip")}
                         >
                           <Icon name="fork" size="small" />
-                          <span>{t("timeline.forkBtn")}</span>
-                        </button>
+                        </ActionIconButton>
 
-                        <button
-                          type="button"
+                        <ActionIconButton
                           disabled={isRunnerSessionID(workspace.activeSessionID)}
-                          class="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[12px] text-[var(--text-muted)] hover:text-[var(--warn-text)] hover:bg-[var(--warn-surface)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                          variant="warn"
+                          label={
+                            isRunnerSessionID(workspace.activeSessionID)
+                              ? t("timeline.runnerFeatureUnsupported")
+                              : t("timeline.revertBtn")
+                          }
                           onClick={() => void onRevertToMessage(turn.info.id)}
-                          title={isRunnerSessionID(workspace.activeSessionID) ? t("timeline.runnerFeatureUnsupported") : t("timeline.revertTooltip")}
                         >
                           <Icon name="arrow-undo-down" size="small" />
-                          <span>{t("timeline.revertBtn")}</span>
-                        </button>
+                        </ActionIconButton>
                       </div>
                     </div>
                   </Show>

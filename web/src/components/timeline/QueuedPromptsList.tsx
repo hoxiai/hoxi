@@ -11,6 +11,7 @@ import {
 import { isRunnerSessionID } from "../../services/api";
 import { TextShimmer } from "../icons";
 import { t } from "../../i18n";
+import { ActionIconButton } from "./tool-card-helpers";
 
 /**
  * Ported from Kilo Code `UserMessageDisplay` (`queued` state) & `session-queue.ts`:
@@ -67,45 +68,42 @@ export default function QueuedPromptsList(props: {
                 </div>
 
                 {/* Queued Status & Action Bar: Queued | Send Now | Edit | Delete */}
-                <div class="mt-1.5 flex items-center justify-end gap-1.5 px-1 text-[12px]">
-                  <span class="inline-flex items-center gap-1 px-1.5 py-0.5 text-[11.5px] text-[var(--text-muted)]">
+                <div class="mt-1.5 flex items-center justify-end gap-1 px-1 text-[12px]">
+                  <span class="mr-1 inline-flex items-center gap-1 px-1.5 py-0.5 text-[11.5px] text-[var(--text-muted)]">
                     <Clock size={11} class="shrink-0" />
                     <TextShimmer text={t("timeline.queuedBadge")} active={true} />
                   </span>
 
-                  <button
-                    type="button"
+                  <ActionIconButton
                     disabled={isRunnerSessionID(sid())}
+                    variant="accent"
+                    label={
+                      isRunnerSessionID(sid())
+                        ? t("timeline.runnerFeatureUnsupported")
+                        : t("timeline.queueSendNow")
+                    }
                     onClick={() => {
                       props.onSendNow();
                       void sendQueuedPromptNow(sid(), item.id);
                     }}
-                    title={isRunnerSessionID(sid()) ? t("timeline.runnerFeatureUnsupported") : t("timeline.queueSendNowTooltip")}
-                    class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11.5px] text-[var(--text-muted)] hover:text-[var(--accent-primary)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
                   >
-                    <ArrowUp size={11} />
-                    <span>{t("timeline.queueSendNow")}</span>
-                  </button>
+                    <ArrowUp size={13} />
+                  </ActionIconButton>
 
-                  <button
-                    type="button"
+                  <ActionIconButton
+                    label={t("timeline.queueEdit")}
                     onClick={() => editQueuedPrompt(sid(), item.id)}
-                    title={t("timeline.queueEditTooltip")}
-                    class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11.5px] text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
                   >
-                    <Pencil size={10.5} />
-                    <span>{t("timeline.queueEdit")}</span>
-                  </button>
+                    <Pencil size={12} />
+                  </ActionIconButton>
 
-                  <button
-                    type="button"
+                  <ActionIconButton
+                    variant="danger"
+                    label={t("timeline.queueDelete")}
                     onClick={() => removeQueuedPrompt(sid(), item.id)}
-                    title={t("timeline.queueDeleteTooltip")}
-                    class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11.5px] text-[var(--text-muted)] hover:text-[var(--danger-text)] transition-colors cursor-pointer"
                   >
-                    <Trash2 size={10.5} />
-                    <span>{t("timeline.queueDelete")}</span>
-                  </button>
+                    <Trash2 size={12} />
+                  </ActionIconButton>
                 </div>
               </div>
             )}

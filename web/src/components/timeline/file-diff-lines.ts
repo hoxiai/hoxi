@@ -3,10 +3,23 @@ import type { SnapshotFileDiff } from "../../services/sse-types";
 import { workspace } from "../../store/workspace";
 import { collectCycleChangedFiles, normalizeWorkspaceRelPath } from "./tool-card-state";
 
+function findMatchingDiff(
+  list: SnapshotFileDiff[] | undefined,
+  norm: string
+): SnapshotFileDiff | undefined {
+  if (!list || list.length === 0) return undefined;
+  const exact = list.find((d) => normalizeWorkspaceRelPath(d.file) === norm);
+  if (exact) return exact;
+  return list.find((d) => {
+    const candidate = normalizeWorkspaceRelPath(d.file);
+    return candidate.endsWith(`/${norm}`) || norm.endsWith(`/${candidate}`);
+  });
+}
+
 /**
  * Resolves the best available SnapshotFileDiff for `filePath` in `sessionID`
- * by checking the explicit fallback diff, session-scoped diffs, and tool
- * edit/write/patch parts across the session's message history.
+ * by checking the explicit fallback diff, session-scoped diffs, worktree diffs
+ * (including nested sub-repositories), and tool edit/write/patch parts.
  */
 export function resolveSessionDiffForFile(
   filePath: string,
@@ -31,17 +44,25 @@ export function resolveSessionDiffForFile(
 
   const sid = sessionID || workspace.activeSessionID;
   if (sid) {
-    const direct = (workspace.diffsBySession[sid] ?? []).find((d) => matchesPath(d.file));
+    const direct = findMatchingDiff(workspace.diffsBySession[sid], norm);
     if (direct && (direct.patch || direct.before !== undefined || direct.after !== undefined)) {
       return direct;
     }
+    const wtDirect = findMatchingDiff(workspace.worktreeDiffsBySession[sid], norm);
+    if (wtDirect && (wtDirect.patch || wtDirect.before !== undefined || wtDirect.after !== undefined)) {
+      return wtDirect;
+    }
     const turns = workspace.messagesBySession[sid] ?? [];
     if (turns.length > 0) {
-      const fromTurns = collectCycleChangedFiles(turns, sid).find((d) => matchesPath(d.file));
+      const fromTurns = findMatchingDiff(collectCycleChangedFiles(turns, sid), norm);
       if (fromTurns) return fromTurns;
     }
     if (direct) return direct;
+    if (wtDirect) return wtDirect;
   }
+
+  const rootWt = findMatchingDiff(workspace.worktreeDiffsBySession["__root__"], norm);
+  if (rootWt) return rootWt;
 
   return undefined;
 }

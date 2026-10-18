@@ -1,9 +1,43 @@
-import { createMemo, createSignal, For, Show, type JSX } from "solid-js";
-import type { MessageInfo, MessagePart } from "../../services/sse-types";
-import type { MessageTurn } from "../../store/workspace";
-import { openFileInInspector } from "../../store/workspace";
-import { FileIcon, Icon, Spinner, TextShimmer, ToolStatusTitle } from "../icons";
-import { extractTargetFile, kiloToolIconName, resolveToolInput } from "./tool-card-helpers";
+// web/src/components/timeline/ContextActivityGroupView.tsx
+import {
+  createEffect,
+  createMemo,
+  createSignal,
+  For,
+  onCleanup,
+  Show,
+  type JSX,
+} from "solid-js";
+import type { MessageInfo, MessagePart, ToolPart } from "../../services/sse-types";
+import {
+  extractChildSubagentSessionId,
+  isSessionBusy,
+  isSubagentToolAlive,
+  isSubagentToolInterrupted,
+  type MessageTurn,
+  workspace,
+} from "../../store/workspace";
+import { DiffChanges, Icon, Spinner, TextShimmer } from "../icons";
+import { resolveSubagentCurrentStepLabel } from "./SubagentInlineTimeline";
+import { reasoningHeading, reasoningSummary } from "./ThoughtBox";
+
+import {
+  extractCommand,
+  extractDescription,
+  extractExitCode,
+  extractTargetFile,
+  formatToolDisplayName,
+  getFilename,
+  isEditingTool,
+  isReadTool,
+  isSearchOrListTool,
+  isShellTool,
+  isTaskTool,
+} from "./tool-card-helpers";
+import {
+  resolveToolFileDiagnostics,
+  resolveToolFileDiffs,
+} from "./tool-card-state";
 import { t as tI18n } from "../../i18n";
 
 function basename(p: string): string {
@@ -12,10 +46,20 @@ function basename(p: string): string {
 }
 
 export function isTodoToolPart(part: MessagePart): boolean {
-  return part.type === "tool" && part.tool.toLowerCase() === "todowrite";
+  if (part.type !== "tool") return false;
+  const lower = part.tool.toLowerCase();
+  return lower === "todowrite" || lower === "todoread";
 }
 
-export function isContextToolPart(part: MessagePart): part is Extract<MessagePart, { type: "tool" }> {
+export function isVisibleTextPart(
+  part: MessagePart
+): part is Extract<MessagePart, { type: "text" }> {
+  return part.type === "text" && part.text.trim().length > 0;
+}
+
+export function isContextToolPart(
+  part: MessagePart
+): part is Extract<MessagePart, { type: "tool" }> {
   if (part.type !== "tool") return false;
   if (part.state.status === "error") return false;
   const t = part.tool.toLowerCase();
@@ -29,9 +73,31 @@ export function isContextToolPart(part: MessagePart): part is Extract<MessagePar
   );
 }
 
-export function isExplorationPart(part: MessagePart): boolean {
-  if (part.type === "reasoning") return true;
-  return isContextToolPart(part);
+export function isWorkPart(part: MessagePart): boolean {
+  if (part.type === "reasoning") {
+    return part.time?.end == null || Boolean(part.text && part.text.trim().length > 0);
+  }
+  return part.type === "tool";
+}
+
+export const isExplorationPart = isWorkPart;
+
+export function isAttentionToolPart(part: MessagePart): part is ToolPart {
+  if (part.type !== "tool" || isTodoToolPart(part)) return false;
+  if (part.state.status === "error") return true;
+  if (isShellTool(part.tool) && part.state.status === "completed") {
+    const code = extractExitCode(part.state);
+    if (code !== undefined && code !== 0) return true;
+  }
+  if (isEditingTool(part.tool) && part.state.status === "completed") {
+    const file = extractTargetFile(part) || "";
+    const diags = resolveToolFileDiagnostics(part, true, file);
+    if (diags.some((d) => !d.severity || d.severity === 1)) return true;
+  }
+  if (isTaskTool(part.tool) && isSubagentToolInterrupted(part, part.sessionID)) {
+    return true;
+  }
+  return false;
 }
 
 export type TurnRenderItem =
@@ -58,19 +124,6 @@ export function groupAssistantParts(parts: MessagePart[]): TurnRenderItem[] {
   }
   flushBuffer();
   return items;
-}
-
-export function isVisibleTextPart(
-  part: MessagePart
-): part is Extract<MessagePart, { type: "text" }> {
-  return part.type === "text" && part.text.trim().length > 0;
-}
-
-export function isWorkPart(part: MessagePart): boolean {
-  if (part.type === "reasoning") {
-    return part.time?.end == null || Boolean(part.text && part.text.trim().length > 0);
-  }
-  return part.type === "tool";
 }
 
 export interface MergedTurnResolution {
@@ -190,6 +243,20 @@ export function resolveMergedTurnParts(
   };
 }
 
+// Folded turns have no visual anchor. Find the turn that actually renders their parts.
+export function resolveTurnNavigationTarget(turns: MessageTurn[], messageID: string, partID?: string): string {
+  const sourceIndex = turns.findIndex((turn) => turn.info.id === messageID);
+  const source = turns[sourceIndex];
+  if (!source || source.info.role !== "assistant") return messageID;
+  const partIDs = new Set(partID ? [partID] : source.parts.map((part) => part.id));
+  for (let index = sourceIndex; index < turns.length && turns[index].info.role === "assistant"; index++) {
+    const merged = resolveMergedTurnParts(turns, index);
+    if (merged.effectiveParts.some((part) => partIDs.has(part.id)) ||
+        (index === sourceIndex && source.info.error)) return turns[index].info.id;
+  }
+  return messageID;
+}
+
 /**
  * Returns true when the latest assistant cycle ends with an active work group
  * (no visible text part after the last tool/reasoning part), meaning the inline
@@ -212,269 +279,403 @@ export function hasLiveTailWorkGroup(
   return false;
 }
 
-function summarizeContextTool(part: Extract<MessagePart, { type: "tool" }>): {
-  action: string;
-  target: string;
-  filePath?: string;
-  detail?: string;
-  pills: string[];
-} {
-  const t = part.tool.toLowerCase();
-  const input = resolveToolInput(part);
-  const pills: string[] = [];
-  if (typeof input.offset === "number") pills.push(`offset=${input.offset}`);
-  if (typeof input.limit === "number") pills.push(`limit=${input.limit}`);
-  if (typeof input.include === "string" && input.include) pills.push(`include=${input.include}`);
-
-  if (t.includes("read")) {
-    const file = extractTargetFile(part) || "";
-    return {
-      action: tI18n("toolCard.actionRead"),
-      target: basename(file) || file || "…",
-      filePath: file || undefined,
-      detail: file.includes("/") ? file.slice(0, file.lastIndexOf("/")) : undefined,
-      pills,
-    };
+function summarizeStepTarget(part: ToolPart): string {
+  if (isTaskTool(part.tool)) {
+    const desc = extractDescription(part);
+    const childStep = resolveSubagentCurrentStepLabel(
+      extractChildSubagentSessionId(part)
+    );
+    if (desc && childStep) return `${desc} · ${childStep}`;
+    return desc || childStep || "";
   }
-  if (t === "grep") {
-    return {
-      action: tI18n("toolCard.actionSearch"),
-      target: typeof input.pattern === "string" && input.pattern ? `"${input.pattern}"` : "…",
-      detail: typeof input.path === "string" ? basename(input.path) : undefined,
-      pills,
-    };
+  const file = extractTargetFile(part);
+  if (file) return getFilename(file) || basename(file);
+  if (isShellTool(part.tool)) {
+    const desc = extractDescription(part);
+    if (desc) return desc;
+    const cmd = extractCommand(part);
+    return cmd ? `$ ${cmd}` : "";
   }
-  if (t === "glob") {
-    return {
-      action: tI18n("toolCard.actionFind"),
-      target: typeof input.pattern === "string" && input.pattern ? input.pattern : "…",
-      detail: typeof input.path === "string" ? basename(input.path) : undefined,
-      pills,
-    };
+  const desc = extractDescription(part);
+  if (desc) return desc;
+  const inp = part.state.input || {};
+  if (typeof inp.pattern === "string" && inp.pattern.trim()) {
+    return `"${inp.pattern.trim()}"`;
   }
-  const dir = typeof input.path === "string" && input.path ? basename(input.path) : ".";
-  return {
-    action: tI18n("toolCard.actionList"),
-    target: dir,
-    pills,
-  };
+  return "";
 }
+
+
+// Persistent manual expand state keyed by the first part ID of each group
+const expandedActivityGroupKeys = new Set<string>();
 
 export default function ContextActivityGroupView(props: {
   parts: MessagePart[];
   renderFallbackPart: (part: MessagePart) => JSX.Element;
   isLiveTail?: boolean;
+  startedAt?: number;
+  revealKey?: string;
 }) {
-  const isRunning = createMemo(() =>
-    props.isLiveTail || props.parts.some((p) => {
-      if (p.type === "reasoning") return p.time?.end == null;
-      if (p.type === "tool") return p.state.status === "pending" || p.state.status === "running";
+  const groupKey = createMemo(() => props.parts[0]?.id || "");
+  const [open, setOpen] = createSignal(expandedActivityGroupKeys.has(groupKey()));
+
+  createEffect(() => {
+    if (!props.revealKey) return;
+    const key = groupKey();
+    if (key) expandedActivityGroupKeys.add(key);
+    setOpen(true);
+  });
+
+  createEffect(() => {
+    const key = groupKey();
+    if (key) {
+      setOpen(expandedActivityGroupKeys.has(key));
+    }
+  });
+
+  const toggleOpen = () => {
+    const key = groupKey();
+    const next = !open();
+    if (key) {
+      if (next) expandedActivityGroupKeys.add(key);
+      else expandedActivityGroupKeys.delete(key);
+    }
+    setOpen(next);
+  };
+
+  const sessionID = createMemo(() => props.parts[0]?.sessionID || workspace.activeSessionID);
+
+  const isRunning = createMemo(() => {
+    if (props.isLiveTail) return true;
+    return props.parts.some((p) => {
+      if (p.type === "reasoning") {
+        return p.time?.end == null && isSessionBusy(p.sessionID);
+      }
+      if (p.type === "tool") {
+        if (p.state.status !== "pending" && p.state.status !== "running") return false;
+        if (isTaskTool(p.tool)) return isSubagentToolAlive(p, p.sessionID);
+        return isSessionBusy(p.sessionID);
+      }
       return false;
-    })
-  );
+    });
+  });
 
-  const [open, setOpen] = createSignal(false);
+  const hasPendingApproval = createMemo(() => {
+    const sid = sessionID();
+    if (!sid || !isRunning()) return false;
+    return workspace.pendingPermissions.some((req) => req.sessionID === sid);
+  });
 
-  const counts = createMemo(() => {
+  const stats = createMemo(() => {
     let reads = 0;
     let searches = 0;
-    let lists = 0;
+    let edits = 0;
+    let commands = 0;
+    let subagents = 0;
+    let otherTools = 0;
     let thoughts = 0;
+
     for (const p of props.parts) {
       if (p.type === "reasoning") {
         thoughts++;
       } else if (p.type === "tool") {
-        const t = p.tool.toLowerCase();
-        if (t.includes("read")) reads++;
-        else if (t === "list" || t === "ls") lists++;
-        else searches++;
+        if (isReadTool(p.tool)) reads++;
+        else if (isEditingTool(p.tool)) edits++;
+        else if (isShellTool(p.tool)) commands++;
+        else if (isSearchOrListTool(p.tool)) searches++;
+        else if (isTaskTool(p.tool)) subagents++;
+        else otherTools++;
       }
     }
+
+    const toolCount = reads + searches + edits + commands + subagents + otherTools;
     const tokens: string[] = [];
     if (reads > 0) tokens.push(tI18n("timeline.reads", { count: reads }));
+    if (edits > 0) tokens.push(tI18n("timeline.editsCount", { count: edits }));
+    if (commands > 0) tokens.push(tI18n("timeline.commandsCount", { count: commands }));
     if (searches > 0) tokens.push(tI18n("timeline.searches", { count: searches }));
-    if (lists > 0) tokens.push(tI18n("timeline.lists", { count: lists }));
-    if (thoughts > 0) tokens.push(tI18n("timeline.thoughts", { count: thoughts }));
-    return tokens.join(", ");
+    if (subagents > 0) tokens.push(tI18n("timeline.subagentsCount", { count: subagents }));
+    if (otherTools > 0 && tokens.length === 0) {
+      tokens.push(tI18n("timeline.stepsCompleted", { count: otherTools }));
+    }
+    if (toolCount === 0 && thoughts > 0) {
+      tokens.push(tI18n("timeline.thoughts", { count: thoughts }));
+    }
+
+    return {
+      toolCount,
+      thoughts,
+      summaryText: tokens.join(", "),
+    };
+  });
+
+  const activeStepDisplay = createMemo(() => {
+    const runningTools: ToolPart[] = [];
+    for (const p of props.parts) {
+      if (
+        p.type === "tool" &&
+        (p.state.status === "pending" || p.state.status === "running")
+      ) {
+        runningTools.push(p);
+      }
+    }
+
+    if (runningTools.length > 0) {
+      const active = runningTools[runningTools.length - 1];
+      const action = formatToolDisplayName(active.tool);
+      const detail = summarizeStepTarget(active);
+      const extra = runningTools.length > 1 ? ` (+${runningTools.length - 1})` : "";
+      return {
+        action,
+        detail: `${detail}${extra}`.trim(),
+      };
+    }
+
+    for (let i = props.parts.length - 1; i >= 0; i--) {
+      const p = props.parts[i];
+      if (p.type === "reasoning" && p.time?.end == null) {
+        const heading = reasoningHeading(p.text ?? "", true).title;
+        return {
+          action: tI18n("timeline.thinking"),
+          detail: heading || "",
+        };
+      }
+    }
+
+    // Fallback during brief transitions between steps while `isLiveTail` is true
+    for (let i = props.parts.length - 1; i >= 0; i--) {
+      const p = props.parts[i];
+      if (p.type === "tool") {
+        return {
+          action: formatToolDisplayName(p.tool),
+          detail: summarizeStepTarget(p),
+        };
+      }
+    }
+
+    return {
+      action: tI18n("timeline.executing"),
+      detail: "",
+    };
+  });
+
+  const thoughtOnlyPreview = createMemo(() => {
+    if (stats().toolCount > 0) return "";
+    for (let i = props.parts.length - 1; i >= 0; i--) {
+      const p = props.parts[i];
+      if (p.type === "reasoning" && p.text?.trim()) {
+        const cleaned = p.text.replace(/\[REDACTED\]/g, "").trim();
+        const parsed = reasoningHeading(cleaned, false);
+        return parsed.title || reasoningSummary(parsed.body);
+      }
+    }
+    return "";
   });
 
   const targetPreview = createMemo(() => {
-    const names: string[] = [];
-    for (const p of props.parts) {
-      if (p.type !== "tool") continue;
-      const info = summarizeContextTool(p);
-      if (info.target && info.target !== "…" && !names.includes(info.target)) {
-        names.push(info.target);
-      }
-    }
-    if (names.length === 0) return "";
-    const head = names.slice(0, 3).join(", ");
-    return names.length > 3 ? `${head} +${names.length - 3}` : head;
+    if (stats().toolCount === 0) return thoughtOnlyPreview();
+    return "";
   });
 
-  const rollingContextTools = createMemo(() =>
-    props.parts
-      .filter((p): p is Extract<MessagePart, { type: "tool" }> => p.type === "tool")
-      .slice(-5)
+  const groupDiffStats = createMemo(() => {
+    const byFile = new Map<string, { additions: number; deletions: number }>();
+    for (const p of props.parts) {
+      if (
+        p.type !== "tool" ||
+        p.state.status !== "completed" ||
+        !isEditingTool(p.tool)
+      ) {
+        continue;
+      }
+      const target = extractTargetFile(p) || "";
+      const diffs = resolveToolFileDiffs(p, true, target);
+      for (const d of diffs) {
+        if (!d.file) continue;
+        byFile.set(d.file, {
+          additions: d.additions || 0,
+          deletions: d.deletions || 0,
+        });
+      }
+    }
+    if (byFile.size === 0) return undefined;
+    let additions = 0;
+    let deletions = 0;
+    for (const item of byFile.values()) {
+      additions += item.additions;
+      deletions += item.deletions;
+    }
+    return additions > 0 || deletions > 0 ? { additions, deletions } : undefined;
+  });
+
+  const attentionTools = createMemo<ToolPart[]>(() =>
+    props.parts.filter(isAttentionToolPart)
   );
+
+  const timeRange = createMemo(() => {
+    let start = props.startedAt && props.startedAt > 0 ? props.startedAt : undefined;
+    let end: number | undefined;
+    for (const p of props.parts) {
+      if (p.type === "reasoning") {
+        if (p.time?.start && (!start || p.time.start < start)) start = p.time.start;
+        if (p.time?.end && (!end || p.time.end > end)) end = p.time.end;
+      } else if (p.type === "tool" && p.state.status !== "pending") {
+        const s = p.state.time?.start;
+        if (s && (!start || s < start)) start = s;
+        if (p.state.status === "completed" || p.state.status === "error") {
+          const e = p.state.time?.end;
+          if (e && (!end || e > end)) end = e;
+        }
+      }
+    }
+    return { start, end };
+  });
+
+  const [now, setNow] = createSignal(Date.now());
+  createEffect(() => {
+    if (!isRunning()) return;
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), 100);
+    onCleanup(() => clearInterval(timer));
+  });
+
+  const durationLabel = createMemo(() => {
+    const { start, end } = timeRange();
+    if (!start) return "";
+    if (isRunning()) {
+      const sec = Math.max(0, (now() - start) / 1000);
+      return `${sec.toFixed(1)}s`;
+    }
+    if (!end || end <= start) return "";
+    const sec = (end - start) / 1000;
+    return sec < 60
+      ? `${sec.toFixed(1)}s`
+      : `${Math.floor(sec / 60)}m ${Math.round(sec % 60)}s`;
+  });
 
   return (
     <div>
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
-        class="group/activity inline-flex max-w-full items-center gap-2 rounded-xl border border-transparent hover:border-[var(--border-subtle)] hover:bg-[var(--bg-inset)] px-2.5 py-1.5 text-[13px] text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-all cursor-pointer"
+        onClick={toggleOpen}
+        class={`group/activity flex w-full items-center justify-between gap-2 rounded-xl border px-3 py-1.5 text-left text-[13px] transition-all cursor-pointer select-none ${
+          open()
+            ? "border-[var(--border-subtle)] bg-[var(--bg-inset)]/80 text-[var(--text-primary)]"
+            : isRunning()
+              ? "border-[var(--accent-border)]/45 bg-[var(--accent-surface)]/20 hover:bg-[var(--accent-surface)]/35 text-[var(--text-primary)]"
+              : "border-transparent bg-[var(--bg-inset)]/45 hover:border-[var(--border-subtle)] hover:bg-[var(--bg-inset)] text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+        }`}
       >
-        <Show
-          when={isRunning()}
-          fallback={
-            <span class="text-[var(--text-muted)] group-hover/activity:text-[var(--accent-primary)] inline-flex items-center shrink-0">
-              <Icon name="magnifying-glass-menu" size="small" />
+        <div class="flex items-center gap-2 min-w-0 flex-1">
+          <Show
+            when={isRunning()}
+            fallback={
+              <Show
+                when={attentionTools().length > 0}
+                fallback={
+                  <span class="text-[var(--text-muted)] group-hover/activity:text-[var(--accent-primary)] inline-flex items-center shrink-0">
+                    <Icon
+                      name={stats().toolCount > 0 ? "layers" : "brain"}
+                      size="small"
+                    />
+                  </span>
+                }
+              >
+                <span class="text-[var(--danger-text)] inline-flex items-center shrink-0">
+                  <Icon name="circle-ban-sign" size="small" />
+                </span>
+              </Show>
+            }
+          >
+            <span class="text-[var(--accent-primary)] inline-flex items-center shrink-0">
+              <Spinner class="w-3.5 h-3.5" />
             </span>
-          }
-        >
-          <span class="text-[var(--accent-primary)] inline-flex items-center shrink-0">
-            <Spinner class="w-4 h-4" />
+          </Show>
+
+          <Show
+            when={isRunning()}
+            fallback={
+              <>
+                <span class="font-medium text-[var(--text-secondary)] shrink-0">
+                  {stats().toolCount > 0
+                    ? tI18n("timeline.executedStepsSummary", {
+                        count: stats().toolCount,
+                      })
+                    : tI18n("timeline.thought")}
+                </span>
+                <Show when={stats().toolCount > 0 && stats().summaryText}>
+                  <span class="text-[12px] text-[var(--text-muted)] truncate">
+                    · {stats().summaryText}
+                  </span>
+                </Show>
+                <Show when={!open() && targetPreview()}>
+                  <span class="hidden sm:inline font-mono text-[11.5px] text-[var(--text-faint)] truncate max-w-[320px]">
+                    ({targetPreview()})
+                  </span>
+                </Show>
+              </>
+            }
+          >
+            <span class="font-medium text-[var(--accent-primary)] shrink-0">
+              <TextShimmer text={activeStepDisplay().action} active={true} />
+            </span>
+            <Show when={activeStepDisplay().detail}>
+              <span class="font-mono text-[12px] text-[var(--text-secondary)] truncate max-w-[360px]">
+                {activeStepDisplay().detail}
+              </span>
+            </Show>
+            <Show when={stats().summaryText}>
+              <span class="hidden md:inline text-[12px] text-[var(--text-muted)] shrink-0">
+                · {stats().summaryText}
+              </span>
+            </Show>
+          </Show>
+        </div>
+
+        <div class="flex items-center gap-2 shrink-0">
+          <Show when={hasPendingApproval()}>
+            <span class="rounded bg-[var(--warn-surface)] px-1.5 py-0.5 font-mono text-[11px] font-medium text-[var(--warn-text)]">
+              {tI18n("timeline.waitingApprovalBadge")}
+            </span>
+          </Show>
+
+          <Show when={attentionTools().length > 0}>
+            <span class="rounded bg-[var(--danger-surface)] px-1.5 py-0.5 font-mono text-[11px] font-medium text-[var(--danger-text)]">
+              {tI18n("timeline.stepsAttentionBadge", {
+                count: attentionTools().length,
+              })}
+            </span>
+          </Show>
+
+          <Show when={groupDiffStats()}>
+            {(diffStats) => <DiffChanges changes={diffStats()} />}
+          </Show>
+
+          <Show when={durationLabel()}>
+            <span class="font-mono text-[11.5px] tabular-nums text-[var(--text-faint)]">
+              {durationLabel()}
+            </span>
+          </Show>
+
+          <span class="text-[var(--text-faint)] inline-flex items-center">
+            <Icon name={open() ? "chevron-down" : "chevron-right"} size="small" />
           </span>
-        </Show>
-
-        <span
-          class={
-            isRunning()
-              ? "font-medium text-[var(--accent-primary)] shrink-0"
-              : "font-medium text-[var(--text-secondary)] shrink-0"
-          }
-        >
-          <ToolStatusTitle
-            active={isRunning()}
-            activeText={tI18n("toolCard.gatheringContext")}
-            doneText={tI18n("toolCard.gatheredContext")}
-          />
-        </span>
-
-        <Show when={counts()}>
-          <span class="text-[12px] text-[var(--text-muted)] shrink-0">· {counts()}</span>
-        </Show>
-
-        <Show when={!open() && targetPreview()}>
-          <span class="hidden sm:inline font-mono text-[11.5px] text-[var(--text-faint)] truncate max-w-[340px]">
-            ({targetPreview()})
-          </span>
-        </Show>
-
-        <span class="text-[var(--text-faint)] inline-flex items-center shrink-0">
-          <Icon name={open() ? "chevron-down" : "chevron-right"} size="small" />
-        </span>
+        </div>
       </button>
 
-      <Show when={isRunning() && !open() && rollingContextTools().length > 0}>
-        <div
-          onClick={() => setOpen(true)}
-          class="mt-1 ml-2 max-h-[115px] overflow-hidden rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)]/65 px-3 py-2 space-y-1 cursor-pointer"
-          style={{
-            "-webkit-mask-image": "linear-gradient(to bottom, transparent 0%, black 22%, black 100%)",
-            "mask-image": "linear-gradient(to bottom, transparent 0%, black 22%, black 100%)",
-          }}
-        >
-          <For each={rollingContextTools()}>
-            {(toolPart) => {
-              const info = createMemo(() => summarizeContextTool(toolPart));
-              const partRunning = () =>
-                toolPart.state.status === "pending" || toolPart.state.status === "running";
-              return (
-                <div class="flex items-center gap-2 text-[12.5px] kilo-rolling-row min-w-0">
-                  <Show
-                    when={info().filePath}
-                    fallback={
-                      <Icon
-                        name={kiloToolIconName(toolPart.tool)}
-                        size="small"
-                        class="text-[var(--text-faint)] shrink-0"
-                      />
-                    }
-                  >
-                    {(fp) => (
-                      <FileIcon node={{ path: fp(), type: "file" }} class="w-3.5 h-3.5 shrink-0" />
-                    )}
-                  </Show>
-                  <span class="text-[var(--text-muted)] shrink-0">
-                    <TextShimmer text={info().action} active={partRunning()} />
-                  </span>
-                  <span class="font-mono text-[12px] font-medium text-[var(--text-primary)] truncate">
-                    {info().target}
-                  </span>
-                  <Show when={info().detail}>
-                    <span class="font-mono text-[11.5px] text-[var(--text-faint)] truncate">
-                      {info().detail}/
-                    </span>
-                  </Show>
-                </div>
-              );
-            }}
+      {/* Auto-surface any errored / non-zero exit / interrupted tool cards even while collapsed */}
+      <Show when={!open() && attentionTools().length > 0}>
+        <div class="mt-1.5 ml-2 border-l-2 border-[var(--danger-border)]/70 pl-3 space-y-1">
+          <For each={attentionTools()}>
+            {(toolPart) => props.renderFallbackPart(toolPart)}
           </For>
         </div>
       </Show>
 
+      {/* Full chronological step list when expanded */}
       <Show when={open()}>
         <div class="mt-1.5 ml-2 border-l-2 border-[var(--border-subtle)] pl-3.5 space-y-1">
           <For each={props.parts}>
-            {(part) => (
-              <Show when={isContextToolPart(part)} fallback={props.renderFallbackPart(part)}>
-                {(_) => {
-                  const toolPart = part as Extract<MessagePart, { type: "tool" }>;
-                  const info = createMemo(() => summarizeContextTool(toolPart));
-                  return (
-                    <div
-                      onClick={() => {
-                        const fp = info().filePath;
-                        if (fp) openFileInInspector(fp);
-                      }}
-                      class={`flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-[12.5px] hover:bg-[var(--bg-hover)] transition-colors ${
-                        info().filePath ? "cursor-pointer" : ""
-                      }`}
-                    >
-                      <div class="flex items-center gap-2 min-w-0">
-                        <Show
-                          when={info().filePath}
-                          fallback={
-                            <Icon
-                              name={kiloToolIconName(toolPart.tool)}
-                              size="small"
-                              class="text-[var(--text-muted)] shrink-0"
-                            />
-                          }
-                        >
-                          {(fp) => (
-                            <FileIcon
-                              node={{ path: fp(), type: "file" }}
-                              class="w-3.5 h-3.5 shrink-0"
-                            />
-                          )}
-                        </Show>
-                        <span class="text-[var(--text-secondary)] shrink-0">{info().action}</span>
-                        <span class="font-mono text-[12px] font-medium text-[var(--text-primary)] hover:text-[var(--accent-primary)] truncate">
-                          {info().target}
-                        </span>
-                        <Show when={info().detail}>
-                          <span class="hidden sm:inline font-mono text-[11.5px] text-[var(--text-faint)] truncate">
-                            {info().detail}/
-                          </span>
-                        </Show>
-                      </div>
-                      <div class="flex items-center gap-1.5 shrink-0">
-                        <For each={info().pills}>
-                          {(pill) => (
-                            <span class="rounded bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[11px] text-[var(--text-muted)]">
-                              {pill}
-                            </span>
-                          )}
-                        </For>
-                      </div>
-                    </div>
-                  );
-                }}
-              </Show>
-            )}
+            {(part) => props.renderFallbackPart(part)}
           </For>
         </div>
       </Show>

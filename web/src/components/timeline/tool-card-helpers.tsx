@@ -1,5 +1,5 @@
 // web/src/components/timeline/tool-card-helpers.tsx
-import { createMemo, For, Show } from "solid-js";
+import { createMemo, For, type JSX, Show } from "solid-js";
 import type { MessagePart, SnapshotFileDiff, ToolState } from "../../services/sse-types";
 import { openDiffInInspector, setWorkspace, workspace } from "../../store/workspace";
 import { Icon, type IconName } from "../icons";
@@ -7,6 +7,60 @@ import FileDiffBlock from "../inspector/LazyFileDiffBlock";
 import { t } from "../../i18n";
 
 export type ToolPart = Extract<MessagePart, { type: "tool" }>;
+
+export function ActionIconButton(props: {
+  label: string;
+  onClick: (e: MouseEvent) => void;
+  disabled?: boolean;
+  variant?: "default" | "accent" | "warn" | "danger" | "dark";
+  tooltipSide?: "top" | "bottom" | "left";
+  class?: string;
+  children: JSX.Element;
+}) {
+  const variantClass = () => {
+    switch (props.variant) {
+      case "accent":
+        return "text-[var(--text-muted)] hover:text-[var(--accent-primary)] hover:bg-[var(--accent-surface)]";
+      case "warn":
+        return "text-[var(--text-muted)] hover:text-[var(--warn-text)] hover:bg-[var(--warn-surface)]";
+      case "danger":
+        return "text-[var(--text-muted)] hover:text-[var(--danger-text)] hover:bg-[var(--danger-surface)]";
+      case "dark":
+        return "text-[#8b949e] hover:bg-white/10 hover:text-white";
+      default:
+        return "text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]";
+    }
+  };
+
+  const tooltipPositionClass = () => {
+    switch (props.tooltipSide) {
+      case "bottom":
+        return "top-[calc(100%+5px)] right-0";
+      case "left":
+        return "right-[calc(100%+6px)] top-1/2 -translate-y-1/2";
+      default:
+        return "bottom-[calc(100%+5px)] left-1/2 -translate-x-1/2";
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      disabled={props.disabled}
+      onClick={(e) => props.onClick(e)}
+      aria-label={props.label}
+      class={`group/icon-btn relative inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${variantClass()} ${props.class ?? ""}`}
+    >
+      {props.children}
+      <span
+        role="tooltip"
+        class={`pointer-events-none absolute z-30 whitespace-nowrap rounded-md border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-2 py-0.5 font-sans text-[11px] font-medium leading-tight text-[var(--text-primary)] shadow-md opacity-0 group-hover/icon-btn:opacity-100 group-focus-visible/icon-btn:opacity-100 transition-opacity duration-100 ${tooltipPositionClass()}`}
+      >
+        {props.label}
+      </span>
+    </button>
+  );
+}
 
 // Strip ANSI escape sequences for clean shell rolling output (ported from kilocode)
 const ANSI_REGEX =
@@ -37,6 +91,7 @@ export function isShellTool(tool: string): boolean {
 
 export function isEditingTool(tool: string): boolean {
   const t = tool.toLowerCase();
+  if (isTodoTool(t)) return false;
   return t.includes("edit") || t.includes("write") || t.includes("patch");
 }
 
@@ -116,8 +171,8 @@ export function getDirectory(p: string): string {
   const idx = Math.max(clean.lastIndexOf("/"), clean.lastIndexOf("\\"));
   if (idx <= 0) return "";
   const dir = clean.slice(0, idx);
-  const root = workspace.rootDir;
-  if (root && dir.startsWith(root)) {
+  const root = workspace.rootDir.replace(/\/+$/, "");
+  if (root && (dir === root || dir.startsWith(`${root}/`))) {
     return dir.slice(root.length).replace(/^\/+/, "") || ".";
   }
   return dir;
@@ -155,8 +210,11 @@ export function extractTargetFile(part: ToolPart): string | null {
   if (toolLower === "glob" || toolLower === "grep") return null;
   const input = resolveToolInput(part);
   const metaFiles = part.state.status !== "pending" ? part.state.metadata?.files : undefined;
-  const firstMetaFile = Array.isArray(metaFiles) && metaFiles[0]
-    ? metaFiles[0].relativePath || metaFiles[0].filePath || metaFiles[0].file || metaFiles[0].path
+  const firstMetaObj = Array.isArray(metaFiles) && metaFiles[0] ? metaFiles[0] : undefined;
+  const firstMetaRel = typeof firstMetaObj?.relativePath === "string" ? firstMetaObj.relativePath : "";
+  const firstMetaAbs = typeof firstMetaObj?.filePath === "string" ? firstMetaObj.filePath : "";
+  const firstMetaFile = firstMetaObj
+    ? (firstMetaRel && !firstMetaRel.startsWith("..") ? firstMetaRel : firstMetaAbs) || firstMetaRel || firstMetaObj.file || firstMetaObj.path
     : undefined;
   const patchMatch =
     typeof input.patchText === "string"
@@ -169,9 +227,12 @@ export function extractTargetFile(part: ToolPart): string | null {
       ? part.state.metadata?.filePath || part.state.metadata?.filepath
       : undefined);
   if (typeof raw === "string" && raw.trim()) {
-    const root = workspace.rootDir;
-    if (root && raw.startsWith(root)) return raw.slice(root.length).replace(/^\/+/, "") || ".";
-    return raw.trim();
+    const trimmed = raw.trim();
+    const root = workspace.rootDir.replace(/\/+$/, "");
+    if (root && (trimmed === root || trimmed.startsWith(`${root}/`))) {
+      return trimmed.slice(root.length).replace(/^\/+/, "") || ".";
+    }
+    return trimmed;
   }
   return null;
 }
@@ -253,11 +314,34 @@ export function countDiffLines(
     return { additions, deletions };
   }
   if (typeof before === "string" && typeof after === "string") {
-    const bLen = before ? before.split("\n").length : 0;
-    const aLen = after ? after.split("\n").length : 0;
+    if (before === after) return { additions: 0, deletions: 0 };
+    const bLines = before ? before.replace(/\r\n/g, "\n").split("\n") : [];
+    const aLines = after ? after.replace(/\r\n/g, "\n").split("\n") : [];
+    let prefix = 0;
+    while (
+      prefix < bLines.length &&
+      prefix < aLines.length &&
+      bLines[prefix] === aLines[prefix]
+    ) {
+      prefix++;
+    }
+    let suffix = 0;
+    while (
+      suffix < bLines.length - prefix &&
+      suffix < aLines.length - prefix &&
+      bLines[bLines.length - 1 - suffix] === aLines[aLines.length - 1 - suffix]
+    ) {
+      suffix++;
+    }
     return {
-      additions: Math.max(0, aLen - bLen) || (aLen > 0 ? 1 : 0),
-      deletions: Math.max(0, bLen - aLen),
+      additions: Math.max(0, aLines.length - prefix - suffix),
+      deletions: Math.max(0, bLines.length - prefix - suffix),
+    };
+  }
+  if (before === undefined && typeof after === "string" && after.length > 0) {
+    return {
+      additions: after.replace(/\r\n/g, "\n").split("\n").length,
+      deletions: 0,
     };
   }
   return { additions: 0, deletions: 0 };
@@ -329,30 +413,29 @@ export function ToolCardExpandedBody(props: {
               <span class="text-[#58a6ff] font-semibold">$</span>
               <code class="truncate text-[#e6edf3] selectable-text">{props.shellCmd}</code>
             </div>
-            <div class="flex items-center gap-1.5 shrink-0">
-              <button
-                type="button"
+            <div class="flex items-center gap-1 shrink-0">
+              <ActionIconButton
+                variant="dark"
+                tooltipSide="left"
+                label={t("timeline.terminalBtn")}
                 onClick={(e) => {
                   e.stopPropagation();
                   setWorkspace("inspectorOpen", true);
                   setWorkspace("inspectorTab", "terminal");
                 }}
-                class="inline-flex items-center gap-1 rounded px-2 py-0.5 text-[10.5px] text-[#8b949e] hover:bg-white/10 hover:text-white transition-colors cursor-pointer"
-                title={t("timeline.openTerminalTooltip")}
               >
                 <Icon name="console" size="small" />
-                <span>{t("timeline.terminalBtn")}</span>
-              </button>
-              <button
-                type="button"
+              </ActionIconButton>
+              <ActionIconButton
+                variant="dark"
+                tooltipSide="left"
+                label={props.copiedCmd ? t("common.copied") : t("common.copy")}
                 onClick={(e) => props.onCopyCommand(e)}
-                class="inline-flex items-center gap-1 rounded px-2 py-0.5 text-[10.5px] text-[#8b949e] hover:bg-white/10 hover:text-white transition-colors cursor-pointer"
               >
                 <Show when={props.copiedCmd} fallback={<Icon name="copy" size="small" />}>
                   <Icon name="check" size="small" class="text-[#3fb950]" />
                 </Show>
-                <span>{props.copiedCmd ? t("common.copied") : t("common.copy")}</span>
-              </button>
+              </ActionIconButton>
             </div>
           </div>
           <Show
@@ -430,13 +513,14 @@ export function ToolCardExpandedBody(props: {
                     <span class="text-[11px] font-medium text-[var(--text-muted)] font-mono truncate">
                       {diffs().length > 1 ? diff.file : t("toolCard.inlineChangePreview")}
                     </span>
-                    <button
-                      type="button"
+                    <ActionIconButton
+                      variant="accent"
+                      tooltipSide="left"
+                      label={t("timeline.viewChanges")}
                       onClick={() => openDiffInInspector(diff.file)}
-                      class="inline-flex items-center gap-1 text-[11px] font-medium text-[var(--accent-primary)] hover:underline cursor-pointer shrink-0"
                     >
                       <Icon name="code-lines" size="small" />
-                    </button>
+                    </ActionIconButton>
                   </div>
                   <FileDiffBlock diff={diff} defaultExpanded={true} compact={true} />
                 </div>

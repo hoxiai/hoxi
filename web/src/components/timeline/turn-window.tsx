@@ -7,7 +7,7 @@ import {
   Index,
   Show,
 } from "solid-js";
-import type { MessageInfo, MessagePart } from "../../services/sse-types";
+import type { MessageInfo } from "../../services/sse-types";
 import type { MessageTurn } from "../../store/workspace";
 import { Icon } from "../icons";
 import { t } from "../../i18n";
@@ -16,9 +16,8 @@ import {
   AssistantTurnFooter,
   ContextActivityGroupView,
   groupAssistantParts,
-  resolveMergedTurnParts,
-  isTodoTool,
   PartView,
+  resolveMergedTurnParts,
 } from "./message-stream-parts";
 
 export const INITIAL_VISIBLE_TURNS = 10;
@@ -211,119 +210,94 @@ export function EarlierTurnsBanner(props: {
   );
 }
 
-// Persistent manual expand state for historical assistant turn steps
-const expandedHistoricalTurnIDs = new Set<string>();
-
 /**
- * Ported from Kilo Desktop `group-turn-work` (`$We` in `thread-BuiFWozN.js`):
- * For older completed assistant turns (`globalIndex < totalTurns - 2`), folds intermediate
- * tool cards and reasoning blocks into a lightweight summary toggle while keeping final text
- * visible. Prevents hundreds of historical ToolCards & SubagentInlineTimelines from bogging down DOM.
+ * Renders an assistant turn while aggregating contiguous tool/reasoning steps
+ * across multi-turn OpenCode assistant cycles into a single collapsible
+ * `<ContextActivityGroupView />`, keeping the main stream focused on user-facing
+ * responses and final file change summaries.
  */
 export function AssistantTurnItem(props: {
   turn: MessageTurn;
   globalIndex: number;
   allTurns: MessageTurn[];
+  windowStartIndex?: number;
   isSessionBusy: boolean;
+  activeMatchTurnID?: string | null;
+  navigationRevision?: number;
   isHighlighted: boolean;
+  cycleStartedAt?: number;
 }) {
-  const merged = createMemo(() => resolveMergedTurnParts(props.allTurns, props.globalIndex));
-  const effectiveParts = () => merged().effectiveParts;
-
-  const [stepsExpanded, setStepsExpanded] = createSignal(
-    expandedHistoricalTurnIDs.has(props.turn.info.id)
+  const merged = createMemo(() =>
+    resolveMergedTurnParts(
+      props.allTurns,
+      props.globalIndex,
+      props.windowStartIndex ?? 0
+    )
   );
 
-  const toggleSteps = () => {
-    const id = props.turn.info.id;
-    const next = !stepsExpanded();
-    if (next) expandedHistoricalTurnIDs.add(id);
-    else expandedHistoricalTurnIDs.delete(id);
-    setStepsExpanded(next);
-  };
+  const groupedItems = createMemo(() =>
+    groupAssistantParts(merged().effectiveParts)
+  );
 
-  const isInLatestUserCycle = createMemo(() => {
-    const list = props.allTurns;
-    for (let i = list.length - 1; i >= 0; i--) {
-      if (list[i]?.info.role === "user") {
-        return props.globalIndex > i;
-      }
-    }
-    return true;
+  const isLatestTurnOverall = createMemo(
+    () => props.globalIndex === props.allTurns.length - 1
+  );
+
+  const isHighlighted = createMemo(() => {
+    if (props.isHighlighted) return true;
+    const matchID = props.activeMatchTurnID;
+    if (!matchID) return false;
+    return merged().carriedTurnIDs.includes(matchID);
   });
 
-  const isRecentTurn = createMemo(
-    () => isInLatestUserCycle() || props.globalIndex >= props.allTurns.length - 2
-  );
-
-  const workParts = createMemo(() =>
-    effectiveParts().filter(
-      (p) => p.type === "reasoning" || (p.type === "tool" && !isTodoTool(p))
-    )
-  );
-
-  const textParts = createMemo(() =>
-    effectiveParts().filter(
-      (p): p is Extract<MessagePart, { type: "text" }> =>
-        p.type === "text" && p.text.trim().length > 0
-    )
-  );
-
-  const hasRunningWork = createMemo(() =>
-    workParts().some((p) => {
-      if (p.type === "reasoning") return p.time?.end == null;
-      if (p.type === "tool") {
-        return p.state.status === "pending" || p.state.status === "running";
-      }
-      return false;
-    })
-  );
-
-  // Fold intermediate tool/reasoning work only on historical turns from prior user prompt cycles
-  const shouldFoldWork = createMemo(
-    () =>
-      !isRecentTurn() &&
-      !hasRunningWork() &&
-      workParts().length > 0
-  );
-
-  const groupedAll = createMemo(() => groupAssistantParts(effectiveParts()));
-  const groupedWorkOnly = createMemo(() => groupAssistantParts(workParts()));
-
-  const prevRole = () =>
-    props.globalIndex > 0 ? props.allTurns[props.globalIndex - 1]?.info.role : undefined;
+  const revealPartIDs = createMemo(() => new Set(
+    props.allTurns.find((turn) => turn.info.id === props.activeMatchTurnID)?.parts.map((part) => part.id) ?? []
+  ));
 
   return (
-    <Show when={!merged().isVisuallyEmpty || merged().isCycleEnd || Boolean(props.turn.info.error)}>
-    <div
-      data-turn-id={props.turn.info.id}
-      class={`flex flex-col gap-y-3.5 px-1 rounded-xl transition-colors ${turnContentVisibilityClass(
-        props.globalIndex,
-        props.allTurns.length
-      )} ${
-        props.globalIndex === 0
-          ? "mt-0"
-          : prevRole() === "assistant"
-            ? "mt-3.5"
-            : "mt-6"
-      } ${
-        props.isHighlighted
-          ? "ring-2 ring-[var(--accent-primary)] bg-[var(--accent-surface)]/20 p-2"
-          : ""
-      }`}
+    <Show
+      when={!merged().isVisuallyEmpty || merged().isCycleEnd || Boolean(props.turn.info.error)}
+      fallback={
+        <div
+          data-merged-turn-id={props.turn.info.id}
+          class="h-0 overflow-hidden pointer-events-none"
+        />
+      }
     >
-      <Show
-        when={shouldFoldWork()}
-        fallback={
-          <Index each={groupedAll()}>
-            {(item, itemIndex) => (
+      <div
+        data-turn-id={props.turn.info.id}
+        class={`flex flex-col gap-y-3.5 px-1 rounded-xl transition-colors ${turnContentVisibilityClass(
+          props.globalIndex,
+          props.allTurns.length
+        )} ${
+          merged().isVisuallyEmpty && !props.turn.info.error
+            ? "mt-0"
+            : props.globalIndex === 0
+              ? "mt-0"
+              : merged().isFirstVisualTurnInCycle
+                ? "mt-6"
+                : "mt-3.5"
+        } ${
+          isHighlighted()
+            ? "ring-2 ring-[var(--accent-primary)] bg-[var(--accent-surface)]/20 p-2"
+            : ""
+        }`}
+      >
+        <Index each={groupedItems()}>
+          {(item, itemIdx) => {
+            const isTailActivityGroup = () =>
+              props.isSessionBusy &&
+              isLatestTurnOverall() &&
+              item().kind === "activity-group" &&
+              itemIdx === groupedItems().length - 1;
+            return (
               <Show
                 when={item().kind === "activity-group"}
                 fallback={
                   <Show
                     when={
                       item().kind === "single"
-                        ? (item() as Extract< ReturnType<typeof item>, { kind: "single" } >).part
+                        ? (item() as Extract<ReturnType<typeof item>, { kind: "single" }>).part
                         : undefined
                     }
                   >
@@ -332,97 +306,32 @@ export function AssistantTurnItem(props: {
                 }
               >
                 <ContextActivityGroupView
-                  isLiveTail={props.isSessionBusy && props.globalIndex === props.allTurns.length - 1 && itemIndex === groupedAll().length - 1 && !props.turn.info.error}
+                  revealKey={item().kind === "activity-group" &&
+                    (item() as { parts: MessageTurn["parts"] }).parts.some((part) => revealPartIDs().has(part.id))
+                    ? `${props.activeMatchTurnID}:${props.navigationRevision ?? 0}` : undefined}
                   parts={
                     item().kind === "activity-group"
-                      ? (item() as Extract< ReturnType<typeof item>, { kind: "activity-group" } >)
+                      ? (item() as Extract<ReturnType<typeof item>, { kind: "activity-group" }>)
                           .parts
                       : []
                   }
+                  isLiveTail={isTailActivityGroup()}
+                  startedAt={isTailActivityGroup() ? props.cycleStartedAt : undefined}
                 />
               </Show>
-            )}
-          </Index>
-        }
-      >
-        {/* Compact folded work summary bar for historical turns */}
-        <div>
-          <button
-            type="button"
-            onClick={toggleSteps}
-            class="inline-flex items-center gap-2 rounded-xl border border-transparent hover:border-[var(--border-subtle)] hover:bg-[var(--bg-inset)] px-2.5 py-1 text-[12.5px] text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
-          >
-            <Icon name="layers" size="small" class="text-[var(--text-faint)]" />
-            <span class="font-medium text-[var(--text-secondary)]">
-              {t("timeline.completedWorkSummary", { count: workParts().length })}
-            </span>
-            <span class="text-[11.5px] text-[var(--text-faint)]">
-              · {stepsExpanded() ? t("timeline.collapseTurnSteps") : t("timeline.expandTurnSteps")}
-            </span>
-            <Icon
-              name={stepsExpanded() ? "chevron-down" : "chevron-right"}
-              size="small"
-              class="text-[var(--text-faint)]"
-            />
-          </button>
-
-          <Show when={stepsExpanded()}>
-            <div class="mt-2 ml-2 border-l-2 border-[var(--border-subtle)] pl-3.5 flex flex-col gap-y-3">
-              <Index each={groupedWorkOnly()}>
-                {(item) => (
-                  <Show
-                    when={item().kind === "activity-group"}
-                    fallback={
-                      <Show
-                        when={
-                          item().kind === "single"
-                            ? (
-                                item() as Extract<
-                                  ReturnType<typeof item>,
-                                  { kind: "single" }
-                                >
-                              ).part
-                            : undefined
-                        }
-                      >
-                        {(part) => <PartView part={part()} />}
-                      </Show>
-                    }
-                  >
-                    <ContextActivityGroupView
-                      parts={
-                        item().kind === "activity-group"
-                          ? (
-                              item() as Extract<
-                                ReturnType<typeof item>,
-                                { kind: "activity-group" }
-                              >
-                            ).parts
-                          : []
-                      }
-                    />
-                  </Show>
-                )}
-              </Index>
-            </div>
-          </Show>
-        </div>
-
-        {/* Always keep any final assistant text visible even when work steps are folded */}
-        <Index each={textParts()}>
-          {(part) => <PartView part={part()} />}
+            );
+          }}
         </Index>
-      </Show>
 
-      <AssistantErrorCard info={props.turn.info as MessageInfo} />
-      <AssistantTurnFooter
-        info={props.turn.info}
-        parts={props.turn.parts}
-        turns={props.allTurns}
-        turnIndex={props.globalIndex}
-        isSessionBusy={props.isSessionBusy}
-      />
-    </div>
+        <AssistantErrorCard info={props.turn.info as MessageInfo} />
+        <AssistantTurnFooter
+          info={props.turn.info}
+          parts={props.turn.parts}
+          turns={props.allTurns}
+          turnIndex={props.globalIndex}
+          isSessionBusy={props.isSessionBusy}
+        />
+      </div>
     </Show>
   );
 }

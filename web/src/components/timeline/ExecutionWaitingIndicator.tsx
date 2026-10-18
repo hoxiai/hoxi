@@ -2,7 +2,6 @@ import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 import { t } from "../../i18n";
 import { Spinner, TextShimmer } from "../icons";
 import type { ToolPart } from "../../services/sse-types";
-import ExecutionStepDetails from "./ExecutionStepDetails";
 
 export default function ExecutionWaitingIndicator(props: {
   completedSteps: number;
@@ -16,7 +15,6 @@ export default function ExecutionWaitingIndicator(props: {
   const calcElapsed = () => Math.max(0, (Date.now() - resolveStart()) / 1000);
 
   const [elapsed, setElapsed] = createSignal(calcElapsed());
-  const [detailsOpen, setDetailsOpen] = createSignal(false);
 
   createEffect(() => {
     setElapsed(calcElapsed());
@@ -55,25 +53,9 @@ export default function ExecutionWaitingIndicator(props: {
           <span class="font-mono text-[11px] tabular-nums text-[var(--accent-text)]">
             {t("timeline.executionElapsed", { time: elapsed().toFixed(1) })}
           </span>
-          <Show when={props.steps.length > 0}>
-            <span aria-hidden="true" class="text-[var(--text-faint)]">·</span>
-            <button
-              type="button"
-              aria-expanded={detailsOpen()}
-              onClick={() => setDetailsOpen((open) => !open)}
-              title={t("timeline.executionStepDetails")}
-              class="shrink-0 rounded px-1.5 py-1 font-mono text-[10.5px] text-[var(--accent-text)] hover:bg-[var(--bg-hover)] focus-visible:outline focus-visible:outline-[var(--accent-primary)] cursor-pointer"
-            >
-              {props.completedSteps > 0
-                ? t("timeline.executionStepsDone", { count: props.completedSteps })
-                : t("timeline.executionStepNumber", { count: props.steps.length })}
-            </button>
-          </Show>
         </div>
       </div>
-      <Show when={detailsOpen()}>
-        <ExecutionStepDetails steps={props.steps} />
-      </Show>
     </div>
   );
 }
+

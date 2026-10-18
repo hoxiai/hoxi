@@ -12,14 +12,17 @@ import {
 } from "./tool-card-helpers";
 
 export function normalizeWorkspaceRelPath(raw: string): string {
-  const trimmed = (raw || "").trim();
+  let trimmed = (raw || "").trim();
   if (!trimmed) return "";
-  const root = workspace.rootDir;
-  if (root && trimmed.startsWith(root)) {
-    return trimmed.slice(root.length).replace(/^\/+/, "");
+  const root = workspace.rootDir.replace(/\/+$/, "");
+  if (root && (trimmed === root || trimmed.startsWith(`${root}/`))) {
+    trimmed = trimmed.slice(root.length).replace(/^\/+/, "");
+  } else {
+    trimmed = trimmed.replace(/^\.\/+/, "");
   }
-  return trimmed.replace(/^\.\/+/, "");
+  return trimmed.replace(/^\.hoxi\/worktrees\/[^/]+\/+/, "");
 }
+
 
 function matchSessionDiff(
   sessionID: string,
@@ -28,11 +31,16 @@ function matchSessionDiff(
   const norm = normalizeWorkspaceRelPath(file);
   if (!norm) return undefined;
   const diffs = workspace.diffsBySession[sessionID] ?? [];
-  return diffs.find(
-    (d) =>
-      d.file === norm ||
-      d.file.endsWith(`/${norm}`) ||
-      norm.endsWith(`/${d.file}`)
+  const exact = diffs.find((d) => d.file === norm);
+  if (exact) return exact;
+  const suffix = diffs.find(
+    (d) => d.file.endsWith(`/${norm}`) || norm.endsWith(`/${d.file}`)
+  );
+  if (suffix) return suffix;
+  const wtDiffs = workspace.worktreeDiffsBySession[sessionID] ?? [];
+  return (
+    wtDiffs.find((d) => d.file === norm) ??
+    wtDiffs.find((d) => d.file.endsWith(`/${norm}`) || norm.endsWith(`/${d.file}`))
   );
 }
 
@@ -163,7 +171,9 @@ export function extractTargetFiles(part: ToolPart): string[] {
     for (const f of meta.files) {
       if (typeof f === "string") add(f);
       else if (f && typeof f === "object") {
-        add(f.relativePath || f.filePath || f.file || f.path);
+        const rel = typeof f.relativePath === "string" ? f.relativePath : "";
+        const abs = typeof f.filePath === "string" ? f.filePath : "";
+        add((rel && !rel.startsWith("..") ? rel : abs) || rel || f.file || f.path);
       }
     }
   }
@@ -215,12 +225,26 @@ export function resolveToolTodoItems(part: ToolPart): Array<{ content: string; s
   return raw.filter((item) => item && typeof item.content === "string");
 }
 
+export function isRealFileDiff(d: SnapshotFileDiff | undefined): boolean {
+  if (!d || !d.file) return false;
+  if ((d.additions ?? 0) > 0 || (d.deletions ?? 0) > 0) return true;
+  if (d.status === "added" || d.status === "deleted") return true;
+  if (typeof d.patch === "string" && d.patch.trim().length > 0) {
+    const counts = countDiffLines(d.patch);
+    return counts.additions > 0 || counts.deletions > 0;
+  }
+  if (typeof d.before === "string" && typeof d.after === "string") {
+    return d.before !== d.after;
+  }
+  return false;
+}
+
 export function resolveToolFileDiffs(
   part: ToolPart,
   isEdit: boolean,
   primaryFile: string
 ): SnapshotFileDiff[] {
-  if (!isEdit) return [];
+  if (!isEdit || part.state.status === "error") return [];
   const state = part.state;
   const meta = state.status !== "pending" ? state.metadata : undefined;
 
@@ -229,11 +253,13 @@ export function resolveToolFileDiffs(
     const list: SnapshotFileDiff[] = [];
     for (const item of meta.files) {
       if (!item || typeof item !== "object") continue;
-      const rawPath = item.relativePath || item.filePath || item.file || item.path;
+      const rel = typeof item.relativePath === "string" ? item.relativePath : "";
+      const abs = typeof item.filePath === "string" ? item.filePath : "";
+      const rawPath = (rel && !rel.startsWith("..") ? rel : abs) || rel || item.file || item.path;
       const file = normalizeWorkspaceRelPath(String(rawPath || ""));
       if (!file) continue;
       const sessionDiff = matchSessionDiff(part.sessionID, file);
-      if (sessionDiff) {
+      if (sessionDiff && isRealFileDiff(sessionDiff)) {
         list.push(sessionDiff);
         continue;
       }
@@ -241,21 +267,24 @@ export function resolveToolFileDiffs(
       const before = typeof item.before === "string" ? item.before : undefined;
       const after = typeof item.after === "string" ? item.after : undefined;
       const counts = countDiffLines(patch, before, after);
-      list.push({
+      const entry: SnapshotFileDiff = {
         file,
         patch,
         before,
         after,
         additions: typeof item.additions === "number" ? item.additions : counts.additions,
         deletions: typeof item.deletions === "number" ? item.deletions : counts.deletions,
-      });
+      };
+      if (isRealFileDiff(entry)) list.push(entry);
     }
     if (list.length > 0) return list;
   }
 
   // 2. `apply_patch` input.patchText
   if (typeof state.input?.patchText === "string") {
-    const parsed = parseApplyPatchText(state.input.patchText, part.sessionID);
+    const parsed = parseApplyPatchText(state.input.patchText, part.sessionID).filter(
+      isRealFileDiff
+    );
     if (parsed.length > 0) return parsed;
   }
 
@@ -263,7 +292,9 @@ export function resolveToolFileDiffs(
   const file = normalizeWorkspaceRelPath(primaryFile);
   if (!file) return [];
   const sessionDiff = matchSessionDiff(part.sessionID, file);
-  if (sessionDiff) return [sessionDiff];
+  if (sessionDiff) {
+    return isRealFileDiff(sessionDiff) ? [sessionDiff] : [];
+  }
 
   const patch = meta?.diff || meta?.patch;
   const before = meta?.filediff?.before ?? state.input?.oldString;
@@ -274,16 +305,15 @@ export function resolveToolFileDiffs(
       typeof before === "string" ? before : undefined,
       typeof after === "string" ? after : undefined
     );
-    return [
-      {
-        file,
-        patch: typeof patch === "string" ? patch : undefined,
-        before: typeof before === "string" ? before : undefined,
-        after: typeof after === "string" ? after : undefined,
-        additions: meta?.filediff?.additions ?? counts.additions,
-        deletions: meta?.filediff?.deletions ?? counts.deletions,
-      },
-    ];
+    const entry: SnapshotFileDiff = {
+      file,
+      patch: typeof patch === "string" ? patch : undefined,
+      before: typeof before === "string" ? before : undefined,
+      after: typeof after === "string" ? after : undefined,
+      additions: meta?.filediff?.additions ?? counts.additions,
+      deletions: meta?.filediff?.deletions ?? counts.deletions,
+    };
+    return isRealFileDiff(entry) ? [entry] : [];
   }
   return [];
 }
@@ -319,7 +349,8 @@ export function resolveToolFileDiagnostics(
 
 /**
  * Collects all unique modified files (with +/- counts and diff payloads) across an assistant turn cycle,
- * including direct edit/write/apply_patch calls, patch parts, and child subagent sessions.
+ * including completed edit/write/apply_patch calls, patch parts, and child subagent sessions.
+ * Files without actual content modifications (`!isRealFileDiff`) or from failed/unfinished tool calls are excluded.
  */
 export function collectCycleChangedFiles(
   cycleTurns: MessageTurn[],
@@ -331,24 +362,31 @@ export function collectCycleChangedFiles(
     const norm = normalizeWorkspaceRelPath(d.file);
     if (!norm) return;
     const fromSession = matchSessionDiff(sessionID, norm);
-    byFile.set(norm, fromSession || { ...d, file: norm });
+    if (fromSession) {
+      if (isRealFileDiff(fromSession)) {
+        byFile.set(norm, { ...fromSession, file: norm });
+      } else {
+        byFile.delete(norm);
+      }
+      return;
+    }
+    const candidate = { ...d, file: norm };
+    if (isRealFileDiff(candidate)) {
+      byFile.set(norm, candidate);
+    }
   };
 
   const scanParts = (parts: MessagePart[]) => {
     for (const p of parts) {
       if (p.type === "tool") {
+        if (p.state.status !== "completed") continue;
         if (isEditingTool(p.tool)) {
-          for (const file of extractTargetFiles(p)) {
-            if (!byFile.has(file)) {
-              recordDiff({ file, additions: 0, deletions: 0 });
-            }
-          }
           const primary = extractTargetFile(p) || "";
           for (const d of resolveToolFileDiffs(p, true, primary)) {
             recordDiff(d);
           }
         } else if (isTaskTool(p.tool)) {
-          const meta = p.state.status !== "pending" ? p.state.metadata : undefined;
+          const meta = p.state.metadata;
           const childID =
             meta?.sessionId || meta?.sessionID || p.state.input?.task_id;
           if (typeof childID === "string" && childID) {
@@ -361,10 +399,8 @@ export function collectCycleChangedFiles(
           const norm = normalizeWorkspaceRelPath(rawFile);
           if (!norm || byFile.has(norm)) continue;
           const fromSession = matchSessionDiff(sessionID, norm);
-          if (fromSession) {
-            byFile.set(norm, fromSession);
-          } else {
-            byFile.set(norm, { file: norm, additions: 0, deletions: 0 });
+          if (fromSession && isRealFileDiff(fromSession)) {
+            byFile.set(norm, { ...fromSession, file: norm });
           }
         }
       }
@@ -375,10 +411,30 @@ export function collectCycleChangedFiles(
     scanParts(step.parts);
   }
 
-  return Array.from(byFile.values());
+  return Array.from(byFile.values()).filter(isRealFileDiff);
+}
+
+/**
+ * Collects all unique modified files strictly from the latest user prompt cycle
+ * of the active session (excluding unrelated workspace/historical git diffs).
+ */
+export function collectSessionChangedFiles(
+  visibleTurns: MessageTurn[],
+  sessionID: string
+): SnapshotFileDiff[] {
+  if (!sessionID || visibleTurns.length === 0) return [];
+  let lastUserIdx = -1;
+  for (let i = visibleTurns.length - 1; i >= 0; i--) {
+    if (visibleTurns[i].info.role === "user") {
+      lastUserIdx = i;
+      break;
+    }
+  }
+  const cycleTurns =
+    lastUserIdx >= 0 ? visibleTurns.slice(lastUserIdx + 1) : visibleTurns;
+  if (cycleTurns.length === 0) return [];
+  return collectCycleChangedFiles(cycleTurns, sessionID);
 }
 
 export { computeChangedFileLines, resolveSessionDiffForFile } from "./file-diff-lines";
-
-
 

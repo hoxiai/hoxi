@@ -23,6 +23,14 @@ function turnSearchableText(turn: MessageTurn): string {
   return chunks.join("\n");
 }
 
+export function firstMatchingPartID(turn: MessageTurn, regex: RegExp): string | undefined {
+  for (const part of turn.parts) {
+    regex.lastIndex = 0;
+    if (regex.test(turnSearchableText({ info: turn.info, parts: [part] }))) return part.id;
+  }
+  return undefined;
+}
+
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -36,7 +44,7 @@ export default function TranscriptSearchBar(props: {
   open: boolean;
   turns: MessageTurn[];
   onClose: () => void;
-  onActiveTurnChange: (messageID: string | null) => void;
+  onActiveTurnChange: (messageID: string | null, partID?: string) => void;
 }) {
   const [query, setQuery] = createSignal("");
   const [matchCase, setMatchCase] = createSignal(false);
@@ -46,7 +54,7 @@ export default function TranscriptSearchBar(props: {
   const deferredQuery = createDeferred(query, { timeoutMs: 150 });
   const searchableTurns = mapArray(
     () => props.open && query().trim() ? props.turns : [],
-    (turn) => ({ id: () => turn.info.id, text: createMemo(() => turnSearchableText(turn)) })
+    (turn) => ({ id: () => turn.info.id, turn, text: createMemo(() => turnSearchableText(turn)) })
   );
 
   let inputRef: HTMLInputElement | undefined;
@@ -62,6 +70,7 @@ export default function TranscriptSearchBar(props: {
   const searchResult = createMemo<{
     matchedTurnIDs: string[];
     invalidRegex: boolean;
+    partIDs?: Record<string, string | undefined>;
   }>(() => {
     if (!props.open) return { matchedTurnIDs: [], invalidRegex: false };
     const q = deferredQuery().trim();
@@ -81,14 +90,16 @@ export default function TranscriptSearchBar(props: {
     }
 
     const matched: string[] = [];
+    const partIDs: Record<string, string | undefined> = {};
     for (const turn of searchableTurns()) {
       const text = turn.text();
       regex.lastIndex = 0;
       if (regex.test(text)) {
         matched.push(turn.id());
+        partIDs[turn.id()] = firstMatchingPartID(turn.turn, regex);
       }
     }
-    return { matchedTurnIDs: matched, invalidRegex: false };
+    return { matchedTurnIDs: matched, invalidRegex: false, partIDs };
   });
 
   const activeTurnID = createMemo(() => {
@@ -106,13 +117,18 @@ export default function TranscriptSearchBar(props: {
     if (clamped !== currentIndex()) setCurrentIndex(clamped);
   });
 
-  createEffect(on(activeTurnID, (id) => props.onActiveTurnChange(id)));
+  const notifyMatch = (id: string | null) => props.onActiveTurnChange(id, id ? searchResult().partIDs?.[id] : undefined);
+  const activePartID = createMemo(() => {
+    const id = activeTurnID();
+    return id ? searchResult().partIDs?.[id] : undefined;
+  });
+  createEffect(on([activeTurnID, activePartID], ([id, partID]) => props.onActiveTurnChange(id, partID)));
 
   const goNext = () => {
     const ids = searchResult().matchedTurnIDs;
     if (ids.length === 0) return;
     const next = (currentIndex() + 1) % ids.length;
-    if (next === currentIndex()) props.onActiveTurnChange(ids[next] ?? null);
+    if (next === currentIndex()) notifyMatch(ids[next] ?? null);
     setCurrentIndex(next);
   };
 
@@ -120,7 +136,7 @@ export default function TranscriptSearchBar(props: {
     const ids = searchResult().matchedTurnIDs;
     if (ids.length === 0) return;
     const prev = (currentIndex() - 1 + ids.length) % ids.length;
-    if (prev === currentIndex()) props.onActiveTurnChange(ids[prev] ?? null);
+    if (prev === currentIndex()) notifyMatch(ids[prev] ?? null);
     setCurrentIndex(prev);
   };
 
