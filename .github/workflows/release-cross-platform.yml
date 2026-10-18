@@ -1,0 +1,133 @@
+name: Release Windows and Linux
+
+on:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-windows:
+    name: "Windows: Build x64 Client & Release"
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: web/package-lock.json
+
+      - name: Validate release version
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          VERSION="$(node scripts/release-artifact.mjs version "$RELEASE_TAG")"
+          echo "RELEASE_VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: Install frontend dependencies & Build web
+        run: |
+          npm --prefix web ci
+          npm --prefix web run build
+
+      - name: Install Wails v2
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.13.0
+
+      - name: Build Windows Desktop App
+        shell: bash
+        run: |
+          wails build -platform windows/amd64 -s -m -nosyncgomod \
+            -ldflags "-X github.com/hoxiai/hoxi/internal/app.BuildVariant=release -X github.com/hoxiai/hoxi/internal/buildinfo.Version=${RELEASE_VERSION}"
+
+      - name: Package Windows Release Archive
+        shell: bash
+        run: |
+          ZIP_NAME="Hoxi-${RELEASE_VERSION}-windows-amd64.zip"
+          cd build/bin
+          7z a "$ZIP_NAME" Hoxi.exe
+
+      - name: Upload Windows Artifact to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            build/bin/Hoxi-${{ env.RELEASE_VERSION }}-windows-amd64.zip
+          draft: false
+          prerelease: false
+
+  build-linux:
+    name: "Linux: Build x64 Client & Release"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install Linux Desktop Dependencies (WebKit2GTK)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev
+
+      - name: Validate release version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          VERSION="$(node scripts/release-artifact.mjs version "$RELEASE_TAG")"
+          echo "RELEASE_VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: Install frontend dependencies & Build web
+        run: |
+          npm --prefix web ci
+          npm --prefix web run build
+
+      - name: Install Wails v2
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.13.0
+
+      - name: Build Linux Desktop App
+        run: |
+          wails build -platform linux/amd64 -s -m -nosyncgomod \
+            -ldflags "-X github.com/hoxiai/hoxi/internal/app.BuildVariant=release -X github.com/hoxiai/hoxi/internal/buildinfo.Version=${RELEASE_VERSION}"
+
+      - name: Package Linux Release Archive
+        run: |
+          TAR_NAME="Hoxi-${RELEASE_VERSION}-linux-amd64.tar.gz"
+          cd build/bin
+          tar -czf "$TAR_NAME" Hoxi
+
+      - name: Upload Linux Artifact to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            build/bin/Hoxi-${{ env.RELEASE_VERSION }}-linux-amd64.tar.gz
+          draft: false
+          prerelease: false
