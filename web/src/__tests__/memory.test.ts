@@ -1,14 +1,23 @@
-import {
+import * as memoryPluginModule from "../../../.opencode/plugins/hoxi-memory.js";
+import HoxiMemoryPlugin from "../../../.opencode/plugins/hoxi-memory.js";
+import { assertEqual, assertTrue, describe, it } from "./test-harness";
+
+const {
   createSessionLedger,
   ingestMessages,
   ledgerHasEvidence,
   noteDiffs,
   noteTodos,
   renderEightDimMemory,
-} from "../../../.opencode/plugins/hoxi-memory.js";
-import { assertEqual, assertTrue, describe, it } from "./test-harness";
+} = HoxiMemoryPlugin as typeof HoxiMemoryPlugin & Record<string, any>;
 
 describe("8-dim session memory", () => {
+  it("exports only the single OpenCode plugin entrypoint", () => {
+    const uniqueExports = new Set(Object.values(memoryPluginModule));
+    assertEqual(uniqueExports.size, 1);
+    assertEqual(uniqueExports.has(HoxiMemoryPlugin), true);
+  });
+
   it("writes observed goals, edits, errors, and todos instead of empty headings", () => {
     const ledger = createSessionLedger();
     assertEqual(ledgerHasEvidence(ledger), false);

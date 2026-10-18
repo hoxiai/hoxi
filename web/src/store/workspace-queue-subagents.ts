@@ -1,14 +1,17 @@
+import { createSignal } from "solid-js";
 import { produce } from "solid-js/store";
 import { t } from "../i18n";
 import { hoxiAPI } from "../services/api";
 import type { MessagePart, ToolPart } from "../services/sse-types";
 import { recordUserRevertAction } from "./provider-telemetry";
+import { appSettings } from "./settings";
 import { type SelectedModel, setWorkspace, workspace } from "./workspace";
 import {
   isSessionBusy,
   loadSessionMessages,
   loadSessionMessagesOnly,
   replaceSession,
+  scheduleRefreshWorktreeStatus,
   selectSession,
   sessionDirectory,
 } from "./workspace-sessions";
@@ -357,11 +360,65 @@ export async function resumeAllInterruptedSubagents(
   });
 }
 
-export async function revertToHere(
+export interface PendingRevertRequest {
+  sessionID: string;
+  messageID: string;
+  partID?: string;
+  affectedFiles: string[];
+}
+
+export const [pendingRevertConfirm, setPendingRevertConfirm] =
+  createSignal<PendingRevertRequest | null>(null);
+
+function collectAffectedRevertFiles(
   sessionID: string,
   messageID: string,
   partID?: string
+): string[] {
+  const turns = workspace.messagesBySession[sessionID] ?? [];
+  const bIdx = turns.findIndex((m) => m.info.id === messageID);
+  const slice =
+    bIdx >= 0 ? turns.slice(bIdx) : turns.filter((m) => m.info.id >= messageID);
+  const files = new Set<string>();
+  slice.forEach((turn, idx) => {
+    const startPart =
+      idx === 0 && partID
+        ? Math.max(0, turn.parts.findIndex((p) => p.id === partID))
+        : 0;
+    for (const p of turn.parts.slice(startPart)) {
+      if (p.type === "patch" && Array.isArray(p.files)) {
+        for (const f of p.files) if (f) files.add(f);
+      } else if (p.type === "tool" && p.state.status === "completed") {
+        const tn = p.tool.toLowerCase();
+        if (tn === "edit" || tn === "write" || tn === "patch" || tn === "multiedit" || tn === "apply_patch") {
+          const inp = (p.state.input || {}) as Record<string, any>;
+          const fp = inp.filePath || inp.path || inp.file || (p.state.metadata as any)?.filediff?.file;
+          if (typeof fp === "string" && fp.trim()) files.add(fp.trim());
+        }
+      }
+    }
+  });
+  return Array.from(files);
+}
+
+export async function revertToHere(
+  sessionID: string,
+  messageID: string,
+  partID?: string,
+  options?: { skipConfirm?: boolean }
 ): Promise<void> {
+  const existingSession = workspace.sessions.find((s) => s.id === sessionID);
+  const affectedFiles = collectAffectedRevertFiles(sessionID, messageID, partID);
+  if (
+    !options?.skipConfirm &&
+    appSettings.confirmBeforeRevert &&
+    !existingSession?.revert &&
+    (affectedFiles.length > 0 || Boolean(partID))
+  ) {
+    setPendingRevertConfirm({ sessionID, messageID, partID, affectedFiles });
+    return;
+  }
+  setPendingRevertConfirm(null);
   recordUserRevertAction(sessionID, messageID);
 
   if (!partID) {
@@ -391,7 +448,6 @@ export async function revertToHere(
     }
   }
 
-  const existingSession = workspace.sessions.find((s) => s.id === sessionID);
   if (existingSession) {
     replaceSession({
       ...existingSession,
@@ -417,9 +473,11 @@ export async function revertToHere(
   );
   replaceSession(info);
   void loadSessionMessages(sessionID);
+  scheduleRefreshWorktreeStatus(sessionID, 120);
 }
 
 export async function undoRevert(sessionID: string): Promise<void> {
+  setPendingRevertConfirm(null);
   const existingSession = workspace.sessions.find((s) => s.id === sessionID);
   if (existingSession) {
     replaceSession({
@@ -430,12 +488,14 @@ export async function undoRevert(sessionID: string): Promise<void> {
   const info = await hoxiAPI.unrevertSession(sessionID, sessionDirectory(sessionID));
   replaceSession(info);
   void loadSessionMessages(sessionID);
+  scheduleRefreshWorktreeStatus(sessionID, 120);
 }
 
 export async function forkFromMessage(
   sessionID: string,
   messageID?: string
 ): Promise<string> {
+  setPendingRevertConfirm(null);
   const forked = await hoxiAPI.forkSession(sessionID, messageID, sessionDirectory(sessionID));
   replaceSession(forked);
   await selectSession(forked.id);

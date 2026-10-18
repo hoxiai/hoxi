@@ -280,6 +280,23 @@ export interface TimelineI18n {
   completedWorkSummary: string;
   expandTurnSteps: string;
   collapseTurnSteps: string;
+  gitCommitAndPush: string;
+  gitCommitOnly: string;
+  gitPushOnly: string;
+  gitCommittingAndPushing: string;
+  gitCommittingOnly: string;
+  gitPushingOnly: string;
+  gitCommitAndPushSuccess: string;
+  gitCommitSuccess: string;
+  gitPushSuccess: string;
+  gitCommitModelLabel: string;
+  gitCommitModelFollowSmall: string;
+  gitCommitModelNone: string;
+  gitNothingToCommit: string;
+  gitAheadCountBadge: string;
+  revertConfirmWithFiles: string;
+  revertConfirmBothBtn: string;
+  revertForkKeepCodeBtn: string;
 }
 
 export interface ToolCardI18n {

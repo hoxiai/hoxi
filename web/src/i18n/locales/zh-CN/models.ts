@@ -235,6 +235,11 @@ export const models: ModelsI18n = {
   hoverPricingLabel: "计费价格",
   hoverCapabilitiesLabel: "模型能力",
   sourceBuiltInFree: "OpenCode 内置免费",
+  commitModelTitle: "Git 提交信息生成模型",
+  commitModelDesc:
+    "用于底部 Git 下拉菜单与检查器一键生成 Conventional Commit 提交说明（可指定任意便宜模型，或选不用模型按规则瞬时合成）",
+  commitModelFollowSmallOption: "跟随快速 / 轻量模型（推荐）",
+  commitModelNoneOption: "不用模型（纯本地规则极速合成 · 0 延迟）",
 };
 
 

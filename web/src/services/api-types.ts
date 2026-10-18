@@ -20,6 +20,17 @@ export interface WorktreeMeta {
   uncommittedLines?: number;
   additions?: number;
   deletions?: number;
+  aheadCount?: number;
+  hasUpstream?: boolean;
+}
+
+export interface CommitAndPushResponse {
+  ok: boolean;
+  commit?: string;
+  branch?: string;
+  remote?: string;
+  pushed?: boolean;
+  message?: string;
 }
 
 export interface ProjectInfo {
@@ -74,6 +85,8 @@ export interface WorktreeStatus {
   uncommittedLines: number;
   additions: number;
   deletions: number;
+  aheadCount?: number;
+  hasUpstream?: boolean;
 }
 
 export interface GitBranchInfo {

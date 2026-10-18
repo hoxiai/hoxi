@@ -40,7 +40,7 @@ When creating any git commit in a project developed with Hoxi, always append the
 Co-authored-by: Hoxi AI <code@hoxi.ai>
 </hoxi_git_attribution>`;
 
-export function redactSecrets(text) {
+function redactSecrets(text) {
   if (typeof text !== "string" || !text) return "";
   let out = text;
   for (const re of SECRET_PATTERNS) out = out.replace(re, "[REDACTED_SECRET]");
@@ -64,7 +64,7 @@ function fileFromInput(input) {
   return input.filePath || input.file_path || input.path || input.file || "";
 }
 
-export function createSessionLedger() {
+function createSessionLedger() {
   return {
     roles: new Map(),
     goals: [],
@@ -78,18 +78,18 @@ export function createSessionLedger() {
   };
 }
 
-export function noteMessage(ledger, info) {
+function noteMessage(ledger, info) {
   if (!ledger || !info?.id) return;
   ledger.roles.set(info.id, info.role || "");
 }
 
-export function noteChanged(ledger, file, reason) {
+function noteChanged(ledger, file, reason) {
   const clean = String(file || "").trim();
   if (!ledger || !clean) return;
   ledger.changed.set(clean, `- \`${clean}\` (${reason || "changed"})`);
 }
 
-export function noteTool(ledger, tool, input, output, error, status) {
+function noteTool(ledger, tool, input, output, error, status) {
   if (!ledger) return;
   const name = String(tool || "tool");
   const file = fileFromInput(input);
@@ -100,7 +100,7 @@ export function noteTool(ledger, tool, input, output, error, status) {
   }
 }
 
-export function notePart(ledger, part, role) {
+function notePart(ledger, part, role) {
   if (!ledger || !part) return;
   const resolvedRole = role || ledger.roles.get(part.messageID) || "";
   if (part.type === "text" && part.text && !part.synthetic) {
@@ -123,7 +123,7 @@ export function notePart(ledger, part, role) {
   }
 }
 
-export function ingestMessages(ledger, messages) {
+function ingestMessages(ledger, messages) {
   if (!ledger || !Array.isArray(messages)) return;
   for (const msg of messages) {
     const info = msg?.info || msg;
@@ -132,7 +132,7 @@ export function ingestMessages(ledger, messages) {
   }
 }
 
-export function noteDiffs(ledger, diffs) {
+function noteDiffs(ledger, diffs) {
   if (!ledger || !Array.isArray(diffs)) return;
   for (const diff of diffs) {
     if (!diff?.file) continue;
@@ -143,7 +143,7 @@ export function noteDiffs(ledger, diffs) {
   }
 }
 
-export function noteTodos(ledger, todos) {
+function noteTodos(ledger, todos) {
   if (!ledger || !Array.isArray(todos)) return;
   ledger.todos = todos
     .filter((item) => item?.content)
@@ -151,13 +151,13 @@ export function noteTodos(ledger, todos) {
     .map((item) => `- [${item.status || "pending"}] ${truncate(redactSecrets(item.content), 200)}`);
 }
 
-export function ledgerHasEvidence(ledger) {
+function ledgerHasEvidence(ledger) {
   return Boolean(
     ledger &&
-      (ledger.goals.length ||
-        ledger.changed.size ||
-        ledger.errors.length ||
-        ledger.todos.length ||
+      (ledger.goals?.length ||
+        ledger.changed?.size ||
+        ledger.errors?.length ||
+        ledger.todos?.length ||
         ledger.progress)
   );
 }
@@ -166,7 +166,7 @@ function bullets(list, empty) {
   return list.length ? list.map((item) => `- ${item}`).join("\n") : empty;
 }
 
-export function renderEightDimMemory(sessionID, ledger, updatedAt = new Date().toISOString()) {
+function renderEightDimMemory(sessionID, ledger, updatedAt = new Date().toISOString()) {
   const pending = (ledger?.todos || []).filter(
     (item) => !item.includes("[completed]") && !item.includes("[cancelled]")
   );
@@ -233,8 +233,9 @@ async function fetchEvidence(client, directory, sessionID) {
   };
 }
 
-export const HoxiMemoryPlugin = async ({ client, directory }) => {
-  const memoryDir = path.join(directory, ".opencode", "memory");
+export const HoxiMemoryPlugin = async ({ client, directory } = {}) => {
+  const baseDir = directory || process.cwd();
+  const memoryDir = path.join(baseDir, ".opencode", "memory");
   const projectMemoryPath = path.join(memoryDir, "project.md");
   const sessionsMemoryDir = path.join(memoryDir, "sessions");
   const ledgers = new Map();
@@ -252,7 +253,7 @@ export const HoxiMemoryPlugin = async ({ client, directory }) => {
   const persist = async (sessionID) => {
     const id = safeSessionID(sessionID);
     const ledger = ensure(id);
-    const evidence = await fetchEvidence(client, directory, sessionID);
+    const evidence = await fetchEvidence(client, baseDir, sessionID);
     if (evidence) {
       ingestMessages(ledger, evidence.messages);
       noteDiffs(ledger, evidence.diffs);
@@ -319,5 +320,19 @@ export const HoxiMemoryPlugin = async ({ client, directory }) => {
     },
   };
 };
+
+Object.assign(HoxiMemoryPlugin, {
+  redactSecrets,
+  createSessionLedger,
+  noteMessage,
+  noteChanged,
+  noteTool,
+  notePart,
+  ingestMessages,
+  noteDiffs,
+  noteTodos,
+  ledgerHasEvidence,
+  renderEightDimMemory,
+});
 
 export default HoxiMemoryPlugin;

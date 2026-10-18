@@ -238,6 +238,11 @@ export const models: ModelsI18n = {
   hoverPricingLabel: "Pricing",
   hoverCapabilitiesLabel: "Capabilities",
   sourceBuiltInFree: "OpenCode Free",
+  commitModelTitle: "Git Commit Message Model",
+  commitModelDesc:
+    "Generate Conventional Commit messages for one-click Git Commit & Push (choose a cheap/fast model or No Model for instant local rules)",
+  commitModelFollowSmallOption: "Follow Fast / Small Model (Recommended)",
+  commitModelNoneOption: "No Model (Pure Local Rule Synthesis · 0ms)",
 };
 
 

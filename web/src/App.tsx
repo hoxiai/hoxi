@@ -6,9 +6,11 @@ import { connectEventStream } from "./services/sse";
 import {
   applyPartDeltaBatch,
   applyStreamFrameBatch,
+  bootstrapProjectSessions,
   drainNextQueuedPrompt,
+  handleSessionErrorEvent,
+  isDismissedProjectPath,
   isInvalidProjectPath,
-  isSessionArchived,
   loadAgents,
   loadProjects,
   loadProviders,
@@ -18,7 +20,6 @@ import {
   loadSessionMessagesOnly,
   normalizeFolderPath,
   recordSessionRetry,
-  refreshWorktreeStatus,
   removeSessionFromStore,
   replaceSession,
   resolveDefaultProjectDir,
@@ -26,7 +27,6 @@ import {
   scheduleRefreshWorktreeStatus,
   selectSession,
   setWorkspace,
-  sortSessionsByActivity,
   syncSessionStatuses,
   triggerDesktopNotification,
   upsertMessageInfo,
@@ -47,6 +47,15 @@ export default function App() {
         wsBaseURL: boot.wsBaseURL,
       });
 
+      const eagerBootRoot =
+        bootRoot && !isDismissedProjectPath(bootRoot) ? bootRoot : "";
+      const eagerSessionsPromise = eagerBootRoot
+        ? bootstrapProjectSessions(eagerBootRoot).catch((err) => {
+            console.warn("Initial session load retry pending:", err);
+            return null;
+          })
+        : null;
+
       // Kick off non-blocking background loads while awaiting saved workspaces & projects
       void loadProviders();
       void loadProviderTelemetry();
@@ -66,20 +75,13 @@ export default function App() {
       }
 
       if (activeRoot) {
-        void refreshWorktreeStatus("__root__");
-        void syncSessionStatuses(activeRoot);
-
-        const sessions = await hoxiAPI.listSessions(activeRoot);
-        setWorkspace("sessions", sessions);
-
-        const unarchived = sessions.filter((s) => !s.parentID && !isSessionArchived(s));
-        if (unarchived.length > 0) {
-          const mostRecent = sortSessionsByActivity(unarchived)[0];
-          const p = selectSession(mostRecent.id);
-          setWorkspace("bootstrappingSessions", false);
-          await p;
+        if (eagerSessionsPromise && activeRoot === eagerBootRoot) {
+          await eagerSessionsPromise;
+          if (workspace.sessions.length === 0) {
+            await bootstrapProjectSessions(activeRoot);
+          }
         } else {
-          setWorkspace("bootstrappingSessions", false);
+          await bootstrapProjectSessions(activeRoot);
         }
       } else {
         setWorkspace("bootstrappingSessions", false);
@@ -96,6 +98,13 @@ export default function App() {
           void loadProviders();
           void loadProviderTelemetry();
           void syncSessionStatuses();
+          if (
+            workspace.rootDir &&
+            workspace.sessions.length === 0 &&
+            !workspace.bootstrappingSessions
+          ) {
+            void bootstrapProjectSessions(workspace.rootDir).catch(() => {});
+          }
         }
       },
       onDeltaBatch: applyPartDeltaBatch,
@@ -217,9 +226,7 @@ export default function App() {
             break;
           case "session.error":
             if (evt.properties.sessionID) {
-              setWorkspace("statusBySession", evt.properties.sessionID, { type: "idle" });
-              setWorkspace("unreadCompletedBySession", evt.properties.sessionID, false);
-              void loadSessionMessages(evt.properties.sessionID);
+              void handleSessionErrorEvent(evt.properties.sessionID, evt.properties.error as any);
             }
             console.error("session error:", evt.properties);
             break;

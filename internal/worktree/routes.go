@@ -112,17 +112,45 @@ func (m *worktreeManager) registerRoutes(mux *http.ServeMux) {
 		var body struct {
 			SessionID string `json:"sessionID"`
 			Message   string `json:"message"`
+			Push      bool   `json:"push"`
+			Directory string `json:"directory"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeJSONError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		hash, err := m.scoped(r.URL.Query().Get("directory"), body.SessionID).CommitWorktree(body.SessionID, body.Message)
+		dir := body.Directory
+		if dir == "" {
+			dir = r.URL.Query().Get("directory")
+		}
+		res, err := m.scoped(dir, body.SessionID).CommitAndPushWorktree(body.SessionID, body.Message, body.Push)
 		if err != nil {
 			writeJSONError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "commit": hash})
+		writeJSON(w, http.StatusOK, res)
+	})
+
+	mux.HandleFunc("/api/hoxi/worktree/push", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var body struct {
+			SessionID string `json:"sessionID"`
+			Directory string `json:"directory"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		dir := body.Directory
+		if dir == "" {
+			dir = r.URL.Query().Get("directory")
+		}
+		res, err := m.scoped(dir, body.SessionID).PushWorktree(body.SessionID)
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, res)
 	})
 
 	mux.HandleFunc("/api/hoxi/worktree/branches", func(w http.ResponseWriter, r *http.Request) {

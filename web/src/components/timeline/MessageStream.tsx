@@ -101,16 +101,16 @@ export default function MessageStream() {
     const last = list[list.length - 1];
     if (last.info.role === "assistant" && last.info.error) return false;
 
-    // Check if any assistant turn in the current cycle has a running/pending tool or open reasoning part
+    // Hide waiting indicator while any tool is pending/running, reasoning is open, or text is streaming
     for (let i = list.length - 1; i > lastUserIdx; i--) {
       const turn = list[i];
       if (turn.info.role !== "assistant" || turn.info.time?.completed) continue;
       const hasRunningWork = turn.parts.some(
         (p) =>
-          !isTodoTool(p) &&
-          ((p.type === "tool" &&
+          (p.type === "tool" &&
             (p.state.status === "pending" || p.state.status === "running")) ||
-            (p.type === "reasoning" && !p.time?.end))
+          (p.type === "reasoning" && !p.time?.end) ||
+          (p.type === "text" && p.text.trim().length > 0)
       );
       if (hasRunningWork) return false;
     }
@@ -118,7 +118,7 @@ export default function MessageStream() {
     return true;
   });
 
-  const completedExecutionSteps = createMemo(() => {
+  const executionCycleMeta = createMemo(() => {
     const list = turns();
     let lastUserIdx = -1;
     for (let i = list.length - 1; i >= 0; i--) {
@@ -127,7 +127,9 @@ export default function MessageStream() {
         break;
       }
     }
-    if (lastUserIdx < 0) return 0;
+    if (lastUserIdx < 0) return { count: 0, startedAt: undefined as number | undefined };
+    const startedAt =
+      list[lastUserIdx].info.time?.created || list[lastUserIdx + 1]?.info.time?.created;
     let count = 0;
     for (let i = lastUserIdx + 1; i < list.length; i++) {
       for (const part of list[i].parts) {
@@ -136,7 +138,7 @@ export default function MessageStream() {
         }
       }
     }
-    return count;
+    return { count, startedAt };
   });
 
   // Reactivity key that changes as tokens stream in or prompts are queued, driving auto-scroll.
@@ -450,7 +452,8 @@ export default function MessageStream() {
                 sessionID={workspace.activeSessionID}
                 isSessionBusy={isSessionBusy()}
                 showThinking={showThinkingPlaceholder()}
-                completedSteps={completedExecutionSteps()}
+                completedSteps={executionCycleMeta().count}
+                startedAt={executionCycleMeta().startedAt}
                 lastTurnRole={turns()[turns().length - 1]?.info.role}
               />
 

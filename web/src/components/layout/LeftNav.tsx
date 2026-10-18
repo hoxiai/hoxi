@@ -3,9 +3,11 @@ import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "so
 import { ArrowRightLeft, Check, Clock, Folder, Layers, Plus } from "lucide-solid";
 import {
   archiveSession,
+  bootstrapProjectSessions,
   discardSession,
   isInvalidProjectPath,
   newIsolatedSession,
+  normalizeFolderPath,
   openCreateWorkspaceModal,
   openHandoffModal,
   reorderProjects,
@@ -19,11 +21,7 @@ import {
 import { hoxiAPI } from "../../services/api";
 import type { SessionInfo } from "../../services/sse-types";
 import { Icon, Spinner } from "../icons";
-import {
-  buildAllProjects,
-  collectPendingSessionIDs,
-  findProjectDropTarget,
-} from "./left-nav-helpers";
+import { buildAllProjects, collectPendingSessionIDs, findProjectDropTarget } from "./left-nav-helpers";
 import MultiProjectTreeItem from "./MultiProjectItem";
 import SingleProjectNavView, { RecentTasksNavView } from "./SingleProjectNavView";
 import UserAccountMenu from "./UserAccountMenu";
@@ -67,30 +65,23 @@ export default function LeftNav() {
 
   // Drag-and-drop state for reordering projects
   const [draggingProjectPath, setDraggingProjectPath] = createSignal<string | null>(null);
-  const [dropTarget, setDropTarget] = createSignal<{
-    path: string;
-    position: "before" | "after";
-  } | null>(null);
+  const [dropTarget, setDropTarget] = createSignal<{ path: string; position: "before" | "after" } | null>(null);
   let projectListContainerRef: HTMLDivElement | undefined;
   let suppressNextProjectClick = false;
 
   // Expanded projects set (by path) for Multi-Project mode
   const [expandedProjects, setExpandedProjects] = createSignal<Set<string>>(
-    new Set(workspace.rootDir && !isInvalidProjectPath(workspace.rootDir) ? [workspace.rootDir] : [])
+    new Set(workspace.rootDir && !isInvalidProjectPath(workspace.rootDir) ? [normalizeFolderPath(workspace.rootDir)] : [])
   );
-
-  // Expanded archived sections per project (by path) for Multi-Project mode
-  const [expandedArchivedByProject, setExpandedArchivedByProject] = createSignal<
-    Record<string, boolean>
-  >({});
-
-  // Cached sessions for inactive projects: Record<path, SessionInfo[]>
+  const [expandedArchivedByProject, setExpandedArchivedByProject] = createSignal<Record<string, boolean>>({});
   const [projectSessions, setProjectSessions] = createSignal<Record<string, SessionInfo[]>>({});
   const [loadingProjects, setLoadingProjects] = createSignal<Record<string, boolean>>({});
 
   createEffect(() => {
-    if (workspace.rootDir && !isInvalidProjectPath(workspace.rootDir)) {
-      setExpandedProjects((prev) => new Set([...prev, workspace.rootDir]));
+    const root = normalizeFolderPath(workspace.rootDir);
+    if (root && !isInvalidProjectPath(root)) {
+      setExpandedProjects((prev) => (prev.has(root) ? prev : new Set([...prev, root])));
+      if (workspace.sessions.length > 0) setProjectSessions((prev) => ({ ...prev, [root]: workspace.sessions }));
     }
   });
 
@@ -101,11 +92,8 @@ export default function LeftNav() {
     if (workspace.bootstrappingSessions) return;
     const current = allProjects().map((p) => p.path);
     if (current.length === 0) return;
-    const saved = workspace.projectOrder;
-    const missing = current.filter((p) => !saved.includes(p));
-    if (missing.length > 0) {
-      setProjectOrder([...saved, ...missing]);
-    }
+    const missing = current.filter((p) => !workspace.projectOrder.includes(p));
+    if (missing.length > 0) setProjectOrder([...workspace.projectOrder, ...missing]);
   });
 
   const projectList = createMemo(() => {
@@ -121,34 +109,53 @@ export default function LeftNav() {
   });
 
   const pendingSessions = createMemo(() => collectPendingSessionIDs());
-  const isExpanded = (path: string) => expandedProjects().has(path);
+  const isExpanded = (path: string) => expandedProjects().has(normalizeFolderPath(path));
 
   const loadSessionsForProject = async (path: string) => {
-    setLoadingProjects((prev) => ({ ...prev, [path]: true }));
+    const clean = normalizeFolderPath(path);
+    if (!clean || isInvalidProjectPath(clean)) return;
+    setLoadingProjects((prev) => ({ ...prev, [clean]: true }));
     try {
-      const list = await hoxiAPI.listSessions(path);
-      setProjectSessions((prev) => ({ ...prev, [path]: list }));
+      if (clean === normalizeFolderPath(workspace.rootDir)) {
+        await bootstrapProjectSessions(clean);
+        setProjectSessions((prev) => ({ ...prev, [clean]: workspace.sessions }));
+      } else {
+        const list = await hoxiAPI.listSessions(clean);
+        setProjectSessions((prev) => ({ ...prev, [clean]: list }));
+      }
     } catch (err) {
-      console.error(`Failed to load sessions for ${path}:`, err);
+      console.error(`Failed to load sessions for ${clean}:`, err);
     } finally {
-      setLoadingProjects((prev) => ({ ...prev, [path]: false }));
+      setLoadingProjects((prev) => ({ ...prev, [clean]: false }));
     }
   };
+
+  createEffect(() => {
+    const activeRoot = normalizeFolderPath(workspace.rootDir);
+    for (const rawPath of expandedProjects()) {
+      const path = normalizeFolderPath(rawPath);
+      if (!path || isInvalidProjectPath(path) || loadingProjects()[path] || projectSessions()[path]) continue;
+      if (path === activeRoot && (workspace.bootstrappingSessions || workspace.sessions.length > 0)) continue;
+      void loadSessionsForProject(path);
+    }
+  });
 
   const toggleProject = async (path: string) => {
     if (suppressNextProjectClick) {
       suppressNextProjectClick = false;
       return;
     }
+    const clean = normalizeFolderPath(path);
     const next = new Set(expandedProjects());
-    if (next.has(path)) {
-      next.delete(path);
+    if (next.has(clean)) {
+      next.delete(clean);
       setExpandedProjects(next);
     } else {
-      next.add(path);
+      next.add(clean);
       setExpandedProjects(next);
-      if (path !== workspace.rootDir && !projectSessions()[path]) {
-        await loadSessionsForProject(path);
+      const isRoot = clean === normalizeFolderPath(workspace.rootDir);
+      if ((!isRoot && !projectSessions()[clean]) || (isRoot && workspace.sessions.length === 0 && !workspace.bootstrappingSessions)) {
+        await loadSessionsForProject(clean);
       }
     }
   };
@@ -413,36 +420,33 @@ export default function LeftNav() {
           class="flex-1 min-h-0 overflow-y-auto px-1 py-1 space-y-1"
         >
           <For each={projectList()}>
-            {(proj) => (
-              <MultiProjectTreeItem
-                proj={proj}
-                expanded={isExpanded(proj.path)}
-                isCreating={creatingForPath() === proj.path}
-                isLoadingSessions={Boolean(loadingProjects()[proj.path])}
-                isDraggingThis={draggingProjectPath() === proj.path}
-                isDropBefore={
-                  dropTarget()?.path === proj.path && dropTarget()?.position === "before"
-                }
-                isDropAfter={
-                  dropTarget()?.path === proj.path && dropTarget()?.position === "after"
-                }
-                isArchivedOpen={
-                  Boolean(expandedArchivedByProject()[proj.path]) ||
-                  Boolean(filterQuery().trim())
-                }
-                filterQuery={filterQuery()}
-                cachedSessions={projectSessions()[proj.path] || []}
-                pendingSessions={pendingSessions()}
-                onPointerDown={onProjectPointerDown}
-                onToggleProject={(p) => void toggleProject(p)}
-                onToggleArchived={toggleArchivedForProject}
-                onCreateThread={(e, p) => void onCreateThreadInProject(e, p)}
-                onSelectSession={(p, id) => void onSelectSessionInProject(p, id)}
-                onArchiveSession={(p, ev, id) => void onArchiveInProject(p, ev, id)}
-                onUnarchiveSession={(p, ev, id) => void onUnarchiveInProject(p, ev, id)}
-                onDiscardSession={(p, ev, id) => onDiscardInProject(p, ev, id)}
-              />
-            )}
+            {(proj) => {
+              const normPath = normalizeFolderPath(proj.path);
+              const isRootProj = normPath === normalizeFolderPath(workspace.rootDir);
+              return (
+                <MultiProjectTreeItem
+                  proj={proj}
+                  expanded={isExpanded(proj.path)}
+                  isCreating={creatingForPath() === proj.path}
+                  isLoadingSessions={Boolean(loadingProjects()[normPath]) || (isRootProj && workspace.bootstrappingSessions && workspace.sessions.length === 0)}
+                  isDraggingThis={draggingProjectPath() === proj.path}
+                  isDropBefore={dropTarget()?.path === proj.path && dropTarget()?.position === "before"}
+                  isDropAfter={dropTarget()?.path === proj.path && dropTarget()?.position === "after"}
+                  isArchivedOpen={Boolean(expandedArchivedByProject()[proj.path]) || Boolean(filterQuery().trim())}
+                  filterQuery={filterQuery()}
+                  cachedSessions={projectSessions()[normPath] || projectSessions()[proj.path] || []}
+                  pendingSessions={pendingSessions()}
+                  onPointerDown={onProjectPointerDown}
+                  onToggleProject={(p) => void toggleProject(p)}
+                  onToggleArchived={toggleArchivedForProject}
+                  onCreateThread={(e, p) => void onCreateThreadInProject(e, p)}
+                  onSelectSession={(p, id) => void onSelectSessionInProject(p, id)}
+                  onArchiveSession={(p, ev, id) => void onArchiveInProject(p, ev, id)}
+                  onUnarchiveSession={(p, ev, id) => void onUnarchiveInProject(p, ev, id)}
+                  onDiscardSession={(p, ev, id) => onDiscardInProject(p, ev, id)}
+                />
+              );
+            }}
           </For>
 
           {/* Bottom + Import External Task Button */}

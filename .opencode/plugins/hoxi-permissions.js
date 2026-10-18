@@ -27,7 +27,7 @@ function pushText(out, value) {
   }
 }
 
-export function commandCandidates(input) {
+function commandCandidates(input) {
   const out = [];
   pushText(out, input?.patterns);
   pushText(out, input?.pattern);
@@ -39,7 +39,7 @@ export function commandCandidates(input) {
   return out;
 }
 
-export function splitCommandChain(command) {
+function splitCommandChain(command) {
   return String(command || "")
     .split(SHELL_SPLIT_RE)
     .map((segment) => segment.replace(/\)\s*$/, "").trim())
@@ -58,7 +58,7 @@ function isSafeSegment(segment) {
   return SAFE_COMMANDS.some((re) => re.test(withoutHarmlessRedirect));
 }
 
-export function decidePermission(input) {
+function decidePermission(input) {
   const permission = String(input?.permission || input?.type || "").toLowerCase();
   const commands = commandCandidates(input);
   const blob = [permission, ...commands].join("\n");
@@ -77,5 +77,11 @@ export const HoxiPermissionsPlugin = async () => {
     },
   };
 };
+
+Object.assign(HoxiPermissionsPlugin, {
+  commandCandidates,
+  splitCommandChain,
+  decidePermission,
+});
 
 export default HoxiPermissionsPlugin;

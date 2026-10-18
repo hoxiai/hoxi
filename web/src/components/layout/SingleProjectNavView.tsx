@@ -280,8 +280,11 @@ export default function SingleProjectNavView(props: {
         <Show
           when={groupedSingleSessions().length > 0}
           fallback={
-            <div class="px-3 py-6 text-center text-[12px] text-[var(--text-faint)]">
-              {t("leftNav.noThreads")}
+            <div class="px-3 py-6 flex items-center justify-center gap-1.5 text-[12px] text-[var(--text-faint)]">
+              <Show when={workspace.bootstrappingSessions} fallback={<span>{t("leftNav.noThreads")}</span>}>
+                <Spinner class="w-3.5 h-3.5" />
+                <span>{t("common.loading")}</span>
+              </Show>
             </div>
           }
         >

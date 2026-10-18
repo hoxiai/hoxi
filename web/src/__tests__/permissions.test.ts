@@ -1,7 +1,17 @@
-import { decidePermission } from "../../../.opencode/plugins/hoxi-permissions.js";
+import * as permissionsPluginModule from "../../../.opencode/plugins/hoxi-permissions.js";
+import HoxiPermissionsPlugin from "../../../.opencode/plugins/hoxi-permissions.js";
 import { assertEqual, describe, it } from "./test-harness";
 
+const { decidePermission } = HoxiPermissionsPlugin as typeof HoxiPermissionsPlugin &
+  Record<string, any>;
+
 describe("permission command chains", () => {
+  it("exports only the single OpenCode plugin entrypoint", () => {
+    const uniqueExports = new Set(Object.values(permissionsPluginModule));
+    assertEqual(uniqueExports.size, 1);
+    assertEqual(uniqueExports.has(HoxiPermissionsPlugin), true);
+  });
+
   it("allows a fully safe command chain and read permissions", () => {
     assertEqual(decidePermission({ permission: "bash", patterns: ["git status && git diff"] }), "allow");
     assertEqual(decidePermission({ permission: "bash", patterns: ["npm test"] }), "allow");

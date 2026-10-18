@@ -214,5 +214,9 @@ export interface ModelsI18n {
   hoverPricingLabel: string;
   hoverCapabilitiesLabel: string;
   sourceBuiltInFree: string;
+  commitModelTitle: string;
+  commitModelDesc: string;
+  commitModelFollowSmallOption: string;
+  commitModelNoneOption: string;
 }
 

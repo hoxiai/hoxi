@@ -1,6 +1,7 @@
 package handoff
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -8,6 +9,8 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+
+	"github.com/hoxiai/hoxi/internal/provider"
 )
 
 func TestDiscoveryPreservesStatsOrderAndFreshness(t *testing.T) {
@@ -63,5 +66,52 @@ func TestDiscoveryPreservesStatsOrderAndFreshness(t *testing.T) {
 	request("/api/hoxi/local-cli/status", &status)
 	if status.Tools[1].SessionCount != fresh.Sources[ExternalToolClaude].SessionCount {
 		t.Fatal("CLI status did not freshly scan external sessions")
+	}
+}
+
+func TestLocalCLIOAuthOnlyImportAndConnectedState(t *testing.T) {
+	workspaceDir := t.TempDir()
+	homeDir := setupSyntheticCLIHome(t, workspaceDir)
+	port, _, closeSrv := setupMockOpenCodeServerAndDB(t)
+	defer closeSrv()
+
+	// Replace settings/auth with OAuth-only formats (no API keys in settings.json)
+	_ = os.WriteFile(filepath.Join(homeDir, ".claude", "settings.json"), []byte(`{"model":"opus[1m]","env":{"HTTP_PROXY":"http://127.0.0.1:7890"}}`), 0o644)
+	_ = os.WriteFile(filepath.Join(homeDir, ".claude", ".credentials.json"), []byte(`{"claudeAiOauth":{"accessToken":"sk-ant-oat01-test"}}`), 0o644)
+	_ = os.WriteFile(filepath.Join(homeDir, ".claude.json"), []byte(`{"additionalModelOptionsCache":[{"value":"claude-fable-5-1[1m]"}]}`), 0o644)
+
+	_ = os.WriteFile(filepath.Join(homeDir, ".gemini", "settings.json"), []byte(`{"hooks":{}}`), 0o644)
+	_ = os.WriteFile(filepath.Join(homeDir, ".gemini", "jetski-standalone-oauth-token"), []byte(`{"token":{"access_token":"ya29.test-antigravity"}}`), 0o644)
+
+	_ = os.WriteFile(filepath.Join(homeDir, ".codex", "auth.json"), []byte(`{"auth_mode":"chatgpt","tokens":{"access_token":"acc-tok","refresh_token":"ref-tok","account_id":"acct-1"}}`), 0o644)
+
+	provSvc := provider.NewService(port, "testpass", workspaceDir, nil)
+	svc := NewService(port, "testpass", workspaceDir, provSvc)
+	mux := http.NewServeMux()
+	svc.RegisterRoutes(mux)
+
+	for _, toolID := range []ExternalToolID{ExternalToolClaude, ExternalToolCodex, ExternalToolGemini} {
+		b, _ := json.Marshal(LocalCLIImportRequest{ToolID: toolID})
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/hoxi/local-cli/import", bytes.NewReader(b)))
+		var resp LocalCLIImportResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("unmarshal %s import: %v", toolID, err)
+		}
+		if !resp.OK || len(resp.Models) == 0 {
+			t.Fatalf("expected OAuth-only import for %s to succeed with models, got %+v", toolID, resp)
+		}
+	}
+
+	recStatus := httptest.NewRecorder()
+	mux.ServeHTTP(recStatus, httptest.NewRequest(http.MethodGet, "/api/hoxi/local-cli/status", nil))
+	var status LocalCLIStatusResponse
+	_ = json.Unmarshal(recStatus.Body.Bytes(), &status)
+	for _, item := range status.Tools {
+		if item.ID == ExternalToolClaude || item.ID == ExternalToolCodex || item.ID == ExternalToolGemini {
+			if !item.Connected {
+				t.Fatalf("expected %s to report Connected=true after import, got %+v", item.ID, item)
+			}
+		}
 	}
 }

@@ -38,6 +38,7 @@ func (s *Service) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/hoxi/provider/test-model", s.handleTestProviderModel)
 	mux.HandleFunc("/api/hoxi/provider/audit", s.handleAuditProviderCode)
 	mux.HandleFunc("/api/hoxi/provider/summarize-title", s.handleSummarizeSessionTitle)
+	mux.HandleFunc("/api/hoxi/provider/generate-commit-message", s.handleGenerateCommitMessage)
 	mux.HandleFunc("/api/hoxi/models-config", s.handleModelsConfig)
 	mux.HandleFunc("/global/config", s.handleGlobalConfigProxy)
 	mux.HandleFunc("/provider", s.handleProviderProxy)
@@ -279,16 +280,31 @@ func (g *desktopGateway) resolveStoredProviderKey(providerID, requestedBaseURL s
 		}
 	}
 
-	// 2. Fallback to ~/.local/share/opencode/auth.json
+	// 2. Check .hoxi/models.json configured options
+	if hProv, ok := g.loadHoxiProvidersMap()[providerID].(map[string]interface{}); ok {
+		if opts, ok := hProv["options"].(map[string]interface{}); ok {
+			if optKey, ok := opts["apiKey"].(string); ok && strings.TrimSpace(optKey) != "" {
+				return strings.TrimSpace(optKey)
+			}
+		}
+	}
+
+	// 3. Fallback to ~/.local/share/opencode/auth.json (supports both API key and OAuth access token)
 	if home, err := os.UserHomeDir(); err == nil {
 		authPath := filepath.Join(home, ".local", "share", "opencode", "auth.json")
 		if data, err := os.ReadFile(authPath); err == nil {
 			var authMap map[string]struct {
-				Key string `json:"key"`
+				Key    string `json:"key"`
+				Access string `json:"access"`
 			}
 			if json.Unmarshal(data, &authMap) == nil {
-				if entry, ok := authMap[providerID]; ok && entry.Key != "" {
-					return entry.Key
+				if entry, ok := authMap[providerID]; ok {
+					if strings.TrimSpace(entry.Key) != "" {
+						return strings.TrimSpace(entry.Key)
+					}
+					if strings.TrimSpace(entry.Access) != "" {
+						return strings.TrimSpace(entry.Access)
+					}
 				}
 			}
 		}

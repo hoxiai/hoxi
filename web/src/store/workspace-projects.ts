@@ -1,38 +1,14 @@
-import {
-  hoxiAPI,
-  type SaveWorkspaceInput,
-  type WorkspaceFolder,
-  type WorkspaceProfile,
-} from "../services/api";
-import {
-  DISMISSED_PROJECTS_KEY,
-  isSessionArchived,
-  PROJECT_ORDER_KEY,
-  RECENT_PROJECTS_KEY,
-  setWorkspace,
-  workspace,
-} from "./workspace";
+import { hoxiAPI, type SaveWorkspaceInput, type WorkspaceFolder, type WorkspaceProfile } from "../services/api";
+import { DISMISSED_PROJECTS_KEY, isSessionArchived, PROJECT_ORDER_KEY, RECENT_PROJECTS_KEY, setWorkspace, workspace } from "./workspace";
 import { loadAgents, loadProviders } from "./workspace-providers";
-import { sortSessionsByActivity } from "./session-title";
+import { isPlaceholderSessionTitle, sortSessionsByActivity } from "./session-title";
 import { syncSessionStatuses } from "./session-status-sync";
-import {
-  isSessionDeleted,
-  refreshWorktreeStatus,
-  selectSession,
-} from "./workspace-sessions";
+import { isSessionBusy, isSessionDeleted, loadSessionMessagesOnly, refreshWorktreeStatus, selectSession } from "./workspace-sessions";
+import type { SessionInfo } from "../services/sse-types";
 
 // Directly borrowed from Kilo Desktop: plugins/kilo-ui/src/contracts/workspaces/identity-color.ts
-export const WORKSPACE_IDENTITY_COLORS = [
-  "#5EA0F7",
-  "#34D399",
-  "#F87171",
-  "#A78BFA",
-  "#22D3EE",
-  "#FBBF24",
-] as const;
-
+export const WORKSPACE_IDENTITY_COLORS = ["#5EA0F7", "#34D399", "#F87171", "#A78BFA", "#22D3EE", "#FBBF24"] as const;
 export const DEFAULT_WORKSPACE_IDENTITY_COLOR = WORKSPACE_IDENTITY_COLORS[0];
-
 const HEX_COLOR_RE = /^#[0-9A-Fa-f]{6}$/;
 
 export function normalizeWorkspaceIdentityColor(value?: string | null): string {
@@ -58,16 +34,11 @@ export function recordDismissedProject(pathOrID?: string | null): void {
   if (!pathOrID) return;
   const clean = pathOrID.trim();
   const norm = normalizeFolderPath(clean);
-  const current = workspace.dismissedProjects || [];
-  const next = [...current];
+  const next = [...(workspace.dismissedProjects || [])];
   if (clean && !next.includes(clean)) next.push(clean);
   if (norm && !next.includes(norm)) next.push(norm);
   setWorkspace("dismissedProjects", next);
-  try {
-    localStorage.setItem(DISMISSED_PROJECTS_KEY, JSON.stringify(next));
-  } catch {
-    /* ignore */
-  }
+  try { localStorage.setItem(DISMISSED_PROJECTS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
 }
 
 export function unrecordDismissedProject(pathOrID?: string | null): void {
@@ -78,11 +49,7 @@ export function unrecordDismissedProject(pathOrID?: string | null): void {
     (item) => item !== clean && normalizeFolderPath(item) !== norm
   );
   setWorkspace("dismissedProjects", next);
-  try {
-    localStorage.setItem(DISMISSED_PROJECTS_KEY, JSON.stringify(next));
-  } catch {
-    /* ignore */
-  }
+  try { localStorage.setItem(DISMISSED_PROJECTS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
 }
 
 export function normalizeFolderPath(p?: string | null): string {
@@ -160,14 +127,7 @@ export function activeWorkspaceFolders(): WorkspaceFolder[] {
     return profile.folders;
   }
   if (!workspace.rootDir || isInvalidProjectPath(workspace.rootDir)) return [];
-  return [
-    {
-      id: "primary",
-      path: workspace.rootDir,
-      isPrimary: true,
-      position: 0,
-    },
-  ];
+  return [{ id: "primary", path: workspace.rootDir, isPrimary: true, position: 0 }];
 }
 
 export function workspaceFoldersForDir(dir: string): WorkspaceFolder[] {
@@ -249,11 +209,75 @@ export function recordRecentProject(directory: string) {
   );
   const updatedRecents = [cleaned, ...recents].slice(0, 20);
   setWorkspace("recentProjects", updatedRecents);
-  try {
-    localStorage.setItem(RECENT_PROJECTS_KEY, JSON.stringify(updatedRecents));
-  } catch {
-    /* ignore */
+  try { localStorage.setItem(RECENT_PROJECTS_KEY, JSON.stringify(updatedRecents)); } catch { /* ignore */ }
+}
+
+export async function selectInitialProjectSession(
+  sessions: SessionInfo[],
+  expectedRootDir = normalizeFolderPath(workspace.rootDir)
+): Promise<void> {
+  const unarchived = sessions.filter((s) => !s.parentID && !isSessionArchived(s));
+  if (unarchived.length === 0) {
+    setWorkspace("bootstrappingSessions", false);
+    return;
   }
+  const sorted = sortSessionsByActivity(unarchived);
+  const candidates = [
+    ...sorted.filter((s) => !isPlaceholderSessionTitle(s.title)),
+    ...sorted.filter((s) => isPlaceholderSessionTitle(s.title)),
+  ];
+  const first = candidates[0];
+  const p = selectSession(first.id);
+  setWorkspace("bootstrappingSessions", false);
+  await p;
+
+  if (
+    (workspace.messagesBySession[first.id]?.length ?? 0) === 0 &&
+    !isSessionBusy(first.id) &&
+    candidates.length > 1
+  ) {
+    for (const next of candidates.slice(1, 6)) {
+      if (
+        workspace.activeSessionID !== first.id ||
+        normalizeFolderPath(workspace.rootDir) !== expectedRootDir
+      ) {
+        break;
+      }
+      await loadSessionMessagesOnly(next.id).catch(() => {});
+      if ((workspace.messagesBySession[next.id]?.length ?? 0) > 0 || isSessionBusy(next.id)) {
+        if (
+          workspace.activeSessionID === first.id &&
+          normalizeFolderPath(workspace.rootDir) === expectedRootDir
+        ) {
+          await selectSession(next.id);
+        }
+        return;
+      }
+    }
+  }
+}
+
+export async function bootstrapProjectSessions(directory: string): Promise<void> {
+  const cleaned = normalizeFolderPath(directory);
+  if (!cleaned || isInvalidProjectPath(cleaned)) {
+    setWorkspace("bootstrappingSessions", false);
+    return;
+  }
+  let rawSessions: SessionInfo[];
+  try {
+    rawSessions = await hoxiAPI.listSessions(cleaned);
+  } catch {
+    await new Promise((r) => setTimeout(r, 400));
+    rawSessions = await hoxiAPI.listSessions(cleaned);
+  }
+  if (normalizeFolderPath(workspace.rootDir) !== cleaned) return;
+  const sessions = (Array.isArray(rawSessions) ? rawSessions : []).filter(
+    (s) => !isSessionDeleted(s.id)
+  );
+  setWorkspace("sessions", sessions);
+  void refreshWorktreeStatus("__root__");
+  void syncSessionStatuses(cleaned);
+  await selectInitialProjectSession(sessions, cleaned);
 }
 
 export async function switchWorkspace(directory: string): Promise<void> {
@@ -270,22 +294,7 @@ export async function switchWorkspace(directory: string): Promise<void> {
   });
 
   try {
-    const rawSessions = await hoxiAPI.listSessions(cleaned);
-    const sessions = rawSessions.filter((s) => !isSessionDeleted(s.id));
-    setWorkspace("sessions", sessions);
-
-    void refreshWorktreeStatus("__root__");
-    void syncSessionStatuses(cleaned);
-
-    const unarchived = sessions.filter((s) => !s.parentID && !isSessionArchived(s));
-    if (unarchived.length > 0) {
-      const mostRecent = sortSessionsByActivity(unarchived)[0];
-      const p = selectSession(mostRecent.id);
-      setWorkspace("bootstrappingSessions", false);
-      await p;
-    } else {
-      setWorkspace("bootstrappingSessions", false);
-    }
+    await bootstrapProjectSessions(cleaned);
   } catch (err) {
     setWorkspace("bootstrappingSessions", false);
     console.error("switch workspace error:", err);
@@ -296,6 +305,7 @@ export async function switchWorkspace(directory: string): Promise<void> {
   void loadSavedWorkspaces();
   void loadAgents(cleaned);
 }
+
 
 export async function openWorkspaceFolder(): Promise<void> {
   try {

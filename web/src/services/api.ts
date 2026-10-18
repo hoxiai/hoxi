@@ -347,8 +347,21 @@ export const hoxiAPI = {
   revertWorktreeFile(sessionID: string, file: string): Promise<{ ok: boolean }> {
     return requestJSON("/api/hoxi/worktree/revert-file", { method: "POST", body: JSON.stringify({ sessionID, file }) });
   },
-  commitWorktree(sessionID: string, message: string): Promise<{ ok: boolean; commit?: string }> {
-    return requestJSON("/api/hoxi/worktree/commit", { method: "POST", body: JSON.stringify({ sessionID, message }) });
+  commitWorktree(
+    sessionID: string,
+    message: string,
+    opts?: { push?: boolean; directory?: string }
+  ): Promise<import("./api-types").CommitAndPushResponse> {
+    return requestJSON("/api/hoxi/worktree/commit", {
+      method: "POST",
+      body: JSON.stringify({ sessionID, message, ...(opts?.push ? { push: true } : {}), ...(opts?.directory ? { directory: opts.directory } : {}) }),
+    });
+  },
+  pushWorktree(sessionID: string, directory?: string): Promise<import("./api-types").CommitAndPushResponse> {
+    return requestJSON("/api/hoxi/worktree/push", {
+      method: "POST",
+      body: JSON.stringify({ sessionID, ...(directory ? { directory } : {}) }),
+    });
   },
   removeWorktree(sessionID: string, force = false, keepBranch = false): Promise<{ ok: boolean }> {
     return requestJSON(
@@ -422,22 +435,20 @@ export const hoxiAPI = {
     return requestJSON("/api/hoxi/provider/audit", { method: "POST", body: JSON.stringify(req) });
   },
   summarizeSessionTitle(req: {
-    providerID: string;
-    modelID: string;
-    baseURL?: string;
-    npm?: string;
-    prompt: string;
-    locale: string;
+    providerID: string; modelID: string; baseURL?: string; npm?: string; prompt: string; locale: string;
   }): Promise<{ ok: boolean; title: string; error?: string }> {
     return requestJSON("/api/hoxi/provider/summarize-title", { method: "POST", body: JSON.stringify(req) });
+  },
+  generateCommitMessage(req: {
+    providerID: string; modelID: string; baseURL?: string; npm?: string;
+    sessionTitle?: string; lastPrompt?: string; diffSummary: string; locale: string;
+  }): Promise<{ ok: boolean; message: string; error?: string }> {
+    return requestJSON("/api/hoxi/provider/generate-commit-message", { method: "POST", body: JSON.stringify(req) });
   },
 
   // Cross-Tool Session Handoff & Local CLI Bridge
   listExternalSessions(opts?: {
-    directory?: string;
-    query?: string;
-    source?: string;
-    onlyCurrent?: boolean;
+    directory?: string; query?: string; source?: string; onlyCurrent?: boolean;
   }): Promise<import("./api-types").HandoffSessionsResponse> {
     const params = new URLSearchParams();
     if (opts?.directory) params.set("directory", opts.directory);
@@ -446,22 +457,14 @@ export const hoxiAPI = {
     if (opts?.onlyCurrent) params.set("onlyCurrent", "1");
     return requestJSON(`/api/hoxi/handoff/sessions?${params.toString()}`);
   },
-  getExternalSessionPreview(
-    source: string,
-    id: string,
-    cwd?: string
-  ): Promise<import("./api-types").ExternalSessionDetail> {
+  getExternalSessionPreview(source: string, id: string, cwd?: string): Promise<import("./api-types").ExternalSessionDetail> {
     const params = new URLSearchParams({ source, id });
     if (cwd) params.set("cwd", cwd);
     return requestJSON(`/api/hoxi/handoff/preview?${params.toString()}`);
   },
   importExternalSession(req: {
-    source: string;
-    sessionID: string;
-    sourceCwd?: string;
-    targetDirectory?: string;
-    preferredProviderID?: string;
-    preferredModelID?: string;
+    source: string; sessionID: string; sourceCwd?: string; targetDirectory?: string;
+    preferredProviderID?: string; preferredModelID?: string;
   }): Promise<import("./api-types").HandoffImportResponse> {
     return requestJSON("/api/hoxi/handoff/import", { method: "POST", body: JSON.stringify(req) });
   },
@@ -472,5 +475,4 @@ export const hoxiAPI = {
     return requestJSON("/api/hoxi/local-cli/import", { method: "POST", body: JSON.stringify({ toolID }) });
   },
 };
-
 

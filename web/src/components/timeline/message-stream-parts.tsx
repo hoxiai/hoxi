@@ -373,6 +373,7 @@ export function LiveExecutionControlBar(props: {
   isSessionBusy: boolean;
   showThinking: boolean;
   completedSteps?: number;
+  startedAt?: number;
   lastTurnRole?: string;
 }) {
   const [busyAction, setBusyAction] = createSignal(false);
@@ -395,7 +396,10 @@ export function LiveExecutionControlBar(props: {
   return (
     <>
       <Show when={props.showThinking}>
-        <ExecutionWaitingIndicator completedSteps={props.completedSteps ?? 0} />
+        <ExecutionWaitingIndicator
+          completedSteps={props.completedSteps ?? 0}
+          startedAt={props.startedAt}
+        />
       </Show>
 
       <Show

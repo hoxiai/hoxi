@@ -35,6 +35,50 @@ func readGeminiLocalKeyAndModels() (apiKey, defaultModel string, models []string
 				}
 			}
 		}
+		if apiKey == "" {
+			if raw, err := os.ReadFile(filepath.Join(gRoot, "jetski-standalone-oauth-token")); err == nil {
+				var oauthDoc struct {
+					Token struct {
+						AccessToken string `json:"access_token"`
+					} `json:"token"`
+				}
+				if json.Unmarshal(raw, &oauthDoc) == nil && strings.TrimSpace(oauthDoc.Token.AccessToken) != "" {
+					apiKey = strings.TrimSpace(oauthDoc.Token.AccessToken)
+				} else if trimmed := strings.TrimSpace(string(raw)); trimmed != "" {
+					apiKey = trimmed
+				}
+			}
+		}
+	}
+	for _, aDir := range antigravityDataDirs() {
+		entries, err := os.ReadDir(filepath.Join(aDir, "brain"))
+		if err != nil {
+			continue
+		}
+		maxScan := 25
+		if len(entries) < maxScan {
+			maxScan = len(entries)
+		}
+		for i := 0; i < maxScan; i++ {
+			if !entries[i].IsDir() {
+				continue
+			}
+			tp := filepath.Join(aDir, "brain", entries[i].Name(), ".system_generated", "logs", "transcript.jsonl")
+			raw, err := os.ReadFile(tp)
+			if err != nil {
+				continue
+			}
+			_, m := extractAntigravityUserPrompt(string(raw))
+			if m != "" {
+				models = appendUniqueString(models, m)
+			}
+		}
+	}
+	if len(models) == 0 {
+		models = []string{"gemini-2.5-pro", "gemini-2.5-flash"}
+	}
+	if defaultModel == "" && len(models) > 0 {
+		defaultModel = models[0]
 	}
 	return apiKey, defaultModel, models
 }
@@ -70,10 +114,15 @@ func (g *desktopGateway) importGeminiCLIProvider() LocalCLIImportResponse {
 		apiKey = g.resolveStoredProviderKey("google", "")
 	}
 	if apiKey == "" {
+		if _, stats := scanGeminiAntigravitySessions("", ""); stats.Installed && stats.SessionCount > 0 {
+			apiKey = "antigravity-local-oauth"
+		}
+	}
+	if apiKey == "" {
 		return LocalCLIImportResponse{
 			OK:     false,
 			ToolID: string(ExternalToolGemini),
-			Error:  "No GEMINI_API_KEY or GOOGLE_GENERATIVE_AI_API_KEY found in environment or ~/.gemini/settings.json",
+			Error:  "No GEMINI_API_KEY or Antigravity OAuth token found in environment or ~/.gemini",
 		}
 	}
 	if g.openCodePort > 0 {
@@ -87,7 +136,30 @@ func (g *desktopGateway) importGeminiCLIProvider() LocalCLIImportResponse {
 				_ = resp.Body.Close()
 			}
 		}
-		g.reloadOpenCodeGlobalConfig()
+	}
+	modelsMap := map[string]interface{}{}
+	for _, m := range models {
+		modelsMap[m] = map[string]interface{}{
+			"name":       m + " (Antigravity / Gemini)",
+			"tool_call":  true,
+			"reasoning":  true,
+			"attachment": true,
+		}
+	}
+	doc := g.loadHoxiConfigDoc()
+	provMap, _ := doc["provider"].(map[string]interface{})
+	if provMap == nil {
+		provMap = map[string]interface{}{}
+	}
+	provMap["google"] = map[string]interface{}{
+		"name":    "Antigravity / Gemini (Local)",
+		"npm":     "@ai-sdk/google",
+		"options": map[string]interface{}{"apiKey": apiKey},
+		"models":  modelsMap,
+	}
+	doc["provider"] = provMap
+	if err := g.persistHoxiConfigDoc(doc); err != nil {
+		return LocalCLIImportResponse{OK: false, ToolID: string(ExternalToolGemini), Error: err.Error()}
 	}
 	return LocalCLIImportResponse{
 		OK:         true,
@@ -250,12 +322,14 @@ func (g *desktopGateway) importCodexCLIProvider() LocalCLIImportResponse {
 	}
 
 	var authBody map[string]interface{}
-	if apiKey := strings.TrimSpace(asString(doc["OPENAI_API_KEY"])); apiKey != "" {
+	apiKey := strings.TrimSpace(asString(doc["OPENAI_API_KEY"]))
+	var access string
+	if apiKey != "" {
 		authBody = map[string]interface{}{"type": "api", "key": apiKey}
 	} else if tokens, ok := doc["tokens"].(map[string]interface{}); ok {
-		access := asString(tokens["access_token"])
-		refresh := asString(tokens["refresh_token"])
-		accountID := asString(tokens["account_id"])
+		access = strings.TrimSpace(asString(tokens["access_token"]))
+		refresh := strings.TrimSpace(asString(tokens["refresh_token"]))
+		accountID := strings.TrimSpace(asString(tokens["account_id"]))
 		if access != "" && refresh != "" {
 			authBody = map[string]interface{}{
 				"type":      "oauth",
@@ -282,10 +356,46 @@ func (g *desktopGateway) importCodexCLIProvider() LocalCLIImportResponse {
 				_ = resp.Body.Close()
 			}
 		}
-		g.reloadOpenCodeGlobalConfig()
 	}
 
 	_, _, models := readCodexLocalConfig()
+	sessions, _ := scanCodexSessions("", "")
+	for _, s := range sessions {
+		if s.Model != "" {
+			models = appendUniqueString(models, s.Model)
+		}
+	}
+	if len(models) == 0 {
+		models = []string{"gpt-5-codex", "o4-mini"}
+	}
+	modelsMap := map[string]interface{}{}
+	for _, m := range models {
+		modelsMap[m] = map[string]interface{}{
+			"name":       m + " (Codex)",
+			"tool_call":  true,
+			"reasoning":  true,
+			"attachment": true,
+		}
+	}
+	cfgDoc := g.loadHoxiConfigDoc()
+	provMap, _ := cfgDoc["provider"].(map[string]interface{})
+	if provMap == nil {
+		provMap = map[string]interface{}{}
+	}
+	provEntry := map[string]interface{}{
+		"name":   "OpenAI Codex (Local)",
+		"npm":    "@ai-sdk/openai",
+		"models": modelsMap,
+	}
+	if token := firstNonEmpty(apiKey, access); token != "" {
+		provEntry["options"] = map[string]interface{}{"apiKey": token}
+	}
+	provMap["openai"] = provEntry
+	cfgDoc["provider"] = provMap
+	if err := g.persistHoxiConfigDoc(cfgDoc); err != nil {
+		return LocalCLIImportResponse{OK: false, ToolID: string(ExternalToolCodex), Error: err.Error()}
+	}
+
 	return LocalCLIImportResponse{
 		OK:         true,
 		ToolID:     string(ExternalToolCodex),

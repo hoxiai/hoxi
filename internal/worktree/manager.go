@@ -42,6 +42,8 @@ type worktreeStatus struct {
 	UncommittedLines int    `json:"uncommittedLines"`
 	Additions        int    `json:"additions"`
 	Deletions        int    `json:"deletions"`
+	AheadCount       int    `json:"aheadCount"`
+	HasUpstream      bool   `json:"hasUpstream"`
 }
 
 type worktreeManager struct {
@@ -164,28 +166,6 @@ func (m *worktreeManager) Create(sessionID string) (worktreeMeta, error) {
 	return meta, nil
 }
 
-func parseBranchFromPorcelainHeader(headerLine string) string {
-	rest := strings.TrimSpace(strings.TrimPrefix(headerLine, "##"))
-	if rest == "" {
-		return ""
-	}
-	for _, prefix := range []string{"No commits yet on ", "Initial commit on "} {
-		if strings.HasPrefix(rest, prefix) {
-			return strings.TrimSpace(strings.TrimPrefix(rest, prefix))
-		}
-	}
-	if strings.HasPrefix(rest, "HEAD") {
-		return "HEAD"
-	}
-	if idx := strings.Index(rest, "..."); idx > 0 {
-		rest = rest[:idx]
-	}
-	if idx := strings.IndexByte(rest, ' '); idx > 0 {
-		rest = rest[:idx]
-	}
-	return strings.TrimSpace(rest)
-}
-
 func (m *worktreeManager) Status(sessionID string) (worktreeStatus, error) {
 	sessionID = sanitizeSessionID(sessionID)
 	m.mu.RLock()
@@ -220,12 +200,15 @@ func (m *worktreeManager) Status(sessionID string) (worktreeStatus, error) {
 	// Single git status --porcelain -b call yields both branch header and file status lines
 	porcelain, _ := runGitRaw(meta.Directory, "status", "--porcelain", "-b")
 	changedFiles := 0
+	aheadCount := 0
+	hasUpstream := false
 	var untrackedFiles []string
 	for _, rawLine := range strings.Split(porcelain, "\n") {
 		if strings.HasPrefix(rawLine, "## ") {
 			if br := parseBranchFromPorcelainHeader(rawLine); br != "" {
 				meta.Branch = br
 			}
+			aheadCount, hasUpstream = parseAheadAndUpstreamFromPorcelainHeader(rawLine)
 			continue
 		}
 		trimmed := strings.TrimSpace(rawLine)
@@ -312,6 +295,8 @@ func (m *worktreeManager) Status(sessionID string) (worktreeStatus, error) {
 		UncommittedLines: additions + deletions,
 		Additions:        additions,
 		Deletions:        deletions,
+		AheadCount:       aheadCount,
+		HasUpstream:      hasUpstream,
 	}, nil
 }
 

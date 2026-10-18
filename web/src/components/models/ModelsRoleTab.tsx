@@ -2,7 +2,9 @@
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { Check, LoaderCircle, RotateCcw, SlidersHorizontal } from "lucide-solid";
 import {
+  commitModelSpec,
   isCustomOrConfiguredProvider,
+  setCommitModelSpec,
   setObserverAutoAudit,
   setObserverModelRole,
   updateGlobalModelConfig,
@@ -107,6 +109,7 @@ export default function ModelsRoleTab() {
     value: string;
     allowEmpty: boolean;
     emptyLabel?: string;
+    extraOptions?: Array<{ value: string; label: string }>;
     onChange: (val: string) => void;
   }) => (
     <div class="flex items-center gap-2 shrink-0">
@@ -119,6 +122,9 @@ export default function ModelsRoleTab() {
           <Show when={opts.allowEmpty}>
             <option value="">{opts.emptyLabel || t("models.useGlobalDefault")}</option>
           </Show>
+          <For each={opts.extraOptions || []}>
+            {(opt) => <option value={opt.value}>{opt.label}</option>}
+          </For>
           <For each={connectedGroups()}>
             {(grp) => (
               <optgroup label={`${grp.providerName} (${grp.providerID})`}>
@@ -140,7 +146,7 @@ export default function ModelsRoleTab() {
           type="button"
           onClick={() => opts.onChange("")}
           class="rounded-lg p-1.5 text-[var(--text-faint)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
-          title={t("models.useGlobalDefault")}
+          title={opts.emptyLabel || t("models.useGlobalDefault")}
         >
           <RotateCcw size={13} />
         </button>
@@ -209,6 +215,34 @@ export default function ModelsRoleTab() {
             allowEmpty: true,
             onChange: (val) =>
               void applyRolePatch("small_model", { small_model: val || null }),
+          })}
+        </div>
+
+        {/* Git Commit Message Model */}
+        <div class="flex items-center justify-between gap-4 px-4 py-3.5">
+          <div class="min-w-0">
+            <div class="text-[13px] font-semibold text-[var(--text-primary)]">
+              {t("models.commitModelTitle")}
+            </div>
+            <div class="text-[11.5px] text-[var(--text-muted)]">
+              {t("models.commitModelDesc")}
+            </div>
+          </div>
+          {renderModelSelect({
+            roleKey: "commit_model",
+            value: commitModelSpec(),
+            allowEmpty: true,
+            emptyLabel: t("models.commitModelFollowSmallOption"),
+            extraOptions: [
+              { value: "none", label: t("models.commitModelNoneOption") },
+            ],
+            onChange: (val) => {
+              setCommitModelSpec(val);
+              setSavedKey("commit_model");
+              setTimeout(() => {
+                if (savedKey() === "commit_model") setSavedKey(null);
+              }, 1500);
+            },
           })}
         </div>
 

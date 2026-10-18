@@ -321,19 +321,19 @@ export async function refreshWorktreeStatus(sessionID?: string | null): Promise<
       uncommittedLines: st.uncommittedLines,
       additions: st.additions,
       deletions: st.deletions,
+      aheadCount: st.aheadCount,
+      hasUpstream: st.hasUpstream,
     });
-
     if (key === "__root__" || key === workspace.activeSessionID) {
       const wtDiffs = st.dirty
         ? await hoxiAPI.getWorktreeDiff(key, dirArg).catch(() => [] as SnapshotFileDiff[])
         : [];
-      if (key === "__root__") {
-        setWorkspace("diffsBySession", "__root__", wtDiffs);
-      } else {
-        const existing = workspace.diffsBySession[key] ?? [];
-        const merged = st.dirty ? mergeSessionAndWorktreeDiffs(existing, wtDiffs) : existing;
-        setWorkspace("diffsBySession", key, merged);
-      }
+      const existing = workspace.diffsBySession[key] ?? [];
+      setWorkspace(
+        "diffsBySession",
+        key,
+        key === "__root__" ? wtDiffs : st.dirty ? mergeSessionAndWorktreeDiffs(existing, wtDiffs) : []
+      );
     }
   } catch (err) {
     console.error("refresh worktree status failed:", err);
@@ -494,3 +494,4 @@ export async function discardSession(
 }
 
 export * from "./workspace-session-messages";
+export * from "./git-commit";

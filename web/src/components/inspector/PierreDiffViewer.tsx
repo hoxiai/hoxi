@@ -4,6 +4,7 @@ import { Check, GitCommitHorizontal, RefreshCw, ShieldCheck, Sparkles } from "lu
 import { hoxiAPI } from "../../services/api";
 import {
   appSettings,
+  generateSmartCommitMessage,
   loadSessionMessages,
   refreshWorktreeStatus,
   runSessionCodeAudit,
@@ -94,9 +95,10 @@ export default function PierreDiffViewer() {
     }
   };
 
-  const onGenerateAICommit = () => {
-    const generated = synthesizeAICommitMessage(workspace.activeSessionID, diffs());
-    setCommitMsg(generated);
+  const onGenerateAICommit = async () => {
+    setCommitMsg(synthesizeAICommitMessage(workspace.activeSessionID, diffs()));
+    const smart = await generateSmartCommitMessage(workspace.activeSessionID, diffs());
+    if (smart) setCommitMsg(smart);
   };
 
   const onCommitWorktree = async () => {

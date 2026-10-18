@@ -61,6 +61,41 @@ export function clearSessionInterrupted(sessionID: string) {
   setWorkspace("interruptedBySession", sessionID, undefined);
 }
 
+export async function handleSessionErrorEvent(
+  sessionID: string,
+  error?: { name: string; data?: { message?: string; statusCode?: number; isRetryable?: boolean } }
+): Promise<void> {
+  if (!sessionID) return;
+  lastInterruptAtBySession.set(sessionID, Date.now());
+  setWorkspace("statusBySession", sessionID, { type: "idle" });
+  setWorkspace("unreadCompletedBySession", sessionID, false);
+  await loadSessionMessages(sessionID);
+  if (!error) return;
+  setWorkspace(
+    produce((state) => {
+      const list = (state.messagesBySession[sessionID] ||= []);
+      const last = list[list.length - 1];
+      if (last?.info.role === "assistant") {
+        last.info.error ||= error;
+        return;
+      }
+      const now = Date.now();
+      list.push({
+        info: {
+          id: `msg_err_${now}`,
+          sessionID,
+          role: "assistant",
+          time: { created: now, completed: now },
+          modelID: state.selectedModel?.modelID,
+          providerID: state.selectedModel?.providerID,
+          error,
+        },
+        parts: [],
+      });
+    })
+  );
+}
+
 export async function pauseSessionTask(sessionID?: string | null): Promise<void> {
   const id = sessionID ?? workspace.activeSessionID;
   if (!id) return;

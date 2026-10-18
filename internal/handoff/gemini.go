@@ -214,10 +214,13 @@ func findAntigravityBrainDir(sessionID string) string {
 func extractAntigravityUserPrompt(raw string) (promptText, modelChange string) {
 	if idx := strings.Index(raw, "changed setting `Model Selection`"); idx >= 0 {
 		rest := raw[idx:]
-		if toIdx := strings.Index(rest, " to "); toIdx >= 0 {
+		if toIdx := strings.Index(rest, " to "); toIdx >= 0 && toIdx < 60 {
 			afterTo := rest[toIdx+4:]
-			if dotIdx := strings.Index(afterTo, "."); dotIdx > 0 {
-				modelChange = strings.TrimSpace(afterTo[:dotIdx])
+			if dotIdx := strings.Index(afterTo, "."); dotIdx > 0 && dotIdx < 60 {
+				candidate := strings.TrimSpace(afterTo[:dotIdx])
+				if candidate != "" && candidate != "None" && !strings.ContainsAny(candidate, "\n\r\"\\") {
+					modelChange = candidate
+				}
 			}
 		}
 	}

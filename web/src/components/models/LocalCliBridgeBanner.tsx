@@ -8,6 +8,7 @@ import { t } from "../../i18n";
 export default function LocalCliBridgeBanner() {
   const [tools, setTools] = createSignal<LocalCLIStatusItem[]>([]);
   const [busyID, setBusyID] = createSignal<string | null>(null);
+  const [errorMsg, setErrorMsg] = createSignal<string | null>(null);
 
   const load = async () => {
     try {
@@ -23,12 +24,17 @@ export default function LocalCliBridgeBanner() {
   const onImport = async (toolID: string) => {
     if (busyID()) return;
     setBusyID(toolID);
+    setErrorMsg(null);
     try {
       const res = await hoxiAPI.importLocalCLI(toolID);
       if (res.ok) {
         await refreshProviders();
         await load();
+      } else if (res.error) {
+        setErrorMsg(res.error);
       }
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : String(err));
     } finally {
       setBusyID(null);
     }
@@ -105,6 +111,12 @@ export default function LocalCliBridgeBanner() {
             )}
           </For>
         </div>
+
+        <Show when={errorMsg()}>
+          <div class="rounded-lg border border-[var(--danger-border)] bg-[var(--danger-surface)]/40 px-3 py-1.5 text-[11px] text-[var(--danger-text)]">
+            {errorMsg()}
+          </div>
+        </Show>
       </div>
     </Show>
   );

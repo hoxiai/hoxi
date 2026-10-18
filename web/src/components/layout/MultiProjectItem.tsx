@@ -166,9 +166,8 @@ export default function MultiProjectTreeItem(props: {
 
   const allFilteredSessions = createMemo(() => {
     const q = props.filterQuery.trim().toLowerCase();
-    const list = (isActive() ? workspace.sessions : props.cachedSessions).filter(
-      (s) => !s.parentID
-    );
+    const rawList = isActive() && workspace.sessions.length > 0 ? workspace.sessions : props.cachedSessions;
+    const list = rawList.filter((s) => !s.parentID);
     const sorted = sortSessionsByActivity(list);
     if (!q) return sorted;
     return sorted.filter(
