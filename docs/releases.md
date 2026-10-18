@@ -48,6 +48,32 @@ make the matching versioned artifacts available at the configured mirror URLs.
 Apple signing/notarization and the live publishing service still require a real
 maintainer-account acceptance run. Local tests never perform these account actions.
 
+## GitHub tag releases
+
+Pushing a `v<major>.<minor>.<patch>` tag runs the desktop release workflow. It
+normalizes the tag version and passes it explicitly to the build. Frontend lint,
+unit tests, release/plugin regressions, the web build, Go vet, uncached race tests,
+and the desktop-tagged Go build must all pass before signing begins.
+
+Configure these GitHub Actions repository secrets before pushing a release tag:
+
+- `MACOS_CERTIFICATE`: base64-encoded Developer ID Application `.p12`, including its private key.
+- `MACOS_CERTIFICATE_PWD`: password protecting the `.p12` export.
+- `APPLE_ID`: Apple account used for notarization.
+- `APPLE_APP_SPECIFIC_PASSWORD`: app-specific password for that account.
+- `APPLE_TEAM_ID`: Apple Developer team owning the signing identity.
+
+Signing and notarization are mandatory on this path. The temporary signing
+keychain is added to the runner's search list and deleted after the job, including
+on failure. Missing credentials or failed verification stop publication.
+
+Before creating the GitHub Release, the workflow mounts the final DMG read-only
+to verify the app version, runtime version, architecture, minimum macOS and app
+signature. It also verifies the DMG's Developer ID signature and stapled notary
+ticket. Only `Hoxi-<version>-darwin-arm64.dmg` and its SHA-256 checksum are uploaded;
+missing files fail the release. This workflow does not publish website/update API
+metadata or GitCode mirrors. Those remain separate maintainer acceptance steps.
+
 ## Regression checks
 
 ```sh

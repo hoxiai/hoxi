@@ -88,6 +88,49 @@ test("publisher rejects HTTP errors, non-confirmations and confirmations for a d
 // separately against a real packaged app; this fixture isolates orchestration.
 const scripts = path.dirname(fileURLToPath(import.meta.url));
 
+test("tag workflow gates publication on tests, versioned artifacts and notarization", () => {
+  const workflow = fs.readFileSync(path.join(scripts, "../.github/workflows/release.yml"), "utf8");
+  const required = [
+    'version "$RELEASE_TAG"',
+    "npm --prefix web run lint",
+    "npm --prefix web test",
+    "node --test scripts/release.test.mjs internal/opencode/browser_plugin_test.mjs",
+    "npm --prefix web run build",
+    "go vet ./...",
+    "go test -race -count=1 ./...",
+    "go build -tags desktop ./...",
+    "- name: Import Apple Developer Certificate",
+    "security list-keychains -d user -s",
+    "- name: Setup Apple Notarization Profile",
+    '--version "$RELEASE_VERSION" --notarize --notary-profile "hoxi-notary"',
+    'verify-dmg "$DMG" "$RELEASE_VERSION"',
+    'verify-distribution "$DMG"',
+    "shasum -a 256",
+    "uses: softprops/action-gh-release@v2",
+    "build/bin/Hoxi-${{ env.RELEASE_VERSION }}-darwin-arm64.dmg",
+    "fail_on_unmatched_files: true",
+    "if: always()",
+    'security delete-keychain "$KEYCHAIN_PATH"',
+  ];
+  let position = -1;
+  for (const gate of required) {
+    const next = workflow.indexOf(gate, position + 1);
+    assert.ok(next > position, `Missing or out-of-order release gate: ${gate}`);
+    position = next;
+  }
+  assert.doesNotMatch(workflow, /Optional|CAN_NOTARIZE|\|\| true|build\/bin\/\*\.dmg/);
+  assert.equal((workflow.match(/^\s+if:/gm) || []).length, 1, "Only cleanup may be conditional");
+  for (const secret of ["MACOS_CERTIFICATE", "MACOS_CERTIFICATE_PWD", "APPLE_ID",
+    "APPLE_APP_SPECIFIC_PASSWORD", "APPLE_TEAM_ID"]) {
+    assert.ok(workflow.includes(`\${${secret}:?`), `Missing required credential: ${secret}`);
+  }
+  for (const block of workflow.matchAll(/^        run: \|\n((?:          .*\n|\n)+)/gm)) {
+    const shell = block[1].replace(/^          /gm, "");
+    const result = spawnSync("bash", ["-n"], { input: shell, encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+  }
+});
+
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "hoxi-release-test-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));

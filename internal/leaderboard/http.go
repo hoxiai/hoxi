@@ -42,8 +42,9 @@ func (h *HTTPHandler) handleLeaderboard(w http.ResponseWriter, r *http.Request) 
 		dimension = r.URL.Query().Get("dimension")
 	}
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	lang := r.URL.Query().Get("lang")
 
-	res, err := h.svc.GetLeaderboard(dimension, limit)
+	res, err := h.svc.GetLeaderboard(dimension, limit, lang)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -63,7 +64,8 @@ func (h *HTTPHandler) handleGateways(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	res, err := h.svc.GetConnectableGateways()
+	lang := r.URL.Query().Get("lang")
+	res, err := h.svc.GetConnectableGateways(lang)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		_ = json.NewEncoder(w).Encode(map[string]any{

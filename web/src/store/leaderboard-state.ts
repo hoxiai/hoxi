@@ -1,5 +1,6 @@
 // web/src/store/leaderboard-state.ts
 import { createStore } from "solid-js/store";
+import { locale } from "../i18n";
 import {
   leaderboardAPI,
   type ConnectableGatewayItem,
@@ -28,6 +29,10 @@ export const [leaderboardState, setLeaderboardState] = createStore<LeaderboardSt
   updatedAt: "",
 });
 
+function currentLangParam(): string {
+  return String(locale() || "en-US").toLowerCase().startsWith("zh") ? "zh" : "en";
+}
+
 export async function fetchLeaderboardModels(tab?: LeaderboardTab) {
   const currentTab = tab || leaderboardState.activeTab;
   if (currentTab === "gateways") {
@@ -35,7 +40,7 @@ export async function fetchLeaderboardModels(tab?: LeaderboardTab) {
   }
   setLeaderboardState({ loading: true, error: null });
   try {
-    const items = await leaderboardAPI.getLeaderboard(currentTab, 15);
+    const items = await leaderboardAPI.getLeaderboard(currentTab, 15, currentLangParam());
     setLeaderboardState({ models: items, loading: false });
   } catch (err: any) {
     setLeaderboardState({ error: err?.message || "Failed to load leaderboard", loading: false });
@@ -45,7 +50,7 @@ export async function fetchLeaderboardModels(tab?: LeaderboardTab) {
 export async function fetchGateways() {
   setLeaderboardState({ loading: true, error: null });
   try {
-    const items = await leaderboardAPI.getConnectableGateways();
+    const items = await leaderboardAPI.getConnectableGateways(currentLangParam());
     setLeaderboardState({ gateways: items, loading: false });
   } catch (err: any) {
     setLeaderboardState({ error: err?.message || "Failed to load gateways", loading: false });

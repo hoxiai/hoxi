@@ -40,14 +40,22 @@ func NewService(baseURL string, client *http.Client) *Service {
 	}
 }
 
-func (s *Service) GetLeaderboard(dimension string, limit int) (*LeaderboardResponse, error) {
+func normalizeLang(lang ...string) string {
+	if len(lang) > 0 && (lang[0] == "zh" || lang[0] == "zh-CN" || lang[0] == "zh_CN") {
+		return "zh"
+	}
+	return "en"
+}
+
+func (s *Service) GetLeaderboard(dimension string, limit int, lang ...string) (*LeaderboardResponse, error) {
 	if dimension == "" {
 		dimension = "overall"
 	}
 	if limit <= 0 || limit > 50 {
 		limit = 10
 	}
-	cacheKey := fmt.Sprintf("leaderboard_%s_%d", dimension, limit)
+	normLang := normalizeLang(lang...)
+	cacheKey := fmt.Sprintf("leaderboard_%s_%d_%s", dimension, limit, normLang)
 
 	s.mu.RLock()
 	if entry, ok := s.cache[cacheKey]; ok && time.Now().Before(entry.expiresAt) {
@@ -56,28 +64,29 @@ func (s *Service) GetLeaderboard(dimension string, limit int) (*LeaderboardRespo
 	}
 	s.mu.RUnlock()
 
-	endpoint := fmt.Sprintf("%s/api/models/leaderboard?sort=%s&limit=%s",
+	endpoint := fmt.Sprintf("%s/api/hoxi/models/leaderboard?sort=%s&limit=%s&lang=%s",
 		s.baseURL,
 		url.QueryEscape(dimension),
 		strconv.Itoa(limit),
+		url.QueryEscape(normLang),
 	)
 
 	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
 	if err != nil {
-		return s.fallbackLeaderboard(dimension, limit), nil
+		return s.fallbackLeaderboard(dimension, limit, normLang), nil
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", "HoxiDesktop/1.0")
 
 	resp, err := s.client.Do(req)
 	if err != nil || resp.StatusCode != http.StatusOK {
-		return s.fallbackLeaderboard(dimension, limit), nil
+		return s.fallbackLeaderboard(dimension, limit, normLang), nil
 	}
 	defer resp.Body.Close()
 
 	var result LeaderboardResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil || result.Data == nil {
-		return s.fallbackLeaderboard(dimension, limit), nil
+		return s.fallbackLeaderboard(dimension, limit, normLang), nil
 	}
 
 	s.mu.Lock()
@@ -90,8 +99,9 @@ func (s *Service) GetLeaderboard(dimension string, limit int) (*LeaderboardRespo
 	return &result, nil
 }
 
-func (s *Service) GetConnectableGateways() (*GatewaysResponse, error) {
-	cacheKey := "connectable_gateways"
+func (s *Service) GetConnectableGateways(lang ...string) (*GatewaysResponse, error) {
+	normLang := normalizeLang(lang...)
+	cacheKey := fmt.Sprintf("connectable_gateways_%s", normLang)
 
 	s.mu.RLock()
 	if entry, ok := s.cache[cacheKey]; ok && time.Now().Before(entry.expiresAt) {
@@ -100,23 +110,23 @@ func (s *Service) GetConnectableGateways() (*GatewaysResponse, error) {
 	}
 	s.mu.RUnlock()
 
-	endpoint := fmt.Sprintf("%s/api/gateways/connectable", s.baseURL)
+	endpoint := fmt.Sprintf("%s/api/hoxi/gateways/connectable?lang=%s", s.baseURL, url.QueryEscape(normLang))
 	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
 	if err != nil {
-		return s.fallbackGateways(), nil
+		return s.fallbackGateways(normLang), nil
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", "HoxiDesktop/1.0")
 
 	resp, err := s.client.Do(req)
 	if err != nil || resp.StatusCode != http.StatusOK {
-		return s.fallbackGateways(), nil
+		return s.fallbackGateways(normLang), nil
 	}
 	defer resp.Body.Close()
 
 	var result GatewaysResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil || result.Data == nil {
-		return s.fallbackGateways(), nil
+		return s.fallbackGateways(normLang), nil
 	}
 
 	s.mu.Lock()
@@ -129,73 +139,89 @@ func (s *Service) GetConnectableGateways() (*GatewaysResponse, error) {
 	return &result, nil
 }
 
-func (s *Service) fallbackLeaderboard(dimension string, limit int) *LeaderboardResponse {
+func (s *Service) fallbackLeaderboard(dimension string, limit int, lang string) *LeaderboardResponse {
+	isZh := lang == "zh"
+	pick := func(en, zh string) string {
+		if isZh {
+			return zh
+		}
+		return en
+	}
+	pickSlice := func(en, zh []string) []string {
+		if isZh {
+			return zh
+		}
+		return en
+	}
+
 	items := []ModelItem{
 		{
-			Rank: 1, Slug: "claude-3-7-sonnet", Name: "Claude 3.7 Sonnet", Vendor: "anthropic", APIName: "claude-3-7-sonnet-20250219",
+			Rank: 1, Slug: "claude-opus-5", Name: "Claude Opus 5", Vendor: "anthropic", APIName: "claude-opus-5",
 			Price: struct {
 				Currency   string  `json:"currency"`
 				Input      float64 `json:"input"`
 				Output     float64 `json:"output"`
 				CacheRead  float64 `json:"cacheRead,omitempty"`
 				CacheWrite float64 `json:"cacheWrite,omitempty"`
-			}{Currency: "USD", Input: 3.0, Output: 15.0, CacheRead: 0.3},
-			ContextWindow: 200000,
-			Scores:        map[string]any{"overall": 72, "coding": 94},
-			Perf:          map[string]any{"tps": 82, "ttft": 0.8},
-			Badges:        []string{"编程榜首", "混合思考"},
-			Scenes:        []string{"写代码", "复杂推理", "Agent工具调用"},
-			Summary:       "当前最强大的混合思考代码模型，架构设计与 Bug 排查首选",
+			}{Currency: "USD", Input: 5.0, Output: 25.0, CacheRead: 0.5},
+			ContextWindow: 1000000,
+			Scores:        map[string]any{"overall": 63, "coding": 95},
+			Perf:          map[string]any{"tps": 55, "ttft": 1.2},
+			Badges:        pickSlice([]string{"#1 Overall", "Coding Leader"}, []string{"综合分第一", "编程榜首"}),
+			Scenes:        pickSlice([]string{"Coding", "Deep Reasoning", "Agent Tool Use"}, []string{"写代码", "复杂推理", "Agent工具调用"}),
+			Summary:       pick("Top-tier workhorse for multi-file refactoring and agentic tool use; rock-solid reasoning and first-pass accuracy.", "多文件复杂重构与 Agent 工具调用的战神；逻辑缜密代码一次过，日常攻坚首选。"),
 			Reasoning:     true,
 		},
 		{
-			Rank: 2, Slug: "deepseek-r1", Name: "DeepSeek R1", Vendor: "deepseek", APIName: "deepseek-reasoner",
+			Rank: 2, Slug: "gpt-5-6-sol", Name: "GPT-5.6 Sol", Vendor: "openai", APIName: "gpt-5.6-sol",
 			Price: struct {
 				Currency   string  `json:"currency"`
 				Input      float64 `json:"input"`
 				Output     float64 `json:"output"`
 				CacheRead  float64 `json:"cacheRead,omitempty"`
 				CacheWrite float64 `json:"cacheWrite,omitempty"`
-			}{Currency: "USD", Input: 0.55, Output: 2.19, CacheRead: 0.14},
-			ContextWindow: 64000,
-			Scores:        map[string]any{"overall": 70, "coding": 92},
-			Perf:          map[string]any{"tps": 65, "ttft": 1.2},
-			Badges:        []string{"性价比之王", "开源满血"},
-			Scenes:        []string{"复杂推理", "写代码", "数学算法"},
-			Summary:       "超高性价比的深度推理大模型，代码能力比肩顶尖商业模型",
+			}{Currency: "USD", Input: 4.0, Output: 20.0, CacheRead: 0.4},
+			ContextWindow: 1050000,
+			Scores:        map[string]any{"overall": 61, "coding": 92},
+			Perf:          map[string]any{"tps": 74, "ttft": 1.1},
+			Badges:        pickSlice([]string{"All-Rounder"}, []string{"全能旗舰"}),
+			Scenes:        pickSlice([]string{"Deep Reasoning", "Coding", "Agent Tool Use"}, []string{"复杂推理", "写代码", "Agent工具调用"}),
+			Summary:       pick("Broad domain knowledge and thorough system design; highly reliable logic and code generation.", "知识面极宽、复杂方案设计详尽；逻辑与代码极稳。"),
 			Reasoning:     true,
 		},
 		{
-			Rank: 3, Slug: "gpt-4o", Name: "GPT-4o", Vendor: "openai", APIName: "gpt-4o",
+			Rank: 3, Slug: "glm-5-3-flash", Name: "GLM-5.3-Flash", Vendor: "zhipu", APIName: "glm-5.3-flash",
 			Price: struct {
 				Currency   string  `json:"currency"`
 				Input      float64 `json:"input"`
 				Output     float64 `json:"output"`
 				CacheRead  float64 `json:"cacheRead,omitempty"`
 				CacheWrite float64 `json:"cacheWrite,omitempty"`
-			}{Currency: "USD", Input: 2.5, Output: 10.0, CacheRead: 1.25},
-			ContextWindow: 128000,
-			Scores:        map[string]any{"overall": 68, "coding": 88},
-			Perf:          map[string]any{"tps": 110, "ttft": 0.5},
-			Badges:        []string{"极速全能"},
-			Scenes:        []string{"写代码", "多模态", "Agent工具调用"},
-			Summary:       "全能极速旗舰，高并发吞吐与多模态识别极佳",
+			}{Currency: "CNY", Input: 0.8, Output: 2.8, CacheRead: 0.23},
+			ContextWindow: 1000000,
+			Scores:        map[string]any{"overall": 57, "coding": 88},
+			Perf:          map[string]any{"tps": 50, "ttft": 1.47},
+			Badges:        pickSlice([]string{"Value King"}, []string{"性价比之王"}),
+			Scenes:        pickSlice([]string{"Batch Processing", "Coding", "Vision"}, []string{"批量处理", "中文写作", "图片理解"}),
+			Summary:       pick("Near-flagship benchmark score at a fraction of the price with 1.47s TTFT; ideal for everyday feature development.", "白菜价却有接近旗舰的能力表现，日常写小功能极度划算。"),
+			Reasoning:     true,
 		},
 		{
-			Rank: 4, Slug: "gemini-2-5-pro", Name: "Gemini 2.5 Pro", Vendor: "google", APIName: "gemini-2.5-pro",
+			Rank: 4, Slug: "gemini-3-7-flash", Name: "Gemini 3.7 Flash", Vendor: "google", APIName: "gemini-3.7-flash",
 			Price: struct {
 				Currency   string  `json:"currency"`
 				Input      float64 `json:"input"`
 				Output     float64 `json:"output"`
 				CacheRead  float64 `json:"cacheRead,omitempty"`
 				CacheWrite float64 `json:"cacheWrite,omitempty"`
-			}{Currency: "USD", Input: 1.25, Output: 5.0, CacheRead: 0.3},
-			ContextWindow: 2000000,
-			Scores:        map[string]any{"overall": 67, "coding": 89},
-			Perf:          map[string]any{"tps": 75, "ttft": 0.9},
-			Badges:        []string{"200万上下文"},
-			Scenes:        []string{"超长项目", "写代码", "全库分析"},
-			Summary:       "200万超大上下文窗口，适合巨型代码库一次性跨文件检索",
+			}{Currency: "USD", Input: 0.75, Output: 3.75, CacheRead: 0.075},
+			ContextWindow: 1048576,
+			Scores:        map[string]any{"overall": 56, "coding": 89},
+			Perf:          map[string]any{"tps": 362, "ttft": 0.4},
+			Badges:        pickSlice([]string{"Fastest TPS"}, []string{"最快"}),
+			Scenes:        pickSlice([]string{"General Chat", "Batch Processing", "Long Context"}, []string{"日常问答", "批量处理", "长文档"}),
+			Summary:       pick("Sub-second TTFT and 360+ TPS; unbeaten value for rapid code completion and multimodal parsing.", "首字毫秒级响应、极速无感；日常代码补全与常规 CRUD 生成利器。"),
+			Reasoning:     true,
 		},
 	}
 	if limit < len(items) {
@@ -213,7 +239,18 @@ func (s *Service) fallbackLeaderboard(dimension string, limit int) *LeaderboardR
 	}
 }
 
-func (s *Service) fallbackGateways() *GatewaysResponse {
+func (s *Service) fallbackGateways(lang string) *GatewaysResponse {
+	isZh := lang == "zh"
+	name := "AINode Direct Pro"
+	badge := "Official Pick · 1-Click Auth"
+	features := []string{"Low-latency direct routing", "100% full-weight thinking mode", "Instant top-up", "Never-expiring balance"}
+	caveat := "Enterprise-grade dedicated upstream channels with 1-click OAuth to Hoxi Desktop"
+	if isZh {
+		name = "AINode 极速专线"
+		badge = "自营推荐 · 一键直连"
+		features = []string{"国内双线直连", "100% 满血思考模式", "微信/支付宝充值", "余额永不过期"}
+		caveat = "高质量企业专线，支持一键免密授权至 Hoxi 桌面端"
+	}
 	return &GatewaysResponse{
 		Code:    200,
 		Message: "ok (cached offline fallback)",
@@ -222,20 +259,20 @@ func (s *Service) fallbackGateways() *GatewaysResponse {
 			Items: []GatewayItem{
 				{
 					ID:                 "ainode-pro",
-					Name:               "AINode 极速专线",
+					Name:               name,
 					Domain:             "ainode.run",
 					URL:                "https://api.ainode.run",
 					BaseURL:            "https://api.ainode.run/v1",
 					IsSelfOperated:     true,
 					CanOneClickConnect: true,
-					Badge:              "自营推荐 · 一键直连",
+					Badge:              badge,
 					SavingsPercent:     87,
 					PriceLabel:         "¥2.80 / M",
 					LatencyMs:          280,
 					Uptime:             "99.99%",
-					Models:             []string{"Claude 3.7 Sonnet", "DeepSeek R1", "GPT-4o", "Gemini 2.5 Flash"},
-					Features:           []string{"国内双线直连", "100% 满血思考模式", "微信/支付宝充值", "余额永不过期"},
-					Caveat:             "高质量企业专线，支持一键免密授权至 Hoxi 桌面端",
+					Models:             []string{"Claude Opus 5", "Claude Sonnet 5", "GPT-5.6 Sol", "Gemini 3.7 Flash"},
+					Features:           features,
+					Caveat:             caveat,
 					AuthURL:            "https://hoxi.ai/auth/authorize-desktop?gateway=ainode",
 				},
 			},

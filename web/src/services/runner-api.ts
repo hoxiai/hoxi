@@ -215,16 +215,19 @@ export const updaterAPI = {
 export const leaderboardAPI = {
   async getLeaderboard(
     sort: string = "overall",
-    limit: number = 10
+    limit: number = 10,
+    lang: string = "en"
   ): Promise<import("./api-types").LeaderboardModelItem[]> {
     const json = await requestJSON<import("./api-types").LeaderboardResponse>(
-      `/api/hoxi/models/leaderboard?sort=${encodeURIComponent(sort)}&limit=${limit}`
+      `/api/hoxi/models/leaderboard?sort=${encodeURIComponent(sort)}&limit=${limit}&lang=${encodeURIComponent(lang)}`
     );
     return json.data?.items || [];
   },
-  async getConnectableGateways(): Promise<import("./api-types").ConnectableGatewayItem[]> {
+  async getConnectableGateways(
+    lang: string = "en"
+  ): Promise<import("./api-types").ConnectableGatewayItem[]> {
     const json = await requestJSON<import("./api-types").ConnectableGatewaysResponse>(
-      "/api/hoxi/gateways/connectable"
+      `/api/hoxi/gateways/connectable?lang=${encodeURIComponent(lang)}`
     );
     return json.data?.items || [];
   },
