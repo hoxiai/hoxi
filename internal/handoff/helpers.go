@@ -74,6 +74,20 @@ func readGeminiLocalKeyAndModels() (apiKey, defaultModel string, models []string
 			}
 		}
 	}
+	if len(antigravityDataDirs()) > 0 {
+		models = appendUniqueString(
+			models,
+			"gemini-4-argon-high",
+			"gemini-4-argon-medium",
+			"gemini-4-argon-low",
+			"gemini-3.8-flash-high",
+			"gemini-3.8-flash-medium",
+			"gemini-3.8-flash-low",
+			"claude-opus-5-5-high",
+			"claude-sonnet-5-5-high",
+			"gpt-oss-120b-medium",
+		)
+	}
 	if len(models) == 0 {
 		models = []string{"gemini-2.5-pro", "gemini-2.5-flash"}
 	}
@@ -387,8 +401,8 @@ func (g *desktopGateway) importCodexCLIProvider() LocalCLIImportResponse {
 		"npm":    "@ai-sdk/openai",
 		"models": modelsMap,
 	}
-	if token := firstNonEmpty(apiKey, access); token != "" {
-		provEntry["options"] = map[string]interface{}{"apiKey": token}
+	if apiKey != "" {
+		provEntry["options"] = map[string]interface{}{"apiKey": apiKey}
 	}
 	provMap["openai"] = provEntry
 	cfgDoc["provider"] = provMap
