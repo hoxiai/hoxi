@@ -172,7 +172,7 @@ func detectGrokCLIStatus(hoxiMap map[string]interface{}) LocalCLIStatusItem {
 	}
 }
 
-func (g *desktopGateway) importGrokCLIProvider() LocalCLIImportResponse {
+func (g *Service) importGrokCLIProvider() LocalCLIImportResponse {
 	creds := loadGrokLocalCredentials()
 	if creds.APIKey == "" {
 		return LocalCLIImportResponse{
@@ -234,51 +234,7 @@ func (g *desktopGateway) importGrokCLIProvider() LocalCLIImportResponse {
 	}
 }
 
-func (g *desktopGateway) syncLocalCLIBridgeURLs() {
-	doc := g.loadHoxiConfigDoc()
-	provMap, _ := doc["provider"].(map[string]interface{})
-	if provMap == nil {
-		return
-	}
-	bridges := map[string]string{
-		"grok-cli":    "/api/hoxi/bridge/grok-cli/v1",
-		"claude-code": "/api/hoxi/bridge/claude-code/v1",
-		"google":      "/api/hoxi/bridge/gemini-antigravity/v1",
-	}
-	changed := false
-	for pid, suffix := range bridges {
-		pObj, ok := provMap[pid].(map[string]interface{})
-		if !ok {
-			continue
-		}
-		opts, _ := pObj["options"].(map[string]interface{})
-		if opts == nil {
-			continue
-		}
-		expected := g.httpBridgeBaseURL() + suffix
-		if cur, _ := opts["baseURL"].(string); pid != "grok-cli" && strings.Contains(cur, suffix) {
-			models, _ := pObj["models"].(map[string]interface{})
-			for _, model := range models {
-				if m, ok := model.(map[string]interface{}); ok && m["tool_call"] != false {
-					m["tool_call"] = false
-					changed = true
-				}
-			}
-		}
-		if cur, _ := opts["baseURL"].(string); strings.Contains(cur, suffix) && cur != expected {
-			opts["baseURL"] = expected
-			pObj["options"] = opts
-			provMap[pid] = pObj
-			changed = true
-		}
-	}
-	if changed {
-		doc["provider"] = provMap
-		_ = g.persistHoxiConfigDoc(doc)
-	}
-}
-
-func (g *desktopGateway) handleGrokCLIBridge(w http.ResponseWriter, r *http.Request) {
+func (g *Service) handleGrokCLIBridge(w http.ResponseWriter, r *http.Request) {
 	subPath := strings.TrimPrefix(r.URL.Path, "/api/hoxi/bridge/grok-cli")
 	if subPath == "/v1/models" && r.Method == http.MethodGet {
 		creds := loadGrokLocalCredentials()

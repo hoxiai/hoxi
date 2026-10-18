@@ -40,7 +40,7 @@ var defaultProviderBaseURLs = map[string]string{
 	"ollama":     "http://127.0.0.1:11434/v1",
 }
 
-func (g *desktopGateway) handleTestProviderModel(w http.ResponseWriter, r *http.Request) {
+func (g *Service) handleTestProviderModel(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSONError(w, http.StatusMethodNotAllowed, "POST required")
 		return

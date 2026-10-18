@@ -1,4 +1,4 @@
-// web/src/components/layout/ModelLeaderboardModal.tsx
+// web/src/components/models/ModelLeaderboardModal.tsx
 import { For, onCleanup, onMount, Show } from "solid-js";
 import {
   Check,

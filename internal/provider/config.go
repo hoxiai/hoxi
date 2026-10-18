@@ -23,7 +23,7 @@ type saveHoxiProviderRequest struct {
 	Config     map[string]interface{} `json:"config"`
 }
 
-func (g *desktopGateway) workspaceHoxiModelsPath() string {
+func (g *Service) workspaceHoxiModelsPath() string {
 	root := strings.TrimSpace(g.rootDir)
 	if root == "" {
 		root, _ = os.Getwd()
@@ -165,11 +165,11 @@ func ensureHoxiModelsConfig(rootDir string) string {
 	return wPath
 }
 
-func (g *desktopGateway) loadOpenCodeImportedProviderMap() map[string]interface{} {
+func (g *Service) loadOpenCodeImportedProviderMap() map[string]interface{} {
 	return loadOpenCodeImportedProvidersFromDisk()
 }
 
-func (g *desktopGateway) loadHoxiConfigDoc() map[string]interface{} {
+func (g *Service) loadHoxiConfigDoc() map[string]interface{} {
 	doc := map[string]interface{}{
 		"$schema":  "https://opencode.ai/config.json",
 		"provider": map[string]interface{}{},
@@ -185,7 +185,7 @@ func (g *desktopGateway) loadHoxiConfigDoc() map[string]interface{} {
 	return doc
 }
 
-func (g *desktopGateway) loadHoxiProvidersMap() map[string]interface{} {
+func (g *Service) loadHoxiProvidersMap() map[string]interface{} {
 	doc := g.loadHoxiConfigDoc()
 	if provMap, ok := doc["provider"].(map[string]interface{}); ok && provMap != nil {
 		return provMap
@@ -193,7 +193,7 @@ func (g *desktopGateway) loadHoxiProvidersMap() map[string]interface{} {
 	return map[string]interface{}{}
 }
 
-func (g *desktopGateway) persistHoxiConfigDoc(doc map[string]interface{}) error {
+func (g *Service) persistHoxiConfigDoc(doc map[string]interface{}) error {
 	doc["$schema"] = "https://opencode.ai/config.json"
 	if uPath := userHoxiModelsPath(); uPath != "" {
 		_ = writeJSONMapFile(uPath, doc)
@@ -203,7 +203,7 @@ func (g *desktopGateway) persistHoxiConfigDoc(doc map[string]interface{}) error 
 	return err
 }
 
-func (g *desktopGateway) reloadOpenCodeGlobalConfig() {
+func (g *Service) reloadOpenCodeGlobalConfig() {
 	if g.openCodePort <= 0 {
 		return
 	}
@@ -219,7 +219,7 @@ func (g *desktopGateway) reloadOpenCodeGlobalConfig() {
 	}
 }
 
-func (g *desktopGateway) handleModelsConfig(w http.ResponseWriter, r *http.Request) {
+func (g *Service) handleModelsConfig(w http.ResponseWriter, r *http.Request) {
 	importedMap := g.loadOpenCodeImportedProviderMap()
 	doc := g.loadHoxiConfigDoc()
 	hoxiMap, _ := doc["provider"].(map[string]interface{})
@@ -367,7 +367,7 @@ func filterProviderModelsByHoxi(provMap, hoxiMap map[string]interface{}) {
 
 // handleGlobalConfigProxy persists PATCH /global/config directly to .hoxi/models.json (never touching ~/.config/opencode)
 // and filters GET /global/config so Hoxi-managed providers strictly reflect .hoxi/models.json's model keys.
-func (g *desktopGateway) handleGlobalConfigProxy(w http.ResponseWriter, r *http.Request) {
+func (g *Service) handleGlobalConfigProxy(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPatch {
 		raw, err := io.ReadAll(r.Body)
 		if err == nil && len(raw) > 0 {
@@ -413,7 +413,7 @@ func (g *desktopGateway) handleGlobalConfigProxy(w http.ResponseWriter, r *http.
 }
 
 // handleProviderProxy filters GET /provider so any provider managed in .hoxi/models.json only exposes its .hoxi models.
-func (g *desktopGateway) handleProviderProxy(w http.ResponseWriter, r *http.Request) {
+func (g *Service) handleProviderProxy(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		g.proxy.ServeHTTP(w, r)
 		return

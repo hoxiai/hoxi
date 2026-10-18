@@ -7,8 +7,8 @@ import MessageStream from "../timeline/MessageStream";
 import Composer from "../timeline/Composer";
 import InspectorPane from "../inspector/InspectorPane";
 import ProviderModal from "../models/ProviderModal";
+import ModelLeaderboardModal from "../models/ModelLeaderboardModal";
 import SettingsModal from "../settings/SettingsModal";
-import ModelLeaderboardModal from "./ModelLeaderboardModal";
 import { setWorkspace, workspace } from "../../store/workspace";
 
 const LEFT_MIN = 220;

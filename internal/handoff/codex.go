@@ -401,7 +401,7 @@ func extractCodexMessageText(content interface{}) string {
 	}
 }
 
-func detectCodexCLIStatus(g *desktopGateway, hoxiMap map[string]interface{}) LocalCLIStatusItem {
+func detectCodexCLIStatus(g *Service, hoxiMap map[string]interface{}) LocalCLIStatusItem {
 	cDir := codexHomeDir()
 	sessions, stats := scanCodexSessions("", "")
 	defaultModel, version, models := readCodexLocalConfig()
@@ -485,7 +485,7 @@ func readCodexLocalConfig() (defaultModel, version string, models []string) {
 	return defaultModel, version, models
 }
 
-func (g *desktopGateway) importCodexCLIProvider() LocalCLIImportResponse {
+func (g *Service) importCodexCLIProvider() LocalCLIImportResponse {
 	cDir := codexHomeDir()
 	if cDir == "" {
 		return LocalCLIImportResponse{OK: false, ToolID: string(ExternalToolCodex), Error: "~/.codex not found"}

@@ -105,7 +105,7 @@ var (
 
 const devPulseCacheTTL = 15 * time.Second
 
-func (g *desktopGateway) handleDevPulse(w http.ResponseWriter, r *http.Request) {
+func (g *Gateway) handleDevPulse(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSONError(w, http.StatusMethodNotAllowed, "GET required")
 		return

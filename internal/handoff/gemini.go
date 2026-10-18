@@ -538,7 +538,7 @@ func readGeminiLocalKeyAndModels() (apiKey, defaultModel string, models []string
 	return apiKey, defaultModel, models
 }
 
-func detectGeminiCLIStatus(g *desktopGateway, hoxiMap map[string]interface{}) LocalCLIStatusItem {
+func detectGeminiCLIStatus(g *Service, hoxiMap map[string]interface{}) LocalCLIStatusItem {
 	_, stats := scanGeminiAntigravitySessions("", "")
 	apiKey, defaultModel, models := readGeminiLocalKeyAndModels()
 	_, inHoxi := hoxiMap["google"]
@@ -563,7 +563,7 @@ func detectGeminiCLIStatus(g *desktopGateway, hoxiMap map[string]interface{}) Lo
 	}
 }
 
-func (g *desktopGateway) importGeminiCLIProvider() LocalCLIImportResponse {
+func (g *Service) importGeminiCLIProvider() LocalCLIImportResponse {
 	apiKey, _, models := readGeminiLocalKeyAndModels()
 	if apiKey == "" {
 		apiKey = g.resolveStoredProviderKey("google", "")

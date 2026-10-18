@@ -33,7 +33,7 @@ var (
 	conventionalCommitRegex = regexp.MustCompile(`^(feat|fix|refactor|perf|style|docs|test|build|ci|chore|revert)(\([a-zA-Z0-9_.\-,/]+\))?!?:\s+.+`)
 )
 
-func (g *desktopGateway) handleGenerateCommitMessage(w http.ResponseWriter, r *http.Request) {
+func (g *Service) handleGenerateCommitMessage(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSONError(w, http.StatusMethodNotAllowed, "POST required")
 		return
@@ -71,7 +71,7 @@ func (g *desktopGateway) handleGenerateCommitMessage(w http.ResponseWriter, r *h
 	})
 }
 
-func (g *desktopGateway) invokeCommitMessageLLM(
+func (g *Service) invokeCommitMessageLLM(
 	parentCtx context.Context,
 	providerID, modelID, baseURL, apiKey, npm string,
 	headers map[string]string,

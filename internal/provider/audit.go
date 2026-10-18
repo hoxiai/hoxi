@@ -45,7 +45,7 @@ type auditCodeResponse struct {
 	Error            string   `json:"error,omitempty"`
 }
 
-func (g *desktopGateway) handleAuditProviderCode(w http.ResponseWriter, r *http.Request) {
+func (g *Service) handleAuditProviderCode(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSONError(w, http.StatusMethodNotAllowed, "POST required")
 		return
@@ -217,50 +217,7 @@ func evaluateStaticCodeRules(diffs []auditDiffFile, lspErrorCount int, lspSummar
 	return deduction, issues
 }
 
-func (g *desktopGateway) resolveProviderConnection(providerID, hintBaseURL, hintNPM string) (baseURL, apiKey, npm string, headers map[string]string) {
-	baseURL = strings.TrimSpace(hintBaseURL)
-	npm = strings.TrimSpace(hintNPM)
-	headers = map[string]string{}
-
-	merged := g.loadOpenCodeImportedProviderMap()
-	for k, v := range g.loadHoxiProvidersMap() {
-		merged[k] = v
-	}
-	if rawCfg, ok := merged[providerID].(map[string]any); ok {
-		if npm == "" {
-			if s, ok := rawCfg["npm"].(string); ok {
-				npm = strings.TrimSpace(s)
-			}
-		}
-		if opts, ok := rawCfg["options"].(map[string]any); ok {
-			if baseURL == "" {
-				if u, ok := opts["baseURL"].(string); ok {
-					baseURL = strings.TrimSpace(u)
-				}
-			}
-			if k, ok := opts["apiKey"].(string); ok && k != "" && k != "********" {
-				apiKey = strings.TrimSpace(k)
-			}
-			if hMap, ok := opts["headers"].(map[string]any); ok {
-				for hk, hv := range hMap {
-					if vs, ok := hv.(string); ok {
-						headers[hk] = vs
-					}
-				}
-			}
-		}
-	}
-
-	if baseURL == "" {
-		baseURL = defaultProviderBaseURLs[providerID]
-	}
-	if apiKey == "" {
-		apiKey = g.resolveStoredProviderKey(providerID, baseURL)
-	}
-	return baseURL, apiKey, npm, headers
-}
-
-func (g *desktopGateway) invokeObserverLLM(
+func (g *Service) invokeObserverLLM(
 	parentCtx context.Context,
 	providerID, modelID, baseURL, apiKey, npm string,
 	headers map[string]string,

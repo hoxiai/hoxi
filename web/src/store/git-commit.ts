@@ -3,7 +3,7 @@ import { createSignal } from "solid-js";
 import { locale } from "../i18n";
 import { hoxiAPI, type CommitAndPushResponse } from "../services/api";
 import type { MessagePart, SnapshotFileDiff } from "../services/sse-types";
-import { isModelFree } from "../components/models/model-selector-utils";
+import { isModelFree } from "./workspace-providers";
 import {
   loadSessionMessages,
   refreshWorktreeStatus,

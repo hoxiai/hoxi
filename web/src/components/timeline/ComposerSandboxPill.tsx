@@ -15,13 +15,13 @@ import {
 import {
   commitModelSpec,
   executeTaskCommitAndPush,
+  getConnectedProviderModelGroups,
   openDiffInInspector,
   refreshWorktreeStatus,
   resolveEffectiveCommitModel,
   setCommitModelSpec,
   workspace,
 } from "../../store/workspace";
-import { getConnectedProviderModelGroups } from "../models/model-selector-utils";
 import { t } from "../../i18n";
 
 export function ComposerSandboxPill(props: {

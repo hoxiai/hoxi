@@ -33,7 +33,7 @@ var (
 	titlePrefixRegex = regexp.MustCompile(`(?i)^(会话标题|会话名称|标题|主题|总结|session\s*title|title|summary|topic)\s*[:：\-]\s*`)
 )
 
-func (g *desktopGateway) handleSummarizeSessionTitle(w http.ResponseWriter, r *http.Request) {
+func (g *Service) handleSummarizeSessionTitle(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSONError(w, http.StatusMethodNotAllowed, "POST required")
 		return
@@ -77,7 +77,7 @@ func (g *desktopGateway) handleSummarizeSessionTitle(w http.ResponseWriter, r *h
 	})
 }
 
-func (g *desktopGateway) invokeTitleSummarizerLLM(
+func (g *Service) invokeTitleSummarizerLLM(
 	parentCtx context.Context,
 	providerID, modelID, baseURL, apiKey, npm string,
 	headers map[string]string,

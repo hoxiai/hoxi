@@ -1,26 +1,35 @@
-import { createSignal } from "solid-js";
 import { produce } from "solid-js/store";
 import { t } from "../i18n";
 import { hoxiAPI } from "../services/api";
-import type { MessagePart, ToolPart } from "../services/sse-types";
-import { recordUserRevertAction } from "./provider-telemetry";
-import { appSettings } from "./settings";
+import type { ToolPart } from "../services/sse-types";
 import { type SelectedModel, setWorkspace, workspace } from "./workspace";
-import { initializeSessionAI, sessionAIConfig } from "./session-ai";
+import { sessionAIConfig } from "./session-ai";
 import {
+  forkFromMessage,
   isSessionBusy,
-  loadSessionMessages,
   loadSessionMessagesOnly,
+  pendingRevertConfirm,
+  type PendingRevertRequest,
   replaceSession,
-  scheduleRefreshWorktreeStatus,
-  selectSession,
+  revertToHere,
   sessionDirectory,
+  setPendingRevertConfirm,
+  undoRevert,
 } from "./workspace-sessions";
 import {
   clearSessionInterrupted,
   markSessionInterrupted,
   submitSessionPrompt,
 } from "./workspace-session-messages";
+
+export {
+  forkFromMessage,
+  pendingRevertConfirm,
+  type PendingRevertRequest,
+  revertToHere,
+  setPendingRevertConfirm,
+  undoRevert,
+};
 
 export interface QueuedPromptAttachment {
   type: "file";
@@ -384,110 +393,4 @@ export async function resumeAllInterruptedSubagents(
   await submitSessionPrompt(lines.join("\n\n"), parentSessionID, {
     forceImmediate: true,
   });
-}
-
-export interface PendingRevertRequest {
-  sessionID: string;
-  messageID: string;
-  partID?: string;
-  affectedFiles: string[];
-}
-
-export const [pendingRevertConfirm, setPendingRevertConfirm] =
-  createSignal<PendingRevertRequest | null>(null);
-
-const MUTATING_TOOLS = new Set(["edit", "write", "patch", "multiedit", "apply_patch"]);
-
-function collectAffectedRevertFiles(sessionID: string, messageID: string, partID?: string): string[] {
-  const turns = workspace.messagesBySession[sessionID] ?? [];
-  const bIdx = turns.findIndex((m) => m.info.id === messageID);
-  const slice = bIdx >= 0 ? turns.slice(bIdx) : turns.filter((m) => m.info.id >= messageID);
-  const files = new Set<string>();
-  slice.forEach((turn, idx) => {
-    const start = idx === 0 && partID ? Math.max(0, turn.parts.findIndex((p) => p.id === partID)) : 0;
-    for (const p of turn.parts.slice(start)) {
-      if (p.type === "patch" && Array.isArray(p.files)) {
-        for (const f of p.files) if (f) files.add(f);
-      } else if (p.type === "tool" && p.state.status === "completed" && MUTATING_TOOLS.has(p.tool.toLowerCase())) {
-        const inp = (p.state.input || {}) as Record<string, any>;
-        const fp = inp.filePath || inp.path || inp.file || (p.state.metadata as any)?.filediff?.file;
-        if (typeof fp === "string" && fp.trim()) files.add(fp.trim());
-      }
-    }
-  });
-  return Array.from(files);
-}
-
-export async function revertToHere(
-  sessionID: string,
-  messageID: string,
-  partID?: string,
-  options?: { skipConfirm?: boolean }
-): Promise<void> {
-  const existingSession = workspace.sessions.find((s) => s.id === sessionID);
-  const affectedFiles = collectAffectedRevertFiles(sessionID, messageID, partID);
-  if (
-    !options?.skipConfirm &&
-    appSettings.confirmBeforeRevert &&
-    !existingSession?.revert &&
-    (affectedFiles.length > 0 || Boolean(partID))
-  ) {
-    setPendingRevertConfirm({ sessionID, messageID, partID, affectedFiles });
-    return;
-  }
-  setPendingRevertConfirm(null);
-  recordUserRevertAction(sessionID, messageID);
-
-  if (!partID) {
-    const targetTurn = (workspace.messagesBySession[sessionID] ?? []).find((m) => m.info.id === messageID);
-    if (targetTurn && targetTurn.info.role === "user") {
-      const text = targetTurn.parts
-        .filter((p): p is Extract<MessagePart, { type: "text" }> => p.type === "text")
-        .map((p) => p.text)
-        .join("\n")
-        .trim();
-      const attachments = targetTurn.parts
-        .filter((p): p is Extract<MessagePart, { type: "file" }> => p.type === "file")
-        .map((p) => ({ type: "file" as const, mime: p.mime, filename: p.filename, url: p.url }));
-      if (text || attachments.length > 0) {
-        setWorkspace("composerDraftEditBySession", sessionID, { id: `revert_${messageID}`, text, attachments });
-      }
-    }
-  }
-
-  if (existingSession) {
-    replaceSession({ ...existingSession, revert: { messageID, partID } });
-  }
-
-  if (isSessionBusy(sessionID)) {
-    setWorkspace("statusBySession", sessionID, { type: "idle" });
-    try {
-      await hoxiAPI.abortSession(sessionID, sessionDirectory(sessionID));
-    } catch { /* ignore */ }
-    void abortChildSubagentSessions(sessionID);
-  }
-
-  const info = await hoxiAPI.revertSession(sessionID, messageID, partID, sessionDirectory(sessionID));
-  replaceSession(info);
-  void loadSessionMessages(sessionID);
-  scheduleRefreshWorktreeStatus(sessionID, 120);
-}
-
-export async function undoRevert(sessionID: string): Promise<void> {
-  setPendingRevertConfirm(null);
-  const existingSession = workspace.sessions.find((s) => s.id === sessionID);
-  if (existingSession) replaceSession({ ...existingSession, revert: undefined });
-  const info = await hoxiAPI.unrevertSession(sessionID, sessionDirectory(sessionID));
-  replaceSession(info);
-  void loadSessionMessages(sessionID);
-  scheduleRefreshWorktreeStatus(sessionID, 120);
-}
-
-export async function forkFromMessage(sessionID: string, messageID?: string): Promise<string> {
-  setPendingRevertConfirm(null);
-  const forked = await hoxiAPI.forkSession(sessionID, messageID, sessionDirectory(sessionID));
-  initializeSessionAI(forked.id, sessionAIConfig(sessionID));
-  replaceSession(forked);
-  await selectSession(forked.id);
-  return forked.id;
 }

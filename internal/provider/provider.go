@@ -21,8 +21,6 @@ type Service struct {
 	telemetry    *providerTelemetryStore
 }
 
-type desktopGateway = Service
-
 func NewService(openCodePort int, password, rootDir string, proxy http.Handler) *Service {
 	return &Service{
 		openCodePort: openCodePort,
@@ -107,7 +105,7 @@ type fetchProviderModelsResponse struct {
 	Auth   bool               `json:"auth,omitempty"`
 }
 
-func (g *desktopGateway) handleFetchProviderModels(w http.ResponseWriter, r *http.Request) {
+func (g *Service) handleFetchProviderModels(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSONError(w, http.StatusMethodNotAllowed, "POST required")
 		return
@@ -247,7 +245,50 @@ func parseOpenAIModelsPayload(raw []byte) []fetchedModelItem {
 	return result
 }
 
-func (g *desktopGateway) resolveStoredProviderKey(providerID, requestedBaseURL string) string {
+func (g *Service) resolveProviderConnection(providerID, hintBaseURL, hintNPM string) (baseURL, apiKey, npm string, headers map[string]string) {
+	baseURL = strings.TrimSpace(hintBaseURL)
+	npm = strings.TrimSpace(hintNPM)
+	headers = map[string]string{}
+
+	merged := g.loadOpenCodeImportedProviderMap()
+	for k, v := range g.loadHoxiProvidersMap() {
+		merged[k] = v
+	}
+	if rawCfg, ok := merged[providerID].(map[string]any); ok {
+		if npm == "" {
+			if s, ok := rawCfg["npm"].(string); ok {
+				npm = strings.TrimSpace(s)
+			}
+		}
+		if opts, ok := rawCfg["options"].(map[string]any); ok {
+			if baseURL == "" {
+				if u, ok := opts["baseURL"].(string); ok {
+					baseURL = strings.TrimSpace(u)
+				}
+			}
+			if k, ok := opts["apiKey"].(string); ok && k != "" && k != "********" {
+				apiKey = strings.TrimSpace(k)
+			}
+			if hMap, ok := opts["headers"].(map[string]any); ok {
+				for hk, hv := range hMap {
+					if vs, ok := hv.(string); ok {
+						headers[hk] = vs
+					}
+				}
+			}
+		}
+	}
+
+	if baseURL == "" {
+		baseURL = defaultProviderBaseURLs[providerID]
+	}
+	if apiKey == "" {
+		apiKey = g.resolveStoredProviderKey(providerID, baseURL)
+	}
+	return baseURL, apiKey, npm, headers
+}
+
+func (g *Service) resolveStoredProviderKey(providerID, requestedBaseURL string) string {
 	// 1. Check OpenCode /provider endpoint first
 	if g.openCodePort > 0 {
 		u := "http://127.0.0.1:" + strconv.Itoa(g.openCodePort) + "/provider"

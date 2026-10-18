@@ -1,14 +1,9 @@
 package handoff
 
 import (
-	"encoding/json"
-	"net/http"
 	"os"
 	"path/filepath"
-	"sort"
-	"strconv"
 	"strings"
-	"sync"
 )
 
 type ExternalToolID string
@@ -128,17 +123,6 @@ type LocalCLIImportResponse struct {
 	Error      string   `json:"error,omitempty"`
 }
 
-func (g *desktopGateway) httpBridgeBaseURL() string {
-	ws := strings.TrimSpace(g.wsBaseURL)
-	if strings.HasPrefix(ws, "ws://") {
-		return "http://" + strings.TrimPrefix(ws, "ws://")
-	}
-	if strings.HasPrefix(ws, "wss://") {
-		return "https://" + strings.TrimPrefix(ws, "wss://")
-	}
-	return "http://127.0.0.1:5088"
-}
-
 func normalizeExternalToolName(raw string) string {
 	lower := strings.ToLower(strings.TrimSpace(raw))
 	switch lower {
@@ -203,169 +187,6 @@ func extractChangedFilesFromTurns(turns []NormalizedTurn) []string {
 		}
 	}
 	return out
-}
-
-func (g *desktopGateway) handleHandoffSessions(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeJSONError(w, http.StatusMethodNotAllowed, "GET required")
-		return
-	}
-	targetDir := strings.TrimSpace(r.URL.Query().Get("directory"))
-	if targetDir == "" {
-		targetDir = g.rootDir
-	}
-	query := strings.TrimSpace(r.URL.Query().Get("query"))
-	sourceFilter := ExternalToolID(strings.TrimSpace(r.URL.Query().Get("source")))
-	onlyCurrent := r.URL.Query().Get("onlyCurrent") == "1" || r.URL.Query().Get("onlyCurrent") == "true"
-	limit := 80
-	if l, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && l > 0 && l <= 300 {
-		limit = l
-	}
-
-	var grokSessions, claudeSessions, codexSessions, geminiSessions []ExternalSessionSummary
-	var grokStats, claudeStats, codexStats, geminiStats ExternalSourceStats
-	var scans sync.WaitGroup
-	for _, scan := range []func(){
-		func() { grokSessions, grokStats = scanGrokSessions(targetDir, query) },
-		func() { claudeSessions, claudeStats = scanClaudeSessions(targetDir, query) },
-		func() { codexSessions, codexStats = scanCodexSessions(targetDir, query) },
-		func() { geminiSessions, geminiStats = scanGeminiAntigravitySessions(targetDir, query) },
-	} {
-		scans.Add(1)
-		go func(scan func()) {
-			defer scans.Done()
-			scan()
-		}(scan)
-	}
-	scans.Wait()
-
-	var combined []ExternalSessionSummary
-	if sourceFilter == "" || sourceFilter == "all" || sourceFilter == ExternalToolGrok {
-		combined = append(combined, grokSessions...)
-	}
-	if sourceFilter == "" || sourceFilter == "all" || sourceFilter == ExternalToolClaude {
-		combined = append(combined, claudeSessions...)
-	}
-	if sourceFilter == "" || sourceFilter == "all" || sourceFilter == ExternalToolCodex {
-		combined = append(combined, codexSessions...)
-	}
-	if sourceFilter == "" || sourceFilter == "all" || sourceFilter == ExternalToolGemini {
-		combined = append(combined, geminiSessions...)
-	}
-
-	if onlyCurrent && targetDir != "" {
-		filtered := make([]ExternalSessionSummary, 0, len(combined))
-		for _, item := range combined {
-			if item.MatchesCWD {
-				filtered = append(filtered, item)
-			}
-		}
-		combined = filtered
-	}
-
-	sort.Slice(combined, func(i, j int) bool {
-		if combined[i].MatchesCWD != combined[j].MatchesCWD {
-			return combined[i].MatchesCWD
-		}
-		return combined[i].UpdatedAt > combined[j].UpdatedAt
-	})
-
-	if len(combined) > limit {
-		combined = combined[:limit]
-	}
-
-	writeJSON(w, http.StatusOK, HandoffSessionsResponse{
-		Sessions: combined,
-		Sources: map[ExternalToolID]ExternalSourceStats{
-			ExternalToolGrok:   grokStats,
-			ExternalToolClaude: claudeStats,
-			ExternalToolCodex:  codexStats,
-			ExternalToolGemini: geminiStats,
-		},
-	})
-}
-
-func (g *desktopGateway) handleHandoffPreview(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeJSONError(w, http.StatusMethodNotAllowed, "GET required")
-		return
-	}
-	source := ExternalToolID(strings.TrimSpace(r.URL.Query().Get("source")))
-	sessionID := strings.TrimSpace(r.URL.Query().Get("id"))
-	hintCWD := strings.TrimSpace(r.URL.Query().Get("cwd"))
-	if sessionID == "" {
-		writeJSONError(w, http.StatusBadRequest, "id is required")
-		return
-	}
-
-	detail, err := loadExternalSessionDetail(source, sessionID, hintCWD, g.rootDir)
-	if err != nil {
-		writeJSONError(w, http.StatusNotFound, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, detail)
-}
-
-func (g *desktopGateway) handleHandoffImport(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeJSONError(w, http.StatusMethodNotAllowed, "POST required")
-		return
-	}
-	var req HandoffImportRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, HandoffImportResponse{Error: "Invalid JSON payload"})
-		return
-	}
-	resp, err := g.materializeExternalSession(r.Context(), req)
-	if err != nil {
-		writeJSON(w, http.StatusOK, HandoffImportResponse{
-			OK:    false,
-			Error: err.Error(),
-		})
-		return
-	}
-	writeJSON(w, http.StatusOK, resp)
-}
-
-func (g *desktopGateway) handleLocalCLIImport(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeJSONError(w, http.StatusMethodNotAllowed, "POST required")
-		return
-	}
-	var req LocalCLIImportRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, LocalCLIImportResponse{Error: "Invalid JSON payload"})
-		return
-	}
-	var resp LocalCLIImportResponse
-	switch req.ToolID {
-	case ExternalToolGrok:
-		resp = g.importGrokCLIProvider()
-	case ExternalToolClaude:
-		resp = g.importClaudeCLIProvider()
-	case ExternalToolCodex:
-		resp = g.importCodexCLIProvider()
-	case ExternalToolGemini:
-		resp = g.importGeminiCLIProvider()
-	default:
-		resp = LocalCLIImportResponse{Error: "Unsupported toolID: " + string(req.ToolID)}
-	}
-	writeJSON(w, http.StatusOK, resp)
-}
-
-func loadExternalSessionDetail(source ExternalToolID, sessionID, hintCWD, activeRoot string) (*ExternalSessionDetail, error) {
-	switch source {
-	case ExternalToolGrok:
-		return loadGrokSessionDetail(sessionID, hintCWD, activeRoot)
-	case ExternalToolClaude:
-		return loadClaudeSessionDetail(sessionID, hintCWD, activeRoot)
-	case ExternalToolCodex:
-		return loadCodexSessionDetail(sessionID, hintCWD, activeRoot)
-	case ExternalToolGemini:
-		return loadGeminiAntigravitySessionDetail(sessionID, hintCWD, activeRoot)
-	default:
-		return loadGrokSessionDetail(sessionID, hintCWD, activeRoot)
-	}
 }
 
 func asString(v interface{}) string {

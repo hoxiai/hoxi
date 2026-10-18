@@ -264,7 +264,7 @@ func recoverAntigravityTranscriptReply(conversationID, rootDir string) string {
 	return strings.TrimSpace(detail.LastTurnSummary)
 }
 
-func (g *desktopGateway) handleAntigravityCLIBridge(w http.ResponseWriter, r *http.Request) {
+func (g *Service) handleAntigravityCLIBridge(w http.ResponseWriter, r *http.Request) {
 	subPath := strings.TrimPrefix(r.URL.Path, "/api/hoxi/bridge/gemini-antigravity")
 	if subPath == "/v1/models" && r.Method == http.MethodGet {
 		_, _, models := readGeminiLocalKeyAndModels()
@@ -296,7 +296,7 @@ func lastJSONObjectLine(raw []byte) string {
 	return strings.TrimSpace(lines[len(lines)-1])
 }
 
-func (g *desktopGateway) handleClaudeCLIBridge(w http.ResponseWriter, r *http.Request) {
+func (g *Service) handleClaudeCLIBridge(w http.ResponseWriter, r *http.Request) {
 	subPath := strings.TrimPrefix(r.URL.Path, "/api/hoxi/bridge/claude-code")
 	if subPath == "/v1/models" && r.Method == http.MethodGet {
 		_, _, _, models := readClaudeSettingsEnv()
