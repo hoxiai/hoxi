@@ -115,7 +115,7 @@ jobs:
 
       - name: Build Linux Desktop App
         run: |
-          wails build -platform linux/amd64 -s -m -nosyncgomod \
+          wails build -platform linux/amd64 -tags webkit2_41 -s -m -nosyncgomod \
             -ldflags "-X github.com/hoxiai/hoxi/internal/app.BuildVariant=release -X github.com/hoxiai/hoxi/internal/buildinfo.Version=${RELEASE_VERSION}"
 
       - name: Package Linux Release Archive
