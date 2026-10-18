@@ -12,7 +12,11 @@ import (
 //go:embed all:web/dist
 var embeddedAssets embed.FS
 
+//go:embed build/appicon.png
+var appIcon []byte
+
 func main() {
+	app.SetAppIcon(appIcon)
 	distFS, err := fs.Sub(embeddedAssets, "web/dist")
 	if err != nil {
 		slog.Error("failed to mount embedded web/dist", "error", err)

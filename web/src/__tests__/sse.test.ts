@@ -2,8 +2,10 @@
 import { connectEventStream, type StreamFrameBatch } from "../services/sse";
 import { findMessageIndex, findPartIndex } from "../store/message-lookup";
 import type { MessageTurn } from "../store/workspace";
-import { createStore, produce } from "solid-js/store";
-import type { OpenCodeEvent } from "../services/sse-types";
+import { createStore, produce, reconcile, unwrap } from "solid-js/store";
+import type { OpenCodeEvent, SessionInfo } from "../services/sse-types";
+import { setWorkspace, workspace } from "../store/workspace";
+import { replaceSessionFromEvent } from "../store/workspace-sessions";
 import { assertDeepEqual, assertEqual, assertTrue, describe, it } from "./test-harness";
 
 class MockEventSource {
@@ -27,6 +29,98 @@ class MockEventSource {
 }
 
 describe("SSE client & 120Hz rAF delta batching", () => {
+  for (const type of ["session.created", "session.updated"] as const) {
+    it(`isolates ${type} list admission without filtering global background events`, () => {
+      const saved = structuredClone(unwrap(workspace));
+      const g = globalThis as Record<string, unknown>;
+      const originals = { EventSource: g.EventSource, requestAnimationFrame: g.requestAnimationFrame,
+        cancelAnimationFrame: g.cancelAnimationFrame };
+      g.EventSource = MockEventSource;
+      g.requestAnimationFrame = () => 1;
+      g.cancelAnimationFrame = () => {};
+      let disconnect: (() => void) | undefined;
+      const session = (id: string, directory?: string, extra?: Partial<SessionInfo>): SessionInfo => ({
+        id, directory, title: "Original", time: { created: 1, updated: 1 }, ...extra,
+      });
+      try {
+        setWorkspace({ rootDir: "/new/", sessions: [
+          session("existing", "/new"), session("parent", "/new/.hoxi/worktrees/parent"),
+          session("external", "/new"), session("stale", "/old"),
+        ], worktreeBySession: {} });
+        setWorkspace("worktreeBySession", "external", {
+          sessionID: "external", directory: "/external/worktree", isolated: true, createdAt: "",
+        });
+        const start = MockEventSource.instances.length;
+        const events: string[] = [];
+        const batches: StreamFrameBatch[] = [];
+        disconnect = connectEventStream({
+          onEvent: (evt, directory) => {
+            events.push(evt.type);
+            if (evt.type === "session.created" || evt.type === "session.updated") {
+              replaceSessionFromEvent(evt.properties.info, directory);
+            }
+          },
+          onFrameBatch: (batch) => batches.push(batch), onDeltaBatch: () => {},
+        });
+        const [source, runner] = MockEventSource.instances.slice(start);
+        assertEqual(source.url, "/global/event");
+        const emit = (info: SessionInfo, directory?: string, runnerEvent = false) => {
+          const payload = { type, properties: { info } };
+          (runnerEvent ? runner : source).onmessage?.({
+            data: JSON.stringify(directory === undefined ? payload : { directory, payload }),
+          });
+        };
+        emit(session("foreign", "/old"), "/old");
+        emit(session("foreign-envelope"), "/old");
+        emit(session("foreign-worktree", "/old/.hoxi/worktrees/runner"), undefined, true);
+        emit(session("nested", "/new/another-project"));
+        emit(session("prefix", "/new-other"));
+        emit(session("unknown"));
+        emit(session("current", "/new///"), "/old");
+        emit(session("envelope"), "/new");
+        emit(session("worktree", "/new/.hoxi/worktrees/other"));
+        emit(session("runner", "/new/.hoxi/worktrees/runner", { runtime: "claude-code" }), undefined, true);
+        emit(session("child", undefined, { parentID: "parent" }));
+        emit(session("foreign-child", "/old", { parentID: "parent" }));
+        emit(session("orphan", undefined, { parentID: "missing" }));
+        emit(session("existing", undefined, { title: "Updated", time: { created: 1, updated: 9 } }));
+        emit(session("external", "/external/worktree", { title: "External updated" }));
+        emit(session("stale", undefined, { title: "Must not update" }));
+        assertDeepEqual(workspace.sessions.map((s) => s.id).sort(), [
+          "child", "current", "envelope", "existing", "external", "parent", "runner", "stale", "worktree",
+        ].sort());
+        assertEqual(workspace.sessions.find((s) => s.id === "existing")?.title, "Updated");
+        assertEqual(workspace.sessions.find((s) => s.id === "existing")?.time.updated, 9);
+        assertEqual(workspace.sessions.find((s) => s.id === "existing")?.directory, "/new");
+        assertEqual(workspace.sessions.find((s) => s.id === "envelope")?.directory, "/new");
+        assertEqual(workspace.sessions.find((s) => s.id === "external")?.title, "External updated");
+        assertEqual(workspace.sessions.find((s) => s.id === "stale")?.title, "Original");
+        source.onmessage?.({ data: JSON.stringify({ directory: "/old", payload: {
+          type: "message.updated", properties: { info: {
+            id: "background-message", sessionID: "foreign", role: "assistant", time: { created: 1 },
+          } },
+        } }) });
+        source.onmessage?.({ data: JSON.stringify({ directory: "/old", payload: {
+          type: "session.status", properties: { sessionID: "foreign", status: { type: "busy" } },
+        } }) });
+        assertEqual(batches[0].infos[0].sessionID, "foreign");
+        assertEqual(events.at(-1), "session.status");
+        // A new workspace must not be repopulated by late old-root events.
+        setWorkspace({ rootDir: "/empty", sessions: [] });
+        emit(session("late", "/new"));
+        emit(session("runner", "/new/.hoxi/worktrees/runner"), undefined, true);
+        assertEqual(workspace.sessions.length, 0);
+        setWorkspace("rootDir", "");
+        emit(session("no-root", "/new"));
+        assertEqual(workspace.sessions.length, 0);
+      } finally {
+        disconnect?.();
+        Object.assign(g, originals);
+        setWorkspace(reconcile(saved));
+      }
+    });
+  }
+
   it("drains a suspended rAF, preserves snapshot/delta ordering and cancels on disconnect", () => {
     const g = globalThis as Record<string, unknown>;
     const originals = { EventSource: g.EventSource, requestAnimationFrame: g.requestAnimationFrame,

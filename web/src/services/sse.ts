@@ -14,7 +14,7 @@ export interface StreamFrameBatch {
 }
 
 export interface SSEHandlers {
-  onEvent: (event: OpenCodeEvent) => void;
+  onEvent: (event: OpenCodeEvent, directory?: string) => void;
   onDeltaBatch: (
     batches: Array<{
       sessionID: string;
@@ -89,12 +89,16 @@ export function connectEventStream(handlers: SSEHandlers, directory?: string): (
     handlers.onConnectionChange?.(false);
   };
 
-  const handleMessage = (msg: MessageEvent) => {
+  const handleMessage = (msg: MessageEvent, streamDirectory?: string) => {
     if (!msg.data) return;
     try {
       const parsed = JSON.parse(msg.data);
       // `/global/event` wraps events in `{ directory, payload: { type, properties } }`
-      const evt = (parsed?.payload && typeof parsed.payload.type === "string"
+      const wrapped = parsed?.payload && typeof parsed.payload.type === "string";
+      const eventDirectory = wrapped
+        ? (typeof parsed.directory === "string" ? parsed.directory : undefined)
+        : streamDirectory;
+      const evt = (wrapped
         ? parsed.payload
         : parsed) as OpenCodeEvent;
       if (!evt || typeof evt.type !== "string") return;
@@ -135,14 +139,14 @@ export function connectEventStream(handlers: SSEHandlers, directory?: string): (
 
       // Preserve stream ordering before status/removal events observe the store.
       flushFrame();
-      handlers.onEvent(evt);
+      handlers.onEvent(evt, eventDirectory);
     } catch {
       // Ignore malformed keepalive frames
     }
   };
 
-  source.onmessage = handleMessage;
-  runnerSource.onmessage = handleMessage;
+  source.onmessage = (msg) => handleMessage(msg, directory);
+  runnerSource.onmessage = (msg) => handleMessage(msg);
 
   return () => {
     if (rafID !== null) {

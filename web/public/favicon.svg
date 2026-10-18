@@ -1,15 +1,20 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
   <defs>
-    <linearGradient id="hoxi-blue-grad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#3B82F6"/>
+    <linearGradient id="hoxi-light-bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#EFF6FF"/>
+    </linearGradient>
+    <linearGradient id="hoxi-blue-fg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#2563EB"/>
       <stop offset="100%" stop-color="#1D4ED8"/>
     </linearGradient>
   </defs>
-  <rect width="64" height="64" rx="14" fill="url(#hoxi-blue-grad)"/>
-  <g fill="#FFFFFF" stroke="#FFFFFF">
-    <path d="M32 8L52 21H44L32 13L20 21H12L32 8Z" fill="#FFFFFF" stroke="none"/>
-    <rect x="20" y="25" width="6.5" height="12" rx="3.25" fill="#FFFFFF" stroke="none"/>
-    <rect x="37.5" y="25" width="6.5" height="12" rx="3.25" fill="#FFFFFF" stroke="none"/>
-    <path d="M19 42.5C23 50 41 50 45 42.5" stroke="#FFFFFF" stroke-width="5.5" stroke-linecap="round" fill="none"/>
+  <rect width="64" height="64" rx="14" fill="url(#hoxi-light-bg)"/>
+  <rect x="0.5" y="0.5" width="63" height="63" rx="13.5" stroke="#DBEAFE" stroke-width="1"/>
+  <g transform="translate(3.2, 4.8) scale(0.9)" fill="url(#hoxi-blue-fg)">
+    <path d="M32 8L52 21H44L32 13L20 21H12L32 8Z"/>
+    <rect x="20" y="25" width="6.5" height="12" rx="3.25"/>
+    <rect x="37.5" y="25" width="6.5" height="12" rx="3.25"/>
+    <path d="M19 42.5C23 50 41 50 45 42.5" stroke="url(#hoxi-blue-fg)" stroke-width="5.5" stroke-linecap="round" fill="none"/>
   </g>
 </svg>

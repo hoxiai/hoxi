@@ -32,6 +32,63 @@ static void hoxi_run_on_main(dispatch_block_t block) {
     dispatch_async(dispatch_get_main_queue(), block);
 }
 
+static NSImage *hoxi_create_statusbar_icon(void) {
+    NSSize size = NSMakeSize(18.0, 18.0);
+    NSImage *image = [NSImage imageWithSize:size flipped:YES drawingHandler:^BOOL(NSRect dstRect) {
+        CGContextRef cg = [[NSGraphicsContext currentContext] CGContext];
+        if (cg == NULL) {
+            return NO;
+        }
+        CGContextSaveGState(cg);
+        CGFloat scale = size.width / 64.0;
+        CGContextScaleCTM(cg, scale, scale);
+        CGContextTranslateCTM(cg, 0.0, 2.5);
+
+        [[NSColor blackColor] setFill];
+        [[NSColor blackColor] setStroke];
+
+        // 1. Roof (合之檐)
+        CGMutablePathRef roof = CGPathCreateMutable();
+        CGPathMoveToPoint(roof, NULL, 32.0, 8.0);
+        CGPathAddLineToPoint(roof, NULL, 52.0, 21.0);
+        CGPathAddLineToPoint(roof, NULL, 44.0, 21.0);
+        CGPathAddLineToPoint(roof, NULL, 32.0, 13.0);
+        CGPathAddLineToPoint(roof, NULL, 20.0, 21.0);
+        CGPathAddLineToPoint(roof, NULL, 12.0, 21.0);
+        CGPathCloseSubpath(roof);
+        CGContextAddPath(cg, roof);
+        CGContextFillPath(cg);
+        CGPathRelease(roof);
+
+        // 2. Eyes (H之目)
+        CGPathRef leftEye = CGPathCreateWithRoundedRect(CGRectMake(20.0, 25.0, 6.5, 12.0), 3.25, 3.25, NULL);
+        CGContextAddPath(cg, leftEye);
+        CGContextFillPath(cg);
+        CGPathRelease(leftEye);
+
+        CGPathRef rightEye = CGPathCreateWithRoundedRect(CGRectMake(37.5, 25.0, 6.5, 12.0), 3.25, 3.25, NULL);
+        CGContextAddPath(cg, rightEye);
+        CGContextFillPath(cg);
+        CGPathRelease(rightEye);
+
+        // 3. Smile (喜之弧)
+        CGMutablePathRef smile = CGPathCreateMutable();
+        CGPathMoveToPoint(smile, NULL, 19.0, 42.5);
+        CGPathAddCurveToPoint(smile, NULL, 23.0, 50.0, 41.0, 50.0, 45.0, 42.5);
+        CGContextAddPath(cg, smile);
+        CGContextSetLineWidth(cg, 5.5);
+        CGContextSetLineCap(cg, kCGLineCapRound);
+        CGContextStrokePath(cg);
+        CGPathRelease(smile);
+
+        CGContextRestoreGState(cg);
+        return YES;
+    }];
+    image.template = YES;
+    image.accessibilityDescription = @"Hoxi";
+    return image;
+}
+
 void hoxi_statusbar_start(void) {
     hoxi_run_on_main(^{
         if (hoxiStatusBarController != nil) {
@@ -42,13 +99,8 @@ void hoxi_statusbar_start(void) {
         hoxiStatusBarController.statusItem = [[NSStatusBar systemStatusBar] statusItemWithLength:NSVariableStatusItemLength];
 
         NSStatusBarButton *button = hoxiStatusBarController.statusItem.button;
-        if (@available(macOS 11.0, *)) {
-            button.image = [NSImage imageWithSystemSymbolName:@"terminal.fill" accessibilityDescription:@"Hoxi"];
-            button.image.template = YES;
-            button.imagePosition = NSImageLeft;
-        } else {
-            button.title = @"Hoxi";
-        }
+        button.image = hoxi_create_statusbar_icon();
+        button.imagePosition = NSImageLeft;
         button.toolTip = @"Hoxi Workspace";
 
         NSMenu *menu = [NSMenu new];

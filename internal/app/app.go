@@ -37,7 +37,12 @@ var (
 	// without colliding with an installed production `/Applications/Hoxi.app`.
 	// Production builds override this via -ldflags "-X github.com/hoxiai/hoxi/internal/app.BuildVariant=release".
 	BuildVariant = "dev"
+	appIconBytes []byte
 )
+
+func SetAppIcon(icon []byte) {
+	appIconBytes = icon
+}
 
 type AppIdentity struct {
 	Variant           string
@@ -273,6 +278,7 @@ func Run(distFS fs.FS) {
 			About: &mac.AboutInfo{
 				Title:   identity.Title,
 				Message: "Native AI Agentic Engineering Workspace (https://hoxi.ai)",
+				Icon:    appIconBytes,
 			},
 		},
 		SingleInstanceLock: &options.SingleInstanceLock{

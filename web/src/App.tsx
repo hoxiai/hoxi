@@ -24,7 +24,7 @@ import {
   normalizeFolderPath,
   recordSessionRetry,
   removeSessionFromStore,
-  replaceSession,
+  replaceSessionFromEvent,
   resolveDefaultProjectDir,
   runSessionCodeAudit,
   scheduleRefreshWorktreeStatus,
@@ -118,7 +118,7 @@ export default function App() {
       },
       onDeltaBatch: applyPartDeltaBatch,
       onFrameBatch: applyStreamFrameBatch,
-      onEvent: (evt) => {
+      onEvent: (evt, directory) => {
         switch (evt.type) {
           case "message.updated":
             upsertMessageInfo(evt.properties.info);
@@ -128,7 +128,7 @@ export default function App() {
             break;
           case "session.updated":
           case "session.created":
-            replaceSession(evt.properties.info);
+            replaceSessionFromEvent(evt.properties.info, directory);
             break;
           case "session.deleted": {
             const delID = evt.properties.sessionID || evt.properties.info?.id;

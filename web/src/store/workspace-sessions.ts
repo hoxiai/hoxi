@@ -99,6 +99,41 @@ export function replaceSession(info: SessionInfo) {
   });
 }
 
+export function replaceSessionFromEvent(info: SessionInfo, eventDirectory?: string): void {
+  const normalize = (path?: string) => (path || "").trim().replace(/[\\/]+$/, "");
+  const root = normalize(workspace.rootDir);
+  if (!root) return;
+  const worktrees = `${root}/.hoxi/worktrees/`;
+  const ownsDirectory = (directory: string) => directory === root ||
+    (directory.startsWith(worktrees) && /^[^/\\]+$/.test(directory.slice(worktrees.length)));
+  const visited = new Set<string>();
+  const belongs = (session: SessionInfo, fallbackDirectory?: string): boolean => {
+    if (visited.has(session.id)) return false;
+    visited.add(session.id);
+    const directory = normalize(session.directory) || normalize(fallbackDirectory);
+    // Only Hoxi worktrees belong to the root, not arbitrary nested project folders.
+    if (ownsDirectory(directory)) return true;
+    const existing = workspace.sessions.find((s) => s.id === session.id);
+    if (existing && ownsDirectory(normalize(existing.directory)) &&
+      directory === normalize(workspace.worktreeBySession[session.id]?.directory)) return true;
+    const parentID = session.parentID || existing?.parentID;
+    const parent = workspace.sessions.find((s) => s.id === parentID);
+    if (parent && (!directory || directory === normalize(sessionDirectory(parent.id)))) {
+      if (belongs(parent)) return true;
+    }
+    // Directory-less updates to an already loaded session must still update its title/time.
+    if (!directory && existing) {
+      return !existing.directory || ownsDirectory(normalize(existing.directory));
+    }
+    return false;
+  };
+  if (belongs(info, eventDirectory)) {
+    const directory = info.directory || workspace.sessions.find((s) => s.id === info.id)?.directory ||
+      eventDirectory;
+    replaceSession(directory ? { ...info, directory } : info);
+  }
+}
+
 export async function loadSessionMessagesOnly(sessionID: string): Promise<void> {
   const directory = sessionDirectory(sessionID);
   const turns = await hoxiAPI.getMessages(sessionID, directory);

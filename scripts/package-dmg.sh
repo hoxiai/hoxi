@@ -19,11 +19,18 @@ fi
 mkdir -p "$(dirname "${DMG_PATH}")"
 rm -f "${DMG_PATH}"
 
+APP_ICNS="${APP_PATH}/Contents/Resources/iconfile.icns"
+
 # Prefer create-dmg if available for custom icon positioning and visual presentation
 if command -v create-dmg >/dev/null 2>&1; then
   echo "📦 Creating DMG using create-dmg: ${DMG_PATH}..."
+  VOLICON_ARGS=()
+  if [[ -f "${APP_ICNS}" ]]; then
+    VOLICON_ARGS=(--volicon "${APP_ICNS}")
+  fi
   create-dmg \
     --volname "${VOLUME_NAME}" \
+    "${VOLICON_ARGS[@]+"${VOLICON_ARGS[@]}"}" \
     --window-pos 200 120 \
     --window-size 600 400 \
     --icon-size 100 \
@@ -46,6 +53,13 @@ if [[ ! -f "${DMG_PATH}" ]]; then
 
   cp -R "${APP_PATH}" "${STAGE_DIR}/"
   ln -s /Applications "${STAGE_DIR}/Applications"
+  if [[ -f "${APP_ICNS}" ]]; then
+    cp "${APP_ICNS}" "${STAGE_DIR}/.VolumeIcon.icns"
+    if command -v SetFile >/dev/null 2>&1; then
+      SetFile -c icnC "${STAGE_DIR}/.VolumeIcon.icns" || true
+      SetFile -a C "${STAGE_DIR}" || true
+    fi
+  fi
 
   hdiutil create \
     -volname "${VOLUME_NAME}" \
