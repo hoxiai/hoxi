@@ -18,7 +18,7 @@ export const timeline: TimelineI18n = {
   forkHere: "从此处分支会话",
   revertConfirm: "确认将对话和工作区代码回滚至此检查点吗？",
   forkConfirm: "确认从该节点衍生出新会话分支吗？",
-  steer: "实时纠偏",
+  queueSend: "加入队列",
   stop: "中止",
   send: "发送",
   buildMode: "构建模式",
@@ -27,8 +27,8 @@ export const timeline: TimelineI18n = {
   planDesc: "只读探索代码与规划架构，不产生实际文件改动",
   inputPlaceholder:
     "输入任务指令或问题... (Enter 发送，Shift+Enter 换行)",
-  steerPlaceholder:
-    "任务执行中。发送后会在下一步工具前注入纠偏，不会中止当前运行。",
+  queuePlaceholder:
+    "任务执行中，发送的消息将先排队。你可以在队列中立即发送、修改或删除。",
   filesAttached: "{count} 个文件",
   addContext: "添加上下文",
   selectModel: "选择模型",

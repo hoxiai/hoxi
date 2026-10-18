@@ -115,7 +115,7 @@ export interface TimelineI18n {
   forkHere: string;
   revertConfirm: string;
   forkConfirm: string;
-  steer: string;
+  queueSend: string;
   stop: string;
   send: string;
   buildMode: string;
@@ -123,7 +123,7 @@ export interface TimelineI18n {
   buildDesc: string;
   planDesc: string;
   inputPlaceholder: string;
-  steerPlaceholder: string;
+  queuePlaceholder: string;
   filesAttached: string;
   addContext: string;
   selectModel: string;

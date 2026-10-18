@@ -18,7 +18,7 @@ export const timeline: TimelineI18n = {
   forkHere: "Fork session",
   revertConfirm: "Roll back conversation and files to this checkpoint?",
   forkConfirm: "Fork a new branch session from this message turn?",
-  steer: "Steer",
+  queueSend: "Add to queue",
   stop: "Stop",
   send: "Send",
   buildMode: "Build",
@@ -27,8 +27,8 @@ export const timeline: TimelineI18n = {
   planDesc: "Read-only architectural planning and exploration",
   inputPlaceholder:
     "Ask a question or describe a task... (Enter to send, Shift+Enter for newline)",
-  steerPlaceholder:
-    "Task is running. Send to inject a course-correction before the next tool step, without stopping the run.",
+  queuePlaceholder:
+    "Task is running. Messages will be queued. You can send them now, edit, or delete them from the queue.",
   filesAttached: "{count} files",
   addContext: "Add Context",
   selectModel: "Select Model",

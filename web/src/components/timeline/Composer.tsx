@@ -172,7 +172,6 @@ export default function Composer() {
     try {
       const id = await submitSessionPrompt(payload, sessionID(), {
         attachments,
-        forceImmediate: busy(),
       });
       clearReviewComments(id);
     } catch (err) {
@@ -331,7 +330,7 @@ export default function Composer() {
             class="w-full min-h-[48px] max-h-[180px] resize-none bg-transparent leading-[1.65] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none selectable-text"
             rows={1}
             placeholder={
-              busy() ? t("timeline.steerPlaceholder") : t("timeline.inputPlaceholder")
+              busy() ? t("timeline.queuePlaceholder") : t("timeline.inputPlaceholder")
             }
             value={text()}
             onPaste={(ev) => {
@@ -372,7 +371,7 @@ export default function Composer() {
               />
             </div>
 
-            {/* Right Context Progress + Approval Mode + Unified Circular Send / Steer / Stop Button */}
+            {/* Right Context Progress + Approval Mode + Send / Queue / Stop Buttons */}
             <div class="flex items-center gap-1.5">
               <ContextProgressPill />
               <ApprovalModePill />
@@ -383,7 +382,7 @@ export default function Composer() {
                     type="button"
                     class="inline-flex h-7 w-7 items-center justify-center rounded-full bg-[var(--accent-primary)] text-white shadow-xs hover:opacity-90 transition-all cursor-pointer"
                     onClick={onSend}
-                    title={t("timeline.steer")}
+                    title={t("timeline.queueSend")}
                   >
                     <Show
                       when={!sending()}
