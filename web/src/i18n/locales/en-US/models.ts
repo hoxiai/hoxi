@@ -236,6 +236,12 @@ export const models = {
   hoverEndpointLabel: "Endpoint",
   hoverPricingLabel: "Pricing",
   hoverCapabilitiesLabel: "Capabilities",
+  viewDetails: "View Details",
+  addFavorite: "Add to Favorites",
+  removeFavorite: "Remove from Favorites",
+  detailInputPrice: "Input Price",
+  detailOutputPrice: "Output Price",
+  detailStatus: "Status",
   sourceBuiltInFree: "OpenCode Free",
   commitModelTitle: "Git Commit Message Model",
   commitModelDesc:
@@ -243,5 +249,3 @@ export const models = {
   commitModelFollowSmallOption: "Follow Fast / Small Model (Recommended)",
   commitModelNoneOption: "No Model (Pure Local Rule Synthesis · 0ms)",
 };
-
-

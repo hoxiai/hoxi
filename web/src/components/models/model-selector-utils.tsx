@@ -2,13 +2,10 @@
 import { For, Show } from "solid-js";
 import {
   Clock,
-  Image,
   KeyRound,
   Pencil,
   Plus,
-  Sparkles,
   Star,
-  Wrench,
 } from "lucide-solid";
 import {
   type ConnectedProviderGroup,
@@ -26,7 +23,6 @@ import {
 } from "../../store/workspace";
 import { ProviderIcon } from "../icons";
 import { t } from "../../i18n";
-import { ProviderHealthBadge } from "./ProviderQualityCard";
 
 export {
   type ConnectedProviderGroup,
@@ -161,110 +157,6 @@ export function ModelSelectorRail(props: {
           <KeyRound size={11} />
           {t("models.manageKeys")}
         </button>
-      </div>
-    </div>
-  );
-}
-
-export function ModelPreviewFooter(props: {
-  model: FlattenedModel;
-  onEditCustom: (providerID: string) => void;
-}) {
-  const ctxText = () => formatTokenLimit(props.model.contextLimit);
-  const outText = () => formatTokenLimit(props.model.outputLimit);
-  const inPrice = () => formatPricePerMillion(props.model.inputCost);
-  const outPrice = () => formatPricePerMillion(props.model.outputCost);
-  const srcInfo = () => getModelSourceInfo(props.model);
-
-  return (
-    <div class="border-t border-[var(--border-subtle)] bg-[var(--bg-elevated)]/60 px-3 py-2 text-[11px] space-y-1">
-      <div class="flex items-center justify-between gap-2">
-        <div class="min-w-0 flex items-center gap-1.5">
-          <span class="font-semibold text-[var(--text-primary)] truncate">
-            {props.model.modelName}
-          </span>
-          <span
-            class={`shrink-0 inline-flex items-center gap-1 rounded-full px-1.5 py-[1px] text-[9.5px] font-medium ${
-              srcInfo().isImported
-                ? "bg-amber-500/10 text-amber-400"
-                : "bg-[var(--ok-surface)] text-[var(--ok-text)]"
-            }`}
-          >
-            <span
-              class={`h-1.5 w-1.5 rounded-full ${
-                srcInfo().isImported ? "bg-amber-400" : "bg-[var(--ok)]"
-              }`}
-            />
-            {srcInfo().label}
-          </span>
-          <ProviderHealthBadge
-            providerID={props.model.providerID}
-            modelID={props.model.modelID}
-          />
-          <span class="font-mono text-[10px] text-[var(--text-faint)] truncate">
-            ({props.model.providerID}/{props.model.modelID})
-          </span>
-        </div>
-        <Show when={props.model.isCustom}>
-          <button
-            type="button"
-            onClick={() => props.onEditCustom(props.model.providerID)}
-            class="shrink-0 inline-flex items-center gap-1 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--accent-primary)] hover:border-[var(--accent-border)] cursor-pointer"
-          >
-            <Pencil size={10} />
-            {t("models.editProvider")}
-          </button>
-        </Show>
-      </div>
-
-      <div class="flex items-center justify-between gap-2 text-[10.5px] text-[var(--text-muted)]">
-        <div class="flex items-center gap-2 flex-wrap">
-          <Show when={ctxText()}>
-            <span>
-              {t("models.contextWindow")}: <strong class="font-mono">{ctxText()}</strong>
-            </span>
-          </Show>
-          <Show when={outText()}>
-            <span>
-              {t("models.maxOutput")}: <strong class="font-mono">{outText()}</strong>
-            </span>
-          </Show>
-          <Show
-            when={!props.model.free && (inPrice() || outPrice())}
-            fallback={
-              <Show when={props.model.free}>
-                <span class="rounded bg-[var(--ok-surface)] px-1.5 py-[1px] text-[10px] font-medium text-[var(--ok-text)]">
-                  {t("models.freeModel")}
-                </span>
-              </Show>
-            }
-          >
-            <span class="font-mono">
-              {inPrice() || "-"} in / {outPrice() || "-"} out
-            </span>
-          </Show>
-        </div>
-
-        <div class="flex items-center gap-1 shrink-0">
-          <Show when={props.model.reasoning}>
-            <span class="inline-flex items-center gap-0.5 rounded bg-[var(--accent-surface)] px-1.5 py-[1px] text-[9.5px] font-medium text-[var(--accent-primary)]">
-              <Sparkles size={9} />
-              {t("models.reasoningCap")}
-            </span>
-          </Show>
-          <Show when={props.model.image}>
-            <span class="inline-flex items-center gap-0.5 rounded bg-[var(--bg-inset)] px-1.5 py-[1px] text-[9.5px] font-medium text-[var(--text-secondary)]">
-              <Image size={9} />
-              {t("models.imageCap")}
-            </span>
-          </Show>
-          <Show when={props.model.toolcall}>
-            <span class="inline-flex items-center gap-0.5 rounded bg-[var(--bg-inset)] px-1.5 py-[1px] text-[9.5px] text-[var(--text-muted)]">
-              <Wrench size={9} />
-              {t("models.toolsCap")}
-            </span>
-          </Show>
-        </div>
       </div>
     </div>
   );

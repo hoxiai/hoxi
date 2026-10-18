@@ -234,6 +234,12 @@ export const models: ModelsI18n = {
   hoverEndpointLabel: "接口地址",
   hoverPricingLabel: "计费价格",
   hoverCapabilitiesLabel: "模型能力",
+  viewDetails: "查看详情",
+  addFavorite: "收藏模型",
+  removeFavorite: "取消收藏",
+  detailInputPrice: "输入价格",
+  detailOutputPrice: "输出价格",
+  detailStatus: "运行状态",
   sourceBuiltInFree: "OpenCode 内置免费",
   commitModelTitle: "Git 提交信息生成模型",
   commitModelDesc:
@@ -241,5 +247,3 @@ export const models: ModelsI18n = {
   commitModelFollowSmallOption: "跟随快速 / 轻量模型（推荐）",
   commitModelNoneOption: "不用模型（纯本地规则极速合成 · 0 延迟）",
 };
-
-

@@ -1,13 +1,11 @@
 // web/src/components/models/ModelSelector.tsx
-import { createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import {
   Check,
   ChevronDown,
   Cpu,
-  Image,
   KeyRound,
   Search,
-  Sparkles,
   Star,
 } from "lucide-solid";
 import {
@@ -23,13 +21,11 @@ import { ProviderIcon } from "../icons";
 import { t } from "../../i18n";
 import {
   extractFlattenedModels,
-  formatTokenLimit,
-  ModelPreviewFooter,
   ModelSelectorRail,
   rankModelSearch,
   type FlattenedModel,
 } from "./model-selector-utils";
-import { ProviderHealthBadge } from "./ProviderQualityCard";
+import { ModelDetailsPopover } from "./ModelDetailsPopover";
 import { SelectedModelHoverCard } from "./SelectedModelHoverCard";
 
 const EFFORT_OPTIONS: Array<{ value: "" | "low" | "medium" | "high"; label: string }> = [
@@ -44,7 +40,7 @@ export default function ModelSelector() {
   const [triggerHovered, setTriggerHovered] = createSignal(false);
   const [rail, setRail] = createSignal<string>("connected");
   const [query, setQuery] = createSignal("");
-  const [hoveredModel, setHoveredModel] = createSignal<FlattenedModel | null>(null);
+  const [details, setDetails] = createSignal<{ model: FlattenedModel; anchor: HTMLButtonElement } | null>(null);
   const [activeIndex, setActiveIndex] = createSignal(0);
   let containerRef: HTMLDivElement | undefined;
   let searchInputRef: HTMLInputElement | undefined;
@@ -147,9 +143,9 @@ export default function ModelSelector() {
     return pool.filter((m) => m.providerID === r);
   });
 
-  const previewTarget = createMemo<FlattenedModel | null>(
-    () => hoveredModel() || filteredModels()[activeIndex()] || activeModelInfo()
-  );
+  createEffect(() => {
+    if (!open()) setDetails(null);
+  });
 
   const toggleOpen = () => {
     const next = !open();
@@ -157,7 +153,6 @@ export default function ModelSelector() {
     setTriggerHovered(false);
     if (next) {
       setActiveIndex(0);
-      setHoveredModel(null);
       setTimeout(() => searchInputRef?.focus(), 20);
     } else {
       setQuery("");
@@ -165,6 +160,13 @@ export default function ModelSelector() {
   };
 
   const handleKeyDown = (e: KeyboardEvent) => {
+    if (e.target !== searchInputRef) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setOpen(false);
+      }
+      return;
+    }
     const list = filteredModels();
     if (e.key === "ArrowDown") {
       e.preventDefault();
@@ -189,6 +191,7 @@ export default function ModelSelector() {
     const onDocClick = (e: MouseEvent) => {
       if (!open() || !containerRef) return;
       const path = typeof e.composedPath === "function" ? e.composedPath() : [];
+      if (path.some((node) => node instanceof HTMLElement && node.hasAttribute("data-model-details"))) return;
       if (!path.includes(containerRef) && !containerRef.contains(e.target as Node)) {
         setOpen(false);
       }
@@ -240,7 +243,7 @@ export default function ModelSelector() {
       <Show when={open()}>
         <div
           onKeyDown={handleKeyDown}
-          class="absolute bottom-full left-0 z-40 mb-2 flex h-[410px] w-[520px] flex-col overflow-hidden rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-panel)] shadow-2xl"
+          class="absolute bottom-full left-0 z-40 mb-2 flex h-[410px] max-h-[calc(100dvh-100px)] w-[520px] max-w-[calc(100vw-24px)] flex-col overflow-hidden rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-panel)] shadow-2xl"
         >
           <div class="flex flex-1 min-h-0">
             <ModelSelectorRail
@@ -250,6 +253,7 @@ export default function ModelSelector() {
               providers={connectedProviderRails()}
               onSelectRail={(r) => {
                 setRail(r);
+                setDetails(null);
                 setActiveIndex(0);
               }}
               onClosePopover={() => setOpen(false)}
@@ -265,6 +269,7 @@ export default function ModelSelector() {
                   value={query()}
                   onInput={(e) => {
                     setQuery(e.currentTarget.value);
+                    setDetails(null);
                     setActiveIndex(0);
                   }}
                   class="w-full bg-transparent text-[12.5px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none selectable-text"
@@ -297,12 +302,10 @@ export default function ModelSelector() {
                         workspace.selectedModel?.providerID === item.providerID &&
                         workspace.selectedModel?.modelID === item.modelID;
                       const fav = () => isFavoriteModel(item.providerID, item.modelID);
-                      const ctxBadge = () => formatTokenLimit(item.contextLimit);
 
                       return (
                         <div
                           onMouseEnter={() => {
-                            setHoveredModel(item);
                             setActiveIndex(idx());
                           }}
                           class={`group flex items-center justify-between gap-2 rounded-xl px-2.5 py-1.5 transition-colors cursor-pointer ${
@@ -312,16 +315,19 @@ export default function ModelSelector() {
                               ? "bg-[var(--bg-hover)] text-[var(--text-primary)]"
                               : "hover:bg-[var(--bg-hover)] text-[var(--text-primary)]"
                           }`}
-                          onClick={() => {
-                            selectModel({
-                              providerID: item.providerID,
-                              modelID: item.modelID,
-                            });
-                            setOpen(false);
-                          }}
                         >
-                          <div class="min-w-0 flex-1">
-                            <div class="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            class="min-w-0 flex-1 text-left cursor-pointer rounded-lg focus-visible:outline focus-visible:outline-[var(--accent-primary)]"
+                            onClick={() => {
+                              selectModel({
+                                providerID: item.providerID,
+                                modelID: item.modelID,
+                              });
+                              setOpen(false);
+                            }}
+                          >
+                            <span class="flex items-center gap-1.5">
                               <span class="truncate text-[12.5px] font-medium">
                                 {item.modelName}
                               </span>
@@ -330,43 +336,27 @@ export default function ModelSelector() {
                                   {t("models.freeModel")}
                                 </span>
                               </Show>
-                              <Show when={item.reasoning}>
-                                <span
-                                  class="inline-flex items-center rounded bg-[var(--bg-inset)] px-1 py-[1px] text-[9.5px] font-mono text-[var(--text-muted)]"
-                                  title={t("models.supportsReasoning")}
-                                >
-                                  <Sparkles size={9} class="mr-0.5 text-[var(--accent-primary)]" />
-                                  {t("models.reasoningCap")}
-                                </span>
-                              </Show>
-                              <Show when={item.image}>
-                                <span class="inline-flex items-center rounded bg-[var(--bg-inset)] px-1 py-[1px] text-[9.5px] font-mono text-[var(--text-muted)]">
-                                  <Image size={9} class="mr-0.5" />
-                                  {t("models.imageCap")}
-                                </span>
-                              </Show>
-                              <Show when={ctxBadge()}>
-                                <span class="rounded bg-[var(--bg-inset)] px-1 py-[1px] text-[9.5px] font-mono text-[var(--text-faint)]">
-                                  {ctxBadge()}
-                                </span>
-                              </Show>
-                            </div>
-                            <div class="flex items-center gap-1.5 text-[10.5px] text-[var(--text-muted)]">
-                              <span class="truncate">{item.providerName}</span>
-                              <ProviderHealthBadge
-                                providerID={item.providerID}
-                                modelID={item.modelID}
-                                compact
-                              />
-                              <span class="font-mono text-[10px] text-[var(--text-faint)] truncate">
-                                · {item.modelID}
-                              </span>
-                            </div>
-                          </div>
+                            </span>
+                            <span class="block truncate text-[10.5px] text-[var(--text-muted)]">{item.providerName}</span>
+                          </button>
 
                           <div class="flex items-center gap-1 shrink-0">
                             <button
                               type="button"
+                              aria-haspopup="dialog"
+                              aria-expanded={details()?.model === item}
+                              aria-label={`${t("models.viewDetails")}: ${item.modelName}`}
+                              onClick={(e) => {
+                                setDetails(details()?.model === item ? null : { model: item, anchor: e.currentTarget });
+                              }}
+                              class="rounded-md px-1.5 py-1 text-[10.5px] text-[var(--text-muted)] hover:bg-[var(--bg-panel)] hover:text-[var(--accent-primary)] focus-visible:outline focus-visible:outline-[var(--accent-primary)] cursor-pointer"
+                            >
+                              {t("models.viewDetails")}
+                            </button>
+                            <button
+                              type="button"
+                              aria-label={t(fav() ? "models.removeFavorite" : "models.addFavorite")}
+                              aria-pressed={fav()}
                               onClick={(e) => {
                                 e.stopPropagation();
                                 toggleFavoriteModel(item.providerID, item.modelID);
@@ -374,7 +364,7 @@ export default function ModelSelector() {
                               class={`rounded p-1 transition-opacity cursor-pointer ${
                                 fav()
                                   ? "text-amber-500 opacity-100"
-                                  : "text-[var(--text-faint)] opacity-0 group-hover:opacity-100 hover:text-[var(--text-primary)]"
+                                  : "text-[var(--text-faint)] opacity-60 hover:opacity-100 hover:text-[var(--text-primary)]"
                               }`}
                             >
                               <Star size={12} class={fav() ? "fill-current" : ""} />
@@ -389,18 +379,6 @@ export default function ModelSelector() {
                   </For>
                 </Show>
               </div>
-
-              <Show when={previewTarget()}>
-                {(model) => (
-                  <ModelPreviewFooter
-                    model={model()}
-                    onEditCustom={(pid) => {
-                      setOpen(false);
-                      openProviderModal("custom", pid);
-                    }}
-                  />
-                )}
-              </Show>
 
               <div class="flex items-center justify-between border-t border-[var(--border-subtle)] bg-[var(--bg-elevated)]/40 px-3 py-1.5 text-[11px]">
                 <span class="text-[var(--text-muted)]">{t("models.reasoningEffort")}</span>
@@ -425,6 +403,19 @@ export default function ModelSelector() {
             </div>
           </div>
         </div>
+      </Show>
+      <Show when={open() && details()} keyed>
+        {(detail) => (
+          <ModelDetailsPopover
+            model={detail.model}
+            anchor={detail.anchor}
+            onClose={() => setDetails(null)}
+            onEditCustom={(pid) => {
+              setOpen(false);
+              openProviderModal("custom", pid);
+            }}
+          />
+        )}
       </Show>
     </div>
   );
