@@ -9,19 +9,6 @@ import (
 
 // Models puts the configured selection first, without inferring it from old sessions.
 func Models() []string {
-	var models []string
-	add := func(value string) {
-		value = strings.TrimSpace(value)
-		if value == "" || strings.ContainsAny(value, " ()\t\r\n") || strings.HasPrefix(value, "<") {
-			return
-		}
-		for _, existing := range models {
-			if existing == value {
-				return
-			}
-		}
-		models = append(models, value)
-	}
 	home, _ := os.UserHomeDir()
 	dir := strings.TrimSpace(os.Getenv("CLAUDE_CONFIG_DIR"))
 	if dir == "" && home != "" {
@@ -36,13 +23,36 @@ func Models() []string {
 			_ = json.Unmarshal(raw, &settings)
 		}
 	}
+	env := func(key string) string {
+		if value, ok := settings.Env[key]; ok {
+			return strings.TrimSpace(value)
+		}
+		return strings.TrimSpace(os.Getenv(key))
+	}
+	var models []string
+	add := func(value string) {
+		value = strings.TrimSpace(value)
+		switch value {
+		case "opus", "sonnet", "haiku":
+			if mapped := env("ANTHROPIC_DEFAULT_" + strings.ToUpper(value) + "_MODEL"); mapped != "" && mapped != value {
+				value = mapped
+			} else if value == "opus" {
+				value = "claude-opus-5-5"
+			}
+		}
+		if value == "" || strings.ContainsAny(value, " ()\t\r\n") || strings.HasPrefix(value, "<") {
+			return
+		}
+		for _, existing := range models {
+			if existing == value {
+				return
+			}
+		}
+		models = append(models, value)
+	}
 	add(settings.Model)
 	for _, key := range []string{"ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL", "ANTHROPIC_SMALL_FAST_MODEL"} {
-		value, ok := settings.Env[key]
-		if !ok {
-			value = os.Getenv(key)
-		}
-		add(value)
+		add(env(key))
 	}
 	if dir != "" {
 		var cache struct {
@@ -56,7 +66,7 @@ func Models() []string {
 			}
 		}
 	}
-	for _, model := range []string{"claude-sonnet-4-6", "claude-opus-4-6", "claude-haiku-4-5-20251001"} {
+	for _, model := range []string{"opus", "sonnet", "haiku"} {
 		add(model)
 	}
 	return models

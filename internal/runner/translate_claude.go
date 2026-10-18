@@ -16,8 +16,11 @@ type claudeRawEvent struct {
 	Result    string `json:"result"`
 	Error     string `json:"error"`
 	Event     *struct {
-		Type  string `json:"type"`
-		Index int    `json:"index"`
+		Type    string `json:"type"`
+		Index   int    `json:"index"`
+		Message *struct {
+			ID string `json:"id"`
+		} `json:"message"`
 		Delta *struct {
 			Type     string `json:"type"`
 			Text     string `json:"text"`
@@ -66,7 +69,14 @@ func (t *TurnTranslator) feedClaudeLine(line string) []SSEEvent {
 		return nil
 
 	case "stream_event":
-		if env.Event == nil || env.Event.Delta == nil {
+		if env.Event == nil {
+			return nil
+		}
+		if env.Event.Type == "message_start" && env.Event.Message != nil {
+			t.claudeMessageID = env.Event.Message.ID
+			t.stepStartMs = make(map[int]int64)
+		}
+		if env.Event.Delta == nil {
 			return nil
 		}
 		idx := env.Event.Index
@@ -80,7 +90,7 @@ func (t *TurnTranslator) feedClaudeLine(line string) []SSEEvent {
 			if delta == "" {
 				return nil
 			}
-			rID := fmt.Sprintf("prt_%s_reason_%d", t.messageID, idx)
+			rID := fmt.Sprintf("prt_%s_%s_reason_%d", t.messageID, t.claudeMessageID, idx)
 			var evts []SSEEvent
 			part, exists := t.partsByID[rID]
 			if !exists {
@@ -115,7 +125,7 @@ func (t *TurnTranslator) feedClaudeLine(line string) []SSEEvent {
 				return nil
 			}
 			t.hasTextPart = true
-			txtID := fmt.Sprintf("prt_%s_text_%d", t.messageID, idx)
+			txtID := fmt.Sprintf("prt_%s_%s_text_%d", t.messageID, t.claudeMessageID, idx)
 			var evts []SSEEvent
 			part, exists := t.partsByID[txtID]
 			if !exists {
@@ -150,6 +160,10 @@ func (t *TurnTranslator) feedClaudeLine(line string) []SSEEvent {
 		if env.Message == nil {
 			return nil
 		}
+		// Claude restarts block indexes for every assistant message in a tool loop.
+		if env.Message.ID != "" {
+			t.claudeMessageID = env.Message.ID
+		}
 		var evts []SSEEvent
 		for idx, blk := range env.Message.Content {
 			switch blk.Type {
@@ -157,8 +171,12 @@ func (t *TurnTranslator) feedClaudeLine(line string) []SSEEvent {
 				if strings.TrimSpace(blk.Thinking) == "" {
 					continue
 				}
-				rID := fmt.Sprintf("prt_%s_reason_%d", t.messageID, idx)
-				if _, exists := t.partsByID[rID]; !exists {
+				rID := fmt.Sprintf("prt_%s_%s_reason_%d", t.messageID, t.claudeMessageID, idx)
+				if existing, exists := t.partsByID[rID]; exists {
+					existing.Text = blk.Thinking
+					existing.Time = &PartTime{Start: existing.Time.Start, End: now}
+					evts = append(evts, SSEEvent{Type: "message.part.updated", Properties: map[string]interface{}{"part": clonePart(*existing)}})
+				} else {
 					part := MessagePart{
 						ID:        rID,
 						SessionID: t.sessionID,
@@ -176,7 +194,7 @@ func (t *TurnTranslator) feedClaudeLine(line string) []SSEEvent {
 					continue
 				}
 				t.hasTextPart = true
-				txtID := fmt.Sprintf("prt_%s_text_%d", t.messageID, idx)
+				txtID := fmt.Sprintf("prt_%s_%s_text_%d", t.messageID, t.claudeMessageID, idx)
 				if existing, exists := t.partsByID[txtID]; exists {
 					existing.Text = blk.Text
 					existing.Time = &PartTime{Start: existing.Time.Start, End: now}

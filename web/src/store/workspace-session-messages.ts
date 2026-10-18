@@ -406,13 +406,20 @@ export function applyPartDeltaBatch(
         if (!list) continue;
         const turn = list[findMessageIndex(list, b.messageID)];
         if (!turn) continue;
-        const part = turn.parts[findPartIndex(turn.parts, b.partID)] as any;
-        if (part && typeof part[b.field] === "string") {
-          part[b.field] += b.delta;
-        }
+        appendPartDelta(turn.parts[findPartIndex(turn.parts, b.partID)], b.field, b.delta);
       }
     })
   );
+}
+
+function appendPartDelta(part: MessagePart | undefined, field: string, delta: string) {
+  if (!part) return;
+  // Older Runner snapshots can omit empty text, including snapshots loaded by REST.
+  if (field === "text" && (part.type === "text" || part.type === "reasoning") && part.text == null) {
+    part.text = "";
+  }
+  const fields = part as unknown as Record<string, unknown>;
+  if (typeof fields[field] === "string") fields[field] += delta;
 }
 
 export function applyStreamFrameBatch(batch: StreamFrameBatch) {
@@ -458,10 +465,7 @@ export function applyStreamFrameBatch(batch: StreamFrameBatch) {
         if (!list) continue;
         const turn = list[findMessageIndex(list, b.messageID)];
         if (!turn) continue;
-        const part = turn.parts[findPartIndex(turn.parts, b.partID)] as any;
-        if (part && typeof part[b.field] === "string") {
-          part[b.field] += b.delta;
-        }
+        appendPartDelta(turn.parts[findPartIndex(turn.parts, b.partID)], b.field, b.delta);
       }
     })
   );

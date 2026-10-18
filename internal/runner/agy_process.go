@@ -176,6 +176,7 @@ func buildAgyModelItems(slugs []string, displayBySlug map[string]string) []Runne
 func DiscoverClaudeModels() []RunnerModelItem {
 	slugs := claudeconfig.Models()
 	friendly := map[string]string{
+		"claude-opus-5-5":           "Claude Opus 5.5",
 		"claude-sonnet-4-6":         "Claude Sonnet 4.6",
 		"claude-opus-4-6":           "Claude Opus 4.6",
 		"claude-haiku-4-5-20251001": "Claude Haiku 4.5",

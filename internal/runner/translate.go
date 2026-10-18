@@ -16,6 +16,7 @@ type TurnTranslator struct {
 	providerID      string
 	mode            string
 	externalID      string
+	claudeMessageID string
 	startedAtMs     int64
 
 	msgInfo      MessageInfo

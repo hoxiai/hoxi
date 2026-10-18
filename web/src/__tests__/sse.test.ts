@@ -6,6 +6,7 @@ import { createStore, produce, reconcile, unwrap } from "solid-js/store";
 import type { OpenCodeEvent, SessionInfo } from "../services/sse-types";
 import { setWorkspace, workspace } from "../store/workspace";
 import { replaceSessionFromEvent } from "../store/workspace-sessions";
+import { applyPartDeltaBatch, applyStreamFrameBatch } from "../store/workspace-session-messages";
 import { assertDeepEqual, assertEqual, assertTrue, describe, it } from "./test-harness";
 
 class MockEventSource {
@@ -29,6 +30,72 @@ class MockEventSource {
 }
 
 describe("SSE client & 120Hz rAF delta batching", () => {
+  for (const runtime of ["claude-code", "antigravity"]) {
+    for (const type of ["text", "reasoning"]) {
+      for (const omittedText of [true, false]) {
+        it(`streams ${runtime} ${type} before completion with ${omittedText ? "omitted" : "empty"} initial text`, () => {
+          const saved = structuredClone(unwrap(workspace));
+          const g = globalThis as Record<string, unknown>;
+          const originals = { EventSource: g.EventSource, requestAnimationFrame: g.requestAnimationFrame,
+            cancelAnimationFrame: g.cancelAnimationFrame };
+          let frame: (() => void) | undefined;
+          g.EventSource = MockEventSource;
+          g.requestAnimationFrame = (callback: () => void) => { frame = callback; return 1; };
+          g.cancelAnimationFrame = () => { frame = undefined; };
+          const sid = `ses_${runtime === "claude-code" ? "cld" : "agy"}_wire_test`;
+          let disconnect: (() => void) | undefined;
+          try {
+            setWorkspace("messagesBySession", {});
+            const start = MockEventSource.instances.length;
+            disconnect = connectEventStream({ onEvent: () => {},
+              onFrameBatch: applyStreamFrameBatch, onDeltaBatch: applyPartDeltaBatch });
+            const runner = MockEventSource.instances[start + 1];
+            const emit = (eventType: string, properties: unknown) => runner.onmessage?.({
+              data: JSON.stringify({ type: eventType, properties }),
+            });
+            const part = { id: "part", messageID: "message", sessionID: sid, type,
+              ...(omittedText ? {} : { text: "" }) };
+            emit("message.updated", { info: { id: "message", sessionID: sid, role: "assistant", time: { created: 1 } } });
+            emit("message.part.updated", { part });
+            const delta = { sessionID: sid, messageID: "message", partID: "part", field: "text", delta: "Hello" };
+            emit("message.part.delta", delta);
+            frame?.();
+            const text = () => (workspace.messagesBySession[sid][0].parts[0] as { text: string }).text;
+            assertEqual(text(), "Hello", "first frame must render before a final snapshot");
+            emit("message.part.delta", { ...delta, delta: " 🌍" });
+            frame?.();
+            assertEqual(text(), "Hello 🌍");
+            // The non-frame consumer must accept old serialized parts as well.
+            applyPartDeltaBatch([{ ...delta, delta: "!" }]);
+            assertEqual(text(), "Hello 🌍!");
+            emit("message.part.updated", { part: { ...part, text: "Hello 🌍!" } });
+            emit("session.status", { sessionID: sid, status: { type: "idle" } });
+            assertEqual(text(), "Hello 🌍!", "final snapshot must not duplicate streamed text");
+          } finally {
+            disconnect?.();
+            Object.assign(g, originals);
+            setWorkspace(reconcile(saved));
+          }
+        });
+      }
+    }
+  }
+
+  it("initializes omitted text in the standalone delta consumer", () => {
+    const saved = structuredClone(unwrap(workspace));
+    try {
+      const sid = "ses_cld_legacy_delta";
+      setWorkspace("messagesBySession", { [sid]: [{
+        info: { id: "m", sessionID: sid, role: "assistant", time: { created: 1 } },
+        parts: [JSON.parse('{"id":"p","messageID":"m","sessionID":"ses_cld_legacy_delta","type":"text"}')],
+      }] });
+      applyPartDeltaBatch([{ sessionID: sid, messageID: "m", partID: "p", field: "text", delta: "first" }]);
+      assertEqual((workspace.messagesBySession[sid][0].parts[0] as { text: string }).text, "first");
+    } finally {
+      setWorkspace(reconcile(saved));
+    }
+  });
+
   for (const [base, expected] of [
     ["ws://127.0.0.1:42817", "http://127.0.0.1:42817"],
     ["wss://localhost:42817/", "https://localhost:42817"],

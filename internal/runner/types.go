@@ -1,5 +1,7 @@
 package runner
 
+import "encoding/json"
+
 type RuntimeType string
 
 const (
@@ -112,6 +114,19 @@ type MessagePart struct {
 	Mime      string                 `json:"mime,omitempty"`
 	Filename  string                 `json:"filename,omitempty"`
 	URL       string                 `json:"url,omitempty"`
+}
+
+// Text streams start with an empty snapshot before their first delta arrives.
+// Keep that field on the wire so clients can append immediately.
+func (p MessagePart) MarshalJSON() ([]byte, error) {
+	type plainPart MessagePart
+	if p.Type == "text" || p.Type == "reasoning" {
+		return json.Marshal(struct {
+			plainPart
+			Text string `json:"text"`
+		}{plainPart: plainPart(p), Text: p.Text})
+	}
+	return json.Marshal(plainPart(p))
 }
 
 type MessageTurn struct {
