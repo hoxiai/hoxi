@@ -2,70 +2,13 @@
 
 ## Project Overview
 
-`Hoxi` is a high-performance, native-feel desktop workspace for AI agentic engineering. It merges four core architectural pillars:
-1. **Desktop Shell & Native Host (Borrowed from `gopanel_v2`)**: Built on Wails v2 with native macOS integration—including `WKWebView` with vibrancy/acrylic backdrop, macOS `NSStatusBar` tray with live status badges (`Running` / `Attention`), single-instance lock, window hide-on-close, and in-process reverse proxy (zero external browser popup).
-2. **Core Agent Runtime (Upstream Zero-Fork)**: Official pristine `opencode` (`anomalyco/opencode`, `v1.18+`) running as a supervised subprocess via `opencode serve`. The Go daemon manages lifecycle, random password generation (`OPENCODE_SERVER_PASSWORD`), and transparent HTTP Basic Auth (`opencode:<password>`) injection.
-3. **Workspace Outer Shell & Task Execution Engine**:
-   - **Outer Shell**: Three-pane dark minimalist workspace (Left Nav: Projects, Worktrees & Sessions; Center Canvas: Conversation & Composer; Right Inspector: Diffs, 8-Dim Memory, Files, Terminal).
-   - **Reactivity & Fluidity (from `Kilo Code`)**: Built on Vite + SolidJS + Tailwind CSS (zero-VDOM, 120Hz `requestAnimationFrame`-batched token rendering).
-   - **Kilo Task Execution Experience**:
-     - Real-time `/event` SSE streaming (`message.part.updated`, `message.part.delta`, `permission.asked`, `session.status`, `session.diff`).
-     - Collapsible reasoning streams (`type: "reasoning"`) distinct from final assistant output (`type: "text"`).
-     - Dynamic tool status cards (`type: "tool"`, states: `pending`, `running`, `completed`, `error`) displaying live elapsed timers, inputs, stdout/stderr, and inline file diffs.
-     - Inline interactive approval gates (`POST /permission/{requestID}/reply` with `once` / `always` / `reject`) for destructive shell commands.
-     - Unified hunk-level diff viewer (`@pierre/diffs`) and WebGL-accelerated Xterm terminal (`@xterm/xterm` + `/pty/{ptyID}/connect` WebSocket).
-4. **Architectural Innovations**:
-   - **Git Worktree Session Isolation**: Each session operates inside an isolated Git worktree (`.hoxi/worktrees/<session-id>`) scoped via OpenCode's `?directory=<worktree-path>` query parameter so multi-agent workflows run concurrently without branch collision.
-   - **8-Dimension Structured Memory Compaction**: `.opencode/plugins/hoxi-memory.js` hooks into `experimental.chat.system.transform`, `experimental.session.compacting`, and `session.idle` to maintain structured session knowledge (Goals, Constraints, Key Facts, Changed Files, Errors & Fixes, Todo, Progress, Next Steps) in `.opencode/memory/`.
-   - **Mid-Stream Live Steering (`Steer`)**: While a session is `busy`, the composer remains active with a `[Steer]` action (`POST /session/{id}/prompt_async`), injecting live course-corrections before the next tool step without aborting progress.
-   - **Checkpoint Time-Travel Revert & Session Fork**: Every message and file-edit tool card supports one-click code + conversation rollback (`POST /session/{id}/revert` & `/unrevert`) and branching exploration (`POST /session/{id}/fork`).
-   - **Millisecond Auto LSP Diagnostics Loop**: Surfaces live language server diagnostics (`GET /lsp`) in the inspector and automatically feeds post-edit compiler/type errors back to the agent for immediate self-healing.
+`Hoxi` is a native-feel desktop workspace for AI agentic engineering built on four core layers:
+1. **Desktop Host (`gopanel_v2` pattern)**: Wails v2 + `WKWebView` with native macOS vibrancy, `NSStatusBar` tray (`Running` / `Attention` badges), single-instance lock, window hide-on-close, and zero-port in-process reverse proxy.
+2. **Core Agent Runtime (Upstream Zero-Fork)**: Official pristine `opencode` (`anomalyco/opencode`, `v1.18+`) supervised via `opencode serve` with per-boot random `OPENCODE_SERVER_PASSWORD` and transparent HTTP Basic Auth (`opencode:<password>`) injection.
+3. **Frontend Workspace (`Kilo Code` pattern)**: Vite + SolidJS + Tailwind CSS 3-pane shell (Left: Projects/Worktrees/Sessions; Center: SSE Timeline/ThoughtBox/ToolCards/Composer; Right: Pierre Diffs, 8-Dim Memory, Files, WebGL Xterm, Browser).
+4. **Core Capabilities**: Git worktree session isolation (`.hoxi/worktrees/<session-id>` via `?directory=`), 8-dimension structured memory (`.opencode/plugins/hoxi-memory.js`), live mid-stream steering (`Steer`), checkpoint revert/fork, and auto LSP diagnostics loop.
 
-> See [DEVELOPMENT.md](DEVELOPMENT.md) for the complete implementation-ready API contracts, SSE TypeScript schemas, Worktree state machines, and phase-by-phase checklist.
-
----
-
-## Architectural Principles & System Boundaries
-
-```text
-┌────────────────────────────────────────────────────────────────────────┐
-│ Desktop Host: Wails v2 + macOS NSStatusBar Tray (gopanel_v2 pattern)    │
-│  - WKWebView (30MB RAM, native vibrancy, 0.2s launch)                   │
-│  - Objective-C status bar badge: Running (busy) / Attention (approval)  │
-│  - Single-instance lock, window hide-on-close                           │
-├────────────────────────────────────────────────────────────────────────┤
-│ Frontend UI: Vite + SolidJS (3-Pane Workspace Shell + Kilo Task UX)    │
-│  - Timeline: SSE event stream, collapsible reasoning, tool call cards   │
-│  - Inspection: Pierre Diff Viewer, 8-Dim Memory Bank, file tree         │
-│  - Terminal: WebGL-accelerated @xterm/xterm via /pty/{id}/connect WS   │
-├────────────────────────────────────────────────────────────────────────┤
-│ Go Supervisor & Gateway: cmd/hoxi/                                   │
-│  - Process lifecycle: supervise pristine `opencode serve`               │
-│  - In-process reverse proxy & Basic Auth injection (Proxy: nil, Flush:-1│
-│  - Worktree Manager: create, diff, apply & cleanup `.hoxi/worktrees` │
-├────────────────────────────────────────────────────────────────────────┤
-│ Agent Core: Official OpenCode (Upstream Pristine)                      │
-│  - Multi-model adaptors (Claude, OpenAI, Gemini, DeepSeek, Local)      │
-│  - Robust 9-stage fuzzy code replacer & native LSP integration         │
-│  - Local plugins: hoxi-permissions.js, hoxi-memory.js (8-dim)      │
-└────────────────────────────────────────────────────────────────────────┘
-```
-
-### 1. Upstream Zero-Fork for Core
-Never fork or modify OpenCode internals. OpenCode executes as an external, pristine daemon. Upgrades happen by replacing the `opencode` binary.
-
-### 2. Go Daemon & Desktop Shell (from `gopanel_v2`)
-- **Process Supervision**: Spawns `opencode serve --hostname 127.0.0.1 --port <free-port> --print-logs` with `OPENCODE_SERVER_PASSWORD=<random-hex>`, `OPENCODE_SERVER_USERNAME=opencode`, and `OPENCODE_DISABLE_CONFIG_DEPENDENCY_INSTALL=1`, polling `GET /global/health` until ready.
-- **Zero-Port Internal Gateway**: Uses Wails `AssetServer.Handler` (`internal/gateway/gateway.go`) with `Transport: &http.Transport{Proxy: nil}` (preventing system HTTP proxies like Clash/Surge from returning `502` on `127.0.0.1`), `FlushInterval: -1` (instant SSE streaming), and `req.SetBasicAuth("opencode", password)`.
-- **macOS Status Bar Integration**: Employs native Objective-C (`NSStatusBar` in `internal/statusbar/statusbar_darwin.m`) driven by `internal/statusbar/tracker.go`:
-  - `Running`: Active `session.status` (`busy`) count.
-  - `Attention`: Pending `permission.asked` or `question.asked` count.
-- **Git Worktree Isolation**: Provisions `.hoxi/worktrees/<session-id>` on branch `hoxi/<session-id>`, passes `?directory=<worktree-path>` to OpenCode endpoints, and supports one-click `Apply to Main` (`git apply --3way` or `git merge`).
-
-### 3. Frontend & Task Execution Feel
-- **Execution Visibility**: Every `ToolPart` (`type: "tool"`) renders as an animated status card (`pending` -> `running` -> `completed` / `error`) with live elapsed duration (`0.1s` ticker), collapsible input/output, and embedded Pierre Diffs for file edits.
-- **Reasoning Stream**: `ReasoningPart` (`type: "reasoning"`) tokens stream into a dedicated collapsible `<ThoughtBox />` with elapsed thought duration (`Thought for X.Xs`), keeping final answers clean.
-- **Interactive Permission Approval**: Safe read/search/test commands auto-pass via `hoxi-permissions.js`; destructive commands trigger `permission.asked` and render an inline `<ApprovalGateCard />` calling `POST /permission/{requestID}/reply` (`once` | `always` | `reject`).
+> See [DEVELOPMENT.md](DEVELOPMENT.md) for the complete architecture diagrams, OpenAPI/SSE contracts, Worktree state machines, and implementation details.
 
 ---
 
@@ -74,72 +17,29 @@ Never fork or modify OpenCode internals. OpenCode executes as an external, prist
 ```text
 /
 ├── main.go                           # Thin Wails embed.FS entrypoint delegating to internal/app
-├── cmd/
-│   └── hoxi/
-│       └── main.go                   # CLI / headless entrypoint calling internal/app
+├── cmd/hoxi/main.go                  # CLI / headless entrypoint calling internal/app
 ├── internal/
 │   ├── app/                          # DesktopApp lifecycle, Wails bindings & signal handling
 │   ├── opencode/                     # OpenCode binary resolver, installer & daemon supervision
 │   ├── gateway/                      # In-process reverse proxy, Basic Auth, WS bridge & pulse
 │   ├── worktree/                     # Git worktree session sandbox manager, diffs & branches
 │   ├── workspace/                    # Multi-workspace profile store & HTTP handlers
-│   ├── provider/                     # Provider config, model probing, code audit & telemetry
+│   ├── provider/                     # Provider config, LLM client, model probing, audit & telemetry
 │   ├── handoff/                      # External CLI (Claude/Codex/Gemini/Grok) session handoff
+│   ├── browser/                      # Headless Chrome session manager & inspector bridge
 │   └── statusbar/                    # Running/Attention tracker & macOS NSStatusBar (CGo)
 ├── web/                              # Frontend workspace (Vite + SolidJS + Tailwind)
 │   ├── src/
-│   │   ├── components/
-│   │   │   ├── layout/
-│   │   │   │   ├── ThreePaneShell.tsx    # 3-pane workspace shell
-│   │   │   │   ├── CompactHeader.tsx     # 38px header with macOS traffic light inset
-│   │   │   │   └── LeftNav.tsx           # Sessions & worktrees navigation
-│   │   │   ├── timeline/
-│   │   │   │   ├── MessageStream.tsx     # Conversation stream
-│   │   │   │   ├── ThoughtBox.tsx        # Collapsible reasoning stream (type="reasoning")
-│   │   │   │   ├── ToolCard.tsx          # Dynamic tool execution cards (type="tool")
-│   │   │   │   └── Composer.tsx          # Multi-modal prompt input & Build/Plan toggle
-│   │   │   ├── inspector/
-│   │   │   │   ├── InspectorPane.tsx     # Right inspector (Diffs / Memory / Files / Terminal)
-│   │   │   │   ├── PierreDiffViewer.tsx  # @pierre/diffs code diff inspection
-│   │   │   │   ├── MemoryBankView.tsx    # 8-dimension memory viewer/editor
-│   │   │   │   └── FileTreeView.tsx      # Workspace file finder & preview
-│   │   │   ├── terminal/
-│   │   │   │   └── WebGLTerminal.tsx     # GPU-accelerated Xterm connected to /pty WS
-│   │   │   └── approval/
-│   │   │       └── ApprovalGateCard.tsx  # Inline permission.asked confirmation card
-│   │   ├── i18n/
-│   │   │   ├── index.ts                  # Reactive t(key, params) & locale signal
-│   │   │   ├── types.ts                  # Strongly-typed domain i18n interfaces (TxKey)
-│   │   │   ├── validator.ts              # Key & placeholder parity validator
-│   │   │   └── locales/
-│   │   │       ├── en-US/                # Modular English dictionaries by domain
-│   │   │       └── zh-CN/                # Modular Chinese dictionaries by domain
-│   │   ├── services/
-│   │   │   ├── sse-types.ts              # OpenCode v1.18+ event & part TypeScript contracts
-│   │   │   ├── sse.ts                    # /event SSE client with rAF batching
-│   │   │   └── api.ts                    # OpenCode REST & Worktree API client
-│   │   ├── store/
-│   │   │   └── workspace.ts              # SolidJS reactive store
-│   │   ├── App.tsx                       # Root layout assembly
-│   │   └── index.tsx                     # SolidJS entry
-│   ├── scripts/
-│   │   └── check-i18n.ts                 # CLI parity checker for all locales
-│   ├── package.json
-│   ├── vite.config.ts
-│   └── dist/                             # Compiled web bundle for Wails embed
+│   │   ├── components/               # Modular UI (layout, timeline, inspector, terminal, approval, models)
+│   │   ├── i18n/                     # Reactive t(key, params), auto-inferred types & en-US/zh-CN locales
+│   │   ├── services/                 # OpenCode SSE client (rAF batching) & REST/Worktree API client
+│   │   └── store/                    # SolidJS reactive store & domain modules
+│   └── scripts/                      # check-i18n.ts, check-lines.ts, run-tests.ts
 ├── .opencode/
-│   ├── package.json                      # Pre-declared plugin dependency
-│   ├── plugins/
-│   │   ├── hoxi-permissions.js         # Permission auto-approver & destructive gate
-│   │   └── hoxi-memory.js              # 8-dimension structured memory plugin
-│   └── memory/
-│       ├── project.md                    # Long-term workspace knowledge bank
-│       └── sessions/                     # Historical session compaction records
-├── build-desktop.sh                      # Production macOS .app packaging script
-├── wails.json                            # Wails v2 desktop configuration
-├── go.mod                                # Go module definition
-├── DEVELOPMENT.md                        # Comprehensive implementation blueprint
-└── AGENTS.md                             # Architectural manual & engineering rules
+│   ├── plugins/                      # hoxi-permissions.js & hoxi-memory.js
+│   └── memory/                       # Long-term project.md & session compaction records
+├── DEVELOPMENT.md                    # Comprehensive implementation blueprint
+└── AGENTS.md                         # Engineering rules & quick reference
 ```
 
 ---
@@ -165,16 +65,15 @@ Never fork or modify OpenCode internals. OpenCode executes as an external, prist
 - **AI One-Click Release (一键发版上线与同步官网发版记录)**:
   ```bash
   ./scripts/ai-release.sh <version> "<release-notes>"
-  # 示例: ./scripts/ai-release.sh 0.2.0 "支持官网一键授权登录与双镜像在线更新"
   ```
 
 ---
 
 ## Engineering & Functional Constraints (工程与功能约束)
 
-1. **单文件 500 行红线与模块化拆分 (500-Line Hard Limit)**
-   - 任何源码文件（`.go`, `.ts`, `.tsx`, `.js`, `.m`）严禁超过 **500 行**（纯静态图标 SVG 字典或自动生成的常量表除外）。
-   - 一旦文件接近或超过 500 行，**必须立即按职责拆分**：大型 UI 组件拆分为独立子组件/视图块，复杂状态或数据处理抽离为独立 Hook、Helper 或按领域拆分的 Store 模块。
+1. **按领域高内聚与单文件 800 行上限 (Domain Cohesion & 800-Line Limit)**
+   - 模块拆分以**单一职责与业务领域高内聚**为第一原则，**严禁为了凑行数把属于模块 A 的函数跨文件塞进无关的模块 B**（如禁止把 Codex/Gemini 逻辑塞进 Grok 或通用 helper 文件）。
+   - 任何源码文件（`.go`, `.ts`, `.tsx`, `.js`, `.m`）上限为 **800 行**（纯静态图标 SVG 字典或自动生成常量表除外）。当文件接近 800 行时，应按正交子领域或独立子组件/Hook 拆分。
    - 视图层（`components/`）、通信层（`services/`）与状态层（`store/`）职责分离，禁止在 UI 组件内直接编写复杂的协议解析或长篇数据转换逻辑。
 
 2. **OpenCode 上游零侵入 (Upstream Zero-Fork)**
@@ -194,10 +93,10 @@ Never fork or modify OpenCode internals. OpenCode executes as an external, prist
    - 包含破坏性指令（`rm`, `sudo`, `chmod`, `chown`, `diskutil`, `mkfs`, `git push --force`, `git reset --hard`）的 Shell 操作严禁自动放行，必须在 `hoxi-permissions.js` 中返回 `"ask"`，触发状态栏 `Attention` 与 `<ApprovalGateCard />` 人工确认。
    - Go 网关仅监听 `127.0.0.1`，反向代理 `http.Transport` 必须配置 `Proxy: nil`（防系统代理 502）与 `FlushInterval: -1`（SSE 零缓冲），并在进程内自动注入随机生成的 `OPENCODE_SERVER_PASSWORD`。
 
-7. **多语言包模块化与强类型对齐规范 (Modular i18n & Parity Constraint)**
+7. **多语言包模块化与自动类型推导规范 (Modular i18n & Inferred Type Safety)**
    - **禁止内联硬编码文案**：严禁在 UI 组件中使用 `locale() === "zh-CN" ? "..." : "..."` 三元硬编码或裸写中英文文案；所有用户可见文案必须统一通过 `web/src/i18n` 的 `t("domain.key", params)` 调用。
-   - **按领域模块化拆分**：语言包按领域拆分存放在 `web/src/i18n/locales/en-US/<domain>.ts` 与 `web/src/i18n/locales/zh-CN/<domain>.ts`（如 `common`, `header`, `leftNav`, `timeline`, `toolCard`, `approval`, `inspector`, `models`），禁止退化为巨型单文件字典。
-   - **强类型契约与双语 100% 对齐**：新增或修改任何翻译词条时，必须同步更新 `web/src/i18n/types.ts` 接口定义以及 `en-US` / `zh-CN` 对应模块，确保键名与 `{param}` 插值占位符完全一致，并通过 `npm --prefix web run check:i18n` 校验。
+   - **按领域模块化拆分与自动类型推导**：语言包按领域存放在 `web/src/i18n/locales/en-US/<domain>.ts` 与 `web/src/i18n/locales/zh-CN/<domain>.ts`。`web/src/i18n/types.ts` 自动从 `en-US` 推导 `I18nDictionary` 与各领域类型（无需手写维护冗长的 interface 文件）。
+   - **双语 100% 对齐**：新增或修改任何翻译词条时，只需同步更新 `en-US` 与 `zh-CN` 对应模块，确保键名与 `{param}` 插值占位符完全一致，并通过 `npm --prefix web run check:i18n` 校验。
 
 8. **修改后必验闭环 (Verification Before Done)**
    - 每次代码变更完成后，必须通过类型检查、语言包校验与构建验证（前端执行 `npx --prefix web tsc -p web/tsconfig.json --noEmit`、`npm --prefix web run check:i18n` 与 `npm --prefix web run build`，后端执行 `go build ./...`），确保零编译错误与零词条缺失。

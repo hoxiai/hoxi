@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
@@ -464,4 +465,179 @@ func loadGeminiAntigravitySessionDetail(sessionID, hintCWD, activeRoot string) (
 		ChangedFiles:    extractChangedFilesFromTurns(turns),
 		LastTurnSummary: truncateRunes(lastAssistantText, 400),
 	}, nil
+}
+
+func readGeminiLocalKeyAndModels() (apiKey, defaultModel string, models []string) {
+	apiKey = firstNonEmpty(
+		strings.TrimSpace(os.Getenv("GEMINI_API_KEY")),
+		strings.TrimSpace(os.Getenv("GOOGLE_GENERATIVE_AI_API_KEY")),
+		strings.TrimSpace(os.Getenv("GOOGLE_API_KEY")),
+	)
+	gRoot := geminiRootDir()
+	if gRoot != "" {
+		if raw, err := os.ReadFile(filepath.Join(gRoot, "settings.json")); err == nil {
+			var doc map[string]interface{}
+			if json.Unmarshal(raw, &doc) == nil {
+				if m := strings.TrimSpace(asString(doc["model"])); m != "" {
+					defaultModel = m
+					models = appendUniqueString(models, m)
+				}
+				if envMap, ok := doc["env"].(map[string]interface{}); ok && apiKey == "" {
+					apiKey = firstNonEmpty(
+						asString(envMap["GEMINI_API_KEY"]),
+						asString(envMap["GOOGLE_GENERATIVE_AI_API_KEY"]),
+					)
+				}
+			}
+		}
+		if apiKey == "" {
+			if raw, err := os.ReadFile(filepath.Join(gRoot, "jetski-standalone-oauth-token")); err == nil {
+				var oauthDoc struct {
+					Token struct {
+						AccessToken string `json:"access_token"`
+					} `json:"token"`
+				}
+				if json.Unmarshal(raw, &oauthDoc) == nil && strings.TrimSpace(oauthDoc.Token.AccessToken) != "" {
+					apiKey = strings.TrimSpace(oauthDoc.Token.AccessToken)
+				} else if trimmed := strings.TrimSpace(string(raw)); trimmed != "" {
+					apiKey = trimmed
+				}
+			}
+		}
+	}
+	for _, aDir := range antigravityDataDirs() {
+		entries, err := os.ReadDir(filepath.Join(aDir, "brain"))
+		if err != nil {
+			continue
+		}
+		maxScan := 25
+		if len(entries) < maxScan {
+			maxScan = len(entries)
+		}
+		for i := 0; i < maxScan; i++ {
+			if !entries[i].IsDir() {
+				continue
+			}
+			tp := filepath.Join(aDir, "brain", entries[i].Name(), ".system_generated", "logs", "transcript.jsonl")
+			raw, err := os.ReadFile(tp)
+			if err != nil {
+				continue
+			}
+			_, m := extractAntigravityUserPrompt(string(raw))
+			if m != "" {
+				models = appendUniqueString(models, m)
+			}
+		}
+	}
+	if cliSlugs, _, _ := discoverAntigravityCLIModels(); len(cliSlugs) > 0 {
+		models = appendUniqueString(models, cliSlugs...)
+	}
+	if defaultModel == "" && len(models) > 0 {
+		defaultModel = models[0]
+	}
+	return apiKey, defaultModel, models
+}
+
+func detectGeminiCLIStatus(g *desktopGateway, hoxiMap map[string]interface{}) LocalCLIStatusItem {
+	_, stats := scanGeminiAntigravitySessions("", "")
+	apiKey, defaultModel, models := readGeminiLocalKeyAndModels()
+	_, inHoxi := hoxiMap["google"]
+	hasStoredKey := g.resolveStoredProviderKey("google", "") != ""
+	hasOAuth := false
+	if gRoot := geminiRootDir(); gRoot != "" {
+		if _, err := os.Stat(filepath.Join(gRoot, "jetski-standalone-oauth-token")); err == nil {
+			hasOAuth = true
+		}
+	}
+	return LocalCLIStatusItem{
+		ID:            ExternalToolGemini,
+		Name:          "Antigravity / Gemini",
+		Installed:     stats.Installed,
+		Authenticated: apiKey != "" || hasStoredKey || hasOAuth || stats.SessionCount > 0,
+		Connected:     inHoxi,
+		DefaultModel:  defaultModel,
+		Models:        models,
+		SessionCount:  stats.SessionCount,
+		AuthMode:      "antigravity",
+		ProviderID:    "google",
+	}
+}
+
+func (g *desktopGateway) importGeminiCLIProvider() LocalCLIImportResponse {
+	apiKey, _, models := readGeminiLocalKeyAndModels()
+	if apiKey == "" {
+		apiKey = g.resolveStoredProviderKey("google", "")
+	}
+	if apiKey == "" {
+		if _, stats := scanGeminiAntigravitySessions("", ""); stats.Installed && stats.SessionCount > 0 {
+			apiKey = "antigravity-local-oauth"
+		}
+	}
+	if apiKey == "" {
+		return LocalCLIImportResponse{
+			OK:     false,
+			ToolID: string(ExternalToolGemini),
+			Error:  "No GEMINI_API_KEY or Antigravity OAuth token found in environment or ~/.gemini",
+		}
+	}
+	if g.openCodePort > 0 {
+		b, _ := json.Marshal(map[string]string{"type": "api", "key": apiKey})
+		u := "http://127.0.0.1:" + strconv.Itoa(g.openCodePort) + "/auth/google"
+		if req, err := http.NewRequest(http.MethodPut, u, bytes.NewReader(b)); err == nil {
+			req.Header.Set("Content-Type", "application/json")
+			req.SetBasicAuth("opencode", g.password)
+			client := &http.Client{Timeout: 5 * time.Second, Transport: localTransport}
+			if resp, err := client.Do(req); err == nil {
+				_ = resp.Body.Close()
+			}
+		}
+	}
+	_, displayBySlug, _ := discoverAntigravityCLIModels()
+	isOAuthBridge := strings.HasPrefix(apiKey, "ya29.") || apiKey == "antigravity-local-oauth"
+	modelsMap := map[string]interface{}{}
+	for _, m := range models {
+		label := m
+		if disp, ok := displayBySlug[m]; ok && disp != "" {
+			label = disp
+		}
+		modelsMap[m] = map[string]interface{}{
+			"name":       label + " (Antigravity / Gemini)",
+			"tool_call":  !isOAuthBridge,
+			"reasoning":  true,
+			"attachment": true,
+		}
+	}
+	doc := g.loadHoxiConfigDoc()
+	provMap, _ := doc["provider"].(map[string]interface{})
+	if provMap == nil {
+		provMap = map[string]interface{}{}
+	}
+	if isOAuthBridge {
+		provMap["google"] = map[string]interface{}{
+			"name": "Antigravity / Gemini (Local)",
+			"npm":  "@ai-sdk/openai-compatible",
+			"options": map[string]interface{}{
+				"baseURL": g.httpBridgeBaseURL() + "/api/hoxi/bridge/gemini-antigravity/v1",
+				"apiKey":  "hoxi-local-antigravity-bridge",
+			},
+			"models": modelsMap,
+		}
+	} else {
+		provMap["google"] = map[string]interface{}{
+			"name":    "Antigravity / Gemini (Local)",
+			"npm":     "@ai-sdk/google",
+			"options": map[string]interface{}{"apiKey": apiKey},
+			"models":  modelsMap,
+		}
+	}
+	doc["provider"] = provMap
+	if err := g.persistHoxiConfigDoc(doc); err != nil {
+		return LocalCLIImportResponse{OK: false, ToolID: string(ExternalToolGemini), Error: err.Error()}
+	}
+	return LocalCLIImportResponse{
+		OK:         true,
+		ToolID:     string(ExternalToolGemini),
+		ProviderID: "google",
+		Models:     models,
+	}
 }

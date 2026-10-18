@@ -1,7 +1,6 @@
 // web/src/i18n/locales/en-US/settings.ts
-import type { SettingsI18n } from "../../types";
 
-export const settings: SettingsI18n = {
+export const settings = {
   modalTitle: "System Settings",
   modalSubtitle: "Configure appearance, language, composer behavior, Git worktree isolation, and runtime",
   tabGeneral: "General & Appearance",

@@ -1,7 +1,6 @@
 // web/src/store/workspace.ts
 import { createStore } from "solid-js/store";
-import { initialArchivedSessions, initialDismissedProjects } from "./workspace-storage";
-import { initialDefaultAgent, initialSessionAI, type SessionAIConfig } from "./session-ai-storage";
+import { initialDefaultAgent, initialSessionAI, type SessionAIConfig } from "./session-ai";
 import type {
   MessageInfo,
   MessagePart,
@@ -135,6 +134,30 @@ export const SIDEBAR_PROJECT_MODE_KEY = "hoxi-sidebar-project-mode:v1";
 export const SESSION_SANDBOX_MODE_KEY = "hoxi-session-sandbox-mode:v1";
 export const ARCHIVED_SESSIONS_KEY = "hoxi-archived-sessions:v1";
 export const DISMISSED_PROJECTS_KEY = "hoxi-dismissed-projects:v1";
+
+export function initialDismissedProjects(storageKey: string): string[] {
+  try {
+    const raw = localStorage.getItem(storageKey);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed.map((p) => String(p));
+  } catch {
+    /* ignore */
+  }
+  return [];
+}
+
+export function initialArchivedSessions(storageKey: string): string[] {
+  try {
+    const raw = localStorage.getItem(storageKey);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed.filter((id) => typeof id === "string");
+  } catch {
+    /* ignore */
+  }
+  return [];
+}
 
 function initialTheme(): "light" | "dark" {
   try {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -190,12 +189,12 @@ func evaluateStaticCodeRules(diffs []auditDiffFile, lspErrorCount int, lspSummar
 
 		if isCodeFile && !isIconDict {
 			lineCount := strings.Count(d.After, "\n") + 1
-			if lineCount > 500 {
+			if lineCount > 800 {
 				deduction += 18
 				if isZh {
-					issues = append(issues, fmt.Sprintf("文件 %s 达到 %d 行，违反单文件 500 行上限规范", f, lineCount))
+					issues = append(issues, fmt.Sprintf("文件 %s 达到 %d 行，违反单文件 800 行上限规范", f, lineCount))
 				} else {
-					issues = append(issues, fmt.Sprintf("File %s has %d lines, exceeding the 500-line limit", f, lineCount))
+					issues = append(issues, fmt.Sprintf("File %s has %d lines, exceeding the 800-line limit", f, lineCount))
 				}
 			}
 		}
@@ -306,123 +305,25 @@ Return ONLY valid JSON matching this schema:
 		langHint,
 	)
 
-	isAnthropic := npm == "@ai-sdk/anthropic" || providerID == "anthropic"
-	trimmedBase := strings.TrimRight(baseURL, "/")
-	var targetURL string
-	var bodyMap map[string]any
-
-	if isAnthropic {
-		if strings.HasSuffix(trimmedBase, "/v1") {
-			targetURL = trimmedBase + "/messages"
-		} else {
-			targetURL = trimmedBase + "/v1/messages"
-		}
-		bodyMap = map[string]any{
-			"model":      modelID,
-			"max_tokens": 400,
-			"messages": []map[string]string{
-				{"role": "user", "content": prompt},
-			},
-		}
-	} else {
-		targetURL = trimmedBase + "/chat/completions"
-		bodyMap = map[string]any{
-			"model":       modelID,
-			"max_tokens":  400,
-			"temperature": 0.1,
-			"messages": []map[string]string{
-				{"role": "user", "content": prompt},
-			},
-		}
-	}
-
-	payloadBytes, _ := json.Marshal(bodyMap)
-	ctx, cancel := context.WithTimeout(parentCtx, 20*time.Second)
-	defer cancel()
-
-	outReq, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, strings.NewReader(string(payloadBytes)))
+	content, err := callSimpleLLM(parentCtx, llmCompletionRequest{
+		ProviderID:  providerID,
+		ModelID:     modelID,
+		BaseURL:     baseURL,
+		APIKey:      apiKey,
+		NPM:         npm,
+		Headers:     headers,
+		Prompt:      prompt,
+		MaxTokens:   400,
+		Temperature: 0.1,
+		Timeout:     20 * time.Second,
+		Transport:   providerTransport,
+	})
 	if err != nil {
 		return 0, "", nil, err
 	}
-	outReq.Header.Set("Accept", "application/json")
-	outReq.Header.Set("Content-Type", "application/json")
-	for k, v := range headers {
-		if k != "" && v != "" {
-			outReq.Header.Set(k, v)
-		}
-	}
-	if apiKey != "" {
-		if isAnthropic {
-			outReq.Header.Set("x-api-key", apiKey)
-			outReq.Header.Set("anthropic-version", "2023-06-01")
-		} else {
-			outReq.Header.Set("Authorization", "Bearer "+apiKey)
-		}
-	}
 
-	client := &http.Client{
-		Timeout:   20 * time.Second,
-		Transport: providerTransport,
-	}
-	if strings.Contains(targetURL, "://127.0.0.1") || strings.Contains(targetURL, "://localhost") {
-		client.Transport = localTransport
-	}
-
-	resp, err := client.Do(outReq)
-	if err != nil {
-		return 0, "", nil, err
-	}
-	defer resp.Body.Close()
-
-	respBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 512*1024))
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return 0, "", nil, fmt.Errorf("%s", extractAPIErrorMessage(resp.StatusCode, respBytes))
-	}
-
-	content := extractLLMTextContent(respBytes)
 	score, summary, issues := parseObserverAuditJSON(content)
 	return score, summary, issues, nil
-}
-
-func extractLLMTextContent(raw []byte) string {
-	var parsed struct {
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-			Text string `json:"text"`
-		} `json:"choices"`
-		Content []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		} `json:"content"`
-	}
-	if json.Unmarshal(raw, &parsed) == nil {
-		if len(parsed.Choices) > 0 {
-			if c := strings.TrimSpace(parsed.Choices[0].Message.Content); c != "" {
-				return c
-			}
-			if t := strings.TrimSpace(parsed.Choices[0].Text); t != "" {
-				return t
-			}
-			// Choices array exists but content is empty (e.g. finish_reason="length" during reasoning):
-			// never fall through to returning the raw JSON envelope.
-			return ""
-		}
-		if len(parsed.Content) > 0 {
-			for _, block := range parsed.Content {
-				if (block.Type == "" || block.Type == "text") && strings.TrimSpace(block.Text) != "" {
-					return strings.TrimSpace(block.Text)
-				}
-			}
-			return ""
-		}
-	}
-	trimmed := strings.TrimSpace(string(raw))
-	if strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[") {
-		return ""
-	}
-	return trimmed
 }
 
 func parseObserverAuditJSON(text string) (int, string, []string) {

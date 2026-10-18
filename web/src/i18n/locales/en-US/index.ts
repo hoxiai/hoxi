@@ -1,5 +1,4 @@
 // web/src/i18n/locales/en-US/index.ts
-import type { I18nDictionary } from "../../types";
 import { common } from "./common";
 import { header } from "./header";
 import { leftNav } from "./leftNav";
@@ -10,7 +9,7 @@ import { inspector } from "./inspector";
 import { models } from "./models";
 import { settings } from "./settings";
 
-export const enUS: I18nDictionary = {
+export const enUS = {
   common,
   header,
   leftNav,

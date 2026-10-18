@@ -3,9 +3,8 @@ import { hoxiAPI } from "../services/api";
 import { setWorkspace, workspace } from "../store/workspace";
 import { renameSessionTitle, replaceSession } from "../store/workspace-sessions";
 import {
-  forgetSessionTitles, hasManualSessionTitle, preserveSessionTitle, summarizeAndRenameSession,
+  forgetSessionTitles, hasManualSessionTitle, loadManualSessionTitles, preserveSessionTitle, summarizeAndRenameSession,
 } from "../store/session-title";
-import { loadManualSessionTitles } from "../store/session-title-storage";
 import { assertEqual, describe, it } from "./test-harness";
 
 const id = "ses_manual_title_test";

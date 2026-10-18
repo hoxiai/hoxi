@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"regexp"
 	"strings"
@@ -101,82 +100,25 @@ Current Session Conversation Context:
 Git Diff Summary:
 %s`, digestSnippet, diffSnippet)
 
-	isAnthropic := npm == "@ai-sdk/anthropic" || providerID == "anthropic"
-	trimmedBase := strings.TrimRight(baseURL, "/")
-	var targetURL string
-	var bodyMap map[string]any
-
 	// Use 2048 max_tokens so reasoning models (DeepSeek, Qwen, GLM, o-series) can finish their
 	// internal reasoning_content without hitting finish_reason="length" before emitting content.
-	if isAnthropic {
-		if strings.HasSuffix(trimmedBase, "/v1") {
-			targetURL = trimmedBase + "/messages"
-		} else {
-			targetURL = trimmedBase + "/v1/messages"
-		}
-		bodyMap = map[string]any{
-			"model":      modelID,
-			"max_tokens": 2048,
-			"messages": []map[string]string{
-				{"role": "user", "content": instruction},
-			},
-		}
-	} else {
-		targetURL = trimmedBase + "/chat/completions"
-		bodyMap = map[string]any{
-			"model":       modelID,
-			"max_tokens":  2048,
-			"temperature": 0.2,
-			"messages": []map[string]string{
-				{"role": "user", "content": instruction},
-			},
-		}
-	}
-
-	payloadBytes, _ := json.Marshal(bodyMap)
-	ctx, cancel := context.WithTimeout(parentCtx, 20*time.Second)
-	defer cancel()
-
-	outReq, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, strings.NewReader(string(payloadBytes)))
+	rawText, err := callSimpleLLM(parentCtx, llmCompletionRequest{
+		ProviderID:  providerID,
+		ModelID:     modelID,
+		BaseURL:     baseURL,
+		APIKey:      apiKey,
+		NPM:         npm,
+		Headers:     headers,
+		Prompt:      instruction,
+		MaxTokens:   2048,
+		Temperature: 0.2,
+		Timeout:     20 * time.Second,
+		Transport:   titleTransport,
+	})
 	if err != nil {
 		return "", err
 	}
-	outReq.Header.Set("Accept", "application/json")
-	outReq.Header.Set("Content-Type", "application/json")
-	for k, v := range headers {
-		if k != "" && v != "" {
-			outReq.Header.Set(k, v)
-		}
-	}
-	if apiKey != "" {
-		if isAnthropic {
-			outReq.Header.Set("x-api-key", apiKey)
-			outReq.Header.Set("anthropic-version", "2023-06-01")
-		} else {
-			outReq.Header.Set("Authorization", "Bearer "+apiKey)
-		}
-	}
 
-	client := &http.Client{
-		Timeout:   20 * time.Second,
-		Transport: titleTransport,
-	}
-	if strings.Contains(targetURL, "://127.0.0.1") || strings.Contains(targetURL, "://localhost") {
-		client.Transport = localTransport
-	}
-
-	resp, err := client.Do(outReq)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	respBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 256*1024))
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("HTTP %d", resp.StatusCode)
-	}
-
-	rawText := extractLLMTextContent(respBytes)
 	cleaned := cleanGeneratedCommitMessage(rawText)
 	if cleaned == "" {
 		return "", fmt.Errorf("empty generated commit message")

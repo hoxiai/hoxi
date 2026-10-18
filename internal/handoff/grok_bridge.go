@@ -44,48 +44,6 @@ func appendUniqueString(list []string, items ...string) []string {
 	return list
 }
 
-func readCodexLocalConfig() (defaultModel, version string, models []string) {
-	cDir := codexHomeDir()
-	if cDir == "" {
-		return "", "", nil
-	}
-	if tomlBytes, err := os.ReadFile(filepath.Join(cDir, "config.toml")); err == nil {
-		for _, line := range strings.Split(string(tomlBytes), "\n") {
-			trimmed := strings.TrimSpace(line)
-			if strings.HasPrefix(trimmed, "model") && strings.Contains(trimmed, "=") {
-				parts := strings.SplitN(trimmed, "=", 2)
-				if strings.TrimSpace(parts[0]) == "model" {
-					if m := strings.Trim(strings.TrimSpace(parts[1]), `"'`); m != "" {
-						defaultModel = m
-						models = appendUniqueString(models, m)
-					}
-					break
-				}
-			}
-		}
-	}
-	if modBytes, err := os.ReadFile(filepath.Join(cDir, "models_cache.json")); err == nil {
-		var modDoc struct {
-			ClientVersion string `json:"client_version"`
-			Models        []struct {
-				Slug string `json:"slug"`
-			} `json:"models"`
-		}
-		if json.Unmarshal(modBytes, &modDoc) == nil {
-			version = strings.TrimSpace(modDoc.ClientVersion)
-			for _, item := range modDoc.Models {
-				if s := strings.TrimSpace(item.Slug); s != "" {
-					models = appendUniqueString(models, s)
-				}
-			}
-		}
-	}
-	if defaultModel == "" && len(models) > 0 {
-		defaultModel = models[0]
-	}
-	return defaultModel, version, models
-}
-
 func loadGrokLocalCredentials() grokLocalCredentials {
 	out := grokLocalCredentials{}
 	gDir := grokHomeDir()

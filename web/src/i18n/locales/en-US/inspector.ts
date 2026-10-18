@@ -1,7 +1,6 @@
 // web/src/i18n/locales/en-US/inspector.ts
-import type { InspectorI18n } from "../../types";
 
-export const inspector: InspectorI18n = {
+export const inspector = {
   tabs: {
     diffs: "Diffs",
     memory: "Memory",

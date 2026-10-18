@@ -9,7 +9,7 @@ import {
   pushIncident,
   pushSample,
   schedulePersistTelemetry,
-} from "./provider-telemetry-storage";
+} from "./provider-telemetry";
 import {
   updateSessionAI,
   sendPrompt,

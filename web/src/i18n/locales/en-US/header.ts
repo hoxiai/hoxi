@@ -1,7 +1,6 @@
 // web/src/i18n/locales/en-US/header.ts
-import type { HeaderI18n } from "../../types";
 
-export const header: HeaderI18n = {
+export const header = {
   applyToMain: "Apply to Main",
   applying: "Applying…",
   appliedSuccess: "Applied to main ✓",

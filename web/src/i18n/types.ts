@@ -1,17 +1,21 @@
 // web/src/i18n/types.ts
-import type {
-  ApprovalI18n,
-  CommonI18n,
-  HeaderI18n,
-  InspectorI18n,
-  LeftNavI18n,
-  ModelsI18n,
-  SettingsI18n,
-  TimelineI18n,
-  ToolCardI18n,
-} from "./domain-types";
+import type { enUS } from "./locales/en-US";
 
-export * from "./domain-types";
+type WidenStringLeaves<T> = {
+  [K in keyof T]: T[K] extends string ? string : WidenStringLeaves<T[K]>;
+};
+
+export type I18nDictionary = WidenStringLeaves<typeof enUS>;
+
+export type CommonI18n = I18nDictionary["common"];
+export type HeaderI18n = I18nDictionary["header"];
+export type LeftNavI18n = I18nDictionary["leftNav"];
+export type TimelineI18n = I18nDictionary["timeline"];
+export type ToolCardI18n = I18nDictionary["toolCard"];
+export type ApprovalI18n = I18nDictionary["approval"];
+export type InspectorI18n = I18nDictionary["inspector"];
+export type ModelsI18n = I18nDictionary["models"];
+export type SettingsI18n = I18nDictionary["settings"];
 
 export type Locale = "zh-CN" | "en-US";
 
@@ -20,18 +24,6 @@ export interface LocaleMetadata {
   label: string;
   shortLabel: string;
   langTag: string;
-}
-
-export interface I18nDictionary {
-  common: CommonI18n;
-  header: HeaderI18n;
-  leftNav: LeftNavI18n;
-  timeline: TimelineI18n;
-  toolCard: ToolCardI18n;
-  approval: ApprovalI18n;
-  inspector: InspectorI18n;
-  models: ModelsI18n;
-  settings: SettingsI18n;
 }
 
 type Join<K, P> = K extends string | number

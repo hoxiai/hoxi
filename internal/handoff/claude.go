@@ -443,3 +443,58 @@ func attachClaudeToolResults(content interface{}, index map[string]*NormalizedTo
 		tc.Output = truncateRunes(out, 4000)
 	}
 }
+
+func extractClaudeAssistantContent(content interface{}) (string, string, []NormalizedToolCall, []ExternalPlanStep) {
+	switch v := content.(type) {
+	case string:
+		return strings.TrimSpace(v), "", nil, nil
+	case []interface{}:
+		var texts, thoughts []string
+		var calls []NormalizedToolCall
+		var plans []ExternalPlanStep
+		for _, elem := range v {
+			m, ok := elem.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			switch asString(m["type"]) {
+			case "text":
+				if txt := strings.TrimSpace(asString(m["text"])); txt != "" {
+					texts = append(texts, txt)
+				}
+			case "thinking":
+				if th := strings.TrimSpace(asString(m["thinking"])); th != "" {
+					thoughts = append(thoughts, th)
+				}
+			case "tool_use":
+				rawName := asString(m["name"])
+				inputMap, _ := m["input"].(map[string]interface{})
+				if inputMap == nil {
+					inputMap = map[string]interface{}{}
+				}
+				if strings.Contains(rawName, "update_plan") || rawName == "TodoWrite" {
+					if items, ok := inputMap["items"].([]interface{}); ok {
+						for _, it := range items {
+							if im, ok := it.(map[string]interface{}); ok {
+								plans = append(plans, ExternalPlanStep{
+									Title:  asString(im["content"]),
+									Status: asString(im["status"]),
+								})
+							}
+						}
+					}
+				}
+				calls = append(calls, NormalizedToolCall{
+					CallID: asString(m["id"]),
+					Tool:   normalizeExternalToolName(rawName),
+					Title:  rawName,
+					Input:  inputMap,
+					Status: "completed",
+				})
+			}
+		}
+		return strings.Join(texts, "\n\n"), strings.Join(thoughts, "\n\n"), calls, plans
+	default:
+		return "", "", nil, nil
+	}
+}

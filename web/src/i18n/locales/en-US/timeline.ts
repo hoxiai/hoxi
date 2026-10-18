@@ -1,7 +1,6 @@
 // web/src/i18n/locales/en-US/timeline.ts
-import type { TimelineI18n } from "../../types";
 
-export const timeline: TimelineI18n = {
+export const timeline = {
   scrollToBottom: "Scroll to bottom",
   welcomeTitle: "Native AI Agentic Engineering",
   welcomeSubtitle:

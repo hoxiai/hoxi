@@ -25,8 +25,8 @@ import ComposerShelf from "./ComposerShelf";
 import {
   ComposerAttachmentChips,
   ComposerAutocompletePopover,
-  ComposerSandboxPill,
 } from "./composer-subcomponents";
+import { ComposerSandboxPill } from "./ComposerSandboxPill";
 import ContextProgressPill from "./ContextProgressPill";
 import ApprovalModePill from "./ApprovalModePill";
 import ModeSwitcher from "./ModeSwitcher";

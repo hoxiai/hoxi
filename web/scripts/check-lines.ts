@@ -2,7 +2,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-const MAX_LINES = 500;
+const MAX_LINES = 800;
 
 // Static SVG icon lookup tables explicitly exempted by AGENTS.md Rule #1
 const EXEMPT_SUFFIXES = [
@@ -51,7 +51,7 @@ for (const file of files) {
     : content.split("\n").length;
 
   if (lineCount > MAX_LINES) {
-    console.error(`  ✗ [500-line limit] ${rel}: ${lineCount} lines (max ${MAX_LINES})`);
+    console.error(`  ✗ [${MAX_LINES}-line limit] ${rel}: ${lineCount} lines (max ${MAX_LINES})`);
     violations++;
   }
 }

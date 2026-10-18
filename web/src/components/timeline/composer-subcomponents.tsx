@@ -9,8 +9,6 @@ import type {
   ImageItem,
 } from "./composer-hooks";
 
-export { ComposerSandboxPill } from "./ComposerSandboxPill";
-
 export function ComposerAutocompletePopover(props: {
   triggerMode: "file" | "command" | null;
   suggestions: AutocompleteItem[];

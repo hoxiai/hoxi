@@ -15,14 +15,13 @@ import {
 import {
   commitModelSpec,
   executeTaskCommitAndPush,
-  isCustomOrConfiguredProvider,
   openDiffInInspector,
   refreshWorktreeStatus,
   resolveEffectiveCommitModel,
   setCommitModelSpec,
   workspace,
 } from "../../store/workspace";
-import { isModelFree } from "../models/model-selector-utils";
+import { getConnectedProviderModelGroups } from "../models/model-selector-utils";
 import { t } from "../../i18n";
 
 export function ComposerSandboxPill(props: {
@@ -76,47 +75,7 @@ export function ComposerSandboxPill(props: {
     () => isDirty() || aheadCount() > 0 || (Boolean(gitBranch()) && !activeWorktree()?.hasUpstream)
   );
 
-  const connectedModelGroups = createMemo(() => {
-    const connSet = new Set(workspace.connectedProviders);
-    const disSet = new Set<string>(
-      Array.isArray(workspace.globalConfig?.disabled_providers)
-        ? workspace.globalConfig.disabled_providers
-        : []
-    );
-    const cfgProviders = workspace.globalConfig?.provider ?? {};
-    const groups: Array<{
-      providerID: string;
-      providerName: string;
-      models: Array<{ id: string; name: string; fullKey: string; free: boolean }>;
-    }> = [];
-
-    for (const p of workspace.providers) {
-      if (disSet.has(p.id)) continue;
-      const isConn = connSet.has(p.id) || Boolean(cfgProviders[p.id]) || p.id === "opencode";
-      if (!isConn) continue;
-
-      const models = Object.entries(p.models || {}).map(([mID, mInfo]) => ({
-        id: mID,
-        name: mInfo?.name || mID,
-        fullKey: `${p.id}/${mID}`,
-        free: isModelFree(p.id, mID, mInfo),
-      }));
-      if (models.length > 0) {
-        groups.push({
-          providerID: p.id,
-          providerName: p.name || p.id,
-          models,
-        });
-      }
-    }
-
-    return groups.sort((a, b) => {
-      const aCustom = isCustomOrConfiguredProvider(a.providerID);
-      const bCustom = isCustomOrConfiguredProvider(b.providerID);
-      if (aCustom !== bCustom) return aCustom ? -1 : 1;
-      return a.providerName.localeCompare(b.providerName);
-    });
-  });
+  const connectedModelGroups = createMemo(() => getConnectedProviderModelGroups());
 
   const resolvedModelBadge = createMemo(() => {
     if (commitModelSpec() === "none") return null;

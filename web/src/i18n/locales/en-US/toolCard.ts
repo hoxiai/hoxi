@@ -1,7 +1,6 @@
 // web/src/i18n/locales/en-US/toolCard.ts
-import type { ToolCardI18n } from "../../types";
 
-export const toolCard: ToolCardI18n = {
+export const toolCard = {
   statePending: "Pending",
   stateRunning: "Running",
   stateCompleted: "Completed",

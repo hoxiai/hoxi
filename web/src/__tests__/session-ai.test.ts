@@ -3,9 +3,9 @@ import { createComputed, createRoot } from "solid-js";
 import { isServer } from "solid-js/web";
 import { hoxiAPI } from "../services/api";
 import {
-  initializeSessionAI, persistSessionAI, restoreSessionAI, sessionAIConfig, setActiveAgent,
+  initialSessionAI, initializeSessionAI, persistSessionAI, restoreSessionAI,
+  SESSION_AI_KEY, sessionAIConfig, setActiveAgent, type SessionAIConfig,
 } from "../store/session-ai";
-import { initialSessionAI, SESSION_AI_KEY, type SessionAIConfig } from "../store/session-ai-storage";
 import {
   EFFORT_KEY, SELECTED_MODEL_KEY, selectModel, setReasoningEffort,
   setWorkspace, workspace, type MessageTurn,

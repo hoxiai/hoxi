@@ -90,7 +90,7 @@ func TestCleanAndFallbackSummarizeTitle(t *testing.T) {
 }
 
 func TestEvaluateStaticCodeRulesAndParseObserverAudit(t *testing.T) {
-	bigFileLines := strings.Repeat("const x = 1;\n", 505)
+	bigFileLines := strings.Repeat("const x = 1;\n", 805)
 	diffs := []auditDiffFile{
 		{
 			File:      "web/src/App.tsx",
@@ -103,18 +103,18 @@ func TestEvaluateStaticCodeRulesAndParseObserverAudit(t *testing.T) {
 			File:      "internal/foo/big.go",
 			Before:    "package foo\n",
 			After:     bigFileLines,
-			Additions: 505,
+			Additions: 805,
 		},
 		{
 			File:      "web/src/components/icons/svg.tsx",
 			After:     bigFileLines,
-			Additions: 505,
+			Additions: 805,
 		},
 	}
 
 	deductionZh, issuesZh := evaluateStaticCodeRules(diffs, 2, "TS2322 type mismatch", "zh-CN")
 	if deductionZh < 60 || len(issuesZh) != 3 {
-		t.Fatalf("expected deduction >= 60 and 3 issues (LSP + lazy + >500 lines, excluding icons), got deduction=%d issues=%v", deductionZh, issuesZh)
+		t.Fatalf("expected deduction >= 60 and 3 issues (LSP + lazy + >800 lines, excluding icons), got deduction=%d issues=%v", deductionZh, issuesZh)
 	}
 
 	deductionEn, issuesEn := evaluateStaticCodeRules(diffs, 3, "undefined symbol", "en-US")

@@ -1,7 +1,6 @@
 // web/src/i18n/locales/en-US/leftNav.ts
-import type { LeftNavI18n } from "../../types";
 
-export const leftNav: LeftNavI18n = {
+export const leftNav = {
   newThread: "New Thread",
   creating: "Creating…",
   multiProject: "Multi-Project",

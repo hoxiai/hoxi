@@ -432,4 +432,49 @@ export function ModelPreviewFooter(props: {
   );
 }
 
+export interface ConnectedProviderGroup {
+  providerID: string;
+  providerName: string;
+  models: Array<{ id: string; name: string; fullKey: string; free: boolean }>;
+}
+
+export function getConnectedProviderModelGroups(): ConnectedProviderGroup[] {
+  const connSet = new Set(workspace.connectedProviders);
+  const disSet = new Set<string>(
+    Array.isArray(workspace.globalConfig?.disabled_providers)
+      ? workspace.globalConfig.disabled_providers
+      : []
+  );
+  const cfgProviders = workspace.globalConfig?.provider ?? {};
+  const groups: ConnectedProviderGroup[] = [];
+
+  for (const p of workspace.providers) {
+    if (disSet.has(p.id)) continue;
+    const isConn = connSet.has(p.id) || Boolean(cfgProviders[p.id]) || p.id === "opencode";
+    if (!isConn) continue;
+
+    const models = Object.entries(p.models || {}).map(([mID, mInfo]) => ({
+      id: mID,
+      name: mInfo?.name || mID,
+      fullKey: `${p.id}/${mID}`,
+      free: isModelFree(p.id, mID, mInfo),
+    }));
+
+    if (models.length > 0) {
+      groups.push({
+        providerID: p.id,
+        providerName: p.name || p.id,
+        models,
+      });
+    }
+  }
+
+  return groups.sort((a, b) => {
+    const aCustom = isCustomOrConfiguredProvider(a.providerID);
+    const bCustom = isCustomOrConfiguredProvider(b.providerID);
+    if (aCustom !== bCustom) return aCustom ? -1 : 1;
+    return a.providerName.localeCompare(b.providerName);
+  });
+}
+
 

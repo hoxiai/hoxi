@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -439,5 +440,144 @@ func detectCodexCLIStatus(g *desktopGateway, hoxiMap map[string]interface{}) Loc
 		SessionCount:  stats.SessionCount,
 		AuthMode:      authMode,
 		ProviderID:    "openai",
+	}
+}
+
+func readCodexLocalConfig() (defaultModel, version string, models []string) {
+	cDir := codexHomeDir()
+	if cDir == "" {
+		return "", "", nil
+	}
+	if tomlBytes, err := os.ReadFile(filepath.Join(cDir, "config.toml")); err == nil {
+		for _, line := range strings.Split(string(tomlBytes), "\n") {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "model") && strings.Contains(trimmed, "=") {
+				parts := strings.SplitN(trimmed, "=", 2)
+				if strings.TrimSpace(parts[0]) == "model" {
+					if m := strings.Trim(strings.TrimSpace(parts[1]), `"'`); m != "" {
+						defaultModel = m
+						models = appendUniqueString(models, m)
+					}
+					break
+				}
+			}
+		}
+	}
+	if modBytes, err := os.ReadFile(filepath.Join(cDir, "models_cache.json")); err == nil {
+		var modDoc struct {
+			ClientVersion string `json:"client_version"`
+			Models        []struct {
+				Slug string `json:"slug"`
+			} `json:"models"`
+		}
+		if json.Unmarshal(modBytes, &modDoc) == nil {
+			version = strings.TrimSpace(modDoc.ClientVersion)
+			for _, item := range modDoc.Models {
+				if s := strings.TrimSpace(item.Slug); s != "" {
+					models = appendUniqueString(models, s)
+				}
+			}
+		}
+	}
+	if defaultModel == "" && len(models) > 0 {
+		defaultModel = models[0]
+	}
+	return defaultModel, version, models
+}
+
+func (g *desktopGateway) importCodexCLIProvider() LocalCLIImportResponse {
+	cDir := codexHomeDir()
+	if cDir == "" {
+		return LocalCLIImportResponse{OK: false, ToolID: string(ExternalToolCodex), Error: "~/.codex not found"}
+	}
+	raw, err := os.ReadFile(filepath.Join(cDir, "auth.json"))
+	if err != nil {
+		return LocalCLIImportResponse{OK: false, ToolID: string(ExternalToolCodex), Error: "~/.codex/auth.json not found"}
+	}
+	var doc map[string]interface{}
+	if json.Unmarshal(raw, &doc) != nil {
+		return LocalCLIImportResponse{OK: false, ToolID: string(ExternalToolCodex), Error: "Invalid ~/.codex/auth.json"}
+	}
+
+	var authBody map[string]interface{}
+	apiKey := strings.TrimSpace(asString(doc["OPENAI_API_KEY"]))
+	var access string
+	if apiKey != "" {
+		authBody = map[string]interface{}{"type": "api", "key": apiKey}
+	} else if tokens, ok := doc["tokens"].(map[string]interface{}); ok {
+		access = strings.TrimSpace(asString(tokens["access_token"]))
+		refresh := strings.TrimSpace(asString(tokens["refresh_token"]))
+		accountID := strings.TrimSpace(asString(tokens["account_id"]))
+		if access != "" && refresh != "" {
+			authBody = map[string]interface{}{
+				"type":      "oauth",
+				"access":    access,
+				"refresh":   refresh,
+				"expires":   time.Now().Add(24 * time.Hour).UnixMilli(),
+				"accountId": accountID,
+			}
+		}
+	}
+	if authBody == nil {
+		return LocalCLIImportResponse{OK: false, ToolID: string(ExternalToolCodex), Error: "No valid tokens in ~/.codex/auth.json"}
+	}
+
+	if g.openCodePort > 0 {
+		b, _ := json.Marshal(authBody)
+		u := "http://127.0.0.1:" + strconv.Itoa(g.openCodePort) + "/auth/openai"
+		req, err := http.NewRequest(http.MethodPut, u, bytes.NewReader(b))
+		if err == nil {
+			req.Header.Set("Content-Type", "application/json")
+			req.SetBasicAuth("opencode", g.password)
+			client := &http.Client{Timeout: 5 * time.Second, Transport: localTransport}
+			if resp, err := client.Do(req); err == nil {
+				_ = resp.Body.Close()
+			}
+		}
+	}
+
+	_, _, models := readCodexLocalConfig()
+	sessions, _ := scanCodexSessions("", "")
+	for _, s := range sessions {
+		if s.Model != "" {
+			models = appendUniqueString(models, s.Model)
+		}
+	}
+	if len(models) == 0 {
+		models = []string{"gpt-5-codex", "o4-mini"}
+	}
+	modelsMap := map[string]interface{}{}
+	for _, m := range models {
+		modelsMap[m] = map[string]interface{}{
+			"name":       m + " (Codex)",
+			"tool_call":  true,
+			"reasoning":  true,
+			"attachment": true,
+		}
+	}
+	cfgDoc := g.loadHoxiConfigDoc()
+	provMap, _ := cfgDoc["provider"].(map[string]interface{})
+	if provMap == nil {
+		provMap = map[string]interface{}{}
+	}
+	provEntry := map[string]interface{}{
+		"name":   "OpenAI Codex (Local)",
+		"npm":    "@ai-sdk/openai",
+		"models": modelsMap,
+	}
+	if apiKey != "" {
+		provEntry["options"] = map[string]interface{}{"apiKey": apiKey}
+	}
+	provMap["openai"] = provEntry
+	cfgDoc["provider"] = provMap
+	if err := g.persistHoxiConfigDoc(cfgDoc); err != nil {
+		return LocalCLIImportResponse{OK: false, ToolID: string(ExternalToolCodex), Error: err.Error()}
+	}
+
+	return LocalCLIImportResponse{
+		OK:         true,
+		ToolID:     string(ExternalToolCodex),
+		ProviderID: "openai",
+		Models:     models,
 	}
 }

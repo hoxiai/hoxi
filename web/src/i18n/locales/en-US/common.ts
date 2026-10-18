@@ -1,7 +1,6 @@
 // web/src/i18n/locales/en-US/common.ts
-import type { CommonI18n } from "../../types";
 
-export const common: CommonI18n = {
+export const common = {
   ready: "Ready",
   connecting: "Connecting",
   working: "Working",

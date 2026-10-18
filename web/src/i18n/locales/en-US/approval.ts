@@ -1,7 +1,6 @@
 // web/src/i18n/locales/en-US/approval.ts
-import type { ApprovalI18n } from "../../types";
 
-export const approval: ApprovalI18n = {
+export const approval = {
   title: "Security Approval Gate",
   warning:
     "The agent requested a destructive or privileged command. Please review carefully.",

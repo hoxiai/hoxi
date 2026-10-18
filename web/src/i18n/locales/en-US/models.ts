@@ -1,7 +1,6 @@
 // web/src/i18n/locales/en-US/models.ts
-import type { ModelsI18n } from "../../types";
 
-export const models: ModelsI18n = {
+export const models = {
   modalTitle: "Models, Auto-Approve & MCP",
   modalSubtitle:
     "Configure AI providers, custom endpoints, auto-approve permissions & MCP tools",
