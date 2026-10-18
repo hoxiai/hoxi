@@ -6,6 +6,7 @@ import type { MessagePart, ToolPart } from "../services/sse-types";
 import { recordUserRevertAction } from "./provider-telemetry";
 import { appSettings } from "./settings";
 import { type SelectedModel, setWorkspace, workspace } from "./workspace";
+import { initializeSessionAI, sessionAIConfig } from "./session-ai";
 import {
   isSessionBusy,
   loadSessionMessages,
@@ -35,6 +36,7 @@ export interface QueuedPromptItem {
   createdAt: number;
   agent?: string;
   model?: SelectedModel;
+  effort?: "" | "low" | "medium" | "high";
   attachments: QueuedPromptAttachment[];
 }
 
@@ -59,15 +61,18 @@ export function lastPromptDispatchedAt(sessionID: string): number {
 export function enqueueSessionPrompt(
   sessionID: string,
   text: string,
-  options?: { agent?: string; model?: SelectedModel; attachments?: QueuedPromptAttachment[] }
+  options?: { agent?: string; model?: SelectedModel; effort?: QueuedPromptItem["effort"]; attachments?: QueuedPromptAttachment[] }
 ): QueuedPromptItem {
+  const config = sessionAIConfig(sessionID);
+  const model = options?.model || config.model;
   const item: QueuedPromptItem = {
     id: `q_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
     sessionID,
     text,
     createdAt: Date.now(),
-    agent: options?.agent || workspace.activeMode,
-    model: options?.model || workspace.selectedModel || undefined,
+    agent: options?.agent || config.agent,
+    model: model ? { ...model } : undefined,
+    effort: options?.effort ?? config.effort,
     attachments: options?.attachments ?? [],
   };
   const current = workspace.queuedPromptsBySession[sessionID] ?? [];
@@ -105,6 +110,7 @@ export async function sendQueuedPromptNow(sessionID: string, itemID: string): Pr
   await submitSessionPrompt(target.text, sessionID, {
     agent: target.agent,
     model: target.model,
+    effort: target.effort,
     attachments: target.attachments,
     forceImmediate: true,
   });
@@ -125,6 +131,7 @@ export async function drainNextQueuedPrompt(sessionID: string): Promise<void> {
     await submitSessionPrompt(next.text, sessionID, {
       agent: next.agent,
       model: next.model,
+      effort: next.effort,
       attachments: next.attachments,
       forceImmediate: true,
     });
@@ -270,6 +277,7 @@ export function purgeSessionsFromStoreState(
     lastPromptDispatchAtBySession.delete(id);
     loadedChildSessionIDs.delete(id);
     delete state.messagesBySession[id];
+    delete state.aiBySession[id];
     delete state.loadingMessagesBySession[id];
     delete state.statusBySession[id];
     delete state.sessionFinishedAt[id];
@@ -477,6 +485,7 @@ export async function undoRevert(sessionID: string): Promise<void> {
 export async function forkFromMessage(sessionID: string, messageID?: string): Promise<string> {
   setPendingRevertConfirm(null);
   const forked = await hoxiAPI.forkSession(sessionID, messageID, sessionDirectory(sessionID));
+  initializeSessionAI(forked.id, sessionAIConfig(sessionID));
   replaceSession(forked);
   await selectSession(forked.id);
   return forked.id;

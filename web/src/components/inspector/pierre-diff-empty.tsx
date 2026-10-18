@@ -16,6 +16,7 @@ import {
   activeDirectory,
   isSessionBusy,
   setWorkspace,
+  setActiveAgent,
   workspace,
 } from "../../store/workspace";
 import { t } from "../../i18n";
@@ -160,7 +161,7 @@ export default function DiffEmptyState(props: {
           </p>
           <button
             type="button"
-            onClick={() => setWorkspace("activeMode", "build")}
+            onClick={() => setActiveAgent("build")}
             class="inline-flex items-center gap-1.5 rounded-lg bg-[var(--accent-primary)] px-2.5 py-1 text-[11px] font-medium text-white hover:opacity-90 transition-opacity cursor-pointer"
           >
             <Hammer size={11} />

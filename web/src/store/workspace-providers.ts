@@ -1,5 +1,6 @@
 // web/src/store/workspace-providers.ts
 import { hoxiAPI, type AgentInfo, type ProviderInfo } from "../services/api";
+import { updateSessionAI } from "./session-ai";
 import {
   EFFORT_KEY,
   FAVORITE_MODELS_KEY,
@@ -90,10 +91,10 @@ function pushRecentModel(model: SelectedModel) {
 }
 
 export function selectModel(model: SelectedModel, _autoRetryOnError = false) {
-  setWorkspace("selectedModel", model);
+  updateSessionAI({ model });
   pushRecentModel(model);
   try {
-    localStorage.setItem(SELECTED_MODEL_KEY, JSON.stringify(model));
+    if (!workspace.activeSessionID) localStorage.setItem(SELECTED_MODEL_KEY, JSON.stringify(model));
   } catch {
     /* ignore */
   }
@@ -106,10 +107,15 @@ export function activeModelInfo() {
   return prov?.models?.[sel.modelID];
 }
 
+function selectDefaultModel(model: SelectedModel) {
+  updateSessionAI({ model }, null);
+  try { localStorage.setItem(SELECTED_MODEL_KEY, JSON.stringify(model)); } catch { /* storage unavailable */ }
+}
+
 export function setReasoningEffort(effort: "" | "low" | "medium" | "high") {
-  setWorkspace("reasoningEffort", effort);
+  updateSessionAI({ effort });
   try {
-    localStorage.setItem(EFFORT_KEY, effort);
+    if (!workspace.activeSessionID) localStorage.setItem(EFFORT_KEY, effort);
   } catch {
     /* ignore */
   }
@@ -255,7 +261,7 @@ export async function loadProviders(): Promise<void> {
     });
 
     // Ensure a valid selectedModel is active
-    const current = workspace.selectedModel;
+    const current = workspace.defaultAI.model;
     const isValid =
       current &&
       all.some((p) => p.id === current.providerID && p.models && p.models[current.modelID]);
@@ -266,7 +272,7 @@ export async function loadProviders(): Promise<void> {
         cfgModel &&
         all.some((p) => p.id === cfgModel.providerID && p.models?.[cfgModel.modelID])
       ) {
-        selectModel(cfgModel, false);
+        selectDefaultModel(cfgModel);
         return;
       }
 
@@ -274,13 +280,13 @@ export async function loadProviders(): Promise<void> {
         const defModel = defaults[pid];
         const prov = all.find((p) => p.id === pid);
         if (prov && defModel && prov.models?.[defModel]) {
-          selectModel({ providerID: pid, modelID: defModel }, false);
+          selectDefaultModel({ providerID: pid, modelID: defModel });
           return;
         }
         if (prov && prov.models) {
           const firstKey = Object.keys(prov.models)[0];
           if (firstKey) {
-            selectModel({ providerID: pid, modelID: firstKey }, false);
+            selectDefaultModel({ providerID: pid, modelID: firstKey });
             return;
           }
         }
@@ -288,14 +294,14 @@ export async function loadProviders(): Promise<void> {
 
       const openCodeProv = all.find((p) => p.id === "opencode");
       if (openCodeProv?.models?.["deepseek-v4.1-flash-free"]) {
-        selectModel({ providerID: "opencode", modelID: "deepseek-v4.1-flash-free" }, false);
+        selectDefaultModel({ providerID: "opencode", modelID: "deepseek-v4.1-flash-free" });
         return;
       }
 
       for (const prov of all) {
         const firstKey = Object.keys(prov.models || {})[0];
         if (firstKey) {
-          selectModel({ providerID: prov.id, modelID: firstKey }, false);
+          selectDefaultModel({ providerID: prov.id, modelID: firstKey });
           return;
         }
       }
@@ -467,7 +473,7 @@ export async function updateGlobalModelConfig(patch: Record<string, any>): Promi
   if (typeof patch.model === "string") {
     const parsed = parseModelString(patch.model);
     if (parsed) {
-      selectModel(parsed, false);
+      selectDefaultModel(parsed);
     }
   }
 }

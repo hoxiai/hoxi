@@ -1,6 +1,7 @@
 // web/src/store/workspace.ts
 import { createStore } from "solid-js/store";
 import { initialArchivedSessions, initialDismissedProjects } from "./workspace-storage";
+import { initialDefaultAgent, initialSessionAI, type SessionAIConfig } from "./session-ai-storage";
 import type {
   MessageInfo,
   MessagePart,
@@ -60,6 +61,8 @@ export interface WorkspaceState {
   sessionSetupError: string | null;
   agents: AgentInfo[];
   activeMode: string;
+  defaultAI: SessionAIConfig;
+  aiBySession: Record<string, SessionAIConfig>;
   sessionSandboxMode: "local" | "worktree";
   sidebarProjectMode: "single" | "multi" | "recent";
   inspectorTab: "diffs" | "memory" | "files" | "terminal";
@@ -257,7 +260,11 @@ export const [workspace, setWorkspace] = createStore<WorkspaceState>({
   activeSessionID: null,
   sessionSetupError: null,
   agents: DEFAULT_AGENTS,
-  activeMode: "build",
+  defaultAI: { model: initialSelectedModel(), agent: initialDefaultAgent(), effort: initialEffort() },
+  aiBySession: initialSessionAI(),
+  get activeMode() {
+    return (this.activeSessionID && this.aiBySession[this.activeSessionID] || this.defaultAI).agent;
+  },
   sessionSandboxMode: initialSessionSandboxMode(),
   sidebarProjectMode: initialSidebarProjectMode(),
   inspectorTab: "diffs",
@@ -284,8 +291,12 @@ export const [workspace, setWorkspace] = createStore<WorkspaceState>({
   hoxiProviders: {},
   openCodeImportedProviders: [],
   providerAuthMethods: {},
-  selectedModel: initialSelectedModel(),
-  reasoningEffort: initialEffort(),
+  get selectedModel() {
+    return (this.activeSessionID && this.aiBySession[this.activeSessionID] || this.defaultAI).model;
+  },
+  get reasoningEffort() {
+    return (this.activeSessionID && this.aiBySession[this.activeSessionID] || this.defaultAI).effort;
+  },
   favoriteModels: initialModelList(FAVORITE_MODELS_KEY),
   recentModels: initialModelList(RECENT_MODELS_KEY),
   messagesBySession: {},
@@ -455,6 +466,7 @@ export function toggleTheme() {
 }
 
 export * from "./workspace-providers";
+export * from "./session-ai";
 export * from "./workspace-projects";
 export * from "./workspace-sessions";
 export * from "./workspace-queue-subagents";

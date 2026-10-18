@@ -11,7 +11,7 @@ import {
   schedulePersistTelemetry,
 } from "./provider-telemetry-storage";
 import {
-  selectModel,
+  updateSessionAI,
   sendPrompt,
   setWorkspace,
   workspace,
@@ -266,7 +266,7 @@ export async function applyAuditFeedbackToSession(
   if (!audit) return;
 
   if (switchModel) {
-    selectModel(switchModel, false);
+    updateSessionAI({ model: switchModel }, sessionID);
   }
 
   const issueLines =
@@ -279,5 +279,5 @@ export async function applyAuditFeedbackToSession(
     ...issueLines,
   ].join("\n");
 
-  await sendPrompt(promptText);
+  await sendPrompt(promptText, sessionID);
 }

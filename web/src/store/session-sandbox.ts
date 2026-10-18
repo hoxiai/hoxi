@@ -3,6 +3,7 @@ import { hoxiAPI, type WorktreeMeta } from "../services/api";
 import type { SessionInfo } from "../services/sse-types";
 import { appSettings } from "./settings";
 import { setWorkspace, workspace } from "./workspace";
+import { initializeSessionAI } from "./session-ai";
 import {
   isSessionBusy,
   refreshWorktreeStatus,
@@ -58,6 +59,7 @@ export async function newIsolatedSession(
   options?: { isolated?: boolean; onSessionCreated?: (sessionID: string) => void }
 ): Promise<string> {
   const directory = workspace.rootDir;
+  const initialAI = { ...workspace.defaultAI };
   const previousSessionID = workspace.activeSessionID;
   const shouldIsolate = options?.isolated ?? (appSettings.defaultSandboxMode === "worktree");
   let session: SessionInfo | undefined;
@@ -87,6 +89,7 @@ export async function newIsolatedSession(
   setWorkspace("loadingMessagesBySession", session.id, false);
   setWorkspace("unreadCompletedBySession", session.id, false);
   replaceSession(session);
+  initializeSessionAI(session.id, initialAI);
   if (workspace.rootDir === directory) setWorkspace("activeSessionID", session.id);
   options?.onSessionCreated?.(session.id);
   return session.id;

@@ -10,7 +10,7 @@ import {
   Sparkles,
   Wrench,
 } from "lucide-solid";
-import { setWorkspace, workspace } from "../../store/workspace";
+import { setActiveAgent, workspace } from "../../store/workspace";
 import type { AgentInfo } from "../../services/api";
 import { t } from "../../i18n";
 
@@ -71,7 +71,7 @@ export default function ModeSwitcher() {
   });
 
   const onSelectMode = (name: string) => {
-    setWorkspace("activeMode", name);
+    setActiveAgent(name);
     setOpen(false);
   };
 
@@ -80,7 +80,7 @@ export default function ModeSwitcher() {
     if (list.length <= 1) return;
     const currentIndex = list.findIndex((a) => a.name === currentMode());
     const nextIndex = (currentIndex + 1) % list.length;
-    setWorkspace("activeMode", list[nextIndex].name);
+    setActiveAgent(list[nextIndex].name);
   };
 
   return (

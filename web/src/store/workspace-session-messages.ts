@@ -20,7 +20,8 @@ import {
 import { isPlaceholderSessionTitle, summarizeAndRenameSession } from "./session-title";
 import { waitForSessionSandbox } from "./session-sandbox";
 import { buildCombinedSystemPrompt, setWorkspace, workspace } from "./workspace";
-import { buildWorkspaceFoldersSystemPrompt } from "./workspace-projects";
+import { buildWorkspaceFoldersSystemPrompt, workspaceFoldersForDir } from "./workspace-projects";
+import { initializeSessionAI, sessionAIConfig } from "./session-ai";
 import {
   isSessionBusy,
   isSessionDeleted,
@@ -88,8 +89,8 @@ export async function handleSessionErrorEvent(
           sessionID,
           role: "assistant",
           time: { created: now, completed: now },
-          modelID: state.selectedModel?.modelID,
-          providerID: state.selectedModel?.providerID,
+          modelID: sessionAIConfig(sessionID).model?.modelID,
+          providerID: sessionAIConfig(sessionID).model?.providerID,
           error,
         },
         parts: [],
@@ -144,6 +145,7 @@ export async function submitSessionPrompt(
   options?: {
     agent?: string;
     model?: { providerID: string; modelID: string };
+    effort?: "" | "low" | "medium" | "high";
     attachments?: Array<{ type: "file"; mime: string; filename?: string; url: string }>;
     forceImmediate?: boolean;
     beforeSend?: () => Promise<void>;
@@ -151,8 +153,23 @@ export async function submitSessionPrompt(
 ): Promise<string> {
   let id = targetSessionID ?? workspace.activeSessionID;
   const isBrandNewSession = !id;
-  const effectiveAgent = options?.agent || workspace.activeMode;
-  const effectiveModel = options?.model || workspace.selectedModel || undefined;
+  if (id && isSessionDeleted(id)) throw new Error(t("timeline.sessionUnavailable"));
+  if (id && !workspace.aiBySession[id]) {
+    await loadSessionMessages(id);
+  }
+  const config = sessionAIConfig(id);
+  const effectiveAgent = options?.agent || config.agent;
+  const chosenModel = options?.model || config.model;
+  const effectiveModel = chosenModel ? { ...chosenModel } : undefined;
+  if (effectiveModel && workspace.providers.length && !workspace.providers.some((provider) =>
+    provider.id === effectiveModel.providerID && provider.models?.[effectiveModel.modelID])) {
+    throw new Error(`${t("timeline.selectModel")}: ${effectiveModel.providerID}/${effectiveModel.modelID}`);
+  }
+  const effort = options?.effort ?? config.effort;
+  const initialDirectory = id ? sessionDirectory(id) : workspace.rootDir;
+  const system = buildCombinedSystemPrompt(buildWorkspaceFoldersSystemPrompt(
+    workspaceFoldersForDir(initialDirectory || "")
+  ));
   const attachments = options?.attachments ?? [];
 
   if (id) {
@@ -165,6 +182,7 @@ export async function submitSessionPrompt(
     enqueueSessionPrompt(id, promptText, {
       agent: effectiveAgent,
       model: effectiveModel,
+      effort,
       attachments,
     });
     return id;
@@ -244,6 +262,7 @@ export async function submitSessionPrompt(
     });
   }
   stageOptimisticTurn(id);
+  initializeSessionAI(id, config);
 
   try {
     if (options?.beforeSend) {
@@ -253,9 +272,9 @@ export async function submitSessionPrompt(
     await hoxiAPI.sendPromptAsync(id, promptText, {
       agent: effectiveAgent,
       model: effectiveModel,
-      variant: workspace.reasoningEffort || undefined,
+      variant: effort || undefined,
       directory: sessionDirectory(id),
-      system: buildCombinedSystemPrompt(buildWorkspaceFoldersSystemPrompt()),
+      system,
       attachments,
     });
     if (!lastInterruptAtBySession.has(id)) {

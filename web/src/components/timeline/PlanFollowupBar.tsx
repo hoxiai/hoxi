@@ -5,6 +5,7 @@ import {
   isSessionBusy,
   newIsolatedSession,
   setWorkspace,
+  setActiveAgent,
   submitSessionPrompt,
   workspace,
 } from "../../store/workspace";
@@ -66,7 +67,7 @@ export default function PlanFollowupBar() {
     setRunningAction("build");
     try {
       setWorkspace("dismissedPlanFollowups", info.dismissKey, true);
-      setWorkspace("activeMode", "build");
+      setActiveAgent("build", info.sessionID);
       const prompt = t("timeline.planPromptText");
       await submitSessionPrompt(prompt, info.sessionID, { agent: "build" });
     } finally {
@@ -80,9 +81,9 @@ export default function PlanFollowupBar() {
     setRunningAction("worktree");
     try {
       setWorkspace("dismissedPlanFollowups", info.dismissKey, true);
-      setWorkspace("activeMode", "build");
       const title = t("timeline.implementPlanSessionTitle");
       const newId = await newIsolatedSession(title, { isolated: true });
+      setActiveAgent("build", newId);
       const excerpt =
         info.planText.length > 3500
           ? `${info.planText.slice(0, 3500)}\n...(truncated)`

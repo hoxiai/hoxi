@@ -19,6 +19,7 @@ import {
   isDestructivePermissionRequest,
   openChangedFileInInspector,
   sessionDirectory,
+  sessionAIConfig,
   setApprovalMode,
   workspace,
 } from "../../store/workspace";
@@ -104,9 +105,9 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
       const note = feedback().trim();
       if (mode === "reject" && note && props.request.sessionID) {
         await hoxiAPI.sendPromptAsync(props.request.sessionID, note, {
-          agent: workspace.activeMode,
-          model: workspace.selectedModel || undefined,
-          variant: workspace.reasoningEffort || undefined,
+          agent: sessionAIConfig(props.request.sessionID).agent,
+          model: sessionAIConfig(props.request.sessionID).model || undefined,
+          variant: sessionAIConfig(props.request.sessionID).effort || undefined,
           directory: dir,
         });
       }

@@ -2,6 +2,7 @@ import { produce } from "solid-js/store";
 import type { SessionInfo } from "../services/sse-types";
 import { hoxiAPI } from "../services/api";
 import { mergeServerTurnsInto } from "./message-lookup";
+import { persistSessionAI, restoreSessionAI } from "./session-ai";
 import {
   ARCHIVED_SESSIONS_KEY,
   isSessionArchived,
@@ -99,6 +100,7 @@ export function replaceSession(info: SessionInfo) {
 export async function loadSessionMessagesOnly(sessionID: string): Promise<void> {
   const directory = sessionDirectory(sessionID);
   const turns = await hoxiAPI.getMessages(sessionID, directory);
+  if (!isSessionDeleted(sessionID)) restoreSessionAI(sessionID, turns);
   setWorkspace(
     produce((state) => {
       mergeServerTurnsInto((state.messagesBySession[sessionID] ||= []), turns);
@@ -118,6 +120,7 @@ export async function loadSessionMessages(sessionID: string): Promise<void> {
   }
   try {
     const turns = await hoxiAPI.getMessages(sessionID, directory);
+    if (!isSessionDeleted(sessionID)) restoreSessionAI(sessionID, turns);
     setWorkspace(
       produce((state) => {
         mergeServerTurnsInto((state.messagesBySession[sessionID] ||= []), turns);
@@ -354,6 +357,7 @@ export function removeSessionFromStore(sessionID: string): SessionInfo | undefin
     persistArchivedSessionIDs(nextArchived);
   }
   setWorkspace(produce((state) => purgeSessionsFromStoreState(state, allIDs)));
+  persistSessionAI();
   return nextCandidate;
 }
 
