@@ -8,7 +8,6 @@ import {
   setWorkspace,
   workspace,
 } from "./workspace";
-import { appSettings } from "./settings";
 import {
   getCustomSessionTitle,
   isPlaceholderSessionTitle,
@@ -184,63 +183,6 @@ export async function selectSession(sessionID: string): Promise<void> {
     console.error("load session messages failed:", err);
   } finally {
     setWorkspace("loadingMessagesBySession", sessionID, false);
-  }
-}
-
-export async function newIsolatedSession(
-  title?: string,
-  options?: { isolated?: boolean; onSessionCreated?: (sessionID: string) => void }
-): Promise<string> {
-  const session = await hoxiAPI.createSession(title, workspace.rootDir || undefined);
-  const shouldIsolate = options?.isolated ?? appSettings.defaultSandboxMode === "worktree";
-  setWorkspace("messagesBySession", session.id, []);
-  setWorkspace("diffsBySession", session.id, []);
-  setWorkspace("loadingMessagesBySession", session.id, false);
-  setWorkspace("unreadCompletedBySession", session.id, false);
-  replaceSession(session);
-  setWorkspace("activeSessionID", session.id);
-  options?.onSessionCreated?.(session.id);
-  if (shouldIsolate) {
-    try {
-      const meta = await hoxiAPI.createWorktree(session.id, workspace.rootDir || undefined);
-      setWorkspace("worktreeBySession", session.id, meta);
-    } catch (err) {
-      console.error("create worktree failed:", err);
-    }
-  } else {
-    setWorkspace("worktreeBySession", session.id, {
-      sessionID: session.id,
-      isolated: false,
-      directory: workspace.rootDir,
-      branch: workspace.worktreeBySession["__root__"]?.branch,
-      createdAt: new Date().toISOString(),
-    });
-  }
-  return session.id;
-}
-
-export async function switchActiveSessionSandboxMode(mode: "local" | "worktree"): Promise<void> {
-  const id = workspace.activeSessionID;
-  if (!id) {
-    await newIsolatedSession(undefined, { isolated: mode === "worktree" });
-    return;
-  }
-  const isCurrentlyIsolated = Boolean(workspace.worktreeBySession[id]?.isolated);
-  if (mode === "worktree" && !isCurrentlyIsolated) {
-    try {
-      const meta = await hoxiAPI.createWorktree(id, workspace.rootDir || undefined);
-      setWorkspace("worktreeBySession", id, meta);
-      await refreshWorktreeStatus(id);
-    } catch (err) {
-      console.error("enable session worktree failed:", err);
-    }
-  } else if (mode === "local" && isCurrentlyIsolated) {
-    try {
-      await hoxiAPI.removeWorktree(id, true);
-      await refreshWorktreeStatus(id);
-    } catch (err) {
-      console.error("remove session worktree failed:", err);
-    }
   }
 }
 
@@ -495,3 +437,4 @@ export async function discardSession(
 
 export * from "./workspace-session-messages";
 export * from "./git-commit";
+export * from "./session-sandbox";

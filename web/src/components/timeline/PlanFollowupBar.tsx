@@ -89,6 +89,8 @@ export default function PlanFollowupBar() {
           : info.planText;
       const prompt = t("timeline.worktreePromptTemplate", { excerpt });
       await submitSessionPrompt(prompt, newId, { agent: "build" });
+    } catch (error) {
+      console.error("implement plan in worktree failed:", error);
     } finally {
       setRunningAction(null);
     }

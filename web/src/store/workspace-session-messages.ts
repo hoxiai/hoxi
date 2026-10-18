@@ -18,10 +18,12 @@ import {
   recordUserRevertAction,
 } from "./provider-telemetry";
 import { isPlaceholderSessionTitle, summarizeAndRenameSession } from "./session-title";
+import { waitForSessionSandbox } from "./session-sandbox";
 import { buildCombinedSystemPrompt, setWorkspace, workspace } from "./workspace";
 import { buildWorkspaceFoldersSystemPrompt } from "./workspace-projects";
 import {
   isSessionBusy,
+  isSessionDeleted,
   loadSessionMessages,
   newIsolatedSession,
   renameSessionTitle,
@@ -152,6 +154,11 @@ export async function submitSessionPrompt(
   const effectiveAgent = options?.agent || workspace.activeMode;
   const effectiveModel = options?.model || workspace.selectedModel || undefined;
   const attachments = options?.attachments ?? [];
+
+  if (id) {
+    await waitForSessionSandbox(id);
+    if (isSessionDeleted(id)) throw new Error(t("timeline.sessionUnavailable"));
+  }
 
   // If the session is currently busy and not forced immediate, enqueue the message!
   if (id && !options?.forceImmediate && isSessionBusy(id)) {

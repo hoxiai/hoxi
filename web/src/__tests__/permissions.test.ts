@@ -36,6 +36,40 @@ describe("permission command chains", () => {
     assertEqual(decidePermission({ permission: "bash" }), "ask");
   });
 
+  it("requires confirmation for branch deletion and worktree removal in every approval mode", () => {
+    for (const command of [
+      "git branch -D feature",
+      "git branch -d feature",
+      "git branch --delete feature",
+      "git branch -df feature",
+      "git -C /tmp/repo branch -D feature",
+      "git worktree remove --force /tmp/example-worktree",
+      "git worktree prune --expire now",
+      "git status && git worktree remove /tmp/example-worktree",
+    ]) {
+      const req = { permission: "bash", metadata: { command } };
+      assertEqual(decidePermission(req), "ask", command);
+      assertEqual(isDestructivePermissionRequest(req), true, command);
+      for (const mode of ["auto", "smart", "manual"] as const) {
+        assertEqual(shouldAutoApprovePermission(req, mode), false, `${mode}: ${command}`);
+      }
+    }
+  });
+
+  it("keeps Git inspection automatic without treating all branch and worktree operations as reads", () => {
+    for (const command of ["git branch", "git branch -avv", "git branch --show-current",
+      "git branch --list 'feature/*'", "git worktree list --porcelain"]) {
+      const req = { permission: "bash", patterns: [command] };
+      assertEqual(decidePermission(req), "allow", command);
+      assertEqual(shouldAutoApprovePermission(req, "smart"), true, command);
+    }
+    for (const command of ["git branch feature", "git worktree add /tmp/new-worktree"]) {
+      const req = { permission: "bash", patterns: [command] };
+      assertEqual(decidePermission(req), "ask", command);
+      assertEqual(shouldAutoApprovePermission(req, "smart"), false, command);
+    }
+  });
+
   it("evaluates 3-tier approval modes (auto, smart, manual) while enforcing destructive gate", () => {
     // 1. Auto mode: allows edits and normal shell commands, but blocks destructive commands
     assertEqual(

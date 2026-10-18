@@ -1,0 +1,194 @@
+import { reconcile, unwrap } from "solid-js/store";
+import { hoxiAPI, type WorktreeMeta } from "../services/api";
+import { appSettings, setAppSettings } from "../store/settings";
+import { setWorkspace, workspace } from "../store/workspace";
+import {
+  newIsolatedSession,
+  sessionDirectory,
+  submitSessionPrompt,
+  switchActiveSessionSandboxMode,
+} from "../store/workspace-sessions";
+import { assertEqual, assertTrue, describe, it } from "./test-harness";
+
+let nextID = 0;
+
+async function withSessionFixture(run: (id: string, meta: WorktreeMeta) => Promise<void>) {
+  const saved = structuredClone(unwrap(workspace));
+  const sandboxMode = appSettings.defaultSandboxMode;
+  const originalAPI = { ...hoxiAPI };
+  const id = `ses_isolation_test_${++nextID}`;
+  const meta: WorktreeMeta = {
+    sessionID: id, isolated: true, directory: `/repo/.hoxi/worktrees/${id}`, createdAt: "test",
+  };
+  setWorkspace({ rootDir: "/repo", activeSessionID: "existing", sessions: [],
+    worktreeBySession: {}, messagesBySession: {}, statusBySession: {} });
+  setAppSettings("defaultSandboxMode", "worktree");
+  hoxiAPI.createSession = async () => ({
+    id, title: "Isolation test", directory: "/repo", time: { created: 1, updated: 1 },
+  });
+  hoxiAPI.createWorktree = async () => meta;
+  hoxiAPI.deleteSession = async () => {};
+  try {
+    await run(id, meta);
+  } finally {
+    Object.assign(hoxiAPI, originalAPI);
+    setAppSettings("defaultSandboxMode", sandboxMode);
+    setWorkspace(reconcile(saved));
+  }
+}
+
+async function rejection(task: Promise<unknown>): Promise<Error> {
+  let error: unknown;
+  try { await task; } catch (caught) { error = caught; }
+  assertTrue(error instanceof Error, "operation must reject instead of falling back to the root workspace");
+  return error as Error;
+}
+
+describe("session worktree isolation", () => {
+  it("rejects failed provisioning, removes the incomplete session and never dispatches a prompt", async () => {
+    await withSessionFixture(async (id) => {
+      let callbackCount = 0;
+      let deleteDirectory: string | undefined;
+      let promptCount = 0;
+      hoxiAPI.createWorktree = async () => { throw new Error("worktree creation failed"); };
+      hoxiAPI.deleteSession = async (deletedID, directory) => {
+        assertEqual(deletedID, id);
+        deleteDirectory = directory;
+      };
+      hoxiAPI.sendPromptAsync = async () => { promptCount++; };
+      await rejection(newIsolatedSession(undefined, { onSessionCreated: () => { callbackCount++; } }));
+      assertEqual(deleteDirectory, "/repo");
+      assertEqual(callbackCount, 0);
+      assertEqual(workspace.activeSessionID, "existing");
+      assertEqual(workspace.sessions.some((session) => session.id === id), false);
+      assertEqual(workspace.messagesBySession[id], undefined);
+      assertTrue(Boolean(workspace.sessionSetupError), "show the setup failure to the user");
+      await rejection(submitSessionPrompt("must not reach the root", id));
+      assertEqual(promptCount, 0);
+    });
+  });
+
+  it("rejects non-isolated worktree responses such as a non-Git workspace", async () => {
+    await withSessionFixture(async (id, meta) => {
+      hoxiAPI.createWorktree = async () => ({ ...meta, isolated: false, directory: "/repo" });
+      await rejection(newIsolatedSession(undefined, { isolated: true }));
+      assertEqual(workspace.worktreeBySession[id], undefined);
+      assertEqual(workspace.activeSessionID, "existing");
+    });
+  });
+
+  it("keeps a failed first prompt out of the timeline and never sends it to the main workspace", async () => {
+    await withSessionFixture(async (id) => {
+      setWorkspace("activeSessionID", null);
+      let promptCount = 0;
+      hoxiAPI.createWorktree = async () => { throw new Error("checkout failed"); };
+      hoxiAPI.sendPromptAsync = async () => { promptCount++; };
+      await rejection(submitSessionPrompt("edit the code"));
+      assertEqual(promptCount, 0);
+      assertEqual(workspace.messagesBySession[id], undefined);
+      assertEqual(workspace.statusBySession[id], undefined);
+      assertEqual(workspace.activeSessionID, null);
+    });
+  });
+
+  it("keeps the originating workspace and isolation choice if the user switches projects while creating", async () => {
+    await withSessionFixture(async (id, meta) => {
+      const session = await hoxiAPI.createSession();
+      let resolveSession!: (value: typeof session) => void;
+      hoxiAPI.createSession = () => new Promise((resolve) => { resolveSession = resolve; });
+      let setupDirectory: string | undefined;
+      hoxiAPI.createWorktree = async (_id, directory) => { setupDirectory = directory; return meta; };
+      const creation = newIsolatedSession();
+      setWorkspace({ rootDir: "/other-repo", activeSessionID: "other-session" });
+      setAppSettings("defaultSandboxMode", "local");
+      resolveSession(session);
+      assertEqual(await creation, id);
+      assertEqual(setupDirectory, "/repo");
+      assertEqual(sessionDirectory(id), meta.directory);
+      assertEqual(workspace.activeSessionID, "other-session");
+    });
+  });
+
+  it("publishes the session and invokes its callback only after the isolated directory is ready", async () => {
+    await withSessionFixture(async (id, meta) => {
+      let resolveSetup!: (value: WorktreeMeta) => void;
+      let started!: () => void;
+      const setupStarted = new Promise<void>((resolve) => { started = resolve; });
+      const setup = new Promise<WorktreeMeta>((resolve) => { resolveSetup = resolve; });
+      const calls: Array<[string, string | undefined]> = [];
+      hoxiAPI.createWorktree = (_id, directory) => {
+        calls.push([_id, directory]);
+        started();
+        return setup;
+      };
+      let callbackDirectory: string | undefined;
+      const creation = newIsolatedSession(undefined, {
+        onSessionCreated: (sessionID) => { callbackDirectory = sessionDirectory(sessionID); },
+      });
+      await setupStarted;
+      const activeWhilePending = workspace.activeSessionID;
+      const publishedWhilePending = workspace.sessions.some((session) => session.id === id);
+      const callbackWhilePending = callbackDirectory;
+      resolveSetup(meta);
+      assertEqual(await creation, id);
+      assertEqual(activeWhilePending, "existing");
+      assertEqual(publishedWhilePending, false);
+      assertEqual(callbackWhilePending, undefined);
+      assertEqual(callbackDirectory, meta.directory);
+      assertEqual(calls[0][1], "/repo");
+      assertEqual(sessionDirectory(id), meta.directory);
+    });
+  });
+
+  it("blocks concurrent prompts while provisioning and propagates a provisioning failure", async () => {
+    await withSessionFixture(async (id) => {
+      let failSetup!: (error: Error) => void;
+      let started!: () => void;
+      const setupStarted = new Promise<void>((resolve) => { started = resolve; });
+      const setup = new Promise<WorktreeMeta>((_resolve, reject) => { failSetup = reject; });
+      hoxiAPI.createWorktree = () => { started(); return setup; };
+      let promptCount = 0;
+      hoxiAPI.sendPromptAsync = async () => { promptCount++; };
+      const creation = rejection(newIsolatedSession());
+      await setupStarted;
+      // The global SSE stream can expose the backend session before provisioning finishes.
+      setWorkspace("sessions", [await hoxiAPI.createSession()]);
+      const submission = rejection(submitSessionPrompt("must wait for isolation", id));
+      await Promise.resolve();
+      const sentWhilePending = promptCount;
+      const optimisticWhilePending = workspace.messagesBySession[id];
+      failSetup(new Error("checkout failed"));
+      await Promise.all([creation, submission]);
+      assertEqual(sentWhilePending, 0);
+      assertEqual(optimisticWhilePending, undefined);
+      assertEqual(promptCount, 0);
+    });
+  });
+
+  it("preserves the previous sandbox and reports errors when enabling isolation fails", async () => {
+    await withSessionFixture(async (id) => {
+      setWorkspace("activeSessionID", id);
+      setWorkspace("worktreeBySession", id, {
+        sessionID: id, isolated: false, directory: "/repo", createdAt: "test",
+      });
+      hoxiAPI.createWorktree = async () => { throw new Error("checkout failed"); };
+      await rejection(switchActiveSessionSandboxMode("worktree"));
+      assertEqual(workspace.worktreeBySession[id].isolated, false);
+      assertEqual(sessionDirectory(id), "/repo");
+      assertTrue(Boolean(workspace.sessionSetupError));
+    });
+  });
+
+  it("does not remove the worktree of a running task", async () => {
+    await withSessionFixture(async (id, meta) => {
+      setWorkspace("activeSessionID", id);
+      setWorkspace("worktreeBySession", id, meta);
+      setWorkspace("statusBySession", id, { type: "busy" });
+      let removeCount = 0;
+      hoxiAPI.removeWorktree = async () => { removeCount++; return { ok: true }; };
+      await rejection(switchActiveSessionSandboxMode("local"));
+      assertEqual(removeCount, 0);
+      assertEqual(sessionDirectory(id), meta.directory);
+    });
+  });
+});

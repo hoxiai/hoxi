@@ -1,5 +1,6 @@
 // web/src/store/workspace.ts
 import { createStore } from "solid-js/store";
+import { initialArchivedSessions, initialDismissedProjects } from "./workspace-storage";
 import type {
   MessageInfo,
   MessagePart,
@@ -56,6 +57,7 @@ export interface WorkspaceState {
   sessions: SessionInfo[];
   archivedSessionIDs: string[];
   activeSessionID: string | null;
+  sessionSetupError: string | null;
   agents: AgentInfo[];
   activeMode: string;
   sessionSandboxMode: "local" | "worktree";
@@ -126,18 +128,6 @@ export const SIDEBAR_PROJECT_MODE_KEY = "hoxi-sidebar-project-mode:v1";
 export const SESSION_SANDBOX_MODE_KEY = "hoxi-session-sandbox-mode:v1";
 export const ARCHIVED_SESSIONS_KEY = "hoxi-archived-sessions:v1";
 export const DISMISSED_PROJECTS_KEY = "hoxi-dismissed-projects:v1";
-
-function initialDismissedProjects(): string[] {
-  try {
-    const raw = localStorage.getItem(DISMISSED_PROJECTS_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) return parsed.map((p) => String(p));
-  } catch {
-    /* ignore */
-  }
-  return [];
-}
 
 function initialTheme(): "light" | "dark" {
   try {
@@ -252,30 +242,19 @@ function initialSessionSandboxMode(): "local" | "worktree" {
   return "local";
 }
 
-function initialArchivedSessions(): string[] {
-  try {
-    const raw = localStorage.getItem(ARCHIVED_SESSIONS_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) return parsed.filter((id) => typeof id === "string");
-  } catch {
-    /* ignore */
-  }
-  return [];
-}
-
 export const [workspace, setWorkspace] = createStore<WorkspaceState>({
   connected: false,
   rootDir: "",
   wsBaseURL: "",
   projects: [],
   savedWorkspaces: [],
-  dismissedProjects: initialDismissedProjects(),
+  dismissedProjects: initialDismissedProjects(DISMISSED_PROJECTS_KEY),
   recentProjects: initialRecentProjects(),
   projectOrder: initialProjectOrder(),
   sessions: [],
-  archivedSessionIDs: initialArchivedSessions(),
+  archivedSessionIDs: initialArchivedSessions(ARCHIVED_SESSIONS_KEY),
   activeSessionID: null,
+  sessionSetupError: null,
   agents: DEFAULT_AGENTS,
   activeMode: "build",
   sessionSandboxMode: initialSessionSandboxMode(),

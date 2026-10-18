@@ -11,6 +11,7 @@ import {
   clearReviewComments,
   openFileInInspector,
   removeReviewComment,
+  setWorkspace,
   workspace,
 } from "../../store/workspace";
 import ApprovalGateCard from "../approval/ApprovalGateCard";
@@ -73,6 +74,17 @@ export default function ComposerShelf() {
 
   return (
     <>
+      <Show when={workspace.sessionSetupError}>
+        {(message) => (
+          <div role="alert" class="mb-2 flex items-start gap-2 rounded-xl border border-[var(--danger-border)] bg-[var(--danger-surface)] px-3 py-2 text-xs text-[var(--danger-text)]">
+            <span class="flex-1 whitespace-pre-wrap break-words">{message()}</span>
+            <button type="button" aria-label={t("common.close")}
+              class="shrink-0 cursor-pointer" onClick={() => setWorkspace("sessionSetupError", null)}>
+              <X size={14} />
+            </button>
+          </div>
+        )}
+      </Show>
       {/* Kilo QuestionDock: Docked Interactive Questions (question.asked) */}
       <Show when={pendingQuestions().length > 0}>
         <div class="mb-2.5 space-y-2">

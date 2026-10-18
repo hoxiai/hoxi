@@ -63,6 +63,8 @@ export default function Composer() {
     setSwitchingSandbox(true);
     try {
       await switchActiveSessionSandboxMode(mode);
+    } catch (err) {
+      console.error("switch session sandbox failed:", err);
     } finally {
       setSwitchingSandbox(false);
     }
@@ -129,7 +131,7 @@ export default function Composer() {
       reviewComments().length > 0 ||
       imgAttach.images().length > 0 ||
       pasteCollapse.pastes().length > 0) &&
-    !sending();
+    !sending() && !switchingSandbox();
 
   const buildPayloadWithReviews = (): string => {
     const withPastes = pasteCollapse.expandIntoPrompt(text());
@@ -150,7 +152,10 @@ export default function Composer() {
   const onSend = async () => {
     const payload = buildPayloadWithReviews();
     const attachments = imgAttach.toPromptAttachments();
-    if ((!payload && attachments.length === 0) || sending()) return;
+    if ((!payload && attachments.length === 0) || sending() || switchingSandbox()) return;
+    const draftSessionID = sessionID();
+    const draftDirectory = workspace.rootDir;
+    const draft = { text: text(), images: imgAttach.images(), pastes: pasteCollapse.pastes() };
 
     if (text().trim()) {
       promptHistory.recordPrompt(text().trim());
@@ -172,6 +177,12 @@ export default function Composer() {
       clearReviewComments(id);
     } catch (err) {
       console.error("send prompt failed:", err);
+      if (workspace.rootDir === draftDirectory && (!draftSessionID || sessionID() === draftSessionID)) {
+        if (!text()) setText(draft.text);
+        imgAttach.replaceImages([...draft.images, ...imgAttach.images()]);
+        pasteCollapse.replacePastes([...draft.pastes, ...pasteCollapse.pastes()]);
+        requestAnimationFrame(adjustHeight);
+      }
     } finally {
       setSending(false);
     }

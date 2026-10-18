@@ -56,7 +56,9 @@ export function WorkspaceGitSettingsTab() {
                 tip: () => t("settings.sandboxWorktreeDesc"),
               },
             ]}
-            onChange={(val) => void switchActiveSessionSandboxMode(val)}
+            onChange={(val) => void switchActiveSessionSandboxMode(val).catch(() => {
+              // The shared session error is displayed in the composer shelf.
+            })}
           />
         </SettingRow>
 

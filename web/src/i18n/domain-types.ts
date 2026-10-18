@@ -279,6 +279,10 @@ export interface TimelineI18n {
   sandboxWorktreeMode: string;
   sandboxLocalTooltip: string;
   sandboxWorktreeTooltip: string;
+  sessionSetupFailed: string;
+  worktreeIsolationUnavailable: string;
+  worktreeBusy: string;
+  sessionUnavailable: string;
   loadEarlierTurns: string;
   loadAllEarlierTurns: string;
   hiddenTurnsHint: string;

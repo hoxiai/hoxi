@@ -5,24 +5,17 @@ import type { PermissionRequest } from "../services/sse-types";
 import { appSettings, triggerDesktopNotification, updateAppSetting } from "./settings";
 import { setWorkspace, workspace } from "./workspace";
 import { sessionDirectory } from "./workspace-sessions";
+import {
+  commandCandidates as extractPermissionCommands,
+  isDestructivePermissionRequest,
+  isSafeCommandPermissionRequest,
+  READ_PERMISSIONS,
+} from "../../../.opencode/lib/permission-policy.js";
+
+export { extractPermissionCommands, isDestructivePermissionRequest, isSafeCommandPermissionRequest };
 
 export type ApprovalMode = "auto" | "smart" | "manual";
 
-const DESTRUCTIVE_RE =
-  /\b(rm|sudo|chmod|chown|mkfs|dd|diskutil|killall|reboot|shutdown)\b|[>|]\s*\/etc\/|git\s+push\b[^\n;&|]*(--force\b|-f\b|--force-with-lease\b)|git\s+reset\b[^\n;&|]*--hard\b|git\s+clean\b[^\n;&|]*\s-[a-z]*f|\bfind\b[^\n;&|]*\s-(delete|exec|ok)\b|\b(curl|wget)\b[^\n|]*\|\s*(sh|bash|zsh)\b/i;
-
-const SAFE_COMMANDS = [
-  /^(ls|pwd|cat|head|tail|wc|find|grep|rg|fd)\b/,
-  /^git\s+(status|diff|log|show|branch|rev-parse|worktree)\b/,
-  /^go\s+(test|vet|build|list|env|version)\b/,
-  /^npm\s+(test|run\s+build|run\s+lint|run\s+check)\b/,
-  /^pnpm\s+(test|build|lint|check)\b/,
-  /^cargo\s+(check|test)\b/,
-  /^(pytest|tsc|npx\s+tsc)\b/,
-  /^node\s+-v\b/,
-];
-
-const READ_PERMISSIONS = new Set(["read", "glob", "grep", "list", "lsp", "todoread"]);
 const SMART_AUTO_PERMISSIONS = new Set([
   "read",
   "glob",
@@ -40,74 +33,6 @@ const SMART_AUTO_PERMISSIONS = new Set([
   "task",
   "skill",
 ]);
-
-const SHELL_SPLIT_RE = /\s*(?:&&|\|\||;|\|(?!\|)|(?<!>)&(?!>)|\n|\$\(|`)\s*/;
-
-function pushText(out: string[], value: unknown) {
-  if (typeof value === "string") {
-    const text = value.trim();
-    if (text) out.push(text);
-    return;
-  }
-  if (Array.isArray(value)) {
-    for (const item of value) pushText(out, item);
-  }
-}
-
-export function extractPermissionCommands(req: Partial<PermissionRequest> & Record<string, any>): string[] {
-  const out: string[] = [];
-  pushText(out, req?.patterns);
-  pushText(out, req?.pattern);
-  const meta = (req?.metadata || {}) as Record<string, unknown>;
-  pushText(out, meta.command);
-  pushText(out, meta.cmd);
-  pushText(out, meta.commands);
-  if (out.length === 0) pushText(out, req?.title);
-  return out;
-}
-
-function splitCommandChain(command: string): string[] {
-  return String(command || "")
-    .split(SHELL_SPLIT_RE)
-    .map((segment) => segment.replace(/\)\s*$/, "").trim())
-    .filter(Boolean);
-}
-
-function isSafeSegment(segment: string): boolean {
-  if (/\s-(exec|delete|ok|fprint)\b/.test(segment)) return false;
-  if (/[>|]\s*\/etc\//.test(segment)) return false;
-  if (/`|\$\(/.test(segment)) return false;
-  const withoutHarmlessRedirect = segment
-    .replace(/\s+\d*>>?\s*\/dev\/null\b/g, "")
-    .replace(/\s+2>&1\b/g, "")
-    .trim();
-  if (/[<>]/.test(withoutHarmlessRedirect)) return false;
-  return SAFE_COMMANDS.some((re) => re.test(withoutHarmlessRedirect));
-}
-
-/**
- * Safety Gate (Rule 6): Destructive shell commands and doom_loop must NEVER auto-pass
- * regardless of the user's selected ApprovalMode.
- */
-export function isDestructivePermissionRequest(
-  req: Partial<PermissionRequest> & Record<string, any>
-): boolean {
-  const perm = String(req?.permission || req?.type || "").toLowerCase();
-  if (perm === "doom_loop") return true;
-  const commands = extractPermissionCommands(req);
-  const blob = [perm, ...commands].join("\n");
-  return DESTRUCTIVE_RE.test(blob);
-}
-
-export function isSafeCommandPermissionRequest(
-  req: Partial<PermissionRequest> & Record<string, any>
-): boolean {
-  if (isDestructivePermissionRequest(req)) return false;
-  const commands = extractPermissionCommands(req);
-  if (commands.length === 0) return false;
-  const segments = commands.flatMap(splitCommandChain);
-  return segments.length > 0 && segments.every(isSafeSegment);
-}
 
 export function shouldAutoApprovePermission(
   req: Partial<PermissionRequest> & Record<string, any>,
