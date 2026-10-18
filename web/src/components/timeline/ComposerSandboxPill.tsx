@@ -19,9 +19,11 @@ import {
   openDiffInInspector,
   refreshWorktreeStatus,
   resolveEffectiveCommitModel,
+  sessionRuntimeForID,
   setCommitModelSpec,
   workspace,
 } from "../../store/workspace";
+import { isRunnerSessionID } from "../../services/api";
 import { t } from "../../i18n";
 
 export function ComposerSandboxPill(props: {
@@ -64,6 +66,9 @@ export function ComposerSandboxPill(props: {
     return workspace.worktreeBySession[id || "__root__"];
   });
 
+  const isRunner = createMemo(
+    () => isRunnerSessionID(props.sessionID) || sessionRuntimeForID(props.sessionID) !== "opencode"
+  );
   const gitBranch = createMemo(() => activeWorktree()?.branch || "");
   const changedFilesCount = createMemo(() => {
     const key = props.sessionID || "__root__";
@@ -121,9 +126,11 @@ export function ComposerSandboxPill(props: {
               : "text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
         }`}
         title={
-          props.mode === "worktree"
-            ? t("timeline.sandboxWorktreeTooltip")
-            : t("timeline.sandboxLocalTooltip")
+          isRunner()
+            ? t("timeline.runnerSafetyNotice")
+            : props.mode === "worktree"
+              ? t("timeline.sandboxWorktreeTooltip")
+              : t("timeline.sandboxLocalTooltip")
         }
       >
         <Show
@@ -167,12 +174,13 @@ export function ComposerSandboxPill(props: {
           <div class="space-y-0.5">
             <button
               type="button"
-              disabled={props.switching || props.busy}
+              disabled={props.switching || props.busy || isRunner()}
+              title={isRunner() ? t("timeline.runnerSandboxRequired") : undefined}
               onClick={() => {
                 props.onToggle("local");
                 setOpen(false);
               }}
-              class={`w-full flex items-start gap-2.5 rounded-xl px-2.5 py-2 text-left transition-colors cursor-pointer disabled:opacity-50 ${
+              class={`w-full flex items-start gap-2.5 rounded-xl px-2.5 py-2 text-left transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
                 props.mode === "local"
                   ? "bg-[var(--accent-surface)] text-[var(--text-primary)]"
                   : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
@@ -192,7 +200,7 @@ export function ComposerSandboxPill(props: {
                   {t("timeline.sandboxLocalMode")}
                 </div>
                 <p class="mt-0.5 text-[11px] leading-snug text-[var(--text-muted)]">
-                  {t("timeline.sandboxLocalTooltip")}
+                  {isRunner() ? t("timeline.runnerSandboxRequired") : t("timeline.sandboxLocalTooltip")}
                 </p>
               </div>
               <Show when={props.mode === "local"}>
@@ -227,7 +235,7 @@ export function ComposerSandboxPill(props: {
                   {t("timeline.sandboxWorktreeMode")}
                 </div>
                 <p class="mt-0.5 text-[11px] leading-snug text-[var(--text-muted)]">
-                  {t("timeline.sandboxWorktreeTooltip")}
+                  {isRunner() ? t("timeline.runnerSafetyNotice") : t("timeline.sandboxWorktreeTooltip")}
                 </p>
               </div>
               <Show when={props.mode === "worktree"}>
@@ -374,12 +382,13 @@ export function ComposerSandboxPill(props: {
               <Show when={props.sessionID && props.onFork}>
                 <button
                   type="button"
-                  disabled={props.forking}
+                  disabled={props.forking || isRunner()}
+                  title={isRunner() ? t("timeline.runnerFeatureUnsupported") : undefined}
                   onClick={() => {
                     props.onFork?.();
                     setOpen(false);
                   }}
-                  class="w-full flex items-center justify-between gap-2 rounded-xl px-2.5 py-1.5 text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] disabled:opacity-50 transition-colors cursor-pointer"
+                  class="w-full flex items-center justify-between gap-2 rounded-xl px-2.5 py-1.5 text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
                 >
                   <div class="flex items-center gap-2 min-w-0">
                     <Show

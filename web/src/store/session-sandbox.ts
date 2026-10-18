@@ -1,9 +1,15 @@
 import { t } from "../i18n";
-import { hoxiAPI, type WorktreeMeta } from "../services/api";
+import {
+  hoxiAPI,
+  isRunnerSessionID,
+  resolveRunnerRuntimeForProvider,
+  type WorktreeMeta,
+} from "../services/api";
 import type { SessionInfo } from "../services/sse-types";
 import { appSettings, updateAppSetting } from "./settings";
 import { setWorkspace, workspace } from "./workspace";
 import { initializeSessionAI } from "./session-ai";
+import { sessionRuntimeForID } from "./workspace-providers";
 import {
   isSessionBusy,
   refreshWorktreeStatus,
@@ -66,13 +72,36 @@ export async function newIsolatedSession(
   const directory = workspace.rootDir;
   const initialAI = { ...workspace.defaultAI };
   const previousSessionID = workspace.activeSessionID;
-  const shouldIsolate = options?.isolated ?? (appSettings.defaultSandboxMode === "worktree");
+  const runtime = resolveRunnerRuntimeForProvider(
+    initialAI.model?.providerID,
+    Boolean(workspace.hoxiProviders?.[initialAI.model?.providerID || ""])
+  );
+  const isRunner = runtime === "antigravity" || runtime === "claude-code";
+  const shouldIsolate = isRunner || (options?.isolated ?? (appSettings.defaultSandboxMode === "worktree"));
   let session: SessionInfo | undefined;
   setWorkspace("sessionSetupError", null);
   try {
     if (!directory) throw new Error(t("timeline.selectFolderHint"));
-    session = await hoxiAPI.createSession(title, directory || undefined);
-    if (shouldIsolate) {
+    session = await hoxiAPI.createSession(title, directory || undefined, {
+      runtime,
+      modelID: initialAI.model?.modelID,
+      providerID: initialAI.model?.providerID,
+      mode: initialAI.agent,
+    });
+    if (isRunner) {
+      const wtDir = session.directory || directory;
+      if (!wtDir || wtDir === directory) {
+        throw new Error(t("timeline.worktreeIsolationUnavailable"));
+      }
+      setWorkspace("worktreeBySession", session.id, {
+        sessionID: session.id,
+        isolated: true,
+        directory: wtDir,
+        branch: workspace.worktreeBySession["__root__"]?.branch,
+        createdAt: new Date().toISOString(),
+      });
+      void refreshWorktreeStatus(session.id);
+    } else if (shouldIsolate) {
       await prepareWorktree(session.id, directory);
     } else {
       setWorkspace("worktreeBySession", session.id, localMeta(session.id, directory));
@@ -103,6 +132,11 @@ export async function newIsolatedSession(
 
 export async function switchActiveSessionSandboxMode(mode: "local" | "worktree"): Promise<void> {
   const id = workspace.activeSessionID;
+  if (mode === "local" && (isRunnerSessionID(id) || sessionRuntimeForID(id) !== "opencode")) {
+    const err = new Error(t("timeline.runnerSandboxRequired"));
+    reportSetupError(err);
+    throw err;
+  }
   if (!id) {
     // Draft sandbox selection must not provision a session before the first send.
     updateAppSetting("defaultSandboxMode", mode);

@@ -164,7 +164,7 @@ export default function TaskTimelineBar(props: {
   });
   onMount(() => {
     const dismiss = (event: PointerEvent) => {
-      if (actions && !actions.contains(event.target as Node)) {
+      if (actions && !actions.contains(event.target as Node) && !rail?.contains(event.target as Node)) {
         setNavOpen(false);
         props.onCloseSearch();
       }

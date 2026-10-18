@@ -276,6 +276,16 @@ export async function bootstrapProjectSessions(directory: string, selectInitial 
   );
   const titledSessions = sessions.map(preserveSessionTitle);
   setWorkspace("sessions", titledSessions);
+  for (const s of titledSessions) {
+    if ((s.runtime === "antigravity" || s.runtime === "claude-code") && s.directory && !workspace.worktreeBySession[s.id]) {
+      setWorkspace("worktreeBySession", s.id, {
+        sessionID: s.id,
+        isolated: true,
+        directory: s.directory,
+        createdAt: new Date(s.time?.created || Date.now()).toISOString(),
+      });
+    }
+  }
   void refreshWorktreeStatus("__root__");
   void syncSessionStatuses(cleaned);
   if (selectInitial) await selectInitialProjectSession(titledSessions, cleaned);

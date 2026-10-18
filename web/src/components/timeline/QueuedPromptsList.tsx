@@ -8,6 +8,7 @@ import {
   sendQueuedPromptNow,
   workspace,
 } from "../../store/workspace";
+import { isRunnerSessionID } from "../../services/api";
 import { TextShimmer } from "../icons";
 import { t } from "../../i18n";
 
@@ -71,9 +72,10 @@ export default function QueuedPromptsList(props: { sessionID: string | null }) {
 
                   <button
                     type="button"
+                    disabled={isRunnerSessionID(sid())}
                     onClick={() => void sendQueuedPromptNow(sid(), item.id)}
-                    title={t("timeline.queueSendNowTooltip")}
-                    class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11.5px] text-[var(--text-muted)] hover:text-[var(--accent-primary)] transition-colors cursor-pointer"
+                    title={isRunnerSessionID(sid()) ? t("timeline.runnerFeatureUnsupported") : t("timeline.queueSendNowTooltip")}
+                    class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11.5px] text-[var(--text-muted)] hover:text-[var(--accent-primary)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
                   >
                     <ArrowUp size={11} />
                     <span>{t("timeline.queueSendNow")}</span>

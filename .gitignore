@@ -12,7 +12,20 @@ web/dist/
 /hoxi
 /cmd/hoxi/hoxi
 build/bin/
+build/preflight/
 
 # Local session worktrees & runtime state
 .hoxi/
 .opencode/memory/sessions/
+
+# Environment & Secrets
+.env
+.env.local
+.env.*.local
+
+# Internal website release & publishing scripts (local maintainer only)
+scripts/publish-release-to-posts.mjs
+scripts/publish-*.mjs
+.env.example
+
+

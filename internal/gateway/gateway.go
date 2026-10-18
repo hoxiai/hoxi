@@ -20,6 +20,7 @@ import (
 	"github.com/hoxiai/hoxi/internal/handoff"
 	"github.com/hoxiai/hoxi/internal/leaderboard"
 	"github.com/hoxiai/hoxi/internal/provider"
+	"github.com/hoxiai/hoxi/internal/runner"
 	"github.com/hoxiai/hoxi/internal/statusbar"
 	"github.com/hoxiai/hoxi/internal/updater"
 	"github.com/hoxiai/hoxi/internal/workspace"
@@ -38,6 +39,7 @@ type Gateway struct {
 	workspaces            *workspace.Store
 	providers             *provider.Service
 	handoff               *handoff.Service
+	runner                *runner.Service
 	browser               *browser.Service
 	auth                  *auth.Service
 	updater               *updater.Checker
@@ -47,8 +49,6 @@ type Gateway struct {
 	originMu              sync.RWMutex
 	uiOrigins             map[string]bool
 }
-
-type desktopGateway = Gateway
 
 func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statusbar.Tracker) *Gateway {
 	targetURL, _ := url.Parse("http://127.0.0.1:" + strconv.Itoa(openCodePort))
@@ -91,8 +91,10 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 	workspaces := workspace.NewStore(rootDir)
 	rootDir = workspaces.PrimaryRootDir(rootDir)
 
+	wtMgr := worktree.NewManager(rootDir)
 	providers := provider.NewService(openCodePort, password, rootDir, proxy)
 	handoffSvc := handoff.NewService(openCodePort, password, rootDir, providers)
+	runnerSvc := runner.NewService(rootDir, wtMgr, status, "")
 	authSvc := auth.NewService(nil)
 	updaterSvc := updater.NewChecker("0.1.0", nil)
 	leaderboardSvc := leaderboard.NewService("", nil)
@@ -104,10 +106,11 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 		proxy:        proxy,
 		mux:          http.NewServeMux(),
 		status:       status,
-		worktrees:    worktree.NewManager(rootDir),
+		worktrees:    wtMgr,
 		workspaces:   workspaces,
 		providers:    providers,
 		handoff:      handoffSvc,
+		runner:       runnerSvc,
 		browser:      browser.New(),
 		auth:         authSvc,
 		updater:      updaterSvc,
@@ -120,7 +123,12 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 
 func (g *Gateway) SetBrowserAgentToken(token string) { g.browser.SetAgentToken(token) }
 
-func (g *Gateway) CloseBrowser() { g.browser.Close() }
+func (g *Gateway) CloseBrowser() {
+	g.browser.Close()
+	if g.runner != nil {
+		g.runner.CloseAll()
+	}
+}
 
 func (g *Gateway) SetWSBaseURL(wsURL string) {
 	g.wsBaseURL = wsURL
@@ -139,11 +147,14 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !g.allowRequest(w, r) {
 		return
 	}
+	if !g.guardSessionScope(w, r) {
+		return
+	}
 	if origin := r.Header.Get("Origin"); origin != "" {
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Add("Vary", "Origin")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Hoxi-Browser")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Hoxi-Browser, X-Hoxi-Directory")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -194,6 +205,9 @@ func (g *Gateway) registerRoutes(distFS fs.FS) {
 	g.worktrees.RegisterRoutes(g.mux)
 	g.workspaces.RegisterRoutes(g.mux)
 	g.browser.RegisterRoutes(g.mux)
+	if g.runner != nil {
+		g.runner.RegisterRoutes(g.mux)
+	}
 
 	if g.auth != nil {
 		g.mux.Handle("/api/hoxi/auth", auth.NewHTTPHandler(g.auth))

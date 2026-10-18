@@ -191,7 +191,7 @@ export interface ProviderModelInfo {
 export interface ProviderInfo {
   id: string;
   name: string;
-  source?: "env" | "config" | "custom" | "api";
+  source?: "env" | "config" | "custom" | "api" | "runner";
   env?: string[];
   key?: string;
   npm?: string;

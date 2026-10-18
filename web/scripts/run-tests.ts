@@ -11,6 +11,7 @@ import "../src/__tests__/new-thread.test";
 import "../src/__tests__/session-ai.test";
 import "../src/__tests__/session-title.test";
 import "../src/__tests__/timeline-scroll.test";
+import "../src/__tests__/session-scroll.test";
 import "../src/__tests__/reading-position.test";
 import "../src/__tests__/transcript-controls.test";
 import "../src/__tests__/session-history.test";

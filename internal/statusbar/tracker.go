@@ -36,6 +36,43 @@ func (t *Tracker) SetAvailable(avail bool) {
 	Update(summary)
 }
 
+func (t *Tracker) SetSessionBusy(sessionID string, busy bool) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return
+	}
+	t.mu.Lock()
+	if busy {
+		t.busySessions[sessionID] = true
+	} else {
+		delete(t.busySessions, sessionID)
+		for reqID, sid := range t.pendingApprovals {
+			if sid == sessionID {
+				delete(t.pendingApprovals, reqID)
+			}
+		}
+	}
+	summary := t.snapshotLocked()
+	t.mu.Unlock()
+	Update(summary)
+}
+
+func (t *Tracker) SetPendingApproval(requestID, sessionID string, pending bool) {
+	requestID = strings.TrimSpace(requestID)
+	if requestID == "" {
+		return
+	}
+	t.mu.Lock()
+	if pending {
+		t.pendingApprovals[requestID] = sessionID
+	} else {
+		delete(t.pendingApprovals, requestID)
+	}
+	summary := t.snapshotLocked()
+	t.mu.Unlock()
+	Update(summary)
+}
+
 func (t *Tracker) Snapshot() Summary {
 	t.mu.Lock()
 	defer t.mu.Unlock()

@@ -74,6 +74,17 @@ describe("Timeline layout following", () => {
       assertEqual(scroller.scrollTop, 800);
       flush();
 
+      // Streaming growth can emit a scroll event before the resize callback.
+      // Staying at the same offset must not be mistaken for reading history.
+      scroller.scrollHeight = 1400;
+      assertEqual(scroll.onScroll(), false);
+      resized();
+      assertEqual(scroller.scrollTop, 1000);
+      flush();
+      scroller.scrollHeight = 1200;
+      resized();
+      flush();
+
       scroller.scrollTop = 200;
       assertEqual(scroll.onScroll(), true);
       assertEqual(scroll.awayFromBottom(), true);
@@ -81,7 +92,7 @@ describe("Timeline layout following", () => {
       assertEqual(frames.size, 0);
       assertEqual(scroller.scrollTop, 200);
 
-      // A session switch resumes even when its text lengths equal the previous session.
+      // Explicitly returning to latest resumes following after reading history.
       scroll.resume();
       flush();
       assertEqual(scroller.scrollTop, 800);

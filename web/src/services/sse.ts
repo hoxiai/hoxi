@@ -33,6 +33,7 @@ export function connectEventStream(handlers: SSEHandlers, directory?: string): (
     ? `/event?directory=${encodeURIComponent(directory)}`
     : "/global/event";
   const source = new EventSource(url);
+  const runnerSource = new EventSource("/api/hoxi/runner/event");
 
   const infoMap = new Map<string, MessageInfo>();
   const partMap = new Map<string, MessagePart>();
@@ -88,7 +89,7 @@ export function connectEventStream(handlers: SSEHandlers, directory?: string): (
     handlers.onConnectionChange?.(false);
   };
 
-  source.onmessage = (msg) => {
+  const handleMessage = (msg: MessageEvent) => {
     if (!msg.data) return;
     try {
       const parsed = JSON.parse(msg.data);
@@ -140,6 +141,9 @@ export function connectEventStream(handlers: SSEHandlers, directory?: string): (
     }
   };
 
+  source.onmessage = handleMessage;
+  runnerSource.onmessage = handleMessage;
+
   return () => {
     if (rafID !== null) {
       cancelAnimationFrame(rafID);
@@ -149,5 +153,6 @@ export function connectEventStream(handlers: SSEHandlers, directory?: string): (
     partMap.clear();
     deltaMap.clear();
     source.close();
+    runnerSource.close();
   };
 }

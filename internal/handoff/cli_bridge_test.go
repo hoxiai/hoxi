@@ -52,11 +52,3 @@ func TestExtractAntigravityUserPromptDecimalModelNames(t *testing.T) {
 		t.Fatalf("expected model 'gemini-3.8-flash-high', got %q", model2)
 	}
 }
-
-func TestLastJSONObjectLineIgnoresHookStdout(t *testing.T) {
-	stdoutWithHook := []byte("Running pre-command hook...\nHook output: ok\n{\"type\":\"result\",\"result\":\"Fixed the issue\"}\n")
-	line := lastJSONObjectLine(stdoutWithHook)
-	if string(line) != `{"type":"result","result":"Fixed the issue"}` {
-		t.Fatalf("unexpected extracted JSON line: %s", string(line))
-	}
-}

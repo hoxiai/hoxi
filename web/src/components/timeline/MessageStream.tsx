@@ -10,6 +10,7 @@ import {
   Show,
 } from "solid-js";
 import type { MessagePart, SessionStatus, ToolPart } from "../../services/sse-types";
+import { isRunnerSessionID } from "../../services/api";
 import {
   appSettings,
   forkFromMessage,
@@ -40,6 +41,7 @@ import { t } from "../../i18n";
 import { createTimelineScroll } from "./timeline-scroll";
 import { createTranscriptControls } from "./transcript-controls";
 import { createReadingPositionTracker } from "./reading-position";
+import { createSessionScroll } from "./session-scroll";
 
 export default function MessageStream(props: { hidden?: boolean }) {
   let scroller: HTMLDivElement | undefined;
@@ -154,33 +156,27 @@ export default function MessageStream(props: { hidden?: boolean }) {
     };
   });
 
+  const sessionScroll = createSessionScroll({
+    sessionID: () => workspace.activeSessionID,
+    turnIDs: () => turns().map((turn) => turn.info.id),
+    loading: () => isLoadingSession(),
+    scroller: () => scroller,
+    content: () => content,
+    scroll,
+    ensureTurnVisible: turnWindow.ensureTurnVisible,
+  });
   let previousSessionID: string | null = null;
-  let wasBusy = false;
-  let prevUserTurnCount = 0;
-  let prevQueuedLen = 0;
+  let previousPromptID: string | undefined;
 
   createEffect(() => {
     const sessionID = workspace.activeSessionID;
-    const busy = isSessionBusy();
-    const userTurnCount = turns().reduce(
-      (acc, t) => (t.info.role === "user" ? acc + 1 : acc),
-      0
-    );
-    const queuedLen = sessionID
-      ? (workspace.queuedPromptsBySession[sessionID]?.length ?? 0)
-      : 0;
-    if (
-      sessionID !== previousSessionID ||
-      (busy && !wasBusy) ||
-      userTurnCount > prevUserTurnCount ||
-      queuedLen > prevQueuedLen
-    ) {
+    const promptID = turns().findLast((turn) => turn.info.role === "user")?.info.id;
+    if (sessionID === previousSessionID && promptID !== previousPromptID && promptID?.startsWith("optimistic_")) {
+      sessionScroll.interrupt();
       scroll.resume();
     }
     previousSessionID = sessionID;
-    wasBusy = busy;
-    prevUserTurnCount = userTurnCount;
-    prevQueuedLen = queuedLen;
+    previousPromptID = promptID;
   });
 
   createEffect(() => {
@@ -194,6 +190,7 @@ export default function MessageStream(props: { hidden?: boolean }) {
     if (scroll.onScroll()) {
       turnWindow.handleTopScroll(scroller);
     }
+    sessionScroll.capture();
   };
 
   const onRevertToMessage = async (messageID: string) => {
@@ -235,6 +232,7 @@ export default function MessageStream(props: { hidden?: boolean }) {
   };
 
   const scrollToTurn = (messageID: string) => {
+    sessionScroll.interrupt();
     scroll.pause();
     turnWindow.ensureTurnVisible(messageID);
     queueMicrotask(() => {
@@ -303,17 +301,18 @@ export default function MessageStream(props: { hidden?: boolean }) {
     <div
       ref={scroller}
       onScroll={onScroll}
-      onWheel={() => transcriptControls.markIntent()}
-      onTouchMove={() => transcriptControls.markIntent()}
-      onPointerDown={() => transcriptControls.startPointer()}
+      onWheel={() => { sessionScroll.interrupt(); transcriptControls.markIntent(); }}
+      onTouchMove={() => { sessionScroll.interrupt(); transcriptControls.markIntent(); }}
+      onPointerDown={() => { sessionScroll.interrupt(); transcriptControls.startPointer(); }}
       onPointerUp={() => transcriptControls.endPointer()}
       onPointerCancel={() => transcriptControls.endPointer()}
       onKeyDown={(event) => {
         if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) {
           transcriptControls.markIntent();
+          sessionScroll.interrupt();
         }
       }}
-      class="relative h-full min-h-0 overflow-y-auto overflow-x-hidden pr-12"
+      class="relative h-full min-h-0 overflow-y-auto overflow-x-hidden"
     >
 
       {/* Top Soft Scroll Fade (Kilo style) */}
@@ -419,9 +418,10 @@ export default function MessageStream(props: { hidden?: boolean }) {
 
                         <button
                           type="button"
-                          class="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[12px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+                          disabled={isRunnerSessionID(workspace.activeSessionID)}
+                          class="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[12px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
                           onClick={() => void onForkFromMessage(turn.info.id)}
-                          title={t("timeline.forkTooltip")}
+                          title={isRunnerSessionID(workspace.activeSessionID) ? t("timeline.runnerFeatureUnsupported") : t("timeline.forkTooltip")}
                         >
                           <Icon name="fork" size="small" />
                           <span>{t("timeline.forkBtn")}</span>
@@ -429,9 +429,10 @@ export default function MessageStream(props: { hidden?: boolean }) {
 
                         <button
                           type="button"
-                          class="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[12px] text-[var(--text-muted)] hover:text-[var(--warn-text)] hover:bg-[var(--warn-surface)] transition-colors cursor-pointer"
+                          disabled={isRunnerSessionID(workspace.activeSessionID)}
+                          class="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[12px] text-[var(--text-muted)] hover:text-[var(--warn-text)] hover:bg-[var(--warn-surface)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
                           onClick={() => void onRevertToMessage(turn.info.id)}
-                          title={t("timeline.revertTooltip")}
+                          title={isRunnerSessionID(workspace.activeSessionID) ? t("timeline.runnerFeatureUnsupported") : t("timeline.revertTooltip")}
                         >
                           <Icon name="arrow-undo-down" size="small" />
                           <span>{t("timeline.revertBtn")}</span>
@@ -470,7 +471,7 @@ export default function MessageStream(props: { hidden?: boolean }) {
     </div>
           <button
             type="button"
-            onClick={() => scroll.jumpToBottom()}
+            onClick={() => { sessionScroll.interrupt(); scroll.jumpToBottom(); }}
             title={t("timeline.scrollToBottom")}
             aria-label={t("timeline.scrollToBottom")}
             aria-hidden={!scroll.awayFromBottom()}

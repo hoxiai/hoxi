@@ -24,36 +24,50 @@ func (g *Service) syncLocalCLIBridgeURLs() {
 	if provMap == nil {
 		return
 	}
-	bridges := map[string]string{
-		"grok-cli":    "/api/hoxi/bridge/grok-cli/v1",
+	changed := false
+	deprecatedBridges := map[string]string{
 		"claude-code": "/api/hoxi/bridge/claude-code/v1",
 		"google":      "/api/hoxi/bridge/gemini-antigravity/v1",
 	}
-	changed := false
-	for pid, suffix := range bridges {
+	for pid, suffix := range deprecatedBridges {
 		pObj, ok := provMap[pid].(map[string]interface{})
 		if !ok {
 			continue
 		}
 		opts, _ := pObj["options"].(map[string]interface{})
-		if opts == nil {
+		curURL, _ := opts["baseURL"].(string)
+		curKey, _ := opts["apiKey"].(string)
+		if strings.Contains(curURL, suffix) ||
+			curKey == "hoxi-local-antigravity-bridge" ||
+			curKey == "hoxi-local-claude-code-bridge" ||
+			curKey == "antigravity-local-oauth" ||
+			curKey == "claude-code-local-oauth" ||
+			strings.HasPrefix(curKey, "ya29.") ||
+			strings.HasPrefix(curKey, "sk-ant-oat") {
+			delete(provMap, pid)
+			changed = true
 			continue
 		}
-		expected := g.httpBridgeBaseURL() + suffix
-		if cur, _ := opts["baseURL"].(string); pid != "grok-cli" && strings.Contains(cur, suffix) {
-			models, _ := pObj["models"].(map[string]interface{})
-			for _, model := range models {
-				if m, ok := model.(map[string]interface{}); ok && m["tool_call"] != false {
-					m["tool_call"] = false
+		if models, ok := pObj["models"].(map[string]interface{}); ok {
+			for mid := range models {
+				if strings.ContainsAny(mid, " ()") {
+					delete(models, mid)
 					changed = true
 				}
 			}
 		}
-		if cur, _ := opts["baseURL"].(string); strings.Contains(cur, suffix) && cur != expected {
-			opts["baseURL"] = expected
-			pObj["options"] = opts
-			provMap[pid] = pObj
-			changed = true
+	}
+
+	if pObj, ok := provMap["grok-cli"].(map[string]interface{}); ok {
+		if opts, ok := pObj["options"].(map[string]interface{}); ok {
+			suffix := "/api/hoxi/bridge/grok-cli/v1"
+			expected := g.httpBridgeBaseURL() + suffix
+			if cur, _ := opts["baseURL"].(string); strings.Contains(cur, suffix) && cur != expected {
+				opts["baseURL"] = expected
+				pObj["options"] = opts
+				provMap["grok-cli"] = pObj
+				changed = true
+			}
 		}
 	}
 	if changed {
@@ -70,7 +84,7 @@ func (g *Service) handleLocalCLIStatus(w http.ResponseWriter, r *http.Request) {
 	hoxiMap := g.loadHoxiProvidersMap()
 	detections := []func() LocalCLIStatusItem{
 		func() LocalCLIStatusItem { return detectGrokCLIStatus(hoxiMap) },
-		func() LocalCLIStatusItem { return detectClaudeCLIStatus(hoxiMap) },
+		func() LocalCLIStatusItem { return detectClaudeCLIStatus(g, hoxiMap) },
 		func() LocalCLIStatusItem { return detectCodexCLIStatus(g, hoxiMap) },
 		func() LocalCLIStatusItem { return detectGeminiCLIStatus(g, hoxiMap) },
 	}

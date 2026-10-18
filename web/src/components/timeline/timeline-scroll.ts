@@ -9,6 +9,7 @@ export function createTimelineScroll(
   let frame: number | undefined;
   let releaseFrame: number | undefined;
   let programmatic = false;
+  let previousScrollTop = 0;
   const [awayFromBottom, setAwayFromBottom] = createSignal(false);
 
   const updatePosition = () => {
@@ -24,6 +25,7 @@ export function createTimelineScroll(
     following = true;
     programmatic = true;
     scroller.scrollTop = scroller.scrollHeight;
+    previousScrollTop = scroller.scrollTop;
     updatePosition();
     if (releaseFrame !== undefined) cancelAnimationFrame(releaseFrame);
     releaseFrame = requestAnimationFrame(() => {
@@ -45,6 +47,7 @@ export function createTimelineScroll(
   return {
     schedule,
     awayFromBottom,
+    updatePosition,
     jumpToBottom,
     resume() {
       following = true;
@@ -52,12 +55,18 @@ export function createTimelineScroll(
     },
     pause() {
       following = false;
+      programmatic = false;
     },
     onScroll() {
       const scroller = getScroller();
       if (!scroller || programmatic || scroller.clientHeight === 0) return false;
+      const movedUp = scroller.scrollTop < previousScrollTop;
+      previousScrollTop = scroller.scrollTop;
       updatePosition();
-      following = !awayFromBottom();
+      // Content growth can emit scroll events before ResizeObserver follows it.
+      // Only upward movement should interrupt an already-following reader.
+      if (!awayFromBottom()) following = true;
+      else if (movedUp) following = false;
       return !following;
     },
     observe(content: HTMLDivElement) {

@@ -232,4 +232,12 @@ export const timeline = {
     "This checkpoint includes code edits across {count} files. Revert both conversation and code?",
   revertConfirmBothBtn: "Revert Code & Chat",
   revertForkKeepCodeBtn: "Fork Here (Keep Current Code)",
+  runnerFeatureUnsupported: "Not supported by this runtime",
+  runnerSandboxRequired:
+    "Local CLI Runner sessions always run inside an isolated Git worktree sandbox (--sandbox)",
+  runnerSafetyNotice:
+    "Protected by official CLI --sandbox & --mode policy inside this session's Git worktree",
+  runtimeAntigravityLocal: "Antigravity (Local)",
+  runtimeClaudeCodeLocal: "Claude Code (Local)",
+  runtimeOpenCode: "OpenCode",
 };

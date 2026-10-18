@@ -230,4 +230,12 @@ export const timeline: TimelineI18n = {
     "该节点之后包含 {count} 个文件的代码修改，确认将对话与代码一并回滚吗？",
   revertConfirmBothBtn: "回滚对话与代码",
   revertForkKeepCodeBtn: "从此处分叉（保留当前代码）",
+  runnerFeatureUnsupported: "该运行时暂不支持",
+  runnerSandboxRequired:
+    "本地 CLI 运行时会话强制在独立的 Git Worktree 沙盒 (--sandbox) 中运行",
+  runnerSafetyNotice:
+    "安全门控由官方 CLI 自带的 --sandbox 与 --mode 策略在独立 Worktree 内强制执行",
+  runtimeAntigravityLocal: "Antigravity（本地）",
+  runtimeClaudeCodeLocal: "Claude Code（本地）",
+  runtimeOpenCode: "OpenCode",
 };

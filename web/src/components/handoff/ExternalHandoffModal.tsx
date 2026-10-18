@@ -116,7 +116,7 @@ export default function ExternalHandoffModal() {
           (item.source === "codex-cli"
             ? "openai"
             : item.source === "gemini-antigravity"
-            ? "google"
+            ? "antigravity"
             : item.source)
         : workspace.selectedModel?.providerID;
       const preferredModelID = useOriginal

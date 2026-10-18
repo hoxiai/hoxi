@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/hoxiai/hoxi/internal/provider"
@@ -90,7 +91,7 @@ func TestLocalCLIOAuthOnlyImportAndConnectedState(t *testing.T) {
 	mux := http.NewServeMux()
 	svc.RegisterRoutes(mux)
 
-	for _, toolID := range []ExternalToolID{ExternalToolClaude, ExternalToolCodex, ExternalToolGemini} {
+	for _, toolID := range []ExternalToolID{ExternalToolClaude, ExternalToolGemini} {
 		b, _ := json.Marshal(LocalCLIImportRequest{ToolID: toolID})
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/hoxi/local-cli/import", bytes.NewReader(b)))
@@ -98,20 +99,19 @@ func TestLocalCLIOAuthOnlyImportAndConnectedState(t *testing.T) {
 		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 			t.Fatalf("unmarshal %s import: %v", toolID, err)
 		}
-		if !resp.OK || len(resp.Models) == 0 {
-			t.Fatalf("expected OAuth-only import for %s to succeed with models, got %+v", toolID, resp)
+		if resp.OK || !strings.Contains(resp.Error, "运行时新建会话") {
+			t.Fatalf("expected OAuth-only import for %s to require Runner runtime, got %+v", toolID, resp)
 		}
 	}
 
-	recStatus := httptest.NewRecorder()
-	mux.ServeHTTP(recStatus, httptest.NewRequest(http.MethodGet, "/api/hoxi/local-cli/status", nil))
-	var status LocalCLIStatusResponse
-	_ = json.Unmarshal(recStatus.Body.Bytes(), &status)
-	for _, item := range status.Tools {
-		if item.ID == ExternalToolClaude || item.ID == ExternalToolCodex || item.ID == ExternalToolGemini {
-			if !item.Connected {
-				t.Fatalf("expected %s to report Connected=true after import, got %+v", item.ID, item)
-			}
-		}
+	bCodex, _ := json.Marshal(LocalCLIImportRequest{ToolID: ExternalToolCodex})
+	recCodex := httptest.NewRecorder()
+	mux.ServeHTTP(recCodex, httptest.NewRequest(http.MethodPost, "/api/hoxi/local-cli/import", bytes.NewReader(bCodex)))
+	var codexResp LocalCLIImportResponse
+	if err := json.Unmarshal(recCodex.Body.Bytes(), &codexResp); err != nil {
+		t.Fatalf("unmarshal codex import: %v", err)
+	}
+	if !codexResp.OK || len(codexResp.Models) == 0 {
+		t.Fatalf("expected OAuth-only import for codex to succeed, got %+v", codexResp)
 	}
 }

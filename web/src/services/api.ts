@@ -5,6 +5,7 @@ import type {
   PermissionRequest,
   QuestionRequest,
   SessionInfo,
+  SessionRuntime,
   SessionStatus,
   SnapshotFileDiff,
 } from "./sse-types";
@@ -27,29 +28,30 @@ import type {
   WorktreeMeta,
   WorktreeStatus,
 } from "./api-types";
+import {
+  authAPI,
+  isRunnerSessionID,
+  leaderboardAPI,
+  requestJSON,
+  resolveRunnerRuntimeForProvider,
+  runnerAPI,
+  updaterAPI,
+} from "./runner-api";
 
 export * from "./api-types";
+export {
+  authAPI,
+  isRunnerSessionID,
+  leaderboardAPI,
+  resolveRunnerRuntimeForProvider,
+  runnerAPI,
+  updaterAPI,
+};
 
 function withDir(path: string, directory?: string): string {
   if (!directory) return path;
   const sep = path.includes("?") ? "&" : "?";
   return `${path}${sep}directory=${encodeURIComponent(directory)}`;
-}
-
-async function requestJSON<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers || {}),
-    },
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`HTTP ${res.status}: ${text}`);
-  }
-  if (res.status === 204) return undefined as T;
-  return res.json();
 }
 
 export const hoxiAPI = {
@@ -72,20 +74,57 @@ export const hoxiAPI = {
     return requestJSON(`/api/hoxi/dev-pulse${qs ? `?${qs}` : ""}`);
   },
 
-  // Sessions
-  listSessions(directory?: string): Promise<SessionInfo[]> {
-    return requestJSON(withDir("/session?limit=200", directory));
+  // Sessions (transparently merges OpenCode & local Runner sessions)
+  async listSessions(directory?: string): Promise<SessionInfo[]> {
+    const [ocRes, runnerRes] = await Promise.allSettled([
+      requestJSON<SessionInfo[]>(withDir("/session?limit=200", directory)),
+      runnerAPI.listSessions(directory),
+    ]);
+    const ocList = ocRes.status === "fulfilled" && Array.isArray(ocRes.value) ? ocRes.value : [];
+    const runList = runnerRes.status === "fulfilled" && Array.isArray(runnerRes.value) ? runnerRes.value : [];
+    return [...runList, ...ocList].sort(
+      (a, b) => (b.time?.updated || 0) - (a.time?.updated || 0)
+    );
   },
 
-  getSessionStatuses(directory?: string): Promise<Record<string, SessionStatus>> {
-    return requestJSON(withDir("/session/status", directory));
+  async getSessionStatuses(directory?: string): Promise<Record<string, SessionStatus>> {
+    const [ocRes, runnerRes] = await Promise.allSettled([
+      requestJSON<Record<string, SessionStatus>>(withDir("/session/status", directory)),
+      runnerAPI.getSessionStatuses(),
+    ]);
+    return {
+      ...(ocRes.status === "fulfilled" && ocRes.value ? ocRes.value : {}),
+      ...(runnerRes.status === "fulfilled" && runnerRes.value ? runnerRes.value : {}),
+    };
   },
 
   getSession(sessionID: string, directory?: string): Promise<SessionInfo> {
+    if (isRunnerSessionID(sessionID)) {
+      return runnerAPI.getSession(sessionID, directory);
+    }
     return requestJSON(withDir(`/session/${sessionID}`, directory));
   },
 
-  createSession(title?: string, directory?: string): Promise<SessionInfo> {
+  createSession(
+    title?: string,
+    directory?: string,
+    options?: {
+      runtime?: SessionRuntime;
+      modelID?: string;
+      providerID?: string;
+      mode?: string;
+    }
+  ): Promise<SessionInfo> {
+    if (options?.runtime === "antigravity" || options?.runtime === "claude-code") {
+      return runnerAPI.createSession({
+        runtime: options.runtime,
+        title,
+        directory,
+        modelID: options.modelID,
+        providerID: options.providerID,
+        mode: options.mode,
+      });
+    }
     return requestJSON(withDir("/session", directory), {
       method: "POST",
       body: JSON.stringify(title ? { title } : {}),
@@ -93,6 +132,9 @@ export const hoxiAPI = {
   },
 
   renameSession(sessionID: string, title: string, directory?: string): Promise<SessionInfo> {
+    if (isRunnerSessionID(sessionID)) {
+      return runnerAPI.renameSession(sessionID, title);
+    }
     return requestJSON(withDir(`/session/${sessionID}`, directory), {
       method: "PATCH",
       body: JSON.stringify({ title }),
@@ -104,6 +146,9 @@ export const hoxiAPI = {
     archived: boolean,
     directory?: string
   ): Promise<SessionInfo> {
+    if (isRunnerSessionID(sessionID)) {
+      return runnerAPI.archiveSession(sessionID, archived);
+    }
     return requestJSON(withDir(`/session/${sessionID}`, directory), {
       method: "PATCH",
       body: JSON.stringify({
@@ -113,6 +158,9 @@ export const hoxiAPI = {
   },
 
   deleteSession(sessionID: string, directory?: string): Promise<void> {
+    if (isRunnerSessionID(sessionID)) {
+      return runnerAPI.deleteSession(sessionID);
+    }
     return requestJSON(withDir(`/session/${sessionID}`, directory), {
       method: "DELETE",
     });
@@ -122,6 +170,9 @@ export const hoxiAPI = {
     sessionID: string,
     directory?: string
   ): Promise<Array<{ info: MessageInfo; parts: MessagePart[] }>> {
+    if (isRunnerSessionID(sessionID)) {
+      return runnerAPI.getMessages(sessionID);
+    }
     return requestJSON(withDir(`/session/${sessionID}/message?limit=100`, directory));
   },
 
@@ -138,6 +189,9 @@ export const hoxiAPI = {
       attachments?: PromptAttachment[];
     }
   ): Promise<void> {
+    if (isRunnerSessionID(sessionID)) {
+      return runnerAPI.sendPromptAsync(sessionID, text, options);
+    }
     const parts: Array<{ type: "text"; text: string } | PromptAttachment> = [];
     if (options?.attachments && options.attachments.length > 0) {
       parts.push(...options.attachments);
@@ -158,6 +212,9 @@ export const hoxiAPI = {
   },
 
   abortSession(sessionID: string, directory?: string): Promise<void> {
+    if (isRunnerSessionID(sessionID)) {
+      return runnerAPI.abortSession(sessionID);
+    }
     return requestJSON(withDir(`/session/${sessionID}/abort`, directory), {
       method: "POST",
       body: JSON.stringify({}),
@@ -170,6 +227,7 @@ export const hoxiAPI = {
     modelID: string,
     directory?: string
   ): Promise<boolean> {
+    if (isRunnerSessionID(sessionID)) return Promise.resolve(false);
     return requestJSON(withDir(`/session/${sessionID}/summarize`, directory), {
       method: "POST",
       body: JSON.stringify({ providerID, modelID }),
@@ -183,6 +241,9 @@ export const hoxiAPI = {
     partID?: string,
     directory?: string
   ): Promise<SessionInfo> {
+    if (isRunnerSessionID(sessionID)) {
+      return Promise.reject(new Error("Revert is not supported in local CLI runner runtime"));
+    }
     return requestJSON(withDir(`/session/${sessionID}/revert`, directory), {
       method: "POST",
       body: JSON.stringify({ messageID, partID }),
@@ -190,6 +251,9 @@ export const hoxiAPI = {
   },
 
   unrevertSession(sessionID: string, directory?: string): Promise<SessionInfo> {
+    if (isRunnerSessionID(sessionID)) {
+      return Promise.reject(new Error("Unrevert is not supported in local CLI runner runtime"));
+    }
     return requestJSON(withDir(`/session/${sessionID}/unrevert`, directory), {
       method: "POST",
       body: JSON.stringify({}),
@@ -197,6 +261,9 @@ export const hoxiAPI = {
   },
 
   forkSession(sessionID: string, messageID?: string, directory?: string): Promise<SessionInfo> {
+    if (isRunnerSessionID(sessionID)) {
+      return Promise.reject(new Error("Fork is not supported in local CLI runner runtime"));
+    }
     return requestJSON(withDir(`/session/${sessionID}/fork`, directory), {
       method: "POST",
       body: JSON.stringify({ messageID }),
@@ -205,6 +272,10 @@ export const hoxiAPI = {
 
   // Diffs & VCS
   getSessionDiff(sessionID: string, directory?: string): Promise<SnapshotFileDiff[]> {
+    if (isRunnerSessionID(sessionID)) {
+      const q = `sessionID=${encodeURIComponent(sessionID)}${directory ? `&directory=${encodeURIComponent(directory)}` : ""}`;
+      return requestJSON(`/api/hoxi/worktree/diff?${q}`);
+    }
     return requestJSON(withDir(`/session/${sessionID}/diff`, directory));
   },
 
@@ -290,56 +361,35 @@ export const hoxiAPI = {
   },
 
   // Agents / Modes (Kilo Mode Switcher)
-  listAgents(directory?: string): Promise<AgentInfo[]> {
-    return requestJSON(withDir("/agent", directory));
-  },
+  listAgents(directory?: string): Promise<AgentInfo[]> { return requestJSON(withDir("/agent", directory)); },
 
   // Commands, LSP Diagnostics & File Search
-  listCommands(directory?: string): Promise<SlashCommandInfo[]> {
-    return requestJSON(withDir("/command", directory));
-  },
-
-  getLSPStatus(directory?: string): Promise<any[]> {
-    return requestJSON(withDir("/lsp", directory));
-  },
-
+  listCommands(directory?: string): Promise<SlashCommandInfo[]> { return requestJSON(withDir("/command", directory)); },
+  getLSPStatus(directory?: string): Promise<any[]> { return requestJSON(withDir("/lsp", directory)); },
   listFiles(path = "", directory?: string): Promise<Array<{ path: string; name?: string; type?: string }>> {
     return requestJSON(withDir(`/file?path=${encodeURIComponent(path)}`, directory));
   },
-
   findFiles(query: string, directory?: string): Promise<string[]> {
     return requestJSON(withDir(`/find/file?query=${encodeURIComponent(query)}&limit=15`, directory));
   },
-
   readFileContent(filePath: string, directory?: string): Promise<{ content: string }> {
     return requestJSON(withDir(`/file/content?path=${encodeURIComponent(filePath)}`, directory));
   },
 
   // Built-in PTY Terminal
   createPTY(directory?: string): Promise<{ id: string; title: string; cwd: string }> {
-    return requestJSON(withDir("/pty", directory), {
-      method: "POST",
-      body: JSON.stringify({ cwd: directory, title: "Hoxi Terminal" }),
-    });
+    return requestJSON(withDir("/pty", directory), { method: "POST", body: JSON.stringify({ cwd: directory, title: "Hoxi Terminal" }) });
   },
-
   resizePTY(ptyID: string, cols: number, rows: number, directory?: string): Promise<void> {
-    return requestJSON(withDir(`/pty/${ptyID}`, directory), {
-      method: "PUT",
-      body: JSON.stringify({ size: { cols, rows } }),
-    });
+    return requestJSON(withDir(`/pty/${ptyID}`, directory), { method: "PUT", body: JSON.stringify({ size: { cols, rows } }) });
   },
-
   deletePTY(ptyID: string, directory?: string): Promise<void> {
     return requestJSON(withDir(`/pty/${encodeURIComponent(ptyID)}`, directory), { method: "DELETE" });
   },
 
   // Git Worktree Sandbox Manager
   createWorktree(sessionID: string, directory?: string): Promise<WorktreeMeta> {
-    return requestJSON("/api/hoxi/worktree/create", {
-      method: "POST",
-      body: JSON.stringify({ sessionID, ...(directory ? { directory } : {}) }),
-    });
+    return requestJSON("/api/hoxi/worktree/create", { method: "POST", body: JSON.stringify({ sessionID, ...(directory ? { directory } : {}) }) });
   },
   getWorktreeStatus(sessionID: string, directory?: string): Promise<WorktreeStatus> {
     const q = `sessionID=${encodeURIComponent(sessionID)}${directory ? `&directory=${encodeURIComponent(directory)}` : ""}`;
@@ -355,21 +405,14 @@ export const hoxiAPI = {
   revertWorktreeFile(sessionID: string, file: string): Promise<{ ok: boolean }> {
     return requestJSON("/api/hoxi/worktree/revert-file", { method: "POST", body: JSON.stringify({ sessionID, file }) });
   },
-  commitWorktree(
-    sessionID: string,
-    message: string,
-    opts?: { push?: boolean; directory?: string }
-  ): Promise<import("./api-types").CommitAndPushResponse> {
+  commitWorktree(sessionID: string, message: string, opts?: { push?: boolean; directory?: string }): Promise<import("./api-types").CommitAndPushResponse> {
     return requestJSON("/api/hoxi/worktree/commit", {
       method: "POST",
       body: JSON.stringify({ sessionID, message, ...(opts?.push ? { push: true } : {}), ...(opts?.directory ? { directory: opts.directory } : {}) }),
     });
   },
   pushWorktree(sessionID: string, directory?: string): Promise<import("./api-types").CommitAndPushResponse> {
-    return requestJSON("/api/hoxi/worktree/push", {
-      method: "POST",
-      body: JSON.stringify({ sessionID, ...(directory ? { directory } : {}) }),
-    });
+    return requestJSON("/api/hoxi/worktree/push", { method: "POST", body: JSON.stringify({ sessionID, ...(directory ? { directory } : {}) }) });
   },
   removeWorktree(sessionID: string, force = false, keepBranch = false): Promise<{ ok: boolean }> {
     return requestJSON(
@@ -378,86 +421,43 @@ export const hoxiAPI = {
     );
   },
   listBranches(directory?: string): Promise<BranchListResponse> {
-    const q = directory ? `?directory=${encodeURIComponent(directory)}` : "";
-    return requestJSON(`/api/hoxi/worktree/branches${q}`);
+    return requestJSON(`/api/hoxi/worktree/branches${directory ? `?directory=${encodeURIComponent(directory)}` : ""}`);
   },
   checkoutBranch(branch: string, create = false, directory?: string): Promise<WorktreeStatus> {
-    return requestJSON("/api/hoxi/worktree/checkout", {
-      method: "POST",
-      body: JSON.stringify({ branch, create, ...(directory ? { directory } : {}) }),
-    });
+    return requestJSON("/api/hoxi/worktree/checkout", { method: "POST", body: JSON.stringify({ branch, create, ...(directory ? { directory } : {}) }) });
   },
   renameBranch(sessionID: string, newBranch: string, directory?: string): Promise<{ ok: boolean; branch: string }> {
-    return requestJSON("/api/hoxi/worktree/rename-branch", {
-      method: "POST",
-      body: JSON.stringify({ sessionID, newBranch, ...(directory ? { directory } : {}) }),
-    });
+    return requestJSON("/api/hoxi/worktree/rename-branch", { method: "POST", body: JSON.stringify({ sessionID, newBranch, ...(directory ? { directory } : {}) }) });
   },
   pruneSandboxes(excludeSessionID?: string, directory?: string): Promise<{ ok: boolean; removedCount: number }> {
-    return requestJSON("/api/hoxi/worktree/prune-sandboxes", {
-      method: "POST",
-      body: JSON.stringify({ ...(excludeSessionID ? { excludeSessionID } : {}), ...(directory ? { directory } : {}) }),
-    });
+    return requestJSON("/api/hoxi/worktree/prune-sandboxes", { method: "POST", body: JSON.stringify({ ...(excludeSessionID ? { excludeSessionID } : {}), ...(directory ? { directory } : {}) }) });
   },
 
   // OpenCode Project / Workspace Manager (Kilo Desktop)
-  listProjects(): Promise<ProjectInfo[]> {
-    return requestJSON("/project");
-  },
-  listWorkspaces(): Promise<{ workspaces: WorkspaceProfile[]; dismissed?: string[] }> {
-    return requestJSON("/api/hoxi/workspaces");
-  },
-  createWorkspace(input: SaveWorkspaceInput): Promise<WorkspaceProfile> {
-    return requestJSON("/api/hoxi/workspaces", { method: "POST", body: JSON.stringify(input) });
-  },
-  updateWorkspace(id: string, input: SaveWorkspaceInput): Promise<WorkspaceProfile> {
-    return requestJSON(`/api/hoxi/workspaces/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(input) });
-  },
-  deleteWorkspace(id: string): Promise<{ ok: boolean; deleted?: boolean; dismissed?: string[] }> {
-    return requestJSON(`/api/hoxi/workspaces/${encodeURIComponent(id)}`, { method: "DELETE" });
-  },
-  openDirectoryDialog(): Promise<{ path: string; error?: string }> {
-    return requestJSON("/api/hoxi/dialog/open-directory", { method: "POST" });
-  },
-  testProviderModel(opts: {
-    providerID?: string;
-    baseURL?: string;
-    apiKey?: string;
-    npm?: string;
-    modelID: string;
-    headers?: Record<string, string>;
-  }): Promise<{ ok: boolean; latencyMs?: number; error?: string }> {
+  listProjects(): Promise<ProjectInfo[]> { return requestJSON("/project"); },
+  listWorkspaces(): Promise<{ workspaces: WorkspaceProfile[]; dismissed?: string[] }> { return requestJSON("/api/hoxi/workspaces"); },
+  createWorkspace(input: SaveWorkspaceInput): Promise<WorkspaceProfile> { return requestJSON("/api/hoxi/workspaces", { method: "POST", body: JSON.stringify(input) }); },
+  updateWorkspace(id: string, input: SaveWorkspaceInput): Promise<WorkspaceProfile> { return requestJSON(`/api/hoxi/workspaces/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(input) }); },
+  deleteWorkspace(id: string): Promise<{ ok: boolean; deleted?: boolean; dismissed?: string[] }> { return requestJSON(`/api/hoxi/workspaces/${encodeURIComponent(id)}`, { method: "DELETE" }); },
+  openDirectoryDialog(): Promise<{ path: string; error?: string }> { return requestJSON("/api/hoxi/dialog/open-directory", { method: "POST" }); },
+  testProviderModel(opts: { providerID?: string; baseURL?: string; apiKey?: string; npm?: string; modelID: string; headers?: Record<string, string> }): Promise<{ ok: boolean; latencyMs?: number; error?: string }> {
     return requestJSON("/api/hoxi/provider/test-model", { method: "POST", body: JSON.stringify(opts) });
   },
-  getProviderTelemetry(): Promise<{ providers: Record<string, ProviderTelemetryStats> }> {
-    return requestJSON("/api/hoxi/provider/telemetry");
-  },
-  saveProviderTelemetry(providers: Record<string, ProviderTelemetryStats>): Promise<{ ok: boolean }> {
-    return requestJSON("/api/hoxi/provider/telemetry", { method: "POST", body: JSON.stringify({ providers }) });
-  },
+  getProviderTelemetry(): Promise<{ providers: Record<string, ProviderTelemetryStats> }> { return requestJSON("/api/hoxi/provider/telemetry"); },
+  saveProviderTelemetry(providers: Record<string, ProviderTelemetryStats>): Promise<{ ok: boolean }> { return requestJSON("/api/hoxi/provider/telemetry", { method: "POST", body: JSON.stringify({ providers }) }); },
   clearProviderTelemetry(providerID?: string): Promise<{ ok: boolean }> {
-    const q = providerID ? `?providerID=${encodeURIComponent(providerID)}` : "";
-    return requestJSON(`/api/hoxi/provider/telemetry${q}`, { method: "DELETE" });
+    return requestJSON(`/api/hoxi/provider/telemetry${providerID ? `?providerID=${encodeURIComponent(providerID)}` : ""}`, { method: "DELETE" });
   },
-  auditProviderCode(req: CodeAuditRequest): Promise<CodeAuditResult> {
-    return requestJSON("/api/hoxi/provider/audit", { method: "POST", body: JSON.stringify(req) });
-  },
-  summarizeSessionTitle(req: {
-    providerID: string; modelID: string; baseURL?: string; npm?: string; prompt: string; locale: string;
-  }): Promise<{ ok: boolean; title: string; error?: string }> {
+  auditProviderCode(req: CodeAuditRequest): Promise<CodeAuditResult> { return requestJSON("/api/hoxi/provider/audit", { method: "POST", body: JSON.stringify(req) }); },
+  summarizeSessionTitle(req: { providerID: string; modelID: string; baseURL?: string; npm?: string; prompt: string; locale: string }): Promise<{ ok: boolean; title: string; error?: string }> {
     return requestJSON("/api/hoxi/provider/summarize-title", { method: "POST", body: JSON.stringify(req) });
   },
-  generateCommitMessage(req: {
-    providerID: string; modelID: string; baseURL?: string; npm?: string;
-    sessionDigest?: string; sessionTitle?: string; lastPrompt?: string; diffSummary: string; locale: string;
-  }): Promise<{ ok: boolean; message: string; error?: string }> {
+  generateCommitMessage(req: { providerID: string; modelID: string; baseURL?: string; npm?: string; sessionDigest?: string; sessionTitle?: string; lastPrompt?: string; diffSummary: string; locale: string }): Promise<{ ok: boolean; message: string; error?: string }> {
     return requestJSON("/api/hoxi/provider/generate-commit-message", { method: "POST", body: JSON.stringify(req) });
   },
 
   // Cross-Tool Session Handoff & Local CLI Bridge
-  listExternalSessions(opts?: {
-    directory?: string; query?: string; source?: string; onlyCurrent?: boolean;
-  }): Promise<import("./api-types").HandoffSessionsResponse> {
+  listExternalSessions(opts?: { directory?: string; query?: string; source?: string; onlyCurrent?: boolean }): Promise<import("./api-types").HandoffSessionsResponse> {
     const params = new URLSearchParams();
     if (opts?.directory) params.set("directory", opts.directory);
     if (opts?.query) params.set("query", opts.query);
@@ -466,65 +466,13 @@ export const hoxiAPI = {
     return requestJSON(`/api/hoxi/handoff/sessions?${params.toString()}`);
   },
   getExternalSessionPreview(source: string, id: string, cwd?: string): Promise<import("./api-types").ExternalSessionDetail> {
-    const params = new URLSearchParams({ source, id });
-    if (cwd) params.set("cwd", cwd);
+    const params = new URLSearchParams({ source, id, ...(cwd ? { cwd } : {}) });
     return requestJSON(`/api/hoxi/handoff/preview?${params.toString()}`);
   },
-  importExternalSession(req: {
-    source: string; sessionID: string; sourceCwd?: string; targetDirectory?: string;
-    preferredProviderID?: string; preferredModelID?: string;
-  }): Promise<import("./api-types").HandoffImportResponse> {
+  importExternalSession(req: { source: string; sessionID: string; sourceCwd?: string; targetDirectory?: string; preferredProviderID?: string; preferredModelID?: string }): Promise<import("./api-types").HandoffImportResponse> {
     return requestJSON("/api/hoxi/handoff/import", { method: "POST", body: JSON.stringify(req) });
   },
-  getLocalCLIStatus(): Promise<import("./api-types").LocalCLIStatusResponse> {
-    return requestJSON("/api/hoxi/local-cli/status");
-  },
-  importLocalCLI(toolID: string): Promise<import("./api-types").LocalCLIImportResponse> {
-    return requestJSON("/api/hoxi/local-cli/import", { method: "POST", body: JSON.stringify({ toolID }) });
-  },
+  getLocalCLIStatus(): Promise<import("./api-types").LocalCLIStatusResponse> { return requestJSON("/api/hoxi/local-cli/status"); },
+  importLocalCLI(toolID: string): Promise<import("./api-types").LocalCLIImportResponse> { return requestJSON("/api/hoxi/local-cli/import", { method: "POST", body: JSON.stringify({ toolID }) }); },
 };
 
-export const authAPI = {
-  getStatus(): Promise<import("./api-types").AuthStatusSnapshot> {
-    return requestJSON("/api/hoxi/auth/status");
-  },
-  startAuth(): Promise<import("./api-types").StartAuthResponse> {
-    return requestJSON("/api/hoxi/auth/start", { method: "POST" });
-  },
-  exchange(
-    handoffToken: string,
-    state: string
-  ): Promise<{ success: boolean; user: import("./api-types").AuthUserProfile }> {
-    return requestJSON("/api/hoxi/auth/exchange", {
-      method: "POST",
-      body: JSON.stringify({ handoffToken, state }),
-    });
-  },
-  logout(): Promise<{ success: boolean }> {
-    return requestJSON("/api/hoxi/auth/logout", { method: "POST" });
-  },
-};
-
-export const updaterAPI = {
-  checkUpdate(): Promise<import("./api-types").UpdateCheckResult> {
-    return requestJSON("/api/hoxi/updater/check");
-  },
-};
-
-export const leaderboardAPI = {
-  async getLeaderboard(
-    sort: string = "overall",
-    limit: number = 10
-  ): Promise<import("./api-types").LeaderboardModelItem[]> {
-    const json = await requestJSON<import("./api-types").LeaderboardResponse>(
-      `/api/hoxi/models/leaderboard?sort=${encodeURIComponent(sort)}&limit=${limit}`
-    );
-    return json.data?.items || [];
-  },
-  async getConnectableGateways(): Promise<import("./api-types").ConnectableGatewayItem[]> {
-    const json = await requestJSON<import("./api-types").ConnectableGatewaysResponse>(
-      "/api/hoxi/gateways/connectable"
-    );
-    return json.data?.items || [];
-  },
-};

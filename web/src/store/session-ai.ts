@@ -50,12 +50,17 @@ export function initializeSessionAI(sessionID: string, config = workspace.defaul
 export function restoreSessionAI(sessionID: string, turns: MessageTurn[]): void {
   const pending = pendingHistoryPatches.get(sessionID);
   if (workspace.aiBySession[sessionID] && !pending) return;
+  const session = workspace.sessions.find((s) => s.id === sessionID);
   const latest = [...turns].reverse();
   const model = latest.find((turn) => turn.info.providerID && turn.info.modelID)?.info;
+  const fallbackModel =
+    session?.providerID && session?.modelID
+      ? { providerID: session.providerID, modelID: session.modelID }
+      : workspace.defaultAI.model;
   const agent = latest.find((turn) => turn.info.agent)?.info.agent;
   const config: SessionAIConfig = {
     ...workspace.defaultAI,
-    model: model ? { providerID: model.providerID!, modelID: model.modelID! } : workspace.defaultAI.model,
+    model: model ? { providerID: model.providerID!, modelID: model.modelID! } : fallbackModel,
     agent: agent || workspace.defaultAI.agent,
     ...pending,
   };

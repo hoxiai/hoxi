@@ -1,12 +1,17 @@
 // web/src/services/sse-types.ts
 // Verified against OpenCode v1.18.25 OpenAPI 3.x specification
 
+export type SessionRuntime = "opencode" | "antigravity" | "claude-code";
+
 export interface SessionInfo {
   id: string;
   title: string;
   slug?: string;
   parentID?: string;
   directory?: string;
+  runtime?: SessionRuntime;
+  modelID?: string;
+  providerID?: string;
   time: {
     created: number;
     updated: number;

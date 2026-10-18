@@ -180,7 +180,8 @@ func (g *Service) ensureHandoffModelReady(source ExternalToolID, providerID, mod
 	}
 	changed := false
 	for _, mID := range candidates {
-		if mID = strings.TrimSpace(mID); mID != "" && modelsMap[mID] == nil {
+		mID = strings.TrimSpace(mID)
+		if mID != "" && !strings.ContainsAny(mID, " ()") && modelsMap[mID] == nil {
 			modelsMap[mID] = map[string]interface{}{
 				"name": mID, "tool_call": !textOnly, "reasoning": true, "attachment": true,
 				"limit": map[string]interface{}{"context": 200000, "output": 32768},

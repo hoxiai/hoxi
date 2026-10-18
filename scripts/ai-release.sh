@@ -24,6 +24,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${PROJECT_ROOT}"
 
+# 自动加载 .env 环境变量
+if [[ -f "${PROJECT_ROOT}/.env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "${PROJECT_ROOT}/.env" 2>/dev/null || true
+  set +a
+fi
+
 VERSION=""
 NOTES=""
 SKIP_BUILD=0
@@ -31,6 +39,9 @@ DRY_RUN=0
 CREATE_TAG=0
 JSON_OUTPUT=0
 MANDATORY=0
+API_URL="${HOXI_RELEASE_API_URL:-}"
+API_KEY="${HOXI_RELEASE_KEY:-}"
+FORCE_DB=0
 
 # 解析命令行参数
 while [[ $# -gt 0 ]]; do
@@ -42,6 +53,18 @@ while [[ $# -gt 0 ]]; do
     --notes)
       NOTES="${2:-}"
       shift 2
+      ;;
+    --api-url)
+      API_URL="${2:-}"
+      shift 2
+      ;;
+    --key)
+      API_KEY="${2:-}"
+      shift 2
+      ;;
+    --force-db)
+      FORCE_DB=1
+      shift
       ;;
     --skip-build)
       SKIP_BUILD=1
@@ -185,9 +208,27 @@ if [[ "${DRY_RUN}" -eq 1 ]]; then
   PUBLISH_ARGS+=("--dry-run")
 fi
 
+if [[ -n "${API_URL}" ]]; then
+  PUBLISH_ARGS+=("--api-url" "${API_URL}")
+fi
+
+if [[ -n "${API_KEY}" ]]; then
+  PUBLISH_ARGS+=("--key" "${API_KEY}")
+fi
+
+if [[ "${FORCE_DB}" -eq 1 ]]; then
+  PUBLISH_ARGS+=("--force-db")
+fi
+
 if [[ -f "${PUBLISH_ARGS[0]}" ]]; then
   PUB_RESULT="$(node "${PUBLISH_ARGS[@]}")"
-  log_success "发版元数据已生效"
+  if echo "${PUB_RESULT}" | grep -q '"mode":"api"'; then
+    log_success "发版元数据已通过官网授权 API 成功发布 (hoxi.ai)"
+  elif echo "${PUB_RESULT}" | grep -q '"mode":"db"'; then
+    log_success "发版元数据已写入本地数据库 (PostgreSQL)"
+  else
+    log_success "发版元数据已生效"
+  fi
 else
   PUB_RESULT='{"publication":"skipped","reason":"publisher script not installed"}'
   log_step "Publisher script not installed; website synchronization skipped."

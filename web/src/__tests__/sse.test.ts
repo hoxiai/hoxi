@@ -8,6 +8,7 @@ import { assertDeepEqual, assertEqual, assertTrue, describe, it } from "./test-h
 
 class MockEventSource {
   static latest: MockEventSource | null = null;
+  static instances: MockEventSource[] = [];
   url: string;
   closed = false;
   onopen: (() => void) | null = null;
@@ -17,6 +18,7 @@ class MockEventSource {
   constructor(url: string) {
     this.url = url;
     MockEventSource.latest = this;
+    MockEventSource.instances.push(this);
   }
 
   close(): void {
@@ -145,6 +147,7 @@ describe("SSE client & 120Hz rAF delta batching", () => {
       > = [];
       let connectedState = false;
 
+      const instanceStart = MockEventSource.instances.length;
       const disconnect = connectEventStream(
         {
           onEvent: (evt) => events.push(evt),
@@ -156,8 +159,9 @@ describe("SSE client & 120Hz rAF delta batching", () => {
         "/tmp/worktree-1"
       );
 
-      const src = MockEventSource.latest!;
+      const [src, runner] = MockEventSource.instances.slice(instanceStart);
       assertTrue(src.url.includes("directory=%2Ftmp%2Fworktree-1"), "url should include encoded directory");
+      assertEqual(runner.url, "/api/hoxi/runner/event");
 
       src.onopen?.();
       assertEqual(connectedState, true);
@@ -211,6 +215,7 @@ describe("SSE client & 120Hz rAF delta batching", () => {
 
       disconnect();
       assertEqual(src.closed, true);
+      assertEqual(runner.closed, true);
     } finally {
       g.EventSource = origES;
       g.requestAnimationFrame = origRAF;
