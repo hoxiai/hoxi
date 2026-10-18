@@ -10,8 +10,6 @@ import {
 import type { MessageInfo, MessagePart } from "../services/sse-types";
 import { setWorkspace, workspace } from "./workspace";
 
-export * from "./provider-health";
-
 export const PROVIDER_TELEMETRY_KEY = "hoxi-provider-telemetry:v2";
 
 const MAX_SAMPLES = 30;

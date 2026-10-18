@@ -2,7 +2,7 @@ import { createMemo, createSignal, onCleanup, Show } from "solid-js";
 import CompactHeader from "./CompactHeader";
 import LeftNav from "./LeftNav";
 import WorkspaceModal from "./WorkspaceModal";
-import ExternalHandoffModal from "./ExternalHandoffModal";
+import ExternalHandoffModal from "../handoff/ExternalHandoffModal";
 import MessageStream from "../timeline/MessageStream";
 import Composer from "../timeline/Composer";
 import InspectorPane from "../inspector/InspectorPane";

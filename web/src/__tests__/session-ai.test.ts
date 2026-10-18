@@ -10,8 +10,9 @@ import {
   EFFORT_KEY, SELECTED_MODEL_KEY, selectModel, setReasoningEffort,
   setWorkspace, workspace, type MessageTurn,
 } from "../store/workspace";
-import { removeSessionFromStore, selectSession, submitSessionPrompt } from "../store/workspace-sessions";
-import { drainNextQueuedPrompt, enqueueSessionPrompt, forkFromMessage, sendQueuedPromptNow } from "../store/workspace-queue-subagents";
+import { forkFromMessage, removeSessionFromStore, selectSession } from "../store/workspace-sessions";
+import { submitSessionPrompt } from "../store/workspace-session-messages";
+import { drainNextQueuedPrompt, enqueueSessionPrompt, sendQueuedPromptNow } from "../store/workspace-queue-subagents";
 import { assertDeepEqual, assertEqual, assertTrue, describe, it } from "./test-harness";
 
 const defaults: SessionAIConfig = {

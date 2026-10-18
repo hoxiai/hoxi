@@ -1,4 +1,4 @@
-// web/src/components/layout/ExternalHandoffPreviewPane.tsx
+// web/src/components/handoff/ExternalHandoffPreviewPane.tsx
 import { For, Show } from "solid-js";
 import { ArrowRightLeft, GitBranch, LoaderCircle, Wrench } from "lucide-solid";
 import type {
@@ -6,7 +6,7 @@ import type {
   ExternalSessionSummary,
   ExternalToolID,
 } from "../../services/api";
-import { shortenPath } from "./left-nav-helpers";
+import { shortenPath } from "../layout/left-nav-helpers";
 import { t } from "../../i18n";
 
 export function handoffSourceBadgeClass(source: ExternalToolID): string {

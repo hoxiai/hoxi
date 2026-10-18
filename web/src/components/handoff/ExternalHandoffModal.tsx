@@ -1,4 +1,4 @@
-// web/src/components/layout/ExternalHandoffModal.tsx
+// web/src/components/handoff/ExternalHandoffModal.tsx
 import { createEffect, createSignal, For, Show } from "solid-js";
 import { LoaderCircle, Search, X } from "lucide-solid";
 import {
@@ -19,7 +19,7 @@ import {
   workspace,
 } from "../../store/workspace";
 import { recordCustomSessionTitle } from "../../store/session-title";
-import { shortenPath } from "./left-nav-helpers";
+import { shortenPath } from "../layout/left-nav-helpers";
 import ExternalHandoffPreviewPane, {
   handoffSourceBadgeClass,
   resolveOriginalModel,

@@ -482,7 +482,121 @@ export interface GitDailyPulseResponse {
   }>;
 }
 
+export interface AuthUserProfile {
+  id: number;
+  email: string;
+  nickname: string;
+  username?: string;
+  avatar?: string;
+  avatarUrl?: string;
+  role?: string;
+  plan?: string;
+}
 
+export interface AuthStatusSnapshot {
+  isLoggedIn: boolean;
+  isAuthorizing: boolean;
+  pendingState?: string;
+  user?: AuthUserProfile;
+  expiresAt?: string;
+  serverBaseUrl: string;
+  lastVerifiedAt?: string;
+}
 
+export interface StartAuthResponse {
+  state: string;
+  authUrl: string;
+}
 
+export interface UpdateMirrors {
+  cn?: string;
+  global?: string;
+}
 
+export interface UpdateCheckResult {
+  currentVersion: string;
+  latestVersion: string;
+  versionCode: number;
+  needUpdate: boolean;
+  title: string;
+  releaseNotes: string;
+  downloadUrl: string;
+  mirrors: UpdateMirrors;
+  mandatory: boolean;
+  sha256?: string;
+  checkedAt: string;
+}
+
+export interface LeaderboardModelItem {
+  rank: number;
+  slug: string;
+  name: string;
+  vendor: string;
+  apiName: string;
+  price: {
+    currency: string;
+    input: number;
+    output: number;
+    cacheRead?: number;
+    cacheWrite?: number;
+  };
+  contextWindow: number;
+  scores: {
+    overall?: number;
+    coding?: number;
+    reasoning?: number;
+    chinese?: number;
+    agentic?: number;
+  };
+  perf: {
+    tps?: number;
+    ttft?: number;
+  };
+  badges: string[];
+  scenes: string[];
+  summary: string;
+  reasoning?: boolean;
+  isFree?: boolean;
+}
+
+export interface ConnectableGatewayItem {
+  id: string;
+  name: string;
+  domain: string;
+  url: string;
+  baseUrl: string;
+  isSelfOperated: boolean;
+  canOneClickConnect: boolean;
+  badge?: string;
+  badgeTone?: "positive" | "info" | "warning";
+  savingsPercent: number;
+  priceLabel: string;
+  officialPriceCNY: number;
+  latencyMs: number;
+  uptime: string;
+  models: string[];
+  recommendedModels: string[];
+  features: string[];
+  caveat: string;
+  authUrl?: string;
+}
+
+export interface LeaderboardResponse {
+  code: number;
+  message: string;
+  data: {
+    dimension: string;
+    updatedAt: string;
+    total: number;
+    items: LeaderboardModelItem[];
+  };
+}
+
+export interface ConnectableGatewaysResponse {
+  code: number;
+  message: string;
+  data: {
+    total: number;
+    items: ConnectableGatewayItem[];
+  };
+}

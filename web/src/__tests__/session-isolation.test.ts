@@ -2,16 +2,15 @@ import { reconcile, unwrap } from "solid-js/store";
 import { hoxiAPI, type WorktreeMeta } from "../services/api";
 import { appSettings, setAppSettings } from "../store/settings";
 import { openDiffInInspector, setWorkspace, workspace } from "../store/workspace";
+import { newIsolatedSession, switchActiveSessionSandboxMode } from "../store/session-sandbox";
+import { submitSessionPrompt } from "../store/workspace-session-messages";
 import {
-  newIsolatedSession,
   applySessionDiffEvent,
   loadSessionMessages,
   refreshSessionDiff,
   refreshWorktreeStatus,
   selectSession,
   sessionDirectory,
-  submitSessionPrompt,
-  switchActiveSessionSandboxMode,
 } from "../store/workspace-sessions";
 import { assertEqual, assertTrue, describe, it } from "./test-harness";
 

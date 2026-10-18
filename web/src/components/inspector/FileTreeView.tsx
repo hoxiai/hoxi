@@ -17,7 +17,7 @@ import { FolderIcon } from "../layout/left-nav-helpers";
 import { computeChangedFileLines, resolveSessionDiffForFile } from "../timeline/file-diff-lines";
 import { t } from "../../i18n";
 import FileTreeNodes, { type FileTreeNode } from "./FileTreeNodes";
-import { highlightCode, fileLanguage, type HighlightedCode } from "../../services/syntax-highlight";
+import { highlightCode, fileLanguage, type HighlightedCode } from "../timeline/syntax-highlight";
 
 function baseName(p: string): string {
   const parts = normalizeFolderPath(p).split(/[\\/]/).filter(Boolean);

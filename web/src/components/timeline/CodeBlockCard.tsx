@@ -1,6 +1,6 @@
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 import { t } from "../../i18n";
-import { highlightCode, type HighlightedCode } from "../../services/syntax-highlight";
+import { highlightCode, type HighlightedCode } from "./syntax-highlight";
 import { workspace } from "../../store/workspace";
 import { Icon } from "../icons";
 

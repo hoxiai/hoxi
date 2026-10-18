@@ -18,7 +18,7 @@ import {
   recordUserRevertAction,
 } from "./provider-telemetry";
 import { isPlaceholderSessionTitle, summarizeAndRenameSession } from "./session-title";
-import { waitForSessionSandbox } from "./session-sandbox";
+import { newIsolatedSession, waitForSessionSandbox } from "./session-sandbox";
 import { buildCombinedSystemPrompt, setWorkspace, workspace } from "./workspace";
 import { buildWorkspaceFoldersSystemPrompt, workspaceFoldersForDir } from "./workspace-projects";
 import { initializeSessionAI, sessionAIConfig } from "./session-ai";
@@ -26,7 +26,6 @@ import {
   isSessionBusy,
   isSessionDeleted,
   loadSessionMessages,
-  newIsolatedSession,
   renameSessionTitle,
   replaceSession,
   scheduleRefreshWorktreeStatus,

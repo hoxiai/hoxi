@@ -484,9 +484,47 @@ export const hoxiAPI = {
   },
 };
 
-export { authAPI } from "./auth-api";
-export type { AuthStatusSnapshot, AuthUserProfile, StartAuthResponse } from "./auth-api";
-export { updaterAPI } from "./updater-api";
-export type { UpdateCheckResult, UpdateMirrors } from "./updater-api";
-export { leaderboardAPI } from "./leaderboard-api";
-export type { LeaderboardModelItem, ConnectableGatewayItem } from "./leaderboard-api";
+export const authAPI = {
+  getStatus(): Promise<import("./api-types").AuthStatusSnapshot> {
+    return requestJSON("/api/hoxi/auth/status");
+  },
+  startAuth(): Promise<import("./api-types").StartAuthResponse> {
+    return requestJSON("/api/hoxi/auth/start", { method: "POST" });
+  },
+  exchange(
+    handoffToken: string,
+    state: string
+  ): Promise<{ success: boolean; user: import("./api-types").AuthUserProfile }> {
+    return requestJSON("/api/hoxi/auth/exchange", {
+      method: "POST",
+      body: JSON.stringify({ handoffToken, state }),
+    });
+  },
+  logout(): Promise<{ success: boolean }> {
+    return requestJSON("/api/hoxi/auth/logout", { method: "POST" });
+  },
+};
+
+export const updaterAPI = {
+  checkUpdate(): Promise<import("./api-types").UpdateCheckResult> {
+    return requestJSON("/api/hoxi/updater/check");
+  },
+};
+
+export const leaderboardAPI = {
+  async getLeaderboard(
+    sort: string = "overall",
+    limit: number = 10
+  ): Promise<import("./api-types").LeaderboardModelItem[]> {
+    const json = await requestJSON<import("./api-types").LeaderboardResponse>(
+      `/api/hoxi/models/leaderboard?sort=${encodeURIComponent(sort)}&limit=${limit}`
+    );
+    return json.data?.items || [];
+  },
+  async getConnectableGateways(): Promise<import("./api-types").ConnectableGatewayItem[]> {
+    const json = await requestJSON<import("./api-types").ConnectableGatewaysResponse>(
+      "/api/hoxi/gateways/connectable"
+    );
+    return json.data?.items || [];
+  },
+};

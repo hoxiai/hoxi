@@ -1,4 +1,4 @@
-import { fileLanguage, highlightCode } from "../services/syntax-highlight";
+import { fileLanguage, highlightCode } from "../components/timeline/syntax-highlight";
 import { assertEqual, assertTrue, describe, it } from "./test-harness";
 
 describe("Chat code syntax highlighting", () => {
