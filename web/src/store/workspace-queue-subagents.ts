@@ -94,7 +94,6 @@ export async function sendQueuedPromptNow(sessionID: string, itemID: string): Pr
   const current = workspace.queuedPromptsBySession[sessionID] ?? [];
   const target = current.find((item) => item.id === itemID);
   if (!target) return;
-  const wasBusy = isSessionBusy(sessionID);
   removeQueuedPrompt(sessionID, itemID);
 
   await submitSessionPrompt(target.text, sessionID, {
@@ -102,16 +101,6 @@ export async function sendQueuedPromptNow(sessionID: string, itemID: string): Pr
     model: target.model,
     attachments: target.attachments,
     forceImmediate: true,
-    beforeSend: wasBusy
-      ? async () => {
-          try {
-            await hoxiAPI.abortSession(sessionID, sessionDirectory(sessionID));
-          } catch (err) {
-            console.warn("abort before sendQueuedPromptNow warning:", err);
-          }
-          await abortChildSubagentSessions(sessionID);
-        }
-      : undefined,
   });
 }
 

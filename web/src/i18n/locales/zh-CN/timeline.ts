@@ -28,7 +28,7 @@ export const timeline: TimelineI18n = {
   inputPlaceholder:
     "输入任务指令或问题... (Enter 发送，Shift+Enter 换行)",
   steerPlaceholder:
-    "任务执行中，输入补充指令将加入排队（可随时立即发送、修改或删除）...",
+    "任务执行中。发送后会在下一步工具前注入纠偏，不会中止当前运行。",
   filesAttached: "{count} 个文件",
   addContext: "添加上下文",
   selectModel: "选择模型",
@@ -181,7 +181,7 @@ export const timeline: TimelineI18n = {
     "主任务此前中断，请立即调用 `task` 工具并传入 `task_id=\"{taskId}\"`（`subagent_type=\"{agentType}\"`，任务：\"{description}\"）续接该子智能体会话（其历史上下文与工具输出已完整保留），获取或完成其结果后继续完成当前主任务。",
   queuedBadge: "排队中…",
   queueSendNow: "立即发送",
-  queueSendNowTooltip: "立即打断当前步骤并发送此消息",
+  queueSendNowTooltip: "在下一步工具前注入此消息，不中止当前运行",
   queueEdit: "修改",
   queueEditTooltip: "退回输入框修改内容",
   queueDelete: "删除",

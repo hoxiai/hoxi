@@ -342,11 +342,8 @@ func (m *worktreeManager) Apply(sessionID, mode string) error {
 		return errors.New("session does not have an isolated worktree")
 	}
 
-	// Commit any uncommitted changes in the worktree before generating patch or merging
-	statusOut, err := runGit(meta.Directory, "status", "--porcelain")
-	if err == nil && strings.TrimSpace(statusOut) != "" {
-		_, _ = runGit(meta.Directory, "add", "-A")
-		_, _ = runGit(meta.Directory, "commit", "-m", appendHoxiCoAuthor("chore(hoxi): snapshot before apply ("+sessionID+")"))
+	if err := snapshotWorktree(meta.Directory, sessionID); err != nil {
+		return err
 	}
 
 	if mode == "merge" {
@@ -357,7 +354,14 @@ func (m *worktreeManager) Apply(sessionID, mode string) error {
 	// Default mode: "patch" — applies changes cleanly onto main workspace without polluting commit history
 	base := meta.BaseCommit
 	if base == "" {
-		base, _ = runGit(m.rootDir, "merge-base", "HEAD", meta.Branch)
+		resolved, err := runGit(m.rootDir, "merge-base", "HEAD", meta.Branch)
+		if err != nil || strings.TrimSpace(resolved) == "" {
+			if err == nil {
+				err = errors.New("empty merge-base")
+			}
+			return fmt.Errorf("resolve apply base: %w", err)
+		}
+		base = resolved
 	}
 	diffPatch, err := runGitRaw(meta.Directory, "diff", "--binary", strings.TrimSpace(base)+"..HEAD")
 	if err != nil {
@@ -415,7 +419,10 @@ func (m *worktreeManager) RemoveWithOptions(sessionID string, force bool, keepBr
 
 	if !force {
 		porcelain, err := runGit(meta.Directory, "status", "--porcelain")
-		if err == nil && strings.TrimSpace(porcelain) != "" {
+		if err != nil {
+			return fmt.Errorf("read worktree status: %w", err)
+		}
+		if strings.TrimSpace(porcelain) != "" {
 			return errors.New("worktree has uncommitted changes; pass force=true to discard")
 		}
 	}
@@ -426,10 +433,15 @@ func (m *worktreeManager) RemoveWithOptions(sessionID string, force bool, keepBr
 	}
 	args = append(args, meta.Directory)
 	if _, err := runGit(m.rootDir, args...); err != nil {
-		_, _ = runGit(m.rootDir, "worktree", "prune")
+		return fmt.Errorf("remove worktree: %w", err)
 	}
 	if !keepBranch && meta.Branch != "" {
-		_, _ = runGit(m.rootDir, "branch", "-D", meta.Branch)
+		if _, err := runGit(m.rootDir, "branch", "-D", meta.Branch); err != nil {
+			m.mu.Lock()
+			delete(m.sessions, sessionID)
+			m.mu.Unlock()
+			return fmt.Errorf("delete worktree branch: %w", err)
+		}
 	}
 	m.mu.Lock()
 	delete(m.sessions, sessionID)

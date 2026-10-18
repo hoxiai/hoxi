@@ -28,7 +28,7 @@ export const timeline: TimelineI18n = {
   inputPlaceholder:
     "Ask a question or describe a task... (Enter to send, Shift+Enter for newline)",
   steerPlaceholder:
-    "Task is running. New messages will be queued (Send Now, Edit, or Delete anytime)...",
+    "Task is running. Send to inject a course-correction before the next tool step, without stopping the run.",
   filesAttached: "{count} files",
   addContext: "Add Context",
   selectModel: "Select Model",
@@ -184,7 +184,7 @@ export const timeline: TimelineI18n = {
     "The parent task was interrupted. Please call the `task` tool with `task_id=\"{taskId}\"` (`subagent_type=\"{agentType}\"`, description: \"{description}\") to resume that subagent session with its preserved context, collect or finish its work, and continue the main task.",
   queuedBadge: "Queued…",
   queueSendNow: "Send Now",
-  queueSendNowTooltip: "Interrupt current step and send this message immediately",
+  queueSendNowTooltip: "Inject this message before the next tool step without aborting the current run",
   queueEdit: "Edit",
   queueEditTooltip: "Move back to composer to edit",
   queueDelete: "Delete",

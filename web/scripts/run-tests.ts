@@ -2,6 +2,8 @@
 import "../src/__tests__/i18n.test";
 import "../src/__tests__/sse.test";
 import "../src/__tests__/provider-health.test";
+import "../src/__tests__/permissions.test";
+import "../src/__tests__/memory.test";
 import { runAllTests } from "../src/__tests__/test-harness";
 
 console.log("[test] Running Hoxi frontend unit tests...");

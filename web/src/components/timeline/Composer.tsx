@@ -164,7 +164,10 @@ export default function Composer() {
       textareaRef.style.height = "48px";
     }
     try {
-      const id = await submitSessionPrompt(payload, sessionID(), { attachments });
+      const id = await submitSessionPrompt(payload, sessionID(), {
+        attachments,
+        forceImmediate: busy(),
+      });
       clearReviewComments(id);
     } catch (err) {
       console.error("send prompt failed:", err);

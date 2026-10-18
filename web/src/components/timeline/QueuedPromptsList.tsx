@@ -15,7 +15,7 @@ import { t } from "../../i18n";
  * Ported from Kilo Code `UserMessageDisplay` (`queued` state) & `session-queue.ts`:
  * Renders follow-up user prompts that were submitted while the session was busy.
  * Each queued message supports 3 immediate actions:
- *  - Send Now: interrupts/steers the current step and sends immediately
+ *  - Send Now: injects the message before the next tool step without aborting
  *  - Edit: pops the message (and attachments) back into Composer for editing
  *  - Delete: removes the message from the queue
  */
