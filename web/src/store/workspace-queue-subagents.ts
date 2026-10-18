@@ -370,31 +370,22 @@ export interface PendingRevertRequest {
 export const [pendingRevertConfirm, setPendingRevertConfirm] =
   createSignal<PendingRevertRequest | null>(null);
 
-function collectAffectedRevertFiles(
-  sessionID: string,
-  messageID: string,
-  partID?: string
-): string[] {
+const MUTATING_TOOLS = new Set(["edit", "write", "patch", "multiedit", "apply_patch"]);
+
+function collectAffectedRevertFiles(sessionID: string, messageID: string, partID?: string): string[] {
   const turns = workspace.messagesBySession[sessionID] ?? [];
   const bIdx = turns.findIndex((m) => m.info.id === messageID);
-  const slice =
-    bIdx >= 0 ? turns.slice(bIdx) : turns.filter((m) => m.info.id >= messageID);
+  const slice = bIdx >= 0 ? turns.slice(bIdx) : turns.filter((m) => m.info.id >= messageID);
   const files = new Set<string>();
   slice.forEach((turn, idx) => {
-    const startPart =
-      idx === 0 && partID
-        ? Math.max(0, turn.parts.findIndex((p) => p.id === partID))
-        : 0;
-    for (const p of turn.parts.slice(startPart)) {
+    const start = idx === 0 && partID ? Math.max(0, turn.parts.findIndex((p) => p.id === partID)) : 0;
+    for (const p of turn.parts.slice(start)) {
       if (p.type === "patch" && Array.isArray(p.files)) {
         for (const f of p.files) if (f) files.add(f);
-      } else if (p.type === "tool" && p.state.status === "completed") {
-        const tn = p.tool.toLowerCase();
-        if (tn === "edit" || tn === "write" || tn === "patch" || tn === "multiedit" || tn === "apply_patch") {
-          const inp = (p.state.input || {}) as Record<string, any>;
-          const fp = inp.filePath || inp.path || inp.file || (p.state.metadata as any)?.filediff?.file;
-          if (typeof fp === "string" && fp.trim()) files.add(fp.trim());
-        }
+      } else if (p.type === "tool" && p.state.status === "completed" && MUTATING_TOOLS.has(p.tool.toLowerCase())) {
+        const inp = (p.state.input || {}) as Record<string, any>;
+        const fp = inp.filePath || inp.path || inp.file || (p.state.metadata as any)?.filediff?.file;
+        if (typeof fp === "string" && fp.trim()) files.add(fp.trim());
       }
     }
   });
@@ -422,8 +413,7 @@ export async function revertToHere(
   recordUserRevertAction(sessionID, messageID);
 
   if (!partID) {
-    const turns = workspace.messagesBySession[sessionID] ?? [];
-    const targetTurn = turns.find((m) => m.info.id === messageID);
+    const targetTurn = (workspace.messagesBySession[sessionID] ?? []).find((m) => m.info.id === messageID);
     if (targetTurn && targetTurn.info.role === "user") {
       const text = targetTurn.parts
         .filter((p): p is Extract<MessagePart, { type: "text" }> => p.type === "text")
@@ -432,45 +422,26 @@ export async function revertToHere(
         .trim();
       const attachments = targetTurn.parts
         .filter((p): p is Extract<MessagePart, { type: "file" }> => p.type === "file")
-        .map((p) => ({
-          type: "file" as const,
-          mime: p.mime,
-          filename: p.filename,
-          url: p.url,
-        }));
+        .map((p) => ({ type: "file" as const, mime: p.mime, filename: p.filename, url: p.url }));
       if (text || attachments.length > 0) {
-        setWorkspace("composerDraftEditBySession", sessionID, {
-          id: `revert_${messageID}`,
-          text,
-          attachments,
-        });
+        setWorkspace("composerDraftEditBySession", sessionID, { id: `revert_${messageID}`, text, attachments });
       }
     }
   }
 
   if (existingSession) {
-    replaceSession({
-      ...existingSession,
-      revert: { messageID, partID },
-    });
+    replaceSession({ ...existingSession, revert: { messageID, partID } });
   }
 
   if (isSessionBusy(sessionID)) {
     setWorkspace("statusBySession", sessionID, { type: "idle" });
     try {
       await hoxiAPI.abortSession(sessionID, sessionDirectory(sessionID));
-    } catch {
-      /* ignore */
-    }
+    } catch { /* ignore */ }
     void abortChildSubagentSessions(sessionID);
   }
 
-  const info = await hoxiAPI.revertSession(
-    sessionID,
-    messageID,
-    partID,
-    sessionDirectory(sessionID)
-  );
+  const info = await hoxiAPI.revertSession(sessionID, messageID, partID, sessionDirectory(sessionID));
   replaceSession(info);
   void loadSessionMessages(sessionID);
   scheduleRefreshWorktreeStatus(sessionID, 120);
@@ -479,22 +450,14 @@ export async function revertToHere(
 export async function undoRevert(sessionID: string): Promise<void> {
   setPendingRevertConfirm(null);
   const existingSession = workspace.sessions.find((s) => s.id === sessionID);
-  if (existingSession) {
-    replaceSession({
-      ...existingSession,
-      revert: undefined,
-    });
-  }
+  if (existingSession) replaceSession({ ...existingSession, revert: undefined });
   const info = await hoxiAPI.unrevertSession(sessionID, sessionDirectory(sessionID));
   replaceSession(info);
   void loadSessionMessages(sessionID);
   scheduleRefreshWorktreeStatus(sessionID, 120);
 }
 
-export async function forkFromMessage(
-  sessionID: string,
-  messageID?: string
-): Promise<string> {
+export async function forkFromMessage(sessionID: string, messageID?: string): Promise<string> {
   setPendingRevertConfirm(null);
   const forked = await hoxiAPI.forkSession(sessionID, messageID, sessionDirectory(sessionID));
   replaceSession(forked);
