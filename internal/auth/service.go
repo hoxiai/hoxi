@@ -151,6 +151,22 @@ func (s *Service) StartAuthorization(ctx context.Context) (*StartAuthResponse, e
 	}, nil
 }
 
+// HandleCallback accepts only the desktop login callback, never an arbitrary exchange URL.
+func (s *Service) HandleCallback(ctx context.Context, rawURL string) error {
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Scheme != "hoxi" || u.Host != "auth-callback" ||
+		u.User != nil || u.Path != "" || u.Opaque != "" || u.Fragment != "" {
+		return errors.New("invalid desktop authorization callback")
+	}
+	query, err := url.ParseQuery(u.RawQuery)
+	if err != nil || len(query["handoff"]) != 1 || len(query["state"]) != 1 ||
+		strings.TrimSpace(query.Get("handoff")) == "" || strings.TrimSpace(query.Get("state")) == "" {
+		return errors.New("invalid desktop authorization callback parameters")
+	}
+	_, err = s.ExchangeToken(ctx, query.Get("handoff"), query.Get("state"))
+	return err
+}
+
 // ExchangeToken 外部唤起（如 Deep Link）时主动兑换令牌
 func (s *Service) ExchangeToken(ctx context.Context, handoffToken, state string) (*StoredAuth, error) {
 	if handoffToken == "" || state == "" {

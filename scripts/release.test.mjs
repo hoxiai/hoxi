@@ -30,8 +30,11 @@ test("macOS floor follows every Mach-O slice and required sidecar, not the SDK",
 
 test("artifact metadata rejects wrong releases, wrong bundle and insufficient OS requirements", () => {
   const info = { CFBundleIdentifier: "ai.hoxi.desktop", CFBundleVersion: "0.2.1",
-    CFBundleShortVersionString: "0.2.1", LSMinimumSystemVersion: "13.0" };
+    CFBundleShortVersionString: "0.2.1", LSMinimumSystemVersion: "13.0",
+    CFBundleURLTypes: [{ CFBundleURLSchemes: ["hoxi"] }] };
   validateAppMetadata(info, "0.2.1", "13.0");
+  assert.throws(() => validateAppMetadata({ ...info, CFBundleURLTypes: undefined }, "0.2.1", "13.0"), /URL scheme/);
+  assert.throws(() => validateAppMetadata({ ...info, CFBundleURLTypes: [{ CFBundleURLSchemes: ["other"] }] }, "0.2.1", "13.0"), /URL scheme/);
   assert.throws(() => validateAppMetadata(info, "0.2.2", "13.0"), /display version/);
   assert.throws(() => validateAppMetadata({ ...info, CFBundleVersion: "0.2.0" }, "0.2.1", "13.0"), /build version/);
   assert.throws(() => validateAppMetadata({ ...info, CFBundleIdentifier: "ai.hoxi.desktop.dev" }, "0.2.1", "13.0"));

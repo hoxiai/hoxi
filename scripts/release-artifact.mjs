@@ -66,6 +66,8 @@ function inspectBinaries(app, info) {
 export function validateAppMetadata(info, expectedVersion, requiredMinimum) {
   const version = normalizeVersion(expectedVersion);
   assert.equal(info.CFBundleIdentifier, "ai.hoxi.desktop", "Expected the production Hoxi bundle");
+  assert.ok(info.CFBundleURLTypes?.some((type) => type.CFBundleURLSchemes?.includes("hoxi")),
+    "App must register the hoxi URL scheme");
   assert.equal(info.CFBundleShortVersionString, version, "App display version differs from release version");
   assert.equal(info.CFBundleVersion, version, "App build version differs from release version");
   assert.equal(maximumMacOS([info.LSMinimumSystemVersion, requiredMinimum]), info.LSMinimumSystemVersion,

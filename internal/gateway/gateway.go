@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"io/fs"
@@ -123,6 +124,10 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 }
 
 func (g *Gateway) SetBrowserAgentToken(token string) { g.browser.SetAgentToken(token) }
+
+func (g *Gateway) HandleAuthCallback(ctx context.Context, rawURL string) error {
+	return g.auth.HandleCallback(ctx, rawURL)
+}
 
 func (g *Gateway) CloseBrowser() {
 	g.browser.Close()

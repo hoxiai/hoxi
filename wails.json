@@ -19,6 +19,13 @@
     "productName": "Hoxi",
     "productVersion": "0.2.1",
     "copyright": "Copyright © 2026 Hoxi (https://hoxi.ai)",
-    "comments": "Hoxi Native AI Agentic Engineering Workspace (https://hoxi.ai)"
+    "comments": "Hoxi Native AI Agentic Engineering Workspace (https://hoxi.ai)",
+    "protocols": [
+      {
+        "scheme": "hoxi",
+        "description": "Hoxi desktop authentication callback",
+        "role": "Viewer"
+      }
+    ]
   }
 }

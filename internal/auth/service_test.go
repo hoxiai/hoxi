@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sync"
@@ -107,6 +108,61 @@ func TestExchangeRequiresLivePendingState(t *testing.T) {
 		t.Fatal("replay sent an outbound request")
 	}
 	assertStoredToken(t, s, "new-token")
+}
+
+func TestHandleCallback(t *testing.T) {
+	var requests atomic.Int32
+	var s *Service
+	s = testService(t, func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		if r.Method != http.MethodPost || r.URL.Path != "/api/hoxi/device-tokens/authorize" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		var body ExchangeTokenRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		if body.HandoffToken != "handoff+with&encoding" || body.State != s.Snapshot().PendingState {
+			t.Error("callback credentials were not forwarded correctly")
+		}
+		authorizedResponse(w)
+	})
+	state := startTestAuth(t, s)
+	query := "?handoff=" + url.QueryEscape("handoff+with&encoding") + "&state=" + state
+	for _, rawURL := range []string{
+		"https://auth-callback" + query,
+		"hoxi://other" + query,
+		"hoxi://user@auth-callback" + query,
+		"hoxi://auth-callback:80" + query,
+		"hoxi://auth-callback/path" + query,
+		"hoxi://auth-callback" + query + "#fragment",
+		"hoxi://auth-callback" + query + "&state=duplicate",
+		"hoxi://auth-callback" + query + "&handoff=duplicate",
+		"hoxi://auth-callback" + query + "&invalid=%zz",
+		"hoxi://auth-callback?handoff=&state=" + state,
+		"hoxi://auth-callback?handoff=handoff",
+		"hoxi://auth-callback?handoff=handoff&state=mismatch",
+	} {
+		if err := s.HandleCallback(context.Background(), rawURL); err == nil {
+			t.Error("accepted invalid callback")
+		}
+	}
+	if requests.Load() != 0 {
+		t.Fatal("invalid callback sent an outbound request")
+	}
+	if err := s.HandleCallback(context.Background(), "hoxi://auth-callback"+query); err != nil {
+		t.Fatal(err)
+	}
+	assertStoredToken(t, s, "new-token")
+	if s.Snapshot().IsAuthorizing {
+		t.Fatal("callback did not complete pending authorization")
+	}
+	if err := s.HandleCallback(context.Background(), "hoxi://auth-callback"+query); err == nil {
+		t.Fatal("accepted callback replay")
+	}
+	if requests.Load() != 1 {
+		t.Fatal("callback replay sent an outbound request")
+	}
 }
 
 func TestExchangeExpiredBeforeRequest(t *testing.T) {

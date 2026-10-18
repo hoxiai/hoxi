@@ -84,18 +84,19 @@ type Config struct {
 }
 
 type DesktopApp struct {
-	contextMu    sync.RWMutex
-	context      context.Context
-	cfg          Config
-	logger       *slog.Logger
-	childMu      sync.Mutex
-	child        *exec.Cmd
-	childDone    chan struct{}
-	childStopped bool
-	gateway      *gateway.Gateway
-	status       *statusbar.Tracker
-	wsServer     *http.Server
-	browserEnv   []string
+	contextMu       sync.RWMutex
+	context         context.Context
+	revealOnStartup bool
+	cfg             Config
+	logger          *slog.Logger
+	childMu         sync.Mutex
+	child           *exec.Cmd
+	childDone       chan struct{}
+	childStopped    bool
+	gateway         *gateway.Gateway
+	status          *statusbar.Tracker
+	wsServer        *http.Server
+	browserEnv      []string
 }
 
 func Run(distFS fs.FS) {
@@ -272,6 +273,7 @@ func Run(distFS fs.FS) {
 			Handler: gw,
 		},
 		Mac: &mac.Options{
+			OnUrlOpen:            app.onURLOpen,
 			TitleBar:             mac.TitleBarHiddenInset(),
 			WebviewIsTransparent: true,
 			WindowIsTranslucent:  true,
@@ -357,9 +359,14 @@ func (a *DesktopApp) BootstrapOpenCodeAsync(ctx context.Context, port int, passw
 func (a *DesktopApp) startup(ctx context.Context) {
 	a.contextMu.Lock()
 	a.context = ctx
+	reveal := a.revealOnStartup
+	a.revealOnStartup = false
 	a.contextMu.Unlock()
 	statusbar.Start(ctx)
 	statusbar.Update(a.status.Snapshot())
+	if reveal {
+		a.showWindow()
+	}
 }
 
 func (a *DesktopApp) shutdown(_ context.Context) {
@@ -377,6 +384,32 @@ func (a *DesktopApp) shutdown(_ context.Context) {
 
 func (a *DesktopApp) onSecondInstance(_ options.SecondInstanceData) {
 	if ctx := a.desktopContext(); ctx != nil {
+		wailsruntime.WindowShow(ctx)
+		wailsruntime.WindowUnminimise(ctx)
+	}
+}
+
+func (a *DesktopApp) onURLOpen(rawURL string) {
+	a.showWindow()
+	// URL events can arrive before OnStartup; the gateway already owns the live auth attempt.
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if err := a.gateway.HandleAuthCallback(ctx, rawURL); err != nil {
+			// Callback URLs and transport errors can contain credentials. Never log them.
+			a.logger.Warn("desktop authorization callback was not completed; polling remains available")
+		}
+	}()
+}
+
+func (a *DesktopApp) showWindow() {
+	a.contextMu.Lock()
+	ctx := a.context
+	if ctx == nil {
+		a.revealOnStartup = true
+	}
+	a.contextMu.Unlock()
+	if ctx != nil {
 		wailsruntime.WindowShow(ctx)
 		wailsruntime.WindowUnminimise(ctx)
 	}
