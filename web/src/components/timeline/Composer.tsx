@@ -14,7 +14,6 @@ import {
   ensureAIConsent,
   forkFromMessage,
   isSessionBusy,
-  sessionRuntimeForID,
   stopSessionTask,
   submitSessionPrompt,
   switchActiveSessionSandboxMode,
@@ -42,7 +41,7 @@ import {
 } from "./composer-hooks";
 import { t } from "../../i18n";
 import { isComposerIMEEvent } from "./composer-keyboard";
-import { hoxiAPI, isRunnerSessionID } from "../../services/api";
+import { hoxiAPI } from "../../services/api";
 
 export default function Composer() {
   const [text, setText] = createSignal("");
@@ -79,9 +78,6 @@ export default function Composer() {
   const busy = createMemo(() => isSessionBusy(sessionID()));
   const effectiveSandboxMode = createMemo<"local" | "worktree">(() => {
     const id = sessionID();
-    if (isRunnerSessionID(id) || sessionRuntimeForID(id) !== "opencode") {
-      return "worktree";
-    }
     if (id && workspace.worktreeBySession[id]) {
       return workspace.worktreeBySession[id].isolated ? "worktree" : "local";
     }

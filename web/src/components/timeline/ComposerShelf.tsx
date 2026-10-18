@@ -9,6 +9,7 @@ import {
 } from "lucide-solid";
 import {
   clearReviewComments,
+  isSessionBusy,
   openFileInInspector,
   removeReviewComment,
   setWorkspace,
@@ -17,10 +18,12 @@ import {
 import ApprovalGateCard from "../approval/ApprovalGateCard";
 import QuestionDock from "../approval/QuestionDock";
 import { FileIcon } from "../icons";
-import AgentStackPill, { resolveRootSessionID } from "./AgentStackPill";
+import { resolveRootSessionID } from "./SubagentSessionBanner";
+import ChangedFilesSummary from "./ChangedFilesSummary";
 import PlanFollowupBar from "./PlanFollowupBar";
 import RevertBanner from "./RevertBanner";
-import TaskProgressCard from "./TaskProgressCard";
+import { collectSessionChangedFiles } from "./tool-card-state";
+import { filterVisibleTurnsByRevert } from "./turn-window";
 import { t } from "../../i18n";
 
 export default function ComposerShelf() {
@@ -28,6 +31,24 @@ export default function ComposerShelf() {
   let reviewContainerRef: HTMLDivElement | undefined;
 
   const sessionID = () => workspace.activeSessionID;
+
+  const activeSession = createMemo(() => {
+    const id = sessionID();
+    return id ? workspace.sessions.find((s) => s.id === id) : undefined;
+  });
+
+  const visibleTurns = createMemo(() => {
+    const id = sessionID();
+    const raw = id ? workspace.messagesBySession[id] ?? [] : [];
+    return filterVisibleTurnsByRevert(raw, activeSession()?.revert);
+  });
+
+  const changedFiles = createMemo(() => {
+    const id = sessionID();
+    if (!id || !isSessionBusy(id)) return [];
+    return collectSessionChangedFiles(visibleTurns(), id);
+  });
+
 
   const pendingPermissions = createMemo(() => {
     const id = sessionID();
@@ -111,13 +132,13 @@ export default function ComposerShelf() {
       {/* Kilo Plan Follow-up Suggestion Bar */}
       <PlanFollowupBar />
 
-      {/* Compact single-line Pill Shelf: Subagent Stack + Task Progress + Review Comments (with upward Popovers) */}
-      <div class="mb-2 flex items-center gap-2 flex-wrap empty:hidden">
-        <AgentStackPill />
-        <TaskProgressCard />
+      {/* Compact single-line Pill Shelf: Changed Files + Review Comments (with upward Popover) */}
+      <div class="mb-2 flex items-center justify-center gap-2 flex-wrap empty:hidden">
+        <ChangedFilesSummary files={changedFiles()} variant="pill" />
 
         {/* Queued Inline Diff ReviewComments Pill + Upward Popover */}
         <Show when={reviewComments().length > 0}>
+
           <div ref={reviewContainerRef} class="relative inline-flex items-center">
             <div class="inline-flex items-center gap-1.5 rounded-full border border-[var(--accent-border)] bg-[var(--accent-surface)]/45 px-2.5 py-1 text-[11.5px]">
               <button

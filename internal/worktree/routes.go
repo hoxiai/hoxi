@@ -94,12 +94,17 @@ func (m *worktreeManager) registerRoutes(mux *http.ServeMux) {
 		var body struct {
 			SessionID string `json:"sessionID"`
 			File      string `json:"file"`
+			Directory string `json:"directory"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeJSONError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		if err := m.scoped(r.URL.Query().Get("directory"), body.SessionID).RevertFile(body.SessionID, body.File); err != nil {
+		dir := body.Directory
+		if dir == "" {
+			dir = r.URL.Query().Get("directory")
+		}
+		if err := m.scoped(dir, body.SessionID).RevertFile(body.SessionID, body.File); err != nil {
 			writeJSONError(w, http.StatusBadRequest, err.Error())
 			return
 		}

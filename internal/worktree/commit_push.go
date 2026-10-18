@@ -110,11 +110,68 @@ func (m *worktreeManager) CommitWorktree(sessionID, message string) (string, err
 	return res.Commit, nil
 }
 
+func repoHasOwnChanges(repo gitRepoTarget, nestedPrefixes map[string]struct{}) (bool, error) {
+	porcelain, err := runGitRaw(repo.Dir, "status", "--porcelain")
+	if err != nil {
+		return false, err
+	}
+	for _, rawLine := range strings.Split(porcelain, "\n") {
+		if strings.TrimSpace(rawLine) == "" || len(rawLine) < 4 {
+			continue
+		}
+		rel := strings.TrimSpace(rawLine[3:])
+		if repo.RelPrefix == "" && isWithinNestedRepo(rel, nestedPrefixes) {
+			continue
+		}
+		return true, nil
+	}
+	return false, nil
+}
+
+func pushDiscoveredRepos(repos []gitRepoTarget) (CommitAndPushResult, error) {
+	var target gitRepoTarget
+	for _, r := range repos {
+		porcelain, err := runGitRaw(r.Dir, "status", "--porcelain", "-b")
+		if err != nil {
+			continue
+		}
+		if target.Dir == "" {
+			target = r
+		}
+		firstLine := strings.SplitN(porcelain, "\n", 2)[0]
+		if ahead, _ := parseAheadAndUpstreamFromPorcelainHeader(firstLine); ahead > 0 {
+			target = r
+			break
+		}
+	}
+	if target.Dir == "" && len(repos) > 0 {
+		target = repos[0]
+	}
+	branch, _ := runGit(target.Dir, "rev-parse", "--abbrev-ref", "HEAD")
+	hash, _ := runGit(target.Dir, "rev-parse", "--short", "HEAD")
+	remote, err := runGitPush(target.Dir, branch)
+	if err != nil {
+		return CommitAndPushResult{}, err
+	}
+	return CommitAndPushResult{
+		OK:     true,
+		Commit: hash,
+		Branch: branch,
+		Remote: remote,
+		Pushed: true,
+	}, nil
+}
+
 func (m *worktreeManager) PushWorktree(sessionID string) (CommitAndPushResult, error) {
 	m.ops.Lock()
 	defer m.ops.Unlock()
 
 	workDir := m.resolveWorkDir(sessionID)
+	repos := discoverGitRepos(workDir)
+	if len(repos) > 1 || (len(repos) == 1 && repos[0].RelPrefix != "") {
+		return pushDiscoveredRepos(repos)
+	}
+
 	branch, _ := runGit(workDir, "rev-parse", "--abbrev-ref", "HEAD")
 	hash, _ := runGit(workDir, "rev-parse", "--short", "HEAD")
 
@@ -136,6 +193,79 @@ func (m *worktreeManager) CommitAndPushWorktree(sessionID, message string, push 
 	defer m.ops.Unlock()
 
 	workDir := m.resolveWorkDir(sessionID)
+	repos := discoverGitRepos(workDir)
+	if len(repos) > 1 || (len(repos) == 1 && repos[0].RelPrefix != "") {
+		nestedPrefixes := nestedRepoPrefixSet(repos)
+		var dirtyRepos []gitRepoTarget
+		for _, r := range repos {
+			if dirty, err := repoHasOwnChanges(r, nestedPrefixes); err == nil && dirty {
+				dirtyRepos = append(dirtyRepos, r)
+			}
+		}
+
+		msg := strings.TrimSpace(message)
+		if len(dirtyRepos) == 0 {
+			if !push {
+				return CommitAndPushResult{}, errors.New("nothing to commit, working tree clean")
+			}
+			res, err := pushDiscoveredRepos(repos)
+			res.Message = msg
+			return res, err
+		}
+
+		if msg == "" {
+			return CommitAndPushResult{}, errors.New("commit message is required")
+		}
+		commitMsg := appendHoxiCoAuthor(msg)
+		var hashes []string
+		var firstBranch, firstRemote string
+
+		for _, r := range dirtyRepos {
+			if _, err := runGit(r.Dir, "add", "-A"); err != nil {
+				return CommitAndPushResult{}, err
+			}
+			if r.RelPrefix == "" && len(nestedPrefixes) > 0 {
+				for prefix := range nestedPrefixes {
+					_, _ = runGit(r.Dir, "reset", "-q", "--", prefix)
+				}
+			}
+			if _, err := runGit(r.Dir, "commit", "-m", commitMsg); err != nil {
+				return CommitAndPushResult{}, err
+			}
+			h, _ := runGit(r.Dir, "rev-parse", "--short", "HEAD")
+			br, _ := runGit(r.Dir, "rev-parse", "--abbrev-ref", "HEAD")
+			if h != "" {
+				hashes = append(hashes, h)
+			}
+			if firstBranch == "" && br != "" {
+				firstBranch = br
+			}
+			if push {
+				rem, pushErr := runGitPush(r.Dir, br)
+				if pushErr != nil {
+					return CommitAndPushResult{
+						OK:     false,
+						Commit: strings.Join(hashes, ","),
+						Branch: firstBranch,
+						Pushed: false,
+					}, pushErr
+				}
+				if firstRemote == "" {
+					firstRemote = rem
+				}
+			}
+		}
+
+		return CommitAndPushResult{
+			OK:      true,
+			Commit:  strings.Join(hashes, ","),
+			Branch:  firstBranch,
+			Remote:  firstRemote,
+			Pushed:  push,
+			Message: msg,
+		}, nil
+	}
+
 	porcelain, err := runGit(workDir, "status", "--porcelain")
 	if err != nil {
 		return CommitAndPushResult{}, fmt.Errorf("git status: %w", err)

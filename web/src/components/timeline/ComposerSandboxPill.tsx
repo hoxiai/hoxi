@@ -126,9 +126,7 @@ export function ComposerSandboxPill(props: {
               : "text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
         }`}
         title={
-          isRunner()
-            ? t("timeline.runnerSafetyNotice")
-            : props.mode === "worktree"
+          props.mode === "worktree"
               ? t("timeline.sandboxWorktreeTooltip")
               : t("timeline.sandboxLocalTooltip")
         }
@@ -174,8 +172,7 @@ export function ComposerSandboxPill(props: {
           <div class="space-y-0.5">
             <button
               type="button"
-              disabled={props.switching || props.busy || isRunner()}
-              title={isRunner() ? t("timeline.runnerSandboxRequired") : undefined}
+              disabled={props.switching || props.busy}
               onClick={() => {
                 props.onToggle("local");
                 setOpen(false);
@@ -200,7 +197,7 @@ export function ComposerSandboxPill(props: {
                   {t("timeline.sandboxLocalMode")}
                 </div>
                 <p class="mt-0.5 text-[11px] leading-snug text-[var(--text-muted)]">
-                  {isRunner() ? t("timeline.runnerSandboxRequired") : t("timeline.sandboxLocalTooltip")}
+                  {t("timeline.sandboxLocalTooltip")}
                 </p>
               </div>
               <Show when={props.mode === "local"}>
@@ -235,7 +232,7 @@ export function ComposerSandboxPill(props: {
                   {t("timeline.sandboxWorktreeMode")}
                 </div>
                 <p class="mt-0.5 text-[11px] leading-snug text-[var(--text-muted)]">
-                  {isRunner() ? t("timeline.runnerSafetyNotice") : t("timeline.sandboxWorktreeTooltip")}
+                  {t("timeline.sandboxWorktreeTooltip")}
                 </p>
               </div>
               <Show when={props.mode === "worktree"}>

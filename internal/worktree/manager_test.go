@@ -456,3 +456,102 @@ func TestWorktreeHTTPRoutes(t *testing.T) {
 		t.Fatalf("prune-sandboxes failed: %d %s", rec.Code, rec.Body.String())
 	}
 }
+
+func initSubGitRepo(t *testing.T, parentDir, relPath, branch string) string {
+	t.Helper()
+	repoDir := filepath.Join(parentDir, relPath)
+	if err := os.MkdirAll(repoDir, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", repoDir, err)
+	}
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repoDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v in %s failed: %v\n%s", args, repoDir, err, string(out))
+		}
+	}
+	run("init", "-b", branch)
+	run("config", "user.name", "Test User")
+	run("config", "user.email", "test@hoxi.local")
+	if err := os.WriteFile(filepath.Join(repoDir, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatalf("write main.go: %v", err)
+	}
+	run("add", "main.go")
+	run("commit", "-m", "chore: init "+relPath)
+	return repoDir
+}
+
+func TestMultiRepoSubdirectoriesStatusDiffRevertAndCommit(t *testing.T) {
+	parentDir := t.TempDir()
+	repoA := initSubGitRepo(t, parentDir, "service-a", "main")
+	repoB := initSubGitRepo(t, parentDir, filepath.Join("packages", "service-b"), "feat/sub")
+
+	mgr := NewManager(parentDir)
+
+	// Initially clean across both sub-repositories
+	st0, err := mgr.Status("__root__")
+	if err != nil {
+		t.Fatalf("Status initial failed: %v", err)
+	}
+	if st0.Dirty || st0.ChangedFiles != 0 {
+		t.Fatalf("expected clean multi-repo parent status, got %+v", st0)
+	}
+
+	// Modify tracked file in service-a and add untracked file in packages/service-b
+	if err := os.WriteFile(filepath.Join(repoA, "main.go"), []byte("package main\n\nfunc a() {}\n"), 0o644); err != nil {
+		t.Fatalf("modify service-a/main.go: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoB, "helper.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatalf("write packages/service-b/helper.go: %v", err)
+	}
+
+	st1, err := mgr.Status("__root__")
+	if err != nil {
+		t.Fatalf("Status dirty failed: %v", err)
+	}
+	if !st1.Dirty || st1.ChangedFiles != 2 || st1.Additions != 3 {
+		t.Fatalf("expected Dirty=true, ChangedFiles=2, Additions=3 across sub-repos, got %+v", st1)
+	}
+
+	diffs, err := mgr.Diff("__root__")
+	if err != nil {
+		t.Fatalf("Diff failed: %v", err)
+	}
+	if len(diffs) != 2 {
+		t.Fatalf("expected 2 diffs across nested git repos, got %d: %+v", len(diffs), diffs)
+	}
+
+	byFile := make(map[string]worktreeFileDiff)
+	for _, d := range diffs {
+		byFile[d.File] = d
+	}
+
+	diffA, okA := byFile["service-a/main.go"]
+	if !okA || diffA.Repo != "service-a" || diffA.Branch != "main" || !strings.Contains(diffA.Patch, "+++ b/service-a/main.go") {
+		t.Fatalf("unexpected service-a diff: %+v", diffA)
+	}
+	diffB, okB := byFile["packages/service-b/helper.go"]
+	if !okB || diffB.Repo != "packages/service-b" || diffB.Branch != "feat/sub" || !strings.Contains(diffB.Patch, "+++ b/packages/service-b/helper.go") {
+		t.Fatalf("unexpected packages/service-b diff: %+v", diffB)
+	}
+
+	// Revert untracked file inside nested packages/service-b
+	if err := mgr.RevertFile("__root__", "packages/service-b/helper.go"); err != nil {
+		t.Fatalf("RevertFile nested untracked failed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(repoB, "helper.go")); !os.IsNotExist(err) {
+		t.Fatalf("expected packages/service-b/helper.go to be removed")
+	}
+
+	// Commit remaining change in service-a from parent manager
+	hash, err := mgr.CommitWorktree("__root__", "feat: update service-a")
+	if err != nil || hash == "" {
+		t.Fatalf("CommitWorktree on multi-repo parent failed: err=%v, hash=%q", err, hash)
+	}
+	st2, err := mgr.Status("__root__")
+	if err != nil || st2.Dirty {
+		t.Fatalf("expected clean status after multi-repo commit, got %+v (err=%v)", st2, err)
+	}
+}
+

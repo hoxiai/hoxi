@@ -195,6 +195,127 @@ func (m *worktreeManager) CreateOnBranch(sessionID, retainedBranch string) (work
 	return meta, nil
 }
 
+type repoStatusSummary struct {
+	branch       string
+	headCommit   string
+	headSubject  string
+	changedFiles int
+	additions    int
+	deletions    int
+	aheadCount   int
+	hasUpstream  bool
+	valid        bool
+}
+
+func statusSingleRepo(repo gitRepoTarget, diffTarget string, nestedPrefixes map[string]struct{}) repoStatusSummary {
+	porcelain, porcelainErr := runGitRaw(repo.Dir, "status", "--porcelain", "-b")
+	changedFiles := 0
+	aheadCount := 0
+	hasUpstream := false
+	branch := ""
+	var untrackedFiles []string
+
+	for _, rawLine := range strings.Split(porcelain, "\n") {
+		if strings.HasPrefix(rawLine, "## ") {
+			if br := parseBranchFromPorcelainHeader(rawLine); br != "" {
+				branch = br
+			}
+			aheadCount, hasUpstream = parseAheadAndUpstreamFromPorcelainHeader(rawLine)
+			continue
+		}
+		trimmed := strings.TrimSpace(rawLine)
+		if trimmed == "" || len(rawLine) < 4 {
+			continue
+		}
+		rel := strings.TrimSpace(rawLine[3:])
+		if repo.RelPrefix == "" && isWithinNestedRepo(rel, nestedPrefixes) {
+			continue
+		}
+		changedFiles++
+		if strings.HasPrefix(rawLine, "?? ") && len(untrackedFiles) < maxUntrackedFilesToCount {
+			if rel != "" {
+				untrackedFiles = append(untrackedFiles, rel)
+			}
+		}
+	}
+
+	if branch == "" {
+		if br, err := runGit(repo.Dir, "rev-parse", "--abbrev-ref", "HEAD"); err == nil && br != "" {
+			branch = br
+		}
+	}
+
+	numstat, err := runGit(repo.Dir, "diff", "--numstat", diffTarget)
+	if err != nil && diffTarget != "HEAD" {
+		numstat, err = runGit(repo.Dir, "diff", "--numstat", "HEAD")
+	}
+	if err != nil {
+		numstat, _ = runGit(repo.Dir, "diff", "--cached", "--numstat")
+	}
+
+	additions := 0
+	deletions := 0
+	diffFileSet := make(map[string]struct{})
+	for _, line := range strings.Split(strings.TrimSpace(numstat), "\n") {
+		fields := strings.SplitN(line, "\t", 3)
+		if len(fields) < 3 {
+			fields = strings.Fields(line)
+			if len(fields) < 3 {
+				continue
+			}
+		}
+		f := strings.TrimSpace(fields[len(fields)-1])
+		if repo.RelPrefix == "" && isWithinNestedRepo(f, nestedPrefixes) {
+			continue
+		}
+		if a, convErr := strconv.Atoi(strings.TrimSpace(fields[0])); convErr == nil {
+			additions += a
+		}
+		if d, convErr := strconv.Atoi(strings.TrimSpace(fields[1])); convErr == nil {
+			deletions += d
+		}
+		diffFileSet[f] = struct{}{}
+	}
+
+	for _, rel := range untrackedFiles {
+		full := filepath.Join(repo.Dir, rel)
+		if info, statErr := os.Stat(full); statErr == nil && !info.IsDir() && info.Size() <= maxUntrackedFileSize {
+			if data, readErr := os.ReadFile(full); readErr == nil && len(data) > 0 {
+				cnt := bytes.Count(data, []byte{'\n'})
+				if data[len(data)-1] != '\n' {
+					cnt++
+				}
+				additions += cnt
+			}
+		}
+	}
+
+	if len(diffFileSet) > changedFiles {
+		changedFiles = len(diffFileSet)
+	}
+
+	var headCommit, headSubject string
+	if logLine, logErr := runGit(repo.Dir, "log", "-1", "--format=%h\t%s"); logErr == nil && logLine != "" {
+		parts := strings.SplitN(logLine, "\t", 2)
+		headCommit = strings.TrimSpace(parts[0])
+		if len(parts) > 1 {
+			headSubject = strings.TrimSpace(parts[1])
+		}
+	}
+
+	return repoStatusSummary{
+		branch:       branch,
+		headCommit:   headCommit,
+		headSubject:  headSubject,
+		changedFiles: changedFiles,
+		additions:    additions,
+		deletions:    deletions,
+		aheadCount:   aheadCount,
+		hasUpstream:  hasUpstream,
+		valid:        porcelainErr == nil || branch != "" || headCommit != "",
+	}
+}
+
 func (m *worktreeManager) Status(sessionID string) (worktreeStatus, error) {
 	sessionID = sanitizeSessionID(sessionID)
 	m.mu.RLock()
@@ -226,88 +347,74 @@ func (m *worktreeManager) Status(sessionID string) (worktreeStatus, error) {
 		}
 	}
 
-	// Single git status --porcelain -b call yields both branch header and file status lines
-	porcelain, _ := runGitRaw(meta.Directory, "status", "--porcelain", "-b")
-	changedFiles := 0
-	aheadCount := 0
-	hasUpstream := false
-	var untrackedFiles []string
-	for _, rawLine := range strings.Split(porcelain, "\n") {
-		if strings.HasPrefix(rawLine, "## ") {
-			if br := parseBranchFromPorcelainHeader(rawLine); br != "" {
-				meta.Branch = br
-			}
-			aheadCount, hasUpstream = parseAheadAndUpstreamFromPorcelainHeader(rawLine)
-			continue
-		}
-		trimmed := strings.TrimSpace(rawLine)
-		if trimmed == "" {
-			continue
-		}
-		changedFiles++
-		if strings.HasPrefix(rawLine, "?? ") && len(untrackedFiles) < maxUntrackedFilesToCount {
-			rel := strings.TrimSpace(rawLine[3:])
-			if rel != "" {
-				untrackedFiles = append(untrackedFiles, rel)
-			}
-		}
-	}
-
-	if meta.Branch == "" {
-		if br, err := runGit(meta.Directory, "rev-parse", "--abbrev-ref", "HEAD"); err == nil && br != "" {
-			meta.Branch = br
-		}
-	}
-
-	diffTarget := "HEAD"
+	repos := discoverGitRepos(meta.Directory)
+	nestedPrefixes := nestedRepoPrefixSet(repos)
+	rootDiffTarget := "HEAD"
 	if meta.Isolated && strings.TrimSpace(meta.BaseCommit) != "" {
-		diffTarget = strings.TrimSpace(meta.BaseCommit)
-	}
-	numstat, err := runGit(meta.Directory, "diff", "--numstat", diffTarget)
-	if err != nil && diffTarget != "HEAD" {
-		numstat, _ = runGit(meta.Directory, "diff", "--numstat", "HEAD")
+		rootDiffTarget = strings.TrimSpace(meta.BaseCommit)
 	}
 
+	summaries := make([]repoStatusSummary, len(repos))
+	if len(repos) == 1 {
+		target := "HEAD"
+		if repos[0].RelPrefix == "" {
+			target = rootDiffTarget
+		}
+		summaries[0] = statusSingleRepo(repos[0], target, nestedPrefixes)
+	} else if len(repos) > 1 {
+		sem := make(chan struct{}, maxConcurrentGitRepos)
+		var wg sync.WaitGroup
+		for i, repo := range repos {
+			wg.Add(1)
+			go func(idx int, r gitRepoTarget) {
+				defer wg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
+				target := "HEAD"
+				if r.RelPrefix == "" {
+					target = rootDiffTarget
+				}
+				summaries[idx] = statusSingleRepo(r, target, nestedPrefixes)
+			}(i, repo)
+		}
+		wg.Wait()
+	}
+
+	changedFiles := 0
 	additions := 0
 	deletions := 0
-	diffFileSet := make(map[string]struct{})
-	for _, line := range strings.Split(strings.TrimSpace(numstat), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 3 {
+	aheadCount := 0
+	hasUpstream := false
+	var headCommit, headSubject string
+	primarySet := false
+
+	for i, s := range summaries {
+		if !s.valid {
 			continue
 		}
-		if a, err := strconv.Atoi(fields[0]); err == nil {
-			additions += a
-		}
-		if d, err := strconv.Atoi(fields[1]); err == nil {
-			deletions += d
-		}
-		diffFileSet[fields[len(fields)-1]] = struct{}{}
-	}
+		changedFiles += s.changedFiles
+		additions += s.additions
+		deletions += s.deletions
+		aheadCount += s.aheadCount
+		hasUpstream = hasUpstream || s.hasUpstream
 
-	for _, rel := range untrackedFiles {
-		full := filepath.Join(meta.Directory, rel)
-		if info, err := os.Stat(full); err == nil && !info.IsDir() && info.Size() <= maxUntrackedFileSize {
-			if data, err := os.ReadFile(full); err == nil && len(data) > 0 {
-				cnt := bytes.Count(data, []byte{'\n'})
-				if data[len(data)-1] != '\n' {
-					cnt++
-				}
-				additions += cnt
+		repoDirty := s.changedFiles > 0 || s.additions > 0 || s.deletions > 0
+		if repos[i].RelPrefix == "" {
+			if s.branch != "" {
+				meta.Branch = s.branch
 			}
-		}
-	}
-
-	if len(diffFileSet) > changedFiles {
-		changedFiles = len(diffFileSet)
-	}
-
-	var headCommit, headSubject string
-	if logLine, err := runGit(meta.Directory, "log", "-1", "--format=%h\t%s"); err == nil && logLine != "" {
-		parts := strings.SplitN(logLine, "\t", 2)
-		headCommit = strings.TrimSpace(parts[0])
-		if len(parts) > 1 {
-			headSubject = strings.TrimSpace(parts[1])
+			headCommit = s.headCommit
+			headSubject = s.headSubject
+			primarySet = true
+		} else if !primarySet && (repoDirty || meta.Branch == "") {
+			if s.branch != "" {
+				meta.Branch = s.branch
+			}
+			headCommit = s.headCommit
+			headSubject = s.headSubject
+			if repoDirty {
+				primarySet = true
+			}
 		}
 	}
 

@@ -1,7 +1,7 @@
 import { createSignal } from "solid-js";
 import { produce } from "solid-js/store";
 import type { MessagePart, SnapshotFileDiff, SessionInfo } from "../services/sse-types";
-import { hoxiAPI } from "../services/api";
+import { hoxiAPI, isRunnerSessionID, runnerAPI } from "../services/api";
 import { mergeServerTurnsInto } from "./message-lookup";
 import { recordUserRevertAction } from "./provider-telemetry";
 import { initializeSessionAI, persistSessionAI, restoreSessionAI, sessionAIConfig } from "./session-ai";
@@ -89,6 +89,12 @@ export function sessionsWithPendingPermission(): Set<string> {
 
 export function replaceSession(info: SessionInfo) {
   if (deletedSessionIDs.has(info.id)) return;
+  if (info.sandboxMode && info.directory) {
+    setWorkspace("worktreeBySession", info.id, {
+      sessionID: info.id, isolated: info.sandboxMode === "worktree", directory: info.directory,
+      branch: info.branch, createdAt: new Date(info.time.created).toISOString(),
+    });
+  }
   const effectiveInfo = preserveSessionTitle(info);
   setWorkspace("sessions", (prev) => {
     const idx = prev.findIndex((s) => s.id === effectiveInfo.id);
@@ -246,15 +252,23 @@ export async function applyAndExitSessionWorktree(
   keepBranch = false
 ): Promise<void> {
   await hoxiAPI.applyWorktree(sessionID, mode);
-  await hoxiAPI.removeWorktree(sessionID, true, keepBranch);
+  await leaveSessionWorktree(sessionID, keepBranch);
   await refreshWorktreeStatus(sessionID);
   await refreshWorktreeStatus("__root__");
 }
 
 export async function exitSessionWorktree(sessionID: string, keepBranch = false): Promise<void> {
-  await hoxiAPI.removeWorktree(sessionID, true, keepBranch);
+  await leaveSessionWorktree(sessionID, keepBranch);
   await refreshWorktreeStatus(sessionID);
   await refreshWorktreeStatus("__root__");
+}
+
+async function leaveSessionWorktree(sessionID: string, keepBranch: boolean): Promise<void> {
+  if (isRunnerSessionID(sessionID)) {
+    replaceSession(await runnerAPI.setSandboxMode(sessionID, "local", { force: true, keepBranch }));
+  } else {
+    await hoxiAPI.removeWorktree(sessionID, true, keepBranch);
+  }
 }
 
 export async function renameSessionBranch(sessionID: string, newBranch: string): Promise<string> {

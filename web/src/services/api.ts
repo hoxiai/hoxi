@@ -113,6 +113,7 @@ export const hoxiAPI = {
       modelID?: string;
       providerID?: string;
       mode?: string;
+      sandboxMode?: "local" | "worktree";
     }
   ): Promise<SessionInfo> {
     if (options?.runtime === "antigravity" || options?.runtime === "claude-code") {
@@ -123,6 +124,7 @@ export const hoxiAPI = {
         modelID: options.modelID,
         providerID: options.providerID,
         mode: options.mode,
+        sandboxMode: options.sandboxMode,
       });
     }
     return requestJSON(withDir("/session", directory), {
@@ -402,8 +404,8 @@ export const hoxiAPI = {
   applyWorktree(sessionID: string, mode: "patch" | "merge" = "patch"): Promise<{ ok: boolean }> {
     return requestJSON("/api/hoxi/worktree/apply", { method: "POST", body: JSON.stringify({ sessionID, mode }) });
   },
-  revertWorktreeFile(sessionID: string, file: string): Promise<{ ok: boolean }> {
-    return requestJSON("/api/hoxi/worktree/revert-file", { method: "POST", body: JSON.stringify({ sessionID, file }) });
+  revertWorktreeFile(sessionID: string, file: string, directory?: string): Promise<{ ok: boolean }> {
+    return requestJSON("/api/hoxi/worktree/revert-file", { method: "POST", body: JSON.stringify({ sessionID, file, ...(directory ? { directory } : {}) }) });
   },
   commitWorktree(sessionID: string, message: string, opts?: { push?: boolean; directory?: string; sessionDiffs?: SnapshotFileDiff[] }): Promise<import("./api-types").CommitAndPushResponse> {
     return requestJSON("/api/hoxi/worktree/commit", {

@@ -162,7 +162,8 @@ type NormalizedTurn struct {
 当用户点击「接管会话并继续任务 (Take Over & Continue)」时，Go 后端执行以下原子步骤：
 1. **确定目标工作目录 (`targetDir`)**：
    - 默认使用外部会话记录的 `cwd`（若该目录存在），或当前 Hoxi 激活的工程目录。
-   - 若用户开启了 Worktree 沙箱模式，自动为新会话创建对应的 `.hoxi/worktrees/<sessionID>`。
+   - OpenCode、Claude Code 和 Antigravity 新会话统一遵循“默认目录模式”：开启 Worktree 时创建 `.hoxi/worktrees/<sessionID>`；选择本地时在当前项目目录和当前分支运行，不创建分支。
+   - 本地 CLI 的目录选择不会关闭其自身的工具权限限制。已有会话保留原目录模式，空闲时可切换；退出工作树时保留分支，未提交改动需先处理。
 2. **创建原生 OpenCode 会话**：
    - 调用 `POST http://127.0.0.1:<openCodePort>/session?directory=<targetDir>`，标题设为 `[Grok/Claude/Codex] <原会话标题>`，获取合法的 OpenCode `SessionInfo`（含 `ses_...` ID）。
 3. **写入对话历史 (`message` 与 `part` 表)**：

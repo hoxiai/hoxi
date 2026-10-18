@@ -10,6 +10,8 @@ export interface SessionInfo {
   parentID?: string;
   directory?: string;
   runtime?: SessionRuntime;
+  sandboxMode?: "local" | "worktree";
+  branch?: string;
   modelID?: string;
   providerID?: string;
   time: {
@@ -148,6 +150,8 @@ export interface SnapshotFileDiff {
   additions: number;
   deletions: number;
   status?: "added" | "deleted" | "modified";
+  repo?: string;
+  branch?: string;
 }
 
 export interface PermissionRequest {

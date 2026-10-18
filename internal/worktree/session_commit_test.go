@@ -355,9 +355,13 @@ func TestSessionCommitRejectsUnsafeAddDelete(t *testing.T) {
 }
 
 func TestSessionCommitRejectsContextDependentConfig(t *testing.T) {
-	for _, kind := range []string{"worktree-hooks", "worktree-signing", "onbranch-hooks", "onbranch-signing", "inactive-include", "nested-include", "gitdir-include"} {
+	for _, kind := range []string{"worktree-hooks", "worktree-signing", "worktree-benign", "onbranch-hooks", "onbranch-signing", "inactive-include", "nested-include", "gitdir-include"} {
 		t.Run(kind, func(t *testing.T) {
 			dir, manager, base := sessionFixture(t)
+			realDir, err := filepath.EvalSymlinks(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
 			after := strings.Replace(base, "one\n", "SESSION\n", 1)
 			sessionTestWrite(t, dir, "file.txt", after)
 			hooks := t.TempDir()
@@ -369,6 +373,9 @@ func TestSessionCommitRejectsContextDependentConfig(t *testing.T) {
 			if strings.Contains(kind, "signing") {
 				key, value = "commit.gpgSign", "true"
 			}
+			if kind == "worktree-benign" {
+				key, value = "core.untrackedCache", "true"
+			}
 			if strings.HasPrefix(kind, "worktree-") {
 				sessionTestGit(t, dir, "config", "extensions.worktreeConfig", "true")
 				sessionTestGit(t, dir, "config", "--worktree", key, value)
@@ -379,7 +386,7 @@ func TestSessionCommitRejectsContextDependentConfig(t *testing.T) {
 					condition = "onbranch:other"
 				}
 				if kind == "gitdir-include" {
-					condition = "gitdir:" + filepath.Join(dir, ".git")
+					condition = "gitdir:" + filepath.Join(realDir, ".git") + "/"
 				}
 				if kind == "nested-include" {
 					nested := filepath.Join(t.TempDir(), "nested.config")
@@ -395,8 +402,22 @@ func TestSessionCommitRejectsContextDependentConfig(t *testing.T) {
 				t.Fatal(err)
 			}
 			_, err = manager.CommitSessionChanges("session", "must not bypass policy", false, []SessionDiff{sessionTestDiff("file.txt", base, after, "modified")})
-			if err == nil || !strings.Contains(err.Error(), "cannot safely preserve") {
-				t.Fatalf("expected configuration rejection, got %v", err)
+			if kind == "worktree-benign" || kind == "inactive-include" {
+				if err != nil {
+					t.Fatalf("expected benign config to succeed, got %v", err)
+				}
+				if sessionTestGit(t, dir, "show", "HEAD:file.txt") != after {
+					t.Fatal("expected session commit to be published")
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("expected policy enforcement or configuration rejection, got nil")
+			}
+			if strings.HasPrefix(kind, "onbranch-") || kind == "nested-include" {
+				if !strings.Contains(err.Error(), "cannot safely preserve") {
+					t.Fatalf("expected configuration rejection, got %v", err)
+				}
 			}
 			if sessionTestGit(t, dir, "rev-parse", "HEAD") != head {
 				t.Fatal("configuration policy was bypassed")

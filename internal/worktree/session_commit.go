@@ -203,19 +203,11 @@ func (m *worktreeManager) CommitSessionChanges(sessionID, message string, push b
 		out, err := sessionGit(dir, "", "", nil, args...)
 		return strings.TrimSpace(string(out)), err
 	}
-	// The private detached gitdir cannot preserve worktree-local configuration
-	// or conditional include matching. Inspect expanded config (including nested
-	// includes and inactive includeIf directives) before using that environment.
+	// Capture expanded config in the real worktree so we can verify the private
+	// detached gitdir preserves the exact effective configuration before commit.
 	config, err := sessionGit(dir, "", "", nil, "config", "--includes", "--null", "--list")
 	if err != nil {
 		return fail(err)
-	}
-	for _, record := range bytes.Split(config, []byte{0}) {
-		key, _, _ := strings.Cut(string(record), "\n")
-		key = strings.ToLower(key)
-		if key == "extensions.worktreeconfig" || (strings.HasPrefix(key, "includeif.") && strings.HasSuffix(key, ".path")) {
-			return fail(errors.New("session commit cannot safely preserve worktreeConfig or conditional include configuration"))
-		}
 	}
 	gitDir, err := git("rev-parse", "--absolute-git-dir")
 	if err != nil {
@@ -437,6 +429,20 @@ func (m *worktreeManager) CommitSessionChanges(sessionID, message string, push b
 			if err := os.WriteFile(filepath.Join(temp, name), []byte(value), 0600); err != nil {
 				return fail(err)
 			}
+		}
+		if wtConfig, readErr := os.ReadFile(filepath.Join(gitDir, "config.worktree")); readErr == nil {
+			if err := os.WriteFile(filepath.Join(temp, "config.worktree"), wtConfig, 0600); err != nil {
+				return fail(err)
+			}
+		} else if !os.IsNotExist(readErr) {
+			return fail(readErr)
+		}
+		tempConfig, err := sessionGit(dir, candidateIndex, temp, nil, "config", "--includes", "--null", "--list")
+		if err != nil {
+			return fail(err)
+		}
+		if !bytes.Equal(config, tempConfig) {
+			return fail(errors.New("session commit cannot safely preserve worktreeConfig or conditional include configuration"))
 		}
 		if _, err := sessionGit(dir, candidateIndex, temp, nil, "-c", "core.bare=false", "commit", "-m", appendHoxiCoAuthor(message)); err != nil {
 			return fail(err)

@@ -23,12 +23,20 @@ type branchListResponse struct {
 	SandboxCount  int             `json:"sandboxCount"`
 }
 
+func (m *worktreeManager) primaryGitRepoDir() string {
+	if repos := discoverGitRepos(m.rootDir); len(repos) > 0 {
+		return repos[0].Dir
+	}
+	return m.rootDir
+}
+
 func (m *worktreeManager) ListBranches() (branchListResponse, error) {
-	currentBranch, _ := runGit(m.rootDir, "rev-parse", "--abbrev-ref", "HEAD")
+	targetDir := m.primaryGitRepoDir()
+	currentBranch, _ := runGit(targetDir, "rev-parse", "--abbrev-ref", "HEAD")
 
 	// Map checked-out branches to their worktree directory
 	wtByBranch := make(map[string]string)
-	if wtRaw, err := runGitRaw(m.rootDir, "worktree", "list", "--porcelain"); err == nil {
+	if wtRaw, err := runGitRaw(targetDir, "worktree", "list", "--porcelain"); err == nil {
 		var curWT string
 		for _, line := range strings.Split(wtRaw, "\n") {
 			line = strings.TrimSpace(line)
@@ -46,7 +54,7 @@ func (m *worktreeManager) ListBranches() (branchListResponse, error) {
 	}
 
 	refOut, err := runGitRaw(
-		m.rootDir,
+		targetDir,
 		"for-each-ref",
 		"--sort=-committerdate",
 		"--format=%(refname:short)\t%(objectname:short)\t%(contents:subject)",
@@ -121,12 +129,13 @@ func (m *worktreeManager) CheckoutBranch(branch string, create bool) (worktreeSt
 	if err != nil {
 		return worktreeStatus{}, err
 	}
+	targetDir := m.primaryGitRepoDir()
 	if create {
-		if _, err := runGit(m.rootDir, "checkout", "-b", cleaned); err != nil {
+		if _, err := runGit(targetDir, "checkout", "-b", cleaned); err != nil {
 			return worktreeStatus{}, err
 		}
 	} else {
-		if _, err := runGit(m.rootDir, "checkout", cleaned); err != nil {
+		if _, err := runGit(targetDir, "checkout", cleaned); err != nil {
 			return worktreeStatus{}, err
 		}
 	}
@@ -245,10 +254,15 @@ func (m *worktreeManager) RevertFile(sessionID, relPath string) error {
 		}
 	}
 
+	repoDir, repoRelPath := resolveRepoForRelPath(workDir, cleaned)
+	if repoDir != filepath.Clean(workDir) {
+		base = "HEAD"
+	}
+
 	// Try restoring from base commit or HEAD; if untracked in base, remove the newly added file
-	if _, err := runGit(workDir, "checkout", base, "--", cleaned); err != nil {
-		if _, headErr := runGit(workDir, "checkout", "HEAD", "--", cleaned); headErr != nil {
-			_ = os.Remove(filepath.Join(workDir, cleaned))
+	if _, err := runGit(repoDir, "checkout", base, "--", repoRelPath); err != nil {
+		if _, headErr := runGit(repoDir, "checkout", "HEAD", "--", repoRelPath); headErr != nil {
+			_ = os.Remove(filepath.Join(repoDir, repoRelPath))
 		}
 	}
 	return nil

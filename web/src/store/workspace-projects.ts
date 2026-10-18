@@ -280,8 +280,9 @@ export async function bootstrapProjectSessions(directory: string, selectInitial 
     if ((s.runtime === "antigravity" || s.runtime === "claude-code") && s.directory && !workspace.worktreeBySession[s.id]) {
       setWorkspace("worktreeBySession", s.id, {
         sessionID: s.id,
-        isolated: true,
+        isolated: s.sandboxMode ? s.sandboxMode === "worktree" : normalizeFolderPath(s.directory) !== cleaned,
         directory: s.directory,
+        branch: s.branch,
         createdAt: new Date(s.time?.created || Date.now()).toISOString(),
       });
     }

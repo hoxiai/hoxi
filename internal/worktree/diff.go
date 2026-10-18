@@ -7,7 +7,19 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 )
+
+const (
+	maxNestedGitRepoDepth = 3
+	maxNestedScanDirs     = 200
+	maxConcurrentGitRepos = 6
+)
+
+type gitRepoTarget struct {
+	Dir       string
+	RelPrefix string
+}
 
 type worktreeFileDiff struct {
 	File      string `json:"file"`
@@ -15,6 +27,153 @@ type worktreeFileDiff struct {
 	Additions int    `json:"additions"`
 	Deletions int    `json:"deletions"`
 	Status    string `json:"status,omitempty"`
+	Repo      string `json:"repo,omitempty"`
+	Branch    string `json:"branch,omitempty"`
+}
+
+func hasGitMarker(dir string) bool {
+	if dir == "" {
+		return false
+	}
+	info, err := os.Lstat(filepath.Join(dir, ".git"))
+	if err != nil {
+		return false
+	}
+	return info.IsDir() || info.Mode().IsRegular()
+}
+
+func shouldSkipNestedScanDir(name string) bool {
+	if name == "" || strings.HasPrefix(name, ".") {
+		return true
+	}
+	switch name {
+	case "node_modules", "vendor", "dist", "build", "target", "out", "__pycache__", "Pods", "DerivedData", "venv", "env":
+		return true
+	default:
+		return false
+	}
+}
+
+func scanNestedGitRepos(rootDir, currentDir string, depth int, visited *int, out *[]gitRepoTarget) {
+	if *visited >= maxNestedScanDirs {
+		return
+	}
+	entries, err := os.ReadDir(currentDir)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if shouldSkipNestedScanDir(name) {
+			continue
+		}
+		*visited++
+		if *visited > maxNestedScanDirs {
+			return
+		}
+		childDir := filepath.Join(currentDir, name)
+		if hasGitMarker(childDir) {
+			if rel, relErr := filepath.Rel(rootDir, childDir); relErr == nil && rel != "." {
+				*out = append(*out, gitRepoTarget{
+					Dir:       childDir,
+					RelPrefix: filepath.ToSlash(rel),
+				})
+			}
+			continue
+		}
+		if depth < maxNestedGitRepoDepth {
+			scanNestedGitRepos(rootDir, childDir, depth+1, visited, out)
+		}
+	}
+}
+
+func discoverGitRepos(rawDir string) []gitRepoTarget {
+	trimmed := strings.TrimSpace(rawDir)
+	if trimmed == "" {
+		return nil
+	}
+	baseDir := filepath.Clean(trimmed)
+	if info, err := os.Stat(baseDir); err != nil || !info.IsDir() {
+		return nil
+	}
+
+	var nested []gitRepoTarget
+	visited := 0
+	scanNestedGitRepos(baseDir, baseDir, 1, &visited, &nested)
+
+	if hasGitMarker(baseDir) {
+		return append([]gitRepoTarget{{Dir: baseDir, RelPrefix: ""}}, nested...)
+	}
+	if len(nested) > 0 {
+		return nested
+	}
+	if top, err := runGit(baseDir, "rev-parse", "--show-toplevel"); err == nil && strings.TrimSpace(top) != "" {
+		return []gitRepoTarget{{Dir: baseDir, RelPrefix: ""}}
+	}
+	return nil
+}
+
+func nestedRepoPrefixSet(repos []gitRepoTarget) map[string]struct{} {
+	set := make(map[string]struct{})
+	for _, r := range repos {
+		if r.RelPrefix != "" {
+			set[r.RelPrefix] = struct{}{}
+		}
+	}
+	return set
+}
+
+func isWithinNestedRepo(relPath string, nestedPrefixes map[string]struct{}) bool {
+	if len(nestedPrefixes) == 0 {
+		return false
+	}
+	norm := strings.Trim(filepath.ToSlash(strings.TrimSpace(relPath)), "\"/")
+	if norm == "" {
+		return false
+	}
+	if _, ok := nestedPrefixes[norm]; ok {
+		return true
+	}
+	for prefix := range nestedPrefixes {
+		if strings.HasPrefix(norm, prefix+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+func resolveRepoForRelPath(workDir, cleanedRelPath string) (string, string) {
+	baseDir := filepath.Clean(workDir)
+	absTarget := filepath.Join(baseDir, cleanedRelPath)
+	curr := filepath.Dir(absTarget)
+	for {
+		if hasGitMarker(curr) {
+			if subRel, err := filepath.Rel(curr, absTarget); err == nil && subRel != "." && !strings.HasPrefix(subRel, "..") {
+				return curr, subRel
+			}
+		}
+		if curr == baseDir || filepath.Dir(curr) == curr {
+			break
+		}
+		curr = filepath.Dir(curr)
+	}
+	return baseDir, cleanedRelPath
+}
+
+func prefixPatchFilePaths(patch, file, relFile string) string {
+	if patch == "" || file == "" || file == relFile {
+		return patch
+	}
+	if nl := strings.IndexByte(patch, '\n'); nl > 0 && strings.HasPrefix(patch, "diff --git ") {
+		patch = fmt.Sprintf("diff --git a/%s b/%s", relFile, relFile) + patch[nl:]
+	}
+	patch = strings.ReplaceAll(patch, "\n--- a/"+file+"\n", "\n--- a/"+relFile+"\n")
+	patch = strings.ReplaceAll(patch, "\n+++ b/"+file+"\n", "\n+++ b/"+relFile+"\n")
+	patch = strings.ReplaceAll(patch, "\nBinary files a/"+file+" and b/"+file, "\nBinary files a/"+relFile+" and b/"+relFile)
+	return patch
 }
 
 func (m *worktreeManager) resolveSessionMeta(sessionID string) worktreeMeta {
@@ -44,24 +203,32 @@ func (m *worktreeManager) resolveSessionMeta(sessionID string) worktreeMeta {
 	return meta
 }
 
-func (m *worktreeManager) Diff(sessionID string) ([]worktreeFileDiff, error) {
-	meta := m.resolveSessionMeta(sessionID)
-	if meta.Directory == "" {
-		return []worktreeFileDiff{}, nil
+func diffSingleRepo(repo gitRepoTarget, diffTarget string, nestedPrefixes map[string]struct{}) []worktreeFileDiff {
+	var repoBranch string
+	if repo.RelPrefix != "" {
+		repoBranch, _ = runGit(repo.Dir, "rev-parse", "--abbrev-ref", "HEAD")
 	}
 
-	diffTarget := "HEAD"
-	if meta.Isolated && strings.TrimSpace(meta.BaseCommit) != "" {
-		diffTarget = strings.TrimSpace(meta.BaseCommit)
-	}
-
-	numstat, err := runGitRaw(meta.Directory, "diff", "--no-renames", "--numstat", "-z", diffTarget)
+	useCached := false
+	numstat, err := runGitRaw(repo.Dir, "diff", "--no-renames", "--numstat", "-z", diffTarget)
 	if err != nil && diffTarget != "HEAD" {
 		diffTarget = "HEAD"
-		numstat, _ = runGitRaw(meta.Directory, "diff", "--no-renames", "--numstat", "-z", "HEAD")
+		numstat, err = runGitRaw(repo.Dir, "diff", "--no-renames", "--numstat", "-z", "HEAD")
+	}
+	if err != nil {
+		// Unborn branch fallback (newly git init'd repo without HEAD commit yet)
+		if cached, cachedErr := runGitRaw(repo.Dir, "diff", "--cached", "--no-renames", "--numstat", "-z"); cachedErr == nil {
+			numstat = cached
+			useCached = true
+		}
 	}
 
-	patchesRaw, _ := runGitRaw(meta.Directory, "diff", "--no-renames", "--no-ext-diff", "--no-textconv", "--no-color", "-U3", diffTarget)
+	var patchesRaw string
+	if useCached {
+		patchesRaw, _ = runGitRaw(repo.Dir, "diff", "--cached", "--no-renames", "--no-ext-diff", "--no-textconv", "--no-color", "-U3")
+	} else {
+		patchesRaw, _ = runGitRaw(repo.Dir, "diff", "--no-renames", "--no-ext-diff", "--no-textconv", "--no-color", "-U3", diffTarget)
+	}
 	patches := strings.Split("\n"+patchesRaw, "\ndiff --git ")
 	if len(patches) > 0 {
 		patches = patches[1:]
@@ -75,8 +242,11 @@ func (m *worktreeManager) Diff(sessionID string) ([]worktreeFileDiff, error) {
 		if len(fields) < 3 {
 			continue
 		}
-		file := fields[2]
+		file := filepath.ToSlash(fields[2])
 		if file == "" || strings.HasPrefix(file, ".hoxi/") {
+			continue
+		}
+		if repo.RelPrefix == "" && isWithinNestedRepo(file, nestedPrefixes) {
 			continue
 		}
 		add, _ := strconv.Atoi(fields[0])
@@ -85,31 +255,49 @@ func (m *worktreeManager) Diff(sessionID string) ([]worktreeFileDiff, error) {
 		if i < len(patches) {
 			patch = "diff --git " + patches[i]
 		}
+		if strings.Contains(patch, "\nSubproject commit ") && isWithinNestedRepo(file, nestedPrefixes) {
+			continue
+		}
+		relFile := file
+		if repo.RelPrefix != "" {
+			relFile = repo.RelPrefix + "/" + strings.TrimPrefix(file, "/")
+			patch = prefixPatchFilePaths(patch, file, relFile)
+		}
 		st := "modified"
 		if strings.Contains(patch, "\nnew file mode ") {
 			st = "added"
 		} else if strings.Contains(patch, "\ndeleted file mode ") {
 			st = "deleted"
 		}
-		seen[file] = struct{}{}
+		seen[relFile] = struct{}{}
 		results = append(results, worktreeFileDiff{
-			File:      file,
+			File:      relFile,
 			Patch:     strings.TrimSpace(patch),
 			Additions: add,
 			Deletions: del,
 			Status:    st,
+			Repo:      repo.RelPrefix,
+			Branch:    repoBranch,
 		})
 	}
 
-	untracked, _ := runGitRaw(meta.Directory, "ls-files", "--others", "--exclude-standard", "-z")
+	untracked, _ := runGitRaw(repo.Dir, "ls-files", "--others", "--exclude-standard", "-z")
 	for _, rel := range strings.Split(untracked, "\x00") {
 		if rel == "" || strings.HasPrefix(rel, ".hoxi/") {
 			continue
 		}
-		if _, exists := seen[rel]; exists {
+		slashRel := filepath.ToSlash(rel)
+		if repo.RelPrefix == "" && isWithinNestedRepo(slashRel, nestedPrefixes) {
 			continue
 		}
-		full := filepath.Join(meta.Directory, rel)
+		relFile := slashRel
+		if repo.RelPrefix != "" {
+			relFile = repo.RelPrefix + "/" + strings.TrimPrefix(slashRel, "/")
+		}
+		if _, exists := seen[relFile]; exists {
+			continue
+		}
+		full := filepath.Join(repo.Dir, rel)
 		info, err := os.Stat(full)
 		if err != nil || info.IsDir() || info.Size() > 256*1024 {
 			continue
@@ -125,22 +313,82 @@ func (m *worktreeManager) Diff(sessionID string) ([]worktreeFileDiff, error) {
 			lines = strings.Split(text, "\n")
 		}
 		var patchBuf strings.Builder
-		patchBuf.WriteString(fmt.Sprintf("diff --git a/%s b/%s\nnew file mode 100644\n--- /dev/null\n+++ b/%s\n", rel, rel, rel))
+		patchBuf.WriteString(fmt.Sprintf("diff --git a/%s b/%s\nnew file mode 100644\n--- /dev/null\n+++ b/%s\n", relFile, relFile, relFile))
 		if len(lines) > 0 {
 			patchBuf.WriteString(fmt.Sprintf("@@ -0,0 +1,%d @@\n", len(lines)))
 			for _, l := range lines {
 				patchBuf.WriteString("+" + l + "\n")
 			}
 		}
-		seen[rel] = struct{}{}
+		seen[relFile] = struct{}{}
 		results = append(results, worktreeFileDiff{
-			File:      rel,
+			File:      relFile,
 			Patch:     strings.TrimSpace(patchBuf.String()),
 			Additions: len(lines),
 			Deletions: 0,
 			Status:    "added",
+			Repo:      repo.RelPrefix,
+			Branch:    repoBranch,
 		})
 	}
 
+	return results
+}
+
+func (m *worktreeManager) Diff(sessionID string) ([]worktreeFileDiff, error) {
+	meta := m.resolveSessionMeta(sessionID)
+	if meta.Directory == "" {
+		return []worktreeFileDiff{}, nil
+	}
+
+	repos := discoverGitRepos(meta.Directory)
+	if len(repos) == 0 {
+		return []worktreeFileDiff{}, nil
+	}
+
+	nestedPrefixes := nestedRepoPrefixSet(repos)
+	rootDiffTarget := "HEAD"
+	if meta.Isolated && strings.TrimSpace(meta.BaseCommit) != "" {
+		rootDiffTarget = strings.TrimSpace(meta.BaseCommit)
+	}
+
+	if len(repos) == 1 {
+		target := "HEAD"
+		if repos[0].RelPrefix == "" {
+			target = rootDiffTarget
+		}
+		return diffSingleRepo(repos[0], target, nestedPrefixes), nil
+	}
+
+	perRepo := make([][]worktreeFileDiff, len(repos))
+	sem := make(chan struct{}, maxConcurrentGitRepos)
+	var wg sync.WaitGroup
+	for i, repo := range repos {
+		wg.Add(1)
+		go func(idx int, r gitRepoTarget) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			target := "HEAD"
+			if r.RelPrefix == "" {
+				target = rootDiffTarget
+			}
+			perRepo[idx] = diffSingleRepo(r, target, nestedPrefixes)
+		}(i, repo)
+	}
+	wg.Wait()
+
+	results := make([]worktreeFileDiff, 0)
+	seen := make(map[string]struct{})
+	for _, list := range perRepo {
+		for _, item := range list {
+			if _, exists := seen[item.File]; exists {
+				continue
+			}
+			seen[item.File] = struct{}{}
+			results = append(results, item)
+		}
+	}
 	return results, nil
 }
+

@@ -10,6 +10,7 @@ import "../src/__tests__/task-progress.test";
 import "../src/__tests__/session-isolation.test";
 import "../src/__tests__/worktree-refresh.test";
 import "../src/__tests__/new-thread.test";
+import "../src/__tests__/runner-sandbox.test";
 import "../src/__tests__/session-ai.test";
 import "../src/__tests__/git-commit.test";
 import "../src/__tests__/session-title.test";
