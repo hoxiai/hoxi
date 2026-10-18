@@ -44,6 +44,29 @@ export function validateSparkle(value, version, size) {
     edSignature: base64(value.edSignature, 64), length: size };
 }
 
+export function validateSparkleApp(info, config = null) {
+  const keys = ["SUFeedURL", "SUPublicEDKey", "SUEnableAutomaticChecks", "SUAllowsAutomaticUpdates", "SUAutomaticallyUpdate"];
+  const configured = keys.some((key) => key in info);
+  if (info.CFBundleIdentifier === "ai.hoxi.desktop.dev") {
+    assert.ok(!configured, "Development bundles must not configure Sparkle");
+    return null;
+  }
+  if (!configured && !config) return null;
+  assert.ok(info.SUPublicEDKey && info.SUFeedURL, "Missing bundled Sparkle metadata");
+  const bundled = sparkleConfig({ HOXI_SPARKLE_DIR: ".", HOXI_SPARKLE_PUBLIC_KEY: info.SUPublicEDKey,
+    HOXI_SPARKLE_FEED_URL: info.SUFeedURL });
+  assert.ok(bundled, "Missing bundled Sparkle metadata");
+  for (const [key, expected] of [["SUEnableAutomaticChecks", true],
+    ["SUAllowsAutomaticUpdates", false], ["SUAutomaticallyUpdate", false]]) {
+    assert.equal(info[key], expected, `Sparkle requires ${key}=${expected} (plist boolean)`);
+  }
+  if (config) {
+    assert.equal(bundled.publicKey, config.publicKey, "Bundled Sparkle public key differs from configuration");
+    assert.equal(bundled.feedURL, config.feedURL, "Bundled Sparkle feed differs from configuration");
+  }
+  return bundled;
+}
+
 export function frameworkFiles(framework) {
   assert.ok(fs.statSync(path.join(framework, "Sparkle")).isFile(), "Missing Sparkle framework executable");
   const files = [];
@@ -76,7 +99,7 @@ function configure(app, enabled) {
   const config = sparkleConfig();
   const plist = path.join(app, "Contents/Info.plist");
   const info = JSON.parse(run("plutil", ["-convert", "json", "-o", "-", plist]));
-  for (const key of ["SUFeedURL", "SUPublicEDKey", "SUEnableAutomaticChecks"]) {
+  for (const key of ["SUFeedURL", "SUPublicEDKey", "SUEnableAutomaticChecks", "SUAllowsAutomaticUpdates", "SUAutomaticallyUpdate"]) {
     if (key in info) run("/usr/libexec/PlistBuddy", ["-c", `Delete :${key}`, plist]);
   }
   const framework = path.join(app, "Contents/Frameworks/Sparkle.framework");
@@ -87,7 +110,8 @@ function configure(app, enabled) {
   fs.mkdirSync(path.dirname(framework), { recursive: true });
   run("ditto", [path.join(config.dir, "Sparkle.framework"), framework]);
   for (const [key, type, value] of [["SUFeedURL", "string", config.feedURL],
-    ["SUPublicEDKey", "string", config.publicKey], ["SUEnableAutomaticChecks", "bool", "true"]]) {
+    ["SUPublicEDKey", "string", config.publicKey], ["SUEnableAutomaticChecks", "bool", "true"],
+    ["SUAllowsAutomaticUpdates", "bool", "false"], ["SUAutomaticallyUpdate", "bool", "false"]]) {
     run("/usr/libexec/PlistBuddy", ["-c", `Add :${key} ${type} ${value}`, plist]);
   }
 }

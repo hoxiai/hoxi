@@ -6,7 +6,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { sparkleConfig, machoFiles, frameworkFiles } from "./sparkle.mjs";
+import { sparkleConfig, validateSparkleApp, machoFiles, frameworkFiles } from "./sparkle.mjs";
 
 export const minimumSupportedMacOS = "13.0";
 
@@ -57,14 +57,7 @@ function inspectBinaries(app, info) {
   const sidecar = path.join(app, "Contents/MacOS/opencode");
   const framework = path.join(app, "Contents/Frameworks/Sparkle.framework");
   const config = sparkleConfig();
-  if (info.SUFeedURL || info.SUPublicEDKey || (config && info.CFBundleIdentifier === "ai.hoxi.desktop")) {
-    const bundled = sparkleConfig({ HOXI_SPARKLE_DIR: ".", HOXI_SPARKLE_PUBLIC_KEY: info.SUPublicEDKey,
-      HOXI_SPARKLE_FEED_URL: info.SUFeedURL });
-    assert.ok(bundled, "Missing bundled Sparkle metadata");
-    if (config) {
-      assert.equal(bundled.publicKey, config.publicKey);
-      assert.equal(bundled.feedURL, config.feedURL);
-    }
+  if (validateSparkleApp(info, config)) {
     frameworkFiles(framework);
   } else assert.ok(!fs.existsSync(framework), "Unconfigured Sparkle framework");
   const binaries = [main, sidecar, ...(fs.existsSync(framework) ? machoFiles(framework) : [])];
@@ -80,6 +73,7 @@ function inspectBinaries(app, info) {
 export function validateAppMetadata(info, expectedVersion, requiredMinimum) {
   const version = normalizeVersion(expectedVersion);
   assert.equal(info.CFBundleIdentifier, "ai.hoxi.desktop", "Expected the production Hoxi bundle");
+  validateSparkleApp(info);
   assert.ok(info.CFBundleURLTypes?.some((type) => type.CFBundleURLSchemes?.includes("hoxi")),
     "App must register the hoxi URL scheme");
   assert.equal(info.CFBundleShortVersionString, version, "App display version differs from release version");

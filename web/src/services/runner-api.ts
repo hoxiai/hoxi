@@ -103,6 +103,7 @@ export const runnerAPI = {
     modelID?: string;
     providerID?: string;
     mode?: string;
+    sandboxMode?: "local" | "worktree";
   }): Promise<SessionInfo> {
     const info = await requestJSON<SessionInfo>("/api/hoxi/runner/sessions", {
       method: "POST",
@@ -116,6 +117,13 @@ export const runnerAPI = {
     return requestJSON(`/api/hoxi/runner/sessions/${encodeURIComponent(sessionID)}`, {
       method: "PATCH",
       body: JSON.stringify({ title }),
+    });
+  },
+
+  setSandboxMode(sessionID: string, sandboxMode: "local" | "worktree",
+    options?: { force?: boolean; keepBranch?: boolean }): Promise<SessionInfo> {
+    return requestJSON(`/api/hoxi/runner/sessions/${encodeURIComponent(sessionID)}`, {
+      method: "PATCH", body: JSON.stringify({ sandboxMode, ...options }),
     });
   },
 
@@ -212,6 +220,12 @@ export const authAPI = {
 };
 
 export const updaterAPI = {
+  nativeStatus(): Promise<import("./api-types").NativeUpdateStatus> {
+    return requestJSON("/api/hoxi/updater/native");
+  },
+  install(): Promise<{ started: true }> {
+    return requestJSON("/api/hoxi/updater/install", { method: "POST" });
+  },
   checkUpdate(): Promise<import("./api-types").UpdateCheckResult> {
     return requestJSON("/api/hoxi/updater/check");
   },

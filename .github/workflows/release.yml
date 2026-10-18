@@ -73,7 +73,7 @@ jobs:
           : "${HOXI_RELEASE_KEY:?Website publication credential required}"
           : "${SPARKLE_URL:?Pinned official Sparkle archive URL required}"
           : "${SPARKLE_SHA256:?Sparkle SHA-256 required}"
-          : "${OPENCODE_URL:?Pinned official OpenCode tar.gz URL required}"
+          : "${OPENCODE_URL:?Pinned official OpenCode ZIP URL required}"
           : "${OPENCODE_SHA256:?OpenCode SHA-256 required}"
           [[ "$SPARKLE_URL" == https://github.com/sparkle-project/Sparkle/releases/download/* ]]
           [[ "$OPENCODE_URL" == https://github.com/anomalyco/opencode/releases/download/* ]]
@@ -82,9 +82,9 @@ jobs:
           printf '%s  %s\n' "$SPARKLE_SHA256" "$RUNNER_TEMP/sparkle.tar.xz" | shasum -a 256 -c -
           mkdir -p "$HOXI_SPARKLE_DIR" "$RUNNER_TEMP/opencode"
           tar -xf "$RUNNER_TEMP/sparkle.tar.xz" -C "$HOXI_SPARKLE_DIR"
-          curl --fail --location --proto '=https' --proto-redir '=https' "$OPENCODE_URL" -o "$RUNNER_TEMP/opencode.tar.gz"
-          printf '%s  %s\n' "$OPENCODE_SHA256" "$RUNNER_TEMP/opencode.tar.gz" | shasum -a 256 -c -
-          tar -xf "$RUNNER_TEMP/opencode.tar.gz" -C "$RUNNER_TEMP/opencode"
+          curl --fail --location --proto '=https' --proto-redir '=https' "$OPENCODE_URL" -o "$RUNNER_TEMP/opencode.zip"
+          printf '%s  %s\n' "$OPENCODE_SHA256" "$RUNNER_TEMP/opencode.zip" | shasum -a 256 -c -
+          ditto -x -k "$RUNNER_TEMP/opencode.zip" "$RUNNER_TEMP/opencode"
           test -x "$RUNNER_TEMP/opencode/opencode"
           echo "HOXI_OPENCODE=$RUNNER_TEMP/opencode/opencode" >> "$GITHUB_ENV"
           umask 077

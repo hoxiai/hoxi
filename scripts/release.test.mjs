@@ -9,7 +9,7 @@ import {
   normalizeVersion, maximumMacOS, minimumFromMachO, validateAppMetadata, validatePublication,
 } from "./release-artifact.mjs";
 import { releasePayload, publishRelease } from "./release-publisher.mjs";
-import { sparkleConfig, validateSparkle, frameworkFiles, verifyUpdateSignature } from "./sparkle.mjs";
+import { sparkleConfig, validateSparkle, validateSparkleApp, frameworkFiles, verifyUpdateSignature } from "./sparkle.mjs";
 
 test("release versions accept only complete numeric releases", () => {
   for (const version of ["0.2.1", "1.0.0", "v2.3.4"]) {
@@ -201,6 +201,62 @@ const sparkle = {
   feedURL: "https://hoxi.ai/updates/macos/appcast.xml", publicKey: Buffer.alloc(32, 1).toString("base64"),
   edSignature: Buffer.alloc(64, 2).toString("base64"), length: 1234,
 };
+
+test("artifact validation enforces Sparkle bridge policy keys as strict plist booleans", () => {
+  const info = { CFBundleIdentifier: "ai.hoxi.desktop", CFBundleVersion: "0.2.1",
+    CFBundleShortVersionString: "0.2.1", LSMinimumSystemVersion: "13.0",
+    CFBundleURLTypes: [{ CFBundleURLSchemes: ["hoxi"] }],
+    SUFeedURL: sparkle.feedURL, SUPublicEDKey: sparkle.publicKey,
+    SUEnableAutomaticChecks: true, SUAllowsAutomaticUpdates: false, SUAutomaticallyUpdate: false };
+  validateAppMetadata(info, "0.2.1", "13.0");
+  for (const [key, expected] of [["SUEnableAutomaticChecks", true],
+    ["SUAllowsAutomaticUpdates", false], ["SUAutomaticallyUpdate", false]]) {
+    for (const value of [undefined, !expected, String(expected), Number(expected), null]) {
+      assert.throws(() => validateAppMetadata({ ...info, [key]: value }, "0.2.1", "13.0"), new RegExp(key));
+    }
+  }
+  assert.throws(() => validateSparkleApp({ SUAllowsAutomaticUpdates: false }), /metadata/);
+  assert.throws(() => validateSparkleApp({ ...info, CFBundleIdentifier: "ai.hoxi.desktop.dev" }), /Development/);
+  const config = sparkleConfig({ HOXI_SPARKLE_DIR: ".", HOXI_SPARKLE_PUBLIC_KEY: sparkle.publicKey,
+    HOXI_SPARKLE_FEED_URL: sparkle.feedURL });
+  assert.throws(() => validateSparkleApp({}, config), /metadata/);
+  assert.throws(() => validateSparkleApp({ ...info, SUFeedURL: "https://hoxi.ai/other.xml" }, config), /feed differs/);
+  assert.equal(validateSparkleApp({}), null);
+});
+
+test("configure writes bridge policy booleans and strips updater from development bundles", { skip: process.platform !== "darwin" }, (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "hoxi-sparkle-config-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const app = path.join(root, "Hoxi.app");
+  const sdk = path.join(root, "sdk");
+  fs.mkdirSync(path.join(app, "Contents"), { recursive: true });
+  fs.mkdirSync(path.join(sdk, "Sparkle.framework/Versions/B"), { recursive: true });
+  fs.mkdirSync(path.join(sdk, "bin"));
+  for (const file of ["Sparkle", "Autoupdate", "Updater", "Installer", "Downloader"]) {
+    fs.writeFileSync(path.join(sdk, "Sparkle.framework/Versions/B", file), "fixture");
+  }
+  fs.symlinkSync("Versions/B/Sparkle", path.join(sdk, "Sparkle.framework/Sparkle"));
+  fs.writeFileSync(path.join(sdk, "bin/sign_update"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+  const plist = path.join(app, "Contents/Info.plist");
+  fs.writeFileSync(plist, '<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>ai.hoxi.desktop</string></dict></plist>');
+  const env = { ...process.env, HOXI_SPARKLE_DIR: sdk, HOXI_SPARKLE_PUBLIC_KEY: sparkle.publicKey,
+    HOXI_SPARKLE_FEED_URL: sparkle.feedURL };
+  const configure = (enabled, overrides = {}) => {
+    const result = spawnSync(process.execPath, [path.join(scripts, "sparkle.mjs"), "configure", app, enabled],
+      { env: { ...env, ...overrides }, encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+    const converted = spawnSync("plutil", ["-convert", "json", "-o", "-", plist], { encoding: "utf8" });
+    assert.equal(converted.status, 0, converted.stderr);
+    return JSON.parse(converted.stdout);
+  };
+  validateSparkleApp(configure("1"));
+  assert.ok(fs.lstatSync(path.join(app, "Contents/Frameworks/Sparkle.framework/Sparkle")).isSymbolicLink());
+  for (const disabled of [configure("0"), configure("1", {
+    HOXI_SPARKLE_DIR: "", HOXI_SPARKLE_PUBLIC_KEY: "", HOXI_SPARKLE_FEED_URL: "" })]) {
+    assert.equal(Object.keys(disabled).some((key) => key.startsWith("SU")), false);
+  }
+  assert.equal(fs.existsSync(path.join(app, "Contents/Frameworks/Sparkle.framework")), false);
+});
 
 test("Sparkle is opt-in, rejects partial config and only accepts explicit official HTTPS feeds", () => {
   assert.equal(sparkleConfig({}), null);

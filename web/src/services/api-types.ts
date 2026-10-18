@@ -515,6 +515,11 @@ export interface UpdateMirrors {
   global?: string;
 }
 
+export interface NativeUpdateStatus {
+  available: boolean;
+  draining: boolean;
+}
+
 export interface UpdateCheckResult {
   currentVersion: string;
   latestVersion: string;

@@ -3,6 +3,7 @@ package gateway
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"io/fs"
@@ -10,11 +11,14 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"os"
 	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/hoxiai/hoxi/internal/auth"
 	"github.com/hoxiai/hoxi/internal/browser"
@@ -52,6 +56,11 @@ type Gateway struct {
 	dialogMu              sync.RWMutex
 	originMu              sync.RWMutex
 	uiOrigins             map[string]bool
+	updateMu              sync.Mutex
+	updateCheckMu         sync.Mutex
+	updateDraining        bool
+	updateMutations       int
+	updateDirectories     map[string]bool
 }
 
 func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statusbar.Tracker) *Gateway {
@@ -156,6 +165,12 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !g.allowRequest(w, r) {
 		return
 	}
+	if !g.admitUpdateRequest(w, r) {
+		return
+	}
+	if updateMutation(r) {
+		defer g.finishUpdateRequest()
+	}
 	if !g.guardSessionScope(w, r) {
 		return
 	}
@@ -172,6 +187,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !g.guardPrivacy(w, r) {
 		return
 	}
+	g.observeUpdateDirectory(r)
 	g.mux.ServeHTTP(w, r)
 }
 
@@ -229,8 +245,10 @@ func (g *Gateway) registerRoutes(distFS fs.FS) {
 		g.mux.Handle("/api/hoxi/auth/", auth.NewHTTPHandler(g.auth))
 	}
 	if g.updater != nil {
-		g.mux.Handle("/api/hoxi/updater", updater.NewHTTPHandler(g.updater))
-		g.mux.Handle("/api/hoxi/updater/", updater.NewHTTPHandler(g.updater))
+		h := updater.NewHTTPHandler(g.updater)
+		h.SetDraining(g.UpdateDraining)
+		g.mux.Handle("/api/hoxi/updater", h)
+		g.mux.Handle("/api/hoxi/updater/", h)
 	}
 	if g.leaderboard != nil {
 		h := leaderboard.NewHTTPHandler(g.leaderboard)
@@ -267,11 +285,155 @@ func (g *Gateway) registerRoutes(distFS fs.FS) {
 		g.mux.Handle(prefix, g.proxy)
 		g.mux.Handle(prefix+"/", g.proxy)
 	}
+	g.mux.HandleFunc("/file/content", g.handleFileContent)
+	g.mux.HandleFunc("/api/file/content", g.handleFileContent)
 	g.mux.Handle("/api/", http.StripPrefix("/api", g.proxy))
 
 	if distFS != nil {
 		g.mux.Handle("/", spaStaticHandler(distFS))
 	}
+}
+
+const maxLocalFilePreviewBytes = 10 * 1024 * 1024
+
+func expandUserPath(raw string) string {
+	p := strings.TrimSpace(raw)
+	if p == "~" || strings.HasPrefix(p, "~/") {
+		if home, err := os.UserHomeDir(); err == nil && home != "" {
+			if p == "~" {
+				return home
+			}
+			return filepath.Join(home, p[2:])
+		}
+	}
+	return p
+}
+
+func isPathWithinDir(baseDir, targetPath string) bool {
+	if strings.TrimSpace(baseDir) == "" || strings.TrimSpace(targetPath) == "" {
+		return false
+	}
+	cleanBase, baseOK := canonicalDirectory(baseDir)
+	if !baseOK {
+		absBase, err := filepath.Abs(baseDir)
+		if err != nil {
+			return false
+		}
+		cleanBase = filepath.Clean(absBase)
+	}
+	cleanTarget := filepath.Clean(targetPath)
+	if resolved, err := filepath.EvalSymlinks(targetPath); err == nil {
+		if absResolved, err := filepath.Abs(resolved); err == nil {
+			cleanTarget = filepath.Clean(absResolved)
+		}
+	} else if absTarget, err := filepath.Abs(targetPath); err == nil {
+		cleanTarget = filepath.Clean(absTarget)
+	}
+	rel, err := filepath.Rel(cleanBase, cleanTarget)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel))
+}
+
+func (g *Gateway) handleFileContent(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		g.proxy.ServeHTTP(w, r)
+		return
+	}
+	rawPath := strings.TrimSpace(r.URL.Query().Get("path"))
+	if strings.HasPrefix(strings.ToLower(rawPath), "file://") {
+		rawPath = strings.TrimSpace(rawPath[len("file://"):])
+	}
+	if rawPath == "" {
+		g.proxy.ServeHTTP(w, r)
+		return
+	}
+	rawDir := strings.TrimSpace(r.URL.Query().Get("directory"))
+	expandedPath := expandUserPath(rawPath)
+	baseDir := expandUserPath(rawDir)
+	if baseDir == "" {
+		baseDir = g.rootDir
+	}
+
+	var targetPath string
+	if filepath.IsAbs(expandedPath) {
+		targetPath = filepath.Clean(expandedPath)
+	} else if baseDir != "" {
+		targetPath = filepath.Join(baseDir, expandedPath)
+	} else {
+		targetPath = filepath.Clean(expandedPath)
+	}
+
+	isExplicitExternalOrAbs := filepath.IsAbs(rawPath) || rawPath == "~" || strings.HasPrefix(rawPath, "~/") || !isPathWithinDir(baseDir, targetPath)
+	if !isExplicitExternalOrAbs && g.openCodePort > 0 {
+		if _, err := os.Stat(targetPath); err == nil {
+			g.proxy.ServeHTTP(w, r)
+			return
+		}
+		if g.rootDir != "" && g.rootDir != baseDir {
+			altPath := filepath.Join(g.rootDir, expandedPath)
+			if _, err := os.Stat(altPath); err == nil {
+				targetPath = altPath
+			} else {
+				g.proxy.ServeHTTP(w, r)
+				return
+			}
+		} else {
+			g.proxy.ServeHTTP(w, r)
+			return
+		}
+	}
+
+	info, err := os.Stat(targetPath)
+	if err != nil && !filepath.IsAbs(expandedPath) && g.rootDir != "" && g.rootDir != baseDir {
+		altPath := filepath.Join(g.rootDir, expandedPath)
+		if altInfo, altErr := os.Stat(altPath); altErr == nil {
+			targetPath = altPath
+			info = altInfo
+			err = nil
+		}
+	}
+	if err != nil {
+		if os.IsNotExist(err) {
+			writeJSONError(w, http.StatusNotFound, "file not found: "+rawPath)
+			return
+		}
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if info.IsDir() {
+		writeJSONError(w, http.StatusBadRequest, "path is a directory: "+rawPath)
+		return
+	}
+
+	f, err := os.Open(targetPath)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	defer f.Close()
+
+	data, err := io.ReadAll(io.LimitReader(f, maxLocalFilePreviewBytes))
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	if bytes.IndexByte(data, 0) >= 0 || !utf8.Valid(data) {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"type":     "binary",
+			"content":  base64.StdEncoding.EncodeToString(data),
+			"encoding": "base64",
+			"mimeType": http.DetectContentType(data),
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"type":    "text",
+		"content": string(data),
+	})
 }
 
 func spaStaticHandler(distFS fs.FS) http.Handler {

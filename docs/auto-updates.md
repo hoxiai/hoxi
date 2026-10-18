@@ -1,10 +1,31 @@
 # Sparkle Auto-Updates
 
+## Client Behavior
+
+The existing website JSON upgrade API still supplies the in-app version badge and
+release notes. The Update in App action opens Sparkle's localized native UI, which
+uses the configured official website appcast for authenticated installation.
+Automatic checks are enabled. Background downloads are disabled: Sparkle couples
+them to install-on-quit staging, which has no public veto for active agent tasks.
+Users confirm downloading and restarting in the native dialog.
+Discovering, displaying, ignoring, or dismissing an available update leaves the
+workspace writable. The standard UI's Install reply is intercepted before Sparkle
+can download or stage an update; a busy workspace converts it to Dismiss.
+
+Only after the user selects Install, and again before relaunch, the gateway closes mutation admission
+and checks local processes plus authoritative OpenCode status in known workspace
+and worktree directories. Busy, unknown or unreachable runtime state denies the
+update. New mutations return 503 while admission is closed. Once extraction starts,
+the workspace conservatively remains restart-required even on cancellation/error;
+quit/restart before starting new work. This prevents a staged install-on-quit from
+interrupting newly admitted tasks. External direct daemon clients and unrelated
+terminal jobs are outside this gate. A real signed-app acceptance test is required.
+
 ## Deployment Blocker
 
-The website server is not in this repository. The feed route below is an example,
-not an assertion that it exists. Do not ship an updater-enabled release until the
-website implements and verifies the contract below. A generic release API success
+The website implementation lives in the separate APay Hoxi theme repository.
+Its canonical feed is `https://hoxi.ai/api/hoxi/appcast.xml`; the code must be
+deployed and verified before shipping an updater-enabled release. A generic release API success
 is deliberately insufficient: publication fails without explicit Sparkle acceptance.
 No releases, uploads, or private-key generation are performed by unit tests.
 
@@ -15,7 +36,7 @@ Use an independently verified, official Sparkle >= 2.6 distribution extracted lo
 ```sh
 export HOXI_SPARKLE_DIR=/absolute/path/to/extracted-sparkle
 export HOXI_SPARKLE_PUBLIC_KEY='<canonical base64 Ed25519 public key, 32 bytes>'
-export HOXI_SPARKLE_FEED_URL=https://hoxi.ai/updates/macos/appcast.xml
+export HOXI_SPARKLE_FEED_URL=https://hoxi.ai/api/hoxi/appcast.xml
 export HOXI_OPENCODE=/absolute/path/to/verified/opencode
 ./build-desktop.sh --release-only --no-install --notarize --version 0.2.1
 ```
@@ -55,6 +76,12 @@ and stapling: changing even one DMG byte afterward invalidates the signature.
 `sparkle.json` is public metadata, not a private key. It contains `version`, `url`,
 `feedURL`, `publicKey`, `edSignature` (64-byte canonical base64) and `length`.
 The enclosure URL is the exact versioned GitHub DMG. No GitCode upload is assumed.
+The publication payload also includes `minimumMacOS`, `sha256` and `size` from
+artifact verification. The website pins `HOXI_SPARKLE_PUBLIC_KEY` to the same public
+key as CI and the app. It verifies the public asset before persisting metadata.
+Allow more than 60 seconds at the website reverse proxy; the publisher waits up to
+120 seconds for Sparkle publication. The website buffers at most a 512 MiB artifact
+and needs memory for both chunks and the assembled artifact plus crypto overhead.
 
 ## Website Contract
 
@@ -64,7 +91,7 @@ check the uploaded asset exists and matches size/hash/signature, persist them an
 atomically publish the corresponding stable HTTPS appcast. Only then respond:
 
 ```json
-{"success":true,"data":{"version":"0.2.1","sparkleAccepted":true,"sparkle":{"version":"0.2.1","url":"https://github.com/hoxiai/hoxi/releases/download/v0.2.1/Hoxi-0.2.1-darwin-arm64.dmg","feedURL":"https://hoxi.ai/updates/macos/appcast.xml","publicKey":"<32-byte base64>","edSignature":"<64-byte base64>","length":1234}}}
+{"success":true,"data":{"version":"0.2.1","sparkleAccepted":true,"sparkle":{"version":"0.2.1","url":"https://github.com/hoxiai/hoxi/releases/download/v0.2.1/Hoxi-0.2.1-darwin-arm64.dmg","feedURL":"https://hoxi.ai/api/hoxi/appcast.xml","publicKey":"<32-byte base64>","edSignature":"<64-byte base64>","length":1234}}}
 ```
 
 The confirmation must echo the exact validated metadata. `sparkleAccepted: true`
@@ -90,7 +117,7 @@ optionally `HOXI_RELEASE_API_URL`, and pinned official archive URLs and independ
 verified lowercase SHA-256 values:
 
 - `HOXI_SPARKLE_ARCHIVE_URL`, `HOXI_SPARKLE_ARCHIVE_SHA256`: official Sparkle release archive.
-- `HOXI_OPENCODE_ARCHIVE_URL`, `HOXI_OPENCODE_ARCHIVE_SHA256`: official macOS arm64 tar.gz with root `opencode` executable.
+- `HOXI_OPENCODE_ARCHIVE_URL`, `HOXI_OPENCODE_ARCHIVE_SHA256`: official macOS arm64 ZIP with root `opencode` executable.
 
 Missing settings fail the production job. Archives are checked before extraction
 or execution. Select immutable version URLs, not latest aliases. CI signs the

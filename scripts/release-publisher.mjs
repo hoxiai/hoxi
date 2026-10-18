@@ -35,7 +35,7 @@ export async function publishRelease(payload, { key, url = "https://hoxi.ai/api/
   }
   if (endpoint.username || endpoint.password) throw new Error("Credentials must not be embedded in the release URL");
   const response = await fetchImpl(endpoint, {
-    method: "POST", redirect: "error", signal: AbortSignal.timeout(30_000),
+    method: "POST", redirect: "error", signal: AbortSignal.timeout(payload.sparkle ? 120_000 : 30_000),
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}`, "x-release-key": key },
     body: JSON.stringify(payload),
   });

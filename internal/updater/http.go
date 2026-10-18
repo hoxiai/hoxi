@@ -7,18 +7,35 @@ import (
 )
 
 type HTTPHandler struct {
-	checker *Checker
+	checker  *Checker
+	draining func() bool
 }
 
 func NewHTTPHandler(checker *Checker) *HTTPHandler {
 	return &HTTPHandler{checker: checker}
 }
 
+func (h *HTTPHandler) SetDraining(fn func() bool) { h.draining = fn }
+
 func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/hoxi/updater")
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 
 	switch {
+	case path == "/native" && r.Method == http.MethodGet:
+		draining := h.draining != nil && h.draining()
+		_ = json.NewEncoder(w).Encode(map[string]bool{"available": NativeAvailable(), "draining": draining})
+	case path == "/install" && r.Method == http.MethodPost:
+		if !NativeAvailable() {
+			http.Error(w, `{"error":"native updater is not configured"}`, http.StatusServiceUnavailable)
+			return
+		}
+		if err := CheckNative(); err != nil {
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]bool{"started": true})
 	case (path == "/check" || path == "") && r.Method == http.MethodGet:
 		h.handleCheck(w, r)
 	default:

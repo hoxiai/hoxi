@@ -24,6 +24,7 @@ import (
 	"github.com/hoxiai/hoxi/internal/opencode"
 	"github.com/hoxiai/hoxi/internal/provider"
 	"github.com/hoxiai/hoxi/internal/statusbar"
+	"github.com/hoxiai/hoxi/internal/updater"
 	"github.com/hoxiai/hoxi/internal/workspace"
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -271,6 +272,15 @@ func Run(distFS fs.FS) {
 		AssetServer: &assetserver.Options{
 			Assets:  distFS,
 			Handler: gw,
+			Middleware: func(next http.Handler) http.Handler {
+				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if strings.HasPrefix(r.URL.Path, "/api/") {
+						gw.ServeHTTP(w, r)
+						return
+					}
+					next.ServeHTTP(w, r)
+				})
+			},
 		},
 		Mac: &mac.Options{
 			OnUrlOpen:            app.onURLOpen,
@@ -364,6 +374,14 @@ func (a *DesktopApp) startup(ctx context.Context) {
 	a.contextMu.Unlock()
 	statusbar.Start(ctx)
 	statusbar.Update(a.status.Snapshot())
+	if BuildVariant == "release" {
+		// Wails startup can precede the Cocoa run loop; never wait for it here.
+		go func() {
+			if err := updater.StartNative(a.gateway.BeginUpdate, a.gateway.ReleaseUpdate); err != nil {
+				a.logger.Info("native updates unavailable", "error", err)
+			}
+		}()
+	}
 	if reveal {
 		a.showWindow()
 	}
@@ -380,6 +398,7 @@ func (a *DesktopApp) shutdown(_ context.Context) {
 	if a.gateway != nil {
 		a.gateway.CloseBrowser()
 	}
+	updater.StopNative()
 }
 
 func (a *DesktopApp) onSecondInstance(_ options.SecondInstanceData) {
