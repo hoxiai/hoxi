@@ -5,6 +5,8 @@ import ToolCard from "./ToolCard";
 import MarkdownView from "./MarkdownView";
 import ContextActivityGroupComponent, {
   groupAssistantParts,
+  hasLiveTailWorkGroup,
+  resolveMergedTurnParts,
   isContextToolPart as isContextTool,
   isExplorationPart,
   isTodoToolPart as isTodoTool,
@@ -36,6 +38,8 @@ import ChangedFilesSummary from "./ChangedFilesSummary";
 export {
   AssistantErrorCard,
   groupAssistantParts,
+  hasLiveTailWorkGroup,
+  resolveMergedTurnParts,
   isContextTool,
   isExplorationPart,
   isTodoTool,
@@ -83,10 +87,11 @@ export function basename(p: string): string {
   return parts.length ? parts[parts.length - 1] : "this project";
 }
 
-export function ContextActivityGroupView(props: { parts: MessagePart[] }) {
+export function ContextActivityGroupView(props: { parts: MessagePart[]; isLiveTail?: boolean }) {
   return (
     <ContextActivityGroupComponent
       parts={props.parts}
+      isLiveTail={props.isLiveTail}
       renderFallbackPart={(part) => <PartView part={part} />}
     />
   );

@@ -16,6 +16,7 @@ import {
   AssistantTurnFooter,
   ContextActivityGroupView,
   groupAssistantParts,
+  resolveMergedTurnParts,
   isTodoTool,
   PartView,
 } from "./message-stream-parts";
@@ -226,6 +227,9 @@ export function AssistantTurnItem(props: {
   isSessionBusy: boolean;
   isHighlighted: boolean;
 }) {
+  const merged = createMemo(() => resolveMergedTurnParts(props.allTurns, props.globalIndex));
+  const effectiveParts = () => merged().effectiveParts;
+
   const [stepsExpanded, setStepsExpanded] = createSignal(
     expandedHistoricalTurnIDs.has(props.turn.info.id)
   );
@@ -253,13 +257,13 @@ export function AssistantTurnItem(props: {
   );
 
   const workParts = createMemo(() =>
-    props.turn.parts.filter(
+    effectiveParts().filter(
       (p) => p.type === "reasoning" || (p.type === "tool" && !isTodoTool(p))
     )
   );
 
   const textParts = createMemo(() =>
-    props.turn.parts.filter(
+    effectiveParts().filter(
       (p): p is Extract<MessagePart, { type: "text" }> =>
         p.type === "text" && p.text.trim().length > 0
     )
@@ -283,13 +287,14 @@ export function AssistantTurnItem(props: {
       workParts().length > 0
   );
 
-  const groupedAll = createMemo(() => groupAssistantParts(props.turn.parts));
+  const groupedAll = createMemo(() => groupAssistantParts(effectiveParts()));
   const groupedWorkOnly = createMemo(() => groupAssistantParts(workParts()));
 
   const prevRole = () =>
     props.globalIndex > 0 ? props.allTurns[props.globalIndex - 1]?.info.role : undefined;
 
   return (
+    <Show when={!merged().isVisuallyEmpty || merged().isCycleEnd || Boolean(props.turn.info.error)}>
     <div
       data-turn-id={props.turn.info.id}
       class={`flex flex-col gap-y-3.5 px-1 rounded-xl transition-colors ${turnContentVisibilityClass(
@@ -311,7 +316,7 @@ export function AssistantTurnItem(props: {
         when={shouldFoldWork()}
         fallback={
           <Index each={groupedAll()}>
-            {(item) => (
+            {(item, itemIndex) => (
               <Show
                 when={item().kind === "activity-group"}
                 fallback={
@@ -327,6 +332,7 @@ export function AssistantTurnItem(props: {
                 }
               >
                 <ContextActivityGroupView
+                  isLiveTail={props.isSessionBusy && props.globalIndex === props.allTurns.length - 1 && itemIndex === groupedAll().length - 1 && !props.turn.info.error}
                   parts={
                     item().kind === "activity-group"
                       ? (item() as Extract< ReturnType<typeof item>, { kind: "activity-group" } >)
@@ -417,5 +423,6 @@ export function AssistantTurnItem(props: {
         isSessionBusy={props.isSessionBusy}
       />
     </div>
+    </Show>
   );
 }

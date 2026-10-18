@@ -21,6 +21,7 @@ import {
 import { Icon } from "../icons";
 import {
   formatMessageTime,
+  hasLiveTailWorkGroup,
   isTodoTool,
   LiveExecutionControlBar,
   resolveActiveCycleStepLabel,
@@ -117,7 +118,7 @@ export default function MessageStream(props: { hidden?: boolean }) {
     const last = list[list.length - 1];
     if (last.info.role === "assistant" && last.info.error) return false;
 
-    return true;
+    return !hasLiveTailWorkGroup(list.slice(lastUserIdx + 1));
   });
 
   const executionCycleMeta = createMemo(() => {

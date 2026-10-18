@@ -122,54 +122,50 @@ func (m *worktreeManager) registerRoutes(mux *http.ServeMux) {
 			writeJSONError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		dir := body.Directory
-		if dir == "" {
-			dir = r.URL.Query().Get("directory")
-		}
 		var res CommitAndPushResult
 		var err error
+		binding, known, bindErr := m.BindingForSession(body.SessionID)
+		if bindErr != nil {
+			writeJSONError(w, http.StatusForbidden, bindErr.Error())
+			return
+		}
+		// ParseQuery reports malformed selectors that URL.Query would drop.
+		query, queryErr := url.ParseQuery(r.URL.RawQuery)
+		if queryErr != nil || len(query["directory"]) > 1 {
+			writeJSONError(w, http.StatusBadRequest, "invalid directory query")
+			return
+		}
+		selected := ""
+		selectors := []string{}
+		if body.Directory != "" {
+			selectors = append(selectors, body.Directory)
+		}
+		if values, present := query["directory"]; present {
+			selectors = append(selectors, values[0])
+		}
+		for _, selector := range selectors {
+			canonical, resolveErr := bindingFromDirectory(strings.TrimSpace(selector))
+			if !filepath.IsAbs(strings.TrimSpace(selector)) || resolveErr != nil {
+				writeJSONError(w, http.StatusBadRequest, "invalid session directory selector")
+				return
+			}
+			if known && canonical.Directory != binding.Directory {
+				writeJSONError(w, http.StatusForbidden, "session directory does not match its sandbox")
+				return
+			}
+			if selected != "" && selected != canonical.Directory {
+				writeJSONError(w, http.StatusBadRequest, "conflicting session directory selectors")
+				return
+			}
+			selected = canonical.Directory
+		}
+		if known {
+			selected = binding.Directory
+		}
 		if body.SessionDiffs != nil {
-			binding, known, bindErr := m.BindingForSession(body.SessionID)
-			if bindErr != nil {
-				writeJSONError(w, http.StatusForbidden, bindErr.Error())
-				return
-			}
-			// ParseQuery reports malformed selectors that URL.Query would drop.
-			query, queryErr := url.ParseQuery(r.URL.RawQuery)
-			if queryErr != nil || len(query["directory"]) > 1 {
-				writeJSONError(w, http.StatusBadRequest, "invalid directory query")
-				return
-			}
-			selected := ""
-			selectors := []string{}
-			if body.Directory != "" {
-				selectors = append(selectors, body.Directory)
-			}
-			if values, present := query["directory"]; present {
-				selectors = append(selectors, values[0])
-			}
-			for _, selector := range selectors {
-				canonical, resolveErr := bindingFromDirectory(strings.TrimSpace(selector))
-				if !filepath.IsAbs(strings.TrimSpace(selector)) || resolveErr != nil {
-					writeJSONError(w, http.StatusBadRequest, "invalid session directory selector")
-					return
-				}
-				if known && canonical.Directory != binding.Directory {
-					writeJSONError(w, http.StatusForbidden, "session directory does not match its sandbox")
-					return
-				}
-				if selected != "" && selected != canonical.Directory {
-					writeJSONError(w, http.StatusBadRequest, "conflicting session directory selectors")
-					return
-				}
-				selected = canonical.Directory
-			}
-			if known {
-				selected = binding.Directory
-			}
 			res, err = m.scoped(selected, body.SessionID).CommitSessionChanges(body.SessionID, body.Message, body.Push, *body.SessionDiffs)
 		} else {
-			res, err = m.scoped(dir, body.SessionID).CommitAndPushWorktree(body.SessionID, body.Message, body.Push)
+			res, err = m.scoped(selected, body.SessionID).CommitAndPushWorktree(body.SessionID, body.Message, body.Push)
 		}
 		if err != nil {
 			writeJSONError(w, http.StatusBadRequest, err.Error())

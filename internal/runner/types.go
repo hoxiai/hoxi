@@ -18,18 +18,20 @@ type SessionTime struct {
 }
 
 type SessionInfo struct {
-	ID         string      `json:"id"`
-	Slug       string      `json:"slug,omitempty"`
-	ProjectID  string      `json:"projectID,omitempty"`
-	Directory  string      `json:"directory"`
-	ParentID   string      `json:"parentID,omitempty"`
-	Title      string      `json:"title"`
-	Version    string      `json:"version,omitempty"`
-	Time       SessionTime `json:"time"`
-	Runtime    string      `json:"runtime"`
-	ModelID    string      `json:"modelID,omitempty"`
-	ProviderID string      `json:"providerID,omitempty"`
-	ExternalID string      `json:"externalID,omitempty"`
+	ID          string      `json:"id"`
+	Slug        string      `json:"slug,omitempty"`
+	ProjectID   string      `json:"projectID,omitempty"`
+	Directory   string      `json:"directory"`
+	ParentID    string      `json:"parentID,omitempty"`
+	Title       string      `json:"title"`
+	Version     string      `json:"version,omitempty"`
+	Time        SessionTime `json:"time"`
+	Runtime     string      `json:"runtime"`
+	ModelID     string      `json:"modelID,omitempty"`
+	ProviderID  string      `json:"providerID,omitempty"`
+	ExternalID  string      `json:"externalID,omitempty"`
+	SandboxMode string      `json:"sandboxMode,omitempty"`
+	Branch      string      `json:"branch,omitempty"`
 }
 
 type SessionStatus struct {
@@ -131,21 +133,23 @@ type RunnerModelItem struct {
 }
 
 type SessionRecord struct {
-	ID           string        `json:"id"`
-	Runtime      string        `json:"runtime"`
-	ExternalID   string        `json:"externalID,omitempty"`
-	ProjectDir   string        `json:"projectDir"`
-	WorktreePath string        `json:"worktreePath"`
-	Branch       string        `json:"branch,omitempty"`
-	BaseCommit   string        `json:"baseCommit,omitempty"`
-	ModelID      string        `json:"modelID"`
-	ProviderID   string        `json:"providerID"`
-	Mode         string        `json:"mode,omitempty"`
-	Title        string        `json:"title"`
-	CreatedAt    int64         `json:"createdAt"`
-	UpdatedAt    int64         `json:"updatedAt"`
-	ArchivedAt   int64         `json:"archivedAt,omitempty"`
-	Turns        []MessageTurn `json:"turns,omitempty"`
+	ID             string        `json:"id"`
+	Runtime        string        `json:"runtime"`
+	ExternalID     string        `json:"externalID,omitempty"`
+	ProjectDir     string        `json:"projectDir"`
+	WorktreePath   string        `json:"worktreePath"`
+	Branch         string        `json:"branch,omitempty"`
+	BaseCommit     string        `json:"baseCommit,omitempty"`
+	SandboxMode    string        `json:"sandboxMode,omitempty"`
+	RetainedBranch string        `json:"retainedBranch,omitempty"`
+	ModelID        string        `json:"modelID"`
+	ProviderID     string        `json:"providerID"`
+	Mode           string        `json:"mode,omitempty"`
+	Title          string        `json:"title"`
+	CreatedAt      int64         `json:"createdAt"`
+	UpdatedAt      int64         `json:"updatedAt"`
+	ArchivedAt     int64         `json:"archivedAt,omitempty"`
+	Turns          []MessageTurn `json:"turns,omitempty"`
 }
 
 func (r SessionRecord) ToSessionInfo() SessionInfo {
@@ -154,15 +158,17 @@ func (r SessionRecord) ToSessionInfo() SessionInfo {
 		dir = r.ProjectDir
 	}
 	return SessionInfo{
-		ID:         r.ID,
-		Slug:       r.ID,
-		ProjectID:  r.ProjectDir,
-		Directory:  dir,
-		Title:      r.Title,
-		Time:       SessionTime{Created: r.CreatedAt, Updated: r.UpdatedAt, Archived: r.ArchivedAt},
-		Runtime:    r.Runtime,
-		ModelID:    r.ModelID,
-		ProviderID: r.ProviderID,
-		ExternalID: r.ExternalID,
+		ID:          r.ID,
+		Slug:        r.ID,
+		ProjectID:   r.ProjectDir,
+		Directory:   dir,
+		Title:       r.Title,
+		Time:        SessionTime{Created: r.CreatedAt, Updated: r.UpdatedAt, Archived: r.ArchivedAt},
+		Runtime:     r.Runtime,
+		ModelID:     r.ModelID,
+		ProviderID:  r.ProviderID,
+		ExternalID:  r.ExternalID,
+		SandboxMode: r.sandboxMode(),
+		Branch:      r.Branch,
 	}
 }

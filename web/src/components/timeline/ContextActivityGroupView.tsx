@@ -1,5 +1,6 @@
 import { createMemo, createSignal, For, Show, type JSX } from "solid-js";
-import type { MessagePart } from "../../services/sse-types";
+import type { MessageInfo, MessagePart } from "../../services/sse-types";
+import type { MessageTurn } from "../../store/workspace";
 import { openFileInInspector } from "../../store/workspace";
 import { FileIcon, Icon, Spinner, TextShimmer, ToolStatusTitle } from "../icons";
 import { extractTargetFile, kiloToolIconName, resolveToolInput } from "./tool-card-helpers";
@@ -12,11 +13,6 @@ function basename(p: string): string {
 
 export function isTodoToolPart(part: MessagePart): boolean {
   return part.type === "tool" && part.tool.toLowerCase() === "todowrite";
-}
-
-function isRenderableAssistantPart(part: MessagePart): boolean {
-  if (isTodoToolPart(part)) return false;
-  return part.type === "reasoning" || part.type === "tool" || part.type === "text";
 }
 
 export function isContextToolPart(part: MessagePart): part is Extract<MessagePart, { type: "tool" }> {
@@ -48,25 +44,172 @@ export function groupAssistantParts(parts: MessagePart[]): TurnRenderItem[] {
 
   const flushBuffer = () => {
     if (buffer.length === 0) return;
-    if (buffer.length === 1) {
-      items.push({ kind: "single", part: buffer[0] });
-    } else {
-      items.push({ kind: "activity-group", parts: buffer });
-    }
+    items.push({ kind: "activity-group", parts: buffer });
     buffer = [];
   };
 
   for (const part of parts) {
-    if (!isRenderableAssistantPart(part)) continue;
-    if (isExplorationPart(part)) {
+    if (isWorkPart(part)) {
       buffer.push(part);
-    } else {
+    } else if (isVisibleTextPart(part)) {
       flushBuffer();
       items.push({ kind: "single", part });
     }
   }
   flushBuffer();
   return items;
+}
+
+export function isVisibleTextPart(
+  part: MessagePart
+): part is Extract<MessagePart, { type: "text" }> {
+  return part.type === "text" && part.text.trim().length > 0;
+}
+
+export function isWorkPart(part: MessagePart): boolean {
+  if (part.type === "reasoning") {
+    return part.time?.end == null || Boolean(part.text && part.text.trim().length > 0);
+  }
+  return part.type === "tool";
+}
+
+export interface MergedTurnResolution {
+  effectiveParts: MessagePart[];
+  carriedTurnIDs: string[];
+  isVisuallyEmpty: boolean;
+  isFirstVisualTurnInCycle: boolean;
+  isCycleEnd: boolean;
+}
+
+/**
+ * Aggregates contiguous work parts (`reasoning` + `tool`) across consecutive
+ * assistant turns within the same user prompt cycle so intermediate tool-call
+ * turns collapse into a single unified Execution Activity Bar instead of
+ * rendering dozens of separate rows.
+ */
+export function resolveMergedTurnParts(
+  allTurns: MessageTurn[],
+  globalIndex: number,
+  minStartIndex = 0
+): MergedTurnResolution {
+  let cycleStart = globalIndex;
+  while (cycleStart > 0 && allTurns[cycleStart - 1]?.info.role === "assistant") {
+    cycleStart--;
+  }
+
+  let carriedWork: MessagePart[] = [];
+  let carriedTurnIDs: string[] = [];
+  let hasPriorVisualTurnInCycle = false;
+
+  for (let i = cycleStart; i <= globalIndex; i++) {
+    const t = allTurns[i];
+    if (!t || t.info.role !== "assistant") continue;
+
+    const isCycleEnd =
+      i === allTurns.length - 1 || allTurns[i + 1]?.info.role !== "assistant";
+    const isFlushTurn = isCycleEnd || Boolean(t.info.error);
+
+    let lastTextPartIdx = -1;
+    for (let pIdx = t.parts.length - 1; pIdx >= 0; pIdx--) {
+      if (isVisibleTextPart(t.parts[pIdx])) {
+        lastTextPartIdx = pIdx;
+        break;
+      }
+    }
+
+    if (isFlushTurn) {
+      if (i === globalIndex) {
+        const effectiveParts =
+          carriedWork.length > 0 ? [...carriedWork, ...t.parts] : t.parts;
+        const hasRenderable = effectiveParts.some(
+          (p) => isWorkPart(p) || isVisibleTextPart(p)
+        );
+        return {
+          effectiveParts,
+          carriedTurnIDs,
+          isVisuallyEmpty: !hasRenderable && !t.info.error,
+          isFirstVisualTurnInCycle: !hasPriorVisualTurnInCycle,
+          isCycleEnd,
+        };
+      }
+      if (
+        i >= minStartIndex &&
+        (carriedWork.length > 0 ||
+          t.parts.some((p) => isWorkPart(p) || isVisibleTextPart(p)) ||
+          Boolean(t.info.error))
+      ) {
+        hasPriorVisualTurnInCycle = true;
+      }
+      carriedWork = [];
+      carriedTurnIDs = [];
+      continue;
+    }
+
+    if (lastTextPartIdx === -1) {
+      const ownWork = t.parts.filter(isWorkPart);
+      if (i === globalIndex) {
+        return {
+          effectiveParts: [],
+          carriedTurnIDs: [],
+          isVisuallyEmpty: true,
+          isFirstVisualTurnInCycle: !hasPriorVisualTurnInCycle,
+          isCycleEnd: false,
+        };
+      }
+      if (ownWork.length > 0) {
+        carriedWork.push(...ownWork);
+      }
+      carriedTurnIDs.push(t.info.id);
+    } else {
+      const headSlice = t.parts.slice(0, lastTextPartIdx + 1);
+      const tailWork = t.parts.slice(lastTextPartIdx + 1).filter(isWorkPart);
+      if (i === globalIndex) {
+        return {
+          effectiveParts:
+            carriedWork.length > 0 ? [...carriedWork, ...headSlice] : headSlice,
+          carriedTurnIDs,
+          isVisuallyEmpty: false,
+          isFirstVisualTurnInCycle: !hasPriorVisualTurnInCycle,
+          isCycleEnd: false,
+        };
+      }
+      if (i >= minStartIndex) {
+        hasPriorVisualTurnInCycle = true;
+      }
+      carriedWork = [...tailWork];
+      carriedTurnIDs = tailWork.length > 0 ? [t.info.id] : [];
+    }
+  }
+
+  return {
+    effectiveParts: allTurns[globalIndex]?.parts ?? [],
+    carriedTurnIDs: [],
+    isVisuallyEmpty: false,
+    isFirstVisualTurnInCycle: true,
+    isCycleEnd: true,
+  };
+}
+
+/**
+ * Returns true when the latest assistant cycle ends with an active work group
+ * (no visible text part after the last tool/reasoning part), meaning the inline
+ * `<ContextActivityGroupView isLiveTail />` is already serving as the live bottom
+ * status bar.
+ */
+export function hasLiveTailWorkGroup(
+  cycleTurns: Array<{ info: MessageInfo; parts: MessagePart[] }>
+): boolean {
+  if (cycleTurns.length === 0) return false;
+  const lastTurn = cycleTurns[cycleTurns.length - 1];
+  if (lastTurn.info.error) return false;
+
+  const { effectiveParts } = resolveMergedTurnParts(cycleTurns, cycleTurns.length - 1);
+  for (let i = effectiveParts.length - 1; i >= 0; i--) {
+    const p = effectiveParts[i];
+    if (isVisibleTextPart(p)) return false;
+    if (isWorkPart(p)) return true;
+  }
+  return false;
 }
 
 function summarizeContextTool(part: Extract<MessagePart, { type: "tool" }>): {
@@ -120,9 +263,10 @@ function summarizeContextTool(part: Extract<MessagePart, { type: "tool" }>): {
 export default function ContextActivityGroupView(props: {
   parts: MessagePart[];
   renderFallbackPart: (part: MessagePart) => JSX.Element;
+  isLiveTail?: boolean;
 }) {
   const isRunning = createMemo(() =>
-    props.parts.some((p) => {
+    props.isLiveTail || props.parts.some((p) => {
       if (p.type === "reasoning") return p.time?.end == null;
       if (p.type === "tool") return p.state.status === "pending" || p.state.status === "running";
       return false;

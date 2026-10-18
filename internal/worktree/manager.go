@@ -83,6 +83,11 @@ func (m *worktreeManager) RootDir() string {
 }
 
 func (m *worktreeManager) Create(sessionID string) (worktreeMeta, error) {
+	return m.CreateOnBranch(sessionID, "")
+}
+
+// CreateOnBranch reattaches a retained branch when returning from local mode.
+func (m *worktreeManager) CreateOnBranch(sessionID, retainedBranch string) (worktreeMeta, error) {
 	sessionID = sanitizeSessionID(sessionID)
 	if sessionID == "" {
 		return worktreeMeta{}, errors.New("sessionID is required")
@@ -94,7 +99,7 @@ func (m *worktreeManager) Create(sessionID string) (worktreeMeta, error) {
 	m.mu.RLock()
 	existing, ok := m.sessions[sessionID]
 	m.mu.RUnlock()
-	if ok {
+	if ok && existing.Isolated {
 		if _, err := os.Stat(existing.Directory); err == nil {
 			return existing, nil
 		}
@@ -133,16 +138,40 @@ func (m *worktreeManager) Create(sessionID string) (worktreeMeta, error) {
 
 	worktreeDir := filepath.Join(worktreesRoot, sessionID)
 	branch := "hoxi/" + sessionID
+	if retainedBranch != "" {
+		branch = retainedBranch
+	}
 
 	if _, err := os.Stat(worktreeDir); os.IsNotExist(err) {
-		_, err = runGit(repoRoot, "-c", "checkout.workers=0", "worktree", "add", "-b", branch, worktreeDir, strings.TrimSpace(baseCommit))
-		if err != nil {
-			// Branch may already exist from previous run; try without -b
+		if retainedBranch != "" {
 			_, err = runGit(repoRoot, "-c", "checkout.workers=0", "worktree", "add", worktreeDir, branch)
 			if err != nil {
-				return worktreeMeta{}, fmt.Errorf("git worktree add: %w", err)
+				return worktreeMeta{}, fmt.Errorf("reattach retained branch: %w", err)
+			}
+		} else {
+			_, err = runGit(repoRoot, "-c", "checkout.workers=0", "worktree", "add", "-b", branch, worktreeDir, strings.TrimSpace(baseCommit))
+			if err != nil {
+				// Branch may already exist from previous run; try without -b
+				_, err = runGit(repoRoot, "-c", "checkout.workers=0", "worktree", "add", worktreeDir, branch)
+				if err != nil {
+					return worktreeMeta{}, fmt.Errorf("git worktree add: %w", err)
+				}
 			}
 		}
+	}
+	if actual, err := runGit(worktreeDir, "symbolic-ref", "--short", "HEAD"); err == nil {
+		branch = actual
+	}
+
+	// Reused branches may predate commits added to the project while detached.
+	// Their diff baseline must be their common ancestor, never the new project HEAD.
+	worktreeHead, err := runGit(worktreeDir, "rev-parse", "HEAD")
+	if err != nil {
+		return worktreeMeta{}, err
+	}
+	baseCommit, err = runGit(repoRoot, "merge-base", "HEAD", worktreeHead)
+	if err != nil {
+		return worktreeMeta{}, fmt.Errorf("resolve worktree base: %w", err)
 	}
 
 	// Symlink .opencode into the worktree so plugins and memory are shared
@@ -301,6 +330,18 @@ func (m *worktreeManager) Status(sessionID string) (worktreeStatus, error) {
 }
 
 func (m *worktreeManager) Apply(sessionID, mode string) error {
+	sessionID = sanitizeSessionID(sessionID)
+	m.roots.Lock()
+	guard := m.roots.applyGuard
+	m.roots.Unlock()
+	apply := func() error { return m.apply(sessionID, mode) }
+	if guard != nil {
+		return guard(sessionID, apply)
+	}
+	return apply()
+}
+
+func (m *worktreeManager) apply(sessionID, mode string) error {
 	m.ops.Lock()
 	defer m.ops.Unlock()
 	sessionID = sanitizeSessionID(sessionID)
@@ -326,6 +367,9 @@ func (m *worktreeManager) Apply(sessionID, mode string) error {
 	if !ok || !meta.Isolated {
 		return errors.New("session does not have an isolated worktree")
 	}
+	if branch, err := runGit(meta.Directory, "symbolic-ref", "--short", "HEAD"); err == nil {
+		meta.Branch = branch
+	}
 
 	if err := snapshotWorktree(meta.Directory, sessionID); err != nil {
 		return err
@@ -337,16 +381,9 @@ func (m *worktreeManager) Apply(sessionID, mode string) error {
 	}
 
 	// Default mode: "patch" — applies changes cleanly onto main workspace without polluting commit history
-	base := meta.BaseCommit
-	if base == "" {
-		resolved, err := runGit(m.rootDir, "merge-base", "HEAD", meta.Branch)
-		if err != nil || strings.TrimSpace(resolved) == "" {
-			if err == nil {
-				err = errors.New("empty merge-base")
-			}
-			return fmt.Errorf("resolve apply base: %w", err)
-		}
-		base = resolved
+	base, err := runGit(m.rootDir, "merge-base", "HEAD", meta.Branch)
+	if err != nil || strings.TrimSpace(base) == "" {
+		return fmt.Errorf("resolve apply base: %v", err)
 	}
 	diffPatch, err := runGitRaw(meta.Directory, "diff", "--binary", strings.TrimSpace(base)+"..HEAD")
 	if err != nil {
@@ -413,6 +450,9 @@ func (m *worktreeManager) RemoveWithOptions(sessionID string, force bool, keepBr
 	}
 
 	args := []string{"worktree", "remove"}
+	if branch, err := runGit(meta.Directory, "symbolic-ref", "--short", "HEAD"); err == nil {
+		meta.Branch = branch
+	}
 	if force {
 		args = append(args, "--force")
 	}

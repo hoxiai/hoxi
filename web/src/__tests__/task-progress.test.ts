@@ -1,3 +1,4 @@
+import { groupAssistantParts, hasLiveTailWorkGroup, resolveMergedTurnParts } from "../components/timeline/ContextActivityGroupView";
 // web/src/__tests__/task-progress.test.ts
 import {
   collectCycleStepItems,
@@ -16,6 +17,8 @@ const done = (id: string, tool: string, input: Record<string, unknown> = {}): Me
     id, sessionID: sid, messageID: "msg_a", type: "tool", callID: id, tool,
     state: { status: "completed", input, output: "", title: "", metadata: {}, time: { start: 1, end: 2 } },
   }) as MessagePart;
+const textPart = (id: string, text: string): MessagePart => ({ id, sessionID: sid, messageID: "msg_a", type: "text", text });
+const reasoningPart = (id: string, text: string): MessagePart => ({ id, sessionID: sid, messageID: "msg_a", type: "reasoning", text, time: { start: 1, end: 2 } });
 const todoInput = (statuses: string[]) => ({
   todos: statuses.map((status, i) => ({ id: String(i), content: `item ${i}`, status })),
 });
@@ -56,4 +59,38 @@ describe("task progress todo staleness", () => {
     const allDone = normalizeTodoItems(todoInput(["completed", "cancelled"]).todos, true, false);
     assertTrue(!isTodoListStale(allDone, summary), "finished lists are never stale");
   });
+});
+
+describe("live tail merged rendering", () => {
+  it("matches merged tail rendering across assistant error boundaries", () => {
+    const work = done("before_error", "read");
+    const reasoning = reasoningPart("before_error_reasoning", "Checked the files");
+    const freshWork = done("after_error", "bash");
+    const turn = (id: string, parts: MessagePart[], error = false): MessageTurn => ({
+      info: {
+        id, sessionID: sid, role: "assistant", time: { created: 1 },
+        ...(error ? { error: { name: "APIError", data: { message: "Request failed" } } } : {}),
+      },
+      parts,
+    });
+    const cases: Array<{ label: string; turns: MessageTurn[]; expected: boolean }> = [
+      { label: "empty cycle", turns: [], expected: false },
+      { label: "errored work then empty assistant", turns: [turn("error", [work], true), turn("tail", [])], expected: false },
+      { label: "errored reasoning then whitespace assistant", turns: [turn("error", [reasoning], true), turn("tail", [textPart("blank", "  ")])], expected: false },
+      { label: "carried work flushed by empty error", turns: [turn("work", [work]), turn("error", [], true), turn("tail", [])], expected: false },
+      { label: "work carries through empty assistants without error", turns: [turn("work", [work]), turn("empty", []), turn("tail", [])], expected: true },
+      { label: "fresh work after error carries to tail", turns: [turn("error", [work], true), turn("fresh", [freshWork]), turn("tail", [])], expected: true },
+      { label: "visible text after fresh work", turns: [turn("error", [work], true), turn("tail", [freshWork, textPart("answer", "Done")])], expected: false },
+      { label: "errored final turn", turns: [turn("error", [work], true)], expected: false },
+    ];
+
+    for (const { label, turns, expected } of cases) {
+      const tailIndex = turns.length - 1;
+      const rendered = tailIndex < 0 ? [] : groupAssistantParts(resolveMergedTurnParts(turns, tailIndex).effectiveParts);
+      const hasRenderedLiveTail = !turns[tailIndex]?.info.error && rendered[rendered.length - 1]?.kind === "activity-group";
+      assertEqual(hasRenderedLiveTail, expected, `${label}: merged rendering`);
+      assertEqual(hasLiveTailWorkGroup(turns), expected, label);
+    }
+  });
+
 });

@@ -65,3 +65,45 @@ func TestRemoveKeepsBranchWhenWorktreeRemoveFails(t *testing.T) {
 		t.Fatalf("branch deleted after failed remove: %q", out)
 	}
 }
+
+func TestReusedWorktreeBranchCannotUndoNewProjectCommits(t *testing.T) {
+	root := initTempGitRepo(t)
+	mgr := NewManager(root)
+	first, err := mgr.Create("ses_reuse")
+	if err != nil {
+		t.Fatal(err)
+	}
+	configGitUser(first.Directory)
+	sessionTestWrite(t, first.Directory, "session.txt", "session edit\n")
+	sessionTestGit(t, first.Directory, "add", "session.txt")
+	sessionTestGit(t, first.Directory, "commit", "-m", appendHoxiCoAuthor("session edit"))
+	if err := mgr.RemoveWithOptions("ses_reuse", false, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.UseLocalDirectory("ses_reuse"); err != nil {
+		t.Fatal(err)
+	}
+	sessionTestWrite(t, root, "main-only.txt", "unrelated project commit\n")
+	sessionTestGit(t, root, "add", "main-only.txt")
+	sessionTestGit(t, root, "commit", "-m", appendHoxiCoAuthor("project edit"))
+	newHead := sessionTestGit(t, root, "rev-parse", "HEAD")
+	reused, err := mgr.Create("ses_reuse")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reused.BaseCommit != first.BaseCommit {
+		t.Fatalf("old branch was rebased to wrong baseline: %s", reused.BaseCommit)
+	}
+	// Also repair the apply behavior of metadata produced before this fix.
+	reused.BaseCommit = newHead
+	mgr.storeMeta(reused)
+	if err := mgr.Apply("ses_reuse", "patch"); err != nil {
+		t.Fatal(err)
+	}
+	for file, want := range map[string]string{"main-only.txt": "unrelated project commit\n", "session.txt": "session edit\n"} {
+		got, err := os.ReadFile(filepath.Join(root, file))
+		if err != nil || string(got) != want {
+			t.Fatalf("apply corrupted %s: %q %v", file, got, err)
+		}
+	}
+}

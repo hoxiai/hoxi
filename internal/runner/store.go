@@ -123,16 +123,23 @@ func (s *Store) Get(sessionID string) (SessionRecord, bool) {
 }
 
 func (s *Store) Update(sessionID string, fn func(*SessionRecord)) (SessionRecord, bool, error) {
+	sessionID = strings.TrimSpace(sessionID)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	rec, ok := s.records[strings.TrimSpace(sessionID)]
 	if !ok || rec == nil {
 		return SessionRecord{}, false, nil
 	}
-	fn(rec)
-	rec.UpdatedAt = time.Now().UnixMilli()
+	updated := cloneRecord(*rec)
+	fn(&updated)
+	updated.UpdatedAt = time.Now().UnixMilli()
+	s.records[sessionID] = &updated
 	err := s.saveLocked()
-	return cloneRecord(*rec), true, err
+	if err != nil {
+		s.records[sessionID] = rec
+		return cloneRecord(*rec), true, err
+	}
+	return cloneRecord(updated), true, nil
 }
 
 func (s *Store) Delete(sessionID string) error {

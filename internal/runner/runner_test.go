@@ -192,7 +192,7 @@ func initTestGitRepo(t *testing.T) string {
 		t.Fatal(err)
 	}
 	run("add", "README.md")
-	run("commit", "-m", "initial")
+	run("commit", "-m", "initial\n\nCo-authored-by: Hoxi AI <code@hoxi.ai>")
 	return dir
 }
 
@@ -209,10 +209,11 @@ func TestRunnerSessionMissingBinaryAndSubprocessLifecycle(t *testing.T) {
 
 	// 1. Create runner session -> automatically provisions .hoxi/worktrees/<session-id>
 	createBody, _ := json.Marshal(map[string]string{
-		"runtime":   "antigravity",
-		"title":     "Runner Test",
-		"modelID":   "claude-sonnet-4-6",
-		"directory": repoDir,
+		"runtime":     "antigravity",
+		"title":       "Runner Test",
+		"modelID":     "claude-sonnet-4-6",
+		"directory":   repoDir,
+		"sandboxMode": "worktree",
 	})
 	recCreate := httptest.NewRecorder()
 	mux.ServeHTTP(recCreate, httptest.NewRequest(http.MethodPost, "/api/hoxi/runner/sessions", bytes.NewReader(createBody)))

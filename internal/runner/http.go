@@ -19,6 +19,7 @@ type Service struct {
 	status    *statusbar.Tracker
 
 	mu      sync.Mutex
+	turnMu  sync.Mutex
 	procs   map[string]*activeProcess
 	subs    map[chan SSEEvent]string
 	seqSeed int64
@@ -28,7 +29,7 @@ func NewService(rootDir string, worktrees *worktree.Manager, status *statusbar.T
 	if worktrees == nil {
 		worktrees = worktree.NewManager(rootDir)
 	}
-	return &Service{
+	svc := &Service{
 		rootDir:   rootDir,
 		store:     NewStore(customStorePath),
 		worktrees: worktrees,
@@ -36,6 +37,21 @@ func NewService(rootDir string, worktrees *worktree.Manager, status *statusbar.T
 		procs:     make(map[string]*activeProcess),
 		subs:      make(map[chan SSEEvent]string),
 	}
+	for _, info := range svc.store.List("") {
+		rec, _ := svc.store.Get(info.ID)
+		if validateSessionDirectory(rec) != nil {
+			continue
+		}
+		if info.SandboxMode == "local" {
+			if _, err := existingDirectory(info.ProjectID); err == nil {
+				_ = svc.worktrees.ForDirectory(info.ProjectID).UseLocalDirectory(info.ID)
+			}
+		} else {
+			_ = svc.worktrees.ForDirectory(rec.ProjectDir).RestoreSession(rec.ID, rec.WorktreePath, rec.Branch, rec.BaseCommit)
+		}
+	}
+	svc.worktrees.SetApplyGuard(svc.guardWorktreeApply)
+	return svc
 }
 
 func (s *Service) Store() *Store {
@@ -166,96 +182,6 @@ func (s *Service) handleSessionsRoot(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Service) handleCreateSession(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Title      string `json:"title"`
-		Directory  string `json:"directory"`
-		Runtime    string `json:"runtime"`
-		ModelID    string `json:"modelID"`
-		ProviderID string `json:"providerID"`
-		Mode       string `json:"mode"`
-	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
-
-	rt := strings.TrimSpace(body.Runtime)
-	if rt == "" {
-		rt = string(RuntimeAntigravity)
-	}
-	if !IsValidRuntime(rt) {
-		writeJSONError(w, http.StatusBadRequest, "unsupported runner runtime: "+rt)
-		return
-	}
-	projDir := strings.TrimSpace(body.Directory)
-	if projDir == "" {
-		projDir = strings.TrimSpace(r.URL.Query().Get("directory"))
-	}
-	if projDir == "" {
-		projDir = s.rootDir
-	}
-
-	sessionID := GenerateRunnerSessionID(rt)
-	meta, err := s.worktrees.ForDirectory(projDir).Create(sessionID)
-	if err != nil {
-		writeJSONError(w, http.StatusBadRequest, "failed to create isolated git worktree: "+err.Error())
-		return
-	}
-	if !meta.Isolated || ValidateWorktreeDir(meta.Directory, projDir) != nil {
-		writeJSONError(w, http.StatusBadRequest, "Runner session requires an isolated Git worktree (.hoxi/worktrees/<session-id>); ensure the workspace is a Git repository with at least one commit")
-		return
-	}
-
-	modelID := strings.TrimSpace(body.ModelID)
-	if modelID == "" {
-		if rt == string(RuntimeClaudeCode) {
-			if ms := DiscoverClaudeModels(); len(ms) > 0 {
-				modelID = ms[0].ID
-			}
-		} else {
-			if ms, _, _ := DiscoverAgyModels(); len(ms) > 0 {
-				modelID = ms[0].ID
-			}
-		}
-	}
-	provID := strings.TrimSpace(body.ProviderID)
-	if provID == "" {
-		provID = rt
-	}
-	title := strings.TrimSpace(body.Title)
-	if title == "" {
-		if rt == string(RuntimeClaudeCode) {
-			title = "Claude Code Session"
-		} else {
-			title = "Antigravity Session"
-		}
-	}
-	now := time.Now().UnixMilli()
-	rec := SessionRecord{
-		ID:           sessionID,
-		Runtime:      rt,
-		ProjectDir:   projDir,
-		WorktreePath: meta.Directory,
-		Branch:       meta.Branch,
-		BaseCommit:   meta.BaseCommit,
-		ModelID:      modelID,
-		ProviderID:   provID,
-		Mode:         firstNonEmptyStr(body.Mode, "build"),
-		Title:        title,
-		CreatedAt:    now,
-		UpdatedAt:    now,
-		Turns:        []MessageTurn{},
-	}
-	if err := s.store.Put(rec); err != nil {
-		writeJSONError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	info := rec.ToSessionInfo()
-	s.broadcast(sessionID, SSEEvent{
-		Type:       "session.created",
-		Properties: map[string]interface{}{"info": info},
-	})
-	writeJSON(w, http.StatusOK, info)
-}
-
 func (s *Service) handleSessionSubroutes(w http.ResponseWriter, r *http.Request) {
 	sub := strings.TrimPrefix(r.URL.Path, "/api/hoxi/runner/sessions/")
 	if sub == "status" && r.Method == http.MethodGet {
@@ -317,12 +243,31 @@ func (s *Service) handleSingleSession(w http.ResponseWriter, r *http.Request, se
 
 	case http.MethodPatch:
 		var body struct {
-			Title string `json:"title"`
-			Time  *struct {
+			Title       string  `json:"title"`
+			SandboxMode *string `json:"sandboxMode"`
+			Force       bool    `json:"force"`
+			KeepBranch  *bool   `json:"keepBranch"`
+			Time        *struct {
 				Archived *int64 `json:"archived"`
 			} `json:"time"`
 		}
-		_ = json.NewDecoder(r.Body).Decode(&body)
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid session update")
+			return
+		}
+		if body.SandboxMode != nil {
+			keepBranch := true
+			if body.KeepBranch != nil {
+				keepBranch = *body.KeepBranch
+			}
+			info, err := s.changeSessionSandboxWithOptions(sessionID, *body.SandboxMode, body.Force, keepBranch)
+			if err != nil {
+				writeJSONError(w, http.StatusConflict, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, info)
+			return
+		}
 		updated, ok, err := s.store.Update(sessionID, func(rec *SessionRecord) {
 			if strings.TrimSpace(body.Title) != "" {
 				rec.Title = strings.TrimSpace(body.Title)
@@ -355,6 +300,8 @@ func (s *Service) handleSingleSession(w http.ResponseWriter, r *http.Request, se
 }
 
 func (s *Service) handleSessionPrompt(w http.ResponseWriter, r *http.Request, sessionID string) {
+	s.turnMu.Lock()
+	defer s.turnMu.Unlock()
 	if r.Method != http.MethodPost {
 		writeJSONError(w, http.StatusMethodNotAllowed, "POST required")
 		return
@@ -397,7 +344,7 @@ func (s *Service) handleSessionPrompt(w http.ResponseWriter, r *http.Request, se
 		return
 	}
 
-	if err := ValidateWorktreeDir(rec.WorktreePath, rec.ProjectDir); err != nil {
+	if err := validateSessionDirectory(rec); err != nil {
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}

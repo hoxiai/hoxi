@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
 
 // SessionBinding is the directory authority for a session known to Hoxi.
@@ -18,7 +19,42 @@ type SessionBinding struct {
 
 type managerRoots struct {
 	sync.Mutex
-	managers map[string]*worktreeManager
+	managers   map[string]*worktreeManager
+	applyGuard func(string, func() error) error
+}
+
+// SetApplyGuard coordinates worktree applies with the runner's process-start lock.
+func (m *worktreeManager) SetApplyGuard(guard func(string, func() error) error) {
+	m.roots.Lock()
+	m.roots.applyGuard = guard
+	m.roots.Unlock()
+}
+
+// RestoreSession restores directory authority without creating or changing files.
+func (m *worktreeManager) RestoreSession(sessionID, directory, branch, base string) error {
+	binding, err := bindingFromDirectory(directory)
+	if err != nil {
+		return err
+	}
+	m.storeMeta(worktreeMeta{SessionID: sanitizeSessionID(sessionID), Directory: binding.Directory,
+		Isolated: true, Branch: branch, BaseCommit: base})
+	return nil
+}
+
+// UseLocalDirectory tracks session-only Git operations without creating a branch.
+func (m *worktreeManager) UseLocalDirectory(sessionID string) error {
+	sessionID = sanitizeSessionID(sessionID)
+	if sessionID == "" {
+		return errors.New("sessionID is required")
+	}
+	if info, err := os.Stat(m.rootDir); err != nil || !info.IsDir() {
+		return errors.New("local session directory does not exist")
+	}
+	m.ops.Lock()
+	defer m.ops.Unlock()
+	m.storeMeta(worktreeMeta{SessionID: sessionID, Directory: m.rootDir, Isolated: false,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339)})
+	return nil
 }
 
 // ForDirectory returns a stable manager without changing any other request's root.
@@ -109,11 +145,12 @@ func (m *worktreeManager) BindingForSession(sessionID string) (SessionBinding, b
 
 	var matches []SessionBinding
 	for _, scoped := range managers {
-		if meta, ok := scoped.sessionMeta(sessionID); ok && meta.Isolated {
+		if meta, ok := scoped.sessionMeta(sessionID); ok {
 			binding, err := bindingFromDirectory(meta.Directory)
 			if err != nil {
 				return SessionBinding{}, true, err
 			}
+			binding.Isolated = meta.Isolated
 			matches = append(matches, binding)
 			continue
 		}
@@ -133,8 +170,8 @@ func (m *worktreeManager) BindingForSession(sessionID string) (SessionBinding, b
 	}
 	first := matches[0]
 	for _, match := range matches[1:] {
-		if match.Directory != first.Directory {
-			return SessionBinding{}, true, errors.New("session has ambiguous isolated worktree bindings")
+		if match.Directory != first.Directory || match.Isolated != first.Isolated {
+			return SessionBinding{}, true, errors.New("session has ambiguous directory bindings")
 		}
 	}
 	return first, true, nil
