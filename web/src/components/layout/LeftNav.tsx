@@ -81,7 +81,9 @@ export default function LeftNav() {
     const root = normalizeFolderPath(workspace.rootDir);
     if (root && !isInvalidProjectPath(root)) {
       setExpandedProjects((prev) => (prev.has(root) ? prev : new Set([...prev, root])));
-      if (workspace.sessions.length > 0) setProjectSessions((prev) => ({ ...prev, [root]: workspace.sessions }));
+      if (!workspace.bootstrappingSessions && workspace.sessions.length > 0) {
+        setProjectSessions((prev) => ({ ...prev, [root]: workspace.sessions }));
+      }
     }
   });
 
@@ -107,6 +109,13 @@ export default function LeftNav() {
         item.folders.some((f) => f.path.toLowerCase().includes(q))
     );
   });
+
+  const projectByPath = createMemo(() => new Map(projectList().map((p) => [p.path, p])));
+  const projectPaths = createMemo(
+    () => projectList().map((p) => p.path),
+    [],
+    { equals: (a, b) => a.length === b.length && a.every((v, i) => v === b[i]) }
+  );
 
   const pendingSessions = createMemo(() => collectPendingSessionIDs());
   const isExpanded = (path: string) => expandedProjects().has(normalizeFolderPath(path));
@@ -215,7 +224,10 @@ export default function LeftNav() {
   };
 
   const onSelectSessionInProject = async (path: string, sessionID: string) => {
-    if (path !== workspace.rootDir) await switchWorkspace(path);
+    const normPath = normalizeFolderPath(path);
+    if (normPath && normPath !== normalizeFolderPath(workspace.rootDir)) {
+      await switchWorkspace(normPath, false);
+    }
     await selectSession(sessionID);
   };
 
@@ -416,22 +428,30 @@ export default function LeftNav() {
           ref={projectListContainerRef}
           class="flex-1 min-h-0 overflow-y-auto px-1 py-1 space-y-1"
         >
-          <For each={projectList()}>
-            {(proj) => {
-              const normPath = normalizeFolderPath(proj.path);
-              const isRootProj = normPath === normalizeFolderPath(workspace.rootDir);
+          <For each={projectPaths()}>
+            {(projPath) => {
+              const proj = () => projectByPath().get(projPath)!;
+              const normPath = normalizeFolderPath(projPath);
+              const isRootProj = () => normPath === normalizeFolderPath(workspace.rootDir);
+              const cached = () => projectSessions()[normPath] || projectSessions()[projPath] || [];
               return (
                 <MultiProjectTreeItem
-                  proj={proj}
-                  expanded={isExpanded(proj.path)}
-                  isCreating={creatingForPath() === proj.path}
-                  isLoadingSessions={Boolean(loadingProjects()[normPath]) || (isRootProj && workspace.bootstrappingSessions && workspace.sessions.length === 0)}
-                  isDraggingThis={draggingProjectPath() === proj.path}
-                  isDropBefore={dropTarget()?.path === proj.path && dropTarget()?.position === "before"}
-                  isDropAfter={dropTarget()?.path === proj.path && dropTarget()?.position === "after"}
-                  isArchivedOpen={Boolean(expandedArchivedByProject()[proj.path]) || Boolean(filterQuery().trim())}
+                  proj={proj()}
+                  expanded={isExpanded(projPath)}
+                  isCreating={creatingForPath() === projPath}
+                  isLoadingSessions={
+                    Boolean(loadingProjects()[normPath]) ||
+                    (isRootProj() &&
+                      workspace.bootstrappingSessions &&
+                      workspace.sessions.length === 0 &&
+                      cached().length === 0)
+                  }
+                  isDraggingThis={draggingProjectPath() === projPath}
+                  isDropBefore={dropTarget()?.path === projPath && dropTarget()?.position === "before"}
+                  isDropAfter={dropTarget()?.path === projPath && dropTarget()?.position === "after"}
+                  isArchivedOpen={Boolean(expandedArchivedByProject()[projPath]) || Boolean(filterQuery().trim())}
                   filterQuery={filterQuery()}
-                  cachedSessions={projectSessions()[normPath] || projectSessions()[proj.path] || []}
+                  cachedSessions={cached()}
                   pendingSessions={pendingSessions()}
                   onPointerDown={onProjectPointerDown}
                   onToggleProject={(p) => void toggleProject(p)}

@@ -368,14 +368,18 @@ export function RecentTasksNavView(props: {
   onArchiveSession: (path: string, ev: MouseEvent, sessionID: string) => void;
   onDiscardSession: (path: string, ev: MouseEvent, sessionID: string) => Promise<void> | void;
 }) {
-  const recentGroups = createMemo(() => {
+  const recentData = createMemo(() => {
     const q = props.filterQuery.trim().toLowerCase();
-    const items: Array<{ session: SessionInfo; proj: ProjectNavEntry }> = [];
+    const sessions: SessionInfo[] = [];
+    const projBySession = new Map<string, ProjectNavEntry>();
 
     for (const proj of props.allProjects) {
       const isActive =
         normalizeFolderPath(proj.path) === normalizeFolderPath(workspace.rootDir);
-      const list = isActive ? workspace.sessions : props.projectSessions[proj.path] || [];
+      const list =
+        isActive && !workspace.bootstrappingSessions && workspace.sessions.length > 0
+          ? workspace.sessions
+          : props.projectSessions[proj.path] || (isActive ? workspace.sessions : []);
       for (const s of list) {
         if (s.parentID || isSessionArchived(s)) continue;
         if (
@@ -386,76 +390,83 @@ export function RecentTasksNavView(props: {
         ) {
           continue;
         }
-        items.push({ session: s, proj });
+        sessions.push(s);
+        projBySession.set(s.id, proj);
       }
     }
 
-    items.sort(
+    sessions.sort(
       (a, b) =>
-        compareSessionRunning(a.session, b.session, workspace.statusBySession) ||
-        (b.session.time.updated || b.session.time.created) -
-        (a.session.time.updated || a.session.time.created)
+        compareSessionRunning(a, b, workspace.statusBySession) ||
+        (b.time.updated || b.time.created) -
+        (a.time.updated || a.time.created)
     );
 
-    const groups: Array<{
-      label: string;
-      entries: Array<{ session: SessionInfo; proj: ProjectNavEntry }>;
-    }> = [];
-    for (const entry of items) {
-      const label = dayLabel(entry.session.time.updated || entry.session.time.created);
-      const last = groups[groups.length - 1];
-      if (last && last.label === label) last.entries.push(entry);
-      else groups.push({ label, entries: [entry] });
-    }
-    return groups;
+    return { sessions, projBySession };
   });
 
+  const recentSessions = createMemo(
+    () => recentData().sessions,
+    [],
+    { equals: (a, b) => a.length === b.length && a.every((s, i) => s === b[i]) }
+  );
+
   return (
-    <div class="flex-1 min-h-0 overflow-y-auto px-1 py-1 space-y-2.5">
+    <div class="flex-1 min-h-0 overflow-y-auto px-1 py-1 space-y-0.5">
       <Show
-        when={recentGroups().length > 0}
+        when={recentSessions().length > 0}
         fallback={
           <div class="px-3 py-6 text-center text-[12px] text-[var(--text-faint)]">
             {t("leftNav.noThreads")}
           </div>
         }
       >
-        <For each={recentGroups()}>
-          {(group) => (
-            <div class="space-y-0.5">
-              <div class="px-2 py-0.5 text-[11px] font-medium text-[var(--text-faint)]">
-                {group.label}
+        <For each={recentSessions()}>
+          {(session, index) => {
+            const proj = () => recentData().projBySession.get(session.id);
+            const isActiveProj = () =>
+              normalizeFolderPath(proj()?.path) ===
+              normalizeFolderPath(workspace.rootDir);
+            const label = createMemo(() => {
+              const current = dayLabel(session.time.updated || session.time.created);
+              const previous = recentSessions()[index() - 1];
+              const prevLabel = previous
+                ? dayLabel(previous.time.updated || previous.time.created)
+                : "";
+              return prevLabel === current ? "" : current;
+            });
+            return (
+              <div class={label() && index() > 0 ? "pt-2 space-y-0.5" : "space-y-0.5"}>
+                <Show when={label()}>
+                  <div class="px-2 py-0.5 text-[11px] font-medium text-[var(--text-faint)]">
+                    {label()}
+                  </div>
+                </Show>
+                <SessionNavItem
+                  session={session}
+                  active={
+                    isActiveProj() && workspace.activeSessionID === session.id
+                  }
+                  canDelete={true}
+                  isArchived={false}
+                  showBranchIcon={true}
+                  pendingSessions={props.pendingSessions}
+                  onSelect={() => {
+                    const p = proj()?.path;
+                    if (p) props.onSelectSession(p, session.id);
+                  }}
+                  onArchive={(ev, id) => {
+                    const p = proj()?.path;
+                    if (p) props.onArchiveSession(p, ev, id);
+                  }}
+                  onDiscard={(ev, id) => {
+                    const p = proj()?.path;
+                    if (p) return props.onDiscardSession(p, ev, id);
+                  }}
+                />
               </div>
-              <For each={group.entries}>
-                {(entry) => {
-                  const isActiveProj = () =>
-                    normalizeFolderPath(entry.proj.path) ===
-                    normalizeFolderPath(workspace.rootDir);
-                  return (
-                    <SessionNavItem
-                      session={entry.session}
-                      active={
-                        isActiveProj() && workspace.activeSessionID === entry.session.id
-                      }
-                      canDelete={true}
-                      isArchived={false}
-                      showBranchIcon={true}
-                      pendingSessions={props.pendingSessions}
-                      onSelect={() =>
-                        props.onSelectSession(entry.proj.path, entry.session.id)
-                      }
-                      onArchive={(ev, id) =>
-                        props.onArchiveSession(entry.proj.path, ev, id)
-                      }
-                      onDiscard={(ev, id) =>
-                        props.onDiscardSession(entry.proj.path, ev, id)
-                      }
-                    />
-                  );
-                }}
-              </For>
-            </div>
-          )}
+            );
+          }}
         </For>
       </Show>
 

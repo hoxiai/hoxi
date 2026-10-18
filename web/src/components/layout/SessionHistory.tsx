@@ -12,6 +12,9 @@ import { dayLabel } from "./left-nav-helpers";
 // Keep manual expansion stable across workspace switches and background updates.
 const [expandedPaths, setExpandedPaths] = createSignal(new Set<string>());
 
+const sameSessionArray = (a: SessionInfo[], b: SessionInfo[]) =>
+  a.length === b.length && a.every((s, i) => s === b[i]);
+
 export function useSessionHistory(
   sessions: Accessor<SessionInfo[]>,
   path: Accessor<string>,
@@ -19,6 +22,7 @@ export function useSessionHistory(
   query: Accessor<string>,
 ) {
   const now = useNowTicker();
+  const expanded = () => expandedPaths().has(path());
   const partition = createMemo(() => partitionSessionHistory(
     [...sessions()].sort((a, b) => compareSessionRunning(a, b, workspace.statusBySession)), {
     enabled: appSettings.sidebarAutoCollapse && !query().trim(),
@@ -28,16 +32,23 @@ export function useSessionHistory(
     activityTime: sessionActivityTime,
     protectedSession: (session) => {
       // Protect root rows when a selected or running child belongs to them.
+      // When older sessions are manually expanded, keep items in place instead of jumping across the toggle bar.
+      const protectActive = !expanded();
       const family = [session, ...workspace.sessions.filter((s) => s.parentID === session.id)];
-      return family.some((s) => s.id === workspace.activeSessionID || pending().has(s.id) ||
+      return family.some((s) => (protectActive && s.id === workspace.activeSessionID) || pending().has(s.id) ||
         workspace.statusBySession[s.id]?.type === "busy" ||
         workspace.statusBySession[s.id]?.type === "retry");
     },
   }));
-  const expanded = () => expandedPaths().has(path());
+  const visibleSessions = createMemo(() => partition().visible, [], { equals: sameSessionArray });
+  const olderSessions = createMemo(
+    () => (expanded() ? partition().older : []),
+    [],
+    { equals: sameSessionArray },
+  );
   return {
-    sessions: () => partition().visible,
-    olderSessions: () => expanded() ? partition().older : [],
+    sessions: visibleSessions,
+    olderSessions,
     olderCount: () => partition().older.length,
     expanded,
     toggle: () => setExpandedPaths((previous) => {

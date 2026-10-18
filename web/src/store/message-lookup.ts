@@ -195,7 +195,12 @@ function mergeTurnInto(local: MessageTurn, remote: { info: MessageInfo; parts: M
     if (isOptimisticPartID(lp.id) && remote.parts.length > 0) continue;
     nextParts.push(lp);
   }
-  local.parts.splice(0, local.parts.length, ...nextParts);
+  if (
+    local.parts.length !== nextParts.length ||
+    local.parts.some((p, i) => p !== nextParts[i])
+  ) {
+    local.parts.splice(0, local.parts.length, ...nextParts);
+  }
 }
 
 /**
@@ -241,5 +246,10 @@ export function mergeServerTurnsInto(
     if (lastRemoteID && turn.info.id > lastRemoteID) next.push(turn);
   }
 
-  list.splice(0, list.length, ...next);
+  if (
+    list.length !== next.length ||
+    list.some((t, i) => t !== next[i])
+  ) {
+    list.splice(0, list.length, ...next);
+  }
 }
