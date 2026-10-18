@@ -457,7 +457,18 @@ export default function MessageStream(props: { hidden?: boolean }) {
               />
 
             {/* Queued Follow-Up Prompts (Send Now | Edit | Delete) */}
-            <QueuedPromptsList sessionID={workspace.activeSessionID} />
+            <QueuedPromptsList
+              sessionID={workspace.activeSessionID}
+              onSendNow={() => {
+                const sessionID = workspace.activeSessionID;
+                sessionScroll.interrupt();
+                // Protect the queue removal from being interpreted as scrolling up.
+                scroll.jumpToBottom();
+                queueMicrotask(() => {
+                  if (workspace.activeSessionID === sessionID) scroll.jumpToBottom();
+                });
+              }}
+            />
 
             {/* Kilo SessionRetry Countdown Card */}
             <Show when={activeStatus().type === "retry"}>

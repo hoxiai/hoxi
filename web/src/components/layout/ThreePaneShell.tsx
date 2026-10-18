@@ -5,6 +5,7 @@ import WorkspaceModal from "./WorkspaceModal";
 import ExternalHandoffModal from "../handoff/ExternalHandoffModal";
 import MessageStream from "../timeline/MessageStream";
 import Composer from "../timeline/Composer";
+import ParticleLogo from "../timeline/ParticleLogo";
 import InspectorPane from "../inspector/InspectorPane";
 import ProviderModal from "../models/ProviderModal";
 import ModelLeaderboardModal from "../models/ModelLeaderboardModal";
@@ -89,8 +90,13 @@ export default function ThreePaneShell() {
           }`}
         >
           <MessageStream hidden={isNewConversation()} />
-          <div class={`flex flex-col shrink-0 ${isNewConversation() ? "flex-1 min-h-0 justify-center overflow-y-auto" : ""}`}>
-            <Composer />
+          <div class={`flex flex-col shrink-0 ${isNewConversation() ? "flex-1 min-h-0 overflow-y-auto py-6" : ""}`}>
+            <div class={`w-full shrink-0 ${isNewConversation() ? "my-auto flex flex-col [&>div:last-child]:my-0 [&>div:last-child]:pb-1" : ""}`}>
+              <Show when={isNewConversation()}>
+                <ParticleLogo />
+              </Show>
+              <Composer />
+            </div>
           </div>
         </section>
 

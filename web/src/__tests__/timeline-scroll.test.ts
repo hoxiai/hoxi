@@ -148,6 +148,24 @@ describe("Timeline layout following", () => {
       assertEqual(scroll.awayFromBottom(), false);
       flush();
       scroll.schedule();
+
+      // Send Now starts following before removing the queued card. Its layout
+      // shrink can emit a scroll event before ResizeObserver runs.
+      scroller.scrollTop = 200;
+      assertEqual(scroll.onScroll(), true);
+      scroll.jumpToBottom();
+      scroller.scrollHeight = 1400;
+      scroller.scrollTop = 1000;
+      assertEqual(scroll.onScroll(), false);
+      resized();
+      assertEqual(scroller.scrollTop, 1000);
+      flush();
+      scroller.scrollHeight = 1800;
+      resized();
+      assertEqual(scroller.scrollTop, 1400);
+      flush();
+
+      scroll.schedule();
       dispose();
       assertEqual(disconnected, true);
       assertEqual(frames.size, 0);
