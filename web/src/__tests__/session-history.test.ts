@@ -38,6 +38,21 @@ describe("Sidebar session history", () => {
     assertEqual(partitionSessionHistory(sessions.slice(0, 6), options).older.length, 0);
   });
 
+  it("preserves row identities when the active session changes the visible partition", () => {
+    const select = (id: string) => partitionSessionHistory(sessions, {
+      ...options, protectedSession: (session) => session.id === id,
+    });
+    const before = select("8");
+    const after = select("9");
+    assertEqual(before.visible.length, 8);
+    assertEqual(after.visible.length, 8);
+    for (let index = 0; index < options.minimum; index++) {
+      assertEqual(after.visible[index], before.visible[index]);
+    }
+    assertEqual(after.visible[7], sessions[9]);
+    assertEqual(after.older.find((session) => session.id === "8"), sessions[8]);
+  });
+
   it("unions recent activity and protected sessions with the minimum", () => {
     const result = partitionSessionHistory(sessions, {
       ...options,

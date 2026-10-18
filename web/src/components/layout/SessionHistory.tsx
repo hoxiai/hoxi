@@ -74,24 +74,23 @@ export function SessionHistoryList(props: {
   children: (session: SessionInfo) => JSX.Element;
 }) {
   const renderSessions = (sessions: Accessor<SessionInfo[]>) => {
-    const groups = createMemo(() => {
-      const result: Array<{ label: string; items: SessionInfo[] }> = [];
-      for (const session of sessions()) {
-        const label = props.grouped ? dayLabel(sessionActivityTime(session)) : "";
-        const last = result[result.length - 1];
-        if (last?.label === label) last.items.push(session);
-        else result.push({ label, items: [session] });
-      }
-      return result;
-    });
-    return <For each={groups()}>{(group) => (
-      <div class="space-y-0.5">
-        <Show when={group.label}>
-          <div class="px-2 py-0.5 text-[11px] font-medium text-[var(--text-faint)]">{group.label}</div>
-        </Show>
-        <For each={group.items}>{(session) => props.children(session)}</For>
-      </div>
-    )}</For>;
+    // Key rows by session identity, not freshly allocated date-group objects.
+    return <For each={sessions()}>{(session, index) => {
+      const label = createMemo(() => {
+        if (!props.grouped) return "";
+        const current = dayLabel(sessionActivityTime(session));
+        const previous = sessions()[index() - 1];
+        return previous && dayLabel(sessionActivityTime(previous)) === current ? "" : current;
+      });
+      return (
+        <div class="space-y-0.5">
+          <Show when={label()}>
+            <div class="px-2 py-0.5 text-[11px] font-medium text-[var(--text-faint)]">{label()}</div>
+          </Show>
+          {props.children(session)}
+        </div>
+      );
+    }}</For>;
   };
   return <>
     {renderSessions(props.history.sessions)}
