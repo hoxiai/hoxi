@@ -165,7 +165,7 @@ export default function ExternalHandoffPreviewPane(props: {
                 type="button"
                 disabled={props.importingSession}
                 onClick={props.onTakeOver}
-                class="inline-flex items-center gap-1.5 rounded-lg bg-[var(--accent-primary)] px-3.5 py-1.5 text-[12px] font-medium text-white hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
+                class="inline-flex items-center gap-1.5 rounded-lg bg-[var(--accent-primary)] px-3.5 py-1.5 text-[12px] font-medium text-[var(--accent-foreground)] hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
               >
                 <Show
                   when={!props.importingSession}

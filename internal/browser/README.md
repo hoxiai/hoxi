@@ -122,9 +122,9 @@ which can forge HTTP headers. Do not disclose the token to frontend JavaScript.
 ## Verification
 
 ```sh
-/usr/local/go/bin/go test -race ./internal/browser
-HOXI_BROWSER_TEST=1 /usr/local/go/bin/go test -race ./internal/browser -count=1
-/usr/local/go/bin/go build ./...
+go test -race ./internal/browser
+HOXI_BROWSER_TEST=1 go test -race ./internal/browser -count=1
+go build ./...
 ```
 
 The default suite exercises validation, authentication, manual ownership, lazy

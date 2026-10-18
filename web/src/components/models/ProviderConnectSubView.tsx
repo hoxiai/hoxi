@@ -233,7 +233,7 @@ export function ProviderConnectView(props: {
                     type="button"
                     disabled={busy()}
                     onClick={() => void onStartOAuth()}
-                    class="inline-flex items-center gap-2 rounded-xl bg-[var(--accent-primary)] px-4 py-2 text-[12.5px] font-medium text-white hover:opacity-90 cursor-pointer"
+                    class="inline-flex items-center gap-2 rounded-xl bg-[var(--accent-primary)] px-4 py-2 text-[12.5px] font-medium text-[var(--accent-foreground)] hover:opacity-90 cursor-pointer"
                   >
                     <ExternalLink size={14} />
                     {authMethods()[authMethodIndex()]?.label || t("models.oauthLogin")}
@@ -255,7 +255,7 @@ export function ProviderConnectView(props: {
                         <button
                           type="button"
                           onClick={() => void onCompleteOAuthCode()}
-                          class="rounded-xl bg-[var(--accent-primary)] px-4 py-2 text-[12px] font-medium text-white cursor-pointer"
+                          class="rounded-xl bg-[var(--accent-primary)] px-4 py-2 text-[12px] font-medium text-[var(--accent-foreground)] cursor-pointer"
                         >
                           {t("common.confirm")}
                         </button>
@@ -350,7 +350,7 @@ export function ProviderConnectView(props: {
         <button
           type="submit"
           disabled={busy()}
-          class="inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] px-4 py-2 text-[12.5px] font-medium text-white hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
+          class="inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] px-4 py-2 text-[12.5px] font-medium text-[var(--accent-foreground)] hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
         >
           <Show when={!busy()} fallback={<LoaderCircle size={14} class="animate-spin" />}>
             <Check size={14} />

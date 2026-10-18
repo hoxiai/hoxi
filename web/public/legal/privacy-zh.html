@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Hoxi 隐私说明 | 待审核草案</title>
+  <style>
+    :root { color-scheme: light; font-family: system-ui, sans-serif; color: #202c36; background: #f4f6f8; line-height: 1.7; }
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    main { max-width: 52rem; margin: 0 auto; padding: 2rem clamp(1rem, 4vw, 3rem) 4rem; background: #fff; }
+    nav { display: flex; flex-wrap: wrap; gap: .5rem 1.25rem; }
+    a { color: #075a9c; text-underline-offset: .2em; overflow-wrap: anywhere; }
+    a:focus-visible { outline: 3px solid #075a9c; outline-offset: 4px; }
+    h1, h2 { line-height: 1.3; color: #132735; }
+    h1 { font-size: clamp(1.8rem, 5vw, 2.5rem); }
+    h2 { margin-top: 2rem; font-size: 1.25rem; }
+    .notice { padding: 1rem; border-left: 4px solid #805700; background: #fff5d9; }
+    code { overflow-wrap: anywhere; }
+    li + li { margin-top: .5rem; }
+    footer { margin-top: 3rem; border-top: 1px solid #ccd5dc; padding-top: 1rem; }
+    @media print { :root { background: white; } main { max-width: none; padding: 0; } }
+  </style>
+</head>
+<body>
+<main id="main">
+  <nav aria-label="法律文件">
+    <a href="privacy-en.html" lang="en" hreflang="en">English</a>
+    <a href="terms-zh.html">使用条款</a>
+    <a href="https://hoxi.ai">Hoxi 网站</a>
+  </nav>
+  <header>
+    <h1>隐私说明</h1>
+    <p>Fastix Limited · Hoxi 桌面应用及相关服务<br>草案日期 / 版本：<time datetime="2026-10-18">2026-10-18</time></p>
+    <p class="notice"><strong>供运营方及法律顾问审核的草案，并非最终发布的隐私政策。</strong>本仓库无法验证网站后端的实际处理情况。Fastix Limited 须在发布前确认下述事项并完成法律审核。此日期为草案标识，并非生效日期。</p>
+  </header>
+  <section aria-labelledby="scope">
+    <h2 id="scope">1. 适用范围与联系方式</h2>
+    <p>Hoxi 由 Fastix Limited 运营。隐私及支持联系邮箱：<a href="mailto:support@hoxi.ai">support@hoxi.ai</a>；网站：<a href="https://hoxi.ai">https://hoxi.ai</a>。本说明介绍桌面应用的数据流及相关 Hoxi 服务。拟服务地区包括中国大陆、香港、台湾、美国及其他获准地区；实际可用性受当地法律及供应商限制影响，不代表已取得监管批准。</p>
+    <p><strong>Hoxi 是自带密钥或账户（BYOK）的工具，不提供官方 AI 推理服务。</strong>您自行连接 AI 供应商、自定义端点或外部命令行工具（CLI）。Fastix Limited 不是您的推理服务供应商，不会仅因您使用 Hoxi 而自动接收提示词或托管 AI 对话。可选的 Hoxi 账户、更新及发现请求与推理请求相互独立。</p>
+    <p>您选择的 AI 供应商、网关运营方、外部 CLI 及网站有各自的规则和条款。须核实其实际运营者及法律角色；列出或推荐某项服务不代表它是 Fastix 提供的推理服务。</p>
+  </section>
+  <section aria-labelledby="local">
+    <h2 id="local">2. 设备上的数据</h2>
+    <p>Hoxi 及本地运行时会按功能需要读取和存储项目路径、文件、代码、Git 工作树及差异、对话、工具输入输出、结构化记忆、偏好设置、浏览器会话数据及运行记录。本地供应商性能记录可能包含模型标识、延迟、错误及审核结果。外部 CLI 和 OpenCode 还会按各自的存储方式保存文件。</p>
+    <p>Hoxi 登录凭据及用户资料保存在本地文件系统中，通常为 <code>~/.hoxi/auth.json</code>。供应商设置及凭据也可能保存在本地配置文件中，包括 <code>~/.hoxi/models.json</code> 及运行时或 CLI 配置。Hoxi 的凭据存储不是 macOS 钥匙串保险库；文件权限不等于静态加密承诺。其他工具可能独立使用其自身的凭据存储。请保护设备、备份和配置文件，不要将密钥提交到代码仓库。</p>
+  </section>
+  <section aria-labelledby="transmission">
+    <h2 id="transmission">3. 发送给供应商和工具的内容</h2>
+    <p>使用 AI 或智能体功能时，提示词、对话上下文、相关代码及文件、差异、记忆、附件和工具结果可能发送给所选模型供应商、配置的网关或外部 CLI 及其服务。会话标题、提交说明生成、记忆提炼及模型审核等功能也可能发送相关上下文。传输内容不限于您手动粘贴的文字。</p>
+    <p>浏览器工具可读取页面文本及 DOM 快照并截取屏幕；其中可能包含个人信息、登录后内容或秘密信息，并可能成为模型或工具的上下文。访问网站也会向相应网站发送请求。终端命令、插件、MCP 服务器及外部工具可以在其权限范围内访问数据并连接其他服务。</p>
+    <p>您可以配置供应商端点，并在功能支持时配置 Hoxi 服务端点。接收方取决于您的配置；自定义网关还可能继续转发内容。发送机密或个人数据前，请核实端点、权限、供应商条款、保留规则及训练设置。我们不承诺所有处理均在本地进行，也不承诺所有接收方都不收集数据或不用于模型训练。</p>
+  </section>
+  <section aria-labelledby="services">
+    <h2 id="services">4. Hoxi 账户、发现、更新及支持</h2>
+    <ul>
+      <li><strong>账户授权：</strong>桌面应用打开网站授权流程，并使用授权状态、交接凭证及操作系统和架构信息进行交换或轮询。设备令牌用于验证，退出登录时会尝试撤销令牌。返回的资料可包括账户 ID、邮箱、昵称、头像及角色。</li>
+      <li><strong>更新及发现：</strong>更新检查发送桌面软件包类型、操作系统、架构及已安装版本。模型排行和网关发现发送语言、排行维度、结果数量等查询选项。下载会连接所选分发站点或镜像。</li>
+      <li><strong>网络及支持：</strong>接收服务可见 IP 地址、请求时间、路径及请求头等网络元数据。联系支持时，我们会收到您的消息及主动提供的附件。请删除令牌及不必要的项目或个人数据。</li>
+    </ul>
+    <p>这些独立服务的数据流用于身份验证、兼容性、服务发现、故障排查及安全，并非 Hoxi 推理或云端聊天服务。它们不能证明网站实际记录哪些日志、使用何种 Cookie 或分析工具、托管地点、分包处理方、处理的法律依据或保留规则。运营方须在发布前核实并披露这些后端事实及任何额外用途或披露。Fastix 不是 AI 内容的自动接收方，但这不等于全面“不收集”承诺：您发送给支持团队或明确配置端点的内容，取决于实际接收方及配置。</p>
+  </section>
+  <section aria-labelledby="retention">
+    <h2 id="retention">5. 保留、删除与您的选择</h2>
+    <p>本地记录可能持续存在，直到通过可用控件或相关应用及运行时的存储位置删除。删除会话、工作区或卸载应用可能仍留下工作树、记忆文件、运行时或 CLI 记录、备份及其他副本。本地删除不会删除 Hoxi 服务器记录或供应商、网关、网站、CLI 持有的副本。退出登录会清除 Hoxi 本地登录文件并尝试撤销令牌，但不等于删除账户，服务无法连接时也不保证撤销成功。</p>
+    <p>如需申请删除账户、访问、更正、导出或行使其他适用隐私权利，请发送邮件至 <a href="mailto:support@hoxi.ai">support@hoxi.ai</a>。账户删除由支持人员处理，并非应用内即时完成。我们可能需要进行适度的身份核验，并评估法律义务及允许的例外。可导出范围、服务器删除流程、保留标准及备份处理须在发布前确认；本草案不承诺未经验证的完成期限。</p>
+    <p>第三方依据自身条款及与您的约定决定保留、删除及训练规则。对已发送给第三方的数据，请联系相应第三方。本说明不设定任何第三方保留时长。您可以停止后续使用、断开集成并删除本地凭据，但这些操作无法收回已传输的数据。</p>
+  </section>
+  <section aria-labelledby="regional">
+    <h2 id="regional">6. 地区权利、跨境传输与未成年人</h2>
+    <p>根据您所在地区及适用法律，您可能享有访问、更正、删除、取得个人信息副本、撤回同意、反对或限制处理以及向主管机关投诉等权利。请联系支持提出请求；本说明不排除法定权利。</p>
+    <p>配置的供应商、Hoxi 服务及其基础设施可能在您所在地区以外处理数据，包括中国大陆、香港、台湾、美国及其他地区之间的传输。实际目的地、接收方及所需告知、单独同意、合同或其他跨境保障措施，须在上线前核实。使用某个端点本身并不证明跨境传输合法。</p>
+    <p>Hoxi 是工程工作区，不是面向儿童的服务。年龄资格、年龄核验措施及任何监护人同意流程仍须运营方及当地法律顾问审核；本草案不声称已有经过验证的未成年人保护机制。如您认为有人提交了儿童数据，请联系支持。</p>
+  </section>
+  <section aria-labelledby="security">
+    <h2 id="security">7. 安全与变更</h2>
+    <p>本地权限及授权控制可降低部分风险，但不能保证绝对安全。请审查工具授权、限制敏感仓库访问，并在凭据泄露后及时轮换。运营方的安全、事件响应及法定通知流程须在发布前核实。</p>
+    <p>最终说明应注明生效日期，并通过适当的网站或产品通知说明重大变更。中英文草案旨在表达相同含义；本草案不指定语言优先规则或管辖法律。</p>
+  </section>
+  <footer><p>隐私及支持：<a href="mailto:support@hoxi.ai">support@hoxi.ai</a> · Fastix Limited</p></footer>
+</main>
+</body>
+</html>

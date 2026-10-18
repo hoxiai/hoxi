@@ -200,7 +200,7 @@ type NormalizedTurn struct {
           "id": "b1bc6d85-1695-4df4-a7ae-9de75aa9df70",
           "source": "grok-cli",
           "sourceLabel": "Grok CLI",
-          "cwd": "/Users/hugh/code/hoxi/hoxi",
+          "cwd": "/path/to/project",
           "title": "Analyze local CLI session handoff",
           "summary": "...",
           "model": "grok-4.7",
@@ -227,8 +227,8 @@ type NormalizedTurn struct {
     {
       "source": "grok-cli",
       "sessionID": "b1bc6d85-1695-4df4-a7ae-9de75aa9df70",
-      "sourceCwd": "/Users/hugh/code/hoxi/hoxi",
-      "targetDirectory": "/Users/hugh/code/hoxi/hoxi",
+      "sourceCwd": "/path/to/project",
+      "targetDirectory": "/path/to/project",
       "switchProject": true
     }
     ```
@@ -239,7 +239,7 @@ type NormalizedTurn struct {
       "session": { "id": "ses_...", "title": "...", "directory": "..." },
       "importedTurns": 14,
       "memoryPath": ".opencode/memory/sessions/ses_....md",
-      "targetDirectory": "/Users/hugh/code/hoxi/hoxi"
+      "targetDirectory": "/path/to/project"
     }
     ```
 

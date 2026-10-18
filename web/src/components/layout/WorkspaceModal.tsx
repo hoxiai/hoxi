@@ -223,7 +223,7 @@ export default function WorkspaceModal() {
                   value={name()}
                   onInput={(e) => setName(e.currentTarget.value)}
                   placeholder={primaryFolderHint()}
-                  class="w-full px-3 py-1.5 rounded-lg text-[13px] bg-zinc-50 dark:bg-zinc-900/90 border border-zinc-200 dark:border-zinc-700/80 text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:border-blue-500 transition-colors"
+                  class="w-full px-3 py-1.5 rounded-lg text-[13px] bg-zinc-50 dark:bg-zinc-900/90 border border-zinc-200 dark:border-zinc-700/80 text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:border-[var(--border-focus)] transition-colors"
                 />
               </div>
 
@@ -299,7 +299,7 @@ export default function WorkspaceModal() {
                   <button
                     type="button"
                     onClick={() => void handleBrowseFolder()}
-                    class="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11.5px] font-medium text-blue-600 dark:text-blue-400 hover:bg-blue-500/10 transition-colors"
+                    class="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11.5px] font-medium text-[var(--accent-text)] hover:bg-[var(--accent-surface)] transition-colors"
                   >
                     <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                       <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
@@ -331,7 +331,7 @@ export default function WorkspaceModal() {
                                   {folderBaseName(folder.path)}
                                 </span>
                                 <Show when={folder.isPrimary}>
-                                  <span class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-500/15 text-blue-600 dark:text-blue-400 shrink-0">
+                                  <span class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-[var(--accent-surface)] text-[var(--accent-text)] shrink-0">
                                     {t("leftNav.primaryBadge")}
                                   </span>
                                 </Show>
@@ -382,7 +382,7 @@ export default function WorkspaceModal() {
                       }
                     }}
                     placeholder={t("leftNav.addFolderByPathPlaceholder")}
-                    class="flex-1 px-2.5 py-1.5 rounded-lg text-[12px] font-mono bg-zinc-50 dark:bg-zinc-900/90 border border-zinc-200 dark:border-zinc-800 text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 focus:outline-none focus:border-blue-500"
+                    class="flex-1 px-2.5 py-1.5 rounded-lg text-[12px] font-mono bg-zinc-50 dark:bg-zinc-900/90 border border-zinc-200 dark:border-zinc-800 text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 focus:outline-none focus:border-[var(--border-focus)]"
                   />
                   <button
                     type="button"
@@ -414,7 +414,7 @@ export default function WorkspaceModal() {
               <button
                 type="submit"
                 disabled={folders().length === 0 || saving()}
-                class="px-4 py-1.5 rounded-lg text-[12.5px] font-medium bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-40 transition-colors shadow-sm"
+                class="px-4 py-1.5 rounded-lg text-[12.5px] font-medium bg-[var(--accent-primary)] hover:opacity-90 text-[var(--accent-foreground)] disabled:opacity-40 transition-opacity shadow-sm"
               >
                 {saving()
                   ? t("leftNav.savingWorkspace")

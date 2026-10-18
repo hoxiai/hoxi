@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/hoxiai/hoxi/internal/claudeconfig"
 )
 
 func claudeHomeDir() string {
@@ -515,38 +517,12 @@ func readClaudeSettingsEnv() (baseURL, apiKey, defaultModel string, models []str
 		if raw, err := os.ReadFile(filepath.Join(cDir, "settings.json")); err == nil {
 			var doc map[string]interface{}
 			if json.Unmarshal(raw, &doc) == nil {
-				if m := strings.TrimSpace(asString(doc["model"])); m != "" && !strings.ContainsAny(m, " ()") {
-					defaultModel = m
-					models = appendUniqueString(models, m)
-				}
 				if envMap, ok := doc["env"].(map[string]interface{}); ok {
 					if u := strings.TrimSpace(asString(envMap["ANTHROPIC_BASE_URL"])); u != "" {
 						baseURL = u
 					}
 					if k := firstNonEmpty(asString(envMap["ANTHROPIC_AUTH_TOKEN"]), asString(envMap["ANTHROPIC_API_KEY"])); k != "" && apiKey == "" {
 						apiKey = k
-					}
-					for _, k := range []string{"ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_SMALL_FAST_MODEL"} {
-						if m := strings.TrimSpace(asString(envMap[k])); m != "" && !strings.ContainsAny(m, " ()") {
-							models = appendUniqueString(models, m)
-							if defaultModel == "" {
-								defaultModel = m
-							}
-						}
-					}
-				}
-			}
-		}
-		if raw, err := os.ReadFile(filepath.Join(filepath.Dir(cDir), ".claude.json")); err == nil {
-			var rootDoc map[string]interface{}
-			if json.Unmarshal(raw, &rootDoc) == nil {
-				if extra, ok := rootDoc["additionalModelOptionsCache"].([]interface{}); ok {
-					for _, item := range extra {
-						if im, ok := item.(map[string]interface{}); ok {
-							if v := strings.TrimSpace(asString(im["value"])); v != "" && !strings.ContainsAny(v, " ()") {
-								models = appendUniqueString(models, v)
-							}
-						}
 					}
 				}
 			}
@@ -555,21 +531,8 @@ func readClaudeSettingsEnv() (baseURL, apiKey, defaultModel string, models []str
 	if !isRealAnthropicAPIKey(apiKey) {
 		apiKey = ""
 	}
-	sessions, _ := scanClaudeSessions("", "")
-	for _, s := range sessions {
-		if m := strings.TrimSpace(s.Model); m != "" && !strings.HasPrefix(m, "<") && !strings.ContainsAny(m, " ()") {
-			models = appendUniqueString(models, m)
-			if defaultModel == "" {
-				defaultModel = m
-			}
-		}
-	}
-	if len(models) == 0 {
-		models = []string{"claude-sonnet-4-6", "claude-opus-4-6"}
-	}
-	if defaultModel == "" && len(models) > 0 {
-		defaultModel = models[0]
-	}
+	models = claudeconfig.Models()
+	defaultModel = models[0]
 	if baseURL == "" {
 		baseURL = "https://api.anthropic.com/v1"
 	}

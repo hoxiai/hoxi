@@ -148,7 +148,7 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
               <div class="space-y-1">
                 <For each={props.request.patterns}>
                   {(pattern) => (
-                    <pre class="overflow-auto rounded-lg bg-[var(--bg-code)] px-2.5 py-1.5 font-mono text-[11px] leading-relaxed text-[var(--text-primary)] selectable-text whitespace-pre-wrap break-all">
+                    <pre class="overflow-auto rounded-lg bg-[var(--bg-code)] px-2.5 py-1.5 font-mono leading-relaxed text-[var(--text-primary)] selectable-text whitespace-pre-wrap break-all" style={{ "font-size": "var(--app-code-text-size)" }}>
                       {pattern}
                     </pre>
                   )}
@@ -157,7 +157,7 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
             </Show>
           }
         >
-          <div class="flex items-start gap-2 rounded-lg bg-[var(--bg-code)] px-3 py-2 font-mono text-[11.5px] text-[var(--text-primary)]">
+          <div class="flex items-start gap-2 rounded-lg bg-[var(--bg-code)] px-3 py-2 font-mono text-[var(--text-primary)]" style={{ "font-size": "var(--app-code-text-size)" }}>
             <Terminal size={13} class="mt-0.5 text-[var(--accent-primary)] shrink-0" />
             <pre class="whitespace-pre-wrap break-all selectable-text">{command()}</pre>
           </div>
@@ -213,7 +213,7 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
             <button
               type="button"
               onClick={() => setRulesExpanded((v) => !v)}
-              class="flex w-full items-center justify-between text-[11px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
+              class="flex w-full items-center justify-between text-[12px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
             >
               <span class="inline-flex items-center gap-1.5 font-medium">
                 <SlidersHorizontal size={11} class="text-[var(--accent-primary)]" />
@@ -230,7 +230,7 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
                   {(rule) => {
                     const dec = () => selectedRules()[rule];
                     return (
-                      <div class="flex items-center justify-between gap-2 text-[11px]">
+                      <div class="flex flex-wrap items-center justify-between gap-2 text-[12px]">
                         <code class="truncate font-mono text-[var(--text-primary)] bg-[var(--bg-inset)] px-1.5 py-0.5 rounded">
                           {rule}
                         </code>
@@ -238,7 +238,7 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
                           <button
                             type="button"
                             onClick={() => toggleRuleDecision(rule, "allow")}
-                            class={`rounded px-2 py-0.5 text-[10px] font-medium transition-colors cursor-pointer ${
+                            class={`rounded px-2 py-0.5 text-[12px] font-medium transition-colors cursor-pointer ${
                               dec() === "allow"
                                 ? "bg-[var(--ok-surface)] text-[var(--ok-text)] border border-[var(--ok-border)]"
                                 : "text-[var(--text-muted)] hover:bg-[var(--bg-hover)]"
@@ -249,7 +249,7 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
                           <button
                             type="button"
                             onClick={() => toggleRuleDecision(rule, "deny")}
-                            class={`rounded px-2 py-0.5 text-[10px] font-medium transition-colors cursor-pointer ${
+                            class={`rounded px-2 py-0.5 text-[12px] font-medium transition-colors cursor-pointer ${
                               dec() === "deny"
                                 ? "bg-[var(--danger-surface)] text-[var(--danger-text)] border border-[var(--danger-border)]"
                                 : "text-[var(--text-muted)] hover:bg-[var(--bg-hover)]"
@@ -300,7 +300,7 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
             <>
               <button
                 type="button"
-                class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--ok-border)] bg-[var(--ok-surface)] hover:opacity-90 px-3 py-1 text-[11.5px] font-medium text-[var(--ok-text)] disabled:opacity-50 transition-opacity cursor-pointer"
+                class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--ok-border)] bg-[var(--ok-surface)] hover:opacity-90 px-3 py-1 text-[12px] font-medium text-[var(--ok-text)] disabled:opacity-50 transition-opacity cursor-pointer"
                 disabled={!!busy()}
                 onClick={() => void reply("once")}
               >
@@ -311,7 +311,7 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
               </button>
               <button
                 type="button"
-                class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--accent-border)] bg-[var(--accent-surface)] hover:opacity-90 px-3 py-1 text-[11.5px] font-medium text-[var(--accent-primary)] disabled:opacity-50 transition-opacity cursor-pointer"
+                class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--accent-border)] bg-[var(--accent-surface)] hover:opacity-90 px-3 py-1 text-[12px] font-medium text-[var(--accent-primary)] disabled:opacity-50 transition-opacity cursor-pointer"
                 disabled={!!busy()}
                 onClick={() => void reply("always")}
               >
@@ -322,7 +322,7 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
               </button>
               <button
                 type="button"
-                class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--danger-border)] bg-[var(--danger-surface)] hover:opacity-90 px-3 py-1 text-[11.5px] font-medium text-[var(--danger-text)] disabled:opacity-50 transition-opacity cursor-pointer"
+                class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--danger-border)] bg-[var(--danger-surface)] hover:opacity-90 px-3 py-1 text-[12px] font-medium text-[var(--danger-text)] disabled:opacity-50 transition-opacity cursor-pointer"
                 disabled={!!busy()}
                 onClick={() => setRejecting(true)}
               >

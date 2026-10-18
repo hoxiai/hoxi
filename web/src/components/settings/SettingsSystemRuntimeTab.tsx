@@ -147,7 +147,7 @@ export function SystemRuntimeSettingsTab() {
             type="button"
             disabled={reloading()}
             onClick={() => void onReloadEngine()}
-            class="inline-flex items-center gap-2 rounded-xl bg-[var(--accent-primary)] px-4 py-2 text-[13px] font-medium text-white hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
+            class="inline-flex items-center gap-2 rounded-xl bg-[var(--accent-primary)] px-4 py-2 text-[13px] font-medium text-[var(--accent-foreground)] hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
           >
             <Cpu size={14} />
             {reloading()
@@ -196,7 +196,7 @@ export function SystemRuntimeSettingsTab() {
             type="button"
             disabled={desktopUpdater.isChecking}
             onClick={() => void checkDesktopUpdate(true)}
-            class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[12px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer disabled:opacity-50"
+            class="inline-flex items-center gap-1.5 rounded-lg bg-[var(--accent-primary)] px-2.5 py-1 text-[12px] font-medium text-[var(--accent-foreground)] hover:opacity-90 transition-opacity cursor-pointer disabled:opacity-50"
           >
             <Show when={desktopUpdater.isChecking} fallback={<RefreshCw size={12} />}>
               <Spinner class="h-3.5 w-3.5" />
@@ -231,7 +231,7 @@ export function SystemRuntimeSettingsTab() {
                 }
               >
                 <div class="flex items-center justify-between">
-                  <span class="text-[12.5px] font-semibold text-amber-500">
+                  <span class="text-[12.5px] font-semibold text-[var(--accent-text)]">
                     {t("settings.updaterNewVersionFound", {
                       version: `v${res().latestVersion}`,
                     })}
@@ -257,7 +257,7 @@ export function SystemRuntimeSettingsTab() {
                       href={res().mirrors.cn}
                       target="_blank"
                       rel="noreferrer"
-                      class="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 px-3 py-1.5 text-[11.5px] font-semibold text-white shadow-xs transition-all cursor-pointer"
+                      class="inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] hover:opacity-90 px-3 py-1.5 text-[11.5px] font-semibold text-[var(--accent-foreground)] shadow-xs transition-opacity cursor-pointer"
                     >
                       <Download size={13} />
                       <span>{t("settings.updaterDownloadFromGitCodeBtn")}</span>
@@ -268,7 +268,7 @@ export function SystemRuntimeSettingsTab() {
                       href={res().mirrors.global}
                       target="_blank"
                       rel="noreferrer"
-                      class="inline-flex items-center gap-1.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] px-3 py-1.5 text-[11.5px] font-medium text-[var(--text-primary)] transition-colors cursor-pointer"
+                      class="inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] hover:opacity-90 px-3 py-1.5 text-[11.5px] font-medium text-[var(--accent-foreground)] transition-opacity cursor-pointer"
                     >
                       <ExternalLink size={12} />
                       <span>{t("settings.updaterDownloadFromGitHubBtn")}</span>
@@ -279,7 +279,7 @@ export function SystemRuntimeSettingsTab() {
                       href={res().downloadUrl}
                       target="_blank"
                       rel="noreferrer"
-                      class="inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] px-3 py-1.5 text-[11.5px] font-medium text-white transition-opacity hover:opacity-90 cursor-pointer"
+                      class="inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] px-3 py-1.5 text-[11.5px] font-medium text-[var(--accent-foreground)] transition-opacity hover:opacity-90 cursor-pointer"
                     >
                       <Download size={13} />
                       <span>{t("settings.updaterDownloadNowBtn")}</span>

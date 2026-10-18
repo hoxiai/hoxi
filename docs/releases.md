@@ -70,9 +70,17 @@ on failure. Missing credentials or failed verification stop publication.
 Before creating the GitHub Release, the workflow mounts the final DMG read-only
 to verify the app version, runtime version, architecture, minimum macOS and app
 signature. It also verifies the DMG's Developer ID signature and stapled notary
-ticket. Only `Hoxi-<version>-darwin-arm64.dmg` and its SHA-256 checksum are uploaded;
-missing files fail the release. This workflow does not publish website/update API
-metadata or GitCode mirrors. Those remain separate maintainer acceptance steps.
+ticket. The versioned DMG, SHA-256 checksum and signed public `sparkle.json` metadata
+are uploaded before website metadata publication; missing files fail the release.
+No GitCode mirror is uploaded or advertised for Sparkle releases. The website must
+explicitly confirm Sparkle metadata acceptance and feed deployment, not just generic
+release success. Its implementation is absent here and remains a deployment blocker.
+
+See [Auto-Updates](auto-updates.md) for required Sparkle secrets, pinned SDK/OpenCode
+archive variables, secure key-file handling, local opt-in builds and the website
+appcast contract. Production tag CI requires updater configuration; development
+bundles never include the updater. Local builds require a preinstalled verified
+OpenCode executable and do not execute a remote installer.
 
 ## Regression checks
 

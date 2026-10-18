@@ -3,8 +3,9 @@ import { createStore } from "solid-js/store";
 import type { ApprovalMode } from "./approval-mode";
 import { applyThemeClass, setWorkspace, THEME_KEY, workspace } from "./workspace";
 
-export type SettingsTab = "general" | "chat" | "workspace" | "terminal" | "system";
+export type SettingsTab = "general" | "chat" | "workspace" | "terminal" | "system" | "privacy";
 export type ThemeMode = "light" | "dark" | "system";
+export type ColorScheme = "blue" | "classic";
 export type FontScale = "compact" | "default" | "comfortable" | "large";
 export type SendShortcutMode = "enter" | "mod-enter";
 export type ReasoningDisplayMode = "auto-collapse" | "expanded" | "collapsed";
@@ -15,6 +16,7 @@ export interface AppSettingsState {
   modalOpen: boolean;
   activeTab: SettingsTab;
   themeMode: ThemeMode;
+  colorScheme: ColorScheme;
   fontScale: FontScale;
   sidebarAutoCollapse: boolean;
   sidebarMinSessions: number;
@@ -52,6 +54,7 @@ type PersistedSettings = Omit<
 
 const DEFAULT_SETTINGS: PersistedSettings = {
   themeMode: "light",
+  colorScheme: "blue",
   fontScale: "default",
   sidebarAutoCollapse: true,
   sidebarMinSessions: 7,
@@ -94,6 +97,7 @@ function loadInitialSettings(): PersistedSettings {
       return { ...DEFAULT_SETTINGS, themeMode: baseTheme };
     }
     return {
+      colorScheme: parsed.colorScheme === "classic" ? "classic" : "blue",
       themeMode:
         parsed.themeMode === "light" ||
         parsed.themeMode === "dark" ||
@@ -204,6 +208,7 @@ function persistAppSettings() {
   try {
     const payload: PersistedSettings = {
       themeMode: appSettings.themeMode,
+      colorScheme: appSettings.colorScheme,
       fontScale: appSettings.fontScale,
       sidebarAutoCollapse: appSettings.sidebarAutoCollapse,
       sidebarMinSessions: appSettings.sidebarMinSessions,
@@ -275,7 +280,7 @@ export function signInUserAccount(name?: string, email?: string) {
 }
 
 export function signOutUserAccount() {
-  setAppSettings("userLoggedIn", false);
+  setAppSettings({ userLoggedIn: false, userDisplayName: "", userEmail: "" });
   persistAppSettings();
 }
 
@@ -306,6 +311,9 @@ export function syncSettingsSideEffects() {
   setWorkspace("theme", effective);
   setWorkspace("sessionSandboxMode", appSettings.defaultSandboxMode);
   applyThemeClass(effective);
+  if (typeof document !== "undefined") {
+    document.documentElement.dataset.colorScheme = appSettings.colorScheme;
+  }
   try {
     localStorage.setItem(THEME_KEY, effective);
   } catch {
@@ -338,7 +346,7 @@ export function updateAppSetting<K extends keyof PersistedSettings>(
 ) {
   setAppSettings(key as any, value as any);
   persistAppSettings();
-  if (key === "themeMode" || key === "fontScale" || key === "defaultSandboxMode") {
+  if (key === "themeMode" || key === "colorScheme" || key === "fontScale" || key === "defaultSandboxMode") {
     syncSettingsSideEffects();
   }
 }

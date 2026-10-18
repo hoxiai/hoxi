@@ -129,7 +129,7 @@ export default function ObserverAuditBanner(props: { sessionID: string }) {
               <button
                 type="button"
                 onClick={() => void applyAuditFeedbackToSession(props.sessionID)}
-                class="inline-flex items-center gap-1 rounded-lg bg-[var(--accent-primary)] px-2.5 py-1 text-[11px] font-semibold text-white hover:opacity-90 cursor-pointer"
+                class="inline-flex items-center gap-1 rounded-lg bg-[var(--accent-primary)] px-2.5 py-1 text-[11px] font-semibold text-[var(--accent-foreground)] hover:opacity-90 cursor-pointer"
               >
                 <Wrench size={11} />
                 <span>{t("timeline.auditFixWithFeedbackBtn")}</span>

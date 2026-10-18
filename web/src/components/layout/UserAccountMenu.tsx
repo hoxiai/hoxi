@@ -13,7 +13,6 @@ import {
   openProviderModal,
   openSettingsModal,
   refreshAuthStatus,
-  signOutUserAccount,
   workspace,
 } from "../../store/workspace";
 import { Icon } from "../icons";
@@ -22,6 +21,8 @@ import AccountLoginForm from "./AccountLoginForm";
 
 export default function UserAccountMenu() {
   const [menuOpen, setMenuOpen] = createSignal(false);
+  const [signingOut, setSigningOut] = createSignal(false);
+  const [signOutFailed, setSignOutFailed] = createSignal(false);
   let containerRef: HTMLDivElement | undefined;
 
   onMount(() => {
@@ -66,10 +67,18 @@ export default function UserAccountMenu() {
     setMenuOpen(!menuOpen());
   };
 
-  const handleSignOut = () => {
-    void logoutDesktopAccount();
-    signOutUserAccount();
-    setMenuOpen(false);
+  const handleSignOut = async () => {
+    if (signingOut()) return;
+    setSigningOut(true);
+    setSignOutFailed(false);
+    try {
+      await logoutDesktopAccount();
+      setMenuOpen(false);
+    } catch {
+      setSignOutFailed(true);
+    } finally {
+      setSigningOut(false);
+    }
   };
 
   return (
@@ -90,7 +99,7 @@ export default function UserAccountMenu() {
             {/* Logged-In Account Card */}
             <div class="p-3 border-b border-[var(--border-subtle)] bg-[var(--bg-inset)]/40">
               <div class="flex items-center gap-2.5">
-                <div class="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-[var(--accent-primary)] to-indigo-500 text-[13px] font-bold text-white shadow-xs overflow-hidden">
+                <div class="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[var(--accent-primary)] text-[13px] font-bold text-[var(--accent-foreground)] shadow-xs overflow-hidden">
                   <Show when={userAvatar()} fallback={userInitial()}>
                     <img src={userAvatar()} alt="" class="h-full w-full object-cover" />
                   </Show>
@@ -120,7 +129,7 @@ export default function UserAccountMenu() {
                   <span class="h-1.5 w-1.5 rounded-full bg-emerald-500" />
                   {t("settings.accountOfficialAccountTitle")}
                 </span>
-                <span class="font-mono text-[9.5px] opacity-75">hoxi.ai</span>
+                <span class="font-mono text-[9.5px] opacity-75">Hoxi.ai</span>
               </div>
 
               {/* Connected Providers Pill */}
@@ -170,18 +179,6 @@ export default function UserAccountMenu() {
                 </kbd>
               </button>
             </div>
-
-            {/* Sign Out Footer */}
-            <div class="border-t border-[var(--border-subtle)] p-1.5">
-              <button
-                type="button"
-                onClick={handleSignOut}
-                class="w-full flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] font-medium text-rose-500 hover:bg-rose-500/10 transition-colors cursor-pointer"
-              >
-                <LogOut size={13} />
-                <span>{t("settings.accountSignOutBtn")}</span>
-              </button>
-            </div>
           </Show>
         </div>
       </Show>
@@ -218,7 +215,7 @@ export default function UserAccountMenu() {
                 </>
               }
             >
-              <div class="relative flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-[var(--accent-primary)] to-indigo-500 text-[11.5px] font-bold text-white shadow-2xs overflow-hidden">
+              <div class="relative flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[var(--accent-primary)] text-[11.5px] font-bold text-[var(--accent-foreground)] shadow-2xs overflow-hidden">
                 <Show when={userAvatar()} fallback={userInitial()}>
                   <img src={userAvatar()} alt="" class="h-full w-full object-cover" />
                 </Show>

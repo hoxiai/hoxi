@@ -90,7 +90,7 @@ export function AssistantErrorCard(props: { info: MessageInfo }) {
                   <button
                     type="button"
                     onClick={() => void retryLastUserPrompt(props.info.sessionID)}
-                    class="inline-flex items-center gap-1.5 rounded-lg bg-[var(--accent-primary)] px-2.5 py-1 text-[11px] font-medium text-white hover:opacity-90 transition-opacity cursor-pointer"
+                    class="inline-flex items-center gap-1.5 rounded-lg bg-[var(--accent-primary)] px-2.5 py-1 text-[11px] font-medium text-[var(--accent-foreground)] hover:opacity-90 transition-opacity cursor-pointer"
                   >
                     <Icon name="arrow-up" size="small" />
                     <span>{t("timeline.retryWithModel", { model: sel().modelID })}</span>

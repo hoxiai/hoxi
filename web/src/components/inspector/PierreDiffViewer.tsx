@@ -194,7 +194,7 @@ export default function PierreDiffViewer() {
             <div class="flex rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] p-0.5">
               <button
                 type="button"
-                class={`rounded-md px-2 py-0.5 text-[10.5px] font-medium transition-colors cursor-pointer ${
+                class={`rounded-md px-2 py-0.5 text-[12px] font-medium transition-colors cursor-pointer ${
                   diffStyle() === "unified"
                     ? "bg-[var(--bg-panel)] text-[var(--accent-primary)] shadow-2xs"
                     : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
@@ -205,7 +205,7 @@ export default function PierreDiffViewer() {
               </button>
               <button
                 type="button"
-                class={`rounded-md px-2 py-0.5 text-[10.5px] font-medium transition-colors cursor-pointer ${
+                class={`rounded-md px-2 py-0.5 text-[12px] font-medium transition-colors cursor-pointer ${
                   diffStyle() === "split"
                     ? "bg-[var(--bg-panel)] text-[var(--accent-primary)] shadow-2xs"
                     : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
@@ -229,7 +229,7 @@ export default function PierreDiffViewer() {
 
       {/* Kilo AI Commit Message Generator & Worktree Commit Bar */}
       <Show when={diffs().length > 0}>
-        <div class="shrink-0 flex items-center gap-1.5 px-2.5 py-2 border-b border-[var(--border-subtle)] bg-[var(--bg-inset)]/60">
+        <div class="shrink-0 flex flex-wrap items-center gap-1.5 px-2.5 py-2 border-b border-[var(--border-subtle)] bg-[var(--bg-inset)]/60">
           <input
             type="text"
             value={commitMsg()}
@@ -241,7 +241,7 @@ export default function PierreDiffViewer() {
               }
             }}
             placeholder={t("inspector.diffs.commitPlaceholder")}
-            class="flex-1 min-w-0 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[11.5px] font-mono text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none focus:border-[var(--accent-border)]"
+            class="flex-1 min-w-[120px] rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[12px] font-mono text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none focus:border-[var(--accent-border)]"
           />
           <button
             type="button"
@@ -250,7 +250,7 @@ export default function PierreDiffViewer() {
               workspace.activeSessionID &&
               void runSessionCodeAudit(workspace.activeSessionID, true)
             }
-            class="shrink-0 inline-flex items-center gap-1 rounded-lg border border-[var(--accent-border)] bg-[var(--accent-surface)] px-2 py-1 text-[11px] font-medium text-[var(--accent-primary)] hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
+            class="shrink-0 inline-flex items-center gap-1 rounded-lg border border-[var(--accent-border)] bg-[var(--accent-surface)] px-2 py-1 text-[12px] font-medium text-[var(--accent-primary)] hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
             title={t("inspector.diffs.auditTooltip")}
           >
             <ShieldCheck size={11} />
@@ -263,7 +263,7 @@ export default function PierreDiffViewer() {
           <button
             type="button"
             onClick={onGenerateAICommit}
-            class="shrink-0 inline-flex items-center gap-1 rounded-lg border border-[var(--violet-border)] bg-[var(--violet-surface)] px-2 py-1 text-[11px] font-medium text-[var(--violet-text)] hover:opacity-90 transition-opacity cursor-pointer"
+            class="shrink-0 inline-flex items-center gap-1 rounded-lg border border-[var(--violet-border)] bg-[var(--violet-surface)] px-2 py-1 text-[12px] font-medium text-[var(--violet-text)] hover:opacity-90 transition-opacity cursor-pointer"
             title={t("inspector.diffs.generateCommitTooltip")}
           >
             <Sparkles size={11} />
@@ -273,7 +273,7 @@ export default function PierreDiffViewer() {
             type="button"
             disabled={!commitMsg().trim() || committing()}
             onClick={() => void onCommitWorktree()}
-            class="shrink-0 inline-flex items-center gap-1 rounded-lg bg-[var(--accent-primary)] px-2.5 py-1 text-[11px] font-semibold text-white hover:opacity-90 disabled:opacity-40 transition-opacity cursor-pointer"
+            class="shrink-0 inline-flex items-center gap-1 rounded-lg bg-[var(--accent-primary)] px-2.5 py-1 text-[12px] font-semibold text-[var(--accent-foreground)] hover:opacity-90 disabled:opacity-40 transition-opacity cursor-pointer"
           >
             <GitCommitHorizontal size={12} />
             <span>

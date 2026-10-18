@@ -745,24 +745,24 @@ Go 网关在转发 `/event` SSE 流时，旁路解析事件并实时更新 `desk
 目前 **Phase 1（Go 桌面宿主、Objective-C 状态栏、反向代理、Worktree 引擎）**、**Phase 2 的基础脚手架与 API/SSE 服务层** 以及 **Phase 4 的 OpenCode 插件** 均已落盘并通过 `go build -tags desktop` 编译验证。后续开发者或 AI 模型只需专注完成剩余的前端 UI 组件（`[ ]` 标记项）：
 
 ### Phase 1：Go 桌面宿主与安全网关底座（已完成 ✅）
-- [x] **Step 1.1**：在 [`main.go`](file:///Users/hugh/code/hoxi/hoxi/main.go) 完善 `opencode serve` 守护，注入 `OPENCODE_SERVER_PASSWORD`、`OPENCODE_SERVER_USERNAME=opencode`、`OPENCODE_DISABLE_CONFIG_DEPENDENCY_INSTALL=1`，实现 `/global/health` 轮询探针。
-- [x] **Step 1.2**：编写 [`desktop_gateway.go`](file:///Users/hugh/code/hoxi/hoxi/desktop_gateway.go)，配置 `Proxy: nil`、`FlushInterval: -1` 与 `req.SetBasicAuth("opencode", password)`，彻底解决 `401` 与系统代理 `502` 问题。
-- [x] **Step 1.3**：移植 [`desktop_statusbar_darwin.go`](file:///Users/hugh/code/hoxi/hoxi/desktop_statusbar_darwin.go)、[`desktop_statusbar_darwin.m`](file:///Users/hugh/code/hoxi/hoxi/desktop_statusbar_darwin.m)、[`desktop_code_status.go`](file:///Users/hugh/code/hoxi/hoxi/desktop_code_status.go)、[`wails.json`](file:///Users/hugh/code/hoxi/hoxi/wails.json) 与 [`build-desktop.sh`](file:///Users/hugh/code/hoxi/hoxi/build-desktop.sh)，接入 Wails v2 单实例锁与 macOS 状态栏托盘。
-- [x] **Step 1.4**：实现 [`desktop_worktree.go`](file:///Users/hugh/code/hoxi/hoxi/desktop_worktree.go) 的 `create`、`status`、`apply`、`delete` 四个接口。
+- [x] **Step 1.1**：在 [`main.go`](main.go) 完善 `opencode serve` 守护，注入 `OPENCODE_SERVER_PASSWORD`、`OPENCODE_SERVER_USERNAME=opencode`、`OPENCODE_DISABLE_CONFIG_DEPENDENCY_INSTALL=1`，实现 `/global/health` 轮询探针。
+- [x] **Step 1.2**：编写 [`desktop_gateway.go`](desktop_gateway.go)，配置 `Proxy: nil`、`FlushInterval: -1` 与 `req.SetBasicAuth("opencode", password)`，彻底解决 `401` 与系统代理 `502` 问题。
+- [x] **Step 1.3**：移植 [`desktop_statusbar_darwin.go`](desktop_statusbar_darwin.go)、[`desktop_statusbar_darwin.m`](desktop_statusbar_darwin.m)、[`desktop_code_status.go`](desktop_code_status.go)、[`wails.json`](wails.json) 与 [`build-desktop.sh`](build-desktop.sh)，接入 Wails v2 单实例锁与 macOS 状态栏托盘。
+- [x] **Step 1.4**：实现 [`desktop_worktree.go`](desktop_worktree.go) 的 `create`、`status`、`apply`、`delete` 四个接口。
 
 ### Phase 2：SolidJS + Tailwind 三栏工作区初始化（已完成 ✅）
-- [x] **Step 2.1**：初始化 [`web/package.json`](file:///Users/hugh/code/hoxi/hoxi/web/package.json)（引入 `solid-js`、`tailwindcss`、`@pierre/diffs`、`@xterm/xterm`、`@xterm/addon-webgl`、`@xterm/addon-fit`、`lucide-solid`）。
-- [x] **Step 2.2**：实现 [`web/src/store/workspace.ts`](file:///Users/hugh/code/hoxi/hoxi/web/src/store/workspace.ts) 与 [`web/src/services/api.ts`](file:///Users/hugh/code/hoxi/hoxi/web/src/services/api.ts)、[`web/src/services/sse.ts`](file:///Users/hugh/code/hoxi/hoxi/web/src/services/sse.ts)，对接真实 `/session`、`/session/{id}/prompt_async`、`/event`。
-- [x] **Step 2.3**：搭建 [`ThreePaneShell.tsx`](file:///Users/hugh/code/hoxi/hoxi/web/src/components/layout/ThreePaneShell.tsx)、[`CompactHeader.tsx`](file:///Users/hugh/code/hoxi/hoxi/web/src/components/layout/CompactHeader.tsx)、[`LeftNav.tsx`](file:///Users/hugh/code/hoxi/hoxi/web/src/components/layout/LeftNav.tsx)，实现会话切换、新建隔离会话（调用 `hoxiAPI.createSession` + `hoxiAPI.createWorktree`）与 `Build`/`Plan` 模式切换。
+- [x] **Step 2.1**：初始化 [`web/package.json`](web/package.json)（引入 `solid-js`、`tailwindcss`、`@pierre/diffs`、`@xterm/xterm`、`@xterm/addon-webgl`、`@xterm/addon-fit`、`lucide-solid`）。
+- [x] **Step 2.2**：实现 [`web/src/store/workspace.ts`](web/src/store/workspace.ts) 与 [`web/src/services/api.ts`](web/src/services/api.ts)、[`web/src/services/sse.ts`](web/src/services/sse.ts)，对接真实 `/session`、`/session/{id}/prompt_async`、`/event`。
+- [x] **Step 2.3**：搭建 [`ThreePaneShell.tsx`](web/src/components/layout/ThreePaneShell.tsx)、[`CompactHeader.tsx`](web/src/components/layout/CompactHeader.tsx)、[`LeftNav.tsx`](web/src/components/layout/LeftNav.tsx)，实现会话切换、新建隔离会话（调用 `hoxiAPI.createSession` + `hoxiAPI.createWorktree`）与 `Build`/`Plan` 模式切换。
 
 ### Phase 3：Kilo 风格任务执行流与右侧审查台（已完成 ✅）
-- [x] **Step 3.1**：实现 [`ThoughtBox.tsx`](file:///Users/hugh/code/hoxi/hoxi/web/src/components/timeline/ThoughtBox.tsx)（解析 `type === "reasoning"`，流式展示 + 完成自动折叠并显示思考耗时）。
-- [x] **Step 3.2**：实现 [`ToolCard.tsx`](file:///Users/hugh/code/hoxi/hoxi/web/src/components/timeline/ToolCard.tsx)（解析 `type === "tool"` 与四态 `ToolState`，带 `0.1s` 实时计时器、参数/输出折叠区、文件编辑内联 Diff、以及右上角 `Revert to Here` 回滚按钮）。
-- [x] **Step 3.3**：实现 [`ApprovalGateCard.tsx`](file:///Users/hugh/code/hoxi/hoxi/web/src/components/approval/ApprovalGateCard.tsx)（拦截 `permission.asked` 事件，对接 `hoxiAPI.replyPermission` 的 `once`/`always`/`reject`）与 [`Composer.tsx`](file:///Users/hugh/code/hoxi/hoxi/web/src/components/timeline/Composer.tsx)（含 `busy` 状态下的 `Steer 实时纠偏` 与 `Stop` 按钮）。
-- [x] **Step 3.4**：实现右栏 [`InspectorPane.tsx`](file:///Users/hugh/code/hoxi/hoxi/web/src/components/inspector/InspectorPane.tsx)、[`PierreDiffViewer.tsx`](file:///Users/hugh/code/hoxi/hoxi/web/src/components/inspector/PierreDiffViewer.tsx)（对接 `workspace.diffsBySession`）、[`MemoryBankView.tsx`](file:///Users/hugh/code/hoxi/hoxi/web/src/components/inspector/MemoryBankView.tsx)、[`FileTreeView.tsx`](file:///Users/hugh/code/hoxi/hoxi/web/src/components/inspector/FileTreeView.tsx) 与 [`WebGLTerminal.tsx`](file:///Users/hugh/code/hoxi/hoxi/web/src/components/terminal/WebGLTerminal.tsx)（对接 `/pty` WebSocket）。
+- [x] **Step 3.1**：实现 [`ThoughtBox.tsx`](web/src/components/timeline/ThoughtBox.tsx)（解析 `type === "reasoning"`，流式展示 + 完成自动折叠并显示思考耗时）。
+- [x] **Step 3.2**：实现 [`ToolCard.tsx`](web/src/components/timeline/ToolCard.tsx)（解析 `type === "tool"` 与四态 `ToolState`，带 `0.1s` 实时计时器、参数/输出折叠区、文件编辑内联 Diff、以及右上角 `Revert to Here` 回滚按钮）。
+- [x] **Step 3.3**：实现 [`ApprovalGateCard.tsx`](web/src/components/approval/ApprovalGateCard.tsx)（拦截 `permission.asked` 事件，对接 `hoxiAPI.replyPermission` 的 `once`/`always`/`reject`）与 [`Composer.tsx`](web/src/components/timeline/Composer.tsx)（含 `busy` 状态下的 `Steer 实时纠偏` 与 `Stop` 按钮）。
+- [x] **Step 3.4**：实现右栏 [`InspectorPane.tsx`](web/src/components/inspector/InspectorPane.tsx)、[`PierreDiffViewer.tsx`](web/src/components/inspector/PierreDiffViewer.tsx)（对接 `workspace.diffsBySession`）、[`MemoryBankView.tsx`](web/src/components/inspector/MemoryBankView.tsx)、[`FileTreeView.tsx`](web/src/components/inspector/FileTreeView.tsx) 与 [`WebGLTerminal.tsx`](web/src/components/terminal/WebGLTerminal.tsx)（对接 `/pty` WebSocket）。
 
 ### Phase 4：插件闭环与端到端生产验收
-- [x] **Step 4.1**：按 [第 8 节](#8-opencode-插件体系安全门控与-8-维记忆沉淀) 落盘 [`.opencode/plugins/hoxi-permissions.js`](file:///Users/hugh/code/hoxi/hoxi/.opencode/plugins/hoxi-permissions.js) 与 [`hoxi-memory.js`](file:///Users/hugh/code/hoxi/hoxi/.opencode/plugins/hoxi-memory.js)。
+- [x] **Step 4.1**：按 [第 8 节](#8-opencode-插件体系安全门控与-8-维记忆沉淀) 落盘 [`.opencode/plugins/hoxi-permissions.js`](.opencode/plugins/hoxi-permissions.js) 与 [`hoxi-memory.js`](.opencode/plugins/hoxi-memory.js)。
 - [x] **Step 4.2**：执行 `./build-desktop.sh` 产出 `build/bin/Hoxi.app`，逐项通过以下 **生产可用性验收标准（DoD）**：
   1. 双击 `Hoxi.app` 在 0.5 秒内弹出无边框毛玻璃三栏窗口，右上角 macOS 状态栏出现 `hoxi` 图标。
   2. 点击 `+ New Session` 自动在 `.hoxi/worktrees/<sessionID>` 下创建独立分支，并在顶栏显示分支胶囊。

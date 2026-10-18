@@ -1,5 +1,7 @@
 import { onCleanup, onMount } from "solid-js";
 import ThreePaneShell from "./components/layout/ThreePaneShell";
+import { PrivacyConsentDialog } from "./components/settings/PrivacyControls";
+import { loadPrivacy } from "./store/privacy";
 import { resolveParentSessionID } from "./components/timeline/SubagentSessionBanner";
 import { hoxiAPI } from "./services/api";
 import { connectEventStream } from "./services/sse";
@@ -42,6 +44,7 @@ import { t } from "./i18n";
 
 export default function App() {
   onMount(async () => {
+    void loadPrivacy();
     try {
       const boot = await hoxiAPI.getBootstrap();
       const bootRoot = isInvalidProjectPath(boot.rootDir)
@@ -241,10 +244,10 @@ export default function App() {
             break;
         }
       },
-    });
+    }, undefined, workspace.wsBaseURL);
 
     onCleanup(disconnect);
   });
 
-  return <ThreePaneShell />;
+  return <><ThreePaneShell /><PrivacyConsentDialog /></>;
 }

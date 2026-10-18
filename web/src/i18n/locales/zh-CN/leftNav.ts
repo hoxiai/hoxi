@@ -2,6 +2,7 @@
 import type { LeftNavI18n } from "../../types";
 
 export const leftNav: LeftNavI18n = {
+  accountSignOutFailed: "无法确认已退出登录，请重试。",
   newThread: "新对话",
   creating: "创建中…",
   multiProject: "多项目",
@@ -83,6 +84,8 @@ export const leftNav: LeftNavI18n = {
   handoffCliBannerTitle: "已检测工具",
   handoffCliBannerDesc: "支持接管本机 CLI 会话",
   handoffCliImportBtn: "导入模型",
+  handoffCliSyncModel: "同步并选用 CLI 使用的模型",
+  handoffCliModelUnavailable: "CLI 模型（{model}）在 Hoxi 中不可用，未切换当前模型。",
   handoffCliImporting: "导入中…",
   handoffCliConnected: "已接入",
   handoffCliSessionsBadge: "{count}",

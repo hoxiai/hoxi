@@ -169,7 +169,7 @@ export function SessionNavItem(props: SessionNavItemProps) {
           </span>
         </Show>
         <span
-          class={`truncate text-[13px] flex-1 leading-snug ${
+          class={`truncate text-[14px] flex-1 leading-snug ${
             props.isArchived ? "text-[var(--text-muted)]" : ""
           }`}
           title={props.session.title || ""}

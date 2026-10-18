@@ -22,8 +22,35 @@ func TestLeaderboardServiceFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if gw.Code != 200 || len(gw.Data.Items) == 0 {
-		t.Fatalf("expected fallback gateways, got: %+v", gw)
+	if gw.Code != 200 || gw.Data.Total != 0 || gw.Data.Items == nil || len(gw.Data.Items) != 0 {
+		t.Fatalf("expected empty gateway directory, got: %+v", gw)
+	}
+}
+
+func TestGatewayDirectoryDoesNotOfferHoxiInferenceAuth(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(GatewaysResponse{Code: 200, Data: &GatewaysData{
+			Total: 1, Items: []GatewayItem{{ID: "third-party", Name: "Third Party",
+				URL: "https://example.com", BaseURL: "https://example.com/v1",
+				IsSelfOperated: true, CanOneClickConnect: true,
+				Badge: "Official Pick", Caveat: "Hoxi account connects inference",
+				AuthURL: "https://hoxi.ai/auth/authorize-desktop"}},
+		}})
+	}))
+	defer server.Close()
+	svc := NewService(server.URL, server.Client())
+	for i := 0; i < 2; i++ {
+		result, err := svc.GetConnectableGateways()
+		if err != nil || result.Data == nil || len(result.Data.Items) != 1 {
+			t.Fatalf("expected directory entry, got %+v, %v", result, err)
+		}
+		item := result.Data.Items[0]
+		if item.IsSelfOperated || item.CanOneClickConnect || item.AuthURL != "" || item.Badge != "" || item.Caveat != "" {
+			t.Fatalf("directory must not advertise Hoxi inference or auth: %+v", item)
+		}
+		if item.URL != "https://example.com" || item.BaseURL != "https://example.com/v1" {
+			t.Fatalf("third-party directory metadata should be preserved: %+v", item)
+		}
 	}
 }
 

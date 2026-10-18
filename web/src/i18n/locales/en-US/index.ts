@@ -8,6 +8,7 @@ import { approval } from "./approval";
 import { inspector } from "./inspector";
 import { models } from "./models";
 import { settings } from "./settings";
+import { privacy } from "./privacy";
 
 export const enUS = {
   common,
@@ -19,6 +20,7 @@ export const enUS = {
   inspector,
   models,
   settings,
+  privacy,
 };
 
 export default enUS;

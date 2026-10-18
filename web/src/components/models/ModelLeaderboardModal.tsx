@@ -17,7 +17,6 @@ import {
   closeLeaderboardModal,
   leaderboardState,
   selectModel,
-  startDesktopAuthorization,
   switchLeaderboardTab,
   workspace,
   type LeaderboardTab,
@@ -44,14 +43,13 @@ export default function ModelLeaderboardModal() {
 
   const handleApplyModel = (vendor: string, apiName?: string, slug?: string) => {
     const modelID = apiName || slug || "";
-    if (!modelID) return;
+    if (!canApplyModel(vendor, modelID)) return;
     selectModel({ providerID: vendor, modelID });
   };
 
-  const handleOpenAINodeAuth = async () => {
-    await startDesktopAuthorization();
-    closeLeaderboardModal();
-  };
+  const canApplyModel = (vendor: string, modelID: string) =>
+    Boolean((workspace.connectedProviders.includes(vendor) || workspace.globalConfig?.provider?.[vendor]) &&
+      workspace.providers.find((p) => p.id === vendor)?.models?.[modelID]);
 
   const handleOpenOfficialWeb = () => {
     window.open("https://hoxi.ai/models", "_blank");
@@ -156,11 +154,11 @@ export default function ModelLeaderboardModal() {
                 onClick={() => switchLeaderboardTab("gateways")}
                 class={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium transition-all cursor-pointer ${
                   leaderboardState.activeTab === "gateways"
-                    ? "bg-gradient-to-r from-amber-500/20 to-orange-500/20 border border-amber-500/40 text-amber-500 shadow-xs"
+                    ? "bg-[var(--accent-surface)] text-[var(--accent-primary)] shadow-xs"
                     : "text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
                 }`}
               >
-                <Radio size={13} class="text-amber-500 animate-pulse" />
+                <Radio size={13} />
                 <span>{t("header.leaderboardTabGateways")}</span>
               </button>
             </div>
@@ -271,8 +269,9 @@ export default function ModelLeaderboardModal() {
                             >
                               <button
                                 type="button"
+                                disabled={!canApplyModel(m.vendor, m.apiName || m.slug || "")}
                                 onClick={() => handleApplyModel(m.vendor, m.apiName, m.slug)}
-                                class="inline-flex items-center justify-center rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[11px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent-primary)] hover:bg-[var(--accent-surface)] transition-all cursor-pointer"
+                                class="inline-flex items-center justify-center rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[11px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent-primary)] hover:bg-[var(--accent-surface)] transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                               >
                                 {t("header.leaderboardSetAsActiveModel")}
                               </button>
@@ -286,34 +285,23 @@ export default function ModelLeaderboardModal() {
               </div>
             </Show>
 
-            {/* Gateways Tab (AINode Direct Gateway) */}
+            {/* Gateway directory only; account login does not connect inference. */}
             <Show when={!leaderboardState.loading && leaderboardState.activeTab === "gateways"}>
               <div class="space-y-4">
                 <For each={leaderboardState.gateways}>
                   {(gw) => (
-                    <div class="rounded-2xl border border-amber-500/35 bg-gradient-to-b from-amber-500/10 via-[var(--bg-inset)]/40 to-[var(--bg-panel)] p-5 space-y-4 shadow-sm">
+                    <div class="rounded-2xl border border-[var(--accent-border)] bg-gradient-to-b from-[var(--accent-surface)] to-[var(--bg-panel)] p-5 space-y-4 shadow-sm">
                       <div class="flex items-start justify-between gap-3">
                         <div>
                           <div class="flex items-center gap-2">
                             <span class="text-[16px] font-bold text-[var(--text-primary)]">
                               {gw.name}
                             </span>
-                            <span class="rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-500 px-2.5 py-0.5 text-[10.5px] font-bold">
-                              {gw.badge}
-                            </span>
                           </div>
                           <p class="text-[12px] text-[var(--text-muted)] mt-1 leading-relaxed">
-                            {gw.caveat || t("header.gatewayDirectConnectDesc")}
+                            {gw.domain}
                           </p>
                         </div>
-                        <button
-                          type="button"
-                          onClick={handleOpenAINodeAuth}
-                          class="shrink-0 inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white font-semibold text-[12.5px] px-4 py-2 shadow-md hover:shadow-lg transition-all active:scale-[0.98] cursor-pointer"
-                        >
-                          <Zap size={14} />
-                          <span>{t("header.gatewayConnectNowBtn")}</span>
-                        </button>
                       </div>
 
                       {/* 3 Metric Pills */}
@@ -369,7 +357,7 @@ export default function ModelLeaderboardModal() {
             <button
               type="button"
               onClick={handleOpenOfficialWeb}
-              class="inline-flex items-center gap-1.5 text-[11.5px] text-[var(--text-muted)] hover:text-blue-500 transition-colors cursor-pointer"
+              class="inline-flex items-center gap-1.5 text-[11.5px] text-[var(--text-muted)] hover:text-[var(--accent-text)] transition-colors cursor-pointer"
             >
               <Globe size={13} />
               <span>{t("header.leaderboardViewOnWeb")}</span>

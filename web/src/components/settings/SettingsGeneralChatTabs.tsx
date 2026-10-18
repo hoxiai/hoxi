@@ -5,6 +5,7 @@ import {
   Globe,
   Monitor,
   Moon,
+  Palette,
   RotateCcw,
   Sparkles,
   Sun,
@@ -13,6 +14,7 @@ import {
 import {
   appSettings,
   updateAppSetting,
+  type ColorScheme,
   type FontScale,
   type ReasoningDisplayMode,
   type SendShortcutMode,
@@ -83,6 +85,21 @@ export function GeneralAppearanceTab() {
               },
             ]}
             onChange={(val) => updateAppSetting("themeMode", val)}
+          />
+        </SettingRow>
+
+        <SettingRow
+          icon={Palette}
+          label={t("settings.sectionColorSchemeTitle")}
+          tip={t("settings.sectionColorSchemeDesc")}
+        >
+          <SegmentedPills<ColorScheme>
+            value={appSettings.colorScheme}
+            options={[
+              { id: "blue", label: () => t("settings.colorSchemeBlue") },
+              { id: "classic", label: () => t("settings.colorSchemeClassic") },
+            ]}
+            onChange={(val) => updateAppSetting("colorScheme", val)}
           />
         </SettingRow>
 

@@ -1,12 +1,14 @@
 // web/src/store/git-commit.ts
 import { createSignal } from "solid-js";
-import { locale } from "../i18n";
-import { hoxiAPI, type CommitAndPushResponse } from "../services/api";
+import { locale, t } from "../i18n";
+import { hoxiAPI, isRunnerSessionID, type CommitAndPushResponse } from "../services/api";
 import type { MessagePart, SnapshotFileDiff } from "../services/sse-types";
 import { isModelFree } from "./workspace-providers";
 import {
   loadSessionMessages,
   refreshWorktreeStatus,
+  sessionDirectory,
+  sessionRuntimeForID,
   setWorkspace,
   workspace,
   type SelectedModel,
@@ -253,7 +255,7 @@ export async function generateSmartCommitMessage(
   const activeID = sessionID ?? workspace.activeSessionID;
   const key = activeID || "__root__";
   let diffs = providedDiffs ?? workspace.diffsBySession[key] ?? [];
-  if (diffs.length === 0) {
+  if (providedDiffs === undefined && diffs.length === 0) {
     const dirArg = key === "__root__" ? workspace.rootDir || undefined : undefined;
     diffs = await hoxiAPI.getWorktreeDiff(key, dirArg).catch(() => [] as SnapshotFileDiff[]);
   }
@@ -302,26 +304,37 @@ export async function executeTaskCommitAndPush(
   const activeID = sessionID ?? workspace.activeSessionID;
   const key = activeID || "__root__";
   const shouldPush = options?.push ?? true;
-  const dirArg = workspace.rootDir || undefined;
+  if (!activeID || activeID === "__root__") {
+    throw new Error(t("timeline.gitSessionRequired"));
+  }
+  if (isRunnerSessionID(activeID) || sessionRuntimeForID(activeID) !== "opencode") {
+    throw new Error(t("timeline.gitSessionDiffUnavailable"));
+  }
+  const dirArg = sessionDirectory(activeID);
+  if (!dirArg) throw new Error(t("timeline.gitSessionRequired"));
 
-  const st = await hoxiAPI.getWorktreeStatus(key, key === "__root__" ? dirArg : undefined);
+  const st = await hoxiAPI.getWorktreeStatus(key, dirArg);
   let res: CommitAndPushResponse;
 
   if (st.dirty) {
-    const diffs = await hoxiAPI
-      .getWorktreeDiff(key, key === "__root__" ? dirArg : undefined)
-      .catch(() => workspace.diffsBySession[key] ?? []);
+    // Fetch authoritative snapshots, never the display cache or worktree fallback.
+    const diffs = await hoxiAPI.getSessionDiff(activeID, dirArg);
+    if (diffs.some((diff) => typeof diff.before !== "string" || typeof diff.after !== "string" || !diff.status)) {
+      throw new Error(t("timeline.gitSessionDiffUnavailable"));
+    }
+    if (diffs.length === 0 && !shouldPush) throw new Error(t("timeline.gitSessionNothingToCommit"));
     const msg =
       options?.customMessage?.trim() ||
       (await generateSmartCommitMessage(activeID, diffs));
     res = await hoxiAPI.commitWorktree(key, msg, {
       push: shouldPush,
       directory: dirArg,
+      sessionDiffs: diffs,
     });
   } else if (shouldPush) {
     res = await hoxiAPI.pushWorktree(key, dirArg);
   } else {
-    throw new Error("Nothing to commit, working tree clean");
+    throw new Error(t("timeline.gitSessionNothingToCommit"));
   }
 
   setWorkspace("inspectedDiffFile", null);

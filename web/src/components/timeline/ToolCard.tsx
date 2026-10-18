@@ -354,7 +354,6 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
                   class="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[12px] font-medium text-[var(--accent-primary)] hover:bg-[var(--accent-surface)] transition-colors cursor-pointer"
                 >
                   <Icon name="task" size="small" />
-                  <span>{t("toolCard.inspectSubagent")}</span>
                 </button>
               )}
             </Show>

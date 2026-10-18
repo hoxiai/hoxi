@@ -293,7 +293,7 @@ export default function BranchManagerPopover() {
                       type="button"
                       disabled={!newBranchName().trim() || !!busyAction()}
                       onClick={() => void onCheckoutBranch(newBranchName(), true)}
-                      class="shrink-0 inline-flex items-center gap-1 rounded-lg bg-[var(--accent-primary)] px-2.5 py-1 text-[11px] font-medium text-white hover:opacity-90 disabled:opacity-40 transition-opacity cursor-pointer"
+                      class="shrink-0 inline-flex items-center gap-1 rounded-lg bg-[var(--accent-primary)] px-2.5 py-1 text-[11px] font-medium text-[var(--accent-foreground)] hover:opacity-90 disabled:opacity-40 transition-opacity cursor-pointer"
                     >
                       <Plus size={11} />
                       <span>{t("header.createBranchBtn")}</span>

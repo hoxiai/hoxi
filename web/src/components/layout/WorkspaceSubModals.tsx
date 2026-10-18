@@ -156,7 +156,7 @@ export function ManageWorkspacesModalView() {
         <button
           type="button"
           onClick={() => openCreateWorkspaceModal()}
-          class="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[12px] font-medium bg-blue-600 hover:bg-blue-500 text-white transition-colors"
+          class="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[12px] font-medium bg-[var(--accent-primary)] hover:opacity-90 text-[var(--accent-foreground)] transition-opacity"
         >
           + {t("leftNav.newWorkspace")}
         </button>

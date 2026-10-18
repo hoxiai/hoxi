@@ -121,6 +121,15 @@ JS
 )"
 else
   node scripts/release-artifact.mjs verify-distribution "${TARGET_DMG}" >&2
+  if [[ -n "${HOXI_SPARKLE_DIR:-}${HOXI_SPARKLE_PUBLIC_KEY:-}${HOXI_SPARKLE_FEED_URL:-}" ]]; then
+    [[ "${FORCE_DB}" -eq 0 ]] || { echo 'Sparkle requires the confirming API publisher' >&2; exit 1; }
+    node scripts/sparkle.mjs sign-update "${TARGET_DMG}" "${VERSION}" "${TARGET_DMG}.sparkle.json" >&2
+    RELEASE_JSON="$(node --input-type=module - "${RELEASE_JSON}" "${TARGET_DMG}.sparkle.json" <<'JS'
+import fs from 'node:fs';
+console.log(JSON.stringify({...JSON.parse(process.argv[2]), sparkle: JSON.parse(fs.readFileSync(process.argv[3], 'utf8'))}));
+JS
+)"
+  fi
   if [[ "${FORCE_DB}" -eq 1 ]]; then
     SHA256="$(node -e 'console.log(JSON.parse(process.argv[1]).sha256)' "${METADATA}")"
     FILE_SIZE="$(node -e 'console.log(JSON.parse(process.argv[1]).size)' "${METADATA}")"

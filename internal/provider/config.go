@@ -81,14 +81,62 @@ func writeJSONMapFile(path string, payload interface{}) error {
 	if path == "" {
 		return nil
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
 	raw, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(raw, '\n'), 0o644)
+	// Replace rather than truncate so existing permissive files also become private,
+	// and a failed write cannot destroy the previous credentials.
+	f, err := os.CreateTemp(filepath.Dir(path), ".models-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	if _, err := f.Write(append(raw, '\n')); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), path)
+}
+
+func persistHoxiModelsFiles(userPath, workspacePath string, doc map[string]interface{}) error {
+	if userPath == "" {
+		// Without a home directory, the workspace remains the upstream config.
+		return writeJSONMapFile(workspacePath, doc)
+	}
+	if err := writeJSONMapFile(userPath, doc); err != nil {
+		return err
+	}
+	if filepath.Clean(userPath) == filepath.Clean(workspacePath) {
+		return nil
+	}
+	// Keep the full merged config for OPENCODE_CONFIG and Hoxi's own requests.
+	// Omit credentials from the workspace mirror, without mutating the caller.
+	raw, err := json.Marshal(doc)
+	if err != nil {
+		return err
+	}
+	var workspaceDoc map[string]interface{}
+	if err := json.Unmarshal(raw, &workspaceDoc); err != nil {
+		return err
+	}
+	if providers, ok := workspaceDoc["provider"].(map[string]interface{}); ok {
+		for _, value := range providers {
+			if provider, ok := value.(map[string]interface{}); ok {
+				if options, ok := provider["options"].(map[string]interface{}); ok {
+					delete(options, "apiKey")
+					delete(options, "headers")
+				}
+			}
+		}
+	}
+	return writeJSONMapFile(workspacePath, workspaceDoc)
 }
 
 func loadOpenCodeImportedProvidersFromDisk() map[string]interface{} {
@@ -131,9 +179,11 @@ func ensureHoxiModelsConfig(rootDir string) string {
 	}
 
 	// Clean up legacy ~/.config/opencode/opencode.jsonc so ~/.config/opencode stays 100% untouched
+	legacyOverlay := ""
 	if dir := openCodeConfigDir(); dir != "" {
-		legacyOverlay := filepath.Join(dir, "opencode.jsonc")
-		if overlay := readJSONMapFile(legacyOverlay); overlay != nil {
+		path := filepath.Join(dir, "opencode.jsonc")
+		if overlay := readJSONMapFile(path); overlay != nil {
+			legacyOverlay = path
 			imported := loadOpenCodeImportedProvidersFromDisk()
 			provMap, _ := doc["provider"].(map[string]interface{})
 			if provMap == nil {
@@ -151,14 +201,12 @@ func ensureHoxiModelsConfig(rootDir string) string {
 				}
 			}
 			doc["provider"] = provMap
-			_ = os.Remove(legacyOverlay)
 		}
 	}
 
-	if uPath != "" {
-		_ = writeJSONMapFile(uPath, doc)
+	if err := persistHoxiModelsFiles(uPath, wPath, doc); err == nil && legacyOverlay != "" {
+		_ = os.Remove(legacyOverlay)
 	}
-	_ = writeJSONMapFile(wPath, doc)
 	if uPath != "" {
 		return uPath
 	}
@@ -195,12 +243,11 @@ func (g *Service) loadHoxiProvidersMap() map[string]interface{} {
 
 func (g *Service) persistHoxiConfigDoc(doc map[string]interface{}) error {
 	doc["$schema"] = "https://opencode.ai/config.json"
-	if uPath := userHoxiModelsPath(); uPath != "" {
-		_ = writeJSONMapFile(uPath, doc)
+	if err := persistHoxiModelsFiles(userHoxiModelsPath(), g.workspaceHoxiModelsPath(), doc); err != nil {
+		return err
 	}
-	err := writeJSONMapFile(g.workspaceHoxiModelsPath(), doc)
 	g.reloadOpenCodeGlobalConfig()
-	return err
+	return nil
 }
 
 func (g *Service) reloadOpenCodeGlobalConfig() {
@@ -297,7 +344,10 @@ func (g *Service) handleModelsConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		delete(hoxiMap, pid)
 		doc["provider"] = hoxiMap
-		_ = g.persistHoxiConfigDoc(doc)
+		if err := g.persistHoxiConfigDoc(doc); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"ok":            true,
 			"hoxiProviders": hoxiMap,
@@ -375,7 +425,10 @@ func (g *Service) handleGlobalConfigProxy(w http.ResponseWriter, r *http.Request
 			if json.Unmarshal(raw, &patch) == nil && patch != nil {
 				doc := g.loadHoxiConfigDoc()
 				deepMergeMap(doc, patch)
-				_ = g.persistHoxiConfigDoc(doc)
+				if err := g.persistHoxiConfigDoc(doc); err != nil {
+					writeJSONError(w, http.StatusInternalServerError, err.Error())
+					return
+				}
 			}
 		}
 	}

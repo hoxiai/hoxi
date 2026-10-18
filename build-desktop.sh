@@ -64,6 +64,7 @@ else
   BUILD_VERSION="$(node scripts/release-artifact.mjs default-version)"
 fi
 export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-13.0}"
+node scripts/sparkle.mjs check
 
 if [[ ! -d web/node_modules ]]; then
   npm --prefix web install
@@ -92,9 +93,8 @@ resolve_opencode_bin() {
 
 OPENCODE_SRC="$(resolve_opencode_bin || true)"
 if [[ -z "${OPENCODE_SRC}" && "$(uname -s)" == "Darwin" ]]; then
-  echo "⬇️  opencode not found locally; installing official opencode into ~/.opencode/bin..."
-  curl -fsSL https://opencode.ai/install | bash -s -- --no-modify-path
-  OPENCODE_SRC="${HOME}/.opencode/bin/opencode"
+  echo "Set HOXI_OPENCODE to a preinstalled, verified OpenCode executable." >&2
+  exit 1
 fi
 
 resolve_signing_identity() {
@@ -144,6 +144,7 @@ bundle_and_sign_macos_app() {
     echo "✅ Bundled standalone opencode sidecar (${OPENCODE_SRC}) into ${app_path}/Contents/MacOS/opencode"
   fi
 
+  node scripts/sparkle.mjs configure "${app_path}" "${is_release}"
   node scripts/release-artifact.mjs configure-app "${app_path}" "${BUILD_VERSION}"
 
   local target_identity="-"
@@ -152,6 +153,9 @@ bundle_and_sign_macos_app() {
   fi
 
   local entitlements="build/darwin/entitlements.plist"
+  if [[ -d "${app_path}/Contents/Frameworks/Sparkle.framework" ]]; then
+    node scripts/sparkle.mjs sign-framework "${app_path}/Contents/Frameworks/Sparkle.framework" "${target_identity}"
+  fi
 
   if [[ "${target_identity}" != "-" ]]; then
     echo "🔏 Signing with Apple Developer ID: '${target_identity}' (Hardened Runtime enabled)..."
@@ -169,7 +173,10 @@ bundle_and_sign_macos_app() {
     echo "✅ Verified signature for ${app_path}"
   else
     echo "ℹ️  Signing with Ad-hoc signature (local use only)..."
-    codesign --force --deep --sign - "${app_path}"
+    if [[ -f "${app_path}/Contents/MacOS/opencode" ]]; then
+      codesign --force --sign - "${app_path}/Contents/MacOS/opencode"
+    fi
+    codesign --force --sign - "${app_path}"
   fi
 
   if [[ "${is_release}" -eq 1 ]]; then

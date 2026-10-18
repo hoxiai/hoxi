@@ -99,7 +99,7 @@ export default function PlanFollowupBar() {
 
   return (
     <Show when={planTurnInfo()}>
-      <div class="mb-2 flex items-center justify-between gap-2 rounded-xl border border-[var(--accent-border)] bg-[var(--accent-surface)]/55 px-3 py-2 text-xs shadow-xs">
+      <div class="mb-2 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--accent-border)] bg-[var(--accent-surface)]/55 px-3 py-2 text-[12px] shadow-xs">
         <div class="flex items-center gap-2 min-w-0">
           <Sparkles size={13} class="text-[var(--accent-primary)] shrink-0" />
           <span class="font-medium text-[var(--text-primary)] truncate">
@@ -112,7 +112,7 @@ export default function PlanFollowupBar() {
             type="button"
             disabled={!!runningAction()}
             onClick={() => void implementInCurrentSession()}
-            class="inline-flex items-center gap-1.5 rounded-lg bg-[var(--accent-primary)] px-2.5 py-1 text-[11px] font-medium text-white hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
+            class="inline-flex items-center gap-1.5 rounded-lg bg-[var(--accent-primary)] px-2.5 py-1 text-[12px] font-medium text-[var(--accent-foreground)] hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
           >
             <Show
               when={runningAction() !== "build"}
@@ -127,7 +127,7 @@ export default function PlanFollowupBar() {
             type="button"
             disabled={!!runningAction()}
             onClick={() => void implementInNewWorktree()}
-            class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-strong)] bg-[var(--bg-panel)] px-2.5 py-1 text-[11px] font-medium text-[var(--text-primary)] hover:bg-[var(--bg-hover)] disabled:opacity-50 transition-colors cursor-pointer"
+            class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-strong)] bg-[var(--bg-panel)] px-2.5 py-1 text-[12px] font-medium text-[var(--text-primary)] hover:bg-[var(--bg-hover)] disabled:opacity-50 transition-colors cursor-pointer"
             title={t("timeline.worktreeTooltip")}
           >
             <Show

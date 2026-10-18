@@ -188,7 +188,7 @@ export default function AgentPolicyMcpTab() {
             type="button"
             disabled={saving()}
             onClick={() => void onSavePermissions()}
-            class="inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] px-3.5 py-1.5 text-[12px] font-medium text-white hover:opacity-90 disabled:opacity-50 cursor-pointer"
+            class="inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] px-3.5 py-1.5 text-[12px] font-medium text-[var(--accent-foreground)] hover:opacity-90 disabled:opacity-50 cursor-pointer"
           >
             <Check size={13} />
             {t("models.savePolicy")}
@@ -312,7 +312,7 @@ export default function AgentPolicyMcpTab() {
           <button
             type="submit"
             disabled={saving() || !mcpName().trim() || !mcpTarget().trim()}
-            class="inline-flex items-center gap-1 rounded-xl bg-[var(--accent-primary)] px-3.5 py-1.5 text-[12px] font-medium text-white disabled:opacity-40 cursor-pointer"
+            class="inline-flex items-center gap-1 rounded-xl bg-[var(--accent-primary)] px-3.5 py-1.5 text-[12px] font-medium text-[var(--accent-foreground)] disabled:opacity-40 cursor-pointer"
           >
             <Plus size={13} />
             {t("models.add")}
@@ -387,7 +387,7 @@ export default function AgentPolicyMcpTab() {
             <button
               type="submit"
               disabled={saving() || !agentId().trim() || !agentPrompt().trim()}
-              class="inline-flex items-center gap-1 rounded-xl bg-[var(--accent-primary)] px-3.5 py-1.5 text-[12px] font-medium text-white disabled:opacity-40 cursor-pointer"
+              class="inline-flex items-center gap-1 rounded-xl bg-[var(--accent-primary)] px-3.5 py-1.5 text-[12px] font-medium text-[var(--accent-foreground)] disabled:opacity-40 cursor-pointer"
             >
               <Plus size={13} />
               {t("models.addAgentMode")}

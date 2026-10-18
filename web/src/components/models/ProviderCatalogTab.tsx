@@ -80,9 +80,9 @@ export default function ProviderCatalogTab() {
       }
     }
     return result.sort((a, b) => {
-      const aCustom = isCustomOrConfiguredProvider(a);
-      const bCustom = isCustomOrConfiguredProvider(b);
-      if (aCustom !== bCustom) return aCustom ? -1 : 1;
+      const aPrio = a.source === "runner" || isCustomOrConfiguredProvider(a);
+      const bPrio = b.source === "runner" || isCustomOrConfiguredProvider(b);
+      if (aPrio !== bPrio) return aPrio ? -1 : 1;
       return (a.name || a.id).localeCompare(b.name || b.id);
     });
   });
@@ -122,6 +122,11 @@ export default function ProviderCatalogTab() {
   };
 
   const sourceLabel = (p: ProviderInfo) => {
+    if (p.source === "runner") {
+      return p.id === "antigravity"
+        ? t("timeline.runtimeAntigravityLocal")
+        : t("timeline.runtimeClaudeCodeLocal");
+    }
     if (isHoxiCustomProvider(p.id)) return t("models.sourceHoxi");
     if (isImportedOpenCodeProvider(p.id)) return t("models.sourceOpenCode");
     if (isCustomOrConfiguredProvider(p)) return t("models.sourceCustom");
@@ -174,7 +179,7 @@ export default function ProviderCatalogTab() {
             <button
               type="button"
               onClick={() => openProviderModal("custom", null)}
-              class="shrink-0 inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] px-3.5 py-1.5 text-[12px] font-medium text-white hover:opacity-90 transition-opacity cursor-pointer"
+              class="shrink-0 inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] px-3.5 py-1.5 text-[12px] font-medium text-[var(--accent-foreground)] hover:opacity-90 transition-opacity cursor-pointer"
             >
               <Plus size={13} />
               {t("models.configureCustom")}
@@ -276,7 +281,7 @@ export default function ProviderCatalogTab() {
                                 : t("models.editProvider")}
                             </button>
                           </Show>
-                          <Show when={!isImported()}>
+                          <Show when={!isImported() && item.source !== "runner"}>
                             <button
                               type="button"
                               onClick={() => openConnectView(item.id)}
@@ -296,7 +301,7 @@ export default function ProviderCatalogTab() {
                           >
                             <Ban size={13} />
                           </button>
-                          <Show when={!isImported()}>
+                          <Show when={!isImported() && item.source !== "runner"}>
                             <button
                               type="button"
                               disabled={busyID() === item.id}

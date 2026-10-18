@@ -68,6 +68,34 @@ wails dev
 go run . --no-desktop
 ```
 
+### Local Website and Login Testing
+
+`HOXI_SERVER_URL` overrides the website base URL used for desktop login and
+update checks. If unset or empty, it defaults to `https://hoxi.ai`.
+
+For a single launch:
+
+```bash
+HOXI_SERVER_URL=http://127.0.0.1:5400 wails dev
+```
+
+Alternatively, put `HOXI_SERVER_URL=http://127.0.0.1:5400` in the Git-ignored
+root `.env.local`, then export it before starting the app (env files are not
+loaded automatically):
+
+```bash
+set -a
+source .env.local
+set +a
+wails dev
+# Or: go run . --no-desktop
+```
+
+Restart the app after changing the variable. This is separate from
+`HOXI_BACKEND_URL`, which points the frontend at the local desktop gateway.
+Use a test profile without production login credentials: startup verification
+sends the saved login token to the configured server.
+
 ### Build Production Application (`build/bin/Hoxi.app`)
 ```bash
 ./build-desktop.sh

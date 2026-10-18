@@ -245,7 +245,7 @@ export default function RevertBanner() {
                 type="button"
                 disabled={busy()}
                 onClick={() => void onRestoreAll()}
-                class="inline-flex items-center gap-1 rounded-lg bg-[var(--accent-primary)] px-2.5 py-1 text-[11px] font-medium text-white hover:opacity-90 disabled:opacity-50 cursor-pointer"
+                class="inline-flex items-center gap-1 rounded-lg bg-[var(--accent-primary)] px-2.5 py-1 text-[11px] font-medium text-[var(--accent-foreground)] hover:opacity-90 disabled:opacity-50 cursor-pointer"
               >
                 <span>{t("timeline.redoAll")}</span>
               </button>

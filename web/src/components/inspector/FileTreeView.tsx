@@ -311,7 +311,7 @@ export default function FileTreeView() {
               </div>
             </Show>
             <Show when={!loadingPreview() && !previewError()}>
-              <pre class="py-3 font-mono text-[11.5px] leading-relaxed text-[var(--text-primary)] whitespace-pre selectable-text">
+              <pre class="py-3 font-mono leading-relaxed text-[var(--text-primary)] whitespace-pre selectable-text" style={{ "font-size": "var(--app-code-text-size)" }}>
                 <For each={sourceLines()}>
                   {(line, index) => {
                     const lineNo = () => index() + 1;

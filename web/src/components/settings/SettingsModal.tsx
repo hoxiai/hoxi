@@ -7,6 +7,7 @@ import {
   KeyRound,
   MessageSquareText,
   Settings,
+  ShieldCheck,
   SlidersHorizontal,
   Terminal as TerminalIcon,
   X,
@@ -23,6 +24,7 @@ import {
 import { t } from "../../i18n";
 import { ChatComposerTab, GeneralAppearanceTab } from "./SettingsGeneralChatTabs";
 import { SystemRuntimeSettingsTab } from "./SettingsSystemRuntimeTab";
+import { PrivacySettingsTab } from "./PrivacyControls";
 import {
   TerminalSafetySettingsTab,
   WorkspaceGitSettingsTab,
@@ -146,7 +148,7 @@ export function ToggleSwitch(props: {
       }`}
     >
       <span
-        class={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-xs transition duration-200 ease-in-out ${
+        class={`pointer-events-none inline-block h-5 w-5 transform rounded-full ${props.checked ? "bg-[var(--accent-foreground)]" : "bg-white"} shadow-xs transition duration-200 ease-in-out ${
           props.checked ? "translate-x-5" : "translate-x-0"
         }`}
       />
@@ -181,6 +183,7 @@ export default function SettingsModal() {
     { id: "workspace", label: () => t("settings.tabWorkspace"), icon: FolderGit2 },
     { id: "terminal", label: () => t("settings.tabTerminal"), icon: TerminalIcon },
     { id: "system", label: () => t("settings.tabSystem"), icon: Cpu },
+    { id: "privacy", label: () => t("privacy.title"), icon: ShieldCheck },
   ];
 
   return (
@@ -190,7 +193,7 @@ export default function SettingsModal() {
         onClick={closeSettingsModal}
       >
         <div
-          class="flex h-[620px] w-full max-w-[860px] flex-col overflow-hidden rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-panel)] shadow-2xl"
+          class="flex h-[620px] max-h-[90dvh] w-full max-w-[860px] flex-col overflow-hidden rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-panel)] shadow-2xl"
           onClick={(e) => e.stopPropagation()}
         >
           {/* Header */}
@@ -220,9 +223,9 @@ export default function SettingsModal() {
           </div>
 
           {/* Body: Left Category Sidebar + Right Active Pane */}
-          <div class="flex flex-1 min-h-0">
-            <nav class="w-52 shrink-0 border-r border-[var(--border-subtle)] bg-[var(--bg-inset)]/35 p-3.5 flex flex-col justify-between">
-              <div class="space-y-1">
+          <div class="flex flex-col sm:flex-row flex-1 min-h-0">
+            <nav class="sm:w-52 shrink-0 border-b sm:border-b-0 sm:border-r border-[var(--border-subtle)] bg-[var(--bg-inset)]/35 p-3.5 flex flex-col justify-between">
+              <div class="flex overflow-x-auto sm:block sm:space-y-1">
                 <For each={navItems}>
                   {(item) => {
                     const IconComp = item.icon;
@@ -238,7 +241,7 @@ export default function SettingsModal() {
                         }`}
                       >
                         <IconComp size={16} class="shrink-0" />
-                        <span class="truncate">{item.label()}</span>
+                        <span class="whitespace-nowrap sm:truncate">{item.label()}</span>
                       </button>
                     );
                   }}
@@ -246,7 +249,7 @@ export default function SettingsModal() {
               </div>
 
               {/* Bottom shortcut to Models & Providers Modal */}
-              <div class="border-t border-[var(--border-subtle)] pt-3">
+              <div class="hidden sm:block border-t border-[var(--border-subtle)] pt-3">
                 <button
                   type="button"
                   onClick={() => {
@@ -268,7 +271,7 @@ export default function SettingsModal() {
               </div>
             </nav>
 
-            <div class="flex-1 overflow-y-auto p-7">
+            <div class="min-w-0 flex-1 overflow-y-auto p-4 sm:p-7">
               <Show when={appSettings.activeTab === "general"}>
                 <GeneralAppearanceTab />
               </Show>
@@ -283,6 +286,9 @@ export default function SettingsModal() {
               </Show>
               <Show when={appSettings.activeTab === "system"}>
                 <SystemRuntimeSettingsTab />
+              </Show>
+              <Show when={appSettings.activeTab === "privacy"}>
+                <PrivacySettingsTab />
               </Show>
             </div>
           </div>

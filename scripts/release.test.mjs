@@ -9,6 +9,7 @@ import {
   normalizeVersion, maximumMacOS, minimumFromMachO, validateAppMetadata, validatePublication,
 } from "./release-artifact.mjs";
 import { releasePayload, publishRelease } from "./release-publisher.mjs";
+import { sparkleConfig, validateSparkle, frameworkFiles, verifyUpdateSignature } from "./sparkle.mjs";
 
 test("release versions accept only complete numeric releases", () => {
   for (const version of ["0.2.1", "1.0.0", "v2.3.4"]) {
@@ -142,10 +143,12 @@ function fixture(t) {
   fs.mkdirSync(path.join(root, "build/bin"), { recursive: true });
   fs.copyFileSync(path.join(scripts, "ai-release.sh"), path.join(root, "scripts/ai-release.sh"));
   fs.copyFileSync(path.join(scripts, "release-artifact.mjs"), path.join(root, "scripts/policy.mjs"));
+  fs.copyFileSync(path.join(scripts, "sparkle.mjs"), path.join(root, "scripts/sparkle.mjs"));
   fs.writeFileSync(path.join(root, "scripts/release-artifact.mjs"), `
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import {normalizeVersion, validatePublication} from './policy.mjs';
+export {normalizeVersion};
 const [command, file, version] = process.argv.slice(2);
 try {
   if (command === 'version') console.log(normalizeVersion(file));
@@ -173,6 +176,7 @@ printf '{"version":"%s"}' "$version" > build/bin/Hoxi.dmg
   const env = { ...process.env, PATH: path.join(root, "bin") + path.delimiter + process.env.PATH,
     HOXI_RELEASE_KEY: "fixture-key", HOXI_RELEASE_API_URL: "", TEST_CALLS: calls };
   delete env.DATABASE_URL;
+  for (const key of Object.keys(env)) if (key.startsWith("HOXI_SPARKLE_")) delete env[key];
   return {
     root, env, publisher,
     calls: () => fs.existsSync(calls) ? fs.readFileSync(calls, "utf8") : "",
@@ -190,6 +194,84 @@ test("invalid versions and missing publisher/credentials stop before building or
   fs.unlinkSync(f.publisher);
   assert.notEqual(f.run(["0.2.1", "--tag"]).status, 0);
   assert.equal(f.calls(), "");
+});
+
+const sparkle = {
+  version: "0.2.1", url: "https://github.com/hoxiai/hoxi/releases/download/v0.2.1/Hoxi-0.2.1-darwin-arm64.dmg",
+  feedURL: "https://hoxi.ai/updates/macos/appcast.xml", publicKey: Buffer.alloc(32, 1).toString("base64"),
+  edSignature: Buffer.alloc(64, 2).toString("base64"), length: 1234,
+};
+
+test("Sparkle is opt-in, rejects partial config and only accepts explicit official HTTPS feeds", () => {
+  assert.equal(sparkleConfig({}), null);
+  for (const env of [{ HOXI_SPARKLE_DIR: "/tmp/sdk" }, { HOXI_SPARKLE_PUBLIC_KEY: sparkle.publicKey }]) {
+    assert.throws(() => sparkleConfig(env), /Partial/);
+  }
+  const env = { HOXI_SPARKLE_DIR: "/tmp/sdk", HOXI_SPARKLE_PUBLIC_KEY: sparkle.publicKey,
+    HOXI_SPARKLE_FEED_URL: sparkle.feedURL };
+  assert.equal(sparkleConfig(env).feedURL, sparkle.feedURL);
+  for (const url of ["http://hoxi.ai/feed", "https://other.test/feed", "https://hoxi.ai/", "https://user@hoxi.ai/feed"]) {
+    assert.throws(() => sparkleConfig({ ...env, HOXI_SPARKLE_FEED_URL: url }));
+  }
+  assert.throws(() => sparkleConfig({ ...env, HOXI_SPARKLE_PUBLIC_KEY: "bad" }), /32 bytes/);
+});
+
+test("Sparkle payload validates signature/key lengths, version, URL and byte length; no unuploaded GitCode mirror", () => {
+  const data = releasePayload({ version: "0.2.1", notes: "test", size: 1234, sha256: "a".repeat(64), sparkle });
+  assert.deepEqual(data.sparkle, sparkle);
+  assert.equal(data.desktop["mac-arm64"], sparkle.url);
+  assert.equal(data.mirrors["mac-arm64"].cn, undefined);
+  for (const patch of [{ edSignature: "bad" }, { publicKey: "bad" }, { version: "0.2.2" },
+    { length: 1235 }, { url: "https://example.com/app.dmg" }, { feedURL: "http://hoxi.ai/feed" }]) {
+    assert.throws(() => validateSparkle({ ...sparkle, ...patch }, "0.2.1", 1234));
+  }
+});
+
+test("website must explicitly accept exact Sparkle metadata, not merely generic release success", async () => {
+  const data = releasePayload({ version: "0.2.1", size: 1234, sha256: "a".repeat(64), sparkle });
+  for (const confirmation of [{ version: "0.2.1" }, { version: "0.2.1", sparkleAccepted: true },
+    { version: "0.2.1", sparkleAccepted: true, sparkle: { ...sparkle, length: 5 } }]) {
+    await assert.rejects(publishRelease(data, { key: "test", fetchImpl: async () =>
+      Response.json({ success: true, data: confirmation }) }));
+  }
+  assert.equal((await publishRelease(data, { key: "test", fetchImpl: async () =>
+    Response.json({ success: true, data: { version: "0.2.1", sparkleAccepted: true, sparkle } }) })).success, true);
+});
+
+test("Sparkle framework validation requires executable and helpers, and follows distribution symlinks", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "hoxi-sparkle-test-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  assert.throws(() => frameworkFiles(root));
+  fs.mkdirSync(path.join(root, "Versions/B"), { recursive: true });
+  for (const file of ["Sparkle", "Autoupdate", "Updater", "Installer", "Downloader"]) {
+    fs.writeFileSync(path.join(root, "Versions/B", file), "fixture");
+  }
+  fs.symlinkSync("Versions/B/Sparkle", path.join(root, "Sparkle"));
+  assert.equal(frameworkFiles(root).length, 5);
+  fs.unlinkSync(path.join(root, "Versions/B/Installer"));
+  assert.throws(() => frameworkFiles(root), /Installer/);
+});
+
+test("signature is checked against the configured public key and exact final DMG bytes", () => {
+  // RFC 8032 test vector 1: public data only; no key generation or private material.
+  const bytes = Buffer.alloc(0);
+  const metadata = { publicKey: Buffer.from("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a", "hex").toString("base64"),
+    edSignature: Buffer.from("e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b", "hex").toString("base64") };
+  verifyUpdateSignature(bytes, metadata);
+  assert.throws(() => verifyUpdateSignature(Buffer.from("modified"), metadata), /does not match/);
+});
+
+test("Sparkle workflow signs only the final stapled DMG and uploads before website publication", () => {
+  const workflow = fs.readFileSync(path.join(scripts, "../.github/workflows/release.yml"), "utf8");
+  const gates = ['verify-distribution "$DMG"', 'sign-update "$DMG"', "uses: softprops/action-gh-release@v2",
+    "- name: Publish website metadata after asset upload", "node scripts/release-publisher.mjs"];
+  let position = -1;
+  for (const gate of gates) { const next = workflow.indexOf(gate, position + 1); assert.ok(next > position); position = next; }
+  assert.match(workflow, /shasum -a 256 -c -/);
+  assert.match(workflow, /HOXI_SPARKLE_PUBLIC_KEY:\s*\$\{\{ secrets\./);
+  const build = fs.readFileSync(path.join(scripts, "../build-desktop.sh"), "utf8");
+  assert.ok(build.indexOf('sparkle.mjs configure') < build.indexOf('sparkle.mjs sign-framework'));
+  assert.doesNotMatch(build, /opencode.ai\/install/);
 });
 
 test("dry runs and build-only candidates work without a publisher and never publish or tag", (t) => {

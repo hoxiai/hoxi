@@ -4,17 +4,25 @@ import path from "node:path";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { normalizeVersion, validatePublication } from "./release-artifact.mjs";
+import { validateSparkle } from "./sparkle.mjs";
 
-export function releasePayload({ version, notes, sha256, size, mandatory = false }) {
+export function releasePayload({ version, notes, sha256, size, mandatory = false, sparkle, minimumMacOS }) {
   version = normalizeVersion(version);
   if (!/^[a-f0-9]{64}$/.test(sha256)) throw new Error("A verified SHA-256 is required");
   if (!Number.isSafeInteger(size) || size <= 0) throw new Error("A non-empty artifact is required");
+  if (sparkle !== undefined) sparkle = validateSparkle(sparkle, version, size);
+  if (minimumMacOS !== undefined && !/^\d+\.\d+(?:\.\d+)?$/.test(minimumMacOS)) {
+    throw new Error("Invalid minimum macOS version");
+  }
   const asset = `Hoxi-${version}-darwin-arm64.dmg`;
   const cn = `https://gitcode.com/hoxiai/hoxi/releases/download/v${version}/${asset}`;
   const global = `https://github.com/hoxiai/hoxi/releases/download/v${version}/${asset}`;
   return {
     version, title: `Hoxi Desktop v${version}`, notes, sha256, size, mandatory,
-    mirrors: { "mac-arm64": { cn, global } }, desktop: { "mac-arm64": cn }, dryRun: false,
+    mirrors: { "mac-arm64": sparkle ? { global } : { cn, global } },
+    desktop: { "mac-arm64": sparkle ? global : cn }, dryRun: false,
+    ...(sparkle ? { sparkle: validateSparkle(sparkle, version, size) } : {}),
+    ...(minimumMacOS ? { minimumMacOS } : {}),
   };
 }
 
@@ -41,6 +49,10 @@ export async function publishRelease(payload, { key, url = "https://hoxi.ai/api/
   }
   if (data?.version !== undefined && data.version !== payload.version) {
     throw new Error("Release API confirmed a different version");
+  }
+  if (payload.sparkle && (data.version !== payload.version || data.sparkleAccepted !== true ||
+      JSON.stringify(validateSparkle(data.sparkle, payload.version, payload.size)) !== JSON.stringify(payload.sparkle))) {
+    throw new Error("Website must explicitly confirm persisted Sparkle metadata and feed deployment");
   }
   return validatePublication({ success: true, mode: "api", version: payload.version, data });
 }

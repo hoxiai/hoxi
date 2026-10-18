@@ -6,6 +6,7 @@ import {
   upsertTurnPart,
 } from "./message-lookup";
 import { t } from "../i18n";
+import { ensureAIConsent } from "./privacy";
 import { hoxiAPI } from "../services/api";
 import type { StreamFrameBatch } from "../services/sse";
 import type { MessageInfo, MessagePart } from "../services/sse-types";
@@ -22,6 +23,7 @@ import { newIsolatedSession, waitForSessionSandbox } from "./session-sandbox";
 import { buildCombinedSystemPrompt, setWorkspace, workspace } from "./workspace";
 import { buildWorkspaceFoldersSystemPrompt, workspaceFoldersForDir } from "./workspace-projects";
 import { initializeSessionAI, sessionAIConfig } from "./session-ai";
+import { sessionRuntimeForID } from "./workspace-providers";
 import {
   isSessionBusy,
   isSessionDeleted,
@@ -150,6 +152,7 @@ export async function submitSessionPrompt(
     beforeSend?: () => Promise<void>;
   }
 ): Promise<string> {
+  if (!ensureAIConsent()) throw new Error(t("privacy.consentRequired"));
   let id = targetSessionID ?? workspace.activeSessionID;
   const isBrandNewSession = !id;
   if (id && isSessionDeleted(id)) throw new Error(t("timeline.sessionUnavailable"));
@@ -160,6 +163,9 @@ export async function submitSessionPrompt(
   const effectiveAgent = options?.agent || config.agent;
   const chosenModel = options?.model || config.model;
   const effectiveModel = chosenModel ? { ...chosenModel } : undefined;
+  if (!effectiveModel && sessionRuntimeForID(id) === "opencode") {
+    throw new Error(t("timeline.selectModel"));
+  }
   if (effectiveModel && workspace.providers.length && !workspace.providers.some((provider) =>
     provider.id === effectiveModel.providerID && provider.models?.[effectiveModel.modelID])) {
     throw new Error(`${t("timeline.selectModel")}: ${effectiveModel.providerID}/${effectiveModel.modelID}`);

@@ -162,15 +162,16 @@ func (s *Service) serveSSE(w http.ResponseWriter, r *http.Request, sessionID str
 		writeJSONError(w, http.StatusInternalServerError, "streaming unsupported")
 		return
 	}
+	// Subscribe before flushing headers so clients cannot dispatch a prompt before we listen.
+	ch, unsub := s.Subscribe(sessionID)
+	defer unsub()
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
-
-	ch, unsub := s.Subscribe(sessionID)
-	defer unsub()
 
 	ticker := time.NewTicker(20 * time.Second)
 	defer ticker.Stop()

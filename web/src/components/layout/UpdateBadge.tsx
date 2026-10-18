@@ -32,16 +32,16 @@ export default function UpdateBadge() {
         type="button"
         style={{ "--wails-draggable": "no-drag" } as any}
         onClick={() => setModalOpen(true)}
-        class="inline-flex items-center gap-1.5 rounded-full bg-gradient-to-r from-amber-500/15 via-orange-500/15 to-amber-500/15 border border-amber-500/35 hover:border-amber-500/60 px-2.5 py-0.5 text-[11px] font-semibold text-amber-500 hover:text-amber-400 hover:shadow-xs transition-all cursor-pointer active:scale-[0.98]"
+        class="inline-flex items-center gap-1.5 rounded-full bg-[var(--accent-surface)] border border-[var(--accent-border)] hover:border-[var(--accent-primary)] px-2.5 py-0.5 text-[11px] font-semibold text-[var(--accent-text)] hover:shadow-xs transition-all cursor-pointer active:scale-[0.98]"
         title={t("header.updateAvailableTooltip", {
           version: `v${updateResult()?.latestVersion || ""}`,
         })}
       >
         <span class="relative flex h-1.5 w-1.5">
-          <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" />
-          <span class="relative inline-flex rounded-full h-1.5 w-1.5 bg-amber-500" />
+          <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-[var(--accent-primary)] opacity-75" />
+          <span class="relative inline-flex rounded-full h-1.5 w-1.5 bg-[var(--accent-primary)]" />
         </span>
-        <Sparkles size={11} class="text-amber-500" />
+        <Sparkles size={11} />
         <span>
           {t("header.updateAvailableBadge", {
             version: `v${updateResult()?.latestVersion || ""}`,
@@ -60,10 +60,10 @@ export default function UpdateBadge() {
             onClick={(e) => e.stopPropagation()}
           >
             {/* Header banner */}
-            <div class="p-5 border-b border-[var(--border-subtle)] bg-gradient-to-r from-amber-500/10 via-orange-500/5 to-transparent">
+            <div class="p-5 border-b border-[var(--border-subtle)] bg-[var(--accent-surface)]">
               <div class="flex items-start justify-between">
                 <div class="flex items-center gap-3">
-                  <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-amber-500 to-orange-500 text-white shadow-md shadow-amber-500/20">
+                  <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--accent-primary)] text-[var(--accent-foreground)] shadow-md">
                     <ArrowUpCircle size={20} />
                   </div>
                   <div>
@@ -75,7 +75,7 @@ export default function UpdateBadge() {
                         {t("header.updateModalCurrentVer")}: v{updateResult()?.currentVersion}
                       </span>
                       <span class="text-[var(--text-faint)]">→</span>
-                      <span class="font-bold text-amber-500">
+                      <span class="font-bold text-[var(--accent-text)]">
                         {t("header.updateModalLatestVer")}: v{updateResult()?.latestVersion}
                       </span>
                     </div>
@@ -125,7 +125,7 @@ export default function UpdateBadge() {
                     href={updateResult()?.mirrors.cn}
                     target="_blank"
                     rel="noreferrer"
-                    class="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 px-3.5 py-1.5 text-[12px] font-semibold text-white shadow-xs transition-all cursor-pointer"
+                    class="inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] hover:opacity-90 px-3.5 py-1.5 text-[12px] font-semibold text-[var(--accent-foreground)] shadow-xs transition-opacity cursor-pointer"
                   >
                     <Download size={13} />
                     <span>{t("header.updateModalDownloadGitCode")}</span>
@@ -137,7 +137,7 @@ export default function UpdateBadge() {
                     href={updateResult()?.mirrors.global}
                     target="_blank"
                     rel="noreferrer"
-                    class="inline-flex items-center gap-1.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] px-3 py-1.5 text-[12px] font-medium text-[var(--text-primary)] transition-colors cursor-pointer"
+                    class="inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] hover:opacity-90 px-3 py-1.5 text-[12px] font-medium text-[var(--accent-foreground)] transition-opacity cursor-pointer"
                   >
                     <ExternalLink size={12} />
                     <span>{t("header.updateModalDownloadGitHub")}</span>
@@ -149,7 +149,7 @@ export default function UpdateBadge() {
                     href={updateResult()?.downloadUrl}
                     target="_blank"
                     rel="noreferrer"
-                    class="inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] px-3.5 py-1.5 text-[12px] font-semibold text-white transition-opacity hover:opacity-95 cursor-pointer"
+                    class="inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] px-3.5 py-1.5 text-[12px] font-semibold text-[var(--accent-foreground)] transition-opacity hover:opacity-95 cursor-pointer"
                   >
                     <Download size={13} />
                     <span>{t("header.updateModalDownloadDirect")}</span>

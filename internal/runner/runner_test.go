@@ -299,3 +299,47 @@ printf '%s\n' '{"conversation_id":"conv-synth-99","event":"result","result":{"co
 		t.Fatalf("expected ExternalID conv-synth-99 persisted, got %+v", recStored)
 	}
 }
+
+func TestRunnerModelsEndpointsIncludeInstalledAndModels(t *testing.T) {
+	binDir := t.TempDir()
+	agyBinDir := filepath.Join(binDir, "bin")
+	if err := os.MkdirAll(agyBinDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GEMINI_HOME", binDir)
+	t.Setenv("PATH", agyBinDir)
+	agyScript := "#!/bin/sh\nprintf 'gemini-4-argon-thinking   Gemini 4 Argon (High)\\nclaude-sonnet-5-5-thinking Claude Sonnet 5.5 (Thinking)\\n'\n"
+	if err := os.WriteFile(filepath.Join(agyBinDir, "agy"), []byte(agyScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(agyBinDir, "claude"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	svc := NewService(t.TempDir(), nil, nil, filepath.Join(t.TempDir(), "store.json"))
+	mux := http.NewServeMux()
+	svc.RegisterRoutes(mux)
+
+	for _, ep := range []string{
+		"/api/hoxi/runner/antigravity/models?refresh=1",
+		"/api/hoxi/runner/claude-code/models",
+	} {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, ep, nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s returned %d: %s", ep, rec.Code, rec.Body.String())
+		}
+		var payload struct {
+			Installed bool              `json:"installed"`
+			Available bool              `json:"available"`
+			Default   string            `json:"default"`
+			Models    []RunnerModelItem `json:"models"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+			t.Fatalf("%s invalid JSON: %v", ep, err)
+		}
+		if !payload.Installed || !payload.Available || payload.Default == "" || len(payload.Models) == 0 {
+			t.Fatalf("%s expected installed=true, default!='', models>0, got: %+v", ep, payload)
+		}
+	}
+}

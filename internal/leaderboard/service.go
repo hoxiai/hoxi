@@ -16,11 +16,11 @@ type cachedEntry struct {
 }
 
 type Service struct {
-	mu         sync.RWMutex
-	client     *http.Client
-	baseURL    string
-	cache      map[string]cachedEntry
-	cacheTTL   time.Duration
+	mu       sync.RWMutex
+	client   *http.Client
+	baseURL  string
+	cache    map[string]cachedEntry
+	cacheTTL time.Duration
 }
 
 func NewService(baseURL string, client *http.Client) *Service {
@@ -119,14 +119,28 @@ func (s *Service) GetConnectableGateways(lang ...string) (*GatewaysResponse, err
 	req.Header.Set("User-Agent", "HoxiDesktop/1.0")
 
 	resp, err := s.client.Do(req)
-	if err != nil || resp.StatusCode != http.StatusOK {
+	if err != nil {
 		return s.fallbackGateways(normLang), nil
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return s.fallbackGateways(normLang), nil
+	}
 
 	var result GatewaysResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil || result.Data == nil {
 		return s.fallbackGateways(normLang), nil
+	}
+	// This is a directory, not Hoxi-operated inference or account authorization.
+	for i := range result.Data.Items {
+		item := &result.Data.Items[i]
+		if item.IsSelfOperated {
+			item.Badge = ""
+			item.Caveat = ""
+		}
+		item.IsSelfOperated = false
+		item.CanOneClickConnect = false
+		item.AuthURL = ""
 	}
 
 	s.mu.Lock()
@@ -240,42 +254,12 @@ func (s *Service) fallbackLeaderboard(dimension string, limit int, lang string) 
 }
 
 func (s *Service) fallbackGateways(lang string) *GatewaysResponse {
-	isZh := lang == "zh"
-	name := "AINode Direct Pro"
-	badge := "Official Pick · 1-Click Auth"
-	features := []string{"Low-latency direct routing", "100% full-weight thinking mode", "Instant top-up", "Never-expiring balance"}
-	caveat := "Enterprise-grade dedicated upstream channels with 1-click OAuth to Hoxi Desktop"
-	if isZh {
-		name = "AINode 极速专线"
-		badge = "自营推荐 · 一键直连"
-		features = []string{"国内双线直连", "100% 满血思考模式", "微信/支付宝充值", "余额永不过期"}
-		caveat = "高质量企业专线，支持一键免密授权至 Hoxi 桌面端"
-	}
 	return &GatewaysResponse{
 		Code:    200,
 		Message: "ok (cached offline fallback)",
 		Data: &GatewaysData{
-			Total: 1,
-			Items: []GatewayItem{
-				{
-					ID:                 "ainode-pro",
-					Name:               name,
-					Domain:             "ainode.run",
-					URL:                "https://api.ainode.run",
-					BaseURL:            "https://api.ainode.run/v1",
-					IsSelfOperated:     true,
-					CanOneClickConnect: true,
-					Badge:              badge,
-					SavingsPercent:     87,
-					PriceLabel:         "¥2.80 / M",
-					LatencyMs:          280,
-					Uptime:             "99.99%",
-					Models:             []string{"Claude Opus 5", "Claude Sonnet 5", "GPT-5.6 Sol", "Gemini 3.7 Flash"},
-					Features:           features,
-					Caveat:             caveat,
-					AuthURL:            "https://hoxi.ai/auth/authorize-desktop?gateway=ainode",
-				},
-			},
+			Total: 0,
+			Items: []GatewayItem{},
 		},
 	}
 }

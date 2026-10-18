@@ -4,6 +4,7 @@ import {
   Check,
   ChevronDown,
   Cpu,
+  Eye,
   KeyRound,
   Search,
   Star,
@@ -59,7 +60,7 @@ export default function ModelSelector() {
   });
 
   const connectedProviderRails = createMemo(() => {
-    const counts = new Map<string, { id: string; name: string; count: number; isCustom: boolean }>();
+    const counts = new Map<string, { id: string; name: string; count: number; isCustom: boolean; isRunner: boolean }>();
     for (const m of connectedModels()) {
       const existing = counts.get(m.providerID);
       if (existing) {
@@ -70,11 +71,14 @@ export default function ModelSelector() {
           name: m.providerName,
           count: 1,
           isCustom: isCustomOrConfiguredProvider(m.providerID),
+          isRunner: m.source === "runner",
         });
       }
     }
     return Array.from(counts.values()).sort((a, b) => {
-      if (a.isCustom !== b.isCustom) return a.isCustom ? -1 : 1;
+      const aPrio = a.isRunner || a.isCustom;
+      const bPrio = b.isRunner || b.isCustom;
+      if (aPrio !== bPrio) return aPrio ? -1 : 1;
       return a.name.localeCompare(b.name);
     });
   });
@@ -136,7 +140,9 @@ export default function ModelSelector() {
         const aFav = isFavoriteModel(a.providerID, a.modelID);
         const bFav = isFavoriteModel(b.providerID, b.modelID);
         if (aFav !== bFav) return aFav ? -1 : 1;
-        if (a.isCustom !== b.isCustom) return a.isCustom ? -1 : 1;
+        const aPrio = a.source === "runner" || a.isCustom;
+        const bPrio = b.source === "runner" || b.isCustom;
+        if (aPrio !== bPrio) return aPrio ? -1 : 1;
         return a.providerName.localeCompare(b.providerName);
       });
     }
@@ -346,12 +352,13 @@ export default function ModelSelector() {
                               aria-haspopup="dialog"
                               aria-expanded={details()?.model === item}
                               aria-label={`${t("models.viewDetails")}: ${item.modelName}`}
+                              title={t("models.viewDetails")}
                               onClick={(e) => {
                                 setDetails(details()?.model === item ? null : { model: item, anchor: e.currentTarget });
                               }}
-                              class="rounded-md px-1.5 py-1 text-[10.5px] text-[var(--text-muted)] hover:bg-[var(--bg-panel)] hover:text-[var(--accent-primary)] focus-visible:outline focus-visible:outline-[var(--accent-primary)] cursor-pointer"
+                              class={`rounded-md p-1 text-[var(--text-muted)] transition-opacity hover:bg-[var(--bg-panel)] hover:text-[var(--accent-primary)] focus-visible:outline focus-visible:outline-[var(--accent-primary)] cursor-pointer group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100 ${details()?.model === item ? "opacity-100" : "opacity-0"}`}
                             >
-                              {t("models.viewDetails")}
+                              <Eye size={13} />
                             </button>
                             <button
                               type="button"

@@ -127,7 +127,7 @@ export default function QuestionDock(props: { request: QuestionRequest }) {
                     onClick={() => setActiveTab(idx())}
                     class={`px-2 py-0.5 rounded-md text-[11px] font-mono transition-colors cursor-pointer ${
                       activeTab() === idx()
-                        ? "bg-[var(--accent-primary)] text-white font-semibold"
+                        ? "bg-[var(--accent-primary)] text-[var(--accent-foreground)] font-semibold"
                         : answered()
                           ? "bg-[var(--ok-surface)] text-[var(--ok-text)]"
                           : "bg-[var(--bg-panel)] text-[var(--text-muted)] hover:text-[var(--text-primary)]"
@@ -190,7 +190,7 @@ export default function QuestionDock(props: { request: QuestionRequest }) {
                             q().multiple ? "rounded-sm" : "rounded-full"
                           } border ${
                             isPicked()
-                              ? "border-[var(--accent-primary)] bg-[var(--accent-primary)] text-white"
+                              ? "border-[var(--accent-primary)] bg-[var(--accent-primary)] text-[var(--accent-foreground)]"
                               : "border-[var(--border-strong)] bg-transparent"
                           }`}
                         >
@@ -283,7 +283,7 @@ export default function QuestionDock(props: { request: QuestionRequest }) {
             type="button"
             onClick={() => void onSubmit()}
             disabled={!canSubmit() || sending() || rejecting()}
-            class="inline-flex items-center gap-1.5 rounded-lg bg-[var(--accent-primary)] px-3 py-1 text-[11.5px] font-medium text-white hover:opacity-90 disabled:opacity-40 transition-opacity cursor-pointer"
+            class="inline-flex items-center gap-1.5 rounded-lg bg-[var(--accent-primary)] px-3 py-1 text-[11.5px] font-medium text-[var(--accent-foreground)] hover:opacity-90 disabled:opacity-40 transition-opacity cursor-pointer"
           >
             <Show when={!sending()} fallback={<LoaderCircle size={12} class="animate-spin" />}>
               <Check size={12} />

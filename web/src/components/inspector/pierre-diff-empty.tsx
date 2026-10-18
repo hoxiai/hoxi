@@ -180,7 +180,7 @@ export default function DiffEmptyState(props: {
           <button
             type="button"
             onClick={() => setActiveAgent("build")}
-            class="inline-flex items-center gap-1.5 rounded-lg bg-[var(--accent-primary)] px-2.5 py-1 text-[11px] font-medium text-white hover:opacity-90 transition-opacity cursor-pointer"
+            class="inline-flex items-center gap-1.5 rounded-lg bg-[var(--accent-primary)] px-2.5 py-1 text-[11px] font-medium text-[var(--accent-foreground)] hover:opacity-90 transition-opacity cursor-pointer"
           >
             <Hammer size={11} />
             <span>{t("inspector.diffs.switchToBuildBtn")}</span>

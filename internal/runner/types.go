@@ -127,6 +127,7 @@ type RunnerModelItem struct {
 	Name       string `json:"name"`
 	ProviderID string `json:"providerID"`
 	Runtime    string `json:"runtime"`
+	Reasoning  bool   `json:"reasoning,omitempty"`
 }
 
 type SessionRecord struct {

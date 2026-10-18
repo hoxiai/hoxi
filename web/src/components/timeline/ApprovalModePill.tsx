@@ -176,7 +176,7 @@ export default function ApprovalModePill() {
                             ? "bg-[var(--warn-text)] text-white"
                             : opt.id === "auto"
                               ? "bg-[var(--ok-text)] text-white"
-                              : "bg-[var(--accent-primary)] text-white"
+                              : "bg-[var(--accent-primary)] text-[var(--accent-foreground)]"
                           : "bg-[var(--bg-inset)] text-[var(--text-muted)]"
                       }`}
                     >

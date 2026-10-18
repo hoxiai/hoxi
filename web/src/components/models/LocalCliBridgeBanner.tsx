@@ -1,8 +1,8 @@
 // web/src/components/models/LocalCliBridgeBanner.tsx
 import { createSignal, For, onMount, Show } from "solid-js";
-import { ArrowRightLeft, Check, Sparkles, Terminal } from "lucide-solid";
+import { ArrowRightLeft, Check, RefreshCw, Sparkles, Terminal } from "lucide-solid";
 import { hoxiAPI, type LocalCLIStatusItem } from "../../services/api";
-import { openHandoffModal, refreshProviders, setWorkspace } from "../../store/workspace";
+import { openHandoffModal, setWorkspace, syncLocalCLIModel } from "../../store/workspace";
 import { t } from "../../i18n";
 
 export default function LocalCliBridgeBanner() {
@@ -21,18 +21,13 @@ export default function LocalCliBridgeBanner() {
 
   onMount(() => void load());
 
-  const onImport = async (toolID: string) => {
+  const onImport = async (tool: LocalCLIStatusItem) => {
     if (busyID()) return;
-    setBusyID(toolID);
+    setBusyID(tool.id);
     setErrorMsg(null);
     try {
-      const res = await hoxiAPI.importLocalCLI(toolID);
-      if (res.ok) {
-        await refreshProviders();
-        await load();
-      } else if (res.error) {
-        setErrorMsg(res.error);
-      }
+      const res = await syncLocalCLIModel(tool);
+      setTools(res.tools.filter((item) => item.installed));
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : String(err));
     } finally {
@@ -88,18 +83,32 @@ export default function LocalCliBridgeBanner() {
                   when={!tool.connected && tool.authenticated}
                   fallback={
                     <Show when={tool.connected}>
-                      <span class="inline-flex items-center gap-1 rounded-full bg-[var(--ok-surface)] px-2 py-0.5 text-[10px] font-semibold text-[var(--ok-text)] shrink-0">
-                        <Check size={10} />
-                        {t("leftNav.handoffCliConnected")}
-                      </span>
+                      <div class="flex items-center gap-1 shrink-0">
+                        <span class="inline-flex items-center gap-1 rounded-full bg-[var(--ok-surface)] px-2 py-0.5 text-[10px] font-semibold text-[var(--ok-text)]">
+                          <Check size={10} />
+                          {t("leftNav.handoffCliConnected")}
+                        </span>
+                        <button
+                          type="button"
+                          disabled={busyID() === tool.id}
+                          onClick={() => void onImport(tool)}
+                          class="rounded-md p-1 text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+                          title={t("leftNav.handoffCliSyncModel")}
+                        >
+                          <RefreshCw
+                            size={11}
+                            class={busyID() === tool.id ? "animate-spin" : ""}
+                          />
+                        </button>
+                      </div>
                     </Show>
                   }
                 >
                   <button
                     type="button"
                     disabled={busyID() === tool.id}
-                    onClick={() => void onImport(tool.id)}
-                    class="inline-flex items-center gap-1 rounded-lg bg-[var(--accent-primary)] px-2.5 py-1 text-[11px] font-medium text-white hover:opacity-90 shrink-0 cursor-pointer"
+                    onClick={() => void onImport(tool)}
+                    class="inline-flex items-center gap-1 rounded-lg bg-[var(--accent-primary)] px-2.5 py-1 text-[11px] font-medium text-[var(--accent-foreground)] hover:opacity-90 shrink-0 cursor-pointer"
                   >
                     <Sparkles size={11} />
                     {busyID() === tool.id

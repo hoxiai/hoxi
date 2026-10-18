@@ -1,6 +1,7 @@
 // web/src/i18n/locales/en-US/leftNav.ts
 
 export const leftNav = {
+  accountSignOutFailed: "Sign out could not be confirmed. Please try again.",
   newThread: "New Thread",
   creating: "Creating…",
   multiProject: "Multi-Project",
@@ -82,6 +83,8 @@ export const leftNav = {
   handoffCliBannerTitle: "Detected Tools",
   handoffCliBannerDesc: "Local CLI sessions available for handoff",
   handoffCliImportBtn: "Import Models",
+  handoffCliSyncModel: "Sync and select the CLI model",
+  handoffCliModelUnavailable: "The CLI model ({model}) is unavailable in Hoxi. The current model was not changed.",
   handoffCliImporting: "Importing…",
   handoffCliConnected: "Connected",
   handoffCliSessionsBadge: "{count}",

@@ -10,7 +10,6 @@ export const toolCard = {
   diff: "Diff Changes",
   file: "Target File",
   elapsed: "Elapsed: {time}s",
-  inspectSubagent: "Inspect Subagent",
   undo: "Undo",
   loaded: "Loaded",
   arguments: "Arguments",

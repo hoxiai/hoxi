@@ -12,6 +12,7 @@ import {
 } from "../store/workspace";
 import { forkFromMessage, removeSessionFromStore, selectSession } from "../store/workspace-sessions";
 import { submitSessionPrompt } from "../store/workspace-session-messages";
+import { privacy, setPrivacy } from "../store/privacy";
 import { drainNextQueuedPrompt, enqueueSessionPrompt, sendQueuedPromptNow } from "../store/workspace-queue-subagents";
 import { assertDeepEqual, assertEqual, assertTrue, describe, it } from "./test-harness";
 
@@ -27,6 +28,8 @@ const configB: SessionAIConfig = {
 let nextID = 0;
 
 async function withAIFixture(run: (a: string, b: string, storage: Storage) => void | Promise<void>) {
+  const savedPrivacy = { ...privacy };
+  setPrivacy({ loaded: true, accepted: true, saving: false });
   const saved = structuredClone(unwrap(workspace));
   const originalAPI = { ...hoxiAPI };
   const storageDescriptor = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
@@ -67,6 +70,7 @@ async function withAIFixture(run: (a: string, b: string, storage: Storage) => vo
     for (const id of [a, b]) setWorkspace("messagesBySession", id, [turn(id, { role: "user" })]);
     await run(a, b, storage);
   } finally {
+    setPrivacy(savedPrivacy);
     Object.assign(hoxiAPI, originalAPI);
     setWorkspace(reconcile(saved));
     globalThis.setTimeout = originalTimeout;
@@ -87,6 +91,30 @@ function assertDisplayed(config: SessionAIConfig) {
 }
 
 describe("session AI configuration", () => {
+  it("rejects model-less OpenCode prompts before creation, queueing or dispatch", async () => {
+    await withAIFixture(async (a) => {
+      setWorkspace("defaultAI", "model", null);
+      initializeSessionAI(a, { ...defaults, model: null });
+      setWorkspace("statusBySession", a, { type: "busy" });
+      let sends = 0;
+      let creates = 0;
+      hoxiAPI.sendPromptAsync = async () => { sends++; };
+      hoxiAPI.createSession = async () => { creates++; throw new Error("must not create"); };
+      const messages = structuredClone(unwrap(workspace.messagesBySession));
+      for (const target of [a, null]) {
+        setWorkspace("activeSessionID", target);
+        let error: unknown;
+        try { await submitSessionPrompt("no implicit model", target); }
+        catch (caught) { error = caught; }
+        assertTrue(error instanceof Error);
+      }
+      assertEqual(sends, 0);
+      assertEqual(creates, 0);
+      assertDeepEqual(workspace.queuedPromptsBySession, {});
+      assertDeepEqual(workspace.messagesBySession, messages);
+    });
+  });
+
   it("restores the historical model while preserving effort and agent patched during history loading", async () => {
     await withAIFixture(async (a) => {
       let resolveHistory!: (turns: MessageTurn[]) => void;

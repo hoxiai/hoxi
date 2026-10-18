@@ -1,7 +1,7 @@
 // web/src/store/auth-state.ts
 import { createStore } from "solid-js/store";
 import { authAPI, type AuthStatusSnapshot, type AuthUserProfile } from "../services/api";
-import { setAppSettings, updateAppSetting } from "./settings";
+import { setAppSettings, signOutUserAccount, updateAppSetting } from "./settings";
 
 export interface DesktopAuthState {
   isLoggedIn: boolean;
@@ -24,6 +24,7 @@ export const [desktopAuth, setDesktopAuth] = createStore<DesktopAuthState>({
 });
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
+let logoutGeneration = 0;
 
 function stopPolling() {
   if (pollTimer) {
@@ -33,8 +34,10 @@ function stopPolling() {
 }
 
 export async function refreshAuthStatus(): Promise<AuthStatusSnapshot | null> {
+  const generation = logoutGeneration;
   try {
     const snap = await authAPI.getStatus();
+    if (generation !== logoutGeneration) return null;
     setDesktopAuth({
       isLoggedIn: snap.isLoggedIn,
       isAuthorizing: snap.isAuthorizing,
@@ -60,6 +63,7 @@ export async function refreshAuthStatus(): Promise<AuthStatusSnapshot | null> {
 
     return snap;
   } catch (err: any) {
+    if (generation !== logoutGeneration) return null;
     setDesktopAuth("error", err?.message || "Failed to fetch auth status");
     return null;
   }
@@ -97,10 +101,13 @@ export function cancelDesktopAuthorization() {
 export async function logoutDesktopAccount(): Promise<void> {
   stopPolling();
   try {
-    await authAPI.logout();
-  } catch {
-    /* ignore network error */
+    const result = await authAPI.logout();
+    if (!result.success) throw new Error("Logout was not confirmed");
+  } catch (err) {
+    setDesktopAuth("error", err instanceof Error ? err.message : "Logout failed");
+    throw err;
   }
+  logoutGeneration++;
   setDesktopAuth({
     isLoggedIn: false,
     isAuthorizing: false,
@@ -108,5 +115,5 @@ export async function logoutDesktopAccount(): Promise<void> {
     expiresAt: null,
     error: null,
   });
-  setAppSettings("userLoggedIn", false);
+  signOutUserAccount();
 }

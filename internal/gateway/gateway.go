@@ -21,6 +21,7 @@ import (
 	"github.com/hoxiai/hoxi/internal/buildinfo"
 	"github.com/hoxiai/hoxi/internal/handoff"
 	"github.com/hoxiai/hoxi/internal/leaderboard"
+	"github.com/hoxiai/hoxi/internal/privacy"
 	"github.com/hoxiai/hoxi/internal/provider"
 	"github.com/hoxiai/hoxi/internal/runner"
 	"github.com/hoxiai/hoxi/internal/statusbar"
@@ -46,6 +47,7 @@ type Gateway struct {
 	auth                  *auth.Service
 	updater               *updater.Checker
 	leaderboard           *leaderboard.Service
+	privacy               *privacy.Service
 	onOpenDirectoryDialog func() (string, error)
 	dialogMu              sync.RWMutex
 	originMu              sync.RWMutex
@@ -117,6 +119,7 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 		auth:         authSvc,
 		updater:      updaterSvc,
 		leaderboard:  leaderboardSvc,
+		privacy:      privacy.New(""),
 	}
 
 	g.registerRoutes(distFS)
@@ -166,10 +169,14 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if !g.guardPrivacy(w, r) {
+		return
+	}
 	g.mux.ServeHTTP(w, r)
 }
 
 func (g *Gateway) registerRoutes(distFS fs.FS) {
+	g.mux.HandleFunc("/api/hoxi/privacy", g.handlePrivacy)
 	g.mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	})
@@ -180,10 +187,11 @@ func (g *Gateway) registerRoutes(distFS fs.FS) {
 			st = g.status.Snapshot()
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"appVersion": buildinfo.Version,
-			"rootDir":    g.rootDir,
-			"wsBaseURL":  g.wsBaseURL,
-			"status":     st,
+			"appVersion":   buildinfo.Version,
+			"rootDir":      g.rootDir,
+			"wsBaseURL":    g.wsBaseURL,
+			"status":       st,
+			"privacyScope": privacy.Scope,
 		})
 	})
 

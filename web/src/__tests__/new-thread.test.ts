@@ -25,7 +25,7 @@ async function withDraftFixture(run: (calls: string[]) => void | Promise<void>) 
   };
   Object.defineProperty(globalThis, "localStorage", { configurable: true, value: storage });
   Object.defineProperty(globalThis, "document", { configurable: true, value: {
-    documentElement: { classList: { toggle() {} }, style: { setProperty() {} } },
+    documentElement: { classList: { toggle() {} }, dataset: {}, style: { setProperty() {} } },
   } });
   for (const key of Object.keys(originalAPI)) {
     Object.assign(hoxiAPI, { [key]: async () => {

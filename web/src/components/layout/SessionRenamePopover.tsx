@@ -65,7 +65,7 @@ export function SessionRenamePopover(props: {
           if (title) props.onSave(title);
         }}
       >
-        <label class="block text-xs font-medium text-[var(--text-primary)]">
+        <label class="block text-[12px] font-medium text-[var(--text-primary)]">
           {t("leftNav.renameSessionTooltip")}
           <input
             ref={input}
@@ -80,10 +80,10 @@ export function SessionRenamePopover(props: {
           />
         </label>
         <div class="mt-3 flex justify-end gap-2">
-          <button type="button" onClick={() => props.onClose()} class="rounded-md px-2.5 py-1 text-xs text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]">
+          <button type="button" onClick={() => props.onClose()} class="rounded-md px-2.5 py-1 text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]">
             {t("common.cancel")}
           </button>
-          <button type="submit" disabled={!draft().trim()} class="rounded-md bg-[var(--accent-surface)] px-2.5 py-1 text-xs font-medium text-[var(--accent-primary)] hover:bg-[var(--bg-hover)] disabled:opacity-40">
+          <button type="submit" disabled={!draft().trim()} class="rounded-md bg-[var(--accent-surface)] px-2.5 py-1 text-[12px] font-medium text-[var(--accent-primary)] hover:bg-[var(--bg-hover)] disabled:opacity-40">
             {t("common.save")}
           </button>
         </div>

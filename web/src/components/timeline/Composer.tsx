@@ -11,6 +11,7 @@ import {
   appSettings,
   clearReviewComments,
   consumeComposerDraftEdit,
+  ensureAIConsent,
   forkFromMessage,
   isSessionBusy,
   sessionRuntimeForID,
@@ -192,6 +193,7 @@ export default function Composer() {
     const payload = buildPayloadWithReviews();
     const attachments = imgAttach.toPromptAttachments();
     if ((!payload && attachments.length === 0) || sending() || switchingSandbox()) return;
+    if (!ensureAIConsent()) return;
     const draftSessionID = sessionID();
     const draftDirectory = workspace.rootDir;
     const draft = { text: text(), images: imgAttach.images(), pastes: pasteCollapse.pastes() };
@@ -407,7 +409,7 @@ export default function Composer() {
               <Show when={workspace.rootDir} fallback={
                 <button type="button" onClick={() => void chooseFolder()} disabled={choosingFolder()}
                   title={t("timeline.selectFolderHint")}
-                  class="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs text-[var(--text-muted)] hover:bg-[var(--bg-hover)] disabled:opacity-50 cursor-pointer">
+                  class="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[12px] text-[var(--text-muted)] hover:bg-[var(--bg-hover)] disabled:opacity-50 cursor-pointer">
                   <FolderOpen size={14} />{t("timeline.selectFolder")}
                 </button>
               }>
@@ -432,7 +434,7 @@ export default function Composer() {
                 <Show when={canSend()}>
                   <button
                     type="button"
-                    class="inline-flex h-7 w-7 items-center justify-center rounded-full bg-[var(--accent-primary)] text-white shadow-xs hover:opacity-90 transition-all cursor-pointer"
+                    class="inline-flex h-7 w-7 items-center justify-center rounded-full bg-[var(--accent-primary)] text-[var(--accent-foreground)] shadow-xs hover:opacity-90 transition-all cursor-pointer"
                     onClick={onSend}
                     title={t("timeline.queueSend")}
                   >
@@ -464,7 +466,7 @@ export default function Composer() {
               <Show when={!busy()}>
                 <button
                   type="button"
-                  class="inline-flex h-7 w-7 items-center justify-center rounded-full bg-[var(--accent-primary)] text-white shadow-xs hover:opacity-90 disabled:opacity-30 disabled:cursor-not-allowed transition-all cursor-pointer"
+                  class="inline-flex h-7 w-7 items-center justify-center rounded-full bg-[var(--accent-primary)] text-[var(--accent-foreground)] shadow-xs hover:opacity-90 disabled:opacity-30 disabled:cursor-not-allowed transition-all cursor-pointer"
                   disabled={!canSend()}
                   onClick={onSend}
                   title={`${t("timeline.send")} (${

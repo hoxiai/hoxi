@@ -137,9 +137,9 @@ export const models: ModelsI18n = {
   smallModelTitle: "快速 / 轻量模型",
   smallModelDesc:
     "用于生成会话标题、快速摘要和低延迟辅助任务",
-  subagentModelTitle: "子智能体专用模型",
+  subagentModelTitle: "Sub-agent专用模型",
   subagentModelDesc:
-    "运行后台并发子智能体时采用的专用模型",
+    "运行后台并发Sub-agent时采用的专用模型",
   compactionModelTitle: "记忆压缩模型",
   compactionModelDesc:
     "8维结构化记忆压缩插件所使用的总结模型",

@@ -28,12 +28,14 @@ export interface SSEHandlers {
   onConnectionChange?: (connected: boolean) => void;
 }
 
-export function connectEventStream(handlers: SSEHandlers, directory?: string): () => void {
+export function connectEventStream(handlers: SSEHandlers, directory?: string, wsBaseURL = ""): () => void {
+  // Wails' macOS scheme handler has no http.Flusher; use the existing loopback server.
+  const base = wsBaseURL.replace(/^ws:/, "http:").replace(/^wss:/, "https:").replace(/\/$/, "");
   const url = directory
     ? `/event?directory=${encodeURIComponent(directory)}`
     : "/global/event";
-  const source = new EventSource(url);
-  const runnerSource = new EventSource("/api/hoxi/runner/event");
+  const source = new EventSource(`${base}${url}`);
+  const runnerSource = new EventSource(`${base}/api/hoxi/runner/event`);
 
   const infoMap = new Map<string, MessageInfo>();
   const partMap = new Map<string, MessagePart>();

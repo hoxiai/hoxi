@@ -189,7 +189,7 @@ export function ComposerSandboxPill(props: {
               <div
                 class={`mt-0.5 p-1 rounded-lg shrink-0 ${
                   props.mode === "local"
-                    ? "bg-[var(--accent-primary)] text-white"
+                    ? "bg-[var(--accent-primary)] text-[var(--accent-foreground)]"
                     : "bg-[var(--bg-inset)] text-[var(--text-muted)]"
                 }`}
               >
@@ -224,7 +224,7 @@ export function ComposerSandboxPill(props: {
               <div
                 class={`mt-0.5 p-1 rounded-lg shrink-0 ${
                   props.mode === "worktree"
-                    ? "bg-[var(--accent-primary)] text-white"
+                    ? "bg-[var(--accent-primary)] text-[var(--accent-foreground)]"
                     : "bg-[var(--bg-inset)] text-[var(--text-muted)]"
                 }`}
               >
@@ -264,7 +264,7 @@ export function ComposerSandboxPill(props: {
                 type="button"
                 disabled={!canCommitOrPush() || Boolean(gitAction()) || props.busy}
                 onClick={() => void handleGitCommitAction(true)}
-                class="flex-1 min-w-0 flex items-center justify-between gap-1.5 rounded-xl bg-[var(--accent-primary)] px-2.5 py-1.5 text-[12px] font-medium text-white hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-opacity cursor-pointer"
+                class="flex-1 min-w-0 flex items-center justify-between gap-1.5 rounded-xl bg-[var(--accent-primary)] px-2.5 py-1.5 text-[12px] font-medium text-[var(--accent-foreground)] hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-opacity cursor-pointer"
               >
                 <span class="inline-flex items-center gap-1.5 min-w-0 truncate">
                   <Show

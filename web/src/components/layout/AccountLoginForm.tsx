@@ -47,7 +47,7 @@ export default function AccountLoginForm(_props: AccountLoginFormProps) {
             <button
               type="button"
               onClick={handleStartOneClick}
-              class="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 px-3.5 py-2.5 text-[12px] font-semibold text-white shadow-sm hover:shadow transition-all active:scale-[0.99] cursor-pointer"
+              class="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-[var(--accent-primary)] hover:opacity-90 px-3.5 py-2.5 text-[12px] font-semibold text-[var(--accent-foreground)] shadow-sm hover:shadow transition-all active:scale-[0.99] cursor-pointer"
             >
               <Globe size={14} />
               <span>{t("settings.accountOneClickLoginBtn")}</span>

@@ -238,6 +238,10 @@ func (s *Service) ExchangeToken(ctx context.Context, handoffToken, state string)
 
 func (s *Service) Logout(ctx context.Context) error {
 	s.mu.Lock()
+	if err := s.store.Clear(); err != nil {
+		s.mu.Unlock()
+		return fmt.Errorf("failed to clear local credentials: %w", err)
+	}
 	s.cancelPendingLocked()
 	s.generation++
 	token := ""
@@ -246,21 +250,28 @@ func (s *Service) Logout(ctx context.Context) error {
 	}
 	s.current = nil
 	baseURL := s.serverBaseURL
-	err := s.store.Clear()
 	s.mu.Unlock()
 
 	if token != "" {
 		revokeURL := fmt.Sprintf("%s/api/hoxi/device-tokens/revoke", baseURL)
-		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, revokeURL, nil)
-		if req != nil {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, revokeURL, nil)
+		if err == nil {
 			req.Header.Set("Authorization", "Bearer "+token)
-			if resp, err := s.httpClient.Do(req); err == nil {
+			var resp *http.Response
+			resp, err = s.httpClient.Do(req)
+			if err == nil {
 				_ = resp.Body.Close()
+				if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+					err = fmt.Errorf("revoke returned HTTP %d", resp.StatusCode)
+				}
 			}
+		}
+		if err != nil && s.logger != nil {
+			s.logger.Warn("local logout completed; remote device token revocation was not confirmed", "error", err)
 		}
 	}
 
-	return err
+	return nil
 }
 
 func (s *Service) cancelPendingLocked() {
@@ -388,11 +399,14 @@ func (s *Service) verifyBackground(auth *StoredAuth, baseURL string, generation 
 		if s.logger != nil {
 			s.logger.Warn("device token revoked on server, resetting local auth")
 		}
+		if err := s.store.Clear(); err != nil {
+			if s.logger != nil {
+				s.logger.Error("failed to clear revoked credentials", "error", err)
+			}
+			return
+		}
 		s.current = nil
 		s.generation++
-		if err := s.store.Clear(); err != nil && s.logger != nil {
-			s.logger.Error("failed to clear revoked credentials", "error", err)
-		}
 		return
 	}
 

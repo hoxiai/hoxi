@@ -15,6 +15,11 @@ jobs:
     runs-on: macos-latest
     permissions:
       contents: write
+    env:
+      HOXI_SPARKLE_DIR: ${{ runner.temp }}/sparkle
+      HOXI_SPARKLE_PUBLIC_KEY: ${{ secrets.HOXI_SPARKLE_PUBLIC_KEY }}
+      HOXI_SPARKLE_FEED_URL: ${{ vars.HOXI_SPARKLE_FEED_URL }}
+      HOXI_SPARKLE_PRIVATE_KEY_FILE: ${{ runner.temp }}/sparkle-private-key
 
     steps:
       - name: Checkout repository
@@ -52,6 +57,39 @@ jobs:
           go vet ./...
           go test -race -count=1 ./...
           go build -tags desktop ./...
+
+      - name: Prepare pinned distribution tools
+        env:
+          SPARKLE_URL: ${{ vars.HOXI_SPARKLE_ARCHIVE_URL }}
+          SPARKLE_SHA256: ${{ vars.HOXI_SPARKLE_ARCHIVE_SHA256 }}
+          OPENCODE_URL: ${{ vars.HOXI_OPENCODE_ARCHIVE_URL }}
+          OPENCODE_SHA256: ${{ vars.HOXI_OPENCODE_ARCHIVE_SHA256 }}
+          SPARKLE_PRIVATE_KEY: ${{ secrets.HOXI_SPARKLE_PRIVATE_KEY }}
+          HOXI_RELEASE_KEY: ${{ secrets.HOXI_RELEASE_KEY }}
+        run: |
+          : "${HOXI_SPARKLE_PUBLIC_KEY:?Sparkle public key required}"
+          : "${HOXI_SPARKLE_FEED_URL:?Official feed URL required}"
+          : "${SPARKLE_PRIVATE_KEY:?Sparkle private key required}"
+          : "${HOXI_RELEASE_KEY:?Website publication credential required}"
+          : "${SPARKLE_URL:?Pinned official Sparkle archive URL required}"
+          : "${SPARKLE_SHA256:?Sparkle SHA-256 required}"
+          : "${OPENCODE_URL:?Pinned official OpenCode tar.gz URL required}"
+          : "${OPENCODE_SHA256:?OpenCode SHA-256 required}"
+          [[ "$SPARKLE_URL" == https://github.com/sparkle-project/Sparkle/releases/download/* ]]
+          [[ "$OPENCODE_URL" == https://github.com/anomalyco/opencode/releases/download/* ]]
+          [[ "$SPARKLE_SHA256" =~ ^[a-f0-9]{64}$ && "$OPENCODE_SHA256" =~ ^[a-f0-9]{64}$ ]]
+          curl --fail --location --proto '=https' --proto-redir '=https' "$SPARKLE_URL" -o "$RUNNER_TEMP/sparkle.tar.xz"
+          printf '%s  %s\n' "$SPARKLE_SHA256" "$RUNNER_TEMP/sparkle.tar.xz" | shasum -a 256 -c -
+          mkdir -p "$HOXI_SPARKLE_DIR" "$RUNNER_TEMP/opencode"
+          tar -xf "$RUNNER_TEMP/sparkle.tar.xz" -C "$HOXI_SPARKLE_DIR"
+          curl --fail --location --proto '=https' --proto-redir '=https' "$OPENCODE_URL" -o "$RUNNER_TEMP/opencode.tar.gz"
+          printf '%s  %s\n' "$OPENCODE_SHA256" "$RUNNER_TEMP/opencode.tar.gz" | shasum -a 256 -c -
+          tar -xf "$RUNNER_TEMP/opencode.tar.gz" -C "$RUNNER_TEMP/opencode"
+          test -x "$RUNNER_TEMP/opencode/opencode"
+          echo "HOXI_OPENCODE=$RUNNER_TEMP/opencode/opencode" >> "$GITHUB_ENV"
+          umask 077
+          printf '%s' "$SPARKLE_PRIVATE_KEY" > "$HOXI_SPARKLE_PRIVATE_KEY_FILE"
+          node scripts/sparkle.mjs check
 
       - name: Import Apple Developer Certificate
         env:
@@ -98,9 +136,10 @@ jobs:
         run: |
           DMG="build/bin/Hoxi-${RELEASE_VERSION}-darwin-arm64.dmg"
           mv build/bin/Hoxi.dmg "$DMG"
-          node scripts/release-artifact.mjs verify-dmg "$DMG" "$RELEASE_VERSION"
+          node scripts/release-artifact.mjs verify-dmg "$DMG" "$RELEASE_VERSION" > build/bin/release-artifact.json
           node scripts/release-artifact.mjs verify-distribution "$DMG"
           (cd build/bin && shasum -a 256 "Hoxi-${RELEASE_VERSION}-darwin-arm64.dmg" > checksums.txt)
+          node scripts/sparkle.mjs sign-update "$DMG" "$RELEASE_VERSION" build/bin/sparkle.json
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -108,10 +147,27 @@ jobs:
           files: |
             build/bin/Hoxi-${{ env.RELEASE_VERSION }}-darwin-arm64.dmg
             build/bin/checksums.txt
+            build/bin/sparkle.json
           fail_on_unmatched_files: true
           generate_release_notes: true
           draft: false
           prerelease: false
+
+      - name: Publish website metadata after asset upload
+        env:
+          HOXI_RELEASE_KEY: ${{ secrets.HOXI_RELEASE_KEY }}
+          HOXI_RELEASE_API_URL: ${{ vars.HOXI_RELEASE_API_URL }}
+        run: |
+          node --input-type=module - "$RELEASE_VERSION" <<'JS' | node scripts/release-publisher.mjs
+          import fs from 'node:fs';
+          import crypto from 'node:crypto';
+          const version = process.argv[2];
+          const bytes = fs.readFileSync(`build/bin/Hoxi-${version}-darwin-arm64.dmg`);
+          const verified = JSON.parse(fs.readFileSync('build/bin/release-artifact.json', 'utf8'));
+          console.log(JSON.stringify({...verified, version, notes: `Hoxi Desktop v${version}`, size: bytes.length,
+            sha256: crypto.createHash('sha256').update(bytes).digest('hex'),
+            sparkle: JSON.parse(fs.readFileSync('build/bin/sparkle.json', 'utf8'))}));
+          JS
 
       - name: Clean up signing credentials
         if: always()
@@ -120,3 +176,4 @@ jobs:
             security delete-keychain "$KEYCHAIN_PATH"
           fi
           rm -f "$RUNNER_TEMP/certificate.p12"
+          rm -f "$HOXI_SPARKLE_PRIVATE_KEY_FILE"

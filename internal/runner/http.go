@@ -118,10 +118,19 @@ func (s *Service) handleAntigravityModels(w http.ResponseWriter, r *http.Request
 		writeJSONError(w, http.StatusMethodNotAllowed, "GET required")
 		return
 	}
-	models, _, _ := DiscoverAgyModels()
+	forceRefresh := r.URL.Query().Get("refresh") == "1" || r.URL.Query().Get("refresh") == "true"
+	bin := ResolveAgyBinary()
+	models, _, _ := DiscoverAgyModelsWithRefresh(forceRefresh)
+	defaultModel := ""
+	if len(models) > 0 {
+		defaultModel = models[0].ID
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"available": ResolveAgyBinary() != "",
-		"models":    models,
+		"installed":  bin != "",
+		"available":  bin != "",
+		"binaryPath": bin,
+		"default":    defaultModel,
+		"models":     models,
 	})
 }
 
@@ -130,10 +139,18 @@ func (s *Service) handleClaudeModels(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusMethodNotAllowed, "GET required")
 		return
 	}
+	bin := ResolveClaudeBinary()
 	models := DiscoverClaudeModels()
+	defaultModel := ""
+	if len(models) > 0 {
+		defaultModel = models[0].ID
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"available": ResolveClaudeBinary() != "",
-		"models":    models,
+		"installed":  bin != "",
+		"available":  bin != "",
+		"binaryPath": bin,
+		"default":    defaultModel,
+		"models":     models,
 	})
 }
 

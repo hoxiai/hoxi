@@ -405,10 +405,10 @@ export const hoxiAPI = {
   revertWorktreeFile(sessionID: string, file: string): Promise<{ ok: boolean }> {
     return requestJSON("/api/hoxi/worktree/revert-file", { method: "POST", body: JSON.stringify({ sessionID, file }) });
   },
-  commitWorktree(sessionID: string, message: string, opts?: { push?: boolean; directory?: string }): Promise<import("./api-types").CommitAndPushResponse> {
+  commitWorktree(sessionID: string, message: string, opts?: { push?: boolean; directory?: string; sessionDiffs?: SnapshotFileDiff[] }): Promise<import("./api-types").CommitAndPushResponse> {
     return requestJSON("/api/hoxi/worktree/commit", {
       method: "POST",
-      body: JSON.stringify({ sessionID, message, ...(opts?.push ? { push: true } : {}), ...(opts?.directory ? { directory: opts.directory } : {}) }),
+      body: JSON.stringify({ sessionID, message, ...(opts?.push ? { push: true } : {}), ...(opts?.directory ? { directory: opts.directory } : {}), ...(opts?.sessionDiffs !== undefined ? { sessionDiffs: opts.sessionDiffs } : {}) }),
     });
   },
   pushWorktree(sessionID: string, directory?: string): Promise<import("./api-types").CommitAndPushResponse> {
@@ -475,4 +475,3 @@ export const hoxiAPI = {
   getLocalCLIStatus(): Promise<import("./api-types").LocalCLIStatusResponse> { return requestJSON("/api/hoxi/local-cli/status"); },
   importLocalCLI(toolID: string): Promise<import("./api-types").LocalCLIImportResponse> { return requestJSON("/api/hoxi/local-cli/import", { method: "POST", body: JSON.stringify({ toolID }) }); },
 };
-

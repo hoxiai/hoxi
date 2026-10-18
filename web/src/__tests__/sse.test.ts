@@ -29,6 +29,33 @@ class MockEventSource {
 }
 
 describe("SSE client & 120Hz rAF delta batching", () => {
+  for (const [base, expected] of [
+    ["ws://127.0.0.1:42817", "http://127.0.0.1:42817"],
+    ["wss://localhost:42817/", "https://localhost:42817"],
+  ]) {
+    it(`uses the HTTP streaming server for ${base}`, () => {
+      const g = globalThis as Record<string, unknown>;
+      const original = g.EventSource;
+      g.EventSource = MockEventSource;
+      let disconnect: (() => void) | undefined;
+      try {
+        const start = MockEventSource.instances.length;
+        const events: string[] = [];
+        disconnect = connectEventStream({ onEvent: (evt) => events.push(evt.type), onDeltaBatch: () => {} }, undefined, base);
+        const [source, runner] = MockEventSource.instances.slice(start);
+        assertEqual(source.url, `${expected}/global/event`);
+        assertEqual(runner.url, `${expected}/api/hoxi/runner/event`);
+        runner.onmessage?.({ data: JSON.stringify({ type: "session.idle", properties: { sessionID: "ses_agy_test" } }) });
+        assertDeepEqual(events, ["session.idle"]);
+        disconnect();
+        assertTrue(source.closed && runner.closed);
+      } finally {
+        disconnect?.();
+        g.EventSource = original;
+      }
+    });
+  }
+
   for (const type of ["session.created", "session.updated"] as const) {
     it(`isolates ${type} list admission without filtering global background events`, () => {
       const saved = structuredClone(unwrap(workspace));

@@ -44,6 +44,7 @@
 
   /* Primary Brand Accent (Hoxi Blue) */
   --accent-primary: #2563eb;
+  --accent-foreground: #ffffff;
   --accent-text: #1d4ed8;
   --accent-surface: rgba(37, 99, 235, 0.09);
   --accent-border: rgba(37, 99, 235, 0.26);
@@ -142,6 +143,62 @@
   --violet-text: #ddd6fe;
   --violet-surface: rgba(139, 92, 246, 0.14);
   --violet-border: rgba(139, 92, 246, 0.36);
+}
+
+:root[data-color-scheme="classic"] {
+  --bg-canvas: #f7f7f5;
+  --bg-panel: #ffffff;
+  --bg-elevated: #f0f0ee;
+  --bg-composer: rgba(255, 255, 255, 0.92);
+  --bg-inset: rgba(0, 0, 0, 0.035);
+  --bg-hover: rgba(0, 0, 0, 0.05);
+  --bg-selected: rgba(0, 0, 0, 0.07);
+  --bg-code: #f3f3f1;
+  --border-subtle: rgba(0, 0, 0, 0.08);
+  --border-strong: rgba(0, 0, 0, 0.16);
+  --border-focus: rgba(0, 0, 0, 0.45);
+  --island-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  --composer-shadow: 0 14px 32px -16px rgba(0, 0, 0, 0.14);
+  --bg-glass-pill: rgba(255, 255, 255, 0.75);
+  --border-glass-pill: rgba(255, 255, 255, 0.8);
+  --shadow-glass-pill: 0 4px 14px -4px rgba(0, 0, 0, 0.1);
+  --text-primary: #202020;
+  --text-secondary: #505050;
+  --text-muted: #6b6b6b;
+  --text-faint: #858585;
+  --accent-primary: #242424;
+  --accent-foreground: #ffffff;
+  --accent-text: #242424;
+  --accent-surface: rgba(0, 0, 0, 0.055);
+  --accent-border: rgba(0, 0, 0, 0.2);
+}
+
+:root.dark[data-color-scheme="classic"] {
+  --bg-canvas: #212121;
+  --bg-panel: #282828;
+  --bg-elevated: #333333;
+  --bg-composer: rgba(48, 48, 48, 0.95);
+  --bg-inset: rgba(255, 255, 255, 0.04);
+  --bg-hover: rgba(255, 255, 255, 0.065);
+  --bg-selected: rgba(255, 255, 255, 0.1);
+  --bg-code: #1b1b1b;
+  --border-subtle: rgba(255, 255, 255, 0.09);
+  --border-strong: rgba(255, 255, 255, 0.18);
+  --border-focus: rgba(255, 255, 255, 0.5);
+  --island-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  --composer-shadow: 0 16px 36px -16px rgba(0, 0, 0, 0.5);
+  --bg-glass-pill: rgba(48, 48, 48, 0.8);
+  --border-glass-pill: rgba(255, 255, 255, 0.1);
+  --shadow-glass-pill: 0 4px 14px -4px rgba(0, 0, 0, 0.4);
+  --text-primary: #ececec;
+  --text-secondary: #c2c2c2;
+  --text-muted: #a0a0a0;
+  --text-faint: #858585;
+  --accent-primary: #ececec;
+  --accent-foreground: #202020;
+  --accent-text: #ececec;
+  --accent-surface: rgba(255, 255, 255, 0.08);
+  --accent-border: rgba(255, 255, 255, 0.24);
 }
 
 * {

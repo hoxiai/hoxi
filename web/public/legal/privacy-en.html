@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Hoxi Privacy Notice | Review Draft</title>
+  <style>
+    :root { color-scheme: light; font-family: system-ui, sans-serif; color: #202c36; background: #f4f6f8; line-height: 1.7; }
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    main { max-width: 52rem; margin: 0 auto; padding: 2rem clamp(1rem, 4vw, 3rem) 4rem; background: #fff; }
+    nav { display: flex; flex-wrap: wrap; gap: .5rem 1.25rem; }
+    a { color: #075a9c; text-underline-offset: .2em; overflow-wrap: anywhere; }
+    a:focus-visible { outline: 3px solid #075a9c; outline-offset: 4px; }
+    h1, h2 { line-height: 1.3; color: #132735; }
+    h1 { font-size: clamp(1.8rem, 5vw, 2.5rem); }
+    h2 { margin-top: 2rem; font-size: 1.25rem; }
+    .notice { padding: 1rem; border-left: 4px solid #805700; background: #fff5d9; }
+    code { overflow-wrap: anywhere; }
+    li + li { margin-top: .5rem; }
+    footer { margin-top: 3rem; border-top: 1px solid #ccd5dc; padding-top: 1rem; }
+    @media print { :root { background: white; } main { max-width: none; padding: 0; } }
+  </style>
+</head>
+<body>
+<main id="main">
+  <nav aria-label="Legal documents">
+    <a href="privacy-zh.html" lang="zh-CN" hreflang="zh-CN">简体中文</a>
+    <a href="terms-en.html">Terms of Use</a>
+    <a href="https://hoxi.ai">Hoxi website</a>
+  </nav>
+  <header>
+    <h1>Privacy Notice</h1>
+    <p>Fastix Limited · Hoxi desktop and related services<br>Draft date / version: <time datetime="2026-10-18">2026-10-18</time></p>
+    <p class="notice"><strong>Operator legal-review draft, not a final published policy.</strong> Website backend processing has not been verified from this repository. Fastix Limited must confirm the matters identified below and obtain legal review before publication. This date identifies the draft, not an effective date.</p>
+  </header>
+  <section aria-labelledby="scope">
+    <h2 id="scope">1. Who and what this covers</h2>
+    <p>Fastix Limited operates Hoxi. Contact us for privacy or support at <a href="mailto:support@hoxi.ai">support@hoxi.ai</a>; our website is <a href="https://hoxi.ai">https://hoxi.ai</a>. This notice describes the desktop application's data flows and related Hoxi services. Intended service territories include mainland China, Hong Kong, Taiwan, the United States and other permitted regions; availability is subject to local law and provider restrictions, not a statement of regulatory approval.</p>
+    <p><strong>Hoxi is a bring-your-own-key/account (BYOK) tool, not an official AI inference service.</strong> You connect your own AI providers, custom endpoints or external command-line tools (CLIs). Fastix Limited is not your inference provider and does not automatically receive your prompts or host your AI conversations merely because you use Hoxi. Optional Hoxi account, update and discovery requests are separate from inference requests.</p>
+    <p>Selected AI providers, gateway operators, external CLIs and websites have their own practices and terms. Their actual operators and roles must be verified; a listing or recommendation does not make them a Fastix inference service.</p>
+  </section>
+  <section aria-labelledby="local">
+    <h2 id="local">2. Data on your device</h2>
+    <p>Hoxi and its local runtimes read and store project paths, files, code, Git worktrees and diffs, conversations, tool inputs and outputs, structured memory, preferences, browser session data and operational records as features require. Local provider performance records can include model identifiers, latency, errors and audit results. External CLIs and OpenCode maintain additional files under their own storage conventions.</p>
+    <p>Hoxi login credentials and profile information are stored in a local filesystem file, normally <code>~/.hoxi/auth.json</code>. Provider settings and credentials can also be stored in local configuration files, including <code>~/.hoxi/models.json</code> and runtime/CLI configuration. Hoxi's credential storage is not a macOS Keychain vault; filesystem permissions are not a promise of encryption at rest. Other tools may independently use their own credential stores. Protect your device, backups and configuration files; do not commit secrets to a repository.</p>
+  </section>
+  <section aria-labelledby="transmission">
+    <h2 id="transmission">3. Content sent to providers and tools</h2>
+    <p>When you use AI or agent features, prompts, conversation context, relevant code and files, diffs, memory, attachments and tool results may be sent to the selected model provider, configured gateway or external CLI and its services. Features such as session titles, commit-message generation, memory reflection and model-based review may also send relevant context. Transmission is not limited to text you manually paste.</p>
+    <p>Browser tools can read page text and DOM snapshots and capture screenshots; these may contain personal information, logged-in content or secrets and may become model/tool context. Visiting websites also sends requests to those sites. Terminal commands, plugins, MCP servers and external tools can contact additional services and access data within their permissions.</p>
+    <p>You can configure provider endpoints and, where supported, the Hoxi service endpoint. The receiving operator depends on your configuration; a custom gateway may forward content elsewhere. Verify the endpoint, permissions, provider terms, retention and training settings before sending confidential or personal data. We do not promise that all processing is local or that every recipient refrains from collection or model training.</p>
+  </section>
+  <section aria-labelledby="services">
+    <h2 id="services">4. Hoxi account, discovery, updates and support</h2>
+    <ul>
+      <li><strong>Account authorization:</strong> the desktop opens a website authorization flow and exchanges or polls using authorization state, handoff credentials and operating-system/architecture information. Device tokens are used for verification and attempted revocation on logout. Returned profiles can include account ID, email, nickname, avatar and role.</li>
+      <li><strong>Updates and discovery:</strong> update checks send desktop package type, OS, architecture and installed version. Model rankings and gateway discovery send query choices such as language, ranking dimension and result limit. Downloads contact the selected distribution host or mirror.</li>
+      <li><strong>Network and support:</strong> receiving services can see network metadata such as IP address, request time, path and headers. If you contact support, we receive your message and anything you choose to attach. Redact tokens and unnecessary project or personal data.</li>
+    </ul>
+    <p>These separate service flows support authentication, compatibility, discovery, troubleshooting and security; they are not a Hoxi inference or cloud-chat service. They do not establish what the website actually logs, its cookies/analytics, hosting locations, subprocessors, legal bases or retention. Those backend facts and any additional uses or disclosures require operator verification and disclosure before publication. Fastix is not an automatic recipient of AI content, but this is not a blanket no-collection promise: content you send to support, or to an endpoint you explicitly configure, depends on the actual recipient and configuration.</p>
+  </section>
+  <section aria-labelledby="retention">
+    <h2 id="retention">5. Retention, deletion and your choices</h2>
+    <p>Local records can remain until removed through available controls or from the relevant application/runtime storage. Removing a session, workspace or application may leave worktrees, memory files, runtime/CLI records, backups or other copies. Local deletion does not delete Hoxi server records or copies held by providers, gateways, websites or CLIs. Logout clears Hoxi's local login file and attempts token revocation; it is not account deletion and does not guarantee successful revocation if the service is unreachable.</p>
+    <p>To request account deletion, access, correction, export or other applicable privacy rights, email <a href="mailto:support@hoxi.ai">support@hoxi.ai</a>. Account deletion is a support-handled request, not an instant in-app action. We may need proportionate identity verification and must assess legal obligations and permitted exceptions. Available export scope, server deletion procedures, retention criteria and backup handling must be confirmed before publication; this draft promises no unverified completion deadline.</p>
+    <p>Third parties set their own retention, deletion and training practices under their terms and your arrangements. Contact them for data already sent to them. No third-party retention duration is asserted here. You can stop further use, disconnect integrations and remove local credentials, but these steps do not recall transmitted data.</p>
+  </section>
+  <section aria-labelledby="regional">
+    <h2 id="regional">6. Regional rights, international transfers and minors</h2>
+    <p>Depending on your location and applicable law, you may have rights to access, correct, delete or obtain a copy of personal information, withdraw consent, object to or restrict processing, and complain to the competent authority. Contact support to make a request; mandatory rights are not waived by this notice.</p>
+    <p>Configured providers, Hoxi services and their infrastructure may process data outside your region, including transfers between mainland China, Hong Kong, Taiwan, the US and other locations. Actual destinations, recipients and any required notices, separate consents, contracts or other transfer safeguards must be verified before launch. Use of an endpoint is not, by itself, proof of lawful cross-border transfer.</p>
+    <p>Hoxi is an engineering workspace, not a child-directed service. Age eligibility, age-assurance measures and any parental consent process remain subject to operator and local legal review; this draft does not claim a verified minors-protection program. Contact support if you believe a child's data was submitted.</p>
+  </section>
+  <section aria-labelledby="security">
+    <h2 id="security">7. Security and changes</h2>
+    <p>Local permissions and authorization controls reduce some risks but cannot guarantee security. Review tool approvals, limit access to sensitive repositories and rotate credentials if exposed. Operator security, incident-response and legally required notification procedures must be verified before publication.</p>
+    <p>The final notice should identify its effective date and explain material changes through appropriate website or product notices. Both language drafts are intended to convey the same meaning; no language-precedence rule or governing jurisdiction is selected in this draft.</p>
+  </section>
+  <footer><p>Privacy and support: <a href="mailto:support@hoxi.ai">support@hoxi.ai</a> · Fastix Limited</p></footer>
+</main>
+</body>
+</html>

@@ -71,7 +71,7 @@ export default function MemoryBankView() {
       <div class="shrink-0 flex items-center justify-between gap-2 px-3 py-2 border-b border-[var(--border-subtle)]">
         <div class="flex items-center gap-1.5 min-w-0">
           <Brain size={13} class="text-[var(--accent-primary)] shrink-0" />
-          <div class="inline-flex rounded-lg bg-[var(--bg-inset)] p-0.5 text-[10.5px]">
+          <div class="inline-flex rounded-lg bg-[var(--bg-inset)] p-0.5 text-[12px]">
             <button
               type="button"
               onClick={() => setScope("session")}
@@ -123,7 +123,7 @@ export default function MemoryBankView() {
         </Show>
 
         <Show when={content() && !error()}>
-          <pre class="rounded-md border border-[var(--border-subtle)] bg-[var(--bg-canvas)] p-2.5 font-mono text-[10px] leading-relaxed text-[var(--text-secondary)] whitespace-pre-wrap break-words selectable-text">
+          <pre class="rounded-md border border-[var(--border-subtle)] bg-[var(--bg-canvas)] p-2.5 font-mono leading-relaxed text-[var(--text-secondary)] whitespace-pre-wrap break-words selectable-text" style={{ "font-size": "var(--app-code-text-size)" }}>
             {content()}
           </pre>
         </Show>

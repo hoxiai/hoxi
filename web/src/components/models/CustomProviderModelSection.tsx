@@ -182,7 +182,7 @@ export default function CustomProviderModelSection(props: CustomProviderModelSec
               type="button"
               disabled={selectedFetchedCount() === 0}
               onClick={() => props.onApplyFetchedModels()}
-              class="inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] px-3.5 py-1.5 text-[11.5px] font-medium text-white disabled:opacity-50 cursor-pointer"
+              class="inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] px-3.5 py-1.5 text-[11.5px] font-medium text-[var(--accent-foreground)] disabled:opacity-50 cursor-pointer"
             >
               <Download size={12} />
               {t("models.addSelectedModels", { count: selectedFetchedCount() })}

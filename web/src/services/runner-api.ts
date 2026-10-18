@@ -65,7 +65,8 @@ export interface RunnerModelItem {
 }
 
 export interface RunnerModelsResponse {
-  installed: boolean;
+  installed?: boolean;
+  available?: boolean;
   binaryPath?: string;
   default?: string;
   models: RunnerModelItem[];
@@ -180,8 +181,12 @@ export const runnerAPI = {
     );
   },
 
-  listModels(runtime: "antigravity" | "claude-code"): Promise<RunnerModelsResponse> {
-    return requestJSON(`/api/hoxi/runner/${runtime}/models`);
+  listModels(
+    runtime: "antigravity" | "claude-code",
+    forceRefresh = false
+  ): Promise<RunnerModelsResponse> {
+    const qs = forceRefresh ? "?refresh=1" : "";
+    return requestJSON(`/api/hoxi/runner/${runtime}/models${qs}`);
   },
 };
 

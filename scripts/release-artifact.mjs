@@ -6,6 +6,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { sparkleConfig, machoFiles, frameworkFiles } from "./sparkle.mjs";
 
 export const minimumSupportedMacOS = "13.0";
 
@@ -54,7 +55,20 @@ function inspectBinaries(app, info) {
   assert.equal(path.basename(info.CFBundleExecutable), info.CFBundleExecutable, "Invalid app executable");
   const main = path.join(app, "Contents/MacOS", info.CFBundleExecutable);
   const sidecar = path.join(app, "Contents/MacOS/opencode");
-  const minimum = maximumMacOS([minimumSupportedMacOS, info.LSMinimumSystemVersion, ...[main, sidecar].map((binary) => {
+  const framework = path.join(app, "Contents/Frameworks/Sparkle.framework");
+  const config = sparkleConfig();
+  if (info.SUFeedURL || info.SUPublicEDKey || (config && info.CFBundleIdentifier === "ai.hoxi.desktop")) {
+    const bundled = sparkleConfig({ HOXI_SPARKLE_DIR: ".", HOXI_SPARKLE_PUBLIC_KEY: info.SUPublicEDKey,
+      HOXI_SPARKLE_FEED_URL: info.SUFeedURL });
+    assert.ok(bundled, "Missing bundled Sparkle metadata");
+    if (config) {
+      assert.equal(bundled.publicKey, config.publicKey);
+      assert.equal(bundled.feedURL, config.feedURL);
+    }
+    frameworkFiles(framework);
+  } else assert.ok(!fs.existsSync(framework), "Unconfigured Sparkle framework");
+  const binaries = [main, sidecar, ...(fs.existsSync(framework) ? machoFiles(framework) : [])];
+  const minimum = maximumMacOS([minimumSupportedMacOS, info.LSMinimumSystemVersion, ...binaries.map((binary) => {
     assert.ok(fs.statSync(binary).isFile(), `Missing executable: ${binary}`);
     const architectures = run("lipo", ["-archs", binary]).trim().split(/\s+/);
     assert.ok(architectures.includes("arm64"), `${binary} must contain arm64 code`);

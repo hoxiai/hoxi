@@ -312,7 +312,7 @@ export default function CustomEndpointTab() {
               type="button"
               disabled={saving()}
               onClick={() => void onForkToHoxiEdit()}
-              class="shrink-0 inline-flex items-center gap-1.5 rounded-lg bg-[var(--accent-primary)] px-3 py-1.5 text-[11.5px] font-medium text-white hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
+              class="shrink-0 inline-flex items-center gap-1.5 rounded-lg bg-[var(--accent-primary)] px-3 py-1.5 text-[11.5px] font-medium text-[var(--accent-foreground)] hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
             >
               {t("models.forkToHoxiEdit")}
             </button>
@@ -381,7 +381,7 @@ export default function CustomEndpointTab() {
               autocapitalize="off"
               autocorrect="off"
               spellcheck={false}
-              placeholder="https://api.ainode.run/v1"
+              placeholder="https://api.example.com/v1"
               value={baseURL()}
               onInput={(e) => setBaseURL(e.currentTarget.value)}
               class="w-full rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] px-3 py-2 font-mono text-[12px] text-[var(--text-primary)] disabled:opacity-60 outline-none focus:border-[var(--accent-primary)] selectable-text"
@@ -471,7 +471,7 @@ export default function CustomEndpointTab() {
           <button
             type="submit"
             disabled={saving()}
-            class="inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] px-4 py-2 text-[12.5px] font-medium text-white hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
+            class="inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] px-4 py-2 text-[12.5px] font-medium text-[var(--accent-foreground)] hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
           >
             <Show when={!saving()} fallback={<LoaderCircle size={14} class="animate-spin" />}>
               <Check size={14} />

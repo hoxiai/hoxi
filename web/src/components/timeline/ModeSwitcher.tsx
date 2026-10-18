@@ -147,7 +147,7 @@ export default function ModeSwitcher() {
                     <div
                       class={`mt-0.5 p-1 rounded-lg shrink-0 ${
                         isSelected()
-                          ? "bg-[var(--accent-primary)] text-white"
+                          ? "bg-[var(--accent-primary)] text-[var(--accent-foreground)]"
                           : "bg-[var(--bg-inset)] text-[var(--text-muted)]"
                       }`}
                     >

@@ -1,5 +1,6 @@
 // web/src/components/timeline/composer-hooks.ts
-import { type Accessor, createEffect, createSignal, type Setter } from "solid-js";
+import { type Accessor, createEffect, createSignal, onCleanup, type Setter } from "solid-js";
+import { PROMPT_HISTORY_KEY, PROMPT_HISTORY_CLEARED_EVENT } from "../../store/privacy";
 import type { PromptAttachment } from "../../services/api";
 import {
   createComposerAutocomplete,
@@ -192,7 +193,7 @@ export function createPasteCollapse() {
   };
 }
 
-const HISTORY_STORAGE_KEY = "hoxi-prompt-history:v1";
+const HISTORY_STORAGE_KEY = PROMPT_HISTORY_KEY;
 const MAX_HISTORY = 50;
 
 function loadStoredHistory(): string[] {
@@ -216,6 +217,14 @@ export function createPromptHistory(sessionID: Accessor<string | null>) {
   const [cursorIdx, setCursorIdx] = createSignal(-1);
   let savedDraft = "";
   let lastSession: string | null = null;
+
+  const clearHistory = () => {
+    setEntries([]);
+    setCursorIdx(-1);
+    savedDraft = "";
+  };
+  window.addEventListener(PROMPT_HISTORY_CLEARED_EVENT, clearHistory);
+  onCleanup(() => window.removeEventListener(PROMPT_HISTORY_CLEARED_EVENT, clearHistory));
 
   const syncSession = () => {
     const cur = sessionID();

@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/claudeconfig"
 )
 
 func geminiHomeDir() string {
@@ -48,6 +50,11 @@ func ResolveAgyBinary() string {
 			}
 		}
 	}
+	for _, sysPath := range []string{"/opt/homebrew/bin/agy", "/usr/local/bin/agy"} {
+		if st, err := os.Stat(sysPath); err == nil && !st.IsDir() {
+			return sysPath
+		}
+	}
 	return ""
 }
 
@@ -59,6 +66,11 @@ func ResolveClaudeBinary() string {
 		candidate := filepath.Join(home, ".local", "bin", "claude")
 		if st, err := os.Stat(candidate); err == nil && !st.IsDir() {
 			return candidate
+		}
+	}
+	for _, sysPath := range []string{"/opt/homebrew/bin/claude", "/usr/local/bin/claude"} {
+		if st, err := os.Stat(sysPath); err == nil && !st.IsDir() {
+			return sysPath
 		}
 	}
 	return ""
@@ -105,13 +117,17 @@ func ParseAgyModelsOutput(raw string) (slugs []string, displayBySlug map[string]
 }
 
 func DiscoverAgyModels() ([]RunnerModelItem, map[string]string, map[string]string) {
+	return DiscoverAgyModelsWithRefresh(false)
+}
+
+func DiscoverAgyModelsWithRefresh(forceRefresh bool) ([]RunnerModelItem, map[string]string, map[string]string) {
 	agyBin := ResolveAgyBinary()
 	if agyBin == "" {
 		return nil, nil, nil
 	}
 	agyModelsMu.Lock()
 	defer agyModelsMu.Unlock()
-	if agyCachedBin == agyBin && len(agyCachedSlugs) > 0 && time.Since(agyCachedTime) < 10*time.Minute {
+	if !forceRefresh && agyCachedBin == agyBin && len(agyCachedSlugs) > 0 && time.Since(agyCachedTime) < 10*time.Minute {
 		return buildAgyModelItems(agyCachedSlugs, agyCachedDisplayMap), agyCachedDisplayMap, agyCachedReverseSlug
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
@@ -140,63 +156,42 @@ func buildAgyModelItems(slugs []string, displayBySlug map[string]string) []Runne
 		if name == "" {
 			name = s
 		}
+		lower := strings.ToLower(s)
+		reasoning := strings.Contains(lower, "thinking") ||
+			strings.Contains(lower, "argon") ||
+			strings.Contains(lower, "opus") ||
+			strings.Contains(lower, "sonnet") ||
+			strings.Contains(lower, "oss")
 		items = append(items, RunnerModelItem{
 			ID:         s,
 			Name:       name,
 			ProviderID: string(RuntimeAntigravity),
 			Runtime:    string(RuntimeAntigravity),
+			Reasoning:  reasoning,
 		})
 	}
 	return items
 }
 
 func DiscoverClaudeModels() []RunnerModelItem {
-	seen := make(map[string]bool)
-	var slugs []string
-	add := func(m string) {
-		m = strings.TrimSpace(m)
-		if m == "" || strings.ContainsAny(m, " \t\r\n") || strings.HasPrefix(m, "<") {
-			return
-		}
-		if !seen[m] {
-			seen[m] = true
-			slugs = append(slugs, m)
-		}
-	}
-	if home, _ := os.UserHomeDir(); home != "" {
-		if raw, err := os.ReadFile(filepath.Join(home, ".claude", "settings.json")); err == nil {
-			var doc map[string]interface{}
-			if json.Unmarshal(raw, &doc) == nil {
-				if m, ok := doc["model"].(string); ok {
-					add(m)
-				}
-			}
-		}
-		if raw, err := os.ReadFile(filepath.Join(home, ".claude.json")); err == nil {
-			var doc map[string]interface{}
-			if json.Unmarshal(raw, &doc) == nil {
-				if extra, ok := doc["additionalModelOptionsCache"].([]interface{}); ok {
-					for _, it := range extra {
-						if im, ok := it.(map[string]interface{}); ok {
-							if v, ok := im["value"].(string); ok {
-								add(v)
-							}
-						}
-					}
-				}
-			}
-		}
-	}
-	for _, fallback := range []string{"claude-sonnet-4-6", "claude-opus-4-6"} {
-		add(fallback)
+	slugs := claudeconfig.Models()
+	friendly := map[string]string{
+		"claude-sonnet-4-6":         "Claude Sonnet 4.6",
+		"claude-opus-4-6":           "Claude Opus 4.6",
+		"claude-haiku-4-5-20251001": "Claude Haiku 4.5",
 	}
 	items := make([]RunnerModelItem, 0, len(slugs))
 	for _, s := range slugs {
+		name := friendly[s]
+		if name == "" {
+			name = s
+		}
 		items = append(items, RunnerModelItem{
 			ID:         s,
-			Name:       s,
+			Name:       name,
 			ProviderID: string(RuntimeClaudeCode),
 			Runtime:    string(RuntimeClaudeCode),
+			Reasoning:  true,
 		})
 	}
 	return items

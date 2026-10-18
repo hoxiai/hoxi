@@ -5,6 +5,7 @@ import {
   resolveRunnerRuntimeForProvider,
   runnerAPI,
   type AgentInfo,
+  type LocalCLIStatusItem,
   type ProviderInfo,
 } from "../services/api";
 import type { SessionRuntime } from "../services/sse-types";
@@ -212,11 +213,13 @@ export function parseModelString(val?: string | null): SelectedModel | null {
   };
 }
 
-export async function loadProviders(): Promise<void> {
+export async function loadProviders(forceRefresh = false): Promise<void> {
   try {
     const dir = workspace.rootDir || undefined;
     const [res, cfg, authMethods, hoxiCfg, agyRunner, claudeRunner] = await Promise.all([
-      hoxiAPI.listProviders(dir),
+      hoxiAPI
+        .listProviders(dir)
+        .catch(() => ({ all: [], connected: [] as string[], default: {} as Record<string, string> })),
       hoxiAPI.getGlobalConfig().catch(() => ({} as Record<string, any>)),
       hoxiAPI.getProviderAuthMethods(dir).catch(() => ({})),
       hoxiAPI.getHoxiModelsConfig().catch(() => ({
@@ -224,8 +227,8 @@ export async function loadProviders(): Promise<void> {
         openCodeProviders: [] as string[],
         configPath: ".hoxi/models.json",
       })),
-      runnerAPI.listModels("antigravity").catch(() => null),
-      runnerAPI.listModels("claude-code").catch(() => null),
+      runnerAPI.listModels("antigravity", forceRefresh).catch(() => null),
+      runnerAPI.listModels("claude-code", forceRefresh).catch(() => null),
     ]);
 
     const hoxiMap = hoxiCfg?.hoxiProviders ?? {};
@@ -292,7 +295,8 @@ export async function loadProviders(): Promise<void> {
     }
 
     const registerRunnerProvider = (pid: string, name: string, r: any) => {
-      if (!r?.installed || !Array.isArray(r.models) || r.models.length === 0) return;
+      const isInstalled = Boolean(r?.installed ?? r?.available);
+      if (!isInstalled || !Array.isArray(r?.models) || r.models.length === 0) return;
       const models: Record<string, any> = {};
       for (const m of r.models) {
         if (!m?.id) continue;
@@ -337,6 +341,8 @@ export async function loadProviders(): Promise<void> {
         return;
       }
       for (const pid of connected) {
+        // OpenCode's built-in free service is not a user-configured provider.
+        if (pid === "opencode" && !hoxiMap[pid] && !mergedCfg.provider?.[pid]) continue;
         const defModel = defaults[pid];
         const prov = all.find((p) => p.id === pid);
         if (prov && defModel && prov.models?.[defModel]) {
@@ -346,18 +352,6 @@ export async function loadProviders(): Promise<void> {
         const firstKey = prov?.models ? Object.keys(prov.models)[0] : undefined;
         if (prov && firstKey) {
           selectDefaultModel({ providerID: pid, modelID: firstKey });
-          return;
-        }
-      }
-      const openCodeProv = all.find((p) => p.id === "opencode");
-      if (openCodeProv?.models?.["deepseek-v4.1-flash-free"]) {
-        selectDefaultModel({ providerID: "opencode", modelID: "deepseek-v4.1-flash-free" });
-        return;
-      }
-      for (const prov of all) {
-        const firstKey = Object.keys(prov.models || {})[0];
-        if (firstKey) {
-          selectDefaultModel({ providerID: prov.id, modelID: firstKey });
           return;
         }
       }
@@ -493,3 +487,22 @@ export async function updateGlobalModelConfig(patch: Record<string, any>): Promi
 }
 
 export const refreshProviders = loadProviders;
+
+export async function syncLocalCLIModel(tool: LocalCLIStatusItem) {
+  const isRunner = tool.authMode === "antigravity-runner" || tool.authMode === "claude-runner";
+  let providerID = tool.providerID;
+  if (!isRunner) {
+    const result = await hoxiAPI.importLocalCLI(tool.id);
+    if (!result.ok) throw new Error(result.error || t("common.error"));
+    providerID = result.providerID;
+  }
+  await loadProviders(true);
+  const status = await hoxiAPI.getLocalCLIStatus();
+  const current = status.tools.find((item) => item.id === tool.id);
+  const modelID = current?.defaultModel || workspace.defaultModels[providerID] || current?.models?.[0];
+  if (!modelID || !workspace.providers.some((p) => p.id === providerID && p.models?.[modelID])) {
+    throw new Error(t("leftNav.handoffCliModelUnavailable", { model: modelID || tool.name }));
+  }
+  selectModel({ providerID, modelID });
+  return status;
+}

@@ -436,7 +436,6 @@ export function ToolCardExpandedBody(props: {
                       class="inline-flex items-center gap-1 text-[11px] font-medium text-[var(--accent-primary)] hover:underline cursor-pointer shrink-0"
                     >
                       <Icon name="code-lines" size="small" />
-                      {t("toolCard.openInDiffInspector")}
                     </button>
                   </div>
                   <FileDiffBlock diff={diff} defaultExpanded={true} compact={true} />

@@ -55,7 +55,6 @@ export function FileDiffBlock(props: {
     const themeType = workspace.theme === "dark" ? "dark" : "light";
     host.innerHTML = "";
     if (!patch && !hasBeforeAfter) {
-      host.textContent = t("inspector.diffs.noPatch");
       return;
     }
 
@@ -101,6 +100,11 @@ export function FileDiffBlock(props: {
   return (
     <div
       ref={host}
+      hidden={
+        !(props.patch ?? props.diff?.patch) &&
+        typeof props.diff?.before !== "string" &&
+        typeof props.diff?.after !== "string"
+      }
       class="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-code)] overflow-auto text-[11px]"
       style={
         props.fillHeight
@@ -215,7 +219,7 @@ export function SelectedDiffDetail(props: {
 
           <button
             type="button"
-            class="shrink-0 inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[10.5px] text-[var(--text-muted)] hover:text-[var(--warn-text)] hover:bg-[var(--warn-surface)] transition-colors cursor-pointer disabled:opacity-50"
+            class="shrink-0 inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[12px] text-[var(--text-muted)] hover:text-[var(--warn-text)] hover:bg-[var(--warn-surface)] transition-colors cursor-pointer disabled:opacity-50"
             disabled={reverting()}
             onClick={() => void onRevertFile()}
             title={t("inspector.diffs.revertFileTooltip")}
@@ -226,7 +230,7 @@ export function SelectedDiffDetail(props: {
 
           <button
             type="button"
-            class="shrink-0 inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[10.5px] text-[var(--text-muted)] hover:text-[var(--accent-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+            class="shrink-0 inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[12px] text-[var(--text-muted)] hover:text-[var(--accent-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
             onClick={() => setCommenting((v) => !v)}
             title={t("inspector.diffs.comment")}
           >
@@ -313,7 +317,7 @@ export function SelectedDiffDetail(props: {
               type="button"
               disabled={!commentBody().trim()}
               onClick={onSaveComment}
-              class="rounded-md bg-[var(--accent-primary)] px-2.5 py-1 text-[11px] font-medium text-white disabled:opacity-40 cursor-pointer"
+              class="rounded-md bg-[var(--accent-primary)] px-2.5 py-1 text-[11px] font-medium text-[var(--accent-foreground)] disabled:opacity-40 cursor-pointer"
             >
               {t("inspector.diffs.addToReview")}
             </button>
@@ -322,27 +326,22 @@ export function SelectedDiffDetail(props: {
       </Show>
 
       {/* Single File Diff Body */}
-      <div class="p-2">
-        <Show
-          when={
-            props.diff.patch ||
-            typeof props.diff.before === "string" ||
-            typeof props.diff.after === "string"
-          }
-          fallback={
-            <div class="px-2 py-3 text-[11px] text-[var(--text-muted)] font-mono">
-              {t("inspector.diffs.noPatch")}
-            </div>
-          }
-        >
+      <Show
+        when={
+          props.diff.patch ||
+          typeof props.diff.before === "string" ||
+          typeof props.diff.after === "string"
+        }
+      >
+        <div class="p-2">
           <FileDiffBlock
             diff={props.diff}
             patch={props.diff.patch}
             diffStyle={props.diffStyle}
             fillHeight={true}
           />
-        </Show>
-      </div>
+        </div>
+      </Show>
     </div>
   );
 }
