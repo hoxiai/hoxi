@@ -2,6 +2,7 @@ package auth
 
 import (
 	"encoding/json"
+	"mime"
 	"net/http"
 	"strings"
 )
@@ -17,6 +18,13 @@ func NewHTTPHandler(service *Service) *HTTPHandler {
 func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/hoxi/auth")
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	if r.Method == http.MethodPost {
+		mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+		if err != nil || mediaType != "application/json" {
+			http.Error(w, `{"error":"application/json required"}`, http.StatusUnsupportedMediaType)
+			return
+		}
+	}
 
 	switch {
 	case (path == "/status" || path == "") && r.Method == http.MethodGet:
@@ -69,6 +77,10 @@ func (h *HTTPHandler) handleExchange(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *HTTPHandler) handleLogout(w http.ResponseWriter, r *http.Request) {
-	_ = h.service.Logout(r.Context())
+	if err := h.service.Logout(r.Context()); err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
 	_ = json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }

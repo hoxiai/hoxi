@@ -17,10 +17,8 @@ import (
 	"github.com/hoxiai/hoxi/internal/statusbar"
 )
 
-func TestIsAllowedLocalOrigin(t *testing.T) {
+func TestValidUIOrigin(t *testing.T) {
 	allowed := []string{
-		"wails://wails",
-		"wails://wails.localhost",
 		"http://localhost:5173",
 		"http://127.0.0.1:8080",
 		"http://[::1]:3000",
@@ -28,7 +26,7 @@ func TestIsAllowedLocalOrigin(t *testing.T) {
 		"http://app.wails.localhost",
 	}
 	for _, origin := range allowed {
-		if !isAllowedLocalOrigin(origin) {
+		if !validUIOrigin(origin) {
 			t.Errorf("expected origin %q to be allowed", origin)
 		}
 	}
@@ -40,9 +38,14 @@ func TestIsAllowedLocalOrigin(t *testing.T) {
 		"http://localhost.attacker.org",
 		"https://notwails.localhost.evil.com",
 		"javascript:alert(1)",
+		"wails://evil",
+		"http://localhost:5173/",
+		"http://user@localhost:5173",
+		"http://localhost:5173?",
+		"http://localhost:5173#",
 	}
 	for _, origin := range rejected {
-		if isAllowedLocalOrigin(origin) {
+		if validUIOrigin(origin) {
 			t.Errorf("expected origin %q to be rejected", origin)
 		}
 	}
@@ -50,9 +53,10 @@ func TestIsAllowedLocalOrigin(t *testing.T) {
 
 func TestGatewayCORSWhitelistEnforcement(t *testing.T) {
 	gw := New(0, "test-pass", t.TempDir(), nil, nil)
+	gw.SetBrowserUIOrigins("http://localhost:5173")
 
 	// Disallowed origin preflight should receive 403 Forbidden and no CORS reflection
-	reqEvil := httptest.NewRequest(http.MethodOptions, "/global/health", nil)
+	reqEvil := localRequest(http.MethodOptions, "/global/health", nil)
 	reqEvil.Header.Set("Origin", "https://evil.example.com")
 	recEvil := httptest.NewRecorder()
 	gw.ServeHTTP(recEvil, reqEvil)
@@ -65,7 +69,7 @@ func TestGatewayCORSWhitelistEnforcement(t *testing.T) {
 	}
 
 	// Allowed local origin preflight should receive 204 and reflected local origin
-	reqLocal := httptest.NewRequest(http.MethodOptions, "/global/health", nil)
+	reqLocal := localRequest(http.MethodOptions, "/global/health", nil)
 	reqLocal.Header.Set("Origin", "http://localhost:5173")
 	recLocal := httptest.NewRecorder()
 	gw.ServeHTTP(recLocal, reqLocal)
@@ -144,7 +148,7 @@ func TestGatewayHealthBootstrapDialogAndSystemInfo(t *testing.T) {
 	gw.SetWSBaseURL("http://127.0.0.1:4199")
 
 	// 1. GET /healthz
-	reqHealth := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	reqHealth := localRequest(http.MethodGet, "/healthz", nil)
 	recHealth := httptest.NewRecorder()
 	gw.ServeHTTP(recHealth, reqHealth)
 	if recHealth.Code != http.StatusOK || !strings.Contains(recHealth.Body.String(), `"ok":true`) {
@@ -152,7 +156,7 @@ func TestGatewayHealthBootstrapDialogAndSystemInfo(t *testing.T) {
 	}
 
 	// 2. GET /api/hoxi/bootstrap
-	reqBoot := httptest.NewRequest(http.MethodGet, "/api/hoxi/bootstrap", nil)
+	reqBoot := localRequest(http.MethodGet, "/api/hoxi/bootstrap", nil)
 	recBoot := httptest.NewRecorder()
 	gw.ServeHTTP(recBoot, reqBoot)
 	if recBoot.Code != http.StatusOK {
@@ -171,7 +175,7 @@ func TestGatewayHealthBootstrapDialogAndSystemInfo(t *testing.T) {
 	}
 
 	// 3. GET /api/hoxi/dialog/open-directory (nil callback, success callback, error callback)
-	reqDialog := httptest.NewRequest(http.MethodGet, "/api/hoxi/dialog/open-directory", nil)
+	reqDialog := localRequest(http.MethodGet, "/api/hoxi/dialog/open-directory", nil)
 	recDialog := httptest.NewRecorder()
 	gw.ServeHTTP(recDialog, reqDialog)
 	if recDialog.Code != http.StatusOK || !strings.Contains(recDialog.Body.String(), `"path":""`) {
@@ -182,7 +186,7 @@ func TestGatewayHealthBootstrapDialogAndSystemInfo(t *testing.T) {
 		return "/Users/test/workspace", nil
 	})
 	recDialogOK := httptest.NewRecorder()
-	gw.ServeHTTP(recDialogOK, httptest.NewRequest(http.MethodGet, "/api/hoxi/dialog/open-directory", nil))
+	gw.ServeHTTP(recDialogOK, localRequest(http.MethodGet, "/api/hoxi/dialog/open-directory", nil))
 	if !strings.Contains(recDialogOK.Body.String(), `"/Users/test/workspace"`) {
 		t.Fatalf("expected selected path in response, got %s", recDialogOK.Body.String())
 	}
@@ -191,20 +195,20 @@ func TestGatewayHealthBootstrapDialogAndSystemInfo(t *testing.T) {
 		return "", errors.New("dialog failed")
 	})
 	recDialogErr := httptest.NewRecorder()
-	gw.ServeHTTP(recDialogErr, httptest.NewRequest(http.MethodGet, "/api/hoxi/dialog/open-directory", nil))
+	gw.ServeHTTP(recDialogErr, localRequest(http.MethodGet, "/api/hoxi/dialog/open-directory", nil))
 	if !strings.Contains(recDialogErr.Body.String(), `"error":"dialog failed"`) {
 		t.Fatalf("expected error in dialog response, got %s", recDialogErr.Body.String())
 	}
 
 	// 4. GET & POST /api/hoxi/system-info
 	recSysPost := httptest.NewRecorder()
-	gw.ServeHTTP(recSysPost, httptest.NewRequest(http.MethodPost, "/api/hoxi/system-info", nil))
+	gw.ServeHTTP(recSysPost, localRequest(http.MethodPost, "/api/hoxi/system-info", nil))
 	if recSysPost.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("expected 405 for POST /api/hoxi/system-info, got %d", recSysPost.Code)
 	}
 
 	recSysGet := httptest.NewRecorder()
-	gw.ServeHTTP(recSysGet, httptest.NewRequest(http.MethodGet, "/api/hoxi/system-info", nil))
+	gw.ServeHTTP(recSysGet, localRequest(http.MethodGet, "/api/hoxi/system-info", nil))
 	if recSysGet.Code != http.StatusOK {
 		t.Fatalf("expected 200 for GET /api/hoxi/system-info, got %d", recSysGet.Code)
 	}
@@ -268,14 +272,14 @@ func TestDevPulseWithGitRepositoryAndCache(t *testing.T) {
 
 	// POST should return 405
 	recPost := httptest.NewRecorder()
-	gw.ServeHTTP(recPost, httptest.NewRequest(http.MethodPost, "/api/hoxi/dev-pulse", nil))
+	gw.ServeHTTP(recPost, localRequest(http.MethodPost, "/api/hoxi/dev-pulse", nil))
 	if recPost.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("expected 405 for POST /api/hoxi/dev-pulse, got %d", recPost.Code)
 	}
 
 	// First GET computes git stats
 	recGet := httptest.NewRecorder()
-	gw.ServeHTTP(recGet, httptest.NewRequest(http.MethodGet, "/api/hoxi/dev-pulse?directory="+repoDir, nil))
+	gw.ServeHTTP(recGet, localRequest(http.MethodGet, "/api/hoxi/dev-pulse?directory="+repoDir, nil))
 	if recGet.Code != http.StatusOK {
 		t.Fatalf("expected 200 for GET /api/hoxi/dev-pulse, got %d", recGet.Code)
 	}
@@ -292,7 +296,7 @@ func TestDevPulseWithGitRepositoryAndCache(t *testing.T) {
 
 	// Second GET should hit the in-memory TTL cache
 	recCached := httptest.NewRecorder()
-	gw.ServeHTTP(recCached, httptest.NewRequest(http.MethodGet, "/api/hoxi/dev-pulse?directory="+repoDir, nil))
+	gw.ServeHTTP(recCached, localRequest(http.MethodGet, "/api/hoxi/dev-pulse?directory="+repoDir, nil))
 	if recCached.Code != http.StatusOK {
 		t.Fatalf("expected 200 for cached dev-pulse, got %d", recCached.Code)
 	}
@@ -331,14 +335,14 @@ func TestSPAStaticHandlerAndReverseProxyWithSSETap(t *testing.T) {
 
 	// 1. Direct static asset serving
 	recAsset := httptest.NewRecorder()
-	gw.ServeHTTP(recAsset, httptest.NewRequest(http.MethodGet, "/assets/app.js", nil))
+	gw.ServeHTTP(recAsset, localRequest(http.MethodGet, "/assets/app.js", nil))
 	if recAsset.Code != http.StatusOK || !strings.Contains(recAsset.Body.String(), "console.log('hoxi')") {
 		t.Fatalf("expected static asset body, got code=%d body=%q", recAsset.Code, recAsset.Body.String())
 	}
 
 	// 2. SPA fallback to index.html on unknown client route
 	recSPA := httptest.NewRecorder()
-	gw.ServeHTTP(recSPA, httptest.NewRequest(http.MethodGet, "/unknown/route", nil))
+	gw.ServeHTTP(recSPA, localRequest(http.MethodGet, "/unknown/route", nil))
 	if recSPA.Code != http.StatusOK || !strings.Contains(recSPA.Body.String(), "<title>Hoxi SPA</title>") {
 		t.Fatalf("expected SPA index.html fallback, got code=%d body=%q", recSPA.Code, recSPA.Body.String())
 	}
@@ -346,7 +350,7 @@ func TestSPAStaticHandlerAndReverseProxyWithSSETap(t *testing.T) {
 	// 3. Reverse proxy Basic Auth injection on /session and /api/session
 	for _, p := range []string{"/session", "/api/session"} {
 		recSess := httptest.NewRecorder()
-		gw.ServeHTTP(recSess, httptest.NewRequest(http.MethodGet, p, nil))
+		gw.ServeHTTP(recSess, localRequest(http.MethodGet, p, nil))
 		if recSess.Code != http.StatusOK || !strings.Contains(recSess.Body.String(), "ses_test") {
 			t.Fatalf("proxy %s failed: code=%d body=%q", p, recSess.Code, recSess.Body.String())
 		}
@@ -354,7 +358,7 @@ func TestSPAStaticHandlerAndReverseProxyWithSSETap(t *testing.T) {
 
 	// 4. Reverse proxy SSE tapping updates statusbar.Tracker
 	recEvent := httptest.NewRecorder()
-	gw.ServeHTTP(recEvent, httptest.NewRequest(http.MethodGet, "/event", nil))
+	gw.ServeHTTP(recEvent, localRequest(http.MethodGet, "/event", nil))
 	if recEvent.Code != http.StatusOK {
 		t.Fatalf("expected 200 on /event, got %d", recEvent.Code)
 	}
@@ -366,7 +370,7 @@ func TestSPAStaticHandlerAndReverseProxyWithSSETap(t *testing.T) {
 	// 5. Proxy ErrorHandler when upstream is down
 	mockUpstream.Close()
 	recDown := httptest.NewRecorder()
-	gw.ServeHTTP(recDown, httptest.NewRequest(http.MethodGet, "/session", nil))
+	gw.ServeHTTP(recDown, localRequest(http.MethodGet, "/session", nil))
 	if recDown.Code != http.StatusBadGateway {
 		t.Fatalf("expected 502 Bad Gateway when upstream is closed, got %d", recDown.Code)
 	}

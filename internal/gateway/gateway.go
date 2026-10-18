@@ -44,6 +44,8 @@ type Gateway struct {
 	leaderboard           *leaderboard.Service
 	onOpenDirectoryDialog func() (string, error)
 	dialogMu              sync.RWMutex
+	originMu              sync.RWMutex
+	uiOrigins             map[string]bool
 }
 
 type desktopGateway = Gateway
@@ -118,8 +120,6 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 
 func (g *Gateway) SetBrowserAgentToken(token string) { g.browser.SetAgentToken(token) }
 
-func (g *Gateway) SetBrowserUIOrigins(origins ...string) { g.browser.SetUIOrigins(origins...) }
-
 func (g *Gateway) CloseBrowser() { g.browser.Close() }
 
 func (g *Gateway) SetWSBaseURL(wsURL string) {
@@ -135,39 +135,17 @@ func (g *Gateway) SetOpenDirectoryDialog(fn func() (string, error)) {
 	g.onOpenDirectoryDialog = fn
 }
 
-func isAllowedLocalOrigin(origin string) bool {
-	if origin == "" {
-		return false
-	}
-	lower := strings.ToLower(origin)
-	if strings.HasPrefix(lower, "wails://") {
-		return true
-	}
-	parsed, err := url.Parse(lower)
-	if err != nil {
-		return false
-	}
-	host := parsed.Hostname()
-	return host == "127.0.0.1" ||
-		host == "localhost" ||
-		host == "::1" ||
-		host == "wails.localhost" ||
-		strings.HasSuffix(host, ".wails.localhost")
-}
-
 func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if !g.allowRequest(w, r) {
+		return
+	}
 	if origin := r.Header.Get("Origin"); origin != "" {
-		if isAllowedLocalOrigin(origin) {
-			w.Header().Set("Access-Control-Allow-Origin", origin)
-			w.Header().Set("Vary", "Origin")
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Hoxi-Browser")
-			if r.Method == http.MethodOptions {
-				w.WriteHeader(http.StatusNoContent)
-				return
-			}
-		} else if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusForbidden)
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+		w.Header().Add("Vary", "Origin")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Hoxi-Browser")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 	}

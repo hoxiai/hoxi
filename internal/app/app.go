@@ -154,9 +154,20 @@ func Run(distFS fs.FS) {
 	defer listener.Close()
 	loopbackAddr := listener.Addr().String()
 	gw.SetWSBaseURL("ws://" + loopbackAddr)
-	uiOrigins := []string{"http://" + loopbackAddr}
+	uiOrigins := loopbackUIOrigins(listener.Addr().(*net.TCPAddr))
+	if !cfg.NoDesktop {
+		// Wails on Windows uses HTTP rather than the native wails:// scheme.
+		uiOrigins = append(uiOrigins, "http://wails.localhost")
+	}
 	if identity.Variant == "dev" {
 		uiOrigins = append(uiOrigins, "http://localhost:5173", "http://127.0.0.1:5173")
+		// Wails exports its actual development listener (including custom ports).
+		if devServer := os.Getenv("devserver"); devServer != "" {
+			uiOrigins = append(uiOrigins, "http://"+devServer)
+			if _, port, err := net.SplitHostPort(devServer); err == nil {
+				uiOrigins = append(uiOrigins, "wails://wails.localhost:"+port)
+			}
+		}
 	}
 	if origin := os.Getenv("HOXI_BROWSER_UI_ORIGIN"); origin != "" {
 		uiOrigins = append(uiOrigins, origin)

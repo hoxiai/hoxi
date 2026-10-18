@@ -25,7 +25,7 @@ func TestConcurrentDirectoryDialogRegistration(t *testing.T) {
 		defer wg.Done()
 		for i := 0; i < 100; i++ {
 			w := httptest.NewRecorder()
-			g.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/hoxi/dialog/open-directory", nil))
+			g.ServeHTTP(w, localRequest(http.MethodGet, "/api/hoxi/dialog/open-directory", nil))
 			if w.Code != http.StatusOK {
 				t.Errorf("dialog returned %d", w.Code)
 			}
