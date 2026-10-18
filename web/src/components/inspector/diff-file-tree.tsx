@@ -9,12 +9,14 @@ import {
   Folder,
   FolderOpen,
   FolderTree,
+  GitBranch,
   MessageSquareText,
   RotateCcw,
 } from "lucide-solid";
 import { hoxiAPI } from "../../services/api";
 import type { SnapshotFileDiff } from "../../services/sse-types";
 import {
+  activeDirectory,
   loadSessionMessages,
   openFileInInspector,
   refreshWorktreeStatus,
@@ -253,17 +255,38 @@ export default function DiffFileTree(props: {
     return counts;
   });
 
+  const repoBranchByFolder = createMemo(() => {
+    const map = new Map<string, string>();
+    for (const d of props.diffs) {
+      if (d.repo && !map.has(d.repo)) {
+        map.set(d.repo, d.branch || "HEAD");
+      }
+    }
+    return map;
+  });
+
+  const folderRepoBranch = (folderRow: FlatFolderRow): string | undefined => {
+    const map = repoBranchByFolder();
+    const direct = map.get(folderRow.id);
+    if (direct) return direct;
+    if (folderRow.depth === 0) {
+      for (const [repo, br] of map.entries()) {
+        if (folderRow.id.startsWith(`${repo}/`)) return br;
+      }
+    }
+    return undefined;
+  };
+
   const onRevertFile = async (e: MouseEvent, filePath: string) => {
     e.stopPropagation();
     if (revertingFile()) return;
     const sessionID = workspace.activeSessionID || "__root__";
     setRevertingFile(filePath);
     try {
-      await hoxiAPI.revertWorktreeFile(sessionID, filePath);
+      await hoxiAPI.revertWorktreeFile(sessionID, filePath, activeDirectory());
+      await refreshWorktreeStatus(workspace.activeSessionID);
       if (workspace.activeSessionID) {
         await loadSessionMessages(workspace.activeSessionID);
-      } else {
-        await refreshWorktreeStatus("__root__");
       }
     } catch (err) {
       console.error("revertWorktreeFile failed:", err);
@@ -320,6 +343,7 @@ export default function DiffFileTree(props: {
               when={row.kind === "file"}
               fallback={(() => {
                 const folderRow = row as FlatFolderRow;
+                const repoBranch = () => folderRepoBranch(folderRow);
                 return (
                   <button
                     type="button"
@@ -350,6 +374,14 @@ export default function DiffFileTree(props: {
                       >
                         {folderRow.label}
                       </span>
+                      <Show when={repoBranch()}>
+                        {(br) => (
+                          <span class="shrink-0 inline-flex items-center gap-0.5 rounded bg-[var(--accent-surface)] px-1.5 py-0 text-[10px] font-mono text-[var(--accent-primary)] border border-[var(--accent-border)]">
+                            <GitBranch size={9} />
+                            <span>{br()}</span>
+                          </span>
+                        )}
+                      </Show>
                       <span class="rounded-full bg-[var(--bg-panel)] px-1.5 py-0 text-[10px] font-mono text-[var(--text-muted)] border border-[var(--border-subtle)]">
                         {folderRow.fileCount}
                       </span>

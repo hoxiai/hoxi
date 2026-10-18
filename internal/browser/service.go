@@ -71,13 +71,13 @@ func (s *Service) SetAgentToken(token string) {
 	s.mu.Unlock()
 }
 
-// SetUIOrigins replaces the exact HTTP(S) UI origin allowlist. Invalid or
-// non-local origins are ignored (fail closed). Native Wails origins are built in.
+// SetUIOrigins replaces the exact UI origin allowlist. Invalid or
+// non-local origins are ignored (fail closed). Native unported Wails origins are built in.
 func (s *Service) SetUIOrigins(origins ...string) {
 	allowed := make(map[string]bool)
 	for _, origin := range origins {
 		u, err := url.Parse(origin)
-		if err == nil && (u.Scheme == "http" || u.Scheme == "https") && validOrigin(u) && trustedAuthority(u.Host) {
+		if err == nil && (u.Scheme == "http" || u.Scheme == "https" || (u.Scheme == "wails" && wailsHost(u.Hostname()))) && validOrigin(u) && trustedAuthority(u.Host) {
 			allowed[origin] = true
 		}
 	}

@@ -1,5 +1,5 @@
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
-import { ArrowLeft, FolderOpen, FolderPlus, LoaderCircle, Search } from "lucide-solid";
+import { ArrowLeft, FolderOpen, FolderPlus, GitBranch, LoaderCircle, Search } from "lucide-solid";
 import { hoxiAPI } from "../../services/api";
 import type { SnapshotFileDiff } from "../../services/sse-types";
 import {
@@ -101,9 +101,21 @@ export default function FileTreeView() {
     }
   };
 
+  const resolvedPreviewDiffPath = createMemo(() => {
+    const p = previewPath();
+    if (!p) return "";
+    const base = normalizeFolderPath(activeDirectory());
+    const target = normalizeFolderPath(targetDirectory());
+    if (base && target && target !== base && target.startsWith(`${base}/`)) {
+      const prefix = target.slice(base.length + 1);
+      return `${prefix}/${p.replace(/^\/+/, "")}`;
+    }
+    return p;
+  });
+
   const sourceLines = createMemo(() => previewContent().split("\n"));
   const activeDiff = createMemo(() => {
-    const p = previewPath();
+    const p = resolvedPreviewDiffPath();
     if (!p) return undefined;
     return resolveSessionDiffForFile(p, workspace.activeSessionID, previewDiff());
   });
@@ -278,6 +290,22 @@ export default function FileTreeView() {
             >
               {previewPath()}
             </span>
+            <Show when={activeDiff()?.repo}>
+              <span
+                class="shrink-0 inline-flex items-center gap-1 rounded bg-[var(--accent-surface)] px-1.5 py-0 text-[10px] font-mono text-[var(--accent-primary)] border border-[var(--accent-border)]"
+                title={
+                  activeDiff()!.branch
+                    ? `${activeDiff()!.repo} (${activeDiff()!.branch})`
+                    : activeDiff()!.repo
+                }
+              >
+                <GitBranch size={10} />
+                <span>
+                  {activeDiff()!.repo}
+                  {activeDiff()!.branch ? `:${activeDiff()!.branch}` : ""}
+                </span>
+              </span>
+            </Show>
             <Show
               when={
                 activeDiff() &&
@@ -286,7 +314,7 @@ export default function FileTreeView() {
             >
               <button
                 type="button"
-                onClick={() => openDiffInInspector(previewPath()!)}
+                onClick={() => openDiffInInspector(activeDiff() || resolvedPreviewDiffPath())}
                 class="shrink-0 inline-flex items-center gap-1.5 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2 py-0.5 text-[11px] text-[var(--text-secondary)] hover:text-[var(--accent-primary)] hover:border-[var(--accent-border)] transition-colors cursor-pointer"
                 title={t("toolCard.openInDiffInspector")}
               >

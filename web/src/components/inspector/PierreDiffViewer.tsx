@@ -3,6 +3,7 @@ import { createEffect, createMemo, createSignal, on, onCleanup, Show } from "sol
 import { Check, GitCommitHorizontal, RefreshCw, ShieldCheck, Sparkles } from "lucide-solid";
 import { hoxiAPI } from "../../services/api";
 import {
+  activeDirectory,
   appSettings,
   generateSmartCommitMessage,
   loadSessionMessages,
@@ -12,6 +13,7 @@ import {
   updateAppSetting,
   workspace,
 } from "../../store/workspace";
+import { collectCycleChangedFiles } from "../timeline/tool-card-state";
 import { t } from "../../i18n";
 import ObserverAuditBanner from "./ObserverAuditBanner";
 import DiffEmptyState from "./pierre-diff-empty";
@@ -40,9 +42,12 @@ export default function PierreDiffViewer() {
     if (workspace.diffScope === "worktree") {
       return workspace.worktreeDiffsBySession[sessionKey()] ?? [];
     }
-    return id
+    const sessionDiffs = id
       ? workspace.diffsBySession[id] ?? []
       : workspace.diffsBySession[sessionKey()] ?? [];
+    if (sessionDiffs.length > 0 || !id) return sessionDiffs;
+    const turns = workspace.messagesBySession[id] ?? [];
+    return turns.length > 0 ? collectCycleChangedFiles(turns, id) : sessionDiffs;
   });
 
   // The clicked turn may describe a historical edit absent from the current Git diff.
@@ -51,8 +56,15 @@ export default function PierreDiffViewer() {
     const list = diffs();
     const clicked = workspace.inspectedFileDiff;
     if (!clicked || !workspace.inspectedDiffFile) return list;
-    const index = list.findIndex((item) => item.file === clicked.file ||
-      item.file.endsWith(`/${clicked.file}`) || clicked.file.endsWith(`/${item.file}`));
+    const exactIdx = list.findIndex((item) => item.file === clicked.file);
+    const index =
+      exactIdx >= 0
+        ? exactIdx
+        : list.findIndex(
+            (item) =>
+              item.file.endsWith(`/${clicked.file}`) ||
+              clicked.file.endsWith(`/${item.file}`)
+          );
     if (index < 0) return [...list, clicked];
     const current = list[index];
     if (current.patch || typeof current.before === "string" || typeof current.after === "string") return list;
@@ -63,11 +75,10 @@ export default function PierreDiffViewer() {
     const target = workspace.inspectedDiffFile;
     if (!target) return -1;
     const list = previewDiffs();
+    const exactIdx = list.findIndex((d) => d.file === target);
+    if (exactIdx >= 0) return exactIdx;
     return list.findIndex(
-      (d) =>
-        d.file === target ||
-        d.file.endsWith(`/${target}`) ||
-        target.endsWith(`/${d.file}`)
+      (d) => d.file.endsWith(`/${target}`) || target.endsWith(`/${d.file}`)
     );
   });
 
@@ -126,7 +137,9 @@ export default function PierreDiffViewer() {
     if (!msg || committing()) return;
     setCommitting(true);
     try {
-      const res = await hoxiAPI.commitWorktree(id, msg);
+      const res = await hoxiAPI.commitWorktree(id, msg, {
+        directory: activeDirectory(),
+      });
       setCommitMsg("");
       setCommittedHash(res.commit || "HEAD");
       setWorkspace("inspectedDiffFile", null);

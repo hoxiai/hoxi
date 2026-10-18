@@ -73,6 +73,7 @@ export interface WorkspaceState {
   inspectedFileLine: number | null;
   inspectedFileDiff: SnapshotFileDiff | null;
   inspectedDiffFile: string | null;
+  inspectedBrowserURL: string | null;
   activeInspectorFolder: string | null;
   workspaceModalMode: WorkspaceModalMode;
   editingWorkspaceID: string | null;
@@ -303,6 +304,7 @@ export const [workspace, setWorkspace] = createStore<WorkspaceState>({
   inspectedFileLine: null,
   inspectedFileDiff: null,
   inspectedDiffFile: null,
+  inspectedBrowserURL: null,
   activeInspectorFolder: null,
   workspaceModalMode: null,
   editingWorkspaceID: null,
@@ -413,13 +415,58 @@ function firstChangedLine(patch?: string): number | null {
   return line;
 }
 
+function parseFileReference(raw: string): { path: string; line: number | null } {
+  let str = raw.trim();
+  if (/^file:\/\//i.test(str)) {
+    str = str.replace(/^file:\/\//i, "");
+    try {
+      str = decodeURIComponent(str);
+    } catch {
+      /* ignore */
+    }
+  }
+  let parsedLine: number | null = null;
+  const hashMatch = str.match(/#L(\d+)(?:[-–—]L?\d+)?$/i);
+  if (hashMatch) {
+    parsedLine = Number(hashMatch[1]) || null;
+    str = str.slice(0, hashMatch.index);
+  } else {
+    const colonMatch = str.match(/:(\d+)(?:[:\-–—]\d+)?$/);
+    if (colonMatch) {
+      parsedLine = Number(colonMatch[1]) || null;
+      str = str.slice(0, colonMatch.index);
+    }
+  }
+  str = str.replace(/^\.\//, "").trim();
+  const activeSession = workspace.activeSessionID
+    ? workspace.sessions.find((s) => s.id === workspace.activeSessionID)
+    : undefined;
+  const activeWorktreeDir = workspace.activeSessionID
+    ? workspace.worktreeBySession[workspace.activeSessionID]?.directory
+    : undefined;
+  const candidateRoots = (
+    workspace.activeInspectorFolder
+      ? [workspace.activeInspectorFolder]
+      : [activeWorktreeDir, activeSession?.directory, workspace.rootDir]
+  ).filter((d): d is string => Boolean(d));
+  for (const root of candidateRoots) {
+    const normRoot = root.replace(/\/+$/, "");
+    if (normRoot && str.startsWith(`${normRoot}/`)) {
+      str = str.slice(normRoot.length + 1);
+      break;
+    }
+  }
+  return { path: str, line: parsedLine };
+}
+
 export function openFileInInspector(filePath: string, line?: number | null, diff?: SnapshotFileDiff | null) {
-  const cleaned = filePath.replace(/^\.\//, "").replace(/:\d+(?::\d+)?$/, "").trim();
-  if (!cleaned) return;
+  const ref = parseFileReference(filePath);
+  if (!ref.path) return;
+  const targetLine = line && line > 0 ? line : ref.line;
   setWorkspace({
     inspectedFileDiff: diff ?? null,
-    inspectedFilePath: cleaned,
-    inspectedFileLine: line && line > 0 ? line : null,
+    inspectedFilePath: ref.path,
+    inspectedFileLine: targetLine && targetLine > 0 ? targetLine : null,
     inspectorTab: "files",
     inspectorOpen: true,
   });
@@ -427,24 +474,42 @@ export function openFileInInspector(filePath: string, line?: number | null, diff
 
 export function openChangedFileInInspector(diff: SnapshotFileDiff | string) {
   const file = typeof diff === "string" ? diff : diff.file;
+  const ref = parseFileReference(file);
+  const key = workspace.activeSessionID || "__root__";
+  const pool = [
+    ...(workspace.activeSessionID ? workspace.diffsBySession[workspace.activeSessionID] ?? [] : []),
+    ...(workspace.worktreeDiffsBySession[key] ?? []),
+    ...(workspace.worktreeDiffsBySession["__root__"] ?? []),
+  ];
   const resolvedDiff = typeof diff === "string"
-    ? (workspace.activeSessionID ? workspace.diffsBySession[workspace.activeSessionID] ?? [] : [])
-        .find((item) => item.file === file || item.file.endsWith(`/${file}`) || file.endsWith(`/${item.file}`)) ?? null
+    ? (pool.find((item) => item.file === ref.path) ??
+        pool.find((item) => item.file.endsWith(`/${ref.path}`) || ref.path.endsWith(`/${item.file}`)) ??
+        null)
     : diff;
   openFileInInspector(
     file,
-    firstChangedLine(resolvedDiff?.patch),
+    ref.line ?? firstChangedLine(resolvedDiff?.patch),
     resolvedDiff
   );
 }
 
 export function openDiffInInspector(file?: string | SnapshotFileDiff) {
   const filePath = typeof file === "string" ? file : file?.file;
-  const cleaned = filePath ? filePath.replace(/^\.\//, "").replace(/:\d+(?::\d+)?$/, "").trim() : "";
+  const cleaned = filePath ? parseFileReference(filePath).path : "";
   setWorkspace({
     inspectedFileDiff: typeof file === "object" ? file : null,
     inspectedDiffFile: cleaned || null,
     inspectorTab: "diffs",
+    inspectorOpen: true,
+  });
+}
+
+export function openURLInInspector(url: string) {
+  const trimmed = url.trim();
+  if (!trimmed || !/^https?:\/\//i.test(trimmed)) return;
+  setWorkspace({
+    inspectedBrowserURL: trimmed,
+    inspectorTab: "browser",
     inspectorOpen: true,
   });
 }

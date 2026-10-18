@@ -5,12 +5,14 @@ import {
   ChevronLeft,
   ChevronRight,
   ExternalLink,
+  GitBranch,
   MessageSquarePlus,
   RotateCcw,
 } from "lucide-solid";
 import { DIFFS_TAG_NAME, FileDiff, getSingularPatch, parseDiffFromFile } from "@pierre/diffs";
 import { hoxiAPI } from "../../services/api";
 import {
+  activeDirectory,
   addReviewComment,
   loadSessionMessages,
   openFileInInspector,
@@ -149,11 +151,10 @@ export function SelectedDiffDetail(props: {
     if (reverting()) return;
     setReverting(true);
     try {
-      await hoxiAPI.revertWorktreeFile(sessionID, props.diff.file);
+      await hoxiAPI.revertWorktreeFile(sessionID, props.diff.file, activeDirectory());
+      await refreshWorktreeStatus(workspace.activeSessionID);
       if (workspace.activeSessionID) {
         await loadSessionMessages(workspace.activeSessionID);
-      } else {
-        await refreshWorktreeStatus("__root__");
       }
     } catch (err) {
       console.error("revertWorktreeFile failed:", err);
@@ -260,6 +261,22 @@ export function SelectedDiffDetail(props: {
             <span class="font-semibold text-[var(--text-primary)]">{baseName()}</span>
           </div>
           <DiffStatusBadge status={props.diff.status} />
+          <Show when={props.diff.repo}>
+            <span
+              class="shrink-0 inline-flex items-center gap-1 rounded bg-[var(--accent-surface)] px-1.5 py-0 text-[10px] font-mono text-[var(--accent-primary)] border border-[var(--accent-border)]"
+              title={
+                props.diff.branch
+                  ? `${props.diff.repo} (${props.diff.branch})`
+                  : props.diff.repo
+              }
+            >
+              <GitBranch size={10} />
+              <span>
+                {props.diff.repo}
+                {props.diff.branch ? `:${props.diff.branch}` : ""}
+              </span>
+            </span>
+          </Show>
         </div>
 
         <div class="flex items-center gap-2 shrink-0">

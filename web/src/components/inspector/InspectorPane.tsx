@@ -3,6 +3,7 @@ import { Maximize2, Minimize2 } from "lucide-solid";
 import MemoryBankView from "./MemoryBankView";
 import FileTreeView from "./FileTreeView";
 import { setWorkspace, workspace } from "../../store/workspace";
+import { collectCycleChangedFiles } from "../timeline/tool-card-state";
 import { t } from "../../i18n";
 
 const PierreDiffViewer = lazy(() => import("./PierreDiffViewer"));
@@ -28,6 +29,8 @@ export default function InspectorPane() {
     if (id) {
       const sDiffs = workspace.diffsBySession[id];
       if (sDiffs && sDiffs.length > 0) return sDiffs.length;
+      const turns = workspace.messagesBySession[id] ?? [];
+      if (turns.length > 0) return collectCycleChangedFiles(turns, id).length;
     }
     const key = id || "__root__";
     return (workspace.diffsBySession[key] ?? []).length;
@@ -50,12 +53,12 @@ export default function InspectorPane() {
 
   return (
     <aside class="h-full w-full flex flex-col bg-transparent">
-      <div class="shrink-0 flex flex-wrap items-center gap-1 px-3 py-2 border-b border-[var(--border-subtle)]">
+      <div class="shrink-0 flex items-center gap-1 px-2 py-1.5 border-b border-[var(--border-subtle)] overflow-x-auto no-scrollbar">
         <For each={TABS}>
           {(tab) => (
             <button
               type="button"
-              class={`relative rounded-lg px-3 py-1.5 text-[12.5px] font-medium transition-all cursor-pointer ${
+              class={`relative shrink-0 whitespace-nowrap rounded-lg px-2.5 py-1 text-xs font-medium transition-all cursor-pointer ${
                 workspace.inspectorTab === tab.id
                   ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]"
                   : "text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
@@ -69,7 +72,7 @@ export default function InspectorPane() {
 
         <button
           type="button"
-          class={`ml-auto inline-flex items-center justify-center w-6.5 h-6.5 rounded-lg transition-colors cursor-pointer ${
+          class={`ml-auto shrink-0 inline-flex items-center justify-center w-6 h-6 rounded-lg transition-colors cursor-pointer ${
             workspace.inspectorMaximized
               ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]"
               : "text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"

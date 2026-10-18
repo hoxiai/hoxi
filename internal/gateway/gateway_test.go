@@ -375,3 +375,41 @@ func TestSPAStaticHandlerAndReverseProxyWithSSETap(t *testing.T) {
 		t.Fatalf("expected 502 Bad Gateway when upstream is closed, got %d", recDown.Code)
 	}
 }
+
+func TestFileContentSupportsExternalAndAbsolutePaths(t *testing.T) {
+	projectDir := t.TempDir()
+	externalDir := t.TempDir()
+
+	extFile := filepath.Join(externalDir, "outside.ts")
+	if err := os.WriteFile(extFile, []byte("export const outside = 42;\n"), 0o644); err != nil {
+		t.Fatalf("write external file: %v", err)
+	}
+	inProjFile := filepath.Join(projectDir, "inside.ts")
+	if err := os.WriteFile(inProjFile, []byte("export const inside = 1;\n"), 0o644); err != nil {
+		t.Fatalf("write inside file: %v", err)
+	}
+
+	gw := New(0, "test-pass", projectDir, nil, nil)
+
+	// 1. Absolute path outside the project directory
+	recExt := httptest.NewRecorder()
+	gw.ServeHTTP(recExt, localRequest(http.MethodGet, "/file/content?path="+extFile+"&directory="+projectDir, nil))
+	if recExt.Code != http.StatusOK || !strings.Contains(recExt.Body.String(), "export const outside = 42;") {
+		t.Fatalf("expected external file content, got code=%d body=%s", recExt.Code, recExt.Body.String())
+	}
+
+	// 2. Absolute path inside the project directory via /api/file/content
+	recAbsIn := httptest.NewRecorder()
+	gw.ServeHTTP(recAbsIn, localRequest(http.MethodGet, "/api/file/content?path="+inProjFile+"&directory="+projectDir, nil))
+	if recAbsIn.Code != http.StatusOK || !strings.Contains(recAbsIn.Body.String(), "export const inside = 1;") {
+		t.Fatalf("expected absolute inside file content, got code=%d body=%s", recAbsIn.Code, recAbsIn.Body.String())
+	}
+
+	// 3. Non-existent external file returns 404
+	recMissing := httptest.NewRecorder()
+	gw.ServeHTTP(recMissing, localRequest(http.MethodGet, "/file/content?path="+filepath.Join(externalDir, "missing.ts")+"&directory="+projectDir, nil))
+	if recMissing.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for missing external file, got %d", recMissing.Code)
+	}
+}
+

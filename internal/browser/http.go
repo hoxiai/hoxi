@@ -76,7 +76,7 @@ func validOrigin(u *url.URL) bool {
 	return u.User == nil && u.Host != "" && u.Path == "" && u.RawQuery == "" && !u.ForceQuery && u.Fragment == "" && u.Opaque == ""
 }
 
-func (s *Service) trustedUI(origin, authority string) (bool, bool) {
+func (s *Service) trustedUI(origin, authority string) (bool, bool, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	configuredHost := false
@@ -87,8 +87,9 @@ func (s *Service) trustedUI(origin, authority string) (bool, bool) {
 		}
 	}
 	u, err := url.Parse(origin)
-	native := err == nil && validOrigin(u) && u.Scheme == "wails" && wailsHost(u.Host)
-	return native || s.uiOrigins[origin], configuredHost
+	nativeOrigin := err == nil && validOrigin(u) && u.Scheme == "wails" && wailsHost(u.Host)
+	nativeHost := wailsHost(authority) || s.uiOrigins["wails://"+authority]
+	return nativeOrigin || s.uiOrigins[origin], configuredHost, nativeHost
 }
 
 func (s *Service) authenticate(r *http.Request) (bool, error) {
@@ -96,7 +97,7 @@ func (s *Service) authenticate(r *http.Request) (bool, error) {
 		return false, errors.New("untrusted Host")
 	}
 	origin := r.Header.Get("Origin")
-	allowedOrigin, configuredHost := s.trustedUI(origin, r.Host)
+	allowedOrigin, configuredHost, native := s.trustedUI(origin, r.Host)
 	if origin != "" && !allowedOrigin {
 		return false, errors.New("untrusted Origin")
 	}
@@ -116,7 +117,12 @@ func (s *Service) authenticate(r *http.Request) (bool, error) {
 	}
 	if origin == "" {
 		site := r.Header.Get("Sec-Fetch-Site")
-		native := wailsHost(r.Host)
+		if !native && site == "" {
+			if ref, err := url.Parse(r.Header.Get("Referer")); err == nil && ref.Scheme == "wails" {
+				allowedRef, _, refNative := s.trustedUI(ref.Scheme+"://"+ref.Host, ref.Host)
+				native = allowedRef && refNative
+			}
+		}
 		if r.Header.Get("X-Hoxi-Browser") != "true" || (!native && !configuredHost) || (site != "same-origin" && !(site == "" && native)) {
 			return false, errors.New("UI Origin or trusted browser request required")
 		}
@@ -227,30 +233,50 @@ func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	stop := context.AfterFunc(ctx, opcancel)
 	defer stop()
 	defer opcancel()
-	state, err := sc.state(opctx)
-	if err != nil {
-		fail(w, 502, err)
-		return
-	}
-	var extra map[string]any
-	if path == "action" && action.Action != "control" {
-		extra, err = sc.perform(opctx, action)
-		if err == nil {
-			state, err = sc.state(opctx)
-		}
-	}
-	if err != nil {
-		fail(w, 502, err)
-		return
-	}
 	if path == "frame" {
+		if sc.tabID == "" {
+			if _, err := sc.state(opctx); err != nil {
+				fail(w, 502, err)
+				return
+			}
+		}
 		image, err := sc.capture(opctx)
+		if err != nil {
+			if _, stateErr := sc.state(opctx); stateErr == nil && sc.tabID != "" {
+				image, err = sc.capture(opctx)
+			}
+		}
 		if err != nil {
 			fail(w, 502, err)
 			return
 		}
 		w.Header().Set("Content-Type", "image/jpeg")
 		_, _ = w.Write(image)
+		return
+	}
+	var extra map[string]any
+	if path == "action" && action.Action != "control" {
+		if sc.tabID == "" && action.Action != "tab_new" && action.Action != "tab_select" && action.Action != "tab_close" {
+			if _, err = sc.state(opctx); err != nil {
+				fail(w, 502, err)
+				return
+			}
+		}
+		prevTab := sc.tabID
+		extra, err = sc.perform(opctx, action)
+		if err != nil && action.Action != "tab_new" && action.Action != "tab_select" && action.Action != "tab_close" {
+			if _, stateErr := sc.state(opctx); stateErr == nil && sc.tabID != "" && sc.tabID != prevTab {
+				extra, err = sc.perform(opctx, action)
+			}
+		}
+		if err != nil {
+			fail(w, 502, err)
+			return
+		}
+	}
+	state, err := sc.state(opctx)
+	if err != nil {
+		fail(w, 502, err)
 		return
 	}
 	result := map[string]any{"url": state.URL, "title": state.Title, "tabs": state.Tabs, "tabID": state.TabID, "manual": state.Manual}

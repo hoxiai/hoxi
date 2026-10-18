@@ -29,9 +29,11 @@ func TestUIOrigins(t *testing.T) {
 	}
 	check("localhost:5173", "http://localhost:5173", "same-origin", false)
 	check("localhost:5173", "", "same-origin", false)
-	s.SetUIOrigins("http://localhost:5173", "http://127.0.0.1:42817")
+	s.SetUIOrigins("http://localhost:5173", "http://127.0.0.1:42817", "wails://wails.localhost:34115")
 	check("localhost:5173", "http://localhost:5173", "same-origin", true)
 	check("127.0.0.1:42817", "http://localhost:5173", "", true)
+	check("wails.localhost:34115", "wails://wails.localhost:34115", "", true)
+	check("wails.localhost:34115", "", "", true)
 	// The reverse proxy preserves the configured bridge Host on Vite GETs.
 	check("127.0.0.1:42817", "", "same-origin", true)
 	check("localhost:5173", "", "same-origin", true)

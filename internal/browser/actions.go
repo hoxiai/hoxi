@@ -130,9 +130,6 @@ func (sc *scope) withTab(ctx context.Context, tasks ...chromedp.Action) error {
 	stop := context.AfterFunc(ctx, cancel)
 	defer stop()
 	defer cancel()
-	if err := chromedp.Run(op, chromedp.EmulateViewport(1280, 800)); err != nil {
-		return err
-	}
 	return chromedp.Run(op, tasks...)
 }
 
@@ -143,7 +140,7 @@ func (sc *scope) capture(ctx context.Context) ([]byte, error) {
 		// Without a document-coordinate clip, Chrome captures the visible viewport,
 		// including its current scroll offset, at the emulated 1280x800 size.
 		image, err = page.CaptureScreenshot().WithFormat(page.CaptureScreenshotFormatJpeg).WithQuality(80).
-			WithCaptureBeyondViewport(false).Do(ctx)
+			WithOptimizeForSpeed(true).WithCaptureBeyondViewport(false).Do(ctx)
 		return err
 	}))
 	return image, err
