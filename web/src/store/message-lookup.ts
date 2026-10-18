@@ -28,8 +28,9 @@ function isOptimisticID(id: string): boolean {
   return id.startsWith("optimistic_");
 }
 
+// Optimistic parts are `prt_<ms>` / `prt_file_<ms>_<i>`; real OpenCode part IDs also start with `prt_`.
 function isOptimisticPartID(id: string): boolean {
-  return id.startsWith("prt_");
+  return /^prt_(file_)?\d+(_\d+)?$/.test(id);
 }
 
 function bubbleTurnIntoOrder(list: MessageTurn[], idx: number) {
@@ -143,39 +144,102 @@ export function upsertTurnPart(list: MessageTurn[], part: MessagePart) {
   }
 }
 
-export function mergeServerTurns(
-  existing: MessageTurn[] | undefined,
-  remoteTurns: Array<{ info: MessageInfo; parts: MessagePart[] }>
-): MessageTurn[] {
-  const normalized = remoteTurns.map((t) => ({ info: t.info, parts: t.parts }));
-  if (!existing || existing.length === 0) return normalized;
+const toolStatusRank: Record<string, number> = {
+  pending: 0,
+  running: 1,
+  completed: 2,
+  error: 2,
+};
 
-  const remoteIDs = new Set(normalized.map((t) => t.info.id));
+function isTurnSettled(info: MessageInfo): boolean {
+  return Boolean(info.time?.completed || info.error);
+}
+
+// A REST snapshot is taken before its response lands, so SSE may already have advanced the
+// same part further. Parts only move forward (status rank, text growth, reasoning end).
+function isLocalPartAhead(local: MessagePart, remote: MessagePart): boolean {
+  if (local.type === "tool" && remote.type === "tool") {
+    return (toolStatusRank[local.state.status] ?? 0) > (toolStatusRank[remote.state.status] ?? 0);
+  }
+  if (local.type === "reasoning" && remote.type === "reasoning") {
+    const localEnded = Boolean(local.time?.end);
+    const remoteEnded = Boolean(remote.time?.end);
+    if (localEnded !== remoteEnded) return localEnded;
+    return local.text.length > remote.text.length;
+  }
+  if (local.type === "text" && remote.type === "text") {
+    return local.text.length > remote.text.length;
+  }
+  return false;
+}
+
+function mergeTurnInto(local: MessageTurn, remote: { info: MessageInfo; parts: MessagePart[] }) {
+  if (!(isTurnSettled(local.info) && !isTurnSettled(remote.info))) {
+    Object.assign(local.info, remote.info);
+  }
+  const remoteIDs = new Set(remote.parts.map((p) => p.id));
+  const nextParts: MessagePart[] = [];
+  for (const rp of remote.parts) {
+    const idx = findPartIndex(local.parts, rp.id);
+    const lp = idx >= 0 ? local.parts[idx] : undefined;
+    if (!lp || lp.type !== rp.type) {
+      nextParts.push(rp);
+      continue;
+    }
+    if (!isLocalPartAhead(lp, rp)) Object.assign(lp, rp);
+    nextParts.push(lp);
+  }
+  // Parts streamed in after the snapshot was taken; optimistic placeholders yield to real parts.
+  for (const lp of local.parts) {
+    if (remoteIDs.has(lp.id)) continue;
+    if (isOptimisticPartID(lp.id) && remote.parts.length > 0) continue;
+    nextParts.push(lp);
+  }
+  local.parts.splice(0, local.parts.length, ...nextParts);
+}
+
+/**
+ * Merges a REST message snapshot into the live store list in place (call inside `produce`).
+ * Existing turn/part objects are updated rather than replaced so streamed progress that is
+ * newer than the snapshot survives and rendered cards keep their identity.
+ */
+export function mergeServerTurnsInto(
+  list: MessageTurn[],
+  remoteTurns: Array<{ info: MessageInfo; parts: MessagePart[] }>
+) {
+  const existing = list.slice();
   const priorRealUserIDs = new Set(
     existing
       .filter((t) => t.info.role === "user" && !isOptimisticID(t.info.id))
       .map((t) => t.info.id)
   );
-  const hasNewRemoteUserTurn = normalized.some(
+  const hasNewRemoteUserTurn = remoteTurns.some(
     (t) => t.info.role === "user" && !priorRealUserIDs.has(t.info.id)
   );
-
   const lastRemoteID =
-    normalized.length > 0 ? normalized[normalized.length - 1].info.id : "";
+    remoteTurns.length > 0 ? remoteTurns[remoteTurns.length - 1].info.id : "";
+
+  const remoteIDs = new Set<string>();
+  const next: MessageTurn[] = [];
+  for (const remote of remoteTurns) {
+    remoteIDs.add(remote.info.id);
+    const idx = findMessageIndex(existing, remote.info.id);
+    if (idx < 0) {
+      next.push({ info: remote.info, parts: remote.parts });
+      continue;
+    }
+    mergeTurnInto(existing[idx], remote);
+    next.push(existing[idx]);
+  }
 
   for (const turn of existing) {
     if (remoteIDs.has(turn.info.id)) continue;
     if (isOptimisticID(turn.info.id)) {
-      if (!hasNewRemoteUserTurn) {
-        normalized.push(turn);
-      }
+      if (!hasNewRemoteUserTurn) next.push(turn);
       continue;
     }
-    if (lastRemoteID && turn.info.id > lastRemoteID) {
-      normalized.push(turn);
-    }
+    if (lastRemoteID && turn.info.id > lastRemoteID) next.push(turn);
   }
 
-  return normalized;
+  list.splice(0, list.length, ...next);
 }
-

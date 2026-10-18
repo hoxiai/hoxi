@@ -490,6 +490,7 @@ export * from "./workspace-providers";
 export * from "./workspace-projects";
 export * from "./workspace-sessions";
 export * from "./workspace-queue-subagents";
+export * from "./session-status-sync";
 export * from "./session-title";
 export * from "./provider-telemetry";
 export * from "./provider-audit";

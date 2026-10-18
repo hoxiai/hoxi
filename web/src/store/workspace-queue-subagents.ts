@@ -5,7 +5,6 @@ import type { MessagePart, ToolPart } from "../services/sse-types";
 import { recordUserRevertAction } from "./provider-telemetry";
 import { type SelectedModel, setWorkspace, workspace } from "./workspace";
 import {
-  activeDirectory,
   isSessionBusy,
   loadSessionMessages,
   loadSessionMessagesOnly,
@@ -48,6 +47,10 @@ const loadedChildSessionIDs = new Set<string>();
 
 export function markSessionPromptDispatched(sessionID: string) {
   lastPromptDispatchAtBySession.set(sessionID, Date.now());
+}
+
+export function lastPromptDispatchedAt(sessionID: string): number {
+  return lastPromptDispatchAtBySession.get(sessionID) || 0;
 }
 
 export function enqueueSessionPrompt(
@@ -305,47 +308,6 @@ export async function abortChildSubagentSessions(
       }
     })
   );
-}
-
-export async function syncSessionStatuses(directory?: string): Promise<void> {
-  try {
-    const dir = directory || activeDirectory() || workspace.rootDir || undefined;
-    const remoteStatuses = await hoxiAPI.getSessionStatuses(dir);
-    const now = Date.now();
-    const newlyIdleSessions: string[] = [];
-
-    setWorkspace(
-      produce((state) => {
-        for (const [sid, status] of Object.entries(remoteStatuses || {})) {
-          if (
-            status?.type === "idle" &&
-            now - (lastPromptDispatchAtBySession.get(sid) || 0) <= 3500
-          ) {
-            continue;
-          }
-          state.statusBySession[sid] = status;
-        }
-        for (const [sid, current] of Object.entries(state.statusBySession)) {
-          if (
-            (current?.type === "busy" || current?.type === "retry") &&
-            !remoteStatuses?.[sid]
-          ) {
-            const dispatchedAt = lastPromptDispatchAtBySession.get(sid) || 0;
-            if (now - dispatchedAt > 3500) {
-              state.statusBySession[sid] = { type: "idle" };
-              newlyIdleSessions.push(sid);
-            }
-          }
-        }
-      })
-    );
-
-    for (const sid of newlyIdleSessions) {
-      void drainNextQueuedPrompt(sid);
-    }
-  } catch (err) {
-    console.warn("syncSessionStatuses warning:", err);
-  }
 }
 
 export async function resumeSubagentTask(params: {

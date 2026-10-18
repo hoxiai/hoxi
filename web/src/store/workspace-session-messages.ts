@@ -218,9 +218,6 @@ export async function submitSessionPrompt(
     });
     if (!lastInterruptAtBySession.has(id)) {
       markSessionPromptDispatched(id);
-      if (workspace.statusBySession[id]?.type !== "busy") {
-        setWorkspace("statusBySession", id, { type: "busy" });
-      }
     }
     if (shouldSummarizeTitle) {
       void summarizeAndRenameSession(
@@ -293,23 +290,6 @@ function mutateUpsertPart(state: typeof workspace, part: MessagePart) {
   upsertTurnPart(list, part);
 }
 
-function isMessageTurnAlreadyFinished(
-  sessionID: string,
-  messageID: string,
-  batchInfos?: MessageInfo[]
-): boolean {
-  const fromBatch = batchInfos?.find(
-    (i) => i.sessionID === sessionID && i.id === messageID
-  );
-  if (fromBatch && (fromBatch.time?.completed || fromBatch.error)) return true;
-  const list = workspace.messagesBySession[sessionID];
-  if (!list) return false;
-  const idx = findMessageIndex(list, messageID);
-  if (idx < 0) return false;
-  const info = list[idx].info;
-  return Boolean(info.time?.completed || info.error);
-}
-
 export function upsertMessageInfo(info: MessageInfo) {
   recordAssistantTurnUpdated(info);
   setWorkspace(produce((state) => mutateUpsertInfo(state, info)));
@@ -334,19 +314,6 @@ export function upsertMessagePart(part: MessagePart) {
     ) {
       scheduleRefreshWorktreeStatus(part.sessionID, 250);
   }
-  const interruptedAt = lastInterruptAtBySession.get(part.sessionID) || 0;
-  const isActivelyStreamingPart =
-    ((part.type === "tool" &&
-      (part.state.status === "pending" || part.state.status === "running")) ||
-      (part.type === "reasoning" && !part.time?.end)) &&
-    !isMessageTurnAlreadyFinished(part.sessionID, part.messageID);
-  if (
-    isActivelyStreamingPart &&
-    Date.now() - interruptedAt > 2500 &&
-    workspace.statusBySession[part.sessionID]?.type !== "busy"
-  ) {
-    setWorkspace("statusBySession", part.sessionID, { type: "busy" });
-  }
   setWorkspace(produce((state) => mutateUpsertPart(state, part)));
 }
 
@@ -361,14 +328,6 @@ export function applyPartDeltaBatch(
 ) {
   for (const b of batches) {
     recordFirstToken(b.sessionID);
-    const interruptedAt = lastInterruptAtBySession.get(b.sessionID) || 0;
-    if (
-      Date.now() - interruptedAt > 2500 &&
-      !isMessageTurnAlreadyFinished(b.sessionID, b.messageID) &&
-      workspace.statusBySession[b.sessionID]?.type !== "busy"
-    ) {
-      setWorkspace("statusBySession", b.sessionID, { type: "busy" });
-    }
   }
   setWorkspace(
     produce((state) => {
@@ -387,9 +346,6 @@ export function applyPartDeltaBatch(
 }
 
 export function applyStreamFrameBatch(batch: StreamFrameBatch) {
-  const now = Date.now();
-  const busySessionsToMark = new Set<string>();
-
   for (const info of batch.infos) {
     recordAssistantTurnUpdated(info);
   }
@@ -413,31 +369,10 @@ export function applyStreamFrameBatch(batch: StreamFrameBatch) {
     ) {
       scheduleRefreshWorktreeStatus(part.sessionID, 250);
     }
-    const isActivelyStreamingPart =
-      ((part.type === "tool" &&
-        (part.state.status === "pending" || part.state.status === "running")) ||
-        (part.type === "reasoning" && !part.time?.end)) &&
-      !isMessageTurnAlreadyFinished(part.sessionID, part.messageID, batch.infos);
-    if (isActivelyStreamingPart) {
-      busySessionsToMark.add(part.sessionID);
-    }
   }
 
   for (const d of batch.deltas) {
     recordFirstToken(d.sessionID);
-    if (!isMessageTurnAlreadyFinished(d.sessionID, d.messageID, batch.infos)) {
-      busySessionsToMark.add(d.sessionID);
-    }
-  }
-
-  for (const sid of busySessionsToMark) {
-    const interruptedAt = lastInterruptAtBySession.get(sid) || 0;
-    if (
-      now - interruptedAt > 2500 &&
-      workspace.statusBySession[sid]?.type !== "busy"
-    ) {
-      setWorkspace("statusBySession", sid, { type: "busy" });
-    }
   }
 
   setWorkspace(

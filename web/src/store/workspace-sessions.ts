@@ -1,7 +1,7 @@
 import { produce } from "solid-js/store";
 import type { SessionInfo, SnapshotFileDiff } from "../services/sse-types";
 import { hoxiAPI } from "../services/api";
-import { mergeServerTurns } from "./message-lookup";
+import { mergeServerTurnsInto } from "./message-lookup";
 import {
   ARCHIVED_SESSIONS_KEY,
   isSessionArchived,
@@ -127,7 +127,11 @@ function mergeSessionAndWorktreeDiffs(
 export async function loadSessionMessagesOnly(sessionID: string): Promise<void> {
   const directory = sessionDirectory(sessionID);
   const turns = await hoxiAPI.getMessages(sessionID, directory);
-  setWorkspace("messagesBySession", sessionID, (prev) => mergeServerTurns(prev, turns));
+  setWorkspace(
+    produce((state) => {
+      mergeServerTurnsInto((state.messagesBySession[sessionID] ||= []), turns);
+    })
+  );
 }
 
 export async function loadSessionMessages(sessionID: string): Promise<void> {
@@ -142,7 +146,11 @@ export async function loadSessionMessages(sessionID: string): Promise<void> {
   }
   try {
     const turns = await hoxiAPI.getMessages(sessionID, directory);
-    setWorkspace("messagesBySession", sessionID, (prev) => mergeServerTurns(prev, turns));
+    setWorkspace(
+      produce((state) => {
+        mergeServerTurnsInto((state.messagesBySession[sessionID] ||= []), turns);
+      })
+    );
   } catch (err) {
     if (workspace.messagesBySession[sessionID] === undefined) {
       setWorkspace("messagesBySession", sessionID, []);

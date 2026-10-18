@@ -14,7 +14,7 @@ import {
 } from "./workspace";
 import { loadAgents, loadProviders } from "./workspace-providers";
 import { sortSessionsByActivity } from "./session-title";
-import { syncSessionStatuses } from "./workspace-queue-subagents";
+import { syncSessionStatuses } from "./session-status-sync";
 import {
   isSessionDeleted,
   refreshWorktreeStatus,
