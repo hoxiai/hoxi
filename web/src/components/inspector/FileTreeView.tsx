@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, on, onCleanup, Show } from "solid-js";
 import { ArrowLeft, FolderOpen, FolderPlus, GitBranch, LoaderCircle, Search } from "lucide-solid";
 import { hoxiAPI } from "../../services/api";
 import type { SnapshotFileDiff } from "../../services/sse-types";
@@ -121,6 +121,36 @@ export default function FileTreeView() {
   });
   const changedLines = createMemo(() =>
     computeChangedFileLines(activeDiff(), sourceLines())
+  );
+
+  createEffect(
+    on(
+      () => {
+        const d = activeDiff();
+        return [
+          previewPath(),
+          d?.stamp ?? "",
+          d?.additions ?? 0,
+          d?.deletions ?? 0,
+          d?.patch?.length ?? 0,
+        ] as const;
+      },
+      ([path], prev) => {
+        if (!path || !prev || prev[0] !== path || loadingPreview()) return;
+        const request = ++previewRequest;
+        void hoxiAPI
+          .readFileContent(path, targetDirectory())
+          .then((res) => {
+            if (request === previewRequest && res?.content !== undefined) {
+              setPreviewContent(res.content);
+            }
+          })
+          .catch(() => {
+            /* ignore background refresh error */
+          });
+      },
+      { defer: true }
+    )
   );
 
   createEffect(() => {

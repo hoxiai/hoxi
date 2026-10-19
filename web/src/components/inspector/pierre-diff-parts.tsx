@@ -21,7 +21,7 @@ import { hoxiAPI } from "../../services/api";
 import {
   activeDirectory,
   addReviewComment,
-  loadSessionMessages,
+  loadSessionMessagesOnly,
   openFileInInspector,
   refreshWorktreeStatus,
   synthesizeLocalCommitMessage,
@@ -336,6 +336,44 @@ export function SelectedDiffDetail(props: {
     )
   );
 
+  createEffect(() => {
+    const onKeyDown = (ev: KeyboardEvent) => {
+      if (ev.defaultPrevented || ev.metaKey || ev.ctrlKey) return;
+      const target = ev.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.tagName === "SELECT" ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      if (ev.key === "Escape" && !ev.altKey && !ev.shiftKey) {
+        ev.preventDefault();
+        props.onBack();
+      } else if (
+        (ev.key === "[" && !ev.altKey) ||
+        (ev.altKey && (ev.key === "ArrowUp" || ev.key === "ArrowLeft"))
+      ) {
+        if (props.currentIndex > 0) {
+          ev.preventDefault();
+          props.onPrev();
+        }
+      } else if (
+        (ev.key === "]" && !ev.altKey) ||
+        (ev.altKey && (ev.key === "ArrowDown" || ev.key === "ArrowRight"))
+      ) {
+        if (props.currentIndex < props.totalFiles - 1) {
+          ev.preventDefault();
+          props.onNext();
+        }
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    onCleanup(() => window.removeEventListener("keydown", onKeyDown));
+  });
+
   const dirPart = () => {
     const idx = props.diff.file.lastIndexOf("/");
     return idx >= 0 ? props.diff.file.slice(0, idx + 1) : "";
@@ -358,7 +396,7 @@ export function SelectedDiffDetail(props: {
       );
       await refreshWorktreeStatus(workspace.activeSessionID);
       if (workspace.activeSessionID) {
-        await loadSessionMessages(workspace.activeSessionID);
+        await loadSessionMessagesOnly(workspace.activeSessionID);
       }
     } catch (err) {
       console.error("revertWorktreeFile failed:", err);
