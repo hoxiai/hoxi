@@ -21,8 +21,9 @@ import {
 import { hoxiAPI } from "../../services/api";
 import type { SessionInfo } from "../../services/sse-types";
 import { Icon, Spinner } from "../icons";
-import { buildAllProjects, collectPendingSessionIDs, findProjectDropTarget } from "./left-nav-helpers";
+import { buildAllProjects, collectPendingSessionIDs, findProjectDropTarget, sameStringSet } from "./left-nav-helpers";
 import MultiProjectTreeItem from "./MultiProjectItem";
+import { sameSessionArray } from "./SessionHistory";
 import SingleProjectNavView, { RecentTasksNavView } from "./SingleProjectNavView";
 import UserAccountMenu from "./UserAccountMenu";
 import { t } from "../../i18n";
@@ -81,8 +82,13 @@ export default function LeftNav() {
     const root = normalizeFolderPath(workspace.rootDir);
     if (root && !isInvalidProjectPath(root)) {
       setExpandedProjects((prev) => (prev.has(root) ? prev : new Set([...prev, root])));
-      if (!workspace.bootstrappingSessions && workspace.sessions.length > 0) {
-        setProjectSessions((prev) => ({ ...prev, [root]: workspace.sessions }));
+      if (!workspace.bootstrappingSessions) {
+        const current = workspace.sessions.slice();
+        setProjectSessions((prev) =>
+          prev[root] && sameSessionArray(prev[root], current)
+            ? prev
+            : { ...prev, [root]: current }
+        );
       }
     }
   });
@@ -117,25 +123,28 @@ export default function LeftNav() {
     { equals: (a, b) => a.length === b.length && a.every((v, i) => v === b[i]) }
   );
 
-  const pendingSessions = createMemo(() => collectPendingSessionIDs());
+  const pendingSessions = createMemo(() => collectPendingSessionIDs(), new Set<string>(), {
+    equals: sameStringSet,
+  });
   const isExpanded = (path: string) => expandedProjects().has(normalizeFolderPath(path));
 
   const loadSessionsForProject = async (path: string) => {
     const clean = normalizeFolderPath(path);
     if (!clean || isInvalidProjectPath(clean)) return;
-    setLoadingProjects((prev) => ({ ...prev, [clean]: true }));
+    setLoadingProjects((prev) => (prev[clean] ? prev : { ...prev, [clean]: true }));
     try {
       if (clean === normalizeFolderPath(workspace.rootDir)) {
         await bootstrapProjectSessions(clean);
-        setProjectSessions((prev) => ({ ...prev, [clean]: workspace.sessions }));
+        setProjectSessions((prev) => ({ ...prev, [clean]: workspace.sessions.slice() }));
       } else {
         const list = await hoxiAPI.listSessions(clean);
-        setProjectSessions((prev) => ({ ...prev, [clean]: list }));
+        setProjectSessions((prev) => ({ ...prev, [clean]: Array.isArray(list) ? list : [] }));
       }
     } catch (err) {
       console.error(`Failed to load sessions for ${clean}:`, err);
+      setProjectSessions((prev) => (prev[clean] !== undefined ? prev : { ...prev, [clean]: [] }));
     } finally {
-      setLoadingProjects((prev) => ({ ...prev, [clean]: false }));
+      setLoadingProjects((prev) => (prev[clean] ? { ...prev, [clean]: false } : prev));
     }
   };
 
@@ -143,8 +152,8 @@ export default function LeftNav() {
     const activeRoot = normalizeFolderPath(workspace.rootDir);
     for (const rawPath of expandedProjects()) {
       const path = normalizeFolderPath(rawPath);
-      if (!path || isInvalidProjectPath(path) || loadingProjects()[path] || projectSessions()[path]) continue;
-      if (path === activeRoot && (workspace.bootstrappingSessions || workspace.sessions.length > 0)) continue;
+      if (!path || isInvalidProjectPath(path) || path === activeRoot) continue;
+      if (loadingProjects()[path] || projectSessions()[path] !== undefined) continue;
       void loadSessionsForProject(path);
     }
   });
@@ -163,7 +172,7 @@ export default function LeftNav() {
       next.add(clean);
       setExpandedProjects(next);
       const isRoot = clean === normalizeFolderPath(workspace.rootDir);
-      if ((!isRoot && !projectSessions()[clean]) || (isRoot && workspace.sessions.length === 0 && !workspace.bootstrappingSessions)) {
+      if (!isRoot && projectSessions()[clean] === undefined && !loadingProjects()[clean]) {
         await loadSessionsForProject(clean);
       }
     }
@@ -173,19 +182,37 @@ export default function LeftNav() {
     if (ev.button !== 0 || (ev.target as HTMLElement | null)?.closest("button")) return;
     const startY = ev.clientY;
     let isDragging = false;
+    let rafId: number | null = null;
+    let latestClientY = startY;
+
+    const updateDropTarget = () => {
+      rafId = null;
+      if (!isDragging || !projectListContainerRef) return;
+      const next = findProjectDropTarget(projectListContainerRef, latestClientY, fromPath);
+      setDropTarget((prev) => {
+        if (!prev && !next) return prev;
+        if (prev && next && prev.path === next.path && prev.position === next.position) return prev;
+        return next;
+      });
+    };
 
     const handlePointerMove = (moveEv: PointerEvent) => {
+      latestClientY = moveEv.clientY;
       if (!isDragging) {
         if (Math.abs(moveEv.clientY - startY) < 5) return;
         isDragging = true;
         setDraggingProjectPath(fromPath);
       }
-      if (projectListContainerRef) {
-        setDropTarget(findProjectDropTarget(projectListContainerRef, moveEv.clientY, fromPath));
+      if (rafId === null) {
+        rafId = requestAnimationFrame(updateDropTarget);
       }
     };
 
     const handlePointerUp = () => {
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
+      }
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerup", handlePointerUp);
       window.removeEventListener("pointercancel", handlePointerUp);
@@ -211,10 +238,14 @@ export default function LeftNav() {
   const onCreateThreadInProject = async (e: MouseEvent, path: string) => {
     e.stopPropagation();
     if (creatingForPath()) return;
+    const normPath = normalizeFolderPath(path);
     setCreatingForPath(path);
     try {
-      if (path !== workspace.rootDir) await switchWorkspace(path, false);
-      setExpandedProjects((prev) => new Set([...prev, path]));
+      if (normPath && normPath !== normalizeFolderPath(workspace.rootDir)) {
+        const cached = projectSessions()[normPath] || projectSessions()[path];
+        await switchWorkspace(normPath, { selectInitial: false, cachedSessions: cached });
+      }
+      setExpandedProjects((prev) => (prev.has(normPath) ? prev : new Set([...prev, normPath])));
       startNewThreadDraft();
     } catch (err) {
       console.error("Failed to create thread in project:", err);
@@ -226,50 +257,65 @@ export default function LeftNav() {
   const onSelectSessionInProject = async (path: string, sessionID: string) => {
     const normPath = normalizeFolderPath(path);
     if (normPath && normPath !== normalizeFolderPath(workspace.rootDir)) {
-      await switchWorkspace(normPath, false);
+      const cached = projectSessions()[normPath] || projectSessions()[path];
+      await switchWorkspace(normPath, {
+        selectInitial: false,
+        targetSessionID: sessionID,
+        cachedSessions: cached,
+      });
+      return;
     }
     await selectSession(sessionID);
   };
 
   const onArchiveInProject = async (projPath: string, ev: MouseEvent, sessionID: string) => {
     ev.stopPropagation();
+    const normPath = normalizeFolderPath(projPath);
     const now = Date.now();
-    if (projPath !== workspace.rootDir) {
-      setProjectSessions((prev) => ({
+    setProjectSessions((prev) => {
+      const list = prev[normPath];
+      if (!list) return prev;
+      return {
         ...prev,
-        [projPath]: (prev[projPath] || []).map((s) =>
+        [normPath]: list.map((s) =>
           s.id === sessionID ? { ...s, time: { ...s.time, archived: now } } : s
         ),
-      }));
-    }
-    await archiveSession(sessionID, projPath);
+      };
+    });
+    await archiveSession(sessionID, normPath);
   };
 
   const onUnarchiveInProject = async (projPath: string, ev: MouseEvent, sessionID: string) => {
     ev.stopPropagation();
-    if (projPath !== workspace.rootDir) {
-      setProjectSessions((prev) => ({
+    const normPath = normalizeFolderPath(projPath);
+    setProjectSessions((prev) => {
+      const list = prev[normPath];
+      if (!list) return prev;
+      return {
         ...prev,
-        [projPath]: (prev[projPath] || []).map((s) => {
+        [normPath]: list.map((s) => {
           if (s.id !== sessionID) return s;
           const nextTime = { ...s.time };
           delete nextTime.archived;
           return { ...s, time: nextTime };
         }),
-      }));
-    }
-    await unarchiveSession(sessionID, projPath);
+      };
+    });
+    await unarchiveSession(sessionID, normPath);
   };
 
   const onDiscardInProject = async (projPath: string, ev: MouseEvent, sessionID: string) => {
     ev.stopPropagation();
-    if (projPath !== workspace.rootDir) {
-      setProjectSessions((prev) => ({
+    const normPath = normalizeFolderPath(projPath);
+    setProjectSessions((prev) => {
+      const list = prev[normPath];
+      if (!list) return prev;
+      return {
         ...prev,
-        [projPath]: (prev[projPath] || []).filter((s) => s.id !== sessionID),
-      }));
-    }
-    await discardSession(sessionID, true, projPath);
+        [normPath]: list.filter((s) => s.id !== sessionID),
+      };
+    });
+    await discardSession(sessionID, true, normPath);
   };
 
   createEffect(() => {
@@ -286,9 +332,11 @@ export default function LeftNav() {
 
   createEffect(() => {
     if (workspace.sidebarProjectMode !== "recent") return;
+    const activeRoot = normalizeFolderPath(workspace.rootDir);
     for (const p of allProjects()) {
-      if (p.path !== workspace.rootDir && !projectSessions()[p.path] && !loadingProjects()[p.path]) {
-        void loadSessionsForProject(p.path);
+      const clean = normalizeFolderPath(p.path);
+      if (clean && clean !== activeRoot && projectSessions()[clean] === undefined && !loadingProjects()[clean]) {
+        void loadSessionsForProject(clean);
       }
     }
   });

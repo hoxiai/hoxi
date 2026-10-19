@@ -1,6 +1,14 @@
+import { reconcile, unwrap } from "solid-js/store";
 import type { SessionInfo } from "../services/sse-types";
 import { compareSessionRunning, partitionSessionHistory } from "../components/layout/session-history";
-import { assertEqual, describe, it } from "./test-harness";
+import {
+  collectStatusDirectories,
+  reconcileSessionsInPlace,
+  replaceSession,
+  setWorkspace,
+  workspace,
+} from "../store/workspace";
+import { assertEqual, assertTrue, describe, it } from "./test-harness";
 
 describe("Sidebar session history", () => {
   const now = 1_800_000_000_000;
@@ -75,4 +83,86 @@ describe("Sidebar session history", () => {
     assertEqual(partitionSessionHistory(sessions, recent).older.length, 0);
     assertEqual(partitionSessionHistory(sessions, { ...recent, now: now + 1 }).older.length, 11);
   });
+
+  it("preserves SolidJS store proxy identity across replaceSession and reconcileSessionsInPlace", () => {
+    const saved = structuredClone(unwrap(workspace));
+    try {
+      setWorkspace("sessions", [
+        { id: "ses_1", title: "First", time: { created: 10, updated: 10 } },
+        { id: "ses_2", title: "Second", time: { created: 20, updated: 20 } },
+      ]);
+      const proxy1 = workspace.sessions[0];
+      const proxy2 = workspace.sessions[1];
+
+      replaceSession({ id: "ses_1", title: "First Renamed", time: { created: 10, updated: 99 } });
+      assertTrue(workspace.sessions[0] === proxy1, "replaceSession must preserve existing proxy reference");
+      assertEqual(workspace.sessions[0].title, "First Renamed");
+      assertEqual(workspace.sessions[0].time.updated, 99);
+
+      reconcileSessionsInPlace([
+        { id: "ses_2", title: "Second Updated", time: { created: 20, updated: 120 } },
+        { id: "ses_1", title: "First Renamed", time: { created: 10, updated: 99 } },
+      ]);
+      assertTrue(workspace.sessions[0] === proxy2, "reconcileSessionsInPlace must reuse existing proxy on reorder");
+      assertTrue(workspace.sessions[1] === proxy1, "reconcileSessionsInPlace must reuse existing proxy on reorder");
+      assertEqual(workspace.sessions[0].title, "Second Updated");
+    } finally {
+      setWorkspace(reconcile(saved));
+    }
+  });
+
+  it("avoids fanning out status queries to idle historical worktree directories", () => {
+    const saved = structuredClone(unwrap(workspace));
+    try {
+      setWorkspace({
+        rootDir: "/repo",
+        activeSessionID: "ses_idle_active",
+        sessions: [
+          {
+            id: "ses_idle_active",
+            title: "Active Unadopted",
+            directory: "/repo/.hoxi/worktrees/ses_idle_active",
+            managed: false,
+            time: { created: 1, updated: 1 },
+          },
+          {
+            id: "ses_idle_historical",
+            title: "Historical Idle Worktree",
+            directory: "/repo/.hoxi/worktrees/ses_idle_historical",
+            managed: false,
+            time: { created: 1, updated: 1 },
+          },
+          {
+            id: "ses_busy_unadopted",
+            title: "Busy Unadopted Worktree",
+            directory: "/repo/.hoxi/worktrees/ses_busy_unadopted",
+            managed: false,
+            time: { created: 1, updated: 1 },
+          },
+          {
+            id: "ses_busy_managed",
+            title: "Busy Managed Worktree",
+            directory: "/repo/.hoxi/worktrees/ses_busy_managed",
+            managed: true,
+            time: { created: 1, updated: 1 },
+          },
+        ],
+        statusBySession: {
+          ses_idle_historical: { type: "idle" },
+          ses_busy_unadopted: { type: "busy" },
+          ses_busy_managed: { type: "busy" },
+        },
+        worktreeBySession: {},
+      });
+
+      const dirs = collectStatusDirectories();
+      assertEqual(
+        dirs.join(","),
+        "/repo,/repo/.hoxi/worktrees/ses_idle_active,/repo/.hoxi/worktrees/ses_busy_unadopted"
+      );
+    } finally {
+      setWorkspace(reconcile(saved));
+    }
+  });
 });
+

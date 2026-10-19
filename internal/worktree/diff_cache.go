@@ -93,6 +93,33 @@ func fileStatStamp(repoDir, relPath string) string {
 	return fmt.Sprintf("%d:%d:%d", info.Size(), info.ModTime().UnixNano(), info.Mode())
 }
 
+// resolveGitDirFast resolves the repository's .git directory (including linked
+// git worktrees where .git is a gitdir pointer file) without spawning git.
+func resolveGitDirFast(repoDir string) string {
+	dotGit := filepath.Join(repoDir, ".git")
+	info, err := os.Lstat(dotGit)
+	if err != nil {
+		return ""
+	}
+	if info.IsDir() {
+		return dotGit
+	}
+	if info.Mode().IsRegular() {
+		data, readErr := os.ReadFile(dotGit)
+		if readErr == nil {
+			line := strings.TrimSpace(string(data))
+			if strings.HasPrefix(line, "gitdir:") {
+				target := strings.TrimSpace(strings.TrimPrefix(line, "gitdir:"))
+				if !filepath.IsAbs(target) {
+					target = filepath.Clean(filepath.Join(repoDir, target))
+				}
+				return target
+			}
+		}
+	}
+	return ""
+}
+
 // computeRepoStateFingerprint builds a deterministic fingerprint from git status,
 // HEAD commit, git index stat, and the stat stamps of modified/untracked files.
 func computeRepoStateFingerprint(repoDir, diffTarget string) string {
@@ -108,10 +135,16 @@ func computeRepoStateFingerprint(repoDir, diffTarget string) string {
 	b.WriteString(head)
 	b.WriteByte('|')
 
-	if gitDir, gdErr := runGit(repoDir, "rev-parse", "--git-dir"); gdErr == nil && gitDir != "" {
-		if !filepath.IsAbs(gitDir) {
-			gitDir = filepath.Join(repoDir, gitDir)
+	gitDir := resolveGitDirFast(repoDir)
+	if gitDir == "" {
+		if gd, gdErr := runGit(repoDir, "rev-parse", "--git-dir"); gdErr == nil && gd != "" {
+			if !filepath.IsAbs(gd) {
+				gd = filepath.Join(repoDir, gd)
+			}
+			gitDir = gd
 		}
+	}
+	if gitDir != "" {
 		if idxInfo, statErr := os.Stat(filepath.Join(gitDir, "index")); statErr == nil {
 			fmt.Fprintf(&b, "idx:%d:%d|", idxInfo.Size(), idxInfo.ModTime().UnixNano())
 		}

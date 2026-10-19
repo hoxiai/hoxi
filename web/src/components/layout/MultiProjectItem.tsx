@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
+import { createEffect, createMemo, createSelector, createSignal, For, onCleanup, Show } from "solid-js";
 import { GripVertical, MoreHorizontal, FolderPlus, Pencil, Layers, Trash2, Plus } from "lucide-solid";
 import {
   isSessionArchived,
@@ -18,6 +18,7 @@ import { Icon, Spinner } from "../icons";
 import {
   basename,
   FolderIcon,
+  resolveActiveRootSessionID,
   SessionNavItem,
   shortenPath,
   type ProjectNavEntry,
@@ -164,17 +165,17 @@ export default function MultiProjectTreeItem(props: {
 }) {
   const isActive = () =>
     normalizeFolderPath(props.proj.path) === normalizeFolderPath(workspace.rootDir);
+  const isSelectedSession = createSelector<string | null, string>(() =>
+    isActive() ? resolveActiveRootSessionID() : null
+  );
 
   const allFilteredSessions = createMemo(() => {
+    if (!props.expanded) return [];
     const q = props.filterQuery.trim().toLowerCase();
     const rawList =
-      isActive() && !workspace.bootstrappingSessions && workspace.sessions.length > 0
+      isActive() && !workspace.bootstrappingSessions
         ? workspace.sessions
-        : props.cachedSessions.length > 0
-          ? props.cachedSessions
-          : isActive()
-            ? workspace.sessions
-            : [];
+        : props.cachedSessions;
     const list = rawList.filter((s) => !s.parentID);
     const sorted = sortSessionsByActivity(list);
     if (!q) return sorted;
@@ -345,7 +346,7 @@ export default function MultiProjectTreeItem(props: {
               {(session) => (
                 <SessionNavItem
                   session={session}
-                  active={isActive() && workspace.activeSessionID === session.id}
+                  active={isSelectedSession(session.id)}
                   canDelete={true}
                   isArchived={false}
                   pendingSessions={props.pendingSessions}
@@ -395,9 +396,7 @@ export default function MultiProjectTreeItem(props: {
                     {(session) => (
                       <SessionNavItem
                         session={session}
-                        active={
-                          isActive() && workspace.activeSessionID === session.id
-                        }
+                        active={isSelectedSession(session.id)}
                         canDelete={true}
                         isArchived={true}
                         pendingSessions={props.pendingSessions}

@@ -42,16 +42,30 @@ export default function ThreePaneShell() {
     activeResizeCleanup?.();
     const startX = ev.clientX;
     const startWidth = side === "left" ? leftWidth() : rightWidth();
+    let rafId = 0;
+    let pendingX = startX;
 
-    const onMove = (e: PointerEvent) => {
-      const delta = e.clientX - startX;
+    const flushResize = () => {
+      rafId = 0;
+      const delta = pendingX - startX;
       if (side === "left") {
         setLeftWidth(Math.min(LEFT_MAX, Math.max(LEFT_MIN, startWidth + delta)));
       } else {
         setRightWidth(Math.min(RIGHT_MAX, Math.max(RIGHT_MIN, startWidth - delta)));
       }
     };
+
+    const onMove = (e: PointerEvent) => {
+      pendingX = e.clientX;
+      if (!rafId) {
+        rafId = requestAnimationFrame(flushResize);
+      }
+    };
     const onUp = () => {
+      if (rafId) {
+        cancelAnimationFrame(rafId);
+        rafId = 0;
+      }
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onUp);

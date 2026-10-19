@@ -248,10 +248,20 @@ body {
 /* Frosted Glass Pill for Session Row Hover Actions */
 .session-action-glass {
   background-color: var(--bg-glass-pill);
-  -webkit-backdrop-filter: blur(12px) saturate(1.35);
-  backdrop-filter: blur(12px) saturate(1.35);
   border: 1px solid var(--border-glass-pill);
   box-shadow: var(--shadow-glass-pill);
+}
+
+.group\/row:hover .session-action-glass,
+.group\/row:focus-within .session-action-glass {
+  -webkit-backdrop-filter: blur(12px) saturate(1.35);
+  backdrop-filter: blur(12px) saturate(1.35);
+}
+
+.group\/row:hover .session-row-title,
+.group\/row:focus-within .session-row-title {
+  -webkit-mask-image: linear-gradient(to right, black calc(100% - 56px), transparent calc(100% - 16px));
+  mask-image: linear-gradient(to right, black calc(100% - 56px), transparent calc(100% - 16px));
 }
 
 .session-action-danger-glass {

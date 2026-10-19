@@ -13,7 +13,6 @@ import { Icon, Spinner } from "../icons";
 import { t } from "../../i18n";
 import { badgeFor } from "./left-nav-helpers";
 import { SessionRenamePopover } from "./SessionRenamePopover";
-import { resolveRootSessionID } from "../timeline/AgentStackPill";
 import {
   formatCompactRelativeTime,
   formatExactTime,
@@ -40,11 +39,7 @@ export function SessionNavItem(props: SessionNavItemProps) {
   let rowRef: HTMLDivElement | undefined;
 
   const nowTick = useNowTicker(30000);
-  const isEffectiveActive = () =>
-    props.active ||
-    (Boolean(workspace.activeSessionID) &&
-      workspace.sessions.some((s) => s.id === props.session.id) &&
-      resolveRootSessionID(workspace.activeSessionID) === props.session.id);
+  const isEffectiveActive = () => props.active;
   const status = () => workspace.statusBySession[props.session.id]?.type;
   const isBusy = () => status() === "busy" || status() === "retry";
   const isInterrupted = () =>
@@ -169,10 +164,11 @@ export function SessionNavItem(props: SessionNavItemProps) {
           </span>
         </Show>
         <span
-          class={`truncate text-[14px] flex-1 leading-snug ${
+          class={`session-row-title truncate text-[14px] flex-1 leading-snug ${
             props.isArchived ? "text-[var(--text-muted)]" : ""
           }`}
           title={props.session.title || ""}
+          onDblClick={(ev) => startEditing(ev)}
         >
           {isPlaceholderSessionTitle(props.session.title)
             ? t("leftNav.newThread")
@@ -182,7 +178,7 @@ export function SessionNavItem(props: SessionNavItemProps) {
 
       {/* Static Badges (Branch, Queue, Time or Loading) shown when not hovered and not confirming delete */}
       <Show when={!confirmingDelete()}>
-        <div class="flex items-center gap-1.5 shrink-0 text-[11.5px] font-mono group-hover/row:opacity-0 group-hover/row:translate-x-0.5 transition-all duration-150 ease-out">
+        <div class="flex items-center gap-1.5 shrink-0 text-[11.5px] font-mono group-hover/row:opacity-0 group-hover/row:invisible group-focus-within/row:opacity-0 group-focus-within/row:invisible transition-opacity duration-120 ease-out">
           <Show when={wt()?.isolated && wt()?.branch}>
             <span class="inline-flex items-center gap-0.5 text-[var(--text-faint)] truncate max-w-[68px]">
               <Show when={props.showBranchIcon}>
@@ -225,13 +221,13 @@ export function SessionNavItem(props: SessionNavItemProps) {
         </div>
       </Show>
 
-      {/* Hover Actions / Delete Gate Overlay: frosted glass pill with soft left fade */}
+      {/* Hover Actions / Delete Gate Overlay */}
       <Show when={!editing()}>
         <div
-          class={`absolute right-1 top-1/2 -translate-y-1/2 flex items-center z-10 transition-all duration-150 ease-out ${
+          class={`absolute right-1 top-1/2 -translate-y-1/2 flex items-center z-10 transition-opacity duration-120 ease-out ${
             confirmingDelete()
-              ? "opacity-100 translate-x-0 scale-100 pointer-events-auto"
-              : "opacity-0 translate-x-1 scale-[0.97] pointer-events-none group-hover/row:opacity-100 group-hover/row:translate-x-0 group-hover/row:scale-100 group-hover/row:pointer-events-auto"
+              ? "visible opacity-100 pointer-events-auto"
+              : "invisible opacity-0 pointer-events-none group-hover/row:visible group-hover/row:opacity-100 group-hover/row:pointer-events-auto group-focus-within/row:visible group-focus-within/row:opacity-100 group-focus-within/row:pointer-events-auto"
           }`}
           onClick={(ev) => ev.stopPropagation()}
         >

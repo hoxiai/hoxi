@@ -43,6 +43,9 @@ export default defineConfig({
     port: 5411,
     strictPort: false,
   },
+  worker: {
+    format: "es",
+  },
   build: {
     target: "esnext",
     outDir: "dist",

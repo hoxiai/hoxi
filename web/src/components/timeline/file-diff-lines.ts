@@ -1,7 +1,11 @@
 // web/src/components/timeline/file-diff-lines.ts
 import type { SnapshotFileDiff } from "../../services/sse-types";
 import { workspace } from "../../store/workspace";
-import { collectCycleChangedFiles, normalizeWorkspaceRelPath } from "./tool-card-state";
+import {
+  collectCycleChangedFiles,
+  enrichDiffWithWorktree,
+  normalizeWorkspaceRelPath,
+} from "./tool-card-state";
 
 function findMatchingDiff(
   list: SnapshotFileDiff[] | undefined,
@@ -44,11 +48,14 @@ export function resolveSessionDiffForFile(
 
   const sid = sessionID || workspace.activeSessionID;
   if (sid) {
-    const direct = findMatchingDiff(workspace.diffsBySession[sid], norm);
+    const wtList = workspace.worktreeDiffsBySession[sid];
+    const isolated = workspace.worktreeBySession[sid]?.isolated;
+    const rawDirect = findMatchingDiff(workspace.diffsBySession[sid], norm);
+    const direct = rawDirect ? enrichDiffWithWorktree(rawDirect, wtList, isolated) : undefined;
     if (direct && (direct.patch || direct.before !== undefined || direct.after !== undefined)) {
       return direct;
     }
-    const wtDirect = findMatchingDiff(workspace.worktreeDiffsBySession[sid], norm);
+    const wtDirect = findMatchingDiff(wtList, norm);
     if (wtDirect && (wtDirect.patch || wtDirect.before !== undefined || wtDirect.after !== undefined)) {
       return wtDirect;
     }

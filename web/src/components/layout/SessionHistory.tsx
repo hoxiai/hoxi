@@ -2,7 +2,7 @@ import { createMemo, createSignal, For, Show } from "solid-js";
 import type { Accessor, JSX } from "solid-js";
 import type { SessionInfo } from "../../services/sse-types";
 import { appSettings } from "../../store/settings";
-import { sessionActivityTime, workspace } from "../../store/workspace";
+import { normalizeFolderPath, sessionActivityTime, workspace } from "../../store/workspace";
 import { t } from "../../i18n";
 import { Icon } from "../icons";
 import { useNowTicker } from "./session-time-helpers";
@@ -12,7 +12,7 @@ import { dayLabel } from "./left-nav-helpers";
 // Keep manual expansion stable across workspace switches and background updates.
 const [expandedPaths, setExpandedPaths] = createSignal(new Set<string>());
 
-const sameSessionArray = (a: SessionInfo[], b: SessionInfo[]) =>
+export const sameSessionArray = (a: SessionInfo[], b: SessionInfo[]) =>
   a.length === b.length && a.every((s, i) => s === b[i]);
 
 export function useSessionHistory(
@@ -23,23 +23,43 @@ export function useSessionHistory(
 ) {
   const now = useNowTicker();
   const expanded = () => expandedPaths().has(path());
-  const partition = createMemo(() => partitionSessionHistory(
-    [...sessions()].sort((a, b) => compareSessionRunning(a, b, workspace.statusBySession)), {
-    enabled: appSettings.sidebarAutoCollapse && !query().trim(),
-    minimum: appSettings.sidebarMinSessions,
-    recentMinutes: appSettings.sidebarRecentMinutes,
-    now: now(),
-    activityTime: sessionActivityTime,
-    protectedSession: (session) => {
-      // Protect root rows when a selected or running child belongs to them.
-      // When older sessions are manually expanded, keep items in place instead of jumping across the toggle bar.
-      const protectActive = !expanded();
-      const family = [session, ...workspace.sessions.filter((s) => s.parentID === session.id)];
-      return family.some((s) => (protectActive && s.id === workspace.activeSessionID) || pending().has(s.id) ||
-        workspace.statusBySession[s.id]?.type === "busy" ||
-        workspace.statusBySession[s.id]?.type === "retry");
-    },
-  }));
+  const partition = createMemo(() => {
+    const raw = sessions();
+    if (raw.length === 0) return { visible: [] as SessionInfo[], older: [] as SessionInfo[] };
+    const sorted = [...raw].sort((a, b) => compareSessionRunning(a, b, workspace.statusBySession));
+    const protectActive = !expanded();
+    const pendingSet = pending();
+    const isActiveProject = normalizeFolderPath(path()) === normalizeFolderPath(workspace.rootDir);
+    const activeID = isActiveProject ? workspace.activeSessionID : null;
+    const childrenByParent = new Map<string, SessionInfo[]>();
+    if (isActiveProject) {
+      for (const s of workspace.sessions) {
+        if (!s.parentID) continue;
+        const bucket = childrenByParent.get(s.parentID);
+        if (bucket) bucket.push(s);
+        else childrenByParent.set(s.parentID, [s]);
+      }
+    }
+    return partitionSessionHistory(sorted, {
+      enabled: appSettings.sidebarAutoCollapse && !query().trim(),
+      minimum: appSettings.sidebarMinSessions,
+      recentMinutes: appSettings.sidebarRecentMinutes,
+      now: now(),
+      activityTime: sessionActivityTime,
+      protectedSession: (session) => {
+        // Protect root rows when a selected or running child belongs to them.
+        // When older sessions are manually expanded, keep items in place instead of jumping across the toggle bar.
+        const isProtectedRow = (s: SessionInfo) =>
+          (protectActive && s.id === activeID) ||
+          pendingSet.has(s.id) ||
+          workspace.statusBySession[s.id]?.type === "busy" ||
+          workspace.statusBySession[s.id]?.type === "retry";
+        if (isProtectedRow(session)) return true;
+        const children = childrenByParent.get(session.id);
+        return Boolean(children && children.some(isProtectedRow));
+      },
+    });
+  });
   const visibleSessions = createMemo(() => partition().visible, [], { equals: sameSessionArray });
   const olderSessions = createMemo(
     () => (expanded() ? partition().older : []),

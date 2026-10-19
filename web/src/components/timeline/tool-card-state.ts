@@ -24,20 +24,73 @@ export function normalizeWorkspaceRelPath(raw: string): string {
 }
 
 
+export function enrichDiffWithWorktree(
+  d: SnapshotFileDiff,
+  wtDiffs: SnapshotFileDiff[] | undefined,
+  isolated?: boolean
+): SnapshotFileDiff {
+  if (!wtDiffs || wtDiffs.length === 0) return d;
+  const norm = normalizeWorkspaceRelPath(d.file);
+  if (!norm) return d;
+  const wt =
+    wtDiffs.find((w) => w.file === norm) ??
+    wtDiffs.find((w) => {
+      const wn = normalizeWorkspaceRelPath(w.file);
+      return wn === norm || wn.endsWith(`/${norm}`) || norm.endsWith(`/${wn}`);
+    });
+  if (!wt) return d;
+  const sameCounts =
+    (d.additions ?? 0) === (wt.additions ?? 0) &&
+    (d.deletions ?? 0) === (wt.deletions ?? 0);
+  const canUseWtPatch =
+    Boolean(wt.patch) &&
+    !d.patch &&
+    (Boolean(isolated) || sameCounts || (d.before === undefined && d.after === undefined));
+  const nextPatch = d.patch || (canUseWtPatch ? wt.patch : undefined);
+  const nextStamp = d.stamp || (canUseWtPatch || sameCounts ? wt.stamp : undefined);
+  const nextStatus = d.status || wt.status;
+  const nextRepo = d.repo || wt.repo;
+  const nextBranch = d.branch || wt.branch;
+  const nextGenerated = d.generatedLike ?? wt.generatedLike;
+  const nextLarge = d.large ?? (sameCounts ? wt.large : undefined);
+  if (
+    nextPatch === d.patch &&
+    nextStamp === d.stamp &&
+    nextStatus === d.status &&
+    nextRepo === d.repo &&
+    nextBranch === d.branch &&
+    nextGenerated === d.generatedLike &&
+    nextLarge === d.large
+  ) {
+    return d;
+  }
+  return {
+    ...d,
+    patch: nextPatch,
+    stamp: nextStamp,
+    status: nextStatus,
+    repo: nextRepo,
+    branch: nextBranch,
+    generatedLike: nextGenerated,
+    large: nextLarge,
+  };
+}
+
 function matchSessionDiff(
   sessionID: string,
   file: string
 ): SnapshotFileDiff | undefined {
   const norm = normalizeWorkspaceRelPath(file);
   if (!norm) return undefined;
+  const wtDiffs = workspace.worktreeDiffsBySession[sessionID] ?? [];
+  const isolated = workspace.worktreeBySession[sessionID]?.isolated;
   const diffs = workspace.diffsBySession[sessionID] ?? [];
   const exact = diffs.find((d) => d.file === norm);
-  if (exact) return exact;
+  if (exact) return enrichDiffWithWorktree(exact, wtDiffs, isolated);
   const suffix = diffs.find(
     (d) => d.file.endsWith(`/${norm}`) || norm.endsWith(`/${d.file}`)
   );
-  if (suffix) return suffix;
-  const wtDiffs = workspace.worktreeDiffsBySession[sessionID] ?? [];
+  if (suffix) return enrichDiffWithWorktree(suffix, wtDiffs, isolated);
   return (
     wtDiffs.find((d) => d.file === norm) ??
     wtDiffs.find((d) => d.file.endsWith(`/${norm}`) || norm.endsWith(`/${d.file}`))

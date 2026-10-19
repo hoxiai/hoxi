@@ -268,12 +268,16 @@ func statusSingleRepo(repo gitRepoTarget, diffTarget string, nestedPrefixes map[
 		}
 	}
 
-	numstat, err := runGit(repo.Dir, "diff", "--numstat", diffTarget)
-	if err != nil && diffTarget != "HEAD" {
-		numstat, err = runGit(repo.Dir, "diff", "--numstat", "HEAD")
-	}
-	if err != nil {
-		numstat, _ = runGit(repo.Dir, "diff", "--cached", "--numstat")
+	var numstat string
+	if diffTarget != "HEAD" || changedFiles > 0 || porcelainErr != nil {
+		var err error
+		numstat, err = runGit(repo.Dir, "diff", "--numstat", diffTarget)
+		if err != nil && diffTarget != "HEAD" {
+			numstat, err = runGit(repo.Dir, "diff", "--numstat", "HEAD")
+		}
+		if err != nil {
+			numstat, _ = runGit(repo.Dir, "diff", "--cached", "--numstat")
+		}
 	}
 
 	additions := 0

@@ -1,5 +1,5 @@
 // web/src/components/layout/SingleProjectNavView.tsx
-import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
+import { createEffect, createMemo, createSelector, createSignal, For, onCleanup, Show } from "solid-js";
 import { Plus, Pencil, Layers } from "lucide-solid";
 import {
   activeWorkspaceFolders,
@@ -24,6 +24,7 @@ import {
   basename,
   dayLabel,
   FolderIcon,
+  resolveActiveRootSessionID,
   SessionNavItem,
   shortenPath,
   type ProjectNavEntry,
@@ -62,6 +63,7 @@ export default function SingleProjectNavView(props: {
   const currentProjectName = createMemo(() => workspaceDisplayName(workspace.rootDir));
   const currentProjectColor = createMemo(() => workspaceIdentityColor(workspace.rootDir));
   const currentFolders = createMemo(() => activeWorkspaceFolders());
+  const isSelectedSession = createSelector<string | null, string>(() => resolveActiveRootSessionID());
 
   const dropdownProjectList = createMemo(() => {
     const q = dropdownFilter().trim().toLowerCase();
@@ -285,7 +287,7 @@ export default function SingleProjectNavView(props: {
                   {(session) => (
                     <SessionNavItem
                       session={session}
-                      active={workspace.activeSessionID === session.id}
+                      active={isSelectedSession(session.id)}
                       canDelete={true}
                       isArchived={false}
                       showBranchIcon={true}
@@ -326,7 +328,7 @@ export default function SingleProjectNavView(props: {
                   {(session) => (
                     <SessionNavItem
                       session={session}
-                      active={workspace.activeSessionID === session.id}
+                      active={isSelectedSession(session.id)}
                       canDelete={true}
                       isArchived={true}
                       showBranchIcon={true}
@@ -368,18 +370,21 @@ export function RecentTasksNavView(props: {
   onArchiveSession: (path: string, ev: MouseEvent, sessionID: string) => void;
   onDiscardSession: (path: string, ev: MouseEvent, sessionID: string) => Promise<void> | void;
 }) {
+  const isSelectedSession = createSelector<string | null, string>(() => resolveActiveRootSessionID());
+
   const recentData = createMemo(() => {
     const q = props.filterQuery.trim().toLowerCase();
     const sessions: SessionInfo[] = [];
     const projBySession = new Map<string, ProjectNavEntry>();
+    const activeRoot = normalizeFolderPath(workspace.rootDir);
 
     for (const proj of props.allProjects) {
-      const isActive =
-        normalizeFolderPath(proj.path) === normalizeFolderPath(workspace.rootDir);
+      const normProjPath = normalizeFolderPath(proj.path);
+      const isActive = normProjPath === activeRoot;
       const list =
-        isActive && !workspace.bootstrappingSessions && workspace.sessions.length > 0
+        isActive && !workspace.bootstrappingSessions
           ? workspace.sessions
-          : props.projectSessions[proj.path] || (isActive ? workspace.sessions : []);
+          : props.projectSessions[normProjPath] || props.projectSessions[proj.path] || [];
       for (const s of list) {
         if (s.parentID || isSessionArchived(s)) continue;
         if (
@@ -445,7 +450,7 @@ export function RecentTasksNavView(props: {
                 <SessionNavItem
                   session={session}
                   active={
-                    isActiveProj() && workspace.activeSessionID === session.id
+                    isActiveProj() && isSelectedSession(session.id)
                   }
                   canDelete={true}
                   isArchived={false}

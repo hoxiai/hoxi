@@ -8,12 +8,25 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 const (
 	maxNestedGitRepoDepth = 3
 	maxNestedScanDirs     = 200
 	maxConcurrentGitRepos = 6
+	discoveredReposTTL    = 15 * time.Second
+)
+
+type cachedDiscoveredRepos struct {
+	modTime   int64
+	expiresAt time.Time
+	repos     []gitRepoTarget
+}
+
+var (
+	discoveredReposMu    sync.RWMutex
+	discoveredReposCache = make(map[string]cachedDiscoveredRepos)
 )
 
 type gitRepoTarget struct {
@@ -100,24 +113,47 @@ func discoverGitRepos(rawDir string) []gitRepoTarget {
 		return nil
 	}
 	baseDir := filepath.Clean(trimmed)
-	if info, err := os.Stat(baseDir); err != nil || !info.IsDir() {
+	info, err := os.Stat(baseDir)
+	if err != nil || !info.IsDir() {
 		return nil
+	}
+	modNano := info.ModTime().UnixNano()
+	now := time.Now()
+
+	discoveredReposMu.RLock()
+	cached, ok := discoveredReposCache[baseDir]
+	discoveredReposMu.RUnlock()
+	if ok && cached.modTime == modNano && now.Before(cached.expiresAt) {
+		out := make([]gitRepoTarget, len(cached.repos))
+		copy(out, cached.repos)
+		return out
 	}
 
 	var nested []gitRepoTarget
 	visited := 0
 	scanNestedGitRepos(baseDir, baseDir, 1, &visited, &nested)
 
+	var result []gitRepoTarget
 	if hasGitMarker(baseDir) {
-		return append([]gitRepoTarget{{Dir: baseDir, RelPrefix: ""}}, nested...)
+		result = append([]gitRepoTarget{{Dir: baseDir, RelPrefix: ""}}, nested...)
+	} else if len(nested) > 0 {
+		result = nested
+	} else if top, topErr := runGit(baseDir, "rev-parse", "--show-toplevel"); topErr == nil && strings.TrimSpace(top) != "" {
+		result = []gitRepoTarget{{Dir: baseDir, RelPrefix: ""}}
 	}
-	if len(nested) > 0 {
-		return nested
+
+	if len(result) > 0 {
+		cloned := make([]gitRepoTarget, len(result))
+		copy(cloned, result)
+		discoveredReposMu.Lock()
+		discoveredReposCache[baseDir] = cachedDiscoveredRepos{
+			modTime:   modNano,
+			expiresAt: now.Add(discoveredReposTTL),
+			repos:     cloned,
+		}
+		discoveredReposMu.Unlock()
 	}
-	if top, err := runGit(baseDir, "rev-parse", "--show-toplevel"); err == nil && strings.TrimSpace(top) != "" {
-		return []gitRepoTarget{{Dir: baseDir, RelPrefix: ""}}
-	}
-	return nil
+	return result
 }
 
 func nestedRepoPrefixSet(repos []gitRepoTarget) map[string]struct{} {
@@ -207,6 +243,17 @@ func (m *worktreeManager) resolveSessionMeta(sessionID string) worktreeMeta {
 	return meta
 }
 
+func parsePatchHeaderFile(chunk string) string {
+	firstLine := chunk
+	if nl := strings.IndexByte(chunk, '\n'); nl >= 0 {
+		firstLine = chunk[:nl]
+	}
+	if idx := strings.Index(firstLine, " b/"); idx >= 0 {
+		return filepath.ToSlash(strings.TrimSpace(firstLine[idx+3:]))
+	}
+	return ""
+}
+
 func diffSingleRepo(repo gitRepoTarget, diffTarget string, nestedPrefixes map[string]struct{}) []worktreeFileDiff {
 	fingerprint := computeRepoStateFingerprint(repo.Dir, diffTarget)
 	if cached, hit := globalRepoDiffCache.get(repo.Dir, diffTarget, fingerprint); hit {
@@ -232,15 +279,24 @@ func diffSingleRepo(repo gitRepoTarget, diffTarget string, nestedPrefixes map[st
 		}
 	}
 
-	var patchesRaw string
-	if useCached {
-		patchesRaw, _ = runGitRaw(repo.Dir, "diff", "--cached", "--no-renames", "--no-ext-diff", "--no-textconv", "--no-color", "-U3")
-	} else {
-		patchesRaw, _ = runGitRaw(repo.Dir, "diff", "--no-renames", "--no-ext-diff", "--no-textconv", "--no-color", "-U3", diffTarget)
-	}
-	patches := strings.Split("\n"+patchesRaw, "\ndiff --git ")
-	if len(patches) > 0 {
-		patches = patches[1:]
+	var patches []string
+	patchByFile := make(map[string]string)
+	if strings.TrimSpace(numstat) != "" {
+		var patchesRaw string
+		if useCached {
+			patchesRaw, _ = runGitRaw(repo.Dir, "diff", "--cached", "--no-renames", "--no-ext-diff", "--no-textconv", "--no-color", "-U3")
+		} else {
+			patchesRaw, _ = runGitRaw(repo.Dir, "diff", "--no-renames", "--no-ext-diff", "--no-textconv", "--no-color", "-U3", diffTarget)
+		}
+		patches = strings.Split("\n"+patchesRaw, "\ndiff --git ")
+		if len(patches) > 0 {
+			patches = patches[1:]
+		}
+		for _, chunk := range patches {
+			if f := parsePatchHeaderFile(chunk); f != "" {
+				patchByFile[f] = "diff --git " + chunk
+			}
+		}
 	}
 
 	results := make([]worktreeFileDiff, 0)
@@ -261,8 +317,8 @@ func diffSingleRepo(repo gitRepoTarget, diffTarget string, nestedPrefixes map[st
 		binary := fields[0] == "-" || fields[1] == "-"
 		add, _ := strconv.Atoi(fields[0])
 		del, _ := strconv.Atoi(fields[1])
-		patch := ""
-		if i < len(patches) {
+		patch := patchByFile[file]
+		if patch == "" && i < len(patches) {
 			patch = "diff --git " + patches[i]
 		}
 		if strings.Contains(patch, "\nSubproject commit ") && isWithinNestedRepo(file, nestedPrefixes) {
