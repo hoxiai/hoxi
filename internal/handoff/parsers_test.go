@@ -28,6 +28,12 @@ func setupSyntheticCLIHome(t *testing.T, workspaceDir string) string {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("APPDATA", "")
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("XDG_DATA_HOME", "")
+	t.Setenv("XDG_STATE_HOME", "")
+	t.Setenv("HOXI_ENGINE_DATA_DIR", "")
+	t.Setenv("OPENCODE_DATA_DIR", "")
+	t.Setenv("OPENCODE_EXTERNAL_DB", "")
 	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	t.Setenv("CODEX_HOME", "")
 	t.Setenv("GEMINI_HOME", "")
@@ -323,7 +329,7 @@ CREATE TABLE agent_memory (
 	gmt_modified INTEGER
 );
 	INSERT INTO agent_memory VALUES ('m1', 'Qoder Tech Stack', 'Go + SolidJS', 'qoder-sess-1', 1760695950000);
-`);
+`)
 
 	// 8. External OpenCode CLI fixture (~/.local/share/opencode/opencode.db)
 	t.Setenv("OPENCODE_EXTERNAL_DB", "")

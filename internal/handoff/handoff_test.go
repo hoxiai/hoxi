@@ -364,6 +364,112 @@ func TestLocalCLIStatusAndImportEndpoints(t *testing.T) {
 	}
 }
 
+func TestImportOpenCodeCLIProviderSyncsModelsAndAuth(t *testing.T) {
+	workspaceDir := t.TempDir()
+	homeDir := setupSyntheticCLIHome(t, workspaceDir)
+
+	configDir := filepath.Join(homeDir, ".config", "opencode")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("mkdir opencode config: %v", err)
+	}
+	configDoc := `{"model":"AINode/kimi-k3","provider":{"AINode":{"name":"AINode","npm":"@ai-sdk/openai-compatible","options":{"baseURL":"https://api.ainode.run/v1"},"models":{"kimi-k3":{"name":"kimi-k3"},"deepseek-v4.1-flash":{"name":"deepseek-v4.1-flash"}}}}}`
+	configPath := filepath.Join(configDir, "opencode.json")
+	if err := os.WriteFile(configPath, []byte(configDoc), 0o644); err != nil {
+		t.Fatalf("write opencode config: %v", err)
+	}
+	dataDir := filepath.Join(homeDir, ".local", "share", "opencode")
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		t.Fatalf("mkdir opencode data: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "auth.json"), []byte(`{"ainode":{"type":"api","key":"sk-ainode-test"}}`), 0o600); err != nil {
+		t.Fatalf("write opencode auth: %v", err)
+	}
+
+	provSvc := provider.NewService(0, "", workspaceDir, nil)
+	svc := NewService(0, "", workspaceDir, provSvc)
+	mux := http.NewServeMux()
+	svc.RegisterRoutes(mux)
+
+	findOpenCode := func() LocalCLIStatusItem {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/hoxi/local-cli/status", nil))
+		var status LocalCLIStatusResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &status); err != nil {
+			t.Fatalf("unmarshal status: %v", err)
+		}
+		for _, tool := range status.Tools {
+			if tool.ID == ExternalToolOpenCode {
+				return tool
+			}
+		}
+		t.Fatalf("opencode tool missing from status")
+		return LocalCLIStatusItem{}
+	}
+
+	before := findOpenCode()
+	if !before.Authenticated || before.Connected {
+		t.Fatalf("expected authenticated but not connected before sync, got %+v", before)
+	}
+	if before.ProviderID != "AINode" || before.DefaultModel != "kimi-k3" {
+		t.Fatalf("unexpected pre-sync target: provider=%s model=%s", before.ProviderID, before.DefaultModel)
+	}
+
+	b, _ := json.Marshal(LocalCLIImportRequest{ToolID: ExternalToolOpenCode})
+	recImport := httptest.NewRecorder()
+	mux.ServeHTTP(recImport, httptest.NewRequest(http.MethodPost, "/api/hoxi/local-cli/import", bytes.NewReader(b)))
+	var resp LocalCLIImportResponse
+	if err := json.Unmarshal(recImport.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal import: %v", err)
+	}
+	if !resp.OK || resp.ProviderID != "AINode" || len(resp.Models) != 2 {
+		t.Fatalf("unexpected import response: %+v", resp)
+	}
+
+	rawModels, err := os.ReadFile(filepath.Join(homeDir, ".hoxi", "models.json"))
+	if err != nil {
+		t.Fatalf("read hoxi models: %v", err)
+	}
+	var modelsDoc struct {
+		Provider map[string]map[string]interface{} `json:"provider"`
+	}
+	if err := json.Unmarshal(rawModels, &modelsDoc); err != nil {
+		t.Fatalf("unmarshal hoxi models: %v", err)
+	}
+	if _, ok := modelsDoc.Provider["AINode"]; !ok {
+		t.Fatalf("expected AINode provider in hoxi models, got %s", rawModels)
+	}
+	ainodeOpts, _ := modelsDoc.Provider["AINode"]["options"].(map[string]interface{})
+	if ainodeOpts["apiKey"] != "sk-ainode-test" {
+		t.Fatalf("expected case-insensitive auth key injection, got %v", ainodeOpts)
+	}
+
+	rawAuth, err := os.ReadFile(filepath.Join(homeDir, ".hoxi", "engine-data", "opencode", "auth.json"))
+	if err != nil {
+		t.Fatalf("read engine auth: %v", err)
+	}
+	if !strings.Contains(string(rawAuth), "sk-ainode-test") {
+		t.Fatalf("expected credentials in engine auth, got %s", rawAuth)
+	}
+
+	updatedDoc := `{"model":"AINode/kimi-k3","provider":{"AINode":{"name":"AINode","npm":"@ai-sdk/openai-compatible","options":{"baseURL":"https://api.ainode.run/v1"},"models":{"kimi-k3":{"name":"kimi-k3"},"glm-5.3":{"name":"glm-5.3"}}}}}`
+	if err := os.WriteFile(configPath, []byte(updatedDoc), 0o644); err != nil {
+		t.Fatalf("rewrite opencode config: %v", err)
+	}
+	recSecond := httptest.NewRecorder()
+	mux.ServeHTTP(recSecond, httptest.NewRequest(http.MethodPost, "/api/hoxi/local-cli/import", bytes.NewReader(b)))
+	rawSecond, err := os.ReadFile(filepath.Join(homeDir, ".hoxi", "models.json"))
+	if err != nil {
+		t.Fatalf("read hoxi models after second sync: %v", err)
+	}
+	if !strings.Contains(string(rawSecond), "glm-5.3") {
+		t.Fatalf("expected newly added model after re-sync, got %s", rawSecond)
+	}
+
+	if after := findOpenCode(); !after.Connected {
+		t.Fatalf("expected opencode connected after sync, got %+v", after)
+	}
+}
+
 func TestGrokCLIBridgeEndpoints(t *testing.T) {
 	workspaceDir := t.TempDir()
 	homeDir := setupSyntheticCLIHome(t, workspaceDir)

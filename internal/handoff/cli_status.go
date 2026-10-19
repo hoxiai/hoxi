@@ -90,7 +90,7 @@ func (g *Service) handleLocalCLIStatus(w http.ResponseWriter, r *http.Request) {
 		func() LocalCLIStatusItem { return detectCodeBuddyCLIStatus(hoxiMap) },
 		func() LocalCLIStatusItem { return detectTraeCLIStatus() },
 		func() LocalCLIStatusItem { return detectQoderCLIStatus(hoxiMap) },
-		func() LocalCLIStatusItem { return detectOpenCodeCLIStatus() },
+		func() LocalCLIStatusItem { return detectOpenCodeCLIStatus(g) },
 	}
 	tools := make([]LocalCLIStatusItem, len(detections))
 	var scans sync.WaitGroup
@@ -125,7 +125,9 @@ func (g *Service) handleLocalCLIImport(w http.ResponseWriter, r *http.Request) {
 		resp = g.importCodexCLIProvider()
 	case ExternalToolGemini:
 		resp = g.importGeminiCLIProvider()
-	case ExternalToolCodeBuddy, ExternalToolTrae, ExternalToolQoder, ExternalToolOpenCode:
+	case ExternalToolOpenCode:
+		resp = g.importOpenCodeCLIProvider()
+	case ExternalToolCodeBuddy, ExternalToolTrae, ExternalToolQoder:
 		resp = LocalCLIImportResponse{
 			OK:     false,
 			ToolID: string(req.ToolID),

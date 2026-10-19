@@ -463,28 +463,73 @@ func parseOpenCodeToolPart(pDoc map[string]interface{}, seq int) (NormalizedTool
 	}, steps
 }
 
-func detectOpenCodeCLIStatus() LocalCLIStatusItem {
+func detectOpenCodeCLIStatus(g *Service) LocalCLIStatusItem {
 	sessions, stats := scanOpenCodeSessions("", "")
-	var models []string
-	defaultModel := ""
+	var latestProvider, latestModel string
+	var sessionModels []string
 	for _, s := range sessions {
 		if s.Model != "" {
-			if defaultModel == "" {
-				defaultModel = s.Model
+			sessionModels = appendUniqueString(sessionModels, s.Model)
+			if latestProvider == "" {
+				latestProvider, latestModel = parseOpenCodeModelField(s.Model)
 			}
-			models = appendUniqueString(models, s.Model)
 		}
 	}
+	provDefs := readExternalOpenCodeConfigProviders()
+	authMap := readExternalOpenCodeAuth()
+	if defProvider, defModel := parseOpenCodeModelField(readExternalOpenCodeDefaultModel()); defProvider != "" {
+		latestProvider, latestModel = defProvider, defModel
+	}
+
+	installed := stats.Installed || len(provDefs) > 0 || len(authMap) > 0
+	authenticated := len(authMap) > 0
+	if !authenticated {
+		for _, raw := range provDefs {
+			def, _ := raw.(map[string]interface{})
+			opts, _ := def["options"].(map[string]interface{})
+			if strings.TrimSpace(asString(opts["apiKey"])) != "" {
+				authenticated = true
+				break
+			}
+		}
+	}
+
+	providerID, defaultModel, models := resolveOpenCodeSyncTarget(provDefs, authMap, latestProvider, latestModel)
+	if len(models) == 0 {
+		models = sessionModels
+	}
+
+	hoxiMap := map[string]interface{}{}
+	if g != nil {
+		hoxiMap = g.loadHoxiProvidersMap()
+	}
+	connected := len(provDefs)+len(authMap) > 0
+	for pid := range provDefs {
+		if _, ok := hoxiMap[pid]; !ok {
+			connected = false
+			break
+		}
+	}
+	if connected {
+		engineAuth := engineOpenCodeAuthIDs()
+		for pid := range authMap {
+			if _, ok := engineAuth[pid]; !ok {
+				connected = false
+				break
+			}
+		}
+	}
+
 	return LocalCLIStatusItem{
 		ID:            ExternalToolOpenCode,
 		Name:          "OpenCode CLI",
-		Installed:     stats.Installed,
-		Authenticated: false,
-		Connected:     false,
+		Installed:     installed,
+		Authenticated: authenticated,
+		Connected:     connected,
 		DefaultModel:  defaultModel,
 		Models:        models,
 		SessionCount:  stats.SessionCount,
 		AuthMode:      "session-handoff",
-		ProviderID:    "opencode",
+		ProviderID:    providerID,
 	}
 }
