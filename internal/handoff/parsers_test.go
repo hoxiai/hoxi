@@ -27,11 +27,18 @@ func setupSyntheticCLIHome(t *testing.T, workspaceDir string) string {
 	t.Helper()
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
+	t.Setenv("APPDATA", "")
 	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	t.Setenv("CODEX_HOME", "")
 	t.Setenv("GEMINI_HOME", "")
 	t.Setenv("ANTIGRAVITY_HOME", "")
 	t.Setenv("GROK_HOME", "")
+	t.Setenv("CODEBUDDY_HOME", "")
+	t.Setenv("CODEBUDDY_DATA_DIR", "")
+	t.Setenv("TRAE_HOME", "")
+	t.Setenv("TRAE_DATA_DIR", "")
+	t.Setenv("QODER_HOME", "")
+	t.Setenv("QODER_DATA_DIR", "")
 	t.Setenv("GEMINI_API_KEY", "")
 	t.Setenv("GOOGLE_GENERATIVE_AI_API_KEY", "")
 	t.Setenv("GOOGLE_API_KEY", "")
@@ -45,8 +52,8 @@ func setupSyntheticCLIHome(t *testing.T, workspaceDir string) string {
 	claudeSettings := map[string]interface{}{
 		"model": "claude-sonnet-4-5",
 		"env": map[string]interface{}{
-			"ANTHROPIC_BASE_URL":          "https://api.anthropic.com/v1",
-			"ANTHROPIC_AUTH_TOKEN":        "sk-ant-test-token",
+			"ANTHROPIC_BASE_URL":           "https://api.anthropic.com/v1",
+			"ANTHROPIC_AUTH_TOKEN":         "sk-ant-test-token",
 			"ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-4-5",
 		},
 	}
@@ -205,6 +212,119 @@ INSERT INTO conversation_summaries VALUES (
 	_ = os.WriteFile(filepath.Join(grokSessDir, "session.jsonl"), grokHistoryData, 0o644)
 	_ = os.WriteFile(filepath.Join(grokSessDir, "plan.json"), []byte(`{"todos":{"step1":{"content":"Optimize bridge","status":"completed"},"step2":{"title":"Verify bridge","status":"pending"}}}`), 0o644)
 
+	// 5. CodeBuddy fixture
+	cbExtHistDir := filepath.Join(homeDir, "Library", "Application Support", "CodeBuddyExtension", "Data", "uid1", "CodeBuddyIDE", "uid1", "history", md5HexString(workspaceDir))
+	cbSessMsgsDir := filepath.Join(cbExtHistDir, "cb-sess-1", "messages")
+	if err := os.MkdirAll(cbSessMsgsDir, 0o755); err != nil {
+		t.Fatalf("mkdir codebuddy msgs: %v", err)
+	}
+	cbCopilotDir := filepath.Join(homeDir, "Library", "Application Support", "CodeBuddy CN", "User", "globalStorage", "tencent-cloud.coding-copilot")
+	_ = os.MkdirAll(filepath.Join(cbCopilotDir, "todos"), 0o755)
+	_ = os.MkdirAll(filepath.Join(cbCopilotDir, "brain", "cb-sess-1"), 0o755)
+	_ = os.WriteFile(filepath.Join(cbCopilotDir, "todos", "cb-sess-1.json"), []byte(`{"conversationId":"cb-sess-1","todos":[{"id":"1","status":"completed","content":"Analyze CodeBuddy session"},{"id":"2","status":"in_progress","content":"Write cb_out.go"}]}`), 0o644)
+	_ = os.WriteFile(filepath.Join(cbCopilotDir, "brain", "cb-sess-1", "audit.md"), []byte("# CodeBuddy Audit Recap"), 0o644)
+
+	cbDB := filepath.Join(homeDir, "Library", "Application Support", "CodeBuddy CN", "codebuddy-sessions.vscdb")
+	runSQLite(t, cbDB, `
+CREATE TABLE ItemTable (key TEXT PRIMARY KEY, value BLOB);
+INSERT INTO ItemTable VALUES (
+	'session:cb-sess-1',
+	`+sqlEscapeLiteral(`{"conversationId":"cb-sess-1","cwd":"`+workspaceDir+`","title":"CodeBuddy Refactor","createdAt":1760695000000,"updatedAt":1760695900000}`)+`
+);
+`)
+	_ = os.WriteFile(filepath.Join(cbExtHistDir, "index.json"), []byte(`{"conversations":[{"id":"cb-sess-1","name":"CodeBuddy Refactor","createdAt":"2026-10-17T10:00:00Z","lastMessageAt":"2026-10-17T10:15:00Z","selectedModelId":"step-5-preview"}]}`), 0o644)
+	_ = os.WriteFile(filepath.Join(cbExtHistDir, "cb-sess-1", "index.json"), []byte(`{"messages":[{"id":"m1","role":"user"},{"id":"m2","role":"assistant"},{"id":"m3","role":"tool"}]}`), 0o644)
+
+	cbMsg1 := map[string]interface{}{
+		"id":        "m1",
+		"role":      "user",
+		"message":   `{"role":"user","content":[{"type":"text","text":"<user_info>\nWorkspace Folder: ` + workspaceDir + `\n</user_info>\nRefactor cb_out.go"}]}`,
+		"extra":     `{"modelId":"step-5-preview","sourceContentBlocks":[{"type":"text","text":"Refactor cb_out.go"}]}`,
+		"createdAt": "2026-10-17T10:00:01Z",
+	}
+	cbMsg2 := map[string]interface{}{
+		"id":        "m2",
+		"role":      "assistant",
+		"message":   `{"role":"assistant","content":[{"type":"reasoning","text":"Planning cb_out.go"},{"type":"text","text":"Writing cb_out.go now."},{"type":"tool-call","toolCallId":"cb_call_1","toolName":"write_to_file","args":{"filePath":"cb_out.go","content":"package cb"}}]}`,
+		"extra":     `{"modelId":"step-5-preview"}`,
+		"createdAt": "2026-10-17T10:00:05Z",
+	}
+	cbMsg3 := map[string]interface{}{
+		"id":        "m3",
+		"role":      "tool",
+		"message":   `{"role":"tool","content":[{"type":"tool-result","toolCallId":"cb_call_1","toolName":"write_to_file","result":{"status":"success","result":{"stdout":"wrote cb_out.go"}}}]}`,
+		"extra":     `{"modelId":"step-5-preview"}`,
+		"createdAt": "2026-10-17T10:00:06Z",
+	}
+	for name, doc := range map[string]interface{}{"m1.json": cbMsg1, "m2.json": cbMsg2, "m3.json": cbMsg3} {
+		b, _ := json.Marshal(doc)
+		_ = os.WriteFile(filepath.Join(cbSessMsgsDir, name), b, 0o644)
+	}
+
+	// 6. Trae fixture
+	traeProjDir := filepath.Join(homeDir, ".trae-cn", "memory", "projects", encodeClaudeProjectHint(workspaceDir)+"--p2-abcdef1234", "20261017")
+	if err := os.MkdirAll(traeProjDir, 0o755); err != nil {
+		t.Fatalf("mkdir trae proj: %v", err)
+	}
+	_ = os.WriteFile(filepath.Join(filepath.Dir(traeProjDir), "project_memory.md"), []byte("# Trae Project Memory\n- Go + SolidJS architecture"), 0o644)
+	_ = os.WriteFile(filepath.Join(traeProjDir, "topics.md"), []byte("[session_id: trae-sess-1 | topic_summary_time: 2026-10-17 10:05:00]Completed Trae architecture review and fixed soft-delete bug.\n"), 0o644)
+	traeMemLine := `{"intent":"Refactor Trae module and audit soft-delete","actions":["Scan codebase for GORM Table() calls","Verify soft-delete filter"],"outcome":"Fixed soft-delete bug in Trae module","learned":["Avoid raw Table() without deleted_at filter"],"message_summary_time":"2026-10-17 10:06:00","message_id":"msg_trae_1","compact_summary_meta":{"created_at_ms":1760695560000}}`
+	_ = os.WriteFile(filepath.Join(traeProjDir, "session_memory_trae-sess-1.jsonl"), []byte(traeMemLine+"\n"), 0o644)
+
+	traeVSCDB := filepath.Join(homeDir, "Library", "Application Support", "Trae CN", "User", "globalStorage", "state.vscdb")
+	runSQLite(t, traeVSCDB, `
+CREATE TABLE ItemTable (key TEXT PRIMARY KEY, value BLOB);
+INSERT INTO ItemTable VALUES (
+	'u1:AI.agent.model.session_selected_model',
+	'{"trae-sess-1":{"solo_agent":{"modelId":"solo_agent_1__glm-5.3-flash_null","mode":0}}}'
+);
+`)
+
+	// 7. Qoder fixture
+	qoderTransDir := filepath.Join(homeDir, ".qoder", "projects", encodeClaudeProjectHint(workspaceDir), "transcript")
+	if err := os.MkdirAll(qoderTransDir, 0o755); err != nil {
+		t.Fatalf("mkdir qoder transcript: %v", err)
+	}
+	qoderLines := []string{
+		`{"type":"session_meta","sessionId":"qoder-sess-1","timestamp":"2026-10-17T10:00:00Z","cwd":"` + workspaceDir + `"}`,
+		`{"type":"user","sessionId":"qoder-sess-1","timestamp":"2026-10-17T10:00:02Z","cwd":"` + workspaceDir + `","message":{"role":"user","content":"Refactor qoder_out.go"}}`,
+		`{"type":"assistant","sessionId":"qoder-sess-1","timestamp":"2026-10-17T10:00:05Z","cwd":"` + workspaceDir + `","message":{"role":"assistant","content":[{"type":"thinking","thinking":"Inspecting qoder_out.go"},{"type":"text","text":"Updating qoder_out.go."},{"type":"tool_use","id":"toolu_qoder_1","name":"Edit","input":{"file_path":"qoder_out.go"}}]}}`,
+		`{"type":"user","sessionId":"qoder-sess-1","timestamp":"2026-10-17T10:00:06Z","cwd":"` + workspaceDir + `","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_qoder_1","content":"Updated qoder_out.go"}]}}`,
+	}
+	_ = os.WriteFile(filepath.Join(qoderTransDir, "qoder-sess-1.jsonl"), []byte(strings.Join(qoderLines, "\n")+"\n"), 0o644)
+
+	qoderLocalDB := filepath.Join(homeDir, "Library", "Application Support", "Qoder", "SharedClientCache", "cache", "db", "local.db")
+	runSQLite(t, qoderLocalDB, `
+CREATE TABLE chat_session (
+	session_id TEXT PRIMARY KEY,
+	session_title TEXT,
+	project_uri TEXT,
+	project_name TEXT,
+	gmt_create INTEGER,
+	gmt_modified INTEGER,
+	preferred_model_info TEXT,
+	parent_session_id TEXT
+);
+INSERT INTO chat_session VALUES (
+	'qoder-sess-1',
+	'Qoder Refactor Task',
+	`+sqlEscapeLiteral(workspaceDir)+`,
+	'work',
+	1760695100000,
+	1760695950000,
+	'{"preferred_model":"qmodel_38max"}',
+	''
+);
+CREATE TABLE agent_memory (
+	id TEXT PRIMARY KEY,
+	title TEXT,
+	content TEXT,
+	session_id TEXT,
+	gmt_modified INTEGER
+);
+INSERT INTO agent_memory VALUES ('m1', 'Qoder Tech Stack', 'Go + SolidJS', 'qoder-sess-1', 1760695950000);
+`)
+
 	return homeDir
 }
 
@@ -280,6 +400,48 @@ func TestSyntheticDiscoveryAndDetailAllSources(t *testing.T) {
 	}
 	if grokDetail.Turns[0].Text != "Optimize grok_bridge.go" || !reflect.DeepEqual(grokDetail.ChangedFiles, []string{"grok_bridge.go"}) {
 		t.Fatalf("unexpected grok turn0=%q files=%v", grokDetail.Turns[0].Text, grokDetail.ChangedFiles)
+	}
+
+	// 5. CodeBuddy
+	cbList, cbStats := scanCodeBuddySessions(workspaceDir, "CodeBuddy")
+	if !cbStats.Installed || cbStats.SessionCount != 1 || len(cbList) != 1 || !cbList[0].MatchesCWD {
+		t.Fatalf("unexpected codebuddy scan: stats=%+v list=%+v", cbStats, cbList)
+	}
+	cbDetail, err := loadCodeBuddySessionDetail("cb-sess-1", workspaceDir, workspaceDir)
+	if err != nil {
+		t.Fatalf("loadCodeBuddySessionDetail failed: %v", err)
+	}
+	if cbDetail.Summary.Model != "step-5-preview" || len(cbDetail.Turns) != 2 || len(cbDetail.PlanSteps) != 2 {
+		t.Fatalf("unexpected codebuddy detail: model=%s turns=%d plans=%d", cbDetail.Summary.Model, len(cbDetail.Turns), len(cbDetail.PlanSteps))
+	}
+	if !reflect.DeepEqual(cbDetail.ChangedFiles, []string{"cb_out.go"}) || cbDetail.Turns[1].Tools[0].Output != "wrote cb_out.go" {
+		t.Fatalf("unexpected codebuddy files/tools: files=%v tools=%+v", cbDetail.ChangedFiles, cbDetail.Turns[1].Tools)
+	}
+
+	// 6. Trae
+	traeList, traeStats := scanTraeSessions(workspaceDir, "soft-delete")
+	if !traeStats.Installed || traeStats.SessionCount != 1 || len(traeList) != 1 || !traeList[0].MatchesCWD {
+		t.Fatalf("unexpected trae scan: stats=%+v list=%+v", traeStats, traeList)
+	}
+	traeDetail, err := loadTraeSessionDetail("trae-sess-1", workspaceDir, workspaceDir)
+	if err != nil {
+		t.Fatalf("loadTraeSessionDetail failed: %v", err)
+	}
+	if traeDetail.Summary.Model != "glm-5.3-flash" || len(traeDetail.Turns) != 2 || len(traeDetail.PlanSteps) != 2 {
+		t.Fatalf("unexpected trae detail: model=%s turns=%d plans=%d", traeDetail.Summary.Model, len(traeDetail.Turns), len(traeDetail.PlanSteps))
+	}
+
+	// 7. Qoder
+	qoderList, qoderStats := scanQoderSessions(workspaceDir, "Qoder")
+	if !qoderStats.Installed || qoderStats.SessionCount != 1 || len(qoderList) != 1 || !qoderList[0].MatchesCWD {
+		t.Fatalf("unexpected qoder scan: stats=%+v list=%+v", qoderStats, qoderList)
+	}
+	qoderDetail, err := loadQoderSessionDetail("qoder-sess-1", workspaceDir, workspaceDir)
+	if err != nil {
+		t.Fatalf("loadQoderSessionDetail failed: %v", err)
+	}
+	if qoderDetail.Summary.Model != "qmodel_38max" || len(qoderDetail.Turns) != 2 || !reflect.DeepEqual(qoderDetail.ChangedFiles, []string{"qoder_out.go"}) {
+		t.Fatalf("unexpected qoder detail: model=%s turns=%d files=%v", qoderDetail.Summary.Model, len(qoderDetail.Turns), qoderDetail.ChangedFiles)
 	}
 }
 

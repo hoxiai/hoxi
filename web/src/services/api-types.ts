@@ -355,6 +355,9 @@ export type ExternalToolID =
   | "claude-code"
   | "codex-cli"
   | "gemini-antigravity"
+  | "codebuddy"
+  | "trae"
+  | "qoder"
   | "codex";
 
 export interface ExternalSessionSummary {

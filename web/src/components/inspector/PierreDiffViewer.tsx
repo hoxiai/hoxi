@@ -311,7 +311,7 @@ export default function PierreDiffViewer() {
         {(sid) => <ObserverAuditBanner sessionID={sid()} />}
       </Show>
 
-      <div class="flex-1 min-h-0 overflow-y-auto px-2.5 py-2.5 space-y-2.5">
+      <div class="inspector-scroll flex-1 min-h-0 overflow-y-auto px-2.5 py-2.5 space-y-2.5">
         <Show
           when={previewDiffs().length > 0}
           fallback={

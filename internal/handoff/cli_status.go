@@ -87,6 +87,9 @@ func (g *Service) handleLocalCLIStatus(w http.ResponseWriter, r *http.Request) {
 		func() LocalCLIStatusItem { return detectClaudeCLIStatus(g, hoxiMap) },
 		func() LocalCLIStatusItem { return detectCodexCLIStatus(g, hoxiMap) },
 		func() LocalCLIStatusItem { return detectGeminiCLIStatus(g, hoxiMap) },
+		func() LocalCLIStatusItem { return detectCodeBuddyCLIStatus() },
+		func() LocalCLIStatusItem { return detectTraeCLIStatus() },
+		func() LocalCLIStatusItem { return detectQoderCLIStatus() },
 	}
 	tools := make([]LocalCLIStatusItem, len(detections))
 	var scans sync.WaitGroup
@@ -121,6 +124,12 @@ func (g *Service) handleLocalCLIImport(w http.ResponseWriter, r *http.Request) {
 		resp = g.importCodexCLIProvider()
 	case ExternalToolGemini:
 		resp = g.importGeminiCLIProvider()
+	case ExternalToolCodeBuddy, ExternalToolTrae, ExternalToolQoder:
+		resp = LocalCLIImportResponse{
+			OK:     false,
+			ToolID: string(req.ToolID),
+			Error:  "请通过「会话接管」导入历史会话与记忆 (Please use Session Handoff to import local conversations and memory)",
+		}
 	default:
 		resp = LocalCLIImportResponse{Error: "Unsupported toolID: " + string(req.ToolID)}
 	}

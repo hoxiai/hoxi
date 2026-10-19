@@ -118,8 +118,8 @@ func TestHandoffSessionsAndPreviewEndpoints(t *testing.T) {
 	if err := json.Unmarshal(recAll.Body.Bytes(), &allResp); err != nil {
 		t.Fatalf("unmarshal sessions: %v", err)
 	}
-	if len(allResp.Sessions) != 4 {
-		t.Fatalf("expected 4 sessions across all 4 sources, got %d", len(allResp.Sessions))
+	if len(allResp.Sessions) != 7 {
+		t.Fatalf("expected 7 sessions across all 7 sources, got %d", len(allResp.Sessions))
 	}
 
 	// 2. Filter by source, query, onlyCurrent, limit
@@ -132,7 +132,7 @@ func TestHandoffSessionsAndPreviewEndpoints(t *testing.T) {
 		t.Fatalf("unexpected filtered sessions: %+v", filtResp.Sessions)
 	}
 
-	// Filter onlyCurrent=1 across all sources (gemini has unrelated workspace_uris so 3 match)
+	// Filter onlyCurrent=1 across all sources
 	reqCur := httptest.NewRequest(http.MethodGet, "/api/hoxi/handoff/sessions?onlyCurrent=1&limit=2", nil)
 	recCur := httptest.NewRecorder()
 	mux.ServeHTTP(recCur, reqCur)
@@ -167,6 +167,9 @@ func TestHandoffSessionsAndPreviewEndpoints(t *testing.T) {
 		{ExternalToolCodex, "codex-sess-1"},
 		{ExternalToolGemini, "gemini-sess-1"},
 		{ExternalToolGrok, "grok-sess-1"},
+		{ExternalToolCodeBuddy, "cb-sess-1"},
+		{ExternalToolTrae, "trae-sess-1"},
+		{ExternalToolQoder, "qoder-sess-1"},
 	}
 	for _, tc := range previewCases {
 		u := "/api/hoxi/handoff/preview?source=" + string(tc.source) + "&id=" + tc.id
@@ -213,12 +216,15 @@ func TestHandoffImportEndpoint(t *testing.T) {
 		t.Fatalf("expected 400 for invalid JSON, got %d", recBadJSON.Code)
 	}
 
-	// Import all 4 sources
+	// Import all 7 sources
 	importCases := []HandoffImportRequest{
 		{Source: ExternalToolClaude, SessionID: "claude-sess-1", TargetDirectory: workspaceDir},
 		{Source: ExternalToolCodex, SessionID: "codex-sess-1", TargetDirectory: workspaceDir},
 		{Source: ExternalToolGemini, SessionID: "gemini-sess-1", TargetDirectory: workspaceDir, PreferredProviderID: "google", PreferredModelID: "gemini-2.5-pro"},
 		{Source: ExternalToolGrok, SessionID: "grok-sess-1", TargetDirectory: workspaceDir},
+		{Source: ExternalToolCodeBuddy, SessionID: "cb-sess-1", TargetDirectory: workspaceDir},
+		{Source: ExternalToolTrae, SessionID: "trae-sess-1", TargetDirectory: workspaceDir},
+		{Source: ExternalToolQoder, SessionID: "qoder-sess-1", TargetDirectory: workspaceDir},
 	}
 
 	for _, ic := range importCases {
@@ -297,16 +303,19 @@ func TestLocalCLIStatusAndImportEndpoints(t *testing.T) {
 	if err := json.Unmarshal(recStatus.Body.Bytes(), &statusResp); err != nil {
 		t.Fatalf("unmarshal status: %v", err)
 	}
-	if len(statusResp.Tools) != 4 {
-		t.Fatalf("expected 4 tools, got %d", len(statusResp.Tools))
+	if len(statusResp.Tools) != 7 {
+		t.Fatalf("expected 7 tools, got %d", len(statusResp.Tools))
 	}
 	for _, tool := range statusResp.Tools {
-		if !tool.Installed || !tool.Authenticated || tool.SessionCount != 1 {
-			t.Fatalf("expected tool %s installed & authenticated with 1 session, got %+v", tool.ID, tool)
+		if !tool.Installed || tool.SessionCount != 1 {
+			t.Fatalf("expected tool %s installed with 1 session, got %+v", tool.ID, tool)
+		}
+		if tool.AuthMode != "session-handoff" && !tool.Authenticated {
+			t.Fatalf("expected CLI tool %s authenticated, got %+v", tool.ID, tool)
 		}
 	}
 
-	// 2. POST /api/hoxi/local-cli/import for all 4 tools
+	// 2. POST /api/hoxi/local-cli/import for all 4 CLI provider tools
 	for _, toolID := range []ExternalToolID{ExternalToolGrok, ExternalToolClaude, ExternalToolCodex, ExternalToolGemini} {
 		b, _ := json.Marshal(LocalCLIImportRequest{ToolID: toolID})
 		req := httptest.NewRequest(http.MethodPost, "/api/hoxi/local-cli/import", bytes.NewReader(b))

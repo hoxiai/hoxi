@@ -9,10 +9,13 @@ import (
 type ExternalToolID string
 
 const (
-	ExternalToolGrok   ExternalToolID = "grok-cli"
-	ExternalToolClaude ExternalToolID = "claude-code"
-	ExternalToolCodex  ExternalToolID = "codex-cli"
-	ExternalToolGemini ExternalToolID = "gemini-antigravity"
+	ExternalToolGrok      ExternalToolID = "grok-cli"
+	ExternalToolClaude    ExternalToolID = "claude-code"
+	ExternalToolCodex     ExternalToolID = "codex-cli"
+	ExternalToolGemini    ExternalToolID = "gemini-antigravity"
+	ExternalToolCodeBuddy ExternalToolID = "codebuddy"
+	ExternalToolTrae      ExternalToolID = "trae"
+	ExternalToolQoder     ExternalToolID = "qoder"
 )
 
 type ExternalSessionSummary struct {
@@ -128,15 +131,15 @@ func normalizeExternalToolName(raw string) string {
 	switch lower {
 	case "read", "read_file", "view_file", "cat", "view":
 		return "read"
-	case "edit", "multiedit", "replace_file_content", "apply_patch", "patch", "str_replace_editor":
+	case "edit", "multiedit", "replace_file_content", "replace_in_file", "edit_file", "apply_patch", "patch", "str_replace_editor":
 		return "edit"
 	case "write", "write_file", "create_file", "write_to_file":
 		return "write"
-	case "bash", "exec_command", "shell", "run_command", "terminal", "command":
+	case "bash", "exec_command", "execute_command", "shell", "run_command", "terminal", "command":
 		return "bash"
-	case "grep", "search", "ripgrep", "rg", "grep_search":
+	case "grep", "search", "search_content", "ripgrep", "rg", "grep_search":
 		return "grep"
-	case "glob", "list_dir", "ls", "find", "find_by_name", "file_search":
+	case "glob", "list_dir", "list_files", "ls", "find", "find_by_name", "file_search", "search_file":
 		return "glob"
 	default:
 		if lower == "" {
@@ -165,6 +168,62 @@ func sameOrSubPath(candidate, target string) bool {
 	}
 	sep := string(os.PathSeparator)
 	return strings.HasPrefix(c, t+sep) || strings.HasPrefix(t, c+sep)
+}
+
+func decodeHyphenatedProjectPath(encoded, targetDir string) string {
+	s := strings.TrimSpace(encoded)
+	if s == "" || s == "-" {
+		return ""
+	}
+	if idx := strings.Index(s, "--p"); idx > 0 {
+		s = s[:idx]
+	}
+	s = strings.Trim(s, "-")
+	if s == "" {
+		return ""
+	}
+	if targetDir != "" {
+		tClean := cleanDirPath(targetDir)
+		tHint := strings.Trim(encodeClaudeProjectHint(tClean), "-")
+		if tHint != "" && strings.EqualFold(s, tHint) {
+			return tClean
+		}
+	}
+	tokens := strings.Split(s, "-")
+	if resolved := walkHyphenTokens(string(os.PathSeparator), tokens); resolved != "" {
+		return resolved
+	}
+	return string(os.PathSeparator) + strings.Join(tokens, string(os.PathSeparator))
+}
+
+func walkHyphenTokens(curDir string, tokens []string) string {
+	if len(tokens) == 0 {
+		return cleanDirPath(curDir)
+	}
+	entries, err := os.ReadDir(curDir)
+	if err != nil {
+		return ""
+	}
+	// Prefer longer multi-token directory matches first (e.g., "gopanel_v2" or "qingpu-ai")
+	for span := len(tokens); span >= 1; span-- {
+		wantHint := strings.ToLower(strings.Join(tokens[:span], "-"))
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			entryHint := strings.ToLower(strings.Trim(encodeClaudeProjectHint(e.Name()), "-"))
+			if entryHint == wantHint {
+				nextDir := filepath.Join(curDir, e.Name())
+				if span == len(tokens) {
+					return cleanDirPath(nextDir)
+				}
+				if sub := walkHyphenTokens(nextDir, tokens[span:]); sub != "" {
+					return sub
+				}
+			}
+		}
+	}
+	return ""
 }
 
 func extractChangedFilesFromTurns(turns []NormalizedTurn) []string {

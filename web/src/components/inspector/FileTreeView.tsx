@@ -257,7 +257,7 @@ export default function FileTreeView() {
         </div>
       </div>
 
-          <div style={{ display: previewPath() ? "none" : undefined }} class="flex-1 min-h-0 overflow-y-auto px-2 py-2 space-y-0.5">
+          <div style={{ display: previewPath() ? "none" : undefined }} class="inspector-scroll flex-1 min-h-0 overflow-y-auto px-2 py-2 space-y-0.5">
             <Show
               when={results().length > 0}
               fallback={

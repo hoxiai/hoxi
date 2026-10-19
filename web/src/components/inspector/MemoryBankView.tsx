@@ -105,7 +105,7 @@ export default function MemoryBankView() {
         </button>
       </div>
 
-      <div class="flex-1 min-h-0 overflow-y-auto px-2.5 py-2.5 space-y-2">
+      <div class="inspector-scroll flex-1 min-h-0 overflow-y-auto px-2.5 py-2.5 space-y-2">
         <Show when={dims().length > 0}>
           <div class="flex flex-wrap gap-1">
             {dims().map((d) => (

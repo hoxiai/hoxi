@@ -255,7 +255,7 @@ func (g *Service) resolveDefaultHandoffModel(sum ExternalSessionSummary, req Han
 		_, defModel, _ := readGeminiLocalKeyAndModels()
 		return "google", firstNonEmpty(sum.Model, defModel)
 	default:
-		return string(sum.Source), sum.Model
+		return string(sum.Source), firstNonEmpty(sum.Model, string(sum.Source))
 	}
 }
 

@@ -82,7 +82,24 @@ export default function LocalCliBridgeBanner() {
                 <Show
                   when={!tool.connected && tool.authenticated}
                   fallback={
-                    <Show when={tool.connected}>
+                    <Show
+                      when={tool.connected}
+                      fallback={
+                        <Show when={tool.sessionCount > 0 || tool.authMode === "session-handoff"}>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setWorkspace("providerModalOpen", false);
+                              openHandoffModal();
+                            }}
+                            class="inline-flex items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-2 py-1 text-[10.5px] font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] shrink-0 cursor-pointer"
+                          >
+                            <ArrowRightLeft size={10} />
+                            {t("leftNav.handoffBtn")}
+                          </button>
+                        </Show>
+                      }
+                    >
                       <div class="flex items-center gap-1 shrink-0">
                         <span class="inline-flex items-center gap-1 rounded-full bg-[var(--ok-surface)] px-2 py-0.5 text-[10px] font-semibold text-[var(--ok-text)]">
                           <Check size={10} />

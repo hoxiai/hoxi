@@ -136,7 +136,13 @@ export default function ExternalHandoffModal() {
         return;
       }
       await refreshProviders().catch(() => null);
-      if (res.resolvedProviderID && res.resolvedModelID) {
+      if (
+        res.resolvedProviderID &&
+        res.resolvedModelID &&
+        workspace.providers.some(
+          (p) => p.id === res.resolvedProviderID && Boolean(p.models?.[res.resolvedModelID!])
+        )
+      ) {
         selectModel({
           providerID: res.resolvedProviderID,
           modelID: res.resolvedModelID,
@@ -147,7 +153,9 @@ export default function ExternalHandoffModal() {
         targetDir &&
         normalizeFolderPath(targetDir) !== normalizeFolderPath(workspace.rootDir)
       ) {
-        await switchWorkspace(targetDir);
+        // The imported session is selected below. Do not bootstrap and select a
+        // second session here, which would load two full transcripts at once.
+        await switchWorkspace(targetDir, false);
       }
       if (res.session.title) {
         recordCustomSessionTitle(res.session.id, res.session.title);
@@ -188,9 +196,18 @@ export default function ExternalHandoffModal() {
                 {t("leftNav.handoffModalTitle")}
               </h2>
 
-              <div class="inline-flex rounded-lg bg-[var(--bg-inset)] p-0.5 text-[11px]">
+              <div class="inline-flex flex-wrap rounded-lg bg-[var(--bg-inset)] p-0.5 text-[11px]">
                 {(
-                  ["all", "grok-cli", "claude-code", "codex-cli", "gemini-antigravity"] as const
+                  [
+                    "all",
+                    "grok-cli",
+                    "claude-code",
+                    "codex-cli",
+                    "gemini-antigravity",
+                    "codebuddy",
+                    "trae",
+                    "qoder",
+                  ] as const
                 ).map((src) => (
                   <button
                     type="button"
@@ -209,7 +226,13 @@ export default function ExternalHandoffModal() {
                       ? "Claude"
                       : src === "codex-cli"
                       ? "Codex"
-                      : "Antigravity"}
+                      : src === "gemini-antigravity"
+                      ? "Antigravity"
+                      : src === "codebuddy"
+                      ? "CodeBuddy"
+                      : src === "trae"
+                      ? "Trae"
+                      : "Qoder"}
                   </button>
                 ))}
               </div>

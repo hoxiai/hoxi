@@ -30,6 +30,7 @@ import {
 } from "./workspace-queue-subagents";
 
 const deletedSessionIDs = new Set<string>();
+const sessionMessageLoads = new Map<string, Promise<void>>();
 
 export function isSessionDeleted(id: string): boolean {
   return deletedSessionIDs.has(id);
@@ -269,7 +270,16 @@ export async function selectSession(sessionID: string): Promise<void> {
     return;
   }
   try {
-    await loadSessionMessages(sessionID);
+    let loading = sessionMessageLoads.get(sessionID);
+    if (!loading) {
+      loading = loadSessionMessages(sessionID);
+      sessionMessageLoads.set(sessionID, loading);
+      const clearLoad = () => {
+        if (sessionMessageLoads.get(sessionID) === loading) sessionMessageLoads.delete(sessionID);
+      };
+      void loading.then(clearLoad, clearLoad);
+    }
+    await loading;
   } catch (err) {
     console.error("load session messages failed:", err);
   } finally {

@@ -273,6 +273,17 @@ func loadClaudeSessionDetail(sessionID, hintCWD, activeRoot string) (*ExternalSe
 	if filePath == "" {
 		return nil, fmt.Errorf("claude session not found: %s", sessionID)
 	}
+	detail, err := parseClaudeJSONL(filePath, sessionID, activeRoot)
+	if err != nil {
+		return nil, err
+	}
+	if detail.Summary.CWD == "" {
+		detail.Summary.CWD = hintCWD
+	}
+	return detail, nil
+}
+
+func parseClaudeJSONL(filePath, sessionID, activeRoot string) (*ExternalSessionDetail, error) {
 	fi, _ := os.Stat(filePath)
 	modTimeMs := int64(0)
 	if fi != nil {
@@ -280,9 +291,6 @@ func loadClaudeSessionDetail(sessionID, hintCWD, activeRoot string) (*ExternalSe
 	}
 
 	sum, _ := quickParseClaudeSummary(filePath, sessionID, modTimeMs, activeRoot)
-	if sum.CWD == "" {
-		sum.CWD = hintCWD
-	}
 
 	f, err := os.Open(filePath)
 	if err != nil {

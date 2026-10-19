@@ -71,14 +71,21 @@ func (g *Service) handleHandoffSessions(w http.ResponseWriter, r *http.Request) 
 		limit = l
 	}
 
-	var grokSessions, claudeSessions, codexSessions, geminiSessions []ExternalSessionSummary
-	var grokStats, claudeStats, codexStats, geminiStats ExternalSourceStats
+	var (
+		grokSessions, claudeSessions, codexSessions, geminiSessions          []ExternalSessionSummary
+		codeBuddySessions, traeSessions, qoderSessions                       []ExternalSessionSummary
+		grokStats, claudeStats, codexStats, geminiStats                      ExternalSourceStats
+		codeBuddyStats, traeStats, qoderStats                                ExternalSourceStats
+	)
 	var scans sync.WaitGroup
 	for _, scan := range []func(){
 		func() { grokSessions, grokStats = scanGrokSessions(targetDir, query) },
 		func() { claudeSessions, claudeStats = scanClaudeSessions(targetDir, query) },
 		func() { codexSessions, codexStats = scanCodexSessions(targetDir, query) },
 		func() { geminiSessions, geminiStats = scanGeminiAntigravitySessions(targetDir, query) },
+		func() { codeBuddySessions, codeBuddyStats = scanCodeBuddySessions(targetDir, query) },
+		func() { traeSessions, traeStats = scanTraeSessions(targetDir, query) },
+		func() { qoderSessions, qoderStats = scanQoderSessions(targetDir, query) },
 	} {
 		scans.Add(1)
 		go func(scan func()) {
@@ -100,6 +107,15 @@ func (g *Service) handleHandoffSessions(w http.ResponseWriter, r *http.Request) 
 	}
 	if sourceFilter == "" || sourceFilter == "all" || sourceFilter == ExternalToolGemini {
 		combined = append(combined, geminiSessions...)
+	}
+	if sourceFilter == "" || sourceFilter == "all" || sourceFilter == ExternalToolCodeBuddy {
+		combined = append(combined, codeBuddySessions...)
+	}
+	if sourceFilter == "" || sourceFilter == "all" || sourceFilter == ExternalToolTrae {
+		combined = append(combined, traeSessions...)
+	}
+	if sourceFilter == "" || sourceFilter == "all" || sourceFilter == ExternalToolQoder {
+		combined = append(combined, qoderSessions...)
 	}
 
 	if onlyCurrent && targetDir != "" {
@@ -126,10 +142,13 @@ func (g *Service) handleHandoffSessions(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, HandoffSessionsResponse{
 		Sessions: combined,
 		Sources: map[ExternalToolID]ExternalSourceStats{
-			ExternalToolGrok:   grokStats,
-			ExternalToolClaude: claudeStats,
-			ExternalToolCodex:  codexStats,
-			ExternalToolGemini: geminiStats,
+			ExternalToolGrok:      grokStats,
+			ExternalToolClaude:    claudeStats,
+			ExternalToolCodex:     codexStats,
+			ExternalToolGemini:    geminiStats,
+			ExternalToolCodeBuddy: codeBuddyStats,
+			ExternalToolTrae:      traeStats,
+			ExternalToolQoder:     qoderStats,
 		},
 	})
 }
@@ -186,6 +205,12 @@ func loadExternalSessionDetail(source ExternalToolID, sessionID, hintCWD, active
 		return loadCodexSessionDetail(sessionID, hintCWD, activeRoot)
 	case ExternalToolGemini:
 		return loadGeminiAntigravitySessionDetail(sessionID, hintCWD, activeRoot)
+	case ExternalToolCodeBuddy:
+		return loadCodeBuddySessionDetail(sessionID, hintCWD, activeRoot)
+	case ExternalToolTrae:
+		return loadTraeSessionDetail(sessionID, hintCWD, activeRoot)
+	case ExternalToolQoder:
+		return loadQoderSessionDetail(sessionID, hintCWD, activeRoot)
 	default:
 		return loadGrokSessionDetail(sessionID, hintCWD, activeRoot)
 	}

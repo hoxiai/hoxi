@@ -35,6 +35,7 @@
 │   │   ├── services/                 # Pure HTTP/REST/SSE/Browser transport clients (api.ts, sse.ts, browser.ts)
 │   │   └── store/                    # SolidJS reactive store & domain modules (flat barrel export in workspace.ts)
 │   └── scripts/                      # check-i18n.ts, check-lines.ts (line & boundary lint), run-tests.ts
+├── client/                           # Hoxi Mobile App (Flutter + Riverpod + GoRouter, compatible with Hoxi & GoPanel nodes)
 ├── .opencode/
 │   ├── plugins/                      # hoxi-permissions.js & hoxi-memory.js
 │   └── memory/                       # Long-term project.md & session compaction records
@@ -61,6 +62,10 @@
 - **Sync Web Build & Validate i18n**:
   ```bash
   npm --prefix web run check:i18n && npm --prefix web run build
+  ```
+- **Mobile App (`client/`) Analyze & Test**:
+  ```bash
+  flutter analyze client && (cd client && flutter test)
   ```
 - **AI One-Click Release (一键发版上线与同步官网发版记录)**:
   ```bash

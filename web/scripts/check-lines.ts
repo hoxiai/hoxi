@@ -13,10 +13,13 @@ const EXEMPT_SUFFIXES = [
 const IGNORE_DIRS = new Set([
   ".git",
   ".hoxi",
+  ".dart_tool",
   "node_modules",
   "dist",
   "build",
   "wailsjs",
+  "Pods",
+  "ephemeral",
 ]);
 
 const SOURCE_EXT = /\.(go|ts|tsx|js|m)$/;

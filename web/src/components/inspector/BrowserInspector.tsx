@@ -327,7 +327,7 @@ export default function BrowserInspector() {
           </div>
         </Show>
         <Show when={error() || pollError()}><p role="alert" class="px-2 py-1 text-[11px] text-red-500 break-words border-b border-[var(--border-subtle)]">{t("inspector.browser.error", { error: error() || pollError() })}</p></Show>
-        <div class="flex-1 min-h-0 overflow-auto p-1">
+        <div class="inspector-scroll flex-1 min-h-0 overflow-auto p-1">
           <Show when={frame()} fallback={<p class="p-4 text-center text-[var(--text-muted)]">{t(busy() ? "inspector.browser.working" : running() ? "inspector.browser.waiting" : "inspector.browser.empty")}</p>}>
             <div class="relative">
               <img src={frame()!} alt={t("inspector.browser.viewport")} draggable={false} class="block w-full h-auto rounded-sm cursor-crosshair select-none" onClick={(event) => {
