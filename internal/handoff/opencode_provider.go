@@ -312,6 +312,18 @@ func stringListFromAny(v interface{}) []string {
 	return nil
 }
 
+func equalStringSlices(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func writePrivateJSONFile(path string, doc map[string]interface{}) error {
 	raw, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
@@ -409,6 +421,7 @@ func (g *Service) importOpenCodeCLIProvider() LocalCLIImportResponse {
 	}
 	changed := false
 	enabledIDs := make([]string, 0, len(provDefs))
+	foldedAliases := make([]string, 0, len(provDefs))
 	for _, pid := range sortedStringKeys(provDefs) {
 		def, _ := provDefs[pid].(map[string]interface{})
 		if def == nil {
@@ -423,6 +436,7 @@ func (g *Service) importOpenCodeCLIProvider() LocalCLIImportResponse {
 		// Fold a case-only duplicate (e.g. config "AINode" vs credential "ainode")
 		// into the credentialed provider instead of leaving a dead second entry.
 		if targetID != pid {
+			foldedAliases = append(foldedAliases, pid)
 			if dupRaw, exists := provMap[pid]; exists {
 				if dup, ok := dupRaw.(map[string]interface{}); ok {
 					if targetRaw, ok := provMap[targetID].(map[string]interface{}); ok {
@@ -461,25 +475,44 @@ func (g *Service) importOpenCodeCLIProvider() LocalCLIImportResponse {
 		}
 	}
 
-	// Sync is an explicit request to make these models usable, so clear stale
-	// disabled flags for the merged provider and its case aliases.
-	if len(enabledIDs) > 0 {
+	// Sync is an explicit request to make the merged provider usable, so enable
+	// the credential-backed id. The folded alias must stay disabled: upstream
+	// OpenCode also loads ~/.config/opencode/opencode.json, and without the flag
+	// that file would re-register the duplicate (e.g. "AINode") next to the
+	// synced provider (e.g. "ainode").
+	if len(enabledIDs) > 0 || len(foldedAliases) > 0 {
 		disabled := stringListFromAny(doc["disabled_providers"])
-		if len(disabled) > 0 {
-			enabledLower := make(map[string]struct{}, len(enabledIDs))
-			for _, id := range enabledIDs {
-				enabledLower[strings.ToLower(id)] = struct{}{}
+		// Provider ids are case-sensitive upstream, so only the exact target id
+		// is re-enabled; the differently-cased alias is disabled on purpose.
+		enabledExact := make(map[string]struct{}, len(enabledIDs))
+		for _, id := range enabledIDs {
+			enabledExact[id] = struct{}{}
+		}
+		next := make([]string, 0, len(disabled)+len(foldedAliases))
+		seen := make(map[string]struct{}, len(disabled)+len(foldedAliases))
+		for _, id := range disabled {
+			if _, drop := enabledExact[id]; drop {
+				continue
 			}
-			next := make([]string, 0, len(disabled))
-			for _, id := range disabled {
-				if _, drop := enabledLower[strings.ToLower(id)]; !drop {
-					next = append(next, id)
-				}
+			if _, duplicate := seen[id]; duplicate {
+				continue
 			}
-			if len(next) != len(disabled) {
-				doc["disabled_providers"] = next
-				changed = true
+			seen[id] = struct{}{}
+			next = append(next, id)
+		}
+		for _, alias := range foldedAliases {
+			if _, isTarget := enabledExact[alias]; isTarget {
+				continue
 			}
+			if _, duplicate := seen[alias]; duplicate {
+				continue
+			}
+			seen[alias] = struct{}{}
+			next = append(next, alias)
+		}
+		if !equalStringSlices(next, disabled) {
+			doc["disabled_providers"] = next
+			changed = true
 		}
 	}
 	if changed {

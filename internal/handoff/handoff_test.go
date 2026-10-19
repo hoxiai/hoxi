@@ -490,10 +490,15 @@ func TestImportOpenCodeCLIProviderSyncsModelsAndAuth(t *testing.T) {
 			t.Fatalf("expected model %s in merged provider, got %s", mid, rawModels)
 		}
 	}
+	disabledSet := map[string]bool{}
 	for _, id := range disabled {
-		if strings.EqualFold(id, "ainode") {
-			t.Fatalf("expected synced provider to be enabled, disabled=%v", disabled)
-		}
+		disabledSet[id] = true
+	}
+	if disabledSet["ainode"] {
+		t.Fatalf("expected synced provider to be enabled, disabled=%v", disabled)
+	}
+	if !disabledSet["AINode"] {
+		t.Fatalf("expected folded alias to stay disabled for the upstream global config, disabled=%v", disabled)
 	}
 	ainodeOpts, _ := ainode["options"].(map[string]interface{})
 	if ainodeOpts["apiKey"] != "sk-ainode-test" {
