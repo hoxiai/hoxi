@@ -57,14 +57,28 @@ for (const file of files) {
     violations++;
   }
 
-  // Enforce unidirectional frontend layering: components -> store -> services
+  const baseName = path.basename(rel);
+
+  // Enforce unidirectional frontend layering & naming: components -> store -> services
   if (rel.startsWith("web/src/services/")) {
+    if (!/^[a-z0-9-]+\.ts$/.test(baseName)) {
+      console.error(`  ✗ [naming violation] ${rel} must use lowercase kebab-case.ts filename.`);
+      violations++;
+    }
     const badImport = content.match(/(?:from\s+|import\s*\(\s*)["'][^"']*\/(?:store|components)(?:\/|["'])/);
     if (badImport) {
       console.error(`  ✗ [layering violation] ${rel} must not import from store/ or components/ (${badImport[0]}). Move state/UI logic to web/src/store/ or web/src/components/.`);
       violations++;
     }
+    if (/["'`]\/(?:session|event|permission)(?:[/"'`?]|$)/.test(content)) {
+      console.error(`  ✗ [gateway plane violation] ${rel} must not call raw '/session', '/event', or '/permission'; route through '/api/hoxi/sessions', '/api/hoxi/event', and '/api/hoxi/permission'.`);
+      violations++;
+    }
   } else if (rel.startsWith("web/src/store/")) {
+    if (!/^[a-z0-9-]+\.ts$/.test(baseName)) {
+      console.error(`  ✗ [naming violation] ${rel} must use lowercase kebab-case.ts filename.`);
+      violations++;
+    }
     const badImport = content.match(/(?:from\s+|import\s*\(\s*)["'][^"']*\/components(?:\/|["'])/);
     if (badImport) {
       console.error(`  ✗ [layering violation] ${rel} must not import from components/ (${badImport[0]}). Move pure domain helpers into web/src/store/.`);
@@ -82,8 +96,22 @@ for (const file of files) {
     console.error(`  ✗ [i18n violation] ${rel} must not define manual i18n interface files; types are automatically inferred from en-US in web/src/i18n/types.ts.`);
     violations++;
   } else if (rel.startsWith("internal/") && rel.endsWith(".go")) {
+    if (!/^[a-z0-9_]+\.go$/.test(baseName)) {
+      console.error(`  ✗ [naming violation] ${rel} must use lowercase snake_case.go filename.`);
+      violations++;
+    }
     if (/type\s+desktopGateway\s*=/.test(content)) {
       console.error(`  ✗ [boundary violation] ${rel} must not define legacy 'type desktopGateway =' alias; use explicit package receiver (*Service / *Gateway).`);
+      violations++;
+    }
+    if (
+      !rel.startsWith("internal/app/") &&
+      !rel.startsWith("internal/cli/") &&
+      !rel.startsWith("internal/gateway/") &&
+      !rel.endsWith("_test.go") &&
+      /"github\.com\/hoxiai\/hoxi\/internal\/(?:gateway|app|cli)"/.test(content)
+    ) {
+      console.error(`  ✗ [layering violation] ${rel} must not reverse-import internal/gateway, internal/app, or internal/cli.`);
       violations++;
     }
     if (
