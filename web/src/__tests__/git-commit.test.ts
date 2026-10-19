@@ -121,7 +121,7 @@ async function assertRejects(run: () => Promise<unknown>, expected: string) {
 }
 
 describe("task commit and push", () => {
-  it("dispatches a localized build task using the background session directory, model and effort", async () => {
+  it("dispatches a localized build task using the background session directory and effort", async () => {
     await withCommitFixture(async ({ id, directory, calls }) => {
       const activeAI = structuredClone(unwrap(workspace.aiBySession.ses_other));
       const backgroundAI = structuredClone(unwrap(workspace.aiBySession[id]));
@@ -146,6 +146,24 @@ describe("task commit and push", () => {
       assertEqual(optimistic.info.agent, "build");
       assertDeepEqual(optimistic.parts.map((part) => part.type === "text" ? part.text : ""), [prompt]);
       assertDeepEqual(calls.worktreeDiff, []);
+    });
+  });
+
+  it("temporarily overrides an OpenCode commit task with the configured cheap model", async () => {
+    await withCommitFixture(async ({ id, calls }) => {
+      setWorkspace("providers", [{
+        id: "cheap-provider", name: "Cheap", npm: "cheap", models: {
+          "cheap-model": { id: "cheap-model", name: "Cheap Model", reasoning: false },
+        },
+      }]);
+      setCommitModelSpec("");
+      setWorkspace("globalConfig", { small_model: "cheap-provider/cheap-model" });
+      setWorkspace("sessions", (session) => session.id === id, "runtime", "opencode");
+      await executeTaskCommitAndPush(id);
+      assertDeepEqual(calls.send[0][2]?.model, {
+        providerID: "cheap-provider", modelID: "cheap-model",
+      });
+      assertEqual(workspace.aiBySession[id].model?.providerID, "background-provider");
     });
   });
 

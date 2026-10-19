@@ -6,6 +6,7 @@ import type { MessagePart, SnapshotFileDiff } from "../services/sse-types";
 import { isModelFree } from "./provider-catalog";
 import {
   sessionDirectory,
+  sessionRuntimeForID,
   submitSessionPrompt,
   workspace,
   type SelectedModel,
@@ -305,11 +306,15 @@ export async function executeTaskCommitAndPush(
   const directory = sessionDirectory(activeID);
   if (!directory) throw new Error(t("timeline.gitSessionRequired"));
   const customMessage = options?.customMessage?.trim();
+  const cheapModel = sessionRuntimeForID(activeID) === "opencode"
+    ? resolveEffectiveCommitModel() || undefined
+    : undefined;
   const prompt = [
     t("timeline.gitAgentCommitPrompt", { directory: JSON.stringify(directory) }),
     t(options?.push === false ? "timeline.gitAgentCommitOnlyPrompt" : "timeline.gitAgentCommitPushPrompt"),
     customMessage ? t("timeline.gitAgentCommitMessagePrompt", { message: JSON.stringify(customMessage) }) : "",
   ].filter(Boolean).join("\n\n");
   // Dispatch is not completion; the agent reports actual Git results in the timeline.
-  return submitSessionPrompt(prompt, activeID, { agent: "build" });
+  // Override only this prompt; the session's saved model remains unchanged.
+  return submitSessionPrompt(prompt, activeID, { agent: "build", model: cheapModel });
 }
