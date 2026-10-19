@@ -283,3 +283,92 @@ func TestQuarantineTrackerAndWorktreeHealthClassification(t *testing.T) {
 		t.Fatalf("expected Health=%q when directory removed but branch exists, got %q", HealthAbsentRestorable, st.Health)
 	}
 }
+
+func TestBaseBranchDriftSyncAndAbsentRestorableRecovery(t *testing.T) {
+	repoDir := initTempGitRepo(t)
+	mgr := NewManager(repoDir)
+
+	meta, err := mgr.Create("ses_drift")
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+	defer func() { _ = mgr.Remove("ses_drift", true) }()
+
+	// Commit a change on the primary branch (main) after the isolated worktree was created
+	if err := os.WriteFile(filepath.Join(repoDir, "upstream.txt"), []byte("upstream-change\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runGit(repoDir, "add", "upstream.txt"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runGit(repoDir, "commit", "-m", "feat: upstream commit on main"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Also make an uncommitted local edit inside the isolated worktree to verify autostash rebase
+	if err := os.WriteFile(filepath.Join(meta.Directory, "local-wip.txt"), []byte("wip-content\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	st, err := mgr.Status("ses_drift")
+	if err != nil {
+		t.Fatalf("Status failed: %v", err)
+	}
+	if st.BaseBranch != "main" || st.BehindCount != 1 {
+		t.Fatalf("expected BaseBranch=main and BehindCount=1, got BaseBranch=%q BehindCount=%d", st.BaseBranch, st.BehindCount)
+	}
+
+	// Sync worktree onto base branch via HTTP route POST /api/hoxi/worktree/sync
+	mux := http.NewServeMux()
+	mgr.RegisterRoutes(mux)
+	req := httptest.NewRequest(http.MethodPost, "/api/hoxi/worktree/sync", strings.NewReader(`{"sessionID":"ses_drift"}`))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 from /api/hoxi/worktree/sync, got %d: %s", w.Code, w.Body.String())
+	}
+
+	stAfter, err := mgr.Status("ses_drift")
+	if err != nil {
+		t.Fatalf("Status after sync failed: %v", err)
+	}
+	if stAfter.BehindCount != 0 {
+		t.Fatalf("expected BehindCount=0 after SyncWithBase, got %d", stAfter.BehindCount)
+	}
+	// Verify upstream file is now in the worktree and local uncommitted file survived autostash
+	if _, err := os.Stat(filepath.Join(meta.Directory, "upstream.txt")); err != nil {
+		t.Fatalf("expected upstream.txt in synced worktree: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(meta.Directory, "local-wip.txt")); err != nil {
+		t.Fatalf("expected local-wip.txt preserved after rebase: %v", err)
+	}
+
+	// Delete the worktree directory directly on disk (without git worktree remove) -> absent-restorable
+	if err := os.RemoveAll(meta.Directory); err != nil {
+		t.Fatalf("RemoveAll worktree dir: %v", err)
+	}
+	stMissing, err := mgr.Status("ses_drift")
+	if err != nil {
+		t.Fatalf("Status when missing failed: %v", err)
+	}
+	if stMissing.Health != HealthAbsentRestorable {
+		t.Fatalf("expected Health=%q when directory deleted on disk, got %q", HealthAbsentRestorable, stMissing.Health)
+	}
+
+	// Restore the absent-restorable worktree directory by calling Create("ses_drift")
+	restored, err := mgr.Create("ses_drift")
+	if err != nil {
+		t.Fatalf("Restore via Create failed: %v", err)
+	}
+	stRestored, err := mgr.Status("ses_drift")
+	if err != nil {
+		t.Fatalf("Status after restore failed: %v", err)
+	}
+	if !restored.Isolated || stRestored.Health != HealthOK {
+		t.Fatalf("expected restored worktree to be isolated and healthy, got meta=%+v status=%+v", restored, stRestored)
+	}
+	if _, err := os.Stat(filepath.Join(restored.Directory, "upstream.txt")); err != nil {
+		t.Fatalf("expected upstream.txt in restored worktree directory: %v", err)
+	}
+}
+

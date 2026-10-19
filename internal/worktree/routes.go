@@ -96,6 +96,31 @@ func (m *worktreeManager) registerRoutes(mux *http.ServeMux) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	})
 
+	mux.HandleFunc("/api/hoxi/worktree/sync", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var body struct {
+			SessionID string `json:"sessionID"`
+			Directory string `json:"directory"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		dir := body.Directory
+		if dir == "" {
+			dir = r.URL.Query().Get("directory")
+		}
+		st, err := m.scoped(dir, body.SessionID).SyncWithBase(body.SessionID)
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, st)
+	})
+
 	mux.HandleFunc("/api/hoxi/worktree/revert-file", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

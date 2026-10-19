@@ -343,6 +343,18 @@ export async function checkoutLocalBranch(branch: string, create = false): Promi
   }
 }
 
+export async function syncSessionWorktree(sessionID: string): Promise<void> {
+  await hoxiAPI.syncWorktree(sessionID, workspace.rootDir || undefined);
+  await refreshWorktreeStatus(sessionID);
+  await refreshWorktreeStatus("__root__");
+}
+
+export async function restoreSessionWorktree(sessionID: string): Promise<void> {
+  await hoxiAPI.createWorktree(sessionID, workspace.rootDir || undefined);
+  await refreshWorktreeStatus(sessionID);
+  await refreshWorktreeStatus("__root__");
+}
+
 const worktreeRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const worktreeRevisions = new Map<string, number>();
 
@@ -382,6 +394,7 @@ export async function refreshWorktreeStatus(sessionID?: string | null): Promise<
       isolated: st.isolated,
       directory: st.directory || dirArg || "",
       branch: st.branch || prevMeta?.branch,
+      baseBranch: st.baseBranch || prevMeta?.baseBranch,
       baseCommit: st.baseCommit || prevMeta?.baseCommit,
       headCommit: st.headCommit || prevMeta?.headCommit,
       headSubject: st.headSubject || prevMeta?.headSubject,
@@ -392,7 +405,9 @@ export async function refreshWorktreeStatus(sessionID?: string | null): Promise<
       additions: st.additions,
       deletions: st.deletions,
       aheadCount: st.aheadCount,
+      behindCount: st.behindCount,
       hasUpstream: st.hasUpstream,
+      health: st.health,
     });
     if (key === "__root__" || key === workspace.activeSessionID) {
       const diffs = st.dirty ? await hoxiAPI.getWorktreeDiff(key, dirArg) : [];

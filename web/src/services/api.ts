@@ -399,6 +399,9 @@ export const hoxiAPI = {
   applyWorktree(sessionID: string, mode: "patch" | "merge" = "patch"): Promise<{ ok: boolean }> {
     return requestJSON("/api/hoxi/worktree/apply", { method: "POST", body: JSON.stringify({ sessionID, mode }) });
   },
+  syncWorktree(sessionID: string, directory?: string): Promise<WorktreeStatus> {
+    return requestJSON("/api/hoxi/worktree/sync", { method: "POST", body: JSON.stringify({ sessionID, ...(directory ? { directory } : {}) }) });
+  },
   revertWorktreeFile(sessionID: string, file: string, directory?: string): Promise<{ ok: boolean }> {
     return requestJSON("/api/hoxi/worktree/revert-file", { method: "POST", body: JSON.stringify({ sessionID, file, ...(directory ? { directory } : {}) }) });
   },

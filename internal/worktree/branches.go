@@ -2,8 +2,10 @@ package worktree
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -274,5 +276,69 @@ func (m *worktreeManager) RevertFile(sessionID, relPath string) error {
 	}
 	globalRepoDiffCache.invalidate(repoDir)
 	return nil
+}
+
+func (m *worktreeManager) resolveBaseBranchDrift(meta worktreeMeta) (string, int, int) {
+	if !meta.Isolated || strings.TrimSpace(meta.Directory) == "" {
+		return "", 0, 0
+	}
+	rootRepo := m.primaryGitRepoDir()
+	baseBranch, err := runGit(rootRepo, "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		return "", 0, 0
+	}
+	baseBranch = strings.TrimSpace(baseBranch)
+	if baseBranch == "" || baseBranch == "HEAD" || baseBranch == strings.TrimSpace(meta.Branch) {
+		return baseBranch, 0, 0
+	}
+	out, err := runGit(meta.Directory, "rev-list", "--left-right", "--count", "refs/heads/"+baseBranch+"...HEAD")
+	if err != nil {
+		return baseBranch, 0, 0
+	}
+	fields := strings.Fields(out)
+	if len(fields) != 2 {
+		return baseBranch, 0, 0
+	}
+	behind, _ := strconv.Atoi(fields[0])
+	ahead, _ := strconv.Atoi(fields[1])
+	return baseBranch, behind, ahead
+}
+
+// SyncWithBase rebases an isolated session worktree onto the primary repository's
+// current branch using --autostash, aborting cleanly if conflicts occur.
+func (m *worktreeManager) SyncWithBase(sessionID string) (worktreeStatus, error) {
+	m.ops.Lock()
+	defer m.ops.Unlock()
+
+	sessionID = sanitizeSessionID(sessionID)
+	meta := m.resolveSessionMeta(sessionID)
+	if !meta.Isolated || strings.TrimSpace(meta.Directory) == "" {
+		return worktreeStatus{}, errors.New("session is not in an isolated git worktree")
+	}
+
+	rootRepo := m.primaryGitRepoDir()
+	baseBranch, err := runGit(rootRepo, "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		return worktreeStatus{}, fmt.Errorf("resolve base branch: %w", err)
+	}
+	baseBranch = strings.TrimSpace(baseBranch)
+	if baseBranch == "" || baseBranch == "HEAD" {
+		return worktreeStatus{}, errors.New("cannot sync: primary workspace is on a detached HEAD")
+	}
+
+	if _, err := runGit(meta.Directory, "-c", "rebase.autoStash=true", "rebase", "refs/heads/"+baseBranch); err != nil {
+		_, _ = runGit(meta.Directory, "rebase", "--abort")
+		return worktreeStatus{}, fmt.Errorf("rebase onto %s had conflicts and was aborted: %w", baseBranch, err)
+	}
+
+	if newBase, baseErr := runGit(meta.Directory, "merge-base", "refs/heads/"+baseBranch, "HEAD"); baseErr == nil && strings.TrimSpace(newBase) != "" {
+		meta.BaseCommit = strings.TrimSpace(newBase)
+		m.storeMeta(meta)
+	}
+	globalRepoDiffCache.invalidate(meta.Directory)
+	if m.roots != nil && m.roots.quarantine != nil {
+		m.roots.quarantine.Clear(meta.Directory)
+	}
+	return m.Status(sessionID)
 }
 

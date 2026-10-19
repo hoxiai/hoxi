@@ -34,6 +34,7 @@ type worktreeStatus struct {
 	Isolated         bool   `json:"isolated"`
 	Directory        string `json:"directory"`
 	Branch           string `json:"branch,omitempty"`
+	BaseBranch       string `json:"baseBranch,omitempty"`
 	BaseCommit       string `json:"baseCommit,omitempty"`
 	HeadCommit       string `json:"headCommit,omitempty"`
 	HeadSubject      string `json:"headSubject,omitempty"`
@@ -43,6 +44,7 @@ type worktreeStatus struct {
 	Additions        int    `json:"additions"`
 	Deletions        int    `json:"deletions"`
 	AheadCount       int    `json:"aheadCount"`
+	BehindCount      int    `json:"behindCount"`
 	HasUpstream      bool   `json:"hasUpstream"`
 	Health           string `json:"health,omitempty"`
 }
@@ -107,6 +109,9 @@ func (m *worktreeManager) CreateOnBranch(sessionID, retainedBranch string) (work
 		if _, err := os.Stat(existing.Directory); err == nil {
 			return existing, nil
 		}
+		if retainedBranch == "" && strings.TrimSpace(existing.Branch) != "" {
+			retainedBranch = strings.TrimSpace(existing.Branch)
+		}
 	}
 
 	topLevel, err := runGit(m.rootDir, "rev-parse", "--show-toplevel")
@@ -150,6 +155,7 @@ func (m *worktreeManager) CreateOnBranch(sessionID, retainedBranch string) (work
 	isNewWorktree := false
 	if _, err := os.Stat(worktreeDir); os.IsNotExist(err) {
 		isNewWorktree = true
+		_, _ = runGit(repoRoot, "worktree", "prune")
 		if retainedBranch != "" {
 			_, err = runGit(repoRoot, "-c", "checkout.workers=0", "worktree", "add", worktreeDir, branch)
 			if err != nil {
@@ -467,11 +473,22 @@ func (m *worktreeManager) Status(sessionID string) (worktreeStatus, error) {
 		}
 	}
 
+	var baseBranch string
+	behindCount := 0
+	if meta.Isolated && anyValid {
+		var baseAhead int
+		baseBranch, behindCount, baseAhead = m.resolveBaseBranchDrift(meta)
+		if aheadCount == 0 && baseAhead > 0 {
+			aheadCount = baseAhead
+		}
+	}
+
 	return worktreeStatus{
 		SessionID:        meta.SessionID,
 		Isolated:         meta.Isolated,
 		Directory:        meta.Directory,
 		Branch:           meta.Branch,
+		BaseBranch:       baseBranch,
 		BaseCommit:       meta.BaseCommit,
 		HeadCommit:       headCommit,
 		HeadSubject:      headSubject,
@@ -481,6 +498,7 @@ func (m *worktreeManager) Status(sessionID string) (worktreeStatus, error) {
 		Additions:        additions,
 		Deletions:        deletions,
 		AheadCount:       aheadCount,
+		BehindCount:      behindCount,
 		HasUpstream:      hasUpstream,
 		Health:           health,
 	}, nil

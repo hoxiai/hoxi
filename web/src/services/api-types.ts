@@ -11,6 +11,7 @@ export interface WorktreeMeta {
   isolated: boolean;
   directory: string;
   branch?: string;
+  baseBranch?: string;
   baseCommit?: string;
   headCommit?: string;
   headSubject?: string;
@@ -21,7 +22,9 @@ export interface WorktreeMeta {
   additions?: number;
   deletions?: number;
   aheadCount?: number;
+  behindCount?: number;
   hasUpstream?: boolean;
+  health?: "ok" | "absent-restorable" | "unregistered" | "quarantined" | string;
 }
 
 export interface CommitAndPushResponse {
@@ -77,6 +80,7 @@ export interface WorktreeStatus {
   isolated: boolean;
   directory: string;
   branch?: string;
+  baseBranch?: string;
   baseCommit?: string;
   headCommit?: string;
   headSubject?: string;
@@ -86,6 +90,7 @@ export interface WorktreeStatus {
   additions: number;
   deletions: number;
   aheadCount?: number;
+  behindCount?: number;
   hasUpstream?: boolean;
   health?: "ok" | "absent-restorable" | "unregistered" | "quarantined" | string;
 }

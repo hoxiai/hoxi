@@ -1,6 +1,6 @@
 // web/src/components/inspector/PierreDiffViewer.tsx
 import { createEffect, createMemo, createSignal, on, onCleanup, Show } from "solid-js";
-import { Check, GitCommitHorizontal, RefreshCw, ShieldCheck, Sparkles } from "lucide-solid";
+import { Check, FolderSync, GitCommitHorizontal, GitPullRequestArrow, RefreshCw, ShieldCheck, Sparkles } from "lucide-solid";
 import { hoxiAPI } from "../../services/api";
 import {
   activeDirectory,
@@ -8,8 +8,10 @@ import {
   generateSmartCommitMessage,
   loadSessionMessages,
   refreshWorktreeStatus,
+  restoreSessionWorktree,
   runSessionCodeAudit,
   setWorkspace,
+  syncSessionWorktree,
   updateAppSetting,
   workspace,
 } from "../../store/workspace";
@@ -34,8 +36,37 @@ export default function PierreDiffViewer() {
   const [commitMsg, setCommitMsg] = createSignal("");
   const [committing, setCommitting] = createSignal(false);
   const [committedHash, setCommittedHash] = createSignal<string | null>(null);
+  const [restoring, setRestoring] = createSignal(false);
+  const [syncingBase, setSyncingBase] = createSignal(false);
 
   const sessionKey = () => workspace.activeSessionID || "__root__";
+  const activeWt = createMemo(() => workspace.worktreeBySession[sessionKey()]);
+
+  const onRestoreWorktree = async () => {
+    const id = workspace.activeSessionID;
+    if (!id || restoring()) return;
+    setRestoring(true);
+    try {
+      await restoreSessionWorktree(id);
+    } catch (err) {
+      console.error("restoreSessionWorktree failed:", err);
+    } finally {
+      setRestoring(false);
+    }
+  };
+
+  const onSyncWithBase = async () => {
+    const id = workspace.activeSessionID;
+    if (!id || syncingBase()) return;
+    setSyncingBase(true);
+    try {
+      await syncSessionWorktree(id);
+    } catch (err) {
+      console.error("syncSessionWorktree failed:", err);
+    } finally {
+      setSyncingBase(false);
+    }
+  };
 
   const diffs = createMemo(() => {
     const id = workspace.activeSessionID;
@@ -167,6 +198,58 @@ export default function PierreDiffViewer() {
           {t("inspector.diffs.scopeSession")}
         </button>
       </div>
+      <Show when={activeWt()?.health === "absent-restorable"}>
+        <div class="shrink-0 flex items-center justify-between gap-2 px-3 py-2 bg-[var(--warn-surface)]/70 border-b border-[var(--warn-border)] text-[11px]">
+          <div class="min-w-0 flex-1">
+            <div class="font-semibold text-[var(--warn-text)] truncate">
+              {t("inspector.diffs.restorableTitle")}
+            </div>
+            <div class="text-[10.5px] text-[var(--text-secondary)] truncate">
+              {t("inspector.diffs.restorableDesc", {
+                branch: activeWt()?.branch || `hoxi/${workspace.activeSessionID || ""}`,
+              })}
+            </div>
+          </div>
+          <button
+            type="button"
+            disabled={restoring()}
+            onClick={() => void onRestoreWorktree()}
+            class="shrink-0 inline-flex items-center gap-1 rounded-lg bg-[var(--accent-primary)] px-2.5 py-1 text-[11px] font-medium text-[var(--accent-foreground)] hover:opacity-90 disabled:opacity-40 cursor-pointer"
+          >
+            <FolderSync size={11} />
+            <span>
+              {restoring()
+                ? t("inspector.diffs.restoringWorktreeBtn")
+                : t("inspector.diffs.restoreWorktreeBtn")}
+            </span>
+          </button>
+        </div>
+      </Show>
+      <Show when={activeWt()?.isolated && (activeWt()?.behindCount ?? 0) > 0}>
+        <div class="shrink-0 flex items-center justify-between gap-2 px-3 py-1.5 bg-[var(--accent-surface)]/45 border-b border-[var(--accent-border)]/60 text-[11px]">
+          <span class="font-mono text-[var(--text-secondary)] truncate">
+            {t("inspector.diffs.behindBaseHint", {
+              count: activeWt()?.behindCount ?? 0,
+              branch: activeWt()?.baseBranch || "main",
+            })}
+          </span>
+          <button
+            type="button"
+            disabled={syncingBase()}
+            onClick={() => void onSyncWithBase()}
+            class="shrink-0 inline-flex items-center gap-1 rounded-md border border-[var(--accent-border)] bg-[var(--bg-panel)] px-2 py-0.5 text-[11px] font-medium text-[var(--accent-primary)] hover:bg-[var(--bg-hover)] disabled:opacity-40 cursor-pointer"
+          >
+            <GitPullRequestArrow size={11} />
+            <span>
+              {syncingBase()
+                ? t("inspector.diffs.syncingBaseBtn")
+                : t("inspector.diffs.syncBaseBtn", {
+                    branch: activeWt()?.baseBranch || "main",
+                  })}
+            </span>
+          </button>
+        </div>
+      </Show>
       <div class="shrink-0 flex items-center justify-between px-3 py-2 border-b border-[var(--border-subtle)]">
         <Show
           when={previewDiffs().length > 0}

@@ -6,6 +6,7 @@ import {
   FolderGit2,
   GitBranch,
   GitMerge,
+  GitPullRequestArrow,
   LoaderCircle,
   Pencil,
   Plus,
@@ -22,6 +23,7 @@ import {
   refreshWorktreeStatus,
   renameSessionBranch,
   switchActiveSessionSandboxMode,
+  syncSessionWorktree,
   workspace,
 } from "../../store/workspace";
 import { hoxiAPI, type GitBranchInfo } from "../../services/api";
@@ -148,6 +150,21 @@ export default function BranchManagerPopover() {
         await applySessionWorktree(s.id, appSettings.worktreeApplyMode);
         setOpen(false);
         showToast(t("header.appliedSuccess"));
+      },
+      t("header.applyFailed")
+    );
+  };
+
+  const onSyncSandboxWithBase = () => {
+    const s = session();
+    if (!s) return;
+    const base = activeWorktree()?.baseBranch || rootBranch() || "main";
+    return runAction(
+      "sync-base",
+      async () => {
+        await syncSessionWorktree(s.id);
+        setOpen(false);
+        showToast(t("header.syncedBaseSuccess", { branch: base }));
       },
       t("header.applyFailed")
     );
@@ -394,6 +411,24 @@ export default function BranchManagerPopover() {
                   <FolderGit2 size={12} class="shrink-0 text-[var(--text-muted)]" />
                   <span>{t("header.applyKeepSandboxBtn")}</span>
                 </button>
+
+                {/* Rebase onto Base Branch when behind */}
+                <Show when={(activeWorktree()?.behindCount ?? 0) > 0}>
+                  <button
+                    type="button"
+                    disabled={!!busyAction()}
+                    onClick={() => void onSyncSandboxWithBase()}
+                    class="w-full flex items-center gap-2 rounded-lg px-2 py-1.5 text-[11.5px] text-[var(--accent-primary)] hover:bg-[var(--accent-surface)] disabled:opacity-50 transition-colors cursor-pointer"
+                  >
+                    <GitPullRequestArrow size={12} class="shrink-0" />
+                    <span>
+                      {t("header.syncWithBaseBtn", {
+                        branch: activeWorktree()?.baseBranch || rootBranch() || "main",
+                        count: activeWorktree()?.behindCount ?? 0,
+                      })}
+                    </span>
+                  </button>
+                </Show>
 
                 {/* Rename Sandbox Branch (Promote hoxi/ses_... to formal branch) */}
                 <div class="pt-2 border-t border-[var(--border-subtle)] flex flex-col gap-1.5">
