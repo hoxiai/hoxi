@@ -4,6 +4,7 @@ import { ArrowUpFromLine, Check, Columns2, ExternalLink, FolderSync, GitCommitHo
 import { hoxiAPI } from "../../services/api";
 import {
   activeDirectory,
+  activeWorkspaceFolders,
   appSettings,
   generateSmartCommitMessage,
   loadSessionMessagesOnly,
@@ -23,23 +24,15 @@ import { t } from "../../i18n";
 import ObserverAuditBanner from "./ObserverAuditBanner";
 import DiffEmptyState from "./pierre-diff-empty";
 import DiffFileTree from "./diff-file-tree";
+import MultiRepoDiffView from "./multi-repo-diff-view";
 import {
   FileDiffBlock,
+  openRemoteCompareURL,
   SelectedDiffDetail,
   synthesizeAICommitMessage,
 } from "./pierre-diff-parts";
 
 export { FileDiffBlock };
-
-function openRemoteCompareURL(url: string) {
-  if (!url) return;
-  const wailsRuntime = (window as any).runtime;
-  if (typeof wailsRuntime?.BrowserOpenURL === "function") {
-    wailsRuntime.BrowserOpenURL(url);
-    return;
-  }
-  window.open(url, "_blank", "noopener,noreferrer");
-}
 
 export default function PierreDiffViewer() {
   const diffStyle = () => appSettings.defaultDiffStyle;
@@ -57,6 +50,7 @@ export default function PierreDiffViewer() {
 
   const sessionKey = () => workspace.activeSessionID || "__root__";
   const activeWt = createMemo(() => workspace.worktreeBySession[sessionKey()]);
+  const repos = createMemo(() => activeWt()?.repos ?? []);
   const compareURL = () => lastCompareURL() || activeWt()?.compareURL || "";
 
   const onRestoreWorktree = async () => {
@@ -145,6 +139,16 @@ export default function PierreDiffViewer() {
   const isAuditing = () =>
     Boolean(workspace.activeSessionID && workspace.auditingBySession[workspace.activeSessionID]);
 
+  const hasMultipleRepos = createMemo(() => {
+    if (repos().length > 1) return true;
+    const seen = new Set<string>();
+    for (const d of previewDiffs()) {
+      seen.add(d.repoDir || d.repo || ".");
+      if (seen.size > 1) return true;
+    }
+    return false;
+  });
+
   const totals = createMemo(() => {
     let add = 0;
     let del = 0;
@@ -155,7 +159,11 @@ export default function PierreDiffViewer() {
     return { add, del };
   });
 
-  createEffect(on(() => [workspace.activeSessionID, workspace.rootDir] as const, ([id, root]) => {
+  createEffect(on(() => [
+    workspace.activeSessionID,
+    workspace.rootDir,
+    activeWorkspaceFolders().length,
+  ] as const, ([id, root]) => {
     setLastCompareURL(null);
     if (!root && !id) return;
     void refreshWorktreeStatus(id);
@@ -467,7 +475,10 @@ export default function PierreDiffViewer() {
           {(sid) => <ObserverAuditBanner sessionID={sid()} />}
         </Show>
         <Show
-          when={previewDiffs().length > 0}
+          when={
+            previewDiffs().length > 0 ||
+            (workspace.diffScope === "worktree" && hasMultipleRepos())
+          }
           fallback={
             <DiffEmptyState
               refreshing={refreshing()}
@@ -478,10 +489,27 @@ export default function PierreDiffViewer() {
           <Show
             when={selectedDiff()}
             fallback={
-              <DiffFileTree
-                diffs={previewDiffs()}
-                onSelectFile={(file) => setWorkspace("inspectedDiffFile", file)}
-              />
+              <Show
+                when={hasMultipleRepos()}
+                fallback={
+                  <DiffFileTree
+                    diffs={previewDiffs()}
+                    onSelectFile={(file) => setWorkspace("inspectedDiffFile", file)}
+                  />
+                }
+              >
+                <MultiRepoDiffView
+                  repos={repos()}
+                  diffs={previewDiffs()}
+                  onSelectFile={(file) => setWorkspace("inspectedDiffFile", file)}
+                />
+                <Show when={previewDiffs().length === 0}>
+                  <DiffEmptyState
+                    refreshing={refreshing()}
+                    onRefresh={() => void onRefresh()}
+                  />
+                </Show>
+              </Show>
             }
           >
             {(activeDiff) => (

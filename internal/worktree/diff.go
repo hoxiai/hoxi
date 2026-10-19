@@ -32,6 +32,7 @@ var (
 type gitRepoTarget struct {
 	Dir       string
 	RelPrefix string
+	External  bool
 }
 
 type worktreeFileDiff struct {
@@ -41,6 +42,7 @@ type worktreeFileDiff struct {
 	Deletions     int    `json:"deletions"`
 	Status        string `json:"status,omitempty"`
 	Repo          string `json:"repo,omitempty"`
+	RepoDir       string `json:"repoDir,omitempty"`
 	Branch        string `json:"branch,omitempty"`
 	GeneratedLike bool   `json:"generatedLike,omitempty"`
 	Binary        bool   `json:"binary,omitempty"`
@@ -159,7 +161,7 @@ func discoverGitRepos(rawDir string) []gitRepoTarget {
 func nestedRepoPrefixSet(repos []gitRepoTarget) map[string]struct{} {
 	set := make(map[string]struct{})
 	for _, r := range repos {
-		if r.RelPrefix != "" {
+		if !r.External && r.RelPrefix != "" {
 			set[r.RelPrefix] = struct{}{}
 		}
 	}
@@ -259,10 +261,26 @@ func diffSingleRepo(repo gitRepoTarget, diffTarget string, nestedPrefixes map[st
 	if cached, hit := globalRepoDiffCache.get(repo.Dir, diffTarget, fingerprint); hit {
 		return cached
 	}
+	if st, stHit := globalRepoStatusCache.get(repo.Dir, diffTarget, fingerprint); stHit &&
+		st.changedFiles == 0 && st.additions == 0 && st.deletions == 0 && diffTarget == "HEAD" {
+		empty := []worktreeFileDiff{}
+		globalRepoDiffCache.put(repo.Dir, diffTarget, fingerprint, empty)
+		return empty
+	}
+	flightKey := filepath.Clean(repo.Dir) + "\x00" + repo.RelPrefix + "\x00" + diffTarget + "\x00" + fingerprint
+	return diffFlightGroup.do(flightKey, func() []worktreeFileDiff {
+		if cached, hit := globalRepoDiffCache.get(repo.Dir, diffTarget, fingerprint); hit {
+			return cached
+		}
+		return computeDiffSingleRepo(repo, diffTarget, fingerprint, nestedPrefixes)
+	})
+}
 
-	var repoBranch string
-	if repo.RelPrefix != "" {
-		repoBranch, _ = runGit(repo.Dir, "rev-parse", "--abbrev-ref", "HEAD")
+func computeDiffSingleRepo(repo gitRepoTarget, diffTarget, fingerprint string, nestedPrefixes map[string]struct{}) []worktreeFileDiff {
+	var repoBranch, repoDir string
+	if repo.RelPrefix != "" || repo.External {
+		repoBranch = resolveGitBranchFast(repo.Dir)
+		repoDir = repo.Dir
 	}
 
 	useCached := false
@@ -311,7 +329,7 @@ func diffSingleRepo(repo gitRepoTarget, diffTarget string, nestedPrefixes map[st
 		if file == "" || strings.HasPrefix(file, ".hoxi/") {
 			continue
 		}
-		if repo.RelPrefix == "" && isWithinNestedRepo(file, nestedPrefixes) {
+		if !repo.External && repo.RelPrefix == "" && isWithinNestedRepo(file, nestedPrefixes) {
 			continue
 		}
 		binary := fields[0] == "-" || fields[1] == "-"
@@ -321,7 +339,7 @@ func diffSingleRepo(repo gitRepoTarget, diffTarget string, nestedPrefixes map[st
 		if patch == "" && i < len(patches) {
 			patch = "diff --git " + patches[i]
 		}
-		if strings.Contains(patch, "\nSubproject commit ") && isWithinNestedRepo(file, nestedPrefixes) {
+		if !repo.External && strings.Contains(patch, "\nSubproject commit ") && isWithinNestedRepo(file, nestedPrefixes) {
 			continue
 		}
 		relFile := file
@@ -348,6 +366,7 @@ func diffSingleRepo(repo gitRepoTarget, diffTarget string, nestedPrefixes map[st
 			Deletions:     del,
 			Status:        st,
 			Repo:          repo.RelPrefix,
+			RepoDir:       repoDir,
 			Branch:        repoBranch,
 			GeneratedLike: generated,
 			Binary:        binary,
@@ -362,7 +381,7 @@ func diffSingleRepo(repo gitRepoTarget, diffTarget string, nestedPrefixes map[st
 			continue
 		}
 		slashRel := filepath.ToSlash(rel)
-		if repo.RelPrefix == "" && isWithinNestedRepo(slashRel, nestedPrefixes) {
+		if !repo.External && repo.RelPrefix == "" && isWithinNestedRepo(slashRel, nestedPrefixes) {
 			continue
 		}
 		relFile := slashRel
@@ -385,6 +404,7 @@ func diffSingleRepo(repo gitRepoTarget, diffTarget string, nestedPrefixes map[st
 				File:          relFile,
 				Status:        "added",
 				Repo:          repo.RelPrefix,
+				RepoDir:       repoDir,
 				Branch:        repoBranch,
 				GeneratedLike: generated,
 				Large:         true,
@@ -423,6 +443,7 @@ func diffSingleRepo(repo gitRepoTarget, diffTarget string, nestedPrefixes map[st
 			Deletions:     0,
 			Status:        "added",
 			Repo:          repo.RelPrefix,
+			RepoDir:       repoDir,
 			Branch:        repoBranch,
 			GeneratedLike: generated,
 			Large:         large,
@@ -435,12 +456,21 @@ func diffSingleRepo(repo gitRepoTarget, diffTarget string, nestedPrefixes map[st
 }
 
 func (m *worktreeManager) Diff(sessionID string) ([]worktreeFileDiff, error) {
+	return m.DiffWithExtraDirs(sessionID, nil)
+}
+
+func (m *worktreeManager) DiffWithExtraDirs(sessionID string, extraDirs []string) ([]worktreeFileDiff, error) {
 	meta := m.resolveSessionMeta(sessionID)
 	if meta.Directory == "" {
 		return []worktreeFileDiff{}, nil
 	}
 
-	repos := discoverGitRepos(meta.Directory)
+	var repos []gitRepoTarget
+	if !meta.Isolated && len(extraDirs) > 0 {
+		repos = discoverWorkspaceGitRepos(meta.Directory, extraDirs)
+	} else {
+		repos = discoverGitRepos(meta.Directory)
+	}
 	if len(repos) == 0 {
 		return []worktreeFileDiff{}, nil
 	}
@@ -453,7 +483,7 @@ func (m *worktreeManager) Diff(sessionID string) ([]worktreeFileDiff, error) {
 
 	if len(repos) == 1 {
 		target := "HEAD"
-		if repos[0].RelPrefix == "" {
+		if !repos[0].External && repos[0].RelPrefix == "" {
 			target = rootDiffTarget
 		}
 		return diffSingleRepo(repos[0], target, nestedPrefixes), nil
@@ -469,7 +499,7 @@ func (m *worktreeManager) Diff(sessionID string) ([]worktreeFileDiff, error) {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			target := "HEAD"
-			if r.RelPrefix == "" {
+			if !r.External && r.RelPrefix == "" {
 				target = rootDiffTarget
 			}
 			perRepo[idx] = diffSingleRepo(r, target, nestedPrefixes)

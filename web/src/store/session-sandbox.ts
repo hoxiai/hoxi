@@ -3,12 +3,15 @@ import {
   hoxiAPI,
   resolveRunnerRuntimeForProvider,
   type WorktreeMeta,
+  type WorktreeRepoStatus,
 } from "../services/api";
 import type { SessionInfo } from "../services/sse-types";
 import { appSettings, updateAppSetting } from "./settings";
 import { setWorkspace, workspace } from "./workspace";
 import { initializeSessionAI } from "./session-ai";
+import { normalizeFolderPath, workspaceFoldersForDir } from "./workspace-projects";
 import {
+  exitSessionWorktree,
   isManagedSession,
   isSessionBusy,
   refreshWorktreeStatus,
@@ -17,6 +20,82 @@ import {
 } from "./workspace-sessions";
 
 const pendingSandboxChanges = new Map<string, Promise<void>>();
+
+export function secondaryWorkspaceDirs(primaryDir?: string): string[] {
+  const baseNorm = normalizeFolderPath(primaryDir || workspace.rootDir || "");
+  if (!baseNorm) return [];
+  const folders = workspaceFoldersForDir(baseNorm);
+  if (folders.length <= 1) return [];
+  const out: string[] = [];
+  const seen = new Set<string>([baseNorm]);
+  for (const f of folders) {
+    const norm = normalizeFolderPath(f.path);
+    if (!norm || seen.has(norm)) continue;
+    seen.add(norm);
+    out.push(norm);
+  }
+  return out;
+}
+
+function areRepoStatusListsEqual(
+  prev: WorktreeRepoStatus[] | undefined,
+  next: WorktreeRepoStatus[] | undefined
+): boolean {
+  if (!prev && !next) return true;
+  if (!prev || !next || prev.length !== next.length) return false;
+  for (let i = 0; i < prev.length; i++) {
+    const a = prev[i];
+    const b = next[i];
+    if (
+      a.repo !== b.repo ||
+      a.name !== b.name ||
+      a.directory !== b.directory ||
+      a.branch !== b.branch ||
+      a.headCommit !== b.headCommit ||
+      a.headSubject !== b.headSubject ||
+      a.dirty !== b.dirty ||
+      a.changedFiles !== b.changedFiles ||
+      a.additions !== b.additions ||
+      a.deletions !== b.deletions ||
+      a.aheadCount !== b.aheadCount ||
+      a.behindCount !== b.behindCount ||
+      a.hasUpstream !== b.hasUpstream ||
+      a.compareURL !== b.compareURL
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+export function setWorktreeMetaIfChanged(key: string, next: WorktreeMeta): void {
+  const prev = workspace.worktreeBySession[key];
+  if (
+    prev &&
+    prev.sessionID === next.sessionID &&
+    prev.isolated === next.isolated &&
+    prev.directory === next.directory &&
+    prev.branch === next.branch &&
+    prev.baseBranch === next.baseBranch &&
+    prev.baseCommit === next.baseCommit &&
+    prev.headCommit === next.headCommit &&
+    prev.headSubject === next.headSubject &&
+    prev.dirty === next.dirty &&
+    prev.changedFiles === next.changedFiles &&
+    prev.uncommittedLines === next.uncommittedLines &&
+    prev.additions === next.additions &&
+    prev.deletions === next.deletions &&
+    prev.aheadCount === next.aheadCount &&
+    prev.behindCount === next.behindCount &&
+    prev.hasUpstream === next.hasUpstream &&
+    prev.compareURL === next.compareURL &&
+    prev.health === next.health &&
+    areRepoStatusListsEqual(prev.repos, next.repos)
+  ) {
+    return;
+  }
+  setWorkspace("worktreeBySession", key, next);
+}
 
 export function startNewThreadDraft(): void {
   setWorkspace({ activeSessionID: null, sessionSetupError: null,
@@ -168,4 +247,49 @@ export async function switchActiveSessionSandboxMode(mode: "local" | "worktree")
     reportSetupError(error);
     throw error;
   }
+}
+
+export async function applySessionWorktree(
+  sessionID: string,
+  mode: "patch" | "merge" = "patch"
+): Promise<void> {
+  await hoxiAPI.applyWorktree(sessionID, mode);
+  await refreshWorktreeStatus(sessionID);
+  await refreshWorktreeStatus("__root__");
+}
+
+export async function applyAndExitSessionWorktree(
+  sessionID: string,
+  mode: "patch" | "merge" = "patch",
+  keepBranch = false
+): Promise<void> {
+  await hoxiAPI.applyWorktree(sessionID, mode);
+  await exitSessionWorktree(sessionID, keepBranch);
+}
+
+export async function renameSessionBranch(sessionID: string, newBranch: string): Promise<string> {
+  const res = await hoxiAPI.renameBranch(sessionID, newBranch, workspace.rootDir || undefined);
+  await refreshWorktreeStatus(sessionID);
+  await refreshWorktreeStatus("__root__");
+  return res.branch;
+}
+
+export async function checkoutLocalBranch(branch: string, create = false): Promise<void> {
+  await hoxiAPI.checkoutBranch(branch, create, workspace.rootDir || undefined);
+  await refreshWorktreeStatus("__root__");
+  if (workspace.activeSessionID) {
+    await refreshWorktreeStatus(workspace.activeSessionID);
+  }
+}
+
+export async function syncSessionWorktree(sessionID: string): Promise<void> {
+  await hoxiAPI.syncWorktree(sessionID, workspace.rootDir || undefined);
+  await refreshWorktreeStatus(sessionID);
+  await refreshWorktreeStatus("__root__");
+}
+
+export async function restoreSessionWorktree(sessionID: string): Promise<void> {
+  await hoxiAPI.createWorktree(sessionID, workspace.rootDir || undefined);
+  await refreshWorktreeStatus(sessionID);
+  await refreshWorktreeStatus("__root__");
 }

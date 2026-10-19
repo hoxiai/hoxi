@@ -29,6 +29,7 @@ import {
   deleteChildSubagentSessionsBackend,
   purgeSessionsFromStoreState,
 } from "./workspace-queue-subagents";
+import { secondaryWorkspaceDirs, setWorktreeMetaIfChanged } from "./session-sandbox";
 
 const deletedSessionIDs = new Set<string>();
 const sessionMessageLoads = new Map<string, Promise<void>>();
@@ -289,7 +290,8 @@ function areDiffListsEqual(prev: SnapshotFileDiff[] | undefined, next: SnapshotF
       a.file !== b.file || a.status !== b.status || a.additions !== b.additions ||
       a.deletions !== b.deletions || a.stamp !== b.stamp || a.patch !== b.patch ||
       a.before !== b.before || a.after !== b.after || a.large !== b.large ||
-      a.generatedLike !== b.generatedLike || a.repo !== b.repo || a.branch !== b.branch
+      a.generatedLike !== b.generatedLike || a.repo !== b.repo ||
+      a.repoDir !== b.repoDir || a.branch !== b.branch
     ) return false;
   }
   return true;
@@ -382,26 +384,6 @@ export async function selectSession(sessionID: string): Promise<void> {
   }
 }
 
-export async function applySessionWorktree(
-  sessionID: string,
-  mode: "patch" | "merge" = "patch"
-): Promise<void> {
-  await hoxiAPI.applyWorktree(sessionID, mode);
-  await refreshWorktreeStatus(sessionID);
-  await refreshWorktreeStatus("__root__");
-}
-
-export async function applyAndExitSessionWorktree(
-  sessionID: string,
-  mode: "patch" | "merge" = "patch",
-  keepBranch = false
-): Promise<void> {
-  await hoxiAPI.applyWorktree(sessionID, mode);
-  await leaveSessionWorktree(sessionID, keepBranch);
-  await refreshWorktreeStatus(sessionID);
-  await refreshWorktreeStatus("__root__");
-}
-
 export async function exitSessionWorktree(sessionID: string, keepBranch = false): Promise<void> {
   await leaveSessionWorktree(sessionID, keepBranch);
   await refreshWorktreeStatus(sessionID);
@@ -421,33 +403,6 @@ async function leaveSessionWorktree(sessionID: string, keepBranch: boolean): Pro
   } else {
     await hoxiAPI.removeWorktree(sessionID, true, keepBranch);
   }
-}
-
-export async function renameSessionBranch(sessionID: string, newBranch: string): Promise<string> {
-  const res = await hoxiAPI.renameBranch(sessionID, newBranch, workspace.rootDir || undefined);
-  await refreshWorktreeStatus(sessionID);
-  await refreshWorktreeStatus("__root__");
-  return res.branch;
-}
-
-export async function checkoutLocalBranch(branch: string, create = false): Promise<void> {
-  await hoxiAPI.checkoutBranch(branch, create, workspace.rootDir || undefined);
-  await refreshWorktreeStatus("__root__");
-  if (workspace.activeSessionID) {
-    await refreshWorktreeStatus(workspace.activeSessionID);
-  }
-}
-
-export async function syncSessionWorktree(sessionID: string): Promise<void> {
-  await hoxiAPI.syncWorktree(sessionID, workspace.rootDir || undefined);
-  await refreshWorktreeStatus(sessionID);
-  await refreshWorktreeStatus("__root__");
-}
-
-export async function restoreSessionWorktree(sessionID: string): Promise<void> {
-  await hoxiAPI.createWorktree(sessionID, workspace.rootDir || undefined);
-  await refreshWorktreeStatus(sessionID);
-  await refreshWorktreeStatus("__root__");
 }
 
 const worktreeRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -481,10 +436,13 @@ export async function refreshWorktreeStatus(sessionID?: string | null): Promise<
   const isCurrentScope = () => worktreeRevisions.get(key) === revision && !isSessionDeleted(key) && dirArg ===
     (key === "__root__" ? workspace.rootDir || undefined : sessionDirectory(key));
   try {
-    const st = await hoxiAPI.getWorktreeStatus(key, dirArg);
+    const extraDirs = workspace.worktreeBySession[key]?.isolated ? [] : secondaryWorkspaceDirs(dirArg);
+    const st = extraDirs.length > 0
+      ? await hoxiAPI.getWorktreeStatus(key, dirArg, extraDirs)
+      : await hoxiAPI.getWorktreeStatus(key, dirArg);
     if (!isCurrentScope()) return;
     const prevMeta = workspace.worktreeBySession[key];
-    setWorkspace("worktreeBySession", key, {
+    setWorktreeMetaIfChanged(key, {
       sessionID: key,
       isolated: st.isolated,
       directory: st.directory || dirArg || "",
@@ -504,9 +462,14 @@ export async function refreshWorktreeStatus(sessionID?: string | null): Promise<
       hasUpstream: st.hasUpstream,
       compareURL: st.compareURL,
       health: st.health,
+      repos: st.repos,
     });
     if (key === "__root__" || key === workspace.activeSessionID) {
-      const diffs = st.dirty ? await hoxiAPI.getWorktreeDiff(key, dirArg) : [];
+      const diffs = st.dirty
+        ? (extraDirs.length > 0
+            ? await hoxiAPI.getWorktreeDiff(key, dirArg, extraDirs)
+            : await hoxiAPI.getWorktreeDiff(key, dirArg))
+        : [];
       if (!isCurrentScope()) return;
       setDiffListIfChanged("worktreeDiffsBySession", key, diffs);
       if (key === "__root__") {

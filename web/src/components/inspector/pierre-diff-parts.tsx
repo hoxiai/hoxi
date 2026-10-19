@@ -30,7 +30,21 @@ import {
 import type { SnapshotFileDiff } from "../../services/sse-types";
 import { DiffChanges, FileIcon } from "../icons";
 import { t } from "../../i18n";
-import { DiffStatusBadge, GeneratedFileBadge } from "./diff-file-tree";
+import {
+  DiffStatusBadge,
+  GeneratedFileBadge,
+  stripRepoPrefixFromFile,
+} from "./diff-file-tree";
+
+export function openRemoteCompareURL(url: string) {
+  if (!url) return;
+  const wailsRuntime = (window as any).runtime;
+  if (typeof wailsRuntime?.BrowserOpenURL === "function") {
+    wailsRuntime.BrowserOpenURL(url);
+    return;
+  }
+  window.open(url, "_blank", "noopener,noreferrer");
+}
 
 const MAX_META_CACHE_ENTRIES = 48;
 const MAX_FULL_DIFF_CACHE_ENTRIES = 32;
@@ -290,20 +304,30 @@ export function SelectedDiffDetail(props: {
     }
     setLoadingFull(true);
     try {
+      const repoDir = props.diff.repoDir;
+      const queryFile = repoDir
+        ? stripRepoPrefixFromFile(targetFile, props.diff.repo)
+        : targetFile;
       const detail = await hoxiAPI.getWorktreeFileDiff(
         sessionID,
-        targetFile,
-        activeDirectory() || workspace.rootDir || undefined
+        queryFile,
+        repoDir || activeDirectory() || workspace.rootDir || undefined
       );
       if (detail) {
-        fullDiffDetailCache.set(cacheKey, detail);
+        const normalizedDetail: SnapshotFileDiff = {
+          ...detail,
+          file: targetFile,
+          repo: props.diff.repo || detail.repo,
+          repoDir: repoDir || detail.repoDir,
+        };
+        fullDiffDetailCache.set(cacheKey, normalizedDetail);
         while (fullDiffDetailCache.size > MAX_FULL_DIFF_CACHE_ENTRIES) {
           const oldest = fullDiffDetailCache.keys().next().value;
           if (oldest === undefined) break;
           fullDiffDetailCache.delete(oldest);
         }
         if (props.diff.file === targetFile) {
-          setLoadedDiff(detail);
+          setLoadedDiff(normalizedDetail);
         }
       }
     } catch (err) {
@@ -389,10 +413,14 @@ export function SelectedDiffDetail(props: {
     if (reverting()) return;
     setReverting(true);
     try {
+      const repoDir = props.diff.repoDir;
+      const targetFile = repoDir
+        ? stripRepoPrefixFromFile(props.diff.file, props.diff.repo)
+        : props.diff.file;
       await hoxiAPI.revertWorktreeFile(
         sessionID,
-        props.diff.file,
-        activeDirectory() || workspace.rootDir || undefined
+        targetFile,
+        repoDir || activeDirectory() || workspace.rootDir || undefined
       );
       await refreshWorktreeStatus(workspace.activeSessionID);
       if (workspace.activeSessionID) {
@@ -484,7 +512,12 @@ export function SelectedDiffDetail(props: {
           <button
             type="button"
             class="shrink-0 text-[var(--text-muted)] hover:text-[var(--text-primary)] p-1 cursor-pointer"
-            onClick={() => openFileInInspector(props.diff.file)}
+            onClick={() => {
+              const target = props.diff.repoDir
+                ? `${props.diff.repoDir.replace(/\/+$/, "")}/${stripRepoPrefixFromFile(props.diff.file, props.diff.repo)}`
+                : props.diff.file;
+              openFileInInspector(target);
+            }}
             title={t("inspector.diffs.openFile")}
           >
             <ExternalLink size={12} />

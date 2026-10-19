@@ -403,3 +403,37 @@ func TestBuildRemoteCompareURLAndStatus(t *testing.T) {
 		t.Fatalf("expected CompareURL for worktree branch, got %q", st.CompareURL)
 	}
 }
+
+func TestMultiDirectoryAndNestedGitReposStatusAndDiff(t *testing.T) {
+	primary := initTempGitRepo(t)
+	extraRepo := initTempGitRepo(t)
+
+	// Create a dirty edit in extraRepo and leave primary clean
+	if err := os.WriteFile(filepath.Join(extraRepo, "extra-change.txt"), []byte("hello from extra repo\n"), 0o644); err != nil {
+		t.Fatalf("write extra-change.txt: %v", err)
+	}
+
+	mgr := NewManager(primary)
+	st, err := mgr.StatusWithExtraDirs("", []string{extraRepo})
+	if err != nil {
+		t.Fatalf("StatusWithExtraDirs failed: %v", err)
+	}
+	if len(st.Repos) != 2 {
+		t.Fatalf("expected 2 repos in StatusWithExtraDirs, got %d (%+v)", len(st.Repos), st.Repos)
+	}
+	if !st.Dirty || st.ChangedFiles != 1 {
+		t.Fatalf("expected aggregated Dirty=true and ChangedFiles=1, got Dirty=%v ChangedFiles=%d", st.Dirty, st.ChangedFiles)
+	}
+
+	diffs, err := mgr.DiffWithExtraDirs("", []string{extraRepo})
+	if err != nil {
+		t.Fatalf("DiffWithExtraDirs failed: %v", err)
+	}
+	if len(diffs) != 1 {
+		t.Fatalf("expected 1 diff from extraRepo, got %d (%+v)", len(diffs), diffs)
+	}
+	if diffs[0].RepoDir == "" || !strings.HasSuffix(diffs[0].File, "/extra-change.txt") {
+		t.Fatalf("expected RepoDir and prefixed File on external repo diff, got %+v", diffs[0])
+	}
+}
+

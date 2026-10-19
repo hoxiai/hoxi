@@ -6,6 +6,23 @@ export interface PromptAttachment {
   url: string;
 }
 
+export interface WorktreeRepoStatus {
+  repo: string;
+  name: string;
+  directory: string;
+  branch?: string;
+  headCommit?: string;
+  headSubject?: string;
+  dirty: boolean;
+  changedFiles: number;
+  additions: number;
+  deletions: number;
+  aheadCount?: number;
+  behindCount?: number;
+  hasUpstream?: boolean;
+  compareURL?: string;
+}
+
 export interface WorktreeMeta {
   sessionID: string;
   isolated: boolean;
@@ -26,6 +43,7 @@ export interface WorktreeMeta {
   hasUpstream?: boolean;
   compareURL?: string;
   health?: "ok" | "absent-restorable" | "unregistered" | "quarantined" | string;
+  repos?: WorktreeRepoStatus[];
 }
 
 export interface CommitAndPushResponse {
@@ -96,6 +114,7 @@ export interface WorktreeStatus {
   hasUpstream?: boolean;
   compareURL?: string;
   health?: "ok" | "absent-restorable" | "unregistered" | "quarantined" | string;
+  repos?: WorktreeRepoStatus[];
 }
 
 export interface GitBranchInfo {

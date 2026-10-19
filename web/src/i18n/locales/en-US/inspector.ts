@@ -106,6 +106,11 @@ export const inspector = {
     pushingBtn: "Pushing…",
     createPrBtn: "Create PR",
     createPrTooltip: "Push branch (if needed) and open Pull / Merge Request on remote",
+    reposSummary: "{total} Git repos · {dirty} with changes",
+    cleanReposSummary: "Synced repositories ({count})",
+    repoCleanReadyToPush: "Working tree clean · ↑{count} ready to push",
+    repoBehindUpstream: "↓{count} behind remote",
+    repoCommitAction: "Commit",
   },
   memory: {
     title: "Structured Memory",

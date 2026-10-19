@@ -62,28 +62,40 @@ func parseBranchFromPorcelainHeader(headerLine string) string {
 	return strings.TrimSpace(rest)
 }
 
-func parseAheadAndUpstreamFromPorcelainHeader(headerLine string) (int, bool) {
+func parseAheadBehindAndUpstreamFromPorcelainHeader(headerLine string) (int, int, bool) {
 	rest := strings.TrimSpace(strings.TrimPrefix(headerLine, "##"))
 	if rest == "" || strings.HasPrefix(rest, "HEAD") {
-		return 0, false
+		return 0, 0, false
 	}
 	hasUpstream := strings.Contains(rest, "...")
 	openIdx := strings.IndexByte(rest, '[')
 	closeIdx := strings.LastIndexByte(rest, ']')
 	if openIdx < 0 || closeIdx <= openIdx {
-		return 0, hasUpstream
+		return 0, 0, hasUpstream
 	}
 	bracket := rest[openIdx+1 : closeIdx]
+	ahead := 0
+	behind := 0
 	for _, part := range strings.Split(bracket, ",") {
 		part = strings.TrimSpace(part)
 		if strings.HasPrefix(part, "ahead ") {
 			numStr := strings.TrimSpace(strings.TrimPrefix(part, "ahead "))
 			if n, err := strconv.Atoi(numStr); err == nil && n > 0 {
-				return n, hasUpstream
+				ahead = n
+			}
+		} else if strings.HasPrefix(part, "behind ") {
+			numStr := strings.TrimSpace(strings.TrimPrefix(part, "behind "))
+			if n, err := strconv.Atoi(numStr); err == nil && n > 0 {
+				behind = n
 			}
 		}
 	}
-	return 0, hasUpstream
+	return ahead, behind, hasUpstream
+}
+
+func parseAheadAndUpstreamFromPorcelainHeader(headerLine string) (int, bool) {
+	ahead, _, hasUpstream := parseAheadBehindAndUpstreamFromPorcelainHeader(headerLine)
+	return ahead, hasUpstream
 }
 
 func (m *worktreeManager) resolveWorkDir(sessionID string) string {

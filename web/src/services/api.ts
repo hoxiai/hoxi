@@ -409,12 +409,14 @@ export const hoxiAPI = {
   createWorktree(sessionID: string, directory?: string): Promise<WorktreeMeta> {
     return requestJSON("/api/hoxi/worktree/create", { method: "POST", body: JSON.stringify({ sessionID, ...(directory ? { directory } : {}) }) });
   },
-  getWorktreeStatus(sessionID: string, directory?: string): Promise<WorktreeStatus> {
-    const q = `sessionID=${encodeURIComponent(sessionID)}${directory ? `&directory=${encodeURIComponent(directory)}` : ""}`;
+  getWorktreeStatus(sessionID: string, directory?: string, extraDirs?: string[]): Promise<WorktreeStatus> {
+    const extra = extraDirs?.length ? extraDirs.map((d) => `&extraDir=${encodeURIComponent(d)}`).join("") : "";
+    const q = `sessionID=${encodeURIComponent(sessionID)}${directory ? `&directory=${encodeURIComponent(directory)}` : ""}${extra}`;
     return requestJSON(`/api/hoxi/worktree/status?${q}`);
   },
-  getWorktreeDiff(sessionID: string, directory?: string): Promise<SnapshotFileDiff[]> {
-    const q = `sessionID=${encodeURIComponent(sessionID)}${directory ? `&directory=${encodeURIComponent(directory)}` : ""}`;
+  getWorktreeDiff(sessionID: string, directory?: string, extraDirs?: string[]): Promise<SnapshotFileDiff[]> {
+    const extra = extraDirs?.length ? extraDirs.map((d) => `&extraDir=${encodeURIComponent(d)}`).join("") : "";
+    const q = `sessionID=${encodeURIComponent(sessionID)}${directory ? `&directory=${encodeURIComponent(directory)}` : ""}${extra}`;
     return requestJSON(`/api/hoxi/worktree/diff?${q}`);
   },
   getWorktreeFileDiff(sessionID: string, file: string, directory?: string): Promise<SnapshotFileDiff> {

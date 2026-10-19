@@ -106,6 +106,11 @@ export const inspector: InspectorI18n = {
     pushingBtn: "推送中…",
     createPrBtn: "创建 PR",
     createPrTooltip: "推送当前分支（如需）并在远端仓库打开创建 PR / MR 页面",
+    reposSummary: "共 {total} 个 Git 仓库 · {dirty} 个有改动",
+    cleanReposSummary: "已同步仓库 ({count})",
+    repoCleanReadyToPush: "工作区干净 · ↑{count} 个提交待推送",
+    repoBehindUpstream: "落后远端 ↓{count} 个提交",
+    repoCommitAction: "提交",
   },
   memory: {
     title: "结构化记忆",

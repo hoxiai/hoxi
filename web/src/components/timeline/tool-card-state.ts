@@ -50,6 +50,7 @@ export function enrichDiffWithWorktree(
   const nextStamp = d.stamp || (canUseWtPatch || sameCounts ? wt.stamp : undefined);
   const nextStatus = d.status || wt.status;
   const nextRepo = d.repo || wt.repo;
+  const nextRepoDir = d.repoDir || wt.repoDir;
   const nextBranch = d.branch || wt.branch;
   const nextGenerated = d.generatedLike ?? wt.generatedLike;
   const nextLarge = d.large ?? (sameCounts ? wt.large : undefined);
@@ -58,6 +59,7 @@ export function enrichDiffWithWorktree(
     nextStamp === d.stamp &&
     nextStatus === d.status &&
     nextRepo === d.repo &&
+    nextRepoDir === d.repoDir &&
     nextBranch === d.branch &&
     nextGenerated === d.generatedLike &&
     nextLarge === d.large
@@ -70,6 +72,7 @@ export function enrichDiffWithWorktree(
     stamp: nextStamp,
     status: nextStatus,
     repo: nextRepo,
+    repoDir: nextRepoDir,
     branch: nextBranch,
     generatedLike: nextGenerated,
     large: nextLarge,

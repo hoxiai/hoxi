@@ -1,14 +1,12 @@
 package worktree
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -30,24 +28,25 @@ type worktreeMeta struct {
 }
 
 type worktreeStatus struct {
-	SessionID        string `json:"sessionID"`
-	Isolated         bool   `json:"isolated"`
-	Directory        string `json:"directory"`
-	Branch           string `json:"branch,omitempty"`
-	BaseBranch       string `json:"baseBranch,omitempty"`
-	BaseCommit       string `json:"baseCommit,omitempty"`
-	HeadCommit       string `json:"headCommit,omitempty"`
-	HeadSubject      string `json:"headSubject,omitempty"`
-	Dirty            bool   `json:"dirty"`
-	ChangedFiles     int    `json:"changedFiles"`
-	UncommittedLines int    `json:"uncommittedLines"`
-	Additions        int    `json:"additions"`
-	Deletions        int    `json:"deletions"`
-	AheadCount       int    `json:"aheadCount"`
-	BehindCount      int    `json:"behindCount"`
-	HasUpstream      bool   `json:"hasUpstream"`
-	CompareURL       string `json:"compareURL,omitempty"`
-	Health           string `json:"health,omitempty"`
+	SessionID        string               `json:"sessionID"`
+	Isolated         bool                 `json:"isolated"`
+	Directory        string               `json:"directory"`
+	Branch           string               `json:"branch,omitempty"`
+	BaseBranch       string               `json:"baseBranch,omitempty"`
+	BaseCommit       string               `json:"baseCommit,omitempty"`
+	HeadCommit       string               `json:"headCommit,omitempty"`
+	HeadSubject      string               `json:"headSubject,omitempty"`
+	Dirty            bool                 `json:"dirty"`
+	ChangedFiles     int                  `json:"changedFiles"`
+	UncommittedLines int                  `json:"uncommittedLines"`
+	Additions        int                  `json:"additions"`
+	Deletions        int                  `json:"deletions"`
+	AheadCount       int                  `json:"aheadCount"`
+	BehindCount      int                  `json:"behindCount"`
+	HasUpstream      bool                 `json:"hasUpstream"`
+	CompareURL       string               `json:"compareURL,omitempty"`
+	Health           string               `json:"health,omitempty"`
+	Repos            []worktreeRepoStatus `json:"repos,omitempty"`
 }
 
 type worktreeManager struct {
@@ -219,143 +218,11 @@ func (m *worktreeManager) CreateOnBranch(sessionID, retainedBranch string) (work
 	return meta, nil
 }
 
-type repoStatusSummary struct {
-	branch       string
-	headCommit   string
-	headSubject  string
-	remoteURL    string
-	changedFiles int
-	additions    int
-	deletions    int
-	aheadCount   int
-	hasUpstream  bool
-	valid        bool
-}
-
-func statusSingleRepo(repo gitRepoTarget, diffTarget string, nestedPrefixes map[string]struct{}) repoStatusSummary {
-	fingerprint := computeRepoStateFingerprint(repo.Dir, diffTarget)
-	if cached, hit := globalRepoStatusCache.get(repo.Dir, diffTarget, fingerprint); hit {
-		return cached
-	}
-
-	porcelain, porcelainErr := runGitRaw(repo.Dir, "status", "--porcelain", "-b")
-	changedFiles := 0
-	aheadCount := 0
-	hasUpstream := false
-	branch := ""
-	var untrackedFiles []string
-
-	for _, rawLine := range strings.Split(porcelain, "\n") {
-		if strings.HasPrefix(rawLine, "## ") {
-			if br := parseBranchFromPorcelainHeader(rawLine); br != "" {
-				branch = br
-			}
-			aheadCount, hasUpstream = parseAheadAndUpstreamFromPorcelainHeader(rawLine)
-			continue
-		}
-		trimmed := strings.TrimSpace(rawLine)
-		if trimmed == "" || len(rawLine) < 4 {
-			continue
-		}
-		rel := strings.TrimSpace(rawLine[3:])
-		if repo.RelPrefix == "" && isWithinNestedRepo(rel, nestedPrefixes) {
-			continue
-		}
-		changedFiles++
-		if strings.HasPrefix(rawLine, "?? ") && len(untrackedFiles) < maxUntrackedFilesToCount {
-			if rel != "" {
-				untrackedFiles = append(untrackedFiles, rel)
-			}
-		}
-	}
-
-	if branch == "" {
-		if br, err := runGit(repo.Dir, "rev-parse", "--abbrev-ref", "HEAD"); err == nil && br != "" {
-			branch = br
-		}
-	}
-
-	var numstat string
-	if diffTarget != "HEAD" || changedFiles > 0 || porcelainErr != nil {
-		var err error
-		numstat, err = runGit(repo.Dir, "diff", "--numstat", diffTarget)
-		if err != nil && diffTarget != "HEAD" {
-			numstat, err = runGit(repo.Dir, "diff", "--numstat", "HEAD")
-		}
-		if err != nil {
-			numstat, _ = runGit(repo.Dir, "diff", "--cached", "--numstat")
-		}
-	}
-
-	additions := 0
-	deletions := 0
-	diffFileSet := make(map[string]struct{})
-	for _, line := range strings.Split(strings.TrimSpace(numstat), "\n") {
-		fields := strings.SplitN(line, "\t", 3)
-		if len(fields) < 3 {
-			fields = strings.Fields(line)
-			if len(fields) < 3 {
-				continue
-			}
-		}
-		f := strings.TrimSpace(fields[len(fields)-1])
-		if repo.RelPrefix == "" && isWithinNestedRepo(f, nestedPrefixes) {
-			continue
-		}
-		if a, convErr := strconv.Atoi(strings.TrimSpace(fields[0])); convErr == nil {
-			additions += a
-		}
-		if d, convErr := strconv.Atoi(strings.TrimSpace(fields[1])); convErr == nil {
-			deletions += d
-		}
-		diffFileSet[f] = struct{}{}
-	}
-
-	for _, rel := range untrackedFiles {
-		full := filepath.Join(repo.Dir, rel)
-		if info, statErr := os.Stat(full); statErr == nil && !info.IsDir() && info.Size() <= maxUntrackedFileSize {
-			if data, readErr := os.ReadFile(full); readErr == nil && len(data) > 0 {
-				cnt := bytes.Count(data, []byte{'\n'})
-				if data[len(data)-1] != '\n' {
-					cnt++
-				}
-				additions += cnt
-			}
-		}
-	}
-
-	if len(diffFileSet) > changedFiles {
-		changedFiles = len(diffFileSet)
-	}
-
-	var headCommit, headSubject string
-	if logLine, logErr := runGit(repo.Dir, "log", "-1", "--format=%h\t%s"); logErr == nil && logLine != "" {
-		parts := strings.SplitN(logLine, "\t", 2)
-		headCommit = strings.TrimSpace(parts[0])
-		if len(parts) > 1 {
-			headSubject = strings.TrimSpace(parts[1])
-		}
-	}
-
-	summary := repoStatusSummary{
-		branch:       branch,
-		headCommit:   headCommit,
-		headSubject:  headSubject,
-		remoteURL:    resolveGitRemoteURLFast(repo.Dir, "origin"),
-		changedFiles: changedFiles,
-		additions:    additions,
-		deletions:    deletions,
-		aheadCount:   aheadCount,
-		hasUpstream:  hasUpstream,
-		valid:        porcelainErr == nil || branch != "" || headCommit != "",
-	}
-	if summary.valid {
-		globalRepoStatusCache.put(repo.Dir, diffTarget, fingerprint, summary)
-	}
-	return summary
-}
-
 func (m *worktreeManager) Status(sessionID string) (worktreeStatus, error) {
+	return m.StatusWithExtraDirs(sessionID, nil)
+}
+
+func (m *worktreeManager) StatusWithExtraDirs(sessionID string, extraDirs []string) (worktreeStatus, error) {
 	sessionID = sanitizeSessionID(sessionID)
 	m.mu.RLock()
 	meta, ok := m.sessions[sessionID]
@@ -408,7 +275,12 @@ func (m *worktreeManager) Status(sessionID string) (worktreeStatus, error) {
 		}, nil
 	}
 
-	repos := discoverGitRepos(meta.Directory)
+	var repos []gitRepoTarget
+	if !meta.Isolated && len(extraDirs) > 0 {
+		repos = discoverWorkspaceGitRepos(meta.Directory, extraDirs)
+	} else {
+		repos = discoverGitRepos(meta.Directory)
+	}
 	nestedPrefixes := nestedRepoPrefixSet(repos)
 	rootDiffTarget := "HEAD"
 	if meta.Isolated && strings.TrimSpace(meta.BaseCommit) != "" {
@@ -418,7 +290,7 @@ func (m *worktreeManager) Status(sessionID string) (worktreeStatus, error) {
 	summaries := make([]repoStatusSummary, len(repos))
 	if len(repos) == 1 {
 		target := "HEAD"
-		if repos[0].RelPrefix == "" {
+		if !repos[0].External && repos[0].RelPrefix == "" {
 			target = rootDiffTarget
 		}
 		summaries[0] = statusSingleRepo(repos[0], target, nestedPrefixes)
@@ -432,7 +304,7 @@ func (m *worktreeManager) Status(sessionID string) (worktreeStatus, error) {
 				sem <- struct{}{}
 				defer func() { <-sem }()
 				target := "HEAD"
-				if r.RelPrefix == "" {
+				if !r.External && r.RelPrefix == "" {
 					target = rootDiffTarget
 				}
 				summaries[idx] = statusSingleRepo(r, target, nestedPrefixes)
@@ -445,10 +317,12 @@ func (m *worktreeManager) Status(sessionID string) (worktreeStatus, error) {
 	additions := 0
 	deletions := 0
 	aheadCount := 0
+	behindCount := 0
 	hasUpstream := false
 	var headCommit, headSubject, primaryRemoteURL string
 	primarySet := false
 	anyValid := false
+	repoStatuses := make([]worktreeRepoStatus, 0, len(repos))
 
 	for i, s := range summaries {
 		if !s.valid {
@@ -459,10 +333,28 @@ func (m *worktreeManager) Status(sessionID string) (worktreeStatus, error) {
 		additions += s.additions
 		deletions += s.deletions
 		aheadCount += s.aheadCount
+		behindCount += s.behindCount
 		hasUpstream = hasUpstream || s.hasUpstream
 
 		repoDirty := s.changedFiles > 0 || s.additions > 0 || s.deletions > 0
-		if repos[i].RelPrefix == "" {
+		repoStatuses = append(repoStatuses, worktreeRepoStatus{
+			Repo:         repos[i].RelPrefix,
+			Name:         repoDisplayName(repos[i]),
+			Directory:    repos[i].Dir,
+			Branch:       s.branch,
+			HeadCommit:   s.headCommit,
+			HeadSubject:  s.headSubject,
+			Dirty:        repoDirty,
+			ChangedFiles: s.changedFiles,
+			Additions:    s.additions,
+			Deletions:    s.deletions,
+			AheadCount:   s.aheadCount,
+			BehindCount:  s.behindCount,
+			HasUpstream:  s.hasUpstream,
+			CompareURL:   buildRemoteCompareURL(s.remoteURL, "", s.branch),
+		})
+
+		if !repos[i].External && repos[i].RelPrefix == "" {
 			if s.branch != "" {
 				meta.Branch = s.branch
 			}
@@ -492,12 +384,25 @@ func (m *worktreeManager) Status(sessionID string) (worktreeStatus, error) {
 	}
 
 	var baseBranch string
-	behindCount := 0
 	if meta.Isolated && anyValid {
-		var baseAhead int
-		baseBranch, behindCount, baseAhead = m.resolveBaseBranchDrift(meta)
+		var baseAhead, baseBehind int
+		baseBranch, baseBehind, baseAhead = m.resolveBaseBranchDrift(meta)
+		if baseBehind > behindCount {
+			behindCount = baseBehind
+		}
 		if aheadCount == 0 && baseAhead > 0 {
 			aheadCount = baseAhead
+		}
+		if len(repoStatuses) > 0 && repoStatuses[0].Repo == "" {
+			if repoStatuses[0].AheadCount == 0 && baseAhead > 0 {
+				repoStatuses[0].AheadCount = baseAhead
+			}
+			if baseBehind > repoStatuses[0].BehindCount {
+				repoStatuses[0].BehindCount = baseBehind
+			}
+			if repoStatuses[0].CompareURL == "" {
+				repoStatuses[0].CompareURL = buildRemoteCompareURL(primaryRemoteURL, baseBranch, meta.Branch)
+			}
 		}
 	}
 
@@ -520,6 +425,7 @@ func (m *worktreeManager) Status(sessionID string) (worktreeStatus, error) {
 		HasUpstream:      hasUpstream,
 		CompareURL:       buildRemoteCompareURL(primaryRemoteURL, baseBranch, meta.Branch),
 		Health:           health,
+		Repos:            repoStatuses,
 	}, nil
 }
 

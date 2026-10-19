@@ -159,6 +159,7 @@ export interface SnapshotFileDiff {
   deletions: number;
   status?: "added" | "deleted" | "modified";
   repo?: string;
+  repoDir?: string;
   branch?: string;
   generatedLike?: boolean;
   binary?: boolean;

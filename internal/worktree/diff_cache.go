@@ -157,56 +157,117 @@ func resolveGitHeadFast(repoDir, gitDir string) string {
 	return head
 }
 
-// computeRepoStateFingerprint builds a deterministic fingerprint from git status,
+type repoFlightCall[T any] struct {
+	wg  sync.WaitGroup
+	val T
+}
+
+type repoFlightGroup[T any] struct {
+	mu    sync.Mutex
+	calls map[string]*repoFlightCall[T]
+}
+
+func (g *repoFlightGroup[T]) do(key string, fn func() T) T {
+	g.mu.Lock()
+	if g.calls == nil {
+		g.calls = make(map[string]*repoFlightCall[T])
+	}
+	if c, ok := g.calls[key]; ok {
+		g.mu.Unlock()
+		c.wg.Wait()
+		return c.val
+	}
+	c := &repoFlightCall[T]{}
+	c.wg.Add(1)
+	g.calls[key] = c
+	g.mu.Unlock()
+
+	c.val = fn()
+	c.wg.Done()
+
+	g.mu.Lock()
+	delete(g.calls, key)
+	g.mu.Unlock()
+	return c.val
+}
+
+type fingerprintResult struct {
+	fingerprint string
+	headSHA     string
+	porcelainZ  string
+	err         error
+}
+
+var (
+	fingerprintFlightGroup repoFlightGroup[fingerprintResult]
+	diffFlightGroup        repoFlightGroup[[]worktreeFileDiff]
+	statusFlightGroup      repoFlightGroup[repoStatusSummary]
+)
+
+// computeRepoStateFingerprintWithPorcelain builds a deterministic fingerprint from git status,
 // HEAD commit, git index stat, and the stat stamps of modified/untracked files.
+// Concurrent in-flight calls for the same (repoDir, diffTarget) are coalesced.
+func computeRepoStateFingerprintWithPorcelain(repoDir, diffTarget string) (string, string, string, error) {
+	cleanDir := filepath.Clean(repoDir)
+	res := fingerprintFlightGroup.do(cleanDir+"\x00"+diffTarget, func() fingerprintResult {
+		porcelain, err := runGitRaw(cleanDir, "status", "--porcelain", "-b", "-z")
+		if err != nil {
+			return fingerprintResult{err: err}
+		}
+
+		gitDir := resolveGitDirFast(cleanDir)
+		if gitDir == "" {
+			if gd, gdErr := runGit(cleanDir, "rev-parse", "--git-dir"); gdErr == nil && gd != "" {
+				if !filepath.IsAbs(gd) {
+					gd = filepath.Join(cleanDir, gd)
+				}
+				gitDir = gd
+			}
+		}
+		head := resolveGitHeadFast(cleanDir, gitDir)
+
+		var b strings.Builder
+		b.WriteString(diffTarget)
+		b.WriteByte('|')
+		b.WriteString(head)
+		b.WriteByte('|')
+
+		if gitDir != "" {
+			if idxInfo, statErr := os.Stat(filepath.Join(gitDir, "index")); statErr == nil {
+				fmt.Fprintf(&b, "idx:%d:%d|", idxInfo.Size(), idxInfo.ModTime().UnixNano())
+			}
+		}
+
+		entries := strings.Split(porcelain, "\x00")
+		if len(entries) > maxFingerprintFiles {
+			return fingerprintResult{headSHA: head, porcelainZ: porcelain}
+		}
+		for _, entry := range entries {
+			if entry == "" {
+				continue
+			}
+			b.WriteString(entry)
+			b.WriteByte(';')
+			if len(entry) > 3 && !strings.HasPrefix(entry, "## ") {
+				rel := strings.TrimSpace(entry[3:])
+				if rel != "" && !strings.HasPrefix(rel, ".hoxi/") {
+					b.WriteString(fileStatStamp(cleanDir, rel))
+					b.WriteByte(';')
+				}
+			}
+		}
+		return fingerprintResult{
+			fingerprint: b.String(),
+			headSHA:     head,
+			porcelainZ:  porcelain,
+		}
+	})
+	return res.fingerprint, res.headSHA, res.porcelainZ, res.err
+}
+
 func computeRepoStateFingerprint(repoDir, diffTarget string) string {
-	porcelain, err := runGitRaw(repoDir, "status", "--porcelain", "-b", "-z")
-	if err != nil {
-		return ""
-	}
-
-	gitDir := resolveGitDirFast(repoDir)
-	if gitDir == "" {
-		if gd, gdErr := runGit(repoDir, "rev-parse", "--git-dir"); gdErr == nil && gd != "" {
-			if !filepath.IsAbs(gd) {
-				gd = filepath.Join(repoDir, gd)
-			}
-			gitDir = gd
-		}
-	}
-	head := resolveGitHeadFast(repoDir, gitDir)
-
-	var b strings.Builder
-	b.WriteString(diffTarget)
-	b.WriteByte('|')
-	b.WriteString(head)
-	b.WriteByte('|')
-
-	if gitDir != "" {
-		if idxInfo, statErr := os.Stat(filepath.Join(gitDir, "index")); statErr == nil {
-			fmt.Fprintf(&b, "idx:%d:%d|", idxInfo.Size(), idxInfo.ModTime().UnixNano())
-		}
-	}
-
-	entries := strings.Split(porcelain, "\x00")
-	if len(entries) > maxFingerprintFiles {
-		return ""
-	}
-	for _, entry := range entries {
-		if entry == "" {
-			continue
-		}
-		b.WriteString(entry)
-		b.WriteByte(';')
-		if len(entry) > 3 && !strings.HasPrefix(entry, "## ") {
-			rel := strings.TrimSpace(entry[3:])
-			if rel != "" && !strings.HasPrefix(rel, ".hoxi/") {
-				b.WriteString(fileStatStamp(repoDir, rel))
-				b.WriteByte(';')
-			}
-		}
-	}
-	return b.String()
+	fp, _, _, _ := computeRepoStateFingerprintWithPorcelain(repoDir, diffTarget)
+	return fp
 }
 
 type cachedRepoDiffEntry struct {
@@ -379,7 +440,7 @@ func (m *worktreeManager) DiffFile(sessionID, relPath string) (worktreeFileDiff,
 
 	var repoBranch string
 	if relPrefix != "" {
-		repoBranch, _ = runGit(repoDir, "rev-parse", "--abbrev-ref", "HEAD")
+		repoBranch = resolveGitBranchFast(repoDir)
 	}
 
 	numstat, err := runGitRaw(repoDir, "diff", "--no-renames", "--numstat", "-z", diffTarget, "--", repoRelPath)

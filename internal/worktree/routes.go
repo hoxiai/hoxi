@@ -47,8 +47,9 @@ func (m *worktreeManager) registerRoutes(mux *http.ServeMux) {
 	})
 
 	mux.HandleFunc("/api/hoxi/worktree/status", func(w http.ResponseWriter, r *http.Request) {
-		sessionID := r.URL.Query().Get("sessionID")
-		st, err := m.scoped(r.URL.Query().Get("directory"), sessionID).Status(sessionID)
+		q := r.URL.Query()
+		sessionID := q.Get("sessionID")
+		st, err := m.scoped(q.Get("directory"), sessionID).StatusWithExtraDirs(sessionID, q["extraDir"])
 		if err != nil {
 			writeJSONError(w, http.StatusInternalServerError, err.Error())
 			return
@@ -57,9 +58,10 @@ func (m *worktreeManager) registerRoutes(mux *http.ServeMux) {
 	})
 
 	mux.HandleFunc("/api/hoxi/worktree/diff", func(w http.ResponseWriter, r *http.Request) {
-		sessionID := r.URL.Query().Get("sessionID")
-		scoped := m.scoped(r.URL.Query().Get("directory"), sessionID)
-		if file := strings.TrimSpace(r.URL.Query().Get("file")); file != "" {
+		q := r.URL.Query()
+		sessionID := q.Get("sessionID")
+		scoped := m.scoped(q.Get("directory"), sessionID)
+		if file := strings.TrimSpace(q.Get("file")); file != "" {
 			diff, err := scoped.DiffFile(sessionID, file)
 			if err != nil {
 				writeJSONError(w, http.StatusBadRequest, err.Error())
@@ -68,7 +70,7 @@ func (m *worktreeManager) registerRoutes(mux *http.ServeMux) {
 			writeJSON(w, http.StatusOK, diff)
 			return
 		}
-		diffs, err := scoped.Diff(sessionID)
+		diffs, err := scoped.DiffWithExtraDirs(sessionID, q["extraDir"])
 		if err != nil {
 			writeJSONError(w, http.StatusInternalServerError, err.Error())
 			return

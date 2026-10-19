@@ -98,10 +98,19 @@ function computeStatsAndCompress(node: RawFolderNode): void {
   node.deletions = del;
 }
 
-function buildDiffTreeRoot(diffs: SnapshotFileDiff[]): RawFolderNode {
+export function stripRepoPrefixFromFile(file: string, repo?: string): string {
+  const clean = file.replace(/^\/+/, "");
+  const prefix = (repo || "").replace(/^\/+|\/+$/g, "");
+  if (prefix && clean.startsWith(`${prefix}/`)) {
+    return clean.slice(prefix.length + 1);
+  }
+  return clean;
+}
+
+function buildDiffTreeRoot(diffs: SnapshotFileDiff[], stripRepoPrefix?: string): RawFolderNode {
   const root = createRawFolder("", "");
   for (const diff of diffs) {
-    const cleanPath = diff.file.replace(/^\/+/, "");
+    const cleanPath = stripRepoPrefixFromFile(diff.file, stripRepoPrefix);
     const parts = cleanPath.split("/").filter(Boolean);
     if (parts.length <= 1) {
       root.files.push(diff);
@@ -220,12 +229,14 @@ export function GeneratedFileBadge(props: { generated?: boolean }) {
 
 export default function DiffFileTree(props: {
   diffs: SnapshotFileDiff[];
+  stripRepoPrefix?: string;
+  hideHeader?: boolean;
   onSelectFile: (file: string) => void;
 }) {
   const [collapsed, setCollapsed] = createSignal<Record<string, boolean>>({});
   const [revertingFile, setRevertingFile] = createSignal<string | null>(null);
 
-  const treeRoot = createMemo(() => buildDiffTreeRoot(props.diffs));
+  const treeRoot = createMemo(() => buildDiffTreeRoot(props.diffs, props.stripRepoPrefix));
   const allFolderIds = createMemo(() => collectAllFolderIds(treeRoot()));
 
   const rows = createMemo(() => {
@@ -270,6 +281,7 @@ export default function DiffFileTree(props: {
 
   const repoBranchByFolder = createMemo(() => {
     const map = new Map<string, string>();
+    if (props.stripRepoPrefix) return map;
     for (const d of props.diffs) {
       if (d.repo && !map.has(d.repo)) {
         map.set(d.repo, d.branch || "HEAD");
@@ -290,17 +302,15 @@ export default function DiffFileTree(props: {
     return undefined;
   };
 
-  const onRevertFile = async (e: MouseEvent, filePath: string) => {
+  const onRevertFile = async (e: MouseEvent, diff: SnapshotFileDiff) => {
     e.stopPropagation();
     if (revertingFile()) return;
-    const sessionID = workspace.activeSessionID || "__root__";
-    setRevertingFile(filePath);
+    setRevertingFile(diff.file);
     try {
-      await hoxiAPI.revertWorktreeFile(
-        sessionID,
-        filePath,
-        activeDirectory() || workspace.rootDir || undefined
-      );
+      const targetDir = diff.repoDir || activeDirectory() || workspace.rootDir || undefined;
+      const targetFile = diff.repoDir ? stripRepoPrefixFromFile(diff.file, diff.repo) : diff.file;
+      const sessionID = diff.repoDir ? "__root__" : (workspace.activeSessionID || "__root__");
+      await hoxiAPI.revertWorktreeFile(sessionID, targetFile, targetDir);
       await refreshWorktreeStatus(workspace.activeSessionID);
       if (workspace.activeSessionID) {
         await loadSessionMessages(workspace.activeSessionID);
@@ -313,41 +323,49 @@ export default function DiffFileTree(props: {
   };
 
   return (
-    <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)]/60 overflow-hidden">
+    <div
+      class={
+        props.hideHeader
+          ? "overflow-hidden"
+          : "rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)]/60 overflow-hidden"
+      }
+    >
       {/* Tree Header Bar */}
-      <div class="flex items-center justify-between gap-2 px-2.5 py-1 border-b border-[var(--border-subtle)] bg-[var(--bg-inset)]">
-        <div class="flex items-center gap-1.5 min-w-0">
-          <FolderTree size={13} class="text-[var(--accent-primary)] shrink-0" />
-          <span class="text-[11.5px] font-semibold text-[var(--text-primary)] truncate">
-            {t("inspector.diffs.treeTitle")}
-          </span>
-        </div>
-
-        <Show when={allFolderIds().length > 0}>
-          <button
-            type="button"
-            onClick={toggleAllFolders}
-            class="shrink-0 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10.5px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
-            title={
-              anyCollapsed()
-                ? t("inspector.diffs.expandAll")
-                : t("inspector.diffs.collapseAll")
-            }
-          >
-            <Show
-              when={anyCollapsed()}
-              fallback={<ChevronsDownUp size={12} />}
-            >
-              <ChevronsUpDown size={12} />
-            </Show>
-            <span>
-              {anyCollapsed()
-                ? t("inspector.diffs.expandAll")
-                : t("inspector.diffs.collapseAll")}
+      <Show when={!props.hideHeader}>
+        <div class="flex items-center justify-between gap-2 px-2.5 py-1 border-b border-[var(--border-subtle)] bg-[var(--bg-inset)]">
+          <div class="flex items-center gap-1.5 min-w-0">
+            <FolderTree size={13} class="text-[var(--accent-primary)] shrink-0" />
+            <span class="text-[11.5px] font-semibold text-[var(--text-primary)] truncate">
+              {t("inspector.diffs.treeTitle")}
             </span>
-          </button>
-        </Show>
-      </div>
+          </div>
+
+          <Show when={allFolderIds().length > 0}>
+            <button
+              type="button"
+              onClick={toggleAllFolders}
+              class="shrink-0 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10.5px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+              title={
+                anyCollapsed()
+                  ? t("inspector.diffs.expandAll")
+                  : t("inspector.diffs.collapseAll")
+              }
+            >
+              <Show
+                when={anyCollapsed()}
+                fallback={<ChevronsDownUp size={12} />}
+              >
+                <ChevronsUpDown size={12} />
+              </Show>
+              <span>
+                {anyCollapsed()
+                  ? t("inspector.diffs.expandAll")
+                  : t("inspector.diffs.collapseAll")}
+              </span>
+            </button>
+          </Show>
+        </div>
+      </Show>
 
       {/* Tree Rows */}
       <div class="divide-y divide-[var(--border-subtle)]/50">
@@ -463,7 +481,7 @@ export default function DiffFileTree(props: {
                         <button
                           type="button"
                           disabled={revertingFile() === diff.file}
-                          onClick={(e) => void onRevertFile(e, diff.file)}
+                          onClick={(e) => void onRevertFile(e, diff)}
                           class="rounded p-1 text-[var(--text-muted)] hover:text-[var(--warn-text)] hover:bg-[var(--warn-surface)] transition-colors cursor-pointer disabled:opacity-40"
                           title={t("inspector.diffs.revertFileTooltip")}
                         >
@@ -473,7 +491,10 @@ export default function DiffFileTree(props: {
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            openFileInInspector(diff.file);
+                            const targetPath = diff.repoDir
+                              ? `${diff.repoDir.replace(/\/+$/, "")}/${stripRepoPrefixFromFile(diff.file, diff.repo)}`
+                              : diff.file;
+                            openFileInInspector(targetPath);
                           }}
                           class="rounded p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-panel)] transition-colors cursor-pointer"
                           title={t("inspector.diffs.openFile")}
