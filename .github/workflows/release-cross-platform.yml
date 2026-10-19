@@ -148,8 +148,10 @@ jobs:
       - name: Package Linux Release Archive
         run: |
           TAR_NAME="Hoxi-${RELEASE_VERSION}-linux-amd64.tar.gz"
+          cp build/linux/hoxi.desktop build/bin/
+          cp build/appicon.png build/bin/hoxi.png
           cd build/bin
-          tar -czf "$TAR_NAME" Hoxi opencode
+          tar -czf "$TAR_NAME" Hoxi opencode hoxi.desktop hoxi.png
 
       - name: Upload Linux Artifact to Release
         uses: softprops/action-gh-release@v2

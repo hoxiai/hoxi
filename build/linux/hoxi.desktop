@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=Hoxi
+GenericName=AI Agentic Engineering Workspace
+Comment=Native-feel desktop workspace for AI agentic engineering
+Exec=hoxi %U
+Icon=hoxi
+Terminal=false
+Type=Application
+Categories=Development;IDE;TextEditor;
+StartupWMClass=Hoxi
+Keywords=ai;agent;coding;opencode;claude;antigravity;
