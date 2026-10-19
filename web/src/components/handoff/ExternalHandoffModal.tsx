@@ -1,5 +1,5 @@
 // web/src/components/handoff/ExternalHandoffModal.tsx
-import { createEffect, createSignal, For, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 import { LoaderCircle, Search, X } from "lucide-solid";
 import {
   hoxiAPI,
@@ -27,7 +27,7 @@ import ExternalHandoffPreviewPane, {
 import { t } from "../../i18n";
 
 export default function ExternalHandoffModal() {
-  const [sessions, setSessions] = createSignal<ExternalSessionSummary[]>([]);
+  const [allSessions, setAllSessions] = createSignal<ExternalSessionSummary[]>([]);
   const [cliTools, setCliTools] = createSignal<LocalCLIStatusItem[]>([]);
   const [loadingList, setLoadingList] = createSignal(false);
   const [sourceFilter, setSourceFilter] = createSignal<"all" | ExternalToolID>("all");
@@ -41,57 +41,102 @@ export default function ExternalHandoffModal() {
   const [importingSession, setImportingSession] = createSignal(false);
   const [errorMsg, setErrorMsg] = createSignal<string | null>(null);
 
-  const loadSessionsAndStatus = async () => {
+  const detailCache = new Map<string, ExternalSessionDetail>();
+  let listRequestGen = 0;
+  let detailRequestGen = 0;
+  onCleanup(() => {
+    listRequestGen++;
+    detailRequestGen++;
+  });
+
+  const sessions = createMemo(() => {
+    const src = sourceFilter();
+    const curOnly = onlyCurrent();
+    const q = query().trim().toLowerCase();
+    return allSessions().filter((item) => {
+      if (src !== "all" && item.source !== src) return false;
+      if (curOnly && !item.matchesCwd) return false;
+      if (q) {
+        const hay = `${item.title} ${item.cwd} ${item.sourceLabel} ${item.model || ""} ${item.gitBranch || ""}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+  });
+
+  const pickSession = async (item: ExternalSessionSummary) => {
+    const reqID = ++detailRequestGen;
+    setSelectedItem(item);
+    const cacheKey = `${item.source}:${item.id}:${item.cwd || ""}`;
+    const cached = detailCache.get(cacheKey);
+    if (cached) {
+      setDetail(cached);
+      setLoadingDetail(false);
+      return;
+    }
+    setLoadingDetail(true);
+    try {
+      const d = await hoxiAPI.getExternalSessionPreview(item.source, item.id, item.cwd);
+      if (reqID !== detailRequestGen) return;
+      detailCache.set(cacheKey, d);
+      setDetail(d);
+    } catch (err) {
+      if (reqID !== detailRequestGen) return;
+      console.error("load preview failed:", err);
+      setDetail(null);
+    } finally {
+      if (reqID === detailRequestGen) {
+        setLoadingDetail(false);
+      }
+    }
+  };
+
+  const loadSessionsAndStatus = async (serverQuery?: string) => {
+    const reqID = ++listRequestGen;
     setLoadingList(true);
     setErrorMsg(null);
     try {
       const [sessRes, cliRes] = await Promise.all([
         hoxiAPI.listExternalSessions({
           directory: workspace.rootDir || undefined,
-          query: query().trim() || undefined,
-          source: sourceFilter() === "all" ? undefined : sourceFilter(),
-          onlyCurrent: onlyCurrent(),
+          query: serverQuery?.trim() || undefined,
         }),
-        hoxiAPI.getLocalCLIStatus().catch(() => ({ tools: [] as LocalCLIStatusItem[] })),
+        cliTools().length > 0
+          ? Promise.resolve({ tools: cliTools() })
+          : hoxiAPI.getLocalCLIStatus().catch(() => ({ tools: [] as LocalCLIStatusItem[] })),
       ]);
-      const list = sessRes.sessions || [];
-      setSessions(list);
+      if (reqID !== listRequestGen) return;
+      setAllSessions(sessRes.sessions || []);
       setCliTools(cliRes.tools || []);
-      const cur = selectedItem();
-      if (!cur || !list.some((s) => s.id === cur.id && s.source === cur.source)) {
-        if (list.length > 0) {
-          void pickSession(list[0]);
-        } else {
-          setSelectedItem(null);
-          setDetail(null);
-        }
-      }
     } catch (err: any) {
+      if (reqID !== listRequestGen) return;
       setErrorMsg(err?.message || String(err));
     } finally {
-      setLoadingList(false);
-    }
-  };
-
-  const pickSession = async (item: ExternalSessionSummary) => {
-    setSelectedItem(item);
-    setLoadingDetail(true);
-    try {
-      const d = await hoxiAPI.getExternalSessionPreview(item.source, item.id, item.cwd);
-      setDetail(d);
-    } catch (err) {
-      console.error("load preview failed:", err);
-      setDetail(null);
-    } finally {
-      setLoadingDetail(false);
+      if (reqID === listRequestGen) {
+        setLoadingList(false);
+      }
     }
   };
 
   createEffect(() => {
     if (!workspace.handoffModalOpen) return;
-    void sourceFilter();
-    void onlyCurrent();
     void loadSessionsAndStatus();
+  });
+
+  createEffect(() => {
+    if (!workspace.handoffModalOpen) return;
+    const list = sessions();
+    const cur = selectedItem();
+    if (!cur || !list.some((s) => s.id === cur.id && s.source === cur.source)) {
+      if (list.length > 0) {
+        void pickSession(list[0]);
+      } else {
+        detailRequestGen++;
+        setSelectedItem(null);
+        setDetail(null);
+        setLoadingDetail(false);
+      }
+    }
   });
 
   const currentOriginalModel = () => {
@@ -281,7 +326,7 @@ export default function ExternalHandoffModal() {
                   placeholder={t("leftNav.handoffSearchPlaceholder")}
                   onInput={(e) => setQuery(e.currentTarget.value)}
                   onKeyDown={(e) => {
-                    if (e.key === "Enter") void loadSessionsAndStatus();
+                    if (e.key === "Enter") void loadSessionsAndStatus(query());
                   }}
                   class="w-full bg-transparent text-[11.5px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none"
                 />

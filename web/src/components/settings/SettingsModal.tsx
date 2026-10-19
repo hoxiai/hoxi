@@ -1,5 +1,5 @@
 // web/src/components/settings/SettingsModal.tsx
-import { For, type JSX, onCleanup, onMount, Show } from "solid-js";
+import { For, type JSX, Show } from "solid-js";
 import {
   CircleHelp,
   ScrollText,
@@ -17,7 +17,6 @@ import {
   appSettings,
   closeSettingsModal,
   openProviderModal,
-  openSettingsModal,
   setAppSettings,
   workspace,
   type SettingsTab,
@@ -159,26 +158,6 @@ export function ToggleSwitch(props: {
 }
 
 export default function SettingsModal() {
-  onMount(() => {
-    const onKeyDown = (ev: KeyboardEvent) => {
-      if ((ev.metaKey || ev.ctrlKey) && ev.key === ",") {
-        ev.preventDefault();
-        if (appSettings.modalOpen) {
-          closeSettingsModal();
-        } else {
-          openSettingsModal("general");
-        }
-        return;
-      }
-      if (ev.key === "Escape" && appSettings.modalOpen) {
-        ev.preventDefault();
-        closeSettingsModal();
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    onCleanup(() => window.removeEventListener("keydown", onKeyDown));
-  });
-
   const navItems: Array<{ id: SettingsTab; label: () => string; icon: any }> = [
     { id: "general", label: () => t("settings.tabGeneral"), icon: SlidersHorizontal },
     { id: "chat", label: () => t("settings.tabChat"), icon: MessageSquareText },

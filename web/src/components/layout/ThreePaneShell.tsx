@@ -1,17 +1,24 @@
-import { createMemo, createSignal, lazy, onCleanup, Show, Suspense } from "solid-js";
+import { createMemo, createSignal, lazy, onCleanup, onMount, Show, Suspense } from "solid-js";
 import CompactHeader from "./CompactHeader";
 import LeftNav from "./LeftNav";
 import MessageStream from "../timeline/MessageStream";
 import Composer from "../timeline/Composer";
 import ParticleLogo from "../timeline/ParticleLogo";
 import InspectorPane from "../inspector/InspectorPane";
-import SettingsModal from "../settings/SettingsModal";
-import { leaderboardState, setWorkspace, workspace } from "../../store/workspace";
+import {
+  appSettings,
+  closeSettingsModal,
+  leaderboardState,
+  openSettingsModal,
+  setWorkspace,
+  workspace,
+} from "../../store/workspace";
 
 const WorkspaceModal = lazy(() => import("./WorkspaceModal"));
 const ExternalHandoffModal = lazy(() => import("../handoff/ExternalHandoffModal"));
 const ProviderModal = lazy(() => import("../models/ProviderModal"));
 const ModelLeaderboardModal = lazy(() => import("../models/ModelLeaderboardModal"));
+const SettingsModal = lazy(() => import("../settings/SettingsModal"));
 
 const LEFT_MIN = 220;
 const LEFT_MAX = 360;
@@ -37,6 +44,26 @@ export default function ThreePaneShell() {
 
   let activeResizeCleanup: (() => void) | null = null;
   onCleanup(() => activeResizeCleanup?.());
+
+  onMount(() => {
+    const onKeyDown = (ev: KeyboardEvent) => {
+      if ((ev.metaKey || ev.ctrlKey) && ev.key === ",") {
+        ev.preventDefault();
+        if (appSettings.modalOpen) {
+          closeSettingsModal();
+        } else {
+          openSettingsModal("general");
+        }
+        return;
+      }
+      if (ev.key === "Escape" && appSettings.modalOpen) {
+        ev.preventDefault();
+        closeSettingsModal();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    onCleanup(() => window.removeEventListener("keydown", onKeyDown));
+  });
 
   const startResize = (side: "left" | "right", ev: PointerEvent) => {
     ev.preventDefault();
@@ -161,8 +188,10 @@ export default function ThreePaneShell() {
         <Show when={leaderboardState.modalOpen}>
           <ModelLeaderboardModal />
         </Show>
+        <Show when={appSettings.modalOpen}>
+          <SettingsModal />
+        </Show>
       </Suspense>
-      <SettingsModal />
     </div>
   );
 }

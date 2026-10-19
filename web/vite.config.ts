@@ -60,6 +60,9 @@ export default defineConfig({
           if (id.includes("node_modules/lucide-solid")) {
             return "vendor-icons";
           }
+          if (id.includes("node_modules/@pierre/diffs")) {
+            return "vendor-pierre-diffs";
+          }
           if (id.includes("node_modules/@shikijs") || id.includes("node_modules/shiki")) {
             if (!id.includes("/langs/") && !id.includes("/themes/")) {
               return "vendor-shiki-core";

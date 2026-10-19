@@ -1,50 +1,50 @@
 import { createEffect, createMemo, createSignal, For, on, onCleanup, Show } from "solid-js";
-import {
-  ArrowLeft,
-  Check,
-  Code2,
-  Copy,
-  ExternalLink,
-  Eye,
-  FileCode2,
-  FolderOpen,
-  FolderPlus,
-  GitBranch,
-  LoaderCircle,
-  Search,
-} from "lucide-solid";
+import { FolderOpen, FolderPlus, LoaderCircle, Search } from "lucide-solid";
 import { hoxiAPI, type FileContentResponse } from "../../services/api";
 import type { SnapshotFileDiff } from "../../services/sse-types";
 import {
   activeDirectory,
   activeWorkspaceFolders,
   normalizeFolderPath,
-  openDiffInInspector,
   openEditWorkspaceModal,
   setWorkspace,
   workspace,
   workspaceIdentityColor,
 } from "../../store/workspace";
-import { DiffChanges, FileIcon } from "../icons";
 import { FolderIcon } from "../layout/left-nav-helpers";
-import { computeChangedFileLines, resolveSessionDiffForFile } from "../timeline/file-diff-lines";
-import MarkdownView from "../timeline/MarkdownView";
-import { highlightCode, fileLanguage, type HighlightedCode } from "../timeline/syntax-highlight";
+import { resolveSessionDiffForFile } from "../timeline/file-diff-lines";
 import { t } from "../../i18n";
+import FilePreviewPane from "./FilePreviewPane";
 import FileTreeNodes, { type FileTreeNode } from "./FileTreeNodes";
-import {
-  baseName,
-  formatByteSize,
-  isImagePreviewable,
-  isMarkdownPath,
-  isSvgPath,
-} from "./file-tree-helpers";
+import { baseName, isMarkdownPath, isSvgPath } from "./file-tree-helpers";
+
+const MAX_CACHED_ROOT_DIRS = 24;
+const rootFileNodesCache = new Map<string, FileTreeNode[]>();
+
+function readCachedRootNodes(dir: string | undefined, subPath: string): FileTreeNode[] | undefined {
+  const key = `${normalizeFolderPath(dir || "")}\x00${subPath}`;
+  const hit = rootFileNodesCache.get(key);
+  if (!hit) return undefined;
+  rootFileNodesCache.delete(key);
+  rootFileNodesCache.set(key, hit);
+  return hit;
+}
+
+function writeCachedRootNodes(dir: string | undefined, subPath: string, nodes: FileTreeNode[]) {
+  const key = `${normalizeFolderPath(dir || "")}\x00${subPath}`;
+  if (rootFileNodesCache.has(key)) rootFileNodesCache.delete(key);
+  while (rootFileNodesCache.size >= MAX_CACHED_ROOT_DIRS) {
+    const oldest = rootFileNodesCache.keys().next().value;
+    if (oldest === undefined) break;
+    rootFileNodesCache.delete(oldest);
+  }
+  rootFileNodesCache.set(key, nodes);
+}
 
 export default function FileTreeView() {
   const [query, setQuery] = createSignal("");
   const [results, setResults] = createSignal<FileTreeNode[]>([]);
   const [selectedPath, setSelectedPath] = createSignal<string | null>(null);
-  const [highlighted, setHighlighted] = createSignal<HighlightedCode>();
   const [searching, setSearching] = createSignal(false);
   const [previewPath, setPreviewPath] = createSignal<string | null>(null);
   const [previewDiff, setPreviewDiff] = createSignal<SnapshotFileDiff | null>(null);
@@ -54,10 +54,7 @@ export default function FileTreeView() {
   const [loadingPreview, setLoadingPreview] = createSignal(false);
   const [highlightedLine, setHighlightedLine] = createSignal<number | null>(null);
   const [viewMode, setViewMode] = createSignal<"preview" | "source">("source");
-  const [copiedPath, setCopiedPath] = createSignal(false);
-  const [copiedContent, setCopiedContent] = createSignal(false);
 
-  let sourceContainer: HTMLDivElement | undefined;
   let lastLoadedDir = "";
   let listRequest = 0;
   let previewRequest = 0;
@@ -73,16 +70,23 @@ export default function FileTreeView() {
 
   const loadInitialFiles = async (dir = targetDirectory(), subPath = "") => {
     const request = ++listRequest;
-    setSearching(true);
+    const cached = readCachedRootNodes(dir, subPath);
+    if (cached) {
+      setResults(cached);
+    } else {
+      setSearching(true);
+    }
     try {
       const nodes = await hoxiAPI.listFiles(
         subPath,
         dir,
         workspace.activeSessionID || undefined
       );
-      if (request === listRequest) setResults(nodes ?? []);
+      const list = nodes ?? [];
+      writeCachedRootNodes(dir, subPath, list);
+      if (request === listRequest) setResults(list);
     } catch {
-      if (request === listRequest) setResults([]);
+      if (request === listRequest && !cached) setResults([]);
     } finally {
       if (request === listRequest) setSearching(false);
     }
@@ -178,42 +182,11 @@ export default function FileTreeView() {
     return p;
   });
 
-  const isBinaryPreview = createMemo(() => previewMeta()?.type === "binary");
-  const isImageFile = createMemo(() =>
-    Boolean(previewPath() && isImagePreviewable(previewPath()!, previewMeta()))
-  );
-  const canTogglePreview = createMemo(() => {
-    const p = previewMeta()?.resolvedPath || previewPath() || "";
-    const mime = previewMeta()?.mimeType;
-    return !isBinaryPreview() && (isMarkdownPath(p, mime) || isSvgPath(p, mime));
-  });
-
-  const imageDataUrl = createMemo(() => {
-    const p = previewPath() || "";
-    const meta = previewMeta();
-    const content = previewContent();
-    if (!content) return "";
-    const mime = meta?.mimeType || (isSvgPath(p) ? "image/svg+xml" : "image/png");
-    if (meta?.type === "binary" || meta?.encoding === "base64") {
-      return `data:${mime};base64,${content}`;
-    }
-    if (isSvgPath(p, mime)) {
-      return `data:image/svg+xml;utf8,${encodeURIComponent(content)}`;
-    }
-    return "";
-  });
-
-  const sourceLines = createMemo(() =>
-    isBinaryPreview() ? [] : previewContent().split("\n")
-  );
   const activeDiff = createMemo(() => {
     const p = resolvedPreviewDiffPath();
     if (!p) return undefined;
     return resolveSessionDiffForFile(p, workspace.activeSessionID, previewDiff());
   });
-  const changedLines = createMemo(() =>
-    computeChangedFileLines(activeDiff(), sourceLines())
-  );
 
   createEffect(
     on(
@@ -251,36 +224,19 @@ export default function FileTreeView() {
   );
 
   createEffect(() => {
-    const code = previewContent();
-    if (!code || isBinaryPreview()) {
-      setHighlighted(undefined);
-      return;
-    }
-    const language = fileLanguage(previewMeta()?.resolvedPath || previewPath() || "");
-    const theme = workspace.theme === "dark" ? "dark" : "light";
-    let cancelled = false;
-    setHighlighted(undefined);
-    void highlightCode(code, language, theme).then((result) => {
-      if (!cancelled) setHighlighted(result);
-    });
-    onCleanup(() => {
-      cancelled = true;
-    });
-  });
-
-  createEffect(() => {
     const dir = targetDirectory();
     if (dir && dir !== lastLoadedDir) {
       const hadPrev = Boolean(lastLoadedDir);
       lastLoadedDir = dir;
       listRequest++;
       previewRequest++;
-      setResults([]);
       setQuery("");
       setSelectedPath(null);
       if (hadPrev && !workspace.inspectedFilePath) {
         setPreviewPath(null);
       }
+      const cached = readCachedRootNodes(dir, "");
+      if (!cached) setResults([]);
       void loadInitialFiles(dir);
     }
   });
@@ -296,62 +252,8 @@ export default function FileTreeView() {
     }
   });
 
-  createEffect(() => {
-    const path = previewPath();
-    if (!path || loadingPreview() || !sourceContainer || viewMode() !== "source") return;
-    const changed = changedLines();
-    const firstChanged = changed.size > 0 ? Math.min(...changed) : null;
-    const line = workspace.inspectedFileLine || highlightedLine() || firstChanged;
-    if (!line) return;
-    requestAnimationFrame(() => {
-      const target = sourceContainer?.querySelector<HTMLElement>(`[data-line="${line}"]`);
-      target?.scrollIntoView({ block: "center", behavior: "smooth" });
-    });
-    if (workspace.inspectedFileLine) {
-      setWorkspace("inspectedFileLine", null);
-    }
-  });
-
   const onKeyDown = (ev: KeyboardEvent) => {
     if (ev.key === "Enter") void runSearch();
-  };
-
-  const handleCopyPath = async () => {
-    const target = previewMeta()?.resolvedPath || previewPath();
-    if (!target) return;
-    try {
-      await navigator.clipboard.writeText(target);
-      setCopiedPath(true);
-      setTimeout(() => setCopiedPath(false), 1500);
-    } catch {
-      /* ignore */
-    }
-  };
-
-  const handleCopyContent = async () => {
-    const content = previewContent();
-    if (!content || isBinaryPreview()) return;
-    try {
-      await navigator.clipboard.writeText(content);
-      setCopiedContent(true);
-      setTimeout(() => setCopiedContent(false), 1500);
-    } catch {
-      /* ignore */
-    }
-  };
-
-  const handleOpenExternal = (action: "open" | "reveal") => {
-    const target = previewMeta()?.resolvedPath || previewPath();
-    if (!target) return;
-    void hoxiAPI
-      .openExternalFile(target, {
-        directory: targetDirectory(),
-        sessionID: workspace.activeSessionID || undefined,
-        action,
-      })
-      .catch((err) => {
-        console.error(`Failed to ${action} file:`, err);
-      });
   };
 
   return (
@@ -453,341 +355,22 @@ export default function FileTreeView() {
       </div>
 
       <Show when={previewPath()}>
-        <div class="flex-1 min-h-0 flex flex-col">
-          {/* Preview Header Toolbar */}
-          <div class="shrink-0 flex items-center gap-1.5 px-3 py-2 border-b border-[var(--border-subtle)] bg-[var(--bg-inset)]/60">
-            <button
-              type="button"
-              class="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer shrink-0"
-              onClick={() => setPreviewPath(null)}
-              title={t("inspector.files.back")}
-            >
-              <ArrowLeft size={12} />
-              {t("inspector.files.back")}
-            </button>
-            <FileIcon
-              node={{ path: previewMeta()?.resolvedPath || previewPath()!, type: "file" }}
-              class="w-4 h-4 shrink-0"
-            />
-            <span
-              class="flex-1 truncate font-mono text-[11px] font-medium text-[var(--text-primary)]"
-              title={previewMeta()?.resolvedPath || previewPath()!}
-            >
-              {previewPath()}
-            </span>
-
-            <Show when={previewMeta()?.outsideWorkspace}>
-              <span
-                class="shrink-0 inline-flex items-center rounded bg-amber-500/15 px-1.5 py-0.5 text-[9.5px] font-mono font-medium text-amber-400 border border-amber-500/30"
-                title={`${t("inspector.files.externalTooltip")}: ${previewMeta()?.resolvedPath || previewPath()}`}
-              >
-                {t("inspector.files.externalBadge")}
-              </span>
-            </Show>
-
-            <Show when={activeDiff()?.repo}>
-              <span
-                class="shrink-0 inline-flex items-center gap-1 rounded bg-[var(--accent-surface)] px-1.5 py-0 text-[10px] font-mono text-[var(--accent-primary)] border border-[var(--accent-border)]"
-                title={
-                  activeDiff()!.branch
-                    ? `${activeDiff()!.repo} (${activeDiff()!.branch})`
-                    : activeDiff()!.repo
-                }
-              >
-                <GitBranch size={10} />
-                <span>
-                  {activeDiff()!.repo}
-                  {activeDiff()!.branch ? `:${activeDiff()!.branch}` : ""}
-                </span>
-              </span>
-            </Show>
-
-            {/* Markdown / SVG Preview vs Source Switcher */}
-            <Show when={canTogglePreview()}>
-              <div class="shrink-0 inline-flex items-center rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-0.5">
-                <button
-                  type="button"
-                  onClick={() => setViewMode("preview")}
-                  class={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] transition-colors cursor-pointer ${
-                    viewMode() === "preview"
-                      ? "bg-[var(--accent-surface)] text-[var(--accent-primary)] font-medium"
-                      : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
-                  }`}
-                  title={t("inspector.files.previewMode")}
-                >
-                  <Eye size={11} />
-                  <span>{t("inspector.files.previewMode")}</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setViewMode("source")}
-                  class={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] transition-colors cursor-pointer ${
-                    viewMode() === "source"
-                      ? "bg-[var(--accent-surface)] text-[var(--accent-primary)] font-medium"
-                      : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
-                  }`}
-                  title={t("inspector.files.sourceMode")}
-                >
-                  <Code2 size={11} />
-                  <span>{t("inspector.files.sourceMode")}</span>
-                </button>
-              </div>
-            </Show>
-
-            {/* Quick Action Icons: Copy Path, Copy Content, Reveal in Finder, Open in Default App */}
-            <div class="shrink-0 inline-flex items-center gap-0.5">
-              <button
-                type="button"
-                onClick={handleCopyPath}
-                class="inline-flex items-center justify-center rounded p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
-                title={copiedPath() ? t("inspector.files.copiedPath") : t("inspector.files.copyPath")}
-              >
-                <Show when={copiedPath()} fallback={<FileCode2 size={12} />}>
-                  <Check size={12} class="text-[var(--ok-text)]" />
-                </Show>
-              </button>
-              <Show when={!isBinaryPreview() && previewContent()}>
-                <button
-                  type="button"
-                  onClick={handleCopyContent}
-                  class="inline-flex items-center justify-center rounded p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
-                  title={copiedContent() ? t("inspector.files.copiedContent") : t("inspector.files.copyContent")}
-                >
-                  <Show when={copiedContent()} fallback={<Copy size={12} />}>
-                    <Check size={12} class="text-[var(--ok-text)]" />
-                  </Show>
-                </button>
-              </Show>
-              <button
-                type="button"
-                onClick={() => handleOpenExternal("reveal")}
-                class="inline-flex items-center justify-center rounded p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
-                title={t("inspector.files.revealInFinder")}
-              >
-                <FolderOpen size={12} />
-              </button>
-              <button
-                type="button"
-                onClick={() => handleOpenExternal("open")}
-                class="inline-flex items-center justify-center rounded p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
-                title={t("inspector.files.openInDefaultApp")}
-              >
-                <ExternalLink size={12} />
-              </button>
-            </div>
-
-            <Show
-              when={
-                activeDiff() &&
-                ((activeDiff()!.additions ?? 0) > 0 || (activeDiff()!.deletions ?? 0) > 0)
-              }
-            >
-              <button
-                type="button"
-                onClick={() => openDiffInInspector(activeDiff() || resolvedPreviewDiffPath())}
-                class="shrink-0 inline-flex items-center gap-1.5 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2 py-0.5 text-[11px] text-[var(--text-secondary)] hover:text-[var(--accent-primary)] hover:border-[var(--accent-border)] transition-colors cursor-pointer"
-                title={t("toolCard.openInDiffInspector")}
-              >
-                <DiffChanges
-                  changes={{
-                    additions: activeDiff()!.additions ?? 0,
-                    deletions: activeDiff()!.deletions ?? 0,
-                  }}
-                />
-              </button>
-            </Show>
-          </div>
-
-          {/* Preview Body */}
-          <div ref={sourceContainer} class="flex-1 min-h-0 overflow-auto bg-[var(--bg-code)]">
-            <Show when={loadingPreview()}>
-              <div class="flex items-center justify-center py-8 text-[var(--text-muted)]">
-                <LoaderCircle size={16} class="animate-spin" />
-              </div>
-            </Show>
-            <Show when={previewError()}>
-              <div class="px-4 py-5 space-y-3">
-                <div class="font-mono text-[11.5px] text-[var(--danger-text)] break-all">
-                  {previewError()}
-                </div>
-                <div class="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => handleOpenExternal("reveal")}
-                    class="inline-flex items-center gap-1.5 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[11px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
-                  >
-                    <FolderOpen size={12} />
-                    <span>{t("inspector.files.revealInFinder")}</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleOpenExternal("open")}
-                    class="inline-flex items-center gap-1.5 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[11px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
-                  >
-                    <ExternalLink size={12} />
-                    <span>{t("inspector.files.openInDefaultApp")}</span>
-                  </button>
-                </div>
-              </div>
-            </Show>
-            <Show when={!loadingPreview() && !previewError()}>
-              {/* 1. Image Preview (Binary images or SVG in preview mode) */}
-              <Show
-                when={
-                  isImageFile() &&
-                  (isBinaryPreview() || viewMode() === "preview") &&
-                  imageDataUrl()
-                }
-                fallback={
-                  /* 2. Non-image Binary File Card */
-                  <Show
-                    when={isBinaryPreview()}
-                    fallback={
-                      /* 3. Markdown Rendered Document Preview */
-                      <Show
-                        when={
-                          viewMode() === "preview" &&
-                          isMarkdownPath(
-                            previewMeta()?.resolvedPath || previewPath() || "",
-                            previewMeta()?.mimeType
-                          )
-                        }
-                        fallback={
-                          /* 4. Highlighted Code / Text Source View */
-                          <pre
-                            class="py-3 font-mono leading-relaxed text-[var(--text-primary)] whitespace-pre selectable-text"
-                            style={{ "font-size": "var(--app-code-text-size)" }}
-                          >
-                            <For each={sourceLines()}>
-                              {(line, index) => {
-                                const lineNo = () => index() + 1;
-                                const isChanged = () => changedLines().has(lineNo());
-                                const isTarget = () => highlightedLine() === lineNo();
-                                return (
-                                  <div
-                                    data-line={lineNo()}
-                                    class={`flex min-h-[1.55em] px-3 ${
-                                      isChanged()
-                                        ? "bg-emerald-500/18 border-l-[3px] border-emerald-400"
-                                        : isTarget()
-                                          ? "bg-[var(--accent-surface)] border-l-[3px] border-[var(--accent-primary)]"
-                                          : "border-l-[3px] border-transparent"
-                                    }`}
-                                  >
-                                    <span
-                                      class={`mr-2 w-10 shrink-0 select-none text-right ${
-                                        isChanged()
-                                          ? "text-[var(--ok-text)] font-semibold"
-                                          : "text-[var(--text-faint)]"
-                                      }`}
-                                    >
-                                      {lineNo()}
-                                    </span>
-                                    <span
-                                      class={`mr-2 w-3 shrink-0 select-none text-center font-bold ${
-                                        isChanged() ? "text-[var(--ok-text)]" : "text-transparent"
-                                      }`}
-                                    >
-                                      +
-                                    </span>
-                                    <span class={isChanged() ? "text-[var(--text-primary)]" : ""}>
-                                      <Show
-                                        when={highlighted()?.tokens[index()]}
-                                        fallback={line || " "}
-                                      >
-                                        {(tokens) => (
-                                          <For each={tokens()}>
-                                            {(token) => (
-                                              <span
-                                                style={{
-                                                  color: token.color,
-                                                  "font-style":
-                                                    (token.fontStyle ?? 0) & 1
-                                                      ? "italic"
-                                                      : undefined,
-                                                  "font-weight":
-                                                    (token.fontStyle ?? 0) & 2
-                                                      ? "bold"
-                                                      : undefined,
-                                                  "text-decoration":
-                                                    (token.fontStyle ?? 0) & 4
-                                                      ? "underline"
-                                                      : undefined,
-                                                }}
-                                              >
-                                                {token.content}
-                                              </span>
-                                            )}
-                                          </For>
-                                        )}
-                                      </Show>
-                                    </span>
-                                  </div>
-                                );
-                              }}
-                            </For>
-                          </pre>
-                        }
-                      >
-                        <div class="p-4 bg-[var(--bg-panel)] min-h-full">
-                          <MarkdownView content={previewContent()} />
-                        </div>
-                      </Show>
-                    }
-                  >
-                    <div class="flex flex-col items-center justify-center py-12 px-4 text-center space-y-3">
-                      <FileIcon
-                        node={{ path: previewMeta()?.resolvedPath || previewPath()!, type: "file" }}
-                        class="w-10 h-10 opacity-80"
-                      />
-                      <div class="text-[12.5px] font-medium text-[var(--text-primary)]">
-                        {t("inspector.files.binaryFileTitle")}
-                      </div>
-                      <div class="text-[11px] font-mono text-[var(--text-muted)]">
-                        {t("inspector.files.binaryFileDesc", {
-                          size: formatByteSize(previewMeta()?.size),
-                          mimeType: previewMeta()?.mimeType || "application/octet-stream",
-                        })}
-                      </div>
-                      <div class="flex items-center gap-2 pt-1">
-                        <button
-                          type="button"
-                          onClick={() => handleOpenExternal("reveal")}
-                          class="inline-flex items-center gap-1.5 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-3 py-1.5 text-[11.5px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
-                        >
-                          <FolderOpen size={13} />
-                          <span>{t("inspector.files.revealInFinder")}</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleOpenExternal("open")}
-                          class="inline-flex items-center gap-1.5 rounded-md border border-[var(--accent-border)] bg-[var(--accent-surface)] px-3 py-1.5 text-[11.5px] font-medium text-[var(--accent-primary)] hover:opacity-90 cursor-pointer"
-                        >
-                          <ExternalLink size={13} />
-                          <span>{t("inspector.files.openInDefaultApp")}</span>
-                        </button>
-                      </div>
-                    </div>
-                  </Show>
-                }
-              >
-                <div class="flex flex-col items-center justify-center p-6 min-h-full bg-[var(--bg-inset)]">
-                  <img
-                    src={imageDataUrl()}
-                    alt={previewPath() || ""}
-                    class="max-w-full max-h-[72vh] object-contain rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-2 shadow-sm"
-                  />
-                  <Show when={previewMeta()?.size}>
-                    <div class="mt-2 text-[10.5px] font-mono text-[var(--text-muted)]">
-                      {formatByteSize(previewMeta()?.size)}
-                      {previewMeta()?.mimeType ? ` · ${previewMeta()?.mimeType}` : ""}
-                    </div>
-                  </Show>
-                </div>
-              </Show>
-            </Show>
-          </div>
-        </div>
+        {(path) => (
+          <FilePreviewPane
+            previewPath={path()}
+            resolvedDiffPath={resolvedPreviewDiffPath()}
+            previewMeta={previewMeta()}
+            previewContent={previewContent()}
+            previewError={previewError()}
+            loadingPreview={loadingPreview()}
+            activeDiff={activeDiff()}
+            highlightedLine={highlightedLine()}
+            viewMode={viewMode()}
+            onChangeViewMode={setViewMode}
+            targetDirectory={targetDirectory()}
+            onBack={() => setPreviewPath(null)}
+          />
+        )}
       </Show>
     </div>
   );

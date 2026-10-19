@@ -140,6 +140,40 @@ export function applyAutocompleteToken(
   };
 }
 
+const FILE_SEARCH_CACHE_TTL_MS = 15_000;
+const COMMAND_CACHE_TTL_MS = 30_000;
+const MAX_FILE_SEARCH_CACHE = 48;
+
+const fileSearchCache = new Map<string, { files: string[]; expiresAt: number }>();
+const commandByDirCache = new Map<string, { commands: CommandInfo[]; expiresAt: number }>();
+
+function readCachedFileSearch(dir: string | undefined, query: string): string[] | null {
+  const key = `${dir || "__root__"}\x00${query}`;
+  const entry = fileSearchCache.get(key);
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAt) {
+    fileSearchCache.delete(key);
+    return null;
+  }
+  fileSearchCache.delete(key);
+  fileSearchCache.set(key, entry);
+  return entry.files;
+}
+
+function writeCachedFileSearch(dir: string | undefined, query: string, files: string[]) {
+  const key = `${dir || "__root__"}\x00${query}`;
+  if (fileSearchCache.has(key)) fileSearchCache.delete(key);
+  while (fileSearchCache.size >= MAX_FILE_SEARCH_CACHE) {
+    const oldest = fileSearchCache.keys().next().value;
+    if (oldest === undefined) break;
+    fileSearchCache.delete(oldest);
+  }
+  fileSearchCache.set(key, {
+    files,
+    expiresAt: Date.now() + FILE_SEARCH_CACHE_TTL_MS,
+  });
+}
+
 /**
  * Autocomplete hook for @file, @changes, @session, @worktree, and /command triggers in Composer.
  */
@@ -154,7 +188,10 @@ export function createComposerAutocomplete(
   const [selectedIndex, setSelectedIndex] = createSignal(0);
   const [triggerMode, setTriggerMode] = createSignal<"file" | "command" | null>(null);
   const [activeToken, setActiveToken] = createSignal<AutocompleteToken | null>(null);
-  const [cachedCommands, setCachedCommands] = createSignal<CommandInfo[] | null>(null);
+  let requestGen = 0;
+  onCleanup(() => {
+    requestGen++;
+  });
 
   createEffect(() => {
     const val = text();
@@ -164,6 +201,7 @@ export function createComposerAutocomplete(
     setActiveToken(token);
 
     if (!token) {
+      requestGen++;
       setTriggerMode(null);
       setSuggestions([]);
       return;
@@ -172,17 +210,25 @@ export function createComposerAutocomplete(
     // 1. Slash command at start: `/cmd`
     if (token.mode === "command") {
       const query = token.query.toLowerCase();
+      const dirKey = dir || "__root__";
+      const reqID = ++requestGen;
       setTriggerMode("command");
       void (async () => {
-        let cmds = cachedCommands();
+        const cached = commandByDirCache.get(dirKey);
+        let cmds =
+          cached && Date.now() <= cached.expiresAt ? cached.commands : null;
         if (!cmds) {
           try {
             cmds = await hoxiAPI.listCommands(dir);
-            setCachedCommands(cmds);
+            commandByDirCache.set(dirKey, {
+              commands: cmds ?? [],
+              expiresAt: Date.now() + COMMAND_CACHE_TTL_MS,
+            });
           } catch {
             cmds = [];
           }
         }
+        if (reqID !== requestGen) return;
         const filtered = (cmds ?? [])
           .filter(
             (c) =>
@@ -204,19 +250,26 @@ export function createComposerAutocomplete(
 
     // 2. @file, @changes, @session, or @worktree mention at cursor
     const query = token.query;
-    const qLower = query.trim().toLowerCase();
+    const trimmedQuery = query.trim();
+    const qLower = trimmedQuery.toLowerCase();
+    const reqID = ++requestGen;
     setTriggerMode("file");
     let cancelled = false;
+    const cachedFiles = readCachedFileSearch(dir, trimmedQuery);
+    const delayMs = cachedFiles ? 0 : 90;
     const timer = setTimeout(async () => {
       try {
-        let files: string[] = [];
-        if (query.trim().length > 0) {
-          files = await hoxiAPI.findFiles(query.trim(), dir);
-        } else {
-          const nodes = await hoxiAPI.listFiles("", dir);
-          files = (nodes ?? []).map((n) => n.path);
+        let files: string[] = cachedFiles ?? [];
+        if (!cachedFiles) {
+          if (trimmedQuery.length > 0) {
+            files = (await hoxiAPI.findFiles(trimmedQuery, dir)) ?? [];
+          } else {
+            const nodes = await hoxiAPI.listFiles("", dir);
+            files = (nodes ?? []).map((n) => n.path);
+          }
+          writeCachedFileSearch(dir, trimmedQuery, files);
         }
-        if (cancelled) return;
+        if (cancelled || reqID !== requestGen) return;
         const contextItems: AutocompleteItem[] = [];
         if ("changes".includes(qLower)) {
           contextItems.push({
@@ -277,7 +330,7 @@ export function createComposerAutocomplete(
       } catch {
         if (!cancelled) setSuggestions([]);
       }
-    }, 90);
+    }, delayMs);
     onCleanup(() => {
       cancelled = true;
       clearTimeout(timer);

@@ -17,12 +17,32 @@ import (
 
 var localTransport = &http.Transport{Proxy: nil, IdleConnTimeout: 90 * time.Second}
 
+const handoffPreviewCacheTTL = 10 * time.Second
+
+type cachedHandoffPreview struct {
+	detail    *ExternalSessionDetail
+	expiresAt time.Time
+}
+
+type handoffScanResult struct {
+	sessions map[ExternalToolID][]ExternalSessionSummary
+	stats    map[ExternalToolID]ExternalSourceStats
+}
+
+type handoffScanCall struct {
+	wg  sync.WaitGroup
+	res handoffScanResult
+}
+
 type Service struct {
 	openCodePort int
 	password     string
 	rootDir      string
 	wsBaseURL    string
 	providers    *provider.Service
+	cacheMu      sync.RWMutex
+	inFlightScan map[string]*handoffScanCall
+	previewCache map[string]cachedHandoffPreview
 }
 
 func NewService(openCodePort int, password, rootDir string, providers *provider.Service) *Service {
@@ -31,6 +51,8 @@ func NewService(openCodePort int, password, rootDir string, providers *provider.
 		password:     password,
 		rootDir:      rootDir,
 		providers:    providers,
+		inFlightScan: make(map[string]*handoffScanCall),
+		previewCache: make(map[string]cachedHandoffPreview),
 	}
 }
 
@@ -54,6 +76,82 @@ func OpenCodeDataDBPath() string {
 	return openCodeDataDBPath()
 }
 
+var allExternalSources = []ExternalToolID{
+	ExternalToolGrok,
+	ExternalToolClaude,
+	ExternalToolCodex,
+	ExternalToolGemini,
+	ExternalToolCodeBuddy,
+	ExternalToolTrae,
+	ExternalToolQoder,
+	ExternalToolOpenCode,
+}
+
+func runSourceScanner(source ExternalToolID, targetDir, query string) ([]ExternalSessionSummary, ExternalSourceStats) {
+	switch source {
+	case ExternalToolGrok:
+		return scanGrokSessions(targetDir, query)
+	case ExternalToolClaude:
+		return scanClaudeSessions(targetDir, query)
+	case ExternalToolCodex:
+		return scanCodexSessions(targetDir, query)
+	case ExternalToolGemini:
+		return scanGeminiAntigravitySessions(targetDir, query)
+	case ExternalToolCodeBuddy:
+		return scanCodeBuddySessions(targetDir, query)
+	case ExternalToolTrae:
+		return scanTraeSessions(targetDir, query)
+	case ExternalToolQoder:
+		return scanQoderSessions(targetDir, query)
+	case ExternalToolOpenCode:
+		return scanOpenCodeSessions(targetDir, query)
+	default:
+		return nil, ExternalSourceStats{}
+	}
+}
+
+func (g *Service) scanAllSourcesCoalesced(targetDir, query string) handoffScanResult {
+	flightKey := comparableFolderPath(targetDir) + "\x00" + strings.ToLower(strings.TrimSpace(query))
+	g.cacheMu.Lock()
+	if call, ok := g.inFlightScan[flightKey]; ok {
+		g.cacheMu.Unlock()
+		call.wg.Wait()
+		return call.res
+	}
+	call := &handoffScanCall{}
+	call.wg.Add(1)
+	g.inFlightScan[flightKey] = call
+	g.cacheMu.Unlock()
+
+	sessionsBySource := make(map[ExternalToolID][]ExternalSessionSummary, len(allExternalSources))
+	statsBySource := make(map[ExternalToolID]ExternalSourceStats, len(allExternalSources))
+	var resMu sync.Mutex
+	var scans sync.WaitGroup
+	for _, src := range allExternalSources {
+		scans.Add(1)
+		go func(source ExternalToolID) {
+			defer scans.Done()
+			list, st := runSourceScanner(source, targetDir, query)
+			resMu.Lock()
+			sessionsBySource[source] = list
+			statsBySource[source] = st
+			resMu.Unlock()
+		}(src)
+	}
+	scans.Wait()
+
+	call.res = handoffScanResult{
+		sessions: sessionsBySource,
+		stats:    statsBySource,
+	}
+	call.wg.Done()
+
+	g.cacheMu.Lock()
+	delete(g.inFlightScan, flightKey)
+	g.cacheMu.Unlock()
+	return call.res
+}
+
 func (g *Service) handleHandoffSessions(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSONError(w, http.StatusMethodNotAllowed, "GET required")
@@ -71,55 +169,14 @@ func (g *Service) handleHandoffSessions(w http.ResponseWriter, r *http.Request) 
 		limit = l
 	}
 
-	var (
-		grokSessions, claudeSessions, codexSessions, geminiSessions          []ExternalSessionSummary
-		codeBuddySessions, traeSessions, qoderSessions, openCodeSessions     []ExternalSessionSummary
-		grokStats, claudeStats, codexStats, geminiStats                      ExternalSourceStats
-		codeBuddyStats, traeStats, qoderStats, openCodeStats                 ExternalSourceStats
-	)
-	var scans sync.WaitGroup
-	for _, scan := range []func(){
-		func() { grokSessions, grokStats = scanGrokSessions(targetDir, query) },
-		func() { claudeSessions, claudeStats = scanClaudeSessions(targetDir, query) },
-		func() { codexSessions, codexStats = scanCodexSessions(targetDir, query) },
-		func() { geminiSessions, geminiStats = scanGeminiAntigravitySessions(targetDir, query) },
-		func() { codeBuddySessions, codeBuddyStats = scanCodeBuddySessions(targetDir, query) },
-		func() { traeSessions, traeStats = scanTraeSessions(targetDir, query) },
-		func() { qoderSessions, qoderStats = scanQoderSessions(targetDir, query) },
-		func() { openCodeSessions, openCodeStats = scanOpenCodeSessions(targetDir, query) },
-	} {
-		scans.Add(1)
-		go func(scan func()) {
-			defer scans.Done()
-			scan()
-		}(scan)
-	}
-	scans.Wait()
+	scanRes := g.scanAllSourcesCoalesced(targetDir, query)
+	specificSource := sourceFilter != "" && sourceFilter != "all"
 
 	var combined []ExternalSessionSummary
-	if sourceFilter == "" || sourceFilter == "all" || sourceFilter == ExternalToolGrok {
-		combined = append(combined, grokSessions...)
-	}
-	if sourceFilter == "" || sourceFilter == "all" || sourceFilter == ExternalToolClaude {
-		combined = append(combined, claudeSessions...)
-	}
-	if sourceFilter == "" || sourceFilter == "all" || sourceFilter == ExternalToolCodex {
-		combined = append(combined, codexSessions...)
-	}
-	if sourceFilter == "" || sourceFilter == "all" || sourceFilter == ExternalToolGemini {
-		combined = append(combined, geminiSessions...)
-	}
-	if sourceFilter == "" || sourceFilter == "all" || sourceFilter == ExternalToolCodeBuddy {
-		combined = append(combined, codeBuddySessions...)
-	}
-	if sourceFilter == "" || sourceFilter == "all" || sourceFilter == ExternalToolTrae {
-		combined = append(combined, traeSessions...)
-	}
-	if sourceFilter == "" || sourceFilter == "all" || sourceFilter == ExternalToolQoder {
-		combined = append(combined, qoderSessions...)
-	}
-	if sourceFilter == "" || sourceFilter == "all" || sourceFilter == ExternalToolOpenCode {
-		combined = append(combined, openCodeSessions...)
+	for _, src := range allExternalSources {
+		if !specificSource || src == sourceFilter {
+			combined = append(combined, scanRes.sessions[src]...)
+		}
 	}
 
 	if onlyCurrent && targetDir != "" {
@@ -145,16 +202,7 @@ func (g *Service) handleHandoffSessions(w http.ResponseWriter, r *http.Request) 
 
 	writeJSON(w, http.StatusOK, HandoffSessionsResponse{
 		Sessions: combined,
-		Sources: map[ExternalToolID]ExternalSourceStats{
-			ExternalToolGrok:      grokStats,
-			ExternalToolClaude:    claudeStats,
-			ExternalToolCodex:     codexStats,
-			ExternalToolGemini:    geminiStats,
-			ExternalToolCodeBuddy: codeBuddyStats,
-			ExternalToolTrae:      traeStats,
-			ExternalToolQoder:     qoderStats,
-			ExternalToolOpenCode:  openCodeStats,
-		},
+		Sources:  scanRes.stats,
 	})
 }
 
@@ -171,11 +219,36 @@ func (g *Service) handleHandoffPreview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	cacheKey := string(source) + "\x00" + sessionID + "\x00" + comparableFolderPath(hintCWD) + "\x00" + comparableFolderPath(g.rootDir)
+	now := time.Now()
+	g.cacheMu.RLock()
+	cached, ok := g.previewCache[cacheKey]
+	g.cacheMu.RUnlock()
+	if ok && cached.detail != nil && now.Before(cached.expiresAt) {
+		writeJSON(w, http.StatusOK, cached.detail)
+		return
+	}
+
 	detail, err := loadExternalSessionDetail(source, sessionID, hintCWD, g.rootDir)
 	if err != nil {
 		writeJSONError(w, http.StatusNotFound, err.Error())
 		return
 	}
+
+	g.cacheMu.Lock()
+	if len(g.previewCache) >= 32 {
+		for k, v := range g.previewCache {
+			if now.After(v.expiresAt) {
+				delete(g.previewCache, k)
+			}
+		}
+	}
+	g.previewCache[cacheKey] = cachedHandoffPreview{
+		detail:    detail,
+		expiresAt: now.Add(handoffPreviewCacheTTL),
+	}
+	g.cacheMu.Unlock()
+
 	writeJSON(w, http.StatusOK, detail)
 }
 
