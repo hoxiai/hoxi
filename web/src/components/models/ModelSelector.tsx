@@ -62,6 +62,10 @@ export default function ModelSelector() {
     return freeModels.length > 0 ? freeModels : allModels().slice(0, 30);
   });
 
+  const freeConnectedModels = createMemo<FlattenedModel[]>(() =>
+    connectedModels().filter((m) => m.free)
+  );
+
   const connectedProviderRails = createMemo(() => {
     const counts = new Map<string, { id: string; name: string; count: number; isCustom: boolean; isRunner: boolean }>();
     for (const m of connectedModels()) {
@@ -125,6 +129,17 @@ export default function ModelSelector() {
     }
 
     const r = rail();
+    if (r === "free") {
+      return [...freeConnectedModels()].sort((a, b) => {
+        const aFav = isFavoriteModel(a.providerID, a.modelID);
+        const bFav = isFavoriteModel(b.providerID, b.modelID);
+        if (aFav !== bFav) return aFav ? -1 : 1;
+        const aPrio = a.source === "runner" || a.isCustom;
+        const bPrio = b.source === "runner" || b.isCustom;
+        if (aPrio !== bPrio) return aPrio ? -1 : 1;
+        return a.providerName.localeCompare(b.providerName);
+      });
+    }
     if (r === "favorites") {
       return pool.filter((m) => isFavoriteModel(m.providerID, m.modelID));
     }
@@ -269,6 +284,7 @@ export default function ModelSelector() {
               rail={rail()}
               hasQuery={Boolean(query().trim())}
               connectedTotal={connectedModels().length}
+              freeTotal={freeConnectedModels().length}
               providers={connectedProviderRails()}
               onSelectRail={(r) => {
                 setRail(r);
@@ -293,6 +309,26 @@ export default function ModelSelector() {
                   }}
                   class="w-full bg-transparent text-[12.5px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none selectable-text"
                 />
+                <Show when={freeConnectedModels().length > 0}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const nextRail = rail() === "free" && !query().trim() ? "connected" : "free";
+                      setQuery("");
+                      setRail(nextRail);
+                      setDetails(null);
+                      setActiveIndex(0);
+                    }}
+                    class={`shrink-0 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10.5px] font-semibold transition-colors cursor-pointer ${
+                      rail() === "free" && !query().trim()
+                        ? "bg-[var(--ok-surface)] text-[var(--ok-text)] ring-1 ring-[var(--ok-text)]/30"
+                        : "bg-[var(--bg-inset)] text-[var(--text-secondary)] hover:bg-[var(--ok-surface)] hover:text-[var(--ok-text)]"
+                    }`}
+                  >
+                    <span>{t("models.freeModel")}</span>
+                    <span class="font-mono text-[9.5px] opacity-80">{freeConnectedModels().length}</span>
+                  </button>
+                </Show>
               </div>
 
               <div class="flex-1 overflow-y-auto p-1.5 space-y-0.5">

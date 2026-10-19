@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 380 108" width="380" height="108" fill="none">
+  <defs>
+    <linearGradient id="hoxi-card-bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#EFF6FF"/>
+    </linearGradient>
+    <linearGradient id="hoxi-brand-blue" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#2563EB"/>
+      <stop offset="100%" stop-color="#1D4ED8"/>
+    </linearGradient>
+    <filter id="hoxi-shadow" x="-8%" y="-8%" width="116%" height="120%">
+      <feDropShadow dx="0" dy="3" stdDeviation="4" flood-color="#1D4ED8" flood-opacity="0.10"/>
+    </filter>
+  </defs>
+
+  <!-- Left: Official Hoxi Icon Mark (Scaled cleanly to 88x88 at y=10) -->
+  <g transform="translate(14, 10)" filter="url(#hoxi-shadow)">
+    <rect width="88" height="88" rx="20" fill="url(#hoxi-card-bg)"/>
+    <rect x="0.75" y="0.75" width="86.5" height="86.5" rx="19.25" stroke="#BFDBFE" stroke-width="1.5"/>
+    <g transform="translate(4.4, 6.6) scale(1.2375)" fill="url(#hoxi-brand-blue)">
+      <path d="M32 8L52 21H44L32 13L20 21H12L32 8Z"/>
+      <rect x="20" y="25" width="6.5" height="12" rx="3.25"/>
+      <rect x="37.5" y="25" width="6.5" height="12" rx="3.25"/>
+      <path d="M19 42.5C23 50 41 50 45 42.5" stroke="url(#hoxi-brand-blue)" stroke-width="5.5" stroke-linecap="round" fill="none"/>
+    </g>
+  </g>
+
+  <!-- Right: Bold Geometric "Hoxi" Wordmark -->
+  <text
+    x="124"
+    y="77"
+    fill="url(#hoxi-brand-blue)"
+    font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Inter', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
+    font-size="76"
+    font-weight="800"
+    letter-spacing="-2.5"
+  >Hoxi</text>
+</svg>

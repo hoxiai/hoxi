@@ -56,6 +56,7 @@ export function ModelSelectorRail(props: {
   rail: string;
   hasQuery: boolean;
   connectedTotal: number;
+  freeTotal: number;
   providers: Array<{ id: string; name: string; count: number; isCustom: boolean }>;
   onSelectRail: (rail: string) => void;
   onClosePopover: () => void;
@@ -77,6 +78,24 @@ export function ModelSelectorRail(props: {
             <span class="truncate">{t("models.allConnected")}</span>
           </span>
           <span class="font-mono text-[10px] opacity-70">{props.connectedTotal}</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => props.onSelectRail("free")}
+          class={`w-full flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[11.5px] transition-colors cursor-pointer ${
+            props.rail === "free" && !props.hasQuery
+              ? "bg-[var(--ok-surface)] text-[var(--ok-text)] font-medium"
+              : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+          }`}
+        >
+          <span class="flex items-center gap-1.5 truncate">
+            <span class="rounded bg-[var(--ok-surface)] px-1 py-[0.5px] font-mono text-[9.5px] font-semibold text-[var(--ok-text)] shrink-0">
+              0x
+            </span>
+            <span class="truncate">{t("models.freeModel")}</span>
+          </span>
+          <span class="font-mono text-[10px] opacity-70">{props.freeTotal}</span>
         </button>
 
         <button
