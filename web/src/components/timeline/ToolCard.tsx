@@ -194,22 +194,44 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
                 </span>
               }
             >
-              <span
-                class={
-                  status() === "error" || isInterruptedTool()
-                    ? "shrink-0 text-[var(--danger-text)] inline-flex items-center"
-                    : "shrink-0 text-[var(--text-muted)] inline-flex items-center"
+              <Show
+                when={
+                  status() === "completed" &&
+                  !isInterruptedTool() &&
+                  !(isShell() && exitCode() !== undefined && exitCode() !== 0)
+                }
+                fallback={
+                  <span
+                    class={
+                      status() === "error" ||
+                      isInterruptedTool() ||
+                      (isShell() && exitCode() !== undefined && exitCode() !== 0)
+                        ? "shrink-0 text-[var(--danger-text)] inline-flex items-center"
+                        : "shrink-0 text-[var(--text-muted)] inline-flex items-center"
+                    }
+                  >
+                    <Icon
+                      name={
+                        status() === "error" ||
+                        isInterruptedTool() ||
+                        (isShell() && exitCode() !== undefined && exitCode() !== 0)
+                          ? "circle-ban-sign"
+                          : kiloToolIconName(props.part.tool)
+                      }
+                      size="small"
+                    />
+                  </span>
                 }
               >
-                <Icon
-                  name={
-                    status() === "error" || isInterruptedTool()
-                      ? "circle-ban-sign"
-                      : kiloToolIconName(props.part.tool)
-                  }
-                  size="small"
-                />
-              </span>
+                <span class="shrink-0 inline-grid place-items-center">
+                  <span class="[grid-area:1/1] inline-flex items-center text-[var(--ok-text)] transition-opacity duration-150 group-hover/tool:opacity-0">
+                    <Icon name="circle-check" size="small" />
+                  </span>
+                  <span class="[grid-area:1/1] inline-flex items-center text-[var(--text-secondary)] opacity-0 transition-opacity duration-150 group-hover/tool:opacity-100">
+                    <Icon name={kiloToolIconName(props.part.tool)} size="small" />
+                  </span>
+                </span>
+              </Show>
             </Show>
 
             {/* Tool Title & Semantic Target */}

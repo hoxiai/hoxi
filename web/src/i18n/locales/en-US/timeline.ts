@@ -228,7 +228,7 @@ export const timeline = {
   gitCommitAndPush: "Commit Session & Push",
   gitTaskRequested: "Sent to AI. Follow progress in the conversation.",
   gitAgentCommitHint: "The current session AI reviews changes and handles the commit. Results appear in the conversation.",
-  gitAgentCommitPrompt: "Commit the relevant changes for this session in {directory}. Inspect the real Git status and diff; do not rely on a session snapshot. Stage only reviewed session changes, preserve unrelated staged or working-tree changes, and ask if ownership is genuinely ambiguous. Follow repository instructions and hooks. Keep the commit scoped to this directory and append, after a blank line: Co-authored-by: Hoxi AI <code@hoxi.ai>. Do not reset, discard, amend, force-push, or bypass approvals. Report the actual result.",
+  gitAgentCommitPrompt: "Commit the relevant changes for this session in {directory}. Inspect the real Git status and diff; do not rely on a session snapshot. Stage only reviewed session changes, preserve unrelated staged or working-tree changes, and ask if ownership is genuinely ambiguous. Follow repository instructions and hooks. Keep the commit scoped to this directory and append, after a blank line: Co-authored-by: Hoxi <code@hoxi.ai>. Do not reset, discard, amend, force-push, or bypass approvals. Report the actual result.",
   gitAgentCommitOnlyPrompt: "Commit only; do not push. Report the commit hash, or explain if there is nothing to commit.",
   gitAgentCommitPushPrompt: "After a successful commit, push the configured upstream and report commit and push results separately. If there is no new commit, push existing unpushed commits only when the upstream is clear.",
   gitAgentCommitMessagePrompt: "Use this exact commit message text: {message}",
@@ -260,4 +260,7 @@ export const timeline = {
   runtimeCodeBuddyLocal: "CodeBuddy (Local)",
   runtimeQoderLocal: "Qoder (Local)",
   runtimeOpenCode: "OpenCode",
+  expandPrompt: "Show full message",
+  expandPromptLines: "Show full message ({count} lines)",
+  collapsePrompt: "Show less",
 };

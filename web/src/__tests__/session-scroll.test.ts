@@ -90,6 +90,18 @@ describe("Session reading restoration", () => {
       el.scrollTop = 100;
       flush();
       assertEqual(el.scrollTop, 100);
+
+      // Switching to a bottom-following session and resizing/interrupting
+      // during streaming must never pause auto-follow.
+      controller.switchSession("C");
+      controller.ready([], false);
+      flush();
+      assertEqual(scroll.isFollowing(), true);
+      el.scrollHeight = 2400; // Grows by >64px before scroll ResizeObserver runs
+      controller.resized();
+      controller.interrupt();
+      assertEqual(scroll.isFollowing(), true);
+
       controller.dispose();
       assertEqual(frames.size, 0);
     } finally {

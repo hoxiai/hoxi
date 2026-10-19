@@ -226,7 +226,7 @@ export const timeline: TimelineI18n = {
   gitCommitAndPush: "提交当前会话并 Push",
   gitTaskRequested: "已交给 AI，请在对话中查看处理进度。",
   gitAgentCommitHint: "由当前会话的 AI 检查修改并执行提交，处理结果会显示在对话中。",
-  gitAgentCommitPrompt: "请在当前会话目录 {directory} 内提交相关修改。检查真实的 Git 状态和 diff，不要依赖会话快照。只暂存本会话相关且已检查的修改，保留无关的暂存区和工作区内容；若归属确实不明确，先询问。遵守仓库规范和 hooks，在提交说明末尾空一行追加：Co-authored-by: Hoxi AI <code@hoxi.ai>。不要 reset、丢弃修改、amend、强制推送或绕过审批。汇报实际结果。",
+  gitAgentCommitPrompt: "请在当前会话目录 {directory} 内提交相关修改。检查真实的 Git 状态和 diff，不要依赖会话快照。只暂存本会话相关且已检查的修改，保留无关的暂存区和工作区内容；若归属确实不明确，先询问。遵守仓库规范和 hooks，在提交说明末尾空一行追加：Co-authored-by: Hoxi <code@hoxi.ai>。不要 reset、丢弃修改、amend、强制推送或绕过审批。汇报实际结果。",
   gitAgentCommitOnlyPrompt: "仅提交，不要推送。汇报提交哈希；没有可提交内容时说明原因。",
   gitAgentCommitPushPrompt: "提交成功后推送到已配置的 upstream，并分别汇报提交和推送结果。没有新提交时，仅在 upstream 明确的情况下推送已有未推送提交。",
   gitAgentCommitMessagePrompt: "使用以下精确文本作为提交说明：{message}",
@@ -258,4 +258,7 @@ export const timeline: TimelineI18n = {
   runtimeCodeBuddyLocal: "CodeBuddy（本地）",
   runtimeQoderLocal: "Qoder（本地）",
   runtimeOpenCode: "OpenCode",
+  expandPrompt: "展开完整消息",
+  expandPromptLines: "展开完整消息（共 {count} 行）",
+  collapsePrompt: "收起消息",
 };

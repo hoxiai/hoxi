@@ -19,11 +19,22 @@ export function createSessionScrollController(options: {
   const capture = () => {
     const el = options.scroller();
     if (!sessionID || pending || !el || el.clientHeight === 0) return;
+    const isAtBottom =
+      (options.scroll.isFollowing?.() ?? false) ||
+      el.scrollHeight - el.scrollTop - el.clientHeight < 64;
+    if (isAtBottom) {
+      positions.set(sessionID, {
+        bottom: true,
+        top: el.scrollTop,
+        offset: 0,
+      });
+      return;
+    }
     const top = el.getBoundingClientRect().top;
     const anchor = Array.from(el.querySelectorAll<HTMLElement>("[data-turn-id]"))
       .find((node) => node.getBoundingClientRect().bottom > top);
     positions.set(sessionID, {
-      bottom: el.scrollHeight - el.scrollTop - el.clientHeight < 64,
+      bottom: false,
       top: el.scrollTop,
       turnID: anchor?.dataset.turnId,
       offset: anchor ? anchor.getBoundingClientRect().top - top : 0,
@@ -36,16 +47,18 @@ export function createSessionScrollController(options: {
     const position = pending;
     if (!ready || !position || !el || el.clientHeight === 0) return;
     if (position.bottom) {
+      pending = undefined;
       options.scroll.resume();
-    } else {
-      options.scroll.pause();
-      const anchor = Array.from(el.querySelectorAll<HTMLElement>("[data-turn-id]"))
-        .find((node) => node.dataset.turnId === position.turnID);
-      el.scrollTop = anchor
-        ? el.scrollTop + anchor.getBoundingClientRect().top - el.getBoundingClientRect().top - position.offset
-        : position.top;
-      options.scroll.updatePosition();
+      capture();
+      return;
     }
+    options.scroll.pause();
+    const anchor = Array.from(el.querySelectorAll<HTMLElement>("[data-turn-id]"))
+      .find((node) => node.dataset.turnId === position.turnID);
+    el.scrollTop = anchor
+      ? el.scrollTop + anchor.getBoundingClientRect().top - el.getBoundingClientRect().top - position.offset
+      : position.top;
+    options.scroll.updatePosition();
     // Allow the restored layout and the resulting resize to settle before recording.
     if (settling !== undefined) cancelAnimationFrame(settling);
     settling = requestAnimationFrame(() => {
@@ -90,7 +103,10 @@ export function createSessionScrollController(options: {
       if (frame !== undefined) cancelAnimationFrame(frame);
       if (settling !== undefined) cancelAnimationFrame(settling);
       frame = settling = undefined;
-      if (pending) options.scroll.pause();
+      if (pending) {
+        if (pending.bottom) options.scroll.resume();
+        else options.scroll.pause();
+      }
       pending = undefined;
     },
     dispose() {

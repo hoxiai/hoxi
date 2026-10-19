@@ -1,7 +1,7 @@
 import { createEffect, createMemo, createSignal, onCleanup, Show } from "solid-js";
 import type { MessagePart } from "../../services/sse-types";
 import { appSettings, isSessionBusy } from "../../store/workspace";
-import { Icon, TextShimmer } from "../icons";
+import { Icon, TextReveal, TextShimmer } from "../icons";
 import MarkdownView from "./MarkdownView";
 import { t } from "../../i18n";
 
@@ -314,9 +314,9 @@ export default function ThoughtBox(props: { part: ReasoningPart; revealKey?: str
             />
           </span>
           <Show when={headerTitle()}>
-            <span class="truncate text-[12.5px] font-normal text-[var(--text-muted)] max-w-[540px] inline-flex items-center gap-1">
-              <span>·</span>
-              <TextShimmer text={headerTitle()} active={streaming()} offset={9} />
+            <span class="truncate text-[12.5px] font-normal text-[var(--text-muted)] max-w-[540px] inline-flex items-center gap-1 min-w-0">
+              <span class="shrink-0">·</span>
+              <TextReveal text={headerTitle()} truncate />
             </span>
           </Show>
           <Show when={!streaming() && durationSec() > 0}>
@@ -345,6 +345,7 @@ export default function ThoughtBox(props: { part: ReasoningPart; revealKey?: str
             <div class="min-h-0 overflow-hidden">
               <div
                 ref={bodyRef}
+                data-scrollable
                 onScroll={onViewportScroll}
                 onWheel={onViewportWheel}
                 class={`max-h-[240px] overflow-y-auto border-l-2 border-[var(--border-subtle)] px-3.5 py-2 text-[13px] leading-relaxed text-[var(--text-secondary)] selectable-text ${

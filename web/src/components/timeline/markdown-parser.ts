@@ -1,19 +1,28 @@
 // web/src/components/timeline/markdown-parser.ts
 
 const EXTENSIONS_SOURCE =
-  "ts|tsx|js|jsx|mjs|cjs|go|py|rs|md|json|yaml|yml|toml|css|scss|less|html|sh|zsh|bash|sql|vue|svelte|c|cpp|cc|h|hpp|m|mm|java|kt|swift|rb|php|proto|graphql";
+  "ts|tsx|js|jsx|mjs|cjs|go|py|rs|md|mdx|json|jsonc|json5|yaml|yml|toml|xml|svg|css|scss|less|html|sh|zsh|bash|sql|vue|svelte|c|cpp|cc|h|hpp|m|mm|java|kt|swift|rb|php|proto|graphql|ini|cfg|conf|env|lock|mod|sum|work|gradle|properties|cmake|mk|dockerfile|tf|tfvars|hcl|prisma|sol|zig|lua|ex|exs|erl|hrl|hs|ml|mli|fs|fsx|cs|vb|dart|groovy|scala|clj|cljs|edn|nim|cr|v|sv|vhd|vhdl|glsl|wgsl|hlsl|metal|wasm|wat|csv|tsv|txt|log";
+
+const KNOWN_FILENAMES_SOURCE =
+  "(?:Dockerfile|Containerfile|Makefile|GNUmakefile|Justfile|Caddyfile|Procfile|Gemfile|Rakefile|Guardfile|Brewfile|Vagrantfile|Tiltfile|Earthfile|BUILD|WORKSPACE|CMakeLists\\.txt|CODEOWNERS|LICENSE|README|CHANGELOG|CONTRIBUTING|AUTHORS|NOTICE)(?:\\.[\\w.-]+)?";
+
+const KNOWN_DOTFILES_SOURCE =
+  "\\.(?:env(?:\\.[\\w.-]+)?|gitignore|gitattributes|gitmodules|dockerignore|npmignore|eslintignore|prettierignore|editorconfig|nvmrc|node-version|python-version|ruby-version|tool-versions|babelrc(?:\\.[\\w.-]+)?|eslintrc(?:\\.[\\w.-]+)?|prettierrc(?:\\.[\\w.-]+)?|stylelintrc(?:\\.[\\w.-]+)?|npmrc|yarnrc(?:\\.[\\w.-]+)?|bashrc|zshrc|profile|clang-format|clang-tidy)";
+
+const FILE_LEAF_SOURCE = `(?:[\\w.-]+\\.(?:${EXTENSIONS_SOURCE})|${KNOWN_FILENAMES_SOURCE}|${KNOWN_DOTFILES_SOURCE})`;
 
 const LINE_SUFFIX_SOURCE = "(?::\\d+(?:[:\\-–—]\\d+)?|#L\\d+(?:[-–—]L?\\d+)?)?";
 
 const FILE_PATH_PATTERN = new RegExp(
-  `^(?:file:\\/\\/)?(?:~\\/|\\.\\.?\\/|\\/)?(?:(?:\\.\\.|[\\w@.-]+)\\/)*[\\w.-]+\\.(?:${EXTENSIONS_SOURCE})${LINE_SUFFIX_SOURCE}$`,
+  `^(?:file:\\/\\/)?(?:~\\/|\\.\\.?\\/|\\/)?(?:(?:\\.\\.|[\\w@.-]+)\\/)*${FILE_LEAF_SOURCE}${LINE_SUFFIX_SOURCE}$`,
   "i"
 );
 
 export function isLikelyFilePath(text: string): boolean {
   const trimmed = text.trim();
   if (!trimmed || trimmed.includes(" ") || trimmed.length > 220) return false;
-  if (/^https?:\/\//i.test(trimmed)) return false;
+  if (/^[a-z]+:\/\//i.test(trimmed) && !/^file:\/\//i.test(trimmed)) return false;
+  if (/^\/[^/]+$/.test(trimmed)) return false;
   return FILE_PATH_PATTERN.test(trimmed);
 }
 
@@ -416,7 +425,7 @@ export type InlineSpan =
   | { type: "strike"; text: string }
   | { type: "link"; text: string; href: string };
 
-const BARE_FILE_PATH_SOURCE = `(?:\\.\\/)?(?:[\\w@-]+\\/)+[\\w.-]+\\.(?:${EXTENSIONS_SOURCE})${LINE_SUFFIX_SOURCE}`;
+const BARE_FILE_PATH_SOURCE = `(?:\\.\\/)?(?:[\\w@-]+\\/)+${FILE_LEAF_SOURCE}${LINE_SUFFIX_SOURCE}`;
 
 const INLINE_TOKEN_REGEX = new RegExp(
   `(\`[^\`\\n]+\`|\`[^\`\\n]*$|<br\\s*\\/?>|\\*\\*(?:\`[^\`]+\`|[^*]+|\\*(?!\\*))+\\*\\*|\\*\\*(?:\`[^\`\\n]+\`|\`[^\`\\n]*$|[^*\\n]+|\\*(?!\\*))*$|__(?:\`[^\`]+\`|[^_]+|_(?!_))+__|~~[^~\\n]+~~|\\[(?:\`[^\`]+\`|[^\\]]+)\\]\\((?:[^()\\s]+|\\([^()\\s]*\\))+\\)|\\[(?:\`[^\`\\n]+\`|[^\\]\\n]+)\\]\\([^()\\s]*$|\\*[^*\\n]+\\*|https?:\\/\\/[^\\s<>\\])"]+|${BARE_FILE_PATH_SOURCE})`,

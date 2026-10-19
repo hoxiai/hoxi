@@ -124,6 +124,7 @@ export default function TaskTimelineBar(props: {
   controlsVisible: boolean;
   onCloseSearch: () => void;
   onSearchMatch: (messageID: string | null, partID?: string) => void;
+  onWheel?: (event: WheelEvent) => void;
 }) {
   const [activeSegment, setActiveSegment] = createSignal<string | null>(null);
   const [interacting, setInteracting] = createSignal(false);
@@ -134,6 +135,22 @@ export default function TaskTimelineBar(props: {
     setInteracting(true);
     clearTimeout(resumeTimer);
     resumeTimer = setTimeout(() => setInteracting(false), 1500);
+  };
+  const handleRailWheel = (event: WheelEvent) => {
+    pauseFollowing();
+    const target = event.currentTarget as HTMLElement | null;
+    if (target && activeSegment() && target.scrollHeight > target.clientHeight + 1) {
+      const canScrollUp = event.deltaY < 0 && target.scrollTop > 0;
+      const canScrollDown =
+        event.deltaY > 0 && target.scrollTop + target.clientHeight < target.scrollHeight - 1;
+      if (canScrollUp || canScrollDown) {
+        return;
+      }
+    }
+    if (props.onWheel) {
+      event.preventDefault();
+      props.onWheel(event);
+    }
   };
   const [now, setNow] = createSignal(Date.now());
   createEffect(() => {
@@ -304,7 +321,7 @@ export default function TaskTimelineBar(props: {
         </div>
         <div ref={rail} class="task-reading-rail" aria-label={t("timeline.timelineLabel")}
           onMouseLeave={() => setActiveSegment(null)}>
-          <div class="task-reading-nodes" onWheel={pauseFollowing} onPointerDown={pauseFollowing}
+          <div class="task-reading-nodes" onWheel={handleRailWheel} onPointerDown={pauseFollowing}
             onTouchMove={pauseFollowing} onKeyDown={pauseFollowing} onScroll={() => setActiveSegment(null)}>
             <For each={segments()}>{(seg) => {
               const highlighted = () => (activeSegment() ?? focusedSegment()) === seg.id;

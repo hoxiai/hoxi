@@ -16,7 +16,7 @@ import {
   resolveSubagentTitle,
   workspace,
 } from "../../store/workspace";
-import { DiffChanges, Icon, Spinner, TextShimmer } from "../icons";
+import { DiffChanges, Icon, Spinner, TextReveal, TextShimmer } from "../icons";
 import { resolveSubagentCurrentStepLabel } from "./SubagentInlineTimeline";
 import { liveReasoningTicker, reasoningHeading, reasoningSummary } from "./ThoughtBox";
 
@@ -97,6 +97,7 @@ export default function ContextActivityGroupView(props: {
   startedAt?: number;
   revealKey?: string;
 }) {
+  let rootRef: HTMLDivElement | undefined;
   const groupKey = createMemo(() => props.parts[0]?.id || "");
   const [open, setOpen] = createSignal(
     expandedActivityGroupKeys.has(groupKey()) && !collapsedActivityGroupKeys.has(groupKey())
@@ -126,6 +127,16 @@ export default function ContextActivityGroupView(props: {
   const toggleOpen = () => {
     const key = groupKey();
     const next = !open();
+    if (!next && rootRef) {
+      const scroller = rootRef.closest(".timeline-result-scroll");
+      if (scroller instanceof HTMLElement) {
+        const groupTop = rootRef.getBoundingClientRect().top;
+        const scrollerTop = scroller.getBoundingClientRect().top;
+        if (groupTop < scrollerTop) {
+          scroller.scrollTop += groupTop - scrollerTop - 8;
+        }
+      }
+    }
     if (key) {
       if (next) expandedActivityGroupKeys.add(key);
       else {
@@ -357,13 +368,13 @@ export default function ContextActivityGroupView(props: {
         </div>
       }
     >
-      <div>
+      <div ref={rootRef}>
         <button
           type="button"
           onClick={toggleOpen}
           class={`group/activity flex w-full items-center justify-between gap-2 rounded-md border border-transparent px-2 py-1.5 text-left text-[13px] transition-all cursor-pointer select-none ${
             open()
-              ? "bg-[var(--bg-inset)]/65 text-[var(--text-primary)]"
+              ? "sticky top-0 z-10 bg-[var(--bg-panel)]/92 backdrop-blur-md border-[var(--border-subtle)]/50 text-[var(--text-primary)] shadow-xs"
               : isRunning()
                 ? "bg-[var(--accent-surface)]/15 hover:bg-[var(--accent-surface)]/30 text-[var(--text-primary)]"
                 : "bg-[var(--bg-inset)]/35 hover:bg-[var(--bg-inset)]/75 text-[var(--text-muted)] hover:text-[var(--text-primary)]"
@@ -376,11 +387,16 @@ export default function ContextActivityGroupView(props: {
                 <Show
                   when={attentionTools().length > 0}
                   fallback={
-                    <span class="text-[var(--text-muted)] group-hover/activity:text-[var(--accent-primary)] inline-flex items-center shrink-0">
-                      <Icon
-                        name={stats().toolCount > 0 ? "layers" : "brain"}
-                        size="small"
-                      />
+                    <span class="inline-grid place-items-center shrink-0">
+                      <span class="[grid-area:1/1] inline-flex items-center text-[var(--ok-text)] transition-opacity duration-150 group-hover/activity:opacity-0">
+                        <Icon name="circle-check" size="small" />
+                      </span>
+                      <span class="[grid-area:1/1] inline-flex items-center text-[var(--accent-primary)] opacity-0 transition-opacity duration-150 group-hover/activity:opacity-100">
+                        <Icon
+                          name={stats().toolCount > 0 ? "layers" : "brain"}
+                          size="small"
+                        />
+                      </span>
                     </span>
                   }
                 >
@@ -402,8 +418,8 @@ export default function ContextActivityGroupView(props: {
                   <span class="font-medium text-[var(--text-secondary)] shrink-0">
                     {stats().toolCount > 0
                       ? tI18n("timeline.executedStepsSummary", {
-                          count: stats().toolCount,
-                        })
+                           count: stats().toolCount,
+                         })
                       : tI18n("timeline.thought")}
                   </span>
                   <Show when={stats().toolCount > 0 && stats().summaryText}>
@@ -423,8 +439,8 @@ export default function ContextActivityGroupView(props: {
                 <TextShimmer text={activeStepDisplay().action} active={true} />
               </span>
               <Show when={activeStepDisplay().detail}>
-                <span class="font-mono text-[12px] text-[var(--text-secondary)] truncate max-w-[360px]">
-                  {activeStepDisplay().detail}
+                <span class="font-mono text-[12px] text-[var(--text-secondary)] truncate max-w-[360px] inline-flex items-center min-w-0">
+                  <TextReveal text={activeStepDisplay().detail} truncate />
                 </span>
               </Show>
               <Show when={stats().summaryText}>

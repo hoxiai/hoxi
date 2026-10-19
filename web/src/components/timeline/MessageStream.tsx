@@ -30,6 +30,7 @@ import {
   LiveExecutionControlBar,
   resolveActiveCycleStepLabel,
   SessionRetryCard,
+  UserTextPartView,
 } from "./message-stream-parts";
 import {
   AssistantTurnItem,
@@ -42,7 +43,11 @@ import { SubagentSessionBanner } from "./AgentStackPill";
 import QueuedPromptsList from "./QueuedPromptsList";
 import { SessionSkeleton } from "./SessionSkeleton";
 import { t } from "../../i18n";
-import { createTimelineScroll } from "./timeline-scroll";
+import {
+  createTimelineScroll,
+  isNestedScrollableWheelTarget,
+  isScrollbarGutterPointerDown,
+} from "./timeline-scroll";
 import { createTranscriptControls } from "./transcript-controls";
 import { createReadingPositionTracker } from "./reading-position";
 import { createSessionScroll } from "./session-scroll";
@@ -197,7 +202,12 @@ export default function MessageStream(props: { hidden?: boolean }) {
   }, { defer: true }));
 
   createEffect(() => {
-    if (appSettings.autoScrollStream) scroll.schedule();
+    void isSessionBusy();
+    void showThinkingPlaceholder();
+    void turns().length;
+    if (appSettings.autoScrollStream && scroll.isFollowing()) {
+      scroll.schedule();
+    }
   });
 
   const onScroll = () => {
@@ -328,32 +338,71 @@ export default function MessageStream(props: { hidden?: boolean }) {
             setActiveMatchTurnID(msgID);
             if (msgID) scrollToTurn(msgID, partID);
           }}
+          onWheel={(event) => {
+            transcriptControls.markIntent();
+            if (!scroller) return;
+            if (event.deltaY < -1 && scroller.scrollTop > 0) {
+              sessionScroll.interrupt();
+              scroll.markUserScrollInput();
+              scroll.pause();
+            } else if (event.deltaY > 1) {
+              scroll.markUserScrollInput();
+            }
+            scroller.scrollTop += event.deltaY;
+          }}
         />
     <div
       ref={scroller}
       onScroll={onScroll}
       onWheel={(event) => {
-        sessionScroll.interrupt();
         transcriptControls.markIntent();
+        if (!scroller) return;
+        if (isNestedScrollableWheelTarget(scroller, event.target, event.deltaX, event.deltaY)) {
+          return;
+        }
         // Stop following before the async scroll lands, or the next resize re-anchors.
-        if (event.deltaY < 0 && scroller && scroller.scrollTop > 0) scroll.pause();
+        if (event.deltaY < -1 && scroller.scrollTop > 0) {
+          sessionScroll.interrupt();
+          scroll.markUserScrollInput();
+          scroll.pause();
+        }
       }}
       onTouchStart={() => scroll.setPointerScrolling(true)}
       onTouchEnd={() => scroll.setPointerScrolling(false)}
       onTouchCancel={() => scroll.setPointerScrolling(false)}
-      onTouchMove={() => { sessionScroll.interrupt(); transcriptControls.markIntent(); }}
-      onPointerDown={() => {
+      onTouchMove={() => {
         sessionScroll.interrupt();
-        transcriptControls.startPointer();
-        scroll.setPointerScrolling(true);
+        transcriptControls.markIntent();
+        scroll.markUserScrollInput();
       }}
-      onPointerUp={() => transcriptControls.endPointer()}
+      onPointerDown={(event) => {
+        transcriptControls.startPointer();
+        if (scroller && isScrollbarGutterPointerDown(scroller, event)) {
+          sessionScroll.interrupt();
+          scroll.setPointerScrolling(true);
+        }
+      }}
+      onPointerUp={() => {
+        transcriptControls.endPointer();
+        if (isSessionBusy() && scroller && typeof window.getSelection === "function") {
+          const selection = window.getSelection();
+          if (
+            selection &&
+            !selection.isCollapsed &&
+            selection.anchorNode &&
+            scroller.contains(selection.anchorNode)
+          ) {
+            scroll.pause();
+          }
+        }
+      }}
       onPointerCancel={() => transcriptControls.endPointer()}
       onKeyDown={(event) => {
         if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) {
           transcriptControls.markIntent();
-          sessionScroll.interrupt();
           if (["ArrowUp", "PageUp", "Home"].includes(event.key) || (event.key === " " && event.shiftKey)) {
+            sessionScroll.interrupt();
+            scroll.markUserScrollInput();
             scroll.pause();
           }
         }
@@ -435,13 +484,10 @@ export default function MessageStream(props: { hidden?: boolean }) {
                                 </div>
                               </Show>
                               <Show when={part().type === "text"}>
-                                <div
-                                  data-part-id={part().id}
-                                  class="whitespace-pre-wrap break-words leading-[1.65] text-[var(--text-primary)] selectable-text"
-                                  style={{ "font-size": "var(--app-chat-text-size)" }}
-                                >
-                                  {(part() as Extract<MessagePart, { type: "text" }>).text}
-                                </div>
+                                <UserTextPartView
+                                  part={part() as Extract<MessagePart, { type: "text" }>}
+                                  forceExpand={activeMatchTurnID() === turn.info.id}
+                                />
                               </Show>
                             </>
                           )}

@@ -197,8 +197,24 @@ describe("Timeline layout following", () => {
       flush();
       scroller.scrollHeight = 1800;
       resized();
-      assertEqual(scroller.scrollTop, 1400);
-      flush();
+      // A small shrink-clamp (e.g. 5px) combined with a large burst of new
+      // streamed content (>240px) must NOT be mistaken for reader upward scroll,
+      // and onScroll() must immediately self-heal scrollTop to the bottom.
+      scroller.scrollHeight = 1795;
+      scroller.scrollTop = 1400; // clamped to 1395 (-5px)
+      scroller.scrollHeight = 2150; // +355px burst before scroll event fires
+      assertEqual(scroll.onScroll(), false);
+      assertEqual(scroller.scrollTop, 1750);
+      assertEqual(scroll.awayFromBottom(), false);
+
+      // Scrolling down with wheel/trackpad into the bottom padding (<=28px)
+      // re-engages auto-follow so there is no dead zone with a hidden button.
+      scroller.scrollTop = 1400;
+      assertEqual(scroll.onScroll(), true);
+      assertEqual(scroll.isFollowing(), false);
+      scroller.scrollTop = 1730; // 20px from bottom, moving down without pointer drag
+      assertEqual(scroll.onScroll(), false);
+      assertEqual(scroll.isFollowing(), true);
 
       scroll.schedule();
       dispose();

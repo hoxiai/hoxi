@@ -176,7 +176,7 @@ export default function SubagentInlineTimeline(props: {
             };
 
             return (
-              <div class="flex items-center justify-between gap-2 rounded-lg px-2 py-1 text-[12px] hover:bg-[var(--bg-hover)]/60 transition-colors">
+              <div class="group/substep flex items-center justify-between gap-2 rounded-lg px-2 py-1 text-[12px] hover:bg-[var(--bg-hover)]/60 transition-colors">
                 <div class="flex items-center gap-1.5 min-w-0 flex-1">
                   <Show
                     when={!running()}
@@ -186,21 +186,35 @@ export default function SubagentInlineTimeline(props: {
                       </span>
                     }
                   >
-                    <Icon
-                      name={
-                        toolPart.state.status === "error" || interrupted()
-                          ? "circle-ban-sign"
-                          : kiloToolIconName(toolPart.tool)
+                    <Show
+                      when={toolPart.state.status === "completed" && !interrupted()}
+                      fallback={
+                        <Icon
+                          name={
+                            toolPart.state.status === "error" || interrupted()
+                              ? "circle-ban-sign"
+                              : kiloToolIconName(toolPart.tool)
+                          }
+                          size="small"
+                          class={
+                            toolPart.state.status === "error"
+                              ? "text-[var(--danger-text)] shrink-0"
+                              : interrupted()
+                                ? "text-[var(--warn-text)] shrink-0"
+                                : "text-[var(--text-muted)] shrink-0"
+                          }
+                        />
                       }
-                      size="small"
-                      class={
-                        toolPart.state.status === "error"
-                          ? "text-[var(--danger-text)] shrink-0"
-                          : interrupted()
-                            ? "text-[var(--warn-text)] shrink-0"
-                            : "text-[var(--text-muted)] shrink-0"
-                      }
-                    />
+                    >
+                      <span class="shrink-0 inline-grid place-items-center">
+                        <span class="[grid-area:1/1] inline-flex items-center text-[var(--ok-text)] transition-opacity duration-150 group-hover/substep:opacity-0">
+                          <Icon name="circle-check" size="small" />
+                        </span>
+                        <span class="[grid-area:1/1] inline-flex items-center text-[var(--text-secondary)] opacity-0 transition-opacity duration-150 group-hover/substep:opacity-100">
+                          <Icon name={kiloToolIconName(toolPart.tool)} size="small" />
+                        </span>
+                      </span>
+                    </Show>
                   </Show>
 
                   <span class="font-medium text-[12px] text-[var(--text-secondary)] shrink-0">

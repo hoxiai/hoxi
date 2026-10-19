@@ -139,6 +139,88 @@ export function PartView(props: { part: MessagePart; revealKey?: string }) {
   );
 }
 
+const USER_PROMPT_FOLD_LINES = 10;
+const USER_PROMPT_FOLD_CHARS = 600;
+
+export function UserTextPartView(props: {
+  part: Extract<MessagePart, { type: "text" }>;
+  forceExpand?: boolean;
+}) {
+  const [expanded, setExpanded] = createSignal(false);
+  let containerRef: HTMLDivElement | undefined;
+
+  const lineCount = createMemo(() => {
+    const text = props.part.text || "";
+    let count = 1;
+    for (let i = 0; i < text.length; i++) {
+      if (text.charCodeAt(i) === 10) count++;
+    }
+    return count;
+  });
+
+  const isCollapsible = createMemo(
+    () =>
+      lineCount() > USER_PROMPT_FOLD_LINES ||
+      (props.part.text?.length ?? 0) > USER_PROMPT_FOLD_CHARS
+  );
+
+  const isExpanded = createMemo(() => expanded() || Boolean(props.forceExpand));
+
+  const toggleExpanded = () => {
+    const next = !expanded();
+    if (!next && containerRef) {
+      const scroller = containerRef.closest(".timeline-result-scroll") as HTMLElement | null;
+      if (scroller) {
+        const containerRect = containerRef.getBoundingClientRect();
+        const scrollerRect = scroller.getBoundingClientRect();
+        if (containerRect.top < scrollerRect.top) {
+          const offsetDelta = containerRect.top - scrollerRect.top - 12;
+          setExpanded(false);
+          scroller.scrollTop = Math.max(0, scroller.scrollTop + offsetDelta);
+          return;
+        }
+      }
+    }
+    setExpanded(next);
+  };
+
+  return (
+    <div ref={containerRef}>
+      <div
+        data-part-id={props.part.id}
+        class={`whitespace-pre-wrap break-words leading-[1.65] text-[var(--text-primary)] selectable-text ${
+          isCollapsible() && !isExpanded()
+            ? "max-h-[196px] overflow-hidden [mask-image:linear-gradient(to_bottom,black_65%,transparent_100%)]"
+            : ""
+        }`}
+        style={{ "font-size": "var(--app-chat-text-size)" }}
+      >
+        {props.part.text}
+      </div>
+      <Show when={isCollapsible() && !props.forceExpand}>
+        <button
+          type="button"
+          onClick={toggleExpanded}
+          class="mt-1 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11.5px] font-medium text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer select-none"
+        >
+          <Icon
+            name="chevron-down"
+            size="small"
+            class={`transition-transform duration-150 ${expanded() ? "rotate-180" : ""}`}
+          />
+          <span>
+            {expanded()
+              ? t("timeline.collapsePrompt")
+              : lineCount() > USER_PROMPT_FOLD_LINES
+                ? t("timeline.expandPromptLines", { count: lineCount() })
+                : t("timeline.expandPrompt")}
+          </span>
+        </button>
+      </Show>
+    </div>
+  );
+}
+
 export function formatMessageTime(ts?: number): string {
   if (!ts) return "";
   try {

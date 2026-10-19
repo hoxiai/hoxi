@@ -1,15 +1,17 @@
 import { createEffect, createMemo, createSignal, Index, onCleanup, Show } from "solid-js";
 import { t } from "../../i18n";
-import { highlightCode, type HighlightedCode } from "./syntax-highlight";
+import { getCachedHighlight, highlightCode, type HighlightedCode } from "./syntax-highlight";
 import { workspace } from "../../store/workspace";
 import { Icon } from "../icons";
 import { ActionIconButton } from "./tool-card-helpers";
 
 export default function CodeBlockCard(props: { lang: string; code: string }) {
+  const initialTheme = workspace.theme === "dark" ? "dark" : "light";
+  const initialCached = getCachedHighlight(props.code, props.lang, initialTheme);
   const [copied, setCopied] = createSignal(false);
   const [highlighted, setHighlighted] = createSignal<
     (HighlightedCode & { lang: string; theme: string }) | undefined
-  >();
+  >(initialCached ? { ...initialCached, lang: props.lang, theme: initialTheme } : undefined);
   let copyTimer: ReturnType<typeof setTimeout> | undefined;
   let highlightTimer: ReturnType<typeof setTimeout> | undefined;
   let revision = 0;
@@ -17,12 +19,22 @@ export default function CodeBlockCard(props: { lang: string; code: string }) {
   let latest = { code: "", lang: "", theme: "dark" as "dark" | "light" };
 
   createEffect(() => {
+    const theme = workspace.theme === "dark" ? "dark" : "light";
     latest = {
       code: props.code,
       lang: props.lang,
-      theme: workspace.theme === "dark" ? "dark" : "light",
+      theme,
     };
     revision++;
+    const cached = getCachedHighlight(latest.code, latest.lang, latest.theme);
+    if (cached) {
+      if (highlightTimer !== undefined) {
+        clearTimeout(highlightTimer);
+        highlightTimer = undefined;
+      }
+      setHighlighted({ ...cached, lang: latest.lang, theme: latest.theme });
+      return;
+    }
     // Throttle rather than debounce so continuous streaming still gets highlighted.
     if (highlightTimer !== undefined) return;
     highlightTimer = setTimeout(async () => {
@@ -79,6 +91,7 @@ export default function CodeBlockCard(props: { lang: string; code: string }) {
         </ActionIconButton>
       </div>
       <pre
+        data-scrollable
         class="overflow-x-auto p-4 font-mono leading-[1.65] text-[var(--text-primary)] selectable-text"
         style={{ "font-size": "var(--app-code-text-size)" }}
       >
