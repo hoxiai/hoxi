@@ -2,8 +2,9 @@ import { reconcile, unwrap } from "solid-js/store";
 import { t } from "../i18n";
 import { hoxiAPI, type CommitAndPushResponse } from "../services/api";
 import type { SnapshotFileDiff } from "../services/sse-types";
-import { commitModelSpec, executeTaskCommitAndPush, setCommitModelSpec } from "../store/git-commit";
+import { commitModelSpec, executeTaskCommitAndPush, generateSmartCommitMessage, setCommitModelSpec } from "../store/git-commit";
 import { sessionDirectory, setWorkspace, workspace } from "../store/workspace";
+import { privacy, setPrivacy } from "../store/privacy";
 import { assertDeepEqual, assertEqual, assertTrue, describe, it } from "./test-harness";
 
 let nextID = 0;
@@ -18,14 +19,16 @@ async function withCommitFixture(run: (fixture: {
     worktreeDiff: Parameters<typeof hoxiAPI.getWorktreeDiff>[];
     commit: Parameters<typeof hoxiAPI.commitWorktree>[];
     push: Parameters<typeof hoxiAPI.pushWorktree>[];
+    send: Parameters<typeof hoxiAPI.sendPromptAsync>[];
   };
-  result: CommitAndPushResponse;
 }) => Promise<void>) {
+  const savedPrivacy = { ...privacy };
   const saved = structuredClone(unwrap(workspace));
   const originalAPI = { ...hoxiAPI };
   const originalSpec = commitModelSpec();
   const storageDescriptor = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
   const originalFetch = globalThis.fetch;
+  const originalTimeout = globalThis.setTimeout;
   const values = new Map<string, string>();
   const storage: Storage = {
     get length() { return values.size; },
@@ -47,22 +50,37 @@ async function withCommitFixture(run: (fixture: {
     worktreeDiff: [] as Parameters<typeof hoxiAPI.getWorktreeDiff>[],
     commit: [] as Parameters<typeof hoxiAPI.commitWorktree>[],
     push: [] as Parameters<typeof hoxiAPI.pushWorktree>[],
+    send: [] as Parameters<typeof hoxiAPI.sendPromptAsync>[],
   };
   const result: CommitAndPushResponse = { ok: true, commit: "fixture-commit", pushed: true };
   Object.defineProperty(globalThis, "localStorage", { configurable: true, value: storage });
+  // Follow-up refreshes must not outlive the fixture's API mocks.
+  globalThis.setTimeout = (() => 0) as unknown as typeof setTimeout;
   globalThis.fetch = async () => { throw new Error("Unexpected network request in git commit test"); };
   try {
+    setPrivacy({ loaded: true, accepted: true, saving: false, dialogOpen: false });
     setCommitModelSpec("none");
     setWorkspace("worktreeBySession", reconcile({}));
     setWorkspace("messagesBySession", reconcile({}));
     setWorkspace("loadingMessagesBySession", reconcile({}));
-    setWorkspace("aiBySession", reconcile({}));
+    setWorkspace("aiBySession", reconcile({
+      [id]: { model: { providerID: "background-provider", modelID: "background-model" }, agent: "plan", effort: "high" },
+      ses_other: { model: { providerID: "active-provider", modelID: "active-model" }, agent: "review", effort: "low" },
+    }));
+    setWorkspace("defaultAI", { model: { providerID: "default-provider", modelID: "default-model" }, agent: "plan", effort: "medium" });
+    setWorkspace("providers", []);
+    setWorkspace("hoxiProviders", reconcile({}));
+    setWorkspace("statusBySession", reconcile({}));
+    setWorkspace("queuedPromptsBySession", reconcile({}));
     setWorkspace("diffsBySession", reconcile({ [id]: [{ ...diffs[0], file: "stale-cache.ts" }] }));
-    // A background child avoids unrelated scheduled and display-diff refreshes.
+    // A prior user turn and a non-placeholder title avoid title-generation requests.
     setWorkspace({ rootDir: "/unrelated-root", activeSessionID: "ses_other", sessions: [{
       id, parentID: "fixture-parent", title: "Commit fixture", directory,
       time: { created: 1, updated: 1 },
     }] });
+    setWorkspace("messagesBySession", id, [{
+      info: { id: `msg_${id}`, sessionID: id, role: "user", time: { created: 1 } }, parts: [],
+    }]);
     hoxiAPI.getWorktreeStatus = async (...args) => {
       calls.status.push(args);
       return {
@@ -75,14 +93,21 @@ async function withCommitFixture(run: (fixture: {
     hoxiAPI.getWorktreeDiff = async (...args) => { calls.worktreeDiff.push(args); return []; };
     hoxiAPI.commitWorktree = async (...args) => { calls.commit.push(args); return result; };
     hoxiAPI.pushWorktree = async (...args) => { calls.push.push(args); return result; };
+    hoxiAPI.sendPromptAsync = async (...args) => { calls.send.push(args); };
     hoxiAPI.getMessages = async () => [];
     hoxiAPI.generateCommitMessage = async () => { throw new Error("Commit LLM must be disabled"); };
-    await run({ id, directory, diffs, calls, result });
+    await run({ id, directory, diffs, calls });
+    assertDeepEqual(calls.status, [], "dispatch must not inspect worktree status directly");
+    assertDeepEqual(calls.diff, [], "dispatch must not fetch session snapshots");
+    assertDeepEqual(calls.commit, [], "dispatch must not commit directly");
+    assertDeepEqual(calls.push, [], "dispatch must not push directly");
   } finally {
+    setPrivacy(savedPrivacy);
     Object.assign(hoxiAPI, originalAPI);
     setWorkspace(reconcile(saved));
     setCommitModelSpec(originalSpec);
     globalThis.fetch = originalFetch;
+    globalThis.setTimeout = originalTimeout;
     if (storageDescriptor) Object.defineProperty(globalThis, "localStorage", storageDescriptor);
     else Reflect.deleteProperty(globalThis, "localStorage");
   }
@@ -96,106 +121,141 @@ async function assertRejects(run: () => Promise<unknown>, expected: string) {
 }
 
 describe("task commit and push", () => {
-  it("uses the background session directory and authoritative snapshots, not root or display diffs", async () => {
-    await withCommitFixture(async ({ id, directory, diffs, calls, result }) => {
+  it("dispatches a localized build task using the background session directory, model and effort", async () => {
+    await withCommitFixture(async ({ id, directory, calls }) => {
+      const activeAI = structuredClone(unwrap(workspace.aiBySession.ses_other));
+      const backgroundAI = structuredClone(unwrap(workspace.aiBySession[id]));
       assertEqual(sessionDirectory(id), directory);
-      assertEqual(await executeTaskCommitAndPush(id), result);
-      assertDeepEqual(calls.status, [[id, directory], [id, directory], ["__root__", "/unrelated-root"]]);
-      assertDeepEqual(calls.diff, [[id, directory]]);
-      assertDeepEqual(calls.worktreeDiff, []);
-      assertEqual(calls.commit.length, 1);
-      assertEqual(calls.commit[0][0], id);
-      assertEqual(calls.commit[0][1], "feat(src): update task");
-      assertDeepEqual(calls.commit[0][2], { push: true, directory, sessionDiffs: diffs });
-      assertEqual(calls.commit[0][2]?.sessionDiffs, diffs, "must forward the original snapshot array");
-      assertDeepEqual(calls.push, []);
-    });
-  });
-
-  it("forwards an empty snapshot array without falling back to worktree diffs", async () => {
-    await withCommitFixture(async ({ id, diffs, calls }) => {
-      diffs.length = 0;
-      await executeTaskCommitAndPush(id);
-      assertEqual(calls.commit.length, 1);
-      assertEqual(calls.commit[0][2]?.sessionDiffs, diffs);
-      assertDeepEqual(calls.commit[0][2]?.sessionDiffs, []);
-      assertDeepEqual(calls.diff, [[id, sessionDirectory(id)]]);
+      assertEqual(await executeTaskCommitAndPush(id), id, "returns dispatch ID, not a Git result");
+      assertEqual(calls.send.length, 1);
+      const [target, prompt, options] = calls.send[0];
+      assertEqual(target, id);
+      assertEqual(prompt, [
+        t("timeline.gitAgentCommitPrompt", { directory: JSON.stringify(directory) }),
+        t("timeline.gitAgentCommitPushPrompt"),
+      ].join("\n\n"));
+      assertEqual(options?.directory, directory);
+      assertDeepEqual(options?.model, backgroundAI.model);
+      assertEqual(options?.variant, "high");
+      assertEqual(options?.agent, "build");
+      assertEqual(workspace.activeSessionID, "ses_other");
+      assertDeepEqual(workspace.aiBySession.ses_other, activeAI);
+      assertDeepEqual(workspace.aiBySession[id], backgroundAI, "build override must not replace the saved agent");
+      assertEqual(workspace.statusBySession[id]?.type, "busy");
+      const optimistic = workspace.messagesBySession[id].at(-1)!;
+      assertEqual(optimistic.info.agent, "build");
+      assertDeepEqual(optimistic.parts.map((part) => part.type === "text" ? part.text : ""), [prompt]);
       assertDeepEqual(calls.worktreeDiff, []);
     });
   });
 
-  it("supports commit-only with a trimmed custom message and original snapshots", async () => {
-    await withCommitFixture(async ({ id, directory, diffs, calls }) => {
-      await executeTaskCommitAndPush(id, { push: false, customMessage: "  fix: task  " });
-      assertDeepEqual(calls.commit, [[id, "fix: task", { push: false, directory, sessionDiffs: diffs }]]);
-      assertEqual(calls.commit[0][2]?.sessionDiffs, diffs);
-      assertDeepEqual(calls.push, []);
-      assertDeepEqual(calls.worktreeDiff, []);
-    });
-  });
-
-  for (const field of ["before", "after", "status"] as const) {
-    it(`rejects snapshots missing ${field} without committing or pushing`, async () => {
+  for (const snapshot of ["empty", "missing", "before", "after", "status"] as const) {
+    it(`dispatches despite ${snapshot} snapshots without inspecting Git APIs`, async () => {
       await withCommitFixture(async ({ id, diffs, calls }) => {
-        delete diffs[0][field];
-        await assertRejects(() => executeTaskCommitAndPush(id), t("timeline.gitSessionDiffUnavailable"));
-        assertEqual(calls.diff.length, 1);
-        assertDeepEqual(calls.commit, []);
-        assertDeepEqual(calls.push, []);
+        if (snapshot === "empty") diffs.length = 0;
+        else if (snapshot !== "missing") delete diffs[0][snapshot];
+        setWorkspace("diffsBySession", reconcile(snapshot === "missing" ? {} : { [id]: diffs }));
+        hoxiAPI.getSessionDiff = async (...args) => {
+          calls.diff.push(args);
+          throw new Error("snapshot fetch unavailable");
+        };
+        assertEqual(await executeTaskCommitAndPush(id, { push: false }), id);
+        assertEqual(calls.send.length, 1);
         assertDeepEqual(calls.worktreeDiff, []);
       });
     });
   }
 
-  it("propagates snapshot fetch failures without committing, pushing or falling back", async () => {
-    await withCommitFixture(async ({ id, calls }) => {
-      hoxiAPI.getSessionDiff = async () => { throw new Error("snapshot fetch failed"); };
-      await assertRejects(() => executeTaskCommitAndPush(id), "snapshot fetch failed");
-      assertDeepEqual(calls.commit, []);
-      assertDeepEqual(calls.push, []);
-      assertDeepEqual(calls.worktreeDiff, []);
-    });
-  });
-
-  it("rejects empty snapshots for commit-only without any fallback", async () => {
-    await withCommitFixture(async ({ id, diffs, calls }) => {
-      diffs.length = 0;
-      await assertRejects(() => executeTaskCommitAndPush(id, { push: false }), t("timeline.gitSessionNothingToCommit"));
-      assertDeepEqual(calls.commit, []);
-      assertDeepEqual(calls.push, []);
-      assertDeepEqual(calls.worktreeDiff, []);
-    });
-  });
-
-  it("rejects absent sessions, root scope and runner sessions before calling APIs", async () => {
+  it("rejects absent sessions, root scope and missing directories before dispatch", async () => {
     await withCommitFixture(async ({ id, calls }) => {
       setWorkspace("activeSessionID", null);
       for (const sessionID of [undefined, null, "", "__root__"]) {
         await assertRejects(() => executeTaskCommitAndPush(sessionID), t("timeline.gitSessionRequired"));
       }
-      for (const sessionID of ["ses_agy_fixture", "ses_cld_fixture"]) {
-        await assertRejects(() => executeTaskCommitAndPush(sessionID), t("timeline.gitSessionDiffUnavailable"));
-      }
-      setWorkspace("sessions", (session) => session.id === id, "runtime", "claude-code");
-      await assertRejects(() => executeTaskCommitAndPush(id), t("timeline.gitSessionDiffUnavailable"));
-      assertDeepEqual(calls, { status: [], diff: [], worktreeDiff: [], commit: [], push: [] });
+      setWorkspace("rootDir", "");
+      setWorkspace("sessions", (session) => session.id === id, "directory", "");
+      await assertRejects(() => executeTaskCommitAndPush(id), t("timeline.gitSessionRequired"));
+      assertDeepEqual(calls.send, []);
+      assertDeepEqual(calls.worktreeDiff, []);
     });
   });
 
-  it("only pushes a clean worktree using the session directory", async () => {
-    await withCommitFixture(async ({ id, directory, calls, result }) => {
-      hoxiAPI.getWorktreeStatus = async (sessionID, dir) => ({
-        sessionID, directory: dir || "", isolated: true, dirty: false,
-        changedFiles: 0, uncommittedLines: 0, additions: 0, deletions: 0,
+  for (const runtime of ["claude-code", "antigravity"] as const) {
+    it(`allows ${runtime} runner sessions to dispatch a build task`, async () => {
+      await withCommitFixture(async ({ id, directory, calls }) => {
+        setWorkspace("sessions", (session) => session.id === id, "runtime", runtime);
+        setWorkspace("aiBySession", id, "model", { providerID: runtime, modelID: "runner-model" });
+        assertEqual(await executeTaskCommitAndPush(id), id);
+        assertEqual(calls.send.length, 1);
+        assertEqual(calls.send[0][2]?.runtime, runtime);
+        assertEqual(calls.send[0][2]?.agent, "build");
+        assertEqual(calls.send[0][2]?.directory, directory);
       });
-      assertEqual(await executeTaskCommitAndPush(id), result);
-      assertDeepEqual(calls.push, [[id, directory]]);
-      assertDeepEqual(calls.commit, []);
-      assertDeepEqual(calls.diff, []);
+    });
+  }
+
+  it("uses commit-only instructions and JSON-encodes a trimmed custom message", async () => {
+    await withCommitFixture(async ({ id, directory, calls }) => {
+      const message = 'fix: handle "quoted" paths\n\nKeep \\ escapes';
+      assertEqual(await executeTaskCommitAndPush(id, { push: false, customMessage: ` \n${message}\t ` }), id);
+      assertEqual(calls.send.length, 1);
+      assertEqual(calls.send[0][1], [
+        t("timeline.gitAgentCommitPrompt", { directory: JSON.stringify(directory) }),
+        t("timeline.gitAgentCommitOnlyPrompt"),
+        t("timeline.gitAgentCommitMessagePrompt", { message: JSON.stringify(message) }),
+      ].join("\n\n"));
+    });
+  });
+
+  it("omits a blank custom message and supports explicit push", async () => {
+    await withCommitFixture(async ({ id, directory, calls }) => {
+      assertEqual(await executeTaskCommitAndPush(id, { push: true, customMessage: " \n\t " }), id);
+      assertEqual(calls.send.length, 1);
+      assertEqual(calls.send[0][1], [
+        t("timeline.gitAgentCommitPrompt", { directory: JSON.stringify(directory) }),
+        t("timeline.gitAgentCommitPushPrompt"),
+      ].join("\n\n"));
+    });
+  });
+
+  it("propagates dispatch failures and rolls back the optimistic turn", async () => {
+    await withCommitFixture(async ({ id, calls }) => {
+      const messages = structuredClone(unwrap(workspace.messagesBySession[id]));
+      hoxiAPI.sendPromptAsync = async (...args) => {
+        calls.send.push(args);
+        throw new Error("dispatch failed");
+      };
+      await assertRejects(() => executeTaskCommitAndPush(id), "dispatch failed");
+      assertEqual(calls.send.length, 1);
+      assertDeepEqual(workspace.messagesBySession[id], messages);
+      assertEqual(workspace.statusBySession[id]?.type, "idle");
       assertDeepEqual(calls.worktreeDiff, []);
-      await assertRejects(() => executeTaskCommitAndPush(id, { push: false }), t("timeline.gitSessionNothingToCommit"));
-      assertDeepEqual(calls.push, [[id, directory]]);
-      assertDeepEqual(calls.commit, []);
+    });
+  });
+
+  it("requires privacy consent before dispatch or optimistic updates", async () => {
+    await withCommitFixture(async ({ id, calls }) => {
+      const messages = structuredClone(unwrap(workspace.messagesBySession[id]));
+      setPrivacy({ accepted: false, dialogOpen: false });
+      await assertRejects(() => executeTaskCommitAndPush(id), t("privacy.consentRequired"));
+      assertEqual(privacy.dialogOpen, true);
+      assertDeepEqual(calls.send, []);
+      assertDeepEqual(workspace.messagesBySession[id], messages);
+      assertEqual(workspace.statusBySession[id], undefined);
+      assertDeepEqual(calls.worktreeDiff, []);
+    });
+  });
+
+  it("passes sessionDirectory(id) when generateSmartCommitMessage fetches uncached worktree diffs", async () => {
+    await withCommitFixture(async ({ id, directory, diffs, calls }) => {
+      setWorkspace("diffsBySession", reconcile({}));
+      hoxiAPI.getWorktreeDiff = async (...args) => {
+        calls.worktreeDiff.push(args);
+        return diffs;
+      };
+      const msg = await generateSmartCommitMessage(id);
+      assertEqual(msg, "feat(src): update task");
+      assertDeepEqual(calls.worktreeDiff, [[id, directory]]);
     });
   });
 });

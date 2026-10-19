@@ -1,15 +1,12 @@
 // web/src/store/git-commit.ts
 import { createSignal } from "solid-js";
 import { locale, t } from "../i18n";
-import { hoxiAPI, isRunnerSessionID, type CommitAndPushResponse } from "../services/api";
+import { hoxiAPI } from "../services/api";
 import type { MessagePart, SnapshotFileDiff } from "../services/sse-types";
-import { isModelFree } from "./workspace-providers";
+import { isModelFree } from "./provider-catalog";
 import {
-  loadSessionMessages,
-  refreshWorktreeStatus,
   sessionDirectory,
-  sessionRuntimeForID,
-  setWorkspace,
+  submitSessionPrompt,
   workspace,
   type SelectedModel,
 } from "./workspace";
@@ -256,7 +253,7 @@ export async function generateSmartCommitMessage(
   const key = activeID || "__root__";
   let diffs = providedDiffs ?? workspace.diffsBySession[key] ?? [];
   if (providedDiffs === undefined && diffs.length === 0) {
-    const dirArg = key === "__root__" ? workspace.rootDir || undefined : undefined;
+    const dirArg = key === "__root__" ? workspace.rootDir || undefined : sessionDirectory(key);
     diffs = await hoxiAPI.getWorktreeDiff(key, dirArg).catch(() => [] as SnapshotFileDiff[]);
   }
 
@@ -300,48 +297,19 @@ export async function generateSmartCommitMessage(
 export async function executeTaskCommitAndPush(
   sessionID?: string | null,
   options?: { push?: boolean; customMessage?: string }
-): Promise<CommitAndPushResponse> {
+): Promise<string> {
   const activeID = sessionID ?? workspace.activeSessionID;
-  const key = activeID || "__root__";
-  const shouldPush = options?.push ?? true;
   if (!activeID || activeID === "__root__") {
     throw new Error(t("timeline.gitSessionRequired"));
   }
-  if (isRunnerSessionID(activeID) || sessionRuntimeForID(activeID) !== "opencode") {
-    throw new Error(t("timeline.gitSessionDiffUnavailable"));
-  }
-  const dirArg = sessionDirectory(activeID);
-  if (!dirArg) throw new Error(t("timeline.gitSessionRequired"));
-
-  const st = await hoxiAPI.getWorktreeStatus(key, dirArg);
-  let res: CommitAndPushResponse;
-
-  if (st.dirty) {
-    // Fetch authoritative snapshots, never the display cache or worktree fallback.
-    const diffs = await hoxiAPI.getSessionDiff(activeID, dirArg);
-    if (diffs.some((diff) => typeof diff.before !== "string" || typeof diff.after !== "string" || !diff.status)) {
-      throw new Error(t("timeline.gitSessionDiffUnavailable"));
-    }
-    if (diffs.length === 0 && !shouldPush) throw new Error(t("timeline.gitSessionNothingToCommit"));
-    const msg =
-      options?.customMessage?.trim() ||
-      (await generateSmartCommitMessage(activeID, diffs));
-    res = await hoxiAPI.commitWorktree(key, msg, {
-      push: shouldPush,
-      directory: dirArg,
-      sessionDiffs: diffs,
-    });
-  } else if (shouldPush) {
-    res = await hoxiAPI.pushWorktree(key, dirArg);
-  } else {
-    throw new Error(t("timeline.gitSessionNothingToCommit"));
-  }
-
-  setWorkspace("inspectedDiffFile", null);
-  await refreshWorktreeStatus(activeID);
-  await refreshWorktreeStatus("__root__");
-  if (activeID) {
-    await loadSessionMessages(activeID).catch(() => {});
-  }
-  return res;
+  const directory = sessionDirectory(activeID);
+  if (!directory) throw new Error(t("timeline.gitSessionRequired"));
+  const customMessage = options?.customMessage?.trim();
+  const prompt = [
+    t("timeline.gitAgentCommitPrompt", { directory: JSON.stringify(directory) }),
+    t(options?.push === false ? "timeline.gitAgentCommitOnlyPrompt" : "timeline.gitAgentCommitPushPrompt"),
+    customMessage ? t("timeline.gitAgentCommitMessagePrompt", { message: JSON.stringify(customMessage) }) : "",
+  ].filter(Boolean).join("\n\n");
+  // Dispatch is not completion; the agent reports actual Git results in the timeline.
+  return submitSessionPrompt(prompt, activeID, { agent: "build" });
 }

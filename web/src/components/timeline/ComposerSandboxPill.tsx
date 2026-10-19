@@ -1,5 +1,5 @@
 // web/src/components/timeline/ComposerSandboxPill.tsx
-import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, onCleanup, Show } from "solid-js";
 import {
   ArrowUpFromLine,
   Check,
@@ -10,17 +10,12 @@ import {
   GitCommitHorizontal,
   GitFork,
   LoaderCircle,
-  Sparkles,
 } from "lucide-solid";
 import {
-  commitModelSpec,
   executeTaskCommitAndPush,
-  getConnectedProviderModelGroups,
   openDiffInInspector,
   refreshWorktreeStatus,
-  resolveEffectiveCommitModel,
   sessionRuntimeForID,
-  setCommitModelSpec,
   workspace,
 } from "../../store/workspace";
 import { isRunnerSessionID } from "../../services/api";
@@ -80,30 +75,15 @@ export function ComposerSandboxPill(props: {
     () => isDirty() || aheadCount() > 0 || (Boolean(gitBranch()) && !activeWorktree()?.hasUpstream)
   );
 
-  const connectedModelGroups = createMemo(() => getConnectedProviderModelGroups());
-
-  const resolvedModelBadge = createMemo(() => {
-    if (commitModelSpec() === "none") return null;
-    const m = resolveEffectiveCommitModel();
-    return m ? m.modelID : null;
-  });
-
   const handleGitCommitAction = async (push: boolean) => {
-    if (gitAction()) return;
+    if (gitAction() || props.busy || props.switching) return;
     const mode = !isDirty() && push ? "push" : push ? "commit-push" : "commit";
     setGitAction(mode);
     setErrorMsg(null);
     setToastMsg(null);
     try {
-      const res = await executeTaskCommitAndPush(props.sessionID, { push });
-      const hash = res.commit || "HEAD";
-      if (mode === "push") {
-        setToastMsg(t("timeline.gitPushSuccess", { branch: res.branch || gitBranch() }));
-      } else if (push) {
-        setToastMsg(t("timeline.gitCommitAndPushSuccess", { hash }));
-      } else {
-        setToastMsg(t("timeline.gitCommitSuccess", { hash }));
-      }
+      await executeTaskCommitAndPush(props.sessionID, { push });
+      setToastMsg(t("timeline.gitTaskRequested"));
       setTimeout(() => setToastMsg(null), 4000);
     } catch (err: any) {
       setErrorMsg(err?.message || String(err));
@@ -259,7 +239,7 @@ export function ComposerSandboxPill(props: {
             <div class="flex items-center gap-1.5">
               <button
                 type="button"
-                disabled={!canCommitOrPush() || Boolean(gitAction()) || props.busy}
+                disabled={!canCommitOrPush() || Boolean(gitAction()) || props.busy || props.switching}
                 onClick={() => void handleGitCommitAction(true)}
                 class="flex-1 min-w-0 flex items-center justify-between gap-1.5 rounded-xl bg-[var(--accent-primary)] px-2.5 py-1.5 text-[12px] font-medium text-[var(--accent-foreground)] hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-opacity cursor-pointer"
               >
@@ -296,7 +276,7 @@ export function ComposerSandboxPill(props: {
               <Show when={isDirty()}>
                 <button
                   type="button"
-                  disabled={Boolean(gitAction()) || props.busy}
+                  disabled={Boolean(gitAction()) || props.busy || props.switching}
                   onClick={() => void handleGitCommitAction(false)}
                   title={t("timeline.gitCommitOnly")}
                   class="shrink-0 inline-flex items-center gap-1 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] px-2.5 py-1.5 text-[11.5px] font-medium text-[var(--text-primary)] disabled:opacity-40 transition-colors cursor-pointer"
@@ -312,46 +292,9 @@ export function ComposerSandboxPill(props: {
               </Show>
             </div>
 
-            {/* Cheap Model / No-Model Selector for Commit Message */}
-            <div class="flex items-center justify-between gap-2 px-1 py-0.5">
-              <span class="inline-flex items-center gap-1 text-[11px] text-[var(--text-muted)] shrink-0">
-                <Sparkles size={11} class="text-[var(--accent-primary)]" />
-                <span>{t("timeline.gitCommitModelLabel")}</span>
-              </span>
-
-              <select
-                value={commitModelSpec()}
-                onChange={(e) => setCommitModelSpec(e.currentTarget.value)}
-                title={
-                  resolvedModelBadge()
-                    ? `${t("timeline.gitCommitModelLabel")}: ${resolvedModelBadge()}`
-                    : t("timeline.gitCommitModelNone")
-                }
-                class="max-w-[175px] flex-1 truncate rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-2 py-0.5 text-[11px] font-medium text-[var(--text-secondary)] outline-none focus:border-[var(--accent-primary)] cursor-pointer"
-              >
-                <option value="">
-                  {t("timeline.gitCommitModelFollowSmall")}
-                  {resolvedModelBadge() && commitModelSpec() === ""
-                    ? ` · ${resolvedModelBadge()}`
-                    : ""}
-                </option>
-                <option value="none">{t("timeline.gitCommitModelNone")}</option>
-                <For each={connectedModelGroups()}>
-                  {(grp) => (
-                    <optgroup label={grp.providerName}>
-                      <For each={grp.models}>
-                        {(m) => (
-                          <option value={m.fullKey}>
-                            {m.name}
-                            {m.free ? ` [${t("models.freeModel")}]` : ""}
-                          </option>
-                        )}
-                      </For>
-                    </optgroup>
-                  )}
-                </For>
-              </select>
-            </div>
+            <p class="px-1 py-0.5 text-[11px] leading-snug text-[var(--text-muted)]">
+              {t("timeline.gitAgentCommitHint")}
+            </p>
           </div>
 
           {/* Git Branch, Diff Review & Session Fork */}
