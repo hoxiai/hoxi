@@ -273,13 +273,39 @@ export async function loadSessionMessages(sessionID: string): Promise<void> {
 
 const diffRevisions = new Map<string, number>();
 
+function areDiffListsEqual(prev: SnapshotFileDiff[] | undefined, next: SnapshotFileDiff[]): boolean {
+  if (!prev || prev.length !== next.length) return false;
+  for (let i = 0; i < prev.length; i++) {
+    const a = prev[i];
+    const b = next[i];
+    if (
+      a.file !== b.file || a.status !== b.status || a.additions !== b.additions ||
+      a.deletions !== b.deletions || a.stamp !== b.stamp || a.patch !== b.patch ||
+      a.before !== b.before || a.after !== b.after || a.large !== b.large ||
+      a.generatedLike !== b.generatedLike || a.repo !== b.repo || a.branch !== b.branch
+    ) return false;
+  }
+  return true;
+}
+
+function setDiffListIfChanged(
+  field: "diffsBySession" | "worktreeDiffsBySession", key: string, next: SnapshotFileDiff[]
+): void {
+  if (!areDiffListsEqual(workspace[field][key], next)) {
+    setWorkspace(field, key, next);
+  }
+}
+
 export function applySessionDiffEvent(sessionID: string, diffs: SnapshotFileDiff[]): void {
   if (isSessionDeleted(sessionID)) return;
   diffRevisions.set(sessionID, (diffRevisions.get(sessionID) ?? 0) + 1);
-  setWorkspace("diffsBySession", sessionID, diffs);
+  setDiffListIfChanged("diffsBySession", sessionID, diffs);
 }
 
-export async function refreshSessionDiff(sessionID: string): Promise<void> {
+export async function refreshSessionDiff(
+  sessionID: string,
+  preloadedWorktreeDiffs?: SnapshotFileDiff[]
+): Promise<void> {
   const directory = sessionDirectory(sessionID);
   const revision = (diffRevisions.get(sessionID) ?? 0) + 1;
   diffRevisions.set(sessionID, revision);
@@ -291,9 +317,9 @@ export async function refreshSessionDiff(sessionID: string): Promise<void> {
     const meta = workspace.worktreeBySession[sessionID];
     // Only an isolated worktree can safely attribute directory-wide changes to this session.
     if (!diffs.length && meta?.isolated && meta.dirty && meta.directory === directory) {
-      diffs = await hoxiAPI.getWorktreeDiff(sessionID, directory);
+      diffs = preloadedWorktreeDiffs ?? (await hoxiAPI.getWorktreeDiff(sessionID, directory));
     }
-    if (isCurrent()) setWorkspace("diffsBySession", sessionID, diffs);
+    if (isCurrent()) setDiffListIfChanged("diffsBySession", sessionID, diffs);
   } catch (err) {
     console.error("refresh session diff failed:", err);
   }
@@ -464,11 +490,11 @@ export async function refreshWorktreeStatus(sessionID?: string | null): Promise<
     if (key === "__root__" || key === workspace.activeSessionID) {
       const diffs = st.dirty ? await hoxiAPI.getWorktreeDiff(key, dirArg) : [];
       if (!isCurrentScope()) return;
-      setWorkspace("worktreeDiffsBySession", key, diffs);
+      setDiffListIfChanged("worktreeDiffsBySession", key, diffs);
       if (key === "__root__") {
-        setWorkspace("diffsBySession", key, diffs);
+        setDiffListIfChanged("diffsBySession", key, diffs);
       } else {
-        await refreshSessionDiff(key);
+        await refreshSessionDiff(key, diffs);
       }
     }
   } catch (err) {

@@ -6,7 +6,7 @@ import {
   activeDirectory,
   appSettings,
   generateSmartCommitMessage,
-  loadSessionMessages,
+  loadSessionMessagesOnly,
   refreshWorktreeStatus,
   restoreSessionWorktree,
   runSessionCodeAudit,
@@ -15,7 +15,10 @@ import {
   updateAppSetting,
   workspace,
 } from "../../store/workspace";
-import { collectCycleChangedFiles } from "../timeline/tool-card-state";
+import {
+  collectCycleChangedFiles,
+  enrichDiffWithWorktree,
+} from "../timeline/tool-card-state";
 import { t } from "../../i18n";
 import ObserverAuditBanner from "./ObserverAuditBanner";
 import DiffEmptyState from "./pierre-diff-empty";
@@ -70,13 +73,20 @@ export default function PierreDiffViewer() {
 
   const diffs = createMemo(() => {
     const id = workspace.activeSessionID;
+    const key = sessionKey();
+    const wtDiffs = workspace.worktreeDiffsBySession[key] ?? [];
     if (workspace.diffScope === "worktree") {
-      return workspace.worktreeDiffsBySession[sessionKey()] ?? [];
+      return wtDiffs;
     }
+    const isolated = activeWt()?.isolated;
     const sessionDiffs = id
       ? workspace.diffsBySession[id] ?? []
-      : workspace.diffsBySession[sessionKey()] ?? [];
-    if (sessionDiffs.length > 0 || !id) return sessionDiffs;
+      : workspace.diffsBySession[key] ?? [];
+    if (sessionDiffs.length > 0 || !id) {
+      return wtDiffs.length > 0
+        ? sessionDiffs.map((d) => enrichDiffWithWorktree(d, wtDiffs, isolated))
+        : sessionDiffs;
+    }
     const turns = workspace.messagesBySession[id] ?? [];
     return turns.length > 0 ? collectCycleChangedFiles(turns, id) : sessionDiffs;
   });
@@ -145,10 +155,10 @@ export default function PierreDiffViewer() {
     setRefreshing(true);
     try {
       const id = workspace.activeSessionID;
-      if (id) {
-        await loadSessionMessages(id);
-      }
-      await refreshWorktreeStatus(id);
+      await Promise.all([
+        id ? loadSessionMessagesOnly(id) : Promise.resolve(),
+        refreshWorktreeStatus(id),
+      ]);
     } catch (err) {
       console.error(err);
     } finally {
@@ -177,7 +187,7 @@ export default function PierreDiffViewer() {
       setTimeout(() => setCommittedHash(null), 4000);
       await refreshWorktreeStatus(workspace.activeSessionID);
       if (workspace.activeSessionID) {
-        await loadSessionMessages(workspace.activeSessionID);
+        await loadSessionMessagesOnly(workspace.activeSessionID);
       }
     } catch (err) {
       console.error("commitWorktree failed:", err);
