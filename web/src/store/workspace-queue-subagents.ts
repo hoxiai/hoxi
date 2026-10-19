@@ -143,6 +143,7 @@ export async function drainNextQueuedPrompt(sessionID: string): Promise<void> {
       effort: next.effort,
       attachments: next.attachments,
       forceImmediate: true,
+      followTimeline: false,
     });
   } catch (err) {
     console.error("drainNextQueuedPrompt failed:", err);

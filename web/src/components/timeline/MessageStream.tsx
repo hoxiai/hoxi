@@ -5,6 +5,7 @@ import {
   createSignal,
   For,
   Index,
+  on,
   onCleanup,
   onMount,
   Show,
@@ -17,6 +18,7 @@ import {
   forkFromMessage,
   revertToHere,
   stopSessionTask,
+  timelineFollowRequest,
   workspace,
 } from "../../store/workspace";
 import { Icon } from "../icons";
@@ -34,7 +36,6 @@ import {
   createTurnWindow,
   EarlierTurnsBanner,
   filterVisibleTurnsByRevert,
-  turnContentVisibilityClass,
 } from "./turn-window";
 import TaskTimelineBar from "./TaskTimelineBar";
 import { SubagentSessionBanner } from "./AgentStackPill";
@@ -173,35 +174,27 @@ export default function MessageStream(props: { hidden?: boolean }) {
     scroll,
     ensureTurnVisible: turnWindow.ensureTurnVisible,
   });
-  let previousSessionID: string | null = null;
-  let previousPromptID: string | undefined;
   let promptFollowFrame: number | undefined;
 
   onCleanup(() => {
     if (promptFollowFrame !== undefined) cancelAnimationFrame(promptFollowFrame);
   });
 
-  createEffect(() => {
-    const sessionID = workspace.activeSessionID;
-    const promptID = turns().findLast((turn) => turn.info.role === "user")?.info.id;
-    if (sessionID === previousSessionID && promptID !== previousPromptID && promptID?.startsWith("optimistic_")) {
-      sessionScroll.interrupt();
-      scroll.resume();
-      // The optimistic turn and the first assistant activity are committed in
-      // separate reactive updates. Re-anchor after both layout passes so the
-      // new execution tail stays visible instead of restoring the old offset.
-      scroll.jumpToBottom();
-      if (promptFollowFrame !== undefined) cancelAnimationFrame(promptFollowFrame);
-      promptFollowFrame = requestAnimationFrame(() => {
-        promptFollowFrame = undefined;
-        if (workspace.activeSessionID === sessionID) {
-          scroll.jumpToBottom();
-        }
-      });
-    }
-    previousSessionID = sessionID;
-    previousPromptID = promptID;
-  });
+  // A prompt the user just sent (or queued) always brings the live tail back into
+  // view, even when they had scrolled up; automatic queue drains do not.
+  createEffect(on(timelineFollowRequest, (request) => {
+    const sessionID = request?.sessionID;
+    if (!sessionID || sessionID !== workspace.activeSessionID) return;
+    sessionScroll.interrupt();
+    scroll.jumpToBottom();
+    // The optimistic turn and the first assistant activity are committed in
+    // separate reactive updates; re-anchor once more after the next layout pass.
+    if (promptFollowFrame !== undefined) cancelAnimationFrame(promptFollowFrame);
+    promptFollowFrame = requestAnimationFrame(() => {
+      promptFollowFrame = undefined;
+      if (workspace.activeSessionID === sessionID) scroll.jumpToBottom();
+    });
+  }, { defer: true }));
 
   createEffect(() => {
     if (appSettings.autoScrollStream) scroll.schedule();
@@ -295,6 +288,14 @@ export default function MessageStream(props: { hidden?: boolean }) {
     };
     window.addEventListener("keydown", onWindowKeyDown);
     onCleanup(() => window.removeEventListener("keydown", onWindowKeyDown));
+    // Scrollbar drags can be released outside the transcript.
+    const endPointerScroll = () => scroll.setPointerScrolling(false);
+    window.addEventListener("pointerup", endPointerScroll);
+    window.addEventListener("pointercancel", endPointerScroll);
+    onCleanup(() => {
+      window.removeEventListener("pointerup", endPointerScroll);
+      window.removeEventListener("pointercancel", endPointerScroll);
+    });
   });
 
   const isEmpty = () => turns().length === 0 && pendingForSession().length === 0;
@@ -327,15 +328,30 @@ export default function MessageStream(props: { hidden?: boolean }) {
     <div
       ref={scroller}
       onScroll={onScroll}
-      onWheel={() => { sessionScroll.interrupt(); transcriptControls.markIntent(); }}
+      onWheel={(event) => {
+        sessionScroll.interrupt();
+        transcriptControls.markIntent();
+        // Stop following before the async scroll lands, or the next resize re-anchors.
+        if (event.deltaY < 0 && scroller && scroller.scrollTop > 0) scroll.pause();
+      }}
+      onTouchStart={() => scroll.setPointerScrolling(true)}
+      onTouchEnd={() => scroll.setPointerScrolling(false)}
+      onTouchCancel={() => scroll.setPointerScrolling(false)}
       onTouchMove={() => { sessionScroll.interrupt(); transcriptControls.markIntent(); }}
-      onPointerDown={() => { sessionScroll.interrupt(); transcriptControls.startPointer(); }}
+      onPointerDown={() => {
+        sessionScroll.interrupt();
+        transcriptControls.startPointer();
+        scroll.setPointerScrolling(true);
+      }}
       onPointerUp={() => transcriptControls.endPointer()}
       onPointerCancel={() => transcriptControls.endPointer()}
       onKeyDown={(event) => {
         if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) {
           transcriptControls.markIntent();
           sessionScroll.interrupt();
+          if (["ArrowUp", "PageUp", "Home"].includes(event.key) || (event.key === " " && event.shiftKey)) {
+            scroll.pause();
+          }
         }
       }}
       class="timeline-result-scroll relative h-full min-h-0 overflow-y-auto overflow-x-hidden"
@@ -387,10 +403,7 @@ export default function MessageStream(props: { hidden?: boolean }) {
                     {/* Kilo-style Right-Aligned User Message Bubble */}
                     <div
                       data-turn-id={turn.info.id}
-                      class={`group/turn flex flex-col items-end rounded-xl transition-colors ${turnContentVisibilityClass(
-                        globalIndex(),
-                        turns().length
-                      )} ${
+                      class={`group/turn flex flex-col items-end rounded-xl transition-colors ${
                         idx() === 0 ? "mt-0" : "mt-5"
                       } ${
                         activeMatchTurnID() === turn.info.id
@@ -514,13 +527,13 @@ export default function MessageStream(props: { hidden?: boolean }) {
     </div>
           <button
             type="button"
-            onClick={() => { sessionScroll.interrupt(); scroll.jumpToBottom(); }}
+             onClick={() => { sessionScroll.interrupt(); scroll.smoothToBottom(); }}
             title={t("timeline.scrollToBottom")}
             aria-label={t("timeline.scrollToBottom")}
             aria-hidden={!scroll.awayFromBottom()}
             disabled={!scroll.awayFromBottom()}
             tabIndex={scroll.awayFromBottom() ? 0 : -1}
-            class="absolute bottom-3 left-1/2 z-20 flex h-9 w-9 -translate-x-1/2 items-center justify-center rounded-full border border-[var(--border-subtle)] bg-[var(--bg-elevated)] text-[var(--text-secondary)] shadow-lg transition-[opacity,translate,scale,background-color,color,box-shadow] duration-200 ease-out motion-safe:enabled:hover:-translate-y-0.5 motion-safe:enabled:hover:scale-105 enabled:hover:shadow-xl enabled:hover:bg-[var(--bg-hover)] enabled:hover:text-[var(--text-primary)] motion-safe:enabled:active:translate-y-0 motion-safe:enabled:active:scale-95 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent-primary)] motion-reduce:transition-none motion-reduce:translate-y-0 motion-reduce:scale-100 cursor-pointer"
+             class="absolute bottom-3 left-1/2 z-20 flex h-9 w-9 -translate-x-1/2 items-center justify-center rounded-full border border-[var(--border-subtle)] bg-[var(--bg-elevated)] text-[var(--text-secondary)] shadow-lg transition-[opacity,translate,scale,background-color,color,box-shadow] duration-300 ease-in-out motion-safe:enabled:hover:-translate-y-0.5 motion-safe:enabled:hover:scale-105 enabled:hover:shadow-xl enabled:hover:bg-[var(--bg-hover)] enabled:hover:text-[var(--text-primary)] motion-safe:enabled:active:translate-y-0 motion-safe:enabled:active:scale-95 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent-primary)] motion-reduce:transition-none motion-reduce:translate-y-0 motion-reduce:scale-100 cursor-pointer"
             classList={{
               "opacity-100 translate-y-0 scale-100": scroll.awayFromBottom(),
               "opacity-0 translate-y-2 scale-90 pointer-events-none": !scroll.awayFromBottom(),

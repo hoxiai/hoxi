@@ -128,118 +128,97 @@ export function groupAssistantParts(parts: MessagePart[]): TurnRenderItem[] {
 
 export interface MergedTurnResolution {
   effectiveParts: MessagePart[];
+  /** Later turns whose leading work this turn renders inside its own trailing group. */
   carriedTurnIDs: string[];
   isVisuallyEmpty: boolean;
   isFirstVisualTurnInCycle: boolean;
   isCycleEnd: boolean;
+  /** This turn's trailing work run is still open at the end of the transcript. */
+  ownsLiveTail: boolean;
 }
+
+const isRenderablePart = (part: MessagePart) => isWorkPart(part) || isVisibleTextPart(part);
 
 /**
  * Aggregates contiguous work parts (`reasoning` + `tool`) across consecutive
- * assistant turns within the same user prompt cycle so intermediate tool-call
- * turns collapse into a single unified Execution Activity Bar instead of
- * rendering dozens of separate rows.
+ * assistant turns within the same user prompt cycle into a single Execution
+ * Activity Bar.
+ *
+ * The run is anchored at the turn where it started: later work-only turns fold
+ * forward into that anchor instead of the anchor moving to the newest turn. New
+ * steps therefore only append parts to an already-mounted group, so streaming
+ * never unmounts and rebuilds the group DOM (which caused flashes and height
+ * jumps on every step).
  */
 export function resolveMergedTurnParts(
   allTurns: MessageTurn[],
   globalIndex: number,
   minStartIndex = 0
 ): MergedTurnResolution {
-  let cycleStart = globalIndex;
-  while (cycleStart > 0 && allTurns[cycleStart - 1]?.info.role === "assistant") {
-    cycleStart--;
+  const turn = allTurns[globalIndex];
+  const isCycleEnd =
+    globalIndex === allTurns.length - 1 || allTurns[globalIndex + 1]?.info.role !== "assistant";
+  if (!turn || turn.info.role !== "assistant") {
+    return {
+      effectiveParts: turn?.parts ?? [],
+      carriedTurnIDs: [],
+      isVisuallyEmpty: false,
+      isFirstVisualTurnInCycle: true,
+      isCycleEnd,
+      ownsLiveTail: false,
+    };
   }
 
-  let carriedWork: MessagePart[] = [];
-  let carriedTurnIDs: string[] = [];
+  // The nearest earlier mounted turn that renders anything decides whether a work
+  // run is still open (owned by some earlier turn) or was closed by an error.
+  let runOpen = false;
   let hasPriorVisualTurnInCycle = false;
-
-  for (let i = cycleStart; i <= globalIndex; i++) {
-    const t = allTurns[i];
-    if (!t || t.info.role !== "assistant") continue;
-
-    const isCycleEnd =
-      i === allTurns.length - 1 || allTurns[i + 1]?.info.role !== "assistant";
-    const isFlushTurn = isCycleEnd || Boolean(t.info.error);
-
-    let lastTextPartIdx = -1;
-    for (let pIdx = t.parts.length - 1; pIdx >= 0; pIdx--) {
-      if (isVisibleTextPart(t.parts[pIdx])) {
-        lastTextPartIdx = pIdx;
-        break;
-      }
+  for (let i = globalIndex - 1; i >= minStartIndex && allTurns[i]?.info.role === "assistant"; i--) {
+    const prior = allTurns[i];
+    if (prior.info.error) {
+      hasPriorVisualTurnInCycle = true;
+      break;
     }
-
-    if (isFlushTurn) {
-      if (i === globalIndex) {
-        const effectiveParts =
-          carriedWork.length > 0 ? [...carriedWork, ...t.parts] : t.parts;
-        const hasRenderable = effectiveParts.some(
-          (p) => isWorkPart(p) || isVisibleTextPart(p)
-        );
-        return {
-          effectiveParts,
-          carriedTurnIDs,
-          isVisuallyEmpty: !hasRenderable && !t.info.error,
-          isFirstVisualTurnInCycle: !hasPriorVisualTurnInCycle,
-          isCycleEnd,
-        };
-      }
-      if (
-        i >= minStartIndex &&
-        (carriedWork.length > 0 ||
-          t.parts.some((p) => isWorkPart(p) || isVisibleTextPart(p)) ||
-          Boolean(t.info.error))
-      ) {
-        hasPriorVisualTurnInCycle = true;
-      }
-      carriedWork = [];
-      carriedTurnIDs = [];
-      continue;
-    }
-
-    if (lastTextPartIdx === -1) {
-      const ownWork = t.parts.filter(isWorkPart);
-      if (i === globalIndex) {
-        return {
-          effectiveParts: [],
-          carriedTurnIDs: [],
-          isVisuallyEmpty: true,
-          isFirstVisualTurnInCycle: !hasPriorVisualTurnInCycle,
-          isCycleEnd: false,
-        };
-      }
-      if (ownWork.length > 0) {
-        carriedWork.push(...ownWork);
-      }
-      carriedTurnIDs.push(t.info.id);
-    } else {
-      const headSlice = t.parts.slice(0, lastTextPartIdx + 1);
-      const tailWork = t.parts.slice(lastTextPartIdx + 1).filter(isWorkPart);
-      if (i === globalIndex) {
-        return {
-          effectiveParts:
-            carriedWork.length > 0 ? [...carriedWork, ...headSlice] : headSlice,
-          carriedTurnIDs,
-          isVisuallyEmpty: false,
-          isFirstVisualTurnInCycle: !hasPriorVisualTurnInCycle,
-          isCycleEnd: false,
-        };
-      }
-      if (i >= minStartIndex) {
-        hasPriorVisualTurnInCycle = true;
-      }
-      carriedWork = [...tailWork];
-      carriedTurnIDs = tailWork.length > 0 ? [t.info.id] : [];
+    if (prior.parts.some(isRenderablePart)) {
+      runOpen = true;
+      hasPriorVisualTurnInCycle = true;
+      break;
     }
   }
 
+  const firstTextIdx = turn.parts.findIndex(isVisibleTextPart);
+  const error = Boolean(turn.info.error);
+  // Leading work joins the open run; this turn renders from its first visible text.
+  const own = error || !runOpen ? turn.parts : firstTextIdx < 0 ? [] : turn.parts.slice(firstTextIdx);
+  const ownsRun = !error && (runOpen ? firstTextIdx >= 0 : turn.parts.some(isRenderablePart));
+
+  const carriedWork: MessagePart[] = [];
+  const carriedTurnIDs: string[] = [];
+  let ownsLiveTail = false;
+  if (ownsRun) {
+    let i = globalIndex + 1;
+    for (; i < allTurns.length && allTurns[i].info.role === "assistant"; i++) {
+      const next = allTurns[i];
+      if (next.info.error) break;
+      const nextTextIdx = next.parts.findIndex(isVisibleTextPart);
+      const lead = (nextTextIdx < 0 ? next.parts : next.parts.slice(0, nextTextIdx)).filter(isWorkPart);
+      if (lead.length > 0) {
+        carriedWork.push(...lead);
+        carriedTurnIDs.push(next.info.id);
+      }
+      if (nextTextIdx >= 0) break;
+    }
+    ownsLiveTail = i === allTurns.length;
+  }
+
+  const effectiveParts = carriedWork.length > 0 ? [...own, ...carriedWork] : own;
   return {
-    effectiveParts: allTurns[globalIndex]?.parts ?? [],
-    carriedTurnIDs: [],
-    isVisuallyEmpty: false,
-    isFirstVisualTurnInCycle: true,
-    isCycleEnd: true,
+    effectiveParts,
+    carriedTurnIDs,
+    isVisuallyEmpty: !error && !effectiveParts.some(isRenderablePart),
+    isFirstVisualTurnInCycle: !hasPriorVisualTurnInCycle,
+    isCycleEnd,
+    ownsLiveTail,
   };
 }
 
@@ -249,10 +228,14 @@ export function resolveTurnNavigationTarget(turns: MessageTurn[], messageID: str
   const source = turns[sourceIndex];
   if (!source || source.info.role !== "assistant") return messageID;
   const partIDs = new Set(partID ? [partID] : source.parts.map((part) => part.id));
-  for (let index = sourceIndex; index < turns.length && turns[index].info.role === "assistant"; index++) {
+  const ownParts = resolveMergedTurnParts(turns, sourceIndex).effectiveParts;
+  if (source.info.error || ownParts.some((part) => partIDs.has(part.id))) return messageID;
+  let cycleStart = sourceIndex;
+  while (cycleStart > 0 && turns[cycleStart - 1]?.info.role === "assistant") cycleStart--;
+  for (let index = cycleStart; index < turns.length && turns[index].info.role === "assistant"; index++) {
+    if (index === sourceIndex) continue;
     const merged = resolveMergedTurnParts(turns, index);
-    if (merged.effectiveParts.some((part) => partIDs.has(part.id)) ||
-        (index === sourceIndex && source.info.error)) return turns[index].info.id;
+    if (merged.effectiveParts.some((part) => partIDs.has(part.id))) return turns[index].info.id;
   }
   return messageID;
 }
@@ -266,15 +249,14 @@ export function resolveTurnNavigationTarget(turns: MessageTurn[], messageID: str
 export function hasLiveTailWorkGroup(
   cycleTurns: Array<{ info: MessageInfo; parts: MessagePart[] }>
 ): boolean {
-  if (cycleTurns.length === 0) return false;
-  const lastTurn = cycleTurns[cycleTurns.length - 1];
-  if (lastTurn.info.error) return false;
-
-  const { effectiveParts } = resolveMergedTurnParts(cycleTurns, cycleTurns.length - 1);
-  for (let i = effectiveParts.length - 1; i >= 0; i--) {
-    const p = effectiveParts[i];
-    if (isVisibleTextPart(p)) return false;
-    if (isWorkPart(p)) return true;
+  for (let i = cycleTurns.length - 1; i >= 0; i--) {
+    const turn = cycleTurns[i];
+    if (turn.info.role !== "assistant" || turn.info.error) return false;
+    for (let p = turn.parts.length - 1; p >= 0; p--) {
+      const part = turn.parts[p];
+      if (isVisibleTextPart(part)) return false;
+      if (isWorkPart(part)) return true;
+    }
   }
   return false;
 }

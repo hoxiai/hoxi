@@ -33,6 +33,15 @@ function isOptimisticPartID(id: string): boolean {
   return /^prt_(file_)?\d+(_\d+)?$/.test(id);
 }
 
+// Runner user IDs (`msg_u_<ms>_<n>`) and OpenCode IDs (`msg_<hex>`) do not sort
+// against each other as strings ("msg_u" > "msg_1"), so order by creation time.
+function compareTurnOrder(a: MessageInfo, b: MessageInfo): number {
+  const ta = a.time?.created ?? 0;
+  const tb = b.time?.created ?? 0;
+  if (ta && tb && ta !== tb) return ta - tb;
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+}
+
 function bubbleTurnIntoOrder(list: MessageTurn[], idx: number) {
   const current = list[idx];
   if (!current || isOptimisticID(current.info.id)) return;
@@ -48,7 +57,7 @@ function bubbleTurnIntoOrder(list: MessageTurn[], idx: number) {
       }
       break;
     }
-    if (prev.info.id > current.info.id) {
+    if (compareTurnOrder(prev.info, current.info) > 0) {
       list[pos] = prev;
       list[pos - 1] = current;
       pos--;
@@ -64,11 +73,10 @@ export function upsertTurnInfo(list: MessageTurn[], info: MessageInfo) {
   if (info.role === "user" && !isOptimisticID(info.id)) {
     const optIdx = list.findIndex((m) => isOptimisticID(m.info.id));
     if (optIdx >= 0 && idx < 0) {
-      const fallbackParts = list[optIdx].parts.map((p) => ({
-        ...p,
-        messageID: info.id,
-      }));
-      list[optIdx] = { info, parts: fallbackParts };
+      // Promote the optimistic turn in place: a new object would remount the bubble.
+      const turn = list[optIdx];
+      turn.info = info;
+      for (const part of turn.parts) part.messageID = info.id;
       bubbleTurnIntoOrder(list, optIdx);
       return;
     }
@@ -221,15 +229,27 @@ export function mergeServerTurnsInto(
   const hasNewRemoteUserTurn = remoteTurns.some(
     (t) => t.info.role === "user" && !priorRealUserIDs.has(t.info.id)
   );
-  const lastRemoteID =
-    remoteTurns.length > 0 ? remoteTurns[remoteTurns.length - 1].info.id : "";
+  const lastRemote = remoteTurns[remoteTurns.length - 1]?.info;
 
   const remoteIDs = new Set<string>();
   const next: MessageTurn[] = [];
+  let promoted: MessageTurn | undefined;
   for (const remote of remoteTurns) {
     remoteIDs.add(remote.info.id);
     const idx = findMessageIndex(existing, remote.info.id);
     if (idx < 0) {
+      const optimistic = remote.info.role === "user" && !promoted && !priorRealUserIDs.has(remote.info.id)
+        ? existing.find((t) => isOptimisticID(t.info.id))
+        : undefined;
+      if (optimistic) {
+        // Promote the optimistic bubble in place; a fresh object would remount it.
+        promoted = optimistic;
+        optimistic.info = remote.info;
+        if (remote.parts.length > 0) optimistic.parts = remote.parts;
+        else for (const part of optimistic.parts) part.messageID = remote.info.id;
+        next.push(optimistic);
+        continue;
+      }
       next.push({ info: remote.info, parts: remote.parts });
       continue;
     }
@@ -238,12 +258,13 @@ export function mergeServerTurnsInto(
   }
 
   for (const turn of existing) {
-    if (remoteIDs.has(turn.info.id)) continue;
+    if (turn === promoted || remoteIDs.has(turn.info.id)) continue;
     if (isOptimisticID(turn.info.id)) {
       if (!hasNewRemoteUserTurn) next.push(turn);
       continue;
     }
-    if (lastRemoteID && turn.info.id > lastRemoteID) next.push(turn);
+    // Keep turns SSE delivered after the snapshot was taken; dropping them remounts them.
+    if (lastRemote && compareTurnOrder(turn.info, lastRemote) > 0) next.push(turn);
   }
 
   if (

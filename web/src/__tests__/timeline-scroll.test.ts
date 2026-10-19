@@ -47,7 +47,7 @@ describe("Timeline layout following", () => {
       resized();
       assertEqual(scroller.scrollTop, 600);
       assertEqual(scroll.awayFromBottom(), false);
-      assertEqual(frames.size, 1);
+      assertEqual(frames.size, 0);
       flush();
       assertEqual(scroller.scrollTop, 600);
       assertEqual(scroll.awayFromBottom(), false);
@@ -130,12 +130,47 @@ describe("Timeline layout following", () => {
       assertEqual(scroll.awayFromBottom(), false);
       assertEqual(scroll.onScroll(), false);
       flush();
+      // A scrollbar drag (pointer held) is reader intent even for small moves.
+      scroll.setPointerScrolling(true);
       scroller.scrollTop = 1036; // Exactly 64px from the bottom.
       assertEqual(scroll.onScroll(), true);
       assertEqual(scroll.awayFromBottom(), true);
+      // Hiding the button is not enough to re-follow: small upward reads must not
+      // snap back on the next streamed frame.
       scroller.scrollTop = 1037;
-      assertEqual(scroll.onScroll(), false);
+      assertEqual(scroll.onScroll(), true);
       assertEqual(scroll.awayFromBottom(), false);
+      scroller.scrollTop = 1096; // 4px from the bottom.
+      assertEqual(scroll.onScroll(), false);
+
+      // The user's upward scroll is honoured even while streaming re-anchors every frame.
+      scroller.scrollTop = 1000;
+      assertEqual(scroll.onScroll(), true);
+      resized();
+      assertEqual(scroller.scrollTop, 1000);
+      scroll.setPointerScrolling(false);
+      scroll.jumpToBottom();
+
+      // A collapsing group clamps scrollTop upward; more output lands before the
+      // scroll event is dispatched. That is not the reader scrolling away.
+      enabled = true;
+      scroller.scrollHeight = 1400;
+      scroll.jumpToBottom();
+      assertEqual(scroller.scrollTop, 1000);
+      scroller.scrollHeight = 1250;
+      scroller.scrollTop = 1000; // clamped to 850
+      scroller.scrollHeight = 1290;
+      assertEqual(scroll.onScroll(), false);
+      resized();
+      assertEqual(scroller.scrollTop, 890);
+      // Without pointer events, a clear read-away still pauses following.
+      scroller.scrollTop = 400;
+      assertEqual(scroll.onScroll(), true);
+      scroller.scrollHeight = 1500;
+      resized();
+      assertEqual(scroller.scrollTop, 400);
+      scroller.scrollHeight = 1100;
+      scroll.jumpToBottom();
 
       enabled = true;
       scroll.jumpToBottom();

@@ -64,29 +64,49 @@ export function createTurnWindow(
   sessionID: Accessor<string | null>,
   turns: Accessor<MessageTurn[]>
 ): TurnWindowController {
-  const limits = new Map<string, number>();
-  const [visibleLimit, setVisibleLimit] = createSignal(INITIAL_VISIBLE_TURNS);
-  let lastSessionID: string | null = null;
+  // Per-session window size. Turns appended while a session is open widen the
+  // window instead of sliding it: unmounting the oldest turn on every new step
+  // shifted everything above the reader and re-anchored activity groups.
+  const windows = new Map<string, { limit: number; seen: number }>();
+  const [revision, setRevision] = createSignal(0);
   let prependingLock = false;
 
-  const rememberLimit = (sid: string | null, limit: number) => {
-    if (sid) limits.set(sid, limit);
+  const windowFor = (sid: string | null) => {
+    const key = sid ?? "";
+    let state = windows.get(key);
+    if (!state) {
+      state = { limit: INITIAL_VISIBLE_TURNS, seen: 0 };
+      windows.set(key, state);
+    }
+    return state;
+  };
+
+  const visibleLimit = createMemo(() => {
+    revision();
+    const total = turns().length;
+    const state = windowFor(sessionID());
+    if (state.seen > 0 && total > state.seen) state.limit += total - state.seen;
+    state.seen = total;
+    return state.limit;
+  });
+
+  const setVisibleLimit = (next: number) => {
+    windowFor(sessionID()).limit = next;
+    setRevision((value) => value + 1);
   };
 
   createEffect(() => {
-    const sid = sessionID();
-    if (sid !== lastSessionID) {
-      rememberLimit(lastSessionID, visibleLimit());
-      lastSessionID = sid;
-      setVisibleLimit(sid ? limits.get(sid) ?? INITIAL_VISIBLE_TURNS : INITIAL_VISIBLE_TURNS);
-      prependingLock = false;
-    }
+    sessionID();
+    prependingLock = false;
   });
 
+  // Never cut a prompt cycle in half: folded step turns render nothing, so a
+  // window starting mid-cycle showed a bare activity group without its prompt.
   const startIndex = createMemo(() => {
-    const total = turns().length;
-    const limit = visibleLimit();
-    return Math.max(0, total - limit);
+    const list = turns();
+    let start = Math.max(0, list.length - visibleLimit());
+    while (start > 0 && list[start]?.info.role === "assistant") start--;
+    return start;
   });
 
   const hiddenCount = createMemo(() => startIndex());
@@ -121,11 +141,7 @@ export function createTurnWindow(
     if (hidden <= 0) return;
     prependingLock = true;
     preserveScrollOnPrepend(scroller, () => {
-      setVisibleLimit((prev) => {
-        const next = prev + Math.max(count, TURN_BATCH_SIZE);
-        rememberLimit(sessionID(), next);
-        return next;
-      });
+      setVisibleLimit(visibleLimit() + Math.max(count, TURN_BATCH_SIZE));
     });
   };
 
@@ -134,9 +150,7 @@ export function createTurnWindow(
     if (hiddenCount() <= 0) return;
     prependingLock = true;
     preserveScrollOnPrepend(scroller, () => {
-      const next = total + INITIAL_VISIBLE_TURNS;
-      rememberLimit(sessionID(), next);
-      setVisibleLimit(next);
+      setVisibleLimit(total + INITIAL_VISIBLE_TURNS);
     });
   };
 
@@ -145,10 +159,7 @@ export function createTurnWindow(
     const idx = list.findIndex((t) => t.info.id === messageID);
     if (idx < 0) return;
     const needed = list.length - idx + 2;
-    if (needed > visibleLimit()) {
-      rememberLimit(sessionID(), needed);
-      setVisibleLimit(needed);
-    }
+    if (needed > visibleLimit()) setVisibleLimit(needed);
   };
 
   const handleTopScroll = (scroller: HTMLElement) => {
@@ -167,21 +178,6 @@ export function createTurnWindow(
     ensureTurnVisible,
     handleTopScroll,
   };
-}
-
-/**
- * Ported from Kilo Desktop `J9` (`thread-BuiFWozN.js`):
- * Enables CSS `content-visibility: auto` on turns older than the latest 3 turns
- * so WebKit skips layout/paint for off-viewport history.
- */
-export function turnContentVisibilityClass(
-  globalIndex: number,
-  totalTurns: number
-): string {
-  if (globalIndex < totalTurns - 3) {
-    return "[content-visibility:auto] [contain-intrinsic-size:auto_180px]";
-  }
-  return "";
 }
 
 export function EarlierTurnsBanner(props: {
@@ -252,10 +248,6 @@ export function AssistantTurnItem(props: {
     groupAssistantParts(merged().effectiveParts)
   );
 
-  const isLatestTurnOverall = createMemo(
-    () => props.globalIndex === props.allTurns.length - 1
-  );
-
   const isHighlighted = createMemo(() => {
     if (props.isHighlighted) return true;
     const matchID = props.activeMatchTurnID;
@@ -279,10 +271,7 @@ export function AssistantTurnItem(props: {
     >
       <div
         data-turn-id={props.turn.info.id}
-        class={`flex flex-col gap-y-2.5 px-1 rounded-xl transition-colors ${turnContentVisibilityClass(
-          props.globalIndex,
-          props.allTurns.length
-        )} ${
+        class={`flex flex-col gap-y-2.5 px-1 rounded-xl transition-colors ${
           merged().isVisuallyEmpty && !props.turn.info.error
             ? "mt-0"
             : props.globalIndex === 0
@@ -300,7 +289,7 @@ export function AssistantTurnItem(props: {
           {(item, itemIdx) => {
             const isTailActivityGroup = () =>
               props.isSessionBusy &&
-              isLatestTurnOverall() &&
+              merged().ownsLiveTail &&
               item().kind === "activity-group" &&
               itemIdx === groupedItems().length - 1;
             return (

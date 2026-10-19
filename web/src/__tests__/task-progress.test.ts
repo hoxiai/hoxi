@@ -45,17 +45,21 @@ const todoInput = (statuses: string[]) => ({
 });
 
 describe("task progress todo staleness", () => {
-  it("navigates a tool carried after visible text to its actual carrier", () => {
+  it("navigates a work-only turn to the earlier turn that anchors its run", () => {
     const turns: MessageTurn[] = [
-      { info: { id: "source", sessionID: sid, role: "assistant", time: { created: 1 } },
-        parts: [textPart("intro", "Checking files"), done("carried", "bash", { command: "unique-command" })] },
-      { info: { id: "carrier", sessionID: sid, role: "assistant", time: { created: 2 } },
-        parts: [textPart("answer", "Finished")] },
+      { info: { id: "anchor", sessionID: sid, role: "assistant", time: { created: 1 } },
+        parts: [textPart("intro", "Checking files"), done("own", "read")] },
+      { info: { id: "folded", sessionID: sid, role: "assistant", time: { created: 2 } },
+        parts: [done("carried", "bash", { command: "unique-command" })] },
+      { info: { id: "answer", sessionID: sid, role: "assistant", time: { created: 3 } },
+        parts: [textPart("final", "Finished")] },
     ];
-    const matched = firstMatchingPartID(turns[0], /unique-command/g);
+    const matched = firstMatchingPartID(turns[1], /unique-command/g);
     assertEqual(matched, "carried");
-    assertEqual(resolveTurnNavigationTarget(turns, "source", matched), "carrier");
-    assertEqual(resolveTurnNavigationTarget(turns, "source", "intro"), "source");
+    assertEqual(resolveTurnNavigationTarget(turns, "folded", matched), "anchor");
+    assertEqual(resolveTurnNavigationTarget(turns, "anchor", "intro"), "anchor");
+    assertEqual(resolveTurnNavigationTarget(turns, "answer"), "answer");
+    assertTrue(resolveMergedTurnParts(turns, 1).isVisuallyEmpty, "folded turn renders nothing itself");
   });
 
   it("keeps recorded todo statuses after the session ends instead of forcing completed", () => {
@@ -112,21 +116,23 @@ describe("task progress todo staleness", () => {
     ];
 
     const m1 = resolveMergedTurnParts(turns, 1);
-    assertTrue(m1.isVisuallyEmpty, "pure work intermediate turn 1 is visually folded into cycle tail");
+    assertTrue(!m1.isVisuallyEmpty, "the turn that starts the run anchors the unified group");
+    assertDeepEqual(m1.carriedTurnIDs, ["msg_a2", "msg_a3"]);
     const m2 = resolveMergedTurnParts(turns, 2);
-    assertTrue(m2.isVisuallyEmpty, "pure work intermediate turn 2 is visually folded into cycle tail");
+    assertTrue(m2.isVisuallyEmpty, "pure work intermediate turn folds back into the anchor");
 
     const m3 = resolveMergedTurnParts(turns, 3);
-    assertTrue(!m3.isVisuallyEmpty, "final turn renders merged cycle work + final response");
-    assertDeepEqual(m3.carriedTurnIDs, ["msg_a1", "msg_a2"]);
+    assertTrue(!m3.isVisuallyEmpty, "final turn renders its response");
+    assertDeepEqual(m3.effectiveParts.map((p) => p.id), ["txt_final"]);
 
-    const grouped = groupAssistantParts(m3.effectiveParts);
-    assertEqual(resolveTurnNavigationTarget(turns, "msg_a1"), "msg_a3");
-    assertEqual(resolveTurnNavigationTarget(turns, "msg_a2"), "msg_a3");
+    const grouped = groupAssistantParts(m1.effectiveParts);
+    assertEqual(resolveTurnNavigationTarget(turns, "msg_a1"), "msg_a1");
+    assertEqual(resolveTurnNavigationTarget(turns, "msg_a2"), "msg_a1");
     assertEqual(resolveTurnNavigationTarget(turns, "msg_a3"), "msg_a3");
+    assertEqual(resolveTurnNavigationTarget(turns, "msg_a3", "r2"), "msg_a1");
     assertEqual(resolveTurnNavigationTarget(turns, "msg_u"), "msg_u");
     assertEqual(resolveTurnNavigationTarget(turns, "missing"), "missing");
-    assertEqual(grouped.length, 2, "one unified activity group followed by one final text block");
+    assertEqual(grouped.length, 1, "one unified activity group in the anchor turn");
     assertEqual(grouped[0].kind, "activity-group");
     if (grouped[0].kind === "activity-group") {
       assertDeepEqual(
@@ -134,7 +140,23 @@ describe("task progress todo staleness", () => {
         ["r1", "t1", "t2", "t3", "r2"]
       );
     }
-    assertEqual(grouped[1].kind, "single");
+  });
+
+  it("keeps the anchor group stable while new steps stream in", () => {
+    const user: MessageTurn = { info: { id: "msg_u", sessionID: sid, role: "user", time: { created: 1 } }, parts: [] };
+    const step = (id: string, parts: MessagePart[]): MessageTurn => ({
+      info: { id, sessionID: sid, role: "assistant", time: { created: 2 } },
+      parts,
+    });
+    const first = step("msg_s1", [done("s1", "read")]);
+    const before = [user, first];
+    const after = [user, first, step("msg_s2", []), step("msg_s3", [done("s3", "bash")])];
+    const anchorBefore = resolveMergedTurnParts(before, 1);
+    const anchorAfter = resolveMergedTurnParts(after, 1);
+    assertTrue(anchorBefore.ownsLiveTail && anchorAfter.ownsLiveTail, "anchor keeps the live tail");
+    assertDeepEqual(anchorAfter.effectiveParts.map((p) => p.id), ["s1", "s3"]);
+    assertTrue(resolveMergedTurnParts(after, 3).isVisuallyEmpty, "newest step does not remount the group");
+    assertTrue(!resolveMergedTurnParts(after, 3).ownsLiveTail, "only the anchor owns the live tail");
   });
 
   it("detects live tail work groups and attention-worthy failed commands", () => {
@@ -180,9 +202,11 @@ describe("task progress todo staleness", () => {
     ];
 
     for (const { label, turns, expected } of cases) {
-      const tailIndex = turns.length - 1;
-      const rendered = tailIndex < 0 ? [] : groupAssistantParts(resolveMergedTurnParts(turns, tailIndex).effectiveParts);
-      const hasRenderedLiveTail = !turns[tailIndex]?.info.error && rendered[rendered.length - 1]?.kind === "activity-group";
+      const hasRenderedLiveTail = turns.some((_, index) => {
+        const merged = resolveMergedTurnParts(turns, index);
+        const rendered = groupAssistantParts(merged.effectiveParts);
+        return merged.ownsLiveTail && rendered[rendered.length - 1]?.kind === "activity-group";
+      });
       assertEqual(hasRenderedLiveTail, expected, `${label}: merged rendering`);
       assertEqual(hasLiveTailWorkGroup(turns), expected, label);
     }

@@ -1,3 +1,4 @@
+import { createSignal } from "solid-js";
 import { produce } from "solid-js/store";
 import {
   findMessageIndex,
@@ -140,6 +141,16 @@ export async function resumePausedSession(
   await submitSessionPrompt(prompt, id, { forceImmediate: true });
 }
 
+// Bumped when the user sends (or queues) a prompt so the timeline re-follows the
+// tail. Automatic queue drains skip it and never pull a reader off older output.
+const [timelineFollowRequest, setTimelineFollowRequest] =
+  createSignal<{ sessionID: string; seq: number } | null>(null);
+export { timelineFollowRequest };
+
+function requestTimelineFollow(sessionID: string) {
+  setTimelineFollowRequest((prev) => ({ sessionID, seq: (prev?.seq ?? 0) + 1 }));
+}
+
 export async function submitSessionPrompt(
   promptText: string,
   targetSessionID?: string | null,
@@ -149,6 +160,8 @@ export async function submitSessionPrompt(
     effort?: "" | "low" | "medium" | "high";
     attachments?: Array<{ type: "file"; mime: string; filename?: string; url: string }>;
     forceImmediate?: boolean;
+    /** false for automatic dispatches that must not move the reader's scroll position. */
+    followTimeline?: boolean;
     beforeSend?: () => Promise<void>;
   }
 ): Promise<string> {
@@ -190,6 +203,7 @@ export async function submitSessionPrompt(
       effort,
       attachments,
     });
+    if (options?.followTimeline !== false) requestTimelineFollow(id);
     return id;
   }
 
@@ -259,6 +273,7 @@ export async function submitSessionPrompt(
     markSessionPromptDispatched(sessionID);
     recordPromptDispatched(sessionID, effectiveModel?.providerID, effectiveModel?.modelID);
     setWorkspace("statusBySession", sessionID, { type: "busy" });
+    if (options?.followTimeline !== false) requestTimelineFollow(sessionID);
   };
 
   if (!id) {

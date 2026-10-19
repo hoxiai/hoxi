@@ -46,7 +46,7 @@ export function createSessionScrollController(options: {
         : position.top;
       options.scroll.updatePosition();
     }
-    // Allow content-visibility layout and the resulting resize to settle before recording.
+    // Allow the restored layout and the resulting resize to settle before recording.
     if (settling !== undefined) cancelAnimationFrame(settling);
     settling = requestAnimationFrame(() => {
       settling = requestAnimationFrame(() => {

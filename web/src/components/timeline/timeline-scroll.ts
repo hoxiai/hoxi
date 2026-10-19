@@ -1,5 +1,14 @@
 import { createSignal } from "solid-js";
 
+// Distance at which the jump-to-bottom button appears.
+const AWAY_THRESHOLD = 64;
+// A reader re-joins the live tail only once they are actually back at the bottom;
+// a looser threshold snapped small upward scrolls straight back down.
+const REFOLLOW_THRESHOLD = 4;
+// Without pointer events (WebKit scrollbar drags) only a clear upward read counts:
+// a shrink-clamp race leaves at most one frame of new output below the viewport.
+const READ_AWAY_THRESHOLD = 240;
+
 // Keep following layout changes without pulling readers away from older messages.
 export function createTimelineScroll(
   getScroller: () => HTMLDivElement | undefined,
@@ -7,15 +16,19 @@ export function createTimelineScroll(
 ) {
   let following = true;
   let frame: number | undefined;
-  let releaseFrame: number | undefined;
-  let programmatic = false;
   let previousScrollTop = 0;
+  // Scrollbar drags and touch scrolls emit only scroll events, so upward movement
+  // counts as reader intent only while one of them is in progress.
+  let pointerScrolling = false;
   const [awayFromBottom, setAwayFromBottom] = createSignal(false);
+
+  const distanceFromBottom = (scroller: HTMLElement) =>
+    scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
 
   const updatePosition = () => {
     const scroller = getScroller();
     if (scroller && scroller.clientHeight > 0) {
-      setAwayFromBottom(scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight >= 64);
+      setAwayFromBottom(distanceFromBottom(scroller) >= AWAY_THRESHOLD);
     }
   };
 
@@ -23,15 +36,18 @@ export function createTimelineScroll(
     const scroller = getScroller();
     if (!scroller || scroller.clientHeight === 0) return;
     following = true;
-    programmatic = true;
     scroller.scrollTop = scroller.scrollHeight;
     previousScrollTop = scroller.scrollTop;
     updatePosition();
-    if (releaseFrame !== undefined) cancelAnimationFrame(releaseFrame);
-    releaseFrame = requestAnimationFrame(() => {
-      releaseFrame = undefined;
-      programmatic = false;
-    });
+  };
+
+  const smoothToBottom = () => {
+    const scroller = getScroller();
+    if (!scroller || scroller.clientHeight === 0) return;
+    following = true;
+    previousScrollTop = scroller.scrollTop;
+    scroller.scrollTo({ top: scroller.scrollHeight, behavior: "smooth" });
+    updatePosition();
   };
 
   const schedule = () => {
@@ -49,24 +65,32 @@ export function createTimelineScroll(
     awayFromBottom,
     updatePosition,
     jumpToBottom,
+    smoothToBottom,
     resume() {
       following = true;
       schedule();
     },
     pause() {
       following = false;
-      programmatic = false;
+      if (frame !== undefined) cancelAnimationFrame(frame);
+      frame = undefined;
+    },
+    // Wheel and keyboard intent call pause() directly, before their async scroll lands.
+    setPointerScrolling(active: boolean) {
+      pointerScrolling = active;
     },
     onScroll() {
       const scroller = getScroller();
-      if (!scroller || programmatic || scroller.clientHeight === 0) return false;
-      const movedUp = scroller.scrollTop < previousScrollTop;
+      if (!scroller || scroller.clientHeight === 0) return false;
+      // Upward movement alone is not reader intent: when content shrinks the
+      // browser clamps scrollTop upward, and if more output lands before the
+      // scroll event is dispatched it looks exactly like scrolling away.
+      const movedUp = scroller.scrollTop < previousScrollTop - 1;
       previousScrollTop = scroller.scrollTop;
       updatePosition();
-      // Content growth can emit scroll events before ResizeObserver follows it.
-      // Only upward movement should interrupt an already-following reader.
-      if (!awayFromBottom()) following = true;
-      else if (movedUp) following = false;
+      const distance = distanceFromBottom(scroller);
+      if (distance <= REFOLLOW_THRESHOLD) following = true;
+      else if (movedUp && (pointerScrolling || distance > READ_AWAY_THRESHOLD)) following = false;
       return !following;
     },
     observe(content: HTMLDivElement) {
@@ -87,7 +111,6 @@ export function createTimelineScroll(
       return () => {
         observer.disconnect();
         if (frame !== undefined) cancelAnimationFrame(frame);
-        if (releaseFrame !== undefined) cancelAnimationFrame(releaseFrame);
       };
     },
   };

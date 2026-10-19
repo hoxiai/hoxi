@@ -307,6 +307,7 @@ body {
 
 .timeline-result-scroll::-webkit-scrollbar-thumb {
   background: transparent;
+  transition: background-color 240ms ease-in-out;
 }
 
 .timeline-result-scroll:hover::-webkit-scrollbar-thumb,
