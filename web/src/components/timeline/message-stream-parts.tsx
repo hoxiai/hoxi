@@ -290,7 +290,7 @@ export function AssistantTurnFooter(props: {
     <Show when={cycleSummary()}>
       {(summary) => (
         <Show when={!isTurnExecuting()}>
-          <div class="mt-2 space-y-2.5 select-none">
+          <div class="mt-4 space-y-2 select-none">
             <ChangedFilesSummary
               files={summary().changedFiles}
               onUndo={
@@ -300,7 +300,7 @@ export function AssistantTurnFooter(props: {
               }
             />
 
-            <div class="flex items-center gap-2 flex-wrap text-[12px] text-[var(--text-faint)]">
+            <div class="flex items-center gap-2 flex-wrap text-[11.5px] text-[var(--text-faint)]">
 
               <Show when={summary().finalText.length > 0}>
                 <ActionIconButton
@@ -318,7 +318,7 @@ export function AssistantTurnFooter(props: {
                 fallback={
                   <span class="inline-flex items-center gap-1 text-[var(--ok-text)]/85">
                     <Icon name="circle-check" size="small" />
-                    <span>{t("timeline.turnCompleted")}</span>
+                    <span class="hidden sm:inline">{t("timeline.turnCompleted")}</span>
                   </span>
                 }
               >
@@ -344,14 +344,14 @@ export function AssistantTurnFooter(props: {
 
               <Show when={durationLabel()}>
                 <span>·</span>
-                <span class="font-mono tabular-nums text-[var(--text-muted)]">
+                <span class="hidden sm:inline font-mono tabular-nums text-[var(--text-muted)]">
                   {durationLabel()}
                 </span>
               </Show>
 
               <Show when={summary().toolCount > 0}>
                 <span>·</span>
-                <span class="font-mono tabular-nums text-[var(--text-muted)]">
+                <span class="hidden sm:inline font-mono tabular-nums text-[var(--text-muted)]">
                   {t("timeline.stepsCompleted", { count: summary().toolCount })}
                 </span>
               </Show>

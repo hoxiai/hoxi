@@ -279,7 +279,7 @@ export function AssistantTurnItem(props: {
     >
       <div
         data-turn-id={props.turn.info.id}
-        class={`flex flex-col gap-y-3.5 px-1 rounded-xl transition-colors ${turnContentVisibilityClass(
+        class={`flex flex-col gap-y-2.5 px-1 rounded-xl transition-colors ${turnContentVisibilityClass(
           props.globalIndex,
           props.allTurns.length
         )} ${
@@ -287,9 +287,9 @@ export function AssistantTurnItem(props: {
             ? "mt-0"
             : props.globalIndex === 0
               ? "mt-0"
-              : merged().isFirstVisualTurnInCycle
-                ? "mt-6"
-                : "mt-3.5"
+                : merged().isFirstVisualTurnInCycle
+                  ? "mt-4"
+                  : "mt-2.5"
         } ${
           isHighlighted()
             ? "ring-2 ring-[var(--accent-primary)] bg-[var(--accent-surface)]/20 p-2"

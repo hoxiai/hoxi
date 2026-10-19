@@ -99,7 +99,7 @@ export default function ThreePaneShell() {
           }`}
         >
           <MessageStream hidden={isNewConversation()} />
-          <div class={`flex flex-col shrink-0 ${isNewConversation() ? "flex-1 min-h-0 overflow-y-auto py-6" : ""}`}>
+          <div class={`flex flex-col shrink-0 ${isNewConversation() ? "flex-1 min-h-0 overflow-y-auto py-6" : "pt-3"}`}>
             <div class={`w-full shrink-0 ${isNewConversation() ? "my-auto flex flex-col [&>div:last-child]:my-0 [&>div:last-child]:pb-1" : ""}`}>
               <Show when={isNewConversation()}>
                 <ParticleLogo />

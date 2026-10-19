@@ -415,7 +415,7 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
 
         {/* Collapsible / Live Body Container (only bordered when visible) */}
         <Show when={hasBody()}>
-          <div class="mt-1 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] overflow-hidden">
+          <div class="mt-1 ml-3 overflow-hidden border-l-2 border-[var(--border-subtle)] pl-3">
             {/* Kilo ShellRollingResults: Live 5-line rolling output preview while bash command is running & collapsed */}
             <Show when={isShell() && isRunning() && !expanded() && rollingShellLines().length > 0}>
               <div

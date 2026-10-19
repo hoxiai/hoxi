@@ -412,7 +412,7 @@ export function ToolCardExpandedBody(props: {
   });
 
   return (
-    <div class="border-t border-[var(--border-subtle)] bg-[var(--bg-elevated)]/45">
+    <div class="bg-transparent">
       {/* Case 1: Shell / Bash Tool -> Kilo-style Terminal Card */}
       <Show when={props.isShell}>
         <div class="bg-[#0d1117] text-[#e6edf3] font-mono text-[12px]">

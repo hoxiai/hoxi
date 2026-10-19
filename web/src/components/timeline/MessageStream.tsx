@@ -175,6 +175,11 @@ export default function MessageStream(props: { hidden?: boolean }) {
   });
   let previousSessionID: string | null = null;
   let previousPromptID: string | undefined;
+  let promptFollowFrame: number | undefined;
+
+  onCleanup(() => {
+    if (promptFollowFrame !== undefined) cancelAnimationFrame(promptFollowFrame);
+  });
 
   createEffect(() => {
     const sessionID = workspace.activeSessionID;
@@ -182,6 +187,17 @@ export default function MessageStream(props: { hidden?: boolean }) {
     if (sessionID === previousSessionID && promptID !== previousPromptID && promptID?.startsWith("optimistic_")) {
       sessionScroll.interrupt();
       scroll.resume();
+      // The optimistic turn and the first assistant activity are committed in
+      // separate reactive updates. Re-anchor after both layout passes so the
+      // new execution tail stays visible instead of restoring the old offset.
+      scroll.jumpToBottom();
+      if (promptFollowFrame !== undefined) cancelAnimationFrame(promptFollowFrame);
+      promptFollowFrame = requestAnimationFrame(() => {
+        promptFollowFrame = undefined;
+        if (workspace.activeSessionID === sessionID) {
+          scroll.jumpToBottom();
+        }
+      });
     }
     previousSessionID = sessionID;
     previousPromptID = promptID;
@@ -322,7 +338,7 @@ export default function MessageStream(props: { hidden?: boolean }) {
           sessionScroll.interrupt();
         }
       }}
-      class="relative h-full min-h-0 overflow-y-auto overflow-x-hidden"
+      class="timeline-result-scroll relative h-full min-h-0 overflow-y-auto overflow-x-hidden"
     >
 
       {/* Top Soft Scroll Fade (Kilo style) */}
@@ -331,7 +347,7 @@ export default function MessageStream(props: { hidden?: boolean }) {
         class="pointer-events-none sticky top-0 z-10 -mb-6 h-6 w-full shrink-0 bg-gradient-to-b from-[var(--bg-panel)] to-transparent"
       />
 
-      <div ref={content} class="mx-auto flex w-full max-w-[calc(var(--thread-max-width)+3rem)] min-h-full flex-col px-6 pt-8 pb-8">
+      <div ref={content} class="mx-auto flex w-full max-w-[calc(var(--thread-max-width)+3rem)] min-h-full flex-col px-6 pt-8 pb-12">
         <Show
           when={!isEmpty()}
           fallback={
@@ -375,14 +391,14 @@ export default function MessageStream(props: { hidden?: boolean }) {
                         globalIndex(),
                         turns().length
                       )} ${
-                        idx() === 0 ? "mt-0" : "mt-7"
+                        idx() === 0 ? "mt-0" : "mt-5"
                       } ${
                         activeMatchTurnID() === turn.info.id
                           ? "ring-2 ring-[var(--accent-primary)] p-1.5"
                           : ""
                       }`}
                     >
-                      <div class="max-w-[85%] rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-subtle)] px-4 py-3 shadow-2xs space-y-2">
+                      <div class="max-w-[88%] rounded-lg bg-[var(--bg-inset)]/70 px-3.5 py-2.5 space-y-2">
                         <Index each={turn.parts}>
                           {(part) => (
                             <>

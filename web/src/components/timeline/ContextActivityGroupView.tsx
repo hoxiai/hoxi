@@ -308,6 +308,7 @@ function summarizeStepTarget(part: ToolPart): string {
 
 // Persistent manual expand state keyed by the first part ID of each group
 const expandedActivityGroupKeys = new Set<string>();
+const collapsedActivityGroupKeys = new Set<string>();
 
 export default function ContextActivityGroupView(props: {
   parts: MessagePart[];
@@ -317,7 +318,9 @@ export default function ContextActivityGroupView(props: {
   revealKey?: string;
 }) {
   const groupKey = createMemo(() => props.parts[0]?.id || "");
-  const [open, setOpen] = createSignal(expandedActivityGroupKeys.has(groupKey()));
+  const [open, setOpen] = createSignal(
+    expandedActivityGroupKeys.has(groupKey()) && !collapsedActivityGroupKeys.has(groupKey())
+  );
 
   createEffect(() => {
     if (!props.revealKey) return;
@@ -326,9 +329,17 @@ export default function ContextActivityGroupView(props: {
     setOpen(true);
   });
 
+  // Keep the live step visible, but never override an explicit user collapse.
   createEffect(() => {
     const key = groupKey();
-    if (key) {
+    if (props.isLiveTail && (!key || !collapsedActivityGroupKeys.has(key))) {
+      setOpen(true);
+    }
+  });
+
+  createEffect(() => {
+    const key = groupKey();
+    if (key && !props.isLiveTail) {
       setOpen(expandedActivityGroupKeys.has(key));
     }
   });
@@ -338,7 +349,11 @@ export default function ContextActivityGroupView(props: {
     const next = !open();
     if (key) {
       if (next) expandedActivityGroupKeys.add(key);
-      else expandedActivityGroupKeys.delete(key);
+      else {
+        expandedActivityGroupKeys.delete(key);
+        collapsedActivityGroupKeys.add(key);
+      }
+      if (next) collapsedActivityGroupKeys.delete(key);
     }
     setOpen(next);
   };
@@ -557,12 +572,12 @@ export default function ContextActivityGroupView(props: {
       <button
         type="button"
         onClick={toggleOpen}
-        class={`group/activity flex w-full items-center justify-between gap-2 rounded-xl border px-3 py-1.5 text-left text-[13px] transition-all cursor-pointer select-none ${
+        class={`group/activity flex w-full items-center justify-between gap-2 rounded-md border border-transparent px-2 py-1.5 text-left text-[13px] transition-all cursor-pointer select-none ${
           open()
-            ? "border-[var(--border-subtle)] bg-[var(--bg-inset)]/80 text-[var(--text-primary)]"
+            ? "bg-[var(--bg-inset)]/65 text-[var(--text-primary)]"
             : isRunning()
-              ? "border-[var(--accent-border)]/45 bg-[var(--accent-surface)]/20 hover:bg-[var(--accent-surface)]/35 text-[var(--text-primary)]"
-              : "border-transparent bg-[var(--bg-inset)]/45 hover:border-[var(--border-subtle)] hover:bg-[var(--bg-inset)] text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+              ? "bg-[var(--accent-surface)]/15 hover:bg-[var(--accent-surface)]/30 text-[var(--text-primary)]"
+              : "bg-[var(--bg-inset)]/35 hover:bg-[var(--bg-inset)]/75 text-[var(--text-muted)] hover:text-[var(--text-primary)]"
         }`}
       >
         <div class="flex items-center gap-2 min-w-0 flex-1">
@@ -603,12 +618,12 @@ export default function ContextActivityGroupView(props: {
                     : tI18n("timeline.thought")}
                 </span>
                 <Show when={stats().toolCount > 0 && stats().summaryText}>
-                  <span class="text-[12px] text-[var(--text-muted)] truncate">
+                  <span class="hidden sm:inline text-[12px] text-[var(--text-muted)] truncate">
                     · {stats().summaryText}
                   </span>
                 </Show>
                 <Show when={!open() && targetPreview()}>
-                  <span class="hidden sm:inline font-mono text-[11.5px] text-[var(--text-faint)] truncate max-w-[320px]">
+                  <span class="hidden lg:inline font-mono text-[11.5px] text-[var(--text-faint)] truncate max-w-[320px]">
                     ({targetPreview()})
                   </span>
                 </Show>
@@ -624,7 +639,7 @@ export default function ContextActivityGroupView(props: {
               </span>
             </Show>
             <Show when={stats().summaryText}>
-              <span class="hidden md:inline text-[12px] text-[var(--text-muted)] shrink-0">
+              <span class="hidden lg:inline text-[12px] text-[var(--text-muted)] shrink-0">
                 · {stats().summaryText}
               </span>
             </Show>

@@ -218,7 +218,7 @@ export default function ThoughtBox(props: { part: ReasoningPart }) {
         <Show when={open()}>
           <div
             ref={bodyRef}
-            class="mt-1.5 max-h-[240px] overflow-y-auto rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-4 py-3 text-[13px] leading-relaxed text-[var(--text-secondary)] selectable-text"
+            class="mt-1.5 max-h-[240px] overflow-y-auto border-l-2 border-[var(--border-subtle)] px-3.5 py-2 text-[13px] leading-relaxed text-[var(--text-secondary)] selectable-text"
           >
             <Show
               when={!streaming() || bodyContent().length < 2400}
