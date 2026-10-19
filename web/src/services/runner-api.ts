@@ -2,6 +2,7 @@
 import type {
   MessageInfo,
   MessagePart,
+  PermissionRequest,
   SessionInfo,
   SessionRuntime,
   SessionStatus,
@@ -16,6 +17,11 @@ export function isRunnerSessionID(sessionID?: string | null): boolean {
     return true;
   }
   return knownRunnerSessionIDs.has(sessionID);
+}
+
+// Antigravity approval-hook requests are minted by the Go runner gate.
+export function isRunnerPermissionID(requestID?: string | null): boolean {
+  return !!requestID && requestID.startsWith("per_rnr_");
 }
 
 export function registerRunnerSessions(sessions: SessionInfo[]): void {
@@ -55,6 +61,15 @@ export async function requestJSON<T>(url: string, init?: RequestInit): Promise<T
   }
   if (res.status === 204) return undefined as T;
   return res.json();
+}
+
+// `installed && !current` means hooks.json still points at an old Hoxi binary.
+export interface AgyHookStatus {
+  path: string;
+  executable: string;
+  installed: boolean;
+  current: boolean;
+  error?: string;
 }
 
 export interface RunnerModelItem {
@@ -206,6 +221,30 @@ export const runnerAPI = {
     return requestJSON(`/api/hoxi/runner/${runtime}/models${qs}`);
   },
 
+  listPermissions(directory?: string): Promise<PermissionRequest[]> {
+    return requestJSON(withDir("/api/hoxi/runner/permission", directory));
+  },
+
+  // `message` reaches the model as the deny reason, so rejecting can steer
+  // the running agy turn without a follow-up prompt.
+  replyPermission(requestID: string, reply: "once" | "always" | "reject", message?: string): Promise<void> {
+    return requestJSON(`/api/hoxi/runner/permission/${encodeURIComponent(requestID)}/reply`, {
+      method: "POST",
+      body: JSON.stringify({ reply, message: message || undefined }),
+    });
+  },
+
+  getAgyHookStatus(): Promise<AgyHookStatus> {
+    return requestJSON("/api/hoxi/runner/antigravity/hook");
+  },
+
+  installAgyHook(): Promise<AgyHookStatus> {
+    return requestJSON("/api/hoxi/runner/antigravity/hook", { method: "POST" });
+  },
+
+  uninstallAgyHook(): Promise<AgyHookStatus> {
+    return requestJSON("/api/hoxi/runner/antigravity/hook", { method: "DELETE" });
+  },
 };
 
 export const authAPI = {

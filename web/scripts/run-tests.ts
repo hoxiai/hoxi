@@ -5,6 +5,7 @@ import "../src/__tests__/provider-health.test";
 import "../src/__tests__/provider-selection.test";
 import "../src/__tests__/runtime-switch.test";
 import "../src/__tests__/permissions.test";
+import "../src/__tests__/runner-permission.test";
 import "../src/__tests__/memory.test";
 import "../src/__tests__/merge-turns.test";
 import "../src/__tests__/task-progress.test";

@@ -160,6 +160,19 @@ func (g *Gateway) SetWSBaseURL(wsURL string) {
 	if g.handoff != nil {
 		g.handoff.SetWSBaseURL(wsURL)
 	}
+	if g.runner != nil {
+		// agy approval hooks call back over the same loopback listener.
+		httpBase := strings.Replace(strings.Replace(wsURL, "wss://", "https://", 1), "ws://", "http://", 1)
+		g.runner.SetHookBaseURL(httpBase)
+	}
+}
+
+// EnableAgyApprovalHook lets the runner keep Hoxi's PreToolUse hook installed
+// in ~/.gemini/config/hooks.json before each Antigravity turn.
+func (g *Gateway) EnableAgyApprovalHook() {
+	if g.runner != nil {
+		g.runner.EnableAgyHookAutoInstall()
+	}
 }
 
 func (g *Gateway) SetOpenDirectoryDialog(fn func() (string, error)) {

@@ -30,6 +30,7 @@ import type {
 } from "./api-types";
 import {
   authAPI,
+  isRunnerPermissionID,
   isRunnerSessionID,
   leaderboardAPI,
   requestJSON,
@@ -41,6 +42,7 @@ import {
 export * from "./api-types";
 export {
   authAPI,
+  isRunnerPermissionID,
   isRunnerSessionID,
   leaderboardAPI,
   resolveRunnerRuntimeForProvider,
@@ -285,10 +287,15 @@ export const hoxiAPI = {
   },
 
   // Interactive Permission Approval Gate
-  listPermissions(directory?: string): Promise<PermissionRequest[]> {
-    return requestJSON(withDir("/permission", directory));
+  async listPermissions(directory?: string): Promise<PermissionRequest[]> {
+    const [engine, runner] = await Promise.all([
+      requestJSON<PermissionRequest[]>(withDir("/permission", directory)),
+      runnerAPI.listPermissions(directory).catch(() => [] as PermissionRequest[]),
+    ]);
+    return [...(Array.isArray(engine) ? engine : []), ...(Array.isArray(runner) ? runner : [])];
   },
-  replyPermission(requestID: string, reply: "once" | "always" | "reject", directory?: string): Promise<void> {
+  replyPermission(requestID: string, reply: "once" | "always" | "reject", directory?: string, message?: string): Promise<void> {
+    if (isRunnerPermissionID(requestID)) return runnerAPI.replyPermission(requestID, reply, message);
     return requestJSON(withDir(`/permission/${requestID}/reply`, directory), { method: "POST", body: JSON.stringify({ reply }) });
   },
   // Interactive Question Dock (Kilo QuestionDock)

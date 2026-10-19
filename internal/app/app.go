@@ -19,6 +19,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/hoxiai/hoxi/internal/agyhook"
 	"github.com/hoxiai/hoxi/internal/buildinfo"
 	"github.com/hoxiai/hoxi/internal/gateway"
 	"github.com/hoxiai/hoxi/internal/opencode"
@@ -101,6 +102,10 @@ type DesktopApp struct {
 }
 
 func Run(distFS fs.FS) {
+	// agy runs `hoxi agy-hook` as a short-lived PreToolUse hook; never start the app for it.
+	if len(os.Args) > 1 && os.Args[1] == agyhook.Subcommand {
+		os.Exit(agyhook.Run(os.Stdin, os.Stdout, os.Getenv))
+	}
 	opencode.EnrichSystemPath()
 
 	exePath, _ := os.Executable()
@@ -140,6 +145,7 @@ func Run(distFS fs.FS) {
 
 	statusTracker := statusbar.NewTracker()
 	gw := gateway.New(port, password, cfg.RootDir, distFS, statusTracker)
+	gw.EnableAgyApprovalHook()
 	defer gw.CloseBrowser()
 
 	app := &DesktopApp{

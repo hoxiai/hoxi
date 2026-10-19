@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -27,18 +28,31 @@ func (s *Service) startTurnProcess(
 	cmd := exec.Command(binPath, args...)
 	cmd.Dir = rec.WorktreePath
 
+	revokeHook := func() {}
+	if rec.Runtime == string(RuntimeAntigravity) {
+		s.ensureAgyHookInstalled()
+		var hookEnv []string
+		hookEnv, revokeHook = s.issueHookEnv(rec.ID, asstMsgID)
+		if len(hookEnv) > 0 {
+			cmd.Env = append(os.Environ(), hookEnv...)
+		}
+	}
+
 	stdinPipe, err := cmd.StdinPipe()
 	if err != nil {
+		revokeHook()
 		return err
 	}
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
+		revokeHook()
 		return err
 	}
 	var stderrBuf bytes.Buffer
 	cmd.Stderr = &stderrBuf
 
 	if err := cmd.Start(); err != nil {
+		revokeHook()
 		return err
 	}
 	s.markContextDelivered(rec.ID)
@@ -67,6 +81,8 @@ func (s *Service) startTurnProcess(
 
 	go func() {
 		defer func() {
+			revokeHook()
+			s.cancelSessionApprovals(rec.ID, "the Antigravity process exited")
 			s.store.Flush()
 			close(ap.done)
 			s.mu.Lock()
@@ -132,6 +148,7 @@ func (s *Service) abortActiveProcess(sessionID string) {
 	s.mu.Lock()
 	ap := s.procs[sessionID]
 	s.mu.Unlock()
+	s.cancelSessionApprovals(sessionID, "the session was stopped")
 	if ap != nil {
 		ap.Abort()
 	}

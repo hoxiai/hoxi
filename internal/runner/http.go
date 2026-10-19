@@ -17,6 +17,7 @@ type Service struct {
 	store     *Store
 	worktrees *worktree.Manager
 	status    *statusbar.Tracker
+	gate      *approvalGate
 
 	mu               sync.Mutex
 	turnMu           sync.Mutex
@@ -38,6 +39,7 @@ func NewService(rootDir string, worktrees *worktree.Manager, status *statusbar.T
 		store:     NewStore(customStorePath),
 		worktrees: worktrees,
 		status:    status,
+		gate:      newApprovalGate(),
 		procs:     make(map[string]*activeProcess),
 		subs:      make(map[chan SSEEvent]string),
 	}
@@ -77,6 +79,10 @@ func (s *Service) CloseAll() {
 func (s *Service) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/hoxi/runner/antigravity/models", s.handleAntigravityModels)
 	mux.HandleFunc("/api/hoxi/runner/claude-code/models", s.handleClaudeModels)
+	mux.HandleFunc("/api/hoxi/runner/antigravity/hook", s.handleAgyHookInstall)
+	mux.HandleFunc(hookPreToolPath, s.handleHookPreTool)
+	mux.HandleFunc("/api/hoxi/runner/permission", s.handlePermissionRoutes)
+	mux.HandleFunc("/api/hoxi/runner/permission/", s.handlePermissionRoutes)
 	mux.HandleFunc("/api/hoxi/runner/event", s.handleGlobalSSE)
 	mux.HandleFunc("/api/hoxi/runner/sessions", s.handleSessionsRoot)
 	mux.HandleFunc("/api/hoxi/runner/sessions/", s.handleSessionSubroutes)

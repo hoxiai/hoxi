@@ -410,7 +410,9 @@ func (t *TurnTranslator) handleAgyResult(res *agyResult) []SSEEvent {
 				names = append(names, da.Action)
 			}
 		}
-		notice := fmt.Sprintf("Action blocked by Antigravity `--sandbox` / `--mode` safety policy (%s).", strings.Join(names, ", "))
+		// Hook-gated run_command calls never reach here; a soft-deny means the
+		// Hoxi approval hook was missing or the tool is not run_command.
+		notice := fmt.Sprintf("Action blocked by Antigravity headless permission policy (%s). Hoxi's approval hook did not handle it; check `~/.gemini/config/hooks.json` (entry `%s`).", strings.Join(names, ", "), agyHookName)
 		txtID := fmt.Sprintf("prt_%s_text_denied", t.messageID)
 		part := MessagePart{
 			ID:        txtID,

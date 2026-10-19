@@ -23,6 +23,7 @@ import {
   type WorktreeApplyStrategy,
 } from "../../store/workspace";
 import { t } from "../../i18n";
+import { AgyApprovalHookControls } from "./AgyApprovalHookControls";
 import {
   SegmentedPills,
   SettingGroup,
@@ -320,6 +321,9 @@ export function TerminalSafetySettingsTab() {
       <Show when={permNote()}>
         <div class="px-1 text-[11.5px] text-[var(--ok-text)]">{permNote()}</div>
       </Show>
+
+      {/* 3. Antigravity approval hook (agy headless PreToolUse gate) */}
+      <AgyApprovalHookControls />
     </div>
   );
 }

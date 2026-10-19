@@ -13,7 +13,7 @@ import {
   Zap,
 } from "lucide-solid";
 import type { PermissionRequest } from "../../services/sse-types";
-import { hoxiAPI } from "../../services/api";
+import { hoxiAPI, isRunnerPermissionID } from "../../services/api";
 import {
   appSettings,
   isDestructivePermissionRequest,
@@ -96,14 +96,17 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
     setBusy(mode);
     setError(null);
     const dir = sessionDirectory(props.request.sessionID);
+    // Runner (agy) requests: rules live in the Go gate, and the agy turn is
+    // still running, so the note travels with the reply as the deny reason.
+    const runner = isRunnerPermissionID(props.request.id);
     try {
-      if (Object.keys(selectedRules()).length > 0) {
+      if (!runner && Object.keys(selectedRules()).length > 0) {
         await persistSelectedRules();
       }
-      await hoxiAPI.replyPermission(props.request.id, mode, dir);
-      // If rejecting with steering feedback, send the feedback prompt right after
       const note = feedback().trim();
-      if (mode === "reject" && note && props.request.sessionID) {
+      await hoxiAPI.replyPermission(props.request.id, mode, dir, runner && mode === "reject" ? note : undefined);
+      // If rejecting with steering feedback, send the feedback prompt right after
+      if (!runner && mode === "reject" && note && props.request.sessionID) {
         await hoxiAPI.sendPromptAsync(props.request.sessionID, note, {
           agent: sessionAIConfig(props.request.sessionID).agent,
           model: sessionAIConfig(props.request.sessionID).model || undefined,
@@ -207,8 +210,8 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
           </div>
         </Show>
 
-        {/* Kilo Hierarchical Rule Toggles */}
-        <Show when={rules().length > 0}>
+        {/* Kilo Hierarchical Rule Toggles (OpenCode config only; agy uses session "always") */}
+        <Show when={rules().length > 0 && !isRunnerPermissionID(props.request.id)}>
           <div class="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)]/70 px-2.5 py-1.5">
             <button
               type="button"
