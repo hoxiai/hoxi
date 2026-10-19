@@ -319,7 +319,7 @@ export default function ThoughtBox(props: { part: ReasoningPart; revealKey?: str
               <TextReveal text={headerTitle()} truncate />
             </span>
           </Show>
-          <Show when={!streaming() && durationSec() > 0}>
+          <Show when={!streaming() && durationSec() >= 0.05}>
             <span class="shrink-0 font-mono text-[11.5px] tabular-nums text-[var(--text-faint)]">
               {durationSec().toFixed(1)}s
             </span>

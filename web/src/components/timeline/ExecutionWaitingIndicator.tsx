@@ -54,11 +54,15 @@ export default function ExecutionWaitingIndicator(props: {
             <span class="hidden sm:inline text-[11px] text-[var(--text-muted)]">
               {t("timeline.executionStepsDone", { count: props.completedSteps })}
             </span>
-            <span class="text-[var(--text-faint)]">·</span>
+            <Show when={elapsed() >= 0.05}>
+              <span class="text-[var(--text-faint)]">·</span>
+            </Show>
           </Show>
-          <span class="font-mono text-[11px] tabular-nums text-[var(--accent-text)]">
-            {t("timeline.executionElapsed", { time: elapsed().toFixed(1) })}
-          </span>
+          <Show when={elapsed() >= 0.05}>
+            <span class="font-mono text-[11px] tabular-nums text-[var(--accent-text)]">
+              {t("timeline.executionElapsed", { time: elapsed().toFixed(1) })}
+            </span>
+          </Show>
         </div>
       </div>
     </div>

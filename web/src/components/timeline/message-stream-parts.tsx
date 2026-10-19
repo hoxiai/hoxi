@@ -1,5 +1,5 @@
 // web/src/components/timeline/message-stream-parts.tsx
-import { createMemo, createSignal, Match, Show, Switch } from "solid-js";
+import { createMemo, createSignal, Match, onCleanup, Show, Switch } from "solid-js";
 import ThoughtBox from "./ThoughtBox";
 import ToolCard from "./ToolCard";
 import MarkdownView from "./MarkdownView";
@@ -36,9 +36,13 @@ import {
   getFilename,
   type ToolPart,
 } from "./tool-card-helpers";
-import { collectCycleChangedFiles } from "./tool-card-state";
+import {
+  collectCycleChangedFiles,
+  deriveMarkdownDownloadFilename,
+} from "./tool-card-state";
 import ExecutionWaitingIndicator from "./ExecutionWaitingIndicator";
 import ChangedFilesSummary from "./ChangedFilesSummary";
+import TurnTelemetryPopover from "./TurnTelemetryPopover";
 
 
 export {
@@ -238,7 +242,22 @@ export function AssistantTurnFooter(props: {
   isSessionBusy?: boolean;
 }) {
   const [copied, setCopied] = createSignal(false);
+  const [downloaded, setDownloaded] = createSignal(false);
   const [resuming, setResuming] = createSignal(false);
+  let copyTimer: ReturnType<typeof setTimeout> | undefined;
+  let downloadTimer: ReturnType<typeof setTimeout> | undefined;
+  let revokeTimer: ReturnType<typeof setTimeout> | undefined;
+  let activeBlobURL: string | undefined;
+
+  onCleanup(() => {
+    if (copyTimer !== undefined) clearTimeout(copyTimer);
+    if (downloadTimer !== undefined) clearTimeout(downloadTimer);
+    if (revokeTimer !== undefined) clearTimeout(revokeTimer);
+    if (activeBlobURL) {
+      URL.revokeObjectURL(activeBlobURL);
+      activeBlobURL = undefined;
+    }
+  });
 
   const isLatestTurn = createMemo(() => {
     if (!props.turns || typeof props.turnIndex !== "number") return true;
@@ -287,9 +306,23 @@ export function AssistantTurnFooter(props: {
       const created = cycleTurns[0]?.info.time?.created || props.info.time?.created;
       const completed = props.info.time?.completed;
       let toolCount = 0;
+      let providerID = props.info.providerID || "";
+      let modelID = props.info.modelID || "";
+      let inputTokens = 0;
+      let outputTokens = 0;
+      let reasoningTokens = 0;
+      let cacheReadTokens = 0;
+      let cost = 0;
       const textChunks: string[] = [];
 
       for (const step of cycleTurns) {
+        if (step.info.providerID) providerID = step.info.providerID;
+        if (step.info.modelID) modelID = step.info.modelID;
+        inputTokens += step.info.tokens?.input ?? 0;
+        outputTokens += step.info.tokens?.output ?? 0;
+        reasoningTokens += step.info.tokens?.reasoning ?? 0;
+        cacheReadTokens += step.info.tokens?.cache?.read ?? 0;
+        cost += step.info.cost ?? 0;
         for (const p of step.parts) {
           if (p.type === "tool" && !isTodoTool(p)) toolCount++;
         }
@@ -324,6 +357,13 @@ export function AssistantTurnFooter(props: {
         created,
         completed,
         toolCount,
+        providerID,
+        modelID,
+        inputTokens,
+        outputTokens,
+        reasoningTokens,
+        cacheReadTokens,
+        cost,
         finalText: textChunks.join("\n\n").trim(),
         changedFiles: collectCycleChangedFiles(cycleTurns, props.info.sessionID),
         revertMessageID,
@@ -340,6 +380,13 @@ export function AssistantTurnFooter(props: {
       created: props.info.time?.created,
       completed: props.info.time?.completed,
       toolCount,
+      providerID: props.info.providerID || "",
+      modelID: props.info.modelID || "",
+      inputTokens: props.info.tokens?.input ?? 0,
+      outputTokens: props.info.tokens?.output ?? 0,
+      reasoningTokens: props.info.tokens?.reasoning ?? 0,
+      cacheReadTokens: props.info.tokens?.cache?.read ?? 0,
+      cost: props.info.cost ?? 0,
       finalText: texts,
       changedFiles: collectCycleChangedFiles(
         [{ info: props.info, parts: props.parts }],
@@ -355,6 +402,7 @@ export function AssistantTurnFooter(props: {
       return "";
     }
     const sec = (summary.completed - summary.created) / 1000;
+    if (sec < 0.05) return "";
     return sec < 60 ? `${sec.toFixed(1)}s` : `${Math.floor(sec / 60)}m ${Math.round(sec % 60)}s`;
   });
 
@@ -364,7 +412,39 @@ export function AssistantTurnFooter(props: {
     try {
       await navigator.clipboard.writeText(text);
       setCopied(true);
-      setTimeout(() => setCopied(false), 1800);
+      if (copyTimer !== undefined) clearTimeout(copyTimer);
+      copyTimer = setTimeout(() => setCopied(false), 1800);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const downloadMarkdown = () => {
+    const text = cycleSummary()?.finalText;
+    if (!text) return;
+    try {
+      if (activeBlobURL) {
+        URL.revokeObjectURL(activeBlobURL);
+        activeBlobURL = undefined;
+      }
+      if (revokeTimer !== undefined) clearTimeout(revokeTimer);
+      const content = text.endsWith("\n") ? text : `${text}\n`;
+      const blob = new Blob([content], { type: "text/markdown;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      activeBlobURL = url;
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = deriveMarkdownDownloadFilename(text, props.info.sessionID);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setDownloaded(true);
+      if (downloadTimer !== undefined) clearTimeout(downloadTimer);
+      downloadTimer = setTimeout(() => setDownloaded(false), 1800);
+      revokeTimer = setTimeout(() => {
+        if (activeBlobURL === url) activeBlobURL = undefined;
+        URL.revokeObjectURL(url);
+      }, 60_000);
     } catch {
       /* ignore */
     }
@@ -405,6 +485,19 @@ export function AssistantTurnFooter(props: {
                     <Icon name="check" size="small" class="text-[var(--ok-text)]" />
                   </Show>
                 </ActionIconButton>
+
+                <ActionIconButton
+                  label={
+                    downloaded()
+                      ? t("timeline.downloadedMarkdown")
+                      : t("timeline.downloadMarkdown")
+                  }
+                  onClick={downloadMarkdown}
+                >
+                  <Show when={downloaded()} fallback={<Icon name="download" size="small" />}>
+                    <Icon name="check" size="small" class="text-[var(--ok-text)]" />
+                  </Show>
+                </ActionIconButton>
               </Show>
 
               <Show when={interruptMode()}>
@@ -429,9 +522,21 @@ export function AssistantTurnFooter(props: {
               </Show>
 
               <Show when={durationLabel()}>
-                <span class="hidden sm:inline font-mono tabular-nums text-[var(--text-faint)]">
-                  {durationLabel()}
-                </span>
+                <TurnTelemetryPopover
+                  durationLabel={durationLabel()}
+                  durationMs={Math.max(
+                    0,
+                    (summary().completed || 0) - (summary().created || 0)
+                  )}
+                  providerID={summary().providerID}
+                  modelID={summary().modelID}
+                  toolCount={summary().toolCount}
+                  inputTokens={summary().inputTokens}
+                  outputTokens={summary().outputTokens}
+                  reasoningTokens={summary().reasoningTokens}
+                  cacheReadTokens={summary().cacheReadTokens}
+                  cost={summary().cost}
+                />
               </Show>
 
               <Show when={isLatestTurn() && interruptMode() && !props.isSessionBusy}>

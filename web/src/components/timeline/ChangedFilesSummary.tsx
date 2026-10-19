@@ -11,7 +11,7 @@ import { ChevronDown, ChevronUp } from "lucide-solid";
 import type { SnapshotFileDiff } from "../../services/sse-types";
 import { t } from "../../i18n";
 import { openDiffInInspector } from "../../store/workspace";
-import { DiffChanges, Icon } from "../icons";
+import { DiffChanges, FileIcon, Icon } from "../icons";
 import { getDirectory, getFilename } from "./tool-card-helpers";
 
 const PREVIEW_FILE_COUNT = 3;
@@ -33,11 +33,17 @@ function ChangedFileRow(props: {
         props.compact ? "rounded-xl px-3 py-1.5" : "px-4 py-2"
       }`}
     >
-      <span class="min-w-0 flex-1 truncate font-mono text-[12.5px]">
-        <Show when={dir()}>
-          <span class="text-[var(--text-muted)]">{dir()}/</span>
-        </Show>
-        <span class="font-medium text-[var(--text-primary)]">{name()}</span>
+      <span class="min-w-0 flex-1 flex items-center gap-2 font-mono text-[12.5px]">
+        <FileIcon
+          node={{ path: props.diff.file, type: "file" }}
+          class="w-4 h-4 shrink-0"
+        />
+        <span class="min-w-0 truncate">
+          <Show when={dir()}>
+            <span class="text-[var(--text-muted)]">{dir()}/</span>
+          </Show>
+          <span class="font-medium text-[var(--text-primary)]">{name()}</span>
+        </span>
       </span>
       <DiffChanges
         class="shrink-0 text-[12px] tabular-nums"

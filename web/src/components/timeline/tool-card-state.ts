@@ -560,4 +560,28 @@ export function collectSessionChangedFiles(
   return collectCycleChangedFiles(cycleTurns, sessionID);
 }
 
+export function deriveMarkdownDownloadFilename(
+  text: string,
+  sessionID?: string,
+  dateStr = new Date().toISOString().slice(0, 10)
+): string {
+  const headingMatch = text.match(/^#{1,3}\s+(.+)$/m);
+  const sessionTitle = sessionID
+    ? workspace.sessions.find((s) => s.id === sessionID)?.title
+    : "";
+  const rawStem = (headingMatch?.[1] || sessionTitle || "")
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/[*_`~#]/g, "")
+    .replace(/[/\\?%*:|"<>]/g, "-")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^[-.]+|[-.]+$/g, "")
+    .slice(0, 48);
+  const isGeneric =
+    !rawStem ||
+    /^(new[- ]session|untitled|\u65b0\u4f1a\u8bdd|\u672a\u547d\u540d\u4f1a\u8bdd)$/i.test(rawStem);
+  const stem = isGeneric ? "hoxi-note" : rawStem;
+  return `${stem}-${dateStr}.md`;
+}
+
 export { computeChangedFileLines, resolveSessionDiffForFile } from "./file-diff-lines";

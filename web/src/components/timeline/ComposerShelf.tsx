@@ -17,10 +17,9 @@ import {
 import ApprovalGateCard from "../approval/ApprovalGateCard";
 import QuestionDock from "../approval/QuestionDock";
 import { FileIcon } from "../icons";
-import AgentStackPill, { resolveRootSessionID } from "./AgentStackPill";
 import PlanFollowupBar from "./PlanFollowupBar";
 import RevertBanner from "./RevertBanner";
-import TaskProgressCard from "./TaskProgressCard";
+import { resolveRootSessionID } from "./SubagentSessionBanner";
 import { t } from "../../i18n";
 
 export default function ComposerShelf() {
@@ -111,11 +110,8 @@ export default function ComposerShelf() {
       {/* Kilo Plan Follow-up Suggestion Bar */}
       <PlanFollowupBar />
 
-      {/* Compact single-line Pill Shelf: Subagent Stack + Task Progress + Review Comments */}
+      {/* Compact single-line Pill Shelf: Review Comments */}
       <div class="mb-2 flex items-center justify-center gap-2 flex-wrap empty:hidden">
-        <AgentStackPill />
-        <TaskProgressCard />
-
         {/* Queued Inline Diff ReviewComments Pill + Upward Popover */}
         <Show when={reviewComments().length > 0}>
 

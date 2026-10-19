@@ -22,7 +22,7 @@ import SubagentTaskDetails from "./SubagentTaskDetails";
 
 import {
   ActionIconButton,
-  extractCommand, extractDescription, extractExitCode, extractRollingShellLines,
+  extractCommand, extractDescription, extractRollingShellLines,
   extractShellOutput, extractTargetFile, formatToolDisplayName, getDirectory, getFilename,
   InlineDiagnosticsDisplay, isEditingTool, isReadTool, isShellTool,
   isTaskTool, isTodoTool, kiloToolIconName, processCarriageReturns,
@@ -77,7 +77,6 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
   const shellOut = createMemo(() =>
     isShell() && expanded() ? extractShellOutput(props.part.state, props.part.id) : ""
   );
-  const exitCode = createMemo(() => (isShell() ? extractExitCode(props.part.state) : undefined));
 
   // Rolling 5 lines of shell output while running & collapsed (ported from Kilo ShellRollingResults)
   const rollingShellLines = createMemo(() =>
@@ -195,27 +194,19 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
               }
             >
               <Show
-                when={
-                  status() === "completed" &&
-                  !isInterruptedTool() &&
-                  !(isShell() && exitCode() !== undefined && exitCode() !== 0)
-                }
+                when={status() === "completed" && !isInterruptedTool()}
                 fallback={
                   <span
                     class={
-                      status() === "error" ||
-                      isInterruptedTool() ||
-                      (isShell() && exitCode() !== undefined && exitCode() !== 0)
-                        ? "shrink-0 text-[var(--danger-text)] inline-flex items-center"
+                      status() === "error" || isInterruptedTool()
+                        ? "shrink-0 text-[var(--warn-text)]/80 inline-flex items-center"
                         : "shrink-0 text-[var(--text-muted)] inline-flex items-center"
                     }
                   >
                     <Icon
                       name={
-                        status() === "error" ||
-                        isInterruptedTool() ||
-                        (isShell() && exitCode() !== undefined && exitCode() !== 0)
-                          ? "circle-ban-sign"
+                        status() === "error" || isInterruptedTool()
+                          ? "warning"
                           : kiloToolIconName(props.part.tool)
                       }
                       size="small"
@@ -405,18 +396,6 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
               {(stats) => <DiffChanges changes={stats()} />}
             </Show>
 
-            <Show when={isInterruptedTool()}>
-              <span class="rounded bg-[var(--danger-surface)] px-1.5 py-0.5 font-mono text-[11px] font-medium text-[var(--danger-text)]">
-                {t("toolCard.stateError")}
-              </span>
-            </Show>
-
-            <Show when={isShell() && exitCode() !== undefined && exitCode() !== 0}>
-              <span class="rounded bg-[var(--danger-surface)] px-1.5 py-0.5 font-mono text-[11px] font-medium text-[var(--danger-text)]">
-                exit {exitCode()}
-              </span>
-            </Show>
-
             <Show when={isEdit() && status() === "completed"}>
               <ActionIconButton
                 variant="warn"
@@ -431,7 +410,7 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
               </ActionIconButton>
             </Show>
 
-            <Show when={elapsed() > 0}>
+            <Show when={elapsed() >= 0.05}>
               <span class="font-mono text-[11.5px] text-[var(--text-faint)] tabular-nums">
                 {elapsed().toFixed(1)}s
               </span>

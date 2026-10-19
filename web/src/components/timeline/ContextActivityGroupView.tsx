@@ -16,7 +16,14 @@ import {
   resolveSubagentTitle,
   workspace,
 } from "../../store/workspace";
-import { DiffChanges, Icon, Spinner, TextReveal, TextShimmer } from "../icons";
+import {
+  DiffChanges,
+  Icon,
+  type IconName,
+  Spinner,
+  TextReveal,
+  TextShimmer,
+} from "../icons";
 import { resolveSubagentCurrentStepLabel } from "./SubagentInlineTimeline";
 import { liveReasoningTicker, reasoningHeading, reasoningSummary } from "./ThoughtBox";
 
@@ -179,38 +186,95 @@ export default function ContextActivityGroupView(props: {
     let subagents = 0;
     let otherTools = 0;
     let thoughts = 0;
+    const readTargets: string[] = [];
+    const editTargets: string[] = [];
+    const cmdTargets: string[] = [];
+    const searchTargets: string[] = [];
+    const subagentTargets: string[] = [];
+
+    const pushUnique = (arr: string[], val: string) => {
+      const clean = val.trim();
+      if (clean && !arr.includes(clean)) arr.push(clean);
+    };
 
     for (const p of props.parts) {
       if (p.type === "reasoning") {
         thoughts++;
       } else if (p.type === "tool") {
-        if (isReadTool(p.tool)) reads++;
-        else if (isEditingTool(p.tool)) edits++;
-        else if (isShellTool(p.tool)) commands++;
-        else if (isSearchOrListTool(p.tool)) searches++;
-        else if (isTaskTool(p.tool)) subagents++;
-        else otherTools++;
+        const target = summarizeStepTarget(p);
+        if (isReadTool(p.tool)) {
+          reads++;
+          pushUnique(readTargets, target);
+        } else if (isEditingTool(p.tool)) {
+          edits++;
+          pushUnique(editTargets, target);
+        } else if (isShellTool(p.tool)) {
+          commands++;
+          pushUnique(cmdTargets, target);
+        } else if (isSearchOrListTool(p.tool)) {
+          searches++;
+          pushUnique(searchTargets, target);
+        } else if (isTaskTool(p.tool)) {
+          subagents++;
+          pushUnique(subagentTargets, target);
+        } else {
+          otherTools++;
+        }
       }
     }
 
+    const buildTooltip = (header: string, items: string[]): string => {
+      if (items.length === 0) return header;
+      const preview = items.slice(0, 6).map((item) => `• ${item}`).join("\n");
+      const extra = items.length > 6 ? `\n… +${items.length - 6}` : "";
+      return `${header}\n${preview}${extra}`;
+    };
+
     const toolCount = reads + searches + edits + commands + subagents + otherTools;
-    const tokens: string[] = [];
-    if (reads > 0) tokens.push(tI18n("timeline.reads", { count: reads }));
-    if (edits > 0) tokens.push(tI18n("timeline.editsCount", { count: edits }));
-    if (commands > 0) tokens.push(tI18n("timeline.commandsCount", { count: commands }));
-    if (searches > 0) tokens.push(tI18n("timeline.searches", { count: searches }));
-    if (subagents > 0) tokens.push(tI18n("timeline.subagentsCount", { count: subagents }));
-    if (otherTools > 0 && tokens.length === 0) {
-      tokens.push(tI18n("timeline.stepsCompleted", { count: otherTools }));
+    const badges: Array<{ icon: IconName; count: number; tooltip: string }> = [];
+    if (reads > 0) {
+      badges.push({
+        icon: "glasses",
+        count: reads,
+        tooltip: buildTooltip(tI18n("timeline.reads", { count: reads }), readTargets),
+      });
     }
-    if (toolCount === 0 && thoughts > 0) {
-      tokens.push(tI18n("timeline.thoughts", { count: thoughts }));
+    if (edits > 0) {
+      badges.push({
+        icon: "edit-small-2",
+        count: edits,
+        tooltip: buildTooltip(tI18n("timeline.editsCount", { count: edits }), editTargets),
+      });
+    }
+    if (commands > 0) {
+      badges.push({
+        icon: "console",
+        count: commands,
+        tooltip: buildTooltip(tI18n("timeline.commandsCount", { count: commands }), cmdTargets),
+      });
+    }
+    if (searches > 0) {
+      badges.push({
+        icon: "magnifying-glass",
+        count: searches,
+        tooltip: buildTooltip(tI18n("timeline.searches", { count: searches }), searchTargets),
+      });
+    }
+    if (subagents > 0) {
+      badges.push({
+        icon: "task",
+        count: subagents,
+        tooltip: buildTooltip(
+          tI18n("timeline.subagentsCount", { count: subagents }),
+          subagentTargets
+        ),
+      });
     }
 
     return {
       toolCount,
       thoughts,
-      summaryText: tokens.join(", "),
+      badges,
     };
   });
 
@@ -348,10 +412,11 @@ export default function ContextActivityGroupView(props: {
     if (!start) return "";
     if (isRunning()) {
       const sec = Math.max(0, (now() - start) / 1000);
-      return `${sec.toFixed(1)}s`;
+      return sec >= 0.05 ? `${sec.toFixed(1)}s` : "";
     }
     if (!end || end <= start) return "";
     const sec = (end - start) / 1000;
+    if (sec < 0.05) return "";
     return sec < 60
       ? `${sec.toFixed(1)}s`
       : `${Math.floor(sec / 60)}m ${Math.round(sec % 60)}s`;
@@ -384,26 +449,17 @@ export default function ContextActivityGroupView(props: {
             <Show
               when={isRunning()}
               fallback={
-                <Show
-                  when={attentionTools().length > 0}
-                  fallback={
-                    <span class="inline-grid place-items-center shrink-0">
-                      <span class="[grid-area:1/1] inline-flex items-center text-[var(--ok-text)] transition-opacity duration-150 group-hover/activity:opacity-0">
-                        <Icon name="circle-check" size="small" />
-                      </span>
-                      <span class="[grid-area:1/1] inline-flex items-center text-[var(--accent-primary)] opacity-0 transition-opacity duration-150 group-hover/activity:opacity-100">
-                        <Icon
-                          name={stats().toolCount > 0 ? "layers" : "brain"}
-                          size="small"
-                        />
-                      </span>
-                    </span>
-                  }
-                >
-                  <span class="text-[var(--danger-text)] inline-flex items-center shrink-0">
-                    <Icon name="circle-ban-sign" size="small" />
+                <span class="inline-grid place-items-center shrink-0">
+                  <span class="[grid-area:1/1] inline-flex items-center text-[var(--ok-text)] transition-opacity duration-150 group-hover/activity:opacity-0">
+                    <Icon name="circle-check" size="small" />
                   </span>
-                </Show>
+                  <span class="[grid-area:1/1] inline-flex items-center text-[var(--accent-primary)] opacity-0 transition-opacity duration-150 group-hover/activity:opacity-100">
+                    <Icon
+                      name={stats().toolCount > 0 ? "layers" : "brain"}
+                      size="small"
+                    />
+                  </span>
+                </span>
               }
             >
               <span class="text-[var(--accent-primary)] inline-flex items-center shrink-0">
@@ -418,13 +474,24 @@ export default function ContextActivityGroupView(props: {
                   <span class="font-medium text-[var(--text-secondary)] shrink-0">
                     {stats().toolCount > 0
                       ? tI18n("timeline.executedStepsSummary", {
-                           count: stats().toolCount,
-                         })
+                          count: stats().toolCount,
+                        })
                       : tI18n("timeline.thought")}
                   </span>
-                  <Show when={stats().toolCount > 0 && stats().summaryText}>
-                    <span class="hidden sm:inline text-[12px] text-[var(--text-muted)] truncate">
-                      · {stats().summaryText}
+                  <Show when={stats().badges.length > 0}>
+                    <span class="hidden sm:inline-flex items-center gap-2 text-[var(--text-muted)] shrink-0">
+                      <span class="text-[var(--text-faint)]">·</span>
+                      <For each={stats().badges}>
+                        {(badge) => (
+                          <span
+                            class="inline-flex items-center gap-1 font-mono text-[11.5px] tabular-nums text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors"
+                            title={badge.tooltip}
+                          >
+                            <Icon name={badge.icon} size="small" />
+                            <span>{badge.count}</span>
+                          </span>
+                        )}
+                      </For>
                     </span>
                   </Show>
                   <Show when={!open() && targetPreview()}>
@@ -443,9 +510,20 @@ export default function ContextActivityGroupView(props: {
                   <TextReveal text={activeStepDisplay().detail} truncate />
                 </span>
               </Show>
-              <Show when={stats().summaryText}>
-                <span class="hidden lg:inline text-[12px] text-[var(--text-muted)] shrink-0">
-                  · {stats().summaryText}
+              <Show when={stats().badges.length > 0}>
+                <span class="hidden lg:inline-flex items-center gap-2 text-[var(--text-muted)] shrink-0">
+                  <span class="text-[var(--text-faint)]">·</span>
+                  <For each={stats().badges}>
+                    {(badge) => (
+                      <span
+                        class="inline-flex items-center gap-1 font-mono text-[11.5px] tabular-nums text-[var(--text-muted)]"
+                        title={badge.tooltip}
+                      >
+                        <Icon name={badge.icon} size="small" />
+                        <span>{badge.count}</span>
+                      </span>
+                    )}
+                  </For>
                 </span>
               </Show>
             </Show>
@@ -459,10 +537,16 @@ export default function ContextActivityGroupView(props: {
             </Show>
 
             <Show when={attentionTools().length > 0}>
-              <span class="rounded bg-[var(--danger-surface)] px-1.5 py-0.5 font-mono text-[11px] font-medium text-[var(--danger-text)]">
-                {tI18n("timeline.stepsAttentionBadge", {
+              <span
+                class="inline-flex items-center text-[var(--warn-text)]/80"
+                title={tI18n("timeline.stepsAttentionBadge", {
                   count: attentionTools().length,
                 })}
+                aria-label={tI18n("timeline.stepsAttentionBadge", {
+                  count: attentionTools().length,
+                })}
+              >
+                <Icon name="warning" size="small" />
               </span>
             </Show>
 
@@ -481,15 +565,6 @@ export default function ContextActivityGroupView(props: {
             </span>
           </div>
         </button>
-
-        {/* Auto-surface any errored / non-zero exit / interrupted tool cards even while collapsed */}
-        <Show when={!open() && attentionTools().length > 0}>
-          <div class="mt-1.5 ml-2 border-l-2 border-[var(--danger-border)]/70 pl-3 space-y-1">
-            <For each={attentionTools()}>
-              {(toolPart) => props.renderFallbackPart(toolPart, props.revealKey)}
-            </For>
-          </div>
-        </Show>
 
         {/* Full chronological step list with smooth collapse transition */}
         <Show when={everOpened()}>

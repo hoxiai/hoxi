@@ -18,6 +18,7 @@ import {
 import {
   collectCycleChangedFiles,
   collectSessionChangedFiles,
+  deriveMarkdownDownloadFilename,
 } from "../components/timeline/tool-card-state";
 import type { MessagePart } from "../services/sse-types";
 import { filterLocalSessionDiffsByTurns } from "../store/message-lookup";
@@ -443,6 +444,14 @@ describe("task progress todo staleness", () => {
     assertEqual(
       liveReasoningTicker("**Completed Analysis**\nEverything looks good.", false),
       "Completed Analysis"
+    );
+    assertEqual(
+      deriveMarkdownDownloadFilename("## Architecture Plan: Session Diff Isolation\n\nBody text", undefined, "2026-10-19"),
+      "Architecture-Plan-Session-Diff-Isolation-2026-10-19.md"
+    );
+    assertEqual(
+      deriveMarkdownDownloadFilename("Plain short reply without heading", undefined, "2026-10-19"),
+      "hoxi-note-2026-10-19.md"
     );
   });
 });
