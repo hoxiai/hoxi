@@ -20,7 +20,7 @@ import {
 } from "../../store/workspace";
 import { DiffChanges, Icon, Spinner, TextShimmer } from "../icons";
 import { resolveSubagentCurrentStepLabel } from "./SubagentInlineTimeline";
-import { reasoningHeading, reasoningSummary } from "./ThoughtBox";
+import { liveReasoningTicker, reasoningHeading, reasoningSummary } from "./ThoughtBox";
 
 import {
   extractCommand,
@@ -385,19 +385,13 @@ export default function ContextActivityGroupView(props: {
     setOpen(true);
   });
 
-  // Keep the live step visible, but never override an explicit user collapse.
+  // Sync open state when groupKey changes across virtualized/reused turns,
+  // keeping the bar compact by default so transitioning from live steps to
+  // answer text never collapses a multi-hundred-pixel drawer.
   createEffect(() => {
     const key = groupKey();
-    if (props.isLiveTail && (!key || !collapsedActivityGroupKeys.has(key))) {
-      setOpen(true);
-    }
-  });
-
-  createEffect(() => {
-    const key = groupKey();
-    if (key && !props.isLiveTail) {
-      setOpen(expandedActivityGroupKeys.has(key));
-    }
+    if (!key) return;
+    setOpen(expandedActivityGroupKeys.has(key) && !collapsedActivityGroupKeys.has(key));
   });
 
   const toggleOpen = () => {
@@ -505,7 +499,7 @@ export default function ContextActivityGroupView(props: {
     for (let i = props.parts.length - 1; i >= 0; i--) {
       const p = props.parts[i];
       if (p.type === "reasoning" && p.time?.end == null) {
-        const heading = reasoningHeading(p.text ?? "", true).title;
+        const heading = liveReasoningTicker(p.text ?? "", true);
         return {
           action: tI18n("timeline.thinking"),
           detail: heading || "",

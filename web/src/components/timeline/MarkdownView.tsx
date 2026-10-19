@@ -14,6 +14,7 @@ import {
   parseInline,
   parseMarkdownBlocks,
   splitTableRow,
+  stabilizeBlockToken,
   stripFileLineSuffix,
   type TableAlign,
 } from "./markdown-parser";
@@ -22,10 +23,12 @@ export {
   type AlertKind,
   type BlockToken,
   isLikelyFilePath,
+  isSameBlockToken,
   type ListItemEntry,
   parseInline,
   parseMarkdownBlocks,
   splitTableRow,
+  stabilizeBlockToken,
   type TableAlign,
 };
 
@@ -65,6 +68,7 @@ function InlineRenderer(props: { text: string }) {
           <Match
             when={
               span().type === "code" &&
+              !(span() as Extract<InlineSpan, { type: "code" }>).unclosed &&
               isLikelyFilePath((span() as Extract<InlineSpan, { type: "code" }>).text)
             }
           >
@@ -87,6 +91,7 @@ function InlineRenderer(props: { text: string }) {
           <Match
             when={
               span().type === "code" &&
+              !(span() as Extract<InlineSpan, { type: "code" }>).unclosed &&
               isHttpUrl((span() as Extract<InlineSpan, { type: "code" }>).text)
             }
           >
@@ -223,9 +228,7 @@ export default function MarkdownView(props: { content: string }) {
   const blocks = createMemo<BlockToken[]>((prev) => {
     const next = parseMarkdownBlocks(props.content || "");
     for (let i = 0; i < next.length; i++) {
-      if (isSameBlockToken(prev[i], next[i])) {
-        next[i] = prev[i];
-      }
+      next[i] = stabilizeBlockToken(prev[i], next[i]);
     }
     return next;
   }, []);
@@ -251,7 +254,12 @@ export default function MarkdownView(props: { content: string }) {
               }
             >
               <h1 class="first:mt-0 mt-3.5 -mb-1 text-[1.28em] font-semibold tracking-tight text-[var(--text-primary)]">
-                <InlineRenderer text={(block() as Extract<BlockToken, { type: "heading" }>).text} />
+                <Show
+                  when={(block() as Extract<BlockToken, { type: "heading" }>).text}
+                  fallback={"\u00A0"}
+                >
+                  <InlineRenderer text={(block() as Extract<BlockToken, { type: "heading" }>).text} />
+                </Show>
               </h1>
             </Match>
             <Match
@@ -261,7 +269,12 @@ export default function MarkdownView(props: { content: string }) {
               }
             >
               <h2 class="first:mt-0 mt-3 -mb-1 text-[1.15em] font-semibold tracking-tight text-[var(--text-primary)]">
-                <InlineRenderer text={(block() as Extract<BlockToken, { type: "heading" }>).text} />
+                <Show
+                  when={(block() as Extract<BlockToken, { type: "heading" }>).text}
+                  fallback={"\u00A0"}
+                >
+                  <InlineRenderer text={(block() as Extract<BlockToken, { type: "heading" }>).text} />
+                </Show>
               </h2>
             </Match>
             <Match
@@ -271,12 +284,22 @@ export default function MarkdownView(props: { content: string }) {
               }
             >
               <h3 class="first:mt-0 mt-2.5 -mb-1 text-[1.05em] font-semibold text-[var(--text-primary)]">
-                <InlineRenderer text={(block() as Extract<BlockToken, { type: "heading" }>).text} />
+                <Show
+                  when={(block() as Extract<BlockToken, { type: "heading" }>).text}
+                  fallback={"\u00A0"}
+                >
+                  <InlineRenderer text={(block() as Extract<BlockToken, { type: "heading" }>).text} />
+                </Show>
               </h3>
             </Match>
             <Match when={block().type === "heading"}>
               <h4 class="first:mt-0 mt-2 -mb-1 text-[0.98em] font-semibold text-[var(--text-secondary)]">
-                <InlineRenderer text={(block() as Extract<BlockToken, { type: "heading" }>).text} />
+                <Show
+                  when={(block() as Extract<BlockToken, { type: "heading" }>).text}
+                  fallback={"\u00A0"}
+                >
+                  <InlineRenderer text={(block() as Extract<BlockToken, { type: "heading" }>).text} />
+                </Show>
               </h4>
             </Match>
             <Match when={block().type === "list"}>
@@ -304,7 +327,9 @@ export default function MarkdownView(props: { content: string }) {
                                       : "•"}
                                 </span>
                                 <div class="min-w-0 flex-1 whitespace-pre-wrap break-words">
-                                  <InlineRenderer text={item().text} />
+                                  <Show when={item().text} fallback={"\u00A0"}>
+                                    <InlineRenderer text={item().text} />
+                                  </Show>
                                 </div>
                               </div>
                             }

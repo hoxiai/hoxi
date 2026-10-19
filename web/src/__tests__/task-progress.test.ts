@@ -23,6 +23,12 @@ import type { MessagePart } from "../services/sse-types";
 
 import type { MessageTurn } from "../store/workspace";
 import { firstMatchingPartID } from "../components/timeline/TranscriptSearchBar";
+import {
+  parseInline,
+  parseMarkdownBlocks,
+  stabilizeBlockToken,
+} from "../components/timeline/markdown-parser";
+import { liveReasoningTicker } from "../components/timeline/ThoughtBox";
 import { assertDeepEqual, assertEqual, assertTrue, describe, it } from "./test-harness";
 
 const sid = "ses_tp";
@@ -293,5 +299,99 @@ describe("task progress todo staleness", () => {
       [{ file: "second.go", additions: 2, deletions: 0 }]
     );
   });
+
+  it("keeps streaming markdown blocks and inline tokens stable without intermediate layout thrashing", () => {
+    // 1. Ordered list streaming: `\n2` / `\n2.` / `\n2. ` must stay inside the same list block
+    // and preserve item[0] object identity via stabilizeBlockToken.
+    const step1 = parseMarkdownBlocks("1. First item\n2");
+    assertEqual(step1.length, 1, "partial ordered marker stays in single list block");
+    assertEqual(step1[0].type, "list");
+    const list1 = step1[0] as Extract<(typeof step1)[number], { type: "list" }>;
+    assertEqual(list1.items.length, 2);
+    assertEqual(list1.items[0].text, "First item");
+    assertEqual(list1.items[1].orderNumber, 2);
+    assertEqual(list1.items[1].text, "");
+
+    const step2 = parseMarkdownBlocks("1. First item\n2.");
+    const stabilized2 = stabilizeBlockToken(step1[0], step2[0]) as typeof list1;
+    assertTrue(stabilized2.items[0] === list1.items[0], "unchanged list item reference is preserved");
+    assertEqual(stabilized2.items[1].orderNumber, 2);
+    assertEqual(stabilized2.items[1].text, "");
+
+    const step3 = parseMarkdownBlocks("1. First item\n2. Second item");
+    const stabilized3 = stabilizeBlockToken(stabilized2, step3[0]) as typeof list1;
+    assertTrue(stabilized3.items[0] === list1.items[0], "first item reference stays stable as second streams");
+    assertEqual(stabilized3.items[1].text, "Second item");
+
+    // 2. Heading streaming: `###` and `### ` mount as heading immediately rather than paragraph
+    assertDeepEqual(parseMarkdownBlocks("###"), [{ type: "heading", level: 3, text: "" }]);
+    assertDeepEqual(parseMarkdownBlocks("### "), [{ type: "heading", level: 3, text: "" }]);
+    assertDeepEqual(parseMarkdownBlocks("### Title"), [{ type: "heading", level: 3, text: "Title" }]);
+
+    // 3. Code fence streaming: partial opening/closing backticks don't flash paragraphs or trailing lines
+    assertDeepEqual(parseMarkdownBlocks("`"), []);
+    assertDeepEqual(parseMarkdownBlocks("``"), []);
+    assertDeepEqual(parseMarkdownBlocks("```ts\nconst x = 1;\n`"), [
+      { type: "code", lang: "ts", code: "const x = 1;" },
+    ]);
+    assertDeepEqual(parseMarkdownBlocks("```ts\nconst x = 1;\n``"), [
+      { type: "code", lang: "ts", code: "const x = 1;" },
+    ]);
+    assertDeepEqual(parseMarkdownBlocks("```ts\nconst x = 1;\n```"), [
+      { type: "code", lang: "ts", code: "const x = 1;" },
+    ]);
+
+    // 4. Inline bold streaming: no raw `*` / `**` flash and stable bold span identity
+    assertDeepEqual(parseInline("Prefix *"), [{ type: "text", text: "Prefix " }]);
+    assertDeepEqual(parseInline("Prefix **"), [{ type: "text", text: "Prefix " }]);
+    assertDeepEqual(parseInline("Prefix **bo"), [
+      { type: "text", text: "Prefix " },
+      { type: "bold", text: "bo" },
+    ]);
+    assertDeepEqual(parseInline("Prefix **bold*"), [
+      { type: "text", text: "Prefix " },
+      { type: "bold", text: "bold" },
+    ]);
+    assertDeepEqual(parseInline("Prefix **bold**"), [
+      { type: "text", text: "Prefix " },
+      { type: "bold", text: "bold" },
+    ]);
+
+    // 5. Inline code streaming: unclosed backtick marks `unclosed: true` and prevents bare file path hijack
+    assertDeepEqual(parseInline("Check `"), [{ type: "text", text: "Check " }]);
+    assertDeepEqual(parseInline("Check `see web/src/App.tsx"), [
+      { type: "text", text: "Check " },
+      { type: "code", text: "see web/src/App.tsx", unclosed: true },
+    ]);
+    assertDeepEqual(parseInline("Check `see web/src/App.tsx`"), [
+      { type: "text", text: "Check " },
+      { type: "code", text: "see web/src/App.tsx" },
+    ]);
+
+    // 6. Inline link streaming: `[label](partial` renders as link immediately without raw URL spill
+    assertDeepEqual(parseInline("Visit [Docs](https://hoxi"), [
+      { type: "text", text: "Visit " },
+      { type: "link", text: "Docs", href: "https://hoxi" },
+    ]);
+    assertDeepEqual(parseInline("Visit [Docs](https://hoxi.ai)"), [
+      { type: "text", text: "Visit " },
+      { type: "link", text: "Docs", href: "https://hoxi.ai" },
+    ]);
+
+    // 7. Live reasoning single-line ticker updates with latest phase heading or latest thought line
+    assertEqual(
+      liveReasoningTicker("**Phase 1: Inspecting**\nReading files...\n**Phase 2: Updating parser**", true),
+      "Phase 2: Updating parser"
+    );
+    assertEqual(
+      liveReasoningTicker("First we check the store.\nNow verifying timeline scroll anchoring.", true),
+      "Now verifying timeline scroll anchoring."
+    );
+    assertEqual(
+      liveReasoningTicker("**Completed Analysis**\nEverything looks good.", false),
+      "Completed Analysis"
+    );
+  });
 });
+
 

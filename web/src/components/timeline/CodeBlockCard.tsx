@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, Index, onCleanup, Show } from "solid-js";
 import { t } from "../../i18n";
 import { highlightCode, type HighlightedCode } from "./syntax-highlight";
 import { workspace } from "../../store/workspace";
@@ -83,15 +83,15 @@ export default function CodeBlockCard(props: { lang: string; code: string }) {
         style={{ "font-size": "var(--app-code-text-size)" }}
       >
         <code><Show when={visibleHighlight()} fallback={props.code}>{(result) => <>
-          <For each={result().tokens}>{(line, index) => <>
-            {index() > 0 ? "\n" : ""}
-            <For each={line}>{(token) => <span style={{
-              color: token.color,
-              "font-style": (token.fontStyle ?? 0) & 1 ? "italic" : undefined,
-              "font-weight": (token.fontStyle ?? 0) & 2 ? "bold" : undefined,
-              "text-decoration": (token.fontStyle ?? 0) & 4 ? "underline" : undefined,
-            }}>{token.content}</span>}</For>
-          </>}</For>
+          <Index each={result().tokens}>{(line, index) => <>
+            {index > 0 ? "\n" : ""}
+            <Index each={line()}>{(token) => <span style={{
+              color: token().color,
+              "font-style": (token().fontStyle ?? 0) & 1 ? "italic" : undefined,
+              "font-weight": (token().fontStyle ?? 0) & 2 ? "bold" : undefined,
+              "text-decoration": (token().fontStyle ?? 0) & 4 ? "underline" : undefined,
+            }}>{token().content}</span>}</Index>
+          </>}</Index>
           {props.code.slice(result().code.length)}
         </>}</Show></code>
       </pre>

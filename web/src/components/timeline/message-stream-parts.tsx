@@ -174,7 +174,12 @@ export function AssistantTurnFooter(props: {
     return null;
   });
 
+  const isTurnExecuting = createMemo(() =>
+    Boolean(props.isSessionBusy && !interruptMode() && isLatestTurn())
+  );
+
   const cycleSummary = createMemo(() => {
+    if (isTurnExecuting()) return null;
     if (props.info.error && !isUserAbortError(props.info)) return null;
     const list = props.turns;
     const idx = props.turnIndex;
@@ -292,10 +297,6 @@ export function AssistantTurnFooter(props: {
       setResuming(false);
     }
   };
-
-  const isTurnExecuting = createMemo(() =>
-    Boolean(props.isSessionBusy && !interruptMode() && isLatestTurn())
-  );
 
   return (
     <Show when={cycleSummary()}>

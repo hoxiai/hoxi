@@ -25,17 +25,28 @@ export function createTimelineScroll(
   const distanceFromBottom = (scroller: HTMLElement) =>
     scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
 
+  const syncOverflowAnchor = (scroller?: HTMLElement) => {
+    const el = scroller ?? getScroller();
+    if (!el?.style) return;
+    // Disable native browser scroll anchoring while JS auto-follow is active so
+    // WebKit doesn't fight ResizeObserver's jumpToBottom() during streaming;
+    // re-enable it when the reader scrolls up so their reading position stays anchored.
+    el.style.overflowAnchor = enabled() && following ? "none" : "auto";
+  };
+
   const updatePosition = () => {
     const scroller = getScroller();
     if (scroller && scroller.clientHeight > 0) {
       setAwayFromBottom(distanceFromBottom(scroller) >= AWAY_THRESHOLD);
     }
+    syncOverflowAnchor(scroller);
   };
 
   const jumpToBottom = () => {
     const scroller = getScroller();
     if (!scroller || scroller.clientHeight === 0) return;
     following = true;
+    syncOverflowAnchor(scroller);
     scroller.scrollTop = scroller.scrollHeight;
     previousScrollTop = scroller.scrollTop;
     updatePosition();
@@ -45,12 +56,14 @@ export function createTimelineScroll(
     const scroller = getScroller();
     if (!scroller || scroller.clientHeight === 0) return;
     following = true;
+    syncOverflowAnchor(scroller);
     previousScrollTop = scroller.scrollTop;
     scroller.scrollTo({ top: scroller.scrollHeight, behavior: "smooth" });
     updatePosition();
   };
 
   const schedule = () => {
+    syncOverflowAnchor();
     if (!enabled() || !following || frame !== undefined) return;
     frame = requestAnimationFrame(() => {
       frame = undefined;
@@ -68,10 +81,12 @@ export function createTimelineScroll(
     smoothToBottom,
     resume() {
       following = true;
+      syncOverflowAnchor();
       schedule();
     },
     pause() {
       following = false;
+      syncOverflowAnchor();
       if (frame !== undefined) cancelAnimationFrame(frame);
       frame = undefined;
     },
@@ -87,10 +102,10 @@ export function createTimelineScroll(
       // scroll event is dispatched it looks exactly like scrolling away.
       const movedUp = scroller.scrollTop < previousScrollTop - 1;
       previousScrollTop = scroller.scrollTop;
-      updatePosition();
       const distance = distanceFromBottom(scroller);
       if (distance <= REFOLLOW_THRESHOLD) following = true;
       else if (movedUp && (pointerScrolling || distance > READ_AWAY_THRESHOLD)) following = false;
+      updatePosition();
       return !following;
     },
     observe(content: HTMLDivElement) {
@@ -106,7 +121,10 @@ export function createTimelineScroll(
       });
       observer.observe(content);
       const scroller = getScroller();
-      if (scroller) observer.observe(scroller);
+      if (scroller) {
+        syncOverflowAnchor(scroller);
+        observer.observe(scroller);
+      }
       schedule();
       return () => {
         observer.disconnect();

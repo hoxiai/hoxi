@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, onCleanup, Show } from "solid-js";
 import type { MessagePart } from "../../services/sse-types";
 import { appSettings, isSessionBusy } from "../../store/workspace";
 import { Icon, TextShimmer } from "../icons";
@@ -91,6 +91,52 @@ export function reasoningSummary(body: string): string {
   return `${(cut > 0 ? head.slice(0, cut) : head).trimEnd()}…`;
 }
 
+/**
+ * Extracts a live single-line ticker from streaming or completed reasoning text.
+ * While streaming, prefers the most recent section heading (`### ...` or `**...**`)
+ * or falls back to the latest non-empty thought line so the single-line header
+ * continuously reflects current thinking progress without expanding a 240px box.
+ */
+export function liveReasoningTicker(rawText: string, isStreaming = false): string {
+  const src = (rawText ?? "").replace(/\[REDACTED\]/g, "").replace(/\r\n?/g, "\n").trim();
+  if (!src) return "";
+
+  if (!isStreaming) {
+    const parsed = reasoningHeading(src.slice(0, 480), false);
+    return parsed.title || reasoningSummary(parsed.body);
+  }
+
+  const tail = src.slice(-600);
+  const lines = tail
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !line.startsWith("```"));
+
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i];
+    const atx = line.match(/^#{1,6}[ \t]+(.+?)(?:[ \t]+#+)?$/);
+    if (atx?.[1]) {
+      const title = clean(atx[1]);
+      if (title) return reasoningSummary(title);
+    }
+    const bold = line.match(/^(\*\*|__)([^*_]+?)\1:?$/);
+    if (bold?.[2]) {
+      const title = clean(bold[2]);
+      if (title) return reasoningSummary(title);
+    }
+    if (i === lines.length - 1 && (line.startsWith("**") || line.startsWith("__"))) {
+      const partialTitle = clean(line.slice(2));
+      if (partialTitle) return reasoningSummary(partialTitle);
+    }
+  }
+
+  const headTitle = reasoningHeading(src.slice(0, 360), true).title;
+  if (headTitle) return reasoningSummary(headTitle);
+
+  const lastLine = lines[lines.length - 1];
+  return lastLine ? reasoningSummary(lastLine) : "";
+}
+
 // Persistent open/collapse state across reactive updates (ported from kilocode)
 const userOpened = new Set<string>();
 const userCollapsed = new Set<string>();
@@ -100,23 +146,48 @@ export default function ThoughtBox(props: { part: ReasoningPart; revealKey?: str
     props.part.time?.end == null &&
     (!props.part.sessionID || isSessionBusy(props.part.sessionID));
   const hasContent = () => Boolean(props.part.text && props.part.text.trim().length > 0);
-  const headSlice = createMemo(() =>
-    (props.part.text ?? "").slice(0, 360).replace(/\[REDACTED\]/g, "").trim()
-  );
 
   const resolveDefaultOpen = () => {
     const id = props.part.id;
     if (userOpened.has(id)) return true;
     if (userCollapsed.has(id)) return false;
-    const mode = appSettings.reasoningDisplay;
-    if (mode === "expanded") return true;
-    if (mode === "collapsed") return false;
-    return streaming();
+    // Only open full box by default when the user explicitly selects "expanded";
+    // in default "auto-collapse" mode, keep the compact single-line live ticker
+    // so transitioning from thinking to answer causes zero height collapse.
+    return appSettings.reasoningDisplay === "expanded";
   };
 
   const [open, setOpen] = createSignal(resolveDefaultOpen());
   const [everOpened, setEverOpened] = createSignal(open());
+  const [animateToggle, setAnimateToggle] = createSignal(false);
   let bodyRef: HTMLDivElement | undefined;
+  let innerRef: HTMLDivElement | undefined;
+  let userScrolledUp = false;
+  let lastScrollTop = 0;
+  let followFrame: number | undefined;
+
+  const stopFollow = () => {
+    if (followFrame !== undefined) {
+      cancelAnimationFrame(followFrame);
+      followFrame = undefined;
+    }
+  };
+
+  const maxScrollTop = () =>
+    bodyRef ? Math.max(0, bodyRef.scrollHeight - bodyRef.clientHeight) : 0;
+
+  const tickFollow = () => {
+    followFrame = undefined;
+    if (!streaming() || !open() || userScrolledUp || !bodyRef) return;
+    const target = maxScrollTop();
+    const rest = target - bodyRef.scrollTop;
+    if (Math.abs(rest) < 0.5) {
+      bodyRef.scrollTop = target;
+      return;
+    }
+    bodyRef.scrollTop += rest * 0.25;
+    followFrame = requestAnimationFrame(tickFollow);
+  };
 
   createEffect(() => {
     if (open()) setEverOpened(true);
@@ -129,6 +200,7 @@ export default function ThoughtBox(props: { part: ReasoningPart; revealKey?: str
       userCollapsed.delete(id);
       userOpened.add(id);
     }
+    setAnimateToggle(true);
     setOpen(true);
   });
 
@@ -136,35 +208,59 @@ export default function ThoughtBox(props: { part: ReasoningPart; revealKey?: str
   createEffect(() => {
     const id = props.part.id;
     const mode = appSettings.reasoningDisplay;
-    const isStreaming = streaming();
     if (userOpened.has(id) || userCollapsed.has(id)) return;
-    if (mode === "expanded") {
-      setOpen(true);
-    } else if (mode === "collapsed") {
-      setOpen(false);
-    } else {
-      setOpen(isStreaming);
-    }
+    setAnimateToggle(false);
+    setOpen(mode === "expanded");
   });
 
-  // Auto-scroll reasoning viewport while tokens stream in
+  // Observe inner reasoning body height (KiloCode pattern): smooth lerp while streaming,
+  // synchronous pre-paint snap when settled.
   createEffect(() => {
-    if (!open() || !streaming()) return;
-    void props.part.text;
-    if (bodyRef) {
-      queueMicrotask(() => {
-        if (bodyRef) bodyRef.scrollTop = bodyRef.scrollHeight;
-      });
-    }
+    if (!everOpened() || !innerRef) return;
+    const observer = new ResizeObserver(() => {
+      if (!open() || userScrolledUp || !bodyRef) return;
+      if (streaming()) {
+        if (followFrame === undefined) {
+          followFrame = requestAnimationFrame(tickFollow);
+        }
+        return;
+      }
+      bodyRef.scrollTop = maxScrollTop();
+    });
+    observer.observe(innerRef);
+    onCleanup(() => observer.disconnect());
   });
 
-  const headView = createMemo(() => reasoningHeading(headSlice(), streaming()));
+  onCleanup(() => {
+    stopFollow();
+  });
+
+  const onViewportScroll = (e: Event) => {
+    const el = e.currentTarget as HTMLDivElement;
+    const top = el.scrollTop;
+    if (el.scrollHeight - el.clientHeight - top < 10) {
+      userScrolledUp = false;
+    } else if (top < lastScrollTop - 1) {
+      userScrolledUp = true;
+    }
+    lastScrollTop = top;
+  };
+
+  const onViewportWheel = (e: WheelEvent) => {
+    if (e.deltaY < 0) {
+      userScrolledUp = true;
+      stopFollow();
+    }
+  };
 
   const headerTitle = createMemo(() => {
-    const t = headView().title;
-    if (t) return t;
-    if (!streaming() && !open()) return reasoningSummary(headView().body);
-    return "";
+    if (open() && !streaming()) {
+      return reasoningHeading((props.part.text ?? "").slice(0, 360), false).title || "";
+    }
+    if (appSettings.reasoningDisplay === "collapsed" && streaming()) {
+      return "";
+    }
+    return liveReasoningTicker(props.part.text ?? "", streaming());
   });
 
   const bodyContent = createMemo(() => {
@@ -190,6 +286,7 @@ export default function ThoughtBox(props: { part: ReasoningPart; revealKey?: str
       userOpened.delete(id);
       userCollapsed.add(id);
     }
+    setAnimateToggle(true);
     setOpen(next);
   };
 
@@ -234,7 +331,11 @@ export default function ThoughtBox(props: { part: ReasoningPart; revealKey?: str
 
         <Show when={everOpened()}>
           <div
-            class={`grid transition-[grid-template-rows,opacity,margin-top] duration-200 ease-out ${
+            class={`grid ${
+              animateToggle()
+                ? "transition-[grid-template-rows,opacity,margin-top] duration-200 ease-out"
+                : ""
+            } ${
               open()
                 ? "mt-1.5 grid-rows-[1fr] opacity-100"
                 : "mt-0 grid-rows-[0fr] opacity-0 pointer-events-none"
@@ -244,18 +345,15 @@ export default function ThoughtBox(props: { part: ReasoningPart; revealKey?: str
             <div class="min-h-0 overflow-hidden">
               <div
                 ref={bodyRef}
-                class="max-h-[240px] overflow-y-auto border-l-2 border-[var(--border-subtle)] px-3.5 py-2 text-[13px] leading-relaxed text-[var(--text-secondary)] selectable-text"
+                onScroll={onViewportScroll}
+                onWheel={onViewportWheel}
+                class={`max-h-[240px] overflow-y-auto border-l-2 border-[var(--border-subtle)] px-3.5 py-2 text-[13px] leading-relaxed text-[var(--text-secondary)] selectable-text ${
+                  streaming() ? "[scrollbar-width:none] [&::-webkit-scrollbar]:hidden" : ""
+                }`}
               >
-                <Show
-                  when={!streaming() || bodyContent().length < 2400}
-                  fallback={
-                    <div class="whitespace-pre-wrap break-words leading-relaxed">
-                      {bodyContent()}
-                    </div>
-                  }
-                >
+                <div ref={innerRef}>
                   <MarkdownView content={bodyContent()} />
-                </Show>
+                </div>
               </div>
             </div>
           </div>

@@ -310,7 +310,18 @@ export async function submitSessionPrompt(
       );
     }
     setTimeout(() => {
-      void loadSessionMessages(id!);
+      const targetID = id!;
+      const turns = workspace.messagesBySession[targetID] ?? [];
+      const lastTurn = turns[turns.length - 1];
+      // Only poll via HTTP if SSE is disconnected or no assistant turn has arrived yet;
+      // otherwise an HTTP snapshot mid-stream races with live SSE token deltas at t=900ms.
+      if (
+        !workspace.connected ||
+        !lastTurn ||
+        lastTurn.info.role === "user"
+      ) {
+        void loadSessionMessages(targetID);
+      }
     }, 900);
   } catch (err) {
     setWorkspace(

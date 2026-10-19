@@ -126,8 +126,40 @@ function matchCodeFenceOpen(
   };
 }
 
+function isPendingCodeFenceLine(line: string, expectedMarker?: "`" | "~"): boolean {
+  const m = line.match(/^\s*(`{1,2}|~{1,2})\s*$/);
+  if (!m) return false;
+  if (expectedMarker && m[1][0] !== expectedMarker) return false;
+  return true;
+}
+
+function matchHeadingLine(
+  line: string,
+  isTailLine: boolean
+): { level: 1 | 2 | 3 | 4; text: string } | null {
+  const m = line.match(/^(#{1,6})\s+(.+)$/);
+  if (m) {
+    return {
+      level: Math.min(4, m[1].length) as 1 | 2 | 3 | 4,
+      text: m[2].replace(/\s+#+\s*$/, "").trim(),
+    };
+  }
+  if (isTailLine) {
+    const tailMatch = line.match(/^(#{1,6})\s*$/);
+    if (tailMatch) {
+      return {
+        level: Math.min(4, tailMatch[1].length) as 1 | 2 | 3 | 4,
+        text: "",
+      };
+    }
+  }
+  return null;
+}
+
 function matchListMarker(
-  line: string
+  line: string,
+  isTailLine = false,
+  inOrderedList = false
 ): { indentSpaces: number; kind: "bullet" | "ordered"; orderNumber?: number; text: string } | null {
   const ul = line.match(/^(\s*)[-*+]\s+(.*)$/);
   if (ul) {
@@ -146,6 +178,27 @@ function matchListMarker(
       text: ol[3],
     };
   }
+  if (isTailLine && !isHorizontalRule(line)) {
+    const pendingUl = line.match(/^(\s*)[-*+]\s*$/);
+    if (pendingUl) {
+      return {
+        indentSpaces: pendingUl[1].replace(/\t/g, "  ").length,
+        kind: "bullet",
+        text: "",
+      };
+    }
+    const pendingOl = inOrderedList
+      ? line.match(/^(\s*)(\d+)[.)]?\s*$/)
+      : line.match(/^(\s*)(\d+)[.)]\s*$/);
+    if (pendingOl) {
+      return {
+        indentSpaces: pendingOl[1].replace(/\t/g, "  ").length,
+        kind: "ordered",
+        orderNumber: parseInt(pendingOl[2], 10) || 1,
+        text: "",
+      };
+    }
+  }
   return null;
 }
 
@@ -156,6 +209,13 @@ export function parseMarkdownBlocks(src: string): BlockToken[] {
 
   while (i < lines.length) {
     const line = lines[i];
+    const isTailLine = i === lines.length - 1;
+
+    // Hold trailing 1-2 backticks/tildes on a new line so it doesn't flash as <p> before ```
+    if (isTailLine && isPendingCodeFenceLine(line)) {
+      i++;
+      continue;
+    }
 
     // Fenced code block (supports indentation, 3+ backticks/tildes, and info string metadata)
     const fenceOpen = matchCodeFenceOpen(line);
@@ -166,6 +226,10 @@ export function parseMarkdownBlocks(src: string): BlockToken[] {
       const codeLines: string[] = [];
       i++;
       while (i < lines.length && !closeRe.test(lines[i])) {
+        if (i === lines.length - 1 && isPendingCodeFenceLine(lines[i], fenceOpen.marker)) {
+          i++;
+          break;
+        }
         codeLines.push(stripIndentRe ? lines[i].replace(stripIndentRe, "") : lines[i]);
         i++;
       }
@@ -202,14 +266,13 @@ export function parseMarkdownBlocks(src: string): BlockToken[] {
       continue;
     }
 
-    // Heading (H1 - H6)
-    const headingMatch = line.match(/^(#{1,6})\s+(.+)$/);
+    // Heading (H1 - H6, including trailing `#` / `### ` while streaming)
+    const headingMatch = matchHeadingLine(line, isTailLine);
     if (headingMatch) {
-      const level = Math.min(4, headingMatch[1].length) as 1 | 2 | 3 | 4;
       blocks.push({
         type: "heading",
-        level,
-        text: headingMatch[2].replace(/\s+#+\s*$/, "").trim(),
+        level: headingMatch.level,
+        text: headingMatch.text,
       });
       i++;
       continue;
@@ -235,14 +298,20 @@ export function parseMarkdownBlocks(src: string): BlockToken[] {
           } else {
             quoteLines.shift();
           }
+        } else if (
+          i === lines.length &&
+          quoteLines.length === 1 &&
+          /^\[![A-Za-z]*\]?$/.test(quoteLines[0].trim())
+        ) {
+          quoteLines[0] = "";
         }
       }
       blocks.push({ type: "blockquote", alert, text: quoteLines.join("\n").trim() });
       continue;
     }
 
-    // Lists (Unordered & Ordered, preserving nested sub-items and indented continuation lines)
-    const firstList = matchListMarker(line);
+    // Lists (Unordered & Ordered, preserving nested sub-items and streaming tail markers)
+    const firstList = matchListMarker(line, isTailLine, false);
     if (firstList) {
       const baseIndent = firstList.indentSpaces;
       const isOrderedRoot = firstList.kind === "ordered";
@@ -252,8 +321,16 @@ export function parseMarkdownBlocks(src: string): BlockToken[] {
 
       while (i < lines.length) {
         const curLine = lines[i];
+        const curIsTail = i === lines.length - 1;
         if (!curLine.trim()) {
-          if (i + 1 < lines.length && matchListMarker(lines[i + 1])) {
+          if (curIsTail) {
+            i++;
+            continue;
+          }
+          if (
+            i + 1 < lines.length &&
+            matchListMarker(lines[i + 1], i + 1 === lines.length - 1, isOrderedRoot)
+          ) {
             i++;
             continue;
           }
@@ -261,15 +338,16 @@ export function parseMarkdownBlocks(src: string): BlockToken[] {
         }
         if (
           matchCodeFenceOpen(curLine) ||
+          (curIsTail && isPendingCodeFenceLine(curLine)) ||
           isTableStart(lines, i) ||
           isHorizontalRule(curLine) ||
-          /^(#{1,6})\s+/.test(curLine) ||
+          Boolean(matchHeadingLine(curLine, curIsTail)) ||
           /^>\s?/.test(curLine)
         ) {
           break;
         }
 
-        const marker = matchListMarker(curLine);
+        const marker = matchListMarker(curLine, curIsTail, isOrderedRoot);
         if (marker) {
           const relIndent = Math.min(
             3,
@@ -313,10 +391,11 @@ export function parseMarkdownBlocks(src: string): BlockToken[] {
       i < lines.length &&
       lines[i].trim() !== "" &&
       !matchCodeFenceOpen(lines[i]) &&
-      !/^(#{1,6})\s+/.test(lines[i]) &&
+      !(i === lines.length - 1 && isPendingCodeFenceLine(lines[i])) &&
+      !matchHeadingLine(lines[i], i === lines.length - 1) &&
       !isHorizontalRule(lines[i]) &&
       !isTableStart(lines, i) &&
-      !matchListMarker(lines[i]) &&
+      !matchListMarker(lines[i], i === lines.length - 1, false) &&
       !/^>\s?/.test(lines[i])
     ) {
       paraLines.push(lines[i]);
@@ -331,7 +410,7 @@ export function parseMarkdownBlocks(src: string): BlockToken[] {
 export type InlineSpan =
   | { type: "text"; text: string }
   | { type: "br" }
-  | { type: "code"; text: string }
+  | { type: "code"; text: string; unclosed?: boolean }
   | { type: "bold"; text: string }
   | { type: "italic"; text: string }
   | { type: "strike"; text: string }
@@ -340,9 +419,28 @@ export type InlineSpan =
 const BARE_FILE_PATH_SOURCE = `(?:\\.\\/)?(?:[\\w@-]+\\/)+[\\w.-]+\\.(?:${EXTENSIONS_SOURCE})${LINE_SUFFIX_SOURCE}`;
 
 const INLINE_TOKEN_REGEX = new RegExp(
-  `(\`[^\`]+\`|<br\\s*\\/?>|\\*\\*(?:\`[^\`]+\`|[^*]+|\\*(?!\\*))+\\*\\*|__(?:\`[^\`]+\`|[^_]+|_(?!_))+__|~~[^~\\n]+~~|\\[(?:\`[^\`]+\`|[^\\]]+)\\]\\((?:[^()\\s]+|\\([^()\\s]*\\))+\\)|\\*[^*\\n]+\\*|https?:\\/\\/[^\\s<>\\])"]+|${BARE_FILE_PATH_SOURCE})`,
+  `(\`[^\`\\n]+\`|\`[^\`\\n]*$|<br\\s*\\/?>|\\*\\*(?:\`[^\`]+\`|[^*]+|\\*(?!\\*))+\\*\\*|\\*\\*(?:\`[^\`\\n]+\`|\`[^\`\\n]*$|[^*\\n]+|\\*(?!\\*))*$|__(?:\`[^\`]+\`|[^_]+|_(?!_))+__|~~[^~\\n]+~~|\\[(?:\`[^\`]+\`|[^\\]]+)\\]\\((?:[^()\\s]+|\\([^()\\s]*\\))+\\)|\\[(?:\`[^\`\\n]+\`|[^\\]\\n]+)\\]\\([^()\\s]*$|\\*[^*\\n]+\\*|https?:\\/\\/[^\\s<>\\])"]+|${BARE_FILE_PATH_SOURCE})`,
   "gi"
 );
+
+function appendPlainTextSpan(spans: InlineSpan[], text: string) {
+  if (!text) return;
+  const last = spans[spans.length - 1];
+  if (last && last.type === "text") {
+    last.text += text;
+  } else {
+    spans.push({ type: "text", text });
+  }
+}
+
+function stripPendingTrailingDelimiter(tail: string): string {
+  // Hold back a lone trailing `*` after start-of-line, whitespace, or open punctuation
+  // so the first `*` of an upcoming `**bold**` doesn't flash for one frame.
+  if (tail === "*" || /[\s:：,，(（]\*$/.test(tail)) {
+    return tail.slice(0, -1);
+  }
+  return tail;
+}
 
 export function parseInline(text: string): InlineSpan[] {
   const spans: InlineSpan[] = [];
@@ -353,7 +451,7 @@ export function parseInline(text: string): InlineSpan[] {
   while ((match = regex.exec(text)) !== null) {
     const token = match[0];
 
-    // Guard bare file path matches so they aren't mid-word or part of a protocol/URL
+    // Guard bare file path matches so they aren't mid-word or part of a URL
     if (
       !token.startsWith("`") &&
       !token.startsWith("<") &&
@@ -364,11 +462,11 @@ export function parseInline(text: string): InlineSpan[] {
       !/^https?:\/\//i.test(token)
     ) {
       const prevChar = match.index > 0 ? text[match.index - 1] : "";
-      if (prevChar && /[A-Za-z0-9_/:.~@-]/.test(prevChar)) {
+      if (prevChar && /[A-Za-z0-9_/:.~@\-`]/.test(prevChar)) {
         continue;
       }
       if (match.index > lastIdx) {
-        spans.push({ type: "text", text: text.slice(lastIdx, match.index) });
+        appendPlainTextSpan(spans, text.slice(lastIdx, match.index));
       }
       spans.push({ type: "code", text: token });
       lastIdx = regex.lastIndex;
@@ -376,26 +474,50 @@ export function parseInline(text: string): InlineSpan[] {
     }
 
     if (match.index > lastIdx) {
-      spans.push({ type: "text", text: text.slice(lastIdx, match.index) });
+      appendPlainTextSpan(spans, text.slice(lastIdx, match.index));
     }
 
     if (/^<br\s*\/?>$/i.test(token)) {
       spans.push({ type: "br" });
-    } else if (token.startsWith("`") && token.endsWith("`")) {
-      spans.push({ type: "code", text: token.slice(1, -1) });
+    } else if (token.startsWith("`")) {
+      if (token.length >= 2 && token.endsWith("`")) {
+        spans.push({ type: "code", text: token.slice(1, -1) });
+      } else {
+        const codeBody = token.slice(1);
+        if (codeBody.length > 0) {
+          spans.push({ type: "code", text: codeBody, unclosed: true });
+        }
+      }
     } else if (
-      (token.startsWith("**") && token.endsWith("**")) ||
-      (token.startsWith("__") && token.endsWith("__"))
+      (token.startsWith("**") && token.length >= 4 && token.endsWith("**")) ||
+      (token.startsWith("__") && token.length >= 4 && token.endsWith("__"))
     ) {
       spans.push({ type: "bold", text: token.slice(2, -2) });
+    } else if (token.startsWith("**")) {
+      const rawBody = token.slice(2);
+      const boldBody = rawBody.endsWith("*") ? rawBody.slice(0, -1) : rawBody;
+      if (boldBody.length > 0) {
+        spans.push({ type: "bold", text: boldBody });
+      }
     } else if (token.startsWith("~~") && token.endsWith("~~")) {
       spans.push({ type: "strike", text: token.slice(2, -2) });
     } else if (token.startsWith("[")) {
-      const m = token.match(/^\[((?:`[^`]+`|[^\]]+))\]\(((?:[^()\s]+|\([^()\s]*\))+)\)$/);
-      if (m) {
-        spans.push({ type: "link", text: m[1], href: m[2] });
+      const closedMatch = token.match(
+        /^\[((?:`[^`]+`|[^\]]+))\]\(((?:[^()\s]+|\([^()\s]*\))+)\)$/
+      );
+      if (closedMatch) {
+        spans.push({ type: "link", text: closedMatch[1], href: closedMatch[2] });
       } else {
-        spans.push({ type: "text", text: token });
+        const unclosedMatch = token.match(/^\[((?:`[^`\n]+`|[^\]\n]+))\]\(([^()\s]*)$/);
+        if (unclosedMatch) {
+          spans.push({
+            type: "link",
+            text: unclosedMatch[1],
+            href: unclosedMatch[2] || "#",
+          });
+        } else {
+          appendPlainTextSpan(spans, token);
+        }
       }
     } else if (token.startsWith("*") && token.endsWith("*")) {
       spans.push({ type: "italic", text: token.slice(1, -1) });
@@ -404,16 +526,16 @@ export function parseInline(text: string): InlineSpan[] {
       const trailing = token.slice(cleanUrl.length);
       spans.push({ type: "link", text: cleanUrl, href: cleanUrl });
       if (trailing) {
-        spans.push({ type: "text", text: trailing });
+        appendPlainTextSpan(spans, trailing);
       }
     } else {
-      spans.push({ type: "text", text: token });
+      appendPlainTextSpan(spans, token);
     }
     lastIdx = regex.lastIndex;
   }
 
   if (lastIdx < text.length) {
-    spans.push({ type: "text", text: text.slice(lastIdx) });
+    appendPlainTextSpan(spans, stripPendingTrailingDelimiter(text.slice(lastIdx)));
   }
   return spans;
 }
@@ -422,6 +544,9 @@ export function isSameInlineSpan(a: InlineSpan | undefined, b: InlineSpan): bool
   if (!a || a.type !== b.type) return false;
   if (b.type === "br") return true;
   if (a.type !== "br" && a.text !== b.text) return false;
+  if (a.type === "code" && b.type === "code") {
+    return Boolean(a.unclosed) === Boolean(b.unclosed);
+  }
   if (a.type === "link" && b.type === "link") return a.href === b.href;
   return true;
 }
@@ -434,17 +559,20 @@ function isSameStringArray(a: string[], b: string[]): boolean {
   return true;
 }
 
+function isSameListItem(a: ListItemEntry | undefined, b: ListItemEntry): boolean {
+  if (!a) return false;
+  return (
+    a.text === b.text &&
+    a.indent === b.indent &&
+    a.kind === b.kind &&
+    a.orderNumber === b.orderNumber
+  );
+}
+
 function isSameListItems(a: ListItemEntry[], b: ListItemEntry[]): boolean {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) {
-    if (
-      a[i].text !== b[i].text ||
-      a[i].indent !== b[i].indent ||
-      a[i].kind !== b[i].kind ||
-      a[i].orderNumber !== b[i].orderNumber
-    ) {
-      return false;
-    }
+    if (!isSameListItem(a[i], b[i])) return false;
   }
   return true;
 }
@@ -483,4 +611,37 @@ export function isSameBlockToken(a: BlockToken | undefined, b: BlockToken): bool
       return true;
     }
   }
+}
+
+/**
+ * Reuses unchanged block references AND unchanged sub-items (`list.items[j]`,
+ * `table.rows[r]`) so streaming the last bullet point or table cell never
+ * invalidates earlier items in the same block.
+ */
+export function stabilizeBlockToken(prev: BlockToken | undefined, next: BlockToken): BlockToken {
+  if (isSameBlockToken(prev, next)) return prev!;
+  if (!prev || prev.type !== next.type) return next;
+  if (next.type === "list" && prev.type === "list") {
+    for (let i = 0; i < next.items.length; i++) {
+      if (isSameListItem(prev.items[i], next.items[i])) {
+        next.items[i] = prev.items[i];
+      }
+    }
+    return next;
+  }
+  if (next.type === "table" && prev.type === "table") {
+    if (isSameStringArray(prev.headers, next.headers)) {
+      next.headers = prev.headers;
+    }
+    if (isSameStringArray(prev.aligns, next.aligns)) {
+      next.aligns = prev.aligns;
+    }
+    for (let r = 0; r < next.rows.length; r++) {
+      if (prev.rows[r] && isSameStringArray(prev.rows[r], next.rows[r])) {
+        next.rows[r] = prev.rows[r];
+      }
+    }
+    return next;
+  }
+  return next;
 }
