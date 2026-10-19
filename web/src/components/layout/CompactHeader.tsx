@@ -3,14 +3,12 @@ import {
   Moon,
   PanelLeft,
   PanelRight,
-  RotateCcw,
   Sun,
 } from "lucide-solid";
 import {
   activeSession,
   openEditWorkspaceModal,
   toggleTheme,
-  undoRevert,
   workspace,
   workspaceDisplayName,
 } from "../../store/workspace";
@@ -44,16 +42,6 @@ export default function CompactHeader(props: CompactHeaderProps) {
     const title = mainSession()?.title;
     return isPlaceholderSessionTitle(title) ? t("leftNav.newThread") : title;
   });
-
-  const onUndoRevert = async () => {
-    const s = session();
-    if (!s) return;
-    try {
-      await undoRevert(s.id);
-    } catch (err) {
-      console.error(err);
-    }
-  };
 
   const isMac =
     typeof navigator !== "undefined" &&
@@ -106,18 +94,6 @@ export default function CompactHeader(props: CompactHeaderProps) {
       </div>
 
       <div class="flex shrink-0 items-center gap-1.5 text-[12px]">
-        <Show when={session()?.revert}>
-          <button
-            class="inline-flex items-center gap-1 rounded-lg border border-[var(--warn-border)] bg-[var(--warn-surface)] px-2.5 py-1 text-[12px] text-[var(--warn-text)] hover:opacity-90 transition-opacity cursor-pointer"
-            style={{ "--wails-draggable": "no-drag" } as any}
-            onClick={onUndoRevert}
-            title={t("header.undoRevertTooltip")}
-          >
-            <RotateCcw size={12} />
-            {t("header.undoRevert")}
-          </button>
-        </Show>
-
         <Show when={!workspace.connected}>
           <div class="flex items-center gap-1.5 rounded-lg px-2 py-1 text-[var(--text-muted)]">
             <span class="inline-block w-1.5 h-1.5 rounded-full bg-[var(--warn)] animate-pulse" />

@@ -407,15 +407,7 @@ export function AssistantTurnFooter(props: {
                 </ActionIconButton>
               </Show>
 
-              <Show
-                when={interruptMode()}
-                fallback={
-                  <span class="inline-flex items-center gap-1 text-[var(--ok-text)]/85">
-                    <Icon name="circle-check" size="small" />
-                    <span class="hidden sm:inline">{t("timeline.turnCompleted")}</span>
-                  </span>
-                }
-              >
+              <Show when={interruptMode()}>
                 {(mode) => (
                   <span
                     class={`inline-flex items-center gap-1 font-medium ${
@@ -437,16 +429,8 @@ export function AssistantTurnFooter(props: {
               </Show>
 
               <Show when={durationLabel()}>
-                <span>·</span>
-                <span class="hidden sm:inline font-mono tabular-nums text-[var(--text-muted)]">
+                <span class="hidden sm:inline font-mono tabular-nums text-[var(--text-faint)]">
                   {durationLabel()}
-                </span>
-              </Show>
-
-              <Show when={summary().toolCount > 0}>
-                <span>·</span>
-                <span class="hidden sm:inline font-mono tabular-nums text-[var(--text-muted)]">
-                  {t("timeline.stepsCompleted", { count: summary().toolCount })}
                 </span>
               </Show>
 

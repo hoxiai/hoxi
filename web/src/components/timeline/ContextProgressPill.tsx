@@ -130,11 +130,11 @@ export default function ContextProgressPill() {
           <button
             type="button"
             onClick={() => setOpen((v) => !v)}
-            class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11.5px] font-mono text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
-            title={t("timeline.contextTooltip")}
+            class="inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11.5px] font-mono text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+            title={`${t("timeline.contextTooltip")} · ${formatCompactNumber(s().used)} / ${formatCompactNumber(s().limit)} (${s().percent}%)`}
           >
             {/* Kilo ProgressCircle SVG */}
-            <svg width="15" height="15" viewBox="0 0 16 16" class="-rotate-90 shrink-0">
+            <svg width="14" height="14" viewBox="0 0 16 16" class="-rotate-90 shrink-0">
               <circle
                 cx="8"
                 cy="8"
@@ -158,14 +158,6 @@ export default function ContextProgressPill() {
               />
             </svg>
             <span>{s().percent}%</span>
-            <span class="hidden sm:inline text-[var(--text-faint)]">
-              · {formatCompactNumber(s().used)}
-            </span>
-            <Show when={s().totalCost > 0}>
-              <span class="hidden md:inline text-[var(--text-faint)]">
-                · ${s().totalCost.toFixed(3)}
-              </span>
-            </Show>
           </button>
 
           {/* Breakdown Popover */}
