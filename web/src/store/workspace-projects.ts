@@ -2,6 +2,7 @@ import { hoxiAPI, type SaveWorkspaceInput, type WorkspaceFolder, type WorkspaceP
 import { DISMISSED_PROJECTS_KEY, isSessionArchived, PROJECT_ORDER_KEY, RECENT_PROJECTS_KEY, setWorkspace, workspace } from "./workspace";
 import { loadAgents, loadProviders } from "./workspace-providers";
 import { isPlaceholderSessionTitle, preserveSessionTitle, sortSessionsByActivity } from "./session-title";
+import { syncPendingPermissions } from "./approval-mode";
 import { syncSessionStatuses } from "./session-status-sync";
 import { isSessionBusy, isSessionDeleted, loadSessionMessagesOnly, refreshWorktreeStatus, selectSession } from "./workspace-sessions";
 import type { SessionInfo } from "../services/sse-types";
@@ -277,7 +278,7 @@ export async function bootstrapProjectSessions(directory: string, selectInitial 
   const titledSessions = sessions.map(preserveSessionTitle);
   setWorkspace("sessions", titledSessions);
   for (const s of titledSessions) {
-    if ((s.runtime === "antigravity" || s.runtime === "claude-code") && s.directory && !workspace.worktreeBySession[s.id]) {
+    if (s.directory && !workspace.worktreeBySession[s.id]) {
       setWorkspace("worktreeBySession", s.id, {
         sessionID: s.id,
         isolated: s.sandboxMode ? s.sandboxMode === "worktree" : normalizeFolderPath(s.directory) !== cleaned,
@@ -289,6 +290,7 @@ export async function bootstrapProjectSessions(directory: string, selectInitial 
   }
   void refreshWorktreeStatus("__root__");
   void syncSessionStatuses(cleaned);
+  void syncPendingPermissions(cleaned);
   if (selectInitial) await selectInitialProjectSession(titledSessions, cleaned);
   else setWorkspace("bootstrappingSessions", false);
 }

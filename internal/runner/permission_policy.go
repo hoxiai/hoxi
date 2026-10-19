@@ -16,7 +16,7 @@ var (
 	destructiveGitRe = regexp.MustCompile(`\bgit\b[^\n;&|]*?\b(?:branch\b[^\n;&|]*(?:\s--(?:delete|force)(?:[=\s]|$)|\s-[a-zA-Z]*[dDf][a-zA-Z]*(?:\s|$))|worktree\s+(?:remove|prune)\b|push\b[^\n;&|]*(?:--force\b|-f\b|--force-with-lease\b)|reset\b[^\n;&|]*--hard\b|clean\b[^\n;&|]*\s-[a-zA-Z]*f)`)
 
 	safeCommandRes = []*regexp.Regexp{
-		regexp.MustCompile(`^(ls|pwd|cat|head|tail|wc|find|grep|rg|fd)\b`),
+		regexp.MustCompile(`^(ls|pwd|cat|head|tail|wc|find|grep|rg|fd|lsof|ps|which|whereis|uname|stat|file|du|df)\b`),
 		regexp.MustCompile(`^git\s+(status|diff|log|show|rev-parse)\b`),
 		regexp.MustCompile(`^git\s+worktree\s+list(?:\s|$)`),
 		regexp.MustCompile(`^go\s+(test|vet|build|list|env|version)\b`),
@@ -66,6 +66,7 @@ func decideCommandPermission(command string) string {
 func splitCommandChain(command string) []string {
 	var segments []string
 	var cur strings.Builder
+	var quote byte
 	flush := func() {
 		seg := strings.TrimSpace(trailingParenRe.ReplaceAllString(cur.String(), ""))
 		if seg != "" {
@@ -80,7 +81,38 @@ func splitCommandChain(command string) []string {
 		if i+1 < len(s) {
 			next = s[i+1]
 		}
+		if quote == '\'' {
+			if c == '\'' {
+				quote = 0
+			}
+			cur.WriteByte(c)
+			continue
+		}
+		if c == '\\' && i+1 < len(s) {
+			cur.WriteByte(c)
+			cur.WriteByte(next)
+			i++
+			continue
+		}
+		if quote == '"' {
+			switch {
+			case c == '"':
+				quote = 0
+				cur.WriteByte(c)
+			case c == '$' && next == '(':
+				flush()
+				i++
+			case c == '`':
+				flush()
+			default:
+				cur.WriteByte(c)
+			}
+			continue
+		}
 		switch {
+		case c == '\'' || c == '"':
+			quote = c
+			cur.WriteByte(c)
 		case c == '&' && next == '&', c == '|' && next == '|', c == '$' && next == '(':
 			flush()
 			i++

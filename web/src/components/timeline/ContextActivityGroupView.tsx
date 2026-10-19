@@ -85,6 +85,13 @@ export const isExplorationPart = isWorkPart;
 export function isAttentionToolPart(part: MessagePart): part is ToolPart {
   if (part.type !== "tool" || isTodoToolPart(part)) return false;
   if (part.state.status === "error") return true;
+  if (
+    !isTaskTool(part.tool) &&
+    (part.state.status === "pending" || part.state.status === "running") &&
+    !isSessionBusy(part.sessionID)
+  ) {
+    return true;
+  }
   if (isShellTool(part.tool) && part.state.status === "completed") {
     const code = extractExitCode(part.state);
     if (code !== undefined && code !== 0) return true;

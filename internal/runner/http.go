@@ -97,7 +97,7 @@ func (s *Service) RegisterRoutes(mux *http.ServeMux) {
 }
 
 func (s *Service) Subscribe(sessionID string) (chan SSEEvent, func()) {
-	ch := make(chan SSEEvent, 128)
+	ch := make(chan SSEEvent, 512)
 	s.mu.Lock()
 	s.subs[ch] = strings.TrimSpace(sessionID)
 	s.mu.Unlock()
@@ -113,15 +113,28 @@ func (s *Service) broadcast(sessionID string, evts ...SSEEvent) {
 	for _, evt := range evts {
 		s.persistEventToStore(sessionID, evt)
 		s.mu.Lock()
+		targets := make([]chan SSEEvent, 0, len(s.subs))
 		for ch, filterSid := range s.subs {
 			if filterSid == "" || filterSid == sessionID {
-				select {
-				case ch <- evt:
-				default:
-				}
+				targets = append(targets, ch)
 			}
 		}
 		s.mu.Unlock()
+		isCritical := evt.Type != "message.part.delta"
+		for _, ch := range targets {
+			select {
+			case ch <- evt:
+			default:
+				if isCritical {
+					timer := time.NewTimer(50 * time.Millisecond)
+					select {
+					case ch <- evt:
+					case <-timer.C:
+					}
+					timer.Stop()
+				}
+			}
+		}
 	}
 }
 

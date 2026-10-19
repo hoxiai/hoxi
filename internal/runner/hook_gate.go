@@ -364,7 +364,7 @@ func (s *Service) handleUnifiedPermissionRoutes(w http.ResponseWriter, r *http.R
 		writeJSONError(w, http.StatusBadRequest, "invalid reply")
 		return
 	}
-	status, respRaw, err := s.openCodeRaw(r.Context(), http.MethodPost, "/permission/"+url.PathEscape(id)+"/reply", directoryQuery(r.URL.Query().Get("directory"), nil), raw)
+	status, respRaw, err := s.replyOpenCodePermission(r.Context(), id, r.URL.Query().Get("directory"), raw)
 	if err != nil {
 		writeJSONError(w, http.StatusBadGateway, "opencode service unavailable: "+err.Error())
 		return
@@ -372,6 +372,73 @@ func (s *Service) handleUnifiedPermissionRoutes(w http.ResponseWriter, r *http.R
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	_, _ = w.Write(respRaw)
+}
+
+func (s *Service) replyOpenCodePermission(ctx context.Context, id, directory string, raw []byte) (int, []byte, error) {
+	path := "/permission/" + url.PathEscape(id) + "/reply"
+	primary := strings.TrimSpace(directory)
+	status, respRaw, err := s.openCodeRaw(ctx, http.MethodPost, path, directoryQuery(primary, nil), raw)
+	if err != nil || status != http.StatusNotFound {
+		return status, respRaw, err
+	}
+	for _, candidate := range s.openCodeCandidateDirs("") {
+		if normalizeComparePath(candidate) == normalizeComparePath(primary) {
+			continue
+		}
+		st, body, retryErr := s.openCodeRaw(ctx, http.MethodPost, path, directoryQuery(candidate, nil), raw)
+		if retryErr == nil && st != http.StatusNotFound {
+			return st, body, nil
+		}
+	}
+	return status, respRaw, nil
+}
+
+func (s *Service) openCodeCandidateDirs(directory string) []string {
+	seen := make(map[string]bool)
+	out := make([]string, 0, 4)
+	add := func(d string) {
+		trimmed := strings.TrimSpace(d)
+		key := normalizeComparePath(trimmed)
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		out = append(out, trimmed)
+	}
+	normFilter := normalizeComparePath(directory)
+	add(directory)
+	for _, sid := range s.busySessionIDs() {
+		rec, ok := s.store.Meta(sid)
+		if !ok || rec.Runtime != "opencode" {
+			continue
+		}
+		if normFilter != "" &&
+			normalizeComparePath(rec.ProjectDir) != normFilter &&
+			normalizeComparePath(rec.WorktreePath) != normFilter {
+			continue
+		}
+		if rec.WorktreePath != "" {
+			add(rec.WorktreePath)
+		}
+		if rec.ProjectDir != "" {
+			add(rec.ProjectDir)
+		}
+	}
+	if normFilter == "" {
+		for _, info := range s.store.List("") {
+			rec, ok := s.store.Meta(info.ID)
+			if !ok || rec.Runtime != "opencode" {
+				continue
+			}
+			if rec.WorktreePath != "" {
+				add(rec.WorktreePath)
+			}
+			if rec.ProjectDir != "" {
+				add(rec.ProjectDir)
+			}
+		}
+	}
+	return out
 }
 
 func (s *Service) replyRunnerPermission(w http.ResponseWriter, r *http.Request, id string) {
@@ -419,16 +486,26 @@ func (s *Service) listUnifiedPermissions(ctx context.Context, directory string) 
 		}
 	}
 	out := make([]map[string]interface{}, 0)
-	status, raw, err := s.openCodeRaw(ctx, http.MethodGet, "/permission", directoryQuery(directory, nil), nil)
-	var enginePerms []map[string]interface{}
-	if err == nil && status == http.StatusOK && json.Unmarshal(raw, &enginePerms) == nil {
-		for _, item := range enginePerms {
-			if sid, ok := item["sessionID"].(string); ok {
-				if hoxiID := engineToHoxi[sid]; hoxiID != "" {
-					item["sessionID"] = hoxiID
+	seenIDs := make(map[string]bool)
+	for _, dir := range s.openCodeCandidateDirs(directory) {
+		status, raw, err := s.openCodeRaw(ctx, http.MethodGet, "/permission", directoryQuery(dir, nil), nil)
+		var enginePerms []map[string]interface{}
+		if err == nil && status == http.StatusOK && json.Unmarshal(raw, &enginePerms) == nil {
+			for _, item := range enginePerms {
+				pid, _ := item["id"].(string)
+				if pid != "" {
+					if seenIDs[pid] {
+						continue
+					}
+					seenIDs[pid] = true
 				}
+				if sid, ok := item["sessionID"].(string); ok {
+					if hoxiID := engineToHoxi[sid]; hoxiID != "" {
+						item["sessionID"] = hoxiID
+					}
+				}
+				out = append(out, item)
 			}
-			out = append(out, item)
 		}
 	}
 	out = append(out, s.listPendingApprovals(directory)...)

@@ -2,7 +2,7 @@ import { produce } from "solid-js/store";
 import { hoxiAPI } from "../services/api";
 import type { SessionStatus } from "../services/sse-types";
 import { setWorkspace, workspace } from "./workspace";
-import { activeDirectory, sessionDirectory } from "./workspace-sessions";
+import { activeDirectory, loadSessionMessagesOnly, sessionDirectory } from "./workspace-sessions";
 import { drainNextQueuedPrompt, lastPromptDispatchedAt } from "./workspace-queue-subagents";
 
 // OpenCode tracks session status per directory instance, so each worktree is queried separately.
@@ -49,7 +49,11 @@ export async function syncSessionStatuses(directory?: string): Promise<void> {
           ) {
             continue;
           }
+          const prev = state.statusBySession[sid]?.type;
           state.statusBySession[sid] = status;
+          if ((prev === "busy" || prev === "retry") && status?.type === "idle") {
+            newlyIdleSessions.push(sid);
+          }
         }
         for (const [sid, current] of Object.entries(state.statusBySession)) {
           if (
@@ -69,6 +73,9 @@ export async function syncSessionStatuses(directory?: string): Promise<void> {
     );
 
     for (const sid of newlyIdleSessions) {
+      if (sid === workspace.activeSessionID || workspace.messagesBySession[sid] !== undefined) {
+        void loadSessionMessagesOnly(sid).catch(() => {});
+      }
       void drainNextQueuedPrompt(sid);
     }
   } catch (err) {

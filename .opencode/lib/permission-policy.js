@@ -7,7 +7,7 @@ const DESTRUCTIVE_GIT_RE =
   /\bgit\b[^\n;&|]*?\b(?:branch\b[^\n;&|]*(?:\s--(?:delete|force)(?:[=\s]|$)|\s-[a-zA-Z]*[dDf][a-zA-Z]*(?:\s|$))|worktree\s+(?:remove|prune)\b|push\b[^\n;&|]*(?:--force\b|-f\b|--force-with-lease\b)|reset\b[^\n;&|]*--hard\b|clean\b[^\n;&|]*\s-[a-zA-Z]*f)/;
 
 const SAFE_COMMANDS = [
-  /^(ls|pwd|cat|head|tail|wc|find|grep|rg|fd)\b/,
+  /^(ls|pwd|cat|head|tail|wc|find|grep|rg|fd|lsof|ps|which|whereis|uname|stat|file|du|df)\b/,
   /^git\s+(status|diff|log|show|rev-parse)\b/,
   /^git\s+worktree\s+list(?:\s|$)/,
   /^go\s+(test|vet|build|list|env|version)\b/,
@@ -43,10 +43,58 @@ export function commandCandidates(input) {
 }
 
 export function splitCommandChain(command) {
-  return String(command || "")
-    .split(SHELL_SPLIT_RE)
-    .map((segment) => segment.replace(/\)\s*$/, "").trim())
-    .filter(Boolean);
+  const s = String(command || "");
+  const segments = [];
+  let cur = "";
+  let quote = "";
+  const flush = () => {
+    const seg = cur.replace(/\)\s*$/, "").trim();
+    if (seg) segments.push(seg);
+    cur = "";
+  };
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    const next = i + 1 < s.length ? s[i + 1] : "";
+    if (quote === "'") {
+      if (c === "'") quote = "";
+      cur += c;
+      continue;
+    }
+    if (c === "\\" && i + 1 < s.length) {
+      cur += c + next;
+      i++;
+      continue;
+    }
+    if (quote === '"') {
+      if (c === '"') {
+        quote = "";
+        cur += c;
+      } else if (c === "$" && next === "(") {
+        flush();
+        i++;
+      } else if (c === "`") {
+        flush();
+      } else {
+        cur += c;
+      }
+      continue;
+    }
+    if (c === "'" || c === '"') {
+      quote = c;
+      cur += c;
+    } else if ((c === "&" && next === "&") || (c === "|" && next === "|") || (c === "$" && next === "(")) {
+      flush();
+      i++;
+    } else if (c === ";" || c === "\n" || c === "`" || c === "|") {
+      flush();
+    } else if (c === "&" && (i === 0 || s[i - 1] !== ">") && next !== ">") {
+      flush();
+    } else {
+      cur += c;
+    }
+  }
+  flush();
+  return segments;
 }
 
 function isReadOnlyGitBranch(command) {

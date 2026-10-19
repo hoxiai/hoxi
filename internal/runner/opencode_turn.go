@@ -90,10 +90,11 @@ func (s *Service) startOpenCodeTurn(rec SessionRecord, mode, modelID, effort, sy
 	}
 	ap := &activeProcess{sessionID: rec.ID, runtime: "opencode", done: make(chan struct{})}
 	ap.cancel = func() {
-		cancel()
 		abortCtx, done := context.WithTimeout(context.Background(), 5*time.Second)
 		defer done()
+		s.rejectOpenCodeSessionPermissions(abortCtx, rec)
 		_ = s.openCodeJSON(abortCtx, "POST", "/session/"+rec.ExternalID+"/abort", rec.WorktreePath, map[string]interface{}{}, nil)
+		cancel()
 	}
 	s.mu.Lock()
 	s.procs[rec.ID] = ap
@@ -119,6 +120,7 @@ func (s *Service) startOpenCodeTurn(rec SessionRecord, mode, modelID, effort, sy
 			cancel()
 			_ = stream.Body.Close()
 			<-streamDone
+			s.abandonOpenCodeInFlightParts(rec.ID, time.Now().UnixMilli())
 			s.store.Flush()
 			s.mu.Lock()
 			if s.procs[rec.ID] == ap {
@@ -177,6 +179,71 @@ func (s *Service) startOpenCodeTurn(rec SessionRecord, mode, modelID, effort, sy
 		}
 	}()
 	return nil
+}
+
+func (s *Service) rejectOpenCodeSessionPermissions(ctx context.Context, rec SessionRecord) {
+	status, raw, err := s.openCodeRaw(ctx, http.MethodGet, "/permission", directoryQuery(rec.WorktreePath, nil), nil)
+	var perms []map[string]interface{}
+	if err != nil || status != http.StatusOK || json.Unmarshal(raw, &perms) != nil {
+		return
+	}
+	replyBody := []byte(`{"reply":"reject","message":"the session was stopped"}`)
+	for _, item := range perms {
+		sid, _ := item["sessionID"].(string)
+		pid, _ := item["id"].(string)
+		if pid == "" || (sid != rec.ExternalID && sid != rec.ID) {
+			continue
+		}
+		_, _, _ = s.openCodeRaw(ctx, http.MethodPost, "/permission/"+url.PathEscape(pid)+"/reply", directoryQuery(rec.WorktreePath, nil), replyBody)
+		repliedEvt := SSEEvent{
+			Type:       "permission.replied",
+			Properties: map[string]interface{}{"sessionID": rec.ID, "requestID": pid, "reply": "reject"},
+		}
+		if s.status != nil {
+			if data, mErr := json.Marshal(repliedEvt); mErr == nil {
+				s.status.InspectSSELine("data: " + string(data))
+			}
+		}
+		s.broadcast(rec.ID, repliedEvt)
+	}
+}
+
+func (s *Service) abandonOpenCodeInFlightParts(sessionID string, now int64) {
+	rec, ok := s.store.Get(sessionID)
+	if !ok || len(rec.Turns) == 0 {
+		return
+	}
+	for i := range rec.Turns {
+		for j := range rec.Turns[i].Parts {
+			p := rec.Turns[i].Parts[j]
+			if p.Type == "tool" && p.Tool != "task" && p.State != nil &&
+				(p.State.Status == "pending" || p.State.Status == "running") {
+				start := now
+				if p.State.Time != nil && p.State.Time.Start > 0 {
+					start = p.State.Time.Start
+				}
+				p.State.Status = "error"
+				if strings.TrimSpace(p.State.Error) == "" {
+					p.State.Error = "Interrupted before completion"
+				}
+				p.State.Time = &PartTime{Start: start, End: now}
+				s.broadcast(sessionID, SSEEvent{
+					Type:       "message.part.updated",
+					Properties: map[string]interface{}{"part": p},
+				})
+			} else if p.Type == "reasoning" && (p.Time == nil || p.Time.End == 0) {
+				start := now
+				if p.Time != nil && p.Time.Start > 0 {
+					start = p.Time.Start
+				}
+				p.Time = &PartTime{Start: start, End: now}
+				s.broadcast(sessionID, SSEEvent{
+					Type:       "message.part.updated",
+					Properties: map[string]interface{}{"part": p},
+				})
+			}
+		}
+	}
 }
 
 func (s *Service) relayOpenCodeEvent(rec SessionRecord, raw []byte) {

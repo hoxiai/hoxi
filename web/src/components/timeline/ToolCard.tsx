@@ -62,6 +62,12 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
   const isInterruptedSubagent = createMemo(
     () => isTask() && isSubagentToolInterrupted(props.part, props.part.sessionID)
   );
+  const isInterruptedTool = createMemo(
+    () =>
+      !isTask() &&
+      (status() === "pending" || status() === "running") &&
+      !isRunning()
+  );
 
   const targetFile = createMemo(() => extractTargetFile(props.part));
   const extraTargetFiles = createMemo(() => extractTargetFiles(props.part).slice(1));
@@ -183,14 +189,14 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
             >
               <span
                 class={
-                  status() === "error"
+                  status() === "error" || isInterruptedTool()
                     ? "shrink-0 text-[var(--danger-text)] inline-flex items-center"
                     : "shrink-0 text-[var(--text-muted)] inline-flex items-center"
                 }
               >
                 <Icon
                   name={
-                    status() === "error"
+                    status() === "error" || isInterruptedTool()
                       ? "circle-ban-sign"
                       : kiloToolIconName(props.part.tool)
                   }
@@ -365,6 +371,12 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
 
             <Show when={totalDiffStats()}>
               {(stats) => <DiffChanges changes={stats()} />}
+            </Show>
+
+            <Show when={isInterruptedTool()}>
+              <span class="rounded bg-[var(--danger-surface)] px-1.5 py-0.5 font-mono text-[11px] font-medium text-[var(--danger-text)]">
+                {t("toolCard.stateError")}
+              </span>
             </Show>
 
             <Show when={isShell() && exitCode() !== undefined && exitCode() !== 0}>

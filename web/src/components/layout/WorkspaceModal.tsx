@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, on, Show } from "solid-js";
 import { t } from "../../i18n";
 import { hoxiAPI, type WorkspaceFolderInput } from "../../services/api";
 import {
@@ -40,41 +40,46 @@ export default function WorkspaceModal() {
   const [saving, setSaving] = createSignal(false);
   const [errorMsg, setErrorMsg] = createSignal<string | null>(null);
   let colorInputRef: HTMLInputElement | undefined;
+  let backdropPointerDown = false;
 
-  createEffect(() => {
-    const m = mode();
-    if (m === "create") {
-      const initDir = normalizeFolderPath(workspace.editingWorkspaceDir);
-      setName("");
-      setColor(DEFAULT_WORKSPACE_IDENTITY_COLOR);
-      setFolders(initDir ? [{ path: initDir, isPrimary: true }] : []);
-      setManualPath("");
-      setErrorMsg(null);
-    } else if (m === "edit") {
-      const prof = targetProfile();
-      const fallbackDir = normalizeFolderPath(
-        workspace.editingWorkspaceDir || workspace.rootDir
-      );
-      const existingProject = workspace.projects.find(
-        (p) => normalizeFolderPath(p.worktree) === fallbackDir
-      );
-      setName(prof?.name || (fallbackDir ? folderBaseName(fallbackDir) : ""));
-      setColor(
-        normalizeWorkspaceIdentityColor(prof?.color || existingProject?.icon?.color)
-      );
-      if (prof && prof.folders.length > 0) {
-        setFolders(
-          prof.folders.map((f) => ({ path: f.path, isPrimary: f.isPrimary }))
-        );
-      } else if (fallbackDir) {
-        setFolders([{ path: fallbackDir, isPrimary: true }]);
-      } else {
-        setFolders([]);
+  createEffect(
+    on(
+      [mode, () => workspace.editingWorkspaceID, () => workspace.editingWorkspaceDir],
+      ([m]) => {
+        if (m === "create") {
+          const initDir = normalizeFolderPath(workspace.editingWorkspaceDir);
+          setName("");
+          setColor(DEFAULT_WORKSPACE_IDENTITY_COLOR);
+          setFolders(initDir ? [{ path: initDir, isPrimary: true }] : []);
+          setManualPath("");
+          setErrorMsg(null);
+        } else if (m === "edit") {
+          const prof = targetProfile();
+          const fallbackDir = normalizeFolderPath(
+            workspace.editingWorkspaceDir || workspace.rootDir
+          );
+          const existingProject = workspace.projects.find(
+            (p) => normalizeFolderPath(p.worktree) === fallbackDir
+          );
+          setName(prof?.name || (fallbackDir ? folderBaseName(fallbackDir) : ""));
+          setColor(
+            normalizeWorkspaceIdentityColor(prof?.color || existingProject?.icon?.color)
+          );
+          if (prof && prof.folders.length > 0) {
+            setFolders(
+              prof.folders.map((f) => ({ path: f.path, isPrimary: f.isPrimary }))
+            );
+          } else if (fallbackDir) {
+            setFolders([{ path: fallbackDir, isPrimary: true }]);
+          } else {
+            setFolders([]);
+          }
+          setManualPath("");
+          setErrorMsg(null);
+        }
       }
-      setManualPath("");
-      setErrorMsg(null);
-    }
-  });
+    )
+  );
 
   const appendFolderPath = (rawPath: string) => {
     const cleaned = normalizeFolderPath(rawPath);
@@ -177,8 +182,18 @@ export default function WorkspaceModal() {
     <Show when={mode() !== null}>
       <div
         class="fixed inset-0 z-50 flex items-center justify-center bg-black/55 backdrop-blur-[2px] p-4"
+        onPointerDown={(e) => {
+          backdropPointerDown = e.target === e.currentTarget;
+        }}
         onClick={(e) => {
-          if (e.target === e.currentTarget && !saving()) closeWorkspaceModal();
+          const shouldClose =
+            backdropPointerDown &&
+            e.target === e.currentTarget &&
+            !saving() &&
+            mode() !== "create" &&
+            mode() !== "edit";
+          backdropPointerDown = false;
+          if (shouldClose) closeWorkspaceModal();
         }}
       >
         {/* CREATE / EDIT WORKSPACE MODAL */}
@@ -222,6 +237,11 @@ export default function WorkspaceModal() {
                   type="text"
                   value={name()}
                   onInput={(e) => setName(e.currentTarget.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && (e.isComposing || e.keyCode === 229)) {
+                      e.preventDefault();
+                    }
+                  }}
                   placeholder={primaryFolderHint()}
                   class="w-full px-3 py-1.5 rounded-lg text-[13px] bg-zinc-50 dark:bg-zinc-900/90 border border-zinc-200 dark:border-zinc-700/80 text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:border-[var(--border-focus)] transition-colors"
                 />
@@ -376,7 +396,7 @@ export default function WorkspaceModal() {
                     value={manualPath()}
                     onInput={(e) => setManualPath(e.currentTarget.value)}
                     onKeyDown={(e) => {
-                      if (e.key === "Enter") {
+                      if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229) {
                         e.preventDefault();
                         handleAddManualPath();
                       }

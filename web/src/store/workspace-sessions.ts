@@ -6,6 +6,7 @@ import { registerRunnerSessions } from "../services/runner-api";
 import { mergeServerTurnsInto } from "./message-lookup";
 import { recordUserRevertAction } from "./provider-telemetry";
 import { initializeSessionAI, persistSessionAI, restoreSessionAI, sessionAIConfig } from "./session-ai";
+import { syncPendingPermissions } from "./approval-mode";
 import { appSettings } from "./settings";
 import {
   ARCHIVED_SESSIONS_KEY,
@@ -260,6 +261,7 @@ export async function selectSession(sessionID: string): Promise<void> {
   }
   setWorkspace("activeSessionID", sessionID);
   setWorkspace("unreadCompletedBySession", sessionID, false);
+  void syncPendingPermissions(sessionDirectory(sessionID));
   const cached = workspace.messagesBySession[sessionID];
   if (cached !== undefined && workspace.aiBySession[sessionID]) {
     const isChildSession = Boolean(workspace.sessions.find((s) => s.id === sessionID)?.parentID);

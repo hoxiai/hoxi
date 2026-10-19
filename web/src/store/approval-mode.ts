@@ -148,6 +148,12 @@ export async function syncPendingPermissions(directory?: string): Promise<void> 
   try {
     const list = await hoxiAPI.listPermissions(directory || workspace.rootDir || undefined);
     if (!Array.isArray(list)) return;
+    const remoteIDs = new Set(list.map((r) => r.id));
+    if (workspace.pendingPermissions.length > 0) {
+      setWorkspace("pendingPermissions", (prev) =>
+        prev.filter((p) => remoteIDs.has(p.id))
+      );
+    }
     for (const req of list) {
       handleIncomingPermissionRequest(req);
     }
