@@ -332,7 +332,7 @@ SELECT json_object(
 
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "sqlite3", dbPath, sqlQuery)
+	cmd := exec.CommandContext(ctx, "sqlite3", "-cmd", ".timeout 5000", dbPath, sqlQuery)
 	out, err := cmd.Output()
 	if err != nil || len(bytes.TrimSpace(out)) == 0 {
 		return

@@ -86,7 +86,8 @@ func sanitizeToolCallID(raw string, seq int) string {
 }
 
 func sqlEscapeLiteral(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
+	cleaned := strings.ReplaceAll(s, "\x00", "")
+	return "'" + strings.ReplaceAll(cleaned, "'", "''") + "'"
 }
 
 func (g *Service) materializeExternalSession(ctx context.Context, req HandoffImportRequest) (HandoffImportResponse, error) {
@@ -283,7 +284,7 @@ func insertNormalizedTurnsToOpenCodeDB(
 	}
 
 	var sqlBuf strings.Builder
-	sqlBuf.WriteString("BEGIN TRANSACTION;\n")
+	sqlBuf.WriteString("PRAGMA busy_timeout = 5000;\nBEGIN TRANSACTION;\n")
 
 	baseTs := time.Now().UnixMilli() - int64(len(turns)*2000)
 	seq := 0

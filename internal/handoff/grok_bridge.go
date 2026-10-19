@@ -17,6 +17,15 @@ import (
 
 const grokUpstreamBaseURL = "https://cli-chat-proxy.grok.com"
 
+var grokBridgeTransport = &http.Transport{
+	Proxy: http.ProxyFromEnvironment,
+	DialContext: (&net.Dialer{
+		Timeout:   10 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}).DialContext,
+	IdleConnTimeout: 90 * time.Second,
+}
+
 type grokLocalCredentials struct {
 	APIKey       string
 	Version      string
@@ -303,13 +312,7 @@ func (g *Service) handleGrokCLIBridge(w http.ResponseWriter, r *http.Request) {
 	outReq.Header.Set("x-grok-model-override", modelName)
 
 	client := &http.Client{
-		Transport: &http.Transport{
-			Proxy: http.ProxyFromEnvironment,
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-		},
+		Transport: grokBridgeTransport,
 	}
 
 	resp, err := client.Do(outReq)

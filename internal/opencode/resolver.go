@@ -312,6 +312,8 @@ func downloadOfficialOpenCode(ctx context.Context, logger *slog.Logger) (string,
 	return targetPath, nil
 }
 
+const maxExtractedBinaryBytes = 250 * 1024 * 1024
+
 func extractBinaryFromZip(raw []byte, binName string) ([]byte, error) {
 	zr, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
 	if err != nil {
@@ -324,7 +326,7 @@ func extractBinaryFromZip(raw []byte, binName string) ([]byte, error) {
 				return nil, err
 			}
 			defer rc.Close()
-			return io.ReadAll(rc)
+			return io.ReadAll(io.LimitReader(rc, maxExtractedBinaryBytes))
 		}
 	}
 	return nil, fmt.Errorf("%s not found in zip archive", binName)
@@ -346,7 +348,7 @@ func extractBinaryFromTarGz(raw []byte, binName string) ([]byte, error) {
 			return nil, err
 		}
 		if filepath.Base(hdr.Name) == binName && hdr.Typeflag == tar.TypeReg {
-			return io.ReadAll(tr)
+			return io.ReadAll(io.LimitReader(tr, maxExtractedBinaryBytes))
 		}
 	}
 	return nil, fmt.Errorf("%s not found in tar.gz archive", binName)
