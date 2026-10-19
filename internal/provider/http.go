@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -24,6 +25,21 @@ var (
 		IdleConnTimeout: 90 * time.Second,
 	}
 )
+
+func isLoopbackURL(rawURL string) bool {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	if host == "localhost" {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
+}
 
 type llmCompletionRequest struct {
 	ProviderID  string
@@ -66,12 +82,14 @@ func callSimpleLLM(parentCtx context.Context, req llmCompletionRequest) (string,
 	} else {
 		targetURL = trimmedBase + "/chat/completions"
 		bodyMap = map[string]any{
-			"model":       req.ModelID,
-			"max_tokens":  maxTokens,
-			"temperature": req.Temperature,
+			"model":      req.ModelID,
+			"max_tokens": maxTokens,
 			"messages": []map[string]string{
 				{"role": "user", "content": req.Prompt},
 			},
+		}
+		if req.Temperature > 0 {
+			bodyMap["temperature"] = req.Temperature
 		}
 	}
 
@@ -91,6 +109,8 @@ func callSimpleLLM(parentCtx context.Context, req llmCompletionRequest) (string,
 	outReq.Header.Set("Accept", "application/json")
 	outReq.Header.Set("Content-Type", "application/json")
 	for k, v := range req.Headers {
+		k = strings.TrimSpace(k)
+		v = strings.TrimSpace(v)
 		if k != "" && v != "" {
 			outReq.Header.Set(k, v)
 		}
@@ -108,7 +128,7 @@ func callSimpleLLM(parentCtx context.Context, req llmCompletionRequest) (string,
 	if transport == nil {
 		transport = providerTransport
 	}
-	if strings.Contains(targetURL, "://127.0.0.1") || strings.Contains(targetURL, "://localhost") {
+	if isLoopbackURL(targetURL) {
 		transport = localTransport
 	}
 

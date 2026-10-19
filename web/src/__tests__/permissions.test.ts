@@ -21,6 +21,8 @@ describe("permission command chains", () => {
     assertEqual(decidePermission({ permission: "bash", patterns: ["npm test"] }), "allow");
     assertEqual(decidePermission({ permission: "bash", patterns: ["go test ./... 2>&1"] }), "allow");
     assertEqual(decidePermission({ permission: "read", patterns: ["src/main.go"] }), "allow");
+    assertEqual(decidePermission({ permission: "grep", patterns: ["sudo rm -rf"] }), "allow");
+    assertEqual(isDestructivePermissionRequest({ permission: "grep", patterns: ["sudo rm -rf"] }), false);
   });
 
   it("asks when a safe prefix is chained to an unrecognized or destructive command", () => {

@@ -166,7 +166,7 @@ func (g *Service) handleFetchProviderModels(w http.ResponseWriter, r *http.Reque
 	}
 
 	// For loopback addresses, bypass proxy to avoid 502 from local proxy tools
-	if strings.Contains(modelsURL, "://127.0.0.1") || strings.Contains(modelsURL, "://localhost") {
+	if isLoopbackURL(modelsURL) {
 		client.Transport = localTransport
 	}
 
@@ -245,6 +245,47 @@ func parseOpenAIModelsPayload(raw []byte) []fetchedModelItem {
 	return result
 }
 
+func sameProviderBaseURL(a, b string) bool {
+	na := strings.TrimRight(strings.TrimSpace(a), "/")
+	nb := strings.TrimRight(strings.TrimSpace(b), "/")
+	return na != "" && nb != "" && strings.EqualFold(na, nb)
+}
+
+func (g *Service) isAuthorizedProviderBaseURL(providerID, requestedBaseURL string, extraAllowed ...string) bool {
+	reqURL := strings.TrimSpace(requestedBaseURL)
+	if reqURL == "" {
+		return true
+	}
+	hasConfiguredURL := false
+	if defURL := strings.TrimSpace(defaultProviderBaseURLs[providerID]); defURL != "" {
+		hasConfiguredURL = true
+		if sameProviderBaseURL(reqURL, defURL) {
+			return true
+		}
+	}
+	for _, extra := range extraAllowed {
+		if strings.TrimSpace(extra) != "" {
+			hasConfiguredURL = true
+			if sameProviderBaseURL(reqURL, extra) {
+				return true
+			}
+		}
+	}
+	for _, src := range []map[string]any{g.loadHoxiProvidersMap(), g.loadOpenCodeImportedProviderMap()} {
+		if rawCfg, ok := src[providerID].(map[string]any); ok {
+			if opts, ok := rawCfg["options"].(map[string]any); ok {
+				if u, ok := opts["baseURL"].(string); ok && strings.TrimSpace(u) != "" {
+					hasConfiguredURL = true
+					if sameProviderBaseURL(reqURL, u) {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return !hasConfiguredURL && isLoopbackURL(reqURL)
+}
+
 func (g *Service) resolveProviderConnection(providerID, hintBaseURL, hintNPM string) (baseURL, apiKey, npm string, headers map[string]string) {
 	baseURL = strings.TrimSpace(hintBaseURL)
 	npm = strings.TrimSpace(hintNPM)
@@ -254,6 +295,7 @@ func (g *Service) resolveProviderConnection(providerID, hintBaseURL, hintNPM str
 	for k, v := range g.loadHoxiProvidersMap() {
 		merged[k] = v
 	}
+	var configuredBaseURL string
 	if rawCfg, ok := merged[providerID].(map[string]any); ok {
 		if npm == "" {
 			if s, ok := rawCfg["npm"].(string); ok {
@@ -261,13 +303,16 @@ func (g *Service) resolveProviderConnection(providerID, hintBaseURL, hintNPM str
 			}
 		}
 		if opts, ok := rawCfg["options"].(map[string]any); ok {
+			if u, ok := opts["baseURL"].(string); ok {
+				configuredBaseURL = strings.TrimSpace(u)
+			}
 			if baseURL == "" {
-				if u, ok := opts["baseURL"].(string); ok {
-					baseURL = strings.TrimSpace(u)
-				}
+				baseURL = configuredBaseURL
 			}
 			if k, ok := opts["apiKey"].(string); ok && k != "" && k != "********" {
-				apiKey = strings.TrimSpace(k)
+				if g.isAuthorizedProviderBaseURL(providerID, baseURL, configuredBaseURL) {
+					apiKey = strings.TrimSpace(k)
+				}
 			}
 			if hMap, ok := opts["headers"].(map[string]any); ok {
 				for hk, hv := range hMap {
@@ -289,6 +334,8 @@ func (g *Service) resolveProviderConnection(providerID, hintBaseURL, hintNPM str
 }
 
 func (g *Service) resolveStoredProviderKey(providerID, requestedBaseURL string) string {
+	var openCodeBaseURL string
+	var openCodeKey string
 	// 1. Check OpenCode /provider endpoint first
 	if g.openCodePort > 0 {
 		u := "http://127.0.0.1:" + strconv.Itoa(g.openCodePort) + "/provider"
@@ -308,17 +355,29 @@ func (g *Service) resolveStoredProviderKey(providerID, requestedBaseURL string) 
 				if json.NewDecoder(resp.Body).Decode(&payload) == nil {
 					for _, p := range payload.All {
 						if p.ID == providerID {
+							if optURL, ok := p.Options["baseURL"].(string); ok {
+								openCodeBaseURL = strings.TrimSpace(optURL)
+							}
 							if p.Key != "" {
-								return p.Key
+								openCodeKey = p.Key
+								break
 							}
 							if optKey, ok := p.Options["apiKey"].(string); ok && optKey != "" {
-								return optKey
+								openCodeKey = optKey
+								break
 							}
 						}
 					}
 				}
 			}
 		}
+	}
+
+	if !g.isAuthorizedProviderBaseURL(providerID, requestedBaseURL, openCodeBaseURL) {
+		return ""
+	}
+	if openCodeKey != "" {
+		return openCodeKey
 	}
 
 	// 2. Check .hoxi/models.json configured options

@@ -303,3 +303,69 @@ func TestExtractLLMTextContentNeverLeaksRawJSON(t *testing.T) {
 	}
 }
 
+func TestResolveStoredProviderKeyRejectsMismatchedBaseURL(t *testing.T) {
+	homeDir, workspaceDir := setupIsolatedEnv(t)
+	authDir := filepath.Join(homeDir, ".local", "share", "opencode")
+	if err := os.MkdirAll(authDir, 0o755); err != nil {
+		t.Fatalf("mkdir authDir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(authDir, "auth.json"), []byte(`{"openai":{"key":"sk-secret-openai-key"}}`), 0o600); err != nil {
+		t.Fatalf("write auth.json: %v", err)
+	}
+
+	svc := NewService(0, "pass", workspaceDir, nil)
+	if err := svc.PersistHoxiConfigDoc(map[string]any{
+		"provider": map[string]any{
+			"custom-gw": map[string]any{
+				"options": map[string]any{
+					"baseURL": "https://gateway.trusted.example/v1",
+					"apiKey":  "sk-custom-secret",
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("persist config: %v", err)
+	}
+
+	// Official default baseURL for openai is allowed
+	if got := svc.ResolveStoredProviderKey("openai", "https://api.openai.com/v1/"); got != "sk-secret-openai-key" {
+		t.Fatalf("expected stored key for official default baseURL, got %q", got)
+	}
+	// Mismatched untrusted baseURL must not receive stored key
+	if got := svc.ResolveStoredProviderKey("openai", "https://attacker.example.com/v1"); got != "" {
+		t.Fatalf("expected empty key for mismatched baseURL, got %q", got)
+	}
+	// Configured custom provider baseURL is allowed
+	if got := svc.ResolveStoredProviderKey("custom-gw", "https://gateway.trusted.example/v1"); got != "sk-custom-secret" {
+		t.Fatalf("expected stored key for matching custom baseURL, got %q", got)
+	}
+	if got := svc.ResolveStoredProviderKey("custom-gw", "https://evil.example.com/v1"); got != "" {
+		t.Fatalf("expected empty key for mismatched custom baseURL, got %q", got)
+	}
+	if _, key, _, _ := svc.resolveProviderConnection("custom-gw", "https://evil.example.com/v1", ""); key != "" {
+		t.Fatalf("resolveProviderConnection must not release stored key to mismatched hintBaseURL, got %q", key)
+	}
+}
+
+func TestIsLoopbackURL(t *testing.T) {
+	for _, u := range []string{
+		"http://127.0.0.1:11434/v1/models",
+		"http://localhost:11434/v1/chat/completions",
+		"http://[::1]:8080/v1",
+	} {
+		if !isLoopbackURL(u) {
+			t.Errorf("expected %q to be recognized as loopback URL", u)
+		}
+	}
+	for _, u := range []string{
+		"http://localhost.attacker.com/v1",
+		"https://api.openai.com/v1?redirect=http://127.0.0.1",
+		"https://127.0.0.1.evil.com/v1",
+	} {
+		if isLoopbackURL(u) {
+			t.Errorf("expected %q NOT to be recognized as loopback URL", u)
+		}
+	}
+}
+
+

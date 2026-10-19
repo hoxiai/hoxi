@@ -388,6 +388,11 @@ func (g *Gateway) handleFileContent(w http.ResponseWriter, r *http.Request) {
 		targetPath = filepath.Clean(expandedPath)
 	}
 
+	if isSensitiveCredentialPath(targetPath) {
+		writeJSONError(w, http.StatusForbidden, "access to sensitive credential file is forbidden")
+		return
+	}
+
 	isExplicitExternalOrAbs := filepath.IsAbs(rawPath) || rawPath == "~" || strings.HasPrefix(rawPath, "~/") || !isPathWithinDir(baseDir, targetPath)
 	if !isExplicitExternalOrAbs && g.openCodePort > 0 {
 		if _, err := os.Stat(targetPath); err == nil {
@@ -429,6 +434,10 @@ func (g *Gateway) handleFileContent(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "path is a directory: "+rawPath)
 		return
 	}
+	if isSensitiveCredentialPath(targetPath) {
+		writeJSONError(w, http.StatusForbidden, "access to sensitive credential file is forbidden")
+		return
+	}
 
 	f, err := os.Open(targetPath)
 	if err != nil {
@@ -457,6 +466,28 @@ func (g *Gateway) handleFileContent(w http.ResponseWriter, r *http.Request) {
 		"type":    "text",
 		"content": string(data),
 	})
+}
+
+func isSensitiveCredentialPath(targetPath string) bool {
+	resolved := filepath.Clean(targetPath)
+	if sym, err := filepath.EvalSymlinks(resolved); err == nil && sym != "" {
+		resolved = filepath.Clean(sym)
+	}
+	slashPath := strings.ToLower(filepath.ToSlash(resolved))
+	base := strings.ToLower(filepath.Base(resolved))
+
+	if strings.Contains(slashPath, "/.hoxi/") && (base == "models.json" || base == "auth.json") {
+		return true
+	}
+	if strings.Contains(slashPath, "/opencode/") && (base == "auth.json" || base == "config.json" || base == "opencode.json" || base == "opencode.jsonc") {
+		return true
+	}
+	for _, dirToken := range []string{"/.ssh/", "/.aws/", "/.gnupg/", "/.kube/"} {
+		if strings.Contains(slashPath, dirToken) {
+			return true
+		}
+	}
+	return false
 }
 
 func spaStaticHandler(distFS fs.FS) http.Handler {

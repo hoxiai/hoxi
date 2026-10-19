@@ -80,6 +80,7 @@ function isSafeSegment(segment) {
 export function isDestructivePermissionRequest(input) {
   const permission = String(input?.permission || input?.type || "").toLowerCase();
   if (permission === "doom_loop") return true;
+  if (READ_PERMISSIONS.has(permission)) return false;
   const blob = [permission, ...commandCandidates(input)].join("\n");
   return DESTRUCTIVE_RE.test(blob) || DESTRUCTIVE_GIT_RE.test(blob);
 }

@@ -411,5 +411,20 @@ func TestFileContentSupportsExternalAndAbsolutePaths(t *testing.T) {
 	if recMissing.Code != http.StatusNotFound {
 		t.Fatalf("expected 404 for missing external file, got %d", recMissing.Code)
 	}
+
+	// 4. Sensitive credential files (.hoxi/models.json, opencode/auth.json, .ssh/id_rsa) return 403 Forbidden
+	hoxiModels := filepath.Join(externalDir, ".hoxi", "models.json")
+	if err := os.MkdirAll(filepath.Dir(hoxiModels), 0o755); err != nil {
+		t.Fatalf("mkdir .hoxi: %v", err)
+	}
+	if err := os.WriteFile(hoxiModels, []byte(`{"provider":{"openai":{"options":{"apiKey":"sk-secret"}}}}`), 0o600); err != nil {
+		t.Fatalf("write .hoxi/models.json: %v", err)
+	}
+	recForbidden := httptest.NewRecorder()
+	gw.ServeHTTP(recForbidden, localRequest(http.MethodGet, "/file/content?path="+hoxiModels+"&directory="+projectDir, nil))
+	if recForbidden.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 Forbidden for sensitive credential file, got %d body=%s", recForbidden.Code, recForbidden.Body.String())
+	}
 }
+
 

@@ -1,9 +1,7 @@
 package provider
 
 import (
-	"context"
 	"encoding/json"
-	"io"
 	"net/http"
 	"os"
 	"strconv"
@@ -80,86 +78,22 @@ func (g *Service) handleTestProviderModel(w http.ResponseWriter, r *http.Request
 		apiKey = g.resolveStoredProviderKey(pid, baseURL)
 	}
 
-	isAnthropic := req.NPM == "@ai-sdk/anthropic" || pid == "anthropic"
-	trimmedBase := strings.TrimRight(baseURL, "/")
-	var targetURL string
-	var bodyMap map[string]any
-
-	if isAnthropic {
-		if strings.HasSuffix(trimmedBase, "/v1") {
-			targetURL = trimmedBase + "/messages"
-		} else {
-			targetURL = trimmedBase + "/v1/messages"
-		}
-		bodyMap = map[string]any{
-			"model":      modelID,
-			"max_tokens": 1,
-			"messages": []map[string]string{
-				{"role": "user", "content": "hi"},
-			},
-		}
-	} else {
-		targetURL = trimmedBase + "/chat/completions"
-		bodyMap = map[string]any{
-			"model":      modelID,
-			"max_tokens": 1,
-			"messages": []map[string]string{
-				{"role": "user", "content": "hi"},
-			},
-		}
-	}
-
-	payloadBytes, _ := json.Marshal(bodyMap)
-	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
-	defer cancel()
-
-	outReq, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, strings.NewReader(string(payloadBytes)))
-	if err != nil {
-		writeJSON(w, http.StatusOK, testProviderModelResponse{OK: false, Error: err.Error()})
-		return
-	}
-
-	outReq.Header.Set("Accept", "application/json")
-	outReq.Header.Set("Content-Type", "application/json")
-	for k, v := range req.Headers {
-		k = strings.TrimSpace(k)
-		v = strings.TrimSpace(v)
-		if k != "" && v != "" {
-			outReq.Header.Set(k, v)
-		}
-	}
-	if apiKey != "" {
-		if isAnthropic {
-			outReq.Header.Set("x-api-key", apiKey)
-			outReq.Header.Set("anthropic-version", "2023-06-01")
-		} else {
-			outReq.Header.Set("Authorization", "Bearer "+apiKey)
-		}
-	}
-
-	client := &http.Client{
-		Timeout:   15 * time.Second,
-		Transport: providerTransport,
-	}
-	if strings.Contains(targetURL, "://127.0.0.1") || strings.Contains(targetURL, "://localhost") {
-		client.Transport = localTransport
-	}
-
 	start := time.Now()
-	resp, err := client.Do(outReq)
+	_, err := callSimpleLLM(r.Context(), llmCompletionRequest{
+		ProviderID: pid,
+		ModelID:    modelID,
+		BaseURL:    baseURL,
+		APIKey:     apiKey,
+		NPM:        req.NPM,
+		Headers:    req.Headers,
+		Prompt:     "hi",
+		MaxTokens:  1,
+		Timeout:    15 * time.Second,
+		Transport:  providerTransport,
+	})
 	latency := time.Since(start).Milliseconds()
 	if err != nil {
-		if g.telemetry != nil && pid != "" {
-			g.telemetry.recordProbeResult(pid, false, latency, err.Error(), modelID)
-		}
-		writeJSON(w, http.StatusOK, testProviderModelResponse{OK: false, LatencyMs: latency, Error: err.Error()})
-		return
-	}
-	defer resp.Body.Close()
-
-	respBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 512*1024))
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		errMsg := extractAPIErrorMessage(resp.StatusCode, respBytes)
+		errMsg := err.Error()
 		if g.telemetry != nil && pid != "" {
 			g.telemetry.recordProbeResult(pid, false, latency, errMsg, modelID)
 		}
