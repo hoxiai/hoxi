@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"sort"
 	"strings"
@@ -14,33 +15,47 @@ import (
 	"time"
 )
 
+// Store is Hoxi's own conversation store. Metadata for every session stays in
+// memory; transcripts are read from disk the first time a session is opened.
 type Store struct {
-	mu       sync.RWMutex
-	filePath string
-	records  map[string]*SessionRecord
+	mu      sync.RWMutex
+	dir     string
+	records map[string]*storedSession
 }
 
-func defaultStoreFilePath() string {
-	if custom := strings.TrimSpace(os.Getenv("HOXI_RUNNER_STORE_PATH")); custom != "" {
-		return filepath.Clean(custom)
+type storedSession struct {
+	rec         SessionRecord
+	turnsLoaded bool
+	logLines    int
+	// Parts whose streamed text deltas have not reached turns.jsonl yet.
+	dirty map[partKey]struct{}
+}
+
+type partKey struct{ messageID, partID string }
+
+func defaultStoreDir() (dir, legacy string) {
+	if custom := strings.TrimSpace(os.Getenv("HOXI_SESSION_STORE_DIR")); custom != "" {
+		return filepath.Clean(custom), ""
 	}
 	home, _ := os.UserHomeDir()
 	if home == "" {
-		return filepath.Join(os.TempDir(), "hoxi-runner-sessions.json")
+		return filepath.Join(os.TempDir(), "hoxi-sessions"), ""
 	}
-	return filepath.Join(home, ".hoxi", "runner-sessions.json")
+	return filepath.Join(home, ".hoxi", "sessions"), filepath.Join(home, ".hoxi", legacyStoreFile)
 }
 
-func NewStore(customPath string) *Store {
-	fp := strings.TrimSpace(customPath)
-	if fp == "" {
-		fp = defaultStoreFilePath()
+// NewStore opens the store rooted at customDir, or ~/.hoxi/sessions when empty.
+// The default store also imports the legacy ~/.hoxi/runner-sessions.json once.
+func NewStore(customDir string) *Store {
+	dir, legacy := strings.TrimSpace(customDir), ""
+	if dir == "" {
+		dir, legacy = defaultStoreDir()
 	}
-	s := &Store{
-		filePath: fp,
-		records:  make(map[string]*SessionRecord),
+	s := &Store{dir: filepath.Clean(dir), records: make(map[string]*storedSession)}
+	s.loadAllMeta()
+	if legacy != "" {
+		s.migrateLegacy(legacy)
 	}
-	s.loadFromDisk()
 	return s
 }
 
@@ -59,103 +74,125 @@ func IsRunnerSessionID(sessionID string) bool {
 	return strings.HasPrefix(s, "ses_agy_") || strings.HasPrefix(s, "ses_cld_")
 }
 
-func (s *Store) loadFromDisk() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	raw, err := os.ReadFile(s.filePath)
-	if err != nil || len(raw) == 0 {
+func (s *Store) ensureTurnsLocked(ss *storedSession) {
+	if ss.turnsLoaded {
 		return
 	}
-	var doc struct {
-		Sessions []*SessionRecord `json:"sessions"`
-	}
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		return
-	}
-	for _, rec := range doc.Sessions {
-		if rec != nil && strings.TrimSpace(rec.ID) != "" {
-			s.records[rec.ID] = rec
-		}
-	}
+	ss.rec.Turns, ss.logLines = s.readTurns(ss.rec.ID)
+	ss.turnsLoaded = true
 }
 
-func (s *Store) saveLocked() error {
-	if s.filePath == "" {
-		return nil
+// commitLocked persists next as the new state of ss (nil for a new session).
+// The transcript is rewritten only when it differs from prevTurns; otherwise
+// pending deltas are appended and just the metadata file is replaced.
+func (s *Store) commitLocked(next SessionRecord, ss *storedSession, prevTurns []MessageTurn) error {
+	if !validStoreID(next.ID) {
+		return errInvalidSessionID
 	}
-	if err := os.MkdirAll(filepath.Dir(s.filePath), 0o755); err != nil {
+	lines := 0
+	turnsChanged := ss == nil || !reflect.DeepEqual(prevTurns, next.Turns)
+	if turnsChanged {
+		n, err := s.rewriteTurns(next.ID, next.Turns)
+		if err != nil {
+			return err
+		}
+		lines = n
+	} else {
+		entries := takeDirtyLocked(ss)
+		if err := s.appendTurnEntries(next.ID, entries); err != nil {
+			return err
+		}
+		lines = ss.logLines + len(entries)
+	}
+	if err := s.writeMeta(next); err != nil {
+		if turnsChanged && ss != nil {
+			_, _ = s.rewriteTurns(next.ID, prevTurns)
+		}
 		return err
 	}
-	list := make([]*SessionRecord, 0, len(s.records))
-	for _, r := range s.records {
-		list = append(list, r)
+	if ss == nil {
+		ss = &storedSession{}
+		s.records[next.ID] = ss
 	}
-	sort.Slice(list, func(i, j int) bool {
-		return list[i].UpdatedAt > list[j].UpdatedAt
-	})
-	raw, err := json.MarshalIndent(map[string]interface{}{"sessions": list}, "", "  ")
-	if err != nil {
-		return err
-	}
-	tmpPath := s.filePath + ".tmp"
-	if err := os.WriteFile(tmpPath, raw, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmpPath, s.filePath)
+	ss.rec, ss.turnsLoaded, ss.logLines, ss.dirty = next, true, lines, nil
+	return nil
 }
 
 func (s *Store) Put(rec SessionRecord) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	copied := cloneRecord(rec)
-	previous, existed := s.records[copied.ID]
-	s.records[copied.ID] = &copied
-	if err := s.saveLocked(); err != nil {
-		if existed {
-			s.records[copied.ID] = previous
-		} else {
-			delete(s.records, copied.ID)
-		}
-		return err
+	ss := s.records[copied.ID]
+	var prevTurns []MessageTurn
+	if ss != nil {
+		s.ensureTurnsLocked(ss)
+		prevTurns = ss.rec.Turns
 	}
-	return nil
+	return s.commitLocked(copied, ss, prevTurns)
 }
 
 func (s *Store) Get(sessionID string) (SessionRecord, bool) {
+	sessionID = strings.TrimSpace(sessionID)
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-	rec, ok := s.records[strings.TrimSpace(sessionID)]
-	if !ok || rec == nil {
+	ss := s.records[sessionID]
+	if ss != nil && ss.turnsLoaded {
+		rec := cloneRecord(ss.rec)
+		s.mu.RUnlock()
+		return rec, true
+	}
+	s.mu.RUnlock()
+	if ss == nil {
 		return SessionRecord{}, false
 	}
-	return cloneRecord(*rec), true
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if ss = s.records[sessionID]; ss == nil {
+		return SessionRecord{}, false
+	}
+	s.ensureTurnsLocked(ss)
+	return cloneRecord(ss.rec), true
+}
+
+// Meta returns a session without its transcript and never touches the disk.
+func (s *Store) Meta(sessionID string) (SessionRecord, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	ss := s.records[strings.TrimSpace(sessionID)]
+	if ss == nil {
+		return SessionRecord{}, false
+	}
+	meta := ss.rec
+	meta.Turns = nil
+	return cloneRecord(meta), true
 }
 
 func (s *Store) Update(sessionID string, fn func(*SessionRecord)) (SessionRecord, bool, error) {
 	sessionID = strings.TrimSpace(sessionID)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	rec, ok := s.records[strings.TrimSpace(sessionID)]
-	if !ok || rec == nil {
+	ss := s.records[sessionID]
+	if ss == nil {
 		return SessionRecord{}, false, nil
 	}
-	updated := cloneRecord(*rec)
+	s.ensureTurnsLocked(ss)
+	updated := cloneRecord(ss.rec)
 	fn(&updated)
 	updated.UpdatedAt = time.Now().UnixMilli()
-	s.records[sessionID] = &updated
-	err := s.saveLocked()
-	if err != nil {
-		s.records[sessionID] = rec
-		return cloneRecord(*rec), true, err
+	if err := s.commitLocked(updated, ss, ss.rec.Turns); err != nil {
+		return cloneRecord(ss.rec), true, err
 	}
 	return cloneRecord(updated), true, nil
 }
 
 func (s *Store) Delete(sessionID string) error {
+	sessionID = strings.TrimSpace(sessionID)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	delete(s.records, strings.TrimSpace(sessionID))
-	return s.saveLocked()
+	delete(s.records, sessionID)
+	if !validStoreID(sessionID) {
+		return nil
+	}
+	return os.RemoveAll(s.sessionDir(sessionID))
 }
 
 func (s *Store) List(directory string) []SessionInfo {
@@ -163,10 +200,8 @@ func (s *Store) List(directory string) []SessionInfo {
 	defer s.mu.RUnlock()
 	normFilter := normalizeComparePath(directory)
 	var out []SessionInfo
-	for _, rec := range s.records {
-		if rec == nil {
-			continue
-		}
+	for _, ss := range s.records {
+		rec := &ss.rec
 		if normFilter != "" {
 			normProj := normalizeComparePath(rec.ProjectDir)
 			normWt := normalizeComparePath(rec.WorktreePath)
@@ -187,71 +222,143 @@ func (s *Store) List(directory string) []SessionInfo {
 func (s *Store) UpsertTurnInfo(sessionID string, info MessageInfo) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	rec := s.records[sessionID]
-	if rec == nil {
+	ss := s.records[sessionID]
+	if ss == nil {
 		return
 	}
-	for i := range rec.Turns {
-		if rec.Turns[i].Info.ID == info.ID {
-			rec.Turns[i].Info = info
-			rec.UpdatedAt = time.Now().UnixMilli()
-			_ = s.saveLocked()
-			return
-		}
-	}
-	rec.Turns = append(rec.Turns, MessageTurn{Info: info, Parts: []MessagePart{}})
-	rec.UpdatedAt = time.Now().UnixMilli()
-	_ = s.saveLocked()
+	s.ensureTurnsLocked(ss)
+	ss.rec.Turns = upsertTurnInfo(ss.rec.Turns, info)
+	s.appendLocked(ss, true, turnLogEntry{Info: &info})
 }
 
 func (s *Store) UpsertTurnPart(sessionID string, part MessagePart) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	rec := s.records[sessionID]
-	if rec == nil {
+	ss := s.records[sessionID]
+	if ss == nil {
 		return
 	}
-	for i := range rec.Turns {
-		if rec.Turns[i].Info.ID == part.MessageID {
-			for j := range rec.Turns[i].Parts {
-				if rec.Turns[i].Parts[j].ID == part.ID {
-					rec.Turns[i].Parts[j] = clonePart(part)
-					rec.UpdatedAt = time.Now().UnixMilli()
-					_ = s.saveLocked()
-					return
-				}
-			}
-			rec.Turns[i].Parts = append(rec.Turns[i].Parts, clonePart(part))
-			rec.UpdatedAt = time.Now().UnixMilli()
-			_ = s.saveLocked()
-			return
-		}
+	s.ensureTurnsLocked(ss)
+	copied := clonePart(part)
+	turns, ok := upsertTurnPart(ss.rec.Turns, copied)
+	if !ok {
+		return
 	}
+	ss.rec.Turns = turns
+	delete(ss.dirty, partKey{copied.MessageID, copied.ID})
+	s.appendLocked(ss, true, turnLogEntry{Part: &copied})
 }
 
+// AppendPartDelta only updates memory; Flush or the next write persists it.
 func (s *Store) AppendPartDelta(sessionID, messageID, partID, delta string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	rec := s.records[sessionID]
-	if rec == nil {
+	ss := s.records[sessionID]
+	if ss == nil {
 		return
 	}
-	for i := range rec.Turns {
-		if rec.Turns[i].Info.ID == messageID {
-			for j := range rec.Turns[i].Parts {
-				if rec.Turns[i].Parts[j].ID == partID {
-					rec.Turns[i].Parts[j].Text += delta
-					return
-				}
-			}
+	s.ensureTurnsLocked(ss)
+	if part := findPart(ss.rec.Turns, messageID, partID); part != nil {
+		part.Text += delta
+		if ss.dirty == nil {
+			ss.dirty = make(map[partKey]struct{})
 		}
+		ss.dirty[partKey{messageID, partID}] = struct{}{}
 	}
 }
 
 func (s *Store) Flush() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_ = s.saveLocked()
+	for _, ss := range s.records {
+		if len(ss.dirty) > 0 {
+			s.appendLocked(ss, false)
+		}
+	}
+}
+
+// appendLocked writes pending deltas plus extra entries; touch also bumps
+// UpdatedAt. Write errors are dropped: the in-memory transcript stays
+// authoritative and the next successful rewrite or compaction persists it.
+func (s *Store) appendLocked(ss *storedSession, touch bool, extra ...turnLogEntry) {
+	entries := append(takeDirtyLocked(ss), extra...)
+	if err := s.appendTurnEntries(ss.rec.ID, entries); err == nil {
+		ss.logLines += len(entries)
+	}
+	if touch {
+		ss.rec.UpdatedAt = time.Now().UnixMilli()
+		_ = s.writeMeta(ss.rec)
+	}
+	if live := liveEntryCount(ss.rec.Turns); ss.logLines > 2*live+64 {
+		if n, err := s.rewriteTurns(ss.rec.ID, ss.rec.Turns); err == nil {
+			ss.logLines = n
+		}
+	}
+}
+
+func takeDirtyLocked(ss *storedSession) []turnLogEntry {
+	if len(ss.dirty) == 0 {
+		return nil
+	}
+	entries := make([]turnLogEntry, 0, len(ss.dirty))
+	for key := range ss.dirty {
+		if part := findPart(ss.rec.Turns, key.messageID, key.partID); part != nil {
+			copied := *part
+			entries = append(entries, turnLogEntry{Part: &copied})
+		}
+	}
+	ss.dirty = nil
+	return entries
+}
+
+func liveEntryCount(turns []MessageTurn) int {
+	n := len(turns)
+	for i := range turns {
+		n += len(turns[i].Parts)
+	}
+	return n
+}
+
+func findPart(turns []MessageTurn, messageID, partID string) *MessagePart {
+	for i := range turns {
+		if turns[i].Info.ID != messageID {
+			continue
+		}
+		for j := range turns[i].Parts {
+			if turns[i].Parts[j].ID == partID {
+				return &turns[i].Parts[j]
+			}
+		}
+	}
+	return nil
+}
+
+func upsertTurnInfo(turns []MessageTurn, info MessageInfo) []MessageTurn {
+	for i := range turns {
+		if turns[i].Info.ID == info.ID {
+			turns[i].Info = info
+			return turns
+		}
+	}
+	return append(turns, MessageTurn{Info: info, Parts: []MessagePart{}})
+}
+
+// upsertTurnPart reports false when the part's message is unknown.
+func upsertTurnPart(turns []MessageTurn, part MessagePart) ([]MessageTurn, bool) {
+	for i := range turns {
+		if turns[i].Info.ID != part.MessageID {
+			continue
+		}
+		for j := range turns[i].Parts {
+			if turns[i].Parts[j].ID == part.ID {
+				turns[i].Parts[j] = part
+				return turns, true
+			}
+		}
+		turns[i].Parts = append(turns[i].Parts, part)
+		return turns, true
+	}
+	return turns, false
 }
 
 func clonePart(p MessagePart) MessagePart {

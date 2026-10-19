@@ -42,7 +42,7 @@ func NewService(rootDir string, worktrees *worktree.Manager, status *statusbar.T
 		subs:      make(map[chan SSEEvent]string),
 	}
 	for _, info := range svc.store.List("") {
-		rec, _ := svc.store.Get(info.ID)
+		rec, _ := svc.store.Meta(info.ID)
 		if validateSessionDirectory(rec) != nil {
 			continue
 		}

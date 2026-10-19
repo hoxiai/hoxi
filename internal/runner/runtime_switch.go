@@ -15,7 +15,7 @@ func (s *Service) ConfigureOpenCode(baseURL, password string) {
 	s.openCodeURL, s.openCodePassword = baseURL, password
 	s.openCodeClient = &http.Client{Transport: &http.Transport{Proxy: nil}}
 	for _, info := range s.store.List("") {
-		rec, _ := s.store.Get(info.ID)
+		rec, _ := s.store.Meta(info.ID)
 		for _, id := range rec.OpenCodeIDs {
 			s.managedOpenCode.Store(id, true)
 		}

@@ -88,7 +88,7 @@ func TestRunnerExitPersistenceFailurePreservesWorktree(t *testing.T) {
 				}
 			}
 			// A directory at the atomic-write path fails even when tests run as root.
-			if err := os.Mkdir(path+".tmp", 0700); err != nil {
+			if err := os.Mkdir(filepath.Join(path, info.ID, sessionMetaFile+".tmp"), 0700); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := svc.changeSessionSandboxWithOptions(info.ID, "local", force, false); err == nil {

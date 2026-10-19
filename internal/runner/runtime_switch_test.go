@@ -66,7 +66,7 @@ func TestRuntimeSwitchPreservesConversationAndSandbox(t *testing.T) {
 		}
 		_, _, _ = svc.store.Update(origin.ID, func(r *SessionRecord) { r.ExternalID = "engine-resume-id" })
 	}
-	restored := NewService(root, nil, nil, svc.store.filePath)
+	restored := NewService(root, nil, nil, svc.store.dir)
 	restored.ConfigureOpenCode(server.URL, "secret")
 	rec, _ := restored.store.Get(origin.ID)
 	if rec.Runtime != "opencode" || len(restored.store.List(root)) != 1 || !restored.IsManagedOpenCodeSession(origin.ID) {
@@ -388,7 +388,7 @@ func TestDeleteManagedConversationRemovesAllScopedEngineHandles(t *testing.T) {
 	if w.Code != 204 {
 		t.Fatalf("delete: %s", w.Body)
 	}
-	if _, ok := NewStore(svc.store.filePath).Get(rec.ID); ok {
+	if _, ok := NewStore(svc.store.dir).Get(rec.ID); ok {
 		t.Fatal("conversation not deleted")
 	}
 	if deleted["/session/ses_original_delete"] != root || deleted["/session/ses_backing_delete"] != root+"/old-sandbox" {
