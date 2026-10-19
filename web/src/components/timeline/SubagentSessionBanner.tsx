@@ -19,6 +19,7 @@ import {
   isSubagentToolAlive,
   isSubagentToolInterrupted,
   loadSessionMessagesOnly,
+  lookupSubagentParent,
   markSessionInterrupted,
   resolveSubagentTitle,
   resumeSubagentTask,
@@ -103,20 +104,8 @@ export function resolveParentSessionID(sessionID: string | null | undefined): st
   if (!sessionID) return null;
   const info = workspace.sessions.find((s) => s.id === sessionID);
   if (info?.parentID) return info.parentID;
-
-  for (const [candidateParentID, turns] of Object.entries(workspace.messagesBySession)) {
-    if (candidateParentID === sessionID || !Array.isArray(turns)) continue;
-    for (const turn of turns) {
-      for (const part of turn.parts ?? []) {
-        if (part.type !== "tool") continue;
-        const tp = part as ToolPart;
-        if ((tp.tool || "").toLowerCase() !== "task") continue;
-        const subId = extractChildSubagentSessionId(tp);
-        if (subId === sessionID) return candidateParentID;
-      }
-    }
-  }
-  return null;
+  // Indexed as task parts arrive; never scan every transcript per event or memo.
+  return lookupSubagentParent(sessionID);
 }
 
 /**

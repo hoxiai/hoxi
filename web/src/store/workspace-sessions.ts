@@ -1,5 +1,5 @@
 import { createSignal } from "solid-js";
-import { produce } from "solid-js/store";
+import { produce, unwrap } from "solid-js/store";
 import type { MessagePart, SnapshotFileDiff, SessionInfo } from "../services/sse-types";
 import { hoxiAPI, isRunnerSessionID } from "../services/api";
 import { registerRunnerSessions } from "../services/runner-api";
@@ -342,7 +342,7 @@ export function applySessionDiffEvent(sessionID: string, diffs: SnapshotFileDiff
   diffRevisions.set(sessionID, (diffRevisions.get(sessionID) ?? 0) + 1);
   const next = workspace.worktreeBySession[sessionID]?.isolated
     ? diffs
-    : filterLocalSessionDiffsByTurns(sessionID, diffs, workspace.messagesBySession, workspace.rootDir);
+    : filterLocalSessionDiffsByTurns(sessionID, diffs, unwrap(workspace.messagesBySession), workspace.rootDir);
   setDiffListIfChanged("diffsBySession", sessionID, next);
 }
 
@@ -375,7 +375,7 @@ export async function refreshSessionDiff(
     if (!diffs.length && meta?.isolated && meta.dirty && meta.directory === directory) {
       diffs = preloadedWorktreeDiffs ?? (await hoxiAPI.getWorktreeDiff(sessionID, directory));
     } else if (!meta?.isolated) {
-      diffs = filterLocalSessionDiffsByTurns(sessionID, diffs, workspace.messagesBySession, workspace.rootDir);
+      diffs = filterLocalSessionDiffsByTurns(sessionID, diffs, unwrap(workspace.messagesBySession), workspace.rootDir);
     }
     if (isCurrent()) setDiffListIfChanged("diffsBySession", sessionID, diffs);
   } catch (err) {

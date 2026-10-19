@@ -2,6 +2,7 @@ import { produce } from "solid-js/store";
 import { t } from "../i18n";
 import { hoxiAPI } from "../services/api";
 import type { ToolPart } from "../services/sse-types";
+import { forgetSubagentLinks, subagentChildIDFromPart } from "./message-lookup";
 import { type SelectedModel, setWorkspace, workspace } from "./workspace";
 import { sessionAIConfig } from "./session-ai";
 import { subagentDisplayTitle, type SubagentTitle } from "./session-title";
@@ -158,16 +159,9 @@ export async function drainNextQueuedPrompt(sessionID: string): Promise<void> {
 }
 
 export function extractChildSubagentSessionId(tp: ToolPart): string | undefined {
-  const meta = tp.state.metadata as Record<string, any> | undefined;
+  const direct = subagentChildIDFromPart(tp);
+  if (direct) return direct;
   const input = tp.state.input as Record<string, any> | undefined;
-  if (meta?.sessionId) return String(meta.sessionId);
-  if (meta?.sessionID) return String(meta.sessionID);
-  if (input?.task_id) return String(input.task_id);
-  const out = (tp.state as { output?: string }).output;
-  if (typeof out === "string") {
-    const m = out.match(/session_id:\s*([a-zA-Z0-9_-]+)/);
-    if (m?.[1]) return m[1];
-  }
   let desc = typeof input?.description === "string" ? input.description.trim() : "";
   if (!desc) {
     const raw = (tp.state as { raw?: string }).raw;
@@ -335,6 +329,7 @@ export function purgeSessionsFromStoreState(
   allIDs: string[]
 ) {
   const idSet = new Set(allIDs);
+  forgetSubagentLinks(allIDs);
   for (const id of allIDs) {
     drainingBySession.delete(id);
     lastPromptDispatchAtBySession.delete(id);

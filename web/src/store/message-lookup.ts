@@ -1,3 +1,4 @@
+import { createSignal } from "solid-js";
 import type { MessageInfo, MessagePart, SnapshotFileDiff } from "../services/sse-types";
 import type { MessageTurn } from "./workspace";
 
@@ -163,7 +164,57 @@ function normalizeMessagePartInPlace(part: MessagePart, previous?: MessagePart):
     // preserving any tokens already received when an update omits the field.
     part.text ??= previous?.type === part.type ? previous.text ?? "" : "";
   }
+  // Index before compaction: task outputs carry `session_id:` at their tail.
+  indexSubagentLink(part);
   compactToolPartOutputInPlace(part);
+}
+
+export function isTaskLikeToolName(tool?: string): boolean {
+  const t = (tool || "").toLowerCase();
+  return t === "task" || t === "agent" || t.includes("subagent");
+}
+
+/** Child session ID carried by a task tool part (metadata, input or output). */
+export function subagentChildIDFromPart(part: MessagePart): string | undefined {
+  if (part.type !== "tool") return undefined;
+  const meta = part.state.metadata as Record<string, unknown> | undefined;
+  const input = part.state.input as Record<string, unknown> | undefined;
+  const direct = meta?.sessionId || meta?.sessionID || input?.task_id;
+  if (direct) return String(direct);
+  const out = (part.state as { output?: string }).output;
+  return typeof out === "string" ? out.match(/session_id:\s*([a-zA-Z0-9_-]+)/)?.[1] : undefined;
+}
+
+// child session -> parent session, filled as task parts enter the store. Event
+// routing and several memos resolve parents per update, so a scan of every
+// loaded transcript there grows with history x running tasks.
+const subagentParentByChild = new Map<string, string>();
+const [subagentLinkVersion, setSubagentLinkVersion] = createSignal(0);
+
+function indexSubagentLink(part: MessagePart): void {
+  if (part.type !== "tool" || !isTaskLikeToolName(part.tool)) return;
+  const child = subagentChildIDFromPart(part);
+  if (!child || child === part.sessionID || subagentParentByChild.get(child) === part.sessionID) return;
+  subagentParentByChild.set(child, part.sessionID);
+  setSubagentLinkVersion((v) => v + 1);
+}
+
+/** Parent of a subagent session learned from task parts; reactive to new links. */
+export function lookupSubagentParent(childID: string): string | null {
+  subagentLinkVersion();
+  return subagentParentByChild.get(childID) ?? null;
+}
+
+export function forgetSubagentLinks(sessionIDs: string[]): void {
+  const ids = new Set(sessionIDs);
+  let changed = false;
+  for (const [child, parent] of subagentParentByChild) {
+    if (ids.has(child) || ids.has(parent)) {
+      subagentParentByChild.delete(child);
+      changed = true;
+    }
+  }
+  if (changed) setSubagentLinkVersion((v) => v + 1);
 }
 
 function cacheFullToolOutput(partID: string, fullText: string) {

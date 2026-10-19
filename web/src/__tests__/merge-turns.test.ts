@@ -2,7 +2,9 @@
 import { createStore, produce } from "solid-js/store";
 import {
   evictCachedSessionTurns,
+  forgetSubagentLinks,
   getFullToolOutput,
+  lookupSubagentParent,
   mergeServerTurnsInto,
   persistCachedSessionTurns,
   readCachedSessionTurns,
@@ -28,6 +30,23 @@ const tool = (id: string, messageID: string, status: "running" | "completed"): M
   }) as MessagePart;
 
 describe("REST snapshot merge", () => {
+  it("indexes subagent parents from streamed, snapshot and oversized task parts", () => {
+    const task = (id: string, state: Record<string, unknown>) =>
+      ({ id, sessionID: sid, messageID: "msg_t", type: "tool", callID: id, tool: "task",
+        state: { status: "completed", input: {}, title: "", metadata: {}, time: { start: 1, end: 2 }, ...state } }) as MessagePart;
+    const turns: MessageTurn[] = [];
+    assertEqual(lookupSubagentParent("ses_child_meta"), null);
+    upsertTurnPart(turns, task("prt_meta", { metadata: { sessionId: "ses_child_meta" }, output: "done" }));
+    assertEqual(lookupSubagentParent("ses_child_meta"), sid, "SSE task metadata links the child");
+
+    const huge = "x".repeat(40 * 1024) + "\nsession_id: ses_child_tail";
+    mergeServerTurnsInto(turns, [{ info: info("msg_t", "assistant"), parts: [task("prt_tail", { output: huge })] }]);
+    assertEqual(lookupSubagentParent("ses_child_tail"), sid, "indexed before output compaction drops the tail");
+
+    forgetSubagentLinks([sid]);
+    assertEqual(lookupSubagentParent("ses_child_meta"), null, "deleting the parent forgets its children");
+  });
+
   it("keeps live turn identities when an empty snapshot arrives late", () => {
     const [state, setState] = createStore<{ turns: MessageTurn[] }>({
       turns: [
