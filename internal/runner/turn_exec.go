@@ -33,14 +33,18 @@ func (s *Service) startTurnProcess(
 	cmd := exec.Command(binPath, args...)
 	cmd.Dir = rec.WorktreePath
 
+	var hookEnv []string
 	revokeHook := func() {}
-	if rec.Runtime == string(RuntimeAntigravity) {
+	if rec.Runtime == string(RuntimeClaudeCode) {
+		var hookArgs []string
+		hookArgs, hookEnv, revokeHook = s.issueClaudeHook(mode, rec.ID, asstMsgID)
+		cmd.Args = append(cmd.Args, hookArgs...)
+	} else if rec.Runtime == string(RuntimeAntigravity) {
 		s.ensureAgyHookInstalled()
-		var hookEnv []string
 		hookEnv, revokeHook = s.issueHookEnv(rec.ID, asstMsgID)
-		if len(hookEnv) > 0 {
-			cmd.Env = append(os.Environ(), hookEnv...)
-		}
+	}
+	if len(hookEnv) > 0 {
+		cmd.Env = append(os.Environ(), hookEnv...)
 	}
 
 	stdinPipe, err := cmd.StdinPipe()
@@ -88,7 +92,7 @@ func (s *Service) startTurnProcess(
 	go func() {
 		defer func() {
 			revokeHook()
-			s.cancelSessionApprovals(rec.ID, "the Antigravity process exited")
+			s.cancelSessionApprovals(rec.ID, "the CLI process exited")
 			s.store.Flush()
 			close(ap.done)
 			s.mu.Lock()

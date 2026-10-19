@@ -161,7 +161,7 @@ func (g *Gateway) SetWSBaseURL(wsURL string) {
 		g.handoff.SetWSBaseURL(wsURL)
 	}
 	if g.runner != nil {
-		// agy approval hooks call back over the same loopback listener.
+		// Runner approval hooks (agy, Claude Code) call back over the same loopback listener.
 		httpBase := strings.Replace(strings.Replace(wsURL, "wss://", "https://", 1), "ws://", "http://", 1)
 		g.runner.SetHookBaseURL(httpBase)
 	}
