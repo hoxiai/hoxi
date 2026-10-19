@@ -129,11 +129,11 @@ export const inspector = {
     back: "Back",
   },
   terminal: {
-    connected: "PTY connected",
-    disconnected: "PTY disconnected",
-    reconnect: "Reconnect terminal",
+    connected: "Terminal connected",
+    disconnected: "Terminal disconnected",
+    reconnect: "Reconnect",
     clear: "Clear",
-    connecting: "Connecting PTY…",
-    error: "PTY error",
+    connecting: "Connecting terminal…",
+    error: "Terminal error",
   },
 };

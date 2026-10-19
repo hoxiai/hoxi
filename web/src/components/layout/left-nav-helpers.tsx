@@ -62,7 +62,27 @@ export function dayLabel(ts: number): string {
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
+const EMPTY_PENDING_SET = new Set<string>();
+
+export function sameStringSet(a: Set<string>, b: Set<string>): boolean {
+  if (a === b) return true;
+  if (a.size !== b.size) return false;
+  for (const item of a) {
+    if (!b.has(item)) return false;
+  }
+  return true;
+}
+
+export function resolveActiveRootSessionID(): string | null {
+  const activeID = workspace.activeSessionID;
+  if (!activeID) return null;
+  return resolveRootSessionID(activeID) || activeID;
+}
+
 export function collectPendingSessionIDs(): Set<string> {
+  if (workspace.pendingPermissions.length === 0 && workspace.pendingQuestions.length === 0) {
+    return EMPTY_PENDING_SET;
+  }
   const set = new Set<string>();
   for (const p of workspace.pendingPermissions) {
     set.add(p.sessionID);

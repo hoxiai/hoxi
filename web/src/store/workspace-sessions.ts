@@ -120,6 +120,58 @@ export function sessionsWithPendingPermission(): Set<string> {
   return set;
 }
 
+export function syncSessionFieldsInPlace(target: SessionInfo, source: SessionInfo): void {
+  if (target.title !== source.title) target.title = source.title;
+  if (target.slug !== source.slug) target.slug = source.slug;
+  if (target.directory !== source.directory) target.directory = source.directory;
+  if (target.parentID !== source.parentID) target.parentID = source.parentID;
+  if (target.runtime !== source.runtime) target.runtime = source.runtime;
+  if (target.managed !== source.managed) target.managed = source.managed;
+  if (target.modelID !== source.modelID) target.modelID = source.modelID;
+  if (target.providerID !== source.providerID) target.providerID = source.providerID;
+  if (target.sandboxMode !== source.sandboxMode) target.sandboxMode = source.sandboxMode;
+  if (target.branch !== source.branch) target.branch = source.branch;
+  target.capabilities = source.capabilities;
+  target.revert = source.revert;
+  if (source.time) {
+    if (!target.time) {
+      target.time = { ...source.time };
+    } else {
+      if (target.time.created !== source.time.created) target.time.created = source.time.created;
+      if (target.time.updated !== source.time.updated) target.time.updated = source.time.updated;
+      if (target.time.archived !== source.time.archived) {
+        if (source.time.archived === undefined) delete target.time.archived;
+        else target.time.archived = source.time.archived;
+      }
+    }
+  }
+}
+
+export function reconcileSessionsInPlace(incomingList: SessionInfo[]): void {
+  setWorkspace(
+    produce((state) => {
+      const existingById = new Map(state.sessions.map((s) => [s.id, s]));
+      const next: SessionInfo[] = [];
+      let orderOrLengthChanged = state.sessions.length !== incomingList.length;
+      for (let i = 0; i < incomingList.length; i++) {
+        const incoming = incomingList[i];
+        const existing = existingById.get(incoming.id);
+        if (existing) {
+          syncSessionFieldsInPlace(existing, incoming);
+          next.push(existing);
+          if (state.sessions[i]?.id !== incoming.id) orderOrLengthChanged = true;
+        } else {
+          next.push(incoming);
+          orderOrLengthChanged = true;
+        }
+      }
+      if (orderOrLengthChanged) {
+        state.sessions = next;
+      }
+    })
+  );
+}
+
 export function replaceSession(info: SessionInfo) {
   if (deletedSessionIDs.has(info.id)) return;
   registerRunnerSessions([info]);
@@ -130,13 +182,16 @@ export function replaceSession(info: SessionInfo) {
     });
   }
   const effectiveInfo = preserveSessionTitle(info);
-  setWorkspace("sessions", (prev) => {
-    const idx = prev.findIndex((s) => s.id === effectiveInfo.id);
-    if (idx < 0) return [effectiveInfo, ...prev];
-    const next = prev.slice();
-    next[idx] = effectiveInfo;
-    return next;
-  });
+  setWorkspace(
+    produce((state) => {
+      const idx = state.sessions.findIndex((s) => s.id === effectiveInfo.id);
+      if (idx < 0) {
+        state.sessions.unshift(effectiveInfo);
+      } else {
+        syncSessionFieldsInPlace(state.sessions[idx], effectiveInfo);
+      }
+    })
+  );
 }
 
 export function replaceSessionFromEvent(info: SessionInfo, eventDirectory?: string): void {
@@ -191,8 +246,7 @@ export async function loadSessionMessages(sessionID: string): Promise<void> {
   if (!isChildSession) {
     scheduleRefreshWorktreeStatus(sessionID, 120);
   }
-  const shouldMarkLoading = workspace.messagesBySession[sessionID] === undefined;
-  if (shouldMarkLoading) {
+  if (workspace.messagesBySession[sessionID] === undefined) {
     setWorkspace("loadingMessagesBySession", sessionID, true);
   }
   try {
@@ -209,9 +263,7 @@ export async function loadSessionMessages(sessionID: string): Promise<void> {
     }
     throw err;
   } finally {
-    if (shouldMarkLoading) {
-      setWorkspace("loadingMessagesBySession", sessionID, false);
-    }
+    setWorkspace("loadingMessagesBySession", sessionID, false);
   }
   if (isChildSession && sessionID !== workspace.activeSessionID) {
     return;
@@ -460,10 +512,14 @@ export async function archiveSession(sessionID: string, directory?: string): Pro
   }
 
   const now = Date.now();
-  setWorkspace("sessions", (prev) =>
-    prev.map((s) =>
-      s.id === sessionID ? { ...s, time: { ...s.time, archived: now } } : s
-    )
+  setWorkspace(
+    produce((state) => {
+      const target = state.sessions.find((s) => s.id === sessionID);
+      if (target) {
+        if (!target.time) target.time = { created: now, updated: now, archived: now };
+        else target.time.archived = now;
+      }
+    })
   );
 
   if (workspace.activeSessionID === sessionID) {
@@ -493,12 +549,12 @@ export async function unarchiveSession(sessionID: string, directory?: string): P
     persistArchivedSessionIDs(nextArchived);
   }
 
-  setWorkspace("sessions", (prev) =>
-    prev.map((s) => {
-      if (s.id !== sessionID) return s;
-      const nextTime = { ...s.time };
-      delete nextTime.archived;
-      return { ...s, time: nextTime };
+  setWorkspace(
+    produce((state) => {
+      const target = state.sessions.find((s) => s.id === sessionID);
+      if (target?.time) {
+        delete target.time.archived;
+      }
     })
   );
 

@@ -2,20 +2,28 @@ import { produce } from "solid-js/store";
 import { hoxiAPI } from "../services/api";
 import type { SessionStatus } from "../services/sse-types";
 import { setWorkspace, workspace } from "./workspace";
-import { activeDirectory, loadSessionMessagesOnly, sessionDirectory } from "./workspace-sessions";
+import { activeDirectory, isManagedSession, loadSessionMessagesOnly, sessionDirectory } from "./workspace-sessions";
 import { drainNextQueuedPrompt, lastPromptDispatchedAt } from "./workspace-queue-subagents";
 
-// OpenCode tracks session status per directory instance, so each worktree is queried separately.
-function collectStatusDirectories(extra?: string): Array<string | undefined> {
+// Hoxi-managed conversations report busy status globally from the runner process table.
+// Only unadopted OpenCode sessions need per-directory status queries, and only for the
+// active directory or sessions currently marked busy/retrying (never every historical worktree).
+export function collectStatusDirectories(extra?: string): Array<string | undefined> {
   const dirs = new Set<string>();
   const add = (d?: string | null) => {
-    if (d) dirs.add(d);
+    const trimmed = d?.trim();
+    if (trimmed) dirs.add(trimmed);
   };
   add(extra);
-  add(activeDirectory());
   add(workspace.rootDir);
-  for (const s of workspace.sessions) add(sessionDirectory(s.id));
-  for (const sid of Object.keys(workspace.statusBySession)) add(sessionDirectory(sid));
+  if (workspace.activeSessionID && !isManagedSession(workspace.activeSessionID)) {
+    add(activeDirectory());
+  }
+  for (const [sid, st] of Object.entries(workspace.statusBySession)) {
+    if ((st?.type === "busy" || st?.type === "retry") && !isManagedSession(sid)) {
+      add(sessionDirectory(sid));
+    }
+  }
   return dirs.size > 0 ? Array.from(dirs) : [undefined];
 }
 
@@ -49,8 +57,13 @@ export async function syncSessionStatuses(directory?: string): Promise<void> {
           ) {
             continue;
           }
-          const prev = state.statusBySession[sid]?.type;
-          state.statusBySession[sid] = status;
+          const prevStatus = state.statusBySession[sid];
+          const prev = prevStatus?.type;
+          const prevMsg = prevStatus?.type === "retry" ? prevStatus.message : undefined;
+          const nextMsg = status?.type === "retry" ? status.message : undefined;
+          if (prev !== status?.type || prevMsg !== nextMsg) {
+            state.statusBySession[sid] = status;
+          }
           if ((prev === "busy" || prev === "retry") && status?.type === "idle") {
             newlyIdleSessions.push(sid);
           }
@@ -59,8 +72,7 @@ export async function syncSessionStatuses(directory?: string): Promise<void> {
           if (
             (current?.type === "busy" || current?.type === "retry") &&
             !remoteStatuses[sid] &&
-            // Only trust absence when the session's own directory was actually queried.
-            queriedDirs.has(sessionDirectory(sid))
+            (isManagedSession(sid) || queriedDirs.has(sessionDirectory(sid)))
           ) {
             const dispatchedAt = lastPromptDispatchedAt(sid);
             if (now - dispatchedAt > 3500) {

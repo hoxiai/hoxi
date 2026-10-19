@@ -1,28 +1,28 @@
 // web/src/i18n/locales/en-US/approval.ts
 
 export const approval = {
-  title: "Security Approval Gate",
+  title: "Approval Required",
   warning:
-    "The agent requested a destructive or privileged command. Please review carefully.",
+    "A privileged or potentially destructive operation was requested. Please confirm to proceed.",
   allowOnce: "Allow Once",
   allowAlways: "Always Allow (Session)",
   reject: "Reject",
-  rejectWithFeedback: "Reject & Send Feedback",
+  rejectWithFeedback: "Reject with Note",
   rejectFeedbackPlaceholder:
-    "Optional: tell Hoxi what to do differently (Enter to reject)…",
+    "Optional: suggest a different approach (Enter to reject)…",
   command: "Command",
   path: "Target Path",
-  questionTitle: "Agent Question",
-  skipQuestionTooltip: "Skip / Dismiss",
+  questionTitle: "Confirm Details",
+  skipQuestionTooltip: "Skip",
   multiSelect: "Multi-select",
-  customAnswerLabel: "Add custom answer…",
+  customAnswerLabel: "Other answer…",
   customAnswerPlaceholder:
-    "Type additional details or alternative (Enter to submit)…",
-  confirmHint: "Select options and confirm to proceed",
+    "Type additional details or an alternative (Enter to submit)…",
+  confirmHint: "Select options and confirm to continue",
   skipQuestion: "Skip",
   submitAnswer: "Submit Answer",
-  openDiffInInspector: "Open in Diff Inspector",
-  autoApproveRules: "Auto-approve rules ({count})",
+  openDiffInInspector: "View in Diffs",
+  autoApproveRules: "Approval rules ({count})",
   ruleAlwaysAllow: "Always Allow",
   ruleAlwaysDeny: "Always Deny",
   modeMenuTitle: "Approval Mode",
@@ -31,7 +31,7 @@ export const approval = {
   modeAutoShort: "Auto",
   modeAutoBadge: "Default",
   modeAutoDesc:
-    "Auto-approves file edits and normal commands; destructive commands (rm / sudo / --force) always require confirmation",
+    "Auto-approves file edits and normal commands; destructive commands (rm / sudo / --force) always ask",
   modeSmartLabel: "Smart Ask",
   modeSmartShort: "Smart",
   modeSmartDesc:
@@ -39,9 +39,9 @@ export const approval = {
   modeManualLabel: "Manual Ask",
   modeManualShort: "Manual",
   modeManualDesc:
-    "Requires manual confirmation before every file edit, shell command, or external action",
+    "Asks for confirmation before every file edit, shell command, or external action",
   modeTooltip: "Approval mode: {mode} (click to switch)",
-  openPolicySettings: "Fine-grained Policy & MCP…",
-  highRiskBadge: "High-Risk Gate",
+  openPolicySettings: "Permission Rules & MCP…",
+  highRiskBadge: "High Risk",
   switchToAutoApprove: "Switch to Auto Approve",
 };

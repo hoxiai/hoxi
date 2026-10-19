@@ -1,10 +1,11 @@
+import { produce } from "solid-js/store";
 import { hoxiAPI, type SaveWorkspaceInput, type WorkspaceFolder, type WorkspaceProfile } from "../services/api";
 import { DISMISSED_PROJECTS_KEY, isSessionArchived, PROJECT_ORDER_KEY, RECENT_PROJECTS_KEY, setWorkspace, workspace } from "./workspace";
 import { loadAgents, loadProviders } from "./workspace-providers";
 import { isPlaceholderSessionTitle, preserveSessionTitle, sortSessionsByActivity } from "./session-title";
 import { syncPendingPermissions } from "./approval-mode";
 import { syncSessionStatuses } from "./session-status-sync";
-import { isSessionBusy, isSessionDeleted, loadSessionMessagesOnly, refreshWorktreeStatus, selectSession } from "./workspace-sessions";
+import { isSessionBusy, isSessionDeleted, loadSessionMessagesOnly, reconcileSessionsInPlace, refreshWorktreeStatus, selectSession } from "./workspace-sessions";
 import type { SessionInfo } from "../services/sse-types";
 
 // Directly borrowed from Kilo Desktop: plugins/kilo-ui/src/contracts/workspaces/identity-color.ts
@@ -276,18 +277,22 @@ export async function bootstrapProjectSessions(directory: string, selectInitial 
     (s) => !isSessionDeleted(s.id)
   );
   const titledSessions = sessions.map(preserveSessionTitle);
-  setWorkspace("sessions", titledSessions);
-  for (const s of titledSessions) {
-    if (s.directory && !workspace.worktreeBySession[s.id]) {
-      setWorkspace("worktreeBySession", s.id, {
-        sessionID: s.id,
-        isolated: s.sandboxMode ? s.sandboxMode === "worktree" : normalizeFolderPath(s.directory) !== cleaned,
-        directory: s.directory,
-        branch: s.branch,
-        createdAt: new Date(s.time?.created || Date.now()).toISOString(),
-      });
-    }
-  }
+  reconcileSessionsInPlace(titledSessions);
+  setWorkspace(
+    produce((state) => {
+      for (const s of titledSessions) {
+        if (s.directory && !state.worktreeBySession[s.id]) {
+          state.worktreeBySession[s.id] = {
+            sessionID: s.id,
+            isolated: s.sandboxMode ? s.sandboxMode === "worktree" : normalizeFolderPath(s.directory) !== cleaned,
+            directory: s.directory,
+            branch: s.branch,
+            createdAt: new Date(s.time?.created || Date.now()).toISOString(),
+          };
+        }
+      }
+    })
+  );
   void refreshWorktreeStatus("__root__");
   void syncSessionStatuses(cleaned);
   void syncPendingPermissions(cleaned);
@@ -295,33 +300,58 @@ export async function bootstrapProjectSessions(directory: string, selectInitial 
   else setWorkspace("bootstrappingSessions", false);
 }
 
-export async function switchWorkspace(directory: string, selectInitial = true): Promise<void> {
+export interface SwitchWorkspaceOptions {
+  selectInitial?: boolean;
+  targetSessionID?: string;
+  cachedSessions?: SessionInfo[];
+}
+
+export async function switchWorkspace(
+  directory: string,
+  optionsOrSelectInitial: boolean | SwitchWorkspaceOptions = true
+): Promise<void> {
   const cleaned = normalizeFolderPath(directory);
   if (!cleaned || isInvalidProjectPath(cleaned)) return;
+
+  const opts: SwitchWorkspaceOptions =
+    typeof optionsOrSelectInitial === "boolean"
+      ? { selectInitial: optionsOrSelectInitial }
+      : optionsOrSelectInitial;
+  const selectInitial = opts.selectInitial ?? !opts.targetSessionID;
+  const targetSessionID = opts.targetSessionID ?? null;
+  const hydratedSessions = Array.isArray(opts.cachedSessions)
+    ? opts.cachedSessions.filter((s) => !isSessionDeleted(s.id)).map(preserveSessionTitle)
+    : [];
 
   recordRecentProject(cleaned);
 
   setWorkspace({
     rootDir: cleaned,
+    sessions: hydratedSessions,
     activeInspectorFolder: null,
     inspectedFilePath: null,
     inspectedFileLine: null,
     inspectedFileDiff: null,
     inspectedDiffFile: null,
-    activeSessionID: null,
-    bootstrappingSessions: true,
+    activeSessionID: targetSessionID,
+    bootstrappingSessions: hydratedSessions.length === 0 && !targetSessionID,
   });
 
+  const selectPromise = targetSessionID ? selectSession(targetSessionID) : null;
+
   try {
-    await bootstrapProjectSessions(cleaned, selectInitial);
+    await Promise.all([
+      bootstrapProjectSessions(cleaned, selectInitial),
+      ...(selectPromise ? [selectPromise] : []),
+    ]);
   } catch (err) {
     setWorkspace("bootstrappingSessions", false);
     console.error("switch workspace error:", err);
   }
 
-  void loadProviders();
-  void loadProjects();
-  void loadSavedWorkspaces();
+  if (workspace.providers.length === 0) void loadProviders();
+  if (workspace.projects.length === 0) void loadProjects();
+  if (workspace.savedWorkspaces.length === 0) void loadSavedWorkspaces();
   void loadAgents(cleaned);
 }
 
