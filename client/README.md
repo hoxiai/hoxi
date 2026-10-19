@@ -1,19 +1,37 @@
-# Hoxi Mobile (`client/`)
+<p align="center">
+  <a href="https://hoxi.ai"><img src="../docs/assets/hoxi-banner.svg" alt="Hoxi" width="260" /></a>
+</p>
 
-[English](README.md) | [简体中文](README.zh-CN.md)
+<p align="center">
+  <b>Hoxi Mobile (`client/`)</b> — Mobile AI Engineering Command Center &amp; <a href="https://github.com/hoxiai/gopanel">GoPanel</a> Server Manager for iOS &amp; Android.
+</p>
 
-**Hoxi Mobile** is the iOS & Android command center for Hoxi Desktop and GoPanel (`gopanel_v2`) nodes.
-
-It is intentionally **not** a cramped mobile code editor or remote desktop. It solves one problem: **letting you step away from your desk while long-running AI tasks execute, without losing visibility or control.**
+<p align="center">
+  <kbd><a href="README.md">English</a></kbd>
+  <kbd><a href="README.zh-CN.md">中文(简体)</a></kbd>
+</p>
 
 ---
 
-## What It Solves
+**Hoxi Mobile** is a dual-purpose Flutter client designed for solo builders and engineering teams. Rather than cramming a desktop code editor onto a 6-inch screen, it focuses on the two jobs you actually need away from your desk:
+1. **Commanding running AI coding sessions** on **Hoxi Desktop/Daemon** (`nodeType: 'hoxi'`) and **GoPanel Code** (`nodeType: 'gopanel'`).
+2. **Managing production Linux servers** powered by [**GoPanel (`hoxiai/gopanel`)**](https://github.com/hoxiai/gopanel).
 
-1. **Unattended Agent Anxiety**: Approving a single destructive command (`rm`, `git push --force`) or answering an agent's clarifying question shouldn't require sprinting back to your laptop. The **Attention Hub** surfaces pending permission gates for 1-tap `Once` / `Always` / `Reject` responses.
-2. **Mid-Stream Course Correction**: Watch live SSE token streams and tool calls on the go. If an agent heads down the wrong path, send a **Steer** instruction or abort the turn immediately.
-3. **Mobile Diff & Artifact Review**: Inspect session Git worktree diffs, changed files, 8-dimension memory summaries, and live preview links before merging.
-4. **Dual-Node Native Protocol (`hoxi` + `gopanel`)**: Automatically detects and connects to both **Hoxi Desktop/Daemon nodes** (`/api/hoxi/*`, QR pairing or local discovery) and **GoPanel server nodes** (`/api/v1/*` & `/api/code/*`, container/website ops + remote AI workspaces).
+---
+
+## Core Capabilities
+
+### 1. Mobile AI Engineering Command Center (`ai_workspace` & `task_center`)
+- **1-Tap High-Risk Approval (`Attention Hub`)**: When an agent triggers a PreToolUse safety gate (`rm`, `sudo`, `git push --force`) or asks a clarifying question, approve (`Once` / `Always`) or reject with feedback from your phone.
+- **Live Stream & Mid-Stream Steer**: Watch real-time SSE token streams, reasoning blocks, and tool cards; inject **Steer** instructions mid-turn or abort runaway tasks.
+- **Worktree Diff & Delivery Review**: Inspect session Git worktree diffs, changed files, 8-dimension memory summaries, and live preview links before merging.
+
+### 2. Mobile Server Management for [GoPanel](https://github.com/hoxiai/gopanel) (`server`, `container`, `website`, `database`, `ssl`, `apps`)
+When connected to a [GoPanel](https://github.com/hoxiai/gopanel) node (`/api/v1/*`), the app acts as a full pocket server ops console:
+- **Server Telemetry (`server/`)**: Live CPU, memory, disk, and network traffic metrics.
+- **Docker & Containers (`container/` & `apps/`)**: Inspect container states, view logs, start/stop/restart services, and manage one-click app deployments.
+- **Websites & SSL (`website/` & `ssl/`)**: Manage Nginx sites, domains, reverse proxies, and SSL certificate issuance/renewal.
+- **Databases (`database/`)**: Monitor and manage MySQL, PostgreSQL, and Redis instances on the go.
 
 ---
 

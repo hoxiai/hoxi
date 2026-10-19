@@ -1,14 +1,37 @@
-# Hoxi
+<p align="center">
+  <a href="https://hoxi.ai"><img src="docs/assets/hoxi-banner.svg" alt="Hoxi" width="310" /></a>
+</p>
 
-[English](README.md) | [简体中文](README.zh-CN.md)
+<p align="center">
+  专为高强度 AI 研发打造的 <b>macOS 原生多 Agent 并行工作台</b>，配套 <b>Hoxi &amp; <a href="https://github.com/hoxiai/gopanel">GoPanel</a> 手机端开发与服务器掌上管家</b>。
+</p>
 
-**Hoxi** ([hoxi.ai](https://hoxi.ai)) 是专为高强度 AI 研发打造的 macOS 原生多 Agent 并行工作台。
+<p align="center">
+  <a href="https://hoxi.ai"><img src="docs/assets/hoxi-pill-zh.svg" alt="多 Agent 研发工作台 & 手机服务器管家" height="54" /></a>
+</p>
 
-它不是又一个套壳 Electron 编辑器（仅 **~30 MB 内存**、**0.2 秒冷启动**），而是把你机器上的 **OpenCode**、**Claude Code**、**Google Antigravity (`agy`)**、**Qoder（通义灵码）**、**CodeBuddy（腾讯云）** 统一收进同一个三栏工作区——支持会话级 Git Worktree 物理隔离、8 大工具跨软件无损接管续做、中转站实时防降智测评，以及手机端远程指挥。
+<p align="center">
+  <a href="https://github.com/hoxiai/hoxi/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-2563EB?style=flat" alt="License" /></a>
+  <a href="https://hoxi.ai"><img src="https://img.shields.io/badge/website-hoxi.ai-4F46E5?style=flat" alt="Website" /></a>
+  <a href="https://github.com/hoxiai/gopanel"><img src="https://img.shields.io/badge/server_panel-GoPanel-0EA5E9?style=flat" alt="GoPanel" /></a>
+  <a href="https://github.com/hoxiai/hoxi/releases"><img src="https://img.shields.io/github/v/release/hoxiai/hoxi?style=flat&color=2563EB" alt="Release" /></a>
+  <a href="https://github.com/hoxiai/hoxi/stargazers"><img src="https://img.shields.io/github/stars/hoxiai/hoxi?style=flat&color=2563EB" alt="Stars" /></a>
+</p>
+
+<p align="center">
+  <kbd><a href="README.md">English</a></kbd>
+  <kbd><a href="README.zh-CN.md">中文(简体)</a></kbd>
+</p>
 
 ---
 
-## 直击 5 个最痛的日常研发场景
+**Hoxi** ([hoxi.ai](https://hoxi.ai)) 不是又一个吃掉 1.5GB 内存的套壳 Electron 编辑器（仅 **~30 MB 内存**、**0.2 秒冷启动**）。
+
+它把桌面端的 **OpenCode**、**Claude Code**、**Google Antigravity (`agy`)**、**Qoder（通义灵码）**、**CodeBuddy（腾讯云）** 统一收进同一个三栏工作区，并通过配套移动端（[`client/`](client/README.zh-CN.md)）把**桌面 AI 研发指挥**与 **[GoPanel](https://github.com/hoxiai/gopanel) 服务器运维管理**装进你的口袋。
+
+---
+
+## 直击 5 个最痛的日常研发与运维场景
 
 ### 1. 额度限流、账号被封或单工具死循环，换工具就得从头讲起
 日常写代码往往同时装了 Claude Code、Codex、Antigravity、Trae、Qoder、CodeBuddy。一旦主力工具触发 Rate Limit、额度见底，或者在某个诡异 Bug 上死循环，切到别的工具就要重新贴文件、重新交代上下文。
@@ -32,12 +55,13 @@
 - **8 维结构化长效记忆（`.opencode/memory/`）**：自动将长会话压缩沉淀为**目标、约束、关键事实、已改文件、报错与修复、待办、当前进展、下一步** 8 个结构化维度，跨轮次持久注入，长线重构不失忆。
 - **角色化模型路由（省钱利器）**：主对话用顶级编码模型；会话标题生成、后台子代理（Subagent）、8 维记忆压缩、Git 提交信息生成可分别指定便宜快速的轻量模型（或本地 Ollama / vLLM），其中 Git Commit 更支持 **0 延迟纯本地规则合成**，不花一分冤枉钱。
 
-### 5. 开自动放行怕删库，关自动放行又不敢离开工位
-开了 `accept-edits` 怕 Agent 一句 `rm -rf` 或 `git reset --hard` 把心血扬了；全改手动确认又得死盯屏幕当“回车工具人”。
-- **跨引擎统一高危门控（Safety Gate）**：普通读写自动丝滑放行；一旦涉及 `rm`、`sudo`、`chmod`、`diskutil`、`git push --force`、`git reset --hard` 等高危指令，无论底层是 OpenCode、Claude Code 还是 Antigravity，一律经 PreToolUse Hook 硬拦截，macOS 顶部状态栏实时亮起 `Attention` 徽章并弹出内联审批卡（`仅本次` / `始终允许` / `拒绝并附原因`）。
-- **运行时中途纠偏（Steer）**：看 Agent 思路偏了无需强杀重来，运行途中随时插入补充指令实时纠偏。
-- **内置无头浏览器 + 一键人工接管**：右侧面板直连会话独占的 Headless Chrome。Agent 自测页面遇到登录框或验证码时，点击**人工接管（Manual Control）**直接在画面内输入账号密码，搞定后一键交回 Agent 继续执行。
-- **Hoxi 手机端开发指挥台（`client/`）**：配套 Flutter 移动端（iOS / Android），下楼拿快递或喝咖啡时，用手机随时看实时流式进度、审阅文件 Diff、发送 Steer 纠偏指令、一键审批高危操作。
+### 5. 离开工位不敢放手，线上服务器还得背电脑管（桌面安全门控 + 手机端 Hoxi / [GoPanel](https://github.com/hoxiai/gopanel) 双栖指挥）
+独立开发者与精干团队既要写代码，又要管线上服务器。开了 `accept-edits` 怕 Agent 一句 `rm -rf` 删库；关了又得死盯屏幕点确认；出门在外服务器告警还得找地方开电脑。
+- **跨引擎统一高危门控（Safety Gate）**：普通读写自动放行；一旦涉及 `rm`、`sudo`、`chmod`、`diskutil`、`git push --force`、`git reset --hard` 等高危指令，无论底层是 OpenCode、Claude Code 还是 Antigravity，一律经 PreToolUse Hook 硬拦截，macOS 状态栏亮起 `Attention` 徽章并弹出内联审批卡。
+- **运行时中途纠偏（Steer）+ 内置隔离浏览器**：Agent 思路偏了无需强杀重来，随时插入指令实时纠偏；内置会话独占 Headless Chrome，遇到登录框或验证码一键切换**人工接管**，输完密码交回 Agent 继续跑。
+- **手机端双栖掌上指挥台（[`client/`](client/README.zh-CN.md)）**：同一个 Flutter 手机 App（iOS / Android）原生对接两类节点：
+  1. **连 Hoxi 桌面端**：下楼拿快递或喝咖啡时，用手机实时看 Agent 流式输出、审阅 Git Worktree Diff、中途发送 `Steer` 纠偏、一键审批高危命令。
+  2. **连 [GoPanel (`hoxiai/gopanel`)](https://github.com/hoxiai/gopanel) 服务器节点**：直接在手机上充当**服务器掌上管理面板**——实时查看服务器 CPU/内存/磁盘/网络监控、启停与排查 Docker 容器、管理 Nginx 站点与反向代理、续签 SSL 证书、运维数据库，以及远程调度服务器上的 GoPanel AI 编码会话。
 
 ---
 
@@ -45,9 +69,10 @@
 
 ```text
 ┌─────────────────────────────────────────────────────────────────────────┐
-│ 原生宿主与多端协同 (Wails v2 + Objective-C NSStatusBar + 手机端指挥台)   │
+│ 原生宿主与移动端双栖控制 (Wails v2 + NSStatusBar + Flutter 手机客户端)   │
 │  • macOS WKWebView (~30MB 内存, 0.2s 极速冷启动, 原生毛玻璃与交通灯)     │
 │  • 状态栏常驻托盘 (实时显示 Running 并发计数 / Attention 待审批提醒)     │
+│  • 移动端 (`client/`): 同时接管 Hoxi 桌面工作区与 GoPanel 线上服务器面板 │
 ├─────────────────────────────────────────────────────────────────────────┤
 │ 三栏 SolidJS 极速工作区 (零虚拟 DOM, 120Hz rAF 批处理满帧流式渲染)       │
 │  • 左栏：多项目管理、Git Worktree 沙箱切换、跨软件会话接管中心           │
@@ -101,13 +126,14 @@ npm --prefix web test && npm --prefix web run build
 
 ---
 
-## 深入文档索引
+## 深入文档与生态索引
 
 - **[README.md](README.md)**: English Documentation
+- **[GoPanel (`hoxiai/gopanel`)](https://github.com/hoxiai/gopanel)**: 轻量级服务器运维与远程 AI 编程面板（可由本项目 `client/` 手机端直接管理）
+- **[client/README.zh-CN.md](client/README.zh-CN.md)**: Hoxi 移动端开发指挥台与 GoPanel 手机服务器管家（Flutter，iOS / Android）
 - **[DEVELOPMENT.md](DEVELOPMENT.md)**: 生产级架构蓝图、OpenAPI/SSE 契约、Worktree 状态机与插件细节
 - **[HANDOFF_AND_CLI_BRIDGE.md](HANDOFF_AND_CLI_BRIDGE.md)**: 8 大外部 CLI 会话解析、统一 IR 物化与本地凭证桥接规范
 - **[BROWSER.md](BROWSER.md)**: 会话级隔离 Headless Chrome 审查器、人工接管机制与安全边界
-- **[client/README.zh-CN.md](client/README.zh-CN.md)**: Hoxi 移动端开发指挥台（Flutter，支持 Hoxi 与 GoPanel 双节点）
 - **[docs/releases.md](docs/releases.md)** & **[docs/auto-updates.md](docs/auto-updates.md)**: DMG 签名公证、Sparkle EdDSA 自动更新与一键发版流水线
 - **[AGENTS.md](AGENTS.md)**: 工程分层约束与开发准则
 

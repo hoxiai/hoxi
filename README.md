@@ -1,10 +1,31 @@
-# Hoxi
+<p align="center">
+  <a href="https://hoxi.ai"><img src="docs/assets/hoxi-banner.svg" alt="Hoxi" width="310" /></a>
+</p>
 
-[English](README.md) | [简体中文](README.zh-CN.md)
+<p align="center">
+  Native macOS command center for <b>parallel AI software engineering</b>, paired with a mobile control plane for <b>Hoxi &amp; <a href="https://github.com/hoxiai/gopanel">GoPanel</a> servers</b>.
+</p>
 
-**Hoxi** ([hoxi.ai](https://hoxi.ai)) is a native macOS command center for parallel AI software engineering.
+<p align="center">
+  <a href="https://hoxi.ai"><img src="docs/assets/hoxi-pill-en.svg" alt="Desktop · Mobile · GoPanel Ops" height="54" /></a>
+</p>
 
-Run **OpenCode**, **Claude Code**, **Google Antigravity (`agy`)**, **Qoder**, and **CodeBuddy** in isolated Git worktrees, hand off stuck or rate-limited sessions across 8 local CLIs without losing context, and control running agents from your Mac or phone—at **~30 MB RAM** and **0.2s cold start**.
+<p align="center">
+  <a href="https://github.com/hoxiai/hoxi/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-2563EB?style=flat" alt="License" /></a>
+  <a href="https://hoxi.ai"><img src="https://img.shields.io/badge/website-hoxi.ai-4F46E5?style=flat" alt="Website" /></a>
+  <a href="https://github.com/hoxiai/gopanel"><img src="https://img.shields.io/badge/server_panel-GoPanel-0EA5E9?style=flat" alt="GoPanel" /></a>
+  <a href="https://github.com/hoxiai/hoxi/releases"><img src="https://img.shields.io/github/v/release/hoxiai/hoxi?style=flat&color=2563EB" alt="Release" /></a>
+  <a href="https://github.com/hoxiai/hoxi/stargazers"><img src="https://img.shields.io/github/stars/hoxiai/hoxi?style=flat&color=2563EB" alt="Stars" /></a>
+</p>
+
+<p align="center">
+  <kbd><a href="README.md">English</a></kbd>
+  <kbd><a href="README.zh-CN.md">中文(简体)</a></kbd>
+</p>
+
+---
+
+**Hoxi** ([hoxi.ai](https://hoxi.ai)) unifies **OpenCode**, **Claude Code**, **Google Antigravity (`agy`)**, **Qoder**, and **CodeBuddy** inside a **~30 MB**, **0.2s cold-start** native macOS workspace—and extends to your phone (`client/`) to command running AI agents and manage [**GoPanel**](https://github.com/hoxiai/gopanel) Linux servers on the go.
 
 ---
 
@@ -27,9 +48,13 @@ Giving agents blanket shell access risks `rm -rf` or `git push --force`. Approvi
 - **Unified PreToolUse Safety Gate**: Safe reads and edits flow uninterrupted. Destructive commands (`rm`, `sudo`, `chmod`, `diskutil`, `git reset --hard`, `git push --force`) are intercepted across OpenCode, Claude Code, and Antigravity—triggering a macOS `NSStatusBar` **Attention** badge and an inline approval card (`Once` / `Always` / `Reject`).
 - **Live Mid-Stream Steering (`Steer`)**: Inject course corrections while an agent is actively executing without killing the turn.
 - **Isolated Headless Chrome + Manual Takeover**: Per-session Chrome inspector for UI verification. When the agent hits a login wall or CAPTCHA, flip **Manual Control** on, authenticate directly in the viewport, and hand control back.
-- **Mobile Command Center (`client/`)**: Flutter companion app (iOS/Android) to monitor live streams, inspect diffs, steer tasks, and approve permission gates away from your desk.
 
-### 4. Context Rot, Endpoint Degradation & Electron Bloat
+### 4. Stepping Away from Your Desk (Mobile AI + [GoPanel](https://github.com/hoxiai/gopanel) Server Ops)
+Solo builders and lean teams don't just write code—they also deploy and maintain servers. Being away from your laptop shouldn't stall a long-running agent or leave a production alert unanswered.
+- **Mobile AI Command Center ([`client/`](client/README.md))**: Connect your iOS/Android phone to your Hoxi desktop or remote nodes. Watch live SSE streams, review Git worktree diffs, steer active agents, and approve/reject pending permission gates in one tap.
+- **Mobile Server Management for [GoPanel](https://github.com/hoxiai/gopanel)**: The same mobile app natively speaks the [GoPanel](https://github.com/hoxiai/gopanel) protocol—inspect server CPU/RAM/disk load, restart Docker containers, manage Nginx websites & SSL certificates, check databases, and drive server-side GoPanel Code agents directly from your pocket.
+
+### 5. Context Rot, Endpoint Degradation & Electron Bloat
 Long sessions forget early architectural constraints; third-party API gateways silently degrade or stall; Electron forks eat 1.5 GB+ RAM per window.
 - **8-Dimension Persistent Memory**: Automatically compacts long sessions into `.opencode/memory/` across 8 structured sections (*Goals, Constraints, Key Facts, Changed Files, Errors & Fixes, Todo, Progress, Next Steps*).
 - **Role-Based Model Routing**: Use frontier models for primary coding while routing title generation, background subagents, memory compaction, and Git commit messages to fast/cheap or local models (Ollama / vLLM)—or 0ms local rule synthesis.
@@ -42,9 +67,10 @@ Long sessions forget early architectural constraints; third-party API gateways s
 
 ```text
 ┌─────────────────────────────────────────────────────────────────────────┐
-│ Native Host (Wails v2 + Objective-C NSStatusBar + Mobile Companion)     │
+│ Native Host & Mobile Client (Wails v2 + NSStatusBar + Flutter App)      │
 │  • macOS WKWebView (~30MB RAM, 0.2s cold start, native vibrancy)        │
 │  • Menu bar tray with live Running count & Attention approval badges    │
+│  • Mobile App (`client/`): Dual-node control for Hoxi & GoPanel servers │
 ├─────────────────────────────────────────────────────────────────────────┤
 │ 3-Pane SolidJS Workspace (Zero-VDOM, 120Hz rAF Batched Streaming)       │
 │  • Left: Projects, Worktree Sandboxes, Multi-Runtime Sessions           │
@@ -98,13 +124,14 @@ npm --prefix web test && npm --prefix web run build
 
 ---
 
-## Documentation Map
+## Documentation & Ecosystem
 
-- **[README.zh-CN.md](README.zh-CN.md)**: 简体中文文档（针对国内模型生态、中转站防降智测评与多工具接力场景）
+- **[README.zh-CN.md](README.zh-CN.md)**: 简体中文文档（针对国内模型生态、中转站防降智测评、多工具接力与 GoPanel 手机运维）
+- **[GoPanel (`hoxiai/gopanel`)](https://github.com/hoxiai/gopanel)**: Lightweight server ops panel & remote AI coding node managed by Hoxi Mobile
+- **[client/README.md](client/README.md)**: Hoxi Mobile App (Flutter, iOS/Android — AI Command Center & GoPanel Server Manager)
 - **[DEVELOPMENT.md](DEVELOPMENT.md)**: Deep-dive architecture, OpenAPI/SSE contracts, Worktree state machines, and plugin hooks
 - **[HANDOFF_AND_CLI_BRIDGE.md](HANDOFF_AND_CLI_BRIDGE.md)**: Cross-CLI session handoff IR, local credential discovery, and protocol bridges
 - **[BROWSER.md](BROWSER.md)**: Isolated Headless Chrome inspector, manual takeover, and security boundaries
-- **[client/README.md](client/README.md)**: Hoxi Mobile Companion App (Flutter, iOS/Android)
 - **[docs/releases.md](docs/releases.md)** & **[docs/auto-updates.md](docs/auto-updates.md)**: DMG notarization, Sparkle EdDSA appcast, and release pipeline
 - **[AGENTS.md](AGENTS.md)**: Engineering constraints and module boundaries
 
