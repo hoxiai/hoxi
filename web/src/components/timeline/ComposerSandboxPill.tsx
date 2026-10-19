@@ -74,7 +74,11 @@ export function ComposerSandboxPill(props: {
     }
     return (workspace.diffsBySession["__root__"] ?? []).length;
   });
-  const isDirty = createMemo(() => Boolean(activeWorktree()?.dirty || changedFilesCount() > 0));
+  const isDirty = createMemo(() =>
+    props.mode === "worktree" || !props.sessionID
+      ? Boolean(activeWorktree()?.dirty || changedFilesCount() > 0)
+      : changedFilesCount() > 0
+  );
   const aheadCount = createMemo(() => activeWorktree()?.aheadCount || 0);
   const canCommitOrPush = createMemo(
     () => isDirty() || aheadCount() > 0 || (Boolean(gitBranch()) && !activeWorktree()?.hasUpstream)
