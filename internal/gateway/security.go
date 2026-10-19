@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"crypto/subtle"
 	"net"
 	"net/http"
 	"net/url"
@@ -8,8 +9,46 @@ import (
 	"strings"
 )
 
+const (
+	gatewayTokenHeader     = "X-Hoxi-Token"
+	gatewayTokenCookieName = "hoxi_gateway_token"
+	gatewayTokenQueryParam = "hoxiToken"
+)
+
+var upstreamPassthroughPrefixes = []string{
+	"/session",
+	"/event",
+	"/global",
+	"/permission",
+	"/question",
+	"/pty",
+	"/vcs",
+	"/file",
+	"/find",
+	"/config",
+	"/command",
+	"/agent",
+	"/lsp",
+	"/mcp",
+	"/formatter",
+	"/skill",
+	"/experimental",
+	"/path",
+	"/project",
+	"/auth",
+	"/provider",
+}
+
 func nativeHost(host string) bool {
 	return host == "wails" || host == "wails.localhost" || host == "app.wails.localhost"
+}
+
+func nativeWailsRequest(r *http.Request) bool {
+	if nativeHost(r.Host) {
+		return true
+	}
+	origin := r.Header.Get("Origin")
+	return origin == "wails://wails" || origin == "wails://wails.localhost" || origin == "wails://app.wails.localhost"
 }
 
 // Trust literal loopback authorities, not DNS names that might resolve to them.
@@ -58,6 +97,83 @@ func (g *Gateway) SetBrowserUIOrigins(origins ...string) {
 	g.uiOrigins = allowed
 	g.browser.SetUIOrigins(filtered...)
 	g.originMu.Unlock()
+}
+
+// SetGatewayToken configures the per-boot defense-in-depth token required on
+// loopback upstream passthrough routes (/session, /pty, /auth, etc.).
+func (g *Gateway) SetGatewayToken(token string) {
+	g.originMu.Lock()
+	g.gatewayToken = strings.TrimSpace(token)
+	g.originMu.Unlock()
+}
+
+func (g *Gateway) GatewayToken() string {
+	g.originMu.RLock()
+	defer g.originMu.RUnlock()
+	return g.gatewayToken
+}
+
+func isUpstreamPassthroughPath(requestPath string) bool {
+	if requestPath == "/api/hoxi" || strings.HasPrefix(requestPath, "/api/hoxi/") ||
+		requestPath == "/file/content" || requestPath == "/api/file/content" ||
+		requestPath == "/healthz" {
+		return false
+	}
+	p := strings.TrimPrefix(requestPath, "/api")
+	for _, prefix := range upstreamPassthroughPrefixes {
+		if p == prefix || strings.HasPrefix(p, prefix+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+func requestGatewayToken(r *http.Request) string {
+	if v := strings.TrimSpace(r.Header.Get(gatewayTokenHeader)); v != "" {
+		return v
+	}
+	if auth := strings.TrimSpace(r.Header.Get("Authorization")); strings.HasPrefix(auth, "Bearer ") {
+		if tok := strings.TrimSpace(strings.TrimPrefix(auth, "Bearer ")); tok != "" {
+			return tok
+		}
+	}
+	if c, err := r.Cookie(gatewayTokenCookieName); err == nil && strings.TrimSpace(c.Value) != "" {
+		return strings.TrimSpace(c.Value)
+	}
+	if strings.Contains(r.URL.RawQuery, gatewayTokenQueryParam) {
+		if q := strings.TrimSpace(r.URL.Query().Get(gatewayTokenQueryParam)); q != "" {
+			return q
+		}
+	}
+	return ""
+}
+
+func stripGatewayTokenFromRequest(r *http.Request) {
+	r.Header.Del(gatewayTokenHeader)
+	if strings.Contains(r.URL.RawQuery, gatewayTokenQueryParam) {
+		if values, err := url.ParseQuery(r.URL.RawQuery); err == nil {
+			values.Del(gatewayTokenQueryParam)
+			r.URL.RawQuery = values.Encode()
+		}
+	}
+}
+
+func (g *Gateway) guardUpstreamPassthrough(w http.ResponseWriter, r *http.Request) bool {
+	if !isUpstreamPassthroughPath(r.URL.Path) {
+		r.Header.Del(gatewayTokenHeader)
+		return true
+	}
+	got := requestGatewayToken(r)
+	stripGatewayTokenFromRequest(r)
+	tok := g.GatewayToken()
+	if tok == "" || isInternalConversationRoute(r) || nativeWailsRequest(r) {
+		return true
+	}
+	if got == "" || subtle.ConstantTimeCompare([]byte(got), []byte(tok)) != 1 {
+		writeJSONError(w, http.StatusForbidden, "missing or invalid gateway token")
+		return false
+	}
+	return true
 }
 
 func (g *Gateway) allowRequest(w http.ResponseWriter, r *http.Request) bool {

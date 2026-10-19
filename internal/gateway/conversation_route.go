@@ -1,11 +1,23 @@
 package gateway
 
 import (
+	"context"
 	"net/http"
 	"strings"
 )
 
 const conversationPrefix = "/api/hoxi/sessions/"
+
+type internalConversationRouteKey struct{}
+
+func markInternalConversationRoute(r *http.Request) {
+	*r = *r.WithContext(context.WithValue(r.Context(), internalConversationRouteKey{}, true))
+}
+
+func isInternalConversationRoute(r *http.Request) bool {
+	v, _ := r.Context().Value(internalConversationRouteKey{}).(bool)
+	return v
+}
 
 // routeConversation maps /api/hoxi/sessions/{id}[/action] onto the backend
 // that owns the session: Hoxi's runner for conversations in its store, the
@@ -32,6 +44,7 @@ func (g *Gateway) routeConversation(w http.ResponseWriter, r *http.Request) bool
 	}
 	// Runtime switches adopt unmanaged OpenCode sessions, so they always go to the runner.
 	if action != "runtime" && !g.runner.OwnsSession(id) {
+		markInternalConversationRoute(r)
 		setRequestPath(r, "/session/"+id+suffix)
 		return true
 	}

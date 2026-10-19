@@ -15,10 +15,12 @@ import (
 	"time"
 )
 
+const resolveVersionTimeout = 10 * time.Second
+
 var (
-	cachedOpenCodeVerMu   sync.Mutex
-	cachedOpenCodeVerPath string
-	cachedOpenCodeVerStr  string
+	cachedOpenCodeVerMu    sync.Mutex
+	cachedOpenCodeVersions = make(map[string]string)
+	inflightOpenCodeVer    = make(map[string]chan struct{})
 )
 
 // ResolveHoxiDBPath returns the path to Hoxi's dedicated SQLite database (~/.hoxi/hoxi.db).
@@ -81,34 +83,55 @@ func seedOpenCodeAuthIfNeeded(targetOpenCodeDir string) {
 }
 
 func ResolveVersion(binPath string) string {
+	binPath = strings.TrimSpace(binPath)
 	if binPath == "" {
 		return ""
 	}
-	cachedOpenCodeVerMu.Lock()
-	if cachedOpenCodeVerPath == binPath && cachedOpenCodeVerStr != "" {
-		ver := cachedOpenCodeVerStr
+	key := filepath.Clean(binPath)
+	for {
+		cachedOpenCodeVerMu.Lock()
+		if ver, ok := cachedOpenCodeVersions[key]; ok && ver != "" {
+			cachedOpenCodeVerMu.Unlock()
+			return ver
+		}
+		if waitCh, inflight := inflightOpenCodeVer[key]; inflight {
+			cachedOpenCodeVerMu.Unlock()
+			<-waitCh
+			cachedOpenCodeVerMu.Lock()
+			ver := cachedOpenCodeVersions[key]
+			cachedOpenCodeVerMu.Unlock()
+			return ver
+		}
+		done := make(chan struct{})
+		inflightOpenCodeVer[key] = done
+		cachedOpenCodeVerMu.Unlock()
+
+		ctx, cancel := context.WithTimeout(context.Background(), resolveVersionTimeout)
+		cmd := exec.CommandContext(ctx, binPath, "--version")
+		cmd.Env = append(os.Environ(),
+			"CI=1",
+			"NO_COLOR=1",
+			"GIT_TERMINAL_PROMPT=0",
+			"OPENCODE_DISABLE_CONFIG_DEPENDENCY_INSTALL=1",
+		)
+		out, err := cmd.CombinedOutput()
+		cancel()
+
+		ver := ""
+		if err == nil {
+			lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+			ver = strings.TrimSpace(lines[0])
+		}
+
+		cachedOpenCodeVerMu.Lock()
+		if ver != "" {
+			cachedOpenCodeVersions[key] = ver
+		}
+		delete(inflightOpenCodeVer, key)
+		close(done)
 		cachedOpenCodeVerMu.Unlock()
 		return ver
 	}
-	cachedOpenCodeVerMu.Unlock()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, binPath, "--version")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return ""
-	}
-	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-	ver := strings.TrimSpace(lines[0])
-	if ver != "" {
-		cachedOpenCodeVerMu.Lock()
-		cachedOpenCodeVerPath = binPath
-		cachedOpenCodeVerStr = ver
-		cachedOpenCodeVerMu.Unlock()
-	}
-	return ver
 }
 
 func StartDaemonWithBin(

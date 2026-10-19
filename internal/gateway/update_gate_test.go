@@ -225,6 +225,10 @@ func TestUpdateLocalStatus(t *testing.T) {
 }
 
 func TestUpdateStatusTimeout(t *testing.T) {
+	orig := updateStatusTimeout
+	updateStatusTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { updateStatusTimeout = orig })
+
 	g := updateTestGateway(t, func(w http.ResponseWriter, r *http.Request) { <-r.Context().Done() })
 	start := time.Now()
 	if g.BeginUpdate() || g.UpdateDraining() {

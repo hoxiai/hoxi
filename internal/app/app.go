@@ -213,6 +213,12 @@ func Run(distFS fs.FS) {
 		uiOrigins = append(uiOrigins, origin)
 	}
 	gw.SetBrowserUIOrigins(uiOrigins...)
+	gatewayToken, err := generateRandomHex(32)
+	if err != nil {
+		logger.Error("failed to generate gateway token", "error", err)
+		return
+	}
+	gw.SetGatewayToken(gatewayToken)
 	browserToken, err := generateRandomHex(32)
 	if err != nil {
 		logger.Error("failed to generate browser credential", "error", err)
@@ -534,6 +540,8 @@ func StartEphemeralHeadless(ctx context.Context, rootDir string) (string, func()
 	loopbackAddr := listener.Addr().String()
 	gw.SetWSBaseURL("ws://" + loopbackAddr)
 
+	gatewayToken, _ := generateRandomHex(32)
+	gw.SetGatewayToken(gatewayToken)
 	browserToken, _ := generateRandomHex(32)
 	gw.SetBrowserAgentToken(browserToken)
 	browserEnv, cleanupPlugin, _ := opencode.PrepareBrowserPlugin("http://"+loopbackAddr, browserToken)

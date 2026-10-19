@@ -75,12 +75,14 @@ func (g *Gateway) updateLocallyIdle() bool {
 		(g.runner == nil || g.runner.ActiveProcessCount() == 0)
 }
 
+var updateStatusTimeout = 2 * time.Second
+
 // BeginUpdate closes mutation admission before consulting authoritative runtime
 // state. Repeated calls revalidate, preserving an already-held drain on failure.
 func (g *Gateway) BeginUpdate() bool {
 	g.updateCheckMu.Lock()
 	defer g.updateCheckMu.Unlock()
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), updateStatusTimeout)
 	defer cancel()
 	g.updateMu.Lock()
 	wasDraining := g.updateDraining

@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"net/http"
+	"os"
 	"os/exec"
 	"os/user"
 	"runtime"
@@ -50,14 +51,19 @@ func resolveLocalUserIdentity() (sysUser, gitName, gitEmail string) {
 			}
 			cachedSystemUsername = uname
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
-		defer cancel()
-		if out, err := exec.CommandContext(ctx, "git", "config", "--global", "user.name").Output(); err == nil {
-			cachedGitUserName = strings.TrimSpace(string(out))
+		readGitGlobal := func(key string) string {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, "git", "config", "--global", key)
+			cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GCM_INTERACTIVE=never")
+			out, err := cmd.Output()
+			if err != nil {
+				return ""
+			}
+			return strings.TrimSpace(string(out))
 		}
-		if out, err := exec.CommandContext(ctx, "git", "config", "--global", "user.email").Output(); err == nil {
-			cachedGitUserEmail = strings.TrimSpace(string(out))
-		}
+		cachedGitUserName = readGitGlobal("user.name")
+		cachedGitUserEmail = readGitGlobal("user.email")
 	})
 	return cachedSystemUsername, cachedGitUserName, cachedGitUserEmail
 }

@@ -1,9 +1,12 @@
 package gateway
 
 import (
+	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -132,4 +135,86 @@ func TestConcurrentUIOriginConfiguration(t *testing.T) {
 		}
 	}()
 	wg.Wait()
+}
+
+func TestUpstreamPassthroughTokenDefenseInDepth(t *testing.T) {
+	var seenHeader, seenQuery string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenHeader = r.Header.Get(gatewayTokenHeader)
+		seenQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"ok":true}`)
+	}))
+	defer upstream.Close()
+
+	port := upstream.Listener.Addr().(*net.TCPAddr).Port
+	g := New(port, "upstream-pass", t.TempDir(), nil, nil)
+	const secretToken = "boot-token-secret-xyz"
+	g.SetGatewayToken(secretToken)
+
+	// 1. Bootstrap advertises gatewayToken and sets HttpOnly SameSite=Strict cookie.
+	bootRec := httptest.NewRecorder()
+	g.ServeHTTP(bootRec, localRequest(http.MethodGet, "/api/hoxi/bootstrap", nil))
+	if bootRec.Code != http.StatusOK {
+		t.Fatalf("bootstrap status = %d", bootRec.Code)
+	}
+	var bootBody map[string]any
+	if err := json.Unmarshal(bootRec.Body.Bytes(), &bootBody); err != nil {
+		t.Fatal(err)
+	}
+	if bootBody["gatewayToken"] != secretToken {
+		t.Fatalf("bootstrap gatewayToken = %v, want %q", bootBody["gatewayToken"], secretToken)
+	}
+	cookies := bootRec.Result().Cookies()
+	if len(cookies) == 0 || cookies[0].Name != gatewayTokenCookieName || cookies[0].Value != secretToken || !cookies[0].HttpOnly {
+		t.Fatalf("unexpected bootstrap cookies: %+v", cookies)
+	}
+
+	// 2. Unauthenticated loopback calls to raw upstream prefixes (/pty, /session, /auth, /api/session) fail with 403.
+	for _, target := range []string{"/pty", "/session", "/auth/openai", "/api/session", "/global/config"} {
+		w := httptest.NewRecorder()
+		g.ServeHTTP(w, localRequest(http.MethodGet, target, nil))
+		if w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), "gateway token") {
+			t.Fatalf("%s without token: status=%d body=%s", target, w.Code, w.Body.String())
+		}
+	}
+
+	// 3. Valid X-Hoxi-Token header, Cookie, or ?hoxiToken query param succeeds and is stripped before upstream.
+	reqHeader := localRequest(http.MethodPost, "/pty?directory=/tmp/ws", strings.NewReader(`{}`))
+	reqHeader.Header.Set(gatewayTokenHeader, secretToken)
+	wHeader := httptest.NewRecorder()
+	g.ServeHTTP(wHeader, reqHeader)
+	if wHeader.Code != http.StatusOK || seenHeader != "" || seenQuery != "directory=/tmp/ws" {
+		t.Fatalf("X-Hoxi-Token passthrough: status=%d seenHeader=%q seenQuery=%q", wHeader.Code, seenHeader, seenQuery)
+	}
+
+	reqQuery := localRequest(http.MethodGet, "/pty/pty_1/connect?directory=/tmp/ws&hoxiToken="+secretToken, nil)
+	wQuery := httptest.NewRecorder()
+	g.ServeHTTP(wQuery, reqQuery)
+	if wQuery.Code != http.StatusOK || strings.Contains(seenQuery, "hoxiToken") {
+		t.Fatalf("hoxiToken query passthrough: status=%d seenQuery=%q", wQuery.Code, seenQuery)
+	}
+
+	reqCookie := localRequest(http.MethodGet, "/auth/openai", nil)
+	reqCookie.AddCookie(&http.Cookie{Name: gatewayTokenCookieName, Value: secretToken})
+	wCookie := httptest.NewRecorder()
+	g.ServeHTTP(wCookie, reqCookie)
+	if wCookie.Code != http.StatusOK {
+		t.Fatalf("cookie passthrough: status=%d", wCookie.Code)
+	}
+
+	// 4. Native Wails host and Hoxi's unified /api/hoxi/sessions/{id}/message facade remain permitted.
+	reqWails := localRequest(http.MethodGet, "/pty", nil)
+	reqWails.Host = "wails"
+	wWails := httptest.NewRecorder()
+	g.ServeHTTP(wWails, reqWails)
+	if wWails.Code != http.StatusOK {
+		t.Fatalf("native Wails request blocked: %d", wWails.Code)
+	}
+
+	wFacade := httptest.NewRecorder()
+	g.ServeHTTP(wFacade, localRequest(http.MethodGet, "/api/hoxi/sessions/ses_unadopted/message", nil))
+	if wFacade.Code != http.StatusOK {
+		t.Fatalf("unified conversation facade blocked: %d %s", wFacade.Code, wFacade.Body.String())
+	}
 }

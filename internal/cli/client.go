@@ -42,6 +42,7 @@ type SandboxStatus struct {
 type Client struct {
 	baseURL  string
 	attached bool
+	token    string
 	http     *http.Client
 }
 
@@ -124,8 +125,15 @@ func (c *Client) Healthy(ctx context.Context) bool {
 	return resp.StatusCode == http.StatusOK
 }
 
-// EnsurePrivacyConsent records AI execution consent for explicit CLI invocations.
+// EnsurePrivacyConsent records AI execution consent for explicit CLI invocations
+// and captures the per-boot gateway token if advertised by /api/hoxi/bootstrap.
 func (c *Client) EnsurePrivacyConsent(ctx context.Context) error {
+	var boot struct {
+		GatewayToken string `json:"gatewayToken"`
+	}
+	if err := c.doJSON(ctx, http.MethodGet, "/api/hoxi/bootstrap", nil, &boot); err == nil && strings.TrimSpace(boot.GatewayToken) != "" {
+		c.token = strings.TrimSpace(boot.GatewayToken)
+	}
 	var st privacy.Status
 	if err := c.doJSON(ctx, http.MethodGet, "/api/hoxi/privacy", nil, &st); err == nil && st.Accepted && st.Version == privacy.Version {
 		return nil
@@ -567,6 +575,9 @@ func (c *Client) doJSON(ctx context.Context, method, path string, body interface
 	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, bodyReader)
 	if err != nil {
 		return err
+	}
+	if c.token != "" {
+		req.Header.Set("X-Hoxi-Token", c.token)
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")

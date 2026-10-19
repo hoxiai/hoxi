@@ -53,6 +53,7 @@ type Gateway struct {
 	dialogMu              sync.RWMutex
 	originMu              sync.RWMutex
 	uiOrigins             map[string]bool
+	gatewayToken          string
 	updateMu              sync.Mutex
 	updateCheckMu         sync.Mutex
 	updateDraining        bool
@@ -209,11 +210,14 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Add("Vary", "Origin")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Hoxi-Browser, X-Hoxi-Directory")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Hoxi-Browser, X-Hoxi-Directory, X-Hoxi-Token")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
+	}
+	if !g.guardUpstreamPassthrough(w, r) {
+		return
 	}
 	if !g.guardPrivacy(w, r) {
 		return
@@ -236,13 +240,27 @@ func (g *Gateway) registerRoutes(distFS fs.FS) {
 		if g.status != nil {
 			st = g.status.Snapshot()
 		}
-		writeJSON(w, http.StatusOK, map[string]any{
+		tok := g.GatewayToken()
+		if tok != "" {
+			http.SetCookie(w, &http.Cookie{
+				Name:     gatewayTokenCookieName,
+				Value:    tok,
+				Path:     "/",
+				HttpOnly: true,
+				SameSite: http.SameSiteStrictMode,
+			})
+		}
+		resp := map[string]any{
 			"appVersion":   buildinfo.Version,
 			"rootDir":      g.rootDir,
 			"wsBaseURL":    g.wsBaseURL,
 			"status":       st,
 			"privacyScope": privacy.Scope,
-		})
+		}
+		if tok != "" {
+			resp["gatewayToken"] = tok
+		}
+		writeJSON(w, http.StatusOK, resp)
 	})
 
 	g.mux.HandleFunc("/api/hoxi/dialog/open-directory", func(w http.ResponseWriter, _ *http.Request) {

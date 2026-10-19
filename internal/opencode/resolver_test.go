@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -102,6 +103,9 @@ func TestIsExecutableFileAndFindBinary(t *testing.T) {
 }
 
 func TestResolveVersionAndCaching(t *testing.T) {
+	if resolveVersionTimeout < 8*time.Second {
+		t.Fatalf("resolveVersionTimeout = %s, want >= 8s for Bun cold starts", resolveVersionTimeout)
+	}
 	if got := ResolveVersion(""); got != "" {
 		t.Fatalf("expected empty version for empty path, got %q", got)
 	}
@@ -121,18 +125,47 @@ func TestResolveVersionAndCaching(t *testing.T) {
 		t.Fatalf("write version script: %v", err)
 	}
 
+	secondBin := filepath.Join(tmpDir, "fake-opencode-2")
+	countFile := filepath.Join(tmpDir, "invocations.log")
+	secondScript := "#!/bin/sh\necho x >> '" + countFile + "'\necho 'opencode 1.19.0'\n"
+	if err := os.WriteFile(secondBin, []byte(secondScript), 0o755); err != nil {
+		t.Fatalf("write second version script: %v", err)
+	}
+
 	got := ResolveVersion(verBin)
 	if got != "opencode 1.18.0" {
 		t.Fatalf("ResolveVersion = %q, want %q", got, "opencode 1.18.0")
 	}
 
-	// Remove the underlying script and verify cached version is returned for the same path
+	// Concurrent calls to the second binary should coalesce and populate its own cache slot
+	// without evicting the first binary's cached version.
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if v := ResolveVersion(secondBin); v != "opencode 1.19.0" {
+				t.Errorf("concurrent ResolveVersion(secondBin) = %q, want opencode 1.19.0", v)
+			}
+		}()
+	}
+	wg.Wait()
+
+	// Remove both underlying scripts and verify both cached versions remain intact when alternating.
 	if err := os.Remove(verBin); err != nil {
 		t.Fatalf("remove script: %v", err)
 	}
-	cached := ResolveVersion(verBin)
-	if cached != "opencode 1.18.0" {
+	if err := os.Remove(secondBin); err != nil {
+		t.Fatalf("remove second script: %v", err)
+	}
+	if cached := ResolveVersion(verBin); cached != "opencode 1.18.0" {
 		t.Fatalf("expected cached version %q, got %q", "opencode 1.18.0", cached)
+	}
+	if cached2 := ResolveVersion(secondBin); cached2 != "opencode 1.19.0" {
+		t.Fatalf("expected second cached version %q, got %q", "opencode 1.19.0", cached2)
+	}
+	if raw, err := os.ReadFile(countFile); err != nil || strings.Count(string(raw), "x") != 1 {
+		t.Fatalf("expected singleflight to invoke second binary once, got %q (err=%v)", string(raw), err)
 	}
 }
 

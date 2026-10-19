@@ -9,6 +9,7 @@ import {
 } from "lucide-solid";
 import {
   clearReviewComments,
+  isSessionBusy,
   openFileInInspector,
   removeReviewComment,
   setWorkspace,
@@ -44,7 +45,8 @@ export default function ComposerShelf() {
 
   const changedFiles = createMemo(() => {
     const id = sessionID();
-    return id ? collectSessionChangedFiles(visibleTurns(), id) : [];
+    if (!id || !isSessionBusy(id)) return [];
+    return collectSessionChangedFiles(visibleTurns(), id);
   });
 
   const pendingPermissions = createMemo(() => {

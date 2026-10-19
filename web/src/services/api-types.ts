@@ -137,6 +137,7 @@ export interface BootstrapInfo {
   appVersion: string;
   rootDir: string;
   wsBaseURL: string;
+  gatewayToken?: string;
   status: {
     attention: number;
     running: number;

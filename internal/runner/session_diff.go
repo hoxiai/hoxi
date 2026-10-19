@@ -146,9 +146,19 @@ func (s *Service) sessionEditedFileSet(sessionID string) map[string]struct{} {
 }
 
 // Session diff events arrive in bursts on the broadcast path; cache each child
-// transcript (including failed reads) briefly so one event never fans out into
-// a blocking OpenCode request per subagent.
-const childTurnsTTL = 3 * time.Second
+// transcript briefly so one event burst never fans out into blocking OpenCode
+// requests per subagent, while keeping negative-cache backoff short (and
+// serving last-known turns on transient failure) so the changed-files shelf
+// does not drop entries under load jitter.
+const (
+	childTurnsTTL    = 3 * time.Second
+	childTurnsErrTTL = 250 * time.Millisecond
+)
+
+type childTurnsKey struct {
+	dir string
+	sid string
+}
 
 type childTurnsEntry struct {
 	turns   []MessageTurn
@@ -156,25 +166,36 @@ type childTurnsEntry struct {
 }
 
 func (s *Service) openCodeChildTurns(sid, dir string) []MessageTurn {
+	cleanDir := strings.TrimSpace(dir)
+	if cleanDir != "" {
+		cleanDir = filepath.Clean(cleanDir)
+	}
+	key := childTurnsKey{dir: cleanDir, sid: strings.TrimSpace(sid)}
 	now := time.Now()
-	if v, ok := s.childTurns.Load(sid); ok {
-		if entry := v.(childTurnsEntry); now.Before(entry.expires) {
+	var staleTurns []MessageTurn
+	if v, ok := s.childTurns.Load(key); ok {
+		entry := v.(childTurnsEntry)
+		if now.Before(entry.expires) {
 			return entry.turns
 		}
+		staleTurns = entry.turns
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	var turns []MessageTurn
-	if err := s.openCodeJSON(ctx, http.MethodGet, "/session/"+url.PathEscape(sid)+"/message", dir, nil, &turns); err != nil {
-		turns = nil
+	ttl := childTurnsTTL
+	if err := s.openCodeJSON(ctx, http.MethodGet, "/session/"+url.PathEscape(key.sid)+"/message", dir, nil, &turns); err != nil {
+		turns = staleTurns
+		ttl = childTurnsErrTTL
 	}
 	s.childTurns.Range(func(k, v any) bool {
-		if !now.Before(v.(childTurnsEntry).expires) {
+		entry := v.(childTurnsEntry)
+		if k != key && !now.Before(entry.expires) && len(entry.turns) == 0 {
 			s.childTurns.Delete(k)
 		}
 		return true
 	})
-	s.childTurns.Store(sid, childTurnsEntry{turns: turns, expires: now.Add(childTurnsTTL)})
+	s.childTurns.Store(key, childTurnsEntry{turns: turns, expires: now.Add(ttl)})
 	return turns
 }
 

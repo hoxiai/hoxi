@@ -33,6 +33,7 @@ import type {
 import {
   authAPI,
   forgetRunnerSession,
+  getGatewayToken,
   isRunnerPermissionID,
   isRunnerSessionID,
   leaderboardAPI,
@@ -40,17 +41,20 @@ import {
   requestJSON,
   resolveRunnerRuntimeForProvider,
   runnerAPI,
+  setGatewayToken,
   updaterAPI,
 } from "./runner-api";
 
 export * from "./api-types";
 export {
   authAPI,
+  getGatewayToken,
   isRunnerPermissionID,
   isRunnerSessionID,
   leaderboardAPI,
   resolveRunnerRuntimeForProvider,
   runnerAPI,
+  setGatewayToken,
   updaterAPI,
 };
 
@@ -83,8 +87,12 @@ async function prepareRuntime(
 }
 
 export const hoxiAPI = {
-  getBootstrap(): Promise<BootstrapInfo> {
-    return requestJSON("/api/hoxi/bootstrap");
+  async getBootstrap(): Promise<BootstrapInfo> {
+    const info = await requestJSON<BootstrapInfo>("/api/hoxi/bootstrap");
+    if (info?.gatewayToken) {
+      setGatewayToken(info.gatewayToken);
+    }
+    return info;
   },
 
   getSystemInfo(): Promise<SystemRuntimeInfo> {

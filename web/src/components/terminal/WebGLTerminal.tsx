@@ -4,7 +4,7 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
-import { hoxiAPI } from "../../services/api";
+import { getGatewayToken, hoxiAPI } from "../../services/api";
 import { activeDirectory, appSettings, workspace } from "../../store/workspace";
 import { t } from "../../i18n";
 import { startTerminalConnection } from "./terminal-connection";
@@ -13,8 +13,12 @@ function wsEndpoint(ptyID: string, directory?: string): string {
   const base =
     workspace.wsBaseURL ||
     `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}`;
-  const dir = directory ? `?directory=${encodeURIComponent(directory)}` : "";
-  return `${base}/pty/${encodeURIComponent(ptyID)}/connect${dir}`;
+  const params = new URLSearchParams();
+  if (directory) params.set("directory", directory);
+  const tok = getGatewayToken();
+  if (tok) params.set("hoxiToken", tok);
+  const qs = params.toString();
+  return `${base}/pty/${encodeURIComponent(ptyID)}/connect${qs ? `?${qs}` : ""}`;
 }
 
 const utf8Decoder = new TextDecoder();
