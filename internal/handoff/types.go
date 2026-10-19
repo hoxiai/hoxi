@@ -16,6 +16,7 @@ const (
 	ExternalToolCodeBuddy ExternalToolID = "codebuddy"
 	ExternalToolTrae      ExternalToolID = "trae"
 	ExternalToolQoder     ExternalToolID = "qoder"
+	ExternalToolOpenCode  ExternalToolID = "opencode-cli"
 )
 
 type ExternalSessionSummary struct {

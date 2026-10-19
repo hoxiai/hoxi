@@ -1,5 +1,9 @@
 import { isComposerIMEEvent } from "../components/timeline/composer-keyboard";
-import { assertEqual, describe, it } from "./test-harness";
+import {
+  applyAutocompleteToken,
+  findAutocompleteToken,
+} from "../components/timeline/composer-autocomplete";
+import { assertDeepEqual, assertEqual, describe, it } from "./test-harness";
 
 describe("Composer IME keyboard guard", () => {
   const enter = { key: "Enter", keyCode: 13, isComposing: false };
@@ -24,3 +28,47 @@ describe("Composer IME keyboard guard", () => {
     }
   });
 });
+
+describe("Composer cursor-aware autocomplete token", () => {
+  it("detects @mention tokens both at the end and in the middle of a sentence", () => {
+    const endToken = findAutocompleteToken("check @src/app", 14);
+    assertDeepEqual(endToken, {
+      mode: "file",
+      query: "src/app",
+      start: 6,
+      end: 14,
+    });
+
+    const midSentence = "please review @comp before shipping";
+    // Cursor right after "@comp" (offset 19)
+    const midToken = findAutocompleteToken(midSentence, 19);
+    assertDeepEqual(midToken, {
+      mode: "file",
+      query: "comp",
+      start: 14,
+      end: 19,
+    });
+
+    const applied = applyAutocompleteToken(midSentence, midToken!, "@src/components/Composer.tsx ");
+    assertEqual(applied.text, "please review @src/components/Composer.tsx before shipping");
+    assertEqual(applied.cursor, 43);
+  });
+
+  it("detects /command tokens only at the start of input", () => {
+    const cmdToken = findAutocompleteToken("/rev extra args", 4);
+    assertDeepEqual(cmdToken, {
+      mode: "command",
+      query: "rev",
+      start: 0,
+      end: 4,
+    });
+
+    const applied = applyAutocompleteToken("/rev extra args", cmdToken!, "/review ");
+    assertEqual(applied.text, "/review extra args");
+    assertEqual(applied.cursor, 8);
+
+    // Mid-sentence slash is not a slash command
+    assertEqual(findAutocompleteToken("check path /usr/local", 15), null);
+  });
+});
+

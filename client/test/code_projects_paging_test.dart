@@ -1,8 +1,8 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:gopanel/core/network/api_client.dart';
-import 'package:gopanel/core/network/api_response.dart';
-import 'package:gopanel/features/ai_workspace/data/ai_workspace_repository.dart';
+import 'package:hoxi/core/network/api_client.dart';
+import 'package:hoxi/core/network/api_response.dart';
+import 'package:hoxi/features/ai_workspace/data/ai_workspace_repository.dart';
 
 class _PagedProjectsApiClient implements ApiClient {
   _PagedProjectsApiClient(this.total, {this.stopAfter});

@@ -1,6 +1,6 @@
 import { createEffect, createMemo, createSignal, Show } from "solid-js";
 import type { MessagePart } from "../../services/sse-types";
-import { appSettings } from "../../store/workspace";
+import { appSettings, isSessionBusy } from "../../store/workspace";
 import { Icon, TextShimmer } from "../icons";
 import MarkdownView from "./MarkdownView";
 import { t } from "../../i18n";
@@ -95,8 +95,10 @@ export function reasoningSummary(body: string): string {
 const userOpened = new Set<string>();
 const userCollapsed = new Set<string>();
 
-export default function ThoughtBox(props: { part: ReasoningPart }) {
-  const streaming = () => props.part.time?.end == null;
+export default function ThoughtBox(props: { part: ReasoningPart; revealKey?: string }) {
+  const streaming = () =>
+    props.part.time?.end == null &&
+    (!props.part.sessionID || isSessionBusy(props.part.sessionID));
   const hasContent = () => Boolean(props.part.text && props.part.text.trim().length > 0);
   const headSlice = createMemo(() =>
     (props.part.text ?? "").slice(0, 360).replace(/\[REDACTED\]/g, "").trim()
@@ -113,7 +115,22 @@ export default function ThoughtBox(props: { part: ReasoningPart }) {
   };
 
   const [open, setOpen] = createSignal(resolveDefaultOpen());
+  const [everOpened, setEverOpened] = createSignal(open());
   let bodyRef: HTMLDivElement | undefined;
+
+  createEffect(() => {
+    if (open()) setEverOpened(true);
+  });
+
+  createEffect(() => {
+    if (!props.revealKey) return;
+    const id = props.part.id;
+    if (id) {
+      userCollapsed.delete(id);
+      userOpened.add(id);
+    }
+    setOpen(true);
+  });
 
   // Respect user's global reasoningDisplay setting unless manually toggled on this card
   createEffect(() => {
@@ -151,7 +168,7 @@ export default function ThoughtBox(props: { part: ReasoningPart }) {
   });
 
   const bodyContent = createMemo(() => {
-    if (!open()) return "";
+    if (!open() && !everOpened()) return "";
     const full = (props.part.text ?? "").replace(/\[REDACTED\]/g, "").trim();
     const parsed = reasoningHeading(full, streaming());
     return parsed.body || full;
@@ -215,21 +232,32 @@ export default function ThoughtBox(props: { part: ReasoningPart }) {
           </span>
         </button>
 
-        <Show when={open()}>
+        <Show when={everOpened()}>
           <div
-            ref={bodyRef}
-            class="mt-1.5 max-h-[240px] overflow-y-auto border-l-2 border-[var(--border-subtle)] px-3.5 py-2 text-[13px] leading-relaxed text-[var(--text-secondary)] selectable-text"
+            class={`grid transition-[grid-template-rows,opacity,margin-top] duration-200 ease-out ${
+              open()
+                ? "mt-1.5 grid-rows-[1fr] opacity-100"
+                : "mt-0 grid-rows-[0fr] opacity-0 pointer-events-none"
+            }`}
+            aria-hidden={!open()}
           >
-            <Show
-              when={!streaming() || bodyContent().length < 2400}
-              fallback={
-                <div class="whitespace-pre-wrap break-words leading-relaxed">
-                  {bodyContent()}
-                </div>
-              }
-            >
-              <MarkdownView content={bodyContent()} />
-            </Show>
+            <div class="min-h-0 overflow-hidden">
+              <div
+                ref={bodyRef}
+                class="max-h-[240px] overflow-y-auto border-l-2 border-[var(--border-subtle)] px-3.5 py-2 text-[13px] leading-relaxed text-[var(--text-secondary)] selectable-text"
+              >
+                <Show
+                  when={!streaming() || bodyContent().length < 2400}
+                  fallback={
+                    <div class="whitespace-pre-wrap break-words leading-relaxed">
+                      {bodyContent()}
+                    </div>
+                  }
+                >
+                  <MarkdownView content={bodyContent()} />
+                </Show>
+              </div>
+            </div>
           </div>
         </Show>
       </div>

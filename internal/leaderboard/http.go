@@ -20,6 +20,8 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
 	case "/api/hoxi/models/leaderboard", "/api/hoxi/models/leaderboard/":
 		h.handleLeaderboard(w, r)
+	case "/api/hoxi/models/pricing", "/api/hoxi/models/pricing/":
+		h.handleModelPricing(w, r)
 	case "/api/hoxi/gateways/connectable", "/api/hoxi/gateways/connectable/":
 		h.handleGateways(w, r)
 	default:
@@ -29,6 +31,25 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			"message": "not found",
 		})
 	}
+}
+
+func (h *HTTPHandler) handleModelPricing(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	forceRefresh := r.URL.Query().Get("refresh") == "1" || r.URL.Query().Get("refresh") == "true"
+	res, err := h.svc.GetModelPricing(forceRefresh)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code":    500,
+			"message": err.Error(),
+		})
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(res)
 }
 
 func (h *HTTPHandler) handleLeaderboard(w http.ResponseWriter, r *http.Request) {

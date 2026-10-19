@@ -9,6 +9,7 @@ import {
   formatPricePerMillion,
   formatTokenLimit,
   getModelSourceInfo,
+  getMultiplierBadgeClass,
   type FlattenedModel,
 } from "./model-selector-utils";
 
@@ -16,13 +17,13 @@ export function SelectedModelHoverCard(props: { model: FlattenedModel }) {
   const srcInfo = () => getModelSourceInfo(props.model);
   const ctxText = () => formatTokenLimit(props.model.contextLimit);
   const outText = () => formatTokenLimit(props.model.outputLimit);
-  const inPrice = () => formatPricePerMillion(props.model.inputCost);
-  const outPrice = () => formatPricePerMillion(props.model.outputCost);
+  const inPrice = () => formatPricePerMillion(props.model.inputCost, props.model.priceCurrency);
+  const outPrice = () => formatPricePerMillion(props.model.outputCost, props.model.priceCurrency);
 
   return (
     <div class="pointer-events-none absolute bottom-full left-0 z-30 mb-2 w-[320px] rounded-xl border border-[var(--border-strong)] bg-[var(--bg-panel)] p-3 shadow-2xl text-[11.5px] space-y-2 animate-in fade-in duration-100">
       <div class="flex items-center justify-between gap-2 border-b border-[var(--border-subtle)] pb-2">
-        <div class="flex items-center gap-2 min-w-0">
+        <div class="flex items-center gap-1.5 min-w-0">
           <ProviderIcon id={props.model.providerID} class="w-4 h-4 shrink-0" />
           <span class="font-semibold text-[var(--text-primary)] truncate text-[12.5px]">
             {props.model.modelName}
@@ -30,6 +31,16 @@ export function SelectedModelHoverCard(props: { model: FlattenedModel }) {
           <Show when={props.model.free}>
             <span class="shrink-0 rounded bg-[var(--ok-surface)] px-1.5 py-[1px] text-[10px] font-semibold text-[var(--ok-text)]">
               {t("models.freeModel")}
+            </span>
+          </Show>
+          <Show when={props.model.multiplier}>
+            <span
+              class={`shrink-0 rounded px-1.5 py-[1px] font-mono text-[10px] font-semibold ${getMultiplierBadgeClass(
+                props.model.multiplier,
+                props.model.free
+              )}`}
+            >
+              {props.model.multiplier}
             </span>
           </Show>
         </div>

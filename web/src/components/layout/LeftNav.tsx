@@ -304,9 +304,9 @@ export default function LeftNav() {
   ];
 
   return (
-    <aside class="relative h-full w-full flex flex-col bg-transparent pl-2 pr-1 select-none">
+    <aside class="relative h-full w-full flex flex-col bg-transparent pl-2 select-none">
       {/* Unified Minimal Header: New Thread + Mode Switcher + Search + New Workspace */}
-      <div class="px-1.5 pt-1 pb-1.5 flex items-center justify-between gap-1 shrink-0">
+      <div class="pl-1.5 pr-2.5 pt-1 pb-1.5 flex items-center justify-between gap-1 shrink-0">
         <button
           type="button"
           onClick={onCreateGlobalNewThread}
@@ -399,7 +399,7 @@ export default function LeftNav() {
 
       {/* Collapsible Search Filter */}
       <Show when={showSearch()}>
-        <div class="px-2 pb-2 shrink-0">
+        <div class="pl-2 pr-3 pb-2 shrink-0">
           <div class="flex items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-2.5 py-1.5 text-[12px]">
             <Icon name="magnifying-glass" size="small" class="text-[var(--text-muted)]" />
             <input
@@ -426,7 +426,7 @@ export default function LeftNav() {
       <Show when={workspace.sidebarProjectMode === "multi"}>
         <div
           ref={projectListContainerRef}
-          class="flex-1 min-h-0 overflow-y-auto px-1 py-1 space-y-1"
+          class="sidebar-scroll flex-1 min-h-0 overflow-y-auto pl-1 pr-2 py-1 space-y-1"
         >
           <For each={projectPaths()}>
             {(projPath) => {

@@ -145,13 +145,36 @@ func (s *Service) startOpenCodeTurn(rec SessionRecord, mode, modelID, effort, sy
 		if effort != "" {
 			payload["variant"] = effort
 		}
+		baseSystem := system
 		if contextText := runtimeContext(rec); contextText != "" {
-			system = system + "\n\n" + contextText
+			system = strings.TrimSpace(baseSystem + "\n\n" + contextText)
 		}
 		if system != "" {
 			payload["system"] = system
 		}
 		err := s.openCodeJSON(ctx, "POST", "/session/"+rec.ExternalID+"/message", rec.WorktreePath, payload, nil)
+		if err != nil && (strings.Contains(err.Error(), "OpenCode HTTP 404") || strings.Contains(err.Error(), "NotFoundError") || strings.Contains(err.Error(), "Session not found")) {
+			var info SessionInfo
+			if createErr := s.openCodeJSON(ctx, "POST", "/session", rec.WorktreePath, map[string]interface{}{"title": rec.Title, "metadata": map[string]string{"hoxiConversation": rec.ID}}, &info); createErr == nil && info.ID != "" {
+				rec, _, _ = s.store.Update(rec.ID, func(r *SessionRecord) {
+					r.ExternalID = info.ID
+					r.OpenCodeIDs = append(r.OpenCodeIDs, info.ID)
+					if r.OpenCodeDirectories == nil {
+						r.OpenCodeDirectories = make(map[string]string)
+					}
+					r.OpenCodeDirectories[info.ID] = rec.WorktreePath
+					if len(r.Turns) > 0 {
+						r.ContextPending = true
+						r.ContextTurnCount = len(r.Turns)
+					}
+				})
+				s.managedOpenCode.Store(info.ID, true)
+				if contextText := runtimeContext(rec); contextText != "" {
+					payload["system"] = strings.TrimSpace(baseSystem + "\n\n" + contextText)
+				}
+				err = s.openCodeJSON(ctx, "POST", "/session/"+rec.ExternalID+"/message", rec.WorktreePath, payload, nil)
+			}
+		}
 		// Stop the stream before authoritative snapshots, so a delayed delta cannot
 		// append to an already complete snapshot.
 		_ = stream.Body.Close()

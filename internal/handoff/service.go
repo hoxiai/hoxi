@@ -73,9 +73,9 @@ func (g *Service) handleHandoffSessions(w http.ResponseWriter, r *http.Request) 
 
 	var (
 		grokSessions, claudeSessions, codexSessions, geminiSessions          []ExternalSessionSummary
-		codeBuddySessions, traeSessions, qoderSessions                       []ExternalSessionSummary
+		codeBuddySessions, traeSessions, qoderSessions, openCodeSessions     []ExternalSessionSummary
 		grokStats, claudeStats, codexStats, geminiStats                      ExternalSourceStats
-		codeBuddyStats, traeStats, qoderStats                                ExternalSourceStats
+		codeBuddyStats, traeStats, qoderStats, openCodeStats                 ExternalSourceStats
 	)
 	var scans sync.WaitGroup
 	for _, scan := range []func(){
@@ -86,6 +86,7 @@ func (g *Service) handleHandoffSessions(w http.ResponseWriter, r *http.Request) 
 		func() { codeBuddySessions, codeBuddyStats = scanCodeBuddySessions(targetDir, query) },
 		func() { traeSessions, traeStats = scanTraeSessions(targetDir, query) },
 		func() { qoderSessions, qoderStats = scanQoderSessions(targetDir, query) },
+		func() { openCodeSessions, openCodeStats = scanOpenCodeSessions(targetDir, query) },
 	} {
 		scans.Add(1)
 		go func(scan func()) {
@@ -116,6 +117,9 @@ func (g *Service) handleHandoffSessions(w http.ResponseWriter, r *http.Request) 
 	}
 	if sourceFilter == "" || sourceFilter == "all" || sourceFilter == ExternalToolQoder {
 		combined = append(combined, qoderSessions...)
+	}
+	if sourceFilter == "" || sourceFilter == "all" || sourceFilter == ExternalToolOpenCode {
+		combined = append(combined, openCodeSessions...)
 	}
 
 	if onlyCurrent && targetDir != "" {
@@ -149,6 +153,7 @@ func (g *Service) handleHandoffSessions(w http.ResponseWriter, r *http.Request) 
 			ExternalToolCodeBuddy: codeBuddyStats,
 			ExternalToolTrae:      traeStats,
 			ExternalToolQoder:     qoderStats,
+			ExternalToolOpenCode:  openCodeStats,
 		},
 	})
 }
@@ -211,6 +216,8 @@ func loadExternalSessionDetail(source ExternalToolID, sessionID, hintCWD, active
 		return loadTraeSessionDetail(sessionID, hintCWD, activeRoot)
 	case ExternalToolQoder:
 		return loadQoderSessionDetail(sessionID, hintCWD, activeRoot)
+	case ExternalToolOpenCode:
+		return loadOpenCodeSessionDetail(sessionID, hintCWD, activeRoot)
 	default:
 		return loadGrokSessionDetail(sessionID, hintCWD, activeRoot)
 	}

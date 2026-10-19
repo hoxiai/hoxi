@@ -14,6 +14,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/runner"
 )
 
 func codeBuddyDotDirs() []string {
@@ -753,10 +755,19 @@ func loadCodeBuddySessionDetail(sessionID, hintCWD, activeRoot string) (*Externa
 	}, nil
 }
 
-func detectCodeBuddyCLIStatus() LocalCLIStatusItem {
+func detectCodeBuddyCLIStatus(hoxiMap map[string]interface{}) LocalCLIStatusItem {
 	sessions, stats := scanCodeBuddySessions("", "")
+	bin := runner.ResolveCodeBuddyBinary()
 	var models []string
 	var defModel string
+	for _, m := range runner.DiscoverCodeBuddyModels() {
+		if m.ID != "" {
+			models = appendUniqueString(models, m.ID)
+			if defModel == "" {
+				defModel = m.ID
+			}
+		}
+	}
 	for _, s := range sessions {
 		if s.Model != "" {
 			models = appendUniqueString(models, s.Model)
@@ -765,16 +776,23 @@ func detectCodeBuddyCLIStatus() LocalCLIStatusItem {
 			}
 		}
 	}
+	_, customConn := hoxiMap["codebuddy"]
+	authMode := "session-handoff"
+	if bin != "" {
+		authMode = "codebuddy-runner"
+	} else if customConn {
+		authMode = "hoxi-custom"
+	}
 	return LocalCLIStatusItem{
 		ID:            ExternalToolCodeBuddy,
 		Name:          "CodeBuddy",
-		Installed:     stats.Installed,
-		Authenticated: false,
-		Connected:     false,
+		Installed:     stats.Installed || bin != "",
+		Authenticated: bin != "" || customConn,
+		Connected:     bin != "" || customConn,
 		DefaultModel:  defModel,
 		Models:        models,
 		SessionCount:  stats.SessionCount,
-		AuthMode:      "session-handoff",
+		AuthMode:      authMode,
 		ProviderID:    "codebuddy",
 	}
 }

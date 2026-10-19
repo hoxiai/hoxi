@@ -22,8 +22,8 @@ export function ModelDetailsPopover(props: {
   const source = () => getModelSourceInfo(props.model);
   const context = () => formatTokenLimit(props.model.contextLimit);
   const output = () => formatTokenLimit(props.model.outputLimit);
-  const inputPrice = () => formatPricePerMillion(props.model.inputCost);
-  const outputPrice = () => formatPricePerMillion(props.model.outputCost);
+  const inputPrice = () => formatPricePerMillion(props.model.inputCost, props.model.priceCurrency);
+  const outputPrice = () => formatPricePerMillion(props.model.outputCost, props.model.priceCurrency);
 
   function updatePosition() {
     const anchor = props.anchor.getBoundingClientRect();
@@ -182,29 +182,41 @@ export function ModelDetailsPopover(props: {
           </div>
         </section>
 
-        <Show when={props.model.free || inputPrice() || outputPrice()}>
+        <Show when={props.model.free || props.model.multiplier || inputPrice() || outputPrice()}>
           <section class="space-y-2 border-t border-[var(--border-subtle)] pt-3">
             <h3 class="font-medium text-[var(--text-primary)]">{t("models.hoverPricingLabel")}</h3>
-            <Show when={props.model.free} fallback={
-              <dl class="space-y-1.5">
-                <Show when={inputPrice()}>
-                  <div class="flex flex-wrap justify-between gap-x-3">
-                    <dt class="text-[var(--text-muted)]">{t("models.detailInputPrice")}</dt>
-                    <dd class="font-mono">{inputPrice()}</dd>
-                  </div>
-                </Show>
-                <Show when={outputPrice()}>
-                  <div class="flex flex-wrap justify-between gap-x-3">
-                    <dt class="text-[var(--text-muted)]">{t("models.detailOutputPrice")}</dt>
-                    <dd class="font-mono">{outputPrice()}</dd>
-                  </div>
-                </Show>
-              </dl>
-            }>
-              <span class="inline-block rounded bg-[var(--ok-surface)] px-2 py-0.5 font-medium text-[var(--ok-text)]">
-                {t("models.freeModel")}
-              </span>
-            </Show>
+            <dl class="space-y-1.5">
+              <Show when={props.model.free}>
+                <div class="flex flex-wrap items-center justify-between gap-x-3">
+                  <dt class="text-[var(--text-muted)]">{t("models.hoverPricingLabel")}</dt>
+                  <dd>
+                    <span class="inline-block rounded bg-[var(--ok-surface)] px-2 py-0.5 font-medium text-[var(--ok-text)]">
+                      {t("models.freeModel")} ($0)
+                    </span>
+                  </dd>
+                </div>
+              </Show>
+              <Show when={props.model.multiplier}>
+                <div class="flex flex-wrap items-center justify-between gap-x-3">
+                  <dt class="text-[var(--text-muted)]">{t("models.detailCreditMultiplier")}</dt>
+                  <dd class="font-mono font-semibold text-[var(--text-primary)]">
+                    {props.model.multiplier}
+                  </dd>
+                </div>
+              </Show>
+              <Show when={!props.model.free && inputPrice()}>
+                <div class="flex flex-wrap justify-between gap-x-3">
+                  <dt class="text-[var(--text-muted)]">{t("models.detailInputPrice")}</dt>
+                  <dd class="font-mono">{inputPrice()}</dd>
+                </div>
+              </Show>
+              <Show when={!props.model.free && outputPrice()}>
+                <div class="flex flex-wrap justify-between gap-x-3">
+                  <dt class="text-[var(--text-muted)]">{t("models.detailOutputPrice")}</dt>
+                  <dd class="font-mono">{outputPrice()}</dd>
+                </div>
+              </Show>
+            </dl>
           </section>
         </Show>
 

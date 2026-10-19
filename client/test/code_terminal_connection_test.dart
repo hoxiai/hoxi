@@ -1,7 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:gopanel/features/ai_workspace/presentation/controllers/code_terminal_socket.dart';
+import 'package:hoxi/features/ai_workspace/presentation/controllers/code_terminal_socket.dart';
 
 void main() {
   test('terminal handshake reuses JWT and security entrance cookie', () {

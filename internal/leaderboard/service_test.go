@@ -73,4 +73,18 @@ func TestLeaderboardHTTPHandler(t *testing.T) {
 	if len(res.Data.Items) == 0 {
 		t.Fatalf("expected items in response")
 	}
+
+	reqPricing := httptest.NewRequest(http.MethodGet, "/api/hoxi/models/pricing", nil)
+	recPricing := httptest.NewRecorder()
+	handler.ServeHTTP(recPricing, reqPricing)
+	if recPricing.Code != http.StatusOK {
+		t.Fatalf("expected status 200 for pricing, got %d", recPricing.Code)
+	}
+	var pricingRes ModelPricingResponse
+	if err := json.NewDecoder(recPricing.Body).Decode(&pricingRes); err != nil {
+		t.Fatalf("failed to decode pricing response: %v", err)
+	}
+	if pricingRes.Data == nil || len(pricingRes.Data.Items) == 0 {
+		t.Fatalf("expected pricing items in response, got %+v", pricingRes)
+	}
 }

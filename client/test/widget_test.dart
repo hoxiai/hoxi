@@ -1,9 +1,9 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:gopanel/features/ai_workspace/models/ai_dev_session.dart';
-import 'package:gopanel/features/ai_workspace/models/ai_session_state_info.dart';
-import 'package:gopanel/features/ai_workspace/models/code_workspace_file.dart';
-import 'package:gopanel/features/ai_workspace/models/code_delivery_job.dart';
-import 'package:gopanel/features/ai_workspace/models/code_project_terminal_session.dart';
+import 'package:hoxi/features/ai_workspace/models/ai_dev_session.dart';
+import 'package:hoxi/features/ai_workspace/models/ai_session_state_info.dart';
+import 'package:hoxi/features/ai_workspace/models/code_workspace_file.dart';
+import 'package:hoxi/features/ai_workspace/models/code_delivery_job.dart';
+import 'package:hoxi/features/ai_workspace/models/code_project_terminal_session.dart';
 
 void main() {
   test('parses Code executor capabilities and policies', () {

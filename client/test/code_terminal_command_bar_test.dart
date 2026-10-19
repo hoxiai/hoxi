@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:gopanel/features/ai_workspace/presentation/widgets/code_terminal_command_bar.dart';
+import 'package:hoxi/features/ai_workspace/presentation/widgets/code_terminal_command_bar.dart';
 
 void main() {
   test('terminal symbol insertion replaces selection and keeps cursor', () {

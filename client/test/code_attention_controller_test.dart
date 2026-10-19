@@ -1,9 +1,9 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:gopanel/core/network/api_client.dart';
-import 'package:gopanel/features/ai_workspace/presentation/controllers/code_attention_controller.dart';
-import 'package:gopanel/features/task_center/data/task_attention_repository.dart';
-import 'package:gopanel/features/task_center/models/task_attention.dart';
+import 'package:hoxi/core/network/api_client.dart';
+import 'package:hoxi/features/ai_workspace/presentation/controllers/code_attention_controller.dart';
+import 'package:hoxi/features/task_center/data/task_attention_repository.dart';
+import 'package:hoxi/features/task_center/models/task_attention.dart';
 
 void main() {
   const attention = TaskAttention(

@@ -1,5 +1,5 @@
 // web/src/components/timeline/ContextProgressPill.tsx
-import { createMemo, createSignal, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, onCleanup, Show } from "solid-js";
 import { Minimize2, LoaderCircle } from "lucide-solid";
 import { hoxiAPI } from "../../services/api";
 import {
@@ -24,6 +24,25 @@ function formatCompactNumber(n: number): string {
 export default function ContextProgressPill() {
   const [open, setOpen] = createSignal(false);
   const [compacting, setCompacting] = createSignal(false);
+  let containerRef: HTMLDivElement | undefined;
+
+  createEffect(() => {
+    if (!open()) return;
+    const handlePointerDown = (e: PointerEvent) => {
+      if (containerRef && !containerRef.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    window.addEventListener("pointerdown", handlePointerDown);
+    window.addEventListener("keydown", handleKeyDown);
+    onCleanup(() => {
+      window.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("keydown", handleKeyDown);
+    });
+  });
 
   const stats = createMemo(() => {
     const id = workspace.activeSessionID;
@@ -107,7 +126,7 @@ export default function ContextProgressPill() {
   return (
     <Show when={stats()}>
       {(s) => (
-        <div class="relative inline-flex items-center">
+        <div ref={containerRef} class="relative inline-flex items-center">
           <button
             type="button"
             onClick={() => setOpen((v) => !v)}

@@ -107,7 +107,7 @@ export default function SingleProjectNavView(props: {
   return (
     <>
       {/* Project Switcher Row + Workspace Settings + New Session */}
-      <div class="px-1.5 pb-1.5 flex items-center gap-0.5">
+      <div class="pl-1.5 pr-2.5 pb-1.5 flex items-center gap-0.5">
         <button
           ref={buttonRef}
           type="button"
@@ -151,7 +151,7 @@ export default function SingleProjectNavView(props: {
 
       {/* Multi-Folder Pills when active workspace has >1 folder */}
       <Show when={currentFolders().length > 1}>
-        <div class="px-2 pb-1.5 flex flex-wrap gap-1">
+        <div class="pl-2 pr-3 pb-1.5 flex flex-wrap gap-1">
           <For each={currentFolders()}>
             {(folder) => (
               <button
@@ -269,7 +269,7 @@ export default function SingleProjectNavView(props: {
       </Show>
 
       {/* Chronological Session Stream */}
-      <div class="flex-1 min-h-0 overflow-y-auto px-1 pb-4 space-y-3">
+      <div class="sidebar-scroll flex-1 min-h-0 overflow-y-auto pl-1 pr-2 pb-4 space-y-3">
         <Show
           when={history.sessions().length > 0}
           fallback={
@@ -412,7 +412,7 @@ export function RecentTasksNavView(props: {
   );
 
   return (
-    <div class="flex-1 min-h-0 overflow-y-auto px-1 py-1 space-y-0.5">
+    <div class="sidebar-scroll flex-1 min-h-0 overflow-y-auto pl-1 pr-2 py-1 space-y-0.5">
       <Show
         when={recentSessions().length > 0}
         fallback={

@@ -341,8 +341,16 @@ export async function retryLastUserPrompt(sessionID?: string | null): Promise<vo
         .map((p) => p.text)
         .join("\n")
         .trim();
-      if (text) {
-        await submitSessionPrompt(text, id);
+      const attachments = turns[i].parts
+        .filter((p): p is Extract<MessagePart, { type: "file" }> => p.type === "file")
+        .map((p) => ({
+          type: "file" as const,
+          mime: p.mime,
+          filename: p.filename,
+          url: p.url,
+        }));
+      if (text || attachments.length > 0) {
+        await submitSessionPrompt(text, id, { attachments });
       }
       return;
     }

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:gopanel/features/ai_workspace/presentation/controllers/ai_workspace_controller.dart';
-import 'package:gopanel/features/ai_workspace/presentation/widgets/ai_session_overview_card.dart';
+import 'package:hoxi/features/ai_workspace/presentation/controllers/ai_workspace_controller.dart';
+import 'package:hoxi/features/ai_workspace/presentation/widgets/ai_session_overview_card.dart';
 
 void main() {
   test('等待人工审批时指示条保留并说明是在等审批', () {

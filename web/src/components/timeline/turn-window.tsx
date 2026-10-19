@@ -18,6 +18,8 @@ import {
   groupAssistantParts,
   PartView,
   resolveMergedTurnParts,
+  stabilizeTurnRenderItems,
+  type TurnRenderItem,
 } from "./message-stream-parts";
 
 export const INITIAL_VISIBLE_TURNS = 10;
@@ -244,8 +246,8 @@ export function AssistantTurnItem(props: {
     )
   );
 
-  const groupedItems = createMemo(() =>
-    groupAssistantParts(merged().effectiveParts)
+  const groupedItems = createMemo<TurnRenderItem[]>((prev) =>
+    stabilizeTurnRenderItems(prev, groupAssistantParts(merged().effectiveParts))
   );
 
   const isHighlighted = createMemo(() => {

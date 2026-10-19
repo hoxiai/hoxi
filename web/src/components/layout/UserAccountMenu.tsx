@@ -84,7 +84,7 @@ export default function UserAccountMenu() {
   return (
     <div
       ref={containerRef}
-      class="relative mt-auto border-t border-[var(--border-subtle)]/50 pt-2 pb-2.5 px-2 flex items-center justify-between gap-1"
+      class="relative mt-auto mr-1 border-t border-[var(--border-subtle)]/50 pt-2 pb-2.5 px-2 flex items-center justify-between gap-1"
     >
       {/* Upward Kilo-style Account Popover */}
       <Show when={menuOpen()}>

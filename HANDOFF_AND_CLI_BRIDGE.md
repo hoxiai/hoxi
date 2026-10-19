@@ -1,6 +1,6 @@
 # Hoxi 跨软件会话接管与本地 CLI 桥接落地方案 (`HANDOFF_AND_CLI_BRIDGE.md`)
 
-> **核心定位**：不仅支持一键发现并桥接本地已安装的 AI CLI 工具（**Grok CLI**、**Claude Code**、**OpenAI Codex**）的模型与凭证，更将**跨软件会话接管与任务无缝续做（Cross-Tool Session Handoff & Task Continuation）**作为一等公民能力落盘——自动扫描本机外部 CLI 的历史会话，按工程目录（`cwd`）精准匹配，将外部会话的完整对话轮次（User Prompt、Reasoning 思考链、Tool Call/Result 工具执行记录、Assistant 回复）、任务摘要（Summary）与执行计划（Plan）无损物化到 OpenCode 会话存储与 Hoxi 8 维结构化记忆库中，实现跨工具一键接力续做任务。
+> **核心定位**：不仅支持一键发现并桥接本地已安装的 AI CLI / IDE 工具（**Grok CLI**、**Claude Code**、**OpenAI Codex**、**Google Antigravity (`agy`)**、**OpenCode CLI**、**Trae**、**Qoder（通义灵码）**、**CodeBuddy（腾讯云）**）的模型与凭证，更将**跨软件会话接管与任务无缝续做（Cross-Tool Session Handoff & Task Continuation）**作为一等公民能力落盘——自动扫描本机 8 大外部工具的历史会话，按工程目录（`cwd`）精准匹配，将外部会话的完整对话轮次（User Prompt、Reasoning 思考链、Tool Call/Result 工具执行记录、Assistant 回复）、任务摘要（Summary）与执行计划（Plan）无损物化到 Hoxi / OpenCode 会话存储与 8 维结构化记忆库中，实现跨工具一键接力续做任务。
 
 ---
 
@@ -8,16 +8,17 @@
 
 ```text
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│ Layer 1: External Session & CLI Scanners (只读无侵入探测层)                   │
-│  ├─ GrokAdapter   (~/.grok/sessions/session_search.sqlite + summary.json     │
-│  │                 + chat_history.jsonl / updates.jsonl + plan.json          │
-│  │                 + ~/.grok/auth.json & models_cache.json)                  │
-│  ├─ ClaudeAdapter (~/.claude/projects/<dash-cwd>/*.jsonl                     │
-│  │                 + ~/.claude/settings.json & Keychain/credentials)         │
-│  └─ CodexAdapter  (~/.codex/state_5.sqlite threads + rollout *.jsonl[.zst]   │
-│                    + ~/.codex/auth.json & config.toml*)                      │
+│ Layer 1: External Session & CLI Scanners (`internal/handoff/`, 只读无侵入)    │
+│  ├─ GrokAdapter       (`~/.grok/sessions/*` + `~/.grok/auth.json`)           │
+│  ├─ ClaudeAdapter     (`~/.claude/projects/<dash-cwd>/*.jsonl` + Keychain)   │
+│  ├─ CodexAdapter      (`~/.codex/state_*.sqlite` + `rollout-*.jsonl[.zst]`)  │
+│  ├─ GeminiAdapter     (`~/.gemini/antigravity/brain/<id>/transcript*.jsonl`) │
+│  ├─ OpenCodeAdapter   (`~/.local/share/opencode/opencode.db` SQLite)         │
+│  ├─ TraeAdapter       (`~/Library/Application Support/Trae*` SQLite/JSON)    │
+│  ├─ QoderAdapter      (`~/.qoder/projects/*` & Application Support/Qoder)    │
+│  └─ CodeBuddyAdapter  (`~/.codebuddy/*` & Application Support/CodeBuddy)     │
 ├──────────────────────────────────────────────────────────────────────────────┤
-│ Layer 2: Canonical Session & Tool IR (统一会话中间表示层)                     │
+│ Layer 2: Canonical Session & Tool IR (`internal/handoff/types.go`)           │
 │  ├─ ExternalSessionSummary (ID, Source, CWD, Title, Summary, Branch, Time)   │
 │  ├─ ExternalSessionDetail  (Turns[], PlanSteps[], ChangedFiles[], GitContext)│
 │  └─ Tool Call Normalization:                                                 │
@@ -25,15 +26,15 @@
 │     • Write/Create -> `write`   • Bash/Exec  -> `bash`                       │
 │     • Grep/Search -> `grep`     • Glob/List  -> `glob`                       │
 ├──────────────────────────────────────────────────────────────────────────────┤
-│ Layer 3: OpenCode Session Materializer & 8-Dim Handoff Memory (物化与续做层)  │
-│  ├─ 1. 创建目标会话: POST /session?directory=<target-cwd>                     │
-│  ├─ 2. 注入历史消息与 Part: 写入 OpenCode SQLite (`opencode.db` message/part) │
+│ Layer 3: Session Materializer & 8-Dim Handoff Memory (`materialize.go`)      │
+│  ├─ 1. 创建目标会话与 Hoxi 会话记录 (`~/.hoxi/sessions/<id>/`)                │
+│  ├─ 2. 注入历史消息与 Part: 写入会话存储与 OpenCode SQLite (`opencode.db`)    │
 │  │     生成单调递增 msg_* / prt_* ID，保留完整时间线、ThoughtBox 与 ToolCard  │
 │  ├─ 3. 生成 8 维交接记忆: `.opencode/memory/sessions/<new-session-id>.md`     │
 │  │     并通过 `.opencode/plugins/hoxi-memory.js` 自动注入 System Prompt      │
 │  └─ 4. Git 分支与工作树对齐: 检测源会话 `git_branch` / `head_commit` 状态     │
 ├──────────────────────────────────────────────────────────────────────────────┤
-│ Layer 4: In-Process Local CLI Protocol Bridge (本地网关协议桥接层)            │
+│ Layer 4: In-Process Local CLI Protocol Bridge (`cli_bridge.go`, `grok_*.go`) │
 │  └─ `/api/hoxi/bridge/{toolID}/v1/*`                                         │
 │     • 动态读取本地 CLI 最新 Token，零明文拷贝落盘                             │
 │     • 注入专有握手头 (`X-XAI-Token-Auth`, `x-grok-client-version`,            │
@@ -109,9 +110,14 @@
 type ExternalToolID string
 
 const (
-    ExternalToolGrok   ExternalToolID = "grok-cli"
-    ExternalToolClaude ExternalToolID = "claude-code"
-    ExternalToolCodex  ExternalToolID = "codex-cli"
+    ExternalToolGrok      ExternalToolID = "grok-cli"
+    ExternalToolClaude    ExternalToolID = "claude-code"
+    ExternalToolCodex     ExternalToolID = "codex-cli"
+    ExternalToolGemini    ExternalToolID = "gemini-antigravity"
+    ExternalToolCodeBuddy ExternalToolID = "codebuddy"
+    ExternalToolTrae      ExternalToolID = "trae"
+    ExternalToolQoder     ExternalToolID = "qoder"
+    ExternalToolOpenCode  ExternalToolID = "opencode-cli"
 )
 
 type ExternalSessionSummary struct {
@@ -263,20 +269,19 @@ type NormalizedTurn struct {
 
 ---
 
-## 5. 前端交互与模块化拆分设计（严格遵守单文件 < 500 行红线）
+## 5. 模块化落地结构（严格遵守单文件 < 800 行红线与单向分层）
 
-### 5.1 后端新增模块（按职责拆分）
-1. `desktop_handoff_types.go`：跨软件会话接管与本地 CLI 桥接的数据结构定义、工具名归一化映射、HTTP 路由分发入口。
-2. `desktop_handoff_grok.go`：Grok CLI 会话扫描器（SQLite + JSONL/Updates 解析）、Grok CLI 凭证/模型探测与 `/api/hoxi/bridge/grok-cli/v1/*` 协议桥。
-3. `desktop_handoff_claude.go`：Claude Code 会话扫描器（`~/.claude/projects` JSONL 流式解析、Thinking/ToolUse/ToolResult 提取）与环境凭证探测。
-4. `desktop_handoff_codex.go`：OpenAI Codex 会话扫描器（`~/.codex/state_*.sqlite` 检索 + `.jsonl`/`.jsonl.zst` 解压解析）与 OAuth/API 凭证桥接。
-5. `desktop_handoff_materialize.go`：OpenCode 会话与 SQLite `message`/`part` 写入器 + 8 维交接记忆 `.opencode/memory/sessions/<id>.md` 生成器。
+### 5.1 后端模块 (`internal/handoff/`)
+1. `internal/handoff/types.go` & `service.go`：跨软件会话接管与本地 CLI 桥接的数据结构定义、工具名归一化映射、HTTP 路由分发入口。
+2. `internal/handoff/grok.go` & `grok_bridge.go`：Grok CLI 会话扫描器（SQLite + JSONL/Updates 解析）、凭证/模型探测与 `/api/hoxi/bridge/grok-cli/v1/*` 协议桥。
+3. `internal/handoff/claude.go`：Claude Code 会话扫描器（`~/.claude/projects` JSONL 解析、Thinking/ToolUse/ToolResult 提取）与环境凭证探测。
+4. `internal/handoff/codex.go`：OpenAI Codex 会话扫描器（`~/.codex/state_*.sqlite` 检索 + `.jsonl`/`.jsonl.zst` 解压解析）与 OAuth/API 凭证桥接。
+5. `internal/handoff/gemini.go`：Google Antigravity (`agy`) 会话扫描器（`~/.gemini/antigravity/brain/*` transcript 解析）。
+6. `internal/handoff/opencode.go`：本机外部 OpenCode CLI 历史会话扫描器。
+7. `internal/handoff/trae.go`、`qoder.go`、`codebuddy.go`：Trae、Qoder（通义灵码）、CodeBuddy（腾讯云）会话与本地配置扫描器。
+8. `internal/handoff/materialize.go`：Hoxi / OpenCode 会话物化写入器 + 8 维交接记忆 `.opencode/memory/sessions/<id>.md` 生成器。
 
-### 5.2 前端新增模块（按职责拆分）
-1. `web/src/components/layout/ExternalHandoffModal.tsx`：跨软件会话接管中心弹窗：
-   - 支持按来源筛选（All / Grok CLI / Claude Code / Codex）与按当前项目 (`Current Project`) 或全局所有项目 (`All Projects`) 切换。
-   - 左侧展示外部会话列表（带来源徽章、Git 分支胶囊、修改时间、轮次计数与匹配当前工程标识）。
-   - 右侧实时预览选中会话的完整上下文（任务摘要、8 维提炼预览、历史对话流 User / Reasoning / Tool / Assistant），底部提供一键「接管会话并继续任务 (Take Over & Continue)」按钮。
-2. `web/src/components/models/LocalCliBridgeBanner.tsx`：在模型管理页（`ProviderCatalogTab.tsx`）顶部展示本机已安装的 CLI 工具（Grok CLI / Claude Code / Codex），支持一键接入模型与凭证，并可直接跳转打开会话接管中心。
-3. `web/src/components/inspector/MemoryBankView.tsx`：升级右侧 `Memory` 面板，支持切换查看「当前会话交接记忆 (`sessions/<id>.md`)」与「项目长期记忆 (`project.md`)」。
-4. `web/src/i18n/`：在 `types.ts`、`domain-types.ts`、`en-US` 与 `zh-CN` 中完整新增 `handoff` 领域词条，确保 100% 双语对齐并通过 `npm --prefix web run check:i18n`。
+### 5.2 前端模块 (`web/src/components/handoff/` & `models/`)
+1. `web/src/components/handoff/ExternalHandoffModal.tsx` & `ExternalHandoffPreviewPane.tsx`：跨软件会话接管中心弹窗与实时详情预览面板（支持 8 大来源过滤、当前工程置顶、8 维记忆预览与一键接管续做）。
+2. `web/src/components/models/LocalCliBridgeBanner.tsx`：在模型管理页（`ProviderCatalogTab.tsx`）顶部展示本机已安装的 CLI 工具，支持一键接入模型与凭证，并可直接跳转打开会话接管中心。
+3. `web/src/components/inspector/MemoryBankView.tsx`：右侧 `Memory` 面板，支持切换查看「当前会话交接记忆 (`sessions/<id>.md`)」与「项目长期记忆 (`project.md`)」。

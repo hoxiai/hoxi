@@ -134,6 +134,48 @@ export function groupAssistantParts(parts: MessagePart[]): TurnRenderItem[] {
   return items;
 }
 
+function samePartReferenceList(a: MessagePart[], b: MessagePart[]): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
+/**
+ * Preserves `TurnRenderItem` object and array identities across high-frequency
+ * token deltas (`message.part.delta`) when the underlying part references have
+ * not changed.
+ */
+export function stabilizeTurnRenderItems(
+  prev: TurnRenderItem[] | undefined,
+  next: TurnRenderItem[]
+): TurnRenderItem[] {
+  if (!prev || prev.length === 0) return next;
+  let reusedAll = prev.length === next.length;
+  const stabilized = next.map((item, idx) => {
+    const prior = prev[idx];
+    if (!prior || prior.kind !== item.kind) {
+      reusedAll = false;
+      return item;
+    }
+    if (item.kind === "single" && prior.kind === "single") {
+      if (prior.part === item.part) return prior;
+      reusedAll = false;
+      return item;
+    }
+    if (item.kind === "activity-group" && prior.kind === "activity-group") {
+      if (samePartReferenceList(prior.parts, item.parts)) return prior;
+      reusedAll = false;
+      return item;
+    }
+    reusedAll = false;
+    return item;
+  });
+  return reusedAll ? prev : stabilized;
+}
+
 export interface MergedTurnResolution {
   effectiveParts: MessagePart[];
   /** Later turns whose leading work this turn renders inside its own trailing group. */
@@ -269,6 +311,25 @@ export function hasLiveTailWorkGroup(
   return false;
 }
 
+/**
+ * Returns true once the latest assistant cycle has already mounted any visible
+ * work or text output in the timeline, preventing the bottom waiting placeholder
+ * from re-mounting underneath streaming markdown responses.
+ */
+export function hasLiveTailRenderedOutput(
+  cycleTurns: Array<{ info: MessageInfo; parts: MessagePart[] }>
+): boolean {
+  for (let i = cycleTurns.length - 1; i >= 0; i--) {
+    const turn = cycleTurns[i];
+    if (turn.info.role !== "assistant" || turn.info.error) return false;
+    for (let p = turn.parts.length - 1; p >= 0; p--) {
+      const part = turn.parts[p];
+      if (isVisibleTextPart(part) || isWorkPart(part)) return true;
+    }
+  }
+  return false;
+}
+
 function summarizeStepTarget(part: ToolPart): string {
   if (isTaskTool(part.tool)) {
     const childID = extractChildSubagentSessionId(part);
@@ -302,7 +363,7 @@ const collapsedActivityGroupKeys = new Set<string>();
 
 export default function ContextActivityGroupView(props: {
   parts: MessagePart[];
-  renderFallbackPart: (part: MessagePart) => JSX.Element;
+  renderFallbackPart: (part: MessagePart, revealKey?: string) => JSX.Element;
   isLiveTail?: boolean;
   startedAt?: number;
   revealKey?: string;
@@ -311,6 +372,11 @@ export default function ContextActivityGroupView(props: {
   const [open, setOpen] = createSignal(
     expandedActivityGroupKeys.has(groupKey()) && !collapsedActivityGroupKeys.has(groupKey())
   );
+  const [everOpened, setEverOpened] = createSignal(open());
+
+  createEffect(() => {
+    if (open()) setEverOpened(true);
+  });
 
   createEffect(() => {
     if (!props.revealKey) return;
@@ -558,132 +624,154 @@ export default function ContextActivityGroupView(props: {
   });
 
   return (
-    <div>
-      <button
-        type="button"
-        onClick={toggleOpen}
-        class={`group/activity flex w-full items-center justify-between gap-2 rounded-md border border-transparent px-2 py-1.5 text-left text-[13px] transition-all cursor-pointer select-none ${
-          open()
-            ? "bg-[var(--bg-inset)]/65 text-[var(--text-primary)]"
-            : isRunning()
-              ? "bg-[var(--accent-surface)]/15 hover:bg-[var(--accent-surface)]/30 text-[var(--text-primary)]"
-              : "bg-[var(--bg-inset)]/35 hover:bg-[var(--bg-inset)]/75 text-[var(--text-muted)] hover:text-[var(--text-primary)]"
-        }`}
-      >
-        <div class="flex items-center gap-2 min-w-0 flex-1">
-          <Show
-            when={isRunning()}
-            fallback={
-              <Show
-                when={attentionTools().length > 0}
-                fallback={
-                  <span class="text-[var(--text-muted)] group-hover/activity:text-[var(--accent-primary)] inline-flex items-center shrink-0">
-                    <Icon
-                      name={stats().toolCount > 0 ? "layers" : "brain"}
-                      size="small"
-                    />
+    <Show
+      when={stats().toolCount > 0}
+      fallback={
+        <div class="space-y-1">
+          <For each={props.parts}>
+            {(part) => props.renderFallbackPart(part, props.revealKey)}
+          </For>
+        </div>
+      }
+    >
+      <div>
+        <button
+          type="button"
+          onClick={toggleOpen}
+          class={`group/activity flex w-full items-center justify-between gap-2 rounded-md border border-transparent px-2 py-1.5 text-left text-[13px] transition-all cursor-pointer select-none ${
+            open()
+              ? "bg-[var(--bg-inset)]/65 text-[var(--text-primary)]"
+              : isRunning()
+                ? "bg-[var(--accent-surface)]/15 hover:bg-[var(--accent-surface)]/30 text-[var(--text-primary)]"
+                : "bg-[var(--bg-inset)]/35 hover:bg-[var(--bg-inset)]/75 text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+          }`}
+        >
+          <div class="flex items-center gap-2 min-w-0 flex-1">
+            <Show
+              when={isRunning()}
+              fallback={
+                <Show
+                  when={attentionTools().length > 0}
+                  fallback={
+                    <span class="text-[var(--text-muted)] group-hover/activity:text-[var(--accent-primary)] inline-flex items-center shrink-0">
+                      <Icon
+                        name={stats().toolCount > 0 ? "layers" : "brain"}
+                        size="small"
+                      />
+                    </span>
+                  }
+                >
+                  <span class="text-[var(--danger-text)] inline-flex items-center shrink-0">
+                    <Icon name="circle-ban-sign" size="small" />
                   </span>
-                }
-              >
-                <span class="text-[var(--danger-text)] inline-flex items-center shrink-0">
-                  <Icon name="circle-ban-sign" size="small" />
+                </Show>
+              }
+            >
+              <span class="text-[var(--accent-primary)] inline-flex items-center shrink-0">
+                <Spinner class="w-3.5 h-3.5" />
+              </span>
+            </Show>
+
+            <Show
+              when={isRunning()}
+              fallback={
+                <>
+                  <span class="font-medium text-[var(--text-secondary)] shrink-0">
+                    {stats().toolCount > 0
+                      ? tI18n("timeline.executedStepsSummary", {
+                          count: stats().toolCount,
+                        })
+                      : tI18n("timeline.thought")}
+                  </span>
+                  <Show when={stats().toolCount > 0 && stats().summaryText}>
+                    <span class="hidden sm:inline text-[12px] text-[var(--text-muted)] truncate">
+                      · {stats().summaryText}
+                    </span>
+                  </Show>
+                  <Show when={!open() && targetPreview()}>
+                    <span class="hidden lg:inline font-mono text-[11.5px] text-[var(--text-faint)] truncate max-w-[320px]">
+                      ({targetPreview()})
+                    </span>
+                  </Show>
+                </>
+              }
+            >
+              <span class="font-medium text-[var(--accent-primary)] shrink-0">
+                <TextShimmer text={activeStepDisplay().action} active={true} />
+              </span>
+              <Show when={activeStepDisplay().detail}>
+                <span class="font-mono text-[12px] text-[var(--text-secondary)] truncate max-w-[360px]">
+                  {activeStepDisplay().detail}
                 </span>
               </Show>
-            }
-          >
-            <span class="text-[var(--accent-primary)] inline-flex items-center shrink-0">
-              <Spinner class="w-3.5 h-3.5" />
-            </span>
-          </Show>
-
-          <Show
-            when={isRunning()}
-            fallback={
-              <>
-                <span class="font-medium text-[var(--text-secondary)] shrink-0">
-                  {stats().toolCount > 0
-                    ? tI18n("timeline.executedStepsSummary", {
-                        count: stats().toolCount,
-                      })
-                    : tI18n("timeline.thought")}
+              <Show when={stats().summaryText}>
+                <span class="hidden lg:inline text-[12px] text-[var(--text-muted)] shrink-0">
+                  · {stats().summaryText}
                 </span>
-                <Show when={stats().toolCount > 0 && stats().summaryText}>
-                  <span class="hidden sm:inline text-[12px] text-[var(--text-muted)] truncate">
-                    · {stats().summaryText}
-                  </span>
-                </Show>
-                <Show when={!open() && targetPreview()}>
-                  <span class="hidden lg:inline font-mono text-[11.5px] text-[var(--text-faint)] truncate max-w-[320px]">
-                    ({targetPreview()})
-                  </span>
-                </Show>
-              </>
-            }
+              </Show>
+            </Show>
+          </div>
+
+          <div class="flex items-center gap-2 shrink-0">
+            <Show when={hasPendingApproval()}>
+              <span class="rounded bg-[var(--warn-surface)] px-1.5 py-0.5 font-mono text-[11px] font-medium text-[var(--warn-text)]">
+                {tI18n("timeline.waitingApprovalBadge")}
+              </span>
+            </Show>
+
+            <Show when={attentionTools().length > 0}>
+              <span class="rounded bg-[var(--danger-surface)] px-1.5 py-0.5 font-mono text-[11px] font-medium text-[var(--danger-text)]">
+                {tI18n("timeline.stepsAttentionBadge", {
+                  count: attentionTools().length,
+                })}
+              </span>
+            </Show>
+
+            <Show when={groupDiffStats()}>
+              {(diffStats) => <DiffChanges changes={diffStats()} />}
+            </Show>
+
+            <Show when={durationLabel()}>
+              <span class="font-mono text-[11.5px] tabular-nums text-[var(--text-faint)]">
+                {durationLabel()}
+              </span>
+            </Show>
+
+            <span class="text-[var(--text-faint)] inline-flex items-center">
+              <Icon name={open() ? "chevron-down" : "chevron-right"} size="small" />
+            </span>
+          </div>
+        </button>
+
+        {/* Auto-surface any errored / non-zero exit / interrupted tool cards even while collapsed */}
+        <Show when={!open() && attentionTools().length > 0}>
+          <div class="mt-1.5 ml-2 border-l-2 border-[var(--danger-border)]/70 pl-3 space-y-1">
+            <For each={attentionTools()}>
+              {(toolPart) => props.renderFallbackPart(toolPart, props.revealKey)}
+            </For>
+          </div>
+        </Show>
+
+        {/* Full chronological step list with smooth collapse transition */}
+        <Show when={everOpened()}>
+          <div
+            class={`grid transition-[grid-template-rows,opacity,margin-top] duration-200 ease-out ${
+              open()
+                ? "mt-1.5 grid-rows-[1fr] opacity-100"
+                : "mt-0 grid-rows-[0fr] opacity-0 pointer-events-none"
+            }`}
+            aria-hidden={!open()}
           >
-            <span class="font-medium text-[var(--accent-primary)] shrink-0">
-              <TextShimmer text={activeStepDisplay().action} active={true} />
-            </span>
-            <Show when={activeStepDisplay().detail}>
-              <span class="font-mono text-[12px] text-[var(--text-secondary)] truncate max-w-[360px]">
-                {activeStepDisplay().detail}
-              </span>
-            </Show>
-            <Show when={stats().summaryText}>
-              <span class="hidden lg:inline text-[12px] text-[var(--text-muted)] shrink-0">
-                · {stats().summaryText}
-              </span>
-            </Show>
-          </Show>
-        </div>
-
-        <div class="flex items-center gap-2 shrink-0">
-          <Show when={hasPendingApproval()}>
-            <span class="rounded bg-[var(--warn-surface)] px-1.5 py-0.5 font-mono text-[11px] font-medium text-[var(--warn-text)]">
-              {tI18n("timeline.waitingApprovalBadge")}
-            </span>
-          </Show>
-
-          <Show when={attentionTools().length > 0}>
-            <span class="rounded bg-[var(--danger-surface)] px-1.5 py-0.5 font-mono text-[11px] font-medium text-[var(--danger-text)]">
-              {tI18n("timeline.stepsAttentionBadge", {
-                count: attentionTools().length,
-              })}
-            </span>
-          </Show>
-
-          <Show when={groupDiffStats()}>
-            {(diffStats) => <DiffChanges changes={diffStats()} />}
-          </Show>
-
-          <Show when={durationLabel()}>
-            <span class="font-mono text-[11.5px] tabular-nums text-[var(--text-faint)]">
-              {durationLabel()}
-            </span>
-          </Show>
-
-          <span class="text-[var(--text-faint)] inline-flex items-center">
-            <Icon name={open() ? "chevron-down" : "chevron-right"} size="small" />
-          </span>
-        </div>
-      </button>
-
-      {/* Auto-surface any errored / non-zero exit / interrupted tool cards even while collapsed */}
-      <Show when={!open() && attentionTools().length > 0}>
-        <div class="mt-1.5 ml-2 border-l-2 border-[var(--danger-border)]/70 pl-3 space-y-1">
-          <For each={attentionTools()}>
-            {(toolPart) => props.renderFallbackPart(toolPart)}
-          </For>
-        </div>
-      </Show>
-
-      {/* Full chronological step list when expanded */}
-      <Show when={open()}>
-        <div class="mt-1.5 ml-2 border-l-2 border-[var(--border-subtle)] pl-3.5 space-y-1">
-          <For each={props.parts}>
-            {(part) => props.renderFallbackPart(part)}
-          </For>
-        </div>
-      </Show>
-    </div>
+            <div class="min-h-0 overflow-hidden">
+              <div class="ml-2 border-l-2 border-[var(--border-subtle)] pl-3.5 space-y-1">
+                <For each={props.parts}>
+                  {(part) => props.renderFallbackPart(part, props.revealKey)}
+                </For>
+              </div>
+            </div>
+          </div>
+        </Show>
+      </div>
+    </Show>
   );
 }

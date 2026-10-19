@@ -1,9 +1,9 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:gopanel/core/network/api_client.dart';
-import 'package:gopanel/features/website/data/website_repository.dart';
-import 'package:gopanel/features/website/models/website_info.dart';
-import 'package:gopanel/features/website/presentation/controllers/website_controller.dart';
+import 'package:hoxi/core/network/api_client.dart';
+import 'package:hoxi/features/website/data/website_repository.dart';
+import 'package:hoxi/features/website/models/website_info.dart';
+import 'package:hoxi/features/website/presentation/controllers/website_controller.dart';
 
 class _FakeWebsiteRepository extends WebsiteRepository {
   _FakeWebsiteRepository() : super(ApiClient());

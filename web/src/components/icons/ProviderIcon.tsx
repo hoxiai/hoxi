@@ -11,6 +11,7 @@ const ICON_ALIASES: Record<string, IconName> = {
   antigravity: "google",
   "claude-code": "anthropic",
   "grok-cli": "xai",
+  qoder: "alibaba",
 }
 
 export const ProviderIcon: Component<ProviderIconProps> = (props) => {

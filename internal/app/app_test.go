@@ -133,17 +133,17 @@ func TestResolveIdentity(t *testing.T) {
 	t.Setenv("HOXI_VARIANT", "")
 
 	def := ResolveIdentity(BuildVariant, "/Users/dev/code/hoxi/build/bin/Hoxi.app/Contents/MacOS/Hoxi")
-	if def.Variant != "dev" || def.Title != "Hoxi Dev" || def.BundleID != "ai.hoxi.desktop.dev" || def.DefaultBridgeAddr != "127.0.0.1:5089" {
+	if def.Variant != "dev" || def.Title != "Hoxi Dev" || def.BundleID != "ai.hoxi.desktop.dev" || def.DefaultBridgeAddr != "127.0.0.1:5420" {
 		t.Fatalf("expected default BuildVariant to resolve to dev identity for wails dev, got: %+v", def)
 	}
 
 	rel := ResolveIdentity("release", "/Applications/Hoxi.app/Contents/MacOS/Hoxi")
-	if rel.Variant != "release" || rel.Title != "Hoxi" || rel.BundleID != "ai.hoxi.desktop" || rel.DefaultBridgeAddr != "127.0.0.1:5088" {
+	if rel.Variant != "release" || rel.Title != "Hoxi" || rel.BundleID != "ai.hoxi.desktop" || rel.DefaultBridgeAddr != "127.0.0.1:5410" {
 		t.Fatalf("unexpected release identity: %+v", rel)
 	}
 
 	devByFlag := ResolveIdentity("dev", "/Applications/Hoxi.app/Contents/MacOS/Hoxi")
-	if devByFlag.Variant != "dev" || devByFlag.Title != "Hoxi Dev" || devByFlag.BundleID != "ai.hoxi.desktop.dev" || devByFlag.DefaultBridgeAddr != "127.0.0.1:5089" {
+	if devByFlag.Variant != "dev" || devByFlag.Title != "Hoxi Dev" || devByFlag.BundleID != "ai.hoxi.desktop.dev" || devByFlag.DefaultBridgeAddr != "127.0.0.1:5420" {
 		t.Fatalf("unexpected dev identity from variant flag: %+v", devByFlag)
 	}
 

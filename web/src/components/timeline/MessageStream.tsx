@@ -25,7 +25,7 @@ import { Icon } from "../icons";
 import {
   ActionIconButton,
   formatMessageTime,
-  hasLiveTailWorkGroup,
+  hasLiveTailRenderedOutput,
   isTodoTool,
   LiveExecutionControlBar,
   resolveActiveCycleStepLabel,
@@ -124,7 +124,7 @@ export default function MessageStream(props: { hidden?: boolean }) {
     if (last.info.role === "assistant" && last.info.error) return false;
 
     const cycleTurns = list.slice(lastUserIdx + 1);
-    if (hasLiveTailWorkGroup(cycleTurns)) return false;
+    if (hasLiveTailRenderedOutput(cycleTurns)) return false;
 
     return true;
   });
@@ -256,7 +256,11 @@ export default function MessageStream(props: { hidden?: boolean }) {
     turnWindow.ensureTurnVisible(targetID);
     queueMicrotask(() => {
       if (!scroller) return;
-      const el = scroller.querySelector(`[data-turn-id="${CSS.escape(targetID)}"]`);
+      const partEl = partID
+        ? scroller.querySelector(`[data-part-id="${CSS.escape(partID)}"]`)
+        : null;
+      const el =
+        partEl ?? scroller.querySelector(`[data-turn-id="${CSS.escape(targetID)}"]`);
       if (el instanceof HTMLElement) {
         el.scrollIntoView({ behavior: "smooth", block: "center" });
       }
@@ -416,7 +420,10 @@ export default function MessageStream(props: { hidden?: boolean }) {
                           {(part) => (
                             <>
                               <Show when={part().type === "file"}>
-                                <div class="overflow-hidden rounded-lg border border-[var(--border-subtle)] max-w-[260px]">
+                                <div
+                                  data-part-id={part().id}
+                                  class="overflow-hidden rounded-lg border border-[var(--border-subtle)] max-w-[260px]"
+                                >
                                   <img
                                     src={(part() as Extract<MessagePart, { type: "file" }>).url}
                                     alt={
@@ -429,6 +436,7 @@ export default function MessageStream(props: { hidden?: boolean }) {
                               </Show>
                               <Show when={part().type === "text"}>
                                 <div
+                                  data-part-id={part().id}
                                   class="whitespace-pre-wrap break-words leading-[1.65] text-[var(--text-primary)] selectable-text"
                                   style={{ "font-size": "var(--app-chat-text-size)" }}
                                 >

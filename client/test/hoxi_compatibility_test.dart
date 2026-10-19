@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:gopanel/features/ai_workspace/models/code_conversation_stream.dart';
-import 'package:gopanel/features/auth/data/auth_repository.dart';
-import 'package:gopanel/shared/models/server_connection.dart';
+import 'package:hoxi/features/ai_workspace/models/code_conversation_stream.dart';
+import 'package:hoxi/features/auth/data/auth_repository.dart';
+import 'package:hoxi/shared/models/server_connection.dart';
 
 void main() {
   group('ServerConnection nodeType compatibility', () {

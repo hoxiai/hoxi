@@ -56,11 +56,20 @@ func (s *Service) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 
 	modelID := strings.TrimSpace(body.ModelID)
 	if modelID == "" {
-		if rt == string(RuntimeClaudeCode) {
+		switch rt {
+		case string(RuntimeClaudeCode):
 			if ms := DiscoverClaudeModels(); len(ms) > 0 {
 				modelID = ms[0].ID
 			}
-		} else {
+		case string(RuntimeCodeBuddy):
+			if ms := DiscoverCodeBuddyModels(); len(ms) > 0 {
+				modelID = ms[0].ID
+			}
+		case string(RuntimeQoder):
+			if ms := DiscoverQoderModels(); len(ms) > 0 {
+				modelID = ms[0].ID
+			}
+		default:
 			if ms, _, _ := DiscoverAgyModels(); len(ms) > 0 {
 				modelID = ms[0].ID
 			}
@@ -72,9 +81,14 @@ func (s *Service) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 	title := strings.TrimSpace(body.Title)
 	if title == "" {
-		if rt == string(RuntimeClaudeCode) {
+		switch rt {
+		case string(RuntimeClaudeCode):
 			title = "Claude Code Session"
-		} else {
+		case string(RuntimeCodeBuddy):
+			title = "CodeBuddy Session"
+		case string(RuntimeQoder):
+			title = "Qoder Session"
+		default:
 			title = "Antigravity Session"
 		}
 	}

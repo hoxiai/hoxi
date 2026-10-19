@@ -68,3 +68,37 @@ type GatewaysResponse struct {
 	Message string        `json:"message"`
 	Data    *GatewaysData `json:"data"`
 }
+
+type ModelPricingItem struct {
+	Slug             string   `json:"slug"`
+	Name             string   `json:"name"`
+	Vendor           string   `json:"vendor"`
+	APIName          string   `json:"apiName,omitempty"`
+	GatewayModelName string   `json:"gatewayModelName,omitempty"`
+	AASlug           string   `json:"aaSlug,omitempty"`
+	Price            struct {
+		Currency   string  `json:"currency"`
+		Input      float64 `json:"input"`
+		Output     float64 `json:"output"`
+		CacheRead  float64 `json:"cacheRead,omitempty"`
+		CacheWrite float64 `json:"cacheWrite,omitempty"`
+	} `json:"price"`
+	ContextWindow   int      `json:"contextWindow"`
+	MaxOutputTokens int      `json:"maxOutputTokens,omitempty"`
+	Modalities      []string `json:"modalities,omitempty"`
+	Reasoning       bool     `json:"reasoning"`
+	IsFree          bool     `json:"isFree"`
+	UpdatedAt       string   `json:"updatedAt,omitempty"`
+}
+
+type ModelPricingData struct {
+	UpdatedAt string             `json:"updatedAt"`
+	Total     int                `json:"total"`
+	Items     []ModelPricingItem `json:"items"`
+}
+
+type ModelPricingResponse struct {
+	Code    int               `json:"code"`
+	Message string            `json:"message"`
+	Data    *ModelPricingData `json:"data"`
+}

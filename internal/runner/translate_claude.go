@@ -21,6 +21,7 @@ type claudeRawEvent struct {
 	ToolUseID       string `json:"tool_use_id"`
 	Status          string `json:"status"`
 	Summary         string `json:"summary"`
+	APIMessageID    string `json:"api_message_id"`
 	Event           *struct {
 		Type    string `json:"type"`
 		Index   int    `json:"index"`
@@ -56,6 +57,55 @@ type claudeRawEvent struct {
 	} `json:"message"`
 }
 
+func (t *TurnTranslator) advanceClaudeMessage(id string, forceNewStep bool) {
+	id = strings.TrimSpace(id)
+	if forceNewStep || (id != "" && t.claudeMessageID != "" && id != t.claudeMessageID) {
+		t.claudeReasonPartID = ""
+		t.claudeTextPartID = ""
+		t.stepStartMs = make(map[int]int64)
+	}
+	if id != "" {
+		t.claudeMessageID = id
+	}
+}
+
+func (t *TurnTranslator) closeActiveClaudeReasoning(now int64) []SSEEvent {
+	if t.claudeReasonPartID == "" {
+		return nil
+	}
+	existing, exists := t.partsByID[t.claudeReasonPartID]
+	if !exists || existing == nil || existing.Type != "reasoning" {
+		return nil
+	}
+	if existing.Time != nil && existing.Time.End > 0 {
+		return nil
+	}
+	start := t.startedAtMs
+	if existing.Time != nil && existing.Time.Start > 0 {
+		start = existing.Time.Start
+	}
+	end := now
+	if end < start {
+		end = start
+	}
+	existing.Time = &PartTime{Start: start, End: end}
+	return []SSEEvent{{Type: "message.part.updated", Properties: map[string]interface{}{"part": clonePart(*existing)}}}
+}
+
+func (t *TurnTranslator) currentClaudeReasonPartID() string {
+	if t.claudeReasonPartID == "" {
+		t.claudeReasonPartID = fmt.Sprintf("prt_%s_%s_reason_0", t.messageID, t.claudeMessageID)
+	}
+	return t.claudeReasonPartID
+}
+
+func (t *TurnTranslator) currentClaudeTextPartID() string {
+	if t.claudeTextPartID == "" {
+		t.claudeTextPartID = fmt.Sprintf("prt_%s_%s_text_0", t.messageID, t.claudeMessageID)
+	}
+	return t.claudeTextPartID
+}
+
 func (t *TurnTranslator) feedClaudeLine(line string) []SSEEvent {
 	var env claudeRawEvent
 	if err := json.Unmarshal([]byte(line), &env); err != nil {
@@ -84,9 +134,18 @@ func (t *TurnTranslator) feedClaudeLine(line string) []SSEEvent {
 		if env.Event == nil {
 			return nil
 		}
-		if env.Event.Type == "message_start" && env.Event.Message != nil {
-			t.claudeMessageID = env.Event.Message.ID
-			t.stepStartMs = make(map[int]int64)
+		if env.Event.Type == "message_start" {
+			msgID := env.APIMessageID
+			if env.Event.Message != nil && env.Event.Message.ID != "" {
+				msgID = env.Event.Message.ID
+			}
+			t.advanceClaudeMessage(msgID, true)
+		} else if env.APIMessageID != "" {
+			t.advanceClaudeMessage(env.APIMessageID, false)
+		}
+		if env.Event.Type == "content_block_start" && env.Event.ContentBlock != nil &&
+			env.Event.ContentBlock.Type != "" && env.Event.ContentBlock.Type != "thinking" {
+			return t.closeActiveClaudeReasoning(now)
 		}
 		if env.Event.Delta == nil {
 			return nil
@@ -102,7 +161,7 @@ func (t *TurnTranslator) feedClaudeLine(line string) []SSEEvent {
 			if delta == "" {
 				return nil
 			}
-			rID := fmt.Sprintf("prt_%s_%s_reason_%d", t.messageID, t.claudeMessageID, idx)
+			rID := t.currentClaudeReasonPartID()
 			var evts []SSEEvent
 			part, exists := t.partsByID[rID]
 			if !exists {
@@ -136,9 +195,9 @@ func (t *TurnTranslator) feedClaudeLine(line string) []SSEEvent {
 			if delta == "" {
 				return nil
 			}
+			evts := t.closeActiveClaudeReasoning(now)
 			t.hasTextPart = true
-			txtID := fmt.Sprintf("prt_%s_%s_text_%d", t.messageID, t.claudeMessageID, idx)
-			var evts []SSEEvent
+			txtID := t.currentClaudeTextPartID()
 			part, exists := t.partsByID[txtID]
 			if !exists {
 				part = &MessagePart{
@@ -172,10 +231,10 @@ func (t *TurnTranslator) feedClaudeLine(line string) []SSEEvent {
 		if env.Message == nil {
 			return nil
 		}
-		// Claude restarts block indexes for every assistant message in a tool loop.
-		if env.Message.ID != "" {
-			t.claudeMessageID = env.Message.ID
-		}
+		// Claude Code and CodeBuddy emit a separate "assistant" snapshot per
+		// content block (each with len(content) == 1 at slice index 0), while
+		// stream_event uses the API block index across thinking/text/tool_use.
+		t.advanceClaudeMessage(firstNonEmptyStr(env.Message.ID, env.APIMessageID), false)
 		var evts []SSEEvent
 		for idx, blk := range env.Message.Content {
 			switch blk.Type {
@@ -183,10 +242,20 @@ func (t *TurnTranslator) feedClaudeLine(line string) []SSEEvent {
 				if strings.TrimSpace(blk.Thinking) == "" {
 					continue
 				}
-				rID := fmt.Sprintf("prt_%s_%s_reason_%d", t.messageID, t.claudeMessageID, idx)
+				rID := t.currentClaudeReasonPartID()
 				if existing, exists := t.partsByID[rID]; exists {
+					start := t.startedAtMs
+					end := now
+					if existing.Time != nil {
+						if existing.Time.Start > 0 {
+							start = existing.Time.Start
+						}
+						if existing.Time.End > 0 {
+							end = existing.Time.End
+						}
+					}
 					existing.Text = blk.Thinking
-					existing.Time = &PartTime{Start: existing.Time.Start, End: now}
+					existing.Time = &PartTime{Start: start, End: end}
 					evts = append(evts, SSEEvent{Type: "message.part.updated", Properties: map[string]interface{}{"part": clonePart(*existing)}})
 				} else {
 					part := MessagePart{
@@ -205,11 +274,16 @@ func (t *TurnTranslator) feedClaudeLine(line string) []SSEEvent {
 				if strings.TrimSpace(blk.Text) == "" {
 					continue
 				}
+				evts = append(evts, t.closeActiveClaudeReasoning(now)...)
 				t.hasTextPart = true
-				txtID := fmt.Sprintf("prt_%s_%s_text_%d", t.messageID, t.claudeMessageID, idx)
+				txtID := t.currentClaudeTextPartID()
 				if existing, exists := t.partsByID[txtID]; exists {
+					start := t.startedAtMs
+					if existing.Time != nil && existing.Time.Start > 0 {
+						start = existing.Time.Start
+					}
 					existing.Text = blk.Text
-					existing.Time = &PartTime{Start: existing.Time.Start, End: now}
+					existing.Time = &PartTime{Start: start, End: now}
 					evts = append(evts, SSEEvent{Type: "message.part.updated", Properties: map[string]interface{}{"part": clonePart(*existing)}})
 				} else {
 					part := MessagePart{
@@ -225,6 +299,7 @@ func (t *TurnTranslator) feedClaudeLine(line string) []SSEEvent {
 					evts = append(evts, SSEEvent{Type: "message.part.updated", Properties: map[string]interface{}{"part": part}})
 				}
 			case "tool_use":
+				evts = append(evts, t.closeActiveClaudeReasoning(now)...)
 				callID := blk.ID
 				if callID == "" {
 					callID = fmt.Sprintf("call_%s_%d", t.messageID, idx)
@@ -259,6 +334,10 @@ func (t *TurnTranslator) feedClaudeLine(line string) []SSEEvent {
 		if env.Message == nil {
 			return nil
 		}
+		t.claudeMessageID = ""
+		t.claudeReasonPartID = ""
+		t.claudeTextPartID = ""
+		t.stepStartMs = make(map[int]int64)
 		var evts []SSEEvent
 		for _, blk := range env.Message.Content {
 			if blk.Type != "tool_result" || blk.ToolUseID == "" {

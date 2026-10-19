@@ -1,8 +1,8 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:gopanel/core/network/api_client.dart';
-import 'package:gopanel/features/ai_workspace/data/ai_workspace_repository.dart';
-import 'package:gopanel/features/ai_workspace/models/code_workspace_file.dart';
-import 'package:gopanel/features/ai_workspace/presentation/controllers/code_workspace_files_controller.dart';
+import 'package:hoxi/core/network/api_client.dart';
+import 'package:hoxi/features/ai_workspace/data/ai_workspace_repository.dart';
+import 'package:hoxi/features/ai_workspace/models/code_workspace_file.dart';
+import 'package:hoxi/features/ai_workspace/presentation/controllers/code_workspace_files_controller.dart';
 
 class _FakeAiWorkspaceRepository extends AiWorkspaceRepository {
   _FakeAiWorkspaceRepository({this.saveError}) : super(ApiClient());

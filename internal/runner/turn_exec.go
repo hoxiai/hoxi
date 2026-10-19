@@ -26,9 +26,14 @@ func (s *Service) startTurnProcess(
 	asstMsgID string,
 ) error {
 	var args []string
-	if rec.Runtime == string(RuntimeClaudeCode) {
+	switch rec.Runtime {
+	case string(RuntimeClaudeCode):
 		args = BuildClaudeArgs(mode, modelID, effort, rec.ExternalID)
-	} else {
+	case string(RuntimeCodeBuddy):
+		args = BuildCodeBuddyArgs(mode, modelID, effort, rec.ExternalID)
+	case string(RuntimeQoder):
+		args = BuildQoderArgs(mode, modelID, effort, rec.ExternalID)
+	default:
 		args = BuildAgyArgs(mode, modelID, effort, rec.ExternalID)
 	}
 

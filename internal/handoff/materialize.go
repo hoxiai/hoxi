@@ -20,13 +20,26 @@ import (
 const base62Alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 
 func openCodeDataDBPath() string {
+	if custom := strings.TrimSpace(os.Getenv("OPENCODE_DB")); custom != "" {
+		return filepath.Clean(custom)
+	}
+	if custom := strings.TrimSpace(os.Getenv("HOXI_DB_PATH")); custom != "" {
+		return filepath.Clean(custom)
+	}
 	home, _ := os.UserHomeDir()
 	var candidates []string
 	if xdg := strings.TrimSpace(os.Getenv("XDG_DATA_HOME")); xdg != "" {
 		candidates = append(candidates, filepath.Join(xdg, "opencode", "opencode.db"))
 	}
 	if home != "" {
-		candidates = append(candidates, filepath.Join(home, ".local", "share", "opencode", "opencode.db"))
+		candidates = append(candidates,
+			filepath.Join(home, ".hoxi", "hoxi.db"),
+			filepath.Join(home, ".hoxi", "engine-data", "opencode", "opencode.db"),
+			filepath.Join(home, ".local", "share", "opencode", "opencode.db"),
+		)
+	}
+	if custom := strings.TrimSpace(os.Getenv("HOXI_ENGINE_DATA_DIR")); custom != "" {
+		candidates = append(candidates, filepath.Join(filepath.Clean(custom), "opencode", "opencode.db"))
 	}
 	if localApp := strings.TrimSpace(os.Getenv("LOCALAPPDATA")); localApp != "" {
 		candidates = append(candidates,
@@ -254,6 +267,12 @@ func (g *Service) resolveDefaultHandoffModel(sum ExternalSessionSummary, req Han
 	case ExternalToolGemini:
 		_, defModel, _ := readGeminiLocalKeyAndModels()
 		return "google", firstNonEmpty(sum.Model, defModel)
+	case ExternalToolOpenCode:
+		provID, modID := splitOpenCodeProviderModel(sum.Model)
+		if provID != "" && modID != "" {
+			return provID, modID
+		}
+		return "opencode", firstNonEmpty(modID, sum.Model, "opencode")
 	default:
 		return string(sum.Source), firstNonEmpty(sum.Model, string(sum.Source))
 	}

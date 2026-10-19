@@ -118,8 +118,8 @@ func TestHandoffSessionsAndPreviewEndpoints(t *testing.T) {
 	if err := json.Unmarshal(recAll.Body.Bytes(), &allResp); err != nil {
 		t.Fatalf("unmarshal sessions: %v", err)
 	}
-	if len(allResp.Sessions) != 7 {
-		t.Fatalf("expected 7 sessions across all 7 sources, got %d", len(allResp.Sessions))
+	if len(allResp.Sessions) != 8 {
+		t.Fatalf("expected 8 sessions across all 8 sources, got %d", len(allResp.Sessions))
 	}
 
 	// 2. Filter by source, query, onlyCurrent, limit
@@ -170,6 +170,7 @@ func TestHandoffSessionsAndPreviewEndpoints(t *testing.T) {
 		{ExternalToolCodeBuddy, "cb-sess-1"},
 		{ExternalToolTrae, "trae-sess-1"},
 		{ExternalToolQoder, "qoder-sess-1"},
+		{ExternalToolOpenCode, "opencode-sess-1"},
 	}
 	for _, tc := range previewCases {
 		u := "/api/hoxi/handoff/preview?source=" + string(tc.source) + "&id=" + tc.id
@@ -216,7 +217,7 @@ func TestHandoffImportEndpoint(t *testing.T) {
 		t.Fatalf("expected 400 for invalid JSON, got %d", recBadJSON.Code)
 	}
 
-	// Import all 7 sources
+	// Import all 8 sources
 	importCases := []HandoffImportRequest{
 		{Source: ExternalToolClaude, SessionID: "claude-sess-1", TargetDirectory: workspaceDir},
 		{Source: ExternalToolCodex, SessionID: "codex-sess-1", TargetDirectory: workspaceDir},
@@ -225,6 +226,7 @@ func TestHandoffImportEndpoint(t *testing.T) {
 		{Source: ExternalToolCodeBuddy, SessionID: "cb-sess-1", TargetDirectory: workspaceDir},
 		{Source: ExternalToolTrae, SessionID: "trae-sess-1", TargetDirectory: workspaceDir},
 		{Source: ExternalToolQoder, SessionID: "qoder-sess-1", TargetDirectory: workspaceDir},
+		{Source: ExternalToolOpenCode, SessionID: "opencode-sess-1", TargetDirectory: workspaceDir},
 	}
 
 	for _, ic := range importCases {
@@ -303,8 +305,8 @@ func TestLocalCLIStatusAndImportEndpoints(t *testing.T) {
 	if err := json.Unmarshal(recStatus.Body.Bytes(), &statusResp); err != nil {
 		t.Fatalf("unmarshal status: %v", err)
 	}
-	if len(statusResp.Tools) != 7 {
-		t.Fatalf("expected 7 tools, got %d", len(statusResp.Tools))
+	if len(statusResp.Tools) != 8 {
+		t.Fatalf("expected 8 tools, got %d", len(statusResp.Tools))
 	}
 	for _, tool := range statusResp.Tools {
 		if !tool.Installed || tool.SessionCount != 1 {

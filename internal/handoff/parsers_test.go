@@ -322,7 +322,95 @@ CREATE TABLE agent_memory (
 	session_id TEXT,
 	gmt_modified INTEGER
 );
-INSERT INTO agent_memory VALUES ('m1', 'Qoder Tech Stack', 'Go + SolidJS', 'qoder-sess-1', 1760695950000);
+	INSERT INTO agent_memory VALUES ('m1', 'Qoder Tech Stack', 'Go + SolidJS', 'qoder-sess-1', 1760695950000);
+`);
+
+	// 8. External OpenCode CLI fixture (~/.local/share/opencode/opencode.db)
+	t.Setenv("OPENCODE_EXTERNAL_DB", "")
+	t.Setenv("OPENCODE_DATA_DIR", "")
+	extOpenCodeDB := filepath.Join(homeDir, ".local", "share", "opencode", "opencode.db")
+	runSQLite(t, extOpenCodeDB, `
+CREATE TABLE session (
+	id TEXT PRIMARY KEY,
+	parent_id TEXT,
+	directory TEXT,
+	title TEXT,
+	time_created INTEGER,
+	time_updated INTEGER,
+	model TEXT,
+	metadata TEXT
+);
+CREATE TABLE message (
+	id TEXT PRIMARY KEY,
+	session_id TEXT,
+	time_created INTEGER,
+	time_updated INTEGER,
+	data TEXT
+);
+CREATE TABLE part (
+	id TEXT PRIMARY KEY,
+	message_id TEXT,
+	session_id TEXT,
+	time_created INTEGER,
+	time_updated INTEGER,
+	data TEXT
+);
+INSERT INTO session VALUES (
+	'opencode-sess-1',
+	NULL,
+	`+sqlEscapeLiteral(workspaceDir)+`,
+	'OpenCode Legacy CLI Task',
+	1760695000000,
+	1760695980000,
+	'{"id":"claude-sonnet-4-5","providerID":"anthropic"}',
+	NULL
+);
+INSERT INTO message VALUES (
+	'msg_oc_u1',
+	'opencode-sess-1',
+	1760695001000,
+	1760695001000,
+	'{"role":"user","model":{"providerID":"anthropic","modelID":"claude-sonnet-4-5"}}'
+);
+INSERT INTO part VALUES (
+	'prt_oc_u1',
+	'msg_oc_u1',
+	'opencode-sess-1',
+	1760695001000,
+	1760695001000,
+	'{"type":"text","text":"Audit opencode_out.go"}'
+);
+INSERT INTO message VALUES (
+	'msg_oc_a1',
+	'opencode-sess-1',
+	1760695005000,
+	1760695005000,
+	'{"role":"assistant","providerID":"anthropic","modelID":"claude-sonnet-4-5"}'
+);
+INSERT INTO part VALUES (
+	'prt_oc_a1_r',
+	'msg_oc_a1',
+	'opencode-sess-1',
+	1760695005000,
+	1760695005000,
+	'{"type":"reasoning","text":"Checking opencode_out.go"}'
+);
+INSERT INTO part VALUES (
+	'prt_oc_a1_t',
+	'msg_oc_a1',
+	'opencode-sess-1',
+	1760695006000,
+	1760695006000,
+	'{"type":"tool","tool":"edit","callID":"call_oc_1","state":{"status":"completed","title":"Edit opencode_out.go","input":{"filePath":"opencode_out.go"},"output":"edited opencode_out.go"}}'
+);
+INSERT INTO part VALUES (
+	'prt_oc_a1_txt',
+	'msg_oc_a1',
+	'opencode-sess-1',
+	1760695007000,
+	1760695007000,
+	'{"type":"text","text":"Completed audit of opencode_out.go."}'
+);
 `)
 
 	return homeDir
@@ -442,6 +530,19 @@ func TestSyntheticDiscoveryAndDetailAllSources(t *testing.T) {
 	}
 	if qoderDetail.Summary.Model != "qmodel_38max" || len(qoderDetail.Turns) != 2 || !reflect.DeepEqual(qoderDetail.ChangedFiles, []string{"qoder_out.go"}) {
 		t.Fatalf("unexpected qoder detail: model=%s turns=%d files=%v", qoderDetail.Summary.Model, len(qoderDetail.Turns), qoderDetail.ChangedFiles)
+	}
+
+	// 8. External OpenCode CLI (opencode.db)
+	ocList, ocStats := scanOpenCodeSessions(workspaceDir, "Legacy")
+	if !ocStats.Installed || ocStats.SessionCount != 1 || len(ocList) != 1 || !ocList[0].MatchesCWD {
+		t.Fatalf("unexpected opencode scan: stats=%+v list=%+v", ocStats, ocList)
+	}
+	ocDetail, err := loadOpenCodeSessionDetail("opencode-sess-1", workspaceDir, workspaceDir)
+	if err != nil {
+		t.Fatalf("loadOpenCodeSessionDetail failed: %v", err)
+	}
+	if ocDetail.Summary.Model != "anthropic/claude-sonnet-4-5" || len(ocDetail.Turns) != 2 || !reflect.DeepEqual(ocDetail.ChangedFiles, []string{"opencode_out.go"}) {
+		t.Fatalf("unexpected opencode detail: model=%s turns=%d files=%v", ocDetail.Summary.Model, len(ocDetail.Turns), ocDetail.ChangedFiles)
 	}
 }
 

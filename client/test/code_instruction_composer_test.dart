@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:gopanel/features/ai_workspace/models/code_instruction_options.dart';
-import 'package:gopanel/features/ai_workspace/presentation/widgets/code_instruction_composer.dart';
+import 'package:hoxi/features/ai_workspace/models/code_instruction_options.dart';
+import 'package:hoxi/features/ai_workspace/presentation/widgets/code_instruction_composer.dart';
 
 void main() {
   testWidgets('updates preview and approval instruction options', (

@@ -1,7 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:gopanel/features/auth/data/auth_repository.dart';
+import 'package:hoxi/features/auth/data/auth_repository.dart';
 
 void main() {
   test(

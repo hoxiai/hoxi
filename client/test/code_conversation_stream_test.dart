@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:gopanel/features/ai_workspace/models/code_conversation_stream.dart';
+import 'package:hoxi/features/ai_workspace/models/code_conversation_stream.dart';
 
 void main() {
   test('parses split SSE frames and preserves event type', () {

@@ -123,9 +123,10 @@ export default function ProviderCatalogTab() {
 
   const sourceLabel = (p: ProviderInfo) => {
     if (p.source === "runner") {
-      return p.id === "antigravity"
-        ? t("timeline.runtimeAntigravityLocal")
-        : t("timeline.runtimeClaudeCodeLocal");
+      if (p.id === "antigravity") return t("timeline.runtimeAntigravityLocal");
+      if (p.id === "codebuddy") return t("timeline.runtimeCodeBuddyLocal");
+      if (p.id === "qoder") return t("timeline.runtimeQoderLocal");
+      return t("timeline.runtimeClaudeCodeLocal");
     }
     if (isHoxiCustomProvider(p.id)) return t("models.sourceHoxi");
     if (isImportedOpenCodeProvider(p.id)) return t("models.sourceOpenCode");

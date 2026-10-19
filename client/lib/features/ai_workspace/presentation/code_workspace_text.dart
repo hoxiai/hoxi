@@ -27,7 +27,7 @@ abstract final class CodeWorkspaceText {
       'action.retry': '重试',
       'action.stop': '停止执行',
       'action.dismiss': '关闭',
-      'chat.title': 'GoPanel 开发',
+      'chat.title': 'Hoxi 开发',
       'chat.streamReconnecting': '实时连接已断开，正在重连…',
       'stage.preview_ready': '预览就绪',
       'stage.completed': '已完成',
@@ -295,7 +295,7 @@ abstract final class CodeWorkspaceText {
       'action.retry': 'Retry',
       'action.stop': 'Stop execution',
       'action.dismiss': 'Dismiss',
-      'chat.title': 'GoPanel Development',
+      'chat.title': 'Hoxi Development',
       'chat.streamReconnecting': 'Live connection lost. Reconnecting…',
       'stage.preview_ready': 'Preview ready',
       'stage.completed': 'Completed',
@@ -443,7 +443,7 @@ abstract final class CodeWorkspaceText {
           'The execution environment is ready for more instructions.',
       'recovery.retryInitialization': 'Retry initialization',
       'recovery.retryInitializationHint':
-          'GoPanel will prepare this session workspace and execution environment again. Continue?',
+          'Hoxi will prepare this session workspace and execution environment again. Continue?',
       'recovery.conversation': 'Full conversation',
       'recovery.noMessages': 'No historical messages in this session',
       'recovery.runs': 'Execution runs',
@@ -508,7 +508,7 @@ abstract final class CodeWorkspaceText {
       'delivery.deliverLatest': 'Deliver newer commits',
       'delivery.confirmTitle': 'Start unified delivery?',
       'delivery.confirmDescription':
-          'GoPanel snapshots the saved commits, then syncs, merges, runs quality checks, and pushes. Newer commits remain available for another delivery.',
+          'Hoxi snapshots the saved commits, then syncs, merges, runs quality checks, and pushes. Newer commits remain available for another delivery.',
       'delivery.cancel': 'Not now',
       'delivery.confirm': 'Deliver',
       'delivery.reviewSummary':

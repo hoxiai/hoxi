@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:gopanel/core/network/api_client.dart';
-import 'package:gopanel/features/ai_workspace/data/ai_workspace_repository.dart';
-import 'package:gopanel/features/ai_workspace/models/code_git_review.dart';
-import 'package:gopanel/features/ai_workspace/presentation/controllers/code_git_diff_controller.dart';
-import 'package:gopanel/features/ai_workspace/presentation/controllers/code_git_review_controller.dart';
-import 'package:gopanel/features/ai_workspace/presentation/widgets/code_git_review_cards.dart';
+import 'package:hoxi/core/network/api_client.dart';
+import 'package:hoxi/features/ai_workspace/data/ai_workspace_repository.dart';
+import 'package:hoxi/features/ai_workspace/models/code_git_review.dart';
+import 'package:hoxi/features/ai_workspace/presentation/controllers/code_git_diff_controller.dart';
+import 'package:hoxi/features/ai_workspace/presentation/controllers/code_git_review_controller.dart';
+import 'package:hoxi/features/ai_workspace/presentation/widgets/code_git_review_cards.dart';
 
 class _FakeGitRepository extends AiWorkspaceRepository {
   _FakeGitRepository() : super(ApiClient());

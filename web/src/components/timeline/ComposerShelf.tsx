@@ -18,10 +18,11 @@ import {
 import ApprovalGateCard from "../approval/ApprovalGateCard";
 import QuestionDock from "../approval/QuestionDock";
 import { FileIcon } from "../icons";
-import { resolveRootSessionID } from "./SubagentSessionBanner";
+import AgentStackPill, { resolveRootSessionID } from "./AgentStackPill";
 import ChangedFilesSummary from "./ChangedFilesSummary";
 import PlanFollowupBar from "./PlanFollowupBar";
 import RevertBanner from "./RevertBanner";
+import TaskProgressCard from "./TaskProgressCard";
 import { collectSessionChangedFiles } from "./tool-card-state";
 import { filterVisibleTurnsByRevert } from "./turn-window";
 import { t } from "../../i18n";
@@ -132,8 +133,10 @@ export default function ComposerShelf() {
       {/* Kilo Plan Follow-up Suggestion Bar */}
       <PlanFollowupBar />
 
-      {/* Compact single-line Pill Shelf: Changed Files + Review Comments (with upward Popover) */}
+      {/* Compact single-line Pill Shelf: Subagent Stack + Task Progress + Changed Files + Review Comments */}
       <div class="mb-2 flex items-center justify-center gap-2 flex-wrap empty:hidden">
+        <AgentStackPill />
+        <TaskProgressCard />
         <ChangedFilesSummary files={changedFiles()} variant="pill" />
 
         {/* Queued Inline Diff ReviewComments Pill + Upward Popover */}
@@ -175,7 +178,7 @@ export default function ComposerShelf() {
             </div>
 
             <Show when={reviewsExpanded()}>
-              <div class="absolute left-0 bottom-[calc(100%+6px)] z-40 w-[min(480px,calc(100vw-32px))] rounded-xl border border-[var(--accent-border)] bg-[var(--bg-elevated)]/98 backdrop-blur-xl p-2.5 shadow-2xl animate-in fade-in zoom-in-95 duration-150">
+              <div class="absolute left-1/2 -translate-x-1/2 bottom-[calc(100%+6px)] z-40 w-[min(480px,calc(100vw-32px))] rounded-xl border border-[var(--accent-border)] bg-[var(--bg-elevated)]/98 backdrop-blur-xl p-2.5 shadow-2xl animate-in fade-in zoom-in-95 duration-150">
                 <div class="space-y-1 max-h-48 overflow-y-auto">
                   <For each={reviewComments()}>
                     {(item) => (

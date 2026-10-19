@@ -255,5 +255,7 @@ export const timeline: TimelineI18n = {
     "本地 CLI 会话遵循默认目录模式，工具权限由各 CLI 自身的策略控制",
   runtimeAntigravityLocal: "Antigravity（本地）",
   runtimeClaudeCodeLocal: "Claude Code（本地）",
+  runtimeCodeBuddyLocal: "CodeBuddy（本地）",
+  runtimeQoderLocal: "Qoder（本地）",
   runtimeOpenCode: "OpenCode",
 };

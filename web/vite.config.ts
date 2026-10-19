@@ -2,12 +2,15 @@ import { defineConfig } from "vite";
 import solidPlugin from "vite-plugin-solid";
 import tailwindcss from "@tailwindcss/vite";
 
-const target = process.env.HOXI_BACKEND_URL || "http://127.0.0.1:5089";
+const isRelease = (process.env.HOXI_VARIANT || "").trim().toLowerCase() === "release";
+const target =
+  process.env.HOXI_BACKEND_URL || (isRelease ? "http://127.0.0.1:5410" : "http://127.0.0.1:5420");
+const port = Number(process.env.HOXI_WEB_PORT) || (isRelease ? 5411 : 5421);
 
 export default defineConfig({
   plugins: [tailwindcss(), solidPlugin()],
   server: {
-    port: 5173,
+    port,
     strictPort: false,
     proxy: {
       "/api": { target, changeOrigin: true, ws: true },
@@ -35,6 +38,10 @@ export default defineConfig({
       "/path": { target, changeOrigin: true },
       "/project": { target, changeOrigin: true },
     },
+  },
+  preview: {
+    port: 5411,
+    strictPort: false,
   },
   build: {
     target: "esnext",

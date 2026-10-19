@@ -1,5 +1,5 @@
 // web/src/components/timeline/composer-subcomponents.tsx
-import { For, Show } from "solid-js";
+import { createEffect, For, Show } from "solid-js";
 import { ClipboardPaste, Slash, X } from "lucide-solid";
 import { FileIcon } from "../icons";
 import { t } from "../../i18n";
@@ -16,6 +16,19 @@ export function ComposerAutocompletePopover(props: {
   onSelectIndex: (idx: number) => void;
   onApply: (item: AutocompleteItem) => void;
 }) {
+  let listRef: HTMLDivElement | undefined;
+
+  createEffect(() => {
+    const idx = props.selectedIndex;
+    if (!props.triggerMode || props.suggestions.length === 0) return;
+    queueMicrotask(() => {
+      const btn = listRef?.querySelector<HTMLButtonElement>(
+        `[data-ac-index="${idx}"]`
+      );
+      btn?.scrollIntoView({ block: "nearest" });
+    });
+  });
+
   return (
     <Show when={props.triggerMode && props.suggestions.length > 0}>
       <div class="absolute bottom-full left-0 mb-2 w-full max-w-[32rem] rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-1.5 shadow-xl z-40">
@@ -24,11 +37,12 @@ export function ComposerAutocompletePopover(props: {
             ? t("timeline.slashCommandsHeader")
             : t("timeline.mentionFileOrContextHeader")}
         </div>
-        <div class="max-h-56 overflow-y-auto space-y-0.5">
+        <div ref={listRef} class="max-h-56 overflow-y-auto space-y-0.5">
           <For each={props.suggestions}>
             {(item, idx) => (
               <button
                 type="button"
+                data-ac-index={idx()}
                 class={`w-full flex items-center justify-between gap-3 rounded-lg px-2.5 py-1.5 text-left text-[12.5px] transition-colors cursor-pointer ${
                   idx() === props.selectedIndex
                     ? "bg-[var(--accent-surface)] text-[var(--accent-text)]"

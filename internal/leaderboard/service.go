@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"time"
@@ -260,6 +262,117 @@ func (s *Service) fallbackGateways(lang string) *GatewaysResponse {
 		Data: &GatewaysData{
 			Total: 0,
 			Items: []GatewayItem{},
+		},
+	}
+}
+
+func pricingDiskCachePath() string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return ""
+	}
+	return filepath.Join(home, ".hoxi", "model-pricing-cache.json")
+}
+
+func (s *Service) GetModelPricing(forceRefresh bool) (*ModelPricingResponse, error) {
+	const cacheKey = "model_pricing_catalog"
+
+	if !forceRefresh {
+		s.mu.RLock()
+		if entry, ok := s.cache[cacheKey]; ok && time.Now().Before(entry.expiresAt) {
+			s.mu.RUnlock()
+			return entry.data.(*ModelPricingResponse), nil
+		}
+		s.mu.RUnlock()
+	}
+
+	endpoint := fmt.Sprintf("%s/api/hoxi/models", s.baseURL)
+	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
+	if err == nil {
+		req.Header.Set("Accept", "application/json")
+		req.Header.Set("User-Agent", "HoxiDesktop/1.0")
+		if resp, err := s.client.Do(req); err == nil {
+			defer resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				var items []ModelPricingItem
+				if err := json.NewDecoder(resp.Body).Decode(&items); err == nil && len(items) > 0 {
+					updatedAt := time.Now().Format("2006-01-02")
+					for _, it := range items {
+						if it.UpdatedAt != "" {
+							updatedAt = it.UpdatedAt
+							break
+						}
+					}
+					result := &ModelPricingResponse{
+						Code:    200,
+						Message: "ok",
+						Data: &ModelPricingData{
+							UpdatedAt: updatedAt,
+							Total:     len(items),
+							Items:     items,
+						},
+					}
+					s.mu.Lock()
+					s.cache[cacheKey] = cachedEntry{
+						data:      result,
+						expiresAt: time.Now().Add(30 * time.Minute),
+					}
+					s.mu.Unlock()
+					if p := pricingDiskCachePath(); p != "" {
+						_ = os.MkdirAll(filepath.Dir(p), 0o755)
+						if raw, err := json.Marshal(result); err == nil {
+							_ = os.WriteFile(p, raw, 0o644)
+						}
+					}
+					return result, nil
+				}
+			}
+		}
+	}
+
+	// Try reading last synced catalog from ~/.hoxi/model-pricing-cache.json
+	if p := pricingDiskCachePath(); p != "" {
+		if raw, err := os.ReadFile(p); err == nil {
+			var cached ModelPricingResponse
+			if json.Unmarshal(raw, &cached) == nil && cached.Data != nil && len(cached.Data.Items) > 0 {
+				s.mu.Lock()
+				s.cache[cacheKey] = cachedEntry{
+					data:      &cached,
+					expiresAt: time.Now().Add(5 * time.Minute),
+				}
+				s.mu.Unlock()
+				return &cached, nil
+			}
+		}
+	}
+
+	return s.fallbackModelPricing(), nil
+}
+
+func (s *Service) fallbackModelPricing() *ModelPricingResponse {
+	lb := s.fallbackLeaderboard("overall", 50, "en")
+	var items []ModelPricingItem
+	if lb != nil && lb.Data != nil {
+		for _, m := range lb.Data.Items {
+			items = append(items, ModelPricingItem{
+				Slug:          m.Slug,
+				Name:          m.Name,
+				Vendor:        m.Vendor,
+				APIName:       m.APIName,
+				Price:         m.Price,
+				ContextWindow: m.ContextWindow,
+				Reasoning:     m.Reasoning,
+				IsFree:        m.IsFree,
+			})
+		}
+	}
+	return &ModelPricingResponse{
+		Code:    200,
+		Message: "ok (cached offline fallback)",
+		Data: &ModelPricingData{
+			UpdatedAt: "2026-08-27",
+			Total:     len(items),
+			Items:     items,
 		},
 	}
 }

@@ -1,4 +1,4 @@
-package io.aihop.gopanel
+package ai.hoxi.app
 
 import io.flutter.embedding.android.FlutterActivity
 

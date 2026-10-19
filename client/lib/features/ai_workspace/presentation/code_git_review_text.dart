@@ -60,7 +60,7 @@ abstract final class CodeGitReviewText {
           'Only managed isolated workspaces can be saved from mobile',
       'saveTitle': 'Save all current changes?',
       'saveHint':
-          'GoPanel checks file safety and saves every current workspace change in a Git commit.',
+          'Hoxi checks file safety and saves every current workspace change in a Git commit.',
       'message': 'Commit message',
       'messageHint': 'Leave blank to use the default message',
       'cancel': 'Cancel',

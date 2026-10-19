@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:gopanel/features/task_center/data/task_attention_repository.dart';
-import 'package:gopanel/features/task_center/models/task_attention.dart';
+import 'package:hoxi/features/task_center/data/task_attention_repository.dart';
+import 'package:hoxi/features/task_center/models/task_attention.dart';
 
 void main() {
   test('task attention uses the registered aggregate route', () {

@@ -420,7 +420,7 @@ class CodeTerminalClient extends ChangeNotifier {
 
   void _writeSystem(String message, {bool error = false}) {
     final color = error ? '31' : '33';
-    terminal.write('\r\n\x1b[${color}m[GoPanel] $message\x1b[0m\r\n');
+    terminal.write('\r\n\x1b[${color}m[Hoxi] $message\x1b[0m\r\n');
   }
 
   void _notify() {

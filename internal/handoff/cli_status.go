@@ -15,7 +15,7 @@ func (g *Service) httpBridgeBaseURL() string {
 	if strings.HasPrefix(ws, "wss://") {
 		return "https://" + strings.TrimPrefix(ws, "wss://")
 	}
-	return "http://127.0.0.1:5088"
+	return "http://127.0.0.1:5410"
 }
 
 func (g *Service) syncLocalCLIBridgeURLs() {
@@ -87,9 +87,10 @@ func (g *Service) handleLocalCLIStatus(w http.ResponseWriter, r *http.Request) {
 		func() LocalCLIStatusItem { return detectClaudeCLIStatus(g, hoxiMap) },
 		func() LocalCLIStatusItem { return detectCodexCLIStatus(g, hoxiMap) },
 		func() LocalCLIStatusItem { return detectGeminiCLIStatus(g, hoxiMap) },
-		func() LocalCLIStatusItem { return detectCodeBuddyCLIStatus() },
+		func() LocalCLIStatusItem { return detectCodeBuddyCLIStatus(hoxiMap) },
 		func() LocalCLIStatusItem { return detectTraeCLIStatus() },
-		func() LocalCLIStatusItem { return detectQoderCLIStatus() },
+		func() LocalCLIStatusItem { return detectQoderCLIStatus(hoxiMap) },
+		func() LocalCLIStatusItem { return detectOpenCodeCLIStatus() },
 	}
 	tools := make([]LocalCLIStatusItem, len(detections))
 	var scans sync.WaitGroup
@@ -124,7 +125,7 @@ func (g *Service) handleLocalCLIImport(w http.ResponseWriter, r *http.Request) {
 		resp = g.importCodexCLIProvider()
 	case ExternalToolGemini:
 		resp = g.importGeminiCLIProvider()
-	case ExternalToolCodeBuddy, ExternalToolTrae, ExternalToolQoder:
+	case ExternalToolCodeBuddy, ExternalToolTrae, ExternalToolQoder, ExternalToolOpenCode:
 		resp = LocalCLIImportResponse{
 			OK:     false,
 			ToolID: string(req.ToolID),

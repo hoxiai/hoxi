@@ -7,10 +7,21 @@ type RuntimeType string
 const (
 	RuntimeAntigravity RuntimeType = "antigravity"
 	RuntimeClaudeCode  RuntimeType = "claude-code"
+	RuntimeCodeBuddy   RuntimeType = "codebuddy"
+	RuntimeQoder       RuntimeType = "qoder"
 )
 
 func IsValidRuntime(rt string) bool {
-	return rt == string(RuntimeAntigravity) || rt == string(RuntimeClaudeCode)
+	return rt == string(RuntimeAntigravity) ||
+		rt == string(RuntimeClaudeCode) ||
+		rt == string(RuntimeCodeBuddy) ||
+		rt == string(RuntimeQoder)
+}
+
+func IsClaudeProtocolRuntime(rt string) bool {
+	return rt == string(RuntimeClaudeCode) ||
+		rt == string(RuntimeCodeBuddy) ||
+		rt == string(RuntimeQoder)
 }
 
 type SessionTime struct {
@@ -154,11 +165,18 @@ type SSEEvent struct {
 }
 
 type RunnerModelItem struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	ProviderID string `json:"providerID"`
-	Runtime    string `json:"runtime"`
-	Reasoning  bool   `json:"reasoning,omitempty"`
+	ID           string  `json:"id"`
+	Name         string  `json:"name"`
+	ProviderID   string  `json:"providerID"`
+	Runtime      string  `json:"runtime"`
+	Reasoning    bool    `json:"reasoning,omitempty"`
+	Image        bool    `json:"image,omitempty"`
+	Free         bool    `json:"free,omitempty"`
+	Multiplier   string  `json:"multiplier,omitempty"`
+	ContextLimit int     `json:"contextLimit,omitempty"`
+	OutputLimit  int     `json:"outputLimit,omitempty"`
+	InputCost    float64 `json:"inputCost,omitempty"`
+	OutputCost   float64 `json:"outputCost,omitempty"`
 }
 
 type SessionRecord struct {

@@ -16,6 +16,7 @@ export function handoffSourceBadgeClass(source: ExternalToolID): string {
   if (source === "codebuddy") return "bg-cyan-500/15 text-cyan-400 border-cyan-500/30";
   if (source === "trae") return "bg-rose-500/15 text-rose-400 border-rose-500/30";
   if (source === "qoder") return "bg-indigo-500/15 text-indigo-400 border-indigo-500/30";
+  if (source === "opencode-cli") return "bg-teal-500/15 text-teal-400 border-teal-500/30";
   return "bg-emerald-500/15 text-emerald-400 border-emerald-500/30";
 }
 

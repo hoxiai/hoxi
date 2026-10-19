@@ -239,6 +239,7 @@ export const models: ModelsI18n = {
   removeFavorite: "取消收藏",
   detailInputPrice: "输入价格",
   detailOutputPrice: "输出价格",
+  detailCreditMultiplier: "积分消耗倍率",
   detailStatus: "运行状态",
   sourceBuiltInFree: "OpenCode 内置免费",
   commitModelTitle: "Git 提交信息生成模型",

@@ -81,6 +81,8 @@ func (s *Service) CloseAll() {
 func (s *Service) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/hoxi/runner/antigravity/models", s.handleAntigravityModels)
 	mux.HandleFunc("/api/hoxi/runner/claude-code/models", s.handleClaudeModels)
+	mux.HandleFunc("/api/hoxi/runner/codebuddy/models", s.handleCodeBuddyModels)
+	mux.HandleFunc("/api/hoxi/runner/qoder/models", s.handleQoderModels)
 	mux.HandleFunc("/api/hoxi/runner/antigravity/hook", s.handleAgyHookInstall)
 	mux.HandleFunc(hookPreToolPath, s.handleHookPreTool)
 	mux.HandleFunc(claudeHookPreToolPath, s.handleClaudeHookPreTool)
@@ -188,6 +190,48 @@ func (s *Service) handleClaudeModels(w http.ResponseWriter, r *http.Request) {
 	}
 	bin := ResolveClaudeBinary()
 	models := DiscoverClaudeModels()
+	defaultModel := ""
+	if len(models) > 0 {
+		defaultModel = models[0].ID
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"installed":  bin != "",
+		"available":  bin != "",
+		"binaryPath": bin,
+		"default":    defaultModel,
+		"models":     models,
+	})
+}
+
+func (s *Service) handleCodeBuddyModels(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONError(w, http.StatusMethodNotAllowed, "GET required")
+		return
+	}
+	forceRefresh := r.URL.Query().Get("refresh") == "1" || r.URL.Query().Get("refresh") == "true"
+	bin := ResolveCodeBuddyBinary()
+	models := DiscoverCodeBuddyModelsWithRefresh(forceRefresh)
+	defaultModel := ""
+	if len(models) > 0 {
+		defaultModel = models[0].ID
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"installed":  bin != "",
+		"available":  bin != "",
+		"binaryPath": bin,
+		"default":    defaultModel,
+		"models":     models,
+	})
+}
+
+func (s *Service) handleQoderModels(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONError(w, http.StatusMethodNotAllowed, "GET required")
+		return
+	}
+	forceRefresh := r.URL.Query().Get("refresh") == "1" || r.URL.Query().Get("refresh") == "true"
+	bin := ResolveQoderBinary()
+	models := DiscoverQoderModelsWithRefresh(forceRefresh)
 	defaultModel := ""
 	if len(models) > 0 {
 		defaultModel = models[0].ID
@@ -408,11 +452,28 @@ func (s *Service) handleSessionPrompt(w http.ResponseWriter, r *http.Request, se
 		}
 	}
 
+	mode := firstNonEmptyStr(body.Agent, rec.Mode, "build")
+	modelID := rec.ModelID
+	if body.Model != nil && strings.TrimSpace(body.Model.ModelID) != "" {
+		modelID = strings.TrimSpace(body.Model.ModelID)
+		if body.Model.ProviderID != "" {
+			rec.ProviderID = body.Model.ProviderID
+		}
+	}
+	effort := strings.TrimSpace(body.Variant)
+
 	binPath := ResolveAgyBinary()
 	missingMsg := "Antigravity CLI (agy) binary not found in ~/.gemini/bin/agy or PATH"
-	if rec.Runtime == string(RuntimeClaudeCode) {
+	switch rec.Runtime {
+	case string(RuntimeClaudeCode):
 		binPath = ResolveClaudeBinary()
 		missingMsg = "Claude Code CLI (claude) binary not found in ~/.local/bin/claude or PATH"
+	case string(RuntimeCodeBuddy):
+		binPath = ResolveCodeBuddyBinary()
+		missingMsg = "CodeBuddy CLI (codebuddy) binary not found in PATH"
+	case string(RuntimeQoder):
+		binPath, _ = ResolveQoderBinaryForModel(modelID)
+		missingMsg = "Qoder CLI (qodercli / qoderclicn) binary not found in PATH"
 	}
 	if binPath == "" && rec.Runtime != "opencode" {
 		writeJSONError(w, http.StatusBadRequest, missingMsg)
@@ -428,16 +489,6 @@ func (s *Service) handleSessionPrompt(w http.ResponseWriter, r *http.Request, se
 	s.seqSeed++
 	seq := s.seqSeed
 	s.mu.Unlock()
-
-	mode := firstNonEmptyStr(body.Agent, rec.Mode, "build")
-	modelID := rec.ModelID
-	if body.Model != nil && strings.TrimSpace(body.Model.ModelID) != "" {
-		modelID = strings.TrimSpace(body.Model.ModelID)
-		if body.Model.ProviderID != "" {
-			rec.ProviderID = body.Model.ProviderID
-		}
-	}
-	effort := strings.TrimSpace(body.Variant)
 
 	now := time.Now().UnixMilli()
 	userMsgID := fmt.Sprintf("msg_u_%d_%d", now, seq)

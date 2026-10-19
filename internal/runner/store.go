@@ -64,6 +64,10 @@ func GenerateRunnerSessionID(rt string) string {
 	switch rt {
 	case string(RuntimeClaudeCode):
 		prefix = "ses_cld"
+	case string(RuntimeCodeBuddy):
+		prefix = "ses_cbd"
+	case string(RuntimeQoder):
+		prefix = "ses_qdr"
 	case "opencode":
 		prefix = "ses_hoxi"
 	}
@@ -74,7 +78,11 @@ func GenerateRunnerSessionID(rt string) string {
 
 func IsRunnerSessionID(sessionID string) bool {
 	s := strings.TrimSpace(sessionID)
-	return strings.HasPrefix(s, "ses_agy_") || strings.HasPrefix(s, "ses_cld_") || strings.HasPrefix(s, "ses_hoxi_")
+	return strings.HasPrefix(s, "ses_agy_") ||
+		strings.HasPrefix(s, "ses_cld_") ||
+		strings.HasPrefix(s, "ses_cbd_") ||
+		strings.HasPrefix(s, "ses_qdr_") ||
+		strings.HasPrefix(s, "ses_hoxi_")
 }
 
 func (s *Store) ensureTurnsLocked(ss *storedSession) {

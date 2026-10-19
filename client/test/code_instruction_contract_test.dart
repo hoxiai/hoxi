@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:gopanel/features/ai_workspace/data/ai_workspace_repository.dart';
+import 'package:hoxi/features/ai_workspace/data/ai_workspace_repository.dart';
 
 void main() {
   test('builds the supported mobile Code instruction contract', () {

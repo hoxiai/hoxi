@@ -3,12 +3,22 @@ import { type Accessor, createEffect, createSignal, onCleanup, type Setter } fro
 import { PROMPT_HISTORY_KEY, PROMPT_HISTORY_CLEARED_EVENT } from "../../store/privacy";
 import type { PromptAttachment } from "../../services/api";
 import {
+  applyAutocompleteToken,
   createComposerAutocomplete,
   expandContextMentions,
+  findAutocompleteToken,
   type AutocompleteItem,
+  type AutocompleteToken,
 } from "./composer-autocomplete";
 
-export { createComposerAutocomplete, expandContextMentions, type AutocompleteItem };
+export {
+  applyAutocompleteToken,
+  createComposerAutocomplete,
+  expandContextMentions,
+  findAutocompleteToken,
+  type AutocompleteItem,
+  type AutocompleteToken,
+};
 
 const ACCEPTED_IMAGE_MIMES = new Set([
   "image/png",

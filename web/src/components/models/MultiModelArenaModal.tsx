@@ -20,6 +20,7 @@ interface FlatModelOption {
   modelName: string;
   key: string;
   free: boolean;
+  multiplier?: string;
 }
 
 /**
@@ -48,6 +49,7 @@ export default function MultiModelArenaModal() {
           modelName: mInfo.name || mId,
           key: `${p.id}/${mId}`,
           free,
+          multiplier: mInfo?.multiplier,
         });
       }
     }
@@ -205,6 +207,11 @@ export default function MultiModelArenaModal() {
                               <Show when={m.free}>
                                 <span class="shrink-0 rounded bg-[var(--ok-surface)] px-1 py-[1px] text-[9px] font-semibold text-[var(--ok-text)]">
                                   {t("models.freeModel")}
+                                </span>
+                              </Show>
+                              <Show when={m.multiplier}>
+                                <span class="shrink-0 rounded bg-[var(--bg-inset)] px-1 py-[1px] font-mono text-[9px] font-semibold text-[var(--text-secondary)]">
+                                  {m.multiplier}
                                 </span>
                               </Show>
                             </div>

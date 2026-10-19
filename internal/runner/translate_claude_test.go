@@ -67,3 +67,32 @@ func TestClaudeReasoningSnapshotCompletesStreamedPart(t *testing.T) {
 		t.Fatalf("reasoning snapshot has stale text or timing: %+v", part)
 	}
 }
+
+func TestClaudeThinkingPlusTextDoesNotDuplicateReplyOnSplitAssistantSnapshots(t *testing.T) {
+	tr := NewTurnTranslator("ses_cld_test", string(RuntimeCodeBuddy), "msg_turn", "msg_user", "codebuddy", "hy3", "build", "")
+	tr.FeedLine(`{"type":"stream_event","event":{"type":"message_start","message":{"id":"01a1533e"}}}`)
+	tr.FeedLine(`{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Thinking first"}}}`)
+
+	textEvents := tr.FeedLine(`{"type":"stream_event","event":{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"你好！我在当前 Hoxi 工作树里。"}}}`)
+	reasonID := tr.currentClaudeReasonPartID()
+	if tr.partsByID[reasonID] == nil || tr.partsByID[reasonID].Time == nil || tr.partsByID[reasonID].Time.End == 0 {
+		t.Fatalf("expected reasoning part to be closed immediately when text_delta starts, got %+v (events=%+v)", tr.partsByID[reasonID], textEvents)
+	}
+
+	tr.FeedLine(`{"type":"assistant","message":{"id":"01a1533e","content":[{"type":"thinking","thinking":"Thinking first"}]}}`)
+	tr.FeedLine(`{"type":"assistant","message":{"id":"01a1533e","content":[{"type":"text","text":"你好！我在当前 Hoxi 工作树里。"}]}}`)
+	tr.FeedLine(`{"type":"result","result":"你好！我在当前 Hoxi 工作树里。","is_error":false}`)
+
+	var textParts, reasonParts int
+	for _, id := range tr.partOrder {
+		switch tr.partsByID[id].Type {
+		case "text":
+			textParts++
+		case "reasoning":
+			reasonParts++
+		}
+	}
+	if reasonParts != 1 || textParts != 1 {
+		t.Fatalf("expected 1 reasoning part and 1 text part, got reason=%d text=%d parts=%+v", reasonParts, textParts, tr.partsByID)
+	}
+}

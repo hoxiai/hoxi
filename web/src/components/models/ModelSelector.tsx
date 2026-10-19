@@ -22,6 +22,9 @@ import { ProviderIcon } from "../icons";
 import { t } from "../../i18n";
 import {
   extractFlattenedModels,
+  formatPricePerMillion,
+  formatTokenLimit,
+  getMultiplierBadgeClass,
   ModelSelectorRail,
   rankModelSearch,
   type FlattenedModel,
@@ -234,6 +237,16 @@ export default function ModelSelector() {
             {t("models.freeModel")}
           </span>
         </Show>
+        <Show when={activeModelInfo()?.multiplier && !activeModelInfo()?.free}>
+          <span
+            class={`shrink-0 rounded px-1.5 py-[1px] font-mono text-[10px] font-semibold ${getMultiplierBadgeClass(
+              activeModelInfo()?.multiplier,
+              activeModelInfo()?.free
+            )}`}
+          >
+            {activeModelInfo()?.multiplier}
+          </span>
+        </Show>
         <Show when={workspace.reasoningEffort}>
           <span class="shrink-0 rounded bg-[var(--accent-surface)] px-1 py-[1px] text-[10.5px] uppercase font-mono text-[var(--accent-primary)]">
             {workspace.reasoningEffort}
@@ -308,6 +321,9 @@ export default function ModelSelector() {
                         workspace.selectedModel?.providerID === item.providerID &&
                         workspace.selectedModel?.modelID === item.modelID;
                       const fav = () => isFavoriteModel(item.providerID, item.modelID);
+                      const ctxText = () => formatTokenLimit(item.contextLimit);
+                      const inPrice = () => formatPricePerMillion(item.inputCost, item.priceCurrency);
+                      const outPrice = () => formatPricePerMillion(item.outputCost, item.priceCurrency);
 
                       return (
                         <div
@@ -342,8 +358,36 @@ export default function ModelSelector() {
                                   {t("models.freeModel")}
                                 </span>
                               </Show>
+                              <Show when={item.multiplier}>
+                                <span
+                                  class={`shrink-0 inline-flex items-center rounded px-1.5 py-[1px] font-mono text-[9.5px] font-semibold ${getMultiplierBadgeClass(
+                                    item.multiplier,
+                                    item.free
+                                  )}`}
+                                >
+                                  {item.multiplier}
+                                </span>
+                              </Show>
                             </span>
-                            <span class="block truncate text-[10.5px] text-[var(--text-muted)]">{item.providerName}</span>
+                            <span class="block truncate text-[10.5px] text-[var(--text-muted)]">
+                              {item.providerName}
+                              <Show when={ctxText()}>
+                                <span class="font-mono"> · {ctxText()}</span>
+                              </Show>
+                              <Show
+                                when={!item.free && (inPrice() || outPrice())}
+                                fallback={
+                                  <Show when={item.free}>
+                                    <span class="font-mono text-[var(--ok-text)]"> · $0</span>
+                                  </Show>
+                                }
+                              >
+                                <span class="font-mono">
+                                  {" "}
+                                  · {inPrice() || "-"} / {outPrice() || "-"}
+                                </span>
+                              </Show>
+                            </span>
                           </button>
 
                           <div class="flex items-center gap-1 shrink-0">

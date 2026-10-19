@@ -187,3 +187,14 @@
 @media (prefers-reduced-motion: reduce) {
   .task-activity-actions { transition: none; }
 }
+
+::highlight(transcript-search-match) {
+  background-color: rgba(251, 191, 36, 0.28);
+  color: inherit;
+}
+
+::highlight(transcript-search-active) {
+  background-color: rgba(251, 191, 36, 0.62);
+  color: var(--text-primary);
+}
+

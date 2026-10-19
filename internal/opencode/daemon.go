@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -19,6 +20,65 @@ var (
 	cachedOpenCodeVerPath string
 	cachedOpenCodeVerStr  string
 )
+
+// ResolveHoxiDBPath returns the path to Hoxi's dedicated SQLite database (~/.hoxi/hoxi.db).
+func ResolveHoxiDBPath() string {
+	if custom := strings.TrimSpace(os.Getenv("OPENCODE_DB")); custom != "" {
+		return custom
+	}
+	if custom := strings.TrimSpace(os.Getenv("HOXI_DB_PATH")); custom != "" {
+		p := filepath.Clean(custom)
+		_ = os.MkdirAll(filepath.Dir(p), 0o700)
+		return p
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return ""
+	}
+	hoxiDir := filepath.Join(home, ".hoxi")
+	_ = os.MkdirAll(hoxiDir, 0o700)
+	return filepath.Join(hoxiDir, "hoxi.db")
+}
+
+// EnsureHoxiEngineDataDir prepares Hoxi's private engine data and state directories
+// (~/.hoxi/engine-data and ~/.hoxi/engine-state) so Hoxi's managed opencode daemon
+// keeps runtime state isolated under ~/.hoxi/.
+func EnsureHoxiEngineDataDir() (dataDir, stateDir string) {
+	if custom := strings.TrimSpace(os.Getenv("HOXI_ENGINE_DATA_DIR")); custom != "" {
+		dataDir = filepath.Clean(custom)
+		stateDir = filepath.Join(dataDir, "state")
+	} else if home, err := os.UserHomeDir(); err == nil && home != "" {
+		dataDir = filepath.Join(home, ".hoxi", "engine-data")
+		stateDir = filepath.Join(home, ".hoxi", "engine-state")
+	}
+	if dataDir != "" {
+		ocDataDir := filepath.Join(dataDir, "opencode")
+		_ = os.MkdirAll(ocDataDir, 0o700)
+		seedOpenCodeAuthIfNeeded(ocDataDir)
+	}
+	if stateDir != "" {
+		_ = os.MkdirAll(filepath.Join(stateDir, "opencode"), 0o700)
+	}
+	return dataDir, stateDir
+}
+
+func seedOpenCodeAuthIfNeeded(targetOpenCodeDir string) {
+	dstAuth := filepath.Join(targetOpenCodeDir, "auth.json")
+	if _, err := os.Stat(dstAuth); err == nil {
+		return
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return
+	}
+	srcAuth := filepath.Join(home, ".local", "share", "opencode", "auth.json")
+	if filepath.Clean(srcAuth) == filepath.Clean(dstAuth) {
+		return
+	}
+	if raw, err := os.ReadFile(srcAuth); err == nil && len(raw) > 0 {
+		_ = os.WriteFile(dstAuth, raw, 0o600)
+	}
+}
 
 func ResolveVersion(binPath string) string {
 	if binPath == "" {
@@ -72,6 +132,8 @@ func StartDaemonWithBin(
 	child.Dir = daemonDir
 	child.Stdout = os.Stdout
 	child.Stderr = os.Stderr
+	hoxiDBPath := ResolveHoxiDBPath()
+	dataDir, stateDir := EnsureHoxiEngineDataDir()
 	child.Env = append(os.Environ(),
 		"OPENCODE_SERVER_HOSTNAME=127.0.0.1",
 		"OPENCODE_SERVER_PORT="+strconv.Itoa(port),
@@ -80,6 +142,15 @@ func StartDaemonWithBin(
 		"OPENCODE_DISABLE_CONFIG_DEPENDENCY_INSTALL=1",
 		"NO_PROXY=127.0.0.1,localhost",
 	)
+	if hoxiDBPath != "" && strings.TrimSpace(os.Getenv("OPENCODE_DB")) == "" {
+		child.Env = append(child.Env, "OPENCODE_DB="+hoxiDBPath)
+	}
+	if dataDir != "" && strings.TrimSpace(os.Getenv("XDG_DATA_HOME")) == "" {
+		child.Env = append(child.Env, "XDG_DATA_HOME="+dataDir)
+	}
+	if stateDir != "" && strings.TrimSpace(os.Getenv("XDG_STATE_HOME")) == "" {
+		child.Env = append(child.Env, "XDG_STATE_HOME="+stateDir)
+	}
 	if configPath != "" {
 		child.Env = append(child.Env, "OPENCODE_CONFIG="+configPath)
 	}

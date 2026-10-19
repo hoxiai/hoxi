@@ -67,14 +67,14 @@ func ResolveIdentity(variant, exePath string) AppIdentity {
 			Variant:           "release",
 			Title:             "Hoxi",
 			BundleID:          "ai.hoxi.desktop",
-			DefaultBridgeAddr: "127.0.0.1:5088",
+			DefaultBridgeAddr: "127.0.0.1:5410",
 		}
 	}
 	return AppIdentity{
 		Variant:           "dev",
 		Title:             "Hoxi Dev",
 		BundleID:          "ai.hoxi.desktop.dev",
-		DefaultBridgeAddr: "127.0.0.1:5089",
+		DefaultBridgeAddr: "127.0.0.1:5420",
 	}
 }
 
@@ -180,7 +180,7 @@ func Run(distFS fs.FS) {
 		uiOrigins = append(uiOrigins, "http://wails.localhost")
 	}
 	if identity.Variant == "dev" {
-		uiOrigins = append(uiOrigins, "http://localhost:5173", "http://127.0.0.1:5173")
+		uiOrigins = append(uiOrigins, "http://localhost:5421", "http://127.0.0.1:5421", "http://localhost:5411", "http://127.0.0.1:5411")
 		// Wails exports its actual development listener (including custom ports).
 		if devServer := os.Getenv("devserver"); devServer != "" {
 			uiOrigins = append(uiOrigins, "http://"+devServer)
@@ -188,6 +188,8 @@ func Run(distFS fs.FS) {
 				uiOrigins = append(uiOrigins, "wails://wails.localhost:"+port)
 			}
 		}
+	} else {
+		uiOrigins = append(uiOrigins, "http://localhost:5411", "http://127.0.0.1:5411")
 	}
 	if origin := os.Getenv("HOXI_BROWSER_UI_ORIGIN"); origin != "" {
 		uiOrigins = append(uiOrigins, origin)

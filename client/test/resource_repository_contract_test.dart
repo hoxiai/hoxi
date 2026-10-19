@@ -1,10 +1,10 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:gopanel/features/apps/data/apps_repository.dart';
-import 'package:gopanel/features/container/data/container_repository.dart';
-import 'package:gopanel/features/database/data/database_repository.dart';
-import 'package:gopanel/features/server/data/dashboard_repository.dart';
-import 'package:gopanel/features/website/data/website_repository.dart';
-import 'package:gopanel/features/task_center/data/task_repository.dart';
+import 'package:hoxi/features/apps/data/apps_repository.dart';
+import 'package:hoxi/features/container/data/container_repository.dart';
+import 'package:hoxi/features/database/data/database_repository.dart';
+import 'package:hoxi/features/server/data/dashboard_repository.dart';
+import 'package:hoxi/features/website/data/website_repository.dart';
+import 'package:hoxi/features/task_center/data/task_repository.dart';
 
 void main() {
   test('resource repositories use registered list routes', () {

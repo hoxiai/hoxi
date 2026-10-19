@@ -37,6 +37,21 @@ export {
   rankModelSearch,
 };
 
+export function getMultiplierBadgeClass(multiplier?: string, free?: boolean): string {
+  if (!multiplier) return "bg-[var(--bg-inset)] text-[var(--text-secondary)]";
+  const num = parseFloat(multiplier.replace(/[^\d.]/g, ""));
+  if (free || multiplier === "0x" || num === 0) {
+    return "bg-[var(--ok-surface)] text-[var(--ok-text)]";
+  }
+  if (!Number.isNaN(num) && num <= 0.35) {
+    return "bg-emerald-500/12 text-emerald-500";
+  }
+  if (!Number.isNaN(num) && num > 1.0) {
+    return "bg-amber-500/15 text-amber-500";
+  }
+  return "bg-[var(--bg-inset)] text-[var(--text-secondary)]";
+}
+
 export function ModelSelectorRail(props: {
   rail: string;
   hasQuery: boolean;

@@ -8,6 +8,8 @@ export function isRunnerSessionID(sessionID?: string | null): boolean {
   if (
     sessionID.startsWith("ses_agy_") ||
     sessionID.startsWith("ses_cld_") ||
+    sessionID.startsWith("ses_cbd_") ||
+    sessionID.startsWith("ses_qdr_") ||
     sessionID.startsWith("ses_hoxi_")
   ) {
     return true;
@@ -38,6 +40,8 @@ export function resolveRunnerRuntimeForProvider(
 ): SessionRuntime {
   if (providerID === "antigravity") return "antigravity";
   if (providerID === "claude-code" && !hasConfiguredProvider) return "claude-code";
+  if (providerID === "codebuddy" && !hasConfiguredProvider) return "codebuddy";
+  if (providerID === "qoder" && !hasConfiguredProvider) return "qoder";
   return "opencode";
 }
 
@@ -76,6 +80,13 @@ export interface RunnerModelItem {
   id: string;
   name: string;
   reasoning?: boolean;
+  image?: boolean;
+  free?: boolean;
+  multiplier?: string;
+  contextLimit?: number;
+  outputLimit?: number;
+  inputCost?: number;
+  outputCost?: number;
   default?: boolean;
 }
 
@@ -89,7 +100,7 @@ export interface RunnerModelsResponse {
 
 export const runnerAPI = {
   listModels(
-    runtime: "antigravity" | "claude-code",
+    runtime: "antigravity" | "claude-code" | "codebuddy" | "qoder",
     forceRefresh = false
   ): Promise<RunnerModelsResponse> {
     const qs = forceRefresh ? "?refresh=1" : "";
@@ -171,6 +182,15 @@ export const leaderboardAPI = {
   ): Promise<import("./api-types").ConnectableGatewayItem[]> {
     const json = await requestJSON<import("./api-types").ConnectableGatewaysResponse>(
       `/api/hoxi/gateways/connectable?lang=${encodeURIComponent(lang)}`
+    );
+    return json.data?.items || [];
+  },
+  async getModelPricing(
+    forceRefresh: boolean = false
+  ): Promise<import("./api-types").ModelPricingItem[]> {
+    const q = forceRefresh ? "?refresh=1" : "";
+    const json = await requestJSON<import("./api-types").ModelPricingResponse>(
+      `/api/hoxi/models/pricing${q}`
     );
     return json.data?.items || [];
   },

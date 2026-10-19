@@ -180,6 +180,7 @@ export interface ProviderModelInfo {
       read?: number;
       write?: number;
     };
+    currency?: string;
   };
   limit?: {
     context?: number;
@@ -188,6 +189,7 @@ export interface ProviderModelInfo {
   };
   options?: Record<string, any>;
   variants?: Record<string, any>;
+  multiplier?: string;
 }
 
 export interface ProviderInfo {
@@ -358,6 +360,7 @@ export type ExternalToolID =
   | "codebuddy"
   | "trae"
   | "qoder"
+  | "opencode-cli"
   | "codex";
 
 export interface ExternalSessionSummary {
@@ -608,5 +611,37 @@ export interface ConnectableGatewaysResponse {
   data: {
     total: number;
     items: ConnectableGatewayItem[];
+  };
+}
+
+export interface ModelPricingItem {
+  slug: string;
+  name: string;
+  vendor: string;
+  apiName?: string;
+  gatewayModelName?: string;
+  aaSlug?: string;
+  price: {
+    currency: string;
+    input: number;
+    output: number;
+    cacheRead?: number;
+    cacheWrite?: number;
+  };
+  contextWindow: number;
+  maxOutputTokens?: number;
+  modalities?: string[];
+  reasoning?: boolean;
+  isFree?: boolean;
+  updatedAt?: string;
+}
+
+export interface ModelPricingResponse {
+  code: number;
+  message: string;
+  data: {
+    updatedAt: string;
+    total: number;
+    items: ModelPricingItem[];
   };
 }

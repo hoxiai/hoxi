@@ -1,8 +1,103 @@
 // web/src/components/timeline/TranscriptSearchBar.tsx
-import { createDeferred, createEffect, createMemo, createSignal, mapArray, on, onMount, Show } from "solid-js";
+import {
+  createDeferred,
+  createEffect,
+  createMemo,
+  createSignal,
+  mapArray,
+  on,
+  onCleanup,
+  onMount,
+  Show,
+} from "solid-js";
 import { ChevronDown, ChevronUp, Search, SlidersHorizontal, X } from "lucide-solid";
 import type { MessageTurn } from "../../store/workspace";
 import { t } from "../../i18n";
+
+const MAX_HIGHLIGHT_RANGES = 300;
+
+function applyTranscriptSearchHighlights(
+  regex: RegExp | null,
+  activeTurnID: string | null,
+  activePartID?: string
+) {
+  const cssObj = (
+    globalThis as { CSS?: { highlights?: Map<string, unknown> } }
+  ).CSS;
+  const HighlightCtor = (
+    globalThis as { Highlight?: new (...ranges: AbstractRange[]) => unknown }
+  ).Highlight;
+  if (!cssObj?.highlights || !HighlightCtor || typeof document === "undefined") {
+    return;
+  }
+
+  if (!regex) {
+    cssObj.highlights.delete("transcript-search-match");
+    cssObj.highlights.delete("transcript-search-active");
+    return;
+  }
+
+  const root = document.querySelector(".timeline-result-scroll");
+  if (!root) return;
+
+  const esc = (s: string) =>
+    typeof CSS !== "undefined" && typeof CSS.escape === "function"
+      ? CSS.escape(s)
+      : s.replace(/["\\]/g, "\\$&");
+
+  const activePartEl = activePartID
+    ? root.querySelector(`[data-part-id="${esc(activePartID)}"]`)
+    : null;
+  const activeTurnEl = activeTurnID
+    ? root.querySelector(`[data-turn-id="${esc(activeTurnID)}"]`)
+    : null;
+
+  const allRanges: Range[] = [];
+  const activeRanges: Range[] = [];
+
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let node = walker.nextNode() as Text | null;
+  while (node && allRanges.length + activeRanges.length < MAX_HIGHLIGHT_RANGES) {
+    const val = node.nodeValue;
+    if (val && val.trim().length > 0) {
+      regex.lastIndex = 0;
+      let m: RegExpExecArray | null;
+      while ((m = regex.exec(val)) !== null) {
+        if (m[0].length === 0) {
+          regex.lastIndex++;
+          continue;
+        }
+        const range = document.createRange();
+        range.setStart(node, m.index);
+        range.setEnd(node, m.index + m[0].length);
+        const isActive =
+          (activePartEl && activePartEl.contains(node)) ||
+          (activeTurnEl && activeTurnEl.contains(node));
+        if (isActive) {
+          activeRanges.push(range);
+        } else {
+          allRanges.push(range);
+        }
+        if (allRanges.length + activeRanges.length >= MAX_HIGHLIGHT_RANGES) {
+          break;
+        }
+      }
+    }
+    node = walker.nextNode() as Text | null;
+  }
+
+  if (allRanges.length > 0) {
+    cssObj.highlights.set("transcript-search-match", new HighlightCtor(...allRanges));
+  } else {
+    cssObj.highlights.delete("transcript-search-match");
+  }
+
+  if (activeRanges.length > 0) {
+    cssObj.highlights.set("transcript-search-active", new HighlightCtor(...activeRanges));
+  } else {
+    cssObj.highlights.delete("transcript-search-active");
+  }
+}
 
 function turnSearchableText(turn: MessageTurn): string {
   const chunks: string[] = [];
@@ -64,17 +159,23 @@ export default function TranscriptSearchBar(props: {
       queueMicrotask(() => inputRef?.focus());
     } else {
       props.onActiveTurnChange(null);
+      applyTranscriptSearchHighlights(null, null);
     }
+  });
+
+  onCleanup(() => {
+    applyTranscriptSearchHighlights(null, null);
   });
 
   const searchResult = createMemo<{
     matchedTurnIDs: string[];
     invalidRegex: boolean;
     partIDs?: Record<string, string | undefined>;
+    regex: RegExp | null;
   }>(() => {
-    if (!props.open) return { matchedTurnIDs: [], invalidRegex: false };
+    if (!props.open) return { matchedTurnIDs: [], invalidRegex: false, regex: null };
     const q = deferredQuery().trim();
-    if (!q) return { matchedTurnIDs: [], invalidRegex: false };
+    if (!q) return { matchedTurnIDs: [], invalidRegex: false, regex: null };
 
     let pattern = useRegex() ? q : escapeRegExp(q);
     if (wholeWord()) {
@@ -86,7 +187,7 @@ export default function TranscriptSearchBar(props: {
     try {
       regex = new RegExp(pattern, flags);
     } catch {
-      return { matchedTurnIDs: [], invalidRegex: true };
+      return { matchedTurnIDs: [], invalidRegex: true, regex: null };
     }
 
     const matched: string[] = [];
@@ -99,7 +200,7 @@ export default function TranscriptSearchBar(props: {
         partIDs[turn.id()] = firstMatchingPartID(turn.turn, regex);
       }
     }
-    return { matchedTurnIDs: matched, invalidRegex: false, partIDs };
+    return { matchedTurnIDs: matched, invalidRegex: false, partIDs, regex };
   });
 
   const activeTurnID = createMemo(() => {
@@ -123,6 +224,20 @@ export default function TranscriptSearchBar(props: {
     return id ? searchResult().partIDs?.[id] : undefined;
   });
   createEffect(on([activeTurnID, activePartID], ([id, partID]) => props.onActiveTurnChange(id, partID)));
+
+  createEffect(() => {
+    const rx = searchResult().regex;
+    const tID = activeTurnID();
+    const pID = activePartID();
+    if (!props.open || !rx) {
+      applyTranscriptSearchHighlights(null, null);
+      return;
+    }
+    const frame = requestAnimationFrame(() => {
+      applyTranscriptSearchHighlights(rx, tID, pID);
+    });
+    onCleanup(() => cancelAnimationFrame(frame));
+  });
 
   const goNext = () => {
     const ids = searchResult().matchedTurnIDs;

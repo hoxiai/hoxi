@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:gopanel/features/ai_workspace/models/ai_dev_session.dart';
-import 'package:gopanel/features/ai_workspace/models/code_delivery_job.dart';
-import 'package:gopanel/features/ai_workspace/presentation/widgets/code_delivery_card.dart';
+import 'package:hoxi/features/ai_workspace/models/ai_dev_session.dart';
+import 'package:hoxi/features/ai_workspace/models/code_delivery_job.dart';
+import 'package:hoxi/features/ai_workspace/presentation/widgets/code_delivery_card.dart';
 
 void main() {
   testWidgets('shows pending commits as a continued delivery', (tester) async {

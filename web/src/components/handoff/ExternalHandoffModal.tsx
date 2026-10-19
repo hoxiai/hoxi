@@ -111,16 +111,22 @@ export default function ExternalHandoffModal() {
       if (useOriginal && cli && cli.authenticated && !cli.connected) {
         await hoxiAPI.importLocalCLI(item.source).catch(() => null);
       }
+      const origModel = currentOriginalModel();
+      const slashIdx = item.source === "opencode-cli" ? origModel.indexOf("/") : -1;
       const preferredProviderID = useOriginal
-        ? cli?.providerID ||
-          (item.source === "codex-cli"
-            ? "openai"
-            : item.source === "gemini-antigravity"
-            ? "antigravity"
-            : item.source)
+        ? slashIdx > 0
+          ? origModel.slice(0, slashIdx)
+          : cli?.providerID ||
+            (item.source === "codex-cli"
+              ? "openai"
+              : item.source === "gemini-antigravity"
+              ? "antigravity"
+              : item.source)
         : workspace.selectedModel?.providerID;
       const preferredModelID = useOriginal
-        ? currentOriginalModel()
+        ? slashIdx > 0
+          ? origModel.slice(slashIdx + 1)
+          : origModel
         : workspace.selectedModel?.modelID;
 
       const res = await hoxiAPI.importExternalSession({
@@ -200,6 +206,7 @@ export default function ExternalHandoffModal() {
                 {(
                   [
                     "all",
+                    "opencode-cli",
                     "grok-cli",
                     "claude-code",
                     "codex-cli",
@@ -220,6 +227,8 @@ export default function ExternalHandoffModal() {
                   >
                     {src === "all"
                       ? t("leftNav.handoffSourceAll")
+                      : src === "opencode-cli"
+                      ? "OpenCode"
                       : src === "grok-cli"
                       ? "Grok"
                       : src === "claude-code"

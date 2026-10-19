@@ -257,5 +257,7 @@ export const timeline = {
     "Local CLI sessions follow the default directory mode; tool permissions are controlled by each CLI",
   runtimeAntigravityLocal: "Antigravity (Local)",
   runtimeClaudeCodeLocal: "Claude Code (Local)",
+  runtimeCodeBuddyLocal: "CodeBuddy (Local)",
+  runtimeQoderLocal: "Qoder (Local)",
   runtimeOpenCode: "OpenCode",
 };

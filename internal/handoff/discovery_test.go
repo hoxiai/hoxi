@@ -34,7 +34,7 @@ func TestDiscoveryPreservesStatsOrderAndFreshness(t *testing.T) {
 	var all, filtered HandoffSessionsResponse
 	request("/api/hoxi/handoff/sessions", &all)
 	request("/api/hoxi/handoff/sessions?source=claude-code", &filtered)
-	if len(all.Sources) != 7 || !reflect.DeepEqual(all.Sources, filtered.Sources) {
+	if len(all.Sources) != 8 || !reflect.DeepEqual(all.Sources, filtered.Sources) {
 		t.Fatal("source filter changed full source stats")
 	}
 	if len(filtered.Sessions) != 1 || filtered.Sessions[0].Source != ExternalToolClaude {
@@ -42,7 +42,7 @@ func TestDiscoveryPreservesStatsOrderAndFreshness(t *testing.T) {
 	}
 	var status LocalCLIStatusResponse
 	request("/api/hoxi/local-cli/status", &status)
-	if len(status.Tools) != 7 {
+	if len(status.Tools) != 8 {
 		t.Fatalf("unexpected tools: %+v", status.Tools)
 	}
 	for i, id := range []ExternalToolID{
@@ -53,6 +53,7 @@ func TestDiscoveryPreservesStatsOrderAndFreshness(t *testing.T) {
 		ExternalToolCodeBuddy,
 		ExternalToolTrae,
 		ExternalToolQoder,
+		ExternalToolOpenCode,
 	} {
 		if status.Tools[i].ID != id || status.Tools[i].SessionCount != all.Sources[id].SessionCount {
 			t.Fatalf("tool order or stats changed: %+v", status.Tools[i])

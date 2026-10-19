@@ -307,7 +307,7 @@ export default function TaskProgressCard() {
 
         {/* Upward Floating Popover */}
         <Show when={expanded()}>
-          <div class="absolute left-0 bottom-[calc(100%+6px)] z-40 w-[min(560px,calc(100vw-32px))] rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/98 backdrop-blur-xl p-3 shadow-2xl animate-in fade-in zoom-in-95 duration-150">
+          <div class="absolute left-1/2 -translate-x-1/2 bottom-[calc(100%+6px)] z-40 w-[min(560px,calc(100vw-32px))] rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/98 backdrop-blur-xl p-3 shadow-2xl animate-in fade-in zoom-in-95 duration-150">
             <div class="flex items-center justify-between gap-2 text-[11.5px]">
               <div class="flex items-center gap-2 font-medium text-[var(--text-primary)]">
                 <ListTodo size={13} class="text-[var(--accent-primary)]" />

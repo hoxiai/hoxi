@@ -13,11 +13,11 @@ void main() async {
   await StorageService.init();
 
   // 使用 ProviderScope 包裹整个应用以开启 Riverpod
-  runApp(const ProviderScope(child: GoPanelApp()));
+  runApp(const ProviderScope(child: HoxiApp()));
 }
 
-class GoPanelApp extends StatelessWidget {
-  const GoPanelApp({super.key});
+class HoxiApp extends StatelessWidget {
+  const HoxiApp({super.key});
 
   @override
   Widget build(BuildContext context) {

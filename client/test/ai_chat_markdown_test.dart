@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:gopanel/features/ai_workspace/models/chat_message.dart';
-import 'package:gopanel/features/ai_workspace/presentation/widgets/ai_chat_markdown.dart';
-import 'package:gopanel/features/ai_workspace/presentation/widgets/ai_chat_message_item.dart';
+import 'package:hoxi/features/ai_workspace/models/chat_message.dart';
+import 'package:hoxi/features/ai_workspace/presentation/widgets/ai_chat_markdown.dart';
+import 'package:hoxi/features/ai_workspace/presentation/widgets/ai_chat_message_item.dart';
 
 Future<void> _pumpMessage(WidgetTester tester, ChatMessage message) {
   return tester.pumpWidget(

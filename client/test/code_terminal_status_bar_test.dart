@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:gopanel/features/ai_workspace/presentation/widgets/code_terminal_controls.dart';
+import 'package:hoxi/features/ai_workspace/presentation/widgets/code_terminal_controls.dart';
 
 void main() {
   Widget subject({

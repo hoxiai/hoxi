@@ -39,7 +39,6 @@ export default function WorkspaceModal() {
   const [manualPath, setManualPath] = createSignal("");
   const [saving, setSaving] = createSignal(false);
   const [errorMsg, setErrorMsg] = createSignal<string | null>(null);
-  let colorInputRef: HTMLInputElement | undefined;
   let backdropPointerDown = false;
 
   createEffect(
@@ -140,11 +139,16 @@ export default function WorkspaceModal() {
     setErrorMsg(null);
     try {
       const prof = targetProfile();
+      const modalMode = mode();
+      const selectedPrimary = folders().find((folder) => folder.isPrimary);
+      const orderedFolders = selectedPrimary
+        ? [selectedPrimary, ...folders().filter((folder) => folder !== selectedPrimary)]
+        : folders();
       const saved = await saveWorkspaceProfile(
         {
           name: name().trim() || undefined,
           color: normalizeWorkspaceIdentityColor(color()),
-          folders: folders(),
+          folders: orderedFolders,
         },
         mode() === "edit" ? prof?.id : null
       );
@@ -152,7 +156,7 @@ export default function WorkspaceModal() {
       closeWorkspaceModal();
       if (
         primary &&
-        (mode() === "create" ||
+        (modalMode === "create" ||
           normalizeFolderPath(workspace.rootDir) !== normalizeFolderPath(primary))
       ) {
         await switchWorkspace(primary);
@@ -283,30 +287,32 @@ export default function WorkspaceModal() {
                     }}
                   </For>
 
-                  <button
-                    type="button"
-                    onClick={() => colorInputRef?.click()}
-                    class={`w-6 h-6 rounded-full border border-dashed border-zinc-400 dark:border-zinc-600 flex items-center justify-center transition-transform ${
-                      isCustomColor()
-                        ? "ring-2 ring-offset-2 ring-zinc-900 dark:ring-zinc-100 dark:ring-offset-[#16161A] scale-105"
-                        : "hover:scale-105"
-                    }`}
-                    style={
-                      isCustomColor()
-                        ? { "background-color": normalizeWorkspaceIdentityColor(color()) }
-                        : undefined
-                    }
-                    title={t("leftNav.customColor")}
-                  >
-                    <span class="text-[11px] font-bold text-zinc-600 dark:text-zinc-300">+</span>
-                  </button>
-                  <input
-                    ref={colorInputRef}
-                    type="color"
-                    value={normalizeWorkspaceIdentityColor(color())}
-                    onInput={(e) => setColor(e.currentTarget.value)}
-                    class="sr-only"
-                  />
+                  <div class="relative w-6 h-6">
+                    <button
+                      type="button"
+                      tabindex="-1"
+                      class={`absolute inset-0 w-6 h-6 rounded-full border border-dashed border-zinc-400 dark:border-zinc-600 flex items-center justify-center transition-transform pointer-events-none ${
+                        isCustomColor()
+                          ? "ring-2 ring-offset-2 ring-zinc-900 dark:ring-zinc-100 dark:ring-offset-[#16161A] scale-105"
+                          : ""
+                      }`}
+                      style={
+                        isCustomColor()
+                          ? { "background-color": normalizeWorkspaceIdentityColor(color()) }
+                          : undefined
+                      }
+                      title={t("leftNav.customColor")}
+                    >
+                      <span class="text-[11px] font-bold text-zinc-600 dark:text-zinc-300">+</span>
+                    </button>
+                    <input
+                      type="color"
+                      value={normalizeWorkspaceIdentityColor(color())}
+                      onInput={(e) => setColor(e.currentTarget.value)}
+                      class="absolute inset-0 w-6 h-6 cursor-pointer opacity-0"
+                      aria-label={t("leftNav.customColor")}
+                    />
+                  </div>
                 </div>
               </div>
 

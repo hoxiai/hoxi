@@ -277,3 +277,33 @@ func TestWaitForHealthAndStartDaemonWithBin(t *testing.T) {
 func TestReapOrphanedDaemons(t *testing.T) {
 	ReapOrphanedDaemons(nil)
 }
+
+func TestEnsureHoxiEngineDataDir(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("HOXI_ENGINE_DATA_DIR", "")
+	t.Setenv("OPENCODE_DB", "")
+	t.Setenv("HOXI_DB_PATH", "")
+
+	if gotDB := ResolveHoxiDBPath(); gotDB != filepath.Join(home, ".hoxi", "hoxi.db") {
+		t.Fatalf("ResolveHoxiDBPath() = %s, want %s", gotDB, filepath.Join(home, ".hoxi", "hoxi.db"))
+	}
+
+	extOpenCodeDir := filepath.Join(home, ".local", "share", "opencode")
+	if err := os.MkdirAll(extOpenCodeDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	wantAuth := []byte(`{"openai":{"key":"sk-test"}}`)
+	if err := os.WriteFile(filepath.Join(extOpenCodeDir, "auth.json"), wantAuth, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	dataDir, stateDir := EnsureHoxiEngineDataDir()
+	if dataDir != filepath.Join(home, ".hoxi", "engine-data") || stateDir != filepath.Join(home, ".hoxi", "engine-state") {
+		t.Fatalf("unexpected engine dirs: data=%s state=%s", dataDir, stateDir)
+	}
+	seededAuth, err := os.ReadFile(filepath.Join(dataDir, "opencode", "auth.json"))
+	if err != nil || !bytes.Equal(seededAuth, wantAuth) {
+		t.Fatalf("expected seeded auth.json, got %q (err=%v)", string(seededAuth), err)
+	}
+}

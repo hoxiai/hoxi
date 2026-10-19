@@ -9,6 +9,7 @@ import {
   type ProviderInfo,
 } from "../services/api";
 import type { SessionRuntime } from "../services/sse-types";
+import { syncOfficialModelPricing } from "./leaderboard-state";
 import { updateSessionAI } from "./session-ai";
 import {
   EFFORT_KEY,
@@ -108,6 +109,8 @@ export function sessionRuntimeForID(sessionID?: string | null): SessionRuntime {
   if (found?.runtime) return found.runtime;
   if (sessionID.startsWith("ses_agy_")) return "antigravity";
   if (sessionID.startsWith("ses_cld_")) return "claude-code";
+  if (sessionID.startsWith("ses_cbd_")) return "codebuddy";
+  if (sessionID.startsWith("ses_qdr_")) return "qoder";
   return "opencode";
 }
 
@@ -194,7 +197,7 @@ export function parseModelString(val?: string | null): SelectedModel | null {
 export async function loadProviders(forceRefresh = false): Promise<void> {
   try {
     const dir = workspace.rootDir || undefined;
-    const [res, cfg, authMethods, hoxiCfg, agyRunner, claudeRunner] = await Promise.all([
+    const [res, cfg, authMethods, hoxiCfg, agyRunner, claudeRunner, codeBuddyRunner, qoderRunner] = await Promise.all([
       hoxiAPI
         .listProviders(dir)
         .catch(() => ({ all: [], connected: [] as string[], default: {} as Record<string, string> })),
@@ -207,6 +210,9 @@ export async function loadProviders(forceRefresh = false): Promise<void> {
       })),
       runnerAPI.listModels("antigravity", forceRefresh).catch(() => null),
       runnerAPI.listModels("claude-code", forceRefresh).catch(() => null),
+      runnerAPI.listModels("codebuddy", forceRefresh).catch(() => null),
+      runnerAPI.listModels("qoder", forceRefresh).catch(() => null),
+      syncOfficialModelPricing(forceRefresh).catch(() => {}),
     ]);
 
     const hoxiMap = hoxiCfg?.hoxiProviders ?? {};
@@ -278,11 +284,32 @@ export async function loadProviders(forceRefresh = false): Promise<void> {
       const models: Record<string, any> = {};
       for (const m of r.models) {
         if (!m?.id) continue;
+        const isFree = Boolean(m.free);
+        const hasCost = isFree || m.inputCost !== undefined || m.outputCost !== undefined;
         models[m.id] = {
           id: m.id,
           name: m.name || m.id,
           reasoning: Boolean(m.reasoning),
-          capabilities: { reasoning: Boolean(m.reasoning), toolcall: true },
+          free: isFree,
+          multiplier: m.multiplier || undefined,
+          limit:
+            m.contextLimit || m.outputLimit
+              ? {
+                  context: m.contextLimit || undefined,
+                  output: m.outputLimit || undefined,
+                }
+              : undefined,
+          cost: hasCost
+            ? {
+                input: isFree ? 0 : m.inputCost,
+                output: isFree ? 0 : m.outputCost,
+              }
+            : undefined,
+          capabilities: {
+            reasoning: Boolean(m.reasoning),
+            toolcall: true,
+            input: { image: Boolean(m.image) },
+          },
         };
       }
       byId.set(pid, { id: pid, name, source: "runner", models });
@@ -293,6 +320,12 @@ export async function loadProviders(forceRefresh = false): Promise<void> {
     registerRunnerProvider("antigravity", t("timeline.runtimeAntigravityLocal"), agyRunner);
     if (!hoxiMap["claude-code"]) {
       registerRunnerProvider("claude-code", t("timeline.runtimeClaudeCodeLocal"), claudeRunner);
+    }
+    if (!hoxiMap["codebuddy"]) {
+      registerRunnerProvider("codebuddy", t("timeline.runtimeCodeBuddyLocal"), codeBuddyRunner);
+    }
+    if (!hoxiMap["qoder"]) {
+      registerRunnerProvider("qoder", t("timeline.runtimeQoderLocal"), qoderRunner);
     }
 
     const all = Array.from(byId.values());
@@ -467,7 +500,11 @@ export async function updateGlobalModelConfig(patch: Record<string, any>): Promi
 export const refreshProviders = loadProviders;
 
 export async function syncLocalCLIModel(tool: LocalCLIStatusItem) {
-  const isRunner = tool.authMode === "antigravity-runner" || tool.authMode === "claude-runner";
+  const isRunner =
+    tool.authMode === "antigravity-runner" ||
+    tool.authMode === "claude-runner" ||
+    tool.authMode === "codebuddy-runner" ||
+    tool.authMode === "qoder-runner";
   let providerID = tool.providerID;
   if (!isRunner) {
     const result = await hoxiAPI.importLocalCLI(tool.id);

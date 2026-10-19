@@ -89,13 +89,13 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "ai.hoxi.gopanel" "\0"
-            VALUE "FileDescription", "GoPanel" "\0"
+            VALUE "CompanyName", "ai.hoxi.app" "\0"
+            VALUE "FileDescription", "Hoxi" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "GoPanel" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2026 ai.hoxi.gopanel. All rights reserved." "\0"
-            VALUE "OriginalFilename", "GoPanel.exe" "\0"
-            VALUE "ProductName", "GoPanel" "\0"
+            VALUE "InternalName", "Hoxi" "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2026 ai.hoxi.app. All rights reserved." "\0"
+            VALUE "OriginalFilename", "Hoxi.exe" "\0"
+            VALUE "ProductName", "Hoxi" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

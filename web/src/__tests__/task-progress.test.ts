@@ -1,10 +1,12 @@
 // web/src/__tests__/task-progress.test.ts
 import {
   groupAssistantParts,
+  hasLiveTailRenderedOutput,
   hasLiveTailWorkGroup,
   isAttentionToolPart,
   resolveMergedTurnParts,
   resolveTurnNavigationTarget,
+  stabilizeTurnRenderItems,
 } from "../components/timeline/ContextActivityGroupView";
 import {
   collectCycleStepItems,
@@ -177,6 +179,23 @@ describe("task progress todo staleness", () => {
       },
     ];
     assertTrue(!hasLiveTailWorkGroup(completedWithText), "cycle ending with text has no live tail work group");
+    assertTrue(hasLiveTailRenderedOutput(completedWithText), "cycle with streaming/completed text already renders output");
+
+    const emptyWaitingCycle: MessageTurn[] = [
+      {
+        info: { id: "msg_a1", sessionID: sid, role: "assistant", time: { created: 2 } },
+        parts: [textPart("blank", "   ")],
+      },
+    ];
+    assertTrue(!hasLiveTailRenderedOutput(emptyWaitingCycle), "blank placeholder turn still needs waiting indicator");
+
+    const rPart = reasoningPart("r_stream", "Thinking...");
+    const tPart = textPart("t_stream", "Hello");
+    const firstItems = groupAssistantParts([rPart]);
+    const secondItems = stabilizeTurnRenderItems(firstItems, groupAssistantParts([rPart]));
+    assertTrue(firstItems === secondItems, "stabilizeTurnRenderItems reuses outer array when parts match");
+    const thirdItems = stabilizeTurnRenderItems(secondItems, groupAssistantParts([rPart, tPart]));
+    assertTrue(thirdItems[0] === firstItems[0], "stabilizeTurnRenderItems preserves existing activity-group item reference when new single text part appends");
   });
 
   it("matches merged tail rendering across assistant error boundaries", () => {

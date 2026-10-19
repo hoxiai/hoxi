@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:gopanel/features/ai_workspace/models/ai_dev_session.dart';
+import 'package:hoxi/features/ai_workspace/models/ai_dev_session.dart';
 
 CodeExecutor _executor(List<String> capabilities, List<String> policies) {
   return CodeExecutor.fromJson({

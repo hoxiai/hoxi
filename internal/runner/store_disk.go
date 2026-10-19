@@ -148,7 +148,58 @@ func (s *Store) readTurns(id string) ([]MessageTurn, int) {
 			turns, _ = upsertTurnPart(turns, *e.Part)
 		}
 	}
+	for i := range turns {
+		turns[i].Parts = dedupeClaudeStreamParts(turns[i].Parts)
+	}
 	return turns, lines
+}
+
+func claudePartStem(id string) string {
+	idx := strings.LastIndexByte(id, '_')
+	if idx <= 0 || idx == len(id)-1 {
+		return ""
+	}
+	for _, ch := range id[idx+1:] {
+		if ch < '0' || ch > '9' {
+			return ""
+		}
+	}
+	stem := id[:idx+1]
+	if strings.HasSuffix(stem, "_text_") || strings.HasSuffix(stem, "_reason_") {
+		return stem
+	}
+	return ""
+}
+
+func dedupeClaudeStreamParts(parts []MessagePart) []MessagePart {
+	if len(parts) < 2 {
+		return parts
+	}
+	out := make([]MessagePart, 0, len(parts))
+	for _, p := range parts {
+		stem := claudePartStem(p.ID)
+		if stem != "" && p.Text != "" {
+			merged := false
+			for i := range out {
+				if out[i].Type == p.Type && out[i].Text == p.Text && claudePartStem(out[i].ID) == stem {
+					if p.Time != nil && p.Time.End > 0 {
+						start := p.Time.Start
+						if out[i].Time != nil && out[i].Time.Start > 0 {
+							start = out[i].Time.Start
+						}
+						out[i].Time = &PartTime{Start: start, End: p.Time.End}
+					}
+					merged = true
+					break
+				}
+			}
+			if merged {
+				continue
+			}
+		}
+		out = append(out, p)
+	}
+	return out
 }
 
 func (s *Store) loadAllMeta() {

@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:gopanel/core/storage/storage_service.dart';
-import 'package:gopanel/shared/models/server_connection.dart';
+import 'package:hoxi/core/storage/storage_service.dart';
+import 'package:hoxi/shared/models/server_connection.dart';
 
 void main() {
   test('server list serialization excludes credentials', () {

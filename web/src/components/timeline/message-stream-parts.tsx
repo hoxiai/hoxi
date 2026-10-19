@@ -5,11 +5,13 @@ import ToolCard from "./ToolCard";
 import MarkdownView from "./MarkdownView";
 import ContextActivityGroupComponent, {
   groupAssistantParts,
+  hasLiveTailRenderedOutput,
   hasLiveTailWorkGroup,
   isContextToolPart as isContextTool,
   isExplorationPart,
   isTodoToolPart as isTodoTool,
   resolveMergedTurnParts,
+  stabilizeTurnRenderItems,
   type TurnRenderItem,
 } from "./ContextActivityGroupView";
 import type { MessageInfo, MessagePart } from "../../services/sse-types";
@@ -43,12 +45,14 @@ export {
   ActionIconButton,
   AssistantErrorCard,
   groupAssistantParts,
+  hasLiveTailRenderedOutput,
   hasLiveTailWorkGroup,
   isContextTool,
   isExplorationPart,
   isTodoTool,
   resolveMergedTurnParts,
   SessionRetryCard,
+  stabilizeTurnRenderItems,
   type TurnRenderItem,
 };
 
@@ -104,27 +108,34 @@ export function ContextActivityGroupView(props: {
       isLiveTail={props.isLiveTail}
       startedAt={props.startedAt}
       revealKey={props.revealKey}
-      renderFallbackPart={(part) => <PartView part={part} />}
+      renderFallbackPart={(part, revealKey) => (
+        <PartView part={part} revealKey={revealKey} />
+      )}
     />
   );
 }
 
-export function PartView(props: { part: MessagePart }) {
+export function PartView(props: { part: MessagePart; revealKey?: string }) {
   const part = () => props.part;
   return (
-    <Switch>
-      <Match when={part()?.type === "reasoning"}>
-        <ThoughtBox part={part() as Extract<MessagePart, { type: "reasoning" }>} />
-      </Match>
-      <Match when={part()?.type === "tool"}>
-        <ToolCard part={part() as Extract<MessagePart, { type: "tool" }>} />
-      </Match>
-      <Match when={part()?.type === "text"}>
-        <div>
-          <MarkdownView content={(part() as Extract<MessagePart, { type: "text" }>).text} />
-        </div>
-      </Match>
-    </Switch>
+    <div data-part-id={part()?.id}>
+      <Switch>
+        <Match when={part()?.type === "reasoning"}>
+          <ThoughtBox
+            part={part() as Extract<MessagePart, { type: "reasoning" }>}
+            revealKey={props.revealKey}
+          />
+        </Match>
+        <Match when={part()?.type === "tool"}>
+          <ToolCard part={part() as Extract<MessagePart, { type: "tool" }>} />
+        </Match>
+        <Match when={part()?.type === "text"}>
+          <div>
+            <MarkdownView content={(part() as Extract<MessagePart, { type: "text" }>).text} />
+          </div>
+        </Match>
+      </Switch>
+    </div>
   );
 }
 

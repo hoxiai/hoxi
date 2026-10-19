@@ -1,8 +1,8 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:gopanel/core/network/api_client.dart';
-import 'package:gopanel/features/auth/data/auth_repository.dart';
-import 'package:gopanel/features/auth/presentation/controllers/auth_controller.dart';
+import 'package:hoxi/core/network/api_client.dart';
+import 'package:hoxi/features/auth/data/auth_repository.dart';
+import 'package:hoxi/features/auth/presentation/controllers/auth_controller.dart';
 
 void main() {
   test('opening login does not validate a stale server connection', () async {

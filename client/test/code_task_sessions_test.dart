@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:gopanel/features/ai_workspace/models/ai_dev_session.dart';
-import 'package:gopanel/features/ai_workspace/models/code_task.dart';
-import 'package:gopanel/features/ai_workspace/presentation/controllers/code_task_sessions.dart';
+import 'package:hoxi/features/ai_workspace/models/ai_dev_session.dart';
+import 'package:hoxi/features/ai_workspace/models/code_task.dart';
+import 'package:hoxi/features/ai_workspace/presentation/controllers/code_task_sessions.dart';
 
 AiDevSession session({
   required int id,

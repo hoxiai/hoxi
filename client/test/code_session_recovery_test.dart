@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:gopanel/core/network/api_client.dart';
-import 'package:gopanel/features/ai_workspace/data/ai_workspace_repository.dart';
-import 'package:gopanel/features/ai_workspace/models/ai_dev_session.dart';
-import 'package:gopanel/features/ai_workspace/models/code_session_recovery.dart';
-import 'package:gopanel/features/ai_workspace/presentation/controllers/code_session_recovery_controller.dart';
-import 'package:gopanel/features/ai_workspace/presentation/widgets/code_recovery_cards.dart';
+import 'package:hoxi/core/network/api_client.dart';
+import 'package:hoxi/features/ai_workspace/data/ai_workspace_repository.dart';
+import 'package:hoxi/features/ai_workspace/models/ai_dev_session.dart';
+import 'package:hoxi/features/ai_workspace/models/code_session_recovery.dart';
+import 'package:hoxi/features/ai_workspace/presentation/controllers/code_session_recovery_controller.dart';
+import 'package:hoxi/features/ai_workspace/presentation/widgets/code_recovery_cards.dart';
 
 class _FakeRecoveryRepository extends AiWorkspaceRepository {
   _FakeRecoveryRepository() : super(ApiClient());

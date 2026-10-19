@@ -389,21 +389,25 @@ func (g *Service) resolveStoredProviderKey(providerID, requestedBaseURL string) 
 		}
 	}
 
-	// 3. Fallback to ~/.local/share/opencode/auth.json (supports both API key and OAuth access token)
+	// 3. Fallback to Hoxi engine auth.json or ~/.local/share/opencode/auth.json (supports both API key and OAuth access token)
 	if home, err := os.UserHomeDir(); err == nil {
-		authPath := filepath.Join(home, ".local", "share", "opencode", "auth.json")
-		if data, err := os.ReadFile(authPath); err == nil {
-			var authMap map[string]struct {
-				Key    string `json:"key"`
-				Access string `json:"access"`
-			}
-			if json.Unmarshal(data, &authMap) == nil {
-				if entry, ok := authMap[providerID]; ok {
-					if strings.TrimSpace(entry.Key) != "" {
-						return strings.TrimSpace(entry.Key)
-					}
-					if strings.TrimSpace(entry.Access) != "" {
-						return strings.TrimSpace(entry.Access)
+		for _, authPath := range []string{
+			filepath.Join(home, ".hoxi", "engine-data", "opencode", "auth.json"),
+			filepath.Join(home, ".local", "share", "opencode", "auth.json"),
+		} {
+			if data, err := os.ReadFile(authPath); err == nil {
+				var authMap map[string]struct {
+					Key    string `json:"key"`
+					Access string `json:"access"`
+				}
+				if json.Unmarshal(data, &authMap) == nil {
+					if entry, ok := authMap[providerID]; ok {
+						if strings.TrimSpace(entry.Key) != "" {
+							return strings.TrimSpace(entry.Key)
+						}
+						if strings.TrimSpace(entry.Access) != "" {
+							return strings.TrimSpace(entry.Access)
+						}
 					}
 				}
 			}

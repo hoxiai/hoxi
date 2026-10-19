@@ -241,6 +241,7 @@ export const models = {
   removeFavorite: "Remove from Favorites",
   detailInputPrice: "Input Price",
   detailOutputPrice: "Output Price",
+  detailCreditMultiplier: "Credit Multiplier",
   detailStatus: "Status",
   sourceBuiltInFree: "OpenCode Free",
   commitModelTitle: "Git Commit Message Model",

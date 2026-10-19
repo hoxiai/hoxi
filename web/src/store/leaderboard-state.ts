@@ -5,6 +5,7 @@ import {
   leaderboardAPI,
   type ConnectableGatewayItem,
   type LeaderboardModelItem,
+  type ModelPricingItem,
 } from "../services/api";
 
 export type LeaderboardTab = "overall" | "coding" | "speed" | "price" | "gateways";
@@ -13,6 +14,7 @@ export interface LeaderboardState {
   modalOpen: boolean;
   activeTab: LeaderboardTab;
   models: LeaderboardModelItem[];
+  pricingCatalog: ModelPricingItem[];
   gateways: ConnectableGatewayItem[];
   loading: boolean;
   error: string | null;
@@ -23,6 +25,7 @@ export const [leaderboardState, setLeaderboardState] = createStore<LeaderboardSt
   modalOpen: false,
   activeTab: "overall",
   models: [],
+  pricingCatalog: [],
   gateways: [],
   loading: false,
   error: null,
@@ -31,6 +34,18 @@ export const [leaderboardState, setLeaderboardState] = createStore<LeaderboardSt
 
 function currentLangParam(): string {
   return String(locale() || "en-US").toLowerCase().startsWith("zh") ? "zh" : "en";
+}
+
+export async function syncOfficialModelPricing(forceRefresh: boolean = false): Promise<void> {
+  if (!forceRefresh && leaderboardState.pricingCatalog.length > 0) return;
+  try {
+    const items = await leaderboardAPI.getModelPricing(forceRefresh);
+    if (Array.isArray(items) && items.length > 0) {
+      setLeaderboardState("pricingCatalog", items);
+    }
+  } catch {
+    // Offline fallback handled gracefully by local catalog/prefix inference
+  }
 }
 
 export async function fetchLeaderboardModels(tab?: LeaderboardTab) {

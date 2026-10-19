@@ -53,8 +53,14 @@ func TestClaudeRecordedAgentSubagentGetsItsOwnChildSession(t *testing.T) {
 	if !hasStatus(all, "ses_agy_child_1", "idle") {
 		t.Fatal("child session must go idle once the subagent reports")
 	}
-	if !tr.IsTurnFinished() || !tr.hasTextPart {
-		t.Fatal("the parent's own reply must still render")
+	var parentTextParts int
+	for _, p := range tr.partsByID {
+		if p.Type == "text" {
+			parentTextParts++
+		}
+	}
+	if !tr.IsTurnFinished() || !tr.hasTextPart || parentTextParts != 1 {
+		t.Fatalf("the parent's own reply must render exactly once, got textParts=%d", parentTextParts)
 	}
 }
 

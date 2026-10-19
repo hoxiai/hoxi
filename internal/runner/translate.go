@@ -16,9 +16,11 @@ type TurnTranslator struct {
 	modelID         string
 	providerID      string
 	mode            string
-	externalID      string
-	claudeMessageID string
-	startedAtMs     int64
+	externalID         string
+	claudeMessageID    string
+	claudeReasonPartID string
+	claudeTextPartID   string
+	startedAtMs        int64
 
 	msgInfo      MessageInfo
 	partOrder    []string
@@ -127,7 +129,7 @@ func (t *TurnTranslator) FeedLine(rawLine string) []SSEEvent {
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.runtime == string(RuntimeClaudeCode) {
+	if IsClaudeProtocolRuntime(t.runtime) {
 		return t.feedClaudeLine(line)
 	}
 	return t.feedAgyLine(line)
@@ -272,8 +274,8 @@ func (t *TurnTranslator) handleAgyAgentResponse(su *agyStepUpdate, now int64) []
 	if thinkDelta == "" && su.State == "DONE" && su.Usage != nil && su.Usage.ThinkingTokens > 0 && t.lookupThink != nil && t.externalID != "" {
 		thinkDelta = t.lookupThink(t.externalID, su.StepIndex)
 	}
+	rID := fmt.Sprintf("prt_%s_reason_%d", t.messageID, su.StepIndex)
 	if thinkDelta != "" {
-		rID := fmt.Sprintf("prt_%s_reason_%d", t.messageID, su.StepIndex)
 		part, exists := t.partsByID[rID]
 		if !exists {
 			part = &MessagePart{
@@ -299,9 +301,15 @@ func (t *TurnTranslator) handleAgyAgentResponse(su *agyStepUpdate, now int64) []
 				"delta":     thinkDelta,
 			},
 		})
-		if su.State == "DONE" {
-			part.Time = &PartTime{Start: startMs, End: endMs}
-			evts = append(evts, SSEEvent{Type: "message.part.updated", Properties: map[string]interface{}{"part": clonePart(*part)}})
+	}
+	if su.TextDelta != "" || su.State == "DONE" {
+		if rPart, exists := t.partsByID[rID]; exists && (rPart.Time == nil || rPart.Time.End == 0) {
+			rStart := startMs
+			if rPart.Time != nil && rPart.Time.Start > 0 {
+				rStart = rPart.Time.Start
+			}
+			rPart.Time = &PartTime{Start: rStart, End: endMs}
+			evts = append(evts, SSEEvent{Type: "message.part.updated", Properties: map[string]interface{}{"part": clonePart(*rPart)}})
 		}
 	}
 

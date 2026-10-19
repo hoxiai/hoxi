@@ -11,12 +11,47 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/hoxiai/hoxi/internal/claudeconfig"
 )
+
+func commonUserBinDirs() []string {
+	var dirs []string
+	if home, _ := os.UserHomeDir(); home != "" {
+		dirs = append(dirs,
+			filepath.Join(home, ".local", "bin"),
+			filepath.Join(home, "sdk", "node", "bin"),
+			filepath.Join(home, ".volta", "bin"),
+			filepath.Join(home, ".fnm", "current", "bin"),
+			filepath.Join(home, ".npm-global", "bin"),
+		)
+		if nvmBins, err := filepath.Glob(filepath.Join(home, ".nvm", "versions", "node", "*", "bin")); err == nil && len(nvmBins) > 0 {
+			sort.Strings(nvmBins)
+			for i := len(nvmBins) - 1; i >= 0; i-- {
+				dirs = append(dirs, nvmBins[i])
+			}
+		}
+	}
+	dirs = append(dirs, "/opt/homebrew/bin", "/usr/local/bin")
+	return dirs
+}
+
+func firstExecutableFile(candidates ...string) string {
+	for _, c := range candidates {
+		c = strings.TrimSpace(c)
+		if c == "" {
+			continue
+		}
+		if st, err := os.Stat(c); err == nil && !st.IsDir() {
+			return c
+		}
+	}
+	return ""
+}
 
 func geminiHomeDir() string {
 	if env := strings.TrimSpace(os.Getenv("GEMINI_HOME")); env != "" {
@@ -149,6 +184,48 @@ func DiscoverAgyModelsWithRefresh(forceRefresh bool) ([]RunnerModelItem, map[str
 	return buildAgyModelItems(agyCachedSlugs, agyCachedDisplayMap), agyCachedDisplayMap, agyCachedReverseSlug
 }
 
+func inferOfficialRunnerModelSpec(slug string) (ctxLimit, outLimit int, inCost, outCost float64, image, reasoning bool) {
+	lower := strings.ToLower(strings.TrimSpace(slug))
+	image = true
+	reasoning = !strings.Contains(lower, "fast") && !strings.Contains(lower, "flash") && !strings.Contains(lower, "lite") && !strings.Contains(lower, "haiku")
+	if strings.Contains(lower, "thinking") || strings.Contains(lower, "argon") {
+		reasoning = true
+	}
+
+	switch {
+	case strings.HasPrefix(lower, "claude"):
+		switch {
+		case strings.Contains(lower, "opus"):
+			return 200000, 64000, 5.00, 25.00, true, true
+		case strings.Contains(lower, "haiku"):
+			return 200000, 64000, 0.80, 4.00, true, reasoning
+		default:
+			return 200000, 64000, 3.00, 15.00, true, true
+		}
+	case strings.HasPrefix(lower, "gemini"):
+		switch {
+		case strings.Contains(lower, "lite"):
+			return 1000000, 65536, 0.10, 0.40, true, reasoning
+		case strings.Contains(lower, "flash"):
+			return 1000000, 65536, 0.35, 1.40, true, reasoning
+		default:
+			return 1000000, 65536, 1.25, 10.00, true, true
+		}
+	case strings.HasPrefix(lower, "gpt") || strings.HasPrefix(lower, "o1") || strings.HasPrefix(lower, "o3") || strings.HasPrefix(lower, "o4"):
+		switch {
+		case strings.Contains(lower, "nano"):
+			return 400000, 128000, 0.10, 0.40, true, reasoning
+		case strings.Contains(lower, "mini") || strings.Contains(lower, "luna"):
+			return 400000, 128000, 0.25, 1.00, true, reasoning
+		case strings.Contains(lower, "astra") || strings.HasPrefix(lower, "gpt-6"):
+			return 1000000, 128000, 6.00, 24.00, true, true
+		default:
+			return 400000, 128000, 2.00, 8.00, true, true
+		}
+	}
+	return 200000, 64000, 0, 0, image, reasoning
+}
+
 func buildAgyModelItems(slugs []string, displayBySlug map[string]string) []RunnerModelItem {
 	items := make([]RunnerModelItem, 0, len(slugs))
 	for _, s := range slugs {
@@ -156,18 +233,18 @@ func buildAgyModelItems(slugs []string, displayBySlug map[string]string) []Runne
 		if name == "" {
 			name = s
 		}
-		lower := strings.ToLower(s)
-		reasoning := strings.Contains(lower, "thinking") ||
-			strings.Contains(lower, "argon") ||
-			strings.Contains(lower, "opus") ||
-			strings.Contains(lower, "sonnet") ||
-			strings.Contains(lower, "oss")
+		ctxLim, outLim, inCost, outCost, image, reasoning := inferOfficialRunnerModelSpec(s)
 		items = append(items, RunnerModelItem{
-			ID:         s,
-			Name:       name,
-			ProviderID: string(RuntimeAntigravity),
-			Runtime:    string(RuntimeAntigravity),
-			Reasoning:  reasoning,
+			ID:           s,
+			Name:         name,
+			ProviderID:   string(RuntimeAntigravity),
+			Runtime:      string(RuntimeAntigravity),
+			Reasoning:    reasoning,
+			Image:        image,
+			ContextLimit: ctxLim,
+			OutputLimit:  outLim,
+			InputCost:    inCost,
+			OutputCost:   outCost,
 		})
 	}
 	return items
@@ -187,12 +264,18 @@ func DiscoverClaudeModels() []RunnerModelItem {
 		if name == "" {
 			name = s
 		}
+		ctxLim, outLim, inCost, outCost, image, reasoning := inferOfficialRunnerModelSpec(s)
 		items = append(items, RunnerModelItem{
-			ID:         s,
-			Name:       name,
-			ProviderID: string(RuntimeClaudeCode),
-			Runtime:    string(RuntimeClaudeCode),
-			Reasoning:  true,
+			ID:           s,
+			Name:         name,
+			ProviderID:   string(RuntimeClaudeCode),
+			Runtime:      string(RuntimeClaudeCode),
+			Reasoning:    reasoning,
+			Image:        image,
+			ContextLimit: ctxLim,
+			OutputLimit:  outLim,
+			InputCost:    inCost,
+			OutputCost:   outCost,
 		})
 	}
 	return items
@@ -279,7 +362,7 @@ func BuildClaudeArgs(mode, modelID, effort, externalSessionID string) []string {
 }
 
 func EncodeStreamInputTurn(runtime, promptText string) ([]byte, error) {
-	if runtime == string(RuntimeClaudeCode) {
+	if IsClaudeProtocolRuntime(runtime) {
 		payload := map[string]interface{}{
 			"type": "user",
 			"message": map[string]interface{}{

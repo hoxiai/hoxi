@@ -249,7 +249,10 @@ export default function ModelLeaderboardModal() {
 
                           <div>
                             <div class="text-[10px] text-[var(--text-muted)]">
-                              ${m.price?.input || 0} / ${m.price?.output || 0}
+                              {(() => {
+                                const sym = m.price?.currency?.toUpperCase() === "CNY" ? "¥" : "$";
+                                return `${sym}${m.price?.input || 0} / ${sym}${m.price?.output || 0}`;
+                              })()}
                             </div>
                             <div class="text-[9.5px] text-[var(--text-faint)]">
                               {t("header.leaderboardPerMTokens")}

@@ -12,6 +12,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/runner"
 )
 
 func qoderDotDirs() []string {
@@ -610,12 +612,24 @@ func loadQoderSessionDetail(sessionID, hintCWD, activeRoot string) (*ExternalSes
 	}, nil
 }
 
-func detectQoderCLIStatus() LocalCLIStatusItem {
+func detectQoderCLIStatus(hoxiMap map[string]interface{}) LocalCLIStatusItem {
 	sessions, stats := scanQoderSessions("", "")
-	defModel := readQoderDefaultModel()
+	bin := runner.ResolveQoderBinary()
 	var models []string
-	if defModel != "" {
-		models = appendUniqueString(models, defModel)
+	var defModel string
+	for _, m := range runner.DiscoverQoderModels() {
+		if m.ID != "" {
+			models = appendUniqueString(models, m.ID)
+			if defModel == "" {
+				defModel = m.ID
+			}
+		}
+	}
+	if dm := readQoderDefaultModel(); dm != "" {
+		models = appendUniqueString(models, dm)
+		if defModel == "" {
+			defModel = dm
+		}
 	}
 	for _, s := range sessions {
 		if s.Model != "" {
@@ -625,16 +639,23 @@ func detectQoderCLIStatus() LocalCLIStatusItem {
 			}
 		}
 	}
+	_, customConn := hoxiMap["qoder"]
+	authMode := "session-handoff"
+	if bin != "" {
+		authMode = "qoder-runner"
+	} else if customConn {
+		authMode = "hoxi-custom"
+	}
 	return LocalCLIStatusItem{
 		ID:            ExternalToolQoder,
 		Name:          "Qoder",
-		Installed:     stats.Installed,
-		Authenticated: false,
-		Connected:     false,
+		Installed:     stats.Installed || bin != "",
+		Authenticated: bin != "" || customConn,
+		Connected:     bin != "" || customConn,
 		DefaultModel:  defModel,
 		Models:        models,
 		SessionCount:  stats.SessionCount,
-		AuthMode:      "session-handoff",
+		AuthMode:      authMode,
 		ProviderID:    "qoder",
 	}
 }

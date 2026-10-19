@@ -1,14 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:gopanel/core/network/api_client.dart';
-import 'package:gopanel/features/ai_workspace/data/ai_workspace_repository.dart';
-import 'package:gopanel/features/ai_workspace/models/code_delivery_job.dart';
-import 'package:gopanel/features/ai_workspace/models/code_session_flow.dart';
-import 'package:gopanel/features/ai_workspace/presentation/controllers/ai_workspace_controller.dart';
-import 'package:gopanel/features/ai_workspace/presentation/widgets/code_flow_card.dart';
-import 'package:gopanel/features/task_center/data/task_repository.dart';
-import 'package:gopanel/features/website/data/website_repository.dart';
+import 'package:hoxi/core/network/api_client.dart';
+import 'package:hoxi/features/ai_workspace/data/ai_workspace_repository.dart';
+import 'package:hoxi/features/ai_workspace/models/code_delivery_job.dart';
+import 'package:hoxi/features/ai_workspace/models/code_session_flow.dart';
+import 'package:hoxi/features/ai_workspace/presentation/controllers/ai_workspace_controller.dart';
+import 'package:hoxi/features/ai_workspace/presentation/widgets/code_flow_card.dart';
+import 'package:hoxi/features/task_center/data/task_repository.dart';
+import 'package:hoxi/features/website/data/website_repository.dart';
 
 class _FakeFlowRepository extends AiWorkspaceRepository {
   _FakeFlowRepository(this.flow) : super(ApiClient());

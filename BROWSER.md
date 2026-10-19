@@ -53,7 +53,7 @@ disclose secrets.
 
 HTTP UI access is restricted to exact configured origins. The actual bound bridge
 origin is registered at startup; development builds additionally allow
-`http://localhost:5173` and `http://127.0.0.1:5173`. If Vite selects a different
+`http://localhost:5421` and `http://127.0.0.1:5421` (and `5411` for release). If Vite selects a different
 port, set `HOXI_BROWSER_UI_ORIGIN` to its exact origin before starting Hoxi.
 Production macOS uses the native `wails://wails` asset-server origin.
 

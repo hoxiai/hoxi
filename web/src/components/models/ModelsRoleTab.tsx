@@ -87,7 +87,7 @@ export default function ModelsRoleTab() {
                 <For each={grp.models}>
                   {(m) => (
                     <option value={m.fullKey}>
-                      {m.name} ({m.id}){m.free ? ` · [${t("models.freeModel")}]` : ""}
+                      {m.name} ({m.id}){m.free ? ` · [${t("models.freeModel")}]` : ""}{m.multiplier ? ` · [${m.multiplier}]` : ""}
                     </option>
                   )}
                 </For>

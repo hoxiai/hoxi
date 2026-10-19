@@ -83,15 +83,16 @@ func (t *TurnTranslator) feedClaudeChildLine(env *claudeRawEvent, now int64) []S
 		return nil
 	}
 	var evts []SSEEvent
-	msgID := env.Message.ID
+	msgID := firstNonEmptyStr(env.Message.ID, env.APIMessageID)
 	for idx, blk := range env.Message.Content {
 		switch {
 		case env.Type == "assistant" && blk.Type == "thinking":
-			evts = append(evts, c.upsertText("reasoning", fmt.Sprintf("%s_reason_%d", msgID, idx), blk.Thinking, now, now)...)
+			evts = append(evts, c.upsertText("reasoning", fmt.Sprintf("%s_reason_0", msgID), blk.Thinking, now, now)...)
 		case env.Type == "assistant" && blk.Type == "text":
-			evts = append(evts, c.upsertText("text", fmt.Sprintf("%s_text_%d", msgID, idx), blk.Text, now, now)...)
+			evts = append(evts, c.upsertText("text", fmt.Sprintf("%s_text_0", msgID), blk.Text, now, now)...)
 		case env.Type == "assistant" && blk.Type == "tool_use":
-			evts = append(evts, c.startTool(fmt.Sprintf("%s_tool_%d", msgID, idx), blk.ID, blk.Name, blk.Input, now)...)
+			toolKey := firstNonEmptyStr(blk.ID, fmt.Sprintf("%s_tool_%d", msgID, idx))
+			evts = append(evts, c.startTool(toolKey, blk.ID, blk.Name, blk.Input, now)...)
 		case env.Type == "user" && blk.Type == "tool_result":
 			evts = append(evts, c.finishTool(blk.ToolUseID, claudeToolResultText(blk.Content), blk.IsError, now)...)
 		}

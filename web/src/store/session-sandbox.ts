@@ -75,7 +75,7 @@ export async function newIsolatedSession(
     initialAI.model?.providerID,
     Boolean(workspace.hoxiProviders?.[initialAI.model?.providerID || ""])
   );
-  const isRunner = runtime === "antigravity" || runtime === "claude-code";
+  const isRunner = runtime !== "opencode";
   const shouldIsolate = options?.isolated ?? (appSettings.defaultSandboxMode === "worktree");
   let session: SessionInfo | undefined;
   setWorkspace("sessionSetupError", null);

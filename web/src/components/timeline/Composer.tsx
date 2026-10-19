@@ -2,6 +2,7 @@
 import { createEffect, createMemo, createSignal, Show } from "solid-js";
 import {
   ArrowUp,
+  Clock,
   FolderOpen,
   LoaderCircle,
   Plus,
@@ -45,6 +46,7 @@ import { hoxiAPI } from "../../services/api";
 
 export default function Composer() {
   const [text, setText] = createSignal("");
+  const [cursorOffset, setCursorOffset] = createSignal(0);
   const [sending, setSending] = createSignal(false);
   const [stopping, setStopping] = createSignal(false);
   const [forking, setForking] = createSignal(false);
@@ -104,10 +106,22 @@ export default function Composer() {
   };
 
   // Kilo Composer Hooks: Autocomplete, Image attachments, Paste Collapse, Prompt History
-  const ac = createComposerAutocomplete(text, setText, sessionID, () => {
-    textareaRef?.focus();
-    adjustHeight();
-  });
+  const ac = createComposerAutocomplete(
+    text,
+    setText,
+    sessionID,
+    (nextCursor) => {
+      textareaRef?.focus();
+      if (typeof nextCursor === "number") {
+        setCursorOffset(nextCursor);
+        queueMicrotask(() => {
+          textareaRef?.setSelectionRange(nextCursor, nextCursor);
+        });
+      }
+      adjustHeight();
+    },
+    cursorOffset
+  );
   const imgAttach = createImageAttachments();
   const pasteCollapse = createPasteCollapse();
   const promptHistory = createPromptHistory(sessionID);
@@ -378,8 +392,18 @@ export default function Composer() {
             }}
             onInput={(ev) => {
               promptHistory.resetHistoryCursor();
+              setCursorOffset(ev.currentTarget.selectionStart ?? ev.currentTarget.value.length);
               setText(ev.currentTarget.value);
               adjustHeight();
+            }}
+            onClick={(ev) => {
+              setCursorOffset(ev.currentTarget.selectionStart ?? ev.currentTarget.value.length);
+            }}
+            onKeyUp={(ev) => {
+              setCursorOffset(ev.currentTarget.selectionStart ?? ev.currentTarget.value.length);
+            }}
+            onSelect={(ev) => {
+              setCursorOffset(ev.currentTarget.selectionStart ?? ev.currentTarget.value.length);
             }}
             onKeyDown={onKeyDown}
             onCompositionStart={() => { composing = true; }}
@@ -430,7 +454,7 @@ export default function Composer() {
                 <Show when={canSend()}>
                   <button
                     type="button"
-                    class="inline-flex h-7 w-7 items-center justify-center rounded-full bg-[var(--accent-primary)] text-[var(--accent-foreground)] shadow-xs hover:opacity-90 transition-all cursor-pointer"
+                    class="inline-flex h-7 items-center justify-center gap-1 rounded-full bg-[var(--accent-primary)] px-2.5 text-[var(--accent-foreground)] shadow-xs hover:opacity-90 transition-all cursor-pointer"
                     onClick={onSend}
                     title={t("timeline.queueSend")}
                   >
@@ -438,7 +462,8 @@ export default function Composer() {
                       when={!sending()}
                       fallback={<LoaderCircle size={14} class="animate-spin" />}
                     >
-                      <ArrowUp size={15} strokeWidth={2.5} />
+                      <Clock size={12.5} strokeWidth={2.2} />
+                      <ArrowUp size={13.5} strokeWidth={2.5} />
                     </Show>
                   </button>
                 </Show>

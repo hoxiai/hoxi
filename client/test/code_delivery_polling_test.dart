@@ -3,14 +3,14 @@ import 'dart:async';
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:gopanel/core/network/api_client.dart';
-import 'package:gopanel/features/ai_workspace/data/ai_workspace_repository.dart';
-import 'package:gopanel/features/ai_workspace/models/ai_dev_session.dart';
-import 'package:gopanel/features/ai_workspace/models/ai_session_state_info.dart';
-import 'package:gopanel/features/ai_workspace/models/code_delivery_job.dart';
-import 'package:gopanel/features/ai_workspace/models/code_session_recovery.dart';
-import 'package:gopanel/features/ai_workspace/models/code_task.dart';
-import 'package:gopanel/features/ai_workspace/presentation/controllers/ai_workspace_controller.dart';
+import 'package:hoxi/core/network/api_client.dart';
+import 'package:hoxi/features/ai_workspace/data/ai_workspace_repository.dart';
+import 'package:hoxi/features/ai_workspace/models/ai_dev_session.dart';
+import 'package:hoxi/features/ai_workspace/models/ai_session_state_info.dart';
+import 'package:hoxi/features/ai_workspace/models/code_delivery_job.dart';
+import 'package:hoxi/features/ai_workspace/models/code_session_recovery.dart';
+import 'package:hoxi/features/ai_workspace/models/code_task.dart';
+import 'package:hoxi/features/ai_workspace/presentation/controllers/ai_workspace_controller.dart';
 
 class _FakeDeliveryRepository extends AiWorkspaceRepository {
   _FakeDeliveryRepository() : super(ApiClient());

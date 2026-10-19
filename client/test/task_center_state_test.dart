@@ -1,9 +1,9 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:gopanel/features/task_center/models/task_attention.dart';
-import 'package:gopanel/features/task_center/models/task_entity.dart';
-import 'package:gopanel/features/task_center/models/task_status.dart';
-import 'package:gopanel/features/task_center/models/task_type.dart';
-import 'package:gopanel/features/task_center/presentation/controllers/task_center_controller.dart';
+import 'package:hoxi/features/task_center/models/task_attention.dart';
+import 'package:hoxi/features/task_center/models/task_entity.dart';
+import 'package:hoxi/features/task_center/models/task_status.dart';
+import 'package:hoxi/features/task_center/models/task_type.dart';
+import 'package:hoxi/features/task_center/presentation/controllers/task_center_controller.dart';
 
 void main() {
   const attention = TaskAttention(

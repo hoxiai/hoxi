@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:gopanel/core/network/api_client.dart';
-import 'package:gopanel/features/ai_workspace/data/ai_workspace_repository.dart';
-import 'package:gopanel/features/ai_workspace/models/code_execution_run_detail.dart';
-import 'package:gopanel/features/ai_workspace/presentation/controllers/code_execution_run_controller.dart';
-import 'package:gopanel/features/ai_workspace/presentation/screens/code_execution_run_screen.dart';
+import 'package:hoxi/core/network/api_client.dart';
+import 'package:hoxi/features/ai_workspace/data/ai_workspace_repository.dart';
+import 'package:hoxi/features/ai_workspace/models/code_execution_run_detail.dart';
+import 'package:hoxi/features/ai_workspace/presentation/controllers/code_execution_run_controller.dart';
+import 'package:hoxi/features/ai_workspace/presentation/screens/code_execution_run_screen.dart';
 
 class _FakeRunRepository extends AiWorkspaceRepository {
   _FakeRunRepository() : super(ApiClient());
