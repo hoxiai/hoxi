@@ -431,6 +431,14 @@ export function applyStreamFrameBatch(batch: StreamFrameBatch) {
   for (const part of batch.parts) {
     recordFirstToken(part.sessionID);
     recordToolPartUpdate(part);
+    if (
+      part.type === "tool" &&
+      part.tool === "hoxi_browser" &&
+      part.state.status === "running" &&
+      part.sessionID === workspace.activeSessionID
+    ) {
+      setWorkspace({ inspectorOpen: true, inspectorTab: "browser" });
+    }
     if (part.type === "tool" && part.tool.toLowerCase() === "task") {
       ensureChildSubagentSessionLoaded(
         extractChildSubagentSessionId(part),

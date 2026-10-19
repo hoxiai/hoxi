@@ -13,7 +13,6 @@ const EXEMPT_SUFFIXES = [
 const IGNORE_DIRS = new Set([
   ".git",
   ".hoxi",
-  ".opencode",
   "node_modules",
   "dist",
   "build",
@@ -57,15 +56,19 @@ for (const file of files) {
 
   // Enforce unidirectional frontend layering: components -> store -> services
   if (rel.startsWith("web/src/services/")) {
-    const badImport = content.match(/from\s+["'][^"']*(?:\/store\/|\/components\/)[^"']*["']/);
+    const badImport = content.match(/(?:from\s+|import\s*\(\s*)["'][^"']*\/(?:store|components)(?:\/|["'])/);
     if (badImport) {
       console.error(`  ✗ [layering violation] ${rel} must not import from store/ or components/ (${badImport[0]})`);
       violations++;
     }
   } else if (rel.startsWith("web/src/store/")) {
-    const badImport = content.match(/from\s+["'][^"']*\/components\/[^"']*["']/);
+    const badImport = content.match(/(?:from\s+|import\s*\(\s*)["'][^"']*\/components(?:\/|["'])/);
     if (badImport) {
       console.error(`  ✗ [layering violation] ${rel} must not import from components/ (${badImport[0]})`);
+      violations++;
+    }
+    if (rel !== "web/src/store/workspace.ts" && /^\s*export\s+\*\s+from\s+/m.test(content)) {
+      console.error(`  ✗ [barrel violation] ${rel} must not use secondary 'export * from' (re-export in workspace.ts instead)`);
       violations++;
     }
   } else if (rel.startsWith("internal/") && rel.endsWith(".go")) {

@@ -283,7 +283,11 @@ export default function DiffFileTree(props: {
     const sessionID = workspace.activeSessionID || "__root__";
     setRevertingFile(filePath);
     try {
-      await hoxiAPI.revertWorktreeFile(sessionID, filePath, activeDirectory());
+      await hoxiAPI.revertWorktreeFile(
+        sessionID,
+        filePath,
+        activeDirectory() || workspace.rootDir || undefined
+      );
       await refreshWorktreeStatus(workspace.activeSessionID);
       if (workspace.activeSessionID) {
         await loadSessionMessages(workspace.activeSessionID);

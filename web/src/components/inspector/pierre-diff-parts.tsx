@@ -151,7 +151,11 @@ export function SelectedDiffDetail(props: {
     if (reverting()) return;
     setReverting(true);
     try {
-      await hoxiAPI.revertWorktreeFile(sessionID, props.diff.file, activeDirectory());
+      await hoxiAPI.revertWorktreeFile(
+        sessionID,
+        props.diff.file,
+        activeDirectory() || workspace.rootDir || undefined
+      );
       await refreshWorktreeStatus(workspace.activeSessionID);
       if (workspace.activeSessionID) {
         await loadSessionMessages(workspace.activeSessionID);

@@ -20,8 +20,6 @@ import {
   type SelectedModel,
 } from "./workspace";
 
-export * from "./provider-catalog";
-
 export const MASKED_SECRET = "********";
 
 export const POPULAR_PROVIDER_IDS = [

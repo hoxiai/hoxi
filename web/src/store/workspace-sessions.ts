@@ -273,7 +273,14 @@ export async function exitSessionWorktree(sessionID: string, keepBranch = false)
 
 async function leaveSessionWorktree(sessionID: string, keepBranch: boolean): Promise<void> {
   if (isRunnerSessionID(sessionID)) {
-    replaceSession(await hoxiAPI.setSandboxMode(sessionID, "local", { force: true, keepBranch }));
+    replaceSession(
+      await hoxiAPI.setSandboxMode(
+        sessionID,
+        "local",
+        { force: true, keepBranch },
+        workspace.rootDir || undefined
+      )
+    );
   } else {
     await hoxiAPI.removeWorktree(sessionID, true, keepBranch);
   }

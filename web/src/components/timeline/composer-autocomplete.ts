@@ -1,5 +1,5 @@
 // web/src/components/timeline/composer-autocomplete.ts
-import { type Accessor, createEffect, createSignal, type Setter } from "solid-js";
+import { type Accessor, createEffect, createSignal, onCleanup, type Setter } from "solid-js";
 import { hoxiAPI, type CommandInfo } from "../../services/api";
 import { sessionDirectory, workspace } from "../../store/workspace";
 import { t } from "../../i18n";
@@ -124,6 +124,7 @@ export function createComposerAutocomplete(
       const query = fileMatch[1];
       const qLower = query.trim().toLowerCase();
       setTriggerMode("file");
+      let cancelled = false;
       const timer = setTimeout(async () => {
         try {
           let files: string[] = [];
@@ -133,6 +134,7 @@ export function createComposerAutocomplete(
             const nodes = await hoxiAPI.listFiles("", dir);
             files = (nodes ?? []).map((n) => n.path);
           }
+          if (cancelled) return;
           const contextItems: AutocompleteItem[] = [];
           if ("changes".includes(qLower)) {
             contextItems.push({
@@ -180,10 +182,14 @@ export function createComposerAutocomplete(
           ]);
           setSelectedIndex(0);
         } catch {
-          setSuggestions([]);
+          if (!cancelled) setSuggestions([]);
         }
       }, 90);
-      return () => clearTimeout(timer);
+      onCleanup(() => {
+        cancelled = true;
+        clearTimeout(timer);
+      });
+      return;
     }
 
     setTriggerMode(null);

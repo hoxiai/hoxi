@@ -21,6 +21,7 @@ import {
   sessionDirectory,
   sessionAIConfig,
   setApprovalMode,
+  setWorkspace,
   workspace,
 } from "../../store/workspace";
 import { DiffChanges, FileIcon } from "../icons";
@@ -105,6 +106,7 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
       }
       const note = feedback().trim();
       await hoxiAPI.replyPermission(props.request.id, mode, dir, runner && mode === "reject" ? note : undefined);
+      setWorkspace("pendingPermissions", (prev) => prev.filter((p) => p.id !== props.request.id));
       // If rejecting with steering feedback, send the feedback prompt right after
       if (!runner && mode === "reject" && note && props.request.sessionID) {
         await hoxiAPI.sendPromptAsync(props.request.sessionID, note, {
@@ -117,6 +119,7 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
     } catch (err) {
       console.error("permission reply failed:", err);
       setError(String(err));
+    } finally {
       setBusy(null);
     }
   };

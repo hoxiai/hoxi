@@ -34,8 +34,12 @@ export default function ThreePaneShell() {
       && !workspace.pendingQuestions.some((question) => question.sessionID === id);
   });
 
+  let activeResizeCleanup: (() => void) | null = null;
+  onCleanup(() => activeResizeCleanup?.());
+
   const startResize = (side: "left" | "right", ev: PointerEvent) => {
     ev.preventDefault();
+    activeResizeCleanup?.();
     const startX = ev.clientX;
     const startWidth = side === "left" ? leftWidth() : rightWidth();
 
@@ -50,10 +54,15 @@ export default function ThreePaneShell() {
     const onUp = () => {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+      if (activeResizeCleanup === onUp) {
+        activeResizeCleanup = null;
+      }
     };
+    activeResizeCleanup = onUp;
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
-    onCleanup(onUp);
+    window.addEventListener("pointercancel", onUp);
   };
 
   return (

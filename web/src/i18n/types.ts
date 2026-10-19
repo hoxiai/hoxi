@@ -41,10 +41,9 @@ type Leaves<T, D extends number = 5> = [D] extends [0]
 export type TxKeyPath = Leaves<I18nDictionary>;
 
 /**
- * Autocomplete-friendly translation key type.
- * Suggests exact paths like `common.ready` or `header.applyToMain`
- * while still permitting dynamic strings if needed.
+ * Autocomplete-friendly and compile-time validated translation key type.
+ * Enforces exact paths like `common.ready` or `header.applyToMain` derived from en-US.
  */
-export type TxKey = TxKeyPath | (string & {});
+export type TxKey = TxKeyPath;
 
 export type InterpolationParams = Record<string, string | number>;

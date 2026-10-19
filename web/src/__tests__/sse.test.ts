@@ -410,4 +410,37 @@ describe("SSE client & 120Hz rAF delta batching", () => {
       g.cancelAnimationFrame = origCRAF;
     }
   });
+
+  it("auto-opens Browser Inspector tab when applyStreamFrameBatch receives a running hoxi_browser tool part for the active session", () => {
+    const saved = structuredClone(unwrap(workspace));
+    try {
+      const sid = "ses_browser_auto_open";
+      setWorkspace({
+        activeSessionID: sid,
+        inspectorOpen: false,
+        inspectorTab: "diffs",
+        messagesBySession: {},
+      });
+      applyStreamFrameBatch({
+        infos: [{ id: "m1", sessionID: sid, role: "assistant", time: { created: 1 } }],
+        parts: [
+          {
+            id: "p1",
+            messageID: "m1",
+            sessionID: sid,
+            type: "tool",
+            tool: "hoxi_browser",
+            callID: "c1",
+            state: { status: "running", input: { action: "navigate" }, time: { start: 1 } },
+          },
+        ],
+        deltas: [],
+      });
+      assertEqual(workspace.inspectorOpen, true);
+      assertEqual(workspace.inspectorTab, "browser");
+    } finally {
+      setWorkspace(reconcile(saved));
+    }
+  });
 });
+

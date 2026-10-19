@@ -389,5 +389,3 @@ export function buildCombinedSystemPrompt(
   }
   return parts.length > 0 ? parts.join("\n\n") : undefined;
 }
-
-export * from "./approval-mode";

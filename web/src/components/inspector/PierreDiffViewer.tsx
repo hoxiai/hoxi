@@ -138,7 +138,7 @@ export default function PierreDiffViewer() {
     setCommitting(true);
     try {
       const res = await hoxiAPI.commitWorktree(id, msg, {
-        directory: activeDirectory(),
+        directory: activeDirectory() || workspace.rootDir || undefined,
       });
       setCommitMsg("");
       setCommittedHash(res.commit || "HEAD");

@@ -562,6 +562,7 @@ export function toggleTheme() {
 }
 
 export * from "./workspace-providers";
+export * from "./provider-catalog";
 export * from "./session-ai";
 export * from "./workspace-projects";
 export * from "./workspace-sessions";

@@ -144,7 +144,7 @@ export async function switchActiveSessionSandboxMode(mode: "local" | "worktree")
     if (isSessionBusy(id)) throw new Error(t("timeline.worktreeBusy"));
     if (isRunnerSessionID(id) || sessionRuntimeForID(id) !== "opencode") {
       await changeSandbox(id, async () => {
-        const session = await hoxiAPI.setSandboxMode(id, mode);
+        const session = await hoxiAPI.setSandboxMode(id, mode, undefined, directory || undefined);
         replaceSession(session);
         setWorkspace("worktreeBySession", id, {
           sessionID: id, isolated: session.sandboxMode === "worktree", directory: session.directory!,
