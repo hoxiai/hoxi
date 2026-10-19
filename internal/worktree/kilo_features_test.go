@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -76,10 +77,12 @@ func TestCreateWorktreeSyncsEnvMarksSpotlightAndRunsSetupScript(t *testing.T) {
 		t.Fatalf("expected isolated worktree")
 	}
 
-	// 1. Spotlight exclusion marker exists in .hoxi/worktrees/
+	// 1. Spotlight exclusion marker exists in .hoxi/worktrees/ on macOS only
 	markerPath := filepath.Join(repoDir, ".hoxi", "worktrees", spotlightNoIndexMarker)
-	if _, err := os.Stat(markerPath); err != nil {
+	if _, err := os.Stat(markerPath); runtime.GOOS == "darwin" && err != nil {
 		t.Fatalf("expected Spotlight marker %s: %v", markerPath, err)
+	} else if runtime.GOOS != "darwin" && !os.IsNotExist(err) {
+		t.Fatalf("Spotlight marker must not be written on %s: %v", runtime.GOOS, err)
 	}
 
 	// 2. .env and .env.local were copied into the worktree
