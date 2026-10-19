@@ -59,13 +59,18 @@ func TestInstallAgyHookCreatesMergesAndRefreshes(t *testing.T) {
 			} `json:"hooks"`
 		} `json:"PreToolUse"`
 	}
-	if err := json.Unmarshal(doc[agyHookName], &entry); err != nil || len(entry.PreToolUse) != 1 || len(entry.PreToolUse[0].Hooks) != 1 {
+	if err := json.Unmarshal(doc[agyHookName], &entry); err != nil || len(entry.PreToolUse) != 2 {
 		t.Fatalf("unexpected hook entry: %s (%v)", doc[agyHookName], err)
 	}
-	h := entry.PreToolUse[0].Hooks[0]
-	if entry.PreToolUse[0].Matcher != "run_command" || h.Type != "command" || h.Timeout != 600 ||
-		h.Command != agyHookCommand("/Applications/Hoxi.app/Contents/MacOS/hoxi") {
-		t.Fatalf("unexpected hook entry: %+v", entry)
+	for i, want := range []string{"run_command", "view_file"} {
+		if len(entry.PreToolUse[i].Hooks) != 1 || entry.PreToolUse[i].Matcher != want {
+			t.Fatalf("matcher %d = %+v, want %q", i, entry.PreToolUse[i], want)
+		}
+		h := entry.PreToolUse[i].Hooks[0]
+		if h.Type != "command" || h.Timeout != 600 ||
+			h.Command != agyHookCommand("/Applications/Hoxi.app/Contents/MacOS/hoxi") {
+			t.Fatalf("unexpected hook entry: %+v", entry)
+		}
 	}
 	if raw, _ := os.ReadFile(path); strings.Contains(string(raw), `\u0026`) {
 		t.Fatalf("hooks.json should keep && readable: %s", raw)

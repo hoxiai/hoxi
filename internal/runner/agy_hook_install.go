@@ -75,15 +75,20 @@ func marshalJSON(v interface{}, indent bool) []byte {
 }
 
 func desiredAgyHook(exe string) json.RawMessage {
-	return marshalJSON(map[string]interface{}{
-		"PreToolUse": []interface{}{map[string]interface{}{
-			"matcher": "run_command",
+	entry := func(matcher string) map[string]interface{} {
+		return map[string]interface{}{
+			"matcher": matcher,
 			"hooks": []interface{}{map[string]interface{}{
 				"type":    "command",
 				"command": agyHookCommand(exe),
 				"timeout": agyhook.TimeoutSeconds,
 			}},
-		}},
+		}
+	}
+	// agy gates command execution and file reads separately; both need a hook
+	// entry because headless mode auto-denies anything it cannot prompt for.
+	return marshalJSON(map[string]interface{}{
+		"PreToolUse": []interface{}{entry("run_command"), entry("view_file")},
 	}, false)
 }
 

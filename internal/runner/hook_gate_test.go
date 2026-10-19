@@ -139,14 +139,38 @@ func TestHookGateRejectsBadCredentials(t *testing.T) {
 	}
 }
 
-func TestHookGateAutoApprovesSafeCommandsAndPassesOtherTools(t *testing.T) {
+func TestHookGateAutoApprovesSafeCommandsAndPassesUncoveredTools(t *testing.T) {
 	f := newGateFixture(t)
 	if d := f.callHook(t, f.payload("git status && go test ./...", "", "conv-1")); d.Decision != "auto_approve" {
 		t.Fatalf("safe command: %q", d.Decision)
 	}
-	other, _ := json.Marshal(map[string]interface{}{"toolCall": map[string]interface{}{"name": "view_file"}})
+	other, _ := json.Marshal(map[string]interface{}{"toolCall": map[string]interface{}{"name": "write_to_file"}})
 	if d := f.callHook(t, other); d.Decision != "allow" {
-		t.Fatalf("non-command tool should pass through, got %q", d.Decision)
+		t.Fatalf("uncovered tool should pass through, got %q", d.Decision)
+	}
+}
+
+func TestHookGateAutoApprovesViewFile(t *testing.T) {
+	f := newGateFixture(t)
+	viewFile := func(path string) []byte {
+		raw, _ := json.Marshal(map[string]interface{}{
+			"conversationId": "conv-1",
+			"stepIdx":        4,
+			"workspacePaths": []string{f.dir},
+			"toolCall": map[string]interface{}{
+				"name": "view_file",
+				"args": map[string]interface{}{"AbsolutePath": path, "toolSummary": "View file"},
+			},
+		})
+		return raw
+	}
+	if d := f.callHook(t, viewFile(filepath.Join(f.dir, "inside.txt"))); d.Decision != "auto_approve" {
+		t.Fatalf("inside workspace: %q", d.Decision)
+	}
+	// Headless agy soft-denies any read it cannot prompt for, including paths
+	// outside the worktree; reads are safe under Hoxi's policy, so grant them.
+	if d := f.callHook(t, viewFile(filepath.Join(t.TempDir(), "outside.txt"))); d.Decision != "auto_approve" {
+		t.Fatalf("outside workspace: %q", d.Decision)
 	}
 }
 

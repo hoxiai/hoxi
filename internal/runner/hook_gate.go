@@ -29,6 +29,9 @@ const (
 	runnerPermissionID  = "per_rnr_"
 	hookDecisionApprove = "auto_approve"
 	hookDecisionDeny    = "deny"
+
+	hookToolRunCommand = "run_command"
+	hookToolViewFile   = "view_file"
 )
 
 type hookCredential struct {
@@ -196,7 +199,14 @@ func (s *Service) decideHookCall(r *http.Request, cred hookCredential, p hookPay
 	if !ok {
 		return hookDecisionDeny, "Hoxi session no longer exists"
 	}
-	if p.ToolCall.Name != "run_command" {
+	// File reads are non-destructive and follow the same policy as safe shell
+	// commands (`cat`), so Hoxi grants them instead of letting agy's headless
+	// mode soft-deny the call. Reads of any path were already achievable via a
+	// safe `cat`, and the sandbox still blocks writes outside the worktree.
+	if p.ToolCall.Name == hookToolViewFile {
+		return hookDecisionApprove, ""
+	}
+	if p.ToolCall.Name != hookToolRunCommand {
 		return "allow", ""
 	}
 	if p.ConversationID != "" && rec.ExternalID != "" && p.ConversationID != rec.ExternalID {
