@@ -185,6 +185,9 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !g.allowRequest(w, r) {
 		return
 	}
+	if !g.routeConversation(w, r) {
+		return
+	}
 	if !g.admitUpdateRequest(w, r) {
 		return
 	}

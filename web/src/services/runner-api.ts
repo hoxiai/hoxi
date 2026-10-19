@@ -1,13 +1,5 @@
 // web/src/services/runner-api.ts
-import type {
-  MessageInfo,
-  MessagePart,
-  PermissionRequest,
-  SessionInfo,
-  SessionRuntime,
-  SessionStatus,
-} from "./sse-types";
-import type { PromptAttachment } from "./api-types";
+import type { PermissionRequest, SessionInfo, SessionRuntime } from "./sse-types";
 
 const knownRunnerSessionIDs = new Set<string>();
 
@@ -22,6 +14,10 @@ export function isRunnerSessionID(sessionID?: string | null): boolean {
 // Antigravity approval-hook requests are minted by the Go runner gate.
 export function isRunnerPermissionID(requestID?: string | null): boolean {
   return !!requestID && requestID.startsWith("per_rnr_");
+}
+
+export function forgetRunnerSession(sessionID: string): void {
+  knownRunnerSessionIDs.delete(sessionID);
 }
 
 export function registerRunnerSessions(sessions: SessionInfo[]): void {
@@ -88,131 +84,6 @@ export interface RunnerModelsResponse {
 }
 
 export const runnerAPI = {
-  async prepareRuntime(sessionID: string, runtime: SessionRuntime, model: { providerID: string; modelID: string } | undefined, directory?: string): Promise<void> {
-    if (runtime === "opencode" && !isRunnerSessionID(sessionID)) return;
-    const info = await requestJSON<SessionInfo>(withDir(`/api/hoxi/runner/sessions/${encodeURIComponent(sessionID)}/runtime`, directory), {
-      method: "POST", body: JSON.stringify({ runtime, ...model }),
-    });
-    registerRunnerSessions([info]);
-  },
-  async listSessions(directory?: string): Promise<SessionInfo[]> {
-    const list = await requestJSON<SessionInfo[]>(
-      withDir("/api/hoxi/runner/sessions", directory)
-    );
-    if (Array.isArray(list)) {
-      registerRunnerSessions(list);
-      return list;
-    }
-    return [];
-  },
-
-  getSessionStatuses(): Promise<Record<string, SessionStatus>> {
-    return requestJSON("/api/hoxi/runner/sessions/status");
-  },
-
-  async getSession(sessionID: string, directory?: string): Promise<SessionInfo> {
-    const info = await requestJSON<SessionInfo>(
-      withDir(`/api/hoxi/runner/sessions/${encodeURIComponent(sessionID)}`, directory)
-    );
-    if (info?.id) registerRunnerSessions([info]);
-    return info;
-  },
-
-  async createSession(opts: {
-    runtime: "antigravity" | "claude-code";
-    title?: string;
-    directory?: string;
-    modelID?: string;
-    providerID?: string;
-    mode?: string;
-    sandboxMode?: "local" | "worktree";
-  }): Promise<SessionInfo> {
-    const info = await requestJSON<SessionInfo>("/api/hoxi/runner/sessions", {
-      method: "POST",
-      body: JSON.stringify(opts),
-    });
-    if (info?.id) registerRunnerSessions([info]);
-    return info;
-  },
-
-  renameSession(sessionID: string, title: string): Promise<SessionInfo> {
-    return requestJSON(`/api/hoxi/runner/sessions/${encodeURIComponent(sessionID)}`, {
-      method: "PATCH",
-      body: JSON.stringify({ title }),
-    });
-  },
-
-  setSandboxMode(sessionID: string, sandboxMode: "local" | "worktree",
-    options?: { force?: boolean; keepBranch?: boolean }): Promise<SessionInfo> {
-    return requestJSON(`/api/hoxi/runner/sessions/${encodeURIComponent(sessionID)}`, {
-      method: "PATCH", body: JSON.stringify({ sandboxMode, ...options }),
-    });
-  },
-
-  archiveSession(sessionID: string, archived: boolean): Promise<SessionInfo> {
-    return requestJSON(`/api/hoxi/runner/sessions/${encodeURIComponent(sessionID)}`, {
-      method: "PATCH",
-      body: JSON.stringify({
-        time: { archived: archived ? Date.now() : 0 },
-      }),
-    });
-  },
-
-  deleteSession(sessionID: string): Promise<void> {
-    knownRunnerSessionIDs.delete(sessionID);
-    return requestJSON(`/api/hoxi/runner/sessions/${encodeURIComponent(sessionID)}`, {
-      method: "DELETE",
-    });
-  },
-
-  getMessages(
-    sessionID: string
-  ): Promise<Array<{ info: MessageInfo; parts: MessagePart[] }>> {
-    return requestJSON(
-      `/api/hoxi/runner/sessions/${encodeURIComponent(sessionID)}/message`
-    );
-  },
-
-  sendPromptAsync(
-    sessionID: string,
-    text: string,
-    options?: {
-      agent?: string;
-      model?: { providerID: string; modelID: string };
-      variant?: string;
-      system?: string;
-      attachments?: PromptAttachment[];
-    }
-  ): Promise<void> {
-    const parts: Array<{ type: "text"; text: string } | PromptAttachment> = [];
-    if (options?.attachments?.length) parts.push(...options.attachments);
-    if (text || parts.length === 0) parts.push({ type: "text", text });
-    return requestJSON(
-      `/api/hoxi/runner/sessions/${encodeURIComponent(sessionID)}/prompt`,
-      {
-        method: "POST",
-        body: JSON.stringify({
-          text,
-          agent: options?.agent || "build",
-          ...(options?.model ? { model: options.model } : {}),
-          ...(options?.variant ? { variant: options.variant } : {}),
-          ...(options?.system ? { system: options.system } : {}),
-          parts,
-        }),
-      }
-    );
-  },
-
-  abortSession(sessionID: string): Promise<void> {
-    return requestJSON(
-      `/api/hoxi/runner/sessions/${encodeURIComponent(sessionID)}/abort`,
-      {
-        method: "POST",
-        body: JSON.stringify({}),
-      }
-    );
-  },
-
   listModels(
     runtime: "antigravity" | "claude-code",
     forceRefresh = false

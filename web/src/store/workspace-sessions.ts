@@ -1,7 +1,7 @@
 import { createSignal } from "solid-js";
 import { produce } from "solid-js/store";
 import type { MessagePart, SnapshotFileDiff, SessionInfo } from "../services/sse-types";
-import { hoxiAPI, isRunnerSessionID, runnerAPI } from "../services/api";
+import { hoxiAPI, isRunnerSessionID } from "../services/api";
 import { registerRunnerSessions } from "../services/runner-api";
 import { mergeServerTurnsInto } from "./message-lookup";
 import { recordUserRevertAction } from "./provider-telemetry";
@@ -273,7 +273,7 @@ export async function exitSessionWorktree(sessionID: string, keepBranch = false)
 
 async function leaveSessionWorktree(sessionID: string, keepBranch: boolean): Promise<void> {
   if (isRunnerSessionID(sessionID)) {
-    replaceSession(await runnerAPI.setSandboxMode(sessionID, "local", { force: true, keepBranch }));
+    replaceSession(await hoxiAPI.setSandboxMode(sessionID, "local", { force: true, keepBranch }));
   } else {
     await hoxiAPI.removeWorktree(sessionID, true, keepBranch);
   }

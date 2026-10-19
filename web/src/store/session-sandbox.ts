@@ -3,7 +3,6 @@ import {
   hoxiAPI,
   isRunnerSessionID,
   resolveRunnerRuntimeForProvider,
-  runnerAPI,
   type WorktreeMeta,
 } from "../services/api";
 import type { SessionInfo } from "../services/sse-types";
@@ -145,7 +144,7 @@ export async function switchActiveSessionSandboxMode(mode: "local" | "worktree")
     if (isSessionBusy(id)) throw new Error(t("timeline.worktreeBusy"));
     if (isRunnerSessionID(id) || sessionRuntimeForID(id) !== "opencode") {
       await changeSandbox(id, async () => {
-        const session = await runnerAPI.setSandboxMode(id, mode);
+        const session = await hoxiAPI.setSandboxMode(id, mode);
         replaceSession(session);
         setWorkspace("worktreeBySession", id, {
           sessionID: id, isolated: session.sandboxMode === "worktree", directory: session.directory!,

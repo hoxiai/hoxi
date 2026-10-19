@@ -1,6 +1,5 @@
 import { reconcile, unwrap } from "solid-js/store";
-import { hoxiAPI, runnerAPI } from "../services/api";
-import { registerRunnerSessions } from "../services/runner-api";
+import { hoxiAPI } from "../services/api";
 import type { SessionInfo, SessionRuntime } from "../services/sse-types";
 import { selectModel, sessionRuntimeForID } from "../store/workspace-providers";
 import { setWorkspace, workspace } from "../store/workspace";
@@ -46,15 +45,14 @@ describe("runtime switching in an existing conversation", () => {
       }
       assertEqual(calls.length, 6);
       for (let i = 0; i < calls.length; i += 2) {
-        assertTrue(calls[i].path.includes(`/sessions/${id}/runtime?directory=`));
-        assertEqual(calls[i + 1].path, `/api/hoxi/runner/sessions/${id}/prompt`);
+        assertTrue(calls[i].path.startsWith(`/api/hoxi/sessions/${id}/runtime?directory=`));
+        assertTrue(calls[i + 1].path.startsWith(`/api/hoxi/sessions/${id}/prompt_async?directory=`));
         assertEqual(calls[i + 1].body.system, "Project rules");
-        assertEqual(calls[i + 1].body.text, "Continue");
+        assertDeepEqual(calls[i + 1].body.parts, [{ type: "text", text: "Continue" }]);
       }
-      // Restored managed OpenCode sessions must still use the conversation controller.
-      registerRunnerSessions([{ id: "ses_restored_managed", managed: true, runtime: "opencode", title: "Restored", time: { created: 1, updated: 1 } }]);
+      // Ownership is resolved by the gateway, so every session uses the same endpoint.
       await hoxiAPI.getMessages("ses_restored_managed", "/project");
-      assertEqual(calls[6].path, "/api/hoxi/runner/sessions/ses_restored_managed/message");
+      assertEqual(calls[6].path, "/api/hoxi/sessions/ses_restored_managed/message?limit=100&directory=%2Fproject");
     } finally { globalThis.fetch = savedFetch; }
   });
 

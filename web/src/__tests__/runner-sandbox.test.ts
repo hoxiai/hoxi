@@ -1,5 +1,5 @@
 import { reconcile, unwrap } from "solid-js/store";
-import { hoxiAPI, runnerAPI } from "../services/api";
+import { hoxiAPI } from "../services/api";
 import { appSettings, setAppSettings } from "../store/settings";
 import { newIsolatedSession, switchActiveSessionSandboxMode } from "../store/session-sandbox";
 import { cancelScheduledWorktreeStatus, exitSessionWorktree, replaceSessionFromEvent, sessionDirectory } from "../store/workspace-sessions";
@@ -10,7 +10,6 @@ async function withFixture(run: () => Promise<void>) {
   const saved = structuredClone(unwrap(workspace));
   const settings = structuredClone(unwrap(appSettings));
   const api = { ...hoxiAPI };
-  const runner = { ...runnerAPI };
   const documentDescriptor = Object.getOwnPropertyDescriptor(globalThis, "document");
   Object.defineProperty(globalThis, "document", { configurable: true, value: {
     documentElement: { classList: { toggle() {} }, dataset: {}, style: { setProperty() {} } },
@@ -31,7 +30,6 @@ async function withFixture(run: () => Promise<void>) {
   } finally {
     for (const session of workspace.sessions) cancelScheduledWorktreeStatus(session.id);
     Object.assign(hoxiAPI, api);
-    Object.assign(runnerAPI, runner);
     setAppSettings(reconcile(settings));
     setWorkspace(reconcile(saved));
     if (documentDescriptor) Object.defineProperty(globalThis, "document", documentDescriptor);
@@ -44,7 +42,7 @@ describe("local CLI sandbox settings", () => {
     await withFixture(async () => {
       const id = "ses_cld_discard";
       const choices: boolean[] = [];
-      runnerAPI.setSandboxMode = async (_sid, mode, options) => {
+      hoxiAPI.setSandboxMode = async (_sid, mode, options) => {
         assertEqual(mode, "local");
         assertEqual(options?.force, true);
         choices.push(options!.keepBranch!);
@@ -92,7 +90,7 @@ describe("local CLI sandbox settings", () => {
         setWorkspace({ activeSessionID: id, sessions: [{ id, runtime, sandboxMode: "local", title: "test",
           directory: "/runner-project", time: { created: 1, updated: 1 } }] });
         const calls: string[] = [];
-        runnerAPI.setSandboxMode = async (sid, mode) => {
+        hoxiAPI.setSandboxMode = async (sid, mode) => {
           assertEqual(sid, id);
           calls.push(mode);
           return { id, runtime, sandboxMode: mode, title: "test", time: { created: 1, updated: 1 },

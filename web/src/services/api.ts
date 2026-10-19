@@ -30,9 +30,11 @@ import type {
 } from "./api-types";
 import {
   authAPI,
+  forgetRunnerSession,
   isRunnerPermissionID,
   isRunnerSessionID,
   leaderboardAPI,
+  registerRunnerSessions,
   requestJSON,
   resolveRunnerRuntimeForProvider,
   runnerAPI,
@@ -56,6 +58,28 @@ function withDir(path: string, directory?: string): string {
   return `${path}${sep}directory=${encodeURIComponent(directory)}`;
 }
 
+const SESSIONS = "/api/hoxi/sessions";
+
+function sessionPath(sessionID: string): string {
+  return `${SESSIONS}/${encodeURIComponent(sessionID)}`;
+}
+
+// Hands the conversation to another engine before dispatch. Unadopted OpenCode
+// sessions staying on OpenCode need no handoff.
+async function prepareRuntime(
+  sessionID: string,
+  runtime: SessionRuntime,
+  model: { providerID: string; modelID: string } | undefined,
+  directory?: string
+): Promise<void> {
+  if (runtime === "opencode" && !isRunnerSessionID(sessionID)) return;
+  const info = await requestJSON<SessionInfo>(withDir(`${sessionPath(sessionID)}/runtime`, directory), {
+    method: "POST",
+    body: JSON.stringify({ runtime, ...model }),
+  });
+  registerRunnerSessions([info]);
+}
+
 export const hoxiAPI = {
   getBootstrap(): Promise<BootstrapInfo> {
     return requestJSON("/api/hoxi/bootstrap");
@@ -76,39 +100,26 @@ export const hoxiAPI = {
     return requestJSON(`/api/hoxi/dev-pulse${qs ? `?${qs}` : ""}`);
   },
 
-  // Sessions (transparently merges OpenCode & local Runner sessions)
+  // Sessions: one Hoxi endpoint. The gateway routes each session to its owner
+  // (Hoxi conversation store or a not-yet-adopted OpenCode session).
   async listSessions(directory?: string): Promise<SessionInfo[]> {
-    const [ocRes, runnerRes] = await Promise.allSettled([
-      requestJSON<SessionInfo[]>(withDir("/session?limit=200", directory)),
-      runnerAPI.listSessions(directory),
-    ]);
-    const ocList = ocRes.status === "fulfilled" && Array.isArray(ocRes.value) ? ocRes.value : [];
-    const runList = runnerRes.status === "fulfilled" && Array.isArray(runnerRes.value) ? runnerRes.value : [];
-    const managedIDs = new Set(runList.map((session) => session.id));
-    return [...runList, ...ocList.filter((session) => !managedIDs.has(session.id))].sort(
-      (a, b) => (b.time?.updated || 0) - (a.time?.updated || 0)
-    );
+    const list = await requestJSON<SessionInfo[]>(withDir(SESSIONS, directory));
+    if (!Array.isArray(list)) return [];
+    registerRunnerSessions(list);
+    return list;
   },
 
   async getSessionStatuses(directory?: string): Promise<Record<string, SessionStatus>> {
-    const [ocRes, runnerRes] = await Promise.allSettled([
-      requestJSON<Record<string, SessionStatus>>(withDir("/session/status", directory)),
-      runnerAPI.getSessionStatuses(),
-    ]);
-    return {
-      ...(ocRes.status === "fulfilled" && ocRes.value ? ocRes.value : {}),
-      ...(runnerRes.status === "fulfilled" && runnerRes.value ? runnerRes.value : {}),
-    };
+    return (await requestJSON<Record<string, SessionStatus>>(withDir(`${SESSIONS}/status`, directory))) || {};
   },
 
-  getSession(sessionID: string, directory?: string): Promise<SessionInfo> {
-    if (isRunnerSessionID(sessionID)) {
-      return runnerAPI.getSession(sessionID, directory);
-    }
-    return requestJSON(withDir(`/session/${sessionID}`, directory));
+  async getSession(sessionID: string, directory?: string): Promise<SessionInfo> {
+    const info = await requestJSON<SessionInfo>(withDir(sessionPath(sessionID), directory));
+    if (info?.id) registerRunnerSessions([info]);
+    return info;
   },
 
-  createSession(
+  async createSession(
     title?: string,
     directory?: string,
     options?: {
@@ -119,30 +130,30 @@ export const hoxiAPI = {
       sandboxMode?: "local" | "worktree";
     }
   ): Promise<SessionInfo> {
-    if (options?.runtime === "antigravity" || options?.runtime === "claude-code") {
-      return runnerAPI.createSession({
-        runtime: options.runtime,
-        title,
-        directory,
-        modelID: options.modelID,
-        providerID: options.providerID,
-        mode: options.mode,
-        sandboxMode: options.sandboxMode,
-      });
-    }
-    return requestJSON(withDir("/session", directory), {
+    const info = await requestJSON<SessionInfo>(withDir(SESSIONS, directory), {
       method: "POST",
-      body: JSON.stringify(title ? { title } : {}),
+      body: JSON.stringify({ ...options, ...(title ? { title } : {}), ...(directory ? { directory } : {}) }),
     });
+    if (info?.id) registerRunnerSessions([info]);
+    return info;
   },
 
   renameSession(sessionID: string, title: string, directory?: string): Promise<SessionInfo> {
-    if (isRunnerSessionID(sessionID)) {
-      return runnerAPI.renameSession(sessionID, title);
-    }
-    return requestJSON(withDir(`/session/${sessionID}`, directory), {
+    return requestJSON(withDir(sessionPath(sessionID), directory), {
       method: "PATCH",
       body: JSON.stringify({ title }),
+    });
+  },
+
+  setSandboxMode(
+    sessionID: string,
+    sandboxMode: "local" | "worktree",
+    options?: { force?: boolean; keepBranch?: boolean },
+    directory?: string
+  ): Promise<SessionInfo> {
+    return requestJSON(withDir(sessionPath(sessionID), directory), {
+      method: "PATCH",
+      body: JSON.stringify({ sandboxMode, ...options }),
     });
   },
 
@@ -151,10 +162,7 @@ export const hoxiAPI = {
     archived: boolean,
     directory?: string
   ): Promise<SessionInfo> {
-    if (isRunnerSessionID(sessionID)) {
-      return runnerAPI.archiveSession(sessionID, archived);
-    }
-    return requestJSON(withDir(`/session/${sessionID}`, directory), {
+    return requestJSON(withDir(sessionPath(sessionID), directory), {
       method: "PATCH",
       body: JSON.stringify({
         time: { archived: archived ? Date.now() : 0 },
@@ -162,23 +170,18 @@ export const hoxiAPI = {
     });
   },
 
-  deleteSession(sessionID: string, directory?: string): Promise<void> {
-    if (isRunnerSessionID(sessionID)) {
-      return runnerAPI.deleteSession(sessionID);
-    }
-    return requestJSON(withDir(`/session/${sessionID}`, directory), {
+  async deleteSession(sessionID: string, directory?: string): Promise<void> {
+    await requestJSON(withDir(sessionPath(sessionID), directory), {
       method: "DELETE",
     });
+    forgetRunnerSession(sessionID);
   },
 
   getMessages(
     sessionID: string,
     directory?: string
   ): Promise<Array<{ info: MessageInfo; parts: MessagePart[] }>> {
-    if (isRunnerSessionID(sessionID)) {
-      return runnerAPI.getMessages(sessionID);
-    }
-    return requestJSON(withDir(`/session/${sessionID}/message?limit=100`, directory));
+    return requestJSON(withDir(`${sessionPath(sessionID)}/message?limit=100`, directory));
   },
 
   // Prompting & Live Mid-Stream Steering
@@ -195,10 +198,7 @@ export const hoxiAPI = {
       runtime?: SessionRuntime;
     }
   ): Promise<void> {
-    if (options?.runtime) await runnerAPI.prepareRuntime(sessionID, options.runtime, options.model, options.directory);
-    if (isRunnerSessionID(sessionID)) {
-      return runnerAPI.sendPromptAsync(sessionID, text, options);
-    }
+    if (options?.runtime) await prepareRuntime(sessionID, options.runtime, options.model, options.directory);
     const parts: Array<{ type: "text"; text: string } | PromptAttachment> = [];
     if (options?.attachments && options.attachments.length > 0) {
       parts.push(...options.attachments);
@@ -206,7 +206,7 @@ export const hoxiAPI = {
     if (text || parts.length === 0) {
       parts.push({ type: "text", text });
     }
-    return requestJSON(withDir(`/session/${sessionID}/prompt_async`, options?.directory), {
+    return requestJSON(withDir(`${sessionPath(sessionID)}/prompt_async`, options?.directory), {
       method: "POST",
       body: JSON.stringify({
         agent: options?.agent || "build",
@@ -219,10 +219,7 @@ export const hoxiAPI = {
   },
 
   abortSession(sessionID: string, directory?: string): Promise<void> {
-    if (isRunnerSessionID(sessionID)) {
-      return runnerAPI.abortSession(sessionID);
-    }
-    return requestJSON(withDir(`/session/${sessionID}/abort`, directory), {
+    return requestJSON(withDir(`${sessionPath(sessionID)}/abort`, directory), {
       method: "POST",
       body: JSON.stringify({}),
     });
@@ -234,8 +231,7 @@ export const hoxiAPI = {
     modelID: string,
     directory?: string
   ): Promise<boolean> {
-    if (isRunnerSessionID(sessionID)) return Promise.resolve(false);
-    return requestJSON(withDir(`/session/${sessionID}/summarize`, directory), {
+    return requestJSON(withDir(`${sessionPath(sessionID)}/summarize`, directory), {
       method: "POST",
       body: JSON.stringify({ providerID, modelID }),
     });
@@ -248,30 +244,21 @@ export const hoxiAPI = {
     partID?: string,
     directory?: string
   ): Promise<SessionInfo> {
-    if (isRunnerSessionID(sessionID)) {
-      return Promise.reject(new Error("Revert is not supported in local CLI runner runtime"));
-    }
-    return requestJSON(withDir(`/session/${sessionID}/revert`, directory), {
+    return requestJSON(withDir(`${sessionPath(sessionID)}/revert`, directory), {
       method: "POST",
       body: JSON.stringify({ messageID, partID }),
     });
   },
 
   unrevertSession(sessionID: string, directory?: string): Promise<SessionInfo> {
-    if (isRunnerSessionID(sessionID)) {
-      return Promise.reject(new Error("Unrevert is not supported in local CLI runner runtime"));
-    }
-    return requestJSON(withDir(`/session/${sessionID}/unrevert`, directory), {
+    return requestJSON(withDir(`${sessionPath(sessionID)}/unrevert`, directory), {
       method: "POST",
       body: JSON.stringify({}),
     });
   },
 
   forkSession(sessionID: string, messageID?: string, directory?: string): Promise<SessionInfo> {
-    if (isRunnerSessionID(sessionID)) {
-      return Promise.reject(new Error("Fork is not supported in local CLI runner runtime"));
-    }
-    return requestJSON(withDir(`/session/${sessionID}/fork`, directory), {
+    return requestJSON(withDir(`${sessionPath(sessionID)}/fork`, directory), {
       method: "POST",
       body: JSON.stringify({ messageID }),
     });
@@ -279,11 +266,7 @@ export const hoxiAPI = {
 
   // Diffs & VCS
   getSessionDiff(sessionID: string, directory?: string): Promise<SnapshotFileDiff[]> {
-    if (isRunnerSessionID(sessionID)) {
-      const q = `sessionID=${encodeURIComponent(sessionID)}${directory ? `&directory=${encodeURIComponent(directory)}` : ""}`;
-      return requestJSON(`/api/hoxi/worktree/diff?${q}`);
-    }
-    return requestJSON(withDir(`/session/${sessionID}/diff`, directory));
+    return requestJSON(withDir(`${sessionPath(sessionID)}/diff`, directory));
   },
 
   // Interactive Permission Approval Gate
