@@ -203,9 +203,10 @@ func cloneStringAnyMap(in map[string]interface{}) map[string]interface{} {
 	return out
 }
 
-// mergeOpenCodeProviderModels additively refreshes an existing Hoxi provider with
-// models discovered from the external OpenCode CLI, without clobbering user edits.
-func mergeOpenCodeProviderModels(dst, src map[string]interface{}) bool {
+// mergeOpenCodeProviderDefinition additively refreshes an existing Hoxi provider
+// with models and connection defaults discovered from the external OpenCode CLI,
+// without clobbering user edits or the stored credential.
+func mergeOpenCodeProviderDefinition(dst, src map[string]interface{}) bool {
 	if dst == nil || src == nil {
 		return false
 	}
@@ -222,6 +223,27 @@ func mergeOpenCodeProviderModels(dst, src map[string]interface{}) bool {
 			changed = true
 		}
 	}
+	if srcOpts, ok := src["options"].(map[string]interface{}); ok && len(srcOpts) > 0 {
+		dstOpts, _ := dst["options"].(map[string]interface{})
+		if dstOpts == nil {
+			dstOpts = map[string]interface{}{}
+		}
+		optsChanged := false
+		for k, v := range srcOpts {
+			if k == "apiKey" || k == "headers" {
+				continue
+			}
+			if _, exists := dstOpts[k]; exists {
+				continue
+			}
+			dstOpts[k] = v
+			optsChanged = true
+		}
+		if optsChanged {
+			dst["options"] = dstOpts
+			changed = true
+		}
+	}
 	srcModels, _ := src["models"].(map[string]interface{})
 	if len(srcModels) == 0 {
 		return changed
@@ -230,17 +252,64 @@ func mergeOpenCodeProviderModels(dst, src map[string]interface{}) bool {
 	if dstModels == nil {
 		dstModels = map[string]interface{}{}
 	}
+	modelsChanged := false
 	for mid, m := range srcModels {
 		if _, exists := dstModels[mid]; exists {
 			continue
 		}
 		dstModels[mid] = m
+		modelsChanged = true
+	}
+	if modelsChanged {
+		dst["models"] = dstModels
 		changed = true
 	}
-	if changed {
-		dst["models"] = dstModels
-	}
 	return changed
+}
+
+func lowerKeyLookup(m map[string]interface{}) map[string]string {
+	out := make(map[string]string, len(m))
+	for k := range m {
+		out[strings.ToLower(k)] = k
+	}
+	return out
+}
+
+// resolveOpenCodeProviderID maps an external OpenCode provider id onto the id Hoxi
+// should write. auth.json wins because OpenCode resolves credentials by exact
+// provider id; otherwise reuse an existing Hoxi provider regardless of case.
+func resolveOpenCodeProviderID(pid string, authMap, hoxiProvMap map[string]interface{}) string {
+	pid = strings.TrimSpace(pid)
+	if pid == "" {
+		return ""
+	}
+	if _, ok := authMap[pid]; ok {
+		return pid
+	}
+	lower := strings.ToLower(pid)
+	if key, ok := lowerKeyLookup(authMap)[lower]; ok {
+		return key
+	}
+	if key, ok := lowerKeyLookup(hoxiProvMap)[lower]; ok {
+		return key
+	}
+	return pid
+}
+
+func stringListFromAny(v interface{}) []string {
+	switch list := v.(type) {
+	case []string:
+		return append([]string(nil), list...)
+	case []interface{}:
+		out := make([]string, 0, len(list))
+		for _, item := range list {
+			if s := strings.TrimSpace(asString(item)); s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	}
+	return nil
 }
 
 func writePrivateJSONFile(path string, doc map[string]interface{}) error {
@@ -339,35 +408,79 @@ func (g *Service) importOpenCodeCLIProvider() LocalCLIImportResponse {
 		}
 	}
 	changed := false
+	enabledIDs := make([]string, 0, len(provDefs))
 	for _, pid := range sortedStringKeys(provDefs) {
 		def, _ := provDefs[pid].(map[string]interface{})
-		if existingRaw, exists := provMap[pid]; exists {
-			if existing, ok := existingRaw.(map[string]interface{}); ok && mergeOpenCodeProviderModels(existing, def) {
-				provMap[pid] = existing
+		if def == nil {
+			continue
+		}
+		targetID := resolveOpenCodeProviderID(pid, authMap, provMap)
+		if targetID == "" {
+			targetID = pid
+		}
+		enabledIDs = append(enabledIDs, targetID)
+
+		// Fold a case-only duplicate (e.g. config "AINode" vs credential "ainode")
+		// into the credentialed provider instead of leaving a dead second entry.
+		if targetID != pid {
+			if dupRaw, exists := provMap[pid]; exists {
+				if dup, ok := dupRaw.(map[string]interface{}); ok {
+					if targetRaw, ok := provMap[targetID].(map[string]interface{}); ok {
+						mergeOpenCodeProviderDefinition(targetRaw, dup)
+					} else {
+						provMap[targetID] = cloneStringAnyMap(dup)
+					}
+				}
+				delete(provMap, pid)
 				changed = true
 			}
-			continue
 		}
-		entry := cloneStringAnyMap(def)
-		if entry == nil {
-			continue
+
+		targetRaw, exists := provMap[targetID]
+		target, _ := targetRaw.(map[string]interface{})
+		if target == nil {
+			target = map[string]interface{}{}
+			exists = false
 		}
-		cred, ok := authMap[pid].(map[string]interface{})
-		if !ok {
-			cred = authByLower[strings.ToLower(pid)]
+		if mergeOpenCodeProviderDefinition(target, def) || !exists {
+			provMap[targetID] = target
+			changed = true
 		}
-		if key := strings.TrimSpace(asString(cred["key"])); key != "" {
-			opts, _ := entry["options"].(map[string]interface{})
-			if opts == nil {
-				opts = map[string]interface{}{}
+		if cred := authByLower[strings.ToLower(targetID)]; cred != nil {
+			if key := strings.TrimSpace(asString(cred["key"])); key != "" {
+				opts, _ := target["options"].(map[string]interface{})
+				if opts == nil {
+					opts = map[string]interface{}{}
+				}
+				if strings.TrimSpace(asString(opts["apiKey"])) == "" {
+					opts["apiKey"] = key
+					target["options"] = opts
+					changed = true
+				}
 			}
-			if strings.TrimSpace(asString(opts["apiKey"])) == "" {
-				opts["apiKey"] = key
-				entry["options"] = opts
+		}
+	}
+
+	// Sync is an explicit request to make these models usable, so clear stale
+	// disabled flags for the merged provider and its case aliases.
+	if len(enabledIDs) > 0 {
+		disabled := stringListFromAny(doc["disabled_providers"])
+		if len(disabled) > 0 {
+			enabledLower := make(map[string]struct{}, len(enabledIDs))
+			for _, id := range enabledIDs {
+				enabledLower[strings.ToLower(id)] = struct{}{}
+			}
+			next := make([]string, 0, len(disabled))
+			for _, id := range disabled {
+				if _, drop := enabledLower[strings.ToLower(id)]; !drop {
+					next = append(next, id)
+				}
+			}
+			if len(next) != len(disabled) {
+				doc["disabled_providers"] = next
+				changed = true
 			}
 		}
-		provMap[pid] = entry
-		changed = true
 	}
 	if changed {
 		doc["provider"] = provMap
@@ -386,6 +499,8 @@ func (g *Service) importOpenCodeCLIProvider() LocalCLIImportResponse {
 		latestProvider, latestModel = parseOpenCodeModelField(sessions[0].Model)
 	}
 	providerID, _, models := resolveOpenCodeSyncTarget(provDefs, authMap, latestProvider, latestModel)
+	providerID = resolveOpenCodeProviderID(providerID, authMap, provMap)
+	models = appendUniqueString(models, openCodeProviderModelIDs(provMap, providerID)...)
 	if len(models) == 0 {
 		models = sortedStringKeys(authMap)
 	}

@@ -368,6 +368,17 @@ func TestImportOpenCodeCLIProviderSyncsModelsAndAuth(t *testing.T) {
 	workspaceDir := t.TempDir()
 	homeDir := setupSyntheticCLIHome(t, workspaceDir)
 
+	// Mirror the real-world mismatch: config uses "AINode", credentials use
+	// "ainode", and an earlier Hoxi entry already exists under the lowercase id.
+	hoxiModelsPath := filepath.Join(homeDir, ".hoxi", "models.json")
+	if err := os.MkdirAll(filepath.Dir(hoxiModelsPath), 0o700); err != nil {
+		t.Fatalf("mkdir hoxi dir: %v", err)
+	}
+	seedModels := `{"disabled_providers":["AINode","ainode"],"provider":{"ainode":{"name":"AINode","npm":"@ai-sdk/openai-compatible","options":{"baseURL":"https://api.ainode.run/v1"},"models":{"gpt-6.1-sol":{"name":"gpt-6.1-sol"}}}}}`
+	if err := os.WriteFile(hoxiModelsPath, []byte(seedModels), 0o600); err != nil {
+		t.Fatalf("seed hoxi models: %v", err)
+	}
+
 	configDir := filepath.Join(homeDir, ".config", "opencode")
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
 		t.Fatalf("mkdir opencode config: %v", err)
@@ -381,7 +392,8 @@ func TestImportOpenCodeCLIProviderSyncsModelsAndAuth(t *testing.T) {
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		t.Fatalf("mkdir opencode data: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dataDir, "auth.json"), []byte(`{"ainode":{"type":"api","key":"sk-ainode-test"}}`), 0o600); err != nil {
+	authDoc := `{"ainode":{"type":"api","key":"sk-ainode-test"},"opencode-go":{"type":"api","key":"sk-opencode-go-test"}}`
+	if err := os.WriteFile(filepath.Join(dataDir, "auth.json"), []byte(authDoc), 0o600); err != nil {
 		t.Fatalf("write opencode auth: %v", err)
 	}
 
@@ -406,12 +418,34 @@ func TestImportOpenCodeCLIProviderSyncsModelsAndAuth(t *testing.T) {
 		return LocalCLIStatusItem{}
 	}
 
+	sameSet := func(got []string, want ...string) bool {
+		if len(got) != len(want) {
+			return false
+		}
+		counts := map[string]int{}
+		for _, id := range got {
+			counts[id]++
+		}
+		for _, id := range want {
+			counts[id]--
+		}
+		for _, n := range counts {
+			if n != 0 {
+				return false
+			}
+		}
+		return true
+	}
+
 	before := findOpenCode()
 	if !before.Authenticated || before.Connected {
 		t.Fatalf("expected authenticated but not connected before sync, got %+v", before)
 	}
-	if before.ProviderID != "AINode" || before.DefaultModel != "kimi-k3" {
+	if before.ProviderID != "ainode" || before.DefaultModel != "kimi-k3" {
 		t.Fatalf("unexpected pre-sync target: provider=%s model=%s", before.ProviderID, before.DefaultModel)
+	}
+	if !sameSet(before.Models, "deepseek-v4.1-flash", "gpt-6.1-sol", "kimi-k3") {
+		t.Fatalf("unexpected pre-sync models: %v", before.Models)
 	}
 
 	b, _ := json.Marshal(LocalCLIImportRequest{ToolID: ExternalToolOpenCode})
@@ -421,34 +455,75 @@ func TestImportOpenCodeCLIProviderSyncsModelsAndAuth(t *testing.T) {
 	if err := json.Unmarshal(recImport.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal import: %v", err)
 	}
-	if !resp.OK || resp.ProviderID != "AINode" || len(resp.Models) != 2 {
+	if !resp.OK || resp.ProviderID != "ainode" {
 		t.Fatalf("unexpected import response: %+v", resp)
 	}
+	if !sameSet(resp.Models, "deepseek-v4.1-flash", "gpt-6.1-sol", "kimi-k3") {
+		t.Fatalf("unexpected import models: %v", resp.Models)
+	}
 
-	rawModels, err := os.ReadFile(filepath.Join(homeDir, ".hoxi", "models.json"))
-	if err != nil {
-		t.Fatalf("read hoxi models: %v", err)
+	readModels := func() (map[string]map[string]interface{}, []string, []byte) {
+		raw, err := os.ReadFile(hoxiModelsPath)
+		if err != nil {
+			t.Fatalf("read hoxi models: %v", err)
+		}
+		var doc struct {
+			Provider map[string]map[string]interface{} `json:"provider"`
+			Disabled []string                          `json:"disabled_providers"`
+		}
+		if err := json.Unmarshal(raw, &doc); err != nil {
+			t.Fatalf("unmarshal hoxi models: %v", err)
+		}
+		return doc.Provider, doc.Disabled, raw
 	}
-	var modelsDoc struct {
-		Provider map[string]map[string]interface{} `json:"provider"`
+	providers, disabled, rawModels := readModels()
+	if _, ok := providers["AINode"]; ok {
+		t.Fatalf("expected case duplicate to be merged away, got %s", rawModels)
 	}
-	if err := json.Unmarshal(rawModels, &modelsDoc); err != nil {
-		t.Fatalf("unmarshal hoxi models: %v", err)
+	ainode := providers["ainode"]
+	if ainode == nil {
+		t.Fatalf("expected ainode provider, got %s", rawModels)
 	}
-	if _, ok := modelsDoc.Provider["AINode"]; !ok {
-		t.Fatalf("expected AINode provider in hoxi models, got %s", rawModels)
+	models, _ := ainode["models"].(map[string]interface{})
+	for _, mid := range []string{"kimi-k3", "deepseek-v4.1-flash", "gpt-6.1-sol"} {
+		if _, ok := models[mid]; !ok {
+			t.Fatalf("expected model %s in merged provider, got %s", mid, rawModels)
+		}
 	}
-	ainodeOpts, _ := modelsDoc.Provider["AINode"]["options"].(map[string]interface{})
+	for _, id := range disabled {
+		if strings.EqualFold(id, "ainode") {
+			t.Fatalf("expected synced provider to be enabled, disabled=%v", disabled)
+		}
+	}
+	ainodeOpts, _ := ainode["options"].(map[string]interface{})
 	if ainodeOpts["apiKey"] != "sk-ainode-test" {
-		t.Fatalf("expected case-insensitive auth key injection, got %v", ainodeOpts)
+		t.Fatalf("expected auth key injection into merged provider, got %v", ainodeOpts)
+	}
+	if bytes.Contains(rawModels, []byte("sk-opencode-go-test")) {
+		t.Fatalf("credential for auth-only provider must not leak into models.json")
 	}
 
 	rawAuth, err := os.ReadFile(filepath.Join(homeDir, ".hoxi", "engine-data", "opencode", "auth.json"))
 	if err != nil {
 		t.Fatalf("read engine auth: %v", err)
 	}
-	if !strings.Contains(string(rawAuth), "sk-ainode-test") {
-		t.Fatalf("expected credentials in engine auth, got %s", rawAuth)
+	var engineAuth map[string]map[string]interface{}
+	if err := json.Unmarshal(rawAuth, &engineAuth); err != nil {
+		t.Fatalf("unmarshal engine auth: %v", err)
+	}
+	if engineAuth["ainode"]["key"] != "sk-ainode-test" {
+		t.Fatalf("expected ainode credential in engine auth, got %s", rawAuth)
+	}
+	if engineAuth["opencode-go"]["key"] != "sk-opencode-go-test" {
+		t.Fatalf("expected OpenCode Go credential to be synced, got %s", rawAuth)
+	}
+
+	workspaceMirror, err := os.ReadFile(filepath.Join(workspaceDir, ".hoxi", "models.json"))
+	if err != nil {
+		t.Fatalf("read workspace mirror: %v", err)
+	}
+	if bytes.Contains(workspaceMirror, []byte("sk-ainode-test")) {
+		t.Fatalf("workspace mirror must not contain credentials, got %s", workspaceMirror)
 	}
 
 	updatedDoc := `{"model":"AINode/kimi-k3","provider":{"AINode":{"name":"AINode","npm":"@ai-sdk/openai-compatible","options":{"baseURL":"https://api.ainode.run/v1"},"models":{"kimi-k3":{"name":"kimi-k3"},"glm-5.3":{"name":"glm-5.3"}}}}}`
@@ -457,12 +532,13 @@ func TestImportOpenCodeCLIProviderSyncsModelsAndAuth(t *testing.T) {
 	}
 	recSecond := httptest.NewRecorder()
 	mux.ServeHTTP(recSecond, httptest.NewRequest(http.MethodPost, "/api/hoxi/local-cli/import", bytes.NewReader(b)))
-	rawSecond, err := os.ReadFile(filepath.Join(homeDir, ".hoxi", "models.json"))
-	if err != nil {
-		t.Fatalf("read hoxi models after second sync: %v", err)
-	}
-	if !strings.Contains(string(rawSecond), "glm-5.3") {
+	providers, _, rawSecond := readModels()
+	models, _ = providers["ainode"]["models"].(map[string]interface{})
+	if _, ok := models["glm-5.3"]; !ok {
 		t.Fatalf("expected newly added model after re-sync, got %s", rawSecond)
+	}
+	if _, ok := models["gpt-6.1-sol"]; !ok {
+		t.Fatalf("re-sync must not drop user models, got %s", rawSecond)
 	}
 
 	if after := findOpenCode(); !after.Connected {

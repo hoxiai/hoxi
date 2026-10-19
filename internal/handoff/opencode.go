@@ -494,18 +494,20 @@ func detectOpenCodeCLIStatus(g *Service) LocalCLIStatusItem {
 		}
 	}
 
-	providerID, defaultModel, models := resolveOpenCodeSyncTarget(provDefs, authMap, latestProvider, latestModel)
-	if len(models) == 0 {
-		models = sessionModels
-	}
-
 	hoxiMap := map[string]interface{}{}
 	if g != nil {
 		hoxiMap = g.loadHoxiProvidersMap()
 	}
+	providerID, defaultModel, models := resolveOpenCodeSyncTarget(provDefs, authMap, latestProvider, latestModel)
+	providerID = resolveOpenCodeProviderID(providerID, authMap, hoxiMap)
+	models = appendUniqueString(models, openCodeProviderModelIDs(hoxiMap, providerID)...)
+	if len(models) == 0 {
+		models = sessionModels
+	}
+
 	connected := len(provDefs)+len(authMap) > 0
 	for pid := range provDefs {
-		if _, ok := hoxiMap[pid]; !ok {
+		if _, ok := hoxiMap[resolveOpenCodeProviderID(pid, authMap, hoxiMap)]; !ok {
 			connected = false
 			break
 		}
