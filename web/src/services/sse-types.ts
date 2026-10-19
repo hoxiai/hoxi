@@ -160,6 +160,10 @@ export interface SnapshotFileDiff {
   status?: "added" | "deleted" | "modified";
   repo?: string;
   branch?: string;
+  generatedLike?: boolean;
+  binary?: boolean;
+  large?: boolean;
+  stamp?: string;
 }
 
 export interface PermissionRequest {

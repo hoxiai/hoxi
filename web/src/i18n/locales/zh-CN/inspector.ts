@@ -89,6 +89,10 @@ export const inspector: InspectorI18n = {
     statusAdded: "新增",
     statusModified: "修改",
     statusDeleted: "删除",
+    generatedBadge: "生成",
+    generatedTooltip: "自动生成文件或锁文件",
+    largeDiffHint: "大型或生成文件补丁已在后台轮询中延迟加载。",
+    loadFullDiffBtn: "加载完整改动",
   },
   memory: {
     title: "8 维结构化记忆库",

@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/hoxiai/hoxi/internal/worktree"
 )
 
 func (r SessionRecord) sandboxMode() string {
@@ -143,6 +145,9 @@ func (s *Service) changeSessionSandboxWithOptions(sessionID, mode string, force,
 	} else {
 		if err := s.provisionSessionDirectory(&rec); err != nil {
 			return SessionInfo{}, err
+		}
+		if original.sandboxMode() == "local" && original.RetainedBranch == "" {
+			_ = worktree.TransferWorkingState(rec.ProjectDir, rec.WorktreePath)
 		}
 	}
 	updated, _, err := s.store.Update(sessionID, func(r *SessionRecord) {

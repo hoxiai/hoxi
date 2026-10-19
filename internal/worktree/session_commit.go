@@ -492,6 +492,7 @@ func (m *worktreeManager) CommitSessionChanges(sessionID, message string, push b
 			return fail(fmt.Errorf("commit %s created but index sync failed: %w", newHead, err))
 		}
 		lockHeld = false
+		globalRepoDiffCache.invalidate(dir)
 		if checkpointErr != nil {
 			return CommitAndPushResult{Commit: newHead, Branch: strings.TrimPrefix(ref, "refs/heads/")}, fmt.Errorf("commit %s created but session checkpoint save failed: %w", newHead, checkpointErr)
 		}

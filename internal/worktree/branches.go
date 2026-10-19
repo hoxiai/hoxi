@@ -139,6 +139,7 @@ func (m *worktreeManager) CheckoutBranch(branch string, create bool) (worktreeSt
 			return worktreeStatus{}, err
 		}
 	}
+	globalRepoDiffCache.invalidate(targetDir)
 	return m.Status("__root__")
 }
 
@@ -198,8 +199,14 @@ func (m *worktreeManager) PruneSandboxes(excludeSessionID string) (int, error) {
 				continue
 			}
 			wtDir := filepath.Join(worktreesRoot, sid)
+			cleanupSyncedEnvFiles(m.rootDir, wtDir)
+			_ = os.Remove(filepath.Join(wtDir, ".opencode"))
 			if _, err := runGit(m.rootDir, "worktree", "remove", "--force", wtDir); err != nil {
-				_ = os.RemoveAll(wtDir)
+				detachAndRemoveDir(wtDir)
+			}
+			globalRepoDiffCache.invalidate(wtDir)
+			if m.roots != nil && m.roots.quarantine != nil {
+				m.roots.quarantine.Clear(wtDir)
 			}
 			m.mu.Lock()
 			delete(m.sessions, sid)
@@ -265,6 +272,7 @@ func (m *worktreeManager) RevertFile(sessionID, relPath string) error {
 			_ = os.Remove(filepath.Join(repoDir, repoRelPath))
 		}
 	}
+	globalRepoDiffCache.invalidate(repoDir)
 	return nil
 }
 

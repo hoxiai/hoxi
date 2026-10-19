@@ -44,6 +44,7 @@ type worktreeStatus struct {
 	Deletions        int    `json:"deletions"`
 	AheadCount       int    `json:"aheadCount"`
 	HasUpstream      bool   `json:"hasUpstream"`
+	Health           string `json:"health,omitempty"`
 }
 
 type worktreeManager struct {
@@ -72,7 +73,10 @@ func newWorktreeManager(rootDir string) *worktreeManager {
 	m := &worktreeManager{
 		rootDir:  absRoot,
 		sessions: make(map[string]worktreeMeta),
-		roots:    &managerRoots{managers: make(map[string]*worktreeManager)},
+		roots: &managerRoots{
+			managers:   make(map[string]*worktreeManager),
+			quarantine: newQuarantineTracker(),
+		},
 	}
 	m.roots.managers[absRoot] = m
 	return m
@@ -134,6 +138,7 @@ func (m *worktreeManager) CreateOnBranch(sessionID, retainedBranch string) (work
 	if err := os.MkdirAll(worktreesRoot, 0o755); err != nil {
 		return worktreeMeta{}, fmt.Errorf("create worktrees dir: %w", err)
 	}
+	markSpotlightNoIndex(worktreesRoot)
 	ensureGitExclude(repoRoot, ".hoxi/")
 
 	worktreeDir := filepath.Join(worktreesRoot, sessionID)
@@ -142,7 +147,9 @@ func (m *worktreeManager) CreateOnBranch(sessionID, retainedBranch string) (work
 		branch = retainedBranch
 	}
 
+	isNewWorktree := false
 	if _, err := os.Stat(worktreeDir); os.IsNotExist(err) {
+		isNewWorktree = true
 		if retainedBranch != "" {
 			_, err = runGit(repoRoot, "-c", "checkout.workers=0", "worktree", "add", worktreeDir, branch)
 			if err != nil {
@@ -182,6 +189,16 @@ func (m *worktreeManager) CreateOnBranch(sessionID, retainedBranch string) (work
 			_ = os.Symlink(srcOpenCode, dstOpenCode)
 		}
 	}
+
+	// Sync root-level .env / .env.* files into the worktree without overwriting
+	_, _ = syncWorktreeEnvFiles(repoRoot, worktreeDir)
+	if isNewWorktree {
+		_ = runWorktreeSetupScript(repoRoot, worktreeDir, sessionID, branch)
+	}
+	if m.roots != nil && m.roots.quarantine != nil {
+		m.roots.quarantine.Clear(worktreeDir)
+	}
+	globalRepoDiffCache.invalidate(worktreeDir)
 
 	meta := worktreeMeta{
 		SessionID:  sessionID,
@@ -347,6 +364,28 @@ func (m *worktreeManager) Status(sessionID string) (worktreeStatus, error) {
 		}
 	}
 
+	health := classifyWorktreeHealth(m.rootDir, meta)
+	if meta.Isolated && health == HealthAbsentRestorable {
+		return worktreeStatus{
+			SessionID:  meta.SessionID,
+			Isolated:   meta.Isolated,
+			Directory:  meta.Directory,
+			Branch:     meta.Branch,
+			BaseCommit: meta.BaseCommit,
+			Health:     HealthAbsentRestorable,
+		}, nil
+	}
+	if meta.Isolated && m.roots != nil && m.roots.quarantine != nil && m.roots.quarantine.Blocked(meta.Directory) {
+		return worktreeStatus{
+			SessionID:  meta.SessionID,
+			Isolated:   meta.Isolated,
+			Directory:  meta.Directory,
+			Branch:     meta.Branch,
+			BaseCommit: meta.BaseCommit,
+			Health:     HealthQuarantined,
+		}, nil
+	}
+
 	repos := discoverGitRepos(meta.Directory)
 	nestedPrefixes := nestedRepoPrefixSet(repos)
 	rootDiffTarget := "HEAD"
@@ -387,11 +426,13 @@ func (m *worktreeManager) Status(sessionID string) (worktreeStatus, error) {
 	hasUpstream := false
 	var headCommit, headSubject string
 	primarySet := false
+	anyValid := false
 
 	for i, s := range summaries {
 		if !s.valid {
 			continue
 		}
+		anyValid = true
 		changedFiles += s.changedFiles
 		additions += s.additions
 		deletions += s.deletions
@@ -418,6 +459,14 @@ func (m *worktreeManager) Status(sessionID string) (worktreeStatus, error) {
 		}
 	}
 
+	if meta.Isolated && m.roots != nil && m.roots.quarantine != nil {
+		if anyValid {
+			m.roots.quarantine.Clear(meta.Directory)
+		} else if m.roots.quarantine.RecordFailure(meta.Directory) {
+			health = HealthQuarantined
+		}
+	}
+
 	return worktreeStatus{
 		SessionID:        meta.SessionID,
 		Isolated:         meta.Isolated,
@@ -433,6 +482,7 @@ func (m *worktreeManager) Status(sessionID string) (worktreeStatus, error) {
 		Deletions:        deletions,
 		AheadCount:       aheadCount,
 		HasUpstream:      hasUpstream,
+		Health:           health,
 	}, nil
 }
 
@@ -481,6 +531,10 @@ func (m *worktreeManager) apply(sessionID, mode string) error {
 	if err := snapshotWorktree(meta.Directory, sessionID); err != nil {
 		return err
 	}
+	defer func() {
+		globalRepoDiffCache.invalidate(meta.Directory)
+		globalRepoDiffCache.invalidate(m.rootDir)
+	}()
 
 	if mode == "merge" {
 		_, err := runGit(m.rootDir, "merge", "--no-ff", "-m", appendHoxiCoAuthor("Merge hoxi session "+sessionID), meta.Branch)
@@ -503,6 +557,7 @@ func (m *worktreeManager) apply(sessionID, mode string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), gitCommandTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", "-C", m.rootDir, "apply", "--3way", "-")
+	cmd.Env = nonInteractiveGitEnv()
 	cmd.Stdin = strings.NewReader(diffPatch)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -554,6 +609,10 @@ func (m *worktreeManager) RemoveWithOptions(sessionID string, force bool, keepBr
 		if strings.TrimSpace(porcelain) != "" {
 			return errors.New("worktree has uncommitted changes; pass force=true to discard")
 		}
+		cleanupSyncedEnvFiles(m.rootDir, meta.Directory)
+		if lstat, lErr := os.Lstat(filepath.Join(meta.Directory, ".opencode")); lErr == nil && lstat.Mode()&os.ModeSymlink != 0 {
+			_ = os.Remove(filepath.Join(meta.Directory, ".opencode"))
+		}
 	}
 
 	args := []string{"worktree", "remove"}
@@ -567,6 +626,12 @@ func (m *worktreeManager) RemoveWithOptions(sessionID string, force bool, keepBr
 	if _, err := runGit(m.rootDir, args...); err != nil {
 		return fmt.Errorf("remove worktree: %w", err)
 	}
+	detachAndRemoveDir(meta.Directory)
+	if m.roots != nil && m.roots.quarantine != nil {
+		m.roots.quarantine.Clear(meta.Directory)
+	}
+	globalRepoDiffCache.invalidate(meta.Directory)
+
 	if !keepBranch && meta.Branch != "" {
 		if _, err := runGit(m.rootDir, "branch", "-D", meta.Branch); err != nil {
 			m.mu.Lock()
@@ -610,7 +675,7 @@ func runGitRaw(workDir string, args ...string) (string, error) {
 	defer cancel()
 	cmdArgs := append([]string{"-C", workDir}, args...)
 	cmd := exec.CommandContext(ctx, "git", cmdArgs...)
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	cmd.Env = nonInteractiveGitEnv()
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("%s: %w", strings.TrimSpace(string(output)), err)

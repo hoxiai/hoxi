@@ -22,13 +22,17 @@ type gitRepoTarget struct {
 }
 
 type worktreeFileDiff struct {
-	File      string `json:"file"`
-	Patch     string `json:"patch,omitempty"`
-	Additions int    `json:"additions"`
-	Deletions int    `json:"deletions"`
-	Status    string `json:"status,omitempty"`
-	Repo      string `json:"repo,omitempty"`
-	Branch    string `json:"branch,omitempty"`
+	File          string `json:"file"`
+	Patch         string `json:"patch,omitempty"`
+	Additions     int    `json:"additions"`
+	Deletions     int    `json:"deletions"`
+	Status        string `json:"status,omitempty"`
+	Repo          string `json:"repo,omitempty"`
+	Branch        string `json:"branch,omitempty"`
+	GeneratedLike bool   `json:"generatedLike,omitempty"`
+	Binary        bool   `json:"binary,omitempty"`
+	Large         bool   `json:"large,omitempty"`
+	Stamp         string `json:"stamp,omitempty"`
 }
 
 func hasGitMarker(dir string) bool {
@@ -204,6 +208,11 @@ func (m *worktreeManager) resolveSessionMeta(sessionID string) worktreeMeta {
 }
 
 func diffSingleRepo(repo gitRepoTarget, diffTarget string, nestedPrefixes map[string]struct{}) []worktreeFileDiff {
+	fingerprint := computeRepoStateFingerprint(repo.Dir, diffTarget)
+	if cached, hit := globalRepoDiffCache.get(repo.Dir, diffTarget, fingerprint); hit {
+		return cached
+	}
+
 	var repoBranch string
 	if repo.RelPrefix != "" {
 		repoBranch, _ = runGit(repo.Dir, "rev-parse", "--abbrev-ref", "HEAD")
@@ -249,6 +258,7 @@ func diffSingleRepo(repo gitRepoTarget, diffTarget string, nestedPrefixes map[st
 		if repo.RelPrefix == "" && isWithinNestedRepo(file, nestedPrefixes) {
 			continue
 		}
+		binary := fields[0] == "-" || fields[1] == "-"
 		add, _ := strconv.Atoi(fields[0])
 		del, _ := strconv.Atoi(fields[1])
 		patch := ""
@@ -269,15 +279,24 @@ func diffSingleRepo(repo gitRepoTarget, diffTarget string, nestedPrefixes map[st
 		} else if strings.Contains(patch, "\ndeleted file mode ") {
 			st = "deleted"
 		}
+		generated := classifyGeneratedFile(relFile)
+		large := len(patch) > maxSingleFilePatchBytes || (generated && (len(patch) > maxGeneratedInlinePatchLen || add+del > 300))
+		if large {
+			patch = ""
+		}
 		seen[relFile] = struct{}{}
 		results = append(results, worktreeFileDiff{
-			File:      relFile,
-			Patch:     strings.TrimSpace(patch),
-			Additions: add,
-			Deletions: del,
-			Status:    st,
-			Repo:      repo.RelPrefix,
-			Branch:    repoBranch,
+			File:          relFile,
+			Patch:         strings.TrimSpace(patch),
+			Additions:     add,
+			Deletions:     del,
+			Status:        st,
+			Repo:          repo.RelPrefix,
+			Branch:        repoBranch,
+			GeneratedLike: generated,
+			Binary:        binary,
+			Large:         large,
+			Stamp:         fileStatStamp(repo.Dir, file),
 		})
 	}
 
@@ -299,7 +318,22 @@ func diffSingleRepo(repo gitRepoTarget, diffTarget string, nestedPrefixes map[st
 		}
 		full := filepath.Join(repo.Dir, rel)
 		info, err := os.Stat(full)
-		if err != nil || info.IsDir() || info.Size() > 256*1024 {
+		if err != nil || info.IsDir() {
+			continue
+		}
+		generated := classifyGeneratedFile(relFile)
+		stamp := fileStatStamp(repo.Dir, slashRel)
+		if info.Size() > maxSingleFilePatchBytes {
+			seen[relFile] = struct{}{}
+			results = append(results, worktreeFileDiff{
+				File:          relFile,
+				Status:        "added",
+				Repo:          repo.RelPrefix,
+				Branch:        repoBranch,
+				GeneratedLike: generated,
+				Large:         true,
+				Stamp:         stamp,
+			})
 			continue
 		}
 		data, err := os.ReadFile(full)
@@ -312,26 +346,35 @@ func diffSingleRepo(repo gitRepoTarget, diffTarget string, nestedPrefixes map[st
 		if len(data) > 0 {
 			lines = strings.Split(text, "\n")
 		}
-		var patchBuf strings.Builder
-		patchBuf.WriteString(fmt.Sprintf("diff --git a/%s b/%s\nnew file mode 100644\n--- /dev/null\n+++ b/%s\n", relFile, relFile, relFile))
-		if len(lines) > 0 {
-			patchBuf.WriteString(fmt.Sprintf("@@ -0,0 +1,%d @@\n", len(lines)))
-			for _, l := range lines {
-				patchBuf.WriteString("+" + l + "\n")
+		large := generated && (len(data) > maxGeneratedInlinePatchLen || len(lines) > 300)
+		var patch string
+		if !large {
+			var patchBuf strings.Builder
+			patchBuf.WriteString(fmt.Sprintf("diff --git a/%s b/%s\nnew file mode 100644\n--- /dev/null\n+++ b/%s\n", relFile, relFile, relFile))
+			if len(lines) > 0 {
+				patchBuf.WriteString(fmt.Sprintf("@@ -0,0 +1,%d @@\n", len(lines)))
+				for _, l := range lines {
+					patchBuf.WriteString("+" + l + "\n")
+				}
 			}
+			patch = strings.TrimSpace(patchBuf.String())
 		}
 		seen[relFile] = struct{}{}
 		results = append(results, worktreeFileDiff{
-			File:      relFile,
-			Patch:     strings.TrimSpace(patchBuf.String()),
-			Additions: len(lines),
-			Deletions: 0,
-			Status:    "added",
-			Repo:      repo.RelPrefix,
-			Branch:    repoBranch,
+			File:          relFile,
+			Patch:         patch,
+			Additions:     len(lines),
+			Deletions:     0,
+			Status:        "added",
+			Repo:          repo.RelPrefix,
+			Branch:        repoBranch,
+			GeneratedLike: generated,
+			Large:         large,
+			Stamp:         stamp,
 		})
 	}
 
+	globalRepoDiffCache.put(repo.Dir, diffTarget, fingerprint, results)
 	return results
 }
 

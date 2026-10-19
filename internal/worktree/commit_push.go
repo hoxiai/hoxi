@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	HoxiCoAuthorTrailer = "Co-authored-by: Hoxi AI <code@hoxi.ai>"
+	HoxiCoAuthorTrailer = "Co-authored-by: Hoxi <code@hoxi.ai>"
 	gitPushTimeout      = 45 * time.Second
 )
 
@@ -232,6 +232,7 @@ func (m *worktreeManager) CommitAndPushWorktree(sessionID, message string, push 
 			if _, err := runGit(r.Dir, "commit", "-m", commitMsg); err != nil {
 				return CommitAndPushResult{}, err
 			}
+			globalRepoDiffCache.invalidate(r.Dir)
 			h, _ := runGit(r.Dir, "rev-parse", "--short", "HEAD")
 			br, _ := runGit(r.Dir, "rev-parse", "--abbrev-ref", "HEAD")
 			if h != "" {
@@ -285,6 +286,7 @@ func (m *worktreeManager) CommitAndPushWorktree(sessionID, message string, push 
 		if _, err := runGit(workDir, "commit", "-m", commitMsg); err != nil {
 			return CommitAndPushResult{}, err
 		}
+		globalRepoDiffCache.invalidate(workDir)
 	} else if !push {
 		return CommitAndPushResult{}, errors.New("nothing to commit, working tree clean")
 	}
@@ -368,7 +370,7 @@ func runGitWithTimeout(workDir string, timeout time.Duration, args ...string) (s
 	defer cancel()
 	cmdArgs := append([]string{"-C", workDir}, args...)
 	cmd := exec.CommandContext(ctx, "git", cmdArgs...)
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	cmd.Env = nonInteractiveGitEnv()
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("%s: %w", strings.TrimSpace(string(output)), err)

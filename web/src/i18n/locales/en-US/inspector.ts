@@ -89,6 +89,10 @@ export const inspector = {
     statusAdded: "Added",
     statusModified: "Modified",
     statusDeleted: "Deleted",
+    generatedBadge: "GEN",
+    generatedTooltip: "Generated file or lockfile",
+    largeDiffHint: "Large or generated diff deferred during background polling.",
+    loadFullDiffBtn: "Load full diff",
   },
   memory: {
     title: "8-Dimension Structured Memory",

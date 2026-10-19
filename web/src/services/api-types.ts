@@ -87,6 +87,7 @@ export interface WorktreeStatus {
   deletions: number;
   aheadCount?: number;
   hasUpstream?: boolean;
+  health?: "ok" | "absent-restorable" | "unregistered" | "quarantined" | string;
 }
 
 export interface GitBranchInfo {

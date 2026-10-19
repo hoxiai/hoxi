@@ -58,7 +58,17 @@ func (m *worktreeManager) registerRoutes(mux *http.ServeMux) {
 
 	mux.HandleFunc("/api/hoxi/worktree/diff", func(w http.ResponseWriter, r *http.Request) {
 		sessionID := r.URL.Query().Get("sessionID")
-		diffs, err := m.scoped(r.URL.Query().Get("directory"), sessionID).Diff(sessionID)
+		scoped := m.scoped(r.URL.Query().Get("directory"), sessionID)
+		if file := strings.TrimSpace(r.URL.Query().Get("file")); file != "" {
+			diff, err := scoped.DiffFile(sessionID, file)
+			if err != nil {
+				writeJSONError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, diff)
+			return
+		}
+		diffs, err := scoped.Diff(sessionID)
 		if err != nil {
 			writeJSONError(w, http.StatusInternalServerError, err.Error())
 			return

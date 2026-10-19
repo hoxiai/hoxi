@@ -260,3 +260,36 @@ func TestExplicitRunnerDiscardHonorsBranchChoice(t *testing.T) {
 		})
 	}
 }
+
+func TestPromoteLocalSessionToWorktreeTransfersWorkingStateAndContext(t *testing.T) {
+	root := initTestGitRepo(t)
+	svc := NewService(root, nil, nil, filepath.Join(t.TempDir(), "sessions.json"))
+	info := createSandboxSession(t, svc, "claude-code", root, "local")
+
+	_, _, _ = svc.store.Update(info.ID, func(r *SessionRecord) {
+		r.Turns = []MessageTurn{{
+			Info:  MessageInfo{ID: "msg_1", SessionID: info.ID, Role: "user"},
+			Parts: []MessagePart{{Type: "text", Text: "implement draft"}},
+		}}
+	})
+
+	if err := os.WriteFile(filepath.Join(root, "draft.txt"), []byte("untracked draft\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	isolated, err := svc.changeSessionSandbox(info.ID, "worktree")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(isolated.Directory, "draft.txt"))
+	if err != nil || string(got) != "untracked draft\n" {
+		t.Fatalf("expected untracked draft transferred to worktree, got %q (err=%v)", string(got), err)
+	}
+
+	rec, _ := svc.Store().Get(info.ID)
+	ctx := runtimeContext(rec)
+	if !strings.Contains(ctx, "<system-reminder>") || !strings.Contains(ctx, isolated.Directory) || !strings.Contains(ctx, isolated.Branch) {
+		t.Fatalf("expected system-reminder with worktree directory and branch in runtimeContext, got %q", ctx)
+	}
+}
+

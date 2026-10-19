@@ -23,7 +23,7 @@ import {
 import type { SnapshotFileDiff } from "../../services/sse-types";
 import { DiffChanges, FileIcon } from "../icons";
 import { t } from "../../i18n";
-import { DiffStatusBadge } from "./diff-file-tree";
+import { DiffStatusBadge, GeneratedFileBadge } from "./diff-file-tree";
 
 export function synthesizeAICommitMessage(
   sessionID: string | null | undefined,
@@ -135,6 +135,44 @@ export function SelectedDiffDetail(props: {
   const [reverting, setReverting] = createSignal(false);
   const [lineNum, setLineNum] = createSignal("");
   const [commentBody, setCommentBody] = createSignal("");
+  const [loadedDiff, setLoadedDiff] = createSignal<SnapshotFileDiff | null>(null);
+  const [loadingFull, setLoadingFull] = createSignal(false);
+
+  const effectiveDiff = () => loadedDiff() || props.diff;
+
+  const fetchFullFileDiff = async (targetFile: string) => {
+    const sessionID = workspace.activeSessionID || "__root__";
+    setLoadingFull(true);
+    try {
+      const detail = await hoxiAPI.getWorktreeFileDiff(
+        sessionID,
+        targetFile,
+        activeDirectory() || workspace.rootDir || undefined
+      );
+      if (props.diff.file === targetFile && detail) {
+        setLoadedDiff(detail);
+      }
+    } catch (err) {
+      console.error("getWorktreeFileDiff failed:", err);
+    } finally {
+      setLoadingFull(false);
+    }
+  };
+
+  createEffect(() => {
+    const file = props.diff.file;
+    const _stamp = props.diff.stamp;
+    void _stamp;
+    setLoadedDiff(null);
+    if (
+      props.diff.large &&
+      !props.diff.patch &&
+      typeof props.diff.before !== "string" &&
+      typeof props.diff.after !== "string"
+    ) {
+      void fetchFullFileDiff(file);
+    }
+  });
 
   const dirPart = () => {
     const idx = props.diff.file.lastIndexOf("/");
@@ -264,7 +302,8 @@ export function SelectedDiffDetail(props: {
             </Show>
             <span class="font-semibold text-[var(--text-primary)]">{baseName()}</span>
           </div>
-          <DiffStatusBadge status={props.diff.status} />
+          <DiffStatusBadge status={effectiveDiff().status} />
+          <GeneratedFileBadge generated={effectiveDiff().generatedLike} />
           <Show when={props.diff.repo}>
             <span
               class="shrink-0 inline-flex items-center gap-1 rounded bg-[var(--accent-surface)] px-1.5 py-0 text-[10px] font-mono text-[var(--accent-primary)] border border-[var(--accent-border)]"
@@ -285,10 +324,10 @@ export function SelectedDiffDetail(props: {
 
         <div class="flex items-center gap-2 shrink-0">
           <DiffChanges
-            changes={{ additions: props.diff.additions, deletions: props.diff.deletions }}
+            changes={{ additions: effectiveDiff().additions, deletions: effectiveDiff().deletions }}
           />
           <DiffChanges
-            changes={{ additions: props.diff.additions, deletions: props.diff.deletions }}
+            changes={{ additions: effectiveDiff().additions, deletions: effectiveDiff().deletions }}
             variant="bars"
           />
         </div>
@@ -349,15 +388,30 @@ export function SelectedDiffDetail(props: {
       {/* Single File Diff Body */}
       <Show
         when={
-          props.diff.patch ||
-          typeof props.diff.before === "string" ||
-          typeof props.diff.after === "string"
+          effectiveDiff().patch ||
+          typeof effectiveDiff().before === "string" ||
+          typeof effectiveDiff().after === "string"
+        }
+        fallback={
+          <Show when={effectiveDiff().large}>
+            <div class="flex items-center justify-between gap-2 px-3 py-3 text-[11.5px] text-[var(--text-muted)]">
+              <span>{t("inspector.diffs.largeDiffHint")}</span>
+              <button
+                type="button"
+                disabled={loadingFull()}
+                onClick={() => void fetchFullFileDiff(props.diff.file)}
+                class="shrink-0 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[11px] font-medium text-[var(--text-primary)] hover:bg-[var(--bg-hover)] disabled:opacity-40 cursor-pointer"
+              >
+                {t("inspector.diffs.loadFullDiffBtn")}
+              </button>
+            </div>
+          </Show>
         }
       >
         <div class="p-2">
           <FileDiffBlock
-            diff={props.diff}
-            patch={props.diff.patch}
+            diff={effectiveDiff()}
+            patch={effectiveDiff().patch}
             diffStyle={props.diffStyle}
             fillHeight={true}
           />

@@ -120,6 +120,7 @@ func RestoreSnapshot(dir, treeHash string) error {
 		return fmt.Errorf("checkout snapshot files: %w", err)
 	}
 	_, _ = runGit(repoRoot, "read-tree", "HEAD")
+	globalRepoDiffCache.invalidate(repoRoot)
 	return nil
 }
 
@@ -128,10 +129,162 @@ func runGitWithIndex(workDir, indexPath string, args ...string) (string, error) 
 	defer cancel()
 	cmdArgs := append([]string{"-C", workDir}, args...)
 	cmd := exec.CommandContext(ctx, "git", cmdArgs...)
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_INDEX_FILE="+indexPath)
+	cmd.Env = nonInteractiveGitEnv("GIT_INDEX_FILE=" + indexPath)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("%s: %w", strings.TrimSpace(string(output)), err)
 	}
 	return strings.TrimSpace(string(output)), nil
+}
+
+const maxPortableUntrackedBytes = 20 * 1024 * 1024
+
+// PortableUntrackedFile holds an untracked working-tree file for cross-worktree transfer.
+type PortableUntrackedFile struct {
+	RelPath string
+	Mode    os.FileMode
+	Data    []byte
+}
+
+// PortableGitSnapshot holds staged patches, unstaged patches, and untracked files
+// so uncommitted local changes can be portably applied to a newly provisioned worktree.
+type PortableGitSnapshot struct {
+	StagedPatch    string
+	UnstagedPatch  string
+	UntrackedFiles []PortableUntrackedFile
+}
+
+// CapturePortableSnapshot captures staged diff, unstaged diff, and untracked files from dir.
+func CapturePortableSnapshot(dir string) (*PortableGitSnapshot, error) {
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return nil, fmt.Errorf("directory is required")
+	}
+	topLevel, err := runGit(dir, "rev-parse", "--show-toplevel")
+	if err != nil || strings.TrimSpace(topLevel) == "" {
+		return nil, fmt.Errorf("not a git repository: %w", err)
+	}
+	repoRoot := filepath.Clean(strings.TrimSpace(topLevel))
+
+	staged, _ := runGitRaw(repoRoot, "diff", "--cached", "--binary")
+	unstaged, _ := runGitRaw(repoRoot, "diff", "--binary")
+
+	var untracked []PortableUntrackedFile
+	if out, lsErr := runGitRaw(repoRoot, "ls-files", "--others", "--exclude-standard", "-z"); lsErr == nil && out != "" {
+		var totalBytes int64
+		for _, entry := range strings.Split(out, "\x00") {
+			if entry == "" || strings.HasPrefix(entry, ".hoxi/") || strings.HasPrefix(entry, ".opencode/") || isRootEnvFile(entry) {
+				continue
+			}
+			absPath := filepath.Join(repoRoot, filepath.FromSlash(entry))
+			info, statErr := os.Lstat(absPath)
+			if statErr != nil || !info.Mode().IsRegular() {
+				continue
+			}
+			if totalBytes+info.Size() > maxPortableUntrackedBytes {
+				break
+			}
+			data, readErr := os.ReadFile(absPath)
+			if readErr != nil {
+				continue
+			}
+			totalBytes += int64(len(data))
+			untracked = append(untracked, PortableUntrackedFile{
+				RelPath: entry,
+				Mode:    info.Mode().Perm(),
+				Data:    data,
+			})
+		}
+	}
+
+	return &PortableGitSnapshot{
+		StagedPatch:    staged,
+		UnstagedPatch:  unstaged,
+		UntrackedFiles: untracked,
+	}, nil
+}
+
+// ApplyPortableSnapshot replays a portable snapshot onto targetDir.
+func ApplyPortableSnapshot(targetDir string, snap *PortableGitSnapshot) error {
+	if snap == nil {
+		return nil
+	}
+	targetDir = strings.TrimSpace(targetDir)
+	if targetDir == "" {
+		return fmt.Errorf("target directory is required")
+	}
+	topLevel, err := runGit(targetDir, "rev-parse", "--show-toplevel")
+	if err != nil || strings.TrimSpace(topLevel) == "" {
+		return fmt.Errorf("not a git repository: %w", err)
+	}
+	repoRoot := filepath.Clean(strings.TrimSpace(topLevel))
+
+	if strings.TrimSpace(snap.StagedPatch) != "" {
+		if err := applyGitPatch(repoRoot, snap.StagedPatch, "--index"); err != nil {
+			_ = applyGitPatch(repoRoot, snap.StagedPatch)
+		}
+	}
+	if strings.TrimSpace(snap.UnstagedPatch) != "" {
+		_ = applyGitPatch(repoRoot, snap.UnstagedPatch)
+	}
+	for _, uf := range snap.UntrackedFiles {
+		cleaned := filepath.Clean(filepath.FromSlash(uf.RelPath))
+		if cleaned == "." || strings.HasPrefix(cleaned, "..") || filepath.IsAbs(cleaned) {
+			continue
+		}
+		dstPath := filepath.Join(repoRoot, cleaned)
+		if err := os.MkdirAll(filepath.Dir(dstPath), 0o755); err != nil {
+			continue
+		}
+		mode := uf.Mode
+		if mode == 0 {
+			mode = 0o644
+		}
+		_ = os.WriteFile(dstPath, uf.Data, mode)
+	}
+	globalRepoDiffCache.invalidate(repoRoot)
+	return nil
+}
+
+// TransferWorkingState captures uncommitted staged/unstaged/untracked changes from srcDir
+// and applies them to dstDir without mutating srcDir.
+func TransferWorkingState(srcDir, dstDir string) error {
+	srcDir = strings.TrimSpace(srcDir)
+	dstDir = strings.TrimSpace(dstDir)
+	if srcDir == "" || dstDir == "" || filepath.Clean(srcDir) == filepath.Clean(dstDir) {
+		return nil
+	}
+	snap, err := CapturePortableSnapshot(srcDir)
+	if err != nil {
+		return err
+	}
+	return ApplyPortableSnapshot(dstDir, snap)
+}
+
+func applyGitPatch(workDir, patch string, extraArgs ...string) error {
+	if strings.TrimSpace(patch) == "" {
+		return nil
+	}
+	run := func(threeWay bool) error {
+		ctx, cancel := context.WithTimeout(context.Background(), gitCommandTimeout)
+		defer cancel()
+		args := []string{"-C", workDir, "apply", "--whitespace=nowarn"}
+		if threeWay {
+			args = append(args, "--3way")
+		}
+		args = append(args, extraArgs...)
+		args = append(args, "-")
+		cmd := exec.CommandContext(ctx, "git", args...)
+		cmd.Env = nonInteractiveGitEnv()
+		cmd.Stdin = strings.NewReader(patch)
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("%s: %w", strings.TrimSpace(string(output)), err)
+		}
+		return nil
+	}
+	if err := run(false); err != nil {
+		return run(true)
+	}
+	return nil
 }

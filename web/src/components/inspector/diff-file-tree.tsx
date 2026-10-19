@@ -205,6 +205,19 @@ export function DiffStatusBadge(props: { status?: SnapshotFileDiff["status"] }) 
   );
 }
 
+export function GeneratedFileBadge(props: { generated?: boolean }) {
+  return (
+    <Show when={props.generated}>
+      <span
+        class="shrink-0 inline-flex items-center justify-center rounded border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-1 py-0 text-[9px] font-mono font-medium leading-4 text-[var(--text-muted)]"
+        title={t("inspector.diffs.generatedTooltip")}
+      >
+        {t("inspector.diffs.generatedBadge")}
+      </span>
+    </Show>
+  );
+}
+
 export default function DiffFileTree(props: {
   diffs: SnapshotFileDiff[];
   onSelectFile: (file: string) => void;
@@ -431,6 +444,7 @@ export default function DiffFileTree(props: {
                         {fileRow.name}
                       </span>
                       <DiffStatusBadge status={diff.status} />
+                      <GeneratedFileBadge generated={diff.generatedLike} />
                       <Show when={noteCount() > 0}>
                         <span class="inline-flex items-center gap-0.5 rounded bg-[var(--accent-surface)] px-1 py-0 text-[10px] font-mono text-[var(--accent-primary)]">
                           <MessageSquareText size={10} />
