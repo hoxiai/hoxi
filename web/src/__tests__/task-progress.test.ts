@@ -54,6 +54,21 @@ const todoInput = (statuses: string[]) => ({
 });
 
 describe("task progress todo staleness", () => {
+  it("keeps an omitted initial text part invisible until its first token arrives", () => {
+    const initial = { id: "prt_empty", sessionID: sid, messageID: "msg_a", type: "text" } as MessagePart;
+    const turns: MessageTurn[] = [{
+      info: { id: "msg_a", sessionID: sid, role: "assistant", time: { created: 1 } },
+      parts: [initial],
+    }];
+    assertEqual(groupAssistantParts(turns[0].parts).length, 0);
+    assertTrue(resolveMergedTurnParts(turns, 0).isVisuallyEmpty);
+    assertEqual(hasLiveTailRenderedOutput(turns), false);
+    turns[0].parts[0] = { ...initial, text: "First token" } as MessagePart;
+    assertEqual(groupAssistantParts(turns[0].parts).length, 1);
+    assertEqual(resolveMergedTurnParts(turns, 0).isVisuallyEmpty, false);
+    assertEqual(hasLiveTailRenderedOutput(turns), true);
+  });
+
   it("navigates a work-only turn to the earlier turn that anchors its run", () => {
     const turns: MessageTurn[] = [
       { info: { id: "anchor", sessionID: sid, role: "assistant", time: { created: 1 } },

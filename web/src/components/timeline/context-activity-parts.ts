@@ -19,7 +19,7 @@ export function isTodoToolPart(part: MessagePart): boolean {
 export function isVisibleTextPart(
   part: MessagePart
 ): part is Extract<MessagePart, { type: "text" }> {
-  return part.type === "text" && part.text.trim().length > 0;
+  return part.type === "text" && (part.text ?? "").trim().length > 0;
 }
 
 export function isContextToolPart(

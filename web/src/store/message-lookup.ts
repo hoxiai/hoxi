@@ -145,7 +145,7 @@ export function upsertTurnPart(list: MessageTurn[], part: MessagePart) {
   }
 
   const pIdx = findPartIndex(turn.parts, part.id);
-  compactToolPartOutputInPlace(part);
+  normalizeMessagePartInPlace(part, pIdx >= 0 ? turn.parts[pIdx] : undefined);
   if (pIdx >= 0) {
     Object.assign(turn.parts[pIdx], part);
   } else {
@@ -156,6 +156,15 @@ export function upsertTurnPart(list: MessageTurn[], part: MessagePart) {
 const MAX_REACTIVE_TOOL_OUTPUT_CHARS = 32 * 1024;
 const MAX_FULL_TOOL_OUTPUT_LRU = 64;
 const fullToolOutputCache = new Map<string, string>();
+
+function normalizeMessagePartInPlace(part: MessagePart, previous?: MessagePart): void {
+  if (part.type === "text" || part.type === "reasoning") {
+    // Some Runner snapshots omit empty text. Always expose a string to renderers,
+    // preserving any tokens already received when an update omits the field.
+    part.text ??= previous?.type === part.type ? previous.text ?? "" : "";
+  }
+  compactToolPartOutputInPlace(part);
+}
 
 function cacheFullToolOutput(partID: string, fullText: string) {
   if (!partID || !fullText) return;
@@ -221,10 +230,10 @@ function isLocalPartAhead(local: MessagePart, remote: MessagePart): boolean {
     const localEnded = Boolean(local.time?.end);
     const remoteEnded = Boolean(remote.time?.end);
     if (localEnded !== remoteEnded) return localEnded;
-    return local.text.length > remote.text.length;
+    return (local.text ?? "").length > (remote.text ?? "").length;
   }
   if (local.type === "text" && remote.type === "text") {
-    return local.text.length > remote.text.length;
+    return (local.text ?? "").length > (remote.text ?? "").length;
   }
   return false;
 }
@@ -236,7 +245,7 @@ function mergeTurnInto(local: MessageTurn, remote: { info: MessageInfo; parts: M
   const remoteIDs = new Set(remote.parts.map((p) => p.id));
   const nextParts: MessagePart[] = [];
   for (const rp of remote.parts) {
-    compactToolPartOutputInPlace(rp);
+    normalizeMessagePartInPlace(rp);
     const idx = findPartIndex(local.parts, rp.id);
     const lp = idx >= 0 ? local.parts[idx] : undefined;
     if (!lp || lp.type !== rp.type) {
@@ -284,7 +293,7 @@ export function mergeServerTurnsInto(
   const next: MessageTurn[] = [];
   let promoted: MessageTurn | undefined;
   for (const remote of remoteTurns) {
-    for (const rp of remote.parts) compactToolPartOutputInPlace(rp);
+    for (const rp of remote.parts) normalizeMessagePartInPlace(rp);
     remoteIDs.add(remote.info.id);
     const idx = findMessageIndex(existing, remote.info.id);
     if (idx < 0) {
@@ -313,8 +322,9 @@ export function mergeServerTurnsInto(
       if (!hasNewRemoteUserTurn) next.push(turn);
       continue;
     }
-    // Keep turns SSE delivered after the snapshot was taken; dropping them remounts them.
-    if (lastRemote && compareTurnOrder(turn.info, lastRemote) > 0) next.push(turn);
+    // An empty snapshot has no cutoff: SSE may have filled the list while REST
+    // was in flight. Keep those turns mounted instead of clearing the transcript.
+    if (!lastRemote || compareTurnOrder(turn.info, lastRemote) > 0) next.push(turn);
   }
 
   if (
@@ -542,6 +552,9 @@ export function readCachedSessionTurns(sessionID: string): MessageTurn[] | undef
   const bundle = loadSessionTurnsBundle();
   const turns = bundle.entries[sessionID];
   if (!Array.isArray(turns) || turns.length === 0) return undefined;
+  for (const turn of turns) {
+    for (const part of turn.parts) normalizeMessagePartInPlace(part);
+  }
   return turns;
 }
 

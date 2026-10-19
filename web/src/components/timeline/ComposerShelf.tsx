@@ -17,9 +17,12 @@ import {
 import ApprovalGateCard from "../approval/ApprovalGateCard";
 import QuestionDock from "../approval/QuestionDock";
 import { FileIcon } from "../icons";
+import ChangedFilesSummary from "./ChangedFilesSummary";
 import PlanFollowupBar from "./PlanFollowupBar";
 import RevertBanner from "./RevertBanner";
 import { resolveRootSessionID } from "./SubagentSessionBanner";
+import { collectSessionChangedFiles } from "./tool-card-state";
+import { filterVisibleTurnsByRevert } from "./turn-window";
 import { t } from "../../i18n";
 
 export default function ComposerShelf() {
@@ -27,6 +30,22 @@ export default function ComposerShelf() {
   let reviewContainerRef: HTMLDivElement | undefined;
 
   const sessionID = () => workspace.activeSessionID;
+
+  const activeSession = createMemo(() => {
+    const id = sessionID();
+    return id ? workspace.sessions.find((s) => s.id === id) : undefined;
+  });
+
+  const visibleTurns = createMemo(() => {
+    const id = sessionID();
+    const turns = id ? workspace.messagesBySession[id] ?? [] : [];
+    return filterVisibleTurnsByRevert(turns, activeSession()?.revert);
+  });
+
+  const changedFiles = createMemo(() => {
+    const id = sessionID();
+    return id ? collectSessionChangedFiles(visibleTurns(), id) : [];
+  });
 
   const pendingPermissions = createMemo(() => {
     const id = sessionID();
@@ -110,8 +129,10 @@ export default function ComposerShelf() {
       {/* Kilo Plan Follow-up Suggestion Bar */}
       <PlanFollowupBar />
 
-      {/* Compact single-line Pill Shelf: Review Comments */}
+      {/* Compact single-line Pill Shelf: Changed Files + Review Comments */}
       <div class="mb-2 flex items-center justify-center gap-2 flex-wrap empty:hidden">
+        <ChangedFilesSummary files={changedFiles()} variant="pill" />
+
         {/* Queued Inline Diff ReviewComments Pill + Upward Popover */}
         <Show when={reviewComments().length > 0}>
 

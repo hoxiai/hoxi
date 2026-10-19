@@ -7,6 +7,7 @@ import {
   persistCachedSessionTurns,
   readCachedSessionTurns,
   upsertTurnInfo,
+  upsertTurnPart,
 } from "../store/message-lookup";
 import type { MessageInfo, MessagePart } from "../services/sse-types";
 import type { MessageTurn } from "../store/workspace";
@@ -27,6 +28,67 @@ const tool = (id: string, messageID: string, status: "running" | "completed"): M
   }) as MessagePart;
 
 describe("REST snapshot merge", () => {
+  it("keeps live turn identities when an empty snapshot arrives late", () => {
+    const [state, setState] = createStore<{ turns: MessageTurn[] }>({
+      turns: [
+        { info: info("msg_a", "user"), parts: [text("prt_u", "msg_a", "hi")] },
+        { info: info("msg_b", "assistant"), parts: [text("prt_x", "msg_b", "hello")] },
+      ],
+    });
+    const user = state.turns[0];
+    const assistant = state.turns[1];
+    const part = assistant.parts[0];
+    setState(produce((s) => mergeServerTurnsInto(s.turns, [])));
+    assertEqual(state.turns.length, 2, "an empty snapshot cannot erase streamed turns");
+    assertTrue(state.turns[0] === user && state.turns[1] === assistant);
+    assertTrue(state.turns[1].parts[0] === part, "existing text stays mounted");
+    setState(produce((s) => upsertTurnPart(s.turns, text("prt_x", "msg_b", "hello world"))));
+    assertTrue(state.turns[1].parts[0] === part, "streaming continues on the same part");
+    assertEqual((state.turns[1].parts[0] as Extract<MessagePart, { type: "text" }>).text, "hello world");
+
+    const empty: MessageTurn[] = [];
+    mergeServerTurnsInto(empty, []);
+    assertEqual(empty.length, 0, "a new empty session stays empty");
+  });
+
+  it("merges initial text and reasoning snapshots that omit empty text", () => {
+    for (const type of ["text", "reasoning"] as const) {
+      const missing = { id: "prt_x", sessionID: sid, messageID: "msg_b", type } as MessagePart;
+      const populated = { ...missing, text: "streamed content" } as MessagePart;
+      const [state, setState] = createStore<{ turns: MessageTurn[] }>({
+        turns: [{ info: info("msg_b", "assistant"), parts: [{ ...missing }] }],
+      });
+      const part = state.turns[0].parts[0];
+      setState(produce((s) => mergeServerTurnsInto(s.turns, [
+        { info: info("msg_b", "assistant"), parts: [populated] },
+      ])));
+      assertTrue(state.turns[0].parts[0] === part);
+      assertEqual((part as Extract<MessagePart, { type: "text" | "reasoning" }>).text, "streamed content");
+      setState(produce((s) => mergeServerTurnsInto(s.turns, [
+        { info: info("msg_b", "assistant"), parts: [missing] },
+      ])));
+      assertEqual((part as Extract<MessagePart, { type: "text" | "reasoning" }>).text, "streamed content");
+    }
+  });
+
+  it("normalizes omitted SSE and cached text without resetting streamed tokens", () => {
+    for (const type of ["text", "reasoning"] as const) {
+      const missing = { id: "prt_x", sessionID: sid, messageID: "msg_b", type } as MessagePart;
+      const turns: MessageTurn[] = [];
+      upsertTurnPart(turns, { ...missing });
+      const part = turns[0].parts[0] as Extract<MessagePart, { type: "text" | "reasoning" }>;
+      assertEqual(part.text, "");
+      part.text = "first tokens";
+      upsertTurnPart(turns, { ...missing });
+      assertEqual(part.text, "first tokens");
+      const cacheID = `ses_missing_${type}`;
+      persistCachedSessionTurns(cacheID, [{ info: info("msg_b", "assistant"), parts: [{ ...missing }] }]);
+      const cached = readCachedSessionTurns(cacheID)!;
+      assertEqual((cached[0].parts[0] as typeof part).text, "");
+      evictCachedSessionTurns([cacheID]);
+    }
+  });
+
   it("keeps streamed progress that is newer than a stale snapshot", () => {
     const [state, setState] = createStore<{ turns: MessageTurn[] }>({
       turns: [

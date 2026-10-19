@@ -62,12 +62,6 @@ export default function MessageStream(props: { hidden?: boolean }) {
   const [searchOpen, setSearchOpen] = createSignal(false);
   const [activeMatchTurnID, setActiveMatchTurnID] = createSignal<string | null>(null);
   const [navigationRevision, setNavigationRevision] = createSignal(0);
-  let sessionPhaseToggle = false;
-  const sessionEnterClass = createMemo(() => {
-    void workspace.activeSessionID;
-    sessionPhaseToggle = !sessionPhaseToggle;
-    return sessionPhaseToggle ? "hoxi-view-enter-a" : "hoxi-view-enter-b";
-  });
 
   const activeSession = createMemo(() => {
     const id = workspace.activeSessionID;
@@ -436,7 +430,7 @@ export default function MessageStream(props: { hidden?: boolean }) {
             </Show>
           }
         >
-          <div class={`flex flex-col ${sessionEnterClass()}`}>
+          <div class="flex flex-col">
             <EarlierTurnsBanner
               hiddenCount={turnWindow.hiddenCount()}
               totalCount={turns().length}
