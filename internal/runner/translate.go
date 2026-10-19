@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -26,6 +27,14 @@ type TurnTranslator struct {
 	hasTextPart  bool
 	turnFinished bool
 	lookupThink  func(externalID string, stepIndex int) string
+	lookupStep   func(externalID string, stepIndex int) string
+
+	// mu serialises stdout feeding against the subagent activity poller.
+	mu              sync.Mutex
+	convPinned      bool
+	lastActivityMs  int64
+	subagentsByPart map[string][]*agySubagentTrack
+	subagentByConv  map[string]*agySubagentTrack
 }
 
 func NewTurnTranslator(sessionID, runtime, messageID, parentUserMsgID, providerID, modelID, mode, externalID string) *TurnTranslator {
@@ -58,15 +67,36 @@ func NewTurnTranslator(sessionID, runtime, messageID, parentUserMsgID, providerI
 		partsByID:       make(map[string]*MessagePart),
 		stepStartMs:     make(map[int]int64),
 		lookupThink:     lookupAgyTranscriptThinking,
+		lookupStep:      lookupAgyTranscriptContent,
+		subagentsByPart: make(map[string][]*agySubagentTrack),
+		subagentByConv:  make(map[string]*agySubagentTrack),
 	}
 }
 
 func (t *TurnTranslator) ExternalID() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	return t.externalID
 }
 
 func (t *TurnTranslator) IsTurnFinished() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	return t.turnFinished
+}
+
+// noteAgyConversation pins externalID to the first conversation this turn
+// reports (the parent's) and tells whether id belongs to it.
+func (t *TurnTranslator) noteAgyConversation(id string) bool {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return true
+	}
+	if !t.convPinned {
+		t.convPinned = true
+		t.externalID = id
+	}
+	return id == t.externalID
 }
 
 func (t *TurnTranslator) InitialEvents(userInfo MessageInfo, userParts []MessagePart) []SSEEvent {
@@ -86,6 +116,8 @@ func (t *TurnTranslator) FeedLine(rawLine string) []SSEEvent {
 	if line == "" || !strings.HasPrefix(line, "{") {
 		return nil
 	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	if t.runtime == string(RuntimeClaudeCode) {
 		return t.feedClaudeLine(line)
 	}
@@ -111,7 +143,8 @@ type agyStepUpdate struct {
 			Message string `json:"message"`
 		} `json:"error"`
 	} `json:"tool_info"`
-	Usage *agyUsage `json:"usage"`
+	SubagentInfo *agySubagentInfo `json:"subagent_info"`
+	Usage        *agyUsage        `json:"usage"`
 }
 
 type agyResult struct {
@@ -153,8 +186,9 @@ func (t *TurnTranslator) feedAgyLine(line string) []SSEEvent {
 	if err := json.Unmarshal([]byte(line), &env); err != nil {
 		return nil
 	}
-	if env.ConversationID != "" {
-		t.externalID = env.ConversationID
+	t.lastActivityMs = time.Now().UnixMilli()
+	if !t.noteAgyConversation(env.ConversationID) {
+		return nil
 	}
 
 	switch env.Event {
@@ -170,10 +204,12 @@ func (t *TurnTranslator) feedAgyLine(line string) []SSEEvent {
 		if su == nil {
 			return nil
 		}
-		if su.ConversationID != "" {
-			t.externalID = su.ConversationID
-		}
 		now := time.Now().UnixMilli()
+		// Step indexes are per conversation; never let another one's steps
+		// overwrite the parent's parts.
+		if !t.noteAgyConversation(su.ConversationID) {
+			return t.noteSubagentStep(su, now)
+		}
 		if _, ok := t.stepStartMs[su.StepIndex]; !ok {
 			t.stepStartMs[su.StepIndex] = now
 		}
@@ -181,8 +217,18 @@ func (t *TurnTranslator) feedAgyLine(line string) []SSEEvent {
 		switch su.StepType {
 		case "agent_response":
 			return t.handleAgyAgentResponse(su, now)
+		case "subagent":
+			return t.handleAgySubagentStep(su, now)
 		case "tool":
+			if isAgySubagentDispatch(su) {
+				return t.handleAgySubagentStep(su, now)
+			}
 			return t.handleAgyToolStep(su, now)
+		case "system_message":
+			if su.State != "DONE" {
+				return nil
+			}
+			return t.handleAgySystemMessage(su, now)
 		}
 		return nil
 
@@ -191,8 +237,8 @@ func (t *TurnTranslator) feedAgyLine(line string) []SSEEvent {
 		if res == nil {
 			return nil
 		}
-		if res.ConversationID != "" {
-			t.externalID = res.ConversationID
+		if !t.noteAgyConversation(res.ConversationID) {
+			return nil
 		}
 		return t.handleAgyResult(res)
 	}
@@ -366,6 +412,9 @@ func (t *TurnTranslator) handleAgyToolStep(su *agyStepUpdate, now int64) []SSEEv
 		Error:  errMsg,
 		Time:   partTime,
 	}
+	if normTool == "agent_wait" && t.hasWaitingSubagents() {
+		part.State.Metadata = map[string]interface{}{"waitingFor": "subagents"}
+	}
 	evts = append(evts, SSEEvent{Type: "message.part.updated", Properties: map[string]interface{}{"part": clonePart(*part)}})
 	return evts
 }
@@ -386,6 +435,7 @@ func (t *TurnTranslator) handleAgyResult(res *agyResult) []SSEEvent {
 		t.msgInfo.Tokens = tokens
 	}
 	t.msgInfo.Time.Completed = now
+	evts = append(evts, t.finishAgySubagents(res.Status == "ERROR", now)...)
 
 	if !t.hasTextPart && strings.TrimSpace(res.Response) != "" {
 		txtID := fmt.Sprintf("prt_%s_text_final", t.messageID)

@@ -35,6 +35,7 @@ import {
   isTaskTool,
 } from "./tool-card-helpers";
 import {
+  resolveRunnerSubagentStepLabel,
   resolveToolFileDiagnostics,
   resolveToolFileDiffs,
 } from "./tool-card-state";
@@ -282,9 +283,9 @@ export function hasLiveTailWorkGroup(
 function summarizeStepTarget(part: ToolPart): string {
   if (isTaskTool(part.tool)) {
     const desc = extractDescription(part);
-    const childStep = resolveSubagentCurrentStepLabel(
-      extractChildSubagentSessionId(part)
-    );
+    const childStep =
+      resolveSubagentCurrentStepLabel(extractChildSubagentSessionId(part)) ||
+      resolveRunnerSubagentStepLabel(part);
     if (desc && childStep) return `${desc} · ${childStep}`;
     return desc || childStep || "";
   }
@@ -422,7 +423,7 @@ export default function ContextActivityGroupView(props: {
 
     if (runningTools.length > 0) {
       const active = runningTools[runningTools.length - 1];
-      const action = formatToolDisplayName(active.tool);
+      const action = formatToolDisplayName(active.tool, active);
       const detail = summarizeStepTarget(active);
       const extra = runningTools.length > 1 ? ` (+${runningTools.length - 1})` : "";
       return {
@@ -447,7 +448,7 @@ export default function ContextActivityGroupView(props: {
       const p = props.parts[i];
       if (p.type === "tool") {
         return {
-          action: formatToolDisplayName(p.tool),
+          action: formatToolDisplayName(p.tool, p),
           detail: summarizeStepTarget(p),
         };
       }

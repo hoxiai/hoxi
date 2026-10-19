@@ -354,36 +354,3 @@ func readStreamLines(r io.Reader, onLine func(string)) {
 		onLine(scanner.Text())
 	}
 }
-
-func lookupAgyTranscriptThinking(conversationID string, stepIndex int) string {
-	home, _ := os.UserHomeDir()
-	if home == "" || conversationID == "" {
-		return ""
-	}
-	roots := []string{
-		filepath.Join(home, ".gemini", "antigravity-cli", "brain", conversationID, ".system_generated", "logs"),
-		filepath.Join(home, ".gemini", "antigravity", "brain", conversationID, ".system_generated", "logs"),
-	}
-	for _, dir := range roots {
-		for _, name := range []string{"transcript_full.jsonl", "transcript.jsonl"} {
-			f, err := os.Open(filepath.Join(dir, name))
-			if err != nil {
-				continue
-			}
-			scanner := bufio.NewScanner(f)
-			scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
-			for scanner.Scan() {
-				var row struct {
-					StepIndex int    `json:"step_index"`
-					Thinking  string `json:"thinking"`
-				}
-				if json.Unmarshal(bytes.TrimSpace(scanner.Bytes()), &row) == nil && row.StepIndex == stepIndex && strings.TrimSpace(row.Thinking) != "" {
-					_ = f.Close()
-					return strings.TrimSpace(row.Thinking)
-				}
-			}
-			_ = f.Close()
-		}
-	}
-	return ""
-}

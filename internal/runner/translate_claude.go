@@ -354,13 +354,17 @@ func normalizeRunnerTool(rawName string, rawParams map[string]interface{}) (norm
 		normTool = "webfetch"
 	case "invoke_subagent", "task":
 		normTool = "task"
+	case "schedule":
+		normTool = "agent_wait"
+	case "manage_subagents":
+		normTool = "agent_status"
 	default:
 		normTool = lower
 		if normTool == "" {
 			normTool = "tool"
 		}
 	}
-	title = firstString(clean["toolSummary"], clean["toolAction"], clean["description"], rawName)
+	title = firstString(clean["toolSummary"], clean["toolAction"], clean["description"], clean["Prompt"], clean["Action"], rawName)
 	return normTool, title, clean
 }
 
