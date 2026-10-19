@@ -81,6 +81,7 @@ func (s *Service) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/hoxi/runner/claude-code/models", s.handleClaudeModels)
 	mux.HandleFunc("/api/hoxi/runner/antigravity/hook", s.handleAgyHookInstall)
 	mux.HandleFunc(hookPreToolPath, s.handleHookPreTool)
+	mux.HandleFunc(claudeHookPreToolPath, s.handleClaudeHookPreTool)
 	mux.HandleFunc("/api/hoxi/runner/permission", s.handlePermissionRoutes)
 	mux.HandleFunc("/api/hoxi/runner/permission/", s.handlePermissionRoutes)
 	mux.HandleFunc("/api/hoxi/runner/event", s.handleGlobalSSE)

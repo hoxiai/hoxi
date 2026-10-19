@@ -17,10 +17,10 @@ import (
 	"github.com/hoxiai/hoxi/internal/agyhook"
 )
 
-// Antigravity headless mode cannot prompt, so agy's PreToolUse hook
-// (`hoxi agy-hook`) calls back here and blocks until the user decides.
-// Only `auto_approve` grants permission in headless mode; see
-// docs/antigravity-approval-hook.md for the probe results behind this design.
+// Headless runner CLIs cannot prompt, so their PreToolUse hooks call back
+// here and block until the user decides. agy runs `hoxi agy-hook`, where only
+// `auto_approve` grants permission (docs/antigravity-approval-hook.md);
+// Claude Code posts directly through an HTTP hook (claude_hook_gate.go).
 
 const (
 	hookPreToolPath     = "/api/hoxi/runner/hook/pretool"
@@ -30,8 +30,19 @@ const (
 )
 
 type hookCredential struct {
+	runtime   string
 	sessionID string
 	messageID string
+}
+
+// approvalAsk is one shell command a runner CLI wants to run, normalized
+// from the runtime-specific hook payload.
+type approvalAsk struct {
+	command     string
+	cwd         string
+	description string
+	callID      string
+	source      string
 }
 
 type approvalReply struct {
@@ -81,31 +92,40 @@ func (s *Service) SetHookBaseURL(base string) {
 	s.gate.mu.Unlock()
 }
 
-// issueHookEnv mints a per-process credential for one agy turn. With no base
-// URL the hook falls back to agy's own policy, matching pre-gate behavior.
-func (s *Service) issueHookEnv(sessionID, messageID string) ([]string, func()) {
+// issueHookCredential mints a per-process credential for one runner turn.
+// With no base URL the CLI falls back to its own policy, matching pre-gate
+// behavior.
+func (s *Service) issueHookCredential(runtime, sessionID, messageID string) (string, string, func()) {
 	g := s.gate
 	g.mu.Lock()
 	base := g.baseURL
 	g.mu.Unlock()
 	token := randomHex(32)
 	if base == "" || token == "" {
-		return nil, func() {}
+		return "", "", func() {}
 	}
 	key := sha256.Sum256([]byte(token))
 	g.mu.Lock()
-	g.tokens[key] = hookCredential{sessionID: sessionID, messageID: messageID}
+	g.tokens[key] = hookCredential{runtime: runtime, sessionID: sessionID, messageID: messageID}
 	g.mu.Unlock()
-	env := []string{
-		agyhook.EnvSessionID + "=" + sessionID,
-		agyhook.EnvHookURL + "=" + base + hookPreToolPath,
-		agyhook.EnvHookToken + "=" + token,
-	}
-	return env, func() {
+	return base, token, func() {
 		g.mu.Lock()
 		delete(g.tokens, key)
 		g.mu.Unlock()
 	}
+}
+
+// issueHookEnv returns the environment `hoxi agy-hook` reads for one agy turn.
+func (s *Service) issueHookEnv(sessionID, messageID string) ([]string, func()) {
+	base, token, revoke := s.issueHookCredential(string(RuntimeAntigravity), sessionID, messageID)
+	if base == "" {
+		return nil, revoke
+	}
+	return []string{
+		agyhook.EnvSessionID + "=" + sessionID,
+		agyhook.EnvHookURL + "=" + base + hookPreToolPath,
+		agyhook.EnvHookToken + "=" + token,
+	}, revoke
 }
 
 func (g *approvalGate) lookup(token string) (hookCredential, bool) {
@@ -137,18 +157,27 @@ func (s *Service) cancelSessionApprovals(sessionID, reason string) {
 	}
 }
 
-func (s *Service) handleHookPreTool(w http.ResponseWriter, r *http.Request) {
+// authorizeHook checks a hook callback's loopback origin and credential.
+func (s *Service) authorizeHook(w http.ResponseWriter, r *http.Request, runtime string) (hookCredential, bool) {
 	if r.Method != http.MethodPost {
 		writeJSONError(w, http.StatusMethodNotAllowed, "POST required")
-		return
+		return hookCredential{}, false
 	}
 	if !isLoopbackRemote(r.RemoteAddr) {
 		writeJSONError(w, http.StatusForbidden, "loopback only")
-		return
+		return hookCredential{}, false
 	}
 	cred, ok := s.gate.lookup(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
-	if !ok || cred.sessionID != strings.TrimSpace(r.Header.Get(agyhook.HeaderSession)) {
+	if !ok || cred.runtime != runtime || cred.sessionID != strings.TrimSpace(r.Header.Get(agyhook.HeaderSession)) {
 		writeJSONError(w, http.StatusUnauthorized, "invalid hook credential")
+		return hookCredential{}, false
+	}
+	return cred, true
+}
+
+func (s *Service) handleHookPreTool(w http.ResponseWriter, r *http.Request) {
+	cred, ok := s.authorizeHook(w, r, string(RuntimeAntigravity))
+	if !ok {
 		return
 	}
 	var payload hookPayload
@@ -173,26 +202,44 @@ func (s *Service) decideHookCall(r *http.Request, cred hookCredential, p hookPay
 	}
 	command, _ := p.ToolCall.Args["CommandLine"].(string)
 	cwd, _ := p.ToolCall.Args["Cwd"].(string)
-	if strings.TrimSpace(command) == "" {
-		return hookDecisionDeny, "empty command"
-	}
-	if cwd != "" && !pathWithin(rec.WorktreePath, cwd) {
-		return hookDecisionDeny, "command working directory is outside this session's directory"
-	}
-	if decideCommandPermission(command) == "allow" || s.gate.hasAlways(cred.sessionID, command) {
+	summary, _ := p.ToolCall.Args["toolSummary"].(string)
+	approved, reason := s.gateCommand(r, cred, rec, approvalAsk{
+		command:     command,
+		cwd:         cwd,
+		description: summary,
+		callID:      fmt.Sprintf("call_%s_%d", cred.messageID, p.StepIdx),
+		source:      string(RuntimeAntigravity),
+	})
+	if approved {
 		return hookDecisionApprove, ""
 	}
-	return s.awaitApproval(r, cred, p, command, cwd)
+	return hookDecisionDeny, reason
 }
 
-func (s *Service) awaitApproval(r *http.Request, cred hookCredential, p hookPayload, command, cwd string) (string, string) {
-	id := runnerPermissionID + randomHex(12)
-	meta := map[string]interface{}{"command": command, "source": "antigravity"}
-	if cwd != "" {
-		meta["cwd"] = cwd
+// gateCommand applies the shared command policy and, when needed, blocks on
+// the user's decision. It reports whether the command may run.
+func (s *Service) gateCommand(r *http.Request, cred hookCredential, rec SessionRecord, ask approvalAsk) (bool, string) {
+	if strings.TrimSpace(ask.command) == "" {
+		return false, "empty command"
 	}
-	if summary, _ := p.ToolCall.Args["toolSummary"].(string); strings.TrimSpace(summary) != "" {
-		meta["description"] = strings.TrimSpace(summary)
+	if ask.cwd != "" && !pathWithin(rec.WorktreePath, ask.cwd) {
+		return false, "command working directory is outside this session's directory"
+	}
+	if decideCommandPermission(ask.command) == "allow" || s.gate.hasAlways(cred.sessionID, ask.command) {
+		return true, ""
+	}
+	return s.awaitApproval(r, cred, ask)
+}
+
+func (s *Service) awaitApproval(r *http.Request, cred hookCredential, ask approvalAsk) (bool, string) {
+	id := runnerPermissionID + randomHex(12)
+	command := ask.command
+	meta := map[string]interface{}{"command": command, "source": ask.source}
+	if ask.cwd != "" {
+		meta["cwd"] = ask.cwd
+	}
+	if desc := strings.TrimSpace(ask.description); desc != "" {
+		meta["description"] = desc
 	}
 	req := map[string]interface{}{
 		"id":         id,
@@ -203,7 +250,7 @@ func (s *Service) awaitApproval(r *http.Request, cred hookCredential, p hookPayl
 		"always":     []string{command},
 		"tool": map[string]interface{}{
 			"messageID": cred.messageID,
-			"callID":    fmt.Sprintf("call_%s_%d", cred.messageID, p.StepIdx),
+			"callID":    ask.callID,
 		},
 	}
 	pa := &pendingApproval{req: req, sid: cred.sessionID, reply: make(chan approvalReply, 1)}
@@ -239,15 +286,15 @@ func (s *Service) awaitApproval(r *http.Request, cred hookCredential, p hookPayl
 	switch answer.Reply {
 	case "always":
 		s.gate.addAlways(cred.sessionID, command)
-		return hookDecisionApprove, ""
+		return true, ""
 	case "once":
-		return hookDecisionApprove, ""
+		return true, ""
 	}
 	reason := "The user rejected this command in Hoxi"
 	if msg := strings.TrimSpace(answer.Message); msg != "" {
 		reason += ": " + msg
 	}
-	return hookDecisionDeny, reason
+	return false, reason
 }
 
 // Session "always" grants live in Hoxi only, never in agy's global settings,

@@ -1,0 +1,45 @@
+# Claude Code Runner 审批门控：HTTP PreToolUse Hook 实测与接入方案
+
+> 实测日期：2026-10-19 · claude：`~/.local/bin/claude` 2.1.303 · 模型：`claude-haiku-4-5-20251001`
+> 启动参数与 Hoxi Runner 一致：
+> `claude -p --input-format stream-json --output-format stream-json --verbose --include-partial-messages --permission-mode acceptEdits --permission-prompts none`，用户消息走 stdin NDJSON。
+
+## 1. 问题回顾
+
+`--permission-prompts none` 表示“没有人回答权限提示”：所有需要审批的工具调用都会被自动拒绝。
+工具结果里写的是 *this session has no approval surface*，`result.permission_denials` 会列出被拒的 Bash 调用。
+所以 `python3 sum.py` 这类命令永远跑不起来，Hoxi 的 ApprovalGateCard 也收不到任何请求。
+
+## 2. 实测结果
+
+测试命令是 `python3 -c "open('marker.txt','w').write('x')" && echo done`。
+注意：`touch`、`mkdir` 这类命令在 acceptEdits 模式下本来就会自动放行，不能用来测试。
+
+| # | 配置 | 结果 | 结论 |
+|---|---|---|---|
+| A | 无 hook（`--settings '{}'`） | 被拒，出现在 `permission_denials` 里 | 复现问题 |
+| B | `--settings` 内联 `type: "http"` 的 PreToolUse hook，返回 `permissionDecision: "allow"` | 放行，命令真正执行 | ✅ 无头模式下 hook 的 `allow` 能授权 |
+| C | 同上，返回 `deny` + reason | 被拦截，工具结果为 `PreToolUse:Bash hook error: <reason>` | ✅ reason 原样回给模型 |
+| D | hook URL 不可达 | 回退到 Claude 自己的策略，被拒 | ✅ 失败即拒绝（fail-closed） |
+| E | hook 返回非法 JSON | 同 D，被拒 | ✅ fail-closed |
+| F | hook 等待 75s 后返回 `allow`（`timeout: 600`） | 75s 后放行 | ✅ 长时间等待可行 |
+| G | `--resume <id>` | hook 载荷里的 `session_id` 和原会话一致 | ✅ 可以用 `session_id` 校验会话归属 |
+
+其他观察：
+
+- **headers 环境变量展开**：`"Authorization": "Bearer $HOXI_HOOK_TOKEN"` 搭配 `allowedEnvVars` 时，Claude 会从自己的环境变量里展开这个值。所以 token 不会出现在 argv 中。
+- **请求特征**：axios 发出的请求，`Host: 127.0.0.1:<port>`，不带 `Origin` 头，能通过 Gateway 的 `allowRequest` 检查。
+- **载荷字段**：`{session_id, transcript_path, cwd, permission_mode, hook_event_name, tool_name, tool_use_id, tool_input:{command, description}}`。`tool_use_id` 和 stream-json 里 `tool_use` 块的 `id` 相同，也就是 Hoxi ToolCard 的 `callID`。
+- **事件时序**：`assistant(tool_use)` 在 hook 开始等待之前就已经输出了，所以 ToolCard 会先以 running 状态渲染出来。
+- **`--settings` 不需要信任工作区**：在 `-p` 模式下，hook 在未信任的目录里也会执行。
+
+## 3. 接入方案
+
+- `issueClaudeHook`（`internal/runner/claude_hook_gate.go`）给每个 turn 签发一份一次性凭证，绑定 runtime、会话和消息。它会追加 `--settings <inline JSON>`，把 hook 注册到 `Bash` matcher 上。同时注入 `HOXI_HOOK_TOKEN`、`HOXI_RUNNER_SESSION_ID`，并把 `NO_PROXY` 加上回环地址。这样不会改写 `~/.claude`，在终端或 IDE 里直接启动的 Claude Code 也不受影响。
+- plan 模式不挂 hook，继续由 Claude 自己做只读限制。
+- `POST /api/hoxi/runner/hook/claude-pretool` 和 agy 共用 `gateCommand` / `awaitApproval`：
+  - 安全命令，或命中会话内 always 规则的命令 → `allow`
+  - 其他命令（包括 `rm`、`sudo`、`git push --force` 等破坏性命令）→ `per_rnr_*` 请求、ApprovalGateCard，状态栏显示 Attention
+  - 破坏性命令永远不会被记成 always 规则
+- Stop、进程退出、超时（580s，早于 hook 的 600s timeout）或 hook 连接断开时，待审批的请求都会变成 `deny`。
+- 手动端到端测试：`go test -tags claude_e2e -run ClaudeHookE2E -v ./internal/runner/`
