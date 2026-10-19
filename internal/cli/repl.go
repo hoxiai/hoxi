@@ -65,7 +65,11 @@ func RunREPL(
 		if s.ModelID != "" && opts.ModelID == "" {
 			opts.ModelID = s.ModelID
 		}
+		if s.ProviderID != "" && opts.ProviderID == "" {
+			opts.ProviderID = s.ProviderID
+		}
 	}
+	opts.ProviderID, opts.ModelID = client.ResolveModel(ctx, opts.Directory, opts.Runtime, opts.ProviderID, opts.ModelID)
 
 	printREPLBanner(stdout, client, opts, session)
 
@@ -145,6 +149,16 @@ func RunREPL(
 	}
 }
 
+func formatModelLabel(runtime, providerID, modelID string) string {
+	if modelID == "" {
+		return "(default)"
+	}
+	if NormalizeRuntime(runtime) == "opencode" && providerID != "" {
+		return providerID + "/" + modelID
+	}
+	return modelID
+}
+
 func printREPLBanner(w io.Writer, client *Client, opts Options, session *runner.SessionInfo) {
 	connMode := "spawned headless engine"
 	if client.IsAttached() {
@@ -156,11 +170,16 @@ func printREPLBanner(w io.Writer, client *Client, opts Options, session *runner.
 		ansiCyan, connMode, ansiReset,
 	)
 	fmt.Fprintf(w, "  Workspace : %s\n", opts.Directory)
-	fmt.Fprintf(w, "  Runtime   : %s (sandbox: %s, mode: %s)\n", opts.Runtime, opts.SandboxMode, opts.Mode)
+	fmt.Fprintf(w, "  Runtime   : %s (model: %s, sandbox: %s, mode: %s)\n",
+		opts.Runtime,
+		formatModelLabel(opts.Runtime, opts.ProviderID, opts.ModelID),
+		opts.SandboxMode,
+		opts.Mode,
+	)
 	if session != nil {
 		fmt.Fprintf(w, "  Session   : %s (%s)\n", session.ID, firstNonEmpty(session.Title, "Untitled"))
 	}
-	fmt.Fprintf(w, "  %sTip: Type /runtime, /worktree, /diff, /handoff, /open (open in Desktop GUI), or /help%s\n\n", ansiDim, ansiReset)
+	fmt.Fprintf(w, "  %sTip: Type /runtime, /model, /worktree, /diff, /handoff, /open (Desktop GUI), or /help%s\n\n", ansiDim, ansiReset)
 }
 
 func handleSlashCommand(
@@ -186,7 +205,7 @@ func handleSlashCommand(
 	case "/help", "/?":
 		fmt.Fprintln(stdout, `Slash Commands:
   /runtime <opencode|claude|agy|qoder|codebuddy>  Switch active agent runtime
-  /model <model-id>                               Set active model ID
+  /model [provider/model | model-id]              List or switch active model
   /mode <build|plan>                              Switch agent mode
   /worktree [on|off|status|diff|apply]            Manage Git worktree isolation
   /diff                                           Show modified files in current session
@@ -213,8 +232,9 @@ func handleSlashCommand(
 			fmt.Fprintf(stderr, "Unsupported runtime %q (use: opencode, claude, agy, qoder, codebuddy)\n", arg)
 			return false
 		}
+		newProv, newMod := client.ResolveModel(ctx, opts.Directory, rt, "", "")
 		if *session != nil {
-			updated, err := client.SwitchRuntime(ctx, (*session).ID, rt, opts.ModelID, opts.ProviderID)
+			updated, err := client.SwitchRuntime(ctx, (*session).ID, rt, newMod, newProv)
 			if err != nil {
 				fmt.Fprintf(stderr, "Failed to switch runtime: %v\n", err)
 				return false
@@ -222,15 +242,25 @@ func handleSlashCommand(
 			*session = updated
 		}
 		opts.Runtime = rt
-		fmt.Fprintf(stdout, "%s✓ Switched runtime to %s%s\n", ansiGreen, rt, ansiReset)
+		opts.ProviderID = newProv
+		opts.ModelID = newMod
+		fmt.Fprintf(stdout, "%s✓ Switched runtime to %s (model: %s)%s\n",
+			ansiGreen, rt, formatModelLabel(rt, newProv, newMod), ansiReset)
 
-	case "/model", "/m":
+	case "/model", "/models", "/m":
 		if arg == "" {
-			fmt.Fprintf(stdout, "Current model: %s\n", firstNonEmpty(opts.ModelID, "(default)"))
+			fmt.Fprintf(stdout, "Current model: %s\n", formatModelLabel(opts.Runtime, opts.ProviderID, opts.ModelID))
+			printModelList(ctx, client, opts.Directory, opts.Runtime, opts.ProviderID, opts.ModelID, stdout, stderr)
 			return false
 		}
-		opts.ModelID = arg
-		fmt.Fprintf(stdout, "%s✓ Model set to %s%s\n", ansiGreen, arg, ansiReset)
+		provID, modID := client.ResolveModel(ctx, opts.Directory, opts.Runtime, "", arg)
+		opts.ProviderID = provID
+		opts.ModelID = modID
+		if *session != nil {
+			(*session).ProviderID = provID
+			(*session).ModelID = modID
+		}
+		fmt.Fprintf(stdout, "%s✓ Model set to %s%s\n", ansiGreen, formatModelLabel(opts.Runtime, provID, modID), ansiReset)
 
 	case "/mode":
 		if arg == "" {

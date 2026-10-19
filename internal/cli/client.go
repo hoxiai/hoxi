@@ -137,18 +137,183 @@ func (c *Client) EnsurePrivacyConsent(ctx context.Context) error {
 	return c.doJSON(ctx, http.MethodPut, "/api/hoxi/privacy", payload, nil)
 }
 
+// CLIModelItem describes an available model across OpenCode or a native CLI runtime.
+type CLIModelItem struct {
+	ProviderID string `json:"providerID"`
+	ModelID    string `json:"modelID"`
+	Name       string `json:"name"`
+	Default    bool   `json:"default"`
+}
+
+func (c *Client) ListModels(ctx context.Context, directory, runtime string) ([]CLIModelItem, string, string, error) {
+	rt := NormalizeRuntime(runtime)
+	if rt != "opencode" {
+		var resp struct {
+			Default string `json:"default"`
+			Models  []struct {
+				ID   string `json:"id"`
+				Name string `json:"name"`
+			} `json:"models"`
+		}
+		if err := c.doJSON(ctx, http.MethodGet, "/api/hoxi/runner/"+url.PathEscape(rt)+"/models", nil, &resp); err != nil {
+			return nil, "", "", err
+		}
+		items := make([]CLIModelItem, 0, len(resp.Models))
+		defModel := strings.TrimSpace(resp.Default)
+		for _, m := range resp.Models {
+			if strings.TrimSpace(m.ID) == "" {
+				continue
+			}
+			if defModel == "" {
+				defModel = m.ID
+			}
+			items = append(items, CLIModelItem{
+				ProviderID: rt,
+				ModelID:    m.ID,
+				Name:       firstNonEmpty(m.Name, m.ID),
+				Default:    m.ID == defModel,
+			})
+		}
+		return items, rt, defModel, nil
+	}
+
+	path := "/config/providers"
+	if strings.TrimSpace(directory) != "" {
+		path += "?directory=" + url.QueryEscape(directory)
+	}
+	var resp struct {
+		Providers []struct {
+			ID     string `json:"id"`
+			Name   string `json:"name"`
+			Source string `json:"source"`
+			Key    string `json:"key"`
+			Models map[string]struct {
+				ID   string `json:"id"`
+				Name string `json:"name"`
+			} `json:"models"`
+		} `json:"providers"`
+		Default map[string]string `json:"default"`
+	}
+	if err := c.doJSON(ctx, http.MethodGet, path, nil, &resp); err != nil {
+		return nil, "", "", err
+	}
+
+	defProvider := ""
+	defModel := ""
+	for _, p := range resp.Providers {
+		if p.ID == "opencode" && p.Source != "config" && p.Key == "" {
+			continue
+		}
+		if d := strings.TrimSpace(resp.Default[p.ID]); d != "" {
+			if _, ok := p.Models[d]; ok || len(p.Models) == 0 {
+				defProvider = p.ID
+				defModel = d
+				break
+			}
+		}
+		for mID := range p.Models {
+			defProvider = p.ID
+			defModel = mID
+			break
+		}
+		if defProvider != "" {
+			break
+		}
+	}
+	if defProvider == "" {
+		for _, p := range resp.Providers {
+			if d := strings.TrimSpace(resp.Default[p.ID]); d != "" {
+				defProvider = p.ID
+				defModel = d
+				break
+			}
+		}
+	}
+
+	var items []CLIModelItem
+	for _, p := range resp.Providers {
+		for mID, m := range p.Models {
+			items = append(items, CLIModelItem{
+				ProviderID: p.ID,
+				ModelID:    mID,
+				Name:       firstNonEmpty(m.Name, mID),
+				Default:    p.ID == defProvider && mID == defModel,
+			})
+		}
+	}
+	return items, defProvider, defModel, nil
+}
+
+func (c *Client) ResolveModel(ctx context.Context, directory, runtime, providerID, modelID string) (string, string) {
+	providerID = strings.TrimSpace(providerID)
+	modelID = strings.TrimSpace(modelID)
+	if providerID == "" && strings.Contains(modelID, "/") {
+		parts := strings.SplitN(modelID, "/", 2)
+		if strings.TrimSpace(parts[0]) != "" && strings.TrimSpace(parts[1]) != "" {
+			providerID = strings.TrimSpace(parts[0])
+			modelID = strings.TrimSpace(parts[1])
+		}
+	}
+	if NormalizeRuntime(runtime) != "opencode" {
+		if modelID != "" {
+			return providerID, modelID
+		}
+		_, _, defModel, err := c.ListModels(ctx, directory, runtime)
+		if err == nil && defModel != "" {
+			return providerID, defModel
+		}
+		return providerID, modelID
+	}
+	if providerID != "" && modelID != "" {
+		return providerID, modelID
+	}
+	items, defProv, defMod, err := c.ListModels(ctx, directory, "opencode")
+	if err != nil {
+		return providerID, modelID
+	}
+	if modelID != "" && providerID == "" {
+		for _, it := range items {
+			if it.ModelID == modelID {
+				return it.ProviderID, modelID
+			}
+		}
+		return defProv, modelID
+	}
+	if providerID != "" && modelID == "" {
+		for _, it := range items {
+			if it.ProviderID == providerID && it.Default {
+				return providerID, it.ModelID
+			}
+		}
+		for _, it := range items {
+			if it.ProviderID == providerID {
+				return providerID, it.ModelID
+			}
+		}
+		return providerID, modelID
+	}
+	return defProv, defMod
+}
+
 func (c *Client) CreateSession(ctx context.Context, opts Options) (*runner.SessionInfo, error) {
+	provID, modID := c.ResolveModel(ctx, opts.Directory, opts.Runtime, opts.ProviderID, opts.ModelID)
 	payload := map[string]interface{}{
 		"directory":   opts.Directory,
 		"runtime":     opts.Runtime,
-		"modelID":     opts.ModelID,
-		"providerID":  opts.ProviderID,
+		"modelID":     modID,
+		"providerID":  provID,
 		"mode":        opts.Mode,
 		"sandboxMode": opts.SandboxMode,
 	}
 	var info runner.SessionInfo
 	if err := c.doJSON(ctx, http.MethodPost, "/api/hoxi/sessions?directory="+url.QueryEscape(opts.Directory), payload, &info); err != nil {
 		return nil, err
+	}
+	if info.ModelID == "" {
+		info.ModelID = modID
+	}
+	if info.ProviderID == "" {
+		info.ProviderID = provID
 	}
 	return &info, nil
 }
@@ -318,14 +483,18 @@ func (c *Client) StreamTurn(
 		return fmt.Errorf("SSE stream returned HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
 	}
 
+	provID := firstNonEmpty(providerID, session.ProviderID)
+	modID := firstNonEmpty(modelID, session.ModelID)
+	provID, modID = c.ResolveModel(ctx, session.Directory, session.Runtime, provID, modID)
+
 	promptPayload := map[string]interface{}{
 		"text":  prompt,
 		"agent": firstNonEmpty(mode, "build"),
 	}
-	if modelID != "" || providerID != "" {
+	if modID != "" || provID != "" {
 		promptPayload["model"] = map[string]string{
-			"modelID":    modelID,
-			"providerID": providerID,
+			"modelID":    modID,
+			"providerID": provID,
 		}
 	}
 	promptPath := "/api/hoxi/sessions/" + url.PathEscape(session.ID) + "/prompt"

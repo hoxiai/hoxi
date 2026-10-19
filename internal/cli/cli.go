@@ -36,6 +36,7 @@ var knownSubcommands = map[string]bool{
 	"chat":        true,
 	"tui":         true,
 	"open":        true,
+	"models":      true,
 	"handoff":     true,
 	"worktree":    true,
 	"sessions":    true,
@@ -147,6 +148,8 @@ func Run(
 			return 0
 		case "open":
 			return runOpenCommand(ctx, args[2:], cwd, defaultBridgeAddr, stdout, stderr)
+		case "models":
+			return runModelsCommand(ctx, args[2:], cwd, defaultBridgeAddr, bootHeadless, stdout, stderr)
 		case "sessions":
 			return runSessionsCommand(ctx, args[2:], cwd, defaultBridgeAddr, bootHeadless, stdout, stderr)
 		case "worktree":
@@ -259,6 +262,7 @@ Usage:
   hoxi "<prompt>" [flags]             Execute a prompt directly in the terminal
   hoxi run "<prompt>" [flags]         Run a one-shot task and exit
   hoxi open [directory]               Open or focus the Hoxi desktop workspace window
+  hoxi models [-r <runtime>]          List configured models for a runtime
   hoxi sessions                       List sessions in the current directory
   hoxi handoff [list|import]          Inspect or import sessions across Claude/Codex/AGY/OpenCode
   hoxi worktree [list|diff|apply]     Manage isolated Git worktree sandboxes
@@ -268,7 +272,7 @@ Usage:
 
 Flags:
   -r, --runtime <name>   Agent runtime: opencode (default) | claude | agy | qoder | codebuddy
-  -m, --model <id>       Model ID override
+  -m, --model <id>       Model ID override (e.g. provider/model or model-id)
   -w, --worktree         Isolate session in a Git worktree (.hoxi/worktrees/<session-id>)
   -s, --session <id>     Resume an existing Hoxi session ID
       --mode <mode>      Agent mode: build (default) | plan
@@ -277,7 +281,7 @@ Flags:
 
 Interactive Slash Commands:
   /runtime <name>        Switch runtime mid-session (opencode, claude, agy, qoder, codebuddy)
-  /model <id>            Switch active model
+  /model [id]            List available models or switch active model
   /worktree [on|off]     Toggle Git worktree sandbox isolation
   /diff                  Show current session's Git diff summary
   /open                  Wake up Hoxi Desktop App focused on the current session

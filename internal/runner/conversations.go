@@ -205,6 +205,7 @@ func (s *Service) handleConversationCreate(w http.ResponseWriter, r *http.Reques
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	rec.ProviderID, rec.ModelID = s.resolveOpenCodeModel(r.Context(), rec.WorktreePath, rec.ProviderID, rec.ModelID)
 	payload := map[string]interface{}{
 		"metadata": map[string]string{"hoxiConversation": rec.ID},
 	}

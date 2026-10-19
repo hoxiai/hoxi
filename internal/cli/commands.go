@@ -149,6 +149,70 @@ func printSessionList(w io.Writer, list []runner.SessionInfo, active *runner.Ses
 	}
 }
 
+func runModelsCommand(
+	ctx context.Context,
+	args []string,
+	cwd string,
+	defaultBridgeAddr string,
+	bootHeadless HeadlessBootFunc,
+	stdout, stderr io.Writer,
+) int {
+	fs := flag.NewFlagSet("hoxi models", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var rt string
+	fs.StringVar(&rt, "runtime", "opencode", "runtime: opencode | claude | agy | qoder | codebuddy")
+	fs.StringVar(&rt, "r", "opencode", "shorthand for --runtime")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if fs.NArg() > 0 {
+		rt = fs.Arg(0)
+	}
+	rt = NormalizeRuntime(rt)
+	client, cleanup, err := ConnectOrSpawn(ctx, defaultBridgeAddr, cwd, bootHeadless)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error connecting to Hoxi: %v\n", err)
+		return 1
+	}
+	defer cleanup()
+
+	defProv, defMod := client.ResolveModel(ctx, cwd, rt, "", "")
+	printModelList(ctx, client, cwd, rt, defProv, defMod, stdout, stderr)
+	return 0
+}
+
+func printModelList(
+	ctx context.Context,
+	client *Client,
+	directory, runtime, activeProv, activeMod string,
+	stdout, stderr io.Writer,
+) {
+	items, _, _, err := client.ListModels(ctx, directory, runtime)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error listing models: %v\n", err)
+		return
+	}
+	if len(items) == 0 {
+		fmt.Fprintf(stdout, "No models found for runtime %s.\n", runtime)
+		return
+	}
+	for _, it := range items {
+		marker := "  "
+		if it.ModelID == activeMod && (activeProv == "" || it.ProviderID == activeProv) {
+			marker = "* "
+		}
+		key := it.ModelID
+		if NormalizeRuntime(runtime) == "opencode" && it.ProviderID != "" {
+			key = it.ProviderID + "/" + it.ModelID
+		}
+		defBadge := ""
+		if it.Default {
+			defBadge = " (default)"
+		}
+		fmt.Fprintf(stdout, "%s%-38s  %s%s\n", marker, key, it.Name, defBadge)
+	}
+}
+
 func runWorktreeCommand(
 	ctx context.Context,
 	args []string,
