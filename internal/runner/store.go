@@ -108,8 +108,17 @@ func (s *Store) Put(rec SessionRecord) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	copied := cloneRecord(rec)
+	previous, existed := s.records[copied.ID]
 	s.records[copied.ID] = &copied
-	return s.saveLocked()
+	if err := s.saveLocked(); err != nil {
+		if existed {
+			s.records[copied.ID] = previous
+		} else {
+			delete(s.records, copied.ID)
+		}
+		return err
+	}
+	return nil
 }
 
 func (s *Store) Get(sessionID string) (SessionRecord, bool) {

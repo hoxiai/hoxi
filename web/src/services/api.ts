@@ -82,7 +82,8 @@ export const hoxiAPI = {
     ]);
     const ocList = ocRes.status === "fulfilled" && Array.isArray(ocRes.value) ? ocRes.value : [];
     const runList = runnerRes.status === "fulfilled" && Array.isArray(runnerRes.value) ? runnerRes.value : [];
-    return [...runList, ...ocList].sort(
+    const managedIDs = new Set(runList.map((session) => session.id));
+    return [...runList, ...ocList.filter((session) => !managedIDs.has(session.id))].sort(
       (a, b) => (b.time?.updated || 0) - (a.time?.updated || 0)
     );
   },
@@ -179,7 +180,7 @@ export const hoxiAPI = {
   },
 
   // Prompting & Live Mid-Stream Steering
-  sendPromptAsync(
+  async sendPromptAsync(
     sessionID: string,
     text: string,
     options?: {
@@ -189,8 +190,10 @@ export const hoxiAPI = {
       directory?: string;
       system?: string;
       attachments?: PromptAttachment[];
+      runtime?: SessionRuntime;
     }
   ): Promise<void> {
+    if (options?.runtime) await runnerAPI.prepareRuntime(sessionID, options.runtime, options.model, options.directory);
     if (isRunnerSessionID(sessionID)) {
       return runnerAPI.sendPromptAsync(sessionID, text, options);
     }

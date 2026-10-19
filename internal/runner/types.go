@@ -34,6 +34,7 @@ type SessionInfo struct {
 	ExternalID  string      `json:"externalID,omitempty"`
 	SandboxMode string      `json:"sandboxMode,omitempty"`
 	Branch      string      `json:"branch,omitempty"`
+	Managed     bool        `json:"managed,omitempty"`
 }
 
 type SessionStatus struct {
@@ -148,23 +149,28 @@ type RunnerModelItem struct {
 }
 
 type SessionRecord struct {
-	ID             string        `json:"id"`
-	Runtime        string        `json:"runtime"`
-	ExternalID     string        `json:"externalID,omitempty"`
-	ProjectDir     string        `json:"projectDir"`
-	WorktreePath   string        `json:"worktreePath"`
-	Branch         string        `json:"branch,omitempty"`
-	BaseCommit     string        `json:"baseCommit,omitempty"`
-	SandboxMode    string        `json:"sandboxMode,omitempty"`
-	RetainedBranch string        `json:"retainedBranch,omitempty"`
-	ModelID        string        `json:"modelID"`
-	ProviderID     string        `json:"providerID"`
-	Mode           string        `json:"mode,omitempty"`
-	Title          string        `json:"title"`
-	CreatedAt      int64         `json:"createdAt"`
-	UpdatedAt      int64         `json:"updatedAt"`
-	ArchivedAt     int64         `json:"archivedAt,omitempty"`
-	Turns          []MessageTurn `json:"turns,omitempty"`
+	ID                  string            `json:"id"`
+	ParentID            string            `json:"parentID,omitempty"`
+	Runtime             string            `json:"runtime"`
+	ExternalID          string            `json:"externalID,omitempty"`
+	ProjectDir          string            `json:"projectDir"`
+	WorktreePath        string            `json:"worktreePath"`
+	Branch              string            `json:"branch,omitempty"`
+	BaseCommit          string            `json:"baseCommit,omitempty"`
+	SandboxMode         string            `json:"sandboxMode,omitempty"`
+	RetainedBranch      string            `json:"retainedBranch,omitempty"`
+	ModelID             string            `json:"modelID"`
+	ProviderID          string            `json:"providerID"`
+	Mode                string            `json:"mode,omitempty"`
+	Title               string            `json:"title"`
+	CreatedAt           int64             `json:"createdAt"`
+	UpdatedAt           int64             `json:"updatedAt"`
+	ArchivedAt          int64             `json:"archivedAt,omitempty"`
+	Turns               []MessageTurn     `json:"turns,omitempty"`
+	OpenCodeIDs         []string          `json:"openCodeIDs,omitempty"`
+	OpenCodeDirectories map[string]string `json:"openCodeDirectories,omitempty"`
+	ContextPending      bool              `json:"contextPending,omitempty"`
+	ContextTurnCount    int               `json:"contextTurnCount,omitempty"`
 }
 
 func (r SessionRecord) ToSessionInfo() SessionInfo {
@@ -174,6 +180,8 @@ func (r SessionRecord) ToSessionInfo() SessionInfo {
 	}
 	return SessionInfo{
 		ID:          r.ID,
+		ParentID:    r.ParentID,
+		Managed:     true,
 		Slug:        r.ID,
 		ProjectID:   r.ProjectDir,
 		Directory:   dir,

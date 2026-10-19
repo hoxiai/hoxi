@@ -20,7 +20,7 @@ export function isRunnerSessionID(sessionID?: string | null): boolean {
 
 export function registerRunnerSessions(sessions: SessionInfo[]): void {
   for (const s of sessions) {
-    if (s && s.id && s.runtime && s.runtime !== "opencode") {
+    if (s && s.id && s.runtime && (s.managed || s.runtime !== "opencode")) {
       knownRunnerSessionIDs.add(s.id);
     }
   }
@@ -73,6 +73,13 @@ export interface RunnerModelsResponse {
 }
 
 export const runnerAPI = {
+  async prepareRuntime(sessionID: string, runtime: SessionRuntime, model: { providerID: string; modelID: string } | undefined, directory?: string): Promise<void> {
+    if (runtime === "opencode" && !isRunnerSessionID(sessionID)) return;
+    const info = await requestJSON<SessionInfo>(withDir(`/api/hoxi/runner/sessions/${encodeURIComponent(sessionID)}/runtime`, directory), {
+      method: "POST", body: JSON.stringify({ runtime, ...model }),
+    });
+    registerRunnerSessions([info]);
+  },
   async listSessions(directory?: string): Promise<SessionInfo[]> {
     const list = await requestJSON<SessionInfo[]>(
       withDir("/api/hoxi/runner/sessions", directory)
@@ -158,6 +165,7 @@ export const runnerAPI = {
       agent?: string;
       model?: { providerID: string; modelID: string };
       variant?: string;
+      system?: string;
       attachments?: PromptAttachment[];
     }
   ): Promise<void> {
@@ -173,6 +181,7 @@ export const runnerAPI = {
           agent: options?.agent || "build",
           ...(options?.model ? { model: options.model } : {}),
           ...(options?.variant ? { variant: options.variant } : {}),
+          ...(options?.system ? { system: options.system } : {}),
           parts,
         }),
       }
@@ -196,6 +205,7 @@ export const runnerAPI = {
     const qs = forceRefresh ? "?refresh=1" : "";
     return requestJSON(`/api/hoxi/runner/${runtime}/models${qs}`);
   },
+
 };
 
 export const authAPI = {

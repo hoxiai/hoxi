@@ -64,6 +64,7 @@ type Gateway struct {
 }
 
 func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statusbar.Tracker) *Gateway {
+	var runnerSvc *runner.Service
 	targetURL, _ := url.Parse("http://127.0.0.1:" + strconv.Itoa(openCodePort))
 	proxy := httputil.NewSingleHostReverseProxy(targetURL)
 
@@ -91,6 +92,11 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 	}
 
 	proxy.ModifyResponse = func(resp *http.Response) error {
+		if runnerSvc != nil {
+			if err := filterRunnerResponse(resp, runnerSvc); err != nil {
+				return err
+			}
+		}
 		if status != nil && strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") {
 			resp.Body = newSSETapReadCloser(resp.Body, status.InspectSSELine)
 		}
@@ -107,7 +113,8 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 	wtMgr := worktree.NewManager(rootDir)
 	providers := provider.NewService(openCodePort, password, rootDir, proxy)
 	handoffSvc := handoff.NewService(openCodePort, password, rootDir, providers)
-	runnerSvc := runner.NewService(rootDir, wtMgr, status, "")
+	runnerSvc = runner.NewService(rootDir, wtMgr, status, "")
+	runnerSvc.ConfigureOpenCode(targetURL.String(), password)
 	authSvc := auth.NewService(nil)
 	updaterSvc := updater.NewChecker(buildinfo.Version, nil)
 	leaderboardSvc := leaderboard.NewService("", nil)
@@ -459,54 +466,6 @@ func spaStaticHandler(distFS fs.FS) http.Handler {
 		}
 		fileServer.ServeHTTP(w, r)
 	})
-}
-
-type sseTapReadCloser struct {
-	rc       io.ReadCloser
-	onLine   func(string)
-	buf      []byte
-	dropping bool
-}
-
-const maxSSETapLineSize = 64 * 1024
-
-func newSSETapReadCloser(rc io.ReadCloser, onLine func(string)) io.ReadCloser {
-	return &sseTapReadCloser{rc: rc, onLine: onLine}
-}
-
-func (t *sseTapReadCloser) Read(p []byte) (int, error) {
-	n, err := t.rc.Read(p)
-	if n > 0 && t.onLine != nil {
-		for remaining := p[:n]; len(remaining) > 0; {
-			end := bytes.IndexByte(remaining, '\n')
-			fragment := remaining
-			if end >= 0 {
-				fragment = remaining[:end]
-			}
-			if !t.dropping {
-				if len(t.buf)+len(fragment) > maxSSETapLineSize {
-					t.dropping = true
-					t.buf = t.buf[:0]
-				} else {
-					t.buf = append(t.buf, fragment...)
-				}
-			}
-			if end < 0 {
-				break
-			}
-			if !t.dropping {
-				t.onLine(strings.TrimRight(string(t.buf), "\r"))
-			}
-			t.buf = t.buf[:0]
-			t.dropping = false
-			remaining = remaining[end+1:]
-		}
-	}
-	return n, err
-}
-
-func (t *sseTapReadCloser) Close() error {
-	return t.rc.Close()
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

@@ -80,6 +80,11 @@ func (m *worktreeManager) ForDirectory(dir string) *Manager {
 	return scoped
 }
 
+// ForSession retains the owning workspace and its original sandbox baseline.
+func (m *worktreeManager) ForSession(sessionID string) *Manager {
+	return m.scoped("", sessionID)
+}
+
 func (m *worktreeManager) scoped(dir, sessionID string) *worktreeManager {
 	sessionID = sanitizeSessionID(sessionID)
 	if strings.TrimSpace(dir) != "" {

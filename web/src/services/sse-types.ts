@@ -10,6 +10,7 @@ export interface SessionInfo {
   parentID?: string;
   directory?: string;
   runtime?: SessionRuntime;
+  managed?: boolean;
   sandboxMode?: "local" | "worktree";
   branch?: string;
   modelID?: string;

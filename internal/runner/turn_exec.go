@@ -41,6 +41,7 @@ func (s *Service) startTurnProcess(
 	if err := cmd.Start(); err != nil {
 		return err
 	}
+	s.markContextDelivered(rec.ID)
 
 	ap := &activeProcess{
 		sessionID: rec.ID,

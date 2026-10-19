@@ -84,7 +84,7 @@ describe("local CLI model sync", () => {
     });
   });
 
-  it("refreshes a runner without importing its credentials and preserves the old runtime session", async () => {
+  it("switches to a runner inside the current conversation without importing credentials", async () => {
     await withProviders(async () => {
       const runner = { ...cli, id: "claude-code", providerID: "claude-code", authMode: "claude-runner" } as LocalCLIStatusItem;
       setWorkspace("activeSessionID", "ses_existing");
@@ -94,8 +94,8 @@ describe("local CLI model sync", () => {
       hoxiAPI.getLocalCLIStatus = async () => ({ tools: [{ ...runner, defaultModel: "sonnet" }] });
       await syncLocalCLIModel(runner);
       assertDeepEqual(workspace.selectedModel, { providerID: "claude-code", modelID: "sonnet" });
-      assertDeepEqual(workspace.activeSessionID, null);
-      assertDeepEqual(workspace.aiBySession.ses_existing.model, model);
+      assertDeepEqual(workspace.activeSessionID, "ses_existing");
+      assertDeepEqual(workspace.aiBySession.ses_existing.model, { providerID: "claude-code", modelID: "sonnet" });
     });
   });
 

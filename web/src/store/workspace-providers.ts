@@ -106,34 +106,14 @@ export function sessionRuntimeForID(sessionID?: string | null): SessionRuntime {
     const draftProv = workspace.defaultAI.model?.providerID;
     return resolveRunnerRuntimeForProvider(draftProv, Boolean(workspace.hoxiProviders?.[draftProv || ""]));
   }
-  if (sessionID.startsWith("ses_agy_")) return "antigravity";
-  if (sessionID.startsWith("ses_cld_")) return "claude-code";
   const found = workspace.sessions.find((s) => s.id === sessionID);
   if (found?.runtime) return found.runtime;
+  if (sessionID.startsWith("ses_agy_")) return "antigravity";
+  if (sessionID.startsWith("ses_cld_")) return "claude-code";
   return "opencode";
 }
 
 export function selectModel(model: SelectedModel, _autoRetryOnError = false) {
-  const activeID = workspace.activeSessionID;
-  const targetRuntime = resolveRunnerRuntimeForProvider(
-    model.providerID,
-    Boolean(workspace.hoxiProviders?.[model.providerID])
-  );
-  if (activeID && sessionRuntimeForID(activeID) !== targetRuntime) {
-    updateSessionAI({ model }, null);
-    pushRecentModel(model);
-    try {
-      localStorage.setItem(SELECTED_MODEL_KEY, JSON.stringify(model));
-    } catch {
-      /* ignore */
-    }
-    setWorkspace({
-      activeSessionID: null,
-      sessionSetupError: null,
-      newThreadRequest: workspace.newThreadRequest + 1,
-    });
-    return;
-  }
   updateSessionAI({ model });
   pushRecentModel(model);
   try {

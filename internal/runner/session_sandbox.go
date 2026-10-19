@@ -146,6 +146,9 @@ func (s *Service) changeSessionSandboxWithOptions(sessionID, mode string, force,
 		r.SandboxMode, r.WorktreePath = rec.SandboxMode, rec.WorktreePath
 		r.Branch, r.BaseCommit = rec.Branch, rec.BaseCommit
 		r.RetainedBranch = rec.RetainedBranch
+		// Engine resume handles belong to their original working directory.
+		r.ExternalID, r.ContextPending = "", len(r.Turns) > 0
+		r.ContextTurnCount = len(r.Turns)
 	})
 	if err != nil {
 		return SessionInfo{}, err
@@ -158,6 +161,7 @@ func (s *Service) changeSessionSandboxWithOptions(sessionID, mode string, force,
 				_, _, rollbackErr := s.store.Update(sessionID, func(r *SessionRecord) {
 					r.SandboxMode, r.WorktreePath = original.SandboxMode, original.WorktreePath
 					r.Branch, r.BaseCommit, r.RetainedBranch = original.Branch, original.BaseCommit, original.RetainedBranch
+					r.ExternalID, r.ContextPending, r.ContextTurnCount = original.ExternalID, original.ContextPending, original.ContextTurnCount
 				})
 				return SessionInfo{}, errors.Join(err, rollbackErr)
 			}

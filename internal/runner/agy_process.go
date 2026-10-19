@@ -308,15 +308,23 @@ type activeProcess struct {
 	stdin     io.WriteCloser
 	done      chan struct{}
 	aborted   bool
+	cancel    func()
 	mu        sync.Mutex
 }
 
 func (ap *activeProcess) Abort() {
 	ap.mu.Lock()
 	ap.aborted = true
-	proc := ap.cmd.Process
+	var proc *os.Process
+	if ap.cmd != nil {
+		proc = ap.cmd.Process
+	}
 	stdin := ap.stdin
+	cancel := ap.cancel
 	ap.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 
 	if stdin != nil {
 		_ = stdin.Close()

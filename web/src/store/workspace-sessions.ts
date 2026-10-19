@@ -2,6 +2,7 @@ import { createSignal } from "solid-js";
 import { produce } from "solid-js/store";
 import type { MessagePart, SnapshotFileDiff, SessionInfo } from "../services/sse-types";
 import { hoxiAPI, isRunnerSessionID, runnerAPI } from "../services/api";
+import { registerRunnerSessions } from "../services/runner-api";
 import { mergeServerTurnsInto } from "./message-lookup";
 import { recordUserRevertAction } from "./provider-telemetry";
 import { initializeSessionAI, persistSessionAI, restoreSessionAI, sessionAIConfig } from "./session-ai";
@@ -89,6 +90,7 @@ export function sessionsWithPendingPermission(): Set<string> {
 
 export function replaceSession(info: SessionInfo) {
   if (deletedSessionIDs.has(info.id)) return;
+  registerRunnerSessions([info]);
   if (info.sandboxMode && info.directory) {
     setWorkspace("worktreeBySession", info.id, {
       sessionID: info.id, isolated: info.sandboxMode === "worktree", directory: info.directory,

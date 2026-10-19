@@ -18,11 +18,15 @@ type Service struct {
 	worktrees *worktree.Manager
 	status    *statusbar.Tracker
 
-	mu      sync.Mutex
-	turnMu  sync.Mutex
-	procs   map[string]*activeProcess
-	subs    map[chan SSEEvent]string
-	seqSeed int64
+	mu               sync.Mutex
+	turnMu           sync.Mutex
+	procs            map[string]*activeProcess
+	subs             map[chan SSEEvent]string
+	seqSeed          int64
+	openCodeURL      string
+	openCodePassword string
+	openCodeClient   *http.Client
+	managedOpenCode  sync.Map
 }
 
 func NewService(rootDir string, worktrees *worktree.Manager, status *statusbar.Tracker, customStorePath string) *Service {
@@ -222,6 +226,8 @@ func (s *Service) handleSessionSubroutes(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusOK, turns)
 	case "prompt", "prompt_async":
 		s.handleSessionPrompt(w, r, sessionID)
+	case "runtime":
+		s.handleRuntimeSwitch(w, r, sessionID)
 	case "abort":
 		s.handleSessionAbort(w, r, sessionID)
 	case "event":
@@ -289,8 +295,10 @@ func (s *Service) handleSingleSession(w http.ResponseWriter, r *http.Request, se
 		writeJSON(w, http.StatusOK, info)
 
 	case http.MethodDelete:
-		s.abortActiveProcess(sessionID)
-		_ = s.store.Delete(sessionID)
+		if err := s.deleteConversation(r.Context(), sessionID); err != nil {
+			writeJSONError(w, http.StatusConflict, err.Error())
+			return
+		}
 		s.broadcast(sessionID, SSEEvent{Type: "session.deleted", Properties: map[string]interface{}{"sessionID": sessionID}})
 		w.WriteHeader(http.StatusNoContent)
 
@@ -315,14 +323,12 @@ func (s *Service) handleSessionPrompt(w http.ResponseWriter, r *http.Request, se
 		Text    string `json:"text"`
 		Agent   string `json:"agent"`
 		Variant string `json:"variant"`
+		System  string `json:"system"`
 		Model   *struct {
 			ProviderID string `json:"providerID"`
 			ModelID    string `json:"modelID"`
 		} `json:"model"`
-		Parts []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		} `json:"parts"`
+		Parts []MessagePart `json:"parts"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSONError(w, http.StatusBadRequest, err.Error())
@@ -348,6 +354,24 @@ func (s *Service) handleSessionPrompt(w http.ResponseWriter, r *http.Request, se
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if rec.Runtime == "opencode" {
+		s.mu.Lock()
+		busy := s.procs[sessionID] != nil
+		s.mu.Unlock()
+		if busy {
+			modelID, providerID := rec.ModelID, rec.ProviderID
+			if body.Model != nil {
+				modelID, providerID = body.Model.ModelID, body.Model.ProviderID
+			}
+			err := s.steerOpenCodeTurn(r.Context(), rec, firstNonEmptyStr(body.Agent, rec.Mode, "build"), modelID, providerID, body.Variant, body.System, promptText, body.Parts)
+			if err != nil {
+				writeJSONError(w, http.StatusBadGateway, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
+			return
+		}
+	}
 
 	binPath := ResolveAgyBinary()
 	missingMsg := "Antigravity CLI (agy) binary not found in ~/.gemini/bin/agy or PATH"
@@ -355,7 +379,7 @@ func (s *Service) handleSessionPrompt(w http.ResponseWriter, r *http.Request, se
 		binPath = ResolveClaudeBinary()
 		missingMsg = "Claude Code CLI (claude) binary not found in ~/.local/bin/claude or PATH"
 	}
-	if binPath == "" {
+	if binPath == "" && rec.Runtime != "opencode" {
 		writeJSONError(w, http.StatusBadRequest, missingMsg)
 		return
 	}
@@ -374,6 +398,9 @@ func (s *Service) handleSessionPrompt(w http.ResponseWriter, r *http.Request, se
 	modelID := rec.ModelID
 	if body.Model != nil && strings.TrimSpace(body.Model.ModelID) != "" {
 		modelID = strings.TrimSpace(body.Model.ModelID)
+		if body.Model.ProviderID != "" {
+			rec.ProviderID = body.Model.ProviderID
+		}
 	}
 	effort := strings.TrimSpace(body.Variant)
 
@@ -398,13 +425,31 @@ func (s *Service) handleSessionPrompt(w http.ResponseWriter, r *http.Request, se
 			Text:      promptText,
 		},
 	}
+	for index, part := range body.Parts {
+		if part.Type == "file" {
+			part.ID = fmt.Sprintf("prt_f_%d_%d_%d", now, seq, index)
+			part.SessionID, part.MessageID = sessionID, userMsgID
+			userParts = append(userParts, part)
+		}
+	}
 
 	_, _, _ = s.store.Update(sessionID, func(r *SessionRecord) {
 		r.ModelID = modelID
 		r.Mode = mode
+		r.ProviderID = rec.ProviderID
 	})
 
-	if err := s.startTurnProcess(rec, binPath, mode, modelID, effort, promptText, userInfo, userParts, asstMsgID); err != nil {
+	var err error
+	if rec.Runtime == "opencode" {
+		err = s.startOpenCodeTurn(rec, mode, modelID, effort, body.System, userInfo, userParts)
+	} else {
+		input := runtimeContext(rec)
+		if body.System != "" {
+			input += body.System + "\n\n"
+		}
+		err = s.startTurnProcess(rec, binPath, mode, modelID, effort, input+promptText, userInfo, userParts, asstMsgID)
+	}
+	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

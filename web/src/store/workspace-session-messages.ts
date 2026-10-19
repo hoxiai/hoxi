@@ -7,7 +7,7 @@ import {
 } from "./message-lookup";
 import { t } from "../i18n";
 import { ensureAIConsent } from "./privacy";
-import { hoxiAPI } from "../services/api";
+import { hoxiAPI, resolveRunnerRuntimeForProvider } from "../services/api";
 import type { StreamFrameBatch } from "../services/sse";
 import type { MessageInfo, MessagePart } from "../services/sse-types";
 import {
@@ -281,6 +281,7 @@ export async function submitSessionPrompt(
       directory: sessionDirectory(id),
       system,
       attachments,
+      runtime: resolveRunnerRuntimeForProvider(effectiveModel?.providerID, Boolean(workspace.hoxiProviders?.[effectiveModel?.providerID || ""])),
     });
     if (!lastInterruptAtBySession.has(id)) {
       markSessionPromptDispatched(id);
