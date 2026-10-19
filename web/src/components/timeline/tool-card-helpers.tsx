@@ -127,13 +127,21 @@ export function kiloToolIconName(tool: string): IconName {
   if (isTodoTool(t)) return "checklist";
   if (isTaskTool(t)) return "task";
   if (t === "skill") return "brain";
-  if (t === "question") return "bubble-5";
+  if (t === "question" || t === "agent_report") return "bubble-5";
+  if (t === "agent_wait" || t === "agent_status") return "task";
   return "mcp";
 }
 
-export function formatToolDisplayName(tool: string): string {
+export function formatToolDisplayName(tool: string, part?: ToolPart): string {
   if (!tool) return "";
   const lower = tool.toLowerCase();
+  if (lower === "agent_report") return t("toolCard.actionSystemMessage");
+  if (lower === "agent_wait") {
+    return part?.state.metadata?.waitingFor === "subagents"
+      ? t("toolCard.actionWaitSubagents")
+      : t("toolCard.actionWait");
+  }
+  if (lower === "agent_status") return t("toolCard.actionCheckSubagents");
   if (isReadTool(lower)) return t("toolCard.actionRead");
   if (lower.includes("write") && !isTodoTool(lower)) return t("toolCard.actionWrite");
   if (lower.includes("patch")) return t("toolCard.actionPatch");

@@ -22,6 +22,7 @@ type Service struct {
 	mu               sync.Mutex
 	turnMu           sync.Mutex
 	procs            map[string]*activeProcess
+	childBusy        map[string]bool
 	subs             map[chan SSEEvent]string
 	seqSeed          int64
 	openCodeURL      string
@@ -41,11 +42,12 @@ func NewService(rootDir string, worktrees *worktree.Manager, status *statusbar.T
 		status:    status,
 		gate:      newApprovalGate(),
 		procs:     make(map[string]*activeProcess),
+		childBusy: make(map[string]bool),
 		subs:      make(map[chan SSEEvent]string),
 	}
 	for _, info := range svc.store.List("") {
 		rec, _ := svc.store.Meta(info.ID)
-		if validateSessionDirectory(rec) != nil {
+		if rec.Subagent || validateSessionDirectory(rec) != nil {
 			continue
 		}
 		if info.SandboxMode == "local" {
@@ -197,12 +199,10 @@ func (s *Service) handleSessionsRoot(w http.ResponseWriter, r *http.Request) {
 func (s *Service) handleSessionSubroutes(w http.ResponseWriter, r *http.Request) {
 	sub := strings.TrimPrefix(r.URL.Path, "/api/hoxi/runner/sessions/")
 	if sub == "status" && r.Method == http.MethodGet {
-		s.mu.Lock()
-		res := make(map[string]SessionStatus, len(s.procs))
-		for sid := range s.procs {
+		res := make(map[string]SessionStatus)
+		for _, sid := range s.busySessionIDs() {
 			res[sid] = SessionStatus{Type: "busy"}
 		}
-		s.mu.Unlock()
 		writeJSON(w, http.StatusOK, res)
 		return
 	}
@@ -358,6 +358,10 @@ func (s *Service) handleSessionPrompt(w http.ResponseWriter, r *http.Request, se
 		return
 	}
 
+	if rec.Subagent {
+		writeJSONError(w, http.StatusConflict, errSubagentSessionReadOnly.Error())
+		return
+	}
 	if err := validateSessionDirectory(rec); err != nil {
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return

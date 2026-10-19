@@ -15,7 +15,13 @@ type claudeRawEvent struct {
 	IsError   bool   `json:"is_error"`
 	Result    string `json:"result"`
 	Error     string `json:"error"`
-	Event     *struct {
+	// Subagent plumbing: inner messages carry parent_tool_use_id, and
+	// system/task_notification reports a background subagent's outcome.
+	ParentToolUseID string `json:"parent_tool_use_id"`
+	ToolUseID       string `json:"tool_use_id"`
+	Status          string `json:"status"`
+	Summary         string `json:"summary"`
+	Event           *struct {
 		Type    string `json:"type"`
 		Index   int    `json:"index"`
 		Message *struct {
@@ -59,9 +65,15 @@ func (t *TurnTranslator) feedClaudeLine(line string) []SSEEvent {
 		t.externalID = env.SessionID
 	}
 	now := time.Now().UnixMilli()
+	if env.ParentToolUseID != "" {
+		return t.feedClaudeChildLine(&env, now)
+	}
 
 	switch env.Type {
 	case "system":
+		if env.Subtype == "task_notification" && env.ToolUseID != "" {
+			return t.finishClaudeSubagent(env.ToolUseID, strings.TrimSpace(env.Summary), env.Status == "failed" || env.Status == "error", now)
+		}
 		if env.Subtype == "init" && env.Model != "" && t.msgInfo.ModelID == "" {
 			t.msgInfo.ModelID = env.Model
 			return []SSEEvent{{Type: "message.updated", Properties: map[string]interface{}{"info": t.msgInfo}}}
@@ -235,7 +247,10 @@ func (t *TurnTranslator) feedClaudeLine(line string) []SSEEvent {
 				}
 				t.partsByID[partID] = &part
 				t.partOrder = append(t.partOrder, partID)
-				evts = append(evts, SSEEvent{Type: "message.part.updated", Properties: map[string]interface{}{"part": part}})
+				if isClaudeSubagentTool(blk.Name) {
+					evts = append(evts, t.startClaudeSubagent(callID, partID, blk.Input, now)...)
+				}
+				evts = append(evts, partUpdated(part))
 			}
 		}
 		return evts
@@ -247,6 +262,15 @@ func (t *TurnTranslator) feedClaudeLine(line string) []SSEEvent {
 		var evts []SSEEvent
 		for _, blk := range env.Message.Content {
 			if blk.Type != "tool_result" || blk.ToolUseID == "" {
+				continue
+			}
+			if task := t.claudeTasks[blk.ToolUseID]; task != nil {
+				// A background launch acknowledges immediately; its report comes
+				// later as a task_notification.
+				if !task.background {
+					report := claudeSubagentReport(claudeToolResultText(blk.Content))
+					evts = append(evts, t.finishClaudeSubagent(blk.ToolUseID, report, blk.IsError, now)...)
+				}
 				continue
 			}
 			partID := "prt_tool_" + blk.ToolUseID
@@ -276,7 +300,8 @@ func (t *TurnTranslator) feedClaudeLine(line string) []SSEEvent {
 	case "result":
 		t.turnFinished = true
 		t.msgInfo.Time.Completed = now
-		var evts []SSEEvent
+		evts := t.finishClaudeSubagents(env.IsError, now)
+		evts = append(evts, t.closeAllChildren(env.IsError, now)...)
 		if env.IsError {
 			errMsg := strings.TrimSpace(env.Result)
 			if errMsg == "" {
@@ -352,15 +377,19 @@ func normalizeRunnerTool(rawName string, rawParams map[string]interface{}) (norm
 		normTool = "websearch"
 	case "read_url_content", "webfetch":
 		normTool = "webfetch"
-	case "invoke_subagent", "task":
+	case "invoke_subagent", "task", "agent":
 		normTool = "task"
+	case "schedule":
+		normTool = "agent_wait"
+	case "manage_subagents":
+		normTool = "agent_status"
 	default:
 		normTool = lower
 		if normTool == "" {
 			normTool = "tool"
 		}
 	}
-	title = firstString(clean["toolSummary"], clean["toolAction"], clean["description"], rawName)
+	title = firstString(clean["toolSummary"], clean["toolAction"], clean["description"], clean["Prompt"], clean["Action"], rawName)
 	return normTool, title, clean
 }
 

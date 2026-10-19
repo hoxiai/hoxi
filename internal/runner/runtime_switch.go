@@ -42,6 +42,10 @@ func (s *Service) handleRuntimeSwitch(w http.ResponseWriter, r *http.Request, id
 	busy := s.procs[id] != nil
 	s.mu.Unlock()
 	rec, ok := s.store.Get(id)
+	if ok && rec.Subagent {
+		writeJSONError(w, 409, errSubagentSessionReadOnly.Error())
+		return
+	}
 	if !ok {
 		var err error
 		rec, err = s.adoptOpenCodeSession(r.Context(), id, r.URL.Query().Get("directory"))
@@ -251,5 +255,6 @@ func (s *Service) deleteConversation(ctx context.Context, id string) error {
 			return err
 		}
 	}
+	s.deleteChildSessions(id)
 	return s.store.Delete(id)
 }

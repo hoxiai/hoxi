@@ -17,6 +17,7 @@ import { DiffChanges, FileIcon, Icon, Spinner, TextShimmer, ToolStatusTitle } fr
 import SubagentInlineTimeline, {
   useSubagentTelemetry,
 } from "./SubagentInlineTimeline";
+import SubagentTaskDetails from "./SubagentTaskDetails";
 
 import {
   ActionIconButton,
@@ -31,6 +32,9 @@ import {
   resolveToolFileDiagnostics, resolveToolFileDiff, resolveToolFileDiffs,
   resolveToolTodoItems,
 } from "./tool-card-state";
+
+// Silence shorter than this is normal model latency, not worth flagging.
+const RUNNER_IDLE_HINT_SECONDS = 15;
 
 export { extractTargetFile, kiloToolIconName, processCarriageReturns };
 
@@ -80,6 +84,16 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
     isTask() ? extractChildSubagentSessionId(props.part) : undefined
   );
   const subagentTelemetry = useSubagentTelemetry(childSessionID, isRunning);
+  // Antigravity / Claude Code subagents: child sessions written by the parent's CLI turn.
+  const isRunnerSubagent = () => isTask() && Boolean(props.part.state.metadata?.runner);
+  // Reuses the 0.1s elapsed ticker as the clock instead of starting another timer.
+  const idleSeconds = createMemo(() => {
+    const s = props.part.state;
+    const last = isRunnerSubagent() ? Number(s.metadata?.lastActivityAt) || 0 : 0;
+    if (!last || !isRunning() || s.status !== "running") return 0;
+    const now = s.time.start + elapsed() * 1000;
+    return Math.max(0, Math.floor((now - last) / 1000));
+  });
   const fileDiff = createMemo(() => resolveToolFileDiff(props.part, isEdit(), targetFile() || ""));
   const fileDiffs = createMemo(() =>
     resolveToolFileDiffs(props.part, isEdit(), targetFile() || "")
@@ -213,7 +227,7 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
                         when={isTodo()}
                         fallback={
                           <TextShimmer
-                            text={formatToolDisplayName(props.part.tool)}
+                            text={formatToolDisplayName(props.part.tool, props.part)}
                             active={isRunning()}
                           />
                         }
@@ -255,7 +269,7 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
                   <div class="flex items-center gap-1.5 min-w-0 flex-1">
                     <span class="text-[12.5px] font-medium text-[var(--text-secondary)] shrink-0">
                       <TextShimmer
-                        text={formatToolDisplayName(props.part.tool)}
+                        text={formatToolDisplayName(props.part.tool, props.part)}
                         active={isRunning()}
                       />
                     </span>
@@ -298,13 +312,20 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
 
           {/* Right side: Subagent Resume / link / Diff +/- stats / Exit code / Revert / Duration / Chevron */}
           <div class="flex items-center gap-2 shrink-0">
+            <Show when={idleSeconds() >= RUNNER_IDLE_HINT_SECONDS}>
+              <span class="hidden sm:inline font-mono text-[11px] text-[var(--text-faint)]">
+                {t("toolCard.lastActivity", { seconds: idleSeconds() })}
+              </span>
+            </Show>
+
             <Show when={isTask() && subagentTelemetry().stepCount > 0}>
               <span class="rounded bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[10.5px] text-[var(--text-muted)]">
                 {t("timeline.stepsCompleted", { count: subagentTelemetry().stepCount })}
               </span>
             </Show>
 
-            <Show when={isInterruptedSubagent() && childSessionID()}>
+            {/* Runner subagents cannot be resumed through an OpenCode task_id */}
+            <Show when={isInterruptedSubagent() && !isRunnerSubagent() && childSessionID()}>
               {(subId) => (
                 <button
                   type="button"
@@ -381,10 +402,13 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
         {/* Inline nested step list for Subagent `task` tool calls */}
         <Show when={expanded() && isTask() && childSessionID()}>
           {(subId) => (
-            <SubagentInlineTimeline
-              childSessionID={subId()}
-              parentRunning={isRunning()}
-            />
+            <>
+              <SubagentInlineTimeline
+                childSessionID={subId()}
+                parentRunning={isRunning()}
+              />
+              <SubagentTaskDetails part={props.part} running={isRunning()} />
+            </>
           )}
         </Show>
 

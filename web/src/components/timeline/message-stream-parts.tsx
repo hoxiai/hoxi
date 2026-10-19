@@ -69,7 +69,7 @@ export function resolveActiveCycleStepLabel(
   }
   if (runningTools.length > 0) {
     const active = runningTools[runningTools.length - 1];
-    const toolName = formatToolDisplayName(active.tool);
+    const toolName = formatToolDisplayName(active.tool, active);
     const file = extractTargetFile(active);
     const cmd = extractCommand(active);
     const desc = extractDescription(active);

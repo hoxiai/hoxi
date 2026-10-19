@@ -8,8 +8,13 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 )
+
+// Subagents run silently for minutes; their transcripts are checked at this
+// pace so the running task card keeps showing progress.
+const subagentPollInterval = 3 * time.Second
 
 func (s *Service) startTurnProcess(
 	rec SessionRecord,
@@ -73,6 +78,7 @@ func (s *Service) startTurnProcess(
 	}
 
 	tr := NewTurnTranslator(rec.ID, rec.Runtime, asstMsgID, userInfo.ID, rec.ProviderID, modelID, mode, rec.ExternalID)
+	tr.createChild = s.childSessionFactory(rec, modelID, mode)
 	s.broadcast(rec.ID, tr.InitialEvents(userInfo, userParts)...)
 
 	inputBytes, _ := EncodeStreamInputTurn(rec.Runtime, promptText)
@@ -95,7 +101,30 @@ func (s *Service) startTurnProcess(
 			}
 		}()
 
+		// emitMu keeps translate+broadcast atomic so a poll snapshot can never
+		// land after (and overwrite) a newer stdout snapshot of the same part.
+		var emitMu sync.Mutex
+		stopPoll := make(chan struct{})
+		pollDone := make(chan struct{})
+		go func() {
+			defer close(pollDone)
+			ticker := time.NewTicker(subagentPollInterval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-stopPoll:
+					return
+				case <-ticker.C:
+					emitMu.Lock()
+					s.broadcastRouted(rec.ID, tr.PollSubagentActivity())
+					emitMu.Unlock()
+				}
+			}
+		}()
+
 		readStreamLines(stdoutPipe, func(line string) {
+			emitMu.Lock()
+			defer emitMu.Unlock()
 			evts := tr.FeedLine(line)
 			if extID := tr.ExternalID(); extID != "" && extID != rec.ExternalID {
 				rec.ExternalID = extID
@@ -103,13 +132,20 @@ func (s *Service) startTurnProcess(
 					r.ExternalID = extID
 				})
 			}
-			if len(evts) > 0 {
-				s.broadcast(rec.ID, evts...)
-			}
+			s.broadcastRouted(rec.ID, evts)
 		})
 
+		close(stopPoll)
+		<-pollDone
+
 		waitErr := cmd.Wait()
+		defer func() {
+			for _, id := range tr.ChildSessionIDs() {
+				s.setChildBusy(id, false)
+			}
+		}()
 		if !tr.IsTurnFinished() {
+			s.broadcastRouted(rec.ID, tr.AbandonTurn(time.Now().UnixMilli()))
 			if ap.wasAborted() {
 				tr.msgInfo.Time.Completed = time.Now().UnixMilli()
 				tr.msgInfo.Finish = "aborted"

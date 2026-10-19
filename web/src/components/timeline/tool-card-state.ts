@@ -208,6 +208,7 @@ export function resolveToolArgPills(part: ToolPart): string[] {
     pills.push(`pattern=${input.pattern}`);
   }
   if (typeof input.include === "string" && input.include) pills.push(`include=${input.include}`);
+  if (typeof input.DurationSeconds === "number") pills.push(`${input.DurationSeconds}s`);
   if (part.state.status === "completed") {
     const matches = part.state.metadata?.matches ?? part.state.metadata?.count;
     if (typeof matches === "number") {
@@ -437,4 +438,3 @@ export function collectSessionChangedFiles(
 }
 
 export { computeChangedFileLines, resolveSessionDiffForFile } from "./file-diff-lines";
-

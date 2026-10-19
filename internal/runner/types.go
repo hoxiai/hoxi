@@ -151,6 +151,7 @@ type RunnerModelItem struct {
 type SessionRecord struct {
 	ID                  string            `json:"id"`
 	ParentID            string            `json:"parentID,omitempty"`
+	Subagent            bool              `json:"subagent,omitempty"`
 	Runtime             string            `json:"runtime"`
 	ExternalID          string            `json:"externalID,omitempty"`
 	ProjectDir          string            `json:"projectDir"`

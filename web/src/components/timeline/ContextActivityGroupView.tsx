@@ -422,7 +422,7 @@ export default function ContextActivityGroupView(props: {
 
     if (runningTools.length > 0) {
       const active = runningTools[runningTools.length - 1];
-      const action = formatToolDisplayName(active.tool);
+      const action = formatToolDisplayName(active.tool, active);
       const detail = summarizeStepTarget(active);
       const extra = runningTools.length > 1 ? ` (+${runningTools.length - 1})` : "";
       return {
@@ -447,7 +447,7 @@ export default function ContextActivityGroupView(props: {
       const p = props.parts[i];
       if (p.type === "tool") {
         return {
-          action: formatToolDisplayName(p.tool),
+          action: formatToolDisplayName(p.tool, p),
           detail: summarizeStepTarget(p),
         };
       }
