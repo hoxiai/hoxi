@@ -29,46 +29,45 @@
    - [6.6 三大高阶控制能力](#66-三大高阶控制能力)
 7. [Git Worktree 物理会话隔离与合并生命周期](#7-git-worktree-物理会话隔离与合并生命周期)
    - [7.1 Worktree 沙箱状态机](#71-worktree-沙箱状态机)
-   - [7.2 Go Worktree 管理器完整实现规范 (`desktop_worktree.go`)](#72-go-worktree-管理器完整实现规范-desktop_worktreego)
+   - [7.2 Go Worktree 管理器接口契约 (`internal/worktree/`)](#72-go-worktree-管理器接口契约-internalworktree)
 8. [OpenCode 插件体系：安全门控与 8 维记忆沉淀](#8-opencode-插件体系安全门控与-8-维记忆沉淀)
    - [8.1 真实 `@opencode-ai/plugin` Hook 签名](#81-真实-opencode-aiplugin-hook-签名)
    - [8.2 权限智能分流插件 (`hoxi-permissions.js`)](#82-权限智能分流插件-hoxi-permissionsjs)
    - [8.3 8 维度结构化记忆插件 (`hoxi-memory.js`)](#83-8-维度结构化记忆插件-hoxi-memoryjs)
-9. [macOS 原生宿主与状态栏托盘 (`gopanel_v2` 移植)](#9-macos-原生宿主与状态栏托盘-gopanel_v2-移植)
+9. [macOS 原生宿主与状态栏托盘 (`internal/app/` & `internal/statusbar/`)](#9-macos-原生宿主与状态栏托盘-internalapp--internalstatusbar)
    - [9.1 Wails 窗口配置与单实例锁](#91-wails-窗口配置与单实例锁)
    - [9.2 Objective-C `NSStatusBar` 状态机联动](#92-objective-c-nsstatusbar-状态机联动)
-10. [完整目录结构](#10-完整目录结构)
-11. [分阶段开发路线图与可交付验收清单](#11-分阶段开发路线图与可交付验收清单)
+10. [多运行时执行引擎与跨软件会话接管 (`internal/runner/` & `internal/handoff/`)](#10-多运行时执行引擎与跨软件会话接管-internalrunner--internalhandoff)
 
 ---
 
 ## 1. 架构全景与设计哲学
 
-`hoxi` 的核心定位是：**专为全功能 AI Agent 打造的高颜值、轻量化、原生质感桌面工作台**。项目通过四层解耦架构，将核心工程能力融为一体：
+`hoxi` 的核心定位是：**专为全功能 AI Agent 打造的高颜值、轻量化、原生质感桌面工作台**。项目通过四层解耦架构，将核心工程能力融为一体（完整目录树与模块归属决策表以 [`AGENTS.md`](AGENTS.md) 为唯一权威来源）：
 
 ```text
 ┌────────────────────────────────────────────────────────────────────────┐
-│ 1. 原生宿主层 (Desktop Host) —— 移植自 gopanel_v2                       │
+│ 1. 原生宿主层 (Desktop Host: internal/app & internal/statusbar)        │
 │    - Wails v2 + WKWebView (0.2s 极速冷启动, 约 30MB 内存占用)            │
 │    - macOS 原生毛玻璃背景 (Vibrancy) + 沉浸式无边框交通灯标题栏         │
 │    - Objective-C 状态栏常驻图标 (Running 忙碌计数 / Attention 待审批)   │
 │    - 单实例运行锁 (SingleInstanceLock) + 点红叉仅隐藏窗口后台常驻       │
 ├────────────────────────────────────────────────────────────────────────┤
-│ 2. 前端工作区 (Frontend UI) —— 三栏工作区外壳 + Kilo Code 任务流         │
+│ 2. 前端工作区 (Frontend UI: web/src/{components,store,services,i18n})  │
 │    - 外壳布局：经典三栏 (左侧项目/工作树 + 中间对话 + 右侧审查)          │
 │    - 任务交互：Kilo Code 动态工具卡片、独立 Reasoning 抽屉、内联审批门控│
 │    - 核心引擎：Vite + SolidJS + Tailwind CSS (零 VDOM，120Hz 满帧流式)  │
 │    - 审查与终端：@pierre/diffs Hunk 级代码对比 + @xterm/addon-webgl     │
 ├────────────────────────────────────────────────────────────────────────┤
-│ 3. Go 守护进程与安全网关 (cmd/hoxi/)                                  │
-│    - 子进程守护：全生命周期监管原版 `opencode serve`                    │
-│    - 零端口内存网关：Wails AssetServer.Handler 进程内反向代理           │
+│ 3. Go 模块化守护与安全网关 (internal/{gateway,worktree,provider,...})  │
+│    - 子进程守护 (internal/opencode)：全生命周期监管原版 `opencode serve`│
+│    - 零端口内存网关 (internal/gateway)：进程内反向代理 + 会话目录隔离守卫│
 │    - Basic Auth 随机密码注入 + 绕过系统 HTTP_PROXY 防止本地 502         │
-│    - Git Worktree 沙箱引擎：自动创建/对比/合并 `.hoxi/worktrees/<id>` │
+│    - Git Worktree 沙箱引擎 (internal/worktree)：`.hoxi/worktrees/<id>`  │
 ├────────────────────────────────────────────────────────────────────────┤
-│ 4. 核心 Agent 运行时 (Agent Core) —— Upstream Zero-Fork                 │
-│    - 原汁原味官方 pristine `opencode` 二进制（零侵入，替换二进制即升级）│
-│    - 9 级智能模糊代码替换算法 (9-Stage Fuzzy Replacer) + 原生 LSP 诊断  │
+│ 4. 多运行时 Agent 内核 (internal/opencode & internal/runner)           │
+│    - 官方 pristine `opencode` 二进制（Upstream Zero-Fork 零侵入）        │
+│    - 多运行时引擎 (internal/runner)：原生驱动 Claude Code / agy / Qoder │
 │    - 本地插件：.opencode/plugins/ (安全命令免批 + 8 维度结构化记忆沉淀) │
 └────────────────────────────────────────────────────────────────────────┘
 ```
@@ -82,19 +81,19 @@
 
 | 层级 | 技术栈与核心依赖 | 借鉴定点与选型依据 |
 | :--- | :--- | :--- |
-| **桌面宿主** | Go `>= 1.23` + Wails `v2.13+` + CGo (Cocoa) | 复用 `gopanel_v2` 的 `desktop_*.go` 与 `desktop_statusbar_darwin.m`，摒弃其粗糙的 Vue/NaiveUI 管理后台界面。 |
+| **桌面宿主** | Go `>= 1.23` + Wails `v2.13+` + CGo (Cocoa) | 模块化收归于 `internal/app` 与 `internal/statusbar`（含 `statusbar_darwin.m`）。 |
 | **前端视图层** | SolidJS `^1.9` + TypeScript `^5.7` + Vite `^6.0` | 与 `Kilo Code` (`packages/kilo-ui`) 同源技术栈；细粒度 Signal 响应式直接操作真实 DOM，流式渲染零虚拟 DOM 开销。 |
 | **样式系统** | Tailwind CSS `^4.0` + CSS Variables | 深邃暗黑极简调性（`#0b0d12` 底色 + `1px` 微光边框 + 等宽数值对齐）。 |
 | **代码 Diff** | `@pierre/diffs` | 渲染 OpenCode 返回的 `SnapshotFileDiff` / Unified Patch，支持 Inline 与 Side-by-Side 切换。 |
 | **终端组件** | `@xterm/xterm` + `@xterm/addon-webgl` + `@xterm/addon-fit` | 直连 OpenCode 内置的 `/pty/{ptyID}/connect` WebSocket 终端流，支持 GPU 加速与窗口自适应。 |
-| **Agent 内核** | `opencode serve` (`>= v1.18.0`) | 提供 `/session`、`/event`、`/permission`、`/pty`、`/vcs`、`/file` 全套能力。 |
+| **Agent 内核** | `opencode serve` (`>= v1.18.0`) + `internal/runner` | 提供 `/session`、`/event`、`/permission`、`/pty`、`/vcs`、`/file` 及多运行时适配能力。 |
 
 ---
 
 ## 3. Go 守护进程与零端口内存网关规范
 
 ### 3.1 OpenCode 子进程守护与冷启动优化
-Go 启动时查找 `HOXI_OPENCODE` 环境变量或系统 `PATH` 中的 `opencode`，分配空闲本地回环端口（如 `127.0.0.1:41xxx`），并以如下参数启动：
+Go 启动时（[`internal/opencode/`](internal/opencode/)）查找 `HOXI_OPENCODE` 环境变量或系统 `PATH` 中的 `opencode`，分配空闲本地回环端口（如 `127.0.0.1:41xxx`），并以如下参数启动：
 
 ```bash
 opencode serve --hostname 127.0.0.1 --port <free-port> --print-logs
@@ -115,7 +114,7 @@ Go 启动子进程后，以 100ms 间隔轮询 `GET http://127.0.0.1:<port>/glob
 > 1. `opencode serve` 在设置 `OPENCODE_SERVER_PASSWORD` 后，使用的是 **HTTP Basic Auth**（`WWW-Authenticate: Basic realm="Secure Area"`），**不是** `Bearer` Token！若注入 `Bearer` 会直接收到 `401 Unauthorized`。
 > 2. macOS 开发者常开启 Clash / Surge 等系统代理（设置 `HTTP_PROXY` 环境变量）。Go 的 `http.DefaultTransport` 默认会读取环境代理，导致发往 `127.0.0.1:<port>` 的反向代理请求被转发给外部代理并返回 `502 Bad Gateway`。因此反向代理的 `Transport` **必须显式设置 `Proxy: nil`**。
 
-`cmd/hoxi/desktop_gateway.go` 标准实现模型：
+[`internal/gateway/gateway.go`](internal/gateway/gateway.go) 标准实现模型：
 
 ```go
 func newOpenCodeReverseProxy(target *url.URL, password string) *httputil.ReverseProxy {
@@ -144,7 +143,7 @@ func newOpenCodeReverseProxy(target *url.URL, password string) *httputil.Reverse
 ```
 
 ### 3.3 SSE 零缓冲流式转发与 WebSocket 终端升级
-1. **静态资源与 API 分流（`desktop_gateway.go`）**：
+1. **静态资源与 API 分流（`internal/gateway/gateway.go`）**：
    - 当请求路径匹配 `/session`、`/event`、`/global`、`/permission`、`/question`、`/pty`、`/vcs`、`/file`、`/find`、`/provider`、`/config`、`/command`、`/agent`、`/lsp`、`/experimental`、`/api/hoxi/` 时，交由 Go 网关处理或反向代理至 `opencode serve`。
    - 其余路径回退给 `web/dist` 前端静态资源（SPA History 路由回退至 `index.html`）。
 2. **WebSocket 终端连接限制与方案**：
@@ -486,8 +485,8 @@ stateDiagram-v2
     Cleaned --> [*]
 ```
 
-### 7.2 Go Worktree 管理器完整实现规范 (`desktop_worktree.go`)
-Go 网关暴露 4 个内部管理接口供前端调用：
+### 7.2 Go Worktree 管理器接口契约 (`internal/worktree/`)
+[`internal/worktree/routes.go`](internal/worktree/routes.go) 与 [`internal/worktree/manager.go`](internal/worktree/manager.go) 暴露的核心管理接口：
 
 1. **`POST /api/hoxi/worktree/create`**
    - 输入：`{"sessionID": "ses_xxx"}`
@@ -498,15 +497,15 @@ Go 网关暴露 4 个内部管理接口供前端调用：
      4. 将软链接 `.opencode` 指向主工程的 `.opencode` 目录，共享记忆库与插件。
      5. 返回 `{"isolated": true, "directory": "<worktreeDir>", "branch": "hoxi/<sessionID>", "baseCommit": "<sha>"}`。
 2. **`GET /api/hoxi/worktree/status?sessionID=ses_xxx`**
-   - 返回该沙箱相对 `baseCommit` 的变更统计（Changed files、Additions、Deletions、是否有未提交修改）。
+   - 返回该沙箱相对 `baseCommit` 的变更统计（Changed files、Additions、Deletions、是否有未提交修改、ahead/behind 计数）。
 3. **`POST /api/hoxi/worktree/apply`**
    - 输入：`{"sessionID": "ses_xxx", "mode": "merge" | "patch"}`
    - 动作：
-     - 若沙箱内有未提交的修改，先在沙箱内自动生成快照提交：`git add -A && git commit -m "chore(hoxi): session snapshot"`。
+     - 若沙箱内有未提交的修改，先在沙箱内自动生成快照提交。
      - **`patch` 模式（默认推荐，不污染主分支提交历史）**：在沙箱生成相对 `baseCommit` 的二进制补丁 `git diff --binary <baseCommit>..HEAD`，然后在主工作区执行 `git apply --3way` 将改动平铺到主工作区工作树。
      - **`merge` 模式**：在主工作区执行 `git merge --no-ff hoxi/<sessionID>`。
 4. **`DELETE /api/hoxi/worktree/{sessionID}?force=true|false`**
-   - 借鉴 `gopanel_v2` 的防丢数据保护：若 `force == false`，先检查 `git status --porcelain` 与 `git merge-base --is-ancestor`；若仍有未合入改动则拒绝删除并提示用户确认。
+   - 防丢数据保护：若 `force == false`，先检查 `git status --porcelain` 与 `git merge-base --is-ancestor`；若仍有未合入改动则拒绝删除并提示用户确认。
    - 清理动作：执行 `git worktree remove --force <worktreeDir>` -> `git worktree prune` -> `git branch -D hoxi/<sessionID>`。
 
 ---
@@ -521,271 +520,50 @@ Go 网关暴露 4 个内部管理接口供前端调用：
 - `event?: (input: { event: Event }) => Promise<void>`
 
 ### 8.2 权限智能分流插件 (`hoxi-permissions.js`)
-放置在 `.opencode/plugins/hoxi-permissions.js`，实现“安全命令秒过、高危指令拦截并点亮状态栏”：
-
-```javascript
-// .opencode/plugins/hoxi-permissions.js
-const DESTRUCTIVE_RE = /\b(rm|sudo|chmod|chown|mkfs|dd|diskutil|killall|reboot|shutdown)\b|[>|]\s*\/etc\/|git\s+(push\s+--force|reset\s+--hard|clean\s+-f)/i;
-
-const SAFE_PREFIX_RE = /^(ls|pwd|cat|head|tail|wc|find|grep|rg|fd|git\s+(status|diff|log|show|branch|rev-parse)|go\s+(test|vet|build|list|env)|npm\s+(test|run\s+build|run\s+lint)|pnpm\s+(test|build|lint)|cargo\s+(check|test)|pytest|tsc|node\s+-v)\b/;
-
-export const HoxiPermissionsPlugin = async () => {
-  return {
-    "permission.ask": async (input, output) => {
-      const joined = [
-        input.permission || "",
-        ...(Array.isArray(input.patterns) ? input.patterns : []),
-        JSON.stringify(input.metadata || {})
-      ].join(" ").trim();
-
-      // 1. 命中破坏性原语，强制挂起等待前端 ApprovalGateCard 人工审批
-      if (DESTRUCTIVE_RE.test(joined)) {
-        output.status = "ask";
-        return;
-      }
-
-      // 2. 文件读取、搜索或工作区内普通编辑/安全开发测试命令，自动放行
-      if (
-        input.permission === "read" ||
-        input.permission === "glob" ||
-        input.permission === "grep" ||
-        input.permission === "list" ||
-        SAFE_PREFIX_RE.test(joined)
-      ) {
-        output.status = "allow";
-        return;
-      }
-
-      // 3. 其他未知外部命令默认询问用户
-      output.status = "ask";
-    }
-  };
-};
-
-export default HoxiPermissionsPlugin;
-```
+放置在 [`.opencode/plugins/hoxi-permissions.js`](.opencode/plugins/hoxi-permissions.js)，共享策略规则位于 [`.opencode/lib/permission-policy.js`](.opencode/lib/permission-policy.js) 与 [`.opencode/lib/cases.json`](.opencode/lib/cases.json)，实现“安全命令秒过、高危指令拦截并点亮状态栏”：
+1. 命中破坏性原语（`rm`, `sudo`, `chmod`, `chown`, `mkfs`, `dd`, `diskutil`, `git push --force`, `git reset --hard` 等），强制返回 `output.status = "ask"`，挂起等待前端 `<ApprovalGateCard />` 人工审批。
+2. 文件读取、搜索或工作区内安全开发测试命令自动放行（`output.status = "allow"`）。
+3. 其它未知外部命令根据当前会话审批模式（`ApprovalMode`）决策询问或放行。
 
 ### 8.3 8 维度结构化记忆插件 (`hoxi-memory.js`)
-放置在 `.opencode/plugins/hoxi-memory.js`，实现 **8 维度上下文压缩协议**：
-1. 在每次对话构造 System Prompt 时（`experimental.chat.system.transform`），自动把 `.opencode/memory/project.md` 注入模型上下文。
-2. 在会话触发上下文压缩时（`experimental.session.compacting`），将压缩 Prompt 替换为标准 8 维度结构化模板。
+放置在 [`.opencode/plugins/hoxi-memory.js`](.opencode/plugins/hoxi-memory.js)，实现 **8 维度上下文压缩协议**：
+1. 在每次对话构造 System Prompt 时（`experimental.chat.system.transform`），自动把 `.opencode/memory/project.md` 与当前会话交接记忆 `.opencode/memory/sessions/<sessionID>.md` 注入模型上下文。
+2. 在会话触发上下文压缩时（`experimental.session.compacting`），将压缩 Prompt 替换为标准 8 维度结构化模板（`Goals`, `Constraints`, `Key Facts`, `Changed Files`, `Errors & Fixes`, `Todo`, `Progress`, `Next Steps`）。
 3. 在会话进入空闲状态时（`event` 收到 `session.idle`），将会话关键进展归档至 `.opencode/memory/sessions/<sessionID>.md`。
-
-```javascript
-// .opencode/plugins/hoxi-memory.js
-import fs from "node:fs/promises";
-import path from "node:path";
-
-const EIGHT_DIM_COMPACTION_PROMPT = `You are compacting an engineering session for hoxi.
-Summarize the conversation into the following 8 mandatory dimensions in concise Markdown:
-1. ## Goals (Core user objectives and success criteria)
-2. ## Constraints (Architectural boundaries, forbidden actions, user rules)
-3. ## Key Facts (Discovered file paths, APIs, ports, schemas, environment details)
-4. ## Changed Files (Modified files and the exact rationale for each change)
-5. ## Errors & Fixes (Root causes of bugs encountered and how they were resolved)
-6. ## Todo (Remaining unfinished tasks)
-7. ## Progress (Verified milestones completed so far)
-8. ## Next Steps (Immediate actionable steps for the next turn)`;
-
-export const HoxiMemoryPlugin = async ({ directory }) => {
-  const memoryDir = path.join(directory, ".opencode", "memory");
-  const projectMemoryPath = path.join(memoryDir, "project.md");
-  const sessionsMemoryDir = path.join(memoryDir, "sessions");
-
-  return {
-    // 1. 将长期工程记忆注入每次对话的 System Prompt
-    "experimental.chat.system.transform": async (_input, output) => {
-      try {
-        const content = await fs.readFile(projectMemoryPath, "utf8");
-        if (content.trim()) {
-          output.system.push(`<project_memory>\n${content.trim()}\n</project_memory>`);
-        }
-      } catch {
-        // project.md 尚不存在时忽略
-      }
-    },
-
-    // 2. 注入 8 维度结构化上下文压缩提示词
-    "experimental.session.compacting": async (_input, output) => {
-      output.prompt = EIGHT_DIM_COMPACTION_PROMPT;
-    },
-
-    // 3. 监听 session.idle 事件更新会话级心跳记录
-    event: async ({ event }) => {
-      if (event.type === "session.idle") {
-        const sessionID = event.properties?.sessionID || "unknown";
-        await fs.mkdir(sessionsMemoryDir, { recursive: true });
-        const sessionFile = path.join(sessionsMemoryDir, `${sessionID}.md`);
-        try {
-          await fs.access(sessionFile);
-        } catch {
-          const template = [
-            `# Session Memory (${sessionID})`,
-            `Updated: ${new Date().toISOString()}`,
-            "",
-            "## 1. Goals",
-            "## 2. Constraints",
-            "## 3. Key Facts",
-            "## 4. Changed Files",
-            "## 5. Errors & Fixes",
-            "## 6. Todo",
-            "## 7. Progress",
-            "## 8. Next Steps",
-            ""
-          ].join("\n");
-          await fs.writeFile(sessionFile, template, "utf8");
-        }
-      }
-    }
-  };
-};
-
-export default HoxiMemoryPlugin;
-```
 
 ---
 
-## 9. macOS 原生宿主与状态栏托盘 (`gopanel_v2` 移植)
+## 9. macOS 原生宿主与状态栏托盘 (`internal/app/` & `internal/statusbar/`)
 
-直接移植 `gopanel_v2` 根目录验证成熟的 5 个宿主文件（仅把品牌名从 `GoPanel` 替换为 `hoxi`）：
-- `desktop_statusbar_darwin.go` + `desktop_statusbar_darwin.m`
-- `desktop_code_status.go`
-- `desktop_gateway.go`
-- `wails.json` + `build-desktop.sh`
+宿主窗口生命周期与状态栏托盘分别内聚在 [`internal/app/app.go`](internal/app/app.go) 与 [`internal/statusbar/`](internal/statusbar/)（`tracker.go`、`statusbar_darwin.go`、`statusbar_darwin.m`、`statusbar_stub.go`）：
 
 ### 9.1 Wails 窗口配置与单实例锁
-在 `cmd/hoxi/main.go` 中配置 Wails `options.App`：
+在 [`internal/app/app.go`](internal/app/app.go) 中配置 Wails `options.App`：
 - `Title: "hoxi"`，`Width: 1200`，`Height: 760`，`MinWidth: 880`，`MinHeight: 560`。
 - `HideWindowOnClose: runtime.GOOS == "darwin"`：点击左上角红叉仅隐藏窗口，保持后台 Agent 继续执行任务。
 - `SingleInstanceLock`：固定 UUID 锁，在 `OnSecondInstanceLaunch` 中调用 `wailsruntime.WindowShow(ctx)` 唤醒已有窗口。
 - `Mac: &mac.Options{ TitleBar: mac.TitleBarHiddenInset(), WebviewIsTransparent: true, WindowIsTranslucent: true }`：启用原生毛玻璃背景与内嵌交通灯。
 
 ### 9.2 Objective-C `NSStatusBar` 状态机联动
-Go 网关在转发 `/event` SSE 流时，旁路解析事件并实时更新 `desktopCodeStatusAggregator`（`cmd/hoxi/desktop_code_status.go`）：
+Go 网关在转发 `/event` SSE 流及多运行时事件时，旁路解析事件并实时更新 [`statusbar.Tracker`](internal/statusbar/tracker.go)：
 - 收到 `session.status` (`type === "busy"`)：该会话标记为 `Running = true`。
 - 收到 `session.status` (`type === "idle"`)：该会话标记为 `Running = false`。
 - 收到 `permission.asked` 或 `question.asked`：该会话 `AttentionCount++`。
 - 收到 `permission.replied` 或 `question.replied`：该会话 `AttentionCount--`。
 
-状态汇总器调用 CGo `desktopStatusBarUpdate(attentionCount, runningCount)` 更新 macOS 右上角状态栏：
+状态汇总器调用 CGo 更新 macOS 右上角状态栏：
 - 当 `attentionCount > 0`：状态栏显示醒目提示 `hoxi !1`，菜单第一项显示 `Code: 1 waiting approval`，提醒用户切回窗口点击授权。
 - 当 `runningCount > 0`：状态栏显示 `hoxi •1`，菜单显示 `Code: 1 running`。
 - 空闲时：状态栏仅显示极简图标与 `Code: Idle`。
 
 ---
 
-## 10. 完整目录结构
+## 10. 多运行时执行引擎与跨软件会话接管 (`internal/runner/` & `internal/handoff/`)
 
-```text
-/
-├── cmd/
-│   └── hoxi/
-│       ├── main.go                       # Wails 入口、OpenCode 进程监管与生命周期管理
-│       ├── desktop_gateway.go            # 进程内反向代理、Basic Auth 注入与本地 WS 桥接
-│       ├── desktop_statusbar_darwin.go   # macOS 状态栏托盘 Go CGo 绑定
-│       ├── desktop_statusbar_darwin.m    # Objective-C NSStatusBar 原生状态栏实现
-│       ├── desktop_statusbar_stub.go     # 非 macOS 平台空实现桩
-│       ├── desktop_worktree.go           # Git Worktree 会话沙箱创建/Diff/Apply/清理
-│       └── desktop_code_status.go        # Running / Attention 实时状态聚合器
-├── web/                                  # 前端工作区 (Vite + SolidJS + Tailwind CSS)
-│   ├── src/
-│   │   ├── components/
-│   │   │   ├── layout/
-│   │   │   │   ├── ThreePaneShell.tsx    # 三栏工作区主框架
-│   │   │   │   ├── CompactHeader.tsx     # 融合 macOS 交通灯的 38px 顶栏
-│   │   │   │   └── LeftNav.tsx           # 会话列表、Worktree 标识与新建入口
-│   │   │   ├── timeline/
-│   │   │   │   ├── MessageStream.tsx     # 虚拟/自动触底对话流
-│   │   │   │   ├── ThoughtBox.tsx        # ReasoningPart 独立折叠推理抽屉
-│   │   │   │   ├── ToolCard.tsx          # ToolPart 动态脉冲卡片 (Pending/Running/Completed/Error)
-│   │   │   │   └── Composer.tsx          # 底部多模态输入框 (Build/Plan 切换、@文件、模型选择)
-│   │   │   ├── inspector/
-│   │   │   │   ├── InspectorPane.tsx     # 右栏容器 (Diffs / Memory / Files / Terminal)
-│   │   │   │   ├── PierreDiffViewer.tsx  # @pierre/diffs Hunk 级代码对比组件
-│   │   │   │   ├── MemoryBankView.tsx    # 8 维度结构化记忆展示与编辑面板
-│   │   │   │   └── FileTreeView.tsx      # 工作区文件树与快速预览
-│   │   │   ├── terminal/
-│   │   │   │   └── WebGLTerminal.tsx     # @xterm/xterm + addon-webgl 终端组件
-│   │   │   └── approval/
-│   │   │       └── ApprovalGateCard.tsx  # permission.asked 内联审批卡片 (Once/Always/Reject)
-│   │   ├── services/
-│   │   │   ├── sse-types.ts              # OpenCode v1.18+ 完整事件与 Part 类型定义
-│   │   │   ├── sse.ts                    # /event SSE 客户端 + rAF 120Hz 批处理引擎
-│   │   │   └── api.ts                    # OpenCode REST 客户端 + Worktree 管理客户端
-│   │   ├── store/
-│   │   │   └── workspace.ts              # SolidJS 全局响应式 Store (Sessions, Messages, Diffs, Approvals)
-│   │   ├── App.tsx                       # 根组件
-│   │   └── index.tsx                     # 挂载入口
-│   ├── package.json
-│   ├── tsconfig.json
-│   ├── vite.config.ts
-│   └── dist/                             # 生产构建产物 (由 Go //go:embed 嵌入)
-├── .opencode/
-│   ├── package.json                      # 锁定 @opencode-ai/plugin 避免冷启动联网阻塞
-│   ├── plugins/
-│   │   ├── hoxi-permissions.js         # 安全命令免批与高危命令拦截
-│   │   └── hoxi-memory.js              # 8 维度结构化记忆注入与压缩
-│   └── memory/
-│       ├── project.md                    # 跨会话长期工程记忆库
-│       └── sessions/                     # 按会话归档的 8 维记忆快照
-├── build/
-│   └── appicon.png                       # 1024x1024 应用图标源
-├── build-desktop.sh                      # 生产环境一键构建 Hoxi.app 脚本
-├── wails.json                            # Wails v2 配置文件
-├── go.mod
-├── AGENTS.md                             # AI 研发协作准则
-├── DEVELOPMENT.md                        # 本开发手册
-└── README.md                             # 项目概览与快速上手
-```
-
----
-
-## 11. 分阶段开发路线图与可交付验收清单
-
-目前 **Phase 1（Go 桌面宿主、Objective-C 状态栏、反向代理、Worktree 引擎）**、**Phase 2 的基础脚手架与 API/SSE 服务层** 以及 **Phase 4 的 OpenCode 插件** 均已落盘并通过 `go build -tags desktop` 编译验证。后续开发者或 AI 模型只需专注完成剩余的前端 UI 组件（`[ ]` 标记项）：
-
-### Phase 1：Go 桌面宿主与安全网关底座（已完成 ✅）
-- [x] **Step 1.1**：在 [`main.go`](main.go) 完善 `opencode serve` 守护，注入 `OPENCODE_SERVER_PASSWORD`、`OPENCODE_SERVER_USERNAME=opencode`、`OPENCODE_DISABLE_CONFIG_DEPENDENCY_INSTALL=1`，实现 `/global/health` 轮询探针。
-- [x] **Step 1.2**：编写 [`desktop_gateway.go`](desktop_gateway.go)，配置 `Proxy: nil`、`FlushInterval: -1` 与 `req.SetBasicAuth("opencode", password)`，彻底解决 `401` 与系统代理 `502` 问题。
-- [x] **Step 1.3**：移植 [`desktop_statusbar_darwin.go`](desktop_statusbar_darwin.go)、[`desktop_statusbar_darwin.m`](desktop_statusbar_darwin.m)、[`desktop_code_status.go`](desktop_code_status.go)、[`wails.json`](wails.json) 与 [`build-desktop.sh`](build-desktop.sh)，接入 Wails v2 单实例锁与 macOS 状态栏托盘。
-- [x] **Step 1.4**：实现 [`desktop_worktree.go`](desktop_worktree.go) 的 `create`、`status`、`apply`、`delete` 四个接口。
-
-### Phase 2：SolidJS + Tailwind 三栏工作区初始化（已完成 ✅）
-- [x] **Step 2.1**：初始化 [`web/package.json`](web/package.json)（引入 `solid-js`、`tailwindcss`、`@pierre/diffs`、`@xterm/xterm`、`@xterm/addon-webgl`、`@xterm/addon-fit`、`lucide-solid`）。
-- [x] **Step 2.2**：实现 [`web/src/store/workspace.ts`](web/src/store/workspace.ts) 与 [`web/src/services/api.ts`](web/src/services/api.ts)、[`web/src/services/sse.ts`](web/src/services/sse.ts)，对接真实 `/session`、`/session/{id}/prompt_async`、`/event`。
-- [x] **Step 2.3**：搭建 [`ThreePaneShell.tsx`](web/src/components/layout/ThreePaneShell.tsx)、[`CompactHeader.tsx`](web/src/components/layout/CompactHeader.tsx)、[`LeftNav.tsx`](web/src/components/layout/LeftNav.tsx)，实现会话切换、新建隔离会话（调用 `hoxiAPI.createSession` + `hoxiAPI.createWorktree`）与 `Build`/`Plan` 模式切换。
-
-### Phase 3：Kilo 风格任务执行流与右侧审查台（已完成 ✅）
-- [x] **Step 3.1**：实现 [`ThoughtBox.tsx`](web/src/components/timeline/ThoughtBox.tsx)（解析 `type === "reasoning"`，流式展示 + 完成自动折叠并显示思考耗时）。
-- [x] **Step 3.2**：实现 [`ToolCard.tsx`](web/src/components/timeline/ToolCard.tsx)（解析 `type === "tool"` 与四态 `ToolState`，带 `0.1s` 实时计时器、参数/输出折叠区、文件编辑内联 Diff、以及右上角 `Revert to Here` 回滚按钮）。
-- [x] **Step 3.3**：实现 [`ApprovalGateCard.tsx`](web/src/components/approval/ApprovalGateCard.tsx)（拦截 `permission.asked` 事件，对接 `hoxiAPI.replyPermission` 的 `once`/`always`/`reject`）与 [`Composer.tsx`](web/src/components/timeline/Composer.tsx)（含 `busy` 状态下的 `Steer 实时纠偏` 与 `Stop` 按钮）。
-- [x] **Step 3.4**：实现右栏 [`InspectorPane.tsx`](web/src/components/inspector/InspectorPane.tsx)、[`PierreDiffViewer.tsx`](web/src/components/inspector/PierreDiffViewer.tsx)（对接 `workspace.diffsBySession`）、[`MemoryBankView.tsx`](web/src/components/inspector/MemoryBankView.tsx)、[`FileTreeView.tsx`](web/src/components/inspector/FileTreeView.tsx) 与 [`WebGLTerminal.tsx`](web/src/components/terminal/WebGLTerminal.tsx)（对接 `/pty` WebSocket）。
-
-### Phase 4：插件闭环与端到端生产验收
-- [x] **Step 4.1**：按 [第 8 节](#8-opencode-插件体系安全门控与-8-维记忆沉淀) 落盘 [`.opencode/plugins/hoxi-permissions.js`](.opencode/plugins/hoxi-permissions.js) 与 [`hoxi-memory.js`](.opencode/plugins/hoxi-memory.js)。
-- [x] **Step 4.2**：执行 `./build-desktop.sh` 产出 `build/bin/Hoxi.app`，逐项通过以下 **生产可用性验收标准（DoD）**：
-  1. 双击 `Hoxi.app` 在 0.5 秒内弹出无边框毛玻璃三栏窗口，右上角 macOS 状态栏出现 `hoxi` 图标。
-  2. 点击 `+ New Session` 自动在 `.hoxi/worktrees/<sessionID>` 下创建独立分支，并在顶栏显示分支胶囊。
-  3. 发送代码修改指令后，消息流实时流式呈现 `ThoughtBox`（思考抽屉）与带秒表的 `ToolCard`（如 `read`、`edit`、`bash`），状态栏变为 `Running`。
-  4. 当要求执行 `rm -rf ./tmp_test` 时，自动弹出 `ApprovalGateCard`，状态栏变为 `Attention (!1)`；点击 `Approve Once` 后命令继续执行完毕。
-  5. 右侧 `Diffs` 面板实时渲染 `@pierre/diffs` 高亮代码变更；点击顶栏 `Apply to Main` 可将沙箱变更无损应用回主工程。
-  - 验收记录（构建侧已完成 ✅）：`npm install && npm run build` 与 `npx tsc --noEmit` 均零报错；`./build-desktop.sh` 成功产出 `build/bin/Hoxi.app`（21 MB）；headless 网关经真实浏览器实测，三栏壳 / 顶栏状态 / 左栏新建会话 / 右栏四标签页均正常渲染，零控制台报错，`/api/hoxi/bootstrap`、`/session`、`/event` 请求无失败。
-  - 待人工确认：DoD 第 1~5 项的人机交互验收（毛玻璃窗口呈现、Worktree 分支胶囊、流式 `ThoughtBox`/`ToolCard`、`ApprovalGateCard` 拦截、`Apply to Main`）需在 GUI 下逐项走查。
-  - 已知偏差：`MemoryBankView.tsx` 为只读视图（OpenCode 未暴露文件写入 HTTP 端点，`GET /file/content` 仅可读，`PUT/POST /file/content` 无路由），故“读写 `project.md`”仅实现读取与刷新。
-
----
-
-## 12. 跨软件会话接管与本地 CLI 桥接 (`Phase 5`)
-
-详见专项设计蓝图 [`HANDOFF_AND_CLI_BRIDGE.md`](HANDOFF_AND_CLI_BRIDGE.md)。核心能力包含：
-1. **三大本地 CLI 会话扫描与统一 IR (`NormalizedExternalSession`)**：
-   - **Grok CLI (`~/.grok`)**：扫描 `session_search.sqlite`、`summary.json`、`plan.json`、`chat_history.jsonl` 与 `updates.jsonl`。
-   - **Claude Code (`~/.claude`)**：扫描 `~/.claude/projects/<dash-cwd>/*.jsonl`，提取 `user`、`assistant`、`thinking`、`tool_use`、`tool_result`。
-   - **OpenAI Codex (`~/.codex`)**：扫描 `~/.codex/state_*.sqlite` (`threads` 表) 与 `rollout-*.jsonl[.zst]`。
-2. **OpenCode 无损物化与 8 维交接记忆生成 (`desktop_handoff_materialize.go`)**：
-   - 调用 `POST /session?directory=<cwd>` 创建新会话，并将归一化后的历史消息与工具调用写入 OpenCode SQLite (`opencode.db` 的 `message` 与 `part` 表)。
-   - 自动提炼源会话的目标、文件变更、任务计划与最新进展，生成 `.opencode/memory/sessions/<sessionID>.md`，由 `hoxi-memory.js` 在 `experimental.chat.system.transform` 中自动注入 System Prompt，实现跨工具无缝续做任务。
-3. **本地 CLI 模型与协议网关桥接 (`/api/hoxi/local-cli/*` & `/api/hoxi/bridge/grok-cli/v1/*`)**：
-   - 自动探测本机 Grok CLI、Claude Code、Codex 的登录态与模型缓存，支持一键导入。
-   - 内置 Grok CLI 协议转换网关（自动注入 `X-XAI-Token-Auth: xai-grok-cli`、`x-grok-client-version`、`x-grok-model-override`，并支持非流式与流式自适应转换）。
+1. **多运行时执行引擎（[`internal/runner/`](internal/runner/)）**：
+   - 除默认 `opencode` 运行时外，原生支持驱动 **Claude Code (`claude`)**、**Google Antigravity (`agy`)**、**Qoder** 与 **CodeBuddy** 子进程，并将各 CLI 的流式 JSONL 事件实时转译为统一的 OpenCode SSE 事件契约（`message.updated`、`message.part.delta`、`permission.asked`、`session.status`），使前端 Timeline、ToolCard、ThoughtBox、ApprovalGateCard 与状态栏托盘对底层运行时完全透明。
+   - 详见专项文档：[`docs/antigravity-runner-probe.md`](docs/antigravity-runner-probe.md)、[`docs/antigravity-approval-hook.md`](docs/antigravity-approval-hook.md)、[`docs/claude-code-approval-hook.md`](docs/claude-code-approval-hook.md)。
+2. **跨软件会话接管与本地 CLI 协议桥接（[`internal/handoff/`](internal/handoff/)）**：
+   - 支持一键扫描本机 Grok CLI、Claude Code、OpenAI Codex、Google Antigravity、OpenCode CLI、Trae、Qoder、CodeBuddy 的历史会话，归一化为统一 IR 并物化写入会话存储与 `.opencode/memory/sessions/<sessionID>.md` 8 维交接记忆。
+   - 详见专项蓝图：[`HANDOFF_AND_CLI_BRIDGE.md`](HANDOFF_AND_CLI_BRIDGE.md)。
 

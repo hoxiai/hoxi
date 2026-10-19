@@ -61,22 +61,38 @@ for (const file of files) {
   if (rel.startsWith("web/src/services/")) {
     const badImport = content.match(/(?:from\s+|import\s*\(\s*)["'][^"']*\/(?:store|components)(?:\/|["'])/);
     if (badImport) {
-      console.error(`  ✗ [layering violation] ${rel} must not import from store/ or components/ (${badImport[0]})`);
+      console.error(`  ✗ [layering violation] ${rel} must not import from store/ or components/ (${badImport[0]}). Move state/UI logic to web/src/store/ or web/src/components/.`);
       violations++;
     }
   } else if (rel.startsWith("web/src/store/")) {
     const badImport = content.match(/(?:from\s+|import\s*\(\s*)["'][^"']*\/components(?:\/|["'])/);
     if (badImport) {
-      console.error(`  ✗ [layering violation] ${rel} must not import from components/ (${badImport[0]})`);
+      console.error(`  ✗ [layering violation] ${rel} must not import from components/ (${badImport[0]}). Move pure domain helpers into web/src/store/.`);
       violations++;
     }
     if (rel !== "web/src/store/workspace.ts" && /^\s*export\s+\*\s+from\s+/m.test(content)) {
-      console.error(`  ✗ [barrel violation] ${rel} must not use secondary 'export * from' (re-export in workspace.ts instead)`);
+      console.error(`  ✗ [barrel violation] ${rel} must not use secondary 'export * from' (re-export flatly in web/src/store/workspace.ts instead).`);
       violations++;
     }
+    if (rel.endsWith("-storage.ts")) {
+      console.error(`  ✗ [fragment violation] ${rel} must not split out a separate *-storage.ts scaffold file; keep persistence inside its domain store module.`);
+      violations++;
+    }
+  } else if (rel.startsWith("web/src/i18n/") && /domain-.*-types\.ts$/.test(rel)) {
+    console.error(`  ✗ [i18n violation] ${rel} must not define manual i18n interface files; types are automatically inferred from en-US in web/src/i18n/types.ts.`);
+    violations++;
   } else if (rel.startsWith("internal/") && rel.endsWith(".go")) {
     if (/type\s+desktopGateway\s*=/.test(content)) {
-      console.error(`  ✗ [boundary violation] ${rel} must not define legacy 'type desktopGateway =' alias`);
+      console.error(`  ✗ [boundary violation] ${rel} must not define legacy 'type desktopGateway =' alias; use explicit package receiver (*Service / *Gateway).`);
+      violations++;
+    }
+    if (
+      !rel.startsWith("internal/provider/") &&
+      !rel.endsWith("_test.go") &&
+      rel !== "internal/handoff/grok_bridge.go" &&
+      /["']\/(?:v1\/messages|chat\/completions)["']/.test(content)
+    ) {
+      console.error(`  ✗ [boundary violation] ${rel} must not hand-roll '/v1/messages' or '/chat/completions' requests; reuse callSimpleLLM in internal/provider/http.go.`);
       violations++;
     }
   }

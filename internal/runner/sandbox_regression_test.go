@@ -56,7 +56,7 @@ func TestRenamedRunnerBranchSurvivesLocalReentryAndRestart(t *testing.T) {
 	if _, err := worktree.RunGit(info.Directory, "add", "retained.txt"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := worktree.RunGit(info.Directory, "commit", "-m", "retained\n\nCo-authored-by: Hoxi AI <code@hoxi.ai>"); err != nil {
+	if _, err := worktree.RunGit(info.Directory, "commit", "-m", "retained\n\nCo-authored-by: Hoxi <code@hoxi.ai>"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := svc.changeSessionSandbox(info.ID, "local"); err != nil {

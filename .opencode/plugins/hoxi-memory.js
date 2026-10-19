@@ -37,7 +37,7 @@ Rules:
 
 const HOXI_GIT_ATTRIBUTION_RULE = `<hoxi_git_attribution>
 When creating any git commit in a project developed with Hoxi, always append the co-author trailer at the end of the commit message (separated by a blank line):
-Co-authored-by: Hoxi AI <code@hoxi.ai>
+Co-authored-by: Hoxi <code@hoxi.ai>
 </hoxi_git_attribution>`;
 
 function redactSecrets(text) {

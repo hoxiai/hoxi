@@ -1,6 +1,6 @@
 # 交接：Hoxi 会话体系自主化 + 本地运行时（2026-10-19）
 
-> 读者：接手的 AI / 开发者。开始前先读 `AGENTS.md`（800 行上限、单向分层、i18n、OpenCode 零侵入、提交尾注 `Co-authored-by: Hoxi AI <code@hoxi.ai>`）。
+> 读者：接手的 AI / 开发者。开始前先读 `AGENTS.md`（800 行上限、单向分层、i18n、OpenCode 零侵入、提交尾注 `Co-authored-by: Hoxi <code@hoxi.ai>`）。
 
 ## 1. 目标与原则
 

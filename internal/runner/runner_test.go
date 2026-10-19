@@ -192,7 +192,7 @@ func initTestGitRepo(t *testing.T) string {
 		t.Fatal(err)
 	}
 	run("add", "README.md")
-	run("commit", "-m", "initial\n\nCo-authored-by: Hoxi AI <code@hoxi.ai>")
+	run("commit", "-m", "initial\n\nCo-authored-by: Hoxi <code@hoxi.ai>")
 	return dir
 }
 
@@ -431,4 +431,3 @@ func TestCodeBuddyAndQoderModelDiscoveryAndArgs(t *testing.T) {
 		t.Fatalf("unexpected Qoder args: %v", qArgs)
 	}
 }
-
