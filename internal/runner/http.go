@@ -86,6 +86,7 @@ func (s *Service) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc(claudeHookPreToolPath, s.handleClaudeHookPreTool)
 	mux.HandleFunc("/api/hoxi/runner/permission", s.handlePermissionRoutes)
 	mux.HandleFunc("/api/hoxi/runner/permission/", s.handlePermissionRoutes)
+	mux.HandleFunc("/api/hoxi/event", s.handleUnifiedSSE)
 	mux.HandleFunc("/api/hoxi/runner/event", s.handleGlobalSSE)
 	mux.HandleFunc("/api/hoxi/sessions", s.handleConversationsRoot)
 	mux.HandleFunc("/api/hoxi/sessions/status", s.handleConversationStatuses)

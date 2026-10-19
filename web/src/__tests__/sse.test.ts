@@ -49,8 +49,9 @@ describe("SSE client & 120Hz rAF delta batching", () => {
             const start = MockEventSource.instances.length;
             disconnect = connectEventStream({ onEvent: () => {},
               onFrameBatch: applyStreamFrameBatch, onDeltaBatch: applyPartDeltaBatch });
-            const runner = MockEventSource.instances[start + 1];
-            const emit = (eventType: string, properties: unknown) => runner.onmessage?.({
+            const source = MockEventSource.instances[start];
+            assertEqual(MockEventSource.instances.length, start + 1);
+            const emit = (eventType: string, properties: unknown) => source.onmessage?.({
               data: JSON.stringify({ type: eventType, properties }),
             });
             const part = { id: "part", messageID: "message", sessionID: sid, type,
@@ -109,13 +110,14 @@ describe("SSE client & 120Hz rAF delta batching", () => {
         const start = MockEventSource.instances.length;
         const events: string[] = [];
         disconnect = connectEventStream({ onEvent: (evt) => events.push(evt.type), onDeltaBatch: () => {} }, undefined, base);
-        const [source, runner] = MockEventSource.instances.slice(start);
-        assertEqual(source.url, `${expected}/global/event`);
-        assertEqual(runner.url, `${expected}/api/hoxi/runner/event`);
-        runner.onmessage?.({ data: JSON.stringify({ type: "session.idle", properties: { sessionID: "ses_agy_test" } }) });
+        const created = MockEventSource.instances.slice(start);
+        assertEqual(created.length, 1);
+        const [source] = created;
+        assertEqual(source.url, `${expected}/api/hoxi/event`);
+        source.onmessage?.({ data: JSON.stringify({ type: "session.idle", properties: { sessionID: "ses_agy_test" } }) });
         assertDeepEqual(events, ["session.idle"]);
         disconnect();
-        assertTrue(source.closed && runner.closed);
+        assertTrue(source.closed);
       } finally {
         disconnect?.();
         g.EventSource = original;
@@ -156,11 +158,13 @@ describe("SSE client & 120Hz rAF delta batching", () => {
           },
           onFrameBatch: (batch) => batches.push(batch), onDeltaBatch: () => {},
         });
-        const [source, runner] = MockEventSource.instances.slice(start);
-        assertEqual(source.url, "/global/event");
-        const emit = (info: SessionInfo, directory?: string, runnerEvent = false) => {
+        const created = MockEventSource.instances.slice(start);
+        assertEqual(created.length, 1);
+        const [source] = created;
+        assertEqual(source.url, "/api/hoxi/event");
+        const emit = (info: SessionInfo, directory?: string, _runnerEvent = false) => {
           const payload = { type, properties: { info } };
-          (runnerEvent ? runner : source).onmessage?.({
+          source.onmessage?.({
             data: JSON.stringify(directory === undefined ? payload : { directory, payload }),
           });
         };
@@ -347,9 +351,10 @@ describe("SSE client & 120Hz rAF delta batching", () => {
         "/tmp/worktree-1"
       );
 
-      const [src, runner] = MockEventSource.instances.slice(instanceStart);
-      assertTrue(src.url.includes("directory=%2Ftmp%2Fworktree-1"), "url should include encoded directory");
-      assertEqual(runner.url, "/api/hoxi/runner/event");
+      const created = MockEventSource.instances.slice(instanceStart);
+      assertEqual(created.length, 1);
+      const [src] = created;
+      assertEqual(src.url, "/api/hoxi/event?directory=%2Ftmp%2Fworktree-1");
 
       src.onopen?.();
       assertEqual(connectedState, true);
@@ -403,7 +408,6 @@ describe("SSE client & 120Hz rAF delta batching", () => {
 
       disconnect();
       assertEqual(src.closed, true);
-      assertEqual(runner.closed, true);
     } finally {
       g.EventSource = origES;
       g.requestAnimationFrame = origRAF;
