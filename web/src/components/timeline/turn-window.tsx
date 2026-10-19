@@ -64,15 +64,21 @@ export function createTurnWindow(
   sessionID: Accessor<string | null>,
   turns: Accessor<MessageTurn[]>
 ): TurnWindowController {
+  const limits = new Map<string, number>();
   const [visibleLimit, setVisibleLimit] = createSignal(INITIAL_VISIBLE_TURNS);
   let lastSessionID: string | null = null;
   let prependingLock = false;
 
+  const rememberLimit = (sid: string | null, limit: number) => {
+    if (sid) limits.set(sid, limit);
+  };
+
   createEffect(() => {
     const sid = sessionID();
     if (sid !== lastSessionID) {
+      rememberLimit(lastSessionID, visibleLimit());
       lastSessionID = sid;
-      setVisibleLimit(INITIAL_VISIBLE_TURNS);
+      setVisibleLimit(sid ? limits.get(sid) ?? INITIAL_VISIBLE_TURNS : INITIAL_VISIBLE_TURNS);
       prependingLock = false;
     }
   });
@@ -115,7 +121,11 @@ export function createTurnWindow(
     if (hidden <= 0) return;
     prependingLock = true;
     preserveScrollOnPrepend(scroller, () => {
-      setVisibleLimit((prev) => prev + Math.max(count, TURN_BATCH_SIZE));
+      setVisibleLimit((prev) => {
+        const next = prev + Math.max(count, TURN_BATCH_SIZE);
+        rememberLimit(sessionID(), next);
+        return next;
+      });
     });
   };
 
@@ -124,7 +134,9 @@ export function createTurnWindow(
     if (hiddenCount() <= 0) return;
     prependingLock = true;
     preserveScrollOnPrepend(scroller, () => {
-      setVisibleLimit(total + INITIAL_VISIBLE_TURNS);
+      const next = total + INITIAL_VISIBLE_TURNS;
+      rememberLimit(sessionID(), next);
+      setVisibleLimit(next);
     });
   };
 
@@ -134,6 +146,7 @@ export function createTurnWindow(
     if (idx < 0) return;
     const needed = list.length - idx + 2;
     if (needed > visibleLimit()) {
+      rememberLimit(sessionID(), needed);
       setVisibleLimit(needed);
     }
   };

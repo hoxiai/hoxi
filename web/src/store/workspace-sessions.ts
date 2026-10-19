@@ -230,6 +230,12 @@ export async function selectSession(sessionID: string): Promise<void> {
   }
   setWorkspace("activeSessionID", sessionID);
   setWorkspace("unreadCompletedBySession", sessionID, false);
+  const cached = workspace.messagesBySession[sessionID];
+  if (cached !== undefined && workspace.aiBySession[sessionID]) {
+    const isChildSession = Boolean(workspace.sessions.find((s) => s.id === sessionID)?.parentID);
+    if (!isChildSession) void refreshSessionDiff(sessionID);
+    return;
+  }
   try {
     await loadSessionMessages(sessionID);
   } catch (err) {
