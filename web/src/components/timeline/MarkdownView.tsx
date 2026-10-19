@@ -1,11 +1,20 @@
-import { createMemo, Index, Match, Show, Switch } from "solid-js";
-import { openFileInInspector, openURLInInspector } from "../../store/workspace";
+import { createEffect, createMemo, createSignal, Index, Match, onCleanup, Show, Switch } from "solid-js";
+import {
+  activeDirectory,
+  checkFile,
+  extractFilePathFromHref,
+  looksLikeFilePath,
+  openFileInInspector,
+  openURLInInspector,
+  workspace,
+} from "../../store/workspace";
 import { FileIcon, Icon } from "../icons";
 import { t } from "../../i18n";
 import CodeBlockCard from "./CodeBlockCard";
 import {
   type AlertKind,
   type BlockToken,
+  createIncrementalMarkdownParser,
   type InlineSpan,
   isLikelyFilePath,
   isSameBlockToken,
@@ -37,14 +46,54 @@ function hasNestedInlineSyntax(text: string): boolean {
 }
 
 function isLocalFileHref(href: string): boolean {
-  const trimmed = href.trim();
-  if (/^file:\/\//i.test(trimmed)) return true;
-  if (/^[a-z]+:\/\//i.test(trimmed) || trimmed.startsWith("#")) return false;
-  return isLikelyFilePath(trimmed);
+  return extractFilePathFromHref(href) !== null;
 }
 
 function isHttpUrl(raw: string): boolean {
   return /^https?:\/\/[^\s<>"]+$/i.test(raw.trim());
+}
+
+function FileCodeSpan(props: { text: string }) {
+  const [verified, setVerified] = createSignal(looksLikeFilePath(props.text));
+  const cleanPath = () => stripFileLineSuffix(props.text);
+
+  createEffect(() => {
+    const raw = props.text;
+    const dir = activeDirectory() || workspace.rootDir || "";
+    const sid = workspace.activeSessionID || undefined;
+    let cancelled = false;
+    onCleanup(() => {
+      cancelled = true;
+    });
+    // Only query backend when connected or when we have a rootDir
+    if (!workspace.connected && !dir) return;
+    void checkFile(raw, dir, sid).then((exists) => {
+      if (!cancelled) {
+        setVerified(exists);
+      }
+    });
+  });
+
+  return (
+    <Show
+      when={verified()}
+      fallback={
+        <code class="rounded-md border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-1.5 py-0.5 font-mono text-[0.88em] text-[var(--text-primary)]">
+          {props.text}
+        </code>
+      }
+    >
+      <button
+        type="button"
+        onClick={() => openFileInInspector(props.text)}
+        title={t("timeline.openInInspectorTooltip")}
+        class="inline-flex items-center gap-1.5 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-elevated)] hover:border-[var(--accent-border)] hover:bg-[var(--accent-surface)] px-1.5 py-0.5 font-mono text-[0.88em] text-[var(--text-primary)] hover:text-[var(--accent-text)] transition-colors cursor-pointer align-baseline"
+      >
+        <FileIcon node={{ path: cleanPath(), type: "file" }} class="w-3.5 h-3.5 shrink-0" />
+        <span>{props.text}</span>
+      </button>
+    </Show>
+  );
 }
 
 function InlineRenderer(props: { text: string }) {
@@ -72,21 +121,7 @@ function InlineRenderer(props: { text: string }) {
               isLikelyFilePath((span() as Extract<InlineSpan, { type: "code" }>).text)
             }
           >
-            {(_) => {
-              const codeText = () => (span() as Extract<InlineSpan, { type: "code" }>).text;
-              const cleanPath = () => stripFileLineSuffix(codeText());
-              return (
-                <button
-                  type="button"
-                  onClick={() => openFileInInspector(codeText())}
-                  title={t("timeline.openInInspectorTooltip")}
-                  class="inline-flex items-center gap-1.5 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-elevated)] hover:border-[var(--accent-border)] hover:bg-[var(--accent-surface)] px-1.5 py-0.5 font-mono text-[0.88em] text-[var(--text-primary)] hover:text-[var(--accent-text)] transition-colors cursor-pointer align-baseline"
-                >
-                  <FileIcon node={{ path: cleanPath(), type: "file" }} class="w-3.5 h-3.5 shrink-0" />
-                  <span>{codeText()}</span>
-                </button>
-              );
-            }}
+            <FileCodeSpan text={(span() as Extract<InlineSpan, { type: "code" }>).text} />
           </Match>
           <Match
             when={
@@ -146,18 +181,19 @@ function InlineRenderer(props: { text: string }) {
           <Match when={span().type === "link"}>
             {(_) => {
               const linkSpan = () => span() as Extract<InlineSpan, { type: "link" }>;
+              const localTarget = () => extractFilePathFromHref(linkSpan().href);
               return (
                 <Show
                   when={!isLocalFileHref(linkSpan().href)}
                   fallback={
                     <button
                       type="button"
-                      onClick={() => openFileInInspector(linkSpan().href)}
+                      onClick={() => openFileInInspector(localTarget() || linkSpan().href)}
                       title={t("timeline.openInInspectorTooltip")}
                       class="inline-flex items-center gap-1.5 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-elevated)] hover:border-[var(--accent-border)] hover:bg-[var(--accent-surface)] px-1.5 py-0.5 font-mono text-[0.88em] text-[var(--text-primary)] hover:text-[var(--accent-text)] transition-colors cursor-pointer align-baseline"
                     >
                       <FileIcon
-                        node={{ path: stripFileLineSuffix(linkSpan().href), type: "file" }}
+                        node={{ path: stripFileLineSuffix(localTarget() || linkSpan().href), type: "file" }}
                         class="w-3.5 h-3.5 shrink-0"
                       />
                       <span>{linkSpan().text.replace(/^`|`$/g, "")}</span>
@@ -225,13 +261,8 @@ function alertStyle(alert?: AlertKind): { border: string; badgeBg: string; badge
 }
 
 export default function MarkdownView(props: { content: string }) {
-  const blocks = createMemo<BlockToken[]>((prev) => {
-    const next = parseMarkdownBlocks(props.content || "");
-    for (let i = 0; i < next.length; i++) {
-      next[i] = stabilizeBlockToken(prev[i], next[i]);
-    }
-    return next;
-  }, []);
+  const parseIncremental = createIncrementalMarkdownParser();
+  const blocks = createMemo<BlockToken[]>(() => parseIncremental(props.content || ""));
 
   return (
     <div

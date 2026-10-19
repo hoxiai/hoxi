@@ -425,6 +425,52 @@ func TestFileContentSupportsExternalAndAbsolutePaths(t *testing.T) {
 	if recForbidden.Code != http.StatusForbidden {
 		t.Fatalf("expected 403 Forbidden for sensitive credential file, got %d body=%s", recForbidden.Code, recForbidden.Body.String())
 	}
+
+	// 5. Kilo-style basename/suffix fallback & file:// URL with line anchor
+	deepDir := filepath.Join(projectDir, "internal", "subpkg")
+	if err := os.MkdirAll(deepDir, 0o755); err != nil {
+		t.Fatalf("mkdir deepDir: %v", err)
+	}
+	deepFile := filepath.Join(deepDir, "unique_widget.go")
+	if err := os.WriteFile(deepFile, []byte("package subpkg\nconst Widget = 7\n"), 0o644); err != nil {
+		t.Fatalf("write deepFile: %v", err)
+	}
+	recFallback := httptest.NewRecorder()
+	gw.ServeHTTP(recFallback, localRequest(http.MethodGet, "/api/hoxi/file/content?path=unique_widget.go&directory="+projectDir, nil))
+	if recFallback.Code != http.StatusOK || !strings.Contains(recFallback.Body.String(), "const Widget = 7") {
+		t.Fatalf("expected basename fallback to resolve unique_widget.go, got code=%d body=%s", recFallback.Code, recFallback.Body.String())
+	}
+
+	recFileURL := httptest.NewRecorder()
+	gw.ServeHTTP(recFileURL, localRequest(http.MethodGet, "/api/hoxi/file/content?path=file://"+extFile+"%23L10-L20&directory="+projectDir, nil))
+	if recFileURL.Code != http.StatusOK || !strings.Contains(recFileURL.Body.String(), `"outsideWorkspace":true`) {
+		t.Fatalf("expected file:// URL with anchor to resolve external file, got code=%d body=%s", recFileURL.Code, recFileURL.Body.String())
+	}
+
+	// 6. Batch validation (/api/hoxi/file/validate)
+	valBody := strings.NewReader(`{"paths":["unique_widget.go","` + extFile + `","non_existent_xyz.go"]}`)
+	recVal := httptest.NewRecorder()
+	reqVal := localRequest(http.MethodPost, "/api/hoxi/file/validate?directory="+projectDir, valBody)
+	reqVal.Header.Set("Content-Type", "application/json")
+	gw.ServeHTTP(recVal, reqVal)
+	if recVal.Code != http.StatusOK {
+		t.Fatalf("expected 200 from /api/hoxi/file/validate, got %d: %s", recVal.Code, recVal.Body.String())
+	}
+	var valResp struct {
+		Existing []string          `json:"existing"`
+		Resolved map[string]string `json:"resolved"`
+	}
+	if err := json.Unmarshal(recVal.Body.Bytes(), &valResp); err != nil {
+		t.Fatalf("unmarshal validate response: %v", err)
+	}
+	if len(valResp.Existing) != 2 || valResp.Resolved["unique_widget.go"] == "" || valResp.Resolved[extFile] == "" {
+		t.Fatalf("unexpected validate response: %+v", valResp)
+	}
+
+	// 7. Directory listing (/api/hoxi/file/list) works for external directories
+	recList := httptest.NewRecorder()
+	gw.ServeHTTP(recList, localRequest(http.MethodGet, "/api/hoxi/file/list?path="+externalDir+"&directory="+projectDir, nil))
+	if recList.Code != http.StatusOK || !strings.Contains(recList.Body.String(), "outside.ts") {
+		t.Fatalf("expected external directory listing to include outside.ts, got code=%d body=%s", recList.Code, recList.Body.String())
+	}
 }
-
-

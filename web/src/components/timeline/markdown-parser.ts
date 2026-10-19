@@ -1,7 +1,8 @@
 // web/src/components/timeline/markdown-parser.ts
+import { looksLikeCandidate, normalizeCandidatePath } from "../../store/workspace";
 
 const EXTENSIONS_SOURCE =
-  "ts|tsx|js|jsx|mjs|cjs|go|py|rs|md|mdx|json|jsonc|json5|yaml|yml|toml|xml|svg|css|scss|less|html|sh|zsh|bash|sql|vue|svelte|c|cpp|cc|h|hpp|m|mm|java|kt|swift|rb|php|proto|graphql|ini|cfg|conf|env|lock|mod|sum|work|gradle|properties|cmake|mk|dockerfile|tf|tfvars|hcl|prisma|sol|zig|lua|ex|exs|erl|hrl|hs|ml|mli|fs|fsx|cs|vb|dart|groovy|scala|clj|cljs|edn|nim|cr|v|sv|vhd|vhdl|glsl|wgsl|hlsl|metal|wasm|wat|csv|tsv|txt|log";
+  "ts|tsx|js|jsx|mjs|cjs|mts|cts|go|py|pyi|rs|md|mdx|markdown|json|jsonc|json5|yaml|yml|toml|xml|plist|svg|png|jpg|jpeg|gif|webp|ico|bmp|avif|pdf|css|scss|sass|less|html|htm|sh|zsh|bash|fish|sql|vue|svelte|astro|c|cpp|cc|cxx|h|hpp|m|mm|java|kt|kts|swift|rb|php|proto|graphql|gql|ini|cfg|conf|env|lock|mod|sum|work|gradle|properties|cmake|mk|dockerfile|tf|tfvars|hcl|prisma|sol|zig|lua|ex|exs|erl|hrl|hs|ml|mli|fs|fsx|cs|vb|dart|groovy|scala|clj|cljs|edn|nim|cr|v|sv|vhd|vhdl|glsl|wgsl|hlsl|metal|wasm|wat|csv|tsv|txt|log";
 
 const KNOWN_FILENAMES_SOURCE =
   "(?:Dockerfile|Containerfile|Makefile|GNUmakefile|Justfile|Caddyfile|Procfile|Gemfile|Rakefile|Guardfile|Brewfile|Vagrantfile|Tiltfile|Earthfile|BUILD|WORKSPACE|CMakeLists\\.txt|CODEOWNERS|LICENSE|README|CHANGELOG|CONTRIBUTING|AUTHORS|NOTICE)(?:\\.[\\w.-]+)?";
@@ -9,28 +10,19 @@ const KNOWN_FILENAMES_SOURCE =
 const KNOWN_DOTFILES_SOURCE =
   "\\.(?:env(?:\\.[\\w.-]+)?|gitignore|gitattributes|gitmodules|dockerignore|npmignore|eslintignore|prettierignore|editorconfig|nvmrc|node-version|python-version|ruby-version|tool-versions|babelrc(?:\\.[\\w.-]+)?|eslintrc(?:\\.[\\w.-]+)?|prettierrc(?:\\.[\\w.-]+)?|stylelintrc(?:\\.[\\w.-]+)?|npmrc|yarnrc(?:\\.[\\w.-]+)?|bashrc|zshrc|profile|clang-format|clang-tidy)";
 
-const FILE_LEAF_SOURCE = `(?:[\\w.-]+\\.(?:${EXTENSIONS_SOURCE})|${KNOWN_FILENAMES_SOURCE}|${KNOWN_DOTFILES_SOURCE})`;
+const FILE_LEAF_SOURCE = `(?:[\\w.+\\-\\u4e00-\\u9fa5]+\\.(?:${EXTENSIONS_SOURCE})|${KNOWN_FILENAMES_SOURCE}|${KNOWN_DOTFILES_SOURCE})`;
 
 const LINE_SUFFIX_SOURCE = "(?::\\d+(?:[:\\-–—]\\d+)?|#L\\d+(?:[-–—]L?\\d+)?)?";
 
-const FILE_PATH_PATTERN = new RegExp(
-  `^(?:file:\\/\\/)?(?:~\\/|\\.\\.?\\/|\\/)?(?:(?:\\.\\.|[\\w@.-]+)\\/)*${FILE_LEAF_SOURCE}${LINE_SUFFIX_SOURCE}$`,
-  "i"
-);
-
 export function isLikelyFilePath(text: string): boolean {
   const trimmed = text.trim();
-  if (!trimmed || trimmed.includes(" ") || trimmed.length > 220) return false;
-  if (/^[a-z]+:\/\//i.test(trimmed) && !/^file:\/\//i.test(trimmed)) return false;
+  if (!trimmed || trimmed.length > 512) return false;
   if (/^\/[^/]+$/.test(trimmed)) return false;
-  return FILE_PATH_PATTERN.test(trimmed);
+  return looksLikeCandidate(trimmed);
 }
 
 export function stripFileLineSuffix(text: string): string {
-  return text
-    .trim()
-    .replace(/^file:\/\//i, "")
-    .replace(/(?::\d+(?:[:\-–—]\d+)?|#L\d+(?:[-–—]L?\d+)?)$/i, "");
+  return normalizeCandidatePath(text);
 }
 
 export type TableAlign = "left" | "center" | "right";
@@ -425,7 +417,7 @@ export type InlineSpan =
   | { type: "strike"; text: string }
   | { type: "link"; text: string; href: string };
 
-const BARE_FILE_PATH_SOURCE = `(?:\\.\\/)?(?:[\\w@-]+\\/)+${FILE_LEAF_SOURCE}${LINE_SUFFIX_SOURCE}`;
+const BARE_FILE_PATH_SOURCE = `(?:~\\/|\\.\\.?\\/|\\/)?(?:[\\w@.+\\-\\u4e00-\\u9fa5]+\\/)+${FILE_LEAF_SOURCE}${LINE_SUFFIX_SOURCE}`;
 
 const INLINE_TOKEN_REGEX = new RegExp(
   `(\`[^\`\\n]+\`|\`[^\`\\n]*$|<br\\s*\\/?>|\\*\\*(?:\`[^\`]+\`|[^*]+|\\*(?!\\*))+\\*\\*|\\*\\*(?:\`[^\`\\n]+\`|\`[^\`\\n]*$|[^*\\n]+|\\*(?!\\*))*$|__(?:\`[^\`]+\`|[^_]+|_(?!_))+__|~~[^~\\n]+~~|\\[(?:\`[^\`]+\`|[^\\]]+)\\]\\((?:[^()\\s]+|\\([^()\\s]*\\))+\\)|\\[(?:\`[^\`\\n]+\`|[^\\]\\n]+)\\]\\([^()\\s]*$|\\*[^*\\n]+\\*|https?:\\/\\/[^\\s<>\\])"]+|${BARE_FILE_PATH_SOURCE})`,
@@ -466,7 +458,7 @@ export function parseInline(text: string): InlineSpan[] {
       !token.startsWith("<") &&
       !token.startsWith("*") &&
       !token.startsWith("_") &&
-      !token.startsWith("~") &&
+      !token.startsWith("~~") &&
       !token.startsWith("[") &&
       !/^https?:\/\//i.test(token)
     ) {
@@ -653,4 +645,81 @@ export function stabilizeBlockToken(prev: BlockToken | undefined, next: BlockTok
     return next;
   }
   return next;
+}
+
+/**
+ * Incremental streaming wrapper around `parseMarkdownBlocks` (inspired by Kilo Code's
+ * `markdown-stream.ts` projection + `appendFence` fast-path):
+ * - Caches finalized prefix blocks before the last 2 active blocks by character offset
+ *   so long streaming responses only parse the active tail slice on each 60Hz frame.
+ * -Stabilizes unchanged block/list/table object references in place for SolidJS `<Index>`.
+ */
+export function createIncrementalMarkdownParser(): (src: string) => BlockToken[] {
+  let prevNorm = "";
+  let prevBlocks: BlockToken[] = [];
+  let checkpointOffset = 0;
+  let checkpointBlocks: BlockToken[] = [];
+
+  const findSecondLastBlockOffset = (norm: string): { offset: number; prefixBlocks: BlockToken[] } => {
+    // Locate a safe double-newline boundary outside any code fence so we can checkpoint closed blocks.
+    const allBlocks = parseMarkdownBlocks(norm);
+    if (allBlocks.length < 4 || norm.length < 1024) {
+      return { offset: 0, prefixBlocks: [] };
+    }
+    // Verify by finding the last blank-line boundary before the final ~512 chars where prefix parses cleanly.
+    const searchFrom = Math.max(0, norm.length - 600);
+    const blankIdx = norm.lastIndexOf("\n\n", searchFrom);
+    if (blankIdx <= 0) return { offset: 0, prefixBlocks: [] };
+    const candidateOffset = blankIdx + 2;
+    const prefix = parseMarkdownBlocks(norm.slice(0, blankIdx));
+    const suffix = parseMarkdownBlocks(norm.slice(candidateOffset));
+    if (prefix.length + suffix.length !== allBlocks.length) {
+      return { offset: 0, prefixBlocks: [] };
+    }
+    for (let i = 0; i < prefix.length; i++) {
+      if (!isSameBlockToken(prefix[i], allBlocks[i])) {
+        return { offset: 0, prefixBlocks: [] };
+      }
+    }
+    for (let j = 0; j < suffix.length; j++) {
+      if (!isSameBlockToken(suffix[j], allBlocks[prefix.length + j])) {
+        return { offset: 0, prefixBlocks: [] };
+      }
+    }
+    return { offset: candidateOffset, prefixBlocks: allBlocks.slice(0, prefix.length) };
+  };
+
+  return (rawSrc: string): BlockToken[] => {
+    const norm = (rawSrc || "").replace(/\r\n/g, "\n");
+    if (norm === prevNorm) return prevBlocks;
+
+    let next: BlockToken[];
+    if (checkpointOffset > 0 && norm.startsWith(prevNorm) && norm.length >= checkpointOffset) {
+      const tailBlocks = parseMarkdownBlocks(norm.slice(checkpointOffset));
+      next = [...checkpointBlocks, ...tailBlocks];
+    } else {
+      checkpointOffset = 0;
+      checkpointBlocks = [];
+      next = parseMarkdownBlocks(norm);
+    }
+
+    for (let i = 0; i < next.length; i++) {
+      next[i] = stabilizeBlockToken(prevBlocks[i], next[i]);
+    }
+
+    if (norm.startsWith(prevNorm) && norm.length - checkpointOffset > 1600 && next.length >= 4) {
+      const cp = findSecondLastBlockOffset(norm);
+      if (cp.offset > checkpointOffset) {
+        checkpointOffset = cp.offset;
+        checkpointBlocks = next.slice(0, cp.prefixBlocks.length);
+      }
+    } else if (!norm.startsWith(prevNorm)) {
+      checkpointOffset = 0;
+      checkpointBlocks = [];
+    }
+
+    prevNorm = norm;
+    prevBlocks = next;
+    return next;
+  };
 }

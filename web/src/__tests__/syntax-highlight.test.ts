@@ -1,6 +1,17 @@
 import { fileLanguage, getCachedHighlight, highlightCode } from "../components/timeline/syntax-highlight";
-import { isLikelyFilePath, parseInline } from "../components/timeline/markdown-parser";
-import { assertEqual, assertTrue, describe, it } from "./test-harness";
+import {
+  createIncrementalMarkdownParser,
+  isLikelyFilePath,
+  parseInline,
+  parseMarkdownBlocks,
+} from "../components/timeline/markdown-parser";
+import {
+  extractFilePathFromHref,
+  extractFileSuffix,
+  looksLikeFilePath,
+  normalizeCandidatePath,
+} from "../store/workspace";
+import { assertDeepEqual, assertEqual, assertTrue, describe, it } from "./test-harness";
 
 describe("Chat code syntax highlighting", () => {
   it("detects file preview languages from paths and special filenames", async () => {
@@ -97,9 +108,48 @@ describe("Chat code syntax highlighting", () => {
       assertTrue(!isLikelyFilePath(invalid), `Expected non-match for ${invalid}`);
     }
 
-    const spans = parseInline("Check docker/Dockerfile and `Makefile` but not README in prose.");
+    const spans = parseInline("Check docker/Dockerfile and `Makefile` and ~/.gemini/antigravity/brain/task.md#L12 but not README in prose.");
     assertTrue(spans.some((s) => s.type === "code" && s.text === "docker/Dockerfile"));
     assertTrue(spans.some((s) => s.type === "code" && s.text === "Makefile"));
+    assertTrue(spans.some((s) => s.type === "code" && s.text === "~/.gemini/antigravity/brain/task.md#L12"));
     assertTrue(!spans.some((s) => s.type === "code" && s.text === "README"));
+
+    assertEqual(
+      extractFilePathFromHref("file:///Users/test/%E6%96%87%E6%A1%A3/my%20plan.md#L10-L20"),
+      "/Users/test/\u6587\u6863/my plan.md#L10-L20"
+    );
+    assertEqual(
+      normalizeCandidatePath("file:///Users/test/%E6%96%87%E6%A1%A3/my%20plan.md#L10-L20"),
+      "/Users/test/\u6587\u6863/my plan.md"
+    );
+    assertDeepEqual(
+      extractFileSuffix("/Users/test/\u6587\u6863/my plan.md#L15-L25"),
+      { path: "/Users/test/\u6587\u6863/my plan.md", line: 15, column: undefined }
+    );
+    assertTrue(looksLikeFilePath("~/.gemini/antigravity/brain/plan.md"));
+    assertTrue(looksLikeFilePath("/Users/test/\u6587\u6863/\u8bbe\u8ba1\u8bf4\u660e.md"));
+    assertTrue(!looksLikeFilePath("application/json"));
+    assertTrue(!looksLikeFilePath("true/false"));
+  });
+
+  it("incrementally parses long streaming markdown while preserving prefix block references", () => {
+    const parse = createIncrementalMarkdownParser();
+    const sections = Array.from({ length: 8 }, (_, idx) =>
+      `## Section ${idx + 1}\n\nParagraph ${idx + 1} with detailed explanation ${"x".repeat(220)}.\n\n\`\`\`ts\nexport const v${idx} = ${idx};\n\`\`\``
+    );
+    const doc1 = sections.slice(0, 6).join("\n\n");
+    const blocks1 = parse(doc1);
+    assertDeepEqual(blocks1, parseMarkdownBlocks(doc1));
+
+    const doc2 = `${doc1}\n\n${sections[6]}`;
+    const blocks2 = parse(doc2);
+    assertDeepEqual(blocks2, parseMarkdownBlocks(doc2));
+    assertTrue(blocks2[0] === blocks1[0]);
+    assertTrue(blocks2[1] === blocks1[1]);
+
+    const doc3 = `${doc2}\n\n${sections[7]}`;
+    const blocks3 = parse(doc3);
+    assertDeepEqual(blocks3, parseMarkdownBlocks(doc3));
+    assertTrue(blocks3[0] === blocks1[0]);
   });
 });

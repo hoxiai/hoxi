@@ -1,9 +1,7 @@
 package gateway
 
 import (
-	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"io"
 	"io/fs"
@@ -11,14 +9,11 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
-	"os"
 	"path"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	"github.com/hoxiai/hoxi/internal/auth"
 	"github.com/hoxiai/hoxi/internal/browser"
@@ -349,184 +344,15 @@ func (g *Gateway) registerRoutes(distFS fs.FS) {
 	}
 	g.mux.HandleFunc("/file/content", g.handleFileContent)
 	g.mux.HandleFunc("/api/file/content", g.handleFileContent)
+	g.mux.HandleFunc("/api/hoxi/file/content", g.handleFileContent)
+	g.mux.HandleFunc("/api/hoxi/file/validate", g.handleFileValidate)
+	g.mux.HandleFunc("/api/hoxi/file/list", g.handleFileList)
+	g.mux.HandleFunc("/api/hoxi/file/open", g.handleFileOpen)
 	g.mux.Handle("/api/", http.StripPrefix("/api", g.proxy))
 
 	if distFS != nil {
 		g.mux.Handle("/", spaStaticHandler(distFS))
 	}
-}
-
-const maxLocalFilePreviewBytes = 10 * 1024 * 1024
-
-func expandUserPath(raw string) string {
-	p := strings.TrimSpace(raw)
-	if p == "~" || strings.HasPrefix(p, "~/") {
-		if home, err := os.UserHomeDir(); err == nil && home != "" {
-			if p == "~" {
-				return home
-			}
-			return filepath.Join(home, p[2:])
-		}
-	}
-	return p
-}
-
-func isPathWithinDir(baseDir, targetPath string) bool {
-	if strings.TrimSpace(baseDir) == "" || strings.TrimSpace(targetPath) == "" {
-		return false
-	}
-	cleanBase, baseOK := canonicalDirectory(baseDir)
-	if !baseOK {
-		absBase, err := filepath.Abs(baseDir)
-		if err != nil {
-			return false
-		}
-		cleanBase = filepath.Clean(absBase)
-	}
-	cleanTarget := filepath.Clean(targetPath)
-	if resolved, err := filepath.EvalSymlinks(targetPath); err == nil {
-		if absResolved, err := filepath.Abs(resolved); err == nil {
-			cleanTarget = filepath.Clean(absResolved)
-		}
-	} else if absTarget, err := filepath.Abs(targetPath); err == nil {
-		cleanTarget = filepath.Clean(absTarget)
-	}
-	rel, err := filepath.Rel(cleanBase, cleanTarget)
-	if err != nil {
-		return false
-	}
-	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel))
-}
-
-func (g *Gateway) handleFileContent(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		g.proxy.ServeHTTP(w, r)
-		return
-	}
-	rawPath := strings.TrimSpace(r.URL.Query().Get("path"))
-	if strings.HasPrefix(strings.ToLower(rawPath), "file://") {
-		rawPath = strings.TrimSpace(rawPath[len("file://"):])
-	}
-	if rawPath == "" {
-		g.proxy.ServeHTTP(w, r)
-		return
-	}
-	rawDir := strings.TrimSpace(r.URL.Query().Get("directory"))
-	expandedPath := expandUserPath(rawPath)
-	baseDir := expandUserPath(rawDir)
-	if baseDir == "" {
-		baseDir = g.rootDir
-	}
-
-	var targetPath string
-	if filepath.IsAbs(expandedPath) {
-		targetPath = filepath.Clean(expandedPath)
-	} else if baseDir != "" {
-		targetPath = filepath.Join(baseDir, expandedPath)
-	} else {
-		targetPath = filepath.Clean(expandedPath)
-	}
-
-	if isSensitiveCredentialPath(targetPath) {
-		writeJSONError(w, http.StatusForbidden, "access to sensitive credential file is forbidden")
-		return
-	}
-
-	isExplicitExternalOrAbs := filepath.IsAbs(rawPath) || rawPath == "~" || strings.HasPrefix(rawPath, "~/") || !isPathWithinDir(baseDir, targetPath)
-	if !isExplicitExternalOrAbs && g.openCodePort > 0 {
-		if _, err := os.Stat(targetPath); err == nil {
-			g.proxy.ServeHTTP(w, r)
-			return
-		}
-		if g.rootDir != "" && g.rootDir != baseDir {
-			altPath := filepath.Join(g.rootDir, expandedPath)
-			if _, err := os.Stat(altPath); err == nil {
-				targetPath = altPath
-			} else {
-				g.proxy.ServeHTTP(w, r)
-				return
-			}
-		} else {
-			g.proxy.ServeHTTP(w, r)
-			return
-		}
-	}
-
-	info, err := os.Stat(targetPath)
-	if err != nil && !filepath.IsAbs(expandedPath) && g.rootDir != "" && g.rootDir != baseDir {
-		altPath := filepath.Join(g.rootDir, expandedPath)
-		if altInfo, altErr := os.Stat(altPath); altErr == nil {
-			targetPath = altPath
-			info = altInfo
-			err = nil
-		}
-	}
-	if err != nil {
-		if os.IsNotExist(err) {
-			writeJSONError(w, http.StatusNotFound, "file not found: "+rawPath)
-			return
-		}
-		writeJSONError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if info.IsDir() {
-		writeJSONError(w, http.StatusBadRequest, "path is a directory: "+rawPath)
-		return
-	}
-	if isSensitiveCredentialPath(targetPath) {
-		writeJSONError(w, http.StatusForbidden, "access to sensitive credential file is forbidden")
-		return
-	}
-
-	f, err := os.Open(targetPath)
-	if err != nil {
-		writeJSONError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	defer f.Close()
-
-	data, err := io.ReadAll(io.LimitReader(f, maxLocalFilePreviewBytes))
-	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	if bytes.IndexByte(data, 0) >= 0 || !utf8.Valid(data) {
-		writeJSON(w, http.StatusOK, map[string]any{
-			"type":     "binary",
-			"content":  base64.StdEncoding.EncodeToString(data),
-			"encoding": "base64",
-			"mimeType": http.DetectContentType(data),
-		})
-		return
-	}
-
-	writeJSON(w, http.StatusOK, map[string]any{
-		"type":    "text",
-		"content": string(data),
-	})
-}
-
-func isSensitiveCredentialPath(targetPath string) bool {
-	resolved := filepath.Clean(targetPath)
-	if sym, err := filepath.EvalSymlinks(resolved); err == nil && sym != "" {
-		resolved = filepath.Clean(sym)
-	}
-	slashPath := strings.ToLower(filepath.ToSlash(resolved))
-	base := strings.ToLower(filepath.Base(resolved))
-
-	if strings.Contains(slashPath, "/.hoxi/") && (base == "models.json" || base == "auth.json") {
-		return true
-	}
-	if strings.Contains(slashPath, "/opencode/") && (base == "auth.json" || base == "config.json" || base == "opencode.json" || base == "opencode.jsonc") {
-		return true
-	}
-	for _, dirToken := range []string{"/.ssh/", "/.aws/", "/.gnupg/", "/.kube/"} {
-		if strings.Contains(slashPath, dirToken) {
-			return true
-		}
-	}
-	return false
 }
 
 func spaStaticHandler(distFS fs.FS) http.Handler {
@@ -546,9 +372,13 @@ func spaStaticHandler(distFS fs.FS) http.Handler {
 			if data, err := distFS.Open("index.html"); err == nil {
 				defer data.Close()
 				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+				w.Header().Set("Cache-Control", "no-cache")
 				_, _ = io.Copy(w, data)
 				return
 			}
+		}
+		if strings.HasPrefix(cleanPath, "assets/") {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		}
 		fileServer.ServeHTTP(w, r)
 	})

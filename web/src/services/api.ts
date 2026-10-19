@@ -15,6 +15,8 @@ import type {
   BranchListResponse,
   CodeAuditRequest,
   CodeAuditResult,
+  FileContentResponse,
+  FileValidateResponse,
   ProjectInfo,
   PromptAttachment,
   ProviderAuthAuthorization,
@@ -359,14 +361,37 @@ export const hoxiAPI = {
   // Commands, LSP Diagnostics & File Search
   listCommands(directory?: string): Promise<SlashCommandInfo[]> { return requestJSON(withDir("/command", directory)); },
   getLSPStatus(directory?: string): Promise<any[]> { return requestJSON(withDir("/lsp", directory)); },
-  listFiles(path = "", directory?: string): Promise<Array<{ path: string; name?: string; type?: string }>> {
-    return requestJSON(withDir(`/file?path=${encodeURIComponent(path)}`, directory));
+  listFiles(path = "", directory?: string, sessionID?: string): Promise<Array<{ path: string; name?: string; type?: string }>> {
+    const q = `path=${encodeURIComponent(path)}${sessionID ? `&sessionID=${encodeURIComponent(sessionID)}` : ""}`;
+    return requestJSON(withDir(`/api/hoxi/file/list?${q}`, directory));
   },
   findFiles(query: string, directory?: string): Promise<string[]> {
     return requestJSON(withDir(`/find/file?query=${encodeURIComponent(query)}&limit=15`, directory));
   },
-  readFileContent(filePath: string, directory?: string): Promise<{ content: string }> {
-    return requestJSON(withDir(`/file/content?path=${encodeURIComponent(filePath)}`, directory));
+  readFileContent(filePath: string, directory?: string, sessionID?: string): Promise<FileContentResponse> {
+    const q = `path=${encodeURIComponent(filePath)}${sessionID ? `&sessionID=${encodeURIComponent(sessionID)}` : ""}`;
+    return requestJSON(withDir(`/api/hoxi/file/content?${q}`, directory));
+  },
+  validateFiles(paths: string[], directory?: string, sessionID?: string): Promise<FileValidateResponse> {
+    const q = sessionID ? `?sessionID=${encodeURIComponent(sessionID)}` : "";
+    return requestJSON(withDir(`/api/hoxi/file/validate${q}`, directory), {
+      method: "POST",
+      body: JSON.stringify({ paths, ...(directory ? { directory } : {}), ...(sessionID ? { sessionID } : {}) }),
+    });
+  },
+  openExternalFile(
+    filePath: string,
+    opts?: { directory?: string; sessionID?: string; action?: "open" | "reveal" }
+  ): Promise<{ ok: boolean; path: string; action: string }> {
+    return requestJSON(withDir("/api/hoxi/file/open", opts?.directory), {
+      method: "POST",
+      body: JSON.stringify({
+        path: filePath,
+        ...(opts?.directory ? { directory: opts.directory } : {}),
+        ...(opts?.sessionID ? { sessionID: opts.sessionID } : {}),
+        ...(opts?.action ? { action: opts.action } : {}),
+      }),
+    });
   },
 
   // Built-in PTY Terminal

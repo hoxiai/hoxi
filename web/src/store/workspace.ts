@@ -23,6 +23,11 @@ import type {
 import { DEFAULT_AGENTS } from "./workspace-providers";
 import { initialProviderTelemetry } from "./provider-telemetry";
 import { initialObserverAutoAudit, initialObserverModel } from "./provider-audit";
+import {
+  extractFileSuffix,
+  getResolvedFilePath,
+  normalizeCandidatePath,
+} from "./file-links";
 
 export interface MessageTurn {
   info: MessageInfo;
@@ -416,34 +421,29 @@ function firstChangedLine(patch?: string): number | null {
 }
 
 function parseFileReference(raw: string): { path: string; line: number | null } {
-  let str = raw.trim();
-  if (/^file:\/\//i.test(str)) {
-    str = str.replace(/^file:\/\//i, "");
-    try {
-      str = decodeURIComponent(str);
-    } catch {
-      /* ignore */
-    }
-  }
-  let parsedLine: number | null = null;
-  const hashMatch = str.match(/#L(\d+)(?:[-–—]L?\d+)?$/i);
-  if (hashMatch) {
-    parsedLine = Number(hashMatch[1]) || null;
-    str = str.slice(0, hashMatch.index);
-  } else {
-    const colonMatch = str.match(/:(\d+)(?:[:\-–—]\d+)?$/);
-    if (colonMatch) {
-      parsedLine = Number(colonMatch[1]) || null;
-      str = str.slice(0, colonMatch.index);
-    }
-  }
-  str = str.replace(/^\.\//, "").trim();
+  const { line: suffixLine } = extractFileSuffix(raw);
+  let str = normalizeCandidatePath(raw);
+  const parsedLine = suffixLine && suffixLine > 0 ? suffixLine : null;
+
   const activeSession = workspace.activeSessionID
     ? workspace.sessions.find((s) => s.id === workspace.activeSessionID)
     : undefined;
   const activeWorktreeDir = workspace.activeSessionID
     ? workspace.worktreeBySession[workspace.activeSessionID]?.directory
     : undefined;
+  const primaryDir =
+    workspace.activeInspectorFolder ||
+    activeWorktreeDir ||
+    activeSession?.directory ||
+    workspace.rootDir ||
+    "";
+
+  // If checkFile resolved a bare filename or suffix to an exact path, prefer it
+  const cachedResolved = getResolvedFilePath(str, primaryDir) || getResolvedFilePath(str, workspace.rootDir || "");
+  if (cachedResolved) {
+    str = cachedResolved;
+  }
+
   const candidateRoots = (
     workspace.activeInspectorFolder
       ? [workspace.activeInspectorFolder]
@@ -459,12 +459,28 @@ function parseFileReference(raw: string): { path: string; line: number | null } 
   return { path: str, line: parsedLine };
 }
 
+function resolveKnownPoolDiff(refPath: string): SnapshotFileDiff | null {
+  if (!refPath) return null;
+  const key = workspace.activeSessionID || "__root__";
+  const pool = [
+    ...(workspace.activeSessionID ? workspace.diffsBySession[workspace.activeSessionID] ?? [] : []),
+    ...(workspace.worktreeDiffsBySession[key] ?? []),
+    ...(workspace.worktreeDiffsBySession["__root__"] ?? []),
+  ];
+  return (
+    pool.find((item) => item.file === refPath) ??
+    pool.find((item) => item.file.endsWith(`/${refPath}`) || refPath.endsWith(`/${item.file}`)) ??
+    null
+  );
+}
+
 export function openFileInInspector(filePath: string, line?: number | null, diff?: SnapshotFileDiff | null) {
   const ref = parseFileReference(filePath);
   if (!ref.path) return;
   const targetLine = line && line > 0 ? line : ref.line;
+  const resolvedDiff = diff !== undefined ? diff : resolveKnownPoolDiff(ref.path);
   setWorkspace({
-    inspectedFileDiff: diff ?? null,
+    inspectedFileDiff: resolvedDiff ?? null,
     inspectedFilePath: ref.path,
     inspectedFileLine: targetLine && targetLine > 0 ? targetLine : null,
     inspectorTab: "files",
@@ -475,17 +491,7 @@ export function openFileInInspector(filePath: string, line?: number | null, diff
 export function openChangedFileInInspector(diff: SnapshotFileDiff | string) {
   const file = typeof diff === "string" ? diff : diff.file;
   const ref = parseFileReference(file);
-  const key = workspace.activeSessionID || "__root__";
-  const pool = [
-    ...(workspace.activeSessionID ? workspace.diffsBySession[workspace.activeSessionID] ?? [] : []),
-    ...(workspace.worktreeDiffsBySession[key] ?? []),
-    ...(workspace.worktreeDiffsBySession["__root__"] ?? []),
-  ];
-  const resolvedDiff = typeof diff === "string"
-    ? (pool.find((item) => item.file === ref.path) ??
-        pool.find((item) => item.file.endsWith(`/${ref.path}`) || ref.path.endsWith(`/${item.file}`)) ??
-        null)
-    : diff;
+  const resolvedDiff = typeof diff === "string" ? resolveKnownPoolDiff(ref.path) : diff;
   openFileInInspector(
     file,
     ref.line ?? firstChangedLine(resolvedDiff?.patch),
@@ -583,3 +589,5 @@ export * from "./updater-state";
 export * from "./leaderboard-state";
 export * from "./privacy";
 export * from "./diagnostics";
+export * from "./file-links";
+
