@@ -31,18 +31,20 @@ All paths start with `/api/hoxi/browser/` and require query parameters:
   character must be alphanumeric.
 
 The pair identifies one independent headless Chrome process and temporary profile.
-At most eight scopes are retained, including scopes reserved by `control` without
+At most eight scopes are retained, including scopes reserved by `control` or `resize` without
 launching Chrome. `close` frees the slot after process/profile cleanup.
 
 - `GET state`: `{url,title,tabs:[{id,title,url}],tabID,manual}`. An unstarted scope
-  returns empty strings, an empty tabs array, and `manual:false`.
-- `GET frame`: JPEG of the current viewport, exactly 1280x800; returns 404 if no
-  browser has started, including scopes reserved by `control`.
+  returns empty strings and an empty tabs array; `manual` reflects reserved control state.
+- `GET frame`: JPEG of the current viewport, initially 1280x800; returns 404 if no
+  browser has started, including scopes reserved by `control` or `resize`.
+- `GET stream`: UI-only WebSocket carrying continuous CDP JPEG frames; see below.
+  Returns 404 until Chrome has started; never creates or reserves a scope.
 - `POST action`: `Content-Type: application/json`, maximum 1 MiB. Unknown fields,
   trailing JSON, invalid actions, and invalid navigation URLs are rejected.
 
 POST fields are `action`, optional `url`, `selector`, `text`, `key`, `x`, `y`,
-`deltaX`, `deltaY`, `tabID`, and `manual`. Every successful action returns state,
+`deltaX`, `deltaY`, `tabID`, `manual`, `width`, `height`, and `deviceScaleFactor`. Every successful action returns state,
 with the following action-specific fields:
 
 | Action | Parameters / Behavior |
@@ -59,9 +61,51 @@ with the following action-specific fields:
 | `tab_new` | Optional `url`, defaults to `about:blank`; selects new tab |
 | `tab_select`, `tab_close` | Required `tabID`, checked against browser's page targets |
 | `control` | UI only; required boolean `manual`; does not launch Chrome |
+| `resize` | UI only; required integer `width` and `height`, each 1..4096; optional float `deviceScaleFactor` in [1,2], default 1; effective pixel area at most 8,388,608; saves scope size without launching Chrome and resizes the selected existing tab |
 | `close` | Stops Chrome, removes profile and scope; idempotent |
 
-Only POST actions other than `control` and `close` start Chrome. Each operation
+`width`, `height`, and `deviceScaleFactor` are only valid on `resize`. The default
+viewport is 1280x800 at scale 1. The area bound is
+`ceil(width * scale) * ceil(height * scale) <= 8388608`.
+Metrics use non-mobile CDP device emulation. Each attached tab tracks applied
+dimensions and scale, avoiding repeated emulation on ordinary actions. Background
+tabs receive current metrics when next used. State does not expose dimensions;
+stream metadata supplies CSS width/height for coordinate mapping, independent of
+JPEG natural pixel dimensions. Screenshots also use current density. Resizing does not change
+manual ownership or bypass the agent manual-control gate.
+
+### Screencast WebSocket
+
+Connect to `/api/hoxi/browser/stream?sessionID=...&directory=...` using an explicit
+allowed Origin, including native Wails origins. The same Host and exact Origin
+checks as HTTP apply. Origin-less connections are always denied, even with the
+HTTP marker; agents and requests carrying agent credentials are denied. No custom
+browser marker is required. The embedding server must support WebSocket upgrades.
+
+Server text messages are JSON `{image,width,height,tabID}`. `image` is base64 JPEG
+at quality 92; width and height are CSS viewport dimensions captured at setup.
+After decoding and displaying each frame, send exactly the text `ack`. At most one
+frame is awaiting display ACK and only the latest pending image is retained.
+Chrome screencast frames are ACKed independently by a bounded worker, so slow UI
+decoding or input does not starve Chrome. Images exceeding 16 MiB **base64** close
+the stream; JSON adds only the metadata envelope. The CDP callback only enqueues
+events into a bounded queue; queue overflow closes the stream.
+
+One stream per scope is supported; reconnect replaces the prior stream. A stream
+is tied to its setup tab, CSS dimensions, and density. Metric changes, selected-tab
+changes (including agent actions), tab release, scope close, and shutdown cancel
+it. Clients reconnect after resize or a state poll detects a selected-tab change;
+externally disappeared targets are reconciled by state polling. No automatic
+backend reconfiguration is performed. A resize omitting density resets it to 1.
+
+Reads are limited to 16 bytes; malformed/binary/unsolicited ACKs close the stream.
+Display ACK timeout is 30 seconds, ping interval 15 seconds, pong/read timeout
+45 seconds, write/upgrade timeout 5 seconds. Socket closure unblocks readers.
+CDP setup/stop runs under the scope gate with bounded deadlines; socket upgrade,
+writes, and the stream lifetime never hold that gate. Service/scope cancellation
+also cancels listeners and the independent CDP ACK worker.
+
+Only POST actions other than `control`, `resize`, and `close` start Chrome. Each operation
 has a 30-second deadline including waiting for its scope lock. Scopes serialize
 independently; request cancellation does not kill an already launched browser.
 Service shutdown cancels work, reaps processes, and removes profiles. Initialization
@@ -135,6 +179,12 @@ scope isolation, and temporary-profile cleanup.
 Additional regressions cover Origin-less UI authorization, focused and selector
 text insertion, Control/Meta select-all dispatch, Shift selection, replacement
 of selected text, scrolled-viewport screenshot/frame pixels, and last-tab recovery.
+Dynamic viewport tests cover validation, lazy reservations, responsive innerWidth/
+innerHeight and media queries, JPEG/frame dimensions, existing-tab resizing,
+new-tab and popup attachment, and switching back to previously sized tabs.
 Exact-origin and proxy-authority tests cover production Wails and default-deny
 HTTP access. Live tab tests verify repeated attach/close cleanup, external target
 disappearance reconciliation, and root-browser survival after its initial page closes.
+Stream tests cover explicit-Origin/Host security, agent denial, lazy startup,
+display ACK backpressure/latest-frame delivery, invalid input teardown, and real
+Chrome reconnect, input during pending ACK, resize, density, tab changes, and shutdown.

@@ -62,6 +62,12 @@ export default function MessageStream(props: { hidden?: boolean }) {
   const [searchOpen, setSearchOpen] = createSignal(false);
   const [activeMatchTurnID, setActiveMatchTurnID] = createSignal<string | null>(null);
   const [navigationRevision, setNavigationRevision] = createSignal(0);
+  let sessionPhaseToggle = false;
+  const sessionEnterClass = createMemo(() => {
+    void workspace.activeSessionID;
+    sessionPhaseToggle = !sessionPhaseToggle;
+    return sessionPhaseToggle ? "hoxi-view-enter-a" : "hoxi-view-enter-b";
+  });
 
   const activeSession = createMemo(() => {
     const id = workspace.activeSessionID;
@@ -416,16 +422,21 @@ export default function MessageStream(props: { hidden?: boolean }) {
         class="pointer-events-none sticky top-0 z-10 -mb-6 h-6 w-full shrink-0 bg-gradient-to-b from-[var(--bg-panel)] to-transparent"
       />
 
-      <div ref={content} class="mx-auto flex w-full max-w-[calc(var(--thread-max-width)+3rem)] min-h-full flex-col px-6 pt-8 pb-12">
+      <div
+        ref={content}
+        class="mx-auto flex w-full max-w-[calc(var(--thread-max-width)+3rem)] min-h-full flex-col px-6 pt-8 pb-12"
+      >
         <Show
           when={!isEmpty()}
           fallback={
             <Show when={isLoadingSession()}>
-              <SessionSkeleton />
+              <div class="hoxi-fade-enter">
+                <SessionSkeleton />
+              </div>
             </Show>
           }
         >
-          <div class="flex flex-col">
+          <div class={`flex flex-col ${sessionEnterClass()}`}>
             <EarlierTurnsBanner
               hiddenCount={turnWindow.hiddenCount()}
               totalCount={turns().length}

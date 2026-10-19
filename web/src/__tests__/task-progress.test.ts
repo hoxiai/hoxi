@@ -351,6 +351,79 @@ describe("task progress todo staleness", () => {
       filteredLocalDiffs.map((d) => d.file),
       ["second.go"]
     );
+
+    // Subagent file modifications (via metadata.sessionId, output `session_id:`, or running/interrupted
+    // task tools, including Antigravity `replace_file_content` / `TargetFile`) must surface in parent summary.
+    const childSid = "ses_subagent_child_1";
+    const childTurns: MessageTurn[] = [
+      {
+        info: { id: "msg_c1", sessionID: childSid, role: "assistant", time: { created: 10, completed: 11 } },
+        parts: [
+          {
+            id: "sub_edit_1",
+            sessionID: childSid,
+            messageID: "msg_c1",
+            type: "tool",
+            callID: "sub_edit_1",
+            tool: "replace_file_content",
+            state: {
+              status: "completed",
+              input: {
+                TargetFile: "src/subagent-edited.ts",
+                TargetContent: "const a = 1;",
+                ReplacementContent: "const a = 2;\nconst b = 3;",
+              },
+              output: "updated",
+              title: "Edit subagent-edited.ts",
+              metadata: {},
+              time: { start: 10, end: 11 },
+            },
+          },
+        ],
+      },
+    ];
+    setWorkspace("messagesBySession", childSid, childTurns);
+    const parentWithSubagent: MessageTurn[] = [
+      {
+        info: { id: "msg_p1", sessionID: sid, role: "assistant", time: { created: 9, completed: 12 } },
+        parts: [
+          {
+            id: "task_call_1",
+            sessionID: sid,
+            messageID: "msg_p1",
+            type: "tool",
+            callID: "task_call_1",
+            tool: "task",
+            state: {
+              status: "running",
+              input: { description: "Update subagent file" },
+              output: `session_id: ${childSid}\nDone`,
+              title: "Update subagent file",
+              time: { start: 9 },
+            },
+          } as unknown as MessagePart,
+        ],
+      },
+    ];
+    const subagentChanged = collectCycleChangedFiles(parentWithSubagent, sid);
+    assertDeepEqual(
+      subagentChanged.map((d) => ({ file: d.file, additions: d.additions, deletions: d.deletions })),
+      [{ file: "src/subagent-edited.ts", additions: 2, deletions: 1 }]
+    );
+    const subagentFilteredDiffs = filterLocalSessionDiffsByTurns(
+      sid,
+      [
+        { file: "src/subagent-edited.ts", additions: 2, deletions: 1 },
+        { file: "unrelated-dirty.ts", additions: 50, deletions: 10 },
+      ],
+      { [sid]: parentWithSubagent, [childSid]: childTurns },
+      "/repo"
+    );
+    assertDeepEqual(
+      subagentFilteredDiffs.map((d) => d.file),
+      ["src/subagent-edited.ts"]
+    );
+    setWorkspace("messagesBySession", childSid, []);
     setWorkspace("worktreeDiffsBySession", sid, []);
   });
 

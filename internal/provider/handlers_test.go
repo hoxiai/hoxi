@@ -132,6 +132,80 @@ func doMuxReq(t *testing.T, mux *http.ServeMux, method, path string, body any) *
 	return rec
 }
 
+func TestAuditQualityRequiresValidObserverScore(t *testing.T) {
+	_, workspaceDir := setupIsolatedEnv(t)
+	_, ocPort := newMockOpenCodeServer(t)
+	for _, tc := range []struct {
+		name    string
+		content string
+		status  int
+		baseURL string
+		ok      bool
+	}{
+		{name: "zero", content: `{"score":0,"summary":"Incorrect implementation"}`, ok: true},
+		{name: "malformed", content: "Looks good overall"},
+		{name: "missing score", content: `{"summary":"Looks good"}`},
+		{name: "out of range", content: `{"score":101}`},
+		{name: "nonfinite", content: `{"score":NaN}`},
+		{name: "observer failure", status: http.StatusServiceUnavailable},
+		{name: "invalid endpoint", baseURL: "invalid://observer"},
+	} {
+		for _, lspErrors := range []int{0, 1} {
+			t.Run(tc.name+strings.Repeat(" with static deduction", lspErrors), func(t *testing.T) {
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if tc.status != 0 {
+						w.WriteHeader(tc.status)
+						return
+					}
+					_ = json.NewEncoder(w).Encode(map[string]any{
+						"choices": []any{map[string]any{"message": map[string]any{"content": tc.content}}},
+					})
+				}))
+				defer server.Close()
+				baseURL := server.URL + "/v1"
+				if tc.baseURL != "" {
+					baseURL = tc.baseURL
+				}
+				svc := NewService(ocPort, "secret", workspaceDir, nil)
+				svc.telemetry = &providerTelemetryStore{records: make(map[string]*providerTelemetryStats)}
+				svc.telemetry.recordAuditResult("worker", "model", 95, true, "Previous audit")
+				before, _ := json.Marshal(svc.telemetry.records)
+				mux := http.NewServeMux()
+				svc.RegisterRoutes(mux)
+				rec := doMuxReq(t, mux, http.MethodPost, "/api/hoxi/provider/audit", auditCodeRequest{
+					WorkerProviderID: "worker", WorkerModelID: "model",
+					ObserverProviderID: "observer", ObserverModelID: "model",
+					ObserverBaseURL: baseURL, LspErrorCount: lspErrors,
+				})
+				var result auditCodeResponse
+				if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+					t.Fatal(err)
+				}
+				if rec.Code != http.StatusOK || result.OK != tc.ok {
+					t.Fatalf("unexpected audit response: %d %s", rec.Code, rec.Body.String())
+				}
+				if !tc.ok {
+					after, _ := json.Marshal(svc.telemetry.records)
+					if result.Error == "" || !bytes.Equal(before, after) {
+						t.Fatalf("failed observer must return error and leave telemetry unchanged: %s, %s", rec.Body.String(), after)
+					}
+					return
+				}
+				stats := svc.telemetry.records["worker"]
+				model := stats.Models["model"]
+				if result.Score != 0 || result.Pass || stats.AuditTotalCount != 2 || model.AuditTotalCount != 2 ||
+					len(stats.AuditScores) != 2 || stats.AuditScores[1] != 0 || len(model.AuditScores) != 2 || model.AuditScores[1] != 0 {
+					t.Fatalf("zero score was not recorded correctly: %+v, %+v, %+v", result, stats, model)
+				}
+				telemetry := doMuxReq(t, mux, http.MethodGet, "/api/hoxi/provider/telemetry", nil)
+				if strings.Count(telemetry.Body.String(), `"lastAuditScore":0`) != 2 {
+					t.Fatalf("provider and model must serialize lastAuditScore zero: %s", telemetry.Body.String())
+				}
+			})
+		}
+	}
+}
+
 func TestModelsConfigAndProxyRoutes(t *testing.T) {
 	homeDir, workspaceDir := setupIsolatedEnv(t)
 	_, ocPort := newMockOpenCodeServer(t)

@@ -169,9 +169,18 @@ export default function MultiProjectTreeItem(props: {
   const isSelectedSession = createSelector<string | null, string>(() =>
     isActive() ? resolveActiveRootSessionID() : null
   );
+  const [everExpanded, setEverExpanded] = createSignal(props.expanded);
+  const [everArchivedOpen, setEverArchivedOpen] = createSignal(props.isArchivedOpen);
+
+  createEffect(() => {
+    if (props.expanded) setEverExpanded(true);
+  });
+  createEffect(() => {
+    if (props.isArchivedOpen) setEverArchivedOpen(true);
+  });
 
   const allFilteredSessions = createMemo(() => {
-    if (!props.expanded) return [];
+    if (!everExpanded()) return [];
     const q = props.filterQuery.trim().toLowerCase();
     const rawList =
       isActive() && !workspace.bootstrappingSessions
@@ -225,13 +234,11 @@ export default function MultiProjectTreeItem(props: {
         }`}
       >
         <div class="flex items-center gap-1.5 min-w-0 flex-1">
-          <span class="shrink-0 text-[var(--text-faint)] group-hover/proj:text-[var(--text-muted)] transition-colors inline-flex items-center">
-            <Show
-              when={props.expanded}
-              fallback={<Icon name="chevron-right" size="small" class="w-3.5 h-3.5" />}
-            >
-              <Icon name="chevron-down" size="small" class="w-3.5 h-3.5" />
-            </Show>
+          <span
+            class="hoxi-chevron shrink-0 text-[var(--text-faint)] group-hover/proj:text-[var(--text-muted)] transition-colors"
+            data-open={props.expanded ? "true" : "false"}
+          >
+            <Icon name="chevron-right" size="small" class="w-3.5 h-3.5" />
           </span>
 
           <FolderIcon
@@ -292,127 +299,141 @@ export default function MultiProjectTreeItem(props: {
       </div>
 
       {/* Expanded Workspace Folders & Sessions */}
-      <Show when={props.expanded}>
-        <div class="ml-3.5 pl-2 border-l border-[var(--border-subtle)]/60 my-1 space-y-1">
-          {/* Multi-Folder Workspace Directory List */}
-          <Show when={props.proj.folders.length > 1}>
-            <div class="pb-1 mb-0.5 border-b border-[var(--border-subtle)]/40 space-y-0.5">
-              <For each={props.proj.folders}>
-                {(folder) => (
-                  <button
-                    type="button"
-                    onClick={() => void inspectWorkspaceFolder(folder.path)}
-                    title={folder.path}
-                    class="w-full flex items-center justify-between gap-1.5 rounded-md px-2 py-1 text-[12px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]/50 transition-colors cursor-pointer"
-                  >
-                    <div class="flex items-center gap-1.5 min-w-0">
-                      <FolderIcon
-                        open={folder.isPrimary}
-                        color={props.proj.color}
-                        class="w-3 h-3 shrink-0"
-                      />
-                      <span class="truncate font-mono text-[12px]">
-                        {basename(folder.path)}
-                      </span>
-                    </div>
-                    <Show when={folder.isPrimary}>
-                      <span class="shrink-0 text-[11px] px-1.5 rounded bg-[var(--bg-inset)] text-[var(--text-faint)]">
-                        {t("leftNav.primaryBadge")}
-                      </span>
-                    </Show>
-                  </button>
-                )}
-              </For>
-            </div>
-          </Show>
-
-          <Show when={props.isLoadingSessions}>
-            <div class="flex items-center gap-1.5 px-2 py-1 text-[12px] text-[var(--text-faint)]">
-              <Spinner class="w-3 h-3" />
-              <span>{t("common.loading")}</span>
-            </div>
-          </Show>
-          <Show when={!props.isLoadingSessions && activeSessions().length === 0}>
-            <div class="px-2 py-1.5 text-[12px] text-[var(--text-faint)] italic">
-              {t("leftNav.noThreads")}
-            </div>
-          </Show>
-
-          <Show when={!props.isLoadingSessions && activeSessions().length > 0}>
-            <SessionHistoryList history={history}>
-              {(session) => (
-                <SessionNavItem
-                  session={session}
-                  active={isSelectedSession(session.id)}
-                  canDelete={true}
-                  isArchived={false}
-                  pendingSessions={props.pendingSessions}
-                  onSelect={() => props.onSelectSession(props.proj.path, session.id)}
-                  onArchive={(ev, id) =>
-                    props.onArchiveSession(props.proj.path, ev, id)
-                  }
-                  onDiscard={(ev, id) =>
-                    props.onDiscardSession(props.proj.path, ev, id)
-                  }
-                />
-              )}
-            </SessionHistoryList>
-          </Show>
-
-          {/* Collapsible Archived Section for this project */}
-          <Show when={!props.isLoadingSessions && archivedSessions().length > 0}>
-            <div class="pt-0.5">
-              <button
-                type="button"
-                onClick={(ev) => {
-                  ev.stopPropagation();
-                  props.onToggleArchived(props.proj.path);
-                }}
-                class="w-full flex items-center justify-between gap-1.5 rounded-lg px-2 py-1 text-[12px] text-[var(--text-faint)] hover:text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]/40 transition-colors cursor-pointer"
-              >
-                <div class="flex items-center gap-1">
-                  <Show
-                    when={props.isArchivedOpen}
-                    fallback={
-                      <Icon name="chevron-right" size="small" class="w-3 h-3" />
-                    }
-                  >
-                    <Icon name="chevron-down" size="small" class="w-3 h-3" />
-                  </Show>
-                  <Icon name="archive" size="small" class="w-3 h-3" />
-                  <span>{t("leftNav.archivedSessions")}</span>
-                </div>
-                <span class="text-[11px] font-mono">
-                  {archivedSessions().length}
-                </span>
-              </button>
-
-              <Show when={props.isArchivedOpen}>
-                <div class="mt-1 space-y-1">
-                  <For each={archivedSessions()}>
-                    {(session) => (
-                      <SessionNavItem
-                        session={session}
-                        active={isSelectedSession(session.id)}
-                        canDelete={true}
-                        isArchived={true}
-                        pendingSessions={props.pendingSessions}
-                        onSelect={() =>
-                          props.onSelectSession(props.proj.path, session.id)
-                        }
-                        onUnarchive={(ev, id) =>
-                          props.onUnarchiveSession(props.proj.path, ev, id)
-                        }
-                        onDiscard={(ev, id) =>
-                          props.onDiscardSession(props.proj.path, ev, id)
-                        }
-                      />
+      <Show when={everExpanded()}>
+        <div
+          class="hoxi-drawer-grid"
+          data-open={props.expanded ? "true" : "false"}
+          aria-hidden={!props.expanded}
+        >
+          <div class="min-h-0 overflow-hidden">
+            <div class="ml-3.5 pl-2 border-l border-[var(--border-subtle)]/60 my-1 space-y-1">
+              {/* Multi-Folder Workspace Directory List */}
+              <Show when={props.proj.folders.length > 1}>
+                <div class="pb-1 mb-0.5 border-b border-[var(--border-subtle)]/40 space-y-0.5">
+                  <For each={props.proj.folders}>
+                    {(folder) => (
+                      <button
+                        type="button"
+                        onClick={() => void inspectWorkspaceFolder(folder.path)}
+                        title={folder.path}
+                        class="w-full flex items-center justify-between gap-1.5 rounded-md px-2 py-1 text-[12px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]/50 transition-colors cursor-pointer"
+                      >
+                        <div class="flex items-center gap-1.5 min-w-0">
+                          <FolderIcon
+                            open={folder.isPrimary}
+                            color={props.proj.color}
+                            class="w-3 h-3 shrink-0"
+                          />
+                          <span class="truncate font-mono text-[12px]">
+                            {basename(folder.path)}
+                          </span>
+                        </div>
+                        <Show when={folder.isPrimary}>
+                          <span class="shrink-0 text-[11px] px-1.5 rounded bg-[var(--bg-inset)] text-[var(--text-faint)]">
+                            {t("leftNav.primaryBadge")}
+                          </span>
+                        </Show>
+                      </button>
                     )}
                   </For>
                 </div>
               </Show>
+
+              <Show when={props.isLoadingSessions}>
+                <div class="flex items-center gap-1.5 px-2 py-1 text-[12px] text-[var(--text-faint)]">
+                  <Spinner class="w-3 h-3" />
+                  <span>{t("common.loading")}</span>
+                </div>
+              </Show>
+              <Show when={!props.isLoadingSessions && activeSessions().length === 0}>
+                <div class="px-2 py-1.5 text-[12px] text-[var(--text-faint)] italic">
+                  {t("leftNav.noThreads")}
+                </div>
+              </Show>
+
+              <Show when={!props.isLoadingSessions && activeSessions().length > 0}>
+                <SessionHistoryList history={history}>
+                  {(session) => (
+                    <SessionNavItem
+                      session={session}
+                      active={isSelectedSession(session.id)}
+                      canDelete={true}
+                      isArchived={false}
+                      pendingSessions={props.pendingSessions}
+                      onSelect={() => props.onSelectSession(props.proj.path, session.id)}
+                      onArchive={(ev, id) =>
+                        props.onArchiveSession(props.proj.path, ev, id)
+                      }
+                      onDiscard={(ev, id) =>
+                        props.onDiscardSession(props.proj.path, ev, id)
+                      }
+                    />
+                  )}
+                </SessionHistoryList>
+              </Show>
+
+              {/* Collapsible Archived Section for this project */}
+              <Show when={!props.isLoadingSessions && archivedSessions().length > 0}>
+                <div class="pt-0.5">
+                  <button
+                    type="button"
+                    onClick={(ev) => {
+                      ev.stopPropagation();
+                      props.onToggleArchived(props.proj.path);
+                    }}
+                    class="w-full flex items-center justify-between gap-1.5 rounded-lg px-2 py-1 text-[12px] text-[var(--text-faint)] hover:text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]/40 transition-colors cursor-pointer"
+                  >
+                    <div class="flex items-center gap-1">
+                      <span
+                        class="hoxi-chevron"
+                        data-open={props.isArchivedOpen ? "true" : "false"}
+                      >
+                        <Icon name="chevron-right" size="small" class="w-3 h-3" />
+                      </span>
+                      <Icon name="archive" size="small" class="w-3 h-3" />
+                      <span>{t("leftNav.archivedSessions")}</span>
+                    </div>
+                    <span class="text-[11px] font-mono">
+                      {archivedSessions().length}
+                    </span>
+                  </button>
+
+                  <Show when={everArchivedOpen()}>
+                    <div
+                      class="hoxi-drawer-grid"
+                      data-open={props.isArchivedOpen ? "true" : "false"}
+                      aria-hidden={!props.isArchivedOpen}
+                    >
+                      <div class="min-h-0 overflow-hidden">
+                        <div class="mt-1 space-y-1">
+                          <For each={archivedSessions()}>
+                            {(session) => (
+                              <SessionNavItem
+                                session={session}
+                                active={isSelectedSession(session.id)}
+                                canDelete={true}
+                                isArchived={true}
+                                pendingSessions={props.pendingSessions}
+                                onSelect={() =>
+                                  props.onSelectSession(props.proj.path, session.id)
+                                }
+                                onUnarchive={(ev, id) =>
+                                  props.onUnarchiveSession(props.proj.path, ev, id)
+                                }
+                                onDiscard={(ev, id) =>
+                                  props.onDiscardSession(props.proj.path, ev, id)
+                                }
+                              />
+                            )}
+                          </For>
+                        </div>
+                      </div>
+                    </div>
+                  </Show>
+                </div>
+              </Show>
             </div>
-          </Show>
+          </div>
         </div>
       </Show>
 

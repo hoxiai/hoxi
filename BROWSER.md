@@ -37,8 +37,26 @@ disclose secrets.
 
 ## Current Boundaries
 
-- Preview uses JPEG polling, approximately two frames per second, not video
-  streaming. Viewport resolution is fixed at 1280x800.
+- The inspector displays continuous CDP JPEG screencast through the UI-only
+  `/api/hoxi/browser/stream?sessionID=...&directory=...` WebSocket, using the
+  loopback bridge in desktop mode. The `frame` endpoint remains available for
+  standalone screenshots. Each JSON frame is
+  `{image,width,height,tabID}`, with a base64 JPEG and **CSS viewport** dimensions.
+  Display the image, then send literal text `ack`; map pointer coordinates using
+  supplied CSS dimensions, never the JPEG's natural pixel dimensions.
+- The inspector decodes frames before displaying them on an animation frame and
+  acknowledging receipt. Only one frame awaits display, with the latest pending
+  frame retained server-side. Input does not wait for display acknowledgments.
+  JPEG quality is 92; density follows the display up to 2x within the pixel budget.
+  Hidden inspectors disconnect. State metadata is polled once per second rather
+  than requesting a screenshot on every poll. This is not a guaranteed 60 FPS stream.
+- Viewports default to 1280x800 at density 1. UI-only `resize` accepts integer
+  `width`/`height` (1..4096), optional `deviceScaleFactor` (1..2, default 1), and
+  at most 8,388,608 effective pixels including density. Resize reserves size without
+  launching Chrome and follows the scope across tabs. Size/density changes and
+  selected-tab changes close the stream; reconnect after resize or a state poll
+  detects a changed `tabID`. Streams never launch Chrome or reserve a scope and
+  return 404 until started. Each reconnect replaces the previous stream.
 - Manual interaction supports clicks, scrolling, text, and keys, not drag/drop,
   native browser menus, file-picker dialogs, or OS clipboard synchronization.
 - Profiles are temporary; login state is not retained after browser close.

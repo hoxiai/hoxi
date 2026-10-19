@@ -91,8 +91,14 @@ export function isShellTool(tool: string): boolean {
 
 export function isEditingTool(tool: string): boolean {
   const t = tool.toLowerCase();
-  if (isTodoTool(t)) return false;
-  return t.includes("edit") || t.includes("write") || t.includes("patch");
+  if (isTodoTool(t) || isReadTool(t) || isSearchOrListTool(t)) return false;
+  return (
+    t.includes("edit") ||
+    t.includes("write") ||
+    t.includes("patch") ||
+    t.includes("replace") ||
+    t === "create_file"
+  );
 }
 
 export function isReadTool(tool: string): boolean {
@@ -112,7 +118,7 @@ export function isTodoTool(tool: string): boolean {
 
 export function isTaskTool(tool: string): boolean {
   const t = tool.toLowerCase();
-  return t === "task" || t.includes("subagent");
+  return t === "task" || t === "agent" || t.includes("subagent");
 }
 
 export function kiloToolIconName(tool: string): IconName {
@@ -143,9 +149,9 @@ export function formatToolDisplayName(tool: string, part?: ToolPart): string {
   }
   if (lower === "agent_status") return t("toolCard.actionCheckSubagents");
   if (isReadTool(lower)) return t("toolCard.actionRead");
-  if (lower.includes("write") && !isTodoTool(lower)) return t("toolCard.actionWrite");
+  if ((lower.includes("write") || lower === "create_file") && !isTodoTool(lower)) return t("toolCard.actionWrite");
   if (lower.includes("patch")) return t("toolCard.actionPatch");
-  if (lower.includes("edit")) return t("toolCard.actionEdit");
+  if (lower.includes("edit") || lower.includes("replace")) return t("toolCard.actionEdit");
   if (lower === "grep" || lower.includes("search")) return t("toolCard.actionSearch");
   if (lower === "glob" || lower === "find") return t("toolCard.actionFind");
   if (lower === "list" || lower === "ls") return t("toolCard.actionList");
@@ -192,7 +198,7 @@ function extractRawField(raw: string, key: string): string | undefined {
 }
 
 const RAW_KEYS = [
-  "filePath", "file_path", "path", "file", "command", "cmd",
+  "filePath", "file_path", "path", "file", "TargetFile", "targetFile", "target_file", "command", "cmd",
   "description", "pattern", "include", "url", "subagent_type", "patchText",
 ] as const;
 
@@ -206,7 +212,9 @@ export function resolveToolInput(part: ToolPart): Record<string, any> {
       const v = extractRawField(raw, k);
       if (v) out[k] = v;
     }
-    if (!out.filePath && out.file_path) out.filePath = out.file_path;
+    if (!out.filePath) {
+      out.filePath = out.file_path || out.TargetFile || out.targetFile || out.target_file;
+    }
     if (!out.command && out.cmd) out.command = out.cmd;
     return out;
   }
@@ -230,7 +238,8 @@ export function extractTargetFile(part: ToolPart): string | null {
       : null;
   const raw =
     input.filePath || input.file_path || input.path || input.file ||
-    input.filename || input.targetFile || firstMetaFile || patchMatch?.[1]?.trim() ||
+    input.filename || input.targetFile || input.TargetFile || input.target_file ||
+    input.AbsolutePath || input.notebook_path || firstMetaFile || patchMatch?.[1]?.trim() ||
     (part.state.status !== "pending"
       ? part.state.metadata?.filePath || part.state.metadata?.filepath
       : undefined);

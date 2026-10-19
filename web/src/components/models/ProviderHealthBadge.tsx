@@ -14,6 +14,12 @@ export function formatTtftLabel(ms: number | null | undefined): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
+export function formatHealthScore(score: number | null): string {
+  return score === null
+    ? t("models.qualityNoRating")
+    : t("models.qualityScoreBadge", { score });
+}
+
 export function riskTagLabel(tag: ProviderRiskTag): string {
   switch (tag) {
     case "low_pass_rate":
@@ -84,14 +90,13 @@ export function ProviderHealthBadge(props: {
   compact?: boolean;
 }) {
   const health = createMemo(() => computeProviderHealth(props.providerID, props.modelID));
-  const colors = createMemo(() => statusColors(health().status));
 
   const statusText = createMemo(() => {
     const s = health().status;
     if (s === "healthy") return t("models.qualityGradeHealthy");
     if (s === "warning") return t("models.qualityGradeWarning");
     if (s === "degraded") return t("models.qualityGradeDegraded");
-    return "";
+    return t("models.qualityNoRating");
   });
 
   const primaryRisk = createMemo(() => {
@@ -104,20 +109,21 @@ export function ProviderHealthBadge(props: {
   });
 
   return (
-    <Show when={health().status !== "untested"}>
       <span
-        class={`inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-medium leading-none ${colors().pill}`}
-        title={`${statusText()} · ${t("models.qualityScoreBadge", { score: health().score })}${
-          health().codePassRate !== null
-            ? ` · Pass ${health().codePassRate}%`
-            : ""
-        }${
-          health().avgTtftMs ? ` · TTFT ${formatTtftLabel(health().avgTtftMs)}` : ""
-        }`}
+        class="inline-flex flex-wrap items-center gap-1 text-[10px] font-normal leading-relaxed text-[var(--text-muted)]"
+        title={t("models.qualityScoresTooltip", {
+          status: statusText(),
+          stability: formatHealthScore(health().stabilityScore),
+          quality: formatHealthScore(health().qualityScore),
+          turns: health().totalTurns,
+          audits: health().qualitySampleCount,
+        })}
       >
-        <span class={`h-1.5 w-1.5 rounded-full shrink-0 ${colors().dot}`} />
-        <span class="font-mono font-semibold">
-          {t("models.qualityScoreBadge", { score: health().score })}
+        <span class="font-mono">
+          {t("models.qualityStabilityScore")}: {formatHealthScore(health().stabilityScore)}
+        </span>
+        <span class="font-mono">
+          · {t("models.qualityQualityScore")}: {formatHealthScore(health().qualityScore)}
         </span>
         <Show when={!props.compact}>
           <Show
@@ -139,6 +145,5 @@ export function ProviderHealthBadge(props: {
           </Show>
         </Show>
       </span>
-    </Show>
   );
 }

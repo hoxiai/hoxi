@@ -106,7 +106,7 @@ export default function DevPulsePopover() {
       <Show when={open()}>
         <div
           ref={popoverRef}
-          class="absolute right-0 top-full mt-2 z-50 w-[264px] rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-3.5 shadow-xl text-xs space-y-3 select-text"
+          class="hoxi-popover absolute right-0 top-full mt-2 z-50 w-[264px] rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-3.5 shadow-xl text-xs space-y-3 select-text"
         >
           {/* Header */}
           <div class="flex items-center justify-between">

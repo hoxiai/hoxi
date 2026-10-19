@@ -1,5 +1,5 @@
 // web/src/components/inspector/pierre-diff-parts.tsx
-import { createEffect, createSignal, on, onCleanup, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, on, onCleanup, Show } from "solid-js";
 import {
   ArrowLeft,
   ChevronLeft,
@@ -448,14 +448,21 @@ export function SelectedDiffDetail(props: {
     setCommenting(false);
   };
 
+  let diffPhase = false;
+  const diffEnterClass = createMemo(() => {
+    void props.diff.file;
+    diffPhase = !diffPhase;
+    return diffPhase ? "hoxi-drill-enter-a" : "hoxi-drill-enter-b";
+  });
+
   return (
-    <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)] overflow-hidden">
+    <div class={`rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)] overflow-hidden ${diffEnterClass()}`}>
       {/* Row 1: Back to Tree & Prev/Next Stepper + File Actions */}
       <div class="flex items-center justify-between gap-2 px-3 py-2 border-b border-[var(--border-subtle)] bg-[var(--bg-panel)]/70">
         <button
           type="button"
           onClick={() => props.onBack()}
-          class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-2 py-1 text-[11px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+          class="hoxi-press inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-2 py-1 text-[11px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer"
         >
           <ArrowLeft size={12} />
           <span>{t("inspector.diffs.backToTree")}</span>
@@ -468,7 +475,7 @@ export function SelectedDiffDetail(props: {
                 type="button"
                 disabled={props.currentIndex <= 0}
                 onClick={() => props.onPrev()}
-                class="rounded p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] disabled:opacity-35 transition-colors cursor-pointer"
+                class="hoxi-press rounded p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] disabled:opacity-35 cursor-pointer"
                 title={t("inspector.diffs.prevFileTooltip")}
               >
                 <ChevronLeft size={12} />
@@ -480,7 +487,7 @@ export function SelectedDiffDetail(props: {
                 type="button"
                 disabled={props.currentIndex >= props.totalFiles - 1}
                 onClick={() => props.onNext()}
-                class="rounded p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] disabled:opacity-35 transition-colors cursor-pointer"
+                class="hoxi-press rounded p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] disabled:opacity-35 cursor-pointer"
                 title={t("inspector.diffs.nextFileTooltip")}
               >
                 <ChevronRight size={12} />
@@ -490,7 +497,7 @@ export function SelectedDiffDetail(props: {
 
           <button
             type="button"
-            class="shrink-0 inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[12px] text-[var(--text-muted)] hover:text-[var(--warn-text)] hover:bg-[var(--warn-surface)] transition-colors cursor-pointer disabled:opacity-50"
+            class="hoxi-press shrink-0 inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[12px] text-[var(--text-muted)] hover:text-[var(--warn-text)] hover:bg-[var(--warn-surface)] cursor-pointer disabled:opacity-50"
             disabled={reverting()}
             onClick={() => void onRevertFile()}
             title={t("inspector.diffs.revertFileTooltip")}
@@ -501,7 +508,7 @@ export function SelectedDiffDetail(props: {
 
           <button
             type="button"
-            class="shrink-0 inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[12px] text-[var(--text-muted)] hover:text-[var(--accent-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+            class="hoxi-press shrink-0 inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[12px] text-[var(--text-muted)] hover:text-[var(--accent-primary)] hover:bg-[var(--bg-hover)] cursor-pointer"
             onClick={() => setCommenting((v) => !v)}
             title={t("inspector.diffs.comment")}
           >
@@ -511,7 +518,7 @@ export function SelectedDiffDetail(props: {
 
           <button
             type="button"
-            class="shrink-0 text-[var(--text-muted)] hover:text-[var(--text-primary)] p-1 cursor-pointer"
+            class="hoxi-press shrink-0 text-[var(--text-muted)] hover:text-[var(--text-primary)] p-1 cursor-pointer"
             onClick={() => {
               const target = props.diff.repoDir
                 ? `${props.diff.repoDir.replace(/\/+$/, "")}/${stripRepoPrefixFromFile(props.diff.file, props.diff.repo)}`
@@ -567,56 +574,64 @@ export function SelectedDiffDetail(props: {
       </div>
 
       {/* Optional Inline Review Comment Form */}
-      <Show when={commenting()}>
-        <div class="border-b border-[var(--border-subtle)] bg-[var(--bg-panel)] px-3 py-2.5 space-y-2">
-          <div class="flex items-center gap-2">
-            <span class="text-[11px] font-medium text-[var(--text-secondary)]">
-              {t("inspector.diffs.reviewNoteOn")}{" "}
-              <code class="font-mono text-[var(--accent-text)]">{props.diff.file}</code>
-            </span>
-            <input
-              type="number"
-              min="1"
-              value={lineNum()}
-              onInput={(ev) => setLineNum(ev.currentTarget.value)}
-              placeholder={t("inspector.diffs.lineNumPlaceholder")}
-              class="ml-auto w-24 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-2 py-0.5 font-mono text-[11px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-border)]"
+      <div
+        class="hoxi-drawer-grid"
+        data-open={commenting() ? "true" : "false"}
+        aria-hidden={!commenting()}
+      >
+        <div class="min-h-0 overflow-hidden">
+          <div class="border-b border-[var(--border-subtle)] bg-[var(--bg-panel)] px-3 py-2.5 space-y-2">
+            <div class="flex items-center gap-2">
+              <span class="text-[11px] font-medium text-[var(--text-secondary)]">
+                {t("inspector.diffs.reviewNoteOn")}{" "}
+                <code class="font-mono text-[var(--accent-text)]">{props.diff.file}</code>
+              </span>
+              <input
+                type="number"
+                min="1"
+                value={lineNum()}
+                tabIndex={commenting() ? 0 : -1}
+                onInput={(ev) => setLineNum(ev.currentTarget.value)}
+                placeholder={t("inspector.diffs.lineNumPlaceholder")}
+                class="ml-auto w-24 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-2 py-0.5 font-mono text-[11px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-border)]"
+              />
+            </div>
+            <textarea
+              rows={2}
+              value={commentBody()}
+              tabIndex={commenting() ? 0 : -1}
+              onInput={(ev) => setCommentBody(ev.currentTarget.value)}
+              onKeyDown={(ev) => {
+                if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) {
+                  ev.preventDefault();
+                  onSaveComment();
+                } else if (ev.key === "Escape") {
+                  setCommenting(false);
+                }
+              }}
+              placeholder={t("inspector.diffs.commentPlaceholder")}
+              class="w-full rounded-lg border border-[var(--border-strong)] bg-[var(--bg-inset)] px-2.5 py-1.5 text-[12px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none focus:border-[var(--accent-border)]"
             />
-          </div>
-          <textarea
-            rows={2}
-            value={commentBody()}
-            onInput={(ev) => setCommentBody(ev.currentTarget.value)}
-            onKeyDown={(ev) => {
-              if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) {
-                ev.preventDefault();
-                onSaveComment();
-              } else if (ev.key === "Escape") {
-                setCommenting(false);
-              }
-            }}
-            placeholder={t("inspector.diffs.commentPlaceholder")}
-            class="w-full rounded-lg border border-[var(--border-strong)] bg-[var(--bg-inset)] px-2.5 py-1.5 text-[12px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none focus:border-[var(--accent-border)]"
-          />
-          <div class="flex items-center justify-end gap-1.5">
-            <button
-              type="button"
-              onClick={() => setCommenting(false)}
-              class="rounded-md px-2.5 py-1 text-[11px] text-[var(--text-muted)] hover:bg-[var(--bg-hover)] cursor-pointer"
-            >
-              {t("common.cancel")}
-            </button>
-            <button
-              type="button"
-              disabled={!commentBody().trim()}
-              onClick={onSaveComment}
-              class="rounded-md bg-[var(--accent-primary)] px-2.5 py-1 text-[11px] font-medium text-[var(--accent-foreground)] disabled:opacity-40 cursor-pointer"
-            >
-              {t("inspector.diffs.addToReview")}
-            </button>
+            <div class="flex items-center justify-end gap-1.5">
+              <button
+                type="button"
+                onClick={() => setCommenting(false)}
+                class="hoxi-press rounded-md px-2.5 py-1 text-[11px] text-[var(--text-muted)] hover:bg-[var(--bg-hover)] cursor-pointer"
+              >
+                {t("common.cancel")}
+              </button>
+              <button
+                type="button"
+                disabled={!commentBody().trim()}
+                onClick={onSaveComment}
+                class="hoxi-press rounded-md bg-[var(--accent-primary)] px-2.5 py-1 text-[11px] font-medium text-[var(--accent-foreground)] disabled:opacity-40 cursor-pointer"
+              >
+                {t("inspector.diffs.addToReview")}
+              </button>
+            </div>
           </div>
         </div>
-      </Show>
+      </div>
 
       {/* Single File Diff Body */}
       <Show
@@ -633,7 +648,7 @@ export function SelectedDiffDetail(props: {
                 type="button"
                 disabled={loadingFull()}
                 onClick={() => void fetchFullFileDiff(props.diff.file)}
-                class="shrink-0 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[11px] font-medium text-[var(--text-primary)] hover:bg-[var(--bg-hover)] disabled:opacity-40 cursor-pointer"
+                class="hoxi-press shrink-0 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[11px] font-medium text-[var(--text-primary)] hover:bg-[var(--bg-hover)] disabled:opacity-40 cursor-pointer"
               >
                 {t("inspector.diffs.loadFullDiffBtn")}
               </button>

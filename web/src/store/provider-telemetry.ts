@@ -161,9 +161,9 @@ export async function resetProviderTelemetry(providerID?: string): Promise<void>
   await hoxiAPI.clearProviderTelemetry(providerID).catch(() => {});
 }
 
-export function pushSample(list: number[] | undefined, value: number): number[] {
+export function pushSample(list: number[] | undefined, value: number, allowZero = false): number[] {
   const arr = Array.isArray(list) ? list.slice() : [];
-  if (value > 0 && Number.isFinite(value)) {
+  if ((value > 0 || (allowZero && value === 0)) && Number.isFinite(value)) {
     arr.push(value);
   }
   return arr.length > MAX_SAMPLES ? arr.slice(arr.length - MAX_SAMPLES) : arr;

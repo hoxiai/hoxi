@@ -40,9 +40,10 @@ static NSImage *hoxi_create_statusbar_icon(void) {
             return NO;
         }
         CGContextSaveGState(cg);
-        CGFloat scale = size.width / 64.0;
+        // Fit the mark itself, rather than the app icon's padded 64-point canvas.
+        CGFloat scale = size.width / 48.0;
         CGContextScaleCTM(cg, scale, scale);
-        CGContextTranslateCTM(cg, 0.0, 2.5);
+        CGContextTranslateCTM(cg, -8.0, -4.0);
 
         [[NSColor blackColor] setFill];
         [[NSColor blackColor] setStroke];
@@ -89,6 +90,58 @@ static NSImage *hoxi_create_statusbar_icon(void) {
     return image;
 }
 
+static NSImage *hoxi_create_statusbar_summary(int attention, int running, int available) {
+    NSImage *icon = hoxi_create_statusbar_icon();
+    if (!available || (attention <= 0 && running <= 0)) {
+        return icon;
+    }
+
+    NSDictionary *attributes = @{
+        NSFontAttributeName: [NSFont monospacedDigitSystemFontOfSize:10.0 weight:NSFontWeightSemibold],
+        NSForegroundColorAttributeName: [NSColor blackColor],
+    };
+    NSString *runningText = running > 0 ? (running > 99 ? @"99+" : [NSString stringWithFormat:@"%d", running]) : @"";
+    NSString *attentionText = attention > 0 ? (attention > 99 ? @"!99+" : [NSString stringWithFormat:@"!%d", attention]) : @"";
+    CGFloat runningWidth = running > 0 ? MAX(18.0, ceil([runningText sizeWithAttributes:attributes].width) + 10.0) : 0.0;
+    CGFloat attentionWidth = attention > 0 ? MAX(18.0, ceil([attentionText sizeWithAttributes:attributes].width) + 10.0) : 0.0;
+    CGFloat width = 18.0 + (running > 0 ? runningWidth + 4.0 : 0.0) + (attention > 0 ? attentionWidth + 4.0 : 0.0);
+
+    NSImage *image = [NSImage imageWithSize:NSMakeSize(width, 18.0) flipped:YES drawingHandler:^BOOL(NSRect dstRect) {
+        [icon drawInRect:NSMakeRect(0.0, 0.0, 18.0, 18.0) fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1.0 respectFlipped:YES hints:nil];
+        CGFloat x = 22.0;
+        for (NSUInteger index = 0; index < 2; index++) {
+            NSString *text = index == 0 ? runningText : attentionText;
+            CGFloat badgeWidth = index == 0 ? runningWidth : attentionWidth;
+            if (badgeWidth == 0.0) {
+                continue;
+            }
+            NSRect rect = NSMakeRect(x, 1.5, badgeWidth, 15.0);
+            NSBezierPath *pill = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(rect, 0.5, 0.5) xRadius:5.0 yRadius:5.0];
+            [[NSColor blackColor] set];
+            if (index == 0) {
+                pill.lineWidth = 1.0;
+                [pill stroke];
+            } else {
+                [pill fill];
+            }
+            NSSize textSize = [text sizeWithAttributes:attributes];
+            NSPoint origin = NSMakePoint(x + (badgeWidth - textSize.width) / 2.0, NSMidY(rect) - textSize.height / 2.0);
+            [NSGraphicsContext saveGraphicsState];
+            // Knock attention digits out of the template so system tinting stays legible.
+            if (index == 1) {
+                CGContextSetBlendMode([[NSGraphicsContext currentContext] CGContext], kCGBlendModeDestinationOut);
+            }
+            [text drawAtPoint:origin withAttributes:attributes];
+            [NSGraphicsContext restoreGraphicsState];
+            x += badgeWidth + 4.0;
+        }
+        return YES;
+    }];
+    image.template = YES;
+    image.accessibilityDescription = @"Hoxi";
+    return image;
+}
+
 void hoxi_statusbar_start(void) {
     hoxi_run_on_main(^{
         if (hoxiStatusBarController != nil) {
@@ -100,7 +153,7 @@ void hoxi_statusbar_start(void) {
 
         NSStatusBarButton *button = hoxiStatusBarController.statusItem.button;
         button.image = hoxi_create_statusbar_icon();
-        button.imagePosition = NSImageLeft;
+        button.imagePosition = NSImageOnly;
         button.toolTip = @"Hoxi Workspace";
 
         NSMenu *menu = [NSMenu new];
@@ -134,17 +187,7 @@ void hoxi_statusbar_update(int attention, int running, int queued, int available
         }
 
         NSStatusBarButton *button = hoxiStatusBarController.statusItem.button;
-        if (@available(macOS 11.0, *)) {
-            if (!available) {
-                button.title = @"";
-            } else if (attention > 0) {
-                button.title = attention > 99 ? @" !99+" : [NSString stringWithFormat:@" !%d", attention];
-            } else if (running > 0) {
-                button.title = [NSString stringWithFormat:@" •%d", running];
-            } else {
-                button.title = @"";
-            }
-        }
+        button.image = hoxi_create_statusbar_summary(attention, running, available);
         if (!available) {
             button.toolTip = @"Hoxi: OpenCode 引擎正在启动";
             hoxiStatusBarController.summaryItem.title = @"OpenCode 正在连接...";

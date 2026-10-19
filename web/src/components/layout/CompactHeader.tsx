@@ -57,7 +57,7 @@ export default function CompactHeader(props: CompactHeaderProps) {
       <div class="flex shrink-0 items-center gap-2 text-[12px] font-medium max-w-[35%] min-w-0">
         <button
           type="button"
-          class={`inline-flex items-center justify-center w-7 h-7 shrink-0 rounded-lg transition-colors cursor-pointer ${
+          class={`hoxi-press inline-flex items-center justify-center w-7 h-7 shrink-0 rounded-lg cursor-pointer ${
             props.leftNavOpen
               ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]"
               : "text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
@@ -85,7 +85,7 @@ export default function CompactHeader(props: CompactHeaderProps) {
 
       <div class="flex flex-1 min-w-0 items-center justify-center gap-2">
         <span
-          class="min-w-0 truncate text-[12px] font-medium text-[var(--text-primary)]"
+          class="min-w-0 truncate text-[12px] font-medium text-[var(--text-primary)] transition-opacity duration-150"
           title={sessionTitle()}
         >
           {sessionTitle()}
@@ -105,7 +105,7 @@ export default function CompactHeader(props: CompactHeaderProps) {
         <UpdateBadge />
 
         <button
-          class="inline-flex items-center justify-center w-7 h-7 rounded-lg text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+          class="hoxi-press inline-flex items-center justify-center w-7 h-7 rounded-lg text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer"
           style={{ "--wails-draggable": "no-drag" } as any}
           onClick={toggleTheme}
           title={workspace.theme === "dark" ? t("header.themeLightTooltip") : t("header.themeDarkTooltip")}
@@ -114,7 +114,7 @@ export default function CompactHeader(props: CompactHeaderProps) {
         </button>
 
         <button
-          class={`inline-flex items-center justify-center w-7 h-7 rounded-lg transition-colors cursor-pointer ${
+          class={`hoxi-press inline-flex items-center justify-center w-7 h-7 rounded-lg cursor-pointer ${
             props.inspectorOpen
               ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]"
               : "text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"

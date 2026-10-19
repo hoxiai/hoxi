@@ -45,9 +45,16 @@ export default function FileTreeNodes(props: {
             : "text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
         }`}
       >
-        <span class="w-3.5 shrink-0">
+        <span class="w-3.5 shrink-0 inline-flex items-center justify-center">
           <Show when={isDirectory()}>
-            <Show when={loading()} fallback={<Icon name={expanded() ? "chevron-down" : "chevron-right"} size="small" />}>
+            <Show
+              when={loading()}
+              fallback={
+                <span class="hoxi-chevron" data-open={expanded() ? "true" : "false"}>
+                  <Icon name="chevron-right" size="small" />
+                </span>
+              }
+            >
               <Spinner class="w-3.5 h-3.5" />
             </Show>
           </Show>
@@ -57,8 +64,16 @@ export default function FileTreeNodes(props: {
           {node.name || node.path.replace(/\/$/, "").split("/").pop()}
         </span>
       </button>
-      <Show when={expanded() && children()}>{(nodes) =>
-        <FileTreeNodes nodes={nodes()} directory={props.directory} selected={props.selected} onOpen={props.onOpen} depth={(props.depth ?? 0) + 1} />
+      <Show when={children()}>{(nodes) =>
+        <div
+          class="hoxi-drawer-grid"
+          data-open={expanded() ? "true" : "false"}
+          aria-hidden={!expanded()}
+        >
+          <div class="min-h-0 overflow-hidden">
+            <FileTreeNodes nodes={nodes()} directory={props.directory} selected={props.selected} onOpen={props.onOpen} depth={(props.depth ?? 0) + 1} />
+          </div>
+        </div>
       }</Show>
     </>;
   }}</For>;

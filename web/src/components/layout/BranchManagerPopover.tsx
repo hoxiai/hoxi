@@ -245,7 +245,7 @@ export default function BranchManagerPopover() {
         <button
           type="button"
           onClick={() => setOpen((v) => !v)}
-          class={`inline-flex items-center gap-1 rounded-lg px-2 py-0.5 text-[12px] font-mono transition-colors cursor-pointer ${
+          class={`hoxi-press inline-flex items-center gap-1 rounded-lg px-2 py-0.5 text-[12px] font-mono cursor-pointer ${
             isIsolated()
               ? "text-[var(--accent-primary)] hover:bg-[var(--accent-surface)]"
               : "text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
@@ -256,11 +256,16 @@ export default function BranchManagerPopover() {
         >
           <GitBranch size={12} class="shrink-0" />
           <span class="hidden md:inline truncate max-w-[100px] lg:max-w-[160px]">{displayBranch()}</span>
-          <ChevronDown size={11} class="hidden md:block shrink-0 opacity-65" />
+          <ChevronDown
+            size={11}
+            class={`hidden md:block shrink-0 opacity-65 transition-transform duration-150 ${
+              open() ? "rotate-180" : ""
+            }`}
+          />
         </button>
 
         <Show when={toastNote()}>
-          <span class="text-[11px] text-[var(--ok-text)] whitespace-nowrap">
+          <span class="text-[11px] text-[var(--ok-text)] whitespace-nowrap animate-in fade-in duration-150">
             {toastNote()}
           </span>
         </Show>
@@ -269,7 +274,7 @@ export default function BranchManagerPopover() {
         <Show when={open()}>
           <div
             ref={popoverRef}
-            class="absolute right-0 top-full mt-2 z-50 w-[320px] max-w-[calc(100vw-2rem)] rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-2.5 shadow-xl text-xs"
+            class="hoxi-popover absolute right-0 top-full mt-2 z-50 w-[320px] max-w-[calc(100vw-2rem)] rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-2.5 shadow-xl text-xs"
           >
             <Show when={errorMsg()}>
               <div class="mb-2 rounded-lg border border-[var(--danger-border)] bg-[var(--danger-surface)] px-2.5 py-1.5 text-[11px] text-[var(--danger-text)] break-words">

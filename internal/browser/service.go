@@ -13,12 +13,26 @@ import (
 	"regexp"
 	"sync"
 
+	"github.com/chromedp/cdproto/emulation"
 	"github.com/chromedp/chromedp"
 )
 
 const maxScopes = 8
 
 type scopeKey struct{ directory, session string }
+
+type viewport struct {
+	width, height int
+	scale         float64
+}
+
+func (sc *scope) viewport() viewport {
+	return viewport{sc.width, sc.height, sc.scale}
+}
+
+func (v viewport) action() *emulation.SetDeviceMetricsOverrideParams {
+	return emulation.SetDeviceMetricsOverride(int64(v.width), int64(v.height), v.scale, false)
+}
 
 type scope struct {
 	gate            chan struct{}
@@ -32,6 +46,11 @@ type scope struct {
 	tabID           string
 	profile         string
 	manual          bool
+	width           int
+	height          int
+	scale           float64
+	viewports       map[string]viewport
+	stream          *screencast
 	closed          bool
 }
 
@@ -114,6 +133,10 @@ func (s *Service) Close() {
 
 func (sc *scope) dispose() {
 	sc.closed = true
+	if sc.stream != nil {
+		sc.stream.cancel()
+		sc.stream = nil
+	}
 	sc.cancel()
 	for _, cancel := range sc.tabCancels {
 		cancel()
@@ -166,7 +189,7 @@ func (s *Service) acquire(ctx context.Context, key scopeKey, create bool) (*scop
 			return nil, errors.New("browser scope limit reached")
 		}
 		life, cancel := context.WithCancel(s.ctx)
-		sc = &scope{gate: make(chan struct{}, 1), ctx: life, cancel: cancel, tabs: make(map[string]context.Context), tabCancels: make(map[string]context.CancelFunc)}
+		sc = &scope{gate: make(chan struct{}, 1), ctx: life, cancel: cancel, tabs: make(map[string]context.Context), tabCancels: make(map[string]context.CancelFunc), width: 1280, height: 800, scale: 1, viewports: make(map[string]viewport)}
 		s.scopes[key] = sc
 	}
 	s.mu.Unlock()
@@ -205,7 +228,7 @@ func (sc *scope) start(ctx context.Context) error {
 	}
 	sc.profile = profile
 	opts := append([]chromedp.ExecAllocatorOption{}, chromedp.DefaultExecAllocatorOptions[:]...)
-	opts = append(opts, chromedp.UserDataDir(profile), chromedp.WindowSize(1280, 800))
+	opts = append(opts, chromedp.UserDataDir(profile), chromedp.WindowSize(sc.width, sc.height))
 	const macChrome = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 	if _, err := os.Stat(macChrome); err == nil {
 		opts = append(opts, chromedp.ExecPath(macChrome))
@@ -215,7 +238,7 @@ func (sc *scope) start(ctx context.Context) error {
 	browser, browserCancel := chromedp.NewContext(alloc)
 	sc.browserCancel = browserCancel
 	done := make(chan error, 1)
-	go func() { done <- chromedp.Run(browser, chromedp.EmulateViewport(1280, 800)) }()
+	go func() { done <- chromedp.Run(browser, sc.viewport().action()) }()
 	select {
 	case err = <-done:
 	case <-ctx.Done():
@@ -229,5 +252,6 @@ func (sc *scope) start(ctx context.Context) error {
 	sc.browser = browser
 	sc.tabID = string(chromedp.FromContext(browser).Target.TargetID)
 	sc.tabs[sc.tabID] = browser
+	sc.viewports[sc.tabID] = sc.viewport()
 	return nil
 }

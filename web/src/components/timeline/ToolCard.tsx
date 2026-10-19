@@ -41,10 +41,15 @@ export { extractTargetFile, kiloToolIconName, processCarriageReturns };
 
 export default function ToolCard(props: { part: ToolPart; defaultExpanded?: boolean }) {
   const [expanded, setExpanded] = createSignal(props.defaultExpanded ?? false);
+  const [everExpanded, setEverExpanded] = createSignal(props.defaultExpanded ?? false);
   const [elapsed, setElapsed] = createSignal(0);
   const [copiedCmd, setCopiedCmd] = createSignal(false);
   let outputRef: HTMLPreElement | undefined;
   let rollingShellRef: HTMLDivElement | undefined;
+
+  createEffect(() => {
+    if (expanded()) setEverExpanded(true);
+  });
 
   const status = () => props.part.state.status;
   const isShell = () => isShellTool(props.part.tool);
@@ -75,7 +80,7 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
   const shellCmd = createMemo(() => (isShell() ? extractCommand(props.part) : ""));
   const description = createMemo(() => extractDescription(props.part));
   const shellOut = createMemo(() =>
-    isShell() && expanded() ? extractShellOutput(props.part.state, props.part.id) : ""
+    isShell() && everExpanded() ? extractShellOutput(props.part.state, props.part.id) : ""
   );
 
   // Rolling 5 lines of shell output while running & collapsed (ported from Kilo ShellRollingResults)
@@ -416,94 +421,126 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
               </span>
             </Show>
 
-            <span class="text-[var(--text-faint)] opacity-0 group-hover/tool:opacity-100 transition-opacity inline-flex items-center">
-              <Icon name={expanded() ? "chevron-down" : "chevron-right"} size="small" />
+            <span
+              class="hoxi-chevron text-[var(--text-faint)] opacity-0 group-hover/tool:opacity-100 transition-opacity"
+              data-open={expanded() ? "true" : "false"}
+            >
+              <Icon name="chevron-right" size="small" />
             </span>
           </div>
         </div>
 
         {/* Inline nested step list for Subagent `task` tool calls */}
-        <Show when={expanded() && isTask() && childSessionID()}>
+        <Show when={everExpanded() && isTask() && childSessionID()}>
           {(subId) => (
-            <>
-              <SubagentInlineTimeline
-                childSessionID={subId()}
-                parentRunning={isRunning()}
-              />
-              <SubagentTaskDetails part={props.part} running={isRunning()} />
-            </>
+            <div
+              class="hoxi-drawer-grid"
+              data-open={expanded() ? "true" : "false"}
+              aria-hidden={!expanded()}
+            >
+              <div class="min-h-0 overflow-hidden">
+                <SubagentInlineTimeline
+                  childSessionID={subId()}
+                  parentRunning={isRunning()}
+                />
+                <SubagentTaskDetails part={props.part} running={isRunning()} />
+              </div>
+            </div>
           )}
         </Show>
 
-
         {/* Collapsible / Live Body Container (only bordered when visible) */}
-        <Show when={hasBody()}>
-          <div class="mt-1 ml-3 overflow-hidden border-l-2 border-[var(--border-subtle)] pl-3">
-            {/* Kilo ShellRollingResults: Live 5-line rolling output preview while bash command is running & collapsed */}
-            <Show when={isShell() && isRunning() && !expanded() && rollingShellLines().length > 0}>
-              <div
-                ref={rollingShellRef}
-                onClick={() => setExpanded(true)}
-                class="bg-[#0d1117]/95 px-3.5 py-2 font-mono text-[12px] leading-[1.55] text-[#c9d1d9] max-h-[104px] overflow-hidden cursor-pointer relative"
-                style={{
-                  "-webkit-mask-image":
-                    "linear-gradient(to bottom, transparent 0%, black 24%, black 100%)",
-                  "mask-image": "linear-gradient(to bottom, transparent 0%, black 24%, black 100%)",
-                }}
-              >
-                <For each={rollingShellLines()}>
-                  {(line) => <div class="truncate kilo-rolling-row">{line || " "}</div>}
-                </For>
+        <Show when={hasBody() || (everExpanded() && !isSubagentPopoverMode())}>
+          <div
+            class="hoxi-drawer-grid"
+            data-open={hasBody() ? "true" : "false"}
+            aria-hidden={!hasBody()}
+          >
+            <div class="min-h-0 overflow-hidden">
+              <div class="mt-1 ml-3 overflow-hidden border-l-2 border-[var(--border-subtle)] pl-3">
+                {/* Kilo ShellRollingResults: Live 5-line rolling output preview while bash command is running & collapsed */}
+                <Show when={isShell() && isRunning() && !expanded() && rollingShellLines().length > 0}>
+                  <div
+                    ref={rollingShellRef}
+                    onClick={() => setExpanded(true)}
+                    class="bg-[#0d1117]/95 px-3.5 py-2 font-mono text-[12px] leading-[1.55] text-[#c9d1d9] max-h-[104px] overflow-hidden cursor-pointer relative"
+                    style={{
+                      "-webkit-mask-image":
+                        "linear-gradient(to bottom, transparent 0%, black 24%, black 100%)",
+                      "mask-image": "linear-gradient(to bottom, transparent 0%, black 24%, black 100%)",
+                    }}
+                  >
+                    <For each={rollingShellLines()}>
+                      {(line) => <div class="truncate kilo-rolling-row">{line || " "}</div>}
+                    </For>
+                  </div>
+                </Show>
+
+                {/* Inline Post-Edit LSP Compiler/Type Diagnostics */}
+                <Show when={fileDiagnostics().length > 0}>
+                  <InlineDiagnosticsDisplay diagnostics={fileDiagnostics()} />
+                </Show>
+
+                {/* Expanded Body */}
+                <Show when={everExpanded() && !isSubagentPopoverMode()}>
+                  <div
+                    class="hoxi-drawer-grid"
+                    data-open={expanded() ? "true" : "false"}
+                    aria-hidden={!expanded()}
+                  >
+                    <div class="min-h-0 overflow-hidden">
+                      <ToolCardExpandedBody
+                        part={props.part}
+                        isShell={isShell()}
+                        isEdit={isEdit()}
+                        isTodo={isTodo()}
+                        shellCmd={shellCmd()}
+                        shellOut={shellOut()}
+                        copiedCmd={copiedCmd()}
+                        onCopyCommand={(e) => void copyCommand(e)}
+                        setOutputRef={(el) => {
+                          outputRef = el;
+                        }}
+                        todoItems={todoItems()}
+                        fileDiff={fileDiff()}
+                        fileDiffs={fileDiffs()}
+                      />
+                    </div>
+                  </div>
+                </Show>
               </div>
-            </Show>
-
-            {/* Inline Post-Edit LSP Compiler/Type Diagnostics */}
-            <Show when={fileDiagnostics().length > 0}>
-              <InlineDiagnosticsDisplay diagnostics={fileDiagnostics()} />
-            </Show>
-
-            {/* Expanded Body */}
-            <Show when={expanded()}>
-              <ToolCardExpandedBody
-                part={props.part}
-                isShell={isShell()}
-                isEdit={isEdit()}
-                isTodo={isTodo()}
-                shellCmd={shellCmd()}
-                shellOut={shellOut()}
-                copiedCmd={copiedCmd()}
-                onCopyCommand={(e) => void copyCommand(e)}
-                setOutputRef={(el) => {
-                  outputRef = el;
-                }}
-                todoItems={todoItems()}
-                fileDiff={fileDiff()}
-                fileDiffs={fileDiffs()}
-              />
-            </Show>
+            </div>
           </div>
         </Show>
       </div>
 
       {/* Kilo `Loaded` context files sub-rows under `read` tool */}
-      <Show when={expanded() && loadedFiles().length > 0}>
-        <div class="mt-1 pl-3 space-y-0.5">
-          <For each={loadedFiles()}>
-            {(filePath) => (
-              <button
-                type="button"
-                onClick={() => openFileInInspector(filePath)}
-                class="flex items-center gap-1.5 text-[12px] text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors cursor-pointer py-0.5"
-              >
-                <Icon name="enter" size="small" class="text-[var(--text-faint)]" />
-                <span>{t("toolCard.loaded")}</span>
-                <FileIcon node={{ path: filePath, type: "file" }} class="w-3.5 h-3.5 shrink-0" />
-                <span class="font-mono text-[11.5px] hover:underline truncate max-w-[360px]">
-                  {filePath}
-                </span>
-              </button>
-            )}
-          </For>
+      <Show when={everExpanded() && loadedFiles().length > 0}>
+        <div
+          class="hoxi-drawer-grid"
+          data-open={expanded() ? "true" : "false"}
+          aria-hidden={!expanded()}
+        >
+          <div class="min-h-0 overflow-hidden">
+            <div class="mt-1 pl-3 space-y-0.5">
+              <For each={loadedFiles()}>
+                {(filePath) => (
+                  <button
+                    type="button"
+                    onClick={() => openFileInInspector(filePath)}
+                    class="flex items-center gap-1.5 text-[12px] text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors cursor-pointer py-0.5"
+                  >
+                    <Icon name="enter" size="small" class="text-[var(--text-faint)]" />
+                    <span>{t("toolCard.loaded")}</span>
+                    <FileIcon node={{ path: filePath, type: "file" }} class="w-3.5 h-3.5 shrink-0" />
+                    <span class="font-mono text-[11.5px] hover:underline truncate max-w-[360px]">
+                      {filePath}
+                    </span>
+                  </button>
+                )}
+              </For>
+            </div>
+          </div>
         </div>
       </Show>
     </div>

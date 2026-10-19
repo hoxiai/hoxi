@@ -27,6 +27,8 @@ import {
   abortChildSubagentSessions,
   collectChildSubagentSessionIDs,
   deleteChildSubagentSessionsBackend,
+  ensureChildSubagentSessionLoaded,
+  extractChildSubagentSessionId,
   purgeSessionsFromStoreState,
 } from "./workspace-queue-subagents";
 import { secondaryWorkspaceDirs, setWorktreeMetaIfChanged } from "./session-sandbox";
@@ -231,8 +233,11 @@ export function replaceSessionFromEvent(info: SessionInfo, eventDirectory?: stri
   }
 }
 
-export async function loadSessionMessagesOnly(sessionID: string): Promise<void> {
-  const directory = sessionDirectory(sessionID);
+export async function loadSessionMessagesOnly(
+  sessionID: string,
+  explicitDirectory?: string
+): Promise<void> {
+  const directory = explicitDirectory || sessionDirectory(sessionID);
   const turns = await hoxiAPI.getMessages(sessionID, directory);
   if (!isSessionDeleted(sessionID)) restoreSessionAI(sessionID, turns);
   setWorkspace(
@@ -247,7 +252,8 @@ export async function loadSessionMessagesOnly(sessionID: string): Promise<void> 
 
 export async function loadSessionMessages(sessionID: string): Promise<void> {
   const directory = sessionDirectory(sessionID);
-  const isChildSession = Boolean(workspace.sessions.find((s) => s.id === sessionID)?.parentID);
+  const parentID = workspace.sessions.find((s) => s.id === sessionID)?.parentID;
+  const isChildSession = Boolean(parentID);
   if (!isChildSession) {
     scheduleRefreshWorktreeStatus(sessionID, 120);
   }
@@ -264,6 +270,22 @@ export async function loadSessionMessages(sessionID: string): Promise<void> {
     );
     if (!isSessionDeleted(sessionID)) {
       persistCachedSessionTurns(sessionID, workspace.messagesBySession[sessionID] ?? turns);
+      if (!isChildSession) {
+        for (const t of workspace.messagesBySession[sessionID] ?? []) {
+          for (const p of t.parts) {
+            if (p.type === "tool") {
+              const lower = (p.tool || "").toLowerCase();
+              if (lower === "task" || lower === "agent" || lower.includes("subagent")) {
+                ensureChildSubagentSessionLoaded(
+                  extractChildSubagentSessionId(p),
+                  sessionID,
+                  p.state.status === "completed" || p.state.status === "error"
+                );
+              }
+            }
+          }
+        }
+      }
     }
   } catch (err) {
     if (workspace.messagesBySession[sessionID] === undefined) {
@@ -274,6 +296,9 @@ export async function loadSessionMessages(sessionID: string): Promise<void> {
     setWorkspace("loadingMessagesBySession", sessionID, false);
   }
   if (isChildSession && sessionID !== workspace.activeSessionID) {
+    if (parentID && !isSessionDeleted(parentID)) {
+      void refreshSessionDiff(parentID);
+    }
     return;
   }
   await refreshSessionDiff(sessionID);

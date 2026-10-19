@@ -13,8 +13,9 @@ export type ProviderRiskTag =
 export interface ProviderHealthSummary {
   providerID: string;
   modelID?: string;
-  score: number;
-  grade: "S" | "A" | "B" | "C" | "—";
+  stabilityScore: number | null;
+  qualityScore: number | null;
+  qualitySampleCount: number;
   status: "untested" | "healthy" | "warning" | "degraded";
   totalTurns: number;
   successRate: number;
@@ -40,8 +41,9 @@ function emptyUntestedSummary(providerID: string, modelID?: string): ProviderHea
   return {
     providerID,
     modelID,
-    score: 0,
-    grade: "—",
+    stabilityScore: null,
+    qualityScore: null,
+    qualitySampleCount: 0,
     status: "untested",
     totalTurns: 0,
     successRate: 100,
@@ -63,10 +65,8 @@ function emptyUntestedSummary(providerID: string, modelID?: string): ProviderHea
 }
 
 /**
- * Computes health & quality score for a provider or a specific model.
- * Only models/providers that have actually been run (`totalTurns > 0`) or
- * scored by the Observer (`auditTotalCount > 0`) receive a score;
- * untested models return `status: "untested"` so no score badge is shown.
+ * Execution success measures stability; valid result audits alone measure quality.
+ * Missing evidence stays unrated instead of receiving a synthetic 100 or zero.
  */
 export function computeProviderHealth(
   providerID: string,
@@ -92,7 +92,8 @@ export function computeProviderHealth(
 
   const turns = Math.max(1, totalTurns);
   const successRate =
-    totalTurns > 0 ? Math.round((target.successTurns / totalTurns) * 100) : 100;
+    totalTurns > 0 ? Math.max(0, Math.min(100, Math.round((target.successTurns / totalTurns) * 100))) : 100;
+  const stabilityScore = totalTurns > 0 ? successRate : null;
 
   const toolSuccessRate =
     target.toolCallsTotal > 0
@@ -111,11 +112,18 @@ export function computeProviderHealth(
   const codePassRate =
     auditTotal > 0 ? Math.round((auditPass / auditTotal) * 100) : null;
 
-  const auditScoreList = target.auditScores ?? [];
+  const auditScoreList = (target.auditScores ?? []).filter(
+    (score) => Number.isFinite(score) && score >= 0 && score <= 100
+  );
+  const lastScore = target.lastAuditScore;
   const avgAuditScore =
     auditScoreList.length > 0
       ? Math.round(auditScoreList.reduce((a, b) => a + b, 0) / auditScoreList.length)
-      : target.lastAuditScore ?? null;
+      : auditTotal > 0 && lastScore !== undefined && Number.isFinite(lastScore) && lastScore >= 0 && lastScore <= 100
+      ? lastScore
+      : null;
+  const qualityScore = avgAuditScore;
+  const qualitySampleCount = auditScoreList.length || (qualityScore !== null ? 1 : 0);
 
   const ttftList = target.ttftSamplesMs ?? [];
   const avgTtftMs =
@@ -129,35 +137,9 @@ export function computeProviderHealth(
       ? Math.round((tpsList.reduce((a, b) => a + b, 0) / tpsList.length) * 10) / 10
       : null;
 
-  // Compute composite 0–100 score starting from Observer avgAuditScore (if audited) or 100
-  let score = avgAuditScore !== null ? avgAuditScore : 100;
-  const errorRatio = target.errorTurns / turns;
   const timeoutRatio = target.timeoutTurns / turns;
   const retryRatio = target.retryCount / turns;
-  const toolFailRatio =
-    target.toolCallsTotal > 0 ? target.toolCallsFailed / target.toolCallsTotal : 0;
   const hallucinationRatio = target.hallucinationFlags / turns;
-
-  score -= Math.min(40, Math.round(errorRatio * 45));
-  score -= Math.min(25, Math.round(timeoutRatio * 35));
-  score -= Math.min(15, Math.round(retryRatio * 18));
-  score -= Math.min(25, Math.round(toolFailRatio * 35));
-  score -= Math.min(25, Math.round(hallucinationRatio * 30));
-
-  if (codePassRate !== null && auditTotal > 0 && avgAuditScore === null) {
-    const failAuditRatio = (auditTotal - auditPass) / auditTotal;
-    score -= Math.min(35, Math.round(failAuditRatio * 38));
-  }
-
-  if (avgTtftMs !== null) {
-    if (avgTtftMs > 12_000) score -= 14;
-    else if (avgTtftMs > 6_000) score -= 7;
-  }
-  if (avgTps !== null && avgTps < 12) {
-    score -= 6;
-  }
-
-  score = Math.max(10, Math.min(100, score));
 
   const riskTags: ProviderRiskTag[] = [];
   if (codePassRate !== null && codePassRate < 65 && auditTotal > auditPass) {
@@ -182,12 +164,12 @@ export function computeProviderHealth(
     riskTags.push("frequent_retry");
   }
 
-  const grade: "S" | "A" | "B" | "C" =
-    score >= 88 ? "S" : score >= 75 ? "A" : score >= 60 ? "B" : "C";
-  const status: "healthy" | "warning" | "degraded" =
-    score >= 82 && riskTags.length === 0
+  const lowestScore = Math.min(stabilityScore ?? 100, qualityScore ?? 100);
+  const status: ProviderHealthSummary["status"] =
+    stabilityScore === null && qualityScore === null ? "untested" :
+    lowestScore >= 82 && riskTags.length === 0
       ? "healthy"
-      : score >= 62 &&
+      : lowestScore >= 62 &&
         !riskTags.includes("high_hallucination") &&
         !(riskTags.includes("low_pass_rate") && (codePassRate ?? 100) <= 50)
       ? "warning"
@@ -200,8 +182,9 @@ export function computeProviderHealth(
   return {
     providerID,
     modelID: trimmedModel || undefined,
-    score,
-    grade,
+    stabilityScore,
+    qualityScore,
+    qualitySampleCount,
     status,
     totalTurns,
     successRate,
@@ -242,10 +225,10 @@ export function findBestFallbackModel(excludeProviderID?: string): SelectedModel
       model: { providerID: prov.id, modelID: defModel },
       score:
         health.status === "healthy"
-          ? health.score + 10
+          ? (health.stabilityScore ?? 80) + 10
           : health.status === "untested"
           ? 80
-          : health.score,
+           : health.stabilityScore ?? 80,
     });
   }
 

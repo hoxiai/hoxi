@@ -185,7 +185,7 @@ export default function WorkspaceModal() {
   return (
     <Show when={mode() !== null}>
       <div
-        class="fixed inset-0 z-50 flex items-center justify-center bg-black/55 backdrop-blur-[2px] p-4"
+        class="hoxi-modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/55 backdrop-blur-[2px] p-4"
         onPointerDown={(e) => {
           backdropPointerDown = e.target === e.currentTarget;
         }}

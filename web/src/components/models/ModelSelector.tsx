@@ -231,7 +231,7 @@ export default function ModelSelector() {
         onClick={toggleOpen}
         onMouseEnter={() => setTriggerHovered(true)}
         onMouseLeave={() => setTriggerHovered(false)}
-        class={`inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[12px] font-medium transition-colors cursor-pointer max-w-[260px] ${
+        class={`hoxi-press inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[12px] font-medium cursor-pointer max-w-[260px] ${
           open()
             ? "bg-[var(--bg-hover)] text-[var(--text-primary)]"
             : "text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
@@ -267,7 +267,12 @@ export default function ModelSelector() {
             {workspace.reasoningEffort}
           </span>
         </Show>
-        <ChevronDown size={12} class="shrink-0 opacity-60" />
+        <ChevronDown
+          size={12}
+          class={`shrink-0 opacity-60 transition-transform duration-150 ${
+            open() ? "rotate-180" : ""
+          }`}
+        />
       </button>
 
       <Show when={!open() && triggerHovered() && activeModelInfo()}>
@@ -277,7 +282,7 @@ export default function ModelSelector() {
       <Show when={open()}>
         <div
           onKeyDown={handleKeyDown}
-          class="absolute bottom-full left-0 z-40 mb-2 flex h-[410px] max-h-[calc(100dvh-100px)] w-[520px] max-w-[calc(100vw-24px)] flex-col overflow-hidden rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-panel)] shadow-2xl"
+          class="hoxi-popover absolute bottom-full left-0 z-40 mb-2 flex h-[410px] max-h-[calc(100dvh-100px)] w-[520px] max-w-[calc(100vw-24px)] flex-col overflow-hidden rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-panel)] shadow-2xl"
         >
           <div class="flex flex-1 min-h-0">
             <ModelSelectorRail

@@ -71,7 +71,7 @@ export default function InspectorPane() {
           {(tab) => (
             <button
               type="button"
-              class={`relative shrink-0 whitespace-nowrap rounded-lg px-2.5 py-1 text-xs font-medium transition-all cursor-pointer ${
+              class={`hoxi-press relative shrink-0 whitespace-nowrap rounded-lg px-2.5 py-1 text-xs font-medium cursor-pointer ${
                 workspace.inspectorTab === tab.id
                   ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]"
                   : "text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
@@ -85,7 +85,7 @@ export default function InspectorPane() {
 
         <button
           type="button"
-          class={`ml-auto shrink-0 inline-flex items-center justify-center w-6 h-6 rounded-lg transition-colors cursor-pointer ${
+          class={`hoxi-press ml-auto shrink-0 inline-flex items-center justify-center w-6 h-6 rounded-lg cursor-pointer ${
             workspace.inspectorMaximized
               ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]"
               : "text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
@@ -109,27 +109,29 @@ export default function InspectorPane() {
       <div class="flex-1 min-h-0">
         <Suspense>
           <Show when={visitedTabs().diffs}>
-            <div class={workspace.inspectorTab === "diffs" ? "h-full w-full" : "hidden"}>
+            <div class={workspace.inspectorTab === "diffs" ? "h-full w-full hoxi-view-enter" : "hidden"}>
               <PierreDiffViewer />
             </div>
           </Show>
           <Show when={visitedTabs().memory}>
-            <div class={workspace.inspectorTab === "memory" ? "h-full w-full" : "hidden"}>
+            <div class={workspace.inspectorTab === "memory" ? "h-full w-full hoxi-view-enter" : "hidden"}>
               <MemoryBankView />
             </div>
           </Show>
           <Show when={visitedTabs().files}>
-            <div class={workspace.inspectorTab === "files" ? "h-full w-full" : "hidden"}>
+            <div class={workspace.inspectorTab === "files" ? "h-full w-full hoxi-view-enter" : "hidden"}>
               <FileTreeView />
             </div>
           </Show>
           <Show when={visitedTabs().terminal}>
-            <div class={workspace.inspectorTab === "terminal" ? "h-full w-full" : "hidden"}>
+            <div class={workspace.inspectorTab === "terminal" ? "h-full w-full hoxi-fade-enter" : "hidden"}>
               <WebGLTerminal />
             </div>
           </Show>
           <Show when={workspace.inspectorTab === "browser"}>
-            <BrowserInspector />
+            <div class="h-full w-full hoxi-view-enter">
+              <BrowserInspector />
+            </div>
           </Show>
         </Suspense>
       </div>

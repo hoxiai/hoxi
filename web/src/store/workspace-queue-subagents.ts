@@ -8,11 +8,14 @@ import { subagentDisplayTitle, type SubagentTitle } from "./session-title";
 import {
   forkFromMessage,
   isSessionBusy,
+  isSessionDeleted,
   loadSessionMessagesOnly,
   pendingRevertConfirm,
   type PendingRevertRequest,
+  refreshSessionDiff,
   replaceSession,
   revertToHere,
+  scheduleRefreshWorktreeStatus,
   sessionDirectory,
   setPendingRevertConfirm,
   undoRevert,
@@ -59,6 +62,7 @@ export interface ComposerDraftEdit {
 const drainingBySession = new Set<string>();
 const lastPromptDispatchAtBySession = new Map<string, number>();
 const loadedChildSessionIDs = new Set<string>();
+const settledChildSessionIDs = new Set<string>();
 
 export function markSessionPromptDispatched(sessionID: string) {
   lastPromptDispatchAtBySession.set(sessionID, Date.now());
@@ -266,9 +270,10 @@ export function isSubagentToolInterrupted(
 
 export function ensureChildSubagentSessionLoaded(
   childSessionID?: string,
-  parentSessionID?: string
+  parentSessionID?: string,
+  settled?: boolean
 ) {
-  if (!childSessionID) return;
+  if (!childSessionID || typeof window === "undefined") return;
   const existing = workspace.sessions.find((s) => s.id === childSessionID);
   const directory =
     sessionDirectory(parentSessionID ?? null) ||
@@ -280,14 +285,28 @@ export function ensureChildSubagentSessionLoaded(
     void hoxiAPI
       .getSession(childSessionID, directory)
       .then((info) => {
-        if (info?.id) replaceSession(info);
+        if (info?.id) {
+          replaceSession(
+            parentSessionID && !info.parentID ? { ...info, parentID: parentSessionID } : info
+          );
+        }
       })
       .catch(() => {});
   }
 
-  if (!loadedChildSessionIDs.has(childSessionID)) {
+  const needsInitialLoad = !loadedChildSessionIDs.has(childSessionID);
+  const needsSettledLoad = Boolean(settled && !settledChildSessionIDs.has(childSessionID));
+  if (needsInitialLoad || needsSettledLoad) {
     loadedChildSessionIDs.add(childSessionID);
-    void loadSessionMessagesOnly(childSessionID).catch(() => {});
+    if (settled) settledChildSessionIDs.add(childSessionID);
+    void loadSessionMessagesOnly(childSessionID, directory)
+      .then(() => {
+        if (parentSessionID && !isSessionDeleted(parentSessionID)) {
+          void refreshSessionDiff(parentSessionID);
+          scheduleRefreshWorktreeStatus(parentSessionID, 150);
+        }
+      })
+      .catch(() => {});
   }
 }
 
@@ -299,9 +318,12 @@ export function collectChildSubagentSessionIDs(parentSessionID: string): string[
   const turns = workspace.messagesBySession[parentSessionID] ?? [];
   for (const turn of turns) {
     for (const part of turn.parts) {
-      if (part.type === "tool" && part.tool.toLowerCase() === "task") {
-        const cid = extractChildSubagentSessionId(part);
-        if (cid) childIDs.add(cid);
+      if (part.type === "tool") {
+        const lower = (part.tool || "").toLowerCase();
+        if (lower === "task" || lower === "agent" || lower.includes("subagent")) {
+          const cid = extractChildSubagentSessionId(part);
+          if (cid) childIDs.add(cid);
+        }
       }
     }
   }
@@ -317,6 +339,7 @@ export function purgeSessionsFromStoreState(
     drainingBySession.delete(id);
     lastPromptDispatchAtBySession.delete(id);
     loadedChildSessionIDs.delete(id);
+    settledChildSessionIDs.delete(id);
     delete state.messagesBySession[id];
     delete state.aiBySession[id];
     delete state.loadingMessagesBySession[id];

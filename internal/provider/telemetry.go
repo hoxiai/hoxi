@@ -36,7 +36,7 @@ type modelTelemetryStats struct {
 	AuditTotalCount    int       `json:"auditTotalCount"`
 	AuditPassCount     int       `json:"auditPassCount"`
 	AuditScores        []int     `json:"auditScores,omitempty"`
-	LastAuditScore     int       `json:"lastAuditScore,omitempty"`
+	LastAuditScore     int       `json:"lastAuditScore"`
 	LastAuditPass      *bool     `json:"lastAuditPass,omitempty"`
 	LastAuditSummary   string    `json:"lastAuditSummary,omitempty"`
 	TtftSamplesMs      []int64   `json:"ttftSamplesMs,omitempty"`
@@ -60,7 +60,7 @@ type providerTelemetryStats struct {
 	AuditTotalCount    int                             `json:"auditTotalCount"`
 	AuditPassCount     int                             `json:"auditPassCount"`
 	AuditScores        []int                           `json:"auditScores,omitempty"`
-	LastAuditScore     int                             `json:"lastAuditScore,omitempty"`
+	LastAuditScore     int                             `json:"lastAuditScore"`
 	LastAuditPass      *bool                           `json:"lastAuditPass,omitempty"`
 	LastAuditSummary   string                          `json:"lastAuditSummary,omitempty"`
 	TtftSamplesMs      []int64                         `json:"ttftSamplesMs,omitempty"`

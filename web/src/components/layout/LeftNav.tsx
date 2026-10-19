@@ -452,35 +452,42 @@ export default function LeftNav() {
       </div>
 
       {/* Collapsible Search Filter */}
-      <Show when={showSearch()}>
-        <div class="pl-2 pr-3 pb-2 shrink-0">
-          <div class="flex items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-2.5 py-1.5 text-[12px]">
-            <Icon name="magnifying-glass" size="small" class="text-[var(--text-muted)]" />
-            <input
-              type="text"
-              placeholder={t("leftNav.filterPlaceholder")}
-              value={filterQuery()}
-              onInput={(e) => setFilterQuery(e.currentTarget.value)}
-              class="w-full bg-transparent text-[12px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none"
-            />
-            <Show when={filterQuery()}>
-              <button
-                type="button"
-                onClick={() => setFilterQuery("")}
-                class="text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
-              >
-                <Icon name="close-small" size="small" />
-              </button>
-            </Show>
+      <div
+        class="hoxi-drawer-grid shrink-0"
+        data-open={showSearch() ? "true" : "false"}
+        aria-hidden={!showSearch()}
+      >
+        <div class="min-h-0 overflow-hidden">
+          <div class="pl-2 pr-3 pb-2">
+            <div class="flex items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-2.5 py-1.5 text-[12px]">
+              <Icon name="magnifying-glass" size="small" class="text-[var(--text-muted)]" />
+              <input
+                type="text"
+                placeholder={t("leftNav.filterPlaceholder")}
+                value={filterQuery()}
+                tabIndex={showSearch() ? 0 : -1}
+                onInput={(e) => setFilterQuery(e.currentTarget.value)}
+                class="w-full bg-transparent text-[12px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none"
+              />
+              <Show when={filterQuery()}>
+                <button
+                  type="button"
+                  onClick={() => setFilterQuery("")}
+                  class="text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
+                >
+                  <Icon name="close-small" size="small" />
+                </button>
+              </Show>
+            </div>
           </div>
         </div>
-      </Show>
+      </div>
 
       {/* MODE A: MULTI-PROJECT TREE */}
       <Show when={workspace.sidebarProjectMode === "multi"}>
         <div
           ref={projectListContainerRef}
-          class="sidebar-scroll flex-1 min-h-0 overflow-y-auto pl-1 pr-2 py-1 space-y-1"
+          class="sidebar-scroll hoxi-view-enter flex-1 min-h-0 overflow-y-auto pl-1 pr-2 py-1 space-y-1"
         >
           <For each={projectPaths()}>
             {(projPath) => {

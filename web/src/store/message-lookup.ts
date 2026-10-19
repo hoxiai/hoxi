@@ -377,10 +377,12 @@ export function filterLocalSessionDiffsByTurns(
       for (const p of turn.parts) {
         if (p.type !== "tool") continue;
         const toolName = (p.tool || "").toLowerCase();
-        if (toolName === "task" || toolName === "subagent") {
+        if (toolName === "task" || toolName === "agent" || toolName.includes("subagent")) {
           const meta = p.state.status !== "pending" ? (p.state.metadata as Record<string, any> | undefined) : undefined;
           const inp = (p.state.input || {}) as Record<string, any>;
-          const childID = meta?.sessionId || meta?.sessionID || inp.task_id;
+          const out = (p.state as { output?: string }).output;
+          const outMatch = typeof out === "string" ? out.match(/session_id:\s*([a-zA-Z0-9_-]+)/) : null;
+          const childID = meta?.sessionId || meta?.sessionID || inp.task_id || outMatch?.[1];
           if (typeof childID === "string") scanSession(childID);
           continue;
         }
@@ -388,8 +390,10 @@ export function filterLocalSessionDiffsByTurns(
         const inp = (p.state.input || {}) as Record<string, any>;
         addPath(
           inp.filePath ||
+            inp.file_path ||
             inp.path ||
             inp.file ||
+            inp.TargetFile ||
             inp.target_file ||
             inp.targetFile ||
             inp.filename ||

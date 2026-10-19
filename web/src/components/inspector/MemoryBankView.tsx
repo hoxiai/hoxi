@@ -77,6 +77,13 @@ export default function MemoryBankView() {
   });
 
   const dims = createMemo(() => dimensions(content()));
+  let scopePhase = false;
+  const memoryEnterClass = createMemo(() => {
+    void scope();
+    void workspace.activeSessionID;
+    scopePhase = !scopePhase;
+    return scopePhase ? "hoxi-view-enter-a" : "hoxi-view-enter-b";
+  });
 
   return (
     <div class="flex flex-col h-full">
@@ -87,7 +94,7 @@ export default function MemoryBankView() {
             <button
               type="button"
               onClick={() => setScope("session")}
-              class={`rounded-md px-2 py-0.5 font-medium transition-colors cursor-pointer ${
+              class={`hoxi-press rounded-md px-2 py-0.5 font-medium cursor-pointer ${
                 scope() === "session"
                   ? "bg-[var(--bg-panel)] text-[var(--text-primary)] shadow-2xs"
                   : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
@@ -98,7 +105,7 @@ export default function MemoryBankView() {
             <button
               type="button"
               onClick={() => setScope("project")}
-              class={`rounded-md px-2 py-0.5 font-medium transition-colors cursor-pointer ${
+              class={`hoxi-press rounded-md px-2 py-0.5 font-medium cursor-pointer ${
                 scope() === "project"
                   ? "bg-[var(--bg-panel)] text-[var(--text-primary)] shadow-2xs"
                   : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
@@ -109,7 +116,7 @@ export default function MemoryBankView() {
           </div>
         </div>
         <button
-          class="shrink-0 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
+          class="hoxi-press shrink-0 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
           onClick={() => void load()}
           title={`${t("inspector.memory.reload")} (${activeFile()})`}
         >
@@ -117,7 +124,7 @@ export default function MemoryBankView() {
         </button>
       </div>
 
-      <div class="inspector-scroll flex-1 min-h-0 overflow-y-auto px-2.5 py-2.5 space-y-2">
+      <div class={`inspector-scroll flex-1 min-h-0 overflow-y-auto px-2.5 py-2.5 space-y-2 ${memoryEnterClass()}`}>
         <Show when={dims().length > 0}>
           <div class="flex flex-wrap gap-1">
             {dims().map((d) => (

@@ -370,6 +370,9 @@ export async function retryLastUserPrompt(sessionID?: string | null): Promise<vo
 
 function isMutatingTool(toolName?: string): boolean {
   const t = (toolName || "").toLowerCase();
+  if (!t || t === "todowrite" || t === "todoread" || t === "read" || t.endsWith("_read")) {
+    return false;
+  }
   return (
     t === "edit" ||
     t === "write" ||
@@ -377,8 +380,47 @@ function isMutatingTool(toolName?: string): boolean {
     t === "multiedit" ||
     t === "apply_patch" ||
     t === "bash" ||
-    t === "shell"
+    t === "shell" ||
+    t === "create_file" ||
+    t.includes("edit") ||
+    t.includes("write") ||
+    t.includes("patch") ||
+    t.includes("replace") ||
+    t.includes("bash") ||
+    t.includes("shell")
   );
+}
+
+function isTaskLikeTool(toolName?: string): boolean {
+  const t = (toolName || "").toLowerCase();
+  return t === "task" || t === "agent" || t.includes("subagent");
+}
+
+function belongsToActiveSession(sessionID: string): boolean {
+  const activeID = workspace.activeSessionID;
+  if (!activeID || !sessionID) return false;
+  if (sessionID === activeID) return true;
+  let cur: string | undefined = sessionID;
+  const seen = new Set<string>();
+  while (cur && !seen.has(cur)) {
+    seen.add(cur);
+    const s = workspace.sessions.find((item) => item.id === cur);
+    if (!s?.parentID) break;
+    if (s.parentID === activeID) return true;
+    cur = s.parentID;
+  }
+  for (const turn of workspace.messagesBySession[activeID] ?? []) {
+    for (const p of turn.parts) {
+      if (
+        p.type === "tool" &&
+        isTaskLikeTool(p.tool) &&
+        extractChildSubagentSessionId(p) === sessionID
+      ) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 function mutateUpsertInfo(state: typeof workspace, info: MessageInfo) {
@@ -403,21 +445,23 @@ export function upsertMessagePart(part: MessagePart) {
       part.state.status === "running" && part.sessionID === workspace.activeSessionID) {
     setWorkspace({ inspectorOpen: true, inspectorTab: "browser" });
   }
-  if (part.type === "tool" && part.tool.toLowerCase() === "task") {
+  if (part.type === "tool" && isTaskLikeTool(part.tool)) {
     ensureChildSubagentSessionLoaded(
       extractChildSubagentSessionId(part),
-      part.sessionID
+      part.sessionID,
+      part.state.status === "completed" || part.state.status === "error"
     );
   }
   if (
     part.type === "tool" &&
-      (part.state.status === "pending" ||
-        part.state.status === "running" ||
-        part.state.status === "completed") &&
-      part.sessionID === workspace.activeSessionID &&
-      isMutatingTool(part.tool)
-    ) {
-      scheduleRefreshWorktreeStatus(part.sessionID, 250);
+    (part.state.status === "pending" ||
+      part.state.status === "running" ||
+      part.state.status === "completed") &&
+    workspace.activeSessionID &&
+    belongsToActiveSession(part.sessionID) &&
+    isMutatingTool(part.tool)
+  ) {
+    scheduleRefreshWorktreeStatus(workspace.activeSessionID, 250);
   }
   setWorkspace(produce((state) => mutateUpsertPart(state, part)));
 }
@@ -474,10 +518,11 @@ export function applyStreamFrameBatch(batch: StreamFrameBatch) {
     ) {
       setWorkspace({ inspectorOpen: true, inspectorTab: "browser" });
     }
-    if (part.type === "tool" && part.tool.toLowerCase() === "task") {
+    if (part.type === "tool" && isTaskLikeTool(part.tool)) {
       ensureChildSubagentSessionLoaded(
         extractChildSubagentSessionId(part),
-        part.sessionID
+        part.sessionID,
+        part.state.status === "completed" || part.state.status === "error"
       );
     }
     if (
@@ -485,7 +530,7 @@ export function applyStreamFrameBatch(batch: StreamFrameBatch) {
       (part.state.status === "pending" ||
         part.state.status === "running" ||
         part.state.status === "completed") &&
-      part.sessionID === workspace.activeSessionID &&
+      belongsToActiveSession(part.sessionID) &&
       isMutatingTool(part.tool)
     ) {
       shouldRefreshActiveWorktree = true;

@@ -46,6 +46,12 @@ export default function FilePreviewPane(props: FilePreviewPaneProps) {
   const [copiedPath, setCopiedPath] = createSignal(false);
   const [copiedContent, setCopiedContent] = createSignal(false);
   let sourceContainer: HTMLDivElement | undefined;
+  let drillPhase = false;
+  const drillEnterClass = createMemo(() => {
+    void props.previewPath;
+    drillPhase = !drillPhase;
+    return drillPhase ? "hoxi-drill-enter-a" : "hoxi-drill-enter-b";
+  });
 
   const isBinaryPreview = createMemo(() => props.previewMeta?.type === "binary");
   const isImageFile = createMemo(() =>
@@ -152,12 +158,12 @@ export default function FilePreviewPane(props: FilePreviewPaneProps) {
   };
 
   return (
-    <div class="flex-1 min-h-0 flex flex-col">
+    <div class={`flex-1 min-h-0 flex flex-col ${drillEnterClass()}`}>
       {/* Preview Header Toolbar */}
       <div class="shrink-0 flex items-center gap-1.5 px-3 py-2 border-b border-[var(--border-subtle)] bg-[var(--bg-inset)]/60">
         <button
           type="button"
-          class="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer shrink-0"
+          class="hoxi-press inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer shrink-0"
           onClick={() => props.onBack()}
           title={t("inspector.files.back")}
         >
@@ -207,7 +213,7 @@ export default function FilePreviewPane(props: FilePreviewPaneProps) {
             <button
               type="button"
               onClick={() => props.onChangeViewMode("preview")}
-              class={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] transition-colors cursor-pointer ${
+              class={`hoxi-press inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] cursor-pointer ${
                 props.viewMode === "preview"
                   ? "bg-[var(--accent-surface)] text-[var(--accent-primary)] font-medium"
                   : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
@@ -220,7 +226,7 @@ export default function FilePreviewPane(props: FilePreviewPaneProps) {
             <button
               type="button"
               onClick={() => props.onChangeViewMode("source")}
-              class={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] transition-colors cursor-pointer ${
+              class={`hoxi-press inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] cursor-pointer ${
                 props.viewMode === "source"
                   ? "bg-[var(--accent-surface)] text-[var(--accent-primary)] font-medium"
                   : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"

@@ -391,65 +391,72 @@ export default function PierreDiffViewer() {
           </button>
         </div>
       </Show>
-      <Show when={diffs().length > 0 && commitExpanded()}>
-        <div id="diff-commit-editor" class="shrink-0 grid grid-cols-[1fr_auto] items-center gap-2 px-2.5 py-2 border-b border-[var(--border-subtle)] bg-[var(--bg-inset)]/60">
-          <input
-            type="text"
-            value={commitMsg()}
-            onInput={(ev) => setCommitMsg(ev.currentTarget.value)}
-            onKeyDown={(ev) => {
-              if (ev.key === "Enter" && !ev.isComposing) {
-                ev.preventDefault();
-                void onCommitWorktree(false);
-              }
-            }}
-            placeholder={t("inspector.diffs.commitPlaceholder")}
-            aria-label={t("inspector.diffs.commitPlaceholder")}
-            class="min-w-0 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2 py-1.5 text-[12px] font-mono text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none focus:border-[var(--accent-border)]"
-          />
-          <button
-            type="button"
-            onClick={onGenerateAICommit}
-            class="shrink-0 rounded-md p-1.5 text-[var(--violet-text)] hover:bg-[var(--violet-surface)] transition-colors cursor-pointer"
-            title={t("inspector.diffs.generateCommitTooltip")}
-            aria-label={t("inspector.diffs.generateCommitBtn")}
-          >
-            <Sparkles size={11} />
-          </button>
-          <div class="col-span-2 flex items-center justify-end gap-1.5">
+      <div
+        class="hoxi-drawer-grid shrink-0"
+        data-open={diffs().length > 0 && commitExpanded() ? "true" : "false"}
+        aria-hidden={!(diffs().length > 0 && commitExpanded())}
+      >
+        <div class="min-h-0 overflow-hidden">
+          <div id="diff-commit-editor" class="grid grid-cols-[1fr_auto] items-center gap-2 px-2.5 py-2 border-b border-[var(--border-subtle)] bg-[var(--bg-inset)]/60">
+            <input
+              type="text"
+              value={commitMsg()}
+              tabIndex={diffs().length > 0 && commitExpanded() ? 0 : -1}
+              onInput={(ev) => setCommitMsg(ev.currentTarget.value)}
+              onKeyDown={(ev) => {
+                if (ev.key === "Enter" && !ev.isComposing) {
+                  ev.preventDefault();
+                  void onCommitWorktree(false);
+                }
+              }}
+              placeholder={t("inspector.diffs.commitPlaceholder")}
+              aria-label={t("inspector.diffs.commitPlaceholder")}
+              class="min-w-0 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2 py-1.5 text-[12px] font-mono text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none focus:border-[var(--accent-border)]"
+            />
             <button
               type="button"
-              disabled={!commitMsg().trim() || committing() || pushing()}
-              onClick={() => void onCommitWorktree(false)}
-              class="inline-flex items-center gap-1 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[11px] font-medium text-[var(--text-primary)] hover:bg-[var(--bg-hover)] disabled:opacity-40 transition-colors cursor-pointer"
+              onClick={onGenerateAICommit}
+              class="hoxi-press shrink-0 rounded-md p-1.5 text-[var(--violet-text)] hover:bg-[var(--violet-surface)] cursor-pointer"
+              title={t("inspector.diffs.generateCommitTooltip")}
+              aria-label={t("inspector.diffs.generateCommitBtn")}
             >
-              <GitCommitHorizontal size={12} />
-              <span>
-                {committing() && !pushing()
-                  ? t("inspector.diffs.committing")
-                  : t("inspector.diffs.commitBtn", { count: diffs().length })}
-              </span>
+              <Sparkles size={11} />
             </button>
-            <button
-              type="button"
-              disabled={!commitMsg().trim() || committing() || pushing()}
-              onClick={() => void onCommitWorktree(true)}
-              class="inline-flex items-center gap-1 rounded-md bg-[var(--accent-primary)] px-2.5 py-1 text-[11px] font-semibold text-[var(--accent-foreground)] hover:opacity-90 disabled:opacity-40 transition-opacity cursor-pointer"
-            >
-              <ArrowUpFromLine size={11} />
-              <span>
-                {pushing()
-                  ? t("inspector.diffs.pushingBtn")
-                  : t("inspector.diffs.commitAndPushBtn")}
-              </span>
-            </button>
+            <div class="col-span-2 flex items-center justify-end gap-1.5">
+              <button
+                type="button"
+                disabled={!commitMsg().trim() || committing() || pushing()}
+                onClick={() => void onCommitWorktree(false)}
+                class="hoxi-press inline-flex items-center gap-1 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[11px] font-medium text-[var(--text-primary)] hover:bg-[var(--bg-hover)] disabled:opacity-40 cursor-pointer"
+              >
+                <GitCommitHorizontal size={12} />
+                <span>
+                  {committing() && !pushing()
+                    ? t("inspector.diffs.committing")
+                    : t("inspector.diffs.commitBtn", { count: diffs().length })}
+                </span>
+              </button>
+              <button
+                type="button"
+                disabled={!commitMsg().trim() || committing() || pushing()}
+                onClick={() => void onCommitWorktree(true)}
+                class="hoxi-press inline-flex items-center gap-1 rounded-md bg-[var(--accent-primary)] px-2.5 py-1 text-[11px] font-semibold text-[var(--accent-foreground)] hover:opacity-90 disabled:opacity-40 cursor-pointer"
+              >
+                <ArrowUpFromLine size={11} />
+                <span>
+                  {pushing()
+                    ? t("inspector.diffs.pushingBtn")
+                    : t("inspector.diffs.commitAndPushBtn")}
+                </span>
+              </button>
+            </div>
           </div>
         </div>
-      </Show>
+      </div>
 
       <Show when={committedHash()}>
         {(hash) => (
-          <div class="shrink-0 flex items-center justify-between gap-2 px-3 py-1.5 bg-[var(--ok-surface)] text-[11px] font-mono text-[var(--ok-text)] border-b border-[var(--ok-border)]">
+          <div class="hoxi-view-enter shrink-0 flex items-center justify-between gap-2 px-3 py-1.5 bg-[var(--ok-surface)] text-[11px] font-mono text-[var(--ok-text)] border-b border-[var(--ok-border)]">
             <div class="flex items-center gap-1.5 min-w-0 truncate">
               <Check size={11} class="shrink-0" />
               <span class="truncate">{t("inspector.diffs.commitSuccess", { hash: hash() })}</span>
@@ -459,7 +466,7 @@ export default function PierreDiffViewer() {
                 type="button"
                 disabled={pushing()}
                 onClick={() => void onOpenCreatePR()}
-                class="shrink-0 inline-flex items-center gap-1 rounded-md border border-[var(--ok-border)] bg-[var(--bg-panel)]/80 px-2 py-0.5 text-[10.5px] font-sans font-medium text-[var(--ok-text)] hover:bg-[var(--bg-panel)] cursor-pointer"
+                class="hoxi-press shrink-0 inline-flex items-center gap-1 rounded-md border border-[var(--ok-border)] bg-[var(--bg-panel)]/80 px-2 py-0.5 text-[10.5px] font-sans font-medium text-[var(--ok-text)] hover:bg-[var(--bg-panel)] cursor-pointer"
               >
                 <GitPullRequestArrow size={10} />
                 <span>{t("inspector.diffs.createPrBtn")}</span>
@@ -480,36 +487,40 @@ export default function PierreDiffViewer() {
             (workspace.diffScope === "worktree" && hasMultipleRepos())
           }
           fallback={
-            <DiffEmptyState
-              refreshing={refreshing()}
-              onRefresh={() => void onRefresh()}
-            />
+            <div class="hoxi-fade-enter">
+              <DiffEmptyState
+                refreshing={refreshing()}
+                onRefresh={() => void onRefresh()}
+              />
+            </div>
           }
         >
           <Show
             when={selectedDiff()}
             fallback={
-              <Show
-                when={hasMultipleRepos()}
-                fallback={
-                  <DiffFileTree
+              <div class="hoxi-view-enter space-y-1.5">
+                <Show
+                  when={hasMultipleRepos()}
+                  fallback={
+                    <DiffFileTree
+                      diffs={previewDiffs()}
+                      onSelectFile={(file) => setWorkspace("inspectedDiffFile", file)}
+                    />
+                  }
+                >
+                  <MultiRepoDiffView
+                    repos={repos()}
                     diffs={previewDiffs()}
                     onSelectFile={(file) => setWorkspace("inspectedDiffFile", file)}
                   />
-                }
-              >
-                <MultiRepoDiffView
-                  repos={repos()}
-                  diffs={previewDiffs()}
-                  onSelectFile={(file) => setWorkspace("inspectedDiffFile", file)}
-                />
-                <Show when={previewDiffs().length === 0}>
-                  <DiffEmptyState
-                    refreshing={refreshing()}
-                    onRefresh={() => void onRefresh()}
-                  />
+                  <Show when={previewDiffs().length === 0}>
+                    <DiffEmptyState
+                      refreshing={refreshing()}
+                      onRefresh={() => void onRefresh()}
+                    />
+                  </Show>
                 </Show>
-              </Show>
+              </div>
             }
           >
             {(activeDiff) => (

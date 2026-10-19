@@ -122,16 +122,13 @@ func TestEvaluateStaticCodeRulesAndParseObserverAudit(t *testing.T) {
 		t.Fatalf("expected English static rules issues, got deduction=%d issues=%v", deductionEn, issuesEn)
 	}
 
-	score, summary, parsedIssues := parseObserverAuditJSON("```json\n{\"score\": 68, \"pass\": false, \"summary\": \"Missing error handling\", \"issues\": [\"Unchecked null pointer\"]}\n```")
-	if score != 68 || summary != "Missing error handling" || len(parsedIssues) != 1 {
+	score, summary, parsedIssues, err := parseObserverAuditJSON("```json\n{\"score\": 68, \"pass\": false, \"summary\": \"Missing error handling\", \"issues\": [\"Unchecked null pointer\"]}\n```")
+	if err != nil || score != 68 || summary != "Missing error handling" || len(parsedIssues) != 1 {
 		t.Fatalf("unexpected parsed observer JSON: score=%d summary=%q issues=%v", score, summary, parsedIssues)
 	}
 
-	if s, _, _ := parseObserverAuditJSON("92"); s != 92 {
+	if s, _, _, err := parseObserverAuditJSON("92"); err != nil || s != 92 {
 		t.Errorf("expected numeric score 92, got %d", s)
-	}
-	if s, sum, _ := parseObserverAuditJSON("Looks good overall"); s != 85 || sum != "Looks good overall" {
-		t.Errorf("expected fallback score 85, got %d (%q)", s, sum)
 	}
 
 	// Test extractLLMTextContent for OpenAI, Anthropic, and raw fallback
@@ -143,6 +140,29 @@ func TestEvaluateStaticCodeRulesAndParseObserverAudit(t *testing.T) {
 	}
 	if got := extractLLMTextContent([]byte(`plain text`)); got != "plain text" {
 		t.Errorf("extractLLMTextContent fallback = %q", got)
+	}
+}
+
+func TestParseObserverAuditScoreValidation(t *testing.T) {
+	for _, text := range []string{`{"score":0}`, `{"score":100}`, "0", "100"} {
+		t.Run(text, func(t *testing.T) {
+			score, _, _, err := parseObserverAuditJSON(text)
+			if err != nil || (score != 0 && score != 100) {
+				t.Fatalf("expected valid boundary score, got %d, %v", score, err)
+			}
+		})
+	}
+	for _, text := range []string{
+		"", "Looks good overall", "{}", "null", `{"score":null}`, `{"score":"0"}`,
+		`{"score":-1}`, `{"score":101}`, `{"score":1.5}`, `{"score":NaN}`,
+		`{"score":Infinity}`, `{"score":1e999}`, `{"score":0`, `{"score":0} garbage`,
+		`{"score":0,"issues":"invalid"}`, "NaN", "Inf", "-1", "101",
+	} {
+		t.Run(text, func(t *testing.T) {
+			if _, _, _, err := parseObserverAuditJSON(text); err == nil {
+				t.Fatalf("expected invalid audit response to fail: %q", text)
+			}
+		})
 	}
 }
 
@@ -367,5 +387,3 @@ func TestIsLoopbackURL(t *testing.T) {
 		}
 	}
 }
-
-

@@ -160,6 +160,13 @@ export async function runSessionCodeAudit(
   if (!force && !workspace.observerAutoAudit) return null;
   if (workspace.auditingBySession[sessionID]) return null;
 
+  // A failed or unfinished execution is not an assessable result-quality sample.
+  const latestAssistant = (workspace.messagesBySession[sessionID] ?? [])
+    .slice().reverse().find((turn) => turn.info.role === "assistant");
+  if (!latestAssistant || latestAssistant.info.error || !latestAssistant.info.time?.completed) {
+    return null;
+  }
+
   const diffs = workspace.diffsBySession[sessionID] ?? [];
   if (diffs.length === 0) return null;
 
@@ -202,7 +209,7 @@ export async function runSessionCodeAudit(
       locale: locale(),
     });
 
-    if (!res.ok) return null;
+    if (!res.ok || !Number.isFinite(res.score) || res.score < 0 || res.score > 100) return null;
 
     const enriched: CodeAuditResult = {
       ...res,
@@ -235,13 +242,13 @@ export async function runSessionCodeAudit(
             workerModelID
           );
         }
-        rec.auditScores = pushSample(rec.auditScores, res.score);
+        rec.auditScores = pushSample(rec.auditScores, res.score, true);
         rec.lastAuditScore = res.score;
         rec.lastAuditPass = res.pass;
         rec.lastAuditSummary = res.summary;
         rec.updatedAt = Date.now();
         if (m) {
-          m.auditScores = pushSample(m.auditScores, res.score);
+          m.auditScores = pushSample(m.auditScores, res.score, true);
           m.lastAuditScore = res.score;
           m.lastAuditPass = res.pass;
           m.lastAuditSummary = res.summary;

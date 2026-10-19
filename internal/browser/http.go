@@ -16,17 +16,20 @@ import (
 )
 
 type Action struct {
-	Action   string  `json:"action"`
-	URL      string  `json:"url,omitempty"`
-	Selector string  `json:"selector,omitempty"`
-	Text     string  `json:"text,omitempty"`
-	Key      string  `json:"key,omitempty"`
-	X        float64 `json:"x,omitempty"`
-	Y        float64 `json:"y,omitempty"`
-	DeltaX   float64 `json:"deltaX,omitempty"`
-	DeltaY   float64 `json:"deltaY,omitempty"`
-	TabID    string  `json:"tabID,omitempty"`
-	Manual   *bool   `json:"manual,omitempty"`
+	Action            string   `json:"action"`
+	URL               string   `json:"url,omitempty"`
+	Selector          string   `json:"selector,omitempty"`
+	Text              string   `json:"text,omitempty"`
+	Key               string   `json:"key,omitempty"`
+	X                 float64  `json:"x,omitempty"`
+	Y                 float64  `json:"y,omitempty"`
+	DeltaX            float64  `json:"deltaX,omitempty"`
+	DeltaY            float64  `json:"deltaY,omitempty"`
+	TabID             string   `json:"tabID,omitempty"`
+	Manual            *bool    `json:"manual,omitempty"`
+	Width             *int     `json:"width,omitempty"`
+	Height            *int     `json:"height,omitempty"`
+	DeviceScaleFactor *float64 `json:"deviceScaleFactor,omitempty"`
 }
 
 type Tab struct {
@@ -46,6 +49,7 @@ type State struct {
 func emptyState() State { return State{Tabs: []Tab{}} }
 
 func (s *Service) RegisterRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("/api/hoxi/browser/stream", s.serveStream)
 	for _, path := range []string{"state", "frame", "action"} {
 		mux.HandleFunc("/api/hoxi/browser/"+path, s.serveHTTP)
 	}
@@ -212,6 +216,16 @@ func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if path == "action" && action.Action == "control" {
 		sc.manual = *action.Manual
+	} else if path == "action" && action.Action == "resize" {
+		scale := 1.0
+		if action.DeviceScaleFactor != nil {
+			scale = *action.DeviceScaleFactor
+		}
+		if sc.width != *action.Width || sc.height != *action.Height || sc.scale != scale {
+			sc.stopStream()
+		}
+		sc.width, sc.height = *action.Width, *action.Height
+		sc.scale = scale
 	} else if path == "action" {
 		if err = sc.start(ctx); err != nil {
 			s.remove(key, sc)

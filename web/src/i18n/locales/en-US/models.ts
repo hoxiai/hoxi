@@ -182,14 +182,25 @@ export const models = {
   agentRemoved: "Removed custom mode \"{id}\".",
   removeAgentTooltip: "Remove custom mode",
   modeBadge: "mode",
-  qualityTitle: "Provider Connection Quality",
+  qualityTitle: "Provider Stability & Quality",
   qualitySubtitle:
-    "Live metrics based on latency, timeouts, tool accuracy, and rollbacks",
+    "Independent 0-100 scores for turn success and audited code quality, with supporting diagnostics",
   qualityUntested: "No metrics yet (send a message or test connection)",
   qualityGradeHealthy: "Stable",
   qualityGradeWarning: "Fluctuating",
   qualityGradeDegraded: "Degraded",
-  qualityScoreBadge: "{score} pts",
+  qualityScoreBadge: "{score}/100",
+  qualityStabilityScore: "Stability",
+  qualityQualityScore: "Quality",
+  qualityNoRating: "No rating",
+  qualityNoData: "—",
+  qualitySamplesCount: "{count} valid code reviews",
+  qualityStabilityExplanation:
+    "Successful turns as a percentage of all turns (0-100). Independent of code review quality; no rating without turn samples.",
+  qualityQualityExplanation:
+    "Average valid code review score (0-100). Independent of turn success; no rating without valid scored reviews.",
+  qualityScoresTooltip:
+    "Overall status: {status}. Stability: {stability}, based on successful turns across {turns} turns. Quality: {quality}, the average of {audits} valid scored code reviews. Both scores are independent and range from 0 to 100; missing samples mean no rating.",
   qualityMetricSpeed: "TTFT / Throughput",
   qualityMetricSuccess: "Success / Timeouts",
   qualityMetricTools: "Tool Accuracy",

@@ -332,8 +332,9 @@ export default function FileTreeView() {
       </div>
 
       <div
-        style={{ display: previewPath() ? "none" : undefined }}
-        class="inspector-scroll flex-1 min-h-0 overflow-y-auto px-2 py-2 space-y-0.5"
+        class={`inspector-scroll flex-1 min-h-0 overflow-y-auto px-2 py-2 space-y-0.5 ${
+          previewPath() ? "hidden" : "hoxi-view-enter"
+        }`}
       >
         <Show
           when={results().length > 0}

@@ -129,7 +129,7 @@ export function SessionNavItem(props: SessionNavItemProps) {
   return (
     <div
       ref={rowRef}
-      class={`group/row relative flex items-center justify-between gap-1 rounded-lg px-2.5 py-1.5 cursor-pointer transition-colors overflow-hidden ${
+      class={`hoxi-press group/row relative flex items-center justify-between gap-1 rounded-lg px-2.5 py-1.5 cursor-pointer overflow-hidden ${
         confirmingDelete()
           ? "bg-[var(--danger-surface)] text-[var(--text-primary)] ring-1 ring-[var(--danger-border)]"
           : isEffectiveActive()

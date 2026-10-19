@@ -19,30 +19,21 @@ import {
 import { t } from "../../i18n";
 import {
   formatTtftLabel,
+  formatHealthScore,
   incidentTypeLabel,
   ProviderHealthBadge,
   riskTagLabel,
-  statusColors,
 } from "./ProviderHealthBadge";
 
 export { formatTtftLabel, ProviderHealthBadge, riskTagLabel };
 
 /**
- * Full 4-dimension Relay Quality & Anti-Hallucination Scorecard for CustomEndpointTab / ProviderConnectView.
+ * Independent stability and quality scores with supporting provider diagnostics.
  */
 export default function ProviderQualityCard(props: { providerID: string }) {
   const pid = () => props.providerID.trim();
   const health = createMemo(() => computeProviderHealth(pid()));
   const rawRecord = createMemo(() => workspace.providerTelemetry[pid()]);
-  const colors = createMemo(() => statusColors(health().status));
-
-  const gradeLabel = createMemo(() => {
-    const s = health().status;
-    if (s === "healthy") return t("models.qualityGradeHealthy");
-    if (s === "warning") return t("models.qualityGradeWarning");
-    if (s === "degraded") return t("models.qualityGradeDegraded");
-    return "—";
-  });
 
   return (
     <Show when={pid().length > 0}>
@@ -61,23 +52,13 @@ export default function ProviderQualityCard(props: { providerID: string }) {
               <Activity size={14} />
             </div>
             <div class="min-w-0">
-              <div class="flex items-center gap-2">
+              <div class="flex flex-wrap items-center gap-2">
                 <span class="text-[12px] font-semibold text-[var(--text-primary)]">
                   {t("models.qualityTitle")}
                 </span>
-                <Show when={health().status !== "untested"}>
-                  <span
-                    class={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10.5px] font-semibold ${colors().pill}`}
-                  >
-                    <span class={`h-1.5 w-1.5 rounded-full ${colors().dot}`} />
-                    <span>
-                      {health().grade} · {t("models.qualityScoreBadge", { score: health().score })} ·{" "}
-                      {gradeLabel()}
-                    </span>
-                  </span>
-                </Show>
+                <ProviderHealthBadge providerID={pid()} compact />
               </div>
-              <div class="text-[10.5px] text-[var(--text-muted)] truncate">
+              <div class="text-[10.5px] text-[var(--text-muted)]">
                 {t("models.qualitySubtitle")}
               </div>
             </div>
@@ -98,6 +79,37 @@ export default function ProviderQualityCard(props: { providerID: string }) {
               </button>
             </div>
           </Show>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <div class="py-2 space-y-1">
+            <div class="text-[11px] font-medium text-[var(--text-secondary)]">
+              {t("models.qualityStabilityScore")}
+            </div>
+            <div class="font-mono text-base text-[var(--text-secondary)]">
+              {formatHealthScore(health().stabilityScore)}
+            </div>
+            <div class="text-[10.5px] text-[var(--text-muted)]">
+              {t("models.qualityTurnsCount", { count: health().totalTurns })}
+            </div>
+            <p class="text-[10.5px] text-[var(--text-muted)]">
+              {t("models.qualityStabilityExplanation")}
+            </p>
+          </div>
+          <div class="py-2 space-y-1">
+            <div class="text-[11px] font-medium text-[var(--text-secondary)]">
+              {t("models.qualityQualityScore")}
+            </div>
+            <div class="font-mono text-base text-[var(--text-secondary)]">
+              {formatHealthScore(health().qualityScore)}
+            </div>
+            <div class="text-[10.5px] text-[var(--text-muted)]">
+              {t("models.qualitySamplesCount", { count: health().qualitySampleCount })}
+            </div>
+            <p class="text-[10.5px] text-[var(--text-muted)]">
+              {t("models.qualityQualityExplanation")}
+            </p>
+          </div>
         </div>
 
         <Show
@@ -165,7 +177,7 @@ export default function ProviderQualityCard(props: { providerID: string }) {
                 <span class="truncate">{t("models.qualityMetricTools")}</span>
               </div>
               <div class="font-mono text-[13px] font-semibold text-[var(--text-primary)]">
-                {health().toolSuccessRate !== null ? `${health().toolSuccessRate}%` : "100%"}
+                {health().toolSuccessRate !== null ? `${health().toolSuccessRate}%` : t("models.qualityNoData")}
               </div>
               <div class="text-[10px] font-mono text-[var(--text-faint)] truncate">
                 {t("models.qualityHallucinationSub", {
@@ -192,7 +204,7 @@ export default function ProviderQualityCard(props: { providerID: string }) {
                   {t("models.qualityPassRateSub", {
                     passed: health().auditPassCount,
                     total: health().auditTotalCount,
-                    avgScore: health().avgAuditScore ?? 0,
+                    avgScore: health().avgAuditScore ?? t("models.qualityNoData"),
                   })}
                 </Show>
               </div>

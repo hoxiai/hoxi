@@ -1,7 +1,6 @@
 // web/src/components/inspector/diff-file-tree.tsx
 import { createMemo, createSignal, For, Show } from "solid-js";
 import {
-  ChevronDown,
   ChevronRight,
   ChevronsDownUp,
   ChevronsUpDown,
@@ -384,14 +383,12 @@ export default function DiffFileTree(props: {
                     style={{ "padding-left": `${folderRow.depth * 14 + 10}px` }}
                   >
                     <div class="flex items-center gap-1.5 min-w-0 flex-1">
-                      <Show
-                        when={!collapsed()[folderRow.id]}
-                        fallback={
-                          <ChevronRight size={12} class="text-[var(--text-muted)] shrink-0" />
-                        }
+                      <span
+                        class="hoxi-chevron text-[var(--text-muted)] shrink-0"
+                        data-open={!collapsed()[folderRow.id] ? "true" : "false"}
                       >
-                        <ChevronDown size={12} class="text-[var(--text-muted)] shrink-0" />
-                      </Show>
+                        <ChevronRight size={12} />
+                      </span>
                       <Show
                         when={!collapsed()[folderRow.id]}
                         fallback={

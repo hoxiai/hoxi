@@ -1,6 +1,6 @@
 import { createEffect, createMemo, createSignal, For, onCleanup, Show, untrack } from "solid-js";
 import { ArrowLeft, ArrowRight, Globe, Plus, Power, RefreshCw, X } from "lucide-solid";
-import { browserAPI, browserPoint, type BrowserAction, type BrowserScope, type BrowserState } from "../../services/browser";
+import { browserAPI, browserPoint, connectBrowserStream, type BrowserAction, type BrowserScope, type BrowserState } from "../../services/browser";
 import { sessionDirectory, setWorkspace, workspace } from "../../store/workspace";
 import { t } from "../../i18n";
 
@@ -17,8 +17,7 @@ interface Connection {
   tabEpoch: number;
   pending: number;
   navPending: number;
-  fetchingFrame: boolean;
-  lastFrameAt: number;
+  streamDirty: boolean;
   pendingScroll: PendingScroll | null;
   pendingType: string;
   flushScheduled: boolean;
@@ -29,7 +28,7 @@ const NAV_ACTIONS = new Set<BrowserAction["action"]>([
   "navigate", "back", "forward", "reload", "tab_new", "tab_select", "tab_close", "close", "control",
 ]);
 const TAB_EPOCH_ACTIONS = new Set<BrowserAction["action"]>([
-  "tab_new", "tab_select", "tab_close", "close",
+  "tab_new", "tab_select", "tab_close", "resize", "close",
 ]);
 
 export default function BrowserInspector() {
@@ -40,6 +39,9 @@ export default function BrowserInspector() {
   const [pollError, setPollError] = createSignal("");
   const [busy, setBusy] = createSignal(false);
   const [visible, setVisible] = createSignal(!document.hidden);
+  const [viewport, setViewport] = createSignal<{ width: number; height: number; deviceScaleFactor: number } | null>(null);
+  const [streamGeneration, setStreamGeneration] = createSignal(0);
+  let frameSize = { width: 0, height: 0 };
   const scope = createMemo(() => {
     const sessionID = workspace.activeSessionID;
     const directory = sessionID ? sessionDirectory(sessionID) : undefined;
@@ -49,16 +51,38 @@ export default function BrowserInspector() {
   let input: HTMLTextAreaElement | undefined;
   let composing = false;
   let editingURL = false;
+  let frameEpoch = -1;
   const iconBtn = "shrink-0 rounded p-1 hover:bg-[var(--bg-hover)] disabled:opacity-40 cursor-pointer transition-colors";
   const running = () => Boolean(state()?.tabs.length);
+  const selectedTab = createMemo(() => state()?.tabID);
   const visibility = () => setVisible(!document.hidden);
   document.addEventListener("visibilitychange", visibility);
   onCleanup(() => document.removeEventListener("visibilitychange", visibility));
 
+  function observeViewport(element: HTMLDivElement) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const observer = new ResizeObserver(([entry]) => {
+      clearTimeout(timer);
+      const width = Math.min(4096, Math.floor(entry.contentRect.width));
+      const height = Math.min(4096, Math.floor(entry.contentRect.height));
+      if (width < 1 || height < 1) return;
+      // Bound screenshot memory while retaining the panel's aspect ratio.
+      const scale = Math.min(1, Math.sqrt(8388608 / (width * height)));
+      timer = setTimeout(() => {
+        const next = { width: Math.max(1, Math.floor(width * scale)), height: Math.max(1, Math.floor(height * scale)), deviceScaleFactor: 1 };
+        next.deviceScaleFactor = Math.max(1, Math.min(2, window.devicePixelRatio || 1,
+          Math.sqrt(8388608 / ((next.width + 1) * (next.height + 1)))));
+        setViewport(previous => previous?.width === next.width && previous.height === next.height && previous.deviceScaleFactor === next.deviceScaleFactor ? previous : next);
+      }, 100);
+    });
+    observer.observe(element);
+    onCleanup(() => { observer.disconnect(); clearTimeout(timer); });
+  }
+
   function replaceFrame(next: string | null) {
     const previous = frame();
     setFrame(next);
-    if (previous) URL.revokeObjectURL(previous);
+    if (previous?.startsWith("blob:")) URL.revokeObjectURL(previous);
   }
 
   function valid(connection: Connection) {
@@ -68,30 +92,10 @@ export default function BrowserInspector() {
   }
 
   function applyState(next: BrowserState) {
+    if (state()?.tabID !== next.tabID) replaceFrame(null);
     setState(next);
     if (!editingURL) setURL(next.url || "");
     if (!next.tabs.length) replaceFrame(null);
-  }
-
-  async function pullFrame(connection: Connection) {
-    if (!valid(connection) || connection.fetchingFrame || !running()) return;
-    connection.fetchingFrame = true;
-    const epoch = connection.tabEpoch;
-    try {
-      const blob = await browserAPI.frame(connection.scope, connection.controller.signal);
-      if (!valid(connection) || epoch !== connection.tabEpoch) return;
-      if (blob) {
-        replaceFrame(URL.createObjectURL(blob));
-        connection.lastFrameAt = performance.now();
-      } else if (!running()) {
-        replaceFrame(null);
-      }
-      setPollError("");
-    } catch (err) {
-      if (valid(connection)) setPollError(String(err));
-    } finally {
-      connection.fetchingFrame = false;
-    }
   }
 
   function enqueueAction(connection: Connection, action: BrowserAction) {
@@ -99,6 +103,10 @@ export default function BrowserInspector() {
     const isNav = NAV_ACTIONS.has(action.action);
     if (TAB_EPOCH_ACTIONS.has(action.action)) connection.tabEpoch++;
     connection.pending++;
+    if (TAB_EPOCH_ACTIONS.has(action.action)) {
+      connection.streamDirty = true;
+      setStreamGeneration(value => value + 1);
+    }
     if (isNav) {
       connection.navPending++;
       setBusy(true);
@@ -122,10 +130,9 @@ export default function BrowserInspector() {
         }
         if (valid(connection)) {
           flushBufferedInputs(connection);
-          const now = performance.now();
-          if (action.action !== "close" && action.action !== "control" &&
-            (connection.pending === 0 || now - connection.lastFrameAt >= 120)) {
-            void pullFrame(connection);
+          if (connection.pending === 0 && connection.streamDirty) {
+            connection.streamDirty = false;
+            setStreamGeneration(value => value + 1);
           }
         }
       }
@@ -160,6 +167,10 @@ export default function BrowserInspector() {
   function send(action: BrowserAction) {
     const connection = current;
     if (!connection || !valid(connection)) return;
+    if (!running() && (action.action === "navigate" || action.action === "tab_new")) {
+      const size = viewport();
+      if (size) enqueueAction(connection, { action: "resize", ...size });
+    }
     if (action.action === "scroll") {
       const dx = action.deltaX ?? 0;
       const dy = action.deltaY ?? 0;
@@ -215,14 +226,50 @@ export default function BrowserInspector() {
       tabEpoch: 0,
       pending: 0,
       navPending: 0,
-      fetchingFrame: false,
-      lastFrameAt: 0,
+      streamDirty: false,
       pendingScroll: null,
       pendingType: "",
       flushScheduled: false,
       queue: Promise.resolve(),
     };
     current = connection;
+    createEffect(() => {
+      streamGeneration();
+      const tabID = selectedTab();
+      const base = workspace.wsBaseURL || `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}`;
+      if (!tabID) return;
+      if (connection.pending > 0) { connection.streamDirty = true; return; }
+      const epoch = connection.tabEpoch;
+      let disposed = false;
+      let raf = 0;
+      let finish: (() => void) | undefined;
+      const stop = connectBrowserStream(connection.scope, base, async next => {
+        if (disposed || !valid(connection) || epoch !== connection.tabEpoch || next.tabID !== state()?.tabID) return;
+        const src = `data:image/jpeg;base64,${next.image}`;
+        const image = new Image();
+        image.src = src;
+        await image.decode();
+        if (disposed || !valid(connection) || epoch !== connection.tabEpoch || next.tabID !== state()?.tabID) return;
+        await new Promise<void>(resolve => {
+          finish = resolve;
+          raf = requestAnimationFrame(() => {
+            finish = undefined;
+            if (!disposed && valid(connection) && epoch === connection.tabEpoch && next.tabID === state()?.tabID) {
+              frameSize = { width: next.width, height: next.height };
+              frameEpoch = epoch;
+              replaceFrame(src);
+              setPollError("");
+            }
+            resolve();
+          });
+        });
+      }, message => { if (!disposed && valid(connection)) setPollError(message); });
+      onCleanup(() => { disposed = true; stop(); cancelAnimationFrame(raf); finish?.(); });
+    });
+    createEffect(() => {
+      const size = viewport();
+      if (size) untrack(() => enqueueAction(connection, { action: "resize", ...size }));
+    });
     untrack(consumePendingBrowserURL);
     let timer: ReturnType<typeof setTimeout> | undefined;
     async function poll() {
@@ -232,14 +279,11 @@ export default function BrowserInspector() {
           if (!valid(connection)) return;
           if (connection.pending === 0) applyState(next);
         }
-        if (running()) {
-          await pullFrame(connection);
-        }
         setPollError("");
       } catch (err) {
         if (valid(connection)) setPollError(String(err));
       } finally {
-        if (valid(connection)) timer = setTimeout(poll, running() ? 250 : 600);
+        if (valid(connection)) timer = setTimeout(poll, 1000);
       }
     }
     // Polling must not subscribe this connection lifecycle to browser state.
@@ -329,7 +373,7 @@ export default function BrowserInspector() {
           </div>
         </Show>
         <Show when={error() || pollError()}><p role="alert" class="px-2 py-1 text-[11px] text-red-500 break-words border-b border-[var(--border-subtle)]">{t("inspector.browser.error", { error: error() || pollError() })}</p></Show>
-        <div class="inspector-scroll flex-1 min-h-0 overflow-auto p-1">
+        <div ref={observeViewport} class="flex-1 min-h-0 overflow-hidden">
           <Show when={frame()} fallback={
             <div class="flex min-h-full flex-col items-center justify-center gap-4 px-6 py-10 text-center text-[var(--text-muted)]">
               <Show when={!busy() && !running()} fallback={
@@ -351,12 +395,16 @@ export default function BrowserInspector() {
           }>
             <div class="relative">
               <img src={frame()!} alt={t("inspector.browser.viewport")} draggable={false} class="block w-full h-auto rounded-sm cursor-crosshair select-none" onClick={(event) => {
-                const point = browserPoint(event.currentTarget.getBoundingClientRect(), event.clientX, event.clientY);
+                if (!current || frameEpoch !== current.tabEpoch) return;
+                const point = browserPoint(event.currentTarget.getBoundingClientRect(), event.clientX, event.clientY,
+                  frameSize);
                 if (point) { send({ action: "click", ...point }); input?.focus({ preventScroll: true }); }
               }} onWheel={(event) => {
                 event.preventDefault();
-                const point = browserPoint(event.currentTarget.getBoundingClientRect(), event.clientX, event.clientY);
-                const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? 800 : 1;
+                if (!current || frameEpoch !== current.tabEpoch) return;
+                const point = browserPoint(event.currentTarget.getBoundingClientRect(), event.clientX, event.clientY,
+                  frameSize);
+                const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? frameSize.height : 1;
                 if (point) send({ action: "scroll", ...point, deltaX: event.deltaX * unit, deltaY: event.deltaY * unit });
               }} />
               <textarea ref={input} class="absolute left-0 top-0 w-px h-px opacity-0" aria-label={t("inspector.browser.keyboard")} autocapitalize="off" autocomplete="off" spellcheck={false}

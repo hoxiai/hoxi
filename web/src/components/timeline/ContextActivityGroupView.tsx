@@ -560,8 +560,11 @@ export default function ContextActivityGroupView(props: {
               </span>
             </Show>
 
-            <span class="text-[var(--text-faint)] inline-flex items-center">
-              <Icon name={open() ? "chevron-down" : "chevron-right"} size="small" />
+            <span
+              class="hoxi-chevron text-[var(--text-faint)]"
+              data-open={open() ? "true" : "false"}
+            >
+              <Icon name="chevron-right" size="small" />
             </span>
           </div>
         </button>

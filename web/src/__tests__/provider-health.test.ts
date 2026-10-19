@@ -10,6 +10,7 @@ import {
 } from "../components/timeline/tool-card-helpers";
 import type { PermissionRequest, ToolPart } from "../services/sse-types";
 import { computeProviderHealth } from "../store/provider-health";
+import { emptyStats, pushSample } from "../store/provider-telemetry";
 import { setWorkspace } from "../store/workspace";
 import { assertDeepEqual, assertEqual, assertTrue, describe, it } from "./test-harness";
 
@@ -71,7 +72,8 @@ describe("provider telemetry health scoring", () => {
   it("grades untested, healthy, and degraded providers accurately", () => {
     const untested = computeProviderHealth("non_existent_provider");
     assertEqual(untested.status, "untested");
-    assertEqual(untested.grade, "—");
+    assertEqual(untested.stabilityScore, null);
+    assertEqual(untested.qualityScore, null);
 
     setWorkspace("providerTelemetry", "openai_test", {
       providerID: "openai_test",
@@ -93,8 +95,8 @@ describe("provider telemetry health scoring", () => {
 
     const healthy = computeProviderHealth("openai_test");
     assertEqual(healthy.status, "healthy");
-    assertTrue(healthy.score >= 90, "expected healthy provider score >= 90");
-    assertEqual(healthy.grade, "S");
+    assertEqual(healthy.stabilityScore, 100);
+    assertEqual(healthy.qualityScore, null);
     assertEqual(healthy.avgTtftMs, 450);
 
     setWorkspace("providerTelemetry", "relay_downgraded", {
@@ -122,6 +124,8 @@ describe("provider telemetry health scoring", () => {
     const downgraded = computeProviderHealth("relay_downgraded");
     assertEqual(downgraded.codePassRate, 25);
     assertEqual(downgraded.avgAuditScore, 60);
+    assertEqual(downgraded.qualityScore, 60);
+    assertEqual(downgraded.stabilityScore, 100);
     assertTrue(
       downgraded.riskTags.includes("low_pass_rate"),
       "expected low_pass_rate risk tag when codePassRate < 65%"
@@ -152,7 +156,8 @@ describe("provider telemetry health scoring", () => {
 
     const probeOnly = computeProviderHealth("probe_only_provider");
     assertEqual(probeOnly.status, "untested");
-    assertEqual(probeOnly.score, 0);
+    assertEqual(probeOnly.stabilityScore, null);
+    assertEqual(probeOnly.qualityScore, null);
 
     setWorkspace("providerTelemetry", "multi_model_provider", {
       providerID: "multi_model_provider",
@@ -192,12 +197,53 @@ describe("provider telemetry health scoring", () => {
 
     const scoredModel = computeProviderHealth("multi_model_provider", "model-scored");
     assertEqual(scoredModel.status, "healthy");
-    assertTrue(scoredModel.score >= 90, "expected scored model to have score >= 90");
+    assertEqual(scoredModel.stabilityScore, 100);
+    assertEqual(scoredModel.qualityScore, null);
 
     const unscoredSiblingModel = computeProviderHealth("multi_model_provider", "model-never-run");
     assertEqual(unscoredSiblingModel.status, "untested");
-    assertEqual(unscoredSiblingModel.score, 0);
-    assertEqual(unscoredSiblingModel.grade, "—");
+    assertEqual(unscoredSiblingModel.stabilityScore, null);
+    assertEqual(unscoredSiblingModel.qualityScore, null);
+  });
+
+  it("keeps request failures, retries and speed separate from result quality", () => {
+    setWorkspace("providerTelemetry", "independent_scores", {
+      ...emptyStats("independent_scores"),
+      totalTurns: 10,
+      successTurns: 5,
+      errorTurns: 5,
+      timeoutTurns: 8,
+      retryCount: 9,
+      toolCallsTotal: 5,
+      toolCallsFailed: 5,
+      hallucinationFlags: 3,
+      ttftSamplesMs: [25000],
+      tpsSamples: [5],
+      auditTotalCount: 2,
+      auditPassCount: 2,
+      auditScores: [90, 100],
+    });
+    const health = computeProviderHealth("independent_scores");
+    assertEqual(health.stabilityScore, 50);
+    assertEqual(health.qualityScore, 95);
+    assertEqual(health.qualitySampleCount, 2);
+  });
+
+  it("keeps failure-only quality unrated and accepts genuine zero quality", () => {
+    setWorkspace("providerTelemetry", "failure_only", {
+      ...emptyStats("failure_only"), totalTurns: 3, errorTurns: 3,
+    });
+    assertEqual(computeProviderHealth("failure_only").stabilityScore, 0);
+    assertEqual(computeProviderHealth("failure_only").qualityScore, null);
+    setWorkspace("providerTelemetry", "audit_only", {
+      ...emptyStats("audit_only"), auditTotalCount: 1, auditScores: [0], lastAuditScore: 0,
+    });
+    const health = computeProviderHealth("audit_only");
+    assertEqual(health.stabilityScore, null);
+    assertEqual(health.qualityScore, 0);
+    assertEqual(health.qualitySampleCount, 1);
+    assertEqual(health.status, "degraded");
+    assertDeepEqual(pushSample([90], 0, true), [90, 0]);
+    assertDeepEqual(pushSample([90], 0), [90]);
   });
 });
-

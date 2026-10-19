@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net/url"
 	"sort"
+	"time"
 
 	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/input"
@@ -23,10 +25,25 @@ func navigationURL(raw string) bool {
 }
 
 func validateAction(a Action, agent bool) error {
+	if a.Action != "resize" && (a.Width != nil || a.Height != nil || a.DeviceScaleFactor != nil) {
+		return errors.New("width and height are only valid for resize")
+	}
 	if a.Manual != nil && a.Action != "control" {
 		return errors.New("manual is only valid for control")
 	}
 	switch a.Action {
+	case "resize":
+		if agent || a.Width == nil || a.Height == nil {
+			return errors.New("only UI may resize; integer width and height are required")
+		}
+		width, height := *a.Width, *a.Height
+		scale := 1.0
+		if a.DeviceScaleFactor != nil {
+			scale = *a.DeviceScaleFactor
+		}
+		if math.IsNaN(scale) || math.IsInf(scale, 0) || scale < 1 || scale > 2 || width < 1 || width > 4096 || height < 1 || height > 4096 || math.Ceil(float64(width)*scale)*math.Ceil(float64(height)*scale) > 8388608 {
+			return errors.New("viewport dimensions must be 1..4096 with at most 8388608 pixels")
+		}
 	case "navigate":
 		if !navigationURL(a.URL) {
 			return errors.New("only http, https and about:blank navigation is allowed")
@@ -85,6 +102,7 @@ func (sc *scope) state(ctx context.Context) (State, error) {
 		}
 	}
 	if !found {
+		sc.stopStream()
 		sc.tabID = ""
 		if len(state.Tabs) > 0 {
 			sc.tabID = state.Tabs[0].ID
@@ -111,7 +129,7 @@ func (sc *scope) withTab(ctx context.Context, tasks ...chromedp.Action) error {
 		// Initial attachment starts a target event loop using this context.
 		// Keep it alive across requests, just like the initial browser target.
 		done := make(chan error, 1)
-		go func() { done <- chromedp.Run(tab, chromedp.EmulateViewport(1280, 800)) }()
+		go func() { done <- chromedp.Run(tab, sc.viewport().action()) }()
 		select {
 		case err := <-done:
 			if err != nil {
@@ -125,11 +143,18 @@ func (sc *scope) withTab(ctx context.Context, tasks ...chromedp.Action) error {
 		}
 		sc.tabs[sc.tabID] = tab
 		sc.tabCancels[sc.tabID] = cancel
+		sc.viewports[sc.tabID] = sc.viewport()
 	}
 	op, cancel := context.WithCancel(tab)
 	stop := context.AfterFunc(ctx, cancel)
 	defer stop()
 	defer cancel()
+	if sc.viewports[sc.tabID] != sc.viewport() {
+		if err := chromedp.Run(op, sc.viewport().action()); err != nil {
+			return err
+		}
+		sc.viewports[sc.tabID] = sc.viewport()
+	}
 	return chromedp.Run(op, tasks...)
 }
 
@@ -138,7 +163,7 @@ func (sc *scope) capture(ctx context.Context) ([]byte, error) {
 	err := sc.withTab(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
 		var err error
 		// Without a document-coordinate clip, Chrome captures the visible viewport,
-		// including its current scroll offset, at the emulated 1280x800 size.
+		// including its current scroll offset, at the scope's emulated size.
 		image, err = page.CaptureScreenshot().WithFormat(page.CaptureScreenshotFormatJpeg).WithQuality(80).
 			WithOptimizeForSpeed(true).WithCaptureBeyondViewport(false).Do(ctx)
 		return err
@@ -149,6 +174,8 @@ func (sc *scope) capture(ctx context.Context) ([]byte, error) {
 func (sc *scope) perform(ctx context.Context, a Action) (map[string]any, error) {
 	var task chromedp.Action
 	switch a.Action {
+	case "resize":
+		return nil, sc.withTab(ctx)
 	case "navigate":
 		task = chromedp.Navigate(a.URL)
 	case "back":
@@ -197,7 +224,9 @@ func (sc *scope) perform(ctx context.Context, a Action) (map[string]any, error) 
 		}
 		id, err := target.CreateTarget(u).Do(cdp.WithExecutor(ctx, chromedp.FromContext(sc.browser).Browser))
 		if err == nil {
+			sc.stopStream()
 			sc.tabID = string(id)
+			err = sc.withTab(ctx)
 		}
 		return nil, err
 	case "tab_select", "tab_close":
@@ -215,11 +244,15 @@ func (sc *scope) perform(ctx context.Context, a Action) (map[string]any, error) 
 			return nil, errors.New("tab does not belong to this browser")
 		}
 		if a.Action == "tab_select" {
+			if sc.tabID != a.TabID {
+				sc.stopStream()
+			}
 			sc.tabID = a.TabID
 			return nil, sc.withTab(ctx, chromedp.ActionFunc(func(ctx context.Context) error { return target.ActivateTarget(target.ID(a.TabID)).Do(ctx) }))
 		}
 		executor := cdp.WithExecutor(ctx, chromedp.FromContext(sc.browser).Browser)
 		if len(state.Tabs) == 1 {
+			sc.stopStream()
 			// Keep Chrome and the scope usable when its last page is closed.
 			id, err := target.CreateTarget("about:blank").Do(executor)
 			if err != nil {
@@ -230,6 +263,28 @@ func (sc *scope) perform(ctx context.Context, a Action) (map[string]any, error) 
 		err = target.CloseTarget(target.ID(a.TabID)).Do(executor)
 		if err == nil {
 			sc.releaseTab(a.TabID)
+			// CloseTarget acknowledges the request before target destruction finishes.
+			// Wait before returning state so the closed tab cannot be selected again.
+			for {
+				infos, listErr := chromedp.Targets(ctx)
+				if listErr != nil {
+					return nil, listErr
+				}
+				live := false
+				for _, info := range infos {
+					if string(info.TargetID) == a.TabID {
+						live = true
+					}
+				}
+				if !live {
+					break
+				}
+				select {
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				case <-time.After(10 * time.Millisecond):
+				}
+			}
 		}
 		return nil, err
 	default:
@@ -239,6 +294,9 @@ func (sc *scope) perform(ctx context.Context, a Action) (map[string]any, error) 
 }
 
 func (sc *scope) releaseTab(id string) {
+	if sc.stream != nil && sc.stream.frame.TabID == id {
+		sc.stopStream()
+	}
 	// The initial page shares the root browser context. Dropping that page must
 	// not cancel Chrome; only attached child contexts have entries in this map.
 	if cancel := sc.tabCancels[id]; cancel != nil {
@@ -246,6 +304,7 @@ func (sc *scope) releaseTab(id string) {
 		delete(sc.tabCancels, id)
 	}
 	delete(sc.tabs, id)
+	delete(sc.viewports, id)
 }
 
 // Light-DOM snapshot: at most 200 visible controls and 32 KiB of rendered text.

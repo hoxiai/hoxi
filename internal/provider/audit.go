@@ -71,28 +71,19 @@ func (g *Service) handleAuditProviderCode(w http.ResponseWriter, r *http.Request
 	baseURL, apiKey, npm, headers := g.resolveProviderConnection(obsPID, req.ObserverBaseURL, req.ObserverNPM)
 	start := time.Now()
 
-	var llmScore = 90
-	var llmSummary = ""
-	var llmIssues []string
-
-	if strings.HasPrefix(baseURL, "http://") || strings.HasPrefix(baseURL, "https://") {
-		score, summary, issues, err := g.invokeObserverLLM(r.Context(), obsPID, obsMID, baseURL, apiKey, npm, headers, req)
-		if err == nil {
-			llmScore = score
-			llmSummary = summary
-			llmIssues = issues
-		} else {
-			// If observer endpoint is unreachable, surface error without penalizing worker unless static checks failed
-			if staticDeduction == 0 {
-				writeJSON(w, http.StatusOK, auditCodeResponse{
-					OK:               false,
-					ObserverProvider: obsPID,
-					ObserverModel:    obsMID,
-					Error:            err.Error(),
-				})
-				return
-			}
-		}
+	if !strings.HasPrefix(baseURL, "http://") && !strings.HasPrefix(baseURL, "https://") {
+		writeJSON(w, http.StatusOK, auditCodeResponse{OK: false, ObserverProvider: obsPID, ObserverModel: obsMID, Error: "Observer endpoint is not configured"})
+		return
+	}
+	llmScore, llmSummary, llmIssues, err := g.invokeObserverLLM(r.Context(), obsPID, obsMID, baseURL, apiKey, npm, headers, req)
+	if err != nil {
+		writeJSON(w, http.StatusOK, auditCodeResponse{
+			OK:               false,
+			ObserverProvider: obsPID,
+			ObserverModel:    obsMID,
+			Error:            err.Error(),
+		})
+		return
 	}
 
 	finalScore := llmScore - staticDeduction
@@ -279,29 +270,26 @@ Return ONLY valid JSON matching this schema:
 		return 0, "", nil, err
 	}
 
-	score, summary, issues := parseObserverAuditJSON(content)
-	return score, summary, issues, nil
+	return parseObserverAuditJSON(content)
 }
 
-func parseObserverAuditJSON(text string) (int, string, []string) {
+func parseObserverAuditJSON(text string) (int, string, []string, error) {
 	cleaned := strings.TrimSpace(text)
-	if start := strings.Index(cleaned, "{"); start >= 0 {
-		if end := strings.LastIndex(cleaned, "}"); end > start {
-			cleaned = cleaned[start : end+1]
-		}
+	if strings.HasPrefix(cleaned, "```") && strings.HasSuffix(cleaned, "```") {
+		cleaned = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(strings.TrimPrefix(cleaned, "```"), "json"), "```"))
 	}
 	var res struct {
-		Score   int      `json:"score"`
+		Score   *int     `json:"score"`
 		Summary string   `json:"summary"`
 		Issues  []string `json:"issues"`
 	}
-	if err := json.Unmarshal([]byte(cleaned), &res); err == nil && res.Score > 0 {
-		return res.Score, strings.TrimSpace(res.Summary), res.Issues
+	if err := json.Unmarshal([]byte(cleaned), &res); err == nil && res.Score != nil && *res.Score >= 0 && *res.Score <= 100 {
+		return *res.Score, strings.TrimSpace(res.Summary), res.Issues, nil
 	}
 	if s, err := strconv.Atoi(strings.TrimSpace(cleaned)); err == nil && s >= 0 && s <= 100 {
-		return s, "", nil
+		return s, "", nil, nil
 	}
-	return 85, truncateStr(strings.TrimSpace(text), 140), nil
+	return 0, "", nil, fmt.Errorf("Observer returned an invalid audit score")
 }
 
 func truncateStr(s string, maxLen int) string {

@@ -24,9 +24,9 @@ export default function ProviderModal() {
 
   return (
     <Show when={workspace.providerModalOpen}>
-      <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4">
+      <div class="hoxi-modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4">
         <div
-          class="flex h-[620px] w-full max-w-[860px] flex-col overflow-hidden rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-panel)] shadow-2xl"
+          class="hoxi-modal-panel flex h-[620px] w-full max-w-[860px] flex-col overflow-hidden rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-panel)] shadow-2xl"
           onClick={(e) => e.stopPropagation()}
         >
           {/* Modal Header */}
@@ -49,7 +49,7 @@ export default function ProviderModal() {
               <div class="inline-flex rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)] p-0.5">
                 <button
                   type="button"
-                  class={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-[11.5px] font-medium transition-colors cursor-pointer ${
+                  class={`hoxi-press inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-[11.5px] font-medium cursor-pointer ${
                     activeTab() === "providers"
                       ? "bg-[var(--bg-panel)] text-[var(--text-primary)] shadow-2xs"
                       : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
@@ -61,7 +61,7 @@ export default function ProviderModal() {
                 </button>
                 <button
                   type="button"
-                  class={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-[11.5px] font-medium transition-colors cursor-pointer ${
+                  class={`hoxi-press inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-[11.5px] font-medium cursor-pointer ${
                     activeTab() === "custom"
                       ? "bg-[var(--bg-panel)] text-[var(--text-primary)] shadow-2xs"
                       : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
@@ -73,7 +73,7 @@ export default function ProviderModal() {
                 </button>
                 <button
                   type="button"
-                  class={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-[11.5px] font-medium transition-colors cursor-pointer ${
+                  class={`hoxi-press inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-[11.5px] font-medium cursor-pointer ${
                     activeTab() === "models"
                       ? "bg-[var(--bg-panel)] text-[var(--text-primary)] shadow-2xs"
                       : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
@@ -85,7 +85,7 @@ export default function ProviderModal() {
                 </button>
                 <button
                   type="button"
-                  class={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-[11.5px] font-medium transition-colors cursor-pointer ${
+                  class={`hoxi-press inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-[11.5px] font-medium cursor-pointer ${
                     activeTab() === "policy"
                       ? "bg-[var(--bg-panel)] text-[var(--text-primary)] shadow-2xs"
                       : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
@@ -99,7 +99,7 @@ export default function ProviderModal() {
 
               <button
                 type="button"
-                class="rounded-lg p-1.5 text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+                class="hoxi-press rounded-lg p-1.5 text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-pointer"
                 onClick={() => setWorkspace("providerModalOpen", false)}
               >
                 <X size={16} />
@@ -109,19 +109,27 @@ export default function ProviderModal() {
 
           {/* Modal Body */}
           <Show when={activeTab() === "providers"}>
-            <ProviderCatalogTab />
+            <div class="flex-1 min-h-0 flex flex-col hoxi-view-enter">
+              <ProviderCatalogTab />
+            </div>
           </Show>
 
           <Show when={activeTab() === "custom"}>
-            <CustomEndpointTab />
+            <div class="flex-1 min-h-0 flex flex-col hoxi-view-enter">
+              <CustomEndpointTab />
+            </div>
           </Show>
 
           <Show when={activeTab() === "models"}>
-            <ModelsRoleTab />
+            <div class="flex-1 min-h-0 flex flex-col hoxi-view-enter">
+              <ModelsRoleTab />
+            </div>
           </Show>
 
           <Show when={activeTab() === "policy"}>
-            <AgentPolicyMcpTab />
+            <div class="flex-1 min-h-0 flex flex-col hoxi-view-enter">
+              <AgentPolicyMcpTab />
+            </div>
           </Show>
         </div>
       </div>

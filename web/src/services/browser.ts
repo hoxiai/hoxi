@@ -13,7 +13,7 @@ export interface BrowserState {
 
 export interface BrowserAction {
   action: "navigate" | "back" | "forward" | "reload" | "click" | "type" | "key" |
-    "scroll" | "tab_new" | "tab_select" | "tab_close" | "control" | "close";
+    "scroll" | "tab_new" | "tab_select" | "tab_close" | "control" | "resize" | "close";
   url?: string;
   selector?: string;
   text?: string;
@@ -24,21 +24,78 @@ export interface BrowserAction {
   deltaY?: number;
   tabID?: string;
   manual?: boolean;
+  width?: number;
+  height?: number;
+  deviceScaleFactor?: number;
 }
 
-export function browserURL(endpoint: "state" | "action" | "frame", scope: BrowserScope): string {
+export function browserURL(endpoint: "state" | "action" | "frame" | "stream", scope: BrowserScope): string {
   const query = new URLSearchParams({ sessionID: scope.sessionID, directory: scope.directory });
   return `/api/hoxi/browser/${endpoint}?${query}`;
 }
 
+export interface BrowserFrame {
+  image: string;
+  width: number;
+  height: number;
+  tabID: string;
+}
+
+export function browserStreamURL(scope: BrowserScope, base: string): string {
+  return `${base.replace(/\/$/, "")}${browserURL("stream", scope)}`;
+}
+
+// Display ACKs bound network buffering; CDP keeps only the latest pending frame.
+export function connectBrowserStream(scope: BrowserScope, base: string,
+  display: (frame: BrowserFrame) => Promise<void>, onError: (error: string) => void): () => void {
+  let disposed = false;
+  let socket: WebSocket | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  function connect() {
+    if (disposed) return;
+    const current = new WebSocket(browserStreamURL(scope, base));
+    socket = current;
+    let displaying = false;
+    current.onmessage = async event => {
+      if (disposed || socket !== current) return;
+      try {
+        if (displaying || typeof event.data !== "string" || event.data.length > (16 << 20) + 1024) throw new Error("Invalid browser frame");
+        const frame = JSON.parse(event.data) as BrowserFrame;
+        if (typeof frame.image !== "string" || !/^[A-Za-z0-9+/=]+$/.test(frame.image) ||
+          !Number.isInteger(frame.width) || frame.width < 1 || frame.width > 4096 ||
+          !Number.isInteger(frame.height) || frame.height < 1 || frame.height > 4096 || typeof frame.tabID !== "string") throw new Error("Invalid browser frame");
+        displaying = true;
+        await display(frame);
+        if (!disposed && socket === current && current.readyState === WebSocket.OPEN) current.send("ack");
+        displaying = false;
+      } catch (error) {
+        if (!disposed) onError(String(error));
+        current.close();
+      }
+    };
+    current.onerror = () => { if (!disposed) onError("Browser stream disconnected"); };
+    current.onclose = () => {
+      if (!disposed && socket === current) timer = setTimeout(connect, 500);
+    };
+  }
+  connect();
+  return () => {
+    disposed = true;
+    clearTimeout(timer);
+    socket?.close();
+  };
+}
+
 // Bounds belong to the image itself, not its letterboxed container.
 export function browserPoint(bounds: { left: number; top: number; width: number; height: number },
-  clientX: number, clientY: number): { x: number; y: number } | null {
-  if (bounds.width <= 0 || bounds.height <= 0 || !Number.isFinite(clientX + clientY)) return null;
+  clientX: number, clientY: number, viewport: { width: number; height: number }): { x: number; y: number } | null {
+  if (bounds.width <= 0 || bounds.height <= 0 || viewport.width <= 0 || viewport.height <= 0 ||
+    !Number.isFinite(clientX + clientY + viewport.width + viewport.height)) return null;
   const x = (clientX - bounds.left) / bounds.width;
   const y = (clientY - bounds.top) / bounds.height;
   if (x < 0 || y < 0 || x > 1 || y > 1) return null;
-  return { x: Math.min(1279, Math.floor(x * 1280)), y: Math.min(799, Math.floor(y * 800)) };
+  return { x: Math.min(viewport.width - 1, Math.floor(x * viewport.width)),
+    y: Math.min(viewport.height - 1, Math.floor(y * viewport.height)) };
 }
 
 async function request(scope: BrowserScope, endpoint: "state" | "action" | "frame",

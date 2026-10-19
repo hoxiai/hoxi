@@ -271,7 +271,7 @@ export default function SingleProjectNavView(props: {
       </Show>
 
       {/* Chronological Session Stream */}
-      <div class="sidebar-scroll flex-1 min-h-0 overflow-y-auto pl-1 pr-2 pb-4 space-y-3">
+      <div class="sidebar-scroll hoxi-view-enter flex-1 min-h-0 overflow-y-auto pl-1 pr-2 pb-4 space-y-3">
         <Show
           when={history.sessions().length > 0}
           fallback={
@@ -308,12 +308,12 @@ export default function SingleProjectNavView(props: {
               class="w-full flex items-center justify-between gap-1.5 rounded-lg px-2 py-1 text-[11.5px] font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]/50 transition-colors cursor-pointer"
             >
               <div class="flex items-center gap-1.5">
-                <Show
-                  when={showArchived() || Boolean(props.filterQuery.trim())}
-                  fallback={<Icon name="chevron-right" size="small" class="w-3 h-3" />}
+                <span
+                  class="hoxi-chevron"
+                  data-open={showArchived() || Boolean(props.filterQuery.trim()) ? "true" : "false"}
                 >
-                  <Icon name="chevron-down" size="small" class="w-3 h-3" />
-                </Show>
+                  <Icon name="chevron-right" size="small" class="w-3 h-3" />
+                </span>
                 <Icon name="archive" size="small" class="w-3 h-3 text-[var(--text-faint)]" />
                 <span>{t("leftNav.archivedSessions")}</span>
               </div>
@@ -322,25 +322,31 @@ export default function SingleProjectNavView(props: {
               </span>
             </button>
 
-            <Show when={showArchived() || Boolean(props.filterQuery.trim())}>
-              <div class="mt-1 space-y-0.5">
-                <For each={archivedSessions()}>
-                  {(session) => (
-                    <SessionNavItem
-                      session={session}
-                      active={isSelectedSession(session.id)}
-                      canDelete={true}
-                      isArchived={true}
-                      showBranchIcon={true}
-                      pendingSessions={props.pendingSessions}
-                      onSelect={() => void selectSession(session.id)}
-                      onUnarchive={props.onUnarchive}
-                      onDiscard={props.onDiscard}
-                    />
-                  )}
-                </For>
+            <div
+              class="hoxi-drawer-grid"
+              data-open={showArchived() || Boolean(props.filterQuery.trim()) ? "true" : "false"}
+              aria-hidden={!(showArchived() || Boolean(props.filterQuery.trim()))}
+            >
+              <div class="min-h-0 overflow-hidden">
+                <div class="mt-1 space-y-0.5">
+                  <For each={archivedSessions()}>
+                    {(session) => (
+                      <SessionNavItem
+                        session={session}
+                        active={isSelectedSession(session.id)}
+                        canDelete={true}
+                        isArchived={true}
+                        showBranchIcon={true}
+                        pendingSessions={props.pendingSessions}
+                        onSelect={() => void selectSession(session.id)}
+                        onUnarchive={props.onUnarchive}
+                        onDiscard={props.onDiscard}
+                      />
+                    )}
+                  </For>
+                </div>
               </div>
-            </Show>
+            </div>
           </div>
         </Show>
 
@@ -417,7 +423,7 @@ export function RecentTasksNavView(props: {
   );
 
   return (
-    <div class="sidebar-scroll flex-1 min-h-0 overflow-y-auto pl-1 pr-2 py-1 space-y-0.5">
+    <div class="sidebar-scroll hoxi-view-enter flex-1 min-h-0 overflow-y-auto pl-1 pr-2 py-1 space-y-0.5">
       <Show
         when={recentSessions().length > 0}
         fallback={

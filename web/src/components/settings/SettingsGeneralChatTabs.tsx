@@ -287,7 +287,7 @@ export function ChatComposerTab() {
             onClick={testDesktopNotification}
             class="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-3 py-1 text-[12.5px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
           >
-            Test
+            {t("settings.testNotificationBtn")}
           </button>
           <ToggleSwitch
             checked={appSettings.desktopNotifications}

@@ -1,13 +1,19 @@
 package runner
 
 import (
+	"context"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 )
 
-var applyPatchHeaderRe = regexp.MustCompile(`(?m)^\*\*\*\s+(?:Update|Add|Delete)\s+File:\s*(.+)$`)
+var (
+	applyPatchHeaderRe    = regexp.MustCompile(`(?m)^\*\*\*\s+(?:Update|Add|Delete)\s+File:\s*(.+)$`)
+	taskOutputSessionIDRe = regexp.MustCompile(`session_id:\s*([a-zA-Z0-9_-]+)`)
+)
 
 func (s *Service) handleSessionDiff(w http.ResponseWriter, r *http.Request, sessionID string) {
 	if r.Method != http.MethodGet {
@@ -83,34 +89,52 @@ func (s *Service) filterLocalSessionDiffEvent(sessionID string, rawDiff interfac
 func (s *Service) sessionEditedFileSet(sessionID string) map[string]struct{} {
 	edited := make(map[string]struct{})
 	visited := make(map[string]bool)
+	rootRec, _ := s.store.Get(sessionID)
 
 	var walkSession func(sid string)
+	walkTurns := func(turns []MessageTurn, projectDir, worktreePath string) {
+		for _, turn := range turns {
+			for _, part := range turn.Parts {
+				if part.Type != "tool" || part.State == nil {
+					continue
+				}
+				if isRunnerTaskTool(part.Tool) {
+					for _, childID := range extractChildSessionIDsFromPart(part) {
+						walkSession(childID)
+					}
+					continue
+				}
+				if part.State.Status != "completed" {
+					continue
+				}
+				if isRunnerEditingTool(part.Tool) {
+					for _, rawPath := range extractEditedPathsFromPart(part) {
+						if norm := normalizeSessionRelPath(rawPath, projectDir, worktreePath); norm != "" {
+							edited[norm] = struct{}{}
+						}
+					}
+				}
+			}
+		}
+	}
+
 	walkSession = func(sid string) {
 		sid = strings.TrimSpace(sid)
 		if sid == "" || visited[sid] {
 			return
 		}
 		visited[sid] = true
-		rec, ok := s.store.Get(sid)
-		if !ok {
+		if rec, ok := s.store.Get(sid); ok {
+			walkTurns(rec.Turns, rec.ProjectDir, rec.WorktreePath)
 			return
 		}
-		for _, turn := range rec.Turns {
-			for _, part := range turn.Parts {
-				if part.Type != "tool" || part.State == nil || part.State.Status != "completed" {
-					continue
-				}
-				if isRunnerEditingTool(part.Tool) {
-					for _, rawPath := range extractEditedPathsFromPart(part) {
-						if norm := normalizeSessionRelPath(rawPath, rec.ProjectDir, rec.WorktreePath); norm != "" {
-							edited[norm] = struct{}{}
-						}
-					}
-				} else if isRunnerTaskTool(part.Tool) {
-					for _, childID := range extractChildSessionIDsFromPart(part) {
-						walkSession(childID)
-					}
-				}
+		if s.openCodeClient != nil {
+			dir := firstNonEmptyStr(rootRec.WorktreePath, rootRec.ProjectDir, s.rootDir)
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			var turns []MessageTurn
+			if err := s.openCodeJSON(ctx, http.MethodGet, "/session/"+url.PathEscape(sid)+"/message", dir, nil, &turns); err == nil && len(turns) > 0 {
+				walkTurns(turns, rootRec.ProjectDir, rootRec.WorktreePath)
 			}
 		}
 	}
@@ -134,7 +158,7 @@ func isRunnerEditingTool(tool string) bool {
 
 func isRunnerTaskTool(tool string) bool {
 	t := strings.ToLower(strings.TrimSpace(tool))
-	return t == "task" || strings.Contains(t, "subagent")
+	return t == "task" || t == "agent" || strings.Contains(t, "subagent")
 }
 
 func extractChildSessionIDsFromPart(part MessagePart) []string {
@@ -152,6 +176,9 @@ func extractChildSessionIDsFromPart(part MessagePart) []string {
 		if part.State.Input != nil {
 			add(part.State.Input["task_id"])
 		}
+		if m := taskOutputSessionIDRe.FindStringSubmatch(part.State.Output); len(m) > 1 {
+			add(m[1])
+		}
 	}
 	return ids
 }
@@ -167,7 +194,7 @@ func extractEditedPathsFromPart(part MessagePart) []string {
 		}
 	}
 	if in := part.State.Input; in != nil {
-		for _, k := range []string{"filePath", "file_path", "path", "file", "filename", "targetFile", "TargetFile"} {
+		for _, k := range []string{"filePath", "file_path", "path", "file", "filename", "targetFile", "TargetFile", "target_file", "notebook_path"} {
 			add(in[k])
 		}
 		if patchText, ok := in["patchText"].(string); ok && patchText != "" {

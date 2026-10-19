@@ -116,7 +116,7 @@ export function SegmentedPills<T extends string>(props: {
               type="button"
               onClick={() => props.onChange(opt.id)}
               title={opt.tip ? opt.tip() : undefined}
-              class={`inline-flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-[13px] font-medium transition-all cursor-pointer ${
+              class={`hoxi-press inline-flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-[13px] font-medium cursor-pointer ${
                 active()
                   ? "bg-[var(--bg-panel)] text-[var(--accent-primary)] shadow-2xs"
                   : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
@@ -171,11 +171,11 @@ export default function SettingsModal() {
   return (
     <Show when={appSettings.modalOpen}>
       <div
-        class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4 select-none"
+        class="hoxi-modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4 select-none"
         onClick={closeSettingsModal}
       >
         <div
-          class="flex h-[620px] max-h-[90dvh] w-full max-w-[860px] flex-col overflow-hidden rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-panel)] shadow-2xl"
+          class="hoxi-modal-panel flex h-[620px] max-h-[90dvh] w-full max-w-[860px] flex-col overflow-hidden rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-panel)] shadow-2xl"
           onClick={(e) => e.stopPropagation()}
         >
           {/* Header */}
@@ -197,7 +197,7 @@ export default function SettingsModal() {
               <button
                 type="button"
                 onClick={closeSettingsModal}
-                class="rounded-lg p-1.5 text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+                class="hoxi-press rounded-lg p-1.5 text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-pointer"
               >
                 <X size={17} />
               </button>
@@ -216,7 +216,7 @@ export default function SettingsModal() {
                       <button
                         type="button"
                         onClick={() => setAppSettings("activeTab", item.id)}
-                        class={`flex w-full items-center gap-2.5 rounded-xl px-3.5 py-2.5 text-left text-[13.5px] font-medium transition-colors cursor-pointer ${
+                        class={`hoxi-press flex w-full items-center gap-2.5 rounded-xl px-3.5 py-2.5 text-left text-[13.5px] font-medium cursor-pointer ${
                           isActive()
                             ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]"
                             : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
@@ -238,7 +238,7 @@ export default function SettingsModal() {
                     closeSettingsModal();
                     openProviderModal("providers");
                   }}
-                  class="flex w-full items-center justify-between gap-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] px-3.5 py-2.5 text-left text-[13px] font-medium text-[var(--text-primary)] transition-colors cursor-pointer shadow-2xs"
+                  class="hoxi-press flex w-full items-center justify-between gap-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] px-3.5 py-2.5 text-left text-[13px] font-medium text-[var(--text-primary)] cursor-pointer shadow-2xs"
                 >
                   <span class="inline-flex items-center gap-2 truncate">
                     <KeyRound size={14} class="text-[var(--accent-primary)] shrink-0" />
@@ -255,25 +255,39 @@ export default function SettingsModal() {
 
             <div class="min-w-0 flex-1 overflow-y-auto p-4 sm:p-7">
               <Show when={appSettings.activeTab === "general"}>
-                <GeneralAppearanceTab />
+                <div class="hoxi-view-enter">
+                  <GeneralAppearanceTab />
+                </div>
               </Show>
               <Show when={appSettings.activeTab === "chat"}>
-                <ChatComposerTab />
+                <div class="hoxi-view-enter">
+                  <ChatComposerTab />
+                </div>
               </Show>
               <Show when={appSettings.activeTab === "workspace"}>
-                <WorkspaceGitSettingsTab />
+                <div class="hoxi-view-enter">
+                  <WorkspaceGitSettingsTab />
+                </div>
               </Show>
               <Show when={appSettings.activeTab === "terminal"}>
-                <TerminalSafetySettingsTab />
+                <div class="hoxi-view-enter">
+                  <TerminalSafetySettingsTab />
+                </div>
               </Show>
               <Show when={appSettings.activeTab === "system"}>
-                <SystemRuntimeSettingsTab />
+                <div class="hoxi-view-enter">
+                  <SystemRuntimeSettingsTab />
+                </div>
               </Show>
               <Show when={appSettings.activeTab === "privacy"}>
-                <PrivacySettingsTab />
+                <div class="hoxi-view-enter">
+                  <PrivacySettingsTab />
+                </div>
               </Show>
               <Show when={appSettings.activeTab === "diagnostics"}>
-                <DiagnosticsTab />
+                <div class="hoxi-view-enter">
+                  <DiagnosticsTab />
+                </div>
               </Show>
             </div>
           </div>

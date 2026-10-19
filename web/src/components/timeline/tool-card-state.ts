@@ -1,6 +1,11 @@
 // web/src/components/timeline/tool-card-state.ts
 import type { MessagePart, SnapshotFileDiff } from "../../services/sse-types";
-import { type MessageTurn, workspace } from "../../store/workspace";
+import {
+  ensureChildSubagentSessionLoaded,
+  extractChildSubagentSessionId,
+  type MessageTurn,
+  workspace,
+} from "../../store/workspace";
 import {
   countDiffLines,
   extractTargetFile,
@@ -79,15 +84,41 @@ export function enrichDiffWithWorktree(
   };
 }
 
+function resolveDiffOwnerSessionID(sessionID: string): string {
+  if (!sessionID) return sessionID;
+  const seen = new Set<string>();
+  let cur = sessionID;
+  while (cur && !seen.has(cur)) {
+    seen.add(cur);
+    const s = workspace.sessions.find((item) => item.id === cur);
+    if (s?.parentID) {
+      cur = s.parentID;
+      continue;
+    }
+    break;
+  }
+  if (
+    cur === sessionID &&
+    !workspace.diffsBySession[cur] &&
+    !workspace.worktreeDiffsBySession[cur] &&
+    workspace.activeSessionID &&
+    workspace.activeSessionID !== cur
+  ) {
+    return workspace.activeSessionID;
+  }
+  return cur;
+}
+
 function matchSessionDiff(
   sessionID: string,
   file: string
 ): SnapshotFileDiff | undefined {
   const norm = normalizeWorkspaceRelPath(file);
   if (!norm) return undefined;
-  const wtDiffs = workspace.worktreeDiffsBySession[sessionID] ?? [];
-  const isolated = workspace.worktreeBySession[sessionID]?.isolated;
-  const diffs = workspace.diffsBySession[sessionID] ?? [];
+  const ownerID = resolveDiffOwnerSessionID(sessionID);
+  const wtDiffs = workspace.worktreeDiffsBySession[ownerID] ?? [];
+  const isolated = workspace.worktreeBySession[ownerID]?.isolated;
+  const diffs = workspace.diffsBySession[ownerID] ?? [];
   const exact = diffs.find((d) => d.file === norm);
   if (exact) return enrichDiffWithWorktree(exact, wtDiffs, isolated);
   const suffix = diffs.find(
@@ -328,11 +359,13 @@ export function isRealFileDiff(d: SnapshotFileDiff | undefined): boolean {
 export function resolveToolFileDiffs(
   part: ToolPart,
   isEdit: boolean,
-  primaryFile: string
+  primaryFile: string,
+  fallbackSessionID?: string
 ): SnapshotFileDiff[] {
   if (!isEdit || part.state.status === "error") return [];
   const state = part.state;
   const meta = state.status !== "pending" ? state.metadata : undefined;
+  const diffSessionID = fallbackSessionID || part.sessionID;
 
   // 1. Multi-file metadata from OpenCode `apply_patch` (`metadata.files`)
   if (Array.isArray(meta?.files) && meta.files.length > 0) {
@@ -364,11 +397,11 @@ export function resolveToolFileDiffs(
           deletions: typeof item.deletions === "number" ? item.deletions : counts.deletions,
         };
         if (isRealFileDiff(entry)) {
-          list.push(enrichToolDiffMeta(entry, part.sessionID));
+          list.push(enrichToolDiffMeta(entry, diffSessionID));
         }
         continue;
       }
-      const sessionDiff = matchSessionDiff(part.sessionID, file);
+      const sessionDiff = matchSessionDiff(diffSessionID, file);
       if (sessionDiff && isRealFileDiff(sessionDiff)) {
         list.push(sessionDiff);
       }
@@ -378,24 +411,53 @@ export function resolveToolFileDiffs(
 
   // 2. `apply_patch` input.patchText
   if (typeof state.input?.patchText === "string") {
-    const parsed = parseApplyPatchText(state.input.patchText, part.sessionID).filter(
+    const parsed = parseApplyPatchText(state.input.patchText, diffSessionID).filter(
       isRealFileDiff
     );
     if (parsed.length > 0) return parsed;
   }
 
-  // 3. Single file `edit` / `write` / `patch`
+  // 3. Single file `edit` / `write` / `patch` / `replace_file_content` / `write_to_file`
   const file = normalizeWorkspaceRelPath(primaryFile);
   if (!file) return [];
   const input = resolveToolInput(part);
   const patch = meta?.diff || meta?.patch || input.patch || input.diff;
-  const before = meta?.filediff?.before ?? input.oldString ?? input.old_string;
+  let chunksBefore: string | undefined;
+  let chunksAfter: string | undefined;
+  if (Array.isArray(input.ReplacementChunks) && input.ReplacementChunks.length > 0) {
+    const bParts: string[] = [];
+    const aParts: string[] = [];
+    for (const ch of input.ReplacementChunks) {
+      if (ch && typeof ch === "object") {
+        const tb = ch.TargetContent ?? ch.targetContent;
+        const ta = ch.ReplacementContent ?? ch.replacementContent;
+        if (typeof tb === "string") bParts.push(tb);
+        if (typeof ta === "string") aParts.push(ta);
+      }
+    }
+    if (bParts.length > 0 || aParts.length > 0) {
+      chunksBefore = bParts.join("\n");
+      chunksAfter = aParts.join("\n");
+    }
+  }
+  const before =
+    meta?.filediff?.before ??
+    input.oldString ??
+    input.old_string ??
+    input.TargetContent ??
+    input.targetContent ??
+    chunksBefore;
   const after =
     meta?.filediff?.after ??
     input.newString ??
     input.new_string ??
+    input.ReplacementContent ??
+    input.replacementContent ??
     input.content ??
-    input.file_text;
+    input.file_text ??
+    input.CodeContent ??
+    input.codeContent ??
+    chunksAfter;
   const hasOwnPayload =
     typeof patch === "string" ||
     typeof before === "string" ||
@@ -416,10 +478,10 @@ export function resolveToolFileDiffs(
       additions: meta?.filediff?.additions ?? counts.additions,
       deletions: meta?.filediff?.deletions ?? counts.deletions,
     };
-    return isRealFileDiff(entry) ? [enrichToolDiffMeta(entry, part.sessionID)] : [];
+    return isRealFileDiff(entry) ? [enrichToolDiffMeta(entry, diffSessionID)] : [];
   }
 
-  const sessionDiff = matchSessionDiff(part.sessionID, file);
+  const sessionDiff = matchSessionDiff(diffSessionID, file);
   if (sessionDiff) {
     return isRealFileDiff(sessionDiff) ? [sessionDiff] : [];
   }
@@ -492,22 +554,29 @@ export function collectCycleChangedFiles(
     });
   };
 
-  const scanParts = (parts: MessagePart[]) => {
+  const visitedSessions = new Set<string>([sessionID]);
+  const scanParts = (parts: MessagePart[], ownerSessionID: string) => {
     for (const p of parts) {
       if (p.type === "tool") {
+        if (isTaskTool(p.tool)) {
+          const childID = extractChildSubagentSessionId(p);
+          if (childID && !visitedSessions.has(childID)) {
+            visitedSessions.add(childID);
+            ensureChildSubagentSessionLoaded(
+              childID,
+              ownerSessionID,
+              p.state.status === "completed" || p.state.status === "error"
+            );
+            const childTurns = workspace.messagesBySession[childID] ?? [];
+            for (const ct of childTurns) scanParts(ct.parts, childID);
+          }
+          continue;
+        }
         if (p.state.status !== "completed") continue;
         if (isEditingTool(p.tool)) {
           const primary = extractTargetFile(p) || "";
-          for (const d of resolveToolFileDiffs(p, true, primary)) {
+          for (const d of resolveToolFileDiffs(p, true, primary, sessionID)) {
             recordDiff(d);
-          }
-        } else if (isTaskTool(p.tool)) {
-          const meta = p.state.metadata;
-          const childID =
-            meta?.sessionId || meta?.sessionID || p.state.input?.task_id;
-          if (typeof childID === "string" && childID) {
-            const childTurns = workspace.messagesBySession[childID] ?? [];
-            for (const ct of childTurns) scanParts(ct.parts);
           }
         }
       } else if (p.type === "patch" && Array.isArray(p.files)) {
@@ -520,7 +589,7 @@ export function collectCycleChangedFiles(
   };
 
   for (const step of cycleTurns) {
-    scanParts(step.parts);
+    scanParts(step.parts, sessionID);
   }
 
   // OpenCode `patch` parts snapshot the entire working tree, which in shared `local`

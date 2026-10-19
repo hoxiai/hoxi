@@ -180,14 +180,25 @@ export const models: ModelsI18n = {
   agentRemoved: "已移除自定义模式 \"{id}\"。",
   removeAgentTooltip: "移除此自定义模式",
   modeBadge: "模式",
-  qualityTitle: "服务商连接质量评估",
+  qualityTitle: "服务商稳定性与质量",
   qualitySubtitle:
-    "基于首字耗时、超时率、工具调用成功率与代码回滚率实时统计",
+    "分别以 0-100 分评估轮次成功率和代码审查质量，并展示辅助诊断指标",
   qualityUntested: "暂无评估数据（发送任务或测试连接后自动生成）",
   qualityGradeHealthy: "稳定",
   qualityGradeWarning: "偶发波动",
   qualityGradeDegraded: "质量预警",
-  qualityScoreBadge: "{score}分",
+  qualityScoreBadge: "{score}/100",
+  qualityStabilityScore: "稳定性",
+  qualityQualityScore: "质量",
+  qualityNoRating: "暂无评分",
+  qualityNoData: "—",
+  qualitySamplesCount: "{count} 次有效代码审查",
+  qualityStabilityExplanation:
+    "成功轮次占全部轮次的百分比（0-100 分）。与代码审查质量独立，无轮次样本时不评分。",
+  qualityQualityExplanation:
+    "有效代码审查评分的平均值（0-100 分）。与轮次成功率独立，无有效评分样本时不评分。",
+  qualityScoresTooltip:
+    "综合状态：{status}。稳定性：{stability}，基于 {turns} 轮中的成功轮次。质量：{quality}，取 {audits} 次有效代码审查评分的平均值。两项评分相互独立，范围均为 0-100 分；缺少样本时不评分。",
   qualityMetricSpeed: "首字延迟 / 吞吐",
   qualityMetricSuccess: "成功率 / 超时重试",
   qualityMetricTools: "工具调用准确率",

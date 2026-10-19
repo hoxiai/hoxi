@@ -234,12 +234,12 @@ export default function ExternalHandoffModal() {
   return (
     <Show when={workspace.handoffModalOpen}>
       <div
-        class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4"
+        class="hoxi-modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4"
         onClick={(e) => {
           if (e.target === e.currentTarget) closeHandoffModal();
         }}
       >
-        <div class="flex h-[78vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] shadow-2xl">
+        <div class="hoxi-modal-panel flex h-[78vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] shadow-2xl">
           {/* Single Compact Header & Filter Bar */}
           <div class="flex flex-wrap items-center justify-between gap-2.5 border-b border-[var(--border-subtle)] px-4 py-2.5">
             <div class="flex items-center gap-3 min-w-0">

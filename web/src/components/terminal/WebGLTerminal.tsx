@@ -60,7 +60,7 @@ export default function WebGLTerminal() {
   });
 
   createEffect(() => {
-    if (workspace.inspectorTab === "terminal" && activeFit) {
+    if (workspace.inspectorOpen && workspace.inspectorTab === "terminal" && activeFit) {
       requestAnimationFrame(() => {
         try {
           activeFit?.fit();

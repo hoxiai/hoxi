@@ -324,8 +324,11 @@ export default function ThoughtBox(props: { part: ReasoningPart; revealKey?: str
               {durationSec().toFixed(1)}s
             </span>
           </Show>
-          <span class="shrink-0 text-[var(--text-faint)] inline-flex items-center">
-            <Icon name={open() ? "chevron-down" : "chevron-right"} size="small" />
+          <span
+            class="hoxi-chevron shrink-0 text-[var(--text-faint)]"
+            data-open={open() ? "true" : "false"}
+          >
+            <Icon name="chevron-right" size="small" />
           </span>
         </button>
 
