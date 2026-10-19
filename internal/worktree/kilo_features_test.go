@@ -440,3 +440,49 @@ func TestMultiDirectoryAndNestedGitReposStatusAndDiff(t *testing.T) {
 	}
 }
 
+func TestOnDemandNestedGitRepoLoadingWhenRootIsGitRepo(t *testing.T) {
+	root := initTempGitRepo(t)
+	subA := initSubGitRepo(t, root, filepath.Join("plugins", "app", "stripe"), "main")
+	subB := initSubGitRepo(t, root, filepath.Join("plugins", "app", "paypal"), "main")
+
+	// Dirty both nested repos
+	if err := os.WriteFile(filepath.Join(subA, "main.go"), []byte("package main\n// stripe edit\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(subB, "main.go"), []byte("package main\n// paypal edit\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	mgr := NewManager(root)
+
+	// 1. Before any file in plugins/app/* is touched by a session, root status only loads root repo
+	stBefore, err := mgr.Status("__root__")
+	if err != nil {
+		t.Fatalf("Status before touch failed: %v", err)
+	}
+	if len(stBefore.Repos) != 1 {
+		t.Fatalf("expected only 1 repo (root) loaded before sub-repos are touched, got %d: %+v", len(stBefore.Repos), stBefore.Repos)
+	}
+
+	// 2. Touching a file inside plugins/app/stripe via DiffForFiles activates only stripe (not paypal)
+	edited := map[string]struct{}{
+		"plugins/app/stripe/main.go": {},
+	}
+	diffs, err := mgr.DiffForFiles("__root__", edited)
+	if err != nil {
+		t.Fatalf("DiffForFiles failed: %v", err)
+	}
+	if len(diffs) != 1 || diffs[0].File != "plugins/app/stripe/main.go" {
+		t.Fatalf("expected only stripe diff from DiffForFiles, got %+v", diffs)
+	}
+
+	stAfter, err := mgr.Status("__root__")
+	if err != nil {
+		t.Fatalf("Status after touch failed: %v", err)
+	}
+	if len(stAfter.Repos) != 2 {
+		t.Fatalf("expected root + touched stripe repo (2 repos, not untouched paypal), got %d: %+v", len(stAfter.Repos), stAfter.Repos)
+	}
+}
+
+

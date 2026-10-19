@@ -13,7 +13,7 @@ import (
 const (
 	maxSingleFilePatchBytes    = 256 * 1024
 	maxGeneratedInlinePatchLen = 64 * 1024
-	maxCachedRepoDiffs         = 32
+	maxCachedRepoDiffs         = 512
 	maxFingerprintFiles        = 128
 )
 

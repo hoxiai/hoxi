@@ -69,6 +69,7 @@ export default function MemoryBankView() {
   };
 
   createEffect(() => {
+    if (!workspace.inspectorOpen || workspace.inspectorTab !== "memory") return;
     const sid = workspace.activeSessionID;
     void (sid ? workspace.sessionFinishedAt[sid] : 0);
     void activeDirectory();

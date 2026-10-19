@@ -1,5 +1,5 @@
 // web/src/components/timeline/TaskTimelineBar.tsx
-import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, Index, on, onCleanup, onMount, Show } from "solid-js";
 import { ListTree, Search } from "lucide-solid";
 import type { MessagePart, ToolPart } from "../../services/sse-types";
 import type { MessageTurn } from "../../store/workspace";
@@ -339,18 +339,18 @@ export default function TaskTimelineBar(props: {
           onMouseLeave={() => setActiveSegment(null)}>
           <div class="task-reading-nodes" onWheel={handleRailWheel} onPointerDown={pauseFollowing}
             onTouchMove={pauseFollowing} onKeyDown={pauseFollowing} onScroll={() => setActiveSegment(null)}>
-            <For each={segments()}>{(seg) => {
-              const highlighted = () => (activeSegment() ?? focusedSegment()) === seg.id;
-              return <button type="button" class="task-reading-node" data-segment-id={seg.id}
-                aria-label={seg.label} aria-current={focusedSegment() === seg.id ? "step" : undefined}
-                onMouseEnter={(event) => showDetail(seg.id, event.currentTarget)}
-                onFocus={(event) => showDetail(seg.id, event.currentTarget)} onBlur={() => setActiveSegment(null)}
-                onClick={() => props.onJumpToTurn(seg.messageID, seg.id)}>
-                <span style={{ background: highlighted() ? seg.color : "var(--text-faint)",
-                  width: highlighted() ? `${seg.duration === undefined ? 45 : 20 + 80 * Math.sqrt(seg.duration / maxDuration())}%` : "30%",
+            <Index each={segments()}>{(seg) => {
+              const highlighted = () => (activeSegment() ?? focusedSegment()) === seg().id;
+              return <button type="button" class="task-reading-node" data-segment-id={seg().id}
+                aria-label={seg().label} aria-current={focusedSegment() === seg().id ? "step" : undefined}
+                onMouseEnter={(event) => showDetail(seg().id, event.currentTarget)}
+                onFocus={(event) => showDetail(seg().id, event.currentTarget)} onBlur={() => setActiveSegment(null)}
+                onClick={() => props.onJumpToTurn(seg().messageID, seg().id)}>
+                <span style={{ background: highlighted() ? seg().color : "var(--text-faint)",
+                  width: highlighted() ? `${seg().duration === undefined ? 45 : 20 + 80 * Math.sqrt(seg().duration! / maxDuration())}%` : "30%",
                   opacity: highlighted() ? 1 : 0.4 }} />
               </button>;
-            }}</For>
+            }}</Index>
           </div>
           <Show when={detailSegment()}>{(seg) => <div class="task-reading-detail" style={{ top: `${detailTop()}px` }}>
             {seg().label}

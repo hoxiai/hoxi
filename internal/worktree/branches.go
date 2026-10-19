@@ -283,12 +283,13 @@ func (m *worktreeManager) resolveBaseBranchDrift(meta worktreeMeta) (string, int
 		return "", 0, 0
 	}
 	rootRepo := m.primaryGitRepoDir()
-	baseBranch, err := runGit(rootRepo, "rev-parse", "--abbrev-ref", "HEAD")
-	if err != nil {
-		return "", 0, 0
-	}
-	baseBranch = strings.TrimSpace(baseBranch)
+	baseBranch := strings.TrimSpace(resolveGitBranchFast(rootRepo))
 	if baseBranch == "" || baseBranch == "HEAD" || baseBranch == strings.TrimSpace(meta.Branch) {
+		return baseBranch, 0, 0
+	}
+	rootSHA := resolveGitHeadFast(rootRepo, resolveGitDirFast(rootRepo))
+	wtSHA := resolveGitHeadFast(meta.Directory, resolveGitDirFast(meta.Directory))
+	if rootSHA != "" && rootSHA == wtSHA {
 		return baseBranch, 0, 0
 	}
 	out, err := runGit(meta.Directory, "rev-list", "--left-right", "--count", "refs/heads/"+baseBranch+"...HEAD")

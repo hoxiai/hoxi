@@ -14,6 +14,7 @@ import (
 const (
 	maxNestedGitRepoDepth = 3
 	maxNestedScanDirs     = 200
+	maxEagerUmbrellaRepos = 8
 	maxConcurrentGitRepos = 6
 	discoveredReposTTL    = 15 * time.Second
 )
@@ -27,7 +28,51 @@ type cachedDiscoveredRepos struct {
 var (
 	discoveredReposMu    sync.RWMutex
 	discoveredReposCache = make(map[string]cachedDiscoveredRepos)
+	activeSubReposByRoot = make(map[string]map[string]gitRepoTarget)
 )
+
+func registerActiveSubRepo(baseDir, subRepoDir string) {
+	baseDir = filepath.Clean(strings.TrimSpace(baseDir))
+	subRepoDir = filepath.Clean(strings.TrimSpace(subRepoDir))
+	if baseDir == "" || subRepoDir == "" || baseDir == subRepoDir {
+		return
+	}
+	rel, err := filepath.Rel(baseDir, subRepoDir)
+	if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
+		return
+	}
+	relSlash := filepath.ToSlash(rel)
+
+	discoveredReposMu.Lock()
+	byRoot := activeSubReposByRoot[baseDir]
+	if byRoot == nil {
+		byRoot = make(map[string]gitRepoTarget)
+		activeSubReposByRoot[baseDir] = byRoot
+	}
+	if _, exists := byRoot[relSlash]; !exists {
+		byRoot[relSlash] = gitRepoTarget{
+			Dir:       subRepoDir,
+			RelPrefix: relSlash,
+		}
+		delete(discoveredReposCache, baseDir)
+	}
+	discoveredReposMu.Unlock()
+}
+
+func activeSubReposForRoot(baseDir string) []gitRepoTarget {
+	discoveredReposMu.RLock()
+	byRoot := activeSubReposByRoot[baseDir]
+	if len(byRoot) == 0 {
+		discoveredReposMu.RUnlock()
+		return nil
+	}
+	out := make([]gitRepoTarget, 0, len(byRoot))
+	for _, target := range byRoot {
+		out = append(out, target)
+	}
+	discoveredReposMu.RUnlock()
+	return out
+}
 
 type gitRepoTarget struct {
 	Dir       string
@@ -74,7 +119,7 @@ func shouldSkipNestedScanDir(name string) bool {
 }
 
 func scanNestedGitRepos(rootDir, currentDir string, depth int, visited *int, out *[]gitRepoTarget) {
-	if *visited >= maxNestedScanDirs {
+	if *visited >= maxNestedScanDirs || len(*out) >= maxEagerUmbrellaRepos {
 		return
 	}
 	entries, err := os.ReadDir(currentDir)
@@ -90,7 +135,7 @@ func scanNestedGitRepos(rootDir, currentDir string, depth int, visited *int, out
 			continue
 		}
 		*visited++
-		if *visited > maxNestedScanDirs {
+		if *visited > maxNestedScanDirs || len(*out) >= maxEagerUmbrellaRepos {
 			return
 		}
 		childDir := filepath.Join(currentDir, name)
@@ -131,17 +176,30 @@ func discoverGitRepos(rawDir string) []gitRepoTarget {
 		return out
 	}
 
-	var nested []gitRepoTarget
-	visited := 0
-	scanNestedGitRepos(baseDir, baseDir, 1, &visited, &nested)
-
 	var result []gitRepoTarget
 	if hasGitMarker(baseDir) {
-		result = append([]gitRepoTarget{{Dir: baseDir, RelPrefix: ""}}, nested...)
-	} else if len(nested) > 0 {
-		result = nested
-	} else if top, topErr := runGit(baseDir, "rev-parse", "--show-toplevel"); topErr == nil && strings.TrimSpace(top) != "" {
-		result = []gitRepoTarget{{Dir: baseDir, RelPrefix: ""}}
+		// On-demand sub-repo loading: when baseDir is already a Git repository
+		// (e.g. a monorepo with 100+ plugin/theme sub-repos), only load the root
+		// repository plus any sub-repositories explicitly touched by a session.
+		result = append([]gitRepoTarget{{Dir: baseDir, RelPrefix: ""}}, activeSubReposForRoot(baseDir)...)
+	} else {
+		var nested []gitRepoTarget
+		visited := 0
+		scanNestedGitRepos(baseDir, baseDir, 1, &visited, &nested)
+		if len(nested) > 0 {
+			seen := make(map[string]struct{}, len(nested))
+			for _, r := range nested {
+				seen[r.RelPrefix] = struct{}{}
+				result = append(result, r)
+			}
+			for _, active := range activeSubReposForRoot(baseDir) {
+				if _, exists := seen[active.RelPrefix]; !exists {
+					result = append(result, active)
+				}
+			}
+		} else if top, topErr := runGit(baseDir, "rev-parse", "--show-toplevel"); topErr == nil && strings.TrimSpace(top) != "" {
+			result = []gitRepoTarget{{Dir: baseDir, RelPrefix: ""}}
+		}
 	}
 
 	if len(result) > 0 {
@@ -194,6 +252,9 @@ func resolveRepoForRelPath(workDir, cleanedRelPath string) (string, string) {
 	for {
 		if hasGitMarker(curr) {
 			if subRel, err := filepath.Rel(curr, absTarget); err == nil && subRel != "." && !strings.HasPrefix(subRel, "..") {
+				if curr != baseDir {
+					registerActiveSubRepo(baseDir, curr)
+				}
 				return curr, subRel
 			}
 		}
@@ -516,6 +577,80 @@ func (m *worktreeManager) DiffWithExtraDirs(sessionID string, extraDirs []string
 			}
 			seen[item.File] = struct{}{}
 			results = append(results, item)
+		}
+	}
+	return results, nil
+}
+
+// DiffForFiles diffs only the Git repositories that own the specified relative
+// file paths, activating nested sub-repositories on demand when touched.
+func (m *worktreeManager) DiffForFiles(sessionID string, edited map[string]struct{}) ([]worktreeFileDiff, error) {
+	if len(edited) == 0 {
+		return []worktreeFileDiff{}, nil
+	}
+	meta := m.resolveSessionMeta(sessionID)
+	if meta.Directory == "" {
+		return []worktreeFileDiff{}, nil
+	}
+	baseDir := filepath.Clean(meta.Directory)
+	seenRepoDirs := make(map[string]struct{})
+	var targetRepos []gitRepoTarget
+	for relFile := range edited {
+		cleaned := filepath.FromSlash(strings.TrimPrefix(strings.TrimSpace(relFile), "./"))
+		if cleaned == "" || cleaned == "." || strings.HasPrefix(cleaned, "..") {
+			continue
+		}
+		repoDir, _ := resolveRepoForRelPath(baseDir, cleaned)
+		repoDir = filepath.Clean(repoDir)
+		if _, exists := seenRepoDirs[repoDir]; exists {
+			continue
+		}
+		if !hasGitMarker(repoDir) {
+			if top, err := runGit(repoDir, "rev-parse", "--show-toplevel"); err != nil || strings.TrimSpace(top) == "" {
+				continue
+			}
+		}
+		seenRepoDirs[repoDir] = struct{}{}
+		var relPrefix string
+		if repoDir != baseDir {
+			if rel, err := filepath.Rel(baseDir, repoDir); err == nil && rel != "." && !strings.HasPrefix(rel, "..") {
+				relPrefix = filepath.ToSlash(rel)
+			}
+		}
+		targetRepos = append(targetRepos, gitRepoTarget{
+			Dir:       repoDir,
+			RelPrefix: relPrefix,
+		})
+	}
+	if len(targetRepos) == 0 {
+		return []worktreeFileDiff{}, nil
+	}
+
+	nestedPrefixes := nestedRepoPrefixSet(discoverGitRepos(baseDir))
+	rootDiffTarget := "HEAD"
+	if meta.Isolated && strings.TrimSpace(meta.BaseCommit) != "" {
+		rootDiffTarget = strings.TrimSpace(meta.BaseCommit)
+	}
+	if len(targetRepos) == 1 {
+		target := "HEAD"
+		if targetRepos[0].RelPrefix == "" {
+			target = rootDiffTarget
+		}
+		return diffSingleRepo(targetRepos[0], target, nestedPrefixes), nil
+	}
+
+	var results []worktreeFileDiff
+	seenFiles := make(map[string]struct{})
+	for _, r := range targetRepos {
+		target := "HEAD"
+		if r.RelPrefix == "" {
+			target = rootDiffTarget
+		}
+		for _, item := range diffSingleRepo(r, target, nestedPrefixes) {
+			if _, exists := seenFiles[item.File]; !exists {
+				seenFiles[item.File] = struct{}{}
+				results = append(results, item)
+			}
 		}
 	}
 	return results, nil

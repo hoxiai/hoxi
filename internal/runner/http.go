@@ -31,7 +31,8 @@ type Service struct {
 	openCodeClient   *http.Client
 	managedOpenCode  sync.Map
 	// childTurns caches OpenCode subagent transcripts read while filtering diffs.
-	childTurns sync.Map // session ID -> childTurnsEntry
+	childTurns  sync.Map // session ID -> childTurnsEntry
+	editedFiles sync.Map // session ID -> editedFilesEntry
 }
 
 func NewService(rootDir string, worktrees *worktree.Manager, status *statusbar.Tracker, customStorePath string) *Service {
@@ -294,16 +295,14 @@ func (s *Service) handleSessionSubroutes(w http.ResponseWriter, r *http.Request)
 	case "":
 		s.handleSingleSession(w, r, sessionID)
 	case "message":
-		rec, ok := s.store.Get(sessionID)
+		raw, ok := s.store.MarshalTurns(sessionID)
 		if !ok {
 			writeJSONError(w, http.StatusNotFound, "runner session not found")
 			return
 		}
-		turns := rec.Turns
-		if turns == nil {
-			turns = []MessageTurn{}
-		}
-		writeJSON(w, http.StatusOK, turns)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(raw)
 	case "prompt", "prompt_async":
 		s.handleSessionPrompt(w, r, sessionID)
 	case "runtime":

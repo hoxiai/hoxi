@@ -15,12 +15,17 @@ var (
 	taskOutputSessionIDRe = regexp.MustCompile(`session_id:\s*([a-zA-Z0-9_-]+)`)
 )
 
+type editedFilesEntry struct {
+	stamp int64
+	files map[string]struct{}
+}
+
 func (s *Service) handleSessionDiff(w http.ResponseWriter, r *http.Request, sessionID string) {
 	if r.Method != http.MethodGet {
 		writeJSONError(w, http.StatusMethodNotAllowed, "GET required")
 		return
 	}
-	rec, ok := s.store.Get(sessionID)
+	rec, ok := s.store.Meta(sessionID)
 	if !ok {
 		writeJSONError(w, http.StatusNotFound, "runner session not found")
 		return
@@ -41,7 +46,7 @@ func (s *Service) handleSessionDiff(w http.ResponseWriter, r *http.Request, sess
 		writeJSON(w, http.StatusOK, []struct{}{})
 		return
 	}
-	wtDiffs, err := s.worktrees.ForDirectory(projDir).Diff(sessionID)
+	wtDiffs, err := s.worktrees.ForDirectory(projDir).DiffForFiles(sessionID, edited)
 	if err != nil || len(wtDiffs) == 0 {
 		writeJSON(w, http.StatusOK, []struct{}{})
 		return
@@ -60,7 +65,7 @@ func (s *Service) handleSessionDiff(w http.ResponseWriter, r *http.Request, sess
 }
 
 func (s *Service) filterLocalSessionDiffEvent(sessionID string, rawDiff interface{}) interface{} {
-	rec, ok := s.store.Get(sessionID)
+	rec, ok := s.store.Meta(sessionID)
 	if !ok || rec.SandboxMode == "worktree" {
 		return rawDiff
 	}
@@ -87,21 +92,35 @@ func (s *Service) filterLocalSessionDiffEvent(sessionID string, rawDiff interfac
 }
 
 func (s *Service) sessionEditedFileSet(sessionID string) map[string]struct{} {
+	rootRec, ok := s.store.Meta(sessionID)
+	if !ok {
+		return nil
+	}
+	childIDs, stamp := s.store.ChildSessionIDs(sessionID)
+	if stamp != 0 {
+		if cached, hit := s.editedFiles.Load(sessionID); hit {
+			entry := cached.(editedFilesEntry)
+			if entry.stamp == stamp {
+				return entry.files
+			}
+		}
+	}
+
 	edited := make(map[string]struct{})
 	visited := make(map[string]bool)
-	rootRec, _ := s.store.Get(sessionID)
+	hasExternalChild := false
 
 	var walkSession func(sid string)
-	walkTurns := func(turns []MessageTurn, projectDir, worktreePath string) {
-		for _, turn := range turns {
-			for _, part := range turn.Parts {
+	walkTurns := func(turns []MessageTurn, projectDir, worktreePath string, discoveredChildren *[]string) {
+		for i := range turns {
+			parts := turns[i].Parts
+			for j := range parts {
+				part := parts[j]
 				if part.Type != "tool" || part.State == nil {
 					continue
 				}
 				if isRunnerTaskTool(part.Tool) {
-					for _, childID := range extractChildSessionIDsFromPart(part) {
-						walkSession(childID)
-					}
+					*discoveredChildren = append(*discoveredChildren, extractChildSessionIDsFromPart(part)...)
 					continue
 				}
 				if part.State.Status != "completed" {
@@ -124,22 +143,35 @@ func (s *Service) sessionEditedFileSet(sessionID string) map[string]struct{} {
 			return
 		}
 		visited[sid] = true
-		if rec, ok := s.store.Get(sid); ok {
-			walkTurns(rec.Turns, rec.ProjectDir, rec.WorktreePath)
+		var subChildren []string
+		if s.store.VisitTurns(sid, func(rec SessionRecord) {
+			walkTurns(rec.Turns, rec.ProjectDir, rec.WorktreePath, &subChildren)
+		}) {
+			for _, cid := range subChildren {
+				walkSession(cid)
+			}
 			return
 		}
+		hasExternalChild = true
 		if s.openCodeClient != nil {
 			dir := firstNonEmptyStr(rootRec.WorktreePath, rootRec.ProjectDir, s.rootDir)
 			if turns := s.openCodeChildTurns(sid, dir); len(turns) > 0 {
-				walkTurns(turns, rootRec.ProjectDir, rootRec.WorktreePath)
+				walkTurns(turns, rootRec.ProjectDir, rootRec.WorktreePath, &subChildren)
+				for _, cid := range subChildren {
+					walkSession(cid)
+				}
 			}
 		}
 	}
 
 	walkSession(sessionID)
-	for _, info := range s.store.List("") {
-		if info.ParentID == sessionID {
-			walkSession(info.ID)
+	for _, cid := range childIDs {
+		walkSession(cid)
+	}
+	if !hasExternalChild {
+		_, postStamp := s.store.ChildSessionIDs(sessionID)
+		if postStamp != 0 {
+			s.editedFiles.Store(sessionID, editedFilesEntry{stamp: postStamp, files: edited})
 		}
 	}
 	return edited

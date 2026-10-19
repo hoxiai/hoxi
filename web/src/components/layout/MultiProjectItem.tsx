@@ -8,15 +8,12 @@ import {
   openEditWorkspaceModal,
   openManageWorkspacesModal,
   quickAddFolderToWorkspace,
-  setWorkspace,
   sortSessionsByActivity,
-  switchWorkspace,
   workspace,
 } from "../../store/workspace";
 import type { SessionInfo } from "../../services/sse-types";
 import { Icon, Spinner } from "../icons";
 import {
-  basename,
   FolderIcon,
   resolveActiveRootSessionID,
   SessionNavItem,
@@ -202,15 +199,6 @@ export default function MultiProjectTreeItem(props: {
   const history = useSessionHistory(activeSessions, () => props.proj.path,
     () => props.pendingSessions, () => props.filterQuery);
 
-  const inspectWorkspaceFolder = async (folderPath: string) => {
-    if (!isActive()) {
-      await switchWorkspace(props.proj.path);
-    }
-    setWorkspace("activeInspectorFolder", folderPath);
-    setWorkspace("inspectorTab", "files");
-    setWorkspace("inspectorOpen", true);
-  };
-
   return (
     <div data-project-item={props.proj.path} class="relative">
       <Show when={props.isDropBefore}>
@@ -222,11 +210,7 @@ export default function MultiProjectTreeItem(props: {
         data-project-header={props.proj.path}
         onPointerDown={(ev) => props.onPointerDown(ev, props.proj.path)}
         onClick={() => props.onToggleProject(props.proj.path)}
-        title={
-          props.proj.folders.length > 1
-            ? props.proj.folders.map((f) => shortenPath(f.path)).join("\n")
-            : shortenPath(props.proj.path)
-        }
+        title={shortenPath(props.proj.path)}
         class={`group/proj flex items-center justify-between gap-1.5 rounded-lg px-2.5 py-1.5 cursor-pointer active:cursor-grabbing transition-colors ${
           props.isDraggingThis
             ? "opacity-55 bg-[var(--accent-surface)] ring-1 ring-[var(--accent-border)]"
@@ -260,9 +244,12 @@ export default function MultiProjectTreeItem(props: {
           <Show when={props.proj.folders.length > 1}>
             <span
               class="shrink-0 rounded px-1.5 py-0.2 text-[11px] font-mono bg-[var(--bg-inset)] text-[var(--text-muted)]"
-              title={t("leftNav.folderCountBadge", {
-                count: props.proj.folders.length,
-              })}
+              title={[
+                t("leftNav.folderCountBadge", {
+                  count: props.proj.folders.length,
+                }),
+                ...props.proj.folders.map((f) => shortenPath(f.path)),
+              ].join("\n")}
             >
               {props.proj.folders.length}
             </span>
@@ -298,7 +285,7 @@ export default function MultiProjectTreeItem(props: {
         </div>
       </div>
 
-      {/* Expanded Workspace Folders & Sessions */}
+      {/* Expanded Workspace Sessions */}
       <Show when={everExpanded()}>
         <div
           class="hoxi-drawer-grid"
@@ -307,38 +294,6 @@ export default function MultiProjectTreeItem(props: {
         >
           <div class="min-h-0 overflow-hidden">
             <div class="ml-3.5 pl-2 border-l border-[var(--border-subtle)]/60 my-1 space-y-1">
-              {/* Multi-Folder Workspace Directory List */}
-              <Show when={props.proj.folders.length > 1}>
-                <div class="pb-1 mb-0.5 border-b border-[var(--border-subtle)]/40 space-y-0.5">
-                  <For each={props.proj.folders}>
-                    {(folder) => (
-                      <button
-                        type="button"
-                        onClick={() => void inspectWorkspaceFolder(folder.path)}
-                        title={folder.path}
-                        class="w-full flex items-center justify-between gap-1.5 rounded-md px-2 py-1 text-[12px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]/50 transition-colors cursor-pointer"
-                      >
-                        <div class="flex items-center gap-1.5 min-w-0">
-                          <FolderIcon
-                            open={folder.isPrimary}
-                            color={props.proj.color}
-                            class="w-3 h-3 shrink-0"
-                          />
-                          <span class="truncate font-mono text-[12px]">
-                            {basename(folder.path)}
-                          </span>
-                        </div>
-                        <Show when={folder.isPrimary}>
-                          <span class="shrink-0 text-[11px] px-1.5 rounded bg-[var(--bg-inset)] text-[var(--text-faint)]">
-                            {t("leftNav.primaryBadge")}
-                          </span>
-                        </Show>
-                      </button>
-                    )}
-                  </For>
-                </div>
-              </Show>
-
               <Show when={props.isLoadingSessions}>
                 <div class="flex items-center gap-1.5 px-2 py-1 text-[12px] text-[var(--text-faint)]">
                   <Spinner class="w-3 h-3" />

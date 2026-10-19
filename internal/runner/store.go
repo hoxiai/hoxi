@@ -3,6 +3,7 @@ package runner
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -26,6 +27,7 @@ type storedSession struct {
 	rec         SessionRecord
 	turnsLoaded bool
 	logLines    int
+	rev         int64
 	metaDirty   bool
 	// Parts whose streamed text deltas have not reached turns.jsonl yet.
 	dirty map[partKey]struct{}
@@ -91,6 +93,35 @@ func (s *Store) ensureTurnsLocked(ss *storedSession) {
 	}
 	ss.rec.Turns, ss.logLines = s.readTurns(ss.rec.ID)
 	ss.turnsLoaded = true
+	ss.rev++
+}
+
+// ensureSessionLoaded loads turns.jsonl outside the global write lock so disk I/O
+// on multi-MB transcripts never blocks concurrent Meta/List/OwnsSession readers.
+func (s *Store) ensureSessionLoaded(sessionID string) bool {
+	sessionID = strings.TrimSpace(sessionID)
+	s.mu.RLock()
+	ss := s.records[sessionID]
+	loaded := ss != nil && ss.turnsLoaded
+	s.mu.RUnlock()
+	if ss == nil {
+		return false
+	}
+	if loaded {
+		return true
+	}
+	turns, lines := s.readTurns(sessionID)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ss = s.records[sessionID]
+	if ss == nil {
+		return false
+	}
+	if !ss.turnsLoaded {
+		ss.rec.Turns, ss.logLines, ss.turnsLoaded = turns, lines, true
+		ss.rev++
+	}
+	return true
 }
 
 // commitLocked persists next as the new state of ss (nil for a new session).
@@ -126,6 +157,7 @@ func (s *Store) commitLocked(next SessionRecord, ss *storedSession, prevTurns []
 		s.records[next.ID] = ss
 	}
 	ss.rec, ss.turnsLoaded, ss.logLines, ss.metaDirty, ss.dirty = next, true, lines, false, nil
+	ss.rev++
 	return nil
 }
 
@@ -144,24 +176,57 @@ func (s *Store) Put(rec SessionRecord) error {
 
 func (s *Store) Get(sessionID string) (SessionRecord, bool) {
 	sessionID = strings.TrimSpace(sessionID)
-	s.mu.RLock()
-	ss := s.records[sessionID]
-	if ss != nil && ss.turnsLoaded {
-		rec := cloneRecord(ss.rec)
-		s.mu.RUnlock()
-		return rec, true
+	if !s.ensureSessionLoaded(sessionID) {
+		return SessionRecord{}, false
 	}
-	s.mu.RUnlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	ss := s.records[sessionID]
 	if ss == nil {
 		return SessionRecord{}, false
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if ss = s.records[sessionID]; ss == nil {
-		return SessionRecord{}, false
-	}
-	s.ensureTurnsLocked(ss)
 	return cloneRecord(ss.rec), true
+}
+
+// MarshalTurns serializes the session's turns under RLock without deep-cloning
+// thousands of nested tool input/metadata maps on every HTTP /message read.
+func (s *Store) MarshalTurns(sessionID string) ([]byte, bool) {
+	sessionID = strings.TrimSpace(sessionID)
+	if !s.ensureSessionLoaded(sessionID) {
+		return nil, false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	ss := s.records[sessionID]
+	if ss == nil {
+		return nil, false
+	}
+	turns := ss.rec.Turns
+	if turns == nil {
+		turns = []MessageTurn{}
+	}
+	raw, err := json.Marshal(turns)
+	if err != nil {
+		return []byte("[]"), true
+	}
+	return raw, true
+}
+
+// VisitTurns invokes fn with a read-only view of the session record under RLock
+// without deep-cloning the transcript. The callback must not mutate rec.Turns.
+func (s *Store) VisitTurns(sessionID string, fn func(rec SessionRecord)) bool {
+	sessionID = strings.TrimSpace(sessionID)
+	if !s.ensureSessionLoaded(sessionID) {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	ss := s.records[sessionID]
+	if ss == nil {
+		return false
+	}
+	fn(ss.rec)
+	return true
 }
 
 // Meta returns a session without its transcript and never touches the disk.
@@ -229,6 +294,29 @@ func (s *Store) List(directory string) []SessionInfo {
 		return out[i].Time.Updated > out[j].Time.Updated
 	})
 	return out
+}
+
+// ChildSessionIDs returns all child session IDs whose ParentID equals parentID
+// along with a combined metadata revision stamp without allocating SessionInfo or sorting.
+func (s *Store) ChildSessionIDs(parentID string) ([]string, int64) {
+	parentID = strings.TrimSpace(parentID)
+	if parentID == "" {
+		return nil, 0
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var stamp int64
+	if root := s.records[parentID]; root != nil {
+		stamp = root.rec.UpdatedAt ^ int64(len(root.rec.Turns)<<16) ^ int64(root.logLines)
+	}
+	var ids []string
+	for id, ss := range s.records {
+		if ss.rec.ParentID == parentID {
+			ids = append(ids, id)
+			stamp ^= ss.rec.UpdatedAt + int64(ss.logLines)
+		}
+	}
+	return ids, stamp
 }
 
 func (s *Store) UpsertTurnInfo(sessionID string, info MessageInfo) {
@@ -507,18 +595,29 @@ func cloneRecord(r SessionRecord) SessionRecord {
 	return out
 }
 
+var normalizedComparePathCache sync.Map
+
 func normalizeComparePath(p string) string {
 	p = strings.TrimSpace(p)
 	if p == "" {
 		return ""
 	}
+	if cached, ok := normalizedComparePathCache.Load(p); ok {
+		return cached.(string)
+	}
+	raw := p
+	resolvedOK := false
 	if resolved, err := filepath.EvalSymlinks(p); err == nil {
 		p = resolved
+		resolvedOK = true
 	}
 	cleaned := filepath.ToSlash(filepath.Clean(p))
 	cleaned = strings.TrimRight(cleaned, "/")
 	if runtime.GOOS == "windows" {
-		return strings.ToLower(cleaned)
+		cleaned = strings.ToLower(cleaned)
+	}
+	if resolvedOK {
+		normalizedComparePathCache.Store(raw, cleaned)
 	}
 	return cleaned
 }

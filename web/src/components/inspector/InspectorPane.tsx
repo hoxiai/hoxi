@@ -2,7 +2,7 @@ import { createEffect, createMemo, createSignal, For, lazy, Show, Suspense } fro
 import { Maximize2, Minimize2 } from "lucide-solid";
 import MemoryBankView from "./MemoryBankView";
 import FileTreeView from "./FileTreeView";
-import { setWorkspace, workspace } from "../../store/workspace";
+import { isSessionBusy, setWorkspace, workspace } from "../../store/workspace";
 import { collectCycleChangedFiles } from "../timeline/tool-card-state";
 import { t } from "../../i18n";
 
@@ -35,6 +35,7 @@ export default function InspectorPane() {
   });
 
   const diffCount = createMemo(() => {
+    if (!workspace.inspectorOpen) return 0;
     const id = workspace.activeSessionID;
     if (workspace.diffScope === "worktree") {
       return (workspace.worktreeDiffsBySession[id || "__root__"] ?? []).length;
@@ -42,6 +43,9 @@ export default function InspectorPane() {
     if (id) {
       const sDiffs = workspace.diffsBySession[id];
       if (sDiffs && sDiffs.length > 0) return sDiffs.length;
+      if (workspace.worktreeBySession[id]?.dirty === false && !isSessionBusy(id)) {
+        return 0;
+      }
       const turns = workspace.messagesBySession[id] ?? [];
       if (turns.length > 0) return collectCycleChangedFiles(turns, id).length;
     }

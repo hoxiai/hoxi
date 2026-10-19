@@ -65,6 +65,7 @@ export function ComposerSandboxPill(props: {
   const gitBranch = createMemo(() => activeWorktree()?.branch || "");
   const changedFilesCount = createMemo(() => {
     const id = props.sessionID;
+    if (activeWorktree()?.dirty === false && !props.busy) return 0;
     if (id) {
       const sDiffs = workspace.diffsBySession[id] ?? [];
       if (sDiffs.length > 0) return sDiffs.length;

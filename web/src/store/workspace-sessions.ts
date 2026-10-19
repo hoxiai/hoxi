@@ -233,25 +233,23 @@ export function replaceSessionFromEvent(info: SessionInfo, eventDirectory?: stri
   }
 }
 
+const hydratedSessionIDs = new Set<string>();
+
 // Idle turns an empty snapshot proves stale (cache seeds); busy sessions may still be persisting.
 function idleTurnIDs(sessionID: string): Set<string> | undefined {
   return isSessionBusy(sessionID) ? undefined : new Set((workspace.messagesBySession[sessionID] ?? []).map((t) => t.info.id));
 }
 
-export async function loadSessionMessagesOnly(
-  sessionID: string,
-  explicitDirectory?: string
-): Promise<void> {
+export async function loadSessionMessagesOnly(sessionID: string, explicitDirectory?: string): Promise<void> {
   const directory = explicitDirectory || sessionDirectory(sessionID);
   const preRequestIDs = idleTurnIDs(sessionID);
   const turns = await hoxiAPI.getMessages(sessionID, directory);
   if (!isSessionDeleted(sessionID)) restoreSessionAI(sessionID, turns);
-  setWorkspace(
-    produce((state) => {
-      mergeServerTurnsInto((state.messagesBySession[sessionID] ||= []), turns, preRequestIDs);
-    })
-  );
+  setWorkspace(produce((state) => {
+    mergeServerTurnsInto((state.messagesBySession[sessionID] ||= []), turns, preRequestIDs);
+  }));
   if (!isSessionDeleted(sessionID)) {
+    hydratedSessionIDs.add(sessionID);
     persistCachedSessionTurns(sessionID, workspace.messagesBySession[sessionID] ?? turns);
   }
 }
@@ -260,9 +258,7 @@ export async function loadSessionMessages(sessionID: string): Promise<void> {
   const directory = sessionDirectory(sessionID);
   const parentID = workspace.sessions.find((s) => s.id === sessionID)?.parentID;
   const isChildSession = Boolean(parentID);
-  if (!isChildSession) {
-    scheduleRefreshWorktreeStatus(sessionID, 120);
-  }
+  if (!isChildSession) scheduleRefreshWorktreeStatus(sessionID, 120);
   if (workspace.messagesBySession[sessionID] === undefined) {
     setWorkspace("loadingMessagesBySession", sessionID, true);
   }
@@ -270,12 +266,11 @@ export async function loadSessionMessages(sessionID: string): Promise<void> {
     const preRequestIDs = idleTurnIDs(sessionID);
     const turns = await hoxiAPI.getMessages(sessionID, directory);
     if (!isSessionDeleted(sessionID)) restoreSessionAI(sessionID, turns);
-    setWorkspace(
-      produce((state) => {
-        mergeServerTurnsInto((state.messagesBySession[sessionID] ||= []), turns, preRequestIDs);
-      })
-    );
+    setWorkspace(produce((state) => {
+      mergeServerTurnsInto((state.messagesBySession[sessionID] ||= []), turns, preRequestIDs);
+    }));
     if (!isSessionDeleted(sessionID)) {
+      hydratedSessionIDs.add(sessionID);
       persistCachedSessionTurns(sessionID, workspace.messagesBySession[sessionID] ?? turns);
       if (!isChildSession) {
         for (const t of workspace.messagesBySession[sessionID] ?? []) {
@@ -405,7 +400,7 @@ export async function selectSession(sessionID: string): Promise<void> {
   setWorkspace("activeSessionID", sessionID);
   setWorkspace("unreadCompletedBySession", sessionID, false);
   void syncPendingPermissions(sessionDirectory(sessionID));
-  if (hadLiveMemory && workspace.aiBySession[sessionID]) {
+  if (hadLiveMemory && (workspace.aiBySession[sessionID] || (hydratedSessionIDs.has(sessionID) && !isSessionBusy(sessionID)))) {
     const isChildSession = Boolean(workspace.sessions.find((s) => s.id === sessionID)?.parentID);
     if (!isChildSession) void refreshSessionDiff(sessionID);
     return;
@@ -621,6 +616,7 @@ export function removeSessionFromStore(sessionID: string): SessionInfo | undefin
   const allIDs = [sessionID, ...childIDs];
   for (const id of allIDs) {
     cancelScheduledWorktreeStatus(id);
+    hydratedSessionIDs.delete(id);
     deletedSessionIDs.add(id);
   }
   forgetSessionTitles(allIDs);

@@ -7,6 +7,7 @@ import {
   activeWorkspaceFolders,
   appSettings,
   generateSmartCommitMessage,
+  isSessionBusy,
   loadSessionMessagesOnly,
   refreshWorktreeStatus,
   restoreSessionWorktree,
@@ -80,6 +81,9 @@ export default function PierreDiffViewer() {
   };
 
   const diffs = createMemo(() => {
+    if (!workspace.inspectorOpen || workspace.inspectorTab !== "diffs") {
+      return [];
+    }
     const id = workspace.activeSessionID;
     const key = sessionKey();
     const wtDiffs = workspace.worktreeDiffsBySession[key] ?? [];
@@ -94,6 +98,9 @@ export default function PierreDiffViewer() {
       return wtDiffs.length > 0
         ? sessionDiffs.map((d) => enrichDiffWithWorktree(d, wtDiffs, isolated))
         : sessionDiffs;
+    }
+    if (activeWt()?.dirty === false && !isSessionBusy(id)) {
+      return sessionDiffs;
     }
     const turns = workspace.messagesBySession[id] ?? [];
     return turns.length > 0 ? collectCycleChangedFiles(turns, id) : sessionDiffs;
@@ -163,15 +170,20 @@ export default function PierreDiffViewer() {
     workspace.activeSessionID,
     workspace.rootDir,
     activeWorkspaceFolders().length,
-  ] as const, ([id, root]) => {
+    workspace.inspectorOpen,
+    workspace.inspectorTab === "diffs",
+  ] as const, ([id, root, , isOpen, isDiffsTab]) => {
     setLastCompareURL(null);
-    if (!root && !id) return;
-    void refreshWorktreeStatus(id);
+    if (!isOpen || !isDiffsTab || (!root && !id)) return;
+    const key = id || "__root__";
+    if (!workspace.worktreeBySession[key] || !workspace.worktreeDiffsBySession[key]) {
+      void refreshWorktreeStatus(id);
+    }
     let cleanStreak = 0;
     const timer = setInterval(() => {
-      if (document.hidden || workspace.inspectorTab !== "diffs") return;
+      if (document.hidden || !workspace.inspectorOpen || workspace.inspectorTab !== "diffs") return;
       const busy = Boolean(id && workspace.statusBySession[id]?.type === "busy");
-      const dirty = Boolean(workspace.worktreeBySession[id || "__root__"]?.dirty);
+      const dirty = Boolean(workspace.worktreeBySession[key]?.dirty);
       if (!busy && !dirty) {
         cleanStreak++;
         if (cleanStreak > 2 && cleanStreak % 3 !== 0) return;

@@ -517,6 +517,7 @@ interface CachedSessionTurnsBundle {
 }
 
 let cachedSessionTurnsBundle: CachedSessionTurnsBundle | null = null;
+let saveSessionTurnsTimer: ReturnType<typeof setTimeout> | null = null;
 
 function loadSessionTurnsBundle(): CachedSessionTurnsBundle {
   if (cachedSessionTurnsBundle) return cachedSessionTurnsBundle;
@@ -536,9 +537,10 @@ function loadSessionTurnsBundle(): CachedSessionTurnsBundle {
   return cachedSessionTurnsBundle;
 }
 
-function saveSessionTurnsBundle(bundle: CachedSessionTurnsBundle): void {
-  cachedSessionTurnsBundle = bundle;
-  if (typeof localStorage === "undefined") return;
+function flushSessionTurnsBundleToStorage(): void {
+  saveSessionTurnsTimer = null;
+  const bundle = cachedSessionTurnsBundle;
+  if (!bundle || typeof localStorage === "undefined") return;
   try {
     localStorage.setItem(SESSION_TURNS_CACHE_KEY, JSON.stringify(bundle));
   } catch {
@@ -555,6 +557,13 @@ function saveSessionTurnsBundle(bundle: CachedSessionTurnsBundle): void {
       /* ignore storage errors */
     }
   }
+}
+
+function saveSessionTurnsBundle(bundle: CachedSessionTurnsBundle): void {
+  cachedSessionTurnsBundle = bundle;
+  if (typeof localStorage === "undefined") return;
+  if (saveSessionTurnsTimer !== null) clearTimeout(saveSessionTurnsTimer);
+  saveSessionTurnsTimer = setTimeout(flushSessionTurnsBundleToStorage, 350);
 }
 
 function compactTurnForSnapshot(turn: MessageTurn): MessageTurn {

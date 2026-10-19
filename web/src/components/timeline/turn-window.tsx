@@ -69,7 +69,7 @@ export function createTurnWindow(
   // Per-session window size. Turns appended while a session is open widen the
   // window instead of sliding it: unmounting the oldest turn on every new step
   // shifted everything above the reader and re-anchored activity groups.
-  const windows = new Map<string, { limit: number; seen: number }>();
+  const windows = new Map<string, { limit: number; seen: number; lastTailID: string }>();
   const [revision, setRevision] = createSignal(0);
   let prependingLock = false;
 
@@ -81,7 +81,7 @@ export function createTurnWindow(
         const oldest = windows.keys().next().value;
         if (oldest !== undefined) windows.delete(oldest);
       }
-      state = { limit: INITIAL_VISIBLE_TURNS, seen: 0 };
+      state = { limit: INITIAL_VISIBLE_TURNS, seen: 0, lastTailID: "" };
       windows.set(key, state);
     }
     return state;
@@ -89,10 +89,21 @@ export function createTurnWindow(
 
   const visibleLimit = createMemo(() => {
     revision();
-    const total = turns().length;
+    const list = turns();
+    const total = list.length;
+    const tailID = total > 0 ? list[total - 1]!.info.id : "";
     const state = windowFor(sessionID());
-    if (state.seen > 0 && total > state.seen) state.limit += total - state.seen;
+    if (state.seen > 0 && total > state.seen && state.lastTailID) {
+      const prevTailIdx = list.findIndex((t) => t.info.id === state.lastTailID);
+      if (prevTailIdx >= 0) {
+        const appendedAtTail = total - 1 - prevTailIdx;
+        if (appendedAtTail > 0 && appendedAtTail <= TURN_BATCH_SIZE) {
+          state.limit += appendedAtTail;
+        }
+      }
+    }
     state.seen = total;
+    state.lastTailID = tailID;
     return state.limit;
   });
 
@@ -261,9 +272,13 @@ export function AssistantTurnItem(props: {
     return merged().carriedTurnIDs.includes(matchID);
   });
 
-  const revealPartIDs = createMemo(() => new Set(
-    props.allTurns.find((turn) => turn.info.id === props.activeMatchTurnID)?.parts.map((part) => part.id) ?? []
-  ));
+  const revealPartIDs = createMemo(() => {
+    const matchID = props.activeMatchTurnID;
+    if (!matchID) return new Set<string>();
+    return new Set(
+      props.allTurns.find((turn) => turn.info.id === matchID)?.parts.map((part) => part.id) ?? []
+    );
+  });
 
   return (
     <Show
