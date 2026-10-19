@@ -54,6 +54,7 @@ type Gateway struct {
 	leaderboard           *leaderboard.Service
 	privacy               *privacy.Service
 	onOpenDirectoryDialog func() (string, error)
+	onFocusDesktop        func(directory, sessionID string)
 	dialogMu              sync.RWMutex
 	originMu              sync.RWMutex
 	uiOrigins             map[string]bool
@@ -187,6 +188,12 @@ func (g *Gateway) SetOpenDirectoryDialog(fn func() (string, error)) {
 	g.onOpenDirectoryDialog = fn
 }
 
+func (g *Gateway) SetDesktopFocusHandler(fn func(directory, sessionID string)) {
+	g.dialogMu.Lock()
+	defer g.dialogMu.Unlock()
+	g.onFocusDesktop = fn
+}
+
 func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !g.allowRequest(w, r) {
 		return
@@ -257,6 +264,27 @@ func (g *Gateway) registerRoutes(distFS fs.FS) {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"path": dirPath})
+	})
+
+	g.mux.HandleFunc("/api/hoxi/desktop/focus", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSONError(w, http.StatusMethodNotAllowed, "POST required")
+			return
+		}
+		var body struct {
+			Directory string `json:"directory"`
+			SessionID string `json:"sessionID"`
+		}
+		_ = json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&body)
+		g.dialogMu.RLock()
+		focusFn := g.onFocusDesktop
+		g.dialogMu.RUnlock()
+		if focusFn == nil {
+			writeJSONError(w, http.StatusServiceUnavailable, "desktop window not attached")
+			return
+		}
+		focusFn(strings.TrimSpace(body.Directory), strings.TrimSpace(body.SessionID))
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	})
 
 	g.mux.HandleFunc("/api/hoxi/system-info", g.handleSystemRuntimeInfo)

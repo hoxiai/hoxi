@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net"
@@ -21,6 +22,7 @@ import (
 
 	"github.com/hoxiai/hoxi/internal/agyhook"
 	"github.com/hoxiai/hoxi/internal/buildinfo"
+	"github.com/hoxiai/hoxi/internal/cli"
 	"github.com/hoxiai/hoxi/internal/diagnostics"
 	"github.com/hoxiai/hoxi/internal/gateway"
 	"github.com/hoxiai/hoxi/internal/opencode"
@@ -111,6 +113,14 @@ func Run(distFS fs.FS) {
 
 	exePath, _ := os.Executable()
 	identity := ResolveIdentity(BuildVariant, exePath)
+	if rewritten, ok := cli.IsServeCommand(os.Args); ok {
+		os.Args = rewritten
+	}
+	if cli.ShouldHandle(os.Args, os.Getenv) {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		os.Exit(cli.Run(ctx, os.Args, os.Stdin, os.Stdout, os.Stderr, envOr("HOXI_BRIDGE_ADDR", identity.DefaultBridgeAddr), StartEphemeralHeadless))
+	}
 
 	var cfg Config
 	var showVersion bool
@@ -278,6 +288,9 @@ func Run(distFS fs.FS) {
 		return wailsruntime.OpenDirectoryDialog(ctx, wailsruntime.OpenDialogOptions{
 			Title: "Select Workspace Project Folder",
 		})
+	})
+	gw.SetDesktopFocusHandler(func(_, _ string) {
+		app.showWindow()
 	})
 
 	err = wails.Run(&options.App{
@@ -495,3 +508,77 @@ func envOr(key, fallback string) string {
 	}
 	return fallback
 }
+
+// StartEphemeralHeadless boots a quiet, in-process Hoxi Gateway on an ephemeral
+// loopback port when the CLI is invoked while Hoxi Desktop is not running.
+func StartEphemeralHeadless(ctx context.Context, rootDir string) (string, func(), error) {
+	rootDir = workspace.ResolveInitialRootDir(rootDir)
+	port, err := chooseFreePort()
+	if err != nil {
+		return "", nil, err
+	}
+	password, err := generateRandomHex(16)
+	if err != nil {
+		return "", nil, err
+	}
+	quietLogger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	statusTracker := statusbar.NewTracker()
+	gw := gateway.New(port, password, rootDir, nil, statusTracker)
+	gw.EnableAgyApprovalHook()
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		gw.CloseBrowser()
+		return "", nil, err
+	}
+	loopbackAddr := listener.Addr().String()
+	gw.SetWSBaseURL("ws://" + loopbackAddr)
+
+	browserToken, _ := generateRandomHex(32)
+	gw.SetBrowserAgentToken(browserToken)
+	browserEnv, cleanupPlugin, _ := opencode.PrepareBrowserPlugin("http://"+loopbackAddr, browserToken)
+
+	dapp := &DesktopApp{
+		cfg: Config{
+			Address:   loopbackAddr,
+			OpenCode:  envOr("HOXI_OPENCODE", "opencode"),
+			RootDir:   rootDir,
+			NoDesktop: true,
+		},
+		logger:     quietLogger,
+		gateway:    gw,
+		status:     statusTracker,
+		browserEnv: browserEnv,
+	}
+
+	if localBin := opencode.FindBinary(dapp.cfg.OpenCode); localBin != "" {
+		cfgPath := provider.EnsureHoxiModelsConfig(rootDir)
+		if child, startErr := opencode.StartDaemonWithBin(ctx, localBin, rootDir, cfgPath, port, password, quietLogger, browserEnv...); startErr == nil {
+			dapp.setChild(child)
+		} else {
+			go dapp.BootstrapOpenCodeAsync(ctx, port, password)
+		}
+	} else {
+		go dapp.BootstrapOpenCodeAsync(ctx, port, password)
+	}
+
+	srv := &http.Server{Handler: gw, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 90 * time.Second}
+	dapp.wsServer = srv
+	go func() {
+		_ = srv.Serve(listener)
+	}()
+
+	cleanup := func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(shutdownCtx)
+		_ = listener.Close()
+		dapp.killChild()
+		gw.CloseBrowser()
+		if cleanupPlugin != nil {
+			cleanupPlugin()
+		}
+	}
+	return "http://" + loopbackAddr, cleanup, nil
+}
+
