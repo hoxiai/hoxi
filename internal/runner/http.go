@@ -30,6 +30,8 @@ type Service struct {
 	openCodePassword string
 	openCodeClient   *http.Client
 	managedOpenCode  sync.Map
+	// childTurns caches OpenCode subagent transcripts read while filtering diffs.
+	childTurns sync.Map // session ID -> childTurnsEntry
 }
 
 func NewService(rootDir string, worktrees *worktree.Manager, status *statusbar.Tracker, customStorePath string) *Service {

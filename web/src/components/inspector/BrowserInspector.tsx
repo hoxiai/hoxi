@@ -268,7 +268,8 @@ export default function BrowserInspector() {
     });
     createEffect(() => {
       const size = viewport();
-      if (size) untrack(() => enqueueAction(connection, { action: "resize", ...size }));
+      // An idle panel only remembers its size; navigate/tab_new sends it on startup.
+      if (size) untrack(() => { if (running()) enqueueAction(connection, { action: "resize", ...size }); });
     });
     untrack(consumePendingBrowserURL);
     let timer: ReturnType<typeof setTimeout> | undefined;

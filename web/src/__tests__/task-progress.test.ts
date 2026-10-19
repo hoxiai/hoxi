@@ -491,6 +491,19 @@ describe("task progress todo staleness", () => {
     assertDeepEqual(parseMarkdownBlocks("~~~json {\"score\":68}~~~"), [
       { type: "code", lang: "json", code: '{"score":68}' },
     ]);
+    // Untagged one-line fences keep their whole content instead of losing a "language".
+    assertDeepEqual(parseMarkdownBlocks("```{\"score\":68}```"), [
+      { type: "code", lang: "text", code: '{"score":68}' },
+    ]);
+    assertDeepEqual(parseMarkdownBlocks("```npm run build```"), [
+      { type: "code", lang: "text", code: "npm run build" },
+    ]);
+    assertDeepEqual(parseMarkdownBlocks("```bash```"), [
+      { type: "code", lang: "text", code: "bash" },
+    ]);
+    assertDeepEqual(parseMarkdownBlocks("```bash npm run build```"), [
+      { type: "code", lang: "bash", code: "npm run build" },
+    ]);
 
     // 4. Inline bold streaming: no raw `*` / `**` flash and stable bold span identity
     assertDeepEqual(parseInline("Prefix *"), [{ type: "text", text: "Prefix " }]);

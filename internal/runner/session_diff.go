@@ -130,10 +130,7 @@ func (s *Service) sessionEditedFileSet(sessionID string) map[string]struct{} {
 		}
 		if s.openCodeClient != nil {
 			dir := firstNonEmptyStr(rootRec.WorktreePath, rootRec.ProjectDir, s.rootDir)
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			defer cancel()
-			var turns []MessageTurn
-			if err := s.openCodeJSON(ctx, http.MethodGet, "/session/"+url.PathEscape(sid)+"/message", dir, nil, &turns); err == nil && len(turns) > 0 {
+			if turns := s.openCodeChildTurns(sid, dir); len(turns) > 0 {
 				walkTurns(turns, rootRec.ProjectDir, rootRec.WorktreePath)
 			}
 		}
@@ -146,6 +143,39 @@ func (s *Service) sessionEditedFileSet(sessionID string) map[string]struct{} {
 		}
 	}
 	return edited
+}
+
+// Session diff events arrive in bursts on the broadcast path; cache each child
+// transcript (including failed reads) briefly so one event never fans out into
+// a blocking OpenCode request per subagent.
+const childTurnsTTL = 3 * time.Second
+
+type childTurnsEntry struct {
+	turns   []MessageTurn
+	expires time.Time
+}
+
+func (s *Service) openCodeChildTurns(sid, dir string) []MessageTurn {
+	now := time.Now()
+	if v, ok := s.childTurns.Load(sid); ok {
+		if entry := v.(childTurnsEntry); now.Before(entry.expires) {
+			return entry.turns
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	var turns []MessageTurn
+	if err := s.openCodeJSON(ctx, http.MethodGet, "/session/"+url.PathEscape(sid)+"/message", dir, nil, &turns); err != nil {
+		turns = nil
+	}
+	s.childTurns.Range(func(k, v any) bool {
+		if !now.Before(v.(childTurnsEntry).expires) {
+			s.childTurns.Delete(k)
+		}
+		return true
+	})
+	s.childTurns.Store(sid, childTurnsEntry{turns: turns, expires: now.Add(childTurnsTTL)})
+	return turns
 }
 
 func isRunnerEditingTool(tool string) bool {

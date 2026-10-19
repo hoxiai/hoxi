@@ -184,7 +184,7 @@ func (s *Service) acquire(ctx context.Context, key scopeKey, create bool) (*scop
 	}
 	sc := s.scopes[key]
 	if sc == nil && create {
-		if len(s.scopes) >= maxScopes {
+		if len(s.scopes) >= maxScopes && !s.evictIdleScopeLocked() {
 			s.mu.Unlock()
 			return nil, errors.New("browser scope limit reached")
 		}
@@ -206,6 +206,28 @@ func (s *Service) acquire(ctx context.Context, key scopeKey, create bool) (*scop
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
+}
+
+// evictIdleScopeLocked frees one slot held only by a saved viewport. UI resizes
+// create scopes lazily, so they must not starve sessions that start Chrome.
+// Scopes with Chrome, manual control, or in-flight work are never evicted.
+func (s *Service) evictIdleScopeLocked() bool {
+	for key, sc := range s.scopes {
+		select {
+		case sc.gate <- struct{}{}:
+		default:
+			continue
+		}
+		if sc.browser != nil || sc.manual || sc.closed {
+			<-sc.gate
+			continue
+		}
+		delete(s.scopes, key)
+		sc.dispose()
+		<-sc.gate
+		return true
+	}
+	return false
 }
 
 func (s *Service) remove(key scopeKey, sc *scope) {

@@ -276,7 +276,9 @@ function mergeTurnInto(local: MessageTurn, remote: { info: MessageInfo; parts: M
  */
 export function mergeServerTurnsInto(
   list: MessageTurn[],
-  remoteTurns: Array<{ info: MessageInfo; parts: MessagePart[] }>
+  remoteTurns: Array<{ info: MessageInfo; parts: MessagePart[] }>,
+  /** Turn IDs already in the list when the snapshot was requested (e.g. a cached seed). */
+  preRequestIDs?: ReadonlySet<string>
 ) {
   const existing = list.slice();
   const priorRealUserIDs = new Set(
@@ -323,8 +325,13 @@ export function mergeServerTurnsInto(
       continue;
     }
     // An empty snapshot has no cutoff: SSE may have filled the list while REST
-    // was in flight. Keep those turns mounted instead of clearing the transcript.
-    if (!lastRemote || compareTurnOrder(turn.info, lastRemote) > 0) next.push(turn);
+    // was in flight. Keep those turns mounted instead of clearing the transcript,
+    // but drop turns that predate the request: the server no longer has them.
+    if (!lastRemote) {
+      if (!preRequestIDs?.has(turn.info.id)) next.push(turn);
+    } else if (compareTurnOrder(turn.info, lastRemote) > 0) {
+      next.push(turn);
+    }
   }
 
   if (
@@ -534,7 +541,9 @@ function compactTurnForSnapshot(turn: MessageTurn): MessageTurn {
 }
 
 export function persistCachedSessionTurns(sessionID: string, turns: MessageTurn[]): void {
-  if (!sessionID || !Array.isArray(turns) || turns.length === 0) return;
+  if (!sessionID || !Array.isArray(turns)) return;
+  // An empty merged snapshot means the server has no history; drop stale cache seeds.
+  if (turns.length === 0) return evictCachedSessionTurns([sessionID]);
   const tail = turns.slice(-MAX_SNAPSHOT_TURNS_PER_SESSION).map(compactTurnForSnapshot);
   const bundle = loadSessionTurnsBundle();
   bundle.order = bundle.order.filter((id) => id !== sessionID);

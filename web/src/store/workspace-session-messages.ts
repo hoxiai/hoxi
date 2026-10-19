@@ -458,8 +458,8 @@ export function upsertMessagePart(part: MessagePart) {
       part.state.status === "running" ||
       part.state.status === "completed") &&
     workspace.activeSessionID &&
-    belongsToActiveSession(part.sessionID) &&
-    isMutatingTool(part.tool)
+    isMutatingTool(part.tool) &&
+    belongsToActiveSession(part.sessionID)
   ) {
     scheduleRefreshWorktreeStatus(workspace.activeSessionID, 250);
   }
@@ -530,8 +530,8 @@ export function applyStreamFrameBatch(batch: StreamFrameBatch) {
       (part.state.status === "pending" ||
         part.state.status === "running" ||
         part.state.status === "completed") &&
-      belongsToActiveSession(part.sessionID) &&
-      isMutatingTool(part.tool)
+      isMutatingTool(part.tool) &&
+      belongsToActiveSession(part.sessionID)
     ) {
       shouldRefreshActiveWorktree = true;
     }

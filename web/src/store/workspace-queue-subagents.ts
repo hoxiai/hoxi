@@ -12,9 +12,9 @@ import {
   loadSessionMessagesOnly,
   pendingRevertConfirm,
   type PendingRevertRequest,
-  refreshSessionDiff,
   replaceSession,
   revertToHere,
+  scheduleRefreshSessionDiff,
   scheduleRefreshWorktreeStatus,
   sessionDirectory,
   setPendingRevertConfirm,
@@ -302,7 +302,7 @@ export function ensureChildSubagentSessionLoaded(
     void loadSessionMessagesOnly(childSessionID, directory)
       .then(() => {
         if (parentSessionID && !isSessionDeleted(parentSessionID)) {
-          void refreshSessionDiff(parentSessionID);
+          scheduleRefreshSessionDiff(parentSessionID);
           scheduleRefreshWorktreeStatus(parentSessionID, 150);
         }
       })

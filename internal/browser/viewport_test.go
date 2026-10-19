@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -173,4 +174,34 @@ func TestChromeDynamicViewport(t *testing.T) {
 	assertSize(375, 667)
 	call(fmt.Sprintf(`{"action":"tab_select","tabID":%q}`, first), true)
 	assertSize(375, 667)
+}
+
+func TestViewportOnlyScopesDoNotExhaustLimit(t *testing.T) {
+	s := New()
+	defer s.Close()
+	dir := t.TempDir()
+	// Opening the Browser tab in many sessions only saves viewport sizes.
+	request(t, s, dir, "ses_manual", "action", `{"action":"control","manual":true}`, false)
+	for i := 0; i < maxScopes*2; i++ {
+		body := `{"action":"resize","width":800,"height":600}`
+		if w := request(t, s, dir, fmt.Sprintf("ses_%d", i), "action", body, false); w.Code != 200 {
+			t.Fatalf("resize %d: %d %s", i, w.Code, w.Body.String())
+		}
+	}
+	if len(s.scopes) > maxScopes {
+		t.Fatalf("scope count %d exceeds limit", len(s.scopes))
+	}
+	manual := false
+	for key, sc := range s.scopes {
+		if key.session == "ses_manual" && sc.manual {
+			manual = true
+		}
+	}
+	if !manual {
+		t.Fatal("manual-control scope was evicted")
+	}
+	resolved, _ := filepath.EvalSymlinks(dir)
+	if _, ok := s.scopes[scopeKey{resolved, fmt.Sprintf("ses_%d", maxScopes*2-1)}]; !ok {
+		t.Fatal("latest viewport scope was not kept")
+	}
 }

@@ -171,6 +171,8 @@ func TestScopesAndCancellation(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		// Mark the slot as running Chrome; idle viewport-only scopes are evictable.
+		sc.browser = ctx
 		<-sc.gate
 	}
 	if _, err := s.acquire(ctx, scopeKey{"/tmp", "extra"}, true); err == nil {

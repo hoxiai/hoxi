@@ -233,16 +233,22 @@ export function replaceSessionFromEvent(info: SessionInfo, eventDirectory?: stri
   }
 }
 
+// Idle turns an empty snapshot proves stale (cache seeds); busy sessions may still be persisting.
+function idleTurnIDs(sessionID: string): Set<string> | undefined {
+  return isSessionBusy(sessionID) ? undefined : new Set((workspace.messagesBySession[sessionID] ?? []).map((t) => t.info.id));
+}
+
 export async function loadSessionMessagesOnly(
   sessionID: string,
   explicitDirectory?: string
 ): Promise<void> {
   const directory = explicitDirectory || sessionDirectory(sessionID);
+  const preRequestIDs = idleTurnIDs(sessionID);
   const turns = await hoxiAPI.getMessages(sessionID, directory);
   if (!isSessionDeleted(sessionID)) restoreSessionAI(sessionID, turns);
   setWorkspace(
     produce((state) => {
-      mergeServerTurnsInto((state.messagesBySession[sessionID] ||= []), turns);
+      mergeServerTurnsInto((state.messagesBySession[sessionID] ||= []), turns, preRequestIDs);
     })
   );
   if (!isSessionDeleted(sessionID)) {
@@ -261,11 +267,12 @@ export async function loadSessionMessages(sessionID: string): Promise<void> {
     setWorkspace("loadingMessagesBySession", sessionID, true);
   }
   try {
+    const preRequestIDs = idleTurnIDs(sessionID);
     const turns = await hoxiAPI.getMessages(sessionID, directory);
     if (!isSessionDeleted(sessionID)) restoreSessionAI(sessionID, turns);
     setWorkspace(
       produce((state) => {
-        mergeServerTurnsInto((state.messagesBySession[sessionID] ||= []), turns);
+        mergeServerTurnsInto((state.messagesBySession[sessionID] ||= []), turns, preRequestIDs);
       })
     );
     if (!isSessionDeleted(sessionID)) {
@@ -297,7 +304,7 @@ export async function loadSessionMessages(sessionID: string): Promise<void> {
   }
   if (isChildSession && sessionID !== workspace.activeSessionID) {
     if (parentID && !isSessionDeleted(parentID)) {
-      void refreshSessionDiff(parentID);
+      scheduleRefreshSessionDiff(parentID);
     }
     return;
   }
@@ -337,6 +344,18 @@ export function applySessionDiffEvent(sessionID: string, diffs: SnapshotFileDiff
     ? diffs
     : filterLocalSessionDiffsByTurns(sessionID, diffs, workspace.messagesBySession, workspace.rootDir);
   setDiffListIfChanged("diffsBySession", sessionID, next);
+}
+
+const diffRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+/** Coalesces bursts (e.g. many settled subagents) into one parent diff refresh. */
+export function scheduleRefreshSessionDiff(sessionID: string, delayMs = 150): void {
+  const pending = diffRefreshTimers.get(sessionID);
+  if (pending !== undefined) clearTimeout(pending);
+  diffRefreshTimers.set(sessionID, setTimeout(() => {
+    diffRefreshTimers.delete(sessionID);
+    if (!isSessionDeleted(sessionID)) void refreshSessionDiff(sessionID);
+  }, delayMs));
 }
 
 export async function refreshSessionDiff(

@@ -51,6 +51,21 @@ describe("REST snapshot merge", () => {
     assertEqual(empty.length, 0, "a new empty session stays empty");
   });
 
+  it("drops turns that predate an empty snapshot but keeps ones streamed during it", () => {
+    const [state, setState] = createStore<{ turns: MessageTurn[] }>({
+      turns: [{ info: info("msg_a", "user"), parts: [text("prt_u", "msg_a", "cached")] }],
+    });
+    const preRequestIDs = new Set(state.turns.map((t) => t.info.id));
+    setState(produce((s) => upsertTurnPart(s.turns, text("prt_x", "msg_b", "live"))));
+    setState(produce((s) => mergeServerTurnsInto(s.turns, [], preRequestIDs)));
+    assertEqual(state.turns.length, 1, "stale cached turn is removed");
+    assertEqual(state.turns[0].info.id, "msg_b", "turn streamed while REST was in flight stays");
+
+    persistCachedSessionTurns("ses_stale_cache", [{ info: info("msg_a", "user"), parts: [] }]);
+    persistCachedSessionTurns("ses_stale_cache", []);
+    assertEqual(readCachedSessionTurns("ses_stale_cache"), undefined, "empty history evicts the cache seed");
+  });
+
   it("merges initial text and reasoning snapshots that omit empty text", () => {
     for (const type of ["text", "reasoning"] as const) {
       const missing = { id: "prt_x", sessionID: sid, messageID: "msg_b", type } as MessagePart;

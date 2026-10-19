@@ -127,6 +127,13 @@ function matchCodeFenceOpen(
   };
 }
 
+const SINGLE_LINE_FENCE_LANGS = new Set(
+  ("json jsonc json5 js javascript jsx mjs cjs ts typescript tsx go golang py python rs rust rb ruby " +
+    "sh bash zsh fish shell shellscript console powershell ps1 sql yaml yml toml xml html css scss " +
+    "md markdown diff patch c cpp h hpp java kt kotlin swift php lua dart graphql gql ini text txt plaintext")
+    .split(" ")
+);
+
 function matchSingleLineCodeFence(
   line: string
 ): { indent: number; marker: "`" | "~"; count: number; lang: string; code: string } | null {
@@ -134,9 +141,12 @@ function matchSingleLineCodeFence(
   if (!m) return null;
   const infoAndCode = m[3].trim();
   if (m[2][0] === "`" && infoAndCode.includes("`")) return null;
-  const firstSpace = infoAndCode.search(/[\s:]/);
-  const lang = firstSpace < 0 ? "text" : infoAndCode.slice(0, firstSpace) || "text";
-  const code = firstSpace < 0 ? "" : infoAndCode.slice(firstSpace).trim();
+  // Only a known language tag followed by code is split off; anything else,
+  // such as ```npm run build``` or ```{"a":1}```, is code in full.
+  const tagged = infoAndCode.match(/^([A-Za-z0-9_+#.-]+)\s+(\S[\s\S]*)$/);
+  const isLang = tagged && SINGLE_LINE_FENCE_LANGS.has(tagged[1].toLowerCase());
+  const lang = isLang ? tagged[1] : "text";
+  const code = isLang ? tagged[2].trim() : infoAndCode;
   return {
     indent: m[1].length,
     marker: m[2][0] as "`" | "~",
