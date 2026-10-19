@@ -2,11 +2,12 @@
 
 ## Project Overview
 
-`Hoxi` is a native-feel desktop workspace for AI agentic engineering built on four core layers:
+`Hoxi` is a native-feel desktop workspace for AI agentic engineering built on four core layers, plus a mobile control plane:
 1. **Desktop Host (`gopanel_v2` pattern)**: Wails v2 + `WKWebView` with native macOS vibrancy, `NSStatusBar` tray (`Running` / `Attention` badges), single-instance lock, window hide-on-close, and zero-port in-process reverse proxy.
-2. **Core Agent Runtime (Upstream Zero-Fork)**: Official pristine `opencode` (`anomalyco/opencode`, `v1.18+`) supervised via `opencode serve` with per-boot random `OPENCODE_SERVER_PASSWORD` and transparent HTTP Basic Auth (`opencode:<password>`) injection.
+2. **Execution Runtimes**: Official pristine `opencode` (`anomalyco/opencode`, `v1.18+`) supervised via `opencode serve` with per-boot random `OPENCODE_SERVER_PASSWORD` and transparent HTTP Basic Auth (`opencode:<password>`) injection; native multi-runtime adapters (`internal/runner`) drive Claude Code (`claude`), Antigravity (`agy`), Qoder, and CodeBuddy as pluggable subprocess runs.
 3. **Frontend Workspace (`Kilo Code` pattern)**: Vite + SolidJS + Tailwind CSS 3-pane shell (Left: Projects/Worktrees/Sessions; Center: SSE Timeline/ThoughtBox/ToolCards/Composer; Right: Pierre Diffs, 8-Dim Memory, Files, WebGL Xterm, Browser).
-4. **Core Capabilities**: Git worktree session isolation (`.hoxi/worktrees/<session-id>` via `?directory=`), 8-dimension structured memory (`.opencode/plugins/hoxi-memory.js`), live mid-stream steering (`Steer`), checkpoint revert/fork, and auto LSP diagnostics loop.
+4. **Core Capabilities**: Git worktree session isolation (`.hoxi/worktrees/<session-id>` via `?directory=`), 8-dimension structured memory (`.opencode/plugins/hoxi-memory.js`), live mid-stream steering (`Steer`), checkpoint revert/fork, cross-CLI session handoff, unified PreToolUse safety gate, and auto LSP diagnostics loop.
+5. **Mobile Control Plane**: Flutter iOS/Android app (`client/`) that watches live streams, steers agents, approves safety gates, and manages Hoxi & GoPanel server nodes.
 
 > See [DEVELOPMENT.md](DEVELOPMENT.md) for the complete architecture diagrams, OpenAPI/SSE contracts, Worktree state machines, and implementation details.
 
@@ -19,26 +20,45 @@
 ├── main.go                           # Thin Wails embed.FS entrypoint delegating to internal/app
 ├── cmd/hoxi/main.go                  # CLI / headless entrypoint calling internal/app
 ├── internal/
-│   ├── app/                          # DesktopApp lifecycle, Wails bindings & signal handling
-│   ├── opencode/                     # OpenCode binary resolver, installer & daemon supervision
-│   ├── gateway/                      # In-process reverse proxy, Basic Auth, WS bridge & pulse
-│   ├── worktree/                     # Git worktree session sandbox manager, diffs & branches
-│   ├── workspace/                    # Multi-workspace profile store & HTTP handlers
-│   ├── provider/                     # Provider config, LLM client, model probing, audit & telemetry
-│   ├── handoff/                      # External CLI (Claude/Codex/Gemini/Grok) session handoff
-│   ├── browser/                      # Headless Chrome session manager & inspector bridge
-│   └── statusbar/                    # Running/Attention tracker & macOS NSStatusBar (CGo)
+│   ├── app/                          # DesktopApp lifecycle, Wails bindings, origin allow-list & signal handling
+│   ├── agyhook/                      # `hoxi agy-hook` Antigravity PreToolUse hook → runner approval gate
+│   ├── auth/                         # Hoxi account one-click authorization, token poll/exchange & store
+│   ├── browser/                      # Headless Chrome session manager, tabs, actions & inspector bridge
+│   ├── buildinfo/                    # Build version embedded by the desktop build
+│   ├── claudeconfig/                 # Claude Code model/config discovery & selection
+│   ├── gateway/                      # In-process reverse proxy, Basic Auth, WS/SSE bridge, dev pulse & security
+│   ├── handoff/                      # Cross-CLI session handoff (Claude/Codex/Gemini/Grok/OpenCode/Trae/Qoder/CodeBuddy) + local CLI bridge & materializer
+│   ├── leaderboard/                  # Model / endpoint leaderboard aggregation & cache
+│   ├── opencode/                     # OpenCode binary resolver, installer, daemon supervision & browser plugin overlay
+│   ├── privacy/                      # Versioned consent store for gateway-initiated AI execution
+│   ├── provider/                     # Provider config, models.json, LLM client, probing, audit & telemetry
+│   ├── runner/                       # Multi-runtime execution engine (OpenCode/Claude/Antigravity/Qoder/CodeBuddy): process adapters, translators, hook gates, session store & revert
+│   ├── statusbar/                    # Running/Attention tracker & macOS NSStatusBar (CGo)
+│   ├── updater/                      # Sparkle-based native auto-update checker & appcast
+│   ├── workspace/                    # Multi-workspace project profile store & validation
+│   └── worktree/                     # Git worktree session sandbox manager, diffs, branches & snapshots
 ├── web/                              # Frontend workspace (Vite + SolidJS + Tailwind)
 │   ├── src/
-│   │   ├── components/               # Modular UI (layout, timeline, inspector, models, handoff, approval, terminal, settings)
-│   │   ├── i18n/                     # Reactive t(key, params), auto-inferred types & en-US/zh-CN locales
-│   │   ├── services/                 # Pure HTTP/REST/SSE/Browser transport clients (api.ts, sse.ts, browser.ts)
-│   │   └── store/                    # SolidJS reactive store & domain modules (flat barrel export in workspace.ts)
+│   │   ├── components/               # Modular UI by domain (layout, timeline, inspector, models, handoff, approval, terminal, settings, icons)
+│   │   ├── i18n/                     # Reactive t(key, params), auto-inferred types & en-US/zh-CN locale modules
+│   │   ├── services/                 # Pure HTTP/REST/SSE/Browser transport clients (api.ts, sse.ts, browser.ts, runner-api.ts, privacy.ts)
+│   │   ├── store/                    # SolidJS reactive store & domain modules (flat barrel export in workspace.ts)
+│   │   └── __tests__/                # Node-based unit/integration tests (sse, session-isolation, permissions, …)
 │   └── scripts/                      # check-i18n.ts, check-lines.ts (line & boundary lint), run-tests.ts
-├── client/                           # Hoxi Mobile App (Flutter + Riverpod + GoRouter, compatible with Hoxi & GoPanel nodes)
+├── client/                           # Hoxi Mobile App (Flutter + Riverpod + GoRouter, Hoxi & GoPanel dual-node)
+│   └── lib/
+│       ├── app/                      # App shell, router & presentation
+│       ├── core/                     # Network, storage & theme primitives
+│       └── features/                 # Domain features: ai_workspace, server, container, database, website, ssl, apps, resources, task_center, auth, settings
 ├── .opencode/
 │   ├── plugins/                      # hoxi-permissions.js & hoxi-memory.js
-│   └── memory/                       # Long-term project.md & session compaction records
+│   ├── lib/                          # permission-policy.js + cases.json (shared safety-gate rules)
+│   └── memory/                       # Long-term project.md & per-session compaction records
+├── docs/                             # Approval hooks, auto-updates, release & direct-distribution guides (+ assets/)
+├── scripts/                          # AI one-click release, DMG packaging, notarization & release publishing
+├── README.md / README.zh-CN.md       # Bilingual landing docs
+├── BROWSER.md                        # Headless Chrome inspector, manual takeover & security boundaries
+├── HANDOFF_AND_CLI_BRIDGE.md         # Cross-CLI handoff IR, credential discovery & protocol bridges
 ├── DEVELOPMENT.md                    # Comprehensive implementation blueprint
 └── AGENTS.md                         # Engineering rules & quick reference
 ```
