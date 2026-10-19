@@ -12,6 +12,7 @@ import {
 } from "lucide-solid";
 import {
   computeProviderHealth,
+  openDiagnostics,
   resetProviderTelemetry,
   workspace,
 } from "../../store/workspace";
@@ -47,6 +48,13 @@ export default function ProviderQualityCard(props: { providerID: string }) {
     <Show when={pid().length > 0}>
       <div class="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/45 p-3.5 space-y-3">
         {/* Header Row */}
+        <button
+          type="button"
+          onClick={() => openDiagnostics({ providerID: pid() })}
+          class="inline-flex items-center rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1.5 text-[11px] text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer"
+        >
+          {t("diagnostics.view")}
+        </button>
         <div class="flex items-center justify-between gap-2 flex-wrap">
           <div class="flex items-center gap-2 min-w-0">
             <div class="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-[var(--accent-surface)] text-[var(--accent-primary)]">

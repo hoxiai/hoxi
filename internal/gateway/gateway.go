@@ -23,6 +23,7 @@ import (
 	"github.com/hoxiai/hoxi/internal/auth"
 	"github.com/hoxiai/hoxi/internal/browser"
 	"github.com/hoxiai/hoxi/internal/buildinfo"
+	"github.com/hoxiai/hoxi/internal/diagnostics"
 	"github.com/hoxiai/hoxi/internal/handoff"
 	"github.com/hoxiai/hoxi/internal/leaderboard"
 	"github.com/hoxiai/hoxi/internal/privacy"
@@ -97,8 +98,13 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 				return err
 			}
 		}
-		if status != nil && strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") {
-			resp.Body = newSSETapReadCloser(resp.Body, status.InspectSSELine)
+		if strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") {
+			resp.Body = newSSETapReadCloser(resp.Body, func(line string) {
+				if status != nil {
+					status.InspectSSELine(line)
+				}
+				inspectOpenCodeError(line)
+			})
 		}
 		return nil
 	}
@@ -215,6 +221,9 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (g *Gateway) registerRoutes(distFS fs.FS) {
+	diagnosticHandler := diagnostics.Handler()
+	g.mux.Handle("/api/hoxi/diagnostics", diagnosticHandler)
+	g.mux.Handle("/api/hoxi/diagnostics/", diagnosticHandler)
 	g.mux.HandleFunc("/api/hoxi/privacy", g.handlePrivacy)
 	g.mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})

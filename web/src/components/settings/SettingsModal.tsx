@@ -2,6 +2,7 @@
 import { For, type JSX, onCleanup, onMount, Show } from "solid-js";
 import {
   CircleHelp,
+  ScrollText,
   Cpu,
   FolderGit2,
   KeyRound,
@@ -25,6 +26,7 @@ import { t } from "../../i18n";
 import { ChatComposerTab, GeneralAppearanceTab } from "./SettingsGeneralChatTabs";
 import { SystemRuntimeSettingsTab } from "./SettingsSystemRuntimeTab";
 import { PrivacySettingsTab } from "./PrivacyControls";
+import DiagnosticsTab from "./DiagnosticsTab";
 import {
   TerminalSafetySettingsTab,
   WorkspaceGitSettingsTab,
@@ -184,6 +186,7 @@ export default function SettingsModal() {
     { id: "terminal", label: () => t("settings.tabTerminal"), icon: TerminalIcon },
     { id: "system", label: () => t("settings.tabSystem"), icon: Cpu },
     { id: "privacy", label: () => t("privacy.title"), icon: ShieldCheck },
+    { id: "diagnostics", label: () => t("diagnostics.title"), icon: ScrollText },
   ];
 
   return (
@@ -289,6 +292,9 @@ export default function SettingsModal() {
               </Show>
               <Show when={appSettings.activeTab === "privacy"}>
                 <PrivacySettingsTab />
+              </Show>
+              <Show when={appSettings.activeTab === "diagnostics"}>
+                <DiagnosticsTab />
               </Show>
             </div>
           </div>

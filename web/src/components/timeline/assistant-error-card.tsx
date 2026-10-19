@@ -5,6 +5,7 @@ import {
   computeProviderHealth,
   findBestFallbackModel,
   isUserAbortError,
+  openDiagnostics,
   retryLastUserPrompt,
   selectModel,
   setWorkspace,
@@ -85,6 +86,13 @@ export function AssistantErrorCard(props: { info: MessageInfo }) {
             </Show>
 
             <div class="pt-1 flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={() => openDiagnostics({ sessionID: props.info.sessionID })}
+                class="inline-flex items-center gap-1 rounded-lg border border-[var(--danger-border)] bg-[var(--bg-panel)]/80 px-2.5 py-1 text-[11px] font-medium text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer"
+              >
+                {t("diagnostics.view")}
+              </button>
               <Show when={workspace.selectedModel}>
                 {(sel) => (
                   <button

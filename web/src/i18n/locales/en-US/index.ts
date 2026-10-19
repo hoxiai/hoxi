@@ -9,6 +9,7 @@ import { inspector } from "./inspector";
 import { models } from "./models";
 import { settings } from "./settings";
 import { privacy } from "./privacy";
+import { diagnostics } from "./diagnostics";
 
 export const enUS = {
   common,
@@ -21,6 +22,7 @@ export const enUS = {
   models,
   settings,
   privacy,
+  diagnostics,
 };
 
 export default enUS;

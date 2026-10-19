@@ -3,7 +3,7 @@ import { createStore } from "solid-js/store";
 import type { ApprovalMode } from "./approval-mode";
 import { applyThemeClass, setWorkspace, THEME_KEY, workspace } from "./workspace";
 
-export type SettingsTab = "general" | "chat" | "workspace" | "terminal" | "system" | "privacy";
+export type SettingsTab = "general" | "chat" | "workspace" | "terminal" | "system" | "privacy" | "diagnostics";
 export type ThemeMode = "light" | "dark" | "system";
 export type ColorScheme = "blue" | "classic";
 export type FontScale = "compact" | "default" | "comfortable" | "large";

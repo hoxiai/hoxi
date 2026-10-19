@@ -27,6 +27,7 @@ import { runAllTests } from "../src/__tests__/test-harness";
 import "../src/__tests__/browser.test";
 import "../src/__tests__/terminal-lifecycle.test";
 import "../src/__tests__/privacy.test";
+import "../src/__tests__/diagnostics.test";
 import "../src/__tests__/appearance.test";
 
 console.log("[test] Running Hoxi frontend unit tests...");

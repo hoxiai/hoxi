@@ -582,3 +582,4 @@ export * from "./auth-state";
 export * from "./updater-state";
 export * from "./leaderboard-state";
 export * from "./privacy";
+export * from "./diagnostics";

@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -10,6 +11,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/diagnostics"
 )
 
 var (
@@ -55,7 +58,28 @@ type llmCompletionRequest struct {
 	Transport   *http.Transport
 }
 
-func callSimpleLLM(parentCtx context.Context, req llmCompletionRequest) (string, error) {
+func callSimpleLLM(parentCtx context.Context, req llmCompletionRequest) (text string, resultErr error) {
+	started := time.Now()
+	status := 0
+	readFailed := false
+	defer func() {
+		level, message := "info", "internal request completed"
+		if resultErr != nil {
+			level, message = "error", "internal request failed"
+			var netErr net.Error
+			switch {
+			case errors.Is(resultErr, context.Canceled):
+				level, message = "info", "internal request canceled"
+			case errors.Is(resultErr, context.DeadlineExceeded), errors.As(resultErr, &netErr) && netErr.Timeout():
+				message = "internal request timed out"
+			case readFailed:
+				message = "internal request response read failed"
+			case status != 0 && (status < 200 || status >= 300):
+				message = "internal request HTTP error"
+			}
+		}
+		diagnostics.Record(diagnostics.Entry{Kind: "request", Level: level, Source: "provider", Message: message, ProviderID: req.ProviderID, ModelID: req.ModelID, Status: status, DurationMs: time.Since(started).Milliseconds()})
+	}()
 	isAnthropic := req.NPM == "@ai-sdk/anthropic" || req.ProviderID == "anthropic"
 	trimmedBase := strings.TrimRight(req.BaseURL, "/")
 	var targetURL string
@@ -142,8 +166,13 @@ func callSimpleLLM(parentCtx context.Context, req llmCompletionRequest) (string,
 		return "", err
 	}
 	defer resp.Body.Close()
+	status = resp.StatusCode
 
-	respBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 512*1024))
+	respBytes, err := io.ReadAll(io.LimitReader(resp.Body, 512*1024))
+	if err != nil {
+		readFailed = true
+		return "", fmt.Errorf("read provider response: %w", err)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", fmt.Errorf("%s", extractAPIErrorMessage(resp.StatusCode, respBytes))
 	}

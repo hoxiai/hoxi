@@ -21,6 +21,7 @@ import (
 
 	"github.com/hoxiai/hoxi/internal/agyhook"
 	"github.com/hoxiai/hoxi/internal/buildinfo"
+	"github.com/hoxiai/hoxi/internal/diagnostics"
 	"github.com/hoxiai/hoxi/internal/gateway"
 	"github.com/hoxiai/hoxi/internal/opencode"
 	"github.com/hoxiai/hoxi/internal/provider"
@@ -127,7 +128,14 @@ func Run(distFS fs.FS) {
 
 	cfg.RootDir = workspace.ResolveInitialRootDir(cfg.RootDir)
 
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	logErr := diagnostics.Initialize()
+	logger := slog.New(diagnostics.NewHandler(os.Stderr))
+	slog.SetDefault(logger)
+	if logErr != nil {
+		logger.Warn("diagnostics storage unavailable")
+	}
+	diagnostics.Record(diagnostics.Entry{Kind: "system", Level: "INFO", Source: "app", Message: "application starting"})
+	defer diagnostics.Record(diagnostics.Entry{Kind: "system", Level: "INFO", Source: "app", Message: "application stopped"})
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -214,7 +222,11 @@ func Run(distFS fs.FS) {
 	wsServer := &http.Server{Handler: gw, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 90 * time.Second}
 	app.wsServer = wsServer
 	defer wsServer.Close()
-	go func() { _ = wsServer.Serve(listener) }()
+	go func() {
+		if err := wsServer.Serve(listener); err != nil && err != http.ErrServerClosed {
+			logger.Error("loopback server stopped unexpectedly", "error", err)
+		}
+	}()
 
 	opencode.ReapOrphanedDaemons(logger)
 
@@ -329,8 +341,9 @@ func (a *DesktopApp) setChild(c *exec.Cmd) {
 	done := make(chan struct{})
 	a.childDone = done
 	go func() {
-		_ = c.Wait()
+		err := c.Wait()
 		a.childMu.Lock()
+		stopped := a.childStopped
 		if a.child == c {
 			a.child = nil
 			if a.status != nil {
@@ -338,6 +351,17 @@ func (a *DesktopApp) setChild(c *exec.Cmd) {
 			}
 		}
 		a.childMu.Unlock()
+		if !stopped && a.logger != nil {
+			if err != nil {
+				exitCode := -1
+				if c.ProcessState != nil {
+					exitCode = c.ProcessState.ExitCode()
+				}
+				a.logger.Error("opencode daemon exited unexpectedly", "source", "opencode", "exitCode", exitCode)
+			} else {
+				a.logger.Warn("opencode daemon exited unexpectedly", "source", "opencode", "exitCode", 0)
+			}
+		}
 		close(done)
 	}()
 }

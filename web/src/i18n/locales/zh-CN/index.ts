@@ -10,6 +10,7 @@ import { inspector } from "./inspector";
 import { models } from "./models";
 import { settings } from "./settings";
 import { privacy } from "./privacy";
+import { diagnostics } from "./diagnostics";
 
 export const zhCN: I18nDictionary = {
   common,
@@ -22,6 +23,7 @@ export const zhCN: I18nDictionary = {
   models,
   settings,
   privacy,
+  diagnostics,
 };
 
 export default zhCN;

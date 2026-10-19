@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hoxiai/hoxi/internal/diagnostics"
 	"github.com/hoxiai/hoxi/internal/statusbar"
 	"github.com/hoxiai/hoxi/internal/worktree"
 )
@@ -113,6 +114,14 @@ func (s *Service) Subscribe(sessionID string) (chan SSEEvent, func()) {
 
 func (s *Service) broadcast(sessionID string, evts ...SSEEvent) {
 	for _, evt := range evts {
+		if evt.Type == "session.error" {
+			if entry := sessionErrorDiagnostic(sessionID, evt.Properties["error"]); entry != nil {
+				if rec, ok := s.store.Get(sessionID); ok {
+					entry.ProviderID, entry.ModelID = rec.ProviderID, rec.ModelID
+				}
+				diagnostics.Record(*entry)
+			}
+		}
 		s.persistEventToStore(sessionID, evt)
 		s.mu.Lock()
 		targets := make([]chan SSEEvent, 0, len(s.subs))
