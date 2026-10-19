@@ -31,35 +31,47 @@ export default function MemoryBankView() {
       : PROJECT_MEMORY_FILE
   );
 
+  let requestGen = 0;
+
   const load = async () => {
+    const gen = ++requestGen;
     setLoading(true);
     setError(null);
     const dir = activeDirectory();
+    const sid = workspace.activeSessionID;
     try {
-      if (scope() === "session" && workspace.activeSessionID) {
+      if (scope() === "session" && sid) {
         try {
           const res = await hoxiAPI.readFileContent(sessionMemoryFile(), dir);
+          if (gen !== requestGen) return;
           if (res?.content?.trim()) {
             setContent(res.content);
             return;
           }
         } catch {
+          if (gen !== requestGen) return;
           // Fallback to project memory if session memory file does not exist yet
         }
       }
       const res = await hoxiAPI.readFileContent(PROJECT_MEMORY_FILE, dir);
+      if (gen !== requestGen) return;
       setContent(res?.content ?? "");
     } catch (err) {
+      if (gen !== requestGen) return;
       console.error("read memory failed:", err);
       setError(t("inspector.memory.notFound"));
       setContent("");
     } finally {
-      setLoading(false);
+      if (gen === requestGen) {
+        setLoading(false);
+      }
     }
   };
 
   createEffect(() => {
-    void workspace.activeSessionID;
+    const sid = workspace.activeSessionID;
+    void (sid ? workspace.sessionFinishedAt[sid] : 0);
+    void activeDirectory();
     void scope();
     void load();
   });

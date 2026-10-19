@@ -327,7 +327,7 @@ export default function TaskProgressCard() {
                 <Show when={changedFiles().length > 0}>
                   <button
                     type="button"
-                    onClick={() => openDiffInInspector(changedFiles()[0]?.file)}
+                    onClick={() => openDiffInInspector(changedFiles()[0], "session")}
                     class="inline-flex items-center gap-1 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2 py-0.5 text-[10.5px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
                   >
                     <span>{t("timeline.filesAttached", { count: changedFiles().length })}</span>

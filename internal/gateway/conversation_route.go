@@ -2,7 +2,6 @@ package gateway
 
 import (
 	"net/http"
-	"net/url"
 	"strings"
 )
 
@@ -41,12 +40,6 @@ func (g *Gateway) routeConversation(w http.ResponseWriter, r *http.Request) bool
 		// CLI engines compact their own context; there is nothing to summarize.
 		writeJSON(w, http.StatusOK, false)
 		return false
-	case "diff":
-		setRequestPath(r, "/api/hoxi/worktree/diff")
-		values, _ := url.ParseQuery(r.URL.RawQuery)
-		values.Set("sessionID", id)
-		r.URL.RawQuery = values.Encode()
-		return true
 	}
 	setRequestPath(r, "/api/hoxi/runner/sessions/"+id+suffix)
 	return true

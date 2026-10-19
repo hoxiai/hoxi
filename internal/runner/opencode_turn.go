@@ -292,6 +292,7 @@ func (s *Service) startOpenCodeTurn(rec SessionRecord, mode, modelID, effort, sy
 						}
 					}
 				}
+				s.syncSessionMemoryFile(rec.ID)
 			} else {
 				err = fetchErr
 			}
@@ -430,6 +431,8 @@ func (s *Service) relayOpenCodeEvent(rec SessionRecord, raw []byte) {
 			return
 		}
 		evt.Properties["part"] = part
+	case "session.diff":
+		evt.Properties["diff"] = s.filterLocalSessionDiffEvent(rec.ID, evt.Properties["diff"])
 	}
 	if s.status != nil {
 		data, _ := json.Marshal(evt)

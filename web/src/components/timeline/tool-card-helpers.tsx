@@ -1,7 +1,7 @@
 // web/src/components/timeline/tool-card-helpers.tsx
 import { createMemo, For, type JSX, Show } from "solid-js";
 import type { MessagePart, SnapshotFileDiff, ToolState } from "../../services/sse-types";
-import { openDiffInInspector, setWorkspace, workspace } from "../../store/workspace";
+import { getFullToolOutput, openDiffInInspector, setWorkspace, workspace } from "../../store/workspace";
 import { Icon, type IconName } from "../icons";
 import FileDiffBlock from "../inspector/LazyFileDiffBlock";
 import { t } from "../../i18n";
@@ -289,8 +289,9 @@ function rawShellOutputFromState(state: ToolState): string {
   return "";
 }
 
-export function extractShellOutput(state: ToolState): string {
-  const raw = rawShellOutputFromState(state);
+export function extractShellOutput(state: ToolState, partID?: string): string {
+  const full = partID ? getFullToolOutput(partID) : undefined;
+  const raw = full ?? rawShellOutputFromState(state);
   return raw ? processCarriageReturns(truncateToolOutput(raw)) : "";
 }
 
@@ -525,7 +526,7 @@ export function ToolCardExpandedBody(props: {
                       variant="accent"
                       tooltipSide="left"
                       label={t("timeline.viewChanges")}
-                      onClick={() => openDiffInInspector(diff.file)}
+                      onClick={() => openDiffInInspector(diff, "session")}
                     >
                       <Icon name="code-lines" size="small" />
                     </ActionIconButton>
@@ -560,7 +561,8 @@ export function ToolCardExpandedBody(props: {
               <pre class="text-[11.5px] font-mono bg-[var(--bg-code)] border border-[var(--border-subtle)] p-2.5 rounded-lg overflow-x-auto max-h-56 text-[var(--text-secondary)] whitespace-pre-wrap break-all selectable-text">
                 {processCarriageReturns(
                   truncateToolOutput(
-                    (props.part.state as Extract<ToolState, { status: "completed" }>).output
+                    getFullToolOutput(props.part.id) ??
+                      (props.part.state as Extract<ToolState, { status: "completed" }>).output
                   )
                 )}
               </pre>

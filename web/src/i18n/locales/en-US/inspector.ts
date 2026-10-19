@@ -19,7 +19,7 @@ export const inspector = {
     manualHint: "You have control. Agent browser actions are blocked until you release manual control.",
     agentHint: "Agent control is enabled. Turn on manual control to prevent competing agent actions.",
     error: "Browser error: {error}", working: "Updating browser...", waiting: "Waiting for browser frame...",
-    empty: "Start the browser or enter a URL. Viewing this panel does not launch Chrome.",
+    empty: "Or enter a URL above and press Enter to open it.",
     viewport: "Live browser viewport", keyboard: "Browser keyboard input",
   },
   diffs: {

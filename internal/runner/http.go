@@ -314,6 +314,8 @@ func (s *Service) handleSessionSubroutes(w http.ResponseWriter, r *http.Request)
 		s.handleSessionUnrevert(w, r, sessionID)
 	case "fork":
 		s.handleSessionFork(w, r, sessionID)
+	case "diff":
+		s.handleSessionDiff(w, r, sessionID)
 	case "event":
 		s.serveSSE(w, r, sessionID)
 	default:
@@ -542,7 +544,7 @@ func (s *Service) handleSessionPrompt(w http.ResponseWriter, r *http.Request, se
 	if rec.Runtime == "opencode" {
 		err = s.startOpenCodeTurn(rec, mode, modelID, effort, body.System, userInfo, userParts)
 	} else {
-		input := runtimeContext(rec)
+		input := runtimeMemoryContext(rec) + runtimeContext(rec)
 		if body.System != "" {
 			input += body.System + "\n\n"
 		}

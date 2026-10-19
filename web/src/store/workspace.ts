@@ -499,10 +499,14 @@ export function openChangedFileInInspector(diff: SnapshotFileDiff | string) {
   );
 }
 
-export function openDiffInInspector(file?: string | SnapshotFileDiff) {
+export function openDiffInInspector(
+  file?: string | SnapshotFileDiff,
+  scope?: "worktree" | "session"
+) {
   const filePath = typeof file === "string" ? file : file?.file;
   const cleaned = filePath ? parseFileReference(filePath).path : "";
   setWorkspace({
+    ...(scope ? { diffScope: scope } : {}),
     inspectedFileDiff: typeof file === "object" ? file : null,
     inspectedDiffFile: cleaned || null,
     inspectorTab: "diffs",
@@ -590,4 +594,5 @@ export * from "./leaderboard-state";
 export * from "./privacy";
 export * from "./diagnostics";
 export * from "./file-links";
+export * from "./message-lookup";
 

@@ -27,6 +27,7 @@ import { sameSessionArray } from "./SessionHistory";
 import SingleProjectNavView, { RecentTasksNavView } from "./SingleProjectNavView";
 import UserAccountMenu from "./UserAccountMenu";
 import { t } from "../../i18n";
+import { matchesProjectSessionSearch } from "./session-search";
 
 export default function LeftNav() {
   const [filterQuery, setFilterQuery] = createSignal("");
@@ -108,12 +109,12 @@ export default function LeftNav() {
     const all = allProjects();
     const q = filterQuery().trim().toLowerCase();
     if (!q) return all;
-    return all.filter(
-      (item) =>
-        item.name.toLowerCase().includes(q) ||
-        item.path.toLowerCase().includes(q) ||
-        item.folders.some((f) => f.path.toLowerCase().includes(q))
-    );
+    return all.filter((item) => {
+      const path = normalizeFolderPath(item.path);
+      const sessions = path === normalizeFolderPath(workspace.rootDir) && !workspace.bootstrappingSessions
+        ? workspace.sessions : projectSessions()[path] || [];
+      return matchesProjectSessionSearch(item, sessions, q) || Boolean(loadingProjects()[path]);
+    });
   });
 
   const projectByPath = createMemo(() => new Map(projectList().map((p) => [p.path, p])));
@@ -131,6 +132,7 @@ export default function LeftNav() {
   const loadSessionsForProject = async (path: string) => {
     const clean = normalizeFolderPath(path);
     if (!clean || isInvalidProjectPath(clean)) return;
+    if (loadingProjects()[clean]) return;
     setLoadingProjects((prev) => (prev[clean] ? prev : { ...prev, [clean]: true }));
     try {
       if (clean === normalizeFolderPath(workspace.rootDir)) {
@@ -331,7 +333,8 @@ export default function LeftNav() {
   });
 
   createEffect(() => {
-    if (workspace.sidebarProjectMode !== "recent") return;
+    if (workspace.sidebarProjectMode !== "recent" &&
+      !(workspace.sidebarProjectMode === "multi" && filterQuery().trim())) return;
     const activeRoot = normalizeFolderPath(workspace.rootDir);
     for (const p of allProjects()) {
       const clean = normalizeFolderPath(p.path);
@@ -426,7 +429,10 @@ export default function LeftNav() {
 
           <button
             type="button"
-            onClick={() => setShowSearch((v) => !v)}
+            onClick={() => {
+              if (showSearch()) setFilterQuery("");
+              setShowSearch((v) => !v);
+            }}
             class={`inline-flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-lg text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer ${
               showSearch() ? "bg-[var(--bg-hover)] text-[var(--text-primary)]" : ""
             }`}
@@ -485,7 +491,7 @@ export default function LeftNav() {
               return (
                 <MultiProjectTreeItem
                   proj={proj()}
-                  expanded={isExpanded(projPath)}
+                  expanded={isExpanded(projPath) || Boolean(filterQuery().trim())}
                   isCreating={creatingForPath() === projPath}
                   isLoadingSessions={
                     Boolean(loadingProjects()[normPath]) ||

@@ -1,6 +1,13 @@
 // web/src/__tests__/merge-turns.test.ts
 import { createStore, produce } from "solid-js/store";
-import { mergeServerTurnsInto, upsertTurnInfo } from "../store/message-lookup";
+import {
+  evictCachedSessionTurns,
+  getFullToolOutput,
+  mergeServerTurnsInto,
+  persistCachedSessionTurns,
+  readCachedSessionTurns,
+  upsertTurnInfo,
+} from "../store/message-lookup";
 import type { MessageInfo, MessagePart } from "../services/sse-types";
 import type { MessageTurn } from "../store/workspace";
 import { assertEqual, assertTrue, describe, it } from "./test-harness";
@@ -99,5 +106,38 @@ describe("REST snapshot merge", () => {
     assertEqual(state.turns.length, 1);
     assertEqual(state.turns[0].info.id, "msg_u_300_1");
     assertTrue(state.turns[0] === bubble, "bubble is not remounted");
+  });
+
+  it("compacts oversized completed tool outputs out of reactive store and caches session snapshots", () => {
+    const hugeOutput = "L".repeat(48 * 1024);
+    const bigTool: MessagePart = {
+      id: "prt_big_tool",
+      sessionID: sid,
+      messageID: "msg_big",
+      type: "tool",
+      callID: "prt_big_tool",
+      tool: "bash",
+      state: {
+        status: "completed",
+        input: { command: "cat huge.log" },
+        output: hugeOutput,
+        title: "cat huge.log",
+        metadata: {},
+        time: { start: 1, end: 2 },
+      },
+    };
+    const [state, setState] = createStore<{ turns: MessageTurn[] }>({ turns: [] });
+    setState(produce((s) => mergeServerTurnsInto(s.turns, [
+      { info: info("msg_big", "assistant", 2), parts: [bigTool] },
+    ])));
+    const storedPart = state.turns[0].parts[0] as Extract<MessagePart, { type: "tool" }>;
+    assertEqual((storedPart.state as any).output.length, 32 * 1024);
+    assertEqual(getFullToolOutput("prt_big_tool")?.length, 48 * 1024);
+
+    persistCachedSessionTurns("ses_snap_test", state.turns);
+    const snap = readCachedSessionTurns("ses_snap_test");
+    assertTrue(Array.isArray(snap) && snap.length === 1);
+    evictCachedSessionTurns(["ses_snap_test"]);
+    assertEqual(readCachedSessionTurns("ses_snap_test"), undefined);
   });
 });

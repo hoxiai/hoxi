@@ -165,7 +165,7 @@ export default function ChangedFilesSummary(props: {
                 <button
                   type="button"
                   onClick={() => {
-                    if (props.files[0]) openDiffInInspector(props.files[0]);
+                    if (props.files[0]) openDiffInInspector(props.files[0], "session");
                   }}
                   class="inline-flex items-center rounded-full border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3 py-1 text-[12px] font-medium text-[var(--text-primary)] hover:border-[var(--border-strong)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
                 >
@@ -180,7 +180,7 @@ export default function ChangedFilesSummary(props: {
                 {(diff) => (
                   <ChangedFileRow
                     diff={diff}
-                    onSelect={(item) => openDiffInInspector(item)}
+                    onSelect={(item) => openDiffInInspector(item, "session")}
                   />
                 )}
               </For>
@@ -225,7 +225,7 @@ export default function ChangedFilesSummary(props: {
                 return;
               }
               if (props.files[0]) {
-                openDiffInInspector(props.files[0]);
+                openDiffInInspector(props.files[0], "session");
               }
             }}
             class="inline-flex items-center gap-2 rounded-full border border-[var(--border-subtle)] bg-[var(--bg-panel)]/95 backdrop-blur-md px-3.5 py-1 text-[12px] text-[var(--text-primary)] shadow-xs transition-colors cursor-pointer hover:border-[var(--border-strong)] hover:bg-[var(--bg-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-primary)]"
@@ -251,7 +251,7 @@ export default function ChangedFilesSummary(props: {
                       diff={diff}
                       compact={true}
                       onSelect={(item) => {
-                        openDiffInInspector(item);
+                        openDiffInInspector(item, "session");
                         setOpen(false);
                       }}
                     />

@@ -50,5 +50,23 @@ export default defineConfig({
     target: "esnext",
     outDir: "dist",
     emptyOutDir: true,
+    chunkSizeWarningLimit: 900,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes("node_modules/solid-js")) {
+            return "vendor-solid";
+          }
+          if (id.includes("node_modules/lucide-solid")) {
+            return "vendor-icons";
+          }
+          if (id.includes("node_modules/@shikijs") || id.includes("node_modules/shiki")) {
+            if (!id.includes("/langs/") && !id.includes("/themes/")) {
+              return "vendor-shiki-core";
+            }
+          }
+        },
+      },
+    },
   },
 });

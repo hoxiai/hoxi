@@ -3,17 +3,18 @@ import { produce } from "solid-js/store";
 import type { MessagePart, SnapshotFileDiff, SessionInfo } from "../services/sse-types";
 import { hoxiAPI, isRunnerSessionID } from "../services/api";
 import { registerRunnerSessions } from "../services/runner-api";
-import { mergeServerTurnsInto } from "./message-lookup";
+import {
+  evictCachedSessionTurns,
+  filterLocalSessionDiffsByTurns,
+  mergeServerTurnsInto,
+  persistCachedSessionTurns,
+  readCachedSessionTurns,
+} from "./message-lookup";
 import { recordUserRevertAction } from "./provider-telemetry";
 import { initializeSessionAI, persistSessionAI, restoreSessionAI, sessionAIConfig } from "./session-ai";
 import { syncPendingPermissions } from "./approval-mode";
 import { appSettings } from "./settings";
-import {
-  ARCHIVED_SESSIONS_KEY,
-  isSessionArchived,
-  setWorkspace,
-  workspace,
-} from "./workspace";
+import { ARCHIVED_SESSIONS_KEY, isSessionArchived, setWorkspace, workspace } from "./workspace";
 import {
   forgetSessionTitles,
   hasManualSessionTitle,
@@ -238,6 +239,9 @@ export async function loadSessionMessagesOnly(sessionID: string): Promise<void> 
       mergeServerTurnsInto((state.messagesBySession[sessionID] ||= []), turns);
     })
   );
+  if (!isSessionDeleted(sessionID)) {
+    persistCachedSessionTurns(sessionID, workspace.messagesBySession[sessionID] ?? turns);
+  }
 }
 
 export async function loadSessionMessages(sessionID: string): Promise<void> {
@@ -257,6 +261,9 @@ export async function loadSessionMessages(sessionID: string): Promise<void> {
         mergeServerTurnsInto((state.messagesBySession[sessionID] ||= []), turns);
       })
     );
+    if (!isSessionDeleted(sessionID)) {
+      persistCachedSessionTurns(sessionID, workspace.messagesBySession[sessionID] ?? turns);
+    }
   } catch (err) {
     if (workspace.messagesBySession[sessionID] === undefined) {
       setWorkspace("messagesBySession", sessionID, []);
@@ -299,7 +306,10 @@ function setDiffListIfChanged(
 export function applySessionDiffEvent(sessionID: string, diffs: SnapshotFileDiff[]): void {
   if (isSessionDeleted(sessionID)) return;
   diffRevisions.set(sessionID, (diffRevisions.get(sessionID) ?? 0) + 1);
-  setDiffListIfChanged("diffsBySession", sessionID, diffs);
+  const next = workspace.worktreeBySession[sessionID]?.isolated
+    ? diffs
+    : filterLocalSessionDiffsByTurns(sessionID, diffs, workspace.messagesBySession, workspace.rootDir);
+  setDiffListIfChanged("diffsBySession", sessionID, next);
 }
 
 export async function refreshSessionDiff(
@@ -318,6 +328,8 @@ export async function refreshSessionDiff(
     // Only an isolated worktree can safely attribute directory-wide changes to this session.
     if (!diffs.length && meta?.isolated && meta.dirty && meta.directory === directory) {
       diffs = preloadedWorktreeDiffs ?? (await hoxiAPI.getWorktreeDiff(sessionID, directory));
+    } else if (!meta?.isolated) {
+      diffs = filterLocalSessionDiffsByTurns(sessionID, diffs, workspace.messagesBySession, workspace.rootDir);
     }
     if (isCurrent()) setDiffListIfChanged("diffsBySession", sessionID, diffs);
   } catch (err) {
@@ -335,14 +347,19 @@ export async function selectSession(sessionID: string): Promise<void> {
       activeInspectorFolder: null,
     });
   }
-  if (workspace.messagesBySession[sessionID] === undefined) {
-    setWorkspace("loadingMessagesBySession", sessionID, true);
+  const hadLiveMemory = workspace.messagesBySession[sessionID] !== undefined;
+  if (!hadLiveMemory) {
+    const snap = readCachedSessionTurns(sessionID);
+    if (snap && snap.length > 0) {
+      setWorkspace("messagesBySession", sessionID, snap);
+    } else {
+      setWorkspace("loadingMessagesBySession", sessionID, true);
+    }
   }
   setWorkspace("activeSessionID", sessionID);
   setWorkspace("unreadCompletedBySession", sessionID, false);
   void syncPendingPermissions(sessionDirectory(sessionID));
-  const cached = workspace.messagesBySession[sessionID];
-  if (cached !== undefined && workspace.aiBySession[sessionID]) {
+  if (hadLiveMemory && workspace.aiBySession[sessionID]) {
     const isChildSession = Boolean(workspace.sessions.find((s) => s.id === sessionID)?.parentID);
     if (!isChildSession) void refreshSessionDiff(sessionID);
     return;
@@ -600,6 +617,7 @@ export function removeSessionFromStore(sessionID: string): SessionInfo | undefin
     deletedSessionIDs.add(id);
   }
   forgetSessionTitles(allIDs);
+  evictCachedSessionTurns(allIDs);
   const nextCandidate = nextActiveSessionCandidate(sessionID);
   if (workspace.archivedSessionIDs.some((id) => allIDs.includes(id))) {
     const nextArchived = workspace.archivedSessionIDs.filter((id) => !allIDs.includes(id));

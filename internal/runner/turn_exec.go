@@ -100,6 +100,7 @@ func (s *Service) startTurnProcess(
 		defer func() {
 			revokeHook()
 			s.cancelSessionApprovals(rec.ID, "the CLI process exited")
+			s.syncSessionMemoryFile(rec.ID)
 			s.store.Flush()
 			close(ap.done)
 			s.mu.Lock()

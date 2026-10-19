@@ -20,8 +20,8 @@ import {
   collectSessionChangedFiles,
 } from "../components/timeline/tool-card-state";
 import type { MessagePart } from "../services/sse-types";
-
-import type { MessageTurn } from "../store/workspace";
+import { filterLocalSessionDiffsByTurns } from "../store/message-lookup";
+import { type MessageTurn, setWorkspace } from "../store/workspace";
 import { firstMatchingPartID } from "../components/timeline/TranscriptSearchBar";
 import {
   parseInline,
@@ -298,6 +298,59 @@ describe("task progress todo staleness", () => {
       sessionChanged.map((d) => ({ file: d.file, additions: d.additions, deletions: d.deletions })),
       [{ file: "second.go", additions: 2, deletions: 0 }]
     );
+
+    // In local (non-isolated) mode, OpenCode `patch` parts snapshot the entire working tree
+    // and `worktreeDiffsBySession` holds all uncommitted repo files. Neither may leak into
+    // the session's changed-files summary or override the tool's own +/- counts.
+    setWorkspace("worktreeBySession", sid, {
+      sessionID: sid,
+      isolated: false,
+      directory: "/repo",
+      createdAt: "test",
+    });
+    setWorkspace("worktreeDiffsBySession", sid, [
+      { file: "second.go", additions: 99, deletions: 42 },
+      { file: "unrelated-dirty.ts", additions: 50, deletions: 10 },
+    ]);
+    const turnWithSnapshotPatch: MessageTurn[] = [
+      {
+        info: { id: "msg_a3", sessionID: sid, role: "assistant", time: { created: 7, completed: 8 } },
+        parts: [
+          done("real_edit_3", "edit", {
+            filePath: "second.go",
+            oldString: "package a",
+            newString: "package a\n\nfunc main() {}",
+          }),
+          {
+            id: "patch_1",
+            sessionID: sid,
+            messageID: "msg_a3",
+            type: "patch",
+            hash: "abc",
+            files: ["second.go", "unrelated-dirty.ts"],
+          },
+        ],
+      },
+    ];
+    const localCycleChanged = collectCycleChangedFiles(turnWithSnapshotPatch, sid);
+    assertDeepEqual(
+      localCycleChanged.map((d) => ({ file: d.file, additions: d.additions, deletions: d.deletions })),
+      [{ file: "second.go", additions: 2, deletions: 0 }]
+    );
+    const filteredLocalDiffs = filterLocalSessionDiffsByTurns(
+      sid,
+      [
+        { file: "second.go", additions: 2, deletions: 0 },
+        { file: "unrelated-dirty.ts", additions: 50, deletions: 10 },
+      ],
+      { [sid]: turnWithSnapshotPatch },
+      "/repo"
+    );
+    assertDeepEqual(
+      filteredLocalDiffs.map((d) => d.file),
+      ["second.go"]
+    );
+    setWorkspace("worktreeDiffsBySession", sid, []);
   });
 
   it("keeps streaming markdown blocks and inline tokens stable without intermediate layout thrashing", () => {

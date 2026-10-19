@@ -19,6 +19,7 @@ import {
   workspace,
 } from "../../store/workspace";
 import { t } from "../../i18n";
+import { collectCycleChangedFiles } from "./tool-card-state";
 
 export function ComposerSandboxPill(props: {
   mode: "local" | "worktree";
@@ -63,8 +64,15 @@ export function ComposerSandboxPill(props: {
   const canFork = createMemo(() => canForkSession(props.sessionID));
   const gitBranch = createMemo(() => activeWorktree()?.branch || "");
   const changedFilesCount = createMemo(() => {
-    const key = props.sessionID || "__root__";
-    return (workspace.diffsBySession[key] ?? []).length;
+    const id = props.sessionID;
+    if (id) {
+      const sDiffs = workspace.diffsBySession[id] ?? [];
+      if (sDiffs.length > 0) return sDiffs.length;
+      const turns = workspace.messagesBySession[id] ?? [];
+      if (turns.length > 0) return collectCycleChangedFiles(turns, id).length;
+      return 0;
+    }
+    return (workspace.diffsBySession["__root__"] ?? []).length;
   });
   const isDirty = createMemo(() => Boolean(activeWorktree()?.dirty || changedFilesCount() > 0));
   const aheadCount = createMemo(() => activeWorktree()?.aheadCount || 0);
@@ -301,7 +309,10 @@ export function ComposerSandboxPill(props: {
                 <button
                   type="button"
                   onClick={() => {
-                    openDiffInInspector();
+                    openDiffInInspector(
+                      undefined,
+                      props.sessionID ? "session" : "worktree"
+                    );
                     setOpen(false);
                   }}
                   class="w-full flex items-center justify-between gap-2 rounded-xl px-2.5 py-1.5 text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"

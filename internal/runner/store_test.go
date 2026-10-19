@@ -167,3 +167,67 @@ func TestStoreMigratesLegacySingleFile(t *testing.T) {
 		t.Fatalf("migrated record = %+v, %v", rec, ok)
 	}
 }
+
+func TestRunnerMultiRuntimeMemoryInjectionAndSync(t *testing.T) {
+	workDir := t.TempDir()
+	storeDir := t.TempDir()
+	svc := NewService(workDir, nil, nil, storeDir)
+
+	rec := SessionRecord{
+		ID:           "ses_hoxi_mem_1",
+		Runtime:      string(RuntimeClaudeCode),
+		ProjectDir:   workDir,
+		WorktreePath: workDir,
+		SandboxMode:  "local",
+		ModelID:      "claude-sonnet-4-6",
+		Branch:       "main",
+		Turns: []MessageTurn{
+			{
+				Info:  MessageInfo{ID: "msg_u1", SessionID: "ses_hoxi_mem_1", Role: "user"},
+				Parts: []MessagePart{{ID: "prt_u1", SessionID: "ses_hoxi_mem_1", MessageID: "msg_u1", Type: "text", Text: "Optimize runner memory sync"}},
+			},
+			{
+				Info: MessageInfo{ID: "msg_a1", SessionID: "ses_hoxi_mem_1", Role: "assistant"},
+				Parts: []MessagePart{
+					{
+						ID: "prt_t1", SessionID: "ses_hoxi_mem_1", MessageID: "msg_a1", Type: "tool", Tool: "edit",
+						State: &ToolState{Status: "completed", Input: map[string]interface{}{"filePath": "internal/runner/memory.go"}},
+					},
+					{
+						ID: "prt_txt1", SessionID: "ses_hoxi_mem_1", MessageID: "msg_a1", Type: "text", Text: "Implemented 8-dimension memory sync.",
+					},
+				},
+			},
+		},
+	}
+	if err := svc.store.Put(rec); err != nil {
+		t.Fatal(err)
+	}
+
+	svc.syncSessionMemoryFile(rec.ID)
+
+	sessMemPath := filepath.Join(workDir, ".opencode", "memory", "sessions", rec.ID+".md")
+	rawSess, err := os.ReadFile(sessMemPath)
+	if err != nil {
+		t.Fatalf("expected session memory file created: %v", err)
+	}
+	if !strings.Contains(string(rawSess), "## 1. Primary Request and Intent") || !strings.Contains(string(rawSess), "internal/runner/memory.go") {
+		t.Fatalf("unexpected session memory content: %s", string(rawSess))
+	}
+
+	injected := runtimeMemoryContext(rec)
+	if !strings.Contains(injected, "<project_memory>") || !strings.Contains(injected, "<session_handoff_memory>") {
+		t.Fatalf("expected project and session memory blocks, got: %s", injected)
+	}
+	if strings.Contains(injected, "Updated:") {
+		t.Fatalf("expected volatile Updated timestamp stripped from injected context: %s", injected)
+	}
+
+	// Once ExternalID is set and ContextPending is false, native resume takes over without re-injecting
+	rec.ExternalID = "claude-ext-1"
+	rec.ContextPending = false
+	if got := runtimeMemoryContext(rec); got != "" {
+		t.Fatalf("expected empty memory injection on native resume turn, got: %s", got)
+	}
+}
+

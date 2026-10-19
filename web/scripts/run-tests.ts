@@ -21,6 +21,7 @@ import "../src/__tests__/session-scroll.test";
 import "../src/__tests__/reading-position.test";
 import "../src/__tests__/transcript-controls.test";
 import "../src/__tests__/session-history.test";
+import "../src/__tests__/session-search.test";
 import "../src/__tests__/syntax-highlight.test";
 import "../src/__tests__/composer-keyboard.test";
 import { runAllTests } from "../src/__tests__/test-harness";

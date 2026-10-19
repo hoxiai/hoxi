@@ -20,7 +20,7 @@ export const inspector: InspectorI18n = {
     manualHint: "您正在手动控制浏览器，期间 AI 操作将暂停。",
     agentHint: "当前由 AI 控制浏览器。开启手动控制可避免操作冲突。",
     error: "浏览器错误：{error}", working: "正在更新浏览器…", waiting: "正在等待画面…",
-    empty: "启动浏览器或输入网址。",
+    empty: "也可以在上方输入网址，按回车打开。",
     viewport: "浏览器实时画面", keyboard: "浏览器键盘输入",
   },
   diffs: {

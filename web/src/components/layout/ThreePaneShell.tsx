@@ -1,16 +1,17 @@
-import { createMemo, createSignal, onCleanup, Show } from "solid-js";
+import { createMemo, createSignal, lazy, onCleanup, Show, Suspense } from "solid-js";
 import CompactHeader from "./CompactHeader";
 import LeftNav from "./LeftNav";
-import WorkspaceModal from "./WorkspaceModal";
-import ExternalHandoffModal from "../handoff/ExternalHandoffModal";
 import MessageStream from "../timeline/MessageStream";
 import Composer from "../timeline/Composer";
 import ParticleLogo from "../timeline/ParticleLogo";
 import InspectorPane from "../inspector/InspectorPane";
-import ProviderModal from "../models/ProviderModal";
-import ModelLeaderboardModal from "../models/ModelLeaderboardModal";
 import SettingsModal from "../settings/SettingsModal";
-import { setWorkspace, workspace } from "../../store/workspace";
+import { leaderboardState, setWorkspace, workspace } from "../../store/workspace";
+
+const WorkspaceModal = lazy(() => import("./WorkspaceModal"));
+const ExternalHandoffModal = lazy(() => import("../handoff/ExternalHandoffModal"));
+const ProviderModal = lazy(() => import("../models/ProviderModal"));
+const ModelLeaderboardModal = lazy(() => import("../models/ModelLeaderboardModal"));
 
 const LEFT_MIN = 220;
 const LEFT_MAX = 360;
@@ -147,11 +148,21 @@ export default function ThreePaneShell() {
       </main>
 
       {/* Provider, Custom Model, Workspace, Session Handoff & System Settings Modals */}
-      <WorkspaceModal />
-      <ExternalHandoffModal />
-      <ProviderModal />
+      <Suspense>
+        <Show when={workspace.workspaceModalMode !== null}>
+          <WorkspaceModal />
+        </Show>
+        <Show when={workspace.handoffModalOpen}>
+          <ExternalHandoffModal />
+        </Show>
+        <Show when={workspace.providerModalOpen}>
+          <ProviderModal />
+        </Show>
+        <Show when={leaderboardState.modalOpen}>
+          <ModelLeaderboardModal />
+        </Show>
+      </Suspense>
       <SettingsModal />
-      <ModelLeaderboardModal />
     </div>
   );
 }

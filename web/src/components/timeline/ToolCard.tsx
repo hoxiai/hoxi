@@ -75,7 +75,7 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
   const shellCmd = createMemo(() => (isShell() ? extractCommand(props.part) : ""));
   const description = createMemo(() => extractDescription(props.part));
   const shellOut = createMemo(() =>
-    isShell() && expanded() ? extractShellOutput(props.part.state) : ""
+    isShell() && expanded() ? extractShellOutput(props.part.state, props.part.id) : ""
   );
   const exitCode = createMemo(() => (isShell() ? extractExitCode(props.part.state) : undefined));
 

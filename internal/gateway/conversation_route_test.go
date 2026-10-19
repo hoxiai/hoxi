@@ -113,6 +113,10 @@ func TestConversationRoutesToOwningBackend(t *testing.T) {
 	if res.Code != http.StatusOK || !strings.Contains(res.Body.String(), `"revert":{"messageID":"msg"}`) {
 		t.Fatalf("owned revert: %d %s", res.Code, res.Body.String())
 	}
+	res = serve(gw, http.MethodGet, "/api/hoxi/sessions/ses_cld_owned/diff", "")
+	if res.Code != http.StatusOK || strings.TrimSpace(res.Body.String()) != "[]" {
+		t.Fatalf("owned local session with no edits must return empty diff: %d %s", res.Code, res.Body.String())
+	}
 	if len(calls()) != before+1 {
 		t.Fatalf("owned routes reached OpenCode: %+v", calls())
 	}

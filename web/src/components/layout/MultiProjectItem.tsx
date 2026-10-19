@@ -25,6 +25,7 @@ import {
 } from "./left-nav-helpers";
 import { t } from "../../i18n";
 import { SessionHistoryList, useSessionHistory } from "./SessionHistory";
+import { matchesProjectSearch, matchesSessionSearch } from "./session-search";
 
 export function WorkspaceActionMenu(props: {
   dirOrWorkspaceID: string;
@@ -178,12 +179,8 @@ export default function MultiProjectTreeItem(props: {
         : props.cachedSessions;
     const list = rawList.filter((s) => !s.parentID);
     const sorted = sortSessionsByActivity(list);
-    if (!q) return sorted;
-    return sorted.filter(
-      (s) =>
-        (s.title || "").toLowerCase().includes(q) ||
-        (s.slug || "").toLowerCase().includes(q)
-    );
+    if (matchesProjectSearch(props.proj, q)) return sorted;
+    return sorted.filter((s) => matchesSessionSearch(s, q));
   });
 
   const activeSessions = createMemo(() =>

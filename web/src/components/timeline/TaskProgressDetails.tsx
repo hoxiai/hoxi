@@ -233,7 +233,7 @@ export default function TaskProgressDetails(props: {
             </div>
             <button
               type="button"
-               onClick={() => openDiffInInspector(props.changedFiles[0])}
+              onClick={() => openDiffInInspector(props.changedFiles[0], "session")}
               class="inline-flex items-center gap-1 text-[11px] font-medium text-[var(--accent-primary)] hover:underline cursor-pointer"
             >
               <span>{t("timeline.reviewDiffs")}</span>
@@ -246,7 +246,7 @@ export default function TaskProgressDetails(props: {
               {(item) => (
                 <button
                   type="button"
-                   onClick={() => openDiffInInspector(item)}
+                  onClick={() => openDiffInInspector(item, "session")}
                   class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)]/85 px-2 py-1 font-mono text-[11px] text-[var(--text-primary)] hover:border-[var(--accent-border)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
                   title={item.file}
                 >

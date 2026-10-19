@@ -1,5 +1,5 @@
 import { createEffect, createMemo, createSignal, For, onCleanup, Show, untrack } from "solid-js";
-import { ArrowLeft, ArrowRight, Plus, Power, RefreshCw, X } from "lucide-solid";
+import { ArrowLeft, ArrowRight, Globe, Plus, Power, RefreshCw, X } from "lucide-solid";
 import { browserAPI, browserPoint, type BrowserAction, type BrowserScope, type BrowserState } from "../../services/browser";
 import { sessionDirectory, setWorkspace, workspace } from "../../store/workspace";
 import { t } from "../../i18n";
@@ -242,7 +242,8 @@ export default function BrowserInspector() {
         if (valid(connection)) timer = setTimeout(poll, running() ? 250 : 600);
       }
     }
-    void poll();
+    // Polling must not subscribe this connection lifecycle to browser state.
+    untrack(() => { void poll(); });
     onCleanup(() => {
       connection.controller.abort();
       clearTimeout(timer);
@@ -262,6 +263,8 @@ export default function BrowserInspector() {
   }
 
   function keydown(event: KeyboardEvent) {
+    // Remote-page keys belong to Chrome, not workspace shortcuts.
+    event.stopPropagation();
     if (event.isComposing || composing || event.key === "Process" || event.keyCode === 229) return;
     // Let the textarea receive text and native paste/IME events.
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "v") return;
@@ -281,9 +284,8 @@ export default function BrowserInspector() {
           <button class={iconBtn} disabled={!running() || busy()} title={t("inspector.browser.reload")} aria-label={t("inspector.browser.reload")} onClick={() => send({ action: "reload" })}><RefreshCw size={13} class={busy() ? "animate-spin" : ""} /></button>
           <form class="flex flex-1 min-w-0 items-center gap-1" onSubmit={(event) => {
             event.preventDefault();
-            editingURL = false;
             send({ action: "navigate", url: url().trim() || "about:blank" });
-          }}>
+          }} onKeyDown={(event) => event.stopPropagation()}>
             <input class="min-w-0 flex-1 rounded border border-[var(--border-subtle)] bg-transparent px-2 py-1 text-xs focus:outline-none focus:border-[var(--accent-primary)]" aria-label={t("inspector.browser.url")} placeholder={t("inspector.browser.url")} value={url()} onFocus={() => { editingURL = true; }} onBlur={() => { editingURL = false; }} onInput={(event) => setURL(event.currentTarget.value)} />
             <button class="shrink-0 rounded px-1.5 py-1 text-[11px] hover:bg-[var(--bg-hover)] disabled:opacity-40 cursor-pointer" disabled={busy()} type="submit">{t("inspector.browser.go")}</button>
           </form>
@@ -328,7 +330,25 @@ export default function BrowserInspector() {
         </Show>
         <Show when={error() || pollError()}><p role="alert" class="px-2 py-1 text-[11px] text-red-500 break-words border-b border-[var(--border-subtle)]">{t("inspector.browser.error", { error: error() || pollError() })}</p></Show>
         <div class="inspector-scroll flex-1 min-h-0 overflow-auto p-1">
-          <Show when={frame()} fallback={<p class="p-4 text-center text-[var(--text-muted)]">{t(busy() ? "inspector.browser.working" : running() ? "inspector.browser.waiting" : "inspector.browser.empty")}</p>}>
+          <Show when={frame()} fallback={
+            <div class="flex min-h-full flex-col items-center justify-center gap-4 px-6 py-10 text-center text-[var(--text-muted)]">
+              <Show when={!busy() && !running()} fallback={
+                <p role="status">{t(busy() ? "inspector.browser.working" : "inspector.browser.waiting")}</p>
+              }>
+                <div class="flex h-16 w-16 items-center justify-center rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-hover)]">
+                  <Globe size={32} strokeWidth={1.5} aria-hidden="true" />
+                </div>
+                <button
+                  class="inline-flex items-center gap-2 rounded-lg bg-[var(--accent-primary)] px-4 py-2 text-xs font-medium text-white hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent-primary)] cursor-pointer transition-opacity"
+                  onClick={() => send({ action: "navigate", url: url().trim() || "about:blank" })}
+                >
+                  <Power size={14} aria-hidden="true" />
+                  {t("inspector.browser.start")}
+                </button>
+                <p class="max-w-64 text-xs leading-relaxed">{t("inspector.browser.empty")}</p>
+              </Show>
+            </div>
+          }>
             <div class="relative">
               <img src={frame()!} alt={t("inspector.browser.viewport")} draggable={false} class="block w-full h-auto rounded-sm cursor-crosshair select-none" onClick={(event) => {
                 const point = browserPoint(event.currentTarget.getBoundingClientRect(), event.clientX, event.clientY);
