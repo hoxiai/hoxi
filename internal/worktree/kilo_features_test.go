@@ -372,3 +372,34 @@ func TestBaseBranchDriftSyncAndAbsentRestorableRecovery(t *testing.T) {
 	}
 }
 
+func TestBuildRemoteCompareURLAndStatus(t *testing.T) {
+	if got := buildRemoteCompareURL("git@github.com:hoxiai/hoxi.git", "main", "hoxi/ses_123"); got != "https://github.com/hoxiai/hoxi/compare/main...hoxi/ses_123?expand=1" {
+		t.Fatalf("unexpected GitHub SSH compareURL: %q", got)
+	}
+	if got := buildRemoteCompareURL("https://token@github.com/hoxiai/hoxi.git", "", "feat/pr-flow"); got != "https://github.com/hoxiai/hoxi/compare/feat/pr-flow?expand=1" {
+		t.Fatalf("unexpected GitHub HTTPS compareURL: %q", got)
+	}
+	if got := buildRemoteCompareURL("git@gitlab.com:group/sub/repo.git", "main", "hoxi/ses_1"); got != "https://gitlab.com/group/sub/repo/-/merge_requests/new?merge_request[source_branch]=hoxi%2Fses_1&merge_request[target_branch]=main" {
+		t.Fatalf("unexpected GitLab compareURL: %q", got)
+	}
+	if got := buildRemoteCompareURL("https://github.com/hoxiai/hoxi.git", "main", "main"); got != "" {
+		t.Fatalf("expected empty compareURL when branch equals baseBranch, got %q", got)
+	}
+
+	root := initTempGitRepo(t)
+	if _, err := runGit(root, "remote", "add", "origin", "git@github.com:hoxiai/hoxi.git"); err != nil {
+		t.Fatalf("remote add origin: %v", err)
+	}
+
+	mgr := NewManager(root)
+	if _, err := mgr.Create("ses_pr"); err != nil {
+		t.Fatalf("Create worktree: %v", err)
+	}
+	st, err := mgr.Status("ses_pr")
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if !strings.Contains(st.CompareURL, "https://github.com/hoxiai/hoxi/compare/") || !strings.HasSuffix(st.CompareURL, "...hoxi/ses_pr?expand=1") {
+		t.Fatalf("expected CompareURL for worktree branch, got %q", st.CompareURL)
+	}
+}

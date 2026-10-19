@@ -502,5 +502,6 @@ func (m *worktreeManager) CommitSessionChanges(sessionID, message string, push b
 		result.Remote, err = runGitPush(dir, result.Branch)
 		result.Pushed, result.OK = err == nil, err == nil
 	}
+	result.CompareURL = buildRemoteCompareURL(resolveGitRemoteURLFast(dir, result.Remote), "", result.Branch)
 	return result, err
 }

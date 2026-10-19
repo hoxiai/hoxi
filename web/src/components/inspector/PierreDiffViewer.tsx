@@ -1,6 +1,6 @@
 // web/src/components/inspector/PierreDiffViewer.tsx
 import { createEffect, createMemo, createSignal, on, onCleanup, Show } from "solid-js";
-import { Check, FolderSync, GitCommitHorizontal, GitPullRequestArrow, RefreshCw, ShieldCheck, Sparkles } from "lucide-solid";
+import { ArrowUpFromLine, Check, Columns2, ExternalLink, FolderSync, GitCommitHorizontal, GitPullRequestArrow, RefreshCw, Rows2, ShieldCheck, Sparkles } from "lucide-solid";
 import { hoxiAPI } from "../../services/api";
 import {
   activeDirectory,
@@ -31,19 +31,33 @@ import {
 
 export { FileDiffBlock };
 
+function openRemoteCompareURL(url: string) {
+  if (!url) return;
+  const wailsRuntime = (window as any).runtime;
+  if (typeof wailsRuntime?.BrowserOpenURL === "function") {
+    wailsRuntime.BrowserOpenURL(url);
+    return;
+  }
+  window.open(url, "_blank", "noopener,noreferrer");
+}
+
 export default function PierreDiffViewer() {
   const diffStyle = () => appSettings.defaultDiffStyle;
   const setDiffStyle = (mode: "unified" | "split") =>
     updateAppSetting("defaultDiffStyle", mode);
   const [refreshing, setRefreshing] = createSignal(false);
   const [commitMsg, setCommitMsg] = createSignal("");
+  const [commitExpanded, setCommitExpanded] = createSignal(false);
   const [committing, setCommitting] = createSignal(false);
+  const [pushing, setPushing] = createSignal(false);
   const [committedHash, setCommittedHash] = createSignal<string | null>(null);
+  const [lastCompareURL, setLastCompareURL] = createSignal<string | null>(null);
   const [restoring, setRestoring] = createSignal(false);
   const [syncingBase, setSyncingBase] = createSignal(false);
 
   const sessionKey = () => workspace.activeSessionID || "__root__";
   const activeWt = createMemo(() => workspace.worktreeBySession[sessionKey()]);
+  const compareURL = () => lastCompareURL() || activeWt()?.compareURL || "";
 
   const onRestoreWorktree = async () => {
     const id = workspace.activeSessionID;
@@ -142,10 +156,21 @@ export default function PierreDiffViewer() {
   });
 
   createEffect(on(() => [workspace.activeSessionID, workspace.rootDir] as const, ([id, root]) => {
+    setLastCompareURL(null);
     if (!root && !id) return;
     void refreshWorktreeStatus(id);
+    let cleanStreak = 0;
     const timer = setInterval(() => {
-      if (!document.hidden) void refreshWorktreeStatus(id);
+      if (document.hidden || workspace.inspectorTab !== "diffs") return;
+      const busy = Boolean(id && workspace.statusBySession[id]?.type === "busy");
+      const dirty = Boolean(workspace.worktreeBySession[id || "__root__"]?.dirty);
+      if (!busy && !dirty) {
+        cleanStreak++;
+        if (cleanStreak > 2 && cleanStreak % 3 !== 0) return;
+      } else {
+        cleanStreak = 0;
+      }
+      void refreshWorktreeStatus(id);
     }, 5000);
     onCleanup(() => clearInterval(timer));
   }));
@@ -172,19 +197,22 @@ export default function PierreDiffViewer() {
     if (smart) setCommitMsg(smart);
   };
 
-  const onCommitWorktree = async () => {
+  const onCommitWorktree = async (push = false) => {
     const id = sessionKey();
     const msg = commitMsg().trim();
-    if (!msg || committing()) return;
+    if (!msg || committing() || pushing()) return;
     setCommitting(true);
+    if (push) setPushing(true);
     try {
       const res = await hoxiAPI.commitWorktree(id, msg, {
+        push,
         directory: activeDirectory() || workspace.rootDir || undefined,
       });
       setCommitMsg("");
+      if (res.compareURL) setLastCompareURL(res.compareURL);
       setCommittedHash(res.commit || "HEAD");
       setWorkspace("inspectedDiffFile", null);
-      setTimeout(() => setCommittedHash(null), 4000);
+      setTimeout(() => setCommittedHash(null), 5000);
       await refreshWorktreeStatus(workspace.activeSessionID);
       if (workspace.activeSessionID) {
         await loadSessionMessagesOnly(workspace.activeSessionID);
@@ -193,20 +221,115 @@ export default function PierreDiffViewer() {
       console.error("commitWorktree failed:", err);
     } finally {
       setCommitting(false);
+      setPushing(false);
     }
+  };
+
+  const onPushWorktree = async (): Promise<string> => {
+    if (pushing() || committing()) return compareURL();
+    setPushing(true);
+    try {
+      const res = await hoxiAPI.pushWorktree(
+        sessionKey(),
+        activeDirectory() || workspace.rootDir || undefined
+      );
+      if (res.compareURL) setLastCompareURL(res.compareURL);
+      await refreshWorktreeStatus(workspace.activeSessionID);
+      return res.compareURL || compareURL();
+    } catch (err) {
+      console.error("pushWorktree failed:", err);
+      return "";
+    } finally {
+      setPushing(false);
+    }
+  };
+
+  const onOpenCreatePR = async () => {
+    if (pushing() || committing()) return;
+    const wt = activeWt();
+    let url = compareURL();
+    if ((wt?.aheadCount ?? 0) > 0 || !wt?.hasUpstream) {
+      const pushedURL = await onPushWorktree();
+      if (pushedURL) url = pushedURL;
+    }
+    if (url) openRemoteCompareURL(url);
   };
 
   return (
     <div class="flex flex-col h-full">
-      <div class="shrink-0 flex gap-1 px-3 py-2 border-b border-[var(--border-subtle)]">
+      <div class="shrink-0 flex items-center gap-1 px-2 py-1 border-b border-[var(--border-subtle)]">
         <button type="button" class={`rounded-md px-2 py-1 text-[11px] cursor-pointer ${workspace.diffScope === "worktree" ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]" : "text-[var(--text-muted)]"}`}
+          aria-pressed={workspace.diffScope === "worktree"}
           onClick={() => setWorkspace("diffScope", "worktree")}>
           {t("inspector.diffs.scopeWorktree")}
         </button>
         <button type="button" class={`rounded-md px-2 py-1 text-[11px] cursor-pointer ${workspace.diffScope === "session" ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]" : "text-[var(--text-muted)]"}`}
+          aria-pressed={workspace.diffScope === "session"}
           onClick={() => setWorkspace("diffScope", "session")}>
           {t("inspector.diffs.scopeSession")}
         </button>
+        <button type="button" onClick={() => setWorkspace("inspectedDiffFile", null)}
+          title={t("inspector.diffs.backToTree")}
+          class="ml-auto flex shrink-0 items-center gap-1.5 px-1 text-[10.5px] font-mono tabular-nums cursor-pointer">
+          <span class="text-[var(--ok-text)]">+{totals().add}</span>
+          <span class="text-[var(--danger-text)]">-{totals().del}</span>
+        </button>
+        <Show when={selectedDiff()}>
+          <button type="button" onClick={() => setDiffStyle(diffStyle() === "unified" ? "split" : "unified")}
+            title={diffStyle() === "unified" ? t("inspector.diffs.split") : t("inspector.diffs.unified")}
+            aria-label={diffStyle() === "unified" ? t("inspector.diffs.split") : t("inspector.diffs.unified")}
+            class="shrink-0 rounded-md p-1.5 text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-pointer">
+            <Show when={diffStyle() === "unified"} fallback={<Rows2 size={13} />}><Columns2 size={13} /></Show>
+          </button>
+        </Show>
+        <button type="button" onClick={() => void onRefresh()} disabled={refreshing()}
+          title={t("inspector.diffs.refresh")} aria-label={t("inspector.diffs.refresh")}
+          class="shrink-0 rounded-md p-1.5 text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-pointer">
+          <RefreshCw size={13} class={refreshing() ? "animate-spin" : ""} />
+        </button>
+        <Show when={(activeWt()?.aheadCount ?? 0) > 0}>
+          <button
+            type="button"
+            disabled={pushing() || committing()}
+            onClick={() => void onPushWorktree()}
+            title={t("inspector.diffs.pushAheadBtn", { count: activeWt()?.aheadCount ?? 0 })}
+            aria-label={t("inspector.diffs.pushAheadBtn", { count: activeWt()?.aheadCount ?? 0 })}
+            class="shrink-0 inline-flex items-center gap-1 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-1.5 py-1 text-[10.5px] font-mono text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] disabled:opacity-40 cursor-pointer"
+          >
+            <ArrowUpFromLine size={11} class={pushing() ? "animate-bounce" : ""} />
+            <span>{pushing() ? t("inspector.diffs.pushingBtn") : `↑${activeWt()?.aheadCount ?? 0}`}</span>
+          </button>
+        </Show>
+        <Show when={compareURL() && ((activeWt()?.aheadCount ?? 0) > 0 || activeWt()?.hasUpstream || Boolean(committedHash()))}>
+          <button
+            type="button"
+            disabled={pushing() || committing()}
+            onClick={() => void onOpenCreatePR()}
+            title={t("inspector.diffs.createPrTooltip")}
+            aria-label={t("inspector.diffs.createPrBtn")}
+            class="shrink-0 inline-flex items-center gap-1 rounded-md border border-[var(--accent-border)] bg-[var(--accent-surface)] px-2 py-1 text-[10.5px] font-medium text-[var(--accent-primary)] hover:opacity-90 disabled:opacity-40 cursor-pointer"
+          >
+            <GitPullRequestArrow size={11} />
+            <span>{t("inspector.diffs.createPrBtn")}</span>
+            <ExternalLink size={9} />
+          </button>
+        </Show>
+        <Show when={diffs().length > 0}>
+          <button type="button" disabled={isAuditing() || !workspace.activeSessionID}
+            onClick={() => workspace.activeSessionID && void runSessionCodeAudit(workspace.activeSessionID, true)}
+            title={t("inspector.diffs.auditTooltip")}
+            aria-label={isAuditing() ? t("inspector.diffs.auditingBtn") : t("inspector.diffs.auditBtn")}
+            class="shrink-0 rounded-md p-1.5 text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--accent-primary)] disabled:opacity-40 cursor-pointer">
+            <ShieldCheck size={13} class={isAuditing() ? "animate-pulse" : ""} />
+          </button>
+          <button type="button" onClick={() => setCommitExpanded(!commitExpanded())}
+            aria-expanded={commitExpanded()} aria-controls="diff-commit-editor"
+            title={t("inspector.diffs.commitBtn", { count: diffs().length })}
+            aria-label={t("inspector.diffs.commitBtn", { count: diffs().length })}
+            class={`shrink-0 rounded-md p-1.5 cursor-pointer transition-colors ${commitExpanded() ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]" : "text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--accent-primary)]"}`}>
+            <GitCommitHorizontal size={14} />
+          </button>
+        </Show>
       </div>
       <Show when={activeWt()?.health === "absent-restorable"}>
         <div class="shrink-0 flex items-center justify-between gap-2 px-3 py-2 bg-[var(--warn-surface)]/70 border-b border-[var(--warn-border)] text-[11px]">
@@ -260,82 +383,8 @@ export default function PierreDiffViewer() {
           </button>
         </div>
       </Show>
-      <div class="shrink-0 flex items-center justify-between px-3 py-2 border-b border-[var(--border-subtle)]">
-        <Show
-          when={previewDiffs().length > 0}
-          fallback={
-            <div class="flex items-center gap-2 text-[11.5px] text-[var(--text-secondary)]">
-              <span class="inline-flex items-center gap-1.5 font-medium">
-                <span>{workspace.diffScope === "session" ? t("inspector.diffs.sessionEmpty")
-                  : workspace.worktreeBySession[sessionKey()]?.dirty === false ? t("inspector.diffs.cleanStatus")
-                  : workspace.worktreeBySession[sessionKey()]?.dirty ? t("inspector.diffs.envStatusDirty")
-                  : t("inspector.diffs.envStatusUnknown")}</span>
-              </span>
-              <span class="text-[var(--text-faint)]">·</span>
-              <span class="text-[var(--text-muted)]">
-                0 {t("inspector.diffs.files")}
-              </span>
-            </div>
-          }
-        >
-          <button
-            type="button"
-            onClick={() => setWorkspace("inspectedDiffFile", null)}
-            class="flex items-center gap-2 text-[11.5px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
-            title={t("inspector.diffs.backToTree")}
-          >
-            <span class="font-mono">
-              <span class="text-[var(--ok-text)]">+{totals().add}</span>{" "}
-              <span class="text-[var(--danger-text)]">-{totals().del}</span>
-            </span>
-            <span class="text-[var(--text-faint)]">·</span>
-            <span>
-              {diffs().length} {t("inspector.diffs.files")}
-            </span>
-          </button>
-        </Show>
-
-        <div class="flex items-center gap-1.5">
-          <Show when={selectedDiff()}>
-            <div class="flex rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] p-0.5">
-              <button
-                type="button"
-                class={`rounded-md px-2 py-0.5 text-[12px] font-medium transition-colors cursor-pointer ${
-                  diffStyle() === "unified"
-                    ? "bg-[var(--bg-panel)] text-[var(--accent-primary)] shadow-2xs"
-                    : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
-                }`}
-                onClick={() => setDiffStyle("unified")}
-              >
-                {t("inspector.diffs.unified")}
-              </button>
-              <button
-                type="button"
-                class={`rounded-md px-2 py-0.5 text-[12px] font-medium transition-colors cursor-pointer ${
-                  diffStyle() === "split"
-                    ? "bg-[var(--bg-panel)] text-[var(--accent-primary)] shadow-2xs"
-                    : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
-                }`}
-                onClick={() => setDiffStyle("split")}
-              >
-                {t("inspector.diffs.split")}
-              </button>
-            </div>
-          </Show>
-          <button
-            type="button"
-            class="p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
-            onClick={() => void onRefresh()}
-            title={t("inspector.diffs.refresh")}
-          >
-            <RefreshCw size={13} class={refreshing() ? "animate-spin" : ""} />
-          </button>
-        </div>
-      </div>
-
-      {/* Kilo AI Commit Message Generator & Worktree Commit Bar */}
-      <Show when={diffs().length > 0}>
-        <div class="shrink-0 flex flex-wrap items-center gap-1.5 px-2.5 py-2 border-b border-[var(--border-subtle)] bg-[var(--bg-inset)]/60">
+      <Show when={diffs().length > 0 && commitExpanded()}>
+        <div id="diff-commit-editor" class="shrink-0 grid grid-cols-[1fr_auto] items-center gap-2 px-2.5 py-2 border-b border-[var(--border-subtle)] bg-[var(--bg-inset)]/60">
           <input
             type="text"
             value={commitMsg()}
@@ -343,68 +392,80 @@ export default function PierreDiffViewer() {
             onKeyDown={(ev) => {
               if (ev.key === "Enter" && !ev.isComposing) {
                 ev.preventDefault();
-                void onCommitWorktree();
+                void onCommitWorktree(false);
               }
             }}
             placeholder={t("inspector.diffs.commitPlaceholder")}
-            class="flex-1 min-w-[120px] rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[12px] font-mono text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none focus:border-[var(--accent-border)]"
+            aria-label={t("inspector.diffs.commitPlaceholder")}
+            class="min-w-0 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2 py-1.5 text-[12px] font-mono text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none focus:border-[var(--accent-border)]"
           />
           <button
             type="button"
-            disabled={isAuditing() || !workspace.activeSessionID}
-            onClick={() =>
-              workspace.activeSessionID &&
-              void runSessionCodeAudit(workspace.activeSessionID, true)
-            }
-            class="shrink-0 inline-flex items-center gap-1 rounded-lg border border-[var(--accent-border)] bg-[var(--accent-surface)] px-2 py-1 text-[12px] font-medium text-[var(--accent-primary)] hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
-            title={t("inspector.diffs.auditTooltip")}
-          >
-            <ShieldCheck size={11} />
-            <span>
-              {isAuditing()
-                ? t("inspector.diffs.auditingBtn")
-                : t("inspector.diffs.auditBtn")}
-            </span>
-          </button>
-          <button
-            type="button"
             onClick={onGenerateAICommit}
-            class="shrink-0 inline-flex items-center gap-1 rounded-lg border border-[var(--violet-border)] bg-[var(--violet-surface)] px-2 py-1 text-[12px] font-medium text-[var(--violet-text)] hover:opacity-90 transition-opacity cursor-pointer"
+            class="shrink-0 rounded-md p-1.5 text-[var(--violet-text)] hover:bg-[var(--violet-surface)] transition-colors cursor-pointer"
             title={t("inspector.diffs.generateCommitTooltip")}
+            aria-label={t("inspector.diffs.generateCommitBtn")}
           >
             <Sparkles size={11} />
-            <span>{t("inspector.diffs.generateCommitBtn")}</span>
           </button>
-          <button
-            type="button"
-            disabled={!commitMsg().trim() || committing()}
-            onClick={() => void onCommitWorktree()}
-            class="shrink-0 inline-flex items-center gap-1 rounded-lg bg-[var(--accent-primary)] px-2.5 py-1 text-[12px] font-semibold text-[var(--accent-foreground)] hover:opacity-90 disabled:opacity-40 transition-opacity cursor-pointer"
-          >
-            <GitCommitHorizontal size={12} />
-            <span>
-              {committing()
-                ? t("inspector.diffs.committing")
-                : t("inspector.diffs.commitBtn", { count: diffs().length })}
-            </span>
-          </button>
+          <div class="col-span-2 flex items-center justify-end gap-1.5">
+            <button
+              type="button"
+              disabled={!commitMsg().trim() || committing() || pushing()}
+              onClick={() => void onCommitWorktree(false)}
+              class="inline-flex items-center gap-1 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[11px] font-medium text-[var(--text-primary)] hover:bg-[var(--bg-hover)] disabled:opacity-40 transition-colors cursor-pointer"
+            >
+              <GitCommitHorizontal size={12} />
+              <span>
+                {committing() && !pushing()
+                  ? t("inspector.diffs.committing")
+                  : t("inspector.diffs.commitBtn", { count: diffs().length })}
+              </span>
+            </button>
+            <button
+              type="button"
+              disabled={!commitMsg().trim() || committing() || pushing()}
+              onClick={() => void onCommitWorktree(true)}
+              class="inline-flex items-center gap-1 rounded-md bg-[var(--accent-primary)] px-2.5 py-1 text-[11px] font-semibold text-[var(--accent-foreground)] hover:opacity-90 disabled:opacity-40 transition-opacity cursor-pointer"
+            >
+              <ArrowUpFromLine size={11} />
+              <span>
+                {pushing()
+                  ? t("inspector.diffs.pushingBtn")
+                  : t("inspector.diffs.commitAndPushBtn")}
+              </span>
+            </button>
+          </div>
         </div>
       </Show>
 
       <Show when={committedHash()}>
         {(hash) => (
-          <div class="shrink-0 flex items-center gap-1.5 px-3 py-1.5 bg-[var(--ok-surface)] text-[11px] font-mono text-[var(--ok-text)] border-b border-[var(--ok-border)]">
-            <Check size={11} />
-            <span>{t("inspector.diffs.commitSuccess", { hash: hash() })}</span>
+          <div class="shrink-0 flex items-center justify-between gap-2 px-3 py-1.5 bg-[var(--ok-surface)] text-[11px] font-mono text-[var(--ok-text)] border-b border-[var(--ok-border)]">
+            <div class="flex items-center gap-1.5 min-w-0 truncate">
+              <Check size={11} class="shrink-0" />
+              <span class="truncate">{t("inspector.diffs.commitSuccess", { hash: hash() })}</span>
+            </div>
+            <Show when={compareURL()}>
+              <button
+                type="button"
+                disabled={pushing()}
+                onClick={() => void onOpenCreatePR()}
+                class="shrink-0 inline-flex items-center gap-1 rounded-md border border-[var(--ok-border)] bg-[var(--bg-panel)]/80 px-2 py-0.5 text-[10.5px] font-sans font-medium text-[var(--ok-text)] hover:bg-[var(--bg-panel)] cursor-pointer"
+              >
+                <GitPullRequestArrow size={10} />
+                <span>{t("inspector.diffs.createPrBtn")}</span>
+                <ExternalLink size={9} />
+              </button>
+            </Show>
           </div>
         )}
       </Show>
 
-      <Show when={workspace.activeSessionID}>
-        {(sid) => <ObserverAuditBanner sessionID={sid()} />}
-      </Show>
-
-      <div class="inspector-scroll flex-1 min-h-0 overflow-y-auto px-2.5 py-2.5 space-y-2.5">
+      <div class="inspector-scroll flex-1 min-h-0 overflow-y-auto px-2 py-1.5 space-y-1.5">
+        <Show when={workspace.activeSessionID}>
+          {(sid) => <ObserverAuditBanner sessionID={sid()} />}
+        </Show>
         <Show
           when={previewDiffs().length > 0}
           fallback={

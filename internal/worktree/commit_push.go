@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,12 +19,13 @@ const (
 )
 
 type CommitAndPushResult struct {
-	OK      bool   `json:"ok"`
-	Commit  string `json:"commit,omitempty"`
-	Branch  string `json:"branch,omitempty"`
-	Remote  string `json:"remote,omitempty"`
-	Pushed  bool   `json:"pushed"`
-	Message string `json:"message,omitempty"`
+	OK         bool   `json:"ok"`
+	Commit     string `json:"commit,omitempty"`
+	Branch     string `json:"branch,omitempty"`
+	Remote     string `json:"remote,omitempty"`
+	Pushed     bool   `json:"pushed"`
+	Message    string `json:"message,omitempty"`
+	CompareURL string `json:"compareURL,omitempty"`
 }
 
 func appendHoxiCoAuthor(msg string) string {
@@ -154,11 +156,12 @@ func pushDiscoveredRepos(repos []gitRepoTarget) (CommitAndPushResult, error) {
 		return CommitAndPushResult{}, err
 	}
 	return CommitAndPushResult{
-		OK:     true,
-		Commit: hash,
-		Branch: branch,
-		Remote: remote,
-		Pushed: true,
+		OK:         true,
+		Commit:     hash,
+		Branch:     branch,
+		Remote:     remote,
+		Pushed:     true,
+		CompareURL: buildRemoteCompareURL(resolveGitRemoteURLFast(target.Dir, remote), "", branch),
 	}, nil
 }
 
@@ -180,11 +183,12 @@ func (m *worktreeManager) PushWorktree(sessionID string) (CommitAndPushResult, e
 		return CommitAndPushResult{}, err
 	}
 	return CommitAndPushResult{
-		OK:     true,
-		Commit: hash,
-		Branch: branch,
-		Remote: remote,
-		Pushed: true,
+		OK:         true,
+		Commit:     hash,
+		Branch:     branch,
+		Remote:     remote,
+		Pushed:     true,
+		CompareURL: buildRemoteCompareURL(resolveGitRemoteURLFast(workDir, remote), "", branch),
 	}, nil
 }
 
@@ -218,7 +222,7 @@ func (m *worktreeManager) CommitAndPushWorktree(sessionID, message string, push 
 		}
 		commitMsg := appendHoxiCoAuthor(msg)
 		var hashes []string
-		var firstBranch, firstRemote string
+		var firstBranch, firstRemote, firstRepoDir string
 
 		for _, r := range dirtyRepos {
 			if _, err := runGit(r.Dir, "add", "-A"); err != nil {
@@ -240,6 +244,7 @@ func (m *worktreeManager) CommitAndPushWorktree(sessionID, message string, push 
 			}
 			if firstBranch == "" && br != "" {
 				firstBranch = br
+				firstRepoDir = r.Dir
 			}
 			if push {
 				rem, pushErr := runGitPush(r.Dir, br)
@@ -258,12 +263,13 @@ func (m *worktreeManager) CommitAndPushWorktree(sessionID, message string, push 
 		}
 
 		return CommitAndPushResult{
-			OK:      true,
-			Commit:  strings.Join(hashes, ","),
-			Branch:  firstBranch,
-			Remote:  firstRemote,
-			Pushed:  push,
-			Message: msg,
+			OK:         true,
+			Commit:     strings.Join(hashes, ","),
+			Branch:     firstBranch,
+			Remote:     firstRemote,
+			Pushed:     push,
+			Message:    msg,
+			CompareURL: buildRemoteCompareURL(resolveGitRemoteURLFast(firstRepoDir, firstRemote), "", firstBranch),
 		}, nil
 	}
 
@@ -309,13 +315,155 @@ func (m *worktreeManager) CommitAndPushWorktree(sessionID, message string, push 
 	}
 
 	return CommitAndPushResult{
-		OK:      true,
-		Commit:  hash,
-		Branch:  branch,
-		Remote:  remote,
-		Pushed:  push,
-		Message: msg,
+		OK:         true,
+		Commit:     hash,
+		Branch:     branch,
+		Remote:     remote,
+		Pushed:     push,
+		Message:    msg,
+		CompareURL: buildRemoteCompareURL(resolveGitRemoteURLFast(workDir, remote), "", branch),
 	}, nil
+}
+
+func resolveGitRemoteURLFast(repoDir, preferredRemote string) string {
+	if strings.TrimSpace(repoDir) == "" {
+		return ""
+	}
+	if strings.TrimSpace(preferredRemote) == "" {
+		preferredRemote = "origin"
+	}
+	gitDir := resolveGitDirFast(repoDir)
+	commonDir := gitDir
+	if gitDir != "" {
+		if rawCommon, err := os.ReadFile(filepath.Join(gitDir, "commondir")); err == nil {
+			rel := strings.TrimSpace(string(rawCommon))
+			if rel != "" {
+				if filepath.IsAbs(rel) {
+					commonDir = filepath.Clean(rel)
+				} else {
+					commonDir = filepath.Clean(filepath.Join(gitDir, rel))
+				}
+			}
+		}
+	}
+	if commonDir != "" {
+		if cfgBytes, err := os.ReadFile(filepath.Join(commonDir, "config")); err == nil {
+			var currentRemote, fallbackURL string
+			for _, rawLine := range strings.Split(string(cfgBytes), "\n") {
+				line := strings.TrimSpace(rawLine)
+				if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+					currentRemote = ""
+					if strings.HasPrefix(line, `[remote "`) && strings.HasSuffix(line, `"]`) {
+						currentRemote = line[len(`[remote "`): len(line)-2]
+					}
+					continue
+				}
+				if currentRemote != "" {
+					if idx := strings.IndexByte(line, '='); idx > 0 {
+						k := strings.TrimSpace(line[:idx])
+						v := strings.TrimSpace(line[idx+1:])
+						if strings.EqualFold(k, "url") && v != "" {
+							if currentRemote == preferredRemote {
+								return v
+							}
+							if fallbackURL == "" {
+								fallbackURL = v
+							}
+						}
+					}
+				}
+			}
+			if fallbackURL != "" {
+				return fallbackURL
+			}
+		}
+	}
+	u, _ := runGit(repoDir, "remote", "get-url", preferredRemote)
+	return u
+}
+
+func parseRemoteWebBaseURL(rawRemoteURL string) (string, string) {
+	raw := strings.TrimSpace(rawRemoteURL)
+	if raw == "" {
+		return "", ""
+	}
+	if strings.HasPrefix(raw, "http://") || strings.HasPrefix(raw, "https://") ||
+		strings.HasPrefix(raw, "ssh://") || strings.HasPrefix(raw, "git://") {
+		u, err := url.Parse(raw)
+		if err != nil {
+			return "", ""
+		}
+		host := strings.ToLower(u.Hostname())
+		repoPath := strings.Trim(strings.TrimSuffix(u.Path, ".git"), "/")
+		if host == "" || repoPath == "" {
+			return "", ""
+		}
+		scheme := "https"
+		hostWithPort := host
+		if u.Scheme == "http" {
+			scheme = "http"
+			hostWithPort = u.Host
+		} else if u.Scheme == "https" {
+			hostWithPort = u.Host
+		}
+		return host, scheme + "://" + hostWithPort + "/" + repoPath
+	}
+
+	// SCP-style SSH URL: [user@]host:owner/repo.git
+	trimmed := raw
+	if atIdx := strings.IndexByte(trimmed, '@'); atIdx >= 0 {
+		colonIdx := strings.IndexByte(trimmed, ':')
+		if colonIdx > atIdx {
+			trimmed = trimmed[atIdx+1:]
+		}
+	}
+	colonIdx := strings.IndexByte(trimmed, ':')
+	if colonIdx <= 0 {
+		return "", ""
+	}
+	host := strings.ToLower(strings.TrimSpace(trimmed[:colonIdx]))
+	repoPath := strings.Trim(strings.TrimSuffix(strings.TrimSpace(trimmed[colonIdx+1:]), ".git"), "/")
+	if host == "" || repoPath == "" || strings.Contains(host, "/") {
+		return "", ""
+	}
+	return host, "https://" + host + "/" + repoPath
+}
+
+func escapeGitRefPath(ref string) string {
+	parts := strings.Split(strings.TrimSpace(ref), "/")
+	for i, p := range parts {
+		parts[i] = url.PathEscape(p)
+	}
+	return strings.Join(parts, "/")
+}
+
+func buildRemoteCompareURL(rawRemoteURL, baseBranch, branch string) string {
+	branch = strings.TrimSpace(branch)
+	baseBranch = strings.TrimSpace(baseBranch)
+	if branch == "" || branch == "HEAD" || branch == baseBranch {
+		return ""
+	}
+	if baseBranch == "" && (branch == "main" || branch == "master" || branch == "trunk") {
+		return ""
+	}
+	host, webBase := parseRemoteWebBaseURL(rawRemoteURL)
+	if webBase == "" {
+		return ""
+	}
+	if strings.Contains(host, "gitlab") {
+		q := "merge_request[source_branch]=" + url.QueryEscape(branch)
+		if baseBranch != "" {
+			q += "&merge_request[target_branch]=" + url.QueryEscape(baseBranch)
+		}
+		return webBase + "/-/merge_requests/new?" + q
+	}
+	if strings.Contains(host, "bitbucket") {
+		return webBase + "/pull-requests/new?source=" + url.QueryEscape(branch)
+	}
+	if baseBranch != "" {
+		return webBase + "/compare/" + escapeGitRefPath(baseBranch) + "..." + escapeGitRefPath(branch) + "?expand=1"
+	}
+	return webBase + "/compare/" + escapeGitRefPath(branch) + "?expand=1"
 }
 
 func runGitPush(workDir, branch string) (string, error) {

@@ -24,6 +24,7 @@ export interface WorktreeMeta {
   aheadCount?: number;
   behindCount?: number;
   hasUpstream?: boolean;
+  compareURL?: string;
   health?: "ok" | "absent-restorable" | "unregistered" | "quarantined" | string;
 }
 
@@ -34,6 +35,7 @@ export interface CommitAndPushResponse {
   remote?: string;
   pushed?: boolean;
   message?: string;
+  compareURL?: string;
 }
 
 export interface ProjectInfo {
@@ -92,6 +94,7 @@ export interface WorktreeStatus {
   aheadCount?: number;
   behindCount?: number;
   hasUpstream?: boolean;
+  compareURL?: string;
   health?: "ok" | "absent-restorable" | "unregistered" | "quarantined" | string;
 }
 
@@ -651,3 +654,20 @@ export interface ModelPricingResponse {
     items: ModelPricingItem[];
   };
 }
+
+export interface FileContentResponse {
+  type?: "text" | "binary";
+  content: string;
+  encoding?: "base64";
+  mimeType?: string;
+  resolvedPath?: string;
+  outsideWorkspace?: boolean;
+  size?: number;
+  isDirectory?: boolean;
+}
+
+export interface FileValidateResponse {
+  existing: string[];
+  resolved?: Record<string, string>;
+}
+

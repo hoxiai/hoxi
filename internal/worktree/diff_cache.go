@@ -120,6 +120,43 @@ func resolveGitDirFast(repoDir string) string {
 	return ""
 }
 
+// resolveGitHeadFast reads the HEAD commit hash directly from the git directory
+// when loose refs are available, falling back to git rev-parse HEAD only for packed refs.
+func resolveGitHeadFast(repoDir, gitDir string) string {
+	if gitDir != "" {
+		if rawHead, err := os.ReadFile(filepath.Join(gitDir, "HEAD")); err == nil {
+			headLine := strings.TrimSpace(string(rawHead))
+			if !strings.HasPrefix(headLine, "ref:") && len(headLine) >= 40 {
+				return headLine
+			}
+			if strings.HasPrefix(headLine, "ref:") {
+				refRel := filepath.FromSlash(strings.TrimSpace(strings.TrimPrefix(headLine, "ref:")))
+				if refBytes, refErr := os.ReadFile(filepath.Join(gitDir, refRel)); refErr == nil {
+					if sha := strings.TrimSpace(string(refBytes)); len(sha) >= 40 {
+						return sha
+					}
+				}
+				if commonRaw, commonErr := os.ReadFile(filepath.Join(gitDir, "commondir")); commonErr == nil {
+					commonRel := strings.TrimSpace(string(commonRaw))
+					if commonRel != "" {
+						commonDir := commonRel
+						if !filepath.IsAbs(commonDir) {
+							commonDir = filepath.Clean(filepath.Join(gitDir, commonDir))
+						}
+						if refBytes, refErr := os.ReadFile(filepath.Join(commonDir, refRel)); refErr == nil {
+							if sha := strings.TrimSpace(string(refBytes)); len(sha) >= 40 {
+								return sha
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	head, _ := runGit(repoDir, "rev-parse", "HEAD")
+	return head
+}
+
 // computeRepoStateFingerprint builds a deterministic fingerprint from git status,
 // HEAD commit, git index stat, and the stat stamps of modified/untracked files.
 func computeRepoStateFingerprint(repoDir, diffTarget string) string {
@@ -127,13 +164,6 @@ func computeRepoStateFingerprint(repoDir, diffTarget string) string {
 	if err != nil {
 		return ""
 	}
-	head, _ := runGit(repoDir, "rev-parse", "HEAD")
-
-	var b strings.Builder
-	b.WriteString(diffTarget)
-	b.WriteByte('|')
-	b.WriteString(head)
-	b.WriteByte('|')
 
 	gitDir := resolveGitDirFast(repoDir)
 	if gitDir == "" {
@@ -144,6 +174,14 @@ func computeRepoStateFingerprint(repoDir, diffTarget string) string {
 			gitDir = gd
 		}
 	}
+	head := resolveGitHeadFast(repoDir, gitDir)
+
+	var b strings.Builder
+	b.WriteString(diffTarget)
+	b.WriteByte('|')
+	b.WriteString(head)
+	b.WriteByte('|')
+
 	if gitDir != "" {
 		if idxInfo, statErr := os.Stat(filepath.Join(gitDir, "index")); statErr == nil {
 			fmt.Fprintf(&b, "idx:%d:%d|", idxInfo.Size(), idxInfo.ModTime().UnixNano())
@@ -184,6 +222,74 @@ type repoDiffCache struct {
 
 var globalRepoDiffCache = &repoDiffCache{
 	entries: make(map[string]cachedRepoDiffEntry),
+}
+
+type cachedRepoStatusEntry struct {
+	fingerprint string
+	summary     repoStatusSummary
+}
+
+type repoStatusCache struct {
+	mu      sync.RWMutex
+	entries map[string]cachedRepoStatusEntry
+	order   []string
+}
+
+var globalRepoStatusCache = &repoStatusCache{
+	entries: make(map[string]cachedRepoStatusEntry),
+}
+
+func (c *repoStatusCache) get(repoDir, diffTarget, fingerprint string) (repoStatusSummary, bool) {
+	if fingerprint == "" {
+		return repoStatusSummary{}, false
+	}
+	key := repoDir + "\x00" + diffTarget
+	c.mu.RLock()
+	entry, ok := c.entries[key]
+	c.mu.RUnlock()
+	if !ok || entry.fingerprint != fingerprint {
+		return repoStatusSummary{}, false
+	}
+	return entry.summary, true
+}
+
+func (c *repoStatusCache) put(repoDir, diffTarget, fingerprint string, summary repoStatusSummary) {
+	if fingerprint == "" {
+		return
+	}
+	key := repoDir + "\x00" + diffTarget
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, exists := c.entries[key]; !exists {
+		if len(c.order) >= maxCachedRepoDiffs {
+			evict := c.order[0]
+			c.order = c.order[1:]
+			delete(c.entries, evict)
+		}
+		c.order = append(c.order, key)
+	}
+	c.entries[key] = cachedRepoStatusEntry{
+		fingerprint: fingerprint,
+		summary:     summary,
+	}
+}
+
+func (c *repoStatusCache) invalidate(repoDir string) {
+	if strings.TrimSpace(repoDir) == "" {
+		return
+	}
+	prefix := filepath.Clean(repoDir) + "\x00"
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	nextOrder := c.order[:0]
+	for _, k := range c.order {
+		if strings.HasPrefix(k, prefix) {
+			delete(c.entries, k)
+		} else {
+			nextOrder = append(nextOrder, k)
+		}
+	}
+	c.order = nextOrder
 }
 
 func (c *repoDiffCache) get(repoDir, diffTarget, fingerprint string) ([]worktreeFileDiff, bool) {
@@ -227,6 +333,7 @@ func (c *repoDiffCache) put(repoDir, diffTarget, fingerprint string, diffs []wor
 }
 
 func (c *repoDiffCache) invalidate(repoDir string) {
+	globalRepoStatusCache.invalidate(repoDir)
 	if strings.TrimSpace(repoDir) == "" {
 		return
 	}

@@ -485,6 +485,7 @@ export async function refreshWorktreeStatus(sessionID?: string | null): Promise<
       aheadCount: st.aheadCount,
       behindCount: st.behindCount,
       hasUpstream: st.hasUpstream,
+      compareURL: st.compareURL,
       health: st.health,
     });
     if (key === "__root__" || key === workspace.activeSessionID) {

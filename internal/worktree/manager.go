@@ -46,6 +46,7 @@ type worktreeStatus struct {
 	AheadCount       int    `json:"aheadCount"`
 	BehindCount      int    `json:"behindCount"`
 	HasUpstream      bool   `json:"hasUpstream"`
+	CompareURL       string `json:"compareURL,omitempty"`
 	Health           string `json:"health,omitempty"`
 }
 
@@ -222,6 +223,7 @@ type repoStatusSummary struct {
 	branch       string
 	headCommit   string
 	headSubject  string
+	remoteURL    string
 	changedFiles int
 	additions    int
 	deletions    int
@@ -231,6 +233,11 @@ type repoStatusSummary struct {
 }
 
 func statusSingleRepo(repo gitRepoTarget, diffTarget string, nestedPrefixes map[string]struct{}) repoStatusSummary {
+	fingerprint := computeRepoStateFingerprint(repo.Dir, diffTarget)
+	if cached, hit := globalRepoStatusCache.get(repo.Dir, diffTarget, fingerprint); hit {
+		return cached
+	}
+
 	porcelain, porcelainErr := runGitRaw(repo.Dir, "status", "--porcelain", "-b")
 	changedFiles := 0
 	aheadCount := 0
@@ -330,10 +337,11 @@ func statusSingleRepo(repo gitRepoTarget, diffTarget string, nestedPrefixes map[
 		}
 	}
 
-	return repoStatusSummary{
+	summary := repoStatusSummary{
 		branch:       branch,
 		headCommit:   headCommit,
 		headSubject:  headSubject,
+		remoteURL:    resolveGitRemoteURLFast(repo.Dir, "origin"),
 		changedFiles: changedFiles,
 		additions:    additions,
 		deletions:    deletions,
@@ -341,6 +349,10 @@ func statusSingleRepo(repo gitRepoTarget, diffTarget string, nestedPrefixes map[
 		hasUpstream:  hasUpstream,
 		valid:        porcelainErr == nil || branch != "" || headCommit != "",
 	}
+	if summary.valid {
+		globalRepoStatusCache.put(repo.Dir, diffTarget, fingerprint, summary)
+	}
+	return summary
 }
 
 func (m *worktreeManager) Status(sessionID string) (worktreeStatus, error) {
@@ -434,7 +446,7 @@ func (m *worktreeManager) Status(sessionID string) (worktreeStatus, error) {
 	deletions := 0
 	aheadCount := 0
 	hasUpstream := false
-	var headCommit, headSubject string
+	var headCommit, headSubject, primaryRemoteURL string
 	primarySet := false
 	anyValid := false
 
@@ -456,6 +468,7 @@ func (m *worktreeManager) Status(sessionID string) (worktreeStatus, error) {
 			}
 			headCommit = s.headCommit
 			headSubject = s.headSubject
+			primaryRemoteURL = s.remoteURL
 			primarySet = true
 		} else if !primarySet && (repoDirty || meta.Branch == "") {
 			if s.branch != "" {
@@ -463,6 +476,7 @@ func (m *worktreeManager) Status(sessionID string) (worktreeStatus, error) {
 			}
 			headCommit = s.headCommit
 			headSubject = s.headSubject
+			primaryRemoteURL = s.remoteURL
 			if repoDirty {
 				primarySet = true
 			}
@@ -504,6 +518,7 @@ func (m *worktreeManager) Status(sessionID string) (worktreeStatus, error) {
 		AheadCount:       aheadCount,
 		BehindCount:      behindCount,
 		HasUpstream:      hasUpstream,
+		CompareURL:       buildRemoteCompareURL(primaryRemoteURL, baseBranch, meta.Branch),
 		Health:           health,
 	}, nil
 }
