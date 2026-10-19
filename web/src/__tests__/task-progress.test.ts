@@ -482,6 +482,15 @@ describe("task progress todo staleness", () => {
     assertDeepEqual(parseMarkdownBlocks("```ts\nconst x = 1;\n```"), [
       { type: "code", lang: "ts", code: "const x = 1;" },
     ]);
+    assertDeepEqual(parseMarkdownBlocks("```json {\"score\":68}```"), [
+      { type: "code", lang: "json", code: '{"score":68}' },
+    ]);
+    assertDeepEqual(parseMarkdownBlocks("``` json {\"score\":68}```"), [
+      { type: "code", lang: "json", code: '{"score":68}' },
+    ]);
+    assertDeepEqual(parseMarkdownBlocks("~~~json {\"score\":68}~~~"), [
+      { type: "code", lang: "json", code: '{"score":68}' },
+    ]);
 
     // 4. Inline bold streaming: no raw `*` / `**` flash and stable bold span identity
     assertDeepEqual(parseInline("Prefix *"), [{ type: "text", text: "Prefix " }]);
@@ -543,5 +552,3 @@ describe("task progress todo staleness", () => {
     );
   });
 });
-
-

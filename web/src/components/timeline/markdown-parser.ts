@@ -127,6 +127,25 @@ function matchCodeFenceOpen(
   };
 }
 
+function matchSingleLineCodeFence(
+  line: string
+): { indent: number; marker: "`" | "~"; count: number; lang: string; code: string } | null {
+  const m = line.match(/^(\s*)(`{3,}|~{3,})(.*?)(\2)\s*$/);
+  if (!m) return null;
+  const infoAndCode = m[3].trim();
+  if (m[2][0] === "`" && infoAndCode.includes("`")) return null;
+  const firstSpace = infoAndCode.search(/[\s:]/);
+  const lang = firstSpace < 0 ? "text" : infoAndCode.slice(0, firstSpace) || "text";
+  const code = firstSpace < 0 ? "" : infoAndCode.slice(firstSpace).trim();
+  return {
+    indent: m[1].length,
+    marker: m[2][0] as "`" | "~",
+    count: m[2].length,
+    lang,
+    code,
+  };
+}
+
 function isPendingCodeFenceLine(line: string, expectedMarker?: "`" | "~"): boolean {
   const m = line.match(/^\s*(`{1,2}|~{1,2})\s*$/);
   if (!m) return false;
@@ -219,6 +238,12 @@ export function parseMarkdownBlocks(src: string): BlockToken[] {
     }
 
     // Fenced code block (supports indentation, 3+ backticks/tildes, and info string metadata)
+    const singleLineFence = matchSingleLineCodeFence(line);
+    if (singleLineFence) {
+      blocks.push({ type: "code", lang: singleLineFence.lang, code: singleLineFence.code });
+      i++;
+      continue;
+    }
     const fenceOpen = matchCodeFenceOpen(line);
     if (fenceOpen) {
       const closeRe = new RegExp(`^\\s*${fenceOpen.marker}{${fenceOpen.count},}\\s*$`);
