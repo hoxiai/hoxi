@@ -13,8 +13,8 @@ import ContextActivityGroupComponent, {
   type TurnRenderItem,
 } from "./ContextActivityGroupView";
 import type { MessageInfo, MessagePart } from "../../services/sse-types";
-import { isRunnerSessionID } from "../../services/api";
 import {
+  canRevertSession,
   isUserAbortError,
    resumePausedSession,
   retryLastUserPrompt,
@@ -294,7 +294,7 @@ export function AssistantTurnFooter(props: {
             <ChangedFilesSummary
               files={summary().changedFiles}
               onUndo={
-                !isRunnerSessionID(props.info.sessionID)
+                canRevertSession(props.info.sessionID)
                   ? () => void revertToHere(props.info.sessionID, summary().revertMessageID)
                   : undefined
               }

@@ -41,9 +41,6 @@ func (g *Gateway) routeConversation(w http.ResponseWriter, r *http.Request) bool
 		// CLI engines compact their own context; there is nothing to summarize.
 		writeJSON(w, http.StatusOK, false)
 		return false
-	case "revert", "unrevert", "fork":
-		writeJSONError(w, http.StatusNotImplemented, action+" is not supported for this session yet")
-		return false
 	case "diff":
 		setRequestPath(r, "/api/hoxi/worktree/diff")
 		values, _ := url.ParseQuery(r.URL.RawQuery)

@@ -36,41 +36,37 @@ describe("Antigravity runner permission routing", () => {
     assertTrue(!isRunnerPermissionID(undefined));
   });
 
-  it("sends runner replies to the Go gate with the steering note", async () => {
+  it("sends runner replies to the unified permission endpoint with the steering note", async () => {
     const m = mockFetch(() => ({ status: 200, body: true }));
     try {
       await hoxiAPI.replyPermission("per_rnr_abc", "reject", "/project", "use pnpm instead");
       await hoxiAPI.replyPermission("per_rnr_def", "once", "/project");
-      assertEqual(m.calls[0].url, "/api/hoxi/runner/permission/per_rnr_abc/reply");
+      assertEqual(m.calls[0].url, "/api/hoxi/permission/per_rnr_abc/reply?directory=%2Fproject");
       assertEqual(m.calls[0].method, "POST");
       assertDeepEqual(m.calls[0].body, { reply: "reject", message: "use pnpm instead" });
       assertDeepEqual(m.calls[1].body, { reply: "once" });
     } finally { m.restore(); }
   });
 
-  it("keeps OpenCode replies on the engine endpoint", async () => {
+  it("sends OpenCode replies through the unified permission endpoint", async () => {
     const m = mockFetch(() => ({ status: 200, body: true }));
     try {
       await hoxiAPI.replyPermission("per_01JABC", "always", "/project");
-      assertEqual(m.calls[0].url, "/permission/per_01JABC/reply?directory=%2Fproject");
+      assertEqual(m.calls[0].url, "/api/hoxi/permission/per_01JABC/reply?directory=%2Fproject");
       assertDeepEqual(m.calls[0].body, { reply: "always" });
     } finally { m.restore(); }
   });
 
-  it("merges pending runner requests and tolerates a missing runner endpoint", async () => {
-    let runnerStatus = 200;
-    const m = mockFetch((url) =>
-      url.startsWith("/api/hoxi/runner/permission")
-        ? { status: runnerStatus, body: [req("per_rnr_1", "ses_agy_1")] }
-        : { status: 200, body: [req("per_engine", "ses_oc")] }
-    );
+  it("fetches pending permissions from the unified backend endpoint", async () => {
+    const m = mockFetch(() => ({
+      status: 200,
+      body: [req("per_engine", "ses_oc"), req("per_rnr_1", "ses_agy_1")],
+    }));
     try {
       const merged = await hoxiAPI.listPermissions("/project");
       assertDeepEqual(merged.map((p) => p.id), ["per_engine", "per_rnr_1"]);
-      assertEqual(m.calls[1].url, "/api/hoxi/runner/permission?directory=%2Fproject");
-      runnerStatus = 404;
-      const engineOnly = await hoxiAPI.listPermissions("/project");
-      assertDeepEqual(engineOnly.map((p) => p.id), ["per_engine"]);
+      assertEqual(m.calls.length, 1);
+      assertEqual(m.calls[0].url, "/api/hoxi/permission?directory=%2Fproject");
     } finally { m.restore(); }
   });
 });

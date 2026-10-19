@@ -5,8 +5,8 @@ import { hoxiAPI } from "../services/api";
 import type { MessagePart, SnapshotFileDiff } from "../services/sse-types";
 import { isModelFree } from "./provider-catalog";
 import {
+  canSteerSession,
   sessionDirectory,
-  sessionRuntimeForID,
   submitSessionPrompt,
   workspace,
   type SelectedModel,
@@ -306,7 +306,7 @@ export async function executeTaskCommitAndPush(
   const directory = sessionDirectory(activeID);
   if (!directory) throw new Error(t("timeline.gitSessionRequired"));
   const customMessage = options?.customMessage?.trim();
-  const cheapModel = sessionRuntimeForID(activeID) === "opencode"
+  const cheapModel = canSteerSession(activeID)
     ? resolveEffectiveCommitModel() || undefined
     : undefined;
   const prompt = [

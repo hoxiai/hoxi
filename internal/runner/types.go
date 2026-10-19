@@ -19,22 +19,35 @@ type SessionTime struct {
 	Archived int64 `json:"archived,omitempty"`
 }
 
+type SessionRevert struct {
+	MessageID string `json:"messageID"`
+	PartID    string `json:"partID,omitempty"`
+}
+
+type SessionCapabilities struct {
+	Revert bool `json:"revert"`
+	Fork   bool `json:"fork"`
+	Steer  bool `json:"steer"`
+}
+
 type SessionInfo struct {
-	ID          string      `json:"id"`
-	Slug        string      `json:"slug,omitempty"`
-	ProjectID   string      `json:"projectID,omitempty"`
-	Directory   string      `json:"directory"`
-	ParentID    string      `json:"parentID,omitempty"`
-	Title       string      `json:"title"`
-	Version     string      `json:"version,omitempty"`
-	Time        SessionTime `json:"time"`
-	Runtime     string      `json:"runtime"`
-	ModelID     string      `json:"modelID,omitempty"`
-	ProviderID  string      `json:"providerID,omitempty"`
-	ExternalID  string      `json:"externalID,omitempty"`
-	SandboxMode string      `json:"sandboxMode,omitempty"`
-	Branch      string      `json:"branch,omitempty"`
-	Managed     bool        `json:"managed,omitempty"`
+	ID           string               `json:"id"`
+	Slug         string               `json:"slug,omitempty"`
+	ProjectID    string               `json:"projectID,omitempty"`
+	Directory    string               `json:"directory"`
+	ParentID     string               `json:"parentID,omitempty"`
+	Title        string               `json:"title"`
+	Version      string               `json:"version,omitempty"`
+	Time         SessionTime          `json:"time"`
+	Runtime      string               `json:"runtime"`
+	ModelID      string               `json:"modelID,omitempty"`
+	ProviderID   string               `json:"providerID,omitempty"`
+	ExternalID   string               `json:"externalID,omitempty"`
+	SandboxMode  string               `json:"sandboxMode,omitempty"`
+	Branch       string               `json:"branch,omitempty"`
+	Managed      bool                 `json:"managed,omitempty"`
+	Revert       *SessionRevert       `json:"revert,omitempty"`
+	Capabilities *SessionCapabilities `json:"capabilities,omitempty"`
 }
 
 type SessionStatus struct {
@@ -168,6 +181,10 @@ type SessionRecord struct {
 	UpdatedAt           int64             `json:"updatedAt"`
 	ArchivedAt          int64             `json:"archivedAt,omitempty"`
 	Turns               []MessageTurn     `json:"turns,omitempty"`
+	Revert              *SessionRevert    `json:"revert,omitempty"`
+	RevertedTurns       []MessageTurn     `json:"revertedTurns,omitempty"`
+	RevertSnapshot      string            `json:"revertSnapshot,omitempty"`
+	Snapshots           map[string]string `json:"snapshots,omitempty"`
 	OpenCodeIDs         []string          `json:"openCodeIDs,omitempty"`
 	OpenCodeDirectories map[string]string `json:"openCodeDirectories,omitempty"`
 	ContextPending      bool              `json:"contextPending,omitempty"`
@@ -179,6 +196,8 @@ func (r SessionRecord) ToSessionInfo() SessionInfo {
 	if dir == "" {
 		dir = r.ProjectDir
 	}
+	canMutate := !r.Subagent
+	canSteer := canMutate && (r.Runtime == "" || r.Runtime == "opencode")
 	return SessionInfo{
 		ID:          r.ID,
 		ParentID:    r.ParentID,
@@ -194,5 +213,11 @@ func (r SessionRecord) ToSessionInfo() SessionInfo {
 		ExternalID:  r.ExternalID,
 		SandboxMode: r.sandboxMode(),
 		Branch:      r.Branch,
+		Revert:      r.Revert,
+		Capabilities: &SessionCapabilities{
+			Revert: canMutate,
+			Fork:   canMutate,
+			Steer:  canSteer,
+		},
 	}
 }

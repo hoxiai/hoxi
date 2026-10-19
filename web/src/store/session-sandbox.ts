@@ -1,7 +1,6 @@
 import { t } from "../i18n";
 import {
   hoxiAPI,
-  isRunnerSessionID,
   resolveRunnerRuntimeForProvider,
   type WorktreeMeta,
 } from "../services/api";
@@ -9,8 +8,8 @@ import type { SessionInfo } from "../services/sse-types";
 import { appSettings, updateAppSetting } from "./settings";
 import { setWorkspace, workspace } from "./workspace";
 import { initializeSessionAI } from "./session-ai";
-import { sessionRuntimeForID } from "./workspace-providers";
 import {
+  isManagedSession,
   isSessionBusy,
   refreshWorktreeStatus,
   removeSessionFromStore,
@@ -142,7 +141,7 @@ export async function switchActiveSessionSandboxMode(mode: "local" | "worktree")
   setWorkspace("sessionSetupError", null);
   try {
     if (isSessionBusy(id)) throw new Error(t("timeline.worktreeBusy"));
-    if (isRunnerSessionID(id) || sessionRuntimeForID(id) !== "opencode") {
+    if (isManagedSession(id)) {
       await changeSandbox(id, async () => {
         const session = await hoxiAPI.setSandboxMode(id, mode, undefined, directory || undefined);
         replaceSession(session);

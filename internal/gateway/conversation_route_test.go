@@ -110,8 +110,8 @@ func TestConversationRoutesToOwningBackend(t *testing.T) {
 		t.Fatalf("owned summarize: %d %s", res.Code, res.Body.String())
 	}
 	res = serve(gw, http.MethodPost, "/api/hoxi/sessions/ses_cld_owned/revert", `{"messageID":"msg"}`)
-	if res.Code != http.StatusNotImplemented {
-		t.Fatalf("owned revert: %d", res.Code)
+	if res.Code != http.StatusOK || !strings.Contains(res.Body.String(), `"revert":{"messageID":"msg"}`) {
+		t.Fatalf("owned revert: %d %s", res.Code, res.Body.String())
 	}
 	if len(calls()) != before+1 {
 		t.Fatalf("owned routes reached OpenCode: %+v", calls())

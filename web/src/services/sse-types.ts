@@ -3,6 +3,12 @@
 
 export type SessionRuntime = "opencode" | "antigravity" | "claude-code";
 
+export interface SessionCapabilities {
+  revert: boolean;
+  fork: boolean;
+  steer: boolean;
+}
+
 export interface SessionInfo {
   id: string;
   title: string;
@@ -26,6 +32,7 @@ export interface SessionInfo {
     snapshot?: string;
     diff?: string;
   };
+  capabilities?: SessionCapabilities;
 }
 
 export interface MessageError {

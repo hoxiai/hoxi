@@ -12,13 +12,12 @@ import {
   LoaderCircle,
 } from "lucide-solid";
 import {
+  canForkSession,
   executeTaskCommitAndPush,
   openDiffInInspector,
   refreshWorktreeStatus,
-  sessionRuntimeForID,
   workspace,
 } from "../../store/workspace";
-import { isRunnerSessionID } from "../../services/api";
 import { t } from "../../i18n";
 
 export function ComposerSandboxPill(props: {
@@ -61,9 +60,7 @@ export function ComposerSandboxPill(props: {
     return workspace.worktreeBySession[id || "__root__"];
   });
 
-  const isRunner = createMemo(
-    () => isRunnerSessionID(props.sessionID) || sessionRuntimeForID(props.sessionID) !== "opencode"
-  );
+  const canFork = createMemo(() => canForkSession(props.sessionID));
   const gitBranch = createMemo(() => activeWorktree()?.branch || "");
   const changedFilesCount = createMemo(() => {
     const key = props.sessionID || "__root__";
@@ -322,8 +319,8 @@ export function ComposerSandboxPill(props: {
               <Show when={props.sessionID && props.onFork}>
                 <button
                   type="button"
-                  disabled={props.forking || isRunner()}
-                  title={isRunner() ? t("timeline.runnerFeatureUnsupported") : undefined}
+                  disabled={props.forking || !canFork()}
+                  title={!canFork() ? t("timeline.runnerFeatureUnsupported") : undefined}
                   onClick={() => {
                     props.onFork?.();
                     setOpen(false);

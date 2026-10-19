@@ -270,16 +270,14 @@ export const hoxiAPI = {
   },
 
   // Interactive Permission Approval Gate
-  async listPermissions(directory?: string): Promise<PermissionRequest[]> {
-    const [engine, runner] = await Promise.all([
-      requestJSON<PermissionRequest[]>(withDir("/permission", directory)),
-      runnerAPI.listPermissions(directory).catch(() => [] as PermissionRequest[]),
-    ]);
-    return [...(Array.isArray(engine) ? engine : []), ...(Array.isArray(runner) ? runner : [])];
+  listPermissions(directory?: string): Promise<PermissionRequest[]> {
+    return requestJSON(withDir("/api/hoxi/permission", directory));
   },
   replyPermission(requestID: string, reply: "once" | "always" | "reject", directory?: string, message?: string): Promise<void> {
-    if (isRunnerPermissionID(requestID)) return runnerAPI.replyPermission(requestID, reply, message);
-    return requestJSON(withDir(`/permission/${requestID}/reply`, directory), { method: "POST", body: JSON.stringify({ reply }) });
+    return requestJSON(withDir(`/api/hoxi/permission/${encodeURIComponent(requestID)}/reply`, directory), {
+      method: "POST",
+      body: JSON.stringify({ reply, ...(message ? { message } : {}) }),
+    });
   },
   // Interactive Question Dock (Kilo QuestionDock)
   listQuestions(directory?: string): Promise<QuestionRequest[]> {

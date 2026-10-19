@@ -2,13 +2,13 @@
 import { createMemo, For, Show } from "solid-js";
 import { ArrowUp, Clock, Pencil, Trash2 } from "lucide-solid";
 import {
+  canSteerSession,
   editQueuedPrompt,
   type QueuedPromptItem,
   removeQueuedPrompt,
   sendQueuedPromptNow,
   workspace,
 } from "../../store/workspace";
-import { isRunnerSessionID } from "../../services/api";
 import { TextShimmer } from "../icons";
 import { t } from "../../i18n";
 import { ActionIconButton } from "./tool-card-helpers";
@@ -75,10 +75,10 @@ export default function QueuedPromptsList(props: {
                   </span>
 
                   <ActionIconButton
-                    disabled={isRunnerSessionID(sid())}
+                    disabled={!canSteerSession(sid())}
                     variant="accent"
                     label={
-                      isRunnerSessionID(sid())
+                      !canSteerSession(sid())
                         ? t("timeline.runnerFeatureUnsupported")
                         : t("timeline.queueSendNow")
                     }

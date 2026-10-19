@@ -84,6 +84,8 @@ func (s *Service) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/hoxi/runner/antigravity/hook", s.handleAgyHookInstall)
 	mux.HandleFunc(hookPreToolPath, s.handleHookPreTool)
 	mux.HandleFunc(claudeHookPreToolPath, s.handleClaudeHookPreTool)
+	mux.HandleFunc("/api/hoxi/permission", s.handleUnifiedPermissionRoutes)
+	mux.HandleFunc("/api/hoxi/permission/", s.handleUnifiedPermissionRoutes)
 	mux.HandleFunc("/api/hoxi/runner/permission", s.handlePermissionRoutes)
 	mux.HandleFunc("/api/hoxi/runner/permission/", s.handlePermissionRoutes)
 	mux.HandleFunc("/api/hoxi/event", s.handleUnifiedSSE)
@@ -240,6 +242,12 @@ func (s *Service) handleSessionSubroutes(w http.ResponseWriter, r *http.Request)
 		s.handleRuntimeSwitch(w, r, sessionID)
 	case "abort":
 		s.handleSessionAbort(w, r, sessionID)
+	case "revert":
+		s.handleSessionRevert(w, r, sessionID)
+	case "unrevert":
+		s.handleSessionUnrevert(w, r, sessionID)
+	case "fork":
+		s.handleSessionFork(w, r, sessionID)
 	case "event":
 		s.serveSSE(w, r, sessionID)
 	default:
@@ -452,6 +460,10 @@ func (s *Service) handleSessionPrompt(w http.ResponseWriter, r *http.Request, se
 		r.Mode = mode
 		r.ProviderID = rec.ProviderID
 	})
+	s.recordTurnSnapshot(sessionID, userMsgID)
+	if updated, ok := s.store.Get(sessionID); ok {
+		rec = updated
+	}
 
 	var err error
 	if rec.Runtime == "opencode" {

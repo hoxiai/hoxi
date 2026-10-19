@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -9,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -335,6 +337,44 @@ func (s *Service) handlePermissionRoutes(w http.ResponseWriter, r *http.Request)
 		writeJSONError(w, http.StatusNotFound, "unknown permission endpoint")
 		return
 	}
+	s.replyRunnerPermission(w, r, id)
+}
+
+func (s *Service) handleUnifiedPermissionRoutes(w http.ResponseWriter, r *http.Request) {
+	sub := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/hoxi/permission"), "/")
+	if sub == "" {
+		if r.Method != http.MethodGet {
+			writeJSONError(w, http.StatusMethodNotAllowed, "GET required")
+			return
+		}
+		writeJSON(w, http.StatusOK, s.listUnifiedPermissions(r.Context(), r.URL.Query().Get("directory")))
+		return
+	}
+	id, action, _ := strings.Cut(sub, "/")
+	if action != "reply" || r.Method != http.MethodPost {
+		writeJSONError(w, http.StatusNotFound, "unknown permission endpoint")
+		return
+	}
+	if strings.HasPrefix(id, runnerPermissionID) {
+		s.replyRunnerPermission(w, r, id)
+		return
+	}
+	raw, err := io.ReadAll(io.LimitReader(r.Body, 64<<10))
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid reply")
+		return
+	}
+	status, respRaw, err := s.openCodeRaw(r.Context(), http.MethodPost, "/permission/"+url.PathEscape(id)+"/reply", directoryQuery(r.URL.Query().Get("directory"), nil), raw)
+	if err != nil {
+		writeJSONError(w, http.StatusBadGateway, "opencode service unavailable: "+err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_, _ = w.Write(respRaw)
+}
+
+func (s *Service) replyRunnerPermission(w http.ResponseWriter, r *http.Request, id string) {
 	var body struct {
 		Reply   string `json:"reply"`
 		Message string `json:"message"`
@@ -360,6 +400,39 @@ func (s *Service) handlePermissionRoutes(w http.ResponseWriter, r *http.Request)
 	default:
 		writeJSONError(w, http.StatusConflict, "permission request already answered")
 	}
+}
+
+func (s *Service) listUnifiedPermissions(ctx context.Context, directory string) []map[string]interface{} {
+	engineToHoxi := make(map[string]string)
+	for _, info := range s.store.List("") {
+		rec, ok := s.store.Meta(info.ID)
+		if !ok {
+			continue
+		}
+		if rec.ExternalID != "" {
+			engineToHoxi[rec.ExternalID] = rec.ID
+		}
+		for _, ocID := range rec.OpenCodeIDs {
+			if ocID != "" {
+				engineToHoxi[ocID] = rec.ID
+			}
+		}
+	}
+	out := make([]map[string]interface{}, 0)
+	status, raw, err := s.openCodeRaw(ctx, http.MethodGet, "/permission", directoryQuery(directory, nil), nil)
+	var enginePerms []map[string]interface{}
+	if err == nil && status == http.StatusOK && json.Unmarshal(raw, &enginePerms) == nil {
+		for _, item := range enginePerms {
+			if sid, ok := item["sessionID"].(string); ok {
+				if hoxiID := engineToHoxi[sid]; hoxiID != "" {
+					item["sessionID"] = hoxiID
+				}
+			}
+			out = append(out, item)
+		}
+	}
+	out = append(out, s.listPendingApprovals(directory)...)
+	return out
 }
 
 func (s *Service) listPendingApprovals(directory string) []map[string]interface{} {

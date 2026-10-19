@@ -10,9 +10,10 @@ import {
   Show,
 } from "solid-js";
 import type { MessagePart, SessionStatus, ToolPart } from "../../services/sse-types";
-import { isRunnerSessionID } from "../../services/api";
 import {
   appSettings,
+  canForkSession,
+  canRevertSession,
   forkFromMessage,
   revertToHere,
   stopSessionTask,
@@ -429,9 +430,9 @@ export default function MessageStream(props: { hidden?: boolean }) {
                         </ActionIconButton>
 
                         <ActionIconButton
-                          disabled={isRunnerSessionID(workspace.activeSessionID)}
+                          disabled={!canForkSession(workspace.activeSessionID)}
                           label={
-                            isRunnerSessionID(workspace.activeSessionID)
+                            !canForkSession(workspace.activeSessionID)
                               ? t("timeline.runnerFeatureUnsupported")
                               : t("timeline.forkBtn")
                           }
@@ -441,10 +442,10 @@ export default function MessageStream(props: { hidden?: boolean }) {
                         </ActionIconButton>
 
                         <ActionIconButton
-                          disabled={isRunnerSessionID(workspace.activeSessionID)}
+                          disabled={!canRevertSession(workspace.activeSessionID)}
                           variant="warn"
                           label={
-                            isRunnerSessionID(workspace.activeSessionID)
+                            !canRevertSession(workspace.activeSessionID)
                               ? t("timeline.runnerFeatureUnsupported")
                               : t("timeline.revertBtn")
                           }
