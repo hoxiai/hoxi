@@ -26,7 +26,10 @@ export interface SSEHandlers {
   ) => void;
   onFrameBatch?: (batch: StreamFrameBatch) => void;
   onConnectionChange?: (connected: boolean) => void;
+  isFocusedSession?: (sessionID: string) => boolean;
 }
+
+const BACKGROUND_FLUSH_MS = 180;
 
 export function connectEventStream(handlers: SSEHandlers, directory?: string, wsBaseURL = ""): () => void {
   // Wails' macOS scheme handler has no http.Flusher; use the existing loopback server.
@@ -44,20 +47,36 @@ export function connectEventStream(handlers: SSEHandlers, directory?: string, ws
   >();
   let rafID: number | null = null;
   let flushTimer: ReturnType<typeof setTimeout> | null = null;
+  let bgFlushTimer: ReturnType<typeof setTimeout> | null = null;
 
-  const scheduleFlush = () => {
-    if (rafID === null) {
-      rafID = requestAnimationFrame(flushFrame);
-      // WebViews may suspend rAF while hidden; keep draining the stream in batches.
-      flushTimer = setTimeout(flushFrame, 100);
+  const isFocused = (sessionID: string): boolean =>
+    handlers.isFocusedSession ? handlers.isFocusedSession(sessionID) : true;
+
+  const scheduleFlush = (focused = true) => {
+    if (focused) {
+      if (bgFlushTimer !== null) {
+        clearTimeout(bgFlushTimer);
+        bgFlushTimer = null;
+      }
+      if (rafID === null) {
+        rafID = requestAnimationFrame(flushFrame);
+        // WebViews may suspend rAF while hidden; keep draining the stream in batches.
+        flushTimer = setTimeout(flushFrame, 100);
+      }
+      return;
+    }
+    if (rafID === null && bgFlushTimer === null) {
+      bgFlushTimer = setTimeout(flushFrame, BACKGROUND_FLUSH_MS);
     }
   };
 
   const flushFrame = () => {
     if (rafID !== null) cancelAnimationFrame(rafID);
     if (flushTimer !== null) clearTimeout(flushTimer);
+    if (bgFlushTimer !== null) clearTimeout(bgFlushTimer);
     rafID = null;
     flushTimer = null;
+    bgFlushTimer = null;
     if (infoMap.size === 0 && partMap.size === 0 && deltaMap.size === 0) return;
 
     const infos = Array.from(infoMap.values());
@@ -107,7 +126,7 @@ export function connectEventStream(handlers: SSEHandlers, directory?: string, ws
       if (evt.type === "message.updated") {
         const info = evt.properties.info;
         infoMap.set(`${info.sessionID}:${info.id}`, info);
-        scheduleFlush();
+        scheduleFlush(isFocused(info.sessionID));
         return;
       }
 
@@ -121,7 +140,7 @@ export function connectEventStream(handlers: SSEHandlers, directory?: string, ws
         ) {
           deltaMap.delete(`${part.sessionID}:${part.messageID}:${part.id}:text`);
         }
-        scheduleFlush();
+        scheduleFlush(isFocused(part.sessionID));
         return;
       }
 
@@ -134,7 +153,7 @@ export function connectEventStream(handlers: SSEHandlers, directory?: string, ws
         } else {
           deltaMap.set(key, { sessionID, messageID, partID, field, delta });
         }
-        scheduleFlush();
+        scheduleFlush(isFocused(sessionID));
         return;
       }
 
@@ -153,6 +172,7 @@ export function connectEventStream(handlers: SSEHandlers, directory?: string, ws
       cancelAnimationFrame(rafID);
     }
     if (flushTimer !== null) clearTimeout(flushTimer);
+    if (bgFlushTimer !== null) clearTimeout(bgFlushTimer);
     infoMap.clear();
     partMap.clear();
     deltaMap.clear();

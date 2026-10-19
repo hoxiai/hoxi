@@ -341,18 +341,3 @@ func sliceTurnsForFork(turns []MessageTurn, messageID, newSessionID string) []Me
 	}
 	return cloned
 }
-
-func cloneTurns(turns []MessageTurn) []MessageTurn {
-	if len(turns) == 0 {
-		return []MessageTurn{}
-	}
-	raw, err := json.Marshal(turns)
-	if err != nil {
-		return append([]MessageTurn(nil), turns...)
-	}
-	var out []MessageTurn
-	if json.Unmarshal(raw, &out) != nil {
-		return append([]MessageTurn(nil), turns...)
-	}
-	return out
-}

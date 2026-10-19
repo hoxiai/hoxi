@@ -138,6 +138,10 @@ export default function App() {
         },
         onDeltaBatch: applyPartDeltaBatch,
         onFrameBatch: applyStreamFrameBatch,
+        isFocusedSession: (sid) =>
+          !workspace.activeSessionID ||
+          sid === workspace.activeSessionID ||
+          resolveParentSessionID(sid) === workspace.activeSessionID,
         onEvent: (evt, directory) => {
           switch (evt.type) {
             case "message.updated":

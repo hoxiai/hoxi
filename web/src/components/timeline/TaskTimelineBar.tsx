@@ -153,7 +153,23 @@ export default function TaskTimelineBar(props: {
     }
   };
   const [now, setNow] = createSignal(Date.now());
+  const hasRunningSegment = createMemo(() => {
+    const list = props.turns;
+    for (let i = 0; i < list.length; i++) {
+      const turn = list[i];
+      if (turn.info.role === "user") continue;
+      if (Boolean(turn.info.time?.completed) && i < list.length - 1) continue;
+      for (const part of turn.parts) {
+        if (part.type === "reasoning" && part.time && !part.time.end) return true;
+        if (part.type === "tool" && part.state.status === "running") {
+          return true;
+        }
+      }
+    }
+    return false;
+  });
   createEffect(() => {
+    if (!hasRunningSegment()) return;
     setNow(Date.now());
     const timer = setInterval(() => setNow(Date.now()), 1000);
     onCleanup(() => clearInterval(timer));

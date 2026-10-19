@@ -315,14 +315,11 @@ export default function DiffFileTree(props: {
   return (
     <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)]/60 overflow-hidden">
       {/* Tree Header Bar */}
-      <div class="flex items-center justify-between gap-2 px-3 py-2 border-b border-[var(--border-subtle)] bg-[var(--bg-inset)]">
+      <div class="flex items-center justify-between gap-2 px-2.5 py-1 border-b border-[var(--border-subtle)] bg-[var(--bg-inset)]">
         <div class="flex items-center gap-1.5 min-w-0">
           <FolderTree size={13} class="text-[var(--accent-primary)] shrink-0" />
           <span class="text-[11.5px] font-semibold text-[var(--text-primary)] truncate">
             {t("inspector.diffs.treeTitle")}
-          </span>
-          <span class="text-[10.5px] text-[var(--text-muted)] truncate">
-            · {t("inspector.diffs.clickFileHint")}
           </span>
         </div>
 

@@ -77,6 +77,10 @@ export function createTurnWindow(
     const key = sid ?? "";
     let state = windows.get(key);
     if (!state) {
+      if (windows.size >= 64) {
+        const oldest = windows.keys().next().value;
+        if (oldest !== undefined) windows.delete(oldest);
+      }
       state = { limit: INITIAL_VISIBLE_TURNS, seen: 0 };
       windows.set(key, state);
     }
@@ -273,6 +277,11 @@ export function AssistantTurnItem(props: {
     >
       <div
         data-turn-id={props.turn.info.id}
+        style={
+          props.globalIndex < props.allTurns.length - 4 && !isHighlighted()
+            ? { "content-visibility": "auto", "contain-intrinsic-size": "auto 140px" }
+            : undefined
+        }
         class={`flex flex-col gap-y-2.5 px-1 rounded-xl transition-colors ${
           merged().isVisuallyEmpty && !props.turn.info.error
             ? "mt-0"

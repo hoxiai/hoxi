@@ -270,12 +270,26 @@ func (s *Service) startOpenCodeTurn(rec SessionRecord, mode, modelID, effort, sy
 			defer done()
 			var turns []MessageTurn
 			if fetchErr := s.openCodeJSON(refreshCtx, "GET", "/session/"+rec.ExternalID+"/message", rec.WorktreePath, nil, &turns); fetchErr == nil {
+				existingInfoByID := make(map[string]MessageInfo)
+				existingPartByKey := make(map[partKey]MessagePart)
+				if current, ok := s.store.Get(rec.ID); ok {
+					for _, t := range current.Turns {
+						existingInfoByID[t.Info.ID] = t.Info
+						for _, p := range t.Parts {
+							existingPartByKey[partKey{messageID: p.MessageID, partID: p.ID}] = p
+						}
+					}
+				}
 				for _, turn := range turns {
 					turn.Info.SessionID = rec.ID
-					s.broadcast(rec.ID, SSEEvent{Type: "message.updated", Properties: map[string]interface{}{"info": turn.Info}})
+					if prevInfo, exists := existingInfoByID[turn.Info.ID]; !exists || !equalMessageInfo(prevInfo, turn.Info) {
+						s.broadcast(rec.ID, SSEEvent{Type: "message.updated", Properties: map[string]interface{}{"info": turn.Info}})
+					}
 					for _, part := range turn.Parts {
 						part.SessionID = rec.ID
-						s.broadcast(rec.ID, SSEEvent{Type: "message.part.updated", Properties: map[string]interface{}{"part": part}})
+						if prevPart, exists := existingPartByKey[partKey{messageID: part.MessageID, partID: part.ID}]; !exists || !equalMessagePart(prevPart, part) {
+							s.broadcast(rec.ID, SSEEvent{Type: "message.part.updated", Properties: map[string]interface{}{"part": part}})
+						}
 					}
 				}
 			} else {

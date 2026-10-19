@@ -1,4 +1,4 @@
-import { createMemo, For, lazy, Show, Suspense } from "solid-js";
+import { createEffect, createMemo, createSignal, For, lazy, Show, Suspense } from "solid-js";
 import { Maximize2, Minimize2 } from "lucide-solid";
 import MemoryBankView from "./MemoryBankView";
 import FileTreeView from "./FileTreeView";
@@ -21,6 +21,19 @@ const TABS: Array<{ id: TabID }> = [
 ];
 
 export default function InspectorPane() {
+  const [visitedTabs, setVisitedTabs] = createSignal<Record<TabID, boolean>>({
+    diffs: workspace.inspectorTab === "diffs",
+    memory: workspace.inspectorTab === "memory",
+    files: workspace.inspectorTab === "files",
+    terminal: workspace.inspectorTab === "terminal",
+    browser: workspace.inspectorTab === "browser",
+  });
+
+  createEffect(() => {
+    const active = workspace.inspectorTab;
+    setVisitedTabs((prev) => (prev[active] ? prev : { ...prev, [active]: true }));
+  });
+
   const diffCount = createMemo(() => {
     const id = workspace.activeSessionID;
     if (workspace.diffScope === "worktree") {
@@ -95,21 +108,29 @@ export default function InspectorPane() {
 
       <div class="flex-1 min-h-0">
         <Suspense>
-        <Show when={workspace.inspectorTab === "diffs"}>
-          <PierreDiffViewer />
-        </Show>
-        <Show when={workspace.inspectorTab === "memory"}>
-          <MemoryBankView />
-        </Show>
-        <Show when={workspace.inspectorTab === "files"}>
-          <FileTreeView />
-        </Show>
-        <Show when={workspace.inspectorTab === "terminal"}>
-          <WebGLTerminal />
-        </Show>
-        <Show when={workspace.inspectorTab === "browser"}>
-          <BrowserInspector />
-        </Show>
+          <Show when={visitedTabs().diffs}>
+            <div class={workspace.inspectorTab === "diffs" ? "h-full w-full" : "hidden"}>
+              <PierreDiffViewer />
+            </div>
+          </Show>
+          <Show when={visitedTabs().memory}>
+            <div class={workspace.inspectorTab === "memory" ? "h-full w-full" : "hidden"}>
+              <MemoryBankView />
+            </div>
+          </Show>
+          <Show when={visitedTabs().files}>
+            <div class={workspace.inspectorTab === "files" ? "h-full w-full" : "hidden"}>
+              <FileTreeView />
+            </div>
+          </Show>
+          <Show when={visitedTabs().terminal}>
+            <div class={workspace.inspectorTab === "terminal" ? "h-full w-full" : "hidden"}>
+              <WebGLTerminal />
+            </div>
+          </Show>
+          <Show when={workspace.inspectorTab === "browser"}>
+            <BrowserInspector />
+          </Show>
         </Suspense>
       </div>
     </aside>

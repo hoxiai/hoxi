@@ -69,7 +69,7 @@ func scanCodexSessions(targetDir, query string) ([]ExternalSessionSummary, Exter
 	}
 
 	// Count total threads and fetch top 100 recent threads
-	countOut, err := codexCommandOutput("sqlite3", dbPath, "SELECT count(*) FROM threads WHERE archived = 0;")
+	countOut, err := codexCommandOutput("sqlite3", "-readonly", "-cmd", ".timeout 5000", dbPath, "SELECT count(*) FROM threads WHERE archived = 0;")
 	if err == nil {
 		if n, err := strconv.Atoi(strings.TrimSpace(string(countOut))); err == nil {
 			stats.SessionCount = n
@@ -82,7 +82,7 @@ WHERE archived = 0 AND title != 'Guardian review'
 ORDER BY updated_at DESC
 LIMIT 120;`
 
-	rawJSON, err := codexCommandOutput("sqlite3", "-json", dbPath, sqlQuery)
+	rawJSON, err := codexCommandOutput("sqlite3", "-readonly", "-cmd", ".timeout 5000", "-json", dbPath, sqlQuery)
 	if err != nil || len(bytes.TrimSpace(rawJSON)) == 0 {
 		return nil, stats
 	}

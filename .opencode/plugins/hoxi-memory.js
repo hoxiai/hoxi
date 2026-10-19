@@ -233,12 +233,21 @@ async function fetchEvidence(client, directory, sessionID) {
   };
 }
 
+function stripVolatileMemoryHeader(markdown) {
+  return String(markdown || "")
+    .replace(/^Updated:\s*[^\r\n]+\r?\n?/m, "")
+    .trim();
+}
+
 export const HoxiMemoryPlugin = async ({ client, directory } = {}) => {
   const baseDir = directory || process.cwd();
   const memoryDir = path.join(baseDir, ".opencode", "memory");
   const projectMemoryPath = path.join(memoryDir, "project.md");
   const sessionsMemoryDir = path.join(memoryDir, "sessions");
   const ledgers = new Map();
+  // Freeze injected system blocks per session so output.system remains 100%
+  // byte-stable across turns and never busts the LLM KV prefix cache.
+  const frozenSessionSystemBlocks = new Map();
 
   const ensure = (sessionID) => {
     const id = safeSessionID(sessionID);
@@ -253,11 +262,13 @@ export const HoxiMemoryPlugin = async ({ client, directory } = {}) => {
   const persist = async (sessionID) => {
     const id = safeSessionID(sessionID);
     const ledger = ensure(id);
-    const evidence = await fetchEvidence(client, baseDir, sessionID);
-    if (evidence) {
-      ingestMessages(ledger, evidence.messages);
-      noteDiffs(ledger, evidence.diffs);
-      noteTodos(ledger, evidence.todos);
+    if (!ledgerHasEvidence(ledger)) {
+      const evidence = await fetchEvidence(client, baseDir, sessionID);
+      if (evidence) {
+        ingestMessages(ledger, evidence.messages);
+        noteDiffs(ledger, evidence.diffs);
+        noteTodos(ledger, evidence.todos);
+      }
     }
     await fs.mkdir(sessionsMemoryDir, { recursive: true });
     const sessionFile = path.join(sessionsMemoryDir, `${id}.md`);
@@ -272,27 +283,45 @@ export const HoxiMemoryPlugin = async ({ client, directory } = {}) => {
     await fs.writeFile(sessionFile, markdown, "utf8");
   };
 
-  return {
-    "experimental.chat.system.transform": async (input, output) => {
-      output.system.push(HOXI_GIT_ATTRIBUTION_RULE);
+  const resolveFrozenBlocks = async (sessionID) => {
+    const cacheKey = typeof sessionID === "string" && sessionID.trim() ? safeSessionID(sessionID) : "";
+    if (cacheKey && frozenSessionSystemBlocks.has(cacheKey)) {
+      return frozenSessionSystemBlocks.get(cacheKey);
+    }
+    const blocks = [];
+    try {
+      const content = await fs.readFile(projectMemoryPath, "utf8");
+      const sanitized = stripVolatileMemoryHeader(redactSecrets(content.trim()));
+      if (sanitized) blocks.push(`<project_memory>\n${sanitized}\n</project_memory>`);
+    } catch {
+      // project.md does not exist yet
+    }
+    if (cacheKey) {
       try {
-        const content = await fs.readFile(projectMemoryPath, "utf8");
-        const sanitized = redactSecrets(content.trim());
-        if (sanitized) output.system.push(`<project_memory>\n${sanitized}\n</project_memory>`);
-      } catch {
-        // project.md does not exist yet
-      }
-      const sessionID = input?.sessionID;
-      if (typeof sessionID !== "string" || !sessionID.trim()) return;
-      try {
-        const sessionMemoryPath = path.join(sessionsMemoryDir, `${safeSessionID(sessionID)}.md`);
+        const sessionMemoryPath = path.join(sessionsMemoryDir, `${cacheKey}.md`);
         const sessionContent = await fs.readFile(sessionMemoryPath, "utf8");
-        const sanitizedSession = redactSecrets(sessionContent.trim());
+        const sanitizedSession = stripVolatileMemoryHeader(redactSecrets(sessionContent.trim()));
         if (sanitizedSession) {
-          output.system.push(`<session_handoff_memory>\n${sanitizedSession}\n</session_handoff_memory>`);
+          blocks.push(`<session_handoff_memory>\n${sanitizedSession}\n</session_handoff_memory>`);
         }
       } catch {
         // session memory does not exist yet
+      }
+      if (frozenSessionSystemBlocks.size >= 128) {
+        const oldestKey = frozenSessionSystemBlocks.keys().next().value;
+        if (oldestKey !== undefined) frozenSessionSystemBlocks.delete(oldestKey);
+      }
+      frozenSessionSystemBlocks.set(cacheKey, blocks);
+    }
+    return blocks;
+  };
+
+  return {
+    "experimental.chat.system.transform": async (input, output) => {
+      output.system.push(HOXI_GIT_ATTRIBUTION_RULE);
+      const blocks = await resolveFrozenBlocks(input?.sessionID);
+      for (const block of blocks) {
+        output.system.push(block);
       }
     },
 

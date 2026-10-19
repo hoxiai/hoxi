@@ -3,7 +3,6 @@ package runner
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -27,6 +26,7 @@ type storedSession struct {
 	rec         SessionRecord
 	turnsLoaded bool
 	logLines    int
+	metaDirty   bool
 	// Parts whose streamed text deltas have not reached turns.jsonl yet.
 	dirty map[partKey]struct{}
 }
@@ -125,7 +125,7 @@ func (s *Store) commitLocked(next SessionRecord, ss *storedSession, prevTurns []
 		ss = &storedSession{}
 		s.records[next.ID] = ss
 	}
-	ss.rec, ss.turnsLoaded, ss.logLines, ss.dirty = next, true, lines, nil
+	ss.rec, ss.turnsLoaded, ss.logLines, ss.metaDirty, ss.dirty = next, true, lines, false, nil
 	return nil
 }
 
@@ -174,6 +174,7 @@ func (s *Store) Meta(sessionID string) (SessionRecord, bool) {
 	}
 	meta := ss.rec
 	meta.Turns = nil
+	meta.RevertedTurns = nil
 	return cloneRecord(meta), true
 }
 
@@ -238,8 +239,9 @@ func (s *Store) UpsertTurnInfo(sessionID string, info MessageInfo) {
 		return
 	}
 	s.ensureTurnsLocked(ss)
-	ss.rec.Turns = upsertTurnInfo(ss.rec.Turns, info)
-	s.appendLocked(ss, true, turnLogEntry{Info: &info})
+	copied := cloneMessageInfo(info)
+	ss.rec.Turns = upsertTurnInfo(ss.rec.Turns, copied)
+	s.appendLocked(ss, true, turnLogEntry{Info: &copied})
 }
 
 func (s *Store) UpsertTurnPart(sessionID string, part MessagePart) {
@@ -285,12 +287,16 @@ func (s *Store) Flush() {
 		if len(ss.dirty) > 0 {
 			s.appendLocked(ss, false)
 		}
+		if ss.metaDirty {
+			if s.writeMeta(ss.rec) == nil {
+				ss.metaDirty = false
+			}
+		}
 	}
 }
 
 // appendLocked writes pending deltas plus extra entries; touch also bumps
-// UpdatedAt. Write errors are dropped: the in-memory transcript stays
-// authoritative and the next successful rewrite or compaction persists it.
+// UpdatedAt and marks metadata dirty for the next Flush/compaction.
 func (s *Store) appendLocked(ss *storedSession, touch bool, extra ...turnLogEntry) {
 	entries := append(takeDirtyLocked(ss), extra...)
 	if err := s.appendTurnEntries(ss.rec.ID, entries); err == nil {
@@ -298,11 +304,14 @@ func (s *Store) appendLocked(ss *storedSession, touch bool, extra ...turnLogEntr
 	}
 	if touch {
 		ss.rec.UpdatedAt = time.Now().UnixMilli()
-		_ = s.writeMeta(ss.rec)
+		ss.metaDirty = true
 	}
 	if live := liveEntryCount(ss.rec.Turns); ss.logLines > 2*live+64 {
 		if n, err := s.rewriteTurns(ss.rec.ID, ss.rec.Turns); err == nil {
 			ss.logLines = n
+		}
+		if ss.metaDirty && s.writeMeta(ss.rec) == nil {
+			ss.metaDirty = false
 		}
 	}
 }
@@ -314,7 +323,7 @@ func takeDirtyLocked(ss *storedSession) []turnLogEntry {
 	entries := make([]turnLogEntry, 0, len(ss.dirty))
 	for key := range ss.dirty {
 		if part := findPart(ss.rec.Turns, key.messageID, key.partID); part != nil {
-			copied := *part
+			copied := clonePart(*part)
 			entries = append(entries, turnLogEntry{Part: &copied})
 		}
 	}
@@ -372,17 +381,129 @@ func upsertTurnPart(turns []MessageTurn, part MessagePart) ([]MessageTurn, bool)
 	return turns, false
 }
 
+func equalMessageInfo(a, b MessageInfo) bool {
+	return reflect.DeepEqual(a, b)
+}
+
+func equalMessagePart(a, b MessagePart) bool {
+	return reflect.DeepEqual(a, b)
+}
+
+func cloneAnyValue(v interface{}) interface{} {
+	switch val := v.(type) {
+	case map[string]interface{}:
+		return cloneGenericMap(val)
+	case []interface{}:
+		out := make([]interface{}, len(val))
+		for i, item := range val {
+			out[i] = cloneAnyValue(item)
+		}
+		return out
+	case []string:
+		out := make([]string, len(val))
+		copy(out, val)
+		return out
+	default:
+		return val
+	}
+}
+
+func cloneGenericMap(m map[string]interface{}) map[string]interface{} {
+	if m == nil {
+		return nil
+	}
+	out := make(map[string]interface{}, len(m))
+	for k, v := range m {
+		out[k] = cloneAnyValue(v)
+	}
+	return out
+}
+
+func cloneStringMap(m map[string]string) map[string]string {
+	if m == nil {
+		return nil
+	}
+	out := make(map[string]string, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
+}
+
+func cloneMessageInfo(info MessageInfo) MessageInfo {
+	out := info
+	if info.Tokens != nil {
+		tok := *info.Tokens
+		out.Tokens = &tok
+	}
+	if info.Error != nil {
+		errCopy := *info.Error
+		if info.Error.Data != nil {
+			dataCopy := *info.Error.Data
+			errCopy.Data = &dataCopy
+		}
+		out.Error = &errCopy
+	}
+	return out
+}
+
 func clonePart(p MessagePart) MessagePart {
-	raw, _ := json.Marshal(p)
-	var out MessagePart
-	_ = json.Unmarshal(raw, &out)
+	out := p
+	if p.Time != nil {
+		t := *p.Time
+		out.Time = &t
+	}
+	if p.Metadata != nil {
+		out.Metadata = cloneGenericMap(p.Metadata)
+	}
+	if p.State != nil {
+		st := *p.State
+		st.Input = cloneGenericMap(p.State.Input)
+		st.Metadata = cloneGenericMap(p.State.Metadata)
+		if p.State.Time != nil {
+			t := *p.State.Time
+			st.Time = &t
+		}
+		out.State = &st
+	}
+	return out
+}
+
+func cloneTurns(turns []MessageTurn) []MessageTurn {
+	if turns == nil {
+		return nil
+	}
+	out := make([]MessageTurn, len(turns))
+	for i, t := range turns {
+		var parts []MessagePart
+		if t.Parts != nil {
+			parts = make([]MessagePart, len(t.Parts))
+			for j, p := range t.Parts {
+				parts[j] = clonePart(p)
+			}
+		}
+		out[i] = MessageTurn{
+			Info:  cloneMessageInfo(t.Info),
+			Parts: parts,
+		}
+	}
 	return out
 }
 
 func cloneRecord(r SessionRecord) SessionRecord {
-	raw, _ := json.Marshal(r)
-	var out SessionRecord
-	_ = json.Unmarshal(raw, &out)
+	out := r
+	out.Turns = cloneTurns(r.Turns)
+	out.RevertedTurns = cloneTurns(r.RevertedTurns)
+	if r.Revert != nil {
+		rev := *r.Revert
+		out.Revert = &rev
+	}
+	out.Snapshots = cloneStringMap(r.Snapshots)
+	if r.OpenCodeIDs != nil {
+		out.OpenCodeIDs = make([]string, len(r.OpenCodeIDs))
+		copy(out.OpenCodeIDs, r.OpenCodeIDs)
+	}
+	out.OpenCodeDirectories = cloneStringMap(r.OpenCodeDirectories)
 	return out
 }
 

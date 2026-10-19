@@ -17,10 +17,12 @@ function wsEndpoint(ptyID: string, directory?: string): string {
   return `${base}/pty/${encodeURIComponent(ptyID)}/connect${dir}`;
 }
 
+const utf8Decoder = new TextDecoder();
+
 // OpenCode streams raw PTY bytes; tolerate JSON-framed frames as well.
 function decodeFrame(data: string | ArrayBuffer): string {
   if (typeof data !== "string") {
-    return new TextDecoder().decode(data);
+    return utf8Decoder.decode(data);
   }
   if (data.startsWith("{")) {
     try {
@@ -41,6 +43,7 @@ export default function WebGLTerminal() {
   const [retry, setRetry] = createSignal(0);
   let activeTerm: Terminal | null = null;
   let activeFit: FitAddon | null = null;
+  let activeConnection: ReturnType<typeof startTerminalConnection> | undefined;
 
   createEffect(() => {
     const fz = appSettings.terminalFontSize;
@@ -53,6 +56,19 @@ export default function WebGLTerminal() {
       } catch {
         /* ignore */
       }
+    }
+  });
+
+  createEffect(() => {
+    if (workspace.inspectorTab === "terminal" && activeFit) {
+      requestAnimationFrame(() => {
+        try {
+          activeFit?.fit();
+          activeConnection?.resize();
+        } catch {
+          /* ignore */
+        }
+      });
     }
   });
 
@@ -109,6 +125,7 @@ export default function WebGLTerminal() {
     let connection: ReturnType<typeof startTerminalConnection> | undefined;
     const onData = term.onData((chunk) => connection?.send(chunk));
     const resizeObserver = new ResizeObserver(() => {
+      if (workspace.inspectorTab !== "terminal") return;
       fitSize();
       connection?.resize();
     });
@@ -125,16 +142,18 @@ export default function WebGLTerminal() {
         onData.dispose();
         activeTerm = null;
         activeFit = null;
+        activeConnection = undefined;
         term.dispose();
       },
     });
+    activeConnection = connection;
     onCleanup(connection.dispose);
     resizeObserver.observe(container);
   };
 
   createEffect(on(
-    () => [workspace.activeSessionID, activeDirectory(), retry()] as const,
-    ([, directory]) => boot(directory),
+    () => [activeDirectory(), retry()] as const,
+    ([directory]) => boot(directory),
   ));
 
   return (

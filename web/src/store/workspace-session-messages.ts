@@ -462,6 +462,7 @@ export function applyStreamFrameBatch(batch: StreamFrameBatch) {
     recordAssistantTurnUpdated(info);
   }
 
+  let shouldRefreshActiveWorktree = false;
   for (const part of batch.parts) {
     recordFirstToken(part.sessionID);
     recordToolPartUpdate(part);
@@ -487,8 +488,11 @@ export function applyStreamFrameBatch(batch: StreamFrameBatch) {
       part.sessionID === workspace.activeSessionID &&
       isMutatingTool(part.tool)
     ) {
-      scheduleRefreshWorktreeStatus(part.sessionID, 250);
+      shouldRefreshActiveWorktree = true;
     }
+  }
+  if (shouldRefreshActiveWorktree && workspace.activeSessionID) {
+    scheduleRefreshWorktreeStatus(workspace.activeSessionID, 250);
   }
 
   for (const d of batch.deltas) {

@@ -86,27 +86,24 @@ export default function ObserverAuditBanner(props: { sessionID: string }) {
   return (
     <Show when={audit()}>
       {(res) => (
-        <div
-          class={`mx-2.5 mt-2 rounded-xl border px-3 py-2.5 text-[11.5px] space-y-1.5 ${
+        <details
+          class={`rounded-lg border px-2.5 py-1.5 text-[11px] space-y-1.5 ${
             res().pass
               ? "border-[var(--ok-border)] bg-[var(--ok-surface)]/75 text-[var(--ok-text)]"
               : "border-[var(--danger-border)] bg-[var(--danger-surface)]/85 text-[var(--danger-text)]"
           }`}
         >
-          <div class="flex items-center justify-between gap-2 flex-wrap">
-            <div class="flex items-center gap-1.5 font-semibold">
-              <Show
-                when={res().pass}
-                fallback={<AlertTriangle size={13} class="shrink-0" />}
-              >
-                <CheckCircle2 size={13} class="shrink-0" />
+          <summary class="cursor-pointer marker:text-[var(--text-muted)]">
+            <span class="inline-flex items-center gap-1.5 font-medium align-middle">
+              <Show when={res().pass} fallback={<AlertTriangle size={12} />}>
+                <CheckCircle2 size={12} />
               </Show>
-              <span>
-                {res().pass
-                  ? t("inspector.diffs.auditCardTitlePass", { score: res().score })
-                  : t("inspector.diffs.auditCardTitleFail", { score: res().score })}
-              </span>
-            </div>
+              {res().pass
+                ? t("inspector.diffs.auditCardTitlePass", { score: res().score })
+                : t("inspector.diffs.auditCardTitleFail", { score: res().score })}
+            </span>
+          </summary>
+          <div class="border-t border-current/10 pt-2">
             <span class="font-mono text-[10px] opacity-80">
               {t("inspector.diffs.auditObserverBy", {
                 observer: `${res().observerProvider}/${res().observerModel}`,
@@ -155,7 +152,7 @@ export default function ObserverAuditBanner(props: { sessionID: string }) {
               </Show>
             </div>
           </Show>
-        </div>
+        </details>
       )}
     </Show>
   );
