@@ -276,7 +276,12 @@ Return ONLY valid JSON matching this schema:
 func parseObserverAuditJSON(text string) (int, string, []string, error) {
 	cleaned := strings.TrimSpace(text)
 	if strings.HasPrefix(cleaned, "```") && strings.HasSuffix(cleaned, "```") {
-		cleaned = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(strings.TrimPrefix(cleaned, "```"), "json"), "```"))
+		body := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(cleaned, "```"), "```"))
+		fields := strings.Fields(body)
+		if len(fields) > 0 && strings.EqualFold(fields[0], "json") {
+			body = strings.TrimSpace(body[len(fields[0]):])
+		}
+		cleaned = strings.TrimSpace(body)
 	}
 	var res struct {
 		Score   *int     `json:"score"`

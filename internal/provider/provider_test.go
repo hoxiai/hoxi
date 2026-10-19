@@ -144,6 +144,18 @@ func TestEvaluateStaticCodeRulesAndParseObserverAudit(t *testing.T) {
 }
 
 func TestParseObserverAuditScoreValidation(t *testing.T) {
+	for _, text := range []string{
+		"``` json\n{\"score\":68,\"summary\":\"ok\"}\n```",
+		"```JSON\n{\"score\":68,\"summary\":\"ok\"}\n```",
+		"```json {\"score\":68,\"summary\":\"ok\"}```",
+	} {
+		t.Run(text, func(t *testing.T) {
+			score, summary, _, err := parseObserverAuditJSON(text)
+			if err != nil || score != 68 || summary != "ok" {
+				t.Fatalf("expected fenced JSON with flexible language tag, got %d, %q, %v", score, summary, err)
+			}
+		})
+	}
 	for _, text := range []string{`{"score":0}`, `{"score":100}`, "0", "100"} {
 		t.Run(text, func(t *testing.T) {
 			score, _, _, err := parseObserverAuditJSON(text)

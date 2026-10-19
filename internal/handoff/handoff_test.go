@@ -19,6 +19,9 @@ import (
 
 func setupMockOpenCodeServerAndDB(t *testing.T) (int, string, func()) {
 	t.Helper()
+	// Keep the fixture isolated from Hoxi's process-level database overrides.
+	t.Setenv("OPENCODE_DB", "")
+	t.Setenv("HOXI_DB_PATH", "")
 	xdgDir := t.TempDir()
 	t.Setenv("XDG_DATA_HOME", xdgDir)
 	t.Setenv("XDG_CONFIG_HOME", xdgDir)
