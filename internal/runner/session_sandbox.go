@@ -112,6 +112,9 @@ func (s *Service) changeSessionSandboxWithOptions(sessionID, mode string, force,
 		return SessionInfo{}, errors.New("cannot change sandbox mode while the session is running")
 	}
 	rec, ok := s.store.Get(sessionID)
+	if ok && rec.Subagent {
+		return SessionInfo{}, errSubagentSessionReadOnly
+	}
 	if !ok {
 		return SessionInfo{}, errors.New("runner session not found")
 	}

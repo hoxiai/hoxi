@@ -9,9 +9,12 @@ import (
 // Antigravity dispatches subagents asynchronously: the `subagent` step goes
 // ACTIVE -> DONE within milliseconds, the subagents' own steps never reach
 // stdout, and each report comes back later as a content-less `system_message`
-// step whose text only exists in the parent's brain transcript. The `task`
-// part therefore stays running after the dispatch is DONE and completes once
-// every dispatched subagent has reported (or the turn ends).
+// step whose text only exists in the parent's brain transcript.
+//
+// Each dispatched subagent gets its own `task` part and child session. The
+// part is pending until the dispatch is DONE, running until the subagent's
+// report arrives, then completed with the report as output. The child session
+// is filled from the subagent's own transcript, which agy names in `log_uri`.
 
 type agySubagentInfo struct {
 	Subagents []agySubagentSpec `json:"subagents"`
@@ -35,8 +38,6 @@ type agySubagentTrack struct {
 	conversationID string
 	logPath        string
 	reported       bool
-	steps          int
-	currentTool    string
 	lastActivityMs int64
 	readOffset     int64
 }
@@ -80,14 +81,17 @@ func agySubagentSpecs(su *agyStepUpdate) []agySubagentSpec {
 }
 
 func (t *TurnTranslator) handleAgySubagentStep(su *agyStepUpdate, now int64) []SSEEvent {
-	partID := fmt.Sprintf("prt_%s_tool_%d", t.messageID, su.StepIndex)
-	tracks := t.subagentsByPart[partID]
+	var evts []SSEEvent
+	startMs := t.stepStartMs[su.StepIndex]
 	for i, spec := range agySubagentSpecs(su) {
-		if i >= len(tracks) {
-			tracks = append(tracks, &agySubagentTrack{partID: partID, lastActivityMs: now})
+		partID := fmt.Sprintf("prt_%s_tool_%d_%d", t.messageID, su.StepIndex, i)
+		tr := t.subagentByPart[partID]
+		if tr == nil {
+			tr = &agySubagentTrack{partID: partID, lastActivityMs: now}
+			t.subagentByPart[partID] = tr
+			t.subagentOrder = append(t.subagentOrder, partID)
 		}
-		tr := tracks[i]
-		tr.role = firstNonEmptyStr(spec.Role, tr.role)
+		tr.role = firstNonEmptyStr(spec.Role, tr.role, spec.TypeName, "subagent")
 		tr.typeName = firstNonEmptyStr(spec.TypeName, tr.typeName)
 		tr.model = firstNonEmptyStr(spec.Model, tr.model)
 		tr.prompt = firstNonEmptyStr(spec.InitialPrompt, tr.prompt)
@@ -98,69 +102,74 @@ func (t *TurnTranslator) handleAgySubagentStep(su *agyStepUpdate, now int64) []S
 		if tr.logPath == "" {
 			tr.logPath = resolveAgySubagentLog(spec.LogURI, tr.conversationID)
 		}
-	}
-	t.subagentsByPart[partID] = tracks
 
-	part, exists := t.partsByID[partID]
-	if !exists {
-		part = &MessagePart{
-			ID:        partID,
-			SessionID: t.sessionID,
-			MessageID: t.messageID,
-			Type:      "tool",
-			Tool:      "task",
-			CallID:    fmt.Sprintf("call_%s_%d", t.messageID, su.StepIndex),
+		part, exists := t.partsByID[partID]
+		if !exists {
+			part = &MessagePart{
+				ID:        partID,
+				SessionID: t.sessionID,
+				MessageID: t.messageID,
+				Type:      "tool",
+				Tool:      "task",
+				CallID:    fmt.Sprintf("call_%s_%d_%d", t.messageID, su.StepIndex, i),
+				State:     &ToolState{Status: "pending", Time: &PartTime{Start: startMs}},
+			}
+			t.partsByID[partID] = part
+			t.partOrder = append(t.partOrder, partID)
 		}
-		t.partsByID[partID] = part
-		t.partOrder = append(t.partOrder, partID)
-	}
-	startMs := t.stepStartMs[su.StepIndex]
-	state := &ToolState{
-		Status: "running",
-		Input:  subagentTaskInput(tracks),
-		Title:  subagentRoles(tracks),
-		Time:   &PartTime{Start: startMs},
-	}
-	if su.State == "ERROR" {
-		state.Status = "error"
-		state.Error = "subagent dispatch failed"
-		if su.ToolInfo != nil && su.ToolInfo.Error != nil && su.ToolInfo.Error.Message != "" {
-			state.Error = su.ToolInfo.Error.Message
+		state := part.State
+		state.Input = map[string]interface{}{
+			"description":   tr.role,
+			"subagent_type": firstNonEmptyStr(tr.typeName, "general"),
+			"prompt":        tr.prompt,
 		}
-		state.Time = &PartTime{Start: startMs, End: now}
-		for _, tr := range tracks {
+		if tr.model != "" {
+			state.Input["model"] = tr.model
+		}
+		state.Title = tr.role
+		switch {
+		case tr.reported:
+		case su.State == "ERROR":
 			tr.reported = true
+			state.Status = "error"
+			state.Error = "subagent dispatch failed"
+			if su.ToolInfo != nil && su.ToolInfo.Error != nil && su.ToolInfo.Error.Message != "" {
+				state.Error = su.ToolInfo.Error.Message
+			}
+			state.Time = &PartTime{Start: startMs, End: now}
+		case su.State == "DONE":
+			state.Status = "running"
+			evts = append(evts, t.openChild(partID, ChildSessionSpec{
+				Title:      tr.role,
+				Prompt:     tr.prompt,
+				ModelID:    tr.model,
+				ExternalID: tr.conversationID,
+			}, now)...)
 		}
+		t.refreshSubagentMeta(tr)
+		evts = append(evts, partUpdated(*part))
 	}
-	part.State = state
-	t.refreshSubagentTask(partID, now)
-	return []SSEEvent{partUpdated(*part)}
+	return evts
 }
 
-// handleAgySystemMessage renders a subagent report and settles its task part.
+// handleAgySystemMessage attaches a subagent report to its task part.
 func (t *TurnTranslator) handleAgySystemMessage(su *agyStepUpdate, now int64) []SSEEvent {
 	var content string
 	if t.lookupStep != nil && t.externalID != "" {
 		content = t.lookupStep(t.externalID, su.StepIndex)
 	}
 	sender, body := parseAgySystemMessage(content)
-	track := t.subagentByConv[sender]
-	if track == nil {
-		track = t.firstUnreportedSubagent()
+	tr := t.subagentByConv[sender]
+	if tr == nil || tr.reported {
+		tr = t.firstUnreportedSubagent()
 	}
-	if track == nil && strings.TrimSpace(body) == "" {
+	if tr != nil {
+		return t.settleAgySubagent(tr, body, false, now)
+	}
+	if strings.TrimSpace(body) == "" {
 		return nil
 	}
-
-	input := map[string]interface{}{}
-	title := ""
-	if sender != "" {
-		input["sender"] = sender
-	}
-	if track != nil {
-		input["role"] = track.role
-		title = track.role
-	}
+	// Not a subagent report (or one we cannot attribute): keep it visible.
 	reportID := fmt.Sprintf("prt_%s_report_%d", t.messageID, su.StepIndex)
 	report := &MessagePart{
 		ID:        reportID,
@@ -171,9 +180,8 @@ func (t *TurnTranslator) handleAgySystemMessage(su *agyStepUpdate, now int64) []
 		CallID:    fmt.Sprintf("call_%s_%d", t.messageID, su.StepIndex),
 		State: &ToolState{
 			Status: "completed",
-			Input:  input,
+			Input:  map[string]interface{}{"sender": sender},
 			Output: body,
-			Title:  title,
 			Time:   &PartTime{Start: now, End: now + 1},
 		},
 	}
@@ -181,93 +189,63 @@ func (t *TurnTranslator) handleAgySystemMessage(su *agyStepUpdate, now int64) []
 		t.partOrder = append(t.partOrder, reportID)
 	}
 	t.partsByID[reportID] = report
-
-	evts := []SSEEvent{}
-	if track != nil {
-		track.reported = true
-		track.lastActivityMs = now
-		if task := t.partsByID[track.partID]; task != nil {
-			t.refreshSubagentTask(track.partID, now)
-			evts = append(evts, partUpdated(*task))
-		}
-	}
-	return append(evts, partUpdated(*report))
+	return []SSEEvent{partUpdated(*report)}
 }
 
-// finishAgySubagents settles task parts that are still running when the turn ends.
-func (t *TurnTranslator) finishAgySubagents(failed bool, now int64) []SSEEvent {
-	var evts []SSEEvent
-	for _, partID := range t.partOrder {
-		tracks, ok := t.subagentsByPart[partID]
-		part := t.partsByID[partID]
-		if !ok || part == nil || part.State == nil || part.State.Status != "running" {
-			continue
-		}
-		for _, tr := range tracks {
-			tr.reported = true
-		}
-		t.refreshSubagentTask(partID, now)
+// settleAgySubagent drains the subagent's transcript one last time, completes
+// its task part (with the report, when known) and closes its child session.
+func (t *TurnTranslator) settleAgySubagent(tr *agySubagentTrack, report string, failed bool, now int64) []SSEEvent {
+	evts := t.pollAgySubagent(tr)
+	tr.reported = true
+	tr.lastActivityMs = now
+	if part := t.partsByID[tr.partID]; part != nil && part.State != nil {
 		if failed {
 			part.State.Status = "error"
-			part.State.Error = "turn ended before all subagents reported"
+			part.State.Error = "turn ended before the subagent reported"
+		} else {
+			part.State.Status = "completed"
+			part.State.Output = report
 		}
+		part.State.Time = &PartTime{Start: part.State.Time.Start, End: now}
+		t.refreshSubagentMeta(tr)
 		evts = append(evts, partUpdated(*part))
+	}
+	return append(evts, t.closeChild(tr.partID, failed, now)...)
+}
+
+// finishAgySubagents settles subagents that are still out when the turn ends
+// and picks up rows reported subagents wrote after their report.
+func (t *TurnTranslator) finishAgySubagents(failed bool, now int64) []SSEEvent {
+	var evts []SSEEvent
+	for _, partID := range t.subagentOrder {
+		if tr := t.subagentByPart[partID]; !tr.reported {
+			evts = append(evts, t.settleAgySubagent(tr, "", failed, now)...)
+		} else {
+			evts = append(evts, t.pollAgySubagent(tr)...)
+		}
 	}
 	return evts
 }
 
-// refreshSubagentTask recomputes a task part's status, output and progress metadata.
-func (t *TurnTranslator) refreshSubagentTask(partID string, now int64) {
-	part := t.partsByID[partID]
-	tracks := t.subagentsByPart[partID]
+func (t *TurnTranslator) refreshSubagentMeta(tr *agySubagentTrack) {
+	part := t.partsByID[tr.partID]
 	if part == nil || part.State == nil {
 		return
 	}
-	reported := 0
-	lastActivity := t.lastActivityMs
-	items := make([]map[string]interface{}, 0, len(tracks))
-	for _, tr := range tracks {
-		status := "running"
-		if tr.reported {
-			status = "reported"
-			reported++
-		}
-		if tr.lastActivityMs > lastActivity {
-			lastActivity = tr.lastActivityMs
-		}
-		items = append(items, map[string]interface{}{
-			"role":           tr.role,
-			"type":           tr.typeName,
-			"conversationID": tr.conversationID,
-			"status":         status,
-			"steps":          tr.steps,
-			"currentTool":    tr.currentTool,
-			"lastActivityAt": tr.lastActivityMs,
-		})
-	}
-	part.State.Metadata = map[string]interface{}{
+	meta := map[string]interface{}{
 		"runner":         string(RuntimeAntigravity),
-		"subagents":      items,
-		"reported":       reported,
-		"total":          len(tracks),
-		"lastActivityAt": lastActivity,
+		"lastActivityAt": max(tr.lastActivityMs, t.lastActivityMs),
 	}
-	if part.State.Status == "error" {
-		return
+	if id := t.childSessionID(tr.partID); id != "" {
+		meta["sessionId"] = id
 	}
-	if len(tracks) > 0 && reported == len(tracks) {
-		part.State.Status = "completed"
-		part.State.Output = fmt.Sprintf("%d/%d subagents reported", reported, len(tracks))
-		part.State.Time = &PartTime{Start: part.State.Time.Start, End: now}
-	}
+	part.State.Metadata = meta
 }
 
 func (t *TurnTranslator) firstUnreportedSubagent() *agySubagentTrack {
-	for _, partID := range t.partOrder {
-		for _, tr := range t.subagentsByPart[partID] {
-			if !tr.reported {
-				return tr
-			}
+	for _, partID := range t.subagentOrder {
+		if tr := t.subagentByPart[partID]; !tr.reported {
+			return tr
 		}
 	}
 	return nil
@@ -278,92 +256,85 @@ func (t *TurnTranslator) hasWaitingSubagents() bool {
 }
 
 // noteSubagentStep covers subagent steps leaking onto stdout under their own
-// conversation ID: they advance the parent's task part instead of becoming parts.
+// conversation ID: they count as subagent activity instead of becoming parts.
 func (t *TurnTranslator) noteSubagentStep(su *agyStepUpdate, now int64) []SSEEvent {
 	tr := t.subagentByConv[su.ConversationID]
-	if tr == nil {
+	if tr == nil || tr.reported {
 		return nil
-	}
-	if su.StepIndex+1 > tr.steps {
-		tr.steps = su.StepIndex + 1
-	}
-	if name := firstNonEmptyStr(su.ToolName); name != "" {
-		tr.currentTool = name
 	}
 	tr.lastActivityMs = now
-	part := t.partsByID[tr.partID]
-	if part == nil {
-		return nil
-	}
-	t.refreshSubagentTask(tr.partID, now)
-	return []SSEEvent{partUpdated(*part)}
+	t.refreshSubagentMeta(tr)
+	return []SSEEvent{partUpdated(*t.partsByID[tr.partID])}
 }
 
-// PollSubagentActivity reads what running subagents appended to their brain
-// transcripts since the last poll. It only stats files while subagents are
-// outstanding, and emits a part update only when something changed.
+// PollSubagentActivity mirrors what running subagents appended to their brain
+// transcripts into their child sessions. It only touches files while
+// subagents are outstanding and emits nothing when they did not move.
 func (t *TurnTranslator) PollSubagentActivity() []SSEEvent {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.turnFinished || !t.hasWaitingSubagents() {
+	if t.turnFinished {
 		return nil
 	}
-	now := time.Now().UnixMilli()
-	changed := map[string]bool{}
-	for _, partID := range t.partOrder {
-		for _, tr := range t.subagentsByPart[partID] {
-			if tr.reported {
-				continue
-			}
-			if tr.logPath == "" {
-				tr.logPath = resolveAgySubagentLog("", tr.conversationID)
-			}
-			if tr.logPath != "" && advanceAgySubagentLog(tr) {
-				changed[partID] = true
-			}
-		}
-	}
 	var evts []SSEEvent
-	for _, partID := range t.partOrder {
-		if changed[partID] {
-			t.refreshSubagentTask(partID, now)
+	for _, partID := range t.subagentOrder {
+		tr := t.subagentByPart[partID]
+		if tr.reported {
+			continue
+		}
+		if childEvts := t.pollAgySubagent(tr); len(childEvts) > 0 {
+			t.refreshSubagentMeta(tr)
+			evts = append(evts, childEvts...)
 			evts = append(evts, partUpdated(*t.partsByID[partID]))
 		}
 	}
 	return evts
 }
 
-func subagentRoles(tracks []*agySubagentTrack) string {
-	roles := make([]string, 0, len(tracks))
-	for _, tr := range tracks {
-		roles = append(roles, firstNonEmptyStr(tr.role, tr.typeName, "subagent"))
+func (t *TurnTranslator) pollAgySubagent(tr *agySubagentTrack) []SSEEvent {
+	if tr.logPath == "" {
+		tr.logPath = resolveAgySubagentLog("", tr.conversationID)
 	}
-	return strings.Join(roles, ", ")
+	if tr.logPath == "" {
+		return nil
+	}
+	rows, modMs, ok := advanceAgySubagentLog(tr)
+	if !ok {
+		return nil
+	}
+	tr.lastActivityMs = max(tr.lastActivityMs, modMs)
+	c := t.children[tr.partID]
+	if c == nil {
+		return nil
+	}
+	var evts []SSEEvent
+	for _, row := range rows {
+		evts = append(evts, agyRowToChildEvents(c, row, modMs)...)
+	}
+	return evts
 }
 
-func subagentTaskInput(tracks []*agySubagentTrack) map[string]interface{} {
-	list := make([]map[string]interface{}, 0, len(tracks))
-	for _, tr := range tracks {
-		item := map[string]interface{}{"role": tr.role, "type": tr.typeName, "prompt": tr.prompt}
-		if tr.model != "" {
-			item["model"] = tr.model
+// agyRowToChildEvents maps one subagent transcript row onto child parts:
+// planner responses carry thinking, text and tool calls; GENERIC rows are
+// the results of those calls, in order.
+func agyRowToChildEvents(c *childSink, row agyTranscriptRow, fallbackMs int64) []SSEEvent {
+	at := fallbackMs
+	if ts, err := time.Parse(time.RFC3339, row.CreatedAt); err == nil {
+		at = ts.UnixMilli()
+	}
+	var evts []SSEEvent
+	switch row.Type {
+	case "PLANNER_RESPONSE":
+		evts = append(evts, c.upsertText("reasoning", fmt.Sprintf("reason_%d", row.StepIndex), row.Thinking, at, at)...)
+		evts = append(evts, c.upsertText("text", fmt.Sprintf("text_%d", row.StepIndex), row.Content, at, at)...)
+		for j, call := range row.ToolCalls {
+			suffix := fmt.Sprintf("tool_%d_%d", row.StepIndex, j)
+			evts = append(evts, c.startTool(suffix, "", call.Name, decodeAgyToolArgs(call.Args), at)...)
 		}
-		list = append(list, item)
+	case "GENERIC":
+		evts = append(evts, c.finishTool("", stripAgyResultHeader(row.Content), false, at)...)
 	}
-	return map[string]interface{}{
-		"description":   subagentRoles(tracks),
-		"subagent_type": firstNonEmptyStr(firstTrackType(tracks), "general"),
-		"subagents":     list,
-	}
-}
-
-func firstTrackType(tracks []*agySubagentTrack) string {
-	for _, tr := range tracks {
-		if tr.typeName != "" {
-			return tr.typeName
-		}
-	}
-	return ""
+	return evts
 }
 
 // parseAgySystemMessage extracts sender and body from a transcript row such as
@@ -375,9 +346,9 @@ func parseAgySystemMessage(raw string) (sender, body string) {
 	}
 	text = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(text), "</SYSTEM_MESSAGE>"))
 	header := text
-	if nl := strings.Index(header, "content="); nl >= 0 {
-		header = header[:nl]
-		body = strings.TrimSpace(text[nl+len("content="):])
+	if i := strings.Index(header, "content="); i >= 0 {
+		header = header[:i]
+		body = strings.TrimSpace(text[i+len("content="):])
 	} else {
 		body = text
 	}

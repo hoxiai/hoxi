@@ -22,11 +22,39 @@ const agySubagentLogChunk = 1 << 20
 type agyTranscriptRow struct {
 	StepIndex int    `json:"step_index"`
 	Type      string `json:"type"`
+	CreatedAt string `json:"created_at"`
 	Thinking  string `json:"thinking"`
 	Content   string `json:"content"`
 	ToolCalls []struct {
-		Name string `json:"name"`
+		Name string                 `json:"name"`
+		Args map[string]interface{} `json:"args"`
 	} `json:"tool_calls"`
+}
+
+// decodeAgyToolArgs unwraps transcript tool arguments, which agy stores as
+// JSON-encoded strings (`"CommandLine": "\"ls -la\""`).
+func decodeAgyToolArgs(args map[string]interface{}) map[string]interface{} {
+	out := make(map[string]interface{}, len(args))
+	for k, v := range args {
+		if s, ok := v.(string); ok {
+			var decoded interface{}
+			if json.Unmarshal([]byte(s), &decoded) == nil {
+				v = decoded
+			}
+		}
+		out[k] = v
+	}
+	return out
+}
+
+// stripAgyResultHeader drops the "Created At/Completed At" preamble of tool results.
+func stripAgyResultHeader(content string) string {
+	lines := strings.Split(content, "\n")
+	i := 0
+	for i < len(lines) && (strings.HasPrefix(lines[i], "Created At:") || strings.HasPrefix(lines[i], "Completed At:")) {
+		i++
+	}
+	return strings.TrimSpace(strings.Join(lines[i:], "\n"))
 }
 
 func agyBrainRoots() []string {
@@ -119,51 +147,43 @@ func resolveAgySubagentLog(logURI, conversationID string) string {
 	return ""
 }
 
-// advanceAgySubagentLog consumes rows appended since the last call and
-// reports whether the subagent made progress.
-func advanceAgySubagentLog(tr *agySubagentTrack) bool {
+// advanceAgySubagentLog returns the complete rows appended since the last
+// call and the file's modification time; ok is false when nothing moved.
+func advanceAgySubagentLog(tr *agySubagentTrack) (rows []agyTranscriptRow, modMs int64, ok bool) {
 	st, err := os.Stat(tr.logPath)
 	if err != nil {
-		return false
+		return nil, 0, false
 	}
 	if st.Size() < tr.readOffset {
-		tr.readOffset, tr.steps = 0, 0
+		tr.readOffset = 0
 	}
 	if st.Size() == tr.readOffset {
-		return false
+		return nil, 0, false
 	}
 	f, err := os.Open(tr.logPath)
 	if err != nil {
-		return false
+		return nil, 0, false
 	}
 	defer f.Close()
 	buf := make([]byte, min(st.Size()-tr.readOffset, agySubagentLogChunk))
 	n, err := f.ReadAt(buf, tr.readOffset)
 	if err != nil && err != io.EOF {
-		return false
+		return nil, 0, false
 	}
 	buf = buf[:n]
 	end := bytes.LastIndexByte(buf, '\n')
 	if end < 0 {
-		if len(buf) < agySubagentLogChunk {
-			return false // the current row is still being written
+		if len(buf) == agySubagentLogChunk {
+			tr.readOffset += int64(len(buf)) // a single oversized row; skip it
 		}
-		tr.readOffset += int64(len(buf)) // a single oversized row; skip it
-		return false
+		return nil, 0, false // otherwise the current row is still being written
 	}
 	for _, line := range bytes.Split(buf[:end], []byte{'\n'}) {
 		var row agyTranscriptRow
-		if json.Unmarshal(bytes.TrimSpace(line), &row) != nil {
-			continue
-		}
-		if row.StepIndex+1 > tr.steps {
-			tr.steps = row.StepIndex + 1
-		}
-		if len(row.ToolCalls) > 0 {
-			tr.currentTool = row.ToolCalls[len(row.ToolCalls)-1].Name
+		if json.Unmarshal(bytes.TrimSpace(line), &row) == nil {
+			rows = append(rows, row)
 		}
 	}
 	tr.readOffset += int64(end + 1)
-	tr.lastActivityMs = st.ModTime().UnixMilli()
-	return true
+	return rows, st.ModTime().UnixMilli(), true
 }

@@ -3,6 +3,7 @@ package runner
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,7 +19,8 @@ const (
 	agyDocsConv    = "b71b0905-4721-4402-8fd2-726deb547e14"
 	agyBugRole     = "Code Bug Reviewer"
 	agyDocsRole    = "Documentation Reviewer"
-	agyTaskPartID  = "prt_msg_turn_tool_2"
+	agyBugTaskID   = "prt_msg_turn_tool_2_0"
+	agyDocsTaskID  = "prt_msg_turn_tool_2_1"
 	agyRecordedRun = "testdata/agy_subagents.ndjson"
 )
 
@@ -55,11 +57,21 @@ func fixtureTranscriptLookup(t *testing.T) func(string, int) string {
 	}
 }
 
-func newAgyTestTranslator(lookup func(string, int) string) *TurnTranslator {
+// childRecorder stands in for the host's child session factory.
+type childRecorder struct{ specs []ChildSessionSpec }
+
+func (r *childRecorder) create(spec ChildSessionSpec) (SessionInfo, bool) {
+	r.specs = append(r.specs, spec)
+	return SessionInfo{ID: fmt.Sprintf("ses_agy_child_%d", len(r.specs)), ParentID: "ses_agy", Title: spec.Title}, true
+}
+
+func newAgyTestTranslator(lookup func(string, int) string) (*TurnTranslator, *childRecorder) {
 	tr := NewTurnTranslator("ses_agy", string(RuntimeAntigravity), "msg_turn", "msg_user", "antigravity", "gemini-3.8-flash-low", "build", "")
 	tr.lookupThink = nil
 	tr.lookupStep = lookup
-	return tr
+	rec := &childRecorder{}
+	tr.createChild = rec.create
+	return tr, rec
 }
 
 func stepOf(line string) (int, string, string) {
@@ -71,82 +83,102 @@ func stepOf(line string) (int, string, string) {
 	return env.StepUpdate.StepIndex, env.StepUpdate.State, env.StepUpdate.StepType
 }
 
-func subagentMeta(t *testing.T, part *MessagePart) (reported, total int) {
-	t.Helper()
-	if part == nil || part.State == nil || part.State.Metadata == nil {
-		t.Fatalf("task part has no subagent metadata: %+v", part)
+func eventsFor(evts []SSEEvent, sessionID string) []SSEEvent {
+	var out []SSEEvent
+	for _, e := range evts {
+		if eventSessionID(e) == sessionID {
+			out = append(out, e)
+		}
 	}
-	return part.State.Metadata["reported"].(int), part.State.Metadata["total"].(int)
+	return out
 }
 
-func TestAgyRecordedSubagentTurnStaysRunningUntilReportsArrive(t *testing.T) {
-	tr := newAgyTestTranslator(fixtureTranscriptLookup(t))
+func hasStatus(evts []SSEEvent, sessionID, status string) bool {
+	for _, e := range evts {
+		if st, ok := e.Properties["status"].(SessionStatus); ok && e.Type == "session.status" && eventSessionID(e) == sessionID && st.Type == status {
+			return true
+		}
+	}
+	return false
+}
+
+func TestAgyRecordedSubagentsBecomeChildSessionsWithReports(t *testing.T) {
+	tr, children := newAgyTestTranslator(fixtureTranscriptLookup(t))
+	var all []SSEEvent
 	for _, line := range readFixtureLines(t, agyRecordedRun) {
-		tr.FeedLine(line)
+		evts := tr.FeedLine(line)
+		all = append(all, evts...)
 		step, state, kind := stepOf(line)
-		task := tr.partsByID[agyTaskPartID]
+		bug, docs := tr.partsByID[agyBugTaskID], tr.partsByID[agyDocsTaskID]
 		switch {
+		case step == 2 && state == "ACTIVE":
+			if bug == nil || docs == nil || bug.Tool != "task" || bug.State.Status != "pending" {
+				t.Fatalf("each dispatched subagent needs its own pending task part, got %+v %+v", bug, docs)
+			}
+			if bug.State.Title != agyBugRole || !strings.Contains(bug.State.Input["prompt"].(string), "calc.py") {
+				t.Fatalf("task part must show role and prompt: %+v", bug.State)
+			}
 		case step == 2 && state == "DONE":
-			if task == nil || task.Tool != "task" {
-				t.Fatalf("subagent dispatch must become a task part, got %+v", task)
-			}
 			// Dispatch is async: DONE arrives in ~40ms while the subagents keep working.
-			if task.State.Status != "running" {
-				t.Fatalf("task must stay running after async dispatch, got %q", task.State.Status)
+			if bug.State.Status != "running" || docs.State.Status != "running" {
+				t.Fatalf("tasks must run after async dispatch, got %q %q", bug.State.Status, docs.State.Status)
 			}
-			if task.State.Title != agyBugRole+", "+agyDocsRole {
-				t.Fatalf("unexpected task title %q", task.State.Title)
+			if len(children.specs) != 2 || children.specs[0].ExternalID != agyBugConv || children.specs[1].Title != agyDocsRole {
+				t.Fatalf("one child session per subagent expected, got %+v", children.specs)
 			}
-			if r, n := subagentMeta(t, task); r != 0 || n != 2 {
-				t.Fatalf("want 0/2 reported, got %d/%d", r, n)
+			if bug.State.Metadata["sessionId"] != "ses_agy_child_1" {
+				t.Fatalf("task must link its child session: %+v", bug.State.Metadata)
 			}
-			if tr.subagentByConv[agyBugConv] == nil || tr.subagentByConv[agyDocsConv] == nil {
-				t.Fatal("subagent conversation IDs from the DONE dispatch must be tracked")
+			if !hasStatus(evts, "ses_agy_child_1", "busy") || len(eventsFor(evts, "ses_agy_child_2")) < 5 {
+				t.Fatal("child sessions must be announced busy with their prompt message")
 			}
 		case step == 4 && kind == "system_message":
-			report := tr.partsByID["prt_msg_turn_report_4"]
-			if report == nil || report.Tool != "agent_report" || report.State.Title != agyDocsRole {
-				t.Fatalf("docs report must render as a collapsed report part, got %+v", report)
+			if docs.State.Status != "completed" || !strings.Contains(docs.State.Output, "README.md") || strings.Contains(docs.State.Output, "SYSTEM_MESSAGE") {
+				t.Fatalf("docs report must land on the docs task, got %+v", docs.State)
 			}
-			if strings.Contains(report.State.Output, "SYSTEM_MESSAGE") || !strings.Contains(report.State.Output, "README.md") {
-				t.Fatalf("report body not extracted: %q", report.State.Output)
+			if bug.State.Status != "running" {
+				t.Fatal("bug reviewer is still working")
 			}
-			if r, _ := subagentMeta(t, task); r != 1 || task.State.Status != "running" {
-				t.Fatalf("one report in: want running 1/2, got %s %d", task.State.Status, r)
+			if !hasStatus(evts, "ses_agy_child_2", "idle") {
+				t.Fatal("a reported subagent's child session must go idle")
 			}
 		case step == 6 && state == "DONE":
 			if p := tr.partsByID["prt_msg_turn_tool_6"]; p == nil || p.Tool != "agent_status" {
 				t.Fatalf("manage_subagents must not render as another task, got %+v", p)
 			}
 		case step == 8 && kind == "system_message":
-			if task.State.Status != "completed" || task.State.Time.End == 0 {
-				t.Fatalf("task must complete once both subagents reported, got %+v", task.State)
+			if bug.State.Status != "completed" || !strings.Contains(bug.State.Output, "ZeroDivisionError") {
+				t.Fatalf("bug report must land on the bug task, got %+v", bug.State)
 			}
-			if report := tr.partsByID["prt_msg_turn_report_8"]; report == nil || report.State.Title != agyBugRole {
-				t.Fatalf("bug report must be attributed by sender, got %+v", report)
-			}
+		}
+	}
+	for _, id := range []string{"prt_msg_turn_report_4", "prt_msg_turn_report_8"} {
+		if tr.partsByID[id] != nil {
+			t.Fatal("attributed reports belong on their task part, not in a separate card")
 		}
 	}
 	if !tr.IsTurnFinished() || tr.ExternalID() != agyParentConv {
 		t.Fatalf("finished=%v externalID=%q", tr.IsTurnFinished(), tr.ExternalID())
 	}
-	if !strings.HasPrefix(tr.partsByID["prt_msg_turn_text_9"].Text, "Both subagent reports have been received") {
-		t.Fatal("final summary text missing")
+	for _, e := range all {
+		if p, ok := e.Properties["part"].(MessagePart); ok && p.SessionID == "ses_agy" && p.MessageID != "msg_turn" {
+			t.Fatalf("parent part with foreign message id: %+v", p)
+		}
 	}
 }
 
-func TestAgySubagentReportsWithoutTranscriptStillSettleTask(t *testing.T) {
-	tr := newAgyTestTranslator(func(string, int) string { return "" })
+func TestAgySubagentReportsWithoutTranscriptFallBackToDispatchOrder(t *testing.T) {
+	tr, _ := newAgyTestTranslator(func(string, int) string { return "" })
 	for _, line := range readFixtureLines(t, agyRecordedRun) {
 		tr.FeedLine(line)
 		if step, _, kind := stepOf(line); step == 4 && kind == "system_message" {
-			if r, _ := subagentMeta(t, tr.partsByID[agyTaskPartID]); r != 1 {
-				t.Fatalf("system message must count as a report, got %d", r)
+			if tr.partsByID[agyBugTaskID].State.Status != "completed" || tr.partsByID[agyDocsTaskID].State.Status != "running" {
+				t.Fatal("an unattributed report settles the first outstanding subagent")
 			}
 		}
 	}
-	if task := tr.partsByID[agyTaskPartID]; task.State.Status != "completed" {
-		t.Fatalf("task must complete, got %q", task.State.Status)
+	if tr.partsByID[agyDocsTaskID].State.Status != "completed" {
+		t.Fatal("both subagents must settle")
 	}
 }
 
@@ -160,63 +192,66 @@ func agyDispatchLines() []string {
 }
 
 func TestAgyToolShapedDispatchAndScheduleWait(t *testing.T) {
-	tr := newAgyTestTranslator(func(string, int) string { return "" })
+	tr, children := newAgyTestTranslator(func(string, int) string { return "" })
 	for _, line := range agyDispatchLines() {
 		tr.FeedLine(line)
 	}
-	task := tr.partsByID[agyTaskPartID]
-	if task == nil || task.Tool != "task" || task.State.Status != "running" || task.State.Title != "Deep Audit A, Deep Audit B" {
-		t.Fatalf("tool-shaped invoke_subagent must become a running task, got %+v", task)
+	task := tr.partsByID[agyBugTaskID]
+	if task == nil || task.State.Status != "running" || task.State.Title != "Deep Audit A" || task.State.Input["model"] != "gemini-4-argon-high" {
+		t.Fatalf("tool-shaped invoke_subagent must become running tasks, got %+v", task)
 	}
-	subs := task.State.Input["subagents"].([]map[string]interface{})
-	if subs[0]["prompt"] != "Audit backend" || subs[0]["model"] != "gemini-4-argon-high" {
-		t.Fatalf("subagent prompt/model missing from input: %+v", subs)
+	if len(children.specs) != 2 || children.specs[0].Prompt != "Audit backend" {
+		t.Fatalf("child sessions must carry the prompts, got %+v", children.specs)
 	}
 
-	tr.FeedLine(`{"event":"step_update","step_update":{"conversation_id":"` + agyParentConv + `","step_index":3,"state":"DONE","step_type":"tool","tool_name":"schedule","tool_info":{"name":"schedule","parameters":{"DurationSeconds":30,"Prompt":"Check if subagent has responded"}}}}`)
+	tr.FeedLine(`{"event":"step_update","step_update":{"conversation_id":"` + agyParentConv + `","step_index":3,"state":"ACTIVE","step_type":"tool","tool_name":"schedule","tool_info":{"name":"schedule","parameters":{"DurationSeconds":30,"Prompt":"Check if subagent has responded"}}}}`)
 	wait := tr.partsByID["prt_msg_turn_tool_3"]
-	if wait == nil || wait.Tool != "agent_wait" || wait.State.Metadata["waitingFor"] != "subagents" {
+	if wait == nil || wait.Tool != "agent_wait" || wait.State.Metadata["waitingFor"] != "subagents" || wait.State.Title != "Check if subagent has responded" {
 		t.Fatalf("schedule must render as waiting for subagents, got %+v", wait)
-	}
-	if wait.State.Title != "Check if subagent has responded" {
-		t.Fatalf("unexpected schedule title %q", wait.State.Title)
 	}
 
 	evts := tr.FeedLine(`{"event":"result","result":{"conversation_id":"` + agyParentConv + `","status":"SUCCESS","response":"done"}}`)
-	if task.State.Status != "completed" {
-		t.Fatalf("turn end must settle the task, got %q", task.State.Status)
-	}
-	found := false
-	for _, e := range evts {
-		if p, ok := e.Properties["part"].(MessagePart); ok && p.ID == agyTaskPartID {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatal("result must broadcast the settled task part")
+	if task.State.Status != "completed" || !hasStatus(evts, "ses_agy_child_1", "idle") || !hasStatus(evts, "ses_agy_child_2", "idle") {
+		t.Fatal("turn end must settle tasks and idle their child sessions")
 	}
 }
 
 func TestAgyInterruptedTurnFailsOutstandingSubagents(t *testing.T) {
-	tr := newAgyTestTranslator(func(string, int) string { return "" })
+	tr, _ := newAgyTestTranslator(func(string, int) string { return "" })
 	for _, line := range agyDispatchLines() {
 		tr.FeedLine(line)
 	}
 	tr.FeedLine(`{"event":"result","result":{"conversation_id":"` + agyParentConv + `","status":"ERROR","error":"interrupted"}}`)
-	if st := tr.partsByID[agyTaskPartID].State.Status; st != "error" {
+	if st := tr.partsByID[agyBugTaskID].State.Status; st != "error" {
 		t.Fatalf("interrupted turn must not leave the task running, got %q", st)
+	}
+	if c := tr.children[agyBugTaskID]; !c.closed || c.asst.Finish != "aborted" {
+		t.Fatalf("child session must end aborted, got %+v", c.asst)
+	}
+}
+
+func TestAgyAbandonedTurnClosesChildren(t *testing.T) {
+	tr, _ := newAgyTestTranslator(func(string, int) string { return "" })
+	for _, line := range agyDispatchLines() {
+		tr.FeedLine(line)
+	}
+	evts := tr.AbandonTurn(1)
+	if tr.partsByID[agyDocsTaskID].State.Status != "error" || !hasStatus(evts, "ses_agy_child_2", "idle") {
+		t.Fatal("a CLI crash must fail outstanding subagents and idle their sessions")
+	}
+	if len(tr.ChildSessionIDs()) != 2 {
+		t.Fatal("child IDs must be reported for busy cleanup")
 	}
 }
 
 func TestAgyForeignConversationStepsNeverClobberParent(t *testing.T) {
-	tr := newAgyTestTranslator(func(string, int) string { return "" })
+	tr, _ := newAgyTestTranslator(func(string, int) string { return "" })
 	for _, line := range agyDispatchLines() {
 		tr.FeedLine(line)
 	}
 	partCount := len(tr.partOrder)
 	// Same step_index as the parent's text part, but from a subagent conversation.
 	tr.FeedLine(`{"event":"step_update","step_update":{"conversation_id":"` + agyBugConv + `","step_index":1,"state":"DONE","step_type":"agent_response","text_delta":"subagent text"}}`)
-	tr.FeedLine(`{"event":"step_update","step_update":{"conversation_id":"` + agyBugConv + `","step_index":4,"state":"ACTIVE","step_type":"tool","tool_name":"run_command"}}`)
 	tr.FeedLine(`{"event":"step_update","step_update":{"conversation_id":"unrelated-conv","step_index":1,"state":"DONE","step_type":"agent_response","text_delta":"stray"}}`)
 
 	if len(tr.partOrder) != partCount {
@@ -228,13 +263,9 @@ func TestAgyForeignConversationStepsNeverClobberParent(t *testing.T) {
 	if tr.ExternalID() != agyParentConv {
 		t.Fatalf("externalID must stay pinned to the parent, got %q", tr.ExternalID())
 	}
-	sub := tr.subagentByConv[agyBugConv]
-	if sub.steps != 5 || sub.currentTool != "run_command" {
-		t.Fatalf("foreign steps must advance subagent progress, got steps=%d tool=%q", sub.steps, sub.currentTool)
-	}
 }
 
-func TestPollSubagentActivityTailsTranscriptIncrementally(t *testing.T) {
+func TestPollSubagentActivityMirrorsTranscriptIntoChildSession(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("GEMINI_HOME", home)
 	logDir := agyTranscriptLogDir(filepath.Join(home, "antigravity-cli", "brain"), agyBugConv)
@@ -251,34 +282,47 @@ func TestPollSubagentActivityTailsTranscriptIncrementally(t *testing.T) {
 		_, _ = f.WriteString(strings.Join(rs, "\n") + "\n")
 		_ = f.Close()
 	}
+	// Rows 0-3: instructions, run_command, its result, a view_file still running.
 	writeRows(rows[:4], os.O_CREATE|os.O_TRUNC)
 
-	tr := newAgyTestTranslator(func(string, int) string { return "" })
+	tr, _ := newAgyTestTranslator(func(string, int) string { return "" })
 	for _, line := range agyDispatchLines() {
 		tr.FeedLine(line)
 	}
 	evts := tr.PollSubagentActivity()
-	if len(evts) != 1 {
-		t.Fatalf("first poll must report progress, got %d events", len(evts))
+	child := tr.children[agyBugTaskID]
+	var tools []*MessagePart
+	collect := func() {
+		tools = tools[:0]
+		for _, p := range child.parts {
+			if p.Type == "tool" {
+				tools = append(tools, p)
+			}
+		}
 	}
-	sub := tr.subagentByConv[agyBugConv]
-	if sub.steps != 4 || sub.currentTool != "view_file" || sub.lastActivityMs == 0 {
-		t.Fatalf("unexpected progress steps=%d tool=%q", sub.steps, sub.currentTool)
+	collect()
+	if len(eventsFor(evts, "ses_agy_child_1")) == 0 || len(tools) != 2 {
+		t.Fatalf("first poll must mirror the subagent's tool calls, got %d tools", len(tools))
+	}
+	shell := child.parts[child.partID("tool_1_0")]
+	if shell.Tool != "bash" || shell.State.Status != "completed" || shell.State.Input["command"] != "ls -la" || strings.HasPrefix(shell.State.Output, "Created At") {
+		t.Fatalf("run_command must be a completed bash step with decoded args: %+v", shell.State)
+	}
+	if read := child.parts[child.partID("tool_3_0")]; read.Tool != "read" || read.State.Status != "running" {
+		t.Fatalf("view_file without a result yet must still run: %+v", read.State)
 	}
 	if evts := tr.PollSubagentActivity(); len(evts) != 0 {
 		t.Fatal("an unchanged transcript must not emit updates")
 	}
 
 	writeRows(rows[4:], os.O_APPEND)
-	if evts := tr.PollSubagentActivity(); len(evts) != 1 {
-		t.Fatal("appended rows must emit one update")
+	tr.PollSubagentActivity()
+	collect()
+	if len(tools) != 5 || child.parts[child.partID("tool_9_0")].Tool != "send_message" {
+		t.Fatalf("appended rows must add the remaining steps, got %d tools", len(tools))
 	}
-	if sub.steps != len(rows) || sub.currentTool != "send_message" {
-		t.Fatalf("want %d steps ending in send_message, got %d %q", len(rows), sub.steps, sub.currentTool)
-	}
-	meta := tr.partsByID[agyTaskPartID].State.Metadata["subagents"].([]map[string]interface{})
-	if meta[0]["steps"] != len(rows) {
-		t.Fatalf("task metadata not refreshed: %+v", meta[0])
+	if txt := child.parts[child.partID("text_11")]; txt == nil || !strings.Contains(txt.Text, "calc.py") {
+		t.Fatal("the subagent's final reply must appear as text")
 	}
 
 	tr.FeedLine(`{"event":"result","result":{"conversation_id":"` + agyParentConv + `","status":"SUCCESS"}}`)

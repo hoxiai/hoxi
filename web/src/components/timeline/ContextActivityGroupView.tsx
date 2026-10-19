@@ -35,7 +35,6 @@ import {
   isTaskTool,
 } from "./tool-card-helpers";
 import {
-  resolveRunnerSubagentStepLabel,
   resolveToolFileDiagnostics,
   resolveToolFileDiffs,
 } from "./tool-card-state";
@@ -283,9 +282,9 @@ export function hasLiveTailWorkGroup(
 function summarizeStepTarget(part: ToolPart): string {
   if (isTaskTool(part.tool)) {
     const desc = extractDescription(part);
-    const childStep =
-      resolveSubagentCurrentStepLabel(extractChildSubagentSessionId(part)) ||
-      resolveRunnerSubagentStepLabel(part);
+    const childStep = resolveSubagentCurrentStepLabel(
+      extractChildSubagentSessionId(part)
+    );
     if (desc && childStep) return `${desc} · ${childStep}`;
     return desc || childStep || "";
   }

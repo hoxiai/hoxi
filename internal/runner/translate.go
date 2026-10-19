@@ -30,11 +30,18 @@ type TurnTranslator struct {
 	lookupStep   func(externalID string, stepIndex int) string
 
 	// mu serialises stdout feeding against the subagent activity poller.
-	mu              sync.Mutex
-	convPinned      bool
-	lastActivityMs  int64
-	subagentsByPart map[string][]*agySubagentTrack
-	subagentByConv  map[string]*agySubagentTrack
+	mu             sync.Mutex
+	convPinned     bool
+	lastActivityMs int64
+	subagentOrder  []string
+	subagentByPart map[string]*agySubagentTrack
+	subagentByConv map[string]*agySubagentTrack
+	claudeTasks    map[string]*claudeSubagentTask
+
+	// createChild registers a subagent's child session with the host.
+	createChild func(ChildSessionSpec) (SessionInfo, bool)
+	children    map[string]*childSink
+	childOrder  []string
 }
 
 func NewTurnTranslator(sessionID, runtime, messageID, parentUserMsgID, providerID, modelID, mode, externalID string) *TurnTranslator {
@@ -68,8 +75,10 @@ func NewTurnTranslator(sessionID, runtime, messageID, parentUserMsgID, providerI
 		stepStartMs:     make(map[int]int64),
 		lookupThink:     lookupAgyTranscriptThinking,
 		lookupStep:      lookupAgyTranscriptContent,
-		subagentsByPart: make(map[string][]*agySubagentTrack),
+		subagentByPart:  make(map[string]*agySubagentTrack),
 		subagentByConv:  make(map[string]*agySubagentTrack),
+		claudeTasks:     make(map[string]*claudeSubagentTask),
+		children:        make(map[string]*childSink),
 	}
 }
 
@@ -436,6 +445,7 @@ func (t *TurnTranslator) handleAgyResult(res *agyResult) []SSEEvent {
 	}
 	t.msgInfo.Time.Completed = now
 	evts = append(evts, t.finishAgySubagents(res.Status == "ERROR", now)...)
+	evts = append(evts, t.closeAllChildren(res.Status == "ERROR", now)...)
 
 	if !t.hasTextPart && strings.TrimSpace(res.Response) != "" {
 		txtID := fmt.Sprintf("prt_%s_text_final", t.messageID)

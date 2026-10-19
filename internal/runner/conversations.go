@@ -132,11 +132,9 @@ func (s *Service) conversationStatuses(ctx context.Context, directory string) ma
 			}
 		}
 	}
-	s.mu.Lock()
-	for id := range s.procs {
+	for _, id := range s.busySessionIDs() {
 		out[id] = json.RawMessage(`{"type":"busy"}`)
 	}
-	s.mu.Unlock()
 	return out
 }
 

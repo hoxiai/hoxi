@@ -135,9 +135,7 @@ export function kiloToolIconName(tool: string): IconName {
 export function formatToolDisplayName(tool: string, part?: ToolPart): string {
   if (!tool) return "";
   const lower = tool.toLowerCase();
-  if (lower === "agent_report") {
-    return part?.state.title ? t("toolCard.actionSubagentReport") : t("toolCard.actionSystemMessage");
-  }
+  if (lower === "agent_report") return t("toolCard.actionSystemMessage");
   if (lower === "agent_wait") {
     return part?.state.metadata?.waitingFor === "subagents"
       ? t("toolCard.actionWaitSubagents")

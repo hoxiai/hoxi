@@ -78,6 +78,7 @@ func (s *Service) startTurnProcess(
 	}
 
 	tr := NewTurnTranslator(rec.ID, rec.Runtime, asstMsgID, userInfo.ID, rec.ProviderID, modelID, mode, rec.ExternalID)
+	tr.createChild = s.childSessionFactory(rec, modelID, mode)
 	s.broadcast(rec.ID, tr.InitialEvents(userInfo, userParts)...)
 
 	inputBytes, _ := EncodeStreamInputTurn(rec.Runtime, promptText)
@@ -115,9 +116,7 @@ func (s *Service) startTurnProcess(
 					return
 				case <-ticker.C:
 					emitMu.Lock()
-					if evts := tr.PollSubagentActivity(); len(evts) > 0 {
-						s.broadcast(rec.ID, evts...)
-					}
+					s.broadcastRouted(rec.ID, tr.PollSubagentActivity())
 					emitMu.Unlock()
 				}
 			}
@@ -133,16 +132,20 @@ func (s *Service) startTurnProcess(
 					r.ExternalID = extID
 				})
 			}
-			if len(evts) > 0 {
-				s.broadcast(rec.ID, evts...)
-			}
+			s.broadcastRouted(rec.ID, evts)
 		})
 
 		close(stopPoll)
 		<-pollDone
 
 		waitErr := cmd.Wait()
+		defer func() {
+			for _, id := range tr.ChildSessionIDs() {
+				s.setChildBusy(id, false)
+			}
+		}()
 		if !tr.IsTurnFinished() {
+			s.broadcastRouted(rec.ID, tr.AbandonTurn(time.Now().UnixMilli()))
 			if ap.wasAborted() {
 				tr.msgInfo.Time.Completed = time.Now().UnixMilli()
 				tr.msgInfo.Finish = "aborted"
