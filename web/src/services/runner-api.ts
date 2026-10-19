@@ -5,7 +5,11 @@ const knownRunnerSessionIDs = new Set<string>();
 
 export function isRunnerSessionID(sessionID?: string | null): boolean {
   if (!sessionID) return false;
-  if (sessionID.startsWith("ses_agy_") || sessionID.startsWith("ses_cld_")) {
+  if (
+    sessionID.startsWith("ses_agy_") ||
+    sessionID.startsWith("ses_cld_") ||
+    sessionID.startsWith("ses_hoxi_")
+  ) {
     return true;
   }
   return knownRunnerSessionIDs.has(sessionID);

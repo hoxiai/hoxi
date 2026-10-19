@@ -121,7 +121,7 @@ func (s *Service) adoptOpenCodeSession(ctx context.Context, id, directory string
 	if err = s.openCodeJSON(ctx, "GET", "/session/"+id+"/message", dir, nil, &turns); err != nil {
 		return SessionRecord{}, err
 	}
-	rec := SessionRecord{ID: id, Runtime: "opencode", ProjectDir: dir, WorktreePath: dir, SandboxMode: "local", Title: info.Title, CreatedAt: info.Time.Created, UpdatedAt: info.Time.Updated, ArchivedAt: info.Time.Archived, Turns: turns, OpenCodeIDs: []string{id}, OpenCodeDirectories: map[string]string{id: dir}}
+	rec := SessionRecord{ID: id, Runtime: "opencode", ExternalID: id, ProjectDir: dir, WorktreePath: dir, SandboxMode: "local", Title: info.Title, CreatedAt: info.Time.Created, UpdatedAt: info.Time.Updated, ArchivedAt: info.Time.Archived, Turns: turns, OpenCodeIDs: []string{id}, OpenCodeDirectories: map[string]string{id: dir}}
 	rec.ParentID = info.ParentID
 	if bound && binding.Isolated {
 		manager := s.worktrees.ForSession(id)

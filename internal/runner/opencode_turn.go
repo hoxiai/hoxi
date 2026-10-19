@@ -184,6 +184,20 @@ func (s *Service) relayOpenCodeEvent(rec SessionRecord, raw []byte) {
 	if json.Unmarshal(raw, &evt) != nil {
 		return
 	}
+	if evt.Type == "session.updated" {
+		data, _ := json.Marshal(evt.Properties["info"])
+		var info SessionInfo
+		if json.Unmarshal(data, &info) == nil && info.ID == rec.ExternalID && strings.TrimSpace(info.Title) != "" {
+			if updated, ok, err := s.store.Update(rec.ID, func(r *SessionRecord) {
+				if r.Title == "" || r.Title == "New Session" || strings.HasPrefix(r.Title, "New session - ") {
+					r.Title = strings.TrimSpace(info.Title)
+				}
+			}); err == nil && ok {
+				s.broadcast(rec.ID, SSEEvent{Type: "session.updated", Properties: map[string]interface{}{"info": updated.ToSessionInfo()}})
+			}
+		}
+		return
+	}
 	// Rewriting only sessionID leaves message/part/request IDs intact, so
 	// permissions and questions can use the daemon's existing reply endpoints.
 	var rewrite func(interface{})

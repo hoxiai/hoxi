@@ -395,3 +395,110 @@ func TestDeleteManagedConversationRemovesAllScopedEngineHandles(t *testing.T) {
 		t.Fatalf("unscoped engine cleanup: %v", deleted)
 	}
 }
+
+func TestNewAndAdoptedOpenCodeSessionsShareTurnDriver(t *testing.T) {
+	root := initTestGitRepo(t)
+	svc := NewService(root, nil, nil, filepath.Join(t.TempDir(), "sessions.json"))
+	var mu sync.Mutex
+	createdHandles := 0
+	var messagePaths []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/session":
+			mu.Lock()
+			createdHandles++
+			id := fmt.Sprintf("ses_opc_handle_%d", createdHandles)
+			mu.Unlock()
+			writeJSON(w, http.StatusOK, SessionInfo{ID: id, Directory: r.URL.Query().Get("directory"), Title: "OpenCode Backing"})
+		case r.URL.Path == "/session/ses_legacy":
+			writeJSON(w, http.StatusOK, SessionInfo{ID: "ses_legacy", Directory: root, Title: "Legacy OpenCode", Time: SessionTime{Created: 1, Updated: 2}})
+		case r.URL.Path == "/session/status":
+			writeJSON(w, http.StatusOK, map[string]SessionStatus{})
+		case r.URL.Path == "/event":
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			w.(http.Flusher).Flush()
+			<-r.Context().Done()
+		case strings.HasSuffix(r.URL.Path, "/message"):
+			if r.Method == http.MethodPost {
+				mu.Lock()
+				messagePaths = append(messagePaths, r.URL.Path)
+				mu.Unlock()
+				writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
+				return
+			}
+			writeJSON(w, http.StatusOK, []MessageTurn{
+				{
+					Info:  MessageInfo{ID: "msg_a", SessionID: "engine", Role: "assistant", Finish: "stop"},
+					Parts: []MessagePart{{ID: "prt_a", MessageID: "msg_a", SessionID: "engine", Type: "text", Text: "done"}},
+				},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	svc.ConfigureOpenCode(server.URL, "secret")
+
+	// 1. New OpenCode session gets a Hoxi ID (ses_hoxi_*) and pre-created OpenCode handle.
+	createW := httptest.NewRecorder()
+	createReq := httptest.NewRequest(http.MethodPost, "/api/hoxi/sessions", strings.NewReader(`{"runtime":"opencode","sandboxMode":"worktree","title":"Fresh Chat"}`))
+	svc.handleConversationCreate(createW, createReq)
+	if createW.Code != http.StatusOK {
+		t.Fatalf("create opencode conversation: %d %s", createW.Code, createW.Body.String())
+	}
+	var created SessionInfo
+	if err := json.Unmarshal(createW.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(created.ID, "ses_hoxi_") || !created.Managed || created.SandboxMode != "worktree" {
+		t.Fatalf("unexpected created info: %+v", created)
+	}
+	rec, ok := svc.store.Get(created.ID)
+	if !ok || rec.ExternalID != "ses_opc_handle_1" || len(rec.OpenCodeIDs) != 1 || rec.OpenCodeIDs[0] != "ses_opc_handle_1" {
+		t.Fatalf("unexpected record after create: %+v", rec)
+	}
+
+	// 2. Legacy OpenCode session adopted with runtime="opencode" keeps Hoxi ID == OpenCode ID.
+	if w := switchRuntime(t, svc, "ses_legacy", "opencode", root); w.Code != http.StatusOK {
+		t.Fatalf("adopt legacy opencode session: %d %s", w.Code, w.Body.String())
+	}
+	legacyRec, ok := svc.store.Get("ses_legacy")
+	if !ok || legacyRec.ID != "ses_legacy" || legacyRec.ExternalID != "ses_legacy" {
+		t.Fatalf("unexpected adopted record: %+v", legacyRec)
+	}
+
+	// 3. Both sessions drive turns via opencode_turn.go using their respective ExternalID.
+	for _, sid := range []string{created.ID, "ses_legacy"} {
+		ch, unsub := svc.Subscribe(sid)
+		w := httptest.NewRecorder()
+		svc.handleSessionPrompt(w, httptest.NewRequest(http.MethodPost, "/prompt", strings.NewReader(`{"text":"hello","model":{"providerID":"openai","modelID":"gpt-5"}}`)), sid)
+		if w.Code != http.StatusOK {
+			unsub()
+			t.Fatalf("prompt %s: %d %s", sid, w.Code, w.Body.String())
+		}
+		deadline := time.After(5 * time.Second)
+	waitIdle:
+		for {
+			select {
+			case evt := <-ch:
+				if evt.Type == "session.status" && evt.Properties["status"].(SessionStatus).Type == "idle" {
+					break waitIdle
+				}
+			case <-deadline:
+				unsub()
+				t.Fatalf("turn %s timed out", sid)
+			}
+		}
+		unsub()
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if createdHandles != 1 {
+		t.Fatalf("expected exactly 1 OpenCode handle created, got %d", createdHandles)
+	}
+	if len(messagePaths) != 2 || messagePaths[0] != "/session/ses_opc_handle_1/message" || messagePaths[1] != "/session/ses_legacy/message" {
+		t.Fatalf("unexpected message paths: %v", messagePaths)
+	}
+}

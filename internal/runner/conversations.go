@@ -8,8 +8,10 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 // The /api/hoxi/sessions collection: Hoxi conversations plus the OpenCode
@@ -138,8 +140,9 @@ func (s *Service) conversationStatuses(ctx context.Context, directory string) ma
 	return out
 }
 
-// handleConversationCreate keeps CLI runtimes in the runner and, until new
-// OpenCode chats get Hoxi records, creates those directly in OpenCode.
+// handleConversationCreate creates a Hoxi-owned SessionRecord for all runtimes.
+// When the runtime is OpenCode, it also creates an OpenCode session as the
+// backing execution handle and records it in OpenCodeIDs.
 func (s *Service) handleConversationCreate(w http.ResponseWriter, r *http.Request) {
 	raw, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 	if err != nil {
@@ -147,9 +150,13 @@ func (s *Service) handleConversationCreate(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	var body struct {
-		Runtime   string `json:"runtime"`
-		Title     string `json:"title"`
-		Directory string `json:"directory"`
+		Title       string `json:"title"`
+		Directory   string `json:"directory"`
+		Runtime     string `json:"runtime"`
+		ModelID     string `json:"modelID"`
+		ProviderID  string `json:"providerID"`
+		Mode        string `json:"mode"`
+		SandboxMode string `json:"sandboxMode"`
 	}
 	if len(bytes.TrimSpace(raw)) > 0 && json.Unmarshal(raw, &body) != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid session request")
@@ -164,18 +171,72 @@ func (s *Service) handleConversationCreate(w http.ResponseWriter, r *http.Reques
 		writeJSONError(w, http.StatusBadRequest, "unsupported session runtime")
 		return
 	}
-	payload := map[string]string{}
-	if title := strings.TrimSpace(body.Title); title != "" {
-		payload["title"] = title
+	projDir := firstNonEmptyStr(body.Directory, r.URL.Query().Get("directory"), s.rootDir)
+	projDir, err = filepath.Abs(projDir)
+	if err == nil {
+		projDir, err = existingDirectory(projDir)
 	}
-	encoded, _ := json.Marshal(payload)
-	directory := firstNonEmptyStr(body.Directory, r.URL.Query().Get("directory"))
-	status, out, err := s.openCodeRaw(r.Context(), http.MethodPost, "/session", directoryQuery(directory, nil), encoded)
 	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	sandboxMode, err := normalizeSandboxMode(body.SandboxMode)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	sessionID := GenerateRunnerSessionID("opencode")
+	now := time.Now().UnixMilli()
+	title := strings.TrimSpace(body.Title)
+	rec := SessionRecord{
+		ID:          sessionID,
+		Runtime:     "opencode",
+		ProjectDir:  projDir,
+		SandboxMode: sandboxMode,
+		ModelID:     strings.TrimSpace(body.ModelID),
+		ProviderID:  strings.TrimSpace(body.ProviderID),
+		Mode:        firstNonEmptyStr(body.Mode, "build"),
+		Title:       title,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+		Turns:       []MessageTurn{},
+	}
+	if err := s.provisionSessionDirectory(&rec); err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	payload := map[string]interface{}{
+		"metadata": map[string]string{"hoxiConversation": rec.ID},
+	}
+	if rec.Title != "" {
+		payload["title"] = rec.Title
+	}
+	var engineInfo SessionInfo
+	if err := s.openCodeJSON(r.Context(), http.MethodPost, "/session", rec.WorktreePath, payload, &engineInfo); err != nil || strings.TrimSpace(engineInfo.ID) == "" {
+		if rec.SandboxMode == "worktree" {
+			_ = s.worktrees.ForDirectory(rec.ProjectDir).RemoveWithOptions(rec.ID, true, false)
+		}
+		if err == nil {
+			err = fmt.Errorf("OpenCode returned an empty session ID")
+		}
 		writeJSONError(w, http.StatusBadGateway, "opencode service unavailable: "+err.Error())
 		return
 	}
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(status)
-	_, _ = w.Write(out)
+	rec.ExternalID = strings.TrimSpace(engineInfo.ID)
+	rec.OpenCodeIDs = []string{rec.ExternalID}
+	rec.OpenCodeDirectories = map[string]string{rec.ExternalID: rec.WorktreePath}
+	if rec.Title == "" {
+		rec.Title = firstNonEmptyStr(strings.TrimSpace(engineInfo.Title), "New Session")
+	}
+	if err := s.store.Put(rec); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.managedOpenCode.Store(rec.ExternalID, true)
+	info := rec.ToSessionInfo()
+	s.broadcast(sessionID, SSEEvent{
+		Type:       "session.created",
+		Properties: map[string]interface{}{"info": info},
+	})
+	writeJSON(w, http.StatusOK, info)
 }

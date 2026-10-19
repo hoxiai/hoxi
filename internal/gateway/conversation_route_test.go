@@ -41,6 +41,7 @@ func newConversationGateway(t *testing.T) (*Gateway, func() []upstreamCall) {
 	t.Cleanup(upstream.Close)
 
 	root := t.TempDir()
+	t.Setenv("HOXI_SESSION_STORE_DIR", t.TempDir())
 	gw := New(upstream.Listener.Addr().(*net.TCPAddr).Port, "pass", root, nil, nil)
 	rec := runner.SessionRecord{ID: "ses_cld_owned", Runtime: "claude-code", ProjectDir: root, WorktreePath: root,
 		SandboxMode: "local", Title: "owned", UpdatedAt: 10, OpenCodeIDs: []string{"ses_engine"}}
@@ -119,8 +120,23 @@ func TestConversationRoutesToOwningBackend(t *testing.T) {
 	res = serve(gw, http.MethodPost, "/api/hoxi/sessions", `{"title":"created"}`)
 	got = calls()
 	last := got[len(got)-1]
-	if res.Code != http.StatusOK || last.method != http.MethodPost || last.path != "/session" || last.body != `{"title":"created"}` {
+	var created runner.SessionInfo
+	if err := json.Unmarshal(res.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode created: %v (%s)", err, res.Body.String())
+	}
+	if res.Code != http.StatusOK || last.method != http.MethodPost || last.path != "/session" || !strings.Contains(last.body, `"title":"created"`) || !strings.Contains(last.body, `"hoxiConversation":"`+created.ID+`"`) {
 		t.Fatalf("create: %d %+v", res.Code, last)
+	}
+	if !strings.HasPrefix(created.ID, "ses_hoxi_") || !created.Managed || created.Runtime != "opencode" || !gw.runner.OwnsSession(created.ID) || !gw.runner.IsManagedOpenCodeSession("ses_new") {
+		t.Fatalf("created session not owned by Hoxi: %+v", created)
+	}
+	rec, ok := gw.runner.Store().Get(created.ID)
+	if !ok || rec.ExternalID != "ses_new" || len(rec.OpenCodeIDs) != 1 || rec.OpenCodeIDs[0] != "ses_new" {
+		t.Fatalf("expected backing OpenCode handle ses_new in OpenCodeIDs: %+v", rec)
+	}
+	beforeOwnedGet := len(calls())
+	if getRes := serve(gw, http.MethodGet, "/api/hoxi/sessions/"+created.ID, ""); getRes.Code != http.StatusOK || len(calls()) != beforeOwnedGet {
+		t.Fatalf("newly created OpenCode session did not route to Hoxi store: %d", getRes.Code)
 	}
 
 	if res := serve(gw, http.MethodGet, "/api/hoxi/sessions/", ""); res.Code != http.StatusNotFound {

@@ -61,8 +61,11 @@ func NewStore(customDir string) *Store {
 
 func GenerateRunnerSessionID(rt string) string {
 	prefix := "ses_agy"
-	if rt == string(RuntimeClaudeCode) {
+	switch rt {
+	case string(RuntimeClaudeCode):
 		prefix = "ses_cld"
+	case "opencode":
+		prefix = "ses_hoxi"
 	}
 	buf := make([]byte, 6)
 	_, _ = rand.Read(buf)
@@ -71,7 +74,7 @@ func GenerateRunnerSessionID(rt string) string {
 
 func IsRunnerSessionID(sessionID string) bool {
 	s := strings.TrimSpace(sessionID)
-	return strings.HasPrefix(s, "ses_agy_") || strings.HasPrefix(s, "ses_cld_")
+	return strings.HasPrefix(s, "ses_agy_") || strings.HasPrefix(s, "ses_cld_") || strings.HasPrefix(s, "ses_hoxi_")
 }
 
 func (s *Store) ensureTurnsLocked(ss *storedSession) {
@@ -379,6 +382,9 @@ func normalizeComparePath(p string) string {
 	p = strings.TrimSpace(p)
 	if p == "" {
 		return ""
+	}
+	if resolved, err := filepath.EvalSymlinks(p); err == nil {
+		p = resolved
 	}
 	cleaned := filepath.ToSlash(filepath.Clean(p))
 	cleaned = strings.TrimRight(cleaned, "/")

@@ -89,7 +89,7 @@ export async function newIsolatedSession(
       mode: initialAI.agent,
       sandboxMode: shouldIsolate ? "worktree" : "local",
     });
-    if (isRunner) {
+    if (isRunner || session.managed) {
       const wtDir = session.directory || directory;
       if (!wtDir || (shouldIsolate && wtDir === directory)) {
         throw new Error(t("timeline.worktreeIsolationUnavailable"));
