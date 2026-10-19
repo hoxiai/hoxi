@@ -397,8 +397,8 @@ export default function AgentStackPill() {
                         <span class="rounded bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-muted)] shrink-0">
                           {sub.agentType}
                         </span>
-                        <span class="truncate text-[var(--text-primary)]">
-                          {sub.description}
+                        <span class="truncate text-[var(--text-primary)]" title={sub.titleTooltip}>
+                          {sub.title}
                         </span>
                         <Show when={sub.currentStepLabel}>
                           <span class="font-mono text-[10.5px] text-[var(--text-muted)] truncate max-w-[160px]">

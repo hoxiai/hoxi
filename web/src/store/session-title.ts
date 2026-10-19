@@ -1,5 +1,5 @@
 // web/src/store/session-title.ts
-import { dictionaries, locale } from "../i18n";
+import { dictionaries, locale, t } from "../i18n";
 import { hoxiAPI } from "../services/api";
 import type { SessionInfo } from "../services/sse-types";
 import { workspace, type SelectedModel } from "./workspace";
@@ -106,6 +106,95 @@ export function isPlaceholderSessionTitle(title?: string | null): boolean {
     lower.startsWith("child session -") ||
     lower === "new session"
   );
+}
+
+// OpenCode names child sessions "<description> (@<agent> subagent)".
+const SUBAGENT_TITLE_SUFFIX = /\s*\(@[\w.-]+ subagent\)\s*$/i;
+
+export function stripSubagentTitleSuffix(title?: string | null): string {
+  return (title || "").replace(SUBAGENT_TITLE_SUFFIX, "").trim();
+}
+
+function normalizeTitleForCompare(title: string): string {
+  return title.normalize("NFKC").toLowerCase().replace(/[\p{P}\p{S}\s]+/gu, "");
+}
+
+/**
+ * True when a subagent's title only restates its parent session's title:
+ * equal after normalization, contained in it, or containing it with little extra.
+ */
+export function isRedundantSubagentTitle(
+  parentTitle?: string | null,
+  childTitle?: string | null,
+): boolean {
+  if (isPlaceholderSessionTitle(parentTitle)) return false;
+  const parent = normalizeTitleForCompare(parentTitle!);
+  const child = normalizeTitleForCompare(stripSubagentTitleSuffix(childTitle));
+  if (!parent || !child) return false;
+  if (parent === child) return true;
+  const parentLen = Array.from(parent).length;
+  const childLen = Array.from(child).length;
+  if (Math.min(parentLen, childLen) < 4) return false;
+  if (parent.includes(child)) return true;
+  return child.includes(parent) && childLen <= parentLen * 1.5;
+}
+
+// Letters and digits of space-delimited scripts; CJK characters can be split anywhere.
+const isWordChar = (c?: string) =>
+  Boolean(c) && /[\p{L}\p{N}]/u.test(c!) && !/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(c!);
+
+/**
+ * Drops the leading phrase a subagent title shares with its parent, e.g.
+ * "检查自动确认实现链路" under "检查自动确认是否有效" → "实现链路". Returns null when
+ * the shared part is under half of the shorter title or too little would remain.
+ */
+function trimSharedTitlePrefix(parentTitle: string, childTitle: string): string | null {
+  const parent = normalizeTitleForCompare(parentTitle);
+  const chars = Array.from(childTitle);
+  let matched = "";
+  let cut = 0;
+  for (let i = 0; i < chars.length; i++) {
+    const n = normalizeTitleForCompare(chars[i]);
+    if (!n) continue;
+    if (!parent.startsWith(matched + n)) break;
+    matched += n;
+    cut = i + 1;
+  }
+  while (cut > 0 && isWordChar(chars[cut - 1]) && isWordChar(chars[cut])) cut--;
+  const shared = Array.from(normalizeTitleForCompare(chars.slice(0, cut).join(""))).length;
+  const shorter = Math.min(Array.from(parent).length, Array.from(normalizeTitleForCompare(childTitle)).length);
+  if (shared < 4 || shared * 2 < shorter) return null;
+  const rest = chars.slice(cut).join("").replace(/^[\p{P}\p{S}\s]+/u, "").trim();
+  return Array.from(normalizeTitleForCompare(rest)).length >= 2 ? rest : null;
+}
+
+export interface SubagentTitle {
+  /**
+   * What to render: the subagent's own title, its remainder after the phrase it
+   * shares with the parent ("…rest"), or "Subtask N" when it only repeats the parent.
+   */
+  label: string;
+  /** The original title, for tooltips. */
+  full: string;
+  redundant: boolean;
+}
+
+export function subagentDisplayTitle(
+  parentTitle: string | null | undefined,
+  childTitle: string | null | undefined,
+  ordinal: () => number,
+): SubagentTitle {
+  const full = stripSubagentTitleSuffix(childTitle);
+  const redundant = !full || isRedundantSubagentTitle(parentTitle, full);
+  if (!redundant) {
+    const rest = isPlaceholderSessionTitle(parentTitle) ? null : trimSharedTitlePrefix(parentTitle!, full);
+    return { label: rest ? `…${rest}` : full, full, redundant };
+  }
+  const index = ordinal();
+  const label = index > 0
+    ? t("timeline.subagentOrdinalTitle", { index })
+    : t("timeline.subagentBreadcrumbLabel");
+  return { label, full: full || label, redundant };
 }
 
 export function extractLocalFallbackTitle(promptText: string, currentLocale = locale()): string {

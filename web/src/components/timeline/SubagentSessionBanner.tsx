@@ -20,6 +20,7 @@ import {
   isSubagentToolInterrupted,
   loadSessionMessagesOnly,
   markSessionInterrupted,
+  resolveSubagentTitle,
   resumeSubagentTask,
   selectSession,
   sessionDirectory,
@@ -39,6 +40,10 @@ import { collectCycleChangedFiles } from "./tool-card-state";
 export interface SubagentStackItem {
   sessionID: string;
   description: string;
+  /** Display title; "Subtask N" when the description only repeats the parent's title. */
+  title: string;
+  /** Full original title, for tooltips. */
+  titleTooltip: string;
   agentType: string;
   status: "running" | "interrupted" | "completed" | "error";
   needsAttention: boolean;
@@ -180,9 +185,13 @@ export function collectSubagentsForSession(parentID: string | null): SubagentSta
         workspace.pendingQuestions.some((q) => q.sessionID === subId);
 
       const telemetry = summarizeSubagentTelemetry(subId);
+      const description = String(tp.state.input?.description || tp.state.title || "Subagent Task");
+      const title = resolveSubagentTitle(parentID, subId, description);
       map.set(subId, {
         sessionID: subId,
-        description: String(tp.state.input?.description || tp.state.title || "Subagent Task"),
+        description,
+        title: title.label,
+        titleTooltip: title.full,
         agentType: String(tp.state.input?.subagent_type || "general"),
         status,
         needsAttention,
@@ -202,9 +211,12 @@ export function collectSubagentsForSession(parentID: string | null): SubagentSta
     if (!isViewingChild && !childBusy && !childInterrupted && !needsAttention) continue;
     ensureChildSubagentSessionLoaded(s.id, parentID);
     const telemetry = summarizeSubagentTelemetry(s.id);
+    const title = resolveSubagentTitle(parentID, s.id, s.title || s.id.slice(0, 10));
     map.set(s.id, {
       sessionID: s.id,
-      description: s.title || s.id.slice(0, 10),
+      description: title.full,
+      title: title.label,
+      titleTooltip: title.full,
       agentType: "subagent",
       status: childBusy ? "running" : childInterrupted ? "interrupted" : "completed",
       needsAttention,
@@ -246,21 +258,20 @@ export function SubagentSessionBanner() {
     subagents().findIndex((s) => s.sessionID === activeID())
   );
 
-  const parentTitle = createMemo(() => {
+  // The header shows the main session's title, so the back button only names
+  // the parent when it is an intermediate subagent rather than the main session.
+  const backLabel = createMemo(() => {
     const pid = parentID();
-    if (!pid) return t("timeline.backToMainSessionShort");
-    const info = workspace.sessions.find((s) => s.id === pid);
-    if (!info || isPlaceholderSessionTitle(info.title)) {
-      return t("timeline.backToMainSessionShort");
-    }
-    return info.title;
+    const info = pid && pid !== rootID() ? workspace.sessions.find((s) => s.id === pid) : undefined;
+    return info && !isPlaceholderSessionTitle(info.title)
+      ? resolveSubagentTitle(resolveParentSessionID(pid), pid).label
+      : t("timeline.backToMainSession");
   });
 
   const currentTitle = createMemo(() => {
     const sub = currentSub();
-    if (sub?.description) return sub.description;
-    const info = workspace.sessions.find((s) => s.id === activeID());
-    return info?.title || t("timeline.subagentBreadcrumbLabel");
+    if (sub) return { label: sub.title, full: sub.titleTooltip };
+    return resolveSubagentTitle(parentID(), activeID());
   });
 
   const isRunning = createMemo(
@@ -315,18 +326,7 @@ export function SubagentSessionBanner() {
               class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--accent-border)] bg-[var(--accent-surface)] px-2.5 py-1 text-[11.5px] font-medium text-[var(--accent-primary)] hover:opacity-90 transition-opacity shrink-0 cursor-pointer"
             >
               <ArrowLeft size={12.5} />
-              <span>{t("timeline.backToMainSession")}</span>
-            </button>
-
-            <span class="text-[var(--text-faint)] shrink-0">/</span>
-
-            <button
-              type="button"
-              onClick={() => void selectSession(pid())}
-              class="truncate max-w-[160px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:underline transition-colors cursor-pointer"
-              title={parentTitle()}
-            >
-              {parentTitle()}
+              <span class="truncate max-w-[160px]">{backLabel()}</span>
             </button>
 
             <span class="text-[var(--text-faint)] shrink-0">/</span>
@@ -358,9 +358,9 @@ export function SubagentSessionBanner() {
 
               <span
                 class="font-medium text-[var(--text-primary)] truncate"
-                title={currentTitle()}
+                title={currentTitle().full}
               >
-                {currentTitle()}
+                {currentTitle().label}
               </span>
 
               <Show

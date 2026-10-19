@@ -4,6 +4,7 @@ import { hoxiAPI } from "../services/api";
 import type { ToolPart } from "../services/sse-types";
 import { type SelectedModel, setWorkspace, workspace } from "./workspace";
 import { sessionAIConfig } from "./session-ai";
+import { subagentDisplayTitle, type SubagentTitle } from "./session-title";
 import {
   forkFromMessage,
   isSessionBusy,
@@ -181,6 +182,36 @@ export function extractChildSubagentSessionId(tp: ToolPart): string | undefined 
     if (matched?.id) return matched.id;
   }
   return undefined;
+}
+
+/** 1-based spawn order of `childID` among its parent's subagents, or 0 when unknown. */
+export function subagentOrdinal(parentID?: string | null, childID?: string | null): number {
+  if (!parentID || !childID) return 0;
+  const seen = new Set<string>();
+  for (const turn of workspace.messagesBySession[parentID] ?? []) {
+    for (const part of turn.parts ?? []) {
+      if (part.type !== "tool" || (part.tool || "").toLowerCase() !== "task") continue;
+      const id = extractChildSubagentSessionId(part as ToolPart);
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      if (id === childID) return seen.size;
+    }
+  }
+  const siblings = workspace.sessions
+    .filter((s) => s.parentID === parentID)
+    .sort((a, b) => (a.time?.created || 0) - (b.time?.created || 0));
+  return siblings.findIndex((s) => s.id === childID) + 1;
+}
+
+/** Display title for a subagent, falling back to "Subtask N" when it repeats its parent's title. */
+export function resolveSubagentTitle(
+  parentID: string | null | undefined,
+  childID: string | null | undefined,
+  rawTitle?: string | null,
+): SubagentTitle {
+  const parentTitle = parentID ? workspace.sessions.find((s) => s.id === parentID)?.title : undefined;
+  const fallback = rawTitle || workspace.sessions.find((s) => s.id === childID)?.title;
+  return subagentDisplayTitle(parentTitle, fallback, () => subagentOrdinal(parentID, childID));
 }
 
 function isChildSubagentTurnCompletedCleanly(childSessionID?: string): boolean {

@@ -15,6 +15,7 @@ import {
   isSubagentToolAlive,
   isSubagentToolInterrupted,
   type MessageTurn,
+  resolveSubagentTitle,
   workspace,
 } from "../../store/workspace";
 import { DiffChanges, Icon, Spinner, TextShimmer } from "../icons";
@@ -270,10 +271,10 @@ export function hasLiveTailWorkGroup(
 
 function summarizeStepTarget(part: ToolPart): string {
   if (isTaskTool(part.tool)) {
-    const desc = extractDescription(part);
-    const childStep = resolveSubagentCurrentStepLabel(
-      extractChildSubagentSessionId(part)
-    );
+    const childID = extractChildSubagentSessionId(part);
+    const rawDesc = extractDescription(part);
+    const desc = rawDesc && resolveSubagentTitle(part.sessionID, childID, rawDesc).label;
+    const childStep = resolveSubagentCurrentStepLabel(childID);
     if (desc && childStep) return `${desc} · ${childStep}`;
     return desc || childStep || "";
   }

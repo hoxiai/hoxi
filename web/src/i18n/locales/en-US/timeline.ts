@@ -116,6 +116,7 @@ export const timeline = {
   backToMainSession: "Back to Main Session",
   backToMainSessionShort: "Main Session",
   subagentBreadcrumbLabel: "Subagent",
+  subagentOrdinalTitle: "Subtask {index}",
   prevSubagentTooltip: "Previous subagent",
   nextSubagentTooltip: "Next subagent",
   revertBannerCount: "{count} turns reverted",

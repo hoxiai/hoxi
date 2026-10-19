@@ -3,8 +3,10 @@ import { hoxiAPI } from "../services/api";
 import { setWorkspace, workspace } from "../store/workspace";
 import { renameSessionTitle, replaceSession } from "../store/workspace-sessions";
 import {
-  forgetSessionTitles, hasManualSessionTitle, loadManualSessionTitles, preserveSessionTitle, summarizeAndRenameSession,
+  forgetSessionTitles, hasManualSessionTitle, isRedundantSubagentTitle, loadManualSessionTitles,
+  preserveSessionTitle, subagentDisplayTitle, summarizeAndRenameSession,
 } from "../store/session-title";
+import { t } from "../i18n";
 import { assertEqual, describe, it } from "./test-harness";
 
 const id = "ses_manual_title_test";
@@ -99,5 +101,44 @@ describe("Manual session titles", () => {
       assertEqual(hasManualSessionTitle(id), false);
       assertEqual(loadManualSessionTitles().has(id), false);
     });
+  });
+});
+
+// CJK cases are escaped so check:i18n does not flag them as UI literals.
+describe("Subagent titles", () => {
+  it("treats restated parent titles as redundant", () => {
+    assertEqual(isRedundantSubagentTitle("\u4fee\u590d\u767b\u5f55\u95ee\u9898", "\u4fee\u590d\u767b\u5f55\u95ee\u9898"), true);
+    assertEqual(isRedundantSubagentTitle("\u4fee\u590d\u767b\u5f55\u95ee\u9898\u3002", " \u4fee\u590d \u767b\u5f55\u95ee\u9898 (@general subagent)"), true);
+    assertEqual(isRedundantSubagentTitle("Fix the login bug", "fix login bug"), false);
+    assertEqual(isRedundantSubagentTitle("Fix the login bug", "Fix the login bug quickly"), true);
+    assertEqual(isRedundantSubagentTitle("\u6392\u67e5\u5e76\u4fee\u590d\u767b\u5f55\u95ee\u9898", "\u4fee\u590d\u767b\u5f55\u95ee\u9898"), true);
+    assertEqual(isRedundantSubagentTitle("\u4fee\u590d\u767b\u5f55\u95ee\u9898", "\u4fee\u590d\u767b\u5f55\u95ee\u9898\u5e76\u8865\u5145\u5168\u90e8\u5355\u5143\u6d4b\u8bd5"), false);
+    assertEqual(isRedundantSubagentTitle("\u5206\u6790\u524d\u7aef\u4ee3\u7801\u7ed3\u6784", "\u5206\u6790\u540e\u7aef\u4ee3\u7801\u7ed3\u6784"), false);
+    assertEqual(isRedundantSubagentTitle("New Thread", "New Thread"), false);
+    assertEqual(isRedundantSubagentTitle("\u4fee", "\u4fee"), true);
+    assertEqual(isRedundantSubagentTitle("\u4fee\u590d\u95ee\u9898", "\u4fee"), false);
+  });
+
+  it("falls back to an ordinal label and keeps the original for tooltips", () => {
+    const repeated = subagentDisplayTitle("Fix login", "Fix login (@explore subagent)", () => 2);
+    assertEqual(repeated.redundant, true);
+    assertEqual(repeated.label, t("timeline.subagentOrdinalTitle", { index: 2 }));
+    assertEqual(repeated.full, "Fix login");
+    // "检查自动确认是否有效" → "检查自动确认实现链路" shows "…实现链路".
+    const shared = subagentDisplayTitle(
+      "\u68c0\u67e5\u81ea\u52a8\u786e\u8ba4\u662f\u5426\u6709\u6548",
+      "\u68c0\u67e5\u81ea\u52a8\u786e\u8ba4\u5b9e\u73b0\u94fe\u8def (@explore subagent)",
+      () => 1,
+    );
+    assertEqual(shared.label, "\u2026\u5b9e\u73b0\u94fe\u8def");
+    assertEqual(subagentDisplayTitle("Trace Antigravity SSE delay", "Trace Antigravity backend", () => 1).label,
+      "\u2026backend");
+    // Only a word boundary may cut space-delimited text, and a short shared verb is kept.
+    assertEqual(subagentDisplayTitle("Fix login bug", "Fix logout flow", () => 1).label, "Fix logout flow");
+    assertEqual(subagentDisplayTitle("Fix the login bug", "Fix the logout flow", () => 1).label,
+      "Fix the logout flow");
+    const distinct = subagentDisplayTitle("Fix login", "Scan auth middleware", () => 1);
+    assertEqual(distinct.label, "Scan auth middleware");
+    assertEqual(distinct.redundant, false);
   });
 });

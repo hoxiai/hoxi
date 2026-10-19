@@ -115,6 +115,7 @@ export const timeline: TimelineI18n = {
   backToMainSession: "返回主会话",
   backToMainSessionShort: "主会话",
   subagentBreadcrumbLabel: "Sub-agent",
+  subagentOrdinalTitle: "子任务 {index}",
   prevSubagentTooltip: "上一个Sub-agent",
   nextSubagentTooltip: "下一个Sub-agent",
   revertBannerCount: "已回滚 {count} 轮对话与代码修改",

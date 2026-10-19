@@ -8,6 +8,7 @@ import {
   isSubagentToolInterrupted,
    openChangedFileInInspector,
   openFileInInspector,
+  resolveSubagentTitle,
   resumeSubagentTask,
   revertToHere,
   selectSession,
@@ -90,6 +91,12 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
     isTask() ? extractChildSubagentSessionId(props.part) : undefined
   );
   const subagentTelemetry = useSubagentTelemetry(childSessionID, isRunning);
+  // A task's description often restates the session title; shorten or replace it.
+  const headerDescription = createMemo(() => {
+    const desc = description();
+    if (!isTask() || !desc) return { label: desc, full: desc };
+    return resolveSubagentTitle(props.part.sessionID, childSessionID(), desc);
+  });
   // Antigravity / Claude Code subagents: child sessions written by the parent's CLI turn.
   const isRunnerSubagent = () => isTask() && Boolean(props.part.state.metadata?.runner);
   // Reuses the 0.1s elapsed ticker as the clock instead of starting another timer.
@@ -245,9 +252,12 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
                         />
                       </Show>
                     </span>
-                    <Show when={description()}>
-                      <span class="text-[12.5px] text-[var(--text-muted)] truncate">
-                        {description()}
+                    <Show when={headerDescription().label}>
+                      <span
+                        class="text-[12.5px] text-[var(--text-muted)] truncate"
+                        title={headerDescription().full}
+                      >
+                        {headerDescription().label}
                       </span>
                     </Show>
                     <Show when={isTask() && isRunning() && subagentTelemetry().currentStepLabel}>

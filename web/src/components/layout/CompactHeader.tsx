@@ -16,6 +16,7 @@ import {
 } from "../../store/workspace";
 import { t } from "../../i18n";
 import { isPlaceholderSessionTitle } from "../../store/session-title";
+import { resolveRootSessionID } from "../timeline/SubagentSessionBanner";
 import BranchManagerPopover from "./BranchManagerPopover";
 import DevPulsePopover from "./DevPulsePopover";
 import UpdateBadge from "./UpdateBadge";
@@ -29,10 +30,18 @@ interface CompactHeaderProps {
 
 export default function CompactHeader(props: CompactHeaderProps) {
   const session = createMemo(() => activeSession());
+  // While a subagent session is open its title lives in the subagent banner;
+  // the header keeps naming the main session.
+  const mainSession = createMemo(() => {
+    const active = session();
+    const rootID = resolveRootSessionID(active?.id);
+    if (!active || !rootID || rootID === active.id) return active;
+    return workspace.sessions.find((s) => s.id === rootID) ?? active;
+  });
 
   const projectName = createMemo(() => workspaceDisplayName(workspace.rootDir));
   const sessionTitle = createMemo(() => {
-    const title = session()?.title;
+    const title = mainSession()?.title;
     return isPlaceholderSessionTitle(title) ? t("leftNav.newThread") : title;
   });
 
