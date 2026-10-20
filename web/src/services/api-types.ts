@@ -625,7 +625,6 @@ export interface StartAuthResponse {
 }
 
 export interface UpdateMirrors {
-  cn?: string;
   global?: string;
 }
 

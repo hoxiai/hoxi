@@ -81,9 +81,7 @@ and stapling: changing even one DMG byte afterward invalidates the signature.
 `feedURL`, `publicKey`, `edSignature` (64-byte canonical base64) and `length`.
 The enclosure URL is the exact versioned GitHub DMG. The tag workflow uploads the
 same DMG, checksum and Sparkle metadata to GitHub before publication, and the
-website advertises the GitHub mirror. A GitCode mirror is optional and uploaded
-manually; GitHub Actions cannot reliably reach GitCode's upload storage. The
-publication payload also includes `minimumMacOS`, `sha256` and `size` from
+website advertises the same GitHub-hosted installers. The publication payload also includes `minimumMacOS`, `sha256` and `size` from
 artifact verification. The website pins `HOXI_SPARKLE_PUBLIC_KEY` to the same public
 key as CI and the app. It verifies the public asset before persisting metadata.
 Allow more than 60 seconds at the website reverse proxy; the publisher waits up to

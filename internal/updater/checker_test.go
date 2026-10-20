@@ -25,9 +25,8 @@ func TestUpdaterCheckerWithMockServer(t *testing.T) {
 			"needUpdate":   true,
 			"title":        "Hoxi v0.3.0 Released",
 			"releaseNotes": "- Feature: One-click auth\n- Feature: Auto update",
-			"downloadUrl":  "https://gitcode.com/hoxiai/hoxi-releases/releases/download/v0.3.0/Hoxi.dmg",
+			"downloadUrl":  "https://github.com/hoxiai/hoxi/releases/download/v0.3.0/Hoxi.dmg",
 			"mirrors": map[string]string{
-				"cn":     "https://gitcode.com/hoxiai/hoxi-releases/releases/download/v0.3.0/Hoxi.dmg",
 				"global": "https://github.com/hoxiai/hoxi/releases/download/v0.3.0/Hoxi.dmg",
 			},
 			"mandatory": false,
@@ -50,8 +49,8 @@ func TestUpdaterCheckerWithMockServer(t *testing.T) {
 	if res.LatestVersion != "0.3.0" {
 		t.Errorf("expected version 0.3.0, got %s", res.LatestVersion)
 	}
-	if res.Mirrors.CN == "" || res.Mirrors.Global == "" {
-		t.Errorf("expected both mirrors populated, got %+v", res.Mirrors)
+	if res.Mirrors.Global == "" {
+		t.Errorf("expected the GitHub mirror populated, got %+v", res.Mirrors)
 	}
 	if res.SHA256 != "abcdef1234567890" {
 		t.Errorf("expected sha256 abcdef1234567890, got %s", res.SHA256)

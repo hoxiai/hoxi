@@ -84,7 +84,6 @@ export const settings = {
   updaterCheckingBtn: "Checking…",
   updaterAlreadyLatest: "You are running the latest version",
   updaterNewVersionFound: "New version {version} available",
-  updaterDownloadFromGitCodeBtn: "Download via GitCode (CN)",
   updaterDownloadFromGitHubBtn: "Download via GitHub",
   updaterDownloadNowBtn: "Download Update",
   updaterReleaseNotesTitle: "Release Notes",

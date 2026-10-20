@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { normalizeVersion, validatePublication } from "./release-artifact.mjs";
 import { validateSparkle } from "./sparkle.mjs";
 
-export function releasePayload({ version, notes, sha256, size, mandatory = false, sparkle, minimumMacOS, gitcode = false }) {
+export function releasePayload({ version, notes, sha256, size, mandatory = false, sparkle, minimumMacOS }) {
   version = normalizeVersion(version);
   if (!/^[a-f0-9]{64}$/.test(sha256)) throw new Error("A verified SHA-256 is required");
   if (!Number.isSafeInteger(size) || size <= 0) throw new Error("A non-empty artifact is required");
@@ -15,11 +15,10 @@ export function releasePayload({ version, notes, sha256, size, mandatory = false
     throw new Error("Invalid minimum macOS version");
   }
   const asset = `Hoxi-${version}-darwin-arm64.dmg`;
-  const cn = `https://gitcode.com/hoxiai/hoxi-releases/releases/download/v${version}/${asset}`;
   const global = `https://github.com/hoxiai/hoxi/releases/download/v${version}/${asset}`;
   return {
     version, title: `Hoxi Desktop v${version}`, notes, sha256, size, mandatory,
-    mirrors: { "mac-arm64": gitcode ? { cn, global } : { global } },
+    mirrors: { "mac-arm64": { global } },
     desktop: { "mac-arm64": global }, dryRun: false,
     ...(sparkle ? { sparkle: validateSparkle(sparkle, version, size) } : {}),
     ...(minimumMacOS ? { minimumMacOS } : {}),

@@ -251,25 +251,6 @@ export function SystemRuntimeSettingsTab() {
                 </div>
 
                 <div class="flex flex-wrap items-center gap-2">
-                  <Show when={res().mirrors.cn}>
-                    <a
-                      href={res().mirrors.cn}
-                      target="_blank"
-                      rel="noreferrer"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        if (res().mirrors.cn) openExternalURL(res().mirrors.cn!);
-                      }}
-                      class={
-                        desktopUpdater.nativeAvailable
-                          ? "inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] px-2.5 py-1 text-[11.5px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
-                          : "inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] hover:opacity-90 px-3.5 py-1.5 text-[12px] font-semibold text-[var(--accent-foreground)] shadow-xs transition-opacity cursor-pointer"
-                      }
-                    >
-                      <Download size={12} />
-                      <span>{t("settings.updaterDownloadFromGitCodeBtn")}</span>
-                    </a>
-                  </Show>
                   <Show when={res().mirrors.global}>
                     <a
                       href={res().mirrors.global}
@@ -289,7 +270,7 @@ export function SystemRuntimeSettingsTab() {
                       <span>{t("settings.updaterDownloadFromGitHubBtn")}</span>
                     </a>
                   </Show>
-                  <Show when={!res().mirrors.cn && !res().mirrors.global && res().downloadUrl}>
+                  <Show when={!res().mirrors.global && res().downloadUrl}>
                     <a
                       href={res().downloadUrl}
                       target="_blank"

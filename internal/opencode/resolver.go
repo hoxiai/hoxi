@@ -224,8 +224,6 @@ func OfficialReleaseURLs(goos, goarch string) (urls []string, isZip bool, err er
 	if custom := strings.TrimRight(os.Getenv("HOXI_OPENCODE_MIRROR"), "/"); custom != "" {
 		candidates = append(candidates, custom+"/"+asset)
 	}
-	// GitCode / 国内镜像候选
-	candidates = append(candidates, "https://gitcode.com/hoxiai/hoxi/releases/download/latest/"+asset)
 	// GitHub 官方源
 	candidates = append(candidates, "https://github.com/anomalyco/opencode/releases/latest/download/"+asset)
 

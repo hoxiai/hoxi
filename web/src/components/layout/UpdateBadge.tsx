@@ -138,22 +138,6 @@ export default function UpdateBadge() {
                     {desktopUpdater.isInstalling ? t("header.updateOpening") : t("header.updateInApp")}
                   </button>
                 </Show>
-                <Show when={updateResult()?.mirrors.cn}>
-                  <a
-                    href={updateResult()?.mirrors.cn}
-                    target="_blank"
-                    rel="noreferrer"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      const url = updateResult()?.mirrors.cn;
-                      if (url) openExternalURL(url);
-                    }}
-                    class="inline-flex items-center gap-1.5 rounded-xl border border-[var(--border-subtle)] hover:bg-[var(--bg-hover)] px-3.5 py-1.5 text-[12px] font-medium text-[var(--text-secondary)] transition-colors cursor-pointer"
-                  >
-                    <Download size={13} />
-                    <span>{t("header.updateModalDownloadGitCode")}</span>
-                  </a>
-                </Show>
                 <Show when={updateResult()?.mirrors.global}>
                   <a
                     href={updateResult()?.mirrors.global}
@@ -172,7 +156,6 @@ export default function UpdateBadge() {
                 </Show>
                 <Show
                   when={
-                    !updateResult()?.mirrors.cn &&
                     !updateResult()?.mirrors.global &&
                     updateResult()?.downloadUrl
                   }

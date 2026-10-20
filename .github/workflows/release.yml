@@ -188,7 +188,7 @@ jobs:
           const bytes = fs.readFileSync(`build/bin/Hoxi-${version}-darwin-arm64.dmg`);
           const verified = JSON.parse(fs.readFileSync('build/bin/release-artifact.json', 'utf8'));
           console.log(JSON.stringify({...verified, version, notes: process.env.RELEASE_NOTES || `Hoxi Desktop v${version}`, size: bytes.length,
-            sha256: crypto.createHash('sha256').update(bytes).digest('hex'), gitcode: false,
+            sha256: crypto.createHash('sha256').update(bytes).digest('hex'),
             sparkle: JSON.parse(fs.readFileSync('build/bin/sparkle.json', 'utf8'))}));
           JS
 

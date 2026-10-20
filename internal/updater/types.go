@@ -2,7 +2,6 @@ package updater
 
 // UpdateMirrors 多平台下载镜像
 type UpdateMirrors struct {
-	CN     string `json:"cn,omitempty"`
 	Global string `json:"global,omitempty"`
 }
 

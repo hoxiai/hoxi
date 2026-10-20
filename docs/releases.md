@@ -45,12 +45,8 @@ script is unavailable. There is no automatic database fallback.
 
 The local script does not upload DMGs. The tag workflow uploads the same verified
 DMG, checksum and Sparkle metadata to GitHub before publishing website metadata.
-The website therefore advertises the GitHub mirror. A GitCode mirror is optional
-and must be uploaded from a maintainer machine with a valid `GITCODE_TOKEN`;
-GitHub Actions runners cannot reliably reach GitCode's upload storage, so CI does
-not attempt it. GitCode assets live in the public `hoxiai/hoxi-releases` repository;
-the `hoxiai/hoxi` repository is a read-only import and rejects release creation.
-Apple signing/notarization and the live publishing service still require a real
+The website advertises the GitHub release and GitHub-hosted installers. Apple
+signing/notarization and the live publishing service still require a real
 maintainer-account acceptance run. Local tests never perform these account actions.
 
 ## GitHub tag releases
@@ -77,8 +73,8 @@ to verify the app version, runtime version, architecture, minimum macOS and app
 signature. It also verifies the DMG's Developer ID signature and stapled notary
 ticket. The versioned DMG, SHA-256 checksum and signed public `sparkle.json` metadata
 are uploaded to GitHub before website metadata publication; missing files fail the
-release. The Sparkle enclosure is the exact GitHub DMG, and the website advertises
-the GitHub mirror. The website must explicitly
+release. The Sparkle enclosure and the website download links use the exact GitHub
+DMG. The website must explicitly
 confirm Sparkle metadata acceptance and feed deployment, not just generic release
 success. Its implementation is absent here and remains a deployment blocker.
 

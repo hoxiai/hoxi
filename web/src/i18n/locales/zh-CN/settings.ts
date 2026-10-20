@@ -85,7 +85,6 @@ export const settings: SettingsI18n = {
   updaterCheckingBtn: "正在检查…",
   updaterAlreadyLatest: "当前已是最新版本",
   updaterNewVersionFound: "发现新版本 {version}",
-  updaterDownloadFromGitCodeBtn: "从 GitCode 下载 (国内推荐)",
   updaterDownloadFromGitHubBtn: "从 GitHub 下载",
   updaterDownloadNowBtn: "立即下载更新",
   updaterReleaseNotesTitle: "更新内容",
