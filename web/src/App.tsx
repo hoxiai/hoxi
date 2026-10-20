@@ -13,6 +13,7 @@ import {
   bootstrapProjectSessions,
   drainNextQueuedPrompt,
   handleIncomingPermissionRequest,
+  markPermissionResolved,
   handleSessionErrorEvent,
   isDismissedProjectPath,
   isInvalidProjectPath,
@@ -296,9 +297,7 @@ export default function App() {
               handleIncomingPermissionRequest(evt.properties);
               break;
             case "permission.replied":
-              setWorkspace("pendingPermissions", (prev) =>
-                prev.filter((p) => p.id !== evt.properties.requestID)
-              );
+              markPermissionResolved(evt.properties.requestID);
               break;
             case "question.asked":
             case "question.v2.asked":

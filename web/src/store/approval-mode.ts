@@ -62,7 +62,33 @@ export function shouldAutoApprovePermission(
 
 const inFlightAutoApprovals = new Set<string>();
 
+// Requests already answered (here, by another client, or gone upstream). The
+// 4s watchdog `listPermissions` snapshot can predate the reply; re-docking it
+// flashed the approval card in and out and fired a stray Attention.
+const RESOLVED_PERMISSION_LIMIT = 256;
+const resolvedPermissionIDs = new Set<string>();
+
+export function markPermissionResolved(id: string): void {
+  if (!id) return;
+  resolvedPermissionIDs.delete(id);
+  resolvedPermissionIDs.add(id);
+  if (resolvedPermissionIDs.size > RESOLVED_PERMISSION_LIMIT) {
+    const oldest = resolvedPermissionIDs.values().next().value;
+    if (oldest) resolvedPermissionIDs.delete(oldest);
+  }
+  setWorkspace("pendingPermissions", (prev) =>
+    prev.some((p) => p.id === id) ? prev.filter((p) => p.id !== id) : prev
+  );
+}
+
+/** Upstream no longer holds the request: it was already answered elsewhere. */
+export function isPermissionGoneError(err: unknown): boolean {
+  const msg = String(err);
+  return /\bHTTP 404\b/.test(msg) || msg.includes("PermissionNotFound");
+}
+
 function addPendingPermissionToStore(req: PermissionRequest) {
+  if (resolvedPermissionIDs.has(req.id)) return;
   let added = false;
   setWorkspace("pendingPermissions", (prev) => {
     if (prev.some((p) => p.id === req.id)) return prev;
@@ -75,7 +101,7 @@ function addPendingPermissionToStore(req: PermissionRequest) {
 }
 
 export function handleIncomingPermissionRequest(req: PermissionRequest): void {
-  if (!req || !req.id) return;
+  if (!req || !req.id || resolvedPermissionIDs.has(req.id)) return;
   const mode = appSettings.approvalMode || "auto";
 
   if (!shouldAutoApprovePermission(req, mode)) {
@@ -89,10 +115,12 @@ export function handleIncomingPermissionRequest(req: PermissionRequest): void {
   const dir = sessionDirectory(req.sessionID);
   void hoxiAPI
     .replyPermission(req.id, "once", dir)
-    .then(() => {
-      setWorkspace("pendingPermissions", (prev) => prev.filter((p) => p.id !== req.id));
-    })
+    .then(() => markPermissionResolved(req.id))
     .catch((err) => {
+      if (isPermissionGoneError(err)) {
+        markPermissionResolved(req.id);
+        return;
+      }
       console.warn("auto-approve permission fallback to manual dock:", err);
       addPendingPermissionToStore(req);
     })

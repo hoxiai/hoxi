@@ -1,9 +1,14 @@
 import * as permissionsPluginModule from "../../../.opencode/plugins/hoxi-permissions.js";
 import HoxiPermissionsPlugin from "../../../.opencode/plugins/hoxi-permissions.js";
+import { hoxiAPI } from "../services/api";
+import type { PermissionRequest } from "../services/sse-types";
 import {
+  handleIncomingPermissionRequest,
   isDestructivePermissionRequest,
+  markPermissionResolved,
   shouldAutoApprovePermission,
 } from "../store/approval-mode";
+import { setWorkspace, workspace } from "../store/workspace";
 import { assertEqual, describe, it } from "./test-harness";
 
 const { decidePermission } = HoxiPermissionsPlugin as typeof HoxiPermissionsPlugin &
@@ -129,3 +134,47 @@ describe("permission command chains", () => {
   });
 });
 
+
+describe("auto-approve dock stability", () => {
+  const request = (id: string) =>
+    ({ id, sessionID: "ses_dock_test", permission: "bash", patterns: ["ls"] }) as unknown as PermissionRequest;
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  async function withReply(reply: typeof hoxiAPI.replyPermission, run: () => Promise<void>) {
+    const original = hoxiAPI.replyPermission;
+    hoxiAPI.replyPermission = reply;
+    setWorkspace("pendingPermissions", []);
+    try {
+      await run();
+    } finally {
+      hoxiAPI.replyPermission = original;
+      setWorkspace("pendingPermissions", []);
+    }
+  }
+
+  it("does not dock a request that upstream already answered (404)", async () => {
+    await withReply(async () => {
+      throw new Error('HTTP 404: {"_tag":"PermissionNotFoundError"}');
+    }, async () => {
+      handleIncomingPermissionRequest(request("per_dock_gone"));
+      await settle();
+      assertEqual(workspace.pendingPermissions.length, 0);
+    });
+  });
+
+  it("ignores a stale watchdog snapshot of an already-resolved request", async () => {
+    let replies = 0;
+    await withReply(async () => {
+      replies++;
+    }, async () => {
+      handleIncomingPermissionRequest(request("per_dock_stale"));
+      await settle();
+      markPermissionResolved("per_dock_replied");
+      handleIncomingPermissionRequest(request("per_dock_stale"));
+      handleIncomingPermissionRequest(request("per_dock_replied"));
+      await settle();
+      assertEqual(replies, 1);
+      assertEqual(workspace.pendingPermissions.length, 0);
+    });
+  });
+});

@@ -1,5 +1,5 @@
 // web/src/components/timeline/ToolCard.tsx
-import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, Show, untrack } from "solid-js";
 import { RotateCcw } from "lucide-solid";
 import {
   extractChildSubagentSessionId,
@@ -36,6 +36,10 @@ import {
 
 // Silence shorter than this is normal model latency, not worth flagging.
 const RUNNER_IDLE_HINT_SECONDS = 15;
+// Short commands finish before this; mounting their preview only flashed a block.
+const ROLLING_PREVIEW_DELAY_SECONDS = 0.6;
+// Keeps the last lines mounted while the drawer collapses (--motion-move).
+const ROLLING_PREVIEW_RELEASE_MS = 280;
 
 export { extractTargetFile, kiloToolIconName, processCarriageReturns };
 
@@ -85,9 +89,23 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
   );
 
   // Rolling 5 lines of shell output while running & collapsed (ported from Kilo ShellRollingResults)
-  const rollingShellLines = createMemo(() =>
-    isShell() && isRunning() && !expanded() ? extractRollingShellLines(props.part.state) : []
+  const isRollingPreviewDue = createMemo(
+    () => isShell() && isRunning() && !expanded() && elapsed() >= ROLLING_PREVIEW_DELAY_SECONDS
   );
+  const rollingShellLines = createMemo(() =>
+    isRollingPreviewDue() ? extractRollingShellLines(props.part.state) : []
+  );
+  const [rollingHold, setRollingHold] = createSignal<string[]>([]);
+  createEffect(() => {
+    const lines = rollingShellLines();
+    if (lines.length > 0) {
+      setRollingHold(lines);
+      return;
+    }
+    if (untrack(rollingHold).length === 0) return;
+    const timer = setTimeout(() => setRollingHold([]), ROLLING_PREVIEW_RELEASE_MS);
+    onCleanup(() => clearTimeout(timer));
+  });
 
   const loadedFiles = createMemo(() => (isRead() ? resolveLoadedContextFiles(props.part) : []));
   const toolArgPills = createMemo(() => resolveToolArgPills(props.part));
@@ -451,7 +469,11 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
         </Show>
 
         {/* Collapsible / Live Body Container (only bordered when visible) */}
-        <Show when={hasBody() || (everExpanded() && !isSubagentPopoverMode())}>
+        <Show
+          when={
+            hasBody() || rollingHold().length > 0 || (everExpanded() && !isSubagentPopoverMode())
+          }
+        >
           <div
             class="hoxi-drawer-grid"
             data-open={hasBody() ? "true" : "false"}
@@ -460,18 +482,18 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
             <div class="min-h-0 overflow-hidden">
               <div class="mt-1 ml-3 overflow-hidden border-l-2 border-[var(--border-subtle)] pl-3">
                 {/* Kilo ShellRollingResults: Live 5-line rolling output preview while bash command is running & collapsed */}
-                <Show when={isShell() && isRunning() && !expanded() && rollingShellLines().length > 0}>
+                <Show when={!expanded() && rollingHold().length > 0}>
                   <div
                     ref={rollingShellRef}
                     onClick={() => setExpanded(true)}
-                    class="bg-[#0d1117]/95 px-3.5 py-2 font-mono text-[12px] leading-[1.55] text-[#c9d1d9] max-h-[104px] overflow-hidden cursor-pointer relative"
+                    class="rounded-md bg-[var(--bg-code)] px-3.5 py-2 font-mono text-[12px] leading-[1.55] text-[var(--text-secondary)] max-h-[104px] overflow-hidden cursor-pointer relative"
                     style={{
                       "-webkit-mask-image":
                         "linear-gradient(to bottom, transparent 0%, black 24%, black 100%)",
                       "mask-image": "linear-gradient(to bottom, transparent 0%, black 24%, black 100%)",
                     }}
                   >
-                    <For each={rollingShellLines()}>
+                    <For each={rollingHold()}>
                       {(line) => <div class="truncate kilo-rolling-row">{line || " "}</div>}
                     </For>
                   </div>
