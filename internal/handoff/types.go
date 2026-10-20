@@ -265,3 +265,30 @@ func asString(v interface{}) string {
 	}
 	return ""
 }
+
+// ImportedSessionTitlePrefixes returns the SQL LIKE prefix patterns used to tag
+// sessions imported via external CLI handoff, so OpenCode scanners and Daily Pulse
+// metrics can exclude them from native session counts.
+func ImportedSessionTitlePrefixes() []string {
+	return []string{
+		"[Grok CLI]%",
+		"[Claude Code]%",
+		"[Codex%",
+		"[Gemini%",
+		"[Antigravity]%",
+		"[CodeBuddy]%",
+		"[Trae]%",
+		"[Qoder]%",
+		"[OpenCode%",
+	}
+}
+
+// SQLNotImportedTitleClause builds a conjunction of `<column> NOT LIKE '<prefix>'` clauses.
+func SQLNotImportedTitleClause(column string) string {
+	prefixes := ImportedSessionTitlePrefixes()
+	clauses := make([]string, 0, len(prefixes))
+	for _, p := range prefixes {
+		clauses = append(clauses, column+" NOT LIKE '"+p+"'")
+	}
+	return strings.Join(clauses, " AND ")
+}

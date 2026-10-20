@@ -4,17 +4,48 @@ import type { PermissionRequest, SessionInfo, SessionRuntime } from "./sse-types
 
 export { getGatewayToken, requestJSON, setGatewayToken };
 
+export const RUNNER_RUNTIMES = [
+  "antigravity",
+  "claude-code",
+  "codebuddy",
+  "qoder",
+] as const;
+
+export type RunnerRuntimeID = (typeof RUNNER_RUNTIMES)[number];
+
+const RUNNER_SESSION_PREFIX_MAP: ReadonlyArray<[string, RunnerRuntimeID]> = [
+  ["ses_agy_", "antigravity"],
+  ["ses_cld_", "claude-code"],
+  ["ses_cbd_", "codebuddy"],
+  ["ses_qdr_", "qoder"],
+];
+
+const RUNNER_AUTH_MODE_SET = new Set<string>([
+  "antigravity-runner",
+  "claude-runner",
+  "codebuddy-runner",
+  "qoder-runner",
+]);
+
 const knownRunnerSessionIDs = new Set<string>();
+
+export function inferRunnerRuntimeFromSessionID(
+  sessionID?: string | null
+): RunnerRuntimeID | null {
+  if (!sessionID) return null;
+  for (const [prefix, runtime] of RUNNER_SESSION_PREFIX_MAP) {
+    if (sessionID.startsWith(prefix)) return runtime;
+  }
+  return null;
+}
+
+export function isRunnerAuthMode(authMode?: string | null): boolean {
+  return Boolean(authMode && RUNNER_AUTH_MODE_SET.has(authMode));
+}
 
 export function isRunnerSessionID(sessionID?: string | null): boolean {
   if (!sessionID) return false;
-  if (
-    sessionID.startsWith("ses_agy_") ||
-    sessionID.startsWith("ses_cld_") ||
-    sessionID.startsWith("ses_cbd_") ||
-    sessionID.startsWith("ses_qdr_") ||
-    sessionID.startsWith("ses_hoxi_")
-  ) {
+  if (inferRunnerRuntimeFromSessionID(sessionID) || sessionID.startsWith("ses_hoxi_")) {
     return true;
   }
   return knownRunnerSessionIDs.has(sessionID);

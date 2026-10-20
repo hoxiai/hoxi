@@ -17,7 +17,7 @@ import (
 
 const grokUpstreamBaseURL = "https://cli-chat-proxy.grok.com"
 
-var grokBridgeTransport = &http.Transport{
+var grokBridgeTransport http.RoundTripper = &http.Transport{
 	Proxy: http.ProxyFromEnvironment,
 	DialContext: (&net.Dialer{
 		Timeout:   10 * time.Second,
@@ -283,7 +283,7 @@ func (g *Service) handleGrokCLIBridge(w http.ResponseWriter, r *http.Request) {
 
 	if len(rawBody) > 0 {
 		var payload map[string]interface{}
-		if json.Unmarshal(rawBody, &payload) == nil {
+		if json.Unmarshal(rawBody, &payload) == nil && payload != nil {
 			if m, ok := payload["model"].(string); ok && strings.TrimSpace(m) != "" {
 				modelName = strings.TrimSpace(m)
 			}

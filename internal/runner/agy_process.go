@@ -2,8 +2,6 @@ package runner
 
 import (
 	"bufio"
-	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,101 +18,19 @@ import (
 )
 
 func geminiHomeDir() string {
-	if env := strings.TrimSpace(os.Getenv("GEMINI_HOME")); env != "" {
-		return filepath.Clean(env)
-	}
-	home, _ := os.UserHomeDir()
-	if home == "" {
-		return ""
-	}
-	return filepath.Join(home, ".gemini")
+	return agentcli.GeminiHomeDir()
 }
 
 func ResolveAgyBinary() string {
-	if gRoot := geminiHomeDir(); gRoot != "" {
-		candidate := filepath.Join(gRoot, "bin", "agy")
-		if st, err := os.Stat(candidate); err == nil && !st.IsDir() {
-			return candidate
-		}
-		if os.Getenv("GEMINI_HOME") != "" || os.Getenv("ANTIGRAVITY_HOME") != "" {
-			return ""
-		}
-	}
-	if p, err := exec.LookPath("agy"); err == nil {
-		return p
-	}
-	if home, _ := os.UserHomeDir(); home != "" {
-		for _, rel := range []string{".local/bin/agy", ".gemini/bin/agy"} {
-			candidate := filepath.Join(home, rel)
-			if st, err := os.Stat(candidate); err == nil && !st.IsDir() {
-				return candidate
-			}
-		}
-	}
-	for _, sysPath := range []string{"/opt/homebrew/bin/agy", "/usr/local/bin/agy"} {
-		if st, err := os.Stat(sysPath); err == nil && !st.IsDir() {
-			return sysPath
-		}
-	}
-	return ""
+	return agentcli.ResolveAgyBinary()
 }
 
 func ResolveClaudeBinary() string {
-	if p, err := exec.LookPath("claude"); err == nil {
-		return p
-	}
-	if home, _ := os.UserHomeDir(); home != "" {
-		candidate := filepath.Join(home, ".local", "bin", "claude")
-		if st, err := os.Stat(candidate); err == nil && !st.IsDir() {
-			return candidate
-		}
-	}
-	for _, sysPath := range []string{"/opt/homebrew/bin/claude", "/usr/local/bin/claude"} {
-		if st, err := os.Stat(sysPath); err == nil && !st.IsDir() {
-			return sysPath
-		}
-	}
-	return ""
+	return agentcli.ResolveClaudeBinary()
 }
 
-var (
-	agyModelsMu          sync.Mutex
-	agyCachedBin         string
-	agyCachedTime        time.Time
-	agyCachedSlugs       []string
-	agyCachedDisplayMap  map[string]string
-	agyCachedReverseSlug map[string]string
-)
-
 func ParseAgyModelsOutput(raw string) (slugs []string, displayBySlug map[string]string, slugByDisplayLower map[string]string) {
-	displayBySlug = make(map[string]string)
-	slugByDisplayLower = make(map[string]string)
-	seen := make(map[string]bool)
-	for _, rawLine := range strings.Split(raw, "\n") {
-		segments := strings.Split(rawLine, "\r")
-		line := strings.TrimSpace(segments[len(segments)-1])
-		if line == "" || strings.Contains(line, "Fetching available models") {
-			continue
-		}
-		fields := strings.Fields(line)
-		if len(fields) < 2 {
-			continue
-		}
-		slug := strings.TrimSpace(fields[0])
-		if slug == "" || strings.ContainsAny(slug, " ()") || !strings.Contains(slug, "-") {
-			continue
-		}
-		display := strings.TrimSpace(strings.TrimPrefix(line, slug))
-		if !seen[slug] {
-			seen[slug] = true
-			slugs = append(slugs, slug)
-		}
-		if display != "" {
-			displayBySlug[slug] = display
-			slugByDisplayLower[strings.ToLower(display)] = slug
-		}
-	}
-	return slugs, displayBySlug, slugByDisplayLower
+	return agentcli.ParseAgyModelsOutput(raw)
 }
 
 func DiscoverAgyModels() ([]agentcli.ModelItem, map[string]string, map[string]string) {
@@ -122,32 +38,11 @@ func DiscoverAgyModels() ([]agentcli.ModelItem, map[string]string, map[string]st
 }
 
 func DiscoverAgyModelsWithRefresh(forceRefresh bool) ([]agentcli.ModelItem, map[string]string, map[string]string) {
-	agyBin := ResolveAgyBinary()
-	if agyBin == "" {
+	slugs, dMap, rMap := agentcli.DiscoverAgyCLIModels(forceRefresh)
+	if len(slugs) == 0 {
 		return nil, nil, nil
 	}
-	agyModelsMu.Lock()
-	defer agyModelsMu.Unlock()
-	if !forceRefresh && agyCachedBin == agyBin && len(agyCachedSlugs) > 0 && time.Since(agyCachedTime) < 10*time.Minute {
-		return buildAgyModelItems(agyCachedSlugs, agyCachedDisplayMap), agyCachedDisplayMap, agyCachedReverseSlug
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, agyBin, "models")
-	cmd.WaitDelay = time.Second
-	out, err := cmd.Output()
-	if err != nil && len(bytes.TrimSpace(out)) == 0 {
-		return buildAgyModelItems(agyCachedSlugs, agyCachedDisplayMap), agyCachedDisplayMap, agyCachedReverseSlug
-	}
-	slugs, dMap, rMap := ParseAgyModelsOutput(string(out))
-	if len(slugs) > 0 {
-		agyCachedBin = agyBin
-		agyCachedTime = time.Now()
-		agyCachedSlugs = slugs
-		agyCachedDisplayMap = dMap
-		agyCachedReverseSlug = rMap
-	}
-	return buildAgyModelItems(agyCachedSlugs, agyCachedDisplayMap), agyCachedDisplayMap, agyCachedReverseSlug
+	return buildAgyModelItems(slugs, dMap), dMap, rMap
 }
 
 func splitAgyModelEffortSuffix(slug string) (base, suffixEffort string) {
@@ -259,15 +154,9 @@ func buildAgyModelItems(slugs []string, displayBySlug map[string]string) []agent
 
 func DiscoverClaudeModels() []agentcli.ModelItem {
 	slugs := claudeconfig.Models()
-	friendly := map[string]string{
-		"claude-opus-5-5":           "Claude Opus 5.5",
-		"claude-sonnet-4-6":         "Claude Sonnet 4.6",
-		"claude-opus-4-6":           "Claude Opus 4.6",
-		"claude-haiku-4-5-20251001": "Claude Haiku 4.5",
-	}
 	items := make([]agentcli.ModelItem, 0, len(slugs))
 	for _, s := range slugs {
-		name := friendly[s]
+		name := agentcli.FormatClaudeModelName(s)
 		if name == "" {
 			name = s
 		}
@@ -327,9 +216,7 @@ func ValidateWorktreeDir(worktreePath, projectRoot string) error {
 
 func agySupportedEffortsForBase(base string) []string {
 	lowerBase := strings.ToLower(strings.TrimSpace(base))
-	agyModelsMu.Lock()
-	cached := append([]string(nil), agyCachedSlugs...)
-	agyModelsMu.Unlock()
+	cached := agentcli.CachedAgyCLISlugs()
 	var found []string
 	for _, s := range cached {
 		if b, suf := splitAgyModelEffortSuffix(s); suf != "" && strings.EqualFold(b, lowerBase) {

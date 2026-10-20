@@ -4,6 +4,8 @@ import type { MessageInfo, SessionStatus } from "../../services/sse-types";
 import {
   computeProviderHealth,
   findBestFallbackModel,
+  getEffectivePoolCandidates,
+  isModelFree,
   isRunnerStallError,
   isUserAbortError,
   openDiagnostics,
@@ -41,11 +43,20 @@ export function AssistantErrorCard(props: { info: MessageInfo }) {
     providerID() && !isStall() ? findBestFallbackModel(providerID()) : null
   );
 
-  const hasFreeOpenCodeModel = createMemo(() =>
-    workspace.providers.some(
-      (p) => p.id === "opencode" && p.models && p.models["deepseek-v4.1-flash-free"]
-    )
-  );
+  const freeFallbackModel = createMemo(() => {
+    const poolFree = getEffectivePoolCandidates("free")[0];
+    if (poolFree?.providerID && poolFree?.modelID) {
+      return { providerID: poolFree.providerID, modelID: poolFree.modelID };
+    }
+    for (const p of workspace.providers) {
+      for (const [mid, mInfo] of Object.entries(p.models || {})) {
+        if (isModelFree(p.id, mid, mInfo)) {
+          return { providerID: p.id, modelID: mid };
+        }
+      }
+    }
+    return null;
+  });
 
   return (
     <Show when={props.info.error && !isUserAbortError(props.info)}>
@@ -141,23 +152,19 @@ export function AssistantErrorCard(props: { info: MessageInfo }) {
                 when={
                   !isStall() &&
                   !recommendedFallback() &&
-                  hasFreeOpenCodeModel() &&
+                  freeFallbackModel() &&
                   !(
-                    workspace.selectedModel?.providerID === "opencode" &&
-                    workspace.selectedModel?.modelID === "deepseek-v4.1-flash-free"
+                    workspace.selectedModel?.providerID === freeFallbackModel()!.providerID &&
+                    workspace.selectedModel?.modelID === freeFallbackModel()!.modelID
                   )
                 }
               >
                 <button
                   type="button"
                   onClick={() => {
-                    selectModel(
-                      {
-                        providerID: "opencode",
-                        modelID: "deepseek-v4.1-flash-free",
-                      },
-                      false
-                    );
+                    const free = freeFallbackModel();
+                    if (!free) return;
+                    selectModel(free, false);
                     void retryLastUserPrompt(props.info.sessionID);
                   }}
                   class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--accent-border)] bg-[var(--accent-surface)] px-2.5 py-1 text-[11px] font-medium text-[var(--accent-text)] hover:opacity-90 transition-opacity cursor-pointer"

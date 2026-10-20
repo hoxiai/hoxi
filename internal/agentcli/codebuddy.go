@@ -122,6 +122,16 @@ func stripVendorSuffix(name string) string {
 	return s
 }
 
+func stableCodeBuddyTierSlugs() []string {
+	return []string{
+		"default-model",
+		"fast-model",
+		"balanced-model",
+		"primary-model",
+		"deep-model",
+	}
+}
+
 func defaultCodeBuddyModelSlugs() []string {
 	return []string{
 		"default-model",
@@ -409,7 +419,8 @@ func DiscoverCodeBuddyModelsWithRefresh(forceRefresh bool) []ModelItem {
 	out, _ := cmd.Output()
 	parsed := ParseCodeBuddyModelsOutput(string(out))
 
-	// Combine default curated order + CLI --help models (filtered by prefix) + custom user models
+	// Prioritize live CLI --help models, custom user models, and stable tier aliases;
+	// fall back to the static slug list only when live CLI output is unavailable.
 	var slugs []string
 	seen := make(map[string]bool)
 	addSlug := func(s string, allowFiltered bool) {
@@ -423,11 +434,18 @@ func DiscoverCodeBuddyModelsWithRefresh(forceRefresh bool) []ModelItem {
 		seen[s] = true
 		slugs = append(slugs, s)
 	}
-	for _, s := range defaultCodeBuddyModelSlugs() {
-		addSlug(s, false)
-	}
-	for _, s := range parsed {
-		addSlug(s, false)
+	if len(parsed) > 0 {
+		addSlug("default-model", false)
+		for _, s := range parsed {
+			addSlug(s, false)
+		}
+		for _, s := range stableCodeBuddyTierSlugs() {
+			addSlug(s, false)
+		}
+	} else {
+		for _, s := range defaultCodeBuddyModelSlugs() {
+			addSlug(s, false)
+		}
 	}
 	for _, s := range readCodeBuddyCustomModels() {
 		addSlug(s, true)
@@ -513,6 +531,17 @@ func CodeBuddyReasoningEffort(modelID, requested string) string {
 		slug = "default-model"
 	}
 	spec := inferCodeBuddyModelSpec(slug)
+	if bin := ResolveCodeBuddyBinary(); bin != "" {
+		if pkgSpec, ok := readCodeBuddyProductCatalog(bin)[slug]; ok {
+			spec.reasoning = pkgSpec.reasoning
+			if len(pkgSpec.efforts) > 0 {
+				spec.efforts = pkgSpec.efforts
+			}
+			if pkgSpec.defaultEffort != "" {
+				spec.defaultEffort = pkgSpec.defaultEffort
+			}
+		}
+	}
 	if !spec.reasoning {
 		return ""
 	}

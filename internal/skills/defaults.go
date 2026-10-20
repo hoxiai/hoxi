@@ -6,7 +6,8 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"strings"
+
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
 )
 
 //go:embed defaults/*/SKILL.md
@@ -15,11 +16,7 @@ var defaultSkillFiles embed.FS
 // DefaultUserDir is the Hoxi-managed directory that holds bundled skills.
 // Hoxi registers it in the engine config so every project can discover it.
 func DefaultUserDir() string {
-	home, err := os.UserHomeDir()
-	if err != nil || strings.TrimSpace(home) == "" {
-		return ""
-	}
-	return filepath.Join(home, ".hoxi", "skills")
+	return hoxipaths.Join("skills")
 }
 
 // SeedDefaults installs bundled skills into DefaultUserDir and never

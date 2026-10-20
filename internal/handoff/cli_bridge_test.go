@@ -1,6 +1,12 @@
 package handoff
 
 import (
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -50,5 +56,39 @@ func TestExtractAntigravityUserPromptDecimalModelNames(t *testing.T) {
 	_, model2 := extractAntigravityUserPrompt(raw2)
 	if model2 != "gemini-3.8-flash-high" {
 		t.Fatalf("expected model 'gemini-3.8-flash-high', got %q", model2)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
+}
+
+func TestGrokCLIBridgeHandlesNullBodyWithoutPanic(t *testing.T) {
+	grokHome := t.TempDir()
+	t.Setenv("GROK_HOME", grokHome)
+	if err := os.WriteFile(filepath.Join(grokHome, "auth.json"), []byte(`{"default":{"key":"grok-test-key"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	origTransport := grokBridgeTransport
+	grokBridgeTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusBadRequest,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"error":"invalid body"}`)),
+		}, nil
+	})
+	t.Cleanup(func() {
+		grokBridgeTransport = origTransport
+	})
+
+	svc := NewService(0, "", t.TempDir(), nil)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/hoxi/bridge/grok-cli/v1/chat/completions", strings.NewReader("null"))
+	svc.handleGrokCLIBridge(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400 from stub upstream, got %d: %s", rec.Code, rec.Body.String())
 	}
 }

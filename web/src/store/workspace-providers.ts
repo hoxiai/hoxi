@@ -2,6 +2,7 @@
 import { t } from "../i18n";
 import {
   hoxiAPI,
+  isRunnerAuthMode,
   runnerAPI,
   type LocalCLIStatusItem,
   type ProviderInfo,
@@ -12,10 +13,14 @@ import { syncOfficialModelPricing } from "./leaderboard-state";
 import {
   AUTO_PROVIDER_ID,
   buildAutoVirtualProvider,
+  isNonChatUtilityModelID,
   syncAutoPoolsFromServer,
   type FreeTierGuideItem,
 } from "./auto-models";
-import { isImportedOpenCodeProvider, splitAgyModelEffortSuffix } from "./provider-catalog";
+import {
+  isImportedOpenCodeProvider,
+  splitAgyModelEffortSuffix,
+} from "./provider-catalog";
 import { parseModelString, updateSessionAI } from "./session-ai";
 import { getComposerSkill, selectComposerSkill, setComposerSkillNotice } from "./skills";
 import {
@@ -426,16 +431,10 @@ export async function connectProviderWithKey(opts: {
               ...(existingProvider.models || {}),
               [opts.customModelID.trim()]: {
                 name: opts.customModelID.trim(),
-                attachment: !/embedding|embed|rerank|bge-|whisper|tts|speech|moderation/i.test(
-                  opts.customModelID.trim()
-                ),
-                reasoning: !/embedding|embed|rerank|bge-|whisper|tts|speech|moderation/i.test(
-                  opts.customModelID.trim()
-                ),
+                attachment: !isNonChatUtilityModelID(opts.customModelID),
+                reasoning: !isNonChatUtilityModelID(opts.customModelID),
                 modalities: {
-                  input: !/embedding|embed|rerank|bge-|whisper|tts|speech|moderation/i.test(
-                    opts.customModelID.trim()
-                  )
+                  input: !isNonChatUtilityModelID(opts.customModelID)
                     ? ["text", "image"]
                     : ["text"],
                   output: ["text"],
@@ -612,11 +611,7 @@ export async function applyFreeTierGuideProvider(item: FreeTierGuideItem): Promi
 }
 
 export async function syncLocalCLIModel(tool: LocalCLIStatusItem) {
-  const isRunner =
-    tool.authMode === "antigravity-runner" ||
-    tool.authMode === "claude-runner" ||
-    tool.authMode === "codebuddy-runner" ||
-    tool.authMode === "qoder-runner";
+  const isRunner = isRunnerAuthMode(tool.authMode);
   let providerID = tool.providerID;
   if (!isRunner) {
     const result = await hoxiAPI.importLocalCLI(tool.id);

@@ -48,3 +48,28 @@ func TestEngineDirs(t *testing.T) {
 		t.Fatalf("EngineAuthPath() = %s, want %s", got, want)
 	}
 }
+
+func TestHomeOverrideServerURLAndProtectedStateFiles(t *testing.T) {
+	customHome := t.TempDir()
+	t.Setenv("HOXI_HOME", customHome)
+	if got := Home(); got != customHome {
+		t.Fatalf("Home() with HOXI_HOME = %s, want %s", got, customHome)
+	}
+	if got, want := Join("models.json"), filepath.Join(customHome, "models.json"); got != want {
+		t.Fatalf("Join(models.json) = %s, want %s", got, want)
+	}
+
+	t.Setenv("HOXI_SERVER_URL", "https://mirror.hoxi.ai/")
+	if got := ServerBaseURL(); got != "https://mirror.hoxi.ai" {
+		t.Fatalf("ServerBaseURL() = %s, want https://mirror.hoxi.ai", got)
+	}
+
+	for _, name := range []string{"models.json", "auth.json", "auto-pools.json", "workspaces.json", "device-id", "telemetry.json"} {
+		if !IsProtectedStateFile(name) {
+			t.Fatalf("expected %s to be protected state file", name)
+		}
+	}
+	if IsProtectedStateFile("notes.txt") {
+		t.Fatalf("expected notes.txt not to be protected state file")
+	}
+}

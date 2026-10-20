@@ -14,17 +14,12 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/agentcli"
 )
 
 func geminiRootDir() string {
-	if env := strings.TrimSpace(os.Getenv("GEMINI_HOME")); env != "" {
-		return filepath.Clean(env)
-	}
-	home, _ := os.UserHomeDir()
-	if home == "" {
-		return ""
-	}
-	return filepath.Join(home, ".gemini")
+	return agentcli.GeminiHomeDir()
 }
 
 func antigravityDataDirs() []string {

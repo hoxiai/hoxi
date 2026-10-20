@@ -17,6 +17,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
 )
 
 // EnrichSystemPath ensures macOS GUI launches (Finder / Dock / Spotlight) include
@@ -38,9 +40,11 @@ func EnrichSystemPath() {
 		exeDir := filepath.Dir(exe)
 		extra = append(extra, exeDir, filepath.Clean(filepath.Join(exeDir, "..", "Resources")))
 	}
+	if binDir := hoxipaths.BinDir(); binDir != "" {
+		extra = append(extra, binDir)
+	}
 	if home, err := os.UserHomeDir(); err == nil && home != "" {
 		extra = append(extra,
-			filepath.Join(home, ".hoxi", "bin"),
 			filepath.Join(home, ".opencode", "bin"),
 			filepath.Join(home, ".bun", "bin"),
 			filepath.Join(home, ".local", "bin"),
@@ -130,9 +134,11 @@ func FindBinary(configured string) string {
 		)
 	}
 
+	if binDir := hoxipaths.BinDir(); binDir != "" {
+		candidates = append(candidates, filepath.Join(binDir, binName))
+	}
 	if home, err := os.UserHomeDir(); err == nil && home != "" {
 		candidates = append(candidates,
-			filepath.Join(home, ".hoxi", "bin", binName),
 			filepath.Join(home, ".opencode", "bin", binName),
 			filepath.Join(home, ".bun", "bin", binName),
 			filepath.Join(home, ".local", "bin", binName),
@@ -231,11 +237,10 @@ func OfficialReleaseURLs(goos, goarch string) (urls []string, isZip bool, err er
 }
 
 func downloadOfficialOpenCode(ctx context.Context, logger *slog.Logger) (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
+	binDir := hoxipaths.BinDir()
+	if binDir == "" {
 		return "", errors.New("cannot determine user home directory")
 	}
-	binDir := filepath.Join(home, ".hoxi", "bin")
 	if err := os.MkdirAll(binDir, 0o755); err != nil {
 		return "", err
 	}

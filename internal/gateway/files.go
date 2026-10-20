@@ -19,6 +19,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
 )
 
 const (
@@ -665,7 +667,7 @@ func isSensitiveCredentialPath(targetPath string) bool {
 	slashPath := strings.ToLower(filepath.ToSlash(resolved))
 	base := strings.ToLower(filepath.Base(resolved))
 
-	if strings.Contains(slashPath, "/.hoxi/") && (base == "models.json" || base == "auth.json") {
+	if strings.Contains(slashPath, "/.hoxi/") && hoxipaths.IsProtectedStateFile(base) {
 		return true
 	}
 	if strings.Contains(slashPath, "/opencode/") && (base == "auth.json" || base == "config.json" || base == "opencode.json" || base == "opencode.jsonc") {

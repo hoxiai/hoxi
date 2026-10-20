@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
 )
 
 type cachedEntry struct {
@@ -28,11 +30,9 @@ type Service struct {
 }
 
 func NewService(baseURL string, client *http.Client) *Service {
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	if baseURL == "" {
-		baseURL = strings.TrimRight(os.Getenv("HOXI_SERVER_URL"), "/")
-	}
-	if baseURL == "" {
-		baseURL = "https://hoxi.ai"
+		baseURL = hoxipaths.ServerBaseURL()
 	}
 	if client == nil {
 		client = &http.Client{
@@ -272,11 +272,7 @@ func (s *Service) fallbackGateways(lang string) *GatewaysResponse {
 }
 
 func pricingDiskCachePath() string {
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		return ""
-	}
-	return filepath.Join(home, ".hoxi", "model-pricing-cache.json")
+	return hoxipaths.Join("model-pricing-cache.json")
 }
 
 func (s *Service) GetModelPricing(forceRefresh bool) (*ModelPricingResponse, error) {

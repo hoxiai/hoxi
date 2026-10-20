@@ -151,7 +151,7 @@ func StartDaemonWithBin(
 	child.Env = append(os.Environ(),
 		"OPENCODE_SERVER_HOSTNAME=127.0.0.1",
 		"OPENCODE_SERVER_PORT="+strconv.Itoa(port),
-		"OPENCODE_SERVER_USERNAME=opencode",
+		"OPENCODE_SERVER_USERNAME="+ocapi.Username,
 		"OPENCODE_SERVER_PASSWORD="+password,
 		"OPENCODE_DISABLE_CONFIG_DEPENDENCY_INSTALL=1",
 		"NO_PROXY=127.0.0.1,localhost",

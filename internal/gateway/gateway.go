@@ -377,29 +377,7 @@ func (g *Gateway) registerRoutes(distFS fs.FS) {
 	}
 
 	// OpenCode API prefixes
-	openCodePrefixes := []string{
-		"/session",
-		"/event",
-		"/global",
-		"/permission",
-		"/question",
-		"/pty",
-		"/vcs",
-		"/file",
-		"/find",
-		"/config",
-		"/command",
-		"/agent",
-		"/lsp",
-		"/mcp",
-		"/formatter",
-		"/skill",
-		"/experimental",
-		"/path",
-		"/project",
-		"/auth",
-	}
-	for _, prefix := range openCodePrefixes {
+	for _, prefix := range openCodeProxyPrefixes {
 		g.mux.Handle(prefix, g.proxy)
 		g.mux.Handle(prefix+"/", g.proxy)
 	}

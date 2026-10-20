@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
 )
 
 const settingsFile = "telemetry.json"
@@ -36,11 +38,7 @@ func envDisabled() bool {
 }
 
 func settingsPath() string {
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		return ""
-	}
-	return filepath.Join(home, ".hoxi", settingsFile)
+	return hoxipaths.Join(settingsFile)
 }
 
 // Enabled reports whether a launch event may be sent. Missing, unreadable or

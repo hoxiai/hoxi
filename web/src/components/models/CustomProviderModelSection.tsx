@@ -10,7 +10,7 @@ import {
   Sparkles,
   Trash2,
 } from "lucide-solid";
-import type { CustomProviderModelDraft } from "../../store/workspace";
+import { isNonChatUtilityModelID, type CustomProviderModelDraft } from "../../store/workspace";
 import { t } from "../../i18n";
 import { AddCustomModelModal, FetchedModelsModal } from "./CustomProviderModelModals";
 
@@ -38,8 +38,7 @@ interface CustomProviderModelSectionProps {
 }
 
 export function guessFetchedModelDraft(rm: { id: string; name: string }): CustomProviderModelDraft {
-  const lower = rm.id.toLowerCase().trim();
-  const isNonChat = /embedding|embed|rerank|bge-|whisper|tts|speech|moderation/.test(lower);
+  const isNonChat = isNonChatUtilityModelID(rm.id);
   return {
     id: rm.id,
     name: rm.name || rm.id,

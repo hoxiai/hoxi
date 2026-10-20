@@ -467,7 +467,9 @@ func userSkillRoots() []labeledRoot {
 		add(filepath.Join(home, ".opencode"), "~/.opencode")
 		add(filepath.Join(home, ".claude"), "~/.claude")
 		add(filepath.Join(home, ".agents"), "~/.agents")
-		add(filepath.Join(home, ".hoxi", "skills"), "~/.hoxi/skills")
+		if dir := DefaultUserDir(); dir != "" {
+			add(dir, "~/.hoxi/skills")
+		}
 		add(filepath.Join(home, ".gemini"), "~/.gemini")
 	}
 	return roots

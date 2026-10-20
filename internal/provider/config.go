@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
 	"github.com/hoxiai/hoxi/internal/skills"
 )
 
@@ -35,11 +36,7 @@ func (g *Service) workspaceHoxiModelsPath() string {
 }
 
 func userHoxiModelsPath() string {
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		return ""
-	}
-	return filepath.Join(home, ".hoxi", "models.json")
+	return hoxipaths.Join("models.json")
 }
 
 func openCodeConfigDir() string {
@@ -653,7 +650,7 @@ func (g *Service) handleGlobalConfigProxy(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var cfg map[string]interface{}
-	if json.Unmarshal(body, &cfg) == nil {
+	if json.Unmarshal(body, &cfg) == nil && cfg != nil {
 		doc := g.loadHoxiConfigDoc()
 		overlayHoxiGlobalConfig(cfg, doc)
 		if provMap, ok := cfg["provider"].(map[string]interface{}); ok {

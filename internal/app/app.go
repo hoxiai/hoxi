@@ -25,6 +25,7 @@ import (
 	"github.com/hoxiai/hoxi/internal/cli"
 	"github.com/hoxiai/hoxi/internal/diagnostics"
 	"github.com/hoxiai/hoxi/internal/gateway"
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
 	"github.com/hoxiai/hoxi/internal/opencode"
 	"github.com/hoxiai/hoxi/internal/statusbar"
 	"github.com/hoxiai/hoxi/internal/telemetry"
@@ -70,14 +71,14 @@ func ResolveIdentity(variant, exePath string) AppIdentity {
 			Variant:           "release",
 			Title:             "Hoxi",
 			BundleID:          "ai.hoxi.desktop",
-			DefaultBridgeAddr: "127.0.0.1:5410",
+			DefaultBridgeAddr: hoxipaths.DefaultReleaseBridgeAddr,
 		}
 	}
 	return AppIdentity{
 		Variant:           "dev",
 		Title:             "Hoxi Dev",
 		BundleID:          "ai.hoxi.desktop.dev",
-		DefaultBridgeAddr: "127.0.0.1:5420",
+		DefaultBridgeAddr: hoxipaths.DefaultDevBridgeAddr,
 	}
 }
 

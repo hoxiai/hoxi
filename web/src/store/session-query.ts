@@ -2,7 +2,11 @@
 // Read-only session lookups (directory, busy/archived/deleted flags, runtime).
 // Leaf module (workspace-state + auto-models only) so every domain module can use
 // it without creating import cycles.
-import { isRunnerSessionID, resolveRunnerRuntimeForProvider } from "../services/api";
+import {
+  inferRunnerRuntimeFromSessionID,
+  isRunnerSessionID,
+  resolveRunnerRuntimeForProvider,
+} from "../services/api";
 import type { SessionInfo, SessionRuntime } from "../services/sse-types";
 import { AUTO_PROVIDER_ID, peekAutoModelTarget } from "./auto-models";
 import { workspace } from "./workspace-state";
@@ -80,9 +84,5 @@ export function sessionRuntimeForID(sessionID?: string | null): SessionRuntime {
   }
   const found = workspace.sessions.find((s) => s.id === sessionID);
   if (found?.runtime) return found.runtime;
-  if (sessionID.startsWith("ses_agy_")) return "antigravity";
-  if (sessionID.startsWith("ses_cld_")) return "claude-code";
-  if (sessionID.startsWith("ses_cbd_")) return "codebuddy";
-  if (sessionID.startsWith("ses_qdr_")) return "qoder";
-  return "opencode";
+  return inferRunnerRuntimeFromSessionID(sessionID) || "opencode";
 }

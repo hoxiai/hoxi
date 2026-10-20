@@ -36,6 +36,8 @@ import { getGatewayToken, requestJSON, setGatewayToken, withDir } from "./http";
 import { authAPI, leaderboardAPI, updaterAPI } from "./platform-api";
 import {
   forgetRunnerSession,
+  inferRunnerRuntimeFromSessionID,
+  isRunnerAuthMode,
   isRunnerPermissionID,
   isRunnerSessionID,
   registerRunnerSessions,
@@ -49,6 +51,8 @@ export { skillsAPI } from "./skills";
 export {
   authAPI,
   getGatewayToken,
+  inferRunnerRuntimeFromSessionID,
+  isRunnerAuthMode,
   isRunnerPermissionID,
   isRunnerSessionID,
   leaderboardAPI,

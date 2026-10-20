@@ -98,14 +98,7 @@ FROM (
   FROM session
   WHERE parent_id IS NULL
     AND (metadata IS NULL OR metadata NOT LIKE '%"hoxiConversation"%')
-    AND title NOT LIKE '[Grok CLI]%'
-    AND title NOT LIKE '[Claude Code]%'
-    AND title NOT LIKE '[Codex%'
-    AND title NOT LIKE '[Gemini%'
-    AND title NOT LIKE '[CodeBuddy]%'
-    AND title NOT LIKE '[Trae]%'
-    AND title NOT LIKE '[Qoder]%'
-    AND title NOT LIKE '[OpenCode%'
+    AND ` + SQLNotImportedTitleClause("title") + `
   ORDER BY time_updated DESC
   LIMIT 200
 ) s;`

@@ -15,6 +15,7 @@ import {
 import type { ProviderInfo } from "../../services/api";
 import {
   disconnectProvider,
+  getProviderSourceLabel,
   isCustomOrConfiguredProvider,
   isHoxiCustomProvider,
   isImportedOpenCodeProvider,
@@ -121,20 +122,7 @@ export default function ProviderCatalogTab() {
     setSubView("connect");
   };
 
-  const sourceLabel = (p: ProviderInfo) => {
-    if (p.source === "runner") {
-      if (p.id === "antigravity") return t("timeline.runtimeAntigravityLocal");
-      if (p.id === "codebuddy") return t("timeline.runtimeCodeBuddyLocal");
-      if (p.id === "qoder") return t("timeline.runtimeQoderLocal");
-      return t("timeline.runtimeClaudeCodeLocal");
-    }
-    if (isHoxiCustomProvider(p.id)) return t("models.sourceHoxi");
-    if (isImportedOpenCodeProvider(p.id)) return t("models.sourceOpenCode");
-    if (isCustomOrConfiguredProvider(p)) return t("models.sourceCustom");
-    if (p.source === "env") return t("models.sourceEnv");
-    if (p.source === "config") return t("models.sourceConfig");
-    return t("models.sourceApi");
-  };
+  const sourceLabel = (p: ProviderInfo) => getProviderSourceLabel(p);
 
   const onDisconnect = async (pid: string) => {
     if (busyID()) return;

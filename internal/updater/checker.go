@@ -7,13 +7,12 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"os"
 	"runtime"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/hoxiai/hoxi/internal/buildinfo"
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
 )
 
 type Checker struct {
@@ -27,18 +26,13 @@ type Checker struct {
 }
 
 func NewChecker(currentVersion string, logger *slog.Logger) *Checker {
-	serverURL := strings.TrimRight(os.Getenv("HOXI_SERVER_URL"), "/")
-	if serverURL == "" {
-		serverURL = "https://hoxi.ai"
-	}
-
 	if currentVersion == "" {
 		currentVersion = buildinfo.Version
 	}
 
 	return &Checker{
 		logger:         logger,
-		serverBaseURL:  serverURL,
+		serverBaseURL:  hoxipaths.ServerBaseURL(),
 		currentVersion: currentVersion,
 		httpClient: &http.Client{
 			Timeout: 15 * time.Second,
@@ -52,15 +46,8 @@ func (c *Checker) Check(ctx context.Context) (*UpdateCheckResult, error) {
 	currVer := c.currentVersion
 	c.mu.RUnlock()
 
-	osName := runtime.GOOS
-	if osName == "darwin" {
-		osName = "mac"
-	}
-
-	archName := runtime.GOARCH
-	if archName == "amd64" {
-		archName = "x64"
-	}
+	osName := hoxipaths.NormalizedPlatform(runtime.GOOS)
+	archName := hoxipaths.NormalizedArch(runtime.GOARCH)
 
 	apiURL := fmt.Sprintf("%s/api/hoxi/upgrade?package=desktop&os=%s&arch=%s&version=%s",
 		serverURL,

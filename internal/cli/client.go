@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/hoxiai/hoxi/internal/handoff"
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
 	"github.com/hoxiai/hoxi/internal/runner"
 )
 
@@ -82,7 +83,7 @@ func ConnectOrSpawn(
 	if strings.TrimSpace(preferredAddr) != "" {
 		candidates = append(candidates, strings.TrimSpace(preferredAddr))
 	}
-	for _, fallback := range []string{"127.0.0.1:5410", "127.0.0.1:5420"} {
+	for _, fallback := range []string{hoxipaths.DefaultReleaseBridgeAddr, hoxipaths.DefaultDevBridgeAddr} {
 		if fallback != strings.TrimSpace(preferredAddr) {
 			candidates = append(candidates, fallback)
 		}

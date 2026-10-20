@@ -11,13 +11,18 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"os"
 	"os/exec"
 	"runtime"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
 )
+
+func devicePlatform() string {
+	return fmt.Sprintf("%s-%s", hoxipaths.NormalizedPlatform(runtime.GOOS), hoxipaths.NormalizedArch(runtime.GOARCH))
+}
 
 type Service struct {
 	mu            sync.RWMutex
@@ -41,15 +46,10 @@ type authorization struct {
 }
 
 func NewService(logger *slog.Logger) *Service {
-	serverURL := strings.TrimRight(os.Getenv("HOXI_SERVER_URL"), "/")
-	if serverURL == "" {
-		serverURL = "https://hoxi.ai"
-	}
-
 	svc := &Service{
 		store:         NewTokenStore(),
 		logger:        logger,
-		serverBaseURL: serverURL,
+		serverBaseURL: hoxipaths.ServerBaseURL(),
 		launchBrowser: openBrowser,
 		httpClient: &http.Client{
 			Timeout: 10 * time.Second,
@@ -59,7 +59,7 @@ func NewService(logger *slog.Logger) *Service {
 	// 启动时从磁盘加载已有凭据
 	if stored, err := svc.store.Load(); err == nil && stored != nil {
 		svc.current = stored
-		go svc.verifyBackground(stored, serverURL, svc.generation)
+		go svc.verifyBackground(stored, svc.serverBaseURL, svc.generation)
 	}
 
 	return svc
@@ -188,7 +188,7 @@ func (s *Service) ExchangeToken(ctx context.Context, handoffToken, state string)
 	reqBody, _ := json.Marshal(map[string]string{
 		"handoffToken": handoffToken,
 		"state":        state,
-		"platform":     fmt.Sprintf("%s-%s", runtime.GOOS, runtime.GOARCH),
+		"platform":     devicePlatform(),
 	})
 
 	apiURL := fmt.Sprintf("%s/api/hoxi/device-tokens/authorize", baseURL)
@@ -314,7 +314,7 @@ func (s *Service) runPollWorker(attempt *authorization) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
-	platform := fmt.Sprintf("%s-%s", runtime.GOOS, runtime.GOARCH)
+	platform := devicePlatform()
 	pollURL := fmt.Sprintf("%s/api/hoxi/device-tokens/poll?state=%s&platform=%s",
 		attempt.baseURL, url.QueryEscape(attempt.state), url.QueryEscape(platform))
 

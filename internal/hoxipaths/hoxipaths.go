@@ -20,13 +20,82 @@ import (
 	"strings"
 )
 
-// Home returns ~/.hoxi, or "" when the user home directory is unknown.
+const (
+	// DefaultServerBaseURL is the canonical Hoxi cloud endpoint when HOXI_SERVER_URL is unset.
+	DefaultServerBaseURL = "https://hoxi.ai"
+	// DefaultReleaseBridgeAddr is the default loopback gateway address for release builds.
+	DefaultReleaseBridgeAddr = "127.0.0.1:5410"
+	// DefaultDevBridgeAddr is the default loopback gateway address for dev builds.
+	DefaultDevBridgeAddr = "127.0.0.1:5420"
+)
+
+var protectedStateFiles = []string{
+	"models.json",
+	"auto-pools.json",
+	"workspaces.json",
+	"auth.json",
+	"device-id",
+	"telemetry.json",
+}
+
+// Home returns ~/.hoxi (or $HOXI_HOME when set), or "" when the user home directory is unknown.
 func Home() string {
+	if custom := env("HOXI_HOME"); custom != "" {
+		return filepath.Clean(custom)
+	}
 	home, err := os.UserHomeDir()
 	if err != nil || strings.TrimSpace(home) == "" {
 		return ""
 	}
 	return filepath.Join(home, ".hoxi")
+}
+
+// Join returns filepath.Join(Home(), elem...), or "" when Home() is unknown.
+func Join(elem ...string) string {
+	return join(Home(), elem...)
+}
+
+// ServerBaseURL returns the configured Hoxi server base URL without a trailing slash.
+func ServerBaseURL() string {
+	if custom := strings.TrimRight(env("HOXI_SERVER_URL"), "/"); custom != "" {
+		return custom
+	}
+	return DefaultServerBaseURL
+}
+
+// NormalizedPlatform maps runtime.GOOS values to Hoxi API platform names.
+func NormalizedPlatform(goos string) string {
+	if goos == "darwin" {
+		return "mac"
+	}
+	return goos
+}
+
+// NormalizedArch maps runtime.GOARCH values to Hoxi API architecture names.
+func NormalizedArch(goarch string) string {
+	if goarch == "amd64" {
+		return "x64"
+	}
+	return goarch
+}
+
+// ProtectedStateFiles returns the filenames under ~/.hoxi that sandboxed child
+// processes and untrusted file readers must not overwrite or exfiltrate.
+func ProtectedStateFiles() []string {
+	out := make([]string, len(protectedStateFiles))
+	copy(out, protectedStateFiles)
+	return out
+}
+
+// IsProtectedStateFile reports whether baseName is a protected ~/.hoxi state file.
+func IsProtectedStateFile(baseName string) bool {
+	lower := strings.ToLower(strings.TrimSpace(baseName))
+	for _, f := range protectedStateFiles {
+		if lower == f {
+			return true
+		}
+	}
+	return false
 }
 
 // BinDir returns ~/.hoxi/bin, where Hoxi installs its managed binaries.

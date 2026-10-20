@@ -11,6 +11,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -117,9 +118,9 @@ type clipboardImageItem struct {
 	DataURL  string `json:"dataUrl"`
 }
 
-const maxClipboardImageBytes = 15 * 1024 * 1024
+const maxClipboardImageBytes = attachment.MaxAttachmentBytes
 
-const macPasteboardJXA = `
+var macPasteboardJXA = `
 ObjC.import("AppKit");
 const pb = $.NSPasteboard.generalPasteboard;
 const classes = $.NSArray.arrayWithObject($.NSURL.class);
@@ -150,7 +151,7 @@ if (files.length === 0) {
       }
     }
   }
-  if (pngData && pngData.length > 0 && pngData.length <= 15728640) {
+  if (pngData && pngData.length > 0 && pngData.length <= ` + strconv.Itoa(maxClipboardImageBytes) + `) {
     rawPngBase64 = ObjC.unwrap(pngData.base64EncodedStringWithOptions(0));
   }
 }

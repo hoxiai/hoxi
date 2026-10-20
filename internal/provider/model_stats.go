@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
 )
 
 // Model usage and quality statistics per provider/model (turn outcomes,
@@ -161,8 +163,7 @@ func newModelStatsStore(rootDir string) *modelStatsStore {
 }
 
 func resolveModelStatsFilePath(rootDir string) string {
-	if home, err := os.UserHomeDir(); err == nil && home != "" {
-		dir := filepath.Join(home, ".hoxi")
+	if dir := hoxipaths.Home(); dir != "" {
 		if err := os.MkdirAll(dir, 0o755); err == nil {
 			return filepath.Join(dir, "provider-telemetry.json")
 		}

@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
 )
 
 type Service struct {
@@ -45,11 +47,10 @@ func NewService(root string) *Service {
 }
 
 func DefaultRoot() string {
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		return filepath.Join(os.TempDir(), "hoxi-code-index")
+	if dir := hoxipaths.Join("code-index"); dir != "" {
+		return dir
 	}
-	return filepath.Join(home, ".hoxi", "code-index")
+	return filepath.Join(os.TempDir(), "hoxi-code-index")
 }
 
 func (s *Service) RegisterRoutes(mux *http.ServeMux) {

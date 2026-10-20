@@ -13,6 +13,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
 )
 
 func generateRandomHex(n int) (string, error) {
@@ -74,11 +76,7 @@ type workspaceStoreFile struct {
 }
 
 func userHoxiWorkspacesPath() string {
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		return ""
-	}
-	return filepath.Join(home, ".hoxi", "workspaces.json")
+	return hoxipaths.Join("workspaces.json")
 }
 
 func normalizeWorkspaceIdentityColor(raw string) string {

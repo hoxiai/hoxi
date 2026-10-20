@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/hoxiai/hoxi/internal/handoff"
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
 	"github.com/hoxiai/hoxi/internal/opencode"
 	"github.com/hoxiai/hoxi/internal/provider"
 	"github.com/hoxiai/hoxi/internal/runner"
@@ -37,7 +38,7 @@ func runOpenCommand(
 		}
 	}
 
-	for _, addr := range []string{defaultBridgeAddr, "127.0.0.1:5410", "127.0.0.1:5420"} {
+	for _, addr := range []string{defaultBridgeAddr, hoxipaths.DefaultReleaseBridgeAddr, hoxipaths.DefaultDevBridgeAddr} {
 		if strings.TrimSpace(addr) == "" {
 			continue
 		}
@@ -389,7 +390,7 @@ func extractImportedSessionID(res *handoff.HandoffImportResponse) string {
 }
 
 func runStatusCommand(ctx context.Context, cwd, defaultBridgeAddr string, stdout, _ io.Writer) int {
-	for _, addr := range []string{defaultBridgeAddr, "127.0.0.1:5410", "127.0.0.1:5420"} {
+	for _, addr := range []string{defaultBridgeAddr, hoxipaths.DefaultReleaseBridgeAddr, hoxipaths.DefaultDevBridgeAddr} {
 		if strings.TrimSpace(addr) == "" {
 			continue
 		}

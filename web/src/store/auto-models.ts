@@ -419,9 +419,17 @@ function candidateHealthScore(c: AutoPoolCandidate): number {
   return score;
 }
 
+const NON_CHAT_UTILITY_MODEL_RE =
+  /embedding|embed|rerank|bge-|whisper|tts|speech|moderation/i;
+
+export function isNonChatUtilityModelID(modelID?: string | null): boolean {
+  if (!modelID) return false;
+  return NON_CHAT_UTILITY_MODEL_RE.test(modelID.trim());
+}
+
 export function modelSupportsImageInput(providerID: string, modelID: string): boolean {
   if (!providerID || !modelID) return true;
-  if (/embedding|embed|rerank|bge-|whisper|tts|speech|moderation/i.test(modelID)) {
+  if (isNonChatUtilityModelID(modelID)) {
     return false;
   }
   const hoxiModel = workspace.hoxiProviders?.[providerID]?.models?.[modelID];

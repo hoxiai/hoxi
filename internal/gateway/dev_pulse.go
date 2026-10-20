@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hoxiai/hoxi/internal/handoff"
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
 	"github.com/hoxiai/hoxi/internal/worktree"
 )
@@ -305,9 +306,7 @@ SELECT json_object(
         JOIN session s ON s.id = m.session_id
         WHERE m.time_created >= %d
           AND json_extract(m.data, '$.role') = 'assistant'
-          AND s.title NOT LIKE '[Grok CLI]%%'
-          AND s.title NOT LIKE '[Claude Code]%%'
-          AND s.title NOT LIKE '[Codex%%'
+          AND %s
           AND (
             CAST(COALESCE(json_extract(m.data, '$.tokens.input'), 0) AS INTEGER) > 0
             OR CAST(COALESCE(json_extract(m.data, '$.tokens.output'), 0) AS INTEGER) > 0
@@ -328,12 +327,10 @@ SELECT json_object(
     FROM session s
     JOIN message m ON m.session_id = s.id
     WHERE m.time_created >= %d
-      AND s.title NOT LIKE '[Grok CLI]%%'
-      AND s.title NOT LIKE '[Claude Code]%%'
-      AND s.title NOT LIKE '[Codex%%'
+      AND %s
       AND s.title NOT LIKE '%%(fork #%%'
   )
-);`, startOfTodayMs, startOfTodayMs)
+);`, startOfTodayMs, handoff.SQLNotImportedTitleClause("s.title"), startOfTodayMs, handoff.SQLNotImportedTitleClause("s.title"))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 	defer cancel()

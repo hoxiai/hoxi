@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
 )
 
 func (g *Service) httpBridgeBaseURL() string {
@@ -15,7 +17,7 @@ func (g *Service) httpBridgeBaseURL() string {
 	if strings.HasPrefix(ws, "wss://") {
 		return "https://" + strings.TrimPrefix(ws, "wss://")
 	}
-	return "http://127.0.0.1:5410"
+	return "http://" + hoxipaths.DefaultReleaseBridgeAddr
 }
 
 func (g *Service) syncLocalCLIBridgeURLs() {

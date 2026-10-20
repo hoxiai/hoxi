@@ -275,3 +275,46 @@ func TestNormalizeDocModelVariantsImageAndReasoning(t *testing.T) {
 		t.Fatalf("expected attachment=true model to receive modalities.input=['text','image'], got: %+v", codex)
 	}
 }
+
+func TestDefaultModelVariantsVersionParsing(t *testing.T) {
+	legacyClaude := []string{
+		"claude-3-7-sonnet-20250219",
+		"claude-opus-4-20250514",
+		"claude-opus-4-1-20250805",
+		"claude-sonnet-4-5-20250929",
+		"claude-haiku-4.5",
+	}
+	for _, mid := range legacyClaude {
+		v := defaultModelVariants("anthropic", "@ai-sdk/anthropic", mid)
+		high, _ := v["high"].(map[string]interface{})
+		thinking, _ := high["thinking"].(map[string]interface{})
+		if thinking["type"] != "enabled" || thinking["budgetTokens"] != 16000 {
+			t.Fatalf("expected legacy budgetTokens for %q, got %+v", mid, high)
+		}
+	}
+
+	modernClaude := []string{
+		"claude-opus-4-6",
+		"claude-sonnet-4.6",
+		"claude-opus-4-7",
+		"claude-sonnet-5",
+		"claude-fable-6",
+		"opus",
+		"sonnet",
+	}
+	for _, mid := range modernClaude {
+		v := defaultModelVariants("anthropic", "@ai-sdk/anthropic", mid)
+		high, _ := v["high"].(map[string]interface{})
+		thinking, _ := high["thinking"].(map[string]interface{})
+		if thinking["type"] != "adaptive" || high["effort"] != "high" {
+			t.Fatalf("expected modern adaptive+effort for %q, got %+v", mid, high)
+		}
+	}
+
+	if !isLegacyGeminiBudgetModel("gemini-2.5-pro") || !isLegacyGeminiBudgetModel("gemini-1.5-flash") {
+		t.Fatal("expected gemini 1.x/2.x to use legacy thinkingBudget")
+	}
+	if isLegacyGeminiBudgetModel("gemini-3-pro") || isLegacyGeminiBudgetModel("gemini-4-ultra") || isLegacyGeminiBudgetModel("gemini-5-pro") {
+		t.Fatal("expected gemini 3.x+ to use modern thinkingLevel")
+	}
+}

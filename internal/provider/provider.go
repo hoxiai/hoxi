@@ -351,12 +351,12 @@ func (g *Service) resolveProviderConnection(providerID, hintBaseURL, hintNPM str
 		}
 	}
 
-	if baseURL == "" {
-		baseURL = defaultProviderBaseURLs[providerID]
-	}
 	liveURL, liveKey, liveNPM, liveHeaders := g.resolveOpenCodeLiveModelConfig(providerID, "")
 	if baseURL == "" && liveURL != "" {
 		baseURL = liveURL
+	}
+	if baseURL == "" {
+		baseURL = defaultProviderBaseURLs[providerID]
 	}
 	if npm == "" && liveNPM != "" {
 		npm = liveNPM

@@ -1,109 +1,26 @@
 package handoff
 
 import (
-	"bytes"
-	"context"
 	"net/http"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
-	"sync"
-	"time"
+
+	"github.com/hoxiai/hoxi/internal/agentcli"
 )
 
 func resolveAgyBinary() string {
-	if gRoot := geminiRootDir(); gRoot != "" {
-		candidate := filepath.Join(gRoot, "bin", "agy")
-		if st, err := os.Stat(candidate); err == nil && !st.IsDir() {
-			return candidate
-		}
-		if os.Getenv("GEMINI_HOME") != "" || os.Getenv("ANTIGRAVITY_HOME") != "" {
-			return ""
-		}
-	}
-	if p, err := exec.LookPath("agy"); err == nil {
-		return p
-	}
-	return ""
+	return agentcli.ResolveAgyBinary()
 }
 
 func resolveClaudeBinary() string {
-	if p, err := exec.LookPath("claude"); err == nil {
-		return p
-	}
-	if home, _ := os.UserHomeDir(); home != "" {
-		candidate := filepath.Join(home, ".local", "bin", "claude")
-		if st, err := os.Stat(candidate); err == nil && !st.IsDir() {
-			return candidate
-		}
-	}
-	return ""
+	return agentcli.ResolveClaudeBinary()
 }
 
-var (
-	agyModelsMu          sync.Mutex
-	agyCachedBinary      string
-	agyCachedAt          time.Time
-	agyCachedSlugs       []string
-	agyCachedDisplayMap  map[string]string
-	agyCachedReverseSlug map[string]string
-)
-
 func parseAgyModelsOutput(raw string) (slugs []string, displayBySlug map[string]string, slugByDisplayLower map[string]string) {
-	displayBySlug = map[string]string{}
-	slugByDisplayLower = map[string]string{}
-	for _, rawLine := range strings.Split(raw, "\n") {
-		segments := strings.Split(rawLine, "\r")
-		line := strings.TrimSpace(segments[len(segments)-1])
-		if line == "" || strings.Contains(line, "Fetching available models") {
-			continue
-		}
-		fields := strings.Fields(line)
-		if len(fields) < 2 {
-			continue
-		}
-		slug := strings.TrimSpace(fields[0])
-		if slug == "" || strings.ContainsAny(slug, " ()") || !strings.Contains(slug, "-") {
-			continue
-		}
-		display := strings.TrimSpace(strings.TrimPrefix(line, slug))
-		slugs = appendUniqueString(slugs, slug)
-		if display != "" {
-			displayBySlug[slug] = display
-			slugByDisplayLower[strings.ToLower(display)] = slug
-		}
-	}
-	return slugs, displayBySlug, slugByDisplayLower
+	return agentcli.ParseAgyModelsOutput(raw)
 }
 
 func discoverAntigravityCLIModels() (slugs []string, displayBySlug map[string]string, slugByDisplayLower map[string]string) {
-	agyBin := resolveAgyBinary()
-	if agyBin == "" {
-		return nil, nil, nil
-	}
-	agyModelsMu.Lock()
-	defer agyModelsMu.Unlock()
-	if agyCachedBinary == agyBin && len(agyCachedSlugs) > 0 && time.Since(agyCachedAt) < 10*time.Minute {
-		return agyCachedSlugs, agyCachedDisplayMap, agyCachedReverseSlug
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, agyBin, "models")
-	cmd.WaitDelay = time.Second
-	out, err := cmd.Output()
-	if err != nil && len(bytes.TrimSpace(out)) == 0 {
-		return agyCachedSlugs, agyCachedDisplayMap, agyCachedReverseSlug
-	}
-	s, dMap, rMap := parseAgyModelsOutput(string(out))
-	if len(s) > 0 {
-		agyCachedBinary = agyBin
-		agyCachedAt = time.Now()
-		agyCachedSlugs = s
-		agyCachedDisplayMap = dMap
-		agyCachedReverseSlug = rMap
-	}
-	return agyCachedSlugs, agyCachedDisplayMap, agyCachedReverseSlug
+	return agentcli.DiscoverAgyCLIModels(false)
 }
 
 func normalizeAntigravityModelID(raw string) string {

@@ -198,6 +198,21 @@ export interface ConnectedProviderGroup {
   models: Array<{ id: string; name: string; fullKey: string; free: boolean; multiplier?: string }>;
 }
 
+export function getProviderSourceLabel(p: ProviderInfo): string {
+  if (p.source === "runner") {
+    if (p.id === "antigravity") return t("timeline.runtimeAntigravityLocal");
+    if (p.id === "codebuddy") return t("timeline.runtimeCodeBuddyLocal");
+    if (p.id === "qoder") return t("timeline.runtimeQoderLocal");
+    return t("timeline.runtimeClaudeCodeLocal");
+  }
+  if (isHoxiCustomProvider(p.id)) return t("models.sourceHoxi");
+  if (isImportedOpenCodeProvider(p.id)) return t("models.sourceOpenCode");
+  if (isCustomOrConfiguredProvider(p)) return t("models.sourceCustom");
+  if (p.source === "env") return t("models.sourceEnv");
+  if (p.source === "config") return t("models.sourceConfig");
+  return t("models.sourceApi");
+}
+
 export function getModelSourceInfo(model: FlattenedModel): ModelSourceInfo {
   const pid = model.providerID;
   if (pid === "antigravity") {

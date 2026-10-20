@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
 )
 
 // TokenStore 管理本地 ~/.hoxi/auth.json 文件存储
@@ -15,12 +17,12 @@ type TokenStore struct {
 }
 
 func NewTokenStore() *TokenStore {
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		home = "."
+	filePath := hoxipaths.Join("auth.json")
+	if filePath == "" {
+		filePath = filepath.Join(".", ".hoxi", "auth.json")
 	}
 	return &TokenStore{
-		filePath: filepath.Join(home, ".hoxi", "auth.json"),
+		filePath: filePath,
 	}
 }
 

@@ -168,12 +168,14 @@ class HoxiCatalogApprovalAdapter {
         id: 'claude-code',
         name: 'Claude Code',
         description: 'Anthropic Claude Code CLI 引擎',
+        supportsApproval: true,
         fallbackEfforts: defaultReasoningEfforts,
       ),
       (
         id: 'antigravity',
         name: 'Antigravity',
         description: 'Google Antigravity CLI 引擎',
+        supportsApproval: true,
         fallbackEfforts: [
           CodeExecutorOption(value: 'low', label: 'Low'),
           CodeExecutorOption(value: 'medium', label: 'Medium'),
@@ -185,12 +187,14 @@ class HoxiCatalogApprovalAdapter {
         id: 'qoder',
         name: 'Qoder',
         description: 'Qoder CLI 引擎',
+        supportsApproval: false,
         fallbackEfforts: defaultReasoningEfforts,
       ),
       (
         id: 'codebuddy',
         name: 'CodeBuddy',
         description: 'CodeBuddy CLI 引擎',
+        supportsApproval: false,
         fallbackEfforts: defaultReasoningEfforts,
       ),
     ];
@@ -221,14 +225,16 @@ class HoxiCatalogApprovalAdapter {
               version: '',
               reason: '',
               nativeTerminal: false,
-              capabilities: const [
+              capabilities: [
                 'code',
                 'automation',
                 'structured_turn',
-                'conversation_approval',
+                if (spec.supportsApproval) 'conversation_approval',
                 'resume',
               ],
-              approvalPolicies: const ['safe_auto', 'manual', 'full_auto'],
+              approvalPolicies: spec.supportsApproval
+                  ? const ['safe_auto', 'manual', 'full_auto']
+                  : const ['safe_auto', 'full_auto'],
               modelOptions: models,
               reasoningEfforts: extractRunnerReasoningEfforts(
                 rawModels,

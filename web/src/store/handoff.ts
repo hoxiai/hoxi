@@ -3,6 +3,7 @@
 // Gemini / OpenCode / …) into Hoxi and makes it the active session.
 import {
   hoxiAPI,
+  isRunnerAuthMode,
   type ExternalSessionSummary,
   type LocalCLIStatusItem,
 } from "../services/api";
@@ -12,8 +13,6 @@ import { switchWorkspace } from "./workspace-projects";
 import { refreshProviders, selectModel } from "./workspace-providers";
 import { replaceSession, selectSession } from "./workspace-sessions";
 import { workspace } from "./workspace-state";
-
-const RUNNER_AUTH_MODES = new Set(["antigravity-runner", "claude-runner", "codebuddy-runner", "qoder-runner"]);
 
 export interface ExternalSessionImportRequest {
   item: ExternalSessionSummary;
@@ -40,7 +39,7 @@ function preferredModelFor(req: ExternalSessionImportRequest): { providerID?: st
 /** Imports the session, switches to its workspace and selects it. Returns an error message on failure. */
 export async function importExternalSession(req: ExternalSessionImportRequest): Promise<string | null> {
   const { item, cli } = req;
-  if (req.useOriginalModel && cli && !RUNNER_AUTH_MODES.has(cli.authMode || "") && cli.authenticated && !cli.connected) {
+  if (req.useOriginalModel && cli && !isRunnerAuthMode(cli.authMode) && cli.authenticated && !cli.connected) {
     await hoxiAPI.importLocalCLI(item.source).catch(() => null);
   }
   const preferred = preferredModelFor(req);

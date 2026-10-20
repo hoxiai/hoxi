@@ -438,6 +438,9 @@ func (g *Service) mergeOpenCodeEngineAuthFile(authMap map[string]interface{}) {
 	if raw, err := os.ReadFile(path); err == nil {
 		_ = json.Unmarshal(raw, &merged)
 	}
+	if merged == nil {
+		merged = map[string]interface{}{}
+	}
 	for pid, cred := range authMap {
 		merged[pid] = cred
 	}

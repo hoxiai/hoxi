@@ -165,7 +165,7 @@ func protectedStateRules() []PathRule {
 	var rules []PathRule
 	if hoxi := hoxipaths.Home(); hoxi != "" {
 		rules = append(rules, PathRule{Path: filepath.Join(hoxi, "sessions"), Kind: PathSubtree})
-		for _, name := range []string{"models.json", "auto-pools.json", "workspaces.json", "device-id"} {
+		for _, name := range hoxipaths.ProtectedStateFiles() {
 			rules = append(rules, PathRule{Path: filepath.Join(hoxi, name), Kind: PathLiteral})
 		}
 	}

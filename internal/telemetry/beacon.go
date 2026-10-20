@@ -18,6 +18,7 @@ import (
 
 	"github.com/hoxiai/hoxi/internal/auth"
 	"github.com/hoxiai/hoxi/internal/buildinfo"
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
 )
 
 const (
@@ -38,11 +39,10 @@ type Event struct {
 // LoadOrCreateInstallID 返回本地匿名安装 ID（~/.hoxi/device-id，随机 UUID，无个人信息）。
 // created=true 表示本次是全新安装（或本地 ID 缺失/损坏后重新生成）。
 func LoadOrCreateInstallID() (id string, created bool, err error) {
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		home = "."
+	path := hoxipaths.Join(installIDFile)
+	if path == "" {
+		path = filepath.Join(".", ".hoxi", installIDFile)
 	}
-	path := filepath.Join(home, ".hoxi", installIDFile)
 
 	if data, readErr := os.ReadFile(path); readErr == nil {
 		existing := strings.TrimSpace(string(data))
@@ -88,19 +88,9 @@ func ReportLaunch(logger *slog.Logger) {
 			eventName = "install"
 		}
 
-		serverURL := strings.TrimRight(os.Getenv("HOXI_SERVER_URL"), "/")
-		if serverURL == "" {
-			serverURL = "https://hoxi.ai"
-		}
-
-		osName := runtime.GOOS
-		if osName == "darwin" {
-			osName = "mac"
-		}
-		archName := runtime.GOARCH
-		if archName == "amd64" {
-			archName = "x64"
-		}
+		serverURL := hoxipaths.ServerBaseURL()
+		osName := hoxipaths.NormalizedPlatform(runtime.GOOS)
+		archName := hoxipaths.NormalizedArch(runtime.GOARCH)
 
 		payload, _ := json.Marshal(Event{
 			Event:     eventName,

@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
 )
 
 // Store is Hoxi's own conversation store. Metadata for every session stays in
@@ -54,11 +56,10 @@ func defaultStoreDir() (dir, legacy string) {
 	if custom := strings.TrimSpace(os.Getenv("HOXI_SESSION_STORE_DIR")); custom != "" {
 		return filepath.Clean(custom), ""
 	}
-	home, _ := os.UserHomeDir()
-	if home == "" {
-		return filepath.Join(os.TempDir(), "hoxi-sessions"), ""
+	if hoxi := hoxipaths.Home(); hoxi != "" {
+		return filepath.Join(hoxi, "sessions"), filepath.Join(hoxi, legacyStoreFile)
 	}
-	return filepath.Join(home, ".hoxi", "sessions"), filepath.Join(home, ".hoxi", legacyStoreFile)
+	return filepath.Join(os.TempDir(), "hoxi-sessions"), ""
 }
 
 // NewStore opens the store rooted at customDir, or ~/.hoxi/sessions when empty.

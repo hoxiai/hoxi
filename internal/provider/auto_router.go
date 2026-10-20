@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
 )
 
 const AutoProviderID = "hoxi-auto"
@@ -33,11 +35,7 @@ var (
 )
 
 func userAutoPoolsPath() string {
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		return ""
-	}
-	return filepath.Join(home, ".hoxi", "auto-pools.json")
+	return hoxipaths.Join("auto-pools.json")
 }
 
 func (g *Service) workspaceAutoPoolsPath() string {

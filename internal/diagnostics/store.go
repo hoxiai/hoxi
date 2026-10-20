@@ -14,6 +14,8 @@ import (
 	"sync"
 	"time"
 	"unicode/utf8"
+
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
 )
 
 const (
@@ -58,11 +60,15 @@ func Initialize() error {
 	global.Lock()
 	defer global.Unlock()
 	if global.s == nil {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return err
+		dir := hoxipaths.Join("logs")
+		if dir == "" {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return err
+			}
+			dir = filepath.Join(home, ".hoxi", "logs")
 		}
-		global.s = &store{directory: filepath.Join(home, ".hoxi", "logs"), budget: maxBytes, segment: segmentBytes, now: time.Now}
+		global.s = &store{directory: dir, budget: maxBytes, segment: segmentBytes, now: time.Now}
 	}
 	s := global.s
 	s.mu.Lock()

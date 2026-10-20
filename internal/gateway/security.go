@@ -15,7 +15,7 @@ const (
 	gatewayTokenQueryParam = "hoxiToken"
 )
 
-var upstreamPassthroughPrefixes = []string{
+var openCodeProxyPrefixes = []string{
 	"/session",
 	"/event",
 	"/global",
@@ -36,8 +36,9 @@ var upstreamPassthroughPrefixes = []string{
 	"/path",
 	"/project",
 	"/auth",
-	"/provider",
 }
+
+var upstreamPassthroughPrefixes = append(append([]string(nil), openCodeProxyPrefixes...), "/provider")
 
 func nativeHost(host string) bool {
 	return host == "wails" || host == "wails.localhost" || host == "app.wails.localhost"

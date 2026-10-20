@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
 )
 
 const (
@@ -59,11 +61,10 @@ type Store struct {
 }
 
 func defaultBaseDir() string {
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		return filepath.Join(os.TempDir(), "hoxi-attachments")
+	if dir := hoxipaths.Join("attachments"); dir != "" {
+		return dir
 	}
-	return filepath.Join(home, ".hoxi", "attachments")
+	return filepath.Join(os.TempDir(), "hoxi-attachments")
 }
 
 func NewStore(baseDir string) *Store {
