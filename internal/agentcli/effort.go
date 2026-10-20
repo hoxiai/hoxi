@@ -89,6 +89,18 @@ func absInt(x int) int {
 	return x
 }
 
+// IsOpenAIOSeriesModel reports whether a lowercased model ID belongs to the OpenAI o-series (e.g., o1, o3, o4, o5).
+func IsOpenAIOSeriesModel(lowerMID string) bool {
+	if len(lowerMID) < 2 || lowerMID[0] != 'o' || lowerMID[1] < '1' || lowerMID[1] > '9' {
+		return false
+	}
+	i := 1
+	for i < len(lowerMID) && lowerMID[i] >= '0' && lowerMID[i] <= '9' {
+		i++
+	}
+	return i == len(lowerMID) || lowerMID[i] == '-' || lowerMID[i] == '.' || lowerMID[i] == '_'
+}
+
 // InferVendorEffortSpec returns vendor-level reasoning effort tiers and default effort
 // by vendor/protocol family without hardcoding specific model version numbers.
 func InferVendorEffortSpec(runtimeOrVendor, modelID string, reasoning bool) (efforts []string, defaultEffort string) {
@@ -112,7 +124,7 @@ func InferVendorEffortSpec(runtimeOrVendor, modelID string, reasoning bool) (eff
 		return []string{"low", "medium", "high"}, "high"
 
 	case strings.Contains(m, "gpt") || strings.Contains(m, "codex") ||
-		strings.HasPrefix(m, "o1") || strings.HasPrefix(m, "o3") || strings.HasPrefix(m, "o4") ||
+		IsOpenAIOSeriesModel(m) ||
 		strings.Contains(rv, "openai") || strings.Contains(rv, "codex"):
 		if strings.Contains(m, "oss-") {
 			return []string{"medium"}, "medium"

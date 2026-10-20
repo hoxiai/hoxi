@@ -188,7 +188,7 @@ export const timeline: TimelineI18n = {
   modelRequestFailed: "模型请求失败",
   apiError: "API 错误",
   retryWithModel: "使用 {model} 重试",
-  switchAndRetryFree: "切换免费模型重试 (deepseek-v4.1-flash-free)",
+  switchAndRetryFree: "切换免费模型重试 ({model})",
   configureModels: "配置模型与密钥",
   retryingInSeconds: "{seconds} 秒后重试",
   retryAttempt: "第 {attempt} 次重试",

@@ -145,7 +145,7 @@ export function inferModelEffortCapabilities(
 
   if (
     s.includes("gpt") ||
-    /^o[134](-|\b)/.test(s) ||
+    /^o\d+(-|\b)/.test(s) ||
     s.includes("codex") ||
     p.includes("openai") ||
     p.includes("codex")
@@ -334,7 +334,7 @@ function inferOfficialModelPricingAndLimits(
 
   // Anthropic Claude family
   if (s.includes("claude")) {
-    if (s.includes("opus")) {
+    if (s.includes("opus") || s.includes("fable")) {
       return { inputCost: 5.0, outputCost: 25.0, contextLimit: 200_000, outputLimit: 64_000 };
     }
     if (s.includes("haiku")) {
@@ -358,7 +358,7 @@ function inferOfficialModelPricingAndLimits(
   if (
     s.startsWith("gpt") ||
     s.includes(" gpt-") ||
-    /^o[134](-|\b)/.test(s) ||
+    /^o\d+(-|\b)/.test(s) ||
     s.includes("codex")
   ) {
     if (s.includes("nano")) {
@@ -381,7 +381,7 @@ function inferOfficialModelPricingAndLimits(
     if (s.includes("flash") || s.includes("lite")) {
       return { inputCost: 0.14, outputCost: 0.28, contextLimit: 1_000_000, outputLimit: 64_000 };
     }
-    if (s.includes("pro") || s.includes("r1") || s.includes("reasoner") || s.includes("v4")) {
+    if (s.includes("pro") || s.includes("reasoner") || /\b(r\d+|v[4-9]\d*)\b/.test(s)) {
       return { inputCost: 0.55, outputCost: 2.19, contextLimit: 1_000_000, outputLimit: 128_000 };
     }
     return { inputCost: 0.27, outputCost: 1.1, contextLimit: 128_000, outputLimit: 32_000 };
@@ -408,7 +408,7 @@ function inferOfficialModelPricingAndLimits(
 
   // Moonshot Kimi family
   if (s.includes("kimi") || s.includes("moonshot")) {
-    if (s.includes("code") || s.includes("k2.7")) {
+    if (s.includes("code")) {
       return { inputCost: 0.6, outputCost: 2.5, contextLimit: 256_000, outputLimit: 32_000 };
     }
     if (s.includes("preview") || s.includes("k2")) {
@@ -418,7 +418,7 @@ function inferOfficialModelPricingAndLimits(
   }
 
   // Tencent Hunyuan (hy3 / hy4 / hunyuan) family
-  if (/^hy[345]/.test(s) || s.includes("hunyuan")) {
+  if (/^hy\d/.test(s) || s.includes("hunyuan")) {
     if (s.startsWith("hy3")) {
       return { inputCost: 0.08, outputCost: 0.3, contextLimit: 192_000, outputLimit: 64_000 };
     }

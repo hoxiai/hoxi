@@ -170,7 +170,11 @@ export function AssistantErrorCard(props: { info: MessageInfo }) {
                   class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--accent-border)] bg-[var(--accent-surface)] px-2.5 py-1 text-[11px] font-medium text-[var(--accent-text)] hover:opacity-90 transition-opacity cursor-pointer"
                 >
                   <Icon name="check-small" size="small" />
-                  <span>{t("timeline.switchAndRetryFree")}</span>
+                  <span>
+                    {t("timeline.switchAndRetryFree", {
+                      model: freeFallbackModel()?.modelID || "",
+                    })}
+                  </span>
                 </button>
               </Show>
 

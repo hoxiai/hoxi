@@ -190,7 +190,7 @@ export const timeline = {
   modelRequestFailed: "Model request failed",
   apiError: "API Error",
   retryWithModel: "Retry with {model}",
-  switchAndRetryFree: "Switch & Retry (deepseek-v4.1-flash-free)",
+  switchAndRetryFree: "Switch & Retry ({model})",
   configureModels: "Configure Models & Keys",
   retryingInSeconds: "Retrying in {seconds}s",
   retryAttempt: "Attempt #{attempt}",

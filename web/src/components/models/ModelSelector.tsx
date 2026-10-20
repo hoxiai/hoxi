@@ -18,6 +18,7 @@ import {
   inferModelEffortCapabilities,
   isCustomOrConfiguredProvider,
   isFavoriteModel,
+  isNonChatUtilityModelID,
   openProviderModal,
   peekAutoModelTarget,
   selectModel,
@@ -213,7 +214,9 @@ export default function ModelSelector() {
       hoxiProv?.options?.baseURL ||
       cfgProv?.options?.baseURL ||
       prov?.options?.baseURL;
-    const inferredReasoning = !/haiku-3|haiku-4|deepseek-flash|glm-.*flash/i.test(sel.modelID);
+    const inferredReasoning =
+      !isNonChatUtilityModelID(sel.modelID) &&
+      !/haiku|deepseek-flash|glm-.*flash/i.test(sel.modelID);
     const effortCaps = inferModelEffortCapabilities(sel.providerID, sel.modelID, inferredReasoning);
     return {
       providerID: sel.providerID,
