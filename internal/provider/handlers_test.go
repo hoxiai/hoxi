@@ -2,7 +2,9 @@ package provider
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +12,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/hoxiai/hoxi/internal/llm"
 )
 
 func newMockOpenCodeServer(t *testing.T) (*httptest.Server, int) {
@@ -132,77 +137,94 @@ func doMuxReq(t *testing.T, mux *http.ServeMux, method, path string, body any) *
 	return rec
 }
 
-func TestAuditQualityRequiresValidObserverScore(t *testing.T) {
+func TestAuditResultStatsSerializeZeroScores(t *testing.T) {
 	_, workspaceDir := setupIsolatedEnv(t)
 	_, ocPort := newMockOpenCodeServer(t)
-	for _, tc := range []struct {
-		name    string
-		content string
-		status  int
-		baseURL string
-		ok      bool
-	}{
-		{name: "zero", content: `{"score":0,"summary":"Incorrect implementation"}`, ok: true},
-		{name: "malformed", content: "Looks good overall"},
-		{name: "missing score", content: `{"summary":"Looks good"}`},
-		{name: "out of range", content: `{"score":101}`},
-		{name: "nonfinite", content: `{"score":NaN}`},
-		{name: "observer failure", status: http.StatusServiceUnavailable},
-		{name: "invalid endpoint", baseURL: "invalid://observer"},
-	} {
-		for _, lspErrors := range []int{0, 1} {
-			t.Run(tc.name+strings.Repeat(" with static deduction", lspErrors), func(t *testing.T) {
-				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					if tc.status != 0 {
-						w.WriteHeader(tc.status)
-						return
-					}
-					_ = json.NewEncoder(w).Encode(map[string]any{
-						"choices": []any{map[string]any{"message": map[string]any{"content": tc.content}}},
-					})
-				}))
-				defer server.Close()
-				baseURL := server.URL + "/v1"
-				if tc.baseURL != "" {
-					baseURL = tc.baseURL
-				}
-				svc := NewService(ocPort, "secret", workspaceDir, nil)
-				svc.telemetry = &providerTelemetryStore{records: make(map[string]*providerTelemetryStats)}
-				svc.telemetry.recordAuditResult("worker", "model", 95, true, "Previous audit")
-				before, _ := json.Marshal(svc.telemetry.records)
-				mux := http.NewServeMux()
-				svc.RegisterRoutes(mux)
-				rec := doMuxReq(t, mux, http.MethodPost, "/api/hoxi/provider/audit", auditCodeRequest{
-					WorkerProviderID: "worker", WorkerModelID: "model",
-					ObserverProviderID: "observer", ObserverModelID: "model",
-					ObserverBaseURL: baseURL, LspErrorCount: lspErrors,
-				})
-				var result auditCodeResponse
-				if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
-					t.Fatal(err)
-				}
-				if rec.Code != http.StatusOK || result.OK != tc.ok {
-					t.Fatalf("unexpected audit response: %d %s", rec.Code, rec.Body.String())
-				}
-				if !tc.ok {
-					after, _ := json.Marshal(svc.telemetry.records)
-					if result.Error == "" || !bytes.Equal(before, after) {
-						t.Fatalf("failed observer must return error and leave telemetry unchanged: %s, %s", rec.Body.String(), after)
-					}
-					return
-				}
-				stats := svc.telemetry.records["worker"]
-				model := stats.Models["model"]
-				if result.Score != 0 || result.Pass || stats.AuditTotalCount != 2 || model.AuditTotalCount != 2 ||
-					len(stats.AuditScores) != 2 || stats.AuditScores[1] != 0 || len(model.AuditScores) != 2 || model.AuditScores[1] != 0 {
-					t.Fatalf("zero score was not recorded correctly: %+v, %+v, %+v", result, stats, model)
-				}
-				telemetry := doMuxReq(t, mux, http.MethodGet, "/api/hoxi/provider/telemetry", nil)
-				if strings.Count(telemetry.Body.String(), `"lastAuditScore":0`) != 2 {
-					t.Fatalf("provider and model must serialize lastAuditScore zero: %s", telemetry.Body.String())
-				}
-			})
+	svc := NewService(ocPort, "secret", workspaceDir, nil)
+	svc.stats = &modelStatsStore{records: make(map[string]*providerTelemetryStats)}
+	svc.RecordAuditResult("worker", "model", 95, true, "Previous audit")
+	svc.RecordAuditResult("worker", "model", 0, false, "Incorrect implementation")
+	mux := http.NewServeMux()
+	svc.RegisterRoutes(mux)
+
+	stats := svc.stats.records["worker"]
+	model := stats.Models["model"]
+	if stats.AuditTotalCount != 2 || model.AuditTotalCount != 2 || len(stats.AuditScores) != 2 || stats.AuditScores[1] != 0 ||
+		len(model.AuditScores) != 2 || model.AuditScores[1] != 0 {
+		t.Fatalf("zero score was not recorded correctly: %+v, %+v", stats, model)
+	}
+	rec := doMuxReq(t, mux, http.MethodGet, "/api/hoxi/provider/telemetry", nil)
+	if strings.Count(rec.Body.String(), `"lastAuditScore":0`) != 2 {
+		t.Fatalf("provider and model must serialize lastAuditScore zero: %s", rec.Body.String())
+	}
+}
+
+func TestAssistRoutesForwardToInjectedHandlers(t *testing.T) {
+	_, workspaceDir := setupIsolatedEnv(t)
+	svc := NewService(0, "secret", workspaceDir, nil)
+	svc.SetAssistHandler(AssistSummarizeTitle, func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "path": r.URL.Path})
+	})
+	mux := http.NewServeMux()
+	svc.RegisterRoutes(mux)
+
+	rec := doMuxReq(t, mux, http.MethodPost, "/api/hoxi/provider/summarize-title", map[string]any{"prompt": "x"})
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"path":"/api/hoxi/provider/summarize-title"`) {
+		t.Fatalf("assist route must forward to the injected handler: %d %s", rec.Code, rec.Body.String())
+	}
+	for _, action := range []string{AssistAudit, AssistGenerateCommitMessage, AssistEnhancePrompt} {
+		rec := doMuxReq(t, mux, http.MethodPost, "/api/hoxi/provider/"+action, map[string]any{})
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Fatalf("unwired assist route %s must report 503, got %d", action, rec.Code)
 		}
+	}
+}
+
+func TestLLMClientResolveAndComplete(t *testing.T) {
+	_, workspaceDir := setupIsolatedEnv(t)
+	_, ocPort := newMockOpenCodeServer(t)
+	llmSrv := newMockLLMServer(t)
+	svc := NewService(ocPort, "secret", workspaceDir, nil)
+	mux := http.NewServeMux()
+	svc.RegisterRoutes(mux)
+	ctx := context.Background()
+
+	target := svc.Resolve("custom-oai", "gpt-4o", llmSrv.URL+"/v1", "")
+	if !target.Ready() || target.ProviderID != "custom-oai" || target.ModelID != "gpt-4o" {
+		t.Fatalf("expected a ready OpenAI-compatible target, got %+v", target)
+	}
+	text, err := svc.Complete(ctx, target, llm.Request{Prompt: "Summarize the request", MaxTokens: 64, Timeout: 5 * time.Second})
+	if err != nil || text != "重构 Provider 单元测试" {
+		t.Fatalf("OpenAI completion = %q, %v", text, err)
+	}
+
+	// Seed anthropic provider config so credentials and headers come from models.json.
+	_ = doMuxReq(t, mux, http.MethodPost, "/api/hoxi/models-config", map[string]any{
+		"providerID": "anthropic",
+		"config": map[string]any{
+			"npm": "@ai-sdk/anthropic",
+			"options": map[string]any{
+				"baseURL": llmSrv.URL,
+				"apiKey":  "sk-ant-test",
+				"headers": map[string]any{"X-Audit-Header": "1"},
+			},
+		},
+	})
+	target = svc.Resolve("anthropic", "claude-3-7-sonnet", "", "")
+	text, err = svc.Complete(ctx, target, llm.Request{Prompt: "Senior Code Auditor", Timeout: 5 * time.Second, Purpose: llm.PurposeReview})
+	if err != nil || !strings.Contains(text, "Anthropic audit pass") {
+		t.Fatalf("Anthropic completion = %q, %v", text, err)
+	}
+
+	invalid := svc.Resolve("observer", "model", "invalid://observer", "")
+	if invalid.HasEndpoint || invalid.Ready() {
+		t.Fatalf("non-HTTP endpoint must not be ready: %+v", invalid)
+	}
+	if _, err := svc.Complete(ctx, invalid, llm.Request{Prompt: "x"}); !errors.Is(err, llm.ErrUnavailable) {
+		t.Fatalf("expected ErrUnavailable for a non-HTTP endpoint, got %v", err)
+	}
+	if _, err := svc.Complete(ctx, llm.Target{}, llm.Request{Prompt: "x"}); !errors.Is(err, llm.ErrUnavailable) {
+		t.Fatalf("expected ErrUnavailable without a model, got %v", err)
 	}
 }
 
@@ -341,7 +363,7 @@ func TestModelsConfigAndProxyRoutes(t *testing.T) {
 	}
 }
 
-func TestFetchProbeAuditSummarizeAndTelemetryRoutes(t *testing.T) {
+func TestFetchProbeAndTelemetryRoutes(t *testing.T) {
 	_, workspaceDir := setupIsolatedEnv(t)
 	_, ocPort := newMockOpenCodeServer(t)
 	llmSrv := newMockLLMServer(t)
@@ -405,69 +427,8 @@ func TestFetchProbeAuditSummarizeAndTelemetryRoutes(t *testing.T) {
 		t.Fatalf("expected test-model failure response, got %s", rec.Body.String())
 	}
 
-	// Seed anthropic provider config in Hoxi models.json so resolveProviderConnection resolves credentials & headers
-	_ = doMuxReq(t, mux, http.MethodPost, "/api/hoxi/models-config", map[string]any{
-		"providerID": "anthropic",
-		"config": map[string]any{
-			"npm": "@ai-sdk/anthropic",
-			"options": map[string]any{
-				"baseURL": llmSrv.URL,
-				"apiKey":  "sk-ant-test",
-				"headers": map[string]any{"X-Audit-Header": "1"},
-			},
-		},
-	})
-
-	// 3. POST /api/hoxi/provider/audit (OpenAI & Anthropic observer + static rules)
-	rec = doMuxReq(t, mux, http.MethodPost, "/api/hoxi/provider/audit", map[string]any{
-		"workerProviderID":   "custom-oai",
-		"workerModelID":      "gpt-4o",
-		"observerProviderID": "custom-oai",
-		"observerModelID":    "gpt-4o",
-		"observerBaseURL":    llmSrv.URL + "/v1",
-		"userPrompt":         "Add feature X",
-		"diffs": []map[string]any{
-			{"file": "main.go", "after": "package main\nfunc main() {}\n", "additions": 2},
-		},
-		"locale": "en-US",
-	})
-	if !strings.Contains(rec.Body.String(), `"pass":true`) || !strings.Contains(rec.Body.String(), `"score":94`) {
-		t.Fatalf("audit OpenAI failed: %s", rec.Body.String())
-	}
-
-	rec = doMuxReq(t, mux, http.MethodPost, "/api/hoxi/provider/audit", map[string]any{
-		"workerProviderID":   "anthropic",
-		"workerModelID":      "claude-3-7-sonnet",
-		"observerProviderID": "anthropic",
-		"observerModelID":    "claude-3-7-sonnet",
-		"userPrompt":         "Fix bug",
-		"lspErrorCount":      1,
-		"lspErrorsSummary":   "type error",
-		"locale":             "zh-CN",
-	})
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"score":76`) {
-		t.Fatalf("audit Anthropic unexpected response: %d %s", rec.Code, rec.Body.String())
-	}
-
-	// 4. POST /api/hoxi/provider/summarize-title (mock LLM + fallback)
-	rec = doMuxReq(t, mux, http.MethodPost, "/api/hoxi/provider/summarize-title", map[string]any{
-		"providerID": "custom-oai",
-		"modelID":    "gpt-4o",
-		"baseURL":    llmSrv.URL + "/v1",
-		"prompt":     "请帮我重构 provider 单元测试",
-		"locale":     "zh-CN",
-	})
-	if !strings.Contains(rec.Body.String(), `"ok":true`) || !strings.Contains(rec.Body.String(), "重构 Provider 单元测试") {
-		t.Fatalf("summarize-title LLM failed: %s", rec.Body.String())
-	}
-
-	rec = doMuxReq(t, mux, http.MethodPost, "/api/hoxi/provider/summarize-title", map[string]any{
-		"prompt": "Fix the login button alignment on macOS.",
-		"locale": "en-US",
-	})
-	if !strings.Contains(rec.Body.String(), "Fix the login button alignment on macOS") {
-		t.Fatalf("summarize-title fallback failed: %s", rec.Body.String())
-	}
+	// 3. Audit verdicts recorded through the LLM client surface in telemetry
+	svc.RecordAuditResult("custom-oai", "gpt-4o", 94, true, "Well structured changes")
 
 	// 5. GET / POST / DELETE /api/hoxi/provider/telemetry
 	rec = doMuxReq(t, mux, http.MethodGet, "/api/hoxi/provider/telemetry", nil)

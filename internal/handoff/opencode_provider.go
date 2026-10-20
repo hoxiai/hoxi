@@ -1,28 +1,19 @@
 package handoff
 
 import (
-	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
-)
 
-func hoxiEngineOpenCodeDir() string {
-	if custom := strings.TrimSpace(os.Getenv("HOXI_ENGINE_DATA_DIR")); custom != "" {
-		return filepath.Join(filepath.Clean(custom), "opencode")
-	}
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		return ""
-	}
-	return filepath.Join(home, ".hoxi", "engine-data", "opencode")
-}
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
+	"github.com/hoxiai/hoxi/internal/opencode/ocstate"
+)
 
 func externalOpenCodeConfigDir() string {
 	if xdg := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME")); xdg != "" {
@@ -210,7 +201,7 @@ func readExternalOpenCodeDefaultModel() string {
 }
 
 func engineOpenCodeAuthIDs() map[string]struct{} {
-	dir := hoxiEngineOpenCodeDir()
+	dir := hoxipaths.EngineOpenCodeDir()
 	if dir == "" {
 		return nil
 	}
@@ -438,7 +429,7 @@ func writePrivateJSONFile(path string, doc map[string]interface{}) error {
 // mergeOpenCodeEngineAuthFile keeps the Hoxi engine's auth.json in step with the
 // external OpenCode CLI so credentials survive restarts even when no server is running.
 func (g *Service) mergeOpenCodeEngineAuthFile(authMap map[string]interface{}) {
-	dir := hoxiEngineOpenCodeDir()
+	dir := hoxipaths.EngineOpenCodeDir()
 	if dir == "" || len(authMap) == 0 {
 		return
 	}
@@ -453,31 +444,29 @@ func (g *Service) mergeOpenCodeEngineAuthFile(authMap map[string]interface{}) {
 	_ = writePrivateJSONFile(path, merged)
 }
 
+// sendEngineAuth mirrors one credential into the running engine's
+// /auth/<providerID>; a nil cred deletes it. Best effort: the engine auth.json
+// written next to it is the durable copy.
+func (g *Service) sendEngineAuth(providerID string, cred map[string]interface{}, timeout time.Duration) {
+	if !g.openCode.Available() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	if cred == nil {
+		_ = g.openCode.JSON(ctx, http.MethodDelete, "/auth/"+url.PathEscape(providerID), nil, nil, nil)
+		return
+	}
+	_ = g.openCode.JSON(ctx, http.MethodPut, "/auth/"+url.PathEscape(providerID), nil, cred, nil)
+}
+
 func (g *Service) syncOpenCodeEngineAuth(authMap map[string]interface{}) {
 	if len(authMap) == 0 {
 		return
 	}
-	if g.openCodePort > 0 && g.password != "" {
-		client := &http.Client{Timeout: 5 * time.Second, Transport: localTransport}
-		for _, pid := range sortedStringKeys(authMap) {
-			cred, ok := authMap[pid].(map[string]interface{})
-			if !ok {
-				continue
-			}
-			body, err := json.Marshal(cred)
-			if err != nil {
-				continue
-			}
-			u := "http://127.0.0.1:" + strconv.Itoa(g.openCodePort) + "/auth/" + url.PathEscape(pid)
-			req, err := http.NewRequest(http.MethodPut, u, bytes.NewReader(body))
-			if err != nil {
-				continue
-			}
-			req.Header.Set("Content-Type", "application/json")
-			req.SetBasicAuth("opencode", g.password)
-			if resp, err := client.Do(req); err == nil {
-				_ = resp.Body.Close()
-			}
+	for _, pid := range sortedStringKeys(authMap) {
+		if cred, ok := authMap[pid].(map[string]interface{}); ok {
+			g.sendEngineAuth(pid, cred, 5*time.Second)
 		}
 	}
 	g.mergeOpenCodeEngineAuthFile(authMap)
@@ -488,7 +477,7 @@ func (g *Service) syncOpenCodeEngineAuth(authMap map[string]interface{}) {
 // auth.json when a live Console account is synced in hoxi.db and external
 // auth.json does not define a static API key for that provider.
 func (g *Service) purgeStaleConsoleSessionAuth(externalAuth map[string]interface{}) {
-	dir := hoxiEngineOpenCodeDir()
+	dir := hoxipaths.EngineOpenCodeDir()
 	if dir == "" {
 		return
 	}
@@ -511,16 +500,7 @@ func (g *Service) purgeStaleConsoleSessionAuth(externalAuth map[string]interface
 		if strings.HasPrefix(key, "st_") {
 			delete(merged, pid)
 			modified = true
-			if g.openCodePort > 0 && g.password != "" {
-				client := &http.Client{Timeout: 3 * time.Second, Transport: localTransport}
-				u := "http://127.0.0.1:" + strconv.Itoa(g.openCodePort) + "/auth/" + url.PathEscape(pid)
-				if req, err := http.NewRequest(http.MethodDelete, u, nil); err == nil {
-					req.SetBasicAuth("opencode", g.password)
-					if resp, err := client.Do(req); err == nil {
-						_ = resp.Body.Close()
-					}
-				}
-			}
+			g.sendEngineAuth(pid, nil, 3*time.Second)
 		}
 	}
 	if modified {
@@ -530,23 +510,11 @@ func (g *Service) purgeStaleConsoleSessionAuth(externalAuth map[string]interface
 
 func (g *Service) fetchLiveOpenCodeProviderModels(providerID string) (defaultModel string, models []string) {
 	providerID = strings.TrimSpace(providerID)
-	if g == nil || g.openCodePort <= 0 || providerID == "" {
+	if g == nil || !g.openCode.Available() || providerID == "" {
 		return "", nil
 	}
-	client := &http.Client{Timeout: 4 * time.Second, Transport: localTransport}
-	u := "http://127.0.0.1:" + strconv.Itoa(g.openCodePort) + "/provider"
-	req, err := http.NewRequest(http.MethodGet, u, nil)
-	if err != nil {
-		return "", nil
-	}
-	if g.password != "" {
-		req.SetBasicAuth("opencode", g.password)
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", nil
-	}
-	defer resp.Body.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
 	var payload struct {
 		All []struct {
 			ID     string                 `json:"id"`
@@ -554,7 +522,7 @@ func (g *Service) fetchLiveOpenCodeProviderModels(providerID string) (defaultMod
 		} `json:"all"`
 		Default map[string]string `json:"default"`
 	}
-	if json.NewDecoder(resp.Body).Decode(&payload) != nil {
+	if g.openCode.JSON(ctx, http.MethodGet, "/provider", nil, nil, &payload) != nil {
 		return "", nil
 	}
 	defaultModel = strings.TrimSpace(payload.Default[providerID])
@@ -577,7 +545,7 @@ func (g *Service) fetchLiveOpenCodeProviderModels(providerID string) (defaultMod
 func (g *Service) importOpenCodeCLIProvider() LocalCLIImportResponse {
 	provDefs := readExternalOpenCodeConfigProviders()
 	authMap := readExternalOpenCodeAuth()
-	consoleState := readExternalOpenCodeConsoleState()
+	consoleState := ocstate.ReadExternalConsoleState()
 	if len(provDefs) == 0 && len(authMap) == 0 && consoleState == nil {
 		return LocalCLIImportResponse{
 			OK:     false,
@@ -586,7 +554,7 @@ func (g *Service) importOpenCodeCLIProvider() LocalCLIImportResponse {
 		}
 	}
 	if consoleState != nil {
-		if err := syncOpenCodeConsoleStateToHoxiDB(consoleState); err != nil {
+		if err := ocstate.SyncConsoleState(consoleState, hoxipaths.DBPath()); err != nil {
 			return LocalCLIImportResponse{OK: false, ToolID: string(ExternalToolOpenCode), Error: err.Error()}
 		}
 		g.purgeStaleConsoleSessionAuth(authMap)

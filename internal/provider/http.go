@@ -57,7 +57,7 @@ type llmCompletionRequest struct {
 	ReasoningEffort string
 	Timeout         time.Duration
 	Transport       *http.Transport
-	Telemetry       *providerTelemetryStore
+	Stats           *modelStatsStore
 }
 
 type llmAttemptResult struct {
@@ -97,8 +97,8 @@ func callSimpleLLM(parentCtx context.Context, req llmCompletionRequest) (text st
 			}
 		}
 		diagnostics.Record(diagnostics.Entry{Kind: "request", Level: level, Source: "provider", Message: message, ProviderID: req.ProviderID, ModelID: req.ModelID, Status: status, DurationMs: time.Since(started).Milliseconds()})
-		if req.Telemetry != nil {
-			req.Telemetry.recordLLMRequest(req.ProviderID, req.ModelID, attempts, resultErr)
+		if req.Stats != nil {
+			req.Stats.recordLLMRequest(req.ProviderID, req.ModelID, attempts, resultErr)
 		}
 	}()
 	for attempt := 1; ; attempt++ {

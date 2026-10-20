@@ -1,4 +1,4 @@
-package provider
+package worktree
 
 import (
 	"context"
@@ -9,8 +9,25 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hoxiai/hoxi/internal/worktree"
+	"github.com/hoxiai/hoxi/internal/llm"
 )
+
+// AuditRecorder folds an observer verdict into the worker model's quality stats.
+type AuditRecorder func(workerProviderID, workerModelID string, score int, pass bool, summary string)
+
+// SetReviewLLM wires the observer model client and the optional stats sink
+// used by the code audit endpoint.
+func (m *Manager) SetReviewLLM(client llm.Client, record AuditRecorder) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.llm, m.recordAudit = client, record
+}
+
+func (m *Manager) reviewLLM() (llm.Client, AuditRecorder) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.llm, m.recordAudit
+}
 
 type auditDiffFile struct {
 	File      string `json:"file"`
@@ -54,9 +71,16 @@ type auditCodeResponse struct {
 	Error            string   `json:"error,omitempty"`
 }
 
-func (g *Service) handleAuditProviderCode(w http.ResponseWriter, r *http.Request) {
+// HandleAudit scores a worker model's changes with an independent observer
+// model. It is served at the public /api/hoxi/provider/audit route.
+func (m *Manager) HandleAudit(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSONError(w, http.StatusMethodNotAllowed, "POST required")
+		return
+	}
+	client, record := m.reviewLLM()
+	if client == nil {
+		writeJSON(w, http.StatusOK, auditCodeResponse{OK: false, Error: "Observer model is not configured"})
 		return
 	}
 
@@ -66,14 +90,15 @@ func (g *Service) handleAuditProviderCode(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	obsPID, obsMID := g.resolveBackendAutoCandidate(strings.TrimSpace(req.ObserverProviderID), strings.TrimSpace(req.ObserverModelID))
-	if obsPID == "" || obsMID == "" {
+	target := client.Resolve(req.ObserverProviderID, req.ObserverModelID, req.ObserverBaseURL, req.ObserverNPM)
+	obsPID, obsMID := target.ProviderID, target.ModelID
+	if !target.HasModel() {
 		writeJSON(w, http.StatusOK, auditCodeResponse{OK: false, Error: "Observer model is not configured"})
 		return
 	}
 
 	if req.ReviewScope != "" {
-		snap, err := worktree.CollectReviewSnapshot(req.RepoDir, worktree.ReviewScope(req.ReviewScope), req.BaseRef)
+		snap, err := CollectReviewSnapshot(req.RepoDir, ReviewScope(req.ReviewScope), req.BaseRef)
 		if err != nil {
 			writeJSON(w, http.StatusOK, auditCodeResponse{OK: false, ObserverProvider: obsPID, ObserverModel: obsMID, Error: err.Error()})
 			return
@@ -96,15 +121,14 @@ func (g *Service) handleAuditProviderCode(w http.ResponseWriter, r *http.Request
 	// Step 1: Zero-cost static engineering rules check
 	staticDeduction, staticIssues := evaluateStaticCodeRules(req.Diffs, req.LspErrorCount, req.LspErrorsSummary, req.Locale)
 
-	// Step 2: Resolve observer provider endpoint & credentials
-	baseURL, apiKey, npm, headers := g.resolveProviderConnection(obsPID, req.ObserverBaseURL, req.ObserverNPM)
+	// Step 2: The observer provider must resolve to an HTTP endpoint
 	start := time.Now()
 
-	if !strings.HasPrefix(baseURL, "http://") && !strings.HasPrefix(baseURL, "https://") {
+	if !target.HasEndpoint {
 		writeJSON(w, http.StatusOK, auditCodeResponse{OK: false, ObserverProvider: obsPID, ObserverModel: obsMID, Error: "Observer endpoint is not configured"})
 		return
 	}
-	llmScore, llmSummary, llmIssues, err := g.invokeObserverLLM(r.Context(), obsPID, obsMID, baseURL, apiKey, npm, headers, req)
+	llmScore, llmSummary, llmIssues, err := invokeObserverLLM(r.Context(), client, target, req)
 	if err != nil {
 		writeJSON(w, http.StatusOK, auditCodeResponse{
 			OK:               false,
@@ -148,8 +172,8 @@ func (g *Service) handleAuditProviderCode(w http.ResponseWriter, r *http.Request
 	}
 
 	latency := time.Since(start).Milliseconds()
-	if g.telemetry != nil && strings.TrimSpace(req.WorkerProviderID) != "" {
-		g.telemetry.recordAuditResult(req.WorkerProviderID, req.WorkerModelID, finalScore, pass, llmSummary)
+	if record != nil && strings.TrimSpace(req.WorkerProviderID) != "" {
+		record(req.WorkerProviderID, req.WorkerModelID, finalScore, pass, llmSummary)
 	}
 
 	writeJSON(w, http.StatusOK, auditCodeResponse{
@@ -237,27 +261,18 @@ func evaluateStaticCodeRules(diffs []auditDiffFile, lspErrorCount int, lspSummar
 	return deduction, issues
 }
 
-func (g *Service) invokeObserverLLM(
+func invokeObserverLLM(
 	parentCtx context.Context,
-	providerID, modelID, baseURL, apiKey, npm string,
-	headers map[string]string,
+	client llm.Client,
+	target llm.Target,
 	req auditCodeRequest,
 ) (int, string, []string, error) {
-	prompt := buildObserverAuditPrompt(req)
-
-	content, err := callSimpleLLM(parentCtx, llmCompletionRequest{
-		ProviderID:  providerID,
-		ModelID:     modelID,
-		BaseURL:     baseURL,
-		APIKey:      apiKey,
-		NPM:         npm,
-		Headers:     headers,
-		Prompt:      prompt,
+	content, err := client.Complete(parentCtx, target, llm.Request{
+		Prompt:      buildObserverAuditPrompt(req),
 		MaxTokens:   400,
 		Temperature: 0.1,
 		Timeout:     20 * time.Second,
-		Transport:   providerTransport,
-		Telemetry:   g.telemetry,
+		Purpose:     llm.PurposeReview,
 	})
 	if err != nil {
 		return 0, "", nil, err
@@ -273,8 +288,8 @@ func noChangesReviewSummary(locale string) string {
 	return "No changes to review."
 }
 
-// auditDiffsFromReview converts worktree review files into the audit payload shape.
-func auditDiffsFromReview(files []worktree.ReviewFileDiff) []auditDiffFile {
+// auditDiffsFromReview converts review files into the audit payload shape.
+func auditDiffsFromReview(files []ReviewFileDiff) []auditDiffFile {
 	out := make([]auditDiffFile, 0, len(files))
 	for _, f := range files {
 		out = append(out, auditDiffFile{

@@ -1,4 +1,4 @@
-package provider
+package worktree
 
 import (
 	"context"
@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/llm"
 )
 
 type generateCommitMessageRequest struct {
@@ -33,7 +35,10 @@ var (
 	conventionalCommitRegex = regexp.MustCompile(`^(feat|fix|refactor|perf|style|docs|test|build|ci|chore|revert)(\([a-zA-Z0-9_.\-,/]+\))?!?:\s+.+`)
 )
 
-func (g *Service) handleGenerateCommitMessage(w http.ResponseWriter, r *http.Request) {
+// HandleGenerateCommitMessage drafts a Conventional Commit subject from the
+// session context and diff summary. It is served at the public
+// /api/hoxi/provider/generate-commit-message route.
+func (m *Manager) HandleGenerateCommitMessage(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSONError(w, http.StatusMethodNotAllowed, "POST required")
 		return
@@ -51,11 +56,9 @@ func (g *Service) handleGenerateCommitMessage(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	pid, mid := g.resolveBackendAutoCandidate(strings.TrimSpace(req.ProviderID), strings.TrimSpace(req.ModelID))
-	baseURL, apiKey, npm, headers := g.resolveProviderConnection(pid, req.BaseURL, req.NPM)
-
-	if pid != "" && mid != "" && (strings.HasPrefix(baseURL, "http://") || strings.HasPrefix(baseURL, "https://")) {
-		if msg, err := g.invokeCommitMessageLLM(r.Context(), pid, mid, baseURL, apiKey, npm, headers, req); err == nil && msg != "" {
+	if client, _ := m.reviewLLM(); client != nil {
+		target := client.Resolve(req.ProviderID, req.ModelID, req.BaseURL, req.NPM)
+		if msg, err := invokeCommitMessageLLM(r.Context(), client, target, req); err == nil && msg != "" {
 			writeJSON(w, http.StatusOK, generateCommitMessageResponse{
 				OK:      true,
 				Message: msg,
@@ -70,16 +73,19 @@ func (g *Service) handleGenerateCommitMessage(w http.ResponseWriter, r *http.Req
 	})
 }
 
-func (g *Service) invokeCommitMessageLLM(
+func invokeCommitMessageLLM(
 	parentCtx context.Context,
-	providerID, modelID, baseURL, apiKey, npm string,
-	headers map[string]string,
+	client llm.Client,
+	target llm.Target,
 	req generateCommitMessageRequest,
 ) (string, error) {
-	diffSnippet := truncateRunes(strings.TrimSpace(req.DiffSummary), 2400)
-	digestSnippet := truncateRunes(strings.TrimSpace(codeFenceRegex.ReplaceAllString(req.SessionDigest, " ")), 1200)
+	if !target.Ready() {
+		return "", llm.ErrUnavailable
+	}
+	diffSnippet := llm.TruncateRunes(strings.TrimSpace(req.DiffSummary), 2400)
+	digestSnippet := llm.TruncateRunes(strings.TrimSpace(llm.StripCodeFences(req.SessionDigest, " ")), 1200)
 	if digestSnippet == "" {
-		digestSnippet = truncateRunes(strings.TrimSpace(codeFenceRegex.ReplaceAllString(req.LastPrompt, " ")), 500)
+		digestSnippet = llm.TruncateRunes(strings.TrimSpace(llm.StripCodeFences(req.LastPrompt, " ")), 500)
 	}
 
 	instruction := fmt.Sprintf(`You are an expert software engineer generating a Git commit message for the changes completed in the current session.
@@ -101,19 +107,12 @@ Git Diff Summary:
 
 	// Use 2048 max_tokens so reasoning models (DeepSeek, Qwen, GLM, o-series) can finish their
 	// internal reasoning_content without hitting finish_reason="length" before emitting content.
-	rawText, err := callSimpleLLM(parentCtx, llmCompletionRequest{
-		ProviderID:  providerID,
-		ModelID:     modelID,
-		BaseURL:     baseURL,
-		APIKey:      apiKey,
-		NPM:         npm,
-		Headers:     headers,
+	rawText, err := client.Complete(parentCtx, target, llm.Request{
 		Prompt:      instruction,
 		MaxTokens:   2048,
 		Temperature: 0.2,
 		Timeout:     20 * time.Second,
-		Transport:   titleTransport,
-		Telemetry:   g.telemetry,
+		Purpose:     llm.PurposeInteractive,
 	})
 	if err != nil {
 		return "", err
@@ -127,10 +126,10 @@ Git Diff Summary:
 }
 
 func cleanGeneratedCommitMessage(raw string) string {
-	text := thinkBlockRegex.ReplaceAllString(raw, "")
-	text = codeFenceRegex.ReplaceAllString(text, "")
+	text := llm.StripThinking(raw)
+	text = llm.StripCodeFences(text, "")
 	text = strings.TrimSpace(text)
-	if text == "" || strings.HasPrefix(text, "{") || strings.HasPrefix(text, "[") || strings.Contains(text, `"choices"`) {
+	if text == "" || llm.LooksLikeRawJSON(text) {
 		return ""
 	}
 
@@ -143,14 +142,14 @@ func cleanGeneratedCommitMessage(raw string) string {
 		l = strings.TrimLeft(l, "#*-•> \t")
 		l = commitPrefixRegex.ReplaceAllString(l, "")
 		l = strings.Trim(l, "\"'`“”‘’「」『』.。;； \t")
-		if !hasMeaningfulRune(l) {
+		if !llm.HasMeaningfulRune(l) {
 			continue
 		}
 		if conventionalCommitRegex.MatchString(l) {
-			return truncateRunes(l, 88)
+			return llm.TruncateRunes(l, 88)
 		}
 		if firstCandidate == "" {
-			firstCandidate = truncateRunes(l, 88)
+			firstCandidate = llm.TruncateRunes(l, 88)
 		}
 	}
 	return firstCandidate

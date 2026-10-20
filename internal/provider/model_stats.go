@@ -10,6 +10,11 @@ import (
 	"time"
 )
 
+// Model usage and quality statistics per provider/model (turn outcomes,
+// latency samples, probe and audit results), persisted to
+// ~/.hoxi/provider-telemetry.json and served at /api/hoxi/provider/telemetry.
+// Not to be confused with internal/telemetry, the anonymous launch beacon.
+
 const maxTelemetrySamples = 30
 const maxTelemetryIncidents = 10
 
@@ -72,7 +77,7 @@ type providerTelemetryStats struct {
 	UpdatedAt          int64                           `json:"updatedAt"`
 }
 
-type providerTelemetryStore struct {
+type modelStatsStore struct {
 	mu               sync.Mutex
 	filePath         string
 	records          map[string]*providerTelemetryStats
@@ -83,7 +88,7 @@ type providerTelemetryStore struct {
 
 const llmDegradedThreshold = 3
 
-func (s *providerTelemetryStore) setOnDegradedChange(fn func(providerID string, degraded bool)) {
+func (s *modelStatsStore) setOnDegradedChange(fn func(providerID string, degraded bool)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.onDegradedChange = fn
@@ -93,7 +98,7 @@ func (s *providerTelemetryStore) setOnDegradedChange(fn func(providerID string, 
 // telemetry records and flags providers that fail repeatedly so the status bar
 // can surface them. It never creates records, so probe/audit quality telemetry
 // stays untouched by one-off internal calls.
-func (s *providerTelemetryStore) recordLLMRequest(providerID, modelID string, attempts int, err error) {
+func (s *modelStatsStore) recordLLMRequest(providerID, modelID string, attempts int, err error) {
 	providerID = strings.TrimSpace(providerID)
 	if providerID == "" {
 		return
@@ -143,9 +148,9 @@ func (s *providerTelemetryStore) recordLLMRequest(providerID, modelID string, at
 	}
 }
 
-func newProviderTelemetryStore(rootDir string) *providerTelemetryStore {
-	storePath := resolveTelemetryFilePath(rootDir)
-	s := &providerTelemetryStore{
+func newModelStatsStore(rootDir string) *modelStatsStore {
+	storePath := resolveModelStatsFilePath(rootDir)
+	s := &modelStatsStore{
 		filePath:        storePath,
 		records:         make(map[string]*providerTelemetryStats),
 		consecutiveFail: make(map[string]int),
@@ -155,7 +160,7 @@ func newProviderTelemetryStore(rootDir string) *providerTelemetryStore {
 	return s
 }
 
-func resolveTelemetryFilePath(rootDir string) string {
+func resolveModelStatsFilePath(rootDir string) string {
 	if home, err := os.UserHomeDir(); err == nil && home != "" {
 		dir := filepath.Join(home, ".hoxi")
 		if err := os.MkdirAll(dir, 0o755); err == nil {
@@ -167,7 +172,7 @@ func resolveTelemetryFilePath(rootDir string) string {
 	return filepath.Join(fallbackDir, "provider-telemetry.json")
 }
 
-func (s *providerTelemetryStore) loadFromDisk() {
+func (s *modelStatsStore) loadFromDisk() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -186,7 +191,7 @@ func (s *providerTelemetryStore) loadFromDisk() {
 	}
 }
 
-func (s *providerTelemetryStore) saveToDiskLocked() {
+func (s *modelStatsStore) saveToDiskLocked() {
 	if s.filePath == "" {
 		return
 	}
@@ -198,7 +203,7 @@ func (s *providerTelemetryStore) saveToDiskLocked() {
 	_ = os.WriteFile(s.filePath, data, 0o644)
 }
 
-func (s *providerTelemetryStore) ensureRecordLocked(providerID string) *providerTelemetryStats {
+func (s *modelStatsStore) ensureRecordLocked(providerID string) *providerTelemetryStats {
 	rec, ok := s.records[providerID]
 	if !ok || rec == nil {
 		rec = &providerTelemetryStats{
@@ -233,7 +238,7 @@ func ensureModelRecordLocked(rec *providerTelemetryStats, modelID string) *model
 	return m
 }
 
-func (s *providerTelemetryStore) recordProbeResult(providerID string, ok bool, latencyMs int64, errMsg string, modelID string) {
+func (s *modelStatsStore) recordProbeResult(providerID string, ok bool, latencyMs int64, errMsg string, modelID string) {
 	providerID = strings.TrimSpace(providerID)
 	if providerID == "" {
 		return
@@ -262,7 +267,7 @@ func (s *providerTelemetryStore) recordProbeResult(providerID string, ok bool, l
 	s.saveToDiskLocked()
 }
 
-func (s *providerTelemetryStore) recordAuditResult(providerID, modelID string, score int, pass bool, summary string) {
+func (s *modelStatsStore) recordAuditResult(providerID, modelID string, score int, pass bool, summary string) {
 	providerID = strings.TrimSpace(providerID)
 	if providerID == "" {
 		return
@@ -329,7 +334,7 @@ func appendIntSample(list []int, val int) []int {
 	return next
 }
 
-func (s *providerTelemetryStore) registerRoutes(mux *http.ServeMux) {
+func (s *modelStatsStore) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/hoxi/provider/telemetry", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:

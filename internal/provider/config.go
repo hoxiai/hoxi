@@ -1,13 +1,14 @@
 package provider
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -349,7 +350,7 @@ func (g *Service) isBusy() bool {
 }
 
 func (g *Service) reloadOpenCodeGlobalConfig() {
-	if g.openCodePort <= 0 {
+	if !g.openCode.Available() {
 		return
 	}
 	if g.isBusy() {
@@ -365,7 +366,7 @@ func (g *Service) reloadOpenCodeGlobalConfig() {
 func (g *Service) scheduleDeferredReload() {
 	g.reloadMu.Lock()
 	g.reloadPending = true
-	if g.reloadLoopRunning || g.openCodePort <= 0 {
+	if g.reloadLoopRunning || !g.openCode.Available() {
 		g.reloadMu.Unlock()
 		return
 	}
@@ -376,7 +377,7 @@ func (g *Service) scheduleDeferredReload() {
 		ticker := time.NewTicker(250 * time.Millisecond)
 		defer ticker.Stop()
 		for range ticker.C {
-			if g.openCodePort <= 0 {
+			if !g.openCode.Available() {
 				g.reloadMu.Lock()
 				g.reloadPending = false
 				g.reloadLoopRunning = false
@@ -402,7 +403,7 @@ func (g *Service) scheduleDeferredReload() {
 // FlushPendingReload immediately disposes OpenCode's global instances if a
 // deferred reload is waiting and no session is currently busy.
 func (g *Service) FlushPendingReload() bool {
-	if g.openCodePort <= 0 || g.isBusy() {
+	if !g.openCode.Available() || g.isBusy() {
 		return false
 	}
 	g.reloadMu.Lock()
@@ -424,19 +425,12 @@ func (g *Service) HasPendingReload() bool {
 }
 
 func (g *Service) postOpenCodeGlobalDispose() {
-	if g.openCodePort <= 0 {
+	if !g.openCode.Available() {
 		return
 	}
-	client := &http.Client{Timeout: 4 * time.Second, Transport: localTransport}
-	base := "http://127.0.0.1:" + strconv.Itoa(g.openCodePort)
-
-	if req, err := http.NewRequest(http.MethodPost, base+"/global/dispose", strings.NewReader("{}")); err == nil {
-		req.Header.Set("Content-Type", "application/json")
-		req.SetBasicAuth("opencode", g.password)
-		if resp, err := client.Do(req); err == nil {
-			_ = resp.Body.Close()
-		}
-	}
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	_, _, _ = g.openCode.Raw(ctx, http.MethodPost, "/global/dispose", nil, []byte("{}"))
 }
 
 func (g *Service) handleGlobalDispose(w http.ResponseWriter, r *http.Request) {
@@ -654,23 +648,8 @@ func (g *Service) handleGlobalConfigProxy(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	client := &http.Client{Timeout: 8 * time.Second, Transport: localTransport}
-	target := "http://127.0.0.1:" + strconv.Itoa(g.openCodePort) + "/global/config"
-	req, err := http.NewRequest(http.MethodGet, target, nil)
-	if err != nil {
-		g.proxy.ServeHTTP(w, r)
-		return
-	}
-	req.SetBasicAuth("opencode", g.password)
-	resp, err := client.Do(req)
-	if err != nil {
-		g.proxy.ServeHTTP(w, r)
-		return
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		writeJSONError(w, http.StatusBadGateway, err.Error())
+	status, body, ok := g.fetchOpenCodeForProxy(w, r, "/global/config", nil)
+	if !ok {
 		return
 	}
 	var cfg map[string]interface{}
@@ -680,12 +659,30 @@ func (g *Service) handleGlobalConfigProxy(w http.ResponseWriter, r *http.Request
 		if provMap, ok := cfg["provider"].(map[string]interface{}); ok {
 			filterProviderModelsByHoxi(provMap, g.loadHoxiProvidersMap())
 		}
-		writeJSON(w, resp.StatusCode, cfg)
+		writeJSON(w, status, cfg)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(resp.StatusCode)
+	w.WriteHeader(status)
 	_, _ = w.Write(body)
+}
+
+// fetchOpenCodeForProxy GETs path from the engine for a filtering proxy
+// handler. When the engine is unreachable it hands the request to the plain
+// reverse proxy (which reports the outage) and returns ok=false.
+func (g *Service) fetchOpenCodeForProxy(w http.ResponseWriter, r *http.Request, path string, query url.Values) (int, []byte, bool) {
+	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+	defer cancel()
+	status, body, err := g.openCode.Raw(ctx, http.MethodGet, path, query, nil)
+	if err != nil && status == 0 {
+		g.proxy.ServeHTTP(w, r)
+		return 0, nil, false
+	}
+	if err != nil {
+		writeJSONError(w, http.StatusBadGateway, err.Error())
+		return 0, nil, false
+	}
+	return status, body, true
 }
 
 // handleProviderProxy filters GET /provider so any provider managed in .hoxi/models.json only exposes its .hoxi models.
@@ -694,23 +691,8 @@ func (g *Service) handleProviderProxy(w http.ResponseWriter, r *http.Request) {
 		g.proxy.ServeHTTP(w, r)
 		return
 	}
-	client := &http.Client{Timeout: 8 * time.Second, Transport: localTransport}
-	target := "http://127.0.0.1:" + strconv.Itoa(g.openCodePort) + r.URL.RequestURI()
-	req, err := http.NewRequest(http.MethodGet, target, nil)
-	if err != nil {
-		g.proxy.ServeHTTP(w, r)
-		return
-	}
-	req.SetBasicAuth("opencode", g.password)
-	resp, err := client.Do(req)
-	if err != nil {
-		g.proxy.ServeHTTP(w, r)
-		return
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		writeJSONError(w, http.StatusBadGateway, err.Error())
+	status, body, ok := g.fetchOpenCodeForProxy(w, r, r.URL.Path, r.URL.Query())
+	if !ok {
 		return
 	}
 	var payload map[string]interface{}
@@ -737,10 +719,10 @@ func (g *Service) handleProviderProxy(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		writeJSON(w, resp.StatusCode, payload)
+		writeJSON(w, status, payload)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(resp.StatusCode)
+	w.WriteHeader(status)
 	_, _ = w.Write(body)
 }

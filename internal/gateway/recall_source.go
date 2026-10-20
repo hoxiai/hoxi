@@ -2,15 +2,12 @@ package gateway
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/hoxiai/hoxi/internal/recall"
 	"github.com/hoxiai/hoxi/internal/runner"
@@ -23,9 +20,11 @@ const (
 	recallUpstreamLimit = 40
 )
 
+// recallUpstreamTimeout bounds each engine read made while indexing.
+const recallUpstreamTimeout = 8 * time.Second
+
 type gatewayRecallSource struct {
-	g      *Gateway
-	client *http.Client
+	g *Gateway
 }
 
 // Sessions merges Hoxi-managed runner sessions with upstream OpenCode sessions
@@ -135,13 +134,11 @@ type upstreamTurn struct {
 }
 
 func (s *gatewayRecallSource) openCodeSessions(ctx context.Context, directory string) []recall.Session {
-	if s.g == nil || s.g.openCodePort <= 0 {
+	if s.g == nil || !s.g.openCode.Available() {
 		return nil
 	}
-	base := "http://127.0.0.1:" + strconv.Itoa(s.g.openCodePort)
-	client := s.client
 	var listed []upstreamSession
-	if err := s.getJSON(ctx, client, base+"/session?"+directoryQueryParam(directory), &listed); err != nil {
+	if err := s.getJSON(ctx, "/session", directory, &listed); err != nil {
 		return nil
 	}
 	sort.SliceStable(listed, func(i, j int) bool { return listed[i].Time.Updated > listed[j].Time.Updated })
@@ -169,8 +166,7 @@ func (s *gatewayRecallSource) openCodeSessions(ctx context.Context, directory st
 			permits <- struct{}{}
 			defer func() { <-permits }()
 			var turns []upstreamTurn
-			endpoint := base + "/session/" + url.PathEscape(item.ID) + "/message?" + directoryQueryParam(directory)
-			if err := s.getJSON(ctx, client, endpoint, &turns); err != nil {
+			if err := s.getJSON(ctx, "/session/"+url.PathEscape(item.ID)+"/message", directory, &turns); err != nil {
 				return
 			}
 			session := recall.Session{
@@ -213,23 +209,8 @@ func (s *gatewayRecallSource) openCodeSessions(ctx context.Context, directory st
 	return sessions
 }
 
-func (s *gatewayRecallSource) getJSON(ctx context.Context, client *http.Client, endpoint string, out interface{}) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return err
-	}
-	req.SetBasicAuth("opencode", s.g.password)
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("upstream HTTP %d", resp.StatusCode)
-	}
-	return json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(out)
-}
-
-func directoryQueryParam(directory string) string {
-	return "directory=" + url.QueryEscape(directory)
+func (s *gatewayRecallSource) getJSON(ctx context.Context, path, directory string, out interface{}) error {
+	ctx, cancel := context.WithTimeout(ctx, recallUpstreamTimeout)
+	defer cancel()
+	return s.g.openCode.JSON(ctx, http.MethodGet, path, url.Values{"directory": {directory}}, nil, out)
 }

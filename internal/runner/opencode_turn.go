@@ -2,60 +2,26 @@ package runner
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
+	"github.com/hoxiai/hoxi/internal/agentcli"
 	"github.com/hoxiai/hoxi/internal/attachment"
 )
 
+// openCodeRequest opens a 2xx engine response scoped to directory; the caller
+// closes the body (it may be an SSE stream).
 func (s *Service) openCodeRequest(ctx context.Context, method, path, directory string, body interface{}) (*http.Response, error) {
-	if s.openCodeClient == nil {
-		return nil, fmt.Errorf("OpenCode connection is unavailable")
-	}
-	var data io.Reader
-	if body != nil {
-		raw, err := json.Marshal(body)
-		if err != nil {
-			return nil, err
-		}
-		data = bytes.NewReader(raw)
-	}
-	req, err := http.NewRequestWithContext(ctx, method, s.openCodeURL+path+"?directory="+url.QueryEscape(directory), data)
-	if err != nil {
-		return nil, err
-	}
-	req.SetBasicAuth("opencode", s.openCodePassword)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := s.openCodeClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		defer resp.Body.Close()
-		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, fmt.Errorf("OpenCode HTTP %d: %s", resp.StatusCode, raw)
-	}
-	return resp, nil
+	return s.openCode.Stream(ctx, method, path, url.Values{"directory": {directory}}, body)
 }
 
 func (s *Service) openCodeJSON(ctx context.Context, method, path, directory string, body, out interface{}) error {
-	resp, err := s.openCodeRequest(ctx, method, path, directory, body)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if out == nil {
-		_, err = io.Copy(io.Discard, resp.Body)
-		return err
-	}
-	return json.NewDecoder(resp.Body).Decode(out)
+	return s.openCode.JSON(ctx, method, path, url.Values{"directory": {directory}}, body, out)
 }
 
 func (s *Service) resolveOpenCodeModel(ctx context.Context, directory, providerID, modelID string) (string, string) {
@@ -132,11 +98,11 @@ func (s *Service) resolveOpenCodeModel(ctx context.Context, directory, providerI
 }
 
 func (s *Service) resolveOpenCodeVariant(ctx context.Context, directory, providerID, modelID, effort string) string {
-	e := normalizeEffortName(effort)
+	e := agentcli.NormalizeEffortName(effort)
 	if e == "" {
 		return ""
 	}
-	if s.openCodeClient == nil || providerID == "" || modelID == "" {
+	if !s.openCode.Available() || providerID == "" || modelID == "" {
 		return e
 	}
 	qCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
@@ -172,7 +138,7 @@ func (s *Service) resolveOpenCodeVariant(ctx context.Context, directory, provide
 		for k := range vMap {
 			keys = append(keys, k)
 		}
-		return clampEffortToSupported(e, keys, "")
+		return agentcli.ClampEffortToSupported(e, keys, "")
 	}
 	return e
 }

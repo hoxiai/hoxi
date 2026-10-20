@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
 )
 
 type PathKind string
@@ -98,9 +100,9 @@ func DefaultProfile(workspace string, network NetworkMode, extraWritable ...stri
 		}
 	}
 	for _, dir := range []string{
-		HoxiHome(),
-		filepath.Join(HoxiHome(), "sandbox"),
-		filepath.Join(HoxiHome(), "runtime"),
+		hoxipaths.Home(),
+		filepath.Join(hoxipaths.Home(), "sandbox"),
+		filepath.Join(hoxipaths.Home(), "runtime"),
 		os.TempDir(),
 		"/private/tmp",
 		"/private/var/folders",
@@ -133,10 +135,10 @@ func DefaultProfile(workspace string, network NetworkMode, extraWritable ...stri
 	allow = append(allow, PathRule{Path: "/dev", Kind: PathSubtree})
 	for _, dir := range []string{
 		DefaultRoot(),
-		filepath.Join(HoxiHome(), "sandbox"),
-		filepath.Join(HoxiHome(), "bin"),
-		filepath.Join(HoxiHome(), "engine-data"),
-		filepath.Join(HoxiHome(), "engine-state"),
+		filepath.Join(hoxipaths.Home(), "sandbox"),
+		hoxipaths.BinDir(),
+		hoxipaths.EngineDataDir(),
+		hoxipaths.EngineStateDir(),
 	} {
 		if dir != "" && dir != string(filepath.Separator) {
 			deny = append(deny, PathRule{Path: dir, Kind: PathSubtree})
@@ -161,14 +163,14 @@ func DefaultProfile(workspace string, network NetworkMode, extraWritable ...stri
 // writable for the CLIs' own session state.
 func protectedStateRules() []PathRule {
 	var rules []PathRule
-	if hoxi := HoxiHome(); hoxi != "" {
+	if hoxi := hoxipaths.Home(); hoxi != "" {
 		rules = append(rules, PathRule{Path: filepath.Join(hoxi, "sessions"), Kind: PathSubtree})
-		for _, name := range []string{
-			"hoxi.db", "hoxi.db-wal", "hoxi.db-shm", "hoxi.db-journal",
-			"models.json", "auto-pools.json", "workspaces.json", "device-id",
-		} {
+		for _, name := range []string{"models.json", "auto-pools.json", "workspaces.json", "device-id"} {
 			rules = append(rules, PathRule{Path: filepath.Join(hoxi, name), Kind: PathLiteral})
 		}
+	}
+	for _, file := range hoxipaths.DBFiles() {
+		rules = append(rules, PathRule{Path: file, Kind: PathLiteral})
 	}
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
@@ -286,16 +288,8 @@ func canonicalDirectory(directory string) (string, error) {
 	return abs, nil
 }
 
-func HoxiHome() string {
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		return ""
-	}
-	return filepath.Join(home, ".hoxi")
-}
-
 func DefaultRoot() string {
-	base := HoxiHome()
+	base := hoxipaths.Home()
 	if base == "" {
 		base = os.TempDir()
 	}

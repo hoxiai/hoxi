@@ -73,7 +73,7 @@ func (s *Service) handleUnifiedSSE(w http.ResponseWriter, r *http.Request) {
 	defer unsub()
 
 	var upstream chan string
-	if s.openCodeClient != nil && strings.TrimSpace(s.openCodeURL) != "" {
+	if s.openCode.Available() {
 		upstream = make(chan string, 128)
 		directory := strings.TrimSpace(r.URL.Query().Get("directory"))
 		go s.pumpOpenCodeEvents(r.Context(), directory, upstream)

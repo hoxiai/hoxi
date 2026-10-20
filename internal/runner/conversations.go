@@ -18,8 +18,6 @@ import (
 // sessions Hoxi has not adopted yet. Engine handles never appear as chats.
 // Per-session routes are mapped onto their owner by the gateway.
 
-const maxOpenCodeResponseBytes = 32 << 20
-
 // OwnsSession reports whether Hoxi's store is the source of truth for id.
 func (s *Service) OwnsSession(id string) bool {
 	_, ok := s.store.Meta(id)
@@ -27,26 +25,7 @@ func (s *Service) OwnsSession(id string) bool {
 }
 
 func (s *Service) openCodeRaw(ctx context.Context, method, path string, query url.Values, body []byte) (int, []byte, error) {
-	if s.openCodeClient == nil {
-		return 0, nil, fmt.Errorf("OpenCode connection is unavailable")
-	}
-	target := s.openCodeURL + path
-	if len(query) > 0 {
-		target += "?" + query.Encode()
-	}
-	req, err := http.NewRequestWithContext(ctx, method, target, bytes.NewReader(body))
-	if err != nil {
-		return 0, nil, err
-	}
-	req.SetBasicAuth("opencode", s.openCodePassword)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := s.openCodeClient.Do(req)
-	if err != nil {
-		return 0, nil, err
-	}
-	defer resp.Body.Close()
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxOpenCodeResponseBytes))
-	return resp.StatusCode, raw, err
+	return s.openCode.Raw(ctx, method, path, query, body)
 }
 
 func directoryQuery(directory string, extra url.Values) url.Values {

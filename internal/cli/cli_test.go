@@ -176,11 +176,18 @@ func TestCLISingleTurnAndREPLWithGateway(t *testing.T) {
 		focusedDesktop.Store(true)
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 	})
-	mux.HandleFunc("/api/hoxi/runner/sessions/ses_test_1/event", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("/api/hoxi/event", func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("directory"); got != "/tmp/proj" {
+			http.Error(w, "missing directory query", http.StatusBadRequest)
+			return
+		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		flusher, _ := w.(http.Flusher)
 		events := []runner.SSEEvent{
+			{Type: "server.heartbeat", Properties: map[string]any{}},
+			{Type: "session.status", Properties: map[string]any{"sessionID": "ses_other", "status": map[string]any{"type": "idle"}}},
 			{Type: "session.status", Properties: map[string]any{"sessionID": "ses_test_1", "status": map[string]any{"type": "busy"}}},
+			{Type: "message.part.delta", Properties: map[string]any{"sessionID": "ses_other", "messageID": "msg_other", "partID": "prt_other", "field": "text", "delta": "WRONG SESSION"}},
 			{Type: "message.part.delta", Properties: map[string]any{"sessionID": "ses_test_1", "messageID": "msg_a_1", "partID": "prt_r_1", "field": "text", "delta": "Analyzing codebase..."}},
 			{Type: "message.part.updated", Properties: map[string]any{"part": runner.MessagePart{
 				ID: "prt_t_1", SessionID: "ses_test_1", MessageID: "msg_a_1", Type: "tool", Tool: "bash",
@@ -260,5 +267,132 @@ func TestCLISingleTurnAndREPLWithGateway(t *testing.T) {
 	}
 	if !focusedDesktop.Load() {
 		t.Fatal("expected /open to trigger /api/hoxi/desktop/focus")
+	}
+}
+
+func TestStreamTurnUnifiedSSEFilterHeartbeatAndResync(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/hoxi/sessions/ses_target/prompt", func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("directory"); got != "/tmp/wt" {
+			http.Error(w, "missing directory", http.StatusBadRequest)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	})
+	mux.HandleFunc("/api/hoxi/sessions/ses_target/message", func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("directory"); got != "/tmp/wt" {
+			http.Error(w, "missing directory", http.StatusBadRequest)
+			return
+		}
+		_ = json.NewEncoder(w).Encode([]runner.MessageTurn{
+			{
+				Info: runner.MessageInfo{ID: "msg_old_u", SessionID: "ses_target", Role: "user"},
+				Parts: []runner.MessagePart{
+					{ID: "prt_old_u", SessionID: "ses_target", MessageID: "msg_old_u", Type: "text", Text: "prior prompt"},
+				},
+			},
+			{
+				Info: runner.MessageInfo{ID: "msg_old_a", SessionID: "ses_target", Role: "assistant"},
+				Parts: []runner.MessagePart{
+					{ID: "prt_old_a", SessionID: "ses_target", MessageID: "msg_old_a", Type: "text", Text: "prior answer"},
+				},
+			},
+			{
+				Info: runner.MessageInfo{ID: "msg_u_2", SessionID: "ses_target", Role: "user"},
+				Parts: []runner.MessagePart{
+					{ID: "prt_u_2", SessionID: "ses_target", MessageID: "msg_u_2", Type: "text", Text: "current prompt"},
+				},
+			},
+			{
+				Info: runner.MessageInfo{ID: "msg_a_2", SessionID: "ses_target", Role: "assistant"},
+				Parts: []runner.MessagePart{
+					{ID: "prt_txt_2", SessionID: "ses_target", MessageID: "msg_a_2", Type: "text", Text: "Hello recovered world!"},
+				},
+			},
+		})
+	})
+	mux.HandleFunc("/api/hoxi/permission", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode([]map[string]any{
+			{"id": "per_other", "sessionID": "ses_other", "permission": "bash"},
+		})
+	})
+	mux.HandleFunc("/api/hoxi/sessions/status", func(w http.ResponseWriter, _ *http.Request) {
+		// Turn already settled to idle during the gap before resync.
+		_ = json.NewEncoder(w).Encode(map[string]runner.SessionStatus{})
+	})
+	mux.HandleFunc("/api/hoxi/event", func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("directory"); got != "/tmp/wt" {
+			http.Error(w, "missing directory", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		frames := []any{
+			runner.SSEEvent{Type: "server.heartbeat", Properties: map[string]any{}},
+			// Other session events across different property shapes must be ignored.
+			runner.SSEEvent{Type: "message.updated", Properties: map[string]any{
+				"info": runner.MessageInfo{ID: "msg_other", SessionID: "ses_other", Role: "assistant"},
+			}},
+			runner.SSEEvent{Type: "message.part.updated", Properties: map[string]any{
+				"part": runner.MessagePart{ID: "prt_other", SessionID: "ses_other", MessageID: "msg_other", Type: "text", Text: "noise"},
+			}},
+			runner.SSEEvent{Type: "session.updated", Properties: map[string]any{
+				"info": runner.SessionInfo{ID: "ses_other", Title: "Other"},
+			}},
+			runner.SSEEvent{Type: "session.error", Properties: map[string]any{
+				"sessionID": "ses_other",
+				"error":     map[string]any{"name": "OtherSessionFailed"},
+			}},
+			// Wrapped /global/event frame for target session.
+			map[string]any{
+				"directory": "/tmp/wt",
+				"payload": runner.SSEEvent{
+					Type:       "message.part.delta",
+					Properties: map[string]any{"sessionID": "ses_target", "messageID": "msg_a_2", "partID": "prt_txt_2", "field": "text", "delta": "Hello "},
+				},
+			},
+			// Stream resync recovers "recovered world!" from /message and sees idle from /sessions/status.
+			runner.SSEEvent{Type: "hoxi.stream.resync", Properties: map[string]any{}},
+		}
+		for _, frame := range frames {
+			raw, _ := json.Marshal(frame)
+			fmt.Fprintf(w, "data: %s\n\n", string(raw))
+			if flusher != nil {
+				flusher.Flush()
+			}
+		}
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	client := NewClient(srv.URL, true)
+	session := &runner.SessionInfo{
+		ID:        "ses_target",
+		Runtime:   "opencode",
+		Directory: "/tmp/wt",
+	}
+	var outBuf, errBuf bytes.Buffer
+	renderer := NewTurnRenderer(nil, &outBuf, &errBuf, client, session.Directory)
+	var seenTypes []string
+	err := client.StreamTurn(context.Background(), session, "current prompt", "build", "m1", "p1", func(evt runner.SSEEvent) {
+		seenTypes = append(seenTypes, evt.Type)
+		if sid := sseEventSessionID(evt); sid != "ses_target" {
+			t.Errorf("unexpected event sessionID %q in %+v", sid, evt)
+		}
+		renderer.HandleEvent(context.Background(), evt)
+	})
+	renderer.Finish()
+	if err != nil {
+		t.Fatalf("StreamTurn failed: %v", err)
+	}
+	for _, typ := range seenTypes {
+		if typ == "server.heartbeat" || typ == "hoxi.stream.resync" {
+			t.Fatalf("control event %q should not be forwarded to onEvent", typ)
+		}
+	}
+	gotOut := strings.TrimSpace(outBuf.String())
+	if gotOut != "Hello recovered world!" {
+		t.Fatalf("rendered output = %q, want %q", gotOut, "Hello recovered world!")
 	}
 }

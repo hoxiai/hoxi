@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"io"
 	"io/fs"
-	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -13,7 +12,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/hoxiai/hoxi/internal/auth"
 	"github.com/hoxiai/hoxi/internal/browser"
@@ -23,6 +21,7 @@ import (
 	"github.com/hoxiai/hoxi/internal/forge"
 	"github.com/hoxiai/hoxi/internal/handoff"
 	"github.com/hoxiai/hoxi/internal/leaderboard"
+	"github.com/hoxiai/hoxi/internal/opencode/ocapi"
 	"github.com/hoxiai/hoxi/internal/orchestration"
 	"github.com/hoxiai/hoxi/internal/provider"
 	"github.com/hoxiai/hoxi/internal/recall"
@@ -37,7 +36,7 @@ import (
 
 type Gateway struct {
 	openCodePort          int
-	password              string
+	openCode              *ocapi.Client
 	rootDir               string
 	wsBaseURL             string
 	proxy                 *httputil.ReverseProxy
@@ -74,21 +73,13 @@ type Gateway struct {
 
 func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statusbar.Tracker) *Gateway {
 	var runnerSvc *runner.Service
+	openCode := ocapi.NewForPort(openCodePort, password)
 	targetURL, _ := url.Parse("http://127.0.0.1:" + strconv.Itoa(openCodePort))
 	proxy := httputil.NewSingleHostReverseProxy(targetURL)
 
-	// Bypass system HTTP_PROXY / HTTPS_PROXY (e.g. Clash/Surge) so 127.0.0.1 never returns 502 Bad Gateway
-	proxy.Transport = &http.Transport{
-		Proxy: nil,
-		DialContext: (&net.Dialer{
-			Timeout:   5 * time.Second,
-			KeepAlive: 30 * time.Second,
-		}).DialContext,
-		ResponseHeaderTimeout: 0,
-		IdleConnTimeout:       90 * time.Second,
-		MaxIdleConns:          100,
-		MaxIdleConnsPerHost:   32,
-	}
+	// Share the engine client's loopback transport: it bypasses system
+	// HTTP_PROXY / HTTPS_PROXY (e.g. Clash/Surge) so 127.0.0.1 never returns 502.
+	proxy.Transport = ocapi.Transport()
 	// Instant flush for /event SSE streaming
 	proxy.FlushInterval = -1
 
@@ -104,7 +95,7 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 			req.Header.Set("Origin", targetURL.Scheme+"://"+targetURL.Host)
 		}
 		// OpenCode serve uses HTTP Basic Auth with username "opencode"
-		req.SetBasicAuth("opencode", password)
+		openCode.Authorize(req)
 	}
 
 	proxy.ModifyResponse = func(resp *http.Response) error {
@@ -136,6 +127,7 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 	if status != nil {
 		providers.SetOnProviderDegraded(status.SetProviderDegraded)
 	}
+	wireAssistRoutes(providers, wtMgr)
 	handoffSvc := handoff.NewService(openCodePort, password, rootDir, providers)
 	runnerSvc = runner.NewService(rootDir, wtMgr, status, "")
 	runnerSvc.ConfigureOpenCode(targetURL.String(), password)
@@ -146,7 +138,7 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 
 	g := &Gateway{
 		openCodePort: openCodePort,
-		password:     password,
+		openCode:     openCode,
 		rootDir:      rootDir,
 		proxy:        proxy,
 		mux:          http.NewServeMux(),
@@ -164,10 +156,7 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 		codeIndex:    codeindex.NewService(""),
 		forge:        forgeSvc,
 	}
-	g.recallSvc = recall.NewService(&gatewayRecallSource{
-		g:      g,
-		client: &http.Client{Transport: &http.Transport{Proxy: nil, MaxIdleConnsPerHost: 8}, Timeout: 8 * time.Second},
-	})
+	g.recallSvc = recall.NewService(&gatewayRecallSource{g: g})
 	g.orchestration = orchestration.NewService(openCodePort, password)
 	g.skills = skills.NewService(targetURL.String(), password, g.resolveSkillContext)
 	runnerSvc.SetSkillValidator(func(ctx context.Context, directory, sessionID string, sel runner.SkillSelection) error {
@@ -286,10 +275,10 @@ func (g *Gateway) registerRoutes(distFS fs.FS) {
 			})
 		}
 		resp := map[string]any{
-			"appVersion":   buildinfo.Version,
-			"rootDir":      g.rootDir,
-			"wsBaseURL":    g.wsBaseURL,
-			"status":       st,
+			"appVersion": buildinfo.Version,
+			"rootDir":    g.rootDir,
+			"wsBaseURL":  g.wsBaseURL,
+			"status":     st,
 		}
 		if tok != "" {
 			resp["gatewayToken"] = tok

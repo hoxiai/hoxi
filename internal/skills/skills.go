@@ -7,8 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -16,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/opencode/ocapi"
 )
 
 const (
@@ -91,33 +91,19 @@ type cachedCatalog struct {
 }
 
 type Service struct {
-	openCodeURL      string
-	openCodePassword string
-	client           *http.Client
-	resolver         ContextResolver
+	openCode *ocapi.Client
+	resolver ContextResolver
 
 	mu    sync.RWMutex
 	cache map[string]cachedCatalog
 }
 
+// upstreamSkillTimeout bounds one engine /skill listing.
+const upstreamSkillTimeout = 15 * time.Second
+
 func NewService(openCodeURL, password string, resolver ContextResolver) *Service {
-	transport := &http.Transport{
-		Proxy: nil,
-		DialContext: (&net.Dialer{
-			Timeout:   5 * time.Second,
-			KeepAlive: 30 * time.Second,
-		}).DialContext,
-		IdleConnTimeout:     90 * time.Second,
-		MaxIdleConns:        32,
-		MaxIdleConnsPerHost: 16,
-	}
 	return &Service{
-		openCodeURL:      strings.TrimRight(strings.TrimSpace(openCodeURL), "/"),
-		openCodePassword: password,
-		client: &http.Client{
-			Transport: transport,
-			Timeout:   15 * time.Second,
-		},
+		openCode: ocapi.New(openCodeURL, password),
 		resolver: resolver,
 		cache:    make(map[string]cachedCatalog),
 	}
@@ -322,29 +308,20 @@ func (s *Service) loadOpenCodeCatalog(ctx context.Context, rc RequestContext, fo
 }
 
 func (s *Service) fetchOpenCodeSkills(ctx context.Context, directory string) ([]OpenCodeSkillInfo, error) {
-	if s.openCodeURL == "" || s.client == nil {
+	if !s.openCode.Available() {
 		return nil, errors.New("OpenCode endpoint is not configured")
 	}
-	reqURL := s.openCodeURL + "/skill?directory=" + url.QueryEscape(directory)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	ctx, cancel := context.WithTimeout(ctx, upstreamSkillTimeout)
+	defer cancel()
+	status, body, err := s.openCode.Raw(ctx, http.MethodGet, "/skill", url.Values{"directory": {directory}}, nil)
 	if err != nil {
 		return nil, err
 	}
-	req.SetBasicAuth("opencode", s.openCodePassword)
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return nil, err
+	if len(body) > maxUpstreamSkillBytes {
+		return nil, fmt.Errorf("OpenCode skill catalog exceeds %d bytes", maxUpstreamSkillBytes)
 	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxUpstreamSkillBytes))
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	if status < 200 || status >= 300 {
+		return nil, fmt.Errorf("HTTP %d: %s", status, strings.TrimSpace(string(body)))
 	}
 
 	var items []OpenCodeSkillInfo

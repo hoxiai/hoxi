@@ -318,8 +318,8 @@ func TestEnsureHoxiEngineDataDir(t *testing.T) {
 	t.Setenv("OPENCODE_DB", "")
 	t.Setenv("HOXI_DB_PATH", "")
 
-	if gotDB := ResolveHoxiDBPath(); gotDB != filepath.Join(home, ".hoxi", "hoxi.db") {
-		t.Fatalf("ResolveHoxiDBPath() = %s, want %s", gotDB, filepath.Join(home, ".hoxi", "hoxi.db"))
+	if gotDB := ensureHoxiDB(); gotDB != filepath.Join(home, ".hoxi", "hoxi.db") {
+		t.Fatalf("ensureHoxiDB() = %s, want %s", gotDB, filepath.Join(home, ".hoxi", "hoxi.db"))
 	}
 
 	extOpenCodeDir := filepath.Join(home, ".local", "share", "opencode")

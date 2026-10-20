@@ -1,14 +1,12 @@
 package orchestration
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -17,13 +15,23 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/opencode/ocapi"
 )
 
+// Service runs convoy plans: a DAG of tasks, each executed as its own
+// OpenCode session in the plan's directory.
+//
+// TODO(orchestration): convoy sessions are created directly on the engine's
+// /session API instead of through the runner, so they are never adopted into
+// Hoxi's session store. They therefore list as unadopted OpenCode sessions,
+// get no worktree provisioning, runtime switching or Steer, and only the
+// engine-side hoxi-permissions.js gate applies (no runner PreToolUse gate).
+// Move session creation, prompting and abort onto an in-process runner API
+// (the same path as POST /api/hoxi/sessions) once runner exposes a blocking
+// "run turn and wait" call; until then keep every engine call in call() below.
 type Service struct {
-	port     int
-	password string
-	base     string
-	client   *http.Client
+	openCode *ocapi.Client
 	mu       sync.Mutex
 	plans    map[string]*planRun
 }
@@ -33,15 +41,13 @@ type planRun struct {
 	cancel context.CancelFunc
 }
 
+// engineCallTimeout caps one engine call; /message blocks for a whole turn.
+const engineCallTimeout = 30 * time.Minute
+
 func NewService(port int, password string) *Service {
 	return &Service{
-		port:     port,
-		password: password,
-		client: &http.Client{
-			Transport: &http.Transport{Proxy: nil},
-			Timeout:   30 * time.Minute,
-		},
-		plans: make(map[string]*planRun),
+		openCode: ocapi.NewForPort(port, password),
+		plans:    make(map[string]*planRun),
 	}
 }
 
@@ -380,44 +386,20 @@ func (s *Service) abort(sessionID, directory string) {
 }
 
 func (s *Service) call(ctx context.Context, method, path, directory string, body []byte, out interface{}) error {
-	if s.base == "" && s.port <= 0 {
+	if !s.openCode.Available() {
 		return errors.New("opencode is unavailable")
 	}
-	endpoint := s.baseURL() + path
+	var query url.Values
 	if directory != "" {
-		endpoint += "?directory=" + url.QueryEscape(directory)
+		query = url.Values{"directory": {directory}}
 	}
-	var reader io.Reader
+	var in interface{}
 	if body != nil {
-		reader = bytes.NewReader(body)
+		in = body
 	}
-	req, err := http.NewRequestWithContext(ctx, method, endpoint, reader)
-	if err != nil {
-		return err
-	}
-	req.SetBasicAuth("opencode", s.password)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("opencode HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
-	}
-	if out == nil {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
-		return nil
-	}
-	return json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(out)
-}
-
-func (s *Service) baseURL() string {
-	if s.base != "" {
-		return strings.TrimRight(s.base, "/")
-	}
-	return "http://127.0.0.1:" + strconv.Itoa(s.port)
+	ctx, cancel := context.WithTimeout(ctx, engineCallTimeout)
+	defer cancel()
+	return s.openCode.JSON(ctx, method, path, query, in, out)
 }
 
 func canonicalDirectory(directory string) (string, error) {

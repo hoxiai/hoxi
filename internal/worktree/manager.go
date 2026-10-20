@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/llm"
 )
 
 const (
@@ -65,6 +67,9 @@ type worktreeManager struct {
 	rootDir  string
 	sessions map[string]worktreeMeta
 	roots    *managerRoots
+	// llm and recordAudit back the AI review helpers (audit, commit message).
+	llm         llm.Client
+	recordAudit AuditRecorder
 }
 
 type Manager = worktreeManager

@@ -3,7 +3,6 @@ package provider
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -56,81 +55,7 @@ func TestParseOpenAIModelsPayloadAndExtractAPIError(t *testing.T) {
 	}
 }
 
-func TestCleanAndFallbackSummarizeTitle(t *testing.T) {
-	rawZh := "<think>思考中...</think>\n标题：“修复网关 CORS 与单元测试”."
-	if got := cleanSummarizedTitle(rawZh, "zh-CN"); got != "修复网关 CORS 与单元测试" {
-		t.Errorf("cleanSummarizedTitle zh-CN = %q, want %q", got, "修复网关 CORS 与单元测试")
-	}
-
-	rawEn := `Title: "Optimize SSE Streaming & Worktree Isolation".`
-	if got := cleanSummarizedTitle(rawEn, "en-US"); got != "Optimize SSE Streaming & Worktree Isolation" {
-		t.Errorf("cleanSummarizedTitle en-US = %q, want %q", got, "Optimize SSE Streaming & Worktree Isolation")
-	}
-
-	if got := cleanSummarizedTitle("   <think>only thought</think>  ", "en-US"); got != "" {
-		t.Errorf("expected empty cleaned title, got %q", got)
-	}
-
-	fbZh := fallbackSummarizeTitle("请帮我排查 desktop_gateway.go 里的 CORS 配置问题。顺便加上单元测试。", "zh-CN")
-	if fbZh == "" || fbZh == "新任务会话" {
-		t.Fatalf("expected meaningful zh fallback title, got %q", fbZh)
-	}
-
-	fbEn := fallbackSummarizeTitle("```go\nfmt.Println()\n```\nFix race condition in worktree manager. Also update docs.", "en-US")
-	if fbEn != "Fix race condition in worktree manager" {
-		t.Errorf("fallbackSummarizeTitle en-US = %q, want %q", fbEn, "Fix race condition in worktree manager")
-	}
-
-	if got := fallbackSummarizeTitle("<think>thinking</think>", "zh-CN"); got != "新任务会话" {
-		t.Errorf("expected default zh fallback, got %q", got)
-	}
-	if got := fallbackSummarizeTitle("   ", "en-US"); got != "New Task Session" {
-		t.Errorf("expected default en fallback, got %q", got)
-	}
-}
-
-func TestEvaluateStaticCodeRulesAndParseObserverAudit(t *testing.T) {
-	bigFileLines := strings.Repeat("const x = 1;\n", 805)
-	diffs := []auditDiffFile{
-		{
-			File:      "web/src/App.tsx",
-			Before:    "const a = 1;\n",
-			After:     "const a = 2;\n// TODO: implement rest of logic\n",
-			Additions: 2,
-			Deletions: 1,
-		},
-		{
-			File:      "internal/foo/big.go",
-			Before:    "package foo\n",
-			After:     bigFileLines,
-			Additions: 805,
-		},
-		{
-			File:      "web/src/components/icons/svg.tsx",
-			After:     bigFileLines,
-			Additions: 805,
-		},
-	}
-
-	deductionZh, issuesZh := evaluateStaticCodeRules(diffs, 2, "TS2322 type mismatch", "zh-CN")
-	if deductionZh < 60 || len(issuesZh) != 3 {
-		t.Fatalf("expected deduction >= 60 and 3 issues (LSP + lazy + >800 lines, excluding icons), got deduction=%d issues=%v", deductionZh, issuesZh)
-	}
-
-	deductionEn, issuesEn := evaluateStaticCodeRules(diffs, 3, "undefined symbol", "en-US")
-	if deductionEn < 60 || len(issuesEn) != 3 {
-		t.Fatalf("expected English static rules issues, got deduction=%d issues=%v", deductionEn, issuesEn)
-	}
-
-	score, summary, parsedIssues, err := parseObserverAuditJSON("```json\n{\"score\": 68, \"pass\": false, \"summary\": \"Missing error handling\", \"issues\": [\"Unchecked null pointer\"]}\n```")
-	if err != nil || score != 68 || summary != "Missing error handling" || len(parsedIssues) != 1 {
-		t.Fatalf("unexpected parsed observer JSON: score=%d summary=%q issues=%v", score, summary, parsedIssues)
-	}
-
-	if s, _, _, err := parseObserverAuditJSON("92"); err != nil || s != 92 {
-		t.Errorf("expected numeric score 92, got %d", s)
-	}
-
+func TestExtractLLMTextContent(t *testing.T) {
 	// Test extractLLMTextContent for OpenAI, Anthropic, and raw fallback
 	if got := extractLLMTextContent([]byte(`{"choices":[{"message":{"content":"hello openai"}}]}`)); got != "hello openai" {
 		t.Errorf("extractLLMTextContent OpenAI = %q", got)
@@ -143,38 +68,14 @@ func TestEvaluateStaticCodeRulesAndParseObserverAudit(t *testing.T) {
 	}
 }
 
-func TestParseObserverAuditScoreValidation(t *testing.T) {
-	for _, text := range []string{
-		"``` json\n{\"score\":68,\"summary\":\"ok\"}\n```",
-		"```JSON\n{\"score\":68,\"summary\":\"ok\"}\n```",
-		"```json {\"score\":68,\"summary\":\"ok\"}```",
-	} {
-		t.Run(text, func(t *testing.T) {
-			score, summary, _, err := parseObserverAuditJSON(text)
-			if err != nil || score != 68 || summary != "ok" {
-				t.Fatalf("expected fenced JSON with flexible language tag, got %d, %q, %v", score, summary, err)
-			}
-		})
+func TestExtractLLMTextContentNeverLeaksRawJSON(t *testing.T) {
+	truncatedReasoningJSON := []byte(`{"choices":[{"finish_reason":"length","index":0,"logprobs":null,"message":{"content":"","reasoning_content":"The user wants a git commit message..."}}]}`)
+	if extracted := extractLLMTextContent(truncatedReasoningJSON); extracted != "" {
+		t.Fatalf("expected empty string when choices[0].message.content is empty, got %q", extracted)
 	}
-	for _, text := range []string{`{"score":0}`, `{"score":100}`, "0", "100"} {
-		t.Run(text, func(t *testing.T) {
-			score, _, _, err := parseObserverAuditJSON(text)
-			if err != nil || (score != 0 && score != 100) {
-				t.Fatalf("expected valid boundary score, got %d, %v", score, err)
-			}
-		})
-	}
-	for _, text := range []string{
-		"", "Looks good overall", "{}", "null", `{"score":null}`, `{"score":"0"}`,
-		`{"score":-1}`, `{"score":101}`, `{"score":1.5}`, `{"score":NaN}`,
-		`{"score":Infinity}`, `{"score":1e999}`, `{"score":0`, `{"score":0} garbage`,
-		`{"score":0,"issues":"invalid"}`, "NaN", "Inf", "-1", "101",
-	} {
-		t.Run(text, func(t *testing.T) {
-			if _, _, _, err := parseObserverAuditJSON(text); err == nil {
-				t.Fatalf("expected invalid audit response to fail: %q", text)
-			}
-		})
+	validResp := []byte(`{"choices":[{"finish_reason":"stop","index":0,"message":{"content":"feat(git): 新增底部一键提交并推送功能"}}]}`)
+	if got := extractLLMTextContent(validResp); got != "feat(git): 新增底部一键提交并推送功能" {
+		t.Fatalf("unexpected extracted content: %q", got)
 	}
 }
 
@@ -275,9 +176,9 @@ func TestConfigHelpersAndEnsureHoxiModelsConfig(t *testing.T) {
 	}
 }
 
-func TestProviderTelemetryStorePersistenceAndRecording(t *testing.T) {
+func TestModelStatsStorePersistenceAndRecording(t *testing.T) {
 	_, workspaceDir := setupIsolatedEnv(t)
-	store := newProviderTelemetryStore(workspaceDir)
+	store := newModelStatsStore(workspaceDir)
 
 	// Record probe results (success, api_error, timeout)
 	store.recordProbeResult("openai", true, 120, "", "gpt-4o")
@@ -303,35 +204,13 @@ func TestProviderTelemetryStorePersistenceAndRecording(t *testing.T) {
 	}
 
 	// Reload from disk into a fresh store instance
-	reloadedStore := newProviderTelemetryStore(workspaceDir)
+	reloadedStore := newModelStatsStore(workspaceDir)
 	reloadedRec := reloadedStore.records["openai"]
 	if reloadedRec == nil || reloadedRec.Models["gpt-4o"] == nil {
 		t.Fatalf("expected telemetry record and model stats to persist on disk, got %+v", reloadedStore.records)
 	}
 	if reloadedRec.Models["gpt-4o"].AuditTotalCount != 2 || reloadedRec.Models["gpt-4o"].HallucinationFlags != 1 {
 		t.Errorf("unexpected persisted model telemetry stats: %+v", reloadedRec.Models["gpt-4o"])
-	}
-}
-
-func TestExtractLLMTextContentNeverLeaksRawJSON(t *testing.T) {
-	truncatedReasoningJSON := []byte(`{"choices":[{"finish_reason":"length","index":0,"logprobs":null,"message":{"content":"","reasoning_content":"The user wants a git commit message..."}}]}`)
-
-	extracted := extractLLMTextContent(truncatedReasoningJSON)
-	if extracted != "" {
-		t.Fatalf("expected empty string when choices[0].message.content is empty, got %q", extracted)
-	}
-
-	if msg := cleanGeneratedCommitMessage(string(truncatedReasoningJSON)); msg != "" {
-		t.Fatalf("expected cleanGeneratedCommitMessage to reject raw JSON, got %q", msg)
-	}
-
-	if title := cleanSummarizedTitle(string(truncatedReasoningJSON), "zh-CN"); title != "" {
-		t.Fatalf("expected cleanSummarizedTitle to reject raw JSON, got %q", title)
-	}
-
-	validResp := []byte(`{"choices":[{"finish_reason":"stop","index":0,"message":{"content":"feat(git): 新增底部一键提交并推送功能"}}]}`)
-	if got := cleanGeneratedCommitMessage(extractLLMTextContent(validResp)); got != "feat(git): 新增底部一键提交并推送功能" {
-		t.Fatalf("unexpected cleaned commit message: %q", got)
 	}
 }
 

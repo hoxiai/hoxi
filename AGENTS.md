@@ -21,32 +21,38 @@
 ├── cmd/hoxi/main.go                  # CLI / headless entrypoint calling internal/app
 ├── internal/
 │   ├── app/                          # DesktopApp lifecycle, Wails bindings, origin allow-list & signal handling
-│   ├── agyhook/                      # `hoxi agy-hook` Antigravity PreToolUse hook → runner approval gate
-│   ├── attachment/                   # Multimodal file/image attachment staging, validation & store
-│   ├── auth/                         # Hoxi account one-click authorization, token poll/exchange & store
-│   ├── browser/                      # Headless Chrome session manager, tabs, actions & inspector bridge
-│   ├── buildinfo/                    # Build version embedded by the desktop build
-│   ├── claudeconfig/                 # Claude Code model/config discovery & selection
+│   ├── agentcli/                     # [底座层] Local agent CLI (Qoder/CodeBuddy) binary & model discovery + effort helpers
+│   ├── agyhook/                      # [底座层] `hoxi agy-hook` Antigravity PreToolUse hook → runner approval gate
+│   ├── attachment/                   # [业务层] Multimodal file/image attachment staging, validation & store
+│   ├── auth/                         # [业务层] Hoxi account one-click authorization, token poll/exchange & store
+│   ├── browser/                      # [业务层] Headless Chrome session manager, tabs, actions & inspector bridge
+│   ├── buildinfo/                    # [底座层] Build version embedded by the desktop build
+│   ├── claudeconfig/                 # [底座层] Claude Code model/config discovery & selection
 │   ├── cli/                          # Terminal-first `hoxi` CLI (REPL, SSE streaming renderer, subcommands & gateway client)
-│   ├── codeindex/                    # Tree-sitter / symbol & trigram workspace code index
-│   ├── diagnostics/                  # Gateway & runtime error ring-buffer, health diagnostics & telemetry
-│   ├── forge/                        # GitHub / GitLab PR, issue & CI review integration
+│   ├── codeindex/                    # [业务层] Tree-sitter / symbol & trigram workspace code index
+│   ├── diagnostics/                  # [底座层] Gateway & runtime error ring-buffer, health diagnostics & telemetry
+│   ├── forge/                        # [业务层] GitHub / GitLab PR, issue & CI review integration
 │   ├── gateway/                      # In-process reverse proxy, Basic Auth, WS/SSE bridge, dev pulse & security
-│   ├── handoff/                      # Cross-CLI session handoff (Claude/Codex/Gemini/Grok/OpenCode/Trae/Qoder/CodeBuddy) + local CLI bridge & materializer
-│   ├── leaderboard/                  # Model / endpoint leaderboard aggregation & cache
-│   ├── opencode/                     # OpenCode binary resolver, installer, daemon supervision & browser plugin overlay
-│   ├── orchestration/                # Multi-agent DAG task orchestration, scheduling & sub-session dispatch
-│   ├── provider/                     # Provider config, models.json, LLM client, probing, audit & telemetry
-│   ├── recall/                       # Cross-session semantic / BM25 memory recall & indexing
-│   ├── runner/                       # Multi-runtime execution engine (OpenCode/Claude/Antigravity/Qoder/CodeBuddy): process adapters, translators, hook gates, session store & revert
-│   ├── sandbox/                      # OS-level Seatbelt / Bubblewrap execution sandbox policy & profiles
-│   ├── skills/                       # Local & marketplace Agent Skills discovery, parser & installer
-│   ├── statusbar/                    # Running/Attention tracker & macOS NSStatusBar (CGo)
-│   ├── telemetry/                    # Local token/cost/latency metrics & session usage ledger
-│   ├── textindex/                    # Pure-Go BM25 / trigram full-text search index primitive
-│   ├── updater/                      # Sparkle-based native auto-update checker & appcast
-│   ├── workspace/                    # Multi-workspace project profile store & validation
-│   └── worktree/                     # Git worktree session sandbox manager, diffs, branches & snapshots
+│   ├── handoff/                      # [业务层] Cross-CLI session handoff (Claude/Codex/Gemini/Grok/OpenCode/Trae/Qoder/CodeBuddy) + local CLI bridge & materializer
+│   ├── hoxipaths/                    # [底座层] Unified ~/.hoxi, hoxi.db & engine-data/state path resolution
+│   ├── leaderboard/                  # [业务层] Model / endpoint leaderboard aggregation & cache
+│   ├── llm/                          # [底座层] Narrow Client/Target/Request contract for internal single-shot LLM calls
+│   ├── opencode/                     # [业务层] OpenCode binary resolver, installer, daemon supervision & browser plugin overlay
+│   │   ├── ocapi/                    # [底座层] Shared loopback HTTP/SSE client & Basic Auth transport for `opencode serve`
+│   │   └── ocstate/                  # [底座层] External OpenCode SQLite reader & Console account sync into hoxi.db
+│   ├── orchestration/                # [业务层] Multi-agent DAG task orchestration, scheduling & sub-session dispatch
+│   ├── promptassist/                 # [业务层] Composer prompt enhancement & session title summarization via llm.Client
+│   ├── provider/                     # [业务层] Provider config, models.json, llm.Client implementation, probing & model stats
+│   ├── recall/                       # [业务层] Cross-session semantic / BM25 memory recall & indexing
+│   ├── runner/                       # [业务层] Multi-runtime execution engine (OpenCode/Claude/Antigravity/Qoder/CodeBuddy): process adapters, translators, hook gates, session store & revert
+│   ├── sandbox/                      # [业务层] OS-level Seatbelt / Bubblewrap execution sandbox policy & profiles
+│   ├── skills/                       # [业务层] Local & marketplace Agent Skills discovery, parser & installer
+│   ├── statusbar/                    # [底座层] Running/Attention tracker & macOS NSStatusBar (CGo)
+│   ├── telemetry/                    # [业务层] Local token/cost/latency metrics & session usage ledger
+│   ├── textindex/                    # [底座层] Pure-Go BM25 / trigram full-text search index primitive
+│   ├── updater/                      # [业务层] Sparkle-based native auto-update checker & appcast
+│   ├── workspace/                    # [业务层] Multi-workspace project profile store & validation
+│   └── worktree/                     # [业务层] Git worktree session sandbox manager, diffs, branches, snapshots, review audit & commit messages
 ├── web/                              # Frontend workspace (Vite + SolidJS + Tailwind)
 │   ├── src/
 │   │   ├── components/               # Modular UI by domain (layout, timeline, inspector, models, handoff, approval, codeindex, orchestration, skills, terminal, settings, icons, motion)
@@ -114,8 +120,8 @@
      - `store/` 负责响应式状态、领域数据计算与本地持久化，**严禁**反向 `import` 任何 `components/` 模块；所有子模块统一在 [`web/src/store/workspace.ts`](web/src/store/workspace.ts) 底部扁平重导出，禁止在子模块末尾做二级链式 `export *`。
      - `components/` 按业务域正交归位（`layout` 仅放窗口骨架与导航栏，独立业务弹窗归入 `models`、`handoff`、`settings`、`approval`、`codeindex`、`orchestration`、`skills` 等对应目录）。
    - **Go 后端四层单向依赖 (`app/cli -> gateway -> 业务领域包 -> 基础底座包`)**：
-     - 业务领域包（`runner`, `handoff`, `worktree`, `provider`, `browser`, `opencode`, `workspace`, `auth`, `leaderboard`, `updater`, `attachment`, `codeindex`, `forge`, `orchestration`, `recall`, `sandbox`, `skills`, `telemetry`）与底座包（`statusbar`, `claudeconfig`, `agyhook`, `diagnostics`, `buildinfo`, `textindex`）**严禁反向 `import` `internal/gateway`、`internal/app` 或 `internal/cli`**。
-     - 各子包必须使用各自明确的 Receiver 类型（`*Gateway` / `*Service` / `*Manager`），严禁定义跨包伪装别名（如 `type desktopGateway = Service`）；Hoxi 内部自发 LLM 请求统一复用 `internal/provider/http.go` 的 `callSimpleLLM`。
+     - 业务领域包（`runner`, `handoff`, `worktree`, `provider`, `promptassist`, `browser`, `opencode`, `workspace`, `auth`, `leaderboard`, `updater`, `attachment`, `codeindex`, `forge`, `orchestration`, `recall`, `sandbox`, `skills`, `telemetry`）与底座包（`hoxipaths`, `llm`, `agentcli`, `opencode/ocapi`, `opencode/ocstate`, `statusbar`, `claudeconfig`, `agyhook`, `diagnostics`, `buildinfo`, `textindex`）**严禁反向 `import` `internal/gateway`、`internal/app` 或 `internal/cli`**。
+     - 各子包必须使用各自明确的 Receiver 类型（`*Gateway` / `*Service` / `*Manager`），严禁定义跨包伪装别名（如 `type desktopGateway = Service`）；Hoxi 内部自发 LLM 请求统一由 `gateway` 注入 [`llm.Client`](internal/llm/llm.go)（底层由 `internal/provider` 实现），业务领域包严禁直接 `import internal/provider`。
 
 2. **OpenCode 上游零侵入 (Upstream Zero-Fork)**
    - 严禁 Fork 或修改 `opencode` 内部源码；所有定制能力仅通过 Go 进程监管、反向代理或 `.opencode/plugins/` 插件钩子扩展。
@@ -172,7 +178,9 @@
 | 当你需要新增 / 修改... | 必须放入的位置 (Target Location) | 严禁放入的位置 (Forbidden) | 典范参考 (Canonical Example) |
 | :--- | :--- | :--- | :--- |
 | **Go 独立业务域与 HTTP 路由** | `internal/<domain>/` 独立子包，在 [`internal/gateway/gateway.go`](internal/gateway/gateway.go) 注册 | 严禁塞入 `internal/provider` 或 `internal/gateway` | [`internal/worktree/`](internal/worktree/manager.go) |
-| **Go 网关自发轻量 LLM 调用** | 业务归各自领域包，底层复用 `provider` 的 `callSimpleLLM` | 严禁手写 `http.Post` 拼接 `/v1/messages` 或 `/chat/completions` | [`internal/provider/http.go`](internal/provider/http.go) |
+| **Go 网关自发轻量 LLM 调用** | 领域包接收 `gateway` 注入的 [`llm.Client`](internal/llm/llm.go)，不 `import provider` | 严禁业务包直接 `import internal/provider`；严禁手写 `http.Post` 拼接 `/v1/messages` 或 `/chat/completions` | [`internal/promptassist/`](internal/promptassist/service.go)、[`internal/gateway/assist.go`](internal/gateway/assist.go) |
+| **直连 OpenCode (`opencode serve`)** | 一律使用 [`internal/opencode/ocapi`](internal/opencode/ocapi/client.go)（共享 `Transport`、Basic Auth 与 `LimitReader`） | 严禁自建回环 `http.Client`/`Transport` 或手动调用 `SetBasicAuth("opencode", ...)` | [`internal/opencode/ocapi/client.go`](internal/opencode/ocapi/client.go) |
+| **`~/.hoxi` 与引擎路径解析** | 一律使用 [`internal/hoxipaths`](internal/hoxipaths/hoxipaths.go)（`DBPath`、`EngineDataDir`、`EngineStateDir`、`Home`） | 严禁在各包硬编码 `~/.hoxi/hoxi.db`、`~/.hoxi/engine-data` 或重复解析环境变量 | [`internal/hoxipaths/hoxipaths.go`](internal/hoxipaths/hoxipaths.go) |
 | **外部 CLI 会话扫描 / 凭证桥接** | `internal/handoff/<tool>.go` 单文件高内聚 | 严禁把工具 A 的函数塞进工具 B、`types.go` 或 `service.go` | [`internal/handoff/codex.go`](internal/handoff/codex.go) |
 | **多运行时 Agent 子进程驱动** | `internal/runner/` 对应进程 adapter 与协议 translator | 严禁侵入或修改 `internal/opencode` | [`internal/runner/`](internal/runner/http.go) |
 | **前端 HTTP / REST / SSE 客户端** | `web/src/services/`，复用 [`requestJSON`](web/src/services/http.ts) | 严禁反向导入 `store/` 或 `components/`；严禁混入纯 UI 工具 | [`web/src/services/http.ts`](web/src/services/http.ts) |

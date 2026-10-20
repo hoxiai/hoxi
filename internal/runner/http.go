@@ -11,8 +11,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hoxiai/hoxi/internal/agentcli"
 	"github.com/hoxiai/hoxi/internal/attachment"
 	"github.com/hoxiai/hoxi/internal/diagnostics"
+	"github.com/hoxiai/hoxi/internal/opencode/ocapi"
 	"github.com/hoxiai/hoxi/internal/statusbar"
 	"github.com/hoxiai/hoxi/internal/worktree"
 )
@@ -27,16 +29,14 @@ type Service struct {
 	doomLoop    *doomLoopGuard
 	stall       stallPolicy
 
-	mu               sync.Mutex
-	turnMu           sessionTurnLocks
-	procs            map[string]*activeProcess
-	childBusy        map[string]bool
-	subs             map[chan SSEEvent]string
-	seqSeed          int64
-	openCodeURL      string
-	openCodePassword string
-	openCodeClient   *http.Client
-	managedOpenCode  sync.Map
+	mu              sync.Mutex
+	turnMu          sessionTurnLocks
+	procs           map[string]*activeProcess
+	childBusy       map[string]bool
+	subs            map[chan SSEEvent]string
+	seqSeed         int64
+	openCode        *ocapi.Client
+	managedOpenCode sync.Map
 	// childTurns caches OpenCode subagent transcripts read while filtering diffs.
 	childTurns     sync.Map // session ID -> childTurnsEntry
 	editedFiles    sync.Map // session ID -> editedFilesEntry
@@ -229,8 +229,8 @@ func (s *Service) handleCodeBuddyModels(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	forceRefresh := r.URL.Query().Get("refresh") == "1" || r.URL.Query().Get("refresh") == "true"
-	bin := ResolveCodeBuddyBinary()
-	models := DiscoverCodeBuddyModelsWithRefresh(forceRefresh)
+	bin := agentcli.ResolveCodeBuddyBinary()
+	models := agentcli.DiscoverCodeBuddyModelsWithRefresh(forceRefresh)
 	defaultModel := ""
 	if len(models) > 0 {
 		defaultModel = models[0].ID
@@ -250,8 +250,8 @@ func (s *Service) handleQoderModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	forceRefresh := r.URL.Query().Get("refresh") == "1" || r.URL.Query().Get("refresh") == "true"
-	bin := ResolveQoderBinary()
-	models := DiscoverQoderModelsWithRefresh(forceRefresh)
+	bin := agentcli.ResolveQoderBinary()
+	models := agentcli.DiscoverQoderModelsWithRefresh(forceRefresh)
 	defaultModel := ""
 	if len(models) > 0 {
 		defaultModel = models[0].ID
@@ -560,10 +560,10 @@ func (s *Service) handleSessionPrompt(w http.ResponseWriter, r *http.Request, se
 		binPath = ResolveClaudeBinary()
 		missingMsg = "Claude Code CLI (claude) binary not found in ~/.local/bin/claude or PATH"
 	case string(RuntimeCodeBuddy):
-		binPath = ResolveCodeBuddyBinary()
+		binPath = agentcli.ResolveCodeBuddyBinary()
 		missingMsg = "CodeBuddy CLI (codebuddy) binary not found in PATH"
 	case string(RuntimeQoder):
-		binPath, _ = ResolveQoderBinaryForModel(modelID)
+		binPath, _ = agentcli.ResolveQoderBinaryForModel(modelID)
 		missingMsg = "Qoder CLI (qodercli / qoderclicn) binary not found in PATH"
 	}
 	if binPath == "" && rec.Runtime != "opencode" {

@@ -1,11 +1,9 @@
-package provider
+package worktree
 
 import (
 	"fmt"
 	"strings"
 	"testing"
-
-	"github.com/hoxiai/hoxi/internal/worktree"
 )
 
 func TestBuildObserverAuditPromptFencesGuidanceAndNotesOmittedFiles(t *testing.T) {
@@ -51,7 +49,7 @@ func TestNoChangesReviewSummaryFollowsLocale(t *testing.T) {
 }
 
 func TestAuditDiffsFromReviewCopiesEveryField(t *testing.T) {
-	out := auditDiffsFromReview([]worktree.ReviewFileDiff{
+	out := auditDiffsFromReview([]ReviewFileDiff{
 		{File: "a.go", Before: "old", After: "new", Additions: 2, Deletions: 1},
 	})
 	if len(out) != 1 || out[0] != (auditDiffFile{File: "a.go", Before: "old", After: "new", Additions: 2, Deletions: 1}) {

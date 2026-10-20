@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hoxiai/hoxi/internal/agentcli"
 	"github.com/hoxiai/hoxi/internal/sandbox"
 )
 
@@ -69,11 +70,11 @@ func (s *Service) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 				modelID = ms[0].ID
 			}
 		case string(RuntimeCodeBuddy):
-			if ms := DiscoverCodeBuddyModels(); len(ms) > 0 {
+			if ms := agentcli.DiscoverCodeBuddyModels(); len(ms) > 0 {
 				modelID = ms[0].ID
 			}
 		case string(RuntimeQoder):
-			if ms := DiscoverQoderModels(); len(ms) > 0 {
+			if ms := agentcli.DiscoverQoderModels(); len(ms) > 0 {
 				modelID = ms[0].ID
 			}
 		default:

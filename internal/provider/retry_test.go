@@ -149,7 +149,7 @@ func TestCallSimpleLLMHonorsTotalBudget(t *testing.T) {
 
 func TestRecordLLMRequestTracksRetriesAndDegradation(t *testing.T) {
 	_, workspaceDir := setupIsolatedEnv(t)
-	store := newProviderTelemetryStore(workspaceDir)
+	store := newModelStatsStore(workspaceDir)
 	store.recordProbeResult("openai", true, 100, "", "gpt-4o")
 	var degradedEvents []bool
 	store.setOnDegradedChange(func(_ string, d bool) { degradedEvents = append(degradedEvents, d) })
@@ -172,7 +172,7 @@ func TestRecordLLMRequestTracksRetriesAndDegradation(t *testing.T) {
 
 func TestRecordLLMRequestNeverCreatesRecords(t *testing.T) {
 	_, workspaceDir := setupIsolatedEnv(t)
-	store := newProviderTelemetryStore(workspaceDir)
+	store := newModelStatsStore(workspaceDir)
 	store.recordLLMRequest("ghost", "m", 3, errors.New("boom"))
 	if len(store.records) != 0 {
 		t.Fatalf("internal LLM calls must not create telemetry records: %+v", store.records)

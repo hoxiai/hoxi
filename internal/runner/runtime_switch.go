@@ -8,12 +8,13 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/opencode/ocapi"
 )
 
 // ConfigureOpenCode connects the conversation controller to the pristine daemon.
 func (s *Service) ConfigureOpenCode(baseURL, password string) {
-	s.openCodeURL, s.openCodePassword = baseURL, password
-	s.openCodeClient = &http.Client{Transport: &http.Transport{Proxy: nil}}
+	s.openCode = ocapi.New(baseURL, password)
 	for _, info := range s.store.List("") {
 		rec, _ := s.store.Meta(info.ID)
 		for _, id := range rec.OpenCodeIDs {

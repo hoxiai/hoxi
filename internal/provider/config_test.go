@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/opencode/ocapi"
 )
 
 func assertPrivateConfig(t *testing.T, path string) {
@@ -91,11 +93,11 @@ func TestConfigCredentialMigrationAndUpstreamReload(t *testing.T) {
 		reloads++
 	}))
 	defer server.Close()
-	svc.openCodePort = server.Listener.Addr().(*net.TCPAddr).Port
+	svc.openCode = ocapi.NewForPort(server.Listener.Addr().(*net.TCPAddr).Port, "password")
 	if err := svc.PersistHoxiConfigDoc(doc); err != nil {
 		t.Fatal(err)
 	}
-	svc.openCodePort = 0
+	svc.openCode = ocapi.NewForPort(0, "")
 	if reloads != 1 {
 		t.Fatalf("reloads = %d, want 1", reloads)
 	}
@@ -197,7 +199,7 @@ func TestDeferredReloadWhileBusyDoesNotDisposeUntilIdle(t *testing.T) {
 	for time.Now().Before(deadline) && disposeCalls.Load() == 0 {
 		time.Sleep(25 * time.Millisecond)
 	}
-	svc.openCodePort = 0
+	svc.openCode = ocapi.NewForPort(0, "")
 	if got := disposeCalls.Load(); got != 1 {
 		t.Fatalf("dispose calls after idle = %d, want 1", got)
 	}

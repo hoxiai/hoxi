@@ -1,4 +1,4 @@
-package provider
+package promptassist
 
 import (
 	"context"
@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/llm"
 )
 
 type enhancePromptRequest struct {
@@ -38,7 +40,9 @@ func compilePrefixRegex(prefixes ...string) *regexp.Regexp {
 	return regexp.MustCompile(`(?i)^(` + strings.Join(escaped, "|") + `)\s*[:：\-]\s*`)
 }
 
-func (g *Service) handleEnhancePrompt(w http.ResponseWriter, r *http.Request) {
+// HandleEnhancePrompt rewrites a composer prompt to be clearer for the agent.
+// It is served at the public /api/hoxi/provider/enhance-prompt route.
+func (s *Service) HandleEnhancePrompt(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSONError(w, http.StatusMethodNotAllowed, "POST required")
 		return
@@ -63,14 +67,16 @@ func (g *Service) handleEnhancePrompt(w http.ResponseWriter, r *http.Request) {
 	if locale == "" {
 		locale = "en-US"
 	}
-	pid, mid := g.resolveBackendAutoCandidate(strings.TrimSpace(req.ProviderID), strings.TrimSpace(req.ModelID))
-	baseURL, apiKey, npm, headers := g.resolveProviderConnection(pid, req.BaseURL, req.NPM)
-	if pid == "" || mid == "" || (!strings.HasPrefix(baseURL, "http://") && !strings.HasPrefix(baseURL, "https://")) {
+	var target llm.Target
+	if s.llm != nil {
+		target = s.llm.Resolve(req.ProviderID, req.ModelID, req.BaseURL, req.NPM)
+	}
+	if !target.Ready() {
 		writeJSON(w, http.StatusOK, enhancePromptResponse{OK: false, Error: "No model is available for prompt enhancement"})
 		return
 	}
 
-	enhanced, err := g.invokePromptEnhancerLLM(r.Context(), pid, mid, baseURL, apiKey, npm, headers, rawPrompt, locale)
+	enhanced, err := s.invokePromptEnhancerLLM(r.Context(), target, rawPrompt, locale)
 	if err != nil || enhanced == "" {
 		writeJSON(w, http.StatusOK, enhancePromptResponse{OK: false, Error: "Could not enhance the prompt"})
 		return
@@ -78,10 +84,9 @@ func (g *Service) handleEnhancePrompt(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, enhancePromptResponse{OK: true, Prompt: enhanced})
 }
 
-func (g *Service) invokePromptEnhancerLLM(
+func (s *Service) invokePromptEnhancerLLM(
 	parentCtx context.Context,
-	providerID, modelID, baseURL, apiKey, npm string,
-	headers map[string]string,
+	target llm.Target,
 	rawPrompt, locale string,
 ) (string, error) {
 	language := "English"
@@ -101,19 +106,12 @@ Rules:
 User request:
 %s`, language, rawPrompt)
 
-	rawText, err := callSimpleLLM(parentCtx, llmCompletionRequest{
-		ProviderID:  providerID,
-		ModelID:     modelID,
-		BaseURL:     baseURL,
-		APIKey:      apiKey,
-		NPM:         npm,
-		Headers:     headers,
+	rawText, err := s.llm.Complete(parentCtx, target, llm.Request{
 		Prompt:      instruction,
 		MaxTokens:   1536,
 		Temperature: 0.3,
 		Timeout:     20 * time.Second,
-		Transport:   titleTransport,
-		Telemetry:   g.telemetry,
+		Purpose:     llm.PurposeInteractive,
 	})
 	if err != nil {
 		return "", err
@@ -122,9 +120,8 @@ User request:
 }
 
 func cleanEnhancedPrompt(raw string) string {
-	text := thinkBlockRegex.ReplaceAllString(raw, "")
-	text = strings.TrimSpace(text)
-	if text == "" || strings.HasPrefix(text, "{") || strings.HasPrefix(text, "[") || strings.Contains(text, `"choices"`) {
+	text := strings.TrimSpace(llm.StripThinking(raw))
+	if text == "" || llm.LooksLikeRawJSON(text) {
 		return ""
 	}
 	lines := strings.Split(text, "\n")
@@ -140,8 +137,8 @@ func cleanEnhancedPrompt(raw string) string {
 	text = strings.TrimSpace(strings.Join(lines, "\n"))
 	text = enhancePrefixRegex.ReplaceAllString(text, "")
 	text = strings.TrimSpace(text)
-	if !hasMeaningfulRune(text) {
+	if !llm.HasMeaningfulRune(text) {
 		return ""
 	}
-	return truncateRunes(text, 12000)
+	return llm.TruncateRunes(text, 12000)
 }

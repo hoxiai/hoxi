@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hoxiai/hoxi/internal/opencode/ocapi"
 	"github.com/hoxiai/hoxi/internal/statusbar"
 	"github.com/hoxiai/hoxi/internal/workspace"
 	"github.com/hoxiai/hoxi/internal/worktree"
@@ -27,7 +28,7 @@ func updateTestGateway(t *testing.T, handler http.HandlerFunc) *Gateway {
 		t.Fatal(err)
 	}
 	n, _ := strconv.Atoi(port)
-	return &Gateway{openCodePort: n, password: "test-secret", rootDir: t.TempDir(), status: statusbar.NewTracker(), mux: http.NewServeMux()}
+	return &Gateway{openCodePort: n, openCode: ocapi.NewForPort(n, "test-secret"), rootDir: t.TempDir(), status: statusbar.NewTracker(), mux: http.NewServeMux()}
 }
 
 func serveUpdateTest(g *Gateway, method, path string) int {

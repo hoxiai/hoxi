@@ -107,29 +107,23 @@ opencode serve --hostname 127.0.0.1 --port <free-port> --print-logs
 3. `OPENCODE_DISABLE_CONFIG_DEPENDENCY_INSTALL=1`：**极其重要**！OpenCode 默认在检测到 `.opencode/` 目录时会调用 `bun add @opencode-ai/plugin` 联网安装依赖，在国内网络或代理异常时会导致冷启动卡死超时。设置该变量（或在 `.opencode/` 预置好静态依赖）可将冷启动耗时控制在 **200ms** 以内。
 4. `NO_PROXY=127.0.0.1,localhost`：防止子进程内部回环请求被系统代理拦截。
 
-**就绪探针（Health Check）**：
-Go 启动子进程后，以 100ms 间隔轮询 `GET http://127.0.0.1:<port>/global/health`（携带 Basic Auth），当返回 `200 OK` 且 `{"healthy": true}` 时标记网关就绪。
+**就绪探针与引擎状态路径（Health Check & Engine Paths）**：
+- 引擎数据库（`hoxi.db`）与数据/状态目录（`engine-data`、`engine-state`）统一由底座包 [`internal/hoxipaths`](internal/hoxipaths/hoxipaths.go) 解析；本机 OpenCode Console 账号预同步由 [`internal/opencode/ocstate`](internal/opencode/ocstate/ocstate.go) 统一处理。
+- Go 启动子进程后，通过 [`internal/opencode/ocapi`](internal/opencode/ocapi/client.go) 以 100ms 间隔轮询 `GET http://127.0.0.1:<port>/global/health`（携带 Basic Auth），当返回 `200 OK` 且 `{"healthy": true}` 时标记网关就绪。
 
 ### 3.2 HTTP Basic Auth 注入与本地代理防劫持
 > [!IMPORTANT]
 > **避坑指南（实测验证）**：
 > 1. `opencode serve` 在设置 `OPENCODE_SERVER_PASSWORD` 后，使用的是 **HTTP Basic Auth**（`WWW-Authenticate: Basic realm="Secure Area"`），**不是** `Bearer` Token！若注入 `Bearer` 会直接收到 `401 Unauthorized`。
-> 2. macOS 开发者常开启 Clash / Surge 等系统代理（设置 `HTTP_PROXY` 环境变量）。Go 的 `http.DefaultTransport` 默认会读取环境代理，导致发往 `127.0.0.1:<port>` 的反向代理请求被转发给外部代理并返回 `502 Bad Gateway`。因此反向代理的 `Transport` **必须显式设置 `Proxy: nil`**。
+> 2. macOS 开发者常开启 Clash / Surge 等系统代理（设置 `HTTP_PROXY` 环境变量）。Go 的 `http.DefaultTransport` 默认会读取环境代理，导致发往 `127.0.0.1:<port>` 的反向代理请求被转发给外部代理并返回 `502 Bad Gateway`。因此反向代理及所有直连引擎的客户端 **必须复用 [`internal/opencode/ocapi`](internal/opencode/ocapi/client.go) 的共享 `Transport`（显式设置 `Proxy: nil`）**。
 
-[`internal/gateway/gateway.go`](internal/gateway/gateway.go) 标准实现模型：
+[`internal/gateway/gateway.go`](internal/gateway/gateway.go) 与 [`internal/opencode/ocapi/client.go`](internal/opencode/ocapi/client.go) 标准实现模型：
 
 ```go
-func newOpenCodeReverseProxy(target *url.URL, password string) *httputil.ReverseProxy {
+func newOpenCodeReverseProxy(target *url.URL, openCode *ocapi.Client) *httputil.ReverseProxy {
 	proxy := httputil.NewSingleHostReverseProxy(target)
-	// 1. 强制直连本地回环，忽略系统 HTTP_PROXY / HTTPS_PROXY，彻底杜绝 502 Bad Gateway
-	proxy.Transport = &http.Transport{
-		Proxy: nil,
-		DialContext: (&net.Dialer{
-			Timeout:   5 * time.Second,
-			KeepAlive: 30 * time.Second,
-		}).DialContext,
-		ResponseHeaderTimeout: 0, // 允许长耗时请求与 SSE 流
-	}
+	// 1. 复用 ocapi 共享回环 Transport（Proxy: nil），忽略系统 HTTP_PROXY / HTTPS_PROXY，彻底杜绝 502 Bad Gateway
+	proxy.Transport = ocapi.Transport()
 	// 2. SSE 实时流必须设置 FlushInterval = -1，禁用响应缓冲，收到字节立即推送给前端
 	proxy.FlushInterval = -1
 
@@ -137,8 +131,8 @@ func newOpenCodeReverseProxy(target *url.URL, password string) *httputil.Reverse
 	proxy.Director = func(req *http.Request) {
 		origDirector(req)
 		req.Host = target.Host
-		// 3. 注入 OpenCode 要求的 HTTP Basic Auth (username: "opencode")
-		req.SetBasicAuth("opencode", password)
+		// 3. 统一由 ocapi 注入 OpenCode 要求的 HTTP Basic Auth (username: "opencode")
+		openCode.Authorize(req)
 	}
 	return proxy
 }

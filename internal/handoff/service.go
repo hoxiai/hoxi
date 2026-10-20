@@ -12,10 +12,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/hoxiai/hoxi/internal/provider"
+	"github.com/hoxiai/hoxi/internal/opencode/ocapi"
 )
-
-var localTransport = &http.Transport{Proxy: nil, IdleConnTimeout: 90 * time.Second}
 
 const handoffPreviewCacheTTL = 10 * time.Second
 
@@ -35,20 +33,29 @@ type handoffScanCall struct {
 }
 
 type Service struct {
-	openCodePort int
-	password     string
+	openCode     *ocapi.Client
 	rootDir      string
 	wsBaseURL    string
-	providers    *provider.Service
+	providers    ProviderConfig
 	cacheMu      sync.RWMutex
 	inFlightScan map[string]*handoffScanCall
 	previewCache map[string]cachedHandoffPreview
 }
 
-func NewService(openCodePort int, password, rootDir string, providers *provider.Service) *Service {
+// ProviderConfig is the slice of Hoxi's provider configuration that handoff
+// imports read and write. provider.Service implements it; the gateway injects
+// it so handoff does not depend on the provider package.
+type ProviderConfig interface {
+	ResolveStoredProviderKey(providerID, requestedBaseURL string) string
+	LoadHoxiConfigDoc() map[string]interface{}
+	LoadHoxiProvidersMap() map[string]interface{}
+	PersistHoxiConfigDoc(doc map[string]interface{}) error
+	ReloadOpenCodeGlobalConfig()
+}
+
+func NewService(openCodePort int, password, rootDir string, providers ProviderConfig) *Service {
 	return &Service{
-		openCodePort: openCodePort,
-		password:     password,
+		openCode:     ocapi.NewForPort(openCodePort, password),
 		rootDir:      rootDir,
 		providers:    providers,
 		inFlightScan: make(map[string]*handoffScanCall),
@@ -70,10 +77,6 @@ func (g *Service) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/hoxi/bridge/grok-cli/", g.handleGrokCLIBridge)
 	mux.HandleFunc("/api/hoxi/bridge/gemini-antigravity/", g.handleAntigravityCLIBridge)
 	mux.HandleFunc("/api/hoxi/bridge/claude-code/", g.handleClaudeCLIBridge)
-}
-
-func OpenCodeDataDBPath() string {
-	return openCodeDataDBPath()
 }
 
 var allExternalSources = []ExternalToolID{

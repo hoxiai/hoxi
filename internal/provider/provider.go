@@ -12,14 +12,18 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
+	"github.com/hoxiai/hoxi/internal/opencode/ocapi"
 )
 
 type Service struct {
-	openCodePort      int
-	password          string
+	openCode          *ocapi.Client
 	rootDir           string
 	proxy             http.Handler
-	telemetry         *providerTelemetryStore
+	stats             *modelStatsStore
+	assistMu          sync.RWMutex
+	assist            map[string]http.HandlerFunc
 	isBusyFn          func() bool
 	reloadMu          sync.Mutex
 	reloadPending     bool
@@ -28,19 +32,18 @@ type Service struct {
 
 func NewService(openCodePort int, password, rootDir string, proxy http.Handler) *Service {
 	return &Service{
-		openCodePort: openCodePort,
-		password:     password,
-		rootDir:      rootDir,
-		proxy:        proxy,
-		telemetry:    newProviderTelemetryStore(rootDir),
+		openCode: ocapi.NewForPort(openCodePort, password),
+		rootDir:  rootDir,
+		proxy:    proxy,
+		stats:    newModelStatsStore(rootDir),
 	}
 }
 
 // SetOnProviderDegraded wires persistent internal LLM failure notifications
 // (e.g. to the macOS status bar Attention badge).
 func (s *Service) SetOnProviderDegraded(fn func(providerID string, degraded bool)) {
-	if s.telemetry != nil {
-		s.telemetry.setOnDegradedChange(fn)
+	if s.stats != nil {
+		s.stats.setOnDegradedChange(fn)
 	}
 }
 
@@ -56,17 +59,16 @@ func (s *Service) SetBusyCheck(fn func() bool) {
 func (s *Service) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/hoxi/provider/fetch-models", s.handleFetchProviderModels)
 	mux.HandleFunc("/api/hoxi/provider/test-model", s.handleTestProviderModel)
-	mux.HandleFunc("/api/hoxi/provider/audit", s.handleAuditProviderCode)
-	mux.HandleFunc("/api/hoxi/provider/summarize-title", s.handleSummarizeSessionTitle)
-	mux.HandleFunc("/api/hoxi/provider/generate-commit-message", s.handleGenerateCommitMessage)
-	mux.HandleFunc("/api/hoxi/provider/enhance-prompt", s.handleEnhancePrompt)
+	for _, action := range assistActions {
+		mux.HandleFunc("/api/hoxi/provider/"+action, s.serveAssist(action))
+	}
 	mux.HandleFunc("/api/hoxi/provider/auto-pools", s.handleAutoPoolsConfig)
 	mux.HandleFunc("/api/hoxi/models-config", s.handleModelsConfig)
 	mux.HandleFunc("/global/config", s.handleGlobalConfigProxy)
 	mux.HandleFunc("/global/dispose", s.handleGlobalDispose)
 	mux.HandleFunc("/provider", s.handleProviderProxy)
-	if s.telemetry != nil {
-		s.telemetry.registerRoutes(mux)
+	if s.stats != nil {
+		s.stats.registerRoutes(mux)
 	}
 }
 
@@ -379,21 +381,11 @@ func (g *Service) resolveProviderConnection(providerID, hintBaseURL, hintNPM str
 }
 
 func (g *Service) resolveOpenCodeLiveModelConfig(providerID, modelID string) (baseURL, apiKey, npm string, headers map[string]string) {
-	if g.openCodePort <= 0 || strings.TrimSpace(providerID) == "" {
+	if !g.openCode.Available() || strings.TrimSpace(providerID) == "" {
 		return "", "", "", nil
 	}
-	u := "http://127.0.0.1:" + strconv.Itoa(g.openCodePort) + "/provider"
-	req, err := http.NewRequest(http.MethodGet, u, nil)
-	if err != nil {
-		return "", "", "", nil
-	}
-	req.SetBasicAuth("opencode", g.password)
-	client := &http.Client{Timeout: 3 * time.Second, Transport: localTransport}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", "", "", nil
-	}
-	defer resp.Body.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
 	var payload struct {
 		All []struct {
 			ID      string         `json:"id"`
@@ -408,7 +400,7 @@ func (g *Service) resolveOpenCodeLiveModelConfig(providerID, modelID string) (ba
 			} `json:"models"`
 		} `json:"all"`
 	}
-	if json.NewDecoder(resp.Body).Decode(&payload) != nil {
+	if g.openCode.JSON(ctx, http.MethodGet, "/provider", nil, nil, &payload) != nil {
 		return "", "", "", nil
 	}
 	headers = map[string]string{}
@@ -473,7 +465,7 @@ func (g *Service) resolveStoredProviderKey(providerID, requestedBaseURL string) 
 	// 3. Fallback to Hoxi engine auth.json or ~/.local/share/opencode/auth.json (supports both API key and OAuth access token)
 	if home, err := os.UserHomeDir(); err == nil {
 		for _, authPath := range []string{
-			filepath.Join(home, ".hoxi", "engine-data", "opencode", "auth.json"),
+			hoxipaths.EngineAuthPath(),
 			filepath.Join(home, ".local", "share", "opencode", "auth.json"),
 		} {
 			if data, err := os.ReadFile(authPath); err == nil {

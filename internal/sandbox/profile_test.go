@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
 )
 
 func runCommand(bin string, args ...string) error {
@@ -101,7 +103,7 @@ func TestProfileTextDeniesSensitiveSubdirectories(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, dir := range []string{DefaultRoot(), filepath.Join(HoxiHome(), "bin")} {
+	for _, dir := range []string{DefaultRoot(), filepath.Join(hoxipaths.Home(), "bin")} {
 		if !strings.Contains(text, dir) {
 			t.Fatalf("profile does not mention %s:\n%s", dir, text)
 		}

@@ -1,4 +1,4 @@
-package provider
+package promptassist
 
 import (
 	"context"
@@ -8,8 +8,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
-	"unicode"
-	"unicode/utf8"
+
+	"github.com/hoxiai/hoxi/internal/llm"
 )
 
 type summarizeTitleRequest struct {
@@ -28,12 +28,13 @@ type summarizeTitleResponse struct {
 }
 
 var (
-	thinkBlockRegex  = regexp.MustCompile(`(?is)<think>.*?</think>`)
-	codeFenceRegex   = regexp.MustCompile("(?s)```.*?```")
 	titlePrefixRegex = regexp.MustCompile(`(?i)^(会话标题|会话名称|标题|主题|总结|session\s*title|title|summary|topic)\s*[:：\-]\s*`)
 )
 
-func (g *Service) handleSummarizeSessionTitle(w http.ResponseWriter, r *http.Request) {
+// HandleSummarizeTitle names a session from its first prompt, falling back to
+// a heuristic title when no model answers. It is served at the public
+// /api/hoxi/provider/summarize-title route.
+func (s *Service) HandleSummarizeTitle(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSONError(w, http.StatusMethodNotAllowed, "POST required")
 		return
@@ -56,11 +57,9 @@ func (g *Service) handleSummarizeSessionTitle(w http.ResponseWriter, r *http.Req
 		locale = "zh-CN"
 	}
 
-	pid, mid := g.resolveBackendAutoCandidate(strings.TrimSpace(req.ProviderID), strings.TrimSpace(req.ModelID))
-	baseURL, apiKey, npm, headers := g.resolveProviderConnection(pid, req.BaseURL, req.NPM)
-
-	if pid != "" && mid != "" && (strings.HasPrefix(baseURL, "http://") || strings.HasPrefix(baseURL, "https://")) {
-		if llmTitle, err := g.invokeTitleSummarizerLLM(r.Context(), pid, mid, baseURL, apiKey, npm, headers, rawPrompt, locale); err == nil && llmTitle != "" {
+	if s.llm != nil {
+		target := s.llm.Resolve(req.ProviderID, req.ModelID, req.BaseURL, req.NPM)
+		if llmTitle, err := s.invokeTitleSummarizerLLM(r.Context(), target, rawPrompt, locale); err == nil && llmTitle != "" {
 			writeJSON(w, http.StatusOK, summarizeTitleResponse{
 				OK:    true,
 				Title: llmTitle,
@@ -76,16 +75,18 @@ func (g *Service) handleSummarizeSessionTitle(w http.ResponseWriter, r *http.Req
 	})
 }
 
-func (g *Service) invokeTitleSummarizerLLM(
+func (s *Service) invokeTitleSummarizerLLM(
 	parentCtx context.Context,
-	providerID, modelID, baseURL, apiKey, npm string,
-	headers map[string]string,
+	target llm.Target,
 	userPrompt, locale string,
 ) (string, error) {
+	if !target.Ready() {
+		return "", llm.ErrUnavailable
+	}
 	isZh := strings.HasPrefix(strings.ToLower(locale), "zh")
-	snippet := truncateRunes(strings.TrimSpace(codeFenceRegex.ReplaceAllString(userPrompt, " ")), 400)
+	snippet := llm.TruncateRunes(strings.TrimSpace(llm.StripCodeFences(userPrompt, " ")), 400)
 	if snippet == "" {
-		snippet = truncateRunes(userPrompt, 400)
+		snippet = llm.TruncateRunes(userPrompt, 400)
 	}
 
 	var instruction string
@@ -107,19 +108,12 @@ User task request:
 %s`, snippet)
 	}
 
-	rawText, err := callSimpleLLM(parentCtx, llmCompletionRequest{
-		ProviderID:  providerID,
-		ModelID:     modelID,
-		BaseURL:     baseURL,
-		APIKey:      apiKey,
-		NPM:         npm,
-		Headers:     headers,
+	rawText, err := s.llm.Complete(parentCtx, target, llm.Request{
 		Prompt:      instruction,
 		MaxTokens:   512,
 		Temperature: 0.2,
 		Timeout:     12 * time.Second,
-		Transport:   titleTransport,
-		Telemetry:   g.telemetry,
+		Purpose:     llm.PurposeInteractive,
 	})
 	if err != nil {
 		return "", err
@@ -133,9 +127,8 @@ User task request:
 }
 
 func cleanSummarizedTitle(raw, locale string) string {
-	text := thinkBlockRegex.ReplaceAllString(raw, "")
-	text = strings.TrimSpace(text)
-	if text == "" || strings.HasPrefix(text, "{") || strings.HasPrefix(text, "[") || strings.Contains(text, `"choices"`) {
+	text := strings.TrimSpace(llm.StripThinking(raw))
+	if text == "" || llm.LooksLikeRawJSON(text) {
 		return ""
 	}
 
@@ -149,34 +142,25 @@ func cleanSummarizedTitle(raw, locale string) string {
 		l = strings.TrimLeft(l, "#*-•> \t")
 		l = titlePrefixRegex.ReplaceAllString(l, "")
 		l = strings.Trim(l, "\"'`“”‘’「」『』《》【】[]()（）.。!！?？;；,，:： \t")
-		if hasMeaningfulRune(l) {
+		if llm.HasMeaningfulRune(l) {
 			text = l
 			found = true
 			break
 		}
 	}
-	if !found || !hasMeaningfulRune(text) {
+	if !found || !llm.HasMeaningfulRune(text) {
 		return ""
 	}
 
 	isZh := strings.HasPrefix(strings.ToLower(locale), "zh")
 	if isZh {
-		return truncateRunes(text, 22)
+		return llm.TruncateRunes(text, 22)
 	}
-	return truncateRunes(text, 50)
-}
-
-func hasMeaningfulRune(s string) bool {
-	for _, r := range s {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) {
-			return true
-		}
-	}
-	return false
+	return llm.TruncateRunes(text, 50)
 }
 
 func fallbackSummarizeTitle(prompt, locale string) string {
-	stripped := strings.TrimSpace(codeFenceRegex.ReplaceAllString(prompt, " "))
+	stripped := strings.TrimSpace(llm.StripCodeFences(prompt, " "))
 	if stripped == "" {
 		stripped = strings.TrimSpace(prompt)
 	}
@@ -205,13 +189,4 @@ func fallbackSummarizeTitle(prompt, locale string) string {
 		return "新任务会话"
 	}
 	return "New Task Session"
-}
-
-func truncateRunes(s string, maxRunes int) string {
-	s = strings.TrimSpace(s)
-	if utf8.RuneCountInString(s) <= maxRunes {
-		return s
-	}
-	runes := []rune(s)
-	return strings.TrimSpace(string(runes[:maxRunes]))
 }

@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
 	"github.com/hoxiai/hoxi/internal/provider"
 )
 
@@ -27,6 +28,7 @@ func setupMockOpenCodeServerAndDB(t *testing.T) (int, string, func()) {
 	t.Setenv("XDG_CONFIG_HOME", xdgDir)
 
 	dbPath := filepath.Join(xdgDir, "opencode", "opencode.db")
+	t.Setenv("HOXI_DB_PATH", dbPath)
 	runSQLite(t, dbPath, `
 CREATE TABLE session (
 	id TEXT PRIMARY KEY,
@@ -199,8 +201,8 @@ func TestHandoffImportEndpoint(t *testing.T) {
 	port, dbPath, closeSrv := setupMockOpenCodeServerAndDB(t)
 	defer closeSrv()
 
-	if gotDB := OpenCodeDataDBPath(); gotDB != dbPath {
-		t.Fatalf("expected OpenCodeDataDBPath() = %s, got %s", dbPath, gotDB)
+	if gotDB := hoxipaths.DBPath(); gotDB != dbPath {
+		t.Fatalf("expected hoxipaths.DBPath() = %s, got %s", dbPath, gotDB)
 	}
 
 	provSvc := provider.NewService(port, "testpass", workspaceDir, nil)

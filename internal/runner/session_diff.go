@@ -153,7 +153,7 @@ func (s *Service) sessionEditedFileSet(sessionID string) map[string]struct{} {
 			return
 		}
 		hasExternalChild = true
-		if s.openCodeClient != nil {
+		if s.openCode.Available() {
 			dir := firstNonEmptyStr(rootRec.WorktreePath, rootRec.ProjectDir, s.rootDir)
 			if turns := s.openCodeChildTurns(sid, dir); len(turns) > 0 {
 				walkTurns(turns, rootRec.ProjectDir, rootRec.WorktreePath, &subChildren)

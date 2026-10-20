@@ -9,6 +9,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/opencode/ocapi"
 )
 
 func TestPlanRunsDependenciesInOrder(t *testing.T) {
@@ -50,7 +52,7 @@ func TestPlanRunsDependenciesInOrder(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	svc := NewService(0, "secret")
-	svc.base = server.URL
+	svc.openCode = ocapi.New(server.URL, "secret")
 	dir := t.TempDir()
 	plan, err := svc.Create(PlanRequest{
 		Directory:   dir,
@@ -111,7 +113,7 @@ func TestCancelMarksQueuedTasks(t *testing.T) {
 	t.Cleanup(func() { close(block) })
 
 	svc := NewService(0, "secret")
-	svc.base = server.URL
+	svc.openCode = ocapi.New(server.URL, "secret")
 	plan, err := svc.Create(PlanRequest{
 		Directory:   t.TempDir(),
 		Concurrency: 1,

@@ -69,7 +69,7 @@ func (s *Service) ResolveSessionContext(ctx context.Context, sessionID, director
 	}
 
 	// Query OpenCode if available for an unadopted session.
-	if s.openCodeClient != nil {
+	if s.openCode.Available() {
 		var info SessionInfo
 		if err := s.openCodeJSON(ctx, http.MethodGet, "/session/"+sessionID, directory, nil, &info); err == nil && info.ID == sessionID {
 			dir := info.Directory

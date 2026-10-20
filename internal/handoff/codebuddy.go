@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hoxiai/hoxi/internal/runner"
+	"github.com/hoxiai/hoxi/internal/agentcli"
 )
 
 func codeBuddyDotDirs() []string {
@@ -416,10 +416,10 @@ func scanCodeBuddySessions(targetDir, query string) ([]ExternalSessionSummary, E
 
 func detectCodeBuddyCLIStatus(hoxiMap map[string]interface{}) LocalCLIStatusItem {
 	sessions, stats := scanCodeBuddySessions("", "")
-	bin := runner.ResolveCodeBuddyBinary()
+	bin := agentcli.ResolveCodeBuddyBinary()
 	var models []string
 	var defModel string
-	for _, m := range runner.DiscoverCodeBuddyModels() {
+	for _, m := range agentcli.DiscoverCodeBuddyModels() {
 		if m.ID != "" {
 			models = appendUniqueString(models, m.ID)
 			if defModel == "" {

@@ -11,47 +11,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/hoxiai/hoxi/internal/agentcli"
 	"github.com/hoxiai/hoxi/internal/claudeconfig"
 )
-
-func commonUserBinDirs() []string {
-	var dirs []string
-	if home, _ := os.UserHomeDir(); home != "" {
-		dirs = append(dirs,
-			filepath.Join(home, ".local", "bin"),
-			filepath.Join(home, "sdk", "node", "bin"),
-			filepath.Join(home, ".volta", "bin"),
-			filepath.Join(home, ".fnm", "current", "bin"),
-			filepath.Join(home, ".npm-global", "bin"),
-		)
-		if nvmBins, err := filepath.Glob(filepath.Join(home, ".nvm", "versions", "node", "*", "bin")); err == nil && len(nvmBins) > 0 {
-			sort.Strings(nvmBins)
-			for i := len(nvmBins) - 1; i >= 0; i-- {
-				dirs = append(dirs, nvmBins[i])
-			}
-		}
-	}
-	dirs = append(dirs, "/opt/homebrew/bin", "/usr/local/bin")
-	return dirs
-}
-
-func firstExecutableFile(candidates ...string) string {
-	for _, c := range candidates {
-		c = strings.TrimSpace(c)
-		if c == "" {
-			continue
-		}
-		if st, err := os.Stat(c); err == nil && !st.IsDir() {
-			return c
-		}
-	}
-	return ""
-}
 
 func geminiHomeDir() string {
 	if env := strings.TrimSpace(os.Getenv("GEMINI_HOME")); env != "" {
@@ -151,11 +117,11 @@ func ParseAgyModelsOutput(raw string) (slugs []string, displayBySlug map[string]
 	return slugs, displayBySlug, slugByDisplayLower
 }
 
-func DiscoverAgyModels() ([]RunnerModelItem, map[string]string, map[string]string) {
+func DiscoverAgyModels() ([]agentcli.ModelItem, map[string]string, map[string]string) {
 	return DiscoverAgyModelsWithRefresh(false)
 }
 
-func DiscoverAgyModelsWithRefresh(forceRefresh bool) ([]RunnerModelItem, map[string]string, map[string]string) {
+func DiscoverAgyModelsWithRefresh(forceRefresh bool) ([]agentcli.ModelItem, map[string]string, map[string]string) {
 	agyBin := ResolveAgyBinary()
 	if agyBin == "" {
 		return nil, nil, nil
@@ -198,7 +164,7 @@ func splitAgyModelEffortSuffix(slug string) (base, suffixEffort string) {
 
 func inferClaudeModelEfforts(slug string) (efforts []string, defaultEffort string, supportsEffort bool) {
 	lower := strings.ToLower(strings.TrimSpace(slug))
-	efforts, defaultEffort = inferVendorEffortSpec(string(RuntimeClaudeCode), lower, !strings.Contains(lower, "haiku"))
+	efforts, defaultEffort = agentcli.InferVendorEffortSpec(string(RuntimeClaudeCode), lower, !strings.Contains(lower, "haiku"))
 	return efforts, defaultEffort, len(efforts) > 0
 }
 
@@ -247,14 +213,14 @@ func inferOfficialRunnerModelSpec(slug string) (ctxLimit, outLimit int, inCost, 
 	return 200000, 64000, 0, 0, image, reasoning
 }
 
-func buildAgyModelItems(slugs []string, displayBySlug map[string]string) []RunnerModelItem {
+func buildAgyModelItems(slugs []string, displayBySlug map[string]string) []agentcli.ModelItem {
 	familyEfforts := make(map[string][]string)
 	for _, s := range slugs {
 		if base, suf := splitAgyModelEffortSuffix(s); suf != "" {
 			familyEfforts[strings.ToLower(base)] = append(familyEfforts[strings.ToLower(base)], suf)
 		}
 	}
-	items := make([]RunnerModelItem, 0, len(slugs))
+	items := make([]agentcli.ModelItem, 0, len(slugs))
 	for _, s := range slugs {
 		name := displayBySlug[s]
 		if name == "" {
@@ -266,14 +232,14 @@ func buildAgyModelItems(slugs []string, displayBySlug map[string]string) []Runne
 		if base, suf := splitAgyModelEffortSuffix(s); suf != "" {
 			reasoning = true
 			defaultEffort = suf
-			efforts = normalizeEffortList(familyEfforts[strings.ToLower(base)])
+			efforts = agentcli.NormalizeEffortList(familyEfforts[strings.ToLower(base)])
 			if len(efforts) == 0 {
 				efforts = []string{suf}
 			}
 		} else if reasoning {
-			efforts, defaultEffort = inferVendorEffortSpec(string(RuntimeAntigravity), s, true)
+			efforts, defaultEffort = agentcli.InferVendorEffortSpec(string(RuntimeAntigravity), s, true)
 		}
-		items = append(items, RunnerModelItem{
+		items = append(items, agentcli.ModelItem{
 			ID:            s,
 			Name:          name,
 			ProviderID:    string(RuntimeAntigravity),
@@ -291,7 +257,7 @@ func buildAgyModelItems(slugs []string, displayBySlug map[string]string) []Runne
 	return items
 }
 
-func DiscoverClaudeModels() []RunnerModelItem {
+func DiscoverClaudeModels() []agentcli.ModelItem {
 	slugs := claudeconfig.Models()
 	friendly := map[string]string{
 		"claude-opus-5-5":           "Claude Opus 5.5",
@@ -299,7 +265,7 @@ func DiscoverClaudeModels() []RunnerModelItem {
 		"claude-opus-4-6":           "Claude Opus 4.6",
 		"claude-haiku-4-5-20251001": "Claude Haiku 4.5",
 	}
-	items := make([]RunnerModelItem, 0, len(slugs))
+	items := make([]agentcli.ModelItem, 0, len(slugs))
 	for _, s := range slugs {
 		name := friendly[s]
 		if name == "" {
@@ -311,7 +277,7 @@ func DiscoverClaudeModels() []RunnerModelItem {
 			efforts = nil
 			defEffort = ""
 		}
-		items = append(items, RunnerModelItem{
+		items = append(items, agentcli.ModelItem{
 			ID:            s,
 			Name:          name,
 			ProviderID:    string(RuntimeClaudeCode),
@@ -370,27 +336,27 @@ func agySupportedEffortsForBase(base string) []string {
 			found = append(found, suf)
 		}
 	}
-	if norm := normalizeEffortList(found); len(norm) > 0 {
+	if norm := agentcli.NormalizeEffortList(found); len(norm) > 0 {
 		return norm
 	}
-	efforts, _ := inferVendorEffortSpec(string(RuntimeAntigravity), lowerBase, true)
+	efforts, _ := agentcli.InferVendorEffortSpec(string(RuntimeAntigravity), lowerBase, true)
 	return efforts
 }
 
 func ResolveAgyModelAndEffort(modelID, effort string) (string, string) {
 	m := strings.TrimSpace(modelID)
-	e := normalizeEffortName(effort)
+	e := agentcli.NormalizeEffortName(effort)
 	if base, suf := splitAgyModelEffortSuffix(m); suf != "" {
 		if e == "" {
 			return m, ""
 		}
 		supported := agySupportedEffortsForBase(base)
-		e = clampEffortToSupported(e, supported, suf)
+		e = agentcli.ClampEffortToSupported(e, supported, suf)
 		return base + "-" + e, e
 	}
 	if e != "" {
-		supported, def := inferVendorEffortSpec(string(RuntimeAntigravity), m, true)
-		e = clampEffortToSupported(e, supported, def)
+		supported, def := agentcli.InferVendorEffortSpec(string(RuntimeAntigravity), m, true)
+		e = agentcli.ClampEffortToSupported(e, supported, def)
 	}
 	return m, e
 }
@@ -438,10 +404,10 @@ func BuildClaudeArgs(mode, modelID, effort, externalSessionID string) []string {
 	if m != "" {
 		args = append(args, "--model", m)
 	}
-	if e := normalizeEffortName(effort); e != "" {
+	if e := agentcli.NormalizeEffortName(effort); e != "" {
 		efforts, defEffort, supportsEffort := inferClaudeModelEfforts(m)
 		if supportsEffort {
-			if clamped := clampEffortToSupported(e, efforts, defEffort); clamped != "" {
+			if clamped := agentcli.ClampEffortToSupported(e, efforts, defEffort); clamped != "" {
 				args = append(args, "--effort", clamped)
 			}
 		}

@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hoxiai/hoxi/internal/runner"
+	"github.com/hoxiai/hoxi/internal/agentcli"
 )
 
 func qoderDotDirs() []string {
@@ -614,10 +614,10 @@ func loadQoderSessionDetail(sessionID, hintCWD, activeRoot string) (*ExternalSes
 
 func detectQoderCLIStatus(hoxiMap map[string]interface{}) LocalCLIStatusItem {
 	sessions, stats := scanQoderSessions("", "")
-	bin := runner.ResolveQoderBinary()
+	bin := agentcli.ResolveQoderBinary()
 	var models []string
 	var defModel string
-	for _, m := range runner.DiscoverQoderModels() {
+	for _, m := range agentcli.DiscoverQoderModels() {
 		if m.ID != "" {
 			models = appendUniqueString(models, m.ID)
 			if defModel == "" {

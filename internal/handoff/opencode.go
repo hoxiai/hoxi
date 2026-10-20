@@ -10,52 +10,10 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-)
 
-func externalOpenCodeDBPaths() []string {
-	if custom := strings.TrimSpace(os.Getenv("OPENCODE_EXTERNAL_DB")); custom != "" {
-		return []string{filepath.Clean(custom)}
-	}
-	if customDir := strings.TrimSpace(os.Getenv("OPENCODE_DATA_DIR")); customDir != "" {
-		return []string{filepath.Join(filepath.Clean(customDir), "opencode.db")}
-	}
-	home, _ := os.UserHomeDir()
-	hoxiDB := ""
-	hoxiEngineDB := ""
-	if home != "" {
-		hoxiDB = filepath.Clean(filepath.Join(home, ".hoxi", "hoxi.db"))
-		hoxiEngineDB = filepath.Clean(filepath.Join(home, ".hoxi", "engine-data", "opencode", "opencode.db"))
-	}
-	var candidates []string
-	if home != "" {
-		candidates = append(candidates, filepath.Join(home, ".local", "share", "opencode", "opencode.db"))
-	}
-	if localApp := strings.TrimSpace(os.Getenv("LOCALAPPDATA")); localApp != "" {
-		candidates = append(candidates,
-			filepath.Join(localApp, "opencode", "opencode.db"),
-			filepath.Join(localApp, "opencode", "Data", "opencode.db"),
-		)
-	}
-	if appData := strings.TrimSpace(os.Getenv("APPDATA")); appData != "" {
-		candidates = append(candidates, filepath.Join(appData, "opencode", "opencode.db"))
-	}
-	var out []string
-	seen := map[string]struct{}{}
-	for _, p := range candidates {
-		clean := filepath.Clean(p)
-		if (hoxiDB != "" && clean == hoxiDB) || (hoxiEngineDB != "" && clean == hoxiEngineDB) {
-			continue
-		}
-		if _, ok := seen[clean]; ok {
-			continue
-		}
-		if st, err := os.Stat(clean); err == nil && !st.IsDir() {
-			seen[clean] = struct{}{}
-			out = append(out, clean)
-		}
-	}
-	return out
-}
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
+	"github.com/hoxiai/hoxi/internal/opencode/ocstate"
+)
 
 func resolveExternalOpenCodeBinary() string {
 	if p, err := exec.LookPath("opencode"); err == nil && strings.TrimSpace(p) != "" {
@@ -64,7 +22,7 @@ func resolveExternalOpenCodeBinary() string {
 	if home, _ := os.UserHomeDir(); home != "" {
 		for _, sub := range []string{
 			filepath.Join(home, ".opencode", "bin", "opencode"),
-			filepath.Join(home, ".hoxi", "bin", "opencode"),
+			filepath.Join(hoxipaths.BinDir(), "opencode"),
 		} {
 			if st, err := os.Stat(sub); err == nil && !st.IsDir() {
 				return sub
@@ -168,7 +126,7 @@ FROM (
 }
 
 func scanOpenCodeSessions(targetDir, query string) ([]ExternalSessionSummary, ExternalSourceStats) {
-	dbPaths := externalOpenCodeDBPaths()
+	dbPaths := ocstate.ExternalDBPaths()
 	stats := ExternalSourceStats{
 		Installed: len(dbPaths) > 0 || resolveExternalOpenCodeBinary() != "",
 	}
@@ -223,7 +181,7 @@ func loadOpenCodeSessionDetail(sessionID, hintCWD, activeRoot string) (*External
 	if sessionID == "" {
 		return nil, fmt.Errorf("opencode session id is required")
 	}
-	for _, dbPath := range externalOpenCodeDBPaths() {
+	for _, dbPath := range ocstate.ExternalDBPaths() {
 		detail, err := loadOpenCodeSessionFromDB(dbPath, sessionID, hintCWD, activeRoot)
 		if err == nil && detail != nil {
 			return detail, nil
@@ -463,168 +421,6 @@ func parseOpenCodeToolPart(pDoc map[string]interface{}, seq int) (NormalizedTool
 	}, steps
 }
 
-type openCodeConsoleAccountRow struct {
-	ID           string `json:"id"`
-	Email        string `json:"email"`
-	URL          string `json:"url"`
-	AccessToken  string `json:"accessToken"`
-	RefreshToken string `json:"refreshToken"`
-	TokenExpiry  int64  `json:"tokenExpiry"`
-	TimeCreated  int64  `json:"timeCreated"`
-	TimeUpdated  int64  `json:"timeUpdated"`
-}
-
-type openCodeConsoleState struct {
-	Accounts        []openCodeConsoleAccountRow `json:"accounts"`
-	ActiveAccountID string                      `json:"activeAccountID"`
-	ActiveOrgID     string                      `json:"activeOrgID"`
-}
-
-func hoxiOpenCodeDBPath() string {
-	if custom := strings.TrimSpace(os.Getenv("OPENCODE_DB")); custom != "" {
-		return filepath.Clean(custom)
-	}
-	if custom := strings.TrimSpace(os.Getenv("HOXI_DB_PATH")); custom != "" {
-		return filepath.Clean(custom)
-	}
-	home, _ := os.UserHomeDir()
-	if home == "" {
-		return ""
-	}
-	return filepath.Join(home, ".hoxi", "hoxi.db")
-}
-
-func readOpenCodeConsoleStateFromDB(dbPath string) *openCodeConsoleState {
-	dbPath = strings.TrimSpace(dbPath)
-	if dbPath == "" {
-		return nil
-	}
-	if st, err := os.Stat(dbPath); err != nil || st.IsDir() {
-		return nil
-	}
-	querySQL := `
-SELECT json_object(
-  'accounts', COALESCE((
-    SELECT json_group_array(json_object(
-      'id', COALESCE(a.id, ''),
-      'email', COALESCE(a.email, ''),
-      'url', COALESCE(a.url, ''),
-      'accessToken', COALESCE(a.access_token, ''),
-      'refreshToken', COALESCE(a.refresh_token, ''),
-      'tokenExpiry', COALESCE(a.token_expiry, 0),
-      'timeCreated', COALESCE(a.time_created, 0),
-      'timeUpdated', COALESCE(a.time_updated, 0)
-    ))
-    FROM account a
-  ), json('[]')),
-  'activeAccountID', COALESCE((SELECT active_account_id FROM account_state WHERE id = 1 LIMIT 1), ''),
-  'activeOrgID', COALESCE((SELECT active_org_id FROM account_state WHERE id = 1 LIMIT 1), '')
-);`
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "sqlite3", "-readonly", "-cmd", ".timeout 3000", dbPath, querySQL)
-	cmd.WaitDelay = time.Second
-	out, err := cmd.Output()
-	if err != nil || len(bytes.TrimSpace(out)) == 0 {
-		return nil
-	}
-	var state openCodeConsoleState
-	if json.Unmarshal(bytes.TrimSpace(out), &state) != nil {
-		return nil
-	}
-	var valid []openCodeConsoleAccountRow
-	for _, a := range state.Accounts {
-		if strings.TrimSpace(a.ID) != "" && (strings.TrimSpace(a.AccessToken) != "" || strings.TrimSpace(a.RefreshToken) != "") {
-			valid = append(valid, a)
-		}
-	}
-	if len(valid) == 0 {
-		return nil
-	}
-	state.Accounts = valid
-	if strings.TrimSpace(state.ActiveAccountID) == "" {
-		state.ActiveAccountID = strings.TrimSpace(valid[0].ID)
-	}
-	return &state
-}
-
-func readExternalOpenCodeConsoleState() *openCodeConsoleState {
-	for _, dbPath := range externalOpenCodeDBPaths() {
-		if state := readOpenCodeConsoleStateFromDB(dbPath); state != nil {
-			return state
-		}
-	}
-	return nil
-}
-
-func isOpenCodeConsoleStateSynced(ext *openCodeConsoleState) bool {
-	if ext == nil || len(ext.Accounts) == 0 {
-		return true
-	}
-	dst := readOpenCodeConsoleStateFromDB(hoxiOpenCodeDBPath())
-	if dst == nil || len(dst.Accounts) == 0 {
-		return false
-	}
-	if strings.TrimSpace(ext.ActiveAccountID) != "" && strings.TrimSpace(dst.ActiveAccountID) != strings.TrimSpace(ext.ActiveAccountID) {
-		return false
-	}
-	if strings.TrimSpace(ext.ActiveOrgID) != "" && strings.TrimSpace(dst.ActiveOrgID) != strings.TrimSpace(ext.ActiveOrgID) {
-		return false
-	}
-	return true
-}
-
-func syncOpenCodeConsoleStateToHoxiDB(ext *openCodeConsoleState) error {
-	if ext == nil || len(ext.Accounts) == 0 {
-		return nil
-	}
-	dstDB := hoxiOpenCodeDBPath()
-	if dstDB == "" {
-		return fmt.Errorf("cannot resolve Hoxi OpenCode database path")
-	}
-	if err := os.MkdirAll(filepath.Dir(dstDB), 0o700); err != nil {
-		return err
-	}
-	var sb strings.Builder
-	sb.WriteString("BEGIN IMMEDIATE;\n")
-	sb.WriteString("CREATE TABLE IF NOT EXISTS `account` (`id` text PRIMARY KEY, `email` text NOT NULL, `url` text NOT NULL, `access_token` text NOT NULL, `refresh_token` text NOT NULL, `token_expiry` integer, `time_created` integer NOT NULL, `time_updated` integer NOT NULL);\n")
-	sb.WriteString("CREATE TABLE IF NOT EXISTS `account_state` (`id` integer PRIMARY KEY, `active_account_id` text, `active_org_id` text, CONSTRAINT `fk_account_state_active_account_id_account_id_fk` FOREIGN KEY (`active_account_id`) REFERENCES `account`(`id`) ON DELETE SET NULL);\n")
-	for _, a := range ext.Accounts {
-		fmt.Fprintf(&sb,
-			"INSERT INTO `account` (`id`, `email`, `url`, `access_token`, `refresh_token`, `token_expiry`, `time_created`, `time_updated`) VALUES (%s, %s, %s, %s, %s, %d, %d, %d) ON CONFLICT(`id`) DO UPDATE SET `email`=excluded.`email`, `url`=excluded.`url`, `access_token`=CASE WHEN excluded.`time_updated` >= `account`.`time_updated` OR `account`.`access_token` = '' THEN excluded.`access_token` ELSE `account`.`access_token` END, `refresh_token`=CASE WHEN excluded.`time_updated` >= `account`.`time_updated` OR `account`.`refresh_token` = '' THEN excluded.`refresh_token` ELSE `account`.`refresh_token` END, `token_expiry`=CASE WHEN excluded.`time_updated` >= `account`.`time_updated` OR COALESCE(`account`.`token_expiry`, 0) = 0 THEN excluded.`token_expiry` ELSE `account`.`token_expiry` END, `time_updated`=MAX(`account`.`time_updated`, excluded.`time_updated`);\n",
-			sqlEscapeLiteral(strings.TrimSpace(a.ID)),
-			sqlEscapeLiteral(a.Email),
-			sqlEscapeLiteral(a.URL),
-			sqlEscapeLiteral(a.AccessToken),
-			sqlEscapeLiteral(a.RefreshToken),
-			a.TokenExpiry,
-			a.TimeCreated,
-			a.TimeUpdated,
-		)
-	}
-	activeID := strings.TrimSpace(ext.ActiveAccountID)
-	if activeID == "" {
-		activeID = strings.TrimSpace(ext.Accounts[0].ID)
-	}
-	activeOrg := strings.TrimSpace(ext.ActiveOrgID)
-	fmt.Fprintf(&sb,
-		"INSERT INTO `account_state` (`id`, `active_account_id`, `active_org_id`) VALUES (1, %s, %s) ON CONFLICT(`id`) DO UPDATE SET `active_account_id`=excluded.`active_account_id`, `active_org_id`=CASE WHEN excluded.`active_org_id` != '' THEN excluded.`active_org_id` ELSE `account_state`.`active_org_id` END;\n",
-		sqlEscapeLiteral(activeID),
-		sqlEscapeLiteral(activeOrg),
-	)
-	sb.WriteString("COMMIT;\n")
-
-	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "sqlite3", "-cmd", ".timeout 3000", dstDB)
-	cmd.WaitDelay = time.Second
-	cmd.Stdin = strings.NewReader(sb.String())
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("sync opencode console account failed: %w (%s)", err, strings.TrimSpace(string(out)))
-	}
-	return nil
-}
-
 func detectOpenCodeCLIStatus(g *Service) LocalCLIStatusItem {
 	sessions, stats := scanOpenCodeSessions("", "")
 	var latestProvider, latestModel string
@@ -639,7 +435,7 @@ func detectOpenCodeCLIStatus(g *Service) LocalCLIStatusItem {
 	}
 	provDefs := readExternalOpenCodeConfigProviders()
 	authMap := readExternalOpenCodeAuth()
-	consoleState := readExternalOpenCodeConsoleState()
+	consoleState := ocstate.ReadExternalConsoleState()
 	hasExplicitDefaultModel := false
 	if defProvider, defModel := parseOpenCodeModelField(readExternalOpenCodeDefaultModel()); defProvider != "" {
 		latestProvider, latestModel = defProvider, defModel
@@ -712,7 +508,7 @@ func detectOpenCodeCLIStatus(g *Service) LocalCLIStatusItem {
 			}
 		}
 	}
-	if connected && consoleState != nil && !isOpenCodeConsoleStateSynced(consoleState) {
+	if connected && consoleState != nil && !ocstate.IsConsoleStateSynced(consoleState) {
 		connected = false
 	}
 

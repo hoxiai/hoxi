@@ -1,12 +1,10 @@
 package handoff
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -15,51 +13,11 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
 )
 
 const base62Alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-
-func openCodeDataDBPath() string {
-	if custom := strings.TrimSpace(os.Getenv("OPENCODE_DB")); custom != "" {
-		return filepath.Clean(custom)
-	}
-	if custom := strings.TrimSpace(os.Getenv("HOXI_DB_PATH")); custom != "" {
-		return filepath.Clean(custom)
-	}
-	home, _ := os.UserHomeDir()
-	var candidates []string
-	if xdg := strings.TrimSpace(os.Getenv("XDG_DATA_HOME")); xdg != "" {
-		candidates = append(candidates, filepath.Join(xdg, "opencode", "opencode.db"))
-	}
-	if home != "" {
-		candidates = append(candidates,
-			filepath.Join(home, ".hoxi", "hoxi.db"),
-			filepath.Join(home, ".hoxi", "engine-data", "opencode", "opencode.db"),
-			filepath.Join(home, ".local", "share", "opencode", "opencode.db"),
-		)
-	}
-	if custom := strings.TrimSpace(os.Getenv("HOXI_ENGINE_DATA_DIR")); custom != "" {
-		candidates = append(candidates, filepath.Join(filepath.Clean(custom), "opencode", "opencode.db"))
-	}
-	if localApp := strings.TrimSpace(os.Getenv("LOCALAPPDATA")); localApp != "" {
-		candidates = append(candidates,
-			filepath.Join(localApp, "opencode", "opencode.db"),
-			filepath.Join(localApp, "opencode", "Data", "opencode.db"),
-		)
-	}
-	if appData := strings.TrimSpace(os.Getenv("APPDATA")); appData != "" {
-		candidates = append(candidates, filepath.Join(appData, "opencode", "opencode.db"))
-	}
-	for _, p := range candidates {
-		if _, err := os.Stat(p); err == nil {
-			return p
-		}
-	}
-	if len(candidates) > 0 {
-		return candidates[0]
-	}
-	return ""
-}
 
 func makeAscendingOpenCodeID(prefix string, tsMs int64, seq int) string {
 	if tsMs <= 0 {
@@ -225,30 +183,13 @@ func dirExists(p string) bool {
 }
 
 func (g *Service) createOpenCodeSessionInDir(ctx context.Context, targetDir, title string) (map[string]interface{}, error) {
-	if g.openCodePort <= 0 {
+	if !g.openCode.Available() {
 		return nil, fmt.Errorf("opencode daemon is not running")
 	}
-	u := fmt.Sprintf("http://127.0.0.1:%d/session?directory=%s", g.openCodePort, url.QueryEscape(targetDir))
-	bodyBytes, _ := json.Marshal(map[string]string{"title": title})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(bodyBytes))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.SetBasicAuth("opencode", g.password)
-
-	client := &http.Client{Timeout: 10 * time.Second, Transport: localTransport}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	raw, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
-	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 	var sessionObj map[string]interface{}
-	if err := json.Unmarshal(raw, &sessionObj); err != nil {
+	if err := g.openCode.JSON(ctx, http.MethodPost, "/session", url.Values{"directory": {targetDir}}, map[string]string{"title": title}, &sessionObj); err != nil {
 		return nil, err
 	}
 	return sessionObj, nil
@@ -285,7 +226,7 @@ func insertNormalizedTurnsToOpenCodeDB(
 	sessionID, targetDir, providerID, modelID string,
 	detail *ExternalSessionDetail,
 ) error {
-	dbPath := openCodeDataDBPath()
+	dbPath := hoxipaths.DBPath()
 	if dbPath == "" {
 		return fmt.Errorf("opencode.db not found")
 	}

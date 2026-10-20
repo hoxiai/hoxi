@@ -3,12 +3,10 @@ package gateway
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -85,7 +83,7 @@ func (g *Gateway) isAnySessionBusy() bool {
 			return true
 		}
 	}
-	if g.openCodePort <= 0 {
+	if !g.openCode.Available() {
 		return false
 	}
 	g.updateMu.Lock()
@@ -102,49 +100,20 @@ func (g *Gateway) isAnySessionBusy() bool {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
 	defer cancel()
-	var rt http.RoundTripper
-	if g.proxy != nil {
-		rt = g.proxy.Transport
-	}
-	client := &http.Client{
-		Timeout:   1500 * time.Millisecond,
-		Transport: rt,
-	}
 	for _, dir := range dirs {
 		if updateDirectoryGone(dir) {
 			continue
 		}
-		if g.openCodeDirectoryHasActiveSession(ctx, client, dir) {
+		if g.openCodeDirectoryHasActiveSession(ctx, dir) {
 			return true
 		}
 	}
 	return false
 }
 
-func (g *Gateway) openCodeDirectoryHasActiveSession(ctx context.Context, client *http.Client, dir string) bool {
-	endpoint := "http://127.0.0.1:" + strconv.Itoa(g.openCodePort) + "/session/status?" + url.Values{"directory": {dir}}.Encode()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return false
-	}
-	req.SetBasicAuth("opencode", g.password)
-	resp, err := client.Do(req)
-	if err != nil {
-		return false
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return false
-	}
-	const maxBody = 1 << 20
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBody+1))
-	if err != nil || len(body) > maxBody {
-		return false
-	}
-	var statuses map[string]struct {
-		Type string `json:"type"`
-	}
-	if json.Unmarshal(body, &statuses) != nil || statuses == nil {
+func (g *Gateway) openCodeDirectoryHasActiveSession(ctx context.Context, dir string) bool {
+	statuses, ok := g.openCodeSessionStatuses(ctx, dir)
+	if !ok {
 		return false
 	}
 	for _, status := range statuses {
@@ -153,6 +122,24 @@ func (g *Gateway) openCodeDirectoryHasActiveSession(ctx context.Context, client 
 		}
 	}
 	return false
+}
+
+// openCodeSessionStatuses reads the engine's per-session busy states for dir.
+func (g *Gateway) openCodeSessionStatuses(ctx context.Context, dir string) (map[string]struct {
+	Type string `json:"type"`
+}, bool) {
+	const maxBody = 1 << 20
+	status, body, err := g.openCode.Raw(ctx, http.MethodGet, "/session/status", url.Values{"directory": {dir}}, nil)
+	if err != nil || status != http.StatusOK || len(body) > maxBody {
+		return nil, false
+	}
+	var statuses map[string]struct {
+		Type string `json:"type"`
+	}
+	if json.Unmarshal(body, &statuses) != nil || statuses == nil {
+		return nil, false
+	}
+	return statuses, true
 }
 
 var updateStatusTimeout = 2 * time.Second
@@ -196,11 +183,6 @@ func (g *Gateway) BeginUpdate() bool {
 			return false
 		}
 	}
-	transport := &http.Transport{Proxy: nil}
-	defer transport.CloseIdleConnections()
-	client := &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error {
-		return http.ErrUseLastResponse
-	}}
 	checked := make(map[string]bool)
 	for {
 		g.updateMu.Lock()
@@ -220,7 +202,7 @@ func (g *Gateway) BeginUpdate() bool {
 				checked[dir] = true
 				continue
 			}
-			if !g.updateDirectoryIdle(ctx, client, dir) {
+			if !g.updateDirectoryIdle(ctx, dir) {
 				if updateDirectoryGone(dir) {
 					checked[dir] = true
 					continue
@@ -264,30 +246,9 @@ func updateDirectoryGone(dir string) bool {
 	return os.IsNotExist(err) || (err == nil && !info.IsDir())
 }
 
-func (g *Gateway) updateDirectoryIdle(ctx context.Context, client *http.Client, dir string) bool {
-	endpoint := "http://127.0.0.1:" + strconv.Itoa(g.openCodePort) + "/session/status?" + url.Values{"directory": {dir}}.Encode()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return false
-	}
-	req.SetBasicAuth("opencode", g.password)
-	resp, err := client.Do(req)
-	if err != nil {
-		return false
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return false
-	}
-	const maxBody = 1 << 20
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBody+1))
-	if err != nil || len(body) > maxBody {
-		return false
-	}
-	var statuses map[string]struct {
-		Type string `json:"type"`
-	}
-	if json.Unmarshal(body, &statuses) != nil || statuses == nil {
+func (g *Gateway) updateDirectoryIdle(ctx context.Context, dir string) bool {
+	statuses, ok := g.openCodeSessionStatuses(ctx, dir)
+	if !ok {
 		return false
 	}
 	for _, status := range statuses {

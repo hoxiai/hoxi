@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hoxiai/hoxi/internal/handoff"
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
 	"github.com/hoxiai/hoxi/internal/worktree"
 )
 
@@ -253,7 +253,7 @@ func collectGitDailyStats(workDir string, startOfToday time.Time, res *gitDailyP
 }
 
 func queryOpenCodeDailyDB(startOfTodayMs int64, res *gitDailyPulseResponse) {
-	dbPath := handoff.OpenCodeDataDBPath()
+	dbPath := hoxipaths.DBPath()
 	if dbPath == "" {
 		return
 	}

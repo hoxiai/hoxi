@@ -115,13 +115,13 @@ func (g *Service) handleTestProviderModel(w http.ResponseWriter, r *http.Request
 		MaxTokens:  1,
 		Timeout:    15 * time.Second,
 		Transport:  providerTransport,
-		Telemetry:  g.telemetry,
+		Stats:      g.stats,
 	})
 	latency := time.Since(start).Milliseconds()
 	if err != nil {
 		errMsg := err.Error()
-		if g.telemetry != nil && pid != "" {
-			g.telemetry.recordProbeResult(pid, false, latency, errMsg, modelID)
+		if g.stats != nil && pid != "" {
+			g.stats.recordProbeResult(pid, false, latency, errMsg, modelID)
 		}
 		writeJSON(w, http.StatusOK, testProviderModelResponse{
 			OK:        false,
@@ -131,8 +131,8 @@ func (g *Service) handleTestProviderModel(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if g.telemetry != nil && pid != "" {
-		g.telemetry.recordProbeResult(pid, true, latency, "", modelID)
+	if g.stats != nil && pid != "" {
+		g.stats.recordProbeResult(pid, true, latency, "", modelID)
 	}
 	writeJSON(w, http.StatusOK, testProviderModelResponse{
 		OK:        true,

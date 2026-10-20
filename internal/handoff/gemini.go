@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
@@ -593,18 +592,7 @@ func (g *Service) importGeminiCLIProvider() LocalCLIImportResponse {
 			Error:  "请使用 Antigravity 运行时新建会话 (Please use the Antigravity local runtime when creating a session; OAuth tokens are never imported into OpenCode)",
 		}
 	}
-	if g.openCodePort > 0 {
-		b, _ := json.Marshal(map[string]string{"type": "api", "key": apiKey})
-		u := "http://127.0.0.1:" + strconv.Itoa(g.openCodePort) + "/auth/google"
-		if req, err := http.NewRequest(http.MethodPut, u, bytes.NewReader(b)); err == nil {
-			req.Header.Set("Content-Type", "application/json")
-			req.SetBasicAuth("opencode", g.password)
-			client := &http.Client{Timeout: 5 * time.Second, Transport: localTransport}
-			if resp, err := client.Do(req); err == nil {
-				_ = resp.Body.Close()
-			}
-		}
-	}
+	g.sendEngineAuth("google", map[string]interface{}{"type": "api", "key": apiKey}, 5*time.Second)
 	_, displayBySlug, _ := discoverAntigravityCLIModels()
 	modelsMap := map[string]interface{}{}
 	var cleanModels []string

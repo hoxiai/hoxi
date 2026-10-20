@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -527,19 +526,7 @@ func (g *Service) importCodexCLIProvider() LocalCLIImportResponse {
 		return LocalCLIImportResponse{OK: false, ToolID: string(ExternalToolCodex), Error: "No valid tokens in ~/.codex/auth.json"}
 	}
 
-	if g.openCodePort > 0 {
-		b, _ := json.Marshal(authBody)
-		u := "http://127.0.0.1:" + strconv.Itoa(g.openCodePort) + "/auth/openai"
-		req, err := http.NewRequest(http.MethodPut, u, bytes.NewReader(b))
-		if err == nil {
-			req.Header.Set("Content-Type", "application/json")
-			req.SetBasicAuth("opencode", g.password)
-			client := &http.Client{Timeout: 5 * time.Second, Transport: localTransport}
-			if resp, err := client.Do(req); err == nil {
-				_ = resp.Body.Close()
-			}
-		}
-	}
+	g.sendEngineAuth("openai", authBody, 5*time.Second)
 
 	_, _, models := readCodexLocalConfig()
 	sessions, _ := scanCodexSessions("", "")
