@@ -33,6 +33,7 @@ import {
 } from "./auto-models";
 import { newIsolatedSession, waitForSessionSandbox } from "./session-sandbox";
 import { buildCombinedSystemPrompt, setWorkspace, workspace } from "./workspace";
+import { touchSessionTranscript } from "./session-transcripts";
 import { parseGoalCommand, pauseSessionGoal, runGoalCommand } from "./session-goal";
 import { buildWorkspaceFoldersSystemPrompt, workspaceFoldersForDir } from "./workspace-projects";
 import { initializeSessionAI, parseModelString, sessionAIConfig, type ReasoningEffort } from "./session-ai";
@@ -589,11 +590,13 @@ function belongsToActiveSession(sessionID: string): boolean {
 }
 
 function mutateUpsertInfo(state: typeof workspace, info: MessageInfo) {
+  touchSessionTranscript(info.sessionID);
   const list = (state.messagesBySession[info.sessionID] ||= []);
   upsertTurnInfo(list, info);
 }
 
 function mutateUpsertPart(state: typeof workspace, part: MessagePart) {
+  touchSessionTranscript(part.sessionID);
   const list = (state.messagesBySession[part.sessionID] ||= []);
   upsertTurnPart(list, part);
 }

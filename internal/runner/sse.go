@@ -40,6 +40,25 @@ var (
 	resyncFrame    = fmt.Sprintf("data: {\"type\":%q,\"properties\":{}}\n\n", resyncEventType)
 )
 
+// Called with Service.mu held so concurrent producers cannot interleave a
+// recovery marker and its event. A stalled client never stalls a runtime; it
+// reconciles from durable state after the bounded queue overflows.
+func enqueueStreamEvent(ch chan SSEEvent, evt SSEEvent) {
+	select {
+	case ch <- evt:
+		return
+	default:
+	}
+	for len(ch) > 0 {
+		select {
+		case <-ch:
+		default:
+		}
+	}
+	ch <- SSEEvent{Type: resyncEventType, Properties: map[string]interface{}{}}
+	ch <- evt
+}
+
 func (s *Service) handleGlobalSSE(w http.ResponseWriter, r *http.Request) {
 	s.serveSSE(w, r, "")
 }

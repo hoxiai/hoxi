@@ -1,6 +1,7 @@
 // web/src/i18n/locales/en-US/timeline.ts
 
 export const timeline = {
+  loadEarlierSteps: "Load {count} earlier steps",
   scrollToBottom: "Scroll to bottom",
   welcomeTitle: "Start a New Task",
   welcomeSubtitle:

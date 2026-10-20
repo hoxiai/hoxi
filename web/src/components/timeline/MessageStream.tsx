@@ -437,7 +437,7 @@ export default function MessageStream(props: { hidden?: boolean }) {
 
             <For each={turnWindow.visibleTurns()}>
               {(turn, idx) => {
-                const globalIndex = () => turnWindow.startIndex() + idx();
+                const globalIndex = () => turnWindow.globalIndex(idx());
                 return (
                   <Show
                     when={turn.info.role === "user"}
@@ -446,7 +446,7 @@ export default function MessageStream(props: { hidden?: boolean }) {
                         turn={turn}
                         globalIndex={globalIndex()}
                         allTurns={turns()}
-                        windowStartIndex={turnWindow.startIndex()}
+                        windowStartIndex={turnWindow.mergeStartIndex()}
                         isSessionBusy={isSessionBusy()}
                         activeMatchTurnID={activeMatchTurnID()}
                         navigationRevision={navigationRevision()}

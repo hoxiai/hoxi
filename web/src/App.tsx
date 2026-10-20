@@ -34,6 +34,7 @@ import {
   removeSessionFromStore,
   replaceSessionFromEvent,
   resolveDefaultProjectDir,
+  resyncResidentTranscripts,
   runSessionCodeAudit,
   scheduleRefreshWorktreeStatus,
   selectSession,
@@ -42,6 +43,7 @@ import {
   syncPendingPermissions,
   syncSessionStatuses,
   triggerDesktopNotification,
+  trimSessionTranscripts,
   upsertMessageInfo,
   upsertMessagePart,
   workspace,
@@ -60,6 +62,7 @@ export default function App() {
       if (isOnline) retryEventStream?.();
     });
     const watchdogTimer = setInterval(() => {
+      trimSessionTranscripts();
       const hasBusySession = Object.values(workspace.statusBySession).some(
         (s) => s?.type === "busy" || s?.type === "retry"
       );
@@ -134,14 +137,24 @@ export default function App() {
       }
 
       // Events may have been missed while disconnected; pull authoritative state.
-      const resyncFromServer = () => {
-        void syncSessionStatuses();
-        void syncPendingPermissions();
-        // A busy turn is reconciled by its final snapshot; reloading it mid-stream would flicker.
-        const active = workspace.activeSessionID;
-        if (active && !isSessionBusy(active)) {
-          void loadSessionMessagesOnly(active).catch(() => {});
-        }
+      let resyncing = false;
+      let resyncRequested = false;
+      const resyncFromServer = async () => {
+        resyncRequested = true;
+        if (resyncing) return;
+        resyncing = true;
+        try {
+          while (resyncRequested) {
+            resyncRequested = false;
+            await Promise.allSettled([
+              syncSessionStatuses(), syncPendingPermissions(), resyncResidentTranscripts(),
+              workspace.rootDir ? bootstrapProjectSessions(workspace.rootDir, false) : Promise.resolve(),
+              hoxiAPI.listQuestions().then((questions) => {
+                if (Array.isArray(questions)) setWorkspace("pendingQuestions", questions);
+              }),
+            ]);
+          }
+        } finally { resyncing = false; }
       };
       const handlers: Parameters<typeof connectEventStream>[0] = {
         onConnectionChange: (connected) => {

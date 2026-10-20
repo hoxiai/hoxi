@@ -1,4 +1,5 @@
 import { produce } from "solid-js/store";
+import { isReadingSessionTranscript } from "./session-transcripts";
 import { t } from "../i18n";
 import { hoxiAPI, type SkillSelection } from "../services/api";
 import type { ToolPart } from "../services/sse-types";
@@ -345,7 +346,8 @@ export function ensureChildSubagentSessionLoaded(
       .catch(() => {});
   }
 
-  const needsInitialLoad = !loadedChildSessionIDs.has(childSessionID);
+  const needsInitialLoad = !loadedChildSessionIDs.has(childSessionID) ||
+    (workspace.messagesBySession[childSessionID] === undefined && !isReadingSessionTranscript(childSessionID));
   const needsSettledLoad = Boolean(settled && !settledChildSessionIDs.has(childSessionID));
   if (needsInitialLoad || needsSettledLoad) {
     loadedChildSessionIDs.add(childSessionID);

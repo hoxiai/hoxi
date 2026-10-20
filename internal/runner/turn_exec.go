@@ -365,7 +365,7 @@ func (s *Service) startTurnProcess(
 			revokeHook()
 			s.cancelSessionApprovals(rec.ID, "the CLI process exited")
 			s.syncSessionMemoryFile(rec.ID)
-			s.store.Flush()
+			s.store.FlushSession(rec.ID)
 			close(ap.done)
 			s.mu.Lock()
 			if s.procs[rec.ID] == ap {

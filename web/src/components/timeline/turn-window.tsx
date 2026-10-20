@@ -11,6 +11,7 @@ import type { MessageInfo } from "../../services/sse-types";
 import type { MessageTurn } from "../../store/workspace";
 import { Icon } from "../icons";
 import { t } from "../../i18n";
+import { isVisibleTextPart, isWorkPart } from "./context-activity-parts";
 import {
   AssistantErrorCard,
   AssistantTurnFooter,
@@ -52,6 +53,8 @@ export interface TurnWindowController {
   visibleTurns: Accessor<MessageTurn[]>;
   hiddenCount: Accessor<number>;
   startIndex: Accessor<number>;
+  mergeStartIndex: Accessor<number>;
+  globalIndex: (visibleIndex: number) => number;
   loadEarlierBatch: (scroller?: HTMLElement, count?: number) => void;
   loadAllEarlier: (scroller?: HTMLElement) => void;
   ensureTurnVisible: (messageID: string) => void;
@@ -61,15 +64,36 @@ export interface TurnWindowController {
 export function computeTurnWindowSlice(
   turns: MessageTurn[],
   limit: number
-): { startIndex: number; visibleTurns: MessageTurn[]; hiddenCount: number } {
+): { startIndex: number; visibleTurns: MessageTurn[]; hiddenCount: number; promptIndex?: number; anchorIndex?: number; indexes: number[] } {
   let start = Math.max(0, turns.length - limit);
-  // Never cut a prompt cycle in half: folded step turns render nothing, so a
-  // window starting mid-cycle showed a bare activity group without its prompt.
-  while (start > 0 && turns[start]?.info.role === "assistant") start--;
+  // Preserve short prompt cycles, but never mount an unbounded number of steps
+  // just to find their user prompt. Carry that prompt as a separate context row.
+  const earliest = Math.max(0, turns.length - limit - TURN_BATCH_SIZE);
+  while (start > earliest && turns[start]?.info.role === "assistant") start--;
+  let promptIndex: number | undefined;
+  let anchorIndex: number | undefined;
+  if (start > 0 && turns[start]?.info.role === "assistant") {
+    let previous = start - 1;
+    while (previous >= 0 && turns[previous]?.info.role === "assistant") previous--;
+    if (previous >= 0 && turns[previous]?.info.role === "user") promptIndex = previous;
+    // Keep the owner of the leading work run mounted. Its activity drawer is
+    // paged separately; moving this anchor on every new step caused flicker.
+    for (let index = start - 1; index > previous; index--) {
+      const prior = turns[index];
+      if (prior.info.error) break;
+      if (prior.parts.some(isWorkPart) || prior.parts.some(isVisibleTextPart)) anchorIndex = index;
+      if (prior.parts.some(isVisibleTextPart)) break;
+    }
+  }
+  const context = [promptIndex, anchorIndex].filter((index): index is number => index !== undefined);
+  const indexes = [...context, ...Array.from({ length: turns.length - start }, (_, index) => start + index)];
   return {
     startIndex: start,
-    visibleTurns: start > 0 ? turns.slice(start) : turns,
-    hiddenCount: start,
+    visibleTurns: indexes.map((index) => turns[index]),
+    hiddenCount: start - context.length,
+    promptIndex,
+    anchorIndex,
+    indexes,
   };
 }
 
@@ -213,6 +237,7 @@ export function createTurnWindow(
     const list = turns();
     const idx = list.findIndex((t) => t.info.id === messageID);
     if (idx < 0) return;
+    if (slice().promptIndex === idx) return;
     const needed = list.length - idx + 2;
     if (needed > visibleLimit()) setVisibleLimit(needed);
   };
@@ -228,6 +253,8 @@ export function createTurnWindow(
     visibleTurns,
     hiddenCount,
     startIndex,
+    mergeStartIndex: () => slice().anchorIndex ?? startIndex(),
+    globalIndex: (index) => slice().indexes[index],
     loadEarlierBatch,
     loadAllEarlier,
     ensureTurnVisible,

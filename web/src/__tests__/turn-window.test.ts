@@ -14,6 +14,7 @@ import {
   resolveSegmentDuration,
 } from "../components/timeline/TaskTimelineBar";
 import type { MessageTurn } from "../store/workspace";
+import { resolveMergedTurnParts } from "../components/timeline/context-activity-turns";
 import { assertEqual, describe, it } from "./test-harness";
 
 function mockTurn(id: string, role: "user" | "assistant" = "assistant"): MessageTurn {
@@ -29,6 +30,37 @@ function mockTurn(id: string, role: "user" | "assistant" = "assistant"): Message
 }
 
 describe("TurnWindow windowing slice & prompt cycle protection", () => {
+  it("keeps a long live activity anchor stable and renders each carried step once", () => {
+    const turns = [mockTurn("prompt", "user"), ...Array.from({ length: 1000 }, (_, i) => {
+      const turn = mockTurn(`step_${i}`);
+      turn.parts = [{ type: "reasoning", id: `part_${i}`, messageID: turn.info.id, sessionID: "test-ses", text: "work" }];
+      return turn;
+    })];
+    const slice = computeTurnWindowSlice(turns, INITIAL_VISIBLE_TURNS);
+    assertEqual(slice.anchorIndex, 1);
+    assertEqual(slice.indexes[0], 0);
+    assertEqual(slice.indexes[1], 1);
+    assertEqual(slice.visibleTurns.length, INITIAL_VISIBLE_TURNS + TURN_BATCH_SIZE + 2);
+    const anchor = resolveMergedTurnParts(turns, slice.anchorIndex!, slice.anchorIndex!);
+    assertEqual(anchor.effectiveParts.length, 1000);
+    assertEqual(resolveMergedTurnParts(turns, slice.startIndex, slice.anchorIndex!).effectiveParts.length, 0);
+    const after = computeTurnWindowSlice([...turns, mockTurn("next")], INITIAL_VISIBLE_TURNS);
+    assertEqual(after.visibleTurns[1], slice.visibleTurns[1]);
+  });
+  it("bounds a long prompt cycle while preserving its prompt and latest steps", () => {
+    const turns = [mockTurn("prompt", "user"), ...Array.from({ length: 1000 }, (_, i) => mockTurn(`step_${i}`))];
+    const slice = computeTurnWindowSlice(turns, INITIAL_VISIBLE_TURNS);
+    assertEqual(slice.promptIndex, 0);
+    assertEqual(slice.visibleTurns[0].info.id, "prompt");
+    assertEqual(slice.visibleTurns.at(-1)?.info.id, "step_999");
+    assertEqual(slice.visibleTurns.length, INITIAL_VISIBLE_TURNS + TURN_BATCH_SIZE + 1);
+    assertEqual(slice.hiddenCount + slice.visibleTurns.length, turns.length);
+    const expanded = computeTurnWindowSlice(turns, INITIAL_VISIBLE_TURNS + TURN_BATCH_SIZE);
+    assertEqual(expanded.visibleTurns.length, slice.visibleTurns.length + TURN_BATCH_SIZE);
+    const all = computeTurnWindowSlice(turns, turns.length);
+    assertEqual(all.visibleTurns.length, turns.length);
+    assertEqual(all.hiddenCount, 0);
+  });
   it("slices recent turns and never cuts an assistant cycle from its user prompt", () => {
     // Turn 0: user, Turn 1: assistant, Turn 2: assistant, Turn 3: assistant
     // Turn 4: user, Turn 5: assistant, Turn 6: assistant

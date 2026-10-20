@@ -102,8 +102,8 @@ func (s *Service) changeSessionSandbox(sessionID, mode string) (SessionInfo, err
 }
 
 func (s *Service) changeSessionSandboxWithOptions(sessionID, mode string, force, keepBranch bool) (SessionInfo, error) {
-	s.turnMu.Lock()
-	defer s.turnMu.Unlock()
+	unlock := s.turnMu.lock(sessionID)
+	defer unlock()
 	mode, err := normalizeSandboxMode(mode)
 	if err != nil {
 		return SessionInfo{}, err
@@ -194,8 +194,8 @@ func (s *Service) SetCommandSandbox(sessionID string, enabled bool) (SessionInfo
 // a native session. It refuses to change while a turn is running so a live
 // process is never half-confined.
 func (s *Service) setCommandSandbox(sessionID string, enabled bool) (SessionInfo, error) {
-	s.turnMu.Lock()
-	defer s.turnMu.Unlock()
+	unlock := s.turnMu.lock(sessionID)
+	defer unlock()
 	s.mu.Lock()
 	busy := s.procs[sessionID] != nil
 	s.mu.Unlock()
@@ -227,8 +227,8 @@ func (s *Service) setCommandSandbox(sessionID string, enabled bool) (SessionInfo
 }
 
 func (s *Service) guardWorktreeApply(sessionID string, apply func() error) error {
-	s.turnMu.Lock()
-	defer s.turnMu.Unlock()
+	unlock := s.turnMu.lock(sessionID)
+	defer unlock()
 	if _, known := s.store.Get(sessionID); known {
 		s.mu.Lock()
 		busy := s.procs[sessionID] != nil

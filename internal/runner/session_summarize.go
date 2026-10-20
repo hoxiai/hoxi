@@ -20,8 +20,8 @@ func (s *Service) handleSessionSummarize(w http.ResponseWriter, r *http.Request,
 	}
 	// Serialize with prompts and other turn mutations: compaction rewrites the
 	// upstream context, so it must not overlap a running or starting turn.
-	s.turnMu.Lock()
-	defer s.turnMu.Unlock()
+	unlock := s.turnMu.lock(sessionID)
+	defer unlock()
 	var body struct {
 		ProviderID string `json:"providerID"`
 		ModelID    string `json:"modelID"`

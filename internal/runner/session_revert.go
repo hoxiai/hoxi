@@ -50,8 +50,8 @@ func (s *Service) handleSessionRevert(w http.ResponseWriter, r *http.Request, se
 	body.MessageID = strings.TrimSpace(body.MessageID)
 	body.PartID = strings.TrimSpace(body.PartID)
 
-	s.turnMu.Lock()
-	defer s.turnMu.Unlock()
+	unlock := s.turnMu.lock(sessionID)
+	defer unlock()
 
 	s.mu.Lock()
 	ap := s.procs[sessionID]
@@ -150,8 +150,8 @@ func (s *Service) handleSessionUnrevert(w http.ResponseWriter, r *http.Request, 
 		writeJSONError(w, http.StatusMethodNotAllowed, "POST required")
 		return
 	}
-	s.turnMu.Lock()
-	defer s.turnMu.Unlock()
+	unlock := s.turnMu.lock(sessionID)
+	defer unlock()
 
 	rec, ok := s.store.Get(sessionID)
 	if !ok {
@@ -215,8 +215,8 @@ func (s *Service) handleSessionFork(w http.ResponseWriter, r *http.Request, sess
 	_ = json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&body)
 	messageID := strings.TrimSpace(body.MessageID)
 
-	s.turnMu.Lock()
-	defer s.turnMu.Unlock()
+	unlock := s.turnMu.lock(sessionID)
+	defer unlock()
 
 	rec, ok := s.store.Get(sessionID)
 	if !ok {

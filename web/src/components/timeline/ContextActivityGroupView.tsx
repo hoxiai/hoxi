@@ -4,6 +4,7 @@ import {
   createMemo,
   createSignal,
   For,
+  on,
   onCleanup,
   Show,
   type JSX,
@@ -109,21 +110,8 @@ export default function ContextActivityGroupView(props: {
   const [open, setOpen] = createSignal(
     expandedActivityGroupKeys.has(groupKey()) && !collapsedActivityGroupKeys.has(groupKey())
   );
-  const [everOpened, setEverOpened] = createSignal(open());
-
-  createEffect(() => {
-    if (open()) setEverOpened(true);
-  });
-
-  createEffect(() => {
-    if (!props.revealKey) return;
-    const key = groupKey();
-    if (key) {
-      expandedActivityGroupKeys.add(key);
-      collapsedActivityGroupKeys.delete(key);
-    }
-    setOpen(true);
-  });
+  const [stepLimit, setStepLimit] = createSignal(40);
+  const visibleSteps = createMemo(() => props.parts.slice(-stepLimit()));
 
   // Sync open state when groupKey changes across virtualized/reused turns,
   // keeping the bar compact by default so transitioning from live steps to
@@ -131,8 +119,20 @@ export default function ContextActivityGroupView(props: {
   createEffect(() => {
     const key = groupKey();
     if (!key) return;
+    setStepLimit(40);
     setOpen(expandedActivityGroupKeys.has(key) && !collapsedActivityGroupKeys.has(key));
   });
+
+  createEffect(on(() => props.revealKey, (revealKey) => {
+    if (!revealKey) return;
+    const key = groupKey();
+    if (key) {
+      expandedActivityGroupKeys.add(key);
+      collapsedActivityGroupKeys.delete(key);
+    }
+    setOpen(true);
+    setStepLimit(props.parts.length);
+  }));
 
   const toggleOpen = () => {
     const key = groupKey();
@@ -159,6 +159,16 @@ export default function ContextActivityGroupView(props: {
   };
 
   const sessionID = createMemo(() => props.parts[0]?.sessionID || workspace.activeSessionID);
+
+  const renderStepWindow = () => <>
+    <Show when={props.parts.length > stepLimit()}>
+      <button type="button" class="text-[12px] text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
+        onClick={() => setStepLimit((limit) => limit + 40)}>
+        {tI18n("timeline.loadEarlierSteps", { count: Math.min(40, props.parts.length - stepLimit()) })}
+      </button>
+    </Show>
+    <For each={visibleSteps()}>{(part) => props.renderFallbackPart(part, props.revealKey)}</For>
+  </>;
 
   const isRunning = createMemo(() => {
     if (props.isLiveTail) return true;
@@ -430,9 +440,7 @@ export default function ContextActivityGroupView(props: {
       when={stats().toolCount > 0}
       fallback={
         <div class="space-y-1">
-          <For each={props.parts}>
-            {(part) => props.renderFallbackPart(part, props.revealKey)}
-          </For>
+          {renderStepWindow()}
         </div>
       }
     >
@@ -573,7 +581,7 @@ export default function ContextActivityGroupView(props: {
         </button>
 
         {/* Full chronological step list with smooth collapse transition */}
-        <Show when={everOpened()}>
+        <Show when={open()}>
           <div
             class={`grid transition-[grid-template-rows,opacity,margin-top] duration-200 ease-out ${
               open()
@@ -584,9 +592,7 @@ export default function ContextActivityGroupView(props: {
           >
             <div class="min-h-0 overflow-hidden">
               <div class="ml-2 border-l-2 border-[var(--border-subtle)] pl-3.5 space-y-1">
-                <For each={props.parts}>
-                  {(part) => props.renderFallbackPart(part, props.revealKey)}
-                </For>
+                {renderStepWindow()}
               </div>
             </div>
           </div>

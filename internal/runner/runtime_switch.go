@@ -36,8 +36,8 @@ func (s *Service) handleRuntimeSwitch(w http.ResponseWriter, r *http.Request, id
 		writeJSONError(w, 400, "unsupported session runtime")
 		return
 	}
-	s.turnMu.Lock()
-	defer s.turnMu.Unlock()
+	unlock := s.turnMu.lock(id)
+	defer unlock()
 	s.mu.Lock()
 	busy := s.procs[id] != nil
 	s.mu.Unlock()
@@ -249,8 +249,8 @@ func (s *Service) markContextDelivered(id string) {
 // Remove execution handles as well, so an adopted OpenCode chat cannot reappear
 // in the sidebar after the conversation controller is restarted.
 func (s *Service) deleteConversation(ctx context.Context, id string) error {
-	s.turnMu.Lock()
-	defer s.turnMu.Unlock()
+	unlock := s.turnMu.lock(id)
+	defer unlock()
 	s.doomLoop.forget(id)
 	s.mu.Lock()
 	ap := s.procs[id]

@@ -18,19 +18,34 @@ import (
 // Store is Hoxi's own conversation store. Metadata for every session stays in
 // memory; transcripts are read from disk the first time a session is opened.
 type Store struct {
-	mu      sync.RWMutex
-	dir     string
-	records map[string]*storedSession
+	// mu protects the registry and immutable metadata/cache summaries only.
+	// Never acquire a session mutex or perform disk I/O while holding mu.
+	mu               sync.RWMutex
+	cacheMu          sync.Mutex
+	dir              string
+	records          map[string]*storedSession
+	clock            uint64
+	cacheMaxSessions int
+	cacheMaxBytes    int64
+	cachedSessions   int
+	cachedBytes      int64
 }
 
 type storedSession struct {
-	rec         SessionRecord
-	turnsLoaded bool
-	logLines    int
-	rev         int64
-	metaDirty   bool
-	// Parts whose streamed text deltas have not reached turns.jsonl yet.
-	dirty map[partKey]struct{}
+	mu               sync.Mutex
+	rec              SessionRecord
+	meta             SessionRecord        // protected by Store.mu; no transcript references
+	cache            transcriptCacheEntry // protected by Store.mu
+	turnsLoaded      bool
+	hasRevertedTurns bool
+	active           bool
+	logLines         int
+	rev              int64
+	metaDirty        bool
+	dirty            map[partKey]struct{}
+	pending          []turnLogEntry
+	index            transcriptIndex
+	bodyBytes        int64
 }
 
 type partKey struct{ messageID, partID string }
@@ -53,7 +68,7 @@ func NewStore(customDir string) *Store {
 	if dir == "" {
 		dir, legacy = defaultStoreDir()
 	}
-	s := &Store{dir: filepath.Clean(dir), records: make(map[string]*storedSession)}
+	s := &Store{dir: filepath.Clean(dir), records: make(map[string]*storedSession), cacheMaxSessions: 12, cacheMaxBytes: 32 << 20}
 	s.loadAllMeta()
 	if legacy != "" {
 		s.migrateLegacy(legacy)
@@ -87,52 +102,33 @@ func IsRunnerSessionID(sessionID string) bool {
 		strings.HasPrefix(s, "ses_hoxi_")
 }
 
+// Each caller holds only this session's lock, including during disk I/O.
 func (s *Store) ensureTurnsLocked(ss *storedSession) {
 	if ss.turnsLoaded {
 		return
 	}
 	ss.rec.Turns, ss.logLines = s.readTurns(ss.rec.ID)
+	if ss.hasRevertedTurns {
+		raw, err := os.ReadFile(filepath.Join(s.sessionDir(ss.rec.ID), sessionMetaFile))
+		if err == nil {
+			var meta SessionRecord
+			if json.Unmarshal(raw, &meta) == nil {
+				ss.rec.RevertedTurns = meta.RevertedTurns
+			}
+		}
+	}
 	ss.turnsLoaded = true
+	ss.index.rebuild(ss.rec.Turns)
+	ss.bodyBytes = estimateTurnsBytes(ss.rec.Turns) + estimateTurnsBytes(ss.rec.RevertedTurns)
 	ss.rev++
 }
 
-// ensureSessionLoaded loads turns.jsonl outside the global write lock so disk I/O
-// on multi-MB transcripts never blocks concurrent Meta/List/OwnsSession readers.
-func (s *Store) ensureSessionLoaded(sessionID string) bool {
-	sessionID = strings.TrimSpace(sessionID)
-	s.mu.RLock()
-	ss := s.records[sessionID]
-	loaded := ss != nil && ss.turnsLoaded
-	s.mu.RUnlock()
-	if ss == nil {
-		return false
-	}
-	if loaded {
-		return true
-	}
-	turns, lines := s.readTurns(sessionID)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	ss = s.records[sessionID]
-	if ss == nil {
-		return false
-	}
-	if !ss.turnsLoaded {
-		ss.rec.Turns, ss.logLines, ss.turnsLoaded = turns, lines, true
-		ss.rev++
-	}
-	return true
-}
-
-// commitLocked persists next as the new state of ss (nil for a new session).
-// The transcript is rewritten only when it differs from prevTurns; otherwise
-// pending deltas are appended and just the metadata file is replaced.
-func (s *Store) commitLocked(next SessionRecord, ss *storedSession, prevTurns []MessageTurn) error {
+func (s *Store) commitLocked(next SessionRecord, ss *storedSession) error {
 	if !validStoreID(next.ID) {
 		return errInvalidSessionID
 	}
-	lines := 0
-	turnsChanged := ss == nil || !reflect.DeepEqual(prevTurns, next.Turns)
+	turnsChanged := !ss.turnsLoaded || !reflect.DeepEqual(ss.rec.Turns, next.Turns)
+	lines := ss.logLines
 	if turnsChanged {
 		n, err := s.rewriteTurns(next.ID, next.Turns)
 		if err != nil {
@@ -140,67 +136,66 @@ func (s *Store) commitLocked(next SessionRecord, ss *storedSession, prevTurns []
 		}
 		lines = n
 	} else {
-		entries := takeDirtyLocked(ss)
+		entries := append(append([]turnLogEntry{}, ss.pending...), dirtyEntriesLocked(ss)...)
 		if err := s.appendTurnEntries(next.ID, entries); err != nil {
 			return err
 		}
-		lines = ss.logLines + len(entries)
+		lines += len(entries)
 	}
 	if err := s.writeMeta(next); err != nil {
-		if turnsChanged && ss != nil {
-			_, _ = s.rewriteTurns(next.ID, prevTurns)
+		if turnsChanged && ss.turnsLoaded {
+			_, _ = s.rewriteTurns(next.ID, ss.rec.Turns)
 		}
 		return err
 	}
-	if ss == nil {
-		ss = &storedSession{}
-		s.records[next.ID] = ss
-	}
-	ss.rec, ss.turnsLoaded, ss.logLines, ss.metaDirty, ss.dirty = next, true, lines, false, nil
+	ss.rec, ss.turnsLoaded, ss.logLines = next, true, lines
+	ss.metaDirty, ss.dirty, ss.pending = false, nil, nil
+	ss.hasRevertedTurns = len(next.RevertedTurns) > 0
+	ss.index.rebuild(next.Turns)
+	ss.bodyBytes = estimateTurnsBytes(next.Turns) + estimateTurnsBytes(next.RevertedTurns)
 	ss.rev++
 	return nil
 }
 
 func (s *Store) Put(rec SessionRecord) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	copied := cloneRecord(rec)
-	ss := s.records[copied.ID]
-	var prevTurns []MessageTurn
-	if ss != nil {
-		s.ensureTurnsLocked(ss)
-		prevTurns = ss.rec.Turns
+	if !validStoreID(rec.ID) {
+		return errInvalidSessionID
 	}
-	return s.commitLocked(copied, ss, prevTurns)
+	ss := s.lockSession(rec.ID, true)
+	defer s.finishSession(ss)
+	if ss.meta.ID != "" {
+		s.ensureTurnsLocked(ss)
+	}
+	if err := s.commitLocked(cloneRecord(rec), ss); err != nil {
+		if ss.meta.ID == "" {
+			s.mu.Lock()
+			delete(s.records, rec.ID)
+			s.mu.Unlock()
+		}
+		return err
+	}
+	return nil
 }
 
 func (s *Store) Get(sessionID string) (SessionRecord, bool) {
-	sessionID = strings.TrimSpace(sessionID)
-	if !s.ensureSessionLoaded(sessionID) {
-		return SessionRecord{}, false
-	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	ss := s.records[sessionID]
+	ss := s.lockSession(sessionID, false)
 	if ss == nil {
 		return SessionRecord{}, false
 	}
+	defer s.finishSession(ss)
+	s.ensureTurnsLocked(ss)
 	return cloneRecord(ss.rec), true
 }
 
-// MarshalTurns serializes the session's turns under RLock without deep-cloning
-// thousands of nested tool input/metadata maps on every HTTP /message read.
+// MarshalTurns holds a session lock, so a large history response never blocks
+// streaming writes or metadata reads for other conversations.
 func (s *Store) MarshalTurns(sessionID string) ([]byte, bool) {
-	sessionID = strings.TrimSpace(sessionID)
-	if !s.ensureSessionLoaded(sessionID) {
-		return nil, false
-	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	ss := s.records[sessionID]
+	ss := s.lockSession(sessionID, false)
 	if ss == nil {
 		return nil, false
 	}
+	defer s.finishSession(ss)
+	s.ensureTurnsLocked(ss)
 	turns := ss.rec.Turns
 	if turns == nil {
 		turns = []MessageTurn{}
@@ -212,92 +207,90 @@ func (s *Store) MarshalTurns(sessionID string) ([]byte, bool) {
 	return raw, true
 }
 
-// VisitTurns invokes fn with a read-only view of the session record under RLock
-// without deep-cloning the transcript. The callback must not mutate rec.Turns.
+// VisitTurns supplies a read-only record under its session lock. The callback
+// must not mutate the record or call Store methods for this same session.
 func (s *Store) VisitTurns(sessionID string, fn func(rec SessionRecord)) bool {
-	sessionID = strings.TrimSpace(sessionID)
-	if !s.ensureSessionLoaded(sessionID) {
-		return false
-	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	ss := s.records[sessionID]
+	ss := s.lockSession(sessionID, false)
 	if ss == nil {
 		return false
 	}
+	defer s.finishSession(ss)
+	s.ensureTurnsLocked(ss)
 	fn(ss.rec)
 	return true
 }
 
-// Meta returns a session without its transcript and never touches the disk.
 func (s *Store) Meta(sessionID string) (SessionRecord, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	ss := s.records[strings.TrimSpace(sessionID)]
-	if ss == nil {
+	if ss == nil || ss.meta.ID == "" {
 		return SessionRecord{}, false
 	}
-	meta := ss.rec
-	meta.Turns = nil
-	meta.RevertedTurns = nil
-	return cloneRecord(meta), true
+	return cloneRecord(ss.meta), true
 }
 
 func (s *Store) Update(sessionID string, fn func(*SessionRecord)) (SessionRecord, bool, error) {
-	sessionID = strings.TrimSpace(sessionID)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	ss := s.records[sessionID]
+	ss := s.lockSession(sessionID, false)
 	if ss == nil {
 		return SessionRecord{}, false, nil
 	}
+	defer s.finishSession(ss)
 	s.ensureTurnsLocked(ss)
 	updated := cloneRecord(ss.rec)
 	fn(&updated)
 	updated.UpdatedAt = time.Now().UnixMilli()
-	if err := s.commitLocked(updated, ss, ss.rec.Turns); err != nil {
+	if err := s.commitLocked(updated, ss); err != nil {
 		return cloneRecord(ss.rec), true, err
 	}
 	return cloneRecord(updated), true, nil
 }
 
 func (s *Store) Delete(sessionID string) error {
-	sessionID = strings.TrimSpace(sessionID)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.records, sessionID)
-	if !validStoreID(sessionID) {
+	ss := s.lockSession(sessionID, false)
+	if ss == nil {
 		return nil
 	}
-	return os.RemoveAll(s.sessionDir(sessionID))
+	defer ss.mu.Unlock()
+	// Keep the record registered until removal completes so a concurrent Put
+	// of the same ID cannot have its files removed by this deletion.
+	if err := os.RemoveAll(s.sessionDir(ss.rec.ID)); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	if ss.cache.loaded {
+		s.cachedSessions--
+		s.cachedBytes -= ss.cache.bytes
+	}
+	delete(s.records, ss.rec.ID)
+	s.mu.Unlock()
+	return nil
 }
 
 func (s *Store) List(directory string) []SessionInfo {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
 	normFilter := normalizeComparePath(directory)
-	var out []SessionInfo
+	s.mu.RLock()
+	metas := make([]SessionRecord, 0, len(s.records))
 	for _, ss := range s.records {
-		rec := &ss.rec
+		if ss.meta.ID != "" {
+			metas = append(metas, ss.meta)
+		}
+	}
+	s.mu.RUnlock()
+	var out []SessionInfo
+	for _, rec := range metas {
 		if normFilter != "" {
-			normProj := normalizeComparePath(rec.ProjectDir)
-			normWt := normalizeComparePath(rec.WorktreePath)
-			if normFilter != normProj && normFilter != normWt &&
-				!strings.HasPrefix(normWt, normFilter+"/") &&
-				!strings.HasPrefix(normFilter, normProj+"/") {
+			normProj, normWt := normalizeComparePath(rec.ProjectDir), normalizeComparePath(rec.WorktreePath)
+			if normFilter != normProj && normFilter != normWt && !strings.HasPrefix(normWt, normFilter+"/") && !strings.HasPrefix(normFilter, normProj+"/") {
 				continue
 			}
 		}
 		out = append(out, rec.ToSessionInfo())
 	}
-	sort.Slice(out, func(i, j int) bool {
-		return out[i].Time.Updated > out[j].Time.Updated
-	})
+	sort.Slice(out, func(i, j int) bool { return out[i].Time.Updated > out[j].Time.Updated })
 	return out
 }
 
-// ChildSessionIDs returns all child session IDs whose ParentID equals parentID
-// along with a combined metadata revision stamp without allocating SessionInfo or sorting.
 func (s *Store) ChildSessionIDs(parentID string) ([]string, int64) {
 	parentID = strings.TrimSpace(parentID)
 	if parentID == "" {
@@ -305,177 +298,22 @@ func (s *Store) ChildSessionIDs(parentID string) ([]string, int64) {
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	var ids []string
 	var stamp int64
 	if root := s.records[parentID]; root != nil {
-		stamp = root.rec.UpdatedAt ^ int64(len(root.rec.Turns)<<16) ^ int64(root.logLines)
+		stamp = root.cache.stamp
 	}
-	var ids []string
 	for id, ss := range s.records {
-		if ss.rec.ParentID == parentID {
+		if ss.meta.ParentID == parentID {
 			ids = append(ids, id)
-			stamp ^= ss.rec.UpdatedAt + int64(ss.logLines)
+			stamp ^= ss.cache.stamp
 		}
 	}
 	return ids, stamp
 }
 
-func (s *Store) UpsertTurnInfo(sessionID string, info MessageInfo) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	ss := s.records[sessionID]
-	if ss == nil {
-		return
-	}
-	s.ensureTurnsLocked(ss)
-	copied := cloneMessageInfo(info)
-	ss.rec.Turns = upsertTurnInfo(ss.rec.Turns, copied)
-	s.appendLocked(ss, true, turnLogEntry{Info: &copied})
-}
-
-func (s *Store) UpsertTurnPart(sessionID string, part MessagePart) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	ss := s.records[sessionID]
-	if ss == nil {
-		return
-	}
-	s.ensureTurnsLocked(ss)
-	copied := clonePart(part)
-	turns, ok := upsertTurnPart(ss.rec.Turns, copied)
-	if !ok {
-		return
-	}
-	ss.rec.Turns = turns
-	delete(ss.dirty, partKey{copied.MessageID, copied.ID})
-	s.appendLocked(ss, true, turnLogEntry{Part: &copied})
-}
-
-// AppendPartDelta only updates memory; Flush or the next write persists it.
-func (s *Store) AppendPartDelta(sessionID, messageID, partID, delta string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	ss := s.records[sessionID]
-	if ss == nil {
-		return
-	}
-	s.ensureTurnsLocked(ss)
-	if part := findPart(ss.rec.Turns, messageID, partID); part != nil {
-		part.Text += delta
-		if ss.dirty == nil {
-			ss.dirty = make(map[partKey]struct{})
-		}
-		ss.dirty[partKey{messageID, partID}] = struct{}{}
-	}
-}
-
-func (s *Store) Flush() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for _, ss := range s.records {
-		if len(ss.dirty) > 0 {
-			s.appendLocked(ss, false)
-		}
-		if ss.metaDirty {
-			if s.writeMeta(ss.rec) == nil {
-				ss.metaDirty = false
-			}
-		}
-	}
-}
-
-// appendLocked writes pending deltas plus extra entries; touch also bumps
-// UpdatedAt and marks metadata dirty for the next Flush/compaction.
-func (s *Store) appendLocked(ss *storedSession, touch bool, extra ...turnLogEntry) {
-	entries := append(takeDirtyLocked(ss), extra...)
-	if err := s.appendTurnEntries(ss.rec.ID, entries); err == nil {
-		ss.logLines += len(entries)
-	}
-	if touch {
-		ss.rec.UpdatedAt = time.Now().UnixMilli()
-		ss.metaDirty = true
-	}
-	if live := liveEntryCount(ss.rec.Turns); ss.logLines > 2*live+64 {
-		if n, err := s.rewriteTurns(ss.rec.ID, ss.rec.Turns); err == nil {
-			ss.logLines = n
-		}
-		if ss.metaDirty && s.writeMeta(ss.rec) == nil {
-			ss.metaDirty = false
-		}
-	}
-}
-
-func takeDirtyLocked(ss *storedSession) []turnLogEntry {
-	if len(ss.dirty) == 0 {
-		return nil
-	}
-	entries := make([]turnLogEntry, 0, len(ss.dirty))
-	for key := range ss.dirty {
-		if part := findPart(ss.rec.Turns, key.messageID, key.partID); part != nil {
-			copied := clonePart(*part)
-			entries = append(entries, turnLogEntry{Part: &copied})
-		}
-	}
-	ss.dirty = nil
-	return entries
-}
-
-func liveEntryCount(turns []MessageTurn) int {
-	n := len(turns)
-	for i := range turns {
-		n += len(turns[i].Parts)
-	}
-	return n
-}
-
-func findPart(turns []MessageTurn, messageID, partID string) *MessagePart {
-	for i := range turns {
-		if turns[i].Info.ID != messageID {
-			continue
-		}
-		for j := range turns[i].Parts {
-			if turns[i].Parts[j].ID == partID {
-				return &turns[i].Parts[j]
-			}
-		}
-	}
-	return nil
-}
-
-func upsertTurnInfo(turns []MessageTurn, info MessageInfo) []MessageTurn {
-	for i := range turns {
-		if turns[i].Info.ID == info.ID {
-			turns[i].Info = info
-			return turns
-		}
-	}
-	return append(turns, MessageTurn{Info: info, Parts: []MessagePart{}})
-}
-
-// upsertTurnPart reports false when the part's message is unknown.
-func upsertTurnPart(turns []MessageTurn, part MessagePart) ([]MessageTurn, bool) {
-	for i := range turns {
-		if turns[i].Info.ID != part.MessageID {
-			continue
-		}
-		for j := range turns[i].Parts {
-			if turns[i].Parts[j].ID == part.ID {
-				turns[i].Parts[j] = part
-				return turns, true
-			}
-		}
-		turns[i].Parts = append(turns[i].Parts, part)
-		return turns, true
-	}
-	return turns, false
-}
-
-func equalMessageInfo(a, b MessageInfo) bool {
-	return reflect.DeepEqual(a, b)
-}
-
-func equalMessagePart(a, b MessagePart) bool {
-	return reflect.DeepEqual(a, b)
-}
+func equalMessageInfo(a, b MessageInfo) bool { return reflect.DeepEqual(a, b) }
+func equalMessagePart(a, b MessagePart) bool { return reflect.DeepEqual(a, b) }
 
 func cloneAnyValue(v interface{}) interface{} {
 	switch val := v.(type) {

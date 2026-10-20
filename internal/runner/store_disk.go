@@ -128,6 +128,7 @@ func (s *Store) readTurns(id string) ([]MessageTurn, int) {
 	}
 	defer f.Close()
 	var turns []MessageTurn
+	var index transcriptIndex
 	lines := 0
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 64*1024), 64*1024*1024)
@@ -143,9 +144,9 @@ func (s *Store) readTurns(id string) ([]MessageTurn, int) {
 		lines++
 		switch {
 		case e.Info != nil:
-			turns = upsertTurnInfo(turns, *e.Info)
+			index.upsertInfo(&turns, *e.Info)
 		case e.Part != nil:
-			turns, _ = upsertTurnPart(turns, *e.Part)
+			index.upsertPart(turns, *e.Part)
 		}
 	}
 	for i := range turns {
@@ -219,8 +220,9 @@ func (s *Store) loadAllMeta() {
 		if json.Unmarshal(raw, &rec) != nil || rec.ID != entry.Name() {
 			continue
 		}
-		rec.Turns = nil
-		s.records[rec.ID] = &storedSession{rec: rec}
+		hasReverted := len(rec.RevertedTurns) > 0
+		rec.Turns, rec.RevertedTurns = nil, nil
+		s.records[rec.ID] = &storedSession{rec: rec, meta: metadataOnly(rec), hasRevertedTurns: hasReverted}
 	}
 }
 
@@ -253,7 +255,11 @@ func (s *Store) migrateLegacy(legacyPath string) {
 		if err != nil {
 			return
 		}
-		s.records[copied.ID] = &storedSession{rec: copied, turnsLoaded: true, logLines: lines}
+		ss := &storedSession{rec: copied, turnsLoaded: true, logLines: lines, hasRevertedTurns: len(copied.RevertedTurns) > 0}
+		ss.index.rebuild(copied.Turns)
+		ss.bodyBytes = estimateTurnsBytes(copied.Turns) + estimateTurnsBytes(copied.RevertedTurns)
+		s.records[copied.ID] = ss
+		s.publishSessionLocked(ss)
 	}
 	_ = os.Rename(legacyPath, legacyPath+".migrated")
 }

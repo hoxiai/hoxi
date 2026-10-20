@@ -2,6 +2,7 @@
 import type { TimelineI18n } from "../../types";
 
 export const timeline: TimelineI18n = {
+  loadEarlierSteps: "加载之前的 {count} 个步骤",
   scrollToBottom: "回到底部",
   welcomeTitle: "开始新任务",
   welcomeSubtitle:

@@ -33,6 +33,7 @@ import {
   purgeSessionsFromStoreState,
 } from "./workspace-queue-subagents";
 import { secondaryWorkspaceDirs, setWorktreeMetaIfChanged } from "./session-sandbox";
+import { beginSessionTranscriptRead, hydratedSessionIDs, touchSessionTranscript } from "./session-transcripts";
 
 const deletedSessionIDs = new Set<string>();
 const sessionMessageLoads = new Map<string, Promise<void>>();
@@ -213,8 +214,6 @@ export function replaceSessionFromEvent(info: SessionInfo, eventDirectory?: stri
   }
 }
 
-const hydratedSessionIDs = new Set<string>();
-
 // Idle turns an empty snapshot proves stale (cache seeds); busy sessions may still be persisting.
 function idleTurnIDs(sessionID: string): Set<string> | undefined {
   return isSessionBusy(sessionID) ? undefined : new Set((workspace.messagesBySession[sessionID] ?? []).map((t) => t.info.id));
@@ -223,23 +222,27 @@ function idleTurnIDs(sessionID: string): Set<string> | undefined {
 const loadRequestRevisions = new Map<string, number>();
 
 export async function loadSessionMessagesOnly(sessionID: string, explicitDirectory?: string): Promise<void> {
-  const directory = explicitDirectory || sessionDirectory(sessionID);
-  const revision = (loadRequestRevisions.get(sessionID) ?? 0) + 1;
-  loadRequestRevisions.set(sessionID, revision);
-  const isCurrent = () => loadRequestRevisions.get(sessionID) === revision &&
-    sessionDirectory(sessionID) === directory && !isSessionDeleted(sessionID);
-  const preRequestIDs = idleTurnIDs(sessionID);
-  const turns = await hoxiAPI.getMessages(sessionID, directory);
-  if (!isCurrent()) return;
-  restoreSessionAI(sessionID, turns);
-  setWorkspace(produce((state) => {
-    mergeServerTurnsInto((state.messagesBySession[sessionID] ||= []), turns, preRequestIDs);
-  }));
-  hydratedSessionIDs.add(sessionID);
-  persistCachedSessionTurns(sessionID, workspace.messagesBySession[sessionID] ?? turns);
+  const finishRead = beginSessionTranscriptRead(sessionID);
+  try {
+    const directory = explicitDirectory || sessionDirectory(sessionID);
+    const revision = (loadRequestRevisions.get(sessionID) ?? 0) + 1;
+    loadRequestRevisions.set(sessionID, revision);
+    const isCurrent = () => loadRequestRevisions.get(sessionID) === revision &&
+      sessionDirectory(sessionID) === directory && !isSessionDeleted(sessionID);
+    const preRequestIDs = idleTurnIDs(sessionID);
+    const turns = await hoxiAPI.getMessages(sessionID, directory);
+    if (!isCurrent()) return;
+    restoreSessionAI(sessionID, turns);
+    setWorkspace(produce((state) => {
+      mergeServerTurnsInto((state.messagesBySession[sessionID] ||= []), turns, preRequestIDs);
+    }));
+    hydratedSessionIDs.add(sessionID);
+    persistCachedSessionTurns(sessionID, workspace.messagesBySession[sessionID] ?? turns);
+  } finally { finishRead(); }
 }
 
 export async function loadSessionMessages(sessionID: string): Promise<void> {
+  const finishRead = beginSessionTranscriptRead(sessionID);
   const directory = sessionDirectory(sessionID);
   const revision = (loadRequestRevisions.get(sessionID) ?? 0) + 1;
   loadRequestRevisions.set(sessionID, revision);
@@ -283,6 +286,7 @@ export async function loadSessionMessages(sessionID: string): Promise<void> {
     }
     throw err;
   } finally {
+    finishRead();
     setWorkspace("loadingMessagesBySession", sessionID, false);
   }
   if (isChildSession && sessionID !== workspace.activeSessionID) {
@@ -363,6 +367,7 @@ export async function refreshSessionDiff(
 }
 
 export async function selectSession(sessionID: string): Promise<void> {
+  touchSessionTranscript(sessionID);
   if (workspace.activeSessionID !== sessionID) {
     setWorkspace({
       inspectedFilePath: null,
@@ -432,6 +437,14 @@ async function leaveSessionWorktree(sessionID: string, keepBranch: boolean): Pro
 
 const worktreeRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const worktreeRevisions = new Map<string, number>();
+
+export function invalidateSessionDiffReads(id: string): void {
+  diffRevisions.set(id, (diffRevisions.get(id) ?? 0) + 1);
+  worktreeRevisions.set(id, (worktreeRevisions.get(id) ?? 0) + 1);
+  cancelScheduledWorktreeStatus(id);
+  clearTimeout(diffRefreshTimers.get(id));
+  diffRefreshTimers.delete(id);
+}
 
 export function cancelScheduledWorktreeStatus(sessionID?: string | null): void {
   const key = sessionID || "__root__";

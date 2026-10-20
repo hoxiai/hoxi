@@ -171,7 +171,7 @@ func TestRunnerApplyGuardSerializesWithTurnStart(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Prompt startup holds turnMu until its process has been registered.
-	svc.turnMu.Lock()
+	unlock := svc.turnMu.lock("test")
 	done := make(chan error, 1)
 	go func() {
 		done <- svc.guardWorktreeApply("test", func() error { return nil })
@@ -184,7 +184,7 @@ func TestRunnerApplyGuardSerializesWithTurnStart(t *testing.T) {
 	svc.mu.Lock()
 	svc.procs["test"] = &activeProcess{}
 	svc.mu.Unlock()
-	svc.turnMu.Unlock()
+	unlock()
 	select {
 	case err := <-done:
 		if err == nil || !strings.Contains(err.Error(), "running") {

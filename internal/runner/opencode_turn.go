@@ -324,7 +324,7 @@ func (s *Service) startOpenCodeTurn(rec SessionRecord, mode, modelID, effort, sy
 			_ = stream.Body.Close()
 			<-streamDone
 			s.abandonOpenCodeInFlightParts(rec.ID, time.Now().UnixMilli())
-			s.store.Flush()
+			s.store.FlushSession(rec.ID)
 			s.mu.Lock()
 			if s.procs[rec.ID] == ap {
 				delete(s.procs, rec.ID)
