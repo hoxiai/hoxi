@@ -110,7 +110,10 @@ this. GitHub's uploaded `sparkle.json` is not itself an appcast.
 
 ## CI Configuration
 
-In addition to Apple credentials, configure repository secrets
+Configure the Apple signing and notarization secrets `MACOS_CERTIFICATE` (base64
+PKCS#12 with the Developer ID identity), `MACOS_CERTIFICATE_PWD`, `APPLE_API_KEY`
+(raw App Store Connect `AuthKey_*.p8` contents), `APPLE_API_KEY_ID` and
+`APPLE_API_ISSUER`. Then configure repository secrets
 `HOXI_SPARKLE_PUBLIC_KEY`, `HOXI_SPARKLE_PRIVATE_KEY` (raw existing key-file contents)
 and `HOXI_RELEASE_KEY`. Configure repository variables `HOXI_SPARKLE_FEED_URL`,
 optionally `HOXI_RELEASE_API_URL`, and pinned official archive URLs and independently
