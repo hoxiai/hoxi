@@ -176,8 +176,10 @@ jobs:
           prerelease: false
 
       - name: Publish GitCode Release
+        shell: bash
         env:
           GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+          GITCODE_UPLOAD_CURL: "1"
           RELEASE_NOTES: ${{ env.RELEASE_NOTES }}
         run: |
           : "${GITCODE_TOKEN:?GITCODE_TOKEN is required for dual release}"

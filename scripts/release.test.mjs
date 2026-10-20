@@ -402,6 +402,18 @@ test("GitCode append keeps existing platform assets while verifying the new subs
     assets: [file], append: false, fetchImpl }), /asset set differs/);
 });
 
+test("cross-platform GitCode uploads use bash and the curl transport on Windows", () => {
+  const workflow = fs.readFileSync(path.join(scripts, "../.github/workflows/release-cross-platform.yml"), "utf8");
+  for (const name of ["Upload Windows Artifact to GitCode", "Upload Linux Artifact to GitCode"]) {
+    const start = workflow.indexOf(`- name: ${name}`);
+    assert.ok(start >= 0, `Missing ${name}`);
+    const next = workflow.indexOf("- name:", start + 10);
+    const block = workflow.slice(start, next < 0 ? undefined : next);
+    assert.match(block, /^\s+shell: bash$/m, `${name} must not run under PowerShell`);
+    assert.match(block, /GITCODE_UPLOAD_CURL: "1"/, `${name} must use the curl uploader`);
+  }
+});
+
 test("GitCode publisher reports invalid credentials without leaking the token", async () => {
   await assert.rejects(publishGitcodeRelease({ token: "bad-token", version: "0.2.1", notes: "test",
     assets: [path.join(scripts, "release-publisher.mjs")],

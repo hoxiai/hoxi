@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import fs from "node:fs";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { normalizeVersion } from "./release-artifact.mjs";
@@ -126,8 +127,39 @@ async function fileBody(file) {
   return fs.readFileSync(file);
 }
 
+function curlQuote(value) {
+  return `"${String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
+
+function uploadWithCurl(file, target, headers) {
+  const config = [
+    `url = ${curlQuote(target.href)}`,
+    'request = "PUT"',
+    `upload-file = ${curlQuote(file)}`,
+    'connect-timeout = "20"',
+    'max-time = "600"',
+    ...Object.entries(headers).map(([key, value]) => `header = ${curlQuote(`${key}: ${value}`)}`),
+    "",
+  ].join("\n");
+  const result = spawnSync("curl", ["--fail", "--silent", "--show-error", "--config", "-"], {
+    input: config,
+    encoding: "utf8",
+    timeout: 620_000,
+    maxBuffer: 1024 * 1024,
+  });
+  if (result.error?.code === "ENOENT") {
+    throw new Error("GITCODE_UPLOAD_CURL is set but curl is not installed");
+  }
+  if (result.error) throw new Error(`curl upload failed for ${path.basename(file)}: ${result.error.message}`);
+  if (result.status !== 0) {
+    const detail = describeBody(`${result.stdout || ""} ${result.stderr || ""}`);
+    throw new Error(`curl upload failed for ${path.basename(file)} with exit code ${result.status}${detail ? ` (${detail})` : ""}`);
+  }
+}
+
 async function uploadAsset(ctx, file) {
   const name = path.basename(file);
+  console.log(`Requesting GitCode upload URL for ${name}`);
   const upload = await gitcodeRequest({
     ...ctx,
     method: "GET",
@@ -144,19 +176,25 @@ async function uploadAsset(ctx, file) {
     }
     headers[key] = text;
   }
-  const body = await fileBody(file);
-  const response = await ctx.fetchImpl(target, {
-    method: "PUT",
-    headers,
-    body,
-    redirect: "error",
-    signal: AbortSignal.timeout(30 * 60_000),
-  });
-  const text = await response.text();
-  if (!response.ok) {
-    throw new GitcodeError(`PUT upload for ${name} failed: HTTP ${response.status}${text ? ` (${describeBody(text)})` : ""}`,
-      response.status);
+  console.log(`Uploading ${name} (${(fs.statSync(file).size / 1024 / 1024).toFixed(1)} MB)`);
+  if (process.env.GITCODE_UPLOAD_CURL === "1") {
+    uploadWithCurl(file, target, headers);
+  } else {
+    const body = await fileBody(file);
+    const response = await ctx.fetchImpl(target, {
+      method: "PUT",
+      headers,
+      body,
+      redirect: "error",
+      signal: AbortSignal.timeout(30 * 60_000),
+    });
+    const text = await response.text();
+    if (!response.ok) {
+      throw new GitcodeError(`PUT upload for ${name} failed: HTTP ${response.status}${text ? ` (${describeBody(text)})` : ""}`,
+        response.status);
+    }
   }
+  console.log(`Uploaded ${name}`);
 }
 
 function verifyRelease(release, expected, status, allowExtra = false) {
@@ -202,10 +240,12 @@ export async function publishGitcodeRelease({
 
   let release = await getRelease(ctx);
   if (!release) {
+    console.log(`Creating GitCode release ${tag} on ${repo}`);
     await createRelease(ctx, notes || `Hoxi Desktop ${tag}`, target);
     release = await getRelease(ctx);
     if (!release) throw new Error("GitCode release was not created");
   } else {
+    console.log(`Updating GitCode release ${tag} on ${repo}`);
     await setReleaseState(ctx, notes || release.body || `Hoxi Desktop ${tag}`, "pre");
   }
 
@@ -217,6 +257,7 @@ export async function publishGitcodeRelease({
 
   release = await getRelease(ctx);
   verifyRelease(release, expected, "pre", append);
+  console.log(`Promoting GitCode release ${tag} to latest`);
   await setReleaseState(ctx, notes || release.body || `Hoxi Desktop ${tag}`, "latest");
   release = await getRelease(ctx);
   verifyRelease(release, expected, "latest", append);

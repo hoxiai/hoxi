@@ -88,8 +88,10 @@ jobs:
           prerelease: false
 
       - name: Upload Windows Artifact to GitCode
+        shell: bash
         env:
           GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+          GITCODE_UPLOAD_CURL: "1"
         run: |
           : "${GITCODE_TOKEN:?GITCODE_TOKEN is required for dual release}"
           node scripts/gitcode-release.mjs --append --version "$RELEASE_VERSION" \
@@ -172,8 +174,10 @@ jobs:
           prerelease: false
 
       - name: Upload Linux Artifact to GitCode
+        shell: bash
         env:
           GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+          GITCODE_UPLOAD_CURL: "1"
         run: |
           : "${GITCODE_TOKEN:?GITCODE_TOKEN is required for dual release}"
           node scripts/gitcode-release.mjs --append --version "$RELEASE_VERSION" \
