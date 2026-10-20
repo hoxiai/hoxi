@@ -72,6 +72,58 @@ func TestSessionSummarizeForwardsToOpenCodeAndRefreshesTurns(t *testing.T) {
 	}
 }
 
+func TestSessionSummarizePreservesConcurrentUpdates(t *testing.T) {
+	root := t.TempDir()
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/session/ses_upstream/summarize":
+			once.Do(func() { close(started) })
+			<-release
+			writeJSON(w, http.StatusOK, true)
+		case r.Method == http.MethodGet && r.URL.Path == "/session/ses_upstream/message":
+			writeJSON(w, http.StatusOK, []MessageTurn{})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	svc := NewService(root, nil, nil, filepath.Join(t.TempDir(), "sessions.json"))
+	svc.ConfigureOpenCode(server.URL, "secret")
+	rec := SessionRecord{
+		ID: "ses_hoxi_race", Runtime: "opencode", ExternalID: "ses_upstream", Title: "before",
+		ProjectDir: root, WorktreePath: root, ProviderID: "p", ModelID: "m",
+	}
+	if err := svc.store.Put(rec); err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		w := httptest.NewRecorder()
+		svc.handleSessionSummarize(w, httptest.NewRequest(http.MethodPost, "/summarize", strings.NewReader(`{}`)), rec.ID)
+		done <- w
+	}()
+
+	<-started
+	if _, ok, err := svc.store.Update(rec.ID, func(r *SessionRecord) { r.Title = "renamed" }); err != nil || !ok {
+		t.Fatalf("concurrent update failed: %v %v", ok, err)
+	}
+	close(release)
+	if w := <-done; w.Code != http.StatusOK {
+		t.Fatalf("summarize: %d %s", w.Code, w.Body.String())
+	}
+
+	updated, _ := svc.store.Get(rec.ID)
+	if updated.Title != "renamed" {
+		t.Fatalf("summarize clobbered a concurrent update: %q", updated.Title)
+	}
+}
+
 func TestSessionSummarizeSkipsNativeRuntimes(t *testing.T) {
 	root := t.TempDir()
 	called := false

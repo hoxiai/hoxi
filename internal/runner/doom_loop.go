@@ -78,6 +78,14 @@ func (g *doomLoopGuard) settle(sessionID, tool string, always bool) {
 	g.exempt[sessionID][tool] = true
 }
 
+// forget drops a session's guard state once it is deleted.
+func (g *doomLoopGuard) forget(sessionID string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	delete(g.recent, sessionID)
+	delete(g.exempt, sessionID)
+}
+
 // toolCallFingerprint hashes the tool name and its input with keys sorted,
 // so formatting differences do not hide a repeat.
 func toolCallFingerprint(tool string, input json.RawMessage) string {

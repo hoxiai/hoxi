@@ -25,9 +25,12 @@ type PathRule struct {
 }
 
 type FilesystemProfile struct {
-	AllowWrite         []PathRule
-	DenyWrite          []PathRule
-	DenyNames          []string
+	AllowWrite []PathRule
+	DenyWrite  []PathRule
+	DenyNames  []string
+	// NameDenyExemptions lists explicitly granted roots where DenyNames do not
+	// apply, e.g. the repository's .git directory for a worktree session.
+	NameDenyExemptions []PathRule
 	TemporaryDirectory string
 }
 
@@ -70,6 +73,21 @@ func DefaultProfile(workspace string, network NetworkMode, extraWritable ...stri
 	}
 	roots := []string{workspace}
 	roots = append(roots, extraWritable...)
+	var nameDenyExemptions []PathRule
+	for _, root := range extraWritable {
+		root = strings.TrimSpace(root)
+		if root == "" {
+			continue
+		}
+		canonical, err := filepath.Abs(root)
+		if err != nil {
+			continue
+		}
+		if resolved, err := filepath.EvalSymlinks(canonical); err == nil {
+			canonical = resolved
+		}
+		nameDenyExemptions = append(nameDenyExemptions, PathRule{Path: canonical, Kind: PathSubtree})
+	}
 	for _, dir := range []string{
 		HoxiHome(),
 		filepath.Join(HoxiHome(), "sandbox"),
@@ -93,6 +111,9 @@ func DefaultProfile(workspace string, network NetworkMode, extraWritable ...stri
 		canonical, err := filepath.Abs(root)
 		if err != nil {
 			continue
+		}
+		if resolved, err := filepath.EvalSymlinks(canonical); err == nil {
+			canonical = resolved
 		}
 		if seen[canonical] {
 			continue
@@ -118,6 +139,7 @@ func DefaultProfile(workspace string, network NetworkMode, extraWritable ...stri
 			AllowWrite:         allow,
 			DenyWrite:          deny,
 			DenyNames:          []string{".git"},
+			NameDenyExemptions: nameDenyExemptions,
 			TemporaryDirectory: "/private/tmp",
 		},
 		Network: NetworkProfile{Mode: network},

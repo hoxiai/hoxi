@@ -97,11 +97,17 @@ func turnText(turn runner.MessageTurn) string {
 			break
 		}
 	}
-	value := b.String()
-	if len(value) > recallMaxTurnChars {
-		value = value[:recallMaxTurnChars]
+	return clipRunes(b.String(), recallMaxTurnChars)
+}
+
+// clipRunes truncates by characters so multi-byte text (e.g. Chinese) is not
+// split into an invalid UTF-8 sequence.
+func clipRunes(value string, max int) string {
+	runes := []rune(value)
+	if len(runes) <= max {
+		return value
 	}
-	return value
+	return string(runes[:max])
 }
 
 type upstreamSession struct {
@@ -185,10 +191,7 @@ func (s *gatewayRecallSource) openCodeSessions(ctx context.Context, directory st
 						break
 					}
 				}
-				text := b.String()
-				if len(text) > recallMaxTurnChars {
-					text = text[:recallMaxTurnChars]
-				}
+				text := clipRunes(b.String(), recallMaxTurnChars)
 				if text != "" {
 					session.Turns = append(session.Turns, recall.Turn{Role: turn.Info.Role, Text: text, Created: turn.Info.Time.Created})
 				}

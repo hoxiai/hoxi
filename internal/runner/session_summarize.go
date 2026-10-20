@@ -18,6 +18,10 @@ func (s *Service) handleSessionSummarize(w http.ResponseWriter, r *http.Request,
 		writeJSONError(w, http.StatusMethodNotAllowed, "POST required")
 		return
 	}
+	// Serialize with prompts and other turn mutations: compaction rewrites the
+	// upstream context, so it must not overlap a running or starting turn.
+	s.turnMu.Lock()
+	defer s.turnMu.Unlock()
 	var body struct {
 		ProviderID string `json:"providerID"`
 		ModelID    string `json:"modelID"`
@@ -101,12 +105,18 @@ func (s *Service) handleSessionSummarize(w http.ResponseWriter, r *http.Request,
 		}
 	}
 
-	rec.Turns = normalized
-	rec.UpdatedAt = time.Now().UnixMilli()
-	if err := s.store.Put(rec); err != nil {
+	updated, ok, err := s.store.Update(sessionID, func(r *SessionRecord) {
+		r.Turns = normalized
+	})
+	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if !ok {
+		writeJSONError(w, http.StatusNotFound, "session not found")
+		return
+	}
+	rec = updated
 
 	for _, turn := range normalized {
 		if !seenMessages[turn.Info.ID] {

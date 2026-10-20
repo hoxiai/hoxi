@@ -163,11 +163,23 @@ func ProfileText(profile Profile) (string, error) {
 		}
 		deny = append(deny, "(require-not "+filter+")")
 	}
+	var exempt []string
+	for _, rule := range profile.Filesystem.NameDenyExemptions {
+		filter, err := pathFilter(rule)
+		if err != nil {
+			return "", err
+		}
+		exempt = append(exempt, filter)
+	}
 	for _, name := range profile.Filesystem.DenyNames {
 		if strings.TrimSpace(name) == "" {
 			continue
 		}
-		deny = append(deny, `(require-not (regex #"(^|/)`+escapeRegex(name)+`(/|$)"))`)
+		filter := `(regex #"(^|/)` + escapeRegex(name) + `(/|$)")`
+		if len(exempt) > 0 {
+			filter = "(require-all " + filter + " (require-not (require-any " + strings.Join(exempt, " ") + ")))"
+		}
+		deny = append(deny, "(require-not "+filter+")")
 	}
 	write := ""
 	if len(allow) > 0 {

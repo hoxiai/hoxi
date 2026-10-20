@@ -50,6 +50,43 @@ func TestProfileTextConfinesWritesAndNetwork(t *testing.T) {
 	}
 }
 
+func TestProfileTextKeepsExplicitGitDirWritable(t *testing.T) {
+	workspace := t.TempDir()
+	gitDir := filepath.Join(workspace, ".git")
+	if err := os.MkdirAll(gitDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	nestedGit := filepath.Join(workspace, "vendor", "repo", ".git")
+	if err := os.MkdirAll(nestedGit, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	profile, err := DefaultProfile(workspace, NetworkAllow, gitDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !Available() {
+		t.Skip("seatbelt backend unavailable")
+	}
+
+	probe := filepath.Join(gitDir, "probe.txt")
+	bin, args, err := WrapShell(profile, "echo ok > "+shellQuote(probe))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runCommand(bin, args...); err != nil {
+		t.Fatalf("explicitly allowed git dir was blocked: %v", err)
+	}
+
+	blocked := filepath.Join(nestedGit, "probe.txt")
+	bin, args, err = WrapShell(profile, "echo bad > "+shellQuote(blocked))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runCommand(bin, args...); err == nil {
+		t.Fatal("a .git directory outside the explicit grant must stay denied")
+	}
+}
+
 func TestProfileTextDeniesSensitiveSubdirectories(t *testing.T) {
 	profile, err := DefaultProfile(t.TempDir(), NetworkDeny)
 	if err != nil {

@@ -413,7 +413,7 @@ func (s *Service) startTurnProcess(
 					return
 				}
 				evts := tr.FeedLine(line)
-			s.noteToolEvents(rec.ID, evts)
+				s.noteToolEvents(rec.ID, evts)
 				// Only output the user can see counts as progress: CLIs keep
 				// writing heartbeats (Claude Code's `tool_progress`) while a
 				// tool hangs.

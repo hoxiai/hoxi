@@ -251,6 +251,7 @@ func (s *Service) markContextDelivered(id string) {
 func (s *Service) deleteConversation(ctx context.Context, id string) error {
 	s.turnMu.Lock()
 	defer s.turnMu.Unlock()
+	s.doomLoop.forget(id)
 	s.mu.Lock()
 	ap := s.procs[id]
 	s.mu.Unlock()
