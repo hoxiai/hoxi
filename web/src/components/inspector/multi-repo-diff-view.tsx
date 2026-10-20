@@ -25,6 +25,7 @@ import { DiffChanges } from "../icons";
 import { t } from "../../i18n";
 import DiffFileTree from "./diff-file-tree";
 import { openRemoteCompareURL, synthesizeAICommitMessage } from "./pierre-diff-parts";
+import AICommitFallbackToast from "./ai-commit-fallback-toast";
 
 export interface RepoDiffBucket {
   key: string;
@@ -309,6 +310,8 @@ function RepoDiffCard(props: {
           </div>
         </div>
       </div>
+
+      <AICommitFallbackToast />
 
       {/* Per-Repo Commit Toast */}
       <Show when={committedHash()}>

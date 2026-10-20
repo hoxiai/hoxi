@@ -2,6 +2,7 @@
 import { dictionaries, locale, t } from "../i18n";
 import { hoxiAPI } from "../services/api";
 import type { SessionInfo } from "../services/sse-types";
+import { AUTO_PROVIDER_ID, resolveAutoModelTarget } from "./auto-models";
 import { workspace, type SelectedModel } from "./workspace";
 
 export const MANUAL_TITLES_KEY = "hoxi-session-manual-titles:v1";
@@ -232,6 +233,10 @@ function resolveTitleModel(hint?: SelectedModel): SelectedModel | null {
     const idx = smallCfg.indexOf("/");
     const pid = smallCfg.slice(0, idx).trim();
     const mid = smallCfg.slice(idx + 1).trim();
+    if (pid === AUTO_PROVIDER_ID && mid) {
+      const target = resolveAutoModelTarget(mid, { advance: true });
+      if (target) return target;
+    }
     if (
       pid &&
       mid &&
@@ -240,7 +245,11 @@ function resolveTitleModel(hint?: SelectedModel): SelectedModel | null {
       return { providerID: pid, modelID: mid };
     }
   }
-  return hint || workspace.selectedModel || null;
+  const fallback = hint || workspace.selectedModel || null;
+  if (fallback?.providerID === AUTO_PROVIDER_ID) {
+    return resolveAutoModelTarget(fallback.modelID, { advance: false }) || fallback;
+  }
+  return fallback;
 }
 
 export async function summarizeAndRenameSession(

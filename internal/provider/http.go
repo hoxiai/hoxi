@@ -57,12 +57,27 @@ type llmCompletionRequest struct {
 	ReasoningEffort string
 	Timeout         time.Duration
 	Transport       *http.Transport
+	Telemetry       *providerTelemetryStore
+}
+
+type llmAttemptResult struct {
+	text       string
+	status     int
+	readFailed bool
+	retryAfter time.Duration
+	err        error
 }
 
 func callSimpleLLM(parentCtx context.Context, req llmCompletionRequest) (text string, resultErr error) {
 	started := time.Now()
+	budget := req.Timeout
+	if budget <= 0 {
+		budget = 15 * time.Second
+	}
+	deadline := started.Add(budget)
 	status := 0
 	readFailed := false
+	attempts := 0
 	defer func() {
 		level, message := "info", "internal request completed"
 		if resultErr != nil {
@@ -80,7 +95,43 @@ func callSimpleLLM(parentCtx context.Context, req llmCompletionRequest) (text st
 			}
 		}
 		diagnostics.Record(diagnostics.Entry{Kind: "request", Level: level, Source: "provider", Message: message, ProviderID: req.ProviderID, ModelID: req.ModelID, Status: status, DurationMs: time.Since(started).Milliseconds()})
+		if req.Telemetry != nil {
+			req.Telemetry.recordLLMRequest(req.ProviderID, req.ModelID, attempts, resultErr)
+		}
 	}()
+	for attempt := 1; ; attempt++ {
+		attempts = attempt
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			resultErr = context.DeadlineExceeded
+			break
+		}
+		res := attemptSimpleLLM(parentCtx, req, llmAttemptWindow(remaining, llmMaxAttempts-attempt+1))
+		status, readFailed = res.status, res.readFailed
+		if res.err == nil {
+			return res.text, nil
+		}
+		resultErr = res.err
+		if parentCtx.Err() != nil || attempt >= llmMaxAttempts || !isTransientLLMError(res.err, res.status) {
+			break
+		}
+		wait := llmRetryWait(attempt, res.retryAfter)
+		if time.Until(deadline) <= wait {
+			break
+		}
+		diagnostics.Record(diagnostics.Entry{Kind: "request", Level: "warn", Source: "provider", Message: "internal request retrying", ProviderID: req.ProviderID, ModelID: req.ModelID, Status: res.status, DurationMs: time.Since(started).Milliseconds()})
+		timer := time.NewTimer(wait)
+		select {
+		case <-parentCtx.Done():
+			timer.Stop()
+			return "", parentCtx.Err()
+		case <-timer.C:
+		}
+	}
+	return "", resultErr
+}
+
+func attemptSimpleLLM(parentCtx context.Context, req llmCompletionRequest, window time.Duration) llmAttemptResult {
 	isAnthropic := req.NPM == "@ai-sdk/anthropic" || req.ProviderID == "anthropic"
 	trimmedBase := strings.TrimRight(req.BaseURL, "/")
 	var targetURL string
@@ -121,7 +172,7 @@ func callSimpleLLM(parentCtx context.Context, req llmCompletionRequest) (text st
 		}
 	}
 
-	timeout := req.Timeout
+	timeout := window
 	if timeout <= 0 {
 		timeout = 15 * time.Second
 	}
@@ -132,7 +183,7 @@ func callSimpleLLM(parentCtx context.Context, req llmCompletionRequest) (text st
 
 	outReq, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, strings.NewReader(string(payloadBytes)))
 	if err != nil {
-		return "", err
+		return llmAttemptResult{err: err}
 	}
 	outReq.Header.Set("Accept", "application/json")
 	outReq.Header.Set("Content-Type", "application/json")
@@ -167,21 +218,21 @@ func callSimpleLLM(parentCtx context.Context, req llmCompletionRequest) (text st
 
 	resp, err := client.Do(outReq)
 	if err != nil {
-		return "", err
+		return llmAttemptResult{err: err}
 	}
 	defer resp.Body.Close()
-	status = resp.StatusCode
 
 	respBytes, err := io.ReadAll(io.LimitReader(resp.Body, 512*1024))
 	if err != nil {
-		readFailed = true
-		return "", fmt.Errorf("read provider response: %w", err)
+		return llmAttemptResult{status: resp.StatusCode, readFailed: true, err: fmt.Errorf("read provider response: %w", err)}
 	}
+	res := llmAttemptResult{status: resp.StatusCode, retryAfter: parseRetryAfter(resp.Header.Get("Retry-After"), time.Now())}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("%s", extractAPIErrorMessage(resp.StatusCode, respBytes))
+		res.err = fmt.Errorf("%s", extractAPIErrorMessage(resp.StatusCode, respBytes))
+		return res
 	}
-
-	return extractLLMTextContent(respBytes), nil
+	res.text = extractLLMTextContent(respBytes)
+	return res
 }
 
 func extractLLMTextContent(raw []byte) string {

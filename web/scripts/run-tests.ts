@@ -32,6 +32,8 @@ import "../src/__tests__/terminal-lifecycle.test";
 import "../src/__tests__/privacy.test";
 import "../src/__tests__/diagnostics.test";
 import "../src/__tests__/appearance.test";
+import "../src/__tests__/network.test";
+import "../src/__tests__/auto-models.test";
 
 console.log("[test] Running Hoxi frontend unit tests...");
 runAllTests().then((failed) => {

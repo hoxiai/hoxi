@@ -359,6 +359,15 @@ export const hoxiAPI = {
   deleteHoxiProviderConfig(providerID: string): Promise<{ ok: boolean; hoxiProviders: Record<string, any> }> {
     return requestJSON(`/api/hoxi/models-config?providerID=${encodeURIComponent(providerID)}`, { method: "DELETE" });
   },
+  getAutoPoolsConfig(): Promise<{ ok: boolean; autoPools: Record<string, any>; keyCounts?: Record<string, number> }> {
+    return requestJSON("/api/hoxi/provider/auto-pools");
+  },
+  saveAutoPoolConfig(poolID: string, pool: Record<string, any>): Promise<{ ok: boolean; autoPools: Record<string, any> }> {
+    return requestJSON("/api/hoxi/provider/auto-pools", { method: "POST", body: JSON.stringify({ poolID, pool }) });
+  },
+  deleteAutoPoolConfig(poolID: string): Promise<{ ok: boolean; autoPools: Record<string, any> }> {
+    return requestJSON(`/api/hoxi/provider/auto-pools?poolID=${encodeURIComponent(poolID)}`, { method: "DELETE" });
+  },
   disposeGlobal(): Promise<void> {
     return requestJSON("/global/dispose", { method: "POST", body: JSON.stringify({}) });
   },

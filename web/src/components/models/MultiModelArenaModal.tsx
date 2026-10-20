@@ -2,6 +2,9 @@
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { Check, GitBranchPlus, LoaderCircle, Sparkles, Swords, X } from "lucide-solid";
 import {
+  AUTO_PROVIDER_ID,
+  getEffectivePoolCandidates,
+  isCandidateCoolingDown,
   newIsolatedSession,
   selectSession,
   setWorkspace,
@@ -38,6 +41,7 @@ export default function MultiModelArenaModal() {
     const connected = new Set(workspace.connectedProviders);
     const list: FlatModelOption[] = [];
     for (const p of workspace.providers) {
+      if (p.id === AUTO_PROVIDER_ID) continue;
       if (connected.size > 0 && !connected.has(p.id) && p.id !== "opencode") continue;
       for (const [mId, mInfo] of Object.entries(p.models || {})) {
         const free = isModelFree(p.id, mId, mInfo);
@@ -71,6 +75,16 @@ export default function MultiModelArenaModal() {
       if (prev.length >= 4) return prev;
       return [...prev, key];
     });
+  };
+
+  const sampleFreePoolModels = () => {
+    const cands = getEffectivePoolCandidates("free");
+    const ready = cands.filter((c) => !isCandidateCoolingDown(c.providerID, c.modelID));
+    const source = ready.length > 0 ? ready : cands;
+    const picked = source.slice(0, 3).map((c) => `${c.providerID}/${c.modelID}`);
+    if (picked.length > 0) {
+      setSelectedKeys(picked);
+    }
   };
 
   const close = () => {
@@ -172,17 +186,27 @@ export default function MultiModelArenaModal() {
 
             {/* Model Multi-Select */}
             <div class="space-y-2">
-              <div class="flex items-center justify-between">
+              <div class="flex items-center justify-between gap-2">
                 <label class="text-[11.5px] font-semibold text-[var(--text-secondary)]">
                   {t("models.stepSelectModels", { count: selectedKeys().length })}
                 </label>
-                <input
-                  type="text"
-                  value={search()}
-                  onInput={(ev) => setSearch(ev.currentTarget.value)}
-                  placeholder={t("models.filterModelsPlaceholder")}
-                  class="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[11.5px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none w-44"
-                />
+                <div class="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={sampleFreePoolModels}
+                    class="inline-flex items-center gap-1 rounded-lg border border-[var(--ok)]/35 bg-[var(--ok-surface)] px-2 py-1 text-[11px] font-semibold text-[var(--ok-text)] hover:opacity-90 cursor-pointer"
+                  >
+                    <Sparkles size={11} />
+                    {t("models.arenaSampleFreePoolBtn")}
+                  </button>
+                  <input
+                    type="text"
+                    value={search()}
+                    onInput={(ev) => setSearch(ev.currentTarget.value)}
+                    placeholder={t("models.filterModelsPlaceholder")}
+                    class="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[11.5px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none w-40"
+                  />
+                </div>
               </div>
 
               <div class="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-56 overflow-y-auto pr-1">

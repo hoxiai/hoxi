@@ -73,16 +73,83 @@ type providerTelemetryStats struct {
 }
 
 type providerTelemetryStore struct {
-	mu       sync.Mutex
-	filePath string
-	records  map[string]*providerTelemetryStats
+	mu               sync.Mutex
+	filePath         string
+	records          map[string]*providerTelemetryStats
+	consecutiveFail  map[string]int
+	degraded         map[string]bool
+	onDegradedChange func(providerID string, degraded bool)
+}
+
+const llmDegradedThreshold = 3
+
+func (s *providerTelemetryStore) setOnDegradedChange(fn func(providerID string, degraded bool)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.onDegradedChange = fn
+}
+
+// recordLLMRequest folds Hoxi-internal LLM retries into existing provider
+// telemetry records and flags providers that fail repeatedly so the status bar
+// can surface them. It never creates records, so probe/audit quality telemetry
+// stays untouched by one-off internal calls.
+func (s *providerTelemetryStore) recordLLMRequest(providerID, modelID string, attempts int, err error) {
+	providerID = strings.TrimSpace(providerID)
+	if providerID == "" {
+		return
+	}
+	s.mu.Lock()
+	if s.consecutiveFail == nil {
+		s.consecutiveFail = make(map[string]int)
+	}
+	if s.degraded == nil {
+		s.degraded = make(map[string]bool)
+	}
+	rec := s.records[providerID]
+	now := time.Now().UnixMilli()
+	if rec != nil && attempts > 1 {
+		rec.RetryCount += attempts - 1
+		rec.UpdatedAt = now
+		if m := ensureModelRecordLocked(rec, modelID); m != nil {
+			m.RetryCount += attempts - 1
+			m.UpdatedAt = now
+		}
+		appendIncidentLocked(rec, providerIncident{
+			Timestamp: now,
+			Type:      "retry",
+			ModelID:   modelID,
+			Detail:    "internal request retried after transient failure",
+		})
+		s.saveToDiskLocked()
+	}
+	var notify func(string, bool)
+	if err != nil {
+		s.consecutiveFail[providerID]++
+		if s.consecutiveFail[providerID] >= llmDegradedThreshold && !s.degraded[providerID] {
+			s.degraded[providerID] = true
+			notify = s.onDegradedChange
+		}
+	} else {
+		s.consecutiveFail[providerID] = 0
+		if s.degraded[providerID] {
+			delete(s.degraded, providerID)
+			notify = s.onDegradedChange
+		}
+	}
+	degraded := s.degraded[providerID]
+	s.mu.Unlock()
+	if notify != nil {
+		notify(providerID, degraded)
+	}
 }
 
 func newProviderTelemetryStore(rootDir string) *providerTelemetryStore {
 	storePath := resolveTelemetryFilePath(rootDir)
 	s := &providerTelemetryStore{
-		filePath: storePath,
-		records:  make(map[string]*providerTelemetryStats),
+		filePath:        storePath,
+		records:         make(map[string]*providerTelemetryStats),
+		consecutiveFail: make(map[string]int),
+		degraded:        make(map[string]bool),
 	}
 	s.loadFromDisk()
 	return s

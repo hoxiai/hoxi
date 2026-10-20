@@ -1,10 +1,12 @@
-import { onCleanup, onMount } from "solid-js";
+import { createSignal, onCleanup, onMount } from "solid-js";
 import ThreePaneShell from "./components/layout/ThreePaneShell";
+import NetworkStatusBanner from "./components/layout/NetworkStatusBanner";
 import { PrivacyConsentDialog } from "./components/settings/PrivacyControls";
 import { loadPrivacy } from "./store/privacy";
 import { resolveParentSessionID } from "./components/timeline/SubagentSessionBanner";
 import { hoxiAPI } from "./services/api";
 import { connectEventStream } from "./services/sse";
+import { watchNetworkStatus } from "./services/network";
 import {
   appSettings,
   applySessionDiffEvent,
@@ -46,8 +48,16 @@ import {
 import { t } from "./i18n";
 
 export default function App() {
+  const [online, setOnline] = createSignal(typeof navigator === "undefined" || navigator.onLine);
+  const [eventStreamStarted, setEventStreamStarted] = createSignal(false);
+  let retryEventStream: (() => void) | undefined;
+
   onMount(() => {
     let disconnectStream: (() => void) | undefined;
+    const stopWatchingNetwork = watchNetworkStatus((isOnline) => {
+      setOnline(isOnline);
+      if (isOnline) retryEventStream?.();
+    });
     const watchdogTimer = setInterval(() => {
       const hasBusySession = Object.values(workspace.statusBySession).some(
         (s) => s?.type === "busy" || s?.type === "retry"
@@ -61,6 +71,7 @@ export default function App() {
     onCleanup(() => {
       clearInterval(watchdogTimer);
       disconnectStream?.();
+      stopWatchingNetwork();
     });
 
     void (async () => {
@@ -122,7 +133,7 @@ export default function App() {
         console.error("Bootstrap error:", err);
       }
 
-      disconnectStream = connectEventStream({
+      const handlers: Parameters<typeof connectEventStream>[0] = {
         onConnectionChange: (connected) => {
           setWorkspace("connected", connected);
           if (connected) {
@@ -177,6 +188,7 @@ export default function App() {
               const previousStatus = workspace.statusBySession[sid]?.type;
               const wasBusy = previousStatus === "busy" || previousStatus === "retry";
               setWorkspace("statusBySession", sid, evt.properties.status);
+              setWorkspace("stalledSinceBySession", sid, 0);
               if (evt.properties.status.type === "busy") {
                 setWorkspace("unreadCompletedBySession", sid, false);
               } else if (evt.properties.status.type === "idle") {
@@ -210,6 +222,7 @@ export default function App() {
             case "session.idle": {
               const sid = evt.properties.sessionID;
               setWorkspace("statusBySession", sid, { type: "idle" });
+              setWorkspace("stalledSinceBySession", sid, 0);
               setWorkspace("sessionFinishedAt", sid, Date.now());
               const parentID = resolveParentSessionID(sid);
               if (parentID) {
@@ -231,6 +244,16 @@ export default function App() {
               }
               break;
             }
+            case "session.stall":
+              setWorkspace(
+                "stalledSinceBySession",
+                evt.properties.sessionID,
+                evt.properties.stalledSince || 0
+              );
+              if (evt.properties.stalledSince) {
+                triggerDesktopNotification("Hoxi", t("timeline.stalledNotification"));
+              }
+              break;
             case "session.diff":
               applySessionDiffEvent(evt.properties.sessionID, evt.properties.diff);
               if (evt.properties.sessionID === workspace.activeSessionID) {
@@ -279,9 +302,20 @@ export default function App() {
               break;
           }
         },
-      }, undefined, workspace.wsBaseURL);
+      };
+      retryEventStream = () => {
+        disconnectStream?.();
+        disconnectStream = connectEventStream(handlers, undefined, workspace.wsBaseURL);
+        setEventStreamStarted(true);
+      };
+      retryEventStream();
     })();
   });
 
-  return <><ThreePaneShell /><PrivacyConsentDialog /></>;
+  return <><ThreePaneShell /><NetworkStatusBanner
+    online={online}
+    connected={() => workspace.connected}
+    streamStarted={eventStreamStarted}
+    onRetry={() => retryEventStream?.()}
+  /><PrivacyConsentDialog /></>;
 }

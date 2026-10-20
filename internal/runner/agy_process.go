@@ -484,6 +484,7 @@ type activeProcess struct {
 	aborted   bool
 	cancel    func()
 	mu        sync.Mutex
+	stall     stallState
 }
 
 func (ap *activeProcess) Abort() {
@@ -506,13 +507,18 @@ func (ap *activeProcess) Abort() {
 	if proc == nil {
 		return
 	}
-	_ = proc.Signal(os.Interrupt)
+	// Stop means the whole turn: whatever survives the interrupt (background
+	// jobs that ignore SIGINT, tool commands in their own process groups) is
+	// killed with the group and the process tree captured before it.
+	tree := descendantPIDs(proc.Pid)
+	_ = signalProcessGroup(proc, os.Interrupt)
 	select {
 	case <-ap.done:
-		return
 	case <-time.After(2 * time.Second):
-		_ = proc.Kill()
+		tree = append(tree, descendantPIDs(proc.Pid)...)
 	}
+	_ = signalProcessGroup(proc, os.Kill)
+	killPIDs(tree)
 }
 
 func (ap *activeProcess) wasAborted() bool {

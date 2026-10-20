@@ -10,11 +10,13 @@ import {
   Star,
 } from "lucide-solid";
 import {
+  AUTO_PROVIDER_ID,
   clampReasoningEffort,
   inferModelEffortCapabilities,
   isCustomOrConfiguredProvider,
   isFavoriteModel,
   openProviderModal,
+  peekAutoModelTarget,
   selectModel,
   setReasoningEffort,
   toggleFavoriteModel,
@@ -95,6 +97,9 @@ export default function ModelSelector() {
       }
     }
     return Array.from(counts.values()).sort((a, b) => {
+      if ((a.id === AUTO_PROVIDER_ID) !== (b.id === AUTO_PROVIDER_ID)) {
+        return a.id === AUTO_PROVIDER_ID ? -1 : 1;
+      }
       const aPrio = a.isRunner || a.isCustom;
       const bPrio = b.isRunner || b.isCustom;
       if (aPrio !== bPrio) return aPrio ? -1 : 1;
@@ -199,6 +204,9 @@ export default function ModelSelector() {
     }
     if (r === "connected") {
       return [...pool].sort((a, b) => {
+        if ((a.providerID === AUTO_PROVIDER_ID) !== (b.providerID === AUTO_PROVIDER_ID)) {
+          return a.providerID === AUTO_PROVIDER_ID ? -1 : 1;
+        }
         const aFav = isFavoriteModel(a.providerID, a.modelID);
         const bFav = isFavoriteModel(b.providerID, b.modelID);
         if (aFav !== bFav) return aFav ? -1 : 1;
@@ -455,7 +463,11 @@ export default function ModelSelector() {
                               </Show>
                             </span>
                             <span class="block truncate text-[10.5px] text-[var(--text-muted)]">
-                              {item.providerName}
+                              {item.providerID === AUTO_PROVIDER_ID && peekAutoModelTarget(item.modelID)
+                                ? `${item.providerName} · ${t("models.autoPoolActiveTarget", {
+                                    model: `${peekAutoModelTarget(item.modelID)!.providerID}/${peekAutoModelTarget(item.modelID)!.modelID}`,
+                                  })}`
+                                : item.providerName}
                               <Show when={ctxText()}>
                                 <span class="font-mono"> · {ctxText()}</span>
                               </Show>

@@ -64,6 +64,10 @@ export async function syncSessionStatuses(directory?: string): Promise<void> {
           if (prev !== status?.type || prevMsg !== nextMsg) {
             state.statusBySession[sid] = status;
           }
+          // Live `session.stall` events clear the flag; a snapshot only
+          // restores it (e.g. after reconnecting) or drops it once idle.
+          if (status?.type !== "busy") state.stalledSinceBySession[sid] = 0;
+          else if (status.stalledSince) state.stalledSinceBySession[sid] = status.stalledSince;
           if ((prev === "busy" || prev === "retry") && status?.type === "idle") {
             newlyIdleSessions.push(sid);
           }

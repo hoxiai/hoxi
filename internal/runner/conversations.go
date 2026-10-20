@@ -137,6 +137,10 @@ func (s *Service) conversationStatuses(ctx context.Context, directory string) ma
 	for _, id := range s.busySessionIDs() {
 		out[id] = json.RawMessage(`{"type":"busy"}`)
 	}
+	// Reconnecting clients restore the stall notice from the snapshot.
+	for id, since := range s.stalledSessions() {
+		out[id] = json.RawMessage(fmt.Sprintf(`{"type":"busy","stalledSince":%d}`, since))
+	}
 	return out
 }
 

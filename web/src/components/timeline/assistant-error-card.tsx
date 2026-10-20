@@ -4,6 +4,7 @@ import type { MessageInfo, SessionStatus } from "../../services/sse-types";
 import {
   computeProviderHealth,
   findBestFallbackModel,
+  isRunnerStallError,
   isUserAbortError,
   openDiagnostics,
   retryLastUserPrompt,
@@ -20,7 +21,11 @@ import { t } from "../../i18n";
  * with relay quality diagnostics and one-click recovery actions.
  */
 export function AssistantErrorCard(props: { info: MessageInfo }) {
+  const isStall = () => isRunnerStallError(props.info);
+  const errTitle = () =>
+    isStall() ? t("timeline.stalledErrorTitle") : props.info.error?.name || t("timeline.apiError");
   const errMessage = () =>
+    (isStall() && t("timeline.stalledErrorMessage")) ||
     props.info.error?.data?.message ||
     props.info.error?.name ||
     t("timeline.modelRequestFailed");
@@ -31,8 +36,9 @@ export function AssistantErrorCard(props: { info: MessageInfo }) {
   const providerHealth = createMemo(() =>
     providerID() ? computeProviderHealth(providerID(), modelID() || undefined) : null
   );
+  // A stall is not a provider failure, so model-switch suggestions are hidden.
   const recommendedFallback = createMemo(() =>
-    providerID() ? findBestFallbackModel(providerID()) : null
+    providerID() && !isStall() ? findBestFallbackModel(providerID()) : null
   );
 
   const hasFreeOpenCodeModel = createMemo(() =>
@@ -49,7 +55,7 @@ export function AssistantErrorCard(props: { info: MessageInfo }) {
           <div class="min-w-0 flex-1 space-y-1.5">
             <div class="flex items-center gap-2 flex-wrap">
               <span class="font-semibold">
-                {props.info.error?.name || t("timeline.apiError")}
+                {errTitle()}
                 {statusCode() ? ` (${statusCode()})` : ""}
               </span>
               <Show when={props.info.providerID || props.info.modelID}>
@@ -68,6 +74,7 @@ export function AssistantErrorCard(props: { info: MessageInfo }) {
 
             <Show
               when={
+                !isStall() &&
                 providerHealth() &&
                 (providerHealth()!.status === "degraded" ||
                   providerHealth()!.status === "warning" ||
@@ -132,6 +139,7 @@ export function AssistantErrorCard(props: { info: MessageInfo }) {
 
               <Show
                 when={
+                  !isStall() &&
                   !recommendedFallback() &&
                   hasFreeOpenCodeModel() &&
                   !(

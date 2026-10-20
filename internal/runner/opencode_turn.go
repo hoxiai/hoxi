@@ -225,6 +225,7 @@ func (s *Service) startOpenCodeTurn(rec SessionRecord, mode, modelID, effort, sy
 		_ = s.openCodeJSON(abortCtx, "POST", "/session/"+rec.ExternalID+"/abort", rec.WorktreePath, map[string]interface{}{}, nil)
 		cancel()
 	}
+	ap.stall.touch(time.Now())
 	s.mu.Lock()
 	s.procs[rec.ID] = ap
 	s.mu.Unlock()
@@ -232,6 +233,7 @@ func (s *Service) startOpenCodeTurn(rec SessionRecord, mode, modelID, effort, sy
 		s.status.SetSessionBusy(rec.ID, true)
 	}
 	s.broadcast(rec.ID, SSEEvent{Type: "session.status", Properties: map[string]interface{}{"sessionID": rec.ID, "status": SessionStatus{Type: "busy"}}})
+	go s.watchStall(ap)
 	streamDone := make(chan struct{})
 	go func() {
 		defer close(streamDone)
@@ -344,7 +346,9 @@ func (s *Service) startOpenCodeTurn(rec SessionRecord, mode, modelID, effort, sy
 				err = fetchErr
 			}
 		}
-		if err != nil && !ap.wasAborted() {
+		if stallErr := ap.stall.abortError(); stallErr != nil {
+			s.broadcast(rec.ID, SSEEvent{Type: "session.error", Properties: map[string]interface{}{"sessionID": rec.ID, "error": stallErr}})
+		} else if err != nil && !ap.wasAborted() {
 			s.broadcast(rec.ID, SSEEvent{Type: "session.error", Properties: map[string]interface{}{"sessionID": rec.ID, "error": &MessageError{Name: "OpenCodeError", Data: &MessageErrorData{Message: err.Error()}}}})
 		}
 	}()
@@ -460,6 +464,7 @@ func (s *Service) relayOpenCodeEvent(rec SessionRecord, raw []byte) {
 	if !matched {
 		return
 	}
+	s.noteOpenCodeActivity(rec.ID, evt)
 	if evt.Type == "session.status" || evt.Type == "session.idle" {
 		return
 	}

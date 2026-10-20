@@ -56,8 +56,7 @@ func (g *Service) handleSummarizeSessionTitle(w http.ResponseWriter, r *http.Req
 		locale = "zh-CN"
 	}
 
-	pid := strings.TrimSpace(req.ProviderID)
-	mid := strings.TrimSpace(req.ModelID)
+	pid, mid := g.resolveBackendAutoCandidate(strings.TrimSpace(req.ProviderID), strings.TrimSpace(req.ModelID))
 	baseURL, apiKey, npm, headers := g.resolveProviderConnection(pid, req.BaseURL, req.NPM)
 
 	if pid != "" && mid != "" && (strings.HasPrefix(baseURL, "http://") || strings.HasPrefix(baseURL, "https://")) {
@@ -120,6 +119,7 @@ User task request:
 		Temperature: 0.2,
 		Timeout:     12 * time.Second,
 		Transport:   titleTransport,
+		Telemetry:   g.telemetry,
 	})
 	if err != nil {
 		return "", err

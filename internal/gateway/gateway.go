@@ -115,6 +115,9 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 
 	wtMgr := worktree.NewManager(rootDir)
 	providers := provider.NewService(openCodePort, password, rootDir, proxy)
+	if status != nil {
+		providers.SetOnProviderDegraded(status.SetProviderDegraded)
+	}
 	handoffSvc := handoff.NewService(openCodePort, password, rootDir, providers)
 	runnerSvc = runner.NewService(rootDir, wtMgr, status, "")
 	runnerSvc.ConfigureOpenCode(targetURL.String(), password)

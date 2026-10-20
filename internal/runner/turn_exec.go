@@ -18,6 +18,10 @@ import (
 // pace so the running task card keeps showing progress.
 const subagentPollInterval = 3 * time.Second
 
+// orphanDrainGrace is how long stdout/stderr may stay open after the CLI
+// exits before leftover holders are treated as orphans.
+const orphanDrainGrace = 2 * time.Second
+
 func (s *Service) startTurnProcess(
 	rec SessionRecord,
 	binPath, mode, modelID, effort, promptText string,
@@ -59,18 +63,26 @@ func (s *Service) startTurnProcess(
 		revokeHook()
 		return err
 	}
-	stdoutPipe, err := cmd.StdoutPipe()
+	// Hoxi owns the stdout pipe (instead of StdoutPipe) so Wait returns when
+	// the CLI exits even if an orphaned grandchild still holds the write end.
+	stdoutR, stdoutW, err := os.Pipe()
 	if err != nil {
 		revokeHook()
 		return err
 	}
+	cmd.Stdout = stdoutW
 	var stderrBuf bytes.Buffer
 	cmd.Stderr = &stderrBuf
+	cmd.WaitDelay = orphanDrainGrace
+	setProcessGroup(cmd)
 
 	if err := cmd.Start(); err != nil {
+		_ = stdoutR.Close()
+		_ = stdoutW.Close()
 		revokeHook()
 		return err
 	}
+	_ = stdoutW.Close()
 	s.markContextDelivered(rec.ID)
 
 	ap := &activeProcess{
@@ -80,6 +92,7 @@ func (s *Service) startTurnProcess(
 		stdin:     stdinPipe,
 		done:      make(chan struct{}),
 	}
+	ap.stall.touch(time.Now())
 	s.mu.Lock()
 	s.procs[rec.ID] = ap
 	s.mu.Unlock()
@@ -87,6 +100,7 @@ func (s *Service) startTurnProcess(
 	if s.status != nil {
 		s.status.SetSessionBusy(rec.ID, true)
 	}
+	go s.watchStall(ap)
 
 	tr := NewTurnTranslator(rec.ID, rec.Runtime, asstMsgID, userInfo.ID, rec.ProviderID, modelID, mode, rec.ExternalID)
 	tr.createChild = s.childSessionFactory(rec, modelID, mode)
@@ -128,29 +142,56 @@ func (s *Service) startTurnProcess(
 					return
 				case <-ticker.C:
 					emitMu.Lock()
-					s.broadcastRouted(rec.ID, tr.PollSubagentActivity())
+					if evts := tr.PollSubagentActivity(); len(evts) > 0 {
+						s.noteActivity(ap)
+						s.broadcastRouted(rec.ID, evts)
+					}
 					emitMu.Unlock()
 				}
 			}
 		}()
 
-		readStreamLines(stdoutPipe, func(line string) {
-			emitMu.Lock()
-			defer emitMu.Unlock()
-			evts := tr.FeedLine(line)
-			if extID := tr.ExternalID(); extID != "" && extID != rec.ExternalID {
-				rec.ExternalID = extID
-				_, _, _ = s.store.Update(rec.ID, func(r *SessionRecord) {
-					r.ExternalID = extID
-				})
-			}
-			s.broadcastRouted(rec.ID, evts)
-		})
-
-		close(stopPoll)
-		<-pollDone
+		readerDone := make(chan struct{})
+		go func() {
+			defer close(readerDone)
+			readStreamLines(stdoutR, func(line string) {
+				emitMu.Lock()
+				defer emitMu.Unlock()
+				// A stopped CLI reports its interruption as a failed result;
+				// Hoxi finishes the turn itself as stopped (or stalled).
+				if ap.wasAborted() && isStreamResultLine(line) {
+					return
+				}
+				evts := tr.FeedLine(line)
+				// Only output the user can see counts as progress: CLIs keep
+				// writing heartbeats (Claude Code's `tool_progress`) while a
+				// tool hangs.
+				if len(evts) > 0 {
+					if gap := time.Since(time.UnixMilli(ap.stall.lastActivity.Load())); gap > 5*time.Second { // TEMP
+						fmt.Fprintf(os.Stderr, "STALLDBG gap=%s line=%.200s evts=%v\n", gap, line, func() []string { // TEMP
+							var ts []string // TEMP
+							for _, e := range evts { // TEMP
+								ts = append(ts, e.Type) // TEMP
+							} // TEMP
+							return ts // TEMP
+						}()) // TEMP
+					} // TEMP
+					s.noteActivity(ap)
+				}
+				if extID := tr.ExternalID(); extID != "" && extID != rec.ExternalID {
+					rec.ExternalID = extID
+					_, _, _ = s.store.Update(rec.ID, func(r *SessionRecord) {
+						r.ExternalID = extID
+					})
+				}
+				s.broadcastRouted(rec.ID, evts)
+			})
+		}()
 
 		waitErr := cmd.Wait()
+		reapOrphanedOutput(cmd.Process, stdoutR, readerDone)
+		close(stopPoll)
+		<-pollDone
 		defer func() {
 			for _, id := range tr.ChildSessionIDs() {
 				s.setChildBusy(id, false)
@@ -158,7 +199,8 @@ func (s *Service) startTurnProcess(
 		}()
 		if !tr.IsTurnFinished() {
 			s.broadcastRouted(rec.ID, tr.AbandonTurn(time.Now().UnixMilli()))
-			if ap.wasAborted() {
+			stallErr := ap.stall.abortError()
+			if ap.wasAborted() && stallErr == nil {
 				tr.msgInfo.Time.Completed = time.Now().UnixMilli()
 				tr.msgInfo.Finish = "aborted"
 				s.broadcast(rec.ID,
@@ -178,6 +220,9 @@ func (s *Service) startTurnProcess(
 				Name: "RunnerProcessError",
 				Data: &MessageErrorData{Message: errText, IsRetryable: false},
 			}
+			if stallErr != nil {
+				msgErr = stallErr
+			}
 			tr.msgInfo.Time.Completed = time.Now().UnixMilli()
 			tr.msgInfo.Error = msgErr
 			tr.msgInfo.Finish = "error"
@@ -190,6 +235,37 @@ func (s *Service) startTurnProcess(
 	}()
 
 	return nil
+}
+
+func isStreamResultLine(line string) bool {
+	if !strings.Contains(line, `"result"`) {
+		return false
+	}
+	var env struct {
+		Type string `json:"type"`
+	}
+	return json.Unmarshal([]byte(line), &env) == nil && env.Type == "result"
+}
+
+// reapOrphanedOutput runs once the CLI has exited. A reader still blocked
+// after the grace period means a grandchild (dev server, watch-mode test,
+// `tail -f`) inherited stdout and would keep the turn busy forever: its group
+// is killed, and the pipe is closed as a last resort for setsid escapees.
+// Background jobs that redirected their output elsewhere are left running.
+func reapOrphanedOutput(proc *os.Process, stdout *os.File, readerDone <-chan struct{}) {
+	defer stdout.Close()
+	select {
+	case <-readerDone:
+		return
+	case <-time.After(orphanDrainGrace):
+	}
+	_ = signalProcessGroup(proc, os.Kill)
+	select {
+	case <-readerDone:
+	case <-time.After(orphanDrainGrace):
+		_ = stdout.Close()
+		<-readerDone
+	}
 }
 
 func (s *Service) abortActiveProcess(sessionID string) {

@@ -73,6 +73,7 @@ export const inspector = {
     commitBtn: "Commit ({count})",
     committing: "Committing…",
     commitSuccess: "Committed {hash}",
+    aiCommitFallback: "AI commit synthesis unavailable — using local fallback message.",
     auditBtn: "Review",
     auditingBtn: "Reviewing…",
     auditTooltip: "Run code quality review on current changes",

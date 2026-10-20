@@ -421,6 +421,10 @@ export default function CustomEndpointTab() {
           </div>
         </div>
 
+        <p class="text-[11px] text-[var(--text-muted)]">
+          {t("models.multiKeyHint")}
+        </p>
+
         <CustomProviderModelSection
           models={models}
           setModels={setModels}

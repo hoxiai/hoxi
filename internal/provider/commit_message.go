@@ -51,8 +51,7 @@ func (g *Service) handleGenerateCommitMessage(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	pid := strings.TrimSpace(req.ProviderID)
-	mid := strings.TrimSpace(req.ModelID)
+	pid, mid := g.resolveBackendAutoCandidate(strings.TrimSpace(req.ProviderID), strings.TrimSpace(req.ModelID))
 	baseURL, apiKey, npm, headers := g.resolveProviderConnection(pid, req.BaseURL, req.NPM)
 
 	if pid != "" && mid != "" && (strings.HasPrefix(baseURL, "http://") || strings.HasPrefix(baseURL, "https://")) {
@@ -114,6 +113,7 @@ Git Diff Summary:
 		Temperature: 0.2,
 		Timeout:     20 * time.Second,
 		Transport:   titleTransport,
+		Telemetry:   g.telemetry,
 	})
 	if err != nil {
 		return "", err

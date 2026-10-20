@@ -186,6 +186,12 @@ export const timeline = {
   executionStepsDone: "{count} steps",
   executionStepNumber: "{count} steps",
   executionStepDetails: "Step details",
+  stalledHint:
+    "No new output for {minutes} min, the task may be stuck. Stop it, or send a message to redirect it.",
+  stalledNotification: "A task has had no output for a while and may be stuck",
+  stalledErrorTitle: "Stopped: no output",
+  stalledErrorMessage:
+    "The task produced no output for a long time, so Hoxi stopped it to release the session. Ask it to continue, or narrow down the task.",
   pausedPlaceholder:
     "Task is paused. Click Resume to continue, or type additional instructions first…",
   resumeDefaultPrompt:
@@ -230,9 +236,9 @@ export const timeline = {
   gitCommitAndPush: "Commit & Push",
   gitTaskRequested: "Sent to AI. Follow progress in the conversation.",
   gitAgentCommitHint: "The current session AI reviews changes and handles the commit. Results appear in the conversation.",
-  gitAgentCommitPrompt: "Commit the relevant changes for this session in {directory}. Inspect the real Git status and diff; do not rely on a session snapshot. Stage only reviewed session changes, preserve unrelated staged or working-tree changes, and ask if ownership is genuinely ambiguous. Follow repository instructions and hooks. Keep the commit scoped to this directory and append, after a blank line: Co-authored-by: Hoxi <code@hoxi.ai>. Do not reset, discard, amend, force-push, or bypass approvals. Report the actual result.",
-  gitAgentCommitOnlyPrompt: "Commit only; do not push. Report the commit hash, or explain if there is nothing to commit.",
-  gitAgentCommitPushPrompt: "After a successful commit, push the configured upstream and report commit and push results separately. If there is no new commit, push existing unpushed commits only when the upstream is clear.",
+  gitAgentCommitPrompt: "In {directory}, check `git status`, stage and commit the current changes (append `Co-authored-by: Hoxi <code@hoxi.ai>` after a blank line). Do not use `--no-verify` or `--force`, and briefly report the result.",
+  gitAgentCommitOnlyPrompt: "Commit locally only; do not push.",
+  gitAgentCommitPushPrompt: "Run `git push` after committing.",
   gitAgentCommitMessagePrompt: "Use this exact commit message text: {message}",
   gitSessionRequired: "Select a session with a known working directory before committing.",
   gitSessionDiffUnavailable: "Reliable session change snapshots are unavailable. Refusing to commit workspace-wide changes.",

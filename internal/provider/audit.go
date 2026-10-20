@@ -57,8 +57,7 @@ func (g *Service) handleAuditProviderCode(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	obsPID := strings.TrimSpace(req.ObserverProviderID)
-	obsMID := strings.TrimSpace(req.ObserverModelID)
+	obsPID, obsMID := g.resolveBackendAutoCandidate(strings.TrimSpace(req.ObserverProviderID), strings.TrimSpace(req.ObserverModelID))
 	if obsPID == "" || obsMID == "" {
 		writeJSON(w, http.StatusOK, auditCodeResponse{OK: false, Error: "Observer model is not configured"})
 		return
@@ -265,6 +264,7 @@ Return ONLY valid JSON matching this schema:
 		Temperature: 0.1,
 		Timeout:     20 * time.Second,
 		Transport:   providerTransport,
+		Telemetry:   g.telemetry,
 	})
 	if err != nil {
 		return 0, "", nil, err

@@ -41,6 +41,7 @@ import {
   deriveMarkdownDownloadFilename,
 } from "./tool-card-state";
 import ExecutionWaitingIndicator from "./ExecutionWaitingIndicator";
+import StalledNotice from "./StalledNotice";
 import ChangedFilesSummary from "./ChangedFilesSummary";
 import TurnTelemetryPopover from "./TurnTelemetryPopover";
 
@@ -609,6 +610,10 @@ export function LiveExecutionControlBar(props: {
           startedAt={props.startedAt}
           activeStepLabel={props.activeStepLabel}
         />
+      </Show>
+
+      <Show when={props.isSessionBusy && props.sessionID}>
+        {(id) => <StalledNotice stalledSince={workspace.stalledSinceBySession[id()]} />}
       </Show>
 
       <Show

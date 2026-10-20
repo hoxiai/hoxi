@@ -4,6 +4,7 @@ import { locale, t } from "../i18n";
 import { hoxiAPI } from "../services/api";
 import type { MessagePart, SnapshotFileDiff } from "../services/sse-types";
 import { isModelFree } from "./provider-catalog";
+import { AUTO_PROVIDER_ID, resolveAutoModelTarget } from "./auto-models";
 import {
   canSteerSession,
   sessionDirectory,
@@ -52,12 +53,25 @@ export function setCommitModelSpec(spec: string): void {
   }
 }
 
+const [aiCommitFallbackNotice, setAiCommitFallbackNotice] = createSignal(false);
+
+export function hasAICommitFallbackNotice(): boolean {
+  return aiCommitFallbackNotice();
+}
+
+export function dismissAICommitFallback(): void {
+  setAiCommitFallbackNotice(false);
+}
+
 function parseProviderModelKey(raw?: unknown): SelectedModel | null {
   if (typeof raw !== "string" || !raw.includes("/")) return null;
   const idx = raw.indexOf("/");
   const providerID = raw.slice(0, idx).trim();
   const modelID = raw.slice(idx + 1).trim();
   if (!providerID || !modelID) return null;
+  if (providerID === AUTO_PROVIDER_ID) {
+    return resolveAutoModelTarget(modelID, { advance: true });
+  }
   const exists = workspace.providers.some(
     (p) => p.id === providerID && p.models && p.models[modelID]
   );
@@ -287,10 +301,13 @@ export async function generateSmartCommitMessage(
     });
     const candidate = res?.message?.trim() || "";
     if (res?.ok && candidate && !isMalformedLLMText(candidate)) {
+      setAiCommitFallbackNotice(false);
       return candidate;
     }
+    setAiCommitFallbackNotice(true);
   } catch (err) {
     console.warn("LLM commit message synthesis failed, using local fallback:", err);
+    setAiCommitFallbackNotice(true);
   }
   return fallback;
 }

@@ -184,6 +184,11 @@ export const timeline: TimelineI18n = {
   executionStepsDone: "{count} 步",
   executionStepNumber: "{count} 步",
   executionStepDetails: "步骤详情",
+  stalledHint: "已 {minutes} 分钟没有新输出，任务可能卡住了。可以停止，或发消息纠偏。",
+  stalledNotification: "有任务长时间没有输出，可能卡住了",
+  stalledErrorTitle: "已停止：长时间无输出",
+  stalledErrorMessage:
+    "任务长时间没有任何输出，Hoxi 已自动停止以释放会话。可以让它继续，或把任务拆小一些再试。",
   pausedPlaceholder:
     "任务已暂停。点击「继续执行」，或输入补充说明后按 Enter 继续…",
   resumeDefaultPrompt:
@@ -228,9 +233,9 @@ export const timeline: TimelineI18n = {
   gitCommitAndPush: "提交并推送",
   gitTaskRequested: "已交给 AI 处理，请在对话中查看进度。",
   gitAgentCommitHint: "由当前会话 AI 检查改动并提交，结果会显示在对话中。",
-  gitAgentCommitPrompt: "请在当前会话目录 {directory} 内提交相关修改。检查真实的 Git 状态和 diff，不要依赖会话快照。只暂存本会话相关且已检查的修改，保留无关的暂存区和工作区内容；若归属确实不明确，先询问。遵守仓库规范和 hooks。不要 reset、丢弃修改、amend、强制推送或绕过审批。汇报实际结果。",
-  gitAgentCommitOnlyPrompt: "仅提交，不要推送。汇报提交哈希；没有可提交内容时说明原因。",
-  gitAgentCommitPushPrompt: "提交成功后推送到已配置的 upstream，并分别汇报提交和推送结果。没有新提交时，仅在 upstream 明确的情况下推送已有未推送提交。",
+  gitAgentCommitPrompt: "请在目录 {directory} 下查看 `git status`，暂存并提交本次修改（提交说明末尾空一行追加 `Co-authored-by: Hoxi <code@hoxi.ai>`）。不要使用 `--no-verify` 或 `--force`，完成后简报结果。",
+  gitAgentCommitOnlyPrompt: "仅本地提交，不要推送。",
+  gitAgentCommitPushPrompt: "提交后执行 `git push` 推送到远端。",
   gitAgentCommitMessagePrompt: "使用以下精确文本作为提交说明：{message}",
   gitSessionRequired: "请先选择具有明确工作目录的会话，再进行提交。",
   gitSessionDiffUnavailable: "无法获取可靠的会话修改快照，已拒绝提交整个工作区的修改。",

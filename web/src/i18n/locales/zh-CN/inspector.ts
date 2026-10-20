@@ -73,6 +73,7 @@ export const inspector: InspectorI18n = {
     commitBtn: "提交 ({count})",
     committing: "提交中…",
     commitSuccess: "已提交 {hash}",
+    aiCommitFallback: "AI 提交信息生成不可用，已使用本地回退文案。",
     auditBtn: "代码审查",
     auditingBtn: "审查中…",
     auditTooltip: "调用审查模型对当前代码变更进行质量评估",

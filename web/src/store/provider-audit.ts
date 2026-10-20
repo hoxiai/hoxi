@@ -3,6 +3,7 @@ import { produce } from "solid-js/store";
 import { locale, t } from "../i18n";
 import { hoxiAPI, type CodeAuditResult } from "../services/api";
 import { findBestFallbackModel } from "./provider-health";
+import { AUTO_PROVIDER_ID, resolveAutoModelTarget } from "./auto-models";
 import {
   emptyStats,
   ensureModelStats,
@@ -71,6 +72,9 @@ function parseProviderModelKey(fullKey: string): SelectedModel | null {
   const providerID = trimmed.slice(0, idx).trim();
   const modelID = trimmed.slice(idx + 1).trim();
   if (!providerID || !modelID) return null;
+  if (providerID === AUTO_PROVIDER_ID) {
+    return resolveAutoModelTarget(modelID, { advance: true });
+  }
   return { providerID, modelID };
 }
 

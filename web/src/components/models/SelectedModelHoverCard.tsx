@@ -1,7 +1,13 @@
 // web/src/components/models/SelectedModelHoverCard.tsx
 import { Show } from "solid-js";
 import { Image, Sparkles, Wrench } from "lucide-solid";
-import { workspace } from "../../store/workspace";
+import {
+  AUTO_PROVIDER_ID,
+  getEffectivePoolCandidates,
+  isCandidateCoolingDown,
+  peekAutoModelTarget,
+  workspace,
+} from "../../store/workspace";
 import { ProviderIcon } from "../icons";
 import { t } from "../../i18n";
 import { ProviderHealthBadge } from "./ProviderQualityCard";
@@ -19,6 +25,11 @@ export function SelectedModelHoverCard(props: { model: FlattenedModel }) {
   const outText = () => formatTokenLimit(props.model.outputLimit);
   const inPrice = () => formatPricePerMillion(props.model.inputCost, props.model.priceCurrency);
   const outPrice = () => formatPricePerMillion(props.model.outputCost, props.model.priceCurrency);
+  const isAuto = () => props.model.providerID === AUTO_PROVIDER_ID;
+  const autoTarget = () => (isAuto() ? peekAutoModelTarget(props.model.modelID) : null);
+  const autoCands = () => (isAuto() ? getEffectivePoolCandidates(props.model.modelID) : []);
+  const autoReadyCount = () =>
+    autoCands().filter((c) => !isCandidateCoolingDown(c.providerID, c.modelID)).length;
 
   return (
     <div class="pointer-events-none absolute bottom-full left-0 z-30 mb-2 w-[320px] rounded-xl border border-[var(--border-strong)] bg-[var(--bg-panel)] p-3 shadow-2xl text-[11.5px] space-y-2 animate-in fade-in duration-100">
@@ -99,6 +110,21 @@ export function SelectedModelHoverCard(props: { model: FlattenedModel }) {
             {props.model.modelID}
           </span>
         </div>
+
+        <Show when={isAuto()}>
+          <div class="flex items-center justify-between gap-2 rounded-lg bg-[var(--accent-surface)]/40 px-2 py-1 text-[10.5px]">
+            <span class="font-medium text-[var(--accent-primary)] truncate">
+              {autoTarget()
+                ? t("models.autoPoolActiveTarget", {
+                    model: `${autoTarget()!.providerID}/${autoTarget()!.modelID}`,
+                  })
+                : t("models.autoRailLabel")}
+            </span>
+            <span class="shrink-0 font-mono text-[10px] text-[var(--text-secondary)]">
+              {autoReadyCount()}/{autoCands().length} {t("models.autoPoolReadyStatus")}
+            </span>
+          </div>
+        </Show>
 
         <Show when={props.model.baseURL}>
           <div class="flex items-center justify-between gap-2">

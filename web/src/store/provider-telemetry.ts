@@ -387,6 +387,11 @@ export function isUserAbortError(info?: MessageInfo | null): boolean {
   return name.includes("abort") || msg.includes("aborted") || msg.includes("abort");
 }
 
+/** The runner watchdog stopped a silent turn; not a provider or model failure. */
+export function isRunnerStallError(info?: MessageInfo | null): boolean {
+  return info?.error?.name === "RunnerStalledError";
+}
+
 export function recordAssistantTurnUpdated(info: MessageInfo) {
   if (info.role !== "assistant") return;
   const pid = info.providerID || resolveSessionProvider(info.sessionID)?.providerID;
@@ -400,7 +405,7 @@ export function recordAssistantTurnUpdated(info: MessageInfo) {
   }
 
   if (info.error) {
-    if (isUserAbortError(info)) return;
+    if (isUserAbortError(info) || isRunnerStallError(info)) return;
     const errKey = `${info.id}:error`;
     if (processedMessageKeys.has(errKey)) return;
     processedMessageKeys.add(errKey);

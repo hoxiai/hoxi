@@ -107,3 +107,29 @@ func TestStatusTrackerFiltersAndAvailability(t *testing.T) {
 	HoxiShowMainWindow()
 	HoxiQuitApplication()
 }
+
+func TestStatusTrackerStalledSessionsRaiseAttention(t *testing.T) {
+	tracker := NewTracker()
+
+	// A stall reported after the turn ended must not leave Attention stuck.
+	tracker.SetSessionStalled("ses_late", true)
+	if snap := tracker.Snapshot(); snap.Attention != 0 {
+		t.Fatalf("stall of an idle session raised Attention: %+v", snap)
+	}
+
+	tracker.SetSessionBusy("ses_1", true)
+	tracker.SetSessionStalled("ses_1", true)
+	if snap := tracker.Snapshot(); snap.Attention != 1 || snap.Running != 1 {
+		t.Fatalf("expected Attention=1 Running=1 for a stalled busy session, got %+v", snap)
+	}
+	tracker.SetSessionStalled("ses_1", false)
+	if snap := tracker.Snapshot(); snap.Attention != 0 {
+		t.Fatalf("cleared stall kept Attention: %+v", snap)
+	}
+
+	tracker.SetSessionStalled("ses_1", true)
+	tracker.SetSessionBusy("ses_1", false)
+	if snap := tracker.Snapshot(); snap.Attention != 0 || snap.Running != 0 {
+		t.Fatalf("idle session kept its stall: %+v", snap)
+	}
+}

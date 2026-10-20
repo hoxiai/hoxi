@@ -10,6 +10,12 @@ import {
 } from "../services/api";
 import type { SessionRuntime } from "../services/sse-types";
 import { syncOfficialModelPricing } from "./leaderboard-state";
+import {
+  AUTO_PROVIDER_ID,
+  buildAutoVirtualProvider,
+  peekAutoModelTarget,
+  syncAutoPoolsFromServer,
+} from "./auto-models";
 import { splitAgyModelEffortSuffix } from "./provider-catalog";
 import { updateSessionAI, type ReasoningEffort } from "./session-ai";
 import {
@@ -103,7 +109,12 @@ function pushRecentModel(model: SelectedModel) {
 
 export function sessionRuntimeForID(sessionID?: string | null): SessionRuntime {
   if (!sessionID) {
-    const draftProv = workspace.defaultAI.model?.providerID;
+    const rawModel = workspace.defaultAI.model;
+    const resolved =
+      rawModel?.providerID === AUTO_PROVIDER_ID
+        ? peekAutoModelTarget(rawModel.modelID)
+        : rawModel;
+    const draftProv = resolved?.providerID;
     return resolveRunnerRuntimeForProvider(draftProv, Boolean(workspace.hoxiProviders?.[draftProv || ""]));
   }
   const found = workspace.sessions.find((s) => s.id === sessionID);
@@ -357,6 +368,13 @@ export async function loadProviders(forceRefresh = false): Promise<void> {
       registerRunnerProvider("qoder", t("timeline.runtimeQoderLocal"), qoderRunner);
     }
 
+    const autoVirt = buildAutoVirtualProvider();
+    byId.set(AUTO_PROVIDER_ID, autoVirt);
+    if (!connected.includes(AUTO_PROVIDER_ID)) {
+      connected.unshift(AUTO_PROVIDER_ID);
+    }
+    defaults[AUTO_PROVIDER_ID] = "free";
+
     const all = Array.from(byId.values());
 
     setWorkspace({
@@ -368,6 +386,7 @@ export async function loadProviders(forceRefresh = false): Promise<void> {
       openCodeImportedProviders: openCodeList,
       providerAuthMethods: authMethods || {},
     });
+    void syncAutoPoolsFromServer();
 
     const current = workspace.defaultAI.model;
     const isValid =
@@ -381,6 +400,7 @@ export async function loadProviders(forceRefresh = false): Promise<void> {
         return;
       }
       for (const pid of connected) {
+        if (pid === AUTO_PROVIDER_ID) continue;
         // OpenCode's built-in free service is not a user-configured provider.
         if (pid === "opencode" && !hoxiMap[pid] && !mergedCfg.provider?.[pid]) continue;
         const defModel = defaults[pid];

@@ -22,6 +22,7 @@ import {
   enrichDiffWithWorktree,
 } from "../timeline/tool-card-state";
 import { t } from "../../i18n";
+import AICommitFallbackToast from "./ai-commit-fallback-toast";
 import ObserverAuditBanner from "./ObserverAuditBanner";
 import DiffEmptyState from "./pierre-diff-empty";
 import DiffFileTree from "./diff-file-tree";
@@ -465,6 +466,8 @@ export default function PierreDiffViewer() {
           </div>
         </div>
       </div>
+
+      <AICommitFallbackToast />
 
       <Show when={committedHash()}>
         {(hash) => (

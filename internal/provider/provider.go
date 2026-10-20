@@ -31,12 +31,21 @@ func NewService(openCodePort int, password, rootDir string, proxy http.Handler) 
 	}
 }
 
+// SetOnProviderDegraded wires persistent internal LLM failure notifications
+// (e.g. to the macOS status bar Attention badge).
+func (s *Service) SetOnProviderDegraded(fn func(providerID string, degraded bool)) {
+	if s.telemetry != nil {
+		s.telemetry.setOnDegradedChange(fn)
+	}
+}
+
 func (s *Service) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/hoxi/provider/fetch-models", s.handleFetchProviderModels)
 	mux.HandleFunc("/api/hoxi/provider/test-model", s.handleTestProviderModel)
 	mux.HandleFunc("/api/hoxi/provider/audit", s.handleAuditProviderCode)
 	mux.HandleFunc("/api/hoxi/provider/summarize-title", s.handleSummarizeSessionTitle)
 	mux.HandleFunc("/api/hoxi/provider/generate-commit-message", s.handleGenerateCommitMessage)
+	mux.HandleFunc("/api/hoxi/provider/auto-pools", s.handleAutoPoolsConfig)
 	mux.HandleFunc("/api/hoxi/models-config", s.handleModelsConfig)
 	mux.HandleFunc("/global/config", s.handleGlobalConfigProxy)
 	mux.HandleFunc("/provider", s.handleProviderProxy)
@@ -329,6 +338,9 @@ func (g *Service) resolveProviderConnection(providerID, hintBaseURL, hintNPM str
 	}
 	if apiKey == "" {
 		apiKey = g.resolveStoredProviderKey(providerID, baseURL)
+	}
+	if apiKey != "" {
+		apiKey = g.selectRotatedProviderKey(providerID, apiKey)
 	}
 	return baseURL, apiKey, npm, headers
 }

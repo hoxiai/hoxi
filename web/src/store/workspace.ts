@@ -53,7 +53,7 @@ export interface ReviewCommentItem {
   snippet?: string;
 }
 
-export type ProviderModalTab = "providers" | "custom" | "models" | "policy";
+export type ProviderModalTab = "providers" | "custom" | "auto" | "models" | "policy";
 export type WorkspaceModalMode = "create" | "edit" | "delete" | "manage" | null;
 
 export interface WorkspaceState {
@@ -110,6 +110,7 @@ export interface WorkspaceState {
   loadingMessagesBySession: Record<string, boolean>;
   bootstrappingSessions: boolean;
   statusBySession: Record<string, SessionStatus>;
+  stalledSinceBySession: Record<string, number>;
   diffsBySession: Record<string, SnapshotFileDiff[]>;
   worktreeDiffsBySession: Record<string, SnapshotFileDiff[]>;
   diffScope: "worktree" | "session";
@@ -347,6 +348,7 @@ export const [workspace, setWorkspace] = createStore<WorkspaceState>({
   loadingMessagesBySession: {},
   bootstrappingSessions: true,
   statusBySession: {},
+  stalledSinceBySession: {},
   diffsBySession: {},
   worktreeDiffsBySession: {},
   diffScope: "worktree",
@@ -604,5 +606,6 @@ export * from "./diagnostics";
 export * from "./file-links";
 export * from "./message-lookup";
 export * from "./question-answers";
+export * from "./auto-models";
 
 

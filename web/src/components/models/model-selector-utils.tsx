@@ -8,6 +8,7 @@ import {
   Star,
 } from "lucide-solid";
 import {
+  AUTO_PROVIDER_ID,
   type ConnectedProviderGroup,
   extractFlattenedModels,
   type FlattenedModel,
@@ -147,13 +148,17 @@ export function ModelSelectorRail(props: {
                 <span class="truncate">{prov.name}</span>
               </span>
               <span class="flex items-center gap-1 shrink-0">
-                <Show when={prov.isCustom}>
+                <Show when={prov.isCustom || prov.id === AUTO_PROVIDER_ID}>
                   <button
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation();
                       props.onClosePopover();
-                      openProviderModal("custom", prov.id);
+                      if (prov.id === AUTO_PROVIDER_ID) {
+                        openProviderModal("auto", null);
+                      } else {
+                        openProviderModal("custom", prov.id);
+                      }
                     }}
                     class="opacity-0 group-hover:opacity-100 rounded p-0.5 hover:bg-[var(--bg-panel)] text-[var(--text-muted)] hover:text-[var(--accent-primary)] cursor-pointer"
                     title={t("models.editProvider")}

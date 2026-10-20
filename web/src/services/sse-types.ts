@@ -205,7 +205,7 @@ export interface QuestionRequest {
 
 export type SessionStatus =
   | { type: "idle" }
-  | { type: "busy" }
+  | { type: "busy"; stalledSince?: number }
   | { type: "retry"; attempt: number; message: string; next: number };
 
 export type OpenCodeEvent =
@@ -282,6 +282,15 @@ export type OpenCodeEvent =
       type: "session.idle";
       properties: {
         sessionID: string;
+      };
+    }
+  | {
+      // Hoxi runner watchdog: a busy turn has produced no output since
+      // `stalledSince` (unix ms); 0 clears the flag.
+      type: "session.stall";
+      properties: {
+        sessionID: string;
+        stalledSince: number;
       };
     }
   | {

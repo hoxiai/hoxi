@@ -10,6 +10,7 @@ import { models } from "./models";
 import { settings } from "./settings";
 import { privacy } from "./privacy";
 import { diagnostics } from "./diagnostics";
+import { network } from "./network";
 
 export const enUS = {
   common,
@@ -23,6 +24,7 @@ export const enUS = {
   settings,
   privacy,
   diagnostics,
+  network,
 };
 
 export default enUS;

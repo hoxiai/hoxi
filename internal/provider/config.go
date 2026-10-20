@@ -407,6 +407,7 @@ func (g *Service) handleModelsConfig(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		g.normalizeAndStoreMultiKeys(pid, cleaned)
 		hoxiMap[pid] = cleaned
 		doc["provider"] = hoxiMap
 		if err := g.persistHoxiConfigDoc(doc); err != nil {

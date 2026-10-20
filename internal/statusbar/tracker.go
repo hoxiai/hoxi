@@ -17,14 +17,18 @@ type Tracker struct {
 	mu               sync.Mutex
 	available        bool
 	busySessions     map[string]bool
+	stalledSessions  map[string]bool   // busy sessions silent long enough to look stuck
 	pendingApprovals map[string]string // requestID -> sessionID
+	degradedProvider map[string]bool
 }
 
 func NewTracker() *Tracker {
 	return &Tracker{
 		available:        true,
 		busySessions:     make(map[string]bool),
+		stalledSessions:  make(map[string]bool),
 		pendingApprovals: make(map[string]string),
+		degradedProvider: make(map[string]bool),
 	}
 }
 
@@ -46,11 +50,30 @@ func (t *Tracker) SetSessionBusy(sessionID string, busy bool) {
 		t.busySessions[sessionID] = true
 	} else {
 		delete(t.busySessions, sessionID)
+		delete(t.stalledSessions, sessionID)
 		for reqID, sid := range t.pendingApprovals {
 			if sid == sessionID {
 				delete(t.pendingApprovals, reqID)
 			}
 		}
+	}
+	summary := t.snapshotLocked()
+	t.mu.Unlock()
+	Update(summary)
+}
+
+// SetSessionStalled raises Attention for a busy session that looks stuck.
+// It is ignored once the session is no longer busy.
+func (t *Tracker) SetSessionStalled(sessionID string, stalled bool) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return
+	}
+	t.mu.Lock()
+	if stalled && t.busySessions[sessionID] {
+		t.stalledSessions[sessionID] = true
+	} else {
+		delete(t.stalledSessions, sessionID)
 	}
 	summary := t.snapshotLocked()
 	t.mu.Unlock()
@@ -73,6 +96,24 @@ func (t *Tracker) SetPendingApproval(requestID, sessionID string, pending bool) 
 	Update(summary)
 }
 
+// SetProviderDegraded flags a provider with persistent internal LLM failures so
+// the tray shows Attention until the provider recovers.
+func (t *Tracker) SetProviderDegraded(providerID string, degraded bool) {
+	providerID = strings.TrimSpace(providerID)
+	if providerID == "" {
+		return
+	}
+	t.mu.Lock()
+	if degraded {
+		t.degradedProvider[providerID] = true
+	} else {
+		delete(t.degradedProvider, providerID)
+	}
+	summary := t.snapshotLocked()
+	t.mu.Unlock()
+	Update(summary)
+}
+
 func (t *Tracker) Snapshot() Summary {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -81,7 +122,7 @@ func (t *Tracker) Snapshot() Summary {
 
 func (t *Tracker) snapshotLocked() Summary {
 	return Summary{
-		Attention: len(t.pendingApprovals),
+		Attention: len(t.pendingApprovals) + len(t.stalledSessions) + len(t.degradedProvider),
 		Running:   len(t.busySessions),
 		Queued:    0,
 		Available: t.available,
@@ -138,6 +179,7 @@ func (t *Tracker) InspectSSELine(line string) {
 				t.busySessions[p.SessionID] = true
 			} else {
 				delete(t.busySessions, p.SessionID)
+				delete(t.stalledSessions, p.SessionID)
 			}
 			changed = true
 		}
@@ -147,6 +189,7 @@ func (t *Tracker) InspectSSELine(line string) {
 		}
 		if json.Unmarshal(evtProps, &p) == nil && p.SessionID != "" {
 			delete(t.busySessions, p.SessionID)
+			delete(t.stalledSessions, p.SessionID)
 			changed = true
 		}
 	case "permission.asked", "question.asked":

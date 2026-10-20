@@ -1,6 +1,6 @@
 // web/src/components/models/ProviderModal.tsx
 import { Show } from "solid-js";
-import { Cpu, KeyRound, Plus, ShieldCheck, SlidersHorizontal, X } from "lucide-solid";
+import { Cpu, KeyRound, Plus, ShieldCheck, SlidersHorizontal, X, Zap } from "lucide-solid";
 import {
   openProviderModal,
   setWorkspace,
@@ -9,6 +9,7 @@ import {
 } from "../../store/workspace";
 import { t } from "../../i18n";
 import AgentPolicyMcpTab from "./AgentPolicyMcpTab";
+import AutoModelPoolTab from "./AutoModelPoolTab";
 import CustomEndpointTab from "./CustomEndpointTab";
 import ModelsRoleTab from "./ModelsRoleTab";
 import ProviderCatalogTab from "./ProviderCatalogTab";
@@ -74,6 +75,18 @@ export default function ProviderModal() {
                 <button
                   type="button"
                   class={`hoxi-press inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-[11.5px] font-medium cursor-pointer ${
+                    activeTab() === "auto"
+                      ? "bg-[var(--bg-panel)] text-[var(--text-primary)] shadow-2xs"
+                      : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                  }`}
+                  onClick={() => switchTab("auto")}
+                >
+                  <Zap size={12} class="text-[var(--ok)]" />
+                  {t("models.tabAutoPools")}
+                </button>
+                <button
+                  type="button"
+                  class={`hoxi-press inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-[11.5px] font-medium cursor-pointer ${
                     activeTab() === "models"
                       ? "bg-[var(--bg-panel)] text-[var(--text-primary)] shadow-2xs"
                       : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
@@ -117,6 +130,12 @@ export default function ProviderModal() {
           <Show when={activeTab() === "custom"}>
             <div class="flex-1 min-h-0 flex flex-col hoxi-view-enter">
               <CustomEndpointTab />
+            </div>
+          </Show>
+
+          <Show when={activeTab() === "auto"}>
+            <div class="flex-1 min-h-0 flex flex-col hoxi-view-enter">
+              <AutoModelPoolTab />
             </div>
           </Show>
 

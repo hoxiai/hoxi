@@ -20,6 +20,11 @@ import {
   recordUserRevertAction,
 } from "./provider-telemetry";
 import { isPlaceholderSessionTitle, summarizeAndRenameSession } from "./session-title";
+import {
+  isAutoModel,
+  markAutoCandidateCooldown,
+  resolveAutoModelTarget,
+} from "./auto-models";
 import { newIsolatedSession, waitForSessionSandbox } from "./session-sandbox";
 import { buildCombinedSystemPrompt, setWorkspace, workspace } from "./workspace";
 import { buildWorkspaceFoldersSystemPrompt, workspaceFoldersForDir } from "./workspace-projects";
@@ -50,6 +55,19 @@ export { forkFromMessage, revertToHere, undoRevert };
 
 const lastInterruptAtBySession = new Map<string, number>();
 
+interface AutoDispatchState {
+  poolID: string;
+  target: { providerID: string; modelID: string };
+  promptText: string;
+  agent?: string;
+  effort?: ReasoningEffort;
+  attachments?: Array<{ type: "file"; mime: string; filename?: string; url: string }>;
+  triedKeys: Set<string>;
+  dispatchedAt: number;
+}
+
+const lastAutoDispatchBySession = new Map<string, AutoDispatchState>();
+
 export function markSessionInterrupted(
   sessionID: string,
   kind: "paused" | "stopped" = "stopped"
@@ -71,6 +89,48 @@ export async function handleSessionErrorEvent(
   error?: { name: string; data?: { message?: string; statusCode?: number; isRetryable?: boolean } }
 ): Promise<void> {
   if (!sessionID) return;
+  const autoState = lastAutoDispatchBySession.get(sessionID);
+  if (autoState && error && error.name !== "RunnerStalledError") {
+    const errText = error.data?.message || error.name || "error";
+    const status = error.data?.statusCode;
+    markAutoCandidateCooldown(autoState.target.providerID, autoState.target.modelID, errText, status);
+    const isElapsedFast = Date.now() - autoState.dispatchedAt < 45_000;
+    const isRateOrTransient =
+      status === 429 ||
+      status === 502 ||
+      status === 503 ||
+      Boolean(error.data?.isRetryable) ||
+      /429|rate.?limit|quota|too many requests|overloaded|unavailable|timeout/i.test(errText);
+    if ((isRateOrTransient || isElapsedFast) && autoState.triedKeys.size < 3) {
+      const nextCand = resolveAutoModelTarget(autoState.poolID, {
+        advance: true,
+        excludeKeys: autoState.triedKeys,
+      });
+      if (
+        nextCand &&
+        `${nextCand.providerID}/${nextCand.modelID}` !==
+          `${autoState.target.providerID}/${autoState.target.modelID}`
+      ) {
+        autoState.triedKeys.add(`${nextCand.providerID}/${nextCand.modelID}`);
+        autoState.target = nextCand;
+        autoState.dispatchedAt = Date.now();
+        void hoxiAPI
+          .sendPromptAsync(sessionID, autoState.promptText, {
+            agent: autoState.agent,
+            model: nextCand,
+            variant: autoState.effort || undefined,
+            directory: sessionDirectory(sessionID),
+            attachments: autoState.attachments,
+            runtime: resolveRunnerRuntimeForProvider(
+              nextCand.providerID,
+              Boolean(workspace.hoxiProviders?.[nextCand.providerID || ""])
+            ),
+          })
+          .catch(() => {});
+        return;
+      }
+    }
+  }
   lastInterruptAtBySession.set(sessionID, Date.now());
   setWorkspace("statusBySession", sessionID, { type: "idle" });
   setWorkspace("unreadCompletedBySession", sessionID, false);
@@ -81,7 +141,9 @@ export async function handleSessionErrorEvent(
       const list = (state.messagesBySession[sessionID] ||= []);
       const last = list[list.length - 1];
       if (last?.info.role === "assistant") {
-        last.info.error ||= error;
+        // A watchdog stop explains the engine's own "aborted" error.
+        if (error.name === "RunnerStalledError") last.info.error = error;
+        else last.info.error ||= error;
         return;
       }
       const now = Date.now();
@@ -175,7 +237,14 @@ export async function submitSessionPrompt(
   const config = sessionAIConfig(id);
   const effectiveAgent = options?.agent || config.agent;
   const chosenModel = options?.model || config.model;
-  const effectiveModel = chosenModel ? { ...chosenModel } : undefined;
+  const isAuto = isAutoModel(chosenModel);
+  const resolvedConcrete =
+    isAuto && chosenModel ? resolveAutoModelTarget(chosenModel, { advance: true }) : null;
+  const effectiveModel = resolvedConcrete
+    ? { ...resolvedConcrete }
+    : chosenModel
+    ? { ...chosenModel }
+    : undefined;
   if (!effectiveModel && sessionRuntimeForID(id) === "opencode") {
     throw new Error(t("timeline.selectModel"));
   }
@@ -287,6 +356,20 @@ export async function submitSessionPrompt(
   try {
     if (options?.beforeSend) {
       await options.beforeSend();
+    }
+    if (isAuto && chosenModel && effectiveModel) {
+      lastAutoDispatchBySession.set(id, {
+        poolID: chosenModel.modelID,
+        target: effectiveModel,
+        promptText,
+        agent: effectiveAgent,
+        effort: effort || undefined,
+        attachments,
+        triedKeys: new Set([`${effectiveModel.providerID}/${effectiveModel.modelID}`]),
+        dispatchedAt: Date.now(),
+      });
+    } else {
+      lastAutoDispatchBySession.delete(id);
     }
     markSessionPromptDispatched(id);
     await hoxiAPI.sendPromptAsync(id, promptText, {
