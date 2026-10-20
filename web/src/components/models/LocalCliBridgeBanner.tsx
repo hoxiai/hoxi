@@ -2,7 +2,7 @@
 import { createSignal, For, onMount, Show } from "solid-js";
 import { ArrowRightLeft, Check, RefreshCw, Sparkles, Terminal } from "lucide-solid";
 import { hoxiAPI, type LocalCLIStatusItem } from "../../services/api";
-import { openHandoffModal, setWorkspace, syncLocalCLIModel } from "../../store/workspace";
+import { closeSettingsModal, openHandoffModal, syncLocalCLIModel } from "../../store/workspace";
 import { t } from "../../i18n";
 
 export default function LocalCliBridgeBanner() {
@@ -95,7 +95,7 @@ export default function LocalCliBridgeBanner() {
           <button
             type="button"
             onClick={() => {
-              setWorkspace("providerModalOpen", false);
+              closeSettingsModal();
               openHandoffModal();
             }}
             class="shrink-0 inline-flex items-center gap-1.5 rounded-xl border border-[var(--accent-border)] bg-[var(--accent-surface)]/50 px-3 py-1.5 text-[11.5px] font-semibold text-[var(--accent-primary)] hover:bg-[var(--accent-surface)] transition-colors cursor-pointer"
@@ -128,7 +128,7 @@ export default function LocalCliBridgeBanner() {
                           <button
                             type="button"
                             onClick={() => {
-                              setWorkspace("providerModalOpen", false);
+                              closeSettingsModal();
                               openHandoffModal();
                             }}
                             class="inline-flex items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-2 py-1 text-[10.5px] font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] shrink-0 cursor-pointer"

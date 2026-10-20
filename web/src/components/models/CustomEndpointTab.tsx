@@ -6,6 +6,7 @@ import {
   disconnectProvider,
   isImportedOpenCodeProvider,
   MASKED_SECRET,
+  openProviderModal,
   recordProbeTelemetry,
   saveCustomProvider,
   setWorkspace,
@@ -246,8 +247,7 @@ export default function CustomEndpointTab() {
     setSaving(true);
     try {
       await disconnectProvider(pid);
-      setWorkspace("editingProviderID", null);
-      setWorkspace("providerModalTab", "providers");
+      openProviderModal("providers", null);
     } finally {
       setSaving(false);
     }
@@ -255,7 +255,8 @@ export default function CustomEndpointTab() {
 
   return (
     <form onSubmit={onSave} class="flex-1 flex flex-col min-h-0 overflow-hidden">
-      <div class="flex-1 overflow-y-auto p-5 space-y-4">
+      <div class="flex-1 overflow-y-auto p-6 sm:p-8">
+        <div class="mx-auto w-full max-w-5xl space-y-4">
         {/* Clean Single-Line Header + Compact Switcher */}
         <div class="flex items-center justify-between gap-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/50 px-3.5 py-2.5">
           <div class="min-w-0">
@@ -451,38 +452,41 @@ export default function CustomEndpointTab() {
             {feedback()!.text}
           </div>
         </Show>
+        </div>
       </div>
 
       {/* Footer */}
-      <div class="flex items-center justify-between border-t border-[var(--border-subtle)] bg-[var(--bg-elevated)]/30 px-5 py-3">
-        <div class="flex items-center gap-3">
-          <Show when={isEditing() && !isReadOnlyImported()}>
+      <div class="border-t border-[var(--border-subtle)] bg-[var(--bg-elevated)]/30 px-6 sm:px-8 py-3.5">
+        <div class="mx-auto flex w-full max-w-5xl items-center justify-between">
+          <div class="flex items-center gap-3">
+            <Show when={isEditing() && !isReadOnlyImported()}>
+              <button
+                type="button"
+                disabled={saving()}
+                onClick={() => void onDeleteProvider()}
+                class="inline-flex items-center gap-1.5 rounded-xl border border-[var(--danger-border)] bg-[var(--danger-surface)] px-3 py-1.5 text-[12px] font-medium text-[var(--danger-text)] hover:opacity-90 cursor-pointer"
+              >
+                <Trash2 size={13} />
+                {t("common.delete")}
+              </button>
+            </Show>
+            <span class="font-mono text-[11px] text-[var(--text-faint)]">
+              {isReadOnlyImported() ? t("models.openCodeReadonlyNote") : t("models.hoxiConfigNote")}
+            </span>
+          </div>
+          <Show when={!isReadOnlyImported()}>
             <button
-              type="button"
+              type="submit"
               disabled={saving()}
-              onClick={() => void onDeleteProvider()}
-              class="inline-flex items-center gap-1.5 rounded-xl border border-[var(--danger-border)] bg-[var(--danger-surface)] px-3 py-1.5 text-[12px] font-medium text-[var(--danger-text)] hover:opacity-90 cursor-pointer"
+              class="inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] px-4 py-2 text-[12.5px] font-medium text-[var(--accent-foreground)] hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
             >
-              <Trash2 size={13} />
-              {t("common.delete")}
+              <Show when={!saving()} fallback={<LoaderCircle size={14} class="animate-spin" />}>
+                <Check size={14} />
+              </Show>
+              {t("models.saveAndSelectModel")}
             </button>
           </Show>
-          <span class="font-mono text-[11px] text-[var(--text-faint)]">
-            {isReadOnlyImported() ? t("models.openCodeReadonlyNote") : t("models.hoxiConfigNote")}
-          </span>
         </div>
-        <Show when={!isReadOnlyImported()}>
-          <button
-            type="submit"
-            disabled={saving()}
-            class="inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] px-4 py-2 text-[12.5px] font-medium text-[var(--accent-foreground)] hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
-          >
-            <Show when={!saving()} fallback={<LoaderCircle size={14} class="animate-spin" />}>
-              <Check size={14} />
-            </Show>
-            {t("models.saveAndSelectModel")}
-          </button>
-        </Show>
       </div>
     </form>
   );

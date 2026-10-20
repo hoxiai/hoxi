@@ -1,27 +1,38 @@
 // web/src/components/settings/SettingsModal.tsx
-import { For, type JSX, Show } from "solid-js";
+import { createMemo, For, type JSX, Show } from "solid-js";
 import {
+  ArrowLeft,
+  Bot,
   CircleHelp,
-  ScrollText,
   Cpu,
   FolderGit2,
   KeyRound,
   MessageSquareText,
+  Moon,
+  Plus,
+  ScrollText,
   Settings,
   ShieldCheck,
   SlidersHorizontal,
+  Sun,
   Terminal as TerminalIcon,
-  X,
+  Zap,
 } from "lucide-solid";
 import {
   appSettings,
   closeSettingsModal,
   openProviderModal,
-  setAppSettings,
+  openSettingsModal,
+  toggleTheme,
   workspace,
   type SettingsTab,
 } from "../../store/workspace";
 import { t } from "../../i18n";
+import AgentPolicyMcpTab from "../models/AgentPolicyMcpTab";
+import AutoModelPoolTab from "../models/AutoModelPoolTab";
+import CustomEndpointTab from "../models/CustomEndpointTab";
+import ModelsRoleTab from "../models/ModelsRoleTab";
+import ProviderCatalogTab from "../models/ProviderCatalogTab";
 import { ChatComposerTab, GeneralAppearanceTab } from "./SettingsGeneralChatTabs";
 import { SystemRuntimeSettingsTab } from "./SettingsSystemRuntimeTab";
 import { PrivacySettingsTab } from "./PrivacyControls";
@@ -158,138 +169,267 @@ export function ToggleSwitch(props: {
 }
 
 export default function SettingsModal() {
-  const navItems: Array<{ id: SettingsTab; label: () => string; icon: any }> = [
-    { id: "general", label: () => t("settings.tabGeneral"), icon: SlidersHorizontal },
-    { id: "chat", label: () => t("settings.tabChat"), icon: MessageSquareText },
-    { id: "workspace", label: () => t("settings.tabWorkspace"), icon: FolderGit2 },
-    { id: "terminal", label: () => t("settings.tabTerminal"), icon: TerminalIcon },
-    { id: "system", label: () => t("settings.tabSystem"), icon: Cpu },
-    { id: "privacy", label: () => t("privacy.title"), icon: ShieldCheck },
-    { id: "diagnostics", label: () => t("diagnostics.title"), icon: ScrollText },
+  const isMac =
+    typeof navigator !== "undefined" &&
+    /Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent);
+
+  const isOpen = () => appSettings.modalOpen || workspace.providerModalOpen;
+
+  const activeTab = createMemo<SettingsTab>(() =>
+    !appSettings.modalOpen && workspace.providerModalOpen
+      ? workspace.providerModalTab
+      : appSettings.activeTab
+  );
+
+  const isModelTab = () => {
+    const tab = activeTab();
+    return (
+      tab === "providers" ||
+      tab === "custom" ||
+      tab === "auto" ||
+      tab === "models" ||
+      tab === "policy"
+    );
+  };
+
+  const selectTab = (tab: SettingsTab) => {
+    if (tab === "custom") {
+      openProviderModal("custom", workspace.editingProviderID);
+      return;
+    }
+    openSettingsModal(tab);
+  };
+
+  const navGroups: Array<{
+    groupLabel: () => string;
+    items: Array<{ id: SettingsTab; label: () => string; icon: any; badge?: () => number }>;
+  }> = [
+    {
+      groupLabel: () => t("settings.groupModels"),
+      items: [
+        {
+          id: "providers",
+          label: () => t("models.tabCatalog"),
+          icon: KeyRound,
+          badge: () => workspace.connectedProviders.length,
+        },
+        { id: "custom", label: () => t("models.tabCustom"), icon: Plus },
+        { id: "auto", label: () => t("models.tabAutoPools"), icon: Zap },
+        { id: "models", label: () => t("models.tabModels"), icon: SlidersHorizontal },
+      ],
+    },
+    {
+      groupLabel: () => t("settings.groupAgentSafety"),
+      items: [
+        { id: "policy", label: () => t("models.tabPolicy"), icon: Bot },
+        { id: "terminal", label: () => t("settings.tabTerminal"), icon: TerminalIcon },
+        { id: "privacy", label: () => t("privacy.title"), icon: ShieldCheck },
+      ],
+    },
+    {
+      groupLabel: () => t("settings.groupWorkspace"),
+      items: [
+        { id: "general", label: () => t("settings.tabGeneral"), icon: Settings },
+        { id: "chat", label: () => t("settings.tabChat"), icon: MessageSquareText },
+        { id: "workspace", label: () => t("settings.tabWorkspace"), icon: FolderGit2 },
+      ],
+    },
+    {
+      groupLabel: () => t("settings.groupSystem"),
+      items: [
+        { id: "system", label: () => t("settings.tabSystem"), icon: Cpu },
+        { id: "diagnostics", label: () => t("diagnostics.title"), icon: ScrollText },
+      ],
+    },
   ];
 
-  return (
-    <Show when={appSettings.modalOpen}>
-      <div
-        class="hoxi-modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4 select-none"
-        onClick={closeSettingsModal}
-      >
-        <div
-          class="hoxi-modal-panel flex h-[620px] max-h-[90dvh] w-full max-w-[860px] flex-col overflow-hidden rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-panel)] shadow-2xl"
-          onClick={(e) => e.stopPropagation()}
-        >
-          {/* Header */}
-          <div class="flex items-center justify-between border-b border-[var(--border-subtle)] px-6 py-4">
-            <div class="flex items-center gap-3 min-w-0">
-              <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[var(--accent-surface)] text-[var(--accent-primary)]">
-                <Settings size={17} />
-              </div>
-              <h2 class="truncate text-[15px] font-semibold text-[var(--text-primary)]">
-                {t("settings.modalTitle")}
-              </h2>
-              <HelpTip text={t("settings.modalSubtitle")} />
-            </div>
+  const activeBreadcrumb = createMemo(() => {
+    const cur = activeTab();
+    for (const grp of navGroups) {
+      for (const item of grp.items) {
+        if (item.id === cur) {
+          return { group: grp.groupLabel(), item: item.label(), icon: item.icon };
+        }
+      }
+    }
+    return { group: t("settings.modalTitle"), item: t("settings.tabGeneral"), icon: Settings };
+  });
 
-            <div class="flex items-center gap-2.5 shrink-0">
-              <span class="hidden sm:inline-block rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-2.5 py-1 font-mono text-[11.5px] text-[var(--text-faint)]">
-                {t("settings.shortcutHint")}
-              </span>
-              <button
-                type="button"
-                onClick={closeSettingsModal}
-                class="hoxi-press rounded-lg p-1.5 text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-pointer"
-              >
-                <X size={17} />
-              </button>
-            </div>
+  return (
+    <Show when={isOpen()}>
+      <div class="fixed inset-0 z-40 flex flex-col bg-[var(--bg-canvas)] text-[var(--text-primary)] select-none overflow-hidden hoxi-view-enter">
+        {/* Top Window Header (respects macOS traffic light drag area) */}
+        <header
+          class={`shrink-0 bg-transparent flex items-center justify-between gap-3 px-4 ${
+            isMac ? "h-[52px] pl-[96px]" : "h-[44px] pl-4"
+          }`}
+          style={{ "--wails-draggable": "drag" } as any}
+        >
+          <div class="flex items-center gap-3 min-w-0">
+            <button
+              type="button"
+              onClick={closeSettingsModal}
+              style={{ "--wails-draggable": "no-drag" } as any}
+              class="hoxi-press inline-flex items-center gap-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] hover:border-[var(--border-strong)] px-3 py-1.5 text-[12.5px] font-medium text-[var(--text-primary)] shadow-2xs transition-colors cursor-pointer"
+            >
+              <ArrowLeft size={14} class="text-[var(--text-secondary)]" />
+              <span>{t("settings.backToWorkspace")}</span>
+              <kbd class="ml-0.5 rounded bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-muted)]">
+                Esc
+              </kbd>
+            </button>
           </div>
 
-          {/* Body: Left Category Sidebar + Right Active Pane */}
-          <div class="flex flex-col sm:flex-row flex-1 min-h-0">
-            <nav class="sm:w-52 shrink-0 border-b sm:border-b-0 sm:border-r border-[var(--border-subtle)] bg-[var(--bg-inset)]/35 p-3.5 flex flex-col justify-between">
-              <div class="flex overflow-x-auto sm:block sm:space-y-1">
-                <For each={navItems}>
-                  {(item) => {
-                    const IconComp = item.icon;
-                    const isActive = () => appSettings.activeTab === item.id;
-                    return (
-                      <button
-                        type="button"
-                        onClick={() => setAppSettings("activeTab", item.id)}
-                        class={`hoxi-press flex w-full items-center gap-2.5 rounded-xl px-3.5 py-2.5 text-left text-[13.5px] font-medium cursor-pointer ${
-                          isActive()
-                            ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]"
-                            : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
-                        }`}
-                      >
-                        <IconComp size={16} class="shrink-0" />
-                        <span class="whitespace-nowrap sm:truncate">{item.label()}</span>
-                      </button>
-                    );
-                  }}
-                </For>
-              </div>
+          <div class="hidden sm:flex items-center gap-2 min-w-0 text-[12.5px]">
+            <span class="truncate text-[var(--text-muted)]">
+              {activeBreadcrumb().group}
+            </span>
+            <span class="text-[var(--text-faint)]">/</span>
+            <span class="truncate font-semibold text-[var(--text-primary)]">
+              {activeBreadcrumb().item}
+            </span>
+          </div>
 
-              {/* Bottom shortcut to Models & Providers Modal */}
-              <div class="hidden sm:block border-t border-[var(--border-subtle)] pt-3">
-                <button
-                  type="button"
-                  onClick={() => {
-                    closeSettingsModal();
-                    openProviderModal("providers");
-                  }}
-                  class="hoxi-press flex w-full items-center justify-between gap-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] px-3.5 py-2.5 text-left text-[13px] font-medium text-[var(--text-primary)] cursor-pointer shadow-2xs"
-                >
-                  <span class="inline-flex items-center gap-2 truncate">
-                    <KeyRound size={14} class="text-[var(--accent-primary)] shrink-0" />
-                    <span class="truncate">{t("settings.manageModelsAndKeysBtn")}</span>
-                  </span>
-                  <Show when={workspace.connectedProviders.length > 0}>
-                    <span class="rounded-full bg-[var(--accent-surface)] px-2 py-0.5 font-mono text-[11px] text-[var(--accent-text)]">
-                      {workspace.connectedProviders.length}
-                    </span>
-                  </Show>
-                </button>
-              </div>
-            </nav>
+          <div class="flex items-center gap-2 shrink-0">
+            <span class="hidden sm:inline-block rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)]/70 px-2.5 py-1 font-mono text-[11px] text-[var(--text-faint)]">
+              {t("settings.shortcutHint")}
+            </span>
+            <button
+              type="button"
+              class="hoxi-press inline-flex items-center justify-center w-7 h-7 rounded-lg text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer"
+              style={{ "--wails-draggable": "no-drag" } as any}
+              onClick={toggleTheme}
+              title={
+                workspace.theme === "dark"
+                  ? t("header.themeLightTooltip")
+                  : t("header.themeDarkTooltip")
+              }
+            >
+              {workspace.theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
+            </button>
+          </div>
+        </header>
 
-            <div class="min-w-0 flex-1 overflow-y-auto p-4 sm:p-7">
-              <Show when={appSettings.activeTab === "general"}>
-                <div class="hoxi-view-enter">
-                  <GeneralAppearanceTab />
-                </div>
-              </Show>
-              <Show when={appSettings.activeTab === "chat"}>
-                <div class="hoxi-view-enter">
-                  <ChatComposerTab />
-                </div>
-              </Show>
-              <Show when={appSettings.activeTab === "workspace"}>
-                <div class="hoxi-view-enter">
-                  <WorkspaceGitSettingsTab />
-                </div>
-              </Show>
-              <Show when={appSettings.activeTab === "terminal"}>
-                <div class="hoxi-view-enter">
-                  <TerminalSafetySettingsTab />
-                </div>
-              </Show>
-              <Show when={appSettings.activeTab === "system"}>
-                <div class="hoxi-view-enter">
-                  <SystemRuntimeSettingsTab />
-                </div>
-              </Show>
-              <Show when={appSettings.activeTab === "privacy"}>
-                <div class="hoxi-view-enter">
-                  <PrivacySettingsTab />
-                </div>
-              </Show>
-              <Show when={appSettings.activeTab === "diagnostics"}>
-                <div class="hoxi-view-enter">
-                  <DiagnosticsTab />
-                </div>
-              </Show>
+        {/* Full-Screen Body: Left Grouped Sidebar Island + Right Content Island */}
+        <div class="flex-1 flex flex-col sm:flex-row min-h-0 px-2 pb-2 gap-2">
+          <nav class="pane-island sm:w-60 shrink-0 p-3 flex sm:flex-col justify-between overflow-x-auto sm:overflow-y-auto bg-[var(--bg-panel)]">
+            <div class="flex sm:block gap-2 sm:space-y-4">
+              <For each={navGroups}>
+                {(group) => (
+                  <div class="flex sm:block items-center gap-1 sm:space-y-1">
+                    <div class="hidden sm:block px-3 pb-1 text-[10.5px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
+                      {group.groupLabel()}
+                    </div>
+                    <For each={group.items}>
+                      {(item) => {
+                        const IconComp = item.icon;
+                        const isActive = () => activeTab() === item.id;
+                        const badgeVal = () => (item.badge ? item.badge() : 0);
+                        return (
+                          <button
+                            type="button"
+                            onClick={() => selectTab(item.id)}
+                            class={`hoxi-press flex w-full items-center justify-between gap-2 rounded-xl px-3 py-2 text-left text-[13px] font-medium cursor-pointer ${
+                              isActive()
+                                ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]"
+                                : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+                            }`}
+                          >
+                            <span class="inline-flex items-center gap-2.5 min-w-0">
+                              <IconComp
+                                size={15}
+                                class={`shrink-0 ${
+                                  item.id === "auto" && !isActive() ? "text-[var(--ok)]" : ""
+                                }`}
+                              />
+                              <span class="whitespace-nowrap sm:truncate">{item.label()}</span>
+                            </span>
+                            <Show when={badgeVal() > 0}>
+                              <span class="shrink-0 rounded-full bg-[var(--bg-inset)] px-2 py-0.5 font-mono text-[10.5px] text-[var(--text-secondary)]">
+                                {badgeVal()}
+                              </span>
+                            </Show>
+                          </button>
+                        );
+                      }}
+                    </For>
+                  </div>
+                )}
+              </For>
             </div>
+          </nav>
+
+          {/* Right Content Island */}
+          <div class="pane-island flex-1 min-w-0 h-full flex flex-col overflow-hidden bg-[var(--bg-panel)]">
+            <Show when={isModelTab()}>
+              <Show when={activeTab() === "providers"}>
+                <div class="flex-1 min-h-0 flex flex-col hoxi-view-enter">
+                  <ProviderCatalogTab />
+                </div>
+              </Show>
+              <Show when={activeTab() === "custom"}>
+                <div class="flex-1 min-h-0 flex flex-col hoxi-view-enter">
+                  <CustomEndpointTab />
+                </div>
+              </Show>
+              <Show when={activeTab() === "auto"}>
+                <div class="flex-1 min-h-0 flex flex-col hoxi-view-enter">
+                  <AutoModelPoolTab />
+                </div>
+              </Show>
+              <Show when={activeTab() === "models"}>
+                <div class="flex-1 min-h-0 flex flex-col hoxi-view-enter">
+                  <ModelsRoleTab />
+                </div>
+              </Show>
+              <Show when={activeTab() === "policy"}>
+                <div class="flex-1 min-h-0 flex flex-col hoxi-view-enter">
+                  <AgentPolicyMcpTab />
+                </div>
+              </Show>
+            </Show>
+
+            <Show when={!isModelTab()}>
+              <div class="min-w-0 flex-1 overflow-y-auto p-6 sm:p-8">
+                <div class="mx-auto w-full max-w-4xl">
+                  <Show when={activeTab() === "general"}>
+                    <div class="hoxi-view-enter">
+                      <GeneralAppearanceTab />
+                    </div>
+                  </Show>
+                  <Show when={activeTab() === "chat"}>
+                    <div class="hoxi-view-enter">
+                      <ChatComposerTab />
+                    </div>
+                  </Show>
+                  <Show when={activeTab() === "workspace"}>
+                    <div class="hoxi-view-enter">
+                      <WorkspaceGitSettingsTab />
+                    </div>
+                  </Show>
+                  <Show when={activeTab() === "terminal"}>
+                    <div class="hoxi-view-enter">
+                      <TerminalSafetySettingsTab />
+                    </div>
+                  </Show>
+                  <Show when={activeTab() === "system"}>
+                    <div class="hoxi-view-enter">
+                      <SystemRuntimeSettingsTab />
+                    </div>
+                  </Show>
+                  <Show when={activeTab() === "privacy"}>
+                    <div class="hoxi-view-enter">
+                      <PrivacySettingsTab />
+                    </div>
+                  </Show>
+                  <Show when={activeTab() === "diagnostics"}>
+                    <div class="hoxi-view-enter">
+                      <DiagnosticsTab />
+                    </div>
+                  </Show>
+                </div>
+              </div>
+            </Show>
           </div>
         </div>
       </div>

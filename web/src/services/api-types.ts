@@ -682,6 +682,29 @@ export interface ModelPricingResponse {
   };
 }
 
+export interface FreeTierGuideRemoteItem {
+  id: string;
+  providerID: string;
+  name: string;
+  badge: string;
+  quotaLabel: string;
+  steps: string[];
+  signupUrl: string;
+  baseUrl: string;
+  customMode?: boolean;
+  recommendedModels: string[];
+}
+
+export interface FreeTiersResponse {
+  code: number;
+  message: string;
+  data: {
+    updatedAt: string;
+    total: number;
+    items: FreeTierGuideRemoteItem[];
+  };
+}
+
 export interface FileContentResponse {
   type?: "text" | "binary";
   content: string;

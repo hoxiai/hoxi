@@ -22,6 +22,8 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleLeaderboard(w, r)
 	case "/api/hoxi/models/pricing", "/api/hoxi/models/pricing/":
 		h.handleModelPricing(w, r)
+	case "/api/hoxi/models/free-tiers", "/api/hoxi/models/free-tiers/":
+		h.handleFreeTiers(w, r)
 	case "/api/hoxi/gateways/connectable", "/api/hoxi/gateways/connectable/":
 		h.handleGateways(w, r)
 	default:
@@ -87,6 +89,31 @@ func (h *HTTPHandler) handleGateways(w http.ResponseWriter, r *http.Request) {
 
 	lang := r.URL.Query().Get("lang")
 	res, err := h.svc.GetConnectableGateways(lang)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code":    500,
+			"message": err.Error(),
+		})
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(res)
+}
+
+func (h *HTTPHandler) handleFreeTiers(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	lang := r.URL.Query().Get("lang")
+	if lang == "" {
+		lang = r.Header.Get("Accept-Language")
+	}
+
+	res, err := h.svc.GetFreeTiers(lang)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		_ = json.NewEncoder(w).Encode(map[string]any{

@@ -33,29 +33,30 @@ export function ProviderSelectAllView(props: {
   });
 
   return (
-    <div class="flex-1 flex flex-col min-h-0 p-5 space-y-3">
-      <div class="flex items-center justify-between gap-3">
-        <button
-          type="button"
-          onClick={() => props.onBack()}
-          class="inline-flex items-center gap-1.5 text-[12px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
-        >
-          <ArrowLeft size={14} />
-          {t("models.tabCatalog")}
-        </button>
-        <div class="flex-1 max-w-[320px] flex items-center gap-2 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] px-3 py-1.5">
-          <Search size={13} class="text-[var(--text-faint)] shrink-0" />
-          <input
-            type="text"
-            placeholder={t("models.searchProviders")}
-            value={search()}
-            onInput={(e) => setSearch(e.currentTarget.value)}
-            class="w-full bg-transparent text-[12.5px] text-[var(--text-primary)] outline-none"
-          />
+    <div class="flex-1 flex flex-col min-h-0 p-6 sm:p-8">
+      <div class="mx-auto w-full max-w-5xl flex-1 flex flex-col min-h-0 space-y-4">
+        <div class="flex items-center justify-between gap-3">
+          <button
+            type="button"
+            onClick={() => props.onBack()}
+            class="inline-flex items-center gap-1.5 text-[12px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
+          >
+            <ArrowLeft size={14} />
+            {t("models.tabCatalog")}
+          </button>
+          <div class="flex-1 max-w-[320px] flex items-center gap-2 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] px-3 py-1.5">
+            <Search size={13} class="text-[var(--text-faint)] shrink-0" />
+            <input
+              type="text"
+              placeholder={t("models.searchProviders")}
+              value={search()}
+              onInput={(e) => setSearch(e.currentTarget.value)}
+              class="w-full bg-transparent text-[12.5px] text-[var(--text-primary)] outline-none"
+            />
+          </div>
         </div>
-      </div>
 
-      <div class="flex-1 overflow-y-auto grid grid-cols-2 gap-2 pr-1">
+        <div class="flex-1 overflow-y-auto grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 content-start gap-2.5 pr-1">
         <For each={filtered()}>
           {(item) => {
             const isConn = () => props.connectedSet.has(item.id);
@@ -95,6 +96,7 @@ export function ProviderSelectAllView(props: {
             );
           }}
         </For>
+        </div>
       </div>
     </div>
   );

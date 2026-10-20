@@ -160,8 +160,8 @@ export function ProviderConnectView(props: {
   };
 
   return (
-    <form onSubmit={onSaveConnect} class="flex-1 flex flex-col justify-between p-6 overflow-y-auto">
-      <div class="space-y-4">
+    <form onSubmit={onSaveConnect} class="flex-1 flex flex-col justify-between p-6 sm:p-8 overflow-y-auto">
+      <div class="mx-auto w-full max-w-3xl space-y-4">
         <div class="flex items-center justify-between">
           <button
             type="button"
@@ -346,7 +346,7 @@ export function ProviderConnectView(props: {
         </Show>
       </div>
 
-      <div class="flex items-center justify-between border-t border-[var(--border-subtle)] pt-4 mt-4">
+      <div class="mx-auto w-full max-w-3xl flex items-center justify-between border-t border-[var(--border-subtle)] pt-4 mt-6">
         <span class="text-[11px] text-[var(--text-faint)]">{t("models.keysStoreNote")}</span>
         <button
           type="submit"

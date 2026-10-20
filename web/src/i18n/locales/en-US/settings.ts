@@ -3,6 +3,11 @@
 export const settings = {
   modalTitle: "System Settings",
   modalSubtitle: "Configure appearance, language, composer behavior, Git worktree isolation, and runtime",
+  backToWorkspace: "Back to Workspace",
+  groupModels: "Models & Routing",
+  groupAgentSafety: "Agent & Safety",
+  groupWorkspace: "Preferences",
+  groupSystem: "System",
   tabGeneral: "General",
   tabChat: "Chat",
   tabWorkspace: "Workspace",

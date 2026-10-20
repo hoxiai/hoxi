@@ -292,6 +292,7 @@ export default function MessageStream(props: { hidden?: boolean }) {
         isSessionBusy() &&
         !ev.defaultPrevented &&
         !searchOpen() &&
+        !appSettings.modalOpen &&
         !workspace.providerModalOpen &&
         !workspace.arenaModalOpen &&
         (ev.key === "Escape" || ((ev.metaKey || ev.ctrlKey) && ev.key === "."))

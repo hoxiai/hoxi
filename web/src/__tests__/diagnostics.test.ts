@@ -1,6 +1,6 @@
 import { diagnosticsAPI, type DiagnosticsResponse } from "../services/diagnostics";
 import { diagnostics, openDiagnostics, refreshDiagnostics, resetDiagnosticsFilters, setDiagnostics, setDiagnosticsFilter } from "../store/diagnostics";
-import { appSettings, setAppSettings } from "../store/settings";
+import { appSettings, closeSettingsModal, openProviderModal, openSettingsModal, setAppSettings } from "../store/settings";
 import { setWorkspace, workspace } from "../store/workspace";
 import { assertEqual, assertTrue, describe, it } from "./test-harness";
 
@@ -33,6 +33,17 @@ describe("Diagnostics", () => {
     const settings = { modalOpen: appSettings.modalOpen, activeTab: appSettings.activeTab };
     const providerModalOpen = workspace.providerModalOpen;
     try {
+      openProviderModal("custom", "ep-1");
+      assertEqual(appSettings.modalOpen, true);
+      assertEqual(appSettings.activeTab, "custom");
+      assertEqual(workspace.editingProviderID, "ep-1");
+      openSettingsModal("providers");
+      assertEqual(appSettings.activeTab, "providers");
+      assertEqual(workspace.editingProviderID, null);
+      closeSettingsModal();
+      assertEqual(appSettings.modalOpen, false);
+      assertEqual(workspace.providerModalOpen, false);
+
       setWorkspace("providerModalOpen", true);
       openDiagnostics({ providerID: "provider-a" });
       assertEqual(workspace.providerModalOpen, false);

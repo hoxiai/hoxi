@@ -120,7 +120,8 @@ export default function ModelsRoleTab() {
   );
 
   return (
-    <div class="flex-1 overflow-y-auto p-5 space-y-5">
+    <div class="flex-1 overflow-y-auto p-6 sm:p-8">
+      <div class="mx-auto w-full max-w-4xl space-y-5">
       <div class="flex items-center gap-3 rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/50 px-4 py-3">
         <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[var(--accent-surface)] text-[var(--accent-primary)]">
           <SlidersHorizontal size={15} />
@@ -340,6 +341,7 @@ export default function ModelsRoleTab() {
             }}
           </For>
         </div>
+      </div>
       </div>
     </div>
   );

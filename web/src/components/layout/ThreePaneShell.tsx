@@ -16,7 +16,6 @@ import {
 
 const WorkspaceModal = lazy(() => import("./WorkspaceModal"));
 const ExternalHandoffModal = lazy(() => import("../handoff/ExternalHandoffModal"));
-const ProviderModal = lazy(() => import("../models/ProviderModal"));
 const ModelLeaderboardModal = lazy(() => import("../models/ModelLeaderboardModal"));
 const SettingsModal = lazy(() => import("../settings/SettingsModal"));
 
@@ -58,14 +57,20 @@ export default function ThreePaneShell() {
     const onKeyDown = (ev: KeyboardEvent) => {
       if ((ev.metaKey || ev.ctrlKey) && ev.key === ",") {
         ev.preventDefault();
-        if (appSettings.modalOpen) {
+        if (appSettings.modalOpen || workspace.providerModalOpen) {
           closeSettingsModal();
         } else {
           openSettingsModal("general");
         }
         return;
       }
-      if (ev.key === "Escape" && appSettings.modalOpen) {
+      if (
+        ev.key === "Escape" &&
+        (appSettings.modalOpen || workspace.providerModalOpen) &&
+        !leaderboardState.modalOpen &&
+        !workspace.handoffModalOpen &&
+        workspace.workspaceModalMode === null
+      ) {
         ev.preventDefault();
         closeSettingsModal();
       }
@@ -250,7 +255,7 @@ export default function ThreePaneShell() {
         </div>
       </main>
 
-      {/* Provider, Custom Model, Workspace, Session Handoff & System Settings Modals */}
+      {/* Workspace, Session Handoff, Leaderboard Modals & Full-Screen Settings Control Center */}
       <Suspense>
         <Show when={workspace.workspaceModalMode !== null}>
           <WorkspaceModal />
@@ -258,13 +263,10 @@ export default function ThreePaneShell() {
         <Show when={workspace.handoffModalOpen}>
           <ExternalHandoffModal />
         </Show>
-        <Show when={workspace.providerModalOpen}>
-          <ProviderModal />
-        </Show>
         <Show when={leaderboardState.modalOpen}>
           <ModelLeaderboardModal />
         </Show>
-        <Show when={appSettings.modalOpen}>
+        <Show when={appSettings.modalOpen || workspace.providerModalOpen}>
           <SettingsModal />
         </Show>
       </Suspense>

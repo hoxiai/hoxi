@@ -1,7 +1,7 @@
 // web/src/store/auto-models.ts
 import { createSignal } from "solid-js";
 import { t } from "../i18n";
-import { hoxiAPI, type ProviderInfo, type ProviderModelInfo } from "../services/api";
+import { hoxiAPI, leaderboardAPI, type ProviderInfo, type ProviderModelInfo } from "../services/api";
 import { isModelFree } from "./provider-catalog";
 import { setWorkspace, workspace, type SelectedModel } from "./workspace";
 
@@ -40,21 +40,26 @@ export interface FreeTierGuideItem {
   baseURL?: string;
   defaultModels?: Array<{ id: string; name: string; reasoning: boolean; free: boolean }>;
   signupURL: string;
-  titleKey:
+  title?: string;
+  badge?: string;
+  quota?: string;
+  step?: string;
+  recommendedModels?: string[];
+  titleKey?:
     | "models.freeHubProviderOpenRouterTitle"
     | "models.freeHubProviderGeminiTitle"
     | "models.freeHubProviderGroqTitle"
     | "models.freeHubProviderSiliconTitle"
     | "models.freeHubProviderZhipuTitle"
     | "models.freeHubProviderModelScopeTitle";
-  quotaKey:
+  quotaKey?:
     | "models.freeHubProviderOpenRouterQuota"
     | "models.freeHubProviderGeminiQuota"
     | "models.freeHubProviderGroqQuota"
     | "models.freeHubProviderSiliconQuota"
     | "models.freeHubProviderZhipuQuota"
     | "models.freeHubProviderModelScopeQuota";
-  stepKey:
+  stepKey?:
     | "models.freeHubProviderOpenRouterStep"
     | "models.freeHubProviderGeminiStep"
     | "models.freeHubProviderGroqStep"
@@ -126,6 +131,55 @@ export const FREE_TIER_GUIDE_ITEMS: readonly FreeTierGuideItem[] = [
     stepKey: "models.freeHubProviderModelScopeStep",
   },
 ];
+
+const [remoteFreeTierGuides, setRemoteFreeTierGuides] = createSignal<FreeTierGuideItem[]>([]);
+let lastFreeTierFetchLang = "";
+
+export function getFreeTierGuideItems(): readonly FreeTierGuideItem[] {
+  const remote = remoteFreeTierGuides();
+  return remote.length > 0 ? remote : FREE_TIER_GUIDE_ITEMS;
+}
+
+export async function fetchFreeTierGuides(lang: string = "zh"): Promise<readonly FreeTierGuideItem[]> {
+  const normalizedLang = lang.toLowerCase().startsWith("zh") ? "zh" : "en";
+  if (remoteFreeTierGuides().length > 0 && lastFreeTierFetchLang === normalizedLang) {
+    return remoteFreeTierGuides();
+  }
+  try {
+    const items = await leaderboardAPI.getFreeTiers(normalizedLang);
+    if (Array.isArray(items) && items.length > 0) {
+      const mapped: FreeTierGuideItem[] = items.map((item) => {
+        const recModels = Array.isArray(item.recommendedModels) ? item.recommendedModels : [];
+        return {
+          id: item.id,
+          providerID: item.providerID,
+          customMode: Boolean(item.customMode),
+          baseURL: item.baseUrl,
+          signupURL: item.signupUrl,
+          title: item.name,
+          badge: item.badge,
+          quota: item.quotaLabel,
+          step: Array.isArray(item.steps) && item.steps.length > 0
+            ? item.steps.map((s: string, idx: number) => `${idx + 1}. ${s}`).join(" · ")
+            : "",
+          recommendedModels: recModels,
+          defaultModels: recModels.map((m: string) => ({
+            id: m,
+            name: m,
+            reasoning: /r1|qwq|reason|thinking/i.test(m),
+            free: true,
+          })),
+        };
+      });
+      lastFreeTierFetchLang = normalizedLang;
+      setRemoteFreeTierGuides(mapped);
+      return mapped;
+    }
+  } catch {
+    /* fallback to local FREE_TIER_GUIDE_ITEMS */
+  }
+  return FREE_TIER_GUIDE_ITEMS;
+}
 
 function createDefaultAutoPools(): Record<string, AutoModelPoolConfig> {
   return {

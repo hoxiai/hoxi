@@ -333,6 +333,8 @@ func (g *Gateway) registerRoutes(distFS fs.FS) {
 		g.mux.Handle("/api/hoxi/models/leaderboard/", h)
 		g.mux.Handle("/api/hoxi/models/pricing", h)
 		g.mux.Handle("/api/hoxi/models/pricing/", h)
+		g.mux.Handle("/api/hoxi/models/free-tiers", h)
+		g.mux.Handle("/api/hoxi/models/free-tiers/", h)
 		g.mux.Handle("/api/hoxi/gateways/connectable", h)
 		g.mux.Handle("/api/hoxi/gateways/connectable/", h)
 	}

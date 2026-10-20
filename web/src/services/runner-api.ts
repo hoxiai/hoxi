@@ -208,4 +208,12 @@ export const leaderboardAPI = {
     );
     return json.data?.items || [];
   },
+  async getFreeTiers(
+    lang: string = "en"
+  ): Promise<import("./api-types").FreeTierGuideRemoteItem[]> {
+    const json = await requestJSON<import("./api-types").FreeTiersResponse>(
+      `/api/hoxi/models/free-tiers?lang=${encodeURIComponent(lang)}`
+    );
+    return json.data?.items || [];
+  },
 };

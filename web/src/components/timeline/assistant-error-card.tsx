@@ -7,9 +7,9 @@ import {
   isRunnerStallError,
   isUserAbortError,
   openDiagnostics,
+  openProviderModal,
   retryLastUserPrompt,
   selectModel,
-  setWorkspace,
   workspace,
 } from "../../store/workspace";
 import { ProviderHealthBadge } from "../models/ProviderHealthBadge";
@@ -169,7 +169,7 @@ export function AssistantErrorCard(props: { info: MessageInfo }) {
 
               <button
                 type="button"
-                onClick={() => setWorkspace("providerModalOpen", true)}
+                onClick={() => openProviderModal("providers")}
                 class="inline-flex items-center gap-1 rounded-lg border border-[var(--danger-border)] bg-[var(--bg-panel)]/80 px-2.5 py-1 text-[11px] font-medium text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
               >
                 <Icon name="sliders" size="small" />

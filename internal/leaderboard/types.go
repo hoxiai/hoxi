@@ -102,3 +102,28 @@ type ModelPricingResponse struct {
 	Message string            `json:"message"`
 	Data    *ModelPricingData `json:"data"`
 }
+
+type FreeTierGuideItem struct {
+	ID                string   `json:"id"`
+	ProviderID        string   `json:"providerID"`
+	Name              string   `json:"name"`
+	Badge             string   `json:"badge"`
+	QuotaLabel        string   `json:"quotaLabel"`
+	Steps             []string `json:"steps"`
+	SignupURL         string   `json:"signupUrl"`
+	BaseURL           string   `json:"baseUrl"`
+	CustomMode        bool     `json:"customMode,omitempty"`
+	RecommendedModels []string `json:"recommendedModels"`
+}
+
+type FreeTiersData struct {
+	UpdatedAt string              `json:"updatedAt"`
+	Total     int                 `json:"total"`
+	Items     []FreeTierGuideItem `json:"items"`
+}
+
+type FreeTiersResponse struct {
+	Code    int            `json:"code"`
+	Message string         `json:"message"`
+	Data    *FreeTiersData `json:"data"`
+}

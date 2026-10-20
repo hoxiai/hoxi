@@ -3,6 +3,7 @@ package leaderboard
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -371,6 +372,179 @@ func (s *Service) fallbackModelPricing() *ModelPricingResponse {
 		Message: "ok (cached offline fallback)",
 		Data: &ModelPricingData{
 			UpdatedAt: "2026-08-27",
+			Total:     len(items),
+			Items:     items,
+		},
+	}
+}
+
+func (s *Service) GetFreeTiers(lang ...string) (*FreeTiersResponse, error) {
+	resolvedLang := normalizeLang(lang...)
+	cacheKey := fmt.Sprintf("free_tiers:%s", resolvedLang)
+
+	s.mu.RLock()
+	if entry, ok := s.cache[cacheKey]; ok && time.Now().Before(entry.expiresAt) {
+		s.mu.RUnlock()
+		return entry.data.(*FreeTiersResponse), nil
+	}
+	s.mu.RUnlock()
+
+	u, err := url.Parse(s.baseURL + "/api/hoxi/models/free-tiers")
+	if err != nil {
+		return s.fallbackFreeTiers(resolvedLang), nil
+	}
+	q := u.Query()
+	q.Set("lang", resolvedLang)
+	u.RawQuery = q.Encode()
+
+	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
+	if err != nil {
+		return s.fallbackFreeTiers(resolvedLang), nil
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Accept-Language", resolvedLang)
+	req.Header.Set("User-Agent", "HoxiDesktop/1.0")
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return s.fallbackFreeTiers(resolvedLang), nil
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return s.fallbackFreeTiers(resolvedLang), nil
+	}
+
+	var result FreeTiersResponse
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&result); err != nil || result.Data == nil || len(result.Data.Items) == 0 {
+		return s.fallbackFreeTiers(resolvedLang), nil
+	}
+
+	s.mu.Lock()
+	s.cache[cacheKey] = cachedEntry{
+		data:      &result,
+		expiresAt: time.Now().Add(s.cacheTTL),
+	}
+	s.mu.Unlock()
+
+	return &result, nil
+}
+
+func (s *Service) fallbackFreeTiers(lang string) *FreeTiersResponse {
+	isZh := lang == "zh"
+	pick := func(en, zh string) string {
+		if isZh {
+			return zh
+		}
+		return en
+	}
+	pickSlice := func(en, zh []string) []string {
+		if isZh {
+			return zh
+		}
+		return en
+	}
+
+	items := []FreeTierGuideItem{
+		{
+			ID:         "google",
+			ProviderID: "google",
+			Name:       "Google AI Studio (Gemini)",
+			Badge:      pick("Generous Daily Free", "每日高频免费"),
+			QuotaLabel: pick("500–1,500 free RPD on Gemini 2.5 Flash with 1M context window", "Gemini 2.5 Flash 每日 500~1500 次免费请求，1M 超长上下文"),
+			Steps: pickSlice(
+				[]string{
+					"Sign in to Google AI Studio (aistudio.google.com/apikey) with your Google account",
+					"Click Get API key -> Create API key (no credit card required)",
+					"Select Google in Hoxi Provider Settings and paste your API key(s)",
+				},
+				[]string{
+					"使用 Google 账号登录 Google AI Studio (aistudio.google.com/apikey)",
+					"点击右上角 Get API key -> Create API key 一键生成密钥（无需绑定信用卡）",
+					"在 Hoxi 供应商设置中选择 Google，粘贴 API Key（可粘贴多个 Key 用逗号分隔实现自动轮询）",
+				},
+			),
+			SignupURL:         "https://aistudio.google.com/apikey",
+			BaseURL:           "https://generativelanguage.googleapis.com/v1beta",
+			CustomMode:        false,
+			RecommendedModels: []string{"gemini-2.5-flash", "gemini-2.0-flash"},
+		},
+		{
+			ID:         "groq",
+			ProviderID: "groq",
+			Name:       pick("Groq Cloud (Ultra-Fast LPU)", "Groq Cloud (LPU 极速推理)"),
+			Badge:      pick("Free Developer Tier", "注册即送免费层"),
+			QuotaLabel: pick("1,000–14,400 RPD free across Llama 3.3 70B, Qwen & DeepSeek", "Llama 3.3 70B / Qwen / DeepSeek 每日最高 1,000~14,400 次免费请求"),
+			Steps: pickSlice(
+				[]string{
+					"Sign in at console.groq.com with GitHub or Google",
+					"Go to API Keys -> Create API Key (gsk_...)",
+					"Add a Custom Endpoint in Hoxi with Base URL https://api.groq.com/openai/v1",
+				},
+				[]string{
+					"访问 console.groq.com 使用 GitHub 或 Google 账号一键登录",
+					"左侧菜单进入 API Keys -> Create API Key 生成 gsk_... 密钥",
+					"在 Hoxi 自定义端点中添加：https://api.groq.com/openai/v1 并填入 API Key",
+				},
+			),
+			SignupURL:         "https://console.groq.com/keys",
+			BaseURL:           "https://api.groq.com/openai/v1",
+			CustomMode:        true,
+			RecommendedModels: []string{"llama-3.3-70b-versatile", "qwen-qwq-32b"},
+		},
+		{
+			ID:         "openrouter",
+			ProviderID: "openrouter",
+			Name:       pick("OpenRouter (:free Models)", "OpenRouter (:free 免费模型专区)"),
+			Badge:      pick("Multi-Model Free Pool", "多模型聚合白嫖"),
+			QuotaLabel: pick("Dozens of :free models (DeepSeek R1/V3, Gemma 3, Qwen3) at $0 cost", "数十款带 :free 后缀的开源旗舰模型（DeepSeek R1/V3、Gemma 3、Qwen3）免费调用"),
+			Steps: pickSlice(
+				[]string{
+					"Visit openrouter.ai/settings/keys and click Create Key",
+					"Select OpenRouter in Hoxi Providers and paste your sk-or-v1-... key",
+					"Add :free models to hoxi-auto/free for automatic 429 rotation",
+				},
+				[]string{
+					"登录 openrouter.ai/settings/keys，点击 Create Key 创建免费密钥",
+					"在 Hoxi 供应商列表选择 OpenRouter 并填入 sk-or-v1-... 密钥",
+					"将带 :free 后缀的模型加入 hoxi-auto/free 候选池，触发 429 自动切换下一节点",
+				},
+			),
+			SignupURL:         "https://openrouter.ai/settings/keys",
+			BaseURL:           "https://openrouter.ai/api/v1",
+			CustomMode:        false,
+			RecommendedModels: []string{"deepseek/deepseek-chat-v3-0324:free", "deepseek/deepseek-r1:free", "qwen/qwen3-235b-a22b:free"},
+		},
+		{
+			ID:         "siliconflow",
+			ProviderID: "siliconflow",
+			Name:       pick("SiliconFlow Cloud", "SiliconFlow 硅基流动"),
+			Badge:      pick("Permanent Free Models", "国内直连 + 永久免费模型"),
+			QuotaLabel: pick("Signup bonus credits + permanent ¥0 free models (Qwen2.5-7B, DeepSeek-R1-Distill-7B)", "注册赠送体验金 + Qwen2.5-7B / DeepSeek-R1-Distill-7B 等多款模型 ¥0 永久免费"),
+			Steps: pickSlice(
+				[]string{
+					"Register at cloud.siliconflow.cn",
+					"Create a new API key (sk-...) under API Keys",
+					"Add a Custom Endpoint in Hoxi with Base URL https://api.siliconflow.cn/v1",
+				},
+				[]string{
+					"访问 cloud.siliconflow.cn 注册账号（国内网络直连免代理）",
+					"在「API 密钥」页面新建密钥 sk-...",
+					"在 Hoxi 自定义端点中添加 Base URL：https://api.siliconflow.cn/v1",
+				},
+			),
+			SignupURL:         "https://cloud.siliconflow.cn/account/ak",
+			BaseURL:           "https://api.siliconflow.cn/v1",
+			CustomMode:        true,
+			RecommendedModels: []string{"Qwen/Qwen2.5-Coder-7B-Instruct", "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"},
+		},
+	}
+
+	return &FreeTiersResponse{
+		Code:    200,
+		Message: "ok (cached offline fallback)",
+		Data: &FreeTiersData{
+			UpdatedAt: "2026-10-20",
 			Total:     len(items),
 			Items:     items,
 		},

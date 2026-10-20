@@ -402,13 +402,6 @@ export function reorderProjects(
   setProjectOrder(list);
 }
 
-export function openProviderModal(
-  tab: ProviderModalTab = "providers",
-  editProviderID: string | null = null
-) {
-  setWorkspace({ providerModalTab: tab, editingProviderID: editProviderID, providerModalOpen: true });
-}
-
 export function openHandoffModal() { setWorkspace("handoffModalOpen", true); }
 export function closeHandoffModal() { setWorkspace("handoffModalOpen", false); }
 

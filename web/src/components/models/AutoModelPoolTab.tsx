@@ -1,5 +1,5 @@
 // web/src/components/models/AutoModelPoolTab.tsx
-import { createMemo, createSignal, For, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
 import {
   ArrowDown,
   ArrowUp,
@@ -17,14 +17,16 @@ import {
   AUTO_PROVIDER_ID,
   autoPools,
   clearAutoPoolCooldowns,
+  closeSettingsModal,
   createCustomAutoPool,
   deleteCustomAutoPool,
   extractFlattenedModels,
-  FREE_TIER_GUIDE_ITEMS,
+  fetchFreeTierGuides,
   getAutoPoolDescription,
   getAutoPoolDisplayName,
   getCandidateCooldownRemainingMs,
   getEffectivePoolCandidates,
+  getFreeTierGuideItems,
   isCandidateCoolingDown,
   openProviderModal,
   openURLInInspector,
@@ -43,7 +45,7 @@ import {
 } from "../../store/workspace";
 import { hoxiAPI } from "../../services/api";
 import { ProviderIcon } from "../icons";
-import { t } from "../../i18n";
+import { locale, t } from "../../i18n";
 
 function formatCooldownRemain(ms: number): string {
   const sec = Math.max(1, Math.ceil(ms / 1000));
@@ -60,6 +62,10 @@ export default function AutoModelPoolTab() {
   const [creatingCustom, setCreatingCustom] = createSignal<boolean>(false);
   const [newPoolID, setNewPoolID] = createSignal<string>("");
   const [newPoolName, setNewPoolName] = createSignal<string>("");
+
+  createEffect(() => {
+    void fetchFreeTierGuides(locale());
+  });
 
   const poolIDs = createMemo<string[]>(() => {
     const map = autoPools();
@@ -200,7 +206,7 @@ export default function AutoModelPoolTab() {
         }
         await hoxiAPI
           .saveHoxiProviderConfig(item.providerID, {
-            name: item.providerID === "siliconflow" ? "SiliconFlow" : "ModelScope",
+            name: item.title || (item.providerID === "siliconflow" ? "SiliconFlow" : item.providerID),
             npm: "@ai-sdk/openai-compatible",
             options: { baseURL: item.baseURL },
             models: modelsObj,
@@ -218,7 +224,8 @@ export default function AutoModelPoolTab() {
     workspace.selectedModel?.modelID === selectedPoolID();
 
   return (
-    <div class="flex-1 overflow-y-auto p-5 space-y-5">
+    <div class="flex-1 overflow-y-auto p-6 sm:p-8">
+      <div class="mx-auto w-full max-w-5xl space-y-5">
       {/* Pool Selector Tabs */}
       <div class="flex flex-wrap items-center justify-between gap-2">
         <div class="flex flex-wrap items-center gap-1.5">
@@ -337,7 +344,7 @@ export default function AutoModelPoolTab() {
               type="button"
               onClick={() => {
                 selectModel({ providerID: AUTO_PROVIDER_ID, modelID: selectedPoolID() });
-                setWorkspace("providerModalOpen", false);
+                closeSettingsModal();
               }}
               class={`inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-[11.5px] font-semibold cursor-pointer ${
                 isCurrentlySelectedInWorkspace()
@@ -574,9 +581,12 @@ export default function AutoModelPoolTab() {
         </div>
 
         <div class="grid grid-cols-2 gap-3">
-          <For each={FREE_TIER_GUIDE_ITEMS}>
+          <For each={getFreeTierGuideItems()}>
             {(item) => {
               const keyCount = () => providerKeyCounts()[item.providerID] || 0;
+              const titleText = () => item.title || (item.titleKey ? t(item.titleKey) : item.id);
+              const quotaText = () => item.quota || (item.quotaKey ? t(item.quotaKey) : "");
+              const stepText = () => item.step || (item.stepKey ? t(item.stepKey) : "");
               return (
                 <div class="flex flex-col justify-between rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/50 p-3.5 space-y-2.5">
                   <div class="space-y-1.5">
@@ -584,7 +594,7 @@ export default function AutoModelPoolTab() {
                       <div class="flex items-center gap-2 min-w-0">
                         <ProviderIcon id={item.providerID} class="w-4 h-4 shrink-0" />
                         <span class="text-[12.5px] font-semibold text-[var(--text-primary)] truncate">
-                          {t(item.titleKey)}
+                          {titleText()}
                         </span>
                       </div>
                       <Show when={keyCount() > 1}>
@@ -594,10 +604,10 @@ export default function AutoModelPoolTab() {
                       </Show>
                     </div>
                     <div class="inline-block rounded-md bg-[var(--ok-surface)] px-2 py-0.5 text-[10.5px] font-medium text-[var(--ok-text)]">
-                      {t(item.quotaKey)}
+                      {quotaText()}
                     </div>
                     <p class="text-[11px] leading-relaxed text-[var(--text-secondary)]">
-                      {t(item.stepKey)}
+                      {stepText()}
                     </p>
                   </div>
 
@@ -627,6 +637,7 @@ export default function AutoModelPoolTab() {
             }}
           </For>
         </div>
+      </div>
       </div>
     </div>
   );

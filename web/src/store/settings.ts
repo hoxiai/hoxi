@@ -1,9 +1,23 @@
 // web/src/store/settings.ts
 import { createStore } from "solid-js/store";
 import type { ApprovalMode } from "./approval-mode";
-import { applyThemeClass, setWorkspace, THEME_KEY, workspace } from "./workspace";
+import {
+  applyThemeClass,
+  setWorkspace,
+  THEME_KEY,
+  workspace,
+  type ProviderModalTab,
+} from "./workspace";
 
-export type SettingsTab = "general" | "chat" | "workspace" | "terminal" | "system" | "privacy" | "diagnostics";
+export type SettingsTab =
+  | "general"
+  | "chat"
+  | "workspace"
+  | "terminal"
+  | "system"
+  | "privacy"
+  | "diagnostics"
+  | ProviderModalTab;
 export type ThemeMode = "light" | "dark" | "system";
 export type ColorScheme = "blue" | "classic";
 export type FontScale = "compact" | "default" | "comfortable" | "large";
@@ -333,11 +347,38 @@ if (typeof window !== "undefined" && window.matchMedia) {
 }
 
 export function openSettingsModal(tab: SettingsTab = "general") {
+  if (
+    tab === "providers" ||
+    tab === "custom" ||
+    tab === "auto" ||
+    tab === "models" ||
+    tab === "policy"
+  ) {
+    if (tab !== "custom") {
+      setWorkspace("editingProviderID", null);
+    }
+    setWorkspace({ providerModalTab: tab, providerModalOpen: false });
+  } else {
+    setWorkspace("providerModalOpen", false);
+  }
+  setAppSettings({ activeTab: tab, modalOpen: true });
+}
+
+export function openProviderModal(
+  tab: ProviderModalTab = "providers",
+  editProviderID: string | null = null
+) {
+  setWorkspace({
+    providerModalTab: tab,
+    editingProviderID: editProviderID,
+    providerModalOpen: true,
+  });
   setAppSettings({ activeTab: tab, modalOpen: true });
 }
 
 export function closeSettingsModal() {
   setAppSettings("modalOpen", false);
+  setWorkspace("providerModalOpen", false);
 }
 
 export function updateAppSetting<K extends keyof PersistedSettings>(

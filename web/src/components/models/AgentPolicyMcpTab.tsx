@@ -172,7 +172,8 @@ export default function AgentPolicyMcpTab() {
   };
 
   return (
-    <div class="flex-1 overflow-y-auto p-6 space-y-6">
+    <div class="flex-1 overflow-y-auto p-6 sm:p-8">
+      <div class="mx-auto w-full max-w-4xl space-y-6">
       {/* Section 1: Auto-Approve Permissions */}
       <div class="space-y-3">
         <div class="flex items-center justify-between">
@@ -449,6 +450,7 @@ export default function AgentPolicyMcpTab() {
           {feedback()!.text}
         </div>
       </Show>
+      </div>
     </div>
   );
 }

@@ -159,7 +159,8 @@ export default function ProviderCatalogTab() {
   return (
     <div class="flex flex-1 flex-col min-h-0 overflow-hidden">
       <Show when={subView() === "list"}>
-        <div class="flex-1 overflow-y-auto p-5 space-y-6">
+        <div class="flex-1 overflow-y-auto p-6 sm:p-8">
+          <div class="mx-auto w-full max-w-5xl space-y-6">
           <LocalCliBridgeBanner />
 
           {/* Custom Provider Quick Card */}
@@ -337,7 +338,7 @@ export default function ProviderCatalogTab() {
               </button>
             </div>
 
-            <div class="grid grid-cols-2 gap-2.5">
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
               <For each={popularNotConnected()}>
                 {(item) => {
                   const modelCount = () => Object.keys(item.models || {}).length;
@@ -420,6 +421,7 @@ export default function ProviderCatalogTab() {
               </Show>
             </div>
           </Show>
+          </div>
         </div>
       </Show>
 

@@ -4,6 +4,11 @@ import type { SettingsI18n } from "../../types";
 export const settings: SettingsI18n = {
   modalTitle: "系统设置",
   modalSubtitle: "配置界面语言、外观、对话交互、Git 沙盒与运行环境",
+  backToWorkspace: "返回工作区",
+  groupModels: "模型与路由",
+  groupAgentSafety: "Agent 与安全",
+  groupWorkspace: "偏好与工作区",
+  groupSystem: "系统与诊断",
   tabGeneral: "通用",
   tabChat: "对话",
   tabWorkspace: "工作区",

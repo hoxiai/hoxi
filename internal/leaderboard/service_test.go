@@ -87,4 +87,18 @@ func TestLeaderboardHTTPHandler(t *testing.T) {
 	if pricingRes.Data == nil || len(pricingRes.Data.Items) == 0 {
 		t.Fatalf("expected pricing items in response, got %+v", pricingRes)
 	}
+
+	reqFree := httptest.NewRequest(http.MethodGet, "/api/hoxi/models/free-tiers?lang=zh", nil)
+	recFree := httptest.NewRecorder()
+	handler.ServeHTTP(recFree, reqFree)
+	if recFree.Code != http.StatusOK {
+		t.Fatalf("expected status 200 for free-tiers, got %d", recFree.Code)
+	}
+	var freeRes FreeTiersResponse
+	if err := json.NewDecoder(recFree.Body).Decode(&freeRes); err != nil {
+		t.Fatalf("failed to decode free-tiers response: %v", err)
+	}
+	if freeRes.Data == nil || len(freeRes.Data.Items) == 0 {
+		t.Fatalf("expected free-tiers items in response, got %+v", freeRes)
+	}
 }
