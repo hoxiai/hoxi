@@ -69,6 +69,7 @@ type Gateway struct {
 	updateDraining        bool
 	updateMutations       int
 	updateDirectories     map[string]bool
+	pulseCache            devPulseCache
 }
 
 func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statusbar.Tracker) *Gateway {

@@ -22,27 +22,36 @@
 ├── internal/
 │   ├── app/                          # DesktopApp lifecycle, Wails bindings, origin allow-list & signal handling
 │   ├── agyhook/                      # `hoxi agy-hook` Antigravity PreToolUse hook → runner approval gate
+│   ├── attachment/                   # Multimodal file/image attachment staging, validation & store
 │   ├── auth/                         # Hoxi account one-click authorization, token poll/exchange & store
 │   ├── browser/                      # Headless Chrome session manager, tabs, actions & inspector bridge
 │   ├── buildinfo/                    # Build version embedded by the desktop build
 │   ├── claudeconfig/                 # Claude Code model/config discovery & selection
 │   ├── cli/                          # Terminal-first `hoxi` CLI (REPL, SSE streaming renderer, subcommands & gateway client)
+│   ├── codeindex/                    # Tree-sitter / symbol & trigram workspace code index
 │   ├── diagnostics/                  # Gateway & runtime error ring-buffer, health diagnostics & telemetry
+│   ├── forge/                        # GitHub / GitLab PR, issue & CI review integration
 │   ├── gateway/                      # In-process reverse proxy, Basic Auth, WS/SSE bridge, dev pulse & security
 │   ├── handoff/                      # Cross-CLI session handoff (Claude/Codex/Gemini/Grok/OpenCode/Trae/Qoder/CodeBuddy) + local CLI bridge & materializer
 │   ├── leaderboard/                  # Model / endpoint leaderboard aggregation & cache
 │   ├── opencode/                     # OpenCode binary resolver, installer, daemon supervision & browser plugin overlay
+│   ├── orchestration/                # Multi-agent DAG task orchestration, scheduling & sub-session dispatch
 │   ├── provider/                     # Provider config, models.json, LLM client, probing, audit & telemetry
+│   ├── recall/                       # Cross-session semantic / BM25 memory recall & indexing
 │   ├── runner/                       # Multi-runtime execution engine (OpenCode/Claude/Antigravity/Qoder/CodeBuddy): process adapters, translators, hook gates, session store & revert
+│   ├── sandbox/                      # OS-level Seatbelt / Bubblewrap execution sandbox policy & profiles
+│   ├── skills/                       # Local & marketplace Agent Skills discovery, parser & installer
 │   ├── statusbar/                    # Running/Attention tracker & macOS NSStatusBar (CGo)
+│   ├── telemetry/                    # Local token/cost/latency metrics & session usage ledger
+│   ├── textindex/                    # Pure-Go BM25 / trigram full-text search index primitive
 │   ├── updater/                      # Sparkle-based native auto-update checker & appcast
 │   ├── workspace/                    # Multi-workspace project profile store & validation
 │   └── worktree/                     # Git worktree session sandbox manager, diffs, branches & snapshots
 ├── web/                              # Frontend workspace (Vite + SolidJS + Tailwind)
 │   ├── src/
-│   │   ├── components/               # Modular UI by domain (layout, timeline, inspector, models, handoff, approval, terminal, settings, icons)
+│   │   ├── components/               # Modular UI by domain (layout, timeline, composer, inspector, models, handoff, approval, orchestration, automation, skills, terminal, settings, icons)
 │   │   ├── i18n/                     # Reactive t(key, params), auto-inferred types & en-US/zh-CN locale modules
-│   │   ├── services/                 # Pure HTTP/REST/SSE/Browser transport clients (api.ts, sse.ts, browser.ts, runner-api.ts)
+│   │   ├── services/                 # Pure HTTP/REST/SSE/Browser transport clients (http.ts, api.ts, sse.ts, browser.ts, runner-api.ts, platform-api.ts, …)
 │   │   ├── store/                    # SolidJS reactive store & domain modules (flat barrel export in workspace.ts)
 │   │   └── __tests__/                # Node-based unit/integration tests (sse, session-isolation, permissions, …)
 │   └── scripts/                      # check-i18n.ts, check-lines.ts (line & boundary lint), run-tests.ts
@@ -99,13 +108,13 @@
 
 1. **按领域高内聚、单向分层边界与单文件 800 行上限 (Domain Cohesion, Unidirectional Layering & 800-Line Limit)**
    - **领域高内聚与禁止张冠李戴**：模块拆分以**单一职责与业务领域高内聚**为第一原则，**严禁为了凑行数把属于模块 A 的函数跨文件塞进无关的模块 B**（如禁止把 Codex/Gemini/Claude 逻辑塞进 Grok 或 `types.go`/`helpers.go`），也禁止拆分出仅几十行的 `*-storage.ts` 脚手架文件。
-   - **单文件 800 行上限**：任何源码文件（`.go`, `.ts`, `.tsx`, `.js`, `.m`）上限为 **800 行**（纯静态图标 SVG 字典或自动生成常量表除外）。当文件接近 800 行时，应按正交子领域或独立子组件/Hook 拆分。
+   - **单文件 800 行上限**：任何源码文件（`.go`, `.ts`, `.tsx`, `.js`, `.m`, `.dart`）上限为 **800 行**（纯静态图标 SVG 字典或自动生成常量表除外）。当文件接近 800 行时，应按正交子领域或独立子组件/Hook 拆分。
    - **前端严格单向分层 (`components/ -> store/ -> services/`)**：
      - `services/` 仅负责 HTTP/REST/SSE 网络通信与协议传输，**严禁**反向 `import` 任何 `store/` 或 `components/` 模块，也不得混入纯 UI 渲染工具。
      - `store/` 负责响应式状态、领域数据计算与本地持久化，**严禁**反向 `import` 任何 `components/` 模块；所有子模块统一在 [`web/src/store/workspace.ts`](web/src/store/workspace.ts) 底部扁平重导出，禁止在子模块末尾做二级链式 `export *`。
-     - `components/` 按业务域正交归位（`layout` 仅放窗口骨架与导航栏，独立业务弹窗归入 `models`、`handoff`、`settings`、`approval` 等对应目录）。
+     - `components/` 按业务域正交归位（`layout` 仅放窗口骨架与导航栏，独立业务弹窗归入 `models`、`handoff`、`settings`、`approval`、`orchestration`、`automation`、`skills` 等对应目录）。
    - **Go 后端四层单向依赖 (`app/cli -> gateway -> 业务领域包 -> 基础底座包`)**：
-     - 业务领域包（`runner`, `handoff`, `worktree`, `provider`, `browser`, `opencode`, `workspace`, `auth`, `leaderboard`, `updater`）与底座包（`statusbar`, `claudeconfig`, `agyhook`, `diagnostics`, `buildinfo`）**严禁反向 `import` `internal/gateway`、`internal/app` 或 `internal/cli`**。
+     - 业务领域包（`runner`, `handoff`, `worktree`, `provider`, `browser`, `opencode`, `workspace`, `auth`, `leaderboard`, `updater`, `attachment`, `codeindex`, `forge`, `orchestration`, `recall`, `sandbox`, `skills`, `telemetry`）与底座包（`statusbar`, `claudeconfig`, `agyhook`, `diagnostics`, `buildinfo`, `textindex`）**严禁反向 `import` `internal/gateway`、`internal/app` 或 `internal/cli`**。
      - 各子包必须使用各自明确的 Receiver 类型（`*Gateway` / `*Service` / `*Manager`），严禁定义跨包伪装别名（如 `type desktopGateway = Service`）；Hoxi 内部自发 LLM 请求统一复用 `internal/provider/http.go` 的 `callSimpleLLM`。
 
 2. **OpenCode 上游零侵入 (Upstream Zero-Fork)**
@@ -166,7 +175,7 @@
 | **Go 网关自发轻量 LLM 调用** | 业务归各自领域包，底层复用 `provider` 的 `callSimpleLLM` | 严禁手写 `http.Post` 拼接 `/v1/messages` 或 `/chat/completions` | [`internal/provider/http.go`](internal/provider/http.go) |
 | **外部 CLI 会话扫描 / 凭证桥接** | `internal/handoff/<tool>.go` 单文件高内聚 | 严禁把工具 A 的函数塞进工具 B、`types.go` 或 `service.go` | [`internal/handoff/codex.go`](internal/handoff/codex.go) |
 | **多运行时 Agent 子进程驱动** | `internal/runner/` 对应进程 adapter 与协议 translator | 严禁侵入或修改 `internal/opencode` | [`internal/runner/`](internal/runner/http.go) |
-| **前端 HTTP / REST / SSE 客户端** | `web/src/services/`，复用 [`requestJSON`](web/src/services/api.ts) | 严禁反向导入 `store/` 或 `components/`；严禁混入纯 UI 工具 | [`web/src/services/api.ts`](web/src/services/api.ts) |
+| **前端 HTTP / REST / SSE 客户端** | `web/src/services/`，复用 [`requestJSON`](web/src/services/http.ts) | 严禁反向导入 `store/` 或 `components/`；严禁混入纯 UI 工具 | [`web/src/services/http.ts`](web/src/services/http.ts) |
 | **前端响应式状态与纯领域计算** | `web/src/store/<domain>.ts`，在 [`workspace.ts`](web/src/store/workspace.ts) 底部扁平导出 | 严禁反向导入 `components/`；严禁新建 `*-storage.ts` 或二级 `export *` | [`web/src/store/git-commit.ts`](web/src/store/git-commit.ts) |
 | **前端独立业务弹窗 / 功能面板** | `web/src/components/<domain>/`（`models/`, `handoff/`, `settings/`, `approval/`） | 严禁将非布局类的业务 Modal 塞进 `components/layout/` | [`web/src/components/handoff/`](web/src/components/handoff/ExternalHandoffModal.tsx) |
 | **前端多语言词条** | 同步写入 `web/src/i18n/locales/en-US/<domain>.ts` 与 `zh-CN/<domain>.ts` | 严禁手写维护冗长 interface（由 [`types.ts`](web/src/i18n/types.ts) 自动推导） | [`web/src/i18n/types.ts`](web/src/i18n/types.ts) |

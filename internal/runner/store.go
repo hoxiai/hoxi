@@ -73,6 +73,7 @@ func NewStore(customDir string) *Store {
 	if legacy != "" {
 		s.migrateLegacy(legacy)
 	}
+	s.trimCache()
 	return s
 }
 

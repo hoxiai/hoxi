@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -27,7 +28,7 @@ type Service struct {
 	stall       stallPolicy
 
 	mu               sync.Mutex
-	turnMu           sync.Mutex
+	turnMu           sessionTurnLocks
 	procs            map[string]*activeProcess
 	childBusy        map[string]bool
 	subs             map[chan SSEEvent]string
@@ -145,28 +146,12 @@ func (s *Service) broadcast(sessionID string, evts ...SSEEvent) {
 		}
 		s.persistEventToStore(sessionID, evt)
 		s.mu.Lock()
-		targets := make([]chan SSEEvent, 0, len(s.subs))
 		for ch, filterSid := range s.subs {
 			if filterSid == "" || filterSid == sessionID {
-				targets = append(targets, ch)
+				enqueueStreamEvent(ch, evt)
 			}
 		}
 		s.mu.Unlock()
-		isCritical := evt.Type != "message.part.delta"
-		for _, ch := range targets {
-			select {
-			case ch <- evt:
-			default:
-				if isCritical {
-					timer := time.NewTimer(50 * time.Millisecond)
-					select {
-					case ch <- evt:
-					case <-timer.C:
-					}
-					timer.Stop()
-				}
-			}
-		}
 	}
 }
 
@@ -187,8 +172,13 @@ func (s *Service) persistEventToStore(sessionID string, evt SSEEvent) {
 		if msgID != "" && partID != "" && delta != "" {
 			s.store.AppendPartDelta(sessionID, msgID, partID, delta)
 		}
+	case "session.status":
+		if status, ok := evt.Properties["status"].(SessionStatus); ok {
+			s.store.SetActive(sessionID, status.Type == "busy" || status.Type == "retry")
+		}
 	case "session.idle", "session.error":
-		s.store.Flush()
+		s.store.FlushSession(sessionID)
+		s.store.SetActive(sessionID, false)
 	}
 }
 
@@ -365,7 +355,7 @@ func (s *Service) handleSingleSession(w http.ResponseWriter, r *http.Request, se
 				Archived *int64 `json:"archived"`
 			} `json:"time"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&body); err != nil {
 			writeJSONError(w, http.StatusBadRequest, "invalid session update")
 			return
 		}
@@ -425,8 +415,8 @@ func (s *Service) handleSingleSession(w http.ResponseWriter, r *http.Request, se
 }
 
 func (s *Service) handleSessionPrompt(w http.ResponseWriter, r *http.Request, sessionID string) {
-	s.turnMu.Lock()
-	defer s.turnMu.Unlock()
+	unlock := s.turnMu.lock(sessionID)
+	defer unlock()
 	if r.Method != http.MethodPost {
 		writeJSONError(w, http.StatusMethodNotAllowed, "POST required")
 		return
@@ -443,7 +433,7 @@ func (s *Service) handleSessionPrompt(w http.ResponseWriter, r *http.Request, se
 		Parts          []MessagePart   `json:"parts"`
 		SkillSelection *SkillSelection `json:"skillSelection,omitempty"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := json.NewDecoder(io.LimitReader(r.Body, 64<<20)).Decode(&body); err != nil {
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}

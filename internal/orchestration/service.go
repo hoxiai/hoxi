@@ -300,7 +300,9 @@ func (s *Service) abortRunning(planID string) {
 	s.mu.Lock()
 	run := s.plans[planID]
 	var sessions []string
+	var directory string
 	if run != nil {
+		directory = run.plan.Directory
 		for _, task := range run.plan.Tasks {
 			if task.SessionID != "" && (task.Status == StatusRunning || task.Status == StatusQueued) {
 				sessions = append(sessions, task.SessionID)
@@ -309,7 +311,7 @@ func (s *Service) abortRunning(planID string) {
 	}
 	s.mu.Unlock()
 	for _, sessionID := range sessions {
-		s.abort(sessionID)
+		s.abort(sessionID, directory)
 	}
 }
 
@@ -371,10 +373,10 @@ func (s *Service) lastAssistantText(ctx context.Context, directory, sessionID st
 	return ""
 }
 
-func (s *Service) abort(sessionID string) {
+func (s *Service) abort(sessionID, directory string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_ = s.call(ctx, http.MethodPost, "/session/"+url.PathEscape(sessionID)+"/abort", "", nil, nil)
+	_ = s.call(ctx, http.MethodPost, "/session/"+url.PathEscape(sessionID)+"/abort", directory, nil, nil)
 }
 
 func (s *Service) call(ctx context.Context, method, path, directory string, body []byte, out interface{}) error {

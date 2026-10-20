@@ -377,11 +377,6 @@ export function isSessionArchived(session: SessionInfo): boolean {
   return workspace.archivedSessionIDs.includes(session.id);
 }
 
-export function setSessionSandboxMode(mode: "local" | "worktree") {
-  setWorkspace("sessionSandboxMode", mode);
-  try { localStorage.setItem(SESSION_SANDBOX_MODE_KEY, mode); } catch { /* ignore */ }
-}
-
 export function setProjectOrder(order: string[]) {
   const unique = Array.from(new Set(order.filter(isValidStoredProjectPath)));
   setWorkspace("projectOrder", unique);
@@ -565,27 +560,8 @@ export function clearReviewComments(sessionID: string) {
 }
 
 export function applyThemeClass(theme: "light" | "dark") {
+  if (typeof document === "undefined") return;
   document.documentElement.classList.toggle("dark", theme === "dark");
-}
-
-export function setTheme(theme: "light" | "dark") {
-  setWorkspace("theme", theme);
-  applyThemeClass(theme);
-  try {
-    localStorage.setItem(THEME_KEY, theme);
-    const rawSettings = localStorage.getItem("hoxi-app-settings:v1");
-    if (rawSettings) {
-      const parsed = JSON.parse(rawSettings);
-      if (parsed && typeof parsed === "object") {
-        parsed.themeMode = theme;
-        localStorage.setItem("hoxi-app-settings:v1", JSON.stringify(parsed));
-      }
-    }
-  } catch { /* storage unavailable */ }
-}
-
-export function toggleTheme() {
-  setTheme(workspace.theme === "dark" ? "light" : "dark");
 }
 
 export * from "./workspace-providers";
@@ -619,6 +595,7 @@ export * from "./skills";
 export * from "./terminal-context";
 export * from "./telemetry";
 export * from "./session-capabilities";
+export * from "./session-transcripts";
 
 
 

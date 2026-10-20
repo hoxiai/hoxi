@@ -445,121 +445,23 @@ export interface WorkspaceReviewResult extends CodeAuditResult {
   baseRef?: string;
 }
 
-export type ExternalToolID =
-  | "grok-cli"
-  | "claude-code"
-  | "codex-cli"
-  | "gemini-antigravity"
-  | "codebuddy"
-  | "trae"
-  | "qoder"
-  | "opencode-cli"
-  | "codex";
-
-export interface ExternalSessionSummary {
-  id: string;
-  source: ExternalToolID;
-  sourceLabel: string;
-  cwd: string;
-  title: string;
-  summary?: string;
-  model?: string;
-  gitBranch?: string;
-  gitCommit?: string;
-  createdAt: number;
-  updatedAt: number;
-  turnCount?: number;
-  matchesCwd: boolean;
-}
-
-export interface NormalizedToolCall {
-  callID: string;
-  tool: string;
-  title: string;
-  input: Record<string, any>;
-  output: string;
-  status: string;
-}
-
-export interface NormalizedTurn {
-  role: "user" | "assistant";
-  timestamp: number;
-  text: string;
-  reasoning?: string;
-  tools?: NormalizedToolCall[];
-  modelID?: string;
-}
-
-export interface ExternalPlanStep {
-  title: string;
-  status: string;
-}
-
-export interface HandoffPreviewFidelity {
-  retainedTurns: number;
-  retainedToolCalls: number;
-  retainedFiles?: string[];
-  unsupportedFeatures?: string[];
-  targetDirectory: string;
-  targetRuntime: string;
-}
-
-export interface ExternalSessionDetail {
-  summary: ExternalSessionSummary;
-  turns: NormalizedTurn[];
-  planSteps?: ExternalPlanStep[];
-  changedFiles?: string[];
-  lastTurnSummary?: string;
-  lastRecap?: string;
-  fidelity?: HandoffPreviewFidelity;
-}
-
-export interface ExternalSourceStats {
-  installed: boolean;
-  sessionCount: number;
-}
-
-export interface HandoffSessionsResponse {
-  sessions: ExternalSessionSummary[];
-  sources: Record<ExternalToolID, ExternalSourceStats>;
-}
-
-export interface HandoffImportResponse {
-  ok: boolean;
-  session?: any;
-  importedTurns: number;
-  memoryPath?: string;
-  targetDirectory?: string;
-  resolvedProviderID?: string;
-  resolvedModelID?: string;
-  error?: string;
-}
-
-export interface LocalCLIStatusItem {
-  id: ExternalToolID;
-  name: string;
-  installed: boolean;
-  authenticated: boolean;
-  connected: boolean;
-  version?: string;
-  defaultModel?: string;
-  models?: string[];
-  sessionCount: number;
-  authMode?: string;
-  providerID: string;
-}
-
-export interface LocalCLIStatusResponse {
-  tools: LocalCLIStatusItem[];
-}
-
-export interface LocalCLIImportResponse {
-  ok: boolean;
-  toolID: string;
-  providerID: string;
-  models?: string[];
-  error?: string;
-}
+export * from "./handoff-types";
+export type {
+  AuthStatusSnapshot,
+  AuthUserProfile,
+  ConnectableGatewayItem,
+  ConnectableGatewaysResponse,
+  FreeTierGuideRemoteItem,
+  FreeTiersResponse,
+  LeaderboardModelItem,
+  LeaderboardResponse,
+  ModelPricingItem,
+  ModelPricingResponse,
+  NativeUpdateStatus,
+  StartAuthResponse,
+  UpdateCheckResult,
+  UpdateMirrors,
+} from "./platform-api";
 
 export interface GitDailyPulseResponse {
   todayCommits: number;
@@ -598,184 +500,6 @@ export interface GitDailyPulseResponse {
   }>;
 }
 
-export interface AuthUserProfile {
-  id: number;
-  email: string;
-  nickname: string;
-  username?: string;
-  avatar?: string;
-  avatarUrl?: string;
-  role?: string;
-  plan?: string;
-}
-
-export interface AuthStatusSnapshot {
-  isLoggedIn: boolean;
-  isAuthorizing: boolean;
-  pendingState?: string;
-  user?: AuthUserProfile;
-  expiresAt?: string;
-  serverBaseUrl: string;
-  lastVerifiedAt?: string;
-}
-
-export interface StartAuthResponse {
-  state: string;
-  authUrl: string;
-}
-
-export interface UpdateMirrors {
-  global?: string;
-}
-
-export interface NativeUpdateStatus {
-  available: boolean;
-  draining: boolean;
-}
-
-export interface UpdateCheckResult {
-  currentVersion: string;
-  latestVersion: string;
-  versionCode: number;
-  needUpdate: boolean;
-  title: string;
-  releaseNotes: string;
-  downloadUrl: string;
-  mirrors: UpdateMirrors;
-  mandatory: boolean;
-  sha256?: string;
-  checkedAt: string;
-}
-
-export interface LeaderboardModelItem {
-  rank: number;
-  slug: string;
-  name: string;
-  vendor: string;
-  apiName: string;
-  price: {
-    currency: string;
-    input: number;
-    output: number;
-    cacheRead?: number;
-    cacheWrite?: number;
-  };
-  contextWindow: number;
-  scores: {
-    overall?: number;
-    coding?: number;
-    reasoning?: number;
-    chinese?: number;
-    agentic?: number;
-  };
-  perf: {
-    tps?: number;
-    ttft?: number;
-  };
-  badges: string[];
-  scenes: string[];
-  summary: string;
-  reasoning?: boolean;
-  isFree?: boolean;
-}
-
-export interface ConnectableGatewayItem {
-  id: string;
-  name: string;
-  domain: string;
-  url: string;
-  baseUrl: string;
-  isSelfOperated: boolean;
-  canOneClickConnect: boolean;
-  badge?: string;
-  badgeTone?: "positive" | "info" | "warning";
-  savingsPercent: number;
-  priceLabel: string;
-  officialPriceCNY: number;
-  latencyMs: number;
-  uptime: string;
-  models: string[];
-  recommendedModels: string[];
-  features: string[];
-  caveat: string;
-  authUrl?: string;
-}
-
-export interface LeaderboardResponse {
-  code: number;
-  message: string;
-  data: {
-    dimension: string;
-    updatedAt: string;
-    total: number;
-    items: LeaderboardModelItem[];
-  };
-}
-
-export interface ConnectableGatewaysResponse {
-  code: number;
-  message: string;
-  data: {
-    total: number;
-    items: ConnectableGatewayItem[];
-  };
-}
-
-export interface ModelPricingItem {
-  slug: string;
-  name: string;
-  vendor: string;
-  apiName?: string;
-  gatewayModelName?: string;
-  aaSlug?: string;
-  price: {
-    currency: string;
-    input: number;
-    output: number;
-    cacheRead?: number;
-    cacheWrite?: number;
-  };
-  contextWindow: number;
-  maxOutputTokens?: number;
-  modalities?: string[];
-  reasoning?: boolean;
-  isFree?: boolean;
-  updatedAt?: string;
-}
-
-export interface ModelPricingResponse {
-  code: number;
-  message: string;
-  data: {
-    updatedAt: string;
-    total: number;
-    items: ModelPricingItem[];
-  };
-}
-
-export interface FreeTierGuideRemoteItem {
-  id: string;
-  providerID: string;
-  name: string;
-  badge: string;
-  quotaLabel: string;
-  steps: string[];
-  signupUrl: string;
-  baseUrl: string;
-  customMode?: boolean;
-  recommendedModels: string[];
-}
-
-export interface FreeTiersResponse {
-  code: number;
-  message: string;
-  data: {
-    updatedAt: string;
-    total: number;
-    items: FreeTierGuideRemoteItem[];
-  };
-}
-
 export interface FileContentResponse {
   type?: "text" | "binary";
   content: string;
@@ -791,4 +515,5 @@ export interface FileValidateResponse {
   existing: string[];
   resolved?: Record<string, string>;
 }
+
 

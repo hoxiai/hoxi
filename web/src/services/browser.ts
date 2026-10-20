@@ -1,3 +1,5 @@
+import { getGatewayToken } from "./http";
+
 export interface BrowserScope {
   sessionID: string;
   directory: string;
@@ -100,9 +102,14 @@ export function browserPoint(bounds: { left: number; top: number; width: number;
 
 async function request(scope: BrowserScope, endpoint: "state" | "action" | "frame",
   signal: AbortSignal, action?: BrowserAction): Promise<Response> {
+  const token = getGatewayToken();
   const response = await fetch(browserURL(endpoint, scope), {
     method: action ? "POST" : "GET",
-    headers: { "Content-Type": "application/json", "X-Hoxi-Browser": "true" },
+    headers: {
+      "Content-Type": "application/json",
+      "X-Hoxi-Browser": "true",
+      ...(token ? { "X-Hoxi-Token": token } : {}),
+    },
     body: action ? JSON.stringify(action) : undefined,
     cache: "no-store",
     signal,

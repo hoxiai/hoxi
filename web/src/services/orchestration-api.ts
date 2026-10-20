@@ -1,5 +1,5 @@
 // web/src/services/orchestration-api.ts
-import { requestJSON } from "./runner-api";
+import { requestJSON } from "./http";
 
 export type ConvoyTaskStatus =
   | "queued"

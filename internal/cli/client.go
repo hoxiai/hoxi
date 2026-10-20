@@ -467,9 +467,15 @@ func (c *Client) StreamTurn(
 	defer cancelStream()
 
 	sseURL := c.baseURL + "/api/hoxi/runner/sessions/" + url.PathEscape(session.ID) + "/event"
+	if strings.TrimSpace(session.Directory) != "" {
+		sseURL += "?directory=" + url.QueryEscape(session.Directory)
+	}
 	req, err := http.NewRequestWithContext(streamCtx, http.MethodGet, sseURL, nil)
 	if err != nil {
 		return err
+	}
+	if c.token != "" {
+		req.Header.Set("X-Hoxi-Token", c.token)
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {

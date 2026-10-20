@@ -1,4 +1,4 @@
-import { requestJSON } from "./runner-api";
+import { requestJSON } from "./http";
 
 export interface ForgeCheck {
   name: string;

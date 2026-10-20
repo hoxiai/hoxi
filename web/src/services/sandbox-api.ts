@@ -1,5 +1,5 @@
 // web/src/services/sandbox-api.ts
-import { requestJSON } from "./runner-api";
+import { requestJSON } from "./http";
 
 export interface SandboxSessionState {
   sessionID: string;

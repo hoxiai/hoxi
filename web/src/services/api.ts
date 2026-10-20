@@ -32,19 +32,15 @@ import type {
   WorktreeMeta,
   WorktreeStatus,
 } from "./api-types";
+import { getGatewayToken, requestJSON, setGatewayToken, withDir } from "./http";
+import { authAPI, leaderboardAPI, updaterAPI } from "./platform-api";
 import {
-  authAPI,
   forgetRunnerSession,
-  getGatewayToken,
   isRunnerPermissionID,
   isRunnerSessionID,
-  leaderboardAPI,
   registerRunnerSessions,
-  requestJSON,
   resolveRunnerRuntimeForProvider,
   runnerAPI,
-  setGatewayToken,
-  updaterAPI,
 } from "./runner-api";
 
 export * from "./api-types";
@@ -56,17 +52,12 @@ export {
   isRunnerPermissionID,
   isRunnerSessionID,
   leaderboardAPI,
+  requestJSON,
   resolveRunnerRuntimeForProvider,
   runnerAPI,
   setGatewayToken,
   updaterAPI,
 };
-
-function withDir(path: string, directory?: string): string {
-  if (!directory) return path;
-  const sep = path.includes("?") ? "&" : "?";
-  return `${path}${sep}directory=${encodeURIComponent(directory)}`;
-}
 
 const SESSIONS = "/api/hoxi/sessions";
 

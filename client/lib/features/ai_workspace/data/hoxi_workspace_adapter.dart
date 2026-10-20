@@ -16,6 +16,7 @@ import '../models/code_session_flow.dart';
 import '../models/code_session_recovery.dart';
 import '../models/code_task.dart';
 import '../models/code_workspace_file.dart';
+import 'hoxi_catalog_approval_adapter.dart';
 import 'hoxi_git_artifact_adapter.dart';
 
 class _HoxiSessionRef {
@@ -55,32 +56,23 @@ class _HoxiSessionRef {
       );
 }
 
-class _HoxiApprovalRef {
-  final String permissionId;
-  final String sessionId;
-  final String directory;
-  final AiApproval approval;
-
-  const _HoxiApprovalRef({
-    required this.permissionId,
-    required this.sessionId,
-    required this.directory,
-    required this.approval,
-  });
-}
-
 /// Hoxi 节点协议适配器
 /// 将 Hoxi Gateway (/api/hoxi/* 及 OpenCode 接口) 转换为移动端现有的领域模型
 class HoxiWorkspaceAdapter {
   final ApiClient _apiClient;
   late final HoxiGitArtifactAdapter _gitAdapter;
+  late final HoxiCatalogApprovalAdapter _catalogAdapter;
 
   final Map<int, CodeProject> _projectsById = {};
   final Map<int, _HoxiSessionRef> _sessionsById = {};
-  final Map<int, _HoxiApprovalRef> _approvalsById = {};
+  final Map<int, HoxiApprovalRef> _approvalsById = {};
 
   HoxiWorkspaceAdapter(this._apiClient) {
     _gitAdapter = HoxiGitArtifactAdapter(_apiClient);
+    _catalogAdapter = HoxiCatalogApprovalAdapter(
+      _apiClient,
+      stablePositiveIntId,
+    );
   }
 
   static int stablePositiveIntId(String raw) {
@@ -92,236 +84,10 @@ class HoxiWorkspaceAdapter {
     return hash == 0 ? 1 : hash;
   }
 
-  Future<List<CodeProject>> getProjects() async {
-    final projects = <CodeProject>[];
-    try {
-      final res = await _apiClient.get<dynamic>('/api/hoxi/workspaces');
-      final rawData = res.data;
-      final list = rawData is Map
-          ? (rawData['workspaces'] as List<dynamic>? ?? const [])
-          : (rawData is List ? rawData : const []);
-      for (final item in list.whereType<Map>()) {
-        final map = item.cast<String, dynamic>();
-        final name = (map['name'] ?? '').toString().trim();
-        final folders = (map['folders'] as List<dynamic>? ?? const [])
-            .whereType<Map>()
-            .map((f) => f.cast<String, dynamic>())
-            .toList();
-        String primaryPath = '';
-        final dirs = <String>[];
-        for (final f in folders) {
-          final p = (f['path'] ?? '').toString().trim();
-          if (p.isEmpty) continue;
-          dirs.add(p);
-          if (f['isPrimary'] == true || primaryPath.isEmpty) {
-            primaryPath = p;
-          }
-        }
-        if (primaryPath.isEmpty) {
-          primaryPath = (map['path'] ?? map['rootDir'] ?? '').toString().trim();
-          if (primaryPath.isNotEmpty) dirs.add(primaryPath);
-        }
-        if (primaryPath.isEmpty) continue;
-        final id = stablePositiveIntId(primaryPath);
-        final project = CodeProject(
-          id: id,
-          name: name.isNotEmpty ? name : _basename(primaryPath),
-          description: 'Hoxi 工作区 · $primaryPath',
-          workDir: primaryPath,
-          sourceDirs: dirs.isEmpty ? [primaryPath] : dirs,
-        );
-        _projectsById[id] = project;
-        projects.add(project);
-      }
-    } catch (_) {
-      // Fallback to bootstrap rootDir below
-    }
+  Future<List<CodeProject>> getProjects() =>
+      _catalogAdapter.getProjects(_projectsById);
 
-    if (projects.isEmpty) {
-      try {
-        final boot = await _apiClient.get<Map<String, dynamic>>(
-          '/api/hoxi/bootstrap',
-        );
-        final rootDir = (boot.data?['rootDir'] ?? '').toString().trim();
-        if (rootDir.isNotEmpty) {
-          final id = stablePositiveIntId(rootDir);
-          final project = CodeProject(
-            id: id,
-            name: _basename(rootDir),
-            description: 'Hoxi 默认工作区 · $rootDir',
-            workDir: rootDir,
-            sourceDirs: [rootDir],
-          );
-          _projectsById[id] = project;
-          projects.add(project);
-        }
-      } catch (_) {}
-    }
-    return projects;
-  }
-
-  static const List<CodeExecutorOption> _defaultReasoningEfforts = [
-    CodeExecutorOption(value: 'low', label: 'Low'),
-    CodeExecutorOption(value: 'medium', label: 'Medium'),
-    CodeExecutorOption(value: 'high', label: 'High'),
-    CodeExecutorOption(value: 'xhigh', label: 'XHigh'),
-    CodeExecutorOption(value: 'max', label: 'Max'),
-  ];
-
-  static List<CodeExecutorOption> _extractRunnerReasoningEfforts(
-    List<dynamic> rawModels, {
-    required List<CodeExecutorOption> fallback,
-  }) {
-    final seen = <String>{};
-    for (final raw in rawModels.whereType<Map>()) {
-      final efforts = raw['efforts'];
-      if (efforts is List) {
-        for (final item in efforts) {
-          final v = item.toString().trim().toLowerCase();
-          if (v.isNotEmpty) seen.add(v);
-        }
-      }
-    }
-    if (seen.isEmpty) return fallback;
-    const labels = {
-      'low': 'Low',
-      'medium': 'Medium',
-      'high': 'High',
-      'xhigh': 'XHigh',
-      'max': 'Max',
-    };
-    final ordered = <CodeExecutorOption>[];
-    for (final key in const ['low', 'medium', 'high', 'xhigh', 'max']) {
-      if (seen.contains(key)) {
-        ordered.add(CodeExecutorOption(value: key, label: labels[key] ?? key));
-      }
-    }
-    return ordered.isEmpty ? fallback : ordered;
-  }
-
-  Future<List<CodeExecutor>> getExecutors() async {
-    var openCodeVer = '';
-    try {
-      final sys = await _apiClient.get<Map<String, dynamic>>(
-        '/api/hoxi/system-info',
-      );
-      openCodeVer = (sys.data?['openCodeVersion'] ?? '').toString();
-    } catch (_) {}
-
-    final executors = <CodeExecutor>[
-      CodeExecutor(
-        id: 'opencode',
-        name: 'OpenCode',
-        description: 'Hoxi 核心 Agent 引擎',
-        available: true,
-        version: openCodeVer,
-        reason: '',
-        nativeTerminal: false,
-        capabilities: const [
-          'code',
-          'automation',
-          'structured_turn',
-          'conversation_approval',
-          'resume',
-        ],
-        approvalPolicies: const ['safe_auto', 'manual', 'full_auto'],
-        reasoningEfforts: _defaultReasoningEfforts,
-      ),
-    ];
-
-    try {
-      final claude = await _apiClient.get<Map<String, dynamic>>(
-        '/api/hoxi/runner/claude-code/models',
-      );
-      if (claude.data?['available'] == true) {
-        final rawModels = claude.data?['models'] as List<dynamic>? ?? const [];
-        final models = rawModels
-            .whereType<Map>()
-            .map(
-              (m) => CodeExecutorOption(
-                value: (m['id'] ?? '').toString(),
-                label: (m['name'] ?? m['id'] ?? '').toString(),
-              ),
-            )
-            .where((o) => o.value.isNotEmpty)
-            .toList();
-        executors.add(
-          CodeExecutor(
-            id: 'claude-code',
-            name: 'Claude Code',
-            description: 'Anthropic Claude Code CLI 引擎',
-            available: true,
-            version: '',
-            reason: '',
-            nativeTerminal: false,
-            capabilities: const [
-              'code',
-              'automation',
-              'structured_turn',
-              'conversation_approval',
-              'resume',
-            ],
-            approvalPolicies: const ['safe_auto', 'manual', 'full_auto'],
-            modelOptions: models,
-            reasoningEfforts: _extractRunnerReasoningEfforts(
-              rawModels,
-              fallback: _defaultReasoningEfforts,
-            ),
-          ),
-        );
-      }
-    } catch (_) {}
-
-    try {
-      final agy = await _apiClient.get<Map<String, dynamic>>(
-        '/api/hoxi/runner/antigravity/models',
-      );
-      if (agy.data?['available'] == true) {
-        final rawModels = agy.data?['models'] as List<dynamic>? ?? const [];
-        final models = rawModels
-            .whereType<Map>()
-            .map(
-              (m) => CodeExecutorOption(
-                value: (m['id'] ?? '').toString(),
-                label: (m['name'] ?? m['id'] ?? '').toString(),
-              ),
-            )
-            .where((o) => o.value.isNotEmpty)
-            .toList();
-        executors.add(
-          CodeExecutor(
-            id: 'antigravity',
-            name: 'Antigravity',
-            description: 'Google Antigravity CLI 引擎',
-            available: true,
-            version: '',
-            reason: '',
-            nativeTerminal: false,
-            capabilities: const [
-              'code',
-              'automation',
-              'structured_turn',
-              'conversation_approval',
-              'resume',
-            ],
-            approvalPolicies: const ['safe_auto', 'manual', 'full_auto'],
-            modelOptions: models,
-            reasoningEfforts: _extractRunnerReasoningEfforts(
-              rawModels,
-              fallback: const [
-                CodeExecutorOption(value: 'low', label: 'Low'),
-                CodeExecutorOption(value: 'medium', label: 'Medium'),
-                CodeExecutorOption(value: 'high', label: 'High'),
-                CodeExecutorOption(value: 'max', label: 'Max'),
-              ],
-            ),
-          ),
-        );
-      }
-    } catch (_) {}
-
-    return executors;
-  }
+  Future<List<CodeExecutor>> getExecutors() => _catalogAdapter.getExecutors();
 
   Future<CodeWorktreeCapability> getWorktreeCapability(int projectId) async {
     final project = _projectsById[projectId];
@@ -866,98 +632,24 @@ class HoxiWorkspaceAdapter {
     );
   }
 
-  Future<List<AiApproval>> getApprovals() async {
-    final results = <AiApproval>[];
-    try {
-      final res = await _apiClient.get<dynamic>('/api/hoxi/permission');
-      final list = res.data is List ? (res.data as List) : const [];
-      for (final raw in list.whereType<Map>()) {
-        final map = raw.cast<String, dynamic>();
-        final permId = (map['id'] ?? '').toString().trim();
-        if (permId.isEmpty) continue;
-        final hoxiSessionId =
-            (map['sessionID'] ?? map['sessionId'] ?? '').toString().trim();
-        final sessionIntId = hoxiSessionId.isNotEmpty
-            ? stablePositiveIntId(hoxiSessionId)
-            : 0;
-        final approvalIntId = stablePositiveIntId(permId);
-        final title = (map['title'] ?? map['permission'] ?? '高风险操作待确认')
-            .toString();
-        final metadata = map['metadata'] is Map
-            ? jsonEncode(map['metadata'])
-            : (map['pattern'] ?? map['command'] ?? title).toString();
-        final approval = AiApproval(
-          id: approvalIntId,
-          sessionId: sessionIntId,
-          taskId: sessionIntId,
-          instructionId: 0,
-          requestUserId: 1,
-          approveUserId: 0,
-          title: title,
-          content: metadata,
-          riskLevel: 'high',
-          status: 'pending',
-          decision: '',
-          decisionReason: '',
-          createdAt: DateTime.now(),
-          updatedAt: DateTime.now(),
-          decisionAt: null,
-        );
-        final sessionDir = _sessionsById[sessionIntId]?.directory ?? '';
-        _approvalsById[approvalIntId] = _HoxiApprovalRef(
-          permissionId: permId,
-          sessionId: hoxiSessionId,
-          directory: sessionDir,
-          approval: approval,
-        );
-        results.add(approval);
-      }
-    } catch (_) {}
-    return results;
-  }
+  Future<List<AiApproval>> getApprovals() => _catalogAdapter.getApprovals(
+        approvalsById: _approvalsById,
+        resolveSessionDir: (sessionIntId) =>
+            _sessionsById[sessionIntId]?.directory ?? '',
+      );
 
   Future<AiApproval> replyApproval(
     int approvalId, {
     required bool approve,
     String? reason,
-  }) async {
-    var ref = _approvalsById[approvalId];
-    if (ref == null) {
-      await getApprovals();
-      ref = _approvalsById[approvalId];
-    }
-    if (ref == null) {
-      throw Exception('未找到对应的 Hoxi 审批项');
-    }
-    await _apiClient.post<dynamic>(
-      '/api/hoxi/permission/${ref.permissionId}/reply',
-      queryParameters: {
-        if (ref.directory.isNotEmpty) 'directory': ref.directory,
-      },
-      data: {
-        'reply': approve ? 'once' : 'reject',
-        if (reason != null && reason.isNotEmpty) 'message': reason,
-      },
-    );
-    _approvalsById.remove(approvalId);
-    return AiApproval(
-      id: ref.approval.id,
-      sessionId: ref.approval.sessionId,
-      taskId: ref.approval.taskId,
-      instructionId: ref.approval.instructionId,
-      requestUserId: ref.approval.requestUserId,
-      approveUserId: 1,
-      title: ref.approval.title,
-      content: ref.approval.content,
-      riskLevel: ref.approval.riskLevel,
-      status: approve ? 'approved' : 'rejected',
-      decision: approve ? 'approve' : 'reject',
-      decisionReason: reason ?? '',
-      createdAt: ref.approval.createdAt,
-      updatedAt: DateTime.now(),
-      decisionAt: DateTime.now(),
-    );
-  }
+  }) =>
+      _catalogAdapter.replyApproval(
+        approvalId,
+        approve: approve,
+        reason: reason,
+        approvalsById: _approvalsById,
+        reloadApprovals: getApprovals,
+      );
 
   Future<CodeGitStatus> getGitStatus(int sessionId) async {
     final ref = await _resolveSessionRef(sessionId);
@@ -1075,10 +767,5 @@ class HoxiWorkspaceAdapter {
       updatedAt: ref.updatedAt,
       lastInstructionAt: ref.updatedAt,
     );
-  }
-
-  static String _basename(String path) {
-    final parts = path.split(RegExp(r'[/\\]')).where((s) => s.isNotEmpty);
-    return parts.isEmpty ? path : parts.last;
   }
 }

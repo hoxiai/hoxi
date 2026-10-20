@@ -1,4 +1,4 @@
-import { requestJSON } from "./runner-api";
+import { getGatewayToken, requestJSON } from "./http";
 
 export type DiagnosticKind = "system" | "request";
 export type DiagnosticLevel = "ERROR" | "WARN" | "INFO";
@@ -43,7 +43,10 @@ export const diagnosticsAPI = {
     return requestJSON(`${BASE}?${query}`);
   },
   async export(): Promise<Blob> {
-    const response = await fetch(`${BASE}/export`);
+    const token = getGatewayToken();
+    const response = await fetch(`${BASE}/export`, {
+      headers: token ? { "X-Hoxi-Token": token } : undefined,
+    });
     if (!response.ok) throw new Error(`HTTP ${response.status}: ${await response.text()}`);
     return response.blob();
   },

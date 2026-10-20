@@ -1,5 +1,5 @@
 // web/src/services/skills.ts
-import { requestJSON } from "./runner-api";
+import { requestJSON } from "./http";
 import type { SkillDetail, SkillListResponse } from "./skills-types";
 
 export const skillsAPI = {

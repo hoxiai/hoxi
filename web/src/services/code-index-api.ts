@@ -1,5 +1,5 @@
 // web/src/services/code-index-api.ts
-import { requestJSON } from "./runner-api";
+import { requestJSON } from "./http";
 
 export interface CodeIndexResult {
   path: string;

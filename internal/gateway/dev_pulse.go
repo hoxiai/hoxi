@@ -101,12 +101,12 @@ func isGeneratedOrLockFile(relPath string) bool {
 	return false
 }
 
-var (
-	pulseCacheMu   sync.Mutex
-	cachedPulseDir string
-	cachedPulseAt  time.Time
-	cachedPulseRes gitDailyPulseResponse
-)
+type devPulseCache struct {
+	mu  sync.Mutex
+	dir string
+	at  time.Time
+	res gitDailyPulseResponse
+}
 
 const devPulseCacheTTL = 15 * time.Second
 
@@ -128,14 +128,14 @@ func (g *Gateway) handleDevPulse(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := time.Now()
-	pulseCacheMu.Lock()
-	if cachedPulseDir == workDir && !cachedPulseAt.IsZero() && now.Sub(cachedPulseAt) < devPulseCacheTTL {
-		cached := cachedPulseRes
-		pulseCacheMu.Unlock()
+	g.pulseCache.mu.Lock()
+	if g.pulseCache.dir == workDir && !g.pulseCache.at.IsZero() && now.Sub(g.pulseCache.at) < devPulseCacheTTL {
+		cached := g.pulseCache.res
+		g.pulseCache.mu.Unlock()
 		writeJSON(w, http.StatusOK, cached)
 		return
 	}
-	pulseCacheMu.Unlock()
+	g.pulseCache.mu.Unlock()
 
 	startOfToday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	startOfTodayMs := startOfToday.UnixMilli()
@@ -152,11 +152,11 @@ func (g *Gateway) handleDevPulse(w http.ResponseWriter, r *http.Request) {
 		collectGitDailyStats(workDir, startOfToday, &res)
 	}
 
-	pulseCacheMu.Lock()
-	cachedPulseDir = workDir
-	cachedPulseAt = time.Now()
-	cachedPulseRes = res
-	pulseCacheMu.Unlock()
+	g.pulseCache.mu.Lock()
+	g.pulseCache.dir = workDir
+	g.pulseCache.at = time.Now()
+	g.pulseCache.res = res
+	g.pulseCache.mu.Unlock()
 
 	writeJSON(w, http.StatusOK, res)
 }

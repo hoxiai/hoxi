@@ -237,7 +237,7 @@ export function createTurnWindow(
     const list = turns();
     const idx = list.findIndex((t) => t.info.id === messageID);
     if (idx < 0) return;
-    if (slice().promptIndex === idx) return;
+    if (slice().indexes.includes(idx)) return;
     const needed = list.length - idx + 2;
     if (needed > visibleLimit()) setVisibleLimit(needed);
   };

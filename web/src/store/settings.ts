@@ -445,6 +445,18 @@ export function updateAppSetting<K extends keyof PersistedSettings>(
   }
 }
 
+export function setSessionSandboxMode(mode: "local" | "worktree") {
+  updateAppSetting("defaultSandboxMode", mode);
+}
+
+export function setTheme(theme: "light" | "dark") {
+  updateAppSetting("themeMode", theme);
+}
+
+export function toggleTheme() {
+  setTheme(workspace.theme === "dark" ? "light" : "dark");
+}
+
 export function syncKeepAwakeFromBackend(enabled: boolean) {
   if (appSettings.keepAwakeWhileRunning !== enabled) {
     setAppSettings("keepAwakeWhileRunning", enabled);

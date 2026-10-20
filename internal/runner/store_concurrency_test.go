@@ -2,6 +2,7 @@ package runner
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -99,6 +100,41 @@ func TestStoreConcurrentSameSessionUpdatesSurviveReload(t *testing.T) {
 	rec, _ := NewStore(dir).Get("ses_cld_1")
 	if got := rec.Turns[0].Parts[0].Text; got != "hello world"+strings.Repeat("x", 400) {
 		t.Fatalf("concurrent deltas were lost: length %d", len(got))
+	}
+}
+
+func TestStoreFailedWriteRetainsLatestDeltasUntilRetry(t *testing.T) {
+	dir := t.TempDir()
+	s := seedStore(t, dir)
+	s.SetActive("ses_cld_1", true)
+	sessionDir := s.sessionDir("ses_cld_1")
+	backup := sessionDir + ".backup"
+	if err := os.Rename(sessionDir, backup); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sessionDir, []byte("block writes"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	s.UpsertTurnPart("ses_cld_1", MessagePart{ID: "prt_1", MessageID: "msg_1", SessionID: "ses_cld_1", Type: "text", Text: "replacement"})
+	s.AppendPartDelta("ses_cld_1", "msg_1", "prt_1", "!")
+	s.cacheMaxSessions = 0
+	s.SetActive("ses_cld_1", false)
+	if !s.records["ses_cld_1"].turnsLoaded {
+		t.Fatal("unpersisted transcript was evicted")
+	}
+	if err := os.Remove(sessionDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(backup, sessionDir); err != nil {
+		t.Fatal(err)
+	}
+	s.FlushSession("ses_cld_1")
+	if s.records["ses_cld_1"].turnsLoaded {
+		t.Fatal("successfully flushed idle body was not evicted")
+	}
+	rec, _ := NewStore(dir).Get("ses_cld_1")
+	if got := rec.Turns[0].Parts[0].Text; got != "replacement!" {
+		t.Fatalf("retry overwrote latest deltas: %q", got)
 	}
 }
 

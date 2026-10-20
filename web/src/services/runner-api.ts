@@ -1,5 +1,8 @@
 // web/src/services/runner-api.ts
+import { getGatewayToken, requestJSON, setGatewayToken, withDir } from "./http";
 import type { PermissionRequest, SessionInfo, SessionRuntime } from "./sse-types";
+
+export { getGatewayToken, requestJSON, setGatewayToken };
 
 const knownRunnerSessionIDs = new Set<string>();
 
@@ -43,40 +46,6 @@ export function resolveRunnerRuntimeForProvider(
   if (providerID === "codebuddy" && !hasConfiguredProvider) return "codebuddy";
   if (providerID === "qoder" && !hasConfiguredProvider) return "qoder";
   return "opencode";
-}
-
-function withDir(path: string, directory?: string): string {
-  if (!directory) return path;
-  const sep = path.includes("?") ? "&" : "?";
-  return `${path}${sep}directory=${encodeURIComponent(directory)}`;
-}
-
-let activeGatewayToken = "";
-
-export function setGatewayToken(token?: string | null): void {
-  activeGatewayToken = typeof token === "string" ? token.trim() : "";
-}
-
-export function getGatewayToken(): string {
-  return activeGatewayToken;
-}
-
-export async function requestJSON<T>(url: string, init?: RequestInit): Promise<T> {
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    ...(activeGatewayToken ? { "X-Hoxi-Token": activeGatewayToken } : {}),
-    ...((init?.headers as Record<string, string>) || {}),
-  };
-  const res = await fetch(url, {
-    ...init,
-    headers,
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`HTTP ${res.status}: ${text}`);
-  }
-  if (res.status === 204) return undefined as T;
-  return res.json();
 }
 
 // `installed && !current` means hooks.json still points at an old Hoxi binary.
@@ -147,73 +116,3 @@ export const runnerAPI = {
   },
 };
 
-export const authAPI = {
-  getStatus(): Promise<import("./api-types").AuthStatusSnapshot> {
-    return requestJSON("/api/hoxi/auth/status");
-  },
-  startAuth(): Promise<import("./api-types").StartAuthResponse> {
-    return requestJSON("/api/hoxi/auth/start", { method: "POST" });
-  },
-  exchange(
-    handoffToken: string,
-    state: string
-  ): Promise<{ success: boolean; user: import("./api-types").AuthUserProfile }> {
-    return requestJSON("/api/hoxi/auth/exchange", {
-      method: "POST",
-      body: JSON.stringify({ handoffToken, state }),
-    });
-  },
-  logout(): Promise<{ success: boolean }> {
-    return requestJSON("/api/hoxi/auth/logout", { method: "POST" });
-  },
-};
-
-export const updaterAPI = {
-  nativeStatus(): Promise<import("./api-types").NativeUpdateStatus> {
-    return requestJSON("/api/hoxi/updater/native");
-  },
-  install(): Promise<{ started: true }> {
-    return requestJSON("/api/hoxi/updater/install", { method: "POST" });
-  },
-  checkUpdate(): Promise<import("./api-types").UpdateCheckResult> {
-    return requestJSON("/api/hoxi/updater/check");
-  },
-};
-
-export const leaderboardAPI = {
-  async getLeaderboard(
-    sort: string = "overall",
-    limit: number = 10,
-    lang: string = "en"
-  ): Promise<import("./api-types").LeaderboardModelItem[]> {
-    const json = await requestJSON<import("./api-types").LeaderboardResponse>(
-      `/api/hoxi/models/leaderboard?sort=${encodeURIComponent(sort)}&limit=${limit}&lang=${encodeURIComponent(lang)}`
-    );
-    return json.data?.items || [];
-  },
-  async getConnectableGateways(
-    lang: string = "en"
-  ): Promise<import("./api-types").ConnectableGatewayItem[]> {
-    const json = await requestJSON<import("./api-types").ConnectableGatewaysResponse>(
-      `/api/hoxi/gateways/connectable?lang=${encodeURIComponent(lang)}`
-    );
-    return json.data?.items || [];
-  },
-  async getModelPricing(
-    forceRefresh: boolean = false
-  ): Promise<import("./api-types").ModelPricingItem[]> {
-    const q = forceRefresh ? "?refresh=1" : "";
-    const json = await requestJSON<import("./api-types").ModelPricingResponse>(
-      `/api/hoxi/models/pricing${q}`
-    );
-    return json.data?.items || [];
-  },
-  async getFreeTiers(
-    lang: string = "en"
-  ): Promise<import("./api-types").FreeTierGuideRemoteItem[]> {
-    const json = await requestJSON<import("./api-types").FreeTiersResponse>(
-      `/api/hoxi/models/free-tiers?lang=${encodeURIComponent(lang)}`
-    );
-    return json.data?.items || [];
-  },
-};

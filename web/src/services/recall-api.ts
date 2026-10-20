@@ -1,5 +1,5 @@
 // web/src/services/recall-api.ts
-import { requestJSON } from "./runner-api";
+import { requestJSON } from "./http";
 
 export interface RecallResult {
   sessionID: string;

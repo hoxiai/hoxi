@@ -22,7 +22,7 @@ const IGNORE_DIRS = new Set([
   "ephemeral",
 ]);
 
-const SOURCE_EXT = /\.(go|ts|tsx|js|m)$/;
+const SOURCE_EXT = /\.(go|ts|tsx|js|m|dart)$/;
 
 function walkRepo(dir: string): string[] {
   let results: string[] = [];
@@ -121,6 +121,11 @@ for (const file of files) {
       /["']\/(?:v1\/messages|chat\/completions)["']/.test(content)
     ) {
       console.error(`  ✗ [boundary violation] ${rel} must not hand-roll '/v1/messages' or '/chat/completions' requests; reuse callSimpleLLM in internal/provider/http.go.`);
+      violations++;
+    }
+  } else if (rel.startsWith("client/lib/") && rel.endsWith(".dart")) {
+    if (!/^[a-z0-9_]+\.dart$/.test(baseName)) {
+      console.error(`  ✗ [naming violation] ${rel} must use lowercase snake_case.dart filename.`);
       violations++;
     }
   }
