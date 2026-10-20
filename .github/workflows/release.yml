@@ -52,6 +52,19 @@ jobs:
           VERSION="$(node scripts/release-artifact.mjs version "$RELEASE_TAG")"
           echo "RELEASE_VERSION=$VERSION" >> "$GITHUB_ENV"
 
+      - name: Resolve release notes
+        run: |
+          NOTES_FILE="docs/release-notes/v${RELEASE_VERSION}.md"
+          if [[ -f "$NOTES_FILE" ]]; then
+            {
+              echo 'RELEASE_NOTES<<HOXI_RELEASE_NOTES_EOF'
+              cat "$NOTES_FILE"
+              echo 'HOXI_RELEASE_NOTES_EOF'
+            } >> "$GITHUB_ENV"
+          else
+            echo "RELEASE_NOTES=Hoxi Desktop v${RELEASE_VERSION}" >> "$GITHUB_ENV"
+          fi
+
       - name: Run release checks
         run: |
           npm --prefix web run lint
@@ -152,12 +165,13 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          name: Hoxi Desktop v${{ env.RELEASE_VERSION }}
+          body: ${{ env.RELEASE_NOTES }}
           files: |
             build/bin/Hoxi-${{ env.RELEASE_VERSION }}-darwin-arm64.dmg
             build/bin/checksums.txt
             build/bin/sparkle.json
           fail_on_unmatched_files: true
-          generate_release_notes: true
           draft: false
           prerelease: false
 
@@ -165,6 +179,7 @@ jobs:
         env:
           HOXI_RELEASE_KEY: ${{ secrets.HOXI_RELEASE_KEY }}
           HOXI_RELEASE_API_URL: ${{ vars.HOXI_RELEASE_API_URL }}
+          RELEASE_NOTES: ${{ env.RELEASE_NOTES }}
         run: |
           node --input-type=module - "$RELEASE_VERSION" <<'JS' | node scripts/release-publisher.mjs
           import fs from 'node:fs';
@@ -172,7 +187,7 @@ jobs:
           const version = process.argv[2];
           const bytes = fs.readFileSync(`build/bin/Hoxi-${version}-darwin-arm64.dmg`);
           const verified = JSON.parse(fs.readFileSync('build/bin/release-artifact.json', 'utf8'));
-          console.log(JSON.stringify({...verified, version, notes: `Hoxi Desktop v${version}`, size: bytes.length,
+          console.log(JSON.stringify({...verified, version, notes: process.env.RELEASE_NOTES || `Hoxi Desktop v${version}`, size: bytes.length,
             sha256: crypto.createHash('sha256').update(bytes).digest('hex'),
             sparkle: JSON.parse(fs.readFileSync('build/bin/sparkle.json', 'utf8'))}));
           JS

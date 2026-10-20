@@ -96,6 +96,8 @@ test("tag workflow gates publication on tests, versioned artifacts and notarizat
   const workflow = fs.readFileSync(path.join(scripts, "../.github/workflows/release.yml"), "utf8");
   const required = [
     'version "$RELEASE_TAG"',
+    "- name: Resolve release notes",
+    'docs/release-notes/v${RELEASE_VERSION}.md',
     "npm --prefix web run lint",
     "npm --prefix web test",
     "node --test scripts/release.test.mjs internal/opencode/browser_plugin_test.mjs",
@@ -112,8 +114,10 @@ test("tag workflow gates publication on tests, versioned artifacts and notarizat
     'verify-distribution "$DMG"',
     "shasum -a 256",
     "uses: softprops/action-gh-release@v2",
+    "body: ${{ env.RELEASE_NOTES }}",
     "build/bin/Hoxi-${{ env.RELEASE_VERSION }}-darwin-arm64.dmg",
     "fail_on_unmatched_files: true",
+    "notes: process.env.RELEASE_NOTES",
     "if: always()",
     'security delete-keychain "$KEYCHAIN_PATH"',
     'rm -f "${APPLE_API_KEY_PATH:-}"',
@@ -124,7 +128,7 @@ test("tag workflow gates publication on tests, versioned artifacts and notarizat
     assert.ok(next > position, `Missing or out-of-order release gate: ${gate}`);
     position = next;
   }
-  assert.doesNotMatch(workflow, /Optional|CAN_NOTARIZE|\|\| true|build\/bin\/\*\.dmg/);
+  assert.doesNotMatch(workflow, /Optional|CAN_NOTARIZE|\|\| true|build\/bin\/\*\.dmg|generate_release_notes/);
   assert.equal((workflow.match(/^\s+if:/gm) || []).length, 1, "Only cleanup may be conditional");
   for (const secret of ["MACOS_CERTIFICATE", "MACOS_CERTIFICATE_PWD", "APPLE_API_KEY",
     "APPLE_API_KEY_ID", "APPLE_API_ISSUER"]) {
