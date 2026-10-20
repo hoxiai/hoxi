@@ -11,6 +11,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/attachment"
 )
 
 func (s *Service) openCodeRequest(ctx context.Context, method, path, directory string, body interface{}) (*http.Response, error) {
@@ -175,7 +177,46 @@ func (s *Service) resolveOpenCodeVariant(ctx context.Context, directory, provide
 	return e
 }
 
-func (s *Service) startOpenCodeTurn(rec SessionRecord, mode, modelID, effort, system string, user MessageInfo, parts []MessagePart) error {
+func (s *Service) normalizeOpenCodePart(rec SessionRecord, part *MessagePart, fileURLByMsgAndName map[string]string) bool {
+	if part.Type == "file" && strings.HasPrefix(strings.TrimSpace(part.URL), "data:") {
+		key := part.MessageID + "\x00" + part.Filename
+		if mapped, ok := fileURLByMsgAndName[key]; ok && mapped != "" {
+			part.URL = mapped
+			return true
+		}
+		if s.attachments != nil {
+			if meta, err := s.attachments.Save(attachment.SaveRequest{
+				SessionID: rec.ID,
+				Directory: rec.WorktreePath,
+				Filename:  part.Filename,
+				Mime:      part.Mime,
+				DataURL:   part.URL,
+			}); err == nil {
+				part.URL = meta.URL
+				part.Mime = meta.Mime
+				part.Filename = meta.Filename
+				if fileURLByMsgAndName != nil {
+					fileURLByMsgAndName[key] = meta.URL
+				}
+			}
+		}
+		return true
+	}
+	if part.Type == "text" {
+		const prefix = "Please analyze the attached file(s):\n\n<attached_file "
+		if strings.HasPrefix(part.Text, prefix) {
+			part.Text = ""
+			return false
+		}
+		if idx := strings.Index(part.Text, "\n\n<attached_file name="); idx >= 0 {
+			part.Text = part.Text[:idx]
+		}
+		s.applyUserSkillOverride(rec.ID, part)
+	}
+	return true
+}
+
+func (s *Service) startOpenCodeTurn(rec SessionRecord, mode, modelID, effort, system string, user MessageInfo, storedParts []MessagePart, deliveryParts []MessagePart) error {
 	setup, cancelSetup := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancelSetup()
 	resolvedProvider, resolvedModel := s.resolveOpenCodeModel(setup, rec.WorktreePath, rec.ProviderID, modelID)
@@ -234,6 +275,22 @@ func (s *Service) startOpenCodeTurn(rec SessionRecord, mode, modelID, effort, sy
 	}
 	s.broadcast(rec.ID, SSEEvent{Type: "session.status", Properties: map[string]interface{}{"sessionID": rec.ID, "status": SessionStatus{Type: "busy"}}})
 	go s.watchStall(ap)
+	fileURLByMsgAndName := make(map[string]string)
+	var docOnlyFileParts []MessagePart
+	deliveryFileIDs := make(map[string]bool)
+	for _, dp := range deliveryParts {
+		if dp.Type == "file" {
+			deliveryFileIDs[dp.ID] = true
+		}
+	}
+	for _, sp := range storedParts {
+		if sp.Type == "file" {
+			fileURLByMsgAndName[user.ID+"\x00"+sp.Filename] = sp.URL
+			if !deliveryFileIDs[sp.ID] {
+				docOnlyFileParts = append(docOnlyFileParts, sp)
+			}
+		}
+	}
 	streamDone := make(chan struct{})
 	go func() {
 		defer close(streamDone)
@@ -242,7 +299,7 @@ func (s *Service) startOpenCodeTurn(rec SessionRecord, mode, modelID, effort, sy
 		for scanner.Scan() {
 			line := scanner.Text()
 			if strings.HasPrefix(line, "data:") {
-				s.relayOpenCodeEvent(rec, []byte(strings.TrimSpace(strings.TrimPrefix(line, "data:"))))
+				s.relayOpenCodeEventWithFiles(rec, []byte(strings.TrimSpace(strings.TrimPrefix(line, "data:"))), fileURLByMsgAndName)
 			}
 		}
 	}()
@@ -264,11 +321,17 @@ func (s *Service) startOpenCodeTurn(rec SessionRecord, mode, modelID, effort, sy
 			}
 			s.broadcast(rec.ID, SSEEvent{Type: "session.status", Properties: map[string]interface{}{"sessionID": rec.ID, "status": SessionStatus{Type: "idle"}}})
 		}()
-		inputParts := make([]map[string]interface{}, 0, len(parts))
-		for _, p := range parts {
+		if len(docOnlyFileParts) > 0 {
+			s.broadcast(rec.ID, SSEEvent{Type: "message.updated", Properties: map[string]interface{}{"info": user}})
+			for _, fp := range docOnlyFileParts {
+				s.broadcast(rec.ID, SSEEvent{Type: "message.part.updated", Properties: map[string]interface{}{"part": fp}})
+			}
+		}
+		inputParts := make([]map[string]interface{}, 0, len(deliveryParts))
+		for _, p := range deliveryParts {
 			if p.Type == "file" {
 				inputParts = append(inputParts, map[string]interface{}{"type": "file", "mime": p.Mime, "url": p.URL, "filename": p.Filename})
-			} else if p.Type == "text" {
+			} else if p.Type == "text" && (strings.TrimSpace(p.Text) != "" || len(deliveryParts) == 1) {
 				inputParts = append(inputParts, map[string]interface{}{"type": "text", "text": p.Text})
 			}
 		}
@@ -336,8 +399,28 @@ func (s *Service) startOpenCodeTurn(rec SessionRecord, mode, modelID, effort, sy
 					}
 					for _, part := range turn.Parts {
 						part.SessionID = rec.ID
+						if !s.normalizeOpenCodePart(rec, &part, fileURLByMsgAndName) {
+							continue
+						}
 						if prevPart, exists := existingPartByKey[partKey{messageID: part.MessageID, partID: part.ID}]; !exists || !equalMessagePart(prevPart, part) {
 							s.broadcast(rec.ID, SSEEvent{Type: "message.part.updated", Properties: map[string]interface{}{"part": part}})
+						}
+					}
+				}
+				if _, hasSkill := s.userSkillByMsg.Load(user.ID); hasSkill {
+					hasUserTurn := false
+					if current, ok := s.store.Get(rec.ID); ok {
+						for _, t := range current.Turns {
+							if t.Info.ID == user.ID {
+								hasUserTurn = true
+								break
+							}
+						}
+					}
+					if !hasUserTurn {
+						s.broadcast(rec.ID, SSEEvent{Type: "message.updated", Properties: map[string]interface{}{"info": user}})
+						for _, sp := range storedParts {
+							s.broadcast(rec.ID, SSEEvent{Type: "message.part.updated", Properties: map[string]interface{}{"part": sp}})
 						}
 					}
 				}
@@ -421,6 +504,10 @@ func (s *Service) abandonOpenCodeInFlightParts(sessionID string, now int64) {
 }
 
 func (s *Service) relayOpenCodeEvent(rec SessionRecord, raw []byte) {
+	s.relayOpenCodeEventWithFiles(rec, raw, nil)
+}
+
+func (s *Service) relayOpenCodeEventWithFiles(rec SessionRecord, raw []byte, fileURLByMsgAndName map[string]string) {
 	var evt SSEEvent
 	if json.Unmarshal(raw, &evt) != nil {
 		return
@@ -482,6 +569,9 @@ func (s *Service) relayOpenCodeEvent(rec SessionRecord, raw []byte) {
 		if json.Unmarshal(data, &part) != nil {
 			return
 		}
+		if !s.normalizeOpenCodePart(rec, &part, fileURLByMsgAndName) {
+			return
+		}
 		evt.Properties["part"] = part
 	case "session.diff":
 		evt.Properties["diff"] = s.filterLocalSessionDiffEvent(rec.ID, evt.Properties["diff"])
@@ -498,17 +588,28 @@ func (s *Service) relayOpenCodeEvent(rec SessionRecord, raw []byte) {
 func (s *Service) steerOpenCodeTurn(ctx context.Context, rec SessionRecord, mode, modelID, providerID, effort, system, text string, parts []MessagePart) error {
 	providerID, modelID = s.resolveOpenCodeModel(ctx, rec.WorktreePath, providerID, modelID)
 	effort = s.resolveOpenCodeVariant(ctx, rec.WorktreePath, providerID, modelID, effort)
-	inputParts := []map[string]interface{}{{"type": "text", "text": text}}
-	for _, part := range parts {
-		if part.Type == "file" {
-			inputParts = append(inputParts, map[string]interface{}{"type": "file", "mime": part.Mime, "filename": part.Filename, "url": part.URL})
-		}
-	}
 	s.mu.Lock()
 	s.seqSeed++
 	seq := s.seqSeed
 	s.mu.Unlock()
-	payload := map[string]interface{}{"messageID": fmt.Sprintf("msg_u_%d_%d", time.Now().UnixMilli(), seq), "agent": mode, "parts": inputParts}
+	now := time.Now().UnixMilli()
+	steerMsgID := fmt.Sprintf("msg_u_%d_%d", now, seq)
+	var fileParts []MessagePart
+	for _, p := range parts {
+		if p.Type == "file" && strings.TrimSpace(p.URL) != "" {
+			fileParts = append(fileParts, p)
+		}
+	}
+	_, deliveryParts, _ := s.prepareTurnAttachments(rec, now, seq, steerMsgID, text, fileParts)
+	inputParts := make([]map[string]interface{}, 0, len(deliveryParts))
+	for _, part := range deliveryParts {
+		if part.Type == "file" {
+			inputParts = append(inputParts, map[string]interface{}{"type": "file", "mime": part.Mime, "filename": part.Filename, "url": part.URL})
+		} else if part.Type == "text" && (strings.TrimSpace(part.Text) != "" || len(deliveryParts) == 1) {
+			inputParts = append(inputParts, map[string]interface{}{"type": "text", "text": part.Text})
+		}
+	}
+	payload := map[string]interface{}{"messageID": steerMsgID, "agent": mode, "parts": inputParts}
 	if providerID != "" && modelID != "" {
 		payload["model"] = map[string]string{"providerID": providerID, "modelID": modelID}
 	}

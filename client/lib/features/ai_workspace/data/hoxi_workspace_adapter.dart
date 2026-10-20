@@ -573,6 +573,12 @@ class HoxiWorkspaceAdapter {
               if (textBuffer.isNotEmpty) textBuffer.writeln();
               textBuffer.write(text);
             }
+          } else if (pType == 'file') {
+            final filename = (part['filename'] ?? part['attachmentId'] ?? 'attachment').toString();
+            final mime = (part['mime'] ?? '').toString();
+            final tag = mime.isNotEmpty ? '[Attachment: $filename ($mime)]' : '[Attachment: $filename]';
+            if (textBuffer.isNotEmpty) textBuffer.writeln();
+            textBuffer.write(tag);
           } else if (pType == 'tool') {
             final toolName = (part['tool'] ?? 'tool').toString();
             final stateMap = part['state'] is Map
@@ -766,21 +772,61 @@ class HoxiWorkspaceAdapter {
     };
   }
 
+  Future<Map<String, dynamic>> uploadAttachment({
+    required int sessionId,
+    required String filename,
+    required String mime,
+    required String dataUrl,
+  }) async {
+    final ref = await _resolveSessionRef(sessionId);
+    final res = await _apiClient.post<Map<String, dynamic>>(
+      '/api/hoxi/attachments',
+      queryParameters: {
+        'directory': ref.directory,
+        'sessionID': ref.hoxiId,
+      },
+      data: {
+        'sessionID': ref.hoxiId,
+        'directory': ref.directory,
+        'filename': filename,
+        'mime': mime,
+        'dataUrl': dataUrl,
+      },
+    );
+    return res.data ?? const <String, dynamic>{};
+  }
+
   Future<AiInstructionSendResult> sendAiCommand({
     required int sessionId,
     required String command,
+    List<Map<String, dynamic>>? attachments,
   }) async {
     final ref = await _resolveSessionRef(sessionId);
     final modelPayload = _buildPromptModelPayload(ref.runtime, ref.modelId);
     final effort = ref.reasoningEffort.trim();
+    final parts = <Map<String, dynamic>>[];
+    if (command.trim().isNotEmpty || (attachments == null || attachments.isEmpty)) {
+      parts.add({'type': 'text', 'text': command});
+    }
+    if (attachments != null) {
+      for (final att in attachments) {
+        parts.add({
+          'type': 'file',
+          if (att['attachmentId'] != null) 'attachmentId': att['attachmentId'],
+          if (att['mime'] != null) 'mime': att['mime'],
+          if (att['filename'] != null) 'filename': att['filename'],
+          if (att['url'] != null) 'url': att['url'],
+          if (att['size'] != null) 'size': att['size'],
+          if (att['kind'] != null) 'kind': att['kind'],
+        });
+      }
+    }
     await _apiClient.post<Map<String, dynamic>>(
       '/api/hoxi/sessions/${ref.hoxiId}/prompt_async',
       queryParameters: {'directory': ref.directory},
       data: {
         'text': command,
-        'parts': [
-          {'type': 'text', 'text': command},
-        ],
+        'parts': parts,
         'model': ?modelPayload,
         if (effort.isNotEmpty) 'variant': effort,
       },

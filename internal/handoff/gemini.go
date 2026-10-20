@@ -623,6 +623,10 @@ func (g *Service) importGeminiCLIProvider() LocalCLIImportResponse {
 			"tool_call":  true,
 			"reasoning":  true,
 			"attachment": true,
+			"modalities": map[string]interface{}{
+				"input":  []string{"text", "image"},
+				"output": []string{"text"},
+			},
 		}
 	}
 	doc := g.loadHoxiConfigDoc()

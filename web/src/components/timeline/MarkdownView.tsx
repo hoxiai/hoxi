@@ -1,9 +1,12 @@
 import { createEffect, createMemo, createSignal, Index, Match, onCleanup, Show, Switch } from "solid-js";
+import { ExternalLink } from "lucide-solid";
 import {
   activeDirectory,
+  appSettings,
   checkFile,
   extractFilePathFromHref,
   looksLikeFilePath,
+  openExternalURL,
   openFileInInspector,
   openURLInInspector,
   workspace,

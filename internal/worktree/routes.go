@@ -313,6 +313,109 @@ func (m *worktreeManager) registerRoutes(mux *http.ServeMux) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "removedCount": removed})
 	})
 
+	mux.HandleFunc("/api/hoxi/worktree/setup-retry", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var body struct {
+			SessionID string `json:"sessionID"`
+			Directory string `json:"directory"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		dir := firstNonEmpty(body.Directory, r.URL.Query().Get("directory"))
+		st, err := m.scoped(dir, body.SessionID).RetrySetup(body.SessionID)
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, st)
+	})
+
+	mux.HandleFunc("/api/hoxi/worktree/verify-status", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		q := r.URL.Query()
+		sessionID := q.Get("sessionID")
+		st, err := m.scoped(q.Get("directory"), sessionID).VerifyStatus(sessionID)
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, st)
+	})
+
+	mux.HandleFunc("/api/hoxi/worktree/verify-config", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var body struct {
+			Directory   string `json:"directory"`
+			RunCommand  string `json:"runCommand"`
+			TestCommand string `json:"testCommand"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		dir := firstNonEmpty(body.Directory, r.URL.Query().Get("directory"))
+		cfg, err := m.ForDirectory(dir).SaveVerifyConfig(WorktreeVerifyConfig{
+			RunCommand:  body.RunCommand,
+			TestCommand: body.TestCommand,
+		})
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, cfg)
+	})
+
+	mux.HandleFunc("/api/hoxi/worktree/verify-run", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var body struct {
+			SessionID string `json:"sessionID"`
+			Directory string `json:"directory"`
+			Kind      string `json:"kind"`
+			Command   string `json:"command"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		dir := firstNonEmpty(body.Directory, r.URL.Query().Get("directory"))
+		st, err := m.scoped(dir, body.SessionID).StartVerify(body.SessionID, body.Kind, body.Command)
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, st)
+	})
+
+	mux.HandleFunc("/api/hoxi/worktree/verify-stop", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var body struct {
+			SessionID string `json:"sessionID"`
+			Directory string `json:"directory"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		dir := firstNonEmpty(body.Directory, r.URL.Query().Get("directory"))
+		st, err := m.scoped(dir, body.SessionID).StopVerify(body.SessionID)
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, st)
+	})
+
 	mux.HandleFunc("/api/hoxi/worktree/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodDelete {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -327,6 +430,15 @@ func (m *worktreeManager) registerRoutes(mux *http.ServeMux) {
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	})
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if s := strings.TrimSpace(v); s != "" {
+			return s
+		}
+	}
+	return ""
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

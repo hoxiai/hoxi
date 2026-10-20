@@ -133,3 +133,51 @@ func TestStatusTrackerStalledSessionsRaiseAttention(t *testing.T) {
 		t.Fatalf("idle session kept its stall: %+v", snap)
 	}
 }
+
+func TestStatusTrackerKeepAwakeLifecycle(t *testing.T) {
+	cfgPath := t.TempDir() + "/keep-awake.json"
+	t.Setenv("HOXI_KEEP_AWAKE_CONFIG", cfgPath)
+
+	tracker := NewTracker()
+	starts := 0
+	stops := 0
+	tracker.startKeepAwakeHook = func() (func(), error) {
+		starts++
+		return func() { stops++ }, nil
+	}
+
+	if !tracker.KeepAwakeEnabled() || tracker.KeepAwakeActive() {
+		t.Fatalf("expected initial KeepAwakeEnabled=true KeepAwakeActive=false")
+	}
+
+	// Busy session activates keep-awake
+	tracker.SetSessionBusy("ses_awake", true)
+	if !tracker.KeepAwakeActive() || starts != 1 || stops != 0 {
+		t.Fatalf("expected keep-awake active after busy session: active=%v starts=%d stops=%d", tracker.KeepAwakeActive(), starts, stops)
+	}
+
+	// Disabling keep-awake while busy stops it and persists setting
+	tracker.SetKeepAwakeEnabled(false)
+	if tracker.KeepAwakeEnabled() || tracker.KeepAwakeActive() || stops != 1 {
+		t.Fatalf("expected keep-awake stopped when disabled: enabled=%v active=%v stops=%d", tracker.KeepAwakeEnabled(), tracker.KeepAwakeActive(), stops)
+	}
+
+	// Re-enabling while still busy restarts keep-awake
+	tracker.SetKeepAwakeEnabled(true)
+	if !tracker.KeepAwakeEnabled() || !tracker.KeepAwakeActive() || starts != 2 {
+		t.Fatalf("expected keep-awake restarted when re-enabled: enabled=%v active=%v starts=%d", tracker.KeepAwakeEnabled(), tracker.KeepAwakeActive(), starts)
+	}
+
+	// Session idle stops keep-awake
+	tracker.SetSessionBusy("ses_awake", false)
+	if tracker.KeepAwakeActive() || stops != 2 {
+		t.Fatalf("expected keep-awake stopped when session idle: active=%v stops=%d", tracker.KeepAwakeActive(), stops)
+	}
+
+	// Verify persistence across NewTracker
+	tracker.SetKeepAwakeEnabled(false)
+	reloaded := NewTracker()
+	if reloaded.KeepAwakeEnabled() {
+		t.Fatalf("expected persisted KeepAwakeEnabled=false on reload")
+	}
+}

@@ -261,7 +261,8 @@ func TestManagedOpenCodeStopAbortsBackingSession(t *testing.T) {
 	}))
 	defer server.Close()
 	svc.ConfigureOpenCode(server.URL, "secret")
-	if err := svc.startOpenCodeTurn(rec, "build", "model", "", "", MessageInfo{ID: "msg_stop", SessionID: rec.ID, Role: "user"}, []MessagePart{{Type: "text", Text: "long task"}}); err != nil {
+	parts := []MessagePart{{Type: "text", Text: "long task"}}
+	if err := svc.startOpenCodeTurn(rec, "build", "model", "", "", MessageInfo{ID: "msg_stop", SessionID: rec.ID, Role: "user"}, parts, parts); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -500,5 +501,34 @@ func TestNewAndAdoptedOpenCodeSessionsShareTurnDriver(t *testing.T) {
 	}
 	if len(messagePaths) != 2 || messagePaths[0] != "/session/ses_opc_handle_1/message" || messagePaths[1] != "/session/ses_legacy/message" {
 		t.Fatalf("unexpected message paths: %v", messagePaths)
+	}
+}
+
+func TestRuntimeContextOmitsInlineBase64DataURLs(t *testing.T) {
+	rec := SessionRecord{
+		ID:             "ses_ctx",
+		Runtime:        "claude-code",
+		ContextPending: true,
+		Turns: []MessageTurn{
+			{
+				Info: MessageInfo{ID: "msg_1", Role: "user"},
+				Parts: []MessagePart{
+					{Type: "text", Text: "look at this screenshot"},
+					{
+						Type:     "file",
+						Filename: "screen.png",
+						Mime:     "image/png",
+						URL:      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ",
+					},
+				},
+			},
+		},
+	}
+	ctx := runtimeContext(rec)
+	if strings.Contains(ctx, "iVBORw0KGgo") || strings.Contains(ctx, "data:image/png;base64") {
+		t.Fatalf("expected runtimeContext to strip inline base64 data URLs, got:\n%s", ctx)
+	}
+	if !strings.Contains(ctx, "Attachment screen.png (image/png)") {
+		t.Fatalf("expected attachment summary in runtimeContext, got:\n%s", ctx)
 	}
 }

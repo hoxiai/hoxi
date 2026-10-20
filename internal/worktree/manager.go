@@ -19,12 +19,16 @@ const (
 )
 
 type worktreeMeta struct {
-	SessionID  string `json:"sessionID"`
-	Isolated   bool   `json:"isolated"`
-	Directory  string `json:"directory"`
-	Branch     string `json:"branch,omitempty"`
-	BaseCommit string `json:"baseCommit,omitempty"`
-	CreatedAt  string `json:"createdAt"`
+	SessionID     string `json:"sessionID"`
+	Isolated      bool   `json:"isolated"`
+	Directory     string `json:"directory"`
+	Branch        string `json:"branch,omitempty"`
+	BaseCommit    string `json:"baseCommit,omitempty"`
+	CreatedAt     string `json:"createdAt"`
+	SetupScript   string `json:"setupScript,omitempty"`
+	SetupStatus   string `json:"setupStatus,omitempty"`
+	SetupError    string `json:"setupError,omitempty"`
+	AllocatedPort int    `json:"allocatedPort,omitempty"`
 }
 
 type worktreeStatus struct {
@@ -46,6 +50,12 @@ type worktreeStatus struct {
 	HasUpstream      bool                 `json:"hasUpstream"`
 	CompareURL       string               `json:"compareURL,omitempty"`
 	Health           string               `json:"health,omitempty"`
+	SetupScript      string               `json:"setupScript,omitempty"`
+	SetupStatus      string               `json:"setupStatus,omitempty"`
+	SetupError       string               `json:"setupError,omitempty"`
+	AllocatedPort    int                  `json:"allocatedPort,omitempty"`
+	RunStatus        string               `json:"runStatus,omitempty"`
+	PreviewURL       string               `json:"previewURL,omitempty"`
 	Repos            []worktreeRepoStatus `json:"repos,omitempty"`
 }
 
@@ -78,6 +88,7 @@ func newWorktreeManager(rootDir string) *worktreeManager {
 		roots: &managerRoots{
 			managers:   make(map[string]*worktreeManager),
 			quarantine: newQuarantineTracker(),
+			verify:     newVerifyTracker(),
 		},
 	}
 	m.roots.managers[absRoot] = m
@@ -198,8 +209,30 @@ func (m *worktreeManager) CreateOnBranch(sessionID, retainedBranch string) (work
 
 	// Sync root-level .env / .env.* files into the worktree without overwriting
 	_, _ = syncWorktreeEnvFiles(repoRoot, worktreeDir)
+	allocatedPort := allocateWorktreePort(sessionID)
+	var setupRes worktreeSetupResult
+	if m.roots != nil && m.roots.verify != nil {
+		ent := m.roots.verify.entryFor(sessionID, worktreeDir)
+		ent.mu.Lock()
+		if ent.allocatedPort > 0 {
+			allocatedPort = ent.allocatedPort
+		} else {
+			ent.allocatedPort = allocatedPort
+		}
+		ent.mu.Unlock()
+	}
 	if isNewWorktree {
-		_ = runWorktreeSetupScript(repoRoot, worktreeDir, sessionID, branch)
+		setupRes = executeWorktreeSetupScript(repoRoot, worktreeDir, sessionID, branch, allocatedPort)
+		if m.roots != nil && m.roots.verify != nil {
+			ent := m.roots.verify.entryFor(sessionID, worktreeDir)
+			ent.mu.Lock()
+			ent.setupScript = setupRes.Script
+			ent.setupStatus = setupRes.Status
+			ent.setupOutput = setupRes.Output
+			ent.setupError = setupRes.Error
+			ent.updatedAt = time.Now().UTC().Format(time.RFC3339)
+			ent.mu.Unlock()
+		}
 	}
 	if m.roots != nil && m.roots.quarantine != nil {
 		m.roots.quarantine.Clear(worktreeDir)
@@ -207,12 +240,16 @@ func (m *worktreeManager) CreateOnBranch(sessionID, retainedBranch string) (work
 	globalRepoDiffCache.invalidate(worktreeDir)
 
 	meta := worktreeMeta{
-		SessionID:  sessionID,
-		Isolated:   true,
-		Directory:  worktreeDir,
-		Branch:     branch,
-		BaseCommit: strings.TrimSpace(baseCommit),
-		CreatedAt:  time.Now().UTC().Format(time.RFC3339),
+		SessionID:     sessionID,
+		Isolated:      true,
+		Directory:     worktreeDir,
+		Branch:        branch,
+		BaseCommit:    strings.TrimSpace(baseCommit),
+		CreatedAt:     time.Now().UTC().Format(time.RFC3339),
+		SetupScript:   setupRes.Script,
+		SetupStatus:   setupRes.Status,
+		SetupError:    setupRes.Error,
+		AllocatedPort: allocatedPort,
 	}
 	m.storeMeta(meta)
 	return meta, nil
@@ -406,6 +443,29 @@ func (m *worktreeManager) StatusWithExtraDirs(sessionID string, extraDirs []stri
 		}
 	}
 
+	setupScript := meta.SetupScript
+	setupStatus := meta.SetupStatus
+	setupError := meta.SetupError
+	allocatedPort := meta.AllocatedPort
+	var runStatus, previewURL string
+	if m.roots != nil && m.roots.verify != nil {
+		vState := m.roots.verify.entryFor(meta.SessionID, meta.Directory).snapshot(WorktreeVerifyConfig{}, resolveWorktreeSetupScript(m.rootDir))
+		if vState.SetupScript != "" {
+			setupScript = vState.SetupScript
+		}
+		if vState.SetupStatus != "" && vState.SetupStatus != "none" {
+			setupStatus = vState.SetupStatus
+			setupError = vState.SetupError
+		}
+		if vState.AllocatedPort > 0 {
+			allocatedPort = vState.AllocatedPort
+		}
+		if vState.RunStatus != "idle" {
+			runStatus = vState.RunStatus
+		}
+		previewURL = vState.PreviewURL
+	}
+
 	return worktreeStatus{
 		SessionID:        meta.SessionID,
 		Isolated:         meta.Isolated,
@@ -425,6 +485,12 @@ func (m *worktreeManager) StatusWithExtraDirs(sessionID string, extraDirs []stri
 		HasUpstream:      hasUpstream,
 		CompareURL:       buildRemoteCompareURL(primaryRemoteURL, baseBranch, meta.Branch),
 		Health:           health,
+		SetupScript:      setupScript,
+		SetupStatus:      setupStatus,
+		SetupError:       setupError,
+		AllocatedPort:    allocatedPort,
+		RunStatus:        runStatus,
+		PreviewURL:       previewURL,
 		Repos:            repoStatuses,
 	}, nil
 }
@@ -544,6 +610,9 @@ func (m *worktreeManager) RemoveWithOptions(sessionID string, force bool, keepBr
 		return nil
 	}
 
+	if m.roots != nil && m.roots.verify != nil {
+		m.roots.verify.StopDirectory(meta.Directory)
+	}
 	if !force {
 		porcelain, err := runGit(meta.Directory, "status", "--porcelain")
 		if err != nil {

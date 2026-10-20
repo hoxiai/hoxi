@@ -174,7 +174,18 @@ func runtimeContext(rec SessionRecord) string {
 					content = append(content, fmt.Sprintf("Tool %s: %s", p.Tool, raw))
 				}
 			case "file":
-				content = append(content, fmt.Sprintf("Attachment %s (%s)", p.Filename, p.URL))
+				desc := strings.TrimSpace(p.Mime)
+				if attID := strings.TrimSpace(p.URL); !strings.HasPrefix(attID, "data:") && attID != "" {
+					if desc != "" {
+						desc = desc + ", " + attID
+					} else {
+						desc = attID
+					}
+				}
+				if desc == "" {
+					desc = "file"
+				}
+				content = append(content, fmt.Sprintf("Attachment %s (%s)", p.Filename, desc))
 			}
 		}
 		raw, _ := json.Marshal(map[string]interface{}{"role": turn.Info.Role, "content": content})

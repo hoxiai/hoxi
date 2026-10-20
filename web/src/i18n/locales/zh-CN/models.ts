@@ -161,6 +161,10 @@ export const models: ModelsI18n = {
     "默认工程智能体，具备完整的代码读写、终端命令执行与工具调用能力。",
   agentRolePlanDesc:
     "只读探索与方案设计模式，禁止编辑修改代码，专注架构分析与步骤规划。",
+  agentRoleAskDesc:
+    "只读回答代码库相关问题，从不编辑文件或执行 Shell 命令。",
+  agentRoleDebugDesc:
+    "排查故障：复现问题、定位根因，并施加最小化且经过验证的修复。",
   agentRoleCustomDesc:
     "自定义工程智能体模式，带专属系统提示词与行为规则。",
   defaultModelTitle: "默认主对话模型",

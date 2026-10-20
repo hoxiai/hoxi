@@ -26,7 +26,7 @@ func startFakeCLITurn(t *testing.T, svc *Service, sessionID, script string) *act
 		t.Fatal(err)
 	}
 	user := MessageInfo{ID: "msg_u_" + sessionID, SessionID: sessionID, Role: "user"}
-	if err := svc.startTurnProcess(rec, bin, "build", "m", "", "hi", user, nil, "msg_a_"+sessionID); err != nil {
+	if err := svc.startTurnProcess(rec, bin, "build", "m", "", "hi", user, nil, nil, "msg_a_"+sessionID); err != nil {
 		t.Fatalf("start turn: %v", err)
 	}
 	svc.mu.Lock()

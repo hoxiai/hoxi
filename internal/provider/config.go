@@ -155,6 +155,7 @@ func loadOpenCodeImportedProvidersFromDisk() map[string]interface{} {
 			}
 		}
 	}
+	normalizeDocModelVariants(map[string]interface{}{"provider": result})
 	return result
 }
 
@@ -231,6 +232,7 @@ func (g *Service) loadHoxiConfigDoc() map[string]interface{} {
 	if _, ok := doc["provider"].(map[string]interface{}); !ok {
 		doc["provider"] = map[string]interface{}{}
 	}
+	normalizeDocModelVariants(doc)
 	return doc
 }
 
@@ -250,93 +252,6 @@ func (g *Service) persistHoxiConfigDoc(doc map[string]interface{}) error {
 	}
 	g.reloadOpenCodeGlobalConfig()
 	return nil
-}
-
-func defaultModelVariants(providerID, npm, modelID string) map[string]interface{} {
-	lowerPID := strings.ToLower(strings.TrimSpace(providerID))
-	lowerNPM := strings.ToLower(strings.TrimSpace(npm))
-	lowerMID := strings.ToLower(strings.TrimSpace(modelID))
-
-	if strings.Contains(lowerNPM, "anthropic") || lowerPID == "anthropic" {
-		if strings.Contains(lowerMID, "opus-4-6") || strings.Contains(lowerMID, "opus-4.6") ||
-			strings.Contains(lowerMID, "sonnet-4-6") || strings.Contains(lowerMID, "sonnet-4.6") ||
-			strings.Contains(lowerMID, "opus-4-7") || strings.Contains(lowerMID, "opus-4.7") ||
-			strings.Contains(lowerMID, "opus-4-8") || strings.Contains(lowerMID, "opus-4.8") ||
-			strings.Contains(lowerMID, "opus-5") || strings.Contains(lowerMID, "sonnet-5") ||
-			strings.Contains(lowerMID, "haiku-5") || strings.Contains(lowerMID, "fable-5") {
-			return map[string]interface{}{
-				"low":    map[string]interface{}{"thinking": map[string]interface{}{"type": "adaptive"}, "effort": "low"},
-				"medium": map[string]interface{}{"thinking": map[string]interface{}{"type": "adaptive"}, "effort": "medium"},
-				"high":   map[string]interface{}{"thinking": map[string]interface{}{"type": "adaptive"}, "effort": "high"},
-				"max":    map[string]interface{}{"thinking": map[string]interface{}{"type": "adaptive"}, "effort": "max"},
-			}
-		}
-		return map[string]interface{}{
-			"low":    map[string]interface{}{"thinking": map[string]interface{}{"type": "enabled", "budgetTokens": 4096}},
-			"medium": map[string]interface{}{"thinking": map[string]interface{}{"type": "enabled", "budgetTokens": 10240}},
-			"high":   map[string]interface{}{"thinking": map[string]interface{}{"type": "enabled", "budgetTokens": 16000}},
-			"max":    map[string]interface{}{"thinking": map[string]interface{}{"type": "enabled", "budgetTokens": 31999}},
-		}
-	}
-
-	if strings.Contains(lowerNPM, "google") || lowerPID == "google" || lowerPID == "gemini" {
-		if strings.Contains(lowerMID, "gemini-3") || strings.Contains(lowerMID, "gemini-4") {
-			return map[string]interface{}{
-				"low":    map[string]interface{}{"thinkingConfig": map[string]interface{}{"includeThoughts": true, "thinkingLevel": "low"}},
-				"medium": map[string]interface{}{"thinkingConfig": map[string]interface{}{"includeThoughts": true, "thinkingLevel": "medium"}},
-				"high":   map[string]interface{}{"thinkingConfig": map[string]interface{}{"includeThoughts": true, "thinkingLevel": "high"}},
-			}
-		}
-		return map[string]interface{}{
-			"low":    map[string]interface{}{"thinkingConfig": map[string]interface{}{"includeThoughts": true, "thinkingBudget": 4096}},
-			"medium": map[string]interface{}{"thinkingConfig": map[string]interface{}{"includeThoughts": true, "thinkingBudget": 10240}},
-			"high":   map[string]interface{}{"thinkingConfig": map[string]interface{}{"includeThoughts": true, "thinkingBudget": 16000}},
-			"max":    map[string]interface{}{"thinkingConfig": map[string]interface{}{"includeThoughts": true, "thinkingBudget": 24576}},
-		}
-	}
-
-	return map[string]interface{}{
-		"low":    map[string]interface{}{"reasoningEffort": "low"},
-		"medium": map[string]interface{}{"reasoningEffort": "medium"},
-		"high":   map[string]interface{}{"reasoningEffort": "high"},
-	}
-}
-
-func normalizeDocModelVariants(doc map[string]interface{}) {
-	provMap, ok := doc["provider"].(map[string]interface{})
-	if !ok {
-		return
-	}
-	for pid, pVal := range provMap {
-		pObj, ok := pVal.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		npm, _ := pObj["npm"].(string)
-		mMap, ok := pObj["models"].(map[string]interface{})
-		if !ok {
-			continue
-		}
-		for mid, mVal := range mMap {
-			mObj, ok := mVal.(map[string]interface{})
-			if !ok {
-				continue
-			}
-			isReasoning, _ := mObj["reasoning"].(bool)
-			if !isReasoning {
-				if caps, ok := mObj["capabilities"].(map[string]interface{}); ok {
-					isReasoning, _ = caps["reasoning"].(bool)
-				}
-			}
-			if !isReasoning {
-				continue
-			}
-			vMap, hasVariants := mObj["variants"].(map[string]interface{})
-			if !hasVariants || len(vMap) == 0 {
-				mObj["variants"] = defaultModelVariants(pid, npm, mid)
-			}
-		}
-	}
 }
 
 func (g *Service) isBusy() bool {

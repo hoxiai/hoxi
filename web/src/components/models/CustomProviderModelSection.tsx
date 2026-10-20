@@ -38,33 +38,13 @@ interface CustomProviderModelSectionProps {
 }
 
 export function guessFetchedModelDraft(rm: { id: string; name: string }): CustomProviderModelDraft {
-  const lower = rm.id.toLowerCase();
-  const reasoning =
-    lower.includes("reason") ||
-    lower.includes("r1") ||
-    lower.includes("thinking") ||
-    lower.includes("opus") ||
-    lower.includes("sonnet") ||
-    lower.includes("o1") ||
-    lower.includes("o3") ||
-    lower.includes("gpt-5") ||
-    lower.includes("gpt-6") ||
-    lower.includes("gemini") ||
-    lower.includes("deepseek") ||
-    lower.includes("glm");
-  const image =
-    lower.includes("vision") ||
-    lower.includes("vl") ||
-    lower.includes("claude") ||
-    lower.includes("gpt-4") ||
-    lower.includes("gpt-5") ||
-    lower.includes("gpt-6") ||
-    lower.includes("gemini");
+  const lower = rm.id.toLowerCase().trim();
+  const isNonChat = /embedding|embed|rerank|bge-|whisper|tts|speech|moderation/.test(lower);
   return {
     id: rm.id,
     name: rm.name || rm.id,
-    reasoning,
-    image,
+    reasoning: !isNonChat,
+    image: !isNonChat,
   };
 }
 

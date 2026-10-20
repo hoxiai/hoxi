@@ -77,6 +77,16 @@ export const DEFAULT_AGENTS: AgentInfo[] = [
     mode: "primary",
     description: "Plan mode. Disallows all edit tools.",
   },
+  {
+    name: "ask",
+    mode: "primary",
+    description: "Read-only answers about the codebase. Never edits files or runs shell commands.",
+  },
+  {
+    name: "debug",
+    mode: "primary",
+    description: "Troubleshoots failures: reproduces, traces the root cause, and applies a minimal verified fix.",
+  },
 ];
 
 export async function loadAgents(directory?: string): Promise<void> {
@@ -291,21 +301,28 @@ export async function loadProviders(forceRefresh = false): Promise<void> {
       for (const [mid, mCfg] of Object.entries<any>(rawModels)) {
         if (!mCfg || typeof mCfg !== "object") continue;
         const rtModel = existingProv?.models?.[mid];
+        const hasImgModality = Boolean(
+          (Array.isArray(mCfg.modalities?.input) && mCfg.modalities.input.includes("image")) ||
+            mCfg.attachment ||
+            mCfg.capabilities?.attachment ||
+            mCfg.capabilities?.input?.image ||
+            rtModel?.capabilities?.input?.image
+        );
         exactModels[mid] = {
           ...(rtModel || {}),
           id: mid,
           name: mCfg.name || rtModel?.name || mid,
+          attachment: hasImgModality,
           reasoning: Boolean(mCfg.reasoning ?? rtModel?.reasoning),
           variants: mCfg.variants || rtModel?.variants,
+          modalities: mCfg.modalities || rtModel?.modalities,
           capabilities: {
             ...(rtModel?.capabilities || {}),
+            attachment: hasImgModality,
             reasoning: Boolean(mCfg.reasoning ?? rtModel?.capabilities?.reasoning),
             input: {
               ...(rtModel?.capabilities?.input || {}),
-              image: Boolean(
-                Array.isArray(mCfg.modalities?.input) &&
-                  mCfg.modalities.input.includes("image")
-              ),
+              image: hasImgModality,
             },
           },
         };
@@ -456,9 +473,20 @@ export async function connectProviderWithKey(opts: {
               ...(existingProvider.models || {}),
               [opts.customModelID.trim()]: {
                 name: opts.customModelID.trim(),
-                reasoning: !/embedding|whisper|tts|rerank|haiku-3|haiku-4|gpt-3\.5|gpt-4o/i.test(
+                attachment: !/embedding|embed|rerank|bge-|whisper|tts|speech|moderation/i.test(
                   opts.customModelID.trim()
                 ),
+                reasoning: !/embedding|embed|rerank|bge-|whisper|tts|speech|moderation/i.test(
+                  opts.customModelID.trim()
+                ),
+                modalities: {
+                  input: !/embedding|embed|rerank|bge-|whisper|tts|speech|moderation/i.test(
+                    opts.customModelID.trim()
+                  )
+                    ? ["text", "image"]
+                    : ["text"],
+                  output: ["text"],
+                },
               },
             },
           }
@@ -493,6 +521,7 @@ export async function saveCustomProvider(input: SaveCustomProviderInput): Promis
     if (!mid) continue;
     nextModels[mid] = {
       name: (m.name || mid).trim(),
+      attachment: Boolean(m.image),
       reasoning: Boolean(m.reasoning),
       modalities: { input: m.image ? ["text", "image"] : ["text"], output: ["text"] },
     };

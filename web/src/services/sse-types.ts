@@ -112,6 +112,7 @@ export type MessagePart =
       messageID: string;
       type: "text";
       text: string;
+      metadata?: Record<string, any>;
     }
   | {
       id: string;

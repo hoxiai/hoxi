@@ -528,6 +528,9 @@ export function extractFlattenedModels(
       const reasoning = rawReasoning || effortCaps.efforts.length > 0;
       const image = Boolean(
         mInfo.capabilities?.input?.image ||
+          mInfo.capabilities?.attachment ||
+          mInfo.attachment ||
+          cfgModel?.attachment ||
           (Array.isArray(mInfo.modalities?.input) && mInfo.modalities.input.includes("image")) ||
           (Array.isArray(cfgModel?.modalities?.input) &&
             cfgModel.modalities.input.includes("image"))

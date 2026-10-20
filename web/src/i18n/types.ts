@@ -17,6 +17,7 @@ export type InspectorI18n = I18nDictionary["inspector"];
 export type ModelsI18n = I18nDictionary["models"];
 export type SettingsI18n = I18nDictionary["settings"];
 export type NetworkI18n = I18nDictionary["network"];
+export type SkillsI18n = I18nDictionary["skills"];
 
 export type Locale = "zh-CN" | "en-US";
 

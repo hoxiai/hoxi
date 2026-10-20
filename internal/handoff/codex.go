@@ -558,6 +558,10 @@ func (g *Service) importCodexCLIProvider() LocalCLIImportResponse {
 			"tool_call":  true,
 			"reasoning":  true,
 			"attachment": true,
+			"modalities": map[string]interface{}{
+				"input":  []string{"text", "image"},
+				"output": []string{"text"},
+			},
 		}
 	}
 	cfgDoc := g.loadHoxiConfigDoc()

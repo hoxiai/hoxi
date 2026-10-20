@@ -23,6 +23,7 @@ import { isPlaceholderSessionTitle, summarizeAndRenameSession } from "./session-
 import {
   isAutoModel,
   markAutoCandidateCooldown,
+  modelSupportsImageInput,
   resolveAutoModelTarget,
 } from "./auto-models";
 import { newIsolatedSession, waitForSessionSandbox } from "./session-sandbox";
@@ -102,9 +103,13 @@ export async function handleSessionErrorEvent(
       Boolean(error.data?.isRetryable) ||
       /429|rate.?limit|quota|too many requests|overloaded|unavailable|timeout/i.test(errText);
     if ((isRateOrTransient || isElapsedFast) && autoState.triedKeys.size < 3) {
+      const retryHasImage = (autoState.attachments ?? []).some(
+        (a) => (a.mime || "").toLowerCase().startsWith("image/") || /^data:image\//i.test(a.url || "")
+      );
       const nextCand = resolveAutoModelTarget(autoState.poolID, {
         advance: true,
         excludeKeys: autoState.triedKeys,
+        requireImage: retryHasImage,
       });
       if (
         nextCand &&
@@ -241,10 +246,16 @@ export async function submitSessionPrompt(
     !options?.model && typeof agentDedicatedModelKey === "string" && agentDedicatedModelKey
       ? parseModelString(agentDedicatedModelKey)
       : null;
+  const attachments = options?.attachments ?? [];
+  const hasImageAttachment = attachments.some(
+    (a) => (a.mime || "").toLowerCase().startsWith("image/") || /^data:image\//i.test(a.url || "")
+  );
   const chosenModel = options?.model || agentDedicatedModel || config.model;
   const isAuto = isAutoModel(chosenModel);
   const resolvedConcrete =
-    isAuto && chosenModel ? resolveAutoModelTarget(chosenModel, { advance: true }) : null;
+    isAuto && chosenModel
+      ? resolveAutoModelTarget(chosenModel, { advance: true, requireImage: hasImageAttachment })
+      : null;
   const effectiveModel = resolvedConcrete
     ? { ...resolvedConcrete }
     : chosenModel
@@ -257,12 +268,18 @@ export async function submitSessionPrompt(
     provider.id === effectiveModel.providerID && provider.models?.[effectiveModel.modelID])) {
     throw new Error(`${t("timeline.selectModel")}: ${effectiveModel.providerID}/${effectiveModel.modelID}`);
   }
+  if (
+    hasImageAttachment &&
+    effectiveModel &&
+    !modelSupportsImageInput(effectiveModel.providerID, effectiveModel.modelID)
+  ) {
+    throw new Error(t("timeline.modelDoesNotSupportImages", { model: effectiveModel.modelID }));
+  }
   const effort = options?.effort ?? config.effort;
   const initialDirectory = id ? sessionDirectory(id) : workspace.rootDir;
   const system = buildCombinedSystemPrompt(buildWorkspaceFoldersSystemPrompt(
     workspaceFoldersForDir(initialDirectory || "")
   ));
-  const attachments = options?.attachments ?? [];
 
   if (id) {
     await waitForSessionSandbox(id);

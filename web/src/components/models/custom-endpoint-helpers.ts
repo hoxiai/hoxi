@@ -7,6 +7,7 @@ import {
   workspace,
   type CustomProviderModelDraft,
 } from "../../store/workspace";
+import { guessFetchedModelDraft } from "./CustomProviderModelSection";
 
 export const PROVIDER_VARIANTS = [
   { value: "@ai-sdk/openai-compatible", label: "OpenAI Compatible (/v1/chat/completions)" },
@@ -27,9 +28,11 @@ export interface CustomProviderFormState {
 
 interface RawConfigModelEntry {
   name?: string;
+  attachment?: boolean;
   reasoning?: boolean;
   modalities?: { input?: string[] };
   capabilities?: {
+    attachment?: boolean;
     reasoning?: boolean;
     input?: { image?: boolean };
   };
@@ -119,18 +122,38 @@ export function extractCustomProviderFormState(editID: string | null): CustomPro
   const loadedModels: CustomProviderModelDraft[] = [];
   for (const [mID, mVal] of Object.entries(rawModels)) {
     if (!mVal || typeof mVal !== "object") continue;
-    const rtModel = runtimeProv?.models?.[mID];
-    const reasoning = Boolean(
-      mVal.reasoning ??
-        mVal.capabilities?.reasoning ??
-        rtModel?.capabilities?.reasoning ??
-        rtModel?.reasoning
-    );
-    const image = Boolean(
-      (Array.isArray(mVal.modalities?.input) && mVal.modalities.input.includes("image")) ||
-        mVal.capabilities?.input?.image ||
-        rtModel?.capabilities?.input?.image
-    );
+    const rtModel = runtimeProv?.models?.[mID] as RawConfigModelEntry | undefined;
+    const guessed = guessFetchedModelDraft({ id: mID, name: mVal.name || rtModel?.name || mID });
+    const hasExplicitReasoning =
+      mVal.reasoning !== undefined ||
+      mVal.capabilities?.reasoning !== undefined ||
+      rtModel?.capabilities?.reasoning !== undefined ||
+      rtModel?.reasoning !== undefined;
+    const reasoning = hasExplicitReasoning
+      ? Boolean(
+          mVal.reasoning ??
+            mVal.capabilities?.reasoning ??
+            rtModel?.capabilities?.reasoning ??
+            rtModel?.reasoning
+        )
+      : guessed.reasoning;
+    const hasExplicitImage =
+      mVal.attachment !== undefined ||
+      mVal.capabilities?.attachment !== undefined ||
+      Array.isArray(mVal.modalities?.input) ||
+      mVal.capabilities?.input?.image !== undefined ||
+      rtModel?.capabilities?.input?.image !== undefined ||
+      rtModel?.attachment !== undefined;
+    const image = hasExplicitImage
+      ? Boolean(
+          mVal.attachment ||
+            mVal.capabilities?.attachment ||
+            (Array.isArray(mVal.modalities?.input) && mVal.modalities.input.includes("image")) ||
+            mVal.capabilities?.input?.image ||
+            rtModel?.capabilities?.input?.image ||
+            rtModel?.attachment
+        )
+      : guessed.image;
     loadedModels.push({
       id: mID,
       name: mVal.name || rtModel?.name || mID,

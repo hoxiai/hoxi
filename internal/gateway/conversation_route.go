@@ -1,7 +1,10 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
 )
@@ -17,6 +20,25 @@ func markInternalConversationRoute(r *http.Request) {
 func isInternalConversationRoute(r *http.Request) bool {
 	v, _ := r.Context().Value(internalConversationRouteKey{}).(bool)
 	return v
+}
+
+func requestHasSkillSelection(r *http.Request) bool {
+	if r == nil || r.Body == nil || r.Method != http.MethodPost {
+		return false
+	}
+	raw, err := io.ReadAll(io.LimitReader(r.Body, 2<<20))
+	r.Body = io.NopCloser(bytes.NewReader(raw))
+	if err != nil || len(bytes.TrimSpace(raw)) == 0 {
+		return false
+	}
+	var probe struct {
+		SkillSelection json.RawMessage `json:"skillSelection"`
+	}
+	if json.Unmarshal(raw, &probe) != nil {
+		return false
+	}
+	trimmed := bytes.TrimSpace(probe.SkillSelection)
+	return len(trimmed) > 0 && !bytes.Equal(trimmed, []byte("null"))
 }
 
 // routeConversation maps /api/hoxi/sessions/{id}[/action] onto the backend
@@ -42,8 +64,9 @@ func (g *Gateway) routeConversation(w http.ResponseWriter, r *http.Request) bool
 	if action != "" {
 		suffix = "/" + action
 	}
-	// Runtime switches adopt unmanaged OpenCode sessions, so they always go to the runner.
-	if action != "runtime" && !g.runner.OwnsSession(id) {
+	// Runtime switches and skill-selected prompts adopt unmanaged OpenCode sessions, so they always go to the runner.
+	hasSkill := (action == "prompt" || action == "prompt_async") && requestHasSkillSelection(r)
+	if action != "runtime" && !hasSkill && !g.runner.OwnsSession(id) {
 		markInternalConversationRoute(r)
 		setRequestPath(r, "/session/"+id+suffix)
 		return true

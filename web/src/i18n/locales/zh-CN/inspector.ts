@@ -6,6 +6,7 @@ export const inspector: InspectorI18n = {
     diffs: "变更",
     memory: "记忆",
     files: "文件",
+    skills: "技能",
     terminal: "终端",
     browser: "浏览器",
     maximize: "全屏展开",

@@ -2,10 +2,12 @@
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 import {
   Bot,
+  Bug,
   Check,
   ChevronDown,
   Compass,
   Hammer,
+  MessageCircleQuestion,
   ShieldAlert,
   Sparkles,
   Wrench,
@@ -20,6 +22,8 @@ function formatAgentLabel(agentOrName: AgentInfo | string): string {
   const lower = name.toLowerCase();
   if (lower === "build") return t("timeline.buildMode");
   if (lower === "plan") return t("timeline.planMode");
+  if (lower === "ask") return t("timeline.askMode");
+  if (lower === "debug") return t("timeline.debugMode");
   return name
     .split(/[-_]/)
     .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
@@ -30,6 +34,8 @@ function modeIcon(name: string) {
   const lower = name.toLowerCase();
   if (lower === "build") return <Hammer size={12} class="shrink-0" />;
   if (lower === "plan") return <Compass size={12} class="shrink-0" />;
+  if (lower === "ask") return <MessageCircleQuestion size={12} class="shrink-0" />;
+  if (lower === "debug") return <Bug size={12} class="shrink-0" />;
   if (lower === "debugger" || lower === "fix") return <Wrench size={12} class="shrink-0" />;
   return <Sparkles size={12} class="shrink-0" />;
 }
@@ -38,6 +44,7 @@ function modeBadge(name: string): string | null {
   const lower = name.toLowerCase();
   if (lower === "build") return t("timeline.buildMode");
   if (lower === "plan") return t("timeline.planMode");
+  if (lower === "ask") return t("timeline.askModeBadge");
   return null;
 }
 

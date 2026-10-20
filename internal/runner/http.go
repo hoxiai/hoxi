@@ -1,25 +1,29 @@
 package runner
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/hoxiai/hoxi/internal/attachment"
 	"github.com/hoxiai/hoxi/internal/diagnostics"
 	"github.com/hoxiai/hoxi/internal/statusbar"
 	"github.com/hoxiai/hoxi/internal/worktree"
 )
 
 type Service struct {
-	rootDir   string
-	store     *Store
-	worktrees *worktree.Manager
-	status    *statusbar.Tracker
-	gate      *approvalGate
-	stall     stallPolicy
+	rootDir     string
+	store       *Store
+	attachments *attachment.Store
+	worktrees   *worktree.Manager
+	status      *statusbar.Tracker
+	gate        *approvalGate
+	stall       stallPolicy
 
 	mu               sync.Mutex
 	turnMu           sync.Mutex
@@ -32,24 +36,31 @@ type Service struct {
 	openCodeClient   *http.Client
 	managedOpenCode  sync.Map
 	// childTurns caches OpenCode subagent transcripts read while filtering diffs.
-	childTurns  sync.Map // session ID -> childTurnsEntry
-	editedFiles sync.Map // session ID -> editedFilesEntry
+	childTurns     sync.Map // session ID -> childTurnsEntry
+	editedFiles    sync.Map // session ID -> editedFilesEntry
+	userSkillByMsg sync.Map // message ID -> userSkillOverride
+	skillValidator func(ctx context.Context, directory, sessionID string, sel SkillSelection) error
 }
 
 func NewService(rootDir string, worktrees *worktree.Manager, status *statusbar.Tracker, customStorePath string) *Service {
 	if worktrees == nil {
 		worktrees = worktree.NewManager(rootDir)
 	}
+	attDir := ""
+	if strings.TrimSpace(customStorePath) != "" {
+		attDir = filepath.Join(filepath.Dir(customStorePath), "attachments")
+	}
 	svc := &Service{
-		rootDir:   rootDir,
-		store:     NewStore(customStorePath),
-		worktrees: worktrees,
-		status:    status,
-		gate:      newApprovalGate(),
-		stall:     stallPolicyFromEnv(),
-		procs:     make(map[string]*activeProcess),
-		childBusy: make(map[string]bool),
-		subs:      make(map[chan SSEEvent]string),
+		rootDir:     rootDir,
+		store:       NewStore(customStorePath),
+		attachments: attachment.NewStore(attDir),
+		worktrees:   worktrees,
+		status:      status,
+		gate:        newApprovalGate(),
+		stall:       stallPolicyFromEnv(),
+		procs:       make(map[string]*activeProcess),
+		childBusy:   make(map[string]bool),
+		subs:        make(map[chan SSEEvent]string),
 	}
 	for _, info := range svc.store.List("") {
 		rec, _ := svc.store.Meta(info.ID)
@@ -85,6 +96,9 @@ func (s *Service) CloseAll() {
 }
 
 func (s *Service) RegisterRoutes(mux *http.ServeMux) {
+	if s.attachments != nil {
+		s.attachments.RegisterRoutes(mux)
+	}
 	mux.HandleFunc("/api/hoxi/runner/antigravity/models", s.handleAntigravityModels)
 	mux.HandleFunc("/api/hoxi/runner/claude-code/models", s.handleClaudeModels)
 	mux.HandleFunc("/api/hoxi/runner/codebuddy/models", s.handleCodeBuddyModels)
@@ -403,11 +417,6 @@ func (s *Service) handleSessionPrompt(w http.ResponseWriter, r *http.Request, se
 		writeJSONError(w, http.StatusMethodNotAllowed, "POST required")
 		return
 	}
-	rec, ok := s.store.Get(sessionID)
-	if !ok {
-		writeJSONError(w, http.StatusNotFound, "runner session not found")
-		return
-	}
 	var body struct {
 		Text    string `json:"text"`
 		Agent   string `json:"agent"`
@@ -417,14 +426,49 @@ func (s *Service) handleSessionPrompt(w http.ResponseWriter, r *http.Request, se
 			ProviderID string `json:"providerID"`
 			ModelID    string `json:"modelID"`
 		} `json:"model"`
-		Parts []MessagePart `json:"parts"`
+		Parts          []MessagePart   `json:"parts"`
+		SkillSelection *SkillSelection `json:"skillSelection,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
+	rec, ok := s.store.Get(sessionID)
+	if !ok && body.SkillSelection != nil {
+		adopted, adoptErr := s.adoptOpenCodeSession(r.Context(), sessionID, r.URL.Query().Get("directory"))
+		if adoptErr != nil {
+			writeJSONError(w, http.StatusConflict, adoptErr.Error())
+			return
+		}
+		if putErr := s.store.Put(adopted); putErr != nil {
+			writeJSONError(w, http.StatusInternalServerError, putErr.Error())
+			return
+		}
+		for _, id := range adopted.OpenCodeIDs {
+			s.managedOpenCode.Store(id, true)
+		}
+		rec = adopted
+		ok = true
+	}
+	if !ok {
+		writeJSONError(w, http.StatusNotFound, "runner session not found")
+		return
+	}
+	if reqDir := strings.TrimSpace(r.URL.Query().Get("directory")); reqDir != "" &&
+		normalizeComparePath(reqDir) != normalizeComparePath(rec.WorktreePath) &&
+		normalizeComparePath(reqDir) != normalizeComparePath(rec.ProjectDir) {
+		writeJSONError(w, http.StatusForbidden, "session directory does not match its sandbox")
+		return
+	}
+
 	promptText := strings.TrimSpace(body.Text)
+	var fileParts []MessagePart
+	for _, p := range body.Parts {
+		if p.Type == "file" && strings.TrimSpace(p.URL) != "" {
+			fileParts = append(fileParts, p)
+		}
+	}
 	if promptText == "" {
 		var texts []string
 		for _, p := range body.Parts {
@@ -434,7 +478,7 @@ func (s *Service) handleSessionPrompt(w http.ResponseWriter, r *http.Request, se
 		}
 		promptText = strings.Join(texts, "\n")
 	}
-	if promptText == "" {
+	if promptText == "" && len(fileParts) == 0 && body.SkillSelection == nil {
 		writeJSONError(w, http.StatusBadRequest, "prompt text is required")
 		return
 	}
@@ -447,6 +491,16 @@ func (s *Service) handleSessionPrompt(w http.ResponseWriter, r *http.Request, se
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if body.SkillSelection != nil {
+		if rec.Runtime != "" && rec.Runtime != "opencode" {
+			writeJSONError(w, http.StatusConflict, fmt.Sprintf("runtime %q does not support native skills", rec.Runtime))
+			return
+		}
+		if err := s.validateSkillSelection(r.Context(), rec.WorktreePath, rec.ID, *body.SkillSelection); err != nil {
+			writeJSONError(w, http.StatusConflict, err.Error())
+			return
+		}
+	}
 	if rec.Runtime == "opencode" {
 		s.mu.Lock()
 		busy := s.procs[sessionID] != nil
@@ -456,7 +510,11 @@ func (s *Service) handleSessionPrompt(w http.ResponseWriter, r *http.Request, se
 			if body.Model != nil {
 				modelID, providerID = body.Model.ModelID, body.Model.ProviderID
 			}
-			err := s.steerOpenCodeTurn(r.Context(), rec, firstNonEmptyStr(body.Agent, rec.Mode, "build"), modelID, providerID, body.Variant, body.System, promptText, body.Parts)
+			steerText := promptText
+			if body.SkillSelection != nil {
+				steerText = formatSkillPromptInstruction(body.SkillSelection.Name, promptText)
+			}
+			err := s.steerOpenCodeTurn(r.Context(), rec, firstNonEmptyStr(body.Agent, rec.Mode, "build"), modelID, providerID, body.Variant, body.System, steerText, body.Parts)
 			if err != nil {
 				writeJSONError(w, http.StatusBadGateway, err.Error())
 				return
@@ -519,21 +577,19 @@ func (s *Service) handleSessionPrompt(w http.ResponseWriter, r *http.Request, se
 		ModelID:    modelID,
 		ProviderID: rec.ProviderID,
 	}
-	userParts := []MessagePart{
-		{
-			ID:        fmt.Sprintf("prt_u_%d_%d", now, seq),
-			SessionID: sessionID,
-			MessageID: userMsgID,
-			Type:      "text",
-			Text:      promptText,
-		},
-	}
-	for index, part := range body.Parts {
-		if part.Type == "file" {
-			part.ID = fmt.Sprintf("prt_f_%d_%d_%d", now, seq, index)
-			part.SessionID, part.MessageID = sessionID, userMsgID
-			userParts = append(userParts, part)
-		}
+	storedParts, deliveryParts, cliPrompt := s.prepareTurnAttachments(rec, now, seq, userMsgID, promptText, fileParts)
+	if body.SkillSelection != nil {
+		s.recordUserSkillOverride(userMsgID, promptText, body.SkillSelection)
+		storedParts, deliveryParts = applySkillSelectionToTurnParts(
+			sessionID,
+			userMsgID,
+			now,
+			seq,
+			promptText,
+			body.SkillSelection,
+			storedParts,
+			deliveryParts,
+		)
 	}
 
 	_, _, _ = s.store.Update(sessionID, func(r *SessionRecord) {
@@ -548,13 +604,13 @@ func (s *Service) handleSessionPrompt(w http.ResponseWriter, r *http.Request, se
 
 	var err error
 	if rec.Runtime == "opencode" {
-		err = s.startOpenCodeTurn(rec, mode, modelID, effort, body.System, userInfo, userParts)
+		err = s.startOpenCodeTurn(rec, mode, modelID, effort, body.System, userInfo, storedParts, deliveryParts)
 	} else {
 		input := runtimeMemoryContext(rec) + runtimeContext(rec)
 		if body.System != "" {
 			input += body.System + "\n\n"
 		}
-		err = s.startTurnProcess(rec, binPath, mode, modelID, effort, input+promptText, userInfo, userParts, asstMsgID)
+		err = s.startTurnProcess(rec, binPath, mode, modelID, effort, input+cliPrompt, userInfo, storedParts, deliveryParts, asstMsgID)
 	}
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, err.Error())

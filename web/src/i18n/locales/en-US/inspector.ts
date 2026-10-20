@@ -5,6 +5,7 @@ export const inspector = {
     diffs: "Diffs",
     memory: "Memory",
     files: "Files",
+    skills: "Skills",
     terminal: "Terminal",
     browser: "Browser",
     maximize: "Maximize Inspector (cover chat area)",

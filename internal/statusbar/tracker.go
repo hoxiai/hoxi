@@ -2,24 +2,32 @@ package statusbar
 
 import (
 	"encoding/json"
+	"os/exec"
 	"strings"
 	"sync"
 )
 
 type Summary struct {
-	Attention int  `json:"attention"`
-	Running   int  `json:"running"`
-	Queued    int  `json:"queued"`
-	Available bool `json:"available"`
+	Attention        int  `json:"attention"`
+	Running          int  `json:"running"`
+	Queued           int  `json:"queued"`
+	Available        bool `json:"available"`
+	KeepAwakeEnabled bool `json:"keepAwakeEnabled"`
+	KeepAwakeActive  bool `json:"keepAwakeActive"`
 }
 
 type Tracker struct {
-	mu               sync.Mutex
-	available        bool
-	busySessions     map[string]bool
-	stalledSessions  map[string]bool   // busy sessions silent long enough to look stuck
-	pendingApprovals map[string]string // requestID -> sessionID
-	degradedProvider map[string]bool
+	mu                 sync.Mutex
+	available          bool
+	busySessions       map[string]bool
+	stalledSessions    map[string]bool   // busy sessions silent long enough to look stuck
+	pendingApprovals   map[string]string // requestID -> sessionID
+	degradedProvider   map[string]bool
+	keepAwakeEnabled   bool
+	keepAwakeActive    bool
+	keepAwakeCmd       *exec.Cmd
+	startKeepAwakeHook func() (func(), error)
+	keepAwakeStopHook  func()
 }
 
 func NewTracker() *Tracker {
@@ -29,12 +37,14 @@ func NewTracker() *Tracker {
 		stalledSessions:  make(map[string]bool),
 		pendingApprovals: make(map[string]string),
 		degradedProvider: make(map[string]bool),
+		keepAwakeEnabled: loadPersistedKeepAwakeEnabled(),
 	}
 }
 
 func (t *Tracker) SetAvailable(avail bool) {
 	t.mu.Lock()
 	t.available = avail
+	t.syncKeepAwakeLocked()
 	summary := t.snapshotLocked()
 	t.mu.Unlock()
 	Update(summary)
@@ -57,6 +67,7 @@ func (t *Tracker) SetSessionBusy(sessionID string, busy bool) {
 			}
 		}
 	}
+	t.syncKeepAwakeLocked()
 	summary := t.snapshotLocked()
 	t.mu.Unlock()
 	Update(summary)
@@ -75,6 +86,7 @@ func (t *Tracker) SetSessionStalled(sessionID string, stalled bool) {
 	} else {
 		delete(t.stalledSessions, sessionID)
 	}
+	t.syncKeepAwakeLocked()
 	summary := t.snapshotLocked()
 	t.mu.Unlock()
 	Update(summary)
@@ -91,6 +103,7 @@ func (t *Tracker) SetPendingApproval(requestID, sessionID string, pending bool) 
 	} else {
 		delete(t.pendingApprovals, requestID)
 	}
+	t.syncKeepAwakeLocked()
 	summary := t.snapshotLocked()
 	t.mu.Unlock()
 	Update(summary)
@@ -109,6 +122,7 @@ func (t *Tracker) SetProviderDegraded(providerID string, degraded bool) {
 	} else {
 		delete(t.degradedProvider, providerID)
 	}
+	t.syncKeepAwakeLocked()
 	summary := t.snapshotLocked()
 	t.mu.Unlock()
 	Update(summary)
@@ -122,10 +136,12 @@ func (t *Tracker) Snapshot() Summary {
 
 func (t *Tracker) snapshotLocked() Summary {
 	return Summary{
-		Attention: len(t.pendingApprovals) + len(t.stalledSessions) + len(t.degradedProvider),
-		Running:   len(t.busySessions),
-		Queued:    0,
-		Available: t.available,
+		Attention:        len(t.pendingApprovals) + len(t.stalledSessions) + len(t.degradedProvider),
+		Running:          len(t.busySessions),
+		Queued:           0,
+		Available:        t.available,
+		KeepAwakeEnabled: t.keepAwakeEnabled,
+		KeepAwakeActive:  t.keepAwakeActive,
 	}
 }
 
@@ -212,6 +228,7 @@ func (t *Tracker) InspectSSELine(line string) {
 	}
 	var summary Summary
 	if changed {
+		t.syncKeepAwakeLocked()
 		summary = t.snapshotLocked()
 	}
 	t.mu.Unlock()

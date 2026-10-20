@@ -527,6 +527,17 @@ export function openURLInInspector(url: string) {
   });
 }
 
+export function openExternalURL(url: string) {
+  const trimmed = url.trim();
+  if (!trimmed || !/^https?:\/\//i.test(trimmed)) return;
+  const wailsRuntime = (window as any).runtime;
+  if (typeof wailsRuntime?.BrowserOpenURL === "function") {
+    wailsRuntime.BrowserOpenURL(trimmed);
+    return;
+  }
+  window.open(trimmed, "_blank", "noopener,noreferrer");
+}
+
 export function addReviewComment(sessionID: string, comment: Omit<ReviewCommentItem, "id">) {
   const item: ReviewCommentItem = {
     ...comment,

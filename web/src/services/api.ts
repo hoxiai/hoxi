@@ -46,6 +46,8 @@ import {
 } from "./runner-api";
 
 export * from "./api-types";
+export * from "./skills-types";
+export { skillsAPI } from "./skills";
 export {
   authAPI,
   getGatewayToken,
@@ -97,6 +99,37 @@ export const hoxiAPI = {
 
   getSystemInfo(): Promise<SystemRuntimeInfo> {
     return requestJSON("/api/hoxi/system-info");
+  },
+
+  async readClipboardImages(opts?: {
+    filesOnly?: boolean;
+  }): Promise<Array<{ filename: string; mime: string; dataUrl: string }>> {
+    const qs = opts?.filesOnly ? "?filesOnly=1" : "";
+    const res = await requestJSON<{
+      images?: Array<{ filename: string; mime: string; dataUrl: string }>;
+    }>(`/api/hoxi/clipboard/images${qs}`);
+    return Array.isArray(res?.images) ? res.images : [];
+  },
+
+  uploadAttachment(req: {
+    sessionID?: string;
+    directory?: string;
+    filename: string;
+    mime: string;
+    dataUrl: string;
+  }): Promise<{
+    id: string;
+    filename: string;
+    mime: string;
+    size: number;
+    kind: "image" | "pdf" | "spreadsheet" | "document" | "text";
+    url: string;
+    textPreview?: string;
+  }> {
+    return requestJSON(withDir("/api/hoxi/attachments", req.directory), {
+      method: "POST",
+      body: JSON.stringify(req),
+    });
   },
 
   getGitDailyPulse(
@@ -206,6 +239,7 @@ export const hoxiAPI = {
       system?: string;
       attachments?: PromptAttachment[];
       runtime?: SessionRuntime;
+      skillSelection?: import("./skills-types").SkillSelection;
     }
   ): Promise<void> {
     if (options?.runtime) await prepareRuntime(sessionID, options.runtime, options.model, options.directory);
@@ -223,6 +257,7 @@ export const hoxiAPI = {
         ...(options?.model ? { model: options.model } : {}),
         ...(options?.variant ? { variant: options.variant } : {}),
         ...(options?.system ? { system: options.system } : {}),
+        ...(options?.skillSelection ? { skillSelection: options.skillSelection } : {}),
         parts,
       }),
     });

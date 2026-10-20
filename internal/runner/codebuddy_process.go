@@ -503,7 +503,7 @@ func buildCodeBuddyModelItems(bin string, slugs []string) []RunnerModelItem {
 
 func BuildCodeBuddyArgs(mode, modelID, effort, externalSessionID string) []string {
 	permMode := "acceptEdits"
-	if strings.EqualFold(strings.TrimSpace(mode), "plan") {
+	if isReadOnlyMode(mode) {
 		permMode = "plan"
 	}
 	args := []string{

@@ -28,6 +28,9 @@ export const timeline = {
   send: "Send",
   buildMode: "Build",
   planMode: "Plan",
+  askMode: "Ask",
+  debugMode: "Debug",
+  askModeBadge: "Read-only",
   buildDesc: "Full autonomous execution with tools and file modifications",
   planDesc: "Read-only architectural planning and exploration",
   inputPlaceholder:
@@ -68,7 +71,7 @@ export const timeline = {
     "Create an isolated Git worktree sandbox to implement this plan",
   newWorktree: "New Worktree",
   dismiss: "Dismiss",
-  attachImageTooltip: "Attach image or screenshot (Cmd+V to paste)",
+  attachImageTooltip: "Attach image, PDF, spreadsheet, or document (Cmd+V to paste)",
   openInInspectorTooltip: "Open file in Inspector",
   openInBrowserTooltip: "Open in built-in Browser",
   removeCommentTooltip: "Remove comment",
@@ -277,4 +280,12 @@ export const timeline = {
   turnSpeedLabel: "Throughput",
   turnTokensSummary: "In {input} · Out {output}",
   turnCacheHitBadge: "Cache {tokens}",
+  attachmentReading: "Reading…",
+  attachmentUnsupportedType:
+    "Unsupported file \"{name}\". Supported: images, PDF, spreadsheets (Excel/CSV), documents (Word), and text/code files.",
+  attachmentTooLarge: "File \"{name}\" exceeds the {maxMB} MB limit.",
+  attachmentLimitReached: "Up to {max} attachments allowed per message.",
+  attachmentReadFailed: "Failed to read attachment \"{name}\".",
+  modelDoesNotSupportImages:
+    "Model {model} has image input disabled. Please enable Vision in model settings or switch models.",
 };

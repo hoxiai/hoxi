@@ -2,12 +2,14 @@
 import { createMemo, createSignal, For, onMount, Show } from "solid-js";
 import {
   Bot,
+  Bug,
   Check,
   ChevronDown,
   ChevronUp,
   Compass,
   Hammer,
   LoaderCircle,
+  MessageCircleQuestion,
   Pencil,
   Plus,
   RotateCcw,
@@ -28,8 +30,13 @@ function agentIcon(name: string) {
   const lower = name.toLowerCase();
   if (lower === "build") return <Hammer size={16} class="shrink-0" />;
   if (lower === "plan") return <Compass size={16} class="shrink-0" />;
+  if (lower === "ask") return <MessageCircleQuestion size={16} class="shrink-0" />;
+  if (lower === "debug") return <Bug size={16} class="shrink-0" />;
   return <Sparkles size={16} class="shrink-0" />;
 }
+
+// Hoxi-owned agents injected by the runtime overlay; they cannot be removed.
+const BUILTIN_MODE_IDS = new Set(["build", "plan", "ask", "debug", "compaction"]);
 
 export default function AgentRolesTab() {
   const [savingKey, setSavingKey] = createSignal<string | null>(null);
@@ -199,10 +206,26 @@ export default function AgentRolesTab() {
       prompt: workspace.globalConfig?.agent?.plan?.prompt,
     });
 
+    // Built-in Ask (read-only) and Debug
+    list.push({
+      id: "ask",
+      name: t("timeline.askMode"),
+      isBuiltin: true,
+      description: t("models.agentRoleAskDesc"),
+      model: workspace.globalConfig?.agent?.ask?.model || "",
+    });
+    list.push({
+      id: "debug",
+      name: t("timeline.debugMode"),
+      isBuiltin: true,
+      description: t("models.agentRoleDebugDesc"),
+      model: workspace.globalConfig?.agent?.debug?.model || "",
+    });
+
     // Custom Agents from globalConfig.agent
     const cfgAgent = workspace.globalConfig?.agent || {};
     for (const [key, val] of Object.entries(cfgAgent)) {
-      if (key === "build" || key === "plan" || key === "compaction") continue;
+      if (BUILTIN_MODE_IDS.has(key)) continue;
       if (val && typeof val === "object") {
         const item = val as Record<string, any>;
         list.push({

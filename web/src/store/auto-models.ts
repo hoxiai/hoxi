@@ -420,9 +420,40 @@ function candidateHealthScore(c: AutoPoolCandidate): number {
   return score;
 }
 
+export function modelSupportsImageInput(providerID: string, modelID: string): boolean {
+  if (!providerID || !modelID) return true;
+  if (/embedding|embed|rerank|bge-|whisper|tts|speech|moderation/i.test(modelID)) {
+    return false;
+  }
+  const hoxiModel = workspace.hoxiProviders?.[providerID]?.models?.[modelID];
+  if (hoxiModel && typeof hoxiModel === "object") {
+    if (hoxiModel.attachment === false) return false;
+    if (
+      Array.isArray(hoxiModel.modalities?.input) &&
+      !hoxiModel.modalities.input.includes("image") &&
+      hoxiModel.attachment !== true
+    ) {
+      return false;
+    }
+    return true;
+  }
+  const prov = workspace.providers.find((p) => p.id === providerID);
+  const mInfo = prov?.models?.[modelID];
+  if (!mInfo || typeof mInfo !== "object") return true;
+  if (mInfo.attachment === false) return false;
+  if (
+    mInfo.capabilities?.input?.image === false &&
+    Array.isArray(mInfo.modalities?.input) &&
+    !mInfo.modalities.input.includes("image")
+  ) {
+    return false;
+  }
+  return true;
+}
+
 export function resolveAutoModelTarget(
   poolIDOrModel: string | SelectedModel,
-  opts?: { advance?: boolean; excludeKeys?: Set<string> }
+  opts?: { advance?: boolean; excludeKeys?: Set<string>; requireImage?: boolean }
 ): SelectedModel | null {
   const poolID =
     typeof poolIDOrModel === "string"
@@ -435,9 +466,15 @@ export function resolveAutoModelTarget(
     candidates: [],
   };
 
-  const allCands = getEffectivePoolCandidates(poolID).filter(
+  let allCands = getEffectivePoolCandidates(poolID).filter(
     (c) => !opts?.excludeKeys?.has(`${c.providerID}/${c.modelID}`)
   );
+  if (opts?.requireImage) {
+    const imgCands = allCands.filter((c) => modelSupportsImageInput(c.providerID, c.modelID));
+    if (imgCands.length > 0) {
+      allCands = imgCands;
+    }
+  }
   if (allCands.length === 0) return null;
 
   const readyCands = allCands.filter((c) => !isCandidateCoolingDown(c.providerID, c.modelID));

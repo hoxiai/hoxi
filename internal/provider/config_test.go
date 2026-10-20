@@ -205,3 +205,71 @@ func TestDeferredReloadWhileBusyDoesNotDisposeUntilIdle(t *testing.T) {
 		t.Fatal("expected pending reload flag to clear after flush")
 	}
 }
+
+func TestNormalizeDocModelVariantsImageAndReasoning(t *testing.T) {
+	doc := map[string]interface{}{
+		"provider": map[string]interface{}{
+			"ainode": map[string]interface{}{
+				"npm": "@ai-sdk/openai-compatible",
+				"models": map[string]interface{}{
+					"claude-opus-4-6": map[string]interface{}{
+						"name":      "claude-opus-4-6",
+						"reasoning": false,
+						"modalities": map[string]interface{}{
+							"input":  []interface{}{"text"},
+							"output": []interface{}{"text"},
+						},
+					},
+					"MiniMax-M2.7": map[string]interface{}{
+						"name": "MiniMax-M2.7",
+					},
+					"explicit-no-image": map[string]interface{}{
+						"name":       "claude-sonnet-4-6",
+						"attachment": false,
+						"reasoning":  false,
+						"modalities": map[string]interface{}{
+							"input":  []interface{}{"text"},
+							"output": []interface{}{"text"},
+						},
+					},
+				},
+			},
+			"openai": map[string]interface{}{
+				"npm": "@ai-sdk/openai",
+				"models": map[string]interface{}{
+					"gpt-5-codex": map[string]interface{}{
+						"name":       "gpt-5-codex (Codex)",
+						"attachment": true,
+						"reasoning":  true,
+					},
+				},
+			},
+		},
+	}
+
+	normalizeDocModelVariants(doc)
+
+	ainodeModels := doc["provider"].(map[string]interface{})["ainode"].(map[string]interface{})["models"].(map[string]interface{})
+	opus := ainodeModels["claude-opus-4-6"].(map[string]interface{})
+	if opus["attachment"] != true || !hasImageInputModality(opus) {
+		t.Fatalf("expected legacy claude-opus-4-6 to gain image input modality, got: %+v", opus)
+	}
+	if opus["reasoning"] != true || opus["variants"] == nil {
+		t.Fatalf("expected legacy claude-opus-4-6 to gain reasoning variants, got: %+v", opus)
+	}
+
+	mm := ainodeModels["MiniMax-M2.7"].(map[string]interface{})
+	if mm["attachment"] != true || !hasImageInputModality(mm) || mm["reasoning"] != true {
+		t.Fatalf("expected MiniMax-M2.7 to gain image & reasoning capabilities, got: %+v", mm)
+	}
+
+	noImg := ainodeModels["explicit-no-image"].(map[string]interface{})
+	if noImg["attachment"] != false || hasImageInputModality(noImg) || noImg["reasoning"] != false {
+		t.Fatalf("expected explicit attachment=false & reasoning=false to be preserved, got: %+v", noImg)
+	}
+
+	codex := doc["provider"].(map[string]interface{})["openai"].(map[string]interface{})["models"].(map[string]interface{})["gpt-5-codex"].(map[string]interface{})
+	if !hasImageInputModality(codex) {
+		t.Fatalf("expected attachment=true model to receive modalities.input=['text','image'], got: %+v", codex)
+	}
+}

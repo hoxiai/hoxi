@@ -397,7 +397,7 @@ func ResolveAgyModelAndEffort(modelID, effort string) (string, string) {
 
 func BuildAgyArgs(mode, modelID, effort, externalConversationID string) []string {
 	agyMode := "accept-edits"
-	if strings.EqualFold(strings.TrimSpace(mode), "plan") {
+	if isReadOnlyMode(mode) {
 		agyMode = "plan"
 	}
 	args := []string{
@@ -422,7 +422,7 @@ func BuildAgyArgs(mode, modelID, effort, externalConversationID string) []string
 
 func BuildClaudeArgs(mode, modelID, effort, externalSessionID string) []string {
 	permMode := "acceptEdits"
-	if strings.EqualFold(strings.TrimSpace(mode), "plan") {
+	if isReadOnlyMode(mode) {
 		permMode = "plan"
 	}
 	args := []string{
@@ -453,6 +453,45 @@ func BuildClaudeArgs(mode, modelID, effort, externalSessionID string) []string {
 }
 
 func EncodeStreamInputTurn(runtime, promptText string) ([]byte, error) {
+	return EncodeStreamInputTurnWithParts(runtime, promptText, nil)
+}
+
+func EncodeStreamInputTurnWithParts(runtime, promptText string, parts []MessagePart) ([]byte, error) {
+	if runtime == string(RuntimeClaudeCode) && len(parts) > 0 {
+		var contentBlocks []map[string]interface{}
+		for _, p := range parts {
+			if p.Type != "file" {
+				continue
+			}
+			mimeType, b64Data, _, ok := parseBase64DataURL(p.URL, p.Mime)
+			if !ok {
+				continue
+			}
+			contentBlocks = append(contentBlocks, map[string]interface{}{
+				"type": "image",
+				"source": map[string]interface{}{
+					"type":       "base64",
+					"media_type": mimeType,
+					"data":       b64Data,
+				},
+			})
+		}
+		if len(contentBlocks) > 0 {
+			contentBlocks = append(contentBlocks, map[string]interface{}{
+				"type": "text",
+				"text": promptText,
+			})
+			payload := map[string]interface{}{
+				"type": "user",
+				"message": map[string]interface{}{
+					"role":    "user",
+					"content": contentBlocks,
+				},
+			}
+			b, err := json.Marshal(payload)
+			return append(b, '\n'), err
+		}
+	}
 	if IsClaudeProtocolRuntime(runtime) {
 		payload := map[string]interface{}{
 			"type": "user",

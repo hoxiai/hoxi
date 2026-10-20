@@ -430,7 +430,7 @@ func DiscoverQoderModelsWithRefresh(forceRefresh bool) []RunnerModelItem {
 
 func BuildQoderArgs(mode, modelID, effort, externalSessionID string) []string {
 	permMode := "accept_edits"
-	if strings.EqualFold(strings.TrimSpace(mode), "plan") {
+	if isReadOnlyMode(mode) {
 		permMode = "default"
 	}
 	args := []string{
@@ -439,7 +439,7 @@ func BuildQoderArgs(mode, modelID, effort, externalSessionID string) []string {
 		"--output-format", "stream-json",
 		"--permission-mode", permMode,
 	}
-	if strings.EqualFold(strings.TrimSpace(mode), "plan") {
+	if isReadOnlyMode(mode) {
 		args = append(args, "--disallowed-tools", "Edit,Write,MultiEdit")
 	}
 	_, cleanModel := ResolveQoderBinaryForModel(modelID)

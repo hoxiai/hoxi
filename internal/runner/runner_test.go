@@ -461,3 +461,40 @@ func TestCodeBuddyAndQoderModelDiscoveryAndArgs(t *testing.T) {
 		t.Fatalf("unexpected Qoder args: %v", qArgs)
 	}
 }
+
+func TestImageOnlyPromptAndAttachmentEncoding(t *testing.T) {
+	const tinyPNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+	wtDir := t.TempDir()
+	parts := []MessagePart{
+		{
+			Type:     "file",
+			Mime:     "image/png",
+			Filename: "screenshot.png",
+			URL:      tinyPNG,
+		},
+	}
+
+	saved := materializeTurnAttachments(wtDir, 1700000000000, 1, parts)
+	if len(saved) != 1 {
+		t.Fatalf("expected 1 materialized attachment, got %d", len(saved))
+	}
+	if _, err := os.Stat(saved[0]); err != nil {
+		t.Fatalf("materialized file missing: %v", err)
+	}
+
+	claudeBytes, err := EncodeStreamInputTurnWithParts(string(RuntimeClaudeCode), "Analyze image", parts)
+	if err != nil {
+		t.Fatalf("EncodeStreamInputTurnWithParts claude error: %v", err)
+	}
+	if !bytes.Contains(claudeBytes, []byte(`"type":"image"`)) || !bytes.Contains(claudeBytes, []byte(`"media_type":"image/png"`)) {
+		t.Fatalf("expected Claude stream-json input to contain base64 image block, got: %s", string(claudeBytes))
+	}
+
+	agyBytes, err := EncodeStreamInputTurnWithParts(string(RuntimeAntigravity), "Analyze image", parts)
+	if err != nil {
+		t.Fatalf("EncodeStreamInputTurnWithParts agy error: %v", err)
+	}
+	if bytes.Contains(agyBytes, []byte(`"type":"image"`)) || !bytes.Contains(agyBytes, []byte(`"content":"Analyze image"`)) {
+		t.Fatalf("expected Antigravity stream-json input to use string content, got: %s", string(agyBytes))
+	}
+}

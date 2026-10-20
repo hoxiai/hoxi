@@ -25,6 +25,7 @@ export type SendShortcutMode = "enter" | "mod-enter";
 export type ReasoningDisplayMode = "auto-collapse" | "expanded" | "collapsed";
 export type DiffLayoutMode = "unified" | "split";
 export type WorktreeApplyStrategy = "patch" | "merge";
+export type LinkOpenTarget = "external" | "inspector";
 
 export interface AppSettingsState {
   modalOpen: boolean;
@@ -53,6 +54,7 @@ export interface AppSettingsState {
   terminalFontSize: number;
   terminalCursorBlink: boolean;
   desktopNotifications: boolean;
+  linkOpenTarget: LinkOpenTarget;
 }
 
 export const APP_SETTINGS_KEY = "hoxi-app-settings:v1";
@@ -88,6 +90,7 @@ const DEFAULT_SETTINGS: PersistedSettings = {
   terminalFontSize: 12,
   terminalCursorBlink: true,
   desktopNotifications: true,
+  linkOpenTarget: "external",
 };
 
 function loadInitialSettings(): PersistedSettings {
@@ -203,6 +206,10 @@ function loadInitialSettings(): PersistedSettings {
         typeof parsed.desktopNotifications === "boolean"
           ? parsed.desktopNotifications
           : DEFAULT_SETTINGS.desktopNotifications,
+      linkOpenTarget:
+        parsed.linkOpenTarget === "external" || parsed.linkOpenTarget === "inspector"
+          ? parsed.linkOpenTarget
+          : DEFAULT_SETTINGS.linkOpenTarget,
     };
   } catch {
     return { ...DEFAULT_SETTINGS, themeMode: baseTheme };
@@ -242,6 +249,7 @@ function persistAppSettings() {
       terminalFontSize: appSettings.terminalFontSize,
       terminalCursorBlink: appSettings.terminalCursorBlink,
       desktopNotifications: appSettings.desktopNotifications,
+      linkOpenTarget: appSettings.linkOpenTarget,
     };
     localStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(payload));
   } catch {

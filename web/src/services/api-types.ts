@@ -265,6 +265,11 @@ export interface SlashCommandInfo {
   name: string;
   description?: string;
   agent?: string;
+  model?: string;
+  source?: "command" | "mcp" | "skill";
+  template?: string;
+  subtask?: boolean;
+  hints?: string[];
 }
 
 export type CommandInfo = SlashCommandInfo;

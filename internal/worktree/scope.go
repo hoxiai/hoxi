@@ -22,6 +22,7 @@ type managerRoots struct {
 	managers   map[string]*worktreeManager
 	applyGuard func(string, func() error) error
 	quarantine *quarantineTracker
+	verify     *verifyTracker
 }
 
 // SetApplyGuard coordinates worktree applies with the runner's process-start lock.

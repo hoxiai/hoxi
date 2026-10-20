@@ -122,7 +122,7 @@ export default function Composer() {
     },
     cursorOffset
   );
-  const imgAttach = createImageAttachments();
+  const imgAttach = createImageAttachments(sessionID);
   const pasteCollapse = createPasteCollapse();
   const promptHistory = createPromptHistory(sessionID);
   const draftSync = createSessionDraftSync({
@@ -176,7 +176,10 @@ export default function Composer() {
       reviewComments().length > 0 ||
       imgAttach.images().length > 0 ||
       pasteCollapse.pastes().length > 0) &&
-    !sending() && !switchingSandbox() && !choosingFolder();
+    imgAttach.pendingCount() === 0 &&
+    !sending() &&
+    !switchingSandbox() &&
+    !choosingFolder();
 
   const buildPayloadWithReviews = (): string => {
     const withPastes = pasteCollapse.expandIntoPrompt(text());
@@ -227,6 +230,10 @@ export default function Composer() {
       clearReviewComments(id);
     } catch (err) {
       console.error("send prompt failed:", err);
+      const errMsg = err instanceof Error ? err.message : String(err || "");
+      if (errMsg) {
+        imgAttach.setNotice(errMsg);
+      }
       if (workspace.rootDir === draftDirectory && (!draftSessionID || sessionID() === draftSessionID)) {
         if (!text()) setText(draft.text);
         imgAttach.replaceImages([...draft.images, ...imgAttach.images()]);
@@ -358,6 +365,9 @@ export default function Composer() {
           <ComposerAttachmentChips
             images={imgAttach.images()}
             pastes={pasteCollapse.pastes()}
+            pendingCount={imgAttach.pendingCount()}
+            notice={imgAttach.notice()}
+            onDismissNotice={() => imgAttach.clearNotice()}
             onRemoveImage={(id) => imgAttach.removeImage(id)}
             onRemovePaste={(id) => pasteCollapse.removePaste(id)}
           />
@@ -365,7 +375,7 @@ export default function Composer() {
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/png,image/jpeg,image/webp,image/gif"
+            accept="image/*,.heic,.heif,.tiff,.tif,.bmp,.webp,.png,.jpg,.jpeg,.gif,.pdf,.xlsx,.xls,.ods,.csv,.tsv,.docx,.doc,.rtf,.txt,.md,.markdown,.json,.jsonl,.yaml,.yml,.toml,.xml,.log,.py,.go,.ts,.tsx,.js,.jsx,.rs,.java,.c,.cpp,.h,.sh,.sql,.html,.css"
             multiple
             class="hidden"
             onChange={(ev) => {
@@ -387,7 +397,14 @@ export default function Composer() {
             }
             value={text()}
             onPaste={(ev) => {
-              if (imgAttach.handleClipboardPaste(ev)) return;
+              if (
+                imgAttach.handleClipboardPaste(ev, (fallbackText) => {
+                  setText((prev) => prev + fallbackText);
+                  requestAnimationFrame(adjustHeight);
+                })
+              ) {
+                return;
+              }
               pasteCollapse.handleTextPaste(ev);
             }}
             onInput={(ev) => {

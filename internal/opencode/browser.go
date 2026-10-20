@@ -13,7 +13,8 @@ import (
 //go:embed browser_plugin.mjs
 var browserPlugin []byte
 
-// PrepareBrowserPlugin creates a private, process-lifetime plugin overlay.
+// PrepareBrowserPlugin creates a private, process-lifetime config overlay that
+// carries the browser plugin and Hoxi's built-in agent modes.
 // Append env to the child environment and call cleanup only after the child exits.
 // Existing persistent OpenCode configuration is never written or replaced.
 func PrepareBrowserPlugin(baseURL, token string) (env []string, cleanup func(), err error) {
@@ -54,6 +55,9 @@ func PrepareBrowserPlugin(baseURL, token string) (env []string, cleanup func(), 
 	entry, _ := json.Marshal(pluginURL)
 	plugins = append(plugins, entry)
 	config["plugin"], _ = json.Marshal(plugins)
+	if err = mergeBuiltinModes(config); err != nil {
+		return nil, cleanup, err
+	}
 	config["$schema"] = json.RawMessage(`"https://opencode.ai/config.json"`)
 	merged, err := json.Marshal(config)
 	if err != nil {

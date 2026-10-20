@@ -1,0 +1,56 @@
+// web/src/i18n/locales/en-US/skills.ts
+
+export const skills = {
+  title: "Skills",
+  searchPlaceholder: "Filter skills by name or description…",
+  refresh: "Refresh catalog",
+  refreshing: "Refreshing…",
+  cacheNotice:
+    "Refreshing syncs Hoxi with the engine's current catalog. Newly added files on disk may require reloading the workspace.",
+  permissionNotice:
+    "Actual availability is governed by the active agent's permissions and runtime safety gate.",
+  hideNotice:
+    "Hidden skills are only hidden from Hoxi's UI list and `/` suggestions; native model auto-invocation is not blocked.",
+  showHidden: "Show hidden ({count})",
+  hideHidden: "Hide hidden",
+  hideFromList: "Hide from Hoxi list",
+  unhideFromList: "Restore to list",
+  hiddenBadge: "Hidden",
+  sourceBuiltin: "Built-in",
+  sourceProject: "Project",
+  sourceUser: "User",
+  sourceExternal: "External",
+  builtinInMemory: "Built-in (in-memory)",
+  openFile: "Open in Files",
+  revealInFinder: "Reveal in Finder",
+  selectInComposer: "Use in Composer",
+  selectedInComposer: "Selected in Composer",
+  removeSelection: "Remove skill selection",
+  viewSkillDetail: "View skill details",
+  openSkillsPanel: "Browse Skills",
+  emptyCatalog: "No skills discovered in this directory.",
+  emptyFiltered: "No skills match the current filter.",
+  unsupportedTitle: "Skills catalog not supported for {runtime}",
+  unsupportedDesc:
+    "First-edition native skill discovery and invocation is enabled for OpenCode sessions. Switch to an OpenCode model to browse and invoke native skills.",
+  selectToPreview: "Select a skill from the list to inspect its SKILL.md instructions.",
+  loadingCatalog: "Loading skills catalog…",
+  loadingDetail: "Loading skill content…",
+  slashGroupSkills: "Skills",
+  slashGroupCommands: "Commands",
+  slashGroupMcp: "MCP Prompts",
+  slashUseSkillDetail: "Select skill for this message",
+  composerSkillBadge: "Skill",
+  statusSelected: "Selected (pending send)",
+  statusRequested: "Skill requested",
+  statusLoading: "Loading skill…",
+  statusLoaded: "Native skill loaded",
+  statusError: "Skill load failed",
+  statusUnconfirmed: "Not confirmed loaded this turn",
+  reselectRequired:
+    "Skill \"{name}\" is unavailable or changed source in the current sandbox directory. Please re-select before sending.",
+  queueSkillInvalid:
+    "Queued message paused: skill \"{name}\" is no longer valid in the active directory. Edit or re-select to continue.",
+  digestLabel: "Content digest",
+  sourcePathLabel: "Source",
+};

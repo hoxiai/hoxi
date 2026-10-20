@@ -200,7 +200,8 @@ func (g *Service) ensureHandoffModelReady(source ExternalToolID, providerID, mod
 		if mID != "" && !strings.ContainsAny(mID, " ()") && modelsMap[mID] == nil {
 			modelsMap[mID] = map[string]interface{}{
 				"name": mID, "tool_call": !textOnly, "reasoning": true, "attachment": true,
-				"limit": map[string]interface{}{"context": 200000, "output": 32768},
+				"modalities": map[string]interface{}{"input": []string{"text", "image"}, "output": []string{"text"}},
+				"limit":      map[string]interface{}{"context": 200000, "output": 32768},
 			}
 			changed = true
 		}

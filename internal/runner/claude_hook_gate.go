@@ -72,9 +72,10 @@ func claudeHookSettings(hookURL string) string {
 }
 
 // issueClaudeHook returns the extra argv and environment for one Claude Code
-// turn. Plan mode keeps Claude's own read-only policy, so it gets no hook.
+// turn. Read-only modes (plan, ask) keep Claude's own read-only policy, so they
+// get no hook.
 func (s *Service) issueClaudeHook(mode, sessionID, messageID string) ([]string, []string, func()) {
-	if strings.EqualFold(strings.TrimSpace(mode), "plan") {
+	if isReadOnlyMode(mode) {
 		return nil, nil, func() {}
 	}
 	base, token, revoke := s.issueHookCredential(string(RuntimeClaudeCode), sessionID, messageID)

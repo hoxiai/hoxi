@@ -2,12 +2,14 @@ package worktree
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -171,16 +173,27 @@ func resolveWorktreeSetupScript(repoRoot string) string {
 	return ""
 }
 
-// runWorktreeSetupScript executes the optional .hoxi/setup.sh script inside a
-// newly created worktree directory.
-func runWorktreeSetupScript(repoRoot, worktreeDir, sessionID, branch string) error {
+type worktreeSetupResult struct {
+	Script string
+	Status string // "none" | "succeeded" | "failed"
+	Output string
+	Error  string
+}
+
+// executeWorktreeSetupScript runs the optional .hoxi/setup.sh script inside a
+// worktree directory and captures its status, bounded output, and error details.
+func executeWorktreeSetupScript(repoRoot, worktreeDir, sessionID, branch string, port int) worktreeSetupResult {
 	scriptPath := resolveWorktreeSetupScript(repoRoot)
 	if scriptPath == "" {
-		return nil
+		return worktreeSetupResult{Status: "none"}
 	}
+	scriptBase := filepath.Base(scriptPath)
 	ctx, cancel := context.WithTimeout(context.Background(), setupScriptTimeout)
 	defer cancel()
 
+	if port <= 0 {
+		port = allocateWorktreePort(sessionID)
+	}
 	cmd := exec.CommandContext(ctx, "sh", scriptPath)
 	cmd.Dir = worktreeDir
 	cmd.Env = nonInteractiveGitEnv(
@@ -188,9 +201,39 @@ func runWorktreeSetupScript(repoRoot, worktreeDir, sessionID, branch string) err
 		"HOXI_REPO_ROOT="+repoRoot,
 		"HOXI_SESSION_ID="+sessionID,
 		"HOXI_BRANCH="+branch,
+		"PORT="+strconv.Itoa(port),
+		"HOXI_PORT="+strconv.Itoa(port),
 	)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("worktree setup script (%s) failed: %s: %w", filepath.Base(scriptPath), strings.TrimSpace(string(out)), err)
+	out, err := cmd.CombinedOutput()
+	if len(out) > maxSetupOutputBytes {
+		out = out[len(out)-maxSetupOutputBytes:]
+	}
+	outputStr := strings.TrimSpace(string(out))
+	if err != nil {
+		errMsg := fmt.Sprintf("worktree setup script (%s) failed: %v", scriptBase, err)
+		if outputStr != "" {
+			errMsg = fmt.Sprintf("worktree setup script (%s) failed: %s", scriptBase, outputStr)
+		}
+		return worktreeSetupResult{
+			Script: scriptBase,
+			Status: "failed",
+			Output: outputStr,
+			Error:  errMsg,
+		}
+	}
+	return worktreeSetupResult{
+		Script: scriptBase,
+		Status: "succeeded",
+		Output: outputStr,
+	}
+}
+
+// runWorktreeSetupScript executes the optional .hoxi/setup.sh script inside a
+// newly created worktree directory.
+func runWorktreeSetupScript(repoRoot, worktreeDir, sessionID, branch string) error {
+	res := executeWorktreeSetupScript(repoRoot, worktreeDir, sessionID, branch, 0)
+	if res.Status == "failed" {
+		return errors.New(res.Error)
 	}
 	return nil
 }

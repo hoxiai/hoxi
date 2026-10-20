@@ -24,6 +24,7 @@ import (
 	"github.com/hoxiai/hoxi/internal/privacy"
 	"github.com/hoxiai/hoxi/internal/provider"
 	"github.com/hoxiai/hoxi/internal/runner"
+	"github.com/hoxiai/hoxi/internal/skills"
 	"github.com/hoxiai/hoxi/internal/statusbar"
 	"github.com/hoxiai/hoxi/internal/updater"
 	"github.com/hoxiai/hoxi/internal/workspace"
@@ -43,6 +44,7 @@ type Gateway struct {
 	providers             *provider.Service
 	handoff               *handoff.Service
 	runner                *runner.Service
+	skills                *skills.Service
 	browser               *browser.Service
 	auth                  *auth.Service
 	updater               *updater.Checker
@@ -143,6 +145,14 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 		leaderboard:  leaderboardSvc,
 		privacy:      privacy.New(""),
 	}
+	g.skills = skills.NewService(targetURL.String(), password, g.resolveSkillContext)
+	runnerSvc.SetSkillValidator(func(ctx context.Context, directory, sessionID string, sel runner.SkillSelection) error {
+		_, err := g.skills.VerifySelection(ctx, directory, sessionID, skills.SkillSelection{
+			Key:  sel.Key,
+			Name: sel.Name,
+		})
+		return err
+	})
 	providers.SetBusyCheck(g.isAnySessionBusy)
 
 	g.registerRoutes(distFS)
@@ -305,6 +315,8 @@ func (g *Gateway) registerRoutes(distFS fs.FS) {
 	})
 
 	g.mux.HandleFunc("/api/hoxi/system-info", g.handleSystemRuntimeInfo)
+	g.mux.HandleFunc("/api/hoxi/keep-awake", g.handleKeepAwake)
+	g.mux.HandleFunc("/api/hoxi/clipboard/images", g.handleClipboardImages)
 	g.mux.HandleFunc("/api/hoxi/dev-pulse", g.handleDevPulse)
 	g.mux.Handle("/provider/", g.proxy)
 
@@ -315,6 +327,9 @@ func (g *Gateway) registerRoutes(distFS fs.FS) {
 	g.browser.RegisterRoutes(g.mux)
 	if g.runner != nil {
 		g.runner.RegisterRoutes(g.mux)
+	}
+	if g.skills != nil {
+		g.skills.RegisterRoutes(g.mux)
 	}
 
 	if g.auth != nil {

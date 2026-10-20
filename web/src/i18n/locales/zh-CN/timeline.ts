@@ -29,6 +29,9 @@ export const timeline: TimelineI18n = {
   send: "发送",
   buildMode: "构建模式",
   planMode: "规划模式",
+  askMode: "问答模式",
+  debugMode: "调试模式",
+  askModeBadge: "只读",
   buildDesc: "可执行命令并修改文件",
   planDesc: "只读探索代码与规划方案，不修改文件",
   inputPlaceholder:
@@ -68,7 +71,7 @@ export const timeline: TimelineI18n = {
   worktreeTooltip: "新建独立 Git Worktree 沙盒执行该方案",
   newWorktree: "新开沙盒执行",
   dismiss: "忽略",
-  attachImageTooltip: "添加图片或截图 (Cmd+V 粘贴)",
+  attachImageTooltip: "添加图片、PDF、表格或文档附件 (Cmd+V 粘贴)",
   openInInspectorTooltip: "打开文件",
   openInBrowserTooltip: "在内置浏览器中打开",
   removeCommentTooltip: "删除批注",
@@ -274,4 +277,12 @@ export const timeline: TimelineI18n = {
   turnSpeedLabel: "输出速率",
   turnTokensSummary: "输入 {input} · 输出 {output}",
   turnCacheHitBadge: "缓存 {tokens}",
+  attachmentReading: "读取中…",
+  attachmentUnsupportedType:
+    "暂不支持文件「{name}」，支持图片、PDF、表格（Excel/CSV）、文档（Word）及文本/代码文件。",
+  attachmentTooLarge: "文件「{name}」超过 {maxMB} MB 大小限制。",
+  attachmentLimitReached: "单条消息最多支持添加 {max} 个附件。",
+  attachmentReadFailed: "读取附件「{name}」失败。",
+  modelDoesNotSupportImages:
+    "当前模型 {model} 已关闭图片输入，请在模型设置中开启视觉能力或切换模型。",
 };

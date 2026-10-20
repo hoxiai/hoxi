@@ -21,7 +21,7 @@ import {
   timelineFollowRequest,
   workspace,
 } from "../../store/workspace";
-import { Icon } from "../icons";
+import { FileIcon, Icon } from "../icons";
 import {
   ActionIconButton,
   formatMessageTime,
@@ -475,19 +475,72 @@ export default function MessageStream(props: { hidden?: boolean }) {
                           {(part) => (
                             <>
                               <Show when={part().type === "file"}>
-                                <div
-                                  data-part-id={part().id}
-                                  class="overflow-hidden rounded-lg border border-[var(--border-subtle)] max-w-[260px]"
-                                >
-                                  <img
-                                    src={(part() as Extract<MessagePart, { type: "file" }>).url}
-                                    alt={
-                                      (part() as Extract<MessagePart, { type: "file" }>).filename ||
-                                      "attachment"
-                                    }
-                                    class="max-h-48 w-auto object-contain block"
-                                  />
-                                </div>
+                                {(() => {
+                                  const fp = part() as Extract<MessagePart, { type: "file" }>;
+                                  const isImg =
+                                    (fp.mime || "").toLowerCase().startsWith("image/") ||
+                                    /^data:image\//i.test(fp.url || "") ||
+                                    /\.(png|jpe?g|webp|gif|bmp|tiff?|svg|heic|heif|avif)$/i.test(
+                                      fp.filename || ""
+                                    );
+                                  const extLabel =
+                                    (fp.mime || "").toLowerCase() === "application/pdf" ||
+                                    /\.pdf$/i.test(fp.filename || "")
+                                      ? "PDF"
+                                      : ((fp.filename || "").split(".").pop() || "FILE")
+                                          .toUpperCase()
+                                          .slice(0, 4);
+                                  const isSheet =
+                                    /\.(xlsx|xls|ods|csv|tsv)$/i.test(fp.filename || "") ||
+                                    (fp.mime || "").includes("spreadsheet") ||
+                                    (fp.mime || "").includes("excel") ||
+                                    (fp.mime || "").includes("csv");
+                                  const badgeColor = isSheet
+                                    ? "text-emerald-500"
+                                    : extLabel === "PDF"
+                                      ? "text-rose-500"
+                                      : "text-[var(--accent-primary)]";
+                                  return (
+                                    <Show
+                                      when={isImg}
+                                      fallback={
+                                        <a
+                                          data-part-id={fp.id}
+                                          href={fp.url}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                          download={fp.filename || "attachment"}
+                                          class="inline-flex items-center gap-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1.5 text-[12px] text-[var(--text-primary)] hover:border-[var(--accent-border)] transition-colors max-w-[260px]"
+                                        >
+                                          <FileIcon
+                                            node={{
+                                              path: fp.filename || "file.txt",
+                                              type: "file",
+                                            }}
+                                            class="h-4 w-4 shrink-0"
+                                          />
+                                          <span class="truncate font-mono text-[11.5px]">
+                                            {fp.filename || "attachment"}
+                                          </span>
+                                          <span class={`ml-auto shrink-0 rounded bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[10px] font-semibold ${badgeColor}`}>
+                                            {extLabel}
+                                          </span>
+                                        </a>
+                                      }
+                                    >
+                                      <div
+                                        data-part-id={fp.id}
+                                        class="overflow-hidden rounded-lg border border-[var(--border-subtle)] max-w-[260px]"
+                                      >
+                                        <img
+                                          src={fp.url}
+                                          alt={fp.filename || "attachment"}
+                                          class="max-h-48 w-auto object-contain block"
+                                        />
+                                      </div>
+                                    </Show>
+                                  );
+                                })()}
                               </Show>
                               <Show when={part().type === "text"}>
                                 <UserTextPartView

@@ -61,6 +61,13 @@ func (g *Gateway) guardSessionScope(w http.ResponseWriter, r *http.Request) bool
 }
 
 func sessionPathID(requestPath string) (string, bool) {
+	if strings.HasPrefix(requestPath, "/api/hoxi/runner/sessions/") {
+		parts := strings.Split(strings.TrimPrefix(requestPath, "/api/hoxi/runner/sessions/"), "/")
+		if len(parts) == 0 || parts[0] == "" || parts[0] == "status" {
+			return "", false
+		}
+		return parts[0], true
+	}
 	p := strings.TrimPrefix(requestPath, "/api")
 	if p != "/session" && !strings.HasPrefix(p, "/session/") {
 		return "", false

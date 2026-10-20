@@ -204,6 +204,10 @@ func (g *Service) importGrokCLIProvider() LocalCLIImportResponse {
 			"tool_call":  true,
 			"reasoning":  true,
 			"attachment": true,
+			"modalities": map[string]interface{}{
+				"input":  []string{"text", "image"},
+				"output": []string{"text"},
+			},
 			"limit": map[string]interface{}{
 				"context": 256000,
 				"output":  32768,

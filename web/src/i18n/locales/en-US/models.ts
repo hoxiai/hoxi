@@ -162,6 +162,10 @@ export const models = {
     "Default engineering agent with full code editing, terminal execution, and tool use capabilities.",
   agentRolePlanDesc:
     "Read-only exploration and architecture design mode. Disallows editing files and focuses on implementation plans.",
+  agentRoleAskDesc:
+    "Read-only answers about the codebase. Never edits files or runs shell commands.",
+  agentRoleDebugDesc:
+    "Troubleshoots failures: reproduces, traces the root cause, and applies a minimal verified fix.",
   agentRoleCustomDesc:
     "Custom engineering agent mode with dedicated instructions and behavior rules.",
   defaultModelTitle: "Default Conversation Model",
