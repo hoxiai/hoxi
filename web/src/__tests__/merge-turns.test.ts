@@ -236,4 +236,23 @@ describe("REST snapshot merge", () => {
     evictCachedSessionTurns(["ses_snap_test"]);
     assertEqual(readCachedSessionTurns("ses_snap_test"), undefined);
   });
+
+  it("drops summary diff patches from persisted snapshots", () => {
+    const withSummary = {
+      ...info("msg_sum", "user"),
+      summary: {
+        diffs: [
+          { file: "web/a.ts", patch: "x".repeat(50_000), additions: 3, deletions: 1 },
+        ],
+      },
+    } as MessageInfo;
+    persistCachedSessionTurns("ses_summary", [
+      { info: withSummary, parts: [text("prt_s", "msg_sum", "hi")] },
+    ]);
+    const snap = readCachedSessionTurns("ses_summary");
+    assertTrue(Array.isArray(snap) && snap.length === 1);
+    assertEqual((snap![0].info as { summary?: unknown }).summary, undefined, "summary payload is not cached");
+    assertEqual(snap![0].parts[0].type, "text");
+    evictCachedSessionTurns(["ses_summary"]);
+  });
 });

@@ -183,12 +183,73 @@ func (s *Service) relayOpenCodeFrames(ctx context.Context, cancel context.Cancel
 			// The unified stream sends its own heartbeat.
 			if strings.Contains(line, `"`+heartbeatEventType+`"`) || !s.AllowOpenCodeSSELine(line) {
 				keep = false
-			} else if s.status != nil {
-				s.status.InspectSSELine(strings.TrimRight(line, "\r\n"))
+			} else {
+				line = trimSummaryDiffPatches(line)
+				if s.status != nil {
+					s.status.InspectSSELine(strings.TrimRight(line, "\r\n"))
+				}
 			}
 		}
 		frame.WriteString(line)
 	}
+}
+
+// trimSummaryDiffPatches drops unified diff bodies from message summaries before
+// they reach the workspace UI, which never renders them.
+func trimSummaryDiffPatches(line string) string {
+	if !strings.Contains(line, `"summary"`) || !strings.Contains(line, `"diffs"`) || !strings.Contains(line, `"patch"`) {
+		return line
+	}
+	trimmed := strings.TrimRight(line, "\r\n")
+	suffix := line[len(trimmed):]
+	payload := strings.TrimSpace(strings.TrimPrefix(trimmed, "data:"))
+	dec := json.NewDecoder(strings.NewReader(payload))
+	dec.UseNumber()
+	var root interface{}
+	if dec.Decode(&root) != nil {
+		return line
+	}
+	if !stripSummaryDiffPatches(root) {
+		return line
+	}
+	raw, err := json.Marshal(root)
+	if err != nil {
+		return line
+	}
+	return "data: " + string(raw) + suffix
+}
+
+func stripSummaryDiffPatches(node interface{}) bool {
+	changed := false
+	switch v := node.(type) {
+	case map[string]interface{}:
+		if summary, ok := v["summary"].(map[string]interface{}); ok {
+			if diffs, ok := summary["diffs"].([]interface{}); ok {
+				for _, item := range diffs {
+					diff, ok := item.(map[string]interface{})
+					if !ok {
+						continue
+					}
+					if _, hasPatch := diff["patch"]; hasPatch {
+						delete(diff, "patch")
+						changed = true
+					}
+				}
+			}
+		}
+		for _, item := range v {
+			if stripSummaryDiffPatches(item) {
+				changed = true
+			}
+		}
+	case []interface{}:
+		for _, item := range v {
+			if stripSummaryDiffPatches(item) {
+				changed = true
+			}
+		}
+	}
+	return changed
 }
 
 func sendFrame(ctx context.Context, out chan<- string, frame string) bool {

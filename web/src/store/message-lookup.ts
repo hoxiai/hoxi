@@ -540,6 +540,7 @@ const SESSION_TURNS_CACHE_KEY = "hoxi.session-turns-cache:v1";
 const MAX_CACHED_SESSIONS = 12;
 const MAX_SNAPSHOT_TURNS_PER_SESSION = 20;
 const MAX_SNAPSHOT_PART_CHARS = 2048;
+const MAX_SNAPSHOT_BUNDLE_CHARS = 600_000;
 
 interface CachedSessionTurnsBundle {
   order: string[];
@@ -548,6 +549,7 @@ interface CachedSessionTurnsBundle {
 
 let cachedSessionTurnsBundle: CachedSessionTurnsBundle | null = null;
 let saveSessionTurnsTimer: ReturnType<typeof setTimeout> | null = null;
+let lastFlushedSessionTurnsJSON = "";
 
 function loadSessionTurnsBundle(): CachedSessionTurnsBundle {
   if (cachedSessionTurnsBundle) return cachedSessionTurnsBundle;
@@ -557,6 +559,7 @@ function loadSessionTurnsBundle(): CachedSessionTurnsBundle {
       const parsed = JSON.parse(raw);
       if (parsed && typeof parsed === "object" && Array.isArray(parsed.order) && typeof parsed.entries === "object") {
         cachedSessionTurnsBundle = parsed as CachedSessionTurnsBundle;
+        lastFlushedSessionTurnsJSON = raw;
         return cachedSessionTurnsBundle;
       }
     }
@@ -567,25 +570,47 @@ function loadSessionTurnsBundle(): CachedSessionTurnsBundle {
   return cachedSessionTurnsBundle;
 }
 
+function serializeSessionTurnsBundle(bundle: CachedSessionTurnsBundle): string {
+  let raw = JSON.stringify(bundle);
+  while (raw.length > MAX_SNAPSHOT_BUNDLE_CHARS && bundle.order.length > 1) {
+    const oldest = bundle.order.shift();
+    if (oldest) delete bundle.entries[oldest];
+    raw = JSON.stringify(bundle);
+  }
+  return raw;
+}
+
 function flushSessionTurnsBundleToStorage(): void {
   saveSessionTurnsTimer = null;
-  const bundle = cachedSessionTurnsBundle;
+  let bundle = cachedSessionTurnsBundle;
   if (!bundle || typeof localStorage === "undefined") return;
+  let raw = serializeSessionTurnsBundle(bundle);
+  if (raw.length > MAX_SNAPSHOT_BUNDLE_CHARS) {
+    bundle = { order: [], entries: {} };
+    cachedSessionTurnsBundle = bundle;
+    raw = JSON.stringify(bundle);
+  }
+  if (raw === lastFlushedSessionTurnsJSON) return;
   try {
-    localStorage.setItem(SESSION_TURNS_CACHE_KEY, JSON.stringify(bundle));
+    localStorage.setItem(SESSION_TURNS_CACHE_KEY, raw);
+    lastFlushedSessionTurnsJSON = raw;
+    return;
   } catch {
-    // If quota exceeded, evict oldest half and retry once
-    try {
-      const keep = bundle.order.slice(-Math.max(2, Math.floor(bundle.order.length / 2)));
-      const trimmed: Record<string, MessageTurn[]> = {};
-      for (const id of keep) {
-        if (bundle.entries[id]) trimmed[id] = bundle.entries[id];
-      }
-      cachedSessionTurnsBundle = { order: keep, entries: trimmed };
-      localStorage.setItem(SESSION_TURNS_CACHE_KEY, JSON.stringify(cachedSessionTurnsBundle));
-    } catch {
-      /* ignore storage errors */
+    /* fall through to quota eviction */
+  }
+  // If quota exceeded, evict oldest half and retry once
+  try {
+    const keep = bundle.order.slice(-Math.max(2, Math.floor(bundle.order.length / 2)));
+    const trimmed: Record<string, MessageTurn[]> = {};
+    for (const id of keep) {
+      if (bundle.entries[id]) trimmed[id] = bundle.entries[id];
     }
+    cachedSessionTurnsBundle = { order: keep, entries: trimmed };
+    const trimmedRaw = JSON.stringify(cachedSessionTurnsBundle);
+    localStorage.setItem(SESSION_TURNS_CACHE_KEY, trimmedRaw);
+    lastFlushedSessionTurnsJSON = trimmedRaw;
+  } catch {
+    /* ignore storage errors */
   }
 }
 
@@ -597,8 +622,10 @@ function saveSessionTurnsBundle(bundle: CachedSessionTurnsBundle): void {
 }
 
 function compactTurnForSnapshot(turn: MessageTurn): MessageTurn {
+  const info = { ...turn.info } as MessageInfo & { summary?: unknown };
+  delete info.summary;
   return {
-    info: { ...turn.info },
+    info,
     parts: turn.parts
       .filter((p) => p.type !== "file" || !p.url?.startsWith("data:"))
       .map((p) => {
