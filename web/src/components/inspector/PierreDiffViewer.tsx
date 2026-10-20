@@ -26,6 +26,7 @@ import AICommitFallbackToast from "./ai-commit-fallback-toast";
 import ObserverAuditBanner from "./ObserverAuditBanner";
 import WorkspaceReviewPanel from "./WorkspaceReviewPanel";
 import PullRequestBadge from "./PullRequestBadge";
+import PullRequestIssuesButton from "./PullRequestIssuesButton";
 import DiffEmptyState from "./pierre-diff-empty";
 import DiffFileTree from "./diff-file-tree";
 import MultiRepoDiffView from "./multi-repo-diff-view";
@@ -335,6 +336,12 @@ export default function PierreDiffViewer() {
           }
           disabled={pushing() || committing()}
           onCreate={onOpenCreatePR}
+        />
+        <PullRequestIssuesButton
+          directory={activeWt()?.directory || activeDirectory()}
+          branch={activeWt()?.branch}
+          sessionID={workspace.activeSessionID || undefined}
+          disabled={pushing() || committing()}
         />
         <Show when={diffs().length > 0}>
           <button type="button" disabled={isAuditing() || !workspace.activeSessionID}

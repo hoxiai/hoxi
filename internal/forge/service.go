@@ -30,9 +30,11 @@ func NewService() *Service {
 	return &Service{ghPath: "gh", timeout: defaultTimeout}
 }
 
-// RegisterRoutes mounts the read-only pull request status endpoint.
+// RegisterRoutes mounts the read-only pull request status endpoints.
 func (s *Service) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/hoxi/forge/pr", s.handlePullRequest)
+	mux.HandleFunc("/api/hoxi/forge/pr/detail", s.handlePullRequestDetail)
+	mux.HandleFunc("/api/hoxi/forge/prs", s.handlePullRequests)
 }
 
 func (s *Service) handlePullRequest(w http.ResponseWriter, r *http.Request) {
@@ -41,6 +43,24 @@ func (s *Service) handlePullRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response := s.Status(r.Context(), r.URL.Query().Get("directory"), r.URL.Query().Get("branch"))
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *Service) handlePullRequestDetail(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	response := s.Detail(r.Context(), r.URL.Query().Get("directory"), r.URL.Query().Get("branch"))
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *Service) handlePullRequests(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	response := s.List(r.Context(), r.URL.Query().Get("directory"))
 	writeJSON(w, http.StatusOK, response)
 }
 

@@ -6,6 +6,19 @@ export interface ForgeCheck {
   url?: string;
 }
 
+export interface ForgeReviewComment {
+  author?: string;
+  body: string;
+}
+
+export interface ForgeReviewThread {
+  path: string;
+  line: number;
+  isResolved: boolean;
+  isOutdated: boolean;
+  comments: ForgeReviewComment[];
+}
+
 export interface ForgePullRequest {
   number: number;
   url: string;
@@ -26,6 +39,8 @@ export interface ForgePullRequest {
   checksPending: number;
   checksTotal: number;
   checksState: "success" | "failure" | "pending" | "none" | string;
+  unresolvedThreads?: number;
+  reviewThreads?: ForgeReviewThread[];
 }
 
 export interface ForgePullRequestResponse {
@@ -35,14 +50,20 @@ export interface ForgePullRequestResponse {
   pullRequest?: ForgePullRequest;
 }
 
+export interface ForgePullRequestListResponse {
+  available: boolean;
+  reason?: string;
+  pullRequests: Record<string, ForgePullRequest>;
+}
+
 interface CacheEntry {
   expiresAt: number;
-  response: ForgePullRequestResponse;
+  response: unknown;
 }
 
 const CACHE_TTL_MS = 30_000;
 const cache = new Map<string, CacheEntry>();
-const inflight = new Map<string, Promise<ForgePullRequestResponse>>();
+const inflight = new Map<string, Promise<unknown>>();
 
 function cacheKey(directory: string, branch: string): string {
   return `${directory}\n${branch}`;
@@ -57,14 +78,76 @@ export function fetchPullRequest(
   const now = Date.now();
   if (!force) {
     const cached = cache.get(key);
-    if (cached && cached.expiresAt > now) return Promise.resolve(cached.response);
+    if (cached && cached.expiresAt > now) {
+      return Promise.resolve(cached.response as ForgePullRequestResponse);
+    }
     const pending = inflight.get(key);
-    if (pending) return pending;
+    if (pending) return pending as Promise<ForgePullRequestResponse>;
   }
 
   const params = new URLSearchParams({ directory });
   if (branch) params.set("branch", branch);
   const request = requestJSON<ForgePullRequestResponse>(`/api/hoxi/forge/pr?${params.toString()}`)
+    .then((response) => {
+      cache.set(key, { expiresAt: Date.now() + CACHE_TTL_MS, response });
+      return response;
+    })
+    .finally(() => {
+      inflight.delete(key);
+    });
+
+  inflight.set(key, request);
+  return request;
+}
+
+export function fetchPullRequests(
+  directory: string,
+  force = false
+): Promise<ForgePullRequestListResponse> {
+  const key = `list:${directory}`;
+  const now = Date.now();
+  if (!force) {
+    const cached = cache.get(key);
+    if (cached && cached.expiresAt > now) {
+      return Promise.resolve(cached.response as ForgePullRequestListResponse);
+    }
+    const pending = inflight.get(key);
+    if (pending) return pending as Promise<ForgePullRequestListResponse>;
+  }
+
+  const params = new URLSearchParams({ directory });
+  const request = requestJSON<ForgePullRequestListResponse>(`/api/hoxi/forge/prs?${params.toString()}`)
+    .then((response) => {
+      cache.set(key, { expiresAt: Date.now() + CACHE_TTL_MS, response });
+      return response;
+    })
+    .finally(() => {
+      inflight.delete(key);
+    });
+
+  inflight.set(key, request);
+  return request;
+}
+
+export function fetchPullRequestDetail(
+  directory: string,
+  branch: string,
+  force = false
+): Promise<ForgePullRequestResponse> {
+  const key = `detail:${cacheKey(directory, branch)}`;
+  const now = Date.now();
+  if (!force) {
+    const cached = cache.get(key);
+    if (cached && cached.expiresAt > now) {
+      return Promise.resolve(cached.response as ForgePullRequestResponse);
+    }
+    const pending = inflight.get(key);
+    if (pending) return pending as Promise<ForgePullRequestResponse>;
+  }
+
+  const params = new URLSearchParams({ directory });
+  if (branch) params.set("branch", branch);
+  const request = requestJSON<ForgePullRequestResponse>(`/api/hoxi/forge/pr/detail?${params.toString()}`)
     .then((response) => {
       cache.set(key, { expiresAt: Date.now() + CACHE_TTL_MS, response });
       return response;

@@ -7,59 +7,11 @@ import {
 import { openExternalURL } from "../../store/workspace";
 import { t } from "../../i18n";
 
-type Tone = "ok" | "warn" | "danger" | "muted" | "accent";
-
-const TONE_CLASS: Record<Tone, string> = {
-  ok: "border-[var(--ok-border)] bg-[var(--ok-surface)] text-[var(--ok-text)]",
-  warn: "border-[var(--warn-border)] bg-[var(--warn-surface)] text-[var(--warn-text)]",
-  danger: "border-[var(--danger-border)] bg-[var(--danger-surface)] text-[var(--danger-text)]",
-  muted: "border-[var(--border-subtle)] bg-[var(--bg-inset)] text-[var(--text-muted)]",
-  accent: "border-[var(--accent-border)] bg-[var(--accent-surface)] text-[var(--accent-primary)]",
-};
-
-function stateLabel(pr: ForgePullRequest): string {
-  if (pr.state === "OPEN" && pr.isDraft) return t("forge.states.draft");
-  switch (pr.state) {
-    case "OPEN":
-      return t("forge.states.open");
-    case "MERGED":
-      return t("forge.states.merged");
-    case "CLOSED":
-      return t("forge.states.closed");
-    default:
-      return t("forge.states.open");
-  }
-}
-
-function reviewLabel(pr: ForgePullRequest): string {
-  switch (pr.reviewDecision) {
-    case "APPROVED":
-      return t("forge.review.approved");
-    case "CHANGES_REQUESTED":
-      return t("forge.review.changesRequested");
-    case "REVIEW_REQUIRED":
-      return t("forge.review.pending");
-    default:
-      return t("forge.review.none");
-  }
-}
-
-function checksLabel(pr: ForgePullRequest): string {
-  if (pr.checksTotal <= 0) return t("forge.checks.none");
-  if (pr.checksFailed > 0) return t("forge.checks.failed", { count: pr.checksFailed });
-  if (pr.checksPending > 0) return t("forge.checks.pending", { count: pr.checksPending });
-  return t("forge.checks.passed", { passed: pr.checksPassed, total: pr.checksTotal });
-}
-
-function tone(pr: ForgePullRequest): Tone {
-  if (pr.state === "MERGED") return "accent";
-  if (pr.state === "CLOSED") return "danger";
-  if (pr.state === "OPEN" && pr.isDraft) return "muted";
-  if (pr.checksFailed > 0) return "danger";
-  if (pr.reviewDecision === "CHANGES_REQUESTED") return "warn";
-  if (pr.checksPending > 0) return "warn";
-  return "ok";
-}
+import {
+  PULL_REQUEST_TONE_CLASS,
+  pullRequestTooltip,
+  pullRequestTone,
+} from "./pull-request-badge-helpers";
 
 export default function PullRequestBadge(props: {
   directory?: string;
@@ -143,13 +95,8 @@ export default function PullRequestBadge(props: {
           disabled={props.disabled}
           onClick={activate}
           aria-label={t("forge.open", { number: current().number })}
-          title={t("forge.tooltip", {
-            title: current().title,
-            state: stateLabel(current()),
-            checks: checksLabel(current()),
-            review: reviewLabel(current()),
-          })}
-          class={`hoxi-press shrink-0 inline-flex items-center gap-1 rounded-md border text-[11px] font-mono font-medium hover:opacity-90 disabled:opacity-40 cursor-pointer ${sizeClass()} ${TONE_CLASS[tone(current())]}`}
+          title={pullRequestTooltip(current())}
+          class={`hoxi-press shrink-0 inline-flex items-center gap-1 rounded-md border text-[11px] font-mono font-medium hover:opacity-90 disabled:opacity-40 cursor-pointer ${sizeClass()} ${PULL_REQUEST_TONE_CLASS[pullRequestTone(current())]}`}
         >
           <GitPullRequest size={10} />
           <span>#{current().number}</span>

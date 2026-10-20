@@ -2,6 +2,10 @@
 export const forge = {
   open: "打开 Pull Request #{number}",
   tooltip: "{title}\n{state} · {checks} · {review}",
+  fixIssues: "修复 PR 问题（{count}）",
+  sendingIssues: "发送中…",
+  issuesSent: "已发送",
+  issuesTooltip: "把失败的检查和未解决的评审线程发送给当前 Agent",
   states: {
     open: "开放",
     draft: "草稿",

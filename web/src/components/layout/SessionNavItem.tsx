@@ -1,9 +1,10 @@
 // web/src/components/layout/SessionNavItem.tsx
-import { createEffect, createSignal, onCleanup, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, onCleanup, Show } from "solid-js";
 import { Pencil, Square } from "lucide-solid";
 import {
   isPlaceholderSessionTitle,
   renameSessionTitle,
+  sessionDirectory,
   setWorkspace,
   workspace,
 } from "../../store/workspace";
@@ -13,6 +14,8 @@ import { Icon, Spinner } from "../icons";
 import { downloadSessionExport } from "../timeline/session-export";
 import { t } from "../../i18n";
 import { badgeFor } from "./left-nav-helpers";
+import SessionPullRequestPill from "./SessionPullRequestPill";
+import { fetchPullRequests, type ForgePullRequest } from "../../services/forge";
 import { SessionRenamePopover } from "./SessionRenamePopover";
 import {
   formatCompactRelativeTime,
@@ -51,6 +54,33 @@ export function SessionNavItem(props: SessionNavItemProps) {
     workspace.queuedPromptsBySession[props.session.id]?.length ?? 0;
   const badge = () => badgeFor(props.session.id, props.pendingSessions, status());
   const wt = () => workspace.worktreeBySession[props.session.id];
+  const [pullRequest, setPullRequest] = createSignal<ForgePullRequest | null>(null);
+  let pullRequestGeneration = 0;
+  const pullRequestDirectory = createMemo(
+    () => wt()?.directory || sessionDirectory(props.session.id) || workspace.rootDir
+  );
+  const pullRequestBranch = createMemo(() => wt()?.branch || props.session.branch || "");
+
+  createEffect(() => {
+    const directory = pullRequestDirectory();
+    const branch = pullRequestBranch();
+    const current = ++pullRequestGeneration;
+    setPullRequest(null);
+    if (!directory || !branch || props.isArchived) return;
+
+    let disposed = false;
+    fetchPullRequests(directory)
+      .then((response) => {
+        if (disposed || current !== pullRequestGeneration) return;
+        setPullRequest(response.available ? response.pullRequests[branch] ?? null : null);
+      })
+      .catch(() => {
+        if (!disposed && current === pullRequestGeneration) setPullRequest(null);
+      });
+    onCleanup(() => {
+      disposed = true;
+    });
+  });
 
   createEffect(() => {
     if (isEffectiveActive() && workspace.unreadCompletedBySession[props.session.id]) {
@@ -180,6 +210,10 @@ export function SessionNavItem(props: SessionNavItemProps) {
       {/* Static Badges (Branch, Queue, Time or Loading) shown when not hovered and not confirming delete */}
       <Show when={!confirmingDelete()}>
         <div class="flex items-center gap-1.5 shrink-0 text-[12px] font-mono group-hover/row:opacity-0 group-hover/row:invisible group-focus-within/row:opacity-0 group-focus-within/row:invisible transition-opacity duration-120 ease-out">
+          <Show when={pullRequest()}>
+            {(pr) => <SessionPullRequestPill pr={pr()} />}
+          </Show>
+
           <Show when={wt()?.isolated && wt()?.branch}>
             <span class="inline-flex items-center gap-0.5 text-[var(--text-faint)] truncate max-w-[68px]">
               <Show when={props.showBranchIcon}>

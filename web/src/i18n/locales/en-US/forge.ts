@@ -2,6 +2,10 @@
 export const forge = {
   open: "Open pull request #{number}",
   tooltip: "{title}\n{state} · {checks} · {review}",
+  fixIssues: "Fix PR issues ({count})",
+  sendingIssues: "Sending…",
+  issuesSent: "Sent",
+  issuesTooltip: "Send failing checks and unresolved review threads to the active agent",
   states: {
     open: "Open",
     draft: "Draft",

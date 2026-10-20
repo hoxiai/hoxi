@@ -39,29 +39,34 @@ func (s *Service) Status(ctx context.Context, directory, branch string) Response
 }
 
 func classifyError(result ghResult, branch string) Response {
+	available, reason := classifyGHFailure(result)
+	return Response{Available: available, Reason: reason, Branch: branch}
+}
+
+func classifyGHFailure(result ghResult) (bool, string) {
 	if errors.Is(result.err, exec.ErrNotFound) {
-		return Response{Available: false, Reason: "gh_missing", Branch: branch}
+		return false, "gh_missing"
 	}
 	if result.timedOut {
-		return Response{Available: false, Reason: "timeout", Branch: branch}
+		return false, "timeout"
 	}
 
 	stderr := strings.ToLower(string(result.stderr))
 	switch {
 	case strings.Contains(stderr, "no pull requests found"):
-		return Response{Available: true, Branch: branch}
+		return true, ""
 	case strings.Contains(stderr, "could not determine"),
 		strings.Contains(stderr, "not a git repository"),
 		strings.Contains(stderr, "no git remotes"),
 		strings.Contains(stderr, "no remotes"),
 		strings.Contains(stderr, "http 404"):
-		return Response{Available: false, Reason: "not_github", Branch: branch}
+		return false, "not_github"
 	case strings.Contains(stderr, "auth"),
 		strings.Contains(stderr, "login"),
 		strings.Contains(stderr, "token"):
-		return Response{Available: false, Reason: "not_authenticated", Branch: branch}
+		return false, "not_authenticated"
 	default:
-		return Response{Available: false, Reason: "gh_failed", Branch: branch}
+		return false, "gh_failed"
 	}
 }
 
