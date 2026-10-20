@@ -12,6 +12,7 @@ import {
   connectProviderWithKey,
   isCustomOrConfiguredProvider,
   loadProviders,
+  openExternalURL,
   openProviderModal,
   recordProbeTelemetry,
   workspace,
@@ -117,7 +118,7 @@ export function ProviderConnectView(props: {
       );
       setOauthState(res);
       if (res?.url) {
-        window.open(res.url, "_blank", "noopener,noreferrer");
+        openExternalURL(res.url);
       }
       if (res?.method === "auto") {
         await hoxiAPI.completeProviderOAuth(

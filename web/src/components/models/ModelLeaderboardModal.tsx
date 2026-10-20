@@ -17,6 +17,7 @@ import {
 import {
   closeLeaderboardModal,
   leaderboardState,
+  openExternalURL,
   selectModel,
   switchLeaderboardTab,
   workspace,
@@ -53,7 +54,7 @@ export default function ModelLeaderboardModal() {
       workspace.providers.find((p) => p.id === vendor)?.models?.[modelID]);
 
   const handleOpenOfficialWeb = () => {
-    window.open("https://hoxi.ai/models", "_blank");
+    openExternalURL("https://hoxi.ai/models");
   };
 
   return (

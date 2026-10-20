@@ -79,7 +79,7 @@ export const settings: SettingsI18n = {
 
   // Software Update
   sectionUpdaterTitle: "软件更新",
-  sectionUpdaterDesc: "检查更新，支持 GitCode 与 GitHub 双通道",
+  sectionUpdaterDesc: "支持应用内自动更新与安装包校验下载",
   updaterCurrentVersion: "当前版本",
   updaterCheckNowBtn: "检查更新",
   updaterCheckingBtn: "正在检查…",

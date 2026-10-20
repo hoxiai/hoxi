@@ -28,6 +28,7 @@ import {
   getEffectivePoolCandidates,
   getFreeTierGuideItems,
   isCandidateCoolingDown,
+  openExternalURL,
   openProviderModal,
   openURLInInspector,
   peekAutoModelTarget,
@@ -591,7 +592,7 @@ export default function AutoModelPoolTab() {
                         type="button"
                         onClick={() => {
                           openURLInInspector(item.signupURL);
-                          window.open(item.signupURL, "_blank", "noopener,noreferrer");
+                          openExternalURL(item.signupURL);
                         }}
                         class="inline-flex items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2 py-1 text-[11px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
                       >

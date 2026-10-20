@@ -78,7 +78,7 @@ export const settings = {
 
   // Software Update
   sectionUpdaterTitle: "Software Updates",
-  sectionUpdaterDesc: "Check releases via GitCode (China) and GitHub",
+  sectionUpdaterDesc: "In-app automatic updates and verified installer downloads",
   updaterCurrentVersion: "Current Version",
   updaterCheckNowBtn: "Check for Updates",
   updaterCheckingBtn: "Checking…",

@@ -52,6 +52,7 @@ export async function checkDesktopUpdate(force = false): Promise<UpdateCheckResu
   }
 
   setDesktopUpdater({ isChecking: true, error: null });
+  void refreshDesktopUpdateStatus();
 
   try {
     const res = await updaterAPI.checkUpdate();

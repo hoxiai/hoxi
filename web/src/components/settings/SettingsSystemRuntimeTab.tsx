@@ -9,9 +9,12 @@ import {
   desktopUpdater,
   loadAgents,
   loadProviders,
+  openExternalURL,
   openProviderModal,
+  refreshDesktopUpdateStatus,
   resetAllAppSettings,
   resetProviderTelemetry,
+  startDesktopUpdate,
   syncKeepAwakeFromBackend,
   updateAppSetting,
   workspace,
@@ -39,6 +42,7 @@ export function SystemRuntimeSettingsTab() {
 
   onMount(() => {
     void fetchInfo();
+    void refreshDesktopUpdateStatus();
   });
 
   const showToast = (msg: string) => {
@@ -265,6 +269,21 @@ export function SystemRuntimeSettingsTab() {
                   </span>
                 </div>
 
+                <Show when={desktopUpdater.nativeAvailable || desktopUpdater.draining}>
+                  <p class="text-[12px] leading-relaxed text-[var(--text-secondary)]">
+                    {t("header.updateNativeExplanation")}
+                  </p>
+                </Show>
+
+                <Show when={desktopUpdater.draining}>
+                  <div
+                    role="status"
+                    class="rounded-xl border border-amber-500/30 bg-amber-500/10 p-2.5 text-[11px] text-amber-600 dark:text-amber-400"
+                  >
+                    {t("header.updateDrainingNotice")}
+                  </div>
+                </Show>
+
                 <Show when={res().releaseNotes}>
                   <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-3 text-[12px] leading-relaxed text-[var(--text-secondary)] max-h-[160px] overflow-y-auto whitespace-pre-wrap font-sans">
                     <div class="font-medium text-[var(--text-primary)] mb-1">
@@ -274,14 +293,37 @@ export function SystemRuntimeSettingsTab() {
                   </div>
                 </Show>
 
-                {/* Mirror download buttons: CN GitCode / Global GitHub */}
+                {/* Native Sparkle update + Mirror download buttons: CN GitCode / Global GitHub */}
                 <div class="flex flex-wrap items-center gap-2 pt-1">
+                  <Show when={desktopUpdater.nativeAvailable}>
+                    <button
+                      type="button"
+                      disabled={desktopUpdater.isInstalling}
+                      onClick={() => void startDesktopUpdate()}
+                      class="inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] hover:opacity-90 px-3.5 py-1.5 text-[12px] font-semibold text-[var(--accent-foreground)] shadow-xs transition-opacity cursor-pointer disabled:opacity-50 disabled:cursor-wait"
+                    >
+                      <ArrowUpCircle size={13} />
+                      <span>
+                        {desktopUpdater.isInstalling
+                          ? t("header.updateOpening")
+                          : t("header.updateInApp")}
+                      </span>
+                    </button>
+                  </Show>
                   <Show when={res().mirrors.cn}>
                     <a
                       href={res().mirrors.cn}
                       target="_blank"
                       rel="noreferrer"
-                      class="inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] hover:opacity-90 px-3 py-1.5 text-[12px] font-semibold text-[var(--accent-foreground)] shadow-xs transition-opacity cursor-pointer"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        if (res().mirrors.cn) openExternalURL(res().mirrors.cn!);
+                      }}
+                      class={
+                        desktopUpdater.nativeAvailable
+                          ? "inline-flex items-center gap-1.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] px-3 py-1.5 text-[12px] font-medium text-[var(--text-secondary)] transition-colors cursor-pointer"
+                          : "inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] hover:opacity-90 px-3 py-1.5 text-[12px] font-semibold text-[var(--accent-foreground)] shadow-xs transition-opacity cursor-pointer"
+                      }
                     >
                       <Download size={13} />
                       <span>{t("settings.updaterDownloadFromGitCodeBtn")}</span>
@@ -292,7 +334,15 @@ export function SystemRuntimeSettingsTab() {
                       href={res().mirrors.global}
                       target="_blank"
                       rel="noreferrer"
-                      class="inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] hover:opacity-90 px-3 py-1.5 text-[12px] font-medium text-[var(--accent-foreground)] transition-opacity cursor-pointer"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        if (res().mirrors.global) openExternalURL(res().mirrors.global!);
+                      }}
+                      class={
+                        desktopUpdater.nativeAvailable
+                          ? "inline-flex items-center gap-1.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] px-3 py-1.5 text-[12px] font-medium text-[var(--text-secondary)] transition-colors cursor-pointer"
+                          : "inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] hover:opacity-90 px-3 py-1.5 text-[12px] font-medium text-[var(--accent-foreground)] transition-opacity cursor-pointer"
+                      }
                     >
                       <ExternalLink size={12} />
                       <span>{t("settings.updaterDownloadFromGitHubBtn")}</span>
@@ -303,7 +353,15 @@ export function SystemRuntimeSettingsTab() {
                       href={res().downloadUrl}
                       target="_blank"
                       rel="noreferrer"
-                      class="inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] px-3 py-1.5 text-[12px] font-medium text-[var(--accent-foreground)] transition-opacity hover:opacity-90 cursor-pointer"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        if (res().downloadUrl) openExternalURL(res().downloadUrl);
+                      }}
+                      class={
+                        desktopUpdater.nativeAvailable
+                          ? "inline-flex items-center gap-1.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] px-3 py-1.5 text-[12px] font-medium text-[var(--text-secondary)] transition-colors cursor-pointer"
+                          : "inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] px-3 py-1.5 text-[12px] font-medium text-[var(--accent-foreground)] transition-opacity hover:opacity-90 cursor-pointer"
+                      }
                     >
                       <Download size={13} />
                       <span>{t("settings.updaterDownloadNowBtn")}</span>

@@ -5,6 +5,7 @@ import { ArrowUpCircle, Download, ExternalLink, X } from "lucide-solid";
 import {
   checkDesktopUpdate,
   desktopUpdater,
+  openExternalURL,
   refreshDesktopUpdateStatus,
   startDesktopUpdate,
 } from "../../store/workspace";
@@ -142,6 +143,11 @@ export default function UpdateBadge() {
                     href={updateResult()?.mirrors.cn}
                     target="_blank"
                     rel="noreferrer"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      const url = updateResult()?.mirrors.cn;
+                      if (url) openExternalURL(url);
+                    }}
                     class="inline-flex items-center gap-1.5 rounded-xl border border-[var(--border-subtle)] hover:bg-[var(--bg-hover)] px-3.5 py-1.5 text-[12px] font-medium text-[var(--text-secondary)] transition-colors cursor-pointer"
                   >
                     <Download size={13} />
@@ -153,6 +159,11 @@ export default function UpdateBadge() {
                     href={updateResult()?.mirrors.global}
                     target="_blank"
                     rel="noreferrer"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      const url = updateResult()?.mirrors.global;
+                      if (url) openExternalURL(url);
+                    }}
                     class="inline-flex items-center gap-1.5 rounded-xl border border-[var(--border-subtle)] hover:bg-[var(--bg-hover)] px-3 py-1.5 text-[12px] font-medium text-[var(--text-secondary)] transition-colors cursor-pointer"
                   >
                     <ExternalLink size={12} />
@@ -170,6 +181,11 @@ export default function UpdateBadge() {
                     href={updateResult()?.downloadUrl}
                     target="_blank"
                     rel="noreferrer"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      const url = updateResult()?.downloadUrl;
+                      if (url) openExternalURL(url);
+                    }}
                     class="inline-flex items-center gap-1.5 rounded-xl border border-[var(--border-subtle)] hover:bg-[var(--bg-hover)] px-3.5 py-1.5 text-[12px] font-medium text-[var(--text-secondary)] transition-colors cursor-pointer"
                   >
                     <Download size={13} />
