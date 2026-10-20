@@ -339,7 +339,89 @@ func normalizeDocModelVariants(doc map[string]interface{}) {
 	}
 }
 
+func (g *Service) isBusy() bool {
+	g.reloadMu.Lock()
+	fn := g.isBusyFn
+	g.reloadMu.Unlock()
+	return fn != nil && fn()
+}
+
 func (g *Service) reloadOpenCodeGlobalConfig() {
+	if g.openCodePort <= 0 {
+		return
+	}
+	if g.isBusy() {
+		g.scheduleDeferredReload()
+		return
+	}
+	g.reloadMu.Lock()
+	g.reloadPending = false
+	g.reloadMu.Unlock()
+	g.postOpenCodeGlobalDispose()
+}
+
+func (g *Service) scheduleDeferredReload() {
+	g.reloadMu.Lock()
+	g.reloadPending = true
+	if g.reloadLoopRunning || g.openCodePort <= 0 {
+		g.reloadMu.Unlock()
+		return
+	}
+	g.reloadLoopRunning = true
+	g.reloadMu.Unlock()
+
+	go func() {
+		ticker := time.NewTicker(250 * time.Millisecond)
+		defer ticker.Stop()
+		for range ticker.C {
+			if g.openCodePort <= 0 {
+				g.reloadMu.Lock()
+				g.reloadPending = false
+				g.reloadLoopRunning = false
+				g.reloadMu.Unlock()
+				return
+			}
+			if g.isBusy() {
+				continue
+			}
+			g.reloadMu.Lock()
+			pending := g.reloadPending
+			g.reloadPending = false
+			g.reloadLoopRunning = false
+			g.reloadMu.Unlock()
+			if pending {
+				g.postOpenCodeGlobalDispose()
+			}
+			return
+		}
+	}()
+}
+
+// FlushPendingReload immediately disposes OpenCode's global instances if a
+// deferred reload is waiting and no session is currently busy.
+func (g *Service) FlushPendingReload() bool {
+	if g.openCodePort <= 0 || g.isBusy() {
+		return false
+	}
+	g.reloadMu.Lock()
+	pending := g.reloadPending
+	g.reloadPending = false
+	g.reloadMu.Unlock()
+	if !pending {
+		return false
+	}
+	g.postOpenCodeGlobalDispose()
+	return true
+}
+
+// HasPendingReload reports whether an OpenCode global config reload is queued.
+func (g *Service) HasPendingReload() bool {
+	g.reloadMu.Lock()
+	defer g.reloadMu.Unlock()
+	return g.reloadPending
+}
+
+func (g *Service) postOpenCodeGlobalDispose() {
 	if g.openCodePort <= 0 {
 		return
 	}
@@ -353,6 +435,19 @@ func (g *Service) reloadOpenCodeGlobalConfig() {
 			_ = resp.Body.Close()
 		}
 	}
+}
+
+func (g *Service) handleGlobalDispose(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		if g.proxy != nil {
+			g.proxy.ServeHTTP(w, r)
+			return
+		}
+		writeJSONError(w, http.StatusMethodNotAllowed, "POST required")
+		return
+	}
+	g.reloadOpenCodeGlobalConfig()
+	writeJSON(w, http.StatusOK, true)
 }
 
 func (g *Service) handleModelsConfig(w http.ResponseWriter, r *http.Request) {
@@ -544,6 +639,13 @@ func (g *Service) handleGlobalConfigProxy(w http.ResponseWriter, r *http.Request
 	}
 	var cfg map[string]interface{}
 	if json.Unmarshal(body, &cfg) == nil {
+		doc := g.loadHoxiConfigDoc()
+		if disabled, ok := doc["disabled_providers"]; ok {
+			cfg["disabled_providers"] = disabled
+		}
+		if model, ok := doc["model"].(string); ok && strings.TrimSpace(model) != "" {
+			cfg["model"] = model
+		}
 		if provMap, ok := cfg["provider"].(map[string]interface{}); ok {
 			filterProviderModelsByHoxi(provMap, g.loadHoxiProvidersMap())
 		}

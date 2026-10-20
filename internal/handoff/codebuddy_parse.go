@@ -28,7 +28,7 @@ func parseCodeBuddySessionMessages(sessionDir string, baseTs int64, defaultModel
 	var turns []NormalizedTurn
 	var plans []ExternalPlanStep
 	var detectedCWD string
-	toolByID := map[string]*NormalizedToolCall{}
+	toolCallIDIndex := map[string]int{}
 
 	for stepIdx, mRef := range idxDoc.Messages {
 		msgPath := filepath.Join(sessionDir, "messages", mRef.ID+".json")
@@ -96,7 +96,7 @@ func parseCodeBuddySessionMessages(sessionDir string, baseTs int64, defaultModel
 				last.Tools = append(last.Tools, calls...)
 				for i := start; i < len(last.Tools); i++ {
 					if last.Tools[i].CallID != "" {
-						toolByID[last.Tools[i].CallID] = &last.Tools[i]
+						toolCallIDIndex[last.Tools[i].CallID] = len(turns) - 1
 					}
 				}
 			} else {
@@ -108,16 +108,15 @@ func parseCodeBuddySessionMessages(sessionDir string, baseTs int64, defaultModel
 					Tools:     calls,
 					ModelID:   modelID,
 				})
-				last := &turns[len(turns)-1]
-				for i := range last.Tools {
-					if last.Tools[i].CallID != "" {
-						toolByID[last.Tools[i].CallID] = &last.Tools[i]
+				for i := range turns[len(turns)-1].Tools {
+					if turns[len(turns)-1].Tools[i].CallID != "" {
+						toolCallIDIndex[turns[len(turns)-1].Tools[i].CallID] = len(turns) - 1
 					}
 				}
 			}
 
 		case "tool":
-			attachCodeBuddyToolResults(msgDoc["content"], toolByID)
+			attachCodeBuddyToolResults(msgDoc["content"], &turns, toolCallIDIndex)
 		}
 	}
 
@@ -212,7 +211,7 @@ func extractCodeBuddyAssistantContent(rawContent interface{}) (text, reasoning s
 	return strings.Join(texts, "\n\n"), strings.Join(thoughts, "\n\n"), calls, plans
 }
 
-func attachCodeBuddyToolResults(rawContent interface{}, toolByID map[string]*NormalizedToolCall) {
+func attachCodeBuddyToolResults(rawContent interface{}, turns *[]NormalizedTurn, callIDIndex map[string]int) {
 	arr, ok := rawContent.([]interface{})
 	if !ok {
 		return
@@ -223,8 +222,8 @@ func attachCodeBuddyToolResults(rawContent interface{}, toolByID map[string]*Nor
 			continue
 		}
 		callID := asString(m["toolCallId"])
-		tc, exists := toolByID[callID]
-		if !exists {
+		turnIdx, exists := callIDIndex[callID]
+		if !exists || turnIdx >= len(*turns) {
 			continue
 		}
 		resWrapper, _ := m["result"].(map[string]interface{})
@@ -239,7 +238,12 @@ func attachCodeBuddyToolResults(rawContent interface{}, toolByID map[string]*Nor
 			outParts = append(outParts, errMsg)
 		}
 		if len(outParts) > 0 {
-			tc.Output = truncateRunes(strings.Join(outParts, "\n"), 4000)
+			for i := range (*turns)[turnIdx].Tools {
+				if (*turns)[turnIdx].Tools[i].CallID == callID {
+					(*turns)[turnIdx].Tools[i].Output = truncateRunes(strings.Join(outParts, "\n"), 4000)
+					break
+				}
+			}
 		}
 	}
 }

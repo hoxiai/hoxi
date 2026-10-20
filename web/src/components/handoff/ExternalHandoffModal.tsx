@@ -153,7 +153,12 @@ export default function ExternalHandoffModal() {
     try {
       const useOriginal = modelMode() === "original";
       const cli = cliTools().find((c) => c.id === item.source);
-      if (useOriginal && cli && cli.authenticated && !cli.connected) {
+      const isRunnerTool =
+        cli?.authMode === "antigravity-runner" ||
+        cli?.authMode === "claude-runner" ||
+        cli?.authMode === "codebuddy-runner" ||
+        cli?.authMode === "qoder-runner";
+      if (useOriginal && cli && !isRunnerTool && cli.authenticated && !cli.connected) {
         await hoxiAPI.importLocalCLI(item.source).catch(() => null);
       }
       const origModel = currentOriginalModel();
@@ -187,18 +192,6 @@ export default function ExternalHandoffModal() {
         return;
       }
       await refreshProviders().catch(() => null);
-      if (
-        res.resolvedProviderID &&
-        res.resolvedModelID &&
-        workspace.providers.some(
-          (p) => p.id === res.resolvedProviderID && Boolean(p.models?.[res.resolvedModelID!])
-        )
-      ) {
-        selectModel({
-          providerID: res.resolvedProviderID,
-          modelID: res.resolvedModelID,
-        });
-      }
       const targetDir = res.targetDirectory || item.cwd || workspace.rootDir;
       if (
         targetDir &&
@@ -213,6 +206,18 @@ export default function ExternalHandoffModal() {
       }
       replaceSession(res.session);
       await selectSession(res.session.id);
+      if (
+        res.resolvedProviderID &&
+        res.resolvedModelID &&
+        workspace.providers.some(
+          (p) => p.id === res.resolvedProviderID && Boolean(p.models?.[res.resolvedModelID!])
+        )
+      ) {
+        selectModel({
+          providerID: res.resolvedProviderID,
+          modelID: res.resolvedModelID,
+        });
+      }
       closeHandoffModal();
     } catch (err: any) {
       setErrorMsg(err?.message || String(err));

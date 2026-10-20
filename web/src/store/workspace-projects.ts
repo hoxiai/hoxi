@@ -325,6 +325,25 @@ export async function switchWorkspace(
 
   recordRecentProject(cleaned);
 
+  setWorkspace(
+    produce((state) => {
+      const prevRoot = normalizeFolderPath(state.rootDir);
+      for (const s of state.sessions) {
+        if (s.directory && !state.worktreeBySession[s.id]) {
+          state.worktreeBySession[s.id] = {
+            sessionID: s.id,
+            isolated: s.sandboxMode
+              ? s.sandboxMode === "worktree"
+              : Boolean(prevRoot && normalizeFolderPath(s.directory) !== prevRoot),
+            directory: s.directory,
+            branch: s.branch,
+            createdAt: new Date(s.time?.created || Date.now()).toISOString(),
+          };
+        }
+      }
+    })
+  );
+
   setWorkspace({
     rootDir: cleaned,
     sessions: hydratedSessions,

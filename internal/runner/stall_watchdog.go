@@ -171,7 +171,6 @@ func (s *Service) watchStall(ap *activeProcess) {
 // checkStall evaluates one tick; it reports false once the turn was stopped.
 func (s *Service) checkStall(ap *activeProcess, now time.Time) bool {
 	if s.awaitingUser(ap) {
-		fmt.Fprintf(os.Stderr, "STALLDBG awaiting user, clock reset\n") // TEMP
 		// The clock restarts when the user answers.
 		s.noteActivity(ap)
 		return true

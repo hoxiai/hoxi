@@ -143,6 +143,7 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 		leaderboard:  leaderboardSvc,
 		privacy:      privacy.New(""),
 	}
+	providers.SetBusyCheck(g.isAnySessionBusy)
 
 	g.registerRoutes(distFS)
 	return g

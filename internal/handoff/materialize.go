@@ -159,16 +159,18 @@ func (g *Service) ensureHandoffModelReady(source ExternalToolID, providerID, mod
 	}
 	provMap, _ := g.loadHoxiConfigDoc()["provider"].(map[string]interface{})
 	existingProv, hasProv := provMap[providerID].(map[string]interface{})
-	existingName, _ := existingProv["name"].(string)
-	isLocal := !hasProv || strings.Contains(existingName, "Local") || strings.Contains(existingName, "Antigravity") || strings.Contains(existingName, "Codex")
+	existingOpts, _ := existingProv["options"].(map[string]interface{})
+	existingBaseURL, _ := existingOpts["baseURL"].(string)
+	hasDeprecatedBridge := strings.Contains(existingBaseURL, "/api/hoxi/bridge/claude-code/v1") ||
+		strings.Contains(existingBaseURL, "/api/hoxi/bridge/gemini-antigravity/v1")
 	switch {
-	case providerID == "claude-code":
+	case providerID == "claude-code" && (!hasProv || hasDeprecatedBridge):
 		_ = g.importClaudeCLIProvider()
-	case providerID == "grok-cli":
+	case providerID == "grok-cli" && !hasProv:
 		_ = g.importGrokCLIProvider()
-	case providerID == "google" && isLocal:
+	case providerID == "google" && (!hasProv || hasDeprecatedBridge):
 		_ = g.importGeminiCLIProvider()
-	case providerID == "openai" && isLocal:
+	case providerID == "openai" && !hasProv:
 		_ = g.importCodexCLIProvider()
 	}
 

@@ -236,26 +236,36 @@ export function replaceSessionFromEvent(info: SessionInfo, eventDirectory?: stri
 const hydratedSessionIDs = new Set<string>();
 
 // Idle turns an empty snapshot proves stale (cache seeds); busy sessions may still be persisting.
-function idleTurnIDs(sessionID: string): Set<string> | undefined {
-  return isSessionBusy(sessionID) ? undefined : new Set((workspace.messagesBySession[sessionID] ?? []).map((t) => t.info.id));
+// (Moved to workspace-sessions-helpers.ts)
+
+const loadRequestRevisions = new Map<string, number>();
+
+function beginMessageLoadGuard(sessionID: string, directory: string | undefined) {
+  const revision = (loadRequestRevisions.get(sessionID) ?? 0) + 1;
+  loadRequestRevisions.set(sessionID, revision);
+  return () =>
+    loadRequestRevisions.get(sessionID) === revision &&
+    sessionDirectory(sessionID) === directory &&
+    !isSessionDeleted(sessionID);
 }
 
 export async function loadSessionMessagesOnly(sessionID: string, explicitDirectory?: string): Promise<void> {
   const directory = explicitDirectory || sessionDirectory(sessionID);
+  const isCurrent = beginMessageLoadGuard(sessionID, directory);
   const preRequestIDs = idleTurnIDs(sessionID);
   const turns = await hoxiAPI.getMessages(sessionID, directory);
-  if (!isSessionDeleted(sessionID)) restoreSessionAI(sessionID, turns);
+  if (!isCurrent()) return;
+  restoreSessionAI(sessionID, turns);
   setWorkspace(produce((state) => {
     mergeServerTurnsInto((state.messagesBySession[sessionID] ||= []), turns, preRequestIDs);
   }));
-  if (!isSessionDeleted(sessionID)) {
-    hydratedSessionIDs.add(sessionID);
-    persistCachedSessionTurns(sessionID, workspace.messagesBySession[sessionID] ?? turns);
-  }
+  hydratedSessionIDs.add(sessionID);
+  persistCachedSessionTurns(sessionID, workspace.messagesBySession[sessionID] ?? turns);
 }
 
 export async function loadSessionMessages(sessionID: string): Promise<void> {
   const directory = sessionDirectory(sessionID);
+  const isCurrent = beginMessageLoadGuard(sessionID, directory);
   const parentID = workspace.sessions.find((s) => s.id === sessionID)?.parentID;
   const isChildSession = Boolean(parentID);
   if (!isChildSession) scheduleRefreshWorktreeStatus(sessionID, 120);
@@ -265,25 +275,24 @@ export async function loadSessionMessages(sessionID: string): Promise<void> {
   try {
     const preRequestIDs = idleTurnIDs(sessionID);
     const turns = await hoxiAPI.getMessages(sessionID, directory);
-    if (!isSessionDeleted(sessionID)) restoreSessionAI(sessionID, turns);
+    if (!isCurrent()) return;
+    restoreSessionAI(sessionID, turns);
     setWorkspace(produce((state) => {
       mergeServerTurnsInto((state.messagesBySession[sessionID] ||= []), turns, preRequestIDs);
     }));
-    if (!isSessionDeleted(sessionID)) {
-      hydratedSessionIDs.add(sessionID);
-      persistCachedSessionTurns(sessionID, workspace.messagesBySession[sessionID] ?? turns);
-      if (!isChildSession) {
-        for (const t of workspace.messagesBySession[sessionID] ?? []) {
-          for (const p of t.parts) {
-            if (p.type === "tool") {
-              const lower = (p.tool || "").toLowerCase();
-              if (lower === "task" || lower === "agent" || lower.includes("subagent")) {
-                ensureChildSubagentSessionLoaded(
-                  extractChildSubagentSessionId(p),
-                  sessionID,
-                  p.state.status === "completed" || p.state.status === "error"
-                );
-              }
+    hydratedSessionIDs.add(sessionID);
+    persistCachedSessionTurns(sessionID, workspace.messagesBySession[sessionID] ?? turns);
+    if (!isChildSession) {
+      for (const t of workspace.messagesBySession[sessionID] ?? []) {
+        for (const p of t.parts) {
+          if (p.type === "tool") {
+            const lower = (p.tool || "").toLowerCase();
+            if (lower === "task" || lower === "agent" || lower.includes("subagent")) {
+              ensureChildSubagentSessionLoaded(
+                extractChildSubagentSessionId(p),
+                sessionID,
+                p.state.status === "completed" || p.state.status === "error"
+              );
             }
           }
         }
@@ -298,31 +307,14 @@ export async function loadSessionMessages(sessionID: string): Promise<void> {
     setWorkspace("loadingMessagesBySession", sessionID, false);
   }
   if (isChildSession && sessionID !== workspace.activeSessionID) {
-    if (parentID && !isSessionDeleted(parentID)) {
-      scheduleRefreshSessionDiff(parentID);
-    }
+    if (parentID && !isSessionDeleted(parentID)) scheduleRefreshSessionDiff(parentID);
     return;
   }
+  if (!isCurrent()) return;
   await refreshSessionDiff(sessionID);
 }
 
 const diffRevisions = new Map<string, number>();
-
-function areDiffListsEqual(prev: SnapshotFileDiff[] | undefined, next: SnapshotFileDiff[]): boolean {
-  if (!prev || prev.length !== next.length) return false;
-  for (let i = 0; i < prev.length; i++) {
-    const a = prev[i];
-    const b = next[i];
-    if (
-      a.file !== b.file || a.status !== b.status || a.additions !== b.additions ||
-      a.deletions !== b.deletions || a.stamp !== b.stamp || a.patch !== b.patch ||
-      a.before !== b.before || a.after !== b.after || a.large !== b.large ||
-      a.generatedLike !== b.generatedLike || a.repo !== b.repo ||
-      a.repoDir !== b.repoDir || a.branch !== b.branch
-    ) return false;
-  }
-  return true;
-}
 
 function setDiffListIfChanged(
   field: "diffsBySession" | "worktreeDiffsBySession", key: string, next: SnapshotFileDiff[]
@@ -758,18 +750,12 @@ export async function revertToHere(
     }
   }
 
-  if (existingSession) {
-    replaceSession({ ...existingSession, revert: { messageID, partID } });
-  }
-
+  if (existingSession) replaceSession({ ...existingSession, revert: { messageID, partID } });
   if (isSessionBusy(sessionID)) {
     setWorkspace("statusBySession", sessionID, { type: "idle" });
-    try {
-      await hoxiAPI.abortSession(sessionID, sessionDirectory(sessionID));
-    } catch { /* ignore */ }
+    try { await hoxiAPI.abortSession(sessionID, sessionDirectory(sessionID)); } catch { /* ignore */ }
     void abortChildSubagentSessions(sessionID);
   }
-
   const info = await hoxiAPI.revertSession(sessionID, messageID, partID, sessionDirectory(sessionID));
   replaceSession(info);
   void loadSessionMessages(sessionID);

@@ -158,6 +158,22 @@ function selectDefaultModel(model: SelectedModel) {
   try { localStorage.setItem(SELECTED_MODEL_KEY, JSON.stringify(model)); } catch { /* storage unavailable */ }
 }
 
+function isActiveSessionBusy(): boolean {
+  const sid = workspace.activeSessionID;
+  if (!sid) return false;
+  const st = workspace.statusBySession[sid]?.type;
+  return st === "busy" || st === "retry";
+}
+
+function selectProviderModelPreservingBusySession(model: SelectedModel) {
+  if (isActiveSessionBusy()) {
+    selectDefaultModel(model);
+    pushRecentModel(model);
+    return;
+  }
+  selectModel(model, false);
+}
+
 export function setReasoningEffort(effort: ReasoningEffort) {
   const patch: { effort: ReasoningEffort; model?: SelectedModel } = { effort };
   const sel = workspace.selectedModel;
@@ -463,11 +479,11 @@ export async function connectProviderWithKey(opts: {
   await loadProviders();
 
   if (opts.customModelID?.trim()) {
-    selectModel({ providerID: pid, modelID: opts.customModelID.trim() }, false);
+    selectProviderModelPreservingBusySession({ providerID: pid, modelID: opts.customModelID.trim() });
   } else if (!workspace.selectedModel) {
     const prov = workspace.providers.find((p) => p.id === pid);
     const defModel = workspace.defaultModels[pid] || Object.keys(prov?.models || {})[0];
-    if (defModel) selectModel({ providerID: pid, modelID: defModel }, false);
+    if (defModel) selectProviderModelPreservingBusySession({ providerID: pid, modelID: defModel });
   }
 }
 
@@ -520,9 +536,13 @@ export async function saveCustomProvider(input: SaveCustomProviderInput): Promis
 
   const firstModelID = input.models[0]?.id?.trim();
   const cur = workspace.selectedModel;
-  if (firstModelID && (!cur || cur.providerID === pid || !nextModels[cur.modelID])) {
-    const targetModelID = cur?.providerID === pid && nextModels[cur.modelID] ? cur.modelID : firstModelID;
-    selectModel({ providerID: pid, modelID: targetModelID }, false);
+  if (firstModelID) {
+    if (!cur || cur.providerID === pid) {
+      const targetModelID = cur?.providerID === pid && nextModels[cur.modelID] ? cur.modelID : firstModelID;
+      selectProviderModelPreservingBusySession({ providerID: pid, modelID: targetModelID });
+    } else {
+      pushRecentModel({ providerID: pid, modelID: firstModelID });
+    }
   }
 }
 
@@ -575,6 +595,6 @@ export async function syncLocalCLIModel(tool: LocalCLIStatusItem) {
   if (!modelID || !workspace.providers.some((p) => p.id === providerID && p.models?.[modelID])) {
     throw new Error(t("leftNav.handoffCliModelUnavailable", { model: modelID || tool.name }));
   }
-  selectModel({ providerID, modelID });
+  selectProviderModelPreservingBusySession({ providerID, modelID });
   return status;
 }

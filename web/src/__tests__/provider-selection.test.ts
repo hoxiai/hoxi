@@ -1,6 +1,11 @@
 import { reconcile, unwrap } from "solid-js/store";
 import { hoxiAPI, runnerAPI, type LocalCLIStatusItem, type ProviderInfo } from "../services/api";
-import { loadProviders, syncLocalCLIModel } from "../store/workspace-providers";
+import {
+  connectProviderWithKey,
+  loadProviders,
+  saveCustomProvider,
+  syncLocalCLIModel,
+} from "../store/workspace-providers";
 import { setWorkspace, workspace } from "../store/workspace";
 import { assertDeepEqual, describe, it } from "./test-harness";
 
@@ -119,6 +124,97 @@ describe("local CLI model sync", () => {
       try { await syncLocalCLIModel(cli); } catch (err) { message = (err as Error).message; }
       assertDeepEqual(message, "import failed");
       assertDeepEqual(workspace.selectedModel, model);
+    });
+  });
+
+  it("does not overwrite a running session model when syncing CLI or saving providers", async () => {
+    await withProviders(async () => {
+      const runningModel = { providerID: "ollama", modelID: "local-model" };
+      setWorkspace("activeSessionID", "ses_busy");
+      setWorkspace("statusBySession", "ses_busy", { type: "busy" });
+      setWorkspace("aiBySession", "ses_busy", { ...workspace.defaultAI, model: runningModel });
+
+      const runner = { ...cli, id: "claude-code", providerID: "claude-code", authMode: "claude-runner" } as LocalCLIStatusItem;
+      runnerAPI.listModels = async () => ({
+        installed: true,
+        available: true,
+        models: [{ id: "sonnet", name: "Sonnet" }],
+        default: "sonnet",
+      });
+      hoxiAPI.getLocalCLIStatus = async () => ({ tools: [{ ...runner, defaultModel: "sonnet" }] });
+      await syncLocalCLIModel(runner);
+
+      // Active busy session keeps its model, while defaultAI and recentModels receive the synced model
+      assertDeepEqual(workspace.aiBySession.ses_busy.model, runningModel);
+      assertDeepEqual(workspace.selectedModel, runningModel);
+      assertDeepEqual(workspace.defaultAI.model, { providerID: "claude-code", modelID: "sonnet" });
+      assertDeepEqual(workspace.recentModels[0], { providerID: "claude-code", modelID: "sonnet" });
+
+      hoxiAPI.setProviderAuth = async () => {};
+      hoxiAPI.saveHoxiProviderConfig = async () => ({
+        ok: true,
+        hoxiProviders: {},
+        configPath: "test",
+      });
+      hoxiAPI.getHoxiModelsConfig = async () => ({
+        hoxiProviders: {
+          "custom-gw": {
+            name: "Custom GW",
+            npm: "@ai-sdk/openai-compatible",
+            options: { baseURL: "https://gw.example/v1" },
+            models: { "gw-m1": { name: "GW M1", reasoning: true } },
+          },
+        },
+        openCodeProviders: [],
+        configPath: "test",
+      });
+      await connectProviderWithKey({
+        providerID: "custom-gw",
+        apiKey: "sk-test",
+        baseURL: "https://gw.example/v1",
+        customModelID: "gw-m1",
+      });
+      assertDeepEqual(workspace.aiBySession.ses_busy.model, runningModel);
+      assertDeepEqual(workspace.defaultAI.model, { providerID: "custom-gw", modelID: "gw-m1" });
+    });
+  });
+
+  it("does not hijack an unrelated provider selection when saving a custom provider", async () => {
+    await withProviders(async () => {
+      setWorkspace("activeSessionID", "ses_idle");
+      setWorkspace("statusBySession", "ses_idle", { type: "idle" });
+      setWorkspace("aiBySession", "ses_idle", { ...workspace.defaultAI, model });
+
+      hoxiAPI.setProviderAuth = async () => {};
+      hoxiAPI.saveHoxiProviderConfig = async () => ({
+        ok: true,
+        hoxiProviders: {},
+        configPath: "test",
+      });
+      hoxiAPI.getHoxiModelsConfig = async () => ({
+        hoxiProviders: {
+          "other-custom": {
+            name: "Other Custom",
+            npm: "@ai-sdk/openai-compatible",
+            options: { baseURL: "https://other.example/v1" },
+            models: { "other-m1": { name: "Other M1", reasoning: true } },
+          },
+        },
+        openCodeProviders: [],
+        configPath: "test",
+      });
+
+      await saveCustomProvider({
+        providerID: "other-custom",
+        name: "Other Custom",
+        npm: "@ai-sdk/openai-compatible",
+        baseURL: "https://other.example/v1",
+        apiKey: "sk-other",
+        models: [{ id: "other-m1", name: "Other M1", reasoning: true, image: false }],
+      });
+
+      assertDeepEqual(workspace.selectedModel, model);
+      assertDeepEqual(workspace.recentModels[0], { providerID: "other-custom", modelID: "other-m1" });
     });
   });
 });

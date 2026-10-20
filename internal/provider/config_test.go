@@ -7,7 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func assertPrivateConfig(t *testing.T, path string) {
@@ -137,5 +139,69 @@ func TestConfigSamePathAndNoHomeFallback(t *testing.T) {
 	assertPrivateConfig(t, path)
 	if !reflect.DeepEqual(readJSONMapFile(path), doc) {
 		t.Fatal("no-home fallback lost upstream credentials")
+	}
+}
+
+func TestDeferredReloadWhileBusyDoesNotDisposeUntilIdle(t *testing.T) {
+	_, workspace := setupIsolatedEnv(t)
+	var disposeCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/global/dispose" && r.Method == http.MethodPost {
+			disposeCalls.Add(1)
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`true`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	port := server.Listener.Addr().(*net.TCPAddr).Port
+	svc := NewService(port, "password", workspace, nil)
+	var busy atomic.Bool
+	busy.Store(true)
+	svc.SetBusyCheck(func() bool { return busy.Load() })
+
+	mux := http.NewServeMux()
+	svc.RegisterRoutes(mux)
+
+	doc := map[string]interface{}{
+		"provider": map[string]interface{}{
+			"custom": map[string]interface{}{
+				"options": map[string]interface{}{"apiKey": "busy-safe-key"},
+			},
+		},
+	}
+	if err := svc.PersistHoxiConfigDoc(doc); err != nil {
+		t.Fatal(err)
+	}
+	// Direct POST /global/dispose through the provider route must also defer while busy.
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/global/dispose", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /global/dispose status = %d, want 200", rec.Code)
+	}
+	if !svc.HasPendingReload() {
+		t.Fatal("expected pending reload while session is busy")
+	}
+	if got := disposeCalls.Load(); got != 0 {
+		t.Fatalf("dispose calls while busy = %d, want 0", got)
+	}
+	if got := svc.ResolveStoredProviderKey("custom", ""); got != "busy-safe-key" {
+		t.Fatalf("expected persisted key immediately while busy, got %q", got)
+	}
+
+	// Mark idle and verify the deferred reload flushes exactly once.
+	busy.Store(false)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && disposeCalls.Load() == 0 {
+		time.Sleep(25 * time.Millisecond)
+	}
+	svc.openCodePort = 0
+	if got := disposeCalls.Load(); got != 1 {
+		t.Fatalf("dispose calls after idle = %d, want 1", got)
+	}
+	if svc.HasPendingReload() {
+		t.Fatal("expected pending reload flag to clear after flush")
 	}
 }

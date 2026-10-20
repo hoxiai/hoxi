@@ -243,7 +243,7 @@ func parseGrokChatHistory(historyPath string, baseTs int64, defaultModel string)
 
 	var turns []NormalizedTurn
 	var pendingReasoning []string
-	toolIndexByID := map[string]*NormalizedToolCall{}
+	toolCallIDIndex := map[string]int{}
 
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
@@ -344,7 +344,7 @@ func parseGrokChatHistory(historyPath string, baseTs int64, defaultModel string)
 				last.Tools = append(last.Tools, tCalls...)
 				for i := startIdx; i < len(last.Tools); i++ {
 					if last.Tools[i].CallID != "" {
-						toolIndexByID[last.Tools[i].CallID] = &last.Tools[i]
+						toolCallIDIndex[last.Tools[i].CallID] = len(turns) - 1
 					}
 				}
 			} else {
@@ -357,10 +357,9 @@ func parseGrokChatHistory(historyPath string, baseTs int64, defaultModel string)
 					ModelID:   modelID,
 				}
 				turns = append(turns, turn)
-				last := &turns[len(turns)-1]
-				for i := range last.Tools {
-					if last.Tools[i].CallID != "" {
-						toolIndexByID[last.Tools[i].CallID] = &last.Tools[i]
+				for i := range turns[len(turns)-1].Tools {
+					if turns[len(turns)-1].Tools[i].CallID != "" {
+						toolCallIDIndex[turns[len(turns)-1].Tools[i].CallID] = len(turns) - 1
 					}
 				}
 			}
@@ -368,8 +367,13 @@ func parseGrokChatHistory(historyPath string, baseTs int64, defaultModel string)
 		case "tool_result":
 			callID, _ := item["tool_call_id"].(string)
 			outText := extractGrokContentText(item["content"])
-			if tc, ok := toolIndexByID[callID]; ok {
-				tc.Output = truncateRunes(outText, 4000)
+			if turnIdx, ok := toolCallIDIndex[callID]; ok && turnIdx < len(turns) {
+				for i := range turns[turnIdx].Tools {
+					if turns[turnIdx].Tools[i].CallID == callID {
+						turns[turnIdx].Tools[i].Output = truncateRunes(outText, 4000)
+						break
+					}
+				}
 			}
 		}
 	}

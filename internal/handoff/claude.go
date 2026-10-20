@@ -300,7 +300,7 @@ func parseClaudeJSONL(filePath, sessionID, activeRoot string) (*ExternalSessionD
 
 	var turns []NormalizedTurn
 	var planSteps []ExternalPlanStep
-	toolIndexByID := map[string]*NormalizedToolCall{}
+	toolCallIDIndex := map[string]int{} // map callID to turn index
 
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
@@ -331,7 +331,7 @@ func parseClaudeJSONL(filePath, sessionID, activeRoot string) (*ExternalSessionD
 		case "user":
 			userText, isToolRes := extractClaudeUserText(msg["content"])
 			if isToolRes {
-				attachClaudeToolResults(msg["content"], toolIndexByID)
+				attachClaudeToolResults(msg["content"], &turns, toolCallIDIndex)
 				continue
 			}
 			if userText == "" || strings.HasPrefix(userText, "<system-reminder>") {
@@ -369,7 +369,7 @@ func parseClaudeJSONL(filePath, sessionID, activeRoot string) (*ExternalSessionD
 				last.Tools = append(last.Tools, tCalls...)
 				for i := startIdx; i < len(last.Tools); i++ {
 					if last.Tools[i].CallID != "" {
-						toolIndexByID[last.Tools[i].CallID] = &last.Tools[i]
+						toolCallIDIndex[last.Tools[i].CallID] = len(turns) - 1
 					}
 				}
 			} else {
@@ -382,10 +382,9 @@ func parseClaudeJSONL(filePath, sessionID, activeRoot string) (*ExternalSessionD
 					ModelID:   modelID,
 				}
 				turns = append(turns, turn)
-				last := &turns[len(turns)-1]
-				for i := range last.Tools {
-					if last.Tools[i].CallID != "" {
-						toolIndexByID[last.Tools[i].CallID] = &last.Tools[i]
+				for i := range turns[len(turns)-1].Tools {
+					if turns[len(turns)-1].Tools[i].CallID != "" {
+						toolCallIDIndex[turns[len(turns)-1].Tools[i].CallID] = len(turns) - 1
 					}
 				}
 			}
@@ -434,7 +433,7 @@ func extractClaudeUserText(content interface{}) (string, bool) {
 	}
 }
 
-func attachClaudeToolResults(content interface{}, index map[string]*NormalizedToolCall) {
+func attachClaudeToolResults(content interface{}, turns *[]NormalizedTurn, callIDIndex map[string]int) {
 	arr, ok := content.([]interface{})
 	if !ok {
 		return
@@ -445,12 +444,17 @@ func attachClaudeToolResults(content interface{}, index map[string]*NormalizedTo
 			continue
 		}
 		callID := asString(m["tool_use_id"])
-		tc, exists := index[callID]
-		if !exists {
+		turnIdx, exists := callIDIndex[callID]
+		if !exists || turnIdx >= len(*turns) {
 			continue
 		}
-		out := extractGrokContentText(m["content"])
-		tc.Output = truncateRunes(out, 4000)
+		for i := range (*turns)[turnIdx].Tools {
+			if (*turns)[turnIdx].Tools[i].CallID == callID {
+				out := extractGrokContentText(m["content"])
+				(*turns)[turnIdx].Tools[i].Output = truncateRunes(out, 4000)
+				break
+			}
+		}
 	}
 }
 

@@ -10,15 +10,20 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
 type Service struct {
-	openCodePort int
-	password     string
-	rootDir      string
-	proxy        http.Handler
-	telemetry    *providerTelemetryStore
+	openCodePort      int
+	password          string
+	rootDir           string
+	proxy             http.Handler
+	telemetry         *providerTelemetryStore
+	isBusyFn          func() bool
+	reloadMu          sync.Mutex
+	reloadPending     bool
+	reloadLoopRunning bool
 }
 
 func NewService(openCodePort int, password, rootDir string, proxy http.Handler) *Service {
@@ -39,6 +44,15 @@ func (s *Service) SetOnProviderDegraded(fn func(providerID string, degraded bool
 	}
 }
 
+// SetBusyCheck wires a predicate that reports whether any session or runtime
+// process is actively executing, so global OpenCode config reloads (`POST /global/dispose`)
+// are deferred until active turns complete instead of killing in-flight tasks.
+func (s *Service) SetBusyCheck(fn func() bool) {
+	s.reloadMu.Lock()
+	defer s.reloadMu.Unlock()
+	s.isBusyFn = fn
+}
+
 func (s *Service) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/hoxi/provider/fetch-models", s.handleFetchProviderModels)
 	mux.HandleFunc("/api/hoxi/provider/test-model", s.handleTestProviderModel)
@@ -48,6 +62,7 @@ func (s *Service) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/hoxi/provider/auto-pools", s.handleAutoPoolsConfig)
 	mux.HandleFunc("/api/hoxi/models-config", s.handleModelsConfig)
 	mux.HandleFunc("/global/config", s.handleGlobalConfigProxy)
+	mux.HandleFunc("/global/dispose", s.handleGlobalDispose)
 	mux.HandleFunc("/provider", s.handleProviderProxy)
 	if s.telemetry != nil {
 		s.telemetry.registerRoutes(mux)

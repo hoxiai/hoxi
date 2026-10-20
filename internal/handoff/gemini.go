@@ -122,7 +122,7 @@ func scanGeminiAntigravitySessions(targetDir, query string) ([]ExternalSessionSu
 		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		countCmd := exec.CommandContext(ctx, "sqlite3", dbPath, "SELECT count(*) FROM conversation_summaries WHERE nesting_depth = 0 AND killed = 0;")
+		countCmd := exec.CommandContext(ctx, "sqlite3", "-readonly", "-cmd", ".timeout 3000", dbPath, "SELECT count(*) FROM conversation_summaries WHERE nesting_depth = 0 AND killed = 0;")
 		countCmd.WaitDelay = time.Second
 		countOut, countErr := countCmd.Output()
 		cancel()
@@ -139,7 +139,7 @@ ORDER BY last_modified_time DESC
 LIMIT 120;`
 
 		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
-		queryCmd := exec.CommandContext(ctx, "sqlite3", "-json", dbPath, sqlQuery)
+		queryCmd := exec.CommandContext(ctx, "sqlite3", "-readonly", "-cmd", ".timeout 3000", "-json", dbPath, sqlQuery)
 		queryCmd.WaitDelay = time.Second
 		rawOut, err := queryCmd.Output()
 		cancel()
@@ -339,7 +339,8 @@ func loadGeminiAntigravitySessionDetail(sessionID, hintCWD, activeRoot string) (
 	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
 
 	var turns []NormalizedTurn
-	var pendingOutputs []*NormalizedToolCall
+	type toolLocation struct{ turnIdx, toolIdx int }
+	var pendingOutputs []toolLocation
 	var lastAssistantText string
 	var detectedModel string
 	callSeq := 0
@@ -423,7 +424,7 @@ func loadGeminiAntigravitySessionDetail(sessionID, hintCWD, activeRoot string) (
 				startIdx := len(prev.Tools)
 				prev.Tools = append(prev.Tools, calls...)
 				for i := startIdx; i < len(prev.Tools); i++ {
-					pendingOutputs = append(pendingOutputs, &prev.Tools[i])
+					pendingOutputs = append(pendingOutputs, toolLocation{turnIdx: len(turns) - 1, toolIdx: i})
 				}
 			} else {
 				turns = append(turns, NormalizedTurn{
@@ -434,18 +435,19 @@ func loadGeminiAntigravitySessionDetail(sessionID, hintCWD, activeRoot string) (
 					Tools:     calls,
 					ModelID:   detectedModel,
 				})
-				lastTurn := &turns[len(turns)-1]
-				for i := range lastTurn.Tools {
-					pendingOutputs = append(pendingOutputs, &lastTurn.Tools[i])
+				for i := range turns[len(turns)-1].Tools {
+					pendingOutputs = append(pendingOutputs, toolLocation{turnIdx: len(turns) - 1, toolIdx: i})
 				}
 			}
 
 		case "GENERIC":
 			outText := strings.TrimSpace(asString(step["content"]))
 			if outText != "" && len(pendingOutputs) > 0 {
-				target := pendingOutputs[0]
+				loc := pendingOutputs[0]
 				pendingOutputs = pendingOutputs[1:]
-				target.Output = truncateRunes(outText, 4000)
+				if loc.turnIdx < len(turns) && loc.toolIdx < len(turns[loc.turnIdx].Tools) {
+					turns[loc.turnIdx].Tools[loc.toolIdx].Output = truncateRunes(outText, 4000)
+				}
 			}
 		}
 	}

@@ -170,10 +170,14 @@ func sortedStringKeys(in map[string]interface{}) []string {
 // list is known up front; auth-only or session-derived providers act as fallbacks.
 func resolveOpenCodeSyncTarget(provDefs, authMap map[string]interface{}, latestProvider, latestModel string) (providerID, modelID string, models []string) {
 	if latestProvider != "" && latestModel != "" {
-		if ids := openCodeProviderModelIDs(provDefs, latestProvider); len(ids) > 0 {
-			for _, id := range ids {
-				if id == latestModel {
-					return latestProvider, latestModel, ids
+		// Case-insensitive lookup to match case-folding elsewhere in this file
+		lowerLookup := lowerKeyLookup(provDefs)
+		if resolved, ok := lowerLookup[strings.ToLower(latestProvider)]; ok {
+			if ids := openCodeProviderModelIDs(provDefs, resolved); len(ids) > 0 {
+				for _, id := range ids {
+					if id == latestModel {
+						return resolved, latestModel, ids
+					}
 				}
 			}
 		}
@@ -269,8 +273,13 @@ func mergeOpenCodeProviderDefinition(dst, src map[string]interface{}) bool {
 
 func lowerKeyLookup(m map[string]interface{}) map[string]string {
 	out := make(map[string]string, len(m))
-	for k := range m {
-		out[strings.ToLower(k)] = k
+	// Deterministic iteration order: prefer the lexicographically first exact key
+	// when multiple keys map to the same lowercase (e.g. "AINode" vs "ainode").
+	for _, k := range sortedStringKeys(m) {
+		lower := strings.ToLower(k)
+		if _, exists := out[lower]; !exists {
+			out[lower] = k
+		}
 	}
 	return out
 }
@@ -515,15 +524,15 @@ func (g *Service) importOpenCodeCLIProvider() LocalCLIImportResponse {
 			changed = true
 		}
 	}
+	g.syncOpenCodeEngineAuth(authMap)
 	if changed {
 		doc["provider"] = provMap
 		if err := g.persistHoxiConfigDoc(doc); err != nil {
 			return LocalCLIImportResponse{OK: false, ToolID: string(ExternalToolOpenCode), Error: err.Error()}
 		}
+	} else if len(authMap) > 0 {
+		g.reloadOpenCodeGlobalConfig()
 	}
-
-	g.syncOpenCodeEngineAuth(authMap)
-	g.reloadOpenCodeGlobalConfig()
 
 	latestProvider, latestModel := "", ""
 	if defProvider, defModel := parseOpenCodeModelField(readExternalOpenCodeDefaultModel()); defProvider != "" {
@@ -534,9 +543,8 @@ func (g *Service) importOpenCodeCLIProvider() LocalCLIImportResponse {
 	providerID, _, models := resolveOpenCodeSyncTarget(provDefs, authMap, latestProvider, latestModel)
 	providerID = resolveOpenCodeProviderID(providerID, authMap, provMap)
 	models = appendUniqueString(models, openCodeProviderModelIDs(provMap, providerID)...)
-	if len(models) == 0 {
-		models = sortedStringKeys(authMap)
-	}
+	// If no models found, return empty to signal the need for user configuration.
+	// Returning provider IDs as model IDs would be semantically incorrect.
 	return LocalCLIImportResponse{
 		OK:         true,
 		ToolID:     string(ExternalToolOpenCode),

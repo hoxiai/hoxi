@@ -176,10 +176,11 @@ export function ProviderConnectView(props: {
             <button
               type="button"
               onClick={() => openProviderModal("custom", props.provider.id)}
-              class="inline-flex items-center gap-1.5 rounded-xl border border-[var(--accent-border)] bg-[var(--accent-surface)] px-3 py-1 text-[11.5px] font-medium text-[var(--accent-primary)] cursor-pointer"
+              title={t("models.editCustomEndpoint")}
+              aria-label={t("models.editCustomEndpoint")}
+              class="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--accent-border)] bg-[var(--accent-surface)] text-[var(--accent-primary)] cursor-pointer"
             >
-              <Pencil size={12} />
-              {t("models.editCustomEndpoint")}
+              <Pencil size={14} />
             </button>
           </Show>
         </div>

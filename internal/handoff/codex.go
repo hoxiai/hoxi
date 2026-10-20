@@ -147,7 +147,7 @@ func loadCodexSessionDetail(sessionID, hintCWD, activeRoot string) (*ExternalSes
 	sqlQuery := fmt.Sprintf(`SELECT id, rollout_path, created_at, updated_at, cwd, title, COALESCE(git_branch,''), COALESCE(git_sha,''), COALESCE(model,''), COALESCE(first_user_message,'')
 FROM threads WHERE id = '%s' LIMIT 1;`, safeID)
 
-	rawJSON, err := codexCommandOutput("sqlite3", "-cmd", ".timeout 5000", "-json", dbPath, sqlQuery)
+	rawJSON, err := codexCommandOutput("sqlite3", "-readonly", "-cmd", ".timeout 5000", "-json", dbPath, sqlQuery)
 	if err != nil {
 		return nil, err
 	}
@@ -248,7 +248,7 @@ func parseCodexRolloutFile(rolloutPath string, baseTs int64, defaultModel string
 	defer rc.Close()
 
 	var turns []NormalizedTurn
-	toolIndexByID := map[string]*NormalizedToolCall{}
+	toolCallIDIndex := map[string]int{} // map callID to turn index in turns slice
 
 	scanner := bufio.NewScanner(rc)
 	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
@@ -365,17 +365,22 @@ func parseCodexRolloutFile(rolloutPath string, baseTs int64, defaultModel string
 			last := &turns[len(turns)-1]
 			last.Tools = append(last.Tools, tc)
 			if callID != "" {
-				toolIndexByID[callID] = &last.Tools[len(last.Tools)-1]
+				toolCallIDIndex[callID] = len(turns) - 1
 			}
 
 		case "function_call_output", "custom_tool_call_output":
 			callID := asString(payload["call_id"])
-			if tc, exists := toolIndexByID[callID]; exists {
-				out := extractCodexMessageText(payload["output"])
-				if out == "" {
-					out = asString(payload["output"])
+			if turnIdx, exists := toolCallIDIndex[callID]; exists && turnIdx < len(turns) {
+				for i := range turns[turnIdx].Tools {
+					if turns[turnIdx].Tools[i].CallID == callID {
+						out := extractCodexMessageText(payload["output"])
+						if out == "" {
+							out = asString(payload["output"])
+						}
+						turns[turnIdx].Tools[i].Output = truncateRunes(out, 4000)
+						break
+					}
 				}
-				tc.Output = truncateRunes(out, 4000)
 			}
 		}
 	}

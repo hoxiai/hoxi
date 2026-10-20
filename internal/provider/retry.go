@@ -30,7 +30,10 @@ func isTransientLLMError(err error, status int) bool {
 		if errors.As(err, &netErr) {
 			return true
 		}
-		return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
+		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+			return true
+		}
+		// Plain HTTP errors (e.g. 5xx) fall through to status classification.
 	}
 	switch {
 	case status == http.StatusRequestTimeout,

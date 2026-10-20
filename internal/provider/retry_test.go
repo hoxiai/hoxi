@@ -50,11 +50,14 @@ func TestIsTransientLLMError(t *testing.T) {
 }
 
 func TestIsTransientLLMErrorClassifiesHTTPStatusErrors(t *testing.T) {
-	if !isTransientLLMError(&llmHTTPError{status: http.StatusBadGateway, msg: "HTTP 502"}, 0) {
-		t.Fatal("502 llmHTTPError must be transient")
+	if !isTransientLLMError(errors.New("HTTP 502: bad gateway"), http.StatusBadGateway) {
+		t.Fatal("502 with plain error must be transient")
 	}
-	if isTransientLLMError(&llmHTTPError{status: http.StatusUnauthorized, msg: "HTTP 401"}, 0) {
-		t.Fatal("401 llmHTTPError must be permanent")
+	if isTransientLLMError(errors.New("HTTP 401: bad key"), http.StatusUnauthorized) {
+		t.Fatal("401 with plain error must be permanent")
+	}
+	if !isTransientLLMError(nil, http.StatusTooManyRequests) {
+		t.Fatal("429 must be transient")
 	}
 }
 

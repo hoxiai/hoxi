@@ -22,7 +22,9 @@ func filterRunnerResponse(resp *http.Response, svc *runner.Service) error {
 	if resp.StatusCode != http.StatusOK || resp.Request == nil || resp.Request.URL.Path != "/session" {
 		return nil
 	}
-	raw, err := io.ReadAll(resp.Body)
+	// Limit to 16 MB to prevent memory exhaustion from a malicious or broken upstream.
+	const maxSessionListSize = 16 * 1024 * 1024
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxSessionListSize))
 	if err != nil {
 		return err
 	}

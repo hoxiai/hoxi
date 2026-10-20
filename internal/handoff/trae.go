@@ -82,7 +82,7 @@ func readTraeSessionModels() (bySession map[string]string, defaultModel string) 
 		}
 		sqlQuery := `SELECT key, value FROM ItemTable WHERE key LIKE '%AI.agent.model.session_selected_model' OR key LIKE '%AI.agent.model.recent_user_selection_by_agent_label' OR key LIKE '%ai-chat:sessionRelation:globalModelMap' LIMIT 20;`
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		cmd := exec.CommandContext(ctx, "sqlite3", "-readonly", "-json", vscdb, sqlQuery)
+		cmd := exec.CommandContext(ctx, "sqlite3", "-readonly", "-cmd", ".timeout 3000", "-json", vscdb, sqlQuery)
 		cmd.WaitDelay = time.Second
 		rawOut, err := cmd.Output()
 		cancel()

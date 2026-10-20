@@ -157,27 +157,18 @@ func (s *Service) startTurnProcess(
 			readStreamLines(stdoutR, func(line string) {
 				emitMu.Lock()
 				defer emitMu.Unlock()
-				// A stopped CLI reports its interruption as a failed result;
-				// Hoxi finishes the turn itself as stopped (or stalled).
-				if ap.wasAborted() && isStreamResultLine(line) {
-					return
-				}
-				evts := tr.FeedLine(line)
-				// Only output the user can see counts as progress: CLIs keep
-				// writing heartbeats (Claude Code's `tool_progress`) while a
-				// tool hangs.
-				if len(evts) > 0 {
-					if gap := time.Since(time.UnixMilli(ap.stall.lastActivity.Load())); gap > 5*time.Second { // TEMP
-						fmt.Fprintf(os.Stderr, "STALLDBG gap=%s line=%.200s evts=%v\n", gap, line, func() []string { // TEMP
-							var ts []string // TEMP
-							for _, e := range evts { // TEMP
-								ts = append(ts, e.Type) // TEMP
-							} // TEMP
-							return ts // TEMP
-						}()) // TEMP
-					} // TEMP
-					s.noteActivity(ap)
-				}
+			// A stopped CLI reports its interruption as a failed result;
+			// Hoxi finishes the turn itself as stopped (or stalled).
+			if ap.wasAborted() && isStreamResultLine(line) {
+				return
+			}
+			evts := tr.FeedLine(line)
+			// Only output the user can see counts as progress: CLIs keep
+			// writing heartbeats (Claude Code's `tool_progress`) while a
+			// tool hangs.
+			if len(evts) > 0 {
+				s.noteActivity(ap)
+			}
 				if extID := tr.ExternalID(); extID != "" && extID != rec.ExternalID {
 					rec.ExternalID = extID
 					_, _, _ = s.store.Update(rec.ID, func(r *SessionRecord) {
