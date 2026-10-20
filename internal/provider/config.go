@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/skills"
 )
 
 type hoxiModelsConfigResponse struct {
@@ -173,10 +175,16 @@ func ensureHoxiModelsConfig(rootDir string) string {
 		"$schema":  "https://opencode.ai/config.json",
 		"provider": map[string]interface{}{},
 	}
+	skillLayers := make([]interface{}, 0, 2)
 	for _, p := range []string{uPath, wPath} {
-		if parsed := readJSONMapFile(p); parsed != nil {
-			deepMergeMap(doc, parsed)
+		parsed := readJSONMapFile(p)
+		if parsed == nil {
+			continue
 		}
+		if layer, ok := parsed["skills"]; ok && layer != nil {
+			skillLayers = append(skillLayers, layer)
+		}
+		deepMergeMap(doc, parsed)
 	}
 
 	// Clean up legacy ~/.config/opencode/opencode.jsonc so ~/.config/opencode stays 100% untouched
@@ -205,6 +213,9 @@ func ensureHoxiModelsConfig(rootDir string) string {
 		}
 	}
 
+	if dir := skills.DefaultUserDir(); dir != "" {
+		mergeHoxiSkillsPath(doc, skillLayers, dir)
+	}
 	normalizeDocModelVariants(doc)
 	if err := persistHoxiModelsFiles(uPath, wPath, doc); err == nil && legacyOverlay != "" {
 		_ = os.Remove(legacyOverlay)
@@ -213,6 +224,82 @@ func ensureHoxiModelsConfig(rootDir string) string {
 		return uPath
 	}
 	return wPath
+}
+
+// mergeHoxiSkillsPath unions every skills layer with Hoxi's bundled skills
+// directory. Paths are merged instead of replaced so user-defined skill
+// sources survive initialization, and duplicates are dropped.
+func mergeHoxiSkillsPath(doc map[string]interface{}, layers []interface{}, dir string) {
+	dir = filepath.Clean(strings.TrimSpace(dir))
+	if dir == "" || dir == "." {
+		return
+	}
+	var paths, urls []string
+	seenPaths := make(map[string]bool)
+	seenURLs := make(map[string]bool)
+	addPath := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" || seenPaths[value] {
+			return
+		}
+		seenPaths[value] = true
+		paths = append(paths, value)
+	}
+	addURL := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" || seenURLs[value] {
+			return
+		}
+		seenURLs[value] = true
+		urls = append(urls, value)
+	}
+	addLayer := func(layer interface{}) {
+		switch v := layer.(type) {
+		case []interface{}:
+			for _, item := range v {
+				if s, ok := item.(string); ok {
+					addPath(s)
+				}
+			}
+		case map[string]interface{}:
+			if raw, ok := v["paths"].([]interface{}); ok {
+				for _, item := range raw {
+					if s, ok := item.(string); ok {
+						addPath(s)
+					}
+				}
+			}
+			if raw, ok := v["urls"].([]interface{}); ok {
+				for _, item := range raw {
+					if s, ok := item.(string); ok {
+						addURL(s)
+					}
+				}
+			}
+		}
+	}
+	addLayer(doc["skills"])
+	for _, layer := range layers {
+		addLayer(layer)
+	}
+	addPath(dir)
+
+	// The schema marks the {paths, urls} object as deprecated; the array form
+	// accepts both paths and URLs, so emit that instead.
+	values := make([]string, 0, len(paths)+len(urls))
+	values = append(values, paths...)
+	values = append(values, urls...)
+	if len(values) > 0 {
+		doc["skills"] = stringsToInterfaces(values)
+	}
+}
+
+func stringsToInterfaces(values []string) []interface{} {
+	out := make([]interface{}, len(values))
+	for i, value := range values {
+		out[i] = value
+	}
+	return out
 }
 
 func (g *Service) loadOpenCodeImportedProviderMap() map[string]interface{} {

@@ -148,6 +148,13 @@ metadata:
 
 Claude Code 的扩展能力和标准字段需要分开处理，参见 [官方兼容说明](https://code.claude.com/docs/en/skills#using-skill-frontmatter-outside-claude-code)。
 
+### 2.4 Hoxi 默认技能
+
+- 内置默认技能随应用发布，引擎启动前由 `skills.SeedDefaults` 播种到 `~/.hoxi/skills/<name>/SKILL.md`；已存在的文件不覆盖，用户修改优先。
+- `ensureHoxiModelsConfig` 在生成 `OPENCODE_CONFIG` 时把该目录并入 `skills`。合并按路径并集处理，兼容数组与 `{paths, urls}` 两种既有形式，统一输出数组形式（官方 schema 已把对象形式标记为 deprecated），不覆盖用户自定义来源。
+- 该目录同时登记在 `internal/skills/userSkillRoots`，Hoxi 技能面板将其标识为 `~/.hoxi/skills` 来源并允许打开文件。
+- 默认技能源文件位于 `internal/skills/defaults/`；仓库根 `.opencode/skills/` 的副本用于本项目会话，测试会校验两者一致。
+
 ## 3. OpenCode 1.19.3 协议与语义
 
 ### 3.1 实际目录响应

@@ -16,6 +16,7 @@ import (
 	"github.com/hoxiai/hoxi/internal/opencode"
 	"github.com/hoxiai/hoxi/internal/provider"
 	"github.com/hoxiai/hoxi/internal/runner"
+	"github.com/hoxiai/hoxi/internal/skills"
 )
 
 func runOpenCommand(
@@ -467,6 +468,9 @@ func runNativeOpenCodeTUI(ctx context.Context, args []string, dir string, stdout
 	if binPath == "" {
 		fmt.Fprintln(stderr, "Error: opencode binary not found. Run Hoxi Desktop once or install opencode in PATH.")
 		return 1
+	}
+	if _, err := skills.SeedDefaults(); err != nil {
+		fmt.Fprintf(stderr, "Warning: failed to seed default skills: %v\n", err)
 	}
 	cfgPath := provider.EnsureHoxiModelsConfig(dir)
 	cmd := exec.CommandContext(ctx, binPath, args...)

@@ -7,6 +7,7 @@ import (
 
 	"github.com/hoxiai/hoxi/internal/opencode"
 	"github.com/hoxiai/hoxi/internal/provider"
+	"github.com/hoxiai/hoxi/internal/skills"
 )
 
 // The OpenCode daemon is restarted when it exits on its own. A daemon that
@@ -26,6 +27,11 @@ type respawner func() (*exec.Cmd, error)
 // startOpenCode starts the daemon and remembers how to restart it.
 func (a *DesktopApp) startOpenCode(ctx context.Context, binPath string, port int, password string) (*exec.Cmd, error) {
 	start := func() (*exec.Cmd, error) {
+		if seeded, err := skills.SeedDefaults(); err != nil {
+			a.logger.Warn("failed to seed default skills", "error", err)
+		} else if seeded > 0 {
+			a.logger.Info("seeded default skills", "count", seeded)
+		}
 		cfgPath := provider.EnsureHoxiModelsConfig(a.cfg.RootDir)
 		return opencode.StartDaemonWithBin(ctx, binPath, a.cfg.RootDir, cfgPath, port, password, a.logger, a.browserEnv...)
 	}

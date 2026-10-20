@@ -54,9 +54,9 @@ metadata:
 - 只服务当前仓库时放项目级；跨项目通用时放全局级。
 - 多会话、多 worktree 使用时放项目级并提交 Git。
 - 目录名必须使用复数 `skills/`。OpenCode 1.19.3 的 `.opencode` 同时扫描单数 `skill/`，但 `.claude`、`.agents` 只扫描复数；Hoxi 统一使用 `skills/`。
-- 禁止放进 `~/.hoxi/`，引擎不扫描该目录。
+- Hoxi 内置默认技能安装在 `~/.hoxi/skills/<name>/SKILL.md`，由 Hoxi 启动时注册到 `skills` 配置；用户自建技能不要写这里，以免与内置默认技能同名冲突。
 - 名称在全部位置中必须唯一；创建前先检索同名目录。
-- 引擎从当前目录向上扫描到 Git worktree 根。Hoxi 会把主仓库 `.opencode` 符号链接进 worktree，因此未提交文件也可能被发现；提交是为了跨机器共享，不是发现的前提。
+- 引擎从当前目录向上扫描到 Git worktree 根。worktree 只包含已提交文件，因此项目级技能必须提交到 Git 才能在该 worktree 的会话中发现。
 
 ## 第 3 步：编写 frontmatter
 
@@ -143,7 +143,7 @@ awk 'BEGIN{n=0} /^---[[:space:]]*$/{n++; if(n==2){ok=1; exit}} END{exit !ok}' "$
 
 ## 第 6 步：生效与验证
 
-1. 提交：`git add <技能目录>` 并提交，以便跨机器和协作者共享。Hoxi worktree 通过符号链接读取主仓库 `.opencode`，未提交文件也可能被发现。
+1. 提交：`git add <技能目录>` 并提交。worktree 只包含已提交文件，未提交的项目级技能在 worktree 会话中不可见。
 2. 重启：完全退出并重启 Hoxi，或 dispose 引擎实例。OpenCode 1.19.3 按目录缓存技能目录，新增或修改后不会热更新，重复 GET 也不会刷新。
 3. 验证目录接口：
    - Hoxi：`GET /api/hoxi/skills/list?directory=<绝对路径>`
@@ -165,8 +165,8 @@ awk 'BEGIN{n=0} /^---[[:space:]]*$/{n++; if(n==2){ok=1; exit}} END{exit !ok}' "$
 1. 是否是裸 `.md`，而不是 `<name>/SKILL.md`。
 2. 目录名与 `name` 是否不一致，或名称含大写、下划线、连续连字符。
 3. frontmatter 是否未闭合，或缺少 `description`。
-4. 是否放在 `~/.hoxi/` 等非扫描目录。
-5. 当前 worktree 是否真的能看到该文件。Hoxi 会链接主仓库 `.opencode`；其他目录下的未提交文件不会自动进入 worktree。
+4. 是否放在 `~/.hoxi/` 下除 `skills/` 之外的位置，或其它非扫描目录。
+5. 当前 worktree 是否真的能看到该文件；未提交的项目级技能不会进入 worktree。
 6. 引擎是否在技能创建后重启过。
 7. 是否存在跨目录同名技能被覆盖。
 8. 是否被 `permission.skill` 设为 `deny`，或 `metadata["opencode/autoinvoke"]` 为 `"false"`。
