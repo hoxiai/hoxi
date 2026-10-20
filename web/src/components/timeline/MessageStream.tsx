@@ -16,6 +16,7 @@ import {
   canForkSession,
   canRevertSession,
   forkFromMessage,
+  resolveTurnSkillStatus,
   revertToHere,
   stopSessionTask,
   timelineFollowRequest,
@@ -471,6 +472,54 @@ export default function MessageStream(props: { hidden?: boolean }) {
                       }`}
                     >
                       <div class="max-w-[88%] rounded-lg bg-[var(--bg-inset)]/70 px-3.5 py-2.5 space-y-2">
+                        <Show
+                          when={resolveTurnSkillStatus(
+                            turns(),
+                            globalIndex(),
+                            isSessionBusy()
+                          )}
+                        >
+                          {(skillInfo) => {
+                            const statusLabel = () => {
+                              const st = skillInfo().status;
+                              const name = skillInfo().skill.name;
+                              switch (st) {
+                                case "requested":
+                                  return `${name} · ${t("skills.statusRequested")}`;
+                                case "loading":
+                                  return `${name} · ${t("skills.statusLoading")}`;
+                                case "loaded":
+                                  return `${name} · ${t("skills.statusLoaded")}`;
+                                case "error":
+                                  return `${name} · ${t("skills.statusError")}`;
+                                case "unconfirmed":
+                                  return `${name} · ${t("skills.statusUnconfirmed")}`;
+                              }
+                            };
+                            const statusClass = () => {
+                              switch (skillInfo().status) {
+                                case "loaded":
+                                  return "border-emerald-500/30 bg-emerald-500/10 text-emerald-500";
+                                case "error":
+                                  return "border-[var(--danger-border)] bg-[var(--danger-surface)] text-[var(--danger-text)]";
+                                case "unconfirmed":
+                                  return "border-[var(--border-subtle)] bg-[var(--bg-panel)] text-[var(--text-muted)]";
+                                default:
+                                  return "border-[var(--accent-border)] bg-[var(--accent-surface)] text-[var(--accent-text)]";
+                              }
+                            };
+                            return (
+                              <div class="flex items-center">
+                                <span
+                                  class={`inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 font-mono text-[11px] font-medium ${statusClass()}`}
+                                >
+                                  <Icon name="brain" size="small" class="shrink-0" />
+                                  <span>{statusLabel()}</span>
+                                </span>
+                              </div>
+                            );
+                          }}
+                        </Show>
                         <Index each={turn.parts}>
                           {(part) => (
                             <>

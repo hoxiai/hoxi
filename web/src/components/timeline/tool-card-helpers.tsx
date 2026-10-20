@@ -205,7 +205,7 @@ function extractRawField(raw: string, key: string): string | undefined {
 
 const RAW_KEYS = [
   "filePath", "file_path", "path", "file", "TargetFile", "targetFile", "target_file", "command", "cmd",
-  "description", "pattern", "include", "url", "subagent_type", "patchText",
+  "description", "pattern", "include", "url", "subagent_type", "patchText", "name",
 ] as const;
 
 export function resolveToolInput(part: ToolPart): Record<string, any> {
@@ -268,6 +268,15 @@ export function extractCommand(part: ToolPart): string {
 export function extractDescription(part: ToolPart): string {
   const input = resolveToolInput(part);
   if (isQuestionTool(part.tool)) return questionSummaryText(part, findQuestionReply(part.callID));
+  if ((part.tool || "").toLowerCase() === "skill") {
+    const skillName =
+      (typeof input.name === "string" && input.name.trim()) ||
+      (part.state.status !== "pending" &&
+      typeof (part.state.metadata as Record<string, unknown> | undefined)?.name === "string"
+        ? String((part.state.metadata as Record<string, unknown>).name).trim()
+        : "");
+    if (skillName) return skillName;
+  }
   if (typeof input.description === "string" && input.description.trim()) {
     return input.description.trim();
   }

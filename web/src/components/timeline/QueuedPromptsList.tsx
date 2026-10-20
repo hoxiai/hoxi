@@ -1,6 +1,6 @@
 // web/src/components/timeline/QueuedPromptsList.tsx
 import { createMemo, For, Show } from "solid-js";
-import { ArrowUp, Clock, Pencil, Trash2 } from "lucide-solid";
+import { ArrowUp, Clock, Pencil, Sparkles, Trash2 } from "lucide-solid";
 import {
   canSteerSession,
   editQueuedPrompt,
@@ -41,6 +41,14 @@ export default function QueuedPromptsList(props: {
                 class="flex flex-col items-end rounded-xl transition-all"
               >
                 <div class="max-w-[85%] rounded-2xl border border-dashed border-[var(--accent-border)] bg-[var(--bg-elevated)]/85 px-4 py-3 shadow-2xs space-y-2 opacity-90">
+                  <Show when={item.skillSelection}>
+                    {(sk) => (
+                      <div class="inline-flex items-center gap-1.5 rounded-md border border-[var(--accent-border)] bg-[var(--accent-surface)] px-2 py-0.5 font-mono text-[11px] font-medium text-[var(--accent-text)]">
+                        <Sparkles size={11} class="shrink-0 text-[var(--accent-primary)]" />
+                        <span>{t("skills.composerPillPrefix")}: {sk().name}</span>
+                      </div>
+                    )}
+                  </Show>
                   <Show when={item.attachments.length > 0}>
                     <div class="flex flex-wrap gap-2">
                       <For each={item.attachments}>

@@ -7,7 +7,6 @@ import {
   Eye,
   EyeOff,
   FileCode2,
-  FolderOpen,
   Info,
   LoaderCircle,
   RefreshCw,
@@ -15,28 +14,19 @@ import {
   Sparkles,
 } from "lucide-solid";
 import { t } from "../../i18n";
-import { hoxiAPI, type SkillDescriptor, type SkillSource } from "../../services/api";
+import type { SkillDescriptor, SkillSource } from "../../services/api";
 import {
   activeDirectory,
-  activeSkillDetail,
-  activeSkillDetailError,
-  activeSkillDetailKey,
-  activeSkillDetailLoading,
-  closeSkillDetail,
   getComposerSkill,
-  hiddenSkillKeys,
-  inspectFileInPanel,
+  hiddenSkillNames,
   isSkillHidden,
   loadSkillDetail,
   loadSkillsCatalog,
+  openFileInInspector,
   selectComposerSkill,
   sessionRuntimeForID,
   setComposerSkillNotice,
-  skillsCatalogError,
-  skillsCatalogItems,
-  skillsCatalogLoading,
-  skillsCatalogRuntime,
-  skillsCatalogSupported,
+  skillsStore,
   toggleSkillHidden,
   workspace,
 } from "../../store/workspace";
@@ -88,20 +78,24 @@ export default function SkillsInspectorView() {
   });
 
   const hiddenCount = createMemo(() => {
-    const hidden = new Set(hiddenSkillKeys());
-    return skillsCatalogItems().filter((item) => hidden.has(item.key)).length;
+    const hidden = new Set(hiddenSkillNames());
+    return skillsStore.skills.filter(
+      (item) => hidden.has(item.key) || hidden.has(item.name)
+    ).length;
   });
 
   const filteredGroups = createMemo(() => {
     const q = query().trim().toLowerCase();
     const includeHidden = showHidden();
-    const all = skillsCatalogItems().filter((item) => {
-      if (!includeHidden && isSkillHidden(item.key)) return false;
+    const all = skillsStore.skills.filter((item) => {
+      if (!includeHidden && (isSkillHidden(item.key) || isSkillHidden(item.name))) {
+        return false;
+      }
       if (!q) return true;
       return (
         item.name.toLowerCase().includes(q) ||
         (item.description || "").toLowerCase().includes(q) ||
-        (item.locationLabel || "").toLowerCase().includes(q)
+        (item.sourceLabel || "").toLowerCase().includes(q)
       );
     });
     return SOURCE_ORDER.map((source) => ({
@@ -113,35 +107,36 @@ export default function SkillsInspectorView() {
   const handleRefresh = async () => {
     invalidateComposerSkillsAutocompleteCache();
     setShowRefreshHint(true);
-    await loadSkillsCatalog(
-      { sessionID: sessionID(), directory: directory(), runtime: runtime() },
-      { force: true }
-    );
-    const activeKey = activeSkillDetailKey();
+    await loadSkillsCatalog({
+      sessionID: sessionID(),
+      directory: directory(),
+      runtime: runtime(),
+      forceRefresh: true,
+    });
+    const activeKey = skillsStore.selectedKey;
     if (activeKey) {
-      await loadSkillDetail({
-        key: activeKey,
+      await loadSkillDetail(activeKey, {
         sessionID: sessionID(),
         directory: directory(),
         runtime: runtime(),
+        forceRefresh: true,
       });
     }
   };
 
-  const handleToggleComposerSkill = (item: { key: string; name: string }) => {
+  const handleToggleComposerSkill = (item: SkillDescriptor) => {
     const sid = sessionID();
     const current = selectedInComposer();
     if (current?.key === item.key) {
       selectComposerSkill(sid, null);
     } else {
-      selectComposerSkill(sid, { key: item.key, name: item.name });
+      selectComposerSkill(sid, { key: item.key, name: item.name }, item);
       setComposerSkillNotice(sid, null);
     }
   };
 
   const handleOpenSkillDetail = (item: SkillDescriptor) => {
-    void loadSkillDetail({
-      key: item.key,
+    void loadSkillDetail(item.key, {
       sessionID: sessionID(),
       directory: directory(),
       runtime: runtime(),
@@ -169,28 +164,36 @@ export default function SkillsInspectorView() {
                     ? "bg-[var(--accent-surface)] text-[var(--accent-text)]"
                     : "text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
                 }`}
-                title={t("skills.showHidden")}
+                title={
+                  showHidden()
+                    ? t("skills.hideHidden")
+                    : t("skills.showHidden", { count: hiddenCount() })
+                }
               >
                 <Show when={showHidden()} fallback={<EyeOff size={12} />}>
                   <Eye size={12} />
                 </Show>
-                <span>{t("skills.hiddenCount", { count: hiddenCount() })}</span>
+                <span>
+                  {showHidden()
+                    ? t("skills.hideHidden")
+                    : t("skills.showHidden", { count: hiddenCount() })}
+                </span>
               </button>
             </Show>
             <button
               type="button"
               onClick={() => void handleRefresh()}
-              disabled={skillsCatalogLoading()}
+              disabled={skillsStore.loading}
               class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] disabled:opacity-50 transition-colors cursor-pointer"
               title={t("skills.refresh")}
             >
-              <RefreshCw size={12} class={skillsCatalogLoading() ? "animate-spin" : ""} />
-              <span>{t("skills.refresh")}</span>
+              <RefreshCw size={12} class={skillsStore.loading ? "animate-spin" : ""} />
+              <span>{skillsStore.loading ? t("skills.refreshing") : t("skills.refresh")}</span>
             </button>
           </div>
         </div>
 
-        <Show when={skillsCatalogSupported() && !activeSkillDetailKey()}>
+        <Show when={skillsStore.supported && !skillsStore.selectedKey}>
           <div class="relative flex items-center">
             <Search size={13} class="absolute left-2.5 text-[var(--text-faint)] pointer-events-none" />
             <input
@@ -206,7 +209,7 @@ export default function SkillsInspectorView() {
         <Show when={showRefreshHint()}>
           <div class="flex items-start gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-2.5 py-1.5 text-[11px] text-[var(--text-muted)]">
             <Info size={12} class="mt-0.5 shrink-0 text-[var(--accent-primary)]" />
-            <span>{t("skills.refreshNotice")}</span>
+            <span>{t("skills.cacheNotice")}</span>
           </div>
         </Show>
       </div>
@@ -214,50 +217,47 @@ export default function SkillsInspectorView() {
       {/* Body */}
       <div class="flex-1 min-h-0 overflow-y-auto p-3">
         <Show
-          when={!skillsCatalogLoading() || skillsCatalogItems().length > 0}
+          when={!skillsStore.loading || skillsStore.skills.length > 0}
           fallback={
             <div class="flex flex-col items-center justify-center py-12 text-xs text-[var(--text-muted)] gap-2">
               <LoaderCircle size={18} class="animate-spin text-[var(--accent-primary)]" />
-              <span>{t("skills.loading")}</span>
+              <span>{t("skills.loadingCatalog")}</span>
             </div>
           }
         >
           <Show
-            when={!skillsCatalogError()}
+            when={!skillsStore.error}
             fallback={
               <div class="rounded-xl border border-[var(--danger-border)] bg-[var(--danger-surface)] p-3 text-xs text-[var(--danger-text)] flex items-start gap-2">
                 <AlertCircle size={15} class="shrink-0 mt-0.5" />
-                <span>{t("skills.loadFailed", { error: skillsCatalogError() || "" })}</span>
+                <span>{skillsStore.error}</span>
               </div>
             }
           >
             <Show
-              when={skillsCatalogSupported()}
+              when={skillsStore.supported}
               fallback={
                 <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-4 text-center space-y-1.5">
                   <div class="text-xs font-semibold text-[var(--text-primary)]">
-                    {t("skills.unsupportedTitle")}
+                    {t("skills.unsupportedTitle", { runtime: skillsStore.runtime })}
                   </div>
                   <p class="text-[11.5px] leading-relaxed text-[var(--text-muted)]">
-                    {t("skills.unsupportedBody", { runtime: skillsCatalogRuntime() })}
+                    {t("skills.unsupportedDesc")}
                   </p>
                 </div>
               }
             >
               {/* Detail View */}
               <Show
-                when={activeSkillDetailKey()}
+                when={skillsStore.selectedKey}
                 fallback={
                   <Show
-                    when={skillsCatalogItems().length > 0}
+                    when={skillsStore.skills.length > 0}
                     fallback={
                       <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-4 text-center space-y-1.5">
                         <div class="text-xs font-semibold text-[var(--text-primary)]">
-                          {t("skills.emptyTitle")}
+                          {t("skills.emptyCatalog")}
                         </div>
-                        <p class="text-[11.5px] leading-relaxed text-[var(--text-muted)]">
-                          {t("skills.emptyBody")}
-                        </p>
                       </div>
                     }
                   >
@@ -265,7 +265,7 @@ export default function SkillsInspectorView() {
                       when={filteredGroups().length > 0}
                       fallback={
                         <div class="py-8 text-center text-xs text-[var(--text-muted)]">
-                          {t("skills.noSearchResults")}
+                          {t("skills.emptyFiltered")}
                         </div>
                       }
                     >
@@ -317,9 +317,9 @@ export default function SkillsInspectorView() {
                                                 {item.description}
                                               </p>
                                             </Show>
-                                            <Show when={item.locationLabel}>
+                                            <Show when={item.sourceLabel}>
                                               <div class="mt-1 truncate font-mono text-[10px] text-[var(--text-faint)]">
-                                                {item.locationLabel}
+                                                {item.sourceLabel}
                                               </div>
                                             </Show>
                                           </button>
@@ -334,8 +334,8 @@ export default function SkillsInspectorView() {
                                               class="rounded-md p-1 text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-pointer"
                                               title={
                                                 hidden()
-                                                  ? t("skills.unhideSkill")
-                                                  : t("skills.hideSkill")
+                                                  ? t("skills.unhideFromList")
+                                                  : t("skills.hideFromList")
                                               }
                                             >
                                               <Show when={hidden()} fallback={<Eye size={13} />}>
@@ -357,7 +357,7 @@ export default function SkillsInspectorView() {
                                               <span>
                                                 {isSelected()
                                                   ? t("skills.removeFromComposer")
-                                                  : t("skills.useInComposer")}
+                                                  : t("skills.selectInComposer")}
                                               </span>
                                             </button>
                                           </div>
@@ -378,29 +378,27 @@ export default function SkillsInspectorView() {
                 <div class="space-y-3">
                   <button
                     type="button"
-                    onClick={() => closeSkillDetail()}
+                    onClick={() => void loadSkillDetail("")}
                     class="inline-flex items-center gap-1.5 text-xs font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
                   >
                     <ArrowLeft size={13} />
-                    <span>{t("skills.backToList")}</span>
+                    <span>{t("skills.title")}</span>
                   </button>
 
                   <Show
-                    when={!activeSkillDetailLoading()}
+                    when={!skillsStore.detailLoading}
                     fallback={
                       <div class="flex items-center justify-center py-10 text-xs text-[var(--text-muted)] gap-2">
                         <LoaderCircle size={16} class="animate-spin text-[var(--accent-primary)]" />
-                        <span>{t("skills.detailLoading")}</span>
+                        <span>{t("skills.loadingDetail")}</span>
                       </div>
                     }
                   >
                     <Show
-                      when={!activeSkillDetailError() && activeSkillDetail()}
+                      when={!skillsStore.detailError && skillsStore.detail}
                       fallback={
                         <div class="rounded-xl border border-[var(--danger-border)] bg-[var(--danger-surface)] p-3 text-xs text-[var(--danger-text)]">
-                          {t("skills.detailLoadFailed", {
-                            error: activeSkillDetailError() || "",
-                          })}
+                          {skillsStore.detailError}
                         </div>
                       }
                     >
@@ -444,18 +442,18 @@ export default function SkillsInspectorView() {
                                   <span>
                                     {isSelected()
                                       ? t("skills.removeFromComposer")
-                                      : t("skills.useInComposer")}
+                                      : t("skills.selectInComposer")}
                                   </span>
                                 </button>
                               </div>
 
                               <div class="flex flex-wrap items-center gap-2 pt-1 border-t border-[var(--border-subtle)] text-[11px] text-[var(--text-muted)]">
                                 <span class="font-mono truncate max-w-full">
-                                  {detail().locationLabel}
+                                  {detail().sourceLabel}
                                 </span>
                                 <Show when={detail().contentDigest}>
                                   <span class="rounded bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-faint)]">
-                                    {t("skills.digestLabel")}: {detail().contentDigest.slice(0, 8)}
+                                    {t("skills.digestLabel")}: {detail().contentDigest!.slice(0, 8)}
                                   </span>
                                 </Show>
                               </div>
@@ -464,7 +462,7 @@ export default function SkillsInspectorView() {
                                 when={detail().canOpenLocation && detail().location}
                                 fallback={
                                   <div class="text-[11px] text-[var(--text-faint)]">
-                                    {t("skills.builtinReadOnly")}
+                                    {t("skills.builtinInMemory")}
                                   </div>
                                 }
                               >
@@ -473,22 +471,14 @@ export default function SkillsInspectorView() {
                                     <button
                                       type="button"
                                       onClick={() =>
-                                        inspectFileInPanel(detail().locationLabel || detail().location!)
+                                        openFileInInspector(detail().sourceLabel || detail().location!)
                                       }
                                       class="inline-flex items-center gap-1 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-2 py-1 text-[11px] text-[var(--text-primary)] hover:border-[var(--accent-border)] cursor-pointer"
                                     >
                                       <FileCode2 size={12} />
-                                      <span>{t("skills.openInFiles")}</span>
+                                      <span>{t("skills.openFile")}</span>
                                     </button>
                                   </Show>
-                                  <button
-                                    type="button"
-                                    onClick={() => void hoxiAPI.revealInFinder(detail().location!)}
-                                    class="inline-flex items-center gap-1 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-2 py-1 text-[11px] text-[var(--text-primary)] hover:border-[var(--accent-border)] cursor-pointer"
-                                  >
-                                    <FolderOpen size={12} />
-                                    <span>{t("skills.revealInFinder")}</span>
-                                  </button>
                                 </div>
                               </Show>
                             </div>
@@ -499,7 +489,7 @@ export default function SkillsInspectorView() {
 
                             <div class="space-y-1.5">
                               <div class="px-1 text-[10.5px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
-                                {t("skills.instructionsHeader")}
+                                {t("skills.sourcePathLabel")}
                               </div>
                               <pre class="max-h-[420px] overflow-auto rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)] p-3 font-mono text-[11.5px] leading-relaxed text-[var(--text-primary)] whitespace-pre-wrap break-words selectable-text">
                                 {detail().content}
