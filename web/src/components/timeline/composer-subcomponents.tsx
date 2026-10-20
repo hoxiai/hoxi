@@ -8,6 +8,7 @@ import {
   classifyAttachmentKind,
   type AutocompleteItem,
   type CollapsedPasteItem,
+  type ContextMentionChipInfo,
   type ImageItem,
 } from "./composer-hooks";
 
@@ -102,6 +103,8 @@ export function ComposerAutocompletePopover(props: {
 export function ComposerAttachmentChips(props: {
   images: ImageItem[];
   pastes: CollapsedPasteItem[];
+  contextMentions?: ContextMentionChipInfo[];
+  onRemoveMention?: (token: string) => void;
   pendingCount?: number;
   notice?: string | null;
   onDismissNotice?: () => void;
@@ -187,12 +190,44 @@ export function ComposerAttachmentChips(props: {
       <Show
         when={
           Boolean(props.selectedSkill) ||
+          (props.contextMentions?.length ?? 0) > 0 ||
           props.images.length > 0 ||
           props.pastes.length > 0 ||
           (props.pendingCount ?? 0) > 0
         }
       >
         <div class="mb-2 flex flex-wrap items-center gap-1.5">
+          <For each={props.contextMentions ?? []}>
+            {(m) => (
+              <div
+                class={`inline-flex items-center gap-1.5 rounded-lg border px-2 py-1 text-[11px] ${
+                  m.status === "error"
+                    ? "border-[var(--danger-border)] bg-[var(--danger-surface)] text-[var(--danger-text)]"
+                    : m.status === "empty"
+                      ? "border-amber-500/30 bg-amber-500/10 text-amber-500"
+                      : "border-[var(--border-subtle)] bg-[var(--bg-panel)] text-[var(--text-secondary)]"
+                }`}
+              >
+                <Slash size={11} class="shrink-0 text-[var(--accent-primary)]" />
+                <span class="font-mono font-medium text-[var(--text-primary)]">{m.label}</span>
+                <span class="text-[10.5px] text-[var(--text-muted)]">· {m.summary}</span>
+                <Show when={m.status === "truncated"}>
+                  <span class="rounded bg-amber-500/15 px-1 py-0.5 text-[9.5px] font-medium text-amber-500">
+                    {t("timeline.mentionStatusTruncated")}
+                  </span>
+                </Show>
+                <Show when={props.onRemoveMention}>
+                  <button
+                    type="button"
+                    onClick={() => props.onRemoveMention?.(m.token)}
+                    class="text-[var(--text-muted)] hover:text-[var(--danger-text)] cursor-pointer"
+                  >
+                    <X size={11} />
+                  </button>
+                </Show>
+              </div>
+            )}
+          </For>
           <Show when={props.selectedSkill}>
             {(skill) => (
               <div class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--accent-border)] bg-[var(--accent-surface)] px-2.5 py-1 text-[11px] text-[var(--accent-text)]">

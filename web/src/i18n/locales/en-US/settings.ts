@@ -198,5 +198,8 @@ export const settings = {
   resetSettingsBtn: "Restore Defaults",
   resetSettingsConfirm: "Reset all local UI preferences and settings to default values?",
   resetSettingsSuccess: "Preferences restored to defaults",
+  keepAwakeLabel: "Keep System Awake While Running",
+  keepAwakeDesc: "Prevent macOS idle sleep while AI tasks are running; automatically releases when all sessions are idle.",
+  keepAwakeActiveBadge: "Preventing Sleep",
   shortcutHint: "Shortcut: ⌘,",
 };

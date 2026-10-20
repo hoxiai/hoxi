@@ -48,7 +48,8 @@ import {
   createPasteCollapse,
   createPromptHistory,
   createSessionDraftSync,
-  expandContextMentions,
+  inspectPromptContextMentions,
+  resolveContextMentionsForSend,
 } from "./composer-hooks";
 import { t } from "../../i18n";
 import { isComposerIMEEvent } from "./composer-keyboard";
@@ -190,6 +191,20 @@ export default function Composer() {
     return id ? (workspace.reviewCommentsBySession[id] ?? []) : [];
   });
 
+  const contextMentions = createMemo(() =>
+    inspectPromptContextMentions(text(), sessionID())
+  );
+
+  const removeContextMention = (token: string) => {
+    const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    setText((prev) =>
+      prev
+        .replace(new RegExp(`(?:^|\\s)${escaped}(?=\\s|$)`, "g"), " ")
+        .replace(/^\s+/, "")
+    );
+    requestAnimationFrame(adjustHeight);
+  };
+
   const lastMessageID = createMemo(() => {
     const id = sessionID();
     if (!id) return undefined;
@@ -209,9 +224,8 @@ export default function Composer() {
     !switchingSandbox() &&
     !choosingFolder();
 
-  const buildPayloadWithReviews = (): string => {
-    const withPastes = pasteCollapse.expandIntoPrompt(text());
-    const raw = expandContextMentions(withPastes, sessionID());
+  const buildPayloadWithReviews = async (rawInput: string, sid: string | null): Promise<string> => {
+    const raw = await resolveContextMentionsForSend(rawInput, sid);
     const comments = reviewComments();
     if (comments.length === 0) return raw;
 
@@ -231,10 +245,11 @@ export default function Composer() {
       await chooseFolder();
       return;
     }
-    const payload = buildPayloadWithReviews();
+    const withPastes = pasteCollapse.expandIntoPrompt(text());
+    const hasReviews = reviewComments().length > 0;
     const attachments = imgAttach.toPromptAttachments();
     const currentSkill = selectedSkill() ? { ...selectedSkill()! } : undefined;
-    if ((!payload && attachments.length === 0 && !currentSkill) || sending() || switchingSandbox()) return;
+    if ((!withPastes.trim() && !hasReviews && attachments.length === 0 && !currentSkill) || sending() || switchingSandbox()) return;
     if (!ensureAIConsent()) return;
     const draftSessionID = sessionID();
     const draftDirectory = workspace.rootDir;
@@ -260,6 +275,7 @@ export default function Composer() {
       textareaRef.style.height = "48px";
     }
     try {
+      const payload = await buildPayloadWithReviews(withPastes, draftSessionID);
       const id = await submitSessionPrompt(payload, sessionID(), {
         attachments,
         skillSelection: currentSkill,
@@ -406,6 +422,8 @@ export default function Composer() {
           <ComposerAttachmentChips
             images={imgAttach.images()}
             pastes={pasteCollapse.pastes()}
+            contextMentions={contextMentions()}
+            onRemoveMention={removeContextMention}
             pendingCount={imgAttach.pendingCount()}
             notice={imgAttach.notice()}
             onDismissNotice={() => imgAttach.clearNotice()}

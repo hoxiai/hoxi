@@ -1,5 +1,6 @@
 // web/src/store/settings.ts
 import { createStore } from "solid-js/store";
+import { hoxiAPI } from "../services/api";
 import type { ApprovalMode } from "./approval-mode";
 import {
   applyThemeClass,
@@ -54,6 +55,7 @@ export interface AppSettingsState {
   terminalFontSize: number;
   terminalCursorBlink: boolean;
   desktopNotifications: boolean;
+  keepAwakeWhileRunning: boolean;
   linkOpenTarget: LinkOpenTarget;
 }
 
@@ -90,6 +92,7 @@ const DEFAULT_SETTINGS: PersistedSettings = {
   terminalFontSize: 12,
   terminalCursorBlink: true,
   desktopNotifications: true,
+  keepAwakeWhileRunning: true,
   linkOpenTarget: "external",
 };
 
@@ -206,6 +209,10 @@ function loadInitialSettings(): PersistedSettings {
         typeof parsed.desktopNotifications === "boolean"
           ? parsed.desktopNotifications
           : DEFAULT_SETTINGS.desktopNotifications,
+      keepAwakeWhileRunning:
+        typeof parsed.keepAwakeWhileRunning === "boolean"
+          ? parsed.keepAwakeWhileRunning
+          : DEFAULT_SETTINGS.keepAwakeWhileRunning,
       linkOpenTarget:
         parsed.linkOpenTarget === "external" || parsed.linkOpenTarget === "inspector"
           ? parsed.linkOpenTarget
@@ -249,6 +256,7 @@ function persistAppSettings() {
       terminalFontSize: appSettings.terminalFontSize,
       terminalCursorBlink: appSettings.terminalCursorBlink,
       desktopNotifications: appSettings.desktopNotifications,
+      keepAwakeWhileRunning: appSettings.keepAwakeWhileRunning,
       linkOpenTarget: appSettings.linkOpenTarget,
     };
     localStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(payload));
@@ -397,6 +405,16 @@ export function updateAppSetting<K extends keyof PersistedSettings>(
   persistAppSettings();
   if (key === "themeMode" || key === "colorScheme" || key === "fontScale" || key === "defaultSandboxMode") {
     syncSettingsSideEffects();
+  }
+  if (key === "keepAwakeWhileRunning") {
+    void hoxiAPI.setKeepAwake(Boolean(value)).catch(() => {});
+  }
+}
+
+export function syncKeepAwakeFromBackend(enabled: boolean) {
+  if (appSettings.keepAwakeWhileRunning !== enabled) {
+    setAppSettings("keepAwakeWhileRunning", enabled);
+    persistAppSettings();
   }
 }
 

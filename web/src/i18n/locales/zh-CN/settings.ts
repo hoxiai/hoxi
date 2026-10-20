@@ -199,5 +199,8 @@ export const settings: SettingsI18n = {
   resetSettingsBtn: "恢复默认设置",
   resetSettingsConfirm: "确认将所有界面与交互偏好恢复为默认设置吗？",
   resetSettingsSuccess: "已恢复为默认设置",
+  keepAwakeLabel: "任务运行时保持唤醒",
+  keepAwakeDesc: "有 AI 任务执行期间阻止系统自动休眠，所有会话空闲后自动释放（支持合盖外接或锁屏远程控制）",
+  keepAwakeActiveBadge: "唤醒生效中",
   shortcutHint: "快捷键: ⌘,",
 };

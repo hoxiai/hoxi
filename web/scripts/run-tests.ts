@@ -37,6 +37,7 @@ import "../src/__tests__/auto-models.test";
 import "../src/__tests__/workspace-review.test";
 import "../src/__tests__/session-goal.test";
 import "../src/__tests__/skills.test";
+import "../src/__tests__/context-mentions.test";
 
 console.log("[test] Running Hoxi frontend unit tests...");
 runAllTests().then((failed) => {

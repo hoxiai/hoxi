@@ -8,8 +8,11 @@ import {
   createComposerAutocomplete,
   expandContextMentions,
   findAutocompleteToken,
+  inspectPromptContextMentions,
+  resolveContextMentionsForSend,
   type AutocompleteItem,
   type AutocompleteToken,
+  type ContextMentionChipInfo,
 } from "./composer-autocomplete";
 
 export {
@@ -17,8 +20,11 @@ export {
   createComposerAutocomplete,
   expandContextMentions,
   findAutocompleteToken,
+  inspectPromptContextMentions,
+  resolveContextMentionsForSend,
   type AutocompleteItem,
   type AutocompleteToken,
+  type ContextMentionChipInfo,
 };
 
 export const MAX_ATTACHMENTS = 6;

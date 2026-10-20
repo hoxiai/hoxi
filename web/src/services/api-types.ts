@@ -43,7 +43,43 @@ export interface WorktreeMeta {
   hasUpstream?: boolean;
   compareURL?: string;
   health?: "ok" | "absent-restorable" | "unregistered" | "quarantined" | string;
+  setupScript?: string;
+  setupStatus?: "none" | "running" | "succeeded" | "failed" | string;
+  setupError?: string;
+  allocatedPort?: number;
+  runStatus?: "idle" | "running" | "succeeded" | "failed" | "stopped" | string;
+  previewURL?: string;
   repos?: WorktreeRepoStatus[];
+}
+
+export interface WorktreeVerifyConfig {
+  runCommand: string;
+  testCommand: string;
+}
+
+export interface WorktreeVerifyState {
+  sessionID: string;
+  directory: string;
+  setupScript?: string;
+  setupStatus: "none" | "running" | "succeeded" | "failed" | string;
+  setupOutput?: string;
+  setupError?: string;
+  runCommand?: string;
+  testCommand?: string;
+  activeKind?: "" | "setup" | "run" | "test" | string;
+  runStatus: "idle" | "running" | "succeeded" | "failed" | "stopped" | string;
+  allocatedPort?: number;
+  previewURL?: string;
+  output?: string;
+  exitCode?: number;
+  updatedAt?: string;
+}
+
+export interface KeepAwakeStatusResponse {
+  ok?: boolean;
+  enabled: boolean;
+  active: boolean;
+  supported: boolean;
 }
 
 export interface CommitAndPushResponse {
@@ -114,6 +150,12 @@ export interface WorktreeStatus {
   hasUpstream?: boolean;
   compareURL?: string;
   health?: "ok" | "absent-restorable" | "unregistered" | "quarantined" | string;
+  setupScript?: string;
+  setupStatus?: "none" | "running" | "succeeded" | "failed" | string;
+  setupError?: string;
+  allocatedPort?: number;
+  runStatus?: "idle" | "running" | "succeeded" | "failed" | "stopped" | string;
+  previewURL?: string;
   repos?: WorktreeRepoStatus[];
 }
 
@@ -143,6 +185,8 @@ export interface BootstrapInfo {
     running: number;
     queued: number;
     available: boolean;
+    keepAwakeEnabled?: boolean;
+    keepAwakeActive?: boolean;
   };
 }
 
@@ -166,6 +210,8 @@ export interface SystemRuntimeInfo {
     running: number;
     queued: number;
     available: boolean;
+    keepAwakeEnabled?: boolean;
+    keepAwakeActive?: boolean;
   };
 }
 

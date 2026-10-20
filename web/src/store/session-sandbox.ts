@@ -97,6 +97,12 @@ export function setWorktreeMetaIfChanged(key: string, next: WorktreeMeta): void 
     prev.hasUpstream === next.hasUpstream &&
     prev.compareURL === next.compareURL &&
     prev.health === next.health &&
+    prev.setupScript === next.setupScript &&
+    prev.setupStatus === next.setupStatus &&
+    prev.setupError === next.setupError &&
+    prev.allocatedPort === next.allocatedPort &&
+    prev.runStatus === next.runStatus &&
+    prev.previewURL === next.previewURL &&
     areRepoStatusListsEqual(prev.repos, next.repos)
   ) {
     return;

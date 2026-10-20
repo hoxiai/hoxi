@@ -20,6 +20,7 @@ import {
 } from "../../store/workspace";
 import { t } from "../../i18n";
 import { collectCycleChangedFiles } from "./tool-card-state";
+import { WorktreeVerifySection } from "./worktree-verify-section";
 
 export function ComposerSandboxPill(props: {
   mode: "local" | "worktree";
@@ -143,6 +144,19 @@ export function ComposerSandboxPill(props: {
           <span class="rounded-full bg-[var(--accent-surface)] px-1.5 py-0.2 font-mono text-[10px] text-[var(--accent-primary)]">
             {changedFilesCount()}
           </span>
+        </Show>
+
+        <Show when={activeWorktree()?.setupStatus === "failed"}>
+          <span
+            class="h-1.5 w-1.5 rounded-full bg-rose-500 shrink-0"
+            title={t("timeline.worktreeSetupFailed")}
+          />
+        </Show>
+        <Show when={activeWorktree()?.runStatus === "running"}>
+          <span
+            class="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0"
+            title={t("timeline.verifyRunBtn")}
+          />
         </Show>
 
         <ChevronDown
@@ -306,6 +320,13 @@ export function ComposerSandboxPill(props: {
               {t("timeline.gitAgentCommitHint")}
             </p>
           </div>
+
+          {/* Worktree Setup Status/Retry & One-Click Run/Test/Preview */}
+          <WorktreeVerifySection
+            sessionID={props.sessionID}
+            directory={activeWorktree()?.directory || workspace.rootDir || undefined}
+            onCloseMenu={() => setOpen(false)}
+          />
 
           {/* Git Branch, Diff Review & Session Fork */}
           <Show when={gitBranch() || props.sessionID}>

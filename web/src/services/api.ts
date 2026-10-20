@@ -103,6 +103,17 @@ export const hoxiAPI = {
     return requestJSON("/api/hoxi/system-info");
   },
 
+  getKeepAwake(): Promise<import("./api-types").KeepAwakeStatusResponse> {
+    return requestJSON("/api/hoxi/keep-awake");
+  },
+
+  setKeepAwake(enabled: boolean): Promise<import("./api-types").KeepAwakeStatusResponse> {
+    return requestJSON("/api/hoxi/keep-awake", {
+      method: "POST",
+      body: JSON.stringify({ enabled }),
+    });
+  },
+
   async readClipboardImages(opts?: {
     filesOnly?: boolean;
   }): Promise<Array<{ filename: string; mime: string; dataUrl: string }>> {
@@ -512,6 +523,34 @@ export const hoxiAPI = {
   },
   pruneSandboxes(excludeSessionID?: string, directory?: string): Promise<{ ok: boolean; removedCount: number }> {
     return requestJSON("/api/hoxi/worktree/prune-sandboxes", { method: "POST", body: JSON.stringify({ ...(excludeSessionID ? { excludeSessionID } : {}), ...(directory ? { directory } : {}) }) });
+  },
+  retryWorktreeSetup(sessionID: string, directory?: string): Promise<import("./api-types").WorktreeVerifyState> {
+    return requestJSON("/api/hoxi/worktree/setup-retry", {
+      method: "POST",
+      body: JSON.stringify({ sessionID, ...(directory ? { directory } : {}) }),
+    });
+  },
+  getWorktreeVerifyStatus(sessionID: string, directory?: string): Promise<import("./api-types").WorktreeVerifyState> {
+    const q = `sessionID=${encodeURIComponent(sessionID)}${directory ? `&directory=${encodeURIComponent(directory)}` : ""}`;
+    return requestJSON(`/api/hoxi/worktree/verify-status?${q}`);
+  },
+  saveWorktreeVerifyConfig(input: { directory?: string; runCommand: string; testCommand: string }): Promise<import("./api-types").WorktreeVerifyConfig> {
+    return requestJSON("/api/hoxi/worktree/verify-config", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
+  runWorktreeVerify(input: { sessionID: string; directory?: string; kind: "run" | "test"; command?: string }): Promise<import("./api-types").WorktreeVerifyState> {
+    return requestJSON("/api/hoxi/worktree/verify-run", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
+  stopWorktreeVerify(sessionID: string, directory?: string): Promise<import("./api-types").WorktreeVerifyState> {
+    return requestJSON("/api/hoxi/worktree/verify-stop", {
+      method: "POST",
+      body: JSON.stringify({ sessionID, ...(directory ? { directory } : {}) }),
+    });
   },
 
   // OpenCode Project / Workspace Manager (Kilo Desktop)

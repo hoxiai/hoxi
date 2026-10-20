@@ -8,14 +8,25 @@ import {
   type SkillSelection,
 } from "../../services/api";
 import {
+  expandContextMentions,
+  inspectPromptContextMentions,
   isSkillHidden,
+  resolveContextMentionsForSend,
   selectComposerSkill,
   sessionDirectory,
   sessionRuntimeForID,
   setComposerSkillNotice,
   workspace,
+  type ContextMentionChipInfo,
 } from "../../store/workspace";
 import { t } from "../../i18n";
+
+export {
+  expandContextMentions,
+  inspectPromptContextMentions,
+  resolveContextMentionsForSend,
+  type ContextMentionChipInfo,
+};
 
 export interface AutocompleteItem {
   type: "file" | "command" | "context";
@@ -84,61 +95,6 @@ export function buildSlashCommandSuggestions(params: {
   }
 
   return items.slice(0, 12);
-}
-
-/**
- * Ported from kilocode useGitChangesContext.ts, SessionMentionPicker.tsx & WorktreeMentionPicker.tsx:
- * Expands `@changes`, `@session:<id>`, and `@worktree:<id>` tokens into structured context blocks.
- */
-export function expandContextMentions(rawPrompt: string, sessionID: string | null): string {
-  const blocks: string[] = [];
-
-  if (sessionID && rawPrompt.includes("@changes")) {
-    const diffs = workspace.diffsBySession[sessionID] ?? [];
-    if (diffs.length > 0) {
-      const summary = diffs
-        .slice(0, 15)
-        .map((d) => `- \`${d.file}\` (+${d.additions} -${d.deletions})`)
-        .join("\n");
-      blocks.push(`<git_changes_context>\nCurrent session changed files:\n${summary}\n</git_changes_context>`);
-    }
-  }
-
-  for (const match of rawPrompt.matchAll(/@session:([a-zA-Z0-9_-]+)/g)) {
-    const refID = match[1];
-    const targetSession = workspace.sessions.find((s) => s.id === refID);
-    const turns = workspace.messagesBySession[refID] ?? [];
-    const lastText = turns
-      .slice(-2)
-      .flatMap((turn) =>
-        turn.parts
-          .filter((p) => p.type === "text")
-          .map((p) => `${turn.info.role.toUpperCase()}: ${(p as any).text.slice(0, 500)}`)
-      )
-      .join("\n");
-    if (targetSession || lastText) {
-      blocks.push(
-        `<session_context id="${refID}" title="${targetSession?.title || refID}">\n${lastText || "Referenced session"}\n</session_context>`
-      );
-    }
-  }
-
-  for (const match of rawPrompt.matchAll(/@worktree:([a-zA-Z0-9_-]+)/g)) {
-    const refID = match[1];
-    const wt = workspace.worktreeBySession[refID];
-    const diffs = workspace.diffsBySession[refID] ?? [];
-    if (wt) {
-      const diffLines = diffs
-        .slice(0, 12)
-        .map((d) => `- \`${d.file}\` (+${d.additions} -${d.deletions})`)
-        .join("\n");
-      blocks.push(
-        `<worktree_context session="${refID}" branch="${wt.branch || refID}" path="${wt.directory}">\n${diffLines || "Isolated worktree branch"}\n</worktree_context>`
-      );
-    }
-  }
-
-  return blocks.length > 0 ? `${rawPrompt}\n\n${blocks.join("\n\n")}` : rawPrompt;
 }
 
 export interface AutocompleteToken {
@@ -390,6 +346,14 @@ export function createComposerAutocomplete(
             label: "@changes",
             detail: t("timeline.mentionChangesDetail"),
             insertText: "@changes ",
+          });
+        }
+        if ("terminal".includes(qLower)) {
+          contextItems.push({
+            type: "context",
+            label: "@terminal",
+            detail: t("timeline.mentionTerminalDetail"),
+            insertText: "@terminal ",
           });
         }
 

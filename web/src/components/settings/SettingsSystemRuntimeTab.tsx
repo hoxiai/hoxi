@@ -3,6 +3,7 @@ import { createSignal, onMount, Show } from "solid-js";
 import { Activity, ArrowUpCircle, Cpu, Download, ExternalLink, KeyRound, RefreshCw, RotateCcw } from "lucide-solid";
 import { hoxiAPI, type SystemRuntimeInfo } from "../../services/api";
 import {
+  appSettings,
   checkDesktopUpdate,
   closeSettingsModal,
   desktopUpdater,
@@ -11,11 +12,13 @@ import {
   openProviderModal,
   resetAllAppSettings,
   resetProviderTelemetry,
+  syncKeepAwakeFromBackend,
+  updateAppSetting,
   workspace,
 } from "../../store/workspace";
 import { Spinner } from "../icons";
 import { t } from "../../i18n";
-import { SettingGroup, SettingRow } from "./SettingsModal";
+import { SettingGroup, SettingRow, ToggleSwitch } from "./SettingsModal";
 
 export function SystemRuntimeSettingsTab() {
   const [sysInfo, setSysInfo] = createSignal<SystemRuntimeInfo | null>(null);
@@ -26,6 +29,9 @@ export function SystemRuntimeSettingsTab() {
     try {
       const info = await hoxiAPI.getSystemInfo();
       setSysInfo(info);
+      if (typeof info?.status?.keepAwakeEnabled === "boolean") {
+        syncKeepAwakeFromBackend(info.status.keepAwakeEnabled);
+      }
     } catch {
       /* ignore */
     }
@@ -134,6 +140,24 @@ export function SystemRuntimeSettingsTab() {
               ? `${sysInfo()!.os}/${sysInfo()!.arch} (${sysInfo()!.goVersion})`
               : "—"}
           </span>
+        </SettingRow>
+
+        <SettingRow
+          label={t("settings.keepAwakeLabel")}
+          tip={t("settings.keepAwakeDesc")}
+        >
+          <Show when={sysInfo()?.status?.keepAwakeActive}>
+            <span class="rounded-md bg-emerald-500/15 px-2 py-0.5 text-[11px] font-medium text-emerald-500">
+              {t("settings.keepAwakeActiveBadge")}
+            </span>
+          </Show>
+          <ToggleSwitch
+            checked={appSettings.keepAwakeWhileRunning}
+            onChange={(val) => {
+              updateAppSetting("keepAwakeWhileRunning", val);
+              setTimeout(() => void fetchInfo(), 150);
+            }}
+          />
         </SettingRow>
       </SettingGroup>
 

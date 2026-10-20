@@ -1,6 +1,7 @@
 // web/src/components/settings/SettingsGeneralChatTabs.tsx
 import {
   Bell,
+  Coffee,
   CornerDownLeft,
   ExternalLink,
   Globe,
@@ -319,6 +320,17 @@ export function ChatComposerTab() {
           <ToggleSwitch
             checked={appSettings.desktopNotifications}
             onChange={(val) => updateAppSetting("desktopNotifications", val)}
+          />
+        </SettingRow>
+
+        <SettingRow
+          icon={Coffee}
+          label={t("settings.keepAwakeLabel")}
+          tip={t("settings.keepAwakeDesc")}
+        >
+          <ToggleSwitch
+            checked={appSettings.keepAwakeWhileRunning}
+            onChange={(val) => updateAppSetting("keepAwakeWhileRunning", val)}
           />
         </SettingRow>
       </SettingGroup>

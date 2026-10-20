@@ -5,7 +5,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
 import { getGatewayToken, hoxiAPI } from "../../services/api";
-import { activeDirectory, appSettings, workspace } from "../../store/workspace";
+import { activeDirectory, appSettings, appendTerminalOutput, workspace } from "../../store/workspace";
 import { t } from "../../i18n";
 import { startTerminalConnection } from "./terminal-connection";
 
@@ -138,7 +138,11 @@ export default function WebGLTerminal() {
       api: hoxiAPI,
       connect: (id, dir) => new WebSocket(wsEndpoint(id, dir)),
       size: fitSize,
-      write: (data) => term.write(decodeFrame(data)),
+      write: (data) => {
+        const decoded = decodeFrame(data);
+        appendTerminalOutput(directory, decoded);
+        term.write(decoded);
+      },
       ready: () => setStatus("ready"),
       error: (reason) => { setErrorKey(reason); setStatus("error"); },
       disposeView: () => {
