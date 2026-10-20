@@ -1,8 +1,9 @@
 // web/src/components/models/ModelsRoleTab.tsx
 import { createMemo, createSignal, For, Show } from "solid-js";
-import { Check, LoaderCircle, RotateCcw, SlidersHorizontal } from "lucide-solid";
+import { ArrowRight, Bot, Check, LoaderCircle, RotateCcw, SlidersHorizontal } from "lucide-solid";
 import {
   commitModelSpec,
+  openProviderModal,
   setCommitModelSpec,
   setObserverAutoAudit,
   setObserverModelRole,
@@ -286,15 +287,26 @@ export default function ModelsRoleTab() {
         </div>
       </div>
 
-      {/* Per-Mode Model Overrides (Kilo ModelsTab) */}
+      {/* Per-Mode Model Overrides */}
       <div class="space-y-2.5">
-        <div class="px-1">
-          <h4 class="text-[12px] font-semibold text-[var(--text-primary)]">
-            {t("models.modeModelsTitle")}
-          </h4>
-          <p class="text-[11px] text-[var(--text-muted)]">
-            {t("models.modeModelsDesc")}
-          </p>
+        <div class="flex items-center justify-between px-1 gap-3">
+          <div>
+            <h4 class="text-[12px] font-semibold text-[var(--text-primary)]">
+              {t("models.modeModelsTitle")}
+            </h4>
+            <p class="text-[11px] text-[var(--text-muted)]">
+              {t("models.modeModelsDesc")}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => openProviderModal("agents")}
+            class="inline-flex items-center gap-1.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3 py-1.5 text-[11.5px] font-medium text-[var(--accent-primary)] hover:bg-[var(--accent-surface)] transition-colors cursor-pointer shrink-0"
+          >
+            <Bot size={13} />
+            <span>{t("models.goToAgentsSettings")}</span>
+            <ArrowRight size={12} />
+          </button>
         </div>
 
         <div class="divide-y divide-[var(--border-subtle)] rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/40 overflow-hidden">

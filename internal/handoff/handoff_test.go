@@ -551,6 +551,126 @@ func TestImportOpenCodeCLIProviderSyncsModelsAndAuth(t *testing.T) {
 	}
 }
 
+func TestImportOpenCodeConsoleSubscriptionSyncsAccountToHoxiDB(t *testing.T) {
+	workspaceDir := t.TempDir()
+	homeDir := setupSyntheticCLIHome(t, workspaceDir)
+	t.Setenv("OPENCODE_DB", "")
+	t.Setenv("HOXI_DB_PATH", "")
+
+	// Write an external opencode.json with JSONC comments and trailing comma
+	configDir := filepath.Join(homeDir, ".config", "opencode")
+	_ = os.MkdirAll(configDir, 0o755)
+	_ = os.WriteFile(filepath.Join(configDir, "opencode.json"), []byte("{\n  // JSONC comment\n  \"$schema\": \"https://opencode.ai/config.json\",\n}\n"), 0o644)
+
+	// Populate account and account_state in external ~/.local/share/opencode/opencode.db
+	extDB := filepath.Join(homeDir, ".local", "share", "opencode", "opencode.db")
+	runSQLite(t, extDB, `
+CREATE TABLE account (
+	id TEXT PRIMARY KEY,
+	email TEXT NOT NULL,
+	url TEXT NOT NULL,
+	access_token TEXT NOT NULL,
+	refresh_token TEXT NOT NULL,
+	token_expiry INTEGER,
+	time_created INTEGER NOT NULL,
+	time_updated INTEGER NOT NULL
+);
+CREATE TABLE account_state (
+	id INTEGER PRIMARY KEY NOT NULL,
+	active_account_id TEXT,
+	active_org_id TEXT
+);
+INSERT INTO account VALUES ('user_01TEST', 'dev@example.com', 'https://opencode.ai/console', 'st_live_token', 'rt_live_refresh', 1890000000000, 1790000000000, 1792000000000);
+INSERT INTO account_state VALUES (1, 'user_01TEST', 'org_01TEST');
+UPDATE session SET model = '{"providerID":"opencode-go","modelID":"glm-5.1"}' WHERE id = 'opencode-sess-1';
+`)
+
+	// Seed a stale st_ token in Hoxi engine auth.json to verify it is cleaned up
+	engineAuthPath := filepath.Join(homeDir, ".hoxi", "engine-data", "opencode", "auth.json")
+	_ = os.MkdirAll(filepath.Dir(engineAuthPath), 0o700)
+	_ = os.WriteFile(engineAuthPath, []byte(`{"opencode-go":{"type":"api","key":"st_stale_manual_key"}}`), 0o600)
+
+	// Mock OpenCode /provider returning live opencode-go models (without retired glm-5.1)
+	ocMux := http.NewServeMux()
+	ocMux.HandleFunc("/provider", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"all": []map[string]interface{}{
+				{
+					"id": "opencode-go",
+					"models": map[string]interface{}{
+						"gpt-5.6-luna": map[string]interface{}{"id": "gpt-5.6-luna"},
+						"glm-5.3":      map[string]interface{}{"id": "glm-5.3"},
+					},
+				},
+			},
+			"default": map[string]string{
+				"opencode-go": "gpt-5.6-luna",
+			},
+		})
+	})
+	ocMux.HandleFunc("/auth/opencode-go", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, true)
+	})
+	ocMux.HandleFunc("/global/dispose", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, true)
+	})
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	ocSrv := &httptest.Server{Listener: ln, Config: &http.Server{Handler: ocMux}}
+	ocSrv.Start()
+	defer ocSrv.Close()
+	ocPort := ln.Addr().(*net.TCPAddr).Port
+
+	provSvc := provider.NewService(ocPort, "testpass", workspaceDir, nil)
+	svc := NewService(ocPort, "testpass", workspaceDir, provSvc)
+	mux := http.NewServeMux()
+	svc.RegisterRoutes(mux)
+
+	getStatus := func() LocalCLIStatusItem {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/hoxi/local-cli/status", nil))
+		var status LocalCLIStatusResponse
+		_ = json.Unmarshal(rec.Body.Bytes(), &status)
+		for _, item := range status.Tools {
+			if item.ID == ExternalToolOpenCode {
+				return item
+			}
+		}
+		return LocalCLIStatusItem{}
+	}
+
+	before := getStatus()
+	if !before.Authenticated || before.Connected {
+		t.Fatalf("expected authenticated=true connected=false before console sync, got %+v", before)
+	}
+	if before.ProviderID != "opencode-go" || before.DefaultModel != "gpt-5.6-luna" {
+		t.Fatalf("expected opencode-go/gpt-5.6-luna fallback when glm-5.1 retired, got provider=%s model=%s", before.ProviderID, before.DefaultModel)
+	}
+
+	b, _ := json.Marshal(LocalCLIImportRequest{ToolID: ExternalToolOpenCode})
+	recImport := httptest.NewRecorder()
+	mux.ServeHTTP(recImport, httptest.NewRequest(http.MethodPost, "/api/hoxi/local-cli/import", bytes.NewReader(b)))
+	var resp LocalCLIImportResponse
+	if err := json.Unmarshal(recImport.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal import: %v", err)
+	}
+	if !resp.OK || resp.ProviderID != "opencode-go" {
+		t.Fatalf("expected import OK with provider opencode-go, got %+v", resp)
+	}
+
+	after := getStatus()
+	if !after.Connected {
+		t.Fatalf("expected opencode connected after console account sync, got %+v", after)
+	}
+
+	rawEngineAuth, _ := os.ReadFile(engineAuthPath)
+	if bytes.Contains(rawEngineAuth, []byte("st_stale_manual_key")) {
+		t.Fatalf("expected stale st_ key removed from engine auth.json, got %s", rawEngineAuth)
+	}
+}
+
 func TestGrokCLIBridgeEndpoints(t *testing.T) {
 	workspaceDir := t.TempDir()
 	homeDir := setupSyntheticCLIHome(t, workspaceDir)

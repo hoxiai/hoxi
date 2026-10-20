@@ -576,12 +576,15 @@ func stripNullsMap(in map[string]interface{}) map[string]interface{} {
 
 func filterProviderModelsByHoxi(provMap, hoxiMap map[string]interface{}) {
 	for pid, hVal := range hoxiMap {
+		if pid == "opencode" || pid == "opencode-go" {
+			continue
+		}
 		hProv, ok := hVal.(map[string]interface{})
 		if !ok {
 			continue
 		}
 		hModels, hasHModels := hProv["models"].(map[string]interface{})
-		if !hasHModels {
+		if !hasHModels || len(hModels) == 0 {
 			continue
 		}
 		pObj, ok := provMap[pid].(map[string]interface{})
@@ -689,8 +692,11 @@ func (g *Service) handleProviderProxy(w http.ResponseWriter, r *http.Request) {
 			for _, item := range allArr {
 				if pObj, ok := item.(map[string]interface{}); ok {
 					pid, _ := pObj["id"].(string)
+					if pid == "opencode" || pid == "opencode-go" {
+						continue
+					}
 					if hProv, ok := hoxiMap[pid].(map[string]interface{}); ok {
-						if hModels, ok := hProv["models"].(map[string]interface{}); ok {
+						if hModels, ok := hProv["models"].(map[string]interface{}); ok && len(hModels) > 0 {
 							if pModels, ok := pObj["models"].(map[string]interface{}); ok {
 								for mid := range pModels {
 									if _, keep := hModels[mid]; !keep {

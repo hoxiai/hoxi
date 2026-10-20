@@ -66,7 +66,7 @@ export function ModelSelectorRail(props: {
 }) {
   return (
     <div class="w-[172px] shrink-0 border-r border-[var(--border-subtle)] bg-[var(--bg-elevated)]/40 flex flex-col justify-between p-1.5">
-      <div class="overflow-y-auto space-y-0.5 pr-0.5">
+      <div class="min-h-0 flex-1 overflow-y-auto space-y-0.5 pr-0.5">
         <button
           type="button"
           onClick={() => props.onSelectRail("connected")}
@@ -200,7 +200,7 @@ export function ModelSelectorRail(props: {
         </For>
       </div>
 
-      <div class="mt-1 space-y-1 pt-1 border-t border-[var(--border-subtle)]">
+      <div class="mt-1 shrink-0 space-y-1 pt-1 border-t border-[var(--border-subtle)]">
         <button
           type="button"
           onClick={() => {

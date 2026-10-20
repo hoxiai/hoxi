@@ -96,8 +96,35 @@ export function updateSessionAI(patch: Partial<SessionAIConfig>, sessionID = wor
   }
 }
 
+export function parseModelString(val?: string | null): SelectedModel | null {
+  if (!val || typeof val !== "string") return null;
+  const slashIdx = val.indexOf("/");
+  if (slashIdx <= 0 || slashIdx >= val.length - 1) return null;
+  return {
+    providerID: val.slice(0, slashIdx),
+    modelID: val.slice(slashIdx + 1),
+  };
+}
+
 export function setActiveAgent(agent: string, sessionID = workspace.activeSessionID): void {
-  updateSessionAI({ agent }, sessionID);
+  const currentConfig = sessionAIConfig(sessionID);
+  const oldAgent = currentConfig.agent;
+  const oldAgentDedicated = workspace.globalConfig?.agent?.[oldAgent]?.model;
+
+  const patch: Partial<SessionAIConfig> = { agent };
+
+  const targetAgentDedicated = workspace.globalConfig?.agent?.[agent]?.model;
+  if (typeof targetAgentDedicated === "string" && targetAgentDedicated) {
+    const parsed = parseModelString(targetAgentDedicated);
+    if (parsed) patch.model = parsed;
+  } else if (oldAgentDedicated && currentConfig.model) {
+    const oldParsed = parseModelString(oldAgentDedicated);
+    if (oldParsed && oldParsed.providerID === currentConfig.model.providerID && oldParsed.modelID === currentConfig.model.modelID) {
+      patch.model = workspace.defaultAI.model;
+    }
+  }
+
+  updateSessionAI(patch, sessionID);
   if (!sessionID) {
     try { localStorage.setItem(DEFAULT_AGENT_KEY, agent); } catch { /* storage unavailable */ }
   }

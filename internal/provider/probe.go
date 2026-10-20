@@ -25,17 +25,19 @@ type testProviderModelResponse struct {
 }
 
 var defaultProviderBaseURLs = map[string]string{
-	"deepseek":   "https://api.deepseek.com/v1",
-	"openai":     "https://api.openai.com/v1",
-	"anthropic":  "https://api.anthropic.com/v1",
-	"openrouter": "https://openrouter.ai/api/v1",
-	"xai":        "https://api.x.ai/v1",
-	"groq":       "https://api.groq.com/openai/v1",
-	"mistral":    "https://api.mistral.ai/v1",
-	"moonshotai": "https://api.moonshot.cn/v1",
-	"zai":        "https://open.bigmodel.cn/api/paas/v4",
-	"alibaba":    "https://dashscope.aliyuncs.com/compatible-mode/v1",
-	"ollama":     "http://127.0.0.1:11434/v1",
+	"opencode":    "https://opencode.ai/inference/openai/v1",
+	"opencode-go": "https://opencode.ai/inference/go/openai/v1",
+	"deepseek":    "https://api.deepseek.com/v1",
+	"openai":      "https://api.openai.com/v1",
+	"anthropic":   "https://api.anthropic.com/v1",
+	"openrouter":  "https://openrouter.ai/api/v1",
+	"xai":         "https://api.x.ai/v1",
+	"groq":        "https://api.groq.com/openai/v1",
+	"mistral":     "https://api.mistral.ai/v1",
+	"moonshotai":  "https://api.moonshot.cn/v1",
+	"zai":         "https://open.bigmodel.cn/api/paas/v4",
+	"alibaba":     "https://dashscope.aliyuncs.com/compatible-mode/v1",
+	"ollama":      "http://127.0.0.1:11434/v1",
 }
 
 func (g *Service) handleTestProviderModel(w http.ResponseWriter, r *http.Request) {
@@ -58,6 +60,29 @@ func (g *Service) handleTestProviderModel(w http.ResponseWriter, r *http.Request
 
 	pid := strings.TrimSpace(req.ProviderID)
 	baseURL := strings.TrimSpace(req.BaseURL)
+	npm := strings.TrimSpace(req.NPM)
+	headers := map[string]string{}
+	for k, v := range req.Headers {
+		if strings.TrimSpace(k) != "" && strings.TrimSpace(v) != "" {
+			headers[strings.TrimSpace(k)] = strings.TrimSpace(v)
+		}
+	}
+	if pid != "" {
+		liveURL, _, liveNPM, liveHeaders := g.resolveOpenCodeLiveModelConfig(pid, modelID)
+		if baseURL == "" && liveURL != "" {
+			baseURL = liveURL
+		}
+		if npm == "" && liveNPM != "" {
+			npm = liveNPM
+		}
+		if g.isAuthorizedProviderBaseURL(pid, baseURL, liveURL) {
+			for hk, hv := range liveHeaders {
+				if _, exists := headers[hk]; !exists {
+					headers[hk] = hv
+				}
+			}
+		}
+	}
 	if baseURL == "" && pid != "" {
 		baseURL = defaultProviderBaseURLs[pid]
 	}
@@ -84,8 +109,8 @@ func (g *Service) handleTestProviderModel(w http.ResponseWriter, r *http.Request
 		ModelID:    modelID,
 		BaseURL:    baseURL,
 		APIKey:     apiKey,
-		NPM:        req.NPM,
-		Headers:    req.Headers,
+		NPM:        npm,
+		Headers:    headers,
 		Prompt:     "hi",
 		MaxTokens:  1,
 		Timeout:    15 * time.Second,

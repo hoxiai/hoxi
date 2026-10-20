@@ -17,7 +17,7 @@ import {
   syncAutoPoolsFromServer,
 } from "./auto-models";
 import { splitAgyModelEffortSuffix } from "./provider-catalog";
-import { updateSessionAI, type ReasoningEffort } from "./session-ai";
+import { parseModelString, updateSessionAI, type ReasoningEffort } from "./session-ai";
 import {
   EFFORT_KEY,
   FAVORITE_MODELS_KEY,
@@ -32,6 +32,7 @@ export const MASKED_SECRET = "********";
 
 export const POPULAR_PROVIDER_IDS = [
   "opencode",
+  "opencode-go",
   "anthropic",
   "openai",
   "google",
@@ -238,16 +239,6 @@ export function isImportedOpenCodeProvider(provider: ProviderInfo | string): boo
 
 export function isCustomOrConfiguredProvider(provider: ProviderInfo | string): boolean {
   return isHoxiCustomProvider(provider) || isImportedOpenCodeProvider(provider);
-}
-
-export function parseModelString(val?: string | null): SelectedModel | null {
-  if (!val || typeof val !== "string") return null;
-  const slashIdx = val.indexOf("/");
-  if (slashIdx <= 0 || slashIdx >= val.length - 1) return null;
-  return {
-    providerID: val.slice(0, slashIdx),
-    modelID: val.slice(slashIdx + 1),
-  };
 }
 
 export async function loadProviders(forceRefresh = false): Promise<void> {
@@ -576,6 +567,20 @@ export async function updateGlobalModelConfig(patch: Record<string, any>): Promi
   if (typeof patch.model === "string") {
     const parsed = parseModelString(patch.model);
     if (parsed) selectDefaultModel(parsed);
+  }
+  if (patch.agent && typeof patch.agent === "object") {
+    const active = workspace.activeMode;
+    if (active && patch.agent[active] !== undefined) {
+      const nextAgentModel = patch.agent[active]?.model;
+      if (typeof nextAgentModel === "string" && nextAgentModel) {
+        const parsed = parseModelString(nextAgentModel);
+        if (parsed) selectModel(parsed);
+      } else if (nextAgentModel === null || nextAgentModel === "") {
+        if (workspace.defaultAI.model) {
+          selectModel(workspace.defaultAI.model);
+        }
+      }
+    }
   }
 }
 

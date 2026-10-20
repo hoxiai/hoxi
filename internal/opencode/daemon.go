@@ -1,7 +1,9 @@
 package opencode
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -82,6 +84,115 @@ func seedOpenCodeAuthIfNeeded(targetOpenCodeDir string) {
 	}
 }
 
+func sqlQuote(s string) string {
+	return "'" + strings.ReplaceAll(strings.ReplaceAll(s, "\x00", ""), "'", "''") + "'"
+}
+
+// seedOpenCodeConsoleAccountIfNeeded copies the active OpenCode Console account
+// (`account` and `account_state` tables, which power OpenCode Go and Personal
+// subscriptions) from ~/.local/share/opencode/opencode.db into Hoxi's isolated
+// hoxi.db before starting `opencode serve`.
+func seedOpenCodeConsoleAccountIfNeeded(hoxiDBPath string) {
+	hoxiDBPath = strings.TrimSpace(hoxiDBPath)
+	if hoxiDBPath == "" {
+		return
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return
+	}
+	srcDB := filepath.Join(home, ".local", "share", "opencode", "opencode.db")
+	if custom := strings.TrimSpace(os.Getenv("OPENCODE_EXTERNAL_DB")); custom != "" {
+		srcDB = filepath.Clean(custom)
+	}
+	if filepath.Clean(srcDB) == filepath.Clean(hoxiDBPath) {
+		return
+	}
+	if st, err := os.Stat(srcDB); err != nil || st.IsDir() {
+		return
+	}
+	querySQL := `
+SELECT json_object(
+  'accounts', COALESCE((
+    SELECT json_group_array(json_object(
+      'id', COALESCE(a.id, ''),
+      'email', COALESCE(a.email, ''),
+      'url', COALESCE(a.url, ''),
+      'accessToken', COALESCE(a.access_token, ''),
+      'refreshToken', COALESCE(a.refresh_token, ''),
+      'tokenExpiry', COALESCE(a.token_expiry, 0),
+      'timeCreated', COALESCE(a.time_created, 0),
+      'timeUpdated', COALESCE(a.time_updated, 0)
+    ))
+    FROM account a
+  ), json('[]')),
+  'activeAccountID', COALESCE((SELECT active_account_id FROM account_state WHERE id = 1 LIMIT 1), ''),
+  'activeOrgID', COALESCE((SELECT active_org_id FROM account_state WHERE id = 1 LIMIT 1), '')
+);`
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "sqlite3", "-readonly", "-cmd", ".timeout 3000", srcDB, querySQL)
+	cmd.WaitDelay = time.Second
+	out, err := cmd.Output()
+	if err != nil || len(bytes.TrimSpace(out)) == 0 {
+		return
+	}
+	var payload struct {
+		Accounts []struct {
+			ID           string `json:"id"`
+			Email        string `json:"email"`
+			URL          string `json:"url"`
+			AccessToken  string `json:"accessToken"`
+			RefreshToken string `json:"refreshToken"`
+			TokenExpiry  int64  `json:"tokenExpiry"`
+			TimeCreated  int64  `json:"timeCreated"`
+			TimeUpdated  int64  `json:"timeUpdated"`
+		} `json:"accounts"`
+		ActiveAccountID string `json:"activeAccountID"`
+		ActiveOrgID     string `json:"activeOrgID"`
+	}
+	if json.Unmarshal(bytes.TrimSpace(out), &payload) != nil || len(payload.Accounts) == 0 {
+		return
+	}
+	var sb strings.Builder
+	sb.WriteString("BEGIN IMMEDIATE;\n")
+	sb.WriteString("CREATE TABLE IF NOT EXISTS `account` (`id` text PRIMARY KEY, `email` text NOT NULL, `url` text NOT NULL, `access_token` text NOT NULL, `refresh_token` text NOT NULL, `token_expiry` integer, `time_created` integer NOT NULL, `time_updated` integer NOT NULL);\n")
+	sb.WriteString("CREATE TABLE IF NOT EXISTS `account_state` (`id` integer PRIMARY KEY, `active_account_id` text, `active_org_id` text, CONSTRAINT `fk_account_state_active_account_id_account_id_fk` FOREIGN KEY (`active_account_id`) REFERENCES `account`(`id`) ON DELETE SET NULL);\n")
+	validCount := 0
+	for _, a := range payload.Accounts {
+		id := strings.TrimSpace(a.ID)
+		if id == "" || (strings.TrimSpace(a.AccessToken) == "" && strings.TrimSpace(a.RefreshToken) == "") {
+			continue
+		}
+		validCount++
+		fmt.Fprintf(&sb,
+			"INSERT INTO `account` (`id`, `email`, `url`, `access_token`, `refresh_token`, `token_expiry`, `time_created`, `time_updated`) VALUES (%s, %s, %s, %s, %s, %d, %d, %d) ON CONFLICT(`id`) DO UPDATE SET `email`=excluded.`email`, `url`=excluded.`url`, `access_token`=CASE WHEN excluded.`time_updated` >= `account`.`time_updated` OR `account`.`access_token` = '' THEN excluded.`access_token` ELSE `account`.`access_token` END, `refresh_token`=CASE WHEN excluded.`time_updated` >= `account`.`time_updated` OR `account`.`refresh_token` = '' THEN excluded.`refresh_token` ELSE `account`.`refresh_token` END, `token_expiry`=CASE WHEN excluded.`time_updated` >= `account`.`time_updated` OR COALESCE(`account`.`token_expiry`, 0) = 0 THEN excluded.`token_expiry` ELSE `account`.`token_expiry` END, `time_updated`=MAX(`account`.`time_updated`, excluded.`time_updated`);\n",
+			sqlQuote(id), sqlQuote(a.Email), sqlQuote(a.URL), sqlQuote(a.AccessToken), sqlQuote(a.RefreshToken), a.TokenExpiry, a.TimeCreated, a.TimeUpdated,
+		)
+	}
+	if validCount == 0 {
+		return
+	}
+	activeID := strings.TrimSpace(payload.ActiveAccountID)
+	if activeID == "" {
+		activeID = strings.TrimSpace(payload.Accounts[0].ID)
+	}
+	activeOrg := strings.TrimSpace(payload.ActiveOrgID)
+	fmt.Fprintf(&sb,
+		"INSERT INTO `account_state` (`id`, `active_account_id`, `active_org_id`) VALUES (1, %s, %s) ON CONFLICT(`id`) DO UPDATE SET `active_account_id`=excluded.`active_account_id`, `active_org_id`=CASE WHEN excluded.`active_org_id` != '' THEN excluded.`active_org_id` ELSE `account_state`.`active_org_id` END;\n",
+		sqlQuote(activeID), sqlQuote(activeOrg),
+	)
+	sb.WriteString("COMMIT;\n")
+
+	_ = os.MkdirAll(filepath.Dir(hoxiDBPath), 0o700)
+	wCtx, wCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer wCancel()
+	wCmd := exec.CommandContext(wCtx, "sqlite3", "-cmd", ".timeout 3000", hoxiDBPath)
+	wCmd.WaitDelay = time.Second
+	wCmd.Stdin = strings.NewReader(sb.String())
+	_ = wCmd.Run()
+}
+
 func ResolveVersion(binPath string) string {
 	binPath = strings.TrimSpace(binPath)
 	if binPath == "" {
@@ -156,6 +267,7 @@ func StartDaemonWithBin(
 	child.Stdout = os.Stdout
 	child.Stderr = os.Stderr
 	hoxiDBPath := ResolveHoxiDBPath()
+	seedOpenCodeConsoleAccountIfNeeded(hoxiDBPath)
 	dataDir, stateDir := EnsureHoxiEngineDataDir()
 	child.Env = append(os.Environ(),
 		"OPENCODE_SERVER_HOSTNAME=127.0.0.1",

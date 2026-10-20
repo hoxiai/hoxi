@@ -6,7 +6,8 @@ export const models = {
     "Configure AI providers, custom endpoints, auto-approve permissions & MCP tools",
   tabCatalog: "Providers",
   tabCustom: "Custom Endpoint",
-  tabPolicy: "Auto-Approve & MCP",
+  tabPolicy: "Permissions & MCP",
+  tabAgents: "Agents & Roles",
   searchProviders: "Filter providers…",
   apiKey: "API Key",
   apiKeyPlaceholder: "Enter your {provider} API key…",
@@ -139,9 +140,30 @@ export const models = {
   pasteAuthCodePlaceholder: "Paste authorization code…",
   editCustomEndpoint: "Edit Custom Endpoint",
   useGlobalDefault: "Use Global Default",
-  rolesTitle: "Model Routing & Roles",
+  rolesTitle: "System Model Routing & Duties",
   rolesSubtitle:
-    "Assign models to subtasks, helper tasks, and context compaction",
+    "Assign dedicated models to background system duties (default, fast tasks, commit messages, subagents, history compaction, code audit)",
+  agentsTitle: "Agents & Roles",
+  agentsSubtitle:
+    "Manage engineering agents and custom modes with dedicated system prompts, descriptions, and models",
+  agentDedicatedModelLabel: "Dedicated Model",
+  agentPromptLabel: "System Prompt",
+  builtinBadge: "Built-in",
+  customBadge: "Custom",
+  goToAgentsSettings: "Go to Agents & Roles Settings",
+  roleModelsHint:
+    "Dedicated models for Build, Plan, and custom agents are centrally managed in Agents & Roles.",
+  agentEditMode: "Edit Role",
+  saveAgentChanges: "Save Changes",
+  cancelEdit: "Cancel",
+  modeDedicatedModelBadge: "Bound",
+  agentModelFollowDefault: "Follow Global Default",
+  agentRoleBuildDesc:
+    "Default engineering agent with full code editing, terminal execution, and tool use capabilities.",
+  agentRolePlanDesc:
+    "Read-only exploration and architecture design mode. Disallows editing files and focuses on implementation plans.",
+  agentRoleCustomDesc:
+    "Custom engineering agent mode with dedicated instructions and behavior rules.",
   defaultModelTitle: "Default Conversation Model",
   defaultModelDesc: "Primary model used when starting a new session",
   smallModelTitle: "Small Model",
@@ -173,12 +195,12 @@ export const models = {
   viewAllProviders: "View All Providers",
   disabledSection: "Disabled Providers",
   enableProvider: "Enable",
-  tabModels: "Roles & Models",
+  tabModels: "Model Routing",
   allConnected: "All Connected",
   recent: "Recent",
-  customAgentsTitle: "Custom Modes",
+  customAgentsTitle: "Add Custom Role",
   customAgentsSubtitle:
-    "Create custom modes (e.g. Reviewer, Architect, Security Auditor) with dedicated system prompts",
+    "Create custom modes with dedicated system prompts and models (e.g. Code Reviewer, Architect, Security Auditor)",
   agentIdPlaceholder: "Mode ID (e.g. reviewer)",
   agentDescPlaceholder:
     "Short description (e.g. Code review & security audit)",

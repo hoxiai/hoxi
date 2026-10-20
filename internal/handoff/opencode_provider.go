@@ -64,13 +64,92 @@ func externalOpenCodeAuthPaths() []string {
 	return out
 }
 
+func sanitizeOpenCodeJSONC(raw []byte) []byte {
+	noComments := make([]byte, 0, len(raw))
+	inStr := false
+	escaped := false
+	for i := 0; i < len(raw); i++ {
+		c := raw[i]
+		if inStr {
+			noComments = append(noComments, c)
+			if escaped {
+				escaped = false
+			} else if c == '\\' {
+				escaped = true
+			} else if c == '"' {
+				inStr = false
+			}
+			continue
+		}
+		if c == '"' {
+			inStr = true
+			noComments = append(noComments, c)
+			continue
+		}
+		if c == '/' && i+1 < len(raw) {
+			if raw[i+1] == '/' {
+				i += 2
+				for i < len(raw) && raw[i] != '\n' {
+					i++
+				}
+				if i < len(raw) {
+					noComments = append(noComments, '\n')
+				}
+				continue
+			}
+			if raw[i+1] == '*' {
+				i += 2
+				for i+1 < len(raw) && !(raw[i] == '*' && raw[i+1] == '/') {
+					i++
+				}
+				i++
+				continue
+			}
+		}
+		noComments = append(noComments, c)
+	}
+	out := make([]byte, 0, len(noComments))
+	inStr = false
+	escaped = false
+	for i := 0; i < len(noComments); i++ {
+		c := noComments[i]
+		if inStr {
+			out = append(out, c)
+			if escaped {
+				escaped = false
+			} else if c == '\\' {
+				escaped = true
+			} else if c == '"' {
+				inStr = false
+			}
+			continue
+		}
+		if c == '"' {
+			inStr = true
+			out = append(out, c)
+			continue
+		}
+		if c == ',' {
+			j := i + 1
+			for j < len(noComments) && (noComments[j] == ' ' || noComments[j] == '\t' || noComments[j] == '\r' || noComments[j] == '\n') {
+				j++
+			}
+			if j < len(noComments) && (noComments[j] == '}' || noComments[j] == ']') {
+				continue
+			}
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
 func readOpenCodeAuthFile(path string) map[string]interface{} {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil
 	}
 	var doc map[string]interface{}
-	if json.Unmarshal(raw, &doc) != nil {
+	if json.Unmarshal(raw, &doc) != nil && json.Unmarshal(sanitizeOpenCodeJSONC(raw), &doc) != nil {
 		return nil
 	}
 	return doc
@@ -91,13 +170,13 @@ func readExternalOpenCodeConfigProviders() map[string]interface{} {
 		return nil
 	}
 	out := map[string]interface{}{}
-	for _, name := range []string{"config.json", "opencode.json"} {
+	for _, name := range []string{"config.json", "opencode.json", "opencode.jsonc"} {
 		raw, err := os.ReadFile(filepath.Join(dir, name))
 		if err != nil {
 			continue
 		}
 		var doc map[string]interface{}
-		if json.Unmarshal(raw, &doc) != nil {
+		if json.Unmarshal(raw, &doc) != nil && json.Unmarshal(sanitizeOpenCodeJSONC(raw), &doc) != nil {
 			continue
 		}
 		provMap, _ := doc["provider"].(map[string]interface{})
@@ -115,13 +194,13 @@ func readExternalOpenCodeDefaultModel() string {
 	if dir == "" {
 		return ""
 	}
-	for _, name := range []string{"opencode.json", "config.json"} {
+	for _, name := range []string{"opencode.json", "opencode.jsonc", "config.json"} {
 		raw, err := os.ReadFile(filepath.Join(dir, name))
 		if err != nil {
 			continue
 		}
 		var doc map[string]interface{}
-		if json.Unmarshal(raw, &doc) == nil {
+		if json.Unmarshal(raw, &doc) == nil || json.Unmarshal(sanitizeOpenCodeJSONC(raw), &doc) == nil {
 			if m := strings.TrimSpace(asString(doc["model"])); m != "" {
 				return m
 			}
@@ -404,17 +483,113 @@ func (g *Service) syncOpenCodeEngineAuth(authMap map[string]interface{}) {
 	g.mergeOpenCodeEngineAuthFile(authMap)
 }
 
+// purgeStaleConsoleSessionAuth removes any manually-pasted OpenCode Console
+// session tokens (`st_...`) for `opencode` / `opencode-go` from Hoxi's engine
+// auth.json when a live Console account is synced in hoxi.db and external
+// auth.json does not define a static API key for that provider.
+func (g *Service) purgeStaleConsoleSessionAuth(externalAuth map[string]interface{}) {
+	dir := hoxiEngineOpenCodeDir()
+	if dir == "" {
+		return
+	}
+	path := filepath.Join(dir, "auth.json")
+	merged := map[string]interface{}{}
+	raw, err := os.ReadFile(path)
+	if err != nil || json.Unmarshal(raw, &merged) != nil {
+		return
+	}
+	modified := false
+	for _, pid := range []string{"opencode-go", "opencode"} {
+		if _, inExternal := externalAuth[pid]; inExternal {
+			continue
+		}
+		cred, ok := merged[pid].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		key := strings.TrimSpace(asString(cred["key"]))
+		if strings.HasPrefix(key, "st_") {
+			delete(merged, pid)
+			modified = true
+			if g.openCodePort > 0 && g.password != "" {
+				client := &http.Client{Timeout: 3 * time.Second, Transport: localTransport}
+				u := "http://127.0.0.1:" + strconv.Itoa(g.openCodePort) + "/auth/" + url.PathEscape(pid)
+				if req, err := http.NewRequest(http.MethodDelete, u, nil); err == nil {
+					req.SetBasicAuth("opencode", g.password)
+					if resp, err := client.Do(req); err == nil {
+						_ = resp.Body.Close()
+					}
+				}
+			}
+		}
+	}
+	if modified {
+		_ = writePrivateJSONFile(path, merged)
+	}
+}
+
+func (g *Service) fetchLiveOpenCodeProviderModels(providerID string) (defaultModel string, models []string) {
+	providerID = strings.TrimSpace(providerID)
+	if g == nil || g.openCodePort <= 0 || providerID == "" {
+		return "", nil
+	}
+	client := &http.Client{Timeout: 4 * time.Second, Transport: localTransport}
+	u := "http://127.0.0.1:" + strconv.Itoa(g.openCodePort) + "/provider"
+	req, err := http.NewRequest(http.MethodGet, u, nil)
+	if err != nil {
+		return "", nil
+	}
+	if g.password != "" {
+		req.SetBasicAuth("opencode", g.password)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", nil
+	}
+	defer resp.Body.Close()
+	var payload struct {
+		All []struct {
+			ID     string                 `json:"id"`
+			Models map[string]interface{} `json:"models"`
+		} `json:"all"`
+		Default map[string]string `json:"default"`
+	}
+	if json.NewDecoder(resp.Body).Decode(&payload) != nil {
+		return "", nil
+	}
+	defaultModel = strings.TrimSpace(payload.Default[providerID])
+	for _, p := range payload.All {
+		if p.ID == providerID {
+			for mid := range p.Models {
+				if s := strings.TrimSpace(mid); s != "" {
+					models = append(models, s)
+				}
+			}
+			sort.Strings(models)
+			break
+		}
+	}
+	return defaultModel, models
+}
+
 // importOpenCodeCLIProvider merges providers/models from the standalone OpenCode
 // CLI config into Hoxi and copies its credentials into the managed engine.
 func (g *Service) importOpenCodeCLIProvider() LocalCLIImportResponse {
 	provDefs := readExternalOpenCodeConfigProviders()
 	authMap := readExternalOpenCodeAuth()
-	if len(provDefs) == 0 && len(authMap) == 0 {
+	consoleState := readExternalOpenCodeConsoleState()
+	if len(provDefs) == 0 && len(authMap) == 0 && consoleState == nil {
 		return LocalCLIImportResponse{
 			OK:     false,
 			ToolID: string(ExternalToolOpenCode),
-			Error:  "No external OpenCode providers found (~/.config/opencode/opencode.json or ~/.local/share/opencode/auth.json)",
+			Error:  "No external OpenCode providers found (~/.config/opencode/opencode.json, ~/.local/share/opencode/auth.json, or ~/.local/share/opencode/opencode.db)",
 		}
+	}
+	if consoleState != nil {
+		if err := syncOpenCodeConsoleStateToHoxiDB(consoleState); err != nil {
+			return LocalCLIImportResponse{OK: false, ToolID: string(ExternalToolOpenCode), Error: err.Error()}
+		}
+		g.purgeStaleConsoleSessionAuth(authMap)
 	}
 
 	doc := g.loadHoxiConfigDoc()
@@ -530,7 +705,7 @@ func (g *Service) importOpenCodeCLIProvider() LocalCLIImportResponse {
 		if err := g.persistHoxiConfigDoc(doc); err != nil {
 			return LocalCLIImportResponse{OK: false, ToolID: string(ExternalToolOpenCode), Error: err.Error()}
 		}
-	} else if len(authMap) > 0 {
+	} else if len(authMap) > 0 || consoleState != nil {
 		g.reloadOpenCodeGlobalConfig()
 	}
 
@@ -540,9 +715,14 @@ func (g *Service) importOpenCodeCLIProvider() LocalCLIImportResponse {
 	} else if sessions, _ := scanOpenCodeSessions("", ""); len(sessions) > 0 {
 		latestProvider, latestModel = parseOpenCodeModelField(sessions[0].Model)
 	}
+	if consoleState != nil && latestProvider == "" && len(provDefs) == 0 && len(authMap) == 0 {
+		latestProvider = "opencode-go"
+	}
 	providerID, _, models := resolveOpenCodeSyncTarget(provDefs, authMap, latestProvider, latestModel)
 	providerID = resolveOpenCodeProviderID(providerID, authMap, provMap)
 	models = appendUniqueString(models, openCodeProviderModelIDs(provMap, providerID)...)
+	_, liveModels := g.fetchLiveOpenCodeProviderModels(providerID)
+	models = appendUniqueString(models, liveModels...)
 	// If no models found, return empty to signal the need for user configuration.
 	// Returning provider IDs as model IDs would be semantically incorrect.
 	return LocalCLIImportResponse{

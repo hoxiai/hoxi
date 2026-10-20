@@ -351,6 +351,23 @@ func (g *Service) resolveProviderConnection(providerID, hintBaseURL, hintNPM str
 	if baseURL == "" {
 		baseURL = defaultProviderBaseURLs[providerID]
 	}
+	liveURL, liveKey, liveNPM, liveHeaders := g.resolveOpenCodeLiveModelConfig(providerID, "")
+	if baseURL == "" && liveURL != "" {
+		baseURL = liveURL
+	}
+	if npm == "" && liveNPM != "" {
+		npm = liveNPM
+	}
+	if g.isAuthorizedProviderBaseURL(providerID, baseURL, configuredBaseURL, liveURL) {
+		for hk, hv := range liveHeaders {
+			if _, exists := headers[hk]; !exists {
+				headers[hk] = hv
+			}
+		}
+		if apiKey == "" && liveKey != "" {
+			apiKey = liveKey
+		}
+	}
 	if apiKey == "" {
 		apiKey = g.resolveStoredProviderKey(providerID, baseURL)
 	}
@@ -360,45 +377,81 @@ func (g *Service) resolveProviderConnection(providerID, hintBaseURL, hintNPM str
 	return baseURL, apiKey, npm, headers
 }
 
-func (g *Service) resolveStoredProviderKey(providerID, requestedBaseURL string) string {
-	var openCodeBaseURL string
-	var openCodeKey string
-	// 1. Check OpenCode /provider endpoint first
-	if g.openCodePort > 0 {
-		u := "http://127.0.0.1:" + strconv.Itoa(g.openCodePort) + "/provider"
-		req, err := http.NewRequest(http.MethodGet, u, nil)
-		if err == nil {
-			req.SetBasicAuth("opencode", g.password)
-			client := &http.Client{Timeout: 3 * time.Second, Transport: localTransport}
-			if resp, err := client.Do(req); err == nil {
-				defer resp.Body.Close()
-				var payload struct {
-					All []struct {
-						ID      string         `json:"id"`
-						Key     string         `json:"key"`
-						Options map[string]any `json:"options"`
-					} `json:"all"`
+func (g *Service) resolveOpenCodeLiveModelConfig(providerID, modelID string) (baseURL, apiKey, npm string, headers map[string]string) {
+	if g.openCodePort <= 0 || strings.TrimSpace(providerID) == "" {
+		return "", "", "", nil
+	}
+	u := "http://127.0.0.1:" + strconv.Itoa(g.openCodePort) + "/provider"
+	req, err := http.NewRequest(http.MethodGet, u, nil)
+	if err != nil {
+		return "", "", "", nil
+	}
+	req.SetBasicAuth("opencode", g.password)
+	client := &http.Client{Timeout: 3 * time.Second, Transport: localTransport}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", "", "", nil
+	}
+	defer resp.Body.Close()
+	var payload struct {
+		All []struct {
+			ID      string         `json:"id"`
+			Key     string         `json:"key"`
+			Options map[string]any `json:"options"`
+			Models  map[string]struct {
+				API struct {
+					URL string `json:"url"`
+					NPM string `json:"npm"`
+				} `json:"api"`
+				Headers map[string]any `json:"headers"`
+			} `json:"models"`
+		} `json:"all"`
+	}
+	if json.NewDecoder(resp.Body).Decode(&payload) != nil {
+		return "", "", "", nil
+	}
+	headers = map[string]string{}
+	for _, p := range payload.All {
+		if p.ID != providerID {
+			continue
+		}
+		if optURL, ok := p.Options["baseURL"].(string); ok {
+			baseURL = strings.TrimSpace(optURL)
+		}
+		if p.Key != "" {
+			apiKey = strings.TrimSpace(p.Key)
+		} else if optKey, ok := p.Options["apiKey"].(string); ok && optKey != "" {
+			apiKey = strings.TrimSpace(optKey)
+		}
+		if hMap, ok := p.Options["headers"].(map[string]any); ok {
+			for hk, hv := range hMap {
+				if vs, ok := hv.(string); ok && strings.TrimSpace(hk) != "" && strings.TrimSpace(vs) != "" {
+					headers[strings.TrimSpace(hk)] = strings.TrimSpace(vs)
 				}
-				if json.NewDecoder(resp.Body).Decode(&payload) == nil {
-					for _, p := range payload.All {
-						if p.ID == providerID {
-							if optURL, ok := p.Options["baseURL"].(string); ok {
-								openCodeBaseURL = strings.TrimSpace(optURL)
-							}
-							if p.Key != "" {
-								openCodeKey = p.Key
-								break
-							}
-							if optKey, ok := p.Options["apiKey"].(string); ok && optKey != "" {
-								openCodeKey = optKey
-								break
-							}
-						}
+			}
+		}
+		if modelID != "" {
+			if m, ok := p.Models[modelID]; ok {
+				if strings.TrimSpace(m.API.URL) != "" {
+					baseURL = strings.TrimSpace(m.API.URL)
+				}
+				if strings.TrimSpace(m.API.NPM) != "" {
+					npm = strings.TrimSpace(m.API.NPM)
+				}
+				for hk, hv := range m.Headers {
+					if vs, ok := hv.(string); ok && strings.TrimSpace(hk) != "" && strings.TrimSpace(vs) != "" {
+						headers[strings.TrimSpace(hk)] = strings.TrimSpace(vs)
 					}
 				}
 			}
 		}
+		break
 	}
+	return baseURL, apiKey, npm, headers
+}
+
+func (g *Service) resolveStoredProviderKey(providerID, requestedBaseURL string) string {
+	openCodeBaseURL, openCodeKey, _, _ := g.resolveOpenCodeLiveModelConfig(providerID, "")
 
 	if !g.isAuthorizedProviderBaseURL(providerID, requestedBaseURL, openCodeBaseURL) {
 		return ""

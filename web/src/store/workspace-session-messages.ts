@@ -28,7 +28,7 @@ import {
 import { newIsolatedSession, waitForSessionSandbox } from "./session-sandbox";
 import { buildCombinedSystemPrompt, setWorkspace, workspace } from "./workspace";
 import { buildWorkspaceFoldersSystemPrompt, workspaceFoldersForDir } from "./workspace-projects";
-import { initializeSessionAI, sessionAIConfig, type ReasoningEffort } from "./session-ai";
+import { initializeSessionAI, parseModelString, sessionAIConfig, type ReasoningEffort } from "./session-ai";
 import { sessionRuntimeForID } from "./workspace-providers";
 import {
   isSessionBusy,
@@ -236,7 +236,12 @@ export async function submitSessionPrompt(
   }
   const config = sessionAIConfig(id);
   const effectiveAgent = options?.agent || config.agent;
-  const chosenModel = options?.model || config.model;
+  const agentDedicatedModelKey = workspace.globalConfig?.agent?.[effectiveAgent]?.model;
+  const agentDedicatedModel =
+    !options?.model && typeof agentDedicatedModelKey === "string" && agentDedicatedModelKey
+      ? parseModelString(agentDedicatedModelKey)
+      : null;
+  const chosenModel = options?.model || agentDedicatedModel || config.model;
   const isAuto = isAutoModel(chosenModel);
   const resolvedConcrete =
     isAuto && chosenModel ? resolveAutoModelTarget(chosenModel, { advance: true }) : null;

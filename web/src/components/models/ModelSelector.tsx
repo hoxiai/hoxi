@@ -1,5 +1,6 @@
 // web/src/components/models/ModelSelector.tsx
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
+import { Portal } from "solid-js/web";
 import {
   Check,
   ChevronDown,
@@ -61,8 +62,46 @@ export default function ModelSelector() {
   const [query, setQuery] = createSignal("");
   const [details, setDetails] = createSignal<{ model: FlattenedModel; anchor: HTMLButtonElement } | null>(null);
   const [activeIndex, setActiveIndex] = createSignal(0);
+  const [popoverBox, setPopoverBox] = createSignal({ left: 16, top: 56, width: 520, height: 410 });
   let containerRef: HTMLDivElement | undefined;
+  let triggerBtnRef: HTMLButtonElement | undefined;
+  let popoverRef: HTMLDivElement | undefined;
   let searchInputRef: HTMLInputElement | undefined;
+
+  const updatePopoverPosition = () => {
+    if (!triggerBtnRef || typeof window === "undefined") return;
+    const rect = triggerBtnRef.getBoundingClientRect();
+    const gap = 8;
+    const margin = 12;
+    const idealWidth = 520;
+    const idealHeight = 410;
+    const minHeight = 240;
+    const width = Math.min(idealWidth, Math.max(300, window.innerWidth - margin * 2));
+    const left = Math.max(margin, Math.min(rect.left, window.innerWidth - width - margin));
+
+    const headerSafeTop = Math.min(56, Math.max(margin, rect.top - minHeight - gap));
+    const spaceAbove = rect.top - gap - headerSafeTop;
+    const spaceBelow = window.innerHeight - rect.bottom - gap - margin;
+
+    let height = idealHeight;
+    let top = rect.top - gap - idealHeight;
+
+    if (spaceAbove >= idealHeight) {
+      height = idealHeight;
+      top = rect.top - gap - height;
+    } else if (spaceBelow >= idealHeight) {
+      height = idealHeight;
+      top = rect.bottom + gap;
+    } else if (spaceAbove >= spaceBelow) {
+      height = Math.min(idealHeight, Math.max(minHeight, spaceAbove));
+      top = Math.max(margin, rect.top - gap - height);
+    } else {
+      height = Math.min(idealHeight, Math.max(minHeight, spaceBelow));
+      top = Math.min(window.innerHeight - height - margin, rect.bottom + gap);
+    }
+
+    setPopoverBox({ left, top, width, height });
+  };
 
   const connectedSet = createMemo(() => new Set(workspace.connectedProviders));
 
@@ -232,11 +271,26 @@ export default function ModelSelector() {
   });
 
   createEffect(() => {
-    if (!open()) setDetails(null);
+    if (!open()) {
+      setDetails(null);
+      return;
+    }
+    updatePopoverPosition();
+    const raf = requestAnimationFrame(updatePopoverPosition);
+    window.addEventListener("resize", updatePopoverPosition);
+    window.addEventListener("scroll", updatePopoverPosition, true);
+    onCleanup(() => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener("resize", updatePopoverPosition);
+      window.removeEventListener("scroll", updatePopoverPosition, true);
+    });
   });
 
   const toggleOpen = () => {
     const next = !open();
+    if (next) {
+      updatePopoverPosition();
+    }
     setOpen(next);
     setTriggerHovered(false);
     if (next) {
@@ -278,9 +332,12 @@ export default function ModelSelector() {
   onMount(() => {
     const onDocClick = (e: MouseEvent) => {
       if (!open() || !containerRef) return;
+      const target = e.target as Node;
       const path = typeof e.composedPath === "function" ? e.composedPath() : [];
       if (path.some((node) => node instanceof HTMLElement && node.hasAttribute("data-model-details"))) return;
-      if (!path.includes(containerRef) && !containerRef.contains(e.target as Node)) {
+      const inTrigger = path.includes(containerRef) || containerRef.contains(target);
+      const inPopover = Boolean(popoverRef && (path.includes(popoverRef) || popoverRef.contains(target)));
+      if (!inTrigger && !inPopover) {
         setOpen(false);
       }
     };
@@ -291,6 +348,7 @@ export default function ModelSelector() {
   return (
     <div ref={containerRef} class="relative">
       <button
+        ref={triggerBtnRef}
         type="button"
         onClick={toggleOpen}
         onMouseEnter={() => setTriggerHovered(true)}
@@ -344,10 +402,18 @@ export default function ModelSelector() {
       </Show>
 
       <Show when={open()}>
-        <div
-          onKeyDown={handleKeyDown}
-          class="hoxi-popover absolute bottom-full left-0 z-40 mb-2 flex h-[410px] max-h-[calc(100dvh-100px)] w-[520px] max-w-[calc(100vw-24px)] flex-col overflow-hidden rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-panel)] shadow-2xl"
-        >
+        <Portal>
+          <div
+            ref={popoverRef}
+            onKeyDown={handleKeyDown}
+            style={{
+              left: `${popoverBox().left}px`,
+              top: `${popoverBox().top}px`,
+              width: `${popoverBox().width}px`,
+              height: `${popoverBox().height}px`,
+            }}
+            class="hoxi-popover fixed z-[90] flex flex-col overflow-hidden rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-panel)] shadow-2xl"
+          >
           <div class="flex flex-1 min-h-0">
             <ModelSelectorRail
               rail={rail()}
@@ -582,7 +648,8 @@ export default function ModelSelector() {
               </div>
             </div>
           </div>
-        </div>
+          </div>
+        </Portal>
       </Show>
       <Show when={open() && details()} keyed>
         {(detail) => (

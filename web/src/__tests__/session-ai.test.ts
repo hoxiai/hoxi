@@ -523,4 +523,31 @@ describe("session AI configuration", () => {
       assertDeepEqual(workspace.selectedModel, { providerID: "antigravity", modelID: "gemini-3-pro-high" });
     });
   });
+
+  it("synchronizes agent dedicated models when switching active agent", async () => {
+    await withAIFixture(async (a) => {
+      setWorkspace("globalConfig", {
+        model: "default-provider/default-model",
+        agent: {
+          plan: { model: "anthropic/claude-3-7-sonnet" },
+          build: { model: null },
+        },
+      });
+      setWorkspace("activeSessionID", a);
+      selectModel({ providerID: "default-provider", modelID: "default-model" });
+
+      assertEqual(workspace.activeMode, "build");
+      assertDeepEqual(workspace.selectedModel, { providerID: "default-provider", modelID: "default-model" });
+
+      // Switch to plan mode which has a dedicated model
+      setActiveAgent("plan", a);
+      assertEqual(workspace.activeMode, "plan");
+      assertDeepEqual(workspace.selectedModel, { providerID: "anthropic", modelID: "claude-3-7-sonnet" });
+
+      // Switch back to build mode which follows default
+      setActiveAgent("build", a);
+      assertEqual(workspace.activeMode, "build");
+      assertDeepEqual(workspace.selectedModel, { providerID: "default-provider", modelID: "default-model" });
+    });
+  });
 });

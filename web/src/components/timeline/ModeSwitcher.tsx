@@ -133,6 +133,10 @@ export default function ModeSwitcher() {
                 const isSelected = () =>
                   agent.name.toLowerCase() === currentMode().toLowerCase();
                 const badge = modeBadge(agent.name);
+                const dedicatedModel = () => {
+                  const m = workspace.globalConfig?.agent?.[agent.name]?.model;
+                  return typeof m === "string" && m ? m : null;
+                };
 
                 return (
                   <button
@@ -163,17 +167,29 @@ export default function ModeSwitcher() {
                         >
                           {formatAgentLabel(agent)}
                         </span>
-                        <Show when={badge}>
-                          <span
-                            class={`rounded px-1.5 py-[1px] text-[9.5px] font-medium uppercase tracking-wider ${
-                              agent.name === "plan"
-                                ? "bg-[var(--violet-surface)] text-[var(--violet-text)] border border-[var(--violet-border)]"
-                                : "bg-[var(--bg-inset)] text-[var(--text-muted)] border border-[var(--border-subtle)]"
-                            }`}
-                          >
-                            {badge}
-                          </span>
-                        </Show>
+                        <div class="flex items-center gap-1 shrink-0">
+                          <Show when={dedicatedModel()}>
+                            {(mKey) => (
+                              <span
+                                class="rounded bg-[var(--accent-surface)] px-1.5 py-[1px] font-mono text-[9px] text-[var(--accent-primary)] truncate max-w-[100px]"
+                                title={mKey()}
+                              >
+                                {mKey().split("/").pop()}
+                              </span>
+                            )}
+                          </Show>
+                          <Show when={badge}>
+                            <span
+                              class={`rounded px-1.5 py-[1px] text-[9.5px] font-medium uppercase tracking-wider ${
+                                agent.name === "plan"
+                                  ? "bg-[var(--violet-surface)] text-[var(--violet-text)] border border-[var(--violet-border)]"
+                                  : "bg-[var(--bg-inset)] text-[var(--text-muted)] border border-[var(--border-subtle)]"
+                              }`}
+                            >
+                              {badge}
+                            </span>
+                          </Show>
+                        </div>
                       </div>
 
                       <Show when={agent.description}>
