@@ -1,7 +1,7 @@
 [Desktop Entry]
 Name=Hoxi
-GenericName=AI Agentic Engineering Workspace
-Comment=Native-feel desktop workspace for AI agentic engineering
+GenericName=AI Engineering Command Center
+Comment=Native command center for parallel AI engineering
 Exec=hoxi %U
 Icon=hoxi
 Terminal=false

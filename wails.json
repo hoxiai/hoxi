@@ -19,7 +19,7 @@
     "productName": "Hoxi",
     "productVersion": "0.2.3",
     "copyright": "Copyright © 2026 Hoxi (https://hoxi.ai)",
-    "comments": "Hoxi Native AI Agentic Engineering Workspace (https://hoxi.ai)",
+    "comments": "Hoxi — native command center for parallel AI engineering (https://hoxi.ai)",
     "protocols": [
       {
         "scheme": "hoxi",

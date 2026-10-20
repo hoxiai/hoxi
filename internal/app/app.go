@@ -98,6 +98,7 @@ type DesktopApp struct {
 	child           *exec.Cmd
 	childDone       chan struct{}
 	childStopped    bool
+	identity        AppIdentity
 	respawn         respawner
 	respawns        []time.Time
 	gateway         *gateway.Gateway
@@ -169,10 +170,11 @@ func Run(distFS fs.FS) {
 	defer gw.CloseBrowser()
 
 	app := &DesktopApp{
-		cfg:     cfg,
-		logger:  logger,
-		gateway: gw,
-		status:  statusTracker,
+		cfg:      cfg,
+		identity: identity,
+		logger:   logger,
+		gateway:  gw,
+		status:   statusTracker,
 	}
 	defer app.killChild()
 
@@ -328,7 +330,7 @@ func Run(distFS fs.FS) {
 			WindowIsTranslucent:  true,
 			About: &mac.AboutInfo{
 				Title:   identity.Title,
-				Message: "Native AI Agentic Engineering Workspace (https://hoxi.ai)",
+				Message: "A native command center for parallel AI engineering.\nOrchestrate multiple coding agents in isolated Git worktrees, with live steering, structured memory and a mobile control plane.\nhttps://hoxi.ai",
 				Icon:    appIconBytes,
 			},
 		},
@@ -429,6 +431,7 @@ func (a *DesktopApp) startup(ctx context.Context) {
 	a.contextMu.Unlock()
 	statusbar.Start(ctx)
 	statusbar.Update(a.status.Snapshot())
+	installNativeAbout(a.identity.Title, buildinfo.Version)
 	telemetry.ReportLaunch(a.logger)
 	if BuildVariant == "release" {
 		// Wails startup can precede the Cocoa run loop; never wait for it here.
@@ -593,4 +596,3 @@ func StartEphemeralHeadless(ctx context.Context, rootDir string) (string, func()
 	}
 	return "http://" + loopbackAddr, cleanup, nil
 }
-
