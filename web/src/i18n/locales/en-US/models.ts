@@ -80,6 +80,8 @@ export const models = {
   webFetchHint: "webfetch, websearch",
   removeMcpTooltip: "Remove MCP server",
   fetchedModelsCount: "Available Models ({count})",
+  fetchedModelsModalSubtitle: "Click 'Verify & Add' on any model below to test connectivity and add it to this provider.",
+  modelAddedBadge: "Added",
   selectAll: "Select All",
   deselectAll: "Deselect All",
   addSelectedModels: "Add Selected ({count})",

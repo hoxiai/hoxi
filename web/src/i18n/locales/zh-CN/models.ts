@@ -79,6 +79,8 @@ export const models: ModelsI18n = {
   webFetchHint: "webfetch, websearch",
   removeMcpTooltip: "移除此 MCP 服务",
   fetchedModelsCount: "可用模型 ({count})",
+  fetchedModelsModalSubtitle: "点击模型右侧的「验证并添加」测试连通性并加入当前服务商。",
+  modelAddedBadge: "已添加",
   selectAll: "全选",
   deselectAll: "取消全选",
   addSelectedModels: "添加所选 ({count})",
