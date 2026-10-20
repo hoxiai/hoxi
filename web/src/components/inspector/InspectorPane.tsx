@@ -2,6 +2,7 @@ import { createEffect, createMemo, createSignal, For, lazy, Show, Suspense } fro
 import { Maximize2, Minimize2 } from "lucide-solid";
 import MemoryBankView from "./MemoryBankView";
 import FileTreeView from "./FileTreeView";
+import SkillsInspectorView from "../skills/SkillsInspectorView";
 import { isSessionBusy, setWorkspace, workspace } from "../../store/workspace";
 import { collectCycleChangedFiles } from "../timeline/tool-card-state";
 import { t } from "../../i18n";
@@ -16,6 +17,7 @@ const TABS: Array<{ id: TabID }> = [
   { id: "diffs" },
   { id: "memory" },
   { id: "files" },
+  { id: "skills" },
   { id: "terminal" },
   { id: "browser" },
 ];
@@ -128,6 +130,11 @@ export default function InspectorPane() {
           <Show when={visitedTabs().files}>
             <div class={workspace.inspectorTab === "files" ? "h-full w-full hoxi-view-enter" : "hidden"}>
               <FileTreeView />
+            </div>
+          </Show>
+          <Show when={visitedTabs().skills}>
+            <div class={workspace.inspectorTab === "skills" ? "h-full w-full hoxi-view-enter" : "hidden"}>
+              <SkillsInspectorView />
             </div>
           </Show>
           <Show when={visitedTabs().terminal}>
