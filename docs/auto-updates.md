@@ -10,12 +10,16 @@ them to install-on-quit staging, which has no public veto for active agent tasks
 Users confirm downloading and restarting in the native dialog.
 Discovering, displaying, ignoring, or dismissing an available update leaves the
 workspace writable. The standard UI's Install reply is intercepted before Sparkle
-can download or stage an update; a busy workspace converts it to Dismiss.
+can download or stage an update. A busy workspace prompts a native confirmation:
+the user may cancel or choose Update Anyway, which drains admission and accepts
+the interruption instead of silently dismissing the update.
 
 Only after the user selects Install, and again before relaunch, the gateway closes mutation admission
 and checks local processes plus authoritative OpenCode status in known workspace
 and worktree directories. Busy, unknown or unreachable runtime state denies the
-update. New mutations return 503 while admission is closed. Once extraction starts,
+update unless the user explicitly confirms Update Anyway; the confirmation forces
+admission closed without consulting runtime state. New mutations return 503 while
+admission is closed. Once extraction starts,
 the workspace conservatively remains restart-required even on cancellation/error;
 quit/restart before starting new work. This prevents a staged install-on-quit from
 interrupting newly admitted tasks. External direct daemon clients and unrelated

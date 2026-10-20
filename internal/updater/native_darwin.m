@@ -25,8 +25,36 @@
 - (void)dismissUpdateInstallation;
 @end
 
+static NSString *HoxiLocalized(NSString *zh, NSString *en) {
+    NSString *language = [[NSLocale preferredLanguages] firstObject] ?: @"en";
+    return [language hasPrefix:@"zh"] ? zh : en;
+}
+
+// Sparkle installs cannot be paused once extraction starts. Ask before
+// interrupting active agent work, then let the user proceed anyway.
+static BOOL HoxiConfirmBusyUpdate(void) {
+    NSAlert *alert = [[NSAlert alloc] init];
+    alert.alertStyle = NSAlertStyleWarning;
+    alert.messageText = HoxiLocalized(@"Hoxi 有任务正在运行", @"Hoxi is still running tasks");
+    alert.informativeText = HoxiLocalized(
+        @"更新会退出 Hoxi 并中断正在运行的 Agent 任务。仍要现在更新吗？",
+        @"Updating will quit Hoxi and interrupt running agent tasks. Update now?");
+    [alert addButtonWithTitle:HoxiLocalized(@"仍然更新", @"Update Anyway")];
+    [alert addButtonWithTitle:HoxiLocalized(@"取消", @"Cancel")];
+    BOOL confirmed = [alert runModal] == NSAlertFirstButtonReturn;
+    [alert release];
+    return confirmed;
+}
+
+// Tests substitute this hook to keep the native bridge headless.
+static BOOL (*hoxiConfirmUpdateHook)(void);
+static BOOL HoxiConfirmUpdate(void) {
+    return hoxiConfirmUpdateHook != NULL ? hoxiConfirmUpdateHook() : HoxiConfirmBusyUpdate();
+}
+
 @interface HoxiSparkleDelegate : NSObject
 @property(nonatomic) unsigned long long token;
+@property(nonatomic) BOOL forced;
 @property(nonatomic) BOOL active;
 @property(nonatomic, copy) NSString *feed;
 @end
@@ -47,21 +75,26 @@
         // Cocoa supplies the localized cancellation description.
         *error = [NSError errorWithDomain:NSCocoaErrorDomain code:NSUserCancelledError userInfo:nil];
     }
+    self.forced = NO;
     hoxiNativeRelease(self.token, 0);
     return NO;
 }
 - (BOOL)updaterShouldRelaunchApplication:(id)updater {
-    if (self.active && hoxiNativeCanInstall(self.token)) return YES;
+    // Staging already started; relaunch must not be blocked by new work.
+    if (self.active && hoxiNativeCanInstall(self.token, 1)) return YES;
     hoxiNativeRelease(self.token, 0);
     return NO;
 }
 - (void)updater:(id)updater didAbortWithError:(NSError *)error {
+    self.forced = NO;
     hoxiNativeRelease(self.token, 0);
 }
 - (void)updater:(id)updater didFinishUpdateCycleForUpdateCheck:(NSInteger)check error:(NSError *)error {
+    self.forced = NO;
     hoxiNativeRelease(self.token, 0);
 }
 - (void)userDidCancelDownload:(id)updater {
+    self.forced = NO;
     hoxiNativeRelease(self.token, 0);
 }
 - (void)updater:(id)updater willExtractUpdate:(id)item {
@@ -101,10 +134,18 @@
 }
 - (NSInteger)admittedChoice:(NSInteger)choice {
     if (choice == 1) {
-        if (self.admission.active && hoxiNativeCanInstall(self.admission.token)) return choice;
+        if (self.admission.active &&
+            hoxiNativeCanInstall(self.admission.token, self.admission.forced ? 1 : 0)) return choice;
+        // Never dismiss silently: let the user override active agent work.
+        if (self.admission.active && HoxiConfirmUpdate()) {
+            self.admission.forced = YES;
+            if (hoxiNativeCanInstall(self.admission.token, 1)) return choice;
+        }
+        self.admission.forced = NO;
         hoxiNativeRelease(self.admission.token, 0);
         return 2; // Deny before Sparkle begins downloading or staging.
     }
+    self.admission.forced = NO;
     hoxiNativeRelease(self.admission.token, 0);
     return choice;
 }

@@ -436,7 +436,12 @@ func (a *DesktopApp) startup(ctx context.Context) {
 	if BuildVariant == "release" {
 		// Wails startup can precede the Cocoa run loop; never wait for it here.
 		go func() {
-			if err := updater.StartNative(a.gateway.BeginUpdate, a.gateway.ReleaseUpdate); err != nil {
+			if err := updater.StartNative(func(force bool) bool {
+				if force {
+					return a.gateway.BeginUpdateForced()
+				}
+				return a.gateway.BeginUpdate()
+			}, a.gateway.ReleaseUpdate); err != nil {
 				a.logger.Info("native updates unavailable", "error", err)
 			}
 		}()

@@ -4,7 +4,7 @@ package updater
 
 import "errors"
 
-func StartNative(canInstall func() bool, release func()) error {
+func StartNative(canInstall func(force bool) bool, release func()) error {
 	return errors.New("native updater requires macOS with cgo and a configured application bundle")
 }
 

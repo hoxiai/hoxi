@@ -25,12 +25,12 @@ func TestNativeAdmissionLifecycle(t *testing.T) {
 	var checks, releases atomic.Int32
 	nativeCallbacks.Lock()
 	nativeCallbacks.entries[0] = &nativeAdmission{
-		canInstall: func() bool { return checks.Add(1) <= 2 },
+		canInstall: func(bool) bool { return checks.Add(1) <= 2 },
 		release:    func() { releases.Add(1) },
 	}
 	nativeCallbacks.Unlock()
 	t.Cleanup(func() { hoxiNativeRelease(0, 1) })
-	if hoxiNativeCanInstall(0) != 1 || hoxiNativeCanInstall(0) != 1 {
+	if hoxiNativeCanInstall(0, 0) != 1 || hoxiNativeCanInstall(0, 0) != 1 {
 		t.Fatal("selection and relaunch must each recheck admission")
 	}
 	var wg sync.WaitGroup
@@ -42,15 +42,32 @@ func TestNativeAdmissionLifecycle(t *testing.T) {
 	if releases.Load() != 1 {
 		t.Fatal("abort and finish must not double release")
 	}
-	if hoxiNativeCanInstall(0) != 0 {
+	if hoxiNativeCanInstall(0, 0) != 0 {
 		t.Fatal("busy callback must deny admission")
 	}
 	hoxiNativeRelease(0, 1)
 	if releases.Load() != 2 {
 		t.Fatal("stop must release even a denied admission attempt")
 	}
-	if hoxiNativeCanInstall(0) != 0 {
+	if hoxiNativeCanInstall(0, 0) != 0 {
 		t.Fatal("retired native token must fail closed")
+	}
+}
+
+func TestNativeForcedAdmissionBypassesBusy(t *testing.T) {
+	var forced bool
+	nativeCallbacks.Lock()
+	nativeCallbacks.entries[0] = &nativeAdmission{
+		canInstall: func(force bool) bool { forced = force; return force },
+		release:    func() {},
+	}
+	nativeCallbacks.Unlock()
+	t.Cleanup(func() { hoxiNativeRelease(0, 1) })
+	if hoxiNativeCanInstall(0, 0) != 0 || forced {
+		t.Fatal("normal admission must not force")
+	}
+	if hoxiNativeCanInstall(0, 1) != 1 || !forced {
+		t.Fatal("forced admission must bypass busy state")
 	}
 }
 
@@ -58,12 +75,12 @@ func TestNativeAdmissionPanicFailsClosed(t *testing.T) {
 	var released bool
 	nativeCallbacks.Lock()
 	nativeCallbacks.entries[0] = &nativeAdmission{
-		canInstall: func() bool { panic("probe failed") },
+		canInstall: func(bool) bool { panic("probe failed") },
 		release:    func() { released = true },
 	}
 	nativeCallbacks.Unlock()
 	t.Cleanup(func() { hoxiNativeRelease(0, 1) })
-	if hoxiNativeCanInstall(0) != 0 {
+	if hoxiNativeCanInstall(0, 0) != 0 {
 		t.Fatal("panic must not cross cgo boundary")
 	}
 	hoxiNativeRelease(0, 1)
@@ -77,18 +94,18 @@ func TestNativeStagedAdmissionHeldUntilShutdown(t *testing.T) {
 	allow := true
 	nativeCallbacks.Lock()
 	nativeCallbacks.entries[0] = &nativeAdmission{
-		canInstall: func() bool { return allow },
+		canInstall: func(bool) bool { return allow },
 		release:    func() { releases.Add(1) },
 	}
 	nativeCallbacks.Unlock()
 	t.Cleanup(func() { hoxiNativeRelease(0, 1) })
-	if hoxiNativeCanInstall(0) != 1 {
+	if hoxiNativeCanInstall(0, 0) != 1 {
 		t.Fatal("selection must acquire admission")
 	}
 	hoxiNativeStaged(0) // Manual extraction or install-on-quit notification.
 	hoxiNativeStaged(0) // Repeated staging notifications are harmless.
 	allow = false
-	if hoxiNativeCanInstall(0) != 0 {
+	if hoxiNativeCanInstall(0, 0) != 0 {
 		t.Fatal("busy relaunch must still be denied")
 	}
 	for range 4 { // Denial, cancellation, abort, and cycle completion.

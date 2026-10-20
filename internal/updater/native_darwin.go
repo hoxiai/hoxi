@@ -27,7 +27,7 @@ var nativeCallbacks = struct {
 
 type nativeAdmission struct {
 	sync.Mutex
-	canInstall func() bool
+	canInstall func(force bool) bool
 	release    func()
 	touched    bool
 	staged     bool
@@ -37,8 +37,9 @@ type nativeAdmission struct {
 // StartNative starts Sparkle in a configured .app after the Cocoa main loop starts.
 // Calls are marshaled synchronously to the main thread. Both callbacks must be
 // bounded, must not call this API or wait for the main thread, and must tolerate
-// repeated admission checks within one cycle. canInstall must fail closed on
-// timeout and retain its draining admission until release is called.
+// repeated admission checks within one cycle. canInstall(force) must fail
+// closed on timeout and retain its draining admission until release is called;
+// force is only set after the user confirmed interrupting active work.
 //
 // Automatic checks are enabled; background downloads are deliberately disabled.
 // The bundle must set SUAllowsAutomaticUpdates=false to prevent Sparkle's UI
@@ -49,7 +50,7 @@ type nativeAdmission struct {
 // until shutdown, even after cancellation or error: Sparkle may still install on
 // quit. The host UI must treat this as draining/restart-required, not idle, and
 // reject new work while its gateway admission is held. No UI wiring is done here.
-func StartNative(canInstall func() bool, release func()) error {
+func StartNative(canInstall func(force bool) bool, release func()) error {
 	if canInstall == nil || release == nil {
 		return errors.New("native updater requires admission and release callbacks")
 	}
@@ -94,7 +95,7 @@ func StopNative() {
 }
 
 //export hoxiNativeCanInstall
-func hoxiNativeCanInstall(token C.ulonglong) (allowed C.int) {
+func hoxiNativeCanInstall(token C.ulonglong, force C.int) (allowed C.int) {
 	nativeCallbacks.Lock()
 	entry := nativeCallbacks.entries[uint64(token)]
 	nativeCallbacks.Unlock()
@@ -112,7 +113,7 @@ func hoxiNativeCanInstall(token C.ulonglong) (allowed C.int) {
 		return 0
 	}
 	entry.touched = true
-	if entry.canInstall() {
+	if entry.canInstall(force != 0) {
 		return 1
 	}
 	return 0

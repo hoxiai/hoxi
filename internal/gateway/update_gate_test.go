@@ -92,6 +92,21 @@ func TestUpdateInflightMutation(t *testing.T) {
 	}
 }
 
+func TestUpdateForcedAdmissionWhileBusy(t *testing.T) {
+	g := updateTestGateway(t, func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, `{}`) })
+	g.status.SetSessionBusy("ses_test", true)
+	if g.BeginUpdate() || g.UpdateDraining() {
+		t.Fatal("busy gateway admitted a normal update")
+	}
+	if !g.BeginUpdateForced() || !g.UpdateDraining() {
+		t.Fatal("forced update must drain while sessions are busy")
+	}
+	g.ReleaseUpdate()
+	if g.UpdateDraining() {
+		t.Fatal("release retained forced drain")
+	}
+}
+
 func TestUpdateAuthoritativeStatus(t *testing.T) {
 	for _, body := range []string{`{"s":{"type":"busy"}}`, `{"s":{"type":"retry"}}`, `{"s":{"type":"unknown"}}`, `{"s":{}}`, `{"s":null}`, `null`, `[]`, `{`, `{} {}`, strings.Repeat(" ", (1<<20)+1)} {
 		t.Run(fmt.Sprintf("%.40s", body), func(t *testing.T) {

@@ -247,6 +247,18 @@ func (g *Gateway) BeginUpdate() bool {
 	}
 }
 
+// BeginUpdateForced closes mutation admission even when agent sessions are
+// still running. The caller must have confirmed the interruption with the user.
+// Existing in-flight mutations may finish, but new mutations are rejected.
+func (g *Gateway) BeginUpdateForced() bool {
+	g.updateCheckMu.Lock()
+	defer g.updateCheckMu.Unlock()
+	g.updateMu.Lock()
+	g.updateDraining = true
+	g.updateMu.Unlock()
+	return true
+}
+
 func updateDirectoryGone(dir string) bool {
 	info, err := os.Stat(dir)
 	return os.IsNotExist(err) || (err == nil && !info.IsDir())

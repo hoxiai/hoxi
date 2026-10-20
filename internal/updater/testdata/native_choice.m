@@ -3,7 +3,7 @@
 
 static int checks;
 static int allowed;
-int hoxiNativeCanInstall(unsigned long long token) { checks++; return allowed; }
+int hoxiNativeCanInstall(unsigned long long token, int force) { checks++; return allowed; }
 void hoxiNativeRelease(unsigned long long token, int stop) {}
 void hoxiNativeStaged(unsigned long long token) {}
 
@@ -18,7 +18,10 @@ void hoxiNativeStaged(unsigned long long token) {}
 - (void)dealloc { [_reply release]; [super dealloc]; }
 @end
 
+static BOOL DenyConfirm(void) { return NO; }
+
 int main(void) { @autoreleasepool {
+    hoxiConfirmUpdateHook = DenyConfirm;
     HoxiSparkleDelegate *admission = [[HoxiSparkleDelegate alloc] init];
     admission.active = YES;
     admission.token = 7;
