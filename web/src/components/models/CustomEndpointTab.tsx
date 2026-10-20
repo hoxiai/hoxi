@@ -1,6 +1,6 @@
 // web/src/components/models/CustomEndpointTab.tsx
 import { createEffect, createMemo, createSignal, For, Show, untrack } from "solid-js";
-import { Check, LoaderCircle, Lock, Plus, RefreshCw, Trash2 } from "lucide-solid";
+import { ArrowLeft, Check, LoaderCircle, Lock, Plus, RefreshCw, Trash2 } from "lucide-solid";
 import { hoxiAPI } from "../../services/api";
 import {
   disconnectProvider,
@@ -257,6 +257,17 @@ export default function CustomEndpointTab() {
     <form onSubmit={onSave} class="flex-1 flex flex-col min-h-0 overflow-hidden">
       <div class="flex-1 overflow-y-auto p-6 sm:p-8">
         <div class="mx-auto w-full max-w-5xl space-y-4">
+        <div class="flex items-center justify-between">
+          <button
+            type="button"
+            onClick={() => openProviderModal("providers", null)}
+            class="hoxi-press inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 -ml-2 text-[12.5px] font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+          >
+            <ArrowLeft size={14} />
+            <span>{t("models.tabCatalog")}</span>
+          </button>
+        </div>
+
         {/* Clean Single-Line Header + Compact Switcher */}
         <div class="flex items-center justify-between gap-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/50 px-3.5 py-2.5">
           <div class="min-w-0">
