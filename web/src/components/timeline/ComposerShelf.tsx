@@ -12,6 +12,7 @@ import {
   isSessionBusy,
   openFileInInspector,
   removeReviewComment,
+  resolveRootSessionID,
   setWorkspace,
   workspace,
 } from "../../store/workspace";
@@ -21,7 +22,6 @@ import { FileIcon } from "../icons";
 import ChangedFilesSummary from "./ChangedFilesSummary";
 import PlanFollowupBar from "./PlanFollowupBar";
 import RevertBanner from "./RevertBanner";
-import { resolveRootSessionID } from "./SubagentSessionBanner";
 import { collectSessionChangedFiles } from "./tool-card-state";
 import { filterVisibleTurnsByRevert } from "./turn-window";
 import { t } from "../../i18n";

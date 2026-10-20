@@ -49,7 +49,7 @@
 │   └── worktree/                     # Git worktree session sandbox manager, diffs, branches & snapshots
 ├── web/                              # Frontend workspace (Vite + SolidJS + Tailwind)
 │   ├── src/
-│   │   ├── components/               # Modular UI by domain (layout, timeline, composer, inspector, models, handoff, approval, orchestration, automation, skills, terminal, settings, icons)
+│   │   ├── components/               # Modular UI by domain (layout, timeline, inspector, models, handoff, approval, codeindex, orchestration, skills, terminal, settings, icons, motion)
 │   │   ├── i18n/                     # Reactive t(key, params), auto-inferred types & en-US/zh-CN locale modules
 │   │   ├── services/                 # Pure HTTP/REST/SSE/Browser transport clients (http.ts, api.ts, sse.ts, browser.ts, runner-api.ts, platform-api.ts, …)
 │   │   ├── store/                    # SolidJS reactive store & domain modules (flat barrel export in workspace.ts)
@@ -112,7 +112,7 @@
    - **前端严格单向分层 (`components/ -> store/ -> services/`)**：
      - `services/` 仅负责 HTTP/REST/SSE 网络通信与协议传输，**严禁**反向 `import` 任何 `store/` 或 `components/` 模块，也不得混入纯 UI 渲染工具。
      - `store/` 负责响应式状态、领域数据计算与本地持久化，**严禁**反向 `import` 任何 `components/` 模块；所有子模块统一在 [`web/src/store/workspace.ts`](web/src/store/workspace.ts) 底部扁平重导出，禁止在子模块末尾做二级链式 `export *`。
-     - `components/` 按业务域正交归位（`layout` 仅放窗口骨架与导航栏，独立业务弹窗归入 `models`、`handoff`、`settings`、`approval`、`orchestration`、`automation`、`skills` 等对应目录）。
+     - `components/` 按业务域正交归位（`layout` 仅放窗口骨架与导航栏，独立业务弹窗归入 `models`、`handoff`、`settings`、`approval`、`codeindex`、`orchestration`、`skills` 等对应目录）。
    - **Go 后端四层单向依赖 (`app/cli -> gateway -> 业务领域包 -> 基础底座包`)**：
      - 业务领域包（`runner`, `handoff`, `worktree`, `provider`, `browser`, `opencode`, `workspace`, `auth`, `leaderboard`, `updater`, `attachment`, `codeindex`, `forge`, `orchestration`, `recall`, `sandbox`, `skills`, `telemetry`）与底座包（`statusbar`, `claudeconfig`, `agyhook`, `diagnostics`, `buildinfo`, `textindex`）**严禁反向 `import` `internal/gateway`、`internal/app` 或 `internal/cli`**。
      - 各子包必须使用各自明确的 Receiver 类型（`*Gateway` / `*Service` / `*Manager`），严禁定义跨包伪装别名（如 `type desktopGateway = Service`）；Hoxi 内部自发 LLM 请求统一复用 `internal/provider/http.go` 的 `callSimpleLLM`。

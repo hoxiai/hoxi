@@ -1,21 +1,9 @@
 import { createEffect, createMemo, createSignal, Index, onCleanup, Show } from "solid-js";
 import { t } from "../../i18n";
 import { getCachedHighlight, highlightCode, type HighlightedCode } from "./syntax-highlight";
-import { workspace } from "../../store/workspace";
+import { codeWrapEnabled, toggleCodeWrap, workspace } from "../../store/workspace";
 import { Icon } from "../icons";
 import { ActionIconButton } from "./tool-card-helpers";
-
-const WRAP_STORAGE_KEY = "hoxi.codeWrap";
-
-function readWrapPreference(): boolean {
-  try {
-    return typeof localStorage !== "undefined" && localStorage.getItem(WRAP_STORAGE_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
-const [codeWrapEnabled, setCodeWrapEnabled] = createSignal(readWrapPreference());
 
 function detectCodeKind(lang: string): "plain" | "shell" | "diff" {
   const clean = lang.trim().toLowerCase();
@@ -99,15 +87,7 @@ export default function CodeBlockCard(props: { lang: string; code: string }) {
     }
   };
 
-  const toggleWrap = () => {
-    const next = !wrap();
-    setCodeWrapEnabled(next);
-    try {
-      localStorage.setItem(WRAP_STORAGE_KEY, next ? "1" : "0");
-    } catch {
-      /* ignore */
-    }
-  };
+  const toggleWrap = toggleCodeWrap;
 
   const codeKind = () => detectCodeKind(props.lang);
 

@@ -19,8 +19,9 @@ import {
   isSubagentToolAlive,
   isSubagentToolInterrupted,
   loadSessionMessagesOnly,
-  lookupSubagentParent,
   markSessionInterrupted,
+  resolveParentSessionID,
+  resolveRootSessionID,
   resolveSubagentTitle,
   resumeSubagentTask,
   selectSession,
@@ -29,6 +30,8 @@ import {
 } from "../../store/workspace";
 import { DiffChanges, Spinner } from "../icons";
 import { t } from "../../i18n";
+
+export { resolveParentSessionID, resolveRootSessionID };
 import {
   extractCommand,
   extractDescription,
@@ -94,34 +97,6 @@ function summarizeSubagentTelemetry(subId: string) {
     additions,
     deletions,
   };
-}
-
-/**
- * Resolves the immediate parent session ID of `sessionID` (if it is a subagent session),
- * checking both `workspace.sessions` (`parentID`) and `task` tool calls in `messagesBySession`.
- */
-export function resolveParentSessionID(sessionID: string | null | undefined): string | null {
-  if (!sessionID) return null;
-  const info = workspace.sessions.find((s) => s.id === sessionID);
-  if (info?.parentID) return info.parentID;
-  // Indexed as task parts arrive; never scan every transcript per event or memo.
-  return lookupSubagentParent(sessionID);
-}
-
-/**
- * Walks up parent links to return the root/primary session ID.
- */
-export function resolveRootSessionID(sessionID: string | null | undefined): string | null {
-  if (!sessionID) return null;
-  let curr: string = sessionID;
-  const visited = new Set<string>([curr]);
-  for (let depth = 0; depth < 8; depth++) {
-    const parent = resolveParentSessionID(curr);
-    if (!parent || visited.has(parent)) break;
-    visited.add(parent);
-    curr = parent;
-  }
-  return curr;
 }
 
 /**

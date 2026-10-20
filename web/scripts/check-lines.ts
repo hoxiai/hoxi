@@ -13,6 +13,7 @@ const EXEMPT_SUFFIXES = [
 const IGNORE_DIRS = new Set([
   ".git",
   ".hoxi",
+  ".claude",
   ".dart_tool",
   "node_modules",
   "dist",
@@ -90,6 +91,11 @@ for (const file of files) {
     }
     if (rel.endsWith("-storage.ts")) {
       console.error(`  ✗ [fragment violation] ${rel} must not split out a separate *-storage.ts scaffold file; keep persistence inside its domain store module.`);
+      violations++;
+    }
+  } else if (rel.startsWith("web/src/components/")) {
+    if (/\blocalStorage\b/.test(content)) {
+      console.error(`  ✗ [layering violation] ${rel} must not access localStorage directly in components/; move persistence into web/src/store/.`);
       violations++;
     }
   } else if (rel.startsWith("web/src/i18n/") && /domain-.*-types\.ts$/.test(rel)) {

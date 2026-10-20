@@ -16,11 +16,11 @@ import {
   replaceSession,
   selectModel,
   selectSession,
+  shortenPath,
   switchWorkspace,
   workspace,
 } from "../../store/workspace";
 import { recordCustomSessionTitle } from "../../store/session-title";
-import { shortenPath } from "../layout/left-nav-helpers";
 import ExternalHandoffPreviewPane, {
   handoffSourceBadgeClass,
   resolveOriginalModel,

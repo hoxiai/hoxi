@@ -7,12 +7,12 @@ import {
 import {
   activeSession,
   openEditWorkspaceModal,
+  resolveRootSessionID,
   workspace,
   workspaceDisplayName,
 } from "../../store/workspace";
 import { t } from "../../i18n";
 import { isPlaceholderSessionTitle } from "../../store/session-title";
-import { resolveRootSessionID } from "../timeline/SubagentSessionBanner";
 import BranchManagerPopover from "./BranchManagerPopover";
 import HeaderOverflowMenu from "./HeaderOverflowMenu";
 

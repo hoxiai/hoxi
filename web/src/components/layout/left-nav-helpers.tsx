@@ -6,11 +6,14 @@ import {
   isInvalidProjectPath,
   normalizeFolderPath,
   normalizeWorkspaceIdentityColor,
+  resolveRootSessionID,
+  shortenPath,
   workspace,
   workspacePrimaryFolder,
 } from "../../store/workspace";
-import { resolveRootSessionID } from "../timeline/AgentStackPill";
 import { t } from "../../i18n";
+
+export { shortenPath };
 
 export interface ProjectNavEntry {
   workspaceId?: string;
@@ -111,19 +114,6 @@ export function badgeFor(
 export function basename(p: string): string {
   const parts = p.split(/[\\/]+/).filter(Boolean);
   return parts.length ? parts[parts.length - 1] : p || "workspace";
-}
-
-export function shortenPath(p: string): string {
-  if (!p) return "";
-  const winMatch = p.match(/^[A-Za-z]:[\\/]Users[\\/]([^\\/]+)([\\/].*)?$/);
-  if (winMatch) {
-    return "~" + (winMatch[2] || "");
-  }
-  const unixMatch = p.match(/^\/(?:Users|home)\/([^/]+)(\/.*)?$/);
-  if (unixMatch) {
-    return "~" + (unixMatch[2] || "");
-  }
-  return p;
 }
 
 export function buildAllProjects(): ProjectNavEntry[] {

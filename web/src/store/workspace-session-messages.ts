@@ -22,7 +22,6 @@ import {
   recordPromptDispatched,
   recordToolPartUpdate,
   recordUserAbortAction,
-  recordUserRevertAction,
 } from "./provider-telemetry";
 import { isPlaceholderSessionTitle, summarizeAndRenameSession } from "./session-title";
 import {
@@ -53,13 +52,8 @@ import {
   enqueueSessionPrompt,
   ensureChildSubagentSessionLoaded,
   extractChildSubagentSessionId,
-  forkFromMessage,
   markSessionPromptDispatched,
-  revertToHere,
-  undoRevert,
 } from "./workspace-queue-subagents";
-
-export { forkFromMessage, revertToHere, undoRevert };
 
 const lastInterruptAtBySession = new Map<string, number>();
 

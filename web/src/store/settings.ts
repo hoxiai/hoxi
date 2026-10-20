@@ -1,4 +1,5 @@
 // web/src/store/settings.ts
+import { createSignal } from "solid-js";
 import { createStore } from "solid-js/store";
 import { hoxiAPI } from "../services/api";
 import type { ApprovalMode } from "./approval-mode";
@@ -578,3 +579,26 @@ export function buildCombinedSystemPrompt(
   }
   return parts.length > 0 ? parts.join("\n\n") : undefined;
 }
+
+const CODE_WRAP_STORAGE_KEY = "hoxi.codeWrap";
+
+function readInitialCodeWrap(): boolean {
+  try {
+    return typeof localStorage !== "undefined" && localStorage.getItem(CODE_WRAP_STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export const [codeWrapEnabled, setCodeWrapEnabled] = createSignal(readInitialCodeWrap());
+
+export function toggleCodeWrap(): void {
+  const next = !codeWrapEnabled();
+  setCodeWrapEnabled(next);
+  try {
+    localStorage.setItem(CODE_WRAP_STORAGE_KEY, next ? "1" : "0");
+  } catch {
+    /* ignore */
+  }
+}
+

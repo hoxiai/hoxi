@@ -1,7 +1,6 @@
 import { createSignal, onCleanup, onMount } from "solid-js";
 import ThreePaneShell from "./components/layout/ThreePaneShell";
 import NetworkStatusBanner from "./components/layout/NetworkStatusBanner";
-import { resolveParentSessionID } from "./components/timeline/SubagentSessionBanner";
 import { hoxiAPI } from "./services/api";
 import { connectEventStream } from "./services/sse";
 import { watchNetworkStatus } from "./services/network";
@@ -34,6 +33,7 @@ import {
   removeSessionFromStore,
   replaceSessionFromEvent,
   resolveDefaultProjectDir,
+  resolveParentSessionID,
   resyncResidentTranscripts,
   runSessionCodeAudit,
   scheduleRefreshWorktreeStatus,

@@ -61,6 +61,19 @@ export function normalizeFolderPath(p?: string | null): string {
   return trimmed.replace(/[\\/]+$/, "");
 }
 
+export function shortenPath(p: string): string {
+  if (!p) return "";
+  const winMatch = p.match(/^[A-Za-z]:[\\/]Users[\\/]([^\\/]+)([\\/].*)?$/);
+  if (winMatch) {
+    return "~" + (winMatch[2] || "");
+  }
+  const unixMatch = p.match(/^\/(?:Users|home)\/([^/]+)(\/.*)?$/);
+  if (unixMatch) {
+    return "~" + (unixMatch[2] || "");
+  }
+  return p;
+}
+
 export function isInvalidProjectPath(p?: string | null): boolean {
   const norm = normalizeFolderPath(p);
   if (!norm || norm === "." || norm === "/" || norm === "\\") return true;

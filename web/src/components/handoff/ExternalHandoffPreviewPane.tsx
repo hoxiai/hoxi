@@ -6,7 +6,7 @@ import type {
   ExternalSessionSummary,
   ExternalToolID,
 } from "../../services/api";
-import { shortenPath } from "../layout/left-nav-helpers";
+import { shortenPath } from "../../store/workspace";
 import { t } from "../../i18n";
 
 export function handoffSourceBadgeClass(source: ExternalToolID): string {

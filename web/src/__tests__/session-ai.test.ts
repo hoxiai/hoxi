@@ -11,7 +11,7 @@ import {
   setWorkspace, workspace, type MessageTurn,
   inferModelEffortCapabilities, clampReasoningEffort,
 } from "../store/workspace";
-import { forkFromMessage, removeSessionFromStore, selectSession } from "../store/workspace-sessions";
+import { forkFromMessage, removeSessionFromStore, selectSession } from "../store/workspace";
 import { submitSessionPrompt } from "../store/workspace-session-messages";
 import { drainNextQueuedPrompt, enqueueSessionPrompt, sendQueuedPromptNow } from "../store/workspace-queue-subagents";
 import { assertDeepEqual, assertEqual, assertTrue, describe, it } from "./test-harness";
