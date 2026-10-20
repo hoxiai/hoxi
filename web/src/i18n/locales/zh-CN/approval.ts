@@ -4,7 +4,7 @@ import type { ApprovalI18n } from "../../types";
 export const approval: ApprovalI18n = {
   title: "安全确认",
   warning:
-    "请求执行高权限或可能修改系统的操作，请确认是否继续。",
+    "请求执行高权限或可能修改系统的操作，请确认是否继续",
   allowOnce: "仅允许一次",
   allowAlways: "本会话始终允许",
   reject: "拒绝",

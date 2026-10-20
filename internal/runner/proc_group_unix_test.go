@@ -183,7 +183,10 @@ while :; do
   sleep 0.05
 done
 `)
-	defer ap.Abort()
+	defer func() {
+		ap.Abort()
+		waitTurnDone(t, ap, 2*time.Second)
+	}()
 	deadline := time.After(5 * time.Second)
 	for {
 		select {

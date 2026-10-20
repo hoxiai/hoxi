@@ -6,17 +6,20 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/sandbox"
 )
 
 func (s *Service) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Title       string `json:"title"`
-		Directory   string `json:"directory"`
-		Runtime     string `json:"runtime"`
-		ModelID     string `json:"modelID"`
-		ProviderID  string `json:"providerID"`
-		Mode        string `json:"mode"`
-		SandboxMode string `json:"sandboxMode"`
+		Title          string `json:"title"`
+		Directory      string `json:"directory"`
+		Runtime        string `json:"runtime"`
+		ModelID        string `json:"modelID"`
+		ProviderID     string `json:"providerID"`
+		Mode           string `json:"mode"`
+		SandboxMode    string `json:"sandboxMode"`
+		CommandSandbox bool   `json:"commandSandbox"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid session request")
@@ -50,6 +53,10 @@ func (s *Service) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	sandboxMode, err := normalizeSandboxMode(body.SandboxMode)
 	if err != nil {
 		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if body.CommandSandbox && !sandbox.Available() {
+		writeJSONError(w, http.StatusBadRequest, sandbox.UnavailableReason())
 		return
 	}
 	sessionID := GenerateRunnerSessionID(rt)
@@ -94,17 +101,18 @@ func (s *Service) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 	now := time.Now().UnixMilli()
 	rec := SessionRecord{
-		ID:          sessionID,
-		Runtime:     rt,
-		ProjectDir:  projDir,
-		SandboxMode: sandboxMode,
-		ModelID:     modelID,
-		ProviderID:  provID,
-		Mode:        firstNonEmptyStr(body.Mode, "build"),
-		Title:       title,
-		CreatedAt:   now,
-		UpdatedAt:   now,
-		Turns:       []MessageTurn{},
+		ID:             sessionID,
+		Runtime:        rt,
+		ProjectDir:     projDir,
+		SandboxMode:    sandboxMode,
+		CommandSandbox: body.CommandSandbox,
+		ModelID:        modelID,
+		ProviderID:     provID,
+		Mode:           firstNonEmptyStr(body.Mode, "build"),
+		Title:          title,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+		Turns:          []MessageTurn{},
 	}
 	if err := s.provisionSessionDirectory(&rec); err != nil {
 		writeJSONError(w, http.StatusBadRequest, err.Error())

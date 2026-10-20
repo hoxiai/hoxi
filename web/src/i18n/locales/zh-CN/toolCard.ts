@@ -43,7 +43,7 @@ export const toolCard: ToolCardI18n = {
   actionCheckSubagents: "检查子任务",
   subagentPrompt: "任务指令",
   subagentReport: "结果汇报",
-  subagentAwaitingReport: "执行中…子任务完成后结果会显示在这里。",
+  subagentAwaitingReport: "执行中…子任务完成后结果会显示在这里",
   lastActivity: "{seconds} 秒前活跃",
   gatheringContext: "正在读取上下文",
   gatheredContext: "已读取上下文",

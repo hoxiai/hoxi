@@ -495,6 +495,15 @@ export interface ExternalPlanStep {
   status: string;
 }
 
+export interface HandoffPreviewFidelity {
+  retainedTurns: number;
+  retainedToolCalls: number;
+  retainedFiles?: string[];
+  unsupportedFeatures?: string[];
+  targetDirectory: string;
+  targetRuntime: string;
+}
+
 export interface ExternalSessionDetail {
   summary: ExternalSessionSummary;
   turns: NormalizedTurn[];
@@ -502,6 +511,7 @@ export interface ExternalSessionDetail {
   changedFiles?: string[];
   lastTurnSummary?: string;
   lastRecap?: string;
+  fidelity?: HandoffPreviewFidelity;
 }
 
 export interface ExternalSourceStats {

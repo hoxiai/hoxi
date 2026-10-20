@@ -18,12 +18,16 @@ import (
 	"github.com/hoxiai/hoxi/internal/auth"
 	"github.com/hoxiai/hoxi/internal/browser"
 	"github.com/hoxiai/hoxi/internal/buildinfo"
+	"github.com/hoxiai/hoxi/internal/codeindex"
 	"github.com/hoxiai/hoxi/internal/diagnostics"
 	"github.com/hoxiai/hoxi/internal/handoff"
 	"github.com/hoxiai/hoxi/internal/leaderboard"
+	"github.com/hoxiai/hoxi/internal/orchestration"
 	"github.com/hoxiai/hoxi/internal/privacy"
 	"github.com/hoxiai/hoxi/internal/provider"
+	"github.com/hoxiai/hoxi/internal/recall"
 	"github.com/hoxiai/hoxi/internal/runner"
+	"github.com/hoxiai/hoxi/internal/sandbox"
 	"github.com/hoxiai/hoxi/internal/skills"
 	"github.com/hoxiai/hoxi/internal/statusbar"
 	"github.com/hoxiai/hoxi/internal/updater"
@@ -50,6 +54,10 @@ type Gateway struct {
 	updater               *updater.Checker
 	leaderboard           *leaderboard.Service
 	privacy               *privacy.Service
+	sandbox               *sandbox.Manager
+	codeIndex             *codeindex.Service
+	recallSvc             *recall.Service
+	orchestration         *orchestration.Service
 	onOpenDirectoryDialog func() (string, error)
 	onFocusDesktop        func(directory, sessionID string)
 	dialogMu              sync.RWMutex
@@ -144,7 +152,14 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 		updater:      updaterSvc,
 		leaderboard:  leaderboardSvc,
 		privacy:      privacy.New(""),
+		sandbox:      sandbox.NewManager(""),
+		codeIndex:    codeindex.NewService(""),
 	}
+	g.recallSvc = recall.NewService(&gatewayRecallSource{
+		g:      g,
+		client: &http.Client{Transport: &http.Transport{Proxy: nil, MaxIdleConnsPerHost: 8}, Timeout: 8 * time.Second},
+	})
+	g.orchestration = orchestration.NewService(openCodePort, password)
 	g.skills = skills.NewService(targetURL.String(), password, g.resolveSkillContext)
 	runnerSvc.SetSkillValidator(func(ctx context.Context, directory, sessionID string, sel runner.SkillSelection) error {
 		_, err := g.skills.VerifySelection(ctx, directory, sessionID, skills.SkillSelection{
@@ -316,6 +331,7 @@ func (g *Gateway) registerRoutes(distFS fs.FS) {
 
 	g.mux.HandleFunc("/api/hoxi/system-info", g.handleSystemRuntimeInfo)
 	g.mux.HandleFunc("/api/hoxi/keep-awake", g.handleKeepAwake)
+	g.mux.HandleFunc("/api/hoxi/sandbox/session", g.handleSandboxSession)
 	g.mux.HandleFunc("/api/hoxi/clipboard/images", g.handleClipboardImages)
 	g.mux.HandleFunc("/api/hoxi/dev-pulse", g.handleDevPulse)
 	g.mux.Handle("/provider/", g.proxy)
@@ -330,6 +346,15 @@ func (g *Gateway) registerRoutes(distFS fs.FS) {
 	}
 	if g.skills != nil {
 		g.skills.RegisterRoutes(g.mux)
+	}
+	if g.codeIndex != nil {
+		g.codeIndex.RegisterRoutes(g.mux)
+	}
+	if g.recallSvc != nil {
+		g.recallSvc.RegisterRoutes(g.mux)
+	}
+	if g.orchestration != nil {
+		g.orchestration.RegisterRoutes(g.mux)
 	}
 
 	if g.auth != nil {

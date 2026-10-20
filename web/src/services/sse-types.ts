@@ -4,9 +4,13 @@
 export type SessionRuntime = "opencode" | "antigravity" | "claude-code" | "codebuddy" | "qoder";
 
 export interface SessionCapabilities {
-  revert: boolean;
-  fork: boolean;
-  steer: boolean;
+  approval?: boolean;
+  steer?: boolean;
+  resume?: boolean;
+  revert?: boolean;
+  fork?: boolean;
+  attachments?: boolean;
+  costStats?: boolean;
 }
 
 export interface SessionInfo {

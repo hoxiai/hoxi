@@ -498,3 +498,40 @@ func TestImageOnlyPromptAndAttachmentEncoding(t *testing.T) {
 		t.Fatalf("expected Antigravity stream-json input to use string content, got: %s", string(agyBytes))
 	}
 }
+
+func TestRuntimeCapabilitiesMatrix(t *testing.T) {
+	// 1. Subagent: all capabilities false
+	subCaps := RuntimeCapabilities("opencode", true)
+	if subCaps.Approval || subCaps.Steer || subCaps.Resume || subCaps.Revert || subCaps.Fork || subCaps.Attachments || subCaps.CostStats {
+		t.Fatalf("expected subagent to have zero mutable capabilities, got %+v", subCaps)
+	}
+
+	// 2. OpenCode: full capabilities
+	ocCaps := RuntimeCapabilities("opencode", false)
+	if !ocCaps.Approval || !ocCaps.Steer || !ocCaps.Resume || !ocCaps.Revert || !ocCaps.Fork || !ocCaps.Attachments || !ocCaps.CostStats {
+		t.Fatalf("expected opencode to support full capability matrix, got %+v", ocCaps)
+	}
+
+	// 3. Claude Code: approval supported, steer false
+	cldCaps := RuntimeCapabilities(string(RuntimeClaudeCode), false)
+	if !cldCaps.Approval || cldCaps.Steer || !cldCaps.Resume || !cldCaps.Revert || !cldCaps.Fork || !cldCaps.Attachments || !cldCaps.CostStats {
+		t.Fatalf("expected claude-code capabilities mismatch, got %+v", cldCaps)
+	}
+
+	// 4. Antigravity: approval supported, steer false
+	agyCaps := RuntimeCapabilities(string(RuntimeAntigravity), false)
+	if !agyCaps.Approval || agyCaps.Steer || !agyCaps.Resume || !agyCaps.Revert || !agyCaps.Fork || !agyCaps.Attachments || !agyCaps.CostStats {
+		t.Fatalf("expected antigravity capabilities mismatch, got %+v", agyCaps)
+	}
+
+	// 5. CodeBuddy & Qoder: approval false (no PreToolUse hook gate)
+	cbCaps := RuntimeCapabilities(string(RuntimeCodeBuddy), false)
+	if cbCaps.Approval || cbCaps.Steer || !cbCaps.Resume || !cbCaps.Revert || !cbCaps.Fork || cbCaps.Attachments || !cbCaps.CostStats {
+		t.Fatalf("expected codebuddy capabilities mismatch, got %+v", cbCaps)
+	}
+
+	qdCaps := RuntimeCapabilities(string(RuntimeQoder), false)
+	if qdCaps.Approval || qdCaps.Steer || !qdCaps.Resume || !qdCaps.Revert || !qdCaps.Fork || qdCaps.Attachments || !qdCaps.CostStats {
+		t.Fatalf("expected qoder capabilities mismatch, got %+v", qdCaps)
+	}
+}

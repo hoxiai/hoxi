@@ -58,13 +58,23 @@ type ExternalPlanStep struct {
 	Status string `json:"status"`
 }
 
+type HandoffPreviewFidelity struct {
+	RetainedTurns       int      `json:"retainedTurns"`
+	RetainedToolCalls   int      `json:"retainedToolCalls"`
+	RetainedFiles       []string `json:"retainedFiles,omitempty"`
+	UnsupportedFeatures []string `json:"unsupportedFeatures,omitempty"`
+	TargetDirectory     string   `json:"targetDirectory"`
+	TargetRuntime       string   `json:"targetRuntime"`
+}
+
 type ExternalSessionDetail struct {
-	Summary         ExternalSessionSummary `json:"summary"`
-	Turns           []NormalizedTurn       `json:"turns"`
-	PlanSteps       []ExternalPlanStep     `json:"planSteps,omitempty"`
-	ChangedFiles    []string               `json:"changedFiles,omitempty"`
-	LastTurnSummary string                 `json:"lastTurnSummary,omitempty"`
-	LastRecap       string                 `json:"lastRecap,omitempty"`
+	Summary         ExternalSessionSummary  `json:"summary"`
+	Turns           []NormalizedTurn        `json:"turns"`
+	PlanSteps       []ExternalPlanStep      `json:"planSteps,omitempty"`
+	ChangedFiles    []string                `json:"changedFiles,omitempty"`
+	LastTurnSummary string                  `json:"lastTurnSummary,omitempty"`
+	LastRecap       string                  `json:"lastRecap,omitempty"`
+	Fidelity        *HandoffPreviewFidelity `json:"fidelity,omitempty"`
 }
 
 type ExternalSourceStats struct {

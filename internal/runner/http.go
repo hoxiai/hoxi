@@ -352,11 +352,12 @@ func (s *Service) handleSingleSession(w http.ResponseWriter, r *http.Request, se
 
 	case http.MethodPatch:
 		var body struct {
-			Title       string  `json:"title"`
-			SandboxMode *string `json:"sandboxMode"`
-			Force       bool    `json:"force"`
-			KeepBranch  *bool   `json:"keepBranch"`
-			Time        *struct {
+			Title          string  `json:"title"`
+			SandboxMode    *string `json:"sandboxMode"`
+			CommandSandbox *bool   `json:"commandSandbox"`
+			Force          bool    `json:"force"`
+			KeepBranch     *bool   `json:"keepBranch"`
+			Time           *struct {
 				Archived *int64 `json:"archived"`
 			} `json:"time"`
 		}
@@ -370,6 +371,15 @@ func (s *Service) handleSingleSession(w http.ResponseWriter, r *http.Request, se
 				keepBranch = *body.KeepBranch
 			}
 			info, err := s.changeSessionSandboxWithOptions(sessionID, *body.SandboxMode, body.Force, keepBranch)
+			if err != nil {
+				writeJSONError(w, http.StatusConflict, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, info)
+			return
+		}
+		if body.CommandSandbox != nil {
+			info, err := s.setCommandSandbox(sessionID, *body.CommandSandbox)
 			if err != nil {
 				writeJSONError(w, http.StatusConflict, err.Error())
 				return

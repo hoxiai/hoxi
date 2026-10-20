@@ -69,27 +69,6 @@ export function isManagedSession(sessionID?: string | null): boolean {
   return isRunnerSessionID(sessionID);
 }
 
-export function canRevertSession(sessionID?: string | null): boolean {
-  if (!sessionID) return false;
-  const session = workspace.sessions.find((s) => s.id === sessionID);
-  if (session?.capabilities?.revert !== undefined) return session.capabilities.revert;
-  return true;
-}
-
-export function canForkSession(sessionID?: string | null): boolean {
-  if (!sessionID) return false;
-  const session = workspace.sessions.find((s) => s.id === sessionID);
-  if (session?.capabilities?.fork !== undefined) return session.capabilities.fork;
-  return true;
-}
-
-export function canSteerSession(sessionID?: string | null): boolean {
-  if (!sessionID) return false;
-  const session = workspace.sessions.find((s) => s.id === sessionID);
-  if (session?.capabilities?.steer !== undefined) return session.capabilities.steer;
-  if (session?.runtime) return session.runtime === "opencode";
-  return !isRunnerSessionID(sessionID);
-}
 
 export function sessionDirectory(sessionID: string | null): string | undefined {
   if (!sessionID) return undefined;

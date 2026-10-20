@@ -1,0 +1,37 @@
+package textindex
+
+import (
+	"reflect"
+	"strings"
+	"testing"
+)
+
+func TestTokenizeSplitsIdentifiersAndStopwords(t *testing.T) {
+	got := Tokenize("HandleRequest parseHTTP2 with the user_id")
+	want := []string{"handle", "request", "parse", "http2", "user", "id"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Tokenize() = %#v, want %#v", got, want)
+	}
+}
+
+func TestScoreRanksDistinctiveTerms(t *testing.T) {
+	df := map[string]int{"auth": 1, "token": 2}
+	hot := Counts("auth token refresh")
+	cold := Counts("token cache")
+	if Score([]string{"auth"}, hot, df, 2, 3, 4) <= Score([]string{"auth"}, cold, df, 2, 2, 4) {
+		t.Fatal("rarer term should score higher")
+	}
+}
+
+func TestSnippetAndClip(t *testing.T) {
+	snippet := Snippet("a\n\nb\nc\nd\ne\nf\ng", 3, 100)
+	if strings.Count(snippet, "\n") != 2 || strings.Contains(snippet, "\n\n") {
+		t.Fatalf("unexpected snippet: %q", snippet)
+	}
+	if Clip("abcdef", 3) != "abc…" {
+		t.Fatalf("Clip() = %q", Clip("abcdef", 3))
+	}
+	if Clip("abc", 3) != "abc" {
+		t.Fatal("short values must not be clipped")
+	}
+}

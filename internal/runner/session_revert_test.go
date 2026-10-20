@@ -290,3 +290,59 @@ func TestUnifiedPermissionEndpointMergesAndRoutesReplies(t *testing.T) {
 		t.Fatalf("reply engine permission = %d id=%q body=%q", w.Code, repliedEngineID, repliedBody)
 	}
 }
+
+func TestSessionRevertFailurePreservesState(t *testing.T) {
+	repo := initTestGitRepo(t)
+	storeDir := filepath.Join(t.TempDir(), "sessions")
+	svc := NewService(repo, worktree.NewManager(repo), nil, storeDir)
+
+	turns := []MessageTurn{
+		{
+			Info:  MessageInfo{ID: "msg_u_1", SessionID: "ses_hoxi_fail", Role: "user"},
+			Parts: []MessagePart{{ID: "prt_u_1", SessionID: "ses_hoxi_fail", MessageID: "msg_u_1", Type: "text", Text: "first prompt"}},
+		},
+		{
+			Info:  MessageInfo{ID: "msg_a_1", SessionID: "ses_hoxi_fail", Role: "assistant"},
+			Parts: []MessagePart{{ID: "prt_a_1", SessionID: "ses_hoxi_fail", MessageID: "msg_a_1", Type: "text", Text: "first reply"}},
+		},
+	}
+
+	rec := SessionRecord{
+		ID:           "ses_hoxi_fail",
+		Runtime:      "opencode",
+		ProjectDir:   repo,
+		WorktreePath: repo,
+		Title:        "Revert Failure Test",
+		Turns:        turns,
+		Snapshots: map[string]string{
+			"msg_u_1": "invalid_snapshot_tree_hash_that_fails_restore",
+		},
+	}
+	if err := svc.Store().Put(rec); err != nil {
+		t.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+	svc.RegisterRoutes(mux)
+
+	// Revert with an invalid snapshot hash: RestoreSnapshot must fail and request must return 500
+	req := httptest.NewRequest(http.MethodPost, "/api/hoxi/runner/sessions/ses_hoxi_fail/revert", strings.NewReader(`{"messageID":"msg_u_1"}`))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500 for failed restore snapshot, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Verify that record in store was NOT modified and turns are intact
+	stored, ok := svc.Store().Get("ses_hoxi_fail")
+	if !ok {
+		t.Fatal("session not found in store")
+	}
+	if stored.Revert != nil {
+		t.Fatalf("expected stored.Revert to be nil after failed restore, got %+v", stored.Revert)
+	}
+	if len(stored.Turns) != 2 {
+		t.Fatalf("expected 2 turns preserved, got %d", len(stored.Turns))
+	}
+}

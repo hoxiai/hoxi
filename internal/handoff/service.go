@@ -273,27 +273,80 @@ func (g *Service) handleHandoffImport(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+func enrichDetailFidelity(detail *ExternalSessionDetail, source ExternalToolID, activeRoot string) {
+	if detail == nil {
+		return
+	}
+	toolCallsCount := 0
+	for _, t := range detail.Turns {
+		toolCallsCount += len(t.Tools)
+	}
+	targetDir := cleanDirPath(detail.Summary.CWD)
+	if targetDir == "" || !dirExists(targetDir) {
+		targetDir = cleanDirPath(activeRoot)
+	}
+
+	var unsupported []string
+	switch source {
+	case ExternalToolClaude:
+		unsupported = append(unsupported,
+			"Subagent forks flattened into primary conversation stream",
+			"Interactive steering unavailable mid-turn in single-turn subprocess",
+			"Hoxi PreToolUse gate will govern destructive bash commands",
+		)
+	case ExternalToolGemini:
+		unsupported = append(unsupported,
+			"Subagent tasks merged into main turn history",
+			"PreToolUse hook linked to Hoxi native runner gate",
+		)
+	case ExternalToolOpenCode:
+		unsupported = append(unsupported,
+			"Preserves full OpenCode tool schema and revert capabilities",
+		)
+	default:
+		unsupported = append(unsupported,
+			"Proprietary session memory summarized into Hoxi 8-dim project memory",
+			"Git worktree isolation enabled for safe multi-session execution",
+		)
+	}
+
+	detail.Fidelity = &HandoffPreviewFidelity{
+		RetainedTurns:       len(detail.Turns),
+		RetainedToolCalls:   toolCallsCount,
+		RetainedFiles:       detail.ChangedFiles,
+		UnsupportedFeatures: unsupported,
+		TargetDirectory:     targetDir,
+		TargetRuntime:       "opencode",
+	}
+}
+
 func loadExternalSessionDetail(source ExternalToolID, sessionID, hintCWD, activeRoot string) (*ExternalSessionDetail, error) {
+	var detail *ExternalSessionDetail
+	var err error
 	switch source {
 	case ExternalToolGrok:
-		return loadGrokSessionDetail(sessionID, hintCWD, activeRoot)
+		detail, err = loadGrokSessionDetail(sessionID, hintCWD, activeRoot)
 	case ExternalToolClaude:
-		return loadClaudeSessionDetail(sessionID, hintCWD, activeRoot)
+		detail, err = loadClaudeSessionDetail(sessionID, hintCWD, activeRoot)
 	case ExternalToolCodex:
-		return loadCodexSessionDetail(sessionID, hintCWD, activeRoot)
+		detail, err = loadCodexSessionDetail(sessionID, hintCWD, activeRoot)
 	case ExternalToolGemini:
-		return loadGeminiAntigravitySessionDetail(sessionID, hintCWD, activeRoot)
+		detail, err = loadGeminiAntigravitySessionDetail(sessionID, hintCWD, activeRoot)
 	case ExternalToolCodeBuddy:
-		return loadCodeBuddySessionDetail(sessionID, hintCWD, activeRoot)
+		detail, err = loadCodeBuddySessionDetail(sessionID, hintCWD, activeRoot)
 	case ExternalToolTrae:
-		return loadTraeSessionDetail(sessionID, hintCWD, activeRoot)
+		detail, err = loadTraeSessionDetail(sessionID, hintCWD, activeRoot)
 	case ExternalToolQoder:
-		return loadQoderSessionDetail(sessionID, hintCWD, activeRoot)
+		detail, err = loadQoderSessionDetail(sessionID, hintCWD, activeRoot)
 	case ExternalToolOpenCode:
-		return loadOpenCodeSessionDetail(sessionID, hintCWD, activeRoot)
+		detail, err = loadOpenCodeSessionDetail(sessionID, hintCWD, activeRoot)
 	default:
-		return loadGrokSessionDetail(sessionID, hintCWD, activeRoot)
+		detail, err = loadGrokSessionDetail(sessionID, hintCWD, activeRoot)
 	}
+	if err == nil && detail != nil {
+		enrichDetailFidelity(detail, source, activeRoot)
+	}
+	return detail, err
 }
 
 func (g *Service) resolveStoredProviderKey(providerID, requestedBaseURL string) string {

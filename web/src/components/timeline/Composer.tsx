@@ -6,8 +6,10 @@ import {
   FolderOpen,
   LoaderCircle,
   Plus,
+  Search,
   Sparkles,
   Square,
+  Workflow,
 } from "lucide-solid";
 import {
   appSettings,
@@ -39,6 +41,9 @@ import {
   ComposerAutocompletePopover,
 } from "./composer-subcomponents";
 import { ComposerSandboxPill } from "./ComposerSandboxPill";
+import CommandSandboxPill from "./CommandSandboxPill";
+import CodeSearchModal from "../codeindex/CodeSearchModal";
+import ConvoyModal from "../orchestration/ConvoyModal";
 import ContextProgressPill from "./ContextProgressPill";
 import ApprovalModePill from "./ApprovalModePill";
 import ModeSwitcher from "./ModeSwitcher";
@@ -54,6 +59,8 @@ import {
 import { t } from "../../i18n";
 import { isComposerIMEEvent } from "./composer-keyboard";
 import { hoxiAPI } from "../../services/api";
+import type { CodeIndexResult } from "../../services/code-index-api";
+import type { RecallResult } from "../../services/recall-api";
 
 export default function Composer() {
   const [text, setText] = createSignal("");
@@ -62,6 +69,8 @@ export default function Composer() {
   const [stopping, setStopping] = createSignal(false);
   const [forking, setForking] = createSignal(false);
   const [switchingSandbox, setSwitchingSandbox] = createSignal(false);
+  const [codeSearchOpen, setCodeSearchOpen] = createSignal(false);
+  const [convoyOpen, setConvoyOpen] = createSignal(false);
   const [choosingFolder, setChoosingFolder] = createSignal(false);
   const chooseFolder = async () => {
     if (choosingFolder()) return;
@@ -121,6 +130,23 @@ export default function Composer() {
       setSwitchingSandbox(false);
     }
   };
+
+  const insertMention = (reference: string) => {
+    const current = text();
+    const offset = Math.min(cursorOffset(), current.length);
+    const prefix = current.slice(0, offset);
+    const suffix = current.slice(offset);
+    const separator = prefix.length > 0 && !/\s$/.test(prefix) ? " " : "";
+    setText(`${prefix}${separator}${reference} ${suffix}`);
+    setCursorOffset(offset + separator.length + reference.length + 1);
+    requestAnimationFrame(() => {
+      textareaRef?.focus();
+      adjustHeight();
+    });
+  };
+
+  const insertCodeReference = (result: CodeIndexResult) => insertMention(`@${result.path}`);
+  const insertSessionReference = (result: RecallResult) => insertMention(`@session:${result.sessionID}`);
 
   const adjustHeight = () => {
     if (!textareaRef) return;
@@ -517,6 +543,26 @@ export default function Composer() {
                 <Sparkles size={14} />
               </button>
 
+              <button
+                type="button"
+                disabled={!workspace.rootDir}
+                onClick={() => setCodeSearchOpen(true)}
+                class="inline-flex items-center justify-center rounded-lg p-1.5 text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                title={t("timeline.codeSearchOpenTooltip")}
+              >
+                <Search size={14} />
+              </button>
+
+              <button
+                type="button"
+                disabled={!workspace.rootDir}
+                onClick={() => setConvoyOpen(true)}
+                class="inline-flex items-center justify-center rounded-lg p-1.5 text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                title={t("timeline.convoyOpenTooltip")}
+              >
+                <Workflow size={14} />
+              </button>
+
               <ModeSwitcher />
               <ModelSelector />
 
@@ -535,6 +581,11 @@ export default function Composer() {
                 forking={forking()}
                 onToggle={(m) => void onToggleSandbox(m)}
                 onFork={onFork}
+              />
+              <CommandSandboxPill
+                sessionID={sessionID()}
+                directory={sessionDirectory(sessionID()) || workspace.rootDir}
+                busy={busy()}
               />
               </Show>
             </div>
@@ -603,6 +654,18 @@ export default function Composer() {
           <p class="mt-2 px-1 text-xs text-[var(--text-faint)]">{t("timeline.selectFolderHint")}</p>
         </Show>
       </div>
+      <CodeSearchModal
+        open={codeSearchOpen()}
+        directory={sessionDirectory(sessionID()) || workspace.rootDir}
+        onClose={() => setCodeSearchOpen(false)}
+        onSelectCode={insertCodeReference}
+        onSelectSession={insertSessionReference}
+      />
+      <ConvoyModal
+        open={convoyOpen()}
+        directory={sessionDirectory(sessionID()) || workspace.rootDir}
+        onClose={() => setConvoyOpen(false)}
+      />
     </div>
   );
 }

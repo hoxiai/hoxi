@@ -136,6 +136,32 @@ if (hardcodedChineseMatches.length > 0) {
   console.log("  ✓ Zero hardcoded Chinese literals in source code outside i18n locales");
 }
 
+// zh-CN translations must not end with a full stop
+function collectTrailingFullStops(obj: object, prefix = ""): string[] {
+  const keys: string[] = [];
+  for (const [k, v] of Object.entries(obj)) {
+    const full = prefix ? `${prefix}.${k}` : k;
+    if (typeof v === "string") {
+      if (/。\s*$/.test(v)) keys.push(full);
+    } else if (v && typeof v === "object") {
+      keys.push(...collectTrailingFullStops(v, full));
+    }
+  }
+  return keys;
+}
+
+const trailingFullStops = collectTrailingFullStops(dictionaries["zh-CN"]);
+
+if (trailingFullStops.length > 0) {
+  hasError = true;
+  console.error(`\n  ✗ Found ${trailingFullStops.length} zh-CN strings ending with "。" (remove the trailing full stop):`);
+  for (const key of trailingFullStops) {
+    console.error(`    - ${key}`);
+  }
+} else {
+  console.log('  ✓ No zh-CN translation strings end with "。"');
+}
+
 if (hasError) {
   console.error("\n[i18n-check] ✗ Validation failed! Please fix the discrepancies above.\n");
   process.exit(1);

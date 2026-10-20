@@ -26,8 +26,8 @@ func TestSessionScopeSelectorsAndCompatibility(t *testing.T) {
 	}
 	tests := []struct {
 		name, target, header string
-		status int
-		wantDir string
+		status               int
+		wantDir              string
 	}{
 		{"missing injects", "/session/ses_guard", "", http.StatusOK, bound},
 		{"main mismatch", "/session/ses_guard?directory=" + url.QueryEscape(root), "", http.StatusForbidden, ""},

@@ -617,6 +617,7 @@ export * from "./question-answers";
 export * from "./auto-models";
 export * from "./skills";
 export * from "./terminal-context";
+export * from "./session-capabilities";
 
 
 

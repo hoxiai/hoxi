@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -78,11 +79,11 @@ func (s *Service) handleSessionRevert(w http.ResponseWriter, r *http.Request, se
 		allTurns = rec.RevertedTurns
 	}
 
+	createdSnapshot := ""
 	if rec.Revert == nil {
 		if snap, err := worktree.CreateSnapshot(rec.WorktreePath); err == nil && snap != "" {
-			rec.RevertSnapshot = snap
+			createdSnapshot = snap
 		}
-		rec.RevertedTurns = cloneTurns(allTurns)
 	}
 
 	targetSnap := ""
@@ -95,7 +96,15 @@ func (s *Service) handleSessionRevert(w http.ResponseWriter, r *http.Request, se
 		}
 	}
 	if targetSnap != "" && strings.TrimSpace(rec.WorktreePath) != "" {
-		_ = worktree.RestoreSnapshot(rec.WorktreePath, targetSnap)
+		if err := worktree.RestoreSnapshot(rec.WorktreePath, targetSnap); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("failed to restore workspace snapshot: %v", err))
+			return
+		}
+	}
+
+	if rec.Revert == nil {
+		rec.RevertSnapshot = createdSnapshot
+		rec.RevertedTurns = cloneTurns(allTurns)
 	}
 
 	rec.Turns = truncateTurnsForRevert(allTurns, body.MessageID, body.PartID)
@@ -155,7 +164,10 @@ func (s *Service) handleSessionUnrevert(w http.ResponseWriter, r *http.Request, 
 	}
 
 	if rec.RevertSnapshot != "" && strings.TrimSpace(rec.WorktreePath) != "" {
-		_ = worktree.RestoreSnapshot(rec.WorktreePath, rec.RevertSnapshot)
+		if err := worktree.RestoreSnapshot(rec.WorktreePath, rec.RevertSnapshot); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("failed to restore workspace snapshot: %v", err))
+			return
+		}
 	}
 	if len(rec.RevertedTurns) > 0 {
 		rec.Turns = cloneTurns(rec.RevertedTurns)

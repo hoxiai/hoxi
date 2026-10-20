@@ -1,12 +1,10 @@
 package runner
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -16,6 +14,7 @@ import (
 	"time"
 
 	"github.com/hoxiai/hoxi/internal/attachment"
+	"github.com/hoxiai/hoxi/internal/diagnostics"
 )
 
 func (s *Service) prepareTurnAttachments(
@@ -278,19 +277,33 @@ func (s *Service) startTurnProcess(
 		args = BuildAgyArgs(mode, modelID, effort, rec.ExternalID)
 	}
 
-	cmd := exec.Command(binPath, args...)
-	cmd.Dir = rec.WorktreePath
-
 	var hookEnv []string
 	revokeHook := func() {}
 	if rec.Runtime == string(RuntimeClaudeCode) {
 		var hookArgs []string
 		hookArgs, hookEnv, revokeHook = s.issueClaudeHook(mode, rec.ID, asstMsgID)
-		cmd.Args = append(cmd.Args, hookArgs...)
+		args = append(args, hookArgs...)
 	} else if rec.Runtime == string(RuntimeAntigravity) {
 		s.ensureAgyHookInstalled()
 		hookEnv, revokeHook = s.issueHookEnv(rec.ID, asstMsgID)
+	} else if rec.Runtime == string(RuntimeCodeBuddy) || rec.Runtime == string(RuntimeQoder) {
+		diagnostics.Record(diagnostics.Entry{
+			Time:      time.Now(),
+			Kind:      "runner_turn",
+			Level:     "warn",
+			Source:    "runner",
+			Message:   fmt.Sprintf("runtime %s does not support PreToolUse approval gate; tools will run un-gated", rec.Runtime),
+			SessionID: rec.ID,
+		})
 	}
+
+	binPath, args, err := s.confineRuntimeCommand(rec, binPath, args)
+	if err != nil {
+		revokeHook()
+		return err
+	}
+	cmd := exec.Command(binPath, args...)
+	cmd.Dir = rec.WorktreePath
 	if len(hookEnv) > 0 {
 		cmd.Env = append(os.Environ(), hookEnv...)
 	}
@@ -394,18 +407,18 @@ func (s *Service) startTurnProcess(
 			readStreamLines(stdoutR, func(line string) {
 				emitMu.Lock()
 				defer emitMu.Unlock()
-			// A stopped CLI reports its interruption as a failed result;
-			// Hoxi finishes the turn itself as stopped (or stalled).
-			if ap.wasAborted() && isStreamResultLine(line) {
-				return
-			}
-			evts := tr.FeedLine(line)
-			// Only output the user can see counts as progress: CLIs keep
-			// writing heartbeats (Claude Code's `tool_progress`) while a
-			// tool hangs.
-			if len(evts) > 0 {
-				s.noteActivity(ap)
-			}
+				// A stopped CLI reports its interruption as a failed result;
+				// Hoxi finishes the turn itself as stopped (or stalled).
+				if ap.wasAborted() && isStreamResultLine(line) {
+					return
+				}
+				evts := tr.FeedLine(line)
+				// Only output the user can see counts as progress: CLIs keep
+				// writing heartbeats (Claude Code's `tool_progress`) while a
+				// tool hangs.
+				if len(evts) > 0 {
+					s.noteActivity(ap)
+				}
 				if extID := tr.ExternalID(); extID != "" && extID != rec.ExternalID {
 					rec.ExternalID = extID
 					_, _, _ = s.store.Update(rec.ID, func(r *SessionRecord) {
@@ -520,141 +533,6 @@ func (s *Service) handleSessionAbort(w http.ResponseWriter, r *http.Request, ses
 		Properties: map[string]interface{}{"sessionID": sessionID, "status": SessionStatus{Type: "idle"}},
 	})
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
-}
-
-func (s *Service) handleGlobalSSE(w http.ResponseWriter, r *http.Request) {
-	s.serveSSE(w, r, "")
-}
-
-func (s *Service) handleUnifiedSSE(w http.ResponseWriter, r *http.Request) {
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		writeJSONError(w, http.StatusInternalServerError, "streaming unsupported")
-		return
-	}
-	ch, unsub := s.Subscribe("")
-	defer unsub()
-
-	upstreamLines := make(chan string, 128)
-	directory := strings.TrimSpace(r.URL.Query().Get("directory"))
-	upstreamPath := "/global/event"
-	if directory != "" {
-		upstreamPath = "/event"
-	}
-	if s.openCodeClient != nil && strings.TrimSpace(s.openCodeURL) != "" {
-		if resp, err := s.openCodeRequest(r.Context(), http.MethodGet, upstreamPath, directory, nil); err == nil {
-			if resp.StatusCode == http.StatusOK {
-				go func() {
-					defer resp.Body.Close()
-					defer close(upstreamLines)
-					reader := bufio.NewReaderSize(resp.Body, 64*1024)
-					skipBlank := false
-					for {
-						line, readErr := reader.ReadString('\n')
-						if len(line) > 0 {
-							if strings.HasPrefix(line, "data:") && !s.AllowOpenCodeSSELine(line) {
-								skipBlank = true
-							} else if strings.TrimSpace(line) == "" && skipBlank {
-								skipBlank = false
-							} else {
-								skipBlank = false
-								if s.status != nil {
-									s.status.InspectSSELine(strings.TrimRight(line, "\r\n"))
-								}
-								select {
-								case upstreamLines <- line:
-								case <-r.Context().Done():
-									return
-								}
-							}
-						}
-						if readErr != nil {
-							return
-						}
-					}
-				}()
-			} else {
-				_ = resp.Body.Close()
-				close(upstreamLines)
-			}
-		} else {
-			close(upstreamLines)
-		}
-	} else {
-		close(upstreamLines)
-	}
-
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("X-Accel-Buffering", "no")
-	w.WriteHeader(http.StatusOK)
-	flusher.Flush()
-
-	ticker := time.NewTicker(20 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-r.Context().Done():
-			return
-		case <-ticker.C:
-			_, _ = fmt.Fprintf(w, ": keepalive\n\n")
-			flusher.Flush()
-		case evt := <-ch:
-			raw, err := json.Marshal(evt)
-			if err != nil {
-				continue
-			}
-			_, _ = fmt.Fprintf(w, "data: %s\n\n", string(raw))
-			flusher.Flush()
-		case line, ok := <-upstreamLines:
-			if !ok {
-				upstreamLines = nil
-				continue
-			}
-			_, _ = io.WriteString(w, line)
-			flusher.Flush()
-		}
-	}
-}
-
-func (s *Service) serveSSE(w http.ResponseWriter, r *http.Request, sessionID string) {
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		writeJSONError(w, http.StatusInternalServerError, "streaming unsupported")
-		return
-	}
-	// Subscribe before flushing headers so clients cannot dispatch a prompt before we listen.
-	ch, unsub := s.Subscribe(sessionID)
-	defer unsub()
-
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("X-Accel-Buffering", "no")
-	w.WriteHeader(http.StatusOK)
-	flusher.Flush()
-
-	ticker := time.NewTicker(20 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-r.Context().Done():
-			return
-		case <-ticker.C:
-			_, _ = fmt.Fprintf(w, ": keepalive\n\n")
-			flusher.Flush()
-		case evt := <-ch:
-			raw, err := json.Marshal(evt)
-			if err != nil {
-				continue
-			}
-			_, _ = fmt.Fprintf(w, "data: %s\n\n", string(raw))
-			flusher.Flush()
-		}
-	}
 }
 
 func firstNonEmptyStr(vals ...string) string {

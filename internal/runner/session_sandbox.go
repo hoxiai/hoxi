@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/hoxiai/hoxi/internal/sandbox"
 	"github.com/hoxiai/hoxi/internal/worktree"
 )
 
@@ -179,6 +180,46 @@ func (s *Service) changeSessionSandboxWithOptions(sessionID, mode string, force,
 		if err := manager.UseLocalDirectory(sessionID); err != nil {
 			return SessionInfo{}, err
 		}
+	}
+	info := updated.ToSessionInfo()
+	s.broadcast(sessionID, SSEEvent{Type: "session.updated", Properties: map[string]interface{}{"info": info}})
+	return info, nil
+}
+
+func (s *Service) SetCommandSandbox(sessionID string, enabled bool) (SessionInfo, error) {
+	return s.setCommandSandbox(sessionID, enabled)
+}
+
+// setCommandSandbox toggles OS-level confinement for the runtime subprocess of
+// a native session. It refuses to change while a turn is running so a live
+// process is never half-confined.
+func (s *Service) setCommandSandbox(sessionID string, enabled bool) (SessionInfo, error) {
+	s.turnMu.Lock()
+	defer s.turnMu.Unlock()
+	s.mu.Lock()
+	busy := s.procs[sessionID] != nil
+	s.mu.Unlock()
+	if busy {
+		return SessionInfo{}, errors.New("cannot change command sandbox while the session is running")
+	}
+	rec, ok := s.store.Get(sessionID)
+	if !ok {
+		return SessionInfo{}, errors.New("runner session not found")
+	}
+	if rec.Subagent {
+		return SessionInfo{}, errSubagentSessionReadOnly
+	}
+	if enabled && !sandbox.Available() {
+		return SessionInfo{}, errors.New(sandbox.UnavailableReason())
+	}
+	updated, ok, err := s.store.Update(sessionID, func(r *SessionRecord) {
+		r.CommandSandbox = enabled
+	})
+	if err != nil {
+		return SessionInfo{}, err
+	}
+	if !ok {
+		return SessionInfo{}, errors.New("runner session not found")
 	}
 	info := updated.ToSessionInfo()
 	s.broadcast(sessionID, SSEEvent{Type: "session.updated", Properties: map[string]interface{}{"info": info}})

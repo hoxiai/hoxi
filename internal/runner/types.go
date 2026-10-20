@@ -39,29 +39,101 @@ type SessionRevert struct {
 }
 
 type SessionCapabilities struct {
-	Revert bool `json:"revert"`
-	Fork   bool `json:"fork"`
-	Steer  bool `json:"steer"`
+	Approval    bool `json:"approval"`
+	Steer       bool `json:"steer"`
+	Resume      bool `json:"resume"`
+	Revert      bool `json:"revert"`
+	Fork        bool `json:"fork"`
+	Attachments bool `json:"attachments"`
+	CostStats   bool `json:"costStats"`
+}
+
+// RuntimeCapabilities returns the capability matrix for a given runtime.
+func RuntimeCapabilities(rt string, subagent bool) SessionCapabilities {
+	if subagent {
+		return SessionCapabilities{
+			Approval:    false,
+			Steer:       false,
+			Resume:      false,
+			Revert:      false,
+			Fork:        false,
+			Attachments: false,
+			CostStats:   false,
+		}
+	}
+	switch rt {
+	case string(RuntimeClaudeCode):
+		return SessionCapabilities{
+			Approval:    true,
+			Steer:       false,
+			Resume:      true,
+			Revert:      true,
+			Fork:        true,
+			Attachments: true,
+			CostStats:   true,
+		}
+	case string(RuntimeAntigravity):
+		return SessionCapabilities{
+			Approval:    true,
+			Steer:       false,
+			Resume:      true,
+			Revert:      true,
+			Fork:        true,
+			Attachments: true,
+			CostStats:   true,
+		}
+	case string(RuntimeCodeBuddy):
+		return SessionCapabilities{
+			Approval:    false,
+			Steer:       false,
+			Resume:      true,
+			Revert:      true,
+			Fork:        true,
+			Attachments: false,
+			CostStats:   true,
+		}
+	case string(RuntimeQoder):
+		return SessionCapabilities{
+			Approval:    false,
+			Steer:       false,
+			Resume:      true,
+			Revert:      true,
+			Fork:        true,
+			Attachments: false,
+			CostStats:   true,
+		}
+	default: // opencode or native gateway session
+		return SessionCapabilities{
+			Approval:    true,
+			Steer:       true,
+			Resume:      true,
+			Revert:      true,
+			Fork:        true,
+			Attachments: true,
+			CostStats:   true,
+		}
+	}
 }
 
 type SessionInfo struct {
-	ID           string               `json:"id"`
-	Slug         string               `json:"slug,omitempty"`
-	ProjectID    string               `json:"projectID,omitempty"`
-	Directory    string               `json:"directory"`
-	ParentID     string               `json:"parentID,omitempty"`
-	Title        string               `json:"title"`
-	Version      string               `json:"version,omitempty"`
-	Time         SessionTime          `json:"time"`
-	Runtime      string               `json:"runtime"`
-	ModelID      string               `json:"modelID,omitempty"`
-	ProviderID   string               `json:"providerID,omitempty"`
-	ExternalID   string               `json:"externalID,omitempty"`
-	SandboxMode  string               `json:"sandboxMode,omitempty"`
-	Branch       string               `json:"branch,omitempty"`
-	Managed      bool                 `json:"managed,omitempty"`
-	Revert       *SessionRevert       `json:"revert,omitempty"`
-	Capabilities *SessionCapabilities `json:"capabilities,omitempty"`
+	ID             string               `json:"id"`
+	Slug           string               `json:"slug,omitempty"`
+	ProjectID      string               `json:"projectID,omitempty"`
+	Directory      string               `json:"directory"`
+	ParentID       string               `json:"parentID,omitempty"`
+	Title          string               `json:"title"`
+	Version        string               `json:"version,omitempty"`
+	Time           SessionTime          `json:"time"`
+	Runtime        string               `json:"runtime"`
+	ModelID        string               `json:"modelID,omitempty"`
+	ProviderID     string               `json:"providerID,omitempty"`
+	ExternalID     string               `json:"externalID,omitempty"`
+	SandboxMode    string               `json:"sandboxMode,omitempty"`
+	CommandSandbox bool                 `json:"commandSandbox,omitempty"`
+	Branch         string               `json:"branch,omitempty"`
+	Managed        bool                 `json:"managed,omitempty"`
+	Revert         *SessionRevert       `json:"revert,omitempty"`
+	Capabilities   *SessionCapabilities `json:"capabilities,omitempty"`
 }
 
 type SessionStatus struct {
@@ -318,6 +390,7 @@ type SessionRecord struct {
 	Branch              string            `json:"branch,omitempty"`
 	BaseCommit          string            `json:"baseCommit,omitempty"`
 	SandboxMode         string            `json:"sandboxMode,omitempty"`
+	CommandSandbox      bool              `json:"commandSandbox,omitempty"`
 	RetainedBranch      string            `json:"retainedBranch,omitempty"`
 	ModelID             string            `json:"modelID"`
 	ProviderID          string            `json:"providerID"`
@@ -342,28 +415,24 @@ func (r SessionRecord) ToSessionInfo() SessionInfo {
 	if dir == "" {
 		dir = r.ProjectDir
 	}
-	canMutate := !r.Subagent
-	canSteer := canMutate && (r.Runtime == "" || r.Runtime == "opencode")
+	caps := RuntimeCapabilities(r.Runtime, r.Subagent)
 	return SessionInfo{
-		ID:          r.ID,
-		ParentID:    r.ParentID,
-		Managed:     true,
-		Slug:        r.ID,
-		ProjectID:   r.ProjectDir,
-		Directory:   dir,
-		Title:       r.Title,
-		Time:        SessionTime{Created: r.CreatedAt, Updated: r.UpdatedAt, Archived: r.ArchivedAt},
-		Runtime:     r.Runtime,
-		ModelID:     r.ModelID,
-		ProviderID:  r.ProviderID,
-		ExternalID:  r.ExternalID,
-		SandboxMode: r.sandboxMode(),
-		Branch:      r.Branch,
-		Revert:      r.Revert,
-		Capabilities: &SessionCapabilities{
-			Revert: canMutate,
-			Fork:   canMutate,
-			Steer:  canSteer,
-		},
+		ID:             r.ID,
+		ParentID:       r.ParentID,
+		Managed:        true,
+		Slug:           r.ID,
+		ProjectID:      r.ProjectDir,
+		Directory:      dir,
+		Title:          r.Title,
+		Time:           SessionTime{Created: r.CreatedAt, Updated: r.UpdatedAt, Archived: r.ArchivedAt},
+		Runtime:        r.Runtime,
+		ModelID:        r.ModelID,
+		ProviderID:     r.ProviderID,
+		ExternalID:     r.ExternalID,
+		SandboxMode:    r.sandboxMode(),
+		CommandSandbox: r.CommandSandbox,
+		Branch:         r.Branch,
+		Revert:         r.Revert,
+		Capabilities:   &caps,
 	}
 }

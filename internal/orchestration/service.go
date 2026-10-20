@@ -1,0 +1,461 @@
+package orchestration
+
+import (
+	"bytes"
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+)
+
+type Service struct {
+	port     int
+	password string
+	base     string
+	client   *http.Client
+	mu       sync.Mutex
+	plans    map[string]*planRun
+}
+
+type planRun struct {
+	plan   Plan
+	cancel context.CancelFunc
+}
+
+func NewService(port int, password string) *Service {
+	return &Service{
+		port:     port,
+		password: password,
+		client: &http.Client{
+			Transport: &http.Transport{Proxy: nil},
+			Timeout:   30 * time.Minute,
+		},
+		plans: make(map[string]*planRun),
+	}
+}
+
+func (s *Service) RegisterRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("/api/hoxi/orchestration/plans", s.handlePlans)
+	mux.HandleFunc("/api/hoxi/orchestration/plans/", s.handlePlan)
+}
+
+func (s *Service) Create(request PlanRequest) (Plan, error) {
+	directory, err := canonicalDirectory(request.Directory)
+	if err != nil {
+		return Plan{}, err
+	}
+	request.Directory = directory
+	request, err = normalizePlan(request)
+	if err != nil {
+		return Plan{}, err
+	}
+	plan := Plan{
+		ID:          newPlanID(),
+		Title:       request.Title,
+		Directory:   directory,
+		Concurrency: request.Concurrency,
+		Status:      StatusRunning,
+		CreatedAt:   time.Now().UnixMilli(),
+		UpdatedAt:   time.Now().UnixMilli(),
+		Tasks:       make([]TaskState, len(request.Tasks)),
+	}
+	for i, task := range request.Tasks {
+		plan.Tasks[i] = TaskState{
+			ID: task.ID, Prompt: task.Prompt, DependsOn: task.DependsOn, Status: StatusQueued,
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	s.mu.Lock()
+	s.plans[plan.ID] = &planRun{plan: plan, cancel: cancel}
+	s.mu.Unlock()
+	go s.run(ctx, plan.ID, request)
+	snapshot, _ := s.Get(plan.ID)
+	return snapshot, nil
+}
+
+func (s *Service) Get(id string) (Plan, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	run := s.plans[id]
+	if run == nil {
+		return Plan{}, false
+	}
+	plan := run.plan
+	plan.Tasks = append([]TaskState(nil), run.plan.Tasks...)
+	return plan, true
+}
+
+func (s *Service) List(directory string) []Plan {
+	directory = strings.TrimSpace(directory)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	plans := make([]Plan, 0, len(s.plans))
+	for _, run := range s.plans {
+		if directory != "" && run.plan.Directory != directory {
+			continue
+		}
+		plan := run.plan
+		plan.Tasks = append([]TaskState(nil), run.plan.Tasks...)
+		plans = append(plans, plan)
+	}
+	return plans
+}
+
+func (s *Service) Cancel(id string) (Plan, error) {
+	s.mu.Lock()
+	run := s.plans[id]
+	if run == nil {
+		s.mu.Unlock()
+		return Plan{}, errors.New("orchestration plan not found")
+	}
+	if !terminal(run.plan.Status) {
+		run.plan.Status = StatusCancelled
+		for i := range run.plan.Tasks {
+			if run.plan.Tasks[i].Status == StatusQueued {
+				run.plan.Tasks[i].Status = StatusCancelled
+			}
+		}
+		run.plan.UpdatedAt = time.Now().UnixMilli()
+	}
+	cancel := run.cancel
+	plan := run.plan
+	plan.Tasks = append([]TaskState(nil), run.plan.Tasks...)
+	s.mu.Unlock()
+	cancel()
+	go s.abortRunning(id)
+	return plan, nil
+}
+
+func terminal(status string) bool {
+	return status == StatusSucceeded || status == StatusFailed || status == StatusCancelled
+}
+
+func (s *Service) run(ctx context.Context, id string, request PlanRequest) {
+	running := make(map[string]bool)
+	for {
+		s.mu.Lock()
+		run := s.plans[id]
+		if run == nil {
+			s.mu.Unlock()
+			return
+		}
+		if run.plan.Status == StatusCancelled {
+			s.mu.Unlock()
+			return
+		}
+		ready := sortedReady(&run.plan)
+		capacity := run.plan.Concurrency - len(running)
+		if capacity < 0 {
+			capacity = 0
+		}
+		var launch []int
+		for _, index := range ready {
+			if len(launch) >= capacity {
+				break
+			}
+			task := &run.plan.Tasks[index]
+			if running[task.ID] {
+				continue
+			}
+			task.Status = StatusRunning
+			task.StartedAt = time.Now().UnixMilli()
+			run.plan.UpdatedAt = task.StartedAt
+			running[task.ID] = true
+			launch = append(launch, index)
+			capacity--
+		}
+		finished := len(running) == 0 && len(launch) == 0
+		if finished {
+			s.finish(id)
+			s.mu.Unlock()
+			return
+		}
+		s.mu.Unlock()
+
+		var wg sync.WaitGroup
+		for _, index := range launch {
+			spec := request.Tasks[index]
+			wg.Add(1)
+			go func(index int, spec TaskSpec) {
+				defer wg.Done()
+				s.executeTask(ctx, id, index, spec, request)
+				s.mu.Lock()
+				delete(running, spec.ID)
+				s.mu.Unlock()
+			}(index, spec)
+		}
+		wg.Wait()
+	}
+}
+
+func (s *Service) executeTask(ctx context.Context, planID string, index int, spec TaskSpec, request PlanRequest) {
+	taskID := spec.ID
+	title := fmt.Sprintf("Convoy · %s · %s", planID, taskID)
+	sessionID, err := s.createSession(ctx, request.Directory, title)
+	if err != nil {
+		s.completeTask(planID, taskID, "", "", err)
+		return
+	}
+	s.mu.Lock()
+	if run := s.plans[planID]; run != nil {
+		run.plan.Tasks[index].SessionID = sessionID
+		run.plan.UpdatedAt = time.Now().UnixMilli()
+	}
+	s.mu.Unlock()
+	if ctx.Err() != nil {
+		s.completeTask(planID, taskID, sessionID, "", ctx.Err())
+		return
+	}
+	prompt := convoyPrompt(spec, request)
+	summary, err := s.prompt(ctx, request, sessionID, prompt)
+	s.completeTask(planID, taskID, sessionID, summary, err)
+}
+
+func (s *Service) completeTask(planID, taskID, sessionID, summary string, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	run := s.plans[planID]
+	if run == nil {
+		return
+	}
+	for i := range run.plan.Tasks {
+		task := &run.plan.Tasks[i]
+		if task.ID != taskID {
+			continue
+		}
+		if sessionID != "" {
+			task.SessionID = sessionID
+		}
+		task.EndedAt = time.Now().UnixMilli()
+		task.Summary = summary
+		switch {
+		case run.plan.Status == StatusCancelled || errors.Is(err, context.Canceled):
+			task.Status = StatusCancelled
+			task.Error = "cancelled"
+		case err != nil:
+			task.Status = StatusFailed
+			task.Error = err.Error()
+		default:
+			task.Status = StatusSucceeded
+		}
+		break
+	}
+	run.plan.UpdatedAt = time.Now().UnixMilli()
+}
+
+func (s *Service) finish(planID string) {
+	run := s.plans[planID]
+	if run == nil {
+		return
+	}
+	status := StatusSucceeded
+	for _, task := range run.plan.Tasks {
+		switch task.Status {
+		case StatusFailed:
+			status = StatusFailed
+		case StatusBlocked:
+			if status == StatusSucceeded {
+				status = StatusFailed
+			}
+		case StatusRunning, StatusQueued:
+			if run.plan.Status == StatusCancelled {
+				status = StatusCancelled
+			}
+		}
+	}
+	if run.plan.Status == StatusCancelled {
+		status = StatusCancelled
+	}
+	run.plan.Status = status
+	run.plan.UpdatedAt = time.Now().UnixMilli()
+}
+
+func convoyPrompt(spec TaskSpec, request PlanRequest) string {
+	var b strings.Builder
+	b.WriteString("Hoxi convoy task `")
+	b.WriteString(spec.ID)
+	b.WriteString("`.\n")
+	if len(spec.DependsOn) > 0 {
+		b.WriteString("Completed prerequisites: ")
+		b.WriteString(strings.Join(spec.DependsOn, ", "))
+		b.WriteString(". Their changes are already in this workspace.\n")
+	}
+	b.WriteString("Work only within the workspace, report the files you changed, and end with a short hand-off summary.\n\n")
+	b.WriteString(spec.Prompt)
+	return b.String()
+}
+
+func (s *Service) abortRunning(planID string) {
+	s.mu.Lock()
+	run := s.plans[planID]
+	var sessions []string
+	if run != nil {
+		for _, task := range run.plan.Tasks {
+			if task.SessionID != "" && (task.Status == StatusRunning || task.Status == StatusQueued) {
+				sessions = append(sessions, task.SessionID)
+			}
+		}
+	}
+	s.mu.Unlock()
+	for _, sessionID := range sessions {
+		s.abort(sessionID)
+	}
+}
+
+func (s *Service) createSession(ctx context.Context, directory, title string) (string, error) {
+	body := map[string]interface{}{"title": title}
+	raw, _ := json.Marshal(body)
+	var response struct {
+		ID string `json:"id"`
+	}
+	if err := s.call(ctx, http.MethodPost, "/session", directory, raw, &response); err != nil {
+		return "", err
+	}
+	if response.ID == "" {
+		return "", errors.New("opencode returned an empty session id")
+	}
+	return response.ID, nil
+}
+
+func (s *Service) prompt(ctx context.Context, request PlanRequest, sessionID, prompt string) (string, error) {
+	parts := []map[string]string{{"type": "text", "text": prompt}}
+	body := map[string]interface{}{"agent": firstNonEmpty(request.Mode, "build"), "parts": parts}
+	if request.Provider != "" && request.Model != "" {
+		body["model"] = map[string]string{"providerID": request.Provider, "modelID": request.Model}
+	}
+	raw, _ := json.Marshal(body)
+	if err := s.call(ctx, http.MethodPost, "/session/"+url.PathEscape(sessionID)+"/message", request.Directory, raw, nil); err != nil {
+		return "", err
+	}
+	return s.lastAssistantText(ctx, request.Directory, sessionID), nil
+}
+
+func (s *Service) lastAssistantText(ctx context.Context, directory, sessionID string) string {
+	var turns []struct {
+		Info struct {
+			Role string `json:"role"`
+		} `json:"info"`
+		Parts []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"parts"`
+	}
+	if err := s.call(ctx, http.MethodGet, "/session/"+url.PathEscape(sessionID)+"/message", directory, nil, &turns); err != nil {
+		return ""
+	}
+	for i := len(turns) - 1; i >= 0; i-- {
+		if turns[i].Info.Role != "assistant" {
+			continue
+		}
+		var texts []string
+		for _, part := range turns[i].Parts {
+			if part.Type == "text" && strings.TrimSpace(part.Text) != "" {
+				texts = append(texts, part.Text)
+			}
+		}
+		if len(texts) > 0 {
+			return clip(strings.Join(texts, "\n"), 2000)
+		}
+	}
+	return ""
+}
+
+func (s *Service) abort(sessionID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = s.call(ctx, http.MethodPost, "/session/"+url.PathEscape(sessionID)+"/abort", "", nil, nil)
+}
+
+func (s *Service) call(ctx context.Context, method, path, directory string, body []byte, out interface{}) error {
+	if s.base == "" && s.port <= 0 {
+		return errors.New("opencode is unavailable")
+	}
+	endpoint := s.baseURL() + path
+	if directory != "" {
+		endpoint += "?directory=" + url.QueryEscape(directory)
+	}
+	var reader io.Reader
+	if body != nil {
+		reader = bytes.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, endpoint, reader)
+	if err != nil {
+		return err
+	}
+	req.SetBasicAuth("opencode", s.password)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("opencode HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+	}
+	if out == nil {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+		return nil
+	}
+	return json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(out)
+}
+
+func (s *Service) baseURL() string {
+	if s.base != "" {
+		return strings.TrimRight(s.base, "/")
+	}
+	return "http://127.0.0.1:" + strconv.Itoa(s.port)
+}
+
+func canonicalDirectory(directory string) (string, error) {
+	directory = strings.TrimSpace(directory)
+	if directory == "" {
+		return "", errors.New("directory is required")
+	}
+	abs, err := filepath.Abs(directory)
+	if err != nil {
+		return "", err
+	}
+	st, err := os.Stat(abs)
+	if err != nil || !st.IsDir() {
+		return "", errors.New("directory does not exist")
+	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		abs = resolved
+	}
+	return abs, nil
+}
+
+func newPlanID() string {
+	var buf [6]byte
+	_, _ = rand.Read(buf[:])
+	return "plan_" + strconv.FormatInt(time.Now().UnixMilli(), 36) + "_" + hex.EncodeToString(buf[:])
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func clip(value string, max int) string {
+	runes := []rune(value)
+	if len(runes) <= max {
+		return value
+	}
+	return string(runes[:max]) + "…"
+}
