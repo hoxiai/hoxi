@@ -74,11 +74,11 @@ func TestOpenCodePumpReconnectsAndAsksClientsToResync(t *testing.T) {
 }
 
 func TestOpenCodePumpRetriesUntilUpstreamComesUp(t *testing.T) {
-	var up atomic.Bool
+	var attempts atomic.Int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !up.Load() {
-			http.Error(w, "starting", http.StatusServiceUnavailable)
-			up.Store(true)
+		if attempts.Add(1) <= 2 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			fmt.Fprint(w, "starting\n\nretry later\n\n")
 			return
 		}
 		w.Header().Set("Content-Type", "text/event-stream")

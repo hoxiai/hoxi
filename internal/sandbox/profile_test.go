@@ -53,7 +53,7 @@ func TestProfileTextConfinesWritesAndNetwork(t *testing.T) {
 func TestProfileTextKeepsExplicitGitDirWritable(t *testing.T) {
 	workspace := t.TempDir()
 	gitDir := filepath.Join(workspace, ".git")
-	if err := os.MkdirAll(gitDir, 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(gitDir, "hooks"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	nestedGit := filepath.Join(workspace, "vendor", "repo", ".git")
@@ -77,13 +77,18 @@ func TestProfileTextKeepsExplicitGitDirWritable(t *testing.T) {
 		t.Fatalf("explicitly allowed git dir was blocked: %v", err)
 	}
 
-	blocked := filepath.Join(nestedGit, "probe.txt")
-	bin, args, err = WrapShell(profile, "echo bad > "+shellQuote(blocked))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := runCommand(bin, args...); err == nil {
-		t.Fatal("a .git directory outside the explicit grant must stay denied")
+	for _, protected := range []string{
+		filepath.Join(gitDir, "hooks", "pre-commit"),
+		filepath.Join(gitDir, "config"),
+		filepath.Join(nestedGit, "probe.txt"),
+	} {
+		bin, args, err = WrapShell(profile, "echo bad > "+shellQuote(protected))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := runCommand(bin, args...); err == nil {
+			t.Fatalf("expected write to %s to be denied", protected)
+		}
 	}
 }
 

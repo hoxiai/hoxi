@@ -134,14 +134,16 @@ func (s *Service) pumpOpenCodeEvents(ctx context.Context, directory string, out 
 		connCtx, cancel := context.WithCancel(ctx)
 		resp, err := s.openCodeRequest(connCtx, http.MethodGet, path, directory, nil)
 		if err == nil {
-			opened := time.Now()
-			if attempt == 0 || sendFrame(ctx, out, resyncFrame) {
-				s.relayOpenCodeFrames(connCtx, cancel, resp.Body, out)
+			if resp.StatusCode == http.StatusOK {
+				opened := time.Now()
+				if attempt == 0 || sendFrame(ctx, out, resyncFrame) {
+					s.relayOpenCodeFrames(connCtx, cancel, resp.Body, out)
+				}
+				if time.Since(opened) >= upstreamStableAfter {
+					delay = upstreamRetryMin
+				}
 			}
 			_ = resp.Body.Close()
-			if time.Since(opened) >= upstreamStableAfter {
-				delay = upstreamRetryMin
-			}
 		}
 		cancel()
 		select {

@@ -291,6 +291,39 @@ func TestModelsConfigAndProxyRoutes(t *testing.T) {
 		t.Fatalf("expected /global/config to filter out gpt-3.5: %s", rec.Body.String())
 	}
 
+	// Routing roles must come from .hoxi/models.json even though the OpenCode
+	// snapshot was loaded at boot and never received this PATCH.
+	rec = doMuxReq(t, mux, http.MethodPatch, "/global/config", map[string]any{
+		"small_model":    "custom-oai/gpt-4o",
+		"subagent_model": "custom-oai/gpt-4o",
+		"agent":          map[string]any{"build": map[string]any{"model": "custom-oai/gpt-4o"}},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PATCH routing roles failed: %d %s", rec.Code, rec.Body.String())
+	}
+	var globalCfg map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &globalCfg); err != nil {
+		t.Fatalf("invalid /global/config response: %v", err)
+	}
+	if globalCfg["small_model"] != "custom-oai/gpt-4o" || globalCfg["subagent_model"] != "custom-oai/gpt-4o" {
+		t.Fatalf("routing roles missing from /global/config: %s", rec.Body.String())
+	}
+	if agent, _ := globalCfg["agent"].(map[string]any); agent == nil || agent["build"] == nil {
+		t.Fatalf("agent model override missing from /global/config: %s", rec.Body.String())
+	}
+
+	rec = doMuxReq(t, mux, http.MethodPatch, "/global/config", map[string]any{"small_model": nil})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("clear small_model failed: %d %s", rec.Code, rec.Body.String())
+	}
+	globalCfg = nil
+	if err := json.Unmarshal(rec.Body.Bytes(), &globalCfg); err != nil {
+		t.Fatalf("invalid /global/config response: %v", err)
+	}
+	if _, exists := globalCfg["small_model"]; exists {
+		t.Fatalf("cleared small_model still present: %s", rec.Body.String())
+	}
+
 	// 5. GET /provider proxy filtering & non-GET fallback proxy
 	rec = doMuxReq(t, mux, http.MethodGet, "/provider", nil)
 	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "gpt-3.5") {

@@ -213,9 +213,6 @@ export default function UserAccountMenu() {
                     <div class="truncate text-[13px] font-medium text-[var(--text-primary)] leading-tight">
                       {t("settings.accountSignInBtn")}
                     </div>
-                    <div class="truncate text-[11px] text-[var(--text-faint)] leading-tight mt-0.5">
-                      {t("settings.accountGuestBadge")}
-                    </div>
                   </div>
                 </>
               }

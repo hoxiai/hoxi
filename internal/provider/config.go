@@ -458,6 +458,36 @@ func (g *Service) handleModelsConfig(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// managedGlobalConfigKeys are top-level config keys written through PATCH /global/config.
+// When a key is removed from .hoxi/models.json it must also disappear from the GET response,
+// otherwise OpenCode's boot-time config keeps serving the stale value.
+var managedGlobalConfigKeys = []string{
+	"model",
+	"small_model",
+	"subagent_model",
+	"agent",
+	"permission",
+	"mcp",
+	"disabled_providers",
+}
+
+// overlayHoxiGlobalConfig makes .hoxi/models.json authoritative over the OpenCode
+// config snapshot loaded at process start, so routing roles (small_model,
+// subagent_model, agent models) reflect edits immediately without a daemon restart.
+func overlayHoxiGlobalConfig(cfg, doc map[string]interface{}) {
+	for key, value := range doc {
+		if key == "$schema" || key == "provider" {
+			continue
+		}
+		cfg[key] = value
+	}
+	for _, key := range managedGlobalConfigKeys {
+		if _, ok := doc[key]; !ok {
+			delete(cfg, key)
+		}
+	}
+}
+
 func deepMergeMap(dst, src map[string]interface{}) {
 	for k, v := range src {
 		if v == nil {
@@ -519,7 +549,8 @@ func filterProviderModelsByHoxi(provMap, hoxiMap map[string]interface{}) {
 }
 
 // handleGlobalConfigProxy persists PATCH /global/config directly to .hoxi/models.json (never touching ~/.config/opencode)
-// and filters GET /global/config so Hoxi-managed providers strictly reflect .hoxi/models.json's model keys.
+// and overlays GET /global/config with that document, so routing roles (small_model, subagent_model,
+// agent models) and Hoxi-managed provider model keys reflect the latest persisted config.
 func (g *Service) handleGlobalConfigProxy(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPatch {
 		raw, err := io.ReadAll(r.Body)
@@ -558,12 +589,7 @@ func (g *Service) handleGlobalConfigProxy(w http.ResponseWriter, r *http.Request
 	var cfg map[string]interface{}
 	if json.Unmarshal(body, &cfg) == nil {
 		doc := g.loadHoxiConfigDoc()
-		if disabled, ok := doc["disabled_providers"]; ok {
-			cfg["disabled_providers"] = disabled
-		}
-		if model, ok := doc["model"].(string); ok && strings.TrimSpace(model) != "" {
-			cfg["model"] = model
-		}
+		overlayHoxiGlobalConfig(cfg, doc)
 		if provMap, ok := cfg["provider"].(map[string]interface{}); ok {
 			filterProviderModelsByHoxi(provMap, g.loadHoxiProvidersMap())
 		}

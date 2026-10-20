@@ -246,8 +246,9 @@ wait
 		t.Fatalf("user stop ended as finish=%q error=%+v, want aborted without error", finish, err)
 	}
 
-	svc.stall = stallPolicy{warnAfter: 100 * time.Millisecond, abortAfter: 300 * time.Millisecond, interval: 50 * time.Millisecond}
-	_, err = finishOf(t, svc, "ses_stalled", func(*activeProcess) {})
+	stalledSvc := newStallTestService(t)
+	stalledSvc.stall = stallPolicy{warnAfter: 100 * time.Millisecond, abortAfter: 300 * time.Millisecond, interval: 50 * time.Millisecond}
+	_, err = finishOf(t, stalledSvc, "ses_stalled", func(*activeProcess) {})
 	if err == nil || err.Name != stallErrorName {
 		t.Fatalf("watchdog stop ended with %+v, want %s", err, stallErrorName)
 	}

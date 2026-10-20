@@ -74,6 +74,7 @@ func DefaultProfile(workspace string, network NetworkMode, extraWritable ...stri
 	roots := []string{workspace}
 	roots = append(roots, extraWritable...)
 	var nameDenyExemptions []PathRule
+	var deny []PathRule
 	for _, root := range extraWritable {
 		root = strings.TrimSpace(root)
 		if root == "" {
@@ -87,6 +88,14 @@ func DefaultProfile(workspace string, network NetworkMode, extraWritable ...stri
 			canonical = resolved
 		}
 		nameDenyExemptions = append(nameDenyExemptions, PathRule{Path: canonical, Kind: PathSubtree})
+		if filepath.Base(canonical) == ".git" {
+			deny = append(deny,
+				PathRule{Path: filepath.Join(canonical, "hooks"), Kind: PathSubtree},
+				PathRule{Path: filepath.Join(canonical, "info"), Kind: PathSubtree},
+				PathRule{Path: filepath.Join(canonical, "config"), Kind: PathLiteral},
+				PathRule{Path: filepath.Join(canonical, "config.lock"), Kind: PathLiteral},
+			)
+		}
 	}
 	for _, dir := range []string{
 		HoxiHome(),
@@ -122,7 +131,6 @@ func DefaultProfile(workspace string, network NetworkMode, extraWritable ...stri
 		allow = append(allow, PathRule{Path: canonical, Kind: PathSubtree})
 	}
 	allow = append(allow, PathRule{Path: "/dev", Kind: PathSubtree})
-	deny := []PathRule{}
 	for _, dir := range []string{
 		DefaultRoot(),
 		filepath.Join(HoxiHome(), "sandbox"),

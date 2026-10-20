@@ -97,18 +97,15 @@ func (g *Gateway) handleFileSearch(w http.ResponseWriter, r *http.Request) {
 			return nil
 		}
 		name := entry.Name()
-		if entry.IsDir() {
-			if skipFileSearchDir(name) {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if entry.Type()&os.ModeSymlink != 0 || isSensitiveCredentialPath(target) {
-			return nil
+		if entry.IsDir() && skipFileSearchDir(name) {
+			return filepath.SkipDir
 		}
 		scanned++
 		if scanned > maxFileSearchEntries {
 			return fs.SkipAll
+		}
+		if entry.IsDir() || entry.Type()&os.ModeSymlink != 0 || isSensitiveCredentialPath(target) {
+			return nil
 		}
 		rel, relErr := filepath.Rel(baseDir, target)
 		if relErr != nil {

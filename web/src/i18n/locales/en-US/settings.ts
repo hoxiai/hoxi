@@ -56,7 +56,6 @@ export const settings = {
   profileEmailPlaceholder: "Leave blank to use Git email ({email})",
   accountMenuTitle: "Account & Membership",
   accountPlanBadge: "Free",
-  accountGuestBadge: "Signed Out",
   accountSignInBtn: "Sign In",
   accountSignOutBtn: "Sign Out",
   accountEditProfileBtn: "Edit Profile",
