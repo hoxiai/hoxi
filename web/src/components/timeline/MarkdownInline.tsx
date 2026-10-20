@@ -71,7 +71,7 @@ function FileCodeSpan(props: { text: string }) {
         class="inline-flex items-center gap-1.5 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-elevated)] hover:border-[var(--accent-border)] hover:bg-[var(--accent-surface)] px-1.5 py-0.5 font-mono text-[0.88em] text-[var(--text-primary)] hover:text-[var(--accent-text)] transition-colors cursor-pointer align-baseline"
       >
         <FileIcon node={{ path: cleanPath(), type: "file" }} class="w-3.5 h-3.5 shrink-0" />
-        <span>{props.text}</span>
+        <span class="break-all">{props.text}</span>
       </button>
     </Show>
   );
@@ -145,7 +145,7 @@ export default function MarkdownInline(props: { text: string }) {
                     }
                     class="inline-flex items-center gap-1 font-mono text-[0.92em] text-[var(--accent-primary)] underline decoration-[var(--accent-border)] underline-offset-2 hover:opacity-85 transition-opacity cursor-pointer"
                   >
-                    <span>{codeText()}</span>
+                    <span class="break-all">{codeText()}</span>
                   </button>
                   <button
                     type="button"

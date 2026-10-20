@@ -9,11 +9,13 @@ const WRAP_STORAGE_KEY = "hoxi.codeWrap";
 
 function readWrapPreference(): boolean {
   try {
-    return localStorage.getItem(WRAP_STORAGE_KEY) === "1";
+    return typeof localStorage !== "undefined" && localStorage.getItem(WRAP_STORAGE_KEY) === "1";
   } catch {
     return false;
   }
 }
+
+const [codeWrapEnabled, setCodeWrapEnabled] = createSignal(readWrapPreference());
 
 function detectCodeKind(lang: string): "plain" | "shell" | "diff" {
   const clean = lang.trim().toLowerCase();
@@ -32,7 +34,7 @@ export default function CodeBlockCard(props: { lang: string; code: string }) {
   const initialTheme = workspace.theme === "dark" ? "dark" : "light";
   const initialCached = getCachedHighlight(props.code, props.lang, initialTheme);
   const [copied, setCopied] = createSignal(false);
-  const [wrap, setWrap] = createSignal(readWrapPreference());
+  const wrap = codeWrapEnabled;
   const [highlighted, setHighlighted] = createSignal<
     (HighlightedCode & { lang: string; theme: string }) | undefined
   >(initialCached ? { ...initialCached, lang: props.lang, theme: initialTheme } : undefined);
@@ -99,7 +101,7 @@ export default function CodeBlockCard(props: { lang: string; code: string }) {
 
   const toggleWrap = () => {
     const next = !wrap();
-    setWrap(next);
+    setCodeWrapEnabled(next);
     try {
       localStorage.setItem(WRAP_STORAGE_KEY, next ? "1" : "0");
     } catch {

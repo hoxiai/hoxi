@@ -196,7 +196,7 @@ export default function MarkdownImage(props: { src: string; alt: string; title?:
       fallback={
         <span class="my-1 inline-flex max-w-full items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-2.5 py-2 text-[0.88em] text-[var(--text-muted)]">
           <Icon name="photo" size="small" class="shrink-0" />
-          <span class="truncate">
+          <span class="min-w-0 truncate">
             {loading()
               ? t("common.loading")
               : props.alt || localPath() || rawSrc() || t("timeline.imageLoadFailed")}
