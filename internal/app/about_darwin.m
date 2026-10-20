@@ -14,20 +14,31 @@ static NSString *hoxiAboutVersion;
 - (void)showHoxiAbout:(id)sender {
     NSString *language = [[NSLocale preferredLanguages] firstObject] ?: @"en";
     BOOL chinese = [language hasPrefix:@"zh"];
-    NSString *summary = chinese
-        ? @"Hoxi 是为并行 AI 工程打造的原生指挥中枢\n在隔离的 Git 工作树中编排 OpenCode、Claude Code、Antigravity、Qoder 与 CodeBuddy，兼得实时纠偏、结构化记忆与移动控制平面\n"
-        : @"Hoxi is a native command center for parallel AI engineering.\nOrchestrate OpenCode, Claude Code, Antigravity, Qoder and CodeBuddy across isolated Git worktrees, with live steering, structured memory and a mobile control plane.\n";
+    NSString *headline = chinese
+        ? @"为并行 AI 工程打造的原生指挥中枢"
+        : @"Native command center for parallel AI engineering.";
+    NSString *tagline = chinese
+        ? @"多 Agent 并行，一个工作台交付"
+        : @"Many agents. One workspace.";
 
     NSMutableParagraphStyle *paragraph = [NSMutableParagraphStyle new];
     paragraph.alignment = NSTextAlignmentCenter;
-    paragraph.lineSpacing = 3.0;
+    paragraph.lineSpacing = 4.0;
+    paragraph.paragraphSpacing = 8.0;
 
-    NSMutableAttributedString *credits = [[NSMutableAttributedString alloc] initWithString:summary attributes:@{
+    NSMutableAttributedString *credits = [[NSMutableAttributedString alloc] initWithString:headline attributes:@{
+        NSFontAttributeName: [NSFont systemFontOfSize:12.5 weight:NSFontWeightSemibold],
+        NSForegroundColorAttributeName: [NSColor labelColor],
+        NSParagraphStyleAttributeName: paragraph,
+    }];
+    NSAttributedString *taglineText = [[NSAttributedString alloc] initWithString:[@"\n\n" stringByAppendingString:tagline] attributes:@{
         NSFontAttributeName: [NSFont systemFontOfSize:11.0],
         NSForegroundColorAttributeName: [NSColor secondaryLabelColor],
         NSParagraphStyleAttributeName: paragraph,
     }];
-    NSAttributedString *website = [[NSAttributedString alloc] initWithString:@"hoxi.ai" attributes:@{
+    [credits appendAttributedString:taglineText];
+    [taglineText release];
+    NSAttributedString *website = [[NSAttributedString alloc] initWithString:@"\n\nhoxi.ai" attributes:@{
         NSFontAttributeName: [NSFont systemFontOfSize:11.0 weight:NSFontWeightMedium],
         NSForegroundColorAttributeName: [NSColor linkColor],
         NSParagraphStyleAttributeName: paragraph,

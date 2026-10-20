@@ -330,7 +330,7 @@ func Run(distFS fs.FS) {
 			WindowIsTranslucent:  true,
 			About: &mac.AboutInfo{
 				Title:   identity.Title,
-				Message: "A native command center for parallel AI engineering.\nOrchestrate multiple coding agents in isolated Git worktrees, with live steering, structured memory and a mobile control plane.\nhttps://hoxi.ai",
+				Message: "Native command center for parallel AI engineering.\nMany agents. One workspace.\nhttps://hoxi.ai",
 				Icon:    appIconBytes,
 			},
 		},
