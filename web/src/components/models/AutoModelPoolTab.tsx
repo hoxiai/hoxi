@@ -296,40 +296,74 @@ export default function AutoModelPoolTab() {
       </Show>
 
       {/* Active Pool Configuration Card */}
-      <div class="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/60 p-4 space-y-3.5">
-        <div class="flex flex-wrap items-start justify-between gap-3">
-          <div class="min-w-0 space-y-1">
-            <div class="flex items-center gap-2">
-              <span class="text-[13.5px] font-semibold text-[var(--text-primary)]">
-                {getAutoPoolDisplayName(selectedPoolID())}
-              </span>
-              <span class="rounded-md bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[10.5px] text-[var(--text-muted)]">
-                {AUTO_PROVIDER_ID}/{selectedPoolID()}
-              </span>
-              <span
-                class={`rounded-md px-1.5 py-0.5 text-[10px] font-semibold ${
-                  activePool().customized
-                    ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]"
-                    : "bg-[var(--ok-surface)] text-[var(--ok-text)]"
-                }`}
-              >
-                {activePool().customized
-                  ? t("models.autoPoolCustomizedBadge")
-                  : t("models.autoPoolAutoManagedBadge")}
-              </span>
-            </div>
-            <p class="text-[11.5px] text-[var(--text-secondary)]">
-              {getAutoPoolDescription(selectedPoolID())}
-            </p>
+      <div class="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/60 p-4 space-y-3">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div class="min-w-0 flex items-center gap-2 flex-wrap">
+            <span class="text-[13.5px] font-semibold text-[var(--text-primary)]">
+              {getAutoPoolDisplayName(selectedPoolID())}
+            </span>
+            <span class="text-[11.5px] text-[var(--text-muted)]">
+              · {getAutoPoolDescription(selectedPoolID())}
+            </span>
           </div>
 
-          <div class="flex items-center gap-2 shrink-0">
+          <div class="flex items-center gap-1.5 shrink-0 flex-wrap">
+            <select
+              value={activePool().strategy}
+              onChange={(e) =>
+                void handleStrategyChange(e.currentTarget.value as AutoRotationStrategy)
+              }
+              title={t("models.autoStrategyLabel")}
+              class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[11.5px] font-medium text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]"
+            >
+              <option value="round-robin">{t("models.autoStrategyRoundRobin")}</option>
+              <option value="priority">{t("models.autoStrategyPriority")}</option>
+              <option value="smart-health">{t("models.autoStrategySmartHealth")}</option>
+            </select>
+
+            <Show when={readyCount() < effectiveCandidates().length}>
+              <button
+                type="button"
+                onClick={() => clearAutoPoolCooldowns(selectedPoolID())}
+                class="inline-flex items-center gap-1 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[11px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
+              >
+                <RefreshCw size={11} />
+                {t("models.autoPoolClearCooldowns")}
+              </button>
+            </Show>
+
+            <Show when={activePool().customized && activePool().preset}>
+              <button
+                type="button"
+                onClick={() => void resetAutoPoolToDefault(selectedPoolID())}
+                class="inline-flex items-center gap-1 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[11px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
+              >
+                <RotateCcw size={11} />
+                {t("models.autoPoolResetDefault")}
+              </button>
+            </Show>
+
+            <Show when={!activePool().preset}>
+              <button
+                type="button"
+                onClick={() => {
+                  const idToDelete = selectedPoolID();
+                  setSelectedPoolID("free");
+                  void deleteCustomAutoPool(idToDelete);
+                }}
+                class="inline-flex items-center gap-1 rounded-xl border border-[var(--err)]/30 bg-[var(--err-surface)] px-2.5 py-1 text-[11px] text-[var(--err)] hover:opacity-90 cursor-pointer"
+              >
+                <Trash2 size={11} />
+                {t("models.autoPoolDeleteCustom")}
+              </button>
+            </Show>
+
             <Show when={activeTarget()}>
               {(target) => (
                 <button
                   type="button"
                   onClick={() => stepAutoPoolNext(selectedPoolID())}
-                  class="inline-flex items-center gap-1 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1.5 text-[11px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
+                  class="inline-flex items-center gap-1 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[11px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
                   title={t("models.autoPoolActiveTarget", {
                     model: `${target().providerID}/${target().modelID}`,
                   })}
@@ -346,7 +380,7 @@ export default function AutoModelPoolTab() {
                 selectModel({ providerID: AUTO_PROVIDER_ID, modelID: selectedPoolID() });
                 closeSettingsModal();
               }}
-              class={`inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-[11.5px] font-semibold cursor-pointer ${
+              class={`inline-flex items-center gap-1.5 rounded-xl px-3 py-1 text-[11.5px] font-semibold cursor-pointer ${
                 isCurrentlySelectedInWorkspace()
                   ? "bg-[var(--ok-surface)] text-[var(--ok-text)] border border-[var(--ok)]/30"
                   : "bg-[var(--accent-primary)] text-white hover:opacity-90"
@@ -357,63 +391,6 @@ export default function AutoModelPoolTab() {
               </Show>
               <span>{t("models.autoPoolUseNow")}</span>
             </button>
-          </div>
-        </div>
-
-        {/* Strategy & Pool Actions Bar */}
-        <div class="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--border-subtle)] pt-3">
-          <div class="flex items-center gap-2">
-            <span class="text-[11.5px] font-medium text-[var(--text-secondary)]">
-              {t("models.autoStrategyLabel")}:
-            </span>
-            <select
-              value={activePool().strategy}
-              onChange={(e) =>
-                void handleStrategyChange(e.currentTarget.value as AutoRotationStrategy)
-              }
-              class="rounded-xl border border-[var(--border-strong)] bg-[var(--bg-panel)] px-2.5 py-1 text-[11.5px] font-medium text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]"
-            >
-              <option value="round-robin">{t("models.autoStrategyRoundRobin")}</option>
-              <option value="priority">{t("models.autoStrategyPriority")}</option>
-              <option value="smart-health">{t("models.autoStrategySmartHealth")}</option>
-            </select>
-          </div>
-
-          <div class="flex items-center gap-1.5">
-            <Show when={readyCount() < effectiveCandidates().length}>
-              <button
-                type="button"
-                onClick={() => clearAutoPoolCooldowns(selectedPoolID())}
-                class="inline-flex items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2 py-1 text-[11px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
-              >
-                <RefreshCw size={11} />
-                {t("models.autoPoolClearCooldowns")}
-              </button>
-            </Show>
-            <Show when={activePool().customized && activePool().preset}>
-              <button
-                type="button"
-                onClick={() => void resetAutoPoolToDefault(selectedPoolID())}
-                class="inline-flex items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2 py-1 text-[11px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
-              >
-                <RotateCcw size={11} />
-                {t("models.autoPoolResetDefault")}
-              </button>
-            </Show>
-            <Show when={!activePool().preset}>
-              <button
-                type="button"
-                onClick={() => {
-                  const idToDelete = selectedPoolID();
-                  setSelectedPoolID("free");
-                  void deleteCustomAutoPool(idToDelete);
-                }}
-                class="inline-flex items-center gap-1 rounded-lg border border-[var(--err)]/30 bg-[var(--err-surface)] px-2 py-1 text-[11px] text-[var(--err)] hover:opacity-90 cursor-pointer"
-              >
-                <Trash2 size={11} />
-                {t("models.autoPoolDeleteCustom")}
-              </button>
-            </Show>
           </div>
         </div>
 
@@ -569,75 +546,74 @@ export default function AutoModelPoolTab() {
         </div>
       </div>
 
-      {/* Free Tier Hub & Official Registration Guide */}
-      <div class="space-y-3">
-        <div>
-          <h3 class="text-[13.5px] font-semibold text-[var(--text-primary)]">
-            {t("models.freeHubTitle")}
-          </h3>
-          <p class="text-[11.5px] text-[var(--text-muted)]">
-            {t("models.freeHubSubtitle")}
-          </p>
-        </div>
+      {/* Free Channels (fetched dynamically from official Hoxi API) */}
+      <Show when={getFreeTierGuideItems().length > 0}>
+        <div class="space-y-2.5">
+          <div class="flex items-center gap-2 px-0.5">
+            <h3 class="text-[13px] font-semibold text-[var(--text-primary)]">
+              {t("models.freeHubTitle")}
+            </h3>
+            <span class="text-[11.5px] text-[var(--text-muted)]">
+              · {t("models.freeHubSubtitle")}
+            </span>
+          </div>
 
-        <div class="grid grid-cols-2 gap-3">
-          <For each={getFreeTierGuideItems()}>
-            {(item) => {
-              const keyCount = () => providerKeyCounts()[item.providerID] || 0;
-              const titleText = () => item.title || (item.titleKey ? t(item.titleKey) : item.id);
-              const quotaText = () => item.quota || (item.quotaKey ? t(item.quotaKey) : "");
-              const stepText = () => item.step || (item.stepKey ? t(item.stepKey) : "");
-              return (
-                <div class="flex flex-col justify-between rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/50 p-3.5 space-y-2.5">
-                  <div class="space-y-1.5">
-                    <div class="flex items-center justify-between gap-2">
-                      <div class="flex items-center gap-2 min-w-0">
-                        <ProviderIcon id={item.providerID} class="w-4 h-4 shrink-0" />
-                        <span class="text-[12.5px] font-semibold text-[var(--text-primary)] truncate">
-                          {titleText()}
-                        </span>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            <For each={getFreeTierGuideItems()}>
+              {(item) => {
+                const keyCount = () => providerKeyCounts()[item.providerID] || 0;
+                return (
+                  <div
+                    title={item.step}
+                    class="flex items-center justify-between gap-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/45 px-3.5 py-2.5"
+                  >
+                    <div class="flex items-center gap-2.5 min-w-0">
+                      <ProviderIcon id={item.providerID} class="w-4 h-4 shrink-0" />
+                      <div class="min-w-0">
+                        <div class="flex items-center gap-1.5">
+                          <span class="text-[12.5px] font-semibold text-[var(--text-primary)] truncate">
+                            {item.title}
+                          </span>
+                          <Show when={keyCount() > 1}>
+                            <span class="shrink-0 rounded bg-[var(--accent-surface)] px-1.5 py-0.2 text-[9.5px] font-semibold text-[var(--accent-primary)]">
+                              {t("models.multiKeyActiveBadge", { count: keyCount() })}
+                            </span>
+                          </Show>
+                        </div>
+                        <div class="text-[11px] text-[var(--text-muted)] truncate">
+                          {item.quota}
+                        </div>
                       </div>
-                      <Show when={keyCount() > 1}>
-                        <span class="shrink-0 rounded-md bg-[var(--accent-surface)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--accent-primary)]">
-                          {t("models.multiKeyActiveBadge", { count: keyCount() })}
-                        </span>
-                      </Show>
                     </div>
-                    <div class="inline-block rounded-md bg-[var(--ok-surface)] px-2 py-0.5 text-[10.5px] font-medium text-[var(--ok-text)]">
-                      {quotaText()}
-                    </div>
-                    <p class="text-[11px] leading-relaxed text-[var(--text-secondary)]">
-                      {stepText()}
-                    </p>
-                  </div>
 
-                  <div class="flex items-center justify-end gap-2 pt-1">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        openURLInInspector(item.signupURL);
-                        window.open(item.signupURL, "_blank", "noopener,noreferrer");
-                      }}
-                      class="inline-flex items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[11px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
-                    >
-                      <ExternalLink size={11} />
-                      {t("models.freeHubGetKeyBtn")}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void handleConnectGuideItem(item)}
-                      class="inline-flex items-center gap-1 rounded-lg border border-[var(--accent-border)] bg-[var(--accent-surface)] px-2.5 py-1 text-[11px] font-semibold text-[var(--accent-primary)] hover:opacity-90 cursor-pointer"
-                    >
-                      <KeyRound size={11} />
-                      {t("models.freeHubConfigureBtn")}
-                    </button>
+                    <div class="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          openURLInInspector(item.signupURL);
+                          window.open(item.signupURL, "_blank", "noopener,noreferrer");
+                        }}
+                        class="inline-flex items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2 py-1 text-[11px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
+                      >
+                        <ExternalLink size={10} />
+                        {t("models.freeHubGetKeyBtn")}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleConnectGuideItem(item)}
+                        class="inline-flex items-center gap-1 rounded-lg border border-[var(--accent-border)] bg-[var(--accent-surface)] px-2.5 py-1 text-[11px] font-semibold text-[var(--accent-primary)] hover:opacity-90 cursor-pointer"
+                      >
+                        <KeyRound size={10} />
+                        {t("models.freeHubConfigureBtn")}
+                      </button>
+                    </div>
                   </div>
-                </div>
-              );
-            }}
-          </For>
+                );
+              }}
+            </For>
+          </div>
         </div>
-      </div>
+      </Show>
       </div>
     </div>
   );

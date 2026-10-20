@@ -98,7 +98,7 @@ func TestLeaderboardHTTPHandler(t *testing.T) {
 	if err := json.NewDecoder(recFree.Body).Decode(&freeRes); err != nil {
 		t.Fatalf("failed to decode free-tiers response: %v", err)
 	}
-	if freeRes.Data == nil || len(freeRes.Data.Items) == 0 {
-		t.Fatalf("expected free-tiers items in response, got %+v", freeRes)
+	if freeRes.Data == nil || freeRes.Data.Items == nil {
+		t.Fatalf("expected valid free-tiers response envelope, got %+v", freeRes)
 	}
 }

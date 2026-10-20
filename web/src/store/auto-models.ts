@@ -40,104 +40,18 @@ export interface FreeTierGuideItem {
   baseURL?: string;
   defaultModels?: Array<{ id: string; name: string; reasoning: boolean; free: boolean }>;
   signupURL: string;
-  title?: string;
+  title: string;
   badge?: string;
-  quota?: string;
-  step?: string;
+  quota: string;
+  step: string;
   recommendedModels?: string[];
-  titleKey?:
-    | "models.freeHubProviderOpenRouterTitle"
-    | "models.freeHubProviderGeminiTitle"
-    | "models.freeHubProviderGroqTitle"
-    | "models.freeHubProviderSiliconTitle"
-    | "models.freeHubProviderZhipuTitle"
-    | "models.freeHubProviderModelScopeTitle";
-  quotaKey?:
-    | "models.freeHubProviderOpenRouterQuota"
-    | "models.freeHubProviderGeminiQuota"
-    | "models.freeHubProviderGroqQuota"
-    | "models.freeHubProviderSiliconQuota"
-    | "models.freeHubProviderZhipuQuota"
-    | "models.freeHubProviderModelScopeQuota";
-  stepKey?:
-    | "models.freeHubProviderOpenRouterStep"
-    | "models.freeHubProviderGeminiStep"
-    | "models.freeHubProviderGroqStep"
-    | "models.freeHubProviderSiliconStep"
-    | "models.freeHubProviderZhipuStep"
-    | "models.freeHubProviderModelScopeStep";
 }
-
-export const FREE_TIER_GUIDE_ITEMS: readonly FreeTierGuideItem[] = [
-  {
-    id: "openrouter-free",
-    providerID: "openrouter",
-    signupURL: "https://openrouter.ai/settings/keys",
-    titleKey: "models.freeHubProviderOpenRouterTitle",
-    quotaKey: "models.freeHubProviderOpenRouterQuota",
-    stepKey: "models.freeHubProviderOpenRouterStep",
-  },
-  {
-    id: "gemini-free",
-    providerID: "google",
-    signupURL: "https://aistudio.google.com/apikey",
-    titleKey: "models.freeHubProviderGeminiTitle",
-    quotaKey: "models.freeHubProviderGeminiQuota",
-    stepKey: "models.freeHubProviderGeminiStep",
-  },
-  {
-    id: "groq-free",
-    providerID: "groq",
-    signupURL: "https://console.groq.com/keys",
-    titleKey: "models.freeHubProviderGroqTitle",
-    quotaKey: "models.freeHubProviderGroqQuota",
-    stepKey: "models.freeHubProviderGroqStep",
-  },
-  {
-    id: "siliconflow-free",
-    providerID: "siliconflow",
-    customMode: true,
-    baseURL: "https://api.siliconflow.cn/v1",
-    defaultModels: [
-      { id: "Qwen/Qwen2.5-Coder-7B-Instruct", name: "Qwen2.5 Coder 7B (Free)", reasoning: false, free: true },
-      { id: "THUDM/GLM-4-9B-0414", name: "GLM-4 9B (Free)", reasoning: false, free: true },
-      { id: "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B", name: "DeepSeek R1 Distill 7B (Free)", reasoning: true, free: true },
-    ],
-    signupURL: "https://cloud.siliconflow.cn/account/ak",
-    titleKey: "models.freeHubProviderSiliconTitle",
-    quotaKey: "models.freeHubProviderSiliconQuota",
-    stepKey: "models.freeHubProviderSiliconStep",
-  },
-  {
-    id: "zhipu-free",
-    providerID: "zai",
-    signupURL: "https://open.bigmodel.cn/usercenter/apikeys",
-    titleKey: "models.freeHubProviderZhipuTitle",
-    quotaKey: "models.freeHubProviderZhipuQuota",
-    stepKey: "models.freeHubProviderZhipuStep",
-  },
-  {
-    id: "modelscope-free",
-    providerID: "modelscope",
-    customMode: true,
-    baseURL: "https://api-inference.modelscope.cn/v1",
-    defaultModels: [
-      { id: "Qwen/Qwen3-Coder-480B-A35B-Instruct", name: "Qwen3 Coder 480B (Free Quota)", reasoning: true, free: true },
-      { id: "deepseek-ai/DeepSeek-V3", name: "DeepSeek V3 (Free Quota)", reasoning: true, free: true },
-    ],
-    signupURL: "https://modelscope.cn/my/myaccesstoken",
-    titleKey: "models.freeHubProviderModelScopeTitle",
-    quotaKey: "models.freeHubProviderModelScopeQuota",
-    stepKey: "models.freeHubProviderModelScopeStep",
-  },
-];
 
 const [remoteFreeTierGuides, setRemoteFreeTierGuides] = createSignal<FreeTierGuideItem[]>([]);
 let lastFreeTierFetchLang = "";
 
 export function getFreeTierGuideItems(): readonly FreeTierGuideItem[] {
-  const remote = remoteFreeTierGuides();
-  return remote.length > 0 ? remote : FREE_TIER_GUIDE_ITEMS;
+  return remoteFreeTierGuides();
 }
 
 export async function fetchFreeTierGuides(lang: string = "zh"): Promise<readonly FreeTierGuideItem[]> {
@@ -147,7 +61,7 @@ export async function fetchFreeTierGuides(lang: string = "zh"): Promise<readonly
   }
   try {
     const items = await leaderboardAPI.getFreeTiers(normalizedLang);
-    if (Array.isArray(items) && items.length > 0) {
+    if (Array.isArray(items)) {
       const mapped: FreeTierGuideItem[] = items.map((item) => {
         const recModels = Array.isArray(item.recommendedModels) ? item.recommendedModels : [];
         return {
@@ -176,9 +90,9 @@ export async function fetchFreeTierGuides(lang: string = "zh"): Promise<readonly
       return mapped;
     }
   } catch {
-    /* fallback to local FREE_TIER_GUIDE_ITEMS */
+    /* ignore */
   }
-  return FREE_TIER_GUIDE_ITEMS;
+  return remoteFreeTierGuides();
 }
 
 function createDefaultAutoPools(): Record<string, AutoModelPoolConfig> {
