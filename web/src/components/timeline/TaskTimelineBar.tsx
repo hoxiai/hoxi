@@ -17,6 +17,9 @@ export interface ActivityBarSegment {
   heightPct: number;
   duration?: number;
   time?: { start: number; end?: number };
+  messageIDs?: string[];
+  stepCount?: number;
+  running?: boolean;
 }
 
 export const MAX_RAIL_SEGMENTS = 72;
@@ -47,6 +50,112 @@ export function resolveSegmentDuration(
     return Math.max(0, current - seg.time.start);
   }
   return undefined;
+}
+
+const KIND_PRIORITY: ActivityBarSegment["kind"][] = [
+  "error",
+  "task",
+  "edit",
+  "shell",
+  "explore",
+  "reasoning",
+  "text",
+];
+
+function resolvePartTime(part: MessagePart): { start: number; end?: number } | undefined {
+  if (part.type === "reasoning") return part.time;
+  if (part.type === "tool" && part.state.status !== "pending") return part.state.time;
+  return undefined;
+}
+
+function isLivePart(part: MessagePart): boolean {
+  if (part.type === "reasoning") return Boolean(part.time && !part.time.end);
+  if (part.type === "tool") {
+    return part.state.status === "pending" || part.state.status === "running";
+  }
+  return false;
+}
+
+function summarizeUserTurn(turn: MessageTurn): string {
+  const text = turn.parts
+    .filter((part): part is Extract<MessagePart, { type: "text" }> => part.type === "text")
+    .map((part) => part.text)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return text.length > 72 ? `${text.slice(0, 72)}…` : text;
+}
+
+/**
+ * One rail node per user prompt / task, not per reasoning or tool part. Every
+ * assistant turn after a user message belongs to that prompt's node, so a task
+ * that emits dozens of parts still occupies a single entry in the trajectory.
+ */
+export function buildTurnSegments(turns: MessageTurn[]): ActivityBarSegment[] {
+  const segments: ActivityBarSegment[] = [];
+  let group: MessageTurn[] = [];
+
+  const flush = () => {
+    if (group.length === 0) return;
+    const turnsInGroup = group;
+    group = [];
+    const userTurn = turnsInGroup.find((turn) => turn.info.role === "user");
+    const anchorTurn = userTurn ?? turnsInGroup[0];
+    const parts: MessagePart[] = [];
+    for (const turn of turnsInGroup) {
+      if (turn.info.role === "assistant") parts.push(...turn.parts);
+    }
+    type PartMeta = NonNullable<ReturnType<typeof classifyPart>>;
+    const metas: PartMeta[] = [];
+    const starts: number[] = [];
+    const ends: number[] = [];
+    const running = parts.some(isLivePart);
+    for (const part of parts) {
+      const meta = classifyPart(part, !running);
+      if (meta) metas.push(meta);
+      const time = resolvePartTime(part);
+      if (!time) continue;
+      starts.push(time.start);
+      if (time.end !== undefined) ends.push(time.end);
+    }
+    starts.push(anchorTurn.info.time.created);
+    if (!running) {
+      for (const turn of turnsInGroup) {
+        const completed = turn.info.time.completed;
+        if (completed !== undefined) ends.push(completed);
+      }
+    }
+    const start = Math.min(...starts);
+    const end = running || ends.length === 0 ? undefined : Math.max(...ends);
+    const index = segments.length + 1;
+    const preview = userTurn ? summarizeUserTurn(userTurn) : "";
+    const primaryKind = KIND_PRIORITY.find((kind) => metas.some((meta) => meta.kind === kind)) ?? "text";
+    const primary = metas.find((meta) => meta.kind === primaryKind);
+    segments.push({
+      id: anchorTurn.info.id,
+      messageID: anchorTurn.info.id,
+      messageIDs: turnsInGroup.map((turn) => turn.info.id),
+      kind: primaryKind,
+      color: primary?.color ?? "var(--text-muted)",
+      label: preview ? `#${index} ${preview}` : `#${index} ${primary?.label ?? t("timeline.activityResponse")}`,
+      heightPct: Math.min(100, Math.max(20, metas.length * 10)),
+      stepCount: metas.length,
+      running,
+      time: { start, ...(end !== undefined ? { end } : {}) },
+      duration: end !== undefined ? Math.max(0, end - start) : undefined,
+    });
+  };
+
+  for (const turn of turns) {
+    if (turn.info.role === "user") {
+      flush();
+      group = [turn];
+    } else {
+      group.push(turn);
+    }
+  }
+  flush();
+  return segments;
 }
 
 function classifyPart(
@@ -184,21 +293,8 @@ export default function TaskTimelineBar(props: {
     }
   };
   const [now, setNow] = createSignal(Date.now());
-  const hasRunningSegment = createMemo(() => {
-    const list = props.turns;
-    for (let i = 0; i < list.length; i++) {
-      const turn = list[i];
-      if (turn.info.role === "user") continue;
-      if (Boolean(turn.info.time?.completed) && i < list.length - 1) continue;
-      for (const part of turn.parts) {
-        if (part.type === "reasoning" && part.time && !part.time.end) return true;
-        if (part.type === "tool" && part.state.status === "running") {
-          return true;
-        }
-      }
-    }
-    return false;
-  });
+  const segments = createMemo<ActivityBarSegment[]>(() => buildTurnSegments(props.turns));
+  const hasRunningSegment = createMemo(() => segments().some((seg) => seg.running));
   createEffect(() => {
     if (!hasRunningSegment()) return;
     setNow(Date.now());
@@ -238,53 +334,17 @@ export default function TaskTimelineBar(props: {
       document.removeEventListener("pointerdown", dismiss);
     });
   });
-  const segments = createMemo<ActivityBarSegment[]>(() => {
-    const out: ActivityBarSegment[] = [];
-    const list = props.turns;
-    for (let i = 0; i < list.length; i++) {
-      const turn = list[i];
-      if (turn.info.role === "user") continue;
-      const isCompleted = Boolean(turn.info.time?.completed) && i < list.length - 1;
-      const turnSegs: ActivityBarSegment[] = [];
-      for (const part of turn.parts) {
-        const meta = classifyPart(part, isCompleted);
-        if (!meta) continue;
-        const time: { start: number; end?: number } | undefined = part.type === "reasoning" ? part.time
-          : part.type === "tool" && part.state.status !== "pending" ? part.state.time : undefined;
-        // Do not query now() inside this memo so completed segments do not cause
-        // full array re-allocation every second during active task execution.
-        const duration = time?.end ? Math.max(0, time.end - time.start) : undefined;
-        turnSegs.push({
-          id: part.id,
-          messageID: turn.info.id,
-          kind: meta.kind,
-          color: meta.color,
-          label: meta.label,
-          heightPct: meta.weight,
-          duration,
-          time,
-        });
-      }
-      out.push(...turnSegs);
-    }
-    return out;
-  });
-
   const focusSegmentIndex = createMemo(() => {
     const list = segments();
     if (list.length === 0) return -1;
-    const readingID = props.readingTurnID;
-    if (readingID) {
-      for (let i = list.length - 1; i >= 0; i--) {
-        if (list[i].messageID === readingID) return i;
-      }
-    }
-    const matchID = props.activeMatchTurnID;
-    if (matchID) {
-      for (let i = list.length - 1; i >= 0; i--) {
-        if (list[i].messageID === matchID) return i;
-      }
-    }
+    const locate = (id: string | null | undefined) => {
+      if (!id) return -1;
+      return list.findIndex((seg) => seg.messageIDs?.includes(id) || seg.messageID === id);
+    };
+    const readingIndex = locate(props.readingTurnID);
+    if (readingIndex >= 0) return readingIndex;
+    const matchIndex = locate(props.activeMatchTurnID);
+    if (matchIndex >= 0) return matchIndex;
     return list.length - 1;
   });
 
@@ -292,8 +352,17 @@ export default function TaskTimelineBar(props: {
     return computeVisibleSegments(segments(), focusSegmentIndex(), MAX_RAIL_SEGMENTS);
   });
 
-  const maxDuration = createMemo(() => Math.max(1, ...segments().map((seg) => seg.duration ?? 0)));
-  const focusedSegment = createMemo(() => segments().filter((seg) => seg.messageID === props.readingTurnID).at(-1)?.id);
+  const maxDuration = createMemo(() =>
+    Math.max(1, ...segments().map((seg) => resolveSegmentDuration(seg, now()) ?? 0))
+  );
+  const focusedSegment = createMemo(() => {
+    const readingID = props.readingTurnID;
+    if (!readingID) return segments().at(-1)?.id;
+    return (
+      segments().find((seg) => seg.messageIDs?.includes(readingID) || seg.messageID === readingID)?.id ??
+      segments().at(-1)?.id
+    );
+  });
   const detailSegment = createMemo(() => segments().find((seg) => seg.id === activeSegment()));
   const [detailTop, setDetailTop] = createSignal(0);
   const showDetail = (id: string, element: HTMLButtonElement) => {
@@ -402,9 +471,9 @@ export default function TaskTimelineBar(props: {
                 aria-label={seg().label} aria-current={focusedSegment() === seg().id ? "step" : undefined}
                 onMouseEnter={(event) => showDetail(seg().id, event.currentTarget)}
                 onFocus={(event) => showDetail(seg().id, event.currentTarget)} onBlur={() => setActiveSegment(null)}
-                onClick={() => props.onJumpToTurn(seg().messageID, seg().id)}>
+                onClick={() => props.onJumpToTurn(seg().messageID)}>
                 <span style={{ background: highlighted() ? seg().color : "var(--text-faint)",
-                  width: highlighted() ? `${duration() === undefined ? 45 : 20 + 80 * Math.sqrt(duration()! / maxDuration())}%` : "30%",
+                  width: highlighted() ? `${Math.min(100, 20 + 80 * Math.sqrt(duration()! / maxDuration()))}%` : "30%",
                   opacity: highlighted() ? 1 : 0.4 }} />
               </button>;
             }}</Index>
@@ -414,6 +483,11 @@ export default function TaskTimelineBar(props: {
             return (
               <div class="task-reading-detail" style={{ top: `${detailTop()}px` }}>
                 {seg().label}
+                <Show when={(seg().stepCount ?? 0) > 0}>
+                  <span class="task-activity-history-duration">
+                    {t("timeline.stepsCompleted", { count: seg().stepCount ?? 0 })}
+                  </span>
+                </Show>
                 <Show when={duration() !== undefined}>
                   <span class="task-activity-history-duration">{((duration() ?? 0) / 1000).toFixed(1)}s</span>
                 </Show>

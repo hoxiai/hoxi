@@ -8,6 +8,7 @@ import {
 } from "../components/timeline/turn-window";
 import {
   type ActivityBarSegment,
+  buildTurnSegments,
   computeVisibleSegments,
   MAX_RAIL_SEGMENTS,
   resolveSegmentDuration,
@@ -202,5 +203,82 @@ describe("TaskTimelineBar segment windowing & duration resolution", () => {
       time: { start: 10000 },
     };
     assertEqual(resolveSegmentDuration(runningSeg, 13500), 3500);
+  });
+});
+
+describe("TaskTimelineBar per-turn trajectory grouping", () => {
+  const toolPart = (id: string, messageID: string, tool: string, status: "running" | "completed") => ({
+    id,
+    sessionID: "test-ses",
+    messageID,
+    type: "tool" as const,
+    callID: `call_${id}`,
+    tool,
+    state:
+      status === "running"
+        ? { status: "running" as const, input: { command: "npm test" }, time: { start: 1300 } }
+        : {
+            status: "completed" as const,
+            input: { command: "npm test" },
+            output: "ok",
+            title: tool,
+            metadata: {},
+            time: { start: 1300, end: 1800 },
+          },
+  });
+
+  it("collapses every assistant part of a prompt into one rail node", () => {
+    const turns: MessageTurn[] = [
+      {
+        info: { id: "u1", sessionID: "test-ses", role: "user", time: { created: 1000, completed: 1000 } },
+        parts: [{ id: "p1", sessionID: "test-ses", messageID: "u1", type: "text", text: "Fix the auth bug" }],
+      },
+      {
+        info: { id: "a1", sessionID: "test-ses", role: "assistant", time: { created: 1100, completed: 2000 } },
+        parts: [
+          { id: "p2", sessionID: "test-ses", messageID: "a1", type: "reasoning", text: "thinking", time: { start: 1100, end: 1300 } },
+          toolPart("p3", "a1", "bash", "completed"),
+        ],
+      },
+      {
+        info: { id: "u2", sessionID: "test-ses", role: "user", time: { created: 2100, completed: 2100 } },
+        parts: [{ id: "p4", sessionID: "test-ses", messageID: "u2", type: "text", text: "Add regression tests" }],
+      },
+      {
+        info: { id: "a2", sessionID: "test-ses", role: "assistant", time: { created: 2200, completed: 3000 } },
+        parts: [{ id: "p5", sessionID: "test-ses", messageID: "a2", type: "text", text: "Done" }],
+      },
+    ];
+
+    const segments = buildTurnSegments(turns);
+    assertEqual(segments.length, 2);
+    assertEqual(segments[0].messageID, "u1");
+    assertEqual(segments[0].messageIDs?.join(","), "u1,a1");
+    assertEqual(segments[0].stepCount, 2);
+    assertEqual(segments[0].duration, 1000);
+    assertEqual(segments[0].label.includes("Fix the auth bug"), true);
+    assertEqual(segments[1].messageID, "u2");
+    assertEqual(segments[1].label.includes("Add regression tests"), true);
+    assertEqual(segments[1].running, false);
+  });
+
+  it("keeps a prompt live while one of its tools is still running", () => {
+    const turns: MessageTurn[] = [
+      {
+        info: { id: "u1", sessionID: "test-ses", role: "user", time: { created: 1000 } },
+        parts: [{ id: "p1", sessionID: "test-ses", messageID: "u1", type: "text", text: "Run tests" }],
+      },
+      {
+        info: { id: "a1", sessionID: "test-ses", role: "assistant", time: { created: 1100 } },
+        parts: [toolPart("p2", "a1", "bash", "running")],
+      },
+    ];
+
+    const segments = buildTurnSegments(turns);
+    assertEqual(segments.length, 1);
+    assertEqual(segments[0].running, true);
+    assertEqual(segments[0].time?.end, undefined);
+    assertEqual(segments[0].duration, undefined);
+    assertEqual(resolveSegmentDuration(segments[0], 2000), 1000);
   });
 });
