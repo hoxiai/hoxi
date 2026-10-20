@@ -9,6 +9,7 @@ import {
   normalizeVersion, maximumMacOS, minimumFromMachO, validateAppMetadata, validatePublication,
 } from "./release-artifact.mjs";
 import { releasePayload, publishRelease } from "./release-publisher.mjs";
+import { publishGitcodeRelease } from "./gitcode-release.mjs";
 import { sparkleConfig, validateSparkle, validateSparkleApp, frameworkFiles, verifyUpdateSignature } from "./sparkle.mjs";
 
 test("release versions accept only complete numeric releases", () => {
@@ -67,6 +68,8 @@ test("tracked publisher sends verified artifact metadata, keeps credentials out 
       assert.equal(body.size, 1234);
       assert.equal(body.dryRun, false);
       assert.ok(body.mirrors["mac-arm64"].global.endsWith("/v0.2.1/Hoxi-0.2.1-darwin-arm64.dmg"));
+      assert.equal(body.mirrors["mac-arm64"].cn, undefined);
+      assert.equal(body.desktop["mac-arm64"], body.mirrors["mac-arm64"].global);
       return Response.json({ success: true, data: { version: "0.2.1" } });
     } });
   assert.equal(result.mode, "api");
@@ -117,7 +120,11 @@ test("tag workflow gates publication on tests, versioned artifacts and notarizat
     "body: ${{ env.RELEASE_NOTES }}",
     "build/bin/Hoxi-${{ env.RELEASE_VERSION }}-darwin-arm64.dmg",
     "fail_on_unmatched_files: true",
+    "- name: Publish GitCode Release",
+    'node scripts/gitcode-release.mjs',
+    '--version "$RELEASE_VERSION"',
     "notes: process.env.RELEASE_NOTES",
+    "gitcode: true",
     "if: always()",
     'security delete-keychain "$KEYCHAIN_PATH"',
     'rm -f "${APPLE_API_KEY_PATH:-}"',
@@ -131,7 +138,7 @@ test("tag workflow gates publication on tests, versioned artifacts and notarizat
   assert.doesNotMatch(workflow, /Optional|CAN_NOTARIZE|\|\| true|build\/bin\/\*\.dmg|generate_release_notes/);
   assert.equal((workflow.match(/^\s+if:/gm) || []).length, 1, "Only cleanup may be conditional");
   for (const secret of ["MACOS_CERTIFICATE", "MACOS_CERTIFICATE_PWD", "APPLE_API_KEY",
-    "APPLE_API_KEY_ID", "APPLE_API_ISSUER"]) {
+    "APPLE_API_KEY_ID", "APPLE_API_ISSUER", "GITCODE_TOKEN"]) {
     assert.ok(workflow.includes(`\${${secret}:?`), `Missing required credential: ${secret}`);
   }
   for (const block of workflow.matchAll(/^        run: \|\n((?:          .*\n|\n)+)/gm)) {
@@ -278,15 +285,96 @@ test("Sparkle is opt-in, rejects partial config and only accepts explicit offici
   assert.throws(() => sparkleConfig({ ...env, HOXI_SPARKLE_PUBLIC_KEY: "bad" }), /32 bytes/);
 });
 
-test("Sparkle payload validates signature/key lengths, version, URL and byte length; no unuploaded GitCode mirror", () => {
+test("Sparkle payload validates signature/key lengths, version, URL and byte length", () => {
   const data = releasePayload({ version: "0.2.1", notes: "test", size: 1234, sha256: "a".repeat(64), sparkle });
   assert.deepEqual(data.sparkle, sparkle);
   assert.equal(data.desktop["mac-arm64"], sparkle.url);
   assert.equal(data.mirrors["mac-arm64"].cn, undefined);
+  assert.equal(data.mirrors["mac-arm64"].global, sparkle.url);
   for (const patch of [{ edSignature: "bad" }, { publicKey: "bad" }, { version: "0.2.2" },
     { length: 1235 }, { url: "https://example.com/app.dmg" }, { feedURL: "http://hoxi.ai/feed" }]) {
     assert.throws(() => validateSparkle({ ...sparkle, ...patch }, "0.2.1", 1234));
   }
+});
+
+test("GitCode mirror is advertised only after the release publisher opts in", () => {
+  const withMirror = releasePayload({ version: "0.2.1", notes: "test", size: 1234,
+    sha256: "a".repeat(64), sparkle, gitcode: true });
+  assert.equal(withMirror.sparkle.url, sparkle.url);
+  assert.equal(withMirror.desktop["mac-arm64"], sparkle.url);
+  assert.equal(withMirror.mirrors["mac-arm64"].global, sparkle.url);
+  assert.equal(withMirror.mirrors["mac-arm64"].cn,
+    "https://gitcode.com/hoxiai/hoxi-releases/releases/download/v0.2.1/Hoxi-0.2.1-darwin-arm64.dmg");
+});
+
+test("GitCode publisher uploads exact assets, verifies the set and promotes pre to latest", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "hoxi-gitcode-test-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const files = ["Hoxi-0.2.1-darwin-arm64.dmg", "checksums.txt", "sparkle.json"]
+    .map((name) => {
+      const file = path.join(root, name);
+      fs.writeFileSync(file, `${name}-fixture`);
+      return file;
+    });
+  let release = null;
+  let pendingName = "";
+  const calls = [];
+  const fetchImpl = async (url, init) => {
+    const target = new URL(url);
+    calls.push(`${init.method} ${target.origin}${target.pathname}`);
+    if (target.protocol !== "https:") throw new Error("non-HTTPS request");
+    if (target.hostname !== "uploads.example.test") assert.equal(init.headers["PRIVATE-TOKEN"], "test-token");
+    if (target.hostname === "uploads.example.test") {
+      assert.equal(init.method, "PUT");
+      release.assets.push({ id: String(release.assets.length + 1), name: pendingName,
+        type: "attach", size: init.body.size });
+      return new Response("");
+    }
+    if (init.method === "GET" && target.pathname.endsWith("/releases/tags/v0.2.1")) {
+      return release ? Response.json(release) : Response.json({ message: "404" }, { status: 404 });
+    }
+    if (init.method === "POST" && target.pathname.endsWith("/releases")) {
+      const body = JSON.parse(init.body);
+      assert.equal(body.tag_name, "v0.2.1");
+      assert.equal(body.release_status, "pre");
+      assert.equal(body.target_commitish, "main");
+      release = { tag_name: body.tag_name, body: body.body, release_status: "pre", assets: [] };
+      return Response.json(release);
+    }
+    if (init.method === "PATCH") {
+      release.release_status = JSON.parse(init.body).release_status;
+      return Response.json(release);
+    }
+    if (init.method === "GET" && target.pathname.endsWith("/upload_url")) {
+      pendingName = target.searchParams.get("file_name");
+      return Response.json({ url: "https://uploads.example.test/object",
+        headers: { "Content-Type": "application/octet-stream" } });
+    }
+    if (init.method === "DELETE") return Response.json({});
+    throw new Error(`Unexpected request: ${init.method} ${target}`);
+  };
+  const result = await publishGitcodeRelease({ token: "test-token", version: "0.2.1",
+    notes: "Release test", assets: files, fetchImpl });
+  assert.equal(result.tag, "v0.2.1");
+  assert.equal(result.assets.length, 3);
+  assert.equal(release.release_status, "latest");
+  assert.equal(calls.filter((call) => call.endsWith("/upload_url")).length, 3);
+  assert.equal(calls.filter((call) => call === "PUT https://uploads.example.test/object").length, 3);
+  assert.equal(calls.some((call) => call.includes("test-token")), false);
+});
+
+test("GitCode publisher reports invalid credentials without leaking the token", async () => {
+  await assert.rejects(publishGitcodeRelease({ token: "bad-token", version: "0.2.1", notes: "test",
+    assets: [path.join(scripts, "release-publisher.mjs")],
+    fetchImpl: async (url, init) => {
+      assert.equal(init.headers["PRIVATE-TOKEN"], "bad-token");
+      assert.equal(String(url).includes("bad-token"), false);
+      return Response.json({ message: "401 Unauthorized" }, { status: 401 });
+    } }), (error) => {
+    assert.match(error.message, /HTTP 401/);
+    assert.equal(error.message.includes("bad-token"), false);
+    return true;
+  });
 });
 
 test("website must explicitly accept exact Sparkle metadata, not merely generic release success", async () => {
@@ -326,6 +414,7 @@ test("signature is checked against the configured public key and exact final DMG
 test("Sparkle workflow signs only the final stapled DMG and uploads before website publication", () => {
   const workflow = fs.readFileSync(path.join(scripts, "../.github/workflows/release.yml"), "utf8");
   const gates = ['verify-distribution "$DMG"', 'sign-update "$DMG"', "uses: softprops/action-gh-release@v2",
+    "- name: Publish GitCode Release", "node scripts/gitcode-release.mjs",
     "- name: Publish website metadata after asset upload", "node scripts/release-publisher.mjs"];
   let position = -1;
   for (const gate of gates) { const next = workflow.indexOf(gate, position + 1); assert.ok(next > position); position = next; }

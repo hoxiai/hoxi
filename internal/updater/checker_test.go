@@ -25,9 +25,9 @@ func TestUpdaterCheckerWithMockServer(t *testing.T) {
 			"needUpdate":   true,
 			"title":        "Hoxi v0.3.0 Released",
 			"releaseNotes": "- Feature: One-click auth\n- Feature: Auto update",
-			"downloadUrl":  "https://gitcode.com/hoxiai/hoxi/releases/download/v0.3.0/Hoxi.dmg",
+			"downloadUrl":  "https://gitcode.com/hoxiai/hoxi-releases/releases/download/v0.3.0/Hoxi.dmg",
 			"mirrors": map[string]string{
-				"cn":     "https://gitcode.com/hoxiai/hoxi/releases/download/v0.3.0/Hoxi.dmg",
+				"cn":     "https://gitcode.com/hoxiai/hoxi-releases/releases/download/v0.3.0/Hoxi.dmg",
 				"global": "https://github.com/hoxiai/hoxi/releases/download/v0.3.0/Hoxi.dmg",
 			},
 			"mandatory": false,

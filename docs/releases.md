@@ -43,12 +43,15 @@ The tracked client is `scripts/release-publisher.mjs`; it has no npm dependencie
 retains compatibility with the optional local maintainer script, and fails if that
 script is unavailable. There is no automatic database fallback.
 
-This script does not upload DMGs to GitHub/GitCode. Before publishing metadata,
-make the matching versioned artifacts available at the configured mirror URLs.
-Apple signing/notarization and the live publishing service still require a real
-maintainer-account acceptance run. Local tests never perform these account actions.
+The local script does not upload DMGs. The tag workflow uploads the same verified
+DMG, checksum and Sparkle metadata to both GitHub and GitCode before publishing
+website metadata. For a manual local publication, upload the matching versioned
+artifacts to both mirrors first, or run `scripts/gitcode-release.mjs` with a valid
+`GITCODE_TOKEN`. GitCode assets live in the public `hoxiai/hoxi-releases` repository; the `hoxiai/hoxi` repository is a read-only import and rejects release creation. Apple signing/notarization and the live publishing service still
+require a real maintainer-account acceptance run. Local tests never perform these
+account actions.
 
-## GitHub tag releases
+## GitHub + GitCode tag releases
 
 Pushing a `v<major>.<minor>.<patch>` tag runs the desktop release workflow. It
 normalizes the tag version and passes it explicitly to the build. Frontend lint,
@@ -59,22 +62,24 @@ Configure these GitHub Actions repository secrets before pushing a release tag:
 
 - `MACOS_CERTIFICATE`: base64-encoded Developer ID Application `.p12`, including its private key.
 - `MACOS_CERTIFICATE_PWD`: password protecting the `.p12` export.
-- `APPLE_ID`: Apple account used for notarization.
-- `APPLE_APP_SPECIFIC_PASSWORD`: app-specific password for that account.
-- `APPLE_TEAM_ID`: Apple Developer team owning the signing identity.
+- `APPLE_API_KEY`: raw App Store Connect `AuthKey_*.p8` contents.
+- `APPLE_API_KEY_ID`: App Store Connect API key ID.
+- `APPLE_API_ISSUER`: App Store Connect issuer UUID.
+- `GITCODE_TOKEN`: GitCode personal access token with repository release write access.
 
 Signing and notarization are mandatory on this path. The temporary signing
 keychain is added to the runner's search list and deleted after the job, including
 on failure. Missing credentials or failed verification stop publication.
 
-Before creating the GitHub Release, the workflow mounts the final DMG read-only
+Before creating either release, the workflow mounts the final DMG read-only
 to verify the app version, runtime version, architecture, minimum macOS and app
 signature. It also verifies the DMG's Developer ID signature and stapled notary
 ticket. The versioned DMG, SHA-256 checksum and signed public `sparkle.json` metadata
-are uploaded before website metadata publication; missing files fail the release.
-No GitCode mirror is uploaded or advertised for Sparkle releases. The website must
-explicitly confirm Sparkle metadata acceptance and feed deployment, not just generic
-release success. Its implementation is absent here and remains a deployment blocker.
+are uploaded to GitHub and GitCode before website metadata publication; missing
+files fail the release. The Sparkle enclosure remains the exact GitHub DMG, while
+the website advertises both GitHub and GitCode mirrors. The website must explicitly
+confirm Sparkle metadata acceptance and feed deployment, not just generic release
+success. Its implementation is absent here and remains a deployment blocker.
 
 See [Auto-Updates](auto-updates.md) for required Sparkle secrets, pinned SDK/OpenCode
 archive variables, secure key-file handling, local opt-in builds and the website
