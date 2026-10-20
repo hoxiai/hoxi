@@ -24,6 +24,7 @@ import {
 } from "../../store/workspace";
 import ModelSelector from "../models/ModelSelector";
 import ComposerShelf from "./ComposerShelf";
+import SessionGoalBar from "./SessionGoalBar";
 import {
   ComposerAttachmentChips,
   ComposerAutocompletePopover,
@@ -350,6 +351,7 @@ export default function Composer() {
         />
 
         {/* Docked Questions, Approvals, Plan Follow-ups + Contextual Shelf */}
+        <SessionGoalBar />
         <ComposerShelf />
 
         {/* Main Glass Composer Box */}
@@ -375,7 +377,7 @@ export default function Composer() {
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/*,.heic,.heif,.tiff,.tif,.bmp,.webp,.png,.jpg,.jpeg,.gif,.pdf,.xlsx,.xls,.ods,.csv,.tsv,.docx,.doc,.rtf,.txt,.md,.markdown,.json,.jsonl,.yaml,.yml,.toml,.xml,.log,.py,.go,.ts,.tsx,.js,.jsx,.rs,.java,.c,.cpp,.h,.sh,.sql,.html,.css"
+            accept="image/*,.heic,.heif,.tiff,.tif,.bmp,.webp,.png,.jpg,.jpeg,.gif,.pdf,.xlsx,.xls,.ods,.csv,.tsv,.docx,.doc,.pptx,.ppt,.rtf,.txt,.md,.markdown,.json,.jsonl,.yaml,.yml,.toml,.xml,.log,.py,.go,.ts,.tsx,.js,.jsx,.rs,.java,.c,.cpp,.h,.sh,.sql,.html,.css"
             multiple
             class="hidden"
             onChange={(ev) => {

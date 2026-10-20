@@ -110,4 +110,46 @@ func TestStoreSaveGetExtractAndHTTP(t *testing.T) {
 	if !strings.Contains(sheetText, "### Sheet: 财务明细") || !strings.Contains(sheetText, "项目\t金额") || !strings.Contains(sheetText, "服务器续费\t1280.5") {
 		t.Fatalf("unexpected xlsx extracted text:\n%s", sheetText)
 	}
+
+	// Save and extract .pptx presentation + speaker notes
+	var pptxBuf bytes.Buffer
+	pzw := zip.NewWriter(&pptxBuf)
+	writePPTX := func(name, content string) {
+		w, err := pzw.Create(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = w.Write([]byte(content))
+	}
+	writePPTX("ppt/slides/slide1.xml", `<?xml version="1.0" encoding="UTF-8"?><p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree><p:sp><p:txBody><a:p><a:r><a:t>Q4 Product Roadmap</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>`)
+	writePPTX("ppt/notesSlides/notesSlide1.xml", `<?xml version="1.0" encoding="UTF-8"?><p:notes xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree><p:sp><p:txBody><a:p><a:r><a:t>Emphasize unified attachment architecture</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:notes>`)
+	_ = pzw.Close()
+
+	pptxMeta, err := store.Save(SaveRequest{
+		SessionID: "ses_hoxi_2",
+		Filename:  "roadmap.pptx",
+		Data:      pptxBuf.Bytes(),
+	})
+	if err != nil {
+		t.Fatalf("save pptx failed: %v", err)
+	}
+	if pptxMeta.Kind != KindDocument {
+		t.Fatalf("expected KindDocument for pptx, got %q", pptxMeta.Kind)
+	}
+	pptxText := store.ExtractText(pptxMeta.ID, 4000)
+	if !strings.Contains(pptxText, "### Slide 1") || !strings.Contains(pptxText, "Q4 Product Roadmap") || !strings.Contains(pptxText, "[Notes] Emphasize unified attachment architecture") {
+		t.Fatalf("unexpected pptx extracted text:\n%s", pptxText)
+	}
+
+	// DeleteBySession removes ses_hoxi_1 attachments while preserving ses_hoxi_2
+	removed := store.DeleteBySession("ses_hoxi_1")
+	if removed != 3 {
+		t.Fatalf("expected 3 attachments removed for ses_hoxi_1, got %d", removed)
+	}
+	if _, _, err := store.Get(xlsxMeta.ID); err == nil {
+		t.Fatal("expected ses_hoxi_1 attachment to be deleted")
+	}
+	if _, _, err := store.Get(pptxMeta.ID); err != nil {
+		t.Fatalf("expected ses_hoxi_2 attachment to remain intact: %v", err)
+	}
 }

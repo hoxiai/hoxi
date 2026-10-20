@@ -67,6 +67,9 @@ func (g *Gateway) routeConversation(w http.ResponseWriter, r *http.Request) bool
 	// Runtime switches and skill-selected prompts adopt unmanaged OpenCode sessions, so they always go to the runner.
 	hasSkill := (action == "prompt" || action == "prompt_async") && requestHasSkillSelection(r)
 	if action != "runtime" && !hasSkill && !g.runner.OwnsSession(id) {
+		if r.Method == http.MethodDelete && action == "" {
+			g.runner.DeleteSessionAttachments(id)
+		}
 		markInternalConversationRoute(r)
 		setRequestPath(r, "/session/"+id+suffix)
 		return true

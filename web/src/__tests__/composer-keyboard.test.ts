@@ -148,6 +148,7 @@ describe("Composer image paste & custom model vision inference", () => {
     assertEqual(classifyAttachmentKind("data.tsv", ""), "spreadsheet");
     assertEqual(classifyAttachmentKind("sheet.ods", ""), "spreadsheet");
     assertEqual(classifyAttachmentKind("proposal.docx", ""), "document");
+    assertEqual(classifyAttachmentKind("roadmap.pptx", ""), "document");
     assertEqual(classifyAttachmentKind("notes.txt", "text/plain"), "text");
     assertEqual(classifyAttachmentKind("main.go", ""), "text");
     assertEqual(classifyAttachmentKind("archive.zip", "application/octet-stream"), null);

@@ -119,6 +119,10 @@ func ClassifyFile(filename, mimeType string) (Kind, string, error) {
 		return KindDocument, lowerMime, nil
 	case "application/msword":
 		return KindDocument, "application/msword", nil
+	case "application/vnd.openxmlformats-officedocument.presentationml.presentation":
+		return KindDocument, lowerMime, nil
+	case "application/vnd.ms-powerpoint":
+		return KindDocument, "application/vnd.ms-powerpoint", nil
 	case "application/rtf", "text/rtf":
 		return KindDocument, "application/rtf", nil
 	}
@@ -152,6 +156,10 @@ func ClassifyFile(filename, mimeType string) (Kind, string, error) {
 		return KindDocument, "application/vnd.openxmlformats-officedocument.wordprocessingml.document", nil
 	case ".doc":
 		return KindDocument, "application/msword", nil
+	case ".pptx":
+		return KindDocument, "application/vnd.openxmlformats-officedocument.presentationml.presentation", nil
+	case ".ppt":
+		return KindDocument, "application/vnd.ms-powerpoint", nil
 	case ".rtf":
 		return KindDocument, "application/rtf", nil
 	}
@@ -222,6 +230,10 @@ func SanitizeFilename(name, mimeType string) string {
 			cleaned += ".docx"
 		case "application/msword":
 			cleaned += ".doc"
+		case "application/vnd.openxmlformats-officedocument.presentationml.presentation":
+			cleaned += ".pptx"
+		case "application/vnd.ms-powerpoint":
+			cleaned += ".ppt"
 		case "application/rtf":
 			cleaned += ".rtf"
 		case "text/markdown":
@@ -422,6 +434,42 @@ func (s *Store) MaterializeToDir(id, targetDir string) (Metadata, string, error)
 		return Metadata{}, "", err
 	}
 	return meta, dst, nil
+}
+
+// DeleteBySession removes all stored attachment directories belonging to sessionID.
+func (s *Store) DeleteBySession(sessionID string) int {
+	sid := strings.TrimSpace(sessionID)
+	if sid == "" {
+		return 0
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	entries, err := os.ReadDir(s.baseDir)
+	if err != nil {
+		return 0
+	}
+	removed := 0
+	for _, entry := range entries {
+		if !entry.IsDir() || !isValidAttachmentID(entry.Name()) {
+			continue
+		}
+		dir := filepath.Join(s.baseDir, entry.Name())
+		rawMeta, err := os.ReadFile(filepath.Join(dir, "meta.json"))
+		if err != nil {
+			continue
+		}
+		var meta Metadata
+		if json.Unmarshal(rawMeta, &meta) != nil {
+			continue
+		}
+		if meta.SessionID == sid {
+			if os.RemoveAll(dir) == nil {
+				removed++
+			}
+		}
+	}
+	return removed
 }
 
 func (s *Store) RegisterRoutes(mux *http.ServeMux) {

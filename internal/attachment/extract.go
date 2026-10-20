@@ -18,25 +18,57 @@ import (
 
 const macPDFExtractJXA = `
 ObjC.import("Foundation");
+ObjC.import("AppKit");
 ObjC.import("Quartz");
+ObjC.import("Vision");
 const args = $.NSProcessInfo.processInfo.arguments;
+let result = "";
 if (args.count >= 5) {
   const path = ObjC.unwrap(args.objectAtIndex(4));
   const url = $.NSURL.fileURLWithPath(path);
   const doc = $.PDFDocument.alloc.initWithURL(url);
   if (doc) {
-    const str = doc.string;
-    if (str) {
-      ObjC.unwrap(str);
+    const rawStr = doc.string ? ObjC.unwrap(doc.string) : "";
+    if (rawStr && rawStr.replace(/\s+/g, "").length >= 16) {
+      result = rawStr;
     } else {
-      "";
+      const pageCount = Math.min(doc.pageCount, 8);
+      const pagesOut = [];
+      for (let p = 0; p < pageCount; p++) {
+        const page = doc.pageAtIndex(p);
+        if (!page) continue;
+        const pageStr = page.string ? ObjC.unwrap(page.string).trim() : "";
+        if (pageStr.length >= 16) {
+          pagesOut.push("### Page " + (p + 1) + "\n" + pageStr);
+          continue;
+        }
+        const thumb = page.thumbnailOfSizeForBox($.NSMakeSize(1600, 1600), 0);
+        if (!thumb) continue;
+        const tiff = thumb.TIFFRepresentation;
+        if (!tiff) continue;
+        const req = $.VNRecognizeTextRequest.alloc.init;
+        req.recognitionLanguages = $(["zh-Hans", "zh-Hant", "en-US"]);
+        const handler = $.VNImageRequestHandler.alloc.initWithDataOptions(tiff, $({}));
+        handler.performRequestsError($([req]), null);
+        const obs = req.results;
+        const lines = [];
+        if (obs) {
+          for (let i = 0; i < obs.count; i++) {
+            const cand = obs.objectAtIndex(i).topCandidates(1);
+            if (cand && cand.count > 0) {
+              lines.push(ObjC.unwrap(cand.objectAtIndex(0).string));
+            }
+          }
+        }
+        if (lines.length > 0) {
+          pagesOut.push("### Page " + (p + 1) + " (OCR)\n" + lines.join("\n"));
+        }
+      }
+      result = pagesOut.join("\n\n") || rawStr || "";
     }
-  } else {
-    "";
   }
-} else {
-  "";
 }
+result;
 `
 
 func convertImageBytesToPNG(raw []byte, ext string) ([]byte, error) {
@@ -79,7 +111,7 @@ func extractPDFText(pdfPath string) string {
 	if runtime.GOOS != "darwin" {
 		return ""
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "osascript", "-l", "JavaScript", "-e", macPDFExtractJXA, pdfPath)
 	out, err := cmd.Output()
@@ -531,6 +563,129 @@ func extractDOCXText(docxPath string) string {
 	return extractMacTextUtil(docxPath)
 }
 
+func extractDrawingMLParagraphs(f *zip.File) string {
+	if f == nil {
+		return ""
+	}
+	rc, err := f.Open()
+	if err != nil {
+		return ""
+	}
+	defer rc.Close()
+
+	dec := xml.NewDecoder(io.LimitReader(rc, 16*1024*1024))
+	var out strings.Builder
+	var para strings.Builder
+	inT := false
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			break
+		}
+		switch se := tok.(type) {
+		case xml.StartElement:
+			switch se.Name.Local {
+			case "t":
+				inT = true
+			case "br":
+				para.WriteByte('\n')
+			}
+		case xml.CharData:
+			if inT {
+				para.Write(se)
+			}
+		case xml.EndElement:
+			switch se.Name.Local {
+			case "t":
+				inT = false
+			case "tc":
+				para.WriteByte('\t')
+			case "p", "tr":
+				line := strings.TrimSpace(para.String())
+				if line != "" {
+					if out.Len() > 0 {
+						out.WriteByte('\n')
+					}
+					out.WriteString(line)
+				}
+				para.Reset()
+			}
+		}
+	}
+	return strings.TrimSpace(out.String())
+}
+
+func extractPPTXText(pptxPath string) string {
+	zr, err := zip.OpenReader(pptxPath)
+	if err != nil {
+		return ""
+	}
+	defer zr.Close()
+
+	type slideFile struct {
+		num   int
+		slide *zip.File
+		notes *zip.File
+	}
+	slidesByNum := make(map[int]*slideFile)
+	for _, f := range zr.File {
+		name := strings.TrimPrefix(f.Name, "/")
+		if strings.HasPrefix(name, "ppt/slides/slide") && strings.HasSuffix(name, ".xml") {
+			numStr := strings.TrimSuffix(strings.TrimPrefix(name, "ppt/slides/slide"), ".xml")
+			if n, err := strconv.Atoi(numStr); err == nil && n > 0 {
+				sf := slidesByNum[n]
+				if sf == nil {
+					sf = &slideFile{num: n}
+					slidesByNum[n] = sf
+				}
+				sf.slide = f
+			}
+		} else if strings.HasPrefix(name, "ppt/notesSlides/notesSlide") && strings.HasSuffix(name, ".xml") {
+			numStr := strings.TrimSuffix(strings.TrimPrefix(name, "ppt/notesSlides/notesSlide"), ".xml")
+			if n, err := strconv.Atoi(numStr); err == nil && n > 0 {
+				sf := slidesByNum[n]
+				if sf == nil {
+					sf = &slideFile{num: n}
+					slidesByNum[n] = sf
+				}
+				sf.notes = f
+			}
+		}
+	}
+
+	var nums []int
+	for n, sf := range slidesByNum {
+		if sf.slide != nil {
+			nums = append(nums, n)
+		}
+	}
+	sort.Ints(nums)
+
+	var out strings.Builder
+	for _, n := range nums {
+		sf := slidesByNum[n]
+		body := extractDrawingMLParagraphs(sf.slide)
+		notes := extractDrawingMLParagraphs(sf.notes)
+		if body == "" && notes == "" {
+			continue
+		}
+		if out.Len() > 0 {
+			out.WriteString("\n\n")
+		}
+		fmt.Fprintf(&out, "### Slide %d\n", n)
+		if body != "" {
+			out.WriteString(body)
+		}
+		if notes != "" {
+			if body != "" {
+				out.WriteByte('\n')
+			}
+			out.WriteString("[Notes] " + notes)
+		}
+	}
+	return strings.TrimSpace(out.String())
+}
+
 func (s *Store) ExtractText(id string, maxChars int) string {
 	if maxChars <= 0 {
 		maxChars = 64000
@@ -565,6 +720,8 @@ func (s *Store) ExtractText(id string, maxChars int) string {
 		switch ext {
 		case ".docx":
 			text = extractDOCXText(blobPath)
+		case ".pptx":
+			text = extractPPTXText(blobPath)
 		default:
 			text = extractMacTextUtil(blobPath)
 		}

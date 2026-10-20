@@ -33,7 +33,7 @@ const DIRECT_IMAGE_MIMES = new Set([
 
 const IMAGE_FILENAME_RE = /\.(png|jpe?g|webp|gif|bmp|tiff?|svg|heic|heif|avif)$/i;
 const SPREADSHEET_FILENAME_RE = /\.(xlsx|xls|ods|csv|tsv)$/i;
-const DOCUMENT_FILENAME_RE = /\.(docx|doc|rtf)$/i;
+const DOCUMENT_FILENAME_RE = /\.(docx|doc|pptx|ppt|rtf)$/i;
 const TEXT_FILENAME_RE =
   /\.(txt|md|markdown|json|jsonl|ya?ml|toml|xml|log|ini|conf|sh|bash|zsh|py|go|tsx?|jsx?|rs|java|c|cpp|h|hpp|cs|rb|php|swift|kt|dart|sql|html|css|scss|vue|svelte)$/i;
 
@@ -65,6 +65,8 @@ export function classifyAttachmentKind(filename: string, mime: string): Attachme
   if (
     lowerMime === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
     lowerMime === "application/msword" ||
+    lowerMime === "application/vnd.openxmlformats-officedocument.presentationml.presentation" ||
+    lowerMime === "application/vnd.ms-powerpoint" ||
     lowerMime === "application/rtf" ||
     lowerMime === "text/rtf" ||
     DOCUMENT_FILENAME_RE.test(name)
@@ -104,6 +106,10 @@ function normalizeAttachmentMime(mime: string, filename: string, kind: Attachmen
       return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
     }
     if (ext === "doc") return "application/msword";
+    if (ext === "pptx") {
+      return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+    }
+    if (ext === "ppt") return "application/vnd.ms-powerpoint";
     if (ext === "rtf") return "application/rtf";
     return lower || "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
   }

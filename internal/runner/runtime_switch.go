@@ -264,6 +264,9 @@ func (s *Service) deleteConversation(ctx context.Context, id string) error {
 	}
 	rec, ok := s.store.Get(id)
 	if !ok {
+		if s.attachments != nil {
+			s.attachments.DeleteBySession(id)
+		}
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
@@ -277,7 +280,19 @@ func (s *Service) deleteConversation(ctx context.Context, id string) error {
 		if err != nil && !strings.Contains(err.Error(), "HTTP 404:") {
 			return err
 		}
+		if s.attachments != nil {
+			s.attachments.DeleteBySession(engineID)
+		}
+	}
+	if s.attachments != nil {
+		s.attachments.DeleteBySession(id)
 	}
 	s.deleteChildSessions(id)
 	return s.store.Delete(id)
+}
+
+func (s *Service) DeleteSessionAttachments(sessionID string) {
+	if s.attachments != nil {
+		s.attachments.DeleteBySession(sessionID)
+	}
 }
