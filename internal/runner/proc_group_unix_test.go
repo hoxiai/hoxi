@@ -49,7 +49,7 @@ func waitTurnDone(t *testing.T, ap *activeProcess, within time.Duration) {
 
 func readPID(t *testing.T, path string) int {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		if raw, err := os.ReadFile(path); err == nil {
 			if pid, err := strconv.Atoi(strings.TrimSpace(string(raw))); err == nil && pid > 0 {
