@@ -4,7 +4,7 @@ import type { ApprovalI18n } from "../../types";
 export const approval: ApprovalI18n = {
   title: "安全确认",
   warning:
-    "请求执行高权限或可能修改系统的操作，请确认是否继续",
+    "请求包含高权限或破坏性操作，请确认后继续",
   allowOnce: "仅允许一次",
   allowAlways: "本会话始终允许",
   reject: "拒绝",
@@ -31,15 +31,15 @@ export const approval: ApprovalI18n = {
   modeAutoShort: "自动确认",
   modeAutoBadge: "推荐",
   modeAutoDesc:
-    "自动放行文件读写与常规命令，仅高危命令（rm / sudo / --force 等）需手动确认",
+    "自动放行编辑与普通命令；破坏性命令始终确认",
   modeSmartLabel: "智能确认",
   modeSmartShort: "智能确认",
   modeSmartDesc:
-    "自动放行文件修改与只读、构建、测试命令，其余终端命令需手动确认",
+    "自动放行编辑与安全命令；其他 Shell 命令需确认",
   modeManualLabel: "手动确认",
   modeManualShort: "手动确认",
   modeManualDesc:
-    "所有文件修改、终端命令与网络请求执行前均需手动确认",
+    "每次编辑、Shell 命令或外部操作前确认",
   modeTooltip: "确认模式：{mode}（点击切换）",
   openPolicySettings: "权限规则与 MCP…",
   highRiskBadge: "高危拦截",

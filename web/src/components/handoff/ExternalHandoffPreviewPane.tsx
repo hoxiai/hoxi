@@ -94,6 +94,48 @@ export default function ExternalHandoffPreviewPane(props: {
               </div>
             </div>
 
+            {/* Handoff Plan & Fidelity Banner */}
+            <Show when={props.detail?.fidelity}>
+              {(fid) => (
+                <div class="border-b border-[var(--border-subtle)] bg-[var(--bg-inset)]/60 px-5 py-2.5 space-y-2 text-[11.5px]">
+                  <div class="flex items-center justify-between">
+                    <span class="font-semibold text-[var(--text-secondary)]">
+                      {t("leftNav.handoffPreviewPlanTitle")}
+                    </span>
+                    <span class="font-mono text-[10.5px] text-[var(--text-muted)]">
+                      {t("leftNav.handoffTargetEngine", { engine: fid().targetRuntime })}
+                    </span>
+                  </div>
+
+                  <div class="flex flex-wrap items-center gap-3 text-[11px] text-[var(--text-muted)]">
+                    <span class="truncate max-w-[320px]" title={fid().targetDirectory}>
+                      {t("leftNav.handoffTargetDir", { dir: shortenPath(fid().targetDirectory) })}
+                    </span>
+                    <span>
+                      {t("leftNav.handoffRetainedStats", {
+                        turns: fid().retainedTurns,
+                        tools: fid().retainedToolCalls,
+                        files: fid().retainedFiles?.length || 0,
+                      })}
+                    </span>
+                  </div>
+
+                  <Show when={(fid().unsupportedFeatures?.length || 0) > 0}>
+                    <div class="rounded-md border border-amber-500/20 bg-amber-500/5 px-2.5 py-1.5 space-y-1">
+                      <div class="text-[10.5px] font-medium text-amber-500/90">
+                        {t("leftNav.handoffCaveatsTitle")}
+                      </div>
+                      <ul class="list-disc list-inside space-y-0.5 text-[10.5px] text-[var(--text-muted)]">
+                        <For each={fid().unsupportedFeatures}>
+                          {(item) => <li>{item}</li>}
+                        </For>
+                      </ul>
+                    </div>
+                  </Show>
+                </div>
+              )}
+            </Show>
+
             {/* Streamlined Conversation Preview */}
             <div class="flex-1 overflow-y-auto px-5 py-3.5">
               <Show

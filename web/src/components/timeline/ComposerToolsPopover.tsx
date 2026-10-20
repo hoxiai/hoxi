@@ -67,12 +67,6 @@ export default function ComposerToolsPopover(props: {
           ref={menuRef}
           class="absolute bottom-full left-0 mb-2 w-[232px] rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-1.5 shadow-2xl z-50 animate-in fade-in zoom-in-95 duration-100"
         >
-          <div class="px-2.5 py-1.5 border-b border-[var(--border-subtle)] mb-1">
-            <span class="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
-              {t("timeline.composerTools")}
-            </span>
-          </div>
-
           <div class="space-y-0.5">
             <button
               type="button"

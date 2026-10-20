@@ -67,6 +67,8 @@ export default function ModelSelector() {
   let triggerBtnRef: HTMLButtonElement | undefined;
   let popoverRef: HTMLDivElement | undefined;
   let searchInputRef: HTMLInputElement | undefined;
+  let effortRowRef: HTMLDivElement | undefined;
+  let hoverCloseTimer: ReturnType<typeof setTimeout> | undefined;
 
   const updatePopoverPosition = () => {
     if (!triggerBtnRef || typeof window === "undefined") return;
@@ -102,6 +104,45 @@ export default function ModelSelector() {
 
     setPopoverBox({ left, top, width, height });
   };
+
+  const cancelHoverClose = () => {
+    if (hoverCloseTimer) {
+      clearTimeout(hoverCloseTimer);
+      hoverCloseTimer = undefined;
+    }
+  };
+
+  const showHover = () => {
+    cancelHoverClose();
+    if (!open()) setTriggerHovered(true);
+  };
+
+  const hideHover = () => {
+    cancelHoverClose();
+    hoverCloseTimer = setTimeout(() => setTriggerHovered(false), 140);
+  };
+
+  const openEffortPicker = () => {
+    cancelHoverClose();
+    setTriggerHovered(false);
+    const wasOpen = open();
+    if (!wasOpen) {
+      updatePopoverPosition();
+      setOpen(true);
+      setActiveIndex(0);
+    }
+    setTimeout(
+      () => {
+        const row = effortRowRef;
+        if (!row) return;
+        const activeBtn = row.querySelector<HTMLButtonElement>("button[aria-pressed='true']");
+        (activeBtn ?? row.querySelector<HTMLButtonElement>("button"))?.focus();
+      },
+      wasOpen ? 0 : 20
+    );
+  };
+
+  onCleanup(cancelHoverClose);
 
   const connectedSet = createMemo(() => new Set(workspace.connectedProviders));
 
@@ -351,8 +392,8 @@ export default function ModelSelector() {
         ref={triggerBtnRef}
         type="button"
         onClick={toggleOpen}
-        onMouseEnter={() => setTriggerHovered(true)}
-        onMouseLeave={() => setTriggerHovered(false)}
+        onMouseEnter={showHover}
+        onMouseLeave={hideHover}
         class={`hoxi-press inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[12px] font-medium cursor-pointer max-w-[260px] ${
           open()
             ? "bg-[var(--bg-hover)] text-[var(--text-primary)]"
@@ -398,7 +439,14 @@ export default function ModelSelector() {
       </button>
 
       <Show when={!open() && triggerHovered() && activeModelInfo()}>
-        {(info) => <SelectedModelHoverCard model={info()} />}
+        {(info) => (
+          <SelectedModelHoverCard
+            model={info()}
+            onActivate={openEffortPicker}
+            onHoverStart={showHover}
+            onHoverEnd={hideHover}
+          />
+        )}
       </Show>
 
       <Show when={open()}>
@@ -607,7 +655,10 @@ export default function ModelSelector() {
                 </Show>
               </div>
 
-              <div class="flex items-center justify-between border-t border-[var(--border-subtle)] bg-[var(--bg-elevated)]/40 px-3 py-1.5 text-[11px]">
+              <div
+                ref={effortRowRef}
+                class="flex items-center justify-between border-t border-[var(--border-subtle)] bg-[var(--bg-elevated)]/40 px-3 py-1.5 text-[11px]"
+              >
                 <span class="text-[var(--text-muted)]">
                   {t("models.reasoningEffort")}
                   <Show when={!workspace.reasoningEffort && activeModelInfo()?.defaultEffort}>
@@ -632,6 +683,7 @@ export default function ModelSelector() {
                         <button
                           type="button"
                           title={opt.title}
+                          aria-pressed={effectiveReasoningEffort() === opt.value}
                           onClick={() => setReasoningEffort(opt.value)}
                           class={`rounded-md px-2 py-0.5 text-[10.5px] font-medium transition-colors cursor-pointer ${
                             effectiveReasoningEffort() === opt.value

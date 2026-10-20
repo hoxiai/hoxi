@@ -3,7 +3,7 @@
 export const approval = {
   title: "Approval Required",
   warning:
-    "A privileged or potentially destructive operation was requested. Please confirm to proceed.",
+    "Privileged or destructive operation requested. Confirm to proceed",
   allowOnce: "Allow Once",
   allowAlways: "Always Allow (Session)",
   reject: "Reject",
@@ -31,15 +31,15 @@ export const approval = {
   modeAutoShort: "Auto",
   modeAutoBadge: "Default",
   modeAutoDesc:
-    "Auto-approves file edits and normal commands; destructive commands (rm / sudo / --force) always ask",
+    "Auto-approves edits and normal commands; destructive commands always ask",
   modeSmartLabel: "Smart Ask",
   modeSmartShort: "Smart",
   modeSmartDesc:
-    "Auto-approves file edits and safe read/build/test commands; asks before other shell commands",
+    "Auto-approves edits and safe commands; other shell commands ask",
   modeManualLabel: "Manual Ask",
   modeManualShort: "Manual",
   modeManualDesc:
-    "Asks for confirmation before every file edit, shell command, or external action",
+    "Asks before every edit, shell command and external action",
   modeTooltip: "Approval mode: {mode} (click to switch)",
   openPolicySettings: "Permission Rules & MCP…",
   highRiskBadge: "High Risk",

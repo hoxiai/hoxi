@@ -59,7 +59,12 @@ export default function FileTreeNodes(props: {
             </Show>
           </Show>
         </span>
-        <FileIcon node={{ path: node.path, type: isDirectory() ? "directory" : "file" }} expanded={expanded()} class="w-4 h-4 shrink-0" />
+        <FileIcon
+          node={{ path: node.path, type: isDirectory() ? "directory" : "file" }}
+          expanded={expanded()}
+          class="w-4 h-4 shrink-0"
+          classList={{ "text-[var(--text-muted)]": isDirectory() }}
+        />
         <span class="truncate font-mono text-[11.5px]" title={node.path}>
           {node.name || node.path.replace(/\/$/, "").split("/").pop()}
         </span>

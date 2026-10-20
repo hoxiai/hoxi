@@ -4,16 +4,22 @@ import { Minimize2, LoaderCircle } from "lucide-solid";
 import { hoxiAPI } from "../../services/api";
 import {
   activeModelInfo,
+  isAutoModel,
   loadSessionMessages,
+  resolveAutoModelTarget,
   sessionDirectory,
   workspace,
 } from "../../store/workspace";
 import { t } from "../../i18n";
 
 function formatCompactNumber(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1).replace(/\.0$/, "")}k`;
   return String(n);
+}
+
+function formatTokenValue(n: number): string {
+  return n > 0 ? formatCompactNumber(n) : "—";
 }
 
 /**
@@ -24,6 +30,7 @@ function formatCompactNumber(n: number): string {
 export default function ContextProgressPill() {
   const [open, setOpen] = createSignal(false);
   const [compacting, setCompacting] = createSignal(false);
+  const [notice, setNotice] = createSignal("");
   let containerRef: HTMLDivElement | undefined;
 
   createEffect(() => {
@@ -54,7 +61,6 @@ export default function ContextProgressPill() {
     let latestCacheRead = 0;
     let latestCacheWrite = 0;
     let totalCost = 0;
-    let hasTokens = false;
 
     for (const turn of turns) {
       if (typeof turn.info.cost === "number") {
@@ -62,7 +68,6 @@ export default function ContextProgressPill() {
       }
       const t = turn.info.tokens;
       if (t && (t.input > 0 || t.output > 0 || (t.cache?.read ?? 0) > 0)) {
-        hasTokens = true;
         latestInput = t.input || 0;
         latestOutput = t.output || 0;
         latestReasoning = t.reasoning || 0;
@@ -70,8 +75,6 @@ export default function ContextProgressPill() {
         latestCacheWrite = t.cache?.write || 0;
       }
     }
-
-    if (!hasTokens) return null;
 
     const used =
       latestInput + latestOutput + latestReasoning + latestCacheRead + latestCacheWrite;
@@ -92,7 +95,7 @@ export default function ContextProgressPill() {
     };
   });
 
-  const ringColor = createMemo(() => {
+  const usageColor = createMemo(() => {
     const p = stats()?.percent ?? 0;
     if (p >= 85) return "var(--status-danger)";
     if (p >= 65) return "var(--status-warning)";
@@ -101,20 +104,33 @@ export default function ContextProgressPill() {
 
   const onCompact = async () => {
     const id = workspace.activeSessionID;
-    const model = workspace.selectedModel;
-    if (!id || !model || compacting()) return;
+    const selected = workspace.selectedModel;
+    if (!id || !selected || compacting()) return;
+    const model = isAutoModel(selected)
+      ? resolveAutoModelTarget(selected, { advance: false })
+      : selected;
+    if (!model) {
+      setNotice(t("timeline.contextCompactUnavailable"));
+      return;
+    }
+    setNotice("");
     setCompacting(true);
     try {
-      await hoxiAPI.summarizeSession(
+      const compacted = await hoxiAPI.summarizeSession(
         id,
         model.providerID,
         model.modelID,
         sessionDirectory(id)
       );
+      if (!compacted) {
+        setNotice(t("timeline.contextCompactUnavailable"));
+        return;
+      }
       await loadSessionMessages(id);
       setOpen(false);
     } catch (err) {
       console.error("summarizeSession failed:", err);
+      setNotice(t("timeline.contextCompactFailed"));
     } finally {
       setCompacting(false);
     }
@@ -129,9 +145,14 @@ export default function ContextProgressPill() {
         <div ref={containerRef} class="relative inline-flex items-center">
           <button
             type="button"
-            onClick={() => setOpen((v) => !v)}
-            class="inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11.5px] font-mono text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+            onClick={() => {
+              setOpen((v) => !v);
+              setNotice("");
+            }}
+            class="inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11.5px] font-mono tabular-nums text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-pointer"
             title={`${t("timeline.contextTooltip")} · ${formatCompactNumber(s().used)} / ${formatCompactNumber(s().limit)} (${s().percent}%)`}
+            aria-haspopup="dialog"
+            aria-expanded={open()}
           >
             {/* Kilo ProgressCircle SVG */}
             <svg width="14" height="14" viewBox="0 0 16 16" class="-rotate-90 shrink-0">
@@ -148,9 +169,9 @@ export default function ContextProgressPill() {
                 cy="8"
                 r={radius}
                 fill="none"
-                stroke={ringColor()}
                 stroke-width="2"
                 stroke-linecap="round"
+                style={{ stroke: usageColor(), transition: "stroke 300ms ease-out" }}
                 stroke-dasharray={String(circumference)}
                 stroke-dashoffset={String(
                   circumference - (s().percent / 100) * circumference
@@ -162,50 +183,85 @@ export default function ContextProgressPill() {
 
           {/* Breakdown Popover */}
           <Show when={open()}>
-            <div class="absolute bottom-full right-0 mb-2 w-64 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-3 shadow-xl z-40 text-xs space-y-2">
-              <div class="flex items-center justify-between font-semibold text-[var(--text-primary)]">
-                <span>
-                  {t("timeline.contextWatermark")}
+            <div
+              class="hoxi-popover absolute bottom-full right-0 z-40 mb-2.5 w-[18rem] origin-bottom-right select-text rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-panel)] p-4 text-xs shadow-[var(--composer-shadow)]"
+              role="dialog"
+              aria-label={t("timeline.contextWatermark")}
+            >
+              <div class="text-[10.5px] font-medium tracking-[0.04em] text-[var(--text-faint)]">
+                {t("timeline.contextWatermark")}
+              </div>
+
+              <div class="mt-2.5 flex items-baseline gap-1.5">
+                <span class="font-mono text-[19px] font-medium leading-none tracking-tight tabular-nums text-[var(--text-primary)]">
+                  {formatCompactNumber(s().used)}
                 </span>
-                <span class="font-mono text-[11px] text-[var(--accent-primary)]">
-                  {formatCompactNumber(s().used)} / {formatCompactNumber(s().limit)} ({s().percent}%)
+                <span class="font-mono text-[11px] tabular-nums text-[var(--text-faint)]">
+                  / {formatCompactNumber(s().limit)}
                 </span>
               </div>
 
-              <div class="space-y-1 border-t border-[var(--border-subtle)] pt-2 font-mono text-[11px] text-[var(--text-secondary)]">
-                <div class="flex justify-between">
-                  <span>{t("timeline.inputTokens")}</span>
-                  <span>{s().input.toLocaleString()}</span>
+              <div class="mt-3 h-[3px] w-full overflow-hidden rounded-full bg-[var(--bg-inset)]">
+                <div
+                  class="h-full rounded-full"
+                  style={{
+                    width: `${s().percent}%`,
+                    "background-color": usageColor(),
+                    transition: "width 500ms ease-out, background-color 300ms ease-out",
+                  }}
+                />
+              </div>
+
+              <div class="mt-4">
+                <div class="mb-2 flex items-baseline justify-between gap-3">
+                  <span class="text-[10px] font-medium tracking-[0.04em] text-[var(--text-faint)]">
+                    {t("timeline.contextTokens")}
+                  </span>
+                  <span class="text-[10px] text-[var(--text-faint)]">
+                    {t("timeline.contextThisTurn")}
+                  </span>
                 </div>
-                <div class="flex justify-between">
-                  <span>{t("timeline.outputTokens")}</span>
-                  <span>{s().output.toLocaleString()}</span>
-                </div>
-                <Show when={s().reasoning > 0}>
-                  <div class="flex justify-between">
-                    <span>{t("timeline.reasoningTokens")}</span>
-                    <span>{s().reasoning.toLocaleString()}</span>
+                <dl class="grid grid-cols-2 gap-x-4 gap-y-2 text-[11px]">
+                  <div class="flex items-baseline justify-between gap-2">
+                    <dt class="text-[var(--text-muted)]">{t("timeline.contextInput")}</dt>
+                    <dd class="font-mono tabular-nums text-[var(--text-secondary)]">
+                      {formatTokenValue(s().input)}
+                    </dd>
                   </div>
-                </Show>
-                <Show when={s().cacheRead > 0 || s().cacheWrite > 0}>
-                  <div class="flex justify-between text-[var(--ok-text)]">
-                    <span>{t("timeline.cacheReadTokens")}</span>
-                    <span>{s().cacheRead.toLocaleString()}</span>
+                  <div class="flex items-baseline justify-between gap-2">
+                    <dt class="text-[var(--text-muted)]">{t("timeline.contextOutput")}</dt>
+                    <dd class="font-mono tabular-nums text-[var(--text-secondary)]">
+                      {formatTokenValue(s().output)}
+                    </dd>
                   </div>
-                </Show>
-                <Show when={s().totalCost > 0}>
-                  <div class="flex justify-between border-t border-[var(--border-subtle)] pt-1 font-semibold text-[var(--text-primary)]">
-                    <span>{t("timeline.sessionCost")}</span>
-                    <span>${s().totalCost.toFixed(4)}</span>
+                  <div class="flex items-baseline justify-between gap-2">
+                    <dt class="text-[var(--text-muted)]">{t("timeline.contextReasoning")}</dt>
+                    <dd class="font-mono tabular-nums text-[var(--text-secondary)]">
+                      {formatTokenValue(s().reasoning)}
+                    </dd>
                   </div>
-                </Show>
+                  <div class="flex items-baseline justify-between gap-2">
+                    <dt class="text-[var(--text-muted)]">{t("timeline.contextCacheRead")}</dt>
+                    <dd class="font-mono tabular-nums text-[var(--text-secondary)]">
+                      {formatTokenValue(s().cacheRead)}
+                    </dd>
+                  </div>
+                </dl>
+              </div>
+
+              <div class="mt-3 flex items-baseline justify-between gap-3 border-t border-[var(--border-subtle)] pt-2.5 text-[11px]">
+                <span class="text-[var(--text-muted)]">{t("timeline.sessionCost")}</span>
+                <span class="font-mono tabular-nums text-[var(--text-primary)]">
+                  {s().totalCost > 0 ? `$${s().totalCost.toFixed(4)}` : "—"}
+                </span>
               </div>
 
               <button
                 type="button"
-                disabled={compacting() || !workspace.selectedModel}
+                disabled={compacting() || !workspace.selectedModel || s().used === 0}
+                aria-busy={compacting()}
                 onClick={() => void onCompact()}
-                class="w-full inline-flex items-center justify-center gap-1.5 rounded-lg border border-[var(--accent-border)] bg-[var(--accent-surface)] px-2.5 py-1.5 text-[11.5px] font-medium text-[var(--accent-text)] hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
+                class="mt-4 inline-flex h-8 w-full items-center justify-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-transparent text-[11.5px] text-[var(--text-secondary)] transition-colors duration-150 hover:border-[var(--border-strong)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] disabled:cursor-default disabled:opacity-50 cursor-pointer"
               >
                 <Show
                   when={!compacting()}
@@ -213,10 +269,18 @@ export default function ContextProgressPill() {
                 >
                   <Minimize2 size={12} />
                 </Show>
-                <span>
-                  {t("timeline.compactAction")}
-                </span>
+                <span>{t("timeline.compactAction")}</span>
               </button>
+
+              <Show when={notice()}>
+                <p
+                  role="status"
+                  aria-live="polite"
+                  class="mt-2.5 text-[11px] leading-relaxed text-[var(--danger-text)]"
+                >
+                  {notice()}
+                </p>
+              </Show>
             </div>
           </Show>
         </div>

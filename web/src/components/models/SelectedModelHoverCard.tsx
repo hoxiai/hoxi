@@ -1,6 +1,6 @@
 // web/src/components/models/SelectedModelHoverCard.tsx
 import { Show } from "solid-js";
-import { Image, Sparkles, Wrench } from "lucide-solid";
+import { ChevronRight, Image, Sparkles, Wrench } from "lucide-solid";
 import {
   AUTO_PROVIDER_ID,
   getEffectivePoolCandidates,
@@ -19,7 +19,12 @@ import {
   type FlattenedModel,
 } from "./model-selector-utils";
 
-export function SelectedModelHoverCard(props: { model: FlattenedModel }) {
+export function SelectedModelHoverCard(props: {
+  model: FlattenedModel;
+  onActivate?: () => void;
+  onHoverStart?: () => void;
+  onHoverEnd?: () => void;
+}) {
   const srcInfo = () => getModelSourceInfo(props.model);
   const ctxText = () => formatTokenLimit(props.model.contextLimit);
   const outText = () => formatTokenLimit(props.model.outputLimit);
@@ -30,9 +35,33 @@ export function SelectedModelHoverCard(props: { model: FlattenedModel }) {
   const autoCands = () => (isAuto() ? getEffectivePoolCandidates(props.model.modelID) : []);
   const autoReadyCount = () =>
     autoCands().filter((c) => !isCandidateCoolingDown(c.providerID, c.modelID)).length;
+  const hasEffortControl = () =>
+    props.model.reasoning || (props.model.efforts?.length ?? 0) > 0;
+  const effortText = () => {
+    const current = workspace.reasoningEffort;
+    if (current) return current.toUpperCase();
+    const def = props.model.defaultEffort;
+    return def
+      ? t("models.hoverEffortAutoDefault", { effort: def.toUpperCase() })
+      : t("models.effortAuto");
+  };
 
   return (
-    <div class="pointer-events-none absolute bottom-full left-0 z-30 mb-2 w-[320px] rounded-xl border border-[var(--border-strong)] bg-[var(--bg-panel)] p-3 shadow-2xl text-[11.5px] space-y-2 animate-in fade-in duration-100">
+    <div
+      role="button"
+      tabIndex={0}
+      aria-label={t("models.hoverEffortHint")}
+      onClick={() => props.onActivate?.()}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          props.onActivate?.();
+        }
+      }}
+      onMouseEnter={() => props.onHoverStart?.()}
+      onMouseLeave={() => props.onHoverEnd?.()}
+      class="pointer-events-auto cursor-pointer absolute bottom-full left-0 z-30 mb-2 w-[320px] rounded-xl border border-[var(--border-strong)] bg-[var(--bg-panel)] p-3 shadow-2xl text-[11.5px] space-y-2 animate-in fade-in duration-100"
+    >
       <div class="flex items-center justify-between gap-2 border-b border-[var(--border-subtle)] pb-2">
         <div class="flex items-center gap-1.5 min-w-0">
           <ProviderIcon id={props.model.providerID} class="w-4 h-4 shrink-0" />
@@ -163,17 +192,13 @@ export function SelectedModelHoverCard(props: { model: FlattenedModel }) {
           </div>
 
           <div class="flex items-center gap-1 shrink-0">
-            <Show when={props.model.reasoning}>
+            <Show when={hasEffortControl()}>
               <span class="inline-flex items-center gap-0.5 rounded bg-[var(--accent-surface)] px-1.5 py-[1px] text-[9.5px] font-medium text-[var(--accent-primary)]">
                 <Sparkles size={9} />
                 {t("models.reasoningCap")}
-                <Show when={workspace.reasoningEffort || props.model.defaultEffort}>
-                  {(eff) => (
-                    <span class="uppercase font-mono">
-                      ·{eff()}
-                    </span>
-                  )}
-                </Show>
+                <span class="font-mono uppercase">
+                  ·{effortText()}
+                </span>
               </span>
             </Show>
             <Show when={props.model.image}>
@@ -190,6 +215,13 @@ export function SelectedModelHoverCard(props: { model: FlattenedModel }) {
             </Show>
           </div>
         </div>
+
+        <Show when={hasEffortControl()}>
+          <div class="flex items-center justify-between gap-2 border-t border-[var(--border-subtle)] pt-1.5 text-[10px] text-[var(--text-faint)]">
+            <span>{t("models.hoverEffortHint")}</span>
+            <ChevronRight size={11} class="shrink-0 text-[var(--accent-primary)]" />
+          </div>
+        </Show>
       </div>
     </div>
   );

@@ -149,7 +149,7 @@ export default function ChangedFilesSummary(props: {
                     {t("timeline.editedFilesCount", { count: props.files.length })}
                   </span>
                   <DiffChanges
-                    class="mt-0.5 text-[12px] tabular-nums"
+                    class="mt-0.5 self-start text-[12px] tabular-nums"
                     changes={props.files}
                   />
                 </div>

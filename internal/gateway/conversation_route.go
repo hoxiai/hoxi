@@ -74,12 +74,6 @@ func (g *Gateway) routeConversation(w http.ResponseWriter, r *http.Request) bool
 		setRequestPath(r, "/session/"+id+suffix)
 		return true
 	}
-	switch action {
-	case "summarize":
-		// CLI engines compact their own context; there is nothing to summarize.
-		writeJSON(w, http.StatusOK, false)
-		return false
-	}
 	setRequestPath(r, "/api/hoxi/runner/sessions/"+id+suffix)
 	return true
 }

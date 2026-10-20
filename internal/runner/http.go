@@ -327,6 +327,8 @@ func (s *Service) handleSessionSubroutes(w http.ResponseWriter, r *http.Request)
 		s.handleRuntimeSwitch(w, r, sessionID)
 	case "abort":
 		s.handleSessionAbort(w, r, sessionID)
+	case "summarize":
+		s.handleSessionSummarize(w, r, sessionID)
 	case "revert":
 		s.handleSessionRevert(w, r, sessionID)
 	case "unrevert":

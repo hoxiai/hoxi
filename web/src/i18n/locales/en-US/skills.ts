@@ -6,11 +6,11 @@ export const skills = {
   refresh: "Refresh catalog",
   refreshing: "Refreshing…",
   cacheNotice:
-    "Refreshing syncs Hoxi with the engine's current catalog. Newly added files on disk may require reloading the workspace.",
+    "Refreshing syncs the engine catalog; new files may require a workspace reload.",
   permissionNotice:
-    "Actual availability is governed by the active agent's permissions and runtime safety gate.",
+    "Availability depends on agent permissions and the runtime safety gate.",
   hideNotice:
-    "Hidden skills are only hidden from Hoxi's UI list and `/` suggestions; native model auto-invocation is not blocked.",
+    "Hidden skills only leave Hoxi’s list and `/` suggestions; model auto-invocation still works.",
   showHidden: "Show hidden ({count})",
   hideHidden: "Hide hidden",
   hideFromList: "Hide from Hoxi list",
@@ -32,8 +32,8 @@ export const skills = {
   emptyFiltered: "No skills match the current filter.",
   unsupportedTitle: "Skills catalog not supported for {runtime}",
   unsupportedDesc:
-    "First-edition native skill discovery and invocation is enabled for OpenCode sessions. Switch to an OpenCode model to browse and invoke native skills.",
-  selectToPreview: "Select a skill from the list to inspect its SKILL.md instructions.",
+    "Native skills are available for OpenCode sessions. Switch to an OpenCode model to browse and invoke them.",
+  selectToPreview: "Select a skill to preview its SKILL.md instructions.",
   loadingCatalog: "Loading skills catalog…",
   loadingDetail: "Loading skill content…",
   slashGroupSkills: "Skills",
@@ -48,9 +48,9 @@ export const skills = {
   statusError: "Skill load failed",
   statusUnconfirmed: "Not confirmed loaded this turn",
   reselectRequired:
-    "Skill \"{name}\" is unavailable or changed source in the current sandbox directory. Please re-select before sending.",
+    "Skill \"{name}\" changed or is unavailable in this sandbox. Re-select before sending.",
   queueSkillInvalid:
-    "Queued message paused: skill \"{name}\" is no longer valid in the active directory. Edit or re-select to continue.",
+    "Queued message paused: \"{name}\" is invalid in the active directory. Edit or re-select.",
   digestLabel: "Content digest",
   sourcePathLabel: "Source",
   browseSkills: "Browse Skills",
@@ -60,7 +60,7 @@ export const skills = {
   composerPillPrefix: "Skill:",
   removeFromComposer: "Remove from composer",
   sandboxSkillMissing:
-    "Skill \"{name}\" is not available in the new sandbox directory and was deselected.",
+    "Skill \"{name}\" is unavailable in the new sandbox and was deselected.",
   runtimeSwitchedCleared:
-    "Skill \"{name}\" cleared because skills are currently supported only on OpenCode.",
+    "Skill \"{name}\" cleared; skills currently require OpenCode.",
 };
