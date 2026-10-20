@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestStoreSaveGetExtractAndHTTP(t *testing.T) {
@@ -151,5 +152,30 @@ func TestStoreSaveGetExtractAndHTTP(t *testing.T) {
 	}
 	if _, _, err := store.Get(pptxMeta.ID); err != nil {
 		t.Fatalf("expected ses_hoxi_2 attachment to remain intact: %v", err)
+	}
+}
+
+func TestTruncateUTF8KeepsCharactersWhole(t *testing.T) {
+	got := truncateUTF8("你好世界", 7)
+	if got != "你好" {
+		t.Fatalf("truncateUTF8 = %q, want %q", got, "你好")
+	}
+	if !utf8.ValidString(got) {
+		t.Fatal("truncated string is not valid UTF-8")
+	}
+}
+
+func TestActiveAttachmentContentIsSandboxed(t *testing.T) {
+	for mime, want := range map[string]bool{
+		"text/html; charset=utf-8": true,
+		"image/svg+xml":            true,
+		"application/rss+xml":      true,
+		"image/png":                false,
+		"application/pdf":          false,
+		"text/plain":               false,
+	} {
+		if got := isActiveContentMime(mime); got != want {
+			t.Fatalf("isActiveContentMime(%q) = %v, want %v", mime, got, want)
+		}
 	}
 }

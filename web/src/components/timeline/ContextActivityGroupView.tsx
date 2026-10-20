@@ -118,7 +118,10 @@ export default function ContextActivityGroupView(props: {
   createEffect(() => {
     if (!props.revealKey) return;
     const key = groupKey();
-    if (key) expandedActivityGroupKeys.add(key);
+    if (key) {
+      expandedActivityGroupKeys.add(key);
+      collapsedActivityGroupKeys.delete(key);
+    }
     setOpen(true);
   });
 

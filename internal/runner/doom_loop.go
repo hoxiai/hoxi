@@ -28,16 +28,18 @@ var doomLoopPollingTools = map[string]bool{
 type doomLoopGuard struct {
 	mu     sync.Mutex
 	recent map[string][]string        // session → fingerprints of its latest calls
+	turn   map[string]string          // session → turn the recent calls belong to
 	exempt map[string]map[string]bool // session → tools the user always allows
 }
 
 func newDoomLoopGuard() *doomLoopGuard {
-	return &doomLoopGuard{recent: make(map[string][]string), exempt: make(map[string]map[string]bool)}
+	return &doomLoopGuard{recent: make(map[string][]string), turn: make(map[string]string), exempt: make(map[string]map[string]bool)}
 }
 
 // observe records a call and reports whether it completes a run of
-// doomLoopThreshold identical calls.
-func (g *doomLoopGuard) observe(sessionID, tool string, input json.RawMessage) bool {
+// doomLoopThreshold identical calls within one turn: the user asking for the
+// same check (`go test ./...`) in consecutive turns is not a loop.
+func (g *doomLoopGuard) observe(sessionID, turnID, tool string, input json.RawMessage) bool {
 	if doomLoopPollingTools[tool] {
 		return false
 	}
@@ -46,6 +48,10 @@ func (g *doomLoopGuard) observe(sessionID, tool string, input json.RawMessage) b
 	defer g.mu.Unlock()
 	if g.exempt[sessionID][tool] {
 		return false
+	}
+	if g.turn[sessionID] != turnID {
+		g.turn[sessionID] = turnID
+		delete(g.recent, sessionID)
 	}
 	calls := append(g.recent[sessionID], fp)
 	if len(calls) > doomLoopThreshold {
@@ -83,6 +89,7 @@ func (g *doomLoopGuard) forget(sessionID string) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	delete(g.recent, sessionID)
+	delete(g.turn, sessionID)
 	delete(g.exempt, sessionID)
 }
 
@@ -103,7 +110,7 @@ func toolCallFingerprint(tool string, input json.RawMessage) string {
 // gateDoomLoop asks the user before a repeated call runs. It reports whether
 // the call may proceed to the normal policy, and the reason when it may not.
 func (s *Service) gateDoomLoop(r *http.Request, cred hookCredential, tool string, input json.RawMessage, callID string) (bool, string) {
-	if !s.doomLoop.observe(cred.sessionID, tool, input) {
+	if !s.doomLoop.observe(cred.sessionID, cred.messageID, tool, input) {
 		return true, ""
 	}
 	var shown interface{}

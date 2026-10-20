@@ -358,7 +358,7 @@ func (s *Store) Save(req SaveRequest) (Metadata, error) {
 	if kind == KindText {
 		preview := strings.TrimSpace(string(raw))
 		if len(preview) > 240 {
-			preview = preview[:240] + "…"
+			preview = truncateUTF8(preview, 240) + "…"
 		}
 		meta.TextPreview = preview
 	}
@@ -557,7 +557,34 @@ func (s *Store) handleItem(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", meta.Mime)
 	w.Header().Set("Cache-Control", "private, max-age=86400")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	if isActiveContentMime(meta.Mime) {
+		// Attachments share the gateway's origin; never let an uploaded
+		// HTML or SVG document run script against Hoxi's own APIs.
+		w.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'; img-src data:; style-src 'unsafe-inline'")
+	}
 	http.ServeFile(w, r, blobPath)
+}
+
+func isActiveContentMime(mime string) bool {
+	mime = strings.ToLower(strings.TrimSpace(mime))
+	if i := strings.IndexByte(mime, ';'); i >= 0 {
+		mime = strings.TrimSpace(mime[:i])
+	}
+	switch mime {
+	case "text/html", "application/xhtml+xml", "image/svg+xml", "text/xml", "application/xml",
+		"text/javascript", "application/javascript":
+		return true
+	}
+	return strings.HasSuffix(mime, "+xml")
+}
+
+// truncateUTF8 cuts s to at most n bytes without splitting a character.
+func truncateUTF8(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return strings.ToValidUTF8(s[:n], "")
 }
 
 func writeFileAtomic(path string, data []byte) error {

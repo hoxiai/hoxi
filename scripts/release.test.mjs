@@ -85,7 +85,7 @@ test("publisher rejects HTTP errors, non-confirmations and confirmations for a d
     fetchImpl: async () => Response.json({ success: true }, { status: 403 }) }), /HTTP 403/);
   await assert.rejects(publishRelease(payload, { key: "" }), /HOXI_RELEASE_KEY/);
   await assert.rejects(publishRelease(payload, { key: "test", url: "http://external.example/publish" }), /HTTPS/);
-  await assert.rejects(publishRelease(payload, { key: "test", url: "https://secret@example.com/publish" }), /Credentials/);
+  await assert.rejects(publishRelease(payload, { key: "test", url: "https://secret@hoxi.ai/publish" }), /Credentials/);
   assert.equal((await publishRelease(payload, { key: "test",
     fetchImpl: async () => Response.json({ code: 0, data: { version: "0.2.1" } }) })).success, true);
 });
@@ -285,7 +285,7 @@ test("Sparkle payload validates signature/key lengths, version, URL and byte len
   assert.equal(data.desktop["mac-arm64"], sparkle.url);
   assert.deepEqual(data.mirrors["mac-arm64"], { global: sparkle.url });
   for (const patch of [{ edSignature: "bad" }, { publicKey: "bad" }, { version: "0.2.2" },
-    { length: 1235 }, { url: "https://example.com/app.dmg" }, { feedURL: "http://hoxi.ai/feed" }]) {
+    { length: 1235 }, { url: "https://hoxi.ai/app.dmg" }, { feedURL: "http://hoxi.ai/feed" }]) {
     assert.throws(() => validateSparkle({ ...sparkle, ...patch }, "0.2.1", 1234));
   }
 });

@@ -240,7 +240,7 @@ export default function AgentPolicyMcpTab() {
               placeholder={
                 mcpType() === "local"
                   ? "npx -y @modelcontextprotocol/server-filesystem ."
-                  : "https://mcp.example.com/sse"
+                  : "https://mcp.hoxi.ai/sse"
               }
               value={mcpTarget()}
               onInput={(e) => setMcpTarget(e.currentTarget.value)}

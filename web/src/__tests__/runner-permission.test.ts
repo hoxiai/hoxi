@@ -81,4 +81,16 @@ describe("permission policy shared fixture", () => {
       assertEqual(isDestructivePermissionRequest(input), c.destructive, c.command);
     }
   });
+
+  it("judges commands wrapped by the Hoxi sandbox plugin by their inner command", () => {
+    const quote = (v: string) => `'${v.replaceAll("'", `'\\''`)}'`;
+    const wrap = (c: string) =>
+      `${quote("/usr/bin/sandbox-exec")} -f ${quote("/tmp/p.sb")} -- /bin/sh -c ${quote(c)}`;
+    for (const c of policyCases) {
+      if (!c.command) continue;
+      const input = { permission: "bash", patterns: [wrap(c.command)] };
+      assertEqual(decidePermission(input), c.decision, `sandboxed ${c.command}`);
+      assertEqual(isDestructivePermissionRequest(input), c.destructive, `sandboxed ${c.command}`);
+    }
+  });
 });

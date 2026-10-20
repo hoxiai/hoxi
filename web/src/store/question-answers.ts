@@ -1,4 +1,5 @@
 // web/src/store/question-answers.ts
+import { createSignal } from "solid-js";
 import type { QuestionInfo, QuestionRequest, ToolPart } from "../services/sse-types";
 import { t } from "../i18n";
 
@@ -36,6 +37,10 @@ export interface QuestionItemView {
 const repliesByRequestID = new Map<string, QuestionReplyRecord>();
 const requestIDByCallID = new Map<string, string>();
 const MAX_QUESTION_RECORDS = 200;
+// The records live in plain Maps; this version lets cards re-read them when a
+// question is asked, answered or skipped.
+const [recordsVersion, setRecordsVersion] = createSignal(0);
+const bumpRecords = () => setRecordsVersion((v) => v + 1);
 
 function trimQuestionRecords(): void {
   while (repliesByRequestID.size > MAX_QUESTION_RECORDS) {
@@ -64,6 +69,7 @@ export function rememberQuestionRequest(request: QuestionRequest): void {
   });
   if (callID) requestIDByCallID.set(callID, request.id);
   trimQuestionRecords();
+  bumpRecords();
 }
 
 export function rememberQuestionReply(
@@ -83,6 +89,7 @@ export function rememberQuestionReply(
     updatedAt: Date.now(),
   });
   trimQuestionRecords();
+  bumpRecords();
 }
 
 export function rememberQuestionReject(requestID: string, sessionID: string): void {
@@ -97,9 +104,11 @@ export function rememberQuestionReject(requestID: string, sessionID: string): vo
     updatedAt: Date.now(),
   });
   trimQuestionRecords();
+  bumpRecords();
 }
 
 export function findQuestionReply(callID?: string): QuestionReplyRecord | undefined {
+  recordsVersion();
   if (!callID) return undefined;
   const requestID = requestIDByCallID.get(callID);
   return requestID ? repliesByRequestID.get(requestID) : undefined;
@@ -108,6 +117,7 @@ export function findQuestionReply(callID?: string): QuestionReplyRecord | undefi
 export function clearQuestionRecords(): void {
   repliesByRequestID.clear();
   requestIDByCallID.clear();
+  bumpRecords();
 }
 
 function normalizeAnswers(raw: unknown): string[][] | undefined {

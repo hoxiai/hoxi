@@ -209,7 +209,7 @@ func TestDeferredReloadWhileBusyDoesNotDisposeUntilIdle(t *testing.T) {
 func TestNormalizeDocModelVariantsImageAndReasoning(t *testing.T) {
 	doc := map[string]interface{}{
 		"provider": map[string]interface{}{
-			"ainode": map[string]interface{}{
+			"hoxi": map[string]interface{}{
 				"npm": "@ai-sdk/openai-compatible",
 				"models": map[string]interface{}{
 					"claude-opus-4-6": map[string]interface{}{
@@ -249,8 +249,8 @@ func TestNormalizeDocModelVariantsImageAndReasoning(t *testing.T) {
 
 	normalizeDocModelVariants(doc)
 
-	ainodeModels := doc["provider"].(map[string]interface{})["ainode"].(map[string]interface{})["models"].(map[string]interface{})
-	opus := ainodeModels["claude-opus-4-6"].(map[string]interface{})
+	hoxiModels := doc["provider"].(map[string]interface{})["hoxi"].(map[string]interface{})["models"].(map[string]interface{})
+	opus := hoxiModels["claude-opus-4-6"].(map[string]interface{})
 	if opus["attachment"] != true || !hasImageInputModality(opus) {
 		t.Fatalf("expected legacy claude-opus-4-6 to gain image input modality, got: %+v", opus)
 	}
@@ -258,12 +258,12 @@ func TestNormalizeDocModelVariantsImageAndReasoning(t *testing.T) {
 		t.Fatalf("expected legacy claude-opus-4-6 to gain reasoning variants, got: %+v", opus)
 	}
 
-	mm := ainodeModels["MiniMax-M2.7"].(map[string]interface{})
+	mm := hoxiModels["MiniMax-M2.7"].(map[string]interface{})
 	if mm["attachment"] != true || !hasImageInputModality(mm) || mm["reasoning"] != true {
 		t.Fatalf("expected MiniMax-M2.7 to gain image & reasoning capabilities, got: %+v", mm)
 	}
 
-	noImg := ainodeModels["explicit-no-image"].(map[string]interface{})
+	noImg := hoxiModels["explicit-no-image"].(map[string]interface{})
 	if noImg["attachment"] != false || hasImageInputModality(noImg) || noImg["reasoning"] != false {
 		t.Fatalf("expected explicit attachment=false & reasoning=false to be preserved, got: %+v", noImg)
 	}

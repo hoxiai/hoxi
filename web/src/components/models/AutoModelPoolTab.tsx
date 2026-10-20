@@ -30,7 +30,6 @@ import {
   isCandidateCoolingDown,
   openExternalURL,
   openProviderModal,
-  openURLInInspector,
   peekAutoModelTarget,
   PRESET_AUTO_POOL_IDS,
   providerKeyCounts,
@@ -590,10 +589,7 @@ export default function AutoModelPoolTab() {
                     <div class="flex items-center gap-1.5 shrink-0">
                       <button
                         type="button"
-                        onClick={() => {
-                          openURLInInspector(item.signupURL);
-                          openExternalURL(item.signupURL);
-                        }}
+                        onClick={() => openExternalURL(item.signupURL)}
                         class="inline-flex items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2 py-1 text-[11px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
                       >
                         <ExternalLink size={10} />

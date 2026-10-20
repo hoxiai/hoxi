@@ -9,7 +9,6 @@ import {
   sendQueuedPromptNow,
   workspace,
 } from "../../store/workspace";
-import { TextShimmer } from "../icons";
 import { t } from "../../i18n";
 import { ActionIconButton } from "./tool-card-helpers";
 
@@ -77,16 +76,18 @@ export default function QueuedPromptsList(props: {
 
                 {/* Queued Status & Action Bar: Queued | Send Now | Edit | Delete */}
                 <div class="mt-1.5 flex items-center justify-end gap-1 px-1 text-[12px]">
-                  <span class="mr-1 inline-flex items-center gap-1 px-1.5 py-0.5 text-[12px] text-[var(--text-muted)]">
+                  <span
+                    class="mr-1 inline-flex items-center px-1.5 py-0.5 text-[12px] text-[var(--text-muted)]"
+                    title={t("timeline.queuedBadge")}
+                  >
                     <Clock size={11} class="shrink-0" />
-                    <TextShimmer text={t("timeline.queuedBadge")} active={true} />
                   </span>
 
                   <ActionIconButton
-                    disabled={!canSteerSession(sid())}
+                    disabled={!canSteerSession(sid(), item.model)}
                     variant="accent"
                     label={
-                      !canSteerSession(sid())
+                      !canSteerSession(sid(), item.model)
                         ? t("timeline.runnerFeatureUnsupported")
                         : t("timeline.queueSendNow")
                     }

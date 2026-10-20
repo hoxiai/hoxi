@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	indexVersion = 1
+	indexVersion = 2
 	cacheTTL     = 60 * 1000
 )
 

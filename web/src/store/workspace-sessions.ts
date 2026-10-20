@@ -384,7 +384,9 @@ export async function selectSession(sessionID: string): Promise<void> {
   setWorkspace("activeSessionID", sessionID);
   setWorkspace("unreadCompletedBySession", sessionID, false);
   void syncPendingPermissions(sessionDirectory(sessionID));
-  if (hadLiveMemory && (workspace.aiBySession[sessionID] || (hydratedSessionIDs.has(sessionID) && !isSessionBusy(sessionID)))) {
+  // Background SSE events create a partial transcript for sessions that were
+  // never loaded, so only a fully hydrated one may skip the history fetch.
+  if (hadLiveMemory && hydratedSessionIDs.has(sessionID) && (workspace.aiBySession[sessionID] || !isSessionBusy(sessionID))) {
     const isChildSession = Boolean(workspace.sessions.find((s) => s.id === sessionID)?.parentID);
     if (!isChildSession) void refreshSessionDiff(sessionID);
     return;

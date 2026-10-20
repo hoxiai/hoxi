@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestTokenizeSplitsIdentifiersAndStopwords(t *testing.T) {
@@ -33,5 +34,25 @@ func TestSnippetAndClip(t *testing.T) {
 	}
 	if Clip("abc", 3) != "abc" {
 		t.Fatal("short values must not be clipped")
+	}
+}
+
+func TestTokenizeKeepsStatusCodes(t *testing.T) {
+	got := strings.Join(Tokenize("upstream returned 502 on port 8080 (retry 3, v2)"), " ")
+	for _, want := range []string{"502", "8080", "v2"} {
+		if !strings.Contains(" "+got+" ", " "+want+" ") {
+			t.Fatalf("Tokenize dropped %q: %q", want, got)
+		}
+	}
+	if strings.Contains(" "+got+" ", " 3 ") {
+		t.Fatalf("single digits should still be dropped: %q", got)
+	}
+}
+
+func TestSnippetTruncationKeepsUTF8(t *testing.T) {
+	for n := 1; n < 13; n++ {
+		if v := Snippet("你好世界你好", 5, n); !utf8.ValidString(v) {
+			t.Fatalf("Snippet(maxChars=%d) produced invalid UTF-8: %q", n, v)
+		}
 	}
 }

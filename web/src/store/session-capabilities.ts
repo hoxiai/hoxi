@@ -1,6 +1,6 @@
 // web/src/store/session-capabilities.ts
 import { workspace } from "./workspace";
-import { isRunnerSessionID } from "../services/api";
+import { isRunnerSessionID, resolveRunnerRuntimeForProvider } from "../services/api";
 
 export function canRevertSession(sessionID?: string | null): boolean {
   if (!sessionID) return false;
@@ -16,8 +16,18 @@ export function canForkSession(sessionID?: string | null): boolean {
   return true;
 }
 
-export function canSteerSession(sessionID?: string | null): boolean {
+export function canSteerSession(
+  sessionID?: string | null,
+  targetModel?: { providerID: string; modelID: string } | null
+): boolean {
   if (!sessionID) return false;
+  if (targetModel?.providerID) {
+    const targetRuntime = resolveRunnerRuntimeForProvider(
+      targetModel.providerID,
+      Boolean(workspace.hoxiProviders?.[targetModel.providerID])
+    );
+    if (targetRuntime !== "opencode") return false;
+  }
   const session = workspace.sessions.find((s) => s.id === sessionID);
   if (session?.capabilities?.steer !== undefined) return session.capabilities.steer;
   if (session?.runtime) return session.runtime === "opencode";

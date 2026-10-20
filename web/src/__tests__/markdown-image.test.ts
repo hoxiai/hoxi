@@ -6,19 +6,19 @@ import { assertDeepEqual, assertEqual, assertTrue, describe, it } from "./test-h
 
 describe("markdown images", () => {
   it("parses remote images without touching surrounding text", () => {
-    assertDeepEqual(parseInline("See ![arch](https://example.com/a.png) now"), [
+    assertDeepEqual(parseInline("See ![arch](https://hoxi.ai/a.png) now"), [
       { type: "text", text: "See " },
-      { type: "image", alt: "arch", src: "https://example.com/a.png" },
+      { type: "image", alt: "arch", src: "https://hoxi.ai/a.png" },
       { type: "text", text: " now" },
     ]);
   });
 
   it("parses optional image titles", () => {
-    assertDeepEqual(parseInline('![arch](https://example.com/a.png "Diagram")'), [
+    assertDeepEqual(parseInline('![arch](https://hoxi.ai/a.png "Diagram")'), [
       {
         type: "image",
         alt: "arch",
-        src: "https://example.com/a.png",
+        src: "https://hoxi.ai/a.png",
         title: "Diagram",
       },
     ]);
@@ -35,8 +35,8 @@ describe("markdown images", () => {
   });
 
   it("does not render broken or unsafe images", () => {
-    assertDeepEqual(parseInline("![arch](https://example.com/a.png"), [
-      { type: "text", text: "![arch](https://example.com/a.png" },
+    assertDeepEqual(parseInline("![arch](https://hoxi.ai/a.png"), [
+      { type: "text", text: "![arch](https://hoxi.ai/a.png" },
     ]);
     assertDeepEqual(parseInline("![x](javascript:alert(1))"), [
       { type: "text", text: "![x](javascript:alert(1))" },

@@ -368,13 +368,13 @@ func TestImportOpenCodeCLIProviderSyncsModelsAndAuth(t *testing.T) {
 	workspaceDir := t.TempDir()
 	homeDir := setupSyntheticCLIHome(t, workspaceDir)
 
-	// Mirror the real-world mismatch: config uses "AINode", credentials use
-	// "ainode", and an earlier Hoxi entry already exists under the lowercase id.
+	// Mirror the real-world mismatch: config uses "Hoxi", credentials use
+	// "hoxi", and a synced entry already exists under the lowercase id.
 	hoxiModelsPath := filepath.Join(homeDir, ".hoxi", "models.json")
 	if err := os.MkdirAll(filepath.Dir(hoxiModelsPath), 0o700); err != nil {
 		t.Fatalf("mkdir hoxi dir: %v", err)
 	}
-	seedModels := `{"disabled_providers":["AINode","ainode"],"provider":{"ainode":{"name":"AINode","npm":"@ai-sdk/openai-compatible","options":{"baseURL":"https://api.ainode.run/v1"},"models":{"gpt-6.1-sol":{"name":"gpt-6.1-sol"}}}}}`
+	seedModels := `{"disabled_providers":["Hoxi","hoxi"],"provider":{"hoxi":{"name":"Hoxi","npm":"@ai-sdk/openai-compatible","options":{"baseURL":"https://api.hoxi.ai/v1"},"models":{"gpt-6.1-sol":{"name":"gpt-6.1-sol"}}}}}`
 	if err := os.WriteFile(hoxiModelsPath, []byte(seedModels), 0o600); err != nil {
 		t.Fatalf("seed hoxi models: %v", err)
 	}
@@ -383,7 +383,7 @@ func TestImportOpenCodeCLIProviderSyncsModelsAndAuth(t *testing.T) {
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
 		t.Fatalf("mkdir opencode config: %v", err)
 	}
-	configDoc := `{"model":"AINode/kimi-k3","provider":{"AINode":{"name":"AINode","npm":"@ai-sdk/openai-compatible","options":{"baseURL":"https://api.ainode.run/v1"},"models":{"kimi-k3":{"name":"kimi-k3"},"deepseek-v4.1-flash":{"name":"deepseek-v4.1-flash"}}}}}`
+	configDoc := `{"model":"Hoxi/kimi-k3","provider":{"Hoxi":{"name":"Hoxi","npm":"@ai-sdk/openai-compatible","options":{"baseURL":"https://api.hoxi.ai/v1"},"models":{"kimi-k3":{"name":"kimi-k3"},"deepseek-v4.1-flash":{"name":"deepseek-v4.1-flash"}}}}}`
 	configPath := filepath.Join(configDir, "opencode.json")
 	if err := os.WriteFile(configPath, []byte(configDoc), 0o644); err != nil {
 		t.Fatalf("write opencode config: %v", err)
@@ -392,7 +392,7 @@ func TestImportOpenCodeCLIProviderSyncsModelsAndAuth(t *testing.T) {
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		t.Fatalf("mkdir opencode data: %v", err)
 	}
-	authDoc := `{"ainode":{"type":"api","key":"sk-ainode-test"},"opencode-go":{"type":"api","key":"sk-opencode-go-test"}}`
+	authDoc := `{"hoxi":{"type":"api","key":"sk-hoxi-test"},"opencode-go":{"type":"api","key":"sk-opencode-go-test"}}`
 	if err := os.WriteFile(filepath.Join(dataDir, "auth.json"), []byte(authDoc), 0o600); err != nil {
 		t.Fatalf("write opencode auth: %v", err)
 	}
@@ -441,7 +441,7 @@ func TestImportOpenCodeCLIProviderSyncsModelsAndAuth(t *testing.T) {
 	if !before.Authenticated || before.Connected {
 		t.Fatalf("expected authenticated but not connected before sync, got %+v", before)
 	}
-	if before.ProviderID != "ainode" || before.DefaultModel != "kimi-k3" {
+	if before.ProviderID != "hoxi" || before.DefaultModel != "kimi-k3" {
 		t.Fatalf("unexpected pre-sync target: provider=%s model=%s", before.ProviderID, before.DefaultModel)
 	}
 	if !sameSet(before.Models, "deepseek-v4.1-flash", "gpt-6.1-sol", "kimi-k3") {
@@ -455,7 +455,7 @@ func TestImportOpenCodeCLIProviderSyncsModelsAndAuth(t *testing.T) {
 	if err := json.Unmarshal(recImport.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal import: %v", err)
 	}
-	if !resp.OK || resp.ProviderID != "ainode" {
+	if !resp.OK || resp.ProviderID != "hoxi" {
 		t.Fatalf("unexpected import response: %+v", resp)
 	}
 	if !sameSet(resp.Models, "deepseek-v4.1-flash", "gpt-6.1-sol", "kimi-k3") {
@@ -477,14 +477,14 @@ func TestImportOpenCodeCLIProviderSyncsModelsAndAuth(t *testing.T) {
 		return doc.Provider, doc.Disabled, raw
 	}
 	providers, disabled, rawModels := readModels()
-	if _, ok := providers["AINode"]; ok {
+	if _, ok := providers["Hoxi"]; ok {
 		t.Fatalf("expected case duplicate to be merged away, got %s", rawModels)
 	}
-	ainode := providers["ainode"]
-	if ainode == nil {
-		t.Fatalf("expected ainode provider, got %s", rawModels)
+	hoxi := providers["hoxi"]
+	if hoxi == nil {
+		t.Fatalf("expected hoxi provider, got %s", rawModels)
 	}
-	models, _ := ainode["models"].(map[string]interface{})
+	models, _ := hoxi["models"].(map[string]interface{})
 	for _, mid := range []string{"kimi-k3", "deepseek-v4.1-flash", "gpt-6.1-sol"} {
 		if _, ok := models[mid]; !ok {
 			t.Fatalf("expected model %s in merged provider, got %s", mid, rawModels)
@@ -494,15 +494,15 @@ func TestImportOpenCodeCLIProviderSyncsModelsAndAuth(t *testing.T) {
 	for _, id := range disabled {
 		disabledSet[id] = true
 	}
-	if disabledSet["ainode"] {
+	if disabledSet["hoxi"] {
 		t.Fatalf("expected synced provider to be enabled, disabled=%v", disabled)
 	}
-	if !disabledSet["AINode"] {
+	if !disabledSet["Hoxi"] {
 		t.Fatalf("expected folded alias to stay disabled for the upstream global config, disabled=%v", disabled)
 	}
-	ainodeOpts, _ := ainode["options"].(map[string]interface{})
-	if ainodeOpts["apiKey"] != "sk-ainode-test" {
-		t.Fatalf("expected auth key injection into merged provider, got %v", ainodeOpts)
+	hoxiOpts, _ := hoxi["options"].(map[string]interface{})
+	if hoxiOpts["apiKey"] != "sk-hoxi-test" {
+		t.Fatalf("expected auth key injection into merged provider, got %v", hoxiOpts)
 	}
 	if bytes.Contains(rawModels, []byte("sk-opencode-go-test")) {
 		t.Fatalf("credential for auth-only provider must not leak into models.json")
@@ -516,8 +516,8 @@ func TestImportOpenCodeCLIProviderSyncsModelsAndAuth(t *testing.T) {
 	if err := json.Unmarshal(rawAuth, &engineAuth); err != nil {
 		t.Fatalf("unmarshal engine auth: %v", err)
 	}
-	if engineAuth["ainode"]["key"] != "sk-ainode-test" {
-		t.Fatalf("expected ainode credential in engine auth, got %s", rawAuth)
+	if engineAuth["hoxi"]["key"] != "sk-hoxi-test" {
+		t.Fatalf("expected hoxi credential in engine auth, got %s", rawAuth)
 	}
 	if engineAuth["opencode-go"]["key"] != "sk-opencode-go-test" {
 		t.Fatalf("expected OpenCode Go credential to be synced, got %s", rawAuth)
@@ -527,18 +527,18 @@ func TestImportOpenCodeCLIProviderSyncsModelsAndAuth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read workspace mirror: %v", err)
 	}
-	if bytes.Contains(workspaceMirror, []byte("sk-ainode-test")) {
+	if bytes.Contains(workspaceMirror, []byte("sk-hoxi-test")) {
 		t.Fatalf("workspace mirror must not contain credentials, got %s", workspaceMirror)
 	}
 
-	updatedDoc := `{"model":"AINode/kimi-k3","provider":{"AINode":{"name":"AINode","npm":"@ai-sdk/openai-compatible","options":{"baseURL":"https://api.ainode.run/v1"},"models":{"kimi-k3":{"name":"kimi-k3"},"glm-5.3":{"name":"glm-5.3"}}}}}`
+	updatedDoc := `{"model":"Hoxi/kimi-k3","provider":{"Hoxi":{"name":"Hoxi","npm":"@ai-sdk/openai-compatible","options":{"baseURL":"https://api.hoxi.ai/v1"},"models":{"kimi-k3":{"name":"kimi-k3"},"glm-5.3":{"name":"glm-5.3"}}}}}`
 	if err := os.WriteFile(configPath, []byte(updatedDoc), 0o644); err != nil {
 		t.Fatalf("rewrite opencode config: %v", err)
 	}
 	recSecond := httptest.NewRecorder()
 	mux.ServeHTTP(recSecond, httptest.NewRequest(http.MethodPost, "/api/hoxi/local-cli/import", bytes.NewReader(b)))
 	providers, _, rawSecond := readModels()
-	models, _ = providers["ainode"]["models"].(map[string]interface{})
+	models, _ = providers["hoxi"]["models"].(map[string]interface{})
 	if _, ok := models["glm-5.3"]; !ok {
 		t.Fatalf("expected newly added model after re-sync, got %s", rawSecond)
 	}
@@ -580,7 +580,7 @@ CREATE TABLE account_state (
 	active_account_id TEXT,
 	active_org_id TEXT
 );
-INSERT INTO account VALUES ('user_01TEST', 'dev@example.com', 'https://opencode.ai/console', 'st_live_token', 'rt_live_refresh', 1890000000000, 1790000000000, 1792000000000);
+INSERT INTO account VALUES ('user_01TEST', 'dev@hoxi.ai', 'https://opencode.ai/console', 'st_live_token', 'rt_live_refresh', 1890000000000, 1790000000000, 1792000000000);
 INSERT INTO account_state VALUES (1, 'user_01TEST', 'org_01TEST');
 UPDATE session SET model = '{"providerID":"opencode-go","modelID":"glm-5.1"}' WHERE id = 'opencode-sess-1';
 `)

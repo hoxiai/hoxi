@@ -201,3 +201,71 @@ func TestEnforcedWriteStaysInsideWorkspace(t *testing.T) {
 func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
 }
+
+func TestEnforcedWriteProtectsHoxiStateAndHooks(t *testing.T) {
+	if !Available() {
+		t.Skip("seatbelt backend unavailable")
+	}
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	for _, dir := range []string{filepath.Join(home, ".hoxi"), filepath.Join(home, ".gemini", "config")} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	profile, err := DefaultProfile(t.TempDir(), NetworkDeny)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{
+		filepath.Join(home, ".hoxi", "models.json"),
+		filepath.Join(home, ".hoxi", "sessions", "ses_x.json"),
+		filepath.Join(home, ".gemini", "config", "hooks.json"),
+		filepath.Join(home, ".claude", "settings.json"),
+	} {
+		bin, args, err := WrapShell(profile, "mkdir -p "+shellQuote(filepath.Dir(target))+" 2>/dev/null; echo bad > "+shellQuote(target))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = runCommand(bin, args...)
+		if _, err := os.Stat(target); err == nil {
+			t.Fatalf("protected file was written: %s", target)
+		}
+	}
+	allowed := filepath.Join(home, ".hoxi", "attachments-probe.txt")
+	bin, args, err := WrapShell(profile, "echo ok > "+shellQuote(allowed))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runCommand(bin, args...); err != nil {
+		t.Fatalf("unprotected hoxi state write was blocked: %v", err)
+	}
+}
+
+func TestGitMetadataDirResolvesLinkedWorktree(t *testing.T) {
+	root := t.TempDir()
+	common := filepath.Join(root, "repo", ".git")
+	wtGit := filepath.Join(common, "worktrees", "ses")
+	if err := os.MkdirAll(wtGit, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wtGit, "commondir"), []byte("../..\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	wt := filepath.Join(root, "wt")
+	if err := os.MkdirAll(wt, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wt, ".git"), []byte("gitdir: "+wtGit+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := GitMetadataDir(wt); got != common {
+		t.Fatalf("GitMetadataDir(worktree) = %q, want %q", got, common)
+	}
+	if got := GitMetadataDir(filepath.Join(root, "repo")); got != common {
+		t.Fatalf("GitMetadataDir(repo) = %q, want %q", got, common)
+	}
+}

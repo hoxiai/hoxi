@@ -473,7 +473,7 @@ export default function TaskTimelineBar(props: {
                 onFocus={(event) => showDetail(seg().id, event.currentTarget)} onBlur={() => setActiveSegment(null)}
                 onClick={() => props.onJumpToTurn(seg().messageID)}>
                 <span style={{ background: highlighted() ? seg().color : "var(--text-faint)",
-                  width: highlighted() ? `${Math.min(100, 20 + 80 * Math.sqrt(duration()! / maxDuration()))}%` : "30%",
+                  width: highlighted() ? `${Math.min(100, 20 + 80 * Math.sqrt((duration() ?? 0) / maxDuration()))}%` : "30%",
                   opacity: highlighted() ? 1 : 0.4 }} />
               </button>;
             }}</Index>

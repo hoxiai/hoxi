@@ -142,6 +142,7 @@ func DefaultProfile(workspace string, network NetworkMode, extraWritable ...stri
 			deny = append(deny, PathRule{Path: dir, Kind: PathSubtree})
 		}
 	}
+	deny = append(deny, protectedStateRules()...)
 	return Profile{
 		Filesystem: FilesystemProfile{
 			AllowWrite:         allow,
@@ -152,6 +153,77 @@ func DefaultProfile(workspace string, network NetworkMode, extraWritable ...stri
 		},
 		Network: NetworkProfile{Mode: network},
 	}, nil
+}
+
+// protectedStateRules keeps confined commands from rewriting Hoxi's session
+// store, provider config and engine database, or the approval hooks and
+// settings that gate the runtimes, even though their parent directories stay
+// writable for the CLIs' own session state.
+func protectedStateRules() []PathRule {
+	var rules []PathRule
+	if hoxi := HoxiHome(); hoxi != "" {
+		rules = append(rules, PathRule{Path: filepath.Join(hoxi, "sessions"), Kind: PathSubtree})
+		for _, name := range []string{
+			"hoxi.db", "hoxi.db-wal", "hoxi.db-shm", "hoxi.db-journal",
+			"models.json", "auto-pools.json", "workspaces.json", "device-id",
+		} {
+			rules = append(rules, PathRule{Path: filepath.Join(hoxi, name), Kind: PathLiteral})
+		}
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return rules
+	}
+	for _, file := range []string{
+		filepath.Join(home, ".claude", "settings.json"),
+		filepath.Join(home, ".claude", "settings.local.json"),
+		filepath.Join(home, ".gemini", "config", "hooks.json"),
+	} {
+		rules = append(rules, PathRule{Path: file, Kind: PathLiteral})
+	}
+	return rules
+}
+
+// GitMetadataDir returns the git directory that commands in workspace must be
+// able to write: the repository's own .git, or for a linked worktree the main
+// repository's common .git directory.
+func GitMetadataDir(workspace string) string {
+	workspace = strings.TrimSpace(workspace)
+	if workspace == "" {
+		return ""
+	}
+	dotGit := filepath.Join(workspace, ".git")
+	st, err := os.Stat(dotGit)
+	if err != nil {
+		return ""
+	}
+	if st.IsDir() {
+		return dotGit
+	}
+	raw, err := os.ReadFile(dotGit)
+	if err != nil {
+		return ""
+	}
+	gitDir, ok := strings.CutPrefix(strings.TrimSpace(string(raw)), "gitdir:")
+	if !ok {
+		return ""
+	}
+	gitDir = strings.TrimSpace(gitDir)
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(workspace, gitDir)
+	}
+	common := filepath.Clean(gitDir)
+	if commonRaw, err := os.ReadFile(filepath.Join(common, "commondir")); err == nil {
+		dir := strings.TrimSpace(string(commonRaw))
+		if !filepath.IsAbs(dir) {
+			dir = filepath.Join(common, dir)
+		}
+		common = filepath.Clean(dir)
+	}
+	if st, err := os.Stat(common); err != nil || !st.IsDir() {
+		return ""
+	}
+	return common
 }
 
 func runtimeStateDirs() []string {

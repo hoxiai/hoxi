@@ -23,8 +23,9 @@ ObjC.import("Quartz");
 ObjC.import("Vision");
 const args = $.NSProcessInfo.processInfo.arguments;
 let result = "";
-if (args.count >= 5) {
-  const path = ObjC.unwrap(args.objectAtIndex(4));
+if (args.count >= 6) {
+  // argv: osascript -l JavaScript -e <script> <pdfPath>
+  const path = ObjC.unwrap(args.objectAtIndex(5));
   const url = $.NSURL.fileURLWithPath(path);
   const doc = $.PDFDocument.alloc.initWithURL(url);
   if (doc) {
@@ -729,7 +730,7 @@ func (s *Store) ExtractText(id string, maxChars int) string {
 		text = extractPDFText(blobPath)
 	}
 	if len(text) > maxChars {
-		text = text[:maxChars] + "\n...[truncated]..."
+		text = truncateUTF8(text, maxChars) + "\n...[truncated]..."
 	}
 	return text
 }

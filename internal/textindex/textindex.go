@@ -21,7 +21,8 @@ var stopwords = map[string]bool{
 }
 
 // Tokenize splits identifiers on casing, punctuation and whitespace, then
-// lowercases and drops stopwords and pure numbers.
+// lowercases and drops stopwords and short numbers. Numbers of three or more
+// digits (status codes, ports, error numbers) stay searchable.
 func Tokenize(text string) []string {
 	var b strings.Builder
 	b.Grow(len(text))
@@ -43,7 +44,7 @@ func Tokenize(text string) []string {
 	fields := strings.Fields(b.String())
 	out := fields[:0]
 	for _, token := range fields {
-		if len(token) < 2 || stopwords[token] || isNumber(token) {
+		if len(token) < 2 || stopwords[token] || (len(token) < 3 && isNumber(token)) {
 			continue
 		}
 		out = append(out, token)
@@ -108,7 +109,7 @@ func Snippet(text string, maxLines, maxChars int) string {
 	}
 	value := b.String()
 	if len(value) > maxChars {
-		value = value[:maxChars] + "…"
+		value = strings.ToValidUTF8(value[:maxChars], "") + "…"
 	}
 	return value
 }

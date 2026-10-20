@@ -73,7 +73,7 @@ func init() {
 	for _, ext := range strings.Split(
 		"go,ts,tsx,js,jsx,mjs,cjs,py,pyi,rb,rs,java,kt,kts,swift,c,h,cc,cpp,cxx,hpp,cs,php,scala,sh,bash,zsh,fish,ps1,"+
 			"sql,md,mdx,json,jsonc,yaml,yml,toml,xml,html,htm,css,scss,sass,less,vue,svelte,dart,lua,r,ex,exs,erl,hs,"+
-			"clj,cljs,tf,tfvars,hcl,proto,graphql,gql,ini,cfg,conf,env,lock,gradle,mk,cmake", ",") {
+			"clj,cljs,tf,hcl,proto,graphql,gql,ini,cfg,conf,lock,gradle,mk,cmake", ",") {
 		if ext != "" {
 			indexableExtensions["."+ext] = true
 		}
@@ -147,9 +147,30 @@ func chunkFile(path, content string, cfg Config) []Chunk {
 	return chunks
 }
 
+// secretFile reports files that commonly hold credentials. The index is
+// written to ~/.hoxi in plain text, so they are never indexed.
+func secretFile(lower string) bool {
+	if lower == ".env" || strings.HasPrefix(lower, ".env.") || strings.HasSuffix(lower, ".env") {
+		return true
+	}
+	switch lower {
+	case ".npmrc", ".pypirc", ".netrc", ".git-credentials", "credentials", "credentials.json", "id_rsa", "id_ed25519":
+		return true
+	}
+	for _, suffix := range []string{".tfvars", ".tfvars.json", ".tfstate", ".pem", ".key", ".p12", ".pfx", ".keystore"} {
+		if strings.HasSuffix(lower, suffix) {
+			return true
+		}
+	}
+	return false
+}
+
 func indexableFile(path string) bool {
 	base := filepath.Base(path)
 	lower := strings.ToLower(base)
+	if secretFile(lower) {
+		return false
+	}
 	switch lower {
 	case "dockerfile", "makefile", "cmakelists.txt", "gemfile", "rakefile", "procfile", "justfile":
 		return true

@@ -364,17 +364,17 @@ func TestResolveStoredProviderKeyRejectsMismatchedBaseURL(t *testing.T) {
 		t.Fatalf("expected stored key for official default baseURL, got %q", got)
 	}
 	// Mismatched untrusted baseURL must not receive stored key
-	if got := svc.ResolveStoredProviderKey("openai", "https://attacker.example.com/v1"); got != "" {
+	if got := svc.ResolveStoredProviderKey("openai", "https://attacker.hoxi.ai/v1"); got != "" {
 		t.Fatalf("expected empty key for mismatched baseURL, got %q", got)
 	}
 	// Configured custom provider baseURL is allowed
 	if got := svc.ResolveStoredProviderKey("custom-gw", "https://gateway.trusted.example/v1"); got != "sk-custom-secret" {
 		t.Fatalf("expected stored key for matching custom baseURL, got %q", got)
 	}
-	if got := svc.ResolveStoredProviderKey("custom-gw", "https://evil.example.com/v1"); got != "" {
+	if got := svc.ResolveStoredProviderKey("custom-gw", "https://evil.hoxi.ai/v1"); got != "" {
 		t.Fatalf("expected empty key for mismatched custom baseURL, got %q", got)
 	}
-	if _, key, _, _ := svc.resolveProviderConnection("custom-gw", "https://evil.example.com/v1", ""); key != "" {
+	if _, key, _, _ := svc.resolveProviderConnection("custom-gw", "https://evil.hoxi.ai/v1", ""); key != "" {
 		t.Fatalf("resolveProviderConnection must not release stored key to mismatched hintBaseURL, got %q", key)
 	}
 }

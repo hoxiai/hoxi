@@ -248,3 +248,29 @@ func TestSkillSelectionAdoptsOldSessionAndStripsUpstreamField(t *testing.T) {
 		t.Fatalf("upstream payload missing skill instruction or user text: %s", sentBody)
 	}
 }
+
+func TestSkillSelectionProbeKeepsLargeBodies(t *testing.T) {
+	big := `"parts":[{"type":"file","url":"data:image/png;base64,` + strings.Repeat("A", 3<<20) + `"}]`
+	for _, tc := range []struct {
+		payload string
+		want    bool
+	}{
+		{`{"skillSelection":{"name":"x"},` + big + `}`, true},
+		{`{` + big + `,"skillSelection":{"name":"x"}}`, true},
+		{`{` + big + `,"skillSelection":null}`, false},
+		{`{` + big + `}`, false},
+		{`not json`, false},
+	} {
+		r := httptest.NewRequest(http.MethodPost, "/api/hoxi/sessions/ses_1/prompt_async", strings.NewReader(tc.payload))
+		if got := requestHasSkillSelection(r); got != tc.want {
+			t.Fatalf("requestHasSkillSelection = %v, want %v", got, tc.want)
+		}
+		got, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != tc.payload {
+			t.Fatalf("body changed: got %d bytes, want %d", len(got), len(tc.payload))
+		}
+	}
+}

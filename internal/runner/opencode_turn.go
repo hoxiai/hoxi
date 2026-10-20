@@ -184,6 +184,17 @@ func (s *Service) normalizeOpenCodePart(rec SessionRecord, part *MessagePart, fi
 			part.URL = mapped
 			return true
 		}
+		s.mu.Lock()
+		ap := s.procs[rec.ID]
+		s.mu.Unlock()
+		if ap != nil {
+			if v, ok := ap.fileURLs.Load(key); ok {
+				if mapped, _ := v.(string); mapped != "" {
+					part.URL = mapped
+					return true
+				}
+			}
+		}
 		if s.attachments != nil {
 			if meta, err := s.attachments.Save(attachment.SaveRequest{
 				SessionID: rec.ID,
@@ -252,13 +263,16 @@ func (s *Service) startOpenCodeTurn(rec SessionRecord, mode, modelID, effort, sy
 		}
 		s.managedOpenCode.Store(info.ID, true)
 	}
+	if err := syncOpenCodeCommandSandbox(rec); err != nil {
+		return err
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	stream, err := s.openCodeRequest(ctx, "GET", "/event", rec.WorktreePath, nil)
 	if err != nil {
 		cancel()
 		return err
 	}
-	ap := &activeProcess{sessionID: rec.ID, runtime: "opencode", done: make(chan struct{})}
+	ap := &activeProcess{sessionID: rec.ID, runtime: "opencode", done: make(chan struct{}), idleCh: make(chan struct{}, 1)}
 	ap.cancel = func() {
 		abortCtx, done := context.WithTimeout(context.Background(), 5*time.Second)
 		defer done()
@@ -286,6 +300,7 @@ func (s *Service) startOpenCodeTurn(rec SessionRecord, mode, modelID, effort, sy
 	for _, sp := range storedParts {
 		if sp.Type == "file" {
 			fileURLByMsgAndName[user.ID+"\x00"+sp.Filename] = sp.URL
+			ap.fileURLs.Store(user.ID+"\x00"+sp.Filename, sp.URL)
 			if !deliveryFileIDs[sp.ID] {
 				docOnlyFileParts = append(docOnlyFileParts, sp)
 			}
@@ -371,6 +386,9 @@ func (s *Service) startOpenCodeTurn(rec SessionRecord, mode, modelID, effort, sy
 				}
 				err = s.openCodeJSON(ctx, "POST", "/session/"+rec.ExternalID+"/message", rec.WorktreePath, payload, nil)
 			}
+		}
+		if err == nil && ap.wasSteered() && !ap.wasAborted() {
+			s.waitForOpenCodeIdle(ctx, rec, ap)
 		}
 		// Stop the stream before authoritative snapshots, so a delayed delta cannot
 		// append to an already complete snapshot.
@@ -512,6 +530,9 @@ func (s *Service) relayOpenCodeEventWithFiles(rec SessionRecord, raw []byte, fil
 	if json.Unmarshal(raw, &evt) != nil {
 		return
 	}
+	if s.noteOpenCodeChildEvent(rec, evt) {
+		return
+	}
 	if evt.Type == "session.updated" {
 		data, _ := json.Marshal(evt.Properties["info"])
 		var info SessionInfo
@@ -553,6 +574,14 @@ func (s *Service) relayOpenCodeEventWithFiles(rec SessionRecord, raw []byte, fil
 	}
 	s.noteOpenCodeActivity(rec.ID, evt)
 	if evt.Type == "session.status" || evt.Type == "session.idle" {
+		if evt.Type == "session.idle" || isOpenCodeIdleStatus(evt.Properties["status"]) {
+			s.mu.Lock()
+			ap := s.procs[rec.ID]
+			s.mu.Unlock()
+			if ap != nil {
+				ap.notifyIdle()
+			}
+		}
 		return
 	}
 	switch evt.Type {
@@ -584,14 +613,60 @@ func (s *Service) relayOpenCodeEventWithFiles(rec SessionRecord, raw []byte, fil
 	s.broadcast(rec.ID, evt)
 }
 
+func isOpenCodeIdleStatus(raw interface{}) bool {
+	switch v := raw.(type) {
+	case SessionStatus:
+		return v.Type == "idle"
+	case map[string]interface{}:
+		t, _ := v["type"].(string)
+		return t == "idle"
+	}
+	return false
+}
+
+func (s *Service) waitForOpenCodeIdle(ctx context.Context, rec SessionRecord, ap *activeProcess) {
+	ticker := time.NewTicker(150 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		qCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		var statuses map[string]SessionStatus
+		err := s.openCodeJSON(qCtx, http.MethodGet, "/session/status", rec.WorktreePath, nil, &statuses)
+		cancel()
+		if err != nil {
+			return
+		}
+		st := statuses[rec.ExternalID]
+		if st.Type == "" || st.Type == "idle" {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ap.idleCh:
+		case <-ticker.C:
+		}
+	}
+}
+
+func (s *Service) resolveUnmanagedSessionDir(sessionID, requestedDir string) string {
+	if binding, bound, err := s.worktrees.BindingForSession(sessionID); err == nil && bound && strings.TrimSpace(binding.Directory) != "" {
+		return strings.TrimSpace(binding.Directory)
+	}
+	if strings.TrimSpace(requestedDir) != "" {
+		return strings.TrimSpace(requestedDir)
+	}
+	return s.rootDir
+}
+
 // Keep OpenCode's live steering on the backing session; its existing event
 // subscription continues to relay all subsequent tool steps to the same chat.
-func (s *Service) steerOpenCodeTurn(ctx context.Context, rec SessionRecord, mode, modelID, providerID, effort, system, text string, parts []MessagePart) error {
+func (s *Service) steerOpenCodeTurn(ctx context.Context, rec SessionRecord, mode, modelID, providerID, effort, system, text string, parts []MessagePart, skillSelection *SkillSelection) error {
 	providerID, modelID = s.resolveOpenCodeModel(ctx, rec.WorktreePath, providerID, modelID)
 	effort = s.resolveOpenCodeVariant(ctx, rec.WorktreePath, providerID, modelID, effort)
 	s.mu.Lock()
 	s.seqSeed++
 	seq := s.seqSeed
+	ap := s.procs[rec.ID]
 	s.mu.Unlock()
 	now := time.Now().UnixMilli()
 	steerMsgID := fmt.Sprintf("msg_u_%d_%d", now, seq)
@@ -601,7 +676,23 @@ func (s *Service) steerOpenCodeTurn(ctx context.Context, rec SessionRecord, mode
 			fileParts = append(fileParts, p)
 		}
 	}
-	_, deliveryParts, _ := s.prepareTurnAttachments(rec, now, seq, steerMsgID, text, fileParts)
+	storedParts, deliveryParts, _ := s.prepareTurnAttachments(rec, now, seq, steerMsgID, text, fileParts)
+	if skillSelection != nil {
+		s.recordUserSkillOverride(steerMsgID, text, skillSelection)
+		storedParts, deliveryParts = applySkillSelectionToTurnParts(
+			rec.ID,
+			steerMsgID,
+			now,
+			seq,
+			text,
+			skillSelection,
+			storedParts,
+			deliveryParts,
+		)
+	}
+	if rec.ID != "" && s.OwnsSession(rec.ID) {
+		s.recordTurnSnapshot(rec.ID, steerMsgID)
+	}
 	inputParts := make([]map[string]interface{}, 0, len(deliveryParts))
 	for _, part := range deliveryParts {
 		if part.Type == "file" {
@@ -623,5 +714,38 @@ func (s *Service) steerOpenCodeTurn(ctx context.Context, rec SessionRecord, mode
 	if system != "" {
 		payload["system"] = system
 	}
-	return s.openCodeJSON(ctx, "POST", "/session/"+rec.ExternalID+"/prompt_async", rec.WorktreePath, payload, nil)
+	if ap != nil {
+		ap.markSteered()
+		ap.stall.touch(time.Now())
+	}
+	if err := s.openCodeJSON(ctx, "POST", "/session/"+rec.ExternalID+"/prompt_async", rec.WorktreePath, payload, nil); err != nil {
+		return err
+	}
+	// Documents reach OpenCode inlined into the text, which the relay strips
+	// from the echoed message; show their file chips like a normal turn does.
+	deliveredFiles := make(map[string]bool)
+	for _, dp := range deliveryParts {
+		if dp.Type == "file" {
+			deliveredFiles[dp.ID] = true
+		}
+	}
+	var docParts []MessagePart
+	for _, sp := range storedParts {
+		if sp.Type == "file" {
+			if ap != nil {
+				ap.fileURLs.Store(steerMsgID+"\x00"+sp.Filename, sp.URL)
+			}
+			if !deliveredFiles[sp.ID] {
+				docParts = append(docParts, sp)
+			}
+		}
+	}
+	if len(docParts) > 0 && rec.ID != "" && s.OwnsSession(rec.ID) {
+		user := MessageInfo{ID: steerMsgID, SessionID: rec.ID, Role: "user", Time: MessageTime{Created: now}, Agent: mode, ModelID: modelID, ProviderID: providerID}
+		s.broadcast(rec.ID, SSEEvent{Type: "message.updated", Properties: map[string]interface{}{"info": user}})
+		for _, fp := range docParts {
+			s.broadcast(rec.ID, SSEEvent{Type: "message.part.updated", Properties: map[string]interface{}{"part": fp}})
+		}
+	}
+	return nil
 }

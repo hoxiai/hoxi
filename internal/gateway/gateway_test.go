@@ -57,7 +57,7 @@ func TestGatewayCORSWhitelistEnforcement(t *testing.T) {
 
 	// Disallowed origin preflight should receive 403 Forbidden and no CORS reflection
 	reqEvil := localRequest(http.MethodOptions, "/global/health", nil)
-	reqEvil.Header.Set("Origin", "https://evil.example.com")
+	reqEvil.Header.Set("Origin", "https://evil.hoxi.ai")
 	recEvil := httptest.NewRecorder()
 	gw.ServeHTTP(recEvil, reqEvil)
 

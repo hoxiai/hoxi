@@ -268,7 +268,11 @@ export function AssistantTurnFooter(props: {
 
   const isLatestTurn = createMemo(() => {
     if (!props.turns || typeof props.turnIndex !== "number") return true;
-    return props.turnIndex === props.turns.length - 1;
+    if (props.turnIndex === props.turns.length - 1) return true;
+    if (!props.info.time?.completed && !props.info.error) {
+      return props.turns.slice(props.turnIndex + 1).every((t) => t.info.role === "user");
+    }
+    return false;
   });
 
   // Commit actions belong to the current exchange only; historical cards keep

@@ -112,3 +112,22 @@ func TestEmptyQueryReturnsNoResults(t *testing.T) {
 		t.Fatalf("expected no results, got %d", len(response.Results))
 	}
 }
+
+func TestIndexableFileSkipsCredentials(t *testing.T) {
+	for path, want := range map[string]bool{
+		"main.go":              true,
+		"config/app.yaml":      true,
+		".env":                 false,
+		".env.production":      false,
+		"deploy/prod.env":      false,
+		"infra/prod.tfvars":    false,
+		"certs/server.pem":     false,
+		".npmrc":               false,
+		"terraform.tfstate":    false,
+		"internal/keys/api.go": true,
+	} {
+		if got := indexableFile(path); got != want {
+			t.Fatalf("indexableFile(%q) = %v, want %v", path, got, want)
+		}
+	}
+}

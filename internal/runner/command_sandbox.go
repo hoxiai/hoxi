@@ -25,6 +25,24 @@ func (s *Service) confineRuntimeCommand(rec SessionRecord, bin string, args []st
 	return sandbox.WrapExec(profile, bin, args)
 }
 
+// syncOpenCodeCommandSandbox publishes the session's sandbox choice to the
+// OpenCode sandbox plugin, which looks policies up by the daemon's own session
+// ID rather than Hoxi's conversation ID.
+func syncOpenCodeCommandSandbox(rec SessionRecord) error {
+	if rec.ExternalID == "" {
+		return nil
+	}
+	manager := sandbox.NewManager("")
+	if !rec.CommandSandbox {
+		return manager.Remove(rec.ExternalID)
+	}
+	if !sandbox.Available() {
+		return errors.New(sandbox.UnavailableReason())
+	}
+	_, err := manager.Set(rec.ExternalID, rec.WorktreePath, true, sandbox.NetworkAllow)
+	return err
+}
+
 // writableGitDir keeps git metadata writable for worktree sessions, whose
 // actual git directory lives under the main project instead of the worktree.
 func writableGitDir(projectDir string) string {

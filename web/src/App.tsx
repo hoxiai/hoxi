@@ -6,6 +6,7 @@ import { hoxiAPI } from "./services/api";
 import { connectEventStream } from "./services/sse";
 import { watchNetworkStatus } from "./services/network";
 import {
+  advanceSessionGoal,
   appSettings,
   applySessionDiffEvent,
   applyPartDeltaBatch,
@@ -17,6 +18,7 @@ import {
   isDismissedProjectPath,
   isInvalidProjectPath,
   isSessionBusy,
+  lastPromptDispatchedAt,
   loadAgents,
   loadProjects,
   loadProviders,
@@ -218,6 +220,7 @@ export default function App() {
                   setWorkspace("unreadCompletedBySession", sid, true);
                 }
                 void drainNextQueuedPrompt(sid);
+                if (wasBusy && !parentID) void advanceSessionGoal(sid);
               } else if (evt.properties.status.type === "retry") {
                 recordSessionRetry(
                   sid,
@@ -229,8 +232,15 @@ export default function App() {
             }
             case "session.idle": {
               const sid = evt.properties.sessionID;
-              setWorkspace("statusBySession", sid, { type: "idle" });
-              setWorkspace("stalledSinceBySession", sid, 0);
+              // Native runtimes send `session.status` idle right before this
+              // event; that one may already have dispatched the next queued
+              // prompt, whose busy state must not be flipped back to idle.
+              const nextPromptRunning =
+                isSessionBusy(sid) && Date.now() - lastPromptDispatchedAt(sid) <= 3500;
+              if (!nextPromptRunning) {
+                setWorkspace("statusBySession", sid, { type: "idle" });
+                setWorkspace("stalledSinceBySession", sid, 0);
+              }
               setWorkspace("sessionFinishedAt", sid, Date.now());
               const parentID = resolveParentSessionID(sid);
               if (parentID) {
@@ -247,6 +257,7 @@ export default function App() {
                 triggerDesktopNotification("Hoxi", t("timeline.turnCompleted"), { sessionID: sid, kind: "complete" });
                 void loadSessionMessages(sid).then(() => {
                   void drainNextQueuedPrompt(sid);
+                  void advanceSessionGoal(sid);
                   void runSessionCodeAudit(sid, false);
                 });
               }

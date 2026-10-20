@@ -77,19 +77,27 @@ function assertWritable(value, workspace) {
   }
 }
 
+const FILE_WRITE_TOOLS = new Set(["write", "edit", "multiedit", "apply_patch"]);
+const NETWORK_TOOLS = new Set(["webfetch", "websearch", "codesearch", "hoxi_browser"]);
+const PATCH_PATH_RE = /^\*\*\* (?:Add File|Update File|Delete File|Move to):\s*(.+?)\s*$/gm;
+
+function patchTargets(args) {
+  const text = args.patchText ?? args.patch ?? args.input;
+  if (typeof text !== "string") return [];
+  return Array.from(text.matchAll(PATCH_PATH_RE), (m) => m[1]);
+}
+
 function command(snapshot, input) {
   if (snapshot.network === "deny") {
-    for (const tool of ["webfetch", "hoxi_browser"]) {
-      if (input.tool === tool) {
-        throw new Error(`Hoxi sandbox denied network tool '${tool}' (sandbox network mode: deny)`);
-      }
+    if (NETWORK_TOOLS.has(input.tool)) {
+      throw new Error(`Hoxi sandbox denied network tool '${input.tool}' (sandbox network mode: deny)`);
     }
   }
   if (input.tool === "bash") return true;
-  if (input.tool === "write" || input.tool === "edit") return true;
-  if (["read", "grep", "glob", "list", "todowrite", "todoread", "goal_report", "skill", "question"].includes(input.tool)) return true;
+  if (FILE_WRITE_TOOLS.has(input.tool)) return true;
+  if (["read", "grep", "glob", "list", "lsp", "todowrite", "todoread", "goal_report", "skill", "question"].includes(input.tool)) return true;
   if (input.tool.startsWith("hoxi_memory_")) return true;
-  if (snapshot.network === "allow" && (input.tool === "webfetch" || input.tool === "hoxi_browser")) return true;
+  if (snapshot.network === "allow" && NETWORK_TOOLS.has(input.tool)) return true;
   throw new Error(
     `Hoxi sandbox cannot confine tool '${input.tool}'; disable the sandbox to use it`
   );
@@ -112,7 +120,14 @@ export const HoxiSandboxPlugin = async () => ({
       return;
     }
 
-    if (input.tool === "write" || input.tool === "edit") {
+    if (input.tool === "apply_patch") {
+      const targets = patchTargets(args);
+      if (targets.length === 0) throw new Error("Hoxi sandbox could not read the patch file paths");
+      for (const target of targets) assertWritable(target, value.workspace);
+      return;
+    }
+
+    if (FILE_WRITE_TOOLS.has(input.tool)) {
       const target = args.filePath ?? args.path ?? args.file;
       assertWritable(target, value.workspace);
     }

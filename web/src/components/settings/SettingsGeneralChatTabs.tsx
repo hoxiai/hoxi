@@ -2,7 +2,6 @@
 import {
   Bell,
   CheckCircle2,
-  Coffee,
   CornerDownLeft,
   ExternalLink,
   Globe,
@@ -385,16 +384,6 @@ export function ChatComposerTab() {
           />
         </SettingRow>
 
-        <SettingRow
-          icon={Coffee}
-          label={t("settings.keepAwakeLabel")}
-          tip={t("settings.keepAwakeDesc")}
-        >
-          <ToggleSwitch
-            checked={appSettings.keepAwakeWhileRunning}
-            onChange={(val) => updateAppSetting("keepAwakeWhileRunning", val)}
-          />
-        </SettingRow>
       </SettingGroup>
 
       {/* 2. Global Custom Instructions */}

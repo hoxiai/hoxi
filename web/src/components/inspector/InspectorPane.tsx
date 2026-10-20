@@ -14,15 +14,9 @@ const BrowserInspector = lazy(() => import("./BrowserInspector"));
 type TabID = "diffs" | "memory" | "files" | "skills" | "terminal" | "browser";
 
 const PRIMARY_TABS: TabID[] = ["diffs", "files", "terminal"];
+const SECONDARY_TABS: TabID[] = ["browser", "memory", "skills"];
 
 export default function InspectorPane() {
-  // Secondary panes (memory / skills / browser) stay reachable through the
-  // command palette; they only surface in the tab strip while active.
-  const tabs = createMemo<Array<{ id: TabID }>>(() => {
-    const active = workspace.inspectorTab;
-    const primary = PRIMARY_TABS.map((id) => ({ id }));
-    return PRIMARY_TABS.includes(active) ? primary : [...primary, { id: active }];
-  });
   const [visitedTabs, setVisitedTabs] = createSignal<Record<TabID, boolean>>({
     diffs: workspace.inspectorTab === "diffs",
     memory: workspace.inspectorTab === "memory",
@@ -35,6 +29,16 @@ export default function InspectorPane() {
   createEffect(() => {
     const active = workspace.inspectorTab;
     setVisitedTabs((prev) => (prev[active] ? prev : { ...prev, [active]: true }));
+  });
+
+  // Secondary panes (memory / skills / browser) stay reachable through the
+  // command palette; they join the tab strip once opened, so switching to a
+  // primary tab never strands them.
+  const tabs = createMemo<Array<{ id: TabID }>>(() => {
+    const active = workspace.inspectorTab;
+    const visited = visitedTabs();
+    const secondary = SECONDARY_TABS.filter((id) => id === active || visited[id]);
+    return [...PRIMARY_TABS, ...secondary].map((id) => ({ id }));
   });
 
   const diffCount = createMemo(() => {

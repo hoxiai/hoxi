@@ -26,19 +26,37 @@ func requestHasSkillSelection(r *http.Request) bool {
 	if r == nil || r.Body == nil || r.Method != http.MethodPost {
 		return false
 	}
-	raw, err := io.ReadAll(io.LimitReader(r.Body, 2<<20))
-	r.Body = io.NopCloser(bytes.NewReader(raw))
-	if err != nil || len(bytes.TrimSpace(raw)) == 0 {
+	// Scan top-level keys as a stream and hand the backend the full body:
+	// image attachments travel inline, so prompts are often several MB.
+	body := r.Body
+	var consumed bytes.Buffer
+	found := scanSkillSelection(json.NewDecoder(io.TeeReader(body, &consumed)))
+	r.Body = struct {
+		io.Reader
+		io.Closer
+	}{io.MultiReader(&consumed, body), body}
+	return found
+}
+
+func scanSkillSelection(dec *json.Decoder) bool {
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
 		return false
 	}
-	var probe struct {
-		SkillSelection json.RawMessage `json:"skillSelection"`
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			return false
+		}
+		var value json.RawMessage
+		if err := dec.Decode(&value); err != nil {
+			return false
+		}
+		if key, _ := tok.(string); key == "skillSelection" {
+			trimmed := bytes.TrimSpace(value)
+			return len(trimmed) > 0 && !bytes.Equal(trimmed, []byte("null"))
+		}
 	}
-	if json.Unmarshal(raw, &probe) != nil {
-		return false
-	}
-	trimmed := bytes.TrimSpace(probe.SkillSelection)
-	return len(trimmed) > 0 && !bytes.Equal(trimmed, []byte("null"))
+	return false
 }
 
 // routeConversation maps /api/hoxi/sessions/{id}[/action] onto the backend

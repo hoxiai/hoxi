@@ -58,12 +58,12 @@ func TestSessionSummarizeForwardsToOpenCodeAndRefreshesTurns(t *testing.T) {
 	}
 
 	w := httptest.NewRecorder()
-	body := `{"providerID":"ainode","modelID":"deepseek-flash"}`
+	body := `{"providerID":"hoxi","modelID":"deepseek-flash"}`
 	svc.handleSessionSummarize(w, httptest.NewRequest(http.MethodPost, "/summarize", strings.NewReader(body)), rec.ID)
 	if w.Code != http.StatusOK || strings.TrimSpace(w.Body.String()) != "true" {
 		t.Fatalf("summarize: %d %s", w.Code, w.Body.String())
 	}
-	if summarizeBody["providerID"] != "ainode" || summarizeBody["modelID"] != "deepseek-flash" {
+	if summarizeBody["providerID"] != "hoxi" || summarizeBody["modelID"] != "deepseek-flash" {
 		t.Fatalf("summarize body = %+v", summarizeBody)
 	}
 	updated, _ := svc.store.Get(rec.ID)

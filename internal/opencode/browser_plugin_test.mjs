@@ -37,7 +37,7 @@ test("standalone browser plugin", async (t) => {
     sessionID: "session&1", directory: "/work tree/\u771f\u5b9e", abort: controller.signal,
     ask: async (request) => { asks.push(request); },
   };
-  const state = { title: "Example", url: "https://example.com", tabs: [], manual: false };
+  const state = { title: "Example", url: "https://hoxi.ai", tabs: [], manual: false };
   globalThis.fetch = async (url, options) => {
     requests.push({ url, options });
     return Response.json(state);

@@ -449,21 +449,37 @@ func (s *Service) handleSessionPrompt(w http.ResponseWriter, r *http.Request, se
 	}
 
 	rec, ok := s.store.Get(sessionID)
+	unmanagedBusySteer := false
 	if !ok && body.SkillSelection != nil {
 		adopted, adoptErr := s.adoptOpenCodeSession(r.Context(), sessionID, r.URL.Query().Get("directory"))
 		if adoptErr != nil {
-			writeJSONError(w, http.StatusConflict, adoptErr.Error())
-			return
+			if adoptErr.Error() == "cannot change runtime while the session is running" {
+				dir := s.resolveUnmanagedSessionDir(sessionID, r.URL.Query().Get("directory"))
+				rec = SessionRecord{
+					ID:           sessionID,
+					Runtime:      "opencode",
+					ExternalID:   sessionID,
+					ProjectDir:   dir,
+					WorktreePath: dir,
+					SandboxMode:  "local",
+				}
+				ok = true
+				unmanagedBusySteer = true
+			} else {
+				writeJSONError(w, http.StatusConflict, adoptErr.Error())
+				return
+			}
+		} else {
+			if putErr := s.store.Put(adopted); putErr != nil {
+				writeJSONError(w, http.StatusInternalServerError, putErr.Error())
+				return
+			}
+			for _, id := range adopted.OpenCodeIDs {
+				s.managedOpenCode.Store(id, true)
+			}
+			rec = adopted
+			ok = true
 		}
-		if putErr := s.store.Put(adopted); putErr != nil {
-			writeJSONError(w, http.StatusInternalServerError, putErr.Error())
-			return
-		}
-		for _, id := range adopted.OpenCodeIDs {
-			s.managedOpenCode.Store(id, true)
-		}
-		rec = adopted
-		ok = true
 	}
 	if !ok {
 		writeJSONError(w, http.StatusNotFound, "runner session not found")
@@ -517,18 +533,14 @@ func (s *Service) handleSessionPrompt(w http.ResponseWriter, r *http.Request, se
 	}
 	if rec.Runtime == "opencode" {
 		s.mu.Lock()
-		busy := s.procs[sessionID] != nil
+		busy := unmanagedBusySteer || s.procs[sessionID] != nil
 		s.mu.Unlock()
 		if busy {
 			modelID, providerID := rec.ModelID, rec.ProviderID
 			if body.Model != nil {
 				modelID, providerID = body.Model.ModelID, body.Model.ProviderID
 			}
-			steerText := promptText
-			if body.SkillSelection != nil {
-				steerText = formatSkillPromptInstruction(body.SkillSelection.Name, promptText)
-			}
-			err := s.steerOpenCodeTurn(r.Context(), rec, firstNonEmptyStr(body.Agent, rec.Mode, "build"), modelID, providerID, body.Variant, body.System, steerText, body.Parts)
+			err := s.steerOpenCodeTurn(r.Context(), rec, firstNonEmptyStr(body.Agent, rec.Mode, "build"), modelID, providerID, body.Variant, body.System, promptText, body.Parts, body.SkillSelection)
 			if err != nil {
 				writeJSONError(w, http.StatusBadGateway, err.Error())
 				return

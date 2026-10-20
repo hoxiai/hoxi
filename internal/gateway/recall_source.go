@@ -158,6 +158,11 @@ func (s *gatewayRecallSource) openCodeSessions(ctx context.Context, directory st
 		if item.ID == "" || item.ParentID != "" || item.Time.Archived > 0 {
 			continue
 		}
+		// Engine handles of runner conversations are already recalled, with
+		// their persisted turns, under the conversation's own ID.
+		if s.g.runner != nil && s.g.runner.IsManagedOpenCodeSession(item.ID) {
+			continue
+		}
 		wg.Add(1)
 		go func(item upstreamSession) {
 			defer wg.Done()

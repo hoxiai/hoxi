@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -530,5 +531,126 @@ func TestRuntimeContextOmitsInlineBase64DataURLs(t *testing.T) {
 	}
 	if !strings.Contains(ctx, "Attachment screen.png (image/png)") {
 		t.Fatalf("expected attachment summary in runtimeContext, got:\n%s", ctx)
+	}
+}
+
+func TestSteerOpenCodeTurnWaitsForPostMessageAsyncCompletion(t *testing.T) {
+	root := t.TempDir()
+	svc := NewService(root, nil, nil, filepath.Join(t.TempDir(), "sessions"))
+	rec := SessionRecord{
+		ID:           "ses_hoxi_steer_wait",
+		Runtime:      "opencode",
+		ExternalID:   "ses_opc_steer_wait",
+		ProjectDir:   root,
+		WorktreePath: root,
+		SandboxMode:  "local",
+		ProviderID:   "test",
+		ModelID:      "model",
+	}
+	if err := svc.store.Put(rec); err != nil {
+		t.Fatal(err)
+	}
+
+	msgStarted := make(chan struct{})
+	releaseMsg := make(chan struct{})
+	steered := make(chan struct{})
+	eventWriterCh := make(chan http.ResponseWriter, 1)
+	var statusBusy atomic.Bool
+	statusBusy.Store(true)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/event":
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			w.(http.Flusher).Flush()
+			select {
+			case eventWriterCh <- w:
+			default:
+			}
+			<-r.Context().Done()
+		case "/session/ses_opc_steer_wait/message":
+			if r.Method == http.MethodPost {
+				_, _ = io.Copy(io.Discard, r.Body)
+				close(msgStarted)
+				<-releaseMsg
+				writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
+				return
+			}
+			writeJSON(w, http.StatusOK, []MessageTurn{
+				{
+					Info:  MessageInfo{ID: "msg_1", SessionID: rec.ExternalID, Role: "user"},
+					Parts: []MessagePart{{ID: "prt_1", SessionID: rec.ExternalID, MessageID: "msg_1", Type: "text", Text: "initial"}},
+				},
+				{
+					Info:  MessageInfo{ID: "msg_2", SessionID: rec.ExternalID, Role: "assistant"},
+					Parts: []MessagePart{{ID: "prt_2", SessionID: rec.ExternalID, MessageID: "msg_2", Type: "text", Text: "steered reply"}},
+				},
+			})
+		case "/session/ses_opc_steer_wait/prompt_async":
+			_, _ = io.Copy(io.Discard, r.Body)
+			close(steered)
+			writeJSON(w, http.StatusOK, true)
+		case "/session/status":
+			if statusBusy.Load() {
+				writeJSON(w, http.StatusOK, map[string]SessionStatus{
+					rec.ExternalID: {Type: "busy"},
+				})
+			} else {
+				writeJSON(w, http.StatusOK, map[string]SessionStatus{})
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	svc.ConfigureOpenCode(server.URL, "secret")
+
+	ch, unsub := svc.Subscribe(rec.ID)
+	defer unsub()
+
+	parts := []MessagePart{{Type: "text", Text: "initial"}}
+	if err := svc.startOpenCodeTurn(rec, "build", "model", "", "", MessageInfo{ID: "msg_1", SessionID: rec.ID, Role: "user"}, parts, parts); err != nil {
+		t.Fatal(err)
+	}
+	<-msgStarted
+
+	w := httptest.NewRecorder()
+	svc.handleSessionPrompt(w, httptest.NewRequest(http.MethodPost, "/prompt_async", strings.NewReader(`{"text":"follow-up steer"}`)), rec.ID)
+	if w.Code != http.StatusOK {
+		t.Fatalf("steer failed: %d %s", w.Code, w.Body.String())
+	}
+	<-steered
+
+	// First /message finishes while the steered async step is still busy in OpenCode.
+	close(releaseMsg)
+	time.Sleep(80 * time.Millisecond)
+	if svc.ActiveProcessCount() != 1 {
+		t.Fatalf("expected turn to stay active while steered OpenCode status is busy")
+	}
+
+	// Mark OpenCode idle; turn should now finish and broadcast the final steered reply.
+	statusBusy.Store(false)
+	deadline := time.After(3 * time.Second)
+	gotSteeredReply := false
+	for {
+		select {
+		case evt := <-ch:
+			if evt.Type == "message.part.updated" {
+				if p, ok := evt.Properties["part"].(MessagePart); ok && p.Text == "steered reply" {
+					gotSteeredReply = true
+				}
+			}
+			if evt.Type == "session.status" {
+				if st, ok := evt.Properties["status"].(SessionStatus); ok && st.Type == "idle" {
+					if !gotSteeredReply {
+						t.Fatalf("session went idle before broadcasting steered reply")
+					}
+					return
+				}
+			}
+		case <-deadline:
+			t.Fatal("timed out waiting for steered turn to settle")
+		}
 	}
 }

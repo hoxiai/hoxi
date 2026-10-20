@@ -521,10 +521,16 @@ type activeProcess struct {
 	stdin     io.WriteCloser
 	done      chan struct{}
 	aborted   bool
+	steered   bool
+	idleCh    chan struct{}
 	cancel    func()
 	mu        sync.Mutex
 	stall     stallState
 	toolFails toolFailureStreak
+	// openCodeChildren holds the OpenCode subagent session IDs spawned by
+	// this turn, so their activity counts toward the parent's watchdog.
+	openCodeChildren sync.Map
+	fileURLs         sync.Map
 }
 
 func (ap *activeProcess) Abort() {
@@ -565,6 +571,28 @@ func (ap *activeProcess) wasAborted() bool {
 	ap.mu.Lock()
 	defer ap.mu.Unlock()
 	return ap.aborted
+}
+
+func (ap *activeProcess) markSteered() {
+	ap.mu.Lock()
+	ap.steered = true
+	ap.mu.Unlock()
+}
+
+func (ap *activeProcess) wasSteered() bool {
+	ap.mu.Lock()
+	defer ap.mu.Unlock()
+	return ap.steered
+}
+
+func (ap *activeProcess) notifyIdle() {
+	if ap.idleCh == nil {
+		return
+	}
+	select {
+	case ap.idleCh <- struct{}{}:
+	default:
+	}
 }
 
 func readStreamLines(r io.Reader, onLine func(string)) {

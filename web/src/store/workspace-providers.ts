@@ -603,7 +603,16 @@ export async function toggleDisabledProvider(providerID: string, disabled: boole
 
 export async function updateGlobalModelConfig(patch: Record<string, any>): Promise<void> {
   const updated = await hoxiAPI.updateGlobalConfig(patch);
-  setWorkspace("globalConfig", updated || {});
+  // OpenCode's config does not know Hoxi's own providers; keep the ones
+  // loadProviders merged in so they do not vanish until the next reload.
+  const hoxiProviders = workspace.hoxiProviders ?? {};
+  const keptHoxi = Object.fromEntries(
+    Object.entries(workspace.globalConfig?.provider ?? {}).filter(([id]) => id in hoxiProviders)
+  );
+  setWorkspace("globalConfig", {
+    ...(updated || {}),
+    provider: { ...((updated as Record<string, any> | undefined)?.provider ?? {}), ...keptHoxi },
+  });
   if (typeof patch.model === "string") {
     const parsed = parseModelString(patch.model);
     if (parsed) selectDefaultModel(parsed);

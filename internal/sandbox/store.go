@@ -60,7 +60,7 @@ func (m *Manager) Set(sessionID, workspace string, enabled bool, network Network
 	if !enabled {
 		return Snapshot{}, m.Remove(sessionID)
 	}
-	profile, err := DefaultProfile(workspace, network)
+	profile, err := DefaultProfile(workspace, network, GitMetadataDir(workspace))
 	if err != nil {
 		return Snapshot{}, err
 	}

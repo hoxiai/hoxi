@@ -48,24 +48,39 @@ func TestClaudeHookAsksBeforeTheThirdIdenticalCall(t *testing.T) {
 func TestDoomLoopGuardIgnoresPollingAndKeyOrder(t *testing.T) {
 	g := newDoomLoopGuard()
 	for i := 0; i < 5; i++ {
-		if g.observe("s", "BashOutput", json.RawMessage(`{"bash_id":"1"}`)) {
+		if g.observe("s", "m", "BashOutput", json.RawMessage(`{"bash_id":"1"}`)) {
 			t.Fatal("polling tools must not trip the guard")
 		}
 	}
-	g.observe("s", "Read", json.RawMessage(`{"a":1,"b":2}`))
-	g.observe("s", "Read", json.RawMessage(`{ "b": 2, "a": 1 }`))
-	if !g.observe("s", "Read", json.RawMessage(`{"b":2,"a":1}`)) {
+	g.observe("s", "m", "Read", json.RawMessage(`{"a":1,"b":2}`))
+	g.observe("s", "m", "Read", json.RawMessage(`{ "b": 2, "a": 1 }`))
+	if !g.observe("s", "m", "Read", json.RawMessage(`{"b":2,"a":1}`)) {
 		t.Fatal("reformatted identical input must count as a repeat")
 	}
 	g.settle("s", "Read", true)
 	for i := 0; i < 5; i++ {
-		if g.observe("s", "Read", json.RawMessage(`{"a":1,"b":2}`)) {
+		if g.observe("s", "m", "Read", json.RawMessage(`{"a":1,"b":2}`)) {
 			t.Fatal("an always-allowed tool must not be asked again")
 		}
 	}
-	g.observe("t", "Read", json.RawMessage(`{"a":1}`))
-	g.observe("t", "Read", json.RawMessage(`{"a":2}`))
-	if g.observe("t", "Read", json.RawMessage(`{"a":1}`)) {
+	g.observe("t", "m", "Read", json.RawMessage(`{"a":1}`))
+	g.observe("t", "m", "Read", json.RawMessage(`{"a":2}`))
+	if g.observe("t", "m", "Read", json.RawMessage(`{"a":1}`)) {
 		t.Fatal("non-consecutive repeats must not trip the guard")
+	}
+}
+
+func TestDoomLoopGuardResetsBetweenTurns(t *testing.T) {
+	g := newDoomLoopGuard()
+	cmd := json.RawMessage(`{"command":"go test ./..."}`)
+	for _, turn := range []string{"msg_1", "msg_2", "msg_3", "msg_4"} {
+		if g.observe("s", turn, "Bash", cmd) {
+			t.Fatalf("the same check run once per user turn was treated as a loop (%s)", turn)
+		}
+	}
+	g.observe("s", "msg_5", "Bash", cmd)
+	g.observe("s", "msg_5", "Bash", cmd)
+	if !g.observe("s", "msg_5", "Bash", cmd) {
+		t.Fatal("repeats within one turn must still trip the guard")
 	}
 }

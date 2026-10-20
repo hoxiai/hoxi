@@ -2,7 +2,12 @@
 set -euo pipefail
 
 PROFILE_NAME="${1:-hoxi-notary}"
-TEAM_ID="${2:-8ER9ZL9ZFL}"
+TEAM_ID="${2:-${APPLE_TEAM_ID:-}}"
+if [ -z "${TEAM_ID}" ]; then
+  echo "Usage: $0 [profile-name] <apple-team-id>" >&2
+  echo "Set the Apple Team ID as the second argument or via APPLE_TEAM_ID." >&2
+  exit 1
+fi
 
 echo "🔐 Configuring Apple Notarization Keychain Profile: '${PROFILE_NAME}'"
 echo "Team ID: ${TEAM_ID}"

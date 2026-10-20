@@ -302,9 +302,10 @@ export async function submitSessionPrompt(
   }
 
   let effectiveSkill = options?.skillSelection ? { ...options.skillSelection } : undefined;
+  const wasBusyBeforeSubmit = Boolean(id && isSessionBusy(id));
 
   // If the session is currently busy and not forced immediate, enqueue the message!
-  if (id && !options?.forceImmediate && isSessionBusy(id)) {
+  if (id && !options?.forceImmediate && wasBusyBeforeSubmit) {
     enqueueSessionPrompt(id, promptText, {
       agent: effectiveAgent,
       model: effectiveModel,
@@ -470,12 +471,16 @@ export async function submitSessionPrompt(
       const targetID = id!;
       const turns = workspace.messagesBySession[targetID] ?? [];
       const lastTurn = turns[turns.length - 1];
+      const hasInFlightAssistant = turns.some(
+        (t) => t.info.role === "assistant" && !t.info.time?.completed && !t.info.error
+      );
       // Only poll via HTTP if SSE is disconnected or no assistant turn has arrived yet;
       // otherwise an HTTP snapshot mid-stream races with live SSE token deltas at t=900ms.
       if (
         !workspace.connected ||
         !lastTurn ||
-        lastTurn.info.role === "user"
+        (lastTurn.info.role === "user" &&
+          (!wasBusyBeforeSubmit || !hasInFlightAssistant || lastTurn.info.id === optimisticMsgID))
       ) {
         void loadSessionMessages(targetID);
       }
@@ -489,7 +494,9 @@ export async function submitSessionPrompt(
         if (optIdx >= 0) list.splice(optIdx, 1);
       })
     );
-    setWorkspace("statusBySession", id, { type: "idle" });
+    if (!wasBusyBeforeSubmit) {
+      setWorkspace("statusBySession", id, { type: "idle" });
+    }
     throw err;
   }
 

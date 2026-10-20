@@ -474,6 +474,27 @@ describe("session AI configuration", () => {
     });
   });
 
+  it("restores the queued prompt and preserves busy status when sendQueuedPromptNow fails on a running session", async () => {
+    await withAIFixture(async (a) => {
+      initializeSessionAI(a, configA);
+      setWorkspace("statusBySession", a, { type: "busy" });
+      const first = enqueueSessionPrompt(a, "first queued");
+      const second = enqueueSessionPrompt(a, "second queued");
+
+      hoxiAPI.sendPromptAsync = async () => {
+        throw new Error("simulated network failure");
+      };
+
+      await sendQueuedPromptNow(a, second.id);
+
+      assertEqual(workspace.statusBySession[a]?.type, "busy", "running session must remain busy after failed steer");
+      const remaining = workspace.queuedPromptsBySession[a] ?? [];
+      assertEqual(remaining.length, 2, "failed steer prompt is restored to the queue");
+      assertEqual(remaining[0].id, first.id);
+      assertEqual(remaining[1].id, second.id);
+    });
+  });
+
   it("infers vendor-level reasoning effort capabilities and clamps unsupported efforts", () => {
     const claude = inferModelEffortCapabilities("claude-code", "claude-sonnet", true);
     assertDeepEqual(claude.efforts, ["low", "medium", "high", "xhigh", "max"]);

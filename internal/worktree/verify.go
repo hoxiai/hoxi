@@ -154,11 +154,11 @@ func (ent *verifySessionEntry) stopActive() {
 	}
 	ent.mu.Unlock()
 
-	if cancel != nil {
-		cancel()
-	}
 	if cmd != nil {
 		killVerifyProcessGroup(cmd)
+	}
+	if cancel != nil {
+		cancel()
 	}
 	if done != nil {
 		select {
@@ -492,6 +492,9 @@ func (m *worktreeManager) StartVerify(sessionID, kind, customCommand string) (Wo
 	ctx, cancel := context.WithCancel(context.Background())
 	cmd := exec.CommandContext(ctx, "sh", "-c", cmdStr)
 	cmd.Dir = dir
+	// Background children that inherit stdout/stderr must not keep Wait
+	// blocked after the command itself has exited.
+	cmd.WaitDelay = 3 * time.Second
 	setVerifyProcessGroup(cmd)
 	extraEnv := []string{
 		"PORT=" + strconv.Itoa(port),

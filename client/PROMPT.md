@@ -67,7 +67,7 @@ GoPanel 是一个 **使用 Flutter 实现的手机端服务器管理应用**。
 ### 服务端接口基准
 
 - 服务端接口默认直接使用 GoPanel 项目的现成接口
-- 理解接口能力时，直接参考 `/Users/coller/aihop/gopanel/PROMPT.md`
+- 理解接口能力时，直接参考本地 GoPanel 仓库根目录的 `PROMPT.md`
 - 如果需要继续追踪接口实现，优先按 GoPanel 的链路：`router -> api -> service -> repo -> model`
 - 手机端是现有 GoPanel 面板能力的客户端延伸，不额外发明第二套接口协议
 - 除非用户明确要求，否则不要为了移动端单独重做服务端接口设计
@@ -454,7 +454,7 @@ GoPanel 是一个 **使用 Flutter 实现的手机端服务器管理应用**。
 必须遵守：
 
 - 默认直接对接 GoPanel 现成 API，不自行重新定义服务端接口
-- 对接口能力的理解优先参考 `/Users/coller/aihop/gopanel/PROMPT.md`
+- 对接口能力的理解优先参考本地 GoPanel 仓库根目录的 `PROMPT.md`
 - **【极其重要】API 路由匹配与 Method 校验**：GoPanel 后端的 API 路由（例如 `/api/user/info`，`/api/dashboard/current`）很多是 `POST` 请求。如果 Flutter App 误用 `GET` 请求调用，或者拼错路径，由于后端的全局拦截器 `r.Use("/*", middleware.Entrance)` 的存在，会导致请求直接掉入静态资源处理逻辑中，返回 `<h1>暂时无法访问</h1>当前环境已经开启了安全入口登...` 的 HTML 页面，而不是标准的 404 JSON 错误。因此，**每次写新接口时，必须去后端对应路由文件（`app/router/*.go`）确认正确的 Method，遇到返回 HTML 报错时，第一时间检查 HTTP Method 和路径是否拼错。**
 - 始终先对齐服务端真实接口，不要猜字段
 - 请求模型、响应模型、错误模型要统一，后端真实返回的业务成功状态码为 `code: 0`，消息字段为 `msg`。

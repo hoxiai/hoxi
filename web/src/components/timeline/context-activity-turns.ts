@@ -153,7 +153,13 @@ export function resolveMergedTurnParts(
       }
       if (nextTextIdx >= 0) break;
     }
-    ownsLiveTail = i === allTurns.length;
+    const lastCarriedAssistant = allTurns[i - 1];
+    const onlyTrailingSteerUsers =
+      i < allTurns.length &&
+      !lastCarriedAssistant?.info.time?.completed &&
+      !lastCarriedAssistant?.info.error &&
+      allTurns.slice(i).every((t) => t.info.role === "user");
+    ownsLiveTail = i === allTurns.length || onlyTrailingSteerUsers;
   }
 
   const effectiveParts = carriedWork.length > 0 ? [...own, ...carriedWork] : own;
@@ -223,4 +229,54 @@ export function hasLiveTailRenderedOutput(
     }
   }
   return false;
+}
+
+/**
+ * Resolves the active user->assistant cycle for live status indicators.
+ * When a steer prompt is injected mid-turn, a trailing user turn sits at the
+ * end of the list while the preceding assistant step is still running; keep
+ * tracking that in-flight assistant cycle until its step completes.
+ */
+export function resolveActiveExecutionCycle(
+  list: MessageTurn[]
+): { userTurn: MessageTurn; cycleTurns: MessageTurn[] } | null {
+  let lastUserIdx = -1;
+  for (let i = list.length - 1; i >= 0; i--) {
+    if (list[i].info.role === "user") {
+      lastUserIdx = i;
+      break;
+    }
+  }
+  if (lastUserIdx < 0) return null;
+
+  const trailingTurns = list.slice(lastUserIdx + 1);
+  if (trailingTurns.length > 0) {
+    return { userTurn: list[lastUserIdx], cycleTurns: trailingTurns };
+  }
+
+  let priorIdx = lastUserIdx - 1;
+  while (priorIdx >= 0 && list[priorIdx].info.role === "user") {
+    priorIdx--;
+  }
+  if (
+    priorIdx >= 0 &&
+    list[priorIdx].info.role === "assistant" &&
+    !list[priorIdx].info.time?.completed &&
+    !list[priorIdx].info.error
+  ) {
+    let cycleStart = priorIdx;
+    while (cycleStart > 0 && list[cycleStart - 1].info.role === "assistant") {
+      cycleStart--;
+    }
+    const anchorUser =
+      cycleStart > 0 && list[cycleStart - 1].info.role === "user"
+        ? list[cycleStart - 1]
+        : list[lastUserIdx];
+    return {
+      userTurn: anchorUser,
+      cycleTurns: list.slice(cycleStart, priorIdx + 1),
+    };
+  }
+
+  return { userTurn: list[lastUserIdx], cycleTurns: trailingTurns };
 }

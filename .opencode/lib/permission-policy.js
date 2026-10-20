@@ -30,6 +30,16 @@ function pushText(out, value) {
   }
 }
 
+// The Hoxi sandbox plugin rewrites bash commands into
+// `'/usr/bin/sandbox-exec' -f '<profile>' -- /bin/sh -c '<command>'`; judge the
+// wrapped command, not the wrapper.
+const SANDBOX_WRAP_RE = /^'?\/usr\/bin\/sandbox-exec'?\s+-f\s+(?:'[^']*'|\S+)\s+--\s+\/bin\/sh\s+-c\s+'((?:[^']|'\\'')*)'$/;
+
+export function unwrapSandboxCommand(command) {
+  const match = SANDBOX_WRAP_RE.exec(String(command || "").trim());
+  return match ? match[1].replaceAll("'\\''", "'") : command;
+}
+
 export function commandCandidates(input) {
   const out = [];
   pushText(out, input?.patterns);
@@ -39,7 +49,7 @@ export function commandCandidates(input) {
   pushText(out, meta.cmd);
   pushText(out, meta.commands);
   if (out.length === 0) pushText(out, input?.title);
-  return out;
+  return out.map(unwrapSandboxCommand);
 }
 
 export function splitCommandChain(command) {

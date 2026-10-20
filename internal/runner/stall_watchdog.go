@@ -137,6 +137,58 @@ func (s *Service) noteOpenCodeActivity(sessionID string, evt SSEEvent) {
 	s.noteActivity(ap)
 }
 
+// noteOpenCodeChildEvent keeps a turn alive while its OpenCode subagents
+// (`task` tool child sessions) work: their events carry the child session ID,
+// so the relay would otherwise drop them and the parent would look silent.
+// It reports whether evt belonged to a child and was consumed.
+func (s *Service) noteOpenCodeChildEvent(rec SessionRecord, evt SSEEvent) bool {
+	s.mu.Lock()
+	ap := s.procs[rec.ID]
+	s.mu.Unlock()
+	if ap == nil || rec.ExternalID == "" {
+		return false
+	}
+	if evt.Type == "session.created" || evt.Type == "session.updated" {
+		info, _ := evt.Properties["info"].(map[string]interface{})
+		id, _ := info["id"].(string)
+		parentID, _ := info["parentID"].(string)
+		if id == "" || id == rec.ExternalID || parentID == "" {
+			return false
+		}
+		if parentID != rec.ExternalID && !ap.isOpenCodeChild(parentID) {
+			return false
+		}
+		ap.openCodeChildren.Store(id, true)
+		s.noteOpenCodeActivity(rec.ID, evt)
+		return true
+	}
+	sid := openCodeEventSessionID(evt)
+	if sid == "" || sid == rec.ExternalID || !ap.isOpenCodeChild(sid) {
+		return false
+	}
+	s.noteOpenCodeActivity(rec.ID, evt)
+	return true
+}
+
+func (ap *activeProcess) isOpenCodeChild(sessionID string) bool {
+	_, ok := ap.openCodeChildren.Load(sessionID)
+	return ok
+}
+
+func openCodeEventSessionID(evt SSEEvent) string {
+	if sid, ok := evt.Properties["sessionID"].(string); ok {
+		return sid
+	}
+	for _, key := range []string{"info", "part"} {
+		if obj, ok := evt.Properties[key].(map[string]interface{}); ok {
+			if sid, ok := obj["sessionID"].(string); ok {
+				return sid
+			}
+		}
+	}
+	return ""
+}
+
 // stalledSessions maps each flagged active turn to its stalledSince.
 func (s *Service) stalledSessions() map[string]int64 {
 	s.mu.Lock()

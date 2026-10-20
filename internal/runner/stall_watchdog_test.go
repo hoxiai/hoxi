@@ -122,3 +122,38 @@ func TestStallPolicyFromEnv(t *testing.T) {
 		t.Fatalf("abortAfter = %s, want disabled", p.abortAfter)
 	}
 }
+
+func TestOpenCodeSubagentActivityKeepsParentAlive(t *testing.T) {
+	svc := newStallTestService(t)
+	now := time.Now()
+	ap := registerStallTestProcess(svc, "ses_hoxi_parent", now.Add(-time.Hour))
+	rec := SessionRecord{ID: "ses_hoxi_parent", ExternalID: "ses_oc_parent"}
+
+	created := `{"type":"session.created","properties":{"info":{"id":"ses_oc_child","parentID":"ses_oc_parent"}}}`
+	svc.relayOpenCodeEvent(rec, []byte(created))
+	grand := `{"type":"session.created","properties":{"info":{"id":"ses_oc_grand","parentID":"ses_oc_child"}}}`
+	svc.relayOpenCodeEvent(rec, []byte(grand))
+	if !ap.isOpenCodeChild("ses_oc_child") || !ap.isOpenCodeChild("ses_oc_grand") {
+		t.Fatal("subagent sessions were not tracked")
+	}
+
+	ap.stall.touch(now.Add(-time.Hour))
+	delta := `{"type":"message.part.updated","properties":{"part":{"id":"prt_1","sessionID":"ses_oc_grand","type":"text","text":"x"}}}`
+	svc.relayOpenCodeEvent(rec, []byte(delta))
+	if idle := now.Sub(time.UnixMilli(ap.stall.lastActivity.Load())); idle > time.Minute {
+		t.Fatalf("subagent output did not refresh the parent turn (idle %s)", idle)
+	}
+
+	asked := `{"type":"permission.asked","properties":{"id":"per_child","sessionID":"ses_oc_child"}}`
+	svc.relayOpenCodeEvent(rec, []byte(asked))
+	if !svc.awaitingUser(ap) {
+		t.Fatal("subagent permission request was not tracked as a user wait")
+	}
+
+	ap.stall.touch(now.Add(-time.Hour))
+	other := `{"type":"message.part.updated","properties":{"part":{"id":"prt_2","sessionID":"ses_unrelated","type":"text","text":"x"}}}`
+	svc.relayOpenCodeEvent(rec, []byte(other))
+	if idle := now.Sub(time.UnixMilli(ap.stall.lastActivity.Load())); idle < 30*time.Minute {
+		t.Fatal("unrelated session activity refreshed the turn")
+	}
+}

@@ -101,7 +101,7 @@ describe("Chat code syntax highlighting", () => {
       "/plan",
       "/compact",
       "/goal",
-      "https://example.com/file.ts",
+      "https://hoxi.ai/file.ts",
       "just some words",
       "",
     ]) {

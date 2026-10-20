@@ -65,10 +65,38 @@ test("sandbox plugin", async (t) => {
     );
   });
 
+  await t.test("confines multiedit and apply_patch targets to the workspace", async () => {
+    const { workspace } = fixture("deny");
+    const hooks = await HoxiSandboxPlugin();
+    await hooks["tool.execute.before"](
+      { tool: "multiedit", sessionID: "ses_sandbox", callID: "p1" },
+      { args: { filePath: path.join(workspace, "a.ts"), edits: [] } }
+    );
+    const patch = (target) => `*** Begin Patch\n*** Update File: ${target}\n@@\n-a\n+b\n*** End Patch`;
+    await hooks["tool.execute.before"](
+      { tool: "apply_patch", sessionID: "ses_sandbox", callID: "p2" },
+      { args: { patchText: patch("src/a.ts") } }
+    );
+    await assert.rejects(
+      hooks["tool.execute.before"](
+        { tool: "apply_patch", sessionID: "ses_sandbox", callID: "p3" },
+        { args: { patchText: patch("src/a.ts") + `\n*** Add File: /etc/evil` } }
+      ),
+      /outside the session workspace/
+    );
+    await assert.rejects(
+      hooks["tool.execute.before"](
+        { tool: "apply_patch", sessionID: "ses_sandbox", callID: "p4" },
+        { args: { patchText: "garbage" } }
+      ),
+      /patch file paths/
+    );
+  });
+
   await t.test("denies unconfined tools under network deny", async () => {
     fixture("deny");
     const hooks = await HoxiSandboxPlugin();
-    for (const tool of ["patch", "task", "webfetch", "hoxi_browser", "some_mcp"]) {
+    for (const tool of ["patch", "task", "webfetch", "websearch", "hoxi_browser", "some_mcp"]) {
       await assert.rejects(
         hooks["tool.execute.before"]({ tool, sessionID: "ses_sandbox", callID: "c5" }, { args: {} }),
         /sandbox/
@@ -89,7 +117,7 @@ test("sandbox plugin", async (t) => {
     const hooks = await HoxiSandboxPlugin();
     await hooks["tool.execute.before"](
       { tool: "webfetch", sessionID: "ses_sandbox", callID: "c7" },
-      { args: { url: "https://example.com" } }
+      { args: { url: "https://hoxi.ai" } }
     );
   });
 

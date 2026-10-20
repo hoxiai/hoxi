@@ -131,20 +131,36 @@ export function consumeComposerDraftEdit(sessionID: string) {
   setWorkspace("composerDraftEditBySession", sessionID, undefined);
 }
 
+function restoreQueuedPromptAt(sessionID: string, item: QueuedPromptItem, index: number) {
+  if (isSessionDeleted(sessionID)) return;
+  const current = workspace.queuedPromptsBySession[sessionID] ?? [];
+  if (current.some((existing) => existing.id === item.id)) return;
+  const next = current.slice();
+  const clamped = Math.max(0, Math.min(index, next.length));
+  next.splice(clamped, 0, item);
+  setWorkspace("queuedPromptsBySession", sessionID, next);
+}
+
 export async function sendQueuedPromptNow(sessionID: string, itemID: string): Promise<void> {
   const current = workspace.queuedPromptsBySession[sessionID] ?? [];
-  const target = current.find((item) => item.id === itemID);
-  if (!target) return;
+  const targetIdx = current.findIndex((item) => item.id === itemID);
+  if (targetIdx < 0) return;
+  const target = current[targetIdx];
   removeQueuedPrompt(sessionID, itemID);
 
-  await submitSessionPrompt(target.text, sessionID, {
-    agent: target.agent,
-    model: target.model,
-    effort: target.effort,
-    attachments: target.attachments,
-    skillSelection: target.skillSelection,
-    forceImmediate: true,
-  });
+  try {
+    await submitSessionPrompt(target.text, sessionID, {
+      agent: target.agent,
+      model: target.model,
+      effort: target.effort,
+      attachments: target.attachments,
+      skillSelection: target.skillSelection,
+      forceImmediate: true,
+    });
+  } catch (err) {
+    restoreQueuedPromptAt(sessionID, target, targetIdx);
+    console.error("sendQueuedPromptNow failed:", err);
+  }
 }
 
 export async function drainNextQueuedPrompt(sessionID: string): Promise<void> {
@@ -178,15 +194,20 @@ export async function drainNextQueuedPrompt(sessionID: string): Promise<void> {
       validatedSkill = check.selection;
     }
     removeQueuedPrompt(sessionID, next.id);
-    await submitSessionPrompt(next.text, sessionID, {
-      agent: next.agent,
-      model: next.model,
-      effort: next.effort,
-      attachments: next.attachments,
-      skillSelection: validatedSkill,
-      forceImmediate: true,
-      followTimeline: false,
-    });
+    try {
+      await submitSessionPrompt(next.text, sessionID, {
+        agent: next.agent,
+        model: next.model,
+        effort: next.effort,
+        attachments: next.attachments,
+        skillSelection: validatedSkill,
+        forceImmediate: true,
+        followTimeline: false,
+      });
+    } catch (err) {
+      restoreQueuedPromptAt(sessionID, next, 0);
+      throw err;
+    }
   } catch (err) {
     console.error("drainNextQueuedPrompt failed:", err);
   } finally {

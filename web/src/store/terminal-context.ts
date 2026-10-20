@@ -17,6 +17,16 @@ const terminalBuffersByDir = new Map<string, string>();
 const [terminalBufferVersion, setTerminalBufferVersion] = createSignal(0);
 const inflightSessionLoads = new Set<string>();
 const inflightDiffLoads = new Set<string>();
+// Mention chips re-run on every keystroke; remember recent attempts so a clean
+// worktree, an empty session or a half-typed ID is fetched at most once per window.
+const MENTION_REFETCH_MS = 15_000;
+const sessionLoadAttemptAt = new Map<string, number>();
+const diffLoadAttemptAt = new Map<string, number>();
+
+function attemptedRecently(attempts: Map<string, number>, key: string): boolean {
+  const at = attempts.get(key);
+  return at !== undefined && Date.now() - at < MENTION_REFETCH_MS;
+}
 
 export interface ContextMentionChipInfo {
   token: string;
@@ -292,8 +302,9 @@ export function formatSessionContextBlock(
 
 async function ensureSessionMessagesLoaded(refID: string): Promise<void> {
   if (!refID || (workspace.messagesBySession[refID]?.length ?? 0) > 0) return;
-  if (inflightSessionLoads.has(refID)) return;
+  if (inflightSessionLoads.has(refID) || attemptedRecently(sessionLoadAttemptAt, refID)) return;
   inflightSessionLoads.add(refID);
+  sessionLoadAttemptAt.set(refID, Date.now());
   try {
     await loadSessionMessages(refID);
   } catch {
@@ -306,8 +317,9 @@ async function ensureSessionMessagesLoaded(refID: string): Promise<void> {
 async function ensureWorktreeDiffsLoaded(refID: string): Promise<void> {
   const key = refID || "__root__";
   const existing = resolveDiffsForSession(refID);
-  if (existing.length > 0 || inflightDiffLoads.has(key)) return;
+  if (existing.length > 0 || inflightDiffLoads.has(key) || attemptedRecently(diffLoadAttemptAt, key)) return;
   inflightDiffLoads.add(key);
+  diffLoadAttemptAt.set(key, Date.now());
   try {
     const dir = sessionDirectory(refID) || workspace.rootDir || undefined;
     const diffs = await hoxiAPI.getWorktreeDiff(key, dir);

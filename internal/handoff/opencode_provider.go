@@ -353,7 +353,7 @@ func mergeOpenCodeProviderDefinition(dst, src map[string]interface{}) bool {
 func lowerKeyLookup(m map[string]interface{}) map[string]string {
 	out := make(map[string]string, len(m))
 	// Deterministic iteration order: prefer the lexicographically first exact key
-	// when multiple keys map to the same lowercase (e.g. "AINode" vs "ainode").
+	// when multiple keys map to the same lowercase (e.g. "Hoxi" vs "hoxi").
 	for _, k := range sortedStringKeys(m) {
 		lower := strings.ToLower(k)
 		if _, exists := out[lower]; !exists {
@@ -617,7 +617,7 @@ func (g *Service) importOpenCodeCLIProvider() LocalCLIImportResponse {
 		}
 		enabledIDs = append(enabledIDs, targetID)
 
-		// Fold a case-only duplicate (e.g. config "AINode" vs credential "ainode")
+		// Fold a case-only duplicate (e.g. config "Hoxi" vs credential "hoxi")
 		// into the credentialed provider instead of leaving a dead second entry.
 		if targetID != pid {
 			foldedAliases = append(foldedAliases, pid)
@@ -662,8 +662,8 @@ func (g *Service) importOpenCodeCLIProvider() LocalCLIImportResponse {
 	// Sync is an explicit request to make the merged provider usable, so enable
 	// the credential-backed id. The folded alias must stay disabled: upstream
 	// OpenCode also loads ~/.config/opencode/opencode.json, and without the flag
-	// that file would re-register the duplicate (e.g. "AINode") next to the
-	// synced provider (e.g. "ainode").
+	// that file would re-register the duplicate (e.g. "Hoxi") next to the
+	// synced provider (e.g. "hoxi").
 	if len(enabledIDs) > 0 || len(foldedAliases) > 0 {
 		disabled := stringListFromAny(doc["disabled_providers"])
 		// Provider ids are case-sensitive upstream, so only the exact target id

@@ -52,7 +52,7 @@ import {
 import { createTranscriptControls } from "./transcript-controls";
 import { createReadingPositionTracker } from "./reading-position";
 import { createSessionScroll } from "./session-scroll";
-import { resolveTurnNavigationTarget } from "./ContextActivityGroupView";
+import { resolveActiveExecutionCycle, resolveTurnNavigationTarget } from "./context-activity-turns";
 
 export default function MessageStream(props: { hidden?: boolean }) {
   let scroller: HTMLDivElement | undefined;
@@ -117,34 +117,19 @@ export default function MessageStream(props: { hidden?: boolean }) {
     const list = turns();
     if (list.length === 0) return false;
 
-    let lastUserIdx = -1;
-    for (let i = list.length - 1; i >= 0; i--) {
-      if (list[i].info.role === "user") {
-        lastUserIdx = i;
-        break;
-      }
-    }
-    if (lastUserIdx < 0) return false;
-
     const last = list[list.length - 1];
     if (last.info.role === "assistant" && last.info.error) return false;
 
-    const cycleTurns = list.slice(lastUserIdx + 1);
-    if (hasLiveTailRenderedOutput(cycleTurns)) return false;
+    const cycle = resolveActiveExecutionCycle(list);
+    if (!cycle) return false;
+    if (hasLiveTailRenderedOutput(cycle.cycleTurns)) return false;
 
     return true;
   });
 
   const executionCycleMeta = createMemo(() => {
-    const list = turns();
-    let lastUserIdx = -1;
-    for (let i = list.length - 1; i >= 0; i--) {
-      if (list[i].info.role === "user") {
-        lastUserIdx = i;
-        break;
-      }
-    }
-    if (lastUserIdx < 0) {
+    const cycle = resolveActiveExecutionCycle(turns());
+    if (!cycle) {
       return {
         count: 0,
         steps: [] as ToolPart[],
@@ -152,9 +137,9 @@ export default function MessageStream(props: { hidden?: boolean }) {
         activeStepLabel: undefined as string | undefined,
       };
     }
+    const { userTurn, cycleTurns } = cycle;
     const startedAt =
-      list[lastUserIdx].info.time?.created || list[lastUserIdx + 1]?.info.time?.created;
-    const cycleTurns = list.slice(lastUserIdx + 1);
+      userTurn.info.time?.created || cycleTurns[0]?.info.time?.created;
     const steps: ToolPart[] = [];
     for (const turn of cycleTurns) {
       for (const part of turn.parts) {

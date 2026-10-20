@@ -402,7 +402,7 @@ export default function CustomEndpointTab() {
               autocapitalize="off"
               autocorrect="off"
               spellcheck={false}
-              placeholder="https://api.example.com/v1"
+              placeholder="https://api.hoxi.ai/v1"
               value={baseURL()}
               onInput={(e) => setBaseURL(e.currentTarget.value)}
               class="w-full rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] px-3 py-2 font-mono text-[12px] text-[var(--text-primary)] disabled:opacity-60 outline-none focus:border-[var(--accent-primary)] selectable-text"

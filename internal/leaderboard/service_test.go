@@ -31,7 +31,7 @@ func TestGatewayDirectoryDoesNotOfferHoxiInferenceAuth(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(GatewaysResponse{Code: 200, Data: &GatewaysData{
 			Total: 1, Items: []GatewayItem{{ID: "third-party", Name: "Third Party",
-				URL: "https://example.com", BaseURL: "https://example.com/v1",
+				URL: "https://hoxi.ai", BaseURL: "https://hoxi.ai/v1",
 				IsSelfOperated: true, CanOneClickConnect: true,
 				Badge: "Official Pick", Caveat: "Hoxi account connects inference",
 				AuthURL: "https://hoxi.ai/auth/authorize-desktop"}},
@@ -48,7 +48,7 @@ func TestGatewayDirectoryDoesNotOfferHoxiInferenceAuth(t *testing.T) {
 		if item.IsSelfOperated || item.CanOneClickConnect || item.AuthURL != "" || item.Badge != "" || item.Caveat != "" {
 			t.Fatalf("directory must not advertise Hoxi inference or auth: %+v", item)
 		}
-		if item.URL != "https://example.com" || item.BaseURL != "https://example.com/v1" {
+		if item.URL != "https://hoxi.ai" || item.BaseURL != "https://hoxi.ai/v1" {
 			t.Fatalf("third-party directory metadata should be preserved: %+v", item)
 		}
 	}
