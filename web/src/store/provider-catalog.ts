@@ -79,7 +79,7 @@ export function splitAgyModelEffortSuffix(
 }
 
 export function inferModelEffortCapabilities(
-  _providerID: string,
+  providerID: string,
   modelID: string,
   reasoning: boolean,
   mInfo?: Record<string, any> | null,
@@ -109,7 +109,7 @@ export function inferModelEffortCapabilities(
   const agySplit = splitAgyModelEffortSuffix(modelID);
   if (agySplit) {
     const lowerBase = agySplit.base.toLowerCase();
-    if (lowerBase.includes("gpt-oss")) {
+    if (lowerBase.includes("oss-")) {
       return { efforts: ["medium"], defaultEffort: "medium" };
     }
     return { efforts: ["low", "medium", "high"], defaultEffort: agySplit.effort };
@@ -133,67 +133,39 @@ export function inferModelEffortCapabilities(
     };
   }
 
+  const p = (providerID || "").trim().toLowerCase();
   const s = normalizeModelLookupKey(modelID);
-  if (s.includes("claude")) {
-    if (s.includes("opus-4-7") || s.includes("opus-4.7")) {
-      return { efforts: ["low", "medium", "high", "xhigh", "max"], defaultEffort: "xhigh" };
+
+  if (s.includes("claude") || p === "claude-code" || p.includes("anthropic")) {
+    if (s.includes("haiku")) return { efforts: [] };
+    return { efforts: ["low", "medium", "high", "xhigh", "max"], defaultEffort: "high" };
+  }
+
+  if (p === "antigravity") {
+    if (s.includes("oss-")) {
+      return { efforts: ["medium"], defaultEffort: "medium" };
     }
-    if (
-      s.includes("opus-5-5") ||
-      s.includes("opus-5.5") ||
-      s.includes("sonnet-5-5") ||
-      s.includes("sonnet-5.5") ||
-      s.includes("haiku-5-5") ||
-      s.includes("haiku-5.5")
-    ) {
-      return { efforts: ["low", "medium", "high", "xhigh", "max"], defaultEffort: "medium" };
+    return { efforts: ["low", "medium", "high"], defaultEffort: "high" };
+  }
+
+  if (
+    s.includes("gpt") ||
+    /^o[134](-|\b)/.test(s) ||
+    s.includes("codex") ||
+    p.includes("openai") ||
+    p.includes("codex")
+  ) {
+    if (s.includes("oss-")) {
+      return { efforts: ["medium"], defaultEffort: "medium" };
     }
-    if (
-      s.includes("opus-4-8") ||
-      s.includes("opus-5") ||
-      s.includes("sonnet-5") ||
-      s.includes("fable-5")
-    ) {
-      return { efforts: ["low", "medium", "high", "xhigh", "max"], defaultEffort: "high" };
-    }
+    return { efforts: ["low", "medium", "high", "xhigh"], defaultEffort: "high" };
+  }
+
+  if (s.includes("gemini") || p.includes("google")) {
     return { efforts: ["low", "medium", "high", "max"], defaultEffort: "high" };
   }
 
-  if (s.includes("gpt") || /^o[134](-|\b)/.test(s) || s.includes("codex")) {
-    if (s.includes("gpt-oss")) {
-      return { efforts: ["medium"], defaultEffort: "medium" };
-    }
-    if (
-      s.includes("astra") ||
-      s.includes("sol") ||
-      s.includes("terra") ||
-      s.includes("luna") ||
-      s.includes("gpt-5.6") ||
-      s.includes("gpt-6")
-    ) {
-      return {
-        efforts: ["low", "medium", "high", "xhigh", "max"],
-        defaultEffort: s.includes("astra") ? "xhigh" : s.includes("luna") ? "medium" : "high",
-      };
-    }
-    if (s.includes("gpt-5.2") || s.includes("gpt-5.4") || s.includes("gpt-5.5")) {
-      return { efforts: ["low", "medium", "high", "xhigh"], defaultEffort: "high" };
-    }
-    return { efforts: ["low", "medium", "high"], defaultEffort: "medium" };
-  }
-
-  if (s.includes("glm") || s.includes("kimi")) {
-    return {
-      efforts: ["low", "medium", "high", "max"],
-      defaultEffort: s.includes("flash") ? "low" : "high",
-    };
-  }
-
-  return {
-    efforts: ["low", "medium", "high"],
-    defaultEffort:
-      s.includes("flash") || s.includes("fast") || s.includes("efficient") ? "low" : "medium",
-  };
+  return { efforts: ["low", "medium", "high"], defaultEffort: "medium" };
 }
 
 export interface FlattenedModel {

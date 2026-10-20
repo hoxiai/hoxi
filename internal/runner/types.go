@@ -269,6 +269,44 @@ func absInt(x int) int {
 	return x
 }
 
+// inferVendorEffortSpec returns vendor-level reasoning effort tiers and default effort
+// by vendor/protocol family without hardcoding specific model version numbers.
+func inferVendorEffortSpec(runtimeOrVendor, modelID string, reasoning bool) (efforts []string, defaultEffort string) {
+	if !reasoning {
+		return nil, ""
+	}
+	rv := strings.ToLower(strings.TrimSpace(runtimeOrVendor))
+	m := strings.ToLower(strings.TrimSpace(modelID))
+
+	switch {
+	case strings.Contains(m, "claude") || rv == string(RuntimeClaudeCode) || strings.Contains(rv, "anthropic"):
+		if strings.Contains(m, "haiku") {
+			return nil, ""
+		}
+		return []string{"low", "medium", "high", "xhigh", "max"}, "high"
+
+	case rv == string(RuntimeAntigravity):
+		if strings.Contains(m, "oss-") {
+			return []string{"medium"}, "medium"
+		}
+		return []string{"low", "medium", "high"}, "high"
+
+	case strings.Contains(m, "gpt") || strings.Contains(m, "codex") ||
+		strings.HasPrefix(m, "o1") || strings.HasPrefix(m, "o3") || strings.HasPrefix(m, "o4") ||
+		strings.Contains(rv, "openai") || strings.Contains(rv, "codex"):
+		if strings.Contains(m, "oss-") {
+			return []string{"medium"}, "medium"
+		}
+		return []string{"low", "medium", "high", "xhigh"}, "high"
+
+	case strings.Contains(m, "gemini") || strings.Contains(rv, "google"):
+		return []string{"low", "medium", "high", "max"}, "high"
+
+	default:
+		return []string{"low", "medium", "high"}, "medium"
+	}
+}
+
 type SessionRecord struct {
 	ID                  string            `json:"id"`
 	ParentID            string            `json:"parentID,omitempty"`

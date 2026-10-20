@@ -184,90 +184,85 @@ func inferQoderModelSpec(id string) qoderBaseModel {
 	cleanID := strings.TrimSpace(id)
 	lower := strings.ToLower(cleanID)
 	name := stripVendorSuffix(cleanID)
+	withVendorEffort := func(spec qoderBaseModel) qoderBaseModel {
+		if len(spec.efforts) == 0 && spec.reasoning {
+			spec.efforts, spec.defaultEffort = inferVendorEffortSpec(string(RuntimeQoder), lower, true)
+		}
+		return spec
+	}
 
 	switch lower {
 	case "", "auto":
-		return qoderBaseModel{id: firstNonEmptyStr(cleanID, "Auto"), name: "Auto", multiplier: "0.5x", contextLimit: 1000000, outputLimit: 64000, inputCost: 0.50, outputCost: 2.00, image: true, reasoning: true, efforts: []string{"low", "medium", "high"}, defaultEffort: "medium"}
+		return withVendorEffort(qoderBaseModel{id: firstNonEmptyStr(cleanID, "Auto"), name: "Auto", multiplier: "0.5x", contextLimit: 1000000, outputLimit: 64000, inputCost: 0.50, outputCost: 2.00, image: true, reasoning: true})
 	case "efficient":
-		return qoderBaseModel{id: cleanID, name: "Efficient", multiplier: "0x", free: true, contextLimit: 200000, outputLimit: 32000, image: true, reasoning: true, efforts: []string{"low", "medium", "high"}, defaultEffort: "low"}
+		return withVendorEffort(qoderBaseModel{id: cleanID, name: "Efficient", multiplier: "0x", free: true, contextLimit: 200000, outputLimit: 32000, image: true, reasoning: true})
 	case "fast":
-		return qoderBaseModel{id: cleanID, name: "Fast", multiplier: "0.8x", contextLimit: 1000000, outputLimit: 64000, inputCost: 0.80, outputCost: 3.20, image: true, reasoning: true, efforts: []string{"low", "medium", "high"}, defaultEffort: "low"}
+		return withVendorEffort(qoderBaseModel{id: cleanID, name: "Fast", multiplier: "0.8x", contextLimit: 1000000, outputLimit: 64000, inputCost: 0.80, outputCost: 3.20, image: true, reasoning: true})
 	case "performance":
-		return qoderBaseModel{id: cleanID, name: "Performance", multiplier: "1.1x", contextLimit: 1000000, outputLimit: 64000, inputCost: 1.10, outputCost: 4.40, image: true, reasoning: true, efforts: []string{"low", "medium", "high", "xhigh"}, defaultEffort: "high"}
+		return withVendorEffort(qoderBaseModel{id: cleanID, name: "Performance", multiplier: "1.1x", contextLimit: 1000000, outputLimit: 64000, inputCost: 1.10, outputCost: 4.40, image: true, reasoning: true})
 	case "ultimate":
-		return qoderBaseModel{id: cleanID, name: "Ultimate", multiplier: "2.0x", contextLimit: 1000000, outputLimit: 64000, inputCost: 2.50, outputCost: 10.00, image: true, reasoning: true, efforts: []string{"low", "medium", "high", "xhigh", "max"}, defaultEffort: "high"}
+		return withVendorEffort(qoderBaseModel{id: cleanID, name: "Ultimate", multiplier: "2.0x", contextLimit: 1000000, outputLimit: 64000, inputCost: 2.50, outputCost: 10.00, image: true, reasoning: true})
 	}
 
 	switch {
 	case strings.HasPrefix(lower, "qwen"):
 		if strings.Contains(lower, "flash") {
-			return qoderBaseModel{id: cleanID, name: name, multiplier: "0x", free: true, contextLimit: 1000000, outputLimit: 64000, image: true, reasoning: true, efforts: []string{"low", "medium", "high"}, defaultEffort: "low"}
+			return withVendorEffort(qoderBaseModel{id: cleanID, name: name, multiplier: "0x", free: true, contextLimit: 1000000, outputLimit: 64000, image: true, reasoning: true})
 		}
 		if strings.Contains(lower, "plus") || strings.Contains(lower, "coder") {
-			return qoderBaseModel{id: cleanID, name: name, multiplier: "0.1x", contextLimit: 1000000, outputLimit: 64000, inputCost: 0.40, outputCost: 1.20, image: true, reasoning: true, efforts: []string{"low", "medium", "high"}, defaultEffort: "medium"}
+			return withVendorEffort(qoderBaseModel{id: cleanID, name: name, multiplier: "0.1x", contextLimit: 1000000, outputLimit: 64000, inputCost: 0.40, outputCost: 1.20, image: true, reasoning: true})
 		}
-		return qoderBaseModel{id: cleanID, name: name, multiplier: "0.5x", contextLimit: 1000000, outputLimit: 64000, inputCost: 1.20, outputCost: 6.00, image: true, reasoning: true, efforts: []string{"low", "medium", "high", "xhigh"}, defaultEffort: "high"}
+		return withVendorEffort(qoderBaseModel{id: cleanID, name: name, multiplier: "0.5x", contextLimit: 1000000, outputLimit: 64000, inputCost: 1.20, outputCost: 6.00, image: true, reasoning: true})
 
 	case strings.HasPrefix(lower, "deepseek"):
 		if strings.Contains(lower, "flash") {
-			return qoderBaseModel{id: cleanID, name: name, multiplier: "0.1x", contextLimit: 1000000, outputLimit: 64000, inputCost: 0.14, outputCost: 0.28, image: true, reasoning: false}
+			return withVendorEffort(qoderBaseModel{id: cleanID, name: name, multiplier: "0.1x", contextLimit: 1000000, outputLimit: 64000, inputCost: 0.14, outputCost: 0.28, image: true, reasoning: false})
 		}
-		return qoderBaseModel{id: cleanID, name: name, multiplier: "0.5x", contextLimit: 1000000, outputLimit: 128000, inputCost: 0.55, outputCost: 2.19, image: true, reasoning: true, efforts: []string{"low", "medium", "high"}, defaultEffort: "high"}
+		return withVendorEffort(qoderBaseModel{id: cleanID, name: name, multiplier: "0.5x", contextLimit: 1000000, outputLimit: 128000, inputCost: 0.55, outputCost: 2.19, image: true, reasoning: true})
 
 	case strings.HasPrefix(lower, "glm"):
 		if strings.Contains(lower, "flash") {
-			return qoderBaseModel{id: cleanID, name: name, multiplier: "0.1x", contextLimit: 1000000, outputLimit: 64000, inputCost: 0.10, outputCost: 0.40, image: true, reasoning: false}
+			return withVendorEffort(qoderBaseModel{id: cleanID, name: name, multiplier: "0.1x", contextLimit: 1000000, outputLimit: 64000, inputCost: 0.10, outputCost: 0.40, image: true, reasoning: false})
 		}
-		return qoderBaseModel{id: cleanID, name: name, multiplier: "0.8x", contextLimit: 1000000, outputLimit: 64000, inputCost: 0.70, outputCost: 2.80, image: true, reasoning: true, efforts: []string{"low", "medium", "high", "max"}, defaultEffort: "high"}
+		return withVendorEffort(qoderBaseModel{id: cleanID, name: name, multiplier: "0.8x", contextLimit: 1000000, outputLimit: 64000, inputCost: 0.70, outputCost: 2.80, image: true, reasoning: true})
 
 	case strings.HasPrefix(lower, "kimi"):
 		if strings.Contains(lower, "code") {
-			return qoderBaseModel{id: cleanID, name: name, multiplier: "0.3x", contextLimit: 256000, outputLimit: 32000, inputCost: 0.60, outputCost: 2.50, image: true, reasoning: true, efforts: []string{"low", "medium", "high"}, defaultEffort: "medium"}
+			return withVendorEffort(qoderBaseModel{id: cleanID, name: name, multiplier: "0.3x", contextLimit: 256000, outputLimit: 32000, inputCost: 0.60, outputCost: 2.50, image: true, reasoning: true})
 		}
-		if strings.Contains(lower, "preview") || strings.HasPrefix(lower, "kimi-k2") {
-			return qoderBaseModel{id: cleanID, name: name, multiplier: "0.8x", contextLimit: 1000000, outputLimit: 64000, inputCost: 0.80, outputCost: 3.20, image: true, reasoning: true, efforts: []string{"low", "medium", "high", "max"}, defaultEffort: "high"}
-		}
-		return qoderBaseModel{id: cleanID, name: name, multiplier: "1.4x", contextLimit: 1000000, outputLimit: 64000, inputCost: 1.50, outputCost: 6.00, image: true, reasoning: true, efforts: []string{"low", "medium", "high", "max"}, defaultEffort: "high"}
+		return withVendorEffort(qoderBaseModel{id: cleanID, name: name, multiplier: "1.4x", contextLimit: 1000000, outputLimit: 64000, inputCost: 1.50, outputCost: 6.00, image: true, reasoning: true})
 
 	case strings.HasPrefix(lower, "claude"):
 		if strings.Contains(lower, "opus") {
-			return qoderBaseModel{id: cleanID, name: name, multiplier: "2.0x", contextLimit: 200000, outputLimit: 64000, inputCost: 5.00, outputCost: 25.00, image: true, reasoning: true, efforts: []string{"low", "medium", "high", "max"}, defaultEffort: "high"}
+			return withVendorEffort(qoderBaseModel{id: cleanID, name: name, multiplier: "2.0x", contextLimit: 200000, outputLimit: 64000, inputCost: 5.00, outputCost: 25.00, image: true, reasoning: true})
 		}
 		if strings.Contains(lower, "haiku") {
-			return qoderBaseModel{id: cleanID, name: name, multiplier: "0.4x", contextLimit: 200000, outputLimit: 64000, inputCost: 0.80, outputCost: 4.00, image: true, reasoning: false}
+			return withVendorEffort(qoderBaseModel{id: cleanID, name: name, multiplier: "0.4x", contextLimit: 200000, outputLimit: 64000, inputCost: 0.80, outputCost: 4.00, image: true, reasoning: false})
 		}
-		return qoderBaseModel{id: cleanID, name: name, multiplier: "1.1x", contextLimit: 200000, outputLimit: 64000, inputCost: 3.00, outputCost: 15.00, image: true, reasoning: true, efforts: []string{"low", "medium", "high", "max"}, defaultEffort: "high"}
+		return withVendorEffort(qoderBaseModel{id: cleanID, name: name, multiplier: "1.1x", contextLimit: 200000, outputLimit: 64000, inputCost: 3.00, outputCost: 15.00, image: true, reasoning: true})
 
 	case strings.HasPrefix(lower, "gpt"):
 		if strings.Contains(lower, "mini") || strings.Contains(lower, "nano") {
-			return qoderBaseModel{id: cleanID, name: name, multiplier: "0.2x", contextLimit: 400000, outputLimit: 128000, inputCost: 0.25, outputCost: 1.00, image: true, reasoning: true, efforts: []string{"low", "medium", "high"}, defaultEffort: "medium"}
+			return withVendorEffort(qoderBaseModel{id: cleanID, name: name, multiplier: "0.2x", contextLimit: 400000, outputLimit: 128000, inputCost: 0.25, outputCost: 1.00, image: true, reasoning: true})
 		}
-		return qoderBaseModel{id: cleanID, name: name, multiplier: "1.1x", contextLimit: 400000, outputLimit: 128000, inputCost: 1.75, outputCost: 14.00, image: true, reasoning: true, efforts: []string{"low", "medium", "high", "xhigh", "max"}, defaultEffort: "high"}
+		return withVendorEffort(qoderBaseModel{id: cleanID, name: name, multiplier: "1.1x", contextLimit: 400000, outputLimit: 128000, inputCost: 1.75, outputCost: 14.00, image: true, reasoning: true})
 
 	case strings.HasPrefix(lower, "gemini"):
 		if strings.Contains(lower, "flash") {
-			return qoderBaseModel{id: cleanID, name: name, multiplier: "0.5x", contextLimit: 1000000, outputLimit: 64000, inputCost: 0.35, outputCost: 1.40, image: true, reasoning: true, efforts: []string{"low", "medium", "high"}, defaultEffort: "low"}
+			return withVendorEffort(qoderBaseModel{id: cleanID, name: name, multiplier: "0.5x", contextLimit: 1000000, outputLimit: 64000, inputCost: 0.35, outputCost: 1.40, image: true, reasoning: true})
 		}
-		return qoderBaseModel{id: cleanID, name: name, multiplier: "1.1x", contextLimit: 1000000, outputLimit: 64000, inputCost: 1.25, outputCost: 5.00, image: true, reasoning: true, efforts: []string{"low", "medium", "high", "max"}, defaultEffort: "high"}
+		return withVendorEffort(qoderBaseModel{id: cleanID, name: name, multiplier: "1.1x", contextLimit: 1000000, outputLimit: 64000, inputCost: 1.25, outputCost: 5.00, image: true, reasoning: true})
 	}
 
 	reasoning := !strings.Contains(lower, "fast") && !strings.Contains(lower, "flash") && !strings.Contains(lower, "lite")
-	var efforts []string
-	var defEffort string
-	if reasoning {
-		efforts = []string{"low", "medium", "high"}
-		defEffort = "medium"
-	}
-	return qoderBaseModel{
-		id:            cleanID,
-		name:          name,
-		contextLimit:  200000,
-		outputLimit:   32000,
-		image:         true,
-		reasoning:     reasoning,
-		efforts:       efforts,
-		defaultEffort: defEffort,
-	}
+	return withVendorEffort(qoderBaseModel{
+		id:           cleanID,
+		name:         name,
+		contextLimit: 200000,
+		outputLimit:  32000,
+		image:        true,
+		reasoning:    reasoning,
+	})
 }
 
 func buildQoderModelsFromSlugs(slugs []string) []qoderBaseModel {

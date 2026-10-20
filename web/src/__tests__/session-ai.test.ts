@@ -478,21 +478,21 @@ describe("session AI configuration", () => {
     });
   });
 
-  it("infers per-model reasoning effort capabilities and clamps unsupported efforts", () => {
-    const opus = inferModelEffortCapabilities("claude-code", "claude-opus-4-7", true);
-    assertDeepEqual(opus.efforts, ["low", "medium", "high", "xhigh", "max"]);
-    assertEqual(opus.defaultEffort, "xhigh");
+  it("infers vendor-level reasoning effort capabilities and clamps unsupported efforts", () => {
+    const claude = inferModelEffortCapabilities("claude-code", "claude-sonnet", true);
+    assertDeepEqual(claude.efforts, ["low", "medium", "high", "xhigh", "max"]);
+    assertEqual(claude.defaultEffort, "high");
 
-    const sonnet = inferModelEffortCapabilities("claude-code", "claude-sonnet-4-6", true);
-    assertDeepEqual(sonnet.efforts, ["low", "medium", "high", "max"]);
-    assertEqual(sonnet.defaultEffort, "high");
-    assertEqual(clampReasoningEffort("xhigh", sonnet.efforts), "max");
+    const openai = inferModelEffortCapabilities("openai", "gpt-codex", true);
+    assertDeepEqual(openai.efforts, ["low", "medium", "high", "xhigh"]);
+    assertEqual(openai.defaultEffort, "high");
+    assertEqual(clampReasoningEffort("max", openai.efforts), "xhigh");
 
-    const haiku = inferModelEffortCapabilities("claude-code", "claude-haiku-4-5", false);
+    const haiku = inferModelEffortCapabilities("claude-code", "claude-haiku", false);
     assertDeepEqual(haiku.efforts, []);
     assertEqual(clampReasoningEffort("high", haiku.efforts), "");
 
-    const agyLow = inferModelEffortCapabilities("antigravity", "gemini-3-pro-low", true);
+    const agyLow = inferModelEffortCapabilities("antigravity", "gemini-pro-low", true);
     assertDeepEqual(agyLow.efforts, ["low", "medium", "high"]);
     assertEqual(agyLow.defaultEffort, "low");
 

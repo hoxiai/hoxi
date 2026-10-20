@@ -172,18 +172,18 @@ func TestBuildAgyArgsAndWorktreeValidation(t *testing.T) {
 		t.Fatalf("expected empty effort on suffixed agy slug to omit redundant --effort, got: %v", autoAgyArgs)
 	}
 
-	// Verify Claude effort capability filtering & clamping
+	// Verify Claude vendor-level effort capability filtering
 	haikuArgs := BuildClaudeArgs("build", "claude-haiku-4-5-20251001", "high", "")
 	if strings.Contains(strings.Join(haikuArgs, " "), "--effort") {
 		t.Fatalf("expected claude-haiku-4-5 to omit unsupported --effort, got: %v", haikuArgs)
 	}
 	sonnetArgs := BuildClaudeArgs("build", "claude-sonnet-4-6", "xhigh", "")
-	if !strings.Contains(strings.Join(sonnetArgs, " "), "--effort max") {
-		t.Fatalf("expected claude-sonnet-4-6 + xhigh to clamp to max, got: %v", sonnetArgs)
+	if !strings.Contains(strings.Join(sonnetArgs, " "), "--effort xhigh") {
+		t.Fatalf("expected claude-sonnet-4-6 to pass vendor-supported --effort xhigh, got: %v", sonnetArgs)
 	}
-	opus55Args := BuildClaudeArgs("build", "claude-opus-5-5", "xhigh", "")
-	if !strings.Contains(strings.Join(opus55Args, " "), "--effort xhigh") {
-		t.Fatalf("expected claude-opus-5-5 to preserve xhigh, got: %v", opus55Args)
+	opus55Args := BuildClaudeArgs("build", "claude-opus-5-5", "max", "")
+	if !strings.Contains(strings.Join(opus55Args, " "), "--effort max") {
+		t.Fatalf("expected claude-opus-5-5 to pass vendor-supported --effort max, got: %v", opus55Args)
 	}
 
 	// Worktree validation: must reject repo root and home dir, accept .hoxi/worktrees/<id>

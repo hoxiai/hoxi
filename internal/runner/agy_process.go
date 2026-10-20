@@ -198,30 +198,8 @@ func splitAgyModelEffortSuffix(slug string) (base, suffixEffort string) {
 
 func inferClaudeModelEfforts(slug string) (efforts []string, defaultEffort string, supportsEffort bool) {
 	lower := strings.ToLower(strings.TrimSpace(slug))
-	if lower == "" {
-		return []string{"low", "medium", "high", "max"}, "high", true
-	}
-	if lower == "haiku" ||
-		strings.Contains(lower, "haiku-4") ||
-		strings.Contains(lower, "haiku-3") ||
-		strings.Contains(lower, "claude-3-") ||
-		strings.Contains(lower, "sonnet-4-0") ||
-		strings.Contains(lower, "sonnet-4-5") ||
-		strings.Contains(lower, "opus-4-0") ||
-		strings.Contains(lower, "opus-4-1") ||
-		strings.Contains(lower, "opus-4-5") {
-		return nil, "", false
-	}
-	if strings.Contains(lower, "opus-4-7") {
-		return []string{"low", "medium", "high", "xhigh", "max"}, "xhigh", true
-	}
-	if strings.Contains(lower, "opus-5-5") || strings.Contains(lower, "sonnet-5-5") || strings.Contains(lower, "haiku-5-5") {
-		return []string{"low", "medium", "high", "xhigh", "max"}, "medium", true
-	}
-	if lower == "opus" || strings.Contains(lower, "opus-4-8") || strings.Contains(lower, "opus-5") || strings.Contains(lower, "sonnet-5") || strings.Contains(lower, "fable-5") {
-		return []string{"low", "medium", "high", "xhigh", "max"}, "high", true
-	}
-	return []string{"low", "medium", "high", "max"}, "high", true
+	efforts, defaultEffort = inferVendorEffortSpec(string(RuntimeClaudeCode), lower, !strings.Contains(lower, "haiku"))
+	return efforts, defaultEffort, len(efforts) > 0
 }
 
 func inferOfficialRunnerModelSpec(slug string) (ctxLimit, outLimit int, inCost, outCost float64, image, reasoning bool) {
@@ -229,7 +207,7 @@ func inferOfficialRunnerModelSpec(slug string) (ctxLimit, outLimit int, inCost, 
 	_, effSuffix := splitAgyModelEffortSuffix(lower)
 	image = true
 	reasoning = !strings.Contains(lower, "fast") && !strings.Contains(lower, "flash") && !strings.Contains(lower, "lite") && !strings.Contains(lower, "haiku")
-	if effSuffix != "" || strings.Contains(lower, "thinking") || strings.Contains(lower, "argon") || strings.Contains(lower, "gemini-3") || strings.Contains(lower, "gemini-4") || strings.Contains(lower, "haiku-5") {
+	if effSuffix != "" || strings.Contains(lower, "thinking") || strings.Contains(lower, "pro") {
 		reasoning = true
 	}
 
@@ -260,10 +238,8 @@ func inferOfficialRunnerModelSpec(slug string) (ctxLimit, outLimit int, inCost, 
 		switch {
 		case strings.Contains(lower, "nano"):
 			return 400000, 128000, 0.10, 0.40, true, reasoning
-		case strings.Contains(lower, "mini") || strings.Contains(lower, "luna"):
+		case strings.Contains(lower, "mini"):
 			return 400000, 128000, 0.25, 1.00, true, reasoning
-		case strings.Contains(lower, "astra") || strings.HasPrefix(lower, "gpt-6"):
-			return 1000000, 128000, 6.00, 24.00, true, true
 		default:
 			return 400000, 128000, 2.00, 8.00, true, true
 		}
@@ -275,7 +251,7 @@ func buildAgyModelItems(slugs []string, displayBySlug map[string]string) []Runne
 	familyEfforts := make(map[string][]string)
 	for _, s := range slugs {
 		if base, suf := splitAgyModelEffortSuffix(s); suf != "" {
-			familyEfforts[ strings.ToLower(base) ] = append(familyEfforts[strings.ToLower(base)], suf)
+			familyEfforts[strings.ToLower(base)] = append(familyEfforts[strings.ToLower(base)], suf)
 		}
 	}
 	items := make([]RunnerModelItem, 0, len(slugs))
@@ -295,14 +271,7 @@ func buildAgyModelItems(slugs []string, displayBySlug map[string]string) []Runne
 				efforts = []string{suf}
 			}
 		} else if reasoning {
-			lower := strings.ToLower(s)
-			if strings.Contains(lower, "gpt-oss") {
-				efforts = []string{"medium"}
-				defaultEffort = "medium"
-			} else {
-				efforts = []string{"low", "medium", "high"}
-				defaultEffort = "high"
-			}
+			efforts, defaultEffort = inferVendorEffortSpec(string(RuntimeAntigravity), s, true)
 		}
 		items = append(items, RunnerModelItem{
 			ID:            s,
@@ -404,10 +373,8 @@ func agySupportedEffortsForBase(base string) []string {
 	if norm := normalizeEffortList(found); len(norm) > 0 {
 		return norm
 	}
-	if strings.Contains(lowerBase, "gpt-oss") {
-		return []string{"medium"}
-	}
-	return []string{"low", "medium", "high"}
+	efforts, _ := inferVendorEffortSpec(string(RuntimeAntigravity), lowerBase, true)
+	return efforts
 }
 
 func ResolveAgyModelAndEffort(modelID, effort string) (string, string) {
@@ -422,11 +389,8 @@ func ResolveAgyModelAndEffort(modelID, effort string) (string, string) {
 		return base + "-" + e, e
 	}
 	if e != "" {
-		if strings.Contains(strings.ToLower(m), "gpt-oss") {
-			e = clampEffortToSupported(e, []string{"medium"}, "medium")
-		} else {
-			e = clampEffortToSupported(e, []string{"low", "medium", "high"}, "high")
-		}
+		supported, def := inferVendorEffortSpec(string(RuntimeAntigravity), m, true)
+		e = clampEffortToSupported(e, supported, def)
 	}
 	return m, e
 }
