@@ -87,6 +87,15 @@ jobs:
           draft: false
           prerelease: false
 
+      - name: Upload Windows Artifact to GitCode
+        env:
+          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+        run: |
+          : "${GITCODE_TOKEN:?GITCODE_TOKEN is required for dual release}"
+          node scripts/gitcode-release.mjs --append --version "$RELEASE_VERSION" \
+            --notes "Hoxi Desktop v${RELEASE_VERSION}" \
+            "build/bin/Hoxi-${RELEASE_VERSION}-windows-amd64.zip"
+
   build-linux:
     name: "Linux: Build x64 Client & Release"
     runs-on: ubuntu-latest
@@ -161,3 +170,12 @@ jobs:
             build/bin/Hoxi-${{ env.RELEASE_VERSION }}-linux-amd64.tar.gz
           draft: false
           prerelease: false
+
+      - name: Upload Linux Artifact to GitCode
+        env:
+          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+        run: |
+          : "${GITCODE_TOKEN:?GITCODE_TOKEN is required for dual release}"
+          node scripts/gitcode-release.mjs --append --version "$RELEASE_VERSION" \
+            --notes "Hoxi Desktop v${RELEASE_VERSION}" \
+            "build/bin/Hoxi-${RELEASE_VERSION}-linux-amd64.tar.gz"

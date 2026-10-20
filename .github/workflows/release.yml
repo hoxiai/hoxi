@@ -183,6 +183,7 @@ jobs:
           : "${GITCODE_TOKEN:?GITCODE_TOKEN is required for dual release}"
           node scripts/gitcode-release.mjs \
             --version "$RELEASE_VERSION" \
+            --append \
             --notes "$RELEASE_NOTES" \
             "build/bin/Hoxi-${RELEASE_VERSION}-darwin-arm64.dmg" \
             build/bin/checksums.txt \

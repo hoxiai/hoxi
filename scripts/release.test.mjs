@@ -123,6 +123,7 @@ test("tag workflow gates publication on tests, versioned artifacts and notarizat
     "- name: Publish GitCode Release",
     'node scripts/gitcode-release.mjs',
     '--version "$RELEASE_VERSION"',
+    '--append',
     "notes: process.env.RELEASE_NOTES",
     "gitcode: true",
     "if: always()",
@@ -361,6 +362,44 @@ test("GitCode publisher uploads exact assets, verifies the set and promotes pre 
   assert.equal(calls.filter((call) => call.endsWith("/upload_url")).length, 3);
   assert.equal(calls.filter((call) => call === "PUT https://uploads.example.test/object").length, 3);
   assert.equal(calls.some((call) => call.includes("test-token")), false);
+});
+
+test("GitCode append keeps existing platform assets while verifying the new subset", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "hoxi-gitcode-append-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const file = path.join(root, "Hoxi-0.2.1-windows-amd64.zip");
+  fs.writeFileSync(file, "windows-fixture");
+  let release = { tag_name: "v0.2.1", body: "test", release_status: "latest",
+    assets: [{ id: "1", name: "Hoxi-0.2.1-darwin-arm64.dmg", type: "attach", size: 15 }] };
+  let pendingName = "";
+  const fetchImpl = async (url, init) => {
+    const target = new URL(url);
+    if (target.hostname === "uploads.example.test") {
+      release.assets.push({ id: String(release.assets.length + 1), name: pendingName,
+        type: "attach", size: init.body.size });
+      return new Response("");
+    }
+    if (target.protocol !== "https:") throw new Error("non-HTTPS request");
+    assert.equal(init.headers["PRIVATE-TOKEN"], "test-token");
+    if (init.method === "GET" && target.pathname.endsWith("/releases/tags/v0.2.1")) return Response.json(release);
+    if (init.method === "PATCH") { release.release_status = JSON.parse(init.body).release_status; return Response.json(release); }
+    if (init.method === "GET" && target.pathname.endsWith("/upload_url")) {
+      pendingName = target.searchParams.get("file_name");
+      return Response.json({ url: "https://uploads.example.test/object", headers: {} });
+    }
+    if (init.method === "DELETE") {
+      release.assets = release.assets.filter((asset) => asset.id !== target.pathname.split("/").pop());
+      return Response.json({});
+    }
+    throw new Error(`Unexpected request: ${init.method} ${target}`);
+  };
+  const result = await publishGitcodeRelease({ token: "test-token", version: "0.2.1", notes: "test",
+    assets: [file], append: true, fetchImpl });
+  assert.equal(result.success, true);
+  assert.deepEqual(release.assets.map((asset) => asset.name).sort(),
+    ["Hoxi-0.2.1-darwin-arm64.dmg", "Hoxi-0.2.1-windows-amd64.zip"]);
+  await assert.rejects(publishGitcodeRelease({ token: "test-token", version: "0.2.1", notes: "test",
+    assets: [file], append: false, fetchImpl }), /asset set differs/);
 });
 
 test("GitCode publisher reports invalid credentials without leaking the token", async () => {

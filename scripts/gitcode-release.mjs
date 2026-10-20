@@ -159,18 +159,19 @@ async function uploadAsset(ctx, file) {
   }
 }
 
-function verifyRelease(release, expected, status) {
+function verifyRelease(release, expected, status, allowExtra = false) {
   if (!release || release.tag_name !== expected.tag) throw new Error("GitCode release tag does not match");
   if (release.release_status !== status) throw new Error(`GitCode release status is not ${status}`);
   const assets = attachedAssets(release);
   const names = assets.map((asset) => asset.name).sort();
   const wanted = expected.names.slice().sort();
-  if (names.length !== wanted.length || names.some((name, index) => name !== wanted[index])) {
+  if (allowExtra ? wanted.some((name) => !names.includes(name)) : names.length !== wanted.length || names.some((name, index) => name !== wanted[index])) {
     throw new Error(`GitCode asset set differs from the published set: ${names.join(", ")}`);
   }
   for (const asset of assets) {
     const remote = Number(asset.size ?? asset.file_size);
     const local = expected.sizes.get(asset.name);
+    if (local === undefined) continue;
     if (Number.isFinite(remote) && remote !== local) {
       throw new Error(`GitCode asset size differs for ${asset.name}`);
     }
@@ -185,6 +186,7 @@ export async function publishGitcodeRelease({
   repo = DEFAULT_REPO,
   tag = `v${normalizeVersion(version)}`,
   target = "main",
+  append = false,
   fetchImpl = fetch,
 }) {
   if (!Array.isArray(assets) || assets.length === 0) throw new Error("At least one asset is required");
@@ -214,10 +216,10 @@ export async function publishGitcodeRelease({
   for (const file of files) await uploadAsset(ctx, file);
 
   release = await getRelease(ctx);
-  verifyRelease(release, expected, "pre");
+  verifyRelease(release, expected, "pre", append);
   await setReleaseState(ctx, notes || release.body || `Hoxi Desktop ${tag}`, "latest");
   release = await getRelease(ctx);
-  verifyRelease(release, expected, "latest");
+  verifyRelease(release, expected, "latest", append);
 
   return {
     success: true,
@@ -238,6 +240,7 @@ async function main() {
       tag: { type: "string" },
       target: { type: "string", default: "main" },
       "dry-run": { type: "boolean", default: false },
+      append: { type: "boolean", default: false },
     },
   });
   if (!values.version) throw new Error("--version is required");
@@ -260,6 +263,7 @@ async function main() {
     repo: values.repo,
     tag,
     target: values.target,
+    append: values.append,
   })));
 }
 
