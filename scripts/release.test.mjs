@@ -120,12 +120,7 @@ test("tag workflow gates publication on tests, versioned artifacts and notarizat
     "body: ${{ env.RELEASE_NOTES }}",
     "build/bin/Hoxi-${{ env.RELEASE_VERSION }}-darwin-arm64.dmg",
     "fail_on_unmatched_files: true",
-    "- name: Publish GitCode Release",
-    'node scripts/gitcode-release.mjs',
-    '--version "$RELEASE_VERSION"',
-    '--append',
-    "notes: process.env.RELEASE_NOTES",
-    "gitcode: true",
+    "gitcode: false",
     "if: always()",
     'security delete-keychain "$KEYCHAIN_PATH"',
     'rm -f "${APPLE_API_KEY_PATH:-}"',
@@ -139,7 +134,7 @@ test("tag workflow gates publication on tests, versioned artifacts and notarizat
   assert.doesNotMatch(workflow, /Optional|CAN_NOTARIZE|\|\| true|build\/bin\/\*\.dmg|generate_release_notes/);
   assert.equal((workflow.match(/^\s+if:/gm) || []).length, 1, "Only cleanup may be conditional");
   for (const secret of ["MACOS_CERTIFICATE", "MACOS_CERTIFICATE_PWD", "APPLE_API_KEY",
-    "APPLE_API_KEY_ID", "APPLE_API_ISSUER", "GITCODE_TOKEN"]) {
+    "APPLE_API_KEY_ID", "APPLE_API_ISSUER"]) {
     assert.ok(workflow.includes(`\${${secret}:?`), `Missing required credential: ${secret}`);
   }
   for (const block of workflow.matchAll(/^        run: \|\n((?:          .*\n|\n)+)/gm)) {
@@ -402,16 +397,9 @@ test("GitCode append keeps existing platform assets while verifying the new subs
     assets: [file], append: false, fetchImpl }), /asset set differs/);
 });
 
-test("cross-platform GitCode uploads use bash and the curl transport on Windows", () => {
+test("cross-platform release workflows stay GitHub-only", () => {
   const workflow = fs.readFileSync(path.join(scripts, "../.github/workflows/release-cross-platform.yml"), "utf8");
-  for (const name of ["Upload Windows Artifact to GitCode", "Upload Linux Artifact to GitCode"]) {
-    const start = workflow.indexOf(`- name: ${name}`);
-    assert.ok(start >= 0, `Missing ${name}`);
-    const next = workflow.indexOf("- name:", start + 10);
-    const block = workflow.slice(start, next < 0 ? undefined : next);
-    assert.match(block, /^\s+shell: bash$/m, `${name} must not run under PowerShell`);
-    assert.match(block, /GITCODE_UPLOAD_CURL: "1"/, `${name} must use the curl uploader`);
-  }
+  assert.doesNotMatch(workflow, /GitCode|GITCODE/);
 });
 
 test("GitCode publisher reports invalid credentials without leaking the token", async () => {
@@ -465,7 +453,6 @@ test("signature is checked against the configured public key and exact final DMG
 test("Sparkle workflow signs only the final stapled DMG and uploads before website publication", () => {
   const workflow = fs.readFileSync(path.join(scripts, "../.github/workflows/release.yml"), "utf8");
   const gates = ['verify-distribution "$DMG"', 'sign-update "$DMG"', "uses: softprops/action-gh-release@v2",
-    "- name: Publish GitCode Release", "node scripts/gitcode-release.mjs",
     "- name: Publish website metadata after asset upload", "node scripts/release-publisher.mjs"];
   let position = -1;
   for (const gate of gates) { const next = workflow.indexOf(gate, position + 1); assert.ok(next > position); position = next; }

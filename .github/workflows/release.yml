@@ -175,22 +175,6 @@ jobs:
           draft: false
           prerelease: false
 
-      - name: Publish GitCode Release
-        shell: bash
-        env:
-          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
-          GITCODE_UPLOAD_CURL: "1"
-          RELEASE_NOTES: ${{ env.RELEASE_NOTES }}
-        run: |
-          : "${GITCODE_TOKEN:?GITCODE_TOKEN is required for dual release}"
-          node scripts/gitcode-release.mjs \
-            --version "$RELEASE_VERSION" \
-            --append \
-            --notes "$RELEASE_NOTES" \
-            "build/bin/Hoxi-${RELEASE_VERSION}-darwin-arm64.dmg" \
-            build/bin/checksums.txt \
-            build/bin/sparkle.json
-
       - name: Publish website metadata after asset upload
         env:
           HOXI_RELEASE_KEY: ${{ secrets.HOXI_RELEASE_KEY }}
@@ -204,7 +188,7 @@ jobs:
           const bytes = fs.readFileSync(`build/bin/Hoxi-${version}-darwin-arm64.dmg`);
           const verified = JSON.parse(fs.readFileSync('build/bin/release-artifact.json', 'utf8'));
           console.log(JSON.stringify({...verified, version, notes: process.env.RELEASE_NOTES || `Hoxi Desktop v${version}`, size: bytes.length,
-            sha256: crypto.createHash('sha256').update(bytes).digest('hex'), gitcode: true,
+            sha256: crypto.createHash('sha256').update(bytes).digest('hex'), gitcode: false,
             sparkle: JSON.parse(fs.readFileSync('build/bin/sparkle.json', 'utf8'))}));
           JS
 

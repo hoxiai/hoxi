@@ -80,8 +80,10 @@ and stapling: changing even one DMG byte afterward invalidates the signature.
 `sparkle.json` is public metadata, not a private key. It contains `version`, `url`,
 `feedURL`, `publicKey`, `edSignature` (64-byte canonical base64) and `length`.
 The enclosure URL is the exact versioned GitHub DMG. The tag workflow uploads the
-same DMG, checksum and Sparkle metadata to the public `hoxiai/hoxi-releases`
-GitCode repository before publication, and the website advertises both mirrors. The publication payload also includes `minimumMacOS`, `sha256` and `size` from
+same DMG, checksum and Sparkle metadata to GitHub before publication, and the
+website advertises the GitHub mirror. A GitCode mirror is optional and uploaded
+manually; GitHub Actions cannot reliably reach GitCode's upload storage. The
+publication payload also includes `minimumMacOS`, `sha256` and `size` from
 artifact verification. The website pins `HOXI_SPARKLE_PUBLIC_KEY` to the same public
 key as CI and the app. It verifies the public asset before persisting metadata.
 Allow more than 60 seconds at the website reverse proxy; the publisher waits up to
@@ -120,7 +122,7 @@ PKCS#12 with the Developer ID identity), `MACOS_CERTIFICATE_PWD`, `APPLE_API_KEY
 (raw App Store Connect `AuthKey_*.p8` contents), `APPLE_API_KEY_ID` and
 `APPLE_API_ISSUER`. Then configure repository secrets
 `HOXI_SPARKLE_PUBLIC_KEY`, `HOXI_SPARKLE_PRIVATE_KEY` (raw existing key-file contents),
-`HOXI_RELEASE_KEY` and `GITCODE_TOKEN` (GitCode release write access). Configure repository variables `HOXI_SPARKLE_FEED_URL`,
+`HOXI_RELEASE_KEY`. Configure repository variables `HOXI_SPARKLE_FEED_URL`,
 optionally `HOXI_RELEASE_API_URL`, and pinned official archive URLs and independently
 verified lowercase SHA-256 values:
 
@@ -130,8 +132,7 @@ verified lowercase SHA-256 values:
 Missing settings fail the production job. Archives are checked before extraction
 or execution. Select immutable version URLs, not latest aliases. CI signs the
 final notarized/stapled DMG, uploads the DMG/checksum/public Sparkle metadata to
-GitHub and GitCode, then invokes website publication. A GitCode failure stops the
-job before website metadata is published. Website failure leaves both releases
+GitHub, then invokes website publication. Website failure leaves the release
 uploaded but does not claim successful feed deployment; resolve the website blocker
 before retrying metadata publication. Private-key files and Apple keychains are
 removed even on failure. Do not rotate the public key without a migration plan for
@@ -139,5 +140,5 @@ already-installed clients.
 
 The local `ai-release.sh` path also adds signed metadata when Sparkle is configured,
 but does not upload assets. Maintainers must upload the matching versioned GitHub
-and GitCode assets before invoking it; the website must enforce asset availability.
+assets before invoking it; the website must enforce asset availability.
 Its legacy database publisher is not supported for Sparkle releases.
