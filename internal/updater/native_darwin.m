@@ -12,7 +12,6 @@
 @protocol HoxiSparkleUpdater <NSObject>
 @property(nonatomic) BOOL automaticallyChecksForUpdates;
 @property(nonatomic) BOOL automaticallyDownloadsUpdates;
-@property(nonatomic, readonly) BOOL canCheckForUpdates;
 - (id)initWithHostBundle:(NSBundle *)host applicationBundle:(NSBundle *)app userDriver:(id)driver delegate:(id)delegate;
 - (void)checkForUpdates;
 - (BOOL)startUpdater:(NSError **)error;
@@ -203,8 +202,12 @@ char *hoxi_native_check(void) {
     __block char *failure = NULL;
     onMain(^{ @autoreleasepool {
         if (updater == nil || !delegate.active) failure = strdup("native updater is unavailable");
-        else if (!updater.canCheckForUpdates) failure = strdup("Sparkle update check is already in progress");
-        else [updater checkForUpdates];
+        else {
+            // Repeated clicks must refocus an in-progress update instead of failing.
+            // Sparkle's -checkForUpdates shows or refocuses the current session.
+            [NSApp activateIgnoringOtherApps:YES];
+            [updater checkForUpdates];
+        }
     }});
     return failure;
 }
