@@ -106,6 +106,7 @@ test("tag workflow gates publication on tests, versioned artifacts and notarizat
     "- name: Import Apple Developer Certificate",
     "security list-keychains -d user -s",
     "- name: Setup Apple Notarization Profile",
+    '--issuer "$APPLE_API_ISSUER"',
     '--version "$RELEASE_VERSION" --notarize --notary-profile "hoxi-notary"',
     'verify-dmg "$DMG" "$RELEASE_VERSION"',
     'verify-distribution "$DMG"',
@@ -115,6 +116,7 @@ test("tag workflow gates publication on tests, versioned artifacts and notarizat
     "fail_on_unmatched_files: true",
     "if: always()",
     'security delete-keychain "$KEYCHAIN_PATH"',
+    'rm -f "${APPLE_API_KEY_PATH:-}"',
   ];
   let position = -1;
   for (const gate of required) {
@@ -124,8 +126,8 @@ test("tag workflow gates publication on tests, versioned artifacts and notarizat
   }
   assert.doesNotMatch(workflow, /Optional|CAN_NOTARIZE|\|\| true|build\/bin\/\*\.dmg/);
   assert.equal((workflow.match(/^\s+if:/gm) || []).length, 1, "Only cleanup may be conditional");
-  for (const secret of ["MACOS_CERTIFICATE", "MACOS_CERTIFICATE_PWD", "APPLE_ID",
-    "APPLE_APP_SPECIFIC_PASSWORD", "APPLE_TEAM_ID"]) {
+  for (const secret of ["MACOS_CERTIFICATE", "MACOS_CERTIFICATE_PWD", "APPLE_API_KEY",
+    "APPLE_API_KEY_ID", "APPLE_API_ISSUER"]) {
     assert.ok(workflow.includes(`\${${secret}:?`), `Missing required credential: ${secret}`);
   }
   for (const block of workflow.matchAll(/^        run: \|\n((?:          .*\n|\n)+)/gm)) {
