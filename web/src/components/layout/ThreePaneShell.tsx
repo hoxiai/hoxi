@@ -66,6 +66,7 @@ export default function ThreePaneShell() {
       }
       if (
         ev.key === "Escape" &&
+        !ev.defaultPrevented &&
         (appSettings.modalOpen || workspace.providerModalOpen) &&
         !leaderboardState.modalOpen &&
         !workspace.handoffModalOpen &&

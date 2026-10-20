@@ -86,7 +86,7 @@ export function extractCustomProviderFormState(editID: string | null): CustomPro
       baseURL: "",
       apiKey: "",
       preserveExistingKey: false,
-      models: [{ id: "", name: "", reasoning: false, image: false }],
+      models: [],
       headers: [],
     };
   }
@@ -154,10 +154,7 @@ export function extractCustomProviderFormState(editID: string | null): CustomPro
     baseURL: cfgProv?.options?.baseURL || runtimeProv?.options?.baseURL || "",
     apiKey,
     preserveExistingKey,
-    models:
-      loadedModels.length > 0
-        ? loadedModels
-        : [{ id: "", name: "", reasoning: false, image: false }],
+    models: loadedModels,
     headers: loadedHeaders,
   };
 }

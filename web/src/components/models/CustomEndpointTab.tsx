@@ -32,9 +32,7 @@ export default function CustomEndpointTab() {
   const [baseURL, setBaseURL] = createSignal("");
   const [apiKey, setApiKey] = createSignal("");
   const [preserveExistingKey, setPreserveExistingKey] = createSignal(false);
-  const [models, setModels] = createSignal<CustomProviderModelDraft[]>([
-    { id: "", name: "", reasoning: false, image: false },
-  ]);
+  const [models, setModels] = createSignal<CustomProviderModelDraft[]>([]);
   const [headers, setHeaders] = createSignal<Array<{ key: string; value: string }>>([]);
 
   // Fetch & probe models state
@@ -137,9 +135,15 @@ export default function CustomEndpointTab() {
     for (const mid of newlyAdded.slice(0, 3)) void onProbeModel(mid);
   };
 
-  const onProbeModel = async (mid: string) => {
-    if (!mid.trim()) return;
-    setModelProbes((prev) => ({ ...prev, [mid]: { status: "testing" } }));
+  const onProbeModel = async (
+    mid: string
+  ): Promise<{ ok: boolean; latencyMs?: number; error?: string }> => {
+    const cleanId = mid.trim();
+    if (!cleanId) return { ok: false, error: t("models.modelId") };
+    if (!baseURL().trim()) {
+      return { ok: false, error: t("models.fillBaseUrlPrompt") };
+    }
+    setModelProbes((prev) => ({ ...prev, [cleanId]: { status: "testing" } }));
     const hdrs: Record<string, string> = {};
     for (const h of headers()) if (h.key.trim() && h.value.trim()) hdrs[h.key.trim()] = h.value.trim();
     const pid = providerID().trim();
@@ -149,18 +153,23 @@ export default function CustomEndpointTab() {
         baseURL: baseURL().trim() || undefined,
         apiKey: apiKey().trim() === MASKED_SECRET ? undefined : apiKey().trim() || undefined,
         npm: npmPkg(),
-        modelID: mid.trim(),
+        modelID: cleanId,
         headers: Object.keys(hdrs).length ? hdrs : undefined,
       });
-      if (pid) recordProbeTelemetry(pid, res.ok, res.latencyMs, res.error, mid.trim());
+      if (pid) recordProbeTelemetry(pid, res.ok, res.latencyMs, res.error, cleanId);
+      const errText = res.error || t("models.connectFailed");
       setModelProbes((prev) => ({
         ...prev,
-        [mid]: res.ok ? { status: "ok", latencyMs: res.latencyMs } : { status: "error", error: res.error || "Failed" },
+        [cleanId]: res.ok
+          ? { status: "ok", latencyMs: res.latencyMs }
+          : { status: "error", error: errText },
       }));
+      return { ok: res.ok, latencyMs: res.latencyMs, error: res.ok ? undefined : errText };
     } catch (err: any) {
       const errMsg = err?.message || String(err);
-      if (pid) recordProbeTelemetry(pid, false, undefined, errMsg, mid.trim());
-      setModelProbes((prev) => ({ ...prev, [mid]: { status: "error", error: errMsg } }));
+      if (pid) recordProbeTelemetry(pid, false, undefined, errMsg, cleanId);
+      setModelProbes((prev) => ({ ...prev, [cleanId]: { status: "error", error: errMsg } }));
+      return { ok: false, error: errMsg };
     }
   };
 
