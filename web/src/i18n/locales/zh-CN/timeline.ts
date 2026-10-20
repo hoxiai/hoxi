@@ -317,6 +317,8 @@ export const timeline: TimelineI18n = {
   convoyCancelled: "已取消",
   convoySessionLabel: "会话 {id}",
   convoyRunError: "编队失败：{error}",
+  convoyIsolatedNote: "每个任务在独立的 Git 工作树中执行，依赖任务会带上前置任务的改动",
+  convoySharedNote: "当前目录不是 Git 仓库：任务共用此目录并逐个执行",
   sessionSetupFailed: "会话准备失败：{error}",
   worktreeIsolationUnavailable: "无法创建独立 Worktree。请使用至少有一次提交的 Git 仓库，或改用本地模式",
   worktreeBusy: "请等待当前任务完成后再切换模式",

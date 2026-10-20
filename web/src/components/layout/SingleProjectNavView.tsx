@@ -27,10 +27,10 @@ import {
   dayLabel,
   FolderIcon,
   resolveActiveRootSessionID,
-  SessionNavItem,
   shortenPath,
   type ProjectNavEntry,
 } from "./left-nav-helpers";
+import { SessionNavItem } from "./SessionNavItem";
 import { useAnchoredPopover } from "./anchored-popover";
 import { WorkspaceActionMenu } from "./MultiProjectItem";
 import { t } from "../../i18n";

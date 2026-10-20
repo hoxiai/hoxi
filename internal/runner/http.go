@@ -3,13 +3,11 @@ package runner
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"path/filepath"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/hoxiai/hoxi/internal/agentcli"
 	"github.com/hoxiai/hoxi/internal/attachment"
@@ -415,221 +413,17 @@ func (s *Service) handleSingleSession(w http.ResponseWriter, r *http.Request, se
 }
 
 func (s *Service) handleSessionPrompt(w http.ResponseWriter, r *http.Request, sessionID string) {
-	unlock := s.turnMu.lock(sessionID)
-	defer unlock()
 	if r.Method != http.MethodPost {
 		writeJSONError(w, http.StatusMethodNotAllowed, "POST required")
 		return
 	}
-	var body struct {
-		Text    string `json:"text"`
-		Agent   string `json:"agent"`
-		Variant string `json:"variant"`
-		System  string `json:"system"`
-		Model   *struct {
-			ProviderID string `json:"providerID"`
-			ModelID    string `json:"modelID"`
-		} `json:"model"`
-		Parts          []MessagePart   `json:"parts"`
-		SkillSelection *SkillSelection `json:"skillSelection,omitempty"`
-	}
+	var body PromptRequest
 	if err := json.NewDecoder(io.LimitReader(r.Body, 64<<20)).Decode(&body); err != nil {
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-
-	rec, ok := s.store.Get(sessionID)
-	unmanagedBusySteer := false
-	if !ok && body.SkillSelection != nil {
-		adopted, adoptErr := s.adoptOpenCodeSession(r.Context(), sessionID, r.URL.Query().Get("directory"))
-		if adoptErr != nil {
-			if adoptErr.Error() == "cannot change runtime while the session is running" {
-				dir := s.resolveUnmanagedSessionDir(sessionID, r.URL.Query().Get("directory"))
-				rec = SessionRecord{
-					ID:           sessionID,
-					Runtime:      "opencode",
-					ExternalID:   sessionID,
-					ProjectDir:   dir,
-					WorktreePath: dir,
-					SandboxMode:  "local",
-				}
-				ok = true
-				unmanagedBusySteer = true
-			} else {
-				writeJSONError(w, http.StatusConflict, adoptErr.Error())
-				return
-			}
-		} else {
-			if putErr := s.store.Put(adopted); putErr != nil {
-				writeJSONError(w, http.StatusInternalServerError, putErr.Error())
-				return
-			}
-			for _, id := range adopted.OpenCodeIDs {
-				s.managedOpenCode.Store(id, true)
-			}
-			rec = adopted
-			ok = true
-		}
-	}
-	if !ok {
-		writeJSONError(w, http.StatusNotFound, "runner session not found")
-		return
-	}
-	if reqDir := strings.TrimSpace(r.URL.Query().Get("directory")); reqDir != "" &&
-		normalizeComparePath(reqDir) != normalizeComparePath(rec.WorktreePath) &&
-		normalizeComparePath(reqDir) != normalizeComparePath(rec.ProjectDir) {
-		writeJSONError(w, http.StatusForbidden, "session directory does not match its sandbox")
-		return
-	}
-
-	promptText := strings.TrimSpace(body.Text)
-	var fileParts []MessagePart
-	for _, p := range body.Parts {
-		if p.Type == "file" && strings.TrimSpace(p.URL) != "" {
-			fileParts = append(fileParts, p)
-		}
-	}
-	if promptText == "" {
-		var texts []string
-		for _, p := range body.Parts {
-			if p.Type == "text" && strings.TrimSpace(p.Text) != "" {
-				texts = append(texts, strings.TrimSpace(p.Text))
-			}
-		}
-		promptText = strings.Join(texts, "\n")
-	}
-	if promptText == "" && len(fileParts) == 0 && body.SkillSelection == nil {
-		writeJSONError(w, http.StatusBadRequest, "prompt text is required")
-		return
-	}
-
-	if rec.Subagent {
-		writeJSONError(w, http.StatusConflict, errSubagentSessionReadOnly.Error())
-		return
-	}
-	if err := validateSessionDirectory(rec); err != nil {
-		writeJSONError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if body.SkillSelection != nil {
-		if rec.Runtime != "" && rec.Runtime != "opencode" {
-			writeJSONError(w, http.StatusConflict, fmt.Sprintf("runtime %q does not support native skills", rec.Runtime))
-			return
-		}
-		if err := s.validateSkillSelection(r.Context(), rec.WorktreePath, rec.ID, *body.SkillSelection); err != nil {
-			writeJSONError(w, http.StatusConflict, err.Error())
-			return
-		}
-	}
-	if rec.Runtime == "opencode" {
-		s.mu.Lock()
-		busy := unmanagedBusySteer || s.procs[sessionID] != nil
-		s.mu.Unlock()
-		if busy {
-			modelID, providerID := rec.ModelID, rec.ProviderID
-			if body.Model != nil {
-				modelID, providerID = body.Model.ModelID, body.Model.ProviderID
-			}
-			err := s.steerOpenCodeTurn(r.Context(), rec, firstNonEmptyStr(body.Agent, rec.Mode, "build"), modelID, providerID, body.Variant, body.System, promptText, body.Parts, body.SkillSelection)
-			if err != nil {
-				writeJSONError(w, http.StatusBadGateway, err.Error())
-				return
-			}
-			writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
-			return
-		}
-	}
-
-	mode := firstNonEmptyStr(body.Agent, rec.Mode, "build")
-	modelID := rec.ModelID
-	if body.Model != nil && strings.TrimSpace(body.Model.ModelID) != "" {
-		modelID = strings.TrimSpace(body.Model.ModelID)
-		if body.Model.ProviderID != "" {
-			rec.ProviderID = body.Model.ProviderID
-		}
-	}
-	effort := strings.TrimSpace(body.Variant)
-	if rec.Runtime == string(RuntimeAntigravity) {
-		modelID, effort = ResolveAgyModelAndEffort(modelID, effort)
-	}
-
-	binPath := ResolveAgyBinary()
-	missingMsg := "Antigravity CLI (agy) binary not found in ~/.gemini/bin/agy or PATH"
-	switch rec.Runtime {
-	case string(RuntimeClaudeCode):
-		binPath = ResolveClaudeBinary()
-		missingMsg = "Claude Code CLI (claude) binary not found in ~/.local/bin/claude or PATH"
-	case string(RuntimeCodeBuddy):
-		binPath = agentcli.ResolveCodeBuddyBinary()
-		missingMsg = "CodeBuddy CLI (codebuddy) binary not found in PATH"
-	case string(RuntimeQoder):
-		binPath, _ = agentcli.ResolveQoderBinaryForModel(modelID)
-		missingMsg = "Qoder CLI (qodercli / qoderclicn) binary not found in PATH"
-	}
-	if binPath == "" && rec.Runtime != "opencode" {
-		writeJSONError(w, http.StatusBadRequest, missingMsg)
-		return
-	}
-
-	s.mu.Lock()
-	if s.procs[sessionID] != nil {
-		s.mu.Unlock()
-		writeJSONError(w, http.StatusConflict, "session already has an active CLI process running")
-		return
-	}
-	s.seqSeed++
-	seq := s.seqSeed
-	s.mu.Unlock()
-
-	now := time.Now().UnixMilli()
-	userMsgID := fmt.Sprintf("msg_u_%d_%d", now, seq)
-	asstMsgID := fmt.Sprintf("msg_a_%d_%d", now+1, seq)
-	userInfo := MessageInfo{
-		ID:         userMsgID,
-		SessionID:  sessionID,
-		Role:       "user",
-		Time:       MessageTime{Created: now},
-		Agent:      mode,
-		ModelID:    modelID,
-		ProviderID: rec.ProviderID,
-	}
-	storedParts, deliveryParts, cliPrompt := s.prepareTurnAttachments(rec, now, seq, userMsgID, promptText, fileParts)
-	if body.SkillSelection != nil {
-		s.recordUserSkillOverride(userMsgID, promptText, body.SkillSelection)
-		storedParts, deliveryParts = applySkillSelectionToTurnParts(
-			sessionID,
-			userMsgID,
-			now,
-			seq,
-			promptText,
-			body.SkillSelection,
-			storedParts,
-			deliveryParts,
-		)
-	}
-
-	_, _, _ = s.store.Update(sessionID, func(r *SessionRecord) {
-		r.ModelID = modelID
-		r.Mode = mode
-		r.ProviderID = rec.ProviderID
-	})
-	s.recordTurnSnapshot(sessionID, userMsgID)
-	if updated, ok := s.store.Get(sessionID); ok {
-		rec = updated
-	}
-
-	var err error
-	if rec.Runtime == "opencode" {
-		err = s.startOpenCodeTurn(rec, mode, modelID, effort, body.System, userInfo, storedParts, deliveryParts)
-	} else {
-		input := runtimeMemoryContext(rec) + runtimeContext(rec)
-		if body.System != "" {
-			input += body.System + "\n\n"
-		}
-		err = s.startTurnProcess(rec, binPath, mode, modelID, effort, input+cliPrompt, userInfo, storedParts, deliveryParts, asstMsgID)
-	}
-	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, err.Error())
+	if status, err := s.startPrompt(r.Context(), sessionID, r.URL.Query().Get("directory"), body); err != nil {
+		writeJSONError(w, status, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})

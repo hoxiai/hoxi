@@ -287,6 +287,9 @@ export default function ConvoyModal(props: {
             }
           >
             <div class="max-h-[60vh] overflow-y-auto p-3">
+              <p class="mb-2 px-0.5 text-[11px] text-[var(--text-muted)]">
+                {plan()?.isolated ? t("timeline.convoyIsolatedNote") : t("timeline.convoySharedNote")}
+              </p>
               <For each={plan()?.tasks ?? []}>
                 {(task) => (
                   <div class="mb-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-2">

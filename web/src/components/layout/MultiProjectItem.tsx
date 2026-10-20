@@ -18,10 +18,10 @@ import { Icon, Spinner } from "../icons";
 import {
   FolderIcon,
   resolveActiveRootSessionID,
-  SessionNavItem,
   shortenPath,
   type ProjectNavEntry,
 } from "./left-nav-helpers";
+import { SessionNavItem } from "./SessionNavItem";
 import { useAnchoredPopover } from "./anchored-popover";
 import { t } from "../../i18n";
 import { SessionHistoryList, useSessionHistory } from "./SessionHistory";

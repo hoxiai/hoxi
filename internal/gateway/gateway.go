@@ -157,7 +157,9 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 		forge:        forgeSvc,
 	}
 	g.recallSvc = recall.NewService(&gatewayRecallSource{g: g})
-	g.orchestration = orchestration.NewService(openCodePort, password)
+	if g.runner != nil {
+		g.orchestration = orchestration.NewService(convoySessions{runner: g.runner})
+	}
 	g.skills = skills.NewService(targetURL.String(), password, g.resolveSkillContext)
 	runnerSvc.SetSkillValidator(func(ctx context.Context, directory, sessionID string, sel runner.SkillSelection) error {
 		_, err := g.skills.VerifySelection(ctx, directory, sessionID, skills.SkillSelection{

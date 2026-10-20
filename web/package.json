@@ -11,7 +11,8 @@
     "test": "node scripts/run-script.js scripts/run-tests.ts",
     "check:i18n": "node scripts/run-script.js scripts/check-i18n.ts",
     "check:lines": "node scripts/run-script.js scripts/check-lines.ts",
-    "lint": "tsc --noEmit && npm run check:i18n && npm run check:lines"
+    "check:cycles": "node scripts/run-script.js scripts/check-cycles.ts",
+    "lint": "tsc --noEmit && npm run check:i18n && npm run check:lines && npm run check:cycles"
   },
   "dependencies": {
     "@pierre/diffs": "^1.5.2",

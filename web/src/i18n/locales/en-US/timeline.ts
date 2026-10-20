@@ -320,6 +320,8 @@ export const timeline = {
   convoyCancelled: "Cancelled",
   convoySessionLabel: "Session {id}",
   convoyRunError: "Convoy failed: {error}",
+  convoyIsolatedNote: "Each task runs in its own Git worktree; dependents start from their prerequisites' changes",
+  convoySharedNote: "Not a Git repository: tasks share this folder and run one at a time",
   sessionSetupFailed: "Could not prepare session: {error}",
   worktreeIsolationUnavailable: "Could not create an isolated worktree. Use a Git repo with at least one commit, or choose Local mode.",
   worktreeBusy: "Wait for the current task to finish before switching modes.",

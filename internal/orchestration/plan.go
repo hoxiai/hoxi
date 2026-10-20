@@ -41,6 +41,7 @@ type Plan struct {
 	Title       string      `json:"title"`
 	Directory   string      `json:"directory"`
 	Concurrency int         `json:"concurrency"`
+	Isolated    bool        `json:"isolated"` // every task runs in its own git worktree
 	Status      string      `json:"status"`
 	Tasks       []TaskState `json:"tasks"`
 	CreatedAt   int64       `json:"createdAt"`

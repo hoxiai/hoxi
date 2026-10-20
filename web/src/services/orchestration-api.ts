@@ -29,6 +29,8 @@ export interface ConvoyPlan {
   title: string;
   directory: string;
   concurrency: number;
+  /** True when every task runs in its own git worktree (false: shared folder, serial). */
+  isolated?: boolean;
   status: ConvoyTaskStatus;
   tasks: ConvoyTaskState[];
   createdAt: number;

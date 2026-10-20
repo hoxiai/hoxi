@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -132,41 +133,41 @@ func (s *Service) handleConversationCreate(w http.ResponseWriter, r *http.Reques
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	var body struct {
-		Title       string `json:"title"`
-		Directory   string `json:"directory"`
-		Runtime     string `json:"runtime"`
-		ModelID     string `json:"modelID"`
-		ProviderID  string `json:"providerID"`
-		Mode        string `json:"mode"`
-		SandboxMode string `json:"sandboxMode"`
-	}
+	var body CreateSessionRequest
 	if len(bytes.TrimSpace(raw)) > 0 && json.Unmarshal(raw, &body) != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid session request")
 		return
 	}
-	if IsValidRuntime(body.Runtime) {
-		r.Body = io.NopCloser(bytes.NewReader(raw))
-		s.handleCreateSession(w, r)
+	info, status, err := s.CreateConversation(r.Context(), body, r.URL.Query().Get("directory"))
+	if err != nil {
+		writeJSONError(w, status, err.Error())
 		return
+	}
+	writeJSON(w, http.StatusOK, info)
+}
+
+// CreateConversation creates a Hoxi conversation on any runtime: the shared
+// implementation of POST /api/hoxi/sessions, also used in process (convoys).
+// directory is the fallback project directory when body.Directory is empty.
+func (s *Service) CreateConversation(ctx context.Context, body CreateSessionRequest, directory string) (SessionInfo, int, error) {
+	var err error
+	if IsValidRuntime(body.Runtime) {
+		return s.CreateSession(body, directory)
 	}
 	if body.Runtime != "" && body.Runtime != "opencode" {
-		writeJSONError(w, http.StatusBadRequest, "unsupported session runtime")
-		return
+		return SessionInfo{}, http.StatusBadRequest, errors.New("unsupported session runtime")
 	}
-	projDir := firstNonEmptyStr(body.Directory, r.URL.Query().Get("directory"), s.rootDir)
+	projDir := firstNonEmptyStr(body.Directory, directory, s.rootDir)
 	projDir, err = filepath.Abs(projDir)
 	if err == nil {
 		projDir, err = existingDirectory(projDir)
 	}
 	if err != nil {
-		writeJSONError(w, http.StatusBadRequest, err.Error())
-		return
+		return SessionInfo{}, http.StatusBadRequest, err
 	}
 	sandboxMode, err := normalizeSandboxMode(body.SandboxMode)
 	if err != nil {
-		writeJSONError(w, http.StatusBadRequest, err.Error())
-		return
+		return SessionInfo{}, http.StatusBadRequest, err
 	}
 	sessionID := GenerateRunnerSessionID("opencode")
 	now := time.Now().UnixMilli()
@@ -185,10 +186,9 @@ func (s *Service) handleConversationCreate(w http.ResponseWriter, r *http.Reques
 		Turns:       []MessageTurn{},
 	}
 	if err := s.provisionSessionDirectory(&rec); err != nil {
-		writeJSONError(w, http.StatusBadRequest, err.Error())
-		return
+		return SessionInfo{}, http.StatusBadRequest, err
 	}
-	rec.ProviderID, rec.ModelID = s.resolveOpenCodeModel(r.Context(), rec.WorktreePath, rec.ProviderID, rec.ModelID)
+	rec.ProviderID, rec.ModelID = s.resolveOpenCodeModel(ctx, rec.WorktreePath, rec.ProviderID, rec.ModelID)
 	payload := map[string]interface{}{
 		"metadata": map[string]string{"hoxiConversation": rec.ID},
 	}
@@ -196,15 +196,14 @@ func (s *Service) handleConversationCreate(w http.ResponseWriter, r *http.Reques
 		payload["title"] = rec.Title
 	}
 	var engineInfo SessionInfo
-	if err := s.openCodeJSON(r.Context(), http.MethodPost, "/session", rec.WorktreePath, payload, &engineInfo); err != nil || strings.TrimSpace(engineInfo.ID) == "" {
+	if err := s.openCodeJSON(ctx, http.MethodPost, "/session", rec.WorktreePath, payload, &engineInfo); err != nil || strings.TrimSpace(engineInfo.ID) == "" {
 		if rec.SandboxMode == "worktree" {
 			_ = s.worktrees.ForDirectory(rec.ProjectDir).RemoveWithOptions(rec.ID, true, false)
 		}
 		if err == nil {
 			err = fmt.Errorf("OpenCode returned an empty session ID")
 		}
-		writeJSONError(w, http.StatusBadGateway, "opencode service unavailable: "+err.Error())
-		return
+		return SessionInfo{}, http.StatusBadGateway, fmt.Errorf("opencode service unavailable: %w", err)
 	}
 	rec.ExternalID = strings.TrimSpace(engineInfo.ID)
 	rec.OpenCodeIDs = []string{rec.ExternalID}
@@ -213,8 +212,7 @@ func (s *Service) handleConversationCreate(w http.ResponseWriter, r *http.Reques
 		rec.Title = firstNonEmptyStr(strings.TrimSpace(engineInfo.Title), "New Session")
 	}
 	if err := s.store.Put(rec); err != nil {
-		writeJSONError(w, http.StatusInternalServerError, err.Error())
-		return
+		return SessionInfo{}, http.StatusInternalServerError, err
 	}
 	s.managedOpenCode.Store(rec.ExternalID, true)
 	info := rec.ToSessionInfo()
@@ -222,5 +220,5 @@ func (s *Service) handleConversationCreate(w http.ResponseWriter, r *http.Reques
 		Type:       "session.created",
 		Properties: map[string]interface{}{"info": info},
 	})
-	writeJSON(w, http.StatusOK, info)
+	return info, http.StatusOK, nil
 }

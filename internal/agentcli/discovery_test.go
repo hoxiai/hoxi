@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestCodeBuddyAndQoderModelDiscovery(t *testing.T) {
@@ -42,6 +43,11 @@ func TestCodeBuddyAndQoderModelDiscovery(t *testing.T) {
 	_ = os.WriteFile(cnBin, []byte("#!/bin/sh\nprintf 'MODEL\\nAuto\\nQwen3.8-Max\\nQwen3.8-Flash\\n'\n"), 0o755)
 	t.Setenv("QODER_BIN", intlBin)
 	t.Setenv("QODER_CN_BIN", cnBin)
+	// Under a loaded full-suite run, the first exec of a fresh script can stall
+	// on macOS security checks past the production probe timeout.
+	prevTimeout := qoderProbeTimeout
+	qoderProbeTimeout = 30 * time.Second
+	t.Cleanup(func() { qoderProbeTimeout = prevTimeout })
 
 	items := DiscoverQoderModelsWithRefresh(true)
 	var sawCN, sawCNFree, sawIntl, sawHeader bool

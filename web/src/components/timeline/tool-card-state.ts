@@ -653,4 +653,3 @@ export function deriveMarkdownDownloadFilename(
   return `${stem}-${dateStr}.md`;
 }
 
-export { computeChangedFileLines, resolveSessionDiffForFile } from "./file-diff-lines";

@@ -9,7 +9,7 @@ import {
   MAX_ATTACHMENT_BYTES,
   MAX_ATTACHMENTS,
 } from "../components/timeline/composer-hooks";
-import { guessFetchedModelDraft } from "../components/models/CustomProviderModelSection";
+import { guessFetchedModelDraft } from "../components/models/custom-endpoint-helpers";
 import { assertDeepEqual, assertEqual, describe, it } from "./test-harness";
 
 describe("Composer IME keyboard guard", () => {

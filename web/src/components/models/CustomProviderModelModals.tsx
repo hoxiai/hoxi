@@ -13,7 +13,7 @@ import {
 } from "lucide-solid";
 import type { CustomProviderModelDraft } from "../../store/workspace";
 import { t } from "../../i18n";
-import { guessFetchedModelDraft, type ModelProbeResult } from "./CustomProviderModelSection";
+import { guessFetchedModelDraft, type ModelProbeResult } from "./custom-endpoint-helpers";
 
 export function FetchedModelsModal(props: {
   models: Accessor<CustomProviderModelDraft[]>;

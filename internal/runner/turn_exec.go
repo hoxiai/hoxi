@@ -528,11 +528,7 @@ func (s *Service) handleSessionAbort(w http.ResponseWriter, r *http.Request, ses
 		writeJSONError(w, http.StatusMethodNotAllowed, "POST required")
 		return
 	}
-	s.abortActiveProcess(sessionID)
-	s.broadcast(sessionID, SSEEvent{
-		Type:       "session.status",
-		Properties: map[string]interface{}{"sessionID": sessionID, "status": SessionStatus{Type: "idle"}},
-	})
+	s.AbortSession(sessionID)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
 }
 

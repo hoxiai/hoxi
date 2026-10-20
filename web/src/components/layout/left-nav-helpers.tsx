@@ -258,5 +258,3 @@ export function findProjectDropTarget(
   return null;
 }
 
-export { SessionNavItem } from "./SessionNavItem";
-export type { SessionNavItemProps } from "./SessionNavItem";

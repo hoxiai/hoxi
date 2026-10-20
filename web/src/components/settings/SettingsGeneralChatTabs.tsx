@@ -34,7 +34,7 @@ import {
   SettingGroup,
   SettingRow,
   ToggleSwitch,
-} from "./SettingsModal";
+} from "./setting-controls";
 
 export function GeneralAppearanceTab() {
   return (

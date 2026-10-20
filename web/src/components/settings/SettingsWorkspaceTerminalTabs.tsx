@@ -30,7 +30,7 @@ import {
   SettingGroup,
   SettingRow,
   ToggleSwitch,
-} from "./SettingsModal";
+} from "./setting-controls";
 
 type PermMode = "allow" | "ask";
 

@@ -9,7 +9,7 @@ import {
 } from "../../store/workspace";
 import { t } from "../../i18n";
 import { Spinner } from "../icons";
-import { SettingGroup, SettingRow } from "./SettingsModal";
+import { SettingGroup, SettingRow } from "./setting-controls";
 
 type HookState = "installed" | "outdated" | "missing" | "error";
 

@@ -10,15 +10,10 @@ import {
   Sparkles,
   Trash2,
 } from "lucide-solid";
-import { isNonChatUtilityModelID, type CustomProviderModelDraft } from "../../store/workspace";
+import type { CustomProviderModelDraft } from "../../store/workspace";
 import { t } from "../../i18n";
 import { AddCustomModelModal, FetchedModelsModal } from "./CustomProviderModelModals";
-
-export interface ModelProbeResult {
-  status: "testing" | "ok" | "error";
-  latencyMs?: number;
-  error?: string;
-}
+import type { ModelProbeResult } from "./custom-endpoint-helpers";
 
 interface CustomProviderModelSectionProps {
   models: Accessor<CustomProviderModelDraft[]>;
@@ -35,16 +30,6 @@ interface CustomProviderModelSectionProps {
     modelID: string
   ) => Promise<{ ok: boolean; latencyMs?: number; error?: string }> | void;
   readOnly?: Accessor<boolean>;
-}
-
-export function guessFetchedModelDraft(rm: { id: string; name: string }): CustomProviderModelDraft {
-  const isNonChat = isNonChatUtilityModelID(rm.id);
-  return {
-    id: rm.id,
-    name: rm.name || rm.id,
-    reasoning: !isNonChat,
-    image: !isNonChat,
-  };
 }
 
 export default function CustomProviderModelSection(props: CustomProviderModelSectionProps) {

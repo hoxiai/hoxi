@@ -40,7 +40,7 @@
 │   ├── opencode/                     # [业务层] OpenCode binary resolver, installer, daemon supervision & browser plugin overlay
 │   │   ├── ocapi/                    # [底座层] Shared loopback HTTP/SSE client & Basic Auth transport for `opencode serve`
 │   │   └── ocstate/                  # [底座层] External OpenCode SQLite reader & Console account sync into hoxi.db
-│   ├── orchestration/                # [业务层] Multi-agent DAG task orchestration, scheduling & sub-session dispatch
+│   ├── orchestration/                # [业务层] Multi-agent DAG convoys on the runner session plane: per-task worktrees & dependency merge
 │   ├── promptassist/                 # [业务层] Composer prompt enhancement & session title summarization via llm.Client
 │   ├── provider/                     # [业务层] Provider config, models.json, llm.Client implementation, probing & model stats
 │   ├── recall/                       # [业务层] Cross-session semantic / BM25 memory recall & indexing

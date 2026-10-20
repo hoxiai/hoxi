@@ -6,7 +6,7 @@ import {
   resetDiagnosticsFilters, setDiagnosticsFilter,
 } from "../../store/workspace";
 import type { DiagnosticKind, DiagnosticLevel } from "../../services/diagnostics";
-import { SettingGroup } from "./SettingsModal";
+import { SettingGroup } from "./setting-controls";
 
 const control = "w-full min-w-0 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2 py-1.5 text-[12px] text-[var(--text-primary)]";
 const button = "inline-flex items-center justify-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2 py-1.5 text-[12px] text-[var(--text-primary)] hover:bg-[var(--bg-hover)] disabled:opacity-50 cursor-pointer";

@@ -4,34 +4,51 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/hoxiai/hoxi/internal/opencode/ocapi"
 )
 
-// Service runs convoy plans: a DAG of tasks, each executed as its own
-// OpenCode session in the plan's directory.
-//
-// TODO(orchestration): convoy sessions are created directly on the engine's
-// /session API instead of through the runner, so they are never adopted into
-// Hoxi's session store. They therefore list as unadopted OpenCode sessions,
-// get no worktree provisioning, runtime switching or Steer, and only the
-// engine-side hoxi-permissions.js gate applies (no runner PreToolUse gate).
-// Move session creation, prompting and abort onto an in-process runner API
-// (the same path as POST /api/hoxi/sessions) once runner exposes a blocking
-// "run turn and wait" call; until then keep every engine call in call() below.
+// Sessions runs convoy tasks as Hoxi conversations. The gateway implements it
+// over the runner, so convoy sessions share the UI's session plane: they are
+// stored and listed, drive the status bar, pass the runtime approval gates and
+// the stall watchdog, and can be steered or stopped like any other session.
+type Sessions interface {
+	// CanIsolate reports whether directory can host one git worktree per task.
+	CanIsolate(directory string) bool
+	Create(ctx context.Context, req SessionRequest) (string, error)
+	// Run sends prompt as one turn and blocks until it ends, returning the
+	// final assistant text.
+	Run(ctx context.Context, sessionID, prompt string, req PlanRequest) (string, error)
+	// Merge folds the uncommitted changes of sources, in order, into target's
+	// workspace, failing without side effects on conflict.
+	Merge(targetSessionID string, sourceSessionIDs []string) error
+	Abort(sessionID string)
+}
+
+// SessionRequest describes the conversation that hosts one convoy task.
+type SessionRequest struct {
+	Directory string
+	Title     string
+	Mode      string
+	Provider  string
+	Model     string
+	// Isolated asks for a dedicated git worktree instead of Directory itself.
+	Isolated bool
+}
+
+// Service runs convoy plans: a DAG of tasks, each executed as its own Hoxi
+// conversation. When the project is a git repository every task gets its own
+// worktree, and a dependent task starts from its prerequisites' merged
+// changes; otherwise tasks share the directory and run one at a time.
 type Service struct {
-	openCode *ocapi.Client
+	sessions Sessions
 	mu       sync.Mutex
 	plans    map[string]*planRun
 }
@@ -41,14 +58,8 @@ type planRun struct {
 	cancel context.CancelFunc
 }
 
-// engineCallTimeout caps one engine call; /message blocks for a whole turn.
-const engineCallTimeout = 30 * time.Minute
-
-func NewService(port int, password string) *Service {
-	return &Service{
-		openCode: ocapi.NewForPort(port, password),
-		plans:    make(map[string]*planRun),
-	}
+func NewService(sessions Sessions) *Service {
+	return &Service{sessions: sessions, plans: make(map[string]*planRun)}
 }
 
 func (s *Service) RegisterRoutes(mux *http.ServeMux) {
@@ -66,7 +77,16 @@ func (s *Service) Create(request PlanRequest) (Plan, error) {
 	if err != nil {
 		return Plan{}, err
 	}
+	if s.sessions == nil {
+		return Plan{}, errors.New("convoy sessions are unavailable")
+	}
+	isolated := s.sessions.CanIsolate(directory)
+	if !isolated {
+		// Without per-task worktrees, parallel agents would edit the same files.
+		request.Concurrency = 1
+	}
 	plan := Plan{
+		Isolated:    isolated,
 		ID:          newPlanID(),
 		Title:       request.Title,
 		Directory:   directory,
@@ -137,9 +157,21 @@ func (s *Service) Cancel(id string) (Plan, error) {
 	cancel := run.cancel
 	plan := run.plan
 	plan.Tasks = append([]TaskState(nil), run.plan.Tasks...)
+	// Collect live sessions before cancelling: a cancelled task marks itself
+	// cancelled at once and would otherwise drop out of the abort list.
+	var live []string
+	for _, task := range run.plan.Tasks {
+		if task.SessionID != "" && task.Status == StatusRunning {
+			live = append(live, task.SessionID)
+		}
+	}
 	s.mu.Unlock()
 	cancel()
-	go s.abortRunning(id)
+	go func() {
+		for _, sessionID := range live {
+			s.sessions.Abort(sessionID)
+		}
+	}()
 	return plan, nil
 }
 
@@ -207,8 +239,29 @@ func (s *Service) run(ctx context.Context, id string, request PlanRequest) {
 
 func (s *Service) executeTask(ctx context.Context, planID string, index int, spec TaskSpec, request PlanRequest) {
 	taskID := spec.ID
-	title := fmt.Sprintf("Convoy · %s · %s", planID, taskID)
-	sessionID, err := s.createSession(ctx, request.Directory, title)
+	s.mu.Lock()
+	run := s.plans[planID]
+	isolated := run != nil && run.plan.Isolated
+	var prerequisites []string
+	if run != nil {
+		for _, dep := range spec.DependsOn {
+			for _, task := range run.plan.Tasks {
+				if task.ID == dep && task.SessionID != "" {
+					prerequisites = append(prerequisites, task.SessionID)
+				}
+			}
+		}
+	}
+	s.mu.Unlock()
+
+	sessionID, err := s.sessions.Create(ctx, SessionRequest{
+		Directory: request.Directory,
+		Title:     fmt.Sprintf("Convoy · %s · %s", planID, taskID),
+		Mode:      request.Mode,
+		Provider:  request.Provider,
+		Model:     request.Model,
+		Isolated:  isolated,
+	})
 	if err != nil {
 		s.completeTask(planID, taskID, "", "", err)
 		return
@@ -223,9 +276,14 @@ func (s *Service) executeTask(ctx context.Context, planID string, index int, spe
 		s.completeTask(planID, taskID, sessionID, "", ctx.Err())
 		return
 	}
-	prompt := convoyPrompt(spec, request)
-	summary, err := s.prompt(ctx, request, sessionID, prompt)
-	s.completeTask(planID, taskID, sessionID, summary, err)
+	if isolated && len(prerequisites) > 0 {
+		if err := s.sessions.Merge(sessionID, prerequisites); err != nil {
+			s.completeTask(planID, taskID, sessionID, "", fmt.Errorf("could not combine prerequisite changes: %w", err))
+			return
+		}
+	}
+	summary, err := s.sessions.Run(ctx, sessionID, convoyPrompt(spec, isolated), request)
+	s.completeTask(planID, taskID, sessionID, clip(summary, 2000), err)
 }
 
 func (s *Service) completeTask(planID, taskID, sessionID, summary string, err error) {
@@ -287,7 +345,7 @@ func (s *Service) finish(planID string) {
 	run.plan.UpdatedAt = time.Now().UnixMilli()
 }
 
-func convoyPrompt(spec TaskSpec, request PlanRequest) string {
+func convoyPrompt(spec TaskSpec, isolated bool) string {
 	var b strings.Builder
 	b.WriteString("Hoxi convoy task `")
 	b.WriteString(spec.ID)
@@ -297,109 +355,13 @@ func convoyPrompt(spec TaskSpec, request PlanRequest) string {
 		b.WriteString(strings.Join(spec.DependsOn, ", "))
 		b.WriteString(". Their changes are already in this workspace.\n")
 	}
-	b.WriteString("Work only within the workspace, report the files you changed, and end with a short hand-off summary.\n\n")
+	b.WriteString("Work only within the workspace, report the files you changed, and end with a short hand-off summary.\n")
+	if isolated {
+		b.WriteString("Do not commit: leave your changes uncommitted so dependent tasks can build on them.\n")
+	}
+	b.WriteString("\n")
 	b.WriteString(spec.Prompt)
 	return b.String()
-}
-
-func (s *Service) abortRunning(planID string) {
-	s.mu.Lock()
-	run := s.plans[planID]
-	var sessions []string
-	var directory string
-	if run != nil {
-		directory = run.plan.Directory
-		for _, task := range run.plan.Tasks {
-			if task.SessionID != "" && (task.Status == StatusRunning || task.Status == StatusQueued) {
-				sessions = append(sessions, task.SessionID)
-			}
-		}
-	}
-	s.mu.Unlock()
-	for _, sessionID := range sessions {
-		s.abort(sessionID, directory)
-	}
-}
-
-func (s *Service) createSession(ctx context.Context, directory, title string) (string, error) {
-	body := map[string]interface{}{"title": title}
-	raw, _ := json.Marshal(body)
-	var response struct {
-		ID string `json:"id"`
-	}
-	if err := s.call(ctx, http.MethodPost, "/session", directory, raw, &response); err != nil {
-		return "", err
-	}
-	if response.ID == "" {
-		return "", errors.New("opencode returned an empty session id")
-	}
-	return response.ID, nil
-}
-
-func (s *Service) prompt(ctx context.Context, request PlanRequest, sessionID, prompt string) (string, error) {
-	parts := []map[string]string{{"type": "text", "text": prompt}}
-	body := map[string]interface{}{"agent": firstNonEmpty(request.Mode, "build"), "parts": parts}
-	if request.Provider != "" && request.Model != "" {
-		body["model"] = map[string]string{"providerID": request.Provider, "modelID": request.Model}
-	}
-	raw, _ := json.Marshal(body)
-	if err := s.call(ctx, http.MethodPost, "/session/"+url.PathEscape(sessionID)+"/message", request.Directory, raw, nil); err != nil {
-		return "", err
-	}
-	return s.lastAssistantText(ctx, request.Directory, sessionID), nil
-}
-
-func (s *Service) lastAssistantText(ctx context.Context, directory, sessionID string) string {
-	var turns []struct {
-		Info struct {
-			Role string `json:"role"`
-		} `json:"info"`
-		Parts []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		} `json:"parts"`
-	}
-	if err := s.call(ctx, http.MethodGet, "/session/"+url.PathEscape(sessionID)+"/message", directory, nil, &turns); err != nil {
-		return ""
-	}
-	for i := len(turns) - 1; i >= 0; i-- {
-		if turns[i].Info.Role != "assistant" {
-			continue
-		}
-		var texts []string
-		for _, part := range turns[i].Parts {
-			if part.Type == "text" && strings.TrimSpace(part.Text) != "" {
-				texts = append(texts, part.Text)
-			}
-		}
-		if len(texts) > 0 {
-			return clip(strings.Join(texts, "\n"), 2000)
-		}
-	}
-	return ""
-}
-
-func (s *Service) abort(sessionID, directory string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	_ = s.call(ctx, http.MethodPost, "/session/"+url.PathEscape(sessionID)+"/abort", directory, nil, nil)
-}
-
-func (s *Service) call(ctx context.Context, method, path, directory string, body []byte, out interface{}) error {
-	if !s.openCode.Available() {
-		return errors.New("opencode is unavailable")
-	}
-	var query url.Values
-	if directory != "" {
-		query = url.Values{"directory": {directory}}
-	}
-	var in interface{}
-	if body != nil {
-		in = body
-	}
-	ctx, cancel := context.WithTimeout(ctx, engineCallTimeout)
-	defer cancel()
-	return s.openCode.JSON(ctx, method, path, query, in, out)
 }
 
 func canonicalDirectory(directory string) (string, error) {
@@ -425,15 +387,6 @@ func newPlanID() string {
 	var buf [6]byte
 	_, _ = rand.Read(buf[:])
 	return "plan_" + strconv.FormatInt(time.Now().UnixMilli(), 36) + "_" + hex.EncodeToString(buf[:])
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
-	}
-	return ""
 }
 
 func clip(value string, max int) string {

@@ -14,15 +14,14 @@ import {
   type CustomProviderModelDraft,
 } from "../../store/workspace";
 import { t } from "../../i18n";
-import CustomProviderModelSection, {
-  guessFetchedModelDraft,
-  type ModelProbeResult,
-} from "./CustomProviderModelSection";
+import CustomProviderModelSection from "./CustomProviderModelSection";
 import ProviderQualityCard from "./ProviderQualityCard";
 import {
   extractCustomProviderFormState,
+  guessFetchedModelDraft,
   listExistingCustomProviders,
   PROVIDER_VARIANTS,
+  type ModelProbeResult,
 } from "./custom-endpoint-helpers";
 
 export default function CustomEndpointTab() {

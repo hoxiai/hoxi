@@ -3,11 +3,28 @@ import {
   isCustomOrConfiguredProvider,
   isHoxiCustomProvider,
   isImportedOpenCodeProvider,
+  isNonChatUtilityModelID,
   MASKED_SECRET,
   workspace,
   type CustomProviderModelDraft,
 } from "../../store/workspace";
-import { guessFetchedModelDraft } from "./CustomProviderModelSection";
+
+export interface ModelProbeResult {
+  status: "testing" | "ok" | "error";
+  latencyMs?: number;
+  error?: string;
+}
+
+/** Default capability guess for a model fetched from a provider's model list. */
+export function guessFetchedModelDraft(rm: { id: string; name: string }): CustomProviderModelDraft {
+  const isNonChat = isNonChatUtilityModelID(rm.id);
+  return {
+    id: rm.id,
+    name: rm.name || rm.id,
+    reasoning: !isNonChat,
+    image: !isNonChat,
+  };
+}
 
 export const PROVIDER_VARIANTS = [
   { value: "@ai-sdk/openai-compatible", label: "OpenAI Compatible (/v1/chat/completions)" },

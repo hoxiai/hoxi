@@ -311,11 +311,15 @@ var defaultQoderIntlSlugs = []string{
 	"GLM-5.3", "GLM-5.3-Flash", "Kimi-K2.8-Preview", "Kimi-K3",
 }
 
+// qoderProbeTimeout bounds `--list-models`; tests raise it because a freshly
+// written executable can take seconds to pass macOS's first-launch checks.
+var qoderProbeTimeout = 4 * time.Second
+
 func probeQoderBinaryModels(bin string) ([]qoderBaseModel, bool) {
 	if bin == "" {
 		return nil, false
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), qoderProbeTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, bin, "--list-models")
 	cmd.WaitDelay = time.Second

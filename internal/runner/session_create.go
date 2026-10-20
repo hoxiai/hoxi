@@ -2,6 +2,7 @@ package runner
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -11,33 +12,47 @@ import (
 	"github.com/hoxiai/hoxi/internal/sandbox"
 )
 
+// CreateSessionRequest describes a new Hoxi conversation: the JSON body of
+// POST /api/hoxi/runner/sessions, also used in process (e.g. by convoys).
+type CreateSessionRequest struct {
+	Title          string `json:"title"`
+	Directory      string `json:"directory"`
+	Runtime        string `json:"runtime"`
+	ModelID        string `json:"modelID"`
+	ProviderID     string `json:"providerID"`
+	Mode           string `json:"mode"`
+	SandboxMode    string `json:"sandboxMode"`
+	CommandSandbox bool   `json:"commandSandbox"`
+}
+
 func (s *Service) handleCreateSession(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Title          string `json:"title"`
-		Directory      string `json:"directory"`
-		Runtime        string `json:"runtime"`
-		ModelID        string `json:"modelID"`
-		ProviderID     string `json:"providerID"`
-		Mode           string `json:"mode"`
-		SandboxMode    string `json:"sandboxMode"`
-		CommandSandbox bool   `json:"commandSandbox"`
-	}
+	var body CreateSessionRequest
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid session request")
 		return
 	}
+	info, status, err := s.CreateSession(body, r.URL.Query().Get("directory"))
+	if err != nil {
+		writeJSONError(w, status, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, info)
+}
+
+// CreateSession provisions and stores a new conversation; directory is the
+// fallback project directory when body.Directory is empty.
+func (s *Service) CreateSession(body CreateSessionRequest, directory string) (SessionInfo, int, error) {
 
 	rt := strings.TrimSpace(body.Runtime)
 	if rt == "" {
 		rt = string(RuntimeAntigravity)
 	}
 	if !IsValidRuntime(rt) {
-		writeJSONError(w, http.StatusBadRequest, "unsupported runner runtime: "+rt)
-		return
+		return SessionInfo{}, http.StatusBadRequest, errors.New("unsupported runner runtime: " + rt)
 	}
 	projDir := strings.TrimSpace(body.Directory)
 	if projDir == "" {
-		projDir = strings.TrimSpace(r.URL.Query().Get("directory"))
+		projDir = strings.TrimSpace(directory)
 	}
 	if projDir == "" {
 		projDir = s.rootDir
@@ -48,17 +63,14 @@ func (s *Service) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		_, err = existingDirectory(projDir)
 	}
 	if err != nil {
-		writeJSONError(w, http.StatusBadRequest, err.Error())
-		return
+		return SessionInfo{}, http.StatusBadRequest, err
 	}
 	sandboxMode, err := normalizeSandboxMode(body.SandboxMode)
 	if err != nil {
-		writeJSONError(w, http.StatusBadRequest, err.Error())
-		return
+		return SessionInfo{}, http.StatusBadRequest, err
 	}
 	if body.CommandSandbox && !sandbox.Available() {
-		writeJSONError(w, http.StatusBadRequest, sandbox.UnavailableReason())
-		return
+		return SessionInfo{}, http.StatusBadRequest, errors.New(sandbox.UnavailableReason())
 	}
 	sessionID := GenerateRunnerSessionID(rt)
 
@@ -116,17 +128,15 @@ func (s *Service) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		Turns:          []MessageTurn{},
 	}
 	if err := s.provisionSessionDirectory(&rec); err != nil {
-		writeJSONError(w, http.StatusBadRequest, err.Error())
-		return
+		return SessionInfo{}, http.StatusBadRequest, err
 	}
 	if err := s.store.Put(rec); err != nil {
-		writeJSONError(w, http.StatusInternalServerError, err.Error())
-		return
+		return SessionInfo{}, http.StatusInternalServerError, err
 	}
 	info := rec.ToSessionInfo()
 	s.broadcast(sessionID, SSEEvent{
 		Type:       "session.created",
 		Properties: map[string]interface{}{"info": info},
 	})
-	writeJSON(w, http.StatusOK, info)
+	return info, http.StatusOK, nil
 }

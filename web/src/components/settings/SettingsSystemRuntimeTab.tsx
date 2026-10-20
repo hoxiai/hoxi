@@ -20,7 +20,7 @@ import {
 } from "../../store/workspace";
 import { Spinner } from "../icons";
 import { t } from "../../i18n";
-import { SettingGroup, SettingRow, ToggleSwitch } from "./SettingsModal";
+import { SettingGroup, SettingRow, ToggleSwitch } from "./setting-controls";
 
 export function SystemRuntimeSettingsTab() {
   const [sysInfo, setSysInfo] = createSignal<SystemRuntimeInfo | null>(null);
