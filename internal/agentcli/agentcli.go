@@ -253,6 +253,9 @@ func FormatClaudeModelName(slug string) string {
 	}
 	var verParts []string
 	for _, p := range parts {
+		if len(p) == 8 && isAllDigits(p) {
+			continue
+		}
 		if p != "" && isAllDigits(strings.ReplaceAll(p, ".", "")) {
 			verParts = append(verParts, p)
 		}

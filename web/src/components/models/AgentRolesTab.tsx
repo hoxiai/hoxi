@@ -75,15 +75,9 @@ export default function AgentRolesTab() {
     setSavingKey(agentName);
     setSavedKey(null);
     try {
-      const existingAgentCfg = workspace.globalConfig?.agent?.[agentName] || {};
-      const nextAgentEntry = {
-        ...existingAgentCfg,
-        model: modelKey || null,
-      };
       await updateGlobalModelConfig({
         agent: {
-          ...(workspace.globalConfig?.agent || {}),
-          [agentName]: nextAgentEntry,
+          [agentName]: { model: modelKey || null },
         },
       });
       setSavedKey(agentName);
@@ -117,8 +111,7 @@ export default function AgentRolesTab() {
       if (newAgentModel()) {
         entry.model = newAgentModel();
       }
-      const nextAgent = { ...(cfg?.agent ?? {}), [id]: entry };
-      await updateGlobalModelConfig({ agent: nextAgent });
+      await updateGlobalModelConfig({ agent: { [id]: entry } });
       setNewAgentId("");
       setNewAgentDesc("");
       setNewAgentModel("");
@@ -163,8 +156,7 @@ export default function AgentRolesTab() {
         description: editDesc().trim() || existing.description,
         prompt: editPrompt().trim() || existing.prompt,
       };
-      const nextAgent = { ...(cfg?.agent ?? {}), [id]: entry };
-      await updateGlobalModelConfig({ agent: nextAgent });
+      await updateGlobalModelConfig({ agent: { [id]: entry } });
       await loadAgents(workspace.rootDir || undefined);
       setEditingAgentId(null);
     } finally {

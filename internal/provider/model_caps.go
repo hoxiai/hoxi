@@ -38,11 +38,17 @@ func parseModelVersion(lowerMID string) (major, minor int, ok bool) {
 }
 
 func isLegacyClaudeBudgetModel(lowerMID string) bool {
+	if idx := strings.Index(lowerMID, "claude"); idx >= 0 {
+		lowerMID = lowerMID[idx:]
+	}
 	major, minor, ok := parseModelVersion(lowerMID)
 	return ok && (major < 4 || (major == 4 && minor < 6))
 }
 
 func isLegacyGeminiBudgetModel(lowerMID string) bool {
+	if idx := strings.Index(lowerMID, "gemini"); idx >= 0 {
+		lowerMID = lowerMID[idx:]
+	}
 	major, _, ok := parseModelVersion(lowerMID)
 	return ok && major < 3
 }

@@ -44,13 +44,29 @@ export function AssistantErrorCard(props: { info: MessageInfo }) {
   );
 
   const freeFallbackModel = createMemo(() => {
-    const poolFree = getEffectivePoolCandidates("free")[0];
-    if (poolFree?.providerID && poolFree?.modelID) {
-      return { providerID: poolFree.providerID, modelID: poolFree.modelID };
+    const curPID = workspace.selectedModel?.providerID;
+    const curMID = workspace.selectedModel?.modelID;
+    const errPID = props.info.providerID;
+    const errMID = props.info.modelID;
+    const isSameAsActiveOrFailed = (pid: string, mid: string) =>
+      (curPID === pid && curMID === mid) || (errPID === pid && errMID === mid);
+
+    for (const c of getEffectivePoolCandidates("free")) {
+      if (!c?.providerID || !c?.modelID || isSameAsActiveOrFailed(c.providerID, c.modelID)) {
+        continue;
+      }
+      const prov = workspace.providers.find((p) => p.id === c.providerID);
+      if (prov && isModelFree(c.providerID, c.modelID, prov.models?.[c.modelID])) {
+        return { providerID: c.providerID, modelID: c.modelID };
+      }
     }
+    const connSet = new Set(workspace.connectedProviders);
+    const cfgProviders = workspace.globalConfig?.provider ?? {};
     for (const p of workspace.providers) {
+      const isConn = connSet.has(p.id) || Boolean(cfgProviders[p.id]);
       for (const [mid, mInfo] of Object.entries(p.models || {})) {
-        if (isModelFree(p.id, mid, mInfo)) {
+        if (!isConn && p.id !== "opencode") continue;
+        if (isModelFree(p.id, mid, mInfo) && !isSameAsActiveOrFailed(p.id, mid)) {
           return { providerID: p.id, modelID: mid };
         }
       }

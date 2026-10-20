@@ -234,7 +234,7 @@ func inferCodeBuddyModelSpec(slug string) codeBuddyModelSpec {
 		}
 		return withVendorEffort(codeBuddyModelSpec{multiplier: "1.5x", contextLimit: 200000, outputLimit: 64000, inputCost: 3.00, outputCost: 15.00, image: true, reasoning: true})
 
-	case strings.HasPrefix(lower, "gpt"):
+	case strings.HasPrefix(lower, "gpt") || IsOpenAIOSeriesModel(lower):
 		if strings.Contains(lower, "mini") || strings.Contains(lower, "nano") {
 			return withVendorEffort(codeBuddyModelSpec{multiplier: "0.14x", contextLimit: 1000000, outputLimit: 128000, inputCost: 0.20, outputCost: 0.80, image: true, reasoning: true})
 		}

@@ -73,7 +73,7 @@ func inferOfficialRunnerModelSpec(slug string) (ctxLimit, outLimit int, inCost, 
 	}
 
 	switch {
-	case strings.HasPrefix(lower, "claude"):
+	case strings.HasPrefix(lower, "claude") || lower == "opus" || lower == "sonnet" || lower == "haiku" || lower == "fable":
 		_, _, supportsEffort := inferClaudeModelEfforts(lower)
 		if effSuffix != "" {
 			supportsEffort = true

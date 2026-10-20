@@ -314,7 +314,42 @@ func TestDefaultModelVariantsVersionParsing(t *testing.T) {
 	if !isLegacyGeminiBudgetModel("gemini-2.5-pro") || !isLegacyGeminiBudgetModel("gemini-1.5-flash") {
 		t.Fatal("expected gemini 1.x/2.x to use legacy thinkingBudget")
 	}
-	if isLegacyGeminiBudgetModel("gemini-3-pro") || isLegacyGeminiBudgetModel("gemini-4-ultra") || isLegacyGeminiBudgetModel("gemini-5-pro") {
+	if isLegacyGeminiBudgetModel("gemini-3-pro") || isLegacyGeminiBudgetModel("gemini-4-ultra") || isLegacyGeminiBudgetModel("gemini-5-pro") || isLegacyGeminiBudgetModel("route-1/gemini-3-pro") {
 		t.Fatal("expected gemini 3.x+ to use modern thinkingLevel")
+	}
+	if isLegacyClaudeBudgetModel("route-1/claude-opus-4-6") {
+		t.Fatal("expected route-1/claude-opus-4-6 to ignore route prefix version")
+	}
+}
+
+func TestDeepMergeMapStripsNestedNullsOnMissingParent(t *testing.T) {
+	dst := map[string]interface{}{}
+	deepMergeMap(dst, map[string]interface{}{
+		"mcp": map[string]interface{}{
+			"stale": nil,
+		},
+		"agent": map[string]interface{}{
+			"build": map[string]interface{}{
+				"model": nil,
+			},
+			"custom": map[string]interface{}{
+				"description": "Custom mode",
+				"model":       nil,
+			},
+		},
+	})
+	if _, hasMCP := dst["mcp"]; hasMCP {
+		t.Fatalf("expected all-null nested mcp patch not to create empty/null map, got %+v", dst["mcp"])
+	}
+	agentMap, _ := dst["agent"].(map[string]interface{})
+	if _, hasBuild := agentMap["build"]; hasBuild {
+		t.Fatalf("expected all-null agent.build patch not to persist null model, got %+v", agentMap["build"])
+	}
+	customMap, ok := agentMap["custom"].(map[string]interface{})
+	if !ok || customMap["description"] != "Custom mode" {
+		t.Fatalf("expected agent.custom to be kept, got %+v", agentMap)
+	}
+	if _, hasModel := customMap["model"]; hasModel {
+		t.Fatalf("expected null model key to be omitted from agent.custom, got %+v", customMap)
 	}
 }

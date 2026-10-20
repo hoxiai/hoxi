@@ -71,4 +71,11 @@ func TestCodeBuddyAndQoderModelDiscovery(t *testing.T) {
 	if resolvedIntl != intlBin || cleanIntl != "claude-sonnet-4-6" {
 		t.Fatalf("expected Intl bin %q and clean model claude-sonnet-4-6, got %q / %q", intlBin, resolvedIntl, cleanIntl)
 	}
+
+	if got := FormatClaudeModelName("claude-sonnet-4-6-20251001-thinking"); got != "Claude Sonnet 4.6" {
+		t.Fatalf("FormatClaudeModelName with date before suffix = %q, want Claude Sonnet 4.6", got)
+	}
+	if got := FormatClaudeModelName("claude-fable-6-1"); got != "Claude Fable 6.1" {
+		t.Fatalf("FormatClaudeModelName(claude-fable-6-1) = %q, want Claude Fable 6.1", got)
+	}
 }
