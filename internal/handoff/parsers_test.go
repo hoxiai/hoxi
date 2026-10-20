@@ -82,7 +82,7 @@ func setupSyntheticCLIHome(t *testing.T, workspaceDir string) string {
 	if err := os.MkdirAll(rolloutDir, 0o755); err != nil {
 		t.Fatalf("mkdir codex rollout: %v", err)
 	}
-	_ = os.WriteFile(filepath.Join(codexDir, "config.toml"), []byte("model = \"gpt-5-codex\"\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(codexDir, "config.toml"), []byte("model = \"o3\"\n"), 0o644)
 	_ = os.WriteFile(filepath.Join(codexDir, "models_cache.json"), []byte(`{"client_version":"0.42.0","models":[{"slug":"gpt-5-codex"},{"slug":"o3"}]}`), 0o644)
 	_ = os.WriteFile(filepath.Join(codexDir, "auth.json"), []byte(`{"auth_mode":"api_key","OPENAI_API_KEY":"sk-codex-test-key","tokens":{"access_token":"acc-123","refresh_token":"ref-123","account_id":"acct-1"}}`), 0o644)
 
@@ -171,7 +171,7 @@ INSERT INTO conversation_summaries VALUES (
 	4,
 	'2026-10-17T10:10:00Z',
 	'2026-10-17T10:00:00Z',
-	'["file:///unrelated/path"]',
+	`+sqlEscapeLiteral(`["file://`+filepath.ToSlash(workspaceDir)+`"]`)+`,
 	'DONE',
 	0,
 	0
@@ -449,13 +449,19 @@ func TestSyntheticDiscoveryAndDetailAllSources(t *testing.T) {
 	}
 
 	// 2. OpenAI Codex
-	codexList, codexStats := scanCodexSessions(workspaceDir, "codex")
+	codexList, codexStats := scanCodexSessions(workspaceDir, "feat/codex")
 	if !codexStats.Installed || codexStats.SessionCount != 1 || len(codexList) != 1 {
 		t.Fatalf("unexpected codex scan: stats=%+v list=%+v", codexStats, codexList)
+	}
+	if codexList[0].Model != "gpt-5-codex" || codexList[0].GitBranch != "feat/codex" || codexList[0].GitCommit != "12345678" || codexList[0].Summary != "Implement codex feature in codex_feat.go" {
+		t.Fatalf("unexpected codex summary fields: %+v", codexList[0])
 	}
 	codexDetail, err := loadCodexSessionDetail("codex-sess-1", workspaceDir, workspaceDir)
 	if err != nil {
 		t.Fatalf("loadCodexSessionDetail failed: %v", err)
+	}
+	if codexDetail.Summary.Model != "gpt-5-codex" || codexDetail.Summary.GitBranch != "feat/codex" || codexDetail.Summary.GitCommit != "12345678" {
+		t.Fatalf("unexpected codex detail summary fields: %+v", codexDetail.Summary)
 	}
 	if len(codexDetail.Turns) != 2 || !reflect.DeepEqual(codexDetail.ChangedFiles, []string{"codex_feat.go"}) {
 		t.Fatalf("unexpected codex detail: turns=%d changed=%v", len(codexDetail.Turns), codexDetail.ChangedFiles)
@@ -465,9 +471,12 @@ func TestSyntheticDiscoveryAndDetailAllSources(t *testing.T) {
 	}
 
 	// 3. Gemini / Antigravity
-	geminiList, geminiStats := scanGeminiAntigravitySessions(workspaceDir, "Gemini")
+	geminiList, geminiStats := scanGeminiAntigravitySessions(workspaceDir, "Refactor")
 	if !geminiStats.Installed || geminiStats.SessionCount != 1 || len(geminiList) != 1 {
 		t.Fatalf("unexpected gemini scan: stats=%+v list=%+v", geminiStats, geminiList)
+	}
+	if geminiList[0].Title != "Gemini Refactor" || geminiList[0].Summary != "Refactor gemini.go and add tests" || geminiList[0].CWD != workspaceDir || !geminiList[0].MatchesCWD || geminiList[0].UpdatedAt == 0 {
+		t.Fatalf("unexpected gemini summary fields: %+v", geminiList[0])
 	}
 	geminiDetail, err := loadGeminiAntigravitySessionDetail("gemini-sess-1", workspaceDir, workspaceDir)
 	if err != nil {
@@ -536,6 +545,9 @@ func TestSyntheticDiscoveryAndDetailAllSources(t *testing.T) {
 	}
 	if qoderDetail.Summary.Model != "qmodel_38max" || len(qoderDetail.Turns) != 2 || !reflect.DeepEqual(qoderDetail.ChangedFiles, []string{"qoder_out.go"}) {
 		t.Fatalf("unexpected qoder detail: model=%s turns=%d files=%v", qoderDetail.Summary.Model, len(qoderDetail.Turns), qoderDetail.ChangedFiles)
+	}
+	if !strings.Contains(qoderDetail.LastRecap, "Qoder Tech Stack: Go + SolidJS") {
+		t.Fatalf("expected qoder agent_memory in LastRecap, got %q", qoderDetail.LastRecap)
 	}
 
 	// 8. External OpenCode CLI (opencode.db)

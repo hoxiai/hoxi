@@ -75,7 +75,7 @@ func scanCodexSessions(targetDir, query string) ([]ExternalSessionSummary, Exter
 		}
 	}
 
-	sqlQuery := `SELECT id, rollout_path, created_at, updated_at, cwd, title, COALESCE(git_branch,''), COALESCE(git_sha,''), COALESCE(model,''), COALESCE(first_user_message,'')
+	sqlQuery := `SELECT id, rollout_path, created_at, updated_at, cwd, title, COALESCE(git_branch,'') AS git_branch, COALESCE(git_sha,'') AS git_sha, COALESCE(model,'') AS model, COALESCE(first_user_message,'') AS first_user_message
 FROM threads
 WHERE archived = 0 AND title != 'Guardian review'
 ORDER BY updated_at DESC
@@ -143,7 +143,7 @@ func loadCodexSessionDetail(sessionID, hintCWD, activeRoot string) (*ExternalSes
 		return nil, fmt.Errorf("codex state database not found")
 	}
 	safeID := strings.ReplaceAll(strings.ReplaceAll(sessionID, "\x00", ""), "'", "''")
-	sqlQuery := fmt.Sprintf(`SELECT id, rollout_path, created_at, updated_at, cwd, title, COALESCE(git_branch,''), COALESCE(git_sha,''), COALESCE(model,''), COALESCE(first_user_message,'')
+	sqlQuery := fmt.Sprintf(`SELECT id, rollout_path, created_at, updated_at, cwd, title, COALESCE(git_branch,'') AS git_branch, COALESCE(git_sha,'') AS git_sha, COALESCE(model,'') AS model, COALESCE(first_user_message,'') AS first_user_message
 FROM threads WHERE id = '%s' LIMIT 1;`, safeID)
 
 	rawJSON, err := codexCommandOutput("sqlite3", "-readonly", "-cmd", ".timeout 5000", "-json", dbPath, sqlQuery)

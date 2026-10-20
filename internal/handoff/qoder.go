@@ -480,7 +480,7 @@ func loadQoderProjectMemories(cwd, sessionID, localDBPath string) string {
 	// 1. Check SQLite agent_memory if localDBPath exists
 	if localDBPath != "" && sessionID != "" {
 		safeID := strings.ReplaceAll(strings.ReplaceAll(sessionID, "\x00", ""), "'", "''")
-		sqlQuery := fmt.Sprintf("SELECT COALESCE(title,''), COALESCE(content,'') FROM agent_memory WHERE session_id = '%s' ORDER BY gmt_modified DESC LIMIT 8;", safeID)
+		sqlQuery := fmt.Sprintf("SELECT COALESCE(title,'') AS title, COALESCE(content,'') AS content FROM agent_memory WHERE session_id = '%s' ORDER BY gmt_modified DESC LIMIT 8;", safeID)
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		cmd := exec.CommandContext(ctx, "sqlite3", "-readonly", "-cmd", ".timeout 3000", "-json", localDBPath, sqlQuery)
 		cmd.WaitDelay = time.Second
@@ -488,8 +488,8 @@ func loadQoderProjectMemories(cwd, sessionID, localDBPath string) string {
 		cancel()
 		if err == nil && len(bytes.TrimSpace(rawOut)) > 0 {
 			var rows []struct {
-				Title   string `json:"COALESCE(title,'')"`
-				Content string `json:"COALESCE(content,'')"`
+				Title   string `json:"title"`
+				Content string `json:"content"`
 			}
 			if json.Unmarshal(rawOut, &rows) == nil {
 				for _, r := range rows {

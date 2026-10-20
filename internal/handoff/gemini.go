@@ -131,7 +131,7 @@ func scanGeminiAntigravitySessions(targetDir, query string) ([]ExternalSessionSu
 			}
 		}
 
-		sqlQuery := `SELECT conversation_id, COALESCE(title,''), COALESCE( substr(preview,1,280), '' ), step_count, COALESCE(last_modified_time,''), COALESCE(last_user_input_time,''), COALESCE(workspace_uris,''), COALESCE(status,'')
+		sqlQuery := `SELECT conversation_id, COALESCE(title,'') AS title, COALESCE(substr(preview,1,280),'') AS preview, step_count, COALESCE(last_modified_time,'') AS last_modified_time, COALESCE(last_user_input_time,'') AS last_user_input_time, COALESCE(workspace_uris,'') AS workspace_uris, COALESCE(status,'') AS status
 FROM conversation_summaries
 WHERE nesting_depth = 0 AND killed = 0
 ORDER BY last_modified_time DESC
