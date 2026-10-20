@@ -13,7 +13,6 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/hoxiai/hoxi/internal/privacy"
 	"github.com/hoxiai/hoxi/internal/runner"
 )
 
@@ -125,9 +124,6 @@ func TestCLISingleTurnAndREPLWithGateway(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
-	})
-	mux.HandleFunc("/api/hoxi/privacy", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(privacy.Status{Version: privacy.Version, Accepted: true})
 	})
 	mux.HandleFunc("/api/hoxi/sessions", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {

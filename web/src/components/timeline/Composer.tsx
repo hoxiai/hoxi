@@ -15,7 +15,6 @@ import {
   appSettings,
   clearReviewComments,
   consumeComposerDraftEdit,
-  ensureAIConsent,
   forkFromMessage,
   getComposerSkill,
   getComposerSkillNotice,
@@ -284,7 +283,6 @@ export default function Composer() {
     const attachments = imgAttach.toPromptAttachments();
     const currentSkill = selectedSkill() ? { ...selectedSkill()! } : undefined;
     if ((!withPastes.trim() && !hasReviews && attachments.length === 0 && !currentSkill) || sending() || switchingSandbox()) return;
-    if (!ensureAIConsent()) return;
     setEnhanceState(null);
     setEnhanceError(null);
     const draftSessionID = sessionID();
@@ -356,7 +354,6 @@ export default function Composer() {
       setEnhanceError(t("timeline.enhanceNoModel"));
       return;
     }
-    if (!ensureAIConsent()) return;
     setEnhancing(true);
     setEnhanceError(null);
     try {

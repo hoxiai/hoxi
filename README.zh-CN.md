@@ -135,6 +135,9 @@ npm --prefix web test && npm --prefix web run build
 - **[HANDOFF_AND_CLI_BRIDGE.md](HANDOFF_AND_CLI_BRIDGE.md)**: 8 大外部 CLI 会话解析、统一 IR 物化与本地凭证桥接规范
 - **[BROWSER.md](BROWSER.md)**: 会话级隔离 Headless Chrome 审查器、人工接管机制与安全边界
 - **[docs/releases.md](docs/releases.md)** & **[docs/auto-updates.md](docs/auto-updates.md)**: DMG 签名公证、Sparkle EdDSA 自动更新与一键发版流水线
+- **[CONTRIBUTING.md](CONTRIBUTING.md)**: 本地开发流程、必跑门禁与 PR 规范
+- **[SECURITY.md](SECURITY.md)**: 漏洞上报渠道与本地安全边界
+- **[docs/telemetry.md](docs/telemetry.md)**: 启动上报的确切字段与关闭方式
 - **[AGENTS.md](AGENTS.md)**: 工程分层约束与开发准则
 
 ---
@@ -142,3 +145,5 @@ npm --prefix web test && npm --prefix web run build
 ## 开源协议
 
 Apache-2.0 © [Hoxi (hoxi.ai)](https://hoxi.ai)
+
+第三方组件声明：[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)

@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hoxiai/hoxi/internal/privacy"
 	"github.com/hoxiai/hoxi/internal/runner"
 	"github.com/hoxiai/hoxi/internal/skills"
 )
@@ -152,22 +151,6 @@ func TestConversationRoutesToOwningBackend(t *testing.T) {
 	}
 }
 
-// Guards must judge the rewritten path, or the facade would bypass AI consent.
-func TestConversationPromptsStillRequireConsent(t *testing.T) {
-	gw, calls := newConversationGateway(t)
-	for _, id := range []string{"ses_cld_owned", "ses_oc"} {
-		res := serve(gw, http.MethodPost, "/api/hoxi/sessions/"+id+"/prompt_async", `{"parts":[{"type":"text","text":"hi"}]}`)
-		if res.Code != http.StatusForbidden || !strings.Contains(res.Body.String(), "privacy_consent_required") {
-			t.Fatalf("%s prompt without consent: %d %s", id, res.Code, res.Body.String())
-		}
-	}
-	for _, c := range calls() {
-		if strings.HasSuffix(c.path, "/prompt_async") {
-			t.Fatalf("prompt reached OpenCode without consent: %+v", c)
-		}
-	}
-}
-
 func TestSkillSelectionAdoptsOldSessionAndStripsUpstreamField(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("HOXI_SESSION_STORE_DIR", t.TempDir())
@@ -210,7 +193,6 @@ func TestSkillSelectionAdoptsOldSessionAndStripsUpstreamField(t *testing.T) {
 	defer upstream.Close()
 
 	gw := New(upstream.Listener.Addr().(*net.TCPAddr).Port, "pass", root, nil, nil)
-	_ = gw.privacy.Set(privacy.Status{Accepted: true, Version: privacy.Version})
 
 	// 1. Fetch skill list via gateway
 	listRes := serve(gw, http.MethodGet, "/api/hoxi/skills/list?directory="+url.QueryEscape(root), "")

@@ -13,7 +13,6 @@ import {
 } from "../store/workspace";
 import { forkFromMessage, removeSessionFromStore, selectSession } from "../store/workspace-sessions";
 import { submitSessionPrompt } from "../store/workspace-session-messages";
-import { privacy, setPrivacy } from "../store/privacy";
 import { drainNextQueuedPrompt, enqueueSessionPrompt, sendQueuedPromptNow } from "../store/workspace-queue-subagents";
 import { assertDeepEqual, assertEqual, assertTrue, describe, it } from "./test-harness";
 
@@ -29,8 +28,6 @@ const configB: SessionAIConfig = {
 let nextID = 0;
 
 async function withAIFixture(run: (a: string, b: string, storage: Storage) => void | Promise<void>) {
-  const savedPrivacy = { ...privacy };
-  setPrivacy({ loaded: true, accepted: true, saving: false });
   const saved = structuredClone(unwrap(workspace));
   const originalAPI = { ...hoxiAPI };
   const storageDescriptor = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
@@ -71,7 +68,6 @@ async function withAIFixture(run: (a: string, b: string, storage: Storage) => vo
     for (const id of [a, b]) setWorkspace("messagesBySession", id, [turn(id, { role: "user" })]);
     await run(a, b, storage);
   } finally {
-    setPrivacy(savedPrivacy);
     Object.assign(hoxiAPI, originalAPI);
     setWorkspace(reconcile(saved));
     globalThis.setTimeout = originalTimeout;

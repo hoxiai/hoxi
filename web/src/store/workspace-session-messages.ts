@@ -7,7 +7,6 @@ import {
   upsertTurnPart,
 } from "./message-lookup";
 import { t } from "../i18n";
-import { ensureAIConsent } from "./privacy";
 import { hoxiAPI, resolveRunnerRuntimeForProvider, type SkillSelection } from "../services/api";
 import type { StreamFrameBatch } from "../services/sse";
 import type { MessageInfo, MessagePart } from "../services/sse-types";
@@ -249,7 +248,6 @@ export async function submitSessionPrompt(
     await runGoalCommand(goalCommand, targetSessionID ?? workspace.activeSessionID);
     return "";
   }
-  if (!ensureAIConsent()) throw new Error(t("privacy.consentRequired"));
   let id = targetSessionID ?? workspace.activeSessionID;
   const isBrandNewSession = !id;
   if (id && isSessionDeleted(id)) throw new Error(t("timeline.sessionUnavailable"));

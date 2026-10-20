@@ -23,10 +23,11 @@ Optional account, update and discovery services are separate from inference.
 
 ## Legal Drafts
 
-- [English privacy notice](../web/public/legal/privacy-en.html)
-- [Chinese privacy notice](../web/public/legal/privacy-zh.html)
-- [English terms](../web/public/legal/terms-en.html)
-- [Chinese terms](../web/public/legal/terms-zh.html)
+No legal notices are bundled with the desktop app. The canonical drafts live in
+the separately operated website theme (`app/themes/hoxi/public/legal/`), which
+serves them from the marketing site, and the desktop app only links out to the
+published pages. The copies that previously lived in `web/public/legal/` were
+deleted once the in-app AI-consent gate was removed.
 
 These are self-contained HTML review drafts, not effective published policies.
 Their date is a draft version, not an asserted effective date. They intentionally
@@ -104,7 +105,7 @@ pages and confirm any different canonical paths across all clients.
 ## Software and Artifact Blockers
 
 - [ ] Create a release-specific dependency/license inventory for Go, frontend packages, bundled OpenCode, Wails, browser/runtime components, copied assets/fonts/icons and any bundled or downloaded CLI. Verify exact versions, licenses, redistribution permissions, attribution/notice delivery and source-offer duties where applicable. A top-level license label alone is not an inventory or legal clearance.
-- [x] Run local integrated checks on the current working tree (2026-10-18): TypeScript, bilingual i18n validation, Vite production build, `go build ./...`, the five requested Go packages (`privacy`, `gateway`, `provider`, `auth`, `leaderboard`), and the full frontend suite pass. Frontend result: **125 passed, 0 failed** after adding the missing `dataset` field to the new-thread test's DOM mock; no production workaround was needed. Vite transformed **2557 modules** and emitted a non-fatal >500 kB chunk warning. All four legal HTML files exist in `web/dist/legal/`; they remain review drafts, not approved live website pages.
+- [x] Run local integrated checks on the current working tree (2026-10-18): TypeScript, bilingual i18n validation, Vite production build, `go build ./...`, the four requested Go packages (`gateway`, `provider`, `auth`, `leaderboard`), and the full frontend suite pass. Frontend result: **125 passed, 0 failed** after adding the missing `dataset` field to the new-thread test's DOM mock; no production workaround was needed. Vite transformed **2557 modules** and emitted a non-fatal >500 kB chunk warning.
 - [ ] Run remaining release-specific checks and record exact candidate/artifact evidence. See [release verification](releases.md). This local run is not the full release workflow, race/vet coverage, signing/notarization or a clean-machine acceptance run.
 
 Local verification used Node `v24.15.0`, npm/npx `11.12.1`, and Go
@@ -117,12 +118,12 @@ npm --prefix web run check:i18n
 npm --prefix web run build
 npm --prefix web test
 go build ./...
-go test ./internal/privacy ./internal/gateway ./internal/provider ./internal/auth ./internal/leaderboard
+go test ./internal/gateway ./internal/provider ./internal/auth ./internal/leaderboard
 ```
 
 An additional uncached `go test -count=1 -json` run over the same five packages
 reported **165 passing test/subtest results**, zero failed and zero skipped:
-privacy 11, gateway 114, provider 11, auth 26, leaderboard 3. Counts include
+gateway 114, provider 11, auth 26, leaderboard 3. Counts include
 subtests, not only top-level test functions.
 
 - [ ] Produce the exact versioned app/DMG with the correct Fastix Limited-controlled Developer ID identity and required signing settings. Record team identity, nested executable signatures, entitlements, architecture, minimum macOS, embedded versions and artifact SHA-256. An ad-hoc build or script's existence is not production signing evidence.

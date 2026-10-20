@@ -74,6 +74,9 @@ func newInstallID() string {
 // ReportLaunch 上报一次启动事件。首次启动（新 installId）上报 event=install，其余为 launch。
 // 已登录设备会附带设备令牌，便于服务端关联到用户；上报失败仅记日志。
 func ReportLaunch(logger *slog.Logger) {
+	if !Enabled() {
+		return
+	}
 	go func() {
 		id, created, err := LoadOrCreateInstallID()
 		if err != nil && logger != nil {

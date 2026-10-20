@@ -133,6 +133,9 @@ npm --prefix web test && npm --prefix web run build
 - **[HANDOFF_AND_CLI_BRIDGE.md](HANDOFF_AND_CLI_BRIDGE.md)**: Cross-CLI session handoff IR, local credential discovery, and protocol bridges
 - **[BROWSER.md](BROWSER.md)**: Isolated Headless Chrome inspector, manual takeover, and security boundaries
 - **[docs/releases.md](docs/releases.md)** & **[docs/auto-updates.md](docs/auto-updates.md)**: DMG notarization, Sparkle EdDSA appcast, and release pipeline
+- **[CONTRIBUTING.md](CONTRIBUTING.md)**: Local workflow, required gates and pull-request rules
+- **[SECURITY.md](SECURITY.md)**: Vulnerability reporting and the local security model
+- **[docs/telemetry.md](docs/telemetry.md)**: Exactly what the launch beacon sends and how to opt out
 - **[AGENTS.md](AGENTS.md)**: Engineering constraints and module boundaries
 
 ---
@@ -140,3 +143,5 @@ npm --prefix web test && npm --prefix web run build
 ## License
 
 Apache-2.0 © [Hoxi (hoxi.ai)](https://hoxi.ai)
+
+Third-party notices: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)

@@ -1,7 +1,7 @@
 // web/src/components/timeline/composer-hooks.ts
 import { type Accessor, createEffect, createSignal, onCleanup, type Setter } from "solid-js";
 import { t } from "../../i18n";
-import { PROMPT_HISTORY_KEY, PROMPT_HISTORY_CLEARED_EVENT } from "../../store/privacy";
+import { PROMPT_HISTORY_KEY, PROMPT_HISTORY_CLEARED_EVENT } from "../../store/prompt-history";
 import { hoxiAPI, type PromptAttachment } from "../../services/api";
 import {
   applyAutocompleteToken,

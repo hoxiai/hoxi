@@ -24,7 +24,6 @@ import (
 	"github.com/hoxiai/hoxi/internal/handoff"
 	"github.com/hoxiai/hoxi/internal/leaderboard"
 	"github.com/hoxiai/hoxi/internal/orchestration"
-	"github.com/hoxiai/hoxi/internal/privacy"
 	"github.com/hoxiai/hoxi/internal/provider"
 	"github.com/hoxiai/hoxi/internal/recall"
 	"github.com/hoxiai/hoxi/internal/runner"
@@ -54,7 +53,6 @@ type Gateway struct {
 	auth                  *auth.Service
 	updater               *updater.Checker
 	leaderboard           *leaderboard.Service
-	privacy               *privacy.Service
 	sandbox               *sandbox.Manager
 	codeIndex             *codeindex.Service
 	recallSvc             *recall.Service
@@ -161,7 +159,6 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 		auth:         authSvc,
 		updater:      updaterSvc,
 		leaderboard:  leaderboardSvc,
-		privacy:      privacy.New(""),
 		sandbox:      sandbox.NewManager(""),
 		codeIndex:    codeindex.NewService(""),
 		forge:        forgeSvc,
@@ -259,9 +256,6 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !g.guardUpstreamPassthrough(w, r) {
 		return
 	}
-	if !g.guardPrivacy(w, r) {
-		return
-	}
 	g.observeUpdateDirectory(r)
 	g.mux.ServeHTTP(w, r)
 }
@@ -270,7 +264,7 @@ func (g *Gateway) registerRoutes(distFS fs.FS) {
 	diagnosticHandler := diagnostics.Handler()
 	g.mux.Handle("/api/hoxi/diagnostics", diagnosticHandler)
 	g.mux.Handle("/api/hoxi/diagnostics/", diagnosticHandler)
-	g.mux.HandleFunc("/api/hoxi/privacy", g.handlePrivacy)
+	g.mux.HandleFunc("/api/hoxi/telemetry", g.handleTelemetry)
 	g.mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	})
@@ -295,7 +289,6 @@ func (g *Gateway) registerRoutes(distFS fs.FS) {
 			"rootDir":      g.rootDir,
 			"wsBaseURL":    g.wsBaseURL,
 			"status":       st,
-			"privacyScope": privacy.Scope,
 		}
 		if tok != "" {
 			resp["gatewayToken"] = tok

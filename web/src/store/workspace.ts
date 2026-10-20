@@ -609,7 +609,7 @@ export * from "./daily-pulse";
 export * from "./auth-state";
 export * from "./updater-state";
 export * from "./leaderboard-state";
-export * from "./privacy";
+export * from "./prompt-history";
 export * from "./diagnostics";
 export * from "./file-links";
 export * from "./message-lookup";
@@ -617,6 +617,7 @@ export * from "./question-answers";
 export * from "./auto-models";
 export * from "./skills";
 export * from "./terminal-context";
+export * from "./telemetry";
 export * from "./session-capabilities";
 
 

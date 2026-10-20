@@ -144,6 +144,12 @@ bundle_and_sign_macos_app() {
     echo "✅ Bundled standalone opencode sidecar (${OPENCODE_SRC}) into ${app_path}/Contents/MacOS/opencode"
   fi
 
+  for notice in LICENSE NOTICE THIRD_PARTY_NOTICES.md; do
+    if [[ -f "${notice}" ]]; then
+      cp "${notice}" "${app_path}/Contents/Resources/${notice}"
+    fi
+  done
+
   node scripts/sparkle.mjs configure "${app_path}" "${is_release}"
   node scripts/release-artifact.mjs configure-app "${app_path}" "${BUILD_VERSION}"
 

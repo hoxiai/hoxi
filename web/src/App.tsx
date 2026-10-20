@@ -1,8 +1,6 @@
 import { createSignal, onCleanup, onMount } from "solid-js";
 import ThreePaneShell from "./components/layout/ThreePaneShell";
 import NetworkStatusBanner from "./components/layout/NetworkStatusBanner";
-import { PrivacyConsentDialog } from "./components/settings/PrivacyControls";
-import { loadPrivacy } from "./store/privacy";
 import { resolveParentSessionID } from "./components/timeline/SubagentSessionBanner";
 import { hoxiAPI } from "./services/api";
 import { connectEventStream } from "./services/sse";
@@ -76,7 +74,6 @@ export default function App() {
     });
 
     void (async () => {
-      void loadPrivacy();
       try {
         const boot = await hoxiAPI.getBootstrap();
         const bootRoot = isInvalidProjectPath(boot.rootDir)
@@ -328,5 +325,5 @@ export default function App() {
     connected={() => workspace.connected}
     streamStarted={eventStreamStarted}
     onRetry={() => retryEventStream?.()}
-  /><PrivacyConsentDialog /></>;
+  /></>;
 }

@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/hoxiai/hoxi/internal/handoff"
-	"github.com/hoxiai/hoxi/internal/privacy"
 	"github.com/hoxiai/hoxi/internal/runner"
 )
 
@@ -92,7 +91,7 @@ func ConnectOrSpawn(
 	for _, addr := range candidates {
 		c := NewClient(addr, true)
 		if c.Healthy(ctx) {
-			_ = c.EnsurePrivacyConsent(ctx)
+			c.ensureGatewayToken(ctx)
 			return c, func() {}, nil
 		}
 	}
@@ -105,7 +104,7 @@ func ConnectOrSpawn(
 		return nil, nil, err
 	}
 	c := NewClient(baseURL, false)
-	_ = c.EnsurePrivacyConsent(ctx)
+	c.ensureGatewayToken(ctx)
 	return c, cleanup, nil
 }
 
@@ -125,24 +124,15 @@ func (c *Client) Healthy(ctx context.Context) bool {
 	return resp.StatusCode == http.StatusOK
 }
 
-// EnsurePrivacyConsent records AI execution consent for explicit CLI invocations
-// and captures the per-boot gateway token if advertised by /api/hoxi/bootstrap.
-func (c *Client) EnsurePrivacyConsent(ctx context.Context) error {
+// ensureGatewayToken captures the per-boot gateway token advertised by
+// /api/hoxi/bootstrap when the gateway requires one.
+func (c *Client) ensureGatewayToken(ctx context.Context) {
 	var boot struct {
 		GatewayToken string `json:"gatewayToken"`
 	}
 	if err := c.doJSON(ctx, http.MethodGet, "/api/hoxi/bootstrap", nil, &boot); err == nil && strings.TrimSpace(boot.GatewayToken) != "" {
 		c.token = strings.TrimSpace(boot.GatewayToken)
 	}
-	var st privacy.Status
-	if err := c.doJSON(ctx, http.MethodGet, "/api/hoxi/privacy", nil, &st); err == nil && st.Accepted && st.Version == privacy.Version {
-		return nil
-	}
-	payload := map[string]interface{}{
-		"version":  privacy.Version,
-		"accepted": true,
-	}
-	return c.doJSON(ctx, http.MethodPut, "/api/hoxi/privacy", payload, nil)
 }
 
 // CLIModelItem describes an available model across OpenCode or a native CLI runtime.

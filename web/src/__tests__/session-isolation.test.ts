@@ -4,7 +4,6 @@ import { appSettings, setAppSettings } from "../store/settings";
 import { openDiffInInspector, setWorkspace, workspace } from "../store/workspace";
 import { newIsolatedSession, switchActiveSessionSandboxMode } from "../store/session-sandbox";
 import { submitSessionPrompt } from "../store/workspace-session-messages";
-import { privacy, setPrivacy } from "../store/privacy";
 import {
   applySessionDiffEvent,
   cancelScheduledWorktreeStatus,
@@ -19,8 +18,6 @@ import { assertEqual, assertTrue, describe, it } from "./test-harness";
 let nextID = 0;
 
 async function withSessionFixture(run: (id: string, meta: WorktreeMeta) => Promise<void>) {
-  const savedPrivacy = { ...privacy };
-  setPrivacy({ loaded: true, accepted: true, saving: false });
   const saved = structuredClone(unwrap(workspace));
   const sandboxMode = appSettings.defaultSandboxMode;
   const originalAPI = { ...hoxiAPI };
@@ -40,7 +37,6 @@ async function withSessionFixture(run: (id: string, meta: WorktreeMeta) => Promi
   try {
     await run(id, meta);
   } finally {
-    setPrivacy(savedPrivacy);
     cancelScheduledWorktreeStatus(id);
     Object.assign(hoxiAPI, originalAPI);
     setAppSettings("defaultSandboxMode", sandboxMode);

@@ -32,7 +32,6 @@
 │   ├── handoff/                      # Cross-CLI session handoff (Claude/Codex/Gemini/Grok/OpenCode/Trae/Qoder/CodeBuddy) + local CLI bridge & materializer
 │   ├── leaderboard/                  # Model / endpoint leaderboard aggregation & cache
 │   ├── opencode/                     # OpenCode binary resolver, installer, daemon supervision & browser plugin overlay
-│   ├── privacy/                      # Versioned consent store for gateway-initiated AI execution
 │   ├── provider/                     # Provider config, models.json, LLM client, probing, audit & telemetry
 │   ├── runner/                       # Multi-runtime execution engine (OpenCode/Claude/Antigravity/Qoder/CodeBuddy): process adapters, translators, hook gates, session store & revert
 │   ├── statusbar/                    # Running/Attention tracker & macOS NSStatusBar (CGo)
@@ -43,7 +42,7 @@
 │   ├── src/
 │   │   ├── components/               # Modular UI by domain (layout, timeline, inspector, models, handoff, approval, terminal, settings, icons)
 │   │   ├── i18n/                     # Reactive t(key, params), auto-inferred types & en-US/zh-CN locale modules
-│   │   ├── services/                 # Pure HTTP/REST/SSE/Browser transport clients (api.ts, sse.ts, browser.ts, runner-api.ts, privacy.ts)
+│   │   ├── services/                 # Pure HTTP/REST/SSE/Browser transport clients (api.ts, sse.ts, browser.ts, runner-api.ts)
 │   │   ├── store/                    # SolidJS reactive store & domain modules (flat barrel export in workspace.ts)
 │   │   └── __tests__/                # Node-based unit/integration tests (sse, session-isolation, permissions, …)
 │   └── scripts/                      # check-i18n.ts, check-lines.ts (line & boundary lint), run-tests.ts
@@ -106,7 +105,7 @@
      - `store/` 负责响应式状态、领域数据计算与本地持久化，**严禁**反向 `import` 任何 `components/` 模块；所有子模块统一在 [`web/src/store/workspace.ts`](web/src/store/workspace.ts) 底部扁平重导出，禁止在子模块末尾做二级链式 `export *`。
      - `components/` 按业务域正交归位（`layout` 仅放窗口骨架与导航栏，独立业务弹窗归入 `models`、`handoff`、`settings`、`approval` 等对应目录）。
    - **Go 后端四层单向依赖 (`app/cli -> gateway -> 业务领域包 -> 基础底座包`)**：
-     - 业务领域包（`runner`, `handoff`, `worktree`, `provider`, `browser`, `opencode`, `workspace`, `auth`, `leaderboard`, `updater`, `privacy`）与底座包（`statusbar`, `claudeconfig`, `agyhook`, `diagnostics`, `buildinfo`）**严禁反向 `import` `internal/gateway`、`internal/app` 或 `internal/cli`**。
+     - 业务领域包（`runner`, `handoff`, `worktree`, `provider`, `browser`, `opencode`, `workspace`, `auth`, `leaderboard`, `updater`）与底座包（`statusbar`, `claudeconfig`, `agyhook`, `diagnostics`, `buildinfo`）**严禁反向 `import` `internal/gateway`、`internal/app` 或 `internal/cli`**。
      - 各子包必须使用各自明确的 Receiver 类型（`*Gateway` / `*Service` / `*Manager`），严禁定义跨包伪装别名（如 `type desktopGateway = Service`）；Hoxi 内部自发 LLM 请求统一复用 `internal/provider/http.go` 的 `callSimpleLLM`。
 
 2. **OpenCode 上游零侵入 (Upstream Zero-Fork)**
@@ -124,10 +123,10 @@
 5. **任务流状态与回滚闭环 (Task Lifecycle & Control Integrity)**
    - 会话处于 `busy` 时必须支持实时纠偏（`Steer`）与中止（`Stop`），工具卡片（`ToolCard`）与推理抽屉（`ThoughtBox`）必须准确反映 `pending` / `running` / `completed` / `error` 四态与耗时，且状态变更需实时同步至 macOS 状态栏（`Running` / `Attention`）。
 
-6. **安全门控、隐私授权、子进程消毒与资源边界 (Safety, Privacy, Subprocess & Resource Hygiene)**
+6. **安全门控、网络外发边界、子进程消毒与资源边界 (Safety, Egress, Subprocess & Resource Hygiene)**
    - **破坏性操作人工审批**：包含破坏性指令（`rm`, `sudo`, `chmod`, `chown`, `diskutil`, `mkfs`, `git push --force`, `git reset --hard`）的 Shell 操作严禁自动放行，必须在 `hoxi-permissions.js` 及多运行时 PreToolUse Hook 中返回 `"ask"`，触发状态栏 `Attention` 与 `<ApprovalGateCard />` 人工确认。
    - **本地网关与连接复用**：Go 网关仅监听 `127.0.0.1`，反向代理 `http.Transport` 必须配置 `Proxy: nil`（防系统代理 502）与 `FlushInterval: -1`（SSE 零缓冲）并复用长生命周期 `http.Transport`（严禁单次请求新建 Transport 导致连接泄漏）；读取外部 HTTP 响应或进程输出必须使用 `io.LimitReader` 限制体积。
-   - **网关自发 AI 调用隐私门控 (`internal/privacy`)**：凡由 Hoxi 网关后台主动发起的 LLM 调用（如 Commit Message 生成、分支命名、代码审计），必须先通过 `privacy.Store` 授权检查，未经授权严禁静默外发代码上下文。
+   - **网络外发边界 (`Network Egress Boundary`)**：Hoxi 为开源本地工具，不提供托管的 AI 服务，AI 请求直连用户配置的提供商或 CLI，不经 Hoxi 中转。网关辅助外发（匿名启动上报、更新检查、账号登录、模型价格/排行榜同步）严禁携带提示词、代码、Diff 或会话内容；后台发起的 LLM 调用必须在 UI 中明确说明目的地，不得静默外发代码上下文。
    - **外部子进程非交互消毒与 SQLite 防锁 (`Subprocess & SQLite Hygiene`)**：执行 `git` 或外部 CLI 子进程必须绑定 `context.Context` 超时并剥离交互式环境变量（设置 `GIT_TERMINAL_PROMPT=0`、`GCM_INTERACTIVE=never`，剥离 `GIT_ASKPASS`/`SSH_ASKPASS`/`GIT_EDITOR`）；读取外部 CLI 的 SQLite 库必须携带只读模式与 `_busy_timeout`，严禁阻塞外部进程。
    - **本地状态原子落盘与日志脱敏 (`Atomic Persistence & Secret Redaction`)**：`~/.hoxi/` 与 `.hoxi/` 状态文件写入必须采用「写临时文件 + `os.Rename` 原子替换」并加锁保护；写入诊断环（`internal/diagnostics`）或日志前必须自动脱敏 `Authorization`、`Bearer`、`x-api-key`、`OPENCODE_SERVER_PASSWORD` 等敏感凭据。
 

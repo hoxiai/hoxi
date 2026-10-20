@@ -4,7 +4,6 @@ import { hoxiAPI, type CommitAndPushResponse } from "../services/api";
 import type { SnapshotFileDiff } from "../services/sse-types";
 import { commitModelSpec, executeTaskCommitAndPush, generateSmartCommitMessage, setCommitModelSpec } from "../store/git-commit";
 import { sessionDirectory, setWorkspace, workspace } from "../store/workspace";
-import { privacy, setPrivacy } from "../store/privacy";
 import { assertDeepEqual, assertEqual, assertTrue, describe, it } from "./test-harness";
 
 let nextID = 0;
@@ -22,7 +21,6 @@ async function withCommitFixture(run: (fixture: {
     send: Parameters<typeof hoxiAPI.sendPromptAsync>[];
   };
 }) => Promise<void>) {
-  const savedPrivacy = { ...privacy };
   const saved = structuredClone(unwrap(workspace));
   const originalAPI = { ...hoxiAPI };
   const originalSpec = commitModelSpec();
@@ -58,7 +56,6 @@ async function withCommitFixture(run: (fixture: {
   globalThis.setTimeout = (() => 0) as unknown as typeof setTimeout;
   globalThis.fetch = async () => { throw new Error("Unexpected network request in git commit test"); };
   try {
-    setPrivacy({ loaded: true, accepted: true, saving: false, dialogOpen: false });
     setCommitModelSpec("none");
     setWorkspace("worktreeBySession", reconcile({}));
     setWorkspace("messagesBySession", reconcile({}));
@@ -102,7 +99,6 @@ async function withCommitFixture(run: (fixture: {
     assertDeepEqual(calls.commit, [], "dispatch must not commit directly");
     assertDeepEqual(calls.push, [], "dispatch must not push directly");
   } finally {
-    setPrivacy(savedPrivacy);
     Object.assign(hoxiAPI, originalAPI);
     setWorkspace(reconcile(saved));
     setCommitModelSpec(originalSpec);
@@ -247,19 +243,6 @@ describe("task commit and push", () => {
       assertEqual(calls.send.length, 1);
       assertDeepEqual(workspace.messagesBySession[id], messages);
       assertEqual(workspace.statusBySession[id]?.type, "idle");
-      assertDeepEqual(calls.worktreeDiff, []);
-    });
-  });
-
-  it("requires privacy consent before dispatch or optimistic updates", async () => {
-    await withCommitFixture(async ({ id, calls }) => {
-      const messages = structuredClone(unwrap(workspace.messagesBySession[id]));
-      setPrivacy({ accepted: false, dialogOpen: false });
-      await assertRejects(() => executeTaskCommitAndPush(id), t("privacy.consentRequired"));
-      assertEqual(privacy.dialogOpen, true);
-      assertDeepEqual(calls.send, []);
-      assertDeepEqual(workspace.messagesBySession[id], messages);
-      assertEqual(workspace.statusBySession[id], undefined);
       assertDeepEqual(calls.worktreeDiff, []);
     });
   });
