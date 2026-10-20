@@ -13,6 +13,7 @@ import { diagnostics } from "./diagnostics";
 import { network } from "./network";
 import { skills } from "./skills";
 import { commandPalette } from "./commandPalette";
+import { forge } from "./forge";
 
 export const enUS = {
   common,
@@ -29,6 +30,7 @@ export const enUS = {
   network,
   skills,
   commandPalette,
+  forge,
 };
 
 export default enUS;

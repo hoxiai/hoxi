@@ -4,11 +4,9 @@ import {
   ArrowUpFromLine,
   Check,
   ChevronRight,
-  ExternalLink,
   FolderGit2,
   GitBranch,
   GitCommitHorizontal,
-  GitPullRequestArrow,
   Sparkles,
 } from "lucide-solid";
 import { hoxiAPI } from "../../services/api";
@@ -24,6 +22,7 @@ import {
 import { DiffChanges } from "../icons";
 import { t } from "../../i18n";
 import DiffFileTree from "./diff-file-tree";
+import PullRequestBadge from "./PullRequestBadge";
 import { openRemoteCompareURL, synthesizeAICommitMessage } from "./pierre-diff-parts";
 import AICommitFallbackToast from "./ai-commit-fallback-toast";
 
@@ -202,26 +201,20 @@ function RepoDiffCard(props: {
             </button>
           </Show>
 
-          <Show
-            when={
-              compareURL() &&
+          <PullRequestBadge
+            directory={props.bucket.directory}
+            branch={props.bucket.branch}
+            compareURL={compareURL()}
+            canCreate={
+              Boolean(compareURL()) &&
               (props.bucket.aheadCount > 0 ||
                 props.bucket.hasUpstream ||
                 Boolean(committedHash()))
             }
-          >
-            <button
-              type="button"
-              disabled={pushing() || committing()}
-              onClick={() => void onOpenRepoPR()}
-              title={t("inspector.diffs.createPrTooltip")}
-              class="hoxi-press inline-flex items-center gap-1 rounded-md border border-[var(--accent-border)] bg-[var(--accent-surface)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--accent-primary)] hover:opacity-90 disabled:opacity-40 cursor-pointer"
-            >
-              <GitPullRequestArrow size={10} />
-              <span>{t("inspector.diffs.createPrBtn")}</span>
-              <ExternalLink size={8} />
-            </button>
-          </Show>
+            disabled={pushing() || committing()}
+            onCreate={onOpenRepoPR}
+            compact
+          />
 
           <Show when={props.bucket.diffs.length > 0}>
             <button

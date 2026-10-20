@@ -14,6 +14,7 @@ import { diagnostics } from "./diagnostics";
 import { network } from "./network";
 import { skills } from "./skills";
 import { commandPalette } from "./commandPalette";
+import { forge } from "./forge";
 
 export const zhCN: I18nDictionary = {
   common,
@@ -30,6 +31,7 @@ export const zhCN: I18nDictionary = {
   network,
   skills,
   commandPalette,
+  forge,
 };
 
 export default zhCN;

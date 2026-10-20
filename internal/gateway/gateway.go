@@ -20,6 +20,7 @@ import (
 	"github.com/hoxiai/hoxi/internal/buildinfo"
 	"github.com/hoxiai/hoxi/internal/codeindex"
 	"github.com/hoxiai/hoxi/internal/diagnostics"
+	"github.com/hoxiai/hoxi/internal/forge"
 	"github.com/hoxiai/hoxi/internal/handoff"
 	"github.com/hoxiai/hoxi/internal/leaderboard"
 	"github.com/hoxiai/hoxi/internal/orchestration"
@@ -58,6 +59,7 @@ type Gateway struct {
 	codeIndex             *codeindex.Service
 	recallSvc             *recall.Service
 	orchestration         *orchestration.Service
+	forge                 *forge.Service
 	onOpenDirectoryDialog func() (string, error)
 	onFocusDesktop        func(directory, sessionID string)
 	dialogMu              sync.RWMutex
@@ -141,6 +143,7 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 	authSvc := auth.NewService(nil)
 	updaterSvc := updater.NewChecker(buildinfo.Version, nil)
 	leaderboardSvc := leaderboard.NewService("", nil)
+	forgeSvc := forge.NewService()
 
 	g := &Gateway{
 		openCodePort: openCodePort,
@@ -161,6 +164,7 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 		privacy:      privacy.New(""),
 		sandbox:      sandbox.NewManager(""),
 		codeIndex:    codeindex.NewService(""),
+		forge:        forgeSvc,
 	}
 	g.recallSvc = recall.NewService(&gatewayRecallSource{
 		g:      g,
@@ -362,6 +366,9 @@ func (g *Gateway) registerRoutes(distFS fs.FS) {
 	}
 	if g.orchestration != nil {
 		g.orchestration.RegisterRoutes(g.mux)
+	}
+	if g.forge != nil {
+		g.forge.RegisterRoutes(g.mux)
 	}
 
 	if g.auth != nil {

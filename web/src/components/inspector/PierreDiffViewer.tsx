@@ -1,6 +1,6 @@
 // web/src/components/inspector/PierreDiffViewer.tsx
 import { createEffect, createMemo, createSignal, on, onCleanup, Show } from "solid-js";
-import { ArrowUpFromLine, Check, Columns2, ExternalLink, FolderSync, GitCommitHorizontal, GitPullRequestArrow, RefreshCw, Rows2, ShieldCheck, Sparkles } from "lucide-solid";
+import { ArrowUpFromLine, Check, Columns2, FolderSync, GitCommitHorizontal, GitPullRequestArrow, RefreshCw, Rows2, ShieldCheck, Sparkles } from "lucide-solid";
 import { hoxiAPI } from "../../services/api";
 import {
   activeDirectory,
@@ -25,6 +25,7 @@ import { t } from "../../i18n";
 import AICommitFallbackToast from "./ai-commit-fallback-toast";
 import ObserverAuditBanner from "./ObserverAuditBanner";
 import WorkspaceReviewPanel from "./WorkspaceReviewPanel";
+import PullRequestBadge from "./PullRequestBadge";
 import DiffEmptyState from "./pierre-diff-empty";
 import DiffFileTree from "./diff-file-tree";
 import MultiRepoDiffView from "./multi-repo-diff-view";
@@ -322,20 +323,19 @@ export default function PierreDiffViewer() {
             <span>{pushing() ? t("inspector.diffs.pushingBtn") : `↑${activeWt()?.aheadCount ?? 0}`}</span>
           </button>
         </Show>
-        <Show when={compareURL() && ((activeWt()?.aheadCount ?? 0) > 0 || activeWt()?.hasUpstream || Boolean(committedHash()))}>
-          <button
-            type="button"
-            disabled={pushing() || committing()}
-            onClick={() => void onOpenCreatePR()}
-            title={t("inspector.diffs.createPrTooltip")}
-            aria-label={t("inspector.diffs.createPrBtn")}
-            class="shrink-0 inline-flex items-center gap-1 rounded-md border border-[var(--accent-border)] bg-[var(--accent-surface)] px-2 py-1 text-[11px] font-medium text-[var(--accent-primary)] hover:opacity-90 disabled:opacity-40 cursor-pointer"
-          >
-            <GitPullRequestArrow size={11} />
-            <span>{t("inspector.diffs.createPrBtn")}</span>
-            <ExternalLink size={9} />
-          </button>
-        </Show>
+        <PullRequestBadge
+          directory={activeWt()?.directory || activeDirectory()}
+          branch={activeWt()?.branch}
+          compareURL={compareURL()}
+          canCreate={
+            Boolean(compareURL()) &&
+            ((activeWt()?.aheadCount ?? 0) > 0 ||
+              Boolean(activeWt()?.hasUpstream) ||
+              Boolean(committedHash()))
+          }
+          disabled={pushing() || committing()}
+          onCreate={onOpenCreatePR}
+        />
         <Show when={diffs().length > 0}>
           <button type="button" disabled={isAuditing() || !workspace.activeSessionID}
             onClick={() => workspace.activeSessionID && void runSessionCodeAudit(workspace.activeSessionID, true)}
@@ -478,16 +478,15 @@ export default function PierreDiffViewer() {
               <span class="truncate">{t("inspector.diffs.commitSuccess", { hash: hash() })}</span>
             </div>
             <Show when={compareURL()}>
-              <button
-                type="button"
+              <PullRequestBadge
+                directory={activeWt()?.directory || activeDirectory()}
+                branch={activeWt()?.branch}
+                compareURL={compareURL()}
+                canCreate={Boolean(compareURL())}
                 disabled={pushing()}
-                onClick={() => void onOpenCreatePR()}
-                class="hoxi-press shrink-0 inline-flex items-center gap-1 rounded-md border border-[var(--ok-border)] bg-[var(--bg-panel)]/80 px-2 py-0.5 text-[11px] font-sans font-medium text-[var(--ok-text)] hover:bg-[var(--bg-panel)] cursor-pointer"
-              >
-                <GitPullRequestArrow size={10} />
-                <span>{t("inspector.diffs.createPrBtn")}</span>
-                <ExternalLink size={9} />
-              </button>
+                onCreate={onOpenCreatePR}
+                compact
+              />
             </Show>
           </div>
         )}
