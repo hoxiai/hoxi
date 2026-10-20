@@ -152,7 +152,7 @@ func (s *Store) appendLocked(ss *storedSession, touch bool, extra ...turnLogEntr
 		ss.rec.UpdatedAt, ss.metaDirty = time.Now().UnixMilli(), true
 	}
 	if err := s.appendTurnEntries(ss.rec.ID, entries); err != nil {
-		ss.pending = append(ss.pending, extra...)
+		ss.pending = retainLatestEntries(ss.pending, extra)
 		return
 	}
 	ss.logLines += len(entries)
@@ -165,6 +165,26 @@ func (s *Store) appendLocked(ss *storedSession, touch bool, extra ...turnLogEntr
 			ss.metaDirty = false
 		}
 	}
+}
+
+// A persistent write failure must retain the current state, not every streamed
+// version of a growing part (which would itself grow quadratically in memory).
+func retainLatestEntries(pending, extra []turnLogEntry) []turnLogEntry {
+	for _, next := range extra {
+		replaced := false
+		for i, previous := range pending {
+			sameInfo := next.Info != nil && previous.Info != nil && next.Info.ID == previous.Info.ID
+			samePart := next.Part != nil && previous.Part != nil && next.Part.MessageID == previous.Part.MessageID && next.Part.ID == previous.Part.ID
+			if sameInfo || samePart {
+				pending[i], replaced = next, true
+				break
+			}
+		}
+		if !replaced {
+			pending = append(pending, next)
+		}
+	}
+	return pending
 }
 
 func dirtyEntriesLocked(ss *storedSession) []turnLogEntry {

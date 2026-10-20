@@ -105,3 +105,23 @@ func TestTurnLockRegistryReleasesUnusedEntries(t *testing.T) {
 		t.Fatalf("retained %d unused turn locks", len(locks.entries))
 	}
 }
+
+func TestChildCleanupFlushesAndUnpinsAbortedTranscript(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "sessions")
+	svc := NewService(t.TempDir(), nil, nil, dir)
+	if err := svc.store.Put(SessionRecord{ID: "child", Subagent: true}); err != nil {
+		t.Fatal(err)
+	}
+	svc.setChildBusy("child", true)
+	svc.store.UpsertTurnInfo("child", MessageInfo{ID: "message", SessionID: "child"})
+	svc.store.UpsertTurnPart("child", MessagePart{ID: "part", SessionID: "child", MessageID: "message", Type: "text"})
+	svc.store.AppendPartDelta("child", "message", "part", "unfinished child output")
+	svc.setChildBusy("child", false)
+	if svc.store.records["child"].active {
+		t.Fatal("aborted child remained pinned")
+	}
+	rec, _ := NewStore(dir).Get("child")
+	if rec.Turns[0].Parts[0].Text != "unfinished child output" {
+		t.Fatal("cleanup lost child deltas")
+	}
+}

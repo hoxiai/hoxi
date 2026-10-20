@@ -33,7 +33,7 @@ describe("TurnWindow windowing slice & prompt cycle protection", () => {
   it("keeps a long live activity anchor stable and renders each carried step once", () => {
     const turns = [mockTurn("prompt", "user"), ...Array.from({ length: 1000 }, (_, i) => {
       const turn = mockTurn(`step_${i}`);
-      turn.parts = [{ type: "reasoning", id: `part_${i}`, messageID: turn.info.id, sessionID: "test-ses", text: "work" }];
+      turn.parts = [{ type: "reasoning", id: `part_${i}`, messageID: turn.info.id, sessionID: "test-ses", text: "work", time: { start: 1, end: 2 } }];
       return turn;
     })];
     const slice = computeTurnWindowSlice(turns, INITIAL_VISIBLE_TURNS);

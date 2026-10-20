@@ -35,6 +35,27 @@ func TestStoreConversationLockDoesNotBlockOtherSessionsOrMetadata(t *testing.T) 
 	}
 }
 
+func TestStoreChildRevisionDoesNotCancelParentRevision(t *testing.T) {
+	s := NewStore(t.TempDir())
+	for _, rec := range []SessionRecord{{ID: "parent"}, {ID: "child", ParentID: "parent"}} {
+		if err := s.Put(rec); err != nil {
+			t.Fatal(err)
+		}
+	}
+	info := MessageInfo{ID: "msg", SessionID: "child"}
+	s.UpsertTurnInfo("child", info)
+	s.UpsertTurnPart("child", MessagePart{ID: "part", MessageID: "msg", Type: "text"})
+	s.AppendPartDelta("child", "msg", "part", "x")
+	s.UpsertTurnInfo("parent", MessageInfo{ID: "msg", SessionID: "parent"})
+	_, before := s.ChildSessionIDs("parent")
+	s.UpsertTurnInfo("parent", MessageInfo{ID: "msg", SessionID: "parent"})
+	s.AppendPartDelta("child", "msg", "part", "y")
+	_, after := s.ChildSessionIDs("parent")
+	if after == before {
+		t.Fatal("simultaneous parent/child changes reused a stale diff stamp")
+	}
+}
+
 func TestStoreEvictsIdleTranscriptsAndReloadsDeltas(t *testing.T) {
 	dir := t.TempDir()
 	s := seedStore(t, dir)
@@ -115,7 +136,12 @@ func TestStoreFailedWriteRetainsLatestDeltasUntilRetry(t *testing.T) {
 	if err := os.WriteFile(sessionDir, []byte("block writes"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	s.UpsertTurnPart("ses_cld_1", MessagePart{ID: "prt_1", MessageID: "msg_1", SessionID: "ses_cld_1", Type: "text", Text: "replacement"})
+	for i := 0; i < 20; i++ {
+		s.UpsertTurnPart("ses_cld_1", MessagePart{ID: "prt_1", MessageID: "msg_1", SessionID: "ses_cld_1", Type: "text", Text: "replacement"})
+	}
+	if len(s.records["ses_cld_1"].pending) != 1 {
+		t.Fatal("failed writes retained superseded part snapshots")
+	}
 	s.AppendPartDelta("ses_cld_1", "msg_1", "prt_1", "!")
 	s.cacheMaxSessions = 0
 	s.SetActive("ses_cld_1", false)

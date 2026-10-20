@@ -307,7 +307,7 @@ func (s *Store) ChildSessionIDs(parentID string) ([]string, int64) {
 	for id, ss := range s.records {
 		if ss.meta.ParentID == parentID {
 			ids = append(ids, id)
-			stamp ^= ss.cache.stamp
+			stamp += ss.cache.stamp
 		}
 	}
 	return ids, stamp

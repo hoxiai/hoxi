@@ -58,12 +58,16 @@ func (s *Service) broadcastRouted(defaultID string, evts []SSEEvent) {
 
 func (s *Service) setChildBusy(id string, busy bool) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if busy {
 		s.childBusy[id] = true
 	} else {
 		delete(s.childBusy, id)
 	}
+	s.mu.Unlock()
+	if !busy {
+		s.store.FlushSession(id)
+	}
+	s.store.SetActive(id, busy)
 }
 
 // busySessionIDs lists sessions with a CLI process plus running subagents.
