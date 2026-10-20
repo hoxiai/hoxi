@@ -577,6 +577,12 @@ func deepMergeMap(dst, src map[string]interface{}) {
 				deepMergeMap(dMap, vMap)
 				continue
 			}
+			dMap := make(map[string]interface{}, len(vMap))
+			deepMergeMap(dMap, vMap)
+			if len(dMap) > 0 || len(vMap) == 0 {
+				dst[k] = dMap
+			}
+			continue
 		}
 		dst[k] = v
 	}

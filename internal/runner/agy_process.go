@@ -73,13 +73,13 @@ func inferOfficialRunnerModelSpec(slug string) (ctxLimit, outLimit int, inCost, 
 	}
 
 	switch {
-	case strings.HasPrefix(lower, "claude"):
+	case strings.HasPrefix(lower, "claude") || lower == "opus" || lower == "sonnet" || lower == "haiku" || lower == "fable":
 		_, _, supportsEffort := inferClaudeModelEfforts(lower)
 		if effSuffix != "" {
 			supportsEffort = true
 		}
 		switch {
-		case strings.Contains(lower, "opus"):
+		case strings.Contains(lower, "opus") || strings.Contains(lower, "fable"):
 			return 200000, 64000, 5.00, 25.00, true, true
 		case strings.Contains(lower, "haiku"):
 			return 200000, 64000, 0.80, 4.00, true, supportsEffort
@@ -95,7 +95,7 @@ func inferOfficialRunnerModelSpec(slug string) (ctxLimit, outLimit int, inCost, 
 		default:
 			return 1000000, 65536, 1.25, 10.00, true, true
 		}
-	case strings.HasPrefix(lower, "gpt") || strings.HasPrefix(lower, "o1") || strings.HasPrefix(lower, "o3") || strings.HasPrefix(lower, "o4"):
+	case strings.HasPrefix(lower, "gpt") || agentcli.IsOpenAIOSeriesModel(lower):
 		switch {
 		case strings.Contains(lower, "nano"):
 			return 400000, 128000, 0.10, 0.40, true, reasoning

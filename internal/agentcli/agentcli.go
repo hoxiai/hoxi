@@ -221,17 +221,13 @@ func CachedAgyCLISlugs() []string {
 
 // FormatClaudeModelName derives a human-readable label for any Claude model slug or alias
 // (e.g., "claude-sonnet-4-6" -> "Claude Sonnet 4.6", "claude-haiku-4-5-20251001" -> "Claude Haiku 4.5")
-// without requiring a hardcoded map per point version.
+// without requiring a hardcoded map per point version or tier.
 func FormatClaudeModelName(slug string) string {
 	trimmed := strings.TrimSpace(slug)
 	lower := strings.ToLower(trimmed)
 	switch lower {
-	case "opus":
-		return "Claude Opus"
-	case "sonnet":
-		return "Claude Sonnet"
-	case "haiku":
-		return "Claude Haiku"
+	case "opus", "sonnet", "haiku", "fable":
+		return "Claude " + strings.ToUpper(lower[:1]) + lower[1:]
 	}
 	if !strings.HasPrefix(lower, "claude-") {
 		return trimmed
@@ -243,15 +239,12 @@ func FormatClaudeModelName(slug string) string {
 	tierIdx := -1
 	var tierTitle string
 	for i, p := range parts {
-		switch p {
-		case "opus":
-			tierIdx, tierTitle = i, "Opus"
-		case "sonnet":
-			tierIdx, tierTitle = i, "Sonnet"
-		case "haiku":
-			tierIdx, tierTitle = i, "Haiku"
+		if p == "latest" || p == "thinking" {
+			continue
 		}
-		if tierIdx >= 0 {
+		if isAllASCIIAlpha(p) {
+			tierIdx = i
+			tierTitle = strings.ToUpper(p[:1]) + p[1:]
 			break
 		}
 	}
@@ -260,6 +253,9 @@ func FormatClaudeModelName(slug string) string {
 	}
 	var verParts []string
 	for _, p := range parts {
+		if len(p) == 8 && isAllDigits(p) {
+			continue
+		}
 		if p != "" && isAllDigits(strings.ReplaceAll(p, ".", "")) {
 			verParts = append(verParts, p)
 		}
@@ -268,6 +264,18 @@ func FormatClaudeModelName(slug string) string {
 		return "Claude " + tierTitle
 	}
 	return "Claude " + tierTitle + " " + strings.Join(verParts, ".")
+}
+
+func isAllASCIIAlpha(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < 'a' || s[i] > 'z' {
+			return false
+		}
+	}
+	return true
 }
 
 func isAllDigits(s string) bool {

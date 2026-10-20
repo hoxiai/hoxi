@@ -285,29 +285,30 @@ export function computeSmartDefaultCandidates(poolID: string): AutoPoolCandidate
 
       if (free) {
         let s = 50;
-        if (/coder|claude|sonnet|gemini-2\.5|deepseek|qwen3|glm-4/i.test(lowerKey)) s += 40;
+        if (/coder|claude|sonnet|gemini|deepseek|qwen|glm|kimi|minimax/i.test(lowerKey)) s += 40;
         if (p.source === "runner" || p.id !== "opencode") s += 20;
         freeList.push({ cand, score: s });
       }
 
       if (
-        /deepseek-chat|deepseek-v3|coder|sonnet|gemini-2\.5-flash|gemini-3-flash|glm-4|glm-5|gpt-5-mini|gpt-4\.1|kimi|minimax/i.test(
+        /deepseek|coder|sonnet|gemini.*flash|glm|gpt-.*(mini|nano|luna)|gpt-4|kimi|minimax|qwen.*(plus|coder|flash)/i.test(
           lowerKey
         ) ||
         free
       ) {
         let s = free ? 45 : 80;
-        if (/sonnet|deepseek-v3|qwen3-coder|gemini-2\.5-flash|glm-4\.6|glm-5/i.test(lowerKey)) s += 30;
+        if (/sonnet|deepseek|qwen.*coder|gemini.*flash|glm/i.test(lowerKey)) s += 30;
         dailyList.push({ cand, score: s });
       }
 
       if (
-        /opus|sonnet-4|gpt-5|o3|gemini-2\.5-pro|gemini-3-pro|gemini-4|deepseek-r1|deepseek-reasoner|qwen3-max|qwq/i.test(
+        /opus|fable|sonnet|gpt-(?!.*(mini|nano|luna))|\/o\d+(-|\b)|gemini.*(pro|ultra|argon)|deepseek-(r\d+|reasoner|.*pro)|qwen.*max|qwq/i.test(
           lowerKey
         )
       ) {
         let s = 70;
-        if (/opus|gpt-5|gemini-.*-pro|sonnet-4/i.test(lowerKey)) s += 35;
+        if (/opus|fable|gpt-(?!.*(mini|nano|luna))|gemini.*(pro|ultra|argon)|sonnet/i.test(lowerKey))
+          s += 35;
         if (!free) s += 15;
         frontierList.push({ cand, score: s });
       }

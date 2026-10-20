@@ -233,7 +233,7 @@ func inferQoderModelSpec(id string) qoderBaseModel {
 		return withVendorEffort(qoderBaseModel{id: cleanID, name: name, multiplier: "1.4x", contextLimit: 1000000, outputLimit: 64000, inputCost: 1.50, outputCost: 6.00, image: true, reasoning: true})
 
 	case strings.HasPrefix(lower, "claude"):
-		if strings.Contains(lower, "opus") {
+		if strings.Contains(lower, "opus") || strings.Contains(lower, "fable") {
 			return withVendorEffort(qoderBaseModel{id: cleanID, name: name, multiplier: "2.0x", contextLimit: 200000, outputLimit: 64000, inputCost: 5.00, outputCost: 25.00, image: true, reasoning: true})
 		}
 		if strings.Contains(lower, "haiku") {
@@ -241,7 +241,7 @@ func inferQoderModelSpec(id string) qoderBaseModel {
 		}
 		return withVendorEffort(qoderBaseModel{id: cleanID, name: name, multiplier: "1.1x", contextLimit: 200000, outputLimit: 64000, inputCost: 3.00, outputCost: 15.00, image: true, reasoning: true})
 
-	case strings.HasPrefix(lower, "gpt"):
+	case strings.HasPrefix(lower, "gpt") || IsOpenAIOSeriesModel(lower):
 		if strings.Contains(lower, "mini") || strings.Contains(lower, "nano") {
 			return withVendorEffort(qoderBaseModel{id: cleanID, name: name, multiplier: "0.2x", contextLimit: 400000, outputLimit: 128000, inputCost: 0.25, outputCost: 1.00, image: true, reasoning: true})
 		}
