@@ -82,6 +82,7 @@ export const leftNav = {
   handoffTakingOver: "Importing…",
   handoffCliBannerTitle: "Detected Tools",
   handoffCliBannerDesc: "Local CLI sessions available to import",
+  handoffCliBannerLoading: "Detecting local CLI tools…",
   handoffCliImportBtn: "Import Models",
   handoffCliSyncModel: "Sync and select the CLI model",
   handoffCliModelUnavailable: "The CLI model ({model}) is unavailable in Hoxi. The current model was not changed.",

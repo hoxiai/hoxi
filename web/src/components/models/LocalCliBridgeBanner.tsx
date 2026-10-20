@@ -7,6 +7,7 @@ import { t } from "../../i18n";
 
 export default function LocalCliBridgeBanner() {
   const [tools, setTools] = createSignal<LocalCLIStatusItem[]>([]);
+  const [loading, setLoading] = createSignal(true);
   const [busyID, setBusyID] = createSignal<string | null>(null);
   const [errorMsg, setErrorMsg] = createSignal<string | null>(null);
 
@@ -16,6 +17,8 @@ export default function LocalCliBridgeBanner() {
       setTools((res.tools || []).filter((item) => item.installed));
     } catch {
       /* ignore */
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -36,7 +39,43 @@ export default function LocalCliBridgeBanner() {
   };
 
   return (
-    <Show when={tools().length > 0}>
+    <>
+      <Show when={loading()}>
+        <div
+          aria-busy="true"
+          aria-live="polite"
+          class="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/70 p-4 space-y-3 animate-pulse select-none pointer-events-none"
+        >
+          <div class="flex items-center justify-between gap-3">
+            <div class="flex items-center gap-2.5 min-w-0">
+              <div class="h-8 w-8 shrink-0 rounded-xl bg-[var(--bg-hover)]" />
+              <div class="min-w-0 space-y-1.5">
+                <div class="h-3 w-24 rounded-md bg-[var(--bg-hover)]" />
+                <div class="text-[11.5px] text-[var(--text-muted)]">
+                  {t("leftNav.handoffCliBannerLoading")}
+                </div>
+              </div>
+            </div>
+            <div class="h-8 w-24 shrink-0 rounded-xl bg-[var(--bg-hover)]" />
+          </div>
+
+          <div class="grid grid-cols-3 gap-2.5">
+            <For each={[0, 1, 2, 3, 4, 5]}>
+              {() => (
+                <div class="flex items-center justify-between gap-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-3 py-2">
+                  <div class="min-w-0 space-y-1.5">
+                    <div class="h-3 w-14 rounded-md bg-[var(--bg-hover)]" />
+                    <div class="h-2.5 w-10 rounded-xs bg-[var(--bg-inset)]" />
+                  </div>
+                  <div class="h-6 w-16 shrink-0 rounded-lg bg-[var(--bg-inset)]" />
+                </div>
+              )}
+            </For>
+          </div>
+        </div>
+      </Show>
+
+      <Show when={!loading() && tools().length > 0}>
       <div class="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/70 p-4 space-y-3">
         <div class="flex items-center justify-between gap-3">
           <div class="flex items-center gap-2.5 min-w-0">
@@ -144,6 +183,7 @@ export default function LocalCliBridgeBanner() {
           </div>
         </Show>
       </div>
-    </Show>
+      </Show>
+    </>
   );
 }

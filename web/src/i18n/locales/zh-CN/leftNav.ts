@@ -83,6 +83,7 @@ export const leftNav: LeftNavI18n = {
   handoffTakingOver: "导入中…",
   handoffCliBannerTitle: "已检测工具",
   handoffCliBannerDesc: "可导入本机 CLI 会话",
+  handoffCliBannerLoading: "正在检测本地工具…",
   handoffCliImportBtn: "导入模型",
   handoffCliSyncModel: "同步并选用 CLI 使用的模型",
   handoffCliModelUnavailable: "CLI 模型（{model}）在 Hoxi 中不可用，未切换当前模型",
