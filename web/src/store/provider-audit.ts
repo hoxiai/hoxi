@@ -16,37 +16,18 @@ import {
   pushSample,
   schedulePersistTelemetry,
 } from "./provider-telemetry";
+import { updateSessionAI } from "./session-ai";
 import {
-  updateSessionAI,
-  sendPrompt,
-  sessionDirectory,
+  OBSERVER_AUTO_AUDIT_KEY,
+  OBSERVER_MODEL_KEY,
   setWorkspace,
   workspace,
   type SelectedModel,
-} from "./workspace";
-
-export const OBSERVER_MODEL_KEY = "hoxi-observer-model:v1";
-export const OBSERVER_AUTO_AUDIT_KEY = "hoxi-observer-auto-audit:v1";
+} from "./workspace-state";
+import { sessionDirectory } from "./session-query";
+import { submitSessionPrompt } from "./session-goal";
 
 const auditedFingerprintsBySession = new Map<string, string>();
-
-export function initialObserverModel(): string {
-  try {
-    return localStorage.getItem(OBSERVER_MODEL_KEY) || "";
-  } catch {
-    return "";
-  }
-}
-
-export function initialObserverAutoAudit(): boolean {
-  try {
-    const raw = localStorage.getItem(OBSERVER_AUTO_AUDIT_KEY);
-    if (raw === "false") return false;
-    return true;
-  } catch {
-    return true;
-  }
-}
 
 export function setObserverModelRole(fullKey: string) {
   const trimmed = fullKey.trim();
@@ -356,5 +337,5 @@ export async function applyAuditFeedbackToSession(
     ...issueLines,
   ].join("\n");
 
-  await sendPrompt(promptText, sessionID);
+  await submitSessionPrompt(promptText, sessionID);
 }

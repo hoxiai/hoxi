@@ -3,17 +3,16 @@ import { hoxiAPI, type WorktreeMeta } from "../services/api";
 import { appSettings, setAppSettings } from "../store/settings";
 import { openDiffInInspector, setWorkspace, workspace } from "../store/workspace";
 import { newIsolatedSession, switchActiveSessionSandboxMode } from "../store/session-sandbox";
-import { submitSessionPrompt } from "../store/workspace-session-messages";
+import { loadSessionMessages, selectSession } from "../store/workspace-sessions";
+import { assertEqual, assertTrue, describe, it } from "./test-harness";
+import { sessionDirectory } from "../store/session-query";
 import {
   applySessionDiffEvent,
   cancelScheduledWorktreeStatus,
-  loadSessionMessages,
   refreshSessionDiff,
   refreshWorktreeStatus,
-  selectSession,
-  sessionDirectory,
-} from "../store/workspace-sessions";
-import { assertEqual, assertTrue, describe, it } from "./test-harness";
+} from "../store/session-diffs";
+import { submitSessionPrompt } from "../store/session-goal";
 
 let nextID = 0;
 

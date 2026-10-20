@@ -3,7 +3,7 @@ import { dictionaries, locale, t } from "../i18n";
 import { hoxiAPI } from "../services/api";
 import type { SessionInfo } from "../services/sse-types";
 import { AUTO_PROVIDER_ID, resolveAutoModelTarget } from "./auto-models";
-import { workspace, type SelectedModel } from "./workspace";
+import { workspace, type SelectedModel } from "./workspace-state";
 
 export const MANUAL_TITLES_KEY = "hoxi-session-manual-titles:v1";
 

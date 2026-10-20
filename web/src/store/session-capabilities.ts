@@ -1,5 +1,5 @@
 // web/src/store/session-capabilities.ts
-import { workspace } from "./workspace";
+import { workspace } from "./workspace-state";
 import { isRunnerSessionID, resolveRunnerRuntimeForProvider } from "../services/api";
 
 export function canRevertSession(sessionID?: string | null): boolean {

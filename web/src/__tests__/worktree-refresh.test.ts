@@ -2,8 +2,11 @@ import { reconcile, unwrap } from "solid-js/store";
 import { hoxiAPI } from "../services/api";
 import { resolveSessionDiffForFile } from "../components/timeline/file-diff-lines";
 import { openChangedFileInInspector, setWorkspace, workspace } from "../store/workspace";
-import { cancelScheduledWorktreeStatus, scheduleRefreshWorktreeStatus } from "../store/workspace-sessions";
 import { assertEqual, describe, it } from "./test-harness";
+import {
+  cancelScheduledWorktreeStatus,
+  scheduleRefreshWorktreeStatus,
+} from "../store/session-diffs";
 
 describe("worktree refresh lifecycle", () => {
   it("does not request status after the scheduled refresh is cancelled", async () => {

@@ -1,9 +1,10 @@
 import { reconcile, unwrap } from "solid-js/store";
 import { hoxiAPI } from "../services/api";
 import type { SessionInfo, SessionRuntime } from "../services/sse-types";
-import { selectModel, sessionRuntimeForID } from "../store/workspace-providers";
+import { selectModel } from "../store/workspace-providers";
 import { setWorkspace, workspace } from "../store/workspace";
 import { assertDeepEqual, assertEqual, assertTrue, describe, it } from "./test-harness";
+import { sessionRuntimeForID } from "../store/session-query";
 
 const modelFor = (runtime: SessionRuntime) => ({ providerID: runtime === "opencode" ? "ollama" : runtime, modelID: "model" });
 

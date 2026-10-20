@@ -2,14 +2,9 @@
 import { createSignal } from "solid-js";
 import { createStore } from "solid-js/store";
 import { hoxiAPI } from "../services/api";
-import type { ApprovalMode } from "./approval-mode";
-import {
-  applyThemeClass,
-  setWorkspace,
-  THEME_KEY,
-  workspace,
-  type ProviderModalTab,
-} from "./workspace";
+import { setWorkspace, THEME_KEY, workspace, type ProviderModalTab } from "./workspace-state";
+
+export type ApprovalMode = "auto" | "smart" | "manual";
 
 export type SettingsTab =
   | "general"
@@ -349,6 +344,11 @@ export function signOutUserAccount() {
   persistAppSettings();
 }
 
+export function applyThemeClass(theme: "light" | "dark") {
+  if (typeof document === "undefined") return;
+  document.documentElement.classList.toggle("dark", theme === "dark");
+}
+
 export function resolveEffectiveTheme(mode: ThemeMode): "light" | "dark" {
   if (mode === "light" || mode === "dark") return mode;
   if (typeof window !== "undefined" && window.matchMedia) {
@@ -426,6 +426,9 @@ export function openProviderModal(
   });
   setAppSettings({ activeTab: tab, modalOpen: true });
 }
+
+export function openHandoffModal() { setWorkspace("handoffModalOpen", true); }
+export function closeHandoffModal() { setWorkspace("handoffModalOpen", false); }
 
 export function closeSettingsModal() {
   setAppSettings("modalOpen", false);

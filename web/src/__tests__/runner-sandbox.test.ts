@@ -2,9 +2,11 @@ import { reconcile, unwrap } from "solid-js/store";
 import { hoxiAPI } from "../services/api";
 import { appSettings, setAppSettings } from "../store/settings";
 import { newIsolatedSession, switchActiveSessionSandboxMode } from "../store/session-sandbox";
-import { cancelScheduledWorktreeStatus, exitSessionWorktree, replaceSessionFromEvent, sessionDirectory } from "../store/workspace-sessions";
+import { exitSessionWorktree, replaceSessionFromEvent } from "../store/workspace-sessions";
 import { setWorkspace, workspace } from "../store/workspace";
 import { assertEqual, assertTrue, describe, it } from "./test-harness";
+import { sessionDirectory } from "../store/session-query";
+import { cancelScheduledWorktreeStatus } from "../store/session-diffs";
 
 async function withFixture(run: () => Promise<void>) {
   const saved = structuredClone(unwrap(workspace));

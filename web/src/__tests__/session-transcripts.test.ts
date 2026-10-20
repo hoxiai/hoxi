@@ -1,8 +1,14 @@
 import { reconcile, unwrap } from "solid-js/store";
 import { setWorkspace, workspace, type MessageTurn } from "../store/workspace";
-import { beginSessionTranscriptRead, hydratedSessionIDs, resyncResidentTranscripts, touchSessionTranscript, trimSessionTranscripts } from "../store/session-transcripts";
+import {
+  beginSessionTranscriptRead,
+  hydratedSessionIDs,
+  touchSessionTranscript,
+  trimSessionTranscripts,
+} from "../store/session-transcripts";
 import { hoxiAPI } from "../services/api";
 import { assertEqual, assertTrue, describe, it } from "./test-harness";
+import { resyncResidentTranscripts } from "../store/workspace-sessions";
 
 function turn(id: string, chars = 20): MessageTurn {
   return { info: { id: `msg_${id}`, sessionID: id, role: "assistant", time: { created: 1 } },

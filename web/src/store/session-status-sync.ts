@@ -1,10 +1,12 @@
 import { produce } from "solid-js/store";
 import { hoxiAPI } from "../services/api";
 import type { SessionStatus } from "../services/sse-types";
-import { setWorkspace, workspace } from "./workspace";
-import { activeDirectory, isManagedSession, loadSessionMessagesOnly, sessionDirectory } from "./workspace-sessions";
-import { drainNextQueuedPrompt, lastPromptDispatchedAt } from "./workspace-queue-subagents";
+import { setWorkspace, workspace } from "./workspace-state";
+import { loadSessionMessagesOnly } from "./workspace-sessions";
 import { advanceSessionGoal } from "./session-goal";
+import { activeDirectory, isManagedSession, sessionDirectory } from "./session-query";
+import { drainNextQueuedPrompt } from "./workspace-session-messages";
+import { lastPromptDispatchedAt } from "./prompt-queue";
 
 // Hoxi-managed conversations report busy status globally from the runner process table.
 // Only unadopted OpenCode sessions need per-directory status queries, and only for the

@@ -6,8 +6,8 @@ import { createStore, produce, reconcile, unwrap } from "solid-js/store";
 import type { OpenCodeEvent, SessionInfo } from "../services/sse-types";
 import { setWorkspace, workspace } from "../store/workspace";
 import { replaceSessionFromEvent } from "../store/workspace-sessions";
-import { applyPartDeltaBatch, applyStreamFrameBatch } from "../store/workspace-session-messages";
 import { assertDeepEqual, assertEqual, assertTrue, describe, it } from "./test-harness";
+import { applyPartDeltaBatch, applyStreamFrameBatch } from "../store/session-stream";
 
 class MockEventSource {
   static latest: MockEventSource | null = null;

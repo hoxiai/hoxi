@@ -3,15 +3,11 @@ import { createSignal } from "solid-js";
 import { locale, t } from "../i18n";
 import { hoxiAPI } from "../services/api";
 import type { MessagePart, SnapshotFileDiff } from "../services/sse-types";
-import { isModelFree } from "./provider-catalog";
-import { AUTO_PROVIDER_ID, resolveAutoModelTarget } from "./auto-models";
-import {
-  canSteerSession,
-  sessionDirectory,
-  submitSessionPrompt,
-  workspace,
-  type SelectedModel,
-} from "./workspace";
+import { AUTO_PROVIDER_ID, isModelFree, resolveAutoModelTarget } from "./auto-models";
+import { canSteerSession } from "./session-capabilities";
+import { workspace, type SelectedModel } from "./workspace-state";
+import { sessionDirectory } from "./session-query";
+import { submitSessionPrompt } from "./session-goal";
 
 export const COMMIT_MODEL_STORAGE_KEY = "hoxi-commit-model:v1";
 

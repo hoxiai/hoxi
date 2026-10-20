@@ -1,15 +1,9 @@
 // web/src/store/provider-catalog.ts
 import { t } from "../i18n";
 import type { ProviderInfo } from "../services/api";
-import { AUTO_PROVIDER_ID, buildAutoVirtualProvider } from "./auto-models";
+import { AUTO_PROVIDER_ID, buildAutoVirtualProvider, isModelFree } from "./auto-models";
 import { leaderboardState } from "./leaderboard-state";
-import type { ReasoningEffort } from "./session-ai";
-import { workspace } from "./workspace";
-import {
-  isCustomOrConfiguredProvider,
-  isHoxiCustomProvider,
-  isImportedOpenCodeProvider,
-} from "./workspace-providers";
+import { workspace, type ReasoningEffort } from "./workspace-state";
 
 export type ConcreteReasoningEffort = Exclude<ReasoningEffort, "">;
 
@@ -285,17 +279,6 @@ export function formatPricePerMillion(cost?: number, currency?: string): string 
   if (cost === 0) return `${sym}0`;
   const val = cost < 0.001 ? cost * 1_000_000 : cost;
   return `${sym}${val < 1 ? val.toFixed(2) : val.toFixed(2).replace(/\.00$/, "")}/M`;
-}
-
-export function isModelFree(
-  providerID: string,
-  modelID: string,
-  mInfo?: Record<string, any> | null
-): boolean {
-  if (mInfo?.free === true || mInfo?.multiplier === "0x") return true;
-  if (providerID !== "opencode" && providerID !== "opencode-go") return false;
-  const inCost = mInfo?.cost?.input;
-  return !mInfo?.cost || inCost === 0 || modelID.endsWith("-free");
 }
 
 interface InferredModelSpec {
@@ -700,4 +683,22 @@ export function getConnectedProviderModelGroups(): ConnectedProviderGroup[] {
   }
 
   return sorted;
+}
+
+export function isHoxiCustomProvider(provider: ProviderInfo | string): boolean {
+  const pid = typeof provider === "string" ? provider : provider.id;
+  return Boolean(workspace.hoxiProviders?.[pid]);
+}
+
+export function isImportedOpenCodeProvider(provider: ProviderInfo | string): boolean {
+  const pid = typeof provider === "string" ? provider : provider.id;
+  if (workspace.hoxiProviders?.[pid]) return false;
+  if (workspace.openCodeImportedProviders.includes(pid)) return true;
+  const cfgProv = workspace.globalConfig?.provider?.[pid];
+  if (!cfgProv || typeof cfgProv !== "object") return false;
+  return Boolean(cfgProv.npm || cfgProv.options?.baseURL || cfgProv.models);
+}
+
+export function isCustomOrConfiguredProvider(provider: ProviderInfo | string): boolean {
+  return isHoxiCustomProvider(provider) || isImportedOpenCodeProvider(provider);
 }

@@ -8,27 +8,11 @@ import {
   type ProviderTelemetryStats,
 } from "../services/api";
 import type { MessageInfo, MessagePart } from "../services/sse-types";
-import { setWorkspace, workspace } from "./workspace";
-
-export const PROVIDER_TELEMETRY_KEY = "hoxi-provider-telemetry:v2";
+import { PROVIDER_TELEMETRY_KEY, setWorkspace, workspace } from "./workspace-state";
 
 const MAX_SAMPLES = 30;
 const MAX_INCIDENTS = 10;
 let syncDebounceTimer: ReturnType<typeof setTimeout> | null = null;
-
-export function initialProviderTelemetry(): Record<string, ProviderTelemetryStats> {
-  try {
-    const raw = localStorage.getItem(PROVIDER_TELEMETRY_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      return parsed;
-    }
-  } catch {
-    /* ignore */
-  }
-  return {};
-}
 
 export function emptyStats(providerID: string): ProviderTelemetryStats {
   return {

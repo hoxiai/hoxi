@@ -3,18 +3,23 @@ import { createComputed, createRoot } from "solid-js";
 import { isServer } from "solid-js/web";
 import { hoxiAPI } from "../services/api";
 import {
-  initialSessionAI, initializeSessionAI, persistSessionAI, restoreSessionAI,
-  SESSION_AI_KEY, sessionAIConfig, setActiveAgent, type SessionAIConfig,
+  initializeSessionAI,
+  persistSessionAI,
+  restoreSessionAI,
+  sessionAIConfig,
+  setActiveAgent,
 } from "../store/session-ai";
+import { initialSessionAI, SESSION_AI_KEY, type SessionAIConfig } from "../store/workspace-state";
 import {
   EFFORT_KEY, SELECTED_MODEL_KEY, selectModel, setReasoningEffort,
   setWorkspace, workspace, type MessageTurn,
   inferModelEffortCapabilities, clampReasoningEffort,
 } from "../store/workspace";
 import { forkFromMessage, removeSessionFromStore, selectSession } from "../store/workspace";
-import { submitSessionPrompt } from "../store/workspace-session-messages";
-import { drainNextQueuedPrompt, enqueueSessionPrompt, sendQueuedPromptNow } from "../store/workspace-queue-subagents";
 import { assertDeepEqual, assertEqual, assertTrue, describe, it } from "./test-harness";
+import { submitSessionPrompt } from "../store/session-goal";
+import { drainNextQueuedPrompt, sendQueuedPromptNow } from "../store/workspace-session-messages";
+import { enqueueSessionPrompt } from "../store/prompt-queue";
 
 const defaults: SessionAIConfig = {
   model: { providerID: "default-provider", modelID: "default-model" }, agent: "build", effort: "medium",

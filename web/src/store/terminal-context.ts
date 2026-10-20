@@ -3,9 +3,10 @@ import { createSignal } from "solid-js";
 import { hoxiAPI } from "../services/api";
 import type { MessagePart, SnapshotFileDiff } from "../services/sse-types";
 import { t } from "../i18n";
-import { normalizeFolderPath } from "./workspace-projects";
-import { loadSessionMessages, sessionDirectory } from "./workspace-sessions";
-import { setWorkspace, workspace } from "./workspace";
+import { loadSessionMessages } from "./workspace-sessions";
+import { setWorkspace, workspace } from "./workspace-state";
+import { normalizeFolderPath } from "./workspace-folders";
+import { sessionDirectory } from "./session-query";
 
 const MAX_TERMINAL_BUFFER_CHARS = 24_000;
 export const MAX_TERMINAL_CONTEXT_CHARS = 6_000;

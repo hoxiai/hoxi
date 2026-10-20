@@ -1,6 +1,6 @@
 // web/src/store/provider-health.ts
 import type { ModelTelemetryStats, ProviderIncident, ProviderTelemetryStats } from "../services/api";
-import { workspace, type SelectedModel } from "./workspace";
+import { workspace, type SelectedModel } from "./workspace-state";
 
 export type ProviderRiskTag =
   | "timeout_prone"

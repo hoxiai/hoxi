@@ -1,7 +1,7 @@
 import { produce } from "solid-js/store";
-import { setWorkspace, workspace } from "./workspace";
-import type { MessageTurn } from "./workspace";
-import { invalidateSessionDiffReads, loadSessionMessagesOnly } from "./workspace-sessions";
+import { setWorkspace, workspace } from "./workspace-state";
+import type { MessageTurn } from "./workspace-state";
+import { invalidateSessionDiffReads } from "./session-diffs";
 
 export const MAX_RESIDENT_TRANSCRIPTS = 12;
 export const MAX_RESIDENT_TRANSCRIPT_BYTES = 32 * 1024 * 1024;
@@ -117,17 +117,3 @@ export function trimSessionTranscripts(
   return evicted;
 }
 
-// Queue-overflow recovery includes busy transcripts: waiting for the next idle
-// event would leave missing text/parts on screen for the rest of a long run.
-export async function resyncResidentTranscripts(): Promise<void> {
-  const ids = new Set(Object.keys(workspace.messagesBySession));
-  if (workspace.activeSessionID) ids.add(workspace.activeSessionID);
-  const queue = [...ids];
-  let next = 0;
-  await Promise.all(Array.from({ length: Math.min(4, queue.length) }, async () => {
-    while (next < queue.length) {
-      const id = queue[next++];
-      await loadSessionMessagesOnly(id).catch(() => {});
-    }
-  }));
-}

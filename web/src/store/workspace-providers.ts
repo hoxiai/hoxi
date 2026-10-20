@@ -2,32 +2,31 @@
 import { t } from "../i18n";
 import {
   hoxiAPI,
-  resolveRunnerRuntimeForProvider,
   runnerAPI,
-  type AgentInfo,
   type LocalCLIStatusItem,
   type ProviderInfo,
 } from "../services/api";
-import type { SessionRuntime } from "../services/sse-types";
 import { syncOfficialModelPricing } from "./leaderboard-state";
 import {
   AUTO_PROVIDER_ID,
   buildAutoVirtualProvider,
-  peekAutoModelTarget,
   syncAutoPoolsFromServer,
 } from "./auto-models";
-import { splitAgyModelEffortSuffix } from "./provider-catalog";
-import { parseModelString, updateSessionAI, type ReasoningEffort } from "./session-ai";
+import { isImportedOpenCodeProvider, splitAgyModelEffortSuffix } from "./provider-catalog";
+import { parseModelString, updateSessionAI } from "./session-ai";
 import { getComposerSkill, selectComposerSkill, setComposerSkillNotice } from "./skills";
 import {
+  DEFAULT_AGENTS,
   EFFORT_KEY,
   FAVORITE_MODELS_KEY,
   RECENT_MODELS_KEY,
   SELECTED_MODEL_KEY,
   setWorkspace,
   workspace,
+  type ReasoningEffort,
   type SelectedModel,
-} from "./workspace";
+} from "./workspace-state";
+import { sessionRuntimeForID } from "./session-query";
 
 export const MASKED_SECRET = "********";
 
@@ -67,29 +66,6 @@ export interface SaveCustomProviderInput {
   models: CustomProviderModelDraft[];
 }
 
-export const DEFAULT_AGENTS: AgentInfo[] = [
-  {
-    name: "build",
-    mode: "primary",
-    description: "The default agent. Executes tools based on configured permissions.",
-  },
-  {
-    name: "plan",
-    mode: "primary",
-    description: "Plan mode. Disallows all edit tools.",
-  },
-  {
-    name: "ask",
-    mode: "primary",
-    description: "Read-only answers about the codebase. Never edits files or runs shell commands.",
-  },
-  {
-    name: "debug",
-    mode: "primary",
-    description: "Troubleshoots failures: reproduces, traces the root cause, and applies a minimal verified fix.",
-  },
-];
-
 export async function loadAgents(directory?: string): Promise<void> {
   try {
     const list = await hoxiAPI.listAgents(directory || workspace.rootDir || undefined);
@@ -117,25 +93,6 @@ function pushRecentModel(model: SelectedModel) {
   } catch {
     /* ignore */
   }
-}
-
-export function sessionRuntimeForID(sessionID?: string | null): SessionRuntime {
-  if (!sessionID) {
-    const rawModel = workspace.defaultAI.model;
-    const resolved =
-      rawModel?.providerID === AUTO_PROVIDER_ID
-        ? peekAutoModelTarget(rawModel.modelID)
-        : rawModel;
-    const draftProv = resolved?.providerID;
-    return resolveRunnerRuntimeForProvider(draftProv, Boolean(workspace.hoxiProviders?.[draftProv || ""]));
-  }
-  const found = workspace.sessions.find((s) => s.id === sessionID);
-  if (found?.runtime) return found.runtime;
-  if (sessionID.startsWith("ses_agy_")) return "antigravity";
-  if (sessionID.startsWith("ses_cld_")) return "claude-code";
-  if (sessionID.startsWith("ses_cbd_")) return "codebuddy";
-  if (sessionID.startsWith("ses_qdr_")) return "qoder";
-  return "opencode";
 }
 
 export function selectModel(model: SelectedModel, _autoRetryOnError = false) {
@@ -242,24 +199,6 @@ export function toggleFavoriteModel(providerID: string, modelID: string) {
   } catch {
     /* ignore */
   }
-}
-
-export function isHoxiCustomProvider(provider: ProviderInfo | string): boolean {
-  const pid = typeof provider === "string" ? provider : provider.id;
-  return Boolean(workspace.hoxiProviders?.[pid]);
-}
-
-export function isImportedOpenCodeProvider(provider: ProviderInfo | string): boolean {
-  const pid = typeof provider === "string" ? provider : provider.id;
-  if (workspace.hoxiProviders?.[pid]) return false;
-  if (workspace.openCodeImportedProviders.includes(pid)) return true;
-  const cfgProv = workspace.globalConfig?.provider?.[pid];
-  if (!cfgProv || typeof cfgProv !== "object") return false;
-  return Boolean(cfgProv.npm || cfgProv.options?.baseURL || cfgProv.models);
-}
-
-export function isCustomOrConfiguredProvider(provider: ProviderInfo | string): boolean {
-  return isHoxiCustomProvider(provider) || isImportedOpenCodeProvider(provider);
 }
 
 export async function loadProviders(forceRefresh = false): Promise<void> {

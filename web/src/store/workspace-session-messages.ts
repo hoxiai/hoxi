@@ -1,28 +1,15 @@
 import { createSignal } from "solid-js";
 import { produce } from "solid-js/store";
-import {
-  findMessageIndex,
-  findPartIndex,
-  upsertTurnInfo,
-  upsertTurnPart,
-} from "./message-lookup";
 import { t } from "../i18n";
 import { hoxiAPI, resolveRunnerRuntimeForProvider, type SkillSelection } from "../services/api";
-import type { StreamFrameBatch } from "../services/sse";
-import type { MessageInfo, MessagePart } from "../services/sse-types";
+import type { MessagePart } from "../services/sse-types";
 import {
   extractUserTurnSkillSelection,
   revalidateSkillForTargetDirectory,
   setComposerSkillNotice,
   transferDraftComposerSkill,
 } from "./skills";
-import {
-  recordAssistantTurnUpdated,
-  recordFirstToken,
-  recordPromptDispatched,
-  recordToolPartUpdate,
-  recordUserAbortAction,
-} from "./provider-telemetry";
+import { recordPromptDispatched, recordUserAbortAction } from "./provider-telemetry";
 import { isPlaceholderSessionTitle, summarizeAndRenameSession } from "./session-title";
 import {
   isAutoModel,
@@ -31,29 +18,31 @@ import {
   resolveAutoModelTarget,
 } from "./auto-models";
 import { newIsolatedSession, waitForSessionSandbox } from "./session-sandbox";
-import { buildCombinedSystemPrompt, setWorkspace, workspace } from "./workspace";
-import { touchSessionTranscript } from "./session-transcripts";
-import { parseGoalCommand, pauseSessionGoal, runGoalCommand } from "./session-goal";
-import { buildWorkspaceFoldersSystemPrompt, workspaceFoldersForDir } from "./workspace-projects";
-import { initializeSessionAI, parseModelString, sessionAIConfig, type ReasoningEffort } from "./session-ai";
-import { sessionRuntimeForID } from "./workspace-providers";
+import { buildCombinedSystemPrompt } from "./settings";
+import { setWorkspace, workspace, type ReasoningEffort } from "./workspace-state";
+import { initializeSessionAI, parseModelString, sessionAIConfig } from "./session-ai";
 import {
-  isSessionBusy,
-  isSessionDeleted,
   loadSessionMessages,
   renameSessionTitle,
   replaceSession,
-  scheduleRefreshWorktreeStatus,
-  selectSession,
-  sessionDirectory,
 } from "./workspace-sessions";
+import { buildWorkspaceFoldersSystemPrompt, workspaceFoldersForDir } from "./workspace-folders";
 import {
-  abortChildSubagentSessions,
+  isSessionBusy,
+  isSessionDeleted,
+  sessionDirectory,
+  sessionRuntimeForID,
+} from "./session-query";
+import { pauseSessionGoal } from "./session-goal-state";
+import {
+  beginQueueDrain,
+  endQueueDrain,
   enqueueSessionPrompt,
-  ensureChildSubagentSessionLoaded,
-  extractChildSubagentSessionId,
   markSessionPromptDispatched,
-} from "./workspace-queue-subagents";
+  removeQueuedPrompt,
+  restoreQueuedPromptAt,
+} from "./prompt-queue";
+import { collectChildSubagentSessionIDs } from "./subagent-sessions";
 
 const lastInterruptAtBySession = new Map<string, number>();
 
@@ -210,7 +199,7 @@ export async function resumePausedSession(
   const prompt = note
     ? `${t("timeline.resumePromptPrefix")}\n\n${note}`
     : t("timeline.resumeDefaultPrompt");
-  await submitSessionPrompt(prompt, id, { forceImmediate: true });
+  await dispatchSessionPrompt(prompt, id, { forceImmediate: true });
 }
 
 // Bumped when the user sends (or queues) a prompt so the timeline re-follows the
@@ -223,7 +212,7 @@ function requestTimelineFollow(sessionID: string) {
   setTimelineFollowRequest((prev) => ({ sessionID, seq: (prev?.seq ?? 0) + 1 }));
 }
 
-export async function submitSessionPrompt(
+export async function dispatchSessionPrompt(
   promptText: string,
   targetSessionID?: string | null,
   options?: {
@@ -238,11 +227,6 @@ export async function submitSessionPrompt(
     beforeSend?: () => Promise<void>;
   }
 ): Promise<string> {
-  const goalCommand = parseGoalCommand(promptText);
-  if (goalCommand) {
-    await runGoalCommand(goalCommand, targetSessionID ?? workspace.activeSessionID);
-    return "";
-  }
   let id = targetSessionID ?? workspace.activeSessionID;
   const isBrandNewSession = !id;
   if (id && isSessionDeleted(id)) throw new Error(t("timeline.sessionUnavailable"));
@@ -498,7 +482,6 @@ export async function submitSessionPrompt(
   return id;
 }
 
-export const sendPrompt = submitSessionPrompt;
 
 export async function retryLastUserPrompt(sessionID?: string | null): Promise<void> {
   const id = sessionID ?? workspace.activeSessionID;
@@ -521,206 +504,145 @@ export async function retryLastUserPrompt(sessionID?: string | null): Promise<vo
         }));
       const skillSelection = extractUserTurnSkillSelection(turns[i].parts) ?? undefined;
       if (text || attachments.length > 0 || skillSelection) {
-        await submitSessionPrompt(text, id, { attachments, skillSelection });
+        await dispatchSessionPrompt(text, id, { attachments, skillSelection });
       }
       return;
     }
   }
 }
 
-function isMutatingTool(toolName?: string): boolean {
-  const t = (toolName || "").toLowerCase();
-  if (!t || t === "todowrite" || t === "todoread" || t === "read" || t.endsWith("_read")) {
-    return false;
+export async function sendQueuedPromptNow(sessionID: string, itemID: string): Promise<void> {
+  const current = workspace.queuedPromptsBySession[sessionID] ?? [];
+  const targetIdx = current.findIndex((item) => item.id === itemID);
+  if (targetIdx < 0) return;
+  const target = current[targetIdx];
+  removeQueuedPrompt(sessionID, itemID);
+
+  try {
+    await dispatchSessionPrompt(target.text, sessionID, {
+      agent: target.agent,
+      model: target.model,
+      effort: target.effort,
+      attachments: target.attachments,
+      skillSelection: target.skillSelection,
+      forceImmediate: true,
+    });
+  } catch (err) {
+    restoreQueuedPromptAt(sessionID, target, targetIdx);
+    console.error("sendQueuedPromptNow failed:", err);
   }
-  return (
-    t === "edit" ||
-    t === "write" ||
-    t === "patch" ||
-    t === "multiedit" ||
-    t === "apply_patch" ||
-    t === "bash" ||
-    t === "shell" ||
-    t === "create_file" ||
-    t.includes("edit") ||
-    t.includes("write") ||
-    t.includes("patch") ||
-    t.includes("replace") ||
-    t.includes("bash") ||
-    t.includes("shell")
+}
+
+export async function drainNextQueuedPrompt(sessionID: string): Promise<void> {
+  if (!sessionID || isSessionBusy(sessionID)) return;
+  if (workspace.interruptedBySession[sessionID]) return;
+
+  const queue = workspace.queuedPromptsBySession[sessionID] ?? [];
+  if (queue.length === 0) return;
+
+  const next = queue[0];
+  if (!beginQueueDrain(sessionID)) return;
+  try {
+    let validatedSkill = next.skillSelection;
+    if (validatedSkill) {
+      const dir = sessionDirectory(sessionID) || workspace.rootDir || "";
+      const rt = sessionRuntimeForID(sessionID);
+      const check = await revalidateSkillForTargetDirectory({
+        sessionID,
+        directory: dir,
+        runtime: rt,
+        selection: validatedSkill,
+      });
+      if (!check.ok) {
+        setComposerSkillNotice(
+          sessionID,
+          t("skills.queueSkillInvalid", { name: validatedSkill.name })
+        );
+        return;
+      }
+      validatedSkill = check.selection;
+    }
+    removeQueuedPrompt(sessionID, next.id);
+    try {
+      await dispatchSessionPrompt(next.text, sessionID, {
+        agent: next.agent,
+        model: next.model,
+        effort: next.effort,
+        attachments: next.attachments,
+        skillSelection: validatedSkill,
+        forceImmediate: true,
+        followTimeline: false,
+      });
+    } catch (err) {
+      restoreQueuedPromptAt(sessionID, next, 0);
+      throw err;
+    }
+  } catch (err) {
+    console.error("drainNextQueuedPrompt failed:", err);
+  } finally {
+    endQueueDrain(sessionID);
+  }
+}
+
+export async function abortChildSubagentSessions(
+  parentSessionID: string
+): Promise<void> {
+  const childIDs = collectChildSubagentSessionIDs(parentSessionID);
+  await Promise.all(
+    childIDs.map(async (cid) => {
+      markSessionInterrupted(cid, "stopped");
+      try {
+        await hoxiAPI.abortSession(cid, sessionDirectory(parentSessionID));
+      } catch {
+        /* ignore */
+      }
+    })
   );
 }
 
-function isTaskLikeTool(toolName?: string): boolean {
-  const t = (toolName || "").toLowerCase();
-  return t === "task" || t === "agent" || t.includes("subagent");
+export async function resumeSubagentTask(params: {
+  parentSessionID: string;
+  childSessionID: string;
+  agentType?: string;
+  description?: string;
+}): Promise<void> {
+  const { parentSessionID, childSessionID, agentType, description } = params;
+  if (!parentSessionID || !childSessionID) return;
+  clearSessionInterrupted(childSessionID);
+  const prompt = t("timeline.resumeSubagentPrompt", {
+    taskId: childSessionID,
+    agentType: agentType || "general",
+    description: description || childSessionID,
+  });
+  await dispatchSessionPrompt(prompt, parentSessionID, {
+    forceImmediate: true,
+  });
 }
 
-function belongsToActiveSession(sessionID: string): boolean {
-  const activeID = workspace.activeSessionID;
-  if (!activeID || !sessionID) return false;
-  if (sessionID === activeID) return true;
-  let cur: string | undefined = sessionID;
-  const seen = new Set<string>();
-  while (cur && !seen.has(cur)) {
-    seen.add(cur);
-    const s = workspace.sessions.find((item) => item.id === cur);
-    if (!s?.parentID) break;
-    if (s.parentID === activeID) return true;
-    cur = s.parentID;
-  }
-  for (const turn of workspace.messagesBySession[activeID] ?? []) {
-    for (const p of turn.parts) {
-      if (
-        p.type === "tool" &&
-        isTaskLikeTool(p.tool) &&
-        extractChildSubagentSessionId(p) === sessionID
-      ) {
-        return true;
-      }
-    }
-  }
-  return false;
-}
-
-function mutateUpsertInfo(state: typeof workspace, info: MessageInfo) {
-  touchSessionTranscript(info.sessionID);
-  const list = (state.messagesBySession[info.sessionID] ||= []);
-  upsertTurnInfo(list, info);
-}
-
-function mutateUpsertPart(state: typeof workspace, part: MessagePart) {
-  touchSessionTranscript(part.sessionID);
-  const list = (state.messagesBySession[part.sessionID] ||= []);
-  upsertTurnPart(list, part);
-}
-
-export function upsertMessageInfo(info: MessageInfo) {
-  recordAssistantTurnUpdated(info);
-  setWorkspace(produce((state) => mutateUpsertInfo(state, info)));
-}
-
-export function upsertMessagePart(part: MessagePart) {
-  recordFirstToken(part.sessionID);
-  recordToolPartUpdate(part);
-  if (part.type === "tool" && part.tool === "hoxi_browser" &&
-      part.state.status === "running" && part.sessionID === workspace.activeSessionID) {
-    setWorkspace({ inspectorOpen: true, inspectorTab: "browser" });
-  }
-  if (part.type === "tool" && isTaskLikeTool(part.tool)) {
-    ensureChildSubagentSessionLoaded(
-      extractChildSubagentSessionId(part),
-      part.sessionID,
-      part.state.status === "completed" || part.state.status === "error"
-    );
-  }
-  if (
-    part.type === "tool" &&
-    (part.state.status === "pending" ||
-      part.state.status === "running" ||
-      part.state.status === "completed") &&
-    workspace.activeSessionID &&
-    isMutatingTool(part.tool) &&
-    belongsToActiveSession(part.sessionID)
-  ) {
-    scheduleRefreshWorktreeStatus(workspace.activeSessionID, 250);
-  }
-  setWorkspace(produce((state) => mutateUpsertPart(state, part)));
-}
-
-export function applyPartDeltaBatch(
-  batches: Array<{
-    sessionID: string;
-    messageID: string;
-    partID: string;
-    field: string;
-    delta: string;
+export async function resumeAllInterruptedSubagents(
+  parentSessionID: string,
+  items: Array<{
+    childSessionID: string;
+    agentType?: string;
+    description?: string;
   }>
-) {
-  for (const b of batches) {
-    recordFirstToken(b.sessionID);
+): Promise<void> {
+  if (!parentSessionID || items.length === 0) return;
+  if (items.length === 1) {
+    await resumeSubagentTask({ parentSessionID, ...items[0] });
+    return;
   }
-  setWorkspace(
-    produce((state) => {
-      for (const b of batches) {
-        const list = state.messagesBySession[b.sessionID];
-        if (!list) continue;
-        const turn = list[findMessageIndex(list, b.messageID)];
-        if (!turn) continue;
-        appendPartDelta(turn.parts[findPartIndex(turn.parts, b.partID)], b.field, b.delta);
-      }
+  for (const item of items) {
+    clearSessionInterrupted(item.childSessionID);
+  }
+  const lines = items.map((item) =>
+    t("timeline.resumeSubagentPrompt", {
+      taskId: item.childSessionID,
+      agentType: item.agentType || "general",
+      description: item.description || item.childSessionID,
     })
   );
-}
-
-function appendPartDelta(part: MessagePart | undefined, field: string, delta: string) {
-  if (!part) return;
-  // Older Runner snapshots can omit empty text, including snapshots loaded by REST.
-  if (field === "text" && (part.type === "text" || part.type === "reasoning") && part.text == null) {
-    part.text = "";
-  }
-  const fields = part as unknown as Record<string, unknown>;
-  if (typeof fields[field] === "string") fields[field] += delta;
-}
-
-export function applyStreamFrameBatch(batch: StreamFrameBatch) {
-  for (const info of batch.infos) {
-    recordAssistantTurnUpdated(info);
-  }
-
-  let shouldRefreshActiveWorktree = false;
-  for (const part of batch.parts) {
-    recordFirstToken(part.sessionID);
-    recordToolPartUpdate(part);
-    if (
-      part.type === "tool" &&
-      part.tool === "hoxi_browser" &&
-      part.state.status === "running" &&
-      part.sessionID === workspace.activeSessionID
-    ) {
-      setWorkspace({ inspectorOpen: true, inspectorTab: "browser" });
-    }
-    if (part.type === "tool" && isTaskLikeTool(part.tool)) {
-      ensureChildSubagentSessionLoaded(
-        extractChildSubagentSessionId(part),
-        part.sessionID,
-        part.state.status === "completed" || part.state.status === "error"
-      );
-    }
-    if (
-      part.type === "tool" &&
-      (part.state.status === "pending" ||
-        part.state.status === "running" ||
-        part.state.status === "completed") &&
-      isMutatingTool(part.tool) &&
-      belongsToActiveSession(part.sessionID)
-    ) {
-      shouldRefreshActiveWorktree = true;
-    }
-  }
-  if (shouldRefreshActiveWorktree && workspace.activeSessionID) {
-    scheduleRefreshWorktreeStatus(workspace.activeSessionID, 250);
-  }
-
-  for (const d of batch.deltas) {
-    recordFirstToken(d.sessionID);
-  }
-
-  setWorkspace(
-    produce((state) => {
-      for (const info of batch.infos) {
-        mutateUpsertInfo(state, info);
-      }
-      for (const part of batch.parts) {
-        mutateUpsertPart(state, part);
-      }
-      for (const b of batch.deltas) {
-        const list = state.messagesBySession[b.sessionID];
-        if (!list) continue;
-        const turn = list[findMessageIndex(list, b.messageID)];
-        if (!turn) continue;
-        appendPartDelta(turn.parts[findPartIndex(turn.parts, b.partID)], b.field, b.delta);
-      }
-    })
-  );
+  await dispatchSessionPrompt(lines.join("\n\n"), parentSessionID, {
+    forceImmediate: true,
+  });
 }

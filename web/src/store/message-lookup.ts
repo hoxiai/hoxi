@@ -1,6 +1,6 @@
 import { createSignal } from "solid-js";
 import type { MessageInfo, MessagePart, SnapshotFileDiff } from "../services/sse-types";
-import type { MessageTurn } from "./workspace";
+import type { MessageTurn } from "./workspace-state";
 
 const indexes = new WeakMap<object, { length: number; byID: Map<string, number> }>();
 

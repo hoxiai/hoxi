@@ -3,7 +3,7 @@ import { createSignal } from "solid-js";
 import { hoxiAPI, type GitDailyPulseResponse, type ModelPricingItem } from "../services/api";
 import { leaderboardState, syncOfficialModelPricing } from "./leaderboard-state";
 import { canonicalModelKey } from "./provider-catalog";
-import { workspace } from "./workspace";
+import { workspace } from "./workspace-state";
 
 export interface DailyModelUsageItem {
   providerID: string;

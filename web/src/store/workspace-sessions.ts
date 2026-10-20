@@ -1,17 +1,17 @@
-import { produce, unwrap } from "solid-js/store";
-import type { SnapshotFileDiff, SessionInfo } from "../services/sse-types";
-import { hoxiAPI, isRunnerSessionID } from "../services/api";
+import { produce } from "solid-js/store";
+import type { SessionInfo } from "../services/sse-types";
+import { hoxiAPI } from "../services/api";
 import { registerRunnerSessions } from "../services/runner-api";
 import {
   evictCachedSessionTurns,
-  filterLocalSessionDiffsByTurns,
+  forgetSubagentLinks,
   mergeServerTurnsInto,
   persistCachedSessionTurns,
   readCachedSessionTurns,
 } from "./message-lookup";
 import { persistSessionAI, restoreSessionAI } from "./session-ai";
 import { syncPendingPermissions } from "./approval-mode";
-import { ARCHIVED_SESSIONS_KEY, isSessionArchived, setWorkspace, workspace } from "./workspace";
+import { ARCHIVED_SESSIONS_KEY, setWorkspace, workspace } from "./workspace-state";
 import {
   forgetSessionTitles,
   hasManualSessionTitle,
@@ -21,21 +21,34 @@ import {
   sortSessionsByActivity,
 } from "./session-title";
 import {
+  beginSessionTranscriptRead,
+  hydratedSessionIDs,
+  isReadingSessionTranscript,
+  touchSessionTranscript,
+} from "./session-transcripts";
+import {
+  isManagedSession,
+  isSessionArchived,
+  isSessionBusy,
+  isSessionDeleted,
+  markSessionDeleted,
+  sessionDirectory,
+} from "./session-query";
+import {
+  cancelScheduledWorktreeStatus,
+  refreshSessionDiff,
+  refreshWorktreeStatus,
+  scheduleRefreshSessionDiff,
+  scheduleRefreshWorktreeStatus,
+} from "./session-diffs";
+import {
   collectChildSubagentSessionIDs,
   deleteChildSubagentSessionsBackend,
-  ensureChildSubagentSessionLoaded,
   extractChildSubagentSessionId,
-  purgeSessionsFromStoreState,
-} from "./workspace-queue-subagents";
-import { secondaryWorkspaceDirs, setWorktreeMetaIfChanged } from "./session-sandbox";
-import { beginSessionTranscriptRead, hydratedSessionIDs, touchSessionTranscript } from "./session-transcripts";
+} from "./subagent-sessions";
+import { forgetPromptQueueState } from "./prompt-queue";
 
-const deletedSessionIDs = new Set<string>();
 const sessionMessageLoads = new Map<string, Promise<void>>();
-
-export function isSessionDeleted(id: string): boolean {
-  return deletedSessionIDs.has(id);
-}
 
 function persistArchivedSessionIDs(ids: string[]) {
   try {
@@ -51,53 +64,6 @@ function nextActiveSessionCandidate(excludeID?: string): SessionInfo | undefined
   );
   if (candidates.length === 0) return undefined;
   return sortSessionsByActivity(candidates)[0];
-}
-
-export function activeSession(): SessionInfo | undefined {
-  return workspace.sessions.find((s) => s.id === workspace.activeSessionID);
-}
-
-export function isManagedSession(sessionID?: string | null): boolean {
-  if (!sessionID) return false;
-  const session = workspace.sessions.find((s) => s.id === sessionID);
-  if (session?.managed !== undefined) return Boolean(session.managed);
-  if (session?.runtime && session.runtime !== "opencode") return true;
-  return isRunnerSessionID(sessionID);
-}
-
-
-export function sessionDirectory(sessionID: string | null): string | undefined {
-  if (!sessionID) return undefined;
-  const meta = workspace.worktreeBySession[sessionID];
-  const session = workspace.sessions.find((s) => s.id === sessionID);
-  if (meta?.directory || session?.directory) {
-    return meta?.directory || session?.directory;
-  }
-  if (session?.parentID) {
-    const parentMeta = workspace.worktreeBySession[session.parentID];
-    const parentSession = workspace.sessions.find((s) => s.id === session.parentID);
-    if (parentMeta?.directory || parentSession?.directory) {
-      return parentMeta?.directory || parentSession?.directory;
-    }
-  }
-  return workspace.rootDir || undefined;
-}
-
-export function activeDirectory(): string | undefined {
-  return sessionDirectory(workspace.activeSessionID);
-}
-
-export function isSessionBusy(sessionID: string | null): boolean {
-  if (!sessionID) return false;
-  const st = workspace.statusBySession[sessionID]?.type;
-  return st === "busy" || st === "retry";
-}
-
-export function sessionsWithPendingPermission(): Set<string> {
-  const set = new Set<string>();
-  for (const p of workspace.pendingPermissions) set.add(p.sessionID);
-  for (const q of workspace.pendingQuestions) set.add(q.sessionID);
-  return set;
 }
 
 export function syncSessionFieldsInPlace(target: SessionInfo, source: SessionInfo): void {
@@ -153,7 +119,7 @@ export function reconcileSessionsInPlace(incomingList: SessionInfo[]): void {
 }
 
 export function replaceSession(info: SessionInfo) {
-  if (deletedSessionIDs.has(info.id)) return;
+  if (isSessionDeleted(info.id)) return;
   registerRunnerSessions([info]);
   if (info.sandboxMode && info.directory) {
     setWorkspace("worktreeBySession", info.id, {
@@ -292,75 +258,6 @@ export async function loadSessionMessages(sessionID: string): Promise<void> {
   await refreshSessionDiff(sessionID);
 }
 
-const diffRevisions = new Map<string, number>();
-
-function areDiffListsEqual(prev: SnapshotFileDiff[] | undefined, next: SnapshotFileDiff[]): boolean {
-  if (!prev || prev.length !== next.length) return false;
-  for (let i = 0; i < prev.length; i++) {
-    const a = prev[i], b = next[i];
-    if (a.file !== b.file || a.status !== b.status || a.additions !== b.additions ||
-      a.deletions !== b.deletions || a.stamp !== b.stamp || a.patch !== b.patch ||
-      a.before !== b.before || a.after !== b.after || a.large !== b.large ||
-      a.generatedLike !== b.generatedLike || a.repo !== b.repo ||
-      a.repoDir !== b.repoDir || a.branch !== b.branch) return false;
-  }
-  return true;
-}
-
-function setDiffListIfChanged(
-  field: "diffsBySession" | "worktreeDiffsBySession", key: string, next: SnapshotFileDiff[]
-): void {
-  if (!areDiffListsEqual(workspace[field][key], next)) {
-    setWorkspace(field, key, next);
-  }
-}
-
-export function applySessionDiffEvent(sessionID: string, diffs: SnapshotFileDiff[]): void {
-  if (isSessionDeleted(sessionID)) return;
-  diffRevisions.set(sessionID, (diffRevisions.get(sessionID) ?? 0) + 1);
-  const next = workspace.worktreeBySession[sessionID]?.isolated
-    ? diffs
-    : filterLocalSessionDiffsByTurns(sessionID, diffs, unwrap(workspace.messagesBySession), workspace.rootDir);
-  setDiffListIfChanged("diffsBySession", sessionID, next);
-}
-
-const diffRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
-
-/** Coalesces bursts (e.g. many settled subagents) into one parent diff refresh. */
-export function scheduleRefreshSessionDiff(sessionID: string, delayMs = 150): void {
-  const pending = diffRefreshTimers.get(sessionID);
-  if (pending !== undefined) clearTimeout(pending);
-  diffRefreshTimers.set(sessionID, setTimeout(() => {
-    diffRefreshTimers.delete(sessionID);
-    if (!isSessionDeleted(sessionID)) void refreshSessionDiff(sessionID);
-  }, delayMs));
-}
-
-export async function refreshSessionDiff(
-  sessionID: string,
-  preloadedWorktreeDiffs?: SnapshotFileDiff[]
-): Promise<void> {
-  const directory = sessionDirectory(sessionID);
-  const revision = (diffRevisions.get(sessionID) ?? 0) + 1;
-  diffRevisions.set(sessionID, revision);
-  const isCurrent = () => diffRevisions.get(sessionID) === revision &&
-    sessionDirectory(sessionID) === directory && !isSessionDeleted(sessionID);
-  try {
-    let diffs = await hoxiAPI.getSessionDiff(sessionID, directory);
-    if (!isCurrent()) return;
-    const meta = workspace.worktreeBySession[sessionID];
-    // Only an isolated worktree can safely attribute directory-wide changes to this session.
-    if (!diffs.length && meta?.isolated && meta.dirty && meta.directory === directory) {
-      diffs = preloadedWorktreeDiffs ?? (await hoxiAPI.getWorktreeDiff(sessionID, directory));
-    } else if (!meta?.isolated) {
-      diffs = filterLocalSessionDiffsByTurns(sessionID, diffs, unwrap(workspace.messagesBySession), workspace.rootDir);
-    }
-    if (isCurrent()) setDiffListIfChanged("diffsBySession", sessionID, diffs);
-  } catch (err) {
-    console.error("refresh session diff failed:", err);
-  }
-}
-
 export async function selectSession(sessionID: string): Promise<void> {
   touchSessionTranscript(sessionID);
   if (workspace.activeSessionID !== sessionID) {
@@ -427,92 +324,6 @@ async function leaveSessionWorktree(sessionID: string, keepBranch: boolean): Pro
     );
   } else {
     await hoxiAPI.removeWorktree(sessionID, true, keepBranch);
-  }
-}
-
-const worktreeRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
-const worktreeRevisions = new Map<string, number>();
-
-export function invalidateSessionDiffReads(id: string): void {
-  diffRevisions.set(id, (diffRevisions.get(id) ?? 0) + 1);
-  worktreeRevisions.set(id, (worktreeRevisions.get(id) ?? 0) + 1);
-  cancelScheduledWorktreeStatus(id);
-  clearTimeout(diffRefreshTimers.get(id));
-  diffRefreshTimers.delete(id);
-}
-
-export function cancelScheduledWorktreeStatus(sessionID?: string | null): void {
-  const key = sessionID || "__root__";
-  const timer = worktreeRefreshTimers.get(key);
-  if (timer !== undefined) clearTimeout(timer);
-  worktreeRefreshTimers.delete(key);
-}
-
-export function scheduleRefreshWorktreeStatus(
-  sessionID?: string | null,
-  delayMs = 900
-): void {
-  const key = sessionID || "__root__";
-  cancelScheduledWorktreeStatus(key);
-  const timer = setTimeout(() => {
-    worktreeRefreshTimers.delete(key);
-    void refreshWorktreeStatus(key);
-  }, delayMs);
-  worktreeRefreshTimers.set(key, timer);
-}
-
-export async function refreshWorktreeStatus(sessionID?: string | null): Promise<void> {
-  const key = sessionID || "__root__";
-  const dirArg = key === "__root__" ? workspace.rootDir || undefined : sessionDirectory(key);
-  const revision = (worktreeRevisions.get(key) ?? 0) + 1;
-  worktreeRevisions.set(key, revision);
-  const isCurrentScope = () => worktreeRevisions.get(key) === revision && !isSessionDeleted(key) && dirArg ===
-    (key === "__root__" ? workspace.rootDir || undefined : sessionDirectory(key));
-  try {
-    const extraDirs = workspace.worktreeBySession[key]?.isolated ? [] : secondaryWorkspaceDirs(dirArg);
-    const st = extraDirs.length > 0
-      ? await hoxiAPI.getWorktreeStatus(key, dirArg, extraDirs)
-      : await hoxiAPI.getWorktreeStatus(key, dirArg);
-    if (!isCurrentScope()) return;
-    const prevMeta = workspace.worktreeBySession[key];
-    setWorktreeMetaIfChanged(key, {
-      sessionID: key,
-      isolated: st.isolated,
-      directory: st.directory || dirArg || "",
-      branch: st.branch || prevMeta?.branch,
-      baseBranch: st.baseBranch || prevMeta?.baseBranch,
-      baseCommit: st.baseCommit || prevMeta?.baseCommit,
-      headCommit: st.headCommit || prevMeta?.headCommit,
-      headSubject: st.headSubject || prevMeta?.headSubject,
-      createdAt: prevMeta?.createdAt || new Date().toISOString(),
-      dirty: st.dirty,
-      changedFiles: st.changedFiles,
-      uncommittedLines: st.uncommittedLines,
-      additions: st.additions,
-      deletions: st.deletions,
-      aheadCount: st.aheadCount,
-      behindCount: st.behindCount,
-      hasUpstream: st.hasUpstream,
-      compareURL: st.compareURL,
-      health: st.health,
-      repos: st.repos,
-    });
-    if (key === "__root__" || key === workspace.activeSessionID) {
-      const diffs = st.dirty
-        ? (extraDirs.length > 0
-            ? await hoxiAPI.getWorktreeDiff(key, dirArg, extraDirs)
-            : await hoxiAPI.getWorktreeDiff(key, dirArg))
-        : [];
-      if (!isCurrentScope()) return;
-      setDiffListIfChanged("worktreeDiffsBySession", key, diffs);
-      if (key === "__root__") {
-        setDiffListIfChanged("diffsBySession", key, diffs);
-      } else {
-        await refreshSessionDiff(key, diffs);
-      }
-    }
-  } catch (err) {
-    console.error("refresh worktree status failed:", err);
   }
 }
 
@@ -611,7 +422,7 @@ export function removeSessionFromStore(sessionID: string): SessionInfo | undefin
   for (const id of allIDs) {
     cancelScheduledWorktreeStatus(id);
     hydratedSessionIDs.delete(id);
-    deletedSessionIDs.add(id);
+    markSessionDeleted(id);
   }
   forgetSessionTitles(allIDs);
   evictCachedSessionTurns(allIDs);
@@ -683,3 +494,100 @@ export async function discardSession(
   }
 }
 
+// Queue-overflow recovery includes busy transcripts: waiting for the next idle
+// event would leave missing text/parts on screen for the rest of a long run.
+export async function resyncResidentTranscripts(): Promise<void> {
+  const ids = new Set(Object.keys(workspace.messagesBySession));
+  if (workspace.activeSessionID) ids.add(workspace.activeSessionID);
+  const queue = [...ids];
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(4, queue.length) }, async () => {
+    while (next < queue.length) {
+      const id = queue[next++];
+      await loadSessionMessagesOnly(id).catch(() => {});
+    }
+  }));
+}
+
+const loadedChildSessionIDs = new Set<string>();
+const settledChildSessionIDs = new Set<string>();
+
+export function ensureChildSubagentSessionLoaded(
+  childSessionID?: string,
+  parentSessionID?: string,
+  settled?: boolean
+) {
+  if (!childSessionID || typeof window === "undefined") return;
+  const existing = workspace.sessions.find((s) => s.id === childSessionID);
+  const directory =
+    sessionDirectory(parentSessionID ?? null) ||
+    sessionDirectory(childSessionID) ||
+    workspace.rootDir ||
+    undefined;
+
+  if (!existing) {
+    void hoxiAPI
+      .getSession(childSessionID, directory)
+      .then((info) => {
+        if (info?.id) {
+          replaceSession(
+            parentSessionID && !info.parentID ? { ...info, parentID: parentSessionID } : info
+          );
+        }
+      })
+      .catch(() => {});
+  }
+
+  const needsInitialLoad = !loadedChildSessionIDs.has(childSessionID) ||
+    (workspace.messagesBySession[childSessionID] === undefined && !isReadingSessionTranscript(childSessionID));
+  const needsSettledLoad = Boolean(settled && !settledChildSessionIDs.has(childSessionID));
+  if (needsInitialLoad || needsSettledLoad) {
+    loadedChildSessionIDs.add(childSessionID);
+    if (settled) settledChildSessionIDs.add(childSessionID);
+    void loadSessionMessagesOnly(childSessionID, directory)
+      .then(() => {
+        if (parentSessionID && !isSessionDeleted(parentSessionID)) {
+          scheduleRefreshSessionDiff(parentSessionID);
+          scheduleRefreshWorktreeStatus(parentSessionID, 150);
+        }
+      })
+      .catch(() => {});
+  }
+}
+
+export function purgeSessionsFromStoreState(
+  state: typeof workspace,
+  allIDs: string[]
+) {
+  const idSet = new Set(allIDs);
+  forgetSubagentLinks(allIDs);
+  forgetPromptQueueState(allIDs);
+  for (const id of allIDs) {
+    loadedChildSessionIDs.delete(id);
+    settledChildSessionIDs.delete(id);
+    delete state.messagesBySession[id];
+    delete state.aiBySession[id];
+    delete state.loadingMessagesBySession[id];
+    delete state.statusBySession[id];
+    delete state.sessionFinishedAt[id];
+    delete state.unreadCompletedBySession[id];
+    delete state.diffsBySession[id];
+    delete state.worktreeDiffsBySession[id];
+    delete state.worktreeBySession[id];
+    delete state.reviewCommentsBySession[id];
+    delete state.auditsBySession[id];
+    delete state.auditingBySession[id];
+    delete state.interruptedBySession[id];
+    delete state.queuedPromptsBySession[id];
+    delete state.composerDraftEditBySession[id];
+  }
+  state.sessions = state.sessions.filter(
+    (s) => !idSet.has(s.id) && (!s.parentID || !idSet.has(s.parentID))
+  );
+  state.pendingPermissions = state.pendingPermissions.filter(
+    (p) => !idSet.has(p.sessionID)
+  );
+  state.pendingQuestions = state.pendingQuestions.filter(
+    (q) => !idSet.has(q.sessionID)
+  );
+}

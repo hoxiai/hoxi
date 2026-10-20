@@ -2,8 +2,7 @@
 import { createSignal } from "solid-js";
 import { t } from "../i18n";
 import { hoxiAPI, leaderboardAPI, type ProviderInfo, type ProviderModelInfo } from "../services/api";
-import { isModelFree } from "./provider-catalog";
-import { setWorkspace, workspace, type SelectedModel } from "./workspace";
+import { setWorkspace, workspace, type SelectedModel } from "./workspace-state";
 
 export const AUTO_PROVIDER_ID = "hoxi-auto";
 export const AUTO_POOLS_STORAGE_KEY = "hoxi-auto-pools:v1";
@@ -686,4 +685,15 @@ export async function deleteCustomAutoPool(poolID: string): Promise<void> {
   }
   refreshWorkspaceAutoProvider();
   await hoxiAPI.deleteAutoPoolConfig(poolID).catch(() => {});
+}
+
+export function isModelFree(
+  providerID: string,
+  modelID: string,
+  mInfo?: Record<string, any> | null
+): boolean {
+  if (mInfo?.free === true || mInfo?.multiplier === "0x") return true;
+  if (providerID !== "opencode" && providerID !== "opencode-go") return false;
+  const inCost = mInfo?.cost?.input;
+  return !mInfo?.cost || inCost === 0 || modelID.endsWith("-free");
 }

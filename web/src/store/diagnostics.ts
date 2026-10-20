@@ -1,7 +1,7 @@
 import { createStore } from "solid-js/store";
 import { diagnosticsAPI, type DiagnosticEntry, type DiagnosticsFilters } from "../services/diagnostics";
 import { openSettingsModal } from "./settings";
-import { setWorkspace } from "./workspace";
+import { setWorkspace } from "./workspace-state";
 
 const emptyFilters = (): DiagnosticsFilters => ({ kind: "", level: "", sessionID: "", providerID: "", q: "" });
 

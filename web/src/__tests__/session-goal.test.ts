@@ -1,13 +1,13 @@
 import type { MessageTurn } from "../store/workspace";
+import { assertDeepEqual, assertEqual, assertTrue, describe, it } from "./test-harness";
 import {
-  GOAL_MAX_CONTINUATIONS,
-  GOAL_MAX_OBJECTIVE_LENGTH,
   collectTurnEvidence,
   decideGoalTurn,
+  GOAL_MAX_CONTINUATIONS,
+  GOAL_MAX_OBJECTIVE_LENGTH,
   parseGoalCommand,
   restoreStoredGoals,
-} from "../store/session-goal";
-import { assertDeepEqual, assertEqual, assertTrue, describe, it } from "./test-harness";
+} from "../store/session-goal-state";
 
 function assistantTurn(parts: MessageTurn["parts"], error?: unknown): MessageTurn {
   return {

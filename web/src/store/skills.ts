@@ -11,9 +11,8 @@ import {
   type SkillListResponse,
   type SkillSelection,
 } from "../services/api";
-import { setWorkspace, workspace } from "./workspace";
-import { sessionRuntimeForID } from "./workspace-providers";
-import { sessionDirectory } from "./workspace-sessions";
+import { setWorkspace, workspace } from "./workspace-state";
+import { sessionDirectory, sessionRuntimeForID } from "./session-query";
 
 export const HIDDEN_SKILLS_STORAGE_KEY = "hoxi.skills.hidden:v1";
 

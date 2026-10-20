@@ -3,11 +3,10 @@ import {
   hoxiAPI,
   resolveRunnerRuntimeForProvider,
   type WorktreeMeta,
-  type WorktreeRepoStatus,
 } from "../services/api";
 import type { SessionInfo } from "../services/sse-types";
 import { appSettings, updateAppSetting } from "./settings";
-import { setWorkspace, workspace } from "./workspace";
+import { setWorkspace, workspace } from "./workspace-state";
 import { initializeSessionAI } from "./session-ai";
 import {
   getComposerSkill,
@@ -15,100 +14,11 @@ import {
   selectComposerSkill,
   setComposerSkillNotice,
 } from "./skills";
-import { normalizeFolderPath, workspaceFoldersForDir } from "./workspace-projects";
-import { sessionRuntimeForID } from "./workspace-providers";
-import {
-  exitSessionWorktree,
-  isManagedSession,
-  isSessionBusy,
-  refreshWorktreeStatus,
-  removeSessionFromStore,
-  replaceSession,
-} from "./workspace-sessions";
+import { exitSessionWorktree, removeSessionFromStore, replaceSession } from "./workspace-sessions";
+import { isManagedSession, isSessionBusy, sessionRuntimeForID } from "./session-query";
+import { refreshWorktreeStatus } from "./session-diffs";
 
 const pendingSandboxChanges = new Map<string, Promise<void>>();
-
-export function secondaryWorkspaceDirs(primaryDir?: string): string[] {
-  const baseNorm = normalizeFolderPath(primaryDir || workspace.rootDir || "");
-  if (!baseNorm) return [];
-  const folders = workspaceFoldersForDir(baseNorm);
-  if (folders.length <= 1) return [];
-  const out: string[] = [];
-  const seen = new Set<string>([baseNorm]);
-  for (const f of folders) {
-    const norm = normalizeFolderPath(f.path);
-    if (!norm || seen.has(norm)) continue;
-    seen.add(norm);
-    out.push(norm);
-  }
-  return out;
-}
-
-function areRepoStatusListsEqual(
-  prev: WorktreeRepoStatus[] | undefined,
-  next: WorktreeRepoStatus[] | undefined
-): boolean {
-  if (!prev && !next) return true;
-  if (!prev || !next || prev.length !== next.length) return false;
-  for (let i = 0; i < prev.length; i++) {
-    const a = prev[i];
-    const b = next[i];
-    if (
-      a.repo !== b.repo ||
-      a.name !== b.name ||
-      a.directory !== b.directory ||
-      a.branch !== b.branch ||
-      a.headCommit !== b.headCommit ||
-      a.headSubject !== b.headSubject ||
-      a.dirty !== b.dirty ||
-      a.changedFiles !== b.changedFiles ||
-      a.additions !== b.additions ||
-      a.deletions !== b.deletions ||
-      a.aheadCount !== b.aheadCount ||
-      a.behindCount !== b.behindCount ||
-      a.hasUpstream !== b.hasUpstream ||
-      a.compareURL !== b.compareURL
-    ) {
-      return false;
-    }
-  }
-  return true;
-}
-
-export function setWorktreeMetaIfChanged(key: string, next: WorktreeMeta): void {
-  const prev = workspace.worktreeBySession[key];
-  if (
-    prev &&
-    prev.sessionID === next.sessionID &&
-    prev.isolated === next.isolated &&
-    prev.directory === next.directory &&
-    prev.branch === next.branch &&
-    prev.baseBranch === next.baseBranch &&
-    prev.baseCommit === next.baseCommit &&
-    prev.headCommit === next.headCommit &&
-    prev.headSubject === next.headSubject &&
-    prev.dirty === next.dirty &&
-    prev.changedFiles === next.changedFiles &&
-    prev.uncommittedLines === next.uncommittedLines &&
-    prev.additions === next.additions &&
-    prev.deletions === next.deletions &&
-    prev.aheadCount === next.aheadCount &&
-    prev.behindCount === next.behindCount &&
-    prev.hasUpstream === next.hasUpstream &&
-    prev.compareURL === next.compareURL &&
-    prev.health === next.health &&
-    prev.setupScript === next.setupScript &&
-    prev.setupStatus === next.setupStatus &&
-    prev.setupError === next.setupError &&
-    prev.allocatedPort === next.allocatedPort &&
-    prev.runStatus === next.runStatus &&
-    prev.previewURL === next.previewURL &&
-    areRepoStatusListsEqual(prev.repos, next.repos)
-  ) {
-    return;
-  }
-  setWorkspace("worktreeBySession", key, next);
-}
 
 export function startNewThreadDraft(): void {
   selectComposerSkill(null, null);

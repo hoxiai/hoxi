@@ -2,9 +2,14 @@
 import { t } from "../i18n";
 import { hoxiAPI } from "../services/api";
 import type { PermissionRequest } from "../services/sse-types";
-import { appSettings, triggerDesktopNotification, updateAppSetting } from "./settings";
-import { setWorkspace, workspace } from "./workspace";
-import { sessionDirectory } from "./workspace-sessions";
+import {
+  appSettings,
+  triggerDesktopNotification,
+  updateAppSetting,
+  type ApprovalMode,
+} from "./settings";
+import { setWorkspace, workspace } from "./workspace-state";
+import { sessionDirectory } from "./session-query";
 import {
   commandCandidates as extractPermissionCommands,
   isDestructivePermissionRequest,
@@ -14,7 +19,6 @@ import {
 
 export { extractPermissionCommands, isDestructivePermissionRequest, isSafeCommandPermissionRequest };
 
-export type ApprovalMode = "auto" | "smart" | "manual";
 
 const SMART_AUTO_PERMISSIONS = new Set([
   "read",
