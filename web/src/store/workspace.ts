@@ -24,6 +24,7 @@ import type {
   ProviderInfo,
   ProviderTelemetryStats,
   WorkspaceProfile,
+  WorkspaceReviewResult,
   WorktreeMeta,
 } from "../services/api";
 import { DEFAULT_AGENTS } from "./workspace-providers";
@@ -77,7 +78,7 @@ export interface WorkspaceState {
   aiBySession: Record<string, SessionAIConfig>;
   sessionSandboxMode: "local" | "worktree";
   sidebarProjectMode: "single" | "multi" | "recent";
-  inspectorTab: "diffs" | "memory" | "files" | "terminal" | "browser";
+  inspectorTab: "diffs" | "memory" | "files" | "skills" | "terminal" | "browser";
   inspectorOpen: boolean;
   inspectorMaximized: boolean;
   inspectedFilePath: string | null;
@@ -124,6 +125,7 @@ export interface WorkspaceState {
   observerAutoAudit: boolean;
   auditsBySession: Record<string, CodeAuditResult>;
   auditingBySession: Record<string, boolean>;
+  reviewsBySession: Record<string, WorkspaceReviewResult>;
   interruptedBySession: Record<string, "paused" | "stopped" | undefined>;
   sessionFinishedAt: Record<string, number>;
   unreadCompletedBySession: Record<string, boolean>;
@@ -362,6 +364,7 @@ export const [workspace, setWorkspace] = createStore<WorkspaceState>({
   observerAutoAudit: initialObserverAutoAudit(),
   auditsBySession: {},
   auditingBySession: {},
+  reviewsBySession: {},
   interruptedBySession: {},
   sessionFinishedAt: {},
   unreadCompletedBySession: {},
@@ -595,6 +598,7 @@ export * from "./workspace-queue-subagents";
 export * from "./session-sandbox";
 export * from "./session-status-sync";
 export * from "./session-title";
+export * from "./session-goal";
 export * from "./git-commit";
 export * from "./approval-mode";
 export * from "./provider-telemetry";
@@ -611,5 +615,6 @@ export * from "./file-links";
 export * from "./message-lookup";
 export * from "./question-answers";
 export * from "./auto-models";
+export * from "./skills";
 
 

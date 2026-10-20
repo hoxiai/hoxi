@@ -18,6 +18,7 @@ import {
 } from "./auto-models";
 import { splitAgyModelEffortSuffix } from "./provider-catalog";
 import { parseModelString, updateSessionAI, type ReasoningEffort } from "./session-ai";
+import { getComposerSkill, selectComposerSkill, setComposerSkillNotice } from "./skills";
 import {
   EFFORT_KEY,
   FAVORITE_MODELS_KEY,
@@ -146,6 +147,16 @@ export function selectModel(model: SelectedModel, _autoRetryOnError = false) {
     }
   }
   updateSessionAI(patch);
+  const activeSID = workspace.activeSessionID;
+  const nextRuntime = sessionRuntimeForID(activeSID);
+  const currentSkill = getComposerSkill(activeSID);
+  if (currentSkill && nextRuntime !== "opencode") {
+    selectComposerSkill(activeSID, null);
+    setComposerSkillNotice(
+      activeSID,
+      t("skills.runtimeSwitchedCleared", { name: currentSkill.name, runtime: nextRuntime })
+    );
+  }
   pushRecentModel(model);
   try {
     if (!workspace.activeSessionID) {

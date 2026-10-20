@@ -1,8 +1,9 @@
 // web/src/components/timeline/composer-subcomponents.tsx
 import { createEffect, For, Show } from "solid-js";
-import { AlertCircle, ClipboardPaste, FileText, LoaderCircle, Slash, X } from "lucide-solid";
+import { AlertCircle, ClipboardPaste, FileText, LoaderCircle, Slash, Sparkles, X } from "lucide-solid";
 import { FileIcon } from "../icons";
 import { t } from "../../i18n";
+import type { SkillSelection } from "../../services/api";
 import {
   classifyAttachmentKind,
   type AutocompleteItem,
@@ -53,7 +54,9 @@ export function ComposerAutocompletePopover(props: {
                 onClick={() => props.onApply(item)}
               >
                 <span class="inline-flex items-center gap-2 min-w-0 font-mono truncate">
-                  {item.type === "context" ? (
+                  {item.source === "skill" ? (
+                    <Sparkles size={12} class="text-[var(--accent-primary)] shrink-0" />
+                  ) : item.type === "context" ? (
                     <Slash size={12} class="text-[var(--accent-primary)] shrink-0" />
                   ) : item.type === "file" ? (
                     <FileIcon
@@ -65,12 +68,28 @@ export function ComposerAutocompletePopover(props: {
                     />
                   ) : null}
                   <span class="truncate">{item.label}</span>
+                  <Show when={item.hints && item.hints.length > 0}>
+                    <span class="text-[10.5px] text-[var(--text-faint)] truncate">
+                      {item.hints!.join(" ")}
+                    </span>
+                  </Show>
                 </span>
-                <Show when={item.detail}>
-                  <span class="text-[11px] text-[var(--text-muted)] truncate max-w-[180px]">
-                    {item.detail}
-                  </span>
-                </Show>
+                <span class="inline-flex items-center gap-1.5 shrink-0 max-w-[220px]">
+                  <Show when={item.source}>
+                    <span class="rounded bg-[var(--bg-inset)] px-1.5 py-0.5 text-[9.5px] font-medium uppercase tracking-wider text-[var(--text-faint)]">
+                      {item.source === "skill"
+                        ? t("skills.groupSkills")
+                        : item.source === "mcp"
+                        ? t("skills.groupMcp")
+                        : t("skills.groupCommands")}
+                    </span>
+                  </Show>
+                  <Show when={item.detail}>
+                    <span class="text-[11px] text-[var(--text-muted)] truncate">
+                      {item.detail}
+                    </span>
+                  </Show>
+                </span>
               </button>
             )}
           </For>
@@ -86,6 +105,11 @@ export function ComposerAttachmentChips(props: {
   pendingCount?: number;
   notice?: string | null;
   onDismissNotice?: () => void;
+  selectedSkill?: SkillSelection | null;
+  skillNotice?: string | null;
+  onDismissSkillNotice?: () => void;
+  onRemoveSkill?: () => void;
+  onInspectSkill?: (skill: SkillSelection) => void;
   onRemoveImage: (id: string) => void;
   onRemovePaste: (id: string) => void;
 }) {
@@ -142,14 +166,56 @@ export function ComposerAttachmentChips(props: {
         </div>
       </Show>
 
+      <Show when={props.skillNotice}>
+        <div class="mb-2 flex items-center justify-between gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-[11.5px] text-amber-500">
+          <span class="inline-flex items-center gap-1.5 min-w-0">
+            <AlertCircle size={13} class="shrink-0" />
+            <span class="truncate">{props.skillNotice}</span>
+          </span>
+          <Show when={props.onDismissSkillNotice}>
+            <button
+              type="button"
+              onClick={() => props.onDismissSkillNotice?.()}
+              class="shrink-0 opacity-75 hover:opacity-100 cursor-pointer"
+            >
+              <X size={12} />
+            </button>
+          </Show>
+        </div>
+      </Show>
+
       <Show
         when={
+          Boolean(props.selectedSkill) ||
           props.images.length > 0 ||
           props.pastes.length > 0 ||
           (props.pendingCount ?? 0) > 0
         }
       >
         <div class="mb-2 flex flex-wrap items-center gap-1.5">
+          <Show when={props.selectedSkill}>
+            {(skill) => (
+              <div class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--accent-border)] bg-[var(--accent-surface)] px-2.5 py-1 text-[11px] text-[var(--accent-text)]">
+                <button
+                  type="button"
+                  onClick={() => props.onInspectSkill?.(skill())}
+                  title={t("skills.selectedInComposer", { name: skill().name })}
+                  class="inline-flex items-center gap-1.5 font-mono font-medium hover:underline cursor-pointer"
+                >
+                  <Sparkles size={11} class="shrink-0 text-[var(--accent-primary)]" />
+                  <span>{t("skills.composerPillPrefix")}: {skill().name}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => props.onRemoveSkill?.()}
+                  title={t("skills.removeFromComposer")}
+                  class="text-[var(--text-muted)] hover:text-[var(--danger-text)] cursor-pointer"
+                >
+                  <X size={11} />
+                </button>
+              </div>
+            )}
+          </Show>
           <For each={props.images}>
             {(img) => (
               <div class="group relative flex items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] pl-1.5 pr-2 py-1 text-[11px]">

@@ -53,4 +53,14 @@ export const skills = {
     "Queued message paused: skill \"{name}\" is no longer valid in the active directory. Edit or re-select to continue.",
   digestLabel: "Content digest",
   sourcePathLabel: "Source",
+  browseSkills: "Browse Skills",
+  groupSkills: "Skills",
+  groupMcp: "MCP Prompts",
+  groupCommands: "Commands",
+  composerPillPrefix: "Skill:",
+  removeFromComposer: "Remove from composer",
+  sandboxSkillMissing:
+    "Skill \"{name}\" is not available in the new sandbox directory and was deselected.",
+  runtimeSwitchedCleared:
+    "Skill \"{name}\" cleared because skills are currently supported only on OpenCode.",
 };

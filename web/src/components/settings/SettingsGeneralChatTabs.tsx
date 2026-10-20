@@ -2,6 +2,7 @@
 import {
   Bell,
   CornerDownLeft,
+  ExternalLink,
   Globe,
   Monitor,
   Moon,
@@ -16,6 +17,7 @@ import {
   updateAppSetting,
   type ColorScheme,
   type FontScale,
+  type LinkOpenTarget,
   type ReasoningDisplayMode,
   type SendShortcutMode,
   type ThemeMode,
@@ -225,6 +227,31 @@ export function ChatComposerTab() {
               },
             ]}
             onChange={(val) => updateAppSetting("sendShortcut", val)}
+          />
+        </SettingRow>
+
+        <SettingRow
+          icon={ExternalLink}
+          label={t("settings.sectionLinkOpenTitle")}
+          tip={t("settings.sectionLinkOpenDesc")}
+        >
+          <SegmentedPills<LinkOpenTarget>
+            value={appSettings.linkOpenTarget}
+            options={[
+              {
+                id: "external",
+                label: () => t("settings.linkOpenExternal"),
+                tip: () => t("settings.linkOpenExternalDesc"),
+                icon: ExternalLink,
+              },
+              {
+                id: "inspector",
+                label: () => t("settings.linkOpenInspector"),
+                tip: () => t("settings.linkOpenInspectorDesc"),
+                icon: Globe,
+              },
+            ]}
+            onChange={(val) => updateAppSetting("linkOpenTarget", val)}
           />
         </SettingRow>
 

@@ -151,6 +151,10 @@ export function transferComposerSkillSelection(
   setSkillsStore("selectedBySession", toSessionID, current ? { ...current } : null);
 }
 
+export function transferDraftComposerSkill(toSessionID: string) {
+  transferComposerSkillSelection(null, toSessionID);
+}
+
 export function getComposerSkillNotice(sessionID?: string | null): string | null {
   return skillsStore.noticeBySession[sessionKey(sessionID)] ?? null;
 }

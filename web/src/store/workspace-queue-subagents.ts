@@ -1,10 +1,15 @@
 import { produce } from "solid-js/store";
 import { t } from "../i18n";
-import { hoxiAPI } from "../services/api";
+import { hoxiAPI, type SkillSelection } from "../services/api";
 import type { ToolPart } from "../services/sse-types";
 import { forgetSubagentLinks, subagentChildIDFromPart } from "./message-lookup";
 import { type SelectedModel, setWorkspace, workspace } from "./workspace";
 import { sessionAIConfig, type ReasoningEffort } from "./session-ai";
+import { sessionRuntimeForID } from "./workspace-providers";
+import {
+  revalidateSkillForTargetDirectory,
+  setComposerSkillNotice,
+} from "./skills";
 import { subagentDisplayTitle, type SubagentTitle } from "./session-title";
 import {
   forkFromMessage,
@@ -52,12 +57,14 @@ export interface QueuedPromptItem {
   model?: SelectedModel;
   effort?: ReasoningEffort;
   attachments: QueuedPromptAttachment[];
+  skillSelection?: SkillSelection;
 }
 
 export interface ComposerDraftEdit {
   id: string;
   text: string;
   attachments: QueuedPromptAttachment[];
+  skillSelection?: SkillSelection;
 }
 
 const drainingBySession = new Set<string>();
@@ -76,7 +83,13 @@ export function lastPromptDispatchedAt(sessionID: string): number {
 export function enqueueSessionPrompt(
   sessionID: string,
   text: string,
-  options?: { agent?: string; model?: SelectedModel; effort?: QueuedPromptItem["effort"]; attachments?: QueuedPromptAttachment[] }
+  options?: {
+    agent?: string;
+    model?: SelectedModel;
+    effort?: QueuedPromptItem["effort"];
+    attachments?: QueuedPromptAttachment[];
+    skillSelection?: SkillSelection;
+  }
 ): QueuedPromptItem {
   const config = sessionAIConfig(sessionID);
   const model = options?.model || config.model;
@@ -89,6 +102,7 @@ export function enqueueSessionPrompt(
     model: model ? { ...model } : undefined,
     effort: options?.effort ?? config.effort,
     attachments: options?.attachments ?? [],
+    ...(options?.skillSelection ? { skillSelection: { ...options.skillSelection } } : {}),
   };
   const current = workspace.queuedPromptsBySession[sessionID] ?? [];
   setWorkspace("queuedPromptsBySession", sessionID, [...current, item]);
@@ -109,6 +123,7 @@ export function editQueuedPrompt(sessionID: string, itemID: string) {
     id: target.id,
     text: target.text,
     attachments: target.attachments,
+    skillSelection: target.skillSelection,
   });
 }
 
@@ -127,6 +142,7 @@ export async function sendQueuedPromptNow(sessionID: string, itemID: string): Pr
     model: target.model,
     effort: target.effort,
     attachments: target.attachments,
+    skillSelection: target.skillSelection,
     forceImmediate: true,
   });
 }
@@ -141,13 +157,33 @@ export async function drainNextQueuedPrompt(sessionID: string): Promise<void> {
 
   const next = queue[0];
   drainingBySession.add(sessionID);
-  removeQueuedPrompt(sessionID, next.id);
   try {
+    let validatedSkill = next.skillSelection;
+    if (validatedSkill) {
+      const dir = sessionDirectory(sessionID) || workspace.rootDir || "";
+      const rt = sessionRuntimeForID(sessionID);
+      const check = await revalidateSkillForTargetDirectory({
+        sessionID,
+        directory: dir,
+        runtime: rt,
+        selection: validatedSkill,
+      });
+      if (!check.ok) {
+        setComposerSkillNotice(
+          sessionID,
+          t("skills.queueSkillInvalid", { name: validatedSkill.name })
+        );
+        return;
+      }
+      validatedSkill = check.selection;
+    }
+    removeQueuedPrompt(sessionID, next.id);
     await submitSessionPrompt(next.text, sessionID, {
       agent: next.agent,
       model: next.model,
       effort: next.effort,
       attachments: next.attachments,
+      skillSelection: validatedSkill,
       forceImmediate: true,
       followTimeline: false,
     });

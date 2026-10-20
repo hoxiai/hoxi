@@ -1,7 +1,12 @@
 // web/src/store/provider-audit.ts
 import { produce } from "solid-js/store";
 import { locale, t } from "../i18n";
-import { hoxiAPI, type CodeAuditResult } from "../services/api";
+import {
+  hoxiAPI,
+  type CodeAuditResult,
+  type WorkspaceReviewResult,
+  type WorkspaceReviewScope,
+} from "../services/api";
 import { findBestFallbackModel } from "./provider-health";
 import { AUTO_PROVIDER_ID, resolveAutoModelTarget } from "./auto-models";
 import {
@@ -14,6 +19,7 @@ import {
 import {
   updateSessionAI,
   sendPrompt,
+  sessionDirectory,
   setWorkspace,
   workspace,
   type SelectedModel,
@@ -154,6 +160,66 @@ function resolveSessionWorkerAndPrompt(sessionID: string): {
   }
 
   return { workerProviderID, workerModelID, userPrompt };
+}
+
+/**
+ * Reviews the session's workspace changes (uncommitted or against a base branch).
+ * The backend collects the diffs and REVIEW.md from the base revision, so the
+ * code under review cannot change the rules applied to it. Results are keyed by
+ * session, so a late response never shows up under another session.
+ */
+export async function runWorkspaceReview(
+  sessionID: string,
+  scope: WorkspaceReviewScope,
+  baseRef = "",
+): Promise<WorkspaceReviewResult | null> {
+  const repoDir = sessionDirectory(sessionID);
+  if (!sessionID || !repoDir) return null;
+  const base = scope === "branch" ? baseRef.trim() : "";
+  const store = (result: WorkspaceReviewResult) => {
+    setWorkspace("reviewsBySession", sessionID, result);
+    return result;
+  };
+  const failed = (error: string): WorkspaceReviewResult => ({
+    ok: false,
+    score: 0,
+    pass: false,
+    summary: "",
+    error,
+    observerProvider: "",
+    observerModel: "",
+    scope,
+    baseRef: base || undefined,
+    timestamp: Date.now(),
+  });
+
+  const { workerProviderID, workerModelID, userPrompt } = resolveSessionWorkerAndPrompt(sessionID);
+  const observer = workerProviderID ? resolveObserverModel(workerProviderID) : null;
+  if (!workerProviderID || !observer) {
+    return store(failed(t("inspector.review.observerMissing")));
+  }
+
+  try {
+    const res = await hoxiAPI.auditProviderCode({
+      sessionID,
+      workerProviderID,
+      workerModelID,
+      observerProviderID: observer.providerID,
+      observerModelID: observer.modelID,
+      observerBaseURL: observer.baseURL,
+      observerNPM: observer.npm,
+      userPrompt: userPrompt || t("inspector.review.defaultRequest"),
+      diffs: [],
+      lspErrorCount: 0,
+      locale: locale(),
+      reviewScope: scope,
+      repoDir,
+      baseRef: base || undefined,
+    });
+    return store({ ...res, scope, baseRef: base || undefined, timestamp: Date.now() });
+  } catch (err: any) {
+    return store(failed(err?.message || t("inspector.review.failed")));
+  }
 }
 
 export async function runSessionCodeAudit(

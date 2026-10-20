@@ -386,6 +386,17 @@ export interface CodeAuditRequest {
   lspErrorCount: number;
   lspErrorsSummary?: string;
   locale?: string;
+  /** Workspace review: diffs and REVIEW.md are collected server-side from repoDir. */
+  reviewScope?: WorkspaceReviewScope;
+  repoDir?: string;
+  baseRef?: string;
+}
+
+export type WorkspaceReviewScope = "uncommitted" | "branch";
+
+export interface WorkspaceReviewResult extends CodeAuditResult {
+  scope: WorkspaceReviewScope;
+  baseRef?: string;
 }
 
 export type ExternalToolID =

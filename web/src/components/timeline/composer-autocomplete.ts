@@ -1,7 +1,20 @@
 // web/src/components/timeline/composer-autocomplete.ts
 import { type Accessor, createEffect, createSignal, onCleanup, type Setter } from "solid-js";
-import { hoxiAPI, type CommandInfo } from "../../services/api";
-import { sessionDirectory, workspace } from "../../store/workspace";
+import {
+  hoxiAPI,
+  skillsAPI,
+  type CommandInfo,
+  type SkillDescriptor,
+  type SkillSelection,
+} from "../../services/api";
+import {
+  isSkillHidden,
+  selectComposerSkill,
+  sessionDirectory,
+  sessionRuntimeForID,
+  setComposerSkillNotice,
+  workspace,
+} from "../../store/workspace";
 import { t } from "../../i18n";
 
 export interface AutocompleteItem {
@@ -9,6 +22,68 @@ export interface AutocompleteItem {
   label: string;
   detail?: string;
   insertText: string;
+  source?: "command" | "mcp" | "skill";
+  hints?: string[];
+  skillSelection?: SkillSelection;
+}
+
+export function buildSlashCommandSuggestions(params: {
+  commands: CommandInfo[];
+  skills: SkillDescriptor[];
+  query: string;
+  runtime: string;
+  isHidden?: (key: string) => boolean;
+}): AutocompleteItem[] {
+  const q = params.query.trim().toLowerCase();
+  const checkHidden = params.isHidden ?? isSkillHidden;
+  const items: AutocompleteItem[] = [];
+  const seenSkills = new Set<string>();
+
+  if (params.runtime === "opencode") {
+    for (const sk of params.skills) {
+      if (checkHidden(sk.key)) continue;
+      seenSkills.add(sk.name);
+      if (
+        !q ||
+        sk.name.toLowerCase().includes(q) ||
+        (sk.description ?? "").toLowerCase().includes(q)
+      ) {
+        items.push({
+          type: "command",
+          source: "skill",
+          label: `/${sk.name}`,
+          detail: sk.description || t("skills.groupSkills"),
+          insertText: "",
+          skillSelection: { key: sk.key, name: sk.name },
+        });
+      }
+    }
+  }
+
+  for (const c of params.commands) {
+    const src = c.source === "skill" || c.source === "mcp" ? c.source : "command";
+    if (src === "skill") {
+      // Only expose skills when backed by a verified SkillDescriptor in opencode runtime
+      continue;
+    }
+    if (seenSkills.has(c.name)) continue;
+    if (
+      !q ||
+      c.name.toLowerCase().includes(q) ||
+      (c.description ?? "").toLowerCase().includes(q)
+    ) {
+      items.push({
+        type: "command",
+        source: src,
+        label: `/${c.name}`,
+        detail: c.description || "Run command",
+        insertText: `/${c.name} `,
+        hints: c.hints?.length ? c.hints : undefined,
+      });
+    }
+  }
+
+  return items.slice(0, 12);
 }
 
 /**
@@ -146,6 +221,11 @@ const MAX_FILE_SEARCH_CACHE = 48;
 
 const fileSearchCache = new Map<string, { files: string[]; expiresAt: number }>();
 const commandByDirCache = new Map<string, { commands: CommandInfo[]; expiresAt: number }>();
+const skillsByDirCache = new Map<string, { skills: SkillDescriptor[]; expiresAt: number }>();
+
+export function invalidateComposerSkillsAutocompleteCache() {
+  skillsByDirCache.clear();
+}
 
 function readCachedFileSearch(dir: string | undefined, query: string): string[] | null {
   const key = `${dir || "__root__"}\x00${query}`;
@@ -210,38 +290,71 @@ export function createComposerAutocomplete(
     // 1. Slash command at start: `/cmd`
     if (token.mode === "command") {
       const query = token.query.toLowerCase();
-      const dirKey = dir || "__root__";
+      const sid = sessionID();
+      const runtime = sessionRuntimeForID(sid);
+      const dirKey = `${runtime}\x00${dir || workspace.rootDir || "__root__"}`;
+      const effectiveDir = dir || workspace.rootDir || undefined;
       const reqID = ++requestGen;
       setTriggerMode("command");
       void (async () => {
-        const cached = commandByDirCache.get(dirKey);
+        const cachedCmds = commandByDirCache.get(dirKey);
         let cmds =
-          cached && Date.now() <= cached.expiresAt ? cached.commands : null;
+          cachedCmds && Date.now() <= cachedCmds.expiresAt ? cachedCmds.commands : null;
+        const cachedSkills = skillsByDirCache.get(dirKey);
+        let skills =
+          runtime === "opencode"
+            ? cachedSkills && Date.now() <= cachedSkills.expiresAt
+              ? cachedSkills.skills
+              : null
+            : [];
+
+        const tasks: Promise<void>[] = [];
         if (!cmds) {
-          try {
-            cmds = await hoxiAPI.listCommands(dir);
-            commandByDirCache.set(dirKey, {
-              commands: cmds ?? [],
-              expiresAt: Date.now() + COMMAND_CACHE_TTL_MS,
-            });
-          } catch {
-            cmds = [];
-          }
+          tasks.push(
+            hoxiAPI
+              .listCommands(effectiveDir)
+              .then((res) => {
+                cmds = res ?? [];
+                commandByDirCache.set(dirKey, {
+                  commands: cmds,
+                  expiresAt: Date.now() + COMMAND_CACHE_TTL_MS,
+                });
+              })
+              .catch(() => {
+                cmds = [];
+              })
+          );
+        }
+        if (runtime === "opencode" && !skills) {
+          tasks.push(
+            skillsAPI
+              .fetchSkillsList({
+                directory: effectiveDir,
+                sessionID: sid,
+                runtime,
+              })
+              .then((res) => {
+                skills = res.supported ? (res.skills ?? []) : [];
+                skillsByDirCache.set(dirKey, {
+                  skills,
+                  expiresAt: Date.now() + COMMAND_CACHE_TTL_MS,
+                });
+              })
+              .catch(() => {
+                skills = [];
+              })
+          );
+        }
+        if (tasks.length > 0) {
+          await Promise.all(tasks);
         }
         if (reqID !== requestGen) return;
-        const filtered = (cmds ?? [])
-          .filter(
-            (c) =>
-              c.name.toLowerCase().includes(query) ||
-              (c.description ?? "").toLowerCase().includes(query)
-          )
-          .slice(0, 8)
-          .map((c) => ({
-            type: "command" as const,
-            label: `/${c.name}`,
-            detail: c.description || "Run command",
-            insertText: `/${c.name} `,
-          }));
+        const filtered = buildSlashCommandSuggestions({
+          commands: cmds ?? [],
+          skills: skills ?? [],
+          query,
+          runtime,
+        });
         setSuggestions(filtered);
         setSelectedIndex(0);
       })();
@@ -342,6 +455,29 @@ export function createComposerAutocomplete(
     const token =
       activeToken() ??
       findAutocompleteToken(val, cursorOffset ? cursorOffset() : val.length);
+    if (item.source === "skill" && item.skillSelection) {
+      const sid = sessionID();
+      selectComposerSkill(sid, item.skillSelection);
+      setComposerSkillNotice(sid, null);
+      if (token) {
+        const before = val.slice(0, token.start);
+        const after = val.slice(token.end).replace(/^\s+/, "");
+        const nextText = `${before}${after}`;
+        setText(nextText);
+        setTriggerMode(null);
+        setActiveToken(null);
+        setSuggestions([]);
+        onApplied?.(before.length);
+        return;
+      }
+      const stripped = val.replace(/^\/[^\s]*\s*/, "");
+      setText(stripped);
+      setTriggerMode(null);
+      setActiveToken(null);
+      setSuggestions([]);
+      onApplied?.(0);
+      return;
+    }
     if (token) {
       const applied = applyAutocompleteToken(val, token, item.insertText);
       setText(applied.text);

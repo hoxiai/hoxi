@@ -140,6 +140,7 @@ export function upsertTurnPart(list: MessageTurn[], part: MessagePart) {
   if (!isOptimisticPartID(part.id)) {
     for (let i = turn.parts.length - 1; i >= 0; i--) {
       if (isOptimisticPartID(turn.parts[i].id) && turn.parts[i].type === part.type) {
+        preserveTextPartSkillMeta(part, turn.parts[i]);
         turn.parts.splice(i, 1);
       }
     }
@@ -154,6 +155,14 @@ export function upsertTurnPart(list: MessageTurn[], part: MessagePart) {
   }
 }
 
+function preserveTextPartSkillMeta(target: MessagePart, source?: MessagePart): void {
+  if (target.type !== "text" || !source || source.type !== "text") return;
+  const srcSkill = source.metadata?.hoxiSkill;
+  if (srcSkill && !target.metadata?.hoxiSkill) {
+    target.metadata = { ...(target.metadata || {}), hoxiSkill: srcSkill };
+  }
+}
+
 const MAX_REACTIVE_TOOL_OUTPUT_CHARS = 32 * 1024;
 const MAX_FULL_TOOL_OUTPUT_LRU = 64;
 const fullToolOutputCache = new Map<string, string>();
@@ -164,6 +173,7 @@ function normalizeMessagePartInPlace(part: MessagePart, previous?: MessagePart):
     // preserving any tokens already received when an update omits the field.
     part.text ??= previous?.type === part.type ? previous.text ?? "" : "";
   }
+  preserveTextPartSkillMeta(part, previous);
   // Index before compaction: task outputs carry `session_id:` at their tail.
   indexSubagentLink(part);
   compactToolPartOutputInPlace(part);
@@ -293,16 +303,24 @@ function mergeTurnInto(local: MessageTurn, remote: { info: MessageInfo; parts: M
   if (!(isTurnSettled(local.info) && !isTurnSettled(remote.info))) {
     Object.assign(local.info, remote.info);
   }
+  const localSkillPart = local.parts.find(
+    (p): p is Extract<MessagePart, { type: "text" }> =>
+      p.type === "text" && Boolean(p.metadata?.hoxiSkill)
+  );
   const remoteIDs = new Set(remote.parts.map((p) => p.id));
   const nextParts: MessagePart[] = [];
   for (const rp of remote.parts) {
     normalizeMessagePartInPlace(rp);
+    if (localSkillPart && rp.type === "text") {
+      preserveTextPartSkillMeta(rp, localSkillPart);
+    }
     const idx = findPartIndex(local.parts, rp.id);
     const lp = idx >= 0 ? local.parts[idx] : undefined;
     if (!lp || lp.type !== rp.type) {
       nextParts.push(rp);
       continue;
     }
+    preserveTextPartSkillMeta(rp, lp);
     if (!isLocalPartAhead(lp, rp)) Object.assign(lp, rp);
     nextParts.push(lp);
   }
@@ -357,8 +375,20 @@ export function mergeServerTurnsInto(
         // Promote the optimistic bubble in place; a fresh object would remount it.
         promoted = optimistic;
         optimistic.info = remote.info;
-        if (remote.parts.length > 0) optimistic.parts = remote.parts;
-        else for (const part of optimistic.parts) part.messageID = remote.info.id;
+        const optSkillPart = optimistic.parts.find(
+          (p): p is Extract<MessagePart, { type: "text" }> =>
+            p.type === "text" && Boolean(p.metadata?.hoxiSkill)
+        );
+        if (remote.parts.length > 0) {
+          if (optSkillPart) {
+            for (const rp of remote.parts) {
+              if (rp.type === "text") preserveTextPartSkillMeta(rp, optSkillPart);
+            }
+          }
+          optimistic.parts = remote.parts;
+        } else {
+          for (const part of optimistic.parts) part.messageID = remote.info.id;
+        }
         next.push(optimistic);
         continue;
       }

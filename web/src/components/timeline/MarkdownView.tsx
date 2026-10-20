@@ -135,15 +135,48 @@ function InlineRenderer(props: { text: string }) {
           >
             {(_) => {
               const codeText = () => (span() as Extract<InlineSpan, { type: "code" }>).text;
+              const handleOpen = (e: MouseEvent) => {
+                e.preventDefault();
+                const target =
+                  e.metaKey || e.ctrlKey
+                    ? appSettings.linkOpenTarget === "external"
+                      ? "inspector"
+                      : "external"
+                    : appSettings.linkOpenTarget;
+                if (target === "external") {
+                  openExternalURL(codeText());
+                } else {
+                  openURLInInspector(codeText());
+                }
+              };
               return (
-                <button
-                  type="button"
-                  onClick={() => openURLInInspector(codeText())}
-                  title={t("timeline.openInBrowserTooltip")}
-                  class="inline-flex items-center gap-1 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-elevated)] hover:border-[var(--accent-border)] hover:bg-[var(--accent-surface)] px-1.5 py-0.5 font-mono text-[0.88em] text-[var(--accent-primary)] hover:text-[var(--accent-text)] transition-colors cursor-pointer align-baseline"
-                >
-                  <span>{codeText()}</span>
-                </button>
+                <span class="inline-flex items-center gap-0.5 align-baseline">
+                  <button
+                    type="button"
+                    onClick={handleOpen}
+                    title={
+                      appSettings.linkOpenTarget === "external"
+                        ? t("timeline.openInExternalBrowserTooltip")
+                        : t("timeline.openInBrowserTooltip")
+                    }
+                    class="inline-flex items-center gap-1 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-elevated)] hover:border-[var(--accent-border)] hover:bg-[var(--accent-surface)] px-1.5 py-0.5 font-mono text-[0.88em] text-[var(--accent-primary)] hover:text-[var(--accent-text)] transition-colors cursor-pointer"
+                  >
+                    <span>{codeText()}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      openExternalURL(codeText());
+                    }}
+                    title={t("timeline.openInExternalBrowserDirectTooltip")}
+                    aria-label={t("timeline.openInExternalBrowserDirectTooltip")}
+                    class="inline-flex items-center justify-center p-0.5 rounded text-[var(--text-muted)] hover:text-[var(--accent-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+                  >
+                    <ExternalLink size={11} />
+                  </button>
+                </span>
               );
             }}
           </Match>
@@ -185,6 +218,21 @@ function InlineRenderer(props: { text: string }) {
             {(_) => {
               const linkSpan = () => span() as Extract<InlineSpan, { type: "link" }>;
               const localTarget = () => extractFilePathFromHref(linkSpan().href);
+              const isHttp = () => isHttpUrl(linkSpan().href);
+              const handleHttpOpen = (e: MouseEvent) => {
+                e.preventDefault();
+                const target =
+                  e.metaKey || e.ctrlKey
+                    ? appSettings.linkOpenTarget === "external"
+                      ? "inspector"
+                      : "external"
+                    : appSettings.linkOpenTarget;
+                if (target === "external") {
+                  openExternalURL(linkSpan().href);
+                } else {
+                  openURLInInspector(linkSpan().href);
+                }
+              };
               return (
                 <Show
                   when={!isLocalFileHref(linkSpan().href)}
@@ -203,23 +251,53 @@ function InlineRenderer(props: { text: string }) {
                     </button>
                   }
                 >
-                  <a
-                    href={linkSpan().href}
-                    target="_blank"
-                    rel="noreferrer"
-                    title={isHttpUrl(linkSpan().href) ? t("timeline.openInBrowserTooltip") : undefined}
-                    onClick={(e) => {
-                      if (isHttpUrl(linkSpan().href) && !e.metaKey && !e.ctrlKey) {
-                        e.preventDefault();
-                        openURLInInspector(linkSpan().href);
-                      }
-                    }}
-                    class="text-[var(--accent-primary)] underline decoration-[var(--accent-border)] underline-offset-2 hover:opacity-85 break-all cursor-pointer"
+                  <Show
+                    when={isHttp()}
+                    fallback={
+                      <a
+                        href={linkSpan().href}
+                        target="_blank"
+                        rel="noreferrer"
+                        class="text-[var(--accent-primary)] underline decoration-[var(--accent-border)] underline-offset-2 hover:opacity-85 break-all cursor-pointer"
+                      >
+                        <Show when={hasNestedInlineSyntax(linkSpan().text)} fallback={linkSpan().text}>
+                          <InlineRenderer text={linkSpan().text} />
+                        </Show>
+                      </a>
+                    }
                   >
-                    <Show when={hasNestedInlineSyntax(linkSpan().text)} fallback={linkSpan().text}>
-                      <InlineRenderer text={linkSpan().text} />
-                    </Show>
-                  </a>
+                    <span class="inline-flex items-center gap-0.5 align-baseline">
+                      <a
+                        href={linkSpan().href}
+                        target="_blank"
+                        rel="noreferrer"
+                        title={
+                          appSettings.linkOpenTarget === "external"
+                            ? t("timeline.openInExternalBrowserTooltip")
+                            : t("timeline.openInBrowserTooltip")
+                        }
+                        onClick={handleHttpOpen}
+                        class="text-[var(--accent-primary)] underline decoration-[var(--accent-border)] underline-offset-2 hover:opacity-85 break-all cursor-pointer"
+                      >
+                        <Show when={hasNestedInlineSyntax(linkSpan().text)} fallback={linkSpan().text}>
+                          <InlineRenderer text={linkSpan().text} />
+                        </Show>
+                      </a>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          openExternalURL(linkSpan().href);
+                        }}
+                        title={t("timeline.openInExternalBrowserDirectTooltip")}
+                        aria-label={t("timeline.openInExternalBrowserDirectTooltip")}
+                        class="inline-flex items-center justify-center p-0.5 rounded text-[var(--text-muted)] hover:text-[var(--accent-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+                      >
+                        <ExternalLink size={11} />
+                      </button>
+                    </span>
+                  </Show>
                 </Show>
               );
             }}

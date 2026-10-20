@@ -78,6 +78,17 @@ func (g *Service) handleAuditProviderCode(w http.ResponseWriter, r *http.Request
 			writeJSON(w, http.StatusOK, auditCodeResponse{OK: false, ObserverProvider: obsPID, ObserverModel: obsMID, Error: err.Error()})
 			return
 		}
+		if snap.TotalFiles == 0 {
+			writeJSON(w, http.StatusOK, auditCodeResponse{
+				OK:               true,
+				Score:            100,
+				Pass:             true,
+				Summary:          noChangesReviewSummary(req.Locale),
+				ObserverProvider: obsPID,
+				ObserverModel:    obsMID,
+			})
+			return
+		}
 		req.Diffs = auditDiffsFromReview(snap.Files)
 		req.ReviewGuidance = snap.Guidance
 	}
@@ -253,6 +264,13 @@ func (g *Service) invokeObserverLLM(
 	}
 
 	return parseObserverAuditJSON(content)
+}
+
+func noChangesReviewSummary(locale string) string {
+	if strings.HasPrefix(locale, "zh") {
+		return "没有需要审查的改动。"
+	}
+	return "No changes to review."
 }
 
 // auditDiffsFromReview converts worktree review files into the audit payload shape.

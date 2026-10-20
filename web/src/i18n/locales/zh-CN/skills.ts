@@ -54,4 +54,14 @@ export const skills: SkillsI18n = {
     "队列消息已暂停：技能「{name}」在当前目录已失效，请编辑或重新选择后再发送。",
   digestLabel: "正文摘要",
   sourcePathLabel: "来源位置",
+  browseSkills: "浏览技能库",
+  groupSkills: "技能",
+  groupMcp: "MCP 提示",
+  groupCommands: "命令",
+  composerPillPrefix: "技能：",
+  removeFromComposer: "从输入框移除",
+  sandboxSkillMissing:
+    "技能 \"{name}\" 在新的沙箱目录中不可用，已自动取消选择。",
+  runtimeSwitchedCleared:
+    "已取消选择技能 \"{name}\"，当前技能仅支持 OpenCode 运行时。",
 };

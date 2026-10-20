@@ -1,7 +1,7 @@
 import { createEffect, createMemo, createSignal, For, onCleanup, Show, untrack } from "solid-js";
-import { ArrowLeft, ArrowRight, Globe, Plus, Power, RefreshCw, X } from "lucide-solid";
+import { ArrowLeft, ArrowRight, ExternalLink, Globe, Plus, Power, RefreshCw, X } from "lucide-solid";
 import { browserAPI, browserPoint, connectBrowserStream, type BrowserAction, type BrowserScope, type BrowserState } from "../../services/browser";
-import { sessionDirectory, setWorkspace, workspace } from "../../store/workspace";
+import { openExternalURL, sessionDirectory, setWorkspace, workspace } from "../../store/workspace";
 import { t } from "../../i18n";
 
 interface PendingScroll {
@@ -334,6 +334,21 @@ export default function BrowserInspector() {
             <input class="min-w-0 flex-1 rounded border border-[var(--border-subtle)] bg-transparent px-2 py-1 text-xs focus:outline-none focus:border-[var(--accent-primary)]" aria-label={t("inspector.browser.url")} placeholder={t("inspector.browser.url")} value={url()} onFocus={() => { editingURL = true; }} onBlur={() => { editingURL = false; }} onInput={(event) => setURL(event.currentTarget.value)} />
             <button class="shrink-0 rounded px-1.5 py-1 text-[11px] hover:bg-[var(--bg-hover)] disabled:opacity-40 cursor-pointer" disabled={busy()} type="submit">{t("inspector.browser.go")}</button>
           </form>
+          <button
+            type="button"
+            class={iconBtn}
+            disabled={!url().trim() || url().trim() === "about:blank"}
+            title={t("inspector.browser.openInExternal")}
+            aria-label={t("inspector.browser.openInExternal")}
+            onClick={() => {
+              const target = url().trim();
+              if (target && target !== "about:blank") {
+                openExternalURL(target);
+              }
+            }}
+          >
+            <ExternalLink size={13} />
+          </button>
           <Show when={running()}>
             <label
               class={`flex shrink-0 items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] cursor-pointer select-none transition-colors ${

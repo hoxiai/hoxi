@@ -4,6 +4,7 @@ import type { SessionStatus } from "../services/sse-types";
 import { setWorkspace, workspace } from "./workspace";
 import { activeDirectory, isManagedSession, loadSessionMessagesOnly, sessionDirectory } from "./workspace-sessions";
 import { drainNextQueuedPrompt, lastPromptDispatchedAt } from "./workspace-queue-subagents";
+import { advanceSessionGoal } from "./session-goal";
 
 // Hoxi-managed conversations report busy status globally from the runner process table.
 // Only unadopted OpenCode sessions need per-directory status queries, and only for the
@@ -93,6 +94,7 @@ export async function syncSessionStatuses(directory?: string): Promise<void> {
         void loadSessionMessagesOnly(sid).catch(() => {});
       }
       void drainNextQueuedPrompt(sid);
+      void advanceSessionGoal(sid);
     }
   } catch (err) {
     console.warn("syncSessionStatuses warning:", err);

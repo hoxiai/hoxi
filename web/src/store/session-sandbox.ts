@@ -9,7 +9,14 @@ import type { SessionInfo } from "../services/sse-types";
 import { appSettings, updateAppSetting } from "./settings";
 import { setWorkspace, workspace } from "./workspace";
 import { initializeSessionAI } from "./session-ai";
+import {
+  getComposerSkill,
+  revalidateSkillForTargetDirectory,
+  selectComposerSkill,
+  setComposerSkillNotice,
+} from "./skills";
 import { normalizeFolderPath, workspaceFoldersForDir } from "./workspace-projects";
+import { sessionRuntimeForID } from "./workspace-providers";
 import {
   exitSessionWorktree,
   isManagedSession,
@@ -98,6 +105,8 @@ export function setWorktreeMetaIfChanged(key: string, next: WorktreeMeta): void 
 }
 
 export function startNewThreadDraft(): void {
+  selectComposerSkill(null, null);
+  setComposerSkillNotice(null, null);
   setWorkspace({ activeSessionID: null, sessionSetupError: null,
     newThreadRequest: workspace.newThreadRequest + 1 });
 }
@@ -230,18 +239,34 @@ export async function switchActiveSessionSandboxMode(mode: "local" | "worktree")
         });
       });
       await refreshWorktreeStatus(id);
-      return;
+    } else {
+      const isolated = Boolean(workspace.worktreeBySession[id]?.isolated);
+      if (mode === "worktree" && !isolated) {
+        await prepareWorktree(id, directory);
+        await refreshWorktreeStatus(id);
+      } else if (mode === "local" && isolated) {
+        await changeSandbox(id, async () => {
+          await hoxiAPI.removeWorktree(id, true);
+          setWorkspace("worktreeBySession", id, localMeta(id, directory));
+        });
+        await refreshWorktreeStatus(id);
+      }
     }
-    const isolated = Boolean(workspace.worktreeBySession[id]?.isolated);
-    if (mode === "worktree" && !isolated) {
-      await prepareWorktree(id, directory);
-      await refreshWorktreeStatus(id);
-    } else if (mode === "local" && isolated) {
-      await changeSandbox(id, async () => {
-        await hoxiAPI.removeWorktree(id, true);
-        setWorkspace("worktreeBySession", id, localMeta(id, directory));
+    const existingSkill = getComposerSkill(id);
+    if (existingSkill) {
+      const targetDir = workspace.worktreeBySession[id]?.directory || directory || "";
+      const check = await revalidateSkillForTargetDirectory({
+        sessionID: id,
+        directory: targetDir,
+        runtime: sessionRuntimeForID(id),
+        selection: existingSkill,
       });
-      await refreshWorktreeStatus(id);
+      if (check.ok && check.selection) {
+        selectComposerSkill(id, check.selection);
+      } else {
+        selectComposerSkill(id, null);
+        setComposerSkillNotice(id, t("skills.sandboxSkillMissing", { name: existingSkill.name }));
+      }
     }
   } catch (error) {
     reportSetupError(error);

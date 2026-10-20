@@ -13,6 +13,7 @@ import {
 import { recordUserRevertAction } from "./provider-telemetry";
 import { initializeSessionAI, persistSessionAI, restoreSessionAI, sessionAIConfig } from "./session-ai";
 import { syncPendingPermissions } from "./approval-mode";
+import { extractUserTurnSkillSelection } from "./skills";
 import { appSettings } from "./settings";
 import { ARCHIVED_SESSIONS_KEY, isSessionArchived, setWorkspace, workspace } from "./workspace";
 import {
@@ -756,8 +757,9 @@ export async function revertToHere(
       const attachments = targetTurn.parts
         .filter((p): p is Extract<MessagePart, { type: "file" }> => p.type === "file")
         .map((p) => ({ type: "file" as const, mime: p.mime, filename: p.filename, url: p.url }));
-      if (text || attachments.length > 0) {
-        setWorkspace("composerDraftEditBySession", sessionID, { id: `revert_${messageID}`, text, attachments });
+      const skillSelection = extractUserTurnSkillSelection(targetTurn.parts) ?? undefined;
+      if (text || attachments.length > 0 || skillSelection) {
+        setWorkspace("composerDraftEditBySession", sessionID, { id: `revert_${messageID}`, text, attachments, skillSelection });
       }
     }
   }

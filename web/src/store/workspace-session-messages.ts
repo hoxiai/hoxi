@@ -8,9 +8,15 @@ import {
 } from "./message-lookup";
 import { t } from "../i18n";
 import { ensureAIConsent } from "./privacy";
-import { hoxiAPI, resolveRunnerRuntimeForProvider } from "../services/api";
+import { hoxiAPI, resolveRunnerRuntimeForProvider, type SkillSelection } from "../services/api";
 import type { StreamFrameBatch } from "../services/sse";
 import type { MessageInfo, MessagePart } from "../services/sse-types";
+import {
+  extractUserTurnSkillSelection,
+  revalidateSkillForTargetDirectory,
+  setComposerSkillNotice,
+  transferDraftComposerSkill,
+} from "./skills";
 import {
   recordAssistantTurnUpdated,
   recordFirstToken,
@@ -28,6 +34,7 @@ import {
 } from "./auto-models";
 import { newIsolatedSession, waitForSessionSandbox } from "./session-sandbox";
 import { buildCombinedSystemPrompt, setWorkspace, workspace } from "./workspace";
+import { parseGoalCommand, pauseSessionGoal, runGoalCommand } from "./session-goal";
 import { buildWorkspaceFoldersSystemPrompt, workspaceFoldersForDir } from "./workspace-projects";
 import { initializeSessionAI, parseModelString, sessionAIConfig, type ReasoningEffort } from "./session-ai";
 import { sessionRuntimeForID } from "./workspace-providers";
@@ -63,6 +70,7 @@ interface AutoDispatchState {
   agent?: string;
   effort?: ReasoningEffort;
   attachments?: Array<{ type: "file"; mime: string; filename?: string; url: string }>;
+  skillSelection?: SkillSelection;
   triedKeys: Set<string>;
   dispatchedAt: number;
 }
@@ -74,6 +82,7 @@ export function markSessionInterrupted(
   kind: "paused" | "stopped" = "stopped"
 ) {
   if (!sessionID) return;
+  pauseSessionGoal(sessionID, "stopped");
   lastInterruptAtBySession.set(sessionID, Date.now());
   setWorkspace("interruptedBySession", sessionID, kind);
   setWorkspace("statusBySession", sessionID, { type: "idle" });
@@ -90,6 +99,7 @@ export async function handleSessionErrorEvent(
   error?: { name: string; data?: { message?: string; statusCode?: number; isRetryable?: boolean } }
 ): Promise<void> {
   if (!sessionID) return;
+  pauseSessionGoal(sessionID, "error");
   const autoState = lastAutoDispatchBySession.get(sessionID);
   if (autoState && error && error.name !== "RunnerStalledError") {
     const errText = error.data?.message || error.name || "error";
@@ -126,6 +136,7 @@ export async function handleSessionErrorEvent(
             variant: autoState.effort || undefined,
             directory: sessionDirectory(sessionID),
             attachments: autoState.attachments,
+            skillSelection: autoState.skillSelection,
             runtime: resolveRunnerRuntimeForProvider(
               nextCand.providerID,
               Boolean(workspace.hoxiProviders?.[nextCand.providerID || ""])
@@ -226,12 +237,18 @@ export async function submitSessionPrompt(
     model?: { providerID: string; modelID: string };
     effort?: ReasoningEffort;
     attachments?: Array<{ type: "file"; mime: string; filename?: string; url: string }>;
+    skillSelection?: import("../services/api").SkillSelection;
     forceImmediate?: boolean;
     /** false for automatic dispatches that must not move the reader's scroll position. */
     followTimeline?: boolean;
     beforeSend?: () => Promise<void>;
   }
 ): Promise<string> {
+  const goalCommand = parseGoalCommand(promptText);
+  if (goalCommand) {
+    await runGoalCommand(goalCommand, targetSessionID ?? workspace.activeSessionID);
+    return "";
+  }
   if (!ensureAIConsent()) throw new Error(t("privacy.consentRequired"));
   let id = targetSessionID ?? workspace.activeSessionID;
   const isBrandNewSession = !id;
@@ -286,6 +303,8 @@ export async function submitSessionPrompt(
     if (isSessionDeleted(id)) throw new Error(t("timeline.sessionUnavailable"));
   }
 
+  let effectiveSkill = options?.skillSelection ? { ...options.skillSelection } : undefined;
+
   // If the session is currently busy and not forced immediate, enqueue the message!
   if (id && !options?.forceImmediate && isSessionBusy(id)) {
     enqueueSessionPrompt(id, promptText, {
@@ -293,6 +312,7 @@ export async function submitSessionPrompt(
       model: effectiveModel,
       effort,
       attachments,
+      skillSelection: effectiveSkill,
     });
     if (options?.followTimeline !== false) requestTimelineFollow(id);
     return id;
@@ -338,13 +358,14 @@ export async function submitSessionPrompt(
           filename: att.filename,
           url: att.url,
         }));
-        if (promptText || optimisticParts.length === 0) {
+        if (promptText || effectiveSkill || optimisticParts.length === 0) {
           optimisticParts.push({
             id: `prt_${now}`,
             sessionID,
             messageID: optimisticMsgID,
             type: "text",
             text: promptText,
+            ...(effectiveSkill ? { metadata: { hoxiSkill: { ...effectiveSkill } } } : {}),
           });
         }
         list.push({
@@ -369,13 +390,44 @@ export async function submitSessionPrompt(
 
   if (!id) {
     id = await newIsolatedSession(undefined, {
-      onSessionCreated: stageOptimisticTurn,
+      onSessionCreated: (createdID) => {
+        transferDraftComposerSkill(createdID);
+        stageOptimisticTurn(createdID);
+      },
     });
   }
   stageOptimisticTurn(id);
   initializeSessionAI(id, config);
 
   try {
+    if (effectiveSkill) {
+      const finalDir = sessionDirectory(id) || workspace.rootDir || "";
+      const finalRuntime = resolveRunnerRuntimeForProvider(
+        effectiveModel?.providerID,
+        Boolean(workspace.hoxiProviders?.[effectiveModel?.providerID || ""])
+      );
+      const check = await revalidateSkillForTargetDirectory({
+        sessionID: id,
+        directory: finalDir,
+        runtime: finalRuntime,
+        selection: effectiveSkill,
+      });
+      if (!check.ok || !check.selection) {
+        const msg = t("skills.sandboxSkillMissing", { name: effectiveSkill.name });
+        setComposerSkillNotice(id, msg);
+        throw new Error(msg);
+      }
+      effectiveSkill = check.selection;
+      setWorkspace(
+        produce((state) => {
+          const turn = state.messagesBySession[id!]?.find((m) => m.info.id === optimisticMsgID);
+          const textPart = turn?.parts.find((p) => p.type === "text");
+          if (textPart && textPart.type === "text") {
+            textPart.metadata = { ...(textPart.metadata || {}), hoxiSkill: { ...effectiveSkill! } };
+          }
+        })
+      );
+    }
     if (options?.beforeSend) {
       await options.beforeSend();
     }
@@ -387,6 +439,7 @@ export async function submitSessionPrompt(
         agent: effectiveAgent,
         effort: effort || undefined,
         attachments,
+        skillSelection: effectiveSkill,
         triedKeys: new Set([`${effectiveModel.providerID}/${effectiveModel.modelID}`]),
         dispatchedAt: Date.now(),
       });
@@ -401,6 +454,7 @@ export async function submitSessionPrompt(
       directory: sessionDirectory(id),
       system,
       attachments,
+      skillSelection: effectiveSkill,
       runtime: resolveRunnerRuntimeForProvider(effectiveModel?.providerID, Boolean(workspace.hoxiProviders?.[effectiveModel?.providerID || ""])),
     });
     if (!lastInterruptAtBySession.has(id)) {
@@ -409,7 +463,7 @@ export async function submitSessionPrompt(
     if (shouldSummarizeTitle) {
       void summarizeAndRenameSession(
         id,
-        promptText || t("timeline.imagePromptSessionTitle"),
+        promptText || (effectiveSkill ? `/${effectiveSkill.name}` : t("timeline.imagePromptSessionTitle")),
         effectiveModel,
         (sessionID, title) => renameSessionTitle(sessionID, title, "automatic")
       );
@@ -465,8 +519,9 @@ export async function retryLastUserPrompt(sessionID?: string | null): Promise<vo
           filename: p.filename,
           url: p.url,
         }));
-      if (text || attachments.length > 0) {
-        await submitSessionPrompt(text, id, { attachments });
+      const skillSelection = extractUserTurnSkillSelection(turns[i].parts) ?? undefined;
+      if (text || attachments.length > 0 || skillSelection) {
+        await submitSessionPrompt(text, id, { attachments, skillSelection });
       }
       return;
     }

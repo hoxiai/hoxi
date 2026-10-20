@@ -10,7 +10,7 @@ const PierreDiffViewer = lazy(() => import("./PierreDiffViewer"));
 const WebGLTerminal = lazy(() => import("../terminal/WebGLTerminal"));
 const BrowserInspector = lazy(() => import("./BrowserInspector"));
 
-type TabID = "diffs" | "memory" | "files" | "terminal" | "browser";
+type TabID = "diffs" | "memory" | "files" | "skills" | "terminal" | "browser";
 
 const TABS: Array<{ id: TabID }> = [
   { id: "diffs" },
@@ -25,6 +25,7 @@ export default function InspectorPane() {
     diffs: workspace.inspectorTab === "diffs",
     memory: workspace.inspectorTab === "memory",
     files: workspace.inspectorTab === "files",
+    skills: workspace.inspectorTab === "skills",
     terminal: workspace.inspectorTab === "terminal",
     browser: workspace.inspectorTab === "browser",
   });
@@ -61,6 +62,8 @@ export default function InspectorPane() {
         return t("inspector.tabs.memory");
       case "files":
         return t("inspector.tabs.files");
+      case "skills":
+        return t("inspector.tabs.skills");
       case "terminal":
         return t("inspector.tabs.terminal");
       case "browser":

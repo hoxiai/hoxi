@@ -9,6 +9,8 @@ import type {
   SessionStatus,
   SnapshotFileDiff,
 } from "./sse-types";
+
+export type { MessageInfo, MessagePart };
 import type {
   AgentInfo,
   BootstrapInfo,

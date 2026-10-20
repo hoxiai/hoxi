@@ -6,6 +6,7 @@ import {
   FolderOpen,
   LoaderCircle,
   Plus,
+  Sparkles,
   Square,
 } from "lucide-solid";
 import {
@@ -14,7 +15,15 @@ import {
   consumeComposerDraftEdit,
   ensureAIConsent,
   forkFromMessage,
+  getComposerSkill,
+  getComposerSkillNotice,
   isSessionBusy,
+  loadSkillDetail,
+  loadSkillsCatalog,
+  selectComposerSkill,
+  sessionDirectory,
+  sessionRuntimeForID,
+  setComposerSkillNotice,
   stopSessionTask,
   submitSessionPrompt,
   switchActiveSessionSandboxMode,
@@ -79,6 +88,18 @@ export default function Composer() {
 
   const sessionID = () => workspace.activeSessionID;
   const busy = createMemo(() => isSessionBusy(sessionID()));
+  const selectedSkill = createMemo(() => getComposerSkill(sessionID()));
+  const skillNotice = createMemo(() => getComposerSkillNotice(sessionID()));
+  const openSkillsBrowser = (inspectKey?: string) => {
+    const sid = sessionID();
+    const dir = sessionDirectory(sid) || workspace.rootDir || "";
+    const rt = sessionRuntimeForID(sid);
+    setWorkspace({ inspectorOpen: true, inspectorTab: "skills" });
+    void loadSkillsCatalog({ sessionID: sid, directory: dir, runtime: rt });
+    if (inspectKey) {
+      void loadSkillDetail(inspectKey, { sessionID: sid, directory: dir, runtime: rt });
+    }
+  };
   const effectiveSandboxMode = createMemo<"local" | "worktree">(() => {
     const id = sessionID();
     if (id && workspace.worktreeBySession[id]) {
@@ -149,9 +170,14 @@ export default function Composer() {
     const draft = workspace.composerDraftEditBySession[id];
     if (!draft) return;
     consumeComposerDraftEdit(id);
-    setText((prev) => (prev.trim() ? `${prev}\n${draft.text}` : draft.text));
+    if (draft.text) {
+      setText((prev) => (prev.trim() ? `${prev}\n${draft.text}` : draft.text));
+    }
     if (draft.attachments?.length) {
       imgAttach.restoreFromAttachments(draft.attachments);
+    }
+    if (draft.skillSelection) {
+      selectComposerSkill(id, draft.skillSelection);
     }
     requestAnimationFrame(() => {
       adjustHeight();
@@ -174,6 +200,7 @@ export default function Composer() {
 
   const canSend = () =>
     (text().trim().length > 0 ||
+      Boolean(selectedSkill()) ||
       reviewComments().length > 0 ||
       imgAttach.images().length > 0 ||
       pasteCollapse.pastes().length > 0) &&
@@ -206,17 +233,25 @@ export default function Composer() {
     }
     const payload = buildPayloadWithReviews();
     const attachments = imgAttach.toPromptAttachments();
-    if ((!payload && attachments.length === 0) || sending() || switchingSandbox()) return;
+    const currentSkill = selectedSkill() ? { ...selectedSkill()! } : undefined;
+    if ((!payload && attachments.length === 0 && !currentSkill) || sending() || switchingSandbox()) return;
     if (!ensureAIConsent()) return;
     const draftSessionID = sessionID();
     const draftDirectory = workspace.rootDir;
-    const draft = { text: text(), images: imgAttach.images(), pastes: pasteCollapse.pastes() };
+    const draft = {
+      text: text(),
+      images: imgAttach.images(),
+      pastes: pasteCollapse.pastes(),
+      skill: currentSkill,
+    };
 
     if (text().trim()) {
       promptHistory.recordPrompt(text().trim());
     }
     setSending(true);
     setText("");
+    selectComposerSkill(draftSessionID, null);
+    setComposerSkillNotice(draftSessionID, null);
     pasteCollapse.clearPastes();
     imgAttach.clearImages();
     draftSync.clearCurrentDraft();
@@ -227,6 +262,7 @@ export default function Composer() {
     try {
       const id = await submitSessionPrompt(payload, sessionID(), {
         attachments,
+        skillSelection: currentSkill,
       });
       clearReviewComments(id);
     } catch (err) {
@@ -237,6 +273,9 @@ export default function Composer() {
       }
       if (workspace.rootDir === draftDirectory && (!draftSessionID || sessionID() === draftSessionID)) {
         if (!text()) setText(draft.text);
+        if (draft.skill && !getComposerSkill(sessionID())) {
+          selectComposerSkill(sessionID(), draft.skill);
+        }
         imgAttach.replaceImages([...draft.images, ...imgAttach.images()]);
         pasteCollapse.replacePastes([...draft.pastes, ...pasteCollapse.pastes()]);
         requestAnimationFrame(adjustHeight);
@@ -370,6 +409,11 @@ export default function Composer() {
             pendingCount={imgAttach.pendingCount()}
             notice={imgAttach.notice()}
             onDismissNotice={() => imgAttach.clearNotice()}
+            selectedSkill={selectedSkill()}
+            skillNotice={skillNotice()}
+            onDismissSkillNotice={() => setComposerSkillNotice(sessionID(), null)}
+            onRemoveSkill={() => selectComposerSkill(sessionID(), null)}
+            onInspectSkill={(sk) => openSkillsBrowser(sk.key)}
             onRemoveImage={(id) => imgAttach.removeImage(id)}
             onRemovePaste={(id) => pasteCollapse.removePaste(id)}
           />
@@ -440,6 +484,19 @@ export default function Composer() {
                 title={t("timeline.attachImageTooltip")}
               >
                 <Plus size={15} />
+              </button>
+
+              <button
+                type="button"
+                onClick={() => openSkillsBrowser(selectedSkill()?.key)}
+                class={`inline-flex items-center justify-center rounded-lg p-1.5 transition-colors cursor-pointer ${
+                  selectedSkill()
+                    ? "bg-[var(--accent-surface)] text-[var(--accent-text)]"
+                    : "text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
+                }`}
+                title={t("skills.browseSkills")}
+              >
+                <Sparkles size={14} />
               </button>
 
               <ModeSwitcher />

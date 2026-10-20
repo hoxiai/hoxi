@@ -24,6 +24,7 @@ import {
 import { t } from "../../i18n";
 import AICommitFallbackToast from "./ai-commit-fallback-toast";
 import ObserverAuditBanner from "./ObserverAuditBanner";
+import WorkspaceReviewPanel from "./WorkspaceReviewPanel";
 import DiffEmptyState from "./pierre-diff-empty";
 import DiffFileTree from "./diff-file-tree";
 import MultiRepoDiffView from "./multi-repo-diff-view";
@@ -495,6 +496,9 @@ export default function PierreDiffViewer() {
       <div class="inspector-scroll flex-1 min-h-0 overflow-y-auto px-2 py-1.5 space-y-1.5">
         <Show when={workspace.activeSessionID}>
           {(sid) => <ObserverAuditBanner sessionID={sid()} />}
+        </Show>
+        <Show when={workspace.activeSessionID} keyed>
+          {(sid) => <WorkspaceReviewPanel sessionID={sid} />}
         </Show>
         <Show
           when={
