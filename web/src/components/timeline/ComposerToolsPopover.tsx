@@ -1,16 +1,29 @@
 // web/src/components/timeline/ComposerToolsPopover.tsx
 import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 import { Presence } from "../motion/Presence";
-import { Paperclip, Plus, Search, Sparkles, Workflow } from "lucide-solid";
+import {
+  GitBranch,
+  LoaderCircle,
+  Paperclip,
+  Plus,
+  Search,
+  Sparkles,
+  Workflow,
+} from "lucide-solid";
 import { t } from "../../i18n";
 
 export default function ComposerToolsPopover(props: {
   workspaceReady: boolean;
   skillActive?: boolean;
+  sandboxMode: "local" | "worktree";
+  canEnhance: boolean;
+  enhancing: boolean;
   onAttach: () => void;
   onOpenSkills: () => void;
   onOpenCodeSearch: () => void;
   onOpenConvoy: () => void;
+  onSwitchSandbox: () => void;
+  onEnhance: () => void;
 }) {
   const [open, setOpen] = createSignal(false);
   let buttonRef: HTMLButtonElement | undefined;
@@ -112,6 +125,37 @@ export default function ComposerToolsPopover(props: {
               <Workflow size={14} class="shrink-0" />
               <span class="flex-1 min-w-0 truncate">{t("timeline.multiAgentConvoy")}</span>
             </button>
+
+            <div class="my-1 border-t border-[var(--border-subtle)]" />
+
+            <button
+              type="button"
+              disabled={!props.canEnhance || props.enhancing}
+              onClick={() => run(props.onEnhance)}
+              class="w-full flex items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+            >
+              <Show
+                when={!props.enhancing}
+                fallback={<LoaderCircle size={14} class="shrink-0 animate-spin" />}
+              >
+                <Sparkles size={14} class="shrink-0" />
+              </Show>
+              <span class="flex-1 min-w-0 truncate">
+                {props.enhancing ? t("timeline.enhancingPrompt") : t("timeline.enhancePrompt")}
+              </span>
+            </button>
+
+            <Show when={props.sandboxMode === "local"}>
+              <button
+                type="button"
+                disabled={!props.workspaceReady}
+                onClick={() => run(props.onSwitchSandbox)}
+                class="w-full flex items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+              >
+                <GitBranch size={14} class="shrink-0" />
+                <span class="flex-1 min-w-0 truncate">{t("timeline.sandboxEnableWorktree")}</span>
+              </button>
+            </Show>
           </div>
         </div>
         )}

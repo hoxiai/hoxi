@@ -1,6 +1,7 @@
 import { createEffect, createMemo, createSignal, lazy, onCleanup, onMount, Show, Suspense } from "solid-js";
 import CompactHeader from "./CompactHeader";
 import CommandPalette, { type CommandPaletteMode } from "./CommandPalette";
+import UpdateBadge from "./UpdateBadge";
 import LeftNav from "./LeftNav";
 import MessageStream from "../timeline/MessageStream";
 import Composer from "../timeline/Composer";
@@ -303,6 +304,7 @@ export default function ThreePaneShell() {
       </main>
 
       <CommandPalette mode={paletteMode()} onClose={() => setPaletteMode(null)} />
+      <UpdateBadge />
 
       {/* Workspace, Session Handoff, Leaderboard Modals & Full-Screen Settings Control Center */}
       <Suspense>

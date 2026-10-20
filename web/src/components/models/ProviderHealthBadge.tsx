@@ -110,7 +110,7 @@ export function ProviderHealthBadge(props: {
 
   return (
       <span
-        class="inline-flex flex-wrap items-center gap-1 text-[10px] font-normal leading-relaxed text-[var(--text-muted)]"
+        class="inline-flex flex-wrap items-center gap-1 text-[11px] font-normal leading-relaxed text-[var(--text-muted)]"
         title={t("models.qualityScoresTooltip", {
           status: statusText(),
           stability: formatHealthScore(health().stabilityScore),

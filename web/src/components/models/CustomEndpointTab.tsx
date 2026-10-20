@@ -270,7 +270,7 @@ export default function CustomEndpointTab() {
           <button
             type="button"
             onClick={() => openProviderModal("providers", null)}
-            class="hoxi-press inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 -ml-2 text-[12.5px] font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+            class="hoxi-press inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 -ml-2 text-[13px] font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
           >
             <ArrowLeft size={14} />
             <span>{t("models.tabCatalog")}</span>
@@ -280,7 +280,7 @@ export default function CustomEndpointTab() {
         {/* Clean Single-Line Header + Compact Switcher */}
         <div class="flex items-center justify-between gap-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/50 px-3.5 py-2.5">
           <div class="min-w-0">
-            <div class="text-[12.5px] font-semibold text-[var(--text-primary)]">
+            <div class="text-[13px] font-semibold text-[var(--text-primary)]">
               {isReadOnlyImported()
                 ? t("models.viewImportedEndpoint")
                 : isEditing()
@@ -297,7 +297,7 @@ export default function CustomEndpointTab() {
               <select
                 value={workspace.editingProviderID || ""}
                 onChange={(e) => setWorkspace("editingProviderID", e.currentTarget.value || null)}
-                class="max-w-[240px] rounded-lg border border-[var(--border-strong)] bg-[var(--bg-panel)] px-2.5 py-1 text-[11.5px] font-medium text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]"
+                class="max-w-[240px] rounded-lg border border-[var(--border-strong)] bg-[var(--bg-panel)] px-2.5 py-1 text-[12px] font-medium text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]"
               >
                 <option value="">+ {t("models.newCustomProvider")}</option>
                 <For each={existingCustomProviders()}>
@@ -313,7 +313,7 @@ export default function CustomEndpointTab() {
                 <button
                   type="button"
                   onClick={() => setWorkspace("editingProviderID", null)}
-                  class="inline-flex items-center gap-1 rounded-lg border border-[var(--accent-border)] bg-[var(--accent-surface)] px-2.5 py-1 text-[11.5px] font-medium text-[var(--accent-primary)] hover:opacity-90 cursor-pointer"
+                  class="inline-flex items-center gap-1 rounded-lg border border-[var(--accent-border)] bg-[var(--accent-surface)] px-2.5 py-1 text-[12px] font-medium text-[var(--accent-primary)] hover:opacity-90 cursor-pointer"
                 >
                   <Plus size={12} />
                   {t("models.newCustomProvider")}
@@ -333,7 +333,7 @@ export default function CustomEndpointTab() {
               type="button"
               disabled={saving()}
               onClick={() => void onForkToHoxiEdit()}
-              class="shrink-0 inline-flex items-center gap-1.5 rounded-lg bg-[var(--accent-primary)] px-3 py-1.5 text-[11.5px] font-medium text-[var(--accent-foreground)] hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
+              class="shrink-0 inline-flex items-center gap-1.5 rounded-lg bg-[var(--accent-primary)] px-3 py-1.5 text-[12px] font-medium text-[var(--accent-foreground)] hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
             >
               {t("models.forkToHoxiEdit")}
             </button>
@@ -345,7 +345,7 @@ export default function CustomEndpointTab() {
         {/* Row 1: Provider ID, Display Name, Provider API */}
         <div class="grid grid-cols-3 gap-3">
           <div>
-            <label class="block text-[11.5px] font-medium text-[var(--text-secondary)] mb-1">
+            <label class="block text-[12px] font-medium text-[var(--text-secondary)] mb-1">
               {t("models.providerId")}
             </label>
             <input
@@ -357,11 +357,11 @@ export default function CustomEndpointTab() {
               placeholder={t("models.providerIdPlaceholder")}
               value={providerID()}
               onInput={(e) => setProviderID(e.currentTarget.value)}
-              class="w-full rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] px-3 py-2 font-mono text-[12.5px] text-[var(--text-primary)] disabled:opacity-60 outline-none focus:border-[var(--accent-primary)] selectable-text"
+              class="w-full rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] px-3 py-2 font-mono text-[13px] text-[var(--text-primary)] disabled:opacity-60 outline-none focus:border-[var(--accent-primary)] selectable-text"
             />
           </div>
           <div>
-            <label class="block text-[11.5px] font-medium text-[var(--text-secondary)] mb-1">
+            <label class="block text-[12px] font-medium text-[var(--text-secondary)] mb-1">
               {t("models.displayName")}
             </label>
             <input
@@ -370,11 +370,11 @@ export default function CustomEndpointTab() {
               placeholder={t("models.displayNamePlaceholder")}
               value={displayName()}
               onInput={(e) => setDisplayName(e.currentTarget.value)}
-              class="w-full rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] px-3 py-2 text-[12.5px] text-[var(--text-primary)] disabled:opacity-60 outline-none focus:border-[var(--accent-primary)] selectable-text"
+              class="w-full rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] px-3 py-2 text-[13px] text-[var(--text-primary)] disabled:opacity-60 outline-none focus:border-[var(--accent-primary)] selectable-text"
             />
           </div>
           <div>
-            <label class="block text-[11.5px] font-medium text-[var(--text-secondary)] mb-1">
+            <label class="block text-[12px] font-medium text-[var(--text-secondary)] mb-1">
               {t("models.providerApi")}
             </label>
             <select
@@ -393,7 +393,7 @@ export default function CustomEndpointTab() {
         {/* Row 2: Base URL + API Key + Fetch Models Button */}
         <div class="grid grid-cols-12 gap-3 items-end">
           <div class="col-span-6">
-            <label class="block text-[11.5px] font-medium text-[var(--text-secondary)] mb-1">
+            <label class="block text-[12px] font-medium text-[var(--text-secondary)] mb-1">
               {t("models.baseUrl")}
             </label>
             <input
@@ -409,7 +409,7 @@ export default function CustomEndpointTab() {
             />
           </div>
           <div class="col-span-4">
-            <label class="block text-[11.5px] font-medium text-[var(--text-secondary)] mb-1">
+            <label class="block text-[12px] font-medium text-[var(--text-secondary)] mb-1">
               {t("models.apiKeyOptional")}
             </label>
             <input
@@ -498,7 +498,7 @@ export default function CustomEndpointTab() {
             <button
               type="submit"
               disabled={saving()}
-              class="inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] px-4 py-2 text-[12.5px] font-medium text-[var(--accent-foreground)] hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
+              class="inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] px-4 py-2 text-[13px] font-medium text-[var(--accent-foreground)] hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
             >
               <Show when={!saving()} fallback={<LoaderCircle size={14} class="animate-spin" />}>
                 <Check size={14} />

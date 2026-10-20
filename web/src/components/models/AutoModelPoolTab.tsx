@@ -249,7 +249,7 @@ export default function AutoModelPoolTab() {
                 >
                   <Zap size={12} class={pid === "free" ? "text-[var(--ok)]" : "text-[var(--accent-primary)]"} />
                   <span>{getAutoPoolDisplayName(pid)}</span>
-                  <span class="rounded-md bg-[var(--bg-inset)] px-1.5 py-0.2 font-mono text-[10px] opacity-80">
+                  <span class="rounded-md bg-[var(--bg-inset)] px-1.5 py-0.2 font-mono text-[11px] opacity-80">
                     {cands().length}
                   </span>
                 </button>
@@ -261,7 +261,7 @@ export default function AutoModelPoolTab() {
         <button
           type="button"
           onClick={() => setCreatingCustom((v) => !v)}
-          class="inline-flex items-center gap-1 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-2.5 py-1.5 text-[11.5px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
+          class="inline-flex items-center gap-1 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-2.5 py-1.5 text-[12px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
         >
           <Plus size={12} />
           {t("models.autoPoolNewCustomBtn")}
@@ -288,7 +288,7 @@ export default function AutoModelPoolTab() {
           <button
             type="button"
             onClick={() => void handleCreatePool()}
-            class="rounded-lg bg-[var(--accent-primary)] px-3 py-1 text-[11.5px] font-semibold text-white hover:opacity-90 cursor-pointer"
+            class="rounded-lg bg-[var(--accent-primary)] px-3 py-1 text-[12px] font-semibold text-white hover:opacity-90 cursor-pointer"
           >
             {t("models.autoPoolCreateConfirm")}
           </button>
@@ -299,10 +299,10 @@ export default function AutoModelPoolTab() {
       <div class="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/60 p-4 space-y-3">
         <div class="flex flex-wrap items-center justify-between gap-3">
           <div class="min-w-0 flex items-center gap-2 flex-wrap">
-            <span class="text-[13.5px] font-semibold text-[var(--text-primary)]">
+            <span class="text-[13px] font-semibold text-[var(--text-primary)]">
               {getAutoPoolDisplayName(selectedPoolID())}
             </span>
-            <span class="text-[11.5px] text-[var(--text-muted)]">
+            <span class="text-[12px] text-[var(--text-muted)]">
               · {getAutoPoolDescription(selectedPoolID())}
             </span>
           </div>
@@ -314,7 +314,7 @@ export default function AutoModelPoolTab() {
                 void handleStrategyChange(e.currentTarget.value as AutoRotationStrategy)
               }
               title={t("models.autoStrategyLabel")}
-              class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[11.5px] font-medium text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]"
+              class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[12px] font-medium text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]"
             >
               <option value="round-robin">{t("models.autoStrategyRoundRobin")}</option>
               <option value="priority">{t("models.autoStrategyPriority")}</option>
@@ -380,7 +380,7 @@ export default function AutoModelPoolTab() {
                 selectModel({ providerID: AUTO_PROVIDER_ID, modelID: selectedPoolID() });
                 closeSettingsModal();
               }}
-              class={`inline-flex items-center gap-1.5 rounded-xl px-3 py-1 text-[11.5px] font-semibold cursor-pointer ${
+              class={`inline-flex items-center gap-1.5 rounded-xl px-3 py-1 text-[12px] font-semibold cursor-pointer ${
                 isCurrentlySelectedInWorkspace()
                   ? "bg-[var(--ok-surface)] text-[var(--ok-text)] border border-[var(--ok)]/30"
                   : "bg-[var(--accent-primary)] text-white hover:opacity-90"
@@ -396,7 +396,7 @@ export default function AutoModelPoolTab() {
 
         {/* Candidates List */}
         <div class="space-y-1.5">
-          <div class="flex items-center justify-between text-[11.5px] font-medium text-[var(--text-secondary)]">
+          <div class="flex items-center justify-between text-[12px] font-medium text-[var(--text-secondary)]">
             <span>
               {t("models.autoPoolCandidatesTitle", {
                 ready: readyCount(),
@@ -417,7 +417,7 @@ export default function AutoModelPoolTab() {
           <Show
             when={effectiveCandidates().length > 0}
             fallback={
-              <div class="rounded-xl border border-dashed border-[var(--border-subtle)] p-3 text-center text-[11.5px] text-[var(--text-muted)]">
+              <div class="rounded-xl border border-dashed border-[var(--border-subtle)] p-3 text-center text-[12px] text-[var(--text-muted)]">
                 {t("models.autoPoolNoCandidates")}
               </div>
             }
@@ -442,7 +442,7 @@ export default function AutoModelPoolTab() {
                       }`}
                     >
                       <div class="flex items-center gap-2 min-w-0">
-                        <span class="w-4 font-mono text-[10.5px] text-[var(--text-faint)]">
+                        <span class="w-4 font-mono text-[11px] text-[var(--text-faint)]">
                           #{idx() + 1}
                         </span>
                         <ProviderIcon id={cand.providerID} class="w-3.5 h-3.5 shrink-0" />
@@ -453,7 +453,7 @@ export default function AutoModelPoolTab() {
                           ({meta().providerName})
                         </span>
                         <Show when={meta().free}>
-                          <span class="rounded bg-[var(--ok-surface)] px-1.5 py-0.2 text-[9.5px] font-semibold text-[var(--ok-text)]">
+                          <span class="rounded bg-[var(--ok-surface)] px-1.5 py-0.2 text-[11px] font-semibold text-[var(--ok-text)]">
                             {t("models.freeModel")}
                           </span>
                         </Show>
@@ -461,7 +461,7 @@ export default function AutoModelPoolTab() {
 
                       <div class="flex items-center gap-1 shrink-0">
                         <span
-                          class={`rounded-md px-1.5 py-0.5 text-[10px] font-semibold ${
+                          class={`rounded-md px-1.5 py-0.5 text-[11px] font-semibold ${
                             cooling()
                               ? "bg-amber-500/15 text-amber-500"
                               : "bg-[var(--ok-surface)] text-[var(--ok-text)]"
@@ -521,7 +521,7 @@ export default function AutoModelPoolTab() {
               <select
                 value={selectedAddKey()}
                 onChange={(e) => setSelectedAddKey(e.currentTarget.value)}
-                class="flex-1 min-w-0 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-panel)] px-2.5 py-1 text-[11.5px] text-[var(--text-primary)] outline-none"
+                class="flex-1 min-w-0 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-panel)] px-2.5 py-1 text-[12px] text-[var(--text-primary)] outline-none"
               >
                 <For each={addableModels()}>
                   {(m) => (
@@ -536,7 +536,7 @@ export default function AutoModelPoolTab() {
                 type="button"
                 disabled={addableModels().length === 0}
                 onClick={() => void handleAddCandidate()}
-                class="shrink-0 inline-flex items-center gap-1 rounded-xl border border-[var(--accent-border)] bg-[var(--accent-surface)] px-2.5 py-1 text-[11.5px] font-semibold text-[var(--accent-primary)] hover:opacity-90 disabled:opacity-40 cursor-pointer"
+                class="shrink-0 inline-flex items-center gap-1 rounded-xl border border-[var(--accent-border)] bg-[var(--accent-surface)] px-2.5 py-1 text-[12px] font-semibold text-[var(--accent-primary)] hover:opacity-90 disabled:opacity-40 cursor-pointer"
               >
                 <Plus size={12} />
                 {t("models.autoPoolAddCandidate")}
@@ -553,7 +553,7 @@ export default function AutoModelPoolTab() {
             <h3 class="text-[13px] font-semibold text-[var(--text-primary)]">
               {t("models.freeHubTitle")}
             </h3>
-            <span class="text-[11.5px] text-[var(--text-muted)]">
+            <span class="text-[12px] text-[var(--text-muted)]">
               · {t("models.freeHubSubtitle")}
             </span>
           </div>
@@ -571,11 +571,11 @@ export default function AutoModelPoolTab() {
                       <ProviderIcon id={item.providerID} class="w-4 h-4 shrink-0" />
                       <div class="min-w-0">
                         <div class="flex items-center gap-1.5">
-                          <span class="text-[12.5px] font-semibold text-[var(--text-primary)] truncate">
+                          <span class="text-[13px] font-semibold text-[var(--text-primary)] truncate">
                             {item.title}
                           </span>
                           <Show when={keyCount() > 1}>
-                            <span class="shrink-0 rounded bg-[var(--accent-surface)] px-1.5 py-0.2 text-[9.5px] font-semibold text-[var(--accent-primary)]">
+                            <span class="shrink-0 rounded bg-[var(--accent-surface)] px-1.5 py-0.2 text-[11px] font-semibold text-[var(--accent-primary)]">
                               {t("models.multiKeyActiveBadge", { count: keyCount() })}
                             </span>
                           </Show>

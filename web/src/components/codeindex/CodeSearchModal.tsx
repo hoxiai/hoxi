@@ -259,7 +259,7 @@ export default function CodeSearchModal(props: {
           </div>
 
           <Show when={error()}>
-            <p class="border-t border-[var(--border-subtle)] px-3 py-2 text-[11.5px] text-[var(--danger-text)] break-words">
+            <p class="border-t border-[var(--border-subtle)] px-3 py-2 text-[12px] text-[var(--danger-text)] break-words">
               {t("timeline.codeSearchError", { error: error() || "" })}
             </p>
           </Show>
@@ -294,11 +294,11 @@ export default function CodeSearchModal(props: {
                         <div class="flex items-center gap-2 text-[12px]">
                           <span class="truncate font-medium text-[var(--text-primary)]">{result.title || result.sessionID}</span>
                           <Show when={result.role}>
-                            <span class="shrink-0 rounded bg-[var(--bg-inset)] px-1.5 py-0.5 text-[10px] text-[var(--text-muted)]">
+                            <span class="shrink-0 rounded bg-[var(--bg-inset)] px-1.5 py-0.5 text-[11px] text-[var(--text-muted)]">
                               {result.role}
                             </span>
                           </Show>
-                          <span class="ml-auto shrink-0 text-[10px] text-[var(--text-faint)]">{result.score}</span>
+                          <span class="ml-auto shrink-0 text-[11px] text-[var(--text-faint)]">{result.score}</span>
                         </div>
                         <pre class="mt-1 line-clamp-2 overflow-hidden whitespace-pre-wrap break-words font-mono text-[11px] leading-snug text-[var(--text-secondary)]">
                           {result.snippet}
@@ -319,15 +319,15 @@ export default function CodeSearchModal(props: {
                     >
                       <div class="flex items-center gap-2 text-[12px]">
                         <span class="truncate font-mono text-[var(--text-primary)]">{result.path}</span>
-                        <span class="shrink-0 text-[10.5px] text-[var(--text-muted)]">
+                        <span class="shrink-0 text-[11px] text-[var(--text-muted)]">
                           {result.startLine}-{result.endLine}
                         </span>
                         <Show when={result.symbol}>
-                          <span class="shrink-0 rounded bg-[var(--accent-surface)] px-1.5 py-0.5 font-mono text-[10.5px] text-[var(--accent-primary)]">
+                          <span class="shrink-0 rounded bg-[var(--accent-surface)] px-1.5 py-0.5 font-mono text-[11px] text-[var(--accent-primary)]">
                             {result.symbol}
                           </span>
                         </Show>
-                        <span class="ml-auto shrink-0 text-[10px] text-[var(--text-faint)]">{result.score}</span>
+                        <span class="ml-auto shrink-0 text-[11px] text-[var(--text-faint)]">{result.score}</span>
                       </div>
                       <pre class="mt-1 line-clamp-2 overflow-hidden whitespace-pre-wrap break-words font-mono text-[11px] leading-snug text-[var(--text-secondary)]">
                         {result.snippet}

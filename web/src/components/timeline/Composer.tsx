@@ -599,7 +599,7 @@ export default function Composer() {
                   <div class="ml-auto flex items-center gap-1">
                     <button
                       type="button"
-                      class="inline-flex items-center gap-1 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-1.5 py-0.5 text-[10.5px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer disabled:opacity-40"
+                      class="inline-flex items-center gap-1 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-1.5 py-0.5 text-[11px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer disabled:opacity-40"
                       disabled={enhancing()}
                       onClick={() => void onEnhance()}
                     >
@@ -608,7 +608,7 @@ export default function Composer() {
                     </button>
                     <button
                       type="button"
-                      class="inline-flex items-center gap-1 rounded-md bg-[var(--accent-primary)] px-1.5 py-0.5 text-[10.5px] font-medium text-[var(--accent-foreground)] hover:opacity-90 cursor-pointer"
+                      class="inline-flex items-center gap-1 rounded-md bg-[var(--accent-primary)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--accent-foreground)] hover:opacity-90 cursor-pointer"
                       onClick={acceptEnhance}
                     >
                       <Check size={10} />
@@ -643,10 +643,15 @@ export default function Composer() {
               <ComposerToolsPopover
                 workspaceReady={Boolean(workspace.rootDir)}
                 skillActive={Boolean(selectedSkill())}
+                sandboxMode={effectiveSandboxMode()}
+                canEnhance={Boolean(text().trim())}
+                enhancing={enhancing()}
                 onAttach={() => fileInputRef?.click()}
                 onOpenSkills={() => openSkillsBrowser(selectedSkill()?.key)}
                 onOpenCodeSearch={() => setCodeSearchOpen(true)}
                 onOpenConvoy={() => setConvoyOpen(true)}
+                onSwitchSandbox={() => void onToggleSandbox("worktree")}
+                onEnhance={() => void onEnhance()}
               />
 
               <ModeSwitcher />
@@ -659,32 +664,23 @@ export default function Composer() {
                   <FolderOpen size={14} />{t("timeline.selectFolder")}
                 </button>
               }>
-              <ComposerSandboxPill
-                mode={effectiveSandboxMode()}
-                switching={switchingSandbox()}
-                busy={busy()}
-                sessionID={sessionID()}
-                directory={sessionDirectory(sessionID()) || workspace.rootDir}
-                forking={forking()}
-                onToggle={(m) => void onToggleSandbox(m)}
-                onFork={onFork}
-              />
+              <Show when={effectiveSandboxMode() === "worktree"}>
+                <ComposerSandboxPill
+                  mode={effectiveSandboxMode()}
+                  switching={switchingSandbox()}
+                  busy={busy()}
+                  sessionID={sessionID()}
+                  directory={sessionDirectory(sessionID()) || workspace.rootDir}
+                  forking={forking()}
+                  onToggle={(m) => void onToggleSandbox(m)}
+                  onFork={onFork}
+                />
+              </Show>
               </Show>
             </div>
 
             {/* Right Context Progress + Approval Mode + Send / Queue / Stop Buttons */}
             <div class="flex items-center gap-1.5">
-              <button
-                type="button"
-                class="inline-flex h-7 w-7 items-center justify-center rounded-full text-[var(--text-secondary)] hover:text-[var(--accent-primary)] hover:bg-[var(--accent-surface)] disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
-                disabled={!text().trim() || enhancing()}
-                onClick={() => void onEnhance()}
-                title={enhancing() ? t("timeline.enhancingPrompt") : t("timeline.enhancePrompt")}
-              >
-                <Show when={!enhancing()} fallback={<LoaderCircle size={13} class="animate-spin text-[var(--accent-primary)]" />}>
-                  <Sparkles size={14} />
-                </Show>
-              </button>
               <ContextProgressPill />
               <ApprovalModePill />
 

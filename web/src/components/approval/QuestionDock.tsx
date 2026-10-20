@@ -164,11 +164,11 @@ export default function QuestionDock(props: { request: QuestionRequest }) {
           return (
             <div class="px-3.5 py-3 space-y-2.5">
               <div class="flex items-baseline justify-between gap-2">
-                <p class="text-[12.5px] font-medium text-[var(--text-primary)] leading-snug">
+                <p class="text-[13px] font-medium text-[var(--text-primary)] leading-snug">
                   {q().question}
                 </p>
                 <Show when={q().multiple}>
-                  <span class="shrink-0 text-[10.5px] text-[var(--text-muted)]">
+                  <span class="shrink-0 text-[11px] text-[var(--text-muted)]">
                     {t("approval.multiSelect")}
                   </span>
                 </Show>
@@ -228,7 +228,7 @@ export default function QuestionDock(props: { request: QuestionRequest }) {
                       onClick={() =>
                         setShowCustomByIdx((prev) => ({ ...prev, [idx()]: true }))
                       }
-                      class="inline-flex items-center gap-1.5 text-[11.5px] text-[var(--accent-primary)] hover:underline cursor-pointer"
+                      class="inline-flex items-center gap-1.5 text-[12px] text-[var(--accent-primary)] hover:underline cursor-pointer"
                     >
                       <MessageSquarePlus size={12} />
                       <span>
@@ -279,7 +279,7 @@ export default function QuestionDock(props: { request: QuestionRequest }) {
             type="button"
             onClick={() => void onDismiss()}
             disabled={sending() || rejecting()}
-            class="rounded-lg px-2.5 py-1 text-[11.5px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] disabled:opacity-50 cursor-pointer"
+            class="rounded-lg px-2.5 py-1 text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] disabled:opacity-50 cursor-pointer"
           >
             {t("approval.skipQuestion")}
           </button>
@@ -287,7 +287,7 @@ export default function QuestionDock(props: { request: QuestionRequest }) {
             type="button"
             onClick={() => void onSubmit()}
             disabled={!canSubmit() || sending() || rejecting()}
-            class="inline-flex items-center gap-1.5 rounded-lg bg-[var(--accent-primary)] px-3 py-1 text-[11.5px] font-medium text-[var(--accent-foreground)] hover:opacity-90 disabled:opacity-40 transition-opacity cursor-pointer"
+            class="inline-flex items-center gap-1.5 rounded-lg bg-[var(--accent-primary)] px-3 py-1 text-[12px] font-medium text-[var(--accent-foreground)] hover:opacity-90 disabled:opacity-40 transition-opacity cursor-pointer"
           >
             <Show when={!sending()} fallback={<LoaderCircle size={12} class="animate-spin" />}>
               <Check size={12} />

@@ -61,13 +61,13 @@ export default function SessionGoalBar() {
   return (
     <Show when={goal()}>
       {(g) => (
-        <div class="mx-auto mb-1.5 flex w-full items-center gap-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/80 px-3 py-1.5 text-[11.5px]">
+        <div class="mx-auto mb-1.5 flex w-full items-center gap-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/80 px-3 py-1.5 text-[12px]">
           <Target size={13} class="shrink-0 text-[var(--accent-primary)]" />
           <span class="shrink-0 font-semibold text-[var(--text-secondary)]">{t("timeline.goalLabel")}</span>
           <span class="min-w-0 flex-1 truncate text-[var(--text-primary)]" title={g().objective}>
             {g().objective}
           </span>
-          <span class="inline-flex shrink-0 items-center gap-1 rounded-full border border-[var(--border-subtle)] px-2 py-0.5 text-[10.5px] font-medium text-[var(--text-secondary)]">
+          <span class="inline-flex shrink-0 items-center gap-1 rounded-full border border-[var(--border-subtle)] px-2 py-0.5 text-[11px] font-medium text-[var(--text-secondary)]">
             <Show when={g().status === "active"}>
               <LoaderCircle size={10} class="animate-spin text-[var(--accent-primary)]" />
             </Show>

@@ -55,7 +55,7 @@ export function DeleteWorkspaceModalView(props: {
         <h3 class="text-[15px] font-semibold text-zinc-900 dark:text-zinc-100">
           {t("leftNav.deleteWorkspaceTitle")}
         </h3>
-        <p class="mt-1.5 text-[12.5px] text-zinc-600 dark:text-zinc-400 leading-relaxed">
+        <p class="mt-1.5 text-[13px] text-zinc-600 dark:text-zinc-400 leading-relaxed">
           {t("leftNav.deleteWorkspaceDesc", {
             name:
               props.targetProfile?.name ||
@@ -75,7 +75,7 @@ export function DeleteWorkspaceModalView(props: {
           type="button"
           onClick={closeWorkspaceModal}
           disabled={saving()}
-          class="px-3.5 py-1.5 rounded-lg text-[12.5px] font-medium text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200/60 dark:hover:bg-zinc-800 transition-colors"
+          class="px-3.5 py-1.5 rounded-lg text-[13px] font-medium text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200/60 dark:hover:bg-zinc-800 transition-colors"
         >
           {t("common.cancel")}
         </button>
@@ -83,7 +83,7 @@ export function DeleteWorkspaceModalView(props: {
           type="button"
           onClick={() => void handleConfirmDelete()}
           disabled={saving()}
-          class="px-4 py-1.5 rounded-lg text-[12.5px] font-medium bg-rose-600 hover:bg-rose-500 text-white disabled:opacity-40 transition-colors shadow-sm"
+          class="px-4 py-1.5 rounded-lg text-[13px] font-medium bg-rose-600 hover:bg-rose-500 text-white disabled:opacity-40 transition-colors shadow-sm"
         >
           {t("leftNav.deleteWorkspace")}
         </button>
@@ -185,7 +185,7 @@ export function ManageWorkspacesModalView() {
                         {item.name}
                       </span>
                       <Show when={item.folders.length > 1}>
-                        <span class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-zinc-200/80 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400">
+                        <span class="px-1.5 py-0.5 rounded text-[11px] font-medium bg-zinc-200/80 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400">
                           {t("leftNav.folderCountBadge", {
                             count: item.folders.length,
                           })}
@@ -204,7 +204,7 @@ export function ManageWorkspacesModalView() {
                     onClick={() =>
                       openEditWorkspaceModal(item.id || item.primaryDir)
                     }
-                    class="px-2 py-1 rounded text-[11.5px] font-medium text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200/70 dark:hover:bg-zinc-800 transition-colors"
+                    class="px-2 py-1 rounded text-[12px] font-medium text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200/70 dark:hover:bg-zinc-800 transition-colors"
                   >
                     {t("leftNav.editWorkspace")}
                   </button>
@@ -213,7 +213,7 @@ export function ManageWorkspacesModalView() {
                     onClick={() =>
                       openDeleteWorkspaceModal(item.id || item.primaryDir)
                     }
-                    class="px-2 py-1 rounded text-[11.5px] font-medium text-rose-500 hover:bg-rose-500/10 transition-colors"
+                    class="px-2 py-1 rounded text-[12px] font-medium text-rose-500 hover:bg-rose-500/10 transition-colors"
                   >
                     {t("common.delete")}
                   </button>
@@ -228,7 +228,7 @@ export function ManageWorkspacesModalView() {
         <button
           type="button"
           onClick={closeWorkspaceModal}
-          class="px-3.5 py-1.5 rounded-lg text-[12.5px] font-medium text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200/60 dark:hover:bg-zinc-800 transition-colors"
+          class="px-3.5 py-1.5 rounded-lg text-[13px] font-medium text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200/60 dark:hover:bg-zinc-800 transition-colors"
         >
           {t("common.close")}
         </button>

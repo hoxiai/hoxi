@@ -484,7 +484,7 @@ export default function ContextActivityGroupView(props: {
                       <For each={stats().badges}>
                         {(badge) => (
                           <span
-                            class="inline-flex items-center gap-1 font-mono text-[11.5px] tabular-nums text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors"
+                            class="inline-flex items-center gap-1 font-mono text-[12px] tabular-nums text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors"
                             title={badge.tooltip}
                           >
                             <Icon name={badge.icon} size="small" />
@@ -495,7 +495,7 @@ export default function ContextActivityGroupView(props: {
                     </span>
                   </Show>
                   <Show when={!open() && targetPreview()}>
-                    <span class="hidden lg:inline font-mono text-[11.5px] text-[var(--text-faint)] truncate max-w-[320px]">
+                    <span class="hidden lg:inline font-mono text-[12px] text-[var(--text-faint)] truncate max-w-[320px]">
                       ({targetPreview()})
                     </span>
                   </Show>
@@ -516,7 +516,7 @@ export default function ContextActivityGroupView(props: {
                   <For each={stats().badges}>
                     {(badge) => (
                       <span
-                        class="inline-flex items-center gap-1 font-mono text-[11.5px] tabular-nums text-[var(--text-muted)]"
+                        class="inline-flex items-center gap-1 font-mono text-[12px] tabular-nums text-[var(--text-muted)]"
                         title={badge.tooltip}
                       >
                         <Icon name={badge.icon} size="small" />
@@ -555,7 +555,7 @@ export default function ContextActivityGroupView(props: {
             </Show>
 
             <Show when={durationLabel()}>
-              <span class="font-mono text-[11.5px] tabular-nums text-[var(--text-faint)]">
+              <span class="font-mono text-[12px] tabular-nums text-[var(--text-faint)]">
                 {durationLabel()}
               </span>
             </Show>

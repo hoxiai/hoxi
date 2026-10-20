@@ -130,10 +130,10 @@ export default function ModeSwitcher() {
           style={{ "--hoxi-origin": "bottom left" }}
         >
           <div class="px-2.5 py-1.5 flex items-center justify-between border-b border-[var(--border-subtle)] mb-1">
-            <span class="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
+            <span class="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
               {t("timeline.agentModes")}
             </span>
-            <span class="text-[10.5px] text-[var(--text-muted)] font-mono">
+            <span class="text-[11px] text-[var(--text-muted)] font-mono">
               {t("timeline.agentsAvailable", { count: agents().length })}
             </span>
           </div>
@@ -182,7 +182,7 @@ export default function ModeSwitcher() {
                           <Show when={dedicatedModel()}>
                             {(mKey) => (
                               <span
-                                class="rounded bg-[var(--accent-surface)] px-1.5 py-[1px] font-mono text-[9px] text-[var(--accent-primary)] truncate max-w-[100px]"
+                                class="rounded bg-[var(--accent-surface)] px-1.5 py-[1px] font-mono text-[11px] text-[var(--accent-primary)] truncate max-w-[100px]"
                                 title={mKey()}
                               >
                                 {mKey().split("/").pop()}
@@ -191,7 +191,7 @@ export default function ModeSwitcher() {
                           </Show>
                           <Show when={badge}>
                             <span
-                              class={`rounded px-1.5 py-[1px] text-[9.5px] font-medium uppercase tracking-wider ${
+                              class={`rounded px-1.5 py-[1px] text-[11px] font-medium uppercase tracking-wider ${
                                 agent.name === "plan"
                                   ? "bg-[var(--violet-surface)] text-[var(--violet-text)] border border-[var(--violet-border)]"
                                   : "bg-[var(--bg-inset)] text-[var(--text-muted)] border border-[var(--border-subtle)]"

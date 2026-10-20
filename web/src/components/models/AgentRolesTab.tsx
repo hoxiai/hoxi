@@ -254,7 +254,7 @@ export default function AgentRolesTab() {
             <h3 class="text-[13px] font-semibold text-[var(--text-primary)]">
               {t("models.agentsTitle")}
             </h3>
-            <p class="text-[11.5px] text-[var(--text-secondary)]">
+            <p class="text-[12px] text-[var(--text-secondary)]">
               {t("models.agentsSubtitle")}
             </p>
           </div>
@@ -279,11 +279,11 @@ export default function AgentRolesTab() {
                           <span class="text-[13px] font-semibold capitalize text-[var(--text-primary)]">
                             {agent.name}
                           </span>
-                          <span class="rounded font-mono text-[10.5px] px-1.5 py-0.5 bg-[var(--bg-inset)] text-[var(--text-muted)]">
+                          <span class="rounded font-mono text-[11px] px-1.5 py-0.5 bg-[var(--bg-inset)] text-[var(--text-muted)]">
                             {agent.id}
                           </span>
                           <span
-                            class={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                            class={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
                               agent.isBuiltin
                                 ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]"
                                 : "bg-emerald-500/10 text-emerald-400"
@@ -293,7 +293,7 @@ export default function AgentRolesTab() {
                           </span>
                         </div>
                         <Show when={!isEditing()}>
-                          <p class="text-[11.5px] text-[var(--text-muted)] leading-relaxed">
+                          <p class="text-[12px] text-[var(--text-muted)] leading-relaxed">
                             {agent.description}
                           </p>
                         </Show>
@@ -303,14 +303,14 @@ export default function AgentRolesTab() {
                     {/* Dedicated Model Selector */}
                     <div class="flex items-center gap-2 shrink-0 self-end sm:self-auto">
                       <div class="flex flex-col items-end">
-                        <span class="text-[10px] font-medium uppercase tracking-wider text-[var(--text-faint)] mb-1">
+                        <span class="text-[11px] font-medium uppercase tracking-wider text-[var(--text-faint)] mb-1">
                           {t("models.agentDedicatedModelLabel")}
                         </span>
                         <div class="flex items-center gap-1.5">
                           <select
                             value={agent.model}
                             onChange={(e) => void applyAgentModel(agent.id, e.currentTarget.value)}
-                            class="w-[240px] rounded-xl border border-[var(--border-strong)] bg-[var(--bg-panel)] px-3 py-1.5 text-[11.5px] font-medium text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)] cursor-pointer"
+                            class="w-[240px] rounded-xl border border-[var(--border-strong)] bg-[var(--bg-panel)] px-3 py-1.5 text-[12px] font-medium text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)] cursor-pointer"
                           >
                             <option value="">{t("models.agentModelFollowDefault")}</option>
                             <For each={connectedGroups()}>
@@ -406,14 +406,14 @@ export default function AgentRolesTab() {
                         <button
                           type="button"
                           onClick={() => setEditingAgentId(null)}
-                          class="rounded-xl px-3 py-1 text-[11.5px] font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] cursor-pointer"
+                          class="rounded-xl px-3 py-1 text-[12px] font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] cursor-pointer"
                         >
                           {t("models.cancelEdit")}
                         </button>
                         <button
                           type="button"
                           onClick={() => void saveEditAgent(agent.id)}
-                          class="inline-flex items-center gap-1 rounded-xl bg-[var(--accent-primary)] px-3.5 py-1 text-[11.5px] font-medium text-[var(--accent-foreground)] hover:opacity-90 cursor-pointer"
+                          class="inline-flex items-center gap-1 rounded-xl bg-[var(--accent-primary)] px-3.5 py-1 text-[12px] font-medium text-[var(--accent-foreground)] hover:opacity-90 cursor-pointer"
                         >
                           <Check size={12} />
                           {t("models.saveAgentChanges")}
@@ -437,7 +437,7 @@ export default function AgentRolesTab() {
                       </button>
 
                       <Show when={isPromptOpen()}>
-                        <pre class="mt-1.5 max-h-48 overflow-y-auto rounded-xl bg-[var(--bg-inset)] p-2.5 font-mono text-[10.5px] text-[var(--text-secondary)] whitespace-pre-wrap">
+                        <pre class="mt-1.5 max-h-48 overflow-y-auto rounded-xl bg-[var(--bg-inset)] p-2.5 font-mono text-[11px] text-[var(--text-secondary)] whitespace-pre-wrap">
                           {agent.prompt}
                         </pre>
                       </Show>
@@ -455,7 +455,7 @@ export default function AgentRolesTab() {
             <h4 class="text-[13px] font-semibold text-[var(--text-primary)]">
               {t("models.customAgentsTitle")}
             </h4>
-            <p class="text-[11.5px] text-[var(--text-muted)]">
+            <p class="text-[12px] text-[var(--text-muted)]">
               {t("models.customAgentsSubtitle")}
             </p>
           </div>
@@ -534,7 +534,7 @@ export default function AgentRolesTab() {
               <Show when={formFeedback()}>
                 {(fb) => (
                   <span
-                    class={`text-[11.5px] font-medium ${
+                    class={`text-[12px] font-medium ${
                       fb().ok ? "text-[var(--ok)]" : "text-rose-400"
                     }`}
                   >

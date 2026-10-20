@@ -480,7 +480,7 @@ export function SelectedDiffDetail(props: {
               >
                 <ChevronLeft size={12} />
               </button>
-              <span class="px-1.5 font-mono text-[10.5px] text-[var(--text-secondary)]">
+              <span class="px-1.5 font-mono text-[11px] text-[var(--text-secondary)]">
                 {props.currentIndex + 1} / {props.totalFiles}
               </span>
               <button
@@ -536,7 +536,7 @@ export function SelectedDiffDetail(props: {
       <div class="flex items-center justify-between gap-2 px-3 py-2 border-b border-[var(--border-subtle)] bg-[var(--bg-inset)]">
         <div class="flex items-center gap-2 min-w-0 flex-1">
           <FileIcon node={{ path: props.diff.file, type: "file" }} class="w-4 h-4 shrink-0" />
-          <div class="truncate font-mono text-[11.5px]" title={props.diff.file}>
+          <div class="truncate font-mono text-[12px]" title={props.diff.file}>
             <Show when={dirPart()}>
               <span class="text-[var(--text-muted)]">{dirPart()}</span>
             </Show>
@@ -546,7 +546,7 @@ export function SelectedDiffDetail(props: {
           <GeneratedFileBadge generated={effectiveDiff().generatedLike} />
           <Show when={props.diff.repo}>
             <span
-              class="shrink-0 inline-flex items-center gap-1 rounded bg-[var(--accent-surface)] px-1.5 py-0 text-[10px] font-mono text-[var(--accent-primary)] border border-[var(--accent-border)]"
+              class="shrink-0 inline-flex items-center gap-1 rounded bg-[var(--accent-surface)] px-1.5 py-0 text-[11px] font-mono text-[var(--accent-primary)] border border-[var(--accent-border)]"
               title={
                 props.diff.branch
                   ? `${props.diff.repo} (${props.diff.branch})`
@@ -642,7 +642,7 @@ export function SelectedDiffDetail(props: {
         }
         fallback={
           <Show when={effectiveDiff().large}>
-            <div class="flex items-center justify-between gap-2 px-3 py-3 text-[11.5px] text-[var(--text-muted)]">
+            <div class="flex items-center justify-between gap-2 px-3 py-3 text-[12px] text-[var(--text-muted)]">
               <span>{t("inspector.diffs.largeDiffHint")}</span>
               <button
                 type="button"

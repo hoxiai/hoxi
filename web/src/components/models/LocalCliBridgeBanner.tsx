@@ -51,7 +51,7 @@ export default function LocalCliBridgeBanner() {
               <div class="h-8 w-8 shrink-0 rounded-xl bg-[var(--bg-hover)]" />
               <div class="min-w-0 space-y-1.5">
                 <div class="h-3 w-24 rounded-md bg-[var(--bg-hover)]" />
-                <div class="text-[11.5px] text-[var(--text-muted)]">
+                <div class="text-[12px] text-[var(--text-muted)]">
                   {t("leftNav.handoffCliBannerLoading")}
                 </div>
               </div>
@@ -86,7 +86,7 @@ export default function LocalCliBridgeBanner() {
               <div class="text-[13px] font-semibold text-[var(--text-primary)]">
                 {t("leftNav.handoffCliBannerTitle")}
               </div>
-              <div class="text-[11.5px] text-[var(--text-secondary)] line-clamp-1">
+              <div class="text-[12px] text-[var(--text-secondary)] line-clamp-1">
                 {t("leftNav.handoffCliBannerDesc")}
               </div>
             </div>
@@ -98,7 +98,7 @@ export default function LocalCliBridgeBanner() {
               closeSettingsModal();
               openHandoffModal();
             }}
-            class="shrink-0 inline-flex items-center gap-1.5 rounded-xl border border-[var(--accent-border)] bg-[var(--accent-surface)]/50 px-3 py-1.5 text-[11.5px] font-semibold text-[var(--accent-primary)] hover:bg-[var(--accent-surface)] transition-colors cursor-pointer"
+            class="shrink-0 inline-flex items-center gap-1.5 rounded-xl border border-[var(--accent-border)] bg-[var(--accent-surface)]/50 px-3 py-1.5 text-[12px] font-semibold text-[var(--accent-primary)] hover:bg-[var(--accent-surface)] transition-colors cursor-pointer"
           >
             <ArrowRightLeft size={13} />
             {t("leftNav.handoffBtn")}
@@ -113,7 +113,7 @@ export default function LocalCliBridgeBanner() {
                   <div class="text-[12px] font-semibold text-[var(--text-primary)] truncate">
                     {tool.name}
                   </div>
-                  <div class="text-[10.5px] font-mono text-[var(--text-muted)]">
+                  <div class="text-[11px] font-mono text-[var(--text-muted)]">
                     {t("leftNav.handoffCliSessionsBadge", { count: tool.sessionCount })}
                   </div>
                 </div>
@@ -131,7 +131,7 @@ export default function LocalCliBridgeBanner() {
                               closeSettingsModal();
                               openHandoffModal();
                             }}
-                            class="inline-flex items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-2 py-1 text-[10.5px] font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] shrink-0 cursor-pointer"
+                            class="inline-flex items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-2 py-1 text-[11px] font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] shrink-0 cursor-pointer"
                           >
                             <ArrowRightLeft size={10} />
                             {t("leftNav.handoffBtn")}
@@ -140,7 +140,7 @@ export default function LocalCliBridgeBanner() {
                       }
                     >
                       <div class="flex items-center gap-1 shrink-0">
-                        <span class="inline-flex items-center gap-1 rounded-full bg-[var(--ok-surface)] px-2 py-0.5 text-[10px] font-semibold text-[var(--ok-text)]">
+                        <span class="inline-flex items-center gap-1 rounded-full bg-[var(--ok-surface)] px-2 py-0.5 text-[11px] font-semibold text-[var(--ok-text)]">
                           <Check size={10} />
                           {t("leftNav.handoffCliConnected")}
                         </span>

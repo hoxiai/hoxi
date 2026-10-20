@@ -43,7 +43,7 @@ export default function ProviderQualityCard(props: { providerID: string }) {
       <div class="flex items-center justify-between gap-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/45 px-3 py-2">
         <div class="flex min-w-0 items-center gap-2">
           <Activity size={14} class="shrink-0 text-[var(--accent-primary)]" />
-          <span class="truncate text-[11.5px] font-medium text-[var(--text-secondary)]">
+          <span class="truncate text-[12px] font-medium text-[var(--text-secondary)]">
             {t("models.qualityTitle")}
           </span>
           <ProviderHealthBadge providerID={pid()} compact />
@@ -117,13 +117,13 @@ export default function ProviderQualityCard(props: { providerID: string }) {
 
                   <Show when={health().status !== "untested"}>
                     <div class="flex items-center gap-2 shrink-0">
-                      <span class="font-mono text-[10.5px] text-[var(--text-faint)]">
+                      <span class="font-mono text-[11px] text-[var(--text-faint)]">
                         {t("models.qualityTurnsCount", { count: health().totalTurns })}
                       </span>
                       <button
                         type="button"
                         onClick={() => void resetProviderTelemetry(pid())}
-                        class="inline-flex items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2 py-1 text-[10.5px] text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
+                        class="inline-flex items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2 py-1 text-[11px] text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
                       >
                         <RotateCcw size={10} />
                         {t("models.qualityResetStats")}
@@ -137,13 +137,13 @@ export default function ProviderQualityCard(props: { providerID: string }) {
             <div class="text-[11px] font-medium text-[var(--text-secondary)]">
               {t("models.qualityStabilityScore")}
             </div>
-            <div class="font-mono text-base text-[var(--text-secondary)]">
+            <div class="font-mono text-[15px] text-[var(--text-secondary)]">
               {formatHealthScore(health().stabilityScore)}
             </div>
-            <div class="text-[10.5px] text-[var(--text-muted)]">
+            <div class="text-[11px] text-[var(--text-muted)]">
               {t("models.qualityTurnsCount", { count: health().totalTurns })}
             </div>
-            <p class="text-[10.5px] text-[var(--text-muted)]">
+            <p class="text-[11px] text-[var(--text-muted)]">
               {t("models.qualityStabilityExplanation")}
             </p>
           </div>
@@ -151,13 +151,13 @@ export default function ProviderQualityCard(props: { providerID: string }) {
             <div class="text-[11px] font-medium text-[var(--text-secondary)]">
               {t("models.qualityQualityScore")}
             </div>
-            <div class="font-mono text-base text-[var(--text-secondary)]">
+            <div class="font-mono text-[15px] text-[var(--text-secondary)]">
               {formatHealthScore(health().qualityScore)}
             </div>
-            <div class="text-[10.5px] text-[var(--text-muted)]">
+            <div class="text-[11px] text-[var(--text-muted)]">
               {t("models.qualitySamplesCount", { count: health().qualitySampleCount })}
             </div>
-            <p class="text-[10.5px] text-[var(--text-muted)]">
+            <p class="text-[11px] text-[var(--text-muted)]">
               {t("models.qualityQualityExplanation")}
             </p>
           </div>
@@ -166,7 +166,7 @@ export default function ProviderQualityCard(props: { providerID: string }) {
         <Show
           when={health().status !== "untested"}
           fallback={
-            <div class="rounded-xl border border-dashed border-[var(--border-subtle)] bg-[var(--bg-panel)]/50 px-3 py-2.5 text-[11.5px] text-[var(--text-muted)]">
+            <div class="rounded-xl border border-dashed border-[var(--border-subtle)] bg-[var(--bg-panel)]/50 px-3 py-2.5 text-[12px] text-[var(--text-muted)]">
               {t("models.qualityUntested")}
             </div>
           }
@@ -176,7 +176,7 @@ export default function ProviderQualityCard(props: { providerID: string }) {
             <div class="flex items-center gap-1.5 flex-wrap">
               <For each={health().riskTags}>
                 {(tag) => (
-                  <span class="inline-flex items-center gap-1 rounded-lg border border-[var(--danger-border)] bg-[var(--danger-surface)] px-2 py-0.5 text-[10.5px] font-medium text-[var(--danger-text)]">
+                  <span class="inline-flex items-center gap-1 rounded-lg border border-[var(--danger-border)] bg-[var(--danger-surface)] px-2 py-0.5 text-[11px] font-medium text-[var(--danger-text)]">
                     <AlertTriangle size={11} />
                     {riskTagLabel(tag)}
                   </span>
@@ -189,7 +189,7 @@ export default function ProviderQualityCard(props: { providerID: string }) {
           <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
             {/* 1. Speed: TTFT & TPS */}
             <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-2 space-y-0.5">
-              <div class="flex items-center gap-1 text-[10.5px] text-[var(--text-muted)]">
+              <div class="flex items-center gap-1 text-[11px] text-[var(--text-muted)]">
                 <Zap size={11} class="text-[var(--accent-primary)]" />
                 <span class="truncate">{t("models.qualityMetricSpeed")}</span>
               </div>
@@ -206,14 +206,14 @@ export default function ProviderQualityCard(props: { providerID: string }) {
 
             {/* 2. Reliability: Success Rate & Timeouts */}
             <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-2 space-y-0.5">
-              <div class="flex items-center gap-1 text-[10.5px] text-[var(--text-muted)]">
+              <div class="flex items-center gap-1 text-[11px] text-[var(--text-muted)]">
                 <Clock size={11} class="text-[var(--ok-text)]" />
                 <span class="truncate">{t("models.qualityMetricSuccess")}</span>
               </div>
               <div class="font-mono text-[13px] font-semibold text-[var(--text-primary)]">
                 {health().successRate}%
               </div>
-              <div class="text-[10px] font-mono text-[var(--text-faint)] truncate">
+              <div class="text-[11px] font-mono text-[var(--text-faint)] truncate">
                 {t("models.qualityTimeoutsRetrySub", {
                   timeouts: rawRecord()?.timeoutTurns ?? 0,
                   retries: health().retryCount,
@@ -223,14 +223,14 @@ export default function ProviderQualityCard(props: { providerID: string }) {
 
             {/* 3. Tool Accuracy & Anti-Hallucination */}
             <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-2 space-y-0.5">
-              <div class="flex items-center gap-1 text-[10.5px] text-[var(--text-muted)]">
+              <div class="flex items-center gap-1 text-[11px] text-[var(--text-muted)]">
                 <Wrench size={11} class="text-amber-500" />
                 <span class="truncate">{t("models.qualityMetricTools")}</span>
               </div>
               <div class="font-mono text-[13px] font-semibold text-[var(--text-primary)]">
                 {health().toolSuccessRate !== null ? `${health().toolSuccessRate}%` : t("models.qualityNoData")}
               </div>
-              <div class="text-[10px] font-mono text-[var(--text-faint)] truncate">
+              <div class="text-[11px] font-mono text-[var(--text-faint)] truncate">
                 {t("models.qualityHallucinationSub", {
                   loops: health().hallucinationFlags,
                   reverts: health().revertCount,
@@ -240,14 +240,14 @@ export default function ProviderQualityCard(props: { providerID: string }) {
 
             {/* 4. Observer Code Pass Rate & Quality Score */}
             <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-2 space-y-0.5">
-              <div class="flex items-center gap-1 text-[10.5px] text-[var(--text-muted)]">
+              <div class="flex items-center gap-1 text-[11px] text-[var(--text-muted)]">
                 <CheckCircle2 size={11} class="text-[var(--accent-primary)]" />
                 <span class="truncate">{t("models.qualityMetricPassRate")}</span>
               </div>
               <div class="font-mono text-[13px] font-semibold text-[var(--text-primary)]">
                 {health().codePassRate !== null ? `${health().codePassRate}%` : "—"}
               </div>
-              <div class="text-[10px] font-mono text-[var(--text-faint)] truncate">
+              <div class="text-[11px] font-mono text-[var(--text-faint)] truncate">
                 <Show
                   when={health().auditTotalCount > 0}
                   fallback={<span>{t("models.qualityNoAuditYet")}</span>}
@@ -265,7 +265,7 @@ export default function ProviderQualityCard(props: { providerID: string }) {
           {/* Recent Anomaly & Hallucination Incidents */}
           <Show when={health().recentIncidents.length > 0}>
             <div class="space-y-1 pt-0.5">
-              <div class="flex items-center gap-1 text-[10.5px] font-medium text-[var(--text-secondary)]">
+              <div class="flex items-center gap-1 text-[11px] font-medium text-[var(--text-secondary)]">
                 <ShieldAlert size={11} class="text-[var(--warn-text)]" />
                 <span>{t("models.qualityRecentIncidents")}</span>
               </div>
@@ -274,19 +274,19 @@ export default function ProviderQualityCard(props: { providerID: string }) {
                   {(inc) => (
                     <div class="flex items-center justify-between gap-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)]/80 px-2.5 py-1 text-[11px]">
                       <div class="flex items-center gap-1.5 min-w-0">
-                        <span class="shrink-0 rounded bg-[var(--danger-surface)] px-1.5 py-[1px] text-[10px] font-medium text-[var(--danger-text)]">
+                        <span class="shrink-0 rounded bg-[var(--danger-surface)] px-1.5 py-[1px] text-[11px] font-medium text-[var(--danger-text)]">
                           {incidentTypeLabel(inc.type)}
                         </span>
                         <Show when={inc.modelID}>
-                          <span class="shrink-0 font-mono text-[10px] text-[var(--text-muted)]">
+                          <span class="shrink-0 font-mono text-[11px] text-[var(--text-muted)]">
                             [{inc.modelID}]
                           </span>
                         </Show>
-                        <span class="truncate font-mono text-[10.5px] text-[var(--text-secondary)]">
+                        <span class="truncate font-mono text-[11px] text-[var(--text-secondary)]">
                           {inc.detail}
                         </span>
                       </div>
-                      <span class="shrink-0 font-mono text-[10px] text-[var(--text-faint)]">
+                      <span class="shrink-0 font-mono text-[11px] text-[var(--text-faint)]">
                         {new Date(inc.timestamp).toLocaleTimeString([], {
                           hour: "2-digit",
                           minute: "2-digit",

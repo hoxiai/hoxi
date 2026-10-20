@@ -11,6 +11,8 @@ export const header = {
   modelsTooltip: "Connect AI Providers, API Keys & Custom Models",
   themeLightTooltip: "Switch to light theme",
   themeDarkTooltip: "Switch to dark theme",
+  moreTooltip: "More",
+  moreBack: "Back",
   appearanceTooltip: "Theme & style",
   appearanceTitle: "Appearance",
   appearanceLight: "Light",

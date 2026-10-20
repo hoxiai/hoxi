@@ -292,7 +292,7 @@ export default function PierreDiffViewer() {
         </button>
         <button type="button" onClick={() => setWorkspace("inspectedDiffFile", null)}
           title={t("inspector.diffs.backToTree")}
-          class="ml-auto flex shrink-0 items-center gap-1.5 px-1 text-[10.5px] font-mono tabular-nums cursor-pointer">
+          class="ml-auto flex shrink-0 items-center gap-1.5 px-1 text-[11px] font-mono tabular-nums cursor-pointer">
           <span class="text-[var(--ok-text)]">+{totals().add}</span>
           <span class="text-[var(--danger-text)]">-{totals().del}</span>
         </button>
@@ -316,7 +316,7 @@ export default function PierreDiffViewer() {
             onClick={() => void onPushWorktree()}
             title={t("inspector.diffs.pushAheadBtn", { count: activeWt()?.aheadCount ?? 0 })}
             aria-label={t("inspector.diffs.pushAheadBtn", { count: activeWt()?.aheadCount ?? 0 })}
-            class="shrink-0 inline-flex items-center gap-1 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-1.5 py-1 text-[10.5px] font-mono text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] disabled:opacity-40 cursor-pointer"
+            class="shrink-0 inline-flex items-center gap-1 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-1.5 py-1 text-[11px] font-mono text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] disabled:opacity-40 cursor-pointer"
           >
             <ArrowUpFromLine size={11} class={pushing() ? "animate-bounce" : ""} />
             <span>{pushing() ? t("inspector.diffs.pushingBtn") : `↑${activeWt()?.aheadCount ?? 0}`}</span>
@@ -329,7 +329,7 @@ export default function PierreDiffViewer() {
             onClick={() => void onOpenCreatePR()}
             title={t("inspector.diffs.createPrTooltip")}
             aria-label={t("inspector.diffs.createPrBtn")}
-            class="shrink-0 inline-flex items-center gap-1 rounded-md border border-[var(--accent-border)] bg-[var(--accent-surface)] px-2 py-1 text-[10.5px] font-medium text-[var(--accent-primary)] hover:opacity-90 disabled:opacity-40 cursor-pointer"
+            class="shrink-0 inline-flex items-center gap-1 rounded-md border border-[var(--accent-border)] bg-[var(--accent-surface)] px-2 py-1 text-[11px] font-medium text-[var(--accent-primary)] hover:opacity-90 disabled:opacity-40 cursor-pointer"
           >
             <GitPullRequestArrow size={11} />
             <span>{t("inspector.diffs.createPrBtn")}</span>
@@ -359,7 +359,7 @@ export default function PierreDiffViewer() {
             <div class="font-semibold text-[var(--warn-text)] truncate">
               {t("inspector.diffs.restorableTitle")}
             </div>
-            <div class="text-[10.5px] text-[var(--text-secondary)] truncate">
+            <div class="text-[11px] text-[var(--text-secondary)] truncate">
               {t("inspector.diffs.restorableDesc", {
                 branch: activeWt()?.branch || `hoxi/${workspace.activeSessionID || ""}`,
               })}
@@ -482,7 +482,7 @@ export default function PierreDiffViewer() {
                 type="button"
                 disabled={pushing()}
                 onClick={() => void onOpenCreatePR()}
-                class="hoxi-press shrink-0 inline-flex items-center gap-1 rounded-md border border-[var(--ok-border)] bg-[var(--bg-panel)]/80 px-2 py-0.5 text-[10.5px] font-sans font-medium text-[var(--ok-text)] hover:bg-[var(--bg-panel)] cursor-pointer"
+                class="hoxi-press shrink-0 inline-flex items-center gap-1 rounded-md border border-[var(--ok-border)] bg-[var(--bg-panel)]/80 px-2 py-0.5 text-[11px] font-sans font-medium text-[var(--ok-text)] hover:bg-[var(--bg-panel)] cursor-pointer"
               >
                 <GitPullRequestArrow size={10} />
                 <span>{t("inspector.diffs.createPrBtn")}</span>

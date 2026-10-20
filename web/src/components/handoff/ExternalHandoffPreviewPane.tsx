@@ -60,13 +60,13 @@ export default function ExternalHandoffPreviewPane(props: {
           <>
             {/* Compact Session Header */}
             <div class="border-b border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-5 py-3 space-y-1.5">
-              <div class="text-[14px] font-semibold text-[var(--text-primary)] truncate">
+              <div class="text-[15px] font-semibold text-[var(--text-primary)] truncate">
                 {cur().title}
               </div>
 
               <div class="flex flex-wrap items-center gap-2 text-[11px] font-mono text-[var(--text-muted)]">
                 <span
-                  class={`rounded border px-1.5 py-0.2 text-[10px] font-sans font-medium ${handoffSourceBadgeClass(
+                  class={`rounded border px-1.5 py-0.2 text-[11px] font-sans font-medium ${handoffSourceBadgeClass(
                     cur().source
                   )}`}
                 >
@@ -97,12 +97,12 @@ export default function ExternalHandoffPreviewPane(props: {
             {/* Handoff Plan & Fidelity Banner */}
             <Show when={props.detail?.fidelity}>
               {(fid) => (
-                <div class="border-b border-[var(--border-subtle)] bg-[var(--bg-inset)]/60 px-5 py-2.5 space-y-2 text-[11.5px]">
+                <div class="border-b border-[var(--border-subtle)] bg-[var(--bg-inset)]/60 px-5 py-2.5 space-y-2 text-[12px]">
                   <div class="flex items-center justify-between">
                     <span class="font-semibold text-[var(--text-secondary)]">
                       {t("leftNav.handoffPreviewPlanTitle")}
                     </span>
-                    <span class="font-mono text-[10.5px] text-[var(--text-muted)]">
+                    <span class="font-mono text-[11px] text-[var(--text-muted)]">
                       {t("leftNav.handoffTargetEngine", { engine: fid().targetRuntime })}
                     </span>
                   </div>
@@ -122,10 +122,10 @@ export default function ExternalHandoffPreviewPane(props: {
 
                   <Show when={(fid().unsupportedFeatures?.length || 0) > 0}>
                     <div class="rounded-md border border-amber-500/20 bg-amber-500/5 px-2.5 py-1.5 space-y-1">
-                      <div class="text-[10.5px] font-medium text-amber-500/90">
+                      <div class="text-[11px] font-medium text-amber-500/90">
                         {t("leftNav.handoffCaveatsTitle")}
                       </div>
-                      <ul class="list-disc list-inside space-y-0.5 text-[10.5px] text-[var(--text-muted)]">
+                      <ul class="list-disc list-inside space-y-0.5 text-[11px] text-[var(--text-muted)]">
                         <For each={fid().unsupportedFeatures}>
                           {(item) => <li>{item}</li>}
                         </For>
@@ -156,10 +156,10 @@ export default function ExternalHandoffPreviewPane(props: {
                             : "bg-[var(--bg-elevated)] border border-[var(--border-subtle)]"
                         }`}
                       >
-                        <div class="mb-1 flex items-center justify-between text-[10.5px] font-medium text-[var(--text-muted)]">
+                        <div class="mb-1 flex items-center justify-between text-[11px] font-medium text-[var(--text-muted)]">
                           <span>{turn.role === "user" ? "User" : cur().sourceLabel}</span>
                           <Show when={(turn.tools?.length || 0) > 0}>
-                            <span class="inline-flex items-center gap-1 font-mono text-[10px] text-[var(--text-muted)]">
+                            <span class="inline-flex items-center gap-1 font-mono text-[11px] text-[var(--text-muted)]">
                               <Wrench size={10} />
                               {turn.tools?.length}
                             </span>

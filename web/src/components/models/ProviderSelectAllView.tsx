@@ -51,7 +51,7 @@ export function ProviderSelectAllView(props: {
               placeholder={t("models.searchProviders")}
               value={search()}
               onInput={(e) => setSearch(e.currentTarget.value)}
-              class="w-full bg-transparent text-[12.5px] text-[var(--text-primary)] outline-none"
+              class="w-full bg-transparent text-[13px] text-[var(--text-primary)] outline-none"
             />
           </div>
         </div>
@@ -69,10 +69,10 @@ export function ProviderSelectAllView(props: {
                 <div class="flex items-center gap-2.5 min-w-0">
                   <ProviderIcon id={item.id} class="w-4 h-4 shrink-0" />
                   <div class="min-w-0">
-                    <div class="truncate text-[12.5px] font-medium text-[var(--text-primary)]">
+                    <div class="truncate text-[13px] font-medium text-[var(--text-primary)]">
                       {item.name || item.id}
                     </div>
-                    <div class="truncate font-mono text-[10.5px] text-[var(--text-faint)]">
+                    <div class="truncate font-mono text-[11px] text-[var(--text-faint)]">
                       {item.id} ·{" "}
                       {t("models.modelsCount", {
                         count: Object.keys(item.models || {}).length,
@@ -88,7 +88,7 @@ export function ProviderSelectAllView(props: {
                     </span>
                   }
                 >
-                  <span class="shrink-0 rounded-full bg-[var(--ok-surface)] px-2 py-0.5 text-[10px] font-medium text-[var(--ok-text)]">
+                  <span class="shrink-0 rounded-full bg-[var(--ok-surface)] px-2 py-0.5 text-[11px] font-medium text-[var(--ok-text)]">
                     {t("models.connected")}
                   </span>
                 </Show>

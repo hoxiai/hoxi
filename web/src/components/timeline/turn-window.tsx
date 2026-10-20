@@ -22,8 +22,9 @@ import {
   type TurnRenderItem,
 } from "./message-stream-parts";
 
-export const INITIAL_VISIBLE_TURNS = 10;
+export const INITIAL_VISIBLE_TURNS = 12;
 export const TURN_BATCH_SIZE = 12;
+export const MAX_AUTO_EXPANDED_TURNS = 32;
 
 export function filterVisibleTurnsByRevert(
   rawTurns: MessageTurn[],
@@ -57,6 +58,52 @@ export interface TurnWindowController {
   handleTopScroll: (scroller: HTMLElement) => void;
 }
 
+export function computeTurnWindowSlice(
+  turns: MessageTurn[],
+  limit: number
+): { startIndex: number; visibleTurns: MessageTurn[]; hiddenCount: number } {
+  let start = Math.max(0, turns.length - limit);
+  // Never cut a prompt cycle in half: folded step turns render nothing, so a
+  // window starting mid-cycle showed a bare activity group without its prompt.
+  while (start > 0 && turns[start]?.info.role === "assistant") start--;
+  return {
+    startIndex: start,
+    visibleTurns: start > 0 ? turns.slice(start) : turns,
+    hiddenCount: start,
+  };
+}
+
+export function resolveNextWindowLimit(params: {
+  currentSession: string | null;
+  lastActiveSessionID: string | null;
+  state: { limit: number; seen: number; lastTailID: string };
+  total: number;
+  tailID: string;
+  list: MessageTurn[];
+}): number {
+  if (params.currentSession !== params.lastActiveSessionID) {
+    params.state.limit = INITIAL_VISIBLE_TURNS;
+    params.state.seen = params.total;
+    params.state.lastTailID = params.tailID;
+    return params.state.limit;
+  }
+
+  if (params.state.seen > 0 && params.total > params.state.seen && params.state.lastTailID) {
+    const prevTailIdx = params.list.findIndex((t) => t.info.id === params.state.lastTailID);
+    if (prevTailIdx >= 0) {
+      const appendedAtTail = params.total - 1 - prevTailIdx;
+      if (appendedAtTail > 0 && appendedAtTail <= TURN_BATCH_SIZE) {
+        if (params.state.limit < MAX_AUTO_EXPANDED_TURNS) {
+          params.state.limit = Math.min(params.state.limit + appendedAtTail, MAX_AUTO_EXPANDED_TURNS);
+        }
+      }
+    }
+  }
+  params.state.seen = params.total;
+  params.state.lastTailID = params.tailID;
+  return params.state.limit;
+}
+
 /**
  * Ported from Kilo Desktop / OpenCode Desktop timeline windowing (`turnInit` + `turnBatch`):
  * Keeps only the latest N turns mounted initially and prepends older turns on scroll-up
@@ -72,6 +119,7 @@ export function createTurnWindow(
   const windows = new Map<string, { limit: number; seen: number; lastTailID: string }>();
   const [revision, setRevision] = createSignal(0);
   let prependingLock = false;
+  let lastActiveSessionID: string | null = null;
 
   const windowFor = (sid: string | null) => {
     const key = sid ?? "";
@@ -89,22 +137,24 @@ export function createTurnWindow(
 
   const visibleLimit = createMemo(() => {
     revision();
+    const currentSession = sessionID();
     const list = turns();
     const total = list.length;
     const tailID = total > 0 ? list[total - 1]!.info.id : "";
-    const state = windowFor(sessionID());
-    if (state.seen > 0 && total > state.seen && state.lastTailID) {
-      const prevTailIdx = list.findIndex((t) => t.info.id === state.lastTailID);
-      if (prevTailIdx >= 0) {
-        const appendedAtTail = total - 1 - prevTailIdx;
-        if (appendedAtTail > 0 && appendedAtTail <= TURN_BATCH_SIZE) {
-          state.limit += appendedAtTail;
-        }
-      }
+    const state = windowFor(currentSession);
+
+    const limit = resolveNextWindowLimit({
+      currentSession,
+      lastActiveSessionID,
+      state,
+      total,
+      tailID,
+      list,
+    });
+    if (currentSession !== lastActiveSessionID) {
+      lastActiveSessionID = currentSession;
     }
-    state.seen = total;
-    state.lastTailID = tailID;
-    return state.limit;
+    return limit;
   });
 
   const setVisibleLimit = (next: number) => {
@@ -117,22 +167,10 @@ export function createTurnWindow(
     prependingLock = false;
   });
 
-  // Never cut a prompt cycle in half: folded step turns render nothing, so a
-  // window starting mid-cycle showed a bare activity group without its prompt.
-  const startIndex = createMemo(() => {
-    const list = turns();
-    let start = Math.max(0, list.length - visibleLimit());
-    while (start > 0 && list[start]?.info.role === "assistant") start--;
-    return start;
-  });
-
-  const hiddenCount = createMemo(() => startIndex());
-
-  const visibleTurns = createMemo(() => {
-    const list = turns();
-    const start = startIndex();
-    return start > 0 ? list.slice(start) : list;
-  });
+  const slice = createMemo(() => computeTurnWindowSlice(turns(), visibleLimit()));
+  const startIndex = createMemo(() => slice().startIndex);
+  const hiddenCount = createMemo(() => slice().hiddenCount);
+  const visibleTurns = createMemo(() => slice().visibleTurns);
 
   const preserveScrollOnPrepend = (scroller: HTMLElement | undefined, fn: () => void) => {
     if (!scroller) {
@@ -208,7 +246,7 @@ export function EarlierTurnsBanner(props: {
   return (
     <Show when={props.hiddenCount > 0}>
       <div class="mb-5 flex flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-[var(--border-subtle)] bg-[var(--bg-inset)]/50 px-4 py-2.5 text-center select-none">
-        <div class="text-[11.5px] text-[var(--text-faint)]">
+        <div class="text-[12px] text-[var(--text-faint)]">
           {t("timeline.hiddenTurnsHint", { count: props.hiddenCount })}
         </div>
         <div class="flex items-center gap-2">
@@ -225,7 +263,7 @@ export function EarlierTurnsBanner(props: {
             <button
               type="button"
               onClick={props.onLoadAll}
-              class="inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-[11.5px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+              class="inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-[12px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
             >
               <span>{t("timeline.loadAllEarlierTurns", { total: props.totalCount })}</span>
             </button>

@@ -192,7 +192,7 @@ export default function BranchManagerPopover() {
                 /* ================= LOCAL MODE VIEW ================= */
                 <div class="flex flex-col gap-2">
                   <div class="flex items-center justify-between px-1">
-                    <span class="text-[10.5px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                    <span class="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
                       {t("header.localBranchesTitle")}
                     </span>
                     <Show when={loadingBranches()}>
@@ -213,7 +213,7 @@ export default function BranchManagerPopover() {
                           void onCheckoutBranch(newBranchName(), true);
                         }
                       }}
-                      class="flex-1 min-w-0 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-2 py-1 text-[11.5px] font-mono text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none focus:border-[var(--accent-border)]"
+                      class="flex-1 min-w-0 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-2 py-1 text-[12px] font-mono text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none focus:border-[var(--accent-border)]"
                     />
                     <button
                       type="button"
@@ -244,11 +244,11 @@ export default function BranchManagerPopover() {
                         >
                           <div class="flex items-center gap-1.5 min-w-0 flex-1">
                             <GitBranch size={11.5} class="shrink-0" />
-                            <span class="font-mono text-[11.5px] truncate">{b.name}</span>
+                            <span class="font-mono text-[12px] truncate">{b.name}</span>
                           </div>
                           <div class="flex items-center gap-1.5 shrink-0">
                             <Show when={b.headCommit}>
-                              <span class="font-mono text-[10px] text-[var(--text-faint)]">
+                              <span class="font-mono text-[11px] text-[var(--text-faint)]">
                                 {b.headCommit}
                               </span>
                             </Show>
@@ -266,10 +266,10 @@ export default function BranchManagerPopover() {
               {/* ================= ISOLATED SANDBOX MODE VIEW ================= */}
               <div class="flex flex-col gap-2.5">
                 <div class="flex items-center justify-between px-1">
-                  <span class="text-[10.5px] font-semibold uppercase tracking-wider text-[var(--accent-primary)]">
+                  <span class="text-[11px] font-semibold uppercase tracking-wider text-[var(--accent-primary)]">
                     {t("header.sandboxHeaderTitle")}
                   </span>
-                  <span class="font-mono text-[10.5px] text-[var(--text-muted)] truncate max-w-[140px]">
+                  <span class="font-mono text-[11px] text-[var(--text-muted)] truncate max-w-[140px]">
                     {displayBranch()}
                   </span>
                 </div>
@@ -277,10 +277,10 @@ export default function BranchManagerPopover() {
                 <div class="flex items-start gap-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-2.5 py-2">
                   <ShieldCheck size={13} class="mt-0.5 shrink-0 text-[var(--accent-primary)]" />
                   <div class="flex flex-col gap-0.5">
-                    <span class="text-[11.5px] font-medium text-[var(--text-primary)]">
+                    <span class="text-[12px] font-medium text-[var(--text-primary)]">
                       {t("header.isolatedSandboxHint")}
                     </span>
-                    <span class="text-[10.5px] text-[var(--text-muted)] leading-snug">
+                    <span class="text-[11px] text-[var(--text-muted)] leading-snug">
                       {t("header.isolatedSandboxManageHint")}
                     </span>
                   </div>

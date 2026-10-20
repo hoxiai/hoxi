@@ -132,7 +132,7 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
           {t("approval.title")}
         </span>
         <Show when={isDestructive()}>
-          <span class="rounded-md border border-[var(--danger-border)] bg-[var(--danger-surface)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--danger-text)]">
+          <span class="rounded-md border border-[var(--danger-border)] bg-[var(--danger-surface)] px-1.5 py-0.5 text-[11px] font-semibold text-[var(--danger-text)]">
             {t("approval.highRiskBadge")}
           </span>
         </Show>
@@ -141,7 +141,7 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
             · {String(props.request.metadata?.description)}
           </span>
         </Show>
-        <span class="ml-auto rounded-md bg-[var(--bg-panel)]/70 px-2 py-0.5 font-mono text-[10.5px] text-[var(--warn-text)]">
+        <span class="ml-auto rounded-md bg-[var(--bg-panel)]/70 px-2 py-0.5 font-mono text-[11px] text-[var(--warn-text)]">
           {props.request.permission || "tool"}
         </span>
       </div>
@@ -201,7 +201,7 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
                       <button
                         type="button"
                          onClick={() => openChangedFileInInspector(item)}
-                        class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10.5px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer"
+                        class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer"
                         title={t("approval.openDiffInInspector")}
                       >
                         <ExternalLink size={11} />
@@ -358,7 +358,7 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
         >
           <button
             type="button"
-            class="inline-flex items-center gap-1.5 rounded-lg bg-[var(--status-danger)] text-white hover:opacity-90 px-3 py-1 text-[11.5px] font-medium disabled:opacity-50 transition-opacity cursor-pointer"
+            class="inline-flex items-center gap-1.5 rounded-lg bg-[var(--status-danger)] text-white hover:opacity-90 px-3 py-1 text-[12px] font-medium disabled:opacity-50 transition-opacity cursor-pointer"
             disabled={!!busy()}
             onClick={() => void reply("reject")}
           >
@@ -371,7 +371,7 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
           </button>
           <button
             type="button"
-            class="inline-flex items-center rounded-lg px-2.5 py-1 text-[11.5px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] cursor-pointer"
+            class="inline-flex items-center rounded-lg px-2.5 py-1 text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] cursor-pointer"
             disabled={!!busy()}
             onClick={() => setRejecting(false)}
           >

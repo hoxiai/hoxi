@@ -13,16 +13,16 @@ const BrowserInspector = lazy(() => import("./BrowserInspector"));
 
 type TabID = "diffs" | "memory" | "files" | "skills" | "terminal" | "browser";
 
-const TABS: Array<{ id: TabID }> = [
-  { id: "diffs" },
-  { id: "memory" },
-  { id: "files" },
-  { id: "skills" },
-  { id: "terminal" },
-  { id: "browser" },
-];
+const PRIMARY_TABS: TabID[] = ["diffs", "files", "terminal"];
 
 export default function InspectorPane() {
+  // Secondary panes (memory / skills / browser) stay reachable through the
+  // command palette; they only surface in the tab strip while active.
+  const tabs = createMemo<Array<{ id: TabID }>>(() => {
+    const active = workspace.inspectorTab;
+    const primary = PRIMARY_TABS.map((id) => ({ id }));
+    return PRIMARY_TABS.includes(active) ? primary : [...primary, { id: active }];
+  });
   const [visitedTabs, setVisitedTabs] = createSignal<Record<TabID, boolean>>({
     diffs: workspace.inspectorTab === "diffs",
     memory: workspace.inspectorTab === "memory",
@@ -76,7 +76,7 @@ export default function InspectorPane() {
   return (
     <aside class="h-full w-full flex flex-col bg-transparent">
       <div class="shrink-0 flex items-center gap-1 px-2 py-1.5 border-b border-[var(--border-subtle)] overflow-x-auto no-scrollbar">
-        <For each={TABS}>
+        <For each={tabs()}>
           {(tab) => (
             <button
               type="button"

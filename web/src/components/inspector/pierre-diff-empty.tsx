@@ -80,7 +80,7 @@ export default function DiffEmptyState(props: {
         <h3 class="text-[13px] font-semibold text-[var(--text-primary)]">
           {emptyTitle()}
         </h3>
-        <p class="mt-1 text-[11.5px] leading-relaxed text-[var(--text-muted)]">
+        <p class="mt-1 text-[12px] leading-relaxed text-[var(--text-muted)]">
           {emptyDescription()}
         </p>
       </div>
@@ -88,11 +88,11 @@ export default function DiffEmptyState(props: {
       {/* 2. Live Worktree & Git Context Card */}
       <div class="w-full rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)]/60 p-3 text-left space-y-2">
         <div class="flex items-center justify-between gap-2 pb-1 border-b border-[var(--border-subtle)]/70">
-          <span class="text-[10.5px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
+          <span class="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
             {t("inspector.diffs.envCardTitle")}
           </span>
           <span
-            class={`rounded-md px-1.5 py-0.5 text-[10px] font-medium ${
+            class={`rounded-md px-1.5 py-0.5 text-[11px] font-medium ${
               worktree()?.isolated
                 ? "border border-[var(--accent-border)] bg-[var(--accent-surface)] text-[var(--accent-text)]"
                 : "border border-[var(--border-subtle)] bg-[var(--bg-panel)] text-[var(--text-secondary)]"
@@ -107,7 +107,7 @@ export default function DiffEmptyState(props: {
         </div>
 
         {/* Git status is independent of the selected diff scope. */}
-        <div class="flex items-center justify-between gap-2 text-[11.5px]">
+        <div class="flex items-center justify-between gap-2 text-[12px]">
           <span class="text-[var(--text-muted)] shrink-0">
             {t("inspector.diffs.envStatusLabel")}
           </span>
@@ -124,7 +124,7 @@ export default function DiffEmptyState(props: {
 
         {/* Active Git Branch */}
         <Show when={worktree()?.branch}>
-          <div class="flex items-center justify-between gap-2 text-[11.5px]">
+          <div class="flex items-center justify-between gap-2 text-[12px]">
             <span class="text-[var(--text-muted)] shrink-0">
               {t("inspector.diffs.envBranchLabel")}
             </span>
@@ -137,12 +137,12 @@ export default function DiffEmptyState(props: {
 
         {/* Latest / Base Commit */}
         <Show when={commitHash()}>
-          <div class="flex items-center justify-between gap-2 text-[11.5px]">
+          <div class="flex items-center justify-between gap-2 text-[12px]">
             <span class="text-[var(--text-muted)] shrink-0">
               {t("inspector.diffs.envCommitLabel")}
             </span>
             <div class="flex items-center gap-1.5 min-w-0 justify-end">
-              <span class="inline-flex items-center gap-1 rounded bg-[var(--bg-panel)] px-1.5 py-0.5 font-mono text-[10.5px] text-[var(--accent-text)] shrink-0">
+              <span class="inline-flex items-center gap-1 rounded bg-[var(--bg-panel)] px-1.5 py-0.5 font-mono text-[11px] text-[var(--accent-text)] shrink-0">
                 <GitCommitHorizontal size={11} />
                 {commitHash()}
               </span>
@@ -159,7 +159,7 @@ export default function DiffEmptyState(props: {
         </Show>
 
         {/* Directory Path */}
-        <div class="pt-1 border-t border-[var(--border-subtle)]/60 flex items-center gap-1.5 text-[10.5px] text-[var(--text-faint)] font-mono">
+        <div class="pt-1 border-t border-[var(--border-subtle)]/60 flex items-center gap-1.5 text-[11px] text-[var(--text-faint)] font-mono">
           <FolderOpen size={11} class="shrink-0 text-[var(--text-muted)]" />
           <span class="truncate" title={dirPath()}>
             {dirPath()}
@@ -170,7 +170,7 @@ export default function DiffEmptyState(props: {
       {/* 3. Read-Only Plan Mode Hint Banner */}
       <Show when={workspace.activeMode === "plan"}>
         <div class="w-full rounded-xl border border-[var(--accent-border)]/70 bg-[var(--accent-surface)]/35 p-3 text-left space-y-2">
-          <div class="flex items-center gap-1.5 text-[11.5px] font-semibold text-[var(--accent-primary)]">
+          <div class="flex items-center gap-1.5 text-[12px] font-semibold text-[var(--accent-primary)]">
             <Compass size={13} class="shrink-0" />
             <span>{t("inspector.diffs.planModeTipTitle")}</span>
           </div>

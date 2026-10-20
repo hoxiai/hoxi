@@ -76,14 +76,14 @@ export default function ModelLeaderboardModal() {
               </div>
               <div>
                 <div class="flex items-center gap-2">
-                  <h2 class="text-[14.5px] font-bold text-[var(--text-primary)]">
+                  <h2 class="text-[15px] font-bold text-[var(--text-primary)]">
                     {t("header.leaderboardModalTitle")}
                   </h2>
-                  <span class="rounded-md bg-amber-500/10 border border-amber-500/25 px-1.5 py-0.5 text-[10px] font-semibold text-amber-500">
+                  <span class="rounded-md bg-amber-500/10 border border-amber-500/25 px-1.5 py-0.5 text-[11px] font-semibold text-amber-500">
                     AA Benchmark
                   </span>
                 </div>
-                <p class="text-[11.5px] text-[var(--text-muted)] mt-0.5">
+                <p class="text-[12px] text-[var(--text-muted)] mt-0.5">
                   {t("header.leaderboardModalSubtitle")}
                 </p>
               </div>
@@ -214,12 +214,12 @@ export default function ModelLeaderboardModal() {
                                 {m.name}
                               </span>
                               <Show when={m.badges && m.badges.length > 0}>
-                                <span class="rounded bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 px-1 py-0.2 text-[9.5px] font-medium">
+                                <span class="rounded bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 px-1 py-0.2 text-[11px] font-medium">
                                   {m.badges[0]}
                                 </span>
                               </Show>
                               <Show when={m.reasoning}>
-                                <span class="rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 px-1 py-0.2 text-[9.5px] font-medium">
+                                <span class="rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 px-1 py-0.2 text-[11px] font-medium">
                                   Thinking
                                 </span>
                               </Show>
@@ -233,7 +233,7 @@ export default function ModelLeaderboardModal() {
                         {/* Scores & Metrics */}
                         <div class="flex items-center gap-4 shrink-0 text-right">
                           <div class="hidden sm:block">
-                            <div class="text-[10px] text-[var(--text-muted)]">
+                            <div class="text-[11px] text-[var(--text-muted)]">
                               {t("header.leaderboardScoreIndex")}
                             </div>
                             <div class="font-bold font-mono text-[13px] text-amber-500">
@@ -242,7 +242,7 @@ export default function ModelLeaderboardModal() {
                           </div>
 
                           <div class="hidden sm:block">
-                            <div class="text-[10px] text-[var(--text-muted)]">
+                            <div class="text-[11px] text-[var(--text-muted)]">
                               {t("header.leaderboardSpeedTps")}
                             </div>
                             <div class="font-mono text-[12px] text-[var(--text-primary)]">
@@ -251,13 +251,13 @@ export default function ModelLeaderboardModal() {
                           </div>
 
                           <div>
-                            <div class="text-[10px] text-[var(--text-muted)]">
+                            <div class="text-[11px] text-[var(--text-muted)]">
                               {(() => {
                                 const sym = m.price?.currency?.toUpperCase() === "CNY" ? "¥" : "$";
                                 return `${sym}${m.price?.input || 0} / ${sym}${m.price?.output || 0}`;
                               })()}
                             </div>
-                            <div class="text-[9.5px] text-[var(--text-faint)]">
+                            <div class="text-[11px] text-[var(--text-faint)]">
                               {t("header.leaderboardPerMTokens")}
                             </div>
                           </div>
@@ -313,7 +313,7 @@ export default function ModelLeaderboardModal() {
                       {/* 3 Metric Pills */}
                       <div class="grid grid-cols-3 gap-2.5">
                         <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-2.5">
-                          <div class="text-[10.5px] text-[var(--text-muted)]">
+                          <div class="text-[11px] text-[var(--text-muted)]">
                             {t("header.gatewaySavingsLabel")}
                           </div>
                           <div class="font-extrabold text-[16px] text-emerald-500 font-mono mt-0.5">
@@ -322,7 +322,7 @@ export default function ModelLeaderboardModal() {
                         </div>
 
                         <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-2.5">
-                          <div class="text-[10.5px] text-[var(--text-muted)]">
+                          <div class="text-[11px] text-[var(--text-muted)]">
                             {t("header.gatewayUptimeLabel")}
                           </div>
                           <div class="font-extrabold text-[16px] text-[var(--text-primary)] font-mono mt-0.5">
@@ -331,7 +331,7 @@ export default function ModelLeaderboardModal() {
                         </div>
 
                         <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-2.5">
-                          <div class="text-[10.5px] text-[var(--text-muted)]">
+                          <div class="text-[11px] text-[var(--text-muted)]">
                             {t("header.gatewayLatencyLabel")}
                           </div>
                           <div class="font-extrabold text-[16px] text-cyan-400 font-mono mt-0.5">
@@ -363,7 +363,7 @@ export default function ModelLeaderboardModal() {
             <button
               type="button"
               onClick={handleOpenOfficialWeb}
-              class="inline-flex items-center gap-1.5 text-[11.5px] text-[var(--text-muted)] hover:text-[var(--accent-text)] transition-colors cursor-pointer"
+              class="inline-flex items-center gap-1.5 text-[12px] text-[var(--text-muted)] hover:text-[var(--accent-text)] transition-colors cursor-pointer"
             >
               <Globe size={13} />
               <span>{t("header.leaderboardViewOnWeb")}</span>

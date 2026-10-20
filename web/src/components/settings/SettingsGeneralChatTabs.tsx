@@ -164,7 +164,7 @@ export function GeneralAppearanceTab() {
                 input.value = String(appSettings.sidebarMinSessions);
               }
             }}
-            class="w-24 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-3.5 py-2 text-[13.5px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)] disabled:opacity-50 disabled:cursor-not-allowed"
+            class="w-24 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-3.5 py-2 text-[13px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)] disabled:opacity-50 disabled:cursor-not-allowed"
           />
         </SettingRow>
         <SettingRow
@@ -187,7 +187,7 @@ export function GeneralAppearanceTab() {
                 input.value = String(appSettings.sidebarRecentMinutes);
               }
             }}
-            class="w-24 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-3.5 py-2 text-[13.5px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)] disabled:opacity-50 disabled:cursor-not-allowed"
+            class="w-24 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-3.5 py-2 text-[13px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)] disabled:opacity-50 disabled:cursor-not-allowed"
           />
         </SettingRow>
       </SettingGroup>
@@ -324,7 +324,7 @@ export function ChatComposerTab() {
           <button
             type="button"
             onClick={testDesktopNotification}
-            class="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-3 py-1 text-[12.5px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+            class="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-3 py-1 text-[13px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
           >
             {t("settings.testNotificationBtn")}
           </button>
@@ -342,7 +342,7 @@ export function ChatComposerTab() {
           <button
             type="button"
             onClick={testNotificationSound}
-            class="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-3 py-1 text-[12.5px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+            class="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-3 py-1 text-[13px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
           >
             {t("settings.testSoundBtn")}
           </button>

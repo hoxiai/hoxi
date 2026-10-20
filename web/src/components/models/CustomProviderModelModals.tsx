@@ -90,10 +90,10 @@ export function FetchedModelsModal(props: {
           {/* Modal Header */}
           <div class="flex items-start justify-between gap-3 border-b border-[var(--border-subtle)] px-5 py-4">
             <div>
-              <h3 class="text-[14px] font-semibold text-[var(--text-primary)]">
+              <h3 class="text-[15px] font-semibold text-[var(--text-primary)]">
                 {t("models.fetchedModelsCount", { count: props.fetchedModels().length })}
               </h3>
-              <p class="mt-0.5 text-[11.5px] text-[var(--text-muted)]">
+              <p class="mt-0.5 text-[12px] text-[var(--text-muted)]">
                 {t("models.fetchedModelsModalSubtitle")}
               </p>
             </div>
@@ -116,7 +116,7 @@ export function FetchedModelsModal(props: {
                 placeholder={t("models.searchModels")}
                 value={fetchSearch()}
                 onInput={(e) => setFetchSearch(e.currentTarget.value)}
-                class="w-full bg-transparent text-[12.5px] text-[var(--text-primary)] outline-none selectable-text"
+                class="w-full bg-transparent text-[13px] text-[var(--text-primary)] outline-none selectable-text"
               />
             </div>
           </div>
@@ -143,23 +143,23 @@ export function FetchedModelsModal(props: {
                       <div class="flex items-center justify-between gap-3">
                         <div class="min-w-0 flex-1">
                           <div class="flex items-center gap-2 flex-wrap">
-                            <span class="font-mono text-[12.5px] font-semibold text-[var(--text-primary)] truncate">
+                            <span class="font-mono text-[13px] font-semibold text-[var(--text-primary)] truncate">
                               {rm.id}
                             </span>
                             <Show when={guessed().reasoning}>
-                              <span class="inline-flex items-center gap-0.5 rounded-md bg-[var(--accent-surface)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--accent-primary)]">
+                              <span class="inline-flex items-center gap-0.5 rounded-md bg-[var(--accent-surface)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--accent-primary)]">
                                 <Sparkles size={10} />
                                 {t("models.reasoningCap")}
                               </span>
                             </Show>
                             <Show when={guessed().image}>
-                              <span class="inline-flex items-center gap-0.5 rounded-md bg-[var(--bg-inset)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--text-secondary)]">
+                              <span class="inline-flex items-center gap-0.5 rounded-md bg-[var(--bg-inset)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--text-secondary)]">
                                 <Image size={10} />
                                 {t("models.imageCap")}
                               </span>
                             </Show>
                             <Show when={probe()?.status === "ok"}>
-                              <span class="inline-flex items-center gap-0.5 rounded-md bg-[var(--ok-surface)] px-1.5 py-0.5 font-mono text-[10px] font-medium text-[var(--ok-text)]">
+                              <span class="inline-flex items-center gap-0.5 rounded-md bg-[var(--ok-surface)] px-1.5 py-0.5 font-mono text-[11px] font-medium text-[var(--ok-text)]">
                                 <Check size={10} />
                                 {probe()?.latencyMs ?? 0}ms
                               </span>
@@ -171,7 +171,7 @@ export function FetchedModelsModal(props: {
                           <Show
                             when={!isAdded()}
                             fallback={
-                              <span class="inline-flex items-center gap-1 rounded-xl border border-[var(--ok-border)] bg-[var(--ok-surface)] px-3 py-1 text-[11.5px] font-semibold text-[var(--ok-text)]">
+                              <span class="inline-flex items-center gap-1 rounded-xl border border-[var(--ok-border)] bg-[var(--ok-surface)] px-3 py-1 text-[12px] font-semibold text-[var(--ok-text)]">
                                 <Check size={12} />
                                 {t("models.modelAddedBadge")}
                               </span>
@@ -190,7 +190,7 @@ export function FetchedModelsModal(props: {
                               type="button"
                               disabled={isTesting()}
                               onClick={() => void handleVerifyAndAddFetched(rm)}
-                              class="inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] px-3 py-1 text-[11.5px] font-medium text-[var(--accent-foreground)] hover:opacity-90 disabled:opacity-50 cursor-pointer"
+                              class="inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] px-3 py-1 text-[12px] font-medium text-[var(--accent-foreground)] hover:opacity-90 disabled:opacity-50 cursor-pointer"
                             >
                               <Show
                                 when={!isTesting()}
@@ -223,7 +223,7 @@ export function FetchedModelsModal(props: {
 
           {/* Modal Footer */}
           <div class="flex items-center justify-between border-t border-[var(--border-subtle)] bg-[var(--bg-elevated)]/30 px-5 py-3">
-            <span class="text-[11.5px] text-[var(--text-muted)]">
+            <span class="text-[12px] text-[var(--text-muted)]">
               {t("models.modelsListTitle")}: {addedIdSet().size}
             </span>
             <button
@@ -333,10 +333,10 @@ export function AddCustomModelModal(props: {
         >
           <div class="flex items-start justify-between gap-3">
             <div>
-              <h3 class="text-[14px] font-semibold text-[var(--text-primary)]">
+              <h3 class="text-[15px] font-semibold text-[var(--text-primary)]">
                 {t("models.addModelModalTitle")}
               </h3>
-              <p class="mt-0.5 text-[11.5px] text-[var(--text-muted)]">
+              <p class="mt-0.5 text-[12px] text-[var(--text-muted)]">
                 {t("models.addModelModalDesc")}
               </p>
             </div>
@@ -352,7 +352,7 @@ export function AddCustomModelModal(props: {
 
           <div class="space-y-3">
             <div>
-              <label class="block text-[11.5px] font-medium text-[var(--text-secondary)] mb-1">
+              <label class="block text-[12px] font-medium text-[var(--text-secondary)] mb-1">
                 {t("models.modelId")}
               </label>
               <input
@@ -380,12 +380,12 @@ export function AddCustomModelModal(props: {
                     void handleVerifyAndAdd();
                   }
                 }}
-                class="w-full rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] px-3 py-2 font-mono text-[12.5px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)] selectable-text"
+                class="w-full rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] px-3 py-2 font-mono text-[13px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)] selectable-text"
               />
             </div>
 
             <div>
-              <label class="block text-[11.5px] font-medium text-[var(--text-secondary)] mb-1">
+              <label class="block text-[12px] font-medium text-[var(--text-secondary)] mb-1">
                 {t("models.modelName")}{" "}
                 <span class="font-normal text-[var(--text-faint)]">({t("models.optional")})</span>
               </label>
@@ -401,7 +401,7 @@ export function AddCustomModelModal(props: {
                     void handleVerifyAndAdd();
                   }
                 }}
-                class="w-full rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3 py-2 text-[12.5px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)] selectable-text"
+                class="w-full rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3 py-2 text-[13px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)] selectable-text"
               />
             </div>
 
@@ -441,7 +441,7 @@ export function AddCustomModelModal(props: {
             </div>
 
             <Show when={verifyError()}>
-              <div class="flex items-start gap-2 rounded-xl border border-[var(--danger-border)] bg-[var(--danger-surface)] px-3 py-2 text-[11.5px] text-[var(--danger-text)]">
+              <div class="flex items-start gap-2 rounded-xl border border-[var(--danger-border)] bg-[var(--danger-surface)] px-3 py-2 text-[12px] text-[var(--danger-text)]">
                 <AlertCircle size={14} class="shrink-0 mt-0.5" />
                 <span class="break-words">{verifyError()}</span>
               </div>

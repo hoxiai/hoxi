@@ -1,23 +1,30 @@
 // web/src/components/layout/UpdateBadge.tsx
 import { createSignal, onCleanup, onMount, Show } from "solid-js";
 import { Presence } from "../motion/Presence";
-import { ArrowUpCircle, Download, ExternalLink, Sparkles, X } from "lucide-solid";
-import { checkDesktopUpdate, desktopUpdater, refreshDesktopUpdateStatus, startDesktopUpdate } from "../../store/workspace";
+import { ArrowUpCircle, Download, ExternalLink, X } from "lucide-solid";
+import {
+  checkDesktopUpdate,
+  desktopUpdater,
+  refreshDesktopUpdateStatus,
+  startDesktopUpdate,
+} from "../../store/workspace";
 import { t } from "../../i18n";
 
-export default function UpdateBadge() {
-  const [modalOpen, setModalOpen] = createSignal(false);
+const [updateModalOpen, setUpdateModalOpen] = createSignal(false);
 
+export function openDesktopUpdateModal(): void {
+  setUpdateModalOpen(true);
+}
+
+export default function UpdateBadge() {
   onMount(() => {
-    // 启动时后台静默自检一次版本
     void checkDesktopUpdate(false);
     void refreshDesktopUpdateStatus();
-    // Native updater initialization can finish after the frontend mounts.
     const statusTimer = window.setInterval(() => void refreshDesktopUpdateStatus(), 5_000);
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && modalOpen()) {
-        setModalOpen(false);
+      if (e.key === "Escape" && updateModalOpen()) {
+        setUpdateModalOpen(false);
       }
     };
     window.addEventListener("keydown", handleKeyDown);
@@ -28,45 +35,19 @@ export default function UpdateBadge() {
   });
 
   const updateResult = () => desktopUpdater.result;
-  const hasUpdate = () => Boolean(updateResult()?.needUpdate || desktopUpdater.draining);
 
   return (
-    <Show when={hasUpdate()}>
-      {/* 1. Header Capsule Tag (Kilo Style) */}
-      <button
-        type="button"
-        style={{ "--wails-draggable": "no-drag" } as any}
-        onClick={() => setModalOpen(true)}
-        class="inline-flex items-center gap-1.5 rounded-full bg-[var(--accent-surface)] border border-[var(--accent-border)] hover:border-[var(--accent-primary)] px-2.5 py-0.5 text-[11px] font-semibold text-[var(--accent-text)] hover:shadow-xs transition-all cursor-pointer active:scale-[0.98]"
-        title={desktopUpdater.draining ? t("header.updateRestartRequired") : t("header.updateAvailableTooltip", {
-          version: `v${updateResult()?.latestVersion || ""}`,
-        })}
-      >
-        <span class="relative flex h-1.5 w-1.5">
-          <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-[var(--accent-primary)] opacity-75" />
-          <span class="relative inline-flex rounded-full h-1.5 w-1.5 bg-[var(--accent-primary)]" />
-        </span>
-        <Sparkles size={11} />
-        <span>
-          {desktopUpdater.draining ? t("header.updateRestartRequired") : t("header.updateAvailableBadge", {
-            version: `v${updateResult()?.latestVersion || ""}`,
-          })}
-        </span>
-      </button>
-
-      {/* 2. Kilo-style Update Details Modal */}
-      <Presence when={modalOpen()}>
-        {(state) => (
+    <Presence when={updateModalOpen()}>
+      {(state) => (
         <div
           data-state={state()}
           class="hoxi-modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4"
-          onClick={() => setModalOpen(false)}
+          onClick={() => setUpdateModalOpen(false)}
         >
           <div
             class="hoxi-modal-panel hoxi-elevation-4 relative w-full max-w-md rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-panel)] overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Header banner */}
             <div class="p-5 border-b border-[var(--border-subtle)] bg-[var(--accent-surface)]">
               <div class="flex items-start justify-between">
                 <div class="flex items-center gap-3">
@@ -74,8 +55,10 @@ export default function UpdateBadge() {
                     <ArrowUpCircle size={20} />
                   </div>
                   <div>
-                    <h3 class="text-[14px] font-bold text-[var(--text-primary)]">
-                      {desktopUpdater.draining ? t("header.updateRestartRequired") : t("header.updateModalTitle")}
+                    <h3 class="text-[15px] font-bold text-[var(--text-primary)]">
+                      {desktopUpdater.draining
+                        ? t("header.updateRestartRequired")
+                        : t("header.updateModalTitle")}
                     </h3>
                     <Show when={updateResult()}>
                       <div class="flex items-center gap-2 mt-1 font-mono text-[11px]">
@@ -93,7 +76,7 @@ export default function UpdateBadge() {
                 <button
                   type="button"
                   aria-label={t("header.updateModalDismiss")}
-                  onClick={() => setModalOpen(false)}
+                  onClick={() => setUpdateModalOpen(false)}
                   class="rounded-lg p-1.5 text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
                 >
                   <X size={15} />
@@ -101,7 +84,6 @@ export default function UpdateBadge() {
               </div>
             </div>
 
-            {/* Content Body: Release Notes */}
             <div class="p-5 space-y-3.5 max-h-[320px] overflow-y-auto">
               <Show when={desktopUpdater.nativeAvailable || desktopUpdater.draining}>
                 <p class="text-[12px] leading-relaxed text-[var(--text-secondary)]">
@@ -134,11 +116,10 @@ export default function UpdateBadge() {
               </div>
             </div>
 
-            {/* Footer Actions: GitCode / GitHub Mirrors */}
             <div class="p-4 border-t border-[var(--border-subtle)] bg-[var(--bg-inset)]/40 flex flex-wrap items-center justify-between gap-2">
               <button
                 type="button"
-                onClick={() => setModalOpen(false)}
+                onClick={() => setUpdateModalOpen(false)}
                 class="px-3 py-1.5 text-[12px] font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
               >
                 {t("header.updateModalDismiss")}
@@ -167,7 +148,6 @@ export default function UpdateBadge() {
                     <span>{t("header.updateModalDownloadGitCode")}</span>
                   </a>
                 </Show>
-
                 <Show when={updateResult()?.mirrors.global}>
                   <a
                     href={updateResult()?.mirrors.global}
@@ -179,8 +159,13 @@ export default function UpdateBadge() {
                     <span>{t("header.updateModalDownloadGitHub")}</span>
                   </a>
                 </Show>
-
-                <Show when={!updateResult()?.mirrors.cn && !updateResult()?.mirrors.global && updateResult()?.downloadUrl}>
+                <Show
+                  when={
+                    !updateResult()?.mirrors.cn &&
+                    !updateResult()?.mirrors.global &&
+                    updateResult()?.downloadUrl
+                  }
+                >
                   <a
                     href={updateResult()?.downloadUrl}
                     target="_blank"
@@ -195,8 +180,7 @@ export default function UpdateBadge() {
             </div>
           </div>
         </div>
-        )}
-      </Presence>
-    </Show>
+      )}
+    </Presence>
   );
 }

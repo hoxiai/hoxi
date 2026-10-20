@@ -291,7 +291,7 @@ export default function TranscriptSearchBar(props: {
           }}
           placeholder={t("timeline.searchPlaceholder")}
           aria-label={t("timeline.searchPlaceholder")}
-          class="flex-1 min-w-0 bg-transparent text-[12.5px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none"
+          class="flex-1 min-w-0 bg-transparent text-[13px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none"
         />
 
         {/* Match Options: Aa / ab / .* */}
@@ -304,7 +304,7 @@ export default function TranscriptSearchBar(props: {
           <button
             type="button"
             onClick={() => setMatchCase((v) => !v)}
-            class={`rounded px-1.5 py-0.5 font-mono text-[10.5px] font-semibold transition-colors cursor-pointer ${
+            class={`rounded px-1.5 py-0.5 font-mono text-[11px] font-semibold transition-colors cursor-pointer ${
               matchCase()
                 ? "bg-[var(--accent-surface)] text-[var(--accent-text)] border border-[var(--accent-border)]"
                 : "text-[var(--text-muted)] hover:bg-[var(--bg-hover)]"
@@ -316,7 +316,7 @@ export default function TranscriptSearchBar(props: {
           <button
             type="button"
             onClick={() => setWholeWord((v) => !v)}
-            class={`rounded px-1.5 py-0.5 font-mono text-[10.5px] font-semibold transition-colors cursor-pointer ${
+            class={`rounded px-1.5 py-0.5 font-mono text-[11px] font-semibold transition-colors cursor-pointer ${
               wholeWord()
                 ? "bg-[var(--accent-surface)] text-[var(--accent-text)] border border-[var(--accent-border)]"
                 : "text-[var(--text-muted)] hover:bg-[var(--bg-hover)]"
@@ -328,7 +328,7 @@ export default function TranscriptSearchBar(props: {
           <button
             type="button"
             onClick={() => setUseRegex((v) => !v)}
-            class={`rounded px-1.5 py-0.5 font-mono text-[10.5px] font-semibold transition-colors cursor-pointer ${
+            class={`rounded px-1.5 py-0.5 font-mono text-[11px] font-semibold transition-colors cursor-pointer ${
               useRegex()
                 ? "bg-[var(--accent-surface)] text-[var(--accent-text)] border border-[var(--accent-border)]"
                 : "text-[var(--text-muted)] hover:bg-[var(--bg-hover)]"

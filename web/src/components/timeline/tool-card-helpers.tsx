@@ -401,8 +401,8 @@ export function InlineDiagnosticsDisplay(props: { diagnostics: DiagnosticItem[] 
       <div class="border-t border-[var(--danger-border)]/50 bg-[var(--danger-surface)]/45 px-3.5 py-2 space-y-1">
         <For each={errors()}>
           {(d) => (
-            <div class="flex items-baseline gap-2 text-[11.5px] leading-snug font-mono">
-              <span class="shrink-0 font-semibold uppercase tracking-wider text-[10px] text-[var(--danger-text)]">
+            <div class="flex items-baseline gap-2 text-[12px] leading-snug font-mono">
+              <span class="shrink-0 font-semibold uppercase tracking-wider text-[11px] text-[var(--danger-text)]">
                 {t("toolCard.error")}
               </span>
               <span class="shrink-0 text-[var(--text-faint)] tabular-nums">
@@ -476,7 +476,7 @@ export function ToolCardExpandedBody(props: {
           <Show
             when={props.shellOut.trim().length > 0}
             fallback={
-              <div class="px-3.5 py-2.5 text-[11.5px] text-[#8b949e] italic">
+              <div class="px-3.5 py-2.5 text-[12px] text-[#8b949e] italic">
                 {status() === "running"
                   ? t("toolCard.waitingForOutput")
                   : t("toolCard.noOutput")}
@@ -498,7 +498,7 @@ export function ToolCardExpandedBody(props: {
         <div class="p-3 space-y-1.5">
           <For each={props.todoItems}>
             {(item) => (
-              <div class="flex items-start gap-2 text-[12.5px] leading-snug">
+              <div class="flex items-start gap-2 text-[13px] leading-snug">
                 <span
                   class={
                     item.status === "completed"
@@ -536,7 +536,7 @@ export function ToolCardExpandedBody(props: {
           <Show
             when={diffs().length > 0}
             fallback={
-              <pre class="text-[11.5px] font-mono bg-[var(--bg-code)] p-2.5 rounded-lg overflow-x-auto max-h-48 text-[var(--text-secondary)] selectable-text">
+              <pre class="text-[12px] font-mono bg-[var(--bg-code)] p-2.5 rounded-lg overflow-x-auto max-h-48 text-[var(--text-secondary)] selectable-text">
                 {JSON.stringify(props.part.state.input, null, 2)}
               </pre>
             }
@@ -575,10 +575,10 @@ export function ToolCardExpandedBody(props: {
         <div class="p-3 space-y-2.5 text-[12px]">
           <Show when={Object.keys(props.part.state.input || {}).length > 0}>
             <div>
-              <div class="text-[10.5px] font-medium text-[var(--text-muted)] mb-1">
+              <div class="text-[11px] font-medium text-[var(--text-muted)] mb-1">
                 {t("toolCard.arguments")}
               </div>
-              <pre class="text-[11.5px] font-mono bg-[var(--bg-code)] border border-[var(--border-subtle)] p-2.5 rounded-lg overflow-x-auto max-h-40 text-[var(--text-secondary)] selectable-text">
+              <pre class="text-[12px] font-mono bg-[var(--bg-code)] border border-[var(--border-subtle)] p-2.5 rounded-lg overflow-x-auto max-h-40 text-[var(--text-secondary)] selectable-text">
                 {JSON.stringify(props.part.state.input, null, 2)}
               </pre>
             </div>
@@ -586,10 +586,10 @@ export function ToolCardExpandedBody(props: {
 
           <Show when={props.part.state.status === "completed" && props.part.state.output}>
             <div>
-              <div class="text-[10.5px] font-medium text-[var(--text-muted)] mb-1">
+              <div class="text-[11px] font-medium text-[var(--text-muted)] mb-1">
                 {t("toolCard.output")}
               </div>
-              <pre class="text-[11.5px] font-mono bg-[var(--bg-code)] border border-[var(--border-subtle)] p-2.5 rounded-lg overflow-x-auto max-h-56 text-[var(--text-secondary)] whitespace-pre-wrap break-all selectable-text">
+              <pre class="text-[12px] font-mono bg-[var(--bg-code)] border border-[var(--border-subtle)] p-2.5 rounded-lg overflow-x-auto max-h-56 text-[var(--text-secondary)] whitespace-pre-wrap break-all selectable-text">
                 {processCarriageReturns(
                   truncateToolOutput(
                     getFullToolOutput(props.part.id) ??
@@ -602,10 +602,10 @@ export function ToolCardExpandedBody(props: {
 
           <Show when={props.part.state.status === "error"}>
             <div>
-              <div class="text-[10.5px] font-medium text-[var(--danger-text)] mb-1">
+              <div class="text-[11px] font-medium text-[var(--danger-text)] mb-1">
                 {t("toolCard.error")}
               </div>
-              <pre class="text-[11.5px] font-mono bg-[var(--danger-surface)] border border-[var(--danger-border)] p-2.5 rounded-lg overflow-x-auto text-[var(--danger-text)] whitespace-pre-wrap selectable-text">
+              <pre class="text-[12px] font-mono bg-[var(--danger-surface)] border border-[var(--danger-border)] p-2.5 rounded-lg overflow-x-auto text-[var(--danger-text)] whitespace-pre-wrap selectable-text">
                 {(props.part.state as Extract<ToolState, { status: "error" }>).error}
               </pre>
             </div>

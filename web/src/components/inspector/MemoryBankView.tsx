@@ -129,7 +129,7 @@ export default function MemoryBankView() {
         <Show when={dims().length > 0}>
           <div class="flex flex-wrap gap-1">
             {dims().map((d) => (
-              <span class="rounded bg-[var(--bg-inset)] px-1.5 py-[1px] font-mono text-[9px] text-[var(--text-secondary)]">
+              <span class="rounded bg-[var(--bg-inset)] px-1.5 py-[1px] font-mono text-[11px] text-[var(--text-secondary)]">
                 {d}
               </span>
             ))}

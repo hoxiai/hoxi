@@ -16,6 +16,37 @@ export interface ActivityBarSegment {
   label: string;
   heightPct: number;
   duration?: number;
+  time?: { start: number; end?: number };
+}
+
+export const MAX_RAIL_SEGMENTS = 72;
+
+export function computeVisibleSegments(
+  list: ActivityBarSegment[],
+  focusSegmentIndex: number,
+  maxSegments = MAX_RAIL_SEGMENTS
+): ActivityBarSegment[] {
+  if (list.length <= maxSegments) return list;
+  const half = Math.floor(maxSegments / 2);
+  let start = Math.max(0, focusSegmentIndex - half);
+  let end = start + maxSegments;
+  if (end > list.length) {
+    end = list.length;
+    start = Math.max(0, end - maxSegments);
+  }
+  return list.slice(start, end);
+}
+
+export function resolveSegmentDuration(
+  seg: ActivityBarSegment,
+  nowTimestamp?: number
+): number | undefined {
+  if (seg.duration !== undefined) return seg.duration;
+  if (seg.time && !seg.time.end) {
+    const current = nowTimestamp ?? Date.now();
+    return Math.max(0, current - seg.time.start);
+  }
+  return undefined;
 }
 
 function classifyPart(
@@ -220,7 +251,9 @@ export default function TaskTimelineBar(props: {
         if (!meta) continue;
         const time: { start: number; end?: number } | undefined = part.type === "reasoning" ? part.time
           : part.type === "tool" && part.state.status !== "pending" ? part.state.time : undefined;
-        const duration = time ? Math.max(0, (time.end ?? now()) - time.start) : undefined;
+        // Do not query now() inside this memo so completed segments do not cause
+        // full array re-allocation every second during active task execution.
+        const duration = time?.end ? Math.max(0, time.end - time.start) : undefined;
         turnSegs.push({
           id: part.id,
           messageID: turn.info.id,
@@ -229,11 +262,34 @@ export default function TaskTimelineBar(props: {
           label: meta.label,
           heightPct: meta.weight,
           duration,
+          time,
         });
       }
       out.push(...turnSegs);
     }
     return out;
+  });
+
+  const focusSegmentIndex = createMemo(() => {
+    const list = segments();
+    if (list.length === 0) return -1;
+    const readingID = props.readingTurnID;
+    if (readingID) {
+      for (let i = list.length - 1; i >= 0; i--) {
+        if (list[i].messageID === readingID) return i;
+      }
+    }
+    const matchID = props.activeMatchTurnID;
+    if (matchID) {
+      for (let i = list.length - 1; i >= 0; i--) {
+        if (list[i].messageID === matchID) return i;
+      }
+    }
+    return list.length - 1;
+  });
+
+  const visibleSegments = createMemo(() => {
+    return computeVisibleSegments(segments(), focusSegmentIndex(), MAX_RAIL_SEGMENTS);
   });
 
   const maxDuration = createMemo(() => Math.max(1, ...segments().map((seg) => seg.duration ?? 0)));
@@ -310,7 +366,7 @@ export default function TaskTimelineBar(props: {
           {/* MessageNav Dropdown */}
           <Show when={navOpen()}>
             <div class="task-activity-menu rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-1.5 shadow-xl">
-              <div class="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
+              <div class="px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
                 {t("timeline.turnsMenuTitle")}
               </div>
               <div class="max-h-56 overflow-y-auto space-y-0.5">
@@ -322,9 +378,9 @@ export default function TaskTimelineBar(props: {
                         setNavOpen(false);
                         props.onJumpToTurn(u.id);
                       }}
-                      class="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[11.5px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-pointer"
+                      class="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-pointer"
                     >
-                      <span class="shrink-0 rounded bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-muted)]">
+                      <span class="shrink-0 rounded bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[11px] text-[var(--text-muted)]">
                         #{u.index}
                       </span>
                       <span class="truncate">{u.preview}</span>
@@ -339,23 +395,31 @@ export default function TaskTimelineBar(props: {
           onMouseLeave={() => setActiveSegment(null)}>
           <div class="task-reading-nodes" onWheel={handleRailWheel} onPointerDown={pauseFollowing}
             onTouchMove={pauseFollowing} onKeyDown={pauseFollowing} onScroll={() => setActiveSegment(null)}>
-            <Index each={segments()}>{(seg) => {
+            <Index each={visibleSegments()}>{(seg) => {
               const highlighted = () => (activeSegment() ?? focusedSegment()) === seg().id;
+              const duration = () => resolveSegmentDuration(seg(), now());
               return <button type="button" class="task-reading-node" data-segment-id={seg().id}
                 aria-label={seg().label} aria-current={focusedSegment() === seg().id ? "step" : undefined}
                 onMouseEnter={(event) => showDetail(seg().id, event.currentTarget)}
                 onFocus={(event) => showDetail(seg().id, event.currentTarget)} onBlur={() => setActiveSegment(null)}
                 onClick={() => props.onJumpToTurn(seg().messageID, seg().id)}>
                 <span style={{ background: highlighted() ? seg().color : "var(--text-faint)",
-                  width: highlighted() ? `${seg().duration === undefined ? 45 : 20 + 80 * Math.sqrt(seg().duration! / maxDuration())}%` : "30%",
+                  width: highlighted() ? `${duration() === undefined ? 45 : 20 + 80 * Math.sqrt(duration()! / maxDuration())}%` : "30%",
                   opacity: highlighted() ? 1 : 0.4 }} />
               </button>;
             }}</Index>
           </div>
-          <Show when={detailSegment()}>{(seg) => <div class="task-reading-detail" style={{ top: `${detailTop()}px` }}>
-            {seg().label}
-            <Show when={seg().duration !== undefined}><span class="task-activity-history-duration">{((seg().duration ?? 0) / 1000).toFixed(1)}s</span></Show>
-          </div>}</Show>
+          <Show when={detailSegment()}>{(seg) => {
+            const duration = () => resolveSegmentDuration(seg(), now());
+            return (
+              <div class="task-reading-detail" style={{ top: `${detailTop()}px` }}>
+                {seg().label}
+                <Show when={duration() !== undefined}>
+                  <span class="task-activity-history-duration">{((duration() ?? 0) / 1000).toFixed(1)}s</span>
+                </Show>
+              </div>
+            );
+          }}</Show>
         </div>
       </nav>
     </Show>

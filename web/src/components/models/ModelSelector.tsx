@@ -412,13 +412,13 @@ export default function ModelSelector() {
           {activeModelInfo()?.modelName || t("models.selectModel")}
         </span>
         <Show when={activeModelInfo()?.free}>
-          <span class="shrink-0 rounded bg-[var(--ok-surface)] px-1.5 py-[1px] text-[10.5px] font-semibold text-[var(--ok-text)]">
+          <span class="shrink-0 rounded bg-[var(--ok-surface)] px-1.5 py-[1px] text-[11px] font-semibold text-[var(--ok-text)]">
             {t("models.freeModel")}
           </span>
         </Show>
         <Show when={activeModelInfo()?.multiplier && !activeModelInfo()?.free}>
           <span
-            class={`shrink-0 rounded px-1.5 py-[1px] font-mono text-[10px] font-semibold ${getMultiplierBadgeClass(
+            class={`shrink-0 rounded px-1.5 py-[1px] font-mono text-[11px] font-semibold ${getMultiplierBadgeClass(
               activeModelInfo()?.multiplier,
               activeModelInfo()?.free
             )}`}
@@ -427,7 +427,7 @@ export default function ModelSelector() {
           </span>
         </Show>
         <Show when={effectiveReasoningEffort()}>
-          <span class="shrink-0 rounded bg-[var(--accent-surface)] px-1 py-[1px] text-[10.5px] uppercase font-mono text-[var(--accent-primary)]">
+          <span class="shrink-0 rounded bg-[var(--accent-surface)] px-1 py-[1px] text-[11px] uppercase font-mono text-[var(--accent-primary)]">
             {effectiveReasoningEffort()}
           </span>
         </Show>
@@ -495,7 +495,7 @@ export default function ModelSelector() {
                     setDetails(null);
                     setActiveIndex(0);
                   }}
-                  class="w-full bg-transparent text-[12.5px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none selectable-text"
+                  class="w-full bg-transparent text-[13px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none selectable-text"
                 />
                 <Show when={freeConnectedModels().length > 0}>
                   <button
@@ -507,14 +507,14 @@ export default function ModelSelector() {
                       setDetails(null);
                       setActiveIndex(0);
                     }}
-                    class={`shrink-0 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10.5px] font-semibold transition-colors cursor-pointer ${
+                    class={`shrink-0 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-semibold transition-colors cursor-pointer ${
                       rail() === "free" && !query().trim()
                         ? "bg-[var(--ok-surface)] text-[var(--ok-text)] ring-1 ring-[var(--ok-text)]/30"
                         : "bg-[var(--bg-inset)] text-[var(--text-secondary)] hover:bg-[var(--ok-surface)] hover:text-[var(--ok-text)]"
                     }`}
                   >
                     <span>{t("models.freeModel")}</span>
-                    <span class="font-mono text-[9.5px] opacity-80">{freeConnectedModels().length}</span>
+                    <span class="font-mono text-[11px] opacity-80">{freeConnectedModels().length}</span>
                   </button>
                 </Show>
               </div>
@@ -531,7 +531,7 @@ export default function ModelSelector() {
                           setOpen(false);
                           openProviderModal("providers", null);
                         }}
-                        class="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-strong)] bg-[var(--bg-elevated)] px-3 py-1.5 text-[11.5px] text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer"
+                        class="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-strong)] bg-[var(--bg-elevated)] px-3 py-1.5 text-[12px] text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer"
                       >
                         <KeyRound size={12} />
                         {t("models.connectProviderOrAdd")}
@@ -574,17 +574,17 @@ export default function ModelSelector() {
                             }}
                           >
                             <span class="flex items-center gap-1.5">
-                              <span class="truncate text-[12.5px] font-medium">
+                              <span class="truncate text-[13px] font-medium">
                                 {item.modelName}
                               </span>
                               <Show when={item.free}>
-                                <span class="shrink-0 inline-flex items-center rounded bg-[var(--ok-surface)] px-1.5 py-[1px] text-[9.5px] font-semibold text-[var(--ok-text)]">
+                                <span class="shrink-0 inline-flex items-center rounded bg-[var(--ok-surface)] px-1.5 py-[1px] text-[11px] font-semibold text-[var(--ok-text)]">
                                   {t("models.freeModel")}
                                 </span>
                               </Show>
                               <Show when={item.multiplier}>
                                 <span
-                                  class={`shrink-0 inline-flex items-center rounded px-1.5 py-[1px] font-mono text-[9.5px] font-semibold ${getMultiplierBadgeClass(
+                                  class={`shrink-0 inline-flex items-center rounded px-1.5 py-[1px] font-mono text-[11px] font-semibold ${getMultiplierBadgeClass(
                                     item.multiplier,
                                     item.free
                                   )}`}
@@ -593,7 +593,7 @@ export default function ModelSelector() {
                                 </span>
                               </Show>
                             </span>
-                            <span class="block truncate text-[10.5px] text-[var(--text-muted)]">
+                            <span class="block truncate text-[11px] text-[var(--text-muted)]">
                               {item.providerID === AUTO_PROVIDER_ID && peekAutoModelTarget(item.modelID)
                                 ? `${item.providerName} · ${t("models.autoPoolActiveTarget", {
                                     model: `${peekAutoModelTarget(item.modelID)!.providerID}/${peekAutoModelTarget(item.modelID)!.modelID}`,
@@ -667,7 +667,7 @@ export default function ModelSelector() {
                   {t("models.reasoningEffort")}
                   <Show when={!workspace.reasoningEffort && activeModelInfo()?.defaultEffort}>
                     {(def) => (
-                      <span class="ml-1 font-mono text-[10px] uppercase text-[var(--text-faint)]">
+                      <span class="ml-1 font-mono text-[11px] uppercase text-[var(--text-faint)]">
                         ({def()})
                       </span>
                     )}
@@ -676,7 +676,7 @@ export default function ModelSelector() {
                 <Show
                   when={availableEffortOptions().length > 0}
                   fallback={
-                    <span class="rounded-md bg-[var(--bg-inset)] px-2 py-0.5 text-[10.5px] text-[var(--text-faint)]">
+                    <span class="rounded-md bg-[var(--bg-inset)] px-2 py-0.5 text-[11px] text-[var(--text-faint)]">
                       {t("models.reasoningUnsupported")}
                     </span>
                   }
@@ -689,7 +689,7 @@ export default function ModelSelector() {
                           title={opt.title}
                           aria-pressed={effectiveReasoningEffort() === opt.value}
                           onClick={() => setReasoningEffort(opt.value)}
-                          class={`rounded-md px-2 py-0.5 text-[10.5px] font-medium transition-colors cursor-pointer ${
+                          class={`rounded-md px-2 py-0.5 text-[11px] font-medium transition-colors cursor-pointer ${
                             effectiveReasoningEffort() === opt.value
                               ? "bg-[var(--bg-panel)] text-[var(--accent-primary)] shadow-2xs"
                               : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"

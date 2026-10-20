@@ -19,12 +19,12 @@ export default function TaskProgressStaleHint(props: {
 
   const stats = () => (
     <>
-      <span class="shrink-0 font-mono text-[10.5px] text-[var(--text-secondary)]">
+      <span class="shrink-0 font-mono text-[11px] text-[var(--text-secondary)]">
         {t("timeline.todoStaleStepsDone", { count: props.summary.stepsDone })}
       </span>
       <Show when={props.summary.subagentsTotal > 0}>
         <span class="text-[var(--text-faint)]">·</span>
-        <span class="shrink-0 font-mono text-[10.5px] text-[var(--text-secondary)]">
+        <span class="shrink-0 font-mono text-[11px] text-[var(--text-secondary)]">
           {t("timeline.todoStaleSubagents", {
             running: props.summary.subagentsRunning,
             total: props.summary.subagentsTotal,

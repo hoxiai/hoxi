@@ -87,7 +87,7 @@ export function ModelDetailsPopover(props: {
         data-model-details
         aria-label={t("models.viewDetails")}
         tabIndex={-1}
-        class="selectable-text select-text fixed z-[100] w-[360px] max-w-[calc(100vw-24px)] max-h-[calc(100vh-24px)] overflow-y-auto rounded-xl border border-[var(--border-strong)] bg-[var(--bg-panel)] p-4 text-[11.5px] text-[var(--text-secondary)] shadow-2xl focus:outline-none space-y-3 [overflow-wrap:anywhere]"
+        class="selectable-text select-text fixed z-[100] w-[360px] max-w-[calc(100vw-24px)] max-h-[calc(100vh-24px)] overflow-y-auto rounded-xl border border-[var(--border-strong)] bg-[var(--bg-panel)] p-4 text-[12px] text-[var(--text-secondary)] shadow-2xl focus:outline-none space-y-3 [overflow-wrap:anywhere]"
         style={{ left: `${position().left}px`, top: `${position().top}px` }}
       >
         <div class="flex items-start justify-between gap-3 border-b border-[var(--border-subtle)] pb-3">
@@ -113,7 +113,7 @@ export function ModelDetailsPopover(props: {
             <dt class="text-[var(--text-muted)]">{t("models.hoverProviderLabel")}</dt>
             <dd class="mt-0.5 font-medium text-[var(--text-primary)]">
               {props.model.providerName}
-              <span class="ml-1.5 font-mono text-[10.5px] text-[var(--text-muted)]">
+              <span class="ml-1.5 font-mono text-[11px] text-[var(--text-muted)]">
                 ({props.model.providerID})
               </span>
             </dd>
@@ -125,7 +125,7 @@ export function ModelDetailsPopover(props: {
           <div>
             <dt class="text-[var(--text-muted)]">{t("models.hoverSourceLabel")}</dt>
             <dd class="mt-1 space-y-1">
-              <span class={`inline-block rounded-full px-2 py-0.5 text-[10.5px] font-medium ${
+              <span class={`inline-block rounded-full px-2 py-0.5 text-[11px] font-medium ${
                 source().isImported
                   ? "bg-[var(--warn-surface)] text-[var(--warn-text)]"
                   : "bg-[var(--ok-surface)] text-[var(--ok-text)]"
@@ -133,7 +133,7 @@ export function ModelDetailsPopover(props: {
                 {source().label}
               </span>
               <Show when={source().configHint}>
-                <div class="font-mono text-[10.5px] text-[var(--text-muted)]">
+                <div class="font-mono text-[11px] text-[var(--text-muted)]">
                   {source().configHint}
                 </div>
               </Show>
@@ -142,7 +142,7 @@ export function ModelDetailsPopover(props: {
           <Show when={props.model.baseURL}>
             <div>
               <dt class="text-[var(--text-muted)]">{t("models.hoverEndpointLabel")}</dt>
-              <dd class="mt-0.5 whitespace-pre-wrap font-mono text-[10.5px]">{props.model.baseURL}</dd>
+              <dd class="mt-0.5 whitespace-pre-wrap font-mono text-[11px]">{props.model.baseURL}</dd>
             </div>
           </Show>
         </dl>
@@ -165,17 +165,17 @@ export function ModelDetailsPopover(props: {
           </dl>
           <div class="flex flex-wrap gap-1.5">
             <Show when={props.model.reasoning}>
-              <span class="inline-flex items-center gap-1 rounded bg-[var(--accent-surface)] px-2 py-1 text-[10px] font-medium text-[var(--accent-primary)]">
+              <span class="inline-flex items-center gap-1 rounded bg-[var(--accent-surface)] px-2 py-1 text-[11px] font-medium text-[var(--accent-primary)]">
                 <Sparkles size={11} />{t("models.reasoningCap")}
               </span>
             </Show>
             <Show when={props.model.image}>
-              <span class="inline-flex items-center gap-1 rounded bg-[var(--bg-inset)] px-2 py-1 text-[10px]">
+              <span class="inline-flex items-center gap-1 rounded bg-[var(--bg-inset)] px-2 py-1 text-[11px]">
                 <Image size={11} />{t("models.imageCap")}
               </span>
             </Show>
             <Show when={props.model.toolcall}>
-              <span class="inline-flex items-center gap-1 rounded bg-[var(--bg-inset)] px-2 py-1 text-[10px]">
+              <span class="inline-flex items-center gap-1 rounded bg-[var(--bg-inset)] px-2 py-1 text-[11px]">
                 <Wrench size={11} />{t("models.toolsCap")}
               </span>
             </Show>

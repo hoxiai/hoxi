@@ -81,7 +81,7 @@ export default function TaskProgressDetails(props: {
       <Show when={props.todos.length > 0}>
         <div class="space-y-1.5">
           <div class="flex items-center justify-between gap-2">
-            <div class="flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
+            <div class="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
               <span>{t("timeline.todoPlanHeader")}</span>
               <Show when={todoStaged()}>
                 <span class="normal-case tracking-normal font-medium text-[var(--ok-text)]">
@@ -92,7 +92,7 @@ export default function TaskProgressDetails(props: {
             <button
               type="button"
               onClick={() => (editingTodos() ? setEditingTodos(false) : openTodoEditor())}
-              class="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10.5px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer"
+              class="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer"
               title={t("timeline.todoEditTooltip")}
             >
               <Show when={editingTodos()} fallback={<Pencil size={10} />}>
@@ -103,7 +103,7 @@ export default function TaskProgressDetails(props: {
           </div>
           <Show when={editingTodos()}>
             <div class="space-y-1.5 rounded-lg border border-[var(--accent-border)] bg-[var(--bg-panel)]/70 p-2">
-              <p class="text-[10.5px] leading-snug text-[var(--text-muted)]">
+              <p class="text-[11px] leading-snug text-[var(--text-muted)]">
                 {t("timeline.todoEditHint")}
               </p>
               <textarea
@@ -116,14 +116,14 @@ export default function TaskProgressDetails(props: {
                 <button
                   type="button"
                   onClick={() => setEditingTodos(false)}
-                  class="rounded-md px-2 py-1 text-[10.5px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] cursor-pointer"
+                  class="rounded-md px-2 py-1 text-[11px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] cursor-pointer"
                 >
                   {t("timeline.todoCancel")}
                 </button>
                 <button
                   type="button"
                   onClick={stageTodoUpdate}
-                  class="rounded-md bg-[var(--accent-primary)] px-2 py-1 text-[10.5px] font-medium text-[var(--accent-foreground)] hover:opacity-90 cursor-pointer"
+                  class="rounded-md bg-[var(--accent-primary)] px-2 py-1 text-[11px] font-medium text-[var(--accent-foreground)] hover:opacity-90 cursor-pointer"
                 >
                   {t("timeline.todoApplyToComposer")}
                 </button>
@@ -197,7 +197,7 @@ export default function TaskProgressDetails(props: {
                   {(step) => (
                     <div class="ml-5 flex items-center gap-1.5 rounded-md bg-[var(--bg-panel)]/75 px-2 py-1 text-[11px] text-[var(--text-secondary)]">
                       <span class="text-[var(--accent-primary)]">↳</span>
-                      <span class="font-mono text-[10.5px] text-[var(--text-muted)]">
+                      <span class="font-mono text-[11px] text-[var(--text-muted)]">
                         {formatToolDisplayName(step().tool)}
                       </span>
                       <span class="font-mono truncate">{step().label}</span>
@@ -222,7 +222,7 @@ export default function TaskProgressDetails(props: {
       {/* 2. Recent Execution Steps */}
       <Show when={props.cycleSteps.length > 0}>
         <div class="space-y-1 border-t border-[var(--border-subtle)]/60 pt-2">
-          <div class="flex items-center justify-between text-[10.5px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
+          <div class="flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
             <span>
               {t("timeline.liveStepsHeader")} ({props.cycleSteps.length})
             </span>
@@ -256,7 +256,7 @@ export default function TaskProgressDetails(props: {
                         }
                       />
                     </Show>
-                    <span class="font-mono text-[10.5px] text-[var(--text-secondary)] shrink-0">
+                    <span class="font-mono text-[11px] text-[var(--text-secondary)] shrink-0">
                       {formatToolDisplayName(step.tool)}
                     </span>
                     <Show
@@ -298,7 +298,7 @@ export default function TaskProgressDetails(props: {
                       />
                     </Show>
                     <span
-                      class={`font-mono text-[10px] ${
+                      class={`font-mono text-[11px] ${
                         step.status === "completed"
                           ? "text-[var(--ok-text)]"
                           : step.status === "error"
@@ -323,7 +323,7 @@ export default function TaskProgressDetails(props: {
       {/* 3. Codex-Style Modified Files Summary Bar */}
       <Show when={props.changedFiles.length > 0}>
         <div class="space-y-1.5 border-t border-[var(--border-subtle)]/60 pt-2">
-          <div class="flex items-center justify-between text-[10.5px]">
+          <div class="flex items-center justify-between text-[11px]">
             <div class="flex items-center gap-1.5 font-semibold uppercase tracking-wider text-[var(--text-faint)]">
               <span>
                 {t("timeline.codeChangesHeader")} ({props.changedFiles.length})

@@ -154,7 +154,7 @@ export default function MultiModelArenaModal() {
                 <Swords size={15} />
               </div>
               <div>
-                <h3 class="text-[13.5px] font-semibold text-[var(--text-primary)]">
+                <h3 class="text-[13px] font-semibold text-[var(--text-primary)]">
                   {t("models.arenaTitle")}
                 </h3>
                 <p class="text-[11px] text-[var(--text-muted)]">
@@ -175,7 +175,7 @@ export default function MultiModelArenaModal() {
           <div class="p-5 space-y-4 overflow-y-auto flex-1">
             {/* Prompt Input */}
             <div class="space-y-1.5">
-              <label class="text-[11.5px] font-semibold text-[var(--text-secondary)]">
+              <label class="text-[12px] font-semibold text-[var(--text-secondary)]">
                 {t("models.stepPrompt")}
               </label>
               <textarea
@@ -183,14 +183,14 @@ export default function MultiModelArenaModal() {
                 value={prompt()}
                 onInput={(ev) => setPrompt(ev.currentTarget.value)}
                 placeholder={t("models.promptPlaceholder")}
-                class="w-full rounded-xl border border-[var(--border-strong)] bg-[var(--bg-panel)] px-3 py-2 text-[12.5px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none resize-none"
+                class="w-full rounded-xl border border-[var(--border-strong)] bg-[var(--bg-panel)] px-3 py-2 text-[13px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none resize-none"
               />
             </div>
 
             {/* Model Multi-Select */}
             <div class="space-y-2">
               <div class="flex items-center justify-between gap-2">
-                <label class="text-[11.5px] font-semibold text-[var(--text-secondary)]">
+                <label class="text-[12px] font-semibold text-[var(--text-secondary)]">
                   {t("models.stepSelectModels", { count: selectedKeys().length })}
                 </label>
                 <div class="flex items-center gap-1.5">
@@ -207,7 +207,7 @@ export default function MultiModelArenaModal() {
                     value={search()}
                     onInput={(ev) => setSearch(ev.currentTarget.value)}
                     placeholder={t("models.filterModelsPlaceholder")}
-                    class="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[11.5px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none w-40"
+                    class="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[12px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none w-40"
                   />
                 </div>
               </div>
@@ -232,17 +232,17 @@ export default function MultiModelArenaModal() {
                             <div class="flex items-center gap-1.5 text-[12px] font-medium text-[var(--text-primary)]">
                               <span class="truncate">{m.modelName}</span>
                               <Show when={m.free}>
-                                <span class="shrink-0 rounded bg-[var(--ok-surface)] px-1 py-[1px] text-[9px] font-semibold text-[var(--ok-text)]">
+                                <span class="shrink-0 rounded bg-[var(--ok-surface)] px-1 py-[1px] text-[11px] font-semibold text-[var(--ok-text)]">
                                   {t("models.freeModel")}
                                 </span>
                               </Show>
                               <Show when={m.multiplier}>
-                                <span class="shrink-0 rounded bg-[var(--bg-inset)] px-1 py-[1px] font-mono text-[9px] font-semibold text-[var(--text-secondary)]">
+                                <span class="shrink-0 rounded bg-[var(--bg-inset)] px-1 py-[1px] font-mono text-[11px] font-semibold text-[var(--text-secondary)]">
                                   {m.multiplier}
                                 </span>
                               </Show>
                             </div>
-                            <div class="text-[10.5px] text-[var(--text-muted)] truncate">
+                            <div class="text-[11px] text-[var(--text-muted)] truncate">
                               {m.providerName}
                             </div>
                           </div>

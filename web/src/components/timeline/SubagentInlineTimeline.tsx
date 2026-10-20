@@ -152,7 +152,7 @@ export default function SubagentInlineTimeline(props: {
       <Show
         when={childToolParts().length > 0}
         fallback={
-          <div class="py-1 text-[11.5px] text-[var(--text-muted)]">
+          <div class="py-1 text-[12px] text-[var(--text-muted)]">
             {t("timeline.subagentLiveActivity", { count: 0 })}
           </div>
         }
@@ -224,7 +224,7 @@ export default function SubagentInlineTimeline(props: {
                   <Show
                     when={file()}
                     fallback={
-                      <span class="font-mono text-[11.5px] text-[var(--text-muted)] truncate">
+                      <span class="font-mono text-[12px] text-[var(--text-muted)] truncate">
                         {desc()}
                       </span>
                     }
@@ -237,7 +237,7 @@ export default function SubagentInlineTimeline(props: {
                           const diff = fileDiff();
                           diff ? openChangedFileInInspector(diff) : openFileInInspector(f());
                         }}
-                        class="inline-flex items-center gap-1 font-mono text-[11.5px] text-[var(--text-primary)] hover:text-[var(--accent-primary)] hover:underline truncate cursor-pointer"
+                        class="inline-flex items-center gap-1 font-mono text-[12px] text-[var(--text-primary)] hover:text-[var(--accent-primary)] hover:underline truncate cursor-pointer"
                         title={f()}
                       >
                         <FileIcon node={{ path: f(), type: "file" }} class="w-3.5 h-3.5 shrink-0" />
@@ -261,7 +261,7 @@ export default function SubagentInlineTimeline(props: {
                 </div>
 
                 <span
-                  class={`font-mono text-[10.5px] shrink-0 ${
+                  class={`font-mono text-[11px] shrink-0 ${
                     toolPart.state.status === "completed"
                       ? "text-[var(--text-faint)]"
                       : toolPart.state.status === "error"

@@ -136,11 +136,11 @@ export default function SingleProjectNavView(props: {
               color={currentProjectColor()}
               class="w-3.5 h-3.5 shrink-0"
             />
-            <span class="truncate text-[14px] font-semibold text-[var(--text-primary)]">
+            <span class="truncate text-[15px] font-semibold text-[var(--text-primary)]">
               {currentProjectName() || t("timeline.selectFolder")}
             </span>
             <Show when={currentFolders().length > 1}>
-              <span class="shrink-0 rounded px-1.5 py-0.2 text-[10.5px] font-mono bg-[var(--bg-inset)] text-[var(--text-muted)]">
+              <span class="shrink-0 rounded px-1.5 py-0.2 text-[11px] font-mono bg-[var(--bg-inset)] text-[var(--text-muted)]">
                 {currentFolders().length}
               </span>
             </Show>
@@ -169,7 +169,7 @@ export default function SingleProjectNavView(props: {
                 type="button"
                 onClick={() => inspectFolder(folder.path)}
                 title={folder.path}
-                class="inline-flex items-center gap-1 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-inset)]/70 px-1.5 py-0.5 text-[11.5px] font-mono text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+                class="inline-flex items-center gap-1 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-inset)]/70 px-1.5 py-0.5 text-[12px] font-mono text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
               >
                 <FolderIcon
                   open={folder.isPrimary}
@@ -194,14 +194,14 @@ export default function SingleProjectNavView(props: {
             style={{ ...anchored.positionStyle(), "--hoxi-origin": "top right" }}
           >
             <div class="mb-1 px-1">
-              <div class="flex items-center gap-1.5 rounded-lg bg-[var(--bg-inset)] px-2 py-1 text-[11.5px]">
+              <div class="flex items-center gap-1.5 rounded-lg bg-[var(--bg-inset)] px-2 py-1 text-[12px]">
                 <Icon name="magnifying-glass" size="small" class="text-[var(--text-muted)]" />
                 <input
                   type="text"
                   placeholder={t("leftNav.switchProject")}
                   value={dropdownFilter()}
                   onInput={(e) => setDropdownFilter(e.currentTarget.value)}
-                  class="w-full bg-transparent text-[11.5px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none"
+                  class="w-full bg-transparent text-[12px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none"
                 />
               </div>
             </div>
@@ -231,7 +231,7 @@ export default function SingleProjectNavView(props: {
                         />
                         <span class="truncate text-[13px]">{proj.name}</span>
                         <Show when={proj.folders.length > 1}>
-                          <span class="shrink-0 rounded px-1.5 py-0.2 text-[10.5px] font-mono bg-[var(--bg-inset)] text-[var(--text-muted)]">
+                          <span class="shrink-0 rounded px-1.5 py-0.2 text-[11px] font-mono bg-[var(--bg-inset)] text-[var(--text-muted)]">
                             {proj.folders.length}
                           </span>
                         </Show>
@@ -252,7 +252,7 @@ export default function SingleProjectNavView(props: {
                   setProjectMenuOpen(false);
                   openEditWorkspaceModal(workspace.rootDir);
                 }}
-                class="w-full flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[11.5px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+                class="w-full flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
               >
                 <Pencil size={12} />
                 <span>{t("leftNav.editWorkspace")}</span>
@@ -263,7 +263,7 @@ export default function SingleProjectNavView(props: {
                   setProjectMenuOpen(false);
                   openCreateWorkspaceModal();
                 }}
-                class="w-full flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[11.5px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+                class="w-full flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
               >
                 <Plus size={12} />
                 <span>{t("leftNav.newWorkspace")}</span>
@@ -274,7 +274,7 @@ export default function SingleProjectNavView(props: {
                   setProjectMenuOpen(false);
                   openManageWorkspacesModal();
                 }}
-                class="w-full flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[11.5px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+                class="w-full flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
               >
                 <Layers size={12} />
                 <span>{t("leftNav.manageWorkspaces")}</span>
@@ -320,7 +320,7 @@ export default function SingleProjectNavView(props: {
             <button
               type="button"
               onClick={() => setShowArchived((v) => !v)}
-              class="w-full flex items-center justify-between gap-1.5 rounded-lg px-2 py-1 text-[11.5px] font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]/50 transition-colors cursor-pointer"
+              class="w-full flex items-center justify-between gap-1.5 rounded-lg px-2 py-1 text-[12px] font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]/50 transition-colors cursor-pointer"
             >
               <div class="flex items-center gap-1.5">
                 <span
@@ -332,7 +332,7 @@ export default function SingleProjectNavView(props: {
                 <Icon name="archive" size="small" class="w-3 h-3 text-[var(--text-faint)]" />
                 <span>{t("leftNav.archivedSessions")}</span>
               </div>
-              <span class="rounded-full bg-[var(--bg-inset)] px-1.5 py-0.2 text-[10.5px] font-mono text-[var(--text-faint)]">
+              <span class="rounded-full bg-[var(--bg-inset)] px-1.5 py-0.2 text-[11px] font-mono text-[var(--text-faint)]">
                 {archivedSessions().length}
               </span>
             </button>

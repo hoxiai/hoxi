@@ -131,7 +131,7 @@ export default function ModelsRoleTab() {
           <h3 class="text-[13px] font-semibold text-[var(--text-primary)]">
             {t("models.rolesTitle")}
           </h3>
-          <p class="text-[11.5px] text-[var(--text-secondary)]">
+          <p class="text-[12px] text-[var(--text-secondary)]">
             {t("models.rolesSubtitle")}
           </p>
         </div>
@@ -145,7 +145,7 @@ export default function ModelsRoleTab() {
             <div class="text-[13px] font-semibold text-[var(--text-primary)]">
               {t("models.defaultModelTitle")}
             </div>
-            <div class="text-[11.5px] text-[var(--text-muted)]">
+            <div class="text-[12px] text-[var(--text-muted)]">
               {t("models.defaultModelDesc")}
             </div>
           </div>
@@ -163,7 +163,7 @@ export default function ModelsRoleTab() {
             <div class="text-[13px] font-semibold text-[var(--text-primary)]">
               {t("models.smallModelTitle")}
             </div>
-            <div class="text-[11.5px] text-[var(--text-muted)]">
+            <div class="text-[12px] text-[var(--text-muted)]">
               {t("models.smallModelDesc")}
             </div>
           </div>
@@ -182,7 +182,7 @@ export default function ModelsRoleTab() {
             <div class="text-[13px] font-semibold text-[var(--text-primary)]">
               {t("models.commitModelTitle")}
             </div>
-            <div class="text-[11.5px] text-[var(--text-muted)]">
+            <div class="text-[12px] text-[var(--text-muted)]">
               {t("models.commitModelDesc")}
             </div>
           </div>
@@ -210,7 +210,7 @@ export default function ModelsRoleTab() {
             <div class="text-[13px] font-semibold text-[var(--text-primary)]">
               {t("models.subagentModelTitle")}
             </div>
-            <div class="text-[11.5px] text-[var(--text-muted)]">
+            <div class="text-[12px] text-[var(--text-muted)]">
               {t("models.subagentModelDesc")}
             </div>
           </div>
@@ -229,7 +229,7 @@ export default function ModelsRoleTab() {
             <div class="text-[13px] font-semibold text-[var(--text-primary)]">
               {t("models.compactionModelTitle")}
             </div>
-            <div class="text-[11.5px] text-[var(--text-muted)]">
+            <div class="text-[12px] text-[var(--text-muted)]">
               {t("models.compactionModelDesc")}
             </div>
           </div>
@@ -257,7 +257,7 @@ export default function ModelsRoleTab() {
               <span class="text-[13px] font-semibold text-[var(--text-primary)]">
                 {t("models.observerModelTitle")}
               </span>
-              <label class="inline-flex items-center gap-1.5 rounded-full border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2 py-0.5 text-[10.5px] text-[var(--text-secondary)] cursor-pointer select-none">
+              <label class="inline-flex items-center gap-1.5 rounded-full border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2 py-0.5 text-[11px] text-[var(--text-secondary)] cursor-pointer select-none">
                 <input
                   type="checkbox"
                   checked={workspace.observerAutoAudit}
@@ -267,7 +267,7 @@ export default function ModelsRoleTab() {
                 <span>{t("models.observerAutoAuditLabel")}</span>
               </label>
             </div>
-            <div class="text-[11.5px] text-[var(--text-muted)]">
+            <div class="text-[12px] text-[var(--text-muted)]">
               {t("models.observerModelDesc")}
             </div>
           </div>
@@ -301,7 +301,7 @@ export default function ModelsRoleTab() {
           <button
             type="button"
             onClick={() => openProviderModal("agents")}
-            class="inline-flex items-center gap-1.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3 py-1.5 text-[11.5px] font-medium text-[var(--accent-primary)] hover:bg-[var(--accent-surface)] transition-colors cursor-pointer shrink-0"
+            class="inline-flex items-center gap-1.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3 py-1.5 text-[12px] font-medium text-[var(--accent-primary)] hover:bg-[var(--accent-surface)] transition-colors cursor-pointer shrink-0"
           >
             <Bot size={13} />
             <span>{t("models.goToAgentsSettings")}</span>
@@ -320,10 +320,10 @@ export default function ModelsRoleTab() {
                 <div class="flex items-center justify-between gap-4 px-4 py-3">
                   <div class="min-w-0">
                     <div class="flex items-center gap-2">
-                      <span class="text-[12.5px] font-semibold capitalize text-[var(--text-primary)]">
+                      <span class="text-[13px] font-semibold capitalize text-[var(--text-primary)]">
                         {agent.name}
                       </span>
-                      <span class="rounded bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-muted)]">
+                      <span class="rounded bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[11px] text-[var(--text-muted)]">
                         {t("models.modeBadge")}
                       </span>
                     </div>

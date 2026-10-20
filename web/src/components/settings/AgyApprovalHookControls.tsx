@@ -22,7 +22,7 @@ function errorText(err: unknown): string {
 }
 
 const buttonClass =
-  "inline-flex items-center gap-1.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] px-3 py-1.5 text-[12.5px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-default";
+  "inline-flex items-center gap-1.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] px-3 py-1.5 text-[13px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-default";
 
 const stateClass: Record<HookState, { dot: string; text: string }> = {
   installed: { dot: "bg-[var(--ok)]", text: "text-[var(--ok-text)]" },
@@ -113,7 +113,7 @@ export function AgyApprovalHookControls() {
     >
       <SettingRow label={t("settings.agyHookStatusLabel")}>
         <span
-          class={`inline-flex items-center gap-2 text-[13.5px] font-medium ${
+          class={`inline-flex items-center gap-2 text-[13px] font-medium ${
             state() ? stateClass[state()!].text : "text-[var(--text-muted)]"
           }`}
         >
@@ -124,7 +124,7 @@ export function AgyApprovalHookControls() {
 
       <SettingRow label={t("settings.agyHookPathLabel")}>
         <span
-          class="max-w-[320px] truncate font-mono text-[12.5px] text-[var(--text-secondary)] selectable-text"
+          class="max-w-[320px] truncate font-mono text-[13px] text-[var(--text-secondary)] selectable-text"
           title={status()?.path}
         >
           {status()?.path || "—"}

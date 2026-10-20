@@ -130,7 +130,7 @@ export function SessionWelcomeHero() {
         </span>
         {welcomeTitleParts().after}
       </h1>
-      <p class="mt-2 max-w-lg text-[13.5px] text-[var(--text-muted)]">
+      <p class="mt-2 max-w-lg text-[13px] text-[var(--text-muted)]">
         {t("timeline.welcomeSubtitle")}
       </p>
 

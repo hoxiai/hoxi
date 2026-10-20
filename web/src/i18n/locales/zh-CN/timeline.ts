@@ -248,6 +248,7 @@ export const timeline: TimelineI18n = {
   resumePromptPrefix:
     "请结合以下补充要求，从暂停处继续执行任务：",
   sandboxLocalMode: "本地",
+  sandboxEnableWorktree: "在分支沙盒中运行",
   sandboxWorktreeMode: "分支沙盒",
   sandboxLocalTooltip: "直接在当前本地分支修改代码",
   sandboxWorktreeTooltip: "为本会话创建独立 Git Worktree 分支",
@@ -354,6 +355,8 @@ export const timeline: TimelineI18n = {
   gitSessionDiffUnavailable: "会话改动快照不可靠，已拒绝提交整个工作区",
   gitSessionNothingToCommit: "当前会话没有未提交的修改",
   gitCommitOnly: "仅提交",
+  gitQuickCommit: "提交",
+  gitCommitFailed: "提交失败：{error}",
   gitPushOnly: "推送分支",
   gitCommittingAndPushing: "正在提交并推送…",
   gitCommittingOnly: "正在提交…",

@@ -60,22 +60,22 @@ export function SelectedModelHoverCard(props: {
       }}
       onMouseEnter={() => props.onHoverStart?.()}
       onMouseLeave={() => props.onHoverEnd?.()}
-      class="pointer-events-auto cursor-pointer absolute bottom-full left-0 z-30 mb-2 w-[320px] rounded-xl border border-[var(--border-strong)] bg-[var(--bg-panel)] p-3 shadow-2xl text-[11.5px] space-y-2 animate-in fade-in duration-100"
+      class="pointer-events-auto cursor-pointer absolute bottom-full left-0 z-30 mb-2 w-[320px] rounded-xl border border-[var(--border-strong)] bg-[var(--bg-panel)] p-3 shadow-2xl text-[12px] space-y-2 animate-in fade-in duration-100"
     >
       <div class="flex items-center justify-between gap-2 border-b border-[var(--border-subtle)] pb-2">
         <div class="flex items-center gap-1.5 min-w-0">
           <ProviderIcon id={props.model.providerID} class="w-4 h-4 shrink-0" />
-          <span class="font-semibold text-[var(--text-primary)] truncate text-[12.5px]">
+          <span class="font-semibold text-[var(--text-primary)] truncate text-[13px]">
             {props.model.modelName}
           </span>
           <Show when={props.model.free}>
-            <span class="shrink-0 rounded bg-[var(--ok-surface)] px-1.5 py-[1px] text-[10px] font-semibold text-[var(--ok-text)]">
+            <span class="shrink-0 rounded bg-[var(--ok-surface)] px-1.5 py-[1px] text-[11px] font-semibold text-[var(--ok-text)]">
               {t("models.freeModel")}
             </span>
           </Show>
           <Show when={props.model.multiplier}>
             <span
-              class={`shrink-0 rounded px-1.5 py-[1px] font-mono text-[10px] font-semibold ${getMultiplierBadgeClass(
+              class={`shrink-0 rounded px-1.5 py-[1px] font-mono text-[11px] font-semibold ${getMultiplierBadgeClass(
                 props.model.multiplier,
                 props.model.free
               )}`}
@@ -98,7 +98,7 @@ export function SelectedModelHoverCard(props: {
           </span>
           <span class="inline-flex items-center gap-1.5 min-w-0">
             <span
-              class={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium ${
+              class={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${
                 srcInfo().isImported
                   ? "bg-amber-500/10 text-amber-400"
                   : "bg-[var(--ok-surface)] text-[var(--ok-text)]"
@@ -112,7 +112,7 @@ export function SelectedModelHoverCard(props: {
               {srcInfo().label}
             </span>
             <Show when={srcInfo().configHint}>
-              <span class="font-mono text-[10px] text-[var(--text-faint)] truncate">
+              <span class="font-mono text-[11px] text-[var(--text-faint)] truncate">
                 {srcInfo().configHint}
               </span>
             </Show>
@@ -125,7 +125,7 @@ export function SelectedModelHoverCard(props: {
           </span>
           <span class="text-[var(--text-primary)] font-medium truncate">
             {props.model.providerName}{" "}
-            <span class="font-mono text-[10px] text-[var(--text-faint)]">
+            <span class="font-mono text-[11px] text-[var(--text-faint)]">
               ({props.model.providerID})
             </span>
           </span>
@@ -135,13 +135,13 @@ export function SelectedModelHoverCard(props: {
           <span class="text-[var(--text-muted)] shrink-0">
             {t("models.hoverModelIdLabel")}
           </span>
-          <span class="font-mono text-[10.5px] text-[var(--text-secondary)] truncate">
+          <span class="font-mono text-[11px] text-[var(--text-secondary)] truncate">
             {props.model.modelID}
           </span>
         </div>
 
         <Show when={isAuto()}>
-          <div class="flex items-center justify-between gap-2 rounded-lg bg-[var(--accent-surface)]/40 px-2 py-1 text-[10.5px]">
+          <div class="flex items-center justify-between gap-2 rounded-lg bg-[var(--accent-surface)]/40 px-2 py-1 text-[11px]">
             <span class="font-medium text-[var(--accent-primary)] truncate">
               {autoTarget()
                 ? t("models.autoPoolActiveTarget", {
@@ -149,7 +149,7 @@ export function SelectedModelHoverCard(props: {
                   })
                 : t("models.autoRailLabel")}
             </span>
-            <span class="shrink-0 font-mono text-[10px] text-[var(--text-secondary)]">
+            <span class="shrink-0 font-mono text-[11px] text-[var(--text-secondary)]">
               {autoReadyCount()}/{autoCands().length} {t("models.autoPoolReadyStatus")}
             </span>
           </div>
@@ -160,13 +160,13 @@ export function SelectedModelHoverCard(props: {
             <span class="text-[var(--text-muted)] shrink-0">
               {t("models.hoverEndpointLabel")}
             </span>
-            <span class="font-mono text-[10px] text-[var(--text-secondary)] truncate max-w-[205px]">
+            <span class="font-mono text-[11px] text-[var(--text-secondary)] truncate max-w-[205px]">
               {props.model.baseURL}
             </span>
           </div>
         </Show>
 
-        <div class="flex items-center justify-between gap-2 pt-1.5 border-t border-[var(--border-subtle)] text-[10.5px] text-[var(--text-muted)]">
+        <div class="flex items-center justify-between gap-2 pt-1.5 border-t border-[var(--border-subtle)] text-[11px] text-[var(--text-muted)]">
           <div class="flex items-center gap-2 flex-wrap">
             <Show when={ctxText()}>
               <span>
@@ -185,7 +185,7 @@ export function SelectedModelHoverCard(props: {
               </span>
             </Show>
             <Show when={!props.model.free && (inPrice() || outPrice())}>
-              <span class="font-mono text-[10px]">
+              <span class="font-mono text-[11px]">
                 {inPrice() || "-"} / {outPrice() || "-"}
               </span>
             </Show>
@@ -193,7 +193,7 @@ export function SelectedModelHoverCard(props: {
 
           <div class="flex items-center gap-1 shrink-0">
             <Show when={hasEffortControl()}>
-              <span class="inline-flex items-center gap-0.5 rounded bg-[var(--accent-surface)] px-1.5 py-[1px] text-[9.5px] font-medium text-[var(--accent-primary)]">
+              <span class="inline-flex items-center gap-0.5 rounded bg-[var(--accent-surface)] px-1.5 py-[1px] text-[11px] font-medium text-[var(--accent-primary)]">
                 <Sparkles size={9} />
                 {t("models.reasoningCap")}
                 <span class="font-mono uppercase">
@@ -202,13 +202,13 @@ export function SelectedModelHoverCard(props: {
               </span>
             </Show>
             <Show when={props.model.image}>
-              <span class="inline-flex items-center gap-0.5 rounded bg-[var(--bg-inset)] px-1.5 py-[1px] text-[9.5px] font-medium text-[var(--text-secondary)]">
+              <span class="inline-flex items-center gap-0.5 rounded bg-[var(--bg-inset)] px-1.5 py-[1px] text-[11px] font-medium text-[var(--text-secondary)]">
                 <Image size={9} />
                 {t("models.imageCap")}
               </span>
             </Show>
             <Show when={props.model.toolcall}>
-              <span class="inline-flex items-center gap-0.5 rounded bg-[var(--bg-inset)] px-1.5 py-[1px] text-[9.5px] text-[var(--text-muted)]">
+              <span class="inline-flex items-center gap-0.5 rounded bg-[var(--bg-inset)] px-1.5 py-[1px] text-[11px] text-[var(--text-muted)]">
                 <Wrench size={9} />
                 {t("models.toolsCap")}
               </span>
@@ -217,7 +217,7 @@ export function SelectedModelHoverCard(props: {
         </div>
 
         <Show when={hasEffortControl()}>
-          <div class="flex items-center justify-between gap-2 border-t border-[var(--border-subtle)] pt-1.5 text-[10px] text-[var(--text-faint)]">
+          <div class="flex items-center justify-between gap-2 border-t border-[var(--border-subtle)] pt-1.5 text-[11px] text-[var(--text-faint)]">
             <span>{t("models.hoverEffortHint")}</span>
             <ChevronRight size={11} class="shrink-0 text-[var(--accent-primary)]" />
           </div>

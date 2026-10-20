@@ -207,7 +207,7 @@ export default function ConvoyModal(props: {
           </div>
 
           <Show when={error()}>
-            <p class="border-b border-[var(--border-subtle)] px-3 py-2 text-[11.5px] text-[var(--danger-text)] break-words">
+            <p class="border-b border-[var(--border-subtle)] px-3 py-2 text-[12px] text-[var(--danger-text)] break-words">
               {plan() ? t("timeline.convoyRunError", { error: error() || "" }) : error()}
             </p>
           </Show>
@@ -224,13 +224,13 @@ export default function ConvoyModal(props: {
                           value={task.id}
                           onInput={(event) => updateTask(index(), { id: event.currentTarget.value })}
                           placeholder={t("timeline.convoyTaskID")}
-                          class="w-32 rounded-lg border border-[var(--border-strong)] bg-[var(--bg-inset)] px-2 py-1 font-mono text-[11.5px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]"
+                          class="w-32 rounded-lg border border-[var(--border-strong)] bg-[var(--bg-inset)] px-2 py-1 font-mono text-[12px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]"
                         />
                         <input
                           value={task.depends}
                           onInput={(event) => updateTask(index(), { depends: event.currentTarget.value })}
                           placeholder={t("timeline.convoyDependsPlaceholder")}
-                          class="min-w-0 flex-1 rounded-lg border border-[var(--border-strong)] bg-[var(--bg-inset)] px-2 py-1 text-[11.5px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]"
+                          class="min-w-0 flex-1 rounded-lg border border-[var(--border-strong)] bg-[var(--bg-inset)] px-2 py-1 text-[12px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]"
                         />
                         <button
                           type="button"
@@ -257,16 +257,16 @@ export default function ConvoyModal(props: {
                   <button
                     type="button"
                     onClick={addTask}
-                    class="inline-flex items-center gap-1 rounded-lg border border-[var(--border-strong)] px-2 py-1 text-[11.5px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] cursor-pointer"
+                    class="inline-flex items-center gap-1 rounded-lg border border-[var(--border-strong)] px-2 py-1 text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] cursor-pointer"
                   >
                     <Plus size={12} /> {t("timeline.convoyAddTask")}
                   </button>
-                  <label class="ml-auto inline-flex items-center gap-1.5 text-[11.5px] text-[var(--text-muted)]">
+                  <label class="ml-auto inline-flex items-center gap-1.5 text-[12px] text-[var(--text-muted)]">
                     {t("timeline.convoyConcurrency")}
                     <select
                       value={concurrency()}
                       onChange={(event) => setConcurrency(Number(event.currentTarget.value))}
-                      class="rounded-lg border border-[var(--border-strong)] bg-[var(--bg-inset)] px-1.5 py-1 text-[11.5px] text-[var(--text-primary)] outline-none cursor-pointer"
+                      class="rounded-lg border border-[var(--border-strong)] bg-[var(--bg-inset)] px-1.5 py-1 text-[12px] text-[var(--text-primary)] outline-none cursor-pointer"
                     >
                       <For each={[1, 2, 3, 4, 5, 6, 8]}>{(value) => <option value={value}>{value}</option>}</For>
                     </select>
@@ -295,30 +295,30 @@ export default function ConvoyModal(props: {
                       <span class="font-mono text-[var(--text-primary)]">{task.id}</span>
                       <span class={`text-[11px] ${statusColor[task.status]}`}>{statusLabel(task.status)}</span>
                       <Show when={task.sessionID}>
-                        <span class="ml-auto truncate font-mono text-[10.5px] text-[var(--text-faint)]">
+                        <span class="ml-auto truncate font-mono text-[11px] text-[var(--text-faint)]">
                           {t("timeline.convoySessionLabel", { id: task.sessionID || "" })}
                         </span>
                       </Show>
                     </div>
                     <Show when={task.summary}>
-                      <p class="mt-1 line-clamp-3 whitespace-pre-wrap break-words text-[11.5px] text-[var(--text-secondary)]">
+                      <p class="mt-1 line-clamp-3 whitespace-pre-wrap break-words text-[12px] text-[var(--text-secondary)]">
                         {task.summary}
                       </p>
                     </Show>
                     <Show when={task.error}>
-                      <p class="mt-1 break-words text-[11.5px] text-[var(--danger-text)]">{task.error}</p>
+                      <p class="mt-1 break-words text-[12px] text-[var(--danger-text)]">{task.error}</p>
                     </Show>
                   </div>
                 )}
               </For>
             </div>
             <div class="flex items-center gap-2 border-t border-[var(--border-subtle)] px-3 py-2">
-              <span class={`text-[11.5px] ${statusColor[plan()?.status ?? "queued"]}`}>{statusLabel(plan()?.status ?? "queued")}</span>
+              <span class={`text-[12px] ${statusColor[plan()?.status ?? "queued"]}`}>{statusLabel(plan()?.status ?? "queued")}</span>
               <Show when={!isTerminal(plan()?.status ?? "queued")}>
                 <button
                   type="button"
                   onClick={() => void cancel()}
-                  class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-strong)] px-2 py-1 text-[11.5px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] cursor-pointer"
+                  class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-strong)] px-2 py-1 text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] cursor-pointer"
                 >
                   <Square size={11} /> {t("timeline.convoyCancel")}
                 </button>
@@ -328,7 +328,7 @@ export default function ConvoyModal(props: {
                   <button
                     type="button"
                     onClick={reset}
-                    class="rounded-lg border border-[var(--border-strong)] px-2 py-1 text-[11.5px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] cursor-pointer"
+                    class="rounded-lg border border-[var(--border-strong)] px-2 py-1 text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] cursor-pointer"
                   >
                     {t("timeline.convoyStart")}
                   </button>
@@ -336,7 +336,7 @@ export default function ConvoyModal(props: {
                 <button
                   type="button"
                   onClick={props.onClose}
-                  class="rounded-lg bg-[var(--bg-inset)] px-2 py-1 text-[11.5px] text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer"
+                  class="rounded-lg bg-[var(--bg-inset)] px-2 py-1 text-[12px] text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer"
                 >
                   {t("timeline.convoyClose")}
                 </button>

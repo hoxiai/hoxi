@@ -173,7 +173,7 @@ export function ComposerSandboxPill(props: {
         </Show>
 
         <Show when={changedFilesCount() > 0}>
-          <span class="rounded-full bg-[var(--accent-surface)] px-1.5 py-0.2 font-mono text-[10px] text-[var(--accent-primary)]">
+          <span class="rounded-full bg-[var(--accent-surface)] px-1.5 py-0.2 font-mono text-[11px] text-[var(--accent-primary)]">
             {changedFilesCount()}
           </span>
         </Show>
@@ -338,12 +338,12 @@ export function ComposerSandboxPill(props: {
                 </span>
 
                 <Show when={changedFilesCount() > 0}>
-                  <span class="shrink-0 rounded-md bg-white/20 px-1.5 py-0.5 font-mono text-[10px]">
+                  <span class="shrink-0 rounded-md bg-white/20 px-1.5 py-0.5 font-mono text-[11px]">
                     {t("timeline.filesAttached", { count: changedFilesCount() })}
                   </span>
                 </Show>
                 <Show when={!isDirty() && aheadCount() > 0}>
-                  <span class="shrink-0 rounded-md bg-white/20 px-1.5 py-0.5 font-mono text-[10px]">
+                  <span class="shrink-0 rounded-md bg-white/20 px-1.5 py-0.5 font-mono text-[11px]">
                     {t("timeline.gitAheadCountBadge", { count: aheadCount() })}
                   </span>
                 </Show>
@@ -355,7 +355,7 @@ export function ComposerSandboxPill(props: {
                   disabled={Boolean(gitAction()) || props.busy || props.switching}
                   onClick={() => void handleGitCommitAction(false)}
                   title={t("timeline.gitCommitOnly")}
-                  class="shrink-0 inline-flex items-center gap-1 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] px-2.5 py-1.5 text-[11.5px] font-medium text-[var(--text-primary)] disabled:opacity-40 transition-colors cursor-pointer"
+                  class="shrink-0 inline-flex items-center gap-1 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] px-2.5 py-1.5 text-[12px] font-medium text-[var(--text-primary)] disabled:opacity-40 transition-colors cursor-pointer"
                 >
                   <Show
                     when={gitAction() !== "commit"}

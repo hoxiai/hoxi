@@ -10,7 +10,7 @@ import {
   undoRevert,
   workspace,
 } from "../../store/workspace";
-import { DiffChanges, FileIcon } from "../icons";
+import { FileIcon } from "../icons";
 import { t } from "../../i18n";
 
 /**
@@ -51,11 +51,6 @@ export default function RevertBanner() {
       (t) => t.info.role === "user" && t.info.id >= boundary
     ).length;
     return Math.max(1, count);
-  });
-
-  const sessionDiffs = createMemo(() => {
-    const id = workspace.activeSessionID;
-    return id ? workspace.diffsBySession[id] ?? [] : [];
   });
 
   const onConfirmRevertBoth = async () => {
@@ -208,73 +203,44 @@ export default function RevertBanner() {
       </Show>
 
       <Show when={revertBoundary()}>
-        <div class="rounded-xl border border-[var(--warn-border)] bg-[var(--warn-surface)]/90 px-3.5 py-2.5 shadow-xs space-y-2">
-          <div class="flex items-center justify-between gap-2">
-            <div class="flex items-center gap-2 min-w-0">
-              <Undo2 size={14} class="text-[var(--warn-text)] shrink-0" />
-              <span class="truncate text-[12px] font-medium text-[var(--warn-text)]">
-                {t("timeline.revertBannerCount", { count: revertedTurnCount() })}
-              </span>
-            </div>
+        <div class="inline-flex items-center gap-1.5 rounded-full border border-[var(--warn-border)] bg-[var(--warn-surface)]/90 px-2.5 py-1 shadow-xs">
+          <Undo2 size={12.5} class="text-[var(--warn-text)] shrink-0" />
+          <span class="truncate text-[11px] font-medium text-[var(--warn-text)]">
+            {t("timeline.revertBannerCount", { count: revertedTurnCount() })}
+          </span>
 
-            <div class="flex items-center gap-1.5 shrink-0">
-              <button
-                type="button"
-                disabled={busy()}
-                onClick={() => void onForkFromBoundary()}
-                class="inline-flex items-center gap-1 rounded-lg border border-[var(--warn-border)] bg-[var(--bg-panel)]/70 px-2.5 py-1 text-[11px] font-medium text-[var(--text-primary)] hover:bg-[var(--bg-hover)] disabled:opacity-50 cursor-pointer"
-                title={t("timeline.forkTooltip")}
-              >
-                <GitFork size={11} />
-                <span>{t("timeline.forkBtn")}</span>
-              </button>
+          <button
+            type="button"
+            disabled={busy()}
+            onClick={() => void onForkFromBoundary()}
+            class="inline-flex items-center rounded-md px-1.5 py-0.5 text-[11px] font-medium text-[var(--warn-text)] hover:bg-[var(--bg-hover)] disabled:opacity-50 cursor-pointer"
+            title={t("timeline.forkTooltip")}
+            aria-label={t("timeline.forkTooltip")}
+          >
+            <GitFork size={12} />
+          </button>
 
-              <button
-                type="button"
-                disabled={busy()}
-                onClick={() => void onStepRedo()}
-                class="inline-flex items-center gap-1 rounded-lg border border-[var(--warn-border)] bg-[var(--bg-panel)]/70 px-2.5 py-1 text-[11px] font-medium text-[var(--text-primary)] hover:bg-[var(--bg-hover)] disabled:opacity-50 cursor-pointer"
-              >
-                <Show when={!busy()} fallback={<LoaderCircle size={11} class="animate-spin" />}>
-                  <RotateCcw size={11} class="scale-x-[-1]" />
-                </Show>
-                <span>{t("timeline.redoOneTurn")}</span>
-              </button>
+          <button
+            type="button"
+            disabled={busy()}
+            onClick={() => void onStepRedo()}
+            class="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium text-[var(--warn-text)] hover:bg-[var(--bg-hover)] disabled:opacity-50 cursor-pointer"
+            title={t("timeline.redoOneTurn")}
+          >
+            <Show when={!busy()} fallback={<LoaderCircle size={11} class="animate-spin" />}>
+              <RotateCcw size={11} class="scale-x-[-1]" />
+            </Show>
+            <span>{t("timeline.redoOneTurn")}</span>
+          </button>
 
-              <button
-                type="button"
-                disabled={busy()}
-                onClick={() => void onRestoreAll()}
-                class="inline-flex items-center gap-1 rounded-lg bg-[var(--accent-primary)] px-2.5 py-1 text-[11px] font-medium text-[var(--accent-foreground)] hover:opacity-90 disabled:opacity-50 cursor-pointer"
-              >
-                <span>{t("timeline.redoAll")}</span>
-              </button>
-            </div>
-          </div>
-
-          <Show when={sessionDiffs().length > 0}>
-            <div class="flex flex-wrap items-center gap-1.5">
-              <For each={sessionDiffs().slice(0, 5)}>
-                {(d) => (
-                  <button
-                    type="button"
-                    onClick={() => openDiffInInspector(d.file)}
-                    class="inline-flex items-center gap-1.5 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)]/80 px-2 py-0.5 text-[11px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
-                  >
-                    <FileIcon node={{ path: d.file, type: "file" }} class="w-3 h-3 shrink-0" />
-                    <span class="font-mono truncate max-w-[140px]">
-                      {d.file.split("/").pop() || d.file}
-                    </span>
-                    <DiffChanges changes={{ additions: d.additions, deletions: d.deletions }} />
-                  </button>
-                )}
-              </For>
-            </div>
-          </Show>
-
-          <div class="text-[11px] text-[var(--text-muted)]">
-            {t("timeline.revertBannerHint")}
-          </div>
+          <button
+            type="button"
+            disabled={busy()}
+            onClick={() => void onRestoreAll()}
+            class="inline-flex items-center rounded-md bg-[var(--accent-primary)] px-2 py-0.5 text-[11px] font-medium text-[var(--accent-foreground)] hover:opacity-90 disabled:opacity-50 cursor-pointer"
+          >
+            <span>{t("timeline.redoAll")}</span>
+          </button>
         </div>
       </Show>
     </>

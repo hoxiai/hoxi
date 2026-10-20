@@ -35,7 +35,7 @@ export function ComposerAutocompletePopover(props: {
   return (
     <Show when={props.triggerMode && props.suggestions.length > 0}>
       <div class="absolute bottom-full left-0 mb-2 w-full max-w-[32rem] rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-1.5 shadow-xl z-40">
-        <div class="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
+        <div class="px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
           {props.triggerMode === "command"
             ? t("timeline.slashCommandsHeader")
             : t("timeline.mentionFileOrContextHeader")}
@@ -46,7 +46,7 @@ export function ComposerAutocompletePopover(props: {
               <button
                 type="button"
                 data-ac-index={idx()}
-                class={`w-full flex items-center justify-between gap-3 rounded-lg px-2.5 py-1.5 text-left text-[12.5px] transition-colors cursor-pointer ${
+                class={`w-full flex items-center justify-between gap-3 rounded-lg px-2.5 py-1.5 text-left text-[13px] transition-colors cursor-pointer ${
                   idx() === props.selectedIndex
                     ? "bg-[var(--accent-surface)] text-[var(--accent-text)]"
                     : "text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
@@ -70,14 +70,14 @@ export function ComposerAutocompletePopover(props: {
                   ) : null}
                   <span class="truncate">{item.label}</span>
                   <Show when={item.hints && item.hints.length > 0}>
-                    <span class="text-[10.5px] text-[var(--text-faint)] truncate">
+                    <span class="text-[11px] text-[var(--text-faint)] truncate">
                       {item.hints!.join(" ")}
                     </span>
                   </Show>
                 </span>
                 <span class="inline-flex items-center gap-1.5 shrink-0 max-w-[220px]">
                   <Show when={item.source}>
-                    <span class="rounded bg-[var(--bg-inset)] px-1.5 py-0.5 text-[9.5px] font-medium uppercase tracking-wider text-[var(--text-faint)]">
+                    <span class="rounded bg-[var(--bg-inset)] px-1.5 py-0.5 text-[11px] font-medium uppercase tracking-wider text-[var(--text-faint)]">
                       {item.source === "skill"
                         ? t("skills.groupSkills")
                         : item.source === "mcp"
@@ -152,7 +152,7 @@ export function ComposerAttachmentChips(props: {
   return (
     <>
       <Show when={props.notice}>
-        <div class="mb-2 flex items-center justify-between gap-2 rounded-lg border border-[var(--danger-border)] bg-[var(--danger-surface)] px-2.5 py-1.5 text-[11.5px] text-[var(--danger-text)]">
+        <div class="mb-2 flex items-center justify-between gap-2 rounded-lg border border-[var(--danger-border)] bg-[var(--danger-surface)] px-2.5 py-1.5 text-[12px] text-[var(--danger-text)]">
           <span class="inline-flex items-center gap-1.5 min-w-0">
             <AlertCircle size={13} class="shrink-0" />
             <span class="truncate">{props.notice}</span>
@@ -170,7 +170,7 @@ export function ComposerAttachmentChips(props: {
       </Show>
 
       <Show when={props.skillNotice}>
-        <div class="mb-2 flex items-center justify-between gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-[11.5px] text-amber-500">
+        <div class="mb-2 flex items-center justify-between gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-[12px] text-amber-500">
           <span class="inline-flex items-center gap-1.5 min-w-0">
             <AlertCircle size={13} class="shrink-0" />
             <span class="truncate">{props.skillNotice}</span>
@@ -210,9 +210,9 @@ export function ComposerAttachmentChips(props: {
               >
                 <Slash size={11} class="shrink-0 text-[var(--accent-primary)]" />
                 <span class="font-mono font-medium text-[var(--text-primary)]">{m.label}</span>
-                <span class="text-[10.5px] text-[var(--text-muted)]">· {m.summary}</span>
+                <span class="text-[11px] text-[var(--text-muted)]">· {m.summary}</span>
                 <Show when={m.status === "truncated"}>
-                  <span class="rounded bg-amber-500/15 px-1 py-0.5 text-[9.5px] font-medium text-amber-500">
+                  <span class="rounded bg-amber-500/15 px-1 py-0.5 text-[11px] font-medium text-amber-500">
                     {t("timeline.mentionStatusTruncated")}
                   </span>
                 </Show>
@@ -258,7 +258,7 @@ export function ComposerAttachmentChips(props: {
                   when={isImageItem(img)}
                   fallback={
                     <span
-                      class={`inline-flex h-6 items-center gap-1 rounded bg-[var(--bg-inset)] px-1.5 font-mono text-[10px] font-semibold ${extBadgeColor(img.filename, img.mime, img.kind)}`}
+                      class={`inline-flex h-6 items-center gap-1 rounded bg-[var(--bg-inset)] px-1.5 font-mono text-[11px] font-semibold ${extBadgeColor(img.filename, img.mime, img.kind)}`}
                     >
                       <FileText size={12} class="shrink-0" />
                       {extBadge(img.filename, img.mime)}

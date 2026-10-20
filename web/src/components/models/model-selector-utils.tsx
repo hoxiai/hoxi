@@ -70,7 +70,7 @@ export function ModelSelectorRail(props: {
         <button
           type="button"
           onClick={() => props.onSelectRail("connected")}
-          class={`w-full flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[11.5px] transition-colors cursor-pointer ${
+          class={`w-full flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] transition-colors cursor-pointer ${
             props.rail === "connected" && !props.hasQuery
               ? "bg-[var(--accent-surface)] text-[var(--accent-primary)] font-medium"
               : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
@@ -80,12 +80,12 @@ export function ModelSelectorRail(props: {
             <span class="h-1.5 w-1.5 rounded-full bg-[var(--ok)] shrink-0" />
             <span class="truncate">{t("models.allConnected")}</span>
           </span>
-          <span class="font-mono text-[10px] opacity-70">{props.connectedTotal}</span>
+          <span class="font-mono text-[11px] opacity-70">{props.connectedTotal}</span>
         </button>
 
         <div
           onClick={() => props.onSelectRail(AUTO_PROVIDER_ID)}
-          class={`group w-full flex items-center justify-between gap-1 rounded-lg px-2.5 py-1.5 text-left text-[11.5px] transition-colors cursor-pointer ${
+          class={`group w-full flex items-center justify-between gap-1 rounded-lg px-2.5 py-1.5 text-left text-[12px] transition-colors cursor-pointer ${
             props.rail === AUTO_PROVIDER_ID && !props.hasQuery
               ? "bg-[var(--accent-surface)] text-[var(--accent-primary)] font-medium"
               : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
@@ -108,32 +108,32 @@ export function ModelSelectorRail(props: {
             >
               <Pencil size={10} />
             </button>
-            <span class="font-mono text-[10px] opacity-70">{props.autoTotal}</span>
+            <span class="font-mono text-[11px] opacity-70">{props.autoTotal}</span>
           </span>
         </div>
 
         <button
           type="button"
           onClick={() => props.onSelectRail("free")}
-          class={`w-full flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[11.5px] transition-colors cursor-pointer ${
+          class={`w-full flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] transition-colors cursor-pointer ${
             props.rail === "free" && !props.hasQuery
               ? "bg-[var(--ok-surface)] text-[var(--ok-text)] font-medium"
               : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
           }`}
         >
           <span class="flex items-center gap-1.5 truncate">
-            <span class="rounded bg-[var(--ok-surface)] px-1 py-[0.5px] font-mono text-[9.5px] font-semibold text-[var(--ok-text)] shrink-0">
+            <span class="rounded bg-[var(--ok-surface)] px-1 py-[0.5px] font-mono text-[11px] font-semibold text-[var(--ok-text)] shrink-0">
               0x
             </span>
             <span class="truncate">{t("models.freeModel")}</span>
           </span>
-          <span class="font-mono text-[10px] opacity-70">{props.freeTotal}</span>
+          <span class="font-mono text-[11px] opacity-70">{props.freeTotal}</span>
         </button>
 
         <button
           type="button"
           onClick={() => props.onSelectRail("favorites")}
-          class={`w-full flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[11.5px] transition-colors cursor-pointer ${
+          class={`w-full flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] transition-colors cursor-pointer ${
             props.rail === "favorites" && !props.hasQuery
               ? "bg-[var(--accent-surface)] text-[var(--accent-primary)] font-medium"
               : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
@@ -143,13 +143,13 @@ export function ModelSelectorRail(props: {
             <Star size={12} class="shrink-0 text-amber-500" />
             <span class="truncate">{t("models.favorites")}</span>
           </span>
-          <span class="font-mono text-[10px] opacity-70">{workspace.favoriteModels.length}</span>
+          <span class="font-mono text-[11px] opacity-70">{workspace.favoriteModels.length}</span>
         </button>
 
         <button
           type="button"
           onClick={() => props.onSelectRail("recent")}
-          class={`w-full flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[11.5px] transition-colors cursor-pointer ${
+          class={`w-full flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] transition-colors cursor-pointer ${
             props.rail === "recent" && !props.hasQuery
               ? "bg-[var(--accent-surface)] text-[var(--accent-primary)] font-medium"
               : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
@@ -159,7 +159,7 @@ export function ModelSelectorRail(props: {
             <Clock size={12} class="shrink-0 text-[var(--text-muted)]" />
             <span class="truncate">{t("models.recent")}</span>
           </span>
-          <span class="font-mono text-[10px] opacity-70">{workspace.recentModels.length}</span>
+          <span class="font-mono text-[11px] opacity-70">{workspace.recentModels.length}</span>
         </button>
 
         <div class="my-1 border-t border-[var(--border-subtle)]" />
@@ -167,7 +167,7 @@ export function ModelSelectorRail(props: {
         <For each={props.providers}>
           {(prov) => (
             <div
-              class={`group flex items-center justify-between gap-1 rounded-lg px-2 py-1.5 text-[11.5px] transition-colors cursor-pointer ${
+              class={`group flex items-center justify-between gap-1 rounded-lg px-2 py-1.5 text-[12px] transition-colors cursor-pointer ${
                 props.rail === prov.id && !props.hasQuery
                   ? "bg-[var(--accent-surface)] text-[var(--accent-primary)] font-medium"
                   : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
@@ -193,7 +193,7 @@ export function ModelSelectorRail(props: {
                     <Pencil size={10} />
                   </button>
                 </Show>
-                <span class="font-mono text-[10px] opacity-65">{prov.count}</span>
+                <span class="font-mono text-[11px] opacity-65">{prov.count}</span>
               </span>
             </div>
           )}

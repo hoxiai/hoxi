@@ -299,7 +299,7 @@ export default function FileTreeView() {
         <div class="flex items-center gap-2 rounded-lg border border-[var(--border-strong)] bg-[var(--bg-inset)] px-2.5 py-1.5 focus-within:border-[var(--accent-border)]">
           <Search size={13} class="shrink-0 text-[var(--text-muted)]" />
           <input
-            class="flex-1 bg-transparent text-[11.5px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none selectable-text"
+            class="flex-1 bg-transparent text-[12px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none selectable-text"
             placeholder={t("inspector.files.searchPlaceholder")}
             value={query()}
             onInput={(ev) => {
@@ -312,7 +312,7 @@ export default function FileTreeView() {
             <LoaderCircle size={12} class="shrink-0 animate-spin text-[var(--text-muted)]" />
           </Show>
         </div>
-        <div class="mt-1.5 flex items-center justify-between gap-1 text-[10px] text-[var(--text-faint)] font-mono">
+        <div class="mt-1.5 flex items-center justify-between gap-1 text-[11px] text-[var(--text-faint)] font-mono">
           <div class="flex items-center gap-1 min-w-0 truncate">
             <FolderOpen size={10} class="shrink-0" />
             <span class="truncate" title={targetDirectory()}>
@@ -322,7 +322,7 @@ export default function FileTreeView() {
           <button
             type="button"
             onClick={() => openEditWorkspaceModal(workspace.rootDir)}
-            class="shrink-0 inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[10px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+            class="shrink-0 inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[11px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
             title={t("leftNav.editWorkspace")}
           >
             <FolderPlus size={10} />
@@ -339,7 +339,7 @@ export default function FileTreeView() {
         <Show
           when={results().length > 0}
           fallback={
-            <div class="px-2 py-8 text-center text-[11.5px] text-[var(--text-muted)]">
+            <div class="px-2 py-8 text-center text-[12px] text-[var(--text-muted)]">
               {query().trim()
                 ? t("inspector.files.noMatchingFiles")
                 : t("inspector.files.noFilesInWorkspace")}

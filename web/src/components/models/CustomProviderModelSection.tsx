@@ -124,7 +124,7 @@ export default function CustomProviderModelSection(props: CustomProviderModelSec
                 <button
                   type="button"
                   onClick={() => setAddModalOpen(true)}
-                  class="inline-flex items-center gap-1.5 rounded-xl border border-[var(--accent-border)] bg-[var(--accent-surface)] px-3 py-1.5 text-[11.5px] font-medium text-[var(--accent-primary)] hover:opacity-90 cursor-pointer"
+                  class="inline-flex items-center gap-1.5 rounded-xl border border-[var(--accent-border)] bg-[var(--accent-surface)] px-3 py-1.5 text-[12px] font-medium text-[var(--accent-primary)] hover:opacity-90 cursor-pointer"
                 >
                   <Plus size={12} />
                   {t("models.addModelRow")}
@@ -266,7 +266,7 @@ export default function CustomProviderModelSection(props: CustomProviderModelSec
       <Show when={!props.readOnly?.() || props.headers().length > 0}>
         <div class="space-y-1.5">
           <div class="flex items-center justify-between">
-            <span class="text-[11.5px] font-medium text-[var(--text-secondary)]">
+            <span class="text-[12px] font-medium text-[var(--text-secondary)]">
               {t("models.headersTitle")}
             </span>
             <Show when={!props.readOnly?.()}>
@@ -297,7 +297,7 @@ export default function CustomProviderModelSection(props: CustomProviderModelSec
                       prev.map((item, i) => (i === idx ? { ...item, key: val } : item))
                     );
                   }}
-                  class="w-1/3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-2.5 py-1 font-mono text-[11.5px] text-[var(--text-primary)] disabled:opacity-60 outline-none selectable-text"
+                  class="w-1/3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-2.5 py-1 font-mono text-[12px] text-[var(--text-primary)] disabled:opacity-60 outline-none selectable-text"
                 />
                 <input
                   type="text"
@@ -313,7 +313,7 @@ export default function CustomProviderModelSection(props: CustomProviderModelSec
                       prev.map((item, i) => (i === idx ? { ...item, value: val } : item))
                     );
                   }}
-                  class="flex-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-2.5 py-1 font-mono text-[11.5px] text-[var(--text-primary)] disabled:opacity-60 outline-none selectable-text"
+                  class="flex-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-2.5 py-1 font-mono text-[12px] text-[var(--text-primary)] disabled:opacity-60 outline-none selectable-text"
                 />
                 <Show when={!props.readOnly?.()}>
                   <button

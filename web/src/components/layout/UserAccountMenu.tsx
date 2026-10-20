@@ -111,16 +111,16 @@ export default function UserAccountMenu() {
                 </div>
                 <div class="min-w-0 flex-1">
                   <div class="flex items-center gap-1.5">
-                    <span class="truncate text-[12.5px] font-semibold text-[var(--text-primary)]">
+                    <span class="truncate text-[13px] font-semibold text-[var(--text-primary)]">
                       {userName()}
                     </span>
-                    <span class="shrink-0 rounded-md bg-[var(--accent-surface)] px-1.5 py-0.5 text-[9.5px] font-bold tracking-wide text-[var(--accent-primary)]">
+                    <span class="shrink-0 rounded-md bg-[var(--accent-surface)] px-1.5 py-0.5 text-[11px] font-bold tracking-wide text-[var(--accent-primary)]">
                       {userPlan()}
                     </span>
                   </div>
                   <div class="flex items-center gap-1 text-[11px] text-[var(--text-muted)] truncate mt-0.5">
                     <Mail size={10} class="shrink-0 opacity-75" />
-                    <span class="truncate font-mono text-[10.5px]">
+                    <span class="truncate font-mono text-[11px]">
                       {userEmail()}
                     </span>
                   </div>
@@ -128,23 +128,23 @@ export default function UserAccountMenu() {
               </div>
 
               {/* Official Cloud Status Badge */}
-              <div class="mt-2.5 flex items-center justify-between rounded-lg bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1 text-[10.5px] text-emerald-500 font-medium">
+              <div class="mt-2.5 flex items-center justify-between rounded-lg bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1 text-[11px] text-emerald-500 font-medium">
                 <span class="inline-flex items-center gap-1.5">
                   <span class="h-1.5 w-1.5 rounded-full bg-emerald-500" />
                   {t("settings.accountOfficialAccountTitle")}
                 </span>
-                <span class="font-mono text-[9.5px] opacity-75">Hoxi.ai</span>
+                <span class="font-mono text-[11px] opacity-75">Hoxi.ai</span>
               </div>
 
               {/* Connected Providers Pill */}
-              <div class="mt-2 flex items-center justify-between rounded-lg bg-[var(--bg-panel)]/80 border border-[var(--border-subtle)]/60 px-2.5 py-1 text-[10.5px] text-[var(--text-muted)]">
+              <div class="mt-2 flex items-center justify-between rounded-lg bg-[var(--bg-panel)]/80 border border-[var(--border-subtle)]/60 px-2.5 py-1 text-[11px] text-[var(--text-muted)]">
                 <span class="inline-flex items-center gap-1.5">
                   <span class="h-1.5 w-1.5 rounded-full bg-emerald-500" />
                   {t("settings.accountConnectedProviders", {
                     count: connectedProvidersCount(),
                   })}
                 </span>
-                <span class="truncate max-w-[110px] font-mono text-[10px] text-[var(--text-faint)]">
+                <span class="truncate max-w-[110px] font-mono text-[11px] text-[var(--text-faint)]">
                   {workspace.selectedModel?.modelID || "auto"}
                 </span>
               </div>
@@ -178,7 +178,7 @@ export default function UserAccountMenu() {
                   <SlidersHorizontal size={13} class="text-[var(--text-muted)]" />
                   {t("settings.modalTitle")}
                 </span>
-                <kbd class="text-[10px] font-mono text-[var(--text-faint)]">
+                <kbd class="text-[11px] font-mono text-[var(--text-faint)]">
                   ⌘,
                 </kbd>
               </button>
@@ -210,17 +210,17 @@ export default function UserAccountMenu() {
                     <User size={13} />
                   </div>
                   <div class="min-w-0 flex-1">
-                    <div class="truncate text-[12.5px] font-medium text-[var(--text-primary)] leading-tight">
+                    <div class="truncate text-[13px] font-medium text-[var(--text-primary)] leading-tight">
                       {t("settings.accountSignInBtn")}
                     </div>
-                    <div class="truncate text-[10.5px] text-[var(--text-faint)] leading-tight mt-0.5">
+                    <div class="truncate text-[11px] text-[var(--text-faint)] leading-tight mt-0.5">
                       {t("settings.accountGuestBadge")}
                     </div>
                   </div>
                 </>
               }
             >
-              <div class="relative flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[var(--accent-primary)] text-[11.5px] font-bold text-[var(--accent-foreground)] shadow-2xs overflow-hidden">
+              <div class="relative flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[var(--accent-primary)] text-[12px] font-bold text-[var(--accent-foreground)] shadow-2xs overflow-hidden">
                 <Show when={userAvatar()} fallback={userInitial()}>
                   <img src={userAvatar()} alt="" class="h-full w-full object-cover" />
                 </Show>
@@ -228,14 +228,14 @@ export default function UserAccountMenu() {
               </div>
               <div class="min-w-0 flex-1">
                 <div class="flex items-center gap-1.5 leading-tight">
-                  <span class="truncate text-[12.5px] font-semibold text-[var(--text-primary)]">
+                  <span class="truncate text-[13px] font-semibold text-[var(--text-primary)]">
                     {userName()}
                   </span>
-                  <span class="shrink-0 rounded px-1 py-0.2 text-[9px] font-bold bg-[var(--accent-surface)] text-[var(--accent-primary)]">
+                  <span class="shrink-0 rounded px-1 py-0.2 text-[11px] font-bold bg-[var(--accent-surface)] text-[var(--accent-primary)]">
                     {userPlan()}
                   </span>
                 </div>
-                <div class="truncate font-mono text-[10.5px] text-[var(--text-muted)] leading-tight mt-0.5">
+                <div class="truncate font-mono text-[11px] text-[var(--text-muted)] leading-tight mt-0.5">
                   {userEmail()}
                 </div>
               </div>
@@ -252,7 +252,7 @@ export default function UserAccountMenu() {
             <div class="truncate text-[12px] font-medium text-amber-500 leading-tight">
               {t("settings.accountWaitingBrowserShort")}
             </div>
-            <div class="truncate text-[10px] text-[var(--text-faint)] leading-tight mt-0.5">
+            <div class="truncate text-[11px] text-[var(--text-faint)] leading-tight mt-0.5">
               {t("settings.accountCancelAuthBtn")}
             </div>
           </div>

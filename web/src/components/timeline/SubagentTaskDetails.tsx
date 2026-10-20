@@ -34,13 +34,13 @@ export default function SubagentTaskDetails(props: { part: ToolPart; running: bo
             e.stopPropagation();
             setShowPrompt(!showPrompt());
           }}
-          class="inline-flex items-center gap-1 text-[11.5px] font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
+          class="inline-flex items-center gap-1 text-[12px] font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
         >
           <Icon name={showPrompt() ? "chevron-down" : "chevron-right"} size="small" />
           <span>{t("toolCard.subagentPrompt")}</span>
         </button>
         <Show when={showPrompt()}>
-          <pre class="text-[11.5px] font-mono bg-[var(--bg-code)] border border-[var(--border-subtle)] p-2.5 rounded-lg max-h-48 overflow-auto text-[var(--text-secondary)] whitespace-pre-wrap selectable-text">
+          <pre class="text-[12px] font-mono bg-[var(--bg-code)] border border-[var(--border-subtle)] p-2.5 rounded-lg max-h-48 overflow-auto text-[var(--text-secondary)] whitespace-pre-wrap selectable-text">
             {prompt()}
           </pre>
         </Show>
@@ -50,14 +50,14 @@ export default function SubagentTaskDetails(props: { part: ToolPart; running: bo
         when={report()}
         fallback={
           <Show when={props.running}>
-            <div class="text-[11.5px] text-[var(--text-faint)] italic">
+            <div class="text-[12px] text-[var(--text-faint)] italic">
               {t("toolCard.subagentAwaitingReport")}
             </div>
           </Show>
         }
       >
         <div class="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-3 py-2">
-          <div class="text-[10.5px] font-medium text-[var(--text-muted)] mb-1">
+          <div class="text-[11px] font-medium text-[var(--text-muted)] mb-1">
             {t("toolCard.subagentReport")}
           </div>
           <div class="max-h-80 overflow-auto selectable-text">

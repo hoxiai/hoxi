@@ -579,10 +579,10 @@ export default function MessageStream(props: { hidden?: boolean }) {
                                             }}
                                             class="h-4 w-4 shrink-0"
                                           />
-                                          <span class="truncate font-mono text-[11.5px]">
+                                          <span class="truncate font-mono text-[12px]">
                                             {fp.filename || "attachment"}
                                           </span>
-                                          <span class={`ml-auto shrink-0 rounded bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[10px] font-semibold ${badgeColor}`}>
+                                          <span class={`ml-auto shrink-0 rounded bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[11px] font-semibold ${badgeColor}`}>
                                             {extLabel}
                                           </span>
                                         </a>
@@ -616,7 +616,7 @@ export default function MessageStream(props: { hidden?: boolean }) {
                       {/* Kilo-style User Message Hover Actions & Metadata */}
                       <div class="mt-1 flex items-center justify-end gap-1 px-1 text-[12px] text-[var(--text-faint)] opacity-0 group-hover/turn:opacity-100 transition-opacity">
                         <Show when={formatMessageTime(turn.info.time?.created)}>
-                          <span class="mr-1 font-mono text-[11.5px]">{formatMessageTime(turn.info.time?.created)}</span>
+                          <span class="mr-1 font-mono text-[12px]">{formatMessageTime(turn.info.time?.created)}</span>
                         </Show>
 
                         <ActionIconButton

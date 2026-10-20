@@ -30,7 +30,7 @@ export default function AccountLoginForm(_props: AccountLoginFormProps) {
           <LogIn size={15} />
         </div>
         <div class="min-w-0 flex-1">
-          <div class="text-[12.5px] font-semibold text-[var(--text-primary)]">
+          <div class="text-[13px] font-semibold text-[var(--text-primary)]">
             {t("settings.accountSignInTitle")}
           </div>
           <p class="mt-0.5 text-[11px] leading-relaxed text-[var(--text-muted)]">
@@ -52,7 +52,7 @@ export default function AccountLoginForm(_props: AccountLoginFormProps) {
               <Globe size={14} />
               <span>{t("settings.accountOneClickLoginBtn")}</span>
             </button>
-            <p class="text-[10.5px] text-center text-[var(--text-faint)] leading-tight">
+            <p class="text-[11px] text-center text-[var(--text-faint)] leading-tight">
               {t("settings.accountLoginWithBrowserHint")}
             </p>
           </div>
@@ -60,18 +60,18 @@ export default function AccountLoginForm(_props: AccountLoginFormProps) {
       >
         {/* Waiting for Browser Confirmation Card */}
         <div class="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 space-y-2.5">
-          <div class="flex items-center gap-2 text-amber-500 text-[11.5px] font-medium">
+          <div class="flex items-center gap-2 text-amber-500 text-[12px] font-medium">
             <Spinner class="h-3.5 w-3.5" />
             <span class="truncate">{t("settings.accountWaitingBrowserAuth")}</span>
           </div>
           <div class="flex items-center justify-between pt-0.5">
-            <span class="text-[10px] text-[var(--text-muted)] font-mono truncate max-w-[170px]">
+            <span class="text-[11px] text-[var(--text-muted)] font-mono truncate max-w-[170px]">
               {desktopAuth.serverBaseUrl}
             </span>
             <button
               type="button"
               onClick={handleCancelOneClick}
-              class="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[10.5px] text-[var(--text-muted)] hover:text-rose-500 hover:bg-rose-500/10 transition-colors cursor-pointer"
+              class="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] text-[var(--text-muted)] hover:text-rose-500 hover:bg-rose-500/10 transition-colors cursor-pointer"
             >
               <X size={11} />
               <span>{t("settings.accountCancelAuthBtn")}</span>

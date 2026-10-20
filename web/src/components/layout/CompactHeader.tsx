@@ -1,4 +1,4 @@
-import { createMemo, Show } from "solid-js";
+import { createMemo } from "solid-js";
 import {
   Command,
   PanelLeft,
@@ -14,9 +14,7 @@ import { t } from "../../i18n";
 import { isPlaceholderSessionTitle } from "../../store/session-title";
 import { resolveRootSessionID } from "../timeline/SubagentSessionBanner";
 import BranchManagerPopover from "./BranchManagerPopover";
-import DevPulsePopover from "./DevPulsePopover";
-import ThemeStylePopover from "./ThemeStylePopover";
-import UpdateBadge from "./UpdateBadge";
+import HeaderOverflowMenu from "./HeaderOverflowMenu";
 
 interface CompactHeaderProps {
   leftNavOpen: boolean;
@@ -94,16 +92,6 @@ export default function CompactHeader(props: CompactHeaderProps) {
       </div>
 
       <div class="flex shrink-0 items-center gap-1.5 text-[12px]">
-        <Show when={!workspace.connected}>
-          <div class="flex items-center gap-1.5 rounded-lg px-2 py-1 text-[var(--text-muted)]">
-            <span class="inline-block w-1.5 h-1.5 rounded-full bg-[var(--warn)] animate-pulse" />
-            <span class="text-[11.5px]">{t("common.connecting")}</span>
-          </div>
-        </Show>
-
-        <DevPulsePopover />
-        <UpdateBadge />
-
         <button
           class="hoxi-press inline-flex items-center justify-center w-7 h-7 rounded-lg text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer"
           style={{ "--wails-draggable": "no-drag" } as any}
@@ -114,7 +102,7 @@ export default function CompactHeader(props: CompactHeaderProps) {
           <Command size={15} />
         </button>
 
-        <ThemeStylePopover />
+        <HeaderOverflowMenu />
 
         <button
           class={`hoxi-press inline-flex items-center justify-center w-7 h-7 rounded-lg cursor-pointer ${

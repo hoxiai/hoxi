@@ -65,7 +65,7 @@ export default function FileTreeNodes(props: {
           class="w-4 h-4 shrink-0"
           classList={{ "text-[var(--text-muted)]": isDirectory() }}
         />
-        <span class="truncate font-mono text-[11.5px]" title={node.path}>
+        <span class="truncate font-mono text-[12px]" title={node.path}>
           {node.name || node.path.replace(/\/$/, "").split("/").pop()}
         </span>
       </button>

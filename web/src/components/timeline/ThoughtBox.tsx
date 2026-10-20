@@ -314,13 +314,13 @@ export default function ThoughtBox(props: { part: ReasoningPart; revealKey?: str
             />
           </span>
           <Show when={headerTitle()}>
-            <span class="truncate text-[12.5px] font-normal text-[var(--text-muted)] max-w-[540px] inline-flex items-center gap-1 min-w-0">
+            <span class="truncate text-[13px] font-normal text-[var(--text-muted)] max-w-[540px] inline-flex items-center gap-1 min-w-0">
               <span class="shrink-0">·</span>
               <TextReveal text={headerTitle()} truncate />
             </span>
           </Show>
           <Show when={!streaming() && durationSec() >= 0.05}>
-            <span class="shrink-0 font-mono text-[11.5px] tabular-nums text-[var(--text-faint)]">
+            <span class="shrink-0 font-mono text-[12px] tabular-nums text-[var(--text-faint)]">
               {durationSec().toFixed(1)}s
             </span>
           </Show>

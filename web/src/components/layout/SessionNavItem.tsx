@@ -160,12 +160,12 @@ export function SessionNavItem(props: SessionNavItemProps) {
           />
         </Show>
         <Show when={isPaused()}>
-          <span class="shrink-0 rounded border border-[var(--border-subtle)] bg-[var(--bg-hover)] px-1 py-0.5 text-[10px] font-medium leading-none text-[var(--text-muted)]">
+          <span class="shrink-0 rounded border border-[var(--border-subtle)] bg-[var(--bg-hover)] px-1 py-0.5 text-[11px] font-medium leading-none text-[var(--text-muted)]">
             {t("timeline.turnPaused")}
           </span>
         </Show>
         <span
-          class={`session-row-title truncate text-[14px] flex-1 leading-snug ${
+          class={`session-row-title truncate text-[15px] flex-1 leading-snug ${
             props.isArchived ? "text-[var(--text-muted)]" : ""
           }`}
           title={props.session.title || ""}
@@ -179,7 +179,7 @@ export function SessionNavItem(props: SessionNavItemProps) {
 
       {/* Static Badges (Branch, Queue, Time or Loading) shown when not hovered and not confirming delete */}
       <Show when={!confirmingDelete()}>
-        <div class="flex items-center gap-1.5 shrink-0 text-[11.5px] font-mono group-hover/row:opacity-0 group-hover/row:invisible group-focus-within/row:opacity-0 group-focus-within/row:invisible transition-opacity duration-120 ease-out">
+        <div class="flex items-center gap-1.5 shrink-0 text-[12px] font-mono group-hover/row:opacity-0 group-hover/row:invisible group-focus-within/row:opacity-0 group-focus-within/row:invisible transition-opacity duration-120 ease-out">
           <Show when={wt()?.isolated && wt()?.branch}>
             <span class="inline-flex items-center gap-0.5 text-[var(--text-faint)] truncate max-w-[68px]">
               <Show when={props.showBranchIcon}>
@@ -191,7 +191,7 @@ export function SessionNavItem(props: SessionNavItemProps) {
 
           <Show when={queuedCount() > 0}>
             <span
-              class="inline-flex items-center rounded px-1 py-0.2 text-[10px] font-medium bg-[var(--accent-surface)] text-[var(--accent-primary)] border border-[var(--accent-border)]/60 shrink-0"
+              class="inline-flex items-center rounded px-1 py-0.2 text-[11px] font-medium bg-[var(--accent-surface)] text-[var(--accent-primary)] border border-[var(--accent-border)]/60 shrink-0"
               title={t("timeline.queueCountBadge", { count: queuedCount() })}
             >
               +{queuedCount()}

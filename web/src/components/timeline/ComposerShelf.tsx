@@ -123,23 +123,17 @@ export default function ComposerShelf() {
         </div>
       </Show>
 
-      {/* Kilo RevertBanner: Checkpoint Time-Travel Status & Redo Bar */}
-      <div class="mb-2 space-y-2 empty:hidden">
-        <RevertBanner />
-      </div>
-
-      {/* Kilo Plan Follow-up Suggestion Bar */}
-      <PlanFollowupBar />
-
-      {/* Compact single-line Pill Shelf: Changed Files + Review Comments */}
+      {/* Single-line status shelf: revert, plan follow-up, changed files, review comments */}
       <div class="mb-2 flex items-center justify-center gap-2 flex-wrap empty:hidden">
+        <RevertBanner />
+        <PlanFollowupBar />
         <ChangedFilesSummary files={changedFiles()} variant="pill" />
 
         {/* Queued Inline Diff ReviewComments Pill + Upward Popover */}
         <Show when={reviewComments().length > 0}>
 
           <div ref={reviewContainerRef} class="relative inline-flex items-center">
-            <div class="inline-flex items-center gap-1.5 rounded-full border border-[var(--accent-border)] bg-[var(--accent-surface)]/45 px-2.5 py-1 text-[11.5px]">
+            <div class="inline-flex items-center gap-1.5 rounded-full border border-[var(--accent-border)] bg-[var(--accent-surface)]/45 px-2.5 py-1 text-[12px]">
               <button
                 type="button"
                 class="inline-flex items-center gap-1.5 text-left cursor-pointer"
@@ -163,7 +157,7 @@ export default function ComposerShelf() {
 
               <button
                 type="button"
-                class="text-[10.5px] text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer ml-1"
+                class="text-[11px] text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer ml-1"
                 onClick={() => {
                   const id = sessionID();
                   if (id) clearReviewComments(id);
@@ -178,7 +172,7 @@ export default function ComposerShelf() {
                 <div class="space-y-1 max-h-48 overflow-y-auto">
                   <For each={reviewComments()}>
                     {(item) => (
-                      <div class="flex items-center justify-between gap-2 rounded-lg bg-[var(--bg-panel)]/80 px-2.5 py-1.5 text-[11.5px]">
+                      <div class="flex items-center justify-between gap-2 rounded-lg bg-[var(--bg-panel)]/80 px-2.5 py-1.5 text-[12px]">
                         <div class="flex items-center gap-2 min-w-0 flex-1">
                           <button
                             type="button"

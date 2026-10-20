@@ -195,7 +195,7 @@ export function WorktreeVerifySection(props: {
               type="button"
               disabled={actionBusy() || state()?.setupStatus === "running"}
               onClick={() => void handleRetrySetup()}
-              class="shrink-0 inline-flex items-center gap-1 rounded-md bg-[var(--bg-panel)] px-1.5 py-0.5 text-[10.5px] font-medium text-[var(--text-primary)] hover:bg-[var(--bg-hover)] disabled:opacity-50 cursor-pointer"
+              class="shrink-0 inline-flex items-center gap-1 rounded-md bg-[var(--bg-panel)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--text-primary)] hover:bg-[var(--bg-hover)] disabled:opacity-50 cursor-pointer"
             >
               <RefreshCw size={10} />
               <span>{t("timeline.worktreeSetupRetry")}</span>
@@ -203,7 +203,7 @@ export function WorktreeVerifySection(props: {
           </div>
 
           <Show when={state()?.setupStatus === "failed" && (state()?.setupError || state()?.setupOutput)}>
-            <pre class="max-h-20 overflow-y-auto rounded bg-black/20 p-1.5 font-mono text-[10px] leading-snug whitespace-pre-wrap break-all">
+            <pre class="max-h-20 overflow-y-auto rounded bg-black/20 p-1.5 font-mono text-[11px] leading-snug whitespace-pre-wrap break-all">
               {(state()?.setupOutput || state()?.setupError || "").trim().slice(-400)}
             </pre>
           </Show>
@@ -217,7 +217,7 @@ export function WorktreeVerifySection(props: {
             {t("timeline.verifySectionTitle")}
           </span>
           <Show when={(state()?.allocatedPort ?? 0) > 0}>
-            <span class="rounded bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[9.5px] text-[var(--text-muted)]">
+            <span class="rounded bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[11px] text-[var(--text-muted)]">
               :{state()?.allocatedPort}
             </span>
           </Show>
@@ -260,7 +260,7 @@ export function WorktreeVerifySection(props: {
           disabled={actionBusy() || loading() || state()?.runStatus === "running"}
           onClick={() => void handleStartVerify("run")}
           title={runCmd() || state()?.runCommand || t("timeline.verifyConfigureTooltip")}
-          class="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] px-2.5 py-1.5 text-[11.5px] font-medium text-[var(--text-primary)] disabled:opacity-45 transition-colors cursor-pointer"
+          class="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] px-2.5 py-1.5 text-[12px] font-medium text-[var(--text-primary)] disabled:opacity-45 transition-colors cursor-pointer"
         >
           <Show
             when={!(state()?.runStatus === "running" && state()?.activeKind === "run")}
@@ -276,7 +276,7 @@ export function WorktreeVerifySection(props: {
           disabled={actionBusy() || loading() || state()?.runStatus === "running"}
           onClick={() => void handleStartVerify("test")}
           title={testCmd() || state()?.testCommand || t("timeline.verifyConfigureTooltip")}
-          class="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] px-2.5 py-1.5 text-[11.5px] font-medium text-[var(--text-primary)] disabled:opacity-45 transition-colors cursor-pointer"
+          class="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] px-2.5 py-1.5 text-[12px] font-medium text-[var(--text-primary)] disabled:opacity-45 transition-colors cursor-pointer"
         >
           <Show
             when={!(state()?.runStatus === "running" && state()?.activeKind === "test")}
@@ -293,7 +293,7 @@ export function WorktreeVerifySection(props: {
             disabled={actionBusy()}
             onClick={() => void handleStopVerify()}
             title={t("timeline.verifyStopBtn")}
-            class="shrink-0 inline-flex items-center gap-1 rounded-xl border border-[var(--danger-border)] bg-[var(--danger-surface)] px-2.5 py-1.5 text-[11.5px] font-medium text-[var(--danger-text)] hover:opacity-90 disabled:opacity-50 cursor-pointer"
+            class="shrink-0 inline-flex items-center gap-1 rounded-xl border border-[var(--danger-border)] bg-[var(--danger-surface)] px-2.5 py-1.5 text-[12px] font-medium text-[var(--danger-text)] hover:opacity-90 disabled:opacity-50 cursor-pointer"
           >
             <Square size={10} class="fill-current" />
             <span>{t("timeline.verifyStopBtn")}</span>
@@ -305,7 +305,7 @@ export function WorktreeVerifySection(props: {
       <Show when={configOpen()}>
         <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)]/50 p-2 space-y-1.5">
           <div>
-            <label class="block text-[10px] font-medium text-[var(--text-muted)] mb-0.5">
+            <label class="block text-[11px] font-medium text-[var(--text-muted)] mb-0.5">
               {t("timeline.verifyRunCommandLabel")}
             </label>
             <input
@@ -317,7 +317,7 @@ export function WorktreeVerifySection(props: {
             />
           </div>
           <div>
-            <label class="block text-[10px] font-medium text-[var(--text-muted)] mb-0.5">
+            <label class="block text-[11px] font-medium text-[var(--text-muted)] mb-0.5">
               {t("timeline.verifyTestCommandLabel")}
             </label>
             <input
@@ -350,13 +350,13 @@ export function WorktreeVerifySection(props: {
               openURLInInspector(url());
               props.onCloseMenu();
             }}
-            class="w-full flex items-center justify-between gap-2 rounded-xl border border-[var(--accent-border)] bg-[var(--accent-surface)]/70 hover:bg-[var(--accent-surface)] px-2.5 py-1.5 text-[11.5px] font-medium text-[var(--accent-text)] transition-colors cursor-pointer"
+            class="w-full flex items-center justify-between gap-2 rounded-xl border border-[var(--accent-border)] bg-[var(--accent-surface)]/70 hover:bg-[var(--accent-surface)] px-2.5 py-1.5 text-[12px] font-medium text-[var(--accent-text)] transition-colors cursor-pointer"
           >
             <span class="inline-flex items-center gap-1.5 min-w-0 truncate">
               <Globe size={12} class="shrink-0 text-[var(--accent-primary)]" />
               <span class="truncate">{t("timeline.verifyOpenPreview")}</span>
             </span>
-            <span class="font-mono text-[10.5px] opacity-80 truncate max-w-[140px]">
+            <span class="font-mono text-[11px] opacity-80 truncate max-w-[140px]">
               {url()}
             </span>
           </button>
@@ -364,7 +364,7 @@ export function WorktreeVerifySection(props: {
       </Show>
 
       <Show when={errMsg()}>
-        <div class="rounded-lg border border-[var(--danger-border)] bg-[var(--danger-surface)] px-2 py-1 text-[10.5px] text-[var(--danger-text)] break-words">
+        <div class="rounded-lg border border-[var(--danger-border)] bg-[var(--danger-surface)] px-2 py-1 text-[11px] text-[var(--danger-text)] break-words">
           {errMsg()}
         </div>
       </Show>
@@ -372,7 +372,7 @@ export function WorktreeVerifySection(props: {
       {/* 6. Live Process Output Tail */}
       <Show when={showOutput() && state()?.output}>
         <div class="rounded-xl border border-[var(--border-subtle)] bg-[#0b0d12] p-2 space-y-1">
-          <div class="flex items-center justify-between text-[10px] font-mono text-gray-400">
+          <div class="flex items-center justify-between text-[11px] font-mono text-gray-400">
             <span>
               {state()?.activeKind === "test"
                 ? t("timeline.verifyTestBtn")
@@ -390,7 +390,7 @@ export function WorktreeVerifySection(props: {
               {state()?.runStatus}
             </span>
           </div>
-          <pre class="max-h-28 overflow-y-auto font-mono text-[10px] leading-relaxed text-gray-200 whitespace-pre-wrap break-all selectable-text">
+          <pre class="max-h-28 overflow-y-auto font-mono text-[11px] leading-relaxed text-gray-200 whitespace-pre-wrap break-all selectable-text">
             {(state()?.output || "").trim().slice(-1500)}
           </pre>
         </div>

@@ -49,7 +49,7 @@ export function AssistantErrorCard(props: { info: MessageInfo }) {
 
   return (
     <Show when={props.info.error && !isUserAbortError(props.info)}>
-      <div class="my-2 rounded-xl border border-[var(--danger-border)] bg-[var(--danger-surface)] px-3.5 py-3 text-[12.5px] text-[var(--danger-text)]">
+      <div class="my-2 rounded-xl border border-[var(--danger-border)] bg-[var(--danger-surface)] px-3.5 py-3 text-[13px] text-[var(--danger-text)]">
         <div class="flex items-start gap-2.5">
           <Icon name="circle-ban-sign" size="small" class="mt-0.5 shrink-0" />
           <div class="min-w-0 flex-1 space-y-1.5">
@@ -68,7 +68,7 @@ export function AssistantErrorCard(props: { info: MessageInfo }) {
               </Show>
             </div>
 
-            <div class="font-mono text-[11.5px] leading-relaxed break-words opacity-95">
+            <div class="font-mono text-[12px] leading-relaxed break-words opacity-95">
               {errMessage()}
             </div>
 
@@ -204,7 +204,7 @@ export function SessionRetryCard(props: { status: Extract<SessionStatus, { type:
   const activeProviderID = () => workspace.selectedModel?.providerID || "";
 
   return (
-    <div class="my-2 flex items-start gap-2.5 rounded-xl border border-[var(--warn-border)] bg-[var(--warn-surface)] px-3.5 py-2.5 text-[12.5px] text-[var(--warn-text)]">
+    <div class="my-2 flex items-start gap-2.5 rounded-xl border border-[var(--warn-border)] bg-[var(--warn-surface)] px-3.5 py-2.5 text-[13px] text-[var(--warn-text)]">
       <Icon name="warning" size="small" class="mt-0.5 shrink-0" />
       <div class="min-w-0 flex-1 space-y-1">
         <div class="flex items-center gap-2 flex-wrap font-medium">
@@ -219,7 +219,7 @@ export function SessionRetryCard(props: { status: Extract<SessionStatus, { type:
           </Show>
         </div>
         <Show when={props.status.message}>
-          <div class="text-[11.5px] opacity-90 break-words font-mono">{props.status.message}</div>
+          <div class="text-[12px] opacity-90 break-words font-mono">{props.status.message}</div>
         </Show>
       </div>
     </div>

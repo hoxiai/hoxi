@@ -251,7 +251,7 @@ export default function ExternalHandoffModal() {
           {/* Single Compact Header & Filter Bar */}
           <div class="flex flex-wrap items-center justify-between gap-2.5 border-b border-[var(--border-subtle)] px-4 py-2.5">
             <div class="flex items-center gap-3 min-w-0">
-              <h2 class="text-[13.5px] font-semibold text-[var(--text-primary)] shrink-0">
+              <h2 class="text-[13px] font-semibold text-[var(--text-primary)] shrink-0">
                 {t("leftNav.handoffModalTitle")}
               </h2>
 
@@ -326,7 +326,7 @@ export default function ExternalHandoffModal() {
                 </button>
               </div>
 
-              <div class="flex w-44 items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-2.5 py-1 text-[11.5px]">
+              <div class="flex w-44 items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-2.5 py-1 text-[12px]">
                 <Search size={12} class="text-[var(--text-muted)] shrink-0" />
                 <input
                   type="text"
@@ -336,7 +336,7 @@ export default function ExternalHandoffModal() {
                   onKeyDown={(e) => {
                     if (e.key === "Enter") void loadSessionsAndStatus(query());
                   }}
-                  class="w-full bg-transparent text-[11.5px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none"
+                  class="w-full bg-transparent text-[12px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none"
                 />
               </div>
 
@@ -351,7 +351,7 @@ export default function ExternalHandoffModal() {
           </div>
 
           <Show when={errorMsg()}>
-            <div class="bg-[var(--danger-surface)] px-4 py-1.5 text-[11.5px] text-[var(--danger-text)]">
+            <div class="bg-[var(--danger-surface)] px-4 py-1.5 text-[12px] text-[var(--danger-text)]">
               {errorMsg()}
             </div>
           </Show>
@@ -390,17 +390,17 @@ export default function ExternalHandoffModal() {
                           }`}
                         >
                           <div class="flex items-center justify-between gap-2">
-                            <span class="text-[12.5px] font-medium text-[var(--text-primary)] truncate">
+                            <span class="text-[13px] font-medium text-[var(--text-primary)] truncate">
                               {item.title}
                             </span>
-                            <span class="text-[10px] font-mono text-[var(--text-faint)] shrink-0">
+                            <span class="text-[11px] font-mono text-[var(--text-faint)] shrink-0">
                               {formatTime(item.updatedAt)}
                             </span>
                           </div>
 
-                          <div class="mt-1 flex items-center gap-1.5 text-[10.5px] text-[var(--text-muted)] min-w-0">
+                          <div class="mt-1 flex items-center gap-1.5 text-[11px] text-[var(--text-muted)] min-w-0">
                             <span
-                              class={`shrink-0 rounded border px-1.5 py-0.2 text-[9.5px] font-medium ${handoffSourceBadgeClass(
+                              class={`shrink-0 rounded border px-1.5 py-0.2 text-[11px] font-medium ${handoffSourceBadgeClass(
                                 item.source
                               )}`}
                             >

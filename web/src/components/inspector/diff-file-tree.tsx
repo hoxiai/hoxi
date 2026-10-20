@@ -205,7 +205,7 @@ export function DiffStatusBadge(props: { status?: SnapshotFileDiff["status"] }) 
 
   return (
     <span
-      class={`shrink-0 inline-flex items-center justify-center rounded border px-1 py-0 text-[9.5px] font-mono font-semibold leading-4 ${cls()}`}
+      class={`shrink-0 inline-flex items-center justify-center rounded border px-1 py-0 text-[11px] font-mono font-semibold leading-4 ${cls()}`}
       title={label()}
     >
       {code()}
@@ -217,7 +217,7 @@ export function GeneratedFileBadge(props: { generated?: boolean }) {
   return (
     <Show when={props.generated}>
       <span
-        class="shrink-0 inline-flex items-center justify-center rounded border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-1 py-0 text-[9px] font-mono font-medium leading-4 text-[var(--text-muted)]"
+        class="shrink-0 inline-flex items-center justify-center rounded border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-1 py-0 text-[11px] font-mono font-medium leading-4 text-[var(--text-muted)]"
         title={t("inspector.diffs.generatedTooltip")}
       >
         {t("inspector.diffs.generatedBadge")}
@@ -334,7 +334,7 @@ export default function DiffFileTree(props: {
         <div class="flex items-center justify-between gap-2 px-2.5 py-1 border-b border-[var(--border-subtle)] bg-[var(--bg-inset)]">
           <div class="flex items-center gap-1.5 min-w-0">
             <FolderTree size={13} class="text-[var(--accent-primary)] shrink-0" />
-            <span class="text-[11.5px] font-semibold text-[var(--text-primary)] truncate">
+            <span class="text-[12px] font-semibold text-[var(--text-primary)] truncate">
               {t("inspector.diffs.treeTitle")}
             </span>
           </div>
@@ -343,7 +343,7 @@ export default function DiffFileTree(props: {
             <button
               type="button"
               onClick={toggleAllFolders}
-              class="shrink-0 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10.5px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+              class="shrink-0 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
               title={
                 anyCollapsed()
                   ? t("inspector.diffs.expandAll")
@@ -398,20 +398,20 @@ export default function DiffFileTree(props: {
                         <FolderOpen size={13} class="text-[var(--accent-primary)] shrink-0" />
                       </Show>
                       <span
-                        class="font-mono text-[11.5px] font-medium text-[var(--text-secondary)] truncate"
+                        class="font-mono text-[12px] font-medium text-[var(--text-secondary)] truncate"
                         title={folderRow.id}
                       >
                         {folderRow.label}
                       </span>
                       <Show when={repoBranch()}>
                         {(br) => (
-                          <span class="shrink-0 inline-flex items-center gap-0.5 rounded bg-[var(--accent-surface)] px-1.5 py-0 text-[10px] font-mono text-[var(--accent-primary)] border border-[var(--accent-border)]">
+                          <span class="shrink-0 inline-flex items-center gap-0.5 rounded bg-[var(--accent-surface)] px-1.5 py-0 text-[11px] font-mono text-[var(--accent-primary)] border border-[var(--accent-border)]">
                             <GitBranch size={9} />
                             <span>{br()}</span>
                           </span>
                         )}
                       </Show>
-                      <span class="rounded-full bg-[var(--bg-panel)] px-1.5 py-0 text-[10px] font-mono text-[var(--text-muted)] border border-[var(--border-subtle)]">
+                      <span class="rounded-full bg-[var(--bg-panel)] px-1.5 py-0 text-[11px] font-mono text-[var(--text-muted)] border border-[var(--border-subtle)]">
                         {folderRow.fileCount}
                       </span>
                     </div>
@@ -458,7 +458,7 @@ export default function DiffFileTree(props: {
                       <DiffStatusBadge status={diff.status} />
                       <GeneratedFileBadge generated={diff.generatedLike} />
                       <Show when={noteCount() > 0}>
-                        <span class="inline-flex items-center gap-0.5 rounded bg-[var(--accent-surface)] px-1 py-0 text-[10px] font-mono text-[var(--accent-primary)]">
+                        <span class="inline-flex items-center gap-0.5 rounded bg-[var(--accent-surface)] px-1 py-0 text-[11px] font-mono text-[var(--accent-primary)]">
                           <MessageSquareText size={10} />
                           {noteCount()}
                         </span>

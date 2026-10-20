@@ -387,14 +387,14 @@ export default function CommandPalette(props: CommandPaletteProps) {
                   ? t("commandPalette.placeholderFiles")
                   : t("commandPalette.placeholderActions")
               }
-              class="min-w-0 flex-1 bg-transparent text-[14px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-faint)]"
+              class="min-w-0 flex-1 bg-transparent text-[15px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-faint)]"
               autocomplete="off"
               spellcheck={false}
             />
             <Show when={searching()}>
               <span class="text-[11px] text-[var(--text-muted)]">{t("common.loading")}</span>
             </Show>
-            <kbd class="shrink-0 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-faint)]">
+            <kbd class="shrink-0 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[11px] text-[var(--text-faint)]">
               Esc
             </kbd>
           </div>
@@ -414,7 +414,7 @@ export default function CommandPalette(props: CommandPaletteProps) {
                 {(item, index) => (
                   <>
                     <Show when={index() === 0 || visibleItems()[index() - 1]?.group !== item.group}>
-                      <div class="px-2.5 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--text-faint)]">
+                      <div class="px-2.5 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--text-faint)]">
                         {groupLabel(item.group)}
                       </div>
                     </Show>
@@ -436,15 +436,15 @@ export default function CommandPalette(props: CommandPaletteProps) {
                         class={selectedIndex() === index() ? "shrink-0 text-[var(--accent-primary)]" : "shrink-0 text-[var(--text-muted)]"}
                       />
                       <span class="min-w-0 flex-1">
-                        <span class="block truncate text-[12.5px] font-medium">{item.label}</span>
+                        <span class="block truncate text-[13px] font-medium">{item.label}</span>
                         <Show when={item.detail}>
-                          <span class="block truncate font-mono text-[10.5px] text-[var(--text-faint)]">
+                          <span class="block truncate font-mono text-[11px] text-[var(--text-faint)]">
                             {item.detail}
                           </span>
                         </Show>
                       </span>
                       <Show when={item.shortcut}>
-                        <kbd class="shrink-0 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-faint)]">
+                        <kbd class="shrink-0 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[11px] text-[var(--text-faint)]">
                           {item.shortcut}
                         </kbd>
                       </Show>
@@ -458,7 +458,7 @@ export default function CommandPalette(props: CommandPaletteProps) {
             </Show>
           </div>
 
-          <div class="flex items-center gap-3 border-t border-[var(--border-subtle)] px-3 py-2 text-[10.5px] text-[var(--text-faint)]">
+          <div class="flex items-center gap-3 border-t border-[var(--border-subtle)] px-3 py-2 text-[11px] text-[var(--text-faint)]">
             <span>{t("commandPalette.hintNavigate")}</span>
             <span>{t("commandPalette.hintSelect")}</span>
             <span>{t("commandPalette.hintClose")}</span>

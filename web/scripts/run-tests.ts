@@ -40,6 +40,7 @@ import "../src/__tests__/session-goal.test";
 import "../src/__tests__/skills.test";
 import "../src/__tests__/context-mentions.test";
 import "../src/__tests__/session-capabilities.test";
+import "../src/__tests__/turn-window.test";
 
 console.log("[test] Running Hoxi frontend unit tests...");
 runAllTests().then((failed) => {

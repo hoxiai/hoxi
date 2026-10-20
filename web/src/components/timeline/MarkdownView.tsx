@@ -493,7 +493,7 @@ export default function MarkdownView(props: { content: string }) {
                     <Show when={bq().alert}>
                       <div class="mb-1 flex items-center gap-1.5">
                         <span
-                          class={`inline-flex items-center rounded px-1.5 py-0.5 font-mono text-[10px] font-semibold tracking-wider ${st().badgeBg}`}
+                          class={`inline-flex items-center rounded px-1.5 py-0.5 font-mono text-[11px] font-semibold tracking-wider ${st().badgeBg}`}
                         >
                           {st().label}
                         </span>

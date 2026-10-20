@@ -273,7 +273,7 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
                     </span>
                     <Show when={headerDescription().label}>
                       <span
-                        class="text-[12.5px] text-[var(--text-muted)] truncate"
+                        class="text-[13px] text-[var(--text-muted)] truncate"
                         title={headerDescription().full}
                       >
                         {headerDescription().label}
@@ -285,14 +285,14 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
                       </span>
                     </Show>
                     <Show when={todoItems().length > 0}>
-                      <span class="font-mono text-[11.5px] text-[var(--text-faint)]">
+                      <span class="font-mono text-[12px] text-[var(--text-faint)]">
                         {todoItems().filter((t) => t.status === "completed").length}/
                         {todoItems().length}
                       </span>
                     </Show>
                     <For each={toolArgPills()}>
                       {(pill) => (
-                        <span class="hidden sm:inline-block font-mono text-[11.5px] text-[var(--text-faint)] truncate max-w-[240px]">
+                        <span class="hidden sm:inline-block font-mono text-[12px] text-[var(--text-faint)] truncate max-w-[240px]">
                           {pill}
                         </span>
                       )}
@@ -302,7 +302,7 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
               >
                 {(file) => (
                   <div class="flex items-center gap-1.5 min-w-0 flex-1">
-                    <span class="text-[12.5px] font-medium text-[var(--text-secondary)] shrink-0">
+                    <span class="text-[13px] font-medium text-[var(--text-secondary)] shrink-0">
                       <TextShimmer
                         text={formatToolDisplayName(props.part.tool, props.part)}
                         active={isRunning()}
@@ -317,24 +317,24 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
                           ? openChangedFileInInspector(fileDiff() ?? file())
                           : openFileInInspector(file());
                       }}
-                      class="font-mono text-[12.5px] font-medium text-[var(--text-primary)] hover:text-[var(--accent-primary)] hover:underline truncate cursor-pointer"
+                      class="font-mono text-[13px] font-medium text-[var(--text-primary)] hover:text-[var(--accent-primary)] hover:underline truncate cursor-pointer"
                       title={file()}
                     >
                       {getFilename(file())}
                     </button>
                     <Show when={getDirectory(file())}>
-                      <span class="hidden md:inline truncate font-mono text-[11.5px] text-[var(--text-faint)]">
+                      <span class="hidden md:inline truncate font-mono text-[12px] text-[var(--text-faint)]">
                         {getDirectory(file())}/
                       </span>
                     </Show>
                     <Show when={extraTargetFiles().length > 0}>
-                      <span class="rounded bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[10.5px] font-medium text-[var(--text-muted)] shrink-0">
+                      <span class="rounded bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[11px] font-medium text-[var(--text-muted)] shrink-0">
                         +{extraTargetFiles().length}
                       </span>
                     </Show>
                     <For each={toolArgPills()}>
                       {(pill) => (
-                        <span class="hidden sm:inline-block font-mono text-[11.5px] text-[var(--text-faint)] truncate max-w-[200px]">
+                        <span class="hidden sm:inline-block font-mono text-[12px] text-[var(--text-faint)] truncate max-w-[200px]">
                           {pill}
                         </span>
                       )}
@@ -354,7 +354,7 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
             </Show>
 
             <Show when={isTask() && subagentTelemetry().stepCount > 0}>
-              <span class="rounded bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[10.5px] text-[var(--text-muted)]">
+              <span class="rounded bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[11px] text-[var(--text-muted)]">
                 {t("timeline.stepsCompleted", { count: subagentTelemetry().stepCount })}
               </span>
             </Show>
@@ -375,7 +375,7 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
                     });
                   }}
                   title={t("timeline.resumeSubagentTooltip")}
-                  class="inline-flex items-center gap-1 rounded-md border border-[var(--accent-border)] bg-[var(--accent-surface)] px-2 py-0.5 text-[11.5px] font-medium text-[var(--accent-primary)] hover:opacity-90 transition-opacity cursor-pointer"
+                  class="inline-flex items-center gap-1 rounded-md border border-[var(--accent-border)] bg-[var(--accent-surface)] px-2 py-0.5 text-[12px] font-medium text-[var(--accent-primary)] hover:opacity-90 transition-opacity cursor-pointer"
                 >
                   <RotateCcw size={11} />
                   <span>{t("timeline.resumeSubagentBtn")}</span>
@@ -417,7 +417,7 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
             </Show>
 
             <Show when={elapsed() >= 0.05}>
-              <span class="font-mono text-[11.5px] text-[var(--text-faint)] tabular-nums">
+              <span class="font-mono text-[12px] text-[var(--text-faint)] tabular-nums">
                 {elapsed().toFixed(1)}s
               </span>
             </Show>
@@ -535,7 +535,7 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
                     <Icon name="enter" size="small" class="text-[var(--text-faint)]" />
                     <span>{t("toolCard.loaded")}</span>
                     <FileIcon node={{ path: filePath, type: "file" }} class="w-3.5 h-3.5 shrink-0" />
-                    <span class="font-mono text-[11.5px] hover:underline truncate max-w-[360px]">
+                    <span class="font-mono text-[12px] hover:underline truncate max-w-[360px]">
                       {filePath}
                     </span>
                   </button>

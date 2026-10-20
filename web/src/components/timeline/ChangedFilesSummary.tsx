@@ -7,10 +7,11 @@ import {
   onCleanup,
   Show,
 } from "solid-js";
-import { ChevronDown, ChevronUp } from "lucide-solid";
+import { ChevronDown, ChevronUp, GitCommitHorizontal, LoaderCircle } from "lucide-solid";
 import type { SnapshotFileDiff } from "../../services/sse-types";
 import { t } from "../../i18n";
 import { openDiffInInspector } from "../../store/workspace";
+import { executeTaskCommitAndPush } from "../../store/git-commit";
 import { DiffChanges, FileIcon, Icon } from "../icons";
 import { getDirectory, getFilename } from "./tool-card-helpers";
 
@@ -29,11 +30,11 @@ function ChangedFileRow(props: {
       type="button"
       onClick={() => props.onSelect(props.diff)}
       title={props.diff.file}
-      class={`flex w-full items-center justify-between gap-4 text-left text-[12.5px] transition-colors cursor-pointer hover:bg-[var(--bg-hover)] ${
+      class={`flex w-full items-center justify-between gap-4 text-left text-[13px] transition-colors cursor-pointer hover:bg-[var(--bg-hover)] ${
         props.compact ? "rounded-xl px-3 py-1.5" : "px-4 py-2"
       }`}
     >
-      <span class="min-w-0 flex-1 flex items-center gap-2 font-mono text-[12.5px]">
+      <span class="min-w-0 flex-1 flex items-center gap-2 font-mono text-[13px]">
         <FileIcon
           node={{ path: props.diff.file, type: "file" }}
           class="w-4 h-4 shrink-0"
@@ -58,9 +59,12 @@ export default function ChangedFilesSummary(props: {
   variant?: "card" | "pill";
   align?: "center" | "start";
   onUndo?: () => void;
+  commitSessionID?: string;
 }) {
   const [open, setOpen] = createSignal(false);
   const [expanded, setExpanded] = createSignal(false);
+  const [committing, setCommitting] = createSignal(false);
+  const [commitError, setCommitError] = createSignal("");
   const popoverID = createUniqueId();
   let containerRef: HTMLDivElement | undefined;
   let closeTimer: ReturnType<typeof setTimeout> | undefined;
@@ -120,6 +124,20 @@ export default function ChangedFilesSummary(props: {
     });
   });
 
+  const onQuickCommit = async () => {
+    const id = props.commitSessionID;
+    if (!id || committing()) return;
+    setCommitError("");
+    setCommitting(true);
+    try {
+      await executeTaskCommitAndPush(id, { push: false });
+    } catch (err: any) {
+      setCommitError(err?.message || String(err));
+    } finally {
+      setCommitting(false);
+    }
+  };
+
   return (
     <Show when={props.files.length > 0}>
       <Show
@@ -168,6 +186,26 @@ export default function ChangedFilesSummary(props: {
                   </button>
                 </Show>
 
+                <Show when={props.commitSessionID}>
+                  <button
+                    type="button"
+                    disabled={committing()}
+                    onClick={() => void onQuickCommit()}
+                    title={t("timeline.gitAgentCommitHint")}
+                    class="inline-flex items-center gap-1 rounded-full border border-[var(--accent-border)] bg-[var(--accent-surface)] px-3 py-1 text-[12px] font-medium text-[var(--accent-text)] hover:border-[var(--accent-primary)] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-wait"
+                  >
+                    <Show
+                      when={!committing()}
+                      fallback={<LoaderCircle size={12} class="animate-spin" />}
+                    >
+                      <GitCommitHorizontal size={12} />
+                    </Show>
+                    <span>
+                      {committing() ? t("timeline.gitCommittingOnly") : t("timeline.gitQuickCommit")}
+                    </span>
+                  </button>
+                </Show>
+
                 <button
                   type="button"
                   onClick={() => {
@@ -179,6 +217,12 @@ export default function ChangedFilesSummary(props: {
                 </button>
               </div>
             </div>
+
+            <Show when={commitError()}>
+              <div role="alert" class="border-t border-[var(--danger-border)] bg-[var(--danger-surface)] px-4 py-1.5 text-[11px] text-[var(--danger-text)] break-words">
+                {t("timeline.gitCommitFailed", { error: commitError() })}
+              </div>
+            </Show>
 
             {/* One-file-per-row list */}
             <div class="border-t border-[var(--border-subtle)] divide-y divide-[var(--border-subtle)]/60">

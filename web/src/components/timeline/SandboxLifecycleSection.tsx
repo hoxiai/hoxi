@@ -133,7 +133,7 @@ export default function SandboxLifecycleSection(props: {
   return (
     <Show when={isolated()}>
       <div class="mt-1.5 pt-1.5 border-t border-[var(--border-subtle)] space-y-1.5">
-        <div class="px-1 text-[10.5px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
+        <div class="px-1 text-[11px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
           {t("timeline.sandboxLifecycleTitle")}
         </div>
 
@@ -154,7 +154,7 @@ export default function SandboxLifecycleSection(props: {
           onClick={() => void onApplyAndExit()}
           class="w-full flex flex-col gap-0.5 rounded-xl border border-[var(--accent-border)] bg-[var(--accent-surface)] px-2.5 py-2 text-left hover:opacity-95 disabled:opacity-50 transition-opacity cursor-pointer"
         >
-          <div class="flex items-center gap-1.5 font-semibold text-[11.5px] text-[var(--accent-primary)]">
+          <div class="flex items-center gap-1.5 font-semibold text-[12px] text-[var(--accent-primary)]">
             <Show
               when={busyAction() !== "apply-exit"}
               fallback={<LoaderCircle size={12} class="animate-spin" />}
@@ -163,7 +163,7 @@ export default function SandboxLifecycleSection(props: {
             </Show>
             <span>{t("timeline.sandboxApplyExitBtn")}</span>
           </div>
-          <span class="text-[10.5px] text-[var(--text-muted)] leading-snug">
+          <span class="text-[11px] text-[var(--text-muted)] leading-snug">
             {t("timeline.sandboxApplyExitDesc")}
           </span>
         </button>
@@ -172,7 +172,7 @@ export default function SandboxLifecycleSection(props: {
           type="button"
           disabled={!!busyAction() || props.busy}
           onClick={() => void onApplyKeepSandbox()}
-          class="w-full flex items-center gap-2 rounded-xl px-2.5 py-1.5 text-[11.5px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] disabled:opacity-50 transition-colors cursor-pointer"
+          class="w-full flex items-center gap-2 rounded-xl px-2.5 py-1.5 text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] disabled:opacity-50 transition-colors cursor-pointer"
         >
           <FolderGit2 size={12} class="shrink-0 text-[var(--text-muted)]" />
           <span>{t("timeline.sandboxApplyKeepBtn")}</span>
@@ -183,7 +183,7 @@ export default function SandboxLifecycleSection(props: {
             type="button"
             disabled={!!busyAction() || props.busy}
             onClick={() => void onSyncSandboxWithBase()}
-            class="w-full flex items-center gap-2 rounded-xl px-2.5 py-1.5 text-[11.5px] text-[var(--accent-primary)] hover:bg-[var(--accent-surface)] disabled:opacity-50 transition-colors cursor-pointer"
+            class="w-full flex items-center gap-2 rounded-xl px-2.5 py-1.5 text-[12px] text-[var(--accent-primary)] hover:bg-[var(--accent-surface)] disabled:opacity-50 transition-colors cursor-pointer"
           >
             <GitPullRequestArrow size={12} class="shrink-0" />
             <span>
@@ -196,7 +196,7 @@ export default function SandboxLifecycleSection(props: {
         </Show>
 
         <div class="px-1 pt-1 flex flex-col gap-1.5">
-          <span class="text-[10.5px] font-medium text-[var(--text-muted)]">
+          <span class="text-[11px] font-medium text-[var(--text-muted)]">
             {t("timeline.sandboxRenameLabel")}
           </span>
           <div class="flex items-center gap-1.5">
@@ -211,7 +211,7 @@ export default function SandboxLifecycleSection(props: {
                   void onRenameSandboxBranch();
                 }
               }}
-              class="flex-1 min-w-0 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-2 py-1 text-[11.5px] font-mono text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none focus:border-[var(--accent-border)]"
+              class="flex-1 min-w-0 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-2 py-1 text-[12px] font-mono text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none focus:border-[var(--accent-border)]"
             />
             <button
               type="button"
@@ -236,7 +236,7 @@ export default function SandboxLifecycleSection(props: {
               type="button"
               disabled={!!busyAction() || props.busy}
               onClick={() => void onExitSandbox(true)}
-              class="w-full flex items-center gap-2 rounded-xl px-2.5 py-1.5 text-[11.5px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] disabled:opacity-50 transition-colors cursor-pointer"
+              class="w-full flex items-center gap-2 rounded-xl px-2.5 py-1.5 text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] disabled:opacity-50 transition-colors cursor-pointer"
             >
               <GitBranch size={12} class="shrink-0 text-[var(--accent-primary)]" />
               <span>{t("timeline.sandboxKeepExitBtn")}</span>
@@ -246,7 +246,7 @@ export default function SandboxLifecycleSection(props: {
             type="button"
             disabled={!!busyAction() || props.busy}
             onClick={() => void onExitSandbox(false)}
-            class="w-full flex items-center gap-2 rounded-xl px-2.5 py-1.5 text-[11.5px] text-[var(--danger-text)] hover:bg-[var(--danger-surface)] disabled:opacity-50 transition-colors cursor-pointer"
+            class="w-full flex items-center gap-2 rounded-xl px-2.5 py-1.5 text-[12px] text-[var(--danger-text)] hover:bg-[var(--danger-surface)] disabled:opacity-50 transition-colors cursor-pointer"
           >
             <Show
               when={busyAction() !== "discard-exit"}

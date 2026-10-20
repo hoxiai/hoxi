@@ -231,7 +231,7 @@ export default function TaskProgressCard() {
       <div ref={containerRef} class="relative inline-flex items-center">
         {/* Compact Pill Trigger */}
         <div
-          class={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11.5px] transition-colors ${
+          class={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[12px] transition-colors ${
             expanded()
               ? "border-[var(--accent-border)] bg-[var(--accent-surface)]/70 text-[var(--text-primary)]"
               : "border-[var(--border-subtle)] bg-[var(--bg-inset)]/90 text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]"
@@ -308,7 +308,7 @@ export default function TaskProgressCard() {
         {/* Upward Floating Popover */}
         <Show when={expanded()}>
           <div class="absolute left-1/2 -translate-x-1/2 bottom-[calc(100%+6px)] z-40 w-[min(560px,calc(100vw-32px))] rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/98 backdrop-blur-xl p-3 shadow-2xl animate-in fade-in zoom-in-95 duration-150">
-            <div class="flex items-center justify-between gap-2 text-[11.5px]">
+            <div class="flex items-center justify-between gap-2 text-[12px]">
               <div class="flex items-center gap-2 font-medium text-[var(--text-primary)]">
                 <ListTodo size={13} class="text-[var(--accent-primary)]" />
                 <span>
@@ -318,7 +318,7 @@ export default function TaskProgressCard() {
                   })}
                 </span>
                 <Show when={cycleSteps().length > 0}>
-                  <span class="rounded bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-muted)]">
+                  <span class="rounded bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[11px] text-[var(--text-muted)]">
                     {t("timeline.stepsCompleted", { count: cycleSteps().length })}
                   </span>
                 </Show>
@@ -328,7 +328,7 @@ export default function TaskProgressCard() {
                   <button
                     type="button"
                     onClick={() => openDiffInInspector(changedFiles()[0], "session")}
-                    class="inline-flex items-center gap-1 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2 py-0.5 text-[10.5px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
+                    class="inline-flex items-center gap-1 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2 py-0.5 text-[11px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
                   >
                     <span>{t("timeline.filesAttached", { count: changedFiles().length })}</span>
                   </button>

@@ -21,7 +21,7 @@ export function ObserverAuditBadge(props: { sessionID: string }) {
     <Show
       when={!auditing()}
       fallback={
-        <span class="inline-flex items-center gap-1 rounded-full border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-2 py-0.5 text-[10.5px] font-medium text-[var(--text-secondary)]">
+        <span class="inline-flex items-center gap-1 rounded-full border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-2 py-0.5 text-[11px] font-medium text-[var(--text-secondary)]">
           <LoaderCircle size={11} class="animate-spin text-[var(--accent-primary)]" />
           <span>{t("timeline.auditRunningBadge")}</span>
         </span>
@@ -36,7 +36,7 @@ export function ObserverAuditBadge(props: { sessionID: string }) {
               title={`${res().summary} (${t("inspector.diffs.auditObserverBy", {
                 observer: `${res().observerProvider}/${res().observerModel}`,
               })})`}
-              class={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10.5px] font-medium cursor-pointer transition-opacity hover:opacity-90 ${
+              class={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium cursor-pointer transition-opacity hover:opacity-90 ${
                 res().pass
                   ? "border-[var(--ok-border)] bg-[var(--ok-surface)] text-[var(--ok-text)]"
                   : "border-[var(--danger-border)] bg-[var(--danger-surface)] text-[var(--danger-text)]"
@@ -59,7 +59,7 @@ export function ObserverAuditBadge(props: { sessionID: string }) {
               <button
                 type="button"
                 onClick={() => void applyAuditFeedbackToSession(props.sessionID)}
-                class="inline-flex items-center gap-1 rounded-full border border-[var(--accent-border)] bg-[var(--accent-surface)] px-2 py-0.5 text-[10.5px] font-semibold text-[var(--accent-primary)] hover:opacity-90 cursor-pointer"
+                class="inline-flex items-center gap-1 rounded-full border border-[var(--accent-border)] bg-[var(--accent-surface)] px-2 py-0.5 text-[11px] font-semibold text-[var(--accent-primary)] hover:opacity-90 cursor-pointer"
               >
                 <Wrench size={10} />
                 <span>{t("timeline.auditFixWithFeedbackBtn")}</span>
@@ -104,7 +104,7 @@ export default function ObserverAuditBanner(props: { sessionID: string }) {
             </span>
           </summary>
           <div class="border-t border-current/10 pt-2">
-            <span class="font-mono text-[10px] opacity-80">
+            <span class="font-mono text-[11px] opacity-80">
               {t("inspector.diffs.auditObserverBy", {
                 observer: `${res().observerProvider}/${res().observerModel}`,
               })}

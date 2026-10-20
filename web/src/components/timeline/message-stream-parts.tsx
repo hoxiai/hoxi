@@ -208,7 +208,7 @@ export function UserTextPartView(props: {
           <button
             type="button"
             onClick={toggleExpanded}
-            class="mt-1 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11.5px] font-medium text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer select-none"
+            class="mt-1 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[12px] font-medium text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer select-none"
           >
             <Icon
               name="chevron-down"
@@ -269,6 +269,17 @@ export function AssistantTurnFooter(props: {
   const isLatestTurn = createMemo(() => {
     if (!props.turns || typeof props.turnIndex !== "number") return true;
     return props.turnIndex === props.turns.length - 1;
+  });
+
+  // Commit actions belong to the current exchange only; historical cards keep
+  // their revert/view buttons but must not offer to commit today's tree.
+  const isLatestExchange = createMemo(() => {
+    if (!props.turns || typeof props.turnIndex !== "number") return true;
+    let lastUserIndex = -1;
+    props.turns.forEach((turn, index) => {
+      if (turn.info.role === "user") lastUserIndex = index;
+    });
+    return props.turnIndex > lastUserIndex;
   });
 
   const interruptMode = createMemo<"paused" | "stopped" | null>(() => {
@@ -482,6 +493,7 @@ export function AssistantTurnFooter(props: {
           <div class="mt-4 space-y-2 select-none">
             <ChangedFilesSummary
               files={summary().changedFiles}
+              commitSessionID={isLatestExchange() ? props.info.sessionID : undefined}
               onUndo={
                 canRevertSession(props.info.sessionID)
                   ? () => void revertToHere(props.info.sessionID, summary().revertMessageID)
@@ -489,7 +501,7 @@ export function AssistantTurnFooter(props: {
               }
             />
 
-            <div class="flex items-center gap-2 flex-wrap text-[11.5px] text-[var(--text-faint)]">
+            <div class="flex items-center gap-2 flex-wrap text-[12px] text-[var(--text-faint)]">
 
               <Show when={summary().finalText.length > 0}>
                 <ActionIconButton
@@ -533,7 +545,7 @@ export function AssistantTurnFooter(props: {
                         : "text-[var(--danger-text)]"
                     }`}
                   >
-                    <span class="font-mono text-[10px] leading-none">
+                    <span class="font-mono text-[11px] leading-none">
                       {mode() === "paused" ? "⏸" : "■"}
                     </span>
                     <span>
@@ -571,7 +583,7 @@ export function AssistantTurnFooter(props: {
                   title={t("timeline.resumeTooltip")}
                   class="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[12px] font-medium text-[var(--accent-primary)] hover:bg-[var(--accent-surface)] disabled:opacity-50 transition-colors cursor-pointer"
                 >
-                  <span class="text-[10px] leading-none">▶</span>
+                  <span class="text-[11px] leading-none">▶</span>
                   <span>{t("timeline.resume")}</span>
                 </button>
 
@@ -654,7 +666,7 @@ export function LiveExecutionControlBar(props: {
                 : "text-[var(--danger-text)]"
             }`}
           >
-            <span class="font-mono text-[10px] leading-none">
+            <span class="font-mono text-[11px] leading-none">
               {interruptedMode() === "paused" ? "⏸" : "■"}
             </span>
             <span>
@@ -671,7 +683,7 @@ export function LiveExecutionControlBar(props: {
             title={t("timeline.resumeTooltip")}
             class="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[12px] font-medium text-[var(--accent-primary)] hover:bg-[var(--accent-surface)] disabled:opacity-50 transition-colors cursor-pointer"
           >
-            <span class="text-[10px] leading-none">▶</span>
+            <span class="text-[11px] leading-none">▶</span>
             <span>{t("timeline.resume")}</span>
           </button>
 

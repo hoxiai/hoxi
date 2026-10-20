@@ -114,7 +114,7 @@ export default function ApprovalModePill() {
         type="button"
         onClick={() => setOpen((v) => !v)}
         class={`inline-flex items-center rounded-lg transition-colors cursor-pointer ${
-          isDefaultAuto() ? "p-1.5" : "gap-1 px-2 py-1 text-[11.5px] font-medium"
+          isDefaultAuto() ? "p-1.5" : "gap-1 px-2 py-1 text-[12px] font-medium"
         } ${
           open()
             ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]"
@@ -158,10 +158,10 @@ export default function ApprovalModePill() {
           class="hoxi-popover absolute bottom-full right-0 mb-2 w-[296px] rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-1.5 z-50"
         >
           <div class="px-2.5 py-1.5 flex items-center justify-between border-b border-[var(--border-subtle)] mb-1">
-            <span class="text-[10.5px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
+            <span class="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
               {t("approval.modeMenuTitle")}
             </span>
-            <span class="rounded-md bg-[var(--warn-surface)] border border-[var(--warn-border)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--warn-text)]">
+            <span class="rounded-md bg-[var(--warn-surface)] border border-[var(--warn-border)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--warn-text)]">
               {t("approval.modeMenuBadge")}
             </span>
           </div>
@@ -206,7 +206,7 @@ export default function ApprovalModePill() {
                           {t(opt.labelKey)}
                         </span>
                         <Show when={opt.badgeKey}>
-                          <span class="rounded px-1.5 py-[1px] text-[9.5px] font-medium bg-[var(--ok-surface)] text-[var(--ok-text)] border border-[var(--ok-border)]">
+                          <span class="rounded px-1.5 py-[1px] text-[11px] font-medium bg-[var(--ok-surface)] text-[var(--ok-text)] border border-[var(--ok-border)]">
                             {t(opt.badgeKey!)}
                           </span>
                         </Show>
@@ -235,7 +235,7 @@ export default function ApprovalModePill() {
                 setOpen(false);
                 openProviderModal("policy");
               }}
-              class="w-full flex items-center gap-2 rounded-xl px-2.5 py-1.5 text-[11.5px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+              class="w-full flex items-center gap-2 rounded-xl px-2.5 py-1.5 text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
             >
               <SlidersHorizontal size={12} class="text-[var(--accent-primary)] shrink-0" />
               <span class="truncate">{t("approval.openPolicySettings")}</span>

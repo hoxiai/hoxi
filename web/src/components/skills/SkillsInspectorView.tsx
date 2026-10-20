@@ -241,7 +241,7 @@ export default function SkillsInspectorView() {
                   <div class="text-xs font-semibold text-[var(--text-primary)]">
                     {t("skills.unsupportedTitle", { runtime: skillsStore.runtime })}
                   </div>
-                  <p class="text-[11.5px] leading-relaxed text-[var(--text-muted)]">
+                  <p class="text-[12px] leading-relaxed text-[var(--text-muted)]">
                     {t("skills.unsupportedDesc")}
                   </p>
                 </div>
@@ -274,10 +274,10 @@ export default function SkillsInspectorView() {
                           {(group) => (
                             <div class="space-y-1.5">
                               <div class="flex items-center justify-between px-1">
-                                <span class="text-[10.5px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
+                                <span class="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
                                   {sourceLabel(group.source)}
                                 </span>
-                                <span class="text-[10px] font-mono text-[var(--text-faint)]">
+                                <span class="text-[11px] font-mono text-[var(--text-faint)]">
                                   {group.items.length}
                                 </span>
                               </div>
@@ -305,7 +305,7 @@ export default function SkillsInspectorView() {
                                                 /{item.name}
                                               </span>
                                               <span
-                                                class={`rounded border px-1.5 py-0.5 text-[9.5px] font-medium ${sourceBadgeClass(
+                                                class={`rounded border px-1.5 py-0.5 text-[11px] font-medium ${sourceBadgeClass(
                                                   item.source
                                                 )}`}
                                               >
@@ -313,12 +313,12 @@ export default function SkillsInspectorView() {
                                               </span>
                                             </div>
                                             <Show when={item.description}>
-                                              <p class="mt-1 line-clamp-2 text-[11.5px] leading-relaxed text-[var(--text-secondary)]">
+                                              <p class="mt-1 line-clamp-2 text-[12px] leading-relaxed text-[var(--text-secondary)]">
                                                 {item.description}
                                               </p>
                                             </Show>
                                             <Show when={item.sourceLabel}>
-                                              <div class="mt-1 truncate font-mono text-[10px] text-[var(--text-faint)]">
+                                              <div class="mt-1 truncate font-mono text-[11px] text-[var(--text-faint)]">
                                                 {item.sourceLabel}
                                               </div>
                                             </Show>
@@ -410,11 +410,11 @@ export default function SkillsInspectorView() {
                               <div class="flex items-start justify-between gap-2">
                                 <div class="min-w-0">
                                   <div class="flex items-center gap-1.5 flex-wrap">
-                                    <span class="font-mono text-sm font-semibold text-[var(--text-primary)]">
+                                    <span class="font-mono text-[13px] font-semibold text-[var(--text-primary)]">
                                       /{detail().name}
                                     </span>
                                     <span
-                                      class={`rounded border px-1.5 py-0.5 text-[10px] font-medium ${sourceBadgeClass(
+                                      class={`rounded border px-1.5 py-0.5 text-[11px] font-medium ${sourceBadgeClass(
                                         detail().source
                                       )}`}
                                     >
@@ -452,7 +452,7 @@ export default function SkillsInspectorView() {
                                   {detail().sourceLabel}
                                 </span>
                                 <Show when={detail().contentDigest}>
-                                  <span class="rounded bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-faint)]">
+                                  <span class="rounded bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[11px] text-[var(--text-faint)]">
                                     {t("skills.digestLabel")}: {detail().contentDigest!.slice(0, 8)}
                                   </span>
                                 </Show>
@@ -488,10 +488,10 @@ export default function SkillsInspectorView() {
                             </div>
 
                             <div class="space-y-1.5">
-                              <div class="px-1 text-[10.5px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
+                              <div class="px-1 text-[11px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
                                 {t("skills.sourcePathLabel")}
                               </div>
-                              <pre class="max-h-[420px] overflow-auto rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)] p-3 font-mono text-[11.5px] leading-relaxed text-[var(--text-primary)] whitespace-pre-wrap break-words selectable-text">
+                              <pre class="max-h-[420px] overflow-auto rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)] p-3 font-mono text-[12px] leading-relaxed text-[var(--text-primary)] whitespace-pre-wrap break-words selectable-text">
                                 {detail().content}
                               </pre>
                             </div>

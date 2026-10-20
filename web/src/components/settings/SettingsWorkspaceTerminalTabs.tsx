@@ -149,7 +149,7 @@ export function WorkspaceGitSettingsTab() {
               closeSettingsModal();
               openProviderModal("models");
             }}
-            class="inline-flex items-center gap-1.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] px-3 py-1 text-[12.5px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+            class="inline-flex items-center gap-1.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] px-3 py-1 text-[13px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
           >
             <SlidersHorizontal size={13} />
             {t("settings.configureObserverBtn")}
@@ -236,7 +236,7 @@ export function TerminalSafetySettingsTab() {
                 <button
                   type="button"
                   onClick={() => updateAppSetting("terminalFontSize", sz)}
-                  class={`rounded-lg px-3 py-1 font-mono text-[12.5px] font-medium transition-colors cursor-pointer ${
+                  class={`rounded-lg px-3 py-1 font-mono text-[13px] font-medium transition-colors cursor-pointer ${
                     appSettings.terminalFontSize === sz
                       ? "bg-[var(--bg-panel)] text-[var(--accent-primary)] shadow-2xs"
                       : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
@@ -271,7 +271,7 @@ export function TerminalSafetySettingsTab() {
               closeSettingsModal();
               openProviderModal("policy");
             }}
-            class="inline-flex items-center gap-1.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] px-3 py-1 text-[12.5px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+            class="inline-flex items-center gap-1.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] px-3 py-1 text-[13px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
           >
             <ShieldCheck size={13} class="text-[var(--accent-primary)]" />
             {t("settings.openFullPolicyModalBtn")}
@@ -319,7 +319,7 @@ export function TerminalSafetySettingsTab() {
       </SettingGroup>
 
       <Show when={permNote()}>
-        <div class="px-1 text-[11.5px] text-[var(--ok-text)]">{permNote()}</div>
+        <div class="px-1 text-[12px] text-[var(--ok-text)]">{permNote()}</div>
       </Show>
 
       {/* 3. Antigravity approval hook (agy headless PreToolUse gate) */}

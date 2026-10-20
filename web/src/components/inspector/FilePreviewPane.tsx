@@ -183,7 +183,7 @@ export default function FilePreviewPane(props: FilePreviewPaneProps) {
 
         <Show when={props.previewMeta?.outsideWorkspace}>
           <span
-            class="shrink-0 inline-flex items-center rounded bg-amber-500/15 px-1.5 py-0.5 text-[9.5px] font-mono font-medium text-amber-400 border border-amber-500/30"
+            class="shrink-0 inline-flex items-center rounded bg-amber-500/15 px-1.5 py-0.5 text-[11px] font-mono font-medium text-amber-400 border border-amber-500/30"
             title={`${t("inspector.files.externalTooltip")}: ${props.previewMeta?.resolvedPath || props.previewPath}`}
           >
             {t("inspector.files.externalBadge")}
@@ -192,7 +192,7 @@ export default function FilePreviewPane(props: FilePreviewPaneProps) {
 
         <Show when={props.activeDiff?.repo}>
           <span
-            class="shrink-0 inline-flex items-center gap-1 rounded bg-[var(--accent-surface)] px-1.5 py-0 text-[10px] font-mono text-[var(--accent-primary)] border border-[var(--accent-border)]"
+            class="shrink-0 inline-flex items-center gap-1 rounded bg-[var(--accent-surface)] px-1.5 py-0 text-[11px] font-mono text-[var(--accent-primary)] border border-[var(--accent-border)]"
             title={
               props.activeDiff!.branch
                 ? `${props.activeDiff!.repo} (${props.activeDiff!.branch})`
@@ -213,7 +213,7 @@ export default function FilePreviewPane(props: FilePreviewPaneProps) {
             <button
               type="button"
               onClick={() => props.onChangeViewMode("preview")}
-              class={`hoxi-press inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] cursor-pointer ${
+              class={`hoxi-press inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] cursor-pointer ${
                 props.viewMode === "preview"
                   ? "bg-[var(--accent-surface)] text-[var(--accent-primary)] font-medium"
                   : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
@@ -226,7 +226,7 @@ export default function FilePreviewPane(props: FilePreviewPaneProps) {
             <button
               type="button"
               onClick={() => props.onChangeViewMode("source")}
-              class={`hoxi-press inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] cursor-pointer ${
+              class={`hoxi-press inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] cursor-pointer ${
                 props.viewMode === "source"
                   ? "bg-[var(--accent-surface)] text-[var(--accent-primary)] font-medium"
                   : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
@@ -312,7 +312,7 @@ export default function FilePreviewPane(props: FilePreviewPaneProps) {
         </Show>
         <Show when={props.previewError}>
           <div class="px-4 py-5 space-y-3">
-            <div class="font-mono text-[11.5px] text-[var(--danger-text)] break-all">
+            <div class="font-mono text-[12px] text-[var(--danger-text)] break-all">
               {props.previewError}
             </div>
             <div class="flex items-center gap-2">
@@ -445,7 +445,7 @@ export default function FilePreviewPane(props: FilePreviewPaneProps) {
                     node={{ path: props.previewMeta?.resolvedPath || props.previewPath, type: "file" }}
                     class="w-10 h-10 opacity-80"
                   />
-                  <div class="text-[12.5px] font-medium text-[var(--text-primary)]">
+                  <div class="text-[13px] font-medium text-[var(--text-primary)]">
                     {t("inspector.files.binaryFileTitle")}
                   </div>
                   <div class="text-[11px] font-mono text-[var(--text-muted)]">
@@ -458,7 +458,7 @@ export default function FilePreviewPane(props: FilePreviewPaneProps) {
                     <button
                       type="button"
                       onClick={() => handleOpenExternal("reveal")}
-                      class="inline-flex items-center gap-1.5 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-3 py-1.5 text-[11.5px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
+                      class="inline-flex items-center gap-1.5 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-3 py-1.5 text-[12px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
                     >
                       <FolderOpen size={13} />
                       <span>{t("inspector.files.revealInFinder")}</span>
@@ -466,7 +466,7 @@ export default function FilePreviewPane(props: FilePreviewPaneProps) {
                     <button
                       type="button"
                       onClick={() => handleOpenExternal("open")}
-                      class="inline-flex items-center gap-1.5 rounded-md border border-[var(--accent-border)] bg-[var(--accent-surface)] px-3 py-1.5 text-[11.5px] font-medium text-[var(--accent-primary)] hover:opacity-90 cursor-pointer"
+                      class="inline-flex items-center gap-1.5 rounded-md border border-[var(--accent-border)] bg-[var(--accent-surface)] px-3 py-1.5 text-[12px] font-medium text-[var(--accent-primary)] hover:opacity-90 cursor-pointer"
                     >
                       <ExternalLink size={13} />
                       <span>{t("inspector.files.openInDefaultApp")}</span>
@@ -483,7 +483,7 @@ export default function FilePreviewPane(props: FilePreviewPaneProps) {
                 class="max-w-full max-h-[72vh] object-contain rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-2 shadow-sm"
               />
               <Show when={props.previewMeta?.size}>
-                <div class="mt-2 text-[10.5px] font-mono text-[var(--text-muted)]">
+                <div class="mt-2 text-[11px] font-mono text-[var(--text-muted)]">
                   {formatByteSize(props.previewMeta?.size)}
                   {props.previewMeta?.mimeType ? ` · ${props.previewMeta?.mimeType}` : ""}
                 </div>

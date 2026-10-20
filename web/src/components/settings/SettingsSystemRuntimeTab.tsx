@@ -93,7 +93,7 @@ export function SystemRuntimeSettingsTab() {
         }
       >
         <SettingRow label={t("settings.runtimeStatusLabel")}>
-          <span class="inline-flex items-center gap-2 text-[13.5px] font-medium text-[var(--text-primary)]">
+          <span class="inline-flex items-center gap-2 text-[13px] font-medium text-[var(--text-primary)]">
             <span
               class={`h-2.5 w-2.5 rounded-full ${
                 workspace.connected
@@ -118,7 +118,7 @@ export function SystemRuntimeSettingsTab() {
 
         <SettingRow label={t("settings.runtimeBinaryLabel")}>
           <span
-            class="max-w-[320px] truncate font-mono text-[12.5px] text-[var(--text-secondary)] selectable-text"
+            class="max-w-[320px] truncate font-mono text-[13px] text-[var(--text-secondary)] selectable-text"
             title={sysInfo()?.openCodeBinPath}
           >
             {sysInfo()?.openCodeBinPath || t("settings.runtimeNotDetected")}
@@ -127,7 +127,7 @@ export function SystemRuntimeSettingsTab() {
 
         <SettingRow label={t("settings.runtimeConfigPathLabel")}>
           <span
-            class="max-w-[320px] truncate font-mono text-[12.5px] text-[var(--text-secondary)] selectable-text"
+            class="max-w-[320px] truncate font-mono text-[13px] text-[var(--text-secondary)] selectable-text"
             title={sysInfo()?.userConfigPath}
           >
             {sysInfo()?.userConfigPath || "~/.hoxi/models.json"}
@@ -135,7 +135,7 @@ export function SystemRuntimeSettingsTab() {
         </SettingRow>
 
         <SettingRow label={t("settings.runtimePlatformLabel")}>
-          <span class="font-mono text-[12.5px] text-[var(--text-secondary)]">
+          <span class="font-mono text-[13px] text-[var(--text-secondary)]">
             {sysInfo()
               ? `${sysInfo()!.os}/${sysInfo()!.arch} (${sysInfo()!.goVersion})`
               : "—"}
@@ -255,7 +255,7 @@ export function SystemRuntimeSettingsTab() {
                 }
               >
                 <div class="flex items-center justify-between">
-                  <span class="text-[12.5px] font-semibold text-[var(--accent-text)]">
+                  <span class="text-[13px] font-semibold text-[var(--accent-text)]">
                     {t("settings.updaterNewVersionFound", {
                       version: `v${res().latestVersion}`,
                     })}
@@ -266,7 +266,7 @@ export function SystemRuntimeSettingsTab() {
                 </div>
 
                 <Show when={res().releaseNotes}>
-                  <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-3 text-[11.5px] leading-relaxed text-[var(--text-secondary)] max-h-[160px] overflow-y-auto whitespace-pre-wrap font-sans">
+                  <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-3 text-[12px] leading-relaxed text-[var(--text-secondary)] max-h-[160px] overflow-y-auto whitespace-pre-wrap font-sans">
                     <div class="font-medium text-[var(--text-primary)] mb-1">
                       {res().title || t("settings.updaterReleaseNotesTitle")}
                     </div>
@@ -281,7 +281,7 @@ export function SystemRuntimeSettingsTab() {
                       href={res().mirrors.cn}
                       target="_blank"
                       rel="noreferrer"
-                      class="inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] hover:opacity-90 px-3 py-1.5 text-[11.5px] font-semibold text-[var(--accent-foreground)] shadow-xs transition-opacity cursor-pointer"
+                      class="inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] hover:opacity-90 px-3 py-1.5 text-[12px] font-semibold text-[var(--accent-foreground)] shadow-xs transition-opacity cursor-pointer"
                     >
                       <Download size={13} />
                       <span>{t("settings.updaterDownloadFromGitCodeBtn")}</span>
@@ -292,7 +292,7 @@ export function SystemRuntimeSettingsTab() {
                       href={res().mirrors.global}
                       target="_blank"
                       rel="noreferrer"
-                      class="inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] hover:opacity-90 px-3 py-1.5 text-[11.5px] font-medium text-[var(--accent-foreground)] transition-opacity cursor-pointer"
+                      class="inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] hover:opacity-90 px-3 py-1.5 text-[12px] font-medium text-[var(--accent-foreground)] transition-opacity cursor-pointer"
                     >
                       <ExternalLink size={12} />
                       <span>{t("settings.updaterDownloadFromGitHubBtn")}</span>
@@ -303,7 +303,7 @@ export function SystemRuntimeSettingsTab() {
                       href={res().downloadUrl}
                       target="_blank"
                       rel="noreferrer"
-                      class="inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] px-3 py-1.5 text-[11.5px] font-medium text-[var(--accent-foreground)] transition-opacity hover:opacity-90 cursor-pointer"
+                      class="inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] px-3 py-1.5 text-[12px] font-medium text-[var(--accent-foreground)] transition-opacity hover:opacity-90 cursor-pointer"
                     >
                       <Download size={13} />
                       <span>{t("settings.updaterDownloadNowBtn")}</span>
@@ -316,7 +316,7 @@ export function SystemRuntimeSettingsTab() {
         </Show>
 
         <Show when={desktopUpdater.error}>
-          <div class="p-3 border-t border-[var(--border-subtle)]/70 text-[11.5px] text-rose-500">
+          <div class="p-3 border-t border-[var(--border-subtle)]/70 text-[12px] text-rose-500">
             {t("settings.updaterCheckFailed")} ({desktopUpdater.error})
           </div>
         </Show>

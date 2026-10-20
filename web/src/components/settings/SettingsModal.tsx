@@ -50,7 +50,7 @@ export function HelpTip(props: { text: string }) {
         size={15}
         class="text-[var(--text-faint)] hover:text-[var(--text-secondary)] transition-colors cursor-help"
       />
-      <span class="pointer-events-none invisible opacity-0 group-hover/tip:visible group-hover/tip:opacity-100 transition-all duration-150 absolute left-1/2 -translate-x-1/2 bottom-full mb-2.5 z-50 w-68 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-panel)] px-3.5 py-2.5 text-[12.5px] font-normal leading-relaxed text-[var(--text-secondary)] shadow-xl">
+      <span class="pointer-events-none invisible opacity-0 group-hover/tip:visible group-hover/tip:opacity-100 transition-all duration-150 absolute left-1/2 -translate-x-1/2 bottom-full mb-2.5 z-50 w-68 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-panel)] px-3.5 py-2.5 text-[13px] font-normal leading-relaxed text-[var(--text-secondary)] shadow-xl">
         {props.text}
       </span>
     </span>
@@ -100,7 +100,7 @@ export function SettingRow(props: {
         <Show when={IconComp}>
           <IconComp size={16} class="text-[var(--text-muted)] shrink-0" />
         </Show>
-        <span class="text-[14px] font-medium text-[var(--text-primary)] truncate">
+        <span class="text-[15px] font-medium text-[var(--text-primary)] truncate">
           {props.label}
         </span>
         <Show when={props.tip}>
@@ -288,17 +288,17 @@ export default function SettingsModal() {
               type="button"
               onClick={closeSettingsModal}
               style={{ "--wails-draggable": "no-drag" } as any}
-              class="hoxi-press inline-flex items-center gap-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] hover:border-[var(--border-strong)] px-3 py-1.5 text-[12.5px] font-medium text-[var(--text-primary)] shadow-2xs transition-colors cursor-pointer"
+              class="hoxi-press inline-flex items-center gap-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] hover:border-[var(--border-strong)] px-3 py-1.5 text-[13px] font-medium text-[var(--text-primary)] shadow-2xs transition-colors cursor-pointer"
             >
               <ArrowLeft size={14} class="text-[var(--text-secondary)]" />
               <span>{t("settings.backToWorkspace")}</span>
-              <kbd class="ml-0.5 rounded bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-muted)]">
+              <kbd class="ml-0.5 rounded bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[11px] text-[var(--text-muted)]">
                 Esc
               </kbd>
             </button>
           </div>
 
-          <div class="hidden sm:flex items-center gap-2 min-w-0 text-[12.5px]">
+          <div class="hidden sm:flex items-center gap-2 min-w-0 text-[13px]">
             <span class="truncate text-[var(--text-muted)]">
               {activeBreadcrumb().group}
             </span>
@@ -335,7 +335,7 @@ export default function SettingsModal() {
               <For each={navGroups}>
                 {(group) => (
                   <div class="flex sm:block items-center gap-1 sm:space-y-1">
-                    <div class="hidden sm:block px-3 pb-1 text-[10.5px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
+                    <div class="hidden sm:block px-3 pb-1 text-[11px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
                       {group.groupLabel()}
                     </div>
                     <For each={group.items}>
@@ -365,7 +365,7 @@ export default function SettingsModal() {
                               <span class="whitespace-nowrap sm:truncate">{item.label()}</span>
                             </span>
                             <Show when={badgeVal() > 0}>
-                              <span class="shrink-0 rounded-full bg-[var(--bg-inset)] px-2 py-0.5 font-mono text-[10.5px] text-[var(--text-secondary)]">
+                              <span class="shrink-0 rounded-full bg-[var(--bg-inset)] px-2 py-0.5 font-mono text-[11px] text-[var(--text-secondary)]">
                                 {badgeVal()}
                               </span>
                             </Show>

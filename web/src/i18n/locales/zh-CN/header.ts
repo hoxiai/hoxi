@@ -12,6 +12,8 @@ export const header: HeaderI18n = {
   modelsTooltip: "配置 AI 服务商、API 密钥与模型",
   themeLightTooltip: "切换至浅色模式",
   themeDarkTooltip: "切换至深色模式",
+  moreTooltip: "更多",
+  moreBack: "返回",
   appearanceTooltip: "主题与风格",
   appearanceTitle: "外观",
   appearanceLight: "浅色",

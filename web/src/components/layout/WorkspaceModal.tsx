@@ -333,7 +333,7 @@ export default function WorkspaceModal() {
                   <button
                     type="button"
                     onClick={() => void handleBrowseFolder()}
-                    class="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11.5px] font-medium text-[var(--accent-text)] hover:bg-[var(--accent-surface)] transition-colors"
+                    class="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[12px] font-medium text-[var(--accent-text)] hover:bg-[var(--accent-surface)] transition-colors"
                   >
                     <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                       <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
@@ -361,11 +361,11 @@ export default function WorkspaceModal() {
                             />
                             <div class="min-w-0 flex-1">
                               <div class="flex items-center gap-1.5">
-                                <span class="text-[12.5px] font-medium text-zinc-800 dark:text-zinc-200 truncate">
+                                <span class="text-[13px] font-medium text-zinc-800 dark:text-zinc-200 truncate">
                                   {folderBaseName(folder.path)}
                                 </span>
                                 <Show when={folder.isPrimary}>
-                                  <span class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-[var(--accent-surface)] text-[var(--accent-text)] shrink-0">
+                                  <span class="px-1.5 py-0.5 rounded text-[11px] font-semibold bg-[var(--accent-surface)] text-[var(--accent-text)] shrink-0">
                                     {t("leftNav.primaryBadge")}
                                   </span>
                                 </Show>
@@ -441,14 +441,14 @@ export default function WorkspaceModal() {
                 type="button"
                 onClick={closeWorkspaceModal}
                 disabled={saving()}
-                class="px-3.5 py-1.5 rounded-lg text-[12.5px] font-medium text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200/60 dark:hover:bg-zinc-800 transition-colors"
+                class="px-3.5 py-1.5 rounded-lg text-[13px] font-medium text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200/60 dark:hover:bg-zinc-800 transition-colors"
               >
                 {t("common.cancel")}
               </button>
               <button
                 type="submit"
                 disabled={folders().length === 0 || saving()}
-                class="px-4 py-1.5 rounded-lg text-[12.5px] font-medium bg-[var(--accent-primary)] hover:opacity-90 text-[var(--accent-foreground)] disabled:opacity-40 transition-opacity shadow-sm"
+                class="px-4 py-1.5 rounded-lg text-[13px] font-medium bg-[var(--accent-primary)] hover:opacity-90 text-[var(--accent-foreground)] disabled:opacity-40 transition-opacity shadow-sm"
               >
                 {saving()
                   ? t("leftNav.savingWorkspace")

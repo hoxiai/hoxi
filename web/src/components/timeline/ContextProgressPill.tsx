@@ -29,7 +29,7 @@ function formatTokenValue(n: number): string {
  * Displays a live circular SVG progress ring of context window utilization,
  * cache read/write breakdown, cumulative session cost, and 1-click 8-Dim Compaction.
  */
-export default function ContextProgressPill() {
+export default function ContextProgressPill(props: { minPercent?: number }) {
   const [open, setOpen] = createSignal(false);
   const [compacting, setCompacting] = createSignal(false);
   const [notice, setNotice] = createSignal("");
@@ -97,6 +97,13 @@ export default function ContextProgressPill() {
     };
   });
 
+  const visibleStats = createMemo(() => {
+    const current = stats();
+    if (!current) return null;
+    const threshold = props.minPercent ?? 70;
+    return current.percent >= threshold || open() ? current : null;
+  });
+
   const usageColor = createMemo(() => {
     const p = stats()?.percent ?? 0;
     if (p >= 85) return "var(--status-danger)";
@@ -142,7 +149,7 @@ export default function ContextProgressPill() {
   const circumference = 2 * Math.PI * radius;
 
   return (
-    <Show when={stats()}>
+    <Show when={visibleStats()}>
       {(s) => (
         <div ref={containerRef} class="relative inline-flex items-center">
           <button
@@ -151,7 +158,7 @@ export default function ContextProgressPill() {
               setOpen((v) => !v);
               setNotice("");
             }}
-            class="inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11.5px] font-mono tabular-nums text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-pointer"
+            class="inline-flex items-center gap-1 rounded-full px-2 py-1 text-[12px] font-mono tabular-nums text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-pointer"
             title={`${t("timeline.contextTooltip")} · ${formatCompactNumber(s().used)} / ${formatCompactNumber(s().limit)} (${s().percent}%)`}
             aria-haspopup="dialog"
             aria-expanded={open()}
@@ -193,7 +200,7 @@ export default function ContextProgressPill() {
               role="dialog"
               aria-label={t("timeline.contextWatermark")}
             >
-              <div class="text-[10.5px] font-medium tracking-[0.04em] text-[var(--text-faint)]">
+              <div class="text-[11px] font-medium tracking-[0.04em] text-[var(--text-faint)]">
                 {t("timeline.contextWatermark")}
               </div>
 
@@ -219,10 +226,10 @@ export default function ContextProgressPill() {
 
               <div class="mt-4">
                 <div class="mb-2 flex items-baseline justify-between gap-3">
-                  <span class="text-[10px] font-medium tracking-[0.04em] text-[var(--text-faint)]">
+                  <span class="text-[11px] font-medium tracking-[0.04em] text-[var(--text-faint)]">
                     {t("timeline.contextTokens")}
                   </span>
-                  <span class="text-[10px] text-[var(--text-faint)]">
+                  <span class="text-[11px] text-[var(--text-faint)]">
                     {t("timeline.contextThisTurn")}
                   </span>
                 </div>
@@ -271,7 +278,7 @@ export default function ContextProgressPill() {
                 }
                 aria-busy={compacting()}
                 onClick={() => void onCompact()}
-                class="mt-4 inline-flex h-8 w-full items-center justify-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-transparent text-[11.5px] text-[var(--text-secondary)] transition-colors duration-150 hover:border-[var(--border-strong)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] disabled:cursor-default disabled:opacity-50 cursor-pointer"
+                class="mt-4 inline-flex h-8 w-full items-center justify-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-transparent text-[12px] text-[var(--text-secondary)] transition-colors duration-150 hover:border-[var(--border-strong)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] disabled:cursor-default disabled:opacity-50 cursor-pointer"
               >
                 <Show
                   when={!compacting()}

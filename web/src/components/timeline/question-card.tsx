@@ -22,7 +22,7 @@ export default function QuestionToolBody(props: { part: ToolPart }) {
   return (
     <div class="p-3 space-y-2.5">
       <Show when={rejected()}>
-        <div class="inline-flex items-center gap-1.5 text-[11.5px] text-[var(--text-muted)]">
+        <div class="inline-flex items-center gap-1.5 text-[12px] text-[var(--text-muted)]">
           <X size={12} class="text-[var(--warn-text)]" />
           <span>{t("toolCard.questionSkipped")}</span>
         </div>
@@ -36,11 +36,11 @@ function QuestionRow(props: { item: QuestionItemView }) {
   return (
     <div class="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)]/60 px-3 py-2.5 space-y-2">
       <div class="flex items-baseline justify-between gap-2">
-        <p class="text-[12.5px] font-medium text-[var(--text-primary)] leading-snug">
+        <p class="text-[13px] font-medium text-[var(--text-primary)] leading-snug">
           {props.item.question || props.item.header}
         </p>
         <Show when={props.item.multiple}>
-          <span class="shrink-0 text-[10.5px] text-[var(--text-muted)]">
+          <span class="shrink-0 text-[11px] text-[var(--text-muted)]">
             {t("toolCard.questionMultiSelect")}
           </span>
         </Show>
@@ -49,7 +49,7 @@ function QuestionRow(props: { item: QuestionItemView }) {
       <Show
         when={props.item.options.length > 0 || props.item.customAnswers.length > 0}
         fallback={
-          <div class="text-[11.5px] text-[var(--text-muted)] italic">
+          <div class="text-[12px] text-[var(--text-muted)] italic">
             {t("toolCard.questionUnanswered")}
           </div>
         }
@@ -116,7 +116,7 @@ function QuestionRow(props: { item: QuestionItemView }) {
           </For>
         </div>
         <Show when={!props.item.answered}>
-          <div class="text-[11.5px] text-[var(--text-muted)] italic">
+          <div class="text-[12px] text-[var(--text-muted)] italic">
             {t("toolCard.questionUnanswered")}
           </div>
         </Show>

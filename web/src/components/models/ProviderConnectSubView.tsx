@@ -210,7 +210,7 @@ export function ProviderConnectView(props: {
                     setAuthMethodIndex(idx());
                     setOauthState(null);
                   }}
-                  class={`rounded-lg px-3 py-1 text-[11.5px] font-medium cursor-pointer ${
+                  class={`rounded-lg px-3 py-1 text-[12px] font-medium cursor-pointer ${
                     authMethodIndex() === idx()
                       ? "bg-[var(--bg-panel)] text-[var(--text-primary)] shadow-2xs"
                       : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
@@ -234,7 +234,7 @@ export function ProviderConnectView(props: {
                     type="button"
                     disabled={busy()}
                     onClick={() => void onStartOAuth()}
-                    class="inline-flex items-center gap-2 rounded-xl bg-[var(--accent-primary)] px-4 py-2 text-[12.5px] font-medium text-[var(--accent-foreground)] hover:opacity-90 cursor-pointer"
+                    class="inline-flex items-center gap-2 rounded-xl bg-[var(--accent-primary)] px-4 py-2 text-[13px] font-medium text-[var(--accent-foreground)] hover:opacity-90 cursor-pointer"
                   >
                     <ExternalLink size={14} />
                     {authMethods()[authMethodIndex()]?.label || t("models.oauthLogin")}
@@ -242,7 +242,7 @@ export function ProviderConnectView(props: {
                 }
               >
                 {(st) => (
-                  <div class="space-y-3 text-[12.5px]">
+                  <div class="space-y-3 text-[13px]">
                     <p class="text-[var(--text-secondary)]">{st().instructions}</p>
                     <Show when={st().method === "code"}>
                       <div class="flex gap-2">
@@ -251,7 +251,7 @@ export function ProviderConnectView(props: {
                           placeholder={t("models.pasteAuthCodePlaceholder")}
                           value={oauthCode()}
                           onInput={(e) => setOauthCode(e.currentTarget.value)}
-                          class="flex-1 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] px-3 py-2 font-mono text-[12.5px] text-[var(--text-primary)] outline-none"
+                          class="flex-1 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] px-3 py-2 font-mono text-[13px] text-[var(--text-primary)] outline-none"
                         />
                         <button
                           type="button"
@@ -269,7 +269,7 @@ export function ProviderConnectView(props: {
           }
         >
           <div>
-            <label class="block text-[11.5px] font-medium text-[var(--text-secondary)] mb-1.5">
+            <label class="block text-[12px] font-medium text-[var(--text-secondary)] mb-1.5">
               {t("models.apiKey")}
             </label>
             <input
@@ -283,12 +283,12 @@ export function ProviderConnectView(props: {
               }
               value={apiKey()}
               onInput={(e) => setApiKey(e.currentTarget.value)}
-              class="w-full rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] px-3.5 py-2.5 font-mono text-[12.5px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)] selectable-text"
+              class="w-full rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] px-3.5 py-2.5 font-mono text-[13px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)] selectable-text"
             />
           </div>
 
           <div>
-            <label class="block text-[11.5px] font-medium text-[var(--text-secondary)] mb-1.5">
+            <label class="block text-[12px] font-medium text-[var(--text-secondary)] mb-1.5">
               {t("models.customBaseUrl")}{" "}
               <span class="text-[var(--text-faint)] font-normal">({t("models.optional")})</span>
             </label>
@@ -302,7 +302,7 @@ export function ProviderConnectView(props: {
           </div>
 
           <div>
-            <label class="block text-[11.5px] font-medium text-[var(--text-secondary)] mb-1.5">
+            <label class="block text-[12px] font-medium text-[var(--text-secondary)] mb-1.5">
               {t("models.registerExtraModel")}{" "}
               <span class="text-[var(--text-faint)] font-normal">({t("models.optional")})</span>
             </label>
@@ -322,7 +322,7 @@ export function ProviderConnectView(props: {
                   type="button"
                   disabled={probingModel()}
                   onClick={() => void onProbeExtraModel()}
-                  class="shrink-0 rounded-xl border border-[var(--accent-border)] bg-[var(--accent-surface)] px-3 py-2 text-[11.5px] font-medium text-[var(--accent-primary)] hover:opacity-90 disabled:opacity-50 cursor-pointer"
+                  class="shrink-0 rounded-xl border border-[var(--accent-border)] bg-[var(--accent-surface)] px-3 py-2 text-[12px] font-medium text-[var(--accent-primary)] hover:opacity-90 disabled:opacity-50 cursor-pointer"
                 >
                   {probingModel() ? t("models.testing") : t("models.testConnection")}
                 </button>
@@ -351,7 +351,7 @@ export function ProviderConnectView(props: {
         <button
           type="submit"
           disabled={busy()}
-          class="inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] px-4 py-2 text-[12.5px] font-medium text-[var(--accent-foreground)] hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
+          class="inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] px-4 py-2 text-[13px] font-medium text-[var(--accent-foreground)] hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
         >
           <Show when={!busy()} fallback={<LoaderCircle size={14} class="animate-spin" />}>
             <Check size={14} />

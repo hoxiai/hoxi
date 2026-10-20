@@ -77,7 +77,7 @@ export default function WorkspaceReviewPanel(props: { sessionID: string }) {
       <Show when={review()}>
         {(res) => (
           <div class="space-y-1.5">
-            <div class="font-mono text-[10px] text-[var(--text-muted)]">{scopeLabel(res())}</div>
+            <div class="font-mono text-[11px] text-[var(--text-muted)]">{scopeLabel(res())}</div>
             <Show
               when={res().ok}
               fallback={
@@ -85,7 +85,7 @@ export default function WorkspaceReviewPanel(props: { sessionID: string }) {
               }
             >
               <span
-                class={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10.5px] font-medium ${
+                class={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium ${
                   res().pass
                     ? "border-[var(--ok-border)] bg-[var(--ok-surface)] text-[var(--ok-text)]"
                     : "border-[var(--danger-border)] bg-[var(--danger-surface)] text-[var(--danger-text)]"
@@ -104,7 +104,7 @@ export default function WorkspaceReviewPanel(props: { sessionID: string }) {
                 <div class="leading-snug text-[var(--text-secondary)]">{res().summary}</div>
               </Show>
               <Show when={(res().issues || []).length > 0}>
-                <ul class="list-disc pl-4 space-y-0.5 font-mono text-[10.5px] text-[var(--text-secondary)]">
+                <ul class="list-disc pl-4 space-y-0.5 font-mono text-[11px] text-[var(--text-secondary)]">
                   <For each={res().issues}>{(iss) => <li>{iss}</li>}</For>
                 </ul>
               </Show>

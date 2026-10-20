@@ -173,7 +173,7 @@ export default function ProviderCatalogTab() {
                 <div class="text-[13px] font-semibold text-[var(--text-primary)]">
                   {t("models.customProviderCardTitle")}
                 </div>
-                <div class="text-[11.5px] text-[var(--text-secondary)] line-clamp-1">
+                <div class="text-[12px] text-[var(--text-secondary)] line-clamp-1">
                   {t("models.customProviderCardDesc")}
                 </div>
               </div>
@@ -191,7 +191,7 @@ export default function ProviderCatalogTab() {
           {/* Connected Providers Section */}
           <div class="space-y-2.5">
             <div class="flex items-center justify-between px-1">
-              <h3 class="text-[11.5px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+              <h3 class="text-[12px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
                 {t("models.connectedSection")} ({connectedProviders().length})
               </h3>
             </div>
@@ -228,11 +228,11 @@ export default function ProviderCatalogTab() {
                               <span class="text-[13px] font-semibold text-[var(--text-primary)] truncate">
                                 {item.name || item.id}
                               </span>
-                              <span class="rounded-md bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-muted)]">
+                              <span class="rounded-md bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[11px] text-[var(--text-muted)]">
                                 {item.id}
                               </span>
                               <span
-                                class={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                                class={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${
                                   isImported()
                                     ? "bg-amber-500/10 text-amber-400"
                                     : "bg-[var(--ok-surface)] text-[var(--ok-text)]"
@@ -250,13 +250,13 @@ export default function ProviderCatalogTab() {
                                 {t("models.modelsCount", { count: modelCount() })}
                               </span>
                               <Show when={freeCount() > 0}>
-                                <span class="rounded-full bg-[var(--ok-surface)] px-2 py-0.5 text-[10px] font-semibold text-[var(--ok-text)]">
+                                <span class="rounded-full bg-[var(--ok-surface)] px-2 py-0.5 text-[11px] font-semibold text-[var(--ok-text)]">
                                   {t("models.freeModelsCount", { count: freeCount() })}
                                 </span>
                               </Show>
                             </div>
                             <Show when={customUrl()}>
-                              <div class="mt-0.5 font-mono text-[10.5px] text-[var(--text-faint)] truncate">
+                              <div class="mt-0.5 font-mono text-[11px] text-[var(--text-faint)] truncate">
                                 {customUrl()}
                               </div>
                             </Show>
@@ -268,7 +268,7 @@ export default function ProviderCatalogTab() {
                             <button
                               type="button"
                               onClick={() => openProviderModal("custom", item.id)}
-                              class="inline-flex items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[11.5px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--border-strong)] transition-colors cursor-pointer"
+                              class="inline-flex items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[12px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--border-strong)] transition-colors cursor-pointer"
                               title={
                                 isImported()
                                   ? t("models.viewImportedEndpoint")
@@ -287,7 +287,7 @@ export default function ProviderCatalogTab() {
                             <button
                               type="button"
                               onClick={() => openConnectView(item.id)}
-                              class="inline-flex items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[11.5px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--border-strong)] transition-colors cursor-pointer"
+                              class="inline-flex items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[12px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--border-strong)] transition-colors cursor-pointer"
                               title={t("models.changeKey")}
                             >
                               <KeyRound size={11} />
@@ -326,13 +326,13 @@ export default function ProviderCatalogTab() {
           {/* Popular Providers Section */}
           <div class="space-y-2.5">
             <div class="flex items-center justify-between px-1">
-              <h3 class="text-[11.5px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+              <h3 class="text-[12px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
                 {t("models.popularSection")}
               </h3>
               <button
                 type="button"
                 onClick={() => setSubView("select-all")}
-                class="text-[11.5px] font-medium text-[var(--accent-primary)] hover:underline cursor-pointer"
+                class="text-[12px] font-medium text-[var(--accent-primary)] hover:underline cursor-pointer"
               >
                 {t("models.viewAllProviders")} ({providerMap().size}) →
               </button>
@@ -347,10 +347,10 @@ export default function ProviderCatalogTab() {
                       <div class="flex items-center gap-2.5 min-w-0">
                         <ProviderIcon id={item.id} class="w-4 h-4 shrink-0" />
                         <div class="min-w-0">
-                          <div class="text-[12.5px] font-medium text-[var(--text-primary)] truncate">
+                          <div class="text-[13px] font-medium text-[var(--text-primary)] truncate">
                             {item.name || item.id}
                           </div>
-                          <div class="text-[10.5px] text-[var(--text-faint)]">
+                          <div class="text-[11px] text-[var(--text-faint)]">
                             {modelCount() > 0
                               ? t("models.modelsCount", { count: modelCount() })
                               : item.id}
@@ -361,7 +361,7 @@ export default function ProviderCatalogTab() {
                         <button
                           type="button"
                           onClick={() => openConnectView(item.id)}
-                          class="rounded-lg border border-[var(--border-strong)] bg-[var(--bg-panel)] px-2.5 py-1 text-[11.5px] font-medium text-[var(--text-primary)] hover:bg-[var(--accent-surface)] hover:text-[var(--accent-primary)] hover:border-[var(--accent-border)] transition-colors cursor-pointer"
+                          class="rounded-lg border border-[var(--border-strong)] bg-[var(--bg-panel)] px-2.5 py-1 text-[12px] font-medium text-[var(--text-primary)] hover:bg-[var(--accent-surface)] hover:text-[var(--accent-primary)] hover:border-[var(--accent-border)] transition-colors cursor-pointer"
                         >
                           {t("models.connect")}
                         </button>
@@ -387,7 +387,7 @@ export default function ProviderCatalogTab() {
               <button
                 type="button"
                 onClick={() => setDisabledExpanded(!disabledExpanded())}
-                class="flex items-center gap-1.5 text-[11.5px] font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
+                class="flex items-center gap-1.5 text-[12px] font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
               >
                 <Show when={disabledExpanded()} fallback={<ChevronRight size={13} />}>
                   <ChevronDown size={13} />

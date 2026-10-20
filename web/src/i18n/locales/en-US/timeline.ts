@@ -251,6 +251,7 @@ export const timeline = {
   resumePromptPrefix:
     "Please continue the paused task with the following additional instructions:",
   sandboxLocalMode: "Local",
+  sandboxEnableWorktree: "Run in worktree sandbox",
   sandboxWorktreeMode: "Worktree",
   sandboxLocalTooltip: "Work directly in the current local branch",
   sandboxWorktreeTooltip: "Isolated Git worktree branch for this session",
@@ -357,6 +358,8 @@ export const timeline = {
   gitSessionDiffUnavailable: "No reliable session change snapshot; refusing to commit workspace-wide changes.",
   gitSessionNothingToCommit: "This session has no uncommitted changes.",
   gitCommitOnly: "Commit",
+  gitQuickCommit: "Commit",
+  gitCommitFailed: "Commit failed: {error}",
   gitPushOnly: "Push Branch",
   gitCommittingAndPushing: "Committing & pushing…",
   gitCommittingOnly: "Committing…",

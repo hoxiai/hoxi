@@ -99,7 +99,7 @@ export default function PlanFollowupBar() {
 
   return (
     <Show when={planTurnInfo()}>
-      <div class="mb-2 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--accent-border)] bg-[var(--accent-surface)]/55 px-3 py-2 text-[12px] shadow-xs">
+      <div class="inline-flex flex-wrap items-center justify-between gap-2 rounded-full border border-[var(--accent-border)] bg-[var(--accent-surface)]/55 px-2.5 py-1 text-[12px] shadow-xs">
         <div class="flex items-center gap-2 min-w-0">
           <Sparkles size={13} class="text-[var(--accent-primary)] shrink-0" />
           <span class="font-medium text-[var(--text-primary)] truncate">

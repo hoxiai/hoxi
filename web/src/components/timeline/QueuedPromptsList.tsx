@@ -77,7 +77,7 @@ export default function QueuedPromptsList(props: {
 
                 {/* Queued Status & Action Bar: Queued | Send Now | Edit | Delete */}
                 <div class="mt-1.5 flex items-center justify-end gap-1 px-1 text-[12px]">
-                  <span class="mr-1 inline-flex items-center gap-1 px-1.5 py-0.5 text-[11.5px] text-[var(--text-muted)]">
+                  <span class="mr-1 inline-flex items-center gap-1 px-1.5 py-0.5 text-[12px] text-[var(--text-muted)]">
                     <Clock size={11} class="shrink-0" />
                     <TextShimmer text={t("timeline.queuedBadge")} active={true} />
                   </span>

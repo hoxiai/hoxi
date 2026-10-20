@@ -312,7 +312,7 @@ export function SubagentSessionBanner() {
             <button
               type="button"
               onClick={() => void selectSession(pid())}
-              class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--accent-border)] bg-[var(--accent-surface)] px-2.5 py-1 text-[11.5px] font-medium text-[var(--accent-primary)] hover:opacity-90 transition-opacity shrink-0 cursor-pointer"
+              class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--accent-border)] bg-[var(--accent-surface)] px-2.5 py-1 text-[12px] font-medium text-[var(--accent-primary)] hover:opacity-90 transition-opacity shrink-0 cursor-pointer"
             >
               <ArrowLeft size={12.5} />
               <span class="truncate max-w-[160px]">{backLabel()}</span>
@@ -341,7 +341,7 @@ export function SubagentSessionBanner() {
                 </span>
               </Show>
 
-              <span class="rounded bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[10.5px] text-[var(--text-muted)] shrink-0">
+              <span class="rounded bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[11px] text-[var(--text-muted)] shrink-0">
                 {currentSub()?.agentType || "subagent"}
               </span>
 
@@ -382,7 +382,7 @@ export function SubagentSessionBanner() {
                 >
                   <ChevronLeft size={12} />
                 </button>
-                <span class="px-1.5 font-mono text-[10.5px] text-[var(--text-secondary)] tabular-nums">
+                <span class="px-1.5 font-mono text-[11px] text-[var(--text-secondary)] tabular-nums">
                   {currentIndex() + 1} / {subagents().length}
                 </span>
                 <button

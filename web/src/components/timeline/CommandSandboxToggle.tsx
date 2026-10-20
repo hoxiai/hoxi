@@ -119,7 +119,7 @@ export default function CommandSandboxToggle(props: {
             <div class="flex items-center justify-between gap-2">
               <span class="text-[12px] font-medium">{t("timeline.commandSandboxTitle")}</span>
               <span
-                class={`shrink-0 rounded px-1.5 py-[1px] text-[9.5px] font-medium uppercase tracking-wider ${
+                class={`shrink-0 rounded px-1.5 py-[1px] text-[11px] font-medium uppercase tracking-wider ${
                   enabled()
                     ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]"
                     : "bg-[var(--bg-inset)] text-[var(--text-muted)]"

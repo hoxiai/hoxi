@@ -219,7 +219,7 @@ export default function AgentStackPill() {
       <div ref={containerRef} class="relative inline-flex items-center">
         {/* Compact Pill Trigger */}
         <div
-          class={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11.5px] transition-colors ${
+          class={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[12px] transition-colors ${
             expanded()
               ? "border-[var(--accent-border)] bg-[var(--accent-surface)]/70 text-[var(--text-primary)]"
               : "border-[var(--border-subtle)] bg-[var(--bg-inset)]/90 text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]"
@@ -268,7 +268,7 @@ export default function AgentStackPill() {
             </Show>
 
             <Show when={attentionCount() > 0}>
-              <span class="inline-flex items-center gap-1 rounded-full bg-[var(--warn-surface)] px-1.5 py-0.2 text-[10px] font-medium text-[var(--warn-text)] shrink-0">
+              <span class="inline-flex items-center gap-1 rounded-full bg-[var(--warn-surface)] px-1.5 py-0.2 text-[11px] font-medium text-[var(--warn-text)] shrink-0">
                 <ShieldAlert size={10} />
                 {t("timeline.subagentsWaiting", { count: attentionCount() })}
               </span>
@@ -284,7 +284,7 @@ export default function AgentStackPill() {
               <button
                 type="button"
                 onClick={() => void selectSession(mainID())}
-                class="inline-flex items-center gap-0.5 rounded-full bg-[var(--accent-surface)] px-2 py-0.5 text-[10px] font-medium text-[var(--accent-primary)] hover:opacity-90 cursor-pointer"
+                class="inline-flex items-center gap-0.5 rounded-full bg-[var(--accent-surface)] px-2 py-0.5 text-[11px] font-medium text-[var(--accent-primary)] hover:opacity-90 cursor-pointer"
               >
                 <ArrowLeft size={10} />
                 <span>{t("timeline.backToMainSessionShort")}</span>
@@ -310,7 +310,7 @@ export default function AgentStackPill() {
         {/* Upward Floating Popover */}
         <Show when={expanded()}>
           <div class="absolute left-1/2 -translate-x-1/2 bottom-[calc(100%+6px)] z-40 w-[min(560px,calc(100vw-32px))] rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/98 backdrop-blur-xl p-2.5 shadow-2xl animate-in fade-in zoom-in-95 duration-150">
-            <div class="flex items-center justify-between gap-2 border-b border-[var(--border-subtle)] pb-2 mb-2 text-[11.5px]">
+            <div class="flex items-center justify-between gap-2 border-b border-[var(--border-subtle)] pb-2 mb-2 text-[12px]">
               <div class="flex items-center gap-2 font-medium text-[var(--text-primary)]">
                 <Bot size={13} class="text-[var(--accent-primary)]" />
                 <span>
@@ -323,7 +323,7 @@ export default function AgentStackPill() {
                     type="button"
                     disabled={!!resumingID()}
                     onClick={() => void handleResumeAll()}
-                    class="inline-flex items-center gap-1 rounded-md border border-[var(--accent-border)] bg-[var(--accent-surface)] px-2 py-0.5 text-[10.5px] font-medium text-[var(--accent-primary)] hover:opacity-90 cursor-pointer"
+                    class="inline-flex items-center gap-1 rounded-md border border-[var(--accent-border)] bg-[var(--accent-surface)] px-2 py-0.5 text-[11px] font-medium text-[var(--accent-primary)] hover:opacity-90 cursor-pointer"
                     title={t("timeline.resumeSubagentTooltip")}
                   >
                     <RotateCcw size={10} />
@@ -340,7 +340,7 @@ export default function AgentStackPill() {
                     type="button"
                     disabled={!!stoppingID()}
                     onClick={() => void stopAllRunning()}
-                    class="inline-flex items-center gap-1 rounded-md bg-[var(--danger-surface)] px-2 py-0.5 text-[10.5px] font-medium text-[var(--danger-text)] hover:opacity-90 cursor-pointer"
+                    class="inline-flex items-center gap-1 rounded-md bg-[var(--danger-surface)] px-2 py-0.5 text-[11px] font-medium text-[var(--danger-text)] hover:opacity-90 cursor-pointer"
                   >
                     <Square size={9} class="fill-current" />
                     <span>{t("timeline.stopAllSubagents")}</span>
@@ -368,7 +368,7 @@ export default function AgentStackPill() {
                         setExpanded(false);
                         if (!isCurrent()) void selectSession(sub.sessionID);
                       }}
-                      class={`flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-[11.5px] transition-colors ${
+                      class={`flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-[12px] transition-colors ${
                         isCurrent()
                           ? "border border-[var(--accent-border)] bg-[var(--accent-surface)]/30"
                           : "border border-transparent bg-[var(--bg-panel)]/70 hover:bg-[var(--bg-hover)]/60 cursor-pointer"
@@ -394,19 +394,19 @@ export default function AgentStackPill() {
                             <Spinner class="w-3 h-3" />
                           </span>
                         </Show>
-                        <span class="rounded bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-muted)] shrink-0">
+                        <span class="rounded bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[11px] text-[var(--text-muted)] shrink-0">
                           {sub.agentType}
                         </span>
                         <span class="truncate text-[var(--text-primary)]" title={sub.titleTooltip}>
                           {sub.title}
                         </span>
                         <Show when={sub.currentStepLabel}>
-                          <span class="font-mono text-[10.5px] text-[var(--text-muted)] truncate max-w-[160px]">
+                          <span class="font-mono text-[11px] text-[var(--text-muted)] truncate max-w-[160px]">
                             · {sub.currentStepLabel}
                           </span>
                         </Show>
                         <Show when={sub.stepCount > 0}>
-                          <span class="rounded bg-[var(--bg-inset)] px-1.5 py-0.2 font-mono text-[10px] text-[var(--text-faint)] shrink-0">
+                          <span class="rounded bg-[var(--bg-inset)] px-1.5 py-0.2 font-mono text-[11px] text-[var(--text-faint)] shrink-0">
                             {t("timeline.stepsCompleted", { count: sub.stepCount })}
                           </span>
                         </Show>
@@ -418,7 +418,7 @@ export default function AgentStackPill() {
                           </span>
                         </Show>
                         <Show when={sub.status === "interrupted"}>
-                          <span class="rounded bg-[var(--warn-surface)] px-1.5 py-0.2 text-[9.5px] font-medium text-[var(--warn-text)] shrink-0">
+                          <span class="rounded bg-[var(--warn-surface)] px-1.5 py-0.2 text-[11px] font-medium text-[var(--warn-text)] shrink-0">
                             {t("timeline.subagentInterruptedBadge")}
                           </span>
                         </Show>
@@ -433,7 +433,7 @@ export default function AgentStackPill() {
                             type="button"
                             disabled={!!resumingID()}
                             onClick={() => void handleResumeOne(sub)}
-                            class="inline-flex items-center gap-1 rounded border border-[var(--accent-border)] bg-[var(--accent-surface)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--accent-primary)] hover:opacity-90 cursor-pointer"
+                            class="inline-flex items-center gap-1 rounded border border-[var(--accent-border)] bg-[var(--accent-surface)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--accent-primary)] hover:opacity-90 cursor-pointer"
                             title={t("timeline.resumeSubagentTooltip")}
                           >
                             <RotateCcw size={9.5} />
@@ -446,7 +446,7 @@ export default function AgentStackPill() {
                             type="button"
                             disabled={!!stoppingID()}
                             onClick={() => void stopSubagent(sub.sessionID)}
-                            class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10.5px] text-[var(--danger-text)] hover:bg-[var(--danger-surface)] cursor-pointer"
+                            class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-[var(--danger-text)] hover:bg-[var(--danger-surface)] cursor-pointer"
                             title={t("timeline.stopSubagentTooltip")}
                           >
                             <Show
@@ -461,7 +461,7 @@ export default function AgentStackPill() {
                         <Show
                           when={!isCurrent()}
                           fallback={
-                            <span class="rounded bg-[var(--accent-surface)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--accent-primary)]">
+                            <span class="rounded bg-[var(--accent-surface)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--accent-primary)]">
                               {t("timeline.viewingSubagentBadge")}
                             </span>
                           }
@@ -472,7 +472,7 @@ export default function AgentStackPill() {
                               setExpanded(false);
                               void selectSession(sub.sessionID);
                             }}
-                            class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10.5px] font-medium text-[var(--accent-primary)] hover:bg-[var(--accent-surface)] cursor-pointer"
+                            class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium text-[var(--accent-primary)] hover:bg-[var(--accent-surface)] cursor-pointer"
                           >
                             <span>
                               {isViewingSubagent()

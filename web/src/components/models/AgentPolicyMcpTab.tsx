@@ -112,10 +112,10 @@ export default function AgentPolicyMcpTab() {
         <div class="space-y-3">
           <div class="flex items-center justify-between">
             <div>
-              <h3 class="text-[13.5px] font-semibold text-[var(--text-primary)]">
+              <h3 class="text-[13px] font-semibold text-[var(--text-primary)]">
                 {t("models.policyTitle")}
               </h3>
-              <p class="text-[11.5px] text-[var(--text-muted)]">
+              <p class="text-[12px] text-[var(--text-muted)]">
                 {t("models.policySubtitle")}
               </p>
             </div>
@@ -211,10 +211,10 @@ export default function AgentPolicyMcpTab() {
         {/* Section 2: MCP Servers */}
         <div class="border-t border-[var(--border-subtle)] pt-5 space-y-3">
           <div>
-            <h3 class="text-[13.5px] font-semibold text-[var(--text-primary)]">
+            <h3 class="text-[13px] font-semibold text-[var(--text-primary)]">
               {t("models.mcpTitle")}
             </h3>
-            <p class="text-[11.5px] text-[var(--text-muted)]">
+            <p class="text-[12px] text-[var(--text-muted)]">
               {t("models.mcpSubtitle")}
             </p>
           </div>
