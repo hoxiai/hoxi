@@ -1,10 +1,12 @@
 // web/src/components/timeline/ContextProgressPill.tsx
 import { createEffect, createMemo, createSignal, onCleanup, Show } from "solid-js";
+import { Presence } from "../motion/Presence";
 import { Minimize2, LoaderCircle } from "lucide-solid";
 import { hoxiAPI } from "../../services/api";
 import {
   activeModelInfo,
   isAutoModel,
+  isSessionBusy,
   loadSessionMessages,
   resolveAutoModelTarget,
   sessionDirectory,
@@ -105,7 +107,7 @@ export default function ContextProgressPill() {
   const onCompact = async () => {
     const id = workspace.activeSessionID;
     const selected = workspace.selectedModel;
-    if (!id || !selected || compacting()) return;
+    if (!id || !selected || compacting() || isSessionBusy(id)) return;
     const model = isAutoModel(selected)
       ? resolveAutoModelTarget(selected, { advance: false })
       : selected;
@@ -182,9 +184,12 @@ export default function ContextProgressPill() {
           </button>
 
           {/* Breakdown Popover */}
-          <Show when={open()}>
+          <Presence when={open()}>
+            {(state) => (
             <div
-              class="hoxi-popover absolute bottom-full right-0 z-40 mb-2.5 w-[18rem] origin-bottom-right select-text rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-panel)] p-4 text-xs shadow-[var(--composer-shadow)]"
+              data-state={state()}
+              style={{ "--hoxi-origin": "bottom right" }}
+              class="hoxi-popover absolute bottom-full right-0 z-40 mb-2.5 w-[18rem] select-text rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-panel)] p-4 text-xs shadow-[var(--composer-shadow)]"
               role="dialog"
               aria-label={t("timeline.contextWatermark")}
             >
@@ -258,7 +263,12 @@ export default function ContextProgressPill() {
 
               <button
                 type="button"
-                disabled={compacting() || !workspace.selectedModel || s().used === 0}
+                disabled={
+                  compacting() ||
+                  !workspace.selectedModel ||
+                  s().used === 0 ||
+                  isSessionBusy(workspace.activeSessionID)
+                }
                 aria-busy={compacting()}
                 onClick={() => void onCompact()}
                 class="mt-4 inline-flex h-8 w-full items-center justify-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-transparent text-[11.5px] text-[var(--text-secondary)] transition-colors duration-150 hover:border-[var(--border-strong)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] disabled:cursor-default disabled:opacity-50 cursor-pointer"
@@ -282,7 +292,8 @@ export default function ContextProgressPill() {
                 </p>
               </Show>
             </div>
-          </Show>
+            )}
+          </Presence>
         </div>
       )}
     </Show>

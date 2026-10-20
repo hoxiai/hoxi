@@ -1,5 +1,6 @@
 // web/src/components/models/ModelLeaderboardModal.tsx
 import { For, onCleanup, onMount, Show } from "solid-js";
+import { Presence } from "../motion/Presence";
 import {
   Check,
   Coins,
@@ -56,13 +57,15 @@ export default function ModelLeaderboardModal() {
   };
 
   return (
-    <Show when={leaderboardState.modalOpen}>
+    <Presence when={leaderboardState.modalOpen}>
+      {(state) => (
       <div
-        class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150"
+        data-state={state()}
+        class="hoxi-modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4"
         onClick={() => closeLeaderboardModal()}
       >
         <div
-          class="relative w-full max-w-3xl max-h-[85vh] rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-panel)] shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-150"
+          class="hoxi-modal-panel hoxi-elevation-4 relative w-full max-w-3xl max-h-[85vh] rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-panel)] flex flex-col overflow-hidden"
           onClick={(e) => e.stopPropagation()}
         >
           {/* Header */}
@@ -377,6 +380,7 @@ export default function ModelLeaderboardModal() {
           </div>
         </div>
       </div>
-    </Show>
+      )}
+    </Presence>
   );
 }

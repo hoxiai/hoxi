@@ -50,7 +50,7 @@ export function DeleteWorkspaceModalView(props: {
   };
 
   return (
-    <div class="w-full max-w-[400px] rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#16161A] shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+    <div class="w-full max-w-[400px] rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#16161A] hoxi-modal-panel hoxi-elevation-4 overflow-hidden">
       <div class="px-5 pt-4 pb-3">
         <h3 class="text-[15px] font-semibold text-zinc-900 dark:text-zinc-100">
           {t("leftNav.deleteWorkspaceTitle")}
@@ -143,7 +143,7 @@ export function ManageWorkspacesModalView() {
   });
 
   return (
-    <div class="w-full max-w-[480px] rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#16161A] shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+    <div class="w-full max-w-[480px] rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#16161A] hoxi-modal-panel hoxi-elevation-4 overflow-hidden">
       <div class="flex items-start justify-between px-5 pt-4 pb-3 border-b border-zinc-100 dark:border-zinc-800/80">
         <div>
           <h3 class="text-[15px] font-semibold text-zinc-900 dark:text-zinc-100">

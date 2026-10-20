@@ -302,8 +302,18 @@ export default function MessageStream(props: { hidden?: boolean }) {
         void stopSessionTask(workspace.activeSessionID);
       }
     };
+    const onFocusMessage = (event: Event) => {
+      const messageID = (event as CustomEvent<{ messageID?: string }>).detail?.messageID;
+      if (!messageID) return;
+      scrollToTurn(messageID);
+      setTimeout(() => scrollToTurn(messageID), 450);
+    };
     window.addEventListener("keydown", onWindowKeyDown);
-    onCleanup(() => window.removeEventListener("keydown", onWindowKeyDown));
+    window.addEventListener("hoxi:focus-message", onFocusMessage);
+    onCleanup(() => {
+      window.removeEventListener("keydown", onWindowKeyDown);
+      window.removeEventListener("hoxi:focus-message", onFocusMessage);
+    });
     // Scrollbar drags can be released outside the transcript.
     const endPointerScroll = () => scroll.setPointerScrolling(false);
     window.addEventListener("pointerup", endPointerScroll);
@@ -463,7 +473,8 @@ export default function MessageStream(props: { hidden?: boolean }) {
                     {/* Kilo-style Right-Aligned User Message Bubble */}
                     <div
                       data-turn-id={turn.info.id}
-                      class={`group/turn flex flex-col items-end rounded-xl transition-colors ${
+                      style={{ "--hoxi-order": String(Math.min(Math.max(turnWindow.visibleTurns().length - 1 - idx(), 0), 5)) }}
+                      class={`hoxi-item-enter group/turn flex flex-col items-end rounded-xl transition-colors ${
                         idx() === 0 ? "mt-0" : "mt-5"
                       } ${
                         activeMatchTurnID() === turn.info.id

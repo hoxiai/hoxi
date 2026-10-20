@@ -59,6 +59,7 @@ func (s *Service) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/hoxi/provider/audit", s.handleAuditProviderCode)
 	mux.HandleFunc("/api/hoxi/provider/summarize-title", s.handleSummarizeSessionTitle)
 	mux.HandleFunc("/api/hoxi/provider/generate-commit-message", s.handleGenerateCommitMessage)
+	mux.HandleFunc("/api/hoxi/provider/enhance-prompt", s.handleEnhancePrompt)
 	mux.HandleFunc("/api/hoxi/provider/auto-pools", s.handleAutoPoolsConfig)
 	mux.HandleFunc("/api/hoxi/models-config", s.handleModelsConfig)
 	mux.HandleFunc("/global/config", s.handleGlobalConfigProxy)

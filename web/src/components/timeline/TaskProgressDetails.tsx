@@ -1,8 +1,8 @@
 // web/src/components/timeline/TaskProgressDetails.tsx
-import { For, Show } from "solid-js";
-import { CheckCircle2, Circle, ExternalLink, PauseCircle } from "lucide-solid";
+import { createEffect, createSignal, For, Show } from "solid-js";
+import { CheckCircle2, Circle, ExternalLink, PauseCircle, Pencil, X } from "lucide-solid";
 import type { SnapshotFileDiff } from "../../services/sse-types";
-import { openChangedFileInInspector, openDiffInInspector, openFileInInspector } from "../../store/workspace";
+import { openChangedFileInInspector, openDiffInInspector, openFileInInspector, setWorkspace } from "../../store/workspace";
 import { DiffChanges, FileIcon, Icon, Spinner, TextShimmer } from "../icons";
 import { t } from "../../i18n";
 import {
@@ -14,6 +14,7 @@ import {
 import type { CycleStepItem, NormalizedTodoItem } from "./task-progress-helpers";
 
 export default function TaskProgressDetails(props: {
+  sessionID: string | null;
   todos: NormalizedTodoItem[];
   isSessionAlive: boolean;
   currentStep?: CycleStepItem;
@@ -21,11 +22,115 @@ export default function TaskProgressDetails(props: {
   changedFiles: SnapshotFileDiff[];
   diffTotals: { additions: number; deletions: number };
 }) {
+  const [editingTodos, setEditingTodos] = createSignal(false);
+  const [todoDraft, setTodoDraft] = createSignal("");
+  const [todoStaged, setTodoStaged] = createSignal(false);
+
+  createEffect(() => {
+    props.sessionID;
+    setEditingTodos(false);
+    setTodoStaged(false);
+  });
+
+  const statusToken = (status: string) =>
+    status === "completed" ? "x" : status === "in_progress" ? "~" : " ";
+
+  const openTodoEditor = () => {
+    setTodoDraft(
+      props.todos
+        .map((todo) => `[${statusToken(todo.status)}] ${todo.content}`)
+        .join("\n")
+    );
+    setTodoStaged(false);
+    setEditingTodos(true);
+  };
+
+  const stageTodoUpdate = () => {
+    const items = todoDraft()
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => {
+        const match = line.match(/^\[([ xX~\-])\]\s*(.+)$/);
+        if (!match) return { status: "pending", content: line };
+        const token = match[1].toLowerCase();
+        return {
+          status: token === "x" ? "completed" : token === "~" ? "in_progress" : "pending",
+          content: match[2].trim(),
+        };
+      })
+      .filter((item) => item.content);
+    if (items.length === 0 || !props.sessionID) return;
+    const body = items
+      .map((item, index) => `${index + 1}. [${item.status}] ${item.content}`)
+      .join("\n");
+    const prompt = `${t("timeline.todoUpdatePromptIntro")}\n\n${body}\n\n${t("timeline.todoUpdatePromptOutro")}`;
+    setWorkspace("composerDraftEditBySession", props.sessionID, {
+      id: `todo_${Date.now()}`,
+      text: prompt,
+      attachments: [],
+    });
+    setEditingTodos(false);
+    setTodoStaged(true);
+    setTimeout(() => setTodoStaged(false), 2400);
+  };
+
   return (
     <div class="mt-2 space-y-2.5 border-t border-[var(--border-subtle)] pt-2 max-h-64 overflow-y-auto">
       {/* 1. Todo Checklist */}
       <Show when={props.todos.length > 0}>
         <div class="space-y-1.5">
+          <div class="flex items-center justify-between gap-2">
+            <div class="flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
+              <span>{t("timeline.todoPlanHeader")}</span>
+              <Show when={todoStaged()}>
+                <span class="normal-case tracking-normal font-medium text-[var(--ok-text)]">
+                  {t("timeline.todoStagedNotice")}
+                </span>
+              </Show>
+            </div>
+            <button
+              type="button"
+              onClick={() => (editingTodos() ? setEditingTodos(false) : openTodoEditor())}
+              class="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10.5px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer"
+              title={t("timeline.todoEditTooltip")}
+            >
+              <Show when={editingTodos()} fallback={<Pencil size={10} />}>
+                <X size={10} />
+              </Show>
+              <span>{editingTodos() ? t("timeline.todoCancel") : t("timeline.todoEdit")}</span>
+            </button>
+          </div>
+          <Show when={editingTodos()}>
+            <div class="space-y-1.5 rounded-lg border border-[var(--accent-border)] bg-[var(--bg-panel)]/70 p-2">
+              <p class="text-[10.5px] leading-snug text-[var(--text-muted)]">
+                {t("timeline.todoEditHint")}
+              </p>
+              <textarea
+                value={todoDraft()}
+                onInput={(event) => setTodoDraft(event.currentTarget.value)}
+                rows={Math.min(10, Math.max(3, props.todos.length + 1))}
+                class="w-full resize-y rounded-md border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-2 py-1.5 font-mono text-[11px] leading-relaxed text-[var(--text-primary)] outline-none focus:border-[var(--accent-border)]"
+              />
+              <div class="flex items-center justify-end gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setEditingTodos(false)}
+                  class="rounded-md px-2 py-1 text-[10.5px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] cursor-pointer"
+                >
+                  {t("timeline.todoCancel")}
+                </button>
+                <button
+                  type="button"
+                  onClick={stageTodoUpdate}
+                  class="rounded-md bg-[var(--accent-primary)] px-2 py-1 text-[10.5px] font-medium text-[var(--accent-foreground)] hover:opacity-90 cursor-pointer"
+                >
+                  {t("timeline.todoApplyToComposer")}
+                </button>
+              </div>
+            </div>
+          </Show>
+          <Show when={!editingTodos()}>
           <For each={props.todos}>
             {(todo) => (
               <div class="space-y-1">
@@ -110,6 +215,7 @@ export default function TaskProgressDetails(props: {
               </div>
             )}
           </For>
+          </Show>
         </div>
       </Show>
 

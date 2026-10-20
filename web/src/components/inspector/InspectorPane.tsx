@@ -115,35 +115,35 @@ export default function InspectorPane() {
         </button>
       </div>
 
-      <div class="flex-1 min-h-0">
+      <div class="hoxi-tab-stack flex-1 min-h-0">
         <Suspense>
           <Show when={visitedTabs().diffs}>
-            <div class={workspace.inspectorTab === "diffs" ? "h-full w-full hoxi-view-enter" : "hidden"}>
+            <div class="hoxi-tab-panel" data-active={workspace.inspectorTab === "diffs" ? "true" : "false"} aria-hidden={workspace.inspectorTab !== "diffs"}>
               <PierreDiffViewer />
             </div>
           </Show>
           <Show when={visitedTabs().memory}>
-            <div class={workspace.inspectorTab === "memory" ? "h-full w-full hoxi-view-enter" : "hidden"}>
+            <div class="hoxi-tab-panel" data-active={workspace.inspectorTab === "memory" ? "true" : "false"} aria-hidden={workspace.inspectorTab !== "memory"}>
               <MemoryBankView />
             </div>
           </Show>
           <Show when={visitedTabs().files}>
-            <div class={workspace.inspectorTab === "files" ? "h-full w-full hoxi-view-enter" : "hidden"}>
+            <div class="hoxi-tab-panel" data-active={workspace.inspectorTab === "files" ? "true" : "false"} aria-hidden={workspace.inspectorTab !== "files"}>
               <FileTreeView />
             </div>
           </Show>
           <Show when={visitedTabs().skills}>
-            <div class={workspace.inspectorTab === "skills" ? "h-full w-full hoxi-view-enter" : "hidden"}>
+            <div class="hoxi-tab-panel" data-active={workspace.inspectorTab === "skills" ? "true" : "false"} aria-hidden={workspace.inspectorTab !== "skills"}>
               <SkillsInspectorView />
             </div>
           </Show>
           <Show when={visitedTabs().terminal}>
-            <div class={workspace.inspectorTab === "terminal" ? "h-full w-full hoxi-fade-enter" : "hidden"}>
+            <div class="hoxi-tab-panel" data-active={workspace.inspectorTab === "terminal" ? "true" : "false"} aria-hidden={workspace.inspectorTab !== "terminal"}>
               <WebGLTerminal />
             </div>
           </Show>
-          <Show when={workspace.inspectorTab === "browser"}>
-            <div class="h-full w-full hoxi-view-enter">
+          <Show when={visitedTabs().browser}>
+            <div class="hoxi-tab-panel" data-active={workspace.inspectorTab === "browser" ? "true" : "false"} aria-hidden={workspace.inspectorTab !== "browser"}>
               <BrowserInspector />
             </div>
           </Show>

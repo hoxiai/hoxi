@@ -1,5 +1,6 @@
 import { createEffect, createMemo, createSignal, lazy, onCleanup, onMount, Show, Suspense } from "solid-js";
 import CompactHeader from "./CompactHeader";
+import CommandPalette, { type CommandPaletteMode } from "./CommandPalette";
 import LeftNav from "./LeftNav";
 import MessageStream from "../timeline/MessageStream";
 import Composer from "../timeline/Composer";
@@ -10,6 +11,7 @@ import {
   closeSettingsModal,
   leaderboardState,
   openSettingsModal,
+  selectSession,
   setWorkspace,
   workspace,
 } from "../../store/workspace";
@@ -30,6 +32,7 @@ export default function ThreePaneShell() {
   const [rightWidth, setRightWidth] = createSignal(420);
   const [resizingSide, setResizingSide] = createSignal<"left" | "right" | null>(null);
   const [inspectorEverOpened, setInspectorEverOpened] = createSignal(workspace.inspectorOpen);
+  const [paletteMode, setPaletteMode] = createSignal<CommandPaletteMode | null>(null);
 
   createEffect(() => {
     if (workspace.inspectorOpen) {
@@ -55,6 +58,16 @@ export default function ThreePaneShell() {
 
   onMount(() => {
     const onKeyDown = (ev: KeyboardEvent) => {
+      if ((ev.metaKey || ev.ctrlKey) && ev.key.toLowerCase() === "k" && !ev.shiftKey && !ev.altKey) {
+        ev.preventDefault();
+        setPaletteMode((current) => (current === "actions" ? null : "actions"));
+        return;
+      }
+      if ((ev.metaKey || ev.ctrlKey) && ev.key.toLowerCase() === "p" && !ev.shiftKey && !ev.altKey) {
+        ev.preventDefault();
+        setPaletteMode((current) => (current === "files" ? null : "files"));
+        return;
+      }
       if ((ev.metaKey || ev.ctrlKey) && ev.key === ",") {
         ev.preventDefault();
         if (appSettings.modalOpen || workspace.providerModalOpen) {
@@ -62,6 +75,11 @@ export default function ThreePaneShell() {
         } else {
           openSettingsModal("general");
         }
+        return;
+      }
+      if (ev.key === "Escape" && !ev.defaultPrevented && paletteMode()) {
+        ev.preventDefault();
+        setPaletteMode(null);
         return;
       }
       if (
@@ -76,8 +94,35 @@ export default function ThreePaneShell() {
         closeSettingsModal();
       }
     };
+    const onNotificationClick = (event: Event) => {
+      const sessionID = (event as CustomEvent<{ sessionID?: string }>).detail?.sessionID;
+      if (sessionID) void selectSession(sessionID);
+    };
+    const focusFromLocationHash = () => {
+      const raw = window.location.hash.replace(/^#/, "");
+      if (!raw) return;
+      const params = new URLSearchParams(raw);
+      const sessionID = params.get("session");
+      if (!sessionID) return;
+      const messageID = params.get("message");
+      void selectSession(sessionID).then(() => {
+        if (!messageID) return;
+        setTimeout(() => {
+          window.dispatchEvent(
+            new CustomEvent("hoxi:focus-message", { detail: { messageID } })
+          );
+        }, 350);
+      });
+    };
+    focusFromLocationHash();
     window.addEventListener("keydown", onKeyDown);
-    onCleanup(() => window.removeEventListener("keydown", onKeyDown));
+    window.addEventListener("hashchange", focusFromLocationHash);
+    window.addEventListener("hoxi:notification-click", onNotificationClick);
+    onCleanup(() => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("hashchange", focusFromLocationHash);
+      window.removeEventListener("hoxi:notification-click", onNotificationClick);
+    });
   });
 
   const startResize = (side: "left" | "right", ev: PointerEvent) => {
@@ -130,6 +175,7 @@ export default function ThreePaneShell() {
         leftNavOpen={leftNavOpen()}
         onToggleLeftNav={() => setLeftNavOpen((open) => !open)}
         inspectorOpen={workspace.inspectorOpen}
+        onOpenCommandPalette={() => setPaletteMode("actions")}
         onToggleInspector={() => {
           const next = !workspace.inspectorOpen;
           setWorkspace("inspectorOpen", next);
@@ -147,7 +193,7 @@ export default function ThreePaneShell() {
           class={`shrink-0 h-full overflow-hidden ${
             resizingSide() === "left"
               ? "transition-none"
-              : "transition-[width,opacity,transform] duration-200 ease-[var(--ease-spring)]"
+              : "transition-[width,opacity,transform] duration-[var(--motion-move)] ease-[var(--ease-spring)]"
           } ${
             leftNavOpen()
               ? "opacity-100 translate-x-0"
@@ -162,7 +208,7 @@ export default function ThreePaneShell() {
 
         {/* Left Resize Handle / Collapsed Left Spacer */}
         <div
-          class={`shrink-0 rounded-full my-2 transition-[width,background-color,opacity] duration-200 ${
+          class={`shrink-0 rounded-full my-2 transition-[width,background-color,opacity] duration-[var(--motion-move)] ${
             leftNavOpen()
               ? "w-1.5 cursor-col-resize hover:bg-[var(--accent-border)] opacity-100"
               : "w-2 pointer-events-none opacity-0"
@@ -178,7 +224,7 @@ export default function ThreePaneShell() {
         >
           <div
             aria-hidden={isNewConversation()}
-            class={`flex min-h-0 flex-col overflow-hidden transition-[flex-grow,opacity,transform] duration-250 ease-[var(--ease-spring)] ${
+            class={`flex min-h-0 flex-col overflow-hidden transition-[flex-grow,opacity,transform] duration-[var(--motion-move)] ease-[var(--ease-move)] ${
               isNewConversation()
                 ? "flex-[0.36_1_0%] opacity-0 -translate-y-1 pointer-events-none"
                 : "flex-[1_1_0%] opacity-100 translate-y-0"
@@ -202,14 +248,14 @@ export default function ThreePaneShell() {
           </div>
           <div
             aria-hidden="true"
-            class="shrink-0 min-h-0 transition-[flex-grow] duration-250 ease-[var(--ease-spring)] pointer-events-none"
+            class="shrink-0 min-h-0 transition-[flex-grow] duration-[var(--motion-move)] ease-[var(--ease-move)] pointer-events-none"
             style={{ "flex-grow": isNewConversation() ? 0.64 : 0 }}
           />
         </section>
 
         {/* Right Inspector Resize Handle */}
         <div
-          class={`shrink-0 rounded-full my-2 transition-[width,background-color,opacity] duration-200 ${
+          class={`shrink-0 rounded-full my-2 transition-[width,background-color,opacity] duration-[var(--motion-move)] ${
             workspace.inspectorOpen && !workspace.inspectorMaximized
               ? "w-1.5 cursor-col-resize hover:bg-[var(--accent-border)] opacity-100"
               : "w-0 pointer-events-none opacity-0"
@@ -227,7 +273,7 @@ export default function ThreePaneShell() {
           class={`pane-island h-full overflow-hidden ${
             resizingSide() === "right"
               ? "transition-none"
-              : "transition-[width,opacity,transform] duration-200 ease-[var(--ease-spring)]"
+              : "transition-[width,opacity,transform] duration-[var(--motion-move)] ease-[var(--ease-spring)]"
           } ${
             !workspace.inspectorOpen
               ? "shrink-0 opacity-0 translate-x-2 pointer-events-none !border-transparent !shadow-none"
@@ -255,6 +301,8 @@ export default function ThreePaneShell() {
           </div>
         </div>
       </main>
+
+      <CommandPalette mode={paletteMode()} onClose={() => setPaletteMode(null)} />
 
       {/* Workspace, Session Handoff, Leaderboard Modals & Full-Screen Settings Control Center */}
       <Suspense>

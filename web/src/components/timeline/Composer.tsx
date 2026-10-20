@@ -2,10 +2,14 @@
 import { createEffect, createMemo, createSignal, Show } from "solid-js";
 import {
   ArrowUp,
+  Check,
   Clock,
   FolderOpen,
   LoaderCircle,
+  RefreshCw,
+  Sparkles,
   Square,
+  X,
 } from "lucide-solid";
 import {
   appSettings,
@@ -52,7 +56,7 @@ import {
   inspectPromptContextMentions,
   resolveContextMentionsForSend,
 } from "./composer-hooks";
-import { t } from "../../i18n";
+import { locale, t } from "../../i18n";
 import { isComposerIMEEvent } from "./composer-keyboard";
 import { hoxiAPI } from "../../services/api";
 import type { CodeIndexResult } from "../../services/code-index-api";
@@ -65,6 +69,9 @@ export default function Composer() {
   const [stopping, setStopping] = createSignal(false);
   const [forking, setForking] = createSignal(false);
   const [switchingSandbox, setSwitchingSandbox] = createSignal(false);
+  const [enhancing, setEnhancing] = createSignal(false);
+  const [enhanceError, setEnhanceError] = createSignal<string | null>(null);
+  const [enhanceState, setEnhanceState] = createSignal<{ original: string; enhanced: string } | null>(null);
   const [codeSearchOpen, setCodeSearchOpen] = createSignal(false);
   const [convoyOpen, setConvoyOpen] = createSignal(false);
   const [choosingFolder, setChoosingFolder] = createSignal(false);
@@ -93,6 +100,11 @@ export default function Composer() {
   let composing = false;
 
   const sessionID = () => workspace.activeSessionID;
+  createEffect(() => {
+    sessionID();
+    setEnhanceState(null);
+    setEnhanceError(null);
+  });
   const busy = createMemo(() => isSessionBusy(sessionID()));
   const selectedSkill = createMemo(() => getComposerSkill(sessionID()));
   const skillNotice = createMemo(() => getComposerSkillNotice(sessionID()));
@@ -273,6 +285,8 @@ export default function Composer() {
     const currentSkill = selectedSkill() ? { ...selectedSkill()! } : undefined;
     if ((!withPastes.trim() && !hasReviews && attachments.length === 0 && !currentSkill) || sending() || switchingSandbox()) return;
     if (!ensureAIConsent()) return;
+    setEnhanceState(null);
+    setEnhanceError(null);
     const draftSessionID = sessionID();
     const draftDirectory = workspace.rootDir;
     const draft = {
@@ -321,6 +335,62 @@ export default function Composer() {
     } finally {
       setSending(false);
     }
+  };
+
+  const resolveEnhanceModel = () => {
+    const small = workspace.globalConfig?.small_model;
+    if (typeof small === "string" && small.includes("/")) {
+      const index = small.indexOf("/");
+      return { providerID: small.slice(0, index), modelID: small.slice(index + 1) };
+    }
+    const selected = workspace.selectedModel;
+    if (selected?.providerID && selected?.modelID) return selected;
+    return null;
+  };
+
+  const onEnhance = async () => {
+    const original = enhanceState()?.original || text().trim();
+    if (!original || enhancing()) return;
+    const model = resolveEnhanceModel();
+    if (!model) {
+      setEnhanceError(t("timeline.enhanceNoModel"));
+      return;
+    }
+    if (!ensureAIConsent()) return;
+    setEnhancing(true);
+    setEnhanceError(null);
+    try {
+      const result = await hoxiAPI.enhancePrompt({
+        providerID: model.providerID,
+        modelID: model.modelID,
+        prompt: original,
+        locale: locale(),
+      });
+      const enhanced = result?.prompt?.trim();
+      if (result?.ok && enhanced) {
+        setEnhanceState({ original, enhanced });
+      } else {
+        setEnhanceError(result?.error || t("timeline.enhanceFailed"));
+      }
+    } catch (err) {
+      setEnhanceError(err instanceof Error ? err.message : t("timeline.enhanceFailed"));
+    } finally {
+      setEnhancing(false);
+    }
+  };
+
+  const acceptEnhance = () => {
+    const state = enhanceState();
+    if (!state) return;
+    setText(state.enhanced);
+    setCursorOffset(state.enhanced.length);
+    setEnhanceState(null);
+    setEnhanceError(null);
+    requestAnimationFrame(() => {
+      adjustHeight();
+      textareaRef?.focus();
+      textareaRef?.setSelectionRange(state.enhanced.length, state.enhanced.length);
+    });
   };
 
   const onStop = async () => {
@@ -497,6 +567,10 @@ export default function Composer() {
               promptHistory.resetHistoryCursor();
               setCursorOffset(ev.currentTarget.selectionStart ?? ev.currentTarget.value.length);
               setText(ev.currentTarget.value);
+              if (enhanceState()) {
+                setEnhanceState(null);
+                setEnhanceError(null);
+              }
               adjustHeight();
             }}
             onClick={(ev) => {
@@ -513,6 +587,55 @@ export default function Composer() {
             onCompositionEnd={() => { composing = false; }}
             onBlur={() => { composing = false; }}
           />
+
+          <Show when={enhanceState()}>
+            {(state) => (
+              <div class="mt-2 rounded-xl border border-[var(--accent-border)] bg-[var(--accent-surface)]/35 px-2.5 py-2">
+                <div class="flex items-center gap-1.5">
+                  <Sparkles size={12} class="text-[var(--accent-primary)]" />
+                  <span class="text-[11px] font-semibold text-[var(--text-primary)]">
+                    {t("timeline.enhancedPromptTitle")}
+                  </span>
+                  <div class="ml-auto flex items-center gap-1">
+                    <button
+                      type="button"
+                      class="inline-flex items-center gap-1 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-1.5 py-0.5 text-[10.5px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer disabled:opacity-40"
+                      disabled={enhancing()}
+                      onClick={() => void onEnhance()}
+                    >
+                      <RefreshCw size={10} class={enhancing() ? "animate-spin" : ""} />
+                      {t("timeline.enhanceRegenerate")}
+                    </button>
+                    <button
+                      type="button"
+                      class="inline-flex items-center gap-1 rounded-md bg-[var(--accent-primary)] px-1.5 py-0.5 text-[10.5px] font-medium text-[var(--accent-foreground)] hover:opacity-90 cursor-pointer"
+                      onClick={acceptEnhance}
+                    >
+                      <Check size={10} />
+                      {t("timeline.enhanceAccept")}
+                    </button>
+                    <button
+                      type="button"
+                      class="inline-flex h-5 w-5 items-center justify-center rounded-md text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer"
+                      title={t("timeline.enhanceDiscard")}
+                      onClick={() => {
+                        setEnhanceState(null);
+                        setEnhanceError(null);
+                      }}
+                    >
+                      <X size={11} />
+                    </button>
+                  </div>
+                </div>
+                <div class="mt-1.5 max-h-40 overflow-y-auto whitespace-pre-wrap text-[12px] leading-relaxed text-[var(--text-secondary)] selectable-text">
+                  {state().enhanced}
+                </div>
+              </div>
+            )}
+          </Show>
+          <Show when={enhanceError()}>
+            <p class="mt-1.5 text-[11px] text-[var(--danger-text)]">{enhanceError()}</p>
+          </Show>
 
           <div class="mt-2 flex items-center justify-between gap-2 flex-wrap">
             {/* Left Action Pills: Attach (+), Agent Mode, Model Selector, Git Dropdown */}
@@ -551,6 +674,17 @@ export default function Composer() {
 
             {/* Right Context Progress + Approval Mode + Send / Queue / Stop Buttons */}
             <div class="flex items-center gap-1.5">
+              <button
+                type="button"
+                class="inline-flex h-7 w-7 items-center justify-center rounded-full text-[var(--text-secondary)] hover:text-[var(--accent-primary)] hover:bg-[var(--accent-surface)] disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                disabled={!text().trim() || enhancing()}
+                onClick={() => void onEnhance()}
+                title={enhancing() ? t("timeline.enhancingPrompt") : t("timeline.enhancePrompt")}
+              >
+                <Show when={!enhancing()} fallback={<LoaderCircle size={13} class="animate-spin text-[var(--accent-primary)]" />}>
+                  <Sparkles size={14} />
+                </Show>
+              </button>
               <ContextProgressPill />
               <ApprovalModePill />
 

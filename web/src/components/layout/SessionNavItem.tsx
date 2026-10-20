@@ -10,6 +10,7 @@ import {
 import { stopSessionTask } from "../../store/workspace-session-messages";
 import type { SessionInfo } from "../../services/sse-types";
 import { Icon, Spinner } from "../icons";
+import { downloadSessionExport } from "../timeline/session-export";
 import { t } from "../../i18n";
 import { badgeFor } from "./left-nav-helpers";
 import { SessionRenamePopover } from "./SessionRenamePopover";
@@ -277,6 +278,17 @@ export function SessionNavItem(props: SessionNavItemProps) {
                 title={t("leftNav.renameSessionTooltip")}
               >
                 <Pencil size={11} class="shrink-0 block" />
+              </button>
+              <button
+                type="button"
+                class="inline-flex h-5 w-5 items-center justify-center rounded-md text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+                onClick={(ev) => {
+                  ev.stopPropagation();
+                  downloadSessionExport(props.session.id);
+                }}
+                title={t("leftNav.exportSessionTooltip")}
+              >
+                <Icon name="download" size="small" class="w-3 h-3" />
               </button>
               <Show
                 when={!isBusy()}

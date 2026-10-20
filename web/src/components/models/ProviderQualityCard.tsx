@@ -1,5 +1,6 @@
 // web/src/components/models/ProviderQualityCard.tsx
 import { createMemo, createSignal, For, Show } from "solid-js";
+import { Presence } from "../motion/Presence";
 import {
   Activity,
   AlertTriangle,
@@ -55,9 +56,11 @@ export default function ProviderQualityCard(props: { providerID: string }) {
           {t("diagnostics.view")}
         </button>
       </div>
-      <Show when={detailsOpen()}>
+      <Presence when={detailsOpen()}>
+        {(state) => (
         <div
-          class="hoxi-modal-backdrop fixed inset-0 z-[60] flex items-center justify-center bg-black/55 backdrop-blur-xs p-4"
+          data-state={state()}
+          class="hoxi-modal-backdrop fixed inset-0 z-[60] flex items-center justify-center p-4"
           onClick={(event) => {
             if (event.target === event.currentTarget) setDetailsOpen(false);
           }}
@@ -66,7 +69,7 @@ export default function ProviderQualityCard(props: { providerID: string }) {
             role="dialog"
             aria-modal="true"
             aria-label={t("models.qualityTitle")}
-            class="hoxi-modal-panel flex max-h-[85dvh] w-full max-w-[680px] flex-col overflow-hidden rounded-xl border border-[var(--border-strong)] bg-[var(--bg-panel)] shadow-2xl"
+            class="hoxi-modal-panel hoxi-elevation-4 flex max-h-[85dvh] w-full max-w-[680px] flex-col overflow-hidden rounded-xl border border-[var(--border-strong)] bg-[var(--bg-panel)] shadow-2xl"
             onClick={(event) => event.stopPropagation()}
           >
             <div class="flex items-center justify-between gap-3 border-b border-[var(--border-subtle)] px-4 py-3">
@@ -300,7 +303,8 @@ export default function ProviderQualityCard(props: { providerID: string }) {
             </div>
           </div>
         </div>
-      </Show>
+        )}
+      </Presence>
     </Show>
   );
 }

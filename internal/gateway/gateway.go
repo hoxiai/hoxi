@@ -95,6 +95,13 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 	proxy.Director = func(req *http.Request) {
 		origDirector(req)
 		req.Host = targetURL.Host
+		// OpenCode rejects WebSocket upgrades whose Origin is not a loopback
+		// HTTP origin. Present the upstream's own origin so native clients
+		// (wails://wails) can attach to PTYs; the gateway already validated
+		// the caller's Origin above.
+		if req.Header.Get("Origin") != "" {
+			req.Header.Set("Origin", targetURL.Scheme+"://"+targetURL.Host)
+		}
 		// OpenCode serve uses HTTP Basic Auth with username "opencode"
 		req.SetBasicAuth("opencode", password)
 	}
@@ -411,6 +418,7 @@ func (g *Gateway) registerRoutes(distFS fs.FS) {
 	g.mux.HandleFunc("/api/hoxi/file/content", g.handleFileContent)
 	g.mux.HandleFunc("/api/hoxi/file/validate", g.handleFileValidate)
 	g.mux.HandleFunc("/api/hoxi/file/list", g.handleFileList)
+	g.mux.HandleFunc("/api/hoxi/file/search", g.handleFileSearch)
 	g.mux.HandleFunc("/api/hoxi/file/open", g.handleFileOpen)
 	g.mux.Handle("/api/", http.StripPrefix("/api", g.proxy))
 

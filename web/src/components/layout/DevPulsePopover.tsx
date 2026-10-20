@@ -1,4 +1,5 @@
 import { createEffect, createMemo, createSignal, Index, onCleanup, onMount, Show } from "solid-js";
+import { Presence } from "../motion/Presence";
 import { BarChart3, ChevronRight, RefreshCw, Trophy } from "lucide-solid";
 import {
   computeDailyDevPulseStats,
@@ -103,9 +104,12 @@ export default function DevPulsePopover() {
         <BarChart3 size={13.5} class="text-[var(--accent-primary)] shrink-0" />
       </button>
 
-      <Show when={open()}>
+      <Presence when={open()}>
+        {(state) => (
         <div
           ref={popoverRef}
+          data-state={state()}
+          style={{ "--hoxi-origin": "top right" }}
           class="hoxi-popover absolute right-0 top-full mt-2 z-50 w-[264px] rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-3.5 shadow-xl text-xs space-y-3 select-text"
         >
           {/* Header */}
@@ -214,7 +218,8 @@ export default function DevPulsePopover() {
             </button>
           </div>
         </div>
-      </Show>
+        )}
+      </Presence>
     </div>
   );
 }

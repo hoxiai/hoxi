@@ -353,6 +353,7 @@ export default function TaskProgressCard() {
             </Show>
 
             <TaskProgressDetails
+              sessionID={sessionID()}
               todos={todos()}
               isSessionAlive={isSessionAlive()}
               currentStep={currentStep()}

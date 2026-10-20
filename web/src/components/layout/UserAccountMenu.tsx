@@ -1,5 +1,6 @@
 // web/src/components/layout/UserAccountMenu.tsx
 import { createSignal, onCleanup, onMount, Show } from "solid-js";
+import { Presence } from "../motion/Presence";
 import {
   Cpu,
   LogOut,
@@ -87,9 +88,12 @@ export default function UserAccountMenu() {
       class="relative mt-auto mr-1 border-t border-[var(--border-subtle)]/50 pt-2 pb-2.5 px-2 flex items-center justify-between gap-1"
     >
       {/* Upward Kilo-style Account Popover */}
-      <Show when={menuOpen()}>
+      <Presence when={menuOpen()}>
+        {(state) => (
         <div
-          class="absolute bottom-full left-2 right-2 mb-2 z-50 rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-panel)] shadow-2xl overflow-hidden animate-in fade-in slide-in-from-bottom-1 duration-150"
+          data-state={state()}
+          style={{ "--hoxi-origin": "bottom center" }}
+          class="hoxi-popover absolute bottom-full left-2 right-2 mb-2 z-50 rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-panel)] shadow-xl overflow-hidden"
           onClick={(e) => e.stopPropagation()}
         >
           <Show
@@ -181,7 +185,8 @@ export default function UserAccountMenu() {
             </div>
           </Show>
         </div>
-      </Show>
+        )}
+      </Presence>
 
       {/* Bottom-Left Trigger: Avatar + Name + Email (Kilo-style) */}
       <button

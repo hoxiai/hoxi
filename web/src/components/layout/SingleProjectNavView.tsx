@@ -1,6 +1,7 @@
 // web/src/components/layout/SingleProjectNavView.tsx
 import { createEffect, createMemo, createSelector, createSignal, For, onCleanup, Show } from "solid-js";
 import { Portal } from "solid-js/web";
+import { Presence } from "../motion/Presence";
 import { Plus, Pencil, Layers } from "lucide-solid";
 import {
   activeWorkspaceFolders,
@@ -183,12 +184,14 @@ export default function SingleProjectNavView(props: {
       </Show>
 
       {/* Floating Project Switcher Popover */}
-      <Show when={projectMenuOpen()}>
+      <Presence when={projectMenuOpen()}>
+        {(state) => (
         <Portal>
           <div
             ref={setMenuRef}
-            class="fixed w-[248px] max-w-[calc(100vw-16px)] rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-1.5 shadow-xl z-[100] animate-in fade-in zoom-in-95 duration-100"
-            style={anchored.positionStyle()}
+            data-state={state()}
+            class="hoxi-popover fixed w-[248px] max-w-[calc(100vw-16px)] rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-1.5 z-[100]"
+            style={{ ...anchored.positionStyle(), "--hoxi-origin": "top right" }}
           >
             <div class="mb-1 px-1">
               <div class="flex items-center gap-1.5 rounded-lg bg-[var(--bg-inset)] px-2 py-1 text-[11.5px]">
@@ -279,7 +282,8 @@ export default function SingleProjectNavView(props: {
             </div>
           </div>
         </Portal>
-      </Show>
+        )}
+      </Presence>
 
       {/* Chronological Session Stream */}
       <div class="sidebar-scroll hoxi-view-enter flex-1 min-h-0 overflow-y-auto pl-1 pr-2 pb-4 space-y-3">

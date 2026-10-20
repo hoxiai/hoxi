@@ -1,6 +1,7 @@
 // web/src/components/settings/SettingsGeneralChatTabs.tsx
 import {
   Bell,
+  CheckCircle2,
   Coffee,
   CornerDownLeft,
   ExternalLink,
@@ -9,12 +10,16 @@ import {
   Moon,
   Palette,
   RotateCcw,
+  ShieldAlert,
   Sparkles,
   Sun,
+  Timer,
   Type,
+  Volume2,
 } from "lucide-solid";
 import {
   appSettings,
+  playNotificationSound,
   updateAppSetting,
   type ColorScheme,
   type FontScale,
@@ -101,6 +106,8 @@ export function GeneralAppearanceTab() {
             options={[
               { id: "blue", label: () => t("settings.colorSchemeBlue") },
               { id: "classic", label: () => t("settings.colorSchemeClassic") },
+              { id: "warm", label: () => t("settings.colorSchemeWarm") },
+              { id: "midnight", label: () => t("settings.colorSchemeMidnight") },
             ]}
             onChange={(val) => updateAppSetting("colorScheme", val)}
           />
@@ -189,6 +196,10 @@ export function GeneralAppearanceTab() {
 }
 
 export function ChatComposerTab() {
+  const testNotificationSound = () => {
+    playNotificationSound(true);
+  };
+
   const testDesktopNotification = () => {
     if (typeof window === "undefined" || !("Notification" in window)) return;
     if (Notification.permission === "granted") {
@@ -320,6 +331,57 @@ export function ChatComposerTab() {
           <ToggleSwitch
             checked={appSettings.desktopNotifications}
             onChange={(val) => updateAppSetting("desktopNotifications", val)}
+          />
+        </SettingRow>
+
+        <SettingRow
+          icon={Volume2}
+          label={t("settings.notificationSoundLabel")}
+          tip={t("settings.notificationSoundDesc")}
+        >
+          <button
+            type="button"
+            onClick={testNotificationSound}
+            class="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-3 py-1 text-[12.5px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+          >
+            {t("settings.testSoundBtn")}
+          </button>
+          <ToggleSwitch
+            checked={appSettings.notificationSound}
+            onChange={(val) => updateAppSetting("notificationSound", val)}
+          />
+        </SettingRow>
+
+        <SettingRow
+          icon={CheckCircle2}
+          label={t("settings.notifyOnCompleteLabel")}
+          tip={t("settings.notifyOnCompleteDesc")}
+        >
+          <ToggleSwitch
+            checked={appSettings.notifyOnComplete}
+            onChange={(val) => updateAppSetting("notifyOnComplete", val)}
+          />
+        </SettingRow>
+
+        <SettingRow
+          icon={ShieldAlert}
+          label={t("settings.notifyOnAttentionLabel")}
+          tip={t("settings.notifyOnAttentionDesc")}
+        >
+          <ToggleSwitch
+            checked={appSettings.notifyOnAttention}
+            onChange={(val) => updateAppSetting("notifyOnAttention", val)}
+          />
+        </SettingRow>
+
+        <SettingRow
+          icon={Timer}
+          label={t("settings.notifyOnStallLabel")}
+          tip={t("settings.notifyOnStallDesc")}
+        >
+          <ToggleSwitch
+            checked={appSettings.notifyOnStall}
+            onChange={(val) => updateAppSetting("notifyOnStall", val)}
           />
         </SettingRow>
 

@@ -1,5 +1,6 @@
 // web/src/components/layout/BranchManagerPopover.tsx
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
+import { Presence } from "../motion/Presence";
 import {
   Check,
   ChevronDown,
@@ -171,9 +172,12 @@ export default function BranchManagerPopover() {
         </Show>
 
         {/* Unified Branch & Sandbox Popover */}
-        <Show when={open()}>
+        <Presence when={open()}>
+          {(state) => (
           <div
             ref={popoverRef}
+            data-state={state()}
+            style={{ "--hoxi-origin": "top right" }}
             class="hoxi-popover absolute right-0 top-full mt-2 z-50 w-[320px] max-w-[calc(100vw-2rem)] rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-2.5 shadow-xl text-xs"
           >
             <Show when={errorMsg()}>
@@ -308,7 +312,8 @@ export default function BranchManagerPopover() {
               </div>
             </Show>
           </div>
-        </Show>
+          )}
+        </Presence>
       </div>
     </Show>
   );

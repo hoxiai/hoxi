@@ -235,9 +235,11 @@ export const hoxiAPI = {
 
   getMessages(
     sessionID: string,
-    directory?: string
+    directory?: string,
+    limit = 100
   ): Promise<Array<{ info: MessageInfo; parts: MessagePart[] }>> {
-    return requestJSON(withDir(`${sessionPath(sessionID)}/message?limit=100`, directory));
+    const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.min(2000, Math.floor(limit)) : 100;
+    return requestJSON(withDir(`${sessionPath(sessionID)}/message?limit=${safeLimit}`, directory));
   },
 
   // Prompting & Live Mid-Stream Steering
@@ -426,6 +428,13 @@ export const hoxiAPI = {
   // Commands, LSP Diagnostics & File Search
   listCommands(directory?: string): Promise<SlashCommandInfo[]> { return requestJSON(withDir("/command", directory)); },
   getLSPStatus(directory?: string): Promise<any[]> { return requestJSON(withDir("/lsp", directory)); },
+  searchFiles(query: string, directory?: string, sessionID?: string, limit = 60): Promise<Array<{ path: string; name: string; type: string }>> {
+    const params = new URLSearchParams({ q: query });
+    if (directory) params.set("directory", directory);
+    if (sessionID) params.set("sessionID", sessionID);
+    if (limit > 0) params.set("limit", String(limit));
+    return requestJSON(`/api/hoxi/file/search?${params.toString()}`);
+  },
   listFiles(path = "", directory?: string, sessionID?: string): Promise<Array<{ path: string; name?: string; type?: string }>> {
     const q = `path=${encodeURIComponent(path)}${sessionID ? `&sessionID=${encodeURIComponent(sessionID)}` : ""}`;
     return requestJSON(withDir(`/api/hoxi/file/list?${q}`, directory));
@@ -574,6 +583,9 @@ export const hoxiAPI = {
   },
   generateCommitMessage(req: { providerID: string; modelID: string; baseURL?: string; npm?: string; sessionDigest?: string; sessionTitle?: string; lastPrompt?: string; diffSummary: string; locale: string }): Promise<{ ok: boolean; message: string; error?: string }> {
     return requestJSON("/api/hoxi/provider/generate-commit-message", { method: "POST", body: JSON.stringify(req) });
+  },
+  enhancePrompt(req: { providerID: string; modelID: string; baseURL?: string; npm?: string; prompt: string; locale: string }): Promise<{ ok: boolean; prompt: string; error?: string }> {
+    return requestJSON("/api/hoxi/provider/enhance-prompt", { method: "POST", body: JSON.stringify(req) });
   },
 
   // Cross-Tool Session Handoff & Local CLI Bridge

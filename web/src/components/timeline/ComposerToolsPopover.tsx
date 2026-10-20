@@ -1,5 +1,6 @@
 // web/src/components/timeline/ComposerToolsPopover.tsx
 import { createEffect, createSignal, onCleanup, Show } from "solid-js";
+import { Presence } from "../motion/Presence";
 import { Paperclip, Plus, Search, Sparkles, Workflow } from "lucide-solid";
 import { t } from "../../i18n";
 
@@ -62,10 +63,13 @@ export default function ComposerToolsPopover(props: {
         />
       </button>
 
-      <Show when={open()}>
+      <Presence when={open()}>
+        {(state) => (
         <div
           ref={menuRef}
-          class="absolute bottom-full left-0 mb-2 w-[232px] rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-1.5 shadow-2xl z-50 animate-in fade-in zoom-in-95 duration-100"
+          data-state={state()}
+          class="hoxi-popover absolute bottom-full left-0 mb-2 w-[232px] rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-1.5 shadow-xl z-50"
+          style={{ "--hoxi-origin": "bottom left" }}
         >
           <div class="space-y-0.5">
             <button
@@ -110,7 +114,8 @@ export default function ComposerToolsPopover(props: {
             </button>
           </div>
         </div>
-      </Show>
+        )}
+      </Presence>
     </div>
   );
 }

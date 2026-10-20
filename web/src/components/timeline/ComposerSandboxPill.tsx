@@ -1,5 +1,6 @@
 // web/src/components/timeline/ComposerSandboxPill.tsx
 import { createEffect, createMemo, createSignal, onCleanup, Show } from "solid-js";
+import { Presence } from "../motion/Presence";
 import {
   ArrowUpFromLine,
   Check,
@@ -20,6 +21,7 @@ import {
   workspace,
 } from "../../store/workspace";
 import { t } from "../../i18n";
+import { fetchSandboxSession } from "../../services/sandbox-api";
 import { collectCycleChangedFiles } from "./tool-card-state";
 import { WorktreeVerifySection } from "./worktree-verify-section";
 import CommandSandboxToggle from "./CommandSandboxToggle";
@@ -43,6 +45,27 @@ export function ComposerSandboxPill(props: {
 
   let buttonRef: HTMLButtonElement | undefined;
   let menuRef: HTMLDivElement | undefined;
+
+  // The toggle lives inside the menu, so fetch the persisted state here as well
+  // to keep the collapsed shield indicator accurate before the menu is opened.
+  createEffect(() => {
+    const id = props.sessionID;
+    if (!id) {
+      setCommandSandboxOn(false);
+      return;
+    }
+    let stale = false;
+    fetchSandboxSession(id)
+      .then((state) => {
+        if (!stale) setCommandSandboxOn(Boolean(state.enabled));
+      })
+      .catch(() => {
+        if (!stale) setCommandSandboxOn(false);
+      });
+    onCleanup(() => {
+      stale = true;
+    });
+  });
 
   createEffect(() => {
     if (!open()) return;
@@ -185,10 +208,13 @@ export function ComposerSandboxPill(props: {
         />
       </button>
 
-      <Show when={open()}>
+      <Presence when={open()}>
+        {(state) => (
         <div
           ref={menuRef}
-          class="absolute bottom-full left-0 mb-2 w-[304px] max-h-[min(70vh,640px)] overflow-y-auto rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-1.5 shadow-2xl z-50 animate-in fade-in zoom-in-95 duration-100"
+          data-state={state()}
+          style={{ "--hoxi-origin": "bottom left" }}
+          class="hoxi-popover absolute bottom-full left-0 mb-2 w-[304px] max-h-[min(70vh,640px)] overflow-y-auto rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-1.5 z-50"
         >
           {/* Mode Options */}
           <div class="space-y-0.5">
@@ -407,7 +433,8 @@ export function ComposerSandboxPill(props: {
             </div>
           </Show>
         </div>
-      </Show>
+        )}
+      </Presence>
     </div>
   );
 }

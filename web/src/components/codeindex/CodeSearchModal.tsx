@@ -1,5 +1,6 @@
 // web/src/components/codeindex/CodeSearchModal.tsx
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
+import { Presence } from "../motion/Presence";
 import { History, LoaderCircle, RefreshCw, Search, X } from "lucide-solid";
 import { t } from "../../i18n";
 import {
@@ -165,15 +166,17 @@ export default function CodeSearchModal(props: {
   };
 
   return (
-    <Show when={props.open}>
+    <Presence when={props.open}>
+      {(state) => (
       <div
-        class="fixed inset-0 z-[80] flex items-start justify-center bg-black/40 px-4 pt-[12vh] backdrop-blur-[2px]"
+        data-state={state()}
+        class="hoxi-modal-backdrop fixed inset-0 z-[80] flex items-start justify-center px-4 pt-[12vh]"
         onMouseDown={(event) => {
           if (event.target === event.currentTarget) props.onClose();
         }}
       >
         <div
-          class="w-full max-w-2xl overflow-hidden rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] shadow-2xl"
+          class="hoxi-modal-panel hoxi-elevation-4 w-full max-w-2xl overflow-hidden rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-elevated)]"
           onKeyDown={onKeyDown}
         >
           <div class="flex items-center gap-1 border-b border-[var(--border-subtle)] px-2 py-1.5">
@@ -337,6 +340,7 @@ export default function CodeSearchModal(props: {
           </div>
         </div>
       </div>
-    </Show>
+      )}
+    </Presence>
   );
 }

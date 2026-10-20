@@ -1,5 +1,6 @@
 // web/src/components/layout/LeftNav.tsx
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
+import { Presence } from "../motion/Presence";
 import { ArrowRightLeft, Check, Clock, Folder, FolderPlus, Layers, Plus, Search } from "lucide-solid";
 import {
   archiveSession,
@@ -391,10 +392,13 @@ export default function LeftNav() {
               <ArrowRightLeft size={14} class="block shrink-0" />
             </button>
 
-            <Show when={modeMenuOpen()}>
+            <Presence when={modeMenuOpen()}>
+              {(state) => (
               <div
                 ref={modeMenuRef}
-                class="absolute right-0 top-full mt-1 w-36 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-1 shadow-xl z-50 animate-in fade-in zoom-in-95 duration-100 space-y-0.5"
+                data-state={state()}
+                style={{ "--hoxi-origin": "top right" }}
+                class="hoxi-popover absolute right-0 top-full mt-1 w-36 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-1 z-50 space-y-0.5"
               >
                 <For each={modeOptions}>
                   {(opt) => {
@@ -424,7 +428,8 @@ export default function LeftNav() {
                   }}
                 </For>
               </div>
-            </Show>
+              )}
+            </Presence>
           </div>
 
           <button

@@ -1,5 +1,6 @@
 // web/src/components/orchestration/ConvoyModal.tsx
 import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
+import { Presence } from "../motion/Presence";
 import {
   CheckCircle2,
   LoaderCircle,
@@ -180,14 +181,16 @@ export default function ConvoyModal(props: {
   };
 
   return (
-    <Show when={props.open}>
+    <Presence when={props.open}>
+      {(state) => (
       <div
-        class="fixed inset-0 z-[80] flex items-start justify-center bg-black/40 px-4 pt-[8vh] backdrop-blur-[2px]"
+        data-state={state()}
+        class="hoxi-modal-backdrop fixed inset-0 z-[80] flex items-start justify-center px-4 pt-[8vh]"
         onMouseDown={(event) => {
           if (event.target === event.currentTarget) props.onClose();
         }}
       >
-        <div class="w-full max-w-3xl overflow-hidden rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] shadow-2xl">
+        <div class="hoxi-modal-panel hoxi-elevation-4 w-full max-w-3xl overflow-hidden rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-elevated)]">
           <div class="flex items-center gap-2 border-b border-[var(--border-subtle)] px-3 py-2">
             <Workflow size={15} class="shrink-0 text-[var(--accent-primary)]" />
             <div class="min-w-0">
@@ -342,6 +345,7 @@ export default function ConvoyModal(props: {
           </Show>
         </div>
       </div>
-    </Show>
+      )}
+    </Presence>
   );
 }

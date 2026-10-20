@@ -12,6 +12,7 @@ import { privacy } from "./privacy";
 import { diagnostics } from "./diagnostics";
 import { network } from "./network";
 import { skills } from "./skills";
+import { commandPalette } from "./commandPalette";
 
 export const enUS = {
   common,
@@ -27,6 +28,7 @@ export const enUS = {
   diagnostics,
   network,
   skills,
+  commandPalette,
 };
 
 export default enUS;

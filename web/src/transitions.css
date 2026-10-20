@@ -1,13 +1,12 @@
 /*
  * Hoxi GPU-Composited Motion & Transition Primitives
  * Loaded after styles.css so motion primitives are never clobbered by utility classes.
- * Zero-layout-thrash animations driven by opacity, transform/translate/scale/rotate, and CSS Grid 0fr/1fr.
+ * Motion contract:
+ *   - enter: decelerating, slightly springy (var(--ease-spring))
+ *   - exit:  accelerating and shorter (var(--ease-exit))
+ *   - press: fast down, springy release
+ *   - only opacity / transform / scale animate; layout properties stay instant.
  */
-:root {
-  --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
-  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
-  --ease-spring: cubic-bezier(0.22, 1, 0.36, 1);
-}
 
 /* ============================================================================
  * 1. Tailwind v4 `animate-in` Polyfill & Composable Entrance Utilities
@@ -30,7 +29,7 @@
 
 .animate-in {
   animation-name: hoxi-enter;
-  animation-duration: 190ms;
+  animation-duration: 220ms;
   animation-timing-function: var(--ease-spring);
   animation-fill-mode: both;
   --tw-enter-opacity: 0;
@@ -45,7 +44,7 @@
 
 .zoom-in-95 {
   --tw-enter-scale: 0.955;
-  --tw-enter-translate-y: 4px;
+  --tw-enter-translate-y: 6px;
 }
 
 .slide-in-from-bottom-1 {
@@ -57,20 +56,63 @@
 }
 
 .animate-in.duration-100 {
-  animation-duration: 165ms;
+  animation-duration: 180ms;
 }
 
 .animate-in.duration-150 {
-  animation-duration: 195ms;
+  animation-duration: 220ms;
 }
 
 .animate-in.duration-200 {
-  animation-duration: 230ms;
+  animation-duration: 250ms;
 }
 
 /* ============================================================================
- * 2. Modal Backdrop, Dialog Panel & Popover Entrances
+ * 2. Modal Backdrop, Dialog Panel & Popover (enter + exit via [data-state])
  * ============================================================================ */
+.hoxi-modal-backdrop {
+  background-color: var(--overlay-backdrop);
+  -webkit-backdrop-filter: blur(var(--overlay-blur)) saturate(1.05);
+  backdrop-filter: blur(var(--overlay-blur)) saturate(1.05);
+  opacity: 1;
+  transition: opacity var(--motion-enter) var(--ease-enter);
+}
+
+.hoxi-modal-backdrop[data-state="enter"] {
+  opacity: 0;
+}
+
+.hoxi-modal-backdrop[data-state="exit"] {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--motion-exit) var(--ease-exit);
+}
+
+.hoxi-modal-backdrop .hoxi-modal-panel,
+dialog[open] {
+  box-shadow: var(--elevation-4);
+  opacity: 1;
+  transform: none;
+  transition:
+    opacity var(--motion-enter) var(--ease-enter),
+    transform var(--motion-enter) var(--ease-spring);
+}
+
+.hoxi-modal-backdrop[data-state="enter"] .hoxi-modal-panel {
+  opacity: 0;
+  transform: translate3d(0, 14px, 0) scale(0.955);
+  will-change: opacity, transform;
+}
+
+.hoxi-modal-backdrop[data-state="exit"] .hoxi-modal-panel {
+  opacity: 0;
+  transform: translate3d(0, 6px, 0) scale(0.985);
+  will-change: opacity, transform;
+  transition:
+    opacity var(--motion-exit) var(--ease-exit),
+    transform var(--motion-exit) var(--ease-exit);
+}
+
 @keyframes hoxi-backdrop-in {
   from {
     opacity: 0;
@@ -84,48 +126,70 @@
   }
 }
 
-@keyframes hoxi-popover-in {
-  from {
-    opacity: 0;
-    transform: translate3d(0, 5px, 0) scale3d(0.96, 0.96, 1);
-  }
-}
-
-.hoxi-modal-backdrop {
-  animation: hoxi-backdrop-in 180ms var(--ease-out-quart) both;
-}
-
-.hoxi-modal-panel,
 dialog[open] {
-  animation: hoxi-modal-in 230ms var(--ease-spring) both;
+  animation: hoxi-modal-in var(--motion-enter) var(--ease-spring) both;
 }
 
 dialog[open]::backdrop {
-  animation: hoxi-backdrop-in 180ms var(--ease-out-quart) both;
+  background: var(--overlay-backdrop);
+  animation: hoxi-backdrop-in var(--motion-enter) var(--ease-enter) both;
 }
 
 .hoxi-popover {
-  animation: hoxi-popover-in 180ms var(--ease-spring) both;
+  transform-origin: var(--hoxi-origin, top center);
+  box-shadow: var(--elevation-3);
+  opacity: 1;
+  transform: none;
+  transition:
+    opacity var(--motion-enter) var(--ease-enter),
+    transform var(--motion-enter) var(--ease-spring);
+}
+
+.hoxi-popover[data-state="enter"] {
+  opacity: 0;
+  transform: translate3d(0, 6px, 0) scale(0.965);
+  will-change: opacity, transform;
+}
+
+.hoxi-popover[data-state="exit"] {
+  opacity: 0;
+  transform: translate3d(0, 4px, 0) scale(0.985);
+  pointer-events: none;
+  will-change: opacity, transform;
+  transition:
+    opacity var(--motion-exit) var(--ease-exit),
+    transform var(--motion-exit) var(--ease-exit);
+}
+
+/* Full-screen surfaces (settings, handoff drill-in) */
+.hoxi-screen {
+  opacity: 1;
+  transform: none;
+  transition:
+    opacity var(--motion-enter) var(--ease-enter),
+    transform var(--motion-enter) var(--ease-spring);
+}
+
+.hoxi-screen[data-state="enter"] {
+  opacity: 0;
+  transform: translate3d(0, 10px, 0) scale(0.994);
+  will-change: opacity, transform;
+}
+
+.hoxi-screen[data-state="exit"] {
+  opacity: 0;
+  transform: translate3d(0, 6px, 0) scale(0.996);
+  pointer-events: none;
+  will-change: opacity, transform;
+  transition:
+    opacity var(--motion-exit) var(--ease-exit),
+    transform var(--motion-exit) var(--ease-exit);
 }
 
 /* ============================================================================
  * 3. View, Session, Drill-Down & Tab Switch Transitions
  * ============================================================================ */
 @keyframes hoxi-view-in {
-  from {
-    opacity: 0;
-    transform: translate3d(0, 8px, 0) scale3d(0.994, 0.994, 1);
-  }
-}
-
-@keyframes hoxi-view-in-a {
-  from {
-    opacity: 0;
-    transform: translate3d(0, 8px, 0) scale3d(0.994, 0.994, 1);
-  }
-}
-
-@keyframes hoxi-view-in-b {
   from {
     opacity: 0;
     transform: translate3d(0, 8px, 0) scale3d(0.994, 0.994, 1);
@@ -139,20 +203,6 @@ dialog[open]::backdrop {
   }
 }
 
-@keyframes hoxi-drill-in-a {
-  from {
-    opacity: 0;
-    transform: translate3d(10px, 0, 0);
-  }
-}
-
-@keyframes hoxi-drill-in-b {
-  from {
-    opacity: 0;
-    transform: translate3d(10px, 0, 0);
-  }
-}
-
 @keyframes hoxi-fade-in {
   from {
     opacity: 0;
@@ -160,42 +210,99 @@ dialog[open]::backdrop {
 }
 
 .hoxi-view-enter {
-  animation: hoxi-view-in 220ms var(--ease-spring) both;
+  animation: hoxi-view-in var(--motion-enter) var(--ease-spring) both;
 }
 
-.hoxi-view-enter-a {
-  animation: hoxi-view-in-a 220ms var(--ease-spring) both;
-}
-
+.hoxi-view-enter-a,
 .hoxi-view-enter-b {
-  animation: hoxi-view-in-b 220ms var(--ease-spring) both;
+  animation: hoxi-view-in var(--motion-enter) var(--ease-spring) both;
 }
 
 .hoxi-drill-enter {
-  animation: hoxi-drill-in 210ms var(--ease-spring) both;
+  animation: hoxi-drill-in var(--motion-move) var(--ease-spring) both;
 }
 
-.hoxi-drill-enter-a {
-  animation: hoxi-drill-in-a 210ms var(--ease-spring) both;
-}
-
+.hoxi-drill-enter-a,
 .hoxi-drill-enter-b {
-  animation: hoxi-drill-in-b 210ms var(--ease-spring) both;
+  animation: hoxi-drill-in var(--motion-move) var(--ease-spring) both;
 }
 
 .hoxi-fade-enter {
-  animation: hoxi-fade-in 180ms var(--ease-out-quart) both;
+  animation: hoxi-fade-in var(--motion-move) var(--ease-enter) both;
+}
+
+/* Inspector tab crossfade: panels stay mounted, only the active one is visible. */
+.hoxi-tab-stack {
+  position: relative;
+}
+
+.hoxi-tab-panel {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  visibility: hidden;
+  transform: translate3d(0, 6px, 0) scale(0.996);
+  pointer-events: none;
+  transition:
+    opacity var(--motion-exit) var(--ease-exit),
+    transform var(--motion-exit) var(--ease-exit),
+    visibility 0s linear var(--motion-exit);
+}
+
+.hoxi-tab-panel[data-active="true"] {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+  pointer-events: auto;
+  transition:
+    opacity var(--motion-enter) var(--ease-enter),
+    transform var(--motion-enter) var(--ease-spring),
+    visibility 0s linear 0s;
 }
 
 /* ============================================================================
- * 4. CSS Grid 0fr -> 1fr Smooth Collapsible Drawers & Rotating Chevrons
+ * 4. Stream / List Item Entrances with Capped Stagger
+ * ============================================================================ */
+@keyframes hoxi-item-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 10px, 0) scale(0.994);
+  }
+}
+
+.hoxi-item-enter {
+  animation: hoxi-item-in var(--motion-enter) var(--ease-spring) both;
+  animation-delay: calc(var(--hoxi-order, 0) * 24ms);
+}
+
+@keyframes hoxi-item-pop {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 8px, 0) scale(0.975);
+  }
+  60% {
+    opacity: 1;
+    transform: translate3d(0, -1px, 0) scale(1.004);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+.hoxi-item-pop {
+  animation: hoxi-item-pop var(--motion-enter) var(--ease-enter) both;
+}
+
+/* ============================================================================
+ * 5. CSS Grid 0fr -> 1fr Smooth Collapsible Drawers & Rotating Chevrons
  * ============================================================================ */
 .hoxi-drawer-grid {
   display: grid;
   transition:
-    grid-template-rows 230ms var(--ease-spring),
-    opacity 190ms var(--ease-out-quart),
-    margin-top 230ms var(--ease-spring);
+    grid-template-rows var(--motion-move) var(--ease-spring),
+    opacity var(--motion-exit) var(--ease-exit),
+    margin-top var(--motion-move) var(--ease-spring);
 }
 
 .hoxi-drawer-grid[data-open="true"] {
@@ -216,8 +323,8 @@ dialog[open]::backdrop {
   transition:
     transform 185ms var(--ease-spring),
     rotate 185ms var(--ease-spring),
-    opacity 150ms ease,
-    color 150ms ease !important;
+    opacity 150ms var(--ease-enter),
+    color 150ms var(--ease-enter) !important;
 }
 
 .hoxi-chevron[data-open="true"] {
@@ -225,43 +332,44 @@ dialog[open]::backdrop {
 }
 
 /* ============================================================================
- * 5. Tactile Micro-Interactions (Press Scale & Smooth Pill Transitions)
+ * 6. Tactile Micro-Interactions (Press Depth & Smooth Pill Transitions)
  * ============================================================================ */
 .hoxi-press {
   transition:
-    transform 140ms var(--ease-spring),
-    scale 140ms var(--ease-spring),
-    background-color 160ms ease,
-    color 160ms ease,
-    border-color 160ms ease,
-    box-shadow 160ms ease,
-    opacity 160ms ease !important;
+    transform var(--motion-enter) var(--ease-spring),
+    scale var(--motion-enter) var(--ease-spring),
+    background-color 160ms var(--ease-enter),
+    color 160ms var(--ease-enter),
+    border-color 160ms var(--ease-enter),
+    box-shadow 200ms var(--ease-enter),
+    opacity 160ms var(--ease-enter) !important;
 }
 
 .hoxi-press:not(:disabled):active {
-  transform: scale(0.965);
+  transform: scale(0.968) translate3d(0, 0.5px, 0);
+  transition:
+    transform var(--motion-press) var(--ease-exit),
+    scale var(--motion-press) var(--ease-exit),
+    background-color 90ms var(--ease-exit),
+    box-shadow 90ms var(--ease-exit) !important;
 }
 
+/* ============================================================================
+ * 7. Reduced Motion — disable every ambient/decorative transition
+ * ============================================================================ */
 @media (prefers-reduced-motion: reduce) {
-  .animate-in,
-  .hoxi-modal-backdrop,
-  .hoxi-modal-panel,
-  .hoxi-popover,
-  .hoxi-view-enter,
-  .hoxi-view-enter-a,
-  .hoxi-view-enter-b,
-  .hoxi-drill-enter,
-  .hoxi-drill-enter-a,
-  .hoxi-drill-enter-b,
-  .hoxi-fade-enter,
-  dialog[open],
-  dialog[open]::backdrop {
-    animation: none !important;
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    transition-delay: 0ms !important;
+    scroll-behavior: auto !important;
   }
 
-  .hoxi-drawer-grid,
-  .hoxi-chevron,
-  .hoxi-press {
-    transition: none !important;
+  .hoxi-press:not(:disabled):active {
+    transform: none;
   }
 }

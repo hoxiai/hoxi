@@ -1,5 +1,6 @@
 // web/src/components/layout/UpdateBadge.tsx
 import { createSignal, onCleanup, onMount, Show } from "solid-js";
+import { Presence } from "../motion/Presence";
 import { ArrowUpCircle, Download, ExternalLink, Sparkles, X } from "lucide-solid";
 import { checkDesktopUpdate, desktopUpdater, refreshDesktopUpdateStatus, startDesktopUpdate } from "../../store/workspace";
 import { t } from "../../i18n";
@@ -54,13 +55,15 @@ export default function UpdateBadge() {
       </button>
 
       {/* 2. Kilo-style Update Details Modal */}
-      <Show when={modalOpen()}>
+      <Presence when={modalOpen()}>
+        {(state) => (
         <div
-          class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150"
+          data-state={state()}
+          class="hoxi-modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4"
           onClick={() => setModalOpen(false)}
         >
           <div
-            class="relative w-full max-w-md rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-panel)] shadow-2xl overflow-hidden animate-in zoom-in-95 duration-150"
+            class="hoxi-modal-panel hoxi-elevation-4 relative w-full max-w-md rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-panel)] overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Header banner */}
@@ -192,7 +195,8 @@ export default function UpdateBadge() {
             </div>
           </div>
         </div>
-      </Show>
+        )}
+      </Presence>
     </Show>
   );
 }

@@ -1,5 +1,6 @@
 // web/src/components/timeline/ModeSwitcher.tsx
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
+import { Presence } from "../motion/Presence";
 import {
   Bot,
   Bug,
@@ -120,10 +121,13 @@ export default function ModeSwitcher() {
       </button>
 
       {/* Floating Mode Switcher Popover */}
-      <Show when={open()}>
+      <Presence when={open()}>
+        {(state) => (
         <div
           ref={menuRef}
-          class="absolute bottom-full left-0 mb-2 w-[270px] rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-1.5 shadow-2xl z-50 animate-in fade-in zoom-in-95 duration-100"
+          data-state={state()}
+          class="hoxi-popover absolute bottom-full left-0 mb-2 w-[270px] rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-1.5 shadow-xl z-50"
+          style={{ "--hoxi-origin": "bottom left" }}
         >
           <div class="px-2.5 py-1.5 flex items-center justify-between border-b border-[var(--border-subtle)] mb-1">
             <span class="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
@@ -215,7 +219,8 @@ export default function ModeSwitcher() {
             </For>
           </div>
         </div>
-      </Show>
+        )}
+      </Presence>
     </div>
   );
 }

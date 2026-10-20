@@ -247,7 +247,7 @@ export default function App() {
                 ) {
                   setWorkspace("unreadCompletedBySession", sid, true);
                 }
-                triggerDesktopNotification("Hoxi", t("timeline.turnCompleted"));
+                triggerDesktopNotification("Hoxi", t("timeline.turnCompleted"), { sessionID: sid, kind: "complete" });
                 void loadSessionMessages(sid).then(() => {
                   void drainNextQueuedPrompt(sid);
                   void runSessionCodeAudit(sid, false);
@@ -262,7 +262,7 @@ export default function App() {
                 evt.properties.stalledSince || 0
               );
               if (evt.properties.stalledSince) {
-                triggerDesktopNotification("Hoxi", t("timeline.stalledNotification"));
+                triggerDesktopNotification("Hoxi", t("timeline.stalledNotification"), { sessionID: evt.properties.sessionID, kind: "stall" });
               }
               break;
             case "session.diff":
@@ -285,7 +285,7 @@ export default function App() {
               setWorkspace("pendingQuestions", (prev) =>
                 prev.some((q) => q.id === evt.properties.id) ? prev : [...prev, evt.properties]
               );
-              triggerDesktopNotification("Hoxi", t("approval.questionTitle"));
+              triggerDesktopNotification("Hoxi", t("approval.questionTitle"), { sessionID: evt.properties.sessionID, kind: "attention" });
               break;
             case "question.replied":
             case "question.v2.replied":

@@ -20,7 +20,9 @@ export type SettingsTab =
   | "diagnostics"
   | ProviderModalTab;
 export type ThemeMode = "light" | "dark" | "system";
-export type ColorScheme = "blue" | "classic";
+export type ColorScheme = "blue" | "classic" | "warm" | "midnight";
+
+export const COLOR_SCHEMES: ColorScheme[] = ["blue", "classic", "warm", "midnight"];
 export type FontScale = "compact" | "default" | "comfortable" | "large";
 export type SendShortcutMode = "enter" | "mod-enter";
 export type ReasoningDisplayMode = "auto-collapse" | "expanded" | "collapsed";
@@ -55,6 +57,10 @@ export interface AppSettingsState {
   terminalFontSize: number;
   terminalCursorBlink: boolean;
   desktopNotifications: boolean;
+  notificationSound: boolean;
+  notifyOnComplete: boolean;
+  notifyOnAttention: boolean;
+  notifyOnStall: boolean;
   keepAwakeWhileRunning: boolean;
   linkOpenTarget: LinkOpenTarget;
 }
@@ -92,9 +98,17 @@ const DEFAULT_SETTINGS: PersistedSettings = {
   terminalFontSize: 12,
   terminalCursorBlink: true,
   desktopNotifications: true,
+  notificationSound: true,
+  notifyOnComplete: true,
+  notifyOnAttention: true,
+  notifyOnStall: true,
   keepAwakeWhileRunning: true,
   linkOpenTarget: "external",
 };
+
+function isColorScheme(value: unknown): value is ColorScheme {
+  return typeof value === "string" && (COLOR_SCHEMES as string[]).includes(value);
+}
 
 function loadInitialSettings(): PersistedSettings {
   let baseTheme: ThemeMode = "light";
@@ -117,7 +131,7 @@ function loadInitialSettings(): PersistedSettings {
       return { ...DEFAULT_SETTINGS, themeMode: baseTheme };
     }
     return {
-      colorScheme: parsed.colorScheme === "classic" ? "classic" : "blue",
+      colorScheme: isColorScheme(parsed.colorScheme) ? parsed.colorScheme : "blue",
       themeMode:
         parsed.themeMode === "light" ||
         parsed.themeMode === "dark" ||
@@ -209,6 +223,22 @@ function loadInitialSettings(): PersistedSettings {
         typeof parsed.desktopNotifications === "boolean"
           ? parsed.desktopNotifications
           : DEFAULT_SETTINGS.desktopNotifications,
+      notificationSound:
+        typeof parsed.notificationSound === "boolean"
+          ? parsed.notificationSound
+          : DEFAULT_SETTINGS.notificationSound,
+      notifyOnComplete:
+        typeof parsed.notifyOnComplete === "boolean"
+          ? parsed.notifyOnComplete
+          : DEFAULT_SETTINGS.notifyOnComplete,
+      notifyOnAttention:
+        typeof parsed.notifyOnAttention === "boolean"
+          ? parsed.notifyOnAttention
+          : DEFAULT_SETTINGS.notifyOnAttention,
+      notifyOnStall:
+        typeof parsed.notifyOnStall === "boolean"
+          ? parsed.notifyOnStall
+          : DEFAULT_SETTINGS.notifyOnStall,
       keepAwakeWhileRunning:
         typeof parsed.keepAwakeWhileRunning === "boolean"
           ? parsed.keepAwakeWhileRunning
@@ -256,6 +286,10 @@ function persistAppSettings() {
       terminalFontSize: appSettings.terminalFontSize,
       terminalCursorBlink: appSettings.terminalCursorBlink,
       desktopNotifications: appSettings.desktopNotifications,
+      notificationSound: appSettings.notificationSound,
+      notifyOnComplete: appSettings.notifyOnComplete,
+      notifyOnAttention: appSettings.notifyOnAttention,
+      notifyOnStall: appSettings.notifyOnStall,
       keepAwakeWhileRunning: appSettings.keepAwakeWhileRunning,
       linkOpenTarget: appSettings.linkOpenTarget,
     };
@@ -426,18 +460,94 @@ export function resetAllAppSettings() {
   syncSettingsSideEffects();
 }
 
-export function triggerDesktopNotification(title: string, body: string) {
+export type NotificationKind = "complete" | "attention" | "stall";
+
+export interface DesktopNotificationOptions {
+  sessionID?: string;
+  kind?: NotificationKind;
+}
+
+const NOTIFICATION_DEDUPE_MS = 8000;
+const recentNotifications = new Map<string, number>();
+let notificationAudioContext: AudioContext | null = null;
+
+function notificationKindEnabled(kind: NotificationKind): boolean {
+  if (kind === "complete") return appSettings.notifyOnComplete;
+  if (kind === "attention") return appSettings.notifyOnAttention;
+  return appSettings.notifyOnStall;
+}
+
+export function playNotificationSound(force = false) {
+  if (!force && !appSettings.notificationSound) return;
+  if (typeof window === "undefined") return;
+  const AudioCtor =
+    window.AudioContext ||
+    (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (!AudioCtor) return;
+  try {
+    notificationAudioContext ??= new AudioCtor();
+    const ctx = notificationAudioContext;
+    if (ctx.state === "suspended") void ctx.resume();
+    const now = ctx.currentTime;
+    const oscillator = ctx.createOscillator();
+    const gain = ctx.createGain();
+    oscillator.type = "sine";
+    oscillator.frequency.setValueAtTime(880, now);
+    oscillator.frequency.exponentialRampToValueAtTime(1174.66, now + 0.12);
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(0.12, now + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.22);
+    oscillator.connect(gain);
+    gain.connect(ctx.destination);
+    oscillator.start(now);
+    oscillator.stop(now + 0.24);
+  } catch {
+    /* audio unavailable */
+  }
+}
+
+export function triggerDesktopNotification(
+  title: string,
+  body: string,
+  options: DesktopNotificationOptions = {}
+) {
   if (!appSettings.desktopNotifications) return;
+  const kind = options.kind ?? "complete";
+  if (!notificationKindEnabled(kind)) return;
   if (typeof document !== "undefined" && document.hasFocus()) return;
+
+  const dedupeKey = `${kind}:${options.sessionID || ""}:${title}`;
+  const now = Date.now();
+  const previous = recentNotifications.get(dedupeKey);
+  if (previous && now - previous < NOTIFICATION_DEDUPE_MS) return;
+  recentNotifications.set(dedupeKey, now);
+  setTimeout(() => {
+    if (recentNotifications.get(dedupeKey) === now) recentNotifications.delete(dedupeKey);
+  }, NOTIFICATION_DEDUPE_MS);
+
+  playNotificationSound();
+
   if (typeof window === "undefined" || !("Notification" in window)) return;
   try {
+    const show = () => {
+      const notification = new Notification(title, { body, silent: true });
+      notification.onclick = () => {
+        window.focus();
+        if (options.sessionID) {
+          window.dispatchEvent(
+            new CustomEvent("hoxi:notification-click", {
+              detail: { sessionID: options.sessionID },
+            })
+          );
+        }
+        notification.close();
+      };
+    };
     if (Notification.permission === "granted") {
-      new Notification(title, { body, silent: false });
+      show();
     } else if (Notification.permission !== "denied") {
       void Notification.requestPermission().then((perm) => {
-        if (perm === "granted") {
-          new Notification(title, { body, silent: false });
-        }
+        if (perm === "granted") show();
       });
     }
   } catch {

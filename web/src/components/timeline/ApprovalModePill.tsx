@@ -1,5 +1,6 @@
 // web/src/components/timeline/ApprovalModePill.tsx
 import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
+import { Presence } from "../motion/Presence";
 import {
   Check,
   ChevronDown,
@@ -148,10 +149,13 @@ export default function ApprovalModePill() {
         </Show>
       </button>
 
-      <Show when={open()}>
+      <Presence when={open()}>
+        {(state) => (
         <div
           ref={menuRef}
-          class="absolute bottom-full right-0 mb-2 w-[296px] rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-1.5 shadow-2xl z-50 animate-in fade-in zoom-in-95 duration-100"
+          data-state={state()}
+          style={{ "--hoxi-origin": "bottom right" }}
+          class="hoxi-popover absolute bottom-full right-0 mb-2 w-[296px] rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-1.5 z-50"
         >
           <div class="px-2.5 py-1.5 flex items-center justify-between border-b border-[var(--border-subtle)] mb-1">
             <span class="text-[10.5px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
@@ -238,7 +242,8 @@ export default function ApprovalModePill() {
             </button>
           </div>
         </div>
-      </Show>
+        )}
+      </Presence>
     </div>
   );
 }

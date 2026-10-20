@@ -1,5 +1,6 @@
 import { createEffect, createMemo, createSelector, createSignal, For, onCleanup, Show } from "solid-js";
 import { Portal } from "solid-js/web";
+import { Presence } from "../motion/Presence";
 import { GripVertical, MoreHorizontal, FolderPlus, Pencil, Layers, Trash2, Plus } from "lucide-solid";
 import {
   isSessionArchived,
@@ -71,12 +72,14 @@ export function WorkspaceActionMenu(props: {
         <MoreHorizontal size={13} class="block shrink-0" />
       </button>
 
-      <Show when={open()}>
+      <Presence when={open()}>
+        {(state) => (
         <Portal>
           <div
             ref={setMenuRef}
-            class="fixed w-48 max-w-[calc(100vw-16px)] rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-1 shadow-xl z-[100] animate-in fade-in zoom-in-95 duration-100"
-            style={anchored.positionStyle()}
+            data-state={state()}
+            class="hoxi-popover fixed w-48 max-w-[calc(100vw-16px)] rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-1 z-[100]"
+            style={{ ...anchored.positionStyle(), "--hoxi-origin": "top right" }}
           >
             <button
               type="button"
@@ -141,7 +144,8 @@ export function WorkspaceActionMenu(props: {
             </button>
           </div>
         </Portal>
-      </Show>
+        )}
+      </Presence>
     </div>
   );
 }

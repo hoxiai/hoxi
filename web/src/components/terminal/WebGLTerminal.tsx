@@ -23,10 +23,30 @@ function wsEndpoint(ptyID: string, directory?: string): string {
 
 const utf8Decoder = new TextDecoder();
 
-// OpenCode streams raw PTY bytes; tolerate JSON-framed frames as well.
+// OpenCode streams raw PTY bytes plus a 0x00-prefixed JSON control frame that
+// carries the replay cursor. Never write control frames to the terminal.
+function decodeControlFrame(payload: string): string | undefined {
+  try {
+    const parsed = JSON.parse(payload);
+    if (parsed && typeof parsed.cursor === "number") return "";
+  } catch {
+    /* raw payload */
+  }
+  return undefined;
+}
+
 function decodeFrame(data: string | ArrayBuffer): string {
   if (typeof data !== "string") {
-    return utf8Decoder.decode(data);
+    const bytes = new Uint8Array(data);
+    if (bytes.length > 0 && bytes[0] === 0) {
+      const control = decodeControlFrame(utf8Decoder.decode(bytes.subarray(1)));
+      if (control !== undefined) return control;
+    }
+    return utf8Decoder.decode(bytes);
+  }
+  if (data.charCodeAt(0) === 0) {
+    const control = decodeControlFrame(data.slice(1));
+    if (control !== undefined) return control;
   }
   if (data.startsWith("{")) {
     try {

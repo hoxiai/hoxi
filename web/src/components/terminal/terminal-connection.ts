@@ -53,6 +53,7 @@ export function startTerminalConnection(options: TerminalConnectionOptions) {
       }
       ptyID = pty.id;
       socket = options.connect(ptyID, options.directory);
+      socket.binaryType = "arraybuffer";
       socket.onopen = () => {
         if (disposed) return;
         options.ready();

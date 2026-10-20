@@ -1,5 +1,6 @@
 // web/src/components/models/CustomProviderModelModals.tsx
 import { createMemo, createSignal, For, Show, type Accessor, type Setter } from "solid-js";
+import { Presence } from "../motion/Presence";
 import {
   AlertCircle,
   Check,
@@ -68,9 +69,11 @@ export function FetchedModelsModal(props: {
   };
 
   return (
-    <Show when={props.fetchedModels().length > 0}>
+    <Presence when={props.fetchedModels().length > 0}>
+      {(state) => (
       <div
-        class="hoxi-modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4"
+        data-state={state()}
+        class="hoxi-modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4"
         onClick={() => props.setFetchedModels([])}
         onKeyDown={(e) => {
           if (e.key === "Escape") {
@@ -81,7 +84,7 @@ export function FetchedModelsModal(props: {
         }}
       >
         <div
-          class="hoxi-modal-panel flex w-full max-w-[620px] max-h-[82dvh] flex-col rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-panel)] shadow-2xl overflow-hidden"
+          class="hoxi-modal-panel hoxi-elevation-4 flex w-full max-w-[620px] max-h-[82dvh] flex-col rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-panel)] shadow-2xl overflow-hidden"
           onClick={(e) => e.stopPropagation()}
         >
           {/* Modal Header */}
@@ -233,7 +236,8 @@ export function FetchedModelsModal(props: {
           </div>
         </div>
       </div>
-    </Show>
+      )}
+    </Presence>
   );
 }
 
@@ -309,9 +313,11 @@ export function AddCustomModelModal(props: {
   };
 
   return (
-    <Show when={props.open()}>
+    <Presence when={props.open()}>
+      {(state) => (
       <div
-        class="hoxi-modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4"
+        data-state={state()}
+        class="hoxi-modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4"
         onClick={() => !verifying() && resetAndClose()}
         onKeyDown={(e) => {
           if (e.key === "Escape") {
@@ -322,7 +328,7 @@ export function AddCustomModelModal(props: {
         }}
       >
         <div
-          class="hoxi-modal-panel w-full max-w-[460px] rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-panel)] p-5 shadow-2xl space-y-4"
+          class="hoxi-modal-panel hoxi-elevation-4 w-full max-w-[460px] rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-panel)] p-5 shadow-2xl space-y-4"
           onClick={(e) => e.stopPropagation()}
         >
           <div class="flex items-start justify-between gap-3">
@@ -477,6 +483,7 @@ export function AddCustomModelModal(props: {
           </div>
         </div>
       </div>
-    </Show>
+      )}
+    </Presence>
   );
 }

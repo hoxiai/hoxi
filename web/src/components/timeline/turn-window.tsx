@@ -292,12 +292,13 @@ export function AssistantTurnItem(props: {
     >
       <div
         data-turn-id={props.turn.info.id}
-        style={
-          props.globalIndex < props.allTurns.length - 4 && !isHighlighted()
+        style={{
+          "--hoxi-order": String(Math.min(Math.max(props.allTurns.length - 1 - props.globalIndex, 0), 5)),
+          ...(props.globalIndex < props.allTurns.length - 4 && !isHighlighted()
             ? { "content-visibility": "auto", "contain-intrinsic-size": "auto 140px" }
-            : undefined
-        }
-        class={`flex flex-col gap-y-2.5 px-1 rounded-xl transition-colors ${
+            : {}),
+        }}
+        class={`hoxi-item-enter flex flex-col gap-y-2.5 px-1 rounded-xl transition-colors ${
           merged().isVisuallyEmpty && !props.turn.info.error
             ? "mt-0"
             : props.globalIndex === 0

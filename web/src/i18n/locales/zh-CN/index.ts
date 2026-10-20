@@ -13,6 +13,7 @@ import { privacy } from "./privacy";
 import { diagnostics } from "./diagnostics";
 import { network } from "./network";
 import { skills } from "./skills";
+import { commandPalette } from "./commandPalette";
 
 export const zhCN: I18nDictionary = {
   common,
@@ -28,6 +29,7 @@ export const zhCN: I18nDictionary = {
   diagnostics,
   network,
   skills,
+  commandPalette,
 };
 
 export default zhCN;

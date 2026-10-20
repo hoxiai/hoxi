@@ -26,6 +26,7 @@ import {
 import { ObserverAuditBadge } from "../inspector/ObserverAuditBanner";
 import { Icon } from "../icons";
 import { t } from "../../i18n";
+import { copyMessageLink } from "./session-export";
 import { AssistantErrorCard, SessionRetryCard } from "./assistant-error-card";
 import {
   ActionIconButton,
@@ -245,15 +246,18 @@ export function AssistantTurnFooter(props: {
   isSessionBusy?: boolean;
 }) {
   const [copied, setCopied] = createSignal(false);
+  const [linkCopied, setLinkCopied] = createSignal(false);
   const [downloaded, setDownloaded] = createSignal(false);
   const [resuming, setResuming] = createSignal(false);
   let copyTimer: ReturnType<typeof setTimeout> | undefined;
+  let linkTimer: ReturnType<typeof setTimeout> | undefined;
   let downloadTimer: ReturnType<typeof setTimeout> | undefined;
   let revokeTimer: ReturnType<typeof setTimeout> | undefined;
   let activeBlobURL: string | undefined;
 
   onCleanup(() => {
     if (copyTimer !== undefined) clearTimeout(copyTimer);
+    if (linkTimer !== undefined) clearTimeout(linkTimer);
     if (downloadTimer !== undefined) clearTimeout(downloadTimer);
     if (revokeTimer !== undefined) clearTimeout(revokeTimer);
     if (activeBlobURL) {
@@ -422,6 +426,14 @@ export function AssistantTurnFooter(props: {
     }
   };
 
+  const copyLink = async () => {
+    const ok = await copyMessageLink(props.info.sessionID, props.info.id);
+    if (!ok) return;
+    setLinkCopied(true);
+    if (linkTimer !== undefined) clearTimeout(linkTimer);
+    linkTimer = setTimeout(() => setLinkCopied(false), 1800);
+  };
+
   const downloadMarkdown = () => {
     const text = cycleSummary()?.finalText;
     if (!text) return;
@@ -498,6 +510,15 @@ export function AssistantTurnFooter(props: {
                   onClick={downloadMarkdown}
                 >
                   <Show when={downloaded()} fallback={<Icon name="download" size="small" />}>
+                    <Icon name="check" size="small" class="text-[var(--ok-text)]" />
+                  </Show>
+                </ActionIconButton>
+
+                <ActionIconButton
+                  label={linkCopied() ? t("common.copied") : t("commandPalette.actionCopySessionLink")}
+                  onClick={() => void copyLink()}
+                >
+                  <Show when={linkCopied()} fallback={<Icon name="link" size="small" />}>
                     <Icon name="check" size="small" class="text-[var(--ok-text)]" />
                   </Show>
                 </ActionIconButton>

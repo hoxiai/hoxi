@@ -55,7 +55,8 @@ func requiresAIConsent(method, requestPath string) bool {
 	}
 	switch p {
 	case "/api/hoxi/provider/test-model", "/api/hoxi/provider/audit",
-		"/api/hoxi/provider/summarize-title", "/api/hoxi/provider/generate-commit-message":
+		"/api/hoxi/provider/summarize-title", "/api/hoxi/provider/generate-commit-message",
+		"/api/hoxi/provider/enhance-prompt":
 		return true
 	}
 	if strings.HasPrefix(p, "/api/hoxi/runner/sessions/") {

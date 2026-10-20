@@ -29,6 +29,7 @@ export const leftNav: LeftNavI18n = {
   confirmDelete: "确认",
   cancelDelete: "取消",
   renameSessionTooltip: "重命名会话 (或双击标题)",
+  exportSessionTooltip: "导出会话为 Markdown",
   renamePlaceholder: "输入会话标题…",
   accountAndProviders: "账号与服务商",
   settingsAndProviders: "设置与服务商",

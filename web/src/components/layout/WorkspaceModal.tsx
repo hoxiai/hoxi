@@ -1,4 +1,5 @@
 import { createEffect, createMemo, createSignal, For, on, Show } from "solid-js";
+import { Presence } from "../motion/Presence";
 import { t } from "../../i18n";
 import { hoxiAPI, type WorkspaceFolderInput } from "../../services/api";
 import {
@@ -23,6 +24,11 @@ import {
 
 export default function WorkspaceModal() {
   const mode = () => workspace.workspaceModalMode;
+  let lastMode: "create" | "edit" | "delete" | "manage" | null = null;
+  createEffect(() => {
+    if (mode() !== null) lastMode = mode();
+  });
+  const shownMode = () => mode() ?? lastMode;
   const targetProfile = createMemo(() => {
     if (workspace.editingWorkspaceID) {
       return findWorkspaceProfileById(workspace.editingWorkspaceID);
@@ -183,9 +189,11 @@ export default function WorkspaceModal() {
   });
 
   return (
-    <Show when={mode() !== null}>
+    <Presence when={mode() !== null}>
+      {(state) => (
       <div
-        class="hoxi-modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/55 backdrop-blur-[2px] p-4"
+        data-state={state()}
+        class="hoxi-modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4"
         onPointerDown={(e) => {
           backdropPointerDown = e.target === e.currentTarget;
         }}
@@ -201,20 +209,20 @@ export default function WorkspaceModal() {
         }}
       >
         {/* CREATE / EDIT WORKSPACE MODAL */}
-        <Show when={mode() === "create" || mode() === "edit"}>
+        <Show when={shownMode() === "create" || shownMode() === "edit"}>
           <form
             onSubmit={handleSave}
-            class="w-full max-w-[460px] rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#16161A] shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150"
+            class="hoxi-modal-panel hoxi-elevation-4 w-full max-w-[460px] rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#16161A] overflow-hidden"
           >
             <div class="flex items-start justify-between px-5 pt-4 pb-3 border-b border-zinc-100 dark:border-zinc-800/80">
               <div>
                 <h3 class="text-[15px] font-semibold text-zinc-900 dark:text-zinc-100">
-                  {mode() === "create"
+                  {shownMode() === "create"
                     ? t("leftNav.createWorkspaceTitle")
                     : t("leftNav.editWorkspaceTitle")}
                 </h3>
                 <p class="mt-0.5 text-[12px] text-zinc-500 dark:text-zinc-400">
-                  {mode() === "create"
+                  {shownMode() === "create"
                     ? t("leftNav.createWorkspaceDesc")
                     : t("leftNav.editWorkspaceDesc")}
                 </p>
@@ -444,7 +452,7 @@ export default function WorkspaceModal() {
               >
                 {saving()
                   ? t("leftNav.savingWorkspace")
-                  : mode() === "create"
+                  : shownMode() === "create"
                   ? t("leftNav.createWorkspaceSubmit")
                   : t("leftNav.saveWorkspaceChanges")}
               </button>
@@ -452,14 +460,15 @@ export default function WorkspaceModal() {
           </form>
         </Show>
 
-        <Show when={mode() === "delete"}>
+        <Show when={shownMode() === "delete"}>
           <DeleteWorkspaceModalView targetProfile={targetProfile()} />
         </Show>
 
-        <Show when={mode() === "manage"}>
+        <Show when={shownMode() === "manage"}>
           <ManageWorkspacesModalView />
         </Show>
       </div>
-    </Show>
+      )}
+    </Presence>
   );
 }

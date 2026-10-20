@@ -1,5 +1,6 @@
 // web/src/components/settings/SettingsModal.tsx
 import { createMemo, For, type JSX, Show } from "solid-js";
+import { Presence } from "../motion/Presence";
 import {
   ArrowLeft,
   Bot,
@@ -269,8 +270,12 @@ export default function SettingsModal() {
   });
 
   return (
-    <Show when={isOpen()}>
-      <div class="fixed inset-0 z-40 flex flex-col bg-[var(--bg-canvas)] text-[var(--text-primary)] select-none overflow-hidden hoxi-view-enter">
+    <Presence when={isOpen()}>
+      {(state) => (
+      <div
+        data-state={state()}
+        class="hoxi-screen fixed inset-0 z-40 flex flex-col bg-[var(--bg-canvas)] text-[var(--text-primary)] select-none overflow-hidden"
+      >
         {/* Top Window Header (respects macOS traffic light drag area) */}
         <header
           class={`shrink-0 bg-transparent flex items-center justify-between gap-3 px-4 ${
@@ -453,6 +458,7 @@ export default function SettingsModal() {
           </div>
         </div>
       </div>
-    </Show>
+      )}
+    </Presence>
   );
 }

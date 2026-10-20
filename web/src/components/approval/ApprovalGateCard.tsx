@@ -125,7 +125,7 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
   };
 
   return (
-    <div class="rounded-xl border border-[var(--warn-border)] bg-[var(--warn-surface)] overflow-hidden shadow-sm">
+    <div class="hoxi-item-pop rounded-xl border border-[var(--warn-border)] bg-[var(--warn-surface)] overflow-hidden shadow-sm">
       <div class="flex items-center gap-2 px-3.5 py-2 border-b border-[var(--warn-border)]">
         <ShieldAlert size={14} class="text-[var(--warn-text)] shrink-0" />
         <span class="text-[12px] font-semibold text-[var(--warn-text)]">

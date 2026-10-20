@@ -70,7 +70,7 @@ function addPendingPermissionToStore(req: PermissionRequest) {
     return [...prev, req];
   });
   if (added) {
-    triggerDesktopNotification("Hoxi", t("approval.title"));
+    triggerDesktopNotification("Hoxi", t("approval.title"), { sessionID: req.sessionID, kind: "attention" });
   }
 }
 

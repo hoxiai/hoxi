@@ -1,5 +1,6 @@
 // web/src/components/models/MultiModelArenaModal.tsx
 import { createMemo, createSignal, For, Show } from "solid-js";
+import { Presence } from "../motion/Presence";
 import { Check, GitBranchPlus, LoaderCircle, Sparkles, Swords, X } from "lucide-solid";
 import {
   AUTO_PROVIDER_ID,
@@ -135,13 +136,15 @@ export default function MultiModelArenaModal() {
   };
 
   return (
-    <Show when={workspace.arenaModalOpen}>
+    <Presence when={workspace.arenaModalOpen}>
+      {(state) => (
       <div
-        class="hoxi-modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4"
+        data-state={state()}
+        class="hoxi-modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4"
         onClick={close}
       >
         <div
-          class="hoxi-modal-panel w-full max-w-xl rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] shadow-2xl overflow-hidden flex flex-col max-h-[85vh]"
+          class="hoxi-modal-panel hoxi-elevation-4 w-full max-w-xl rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] overflow-hidden flex flex-col max-h-[85vh]"
           onClick={(e) => e.stopPropagation()}
         >
           {/* Header */}
@@ -300,6 +303,7 @@ export default function MultiModelArenaModal() {
           </div>
         </div>
       </div>
-    </Show>
+      )}
+    </Presence>
   );
 }

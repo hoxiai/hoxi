@@ -8,6 +8,7 @@ import {
   onCleanup,
   Show,
 } from "solid-js";
+import { Presence } from "../motion/Presence";
 import { AlertTriangle } from "lucide-solid";
 import { t } from "../../i18n";
 import { computeProviderHealth, workspace } from "../../store/workspace";
@@ -169,11 +170,14 @@ export default function TurnTelemetryPopover(props: {
         <span>{props.durationLabel}</span>
       </button>
 
-      <Show when={open()}>
+      <Presence when={open()}>
+        {(state) => (
         <div
           id={popoverID}
           role="dialog"
-          class="absolute left-0 bottom-[calc(100%+6px)] z-40 w-[288px] rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)]/98 backdrop-blur-xl p-3 text-[11.5px] shadow-xl animate-in fade-in zoom-in-95 duration-150 space-y-2.5"
+          data-state={state()}
+          style={{ "--hoxi-origin": "bottom left" }}
+          class="hoxi-popover absolute left-0 bottom-[calc(100%+6px)] z-40 w-[288px] rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)]/98 backdrop-blur-xl p-3 text-[11.5px] shadow-xl space-y-2.5"
         >
           {/* Model & Health Header */}
           <div class="flex items-start justify-between gap-2">
@@ -289,7 +293,8 @@ export default function TurnTelemetryPopover(props: {
             </div>
           </Show>
         </div>
-      </Show>
+        )}
+      </Presence>
     </div>
   );
 }

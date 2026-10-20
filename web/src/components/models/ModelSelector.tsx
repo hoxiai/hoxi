@@ -1,6 +1,7 @@
 // web/src/components/models/ModelSelector.tsx
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import { Portal } from "solid-js/web";
+import { Presence } from "../motion/Presence";
 import {
   Check,
   ChevronDown,
@@ -449,18 +450,21 @@ export default function ModelSelector() {
         )}
       </Show>
 
-      <Show when={open()}>
+      <Presence when={open()}>
+        {(state) => (
         <Portal>
           <div
             ref={popoverRef}
             onKeyDown={handleKeyDown}
+            data-state={state()}
             style={{
               left: `${popoverBox().left}px`,
               top: `${popoverBox().top}px`,
               width: `${popoverBox().width}px`,
               height: `${popoverBox().height}px`,
+              "--hoxi-origin": "top left",
             }}
-            class="hoxi-popover fixed z-[90] flex flex-col overflow-hidden rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-panel)] shadow-2xl"
+            class="hoxi-popover fixed z-[90] flex flex-col overflow-hidden rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-panel)] shadow-xl"
           >
           <div class="flex flex-1 min-h-0">
             <ModelSelectorRail
@@ -702,7 +706,8 @@ export default function ModelSelector() {
           </div>
           </div>
         </Portal>
-      </Show>
+        )}
+      </Presence>
       <Show when={open() && details()} keyed>
         {(detail) => (
           <ModelDetailsPopover
