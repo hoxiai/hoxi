@@ -524,6 +524,7 @@ type activeProcess struct {
 	cancel    func()
 	mu        sync.Mutex
 	stall     stallState
+	toolFails toolFailureStreak
 }
 
 func (ap *activeProcess) Abort() {

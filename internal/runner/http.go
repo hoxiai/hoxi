@@ -23,6 +23,7 @@ type Service struct {
 	worktrees   *worktree.Manager
 	status      *statusbar.Tracker
 	gate        *approvalGate
+	doomLoop    *doomLoopGuard
 	stall       stallPolicy
 
 	mu               sync.Mutex
@@ -57,6 +58,7 @@ func NewService(rootDir string, worktrees *worktree.Manager, status *statusbar.T
 		worktrees:   worktrees,
 		status:      status,
 		gate:        newApprovalGate(),
+		doomLoop:    newDoomLoopGuard(),
 		stall:       stallPolicyFromEnv(),
 		procs:       make(map[string]*activeProcess),
 		childBusy:   make(map[string]bool),

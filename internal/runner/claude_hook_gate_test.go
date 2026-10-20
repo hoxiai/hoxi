@@ -67,7 +67,7 @@ func newClaudeGateFixture(t *testing.T) *claudeGateFixture {
 	if err := json.Unmarshal([]byte(args[1]), &settings); err != nil {
 		t.Fatalf("settings are not JSON: %v", err)
 	}
-	if len(settings.Hooks.PreToolUse) != 1 || settings.Hooks.PreToolUse[0].Matcher != "Bash" {
+	if len(settings.Hooks.PreToolUse) != 1 || settings.Hooks.PreToolUse[0].Matcher != "*" {
 		t.Fatalf("unexpected PreToolUse config: %s", args[1])
 	}
 	hook := settings.Hooks.PreToolUse[0].Hooks[0]

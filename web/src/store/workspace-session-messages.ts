@@ -157,8 +157,8 @@ export async function handleSessionErrorEvent(
       const list = (state.messagesBySession[sessionID] ||= []);
       const last = list[list.length - 1];
       if (last?.info.role === "assistant") {
-        // A watchdog stop explains the engine's own "aborted" error.
-        if (error.name === "RunnerStalledError") last.info.error = error;
+        // A runner stop (watchdog, repeated invalid tool calls) explains the engine's own "aborted" error.
+        if (error.name === "RunnerStalledError" || error.name === "RepeatedToolFailureError") last.info.error = error;
         else last.info.error ||= error;
         return;
       }

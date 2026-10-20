@@ -218,8 +218,15 @@ func (s *Service) publishStall(ap *activeProcess) {
 
 func (s *Service) abortStalled(ap *activeProcess, idle time.Duration) {
 	msg := fmt.Sprintf("No output for %s, so Hoxi stopped this run. Ask it to continue, or narrow down the task.", idle.Round(time.Second))
+	s.abortTurn(ap, &MessageError{Name: stallErrorName, Data: &MessageErrorData{Message: msg}})
+}
+
+// abortTurn stops the turn; err is reported as the turn's error once it ends.
+func (s *Service) abortTurn(ap *activeProcess, err *MessageError) {
 	ap.stall.mu.Lock()
-	ap.stall.abortErr = &MessageError{Name: stallErrorName, Data: &MessageErrorData{Message: msg}}
+	if ap.stall.abortErr == nil {
+		ap.stall.abortErr = err
+	}
 	ap.stall.mu.Unlock()
 	s.abortActiveProcess(ap.sessionID)
 }

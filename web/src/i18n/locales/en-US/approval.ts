@@ -43,5 +43,7 @@ export const approval = {
   modeTooltip: "Approval mode: {mode} (click to switch)",
   openPolicySettings: "Permission Rules & MCP…",
   highRiskBadge: "High Risk",
+  doomLoopNotice:
+    "{tool} was called repeatedly with identical input; it may be stuck. Continue?",
   switchToAutoApprove: "Switch to Auto Approve",
 };

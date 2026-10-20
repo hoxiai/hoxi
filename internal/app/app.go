@@ -26,7 +26,6 @@ import (
 	"github.com/hoxiai/hoxi/internal/diagnostics"
 	"github.com/hoxiai/hoxi/internal/gateway"
 	"github.com/hoxiai/hoxi/internal/opencode"
-	"github.com/hoxiai/hoxi/internal/provider"
 	"github.com/hoxiai/hoxi/internal/statusbar"
 	"github.com/hoxiai/hoxi/internal/telemetry"
 	"github.com/hoxiai/hoxi/internal/updater"
@@ -99,6 +98,8 @@ type DesktopApp struct {
 	child           *exec.Cmd
 	childDone       chan struct{}
 	childStopped    bool
+	respawn         respawner
+	respawns        []time.Time
 	gateway         *gateway.Gateway
 	status          *statusbar.Tracker
 	wsServer        *http.Server
@@ -251,8 +252,7 @@ func Run(distFS fs.FS) {
 	// Slow path: if opencode is missing on the user's machine, launch the UI window without crashing and
 	// auto-download official opencode into ~/.hoxi/bin in the background.
 	if localBin := opencode.FindBinary(cfg.OpenCode); localBin != "" {
-		cfgPath := provider.EnsureHoxiModelsConfig(cfg.RootDir)
-		child, startErr := opencode.StartDaemonWithBin(ctx, localBin, cfg.RootDir, cfgPath, port, password, logger, app.browserEnv...)
+		child, startErr := app.startOpenCode(ctx, localBin, port, password)
 		if startErr != nil {
 			logger.Warn("initial opencode start failed; will retry in background", "error", startErr)
 			statusTracker.SetAvailable(false)
@@ -266,8 +266,7 @@ func Run(distFS fs.FS) {
 			logger.Error("failed to resolve or install opencode", "error", dlErr)
 			os.Exit(1)
 		}
-		cfgPath := provider.EnsureHoxiModelsConfig(cfg.RootDir)
-		child, startErr := opencode.StartDaemonWithBin(ctx, binPath, cfg.RootDir, cfgPath, port, password, logger, app.browserEnv...)
+		child, startErr := app.startOpenCode(ctx, binPath, port, password)
 		if startErr != nil {
 			logger.Error("failed to start opencode daemon", "error", startErr)
 			os.Exit(1)
@@ -364,7 +363,9 @@ func (a *DesktopApp) setChild(c *exec.Cmd) {
 		err := c.Wait()
 		a.childMu.Lock()
 		stopped := a.childStopped
-		if a.child == c {
+		current := a.child == c
+		restart := a.respawn
+		if current {
 			a.child = nil
 			if a.status != nil {
 				a.status.SetAvailable(false)
@@ -383,6 +384,9 @@ func (a *DesktopApp) setChild(c *exec.Cmd) {
 			}
 		}
 		close(done)
+		if !stopped && current && restart != nil {
+			go a.respawnChild(restart)
+		}
 	}()
 }
 
@@ -409,8 +413,7 @@ func (a *DesktopApp) BootstrapOpenCodeAsync(ctx context.Context, port int, passw
 		a.logger.Error("background opencode resolution failed", "error", err)
 		return
 	}
-	cfgPath := provider.EnsureHoxiModelsConfig(a.cfg.RootDir)
-	child, err := opencode.StartDaemonWithBin(ctx, binPath, a.cfg.RootDir, cfgPath, port, password, a.logger, a.browserEnv...)
+	child, err := a.startOpenCode(ctx, binPath, port, password)
 	if err != nil {
 		a.logger.Error("background opencode daemon start failed", "error", err)
 		return
@@ -562,8 +565,7 @@ func StartEphemeralHeadless(ctx context.Context, rootDir string) (string, func()
 	}
 
 	if localBin := opencode.FindBinary(dapp.cfg.OpenCode); localBin != "" {
-		cfgPath := provider.EnsureHoxiModelsConfig(rootDir)
-		if child, startErr := opencode.StartDaemonWithBin(ctx, localBin, rootDir, cfgPath, port, password, quietLogger, browserEnv...); startErr == nil {
+		if child, startErr := dapp.startOpenCode(ctx, localBin, port, password); startErr == nil {
 			dapp.setChild(child)
 		} else {
 			go dapp.BootstrapOpenCodeAsync(ctx, port, password)

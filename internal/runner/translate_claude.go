@@ -22,7 +22,11 @@ type claudeRawEvent struct {
 	Status          string `json:"status"`
 	Summary         string `json:"summary"`
 	APIMessageID    string `json:"api_message_id"`
-	Event           *struct {
+	// system/api_retry: Claude Code is backing off before retrying the API call.
+	Attempt      int     `json:"attempt"`
+	RetryDelayMs float64 `json:"retry_delay_ms"`
+	ErrorStatus  *int    `json:"error_status"`
+	Event        *struct {
 		Type    string `json:"type"`
 		Index   int    `json:"index"`
 		Message *struct {
@@ -115,8 +119,53 @@ func (t *TurnTranslator) feedClaudeLine(line string) []SSEEvent {
 		t.externalID = env.SessionID
 	}
 	now := time.Now().UnixMilli()
+	if env.Type == "system" && env.Subtype == "api_retry" {
+		return []SSEEvent{t.claudeRetryStatus(&env, now)}
+	}
+	evts := t.feedClaudeEvent(&env, now)
+	if t.claudeRetrying && env.Type != "system" {
+		// Output after a retry means the request went through.
+		t.claudeRetrying = false
+		busy := SSEEvent{Type: "session.status", Properties: map[string]interface{}{"sessionID": t.sessionID, "status": SessionStatus{Type: "busy"}}}
+		evts = append([]SSEEvent{busy}, evts...)
+	}
+	return evts
+}
+
+// claudeRetryStatus surfaces Claude Code's own API backoff (`system/api_retry`)
+// as a retry status, so the timeline shows a countdown instead of silence.
+func (t *TurnTranslator) claudeRetryStatus(env *claudeRawEvent, now int64) SSEEvent {
+	t.claudeRetrying = true
+	status := SessionStatus{
+		Type:    "retry",
+		Attempt: env.Attempt,
+		Message: claudeRetryMessage(env.Error, env.ErrorStatus),
+		Next:    now + int64(env.RetryDelayMs),
+	}
+	return SSEEvent{Type: "session.status", Properties: map[string]interface{}{"sessionID": t.sessionID, "status": status}}
+}
+
+func claudeRetryMessage(category string, httpStatus *int) string {
+	labels := map[string]string{
+		"rate_limit":             "Rate limited",
+		"overloaded":             "Provider is overloaded",
+		"server_error":           "Server error",
+		"authentication_failed":  "Authentication failed",
+		"cloud_credential_error": "Cloud credentials error",
+	}
+	msg := labels[category]
+	if msg == "" {
+		msg = "API request failed"
+	}
+	if httpStatus != nil && *httpStatus > 0 {
+		msg += fmt.Sprintf(" (HTTP %d)", *httpStatus)
+	}
+	return msg
+}
+
+func (t *TurnTranslator) feedClaudeEvent(env *claudeRawEvent, now int64) []SSEEvent {
 	if env.ParentToolUseID != "" {
-		return t.feedClaudeChildLine(&env, now)
+		return t.feedClaudeChildLine(env, now)
 	}
 
 	switch env.Type {

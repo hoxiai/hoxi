@@ -36,6 +36,8 @@ type claudeHookPayload struct {
 		Command     string `json:"command"`
 		Description string `json:"description"`
 	} `json:"tool_input"`
+	// rawInput is tool_input verbatim, for repeat detection.
+	rawInput json.RawMessage
 }
 
 type claudeHookOutput struct {
@@ -55,7 +57,8 @@ func claudeHookSettings(hookURL string) string {
 	return string(marshalJSON(map[string]interface{}{
 		"hooks": map[string]interface{}{
 			"PreToolUse": []interface{}{map[string]interface{}{
-				"matcher": "Bash",
+				// Every tool is seen for doom-loop detection; only Bash is gated.
+				"matcher": "*",
 				"hooks": []interface{}{map[string]interface{}{
 					"type":    "http",
 					"url":     hookURL,
@@ -109,10 +112,18 @@ func (s *Service) handleClaudeHookPreTool(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var payload claudeHookPayload
-	if err := json.NewDecoder(io.LimitReader(r.Body, 4<<20)).Decode(&payload); err != nil {
+	var raw struct {
+		ToolInput json.RawMessage `json:"tool_input"`
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, 4<<20))
+	if err == nil {
+		err = json.Unmarshal(body, &payload)
+	}
+	if err != nil || json.Unmarshal(body, &raw) != nil {
 		writeClaudeHookDecision(w, "deny", "Hoxi could not parse the tool call")
 		return
 	}
+	payload.rawInput = raw.ToolInput
 	decision, reason := s.decideClaudeHookCall(r, cred, payload)
 	writeClaudeHookDecision(w, decision, reason)
 }
@@ -123,6 +134,9 @@ func (s *Service) decideClaudeHookCall(r *http.Request, cred hookCredential, p c
 	rec, ok := s.store.Get(cred.sessionID)
 	if !ok {
 		return "deny", "Hoxi session no longer exists"
+	}
+	if ok, reason := s.gateDoomLoop(r, cred, p.ToolName, p.rawInput, p.ToolUseID); !ok {
+		return "deny", reason
 	}
 	if p.ToolName != "Bash" || strings.EqualFold(p.PermissionMode, "plan") {
 		return "", ""

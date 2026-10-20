@@ -203,6 +203,11 @@ func (s *Service) decideHookCall(r *http.Request, cred hookCredential, p hookPay
 	// commands (`cat`), so Hoxi grants them instead of letting agy's headless
 	// mode soft-deny the call. Reads of any path were already achievable via a
 	// safe `cat`, and the sandbox still blocks writes outside the worktree.
+	args, _ := json.Marshal(p.ToolCall.Args)
+	callID := fmt.Sprintf("call_%s_%d", cred.messageID, p.StepIdx)
+	if ok, reason := s.gateDoomLoop(r, cred, p.ToolCall.Name, args, callID); !ok {
+		return hookDecisionDeny, reason
+	}
 	if p.ToolCall.Name == hookToolViewFile {
 		return hookDecisionApprove, ""
 	}
@@ -219,7 +224,7 @@ func (s *Service) decideHookCall(r *http.Request, cred hookCredential, p hookPay
 		command:     command,
 		cwd:         cwd,
 		description: summary,
-		callID:      fmt.Sprintf("call_%s_%d", cred.messageID, p.StepIdx),
+		callID:      callID,
 		source:      string(RuntimeAntigravity),
 	})
 	if approved {
@@ -265,6 +270,24 @@ func (s *Service) awaitApproval(r *http.Request, cred hookCredential, ask approv
 			"callID":    ask.callID,
 		},
 	}
+	answer := s.awaitReply(r, cred, id, req)
+	switch answer.Reply {
+	case "always":
+		s.gate.addAlways(cred.sessionID, command)
+		return true, ""
+	case "once":
+		return true, ""
+	}
+	reason := "The user rejected this command in Hoxi"
+	if msg := strings.TrimSpace(answer.Message); msg != "" {
+		reason += ": " + msg
+	}
+	return false, reason
+}
+
+// awaitReply publishes a permission request and blocks until the user
+// answers, the hook call is interrupted, or the wait limit passes.
+func (s *Service) awaitReply(r *http.Request, cred hookCredential, id string, req map[string]interface{}) approvalReply {
 	pa := &pendingApproval{req: req, sid: cred.sessionID, reply: make(chan approvalReply, 1)}
 	s.gate.mu.Lock()
 	s.gate.pending[id] = pa
@@ -294,19 +317,7 @@ func (s *Service) awaitApproval(r *http.Request, cred hookCredential, ask approv
 	s.broadcast(cred.sessionID, SSEEvent{Type: "permission.replied", Properties: map[string]interface{}{
 		"sessionID": cred.sessionID, "requestID": id, "reply": answer.Reply,
 	}})
-
-	switch answer.Reply {
-	case "always":
-		s.gate.addAlways(cred.sessionID, command)
-		return true, ""
-	case "once":
-		return true, ""
-	}
-	reason := "The user rejected this command in Hoxi"
-	if msg := strings.TrimSpace(answer.Message); msg != "" {
-		reason += ": " + msg
-	}
-	return false, reason
+	return answer
 }
 
 // Session "always" grants live in Hoxi only, never in agy's global settings,

@@ -18,6 +18,7 @@ import {
   handleSessionErrorEvent,
   isDismissedProjectPath,
   isInvalidProjectPath,
+  isSessionBusy,
   loadAgents,
   loadProjects,
   loadProviders,
@@ -133,14 +134,23 @@ export default function App() {
         console.error("Bootstrap error:", err);
       }
 
+      // Events may have been missed while disconnected; pull authoritative state.
+      const resyncFromServer = () => {
+        void syncSessionStatuses();
+        void syncPendingPermissions();
+        // A busy turn is reconciled by its final snapshot; reloading it mid-stream would flicker.
+        const active = workspace.activeSessionID;
+        if (active && !isSessionBusy(active)) {
+          void loadSessionMessagesOnly(active).catch(() => {});
+        }
+      };
       const handlers: Parameters<typeof connectEventStream>[0] = {
         onConnectionChange: (connected) => {
           setWorkspace("connected", connected);
           if (connected) {
             void loadProviders();
             void loadProviderTelemetry();
-            void syncSessionStatuses();
-            void syncPendingPermissions();
+            resyncFromServer();
             if (
               workspace.rootDir &&
               workspace.sessions.length === 0 &&
@@ -150,6 +160,7 @@ export default function App() {
             }
           }
         },
+        onResync: resyncFromServer,
         onDeltaBatch: applyPartDeltaBatch,
         onFrameBatch: applyStreamFrameBatch,
         isFocusedSession: (sid) =>

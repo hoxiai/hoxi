@@ -228,8 +228,13 @@ describe("SSE client & 120Hz rAF delta batching", () => {
     g.EventSource = MockEventSource;
     g.requestAnimationFrame = (cb: () => void) => { frame = cb; return 1; };
     g.cancelAnimationFrame = () => { frame = null; };
-    g.setTimeout = (cb: () => void) => { timer = cb; return 1; };
-    g.clearTimeout = () => { timer = null; };
+    // Only the flush timer is modelled; the 30s heartbeat watchdog is ignored.
+    g.setTimeout = (cb: () => void, ms?: number) => {
+      if (ms === 30_000) return 2;
+      timer = cb;
+      return 1;
+    };
+    g.clearTimeout = (id?: number) => { if (id !== 2) timer = null; };
     try {
       const batches: StreamFrameBatch[] = [];
       const order: string[] = [];

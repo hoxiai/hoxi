@@ -147,6 +147,13 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
       </div>
 
       <div class="px-3.5 py-2.5 space-y-2.5 max-h-[290px] overflow-y-auto">
+        <Show when={props.request.permission === "doom_loop"}>
+          <div class="text-[12px] leading-relaxed text-[var(--warn-text)]">
+            {t("approval.doomLoopNotice", {
+              tool: String(props.request.metadata?.tool ?? props.request.patterns?.[0] ?? ""),
+            })}
+          </div>
+        </Show>
         <Show
           when={command()}
           fallback={

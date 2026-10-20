@@ -46,6 +46,28 @@ func isTransientLLMError(err error, status int) bool {
 	return false
 }
 
+// Providers report an exhausted balance or quota as 429 too (OpenAI's
+// insufficient_quota); retrying it only delays the real error.
+var quotaExhaustedMarkers = []string{
+	"insufficient_quota",
+	"exceeded your current quota",
+	"insufficient balance",
+	"insufficient_balance",
+	"credit balance is too low",
+	"billing_hard_limit",
+	"freeusagelimiterror",
+}
+
+func isQuotaExhausted(body []byte) bool {
+	lower := strings.ToLower(string(body))
+	for _, marker := range quotaExhaustedMarkers {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 func llmRetryWait(attempt int, retryAfter time.Duration) time.Duration {
 	wait := llmRetryBaseWait << (attempt - 1)
 	if wait > llmRetryMaxWait {

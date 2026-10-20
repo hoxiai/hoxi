@@ -43,5 +43,6 @@ export const approval: ApprovalI18n = {
   modeTooltip: "确认模式：{mode}（点击切换）",
   openPolicySettings: "权限规则与 MCP…",
   highRiskBadge: "高危拦截",
+  doomLoopNotice: "{tool} 连续多次使用相同参数，可能陷入循环。是否继续？",
   switchToAutoApprove: "切换为自动确认",
 };

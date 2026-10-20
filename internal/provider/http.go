@@ -66,6 +66,8 @@ type llmAttemptResult struct {
 	readFailed bool
 	retryAfter time.Duration
 	err        error
+	// quotaExhausted marks a 429/403 that is a billing limit, not a rate limit.
+	quotaExhausted bool
 }
 
 func callSimpleLLM(parentCtx context.Context, req llmCompletionRequest) (text string, resultErr error) {
@@ -112,7 +114,7 @@ func callSimpleLLM(parentCtx context.Context, req llmCompletionRequest) (text st
 			return res.text, nil
 		}
 		resultErr = res.err
-		if parentCtx.Err() != nil || attempt >= llmMaxAttempts || !isTransientLLMError(res.err, res.status) {
+		if parentCtx.Err() != nil || attempt >= llmMaxAttempts || res.quotaExhausted || !isTransientLLMError(res.err, res.status) {
 			break
 		}
 		wait := llmRetryWait(attempt, res.retryAfter)
@@ -229,6 +231,7 @@ func attemptSimpleLLM(parentCtx context.Context, req llmCompletionRequest, windo
 	res := llmAttemptResult{status: resp.StatusCode, retryAfter: parseRetryAfter(resp.Header.Get("Retry-After"), time.Now())}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		res.err = fmt.Errorf("%s", extractAPIErrorMessage(resp.StatusCode, respBytes))
+		res.quotaExhausted = isQuotaExhausted(respBytes)
 		return res
 	}
 	res.text = extractLLMTextContent(respBytes)

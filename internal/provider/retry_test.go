@@ -178,3 +178,29 @@ func TestRecordLLMRequestNeverCreatesRecords(t *testing.T) {
 		t.Fatalf("internal LLM calls must not create telemetry records: %+v", store.records)
 	}
 }
+
+func TestCallSimpleLLMDoesNotRetryExhaustedQuota(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = io.WriteString(w, `{"error":{"message":"You exceeded your current quota, please check your plan and billing details.","type":"insufficient_quota","code":"insufficient_quota"}}`)
+	}))
+	defer srv.Close()
+	_, err := callSimpleLLM(context.Background(), llmCompletionRequest{BaseURL: srv.URL, ModelID: "m", Prompt: "hi"})
+	if err == nil {
+		t.Fatal("expected the quota error")
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("an exhausted quota must not be retried, got %d calls", got)
+	}
+}
+
+func TestIsQuotaExhaustedKeepsPlainRateLimitsRetryable(t *testing.T) {
+	if isQuotaExhausted([]byte(`{"error":{"type":"rate_limit_error","message":"Rate limit reached, retry later"}}`)) {
+		t.Fatal("a plain rate limit is transient")
+	}
+	if !isQuotaExhausted([]byte(`{"error":{"message":"Your credit balance is too low to access the Anthropic API."}}`)) {
+		t.Fatal("an empty balance is permanent")
+	}
+}

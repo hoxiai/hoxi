@@ -573,6 +573,7 @@ func (s *Service) relayOpenCodeEventWithFiles(rec SessionRecord, raw []byte, fil
 			return
 		}
 		evt.Properties["part"] = part
+		s.noteToolOutcome(rec.ID, part)
 	case "session.diff":
 		evt.Properties["diff"] = s.filterLocalSessionDiffEvent(rec.ID, evt.Properties["diff"])
 	}

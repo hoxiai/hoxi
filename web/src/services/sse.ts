@@ -26,10 +26,18 @@ export interface SSEHandlers {
   ) => void;
   onFrameBatch?: (batch: StreamFrameBatch) => void;
   onConnectionChange?: (connected: boolean) => void;
+  /** OpenCode events may have been missed; reload anything event-driven. */
+  onResync?: () => void;
   isFocusedSession?: (sessionID: string) => boolean;
 }
 
 const BACKGROUND_FLUSH_MS = 180;
+// The gateway sends `server.heartbeat` every 10s. EventSource never notices a
+// half-dead socket on its own, so silence this long forces a fresh connection.
+const HEARTBEAT_TIMEOUT_MS = 30_000;
+const RECONNECT_MIN_MS = 250;
+const RECONNECT_MAX_MS = 5_000;
+const EVENT_SOURCE_CLOSED = 2;
 
 export function connectEventStream(handlers: SSEHandlers, directory?: string, wsBaseURL = ""): () => void {
   // Wails' macOS scheme handler has no http.Flusher; use the existing loopback server.
@@ -37,7 +45,6 @@ export function connectEventStream(handlers: SSEHandlers, directory?: string, ws
   const url = directory
     ? `/api/hoxi/event?directory=${encodeURIComponent(directory)}`
     : "/api/hoxi/event";
-  const source = new EventSource(`${base}${url}`);
 
   const infoMap = new Map<string, MessageInfo>();
   const partMap = new Map<string, MessagePart>();
@@ -101,14 +108,6 @@ export function connectEventStream(handlers: SSEHandlers, directory?: string, ws
     }
   };
 
-  source.onopen = () => {
-    handlers.onConnectionChange?.(true);
-  };
-
-  source.onerror = () => {
-    handlers.onConnectionChange?.(false);
-  };
-
   const handleMessage = (msg: MessageEvent, streamDirectory?: string) => {
     if (!msg.data) return;
     try {
@@ -122,6 +121,12 @@ export function connectEventStream(handlers: SSEHandlers, directory?: string, ws
         ? parsed.payload
         : parsed) as OpenCodeEvent;
       if (!evt || typeof evt.type !== "string") return;
+      if (evt.type === "server.heartbeat") return;
+      if (evt.type === "hoxi.stream.resync") {
+        flushFrame();
+        handlers.onResync?.();
+        return;
+      }
 
       if (evt.type === "message.updated") {
         const info = evt.properties.info;
@@ -165,17 +170,85 @@ export function connectEventStream(handlers: SSEHandlers, directory?: string, ws
     }
   };
 
-  source.onmessage = (msg) => handleMessage(msg, directory);
+  let source: EventSource | null = null;
+  let disposed = false;
+  let connected = false;
+  let watchdog: ReturnType<typeof setTimeout> | null = null;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let reconnectDelay = RECONNECT_MIN_MS;
+
+  const setConnected = (next: boolean) => {
+    if (connected === next) return;
+    connected = next;
+    handlers.onConnectionChange?.(next);
+  };
+
+  const clearWatchdog = () => {
+    if (watchdog !== null) clearTimeout(watchdog);
+    watchdog = null;
+  };
+
+  const armWatchdog = () => {
+    clearWatchdog();
+    watchdog = setTimeout(reopen, HEARTBEAT_TIMEOUT_MS);
+  };
+
+  // Replaces a dead or abandoned connection, backing off while the gateway is down.
+  function reopen() {
+    source?.close();
+    source = null;
+    clearWatchdog();
+    setConnected(false);
+    if (disposed || reconnectTimer !== null) return;
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      open();
+    }, reconnectDelay);
+    reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX_MS);
+  }
+
+  function open() {
+    if (disposed) return;
+    const es = new EventSource(`${base}${url}`);
+    source = es;
+    armWatchdog();
+    es.onopen = () => {
+      if (source !== es) return;
+      reconnectDelay = RECONNECT_MIN_MS;
+      armWatchdog();
+      setConnected(true);
+    };
+    es.onerror = () => {
+      if (source !== es) return;
+      // A refused or non-200 response is final for EventSource; retry ourselves.
+      if (es.readyState === EVENT_SOURCE_CLOSED) {
+        reopen();
+        return;
+      }
+      setConnected(false);
+    };
+    es.onmessage = (msg) => {
+      if (source !== es) return;
+      armWatchdog();
+      handleMessage(msg, directory);
+    };
+  }
+
+  open();
 
   return () => {
+    disposed = true;
     if (rafID !== null) {
       cancelAnimationFrame(rafID);
     }
     if (flushTimer !== null) clearTimeout(flushTimer);
     if (bgFlushTimer !== null) clearTimeout(bgFlushTimer);
+    if (reconnectTimer !== null) clearTimeout(reconnectTimer);
+    clearWatchdog();
     infoMap.clear();
     partMap.clear();
     deltaMap.clear();
-    source.close();
+    source?.close();
+    source = null;
   };
 }

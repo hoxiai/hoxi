@@ -311,4 +311,11 @@ export type OpenCodeEvent =
         sessionID?: string;
         error?: { name: string; data: Record<string, any> };
       };
+    }
+  | {
+      // Stream control from /api/hoxi/event: `server.heartbeat` proves the
+      // connection is alive; `hoxi.stream.resync` means OpenCode events may
+      // have been missed while its upstream leg reconnected.
+      type: "server.heartbeat" | "hoxi.stream.resync";
+      properties: Record<string, never>;
     };

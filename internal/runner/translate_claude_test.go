@@ -3,6 +3,7 @@ package runner
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestClaudeStreamsBeforeResultAndIsolatesAssistantMessages(t *testing.T) {
@@ -94,5 +95,39 @@ func TestClaudeThinkingPlusTextDoesNotDuplicateReplyOnSplitAssistantSnapshots(t 
 	}
 	if reasonParts != 1 || textParts != 1 {
 		t.Fatalf("expected 1 reasoning part and 1 text part, got reason=%d text=%d parts=%+v", reasonParts, textParts, tr.partsByID)
+	}
+}
+
+func TestClaudeAPIRetryBecomesRetryStatusUntilOutputResumes(t *testing.T) {
+	tr := NewTurnTranslator("ses_cld_test", string(RuntimeClaudeCode), "msg_turn", "msg_user", "claude-code", "sonnet", "build", "")
+	before := time.Now().UnixMilli()
+	events := tr.FeedLine(`{"type":"system","subtype":"api_retry","attempt":2,"max_retries":10,"retry_delay_ms":4000,"error_status":529,"error":"overloaded","session_id":"abc"}`)
+	if len(events) != 1 || events[0].Type != "session.status" {
+		t.Fatalf("expected one retry status, got %+v", events)
+	}
+	st := events[0].Properties["status"].(SessionStatus)
+	if st.Type != "retry" || st.Attempt != 2 || st.Message != "Provider is overloaded (HTTP 529)" || st.Next < before+4000 {
+		t.Fatalf("unexpected retry status: %+v", st)
+	}
+
+	events = tr.FeedLine(`{"type":"stream_event","event":{"type":"message_start","message":{"id":"msg_a"}}}`)
+	if len(events) == 0 || events[0].Properties["status"] != (SessionStatus{Type: "busy"}) {
+		t.Fatalf("output after a retry must restore busy, got %+v", events)
+	}
+	events = tr.FeedLine(`{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hi"}}}`)
+	for _, evt := range events {
+		if evt.Type == "session.status" {
+			t.Fatalf("busy must be restored only once, got %+v", events)
+		}
+	}
+}
+
+func TestClaudeRetryMessageFallsBackForUnknownCategories(t *testing.T) {
+	if got := claudeRetryMessage("unknown", nil); got != "API request failed" {
+		t.Fatalf("got %q", got)
+	}
+	status := 429
+	if got := claudeRetryMessage("rate_limit", &status); got != "Rate limited (HTTP 429)" {
+		t.Fatalf("got %q", got)
 	}
 }

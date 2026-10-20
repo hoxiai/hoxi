@@ -9,17 +9,18 @@ import (
 )
 
 type TurnTranslator struct {
-	sessionID       string
-	runtime         string
-	messageID       string
-	parentUserMsgID string
-	modelID         string
-	providerID      string
-	mode            string
+	sessionID          string
+	runtime            string
+	messageID          string
+	parentUserMsgID    string
+	modelID            string
+	providerID         string
+	mode               string
 	externalID         string
 	claudeMessageID    string
 	claudeReasonPartID string
 	claudeTextPartID   string
+	claudeRetrying     bool
 	startedAtMs        int64
 
 	msgInfo      MessageInfo

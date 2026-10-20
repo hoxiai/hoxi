@@ -140,6 +140,8 @@ type SessionStatus struct {
 	Type    string `json:"type"`
 	Attempt int    `json:"attempt,omitempty"`
 	Message string `json:"message,omitempty"`
+	// Next is when a retry fires (unix ms).
+	Next int64 `json:"next,omitempty"`
 }
 
 type MessageTime struct {
