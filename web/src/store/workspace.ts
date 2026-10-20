@@ -1,6 +1,12 @@
 // web/src/store/workspace.ts
 import { createStore } from "solid-js/store";
-import { initialDefaultAgent, initialSessionAI, type SessionAIConfig } from "./session-ai";
+import {
+  initialDefaultAgent,
+  initialSessionAI,
+  VALID_REASONING_EFFORTS,
+  type ReasoningEffort,
+  type SessionAIConfig,
+} from "./session-ai";
 import type {
   MessageInfo,
   MessagePart,
@@ -97,7 +103,7 @@ export interface WorkspaceState {
   openCodeImportedProviders: string[];
   providerAuthMethods: Record<string, ProviderAuthMethod[]>;
   selectedModel: SelectedModel | null;
-  reasoningEffort: "" | "low" | "medium" | "high";
+  reasoningEffort: ReasoningEffort;
   favoriteModels: SelectedModel[];
   recentModels: SelectedModel[];
   messagesBySession: Record<string, MessageTurn[]>;
@@ -206,10 +212,12 @@ function initialModelList(storageKey: string): SelectedModel[] {
   return [];
 }
 
-function initialEffort(): "" | "low" | "medium" | "high" {
+function initialEffort(): ReasoningEffort {
   try {
     const saved = localStorage.getItem(EFFORT_KEY);
-    if (saved === "low" || saved === "medium" || saved === "high" || saved === "") return saved;
+    if (saved !== null && (VALID_REASONING_EFFORTS as readonly string[]).includes(saved)) {
+      return saved as ReasoningEffort;
+    }
   } catch {
     /* ignore */
   }
@@ -595,4 +603,6 @@ export * from "./privacy";
 export * from "./diagnostics";
 export * from "./file-links";
 export * from "./message-lookup";
+export * from "./question-answers";
+
 

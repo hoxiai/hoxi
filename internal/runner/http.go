@@ -473,6 +473,9 @@ func (s *Service) handleSessionPrompt(w http.ResponseWriter, r *http.Request, se
 		}
 	}
 	effort := strings.TrimSpace(body.Variant)
+	if rec.Runtime == string(RuntimeAntigravity) {
+		modelID, effort = ResolveAgyModelAndEffort(modelID, effort)
+	}
 
 	binPath := ResolveAgyBinary()
 	missingMsg := "Antigravity CLI (agy) binary not found in ~/.gemini/bin/agy or PATH"

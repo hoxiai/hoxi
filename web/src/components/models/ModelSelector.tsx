@@ -10,6 +10,8 @@ import {
   Star,
 } from "lucide-solid";
 import {
+  clampReasoningEffort,
+  inferModelEffortCapabilities,
   isCustomOrConfiguredProvider,
   isFavoriteModel,
   openProviderModal,
@@ -17,6 +19,8 @@ import {
   setReasoningEffort,
   toggleFavoriteModel,
   workspace,
+  type ConcreteReasoningEffort,
+  type ReasoningEffort,
 } from "../../store/workspace";
 import { ProviderIcon } from "../icons";
 import { t } from "../../i18n";
@@ -32,12 +36,20 @@ import {
 import { ModelDetailsPopover } from "./ModelDetailsPopover";
 import { SelectedModelHoverCard } from "./SelectedModelHoverCard";
 
-const EFFORT_OPTIONS: Array<{ value: "" | "low" | "medium" | "high"; label: string }> = [
-  { value: "", label: "Auto" },
-  { value: "low", label: "Low" },
-  { value: "medium", label: "Med" },
-  { value: "high", label: "High" },
-];
+function effortOptionLabel(level: ConcreteReasoningEffort): string {
+  switch (level) {
+    case "low":
+      return t("models.effortLow");
+    case "medium":
+      return t("models.effortMedium");
+    case "high":
+      return t("models.effortHigh");
+    case "xhigh":
+      return t("models.effortXHigh");
+    case "max":
+      return t("models.effortMax");
+  }
+}
 
 export default function ModelSelector() {
   const [open, setOpen] = createSignal(false);
@@ -104,6 +116,8 @@ export default function ModelSelector() {
       hoxiProv?.options?.baseURL ||
       cfgProv?.options?.baseURL ||
       prov?.options?.baseURL;
+    const inferredReasoning = !/haiku-3|haiku-4|deepseek-flash|glm-.*flash/i.test(sel.modelID);
+    const effortCaps = inferModelEffortCapabilities(sel.providerID, sel.modelID, inferredReasoning);
     return {
       providerID: sel.providerID,
       providerName: hoxiProv?.name || cfgProv?.name || prov?.name || sel.providerID,
@@ -113,11 +127,41 @@ export default function ModelSelector() {
       isCustom: isCustomOrConfiguredProvider(sel.providerID),
       source: prov?.source,
       baseURL,
-      reasoning: false,
+      reasoning: inferredReasoning,
+      efforts: effortCaps.efforts,
+      defaultEffort: effortCaps.defaultEffort,
       image: false,
       toolcall: true,
       free: false,
     };
+  });
+
+  const availableEffortOptions = createMemo<
+    Array<{ value: ReasoningEffort; label: string; title?: string }>
+  >(() => {
+    const info = activeModelInfo();
+    if (info && !info.reasoning && (!info.efforts || info.efforts.length === 0)) {
+      return [];
+    }
+    const levels: readonly ConcreteReasoningEffort[] =
+      info?.efforts && info.efforts.length > 0 ? info.efforts : ["low", "medium", "high"];
+    const defHint = info?.defaultEffort
+      ? t("models.defaultEffortHint", { effort: info.defaultEffort.toUpperCase() })
+      : undefined;
+    return [
+      { value: "", label: t("models.effortAuto"), title: defHint },
+      ...levels.map((lvl) => ({ value: lvl, label: effortOptionLabel(lvl) })),
+    ];
+  });
+
+  const effectiveReasoningEffort = createMemo<ReasoningEffort>(() => {
+    const raw = workspace.reasoningEffort;
+    const info = activeModelInfo();
+    if (!raw) return "";
+    if (info && !info.reasoning && (!info.efforts || info.efforts.length === 0)) {
+      return "";
+    }
+    return clampReasoningEffort(raw, info?.efforts, info?.defaultEffort);
   });
 
   const filteredModels = createMemo<FlattenedModel[]>(() => {
@@ -262,9 +306,9 @@ export default function ModelSelector() {
             {activeModelInfo()?.multiplier}
           </span>
         </Show>
-        <Show when={workspace.reasoningEffort}>
+        <Show when={effectiveReasoningEffort()}>
           <span class="shrink-0 rounded bg-[var(--accent-surface)] px-1 py-[1px] text-[10.5px] uppercase font-mono text-[var(--accent-primary)]">
-            {workspace.reasoningEffort}
+            {effectiveReasoningEffort()}
           </span>
         </Show>
         <ChevronDown
@@ -473,24 +517,43 @@ export default function ModelSelector() {
               </div>
 
               <div class="flex items-center justify-between border-t border-[var(--border-subtle)] bg-[var(--bg-elevated)]/40 px-3 py-1.5 text-[11px]">
-                <span class="text-[var(--text-muted)]">{t("models.reasoningEffort")}</span>
-                <div class="inline-flex items-center gap-0.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] p-0.5">
-                  <For each={EFFORT_OPTIONS}>
-                    {(opt) => (
-                      <button
-                        type="button"
-                        onClick={() => setReasoningEffort(opt.value)}
-                        class={`rounded-md px-2 py-0.5 text-[10.5px] font-medium transition-colors cursor-pointer ${
-                          workspace.reasoningEffort === opt.value
-                            ? "bg-[var(--bg-panel)] text-[var(--accent-primary)] shadow-2xs"
-                            : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
-                        }`}
-                      >
-                        {opt.label}
-                      </button>
+                <span class="text-[var(--text-muted)]">
+                  {t("models.reasoningEffort")}
+                  <Show when={!workspace.reasoningEffort && activeModelInfo()?.defaultEffort}>
+                    {(def) => (
+                      <span class="ml-1 font-mono text-[10px] uppercase text-[var(--text-faint)]">
+                        ({def()})
+                      </span>
                     )}
-                  </For>
-                </div>
+                  </Show>
+                </span>
+                <Show
+                  when={availableEffortOptions().length > 0}
+                  fallback={
+                    <span class="rounded-md bg-[var(--bg-inset)] px-2 py-0.5 text-[10.5px] text-[var(--text-faint)]">
+                      {t("models.reasoningUnsupported")}
+                    </span>
+                  }
+                >
+                  <div class="inline-flex items-center gap-0.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] p-0.5">
+                    <For each={availableEffortOptions()}>
+                      {(opt) => (
+                        <button
+                          type="button"
+                          title={opt.title}
+                          onClick={() => setReasoningEffort(opt.value)}
+                          class={`rounded-md px-2 py-0.5 text-[10.5px] font-medium transition-colors cursor-pointer ${
+                            effectiveReasoningEffort() === opt.value
+                              ? "bg-[var(--bg-panel)] text-[var(--accent-primary)] shadow-2xs"
+                              : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                          }`}
+                        >
+                          {opt.label}
+                        </button>
+                      )}
+                    </For>
+                  </div>
+                </Show>
               </div>
             </div>
           </div>

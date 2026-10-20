@@ -45,17 +45,18 @@ func isLoopbackURL(rawURL string) bool {
 }
 
 type llmCompletionRequest struct {
-	ProviderID  string
-	ModelID     string
-	BaseURL     string
-	APIKey      string
-	NPM         string
-	Headers     map[string]string
-	Prompt      string
-	MaxTokens   int
-	Temperature float64
-	Timeout     time.Duration
-	Transport   *http.Transport
+	ProviderID      string
+	ModelID         string
+	BaseURL         string
+	APIKey          string
+	NPM             string
+	Headers         map[string]string
+	Prompt          string
+	MaxTokens       int
+	Temperature     float64
+	ReasoningEffort string
+	Timeout         time.Duration
+	Transport       *http.Transport
 }
 
 func callSimpleLLM(parentCtx context.Context, req llmCompletionRequest) (text string, resultErr error) {
@@ -114,6 +115,9 @@ func callSimpleLLM(parentCtx context.Context, req llmCompletionRequest) (text st
 		}
 		if req.Temperature > 0 {
 			bodyMap["temperature"] = req.Temperature
+		}
+		if eff := strings.TrimSpace(req.ReasoningEffort); eff != "" {
+			bodyMap["reasoning_effort"] = eff
 		}
 	}
 

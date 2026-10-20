@@ -24,11 +24,16 @@ const (
 )
 
 type dailyModelStat struct {
-	ProviderID  string  `json:"providerID"`
-	ModelID     string  `json:"modelID"`
-	Turns       int     `json:"turns"`
-	TotalTokens int64   `json:"totalTokens"`
-	Cost        float64 `json:"cost"`
+	ProviderID       string  `json:"providerID"`
+	ModelID          string  `json:"modelID"`
+	Turns            int     `json:"turns"`
+	TotalTokens      int64   `json:"totalTokens"`
+	InputTokens      int64   `json:"inputTokens"`
+	OutputTokens     int64   `json:"outputTokens"`
+	ReasoningTokens  int64   `json:"reasoningTokens"`
+	CacheReadTokens  int64   `json:"cacheReadTokens"`
+	CacheWriteTokens int64   `json:"cacheWriteTokens"`
+	Cost             float64 `json:"cost"`
 }
 
 type gitDailyPulseResponse struct {
@@ -377,11 +382,16 @@ SELECT json_object(
 			res.DbLatestTurnTs = m.MaxTs
 		}
 		res.DbModels = append(res.DbModels, dailyModelStat{
-			ProviderID:  m.ProviderID,
-			ModelID:     m.ModelID,
-			Turns:       m.Turns,
-			TotalTokens: m.TotalTokens,
-			Cost:        m.Cost,
+			ProviderID:       m.ProviderID,
+			ModelID:          m.ModelID,
+			Turns:            m.Turns,
+			TotalTokens:      m.TotalTokens,
+			InputTokens:      m.InputTokens,
+			OutputTokens:     m.OutputTokens,
+			ReasoningTokens:  m.ReasoningTokens,
+			CacheReadTokens:  m.CacheReadTokens,
+			CacheWriteTokens: m.CacheWriteTokens,
+			Cost:             m.Cost,
 		})
 	}
 }

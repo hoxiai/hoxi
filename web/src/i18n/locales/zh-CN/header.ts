@@ -70,6 +70,7 @@ export const header: HeaderI18n = {
   updateReleaseNotesFallback: "性能优化与稳定性修复。",
   pulseTokensSub: "输入 {input} · 输出 {output} · 思考 {reasoning}",
   pulseTodayCost: "今日费用",
+  pulseCostTooltip: "按各模型市场价估算（无市场价时取实际记录值）",
   pulseCostSub: "缓存节省 {saved} · 均 {avg}/轮",
   pulseLinesAdded: "新增代码",
   pulseLinesAddedSub: "未提交 +{uncommitted} · 已提交 +{committed}",

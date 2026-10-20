@@ -141,10 +141,12 @@ export function SelectedModelHoverCard(props: { model: FlattenedModel }) {
               <span class="inline-flex items-center gap-0.5 rounded bg-[var(--accent-surface)] px-1.5 py-[1px] text-[9.5px] font-medium text-[var(--accent-primary)]">
                 <Sparkles size={9} />
                 {t("models.reasoningCap")}
-                <Show when={workspace.reasoningEffort}>
-                  <span class="uppercase font-mono">
-                    ·{workspace.reasoningEffort}
-                  </span>
+                <Show when={workspace.reasoningEffort || props.model.defaultEffort}>
+                  {(eff) => (
+                    <span class="uppercase font-mono">
+                      ·{eff()}
+                    </span>
+                  )}
                 </Show>
               </span>
             </Show>

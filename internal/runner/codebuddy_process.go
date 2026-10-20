@@ -81,15 +81,17 @@ func ParseCodeBuddyModelsOutput(raw string) []string {
 }
 
 type codeBuddyModelSpec struct {
-	name         string
-	multiplier   string
-	free         bool
-	contextLimit int
-	outputLimit  int
-	inputCost    float64
-	outputCost   float64
-	image        bool
-	reasoning    bool
+	name          string
+	multiplier    string
+	free          bool
+	contextLimit  int
+	outputLimit   int
+	inputCost     float64
+	outputCost    float64
+	image         bool
+	reasoning     bool
+	efforts       []string
+	defaultEffort string
 }
 
 // filteredModelPrefixes excludes low-utility model families by stable prefix rather than hardcoded versions.
@@ -152,89 +154,100 @@ func inferCodeBuddyModelSpec(slug string) codeBuddyModelSpec {
 	lower := strings.ToLower(strings.TrimSpace(slug))
 	switch lower {
 	case "default-model":
-		return codeBuddyModelSpec{name: "Auto", multiplier: "1x", contextLimit: 176000, outputLimit: 24000, image: true, reasoning: true}
+		return codeBuddyModelSpec{name: "Auto", multiplier: "1x", contextLimit: 176000, outputLimit: 24000, image: true, reasoning: true, efforts: []string{"low", "medium", "high", "xhigh", "max"}, defaultEffort: "medium"}
 	case "fast-model":
-		return codeBuddyModelSpec{name: "Fast", multiplier: "0.34x", contextLimit: 200000, outputLimit: 32000, inputCost: 0.35, outputCost: 1.40, image: true, reasoning: true}
+		return codeBuddyModelSpec{name: "Fast", multiplier: "0.34x", contextLimit: 200000, outputLimit: 32000, inputCost: 0.35, outputCost: 1.40, image: true, reasoning: true, efforts: []string{"low", "medium", "high"}, defaultEffort: "medium"}
 	case "balanced-model":
-		return codeBuddyModelSpec{name: "Balanced", multiplier: "0.59x", contextLimit: 256000, outputLimit: 32000, inputCost: 0.60, outputCost: 2.40, image: true, reasoning: true}
+		return codeBuddyModelSpec{name: "Balanced", multiplier: "0.59x", contextLimit: 256000, outputLimit: 32000, inputCost: 0.60, outputCost: 2.40, image: true, reasoning: true, efforts: []string{"low", "medium", "high"}, defaultEffort: "medium"}
 	case "primary-model":
-		return codeBuddyModelSpec{name: "Primary", multiplier: "3.31x", contextLimit: 272000, outputLimit: 72000, inputCost: 3.00, outputCost: 12.00, image: true, reasoning: true}
+		return codeBuddyModelSpec{name: "Primary", multiplier: "3.31x", contextLimit: 272000, outputLimit: 72000, inputCost: 3.00, outputCost: 12.00, image: true, reasoning: true, efforts: []string{"low", "medium", "high", "xhigh", "max"}, defaultEffort: "high"}
 	case "deep-model":
-		return codeBuddyModelSpec{name: "Deep", multiplier: "3.33x", contextLimit: 176000, outputLimit: 24000, inputCost: 3.00, outputCost: 12.00, image: true, reasoning: true}
+		return codeBuddyModelSpec{name: "Deep", multiplier: "3.33x", contextLimit: 176000, outputLimit: 24000, inputCost: 3.00, outputCost: 12.00, image: true, reasoning: true, efforts: []string{"high", "xhigh", "max"}, defaultEffort: "high"}
 	}
 
 	switch {
 	case strings.HasPrefix(lower, "hy"):
 		if lower == "hy3" {
-			return codeBuddyModelSpec{name: "Hy3", multiplier: "0x", free: true, contextLimit: 192000, outputLimit: 64000, image: true, reasoning: true}
+			return codeBuddyModelSpec{name: "Hy3", multiplier: "0x", free: true, contextLimit: 192000, outputLimit: 64000, image: true, reasoning: true, efforts: []string{"low", "high"}, defaultEffort: "high"}
 		}
 		if strings.HasPrefix(lower, "hy3-") {
-			return codeBuddyModelSpec{multiplier: "0.05x", contextLimit: 192000, outputLimit: 64000, inputCost: 0.08, outputCost: 0.30, image: true, reasoning: true}
+			return codeBuddyModelSpec{multiplier: "0.05x", contextLimit: 192000, outputLimit: 64000, inputCost: 0.08, outputCost: 0.30, image: true, reasoning: true, efforts: []string{"low", "high"}, defaultEffort: "high"}
 		}
-		return codeBuddyModelSpec{multiplier: "0.29x", contextLimit: 1000000, outputLimit: 64000, inputCost: 0.30, outputCost: 1.20, image: true, reasoning: true}
+		return codeBuddyModelSpec{multiplier: "0.29x", contextLimit: 1000000, outputLimit: 64000, inputCost: 0.30, outputCost: 1.20, image: true, reasoning: true, efforts: []string{"high"}, defaultEffort: "high"}
 
 	case strings.HasPrefix(lower, "deepseek"):
 		if strings.Contains(lower, "v4.1-flash") && !strings.HasSuffix(lower, "-sg") {
-			return codeBuddyModelSpec{multiplier: "0x", free: true, contextLimit: 1000000, outputLimit: 128000, image: true, reasoning: true}
+			return codeBuddyModelSpec{multiplier: "0x", free: true, contextLimit: 1000000, outputLimit: 128000, image: true, reasoning: true, efforts: []string{"low", "medium", "high"}, defaultEffort: "low"}
 		}
 		if strings.Contains(lower, "flash") {
-			return codeBuddyModelSpec{multiplier: "0.17x", contextLimit: 1000000, outputLimit: 64000, inputCost: 0.14, outputCost: 0.28, image: true, reasoning: true}
+			return codeBuddyModelSpec{multiplier: "0.17x", contextLimit: 1000000, outputLimit: 64000, inputCost: 0.14, outputCost: 0.28, image: true, reasoning: true, efforts: []string{"low", "medium", "high"}, defaultEffort: "low"}
 		}
-		return codeBuddyModelSpec{multiplier: "0.51x", contextLimit: 1000000, outputLimit: 128000, inputCost: 0.55, outputCost: 2.19, image: true, reasoning: true}
+		return codeBuddyModelSpec{multiplier: "0.51x", contextLimit: 1000000, outputLimit: 128000, inputCost: 0.55, outputCost: 2.19, image: true, reasoning: true, efforts: []string{"low", "medium", "high"}, defaultEffort: "high"}
 
 	case strings.HasPrefix(lower, "glm"):
 		if strings.Contains(lower, "flash") {
-			return codeBuddyModelSpec{multiplier: "0.06x", contextLimit: 1000000, outputLimit: 131072, inputCost: 0.10, outputCost: 0.40, image: true, reasoning: true}
+			return codeBuddyModelSpec{multiplier: "0.06x", contextLimit: 1000000, outputLimit: 131072, inputCost: 0.10, outputCost: 0.40, image: true, reasoning: true, efforts: []string{"low", "high", "max"}, defaultEffort: "low"}
 		}
-		return codeBuddyModelSpec{multiplier: "0.79x", contextLimit: 1000000, outputLimit: 64000, inputCost: 0.70, outputCost: 2.80, image: true, reasoning: true}
+		if strings.HasPrefix(lower, "glm-5.2") {
+			return codeBuddyModelSpec{multiplier: "0.79x", contextLimit: 1000000, outputLimit: 64000, inputCost: 0.70, outputCost: 2.80, image: true, reasoning: true, efforts: []string{"high", "xhigh"}, defaultEffort: "high"}
+		}
+		return codeBuddyModelSpec{multiplier: "0.79x", contextLimit: 1000000, outputLimit: 64000, inputCost: 0.70, outputCost: 2.80, image: true, reasoning: true, efforts: []string{"low", "high", "max"}, defaultEffort: "high"}
 
 	case strings.HasPrefix(lower, "kimi"):
 		if strings.Contains(lower, "preview") {
-			return codeBuddyModelSpec{multiplier: "0.77x", contextLimit: 1000000, outputLimit: 64000, inputCost: 0.80, outputCost: 3.20, image: true, reasoning: true}
+			return codeBuddyModelSpec{multiplier: "0.77x", contextLimit: 1000000, outputLimit: 64000, inputCost: 0.80, outputCost: 3.20, image: true, reasoning: true, efforts: []string{"low", "high", "max"}, defaultEffort: "high"}
 		}
 		if strings.HasPrefix(lower, "kimi-k2") {
-			return codeBuddyModelSpec{multiplier: "0.57x", contextLimit: 256000, outputLimit: 32000, inputCost: 0.60, outputCost: 2.50, image: true, reasoning: true}
+			return codeBuddyModelSpec{multiplier: "0.57x", contextLimit: 256000, outputLimit: 32000, inputCost: 0.60, outputCost: 2.50, image: true, reasoning: true, efforts: []string{"low", "medium", "high"}, defaultEffort: "medium"}
 		}
-		return codeBuddyModelSpec{multiplier: "1.62x", contextLimit: 1000000, outputLimit: 32000, inputCost: 1.50, outputCost: 6.00, image: true, reasoning: true}
+		return codeBuddyModelSpec{multiplier: "1.62x", contextLimit: 1000000, outputLimit: 32000, inputCost: 1.50, outputCost: 6.00, image: true, reasoning: true, efforts: []string{"low", "medium", "high"}, defaultEffort: "medium"}
 
 	case strings.HasPrefix(lower, "qwen"):
 		if strings.Contains(lower, "flash") {
-			return codeBuddyModelSpec{multiplier: "0x", free: true, contextLimit: 1000000, outputLimit: 64000, image: true, reasoning: true}
+			return codeBuddyModelSpec{multiplier: "0x", free: true, contextLimit: 1000000, outputLimit: 64000, image: true, reasoning: true, efforts: []string{"low", "medium", "high"}, defaultEffort: "low"}
 		}
 		if strings.Contains(lower, "plus") || strings.Contains(lower, "coder") {
-			return codeBuddyModelSpec{multiplier: "0.1x", contextLimit: 1000000, outputLimit: 64000, inputCost: 0.40, outputCost: 1.20, image: true, reasoning: true}
+			return codeBuddyModelSpec{multiplier: "0.1x", contextLimit: 1000000, outputLimit: 64000, inputCost: 0.40, outputCost: 1.20, image: true, reasoning: true, efforts: []string{"low", "medium", "high"}, defaultEffort: "medium"}
 		}
-		return codeBuddyModelSpec{multiplier: "0.5x", contextLimit: 1000000, outputLimit: 64000, inputCost: 1.20, outputCost: 6.00, image: true, reasoning: true}
+		return codeBuddyModelSpec{multiplier: "0.5x", contextLimit: 1000000, outputLimit: 64000, inputCost: 1.20, outputCost: 6.00, image: true, reasoning: true, efforts: []string{"low", "medium", "high"}, defaultEffort: "high"}
 
 	case strings.HasPrefix(lower, "gemini"):
 		if strings.Contains(lower, "flash") {
-			return codeBuddyModelSpec{multiplier: "0.99x", contextLimit: 1000000, outputLimit: 65536, inputCost: 0.35, outputCost: 1.40, image: true, reasoning: true}
+			return codeBuddyModelSpec{multiplier: "0.99x", contextLimit: 1000000, outputLimit: 65536, inputCost: 0.35, outputCost: 1.40, image: true, reasoning: true, efforts: []string{"low", "medium", "high"}, defaultEffort: "low"}
 		}
-		return codeBuddyModelSpec{multiplier: "1.5x", contextLimit: 1000000, outputLimit: 65536, inputCost: 1.25, outputCost: 5.00, image: true, reasoning: true}
+		return codeBuddyModelSpec{multiplier: "1.5x", contextLimit: 1000000, outputLimit: 65536, inputCost: 1.25, outputCost: 5.00, image: true, reasoning: true, efforts: []string{"low", "medium", "high"}, defaultEffort: "high"}
 
 	case strings.HasPrefix(lower, "claude"):
 		if strings.Contains(lower, "opus") {
-			return codeBuddyModelSpec{multiplier: "3.0x", contextLimit: 200000, outputLimit: 64000, inputCost: 5.00, outputCost: 25.00, image: true, reasoning: true}
+			return codeBuddyModelSpec{multiplier: "3.0x", contextLimit: 200000, outputLimit: 64000, inputCost: 5.00, outputCost: 25.00, image: true, reasoning: true, efforts: []string{"low", "medium", "high", "max"}, defaultEffort: "high"}
 		}
-		return codeBuddyModelSpec{multiplier: "1.5x", contextLimit: 200000, outputLimit: 64000, inputCost: 3.00, outputCost: 15.00, image: true, reasoning: true}
+		return codeBuddyModelSpec{multiplier: "1.5x", contextLimit: 200000, outputLimit: 64000, inputCost: 3.00, outputCost: 15.00, image: true, reasoning: true, efforts: []string{"low", "medium", "high", "max"}, defaultEffort: "high"}
 
 	case strings.HasPrefix(lower, "gpt"):
 		switch {
 		case strings.Contains(lower, "luna") || strings.Contains(lower, "mini") || strings.Contains(lower, "nano"):
-			return codeBuddyModelSpec{multiplier: "0.14x", contextLimit: 1000000, outputLimit: 128000, inputCost: 0.20, outputCost: 0.80, image: true, reasoning: true}
+			return codeBuddyModelSpec{multiplier: "0.14x", contextLimit: 1000000, outputLimit: 128000, inputCost: 0.20, outputCost: 0.80, image: true, reasoning: true, efforts: []string{"low", "medium", "high", "xhigh", "max"}, defaultEffort: "medium"}
 		case strings.Contains(lower, "terra"):
-			return codeBuddyModelSpec{multiplier: "1.39x", contextLimit: 1000000, outputLimit: 128000, inputCost: 1.50, outputCost: 6.00, image: true, reasoning: true}
+			return codeBuddyModelSpec{multiplier: "1.39x", contextLimit: 1000000, outputLimit: 128000, inputCost: 1.50, outputCost: 6.00, image: true, reasoning: true, efforts: []string{"low", "medium", "high", "xhigh", "max"}, defaultEffort: "high"}
 		case strings.Contains(lower, "sol"):
-			return codeBuddyModelSpec{multiplier: "3.47x", contextLimit: 1000000, outputLimit: 128000, inputCost: 3.50, outputCost: 14.00, image: true, reasoning: true}
+			return codeBuddyModelSpec{multiplier: "3.47x", contextLimit: 1000000, outputLimit: 128000, inputCost: 3.50, outputCost: 14.00, image: true, reasoning: true, efforts: []string{"low", "medium", "high", "xhigh", "max"}, defaultEffort: "high"}
 		case strings.Contains(lower, "astra"):
-			return codeBuddyModelSpec{multiplier: "6.67x", contextLimit: 1000000, outputLimit: 128000, inputCost: 6.00, outputCost: 24.00, image: true, reasoning: true}
+			return codeBuddyModelSpec{multiplier: "6.67x", contextLimit: 1000000, outputLimit: 128000, inputCost: 6.00, outputCost: 24.00, image: true, reasoning: true, efforts: []string{"low", "medium", "high", "xhigh", "max"}, defaultEffort: "xhigh"}
+		case strings.HasPrefix(lower, "gpt-5.4") || strings.HasPrefix(lower, "gpt-5.5"):
+			return codeBuddyModelSpec{multiplier: "3.31x", contextLimit: 1000000, outputLimit: 128000, inputCost: 3.00, outputCost: 12.00, image: true, reasoning: true, efforts: []string{"low", "medium", "high", "xhigh"}, defaultEffort: "high"}
 		default:
-			return codeBuddyModelSpec{multiplier: "3.31x", contextLimit: 1000000, outputLimit: 128000, inputCost: 3.00, outputCost: 12.00, image: true, reasoning: true}
+			return codeBuddyModelSpec{multiplier: "3.31x", contextLimit: 1000000, outputLimit: 128000, inputCost: 3.00, outputCost: 12.00, image: true, reasoning: true, efforts: []string{"low", "medium", "high", "xhigh", "max"}, defaultEffort: "high"}
 		}
 	}
 
 	reasoning := !strings.Contains(lower, "fast") && !strings.Contains(lower, "flash") && !strings.Contains(lower, "lite")
-	return codeBuddyModelSpec{contextLimit: 200000, outputLimit: 32000, image: true, reasoning: reasoning}
+	var efforts []string
+	var defEffort string
+	if reasoning {
+		efforts = []string{"low", "medium", "high"}
+		defEffort = "medium"
+	}
+	return codeBuddyModelSpec{contextLimit: 200000, outputLimit: 32000, image: true, reasoning: reasoning, efforts: efforts, defaultEffort: defEffort}
 }
 
 func parseCodeBuddyCredits(raw string) (multiplier string, free bool) {
@@ -283,6 +296,11 @@ func readCodeBuddyProductCatalog(bin string) map[string]codeBuddyModelSpec {
 				SupportsImages    bool     `json:"supportsImages"`
 				SupportsReasoning *bool    `json:"supportsReasoning"`
 				Tags              []string `json:"tags"`
+				Reasoning         *struct {
+					DefaultEffort    string   `json:"defaultEffort"`
+					Effort           string   `json:"effort"`
+					SupportedEfforts []string `json:"supportedEfforts"`
+				} `json:"reasoning"`
 			} `json:"models"`
 		}
 		if json.Unmarshal(raw, &doc) != nil {
@@ -324,14 +342,28 @@ func readCodeBuddyProductCatalog(bin string) map[string]codeBuddyModelSpec {
 			if m.SupportsReasoning != nil {
 				reason = *m.SupportsReasoning
 			}
+			efforts := prev.efforts
+			defEffort := prev.defaultEffort
+			if m.Reasoning != nil {
+				if norm := normalizeEffortList(m.Reasoning.SupportedEfforts); len(norm) > 0 {
+					efforts = norm
+				}
+				if d := normalizeEffortName(m.Reasoning.DefaultEffort); d != "" {
+					defEffort = d
+				} else if e := normalizeEffortName(m.Reasoning.Effort); e != "" {
+					defEffort = e
+				}
+			}
 			out[id] = codeBuddyModelSpec{
-				name:         stripVendorSuffix(m.Name),
-				multiplier:   mult,
-				free:         isFree,
-				contextLimit: inTok,
-				outputLimit:  outTok,
-				image:        m.SupportsImages || prev.image,
-				reasoning:    reason,
+				name:          stripVendorSuffix(m.Name),
+				multiplier:    mult,
+				free:          isFree,
+				contextLimit:  inTok,
+				outputLimit:   outTok,
+				image:         m.SupportsImages || prev.image,
+				reasoning:     reason,
+				efforts:       efforts,
+				defaultEffort: defEffort,
 			}
 		}
 	}
@@ -449,24 +481,36 @@ func buildCodeBuddyModelItems(bin string, slugs []string) []RunnerModelItem {
 				spec.image = true
 			}
 			spec.reasoning = pkgSpec.reasoning
+			if len(pkgSpec.efforts) > 0 {
+				spec.efforts = pkgSpec.efforts
+			}
+			if pkgSpec.defaultEffort != "" {
+				spec.defaultEffort = pkgSpec.defaultEffort
+			}
+		}
+		if !spec.reasoning {
+			spec.efforts = nil
+			spec.defaultEffort = ""
 		}
 		name := stripVendorSuffix(spec.name)
 		if name == "" {
 			name = s
 		}
 		items = append(items, RunnerModelItem{
-			ID:           s,
-			Name:         name,
-			ProviderID:   string(RuntimeCodeBuddy),
-			Runtime:      string(RuntimeCodeBuddy),
-			Reasoning:    spec.reasoning,
-			Image:        spec.image,
-			Free:         spec.free,
-			Multiplier:   spec.multiplier,
-			ContextLimit: spec.contextLimit,
-			OutputLimit:  spec.outputLimit,
-			InputCost:    spec.inputCost,
-			OutputCost:   spec.outputCost,
+			ID:            s,
+			Name:          name,
+			ProviderID:    string(RuntimeCodeBuddy),
+			Runtime:       string(RuntimeCodeBuddy),
+			Reasoning:     spec.reasoning,
+			Efforts:       spec.efforts,
+			DefaultEffort: spec.defaultEffort,
+			Image:         spec.image,
+			Free:          spec.free,
+			Multiplier:    spec.multiplier,
+			ContextLimit:  spec.contextLimit,
+			OutputLimit:   spec.outputLimit,
+			InputCost:     spec.inputCost,
+			OutputCost:    spec.outputCost,
 		})
 	}
 	return items
@@ -485,11 +529,21 @@ func BuildCodeBuddyArgs(mode, modelID, effort, externalSessionID string) []strin
 		"--include-partial-messages",
 		"--permission-mode", permMode,
 	}
-	if m := strings.TrimSpace(modelID); m != "" && m != "default-model" {
+	m := strings.TrimSpace(modelID)
+	if m != "" && m != "default-model" {
 		args = append(args, "--model", m)
 	}
-	if e := strings.TrimSpace(effort); e != "" {
-		args = append(args, "--effort", e)
+	if e := normalizeEffortName(effort); e != "" {
+		specSlug := m
+		if specSlug == "" {
+			specSlug = "default-model"
+		}
+		spec := inferCodeBuddyModelSpec(specSlug)
+		if spec.reasoning {
+			if clamped := clampEffortToSupported(e, spec.efforts, spec.defaultEffort); clamped != "" {
+				args = append(args, "--effort", clamped)
+			}
+		}
 	}
 	if sid := strings.TrimSpace(externalSessionID); sid != "" {
 		args = append(args, "--resume", sid)

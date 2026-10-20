@@ -184,21 +184,66 @@ func DiscoverAgyModelsWithRefresh(forceRefresh bool) ([]RunnerModelItem, map[str
 	return buildAgyModelItems(agyCachedSlugs, agyCachedDisplayMap), agyCachedDisplayMap, agyCachedReverseSlug
 }
 
+func splitAgyModelEffortSuffix(slug string) (base, suffixEffort string) {
+	trimmed := strings.TrimSpace(slug)
+	lower := strings.ToLower(trimmed)
+	for _, eff := range []string{"xhigh", "medium", "high", "low", "max"} {
+		suf := "-" + eff
+		if strings.HasSuffix(lower, suf) && len(trimmed) > len(suf) {
+			return trimmed[:len(trimmed)-len(suf)], eff
+		}
+	}
+	return trimmed, ""
+}
+
+func inferClaudeModelEfforts(slug string) (efforts []string, defaultEffort string, supportsEffort bool) {
+	lower := strings.ToLower(strings.TrimSpace(slug))
+	if lower == "" {
+		return []string{"low", "medium", "high", "max"}, "high", true
+	}
+	if lower == "haiku" ||
+		strings.Contains(lower, "haiku-4") ||
+		strings.Contains(lower, "haiku-3") ||
+		strings.Contains(lower, "claude-3-") ||
+		strings.Contains(lower, "sonnet-4-0") ||
+		strings.Contains(lower, "sonnet-4-5") ||
+		strings.Contains(lower, "opus-4-0") ||
+		strings.Contains(lower, "opus-4-1") ||
+		strings.Contains(lower, "opus-4-5") {
+		return nil, "", false
+	}
+	if strings.Contains(lower, "opus-4-7") {
+		return []string{"low", "medium", "high", "xhigh", "max"}, "xhigh", true
+	}
+	if strings.Contains(lower, "opus-5-5") || strings.Contains(lower, "sonnet-5-5") || strings.Contains(lower, "haiku-5-5") {
+		return []string{"low", "medium", "high", "xhigh", "max"}, "medium", true
+	}
+	if lower == "opus" || strings.Contains(lower, "opus-4-8") || strings.Contains(lower, "opus-5") || strings.Contains(lower, "sonnet-5") || strings.Contains(lower, "fable-5") {
+		return []string{"low", "medium", "high", "xhigh", "max"}, "high", true
+	}
+	return []string{"low", "medium", "high", "max"}, "high", true
+}
+
 func inferOfficialRunnerModelSpec(slug string) (ctxLimit, outLimit int, inCost, outCost float64, image, reasoning bool) {
 	lower := strings.ToLower(strings.TrimSpace(slug))
+	_, effSuffix := splitAgyModelEffortSuffix(lower)
 	image = true
 	reasoning = !strings.Contains(lower, "fast") && !strings.Contains(lower, "flash") && !strings.Contains(lower, "lite") && !strings.Contains(lower, "haiku")
-	if strings.Contains(lower, "thinking") || strings.Contains(lower, "argon") {
+	if effSuffix != "" || strings.Contains(lower, "thinking") || strings.Contains(lower, "argon") || strings.Contains(lower, "gemini-3") || strings.Contains(lower, "gemini-4") || strings.Contains(lower, "haiku-5") {
 		reasoning = true
 	}
 
 	switch {
 	case strings.HasPrefix(lower, "claude"):
+		_, _, supportsEffort := inferClaudeModelEfforts(lower)
+		if effSuffix != "" {
+			supportsEffort = true
+		}
 		switch {
 		case strings.Contains(lower, "opus"):
 			return 200000, 64000, 5.00, 25.00, true, true
 		case strings.Contains(lower, "haiku"):
-			return 200000, 64000, 0.80, 4.00, true, reasoning
+			return 200000, 64000, 0.80, 4.00, true, supportsEffort
 		default:
 			return 200000, 64000, 3.00, 15.00, true, true
 		}
@@ -227,6 +272,12 @@ func inferOfficialRunnerModelSpec(slug string) (ctxLimit, outLimit int, inCost, 
 }
 
 func buildAgyModelItems(slugs []string, displayBySlug map[string]string) []RunnerModelItem {
+	familyEfforts := make(map[string][]string)
+	for _, s := range slugs {
+		if base, suf := splitAgyModelEffortSuffix(s); suf != "" {
+			familyEfforts[ strings.ToLower(base) ] = append(familyEfforts[strings.ToLower(base)], suf)
+		}
+	}
 	items := make([]RunnerModelItem, 0, len(slugs))
 	for _, s := range slugs {
 		name := displayBySlug[s]
@@ -234,17 +285,38 @@ func buildAgyModelItems(slugs []string, displayBySlug map[string]string) []Runne
 			name = s
 		}
 		ctxLim, outLim, inCost, outCost, image, reasoning := inferOfficialRunnerModelSpec(s)
+		var efforts []string
+		var defaultEffort string
+		if base, suf := splitAgyModelEffortSuffix(s); suf != "" {
+			reasoning = true
+			defaultEffort = suf
+			efforts = normalizeEffortList(familyEfforts[strings.ToLower(base)])
+			if len(efforts) == 0 {
+				efforts = []string{suf}
+			}
+		} else if reasoning {
+			lower := strings.ToLower(s)
+			if strings.Contains(lower, "gpt-oss") {
+				efforts = []string{"medium"}
+				defaultEffort = "medium"
+			} else {
+				efforts = []string{"low", "medium", "high"}
+				defaultEffort = "high"
+			}
+		}
 		items = append(items, RunnerModelItem{
-			ID:           s,
-			Name:         name,
-			ProviderID:   string(RuntimeAntigravity),
-			Runtime:      string(RuntimeAntigravity),
-			Reasoning:    reasoning,
-			Image:        image,
-			ContextLimit: ctxLim,
-			OutputLimit:  outLim,
-			InputCost:    inCost,
-			OutputCost:   outCost,
+			ID:            s,
+			Name:          name,
+			ProviderID:    string(RuntimeAntigravity),
+			Runtime:       string(RuntimeAntigravity),
+			Reasoning:     reasoning,
+			Efforts:       efforts,
+			DefaultEffort: defaultEffort,
+			Image:         image,
+			ContextLimit:  ctxLim,
+			OutputLimit:   outLim,
+			InputCost:     inCost,
+			OutputCost:    outCost,
 		})
 	}
 	return items
@@ -265,17 +337,24 @@ func DiscoverClaudeModels() []RunnerModelItem {
 			name = s
 		}
 		ctxLim, outLim, inCost, outCost, image, reasoning := inferOfficialRunnerModelSpec(s)
+		efforts, defEffort, supportsEffort := inferClaudeModelEfforts(s)
+		if !supportsEffort {
+			efforts = nil
+			defEffort = ""
+		}
 		items = append(items, RunnerModelItem{
-			ID:           s,
-			Name:         name,
-			ProviderID:   string(RuntimeClaudeCode),
-			Runtime:      string(RuntimeClaudeCode),
-			Reasoning:    reasoning,
-			Image:        image,
-			ContextLimit: ctxLim,
-			OutputLimit:  outLim,
-			InputCost:    inCost,
-			OutputCost:   outCost,
+			ID:            s,
+			Name:          name,
+			ProviderID:    string(RuntimeClaudeCode),
+			Runtime:       string(RuntimeClaudeCode),
+			Reasoning:     reasoning,
+			Efforts:       efforts,
+			DefaultEffort: defEffort,
+			Image:         image,
+			ContextLimit:  ctxLim,
+			OutputLimit:   outLim,
+			InputCost:     inCost,
+			OutputCost:    outCost,
 		})
 	}
 	return items
@@ -311,6 +390,47 @@ func ValidateWorktreeDir(worktreePath, projectRoot string) error {
 	return nil
 }
 
+func agySupportedEffortsForBase(base string) []string {
+	lowerBase := strings.ToLower(strings.TrimSpace(base))
+	agyModelsMu.Lock()
+	cached := append([]string(nil), agyCachedSlugs...)
+	agyModelsMu.Unlock()
+	var found []string
+	for _, s := range cached {
+		if b, suf := splitAgyModelEffortSuffix(s); suf != "" && strings.EqualFold(b, lowerBase) {
+			found = append(found, suf)
+		}
+	}
+	if norm := normalizeEffortList(found); len(norm) > 0 {
+		return norm
+	}
+	if strings.Contains(lowerBase, "gpt-oss") {
+		return []string{"medium"}
+	}
+	return []string{"low", "medium", "high"}
+}
+
+func ResolveAgyModelAndEffort(modelID, effort string) (string, string) {
+	m := strings.TrimSpace(modelID)
+	e := normalizeEffortName(effort)
+	if base, suf := splitAgyModelEffortSuffix(m); suf != "" {
+		if e == "" {
+			return m, ""
+		}
+		supported := agySupportedEffortsForBase(base)
+		e = clampEffortToSupported(e, supported, suf)
+		return base + "-" + e, e
+	}
+	if e != "" {
+		if strings.Contains(strings.ToLower(m), "gpt-oss") {
+			e = clampEffortToSupported(e, []string{"medium"}, "medium")
+		} else {
+			e = clampEffortToSupported(e, []string{"low", "medium", "high"}, "high")
+		}
+	}
+	return m, e
+}
+
 func BuildAgyArgs(mode, modelID, effort, externalConversationID string) []string {
 	agyMode := "accept-edits"
 	if strings.EqualFold(strings.TrimSpace(mode), "plan") {
@@ -322,11 +442,12 @@ func BuildAgyArgs(mode, modelID, effort, externalConversationID string) []string
 		"--sandbox",
 		"--mode", agyMode,
 	}
-	if m := strings.TrimSpace(modelID); m != "" {
-		args = append(args, "--model", m)
+	resolvedModel, resolvedEffort := ResolveAgyModelAndEffort(modelID, effort)
+	if resolvedModel != "" {
+		args = append(args, "--model", resolvedModel)
 	}
-	if e := strings.TrimSpace(effort); e != "" {
-		args = append(args, "--effort", e)
+	if resolvedEffort != "" {
+		args = append(args, "--effort", resolvedEffort)
 	}
 	if cid := strings.TrimSpace(externalConversationID); cid != "" {
 		args = append(args, "--conversation", cid)
@@ -349,11 +470,17 @@ func BuildClaudeArgs(mode, modelID, effort, externalSessionID string) []string {
 		"--permission-mode", permMode,
 		"--permission-prompts", "none",
 	}
-	if m := strings.TrimSpace(modelID); m != "" {
+	m := strings.TrimSpace(modelID)
+	if m != "" {
 		args = append(args, "--model", m)
 	}
-	if e := strings.TrimSpace(effort); e != "" {
-		args = append(args, "--effort", e)
+	if e := normalizeEffortName(effort); e != "" {
+		efforts, defEffort, supportsEffort := inferClaudeModelEfforts(m)
+		if supportsEffort {
+			if clamped := clampEffortToSupported(e, efforts, defEffort); clamped != "" {
+				args = append(args, "--effort", clamped)
+			}
+		}
 	}
 	if sid := strings.TrimSpace(externalSessionID); sid != "" {
 		args = append(args, "--resume", sid)

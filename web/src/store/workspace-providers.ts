@@ -10,7 +10,8 @@ import {
 } from "../services/api";
 import type { SessionRuntime } from "../services/sse-types";
 import { syncOfficialModelPricing } from "./leaderboard-state";
-import { updateSessionAI } from "./session-ai";
+import { splitAgyModelEffortSuffix } from "./provider-catalog";
+import { updateSessionAI, type ReasoningEffort } from "./session-ai";
 import {
   EFFORT_KEY,
   FAVORITE_MODELS_KEY,
@@ -115,10 +116,20 @@ export function sessionRuntimeForID(sessionID?: string | null): SessionRuntime {
 }
 
 export function selectModel(model: SelectedModel, _autoRetryOnError = false) {
-  updateSessionAI({ model });
+  const patch: { model: SelectedModel; effort?: ReasoningEffort } = { model };
+  if (model.providerID === "antigravity" && workspace.reasoningEffort) {
+    const agySplit = splitAgyModelEffortSuffix(model.modelID);
+    if (agySplit && agySplit.effort !== workspace.reasoningEffort) {
+      patch.effort = agySplit.effort;
+    }
+  }
+  updateSessionAI(patch);
   pushRecentModel(model);
   try {
-    if (!workspace.activeSessionID) localStorage.setItem(SELECTED_MODEL_KEY, JSON.stringify(model));
+    if (!workspace.activeSessionID) {
+      localStorage.setItem(SELECTED_MODEL_KEY, JSON.stringify(model));
+      if (patch.effort !== undefined) localStorage.setItem(EFFORT_KEY, patch.effort);
+    }
   } catch {
     /* ignore */
   }
@@ -136,10 +147,25 @@ function selectDefaultModel(model: SelectedModel) {
   try { localStorage.setItem(SELECTED_MODEL_KEY, JSON.stringify(model)); } catch { /* storage unavailable */ }
 }
 
-export function setReasoningEffort(effort: "" | "low" | "medium" | "high") {
-  updateSessionAI({ effort });
+export function setReasoningEffort(effort: ReasoningEffort) {
+  const patch: { effort: ReasoningEffort; model?: SelectedModel } = { effort };
+  const sel = workspace.selectedModel;
+  if (sel?.providerID === "antigravity" && effort) {
+    const agySplit = splitAgyModelEffortSuffix(sel.modelID);
+    if (agySplit) {
+      const siblingID = `${agySplit.base}-${effort}`;
+      const prov = workspace.providers.find((p) => p.id === "antigravity");
+      if (prov?.models?.[siblingID]) {
+        patch.model = { providerID: "antigravity", modelID: siblingID };
+      }
+    }
+  }
+  updateSessionAI(patch);
   try {
-    if (!workspace.activeSessionID) localStorage.setItem(EFFORT_KEY, effort);
+    if (!workspace.activeSessionID) {
+      localStorage.setItem(EFFORT_KEY, effort);
+      if (patch.model) localStorage.setItem(SELECTED_MODEL_KEY, JSON.stringify(patch.model));
+    }
   } catch {
     /* ignore */
   }
@@ -249,6 +275,7 @@ export async function loadProviders(forceRefresh = false): Promise<void> {
           id: mid,
           name: mCfg.name || rtModel?.name || mid,
           reasoning: Boolean(mCfg.reasoning ?? rtModel?.reasoning),
+          variants: mCfg.variants || rtModel?.variants,
           capabilities: {
             ...(rtModel?.capabilities || {}),
             reasoning: Boolean(mCfg.reasoning ?? rtModel?.capabilities?.reasoning),
@@ -290,6 +317,8 @@ export async function loadProviders(forceRefresh = false): Promise<void> {
           id: m.id,
           name: m.name || m.id,
           reasoning: Boolean(m.reasoning),
+          efforts: Array.isArray(m.efforts) ? m.efforts : undefined,
+          defaultEffort: m.defaultEffort || undefined,
           free: isFree,
           multiplier: m.multiplier || undefined,
           limit:
@@ -391,7 +420,15 @@ export async function connectProviderWithKey(opts: {
       ...(opts.customModelID
         ? {
             npm: existingProvider.npm || "@ai-sdk/openai-compatible",
-            models: { ...(existingProvider.models || {}), [opts.customModelID.trim()]: { name: opts.customModelID.trim() } },
+            models: {
+              ...(existingProvider.models || {}),
+              [opts.customModelID.trim()]: {
+                name: opts.customModelID.trim(),
+                reasoning: !/embedding|whisper|tts|rerank|haiku-3|haiku-4|gpt-3\.5|gpt-4o/i.test(
+                  opts.customModelID.trim()
+                ),
+              },
+            },
           }
         : {}),
       ...(opts.baseURL?.trim()

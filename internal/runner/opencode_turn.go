@@ -129,6 +129,52 @@ func (s *Service) resolveOpenCodeModel(ctx context.Context, directory, providerI
 	return providerID, modelID
 }
 
+func (s *Service) resolveOpenCodeVariant(ctx context.Context, directory, providerID, modelID, effort string) string {
+	e := normalizeEffortName(effort)
+	if e == "" {
+		return ""
+	}
+	if s.openCodeClient == nil || providerID == "" || modelID == "" {
+		return e
+	}
+	qCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	var resp struct {
+		Providers []struct {
+			ID     string                 `json:"id"`
+			Models map[string]interface{} `json:"models"`
+		} `json:"providers"`
+	}
+	if err := s.openCodeJSON(qCtx, http.MethodGet, "/config/providers", directory, nil, &resp); err != nil {
+		return e
+	}
+	for _, p := range resp.Providers {
+		if p.ID != providerID {
+			continue
+		}
+		mObj, ok := p.Models[modelID].(map[string]interface{})
+		if !ok {
+			return e
+		}
+		vMap, hasVariants := mObj["variants"].(map[string]interface{})
+		if !hasVariants {
+			return e
+		}
+		if len(vMap) == 0 {
+			return ""
+		}
+		if _, exact := vMap[e]; exact {
+			return e
+		}
+		keys := make([]string, 0, len(vMap))
+		for k := range vMap {
+			keys = append(keys, k)
+		}
+		return clampEffortToSupported(e, keys, "")
+	}
+	return e
+}
+
 func (s *Service) startOpenCodeTurn(rec SessionRecord, mode, modelID, effort, system string, user MessageInfo, parts []MessagePart) error {
 	setup, cancelSetup := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancelSetup()
@@ -141,6 +187,7 @@ func (s *Service) startOpenCodeTurn(rec SessionRecord, mode, modelID, effort, sy
 			r.ModelID = modelID
 		})
 	}
+	effort = s.resolveOpenCodeVariant(setup, rec.WorktreePath, rec.ProviderID, modelID, effort)
 	if rec.ExternalID == "" {
 		var info SessionInfo
 		if err := s.openCodeJSON(setup, "POST", "/session", rec.WorktreePath, map[string]interface{}{"title": rec.Title, "metadata": map[string]string{"hoxiConversation": rec.ID}}, &info); err != nil {
@@ -445,6 +492,7 @@ func (s *Service) relayOpenCodeEvent(rec SessionRecord, raw []byte) {
 // subscription continues to relay all subsequent tool steps to the same chat.
 func (s *Service) steerOpenCodeTurn(ctx context.Context, rec SessionRecord, mode, modelID, providerID, effort, system, text string, parts []MessagePart) error {
 	providerID, modelID = s.resolveOpenCodeModel(ctx, rec.WorktreePath, providerID, modelID)
+	effort = s.resolveOpenCodeVariant(ctx, rec.WorktreePath, providerID, modelID, effort)
 	inputParts := []map[string]interface{}{{"type": "text", "text": text}}
 	for _, part := range parts {
 		if part.Type == "file" {

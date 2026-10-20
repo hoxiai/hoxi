@@ -2,12 +2,199 @@
 import { t } from "../i18n";
 import type { ProviderInfo } from "../services/api";
 import { leaderboardState } from "./leaderboard-state";
+import type { ReasoningEffort } from "./session-ai";
 import { workspace } from "./workspace";
 import {
   isCustomOrConfiguredProvider,
   isHoxiCustomProvider,
   isImportedOpenCodeProvider,
 } from "./workspace-providers";
+
+export type ConcreteReasoningEffort = Exclude<ReasoningEffort, "">;
+
+const CANONICAL_EFFORTS: readonly ConcreteReasoningEffort[] = [
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+];
+
+function effortRank(e: string): number {
+  const idx = CANONICAL_EFFORTS.indexOf(e as ConcreteReasoningEffort);
+  return idx >= 0 ? idx + 1 : 0;
+}
+
+export function normalizeEffortList(raw?: readonly string[] | null): ConcreteReasoningEffort[] {
+  if (!Array.isArray(raw) || raw.length === 0) return [];
+  const set = new Set<ConcreteReasoningEffort>();
+  for (const item of raw) {
+    const lower = String(item || "").trim().toLowerCase() as ConcreteReasoningEffort;
+    if (CANONICAL_EFFORTS.includes(lower)) set.add(lower);
+  }
+  return CANONICAL_EFFORTS.filter((e) => set.has(e));
+}
+
+export function clampReasoningEffort(
+  requested: ReasoningEffort,
+  supported?: readonly string[] | null,
+  defaultEffort?: string
+): ReasoningEffort {
+  if (!requested) return "";
+  const req = requested.trim().toLowerCase() as ConcreteReasoningEffort;
+  if (!CANONICAL_EFFORTS.includes(req)) return "";
+  const norm = normalizeEffortList(supported);
+  if (norm.length === 0) {
+    if (Array.isArray(supported)) return "";
+    const def = (defaultEffort || "").trim().toLowerCase() as ConcreteReasoningEffort;
+    return CANONICAL_EFFORTS.includes(def) ? def : req;
+  }
+  if (norm.includes(req)) return req;
+  const reqRank = effortRank(req);
+  let best = norm[0];
+  let bestDist = Math.abs(effortRank(best) - reqRank);
+  for (let i = 1; i < norm.length; i++) {
+    const cand = norm[i];
+    const dist = Math.abs(effortRank(cand) - reqRank);
+    if (dist < bestDist || (dist === bestDist && effortRank(cand) > effortRank(best))) {
+      best = cand;
+      bestDist = dist;
+    }
+  }
+  return best;
+}
+
+export function splitAgyModelEffortSuffix(
+  modelID: string
+): { base: string; effort: ConcreteReasoningEffort } | null {
+  const trimmed = (modelID || "").trim();
+  const lower = trimmed.toLowerCase();
+  for (const eff of ["xhigh", "medium", "high", "low", "max"] as const) {
+    const suf = `-${eff}`;
+    if (lower.endsWith(suf) && trimmed.length > suf.length) {
+      return { base: trimmed.slice(0, trimmed.length - suf.length), effort: eff };
+    }
+  }
+  return null;
+}
+
+export function inferModelEffortCapabilities(
+  _providerID: string,
+  modelID: string,
+  reasoning: boolean,
+  mInfo?: Record<string, any> | null,
+  cfgModel?: Record<string, any> | null
+): { efforts: ConcreteReasoningEffort[]; defaultEffort?: ConcreteReasoningEffort } {
+  const explicitEfforts = normalizeEffortList(mInfo?.efforts ?? cfgModel?.efforts);
+  const rawDef = String(mInfo?.defaultEffort ?? cfgModel?.defaultEffort ?? "")
+    .trim()
+    .toLowerCase() as ConcreteReasoningEffort;
+  const explicitDefault = CANONICAL_EFFORTS.includes(rawDef) ? rawDef : undefined;
+
+  if (!reasoning && explicitEfforts.length === 0) {
+    return { efforts: [] };
+  }
+  if (explicitEfforts.length > 0) {
+    return {
+      efforts: explicitEfforts,
+      defaultEffort:
+        explicitDefault && explicitEfforts.includes(explicitDefault)
+          ? explicitDefault
+          : explicitEfforts.includes("medium")
+          ? "medium"
+          : explicitEfforts[0],
+    };
+  }
+
+  const agySplit = splitAgyModelEffortSuffix(modelID);
+  if (agySplit) {
+    const lowerBase = agySplit.base.toLowerCase();
+    if (lowerBase.includes("gpt-oss")) {
+      return { efforts: ["medium"], defaultEffort: "medium" };
+    }
+    return { efforts: ["low", "medium", "high"], defaultEffort: agySplit.effort };
+  }
+
+  const variantKeys = normalizeEffortList([
+    ...Object.keys(mInfo?.variants || {}),
+    ...Object.keys(cfgModel?.variants || {}),
+  ]);
+  if (variantKeys.length > 0) {
+    return {
+      efforts: variantKeys,
+      defaultEffort:
+        explicitDefault && variantKeys.includes(explicitDefault)
+          ? explicitDefault
+          : variantKeys.includes("high")
+          ? "high"
+          : variantKeys.includes("medium")
+          ? "medium"
+          : variantKeys[0],
+    };
+  }
+
+  const s = normalizeModelLookupKey(modelID);
+  if (s.includes("claude")) {
+    if (s.includes("opus-4-7") || s.includes("opus-4.7")) {
+      return { efforts: ["low", "medium", "high", "xhigh", "max"], defaultEffort: "xhigh" };
+    }
+    if (
+      s.includes("opus-5-5") ||
+      s.includes("opus-5.5") ||
+      s.includes("sonnet-5-5") ||
+      s.includes("sonnet-5.5") ||
+      s.includes("haiku-5-5") ||
+      s.includes("haiku-5.5")
+    ) {
+      return { efforts: ["low", "medium", "high", "xhigh", "max"], defaultEffort: "medium" };
+    }
+    if (
+      s.includes("opus-4-8") ||
+      s.includes("opus-5") ||
+      s.includes("sonnet-5") ||
+      s.includes("fable-5")
+    ) {
+      return { efforts: ["low", "medium", "high", "xhigh", "max"], defaultEffort: "high" };
+    }
+    return { efforts: ["low", "medium", "high", "max"], defaultEffort: "high" };
+  }
+
+  if (s.includes("gpt") || /^o[134](-|\b)/.test(s) || s.includes("codex")) {
+    if (s.includes("gpt-oss")) {
+      return { efforts: ["medium"], defaultEffort: "medium" };
+    }
+    if (
+      s.includes("astra") ||
+      s.includes("sol") ||
+      s.includes("terra") ||
+      s.includes("luna") ||
+      s.includes("gpt-5.6") ||
+      s.includes("gpt-6")
+    ) {
+      return {
+        efforts: ["low", "medium", "high", "xhigh", "max"],
+        defaultEffort: s.includes("astra") ? "xhigh" : s.includes("luna") ? "medium" : "high",
+      };
+    }
+    if (s.includes("gpt-5.2") || s.includes("gpt-5.4") || s.includes("gpt-5.5")) {
+      return { efforts: ["low", "medium", "high", "xhigh"], defaultEffort: "high" };
+    }
+    return { efforts: ["low", "medium", "high"], defaultEffort: "medium" };
+  }
+
+  if (s.includes("glm") || s.includes("kimi")) {
+    return {
+      efforts: ["low", "medium", "high", "max"],
+      defaultEffort: s.includes("flash") ? "low" : "high",
+    };
+  }
+
+  return {
+    efforts: ["low", "medium", "high"],
+    defaultEffort:
+      s.includes("flash") || s.includes("fast") || s.includes("efficient") ? "low" : "medium",
+  };
+}
 
 export interface FlattenedModel {
   providerID: string;
@@ -19,6 +206,8 @@ export interface FlattenedModel {
   source?: string;
   baseURL?: string;
   reasoning: boolean;
+  efforts?: ConcreteReasoningEffort[];
+  defaultEffort?: ConcreteReasoningEffort;
   image: boolean;
   toolcall: boolean;
   contextLimit?: number;
@@ -156,7 +345,7 @@ function normalizeModelLookupKey(raw: string): string {
   return s;
 }
 
-function canonicalModelKey(raw?: string): string {
+export function canonicalModelKey(raw?: string): string {
   if (!raw) return "";
   return normalizeModelLookupKey(raw)
     .replace(/（.*?）|\(.*?\)/g, "")
@@ -359,9 +548,11 @@ export function extractFlattenedModels(
       if (!mInfo || typeof mInfo !== "object") continue;
       const cfgModel = cfgProviders?.[p.id]?.models?.[mID];
       const modelName = mInfo.name || cfgModel?.name || mID;
-      const reasoning = Boolean(
+      const rawReasoning = Boolean(
         mInfo.capabilities?.reasoning ?? mInfo.reasoning ?? cfgModel?.reasoning
       );
+      const effortCaps = inferModelEffortCapabilities(p.id, mID, rawReasoning, mInfo, cfgModel);
+      const reasoning = rawReasoning || effortCaps.efforts.length > 0;
       const image = Boolean(
         mInfo.capabilities?.input?.image ||
           (Array.isArray(mInfo.modalities?.input) && mInfo.modalities.input.includes("image")) ||
@@ -424,6 +615,8 @@ export function extractFlattenedModels(
         source: p.source,
         baseURL,
         reasoning,
+        efforts: effortCaps.efforts,
+        defaultEffort: effortCaps.defaultEffort,
         image,
         toolcall,
         contextLimit,

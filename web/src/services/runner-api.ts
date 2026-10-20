@@ -92,6 +92,8 @@ export interface RunnerModelItem {
   id: string;
   name: string;
   reasoning?: boolean;
+  efforts?: string[];
+  defaultEffort?: string;
   image?: boolean;
   free?: boolean;
   multiplier?: string;

@@ -1,4 +1,5 @@
 import { createEffect, createMemo, createSelector, createSignal, For, onCleanup, Show } from "solid-js";
+import { Portal } from "solid-js/web";
 import { GripVertical, MoreHorizontal, FolderPlus, Pencil, Layers, Trash2, Plus } from "lucide-solid";
 import {
   isSessionArchived,
@@ -20,6 +21,7 @@ import {
   shortenPath,
   type ProjectNavEntry,
 } from "./left-nav-helpers";
+import { useAnchoredPopover } from "./anchored-popover";
 import { t } from "../../i18n";
 import { SessionHistoryList, useSessionHistory } from "./SessionHistory";
 import { matchesProjectSearch, matchesSessionSearch } from "./session-search";
@@ -29,19 +31,20 @@ export function WorkspaceActionMenu(props: {
   alwaysVisible?: boolean;
 }) {
   const [open, setOpen] = createSignal(false);
-  let menuRef: HTMLDivElement | undefined;
+  const [menuRef, setMenuRef] = createSignal<HTMLDivElement | undefined>();
   let btnRef: HTMLButtonElement | undefined;
+  const anchored = useAnchoredPopover({
+    anchor: () => btnRef,
+    panel: () => (open() ? menuRef() : undefined),
+    align: "end",
+  });
 
   createEffect(() => {
     if (!open()) return;
     const handlePointerDown = (e: MouseEvent) => {
       const target = e.target as Node;
-      if (
-        menuRef &&
-        !menuRef.contains(target) &&
-        btnRef &&
-        !btnRef.contains(target)
-      ) {
+      const menu = menuRef();
+      if (menu && !menu.contains(target) && btnRef && !btnRef.contains(target)) {
         setOpen(false);
       }
     };
@@ -69,72 +72,75 @@ export function WorkspaceActionMenu(props: {
       </button>
 
       <Show when={open()}>
-        <div
-          ref={menuRef}
-          class="absolute right-0 top-6 w-48 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-1 shadow-xl z-50 animate-in fade-in zoom-in-95 duration-100"
-        >
-          <button
-            type="button"
-            onClick={() => {
-              setOpen(false);
-              openEditWorkspaceModal(props.dirOrWorkspaceID);
-            }}
-            class="w-full flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+        <Portal>
+          <div
+            ref={setMenuRef}
+            class="fixed w-48 max-w-[calc(100vw-16px)] rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-1 shadow-xl z-[100] animate-in fade-in zoom-in-95 duration-100"
+            style={anchored.positionStyle()}
           >
-            <Pencil size={13} />
-            <span>{t("leftNav.editWorkspace")}</span>
-          </button>
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                openEditWorkspaceModal(props.dirOrWorkspaceID);
+              }}
+              class="w-full flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+            >
+              <Pencil size={13} />
+              <span>{t("leftNav.editWorkspace")}</span>
+            </button>
 
-          <button
-            type="button"
-            onClick={() => {
-              setOpen(false);
-              void quickAddFolderToWorkspace(props.dirOrWorkspaceID);
-            }}
-            class="w-full flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
-          >
-            <FolderPlus size={13} />
-            <span>{t("leftNav.addFolderToWorkspace")}</span>
-          </button>
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                void quickAddFolderToWorkspace(props.dirOrWorkspaceID);
+              }}
+              class="w-full flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+            >
+              <FolderPlus size={13} />
+              <span>{t("leftNav.addFolderToWorkspace")}</span>
+            </button>
 
-          <button
-            type="button"
-            onClick={() => {
-              setOpen(false);
-              openCreateWorkspaceModal();
-            }}
-            class="w-full flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
-          >
-            <Plus size={13} />
-            <span>{t("leftNav.newWorkspace")}</span>
-          </button>
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                openCreateWorkspaceModal();
+              }}
+              class="w-full flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+            >
+              <Plus size={13} />
+              <span>{t("leftNav.newWorkspace")}</span>
+            </button>
 
-          <button
-            type="button"
-            onClick={() => {
-              setOpen(false);
-              openManageWorkspacesModal();
-            }}
-            class="w-full flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
-          >
-            <Layers size={13} />
-            <span>{t("leftNav.manageWorkspaces")}</span>
-          </button>
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                openManageWorkspacesModal();
+              }}
+              class="w-full flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+            >
+              <Layers size={13} />
+              <span>{t("leftNav.manageWorkspaces")}</span>
+            </button>
 
-          <div class="my-1 border-t border-[var(--border-subtle)]/60" />
+            <div class="my-1 border-t border-[var(--border-subtle)]/60" />
 
-          <button
-            type="button"
-            onClick={() => {
-              setOpen(false);
-              openDeleteWorkspaceModal(props.dirOrWorkspaceID);
-            }}
-            class="w-full flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] text-[var(--danger-text)] hover:bg-[var(--danger-surface)] transition-colors cursor-pointer"
-          >
-            <Trash2 size={13} />
-            <span>{t("leftNav.deleteWorkspace")}</span>
-          </button>
-        </div>
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                openDeleteWorkspaceModal(props.dirOrWorkspaceID);
+              }}
+              class="w-full flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] text-[var(--danger-text)] hover:bg-[var(--danger-surface)] transition-colors cursor-pointer"
+            >
+              <Trash2 size={13} />
+              <span>{t("leftNav.deleteWorkspace")}</span>
+            </button>
+          </div>
+        </Portal>
       </Show>
     </div>
   );

@@ -1,6 +1,9 @@
 package runner
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strings"
+)
 
 type RuntimeType string
 
@@ -165,18 +168,105 @@ type SSEEvent struct {
 }
 
 type RunnerModelItem struct {
-	ID           string  `json:"id"`
-	Name         string  `json:"name"`
-	ProviderID   string  `json:"providerID"`
-	Runtime      string  `json:"runtime"`
-	Reasoning    bool    `json:"reasoning,omitempty"`
-	Image        bool    `json:"image,omitempty"`
-	Free         bool    `json:"free,omitempty"`
-	Multiplier   string  `json:"multiplier,omitempty"`
-	ContextLimit int     `json:"contextLimit,omitempty"`
-	OutputLimit  int     `json:"outputLimit,omitempty"`
-	InputCost    float64 `json:"inputCost,omitempty"`
-	OutputCost   float64 `json:"outputCost,omitempty"`
+	ID            string   `json:"id"`
+	Name          string   `json:"name"`
+	ProviderID    string   `json:"providerID"`
+	Runtime       string   `json:"runtime"`
+	Reasoning     bool     `json:"reasoning,omitempty"`
+	Efforts       []string `json:"efforts,omitempty"`
+	DefaultEffort string   `json:"defaultEffort,omitempty"`
+	Image         bool     `json:"image,omitempty"`
+	Free          bool     `json:"free,omitempty"`
+	Multiplier    string   `json:"multiplier,omitempty"`
+	ContextLimit  int      `json:"contextLimit,omitempty"`
+	OutputLimit   int      `json:"outputLimit,omitempty"`
+	InputCost     float64  `json:"inputCost,omitempty"`
+	OutputCost    float64  `json:"outputCost,omitempty"`
+}
+
+var canonicalEfforts = []string{"low", "medium", "high", "xhigh", "max"}
+
+func effortRank(e string) int {
+	switch strings.ToLower(strings.TrimSpace(e)) {
+	case "low":
+		return 1
+	case "medium":
+		return 2
+	case "high":
+		return 3
+	case "xhigh":
+		return 4
+	case "max":
+		return 5
+	default:
+		return 0
+	}
+}
+
+func normalizeEffortName(raw string) string {
+	s := strings.ToLower(strings.TrimSpace(raw))
+	if effortRank(s) > 0 {
+		return s
+	}
+	return ""
+}
+
+func normalizeEffortList(raw []string) []string {
+	seen := make(map[string]bool, len(raw))
+	for _, r := range raw {
+		if n := normalizeEffortName(r); n != "" {
+			seen[n] = true
+		}
+	}
+	if len(seen) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(seen))
+	for _, c := range canonicalEfforts {
+		if seen[c] {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// clampEffortToSupported resolves a requested effort level against a model's supported
+// effort levels, choosing the closest available level (breaking ties upward toward deeper reasoning).
+func clampEffortToSupported(requested string, supported []string, defaultEffort string) string {
+	req := normalizeEffortName(requested)
+	if req == "" {
+		return ""
+	}
+	normSupported := normalizeEffortList(supported)
+	if len(normSupported) == 0 {
+		if def := normalizeEffortName(defaultEffort); def != "" {
+			return def
+		}
+		return req
+	}
+	for _, s := range normSupported {
+		if s == req {
+			return req
+		}
+	}
+	reqRank := effortRank(req)
+	best := normSupported[0]
+	bestDist := absInt(effortRank(best) - reqRank)
+	for _, cand := range normSupported[1:] {
+		dist := absInt(effortRank(cand) - reqRank)
+		if dist < bestDist || (dist == bestDist && effortRank(cand) > effortRank(best)) {
+			best = cand
+			bestDist = dist
+		}
+	}
+	return best
+}
+
+func absInt(x int) int {
+	if x < 0 {
+		return -x
+	}
+	return x
 }
 
 type SessionRecord struct {

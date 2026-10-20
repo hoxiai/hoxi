@@ -2,8 +2,10 @@
 import { createMemo, For, type JSX, Show } from "solid-js";
 import type { MessagePart, SnapshotFileDiff, ToolState } from "../../services/sse-types";
 import { getFullToolOutput, openDiffInInspector, setWorkspace, workspace } from "../../store/workspace";
+import { findQuestionReply, questionSummaryText } from "../../store/question-answers";
 import { Icon, type IconName } from "../icons";
 import FileDiffBlock from "../inspector/LazyFileDiffBlock";
+import QuestionToolBody from "./question-card";
 import { t } from "../../i18n";
 
 export type ToolPart = Extract<MessagePart, { type: "tool" }>;
@@ -119,6 +121,10 @@ export function isTodoTool(tool: string): boolean {
 export function isTaskTool(tool: string): boolean {
   const t = tool.toLowerCase();
   return t === "task" || t === "agent" || t.includes("subagent");
+}
+
+export function isQuestionTool(tool: string): boolean {
+  return tool.toLowerCase() === "question";
 }
 
 export function kiloToolIconName(tool: string): IconName {
@@ -261,6 +267,7 @@ export function extractCommand(part: ToolPart): string {
 
 export function extractDescription(part: ToolPart): string {
   const input = resolveToolInput(part);
+  if (isQuestionTool(part.tool)) return questionSummaryText(part, findQuestionReply(part.callID));
   if (typeof input.description === "string" && input.description.trim()) {
     return input.description.trim();
   }
@@ -406,6 +413,7 @@ export function ToolCardExpandedBody(props: {
   isShell: boolean;
   isEdit: boolean;
   isTodo: boolean;
+  isQuestion: boolean;
   shellCmd: string;
   shellOut: string;
   copiedCmd: boolean;
@@ -548,8 +556,13 @@ export function ToolCardExpandedBody(props: {
         </div>
       </Show>
 
+      {/* Case 3.5: Question Tool -> Asked questions + user selections */}
+      <Show when={props.isQuestion}>
+        <QuestionToolBody part={props.part} />
+      </Show>
+
       {/* Case 4: Generic / Read / Search Tool */}
-      <Show when={!props.isShell && !props.isEdit && !props.isTodo}>
+      <Show when={!props.isShell && !props.isEdit && !props.isTodo && !props.isQuestion}>
         <div class="p-3 space-y-2.5 text-[12px]">
           <Show when={Object.keys(props.part.state.input || {}).length > 0}>
             <div>

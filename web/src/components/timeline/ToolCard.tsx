@@ -24,7 +24,7 @@ import {
   ActionIconButton,
   extractCommand, extractDescription, extractRollingShellLines,
   extractShellOutput, extractTargetFile, formatToolDisplayName, getDirectory, getFilename,
-  InlineDiagnosticsDisplay, isEditingTool, isReadTool, isShellTool,
+  InlineDiagnosticsDisplay, isEditingTool, isQuestionTool, isReadTool, isShellTool,
   isTaskTool, isTodoTool, kiloToolIconName, processCarriageReturns,
   ToolCardExpandedBody, type ToolPart,
 } from "./tool-card-helpers";
@@ -57,6 +57,7 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
   const isRead = () => isReadTool(props.part.tool);
   const isTodo = () => isTodoTool(props.part.tool);
   const isTask = () => isTaskTool(props.part.tool);
+  const isQuestion = () => isQuestionTool(props.part.tool);
 
   const isRunning = createMemo(() => {
     const s = status();
@@ -494,6 +495,7 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
                         isShell={isShell()}
                         isEdit={isEdit()}
                         isTodo={isTodo()}
+                        isQuestion={isQuestion()}
                         shellCmd={shellCmd()}
                         shellOut={shellOut()}
                         copiedCmd={copiedCmd()}

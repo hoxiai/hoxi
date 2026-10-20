@@ -260,4 +260,12 @@ export const models = {
     "Used to generate Git commit messages (choose a small model or local rules only)",
   commitModelFollowSmallOption: "Follow Small Model (Recommended)",
   commitModelNoneOption: "Local Rule Only",
+  reasoningUnsupported: "Fixed / Non-reasoning",
+  effortAuto: "Auto",
+  effortLow: "Low",
+  effortMedium: "Med",
+  effortHigh: "High",
+  effortXHigh: "XHigh",
+  effortMax: "Max",
+  defaultEffortHint: "Default: {effort}",
 };

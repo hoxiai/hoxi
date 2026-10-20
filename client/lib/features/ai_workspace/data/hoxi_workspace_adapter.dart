@@ -28,6 +28,7 @@ class _HoxiSessionRef {
   final String sandboxMode;
   final String branch;
   final String modelId;
+  final String reasoningEffort;
   final DateTime? createdAt;
   final DateTime? updatedAt;
 
@@ -41,6 +42,7 @@ class _HoxiSessionRef {
     required this.sandboxMode,
     required this.branch,
     required this.modelId,
+    this.reasoningEffort = '',
     this.createdAt,
     this.updatedAt,
   });
@@ -158,6 +160,45 @@ class HoxiWorkspaceAdapter {
     return projects;
   }
 
+  static const List<CodeExecutorOption> _defaultReasoningEfforts = [
+    CodeExecutorOption(value: 'low', label: 'Low'),
+    CodeExecutorOption(value: 'medium', label: 'Medium'),
+    CodeExecutorOption(value: 'high', label: 'High'),
+    CodeExecutorOption(value: 'xhigh', label: 'XHigh'),
+    CodeExecutorOption(value: 'max', label: 'Max'),
+  ];
+
+  static List<CodeExecutorOption> _extractRunnerReasoningEfforts(
+    List<dynamic> rawModels, {
+    required List<CodeExecutorOption> fallback,
+  }) {
+    final seen = <String>{};
+    for (final raw in rawModels.whereType<Map>()) {
+      final efforts = raw['efforts'];
+      if (efforts is List) {
+        for (final item in efforts) {
+          final v = item.toString().trim().toLowerCase();
+          if (v.isNotEmpty) seen.add(v);
+        }
+      }
+    }
+    if (seen.isEmpty) return fallback;
+    const labels = {
+      'low': 'Low',
+      'medium': 'Medium',
+      'high': 'High',
+      'xhigh': 'XHigh',
+      'max': 'Max',
+    };
+    final ordered = <CodeExecutorOption>[];
+    for (final key in const ['low', 'medium', 'high', 'xhigh', 'max']) {
+      if (seen.contains(key)) {
+        ordered.add(CodeExecutorOption(value: key, label: labels[key] ?? key));
+      }
+    }
+    return ordered.isEmpty ? fallback : ordered;
+  }
+
   Future<List<CodeExecutor>> getExecutors() async {
     var openCodeVer = '';
     try {
@@ -184,6 +225,7 @@ class HoxiWorkspaceAdapter {
           'resume',
         ],
         approvalPolicies: const ['safe_auto', 'manual', 'full_auto'],
+        reasoningEfforts: _defaultReasoningEfforts,
       ),
     ];
 
@@ -192,7 +234,8 @@ class HoxiWorkspaceAdapter {
         '/api/hoxi/runner/claude-code/models',
       );
       if (claude.data?['available'] == true) {
-        final models = (claude.data?['models'] as List<dynamic>? ?? const [])
+        final rawModels = claude.data?['models'] as List<dynamic>? ?? const [];
+        final models = rawModels
             .whereType<Map>()
             .map(
               (m) => CodeExecutorOption(
@@ -220,6 +263,10 @@ class HoxiWorkspaceAdapter {
             ],
             approvalPolicies: const ['safe_auto', 'manual', 'full_auto'],
             modelOptions: models,
+            reasoningEfforts: _extractRunnerReasoningEfforts(
+              rawModels,
+              fallback: _defaultReasoningEfforts,
+            ),
           ),
         );
       }
@@ -230,7 +277,8 @@ class HoxiWorkspaceAdapter {
         '/api/hoxi/runner/antigravity/models',
       );
       if (agy.data?['available'] == true) {
-        final models = (agy.data?['models'] as List<dynamic>? ?? const [])
+        final rawModels = agy.data?['models'] as List<dynamic>? ?? const [];
+        final models = rawModels
             .whereType<Map>()
             .map(
               (m) => CodeExecutorOption(
@@ -258,6 +306,15 @@ class HoxiWorkspaceAdapter {
             ],
             approvalPolicies: const ['safe_auto', 'manual', 'full_auto'],
             modelOptions: models,
+            reasoningEfforts: _extractRunnerReasoningEfforts(
+              rawModels,
+              fallback: const [
+                CodeExecutorOption(value: 'low', label: 'Low'),
+                CodeExecutorOption(value: 'medium', label: 'Medium'),
+                CodeExecutorOption(value: 'high', label: 'High'),
+                CodeExecutorOption(value: 'max', label: 'Max'),
+              ],
+            ),
           ),
         );
       }
@@ -340,6 +397,8 @@ class HoxiWorkspaceAdapter {
               : null;
 
           final isBusy = statusMap[hoxiId] == 'busy';
+          final previousRef = _sessionsById[intId];
+          final reasoningEffort = previousRef?.reasoningEffort ?? '';
           _sessionsById[intId] = _HoxiSessionRef(
             hoxiId: hoxiId,
             directory: workDir.isNotEmpty ? workDir : proj.workDir,
@@ -349,7 +408,8 @@ class HoxiWorkspaceAdapter {
             title: title,
             sandboxMode: sandboxMode,
             branch: branch,
-            modelId: modelId,
+            modelId: modelId.isNotEmpty ? modelId : (previousRef?.modelId ?? ''),
+            reasoningEffort: reasoningEffort,
             createdAt: createdAt,
             updatedAt: updatedAt,
           );
@@ -368,7 +428,10 @@ class HoxiWorkspaceAdapter {
               status: isBusy ? 'running' : 'active',
               currentStage: isBusy ? 'running' : 'idle',
               approvalPolicy: 'safe_auto',
-              providerModel: modelId,
+              providerModel: modelId.isNotEmpty
+                  ? modelId
+                  : (previousRef?.modelId ?? ''),
+              reasoningEffort: reasoningEffort,
               lastTaskId: intId,
               currentTaskTitle: title,
               createdAt: createdAt,
@@ -623,6 +686,7 @@ class HoxiWorkspaceAdapter {
       sandboxMode: ref.sandboxMode,
       branch: ref.branch,
       modelId: ref.modelId,
+      reasoningEffort: ref.reasoningEffort,
       createdAt: ref.createdAt,
       updatedAt: DateTime.now(),
     );
@@ -654,6 +718,9 @@ class HoxiWorkspaceAdapter {
       sandboxMode: ref.sandboxMode,
       branch: ref.branch,
       modelId: model?.trim() ?? ref.modelId,
+      reasoningEffort: reasoningEffort != null
+          ? reasoningEffort.trim()
+          : ref.reasoningEffort,
       createdAt: ref.createdAt,
       updatedAt: DateTime.now(),
     );
@@ -680,11 +747,32 @@ class HoxiWorkspaceAdapter {
     });
   }
 
+  static Map<String, String>? _buildPromptModelPayload(
+    String runtime,
+    String rawModelId,
+  ) {
+    final trimmed = rawModelId.trim();
+    if (trimmed.isEmpty) return null;
+    final slashIdx = trimmed.indexOf('/');
+    if (slashIdx > 0 && slashIdx < trimmed.length - 1) {
+      return {
+        'providerID': trimmed.substring(0, slashIdx),
+        'modelID': trimmed.substring(slashIdx + 1),
+      };
+    }
+    return {
+      'providerID': runtime.isEmpty ? 'opencode' : runtime,
+      'modelID': trimmed,
+    };
+  }
+
   Future<AiInstructionSendResult> sendAiCommand({
     required int sessionId,
     required String command,
   }) async {
     final ref = await _resolveSessionRef(sessionId);
+    final modelPayload = _buildPromptModelPayload(ref.runtime, ref.modelId);
+    final effort = ref.reasoningEffort.trim();
     await _apiClient.post<Map<String, dynamic>>(
       '/api/hoxi/sessions/${ref.hoxiId}/prompt_async',
       queryParameters: {'directory': ref.directory},
@@ -693,6 +781,8 @@ class HoxiWorkspaceAdapter {
         'parts': [
           {'type': 'text', 'text': command},
         ],
+        'model': ?modelPayload,
+        if (effort.isNotEmpty) 'variant': effort,
       },
     );
     final now = DateTime.now();
@@ -932,6 +1022,7 @@ class HoxiWorkspaceAdapter {
       currentStage: stage,
       approvalPolicy: approvalPolicy,
       providerModel: ref.modelId,
+      reasoningEffort: ref.reasoningEffort,
       lastTaskId: sessionId,
       currentTaskTitle: ref.title,
       createdAt: ref.createdAt,

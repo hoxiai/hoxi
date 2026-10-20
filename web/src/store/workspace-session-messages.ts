@@ -23,7 +23,7 @@ import { isPlaceholderSessionTitle, summarizeAndRenameSession } from "./session-
 import { newIsolatedSession, waitForSessionSandbox } from "./session-sandbox";
 import { buildCombinedSystemPrompt, setWorkspace, workspace } from "./workspace";
 import { buildWorkspaceFoldersSystemPrompt, workspaceFoldersForDir } from "./workspace-projects";
-import { initializeSessionAI, sessionAIConfig } from "./session-ai";
+import { initializeSessionAI, sessionAIConfig, type ReasoningEffort } from "./session-ai";
 import { sessionRuntimeForID } from "./workspace-providers";
 import {
   isSessionBusy,
@@ -157,7 +157,7 @@ export async function submitSessionPrompt(
   options?: {
     agent?: string;
     model?: { providerID: string; modelID: string };
-    effort?: "" | "low" | "medium" | "high";
+    effort?: ReasoningEffort;
     attachments?: Array<{ type: "file"; mime: string; filename?: string; url: string }>;
     forceImmediate?: boolean;
     /** false for automatic dispatches that must not move the reader's scroll position. */

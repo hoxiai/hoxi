@@ -218,6 +218,8 @@ export interface ProviderModelInfo {
   };
   options?: Record<string, any>;
   variants?: Record<string, any>;
+  efforts?: string[];
+  defaultEffort?: string;
   multiplier?: string;
 }
 
@@ -515,6 +517,11 @@ export interface GitDailyPulseResponse {
     modelID: string;
     turns: number;
     totalTokens: number;
+    inputTokens?: number;
+    outputTokens?: number;
+    reasoningTokens?: number;
+    cacheReadTokens?: number;
+    cacheWriteTokens?: number;
     cost: number;
   }>;
 }

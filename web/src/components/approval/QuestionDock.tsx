@@ -4,6 +4,7 @@ import { Check, HelpCircle, LoaderCircle, MessageSquarePlus, X } from "lucide-so
 import type { QuestionInfo, QuestionRequest } from "../../services/sse-types";
 import { hoxiAPI } from "../../services/api";
 import { sessionDirectory, setWorkspace } from "../../store/workspace";
+import { rememberQuestionReject, rememberQuestionReply } from "../../store/question-answers";
 import { locale, t } from "../../i18n";
 
 /**
@@ -70,8 +71,10 @@ export default function QuestionDock(props: { request: QuestionRequest }) {
     setSending(true);
     setError(null);
     const dir = sessionDirectory(props.request.sessionID);
+    const answers = buildAnswers();
     try {
-      await hoxiAPI.replyQuestion(props.request.id, buildAnswers(), dir);
+      await hoxiAPI.replyQuestion(props.request.id, answers, dir);
+      rememberQuestionReply(props.request.id, props.request.sessionID, answers);
       removeFromStore();
     } catch (err) {
       console.error("replyQuestion failed:", err);
@@ -87,6 +90,7 @@ export default function QuestionDock(props: { request: QuestionRequest }) {
     const dir = sessionDirectory(props.request.sessionID);
     try {
       await hoxiAPI.rejectQuestion(props.request.id, dir);
+      rememberQuestionReject(props.request.id, props.request.sessionID);
       removeFromStore();
     } catch (err) {
       console.error("rejectQuestion failed:", err);

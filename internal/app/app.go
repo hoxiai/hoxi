@@ -28,6 +28,7 @@ import (
 	"github.com/hoxiai/hoxi/internal/opencode"
 	"github.com/hoxiai/hoxi/internal/provider"
 	"github.com/hoxiai/hoxi/internal/statusbar"
+	"github.com/hoxiai/hoxi/internal/telemetry"
 	"github.com/hoxiai/hoxi/internal/updater"
 	"github.com/hoxiai/hoxi/internal/workspace"
 	"github.com/wailsapp/wails/v2"
@@ -425,6 +426,7 @@ func (a *DesktopApp) startup(ctx context.Context) {
 	a.contextMu.Unlock()
 	statusbar.Start(ctx)
 	statusbar.Update(a.status.Snapshot())
+	telemetry.ReportLaunch(a.logger)
 	if BuildVariant == "release" {
 		// Wails startup can precede the Cocoa run loop; never wait for it here.
 		go func() {

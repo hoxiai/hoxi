@@ -1,5 +1,6 @@
 // web/src/components/layout/SingleProjectNavView.tsx
 import { createEffect, createMemo, createSelector, createSignal, For, onCleanup, Show } from "solid-js";
+import { Portal } from "solid-js/web";
 import { Plus, Pencil, Layers } from "lucide-solid";
 import {
   activeWorkspaceFolders,
@@ -29,6 +30,7 @@ import {
   shortenPath,
   type ProjectNavEntry,
 } from "./left-nav-helpers";
+import { useAnchoredPopover } from "./anchored-popover";
 import { WorkspaceActionMenu } from "./MultiProjectItem";
 import { t } from "../../i18n";
 import { SessionHistoryList, useSessionHistory } from "./SessionHistory";
@@ -45,14 +47,20 @@ export default function SingleProjectNavView(props: {
   const [projectMenuOpen, setProjectMenuOpen] = createSignal(false);
   const [dropdownFilter, setDropdownFilter] = createSignal("");
   const [showArchived, setShowArchived] = createSignal(false);
-  let menuRef: HTMLDivElement | undefined;
+  const [menuRef, setMenuRef] = createSignal<HTMLDivElement | undefined>();
   let buttonRef: HTMLButtonElement | undefined;
+  const anchored = useAnchoredPopover({
+    anchor: () => buttonRef,
+    panel: () => (projectMenuOpen() ? menuRef() : undefined),
+    align: "start",
+  });
 
   createEffect(() => {
     if (!projectMenuOpen()) return;
     const handleClick = (e: MouseEvent) => {
       const target = e.target as Node;
-      if (menuRef && !menuRef.contains(target) && buttonRef && !buttonRef.contains(target)) {
+      const menu = menuRef();
+      if (menu && !menu.contains(target) && buttonRef && !buttonRef.contains(target)) {
         setProjectMenuOpen(false);
       }
     };
@@ -176,98 +184,101 @@ export default function SingleProjectNavView(props: {
 
       {/* Floating Project Switcher Popover */}
       <Show when={projectMenuOpen()}>
-        <div
-          ref={menuRef}
-          class="absolute left-3 top-18 w-[248px] rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-1.5 shadow-xl z-50 animate-in fade-in zoom-in-95 duration-100"
-        >
-          <div class="mb-1 px-1">
-            <div class="flex items-center gap-1.5 rounded-lg bg-[var(--bg-inset)] px-2 py-1 text-[11.5px]">
-              <Icon name="magnifying-glass" size="small" class="text-[var(--text-muted)]" />
-              <input
-                type="text"
-                placeholder={t("leftNav.switchProject")}
-                value={dropdownFilter()}
-                onInput={(e) => setDropdownFilter(e.currentTarget.value)}
-                class="w-full bg-transparent text-[11.5px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none"
-              />
+        <Portal>
+          <div
+            ref={setMenuRef}
+            class="fixed w-[248px] max-w-[calc(100vw-16px)] rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-1.5 shadow-xl z-[100] animate-in fade-in zoom-in-95 duration-100"
+            style={anchored.positionStyle()}
+          >
+            <div class="mb-1 px-1">
+              <div class="flex items-center gap-1.5 rounded-lg bg-[var(--bg-inset)] px-2 py-1 text-[11.5px]">
+                <Icon name="magnifying-glass" size="small" class="text-[var(--text-muted)]" />
+                <input
+                  type="text"
+                  placeholder={t("leftNav.switchProject")}
+                  value={dropdownFilter()}
+                  onInput={(e) => setDropdownFilter(e.currentTarget.value)}
+                  class="w-full bg-transparent text-[11.5px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none"
+                />
+              </div>
+            </div>
+
+            <div class="max-h-56 overflow-y-auto space-y-0.5">
+              <For each={dropdownProjectList()}>
+                {(proj) => {
+                  const isActive = () =>
+                    normalizeFolderPath(proj.path) ===
+                    normalizeFolderPath(workspace.rootDir);
+                  return (
+                    <button
+                      type="button"
+                      onClick={() => void onSelectProjectSingle(proj.path)}
+                      class={`w-full flex items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left transition-colors cursor-pointer ${
+                        isActive()
+                          ? "bg-[var(--bg-hover)] text-[var(--text-primary)] font-medium"
+                          : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]/60 hover:text-[var(--text-primary)]"
+                      }`}
+                      title={shortenPath(proj.path)}
+                    >
+                      <div class="flex items-center gap-1.5 min-w-0">
+                        <FolderIcon
+                          open={isActive()}
+                          color={proj.color}
+                          class="w-3.5 h-3.5 shrink-0"
+                        />
+                        <span class="truncate text-[13px]">{proj.name}</span>
+                        <Show when={proj.folders.length > 1}>
+                          <span class="shrink-0 rounded px-1.5 py-0.2 text-[10.5px] font-mono bg-[var(--bg-inset)] text-[var(--text-muted)]">
+                            {proj.folders.length}
+                          </span>
+                        </Show>
+                      </div>
+                      <Show when={isActive()}>
+                        <Icon name="check-small" size="small" class="text-[var(--accent-primary)]" />
+                      </Show>
+                    </button>
+                  );
+                }}
+              </For>
+            </div>
+
+            <div class="mt-1 pt-1 border-t border-[var(--border-subtle)]/60 space-y-0.5">
+              <button
+                type="button"
+                onClick={() => {
+                  setProjectMenuOpen(false);
+                  openEditWorkspaceModal(workspace.rootDir);
+                }}
+                class="w-full flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[11.5px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+              >
+                <Pencil size={12} />
+                <span>{t("leftNav.editWorkspace")}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setProjectMenuOpen(false);
+                  openCreateWorkspaceModal();
+                }}
+                class="w-full flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[11.5px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+              >
+                <Plus size={12} />
+                <span>{t("leftNav.newWorkspace")}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setProjectMenuOpen(false);
+                  openManageWorkspacesModal();
+                }}
+                class="w-full flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[11.5px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+              >
+                <Layers size={12} />
+                <span>{t("leftNav.manageWorkspaces")}</span>
+              </button>
             </div>
           </div>
-
-          <div class="max-h-56 overflow-y-auto space-y-0.5">
-            <For each={dropdownProjectList()}>
-              {(proj) => {
-                const isActive = () =>
-                  normalizeFolderPath(proj.path) ===
-                  normalizeFolderPath(workspace.rootDir);
-                return (
-                  <button
-                    type="button"
-                    onClick={() => void onSelectProjectSingle(proj.path)}
-                    class={`w-full flex items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left transition-colors cursor-pointer ${
-                      isActive()
-                        ? "bg-[var(--bg-hover)] text-[var(--text-primary)] font-medium"
-                        : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]/60 hover:text-[var(--text-primary)]"
-                    }`}
-                    title={shortenPath(proj.path)}
-                  >
-                    <div class="flex items-center gap-1.5 min-w-0">
-                      <FolderIcon
-                        open={isActive()}
-                        color={proj.color}
-                        class="w-3.5 h-3.5 shrink-0"
-                      />
-                      <span class="truncate text-[13px]">{proj.name}</span>
-                      <Show when={proj.folders.length > 1}>
-                        <span class="shrink-0 rounded px-1.5 py-0.2 text-[10.5px] font-mono bg-[var(--bg-inset)] text-[var(--text-muted)]">
-                          {proj.folders.length}
-                        </span>
-                      </Show>
-                    </div>
-                    <Show when={isActive()}>
-                      <Icon name="check-small" size="small" class="text-[var(--accent-primary)]" />
-                    </Show>
-                  </button>
-                );
-              }}
-            </For>
-          </div>
-
-          <div class="mt-1 pt-1 border-t border-[var(--border-subtle)]/60 space-y-0.5">
-            <button
-              type="button"
-              onClick={() => {
-                setProjectMenuOpen(false);
-                openEditWorkspaceModal(workspace.rootDir);
-              }}
-              class="w-full flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[11.5px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
-            >
-              <Pencil size={12} />
-              <span>{t("leftNav.editWorkspace")}</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setProjectMenuOpen(false);
-                openCreateWorkspaceModal();
-              }}
-              class="w-full flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[11.5px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
-            >
-              <Plus size={12} />
-              <span>{t("leftNav.newWorkspace")}</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setProjectMenuOpen(false);
-                openManageWorkspacesModal();
-              }}
-              class="w-full flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[11.5px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
-            >
-              <Layers size={12} />
-              <span>{t("leftNav.manageWorkspaces")}</span>
-            </button>
-          </div>
-        </div>
+        </Portal>
       </Show>
 
       {/* Chronological Session Stream */}

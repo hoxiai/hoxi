@@ -4,7 +4,7 @@ import { hoxiAPI } from "../services/api";
 import type { ToolPart } from "../services/sse-types";
 import { forgetSubagentLinks, subagentChildIDFromPart } from "./message-lookup";
 import { type SelectedModel, setWorkspace, workspace } from "./workspace";
-import { sessionAIConfig } from "./session-ai";
+import { sessionAIConfig, type ReasoningEffort } from "./session-ai";
 import { subagentDisplayTitle, type SubagentTitle } from "./session-title";
 import {
   forkFromMessage,
@@ -50,7 +50,7 @@ export interface QueuedPromptItem {
   createdAt: number;
   agent?: string;
   model?: SelectedModel;
-  effort?: "" | "low" | "medium" | "high";
+  effort?: ReasoningEffort;
   attachments: QueuedPromptAttachment[];
 }
 

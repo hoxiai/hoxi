@@ -9,6 +9,7 @@ import {
 import {
   EFFORT_KEY, SELECTED_MODEL_KEY, selectModel, setReasoningEffort,
   setWorkspace, workspace, type MessageTurn,
+  inferModelEffortCapabilities, clampReasoningEffort,
 } from "../store/workspace";
 import { forkFromMessage, removeSessionFromStore, selectSession } from "../store/workspace-sessions";
 import { submitSessionPrompt } from "../store/workspace-session-messages";
@@ -474,6 +475,52 @@ describe("session AI configuration", () => {
       assertEqual(calls[0][1], manual.text);
       assertEqual(calls[1][1], automatic.text);
       assertEqual(workspace.queuedPromptsBySession[b].length, 0);
+    });
+  });
+
+  it("infers per-model reasoning effort capabilities and clamps unsupported efforts", () => {
+    const opus = inferModelEffortCapabilities("claude-code", "claude-opus-4-7", true);
+    assertDeepEqual(opus.efforts, ["low", "medium", "high", "xhigh", "max"]);
+    assertEqual(opus.defaultEffort, "xhigh");
+
+    const sonnet = inferModelEffortCapabilities("claude-code", "claude-sonnet-4-6", true);
+    assertDeepEqual(sonnet.efforts, ["low", "medium", "high", "max"]);
+    assertEqual(sonnet.defaultEffort, "high");
+    assertEqual(clampReasoningEffort("xhigh", sonnet.efforts), "max");
+
+    const haiku = inferModelEffortCapabilities("claude-code", "claude-haiku-4-5", false);
+    assertDeepEqual(haiku.efforts, []);
+    assertEqual(clampReasoningEffort("high", haiku.efforts), "");
+
+    const agyLow = inferModelEffortCapabilities("antigravity", "gemini-3-pro-low", true);
+    assertDeepEqual(agyLow.efforts, ["low", "medium", "high"]);
+    assertEqual(agyLow.defaultEffort, "low");
+
+    const gptOss = inferModelEffortCapabilities("antigravity", "gpt-oss-120b-medium", true);
+    assertDeepEqual(gptOss.efforts, ["medium"]);
+    assertEqual(gptOss.defaultEffort, "medium");
+    assertEqual(clampReasoningEffort("max", gptOss.efforts), "medium");
+  });
+
+  it("synchronizes Antigravity effort-suffixed model slugs with reasoningEffort", async () => {
+    await withAIFixture(async (a) => {
+      setWorkspace("providers", [
+        {
+          id: "antigravity",
+          name: "Antigravity",
+          models: {
+            "gemini-3-pro-low": { id: "gemini-3-pro-low", reasoning: true, efforts: ["low", "medium", "high", "max"], defaultEffort: "low" },
+            "gemini-3-pro-high": { id: "gemini-3-pro-high", reasoning: true, efforts: ["low", "medium", "high", "max"], defaultEffort: "high" },
+          },
+        },
+      ]);
+      setWorkspace("activeSessionID", a);
+      selectModel({ providerID: "antigravity", modelID: "gemini-3-pro-low" });
+      assertEqual(workspace.reasoningEffort, "low");
+
+      setReasoningEffort("high");
+      assertEqual(workspace.reasoningEffort, "high");
+      assertDeepEqual(workspace.selectedModel, { providerID: "antigravity", modelID: "gemini-3-pro-high" });
     });
   });
 });

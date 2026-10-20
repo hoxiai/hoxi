@@ -138,7 +138,10 @@ export default function DevPulsePopover() {
               </div>
             </div>
 
-            <div class="rounded-lg bg-[var(--bg-inset)]/60 px-2.5 py-2">
+            <div
+              class="rounded-lg bg-[var(--bg-inset)]/60 px-2.5 py-2"
+              title={t("header.pulseCostTooltip")}
+            >
               <div class="text-[11px] text-[var(--text-muted)]">{t("header.pulseTodayCost")}</div>
               <div class="mt-1 font-mono text-[16px] font-semibold text-[var(--text-primary)] leading-tight">
                 {formatUsd(stats().totalCost)}

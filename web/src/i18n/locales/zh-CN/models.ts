@@ -258,4 +258,12 @@ export const models: ModelsI18n = {
     "用于自动生成 Git 提交说明（可选用轻量模型或仅用本地规则）",
   commitModelFollowSmallOption: "跟随轻量模型（推荐）",
   commitModelNoneOption: "仅用本地规则",
+  reasoningUnsupported: "不支持深度调节",
+  effortAuto: "自动",
+  effortLow: "低",
+  effortMedium: "中",
+  effortHigh: "高",
+  effortXHigh: "极高",
+  effortMax: "最大",
+  defaultEffortHint: "默认深度：{effort}",
 };

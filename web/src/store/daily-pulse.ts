@@ -1,6 +1,8 @@
 // web/src/store/daily-pulse.ts
 import { createSignal } from "solid-js";
-import { hoxiAPI, type GitDailyPulseResponse } from "../services/api";
+import { hoxiAPI, type GitDailyPulseResponse, type ModelPricingItem } from "../services/api";
+import { leaderboardState, syncOfficialModelPricing } from "./leaderboard-state";
+import { canonicalModelKey } from "./provider-catalog";
 import { workspace } from "./workspace";
 
 export interface DailyModelUsageItem {
@@ -9,6 +11,14 @@ export interface DailyModelUsageItem {
   turns: number;
   totalTokens: number;
   cost: number;
+}
+
+export interface DailyTokenBreakdown {
+  input: number;
+  output: number;
+  reasoning: number;
+  cacheRead: number;
+  cacheWrite: number;
 }
 
 export interface DailyDevPulseStats {
@@ -52,6 +62,75 @@ function normalizeTs(ts?: number): number {
   return ts < 1e12 ? ts * 1000 : ts;
 }
 
+const MARKET_CNY_PER_USD = 7.2;
+const MARKET_CACHE_READ_RATIO = 0.1;
+const MARKET_CACHE_WRITE_RATIO = 1.25;
+
+interface MarketPriceSpec {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+}
+
+function convertToUsdPerMillion(value: number, currency?: string): number {
+  return (currency || "").toUpperCase() === "CNY" ? value / MARKET_CNY_PER_USD : value;
+}
+
+let cachedMarketPriceIndex: { source: ModelPricingItem[]; index: Map<string, MarketPriceSpec> } | null =
+  null;
+
+function getMarketPriceIndex(): Map<string, MarketPriceSpec> {
+  const source = leaderboardState.pricingCatalog;
+  if (cachedMarketPriceIndex && cachedMarketPriceIndex.source === source) {
+    return cachedMarketPriceIndex.index;
+  }
+  const index = new Map<string, MarketPriceSpec>();
+  for (const item of source || []) {
+    if (!item) continue;
+    let spec: MarketPriceSpec;
+    if (item.isFree) {
+      spec = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+    } else {
+      const rawInput = item.price?.input || 0;
+      const rawOutput = item.price?.output > 0 ? item.price.output : rawInput;
+      if (rawInput <= 0 && rawOutput <= 0) continue;
+      const input = convertToUsdPerMillion(rawInput, item.price?.currency);
+      const output = convertToUsdPerMillion(rawOutput, item.price?.currency);
+      const cacheRead =
+        item.price?.cacheRead && item.price.cacheRead > 0
+          ? convertToUsdPerMillion(item.price.cacheRead, item.price?.currency)
+          : input * MARKET_CACHE_READ_RATIO;
+      const cacheWrite =
+        item.price?.cacheWrite && item.price.cacheWrite > 0
+          ? convertToUsdPerMillion(item.price.cacheWrite, item.price?.currency)
+          : input * MARKET_CACHE_WRITE_RATIO;
+      spec = { input, output, cacheRead, cacheWrite };
+    }
+    for (const rawKey of [item.slug, item.apiName, item.gatewayModelName, item.aaSlug, item.name]) {
+      const key = canonicalModelKey(rawKey);
+      if (key) index.set(key, spec);
+    }
+  }
+  cachedMarketPriceIndex = { source, index };
+  return index;
+}
+
+export function estimateModelMarketCostUsd(
+  modelID: string,
+  tokens: DailyTokenBreakdown
+): number | null {
+  const spec = getMarketPriceIndex().get(canonicalModelKey(modelID));
+  if (!spec) return null;
+  return (
+    (tokens.input * spec.input +
+      (tokens.output + tokens.reasoning) * spec.output +
+      tokens.cacheRead * spec.cacheRead +
+      tokens.cacheWrite * spec.cacheWrite) /
+    1_000_000
+  );
+}
+
 const [gitDailyPulse, setGitDailyPulse] = createSignal<GitDailyPulseResponse>({
   todayCommits: 0,
   committedAdditions: 0,
@@ -70,6 +149,7 @@ export async function refreshDailyDevPulse(manual = false): Promise<void> {
   if (pulseInFlight && !manual) return;
   pulseInFlight = true;
   if (manual) setSyncingPulse(true);
+  void syncOfficialModelPricing();
   try {
     const res = await hoxiAPI.getGitDailyPulse(
       workspace.rootDir || undefined,
@@ -104,21 +184,35 @@ export function computeDailyDevPulseStats(): DailyDevPulseStats {
   let reasoningTokens = pulse.dbReasoningTokens || 0;
   let cacheReadTokens = pulse.dbCacheReadTokens || 0;
   let cacheWriteTokens = pulse.dbCacheWriteTokens || 0;
-  let totalCost = pulse.dbTotalCost || 0;
+  let totalCost = 0;
   let todayTurnsCount = pulse.dbTurnsCount || 0;
   const latestDbTs = pulse.dbLatestTurnTs || 0;
 
   const byModel = new Map<string, DailyModelUsageItem>();
-  for (const m of pulse.dbModels || []) {
+  const dbModels = pulse.dbModels || [];
+  for (const m of dbModels) {
+    const tokens: DailyTokenBreakdown = {
+      input: m.inputTokens || 0,
+      output: m.outputTokens || 0,
+      reasoning: m.reasoningTokens || 0,
+      cacheRead: m.cacheReadTokens || 0,
+      cacheWrite: m.cacheWriteTokens || 0,
+    };
+    const hasBreakdown = Object.values(tokens).some((v) => v > 0);
+    const cost = hasBreakdown
+      ? (estimateModelMarketCostUsd(m.modelID, tokens) ?? (m.cost || 0))
+      : m.cost || 0;
+    totalCost += cost;
     const key = `${m.providerID}/${m.modelID}`;
     byModel.set(key, {
       providerID: m.providerID,
       modelID: m.modelID,
       turns: m.turns,
       totalTokens: m.totalTokens,
-      cost: m.cost,
+      cost,
     });
   }
+  if (dbModels.length === 0) totalCost = pulse.dbTotalCost || 0;
 
   // Merge any live in-memory turns from the active session newer than the last SQLite snapshot
   const seenLiveTurnKeys = new Set<string>();
@@ -144,7 +238,19 @@ export function computeDailyDevPulseStats(): DailyDevPulseStats {
     const cRead = tk.cache?.read || 0;
     const cWrite = tk.cache?.write || 0;
     const turnTotal = inTok + outTok + reasonTok + cRead + cWrite;
-    const turnCost = typeof info.cost === "number" && info.cost > 0 ? info.cost : 0;
+
+    const pid = info.providerID || workspace.selectedModel?.providerID || "unknown";
+    const mid = info.modelID || workspace.selectedModel?.modelID || "auto";
+    const mKey = `${pid}/${mid}`;
+    const turnCost =
+      estimateModelMarketCostUsd(mid, {
+        input: inTok,
+        output: outTok,
+        reasoning: reasonTok,
+        cacheRead: cRead,
+        cacheWrite: cWrite,
+      }) ??
+      (typeof info.cost === "number" && info.cost > 0 ? info.cost : 0);
 
     inputTokens += inTok;
     outputTokens += outTok;
@@ -154,9 +260,6 @@ export function computeDailyDevPulseStats(): DailyDevPulseStats {
     totalCost += turnCost;
     todayTurnsCount += 1;
 
-    const pid = info.providerID || workspace.selectedModel?.providerID || "unknown";
-    const mid = info.modelID || workspace.selectedModel?.modelID || "auto";
-    const mKey = `${pid}/${mid}`;
     const existing = byModel.get(mKey) || {
       providerID: pid,
       modelID: mid,

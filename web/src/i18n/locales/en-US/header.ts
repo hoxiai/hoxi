@@ -69,6 +69,7 @@ export const header = {
   updateReleaseNotesFallback: "Performance optimizations and stability fixes.",
   pulseTokensSub: "In {input} · Out {output} · Think {reasoning}",
   pulseTodayCost: "Today's Spend",
+  pulseCostTooltip: "Estimated at each model's market price (recorded cost used when no market price matches)",
   pulseCostSub: "Cache saved {saved} · Avg {avg}/turn",
   pulseLinesAdded: "Lines Added",
   pulseLinesAddedSub: "Uncommitted +{uncommitted} · Committed +{committed}",

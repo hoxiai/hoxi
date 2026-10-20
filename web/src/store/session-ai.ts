@@ -1,9 +1,20 @@
 import { setWorkspace, workspace, type MessageTurn, type SelectedModel } from "./workspace";
 
+export type ReasoningEffort = "" | "low" | "medium" | "high" | "xhigh" | "max";
+
+export const VALID_REASONING_EFFORTS: readonly ReasoningEffort[] = [
+  "",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+];
+
 export interface SessionAIConfig {
   model: SelectedModel | null;
   agent: string;
-  effort: "" | "low" | "medium" | "high";
+  effort: ReasoningEffort;
 }
 
 export const SESSION_AI_KEY = "hoxi-session-ai:v1";
@@ -21,7 +32,7 @@ export function initialSessionAI(): Record<string, SessionAIConfig> {
     return Object.fromEntries(Object.entries(parsed).filter(([, value]) => {
       const c = value as SessionAIConfig | null;
       return c && typeof c.agent === "string" && c.agent.length > 0 &&
-        ["", "low", "medium", "high"].includes(c.effort) &&
+        VALID_REASONING_EFFORTS.includes(c.effort) &&
         (c.model === null || (typeof c.model?.providerID === "string" &&
           typeof c.model?.modelID === "string"));
     })) as Record<string, SessionAIConfig>;

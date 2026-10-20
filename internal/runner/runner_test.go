@@ -156,6 +156,36 @@ func TestBuildAgyArgsAndWorktreeValidation(t *testing.T) {
 		t.Fatalf("expected --mode plan for plan agent, got %v", planArgs)
 	}
 
+	// Verify agy effort-suffixed model slugs never conflict with --effort
+	conflictArgs := BuildAgyArgs("build", "gemini-4-argon-low", "high", "")
+	conflictJoined := strings.Join(conflictArgs, " ")
+	if !strings.Contains(conflictJoined, "--model gemini-4-argon-high") || !strings.Contains(conflictJoined, "--effort high") {
+		t.Fatalf("expected gemini-4-argon-low + high effort to resolve to --model gemini-4-argon-high --effort high, got: %v", conflictArgs)
+	}
+	ossArgs := BuildAgyArgs("build", "gpt-oss-120b-medium", "high", "")
+	ossJoined := strings.Join(ossArgs, " ")
+	if !strings.Contains(ossJoined, "--model gpt-oss-120b-medium") || !strings.Contains(ossJoined, "--effort medium") {
+		t.Fatalf("expected gpt-oss-120b-medium + high effort to clamp to medium, got: %v", ossArgs)
+	}
+	autoAgyArgs := BuildAgyArgs("build", "gemini-4-argon-low", "", "")
+	if strings.Contains(strings.Join(autoAgyArgs, " "), "--effort") {
+		t.Fatalf("expected empty effort on suffixed agy slug to omit redundant --effort, got: %v", autoAgyArgs)
+	}
+
+	// Verify Claude effort capability filtering & clamping
+	haikuArgs := BuildClaudeArgs("build", "claude-haiku-4-5-20251001", "high", "")
+	if strings.Contains(strings.Join(haikuArgs, " "), "--effort") {
+		t.Fatalf("expected claude-haiku-4-5 to omit unsupported --effort, got: %v", haikuArgs)
+	}
+	sonnetArgs := BuildClaudeArgs("build", "claude-sonnet-4-6", "xhigh", "")
+	if !strings.Contains(strings.Join(sonnetArgs, " "), "--effort max") {
+		t.Fatalf("expected claude-sonnet-4-6 + xhigh to clamp to max, got: %v", sonnetArgs)
+	}
+	opus55Args := BuildClaudeArgs("build", "claude-opus-5-5", "xhigh", "")
+	if !strings.Contains(strings.Join(opus55Args, " "), "--effort xhigh") {
+		t.Fatalf("expected claude-opus-5-5 to preserve xhigh, got: %v", opus55Args)
+	}
+
 	// Worktree validation: must reject repo root and home dir, accept .hoxi/worktrees/<id>
 	repoRoot := t.TempDir()
 	wtDir := filepath.Join(repoRoot, ".hoxi", "worktrees", "ses_agy_ok")

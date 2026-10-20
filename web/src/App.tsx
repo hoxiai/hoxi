@@ -25,6 +25,9 @@ import {
   loadSessionMessagesOnly,
   normalizeFolderPath,
   recordSessionRetry,
+  rememberQuestionReject,
+  rememberQuestionReply,
+  rememberQuestionRequest,
   removeSessionFromStore,
   replaceSessionFromEvent,
   resolveDefaultProjectDir,
@@ -244,6 +247,7 @@ export default function App() {
               break;
             case "question.asked":
             case "question.v2.asked":
+              rememberQuestionRequest(evt.properties);
               setWorkspace("pendingQuestions", (prev) =>
                 prev.some((q) => q.id === evt.properties.id) ? prev : [...prev, evt.properties]
               );
@@ -251,8 +255,18 @@ export default function App() {
               break;
             case "question.replied":
             case "question.v2.replied":
+              rememberQuestionReply(
+                evt.properties.requestID,
+                evt.properties.sessionID,
+                evt.properties.answers
+              );
+              setWorkspace("pendingQuestions", (prev) =>
+                prev.filter((q) => q.id !== evt.properties.requestID)
+              );
+              break;
             case "question.rejected":
             case "question.v2.rejected":
+              rememberQuestionReject(evt.properties.requestID, evt.properties.sessionID);
               setWorkspace("pendingQuestions", (prev) =>
                 prev.filter((q) => q.id !== evt.properties.requestID)
               );
