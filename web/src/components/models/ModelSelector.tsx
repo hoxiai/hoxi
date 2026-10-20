@@ -11,6 +11,7 @@ import {
 } from "lucide-solid";
 import {
   AUTO_PROVIDER_ID,
+  buildAutoVirtualProvider,
   clampReasoningEffort,
   inferModelEffortCapabilities,
   isCustomOrConfiguredProvider,
@@ -65,6 +66,14 @@ export default function ModelSelector() {
 
   const connectedSet = createMemo(() => new Set(workspace.connectedProviders));
 
+  const autoSystemModels = createMemo<FlattenedModel[]>(() =>
+    extractFlattenedModels(
+      [buildAutoVirtualProvider()],
+      new Set([AUTO_PROVIDER_ID]),
+      workspace.globalConfig
+    )
+  );
+
   const allModels = createMemo<FlattenedModel[]>(() =>
     extractFlattenedModels(workspace.providers, connectedSet(), workspace.globalConfig)
   );
@@ -83,6 +92,7 @@ export default function ModelSelector() {
   const connectedProviderRails = createMemo(() => {
     const counts = new Map<string, { id: string; name: string; count: number; isCustom: boolean; isRunner: boolean }>();
     for (const m of connectedModels()) {
+      if (m.providerID === AUTO_PROVIDER_ID) continue;
       const existing = counts.get(m.providerID);
       if (existing) {
         existing.count += 1;
@@ -97,9 +107,6 @@ export default function ModelSelector() {
       }
     }
     return Array.from(counts.values()).sort((a, b) => {
-      if ((a.id === AUTO_PROVIDER_ID) !== (b.id === AUTO_PROVIDER_ID)) {
-        return a.id === AUTO_PROVIDER_ID ? -1 : 1;
-      }
       const aPrio = a.isRunner || a.isCustom;
       const bPrio = b.isRunner || b.isCustom;
       if (aPrio !== bPrio) return aPrio ? -1 : 1;
@@ -110,6 +117,10 @@ export default function ModelSelector() {
   const activeModelInfo = createMemo<FlattenedModel | null>(() => {
     const sel = workspace.selectedModel;
     if (!sel) return null;
+    if (sel.providerID === AUTO_PROVIDER_ID) {
+      const autoFound = autoSystemModels().find((m) => m.modelID === sel.modelID);
+      if (autoFound) return autoFound;
+    }
     const found = allModels().find(
       (m) => m.providerID === sel.providerID && m.modelID === sel.modelID
     );
@@ -172,12 +183,16 @@ export default function ModelSelector() {
   const filteredModels = createMemo<FlattenedModel[]>(() => {
     const q = query().trim();
     const pool = connectedModels();
+    const allWithAuto = [...autoSystemModels(), ...pool];
 
     if (q) {
-      return rankModelSearch(pool, q);
+      return rankModelSearch(allWithAuto, q);
     }
 
     const r = rail();
+    if (r === AUTO_PROVIDER_ID) {
+      return autoSystemModels();
+    }
     if (r === "free") {
       return [...freeConnectedModels()].sort((a, b) => {
         const aFav = isFavoriteModel(a.providerID, a.modelID);
@@ -190,12 +205,12 @@ export default function ModelSelector() {
       });
     }
     if (r === "favorites") {
-      return pool.filter((m) => isFavoriteModel(m.providerID, m.modelID));
+      return allWithAuto.filter((m) => isFavoriteModel(m.providerID, m.modelID));
     }
     if (r === "recent") {
       const out: FlattenedModel[] = [];
       for (const rm of workspace.recentModels) {
-        const found = pool.find(
+        const found = allWithAuto.find(
           (m) => m.providerID === rm.providerID && m.modelID === rm.modelID
         );
         if (found) out.push(found);
@@ -204,9 +219,6 @@ export default function ModelSelector() {
     }
     if (r === "connected") {
       return [...pool].sort((a, b) => {
-        if ((a.providerID === AUTO_PROVIDER_ID) !== (b.providerID === AUTO_PROVIDER_ID)) {
-          return a.providerID === AUTO_PROVIDER_ID ? -1 : 1;
-        }
         const aFav = isFavoriteModel(a.providerID, a.modelID);
         const bFav = isFavoriteModel(b.providerID, b.modelID);
         if (aFav !== bFav) return aFav ? -1 : 1;
@@ -341,6 +353,7 @@ export default function ModelSelector() {
               rail={rail()}
               hasQuery={Boolean(query().trim())}
               connectedTotal={connectedModels().length}
+              autoTotal={autoSystemModels().length}
               freeTotal={freeConnectedModels().length}
               providers={connectedProviderRails()}
               onSelectRail={(r) => {

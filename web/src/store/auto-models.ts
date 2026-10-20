@@ -628,15 +628,15 @@ export function buildAutoVirtualProvider(): ProviderInfo {
 }
 
 function refreshWorkspaceAutoProvider() {
-  const virtualProv = buildAutoVirtualProvider();
-  const others = workspace.providers.filter((p) => p.id !== AUTO_PROVIDER_ID);
-  const nextConn = workspace.connectedProviders.includes(AUTO_PROVIDER_ID)
-    ? workspace.connectedProviders
-    : [AUTO_PROVIDER_ID, ...workspace.connectedProviders];
-  setWorkspace({
-    providers: [virtualProv, ...others],
-    connectedProviders: nextConn,
-  });
+  if (
+    workspace.providers.some((p) => p.id === AUTO_PROVIDER_ID) ||
+    workspace.connectedProviders.includes(AUTO_PROVIDER_ID)
+  ) {
+    setWorkspace({
+      providers: workspace.providers.filter((p) => p.id !== AUTO_PROVIDER_ID),
+      connectedProviders: workspace.connectedProviders.filter((id) => id !== AUTO_PROVIDER_ID),
+    });
+  }
 }
 
 export async function syncAutoPoolsFromServer(): Promise<void> {

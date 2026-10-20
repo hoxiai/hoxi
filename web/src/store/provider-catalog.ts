@@ -1,6 +1,7 @@
 // web/src/store/provider-catalog.ts
 import { t } from "../i18n";
 import type { ProviderInfo } from "../services/api";
+import { AUTO_PROVIDER_ID, buildAutoVirtualProvider } from "./auto-models";
 import { leaderboardState } from "./leaderboard-state";
 import type { ReasoningEffort } from "./session-ai";
 import { workspace } from "./workspace";
@@ -668,10 +669,32 @@ export function getConnectedProviderModelGroups(): ConnectedProviderGroup[] {
     }
   }
 
-  return groups.sort((a, b) => {
+  const sorted = groups.sort((a, b) => {
     const aCustom = isCustomOrConfiguredProvider(a.providerID);
     const bCustom = isCustomOrConfiguredProvider(b.providerID);
     if (aCustom !== bCustom) return aCustom ? -1 : 1;
     return a.providerName.localeCompare(b.providerName);
   });
+
+  const autoVirt = buildAutoVirtualProvider();
+  const autoModels = Object.entries(autoVirt.models || {}).map(([mID, mInfo]) => ({
+    id: mID,
+    name: mInfo?.name || mID,
+    fullKey: `${AUTO_PROVIDER_ID}/${mID}`,
+    free: mID === "free",
+    multiplier: mInfo?.multiplier,
+  }));
+
+  if (autoModels.length > 0) {
+    return [
+      {
+        providerID: AUTO_PROVIDER_ID,
+        providerName: autoVirt.name || AUTO_PROVIDER_ID,
+        models: autoModels,
+      },
+      ...sorted,
+    ];
+  }
+
+  return sorted;
 }

@@ -6,6 +6,7 @@ import {
   Pencil,
   Plus,
   Star,
+  Zap,
 } from "lucide-solid";
 import {
   AUTO_PROVIDER_ID,
@@ -57,6 +58,7 @@ export function ModelSelectorRail(props: {
   rail: string;
   hasQuery: boolean;
   connectedTotal: number;
+  autoTotal: number;
   freeTotal: number;
   providers: Array<{ id: string; name: string; count: number; isCustom: boolean }>;
   onSelectRail: (rail: string) => void;
@@ -80,6 +82,35 @@ export function ModelSelectorRail(props: {
           </span>
           <span class="font-mono text-[10px] opacity-70">{props.connectedTotal}</span>
         </button>
+
+        <div
+          onClick={() => props.onSelectRail(AUTO_PROVIDER_ID)}
+          class={`group w-full flex items-center justify-between gap-1 rounded-lg px-2.5 py-1.5 text-left text-[11.5px] transition-colors cursor-pointer ${
+            props.rail === AUTO_PROVIDER_ID && !props.hasQuery
+              ? "bg-[var(--accent-surface)] text-[var(--accent-primary)] font-medium"
+              : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+          }`}
+        >
+          <span class="flex items-center gap-2 truncate">
+            <Zap size={12} class="shrink-0 text-[var(--accent-primary)]" />
+            <span class="truncate">{t("models.tabAutoPools")}</span>
+          </span>
+          <span class="flex items-center gap-1 shrink-0">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                props.onClosePopover();
+                openProviderModal("auto", null);
+              }}
+              class="opacity-0 group-hover:opacity-100 rounded p-0.5 hover:bg-[var(--bg-panel)] text-[var(--text-muted)] hover:text-[var(--accent-primary)] cursor-pointer"
+              title={t("models.tabAutoPools")}
+            >
+              <Pencil size={10} />
+            </button>
+            <span class="font-mono text-[10px] opacity-70">{props.autoTotal}</span>
+          </span>
+        </div>
 
         <button
           type="button"
@@ -148,17 +179,13 @@ export function ModelSelectorRail(props: {
                 <span class="truncate">{prov.name}</span>
               </span>
               <span class="flex items-center gap-1 shrink-0">
-                <Show when={prov.isCustom || prov.id === AUTO_PROVIDER_ID}>
+                <Show when={prov.isCustom}>
                   <button
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation();
                       props.onClosePopover();
-                      if (prov.id === AUTO_PROVIDER_ID) {
-                        openProviderModal("auto", null);
-                      } else {
-                        openProviderModal("custom", prov.id);
-                      }
+                      openProviderModal("custom", prov.id);
                     }}
                     class="opacity-0 group-hover:opacity-100 rounded p-0.5 hover:bg-[var(--bg-panel)] text-[var(--text-muted)] hover:text-[var(--accent-primary)] cursor-pointer"
                     title={t("models.editProvider")}

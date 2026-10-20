@@ -149,6 +149,9 @@ export function selectModel(model: SelectedModel, _autoRetryOnError = false) {
 export function activeModelInfo() {
   const sel = workspace.selectedModel;
   if (!sel) return undefined;
+  if (sel.providerID === AUTO_PROVIDER_ID) {
+    return buildAutoVirtualProvider().models?.[sel.modelID];
+  }
   const prov = workspace.providers.find((p) => p.id === sel.providerID);
   return prov?.models?.[sel.modelID];
 }
@@ -384,18 +387,12 @@ export async function loadProviders(forceRefresh = false): Promise<void> {
       registerRunnerProvider("qoder", t("timeline.runtimeQoderLocal"), qoderRunner);
     }
 
-    const autoVirt = buildAutoVirtualProvider();
-    byId.set(AUTO_PROVIDER_ID, autoVirt);
-    if (!connected.includes(AUTO_PROVIDER_ID)) {
-      connected.unshift(AUTO_PROVIDER_ID);
-    }
-    defaults[AUTO_PROVIDER_ID] = "free";
-
-    const all = Array.from(byId.values());
+    const all = Array.from(byId.values()).filter((p) => p.id !== AUTO_PROVIDER_ID);
+    const cleanConnected = connected.filter((id) => id !== AUTO_PROVIDER_ID);
 
     setWorkspace({
       providers: all,
-      connectedProviders: connected,
+      connectedProviders: cleanConnected,
       defaultModels: defaults,
       globalConfig: mergedCfg,
       hoxiProviders: hoxiMap,
@@ -405,17 +402,25 @@ export async function loadProviders(forceRefresh = false): Promise<void> {
     void syncAutoPoolsFromServer();
 
     const current = workspace.defaultAI.model;
+    const autoVirt = buildAutoVirtualProvider();
     const isValid =
-      current &&
-      all.some((p) => p.id === current.providerID && p.models && p.models[current.modelID]);
+      Boolean(
+        current &&
+          ((current.providerID === AUTO_PROVIDER_ID && autoVirt.models?.[current.modelID]) ||
+            all.some((p) => p.id === current.providerID && p.models && p.models[current.modelID]))
+      );
 
     if (!isValid && all.length > 0) {
       const cfgModel = parseModelString(mergedCfg?.model);
-      if (cfgModel && all.some((p) => p.id === cfgModel.providerID && p.models?.[cfgModel.modelID])) {
+      if (
+        cfgModel &&
+        ((cfgModel.providerID === AUTO_PROVIDER_ID && autoVirt.models?.[cfgModel.modelID]) ||
+          all.some((p) => p.id === cfgModel.providerID && p.models?.[cfgModel.modelID]))
+      ) {
         selectDefaultModel(cfgModel);
         return;
       }
-      for (const pid of connected) {
+      for (const pid of cleanConnected) {
         if (pid === AUTO_PROVIDER_ID) continue;
         // OpenCode's built-in free service is not a user-configured provider.
         if (pid === "opencode" && !hoxiMap[pid] && !mergedCfg.provider?.[pid]) continue;
