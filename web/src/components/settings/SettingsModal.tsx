@@ -9,7 +9,6 @@ import {
   KeyRound,
   MessageSquareText,
   Moon,
-  Plus,
   ScrollText,
   Settings,
   ShieldCheck,
@@ -213,7 +212,6 @@ export default function SettingsModal() {
           icon: KeyRound,
           badge: () => workspace.connectedProviders.length,
         },
-        { id: "custom", label: () => t("models.tabCustom"), icon: Plus },
         { id: "auto", label: () => t("models.tabAutoPools"), icon: Zap },
         { id: "models", label: () => t("models.tabModels"), icon: SlidersHorizontal },
       ],
@@ -245,6 +243,13 @@ export default function SettingsModal() {
 
   const activeBreadcrumb = createMemo(() => {
     const cur = activeTab();
+    if (cur === "custom") {
+      return {
+        group: t("settings.groupModels"),
+        item: `${t("models.tabCatalog")} / ${t("models.tabCustom")}`,
+        icon: KeyRound,
+      };
+    }
     for (const grp of navGroups) {
       for (const item of grp.items) {
         if (item.id === cur) {
@@ -323,7 +328,9 @@ export default function SettingsModal() {
                     <For each={group.items}>
                       {(item) => {
                         const IconComp = item.icon;
-                        const isActive = () => activeTab() === item.id;
+                        const isActive = () =>
+                          activeTab() === item.id ||
+                          (item.id === "providers" && activeTab() === "custom");
                         const badgeVal = () => (item.badge ? item.badge() : 0);
                         return (
                           <button
