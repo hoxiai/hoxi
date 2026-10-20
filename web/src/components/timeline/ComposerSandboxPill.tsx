@@ -10,6 +10,7 @@ import {
   GitCommitHorizontal,
   GitFork,
   LoaderCircle,
+  ShieldCheck,
 } from "lucide-solid";
 import {
   canForkSession,
@@ -21,6 +22,8 @@ import {
 import { t } from "../../i18n";
 import { collectCycleChangedFiles } from "./tool-card-state";
 import { WorktreeVerifySection } from "./worktree-verify-section";
+import CommandSandboxToggle from "./CommandSandboxToggle";
+import SandboxLifecycleSection from "./SandboxLifecycleSection";
 
 export function ComposerSandboxPill(props: {
   mode: "local" | "worktree";
@@ -28,6 +31,7 @@ export function ComposerSandboxPill(props: {
   busy: boolean;
   onToggle: (target: "local" | "worktree") => void;
   sessionID?: string | null;
+  directory?: string | null;
   forking?: boolean;
   onFork?: () => void;
 }) {
@@ -35,6 +39,7 @@ export function ComposerSandboxPill(props: {
   const [gitAction, setGitAction] = createSignal<"commit-push" | "commit" | "push" | null>(null);
   const [toastMsg, setToastMsg] = createSignal<string | null>(null);
   const [errorMsg, setErrorMsg] = createSignal<string | null>(null);
+  const [commandSandboxOn, setCommandSandboxOn] = createSignal(false);
 
   let buttonRef: HTMLButtonElement | undefined;
   let menuRef: HTMLDivElement | undefined;
@@ -109,7 +114,11 @@ export function ComposerSandboxPill(props: {
         ref={buttonRef}
         type="button"
         onClick={() => setOpen((v) => !v)}
-        class={`inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[12px] font-medium transition-colors cursor-pointer ${
+        class={`inline-flex items-center rounded-lg transition-colors cursor-pointer ${
+          props.mode === "worktree"
+            ? "gap-1.5 px-2 py-1 text-[12px] font-medium"
+            : "p-1.5"
+        } ${
           open()
             ? "bg-[var(--bg-hover)] text-[var(--text-primary)]"
             : props.mode === "worktree"
@@ -126,19 +135,19 @@ export function ComposerSandboxPill(props: {
           when={!props.switching && !gitAction()}
           fallback={<LoaderCircle size={12} class="animate-spin shrink-0" />}
         >
-          <Show
-            when={props.mode === "worktree"}
-            fallback={<Folder size={12.5} class="shrink-0 text-[var(--text-muted)]" />}
-          >
-            <GitBranch size={12.5} class="shrink-0 text-[var(--accent-primary)]" />
-          </Show>
+          <GitBranch
+            size={12.5}
+            class={`shrink-0 ${
+              props.mode === "worktree"
+                ? "text-[var(--accent-primary)]"
+                : "text-[var(--text-muted)]"
+            }`}
+          />
         </Show>
 
-        <span>
-          {props.mode === "worktree"
-            ? t("timeline.sandboxWorktreeMode")
-            : t("timeline.sandboxLocalMode")}
-        </span>
+        <Show when={props.mode === "worktree"}>
+          <span>{t("timeline.sandboxWorktreeMode")}</span>
+        </Show>
 
         <Show when={changedFilesCount() > 0}>
           <span class="rounded-full bg-[var(--accent-surface)] px-1.5 py-0.2 font-mono text-[10px] text-[var(--accent-primary)]">
@@ -159,6 +168,15 @@ export function ComposerSandboxPill(props: {
           />
         </Show>
 
+        <Show when={commandSandboxOn()}>
+          <span
+            class="shrink-0 text-[var(--accent-primary)]"
+            title={t("timeline.commandSandboxOn")}
+          >
+            <ShieldCheck size={11.5} />
+          </span>
+        </Show>
+
         <ChevronDown
           size={11}
           class={`text-[var(--text-muted)] transition-transform duration-200 ${
@@ -170,7 +188,7 @@ export function ComposerSandboxPill(props: {
       <Show when={open()}>
         <div
           ref={menuRef}
-          class="absolute bottom-full left-0 mb-2 w-[304px] rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-1.5 shadow-2xl z-50 animate-in fade-in zoom-in-95 duration-100"
+          class="absolute bottom-full left-0 mb-2 w-[304px] max-h-[min(70vh,640px)] overflow-y-auto rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-1.5 shadow-2xl z-50 animate-in fade-in zoom-in-95 duration-100"
         >
           {/* Mode Options */}
           <div class="space-y-0.5">
@@ -244,6 +262,14 @@ export function ComposerSandboxPill(props: {
               </Show>
             </button>
           </div>
+
+          {/* OS-level Command Confinement */}
+          <CommandSandboxToggle
+            sessionID={props.sessionID}
+            directory={props.directory}
+            busy={props.busy || props.switching}
+            onStateChange={(next) => setCommandSandboxOn(next.enabled)}
+          />
 
           {/* One-Click Git Commit & Push Section */}
           <div class="mt-1.5 pt-1.5 border-t border-[var(--border-subtle)] px-1 space-y-1.5">
@@ -328,6 +354,12 @@ export function ComposerSandboxPill(props: {
             onCloseMenu={() => setOpen(false)}
           />
 
+          <SandboxLifecycleSection
+            sessionID={props.sessionID}
+            busy={props.busy || props.switching || Boolean(gitAction())}
+            onClose={() => setOpen(false)}
+          />
+
           {/* Git Branch, Diff Review & Session Fork */}
           <Show when={gitBranch() || props.sessionID}>
             <div class="mt-1.5 pt-1.5 border-t border-[var(--border-subtle)] space-y-0.5">
@@ -347,9 +379,6 @@ export function ComposerSandboxPill(props: {
                     <FileDiff size={13} class="text-[var(--accent-primary)] shrink-0" />
                     <span class="truncate">{t("timeline.reviewDiffs")}</span>
                   </div>
-                  <span class="truncate max-w-[120px] font-mono text-[11px] text-[var(--text-muted)]">
-                    {gitBranch()}
-                  </span>
                 </button>
               </Show>
 

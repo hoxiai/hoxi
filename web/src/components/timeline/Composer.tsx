@@ -5,11 +5,7 @@ import {
   Clock,
   FolderOpen,
   LoaderCircle,
-  Plus,
-  Search,
-  Sparkles,
   Square,
-  Workflow,
 } from "lucide-solid";
 import {
   appSettings,
@@ -41,12 +37,12 @@ import {
   ComposerAutocompletePopover,
 } from "./composer-subcomponents";
 import { ComposerSandboxPill } from "./ComposerSandboxPill";
-import CommandSandboxPill from "./CommandSandboxPill";
 import CodeSearchModal from "../codeindex/CodeSearchModal";
 import ConvoyModal from "../orchestration/ConvoyModal";
 import ContextProgressPill from "./ContextProgressPill";
 import ApprovalModePill from "./ApprovalModePill";
 import ModeSwitcher from "./ModeSwitcher";
+import ComposerToolsPopover from "./ComposerToolsPopover";
 import {
   createComposerAutocomplete,
   createImageAttachments,
@@ -521,47 +517,14 @@ export default function Composer() {
           <div class="mt-2 flex items-center justify-between gap-2 flex-wrap">
             {/* Left Action Pills: Attach (+), Agent Mode, Model Selector, Git Dropdown */}
             <div class="flex items-center gap-1 flex-wrap">
-              <button
-                type="button"
-                onClick={() => fileInputRef?.click()}
-                class="inline-flex items-center justify-center rounded-lg p-1.5 text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
-                title={t("timeline.attachImageTooltip")}
-              >
-                <Plus size={15} />
-              </button>
-
-              <button
-                type="button"
-                onClick={() => openSkillsBrowser(selectedSkill()?.key)}
-                class={`inline-flex items-center justify-center rounded-lg p-1.5 transition-colors cursor-pointer ${
-                  selectedSkill()
-                    ? "bg-[var(--accent-surface)] text-[var(--accent-text)]"
-                    : "text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
-                }`}
-                title={t("skills.browseSkills")}
-              >
-                <Sparkles size={14} />
-              </button>
-
-              <button
-                type="button"
-                disabled={!workspace.rootDir}
-                onClick={() => setCodeSearchOpen(true)}
-                class="inline-flex items-center justify-center rounded-lg p-1.5 text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
-                title={t("timeline.codeSearchOpenTooltip")}
-              >
-                <Search size={14} />
-              </button>
-
-              <button
-                type="button"
-                disabled={!workspace.rootDir}
-                onClick={() => setConvoyOpen(true)}
-                class="inline-flex items-center justify-center rounded-lg p-1.5 text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
-                title={t("timeline.convoyOpenTooltip")}
-              >
-                <Workflow size={14} />
-              </button>
+              <ComposerToolsPopover
+                workspaceReady={Boolean(workspace.rootDir)}
+                skillActive={Boolean(selectedSkill())}
+                onAttach={() => fileInputRef?.click()}
+                onOpenSkills={() => openSkillsBrowser(selectedSkill()?.key)}
+                onOpenCodeSearch={() => setCodeSearchOpen(true)}
+                onOpenConvoy={() => setConvoyOpen(true)}
+              />
 
               <ModeSwitcher />
               <ModelSelector />
@@ -578,14 +541,10 @@ export default function Composer() {
                 switching={switchingSandbox()}
                 busy={busy()}
                 sessionID={sessionID()}
+                directory={sessionDirectory(sessionID()) || workspace.rootDir}
                 forking={forking()}
                 onToggle={(m) => void onToggleSandbox(m)}
                 onFork={onFork}
-              />
-              <CommandSandboxPill
-                sessionID={sessionID()}
-                directory={sessionDirectory(sessionID()) || workspace.rootDir}
-                busy={busy()}
               />
               </Show>
             </div>

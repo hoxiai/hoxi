@@ -75,6 +75,8 @@ export default function ApprovalModePill() {
     return t("approval.modeManualShort");
   };
 
+  const isDefaultAuto = () => currentMode() === "auto";
+
   createEffect(() => {
     if (!open()) return;
     const handleClick = (e: MouseEvent) => {
@@ -110,16 +112,19 @@ export default function ApprovalModePill() {
         ref={buttonRef}
         type="button"
         onClick={() => setOpen((v) => !v)}
-        class={`inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11.5px] font-medium transition-colors cursor-pointer ${
+        class={`inline-flex items-center rounded-lg transition-colors cursor-pointer ${
+          isDefaultAuto() ? "p-1.5" : "gap-1 px-2 py-1 text-[11.5px] font-medium"
+        } ${
           open()
             ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]"
             : currentMode() === "manual"
               ? "bg-[var(--warn-surface)] text-[var(--warn-text)] border border-[var(--warn-border)] hover:brightness-105"
               : currentMode() === "auto"
-                ? "text-[var(--ok-text)] bg-[var(--ok-surface)]/65 hover:bg-[var(--ok-surface)]"
+                ? "text-[var(--ok-text)] hover:bg-[var(--bg-hover)]"
                 : "text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
         }`}
         title={t("approval.modeTooltip", { mode: currentShortLabel() })}
+        aria-label={t("approval.modeTooltip", { mode: currentShortLabel() })}
       >
         <span
           class={
@@ -132,13 +137,15 @@ export default function ApprovalModePill() {
         >
           {renderModeIcon(currentMode(), 12.5)}
         </span>
-        <span>{currentShortLabel()}</span>
-        <ChevronDown
-          size={10.5}
-          class={`opacity-75 transition-transform duration-200 ${
-            open() ? "rotate-180" : ""
-          }`}
-        />
+        <Show when={!isDefaultAuto()}>
+          <span>{currentShortLabel()}</span>
+          <ChevronDown
+            size={10.5}
+            class={`opacity-75 transition-transform duration-200 ${
+              open() ? "rotate-180" : ""
+            }`}
+          />
+        </Show>
       </button>
 
       <Show when={open()}>
