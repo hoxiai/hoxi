@@ -569,3 +569,20 @@ export function recordProbeTelemetry(
   );
   schedulePersistTelemetry();
 }
+
+export type ProviderModelProbeInput = Parameters<typeof hoxiAPI.testProviderModel>[0];
+
+/** Sends a one-shot probe request to a provider model and records it in provider telemetry. */
+export async function probeProviderModel(
+  input: ProviderModelProbeInput
+): Promise<{ ok: boolean; latencyMs?: number; error?: string }> {
+  const pid = input.providerID;
+  try {
+    const res = await hoxiAPI.testProviderModel(input);
+    if (pid) recordProbeTelemetry(pid, res.ok, res.latencyMs, res.error, input.modelID);
+    return res;
+  } catch (err: any) {
+    if (pid) recordProbeTelemetry(pid, false, undefined, err?.message || String(err), input.modelID);
+    throw err;
+  }
+}

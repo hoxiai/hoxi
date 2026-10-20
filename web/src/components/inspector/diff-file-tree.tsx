@@ -12,13 +12,10 @@ import {
   MessageSquareText,
   RotateCcw,
 } from "lucide-solid";
-import { hoxiAPI } from "../../services/api";
 import type { SnapshotFileDiff } from "../../services/sse-types";
 import {
-  activeDirectory,
-  loadSessionMessages,
   openFileInInspector,
-  refreshWorktreeStatus,
+  revertWorktreeFileChanges,
   workspace,
 } from "../../store/workspace";
 import { DiffChanges, FileIcon } from "../icons";
@@ -306,14 +303,9 @@ export default function DiffFileTree(props: {
     if (revertingFile()) return;
     setRevertingFile(diff.file);
     try {
-      const targetDir = diff.repoDir || activeDirectory() || workspace.rootDir || undefined;
       const targetFile = diff.repoDir ? stripRepoPrefixFromFile(diff.file, diff.repo) : diff.file;
-      const sessionID = diff.repoDir ? "__root__" : (workspace.activeSessionID || "__root__");
-      await hoxiAPI.revertWorktreeFile(sessionID, targetFile, targetDir);
-      await refreshWorktreeStatus(workspace.activeSessionID);
-      if (workspace.activeSessionID) {
-        await loadSessionMessages(workspace.activeSessionID);
-      }
+      const sessionKey = diff.repoDir ? "__root__" : (workspace.activeSessionID || "__root__");
+      await revertWorktreeFileChanges(sessionKey, targetFile, diff.repoDir);
     } catch (err) {
       console.error("revertWorktreeFile failed:", err);
     } finally {

@@ -2,7 +2,10 @@ import { t } from "../i18n";
 import {
   hoxiAPI,
   resolveRunnerRuntimeForProvider,
+  type BranchListResponse,
   type WorktreeMeta,
+  type WorktreeVerifyConfig,
+  type WorktreeVerifyState,
 } from "../services/api";
 import type { SessionInfo } from "../services/sse-types";
 import { appSettings, updateAppSetting } from "./settings";
@@ -223,6 +226,17 @@ export async function checkoutLocalBranch(branch: string, create = false): Promi
   }
 }
 
+export function fetchProjectBranches(): Promise<BranchListResponse> {
+  return hoxiAPI.listBranches(workspace.rootDir || undefined);
+}
+
+/** Removes idle sandbox worktrees of the project (except `excludeSessionID`). */
+export async function pruneProjectSandboxes(excludeSessionID?: string): Promise<number> {
+  const res = await hoxiAPI.pruneSandboxes(excludeSessionID, workspace.rootDir || undefined);
+  await refreshWorktreeStatus("__root__");
+  return res.removedCount;
+}
+
 export async function syncSessionWorktree(sessionID: string): Promise<void> {
   await hoxiAPI.syncWorktree(sessionID, workspace.rootDir || undefined);
   await refreshWorktreeStatus(sessionID);
@@ -233,4 +247,41 @@ export async function restoreSessionWorktree(sessionID: string): Promise<void> {
   await hoxiAPI.createWorktree(sessionID, workspace.rootDir || undefined);
   await refreshWorktreeStatus(sessionID);
   await refreshWorktreeStatus("__root__");
+}
+
+// Worktree setup / run / test commands shown in the worktree verify section.
+export function fetchWorktreeVerifyState(sessionKey: string, directory?: string): Promise<WorktreeVerifyState> {
+  return hoxiAPI.getWorktreeVerifyStatus(sessionKey, directory);
+}
+
+/** Re-runs the setup script, then refreshes git status of the owning session. */
+export async function retryWorktreeSetupScript(
+  sessionKey: string,
+  directory?: string,
+  ownerSessionID?: string | null
+): Promise<WorktreeVerifyState> {
+  const res = await hoxiAPI.retryWorktreeSetup(sessionKey, directory);
+  void refreshWorktreeStatus(ownerSessionID);
+  return res;
+}
+
+export function saveWorktreeVerifyCommands(input: {
+  directory?: string;
+  runCommand: string;
+  testCommand: string;
+}): Promise<WorktreeVerifyConfig> {
+  return hoxiAPI.saveWorktreeVerifyConfig(input);
+}
+
+export function startWorktreeVerify(input: {
+  sessionID: string;
+  directory?: string;
+  kind: "run" | "test";
+  command?: string;
+}): Promise<WorktreeVerifyState> {
+  return hoxiAPI.runWorktreeVerify(input);
+}
+
+export function stopWorktreeVerifyRun(sessionKey: string, directory?: string): Promise<WorktreeVerifyState> {
+  return hoxiAPI.stopWorktreeVerify(sessionKey, directory);
 }

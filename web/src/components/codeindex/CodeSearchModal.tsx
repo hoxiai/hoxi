@@ -7,13 +7,11 @@ import {
   fetchCodeIndexStatus,
   refreshCodeIndex,
   searchCodeIndex,
+  searchSessionRecall,
   type CodeIndexResult,
   type CodeIndexStatus,
-} from "../../services/code-index-api";
-import {
-  searchSessionRecall,
   type RecallResult,
-} from "../../services/recall-api";
+} from "../../store/workspace";
 
 type SearchMode = "code" | "sessions";
 

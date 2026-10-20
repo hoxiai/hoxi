@@ -11,16 +11,10 @@ import {
 } from "../../services/api";
 import {
   closeHandoffModal,
-  normalizeFolderPath,
-  refreshProviders,
-  replaceSession,
-  selectModel,
-  selectSession,
+  importExternalSession,
   shortenPath,
-  switchWorkspace,
   workspace,
 } from "../../store/workspace";
-import { recordCustomSessionTitle } from "../../store/session-title";
 import ExternalHandoffPreviewPane, {
   handoffSourceBadgeClass,
   resolveOriginalModel,
@@ -152,72 +146,15 @@ export default function ExternalHandoffModal() {
     setImportingSession(true);
     setErrorMsg(null);
     try {
-      const useOriginal = modelMode() === "original";
-      const cli = cliTools().find((c) => c.id === item.source);
-      const isRunnerTool =
-        cli?.authMode === "antigravity-runner" ||
-        cli?.authMode === "claude-runner" ||
-        cli?.authMode === "codebuddy-runner" ||
-        cli?.authMode === "qoder-runner";
-      if (useOriginal && cli && !isRunnerTool && cli.authenticated && !cli.connected) {
-        await hoxiAPI.importLocalCLI(item.source).catch(() => null);
-      }
-      const origModel = currentOriginalModel();
-      const slashIdx = item.source === "opencode-cli" ? origModel.indexOf("/") : -1;
-      const preferredProviderID = useOriginal
-        ? slashIdx > 0
-          ? origModel.slice(0, slashIdx)
-          : cli?.providerID ||
-            (item.source === "codex-cli"
-              ? "openai"
-              : item.source === "gemini-antigravity"
-              ? "antigravity"
-              : item.source)
-        : workspace.selectedModel?.providerID;
-      const preferredModelID = useOriginal
-        ? slashIdx > 0
-          ? origModel.slice(slashIdx + 1)
-          : origModel
-        : workspace.selectedModel?.modelID;
-
-      const res = await hoxiAPI.importExternalSession({
-        source: item.source,
-        sessionID: item.id,
-        sourceCwd: item.cwd,
-        targetDirectory: item.cwd || workspace.rootDir || undefined,
-        preferredProviderID,
-        preferredModelID,
+      const error = await importExternalSession({
+        item,
+        cli: cliTools().find((c) => c.id === item.source),
+        useOriginalModel: modelMode() === "original",
+        originalModel: currentOriginalModel(),
       });
-      if (!res.ok || !res.session?.id) {
-        setErrorMsg(res.error || t("common.error"));
+      if (error !== null) {
+        setErrorMsg(error || t("common.error"));
         return;
-      }
-      await refreshProviders().catch(() => null);
-      const targetDir = res.targetDirectory || item.cwd || workspace.rootDir;
-      if (
-        targetDir &&
-        normalizeFolderPath(targetDir) !== normalizeFolderPath(workspace.rootDir)
-      ) {
-        // The imported session is selected below. Do not bootstrap and select a
-        // second session here, which would load two full transcripts at once.
-        await switchWorkspace(targetDir, false);
-      }
-      if (res.session.title) {
-        recordCustomSessionTitle(res.session.id, res.session.title);
-      }
-      replaceSession(res.session);
-      await selectSession(res.session.id);
-      if (
-        res.resolvedProviderID &&
-        res.resolvedModelID &&
-        workspace.providers.some(
-          (p) => p.id === res.resolvedProviderID && Boolean(p.models?.[res.resolvedModelID!])
-        )
-      ) {
-        selectModel({
-          providerID: res.resolvedProviderID,
-          modelID: res.resolvedModelID,
-        });
       }
       closeHandoffModal();
     } catch (err: any) {

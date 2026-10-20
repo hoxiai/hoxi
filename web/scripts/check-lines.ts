@@ -10,6 +10,133 @@ const EXEMPT_SUFFIXES = [
   "web/src/components/icons/file-icons/icon-maps.ts",
 ];
 
+// Read-only services/ calls permitted directly in components/ (all writes must go through store/).
+const COMPONENT_SERVICE_READONLY_ALLOWLIST: Record<
+  string,
+  { allowed: string[]; reason: string }
+> = {
+  "web/src/components/handoff/ExternalHandoffModal.tsx": {
+    allowed: [
+      "hoxiAPI.getExternalSessionPreview",
+      "hoxiAPI.listExternalSessions",
+      "hoxiAPI.getLocalCLIStatus",
+    ],
+    reason: "Read-only external CLI session discovery and preview before handoff import",
+  },
+  "web/src/components/inspector/FileTreeNodes.tsx": {
+    allowed: ["hoxiAPI.listFiles"],
+    reason: "Read-only lazy directory listing when expanding file tree nodes",
+  },
+  "web/src/components/inspector/FileTreeView.tsx": {
+    allowed: ["hoxiAPI.listFiles", "hoxiAPI.findFiles", "hoxiAPI.readFileContent"],
+    reason: "Read-only workspace file tree browsing, search, and file preview content loading",
+  },
+  "web/src/components/inspector/MemoryBankView.tsx": {
+    allowed: ["hoxiAPI.readFileContent"],
+    reason: "Read-only loading of .opencode/memory markdown files in the Memory inspector",
+  },
+  "web/src/components/inspector/PullRequestBadge.tsx": {
+    allowed: ["fetchPullRequest"],
+    reason: "Read-only GitHub/GitLab pull request status badge lookup",
+  },
+  "web/src/components/inspector/PullRequestIssuesButton.tsx": {
+    allowed: ["fetchPullRequestDetail"],
+    reason: "Read-only GitHub/GitLab pull request review thread and check details lookup",
+  },
+  "web/src/components/inspector/pierre-diff-parts.tsx": {
+    allowed: ["hoxiAPI.getWorktreeFileDiff"],
+    reason: "Read-only on-demand full file diff fetch when expanding a file in the diff viewer",
+  },
+  "web/src/components/layout/CommandPalette.tsx": {
+    allowed: ["hoxiAPI.searchFiles"],
+    reason: "Read-only fuzzy file search for the command palette",
+  },
+  "web/src/components/layout/LeftNav.tsx": {
+    allowed: ["hoxiAPI.listSessions"],
+    reason: "Read-only session count probe when confirming project removal",
+  },
+  "web/src/components/layout/SessionNavItem.tsx": {
+    allowed: ["fetchPullRequests"],
+    reason: "Read-only branch pull request badge lookup for sidebar session items",
+  },
+  "web/src/components/layout/WorkspaceModal.tsx": {
+    allowed: ["hoxiAPI.openDirectoryDialog"],
+    reason: "Read-only native OS folder picker dialog returning a selected directory path",
+  },
+  "web/src/components/models/CustomEndpointTab.tsx": {
+    allowed: ["hoxiAPI.fetchCustomProviderModels"],
+    reason: "Read-only /v1/models discovery probe for populating the custom provider form draft",
+  },
+  "web/src/components/models/LocalCliBridgeBanner.tsx": {
+    allowed: ["hoxiAPI.getLocalCLIStatus"],
+    reason: "Read-only local CLI installation and credential status probe for the bridge banner",
+  },
+  "web/src/components/terminal/WebGLTerminal.tsx": {
+    allowed: ["getGatewayToken"],
+    reason: "Read-only gateway auth token accessor for constructing the PTY WebSocket URL",
+  },
+  "web/src/components/timeline/Composer.tsx": {
+    allowed: ["hoxiAPI.openDirectoryDialog", "hoxiAPI.enhancePrompt"],
+    reason:
+      "Read-only native folder picker dialog and stateless prompt enhancement returning text for composer input",
+  },
+  "web/src/components/timeline/MarkdownImage.tsx": {
+    allowed: ["hoxiAPI.readFileContent"],
+    reason: "Read-only workspace image file loader for rendering relative markdown images",
+  },
+  "web/src/components/timeline/composer-autocomplete.ts": {
+    allowed: [
+      "hoxiAPI.listCommands",
+      "hoxiAPI.findFiles",
+      "hoxiAPI.listFiles",
+      "skillsAPI.fetchSkillsList",
+    ],
+    reason: "Read-only slash command, skill, and @file autocomplete candidate queries",
+  },
+  "web/src/components/timeline/composer-hooks.ts": {
+    allowed: ["hoxiAPI.readClipboardImages"],
+    reason: "Read-only native clipboard image reader for Cmd+V paste in the composer",
+  },
+  "web/src/components/timeline/session-export.ts": {
+    allowed: ["hoxiAPI.getMessages"],
+    reason: "Read-only full session message history fetch when exporting a transcript to Markdown",
+  },
+};
+
+function extractRuntimeServiceImports(content: string): {
+  hasRuntimeImportStmt: boolean;
+  runtimeSymbols: string[];
+} {
+  const re =
+    /(?:^|\n)\s*import\s+(?!type\b)([^;]+?)\s+from\s+["'][^"']*\/services\/[^"']+["']\s*;?/g;
+  let hasRuntimeImportStmt = false;
+  const runtimeSymbols: string[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(content)) !== null) {
+    hasRuntimeImportStmt = true;
+    const clause = match[1].trim();
+    const braceMatch = clause.match(/\{([\s\S]*?)\}/);
+    if (braceMatch) {
+      for (const rawPart of braceMatch[1].split(",")) {
+        const part = rawPart.trim();
+        if (!part || /^type\s+/.test(part)) continue;
+        const localName = part.split(/\s+as\s+/).pop()?.trim();
+        if (localName) runtimeSymbols.push(localName);
+      }
+    }
+    const outsideBraces = clause.replace(/\{[\s\S]*?\}/, "").replace(/,/g, "").trim();
+    if (outsideBraces && !/^type\s+/.test(outsideBraces)) {
+      const nsMatch = outsideBraces.match(/\*\s+as\s+([A-Za-z_$][A-Za-z0-9_$]*)/);
+      if (nsMatch) {
+        runtimeSymbols.push(nsMatch[1]);
+      } else {
+        runtimeSymbols.push(outsideBraces);
+      }
+    }
+  }
+  return { hasRuntimeImportStmt, runtimeSymbols };
+}
+
 const IGNORE_DIRS = new Set([
   ".git",
   ".hoxi",
@@ -43,6 +170,7 @@ const repoRoot = fs.existsSync("./src") ? path.resolve("..") : path.resolve(".")
 const files = walkRepo(repoRoot);
 
 let violations = 0;
+const seenAllowlistFiles = new Set<string>();
 
 for (const file of files) {
   const rel = path.relative(repoRoot, file).replace(/\\/g, "/");
@@ -98,6 +226,46 @@ for (const file of files) {
       console.error(`  ✗ [layering violation] ${rel} must not access localStorage directly in components/; move persistence into web/src/store/.`);
       violations++;
     }
+    const { hasRuntimeImportStmt, runtimeSymbols } = extractRuntimeServiceImports(content);
+    const allowEntry = COMPONENT_SERVICE_READONLY_ALLOWLIST[rel];
+    if (hasRuntimeImportStmt) {
+      if (!allowEntry) {
+        console.error(
+          `  ✗ [layering violation] ${rel} must only 'import type' from services/ (route state/writes through web/src/store/, or register read-only queries in COMPONENT_SERVICE_READONLY_ALLOWLIST).`
+        );
+        violations++;
+      } else {
+        seenAllowlistFiles.add(rel);
+        const bodyOnly = content.replace(
+          /(?:^|\n)\s*import\s+[^;]+?from\s+["'][^"']+["']\s*;?/g,
+          ""
+        );
+        const usedMembers = new Set<string>();
+        for (const sym of runtimeSymbols) {
+          const propRe = new RegExp(`\\b${sym}(?:\\s*\\.\\s*([A-Za-z_$][A-Za-z0-9_$]*))?`, "g");
+          let pm: RegExpExecArray | null;
+          while ((pm = propRe.exec(bodyOnly)) !== null) {
+            usedMembers.add(pm[1] ? `${sym}.${pm[1]}` : sym);
+          }
+        }
+        for (const used of usedMembers) {
+          if (!allowEntry.allowed.includes(used)) {
+            console.error(
+              `  ✗ [layering violation] ${rel} uses non-whitelisted services member '${used}' (allowed: ${allowEntry.allowed.join(", ")}). Route writes through web/src/store/.`
+            );
+            violations++;
+          }
+        }
+        for (const allowedMember of allowEntry.allowed) {
+          if (!usedMembers.has(allowedMember)) {
+            console.error(
+              `  ✗ [stale allowlist] ${rel} no longer uses whitelisted services member '${allowedMember}'; update COMPONENT_SERVICE_READONLY_ALLOWLIST in web/scripts/check-lines.ts.`
+            );
+            violations++;
+          }
+        }
+      }
+    }
   } else if (rel.startsWith("web/src/i18n/") && /domain-.*-types\.ts$/.test(rel)) {
     console.error(`  ✗ [i18n violation] ${rel} must not define manual i18n interface files; types are automatically inferred from en-US in web/src/i18n/types.ts.`);
     violations++;
@@ -134,6 +302,19 @@ for (const file of files) {
       console.error(`  ✗ [naming violation] ${rel} must use lowercase snake_case.dart filename.`);
       violations++;
     }
+  }
+}
+
+for (const [allowFile, allowEntry] of Object.entries(COMPONENT_SERVICE_READONLY_ALLOWLIST)) {
+  if (!allowEntry.reason.trim()) {
+    console.error(`  ✗ [allowlist violation] ${allowFile} is missing a reason in COMPONENT_SERVICE_READONLY_ALLOWLIST.`);
+    violations++;
+  }
+  if (!seenAllowlistFiles.has(allowFile)) {
+    console.error(
+      `  ✗ [stale allowlist] ${allowFile} no longer has runtime imports from services/; remove it from COMPONENT_SERVICE_READONLY_ALLOWLIST in web/scripts/check-lines.ts.`
+    );
+    violations++;
   }
 }
 

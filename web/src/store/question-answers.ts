@@ -1,7 +1,10 @@
 // web/src/store/question-answers.ts
 import { createSignal } from "solid-js";
 import type { QuestionInfo, QuestionRequest, ToolPart } from "../services/sse-types";
+import { hoxiAPI } from "../services/api";
 import { t } from "../i18n";
+import { sessionDirectory } from "./session-query";
+import { setWorkspace } from "./workspace-state";
 
 /**
  * Records `question.asked` / `question.replied` / `question.rejected` payloads so the
@@ -105,6 +108,23 @@ export function rememberQuestionReject(requestID: string, sessionID: string): vo
   });
   trimQuestionRecords();
   bumpRecords();
+}
+
+function dropPendingQuestion(requestID: string): void {
+  setWorkspace("pendingQuestions", (prev) => prev.filter((q) => q.id !== requestID));
+}
+
+/** Sends the user's answers for a docked question and records them for the tool card. */
+export async function replyQuestionRequest(request: QuestionRequest, answers: string[][]): Promise<void> {
+  await hoxiAPI.replyQuestion(request.id, answers, sessionDirectory(request.sessionID));
+  rememberQuestionReply(request.id, request.sessionID, answers);
+  dropPendingQuestion(request.id);
+}
+
+export async function rejectQuestionRequest(request: QuestionRequest): Promise<void> {
+  await hoxiAPI.rejectQuestion(request.id, sessionDirectory(request.sessionID));
+  rememberQuestionReject(request.id, request.sessionID);
+  dropPendingQuestion(request.id);
 }
 
 export function findQuestionReply(callID?: string): QuestionReplyRecord | undefined {

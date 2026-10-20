@@ -7,7 +7,7 @@ import {
   isImportedOpenCodeProvider,
   MASKED_SECRET,
   openProviderModal,
-  recordProbeTelemetry,
+  probeProviderModel,
   saveCustomProvider,
   setWorkspace,
   workspace,
@@ -148,7 +148,7 @@ export default function CustomEndpointTab() {
     for (const h of headers()) if (h.key.trim() && h.value.trim()) hdrs[h.key.trim()] = h.value.trim();
     const pid = providerID().trim();
     try {
-      const res = await hoxiAPI.testProviderModel({
+      const res = await probeProviderModel({
         providerID: pid || undefined,
         baseURL: baseURL().trim() || undefined,
         apiKey: apiKey().trim() === MASKED_SECRET ? undefined : apiKey().trim() || undefined,
@@ -156,7 +156,6 @@ export default function CustomEndpointTab() {
         modelID: cleanId,
         headers: Object.keys(hdrs).length ? hdrs : undefined,
       });
-      if (pid) recordProbeTelemetry(pid, res.ok, res.latencyMs, res.error, cleanId);
       const errText = res.error || t("models.connectFailed");
       setModelProbes((prev) => ({
         ...prev,
@@ -167,7 +166,6 @@ export default function CustomEndpointTab() {
       return { ok: res.ok, latencyMs: res.latencyMs, error: res.ok ? undefined : errText };
     } catch (err: any) {
       const errMsg = err?.message || String(err);
-      if (pid) recordProbeTelemetry(pid, false, undefined, errMsg, cleanId);
       setModelProbes((prev) => ({ ...prev, [cleanId]: { status: "error", error: errMsg } }));
       return { ok: false, error: errMsg };
     }

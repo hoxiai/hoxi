@@ -16,12 +16,12 @@ import {
 import {
   canForkSession,
   executeTaskCommitAndPush,
+  fetchSandboxSession,
   openDiffInInspector,
   refreshWorktreeStatus,
   workspace,
 } from "../../store/workspace";
 import { t } from "../../i18n";
-import { fetchSandboxSession } from "../../services/sandbox-api";
 import { collectCycleChangedFiles } from "./tool-card-state";
 import { WorktreeVerifySection } from "./worktree-verify-section";
 import CommandSandboxToggle from "./CommandSandboxToggle";

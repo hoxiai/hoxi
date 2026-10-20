@@ -591,3 +591,18 @@ export function purgeSessionsFromStoreState(
     (q) => !idSet.has(q.sessionID)
   );
 }
+
+/** Asks the runtime to compact (summarize) a session's context, then reloads its transcript. */
+export async function compactSessionContext(
+  sessionID: string,
+  model: { providerID: string; modelID: string }
+): Promise<boolean> {
+  const compacted = await hoxiAPI.summarizeSession(
+    sessionID,
+    model.providerID,
+    model.modelID,
+    sessionDirectory(sessionID)
+  );
+  if (compacted) await loadSessionMessages(sessionID);
+  return Boolean(compacted);
+}

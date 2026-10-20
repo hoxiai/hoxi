@@ -1,7 +1,9 @@
 // web/src/store/approval-mode.ts
 import { t } from "../i18n";
-import { hoxiAPI } from "../services/api";
+import { hoxiAPI, isRunnerPermissionID, runnerAPI } from "../services/api";
+import type { AgyHookStatus } from "../services/runner-api";
 import type { PermissionRequest } from "../services/sse-types";
+export type { AgyHookStatus };
 import {
   appSettings,
   triggerDesktopNotification,
@@ -10,6 +12,8 @@ import {
 } from "./settings";
 import { setWorkspace, workspace } from "./workspace-state";
 import { sessionDirectory } from "./session-query";
+import { fetchGlobalConfig, updateGlobalPermissions } from "./global-config";
+import { sessionAIConfig } from "./session-ai";
 import {
   commandCandidates as extractPermissionCommands,
   isDestructivePermissionRequest,
@@ -17,7 +21,7 @@ import {
   READ_PERMISSIONS,
 } from "../../../.opencode/lib/permission-policy.js";
 
-export { extractPermissionCommands, isDestructivePermissionRequest, isSafeCommandPermissionRequest };
+export { extractPermissionCommands, isDestructivePermissionRequest, isRunnerPermissionID, isSafeCommandPermissionRequest };
 
 
 const SMART_AUTO_PERMISSIONS = new Set([
@@ -135,7 +139,7 @@ export function handleIncomingPermissionRequest(req: PermissionRequest): void {
 
 export async function syncApprovalModeToOpenCodeConfig(mode: ApprovalMode): Promise<void> {
   try {
-    const cfg = await hoxiAPI.getGlobalConfig().catch(() => ({} as Record<string, any>));
+    const cfg = await fetchGlobalConfig().catch(() => ({} as Record<string, any>));
     const existingPerm =
       cfg?.permission && typeof cfg.permission === "object" ? cfg.permission : {};
     const desiredEdit = mode === "manual" ? "ask" : "allow";
@@ -147,15 +151,11 @@ export async function syncApprovalModeToOpenCodeConfig(mode: ApprovalMode): Prom
     ) {
       return;
     }
-    await hoxiAPI.updateGlobalConfig({
-      ...cfg,
-      permission: {
-        ...existingPerm,
-        edit: desiredEdit,
-        webfetch: desiredWebfetch,
-        // Keep bash at "ask" in OpenCode so hoxi-permissions.js & our Rule 6 safety gate always inspect commands
-        bash: typeof existingPerm.bash === "object" ? existingPerm.bash : "ask",
-      },
+    await updateGlobalPermissions({
+      edit: desiredEdit,
+      webfetch: desiredWebfetch,
+      // Keep bash at "ask" in OpenCode so hoxi-permissions.js & our Rule 6 safety gate always inspect commands
+      ...(typeof existingPerm.bash === "object" ? {} : { bash: "ask" }),
     });
   } catch {
     /* ignore background sync errors */
@@ -192,4 +192,61 @@ export async function syncPendingPermissions(directory?: string): Promise<void> 
   } catch {
     /* ignore if endpoint not ready */
   }
+}
+
+export type PermissionReplyMode = "once" | "always" | "reject";
+
+/**
+ * Answers a docked permission request from the approval card. Selected rule
+ * patterns are merged into `permission.<tool>` first (OpenCode only; runner
+ * rules live in the Go gate). A reject note travels with the reply for runner
+ * requests and is sent as a steering prompt for OpenCode sessions.
+ */
+export async function replyPermissionRequest(
+  req: PermissionRequest,
+  mode: PermissionReplyMode,
+  options: { rules?: Record<string, "allow" | "deny">; note?: string } = {}
+): Promise<void> {
+  const dir = sessionDirectory(req.sessionID);
+  const runner = isRunnerPermissionID(req.id);
+  const rules = Object.entries(options.rules ?? {});
+  if (!runner && rules.length > 0) {
+    try {
+      await updateGlobalPermissions({ [req.permission || "bash"]: Object.fromEntries(rules) });
+    } catch (err) {
+      console.warn("failed to persist custom permission rules:", err);
+    }
+  }
+  const note = (options.note ?? "").trim();
+  try {
+    await hoxiAPI.replyPermission(req.id, mode, dir, runner && mode === "reject" ? note : undefined);
+  } catch (err) {
+    if (isPermissionGoneError(err)) {
+      markPermissionResolved(req.id);
+      return;
+    }
+    throw err;
+  }
+  markPermissionResolved(req.id);
+  if (!runner && mode === "reject" && note && req.sessionID) {
+    const ai = sessionAIConfig(req.sessionID);
+    await hoxiAPI.sendPromptAsync(req.sessionID, note, {
+      agent: ai.agent,
+      model: ai.model || undefined,
+      variant: ai.effort || undefined,
+      directory: dir,
+    });
+  }
+}
+
+export function fetchAgyHookStatus(): Promise<AgyHookStatus> {
+  return runnerAPI.getAgyHookStatus();
+}
+
+export function installAgyHook(): Promise<AgyHookStatus> {
+  return runnerAPI.installAgyHook();
+}
+
+export function uninstallAgyHook(): Promise<AgyHookStatus> {
+  return runnerAPI.uninstallAgyHook();
 }

@@ -7,14 +7,15 @@ import {
   LoaderCircle,
   Pencil,
 } from "lucide-solid";
-import { hoxiAPI, type ProviderAuthAuthorization, type ProviderInfo } from "../../services/api";
+import type { ProviderAuthAuthorization, ProviderInfo } from "../../services/api";
 import {
+  authorizeProviderOAuth,
+  completeProviderOAuth,
   connectProviderWithKey,
   isCustomOrConfiguredProvider,
-  loadProviders,
   openExternalURL,
   openProviderModal,
-  recordProbeTelemetry,
+  probeProviderModel,
   workspace,
 } from "../../store/workspace";
 import { ProviderIcon } from "../icons";
@@ -56,14 +57,13 @@ export function ProviderConnectView(props: {
     setProbingModel(true);
     setFeedback(null);
     try {
-      const res = await hoxiAPI.testProviderModel({
+      const res = await probeProviderModel({
         providerID: props.provider.id,
         baseURL: baseURL().trim() || undefined,
         apiKey: apiKey().trim() || undefined,
         npm: props.provider.npm,
         modelID: mid,
       });
-      recordProbeTelemetry(props.provider.id, res.ok, res.latencyMs, res.error, mid);
       if (!res.ok) {
         setFeedback({ ok: false, text: `${mid}: ${res.error || t("models.connectFailed")}` });
         return false;
@@ -71,9 +71,7 @@ export function ProviderConnectView(props: {
       setFeedback({ ok: true, text: `✓ ${mid} (${res.latencyMs ?? 0}ms)` });
       return true;
     } catch (err: any) {
-      const errMsg = err?.message || t("models.connectFailed");
-      recordProbeTelemetry(props.provider.id, false, undefined, errMsg, mid);
-      setFeedback({ ok: false, text: errMsg });
+      setFeedback({ ok: false, text: err?.message || t("models.connectFailed") });
       return false;
     } finally {
       setProbingModel(false);
@@ -110,25 +108,13 @@ export function ProviderConnectView(props: {
     setBusy(true);
     setFeedback(null);
     try {
-      const res = await hoxiAPI.authorizeProviderOAuth(
-        pid,
-        authMethodIndex(),
-        undefined,
-        workspace.rootDir || undefined
-      );
+      const res = await authorizeProviderOAuth(pid, authMethodIndex());
       setOauthState(res);
       if (res?.url) {
         openExternalURL(res.url);
       }
       if (res?.method === "auto") {
-        await hoxiAPI.completeProviderOAuth(
-          pid,
-          authMethodIndex(),
-          undefined,
-          workspace.rootDir || undefined
-        );
-        await hoxiAPI.disposeGlobal().catch(() => {});
-        await loadProviders();
+        await completeProviderOAuth(pid, authMethodIndex());
         props.onBack();
       }
     } catch (err: any) {
@@ -144,14 +130,7 @@ export function ProviderConnectView(props: {
     setBusy(true);
     setFeedback(null);
     try {
-      await hoxiAPI.completeProviderOAuth(
-        pid,
-        authMethodIndex(),
-        oauthCode().trim(),
-        workspace.rootDir || undefined
-      );
-      await hoxiAPI.disposeGlobal().catch(() => {});
-      await loadProviders();
+      await completeProviderOAuth(pid, authMethodIndex(), oauthCode().trim());
       props.onBack();
     } catch (err: any) {
       setFeedback({ ok: false, text: err?.message || t("models.oauthVerificationFailed") });

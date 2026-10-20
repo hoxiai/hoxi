@@ -11,9 +11,9 @@ import {
   GitBranch,
   LoaderCircle,
 } from "lucide-solid";
-import { hoxiAPI, type FileContentResponse } from "../../services/api";
+import type { FileContentResponse } from "../../services/api";
 import type { SnapshotFileDiff } from "../../services/sse-types";
-import { openDiffInInspector, setWorkspace, workspace } from "../../store/workspace";
+import { openDiffInInspector, openExternalFile, setWorkspace, workspace } from "../../store/workspace";
 import { DiffChanges, FileIcon } from "../icons";
 import { computeChangedFileLines } from "../timeline/file-diff-lines";
 import MarkdownView from "../timeline/MarkdownView";
@@ -146,15 +146,13 @@ export default function FilePreviewPane(props: FilePreviewPaneProps) {
   const handleOpenExternal = (action: "open" | "reveal") => {
     const target = props.previewMeta?.resolvedPath || props.previewPath;
     if (!target) return;
-    void hoxiAPI
-      .openExternalFile(target, {
-        directory: props.targetDirectory,
-        sessionID: workspace.activeSessionID || undefined,
-        action,
-      })
-      .catch((err) => {
-        console.error(`Failed to ${action} file:`, err);
-      });
+    void openExternalFile(target, {
+      directory: props.targetDirectory,
+      sessionID: workspace.activeSessionID || undefined,
+      action,
+    }).catch((err) => {
+      console.error(`Failed to ${action} file:`, err);
+    });
   };
 
   return (

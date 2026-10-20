@@ -1,5 +1,6 @@
 // web/src/store/inspector.ts
 // Inspector panel navigation (files / diffs / browser) and per-session review comments.
+import { hoxiAPI } from "../services/api";
 import type { SnapshotFileDiff } from "../services/sse-types";
 import { extractFileSuffix, getResolvedFilePath, normalizeCandidatePath } from "./file-links";
 import { setWorkspace, workspace, type ReviewCommentItem } from "./workspace-state";
@@ -130,6 +131,23 @@ export function openExternalURL(url: string) {
     return;
   }
   window.open(trimmed, "_blank", "noopener,noreferrer");
+}
+
+export async function openExternalFile(
+  filePath: string,
+  options?: {
+    directory?: string;
+    sessionID?: string;
+    action?: "open" | "reveal";
+  }
+): Promise<void> {
+  const target = filePath.trim();
+  if (!target) return;
+  await hoxiAPI.openExternalFile(target, {
+    directory: options?.directory,
+    sessionID: options?.sessionID ?? (workspace.activeSessionID || undefined),
+    action: options?.action,
+  });
 }
 
 export function addReviewComment(sessionID: string, comment: Omit<ReviewCommentItem, "id">) {

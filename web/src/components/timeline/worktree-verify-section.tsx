@@ -12,8 +12,15 @@ import {
   Square,
   Terminal,
 } from "lucide-solid";
-import { hoxiAPI, type WorktreeVerifyState } from "../../services/api";
-import { openURLInInspector, refreshWorktreeStatus } from "../../store/workspace";
+import type { WorktreeVerifyState } from "../../services/api";
+import {
+  fetchWorktreeVerifyState,
+  openURLInInspector,
+  retryWorktreeSetupScript,
+  saveWorktreeVerifyCommands,
+  startWorktreeVerify,
+  stopWorktreeVerifyRun,
+} from "../../store/workspace";
 import { t } from "../../i18n";
 
 export function WorktreeVerifySection(props: {
@@ -43,7 +50,7 @@ export function WorktreeVerifySection(props: {
     const gen = ++requestGen;
     if (populateInputs) setLoading(true);
     try {
-      const res = await hoxiAPI.getWorktreeVerifyStatus(sid, dir);
+      const res = await fetchWorktreeVerifyState(sid, dir);
       if (gen !== requestGen) return;
       setState(res);
       if (populateInputs) {
@@ -83,9 +90,7 @@ export function WorktreeVerifySection(props: {
     setActionBusy(true);
     setErrMsg(null);
     try {
-      const res = await hoxiAPI.retryWorktreeSetup(effectiveSessionID(), props.directory);
-      setState(res);
-      void refreshWorktreeStatus(props.sessionID);
+      setState(await retryWorktreeSetupScript(effectiveSessionID(), props.directory, props.sessionID));
     } catch (err: any) {
       setErrMsg(err?.message || String(err));
     } finally {
@@ -98,7 +103,7 @@ export function WorktreeVerifySection(props: {
     setActionBusy(true);
     setErrMsg(null);
     try {
-      const cfg = await hoxiAPI.saveWorktreeVerifyConfig({
+      const cfg = await saveWorktreeVerifyCommands({
         directory: props.directory,
         runCommand: runCmd().trim(),
         testCommand: testCmd().trim(),
@@ -126,7 +131,7 @@ export function WorktreeVerifySection(props: {
     setErrMsg(null);
     setShowOutput(true);
     try {
-      const res = await hoxiAPI.runWorktreeVerify({
+      const res = await startWorktreeVerify({
         sessionID: effectiveSessionID(),
         directory: props.directory,
         kind,
@@ -145,7 +150,7 @@ export function WorktreeVerifySection(props: {
     setActionBusy(true);
     setErrMsg(null);
     try {
-      const res = await hoxiAPI.stopWorktreeVerify(effectiveSessionID(), props.directory);
+      const res = await stopWorktreeVerifyRun(effectiveSessionID(), props.directory);
       setState(res);
     } catch (err: any) {
       setErrMsg(err?.message || String(err));

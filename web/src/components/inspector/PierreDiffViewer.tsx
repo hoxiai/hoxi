@@ -1,14 +1,15 @@
 // web/src/components/inspector/PierreDiffViewer.tsx
 import { createEffect, createMemo, createSignal, on, onCleanup, Show } from "solid-js";
 import { ArrowUpFromLine, Check, Columns2, FolderSync, GitCommitHorizontal, GitPullRequestArrow, RefreshCw, Rows2, ShieldCheck, Sparkles } from "lucide-solid";
-import { hoxiAPI } from "../../services/api";
 import {
   activeDirectory,
   activeWorkspaceFolders,
   appSettings,
+  commitWorktreeChanges,
   generateSmartCommitMessage,
   isSessionBusy,
   loadSessionMessagesOnly,
+  pushWorktreeChanges,
   refreshWorktreeStatus,
   restoreSessionWorktree,
   runSessionCodeAudit,
@@ -222,25 +223,17 @@ export default function PierreDiffViewer() {
   };
 
   const onCommitWorktree = async (push = false) => {
-    const id = sessionKey();
     const msg = commitMsg().trim();
     if (!msg || committing() || pushing()) return;
     setCommitting(true);
     if (push) setPushing(true);
     try {
-      const res = await hoxiAPI.commitWorktree(id, msg, {
-        push,
-        directory: activeDirectory() || workspace.rootDir || undefined,
-      });
+      const res = await commitWorktreeChanges(msg, { push });
       setCommitMsg("");
       if (res.compareURL) setLastCompareURL(res.compareURL);
       setCommittedHash(res.commit || "HEAD");
       setWorkspace("inspectedDiffFile", null);
       setTimeout(() => setCommittedHash(null), 5000);
-      await refreshWorktreeStatus(workspace.activeSessionID);
-      if (workspace.activeSessionID) {
-        await loadSessionMessagesOnly(workspace.activeSessionID);
-      }
     } catch (err) {
       console.error("commitWorktree failed:", err);
     } finally {
@@ -253,12 +246,8 @@ export default function PierreDiffViewer() {
     if (pushing() || committing()) return compareURL();
     setPushing(true);
     try {
-      const res = await hoxiAPI.pushWorktree(
-        sessionKey(),
-        activeDirectory() || workspace.rootDir || undefined
-      );
+      const res = await pushWorktreeChanges();
       if (res.compareURL) setLastCompareURL(res.compareURL);
-      await refreshWorktreeStatus(workspace.activeSessionID);
       return res.compareURL || compareURL();
     } catch (err) {
       console.error("pushWorktree failed:", err);

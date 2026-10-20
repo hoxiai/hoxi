@@ -10,7 +10,6 @@ import {
   Square,
 } from "lucide-solid";
 import type { ToolPart } from "../../services/sse-types";
-import { hoxiAPI } from "../../services/api";
 import {
   ensureChildSubagentSessionLoaded,
   extractChildSubagentSessionId,
@@ -19,13 +18,12 @@ import {
   isSubagentToolAlive,
   isSubagentToolInterrupted,
   loadSessionMessagesOnly,
-  markSessionInterrupted,
   resolveParentSessionID,
   resolveRootSessionID,
   resolveSubagentTitle,
   resumeSubagentTask,
   selectSession,
-  sessionDirectory,
+  stopSessionTask,
   workspace,
 } from "../../store/workspace";
 import { DiffChanges, Spinner } from "../icons";
@@ -254,11 +252,8 @@ export function SubagentSessionBanner() {
     const id = activeID();
     if (!id || stopping()) return;
     setStopping(true);
-    markSessionInterrupted(id, "stopped");
     try {
-      await hoxiAPI.abortSession(id, sessionDirectory(id));
-    } catch (err) {
-      console.error("abort subagent failed:", err);
+      await stopSessionTask(id);
     } finally {
       setStopping(false);
     }

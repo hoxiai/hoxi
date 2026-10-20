@@ -13,17 +13,16 @@ import {
   Zap,
 } from "lucide-solid";
 import type { PermissionRequest } from "../../services/sse-types";
-import { hoxiAPI, isRunnerPermissionID } from "../../services/api";
 import {
   appSettings,
   isDestructivePermissionRequest,
   isPermissionGoneError,
+  isRunnerPermissionID,
   markPermissionResolved,
   openChangedFileInInspector,
-  sessionDirectory,
-  sessionAIConfig,
+  replyPermissionRequest,
   setApprovalMode,
-  workspace,
+  type PermissionReplyMode,
 } from "../../store/workspace";
 import { DiffChanges, FileIcon } from "../icons";
 import FileDiffBlock from "../inspector/LazyFileDiffBlock";
@@ -68,55 +67,15 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
     });
   };
 
-  const persistSelectedRules = async () => {
-    const entries = Object.entries(selectedRules());
-    if (entries.length === 0) return;
-    try {
-      const toolName = props.request.permission || "bash";
-      const cfg = await hoxiAPI.getGlobalConfig().catch(() => ({} as Record<string, any>));
-      const existingPerm = (cfg.permission && typeof cfg.permission === "object" ? cfg.permission : {}) as Record<string, any>;
-      const currentToolPerm =
-        existingPerm[toolName] && typeof existingPerm[toolName] === "object"
-          ? { ...existingPerm[toolName] }
-          : {};
-      for (const [pattern, dec] of entries) {
-        currentToolPerm[pattern] = dec;
-      }
-      await hoxiAPI.updateGlobalConfig({
-        permission: {
-          ...existingPerm,
-          [toolName]: currentToolPerm,
-        },
-      });
-    } catch (err) {
-      console.warn("failed to persist custom permission rules:", err);
-    }
-  };
-
-  const reply = async (mode: "once" | "always" | "reject") => {
+  const reply = async (mode: PermissionReplyMode) => {
     if (busy()) return;
     setBusy(mode);
     setError(null);
-    const dir = sessionDirectory(props.request.sessionID);
-    // Runner (agy) requests: rules live in the Go gate, and the agy turn is
-    // still running, so the note travels with the reply as the deny reason.
-    const runner = isRunnerPermissionID(props.request.id);
     try {
-      if (!runner && Object.keys(selectedRules()).length > 0) {
-        await persistSelectedRules();
-      }
-      const note = feedback().trim();
-      await hoxiAPI.replyPermission(props.request.id, mode, dir, runner && mode === "reject" ? note : undefined);
-      markPermissionResolved(props.request.id);
-      // If rejecting with steering feedback, send the feedback prompt right after
-      if (!runner && mode === "reject" && note && props.request.sessionID) {
-        await hoxiAPI.sendPromptAsync(props.request.sessionID, note, {
-          agent: sessionAIConfig(props.request.sessionID).agent,
-          model: sessionAIConfig(props.request.sessionID).model || undefined,
-          variant: sessionAIConfig(props.request.sessionID).effort || undefined,
-          directory: dir,
-        });
-      }
+      await replyPermissionRequest(props.request, mode, {
+        rules: selectedRules(),
+        note: feedback(),
+      });
     } catch (err) {
       if (isPermissionGoneError(err)) {
         markPermissionResolved(props.request.id);

@@ -9,14 +9,13 @@ import {
   GitCommitHorizontal,
   Sparkles,
 } from "lucide-solid";
-import { hoxiAPI } from "../../services/api";
 import type { WorktreeRepoStatus } from "../../services/api-types";
 import type { SnapshotFileDiff } from "../../services/sse-types";
 import {
   activeDirectory,
+  commitWorktreeChanges,
   generateSmartCommitMessage,
-  loadSessionMessagesOnly,
-  refreshWorktreeStatus,
+  pushWorktreeChanges,
   workspace,
 } from "../../store/workspace";
 import { DiffChanges } from "../icons";
@@ -57,7 +56,6 @@ function RepoDiffCard(props: {
   const [committedHash, setCommittedHash] = createSignal<string | null>(null);
   const [lastCompareURL, setLastCompareURL] = createSignal<string | null>(null);
 
-  const sessionKey = () => workspace.activeSessionID || "__root__";
   const repoDir = () =>
     props.bucket.directory || activeDirectory() || workspace.rootDir || undefined;
   const compareURL = () => lastCompareURL() || props.bucket.compareURL || "";
@@ -75,19 +73,12 @@ function RepoDiffCard(props: {
     setCommitting(true);
     if (push) setPushing(true);
     try {
-      const res = await hoxiAPI.commitWorktree(sessionKey(), msg, {
-        push,
-        directory: repoDir(),
-      });
+      const res = await commitWorktreeChanges(msg, { push, directory: repoDir() });
       setCommitMsg("");
       setCommitOpen(false);
       if (res.compareURL) setLastCompareURL(res.compareURL);
       setCommittedHash(res.commit || "HEAD");
       setTimeout(() => setCommittedHash(null), 5000);
-      await refreshWorktreeStatus(workspace.activeSessionID);
-      if (workspace.activeSessionID) {
-        await loadSessionMessagesOnly(workspace.activeSessionID);
-      }
     } catch (err) {
       console.error("commitWorktree (repo) failed:", err);
     } finally {
@@ -100,9 +91,8 @@ function RepoDiffCard(props: {
     if (pushing() || committing()) return compareURL();
     setPushing(true);
     try {
-      const res = await hoxiAPI.pushWorktree(sessionKey(), repoDir());
+      const res = await pushWorktreeChanges(repoDir());
       if (res.compareURL) setLastCompareURL(res.compareURL);
-      await refreshWorktreeStatus(workspace.activeSessionID);
       return res.compareURL || compareURL();
     } catch (err) {
       console.error("pushWorktree (repo) failed:", err);

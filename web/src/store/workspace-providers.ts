@@ -5,12 +5,15 @@ import {
   runnerAPI,
   type LocalCLIStatusItem,
   type ProviderInfo,
+  type ProviderAuthAuthorization,
 } from "../services/api";
+import { disposeOpenCodeInstance, patchGlobalConfig } from "./global-config";
 import { syncOfficialModelPricing } from "./leaderboard-state";
 import {
   AUTO_PROVIDER_ID,
   buildAutoVirtualProvider,
   syncAutoPoolsFromServer,
+  type FreeTierGuideItem,
 } from "./auto-models";
 import { isImportedOpenCodeProvider, splitAgyModelEffortSuffix } from "./provider-catalog";
 import { parseModelString, updateSessionAI } from "./session-ai";
@@ -540,18 +543,28 @@ export async function toggleDisabledProvider(providerID: string, disabled: boole
   await loadProviders();
 }
 
+/** Restarts the OpenCode instance and reloads providers and agents from it. */
+export async function reloadOpenCodeEngine(): Promise<void> {
+  await disposeOpenCodeInstance();
+  await Promise.allSettled([loadProviders(), loadAgents(workspace.rootDir || undefined)]);
+}
+
+export function authorizeProviderOAuth(
+  providerID: string,
+  method: number
+): Promise<ProviderAuthAuthorization> {
+  return hoxiAPI.authorizeProviderOAuth(providerID, method, undefined, workspace.rootDir || undefined);
+}
+
+/** Finishes an OAuth flow, restarts OpenCode so it loads the credential, and reloads providers. */
+export async function completeProviderOAuth(providerID: string, method: number, code?: string): Promise<void> {
+  await hoxiAPI.completeProviderOAuth(providerID, method, code, workspace.rootDir || undefined);
+  await disposeOpenCodeInstance().catch(() => {});
+  await loadProviders();
+}
+
 export async function updateGlobalModelConfig(patch: Record<string, any>): Promise<void> {
-  const updated = await hoxiAPI.updateGlobalConfig(patch);
-  // OpenCode's config does not know Hoxi's own providers; keep the ones
-  // loadProviders merged in so they do not vanish until the next reload.
-  const hoxiProviders = workspace.hoxiProviders ?? {};
-  const keptHoxi = Object.fromEntries(
-    Object.entries(workspace.globalConfig?.provider ?? {}).filter(([id]) => id in hoxiProviders)
-  );
-  setWorkspace("globalConfig", {
-    ...(updated || {}),
-    provider: { ...((updated as Record<string, any> | undefined)?.provider ?? {}), ...keptHoxi },
-  });
+  await patchGlobalConfig(patch);
   if (typeof patch.model === "string") {
     const parsed = parseModelString(patch.model);
     if (parsed) selectDefaultModel(parsed);
@@ -573,6 +586,30 @@ export async function updateGlobalModelConfig(patch: Record<string, any>): Promi
 }
 
 export const refreshProviders = loadProviders;
+
+export async function applyFreeTierGuideProvider(item: FreeTierGuideItem): Promise<void> {
+  if (!item.customMode || !item.baseURL) return;
+  if (workspace.hoxiProviders?.[item.providerID]) return;
+  const modelsObj: Record<string, any> = {};
+  for (const m of item.defaultModels || []) {
+    modelsObj[m.id] = {
+      name: m.name,
+      reasoning: m.reasoning,
+      cost: m.free ? { input: 0, output: 0 } : undefined,
+    };
+  }
+  try {
+    await hoxiAPI.saveHoxiProviderConfig(item.providerID, {
+      name: item.title || (item.providerID === "siliconflow" ? "SiliconFlow" : item.providerID),
+      npm: "@ai-sdk/openai-compatible",
+      options: { baseURL: item.baseURL },
+      models: modelsObj,
+    });
+    await loadProviders();
+  } catch {
+    /* ignore */
+  }
+}
 
 export async function syncLocalCLIModel(tool: LocalCLIStatusItem) {
   const isRunner =

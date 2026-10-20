@@ -1,7 +1,18 @@
 import { createEffect, createMemo, createSignal, For, onCleanup, Show, untrack } from "solid-js";
 import { ArrowLeft, ArrowRight, ExternalLink, Globe, Plus, Power, RefreshCw, X } from "lucide-solid";
-import { browserAPI, browserPoint, connectBrowserStream, type BrowserAction, type BrowserScope, type BrowserState } from "../../services/browser";
-import { openExternalURL, sessionDirectory, setWorkspace, workspace } from "../../store/workspace";
+import {
+  browserPoint,
+  connectBrowserStream,
+  executeBrowserAction,
+  fetchBrowserState,
+  openExternalURL,
+  sessionDirectory,
+  setWorkspace,
+  workspace,
+  type BrowserAction,
+  type BrowserScope,
+  type BrowserState,
+} from "../../store/workspace";
 import { t } from "../../i18n";
 
 interface PendingScroll {
@@ -115,7 +126,7 @@ export default function BrowserInspector() {
     connection.queue = connection.queue.then(async () => {
       if (!valid(connection)) return;
       try {
-        const next = await browserAPI.action(connection.scope, action, connection.controller.signal);
+        const next = await executeBrowserAction(connection.scope, action, connection.controller.signal);
         if (valid(connection)) {
           applyState(next);
           if (action.action === "close") replaceFrame(null);
@@ -276,7 +287,7 @@ export default function BrowserInspector() {
     async function poll() {
       try {
         if (connection.pending === 0) {
-          const next = await browserAPI.state(connection.scope, connection.controller.signal);
+          const next = await fetchBrowserState(connection.scope, connection.controller.signal);
           if (!valid(connection)) return;
           if (connection.pending === 0) applyState(next);
         }

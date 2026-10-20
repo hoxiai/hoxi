@@ -12,10 +12,12 @@ import {
 } from "lucide-solid";
 import {
   checkoutLocalBranch,
+  fetchProjectBranches,
+  pruneProjectSandboxes,
   refreshWorktreeStatus,
   workspace,
 } from "../../store/workspace";
-import { hoxiAPI, type GitBranchInfo } from "../../services/api";
+import type { GitBranchInfo } from "../../services/api";
 import { t } from "../../i18n";
 
 export default function BranchManagerPopover() {
@@ -59,7 +61,7 @@ export default function BranchManagerPopover() {
     setLoadingBranches(true);
     setErrorMsg(null);
     try {
-      const res = await hoxiAPI.listBranches(workspace.rootDir || undefined);
+      const res = await fetchProjectBranches();
       setBranches(res.branches || []);
       if (res.currentBranch) setRootBranch(res.currentBranch);
       setSandboxCount(res.sandboxCount || 0);
@@ -128,10 +130,9 @@ export default function BranchManagerPopover() {
       "prune",
       async () => {
         const exclude = isIsolated() ? sessionID() || undefined : undefined;
-        const res = await hoxiAPI.pruneSandboxes(exclude, workspace.rootDir || undefined);
+        const removedCount = await pruneProjectSandboxes(exclude);
         await fetchBranchList();
-        await refreshWorktreeStatus("__root__");
-        showToast(t("header.prunedSuccess", { count: res.removedCount }));
+        showToast(t("header.prunedSuccess", { count: removedCount }));
       },
       "Clean up failed"
     );

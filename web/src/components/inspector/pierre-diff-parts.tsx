@@ -21,9 +21,8 @@ import { hoxiAPI } from "../../services/api";
 import {
   activeDirectory,
   addReviewComment,
-  loadSessionMessagesOnly,
   openFileInInspector,
-  refreshWorktreeStatus,
+  revertWorktreeFileChanges,
   synthesizeLocalCommitMessage,
   workspace,
 } from "../../store/workspace";
@@ -417,15 +416,7 @@ export function SelectedDiffDetail(props: {
       const targetFile = repoDir
         ? stripRepoPrefixFromFile(props.diff.file, props.diff.repo)
         : props.diff.file;
-      await hoxiAPI.revertWorktreeFile(
-        sessionID,
-        targetFile,
-        repoDir || activeDirectory() || workspace.rootDir || undefined
-      );
-      await refreshWorktreeStatus(workspace.activeSessionID);
-      if (workspace.activeSessionID) {
-        await loadSessionMessagesOnly(workspace.activeSessionID);
-      }
+      await revertWorktreeFileChanges(sessionID, targetFile, repoDir);
     } catch (err) {
       console.error("revertWorktreeFile failed:", err);
     } finally {

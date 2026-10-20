@@ -2,14 +2,12 @@
 import { createEffect, createMemo, createSignal, onCleanup, Show } from "solid-js";
 import { Presence } from "../motion/Presence";
 import { Minimize2, LoaderCircle } from "lucide-solid";
-import { hoxiAPI } from "../../services/api";
 import {
   activeModelInfo,
+  compactSessionContext,
   isAutoModel,
   isSessionBusy,
-  loadSessionMessages,
   resolveAutoModelTarget,
-  sessionDirectory,
   workspace,
 } from "../../store/workspace";
 import { t } from "../../i18n";
@@ -125,17 +123,11 @@ export default function ContextProgressPill(props: { minPercent?: number }) {
     setNotice("");
     setCompacting(true);
     try {
-      const compacted = await hoxiAPI.summarizeSession(
-        id,
-        model.providerID,
-        model.modelID,
-        sessionDirectory(id)
-      );
+      const compacted = await compactSessionContext(id, model);
       if (!compacted) {
         setNotice(t("timeline.contextCompactUnavailable"));
         return;
       }
-      await loadSessionMessages(id);
       setOpen(false);
     } catch (err) {
       console.error("summarizeSession failed:", err);

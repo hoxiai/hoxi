@@ -1,10 +1,15 @@
 // web/src/components/models/AgentPolicyMcpTab.tsx
 import { createSignal, For, onMount, Show } from "solid-js";
 import { Check, Cpu, Plus, Trash2 } from "lucide-solid";
-import { hoxiAPI } from "../../services/api";
 import { t } from "../../i18n";
-
-type PermMode = "ask" | "allow" | "deny";
+import {
+  deleteMcpServer,
+  fetchGlobalConfig,
+  isPermissionMode,
+  saveMcpServer,
+  updateGlobalPermissions,
+  type PermissionMode as PermMode,
+} from "../../store/workspace";
 
 export default function AgentPolicyMcpTab() {
   const [permEdit, setPermEdit] = createSignal<PermMode>("allow");
@@ -19,17 +24,11 @@ export default function AgentPolicyMcpTab() {
 
   onMount(async () => {
     try {
-      const cfg = await hoxiAPI.getGlobalConfig();
+      const cfg = await fetchGlobalConfig();
       const perm = cfg?.permission ?? {};
-      if (perm.edit === "ask" || perm.edit === "allow" || perm.edit === "deny") {
-        setPermEdit(perm.edit);
-      }
-      if (perm.bash === "ask" || perm.bash === "allow" || perm.bash === "deny") {
-        setPermBash(perm.bash);
-      }
-      if (perm.webfetch === "ask" || perm.webfetch === "allow" || perm.webfetch === "deny") {
-        setPermWebfetch(perm.webfetch);
-      }
+      if (isPermissionMode(perm.edit)) setPermEdit(perm.edit);
+      if (isPermissionMode(perm.bash)) setPermBash(perm.bash);
+      if (isPermissionMode(perm.webfetch)) setPermWebfetch(perm.webfetch);
       if (cfg?.mcp && typeof cfg.mcp === "object") {
         setMcpServers(cfg.mcp);
       }
@@ -43,14 +42,11 @@ export default function AgentPolicyMcpTab() {
     setSaving(true);
     setFeedback(null);
     try {
-      const cfg = await hoxiAPI.getGlobalConfig();
-      const nextPerm = {
-        ...(cfg?.permission ?? {}),
+      await updateGlobalPermissions({
         edit: permEdit(),
         bash: permBash(),
         webfetch: permWebfetch(),
-      };
-      await hoxiAPI.updateGlobalConfig({ ...cfg, permission: nextPerm });
+      });
       setFeedback({ ok: true, text: t("models.policyUpdated") });
       setTimeout(() => setFeedback(null), 3000);
     } catch (err: any) {
@@ -68,14 +64,12 @@ export default function AgentPolicyMcpTab() {
     setSaving(true);
     setFeedback(null);
     try {
-      const cfg = await hoxiAPI.getGlobalConfig();
       const entry =
         mcpType() === "local"
           ? { type: "local", command: target.split(/\s+/), enabled: true }
           : { type: "remote", url: target, enabled: true };
-      const nextMcp = { ...(cfg?.mcp ?? {}), [id]: entry };
-      await hoxiAPI.updateGlobalConfig({ ...cfg, mcp: nextMcp });
-      setMcpServers(nextMcp);
+      const cfg = await saveMcpServer(id, entry);
+      setMcpServers(cfg?.mcp && typeof cfg.mcp === "object" ? cfg.mcp : { [id]: entry });
       setMcpName("");
       setMcpTarget("");
       setFeedback({ ok: true, text: t("models.mcpAdded", { id }) });
@@ -91,11 +85,8 @@ export default function AgentPolicyMcpTab() {
     if (saving()) return;
     setSaving(true);
     try {
-      const cfg = await hoxiAPI.getGlobalConfig();
-      const nextMcp = { ...(cfg?.mcp ?? {}) };
-      delete nextMcp[id];
-      await hoxiAPI.updateGlobalConfig({ ...cfg, mcp: nextMcp });
-      setMcpServers(nextMcp);
+      const cfg = await deleteMcpServer(id);
+      setMcpServers(cfg?.mcp && typeof cfg.mcp === "object" ? cfg.mcp : {});
       setFeedback({ ok: true, text: t("models.mcpRemoved", { id }) });
       setTimeout(() => setFeedback(null), 3000);
     } catch (err: any) {

@@ -1,13 +1,15 @@
 // web/src/store/git-commit.ts
 import { createSignal } from "solid-js";
 import { locale, t } from "../i18n";
-import { hoxiAPI } from "../services/api";
+import { hoxiAPI, type CommitAndPushResponse } from "../services/api";
 import type { MessagePart, SnapshotFileDiff } from "../services/sse-types";
 import { AUTO_PROVIDER_ID, isModelFree, resolveAutoModelTarget } from "./auto-models";
 import { canSteerSession } from "./session-capabilities";
 import { workspace, type SelectedModel } from "./workspace-state";
-import { sessionDirectory } from "./session-query";
+import { activeDirectory, sessionDirectory } from "./session-query";
 import { submitSessionPrompt } from "./session-goal";
+import { refreshWorktreeStatus } from "./session-diffs";
+import { loadSessionMessages, loadSessionMessagesOnly } from "./workspace-sessions";
 
 export const COMMIT_MODEL_STORAGE_KEY = "hoxi-commit-model:v1";
 
@@ -330,4 +332,55 @@ export async function executeTaskCommitAndPush(
   // Dispatch is not completion; the agent reports actual Git results in the timeline.
   // Override only this prompt; the session's saved model remains unchanged.
   return submitSessionPrompt(prompt, activeID, { agent: "build", model: cheapModel });
+}
+
+function worktreeTarget(directory?: string): { sessionID: string | null; key: string; directory?: string } {
+  const sessionID = workspace.activeSessionID;
+  return {
+    sessionID,
+    key: sessionID || "__root__",
+    directory: directory || activeDirectory() || workspace.rootDir || undefined,
+  };
+}
+
+/**
+ * Commits the active session's worktree (or one repo of a multi-repo workspace
+ * via `directory`), optionally pushing, then refreshes git status and the
+ * transcript of the session that was committed.
+ */
+export async function commitWorktreeChanges(
+  message: string,
+  options: { push?: boolean; directory?: string } = {}
+): Promise<CommitAndPushResponse> {
+  const target = worktreeTarget(options.directory);
+  const res = await hoxiAPI.commitWorktree(target.key, message, {
+    push: options.push,
+    directory: target.directory,
+  });
+  await refreshWorktreeStatus(target.sessionID);
+  if (target.sessionID) await loadSessionMessagesOnly(target.sessionID);
+  return res;
+}
+
+/** Pushes the active session's worktree branch (or one repo via `directory`). */
+export async function pushWorktreeChanges(directory?: string): Promise<CommitAndPushResponse> {
+  const target = worktreeTarget(directory);
+  const res = await hoxiAPI.pushWorktree(target.key, target.directory);
+  await refreshWorktreeStatus(target.sessionID);
+  return res;
+}
+
+/**
+ * Discards one file's uncommitted changes (`directory` selects the repo in a
+ * multi-repo workspace), then refreshes git status and the active transcript.
+ */
+export async function revertWorktreeFileChanges(
+  sessionKey: string,
+  file: string,
+  directory?: string
+): Promise<void> {
+  const sessionID = workspace.activeSessionID;
+  await hoxiAPI.revertWorktreeFile(sessionKey, file, directory || activeDirectory() || workspace.rootDir || undefined);
+  await refreshWorktreeStatus(sessionID);
+  if (sessionID) await loadSessionMessages(sessionID);
 }

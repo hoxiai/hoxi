@@ -6,6 +6,7 @@ export * from "./workspace-state";
 export * from "./inspector";
 export * from "./session-query";
 export * from "./workspace-folders";
+export * from "./global-config";
 export * from "./workspace-providers";
 export * from "./provider-catalog";
 export * from "./session-ai";
@@ -30,6 +31,7 @@ export * from "./provider-audit";
 export * from "./settings";
 export * from "./daily-pulse";
 export * from "./auth-state";
+export * from "./handoff";
 export * from "./updater-state";
 export * from "./leaderboard-state";
 export * from "./prompt-history";
@@ -43,6 +45,10 @@ export * from "./terminal-context";
 export * from "./telemetry";
 export * from "./session-capabilities";
 export * from "./session-transcripts";
+export * from "./orchestration";
+export * from "./command-sandbox";
+export * from "./code-index";
+export * from "./browser";
 
 
 

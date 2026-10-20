@@ -1,7 +1,7 @@
 // web/src/store/settings.ts
 import { createSignal } from "solid-js";
 import { createStore } from "solid-js/store";
-import { hoxiAPI } from "../services/api";
+import { hoxiAPI, type SystemRuntimeInfo } from "../services/api";
 import { setWorkspace, THEME_KEY, workspace, type ProviderModalTab } from "./workspace-state";
 
 export type ApprovalMode = "auto" | "smart" | "manual";
@@ -466,6 +466,15 @@ export function syncKeepAwakeFromBackend(enabled: boolean) {
     setAppSettings("keepAwakeWhileRunning", enabled);
     persistAppSettings();
   }
+}
+
+/** Reads gateway/runtime info and adopts the backend's keep-awake state. */
+export async function fetchSystemRuntimeInfo(): Promise<SystemRuntimeInfo> {
+  const info = await hoxiAPI.getSystemInfo();
+  if (typeof info?.status?.keepAwakeEnabled === "boolean") {
+    syncKeepAwakeFromBackend(info.status.keepAwakeEnabled);
+  }
+  return info;
 }
 
 export function resetAllAppSettings() {

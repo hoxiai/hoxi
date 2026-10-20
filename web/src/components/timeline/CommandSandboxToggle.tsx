@@ -6,7 +6,7 @@ import {
   fetchSandboxSession,
   updateSandboxSession,
   type SandboxSessionState,
-} from "../../services/sandbox-api";
+} from "../../store/workspace";
 
 export default function CommandSandboxToggle(props: {
   sessionID?: string | null;

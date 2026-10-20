@@ -4,8 +4,8 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
-import { getGatewayToken, hoxiAPI } from "../../services/api";
-import { activeDirectory, appSettings, appendTerminalOutput, workspace } from "../../store/workspace";
+import { getGatewayToken } from "../../services/api";
+import { activeDirectory, appSettings, appendTerminalOutput, terminalPTYAPI, workspace } from "../../store/workspace";
 import { t } from "../../i18n";
 import { startTerminalConnection } from "./terminal-connection";
 
@@ -155,7 +155,7 @@ export default function WebGLTerminal() {
     });
     connection = startTerminalConnection({
       directory,
-      api: hoxiAPI,
+      api: terminalPTYAPI,
       connect: (id, dir) => new WebSocket(wsEndpoint(id, dir)),
       size: fitSize,
       write: (data) => {

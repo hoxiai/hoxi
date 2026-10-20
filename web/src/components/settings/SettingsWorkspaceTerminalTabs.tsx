@@ -9,15 +9,16 @@ import {
   SlidersHorizontal,
   Terminal as TerminalIcon,
 } from "lucide-solid";
-import { hoxiAPI } from "../../services/api";
 import {
   appSettings,
   closeSettingsModal,
+  fetchGlobalConfig,
   openProviderModal,
   setObserverAutoAudit,
   setSidebarProjectMode,
   switchActiveSessionSandboxMode,
   updateAppSetting,
+  updateGlobalPermissions,
   workspace,
   type DiffLayoutMode,
   type WorktreeApplyStrategy,
@@ -179,7 +180,7 @@ export function TerminalSafetySettingsTab() {
 
   onMount(async () => {
     try {
-      const cfg = await hoxiAPI.getGlobalConfig();
+      const cfg = await fetchGlobalConfig();
       const perm = cfg?.permission ?? {};
       if (perm.edit === "allow" || perm.edit === "ask") setPermEdit(perm.edit);
       if (perm.bash === "allow" || perm.bash === "ask") setPermBash(perm.bash);
@@ -201,14 +202,11 @@ export function TerminalSafetySettingsTab() {
     setSavingPerm(true);
     setPermNote(null);
     try {
-      const cfg = await hoxiAPI.getGlobalConfig();
-      const nextPerm = {
-        ...(cfg?.permission ?? {}),
+      await updateGlobalPermissions({
         edit: kind === "edit" ? mode : permEdit(),
         bash: kind === "bash" ? mode : permBash(),
         webfetch: kind === "webfetch" ? mode : permWebfetch(),
-      };
-      await hoxiAPI.updateGlobalConfig({ ...cfg, permission: nextPerm });
+      });
       setPermNote(t("models.policyUpdated"));
       setTimeout(() => setPermNote(null), 2500);
     } catch {

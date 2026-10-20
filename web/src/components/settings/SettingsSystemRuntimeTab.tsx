@@ -1,21 +1,20 @@
 // web/src/components/settings/SettingsSystemRuntimeTab.tsx
 import { createSignal, onMount, Show } from "solid-js";
 import { Activity, ArrowUpCircle, CheckCircle2, Cpu, Download, ExternalLink, KeyRound, RefreshCw, RotateCcw, ShieldCheck } from "lucide-solid";
-import { hoxiAPI, type SystemRuntimeInfo } from "../../services/api";
+import type { SystemRuntimeInfo } from "../../services/api";
 import {
   appSettings,
   checkDesktopUpdate,
   closeSettingsModal,
   desktopUpdater,
-  loadAgents,
-  loadProviders,
+  fetchSystemRuntimeInfo,
   openExternalURL,
   openProviderModal,
   refreshDesktopUpdateStatus,
+  reloadOpenCodeEngine,
   resetAllAppSettings,
   resetProviderTelemetry,
   startDesktopUpdate,
-  syncKeepAwakeFromBackend,
   updateAppSetting,
   workspace,
 } from "../../store/workspace";
@@ -30,11 +29,7 @@ export function SystemRuntimeSettingsTab() {
 
   const fetchInfo = async () => {
     try {
-      const info = await hoxiAPI.getSystemInfo();
-      setSysInfo(info);
-      if (typeof info?.status?.keepAwakeEnabled === "boolean") {
-        syncKeepAwakeFromBackend(info.status.keepAwakeEnabled);
-      }
+      setSysInfo(await fetchSystemRuntimeInfo());
     } catch {
       /* ignore */
     }
@@ -57,12 +52,8 @@ export function SystemRuntimeSettingsTab() {
     if (reloading()) return;
     setReloading(true);
     try {
-      await hoxiAPI.disposeGlobal();
-      await Promise.allSettled([
-        loadProviders(),
-        loadAgents(workspace.rootDir || undefined),
-        fetchInfo(),
-      ]);
+      await reloadOpenCodeEngine();
+      await fetchInfo();
       showToast(t("settings.reloadEngineSuccess"));
     } catch {
       /* ignore */

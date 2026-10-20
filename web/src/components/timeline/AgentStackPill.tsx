@@ -4,10 +4,9 @@ import {
   ArrowLeft, Bot, CheckCircle2, ChevronDown, ChevronUp, ExternalLink,
   LoaderCircle, RotateCcw, ShieldAlert, Square, X,
 } from "lucide-solid";
-import { hoxiAPI } from "../../services/api";
 import {
-  markSessionInterrupted, resumeAllInterruptedSubagents, resumeSubagentTask,
-  selectSession, sessionDirectory, workspace,
+  resumeAllInterruptedSubagents, resumeSubagentTask, selectSession, stopSessionTask,
+  workspace,
 } from "../../store/workspace";
 import { DiffChanges, Spinner } from "../icons";
 import { t } from "../../i18n";
@@ -57,12 +56,14 @@ export default function AgentStackPill() {
   );
   const isActionable = createMemo(() => {
     const rid = rootID();
-    const sessionInterrupted = Boolean(rid && workspace.interruptedBySession[rid]);
+    const hasExplicitInterrupt =
+      Boolean(rid && workspace.interruptedBySession[rid]) ||
+      interruptedList().some((s) => Boolean(workspace.interruptedBySession[s.sessionID]));
     return (
       runningCount() > 0 ||
       attentionCount() > 0 ||
       isViewingSubagent() ||
-      (sessionInterrupted && interruptedList().length > 0)
+      (hasExplicitInterrupt && interruptedList().length > 0)
     );
   });
   const isAllDone = createMemo(() => subagents().length > 0 && !isActionable());
@@ -133,11 +134,8 @@ export default function AgentStackPill() {
   const stopSubagent = async (subID: string) => {
     if (stoppingID()) return;
     setStoppingID(subID);
-    markSessionInterrupted(subID, "stopped");
     try {
-      await hoxiAPI.abortSession(subID, sessionDirectory(subID));
-    } catch (err) {
-      console.error("abort subagent failed:", err);
+      await stopSessionTask(subID);
     } finally {
       setStoppingID(null);
     }
@@ -147,13 +145,8 @@ export default function AgentStackPill() {
     const running = subagents().filter((s) => s.status === "running");
     if (running.length === 0 || stoppingID()) return;
     setStoppingID("all");
-    for (const s of running) markSessionInterrupted(s.sessionID, "stopped");
     try {
-      await Promise.all(
-        running.map((s) =>
-          hoxiAPI.abortSession(s.sessionID, sessionDirectory(s.sessionID)).catch(() => {})
-        )
-      );
+      await Promise.all(running.map((s) => stopSessionTask(s.sessionID)));
     } finally {
       setStoppingID(null);
     }

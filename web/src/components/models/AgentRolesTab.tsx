@@ -15,14 +15,13 @@ import {
   RotateCcw,
   Sparkles,
   Trash2,
-  X,
 } from "lucide-solid";
 import {
+  fetchGlobalConfig,
   loadAgents,
   updateGlobalModelConfig,
   workspace,
 } from "../../store/workspace";
-import { hoxiAPI } from "../../services/api";
 import { t } from "../../i18n";
 import { getConnectedProviderModelGroups } from "./model-selector-utils";
 
@@ -107,7 +106,7 @@ export default function AgentRolesTab() {
     setCreating(true);
     setFormFeedback(null);
     try {
-      const cfg = await hoxiAPI.getGlobalConfig();
+      const cfg = await fetchGlobalConfig();
       const existing = cfg?.agent?.[id] ?? {};
       const entry: Record<string, any> = {
         ...existing,
@@ -138,10 +137,8 @@ export default function AgentRolesTab() {
     if (savingKey() === `del:${id}`) return;
     setSavingKey(`del:${id}`);
     try {
-      const cfg = await hoxiAPI.getGlobalConfig();
-      const nextAgent = { ...(cfg?.agent ?? {}) };
-      delete nextAgent[id];
-      await updateGlobalModelConfig({ agent: nextAgent });
+      // PATCH deep-merges; null is the only way to drop a key from .hoxi/models.json.
+      await updateGlobalModelConfig({ agent: { [id]: null } });
       await loadAgents(workspace.rootDir || undefined);
     } catch {
       /* ignore */
@@ -159,7 +156,7 @@ export default function AgentRolesTab() {
   const saveEditAgent = async (id: string) => {
     setSavingKey(`edit:${id}`);
     try {
-      const cfg = await hoxiAPI.getGlobalConfig();
+      const cfg = await fetchGlobalConfig();
       const existing = cfg?.agent?.[id] ?? {};
       const entry = {
         ...existing,

@@ -21,7 +21,7 @@ import {
   type ConvoyPlan,
   type ConvoyTaskSpec,
   type ConvoyTaskStatus,
-} from "../../services/orchestration-api";
+} from "../../store/workspace";
 
 type DraftTask = { id: string; prompt: string; depends: string };
 

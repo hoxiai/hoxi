@@ -1,7 +1,7 @@
 // web/src/components/timeline/composer-hooks.ts
 import { type Accessor, createEffect, createSignal, type Setter } from "solid-js";
 import { t } from "../../i18n";
-import { createPromptHistory } from "../../store/prompt-history";
+import { createPromptHistory, uploadPromptAttachment } from "../../store/workspace";
 import { hoxiAPI, type PromptAttachment } from "../../services/api";
 import {
   applyAutocompleteToken,
@@ -259,13 +259,12 @@ export function createImageAttachments(sessionID?: Accessor<string | null>) {
 
     if (typeof window !== "undefined" && item.dataUrl.startsWith("data:")) {
       setPendingCount((n) => n + 1);
-      void hoxiAPI
-        .uploadAttachment({
-          sessionID: targetKey === "__new__" ? undefined : targetKey,
-          filename: rawName,
-          mime: normMime,
-          dataUrl: item.dataUrl,
-        })
+      void uploadPromptAttachment({
+        sessionID: targetKey === "__new__" ? undefined : targetKey,
+        filename: rawName,
+        mime: normMime,
+        dataUrl: item.dataUrl,
+      })
         .then((uploaded) => {
           commitAttachmentForTarget(targetKey, targetEpoch, {
             id,

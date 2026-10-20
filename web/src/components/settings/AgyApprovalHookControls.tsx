@@ -1,7 +1,12 @@
 // web/src/components/settings/AgyApprovalHookControls.tsx
 import { createSignal, onMount, Show } from "solid-js";
 import { RefreshCw, Trash2, Wrench } from "lucide-solid";
-import { runnerAPI, type AgyHookStatus } from "../../services/runner-api";
+import {
+  fetchAgyHookStatus,
+  installAgyHook,
+  uninstallAgyHook,
+  type AgyHookStatus,
+} from "../../store/workspace";
 import { t } from "../../i18n";
 import { Spinner } from "../icons";
 import { SettingGroup, SettingRow } from "./SettingsModal";
@@ -66,17 +71,17 @@ export function AgyApprovalHookControls() {
     try {
       const next =
         kind === "install"
-          ? await runnerAPI.installAgyHook()
+          ? await installAgyHook()
           : kind === "uninstall"
-            ? await runnerAPI.uninstallAgyHook()
-            : await runnerAPI.getAgyHookStatus();
+            ? await uninstallAgyHook()
+            : await fetchAgyHookStatus();
       setStatus(next);
     } catch (err) {
       setActionError(errorText(err));
       // A failed write still leaves hooks.json in some state worth showing.
       if (kind !== "load") {
         try {
-          setStatus(await runnerAPI.getAgyHookStatus());
+          setStatus(await fetchAgyHookStatus());
         } catch {
           /* keep previous status */
         }

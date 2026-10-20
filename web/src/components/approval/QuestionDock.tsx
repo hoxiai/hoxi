@@ -2,10 +2,8 @@
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { Check, HelpCircle, LoaderCircle, MessageSquarePlus, X } from "lucide-solid";
 import type { QuestionInfo, QuestionRequest } from "../../services/sse-types";
-import { hoxiAPI } from "../../services/api";
-import { sessionDirectory, setWorkspace } from "../../store/workspace";
-import { rememberQuestionReject, rememberQuestionReply } from "../../store/question-answers";
-import { locale, t } from "../../i18n";
+import { rejectQuestionRequest, replyQuestionRequest } from "../../store/workspace";
+import { t } from "../../i18n";
 
 /**
  * Ported from kilocode QuestionDock.tsx:
@@ -60,22 +58,12 @@ export default function QuestionDock(props: { request: QuestionRequest }) {
     return buildAnswers().every((ans) => ans.length > 0);
   });
 
-  const removeFromStore = () => {
-    setWorkspace("pendingQuestions", (prev) =>
-      prev.filter((q) => q.id !== props.request.id)
-    );
-  };
-
   const onSubmit = async () => {
     if (sending() || rejecting() || !canSubmit()) return;
     setSending(true);
     setError(null);
-    const dir = sessionDirectory(props.request.sessionID);
-    const answers = buildAnswers();
     try {
-      await hoxiAPI.replyQuestion(props.request.id, answers, dir);
-      rememberQuestionReply(props.request.id, props.request.sessionID, answers);
-      removeFromStore();
+      await replyQuestionRequest(props.request, buildAnswers());
     } catch (err) {
       console.error("replyQuestion failed:", err);
       setError(String(err));
@@ -87,11 +75,8 @@ export default function QuestionDock(props: { request: QuestionRequest }) {
     if (sending() || rejecting()) return;
     setRejecting(true);
     setError(null);
-    const dir = sessionDirectory(props.request.sessionID);
     try {
-      await hoxiAPI.rejectQuestion(props.request.id, dir);
-      rememberQuestionReject(props.request.id, props.request.sessionID);
-      removeFromStore();
+      await rejectQuestionRequest(props.request);
     } catch (err) {
       console.error("rejectQuestion failed:", err);
       setError(String(err));

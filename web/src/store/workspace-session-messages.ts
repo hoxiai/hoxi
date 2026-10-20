@@ -212,6 +212,15 @@ function requestTimelineFollow(sessionID: string) {
   setTimelineFollowRequest((prev) => ({ sessionID, seq: (prev?.seq ?? 0) + 1 }));
 }
 
+export function uploadPromptAttachment(input: {
+  sessionID?: string;
+  filename: string;
+  mime: string;
+  dataUrl: string;
+}) {
+  return hoxiAPI.uploadAttachment(input);
+}
+
 export async function dispatchSessionPrompt(
   promptText: string,
   targetSessionID?: string | null,

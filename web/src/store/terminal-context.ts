@@ -79,6 +79,13 @@ export function clearTerminalOutput(directory?: string): void {
   setTerminalBufferVersion((v) => v + 1);
 }
 
+export const terminalPTYAPI = {
+  createPTY: (directory: string) => hoxiAPI.createPTY(directory),
+  deletePTY: (id: string, directory: string) => hoxiAPI.deletePTY(id, directory),
+  resizePTY: (id: string, cols: number, rows: number, directory: string) =>
+    hoxiAPI.resizePTY(id, cols, rows, directory),
+};
+
 function collectSessionShellFallback(sessionID: string | null): string {
   if (!sessionID) return "";
   const turns = workspace.messagesBySession[sessionID] ?? [];

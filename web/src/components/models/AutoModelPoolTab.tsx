@@ -14,6 +14,7 @@ import {
   Zap,
 } from "lucide-solid";
 import {
+  applyFreeTierGuideProvider,
   AUTO_PROVIDER_ID,
   autoPools,
   clearAutoPoolCooldowns,
@@ -36,14 +37,12 @@ import {
   resetAutoPoolToDefault,
   saveAutoPool,
   selectModel,
-  setWorkspace,
   stepAutoPoolNext,
   workspace,
   type AutoPoolCandidate,
   type AutoRotationStrategy,
   type FreeTierGuideItem,
 } from "../../store/workspace";
-import { hoxiAPI } from "../../services/api";
 import { ProviderIcon } from "../icons";
 import { locale, t } from "../../i18n";
 
@@ -193,29 +192,7 @@ export default function AutoModelPoolTab() {
   };
 
   const handleConnectGuideItem = async (item: FreeTierGuideItem) => {
-    if (item.customMode && item.baseURL) {
-      const existing = workspace.hoxiProviders?.[item.providerID];
-      if (!existing) {
-        const modelsObj: Record<string, any> = {};
-        for (const m of item.defaultModels || []) {
-          modelsObj[m.id] = {
-            name: m.name,
-            reasoning: m.reasoning,
-            cost: m.free ? { input: 0, output: 0 } : undefined,
-          };
-        }
-        await hoxiAPI
-          .saveHoxiProviderConfig(item.providerID, {
-            name: item.title || (item.providerID === "siliconflow" ? "SiliconFlow" : item.providerID),
-            npm: "@ai-sdk/openai-compatible",
-            options: { baseURL: item.baseURL },
-            models: modelsObj,
-          })
-          .catch(() => {});
-      }
-      openProviderModal("custom", item.providerID);
-      return;
-    }
+    await applyFreeTierGuideProvider(item);
     openProviderModal("custom", item.providerID);
   };
 
