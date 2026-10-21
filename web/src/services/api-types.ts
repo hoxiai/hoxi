@@ -195,6 +195,7 @@ export interface SystemRuntimeInfo {
   openCodeBinPath: string;
   openCodeVersion: string;
   openCodePort: number;
+  openCodeReady?: boolean;
   wsBaseURL: string;
   rootDir: string;
   userConfigPath: string;

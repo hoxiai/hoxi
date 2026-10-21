@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"os/exec"
 	"time"
 
@@ -48,6 +49,49 @@ func (a *DesktopApp) startOpenCode(ctx context.Context, binPath string, port int
 	}
 	a.childMu.Unlock()
 	return child, nil
+}
+
+// EnsureEngine resolves (downloading and verifying when needed) the OpenCode
+// binary and makes sure the supervised daemon is healthy on the boot-time
+// loopback port. The settings page uses it to install or retry after a failed
+// background bootstrap.
+func (a *DesktopApp) EnsureEngine(ctx context.Context) error {
+	a.engineMu.Lock()
+	defer a.engineMu.Unlock()
+
+	if a.openCodePort == 0 || a.openCodePass == "" {
+		return errors.New("opencode endpoint is not configured")
+	}
+	binPath, err := opencode.ResolveOrInstall(ctx, a.cfg.OpenCode, a.logger)
+	if err != nil {
+		return err
+	}
+	if err := opencode.WaitForHealth(ctx, a.openCodePort, a.openCodePass, 2*time.Second); err == nil {
+		return nil
+	}
+
+	// Detach the stale child before killing it: its waiter then sees a newer
+	// owner and neither clears the status nor triggers an automatic respawn.
+	a.childMu.Lock()
+	stale := a.child
+	a.child = nil
+	a.respawns = nil
+	a.childMu.Unlock()
+	if stale != nil && stale.Process != nil {
+		_ = stale.Process.Kill()
+		_, _ = stale.Process.Wait()
+	}
+
+	startCtx := a.runCtx
+	if startCtx == nil {
+		startCtx = ctx
+	}
+	child, err := a.startOpenCode(startCtx, binPath, a.openCodePort, a.openCodePass)
+	if err != nil {
+		return err
+	}
+	a.setChild(child)
+	return nil
 }
 
 // respawnBudget reports the backoff for the next restart, or false once the

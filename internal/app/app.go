@@ -99,6 +99,10 @@ type DesktopApp struct {
 	child           *exec.Cmd
 	childDone       chan struct{}
 	childStopped    bool
+	engineMu        sync.Mutex
+	runCtx          context.Context
+	openCodePort    int
+	openCodePass    string
 	identity        AppIdentity
 	respawn         respawner
 	respawns        []time.Time
@@ -171,13 +175,17 @@ func Run(distFS fs.FS) {
 	defer gw.CloseBrowser()
 
 	app := &DesktopApp{
-		cfg:      cfg,
-		identity: identity,
-		logger:   logger,
-		gateway:  gw,
-		status:   statusTracker,
+		cfg:          cfg,
+		identity:     identity,
+		logger:       logger,
+		gateway:      gw,
+		status:       statusTracker,
+		runCtx:       ctx,
+		openCodePort: port,
+		openCodePass: password,
 	}
 	defer app.killChild()
+	gw.SetEngineInstaller(app.EnsureEngine)
 
 	// The plugin must know the actual fallback port before OpenCode starts.
 	host, _, addrErr := net.SplitHostPort(cfg.Address)
@@ -567,11 +575,15 @@ func StartEphemeralHeadless(ctx context.Context, rootDir string) (string, func()
 			RootDir:   rootDir,
 			NoDesktop: true,
 		},
-		logger:     quietLogger,
-		gateway:    gw,
-		status:     statusTracker,
-		browserEnv: browserEnv,
+		logger:       quietLogger,
+		gateway:      gw,
+		status:       statusTracker,
+		browserEnv:   browserEnv,
+		runCtx:       ctx,
+		openCodePort: port,
+		openCodePass: password,
 	}
+	gw.SetEngineInstaller(dapp.EnsureEngine)
 
 	if localBin := opencode.FindBinary(dapp.cfg.OpenCode); localBin != "" {
 		if child, startErr := dapp.startOpenCode(ctx, localBin, port, password); startErr == nil {

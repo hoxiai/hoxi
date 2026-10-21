@@ -69,6 +69,9 @@ type Gateway struct {
 	updateMutations       int
 	updateDirectories     map[string]bool
 	pulseCache            devPulseCache
+	engineMu              sync.Mutex
+	engineInstaller       func(context.Context) error
+	engineInstalling      bool
 }
 
 func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statusbar.Tracker) *Gateway {
@@ -175,6 +178,14 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 }
 
 func (g *Gateway) SetBrowserAgentToken(token string) { g.browser.SetAgentToken(token) }
+
+// SetEngineInstaller lets the desktop host resolve, verify and restart the
+// supervised OpenCode daemon when the user asks to install or retry.
+func (g *Gateway) SetEngineInstaller(fn func(context.Context) error) {
+	g.engineMu.Lock()
+	g.engineInstaller = fn
+	g.engineMu.Unlock()
+}
 
 func (g *Gateway) HandleAuthCallback(ctx context.Context, rawURL string) error {
 	return g.auth.HandleCallback(ctx, rawURL)
@@ -326,6 +337,7 @@ func (g *Gateway) registerRoutes(distFS fs.FS) {
 	})
 
 	g.mux.HandleFunc("/api/hoxi/system-info", g.handleSystemRuntimeInfo)
+	g.mux.HandleFunc("/api/hoxi/engine/install", g.handleEngineInstall)
 	g.mux.HandleFunc("/api/hoxi/keep-awake", g.handleKeepAwake)
 	g.mux.HandleFunc("/api/hoxi/sandbox/session", g.handleSandboxSession)
 	g.mux.HandleFunc("/api/hoxi/clipboard/images", g.handleClipboardImages)

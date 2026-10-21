@@ -548,6 +548,15 @@ export async function reloadOpenCodeEngine(): Promise<void> {
   await Promise.allSettled([loadProviders(), loadAgents(workspace.rootDir || undefined)]);
 }
 
+/** Installs the pinned engine when missing and restarts the supervised daemon. */
+export async function installOpenCodeEngine(): Promise<void> {
+  await hoxiAPI.installEngine();
+  await Promise.allSettled([
+    loadProviders(true),
+    loadAgents(workspace.rootDir || undefined),
+  ]);
+}
+
 export function authorizeProviderOAuth(
   providerID: string,
   method: number

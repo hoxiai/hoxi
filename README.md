@@ -100,7 +100,7 @@ Long sessions forget early architectural constraints; third-party API gateways s
 - **Go** `>= 1.23`
 - **Node.js** `>= 20` (or **Bun** `>= 1.2`)
 - **Wails CLI v2** (`go install github.com/wailsapp/wails/v2/cmd/wails@v2.13.0`)
-- At least one supported agent CLI installed on `PATH`: [`opencode`](https://github.com/anomalyco/opencode), `claude`, `agy`, `qoder`, or `codebuddy`
+- **Agent engine**: release builds bundle [`opencode`](https://github.com/anomalyco/opencode), and development runs auto-download the pinned, SHA-256-verified binary into `~/.hoxi/bin` when missing. Alternatively install `opencode`, `claude`, `agy`, `qoder`, or `codebuddy` on `PATH`
 
 ### Run in Development
 ```bash

@@ -8,6 +8,7 @@ import {
   closeSettingsModal,
   desktopUpdater,
   fetchSystemRuntimeInfo,
+  installOpenCodeEngine,
   openExternalURL,
   openProviderModal,
   refreshDesktopUpdateStatus,
@@ -21,10 +22,12 @@ import {
 import { Spinner } from "../icons";
 import { t } from "../../i18n";
 import { SettingGroup, SettingRow, ToggleSwitch } from "./setting-controls";
+import { RemoteTunnelControls } from "./RemoteTunnelControls";
 
 export function SystemRuntimeSettingsTab() {
   const [sysInfo, setSysInfo] = createSignal<SystemRuntimeInfo | null>(null);
   const [reloading, setReloading] = createSignal(false);
+  const [installingEngine, setInstallingEngine] = createSignal(false);
   const [actionToast, setActionToast] = createSignal<string | null>(null);
 
   const fetchInfo = async () => {
@@ -61,6 +64,27 @@ export function SystemRuntimeSettingsTab() {
       setReloading(false);
     }
   };
+
+  const onInstallEngine = async () => {
+    if (installingEngine()) return;
+    setInstallingEngine(true);
+    try {
+      await installOpenCodeEngine();
+      await fetchInfo();
+      showToast(t("settings.engineInstallSuccess"));
+    } catch (err) {
+      showToast(
+        t("settings.engineInstallFailed", {
+          error: err instanceof Error ? err.message : String(err),
+        })
+      );
+    } finally {
+      setInstallingEngine(false);
+    }
+  };
+
+  const engineReady = () =>
+    sysInfo() ? Boolean(sysInfo()!.openCodeReady) : workspace.connected;
 
   const onClearTelemetry = async () => {
     await resetProviderTelemetry();
@@ -287,6 +311,9 @@ export function SystemRuntimeSettingsTab() {
         </Show>
       </SettingGroup>
 
+      {/* Remote control from the mobile app via GoPanel */}
+      <RemoteTunnelControls />
+
       {/* 2. OpenCode Runtime Diagnostics */}
       <SettingGroup
         title={t("settings.sectionRuntimeTitle")}
@@ -306,12 +333,14 @@ export function SystemRuntimeSettingsTab() {
           <span class="inline-flex items-center gap-2 text-[13px] font-medium text-[var(--text-primary)]">
             <span
               class={`h-2.5 w-2.5 rounded-full ${
-                workspace.connected
-                  ? "bg-[var(--ok)]"
-                  : "bg-[var(--warn)] animate-pulse"
+                engineReady() ? "bg-[var(--ok)]" : "bg-[var(--warn)] animate-pulse"
               }`}
             />
-            {workspace.connected ? t("common.ready") : t("common.connecting")}
+            {engineReady()
+              ? t("common.ready")
+              : sysInfo()
+                ? t("settings.engineNotReady")
+                : t("common.connecting")}
             <Show when={sysInfo()?.openCodeVersion}>
               <span class="ml-1 rounded-md bg-[var(--bg-panel)] px-2 py-0.5 font-mono text-[12px] text-[var(--text-muted)]">
                 {sysInfo()?.openCodeVersion}
@@ -387,6 +416,23 @@ export function SystemRuntimeSettingsTab() {
             {reloading()
               ? t("settings.reloadingEngineBtn")
               : t("settings.reloadEngineBtn")}
+          </button>
+
+          <button
+            type="button"
+            disabled={installingEngine()}
+            onClick={() => void onInstallEngine()}
+            class="inline-flex items-center gap-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] px-4 py-2 text-[13px] font-medium text-[var(--text-primary)] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-wait"
+          >
+            <Show
+              when={installingEngine()}
+              fallback={<Download size={14} class="text-[var(--accent-primary)]" />}
+            >
+              <Spinner class="h-3.5 w-3.5" />
+            </Show>
+            {installingEngine()
+              ? t("settings.engineInstallingBtn")
+              : t("settings.engineInstallBtn")}
           </button>
 
           <button

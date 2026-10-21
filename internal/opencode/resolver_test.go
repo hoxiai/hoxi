@@ -6,6 +6,8 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"io"
 	"log/slog"
 	"net"
@@ -46,6 +48,68 @@ func TestOpenCodeResolverAndPathEnrichment(t *testing.T) {
 	}
 	if _, _, err := OfficialReleaseURL("darwin", "386"); err == nil {
 		t.Fatal("expected error for unsupported architecture")
+	}
+}
+
+func TestPinnedReleaseArchiveChecksums(t *testing.T) {
+	platforms := []string{
+		"darwin/arm64",
+		"darwin/amd64",
+		"linux/arm64",
+		"linux/amd64",
+		"windows/arm64",
+		"windows/amd64",
+	}
+	for _, platform := range platforms {
+		goos, goarch, _ := strings.Cut(platform, "/")
+		pinned := pinnedReleaseSHA256[platform]
+		if !isSHA256Hex(pinned) {
+			t.Fatalf("missing or invalid pinned SHA-256 for %s: %q", platform, pinned)
+		}
+		got, err := expectedArchiveSHA256(goos, goarch)
+		if err != nil || got != pinned {
+			t.Fatalf("expectedArchiveSHA256(%s) = %q, %v; want %q", platform, got, err, pinned)
+		}
+	}
+	if _, err := expectedArchiveSHA256("freebsd", "amd64"); err == nil {
+		t.Fatal("expected error for a platform without a pinned checksum")
+	}
+}
+
+func TestExpectedArchiveSHA256Override(t *testing.T) {
+	override := strings.Repeat("a", sha256.Size*2)
+	t.Setenv("HOXI_OPENCODE_SHA256", strings.ToUpper(override))
+	got, err := expectedArchiveSHA256("darwin", "arm64")
+	if err != nil || got != override {
+		t.Fatalf("override = %q, %v; want %q", got, err, override)
+	}
+
+	t.Setenv("HOXI_OPENCODE_SHA256", "not-a-digest")
+	if _, err := expectedArchiveSHA256("darwin", "arm64"); err == nil {
+		t.Fatal("expected error for an invalid checksum override")
+	}
+}
+
+func TestVerifyArchiveSHA256(t *testing.T) {
+	raw := []byte("opencode archive bytes")
+	sum := sha256.Sum256(raw)
+	valid := hex.EncodeToString(sum[:])
+	if err := verifyArchiveSHA256(raw, valid); err != nil {
+		t.Fatalf("expected checksum to verify: %v", err)
+	}
+	if err := verifyArchiveSHA256(raw, strings.Repeat("0", sha256.Size*2)); err == nil {
+		t.Fatal("expected checksum mismatch to be rejected")
+	}
+}
+
+func TestOfficialReleaseURLUsesPinnedVersion(t *testing.T) {
+	t.Setenv("HOXI_OPENCODE_VERSION", "v9.9.9")
+	url, _, err := OfficialReleaseURL("darwin", "arm64")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(url, "/download/v9.9.9/") {
+		t.Fatalf("expected versioned release URL, got %q", url)
 	}
 }
 

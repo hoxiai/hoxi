@@ -101,7 +101,7 @@
 - **Go** `>= 1.23`
 - **Node.js** `>= 20`（或 **Bun** `>= 1.2`）
 - **Wails CLI v2**（`go install github.com/wailsapp/wails/v2/cmd/wails@v2.13.0`）
-- 本机 `PATH` 已安装任意一个受支持的 Agent CLI：[`opencode`](https://github.com/anomalyco/opencode)、`claude`、`agy`、`qoder` 或 `codebuddy`
+- **Agent 引擎**：正式发布包已内置 [`opencode`](https://github.com/anomalyco/opencode)；开发模式会在缺失时自动下载经 SHA-256 校验的固定版本到 `~/.hoxi/bin`。也可以自行在 `PATH` 安装 `opencode`、`claude`、`agy`、`qoder` 或 `codebuddy`
 
 ### 本地开发运行
 ```bash

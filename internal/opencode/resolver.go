@@ -6,6 +6,9 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -176,12 +179,55 @@ func ResolveOrInstall(ctx context.Context, configured string, logger *slog.Logge
 		return found, nil
 	}
 
-	logger.Info("opencode binary not found locally; downloading official release into ~/.hoxi/bin...")
+	logger.Info("opencode binary not found locally; downloading official release into ~/.hoxi/bin",
+		"version", releaseVersion())
 	installed, err := downloadOfficialOpenCode(ctx, logger)
 	if err != nil {
 		return "", fmt.Errorf("opencode not found and auto-download failed: %w", err)
 	}
 	return installed, nil
+}
+
+// releaseVersion reports the pinned official release, or the HOXI_OPENCODE_VERSION
+// override used when maintainers verify a newer archive.
+func releaseVersion() string {
+	if custom := strings.TrimPrefix(strings.TrimSpace(os.Getenv("HOXI_OPENCODE_VERSION")), "v"); custom != "" {
+		return custom
+	}
+	return pinnedReleaseVersion
+}
+
+// expectedArchiveSHA256 resolves the trusted checksum for the current platform.
+// Admin-provided archives must supply HOXI_OPENCODE_SHA256; we never fall back
+// to unverified downloads.
+func expectedArchiveSHA256(goos, goarch string) (string, error) {
+	if override := strings.ToLower(strings.TrimSpace(os.Getenv("HOXI_OPENCODE_SHA256"))); override != "" {
+		if !isSHA256Hex(override) {
+			return "", errors.New("HOXI_OPENCODE_SHA256 must be a 64-character hex SHA-256 digest")
+		}
+		return override, nil
+	}
+	if pinned, ok := pinnedReleaseSHA256[goos+"/"+goarch]; ok && pinned != "" {
+		return pinned, nil
+	}
+	return "", fmt.Errorf("no pinned SHA-256 for %s/%s; set HOXI_OPENCODE_SHA256 to verify a custom archive", goos, goarch)
+}
+
+func isSHA256Hex(v string) bool {
+	if len(v) != sha256.Size*2 {
+		return false
+	}
+	decoded, err := hex.DecodeString(v)
+	return err == nil && len(decoded) == sha256.Size
+}
+
+func verifyArchiveSHA256(raw []byte, expected string) error {
+	sum := sha256.Sum256(raw)
+	actual := hex.EncodeToString(sum[:])
+	if subtle.ConstantTimeCompare([]byte(actual), []byte(expected)) != 1 {
+		return fmt.Errorf("opencode archive checksum mismatch: expected %s, got %s", expected, actual)
+	}
+	return nil
 }
 
 func OfficialReleaseURL(goos, goarch string) (url string, isZip bool, err error) {
@@ -225,13 +271,14 @@ func OfficialReleaseURLs(goos, goarch string) (urls []string, isZip bool, err er
 	}
 	asset := fmt.Sprintf("opencode-%s-%s%s", osName, archName, ext)
 
-	// 支持通过环境变量指定镜像加速
+	version := releaseVersion()
+	// 支持通过环境变量指定镜像加速（可带版本目录，也兼容旧的无版本布局）
 	var candidates []string
 	if custom := strings.TrimRight(os.Getenv("HOXI_OPENCODE_MIRROR"), "/"); custom != "" {
-		candidates = append(candidates, custom+"/"+asset)
+		candidates = append(candidates, custom+"/v"+version+"/"+asset, custom+"/"+asset)
 	}
-	// GitHub 官方源
-	candidates = append(candidates, "https://github.com/anomalyco/opencode/releases/latest/download/"+asset)
+	// GitHub 官方源：固定版本，配合 release_pins.go 的 SHA-256 校验
+	candidates = append(candidates, "https://github.com/anomalyco/opencode/releases/download/v"+version+"/"+asset)
 
 	return candidates, isZip, nil
 }
@@ -252,6 +299,10 @@ func downloadOfficialOpenCode(ctx context.Context, logger *slog.Logger) (string,
 	targetPath := filepath.Join(binDir, binName)
 
 	dlURLs, isZip, err := OfficialReleaseURLs(runtime.GOOS, runtime.GOARCH)
+	if err != nil {
+		return "", err
+	}
+	expectedSHA, err := expectedArchiveSHA256(runtime.GOOS, runtime.GOARCH)
 	if err != nil {
 		return "", err
 	}
@@ -294,6 +345,10 @@ func downloadOfficialOpenCode(ctx context.Context, logger *slog.Logger) (string,
 		return "", fmt.Errorf("failed to download opencode from all mirrors: %w", lastErr)
 	}
 
+	if err := verifyArchiveSHA256(archiveBytes, expectedSHA); err != nil {
+		return "", err
+	}
+
 	var binBytes []byte
 	if isZip {
 		binBytes, err = extractBinaryFromZip(archiveBytes, binName)
@@ -311,7 +366,7 @@ func downloadOfficialOpenCode(ctx context.Context, logger *slog.Logger) (string,
 	if err := os.Rename(tmpPath, targetPath); err != nil {
 		return "", err
 	}
-	logger.Info("installed official opencode binary", "path", targetPath)
+	logger.Info("installed official opencode binary", "path", targetPath, "version", releaseVersion())
 	return targetPath, nil
 }
 
