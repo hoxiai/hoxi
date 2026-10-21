@@ -4,6 +4,8 @@ import { locale, t } from "../i18n";
 import { hoxiAPI, type CommitAndPushResponse } from "../services/api";
 import type { MessagePart, SnapshotFileDiff } from "../services/sse-types";
 import { AUTO_PROVIDER_ID, isModelFree, resolveAutoModelTarget } from "./auto-models";
+import { resolveInternalLLMModel } from "./provider-catalog";
+import { findBestFallbackModel } from "./provider-health";
 import { canSteerSession } from "./session-capabilities";
 import { workspace, type SelectedModel } from "./workspace-state";
 import { activeDirectory, sessionDirectory } from "./session-query";
@@ -271,7 +273,16 @@ export async function generateSmartCommitMessage(
   }
 
   const fallback = synthesizeLocalCommitMessage(activeID, diffs);
-  const targetModel = resolveEffectiveCommitModel();
+  // Commit-message synthesis runs through Hoxi's HTTP LLM client, so CLI
+  // runtime models must never be selected here even though they are valid
+  // conversation models for runner-dispatched agent commits below.
+  const targetModel = resolveInternalLLMModel(
+    resolveEffectiveCommitModel(),
+    parseProviderModelKey(workspace.globalConfig?.model),
+    workspace.defaultAI?.model,
+    workspace.selectedModel,
+    findBestFallbackModel(undefined, { httpOnly: true })
+  );
   if (!targetModel) {
     return fallback;
   }

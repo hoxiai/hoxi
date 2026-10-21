@@ -35,6 +35,7 @@ var staticEvents = map[string]bool{
 	"background opencode daemon start failed":                                     true,
 	"native updates unavailable":                                                  true,
 	"desktop authorization callback was not completed; polling remains available": true,
+	"session title summarizer fell back to prompt":                                true,
 }
 
 // NewHandler preserves normal stderr logging. Disk records accept only reviewed

@@ -8,6 +8,7 @@ import {
   type WorkspaceReviewScope,
 } from "../services/api";
 import { findBestFallbackModel } from "./provider-health";
+import { resolveInternalLLMModel } from "./provider-catalog";
 import { AUTO_PROVIDER_ID, resolveAutoModelTarget } from "./auto-models";
 import {
   emptyStats,
@@ -71,20 +72,25 @@ export function resolveObserverModel(workerProviderID: string): {
   baseURL?: string;
   npm?: string;
 } | null {
-  const configured =
-    parseProviderModelKey(workspace.observerModel) ||
+  const configured = resolveInternalLLMModel(
+    parseProviderModelKey(workspace.observerModel),
     parseProviderModelKey(
       typeof workspace.globalConfig?.observer_model === "string"
         ? workspace.globalConfig.observer_model
         : ""
-    ) ||
+    ),
     parseProviderModelKey(
       typeof workspace.globalConfig?.small_model === "string"
         ? workspace.globalConfig.small_model
         : ""
-    ) ||
-    findBestFallbackModel(workerProviderID) ||
-    workspace.selectedModel;
+    ),
+    parseProviderModelKey(
+      typeof workspace.globalConfig?.model === "string" ? workspace.globalConfig.model : ""
+    ),
+    findBestFallbackModel(workerProviderID, { httpOnly: true }),
+    workspace.selectedModel,
+    workspace.defaultAI?.model
+  );
 
   if (!configured) return null;
 

@@ -3,7 +3,7 @@ import { t } from "../i18n";
 import type { ProviderInfo } from "../services/api";
 import { AUTO_PROVIDER_ID, buildAutoVirtualProvider, isModelFree } from "./auto-models";
 import { leaderboardState } from "./leaderboard-state";
-import { workspace, type ReasoningEffort } from "./workspace-state";
+import { workspace, type ReasoningEffort, type SelectedModel } from "./workspace-state";
 
 export type ConcreteReasoningEffort = Exclude<ReasoningEffort, "">;
 
@@ -698,6 +698,52 @@ export function getConnectedProviderModelGroups(): ConnectedProviderGroup[] {
   }
 
   return sorted;
+}
+
+const LOCAL_CLI_RUNTIME_PROVIDERS = new Set(["antigravity", "claude-code", "codebuddy", "qoder"]);
+
+/**
+ * Internal LLM calls (session titles, commit messages, observer audits) go
+ * through Hoxi's HTTP provider client. Local CLI runtime models (CodeBuddy,
+ * Claude Code, Antigravity, Qoder) can only be driven by the runner, so they
+ * must never be selected for those roles.
+ */
+export function isInternalLLMModel(model?: { providerID?: string; modelID?: string } | null): boolean {
+  const providerID = model?.providerID?.trim();
+  const modelID = model?.modelID?.trim();
+  if (!providerID || !modelID) return false;
+  if (providerID === AUTO_PROVIDER_ID) return false;
+  if (LOCAL_CLI_RUNTIME_PROVIDERS.has(providerID)) return false;
+  const provider = workspace.providers.find((p) => p.id === providerID);
+  // Providers may not be loaded yet (startup, tests): keep the candidate and
+  // let the backend resolve it instead of dropping a valid HTTP model.
+  if (!provider) return true;
+  if (provider.source === "runner") return false;
+  return Boolean(provider.models?.[modelID]);
+}
+
+/** First candidate that can actually serve an internal HTTP LLM call. */
+export function resolveInternalLLMModel(
+  ...candidates: Array<{ providerID?: string; modelID?: string } | null | undefined>
+): SelectedModel | null {
+  for (const candidate of candidates) {
+    if (candidate?.providerID && candidate.modelID && isInternalLLMModel(candidate)) {
+      return { providerID: candidate.providerID, modelID: candidate.modelID };
+    }
+  }
+  return null;
+}
+
+/** Connected model groups for internal LLM roles, excluding CLI runtimes and auto pools. */
+export function getInternalLLMProviderModelGroups(): ConnectedProviderGroup[] {
+  const internalIDs = new Set(
+    workspace.providers
+      .filter((p) => p.source !== "runner" && !LOCAL_CLI_RUNTIME_PROVIDERS.has(p.id))
+      .map((p) => p.id)
+  );
+  return getConnectedProviderModelGroups().filter(
+    (group) => group.providerID !== AUTO_PROVIDER_ID && internalIDs.has(group.providerID)
+  );
 }
 
 export function isHoxiCustomProvider(provider: ProviderInfo | string): boolean {

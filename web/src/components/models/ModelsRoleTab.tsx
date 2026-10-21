@@ -11,13 +11,13 @@ import {
   workspace,
 } from "../../store/workspace";
 import { t } from "../../i18n";
-import { getConnectedProviderModelGroups } from "./model-selector-utils";
+import { getInternalLLMProviderModelGroups } from "./model-selector-utils";
 
 export default function ModelsRoleTab() {
   const [savingKey, setSavingKey] = createSignal<string | null>(null);
   const [savedKey, setSavedKey] = createSignal<string | null>(null);
 
-  const connectedGroups = createMemo(() => getConnectedProviderModelGroups());
+  const connectedGroups = createMemo(() => getInternalLLMProviderModelGroups());
 
   const currentDefaultModel = createMemo(() => {
     if (typeof workspace.globalConfig?.model === "string" && workspace.globalConfig.model) {

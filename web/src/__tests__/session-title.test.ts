@@ -10,6 +10,7 @@ import { t } from "../i18n";
 import { assertEqual, describe, it } from "./test-harness";
 
 const id = "ses_manual_title_test";
+const titleModel = { providerID: "test-provider", modelID: "test-model" };
 
 async function withTitleFixture(run: () => Promise<void>) {
   const saved = structuredClone(unwrap(workspace));
@@ -65,7 +66,7 @@ describe("Manual session titles", () => {
       hoxiAPI.summarizeSessionTitle = () => new Promise((done) => { resolve = done; });
       // A non-placeholder title starts the summary request without an awaited fallback.
       setWorkspace("sessions", 0, "title", "Initial summary");
-      const pending = summarizeAndRenameSession(id, "Prompt", undefined, automaticRename);
+      const pending = summarizeAndRenameSession(id, "Prompt", titleModel, automaticRename);
       await renameSessionTitle(id, "User title");
       resolve({ ok: true, title: "Late AI title" });
       await pending;
@@ -96,7 +97,7 @@ describe("Manual session titles", () => {
   it("still generates titles for unlocked sessions without locking them", async () => {
     await withTitleFixture(async () => {
       hoxiAPI.summarizeSessionTitle = async () => ({ ok: true, title: "Generated title" });
-      await summarizeAndRenameSession(id, "Prompt", undefined, automaticRename);
+      await summarizeAndRenameSession(id, "Prompt", titleModel, automaticRename);
       assertEqual(workspace.sessions[0].title, "Generated title");
       assertEqual(hasManualSessionTitle(id), false);
       assertEqual(loadManualSessionTitles().has(id), false);

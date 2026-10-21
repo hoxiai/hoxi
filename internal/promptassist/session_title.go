@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"regexp"
 	"strings"
@@ -69,6 +70,12 @@ func (s *Service) HandleSummarizeTitle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	fallback := fallbackSummarizeTitle(rawPrompt, locale)
+	// The heuristic echoes the prompt, so a title that looks like the first
+	// message usually means the configured role model cannot serve HTTP calls.
+	slog.Warn("session title summarizer fell back to prompt",
+		"providerID", req.ProviderID,
+		"modelID", req.ModelID,
+	)
 	writeJSON(w, http.StatusOK, summarizeTitleResponse{
 		OK:    true,
 		Title: fallback,

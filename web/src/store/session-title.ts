@@ -3,6 +3,8 @@ import { dictionaries, locale, t } from "../i18n";
 import { hoxiAPI } from "../services/api";
 import type { SessionInfo } from "../services/sse-types";
 import { AUTO_PROVIDER_ID, resolveAutoModelTarget } from "./auto-models";
+import { resolveInternalLLMModel } from "./provider-catalog";
+import { findBestFallbackModel } from "./provider-health";
 import { workspace, type SelectedModel } from "./workspace-state";
 
 export const MANUAL_TITLES_KEY = "hoxi-session-manual-titles:v1";
@@ -227,29 +229,39 @@ export function extractLocalFallbackTitle(promptText: string, currentLocale = lo
   return chars.length > maxChars ? chars.slice(0, maxChars).join("").trim() : clause;
 }
 
+function parseFullModelKey(raw?: unknown): SelectedModel | null {
+  if (typeof raw !== "string") return null;
+  const idx = raw.indexOf("/");
+  if (idx <= 0 || idx >= raw.length - 1) return null;
+  const providerID = raw.slice(0, idx).trim();
+  const modelID = raw.slice(idx + 1).trim();
+  return providerID && modelID ? { providerID, modelID } : null;
+}
+
 function resolveTitleModel(hint?: SelectedModel): SelectedModel | null {
   const smallCfg = workspace.globalConfig?.small_model;
+  let small: SelectedModel | null = null;
   if (typeof smallCfg === "string" && smallCfg.includes("/")) {
     const idx = smallCfg.indexOf("/");
     const pid = smallCfg.slice(0, idx).trim();
     const mid = smallCfg.slice(idx + 1).trim();
     if (pid === AUTO_PROVIDER_ID && mid) {
-      const target = resolveAutoModelTarget(mid, { advance: true });
-      if (target) return target;
-    }
-    if (
-      pid &&
-      mid &&
-      workspace.providers.some((p) => p.id === pid && p.models && p.models[mid])
-    ) {
-      return { providerID: pid, modelID: mid };
+      small = resolveAutoModelTarget(mid, { advance: true });
+    } else if (pid && mid) {
+      small = { providerID: pid, modelID: mid };
     }
   }
-  const fallback = hint || workspace.selectedModel || null;
-  if (fallback?.providerID === AUTO_PROVIDER_ID) {
-    return resolveAutoModelTarget(fallback.modelID, { advance: false }) || fallback;
-  }
-  return fallback;
+  const rawFallback = hint || workspace.selectedModel || null;
+  const fallback = rawFallback?.providerID === AUTO_PROVIDER_ID
+    ? resolveAutoModelTarget(rawFallback.modelID, { advance: false }) || rawFallback
+    : rawFallback;
+  return resolveInternalLLMModel(
+    small,
+    fallback,
+    parseFullModelKey(workspace.globalConfig?.model),
+    workspace.defaultAI?.model,
+    findBestFallbackModel(undefined, { httpOnly: true })
+  );
 }
 
 export async function summarizeAndRenameSession(
@@ -277,8 +289,11 @@ export async function summarizeAndRenameSession(
     if (hasManualSessionTitle(sessionID)) return;
     // 2. Request LLM-summarized session title strictly in the current UI language (`locale()`)
     const targetModel = resolveTitleModel(modelHint);
-    const provID = targetModel?.providerID || "";
-    const modID = targetModel?.modelID || "";
+    // No HTTP-capable model for internal calls: keep the local fallback title
+    // instead of asking the backend to echo the raw prompt as a "summary".
+    if (!targetModel) return;
+    const provID = targetModel.providerID;
+    const modID = targetModel.modelID;
     const runtimeProv = workspace.providers.find((p) => p.id === provID);
     const cfgProv = workspace.globalConfig?.provider?.[provID];
 

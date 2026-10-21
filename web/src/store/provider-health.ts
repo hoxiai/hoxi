@@ -207,12 +207,16 @@ export function computeProviderHealth(
   };
 }
 
-export function findBestFallbackModel(excludeProviderID?: string): SelectedModel | null {
+export function findBestFallbackModel(
+  excludeProviderID?: string,
+  options?: { httpOnly?: boolean }
+): SelectedModel | null {
   const connected = new Set(workspace.connectedProviders);
   const candidates: Array<{ model: SelectedModel; score: number }> = [];
 
   for (const prov of workspace.providers) {
     if (excludeProviderID && prov.id === excludeProviderID) continue;
+    if (options?.httpOnly && prov.source === "runner") continue;
     if (!connected.has(prov.id) && prov.id !== "opencode") continue;
     const modelKeys = Object.keys(prov.models || {});
     if (modelKeys.length === 0) continue;
