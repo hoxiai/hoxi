@@ -144,33 +144,87 @@ func TestHookGateAutoApprovesSafeCommandsAndPassesUncoveredTools(t *testing.T) {
 	if d := f.callHook(t, f.payload("git status && go test ./...", "", "conv-1")); d.Decision != "auto_approve" {
 		t.Fatalf("safe command: %q", d.Decision)
 	}
-	other, _ := json.Marshal(map[string]interface{}{"toolCall": map[string]interface{}{"name": "write_to_file"}})
+	other, _ := json.Marshal(map[string]interface{}{"toolCall": map[string]interface{}{"name": "finish"}})
 	if d := f.callHook(t, other); d.Decision != "allow" {
 		t.Fatalf("uncovered tool should pass through, got %q", d.Decision)
 	}
 }
 
-func TestHookGateAutoApprovesViewFile(t *testing.T) {
+func TestHookGateAutoApprovesReads(t *testing.T) {
 	f := newGateFixture(t)
-	viewFile := func(path string) []byte {
+	read := func(tool, path string) []byte {
 		raw, _ := json.Marshal(map[string]interface{}{
 			"conversationId": "conv-1",
 			"stepIdx":        4,
 			"workspacePaths": []string{f.dir},
 			"toolCall": map[string]interface{}{
-				"name": "view_file",
-				"args": map[string]interface{}{"AbsolutePath": path, "toolSummary": "View file"},
+				"name": tool,
+				"args": map[string]interface{}{"Path": path, "AbsolutePath": path, "toolSummary": "Read file"},
 			},
 		})
 		return raw
 	}
-	if d := f.callHook(t, viewFile(filepath.Join(f.dir, "inside.txt"))); d.Decision != "auto_approve" {
-		t.Fatalf("inside workspace: %q", d.Decision)
+	for _, tool := range []string{"view_file", "read_file"} {
+		if d := f.callHook(t, read(tool, filepath.Join(f.dir, "inside.txt"))); d.Decision != "auto_approve" {
+			t.Fatalf("%s inside workspace: %q", tool, d.Decision)
+		}
+		// Headless agy soft-denies any read it cannot prompt for, including
+		// paths outside the worktree; reads are safe under Hoxi's policy.
+		if d := f.callHook(t, read(tool, filepath.Join(t.TempDir(), "outside.txt"))); d.Decision != "auto_approve" {
+			t.Fatalf("%s outside workspace: %q", tool, d.Decision)
+		}
 	}
-	// Headless agy soft-denies any read it cannot prompt for, including paths
-	// outside the worktree; reads are safe under Hoxi's policy, so grant them.
-	if d := f.callHook(t, viewFile(filepath.Join(t.TempDir(), "outside.txt"))); d.Decision != "auto_approve" {
-		t.Fatalf("outside workspace: %q", d.Decision)
+}
+
+func TestHookGateEditsStayInsideWorktree(t *testing.T) {
+	f := newGateFixture(t)
+	write := func(tool, path string) []byte {
+		raw, _ := json.Marshal(map[string]interface{}{
+			"conversationId": "conv-1",
+			"stepIdx":        4,
+			"toolCall": map[string]interface{}{
+				"name": tool,
+				"args": map[string]interface{}{"TargetFile": path, "toolSummary": "Edit file"},
+			},
+		})
+		return raw
+	}
+	for _, tool := range []string{"write_to_file", "replace_file_content", "multi_replace_file_content", "sed_file"} {
+		if d := f.callHook(t, write(tool, filepath.Join(f.dir, "inside.txt"))); d.Decision != "auto_approve" {
+			t.Fatalf("%s inside workspace: %q", tool, d.Decision)
+		}
+		if d := f.callHook(t, write(tool, filepath.Join(t.TempDir(), "outside.txt"))); d.Decision != "deny" {
+			t.Fatalf("%s outside workspace: %q", tool, d.Decision)
+		}
+		// Relative targets are resolved against the session worktree.
+		if d := f.callHook(t, write(tool, "sub/inside.txt")); d.Decision != "auto_approve" {
+			t.Fatalf("%s relative target: %q", tool, d.Decision)
+		}
+	}
+}
+
+func TestHookGateEditsAcceptQuotedPaths(t *testing.T) {
+	f := newGateFixture(t)
+	raw, _ := json.Marshal(map[string]interface{}{
+		"conversationId": "conv-1",
+		"stepIdx":        4,
+		"toolCall": map[string]interface{}{
+			"name": "read_file",
+			"args": map[string]interface{}{"Path": `"` + filepath.Join(f.dir, "inside.txt") + `"`},
+		},
+	})
+	if d := f.callHook(t, raw); d.Decision != "auto_approve" {
+		t.Fatalf("quoted path: %q", d.Decision)
+	}
+	outside, _ := json.Marshal(map[string]interface{}{
+		"conversationId": "conv-1",
+		"toolCall": map[string]interface{}{
+			"name": "write_to_file",
+			"args": map[string]interface{}{"TargetFile": `"` + filepath.Join(t.TempDir(), "outside.txt") + `"`},
+		},
+	})
+	if d := f.callHook(t, outside); d.Decision != "deny" {
+		t.Fatalf("quoted outside path: %q", d.Decision)
 	}
 }
 
@@ -266,6 +320,59 @@ func TestHookGateAlwaysSkipsRepeatsButNeverDestructive(t *testing.T) {
 	}
 	if code := f.reply(t, id, "once", ""); code != http.StatusNotFound {
 		t.Fatalf("reply after cancel: %d", code)
+	}
+}
+
+func TestHookGateAsksForRiskyTools(t *testing.T) {
+	f := newGateFixture(t)
+	events, unsub := f.svc.Subscribe("ses_agy_gate")
+	defer unsub()
+	payload, _ := json.Marshal(map[string]interface{}{
+		"conversationId": "conv-1",
+		"stepIdx":        4,
+		"toolCall": map[string]interface{}{
+			"name": "call_mcp_tool",
+			"args": map[string]interface{}{"ServerName": "github", "ToolName": "create_issue"},
+		},
+	})
+	result := f.asyncHook(t, payload)
+	asked := waitForEvent(t, events, "permission.asked")
+	if asked.Properties["permission"] != "tool" {
+		t.Fatalf("unexpected request: %#v", asked.Properties)
+	}
+	if patterns, _ := asked.Properties["patterns"].([]string); len(patterns) != 1 || patterns[0] != "call_mcp_tool" {
+		t.Fatalf("patterns: %#v", asked.Properties["patterns"])
+	}
+	id, _ := asked.Properties["id"].(string)
+	if code := f.reply(t, id, "once", ""); code != http.StatusOK {
+		t.Fatalf("reply status %d", code)
+	}
+	if d := <-result; d.Decision != "auto_approve" {
+		t.Fatalf("once: %q", d.Decision)
+	}
+
+	// "always" remembers the exact tool + args, but a different MCP call asks again.
+	result = f.asyncHook(t, payload)
+	id, _ = waitForEvent(t, events, "permission.asked").Properties["id"].(string)
+	f.reply(t, id, "always", "")
+	if d := <-result; d.Decision != "auto_approve" {
+		t.Fatalf("always: %q", d.Decision)
+	}
+	if d := f.callHook(t, payload); d.Decision != "auto_approve" {
+		t.Fatalf("repeat after always: %q", d.Decision)
+	}
+	different, _ := json.Marshal(map[string]interface{}{
+		"conversationId": "conv-1",
+		"toolCall": map[string]interface{}{
+			"name": "execute_browser_javascript",
+			"args": map[string]interface{}{"Script": "fetch('/admin')"},
+		},
+	})
+	result = f.asyncHook(t, different)
+	id, _ = waitForEvent(t, events, "permission.asked").Properties["id"].(string)
+	f.reply(t, id, "reject", "no browser JS")
+	if d := <-result; d.Decision != "deny" || !strings.Contains(d.Reason, "no browser JS") {
+		t.Fatalf("reject risky tool: %+v", d)
 	}
 }
 

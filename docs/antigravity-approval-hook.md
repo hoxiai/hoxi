@@ -72,13 +72,7 @@ agy 发起 run_command
 {
   "hoxi-approval-gate": {
     "PreToolUse": [{
-      "matcher": "run_command",
-      "hooks": [{
-        "command": "[ -x '/Applications/Hoxi.app/Contents/MacOS/hoxi' ] && exec '/Applications/Hoxi.app/Contents/MacOS/hoxi' agy-hook || printf '{\"decision\":\"allow\"}'",
-        "timeout": 600
-      }]
-    }, {
-      "matcher": "view_file",
+      "matcher": "*",
       "hooks": [{
         "command": "[ -x '/Applications/Hoxi.app/Contents/MacOS/hoxi' ] && exec '/Applications/Hoxi.app/Contents/MacOS/hoxi' agy-hook || printf '{\"decision\":\"allow\"}'",
         "timeout": 600
@@ -87,6 +81,8 @@ agy 发起 run_command
   }
 }
 ```
+
+  matcher 是正则：`"*"` / `""` 匹配所有工具，`"run_command|view_file"` 匹配其中之一，`"browser_.*"` 匹配前缀。Hoxi 用通配符覆盖全部工具，再由 `hook_gate.go` 按工具分类，避免 agy 新增工具（如 1.4.3 的 `read_file`）时漏配 matcher 被无头模式软拒。
 
   `[ -x … ] || allow` 这层守卫是必须的。I2 证明 hook 失败会让工具报错，如果 Hoxi 被移走或卸载，用户自己的 agy / IDE 命令就会全部失败。
 
@@ -112,7 +108,11 @@ agy 发起 run_command
 - `translate.go`：
   - 工具报错 `tool call denied by pre-tool hook: …` → ToolCard 显示 `error`，标注"已被拒绝"。
   - `… timed out and was killed` → `error`，标注"审批超时"。
-  - `view_file` 直接返回 `auto_approve`：读取与安全命令（`cat`）同属非破坏性操作，Hoxi 的 `READ_PERMISSIONS` 与 `hoxi-permissions.js` 也一直自动放行读取；`--sandbox` 仍会拦截工作区外的写入。
+  - 工具分类（`hookToolAction`）：
+    - 只读类（`read_file` / `view_file` / `list_dir` / `find_by_name` / `grep_search` / `list_resources` / `read_url_content` / 浏览器读取等）→ `auto_approve`。读取与安全命令（`cat`）同属非破坏性操作，`--sandbox` 仍会拦截工作区外的写入。
+    - 写/改类（`write_to_file` / `write_file` / `replace_file_content` / `multi_replace_file_content` / `sed_file` / `notebook_edit`）→ 目标落在 worktree 内则 `auto_approve`（与 `accept-edits` 一致），相对路径按 worktree 解析，区外直接 `deny` 并回传原因。
+    - MCP / 浏览器 JS / 显式 unsandboxed 等（`call_mcp_tool` / `execute_browser_javascript` / `execute_url` / `unsandboxed` / `run_workflow`）→ 推送 `permission:"tool"` 审批卡片；`always` 只记住完全相同的工具 + 参数，不写 agy 全局配置。
+    - 未知工具 → 返回 `allow`，交回 agy 默认策略，避免误放行。
   - 原有的 `denied_actions` 提示保留作兜底（hook 没装上，或其它未覆盖工具需要权限时），文案改成引导用户检查 hook 安装状态。
 
 ### 3.5 前端
@@ -167,4 +167,5 @@ go build -o /tmp/hoxi-e2e ./cmd/hoxi && HOXI_E2E_BIN=/tmp/hoxi-e2e go test -tags
 - `timeout` 只实测到 120s，600s 是否生效需要再验一次；文档没有给出上限。
 - 全局 `~/.gemini/config/hooks.json` 同样会被 Antigravity IDE / App 读取（来自文档，未实测）。由于有环境变量守卫，IDE 里的行为是透传 allow，但每条命令会多一次进程启动（毫秒级）。
 - 插件形式（`agy plugin install`）的 hooks 未实测，可以作为替代方案：生命周期更清晰，但同样是全局生效。
-- hook 匹配 `run_command` 与 `view_file`。在 `accept-edits` 下工作区内的文件编辑本来就自动放行；工作区外的写入由 `--sandbox` 拦截，未被 hook 覆盖的工具仍会走 `denied_actions` 兜底提示。
+- hook 用 `"matcher": "*"` 覆盖全部工具（2026-10-21 起）。在 `accept-edits` 下工作区内的文件编辑本来就自动放行；工作区外的写入由 `--sandbox` 拦截。未识别的工具仍走 `denied_actions` 兜底提示。
+- 2026-10-21 复现：agy 1.4.3 用 `read_file`（Step_Generic，权限名 `ReadFile`）读取工作区外文件时，旧的两个 matcher 匹配不到，无头模式直接软拒；改为通配 matcher + 只读分类后覆盖。

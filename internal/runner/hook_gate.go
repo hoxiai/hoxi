@@ -31,7 +31,6 @@ const (
 	hookDecisionDeny    = "deny"
 
 	hookToolRunCommand = "run_command"
-	hookToolViewFile   = "view_file"
 )
 
 type hookCredential struct {
@@ -68,15 +67,17 @@ type approvalGate struct {
 	tokens      map[[32]byte]hookCredential
 	pending     map[string]*pendingApproval
 	always      map[string]map[string]bool
+	toolAlways  map[string]map[string]bool
 	waitLimit   time.Duration
 }
 
 func newApprovalGate() *approvalGate {
 	return &approvalGate{
-		tokens:    make(map[[32]byte]hookCredential),
-		pending:   make(map[string]*pendingApproval),
-		always:    make(map[string]map[string]bool),
-		waitLimit: agyhook.ClientTimeout - 5*time.Second,
+		tokens:     make(map[[32]byte]hookCredential),
+		pending:    make(map[string]*pendingApproval),
+		always:     make(map[string]map[string]bool),
+		toolAlways: make(map[string]map[string]bool),
+		waitLimit:  agyhook.ClientTimeout - 5*time.Second,
 	}
 }
 
@@ -199,38 +200,58 @@ func (s *Service) decideHookCall(r *http.Request, cred hookCredential, p hookPay
 	if !ok {
 		return hookDecisionDeny, "Hoxi session no longer exists"
 	}
-	// File reads are non-destructive and follow the same policy as safe shell
-	// commands (`cat`), so Hoxi grants them instead of letting agy's headless
-	// mode soft-deny the call. Reads of any path were already achievable via a
-	// safe `cat`, and the sandbox still blocks writes outside the worktree.
-	args, _ := json.Marshal(p.ToolCall.Args)
-	callID := fmt.Sprintf("call_%s_%d", cred.messageID, p.StepIdx)
-	if ok, reason := s.gateDoomLoop(r, cred, p.ToolCall.Name, args, callID); !ok {
-		return hookDecisionDeny, reason
-	}
-	if p.ToolCall.Name == hookToolViewFile {
-		return hookDecisionApprove, ""
-	}
-	if p.ToolCall.Name != hookToolRunCommand {
-		return "allow", ""
-	}
 	if p.ConversationID != "" && rec.ExternalID != "" && p.ConversationID != rec.ExternalID {
 		return hookDecisionDeny, "Antigravity conversation does not belong to this Hoxi session"
 	}
-	command, _ := p.ToolCall.Args["CommandLine"].(string)
-	cwd, _ := p.ToolCall.Args["Cwd"].(string)
-	summary, _ := p.ToolCall.Args["toolSummary"].(string)
-	approved, reason := s.gateCommand(r, cred, rec, approvalAsk{
-		command:     command,
-		cwd:         cwd,
-		description: summary,
-		callID:      callID,
-		source:      string(RuntimeAntigravity),
-	})
-	if approved {
+	args, _ := json.Marshal(p.ToolCall.Args)
+	callID := fmt.Sprintf("call_%s_%d", cred.messageID, p.StepIdx)
+	action := hookToolAction(p.ToolCall.Name)
+	if action == hookActionAsk && s.gate.hasToolAlways(cred.sessionID, hookToolGrantKey(p.ToolCall.Name, p.ToolCall.Args)) {
 		return hookDecisionApprove, ""
 	}
-	return hookDecisionDeny, reason
+	if ok, reason := s.gateDoomLoop(r, cred, p.ToolCall.Name, args, callID); !ok {
+		return hookDecisionDeny, reason
+	}
+
+	switch action {
+	case hookActionRead:
+		// Reads are non-destructive and follow the same policy as safe shell
+		// commands (`cat`), so Hoxi grants them instead of letting agy's
+		// headless mode soft-deny the call. The sandbox still blocks writes
+		// outside the worktree.
+		return hookDecisionApprove, ""
+	case hookActionEdit:
+		path := resolveHookToolPath(rec.WorktreePath, p.ToolCall.Args)
+		if path == "" {
+			return "allow", ""
+		}
+		if pathWithin(rec.WorktreePath, path) {
+			return hookDecisionApprove, ""
+		}
+		return hookDecisionDeny, fmt.Sprintf("Hoxi blocked %s outside this session's directory: %s", p.ToolCall.Name, path)
+	case hookActionAsk:
+		approved, reason := s.gateToolCall(r, cred, p.ToolCall.Name, p.ToolCall.Args, callID)
+		if approved {
+			return hookDecisionApprove, ""
+		}
+		return hookDecisionDeny, reason
+	case hookActionCommand:
+		command, _ := p.ToolCall.Args["CommandLine"].(string)
+		cwd, _ := p.ToolCall.Args["Cwd"].(string)
+		summary, _ := p.ToolCall.Args["toolSummary"].(string)
+		approved, reason := s.gateCommand(r, cred, rec, approvalAsk{
+			command:     command,
+			cwd:         cwd,
+			description: summary,
+			callID:      callID,
+			source:      string(RuntimeAntigravity),
+		})
+		if approved {
+			return hookDecisionApprove, ""
+		}
+		return hookDecisionDeny, reason
+	}
+	return "allow", ""
 }
 
 // gateCommand applies the shared command policy and, when needed, blocks on
@@ -341,6 +362,23 @@ func (g *approvalGate) hasAlways(sessionID, command string) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	return g.always[sessionID][strings.TrimSpace(command)]
+}
+
+// Tool "always" grants are keyed by tool + exact args, so allowing one MCP
+// call never blanket-approves a different one.
+func (g *approvalGate) addToolAlways(sessionID, key string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.toolAlways[sessionID] == nil {
+		g.toolAlways[sessionID] = make(map[string]bool)
+	}
+	g.toolAlways[sessionID][key] = true
+}
+
+func (g *approvalGate) hasToolAlways(sessionID, key string) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.toolAlways[sessionID][key]
 }
 
 func (s *Service) handlePermissionRoutes(w http.ResponseWriter, r *http.Request) {
@@ -573,7 +611,21 @@ func pathWithin(base, target string) bool {
 		if real, err := filepath.EvalSymlinks(p); err == nil {
 			return real
 		}
-		return p
+		// Writes often target a file that does not exist yet. Resolve the
+		// nearest existing ancestor so /var vs /private/var symlinks on macOS
+		// cannot make an in-worktree path look like an escape.
+		suffix := ""
+		for cur := p; ; {
+			parent := filepath.Dir(cur)
+			if parent == cur {
+				return p
+			}
+			suffix = filepath.Join(filepath.Base(cur), suffix)
+			cur = parent
+			if real, err := filepath.EvalSymlinks(cur); err == nil {
+				return filepath.Join(real, suffix)
+			}
+		}
 	}
 	if strings.TrimSpace(base) == "" {
 		return false
