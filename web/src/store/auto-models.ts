@@ -335,11 +335,22 @@ export function computeSmartDefaultCandidates(poolID: string): AutoPoolCandidate
 
 export function getEffectivePoolCandidates(poolID: string): AutoPoolCandidate[] {
   const pool = autoPoolsSignal()[poolID];
-  if (pool?.customized && pool.candidates.length > 0) {
-    const valid = pool.candidates.filter((c) => isRealModelAvailable(c.providerID, c.modelID));
-    if (valid.length > 0) return valid;
+  // A customized pool is authoritative, including when the user deleted every
+  // candidate. Falling back to the smart defaults here would resurrect the
+  // models that were just removed and make deletion look like a no-op loop.
+  if (pool?.customized) {
+    return pool.candidates.filter((c) => isRealModelAvailable(c.providerID, c.modelID));
   }
   return computeSmartDefaultCandidates(poolID);
+}
+
+// Stored order for a pool, including entries whose provider/model is currently
+// unavailable. Mutations must target this list by identity: the visible list is
+// filtered, so using its indices would delete the wrong stored entry.
+export function getStoredPoolCandidates(poolID: string): AutoPoolCandidate[] {
+  const pool = autoPoolsSignal()[poolID];
+  if (pool?.customized) return pool.candidates.map((c) => ({ ...c }));
+  return getEffectivePoolCandidates(poolID).map((c) => ({ ...c }));
 }
 
 export function isCandidateCoolingDown(providerID: string, modelID: string): boolean {

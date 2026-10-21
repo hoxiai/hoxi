@@ -221,7 +221,9 @@ func (g *Service) resolveBackendAutoCandidate(providerID, modelID string) (strin
 	}
 	pools := g.loadAutoPoolsMap()
 	var candidates []AutoPoolCandidate
+	customized := false
 	if poolObj, ok := pools[poolID].(map[string]interface{}); ok {
+		customized, _ = poolObj["customized"].(bool)
 		if rawList, ok := poolObj["candidates"].([]interface{}); ok {
 			for _, item := range rawList {
 				if cm, ok := item.(map[string]interface{}); ok {
@@ -238,7 +240,11 @@ func (g *Service) resolveBackendAutoCandidate(providerID, modelID string) (strin
 		}
 	}
 
-	if len(candidates) == 0 {
+	// Preset pools that were never customized keep their candidates empty in the
+	// store (the UI derives smart defaults), so the catalog fallback is required.
+	// A customized pool is authoritative: when the user removes every candidate
+	// we must not silently pick a deleted model again.
+	if len(candidates) == 0 && !customized {
 		merged := g.loadOpenCodeImportedProviderMap()
 		for k, v := range g.loadHoxiProvidersMap() {
 			merged[k] = v

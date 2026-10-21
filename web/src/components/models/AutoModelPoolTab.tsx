@@ -28,6 +28,7 @@ import {
   getCandidateCooldownRemainingMs,
   getEffectivePoolCandidates,
   getFreeTierGuideItems,
+  getStoredPoolCandidates,
   isCandidateCoolingDown,
   openExternalURL,
   openProviderModal,
@@ -99,6 +100,9 @@ export default function AutoModelPoolTab() {
     getEffectivePoolCandidates(selectedPoolID())
   );
 
+  const sameCandidate = (a: AutoPoolCandidate, b: AutoPoolCandidate) =>
+    a.providerID === b.providerID && a.modelID === b.modelID;
+
   const readyCount = createMemo(
     () =>
       effectiveCandidates().filter((c) => !isCandidateCoolingDown(c.providerID, c.modelID)).length
@@ -147,7 +151,7 @@ export default function AutoModelPoolTab() {
     const idx = rawKey.indexOf("/");
     const providerID = rawKey.slice(0, idx);
     const modelID = rawKey.slice(idx + 1);
-    const curList = [...effectiveCandidates()];
+    const curList = getStoredPoolCandidates(selectedPoolID());
     if (curList.some((c) => c.providerID === providerID && c.modelID === modelID)) return;
     curList.push({ providerID, modelID });
     await saveAutoPool(selectedPoolID(), {
@@ -158,9 +162,10 @@ export default function AutoModelPoolTab() {
     setSelectedAddKey("");
   };
 
-  const handleRemoveCandidate = async (index: number) => {
-    const curList = [...effectiveCandidates()];
-    curList.splice(index, 1);
+  const handleRemoveCandidate = async (cand: AutoPoolCandidate) => {
+    const curList = getStoredPoolCandidates(selectedPoolID()).filter(
+      (c) => !sameCandidate(c, cand)
+    );
     await saveAutoPool(selectedPoolID(), {
       ...activePool(),
       customized: true,
@@ -168,10 +173,11 @@ export default function AutoModelPoolTab() {
     });
   };
 
-  const handleMoveCandidate = async (index: number, delta: -1 | 1) => {
-    const curList = [...effectiveCandidates()];
+  const handleMoveCandidate = async (cand: AutoPoolCandidate, delta: -1 | 1) => {
+    const curList = getStoredPoolCandidates(selectedPoolID());
+    const index = curList.findIndex((c) => sameCandidate(c, cand));
     const targetIdx = index + delta;
-    if (targetIdx < 0 || targetIdx >= curList.length) return;
+    if (index < 0 || targetIdx < 0 || targetIdx >= curList.length) return;
     const [moved] = curList.splice(index, 1);
     curList.splice(targetIdx, 0, moved);
     await saveAutoPool(selectedPoolID(), {
@@ -452,7 +458,7 @@ export default function AutoModelPoolTab() {
                         </span>
                         <button
                           type="button"
-                          onClick={() => void handleMoveCandidate(idx(), -1)}
+                          onClick={() => void handleMoveCandidate(cand, -1)}
                           disabled={idx() === 0}
                           class="rounded p-1 text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] disabled:opacity-30 cursor-pointer"
                         >
@@ -460,7 +466,7 @@ export default function AutoModelPoolTab() {
                         </button>
                         <button
                           type="button"
-                          onClick={() => void handleMoveCandidate(idx(), 1)}
+                          onClick={() => void handleMoveCandidate(cand, 1)}
                           disabled={idx() === effectiveCandidates().length - 1}
                           class="rounded p-1 text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] disabled:opacity-30 cursor-pointer"
                         >
@@ -468,7 +474,7 @@ export default function AutoModelPoolTab() {
                         </button>
                         <button
                           type="button"
-                          onClick={() => void handleRemoveCandidate(idx())}
+                          onClick={() => void handleRemoveCandidate(cand)}
                           class="rounded p-1 text-[var(--text-muted)] hover:bg-[var(--err-surface)] hover:text-[var(--err)] cursor-pointer"
                         >
                           <Trash2 size={11} />

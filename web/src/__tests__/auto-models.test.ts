@@ -94,4 +94,44 @@ describe("auto virtual models & smart rotation engine", () => {
     const stepped = stepAutoPoolNext("free");
     assertTrue(Boolean(stepped));
   });
+
+  it("keeps a customized pool authoritative after every candidate is removed", async () => {
+    setWorkspace("providers", [
+      {
+        id: "openrouter",
+        name: "OpenRouter",
+        models: {
+          "qwen/qwen3-coder:free": {
+            id: "qwen/qwen3-coder:free",
+            name: "Qwen3 Coder (Free)",
+            cost: { input: 0, output: 0 },
+            capabilities: { toolcall: true, reasoning: true },
+          },
+        },
+      },
+    ]);
+    setWorkspace("connectedProviders", ["openrouter"]);
+
+    await saveAutoPool("free", {
+      id: "free",
+      preset: true,
+      strategy: "round-robin",
+      customized: true,
+      candidates: [{ providerID: "openrouter", modelID: "qwen/qwen3-coder:free" }],
+    });
+    assertEqual(getEffectivePoolCandidates("free").length, 1);
+
+    // Removing the last candidate must not resurrect the smart defaults.
+    await saveAutoPool("free", {
+      id: "free",
+      preset: true,
+      strategy: "round-robin",
+      customized: true,
+      candidates: [],
+    });
+    assertEqual(getEffectivePoolCandidates("free").length, 0);
+    assertEqual(resolveAutoModelTarget("free", { advance: true }), null);
+
+    await resetAutoPoolToDefault("free");
+  });
 });

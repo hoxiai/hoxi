@@ -85,4 +85,28 @@ func TestAutoPoolsCRUDAndMultiKeyRotation(t *testing.T) {
 	if k1 == k2 || k2 == k3 {
 		t.Fatalf("expected rotated keys across calls, got %q, %q, %q", k1, k2, k3)
 	}
+
+	// 5. A customized pool with every candidate removed must not fall back to the
+	// full provider catalog, otherwise deleted models keep being selected.
+	emptyPayload := map[string]interface{}{
+		"poolID": "free",
+		"pool": map[string]interface{}{
+			"id":         "free",
+			"preset":     true,
+			"strategy":   "round-robin",
+			"customized": true,
+			"candidates": []map[string]string{},
+		},
+	}
+	rawEmpty, _ := json.Marshal(emptyPayload)
+	emptyReq := httptest.NewRequest(http.MethodPost, "/api/hoxi/provider/auto-pools", bytes.NewReader(rawEmpty))
+	emptyRec := httptest.NewRecorder()
+	mux.ServeHTTP(emptyRec, emptyReq)
+	if emptyRec.Code != http.StatusOK {
+		t.Fatalf("POST empty pool status = %d: %s", emptyRec.Code, emptyRec.Body.String())
+	}
+	p3, m3 := svc.resolveBackendAutoCandidate("hoxi-auto", "free")
+	if p3 != "hoxi-auto" || m3 != "free" {
+		t.Fatalf("empty customized pool resolved to %s/%s, want unresolved hoxi-auto/free", p3, m3)
+	}
 }
