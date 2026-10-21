@@ -10,6 +10,7 @@ import {
   shortenPath,
   workspace,
   workspacePrimaryFolder,
+  visibleSavedWorkspaces,
 } from "../../store/workspace";
 import { t } from "../../i18n";
 
@@ -120,8 +121,7 @@ export function buildAllProjects(): ProjectNavEntry[] {
   const map = new Map<string, ProjectNavEntry>();
   const secondaryPaths = new Set<string>();
 
-  for (const saved of workspace.savedWorkspaces) {
-    if (saved.hidden) continue;
+  for (const saved of visibleSavedWorkspaces()) {
     const primary = normalizeFolderPath(workspacePrimaryFolder(saved));
     if (
       !primary ||

@@ -183,12 +183,15 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 		g.orchestration = orchestration.NewService(convoySessions{runner: g.runner}, options...)
 	}
 	g.skills = skills.NewService(targetURL.String(), password, g.resolveSkillContext)
-	runnerSvc.SetSkillValidator(func(ctx context.Context, directory, sessionID string, sel runner.SkillSelection) error {
-		_, err := g.skills.VerifySelection(ctx, directory, sessionID, skills.SkillSelection{
+	runnerSvc.SetSkillResolver(func(ctx context.Context, directory, sessionID string, sel runner.SkillSelection) (runner.ResolvedSkill, error) {
+		detail, err := g.skills.ResolveSelection(ctx, directory, sessionID, skills.SkillSelection{
 			Key:  sel.Key,
 			Name: sel.Name,
 		})
-		return err
+		if err != nil {
+			return runner.ResolvedSkill{}, err
+		}
+		return runner.ResolvedSkill{Name: detail.Name, Content: detail.Content}, nil
 	})
 	providers.SetBusyCheck(g.isAnySessionBusy)
 	g.tunnel = tunnel.NewManager(tunnel.Options{Handler: http.HandlerFunc(g.serveTunnelRequest), Version: buildinfo.Version})

@@ -12,7 +12,8 @@ import {
 } from "lucide-solid";
 import type { CustomProviderModelDraft } from "../../store/workspace";
 import { t } from "../../i18n";
-import { AddCustomModelModal, FetchedModelsModal } from "./CustomProviderModelModals";
+import { AddCustomModelModal } from "./AddCustomModelModal";
+import { FetchedModelsModal } from "./FetchedModelsModal";
 import type { ModelProbeResult } from "./custom-endpoint-helpers";
 
 interface CustomProviderModelSectionProps {
@@ -20,9 +21,6 @@ interface CustomProviderModelSectionProps {
   setModels: Setter<CustomProviderModelDraft[]>;
   fetchedModels: Accessor<Array<{ id: string; name: string }>>;
   setFetchedModels: Setter<Array<{ id: string; name: string }>>;
-  selectedFetched?: Accessor<Record<string, boolean>>;
-  setSelectedFetched?: Setter<Record<string, boolean>>;
-  onApplyFetchedModels?: () => void;
   headers: Accessor<Array<{ key: string; value: string }>>;
   setHeaders: Setter<Array<{ key: string; value: string }>>;
   modelProbes?: Accessor<Record<string, ModelProbeResult>>;

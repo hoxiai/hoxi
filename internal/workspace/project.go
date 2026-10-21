@@ -13,7 +13,7 @@ import (
 // Project identity is separate from the directory a session executes in.
 // Sessions store the stable workspace profile ID, so listing and attribution
 // do not depend on the folder path. Relinking a moved folder only needs to
-// update the profile path.
+// update the profile path, and only happens on an explicit folder replace.
 
 func canonicalProjectDirectory(directory string) (string, error) {
 	trimmed := strings.TrimSpace(directory)
@@ -32,7 +32,11 @@ func canonicalProjectDirectory(directory string) (string, error) {
 	if err != nil || !stat.IsDir() {
 		return "", errors.New("project directory does not exist")
 	}
-	return filepath.Clean(resolved), nil
+	resolved = filepath.Clean(resolved)
+	if isForbiddenProjectRoot(resolved) {
+		return "", errors.New("filesystem roots and the home directory cannot be projects")
+	}
+	return resolved, nil
 }
 
 func projectComparePath(path string) string {
@@ -57,22 +61,32 @@ func hoxiWorktreeRoot(path string) string {
 
 // findProjectLocked matches a directory to the workspace that owns it. Hoxi
 // worktrees under <root>/.hoxi/worktrees/<session> belong to root's project;
-// nested project folders stay separate.
+// nested project folders stay separate. Visible workspaces win over hidden
+// projects if legacy data lists the same folder twice.
 func (s *workspaceStore) findProjectLocked(directory string) (workspaceProfile, bool) {
 	target := projectComparePath(directory)
 	if target == "" {
 		return workspaceProfile{}, false
 	}
-	for _, ws := range s.workspaces {
+	var hidden *workspaceProfile
+	for i, ws := range s.workspaces {
 		for _, folder := range ws.Folders {
 			root := projectComparePath(folder.Path)
 			if root == "" {
 				continue
 			}
 			if target == root || strings.HasPrefix(target, root+"/.hoxi/worktrees/") {
-				return ws, true
+				if !ws.Hidden {
+					return ws, true
+				}
+				if hidden == nil {
+					hidden = &s.workspaces[i]
+				}
 			}
 		}
+	}
+	if hidden != nil {
+		return *hidden, true
 	}
 	return workspaceProfile{}, false
 }
@@ -106,11 +120,19 @@ func (s *workspaceStore) EnsureProjectForDirectory(directory string) (string, er
 	if ws, ok := s.findProjectLocked(canonical); ok {
 		return ws.ID, nil
 	}
+	prev := s.snapshotLocked()
+	id, aliases := generateWorkspaceUUID(), []string(nil)
+	if tomb, ok := s.tombstoneForPathLocked(canonical); ok {
+		// The folder's project was removed earlier; reuse its ID so the
+		// sessions created before the removal are attributed again.
+		id, aliases = tomb.ID, tomb.Aliases
+	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	created := workspaceProfile{
-		ID:    generateWorkspaceUUID(),
-		Name:  filepath.Base(canonical),
-		Color: defaultWorkspaceIdentityColor,
+		ID:      id,
+		Aliases: append([]string(nil), aliases...),
+		Name:    filepath.Base(canonical),
+		Color:   defaultWorkspaceIdentityColor,
 		Folders: []workspaceFolder{
 			{ID: generateWorkspaceUUID(), Path: canonical, IsPrimary: true, Position: 0},
 		},
@@ -119,8 +141,36 @@ func (s *workspaceStore) EnsureProjectForDirectory(directory string) (string, er
 		UpdatedAt: now,
 	}
 	s.workspaces = append(s.workspaces, created)
-	s.persistLocked()
+	s.clearTombstonesLocked(created)
+	if err := s.commitLocked(prev); err != nil {
+		return "", err
+	}
 	return created.ID, nil
+}
+
+// CanonicalProjectID maps a live project ID, or the ID of a hidden project
+// merged into a live one, to the live profile ID. It reports false for IDs
+// that no longer belong to any project.
+func (s *workspaceStore) CanonicalProjectID(projectID string) (string, bool) {
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return "", false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, ws := range s.workspaces {
+		if ws.ID == projectID {
+			return ws.ID, true
+		}
+	}
+	for _, ws := range s.workspaces {
+		for _, alias := range ws.Aliases {
+			if alias == projectID {
+				return ws.ID, true
+			}
+		}
+	}
+	return "", false
 }
 
 // ProjectRoots returns the folders that belong to projectID. Sessions in any
@@ -145,6 +195,9 @@ func (s *workspaceStore) ProjectRoots(projectID string) []string {
 	return nil
 }
 
+// handleResolveProject resolves a directory without registering it. Hidden
+// projects are created when a session is created, so a read-only GET (which
+// may arrive through the remote tunnel) never mutates the store.
 func (s *workspaceStore) handleResolveProject(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -156,68 +209,16 @@ func (s *workspaceStore) handleResolveProject(w http.ResponseWriter, r *http.Req
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	projectID, err := s.EnsureProjectForDirectory(canonical)
-	if err != nil {
-		writeJSONError(w, http.StatusBadRequest, err.Error())
-		return
+	projectID, _ := s.ProjectIDForDirectory(canonical)
+	var roots []string
+	if projectID != "" {
+		roots = s.ProjectRoots(projectID)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"projectID": projectID,
 		"directory": canonical,
-		"roots":     s.ProjectRoots(projectID),
+		"roots":     roots,
 	})
-}
-
-// promoteHiddenLocked turns an auto-registered project into a user-visible
-// workspace without changing its ID, so sessions created before the workspace
-// was saved keep their attribution.
-func (s *workspaceStore) promoteHiddenLocked(hidden workspaceProfile, folders []workspaceFolderInput, input saveWorkspaceRequest) (workspaceProfile, error) {
-	name := s.resolveNameLocked(input.Name, folders[0].Path, hidden.ID)
-	color := normalizeWorkspaceIdentityColor(input.Color)
-	if color == "" {
-		color = hidden.Color
-	}
-	if color == "" {
-		color = defaultWorkspaceIdentityColor
-	}
-	existingIDs := make(map[string]string, len(hidden.Folders))
-	for _, folder := range hidden.Folders {
-		existingIDs[projectComparePath(folder.Path)] = folder.ID
-	}
-	wsFolders := make([]workspaceFolder, len(folders))
-	for index, folder := range folders {
-		id := existingIDs[projectComparePath(folder.Path)]
-		if id == "" {
-			id = generateWorkspaceUUID()
-		}
-		wsFolders[index] = workspaceFolder{
-			ID:        id,
-			Path:      folder.Path,
-			IsPrimary: folder.IsPrimary,
-			Position:  index,
-		}
-	}
-	updated := workspaceProfile{
-		ID:        hidden.ID,
-		Name:      name,
-		Color:     color,
-		Folders:   wsFolders,
-		Hidden:    false,
-		CreatedAt: hidden.CreatedAt,
-		UpdatedAt: time.Now().UTC().Format(time.RFC3339),
-	}
-	for index, ws := range s.workspaces {
-		if ws.ID == hidden.ID {
-			s.workspaces[index] = updated
-			break
-		}
-	}
-	for _, folder := range updated.Folders {
-		s.removeDismissedLocked(folder.Path)
-	}
-	s.removeDismissedLocked(updated.ID)
-	s.persistLocked()
-	return updated, nil
 }
 
 // SetFolderRelinkHandler lets the gateway move sessions when a workspace
@@ -233,28 +234,6 @@ type folderRelink struct {
 	projectID string
 	oldPath   string
 	newPath   string
-}
-
-func changedFolderPaths(before, updated workspaceProfile) []folderRelink {
-	var relinks []folderRelink
-	for index := 0; index < len(before.Folders) && index < len(updated.Folders); index++ {
-		oldPath := before.Folders[index].Path
-		newPath := updated.Folders[index].Path
-		if projectComparePath(oldPath) == projectComparePath(newPath) {
-			continue
-		}
-		// Only a real move/rename relinks sessions; reordering existing
-		// folders must not reassign their conversations.
-		if _, err := os.Stat(oldPath); err == nil {
-			continue
-		}
-		relinks = append(relinks, folderRelink{
-			projectID: before.ID,
-			oldPath:   oldPath,
-			newPath:   newPath,
-		})
-	}
-	return relinks
 }
 
 func (s *workspaceStore) dispatchFolderRelinks(relinks []folderRelink) {

@@ -75,11 +75,42 @@ func CreateSnapshot(dir string) (string, error) {
 	if _, err := runGitWithIndex(repoRoot, tmpIndex, "add", "-A", "--", ".", ":(exclude).hoxi", ":(exclude).claude"); err != nil {
 		return "", fmt.Errorf("stage snapshot: %w", err)
 	}
+	if trackedClaude := trackedPathsUnder(repoRoot, ".claude"); len(trackedClaude) > 0 {
+		addArgs := append([]string{"add", "-A", "--"}, trackedClaude...)
+		if _, err := runGitWithIndex(repoRoot, tmpIndex, addArgs...); err != nil {
+			return "", fmt.Errorf("stage tracked .claude snapshot: %w", err)
+		}
+	}
 	tree, err := runGitWithIndex(repoRoot, tmpIndex, "write-tree")
 	if err != nil {
 		return "", fmt.Errorf("write snapshot tree: %w", err)
 	}
 	return strings.TrimSpace(tree), nil
+}
+
+func trackedPathsUnder(repoRoot, relDir string) []string {
+	seen := make(map[string]struct{})
+	var paths []string
+	collect := func(out string) {
+		for _, entry := range strings.Split(out, "\x00") {
+			entry = strings.TrimSpace(entry)
+			if entry == "" {
+				continue
+			}
+			if _, ok := seen[entry]; ok {
+				continue
+			}
+			seen[entry] = struct{}{}
+			paths = append(paths, entry)
+		}
+	}
+	if out, err := runGitRaw(repoRoot, "ls-files", "-z", "--", relDir); err == nil && out != "" {
+		collect(out)
+	}
+	if out, err := runGitRaw(repoRoot, "ls-tree", "-r", "--name-only", "-z", "HEAD", "--", relDir); err == nil && out != "" {
+		collect(out)
+	}
+	return paths
 }
 
 // HeadTree returns the Git tree SHA of HEAD in dir.
@@ -141,7 +172,9 @@ func RestoreSnapshot(dir, treeHash string) error {
 	if _, err := runGitWithIndex(repoRoot, tmpIndex, "checkout-index", "-a", "-f"); err != nil {
 		return fmt.Errorf("checkout snapshot files: %w", err)
 	}
-	_, _ = runGit(repoRoot, "read-tree", "HEAD")
+	if unmerged, _ := runGit(repoRoot, "ls-files", "-u"); strings.TrimSpace(unmerged) != "" {
+		_, _ = runGit(repoRoot, "read-tree", "HEAD")
+	}
 	globalRepoDiffCache.invalidate(repoRoot)
 	return nil
 }

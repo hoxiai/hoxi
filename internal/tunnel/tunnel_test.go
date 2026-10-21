@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -26,7 +27,7 @@ type fakeController struct {
 
 func newFakeController(t *testing.T) *fakeController {
 	t.Helper()
-	fc := &fakeController{conns: make(chan *websocket.Conn, 1)}
+	fc := &fakeController{conns: make(chan *websocket.Conn, 8)}
 	upgrader := websocket.Upgrader{}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/tunnel/pair/exchange", func(w http.ResponseWriter, r *http.Request) {
@@ -258,5 +259,197 @@ func TestNotifySendsFrameWhileOnlineOnly(t *testing.T) {
 	f := readFrame(t, conn)
 	if f.Type != frameNotify || f.StreamID != 0 || !strings.Contains(string(f.Payload), "per_1") {
 		t.Fatalf("frame = %d %d %s", f.Type, f.StreamID, f.Payload)
+	}
+}
+
+func TestDuplicateStreamIDClosesPreviousWithoutResetOrCrossTalk(t *testing.T) {
+	firstStarted := make(chan struct{})
+	firstCanceled := make(chan struct{})
+	firstRelease := make(chan struct{})
+	var firstOnce sync.Once
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/first" {
+			firstOnce.Do(func() { close(firstStarted) })
+			<-r.Context().Done()
+			close(firstCanceled)
+			<-firstRelease
+			// A stale handler trying to write after its stream ID was reused must be dropped.
+			_, _ = w.Write([]byte("stale-first-body"))
+			return
+		}
+		_, _ = w.Write([]byte("fresh-second-body"))
+	})
+
+	_, conn, _ := pairedManager(t, handler)
+	readFrame(t, conn) // service sync
+
+	open1, _ := jsonFrame(frameOpen, 77, openFrame{
+		ServiceID: ServicePublicID, Method: http.MethodGet, RequestURI: "/first",
+	})
+	sendFrame(t, conn, open1)
+
+	select {
+	case <-firstStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("first stream did not start")
+	}
+
+	open2, _ := jsonFrame(frameOpen, 77, openFrame{
+		ServiceID: ServicePublicID, Method: http.MethodGet, RequestURI: "/second",
+	})
+	sendFrame(t, conn, open2)
+
+	select {
+	case <-firstCanceled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("reused stream ID did not cancel previous stream")
+	}
+	close(firstRelease)
+
+	resp := readFrame(t, conn)
+	var meta responseFrame
+	if resp.Type != frameResponse || resp.StreamID != 77 || json.Unmarshal(resp.Payload, &meta) != nil || meta.Status != http.StatusOK {
+		t.Fatalf("response frame = %+v", resp)
+	}
+	data := readFrame(t, conn)
+	if data.Type != frameData || data.StreamID != 77 {
+		t.Fatalf("data frame = %+v", data)
+	}
+	_, payload, err := decodeData(data.Payload)
+	if err != nil || string(payload) != "fresh-second-body" {
+		t.Fatalf("payload = %q, err = %v", string(payload), err)
+	}
+	end := readFrame(t, conn)
+	if end.Type != frameEnd || end.StreamID != 77 {
+		t.Fatalf("end frame = %+v", end)
+	}
+}
+
+func TestStreamWithoutBodyUsesNoBodyAndIgnoresStrayData(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Body != http.NoBody || r.ContentLength != 0 {
+			http.Error(w, "expected http.NoBody and ContentLength 0", http.StatusBadRequest)
+			return
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil || len(body) != 0 {
+			http.Error(w, "unexpected body bytes", http.StatusBadRequest)
+			return
+		}
+		_, _ = w.Write([]byte("ok"))
+	})
+
+	_, conn, _ := pairedManager(t, handler)
+	readFrame(t, conn) // service sync
+
+	open, _ := jsonFrame(frameOpen, 88, openFrame{
+		ServiceID:  ServicePublicID,
+		Method:     http.MethodPost,
+		RequestURI: "/api/hoxi/sessions",
+		HasBody:    false,
+		Headers:    map[string][]string{"Content-Length": {"5"}},
+	})
+	sendFrame(t, conn, open)
+	sendFrame(t, conn, frame{Type: frameData, StreamID: 88, Payload: encodeData(dataHTTP, []byte("stray"))})
+
+	resp := readFrame(t, conn)
+	var meta responseFrame
+	if resp.Type != frameResponse || json.Unmarshal(resp.Payload, &meta) != nil || meta.Status != http.StatusOK {
+		t.Fatalf("response = %d %s", resp.Type, resp.Payload)
+	}
+	data := readFrame(t, conn)
+	_, payload, _ := decodeData(data.Payload)
+	if string(payload) != "ok" {
+		t.Fatalf("payload = %q, want ok", string(payload))
+	}
+	if end := readFrame(t, conn); end.Type != frameEnd {
+		t.Fatalf("end = %d, want frameEnd", end.Type)
+	}
+}
+
+func TestStopResetsStatusAndConcurrentRestartsSerialize(t *testing.T) {
+	fc := newFakeController(t)
+	configPath := filepath.Join(t.TempDir(), "tunnel.json")
+	m := NewManager(Options{Handler: http.NotFoundHandler(), Version: "test", Hostname: func() string { return "mac.local" }})
+	m.Configure(NewStore(configPath), 5410)
+	t.Cleanup(m.Stop)
+
+	if err := m.Pair(t.Context(), fc.server.URL, strings.Repeat("ab", 16), "Studio"); err != nil {
+		t.Fatalf("pair: %v", err)
+	}
+	conn := <-fc.conns
+	t.Cleanup(func() { _ = conn.Close() })
+
+	deadline := time.Now().Add(5 * time.Second)
+	for m.Status().State != StateOnline && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if m.Status().State != StateOnline {
+		t.Fatalf("state before stop = %s, want online", m.Status().State)
+	}
+
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			m.Start()
+		}()
+	}
+	wg.Wait()
+
+	m.Stop()
+	status := m.Status()
+	if status.State == StateOnline || status.State == StateConnecting || status.ConnectedAt != nil {
+		t.Fatalf("status after Stop() = %+v, want offline with nil ConnectedAt", status)
+	}
+	if status.State != StateOffline {
+		t.Fatalf("state after Stop() = %s, want %s", status.State, StateOffline)
+	}
+}
+
+func TestPairDoesNotFollowRedirects(t *testing.T) {
+	redirectTargetHit := false
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		redirectTargetHit = true
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "msg": "Success", "data": map[string]any{
+			"nodeId": 7, "clientId": testClientID, "token": testToken,
+		}})
+	}))
+	t.Cleanup(target.Close)
+
+	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+"/api/tunnel/pair/exchange", http.StatusFound)
+	}))
+	t.Cleanup(redirector.Close)
+
+	m := NewManager(Options{Handler: http.NotFoundHandler()})
+	m.Configure(NewStore(filepath.Join(t.TempDir(), "tunnel.json")), 5410)
+	t.Cleanup(m.Stop)
+
+	if err := m.Pair(t.Context(), redirector.URL, strings.Repeat("ab", 16), "Studio"); err == nil {
+		t.Fatal("expected Pair to reject redirect response")
+	}
+	if redirectTargetHit {
+		t.Fatal("Pair followed HTTP redirect and leaked pairing request to redirect target")
+	}
+}
+
+func TestStartSurfacesCorruptConfigError(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "tunnel.json")
+	if err := os.WriteFile(configPath, []byte("{corrupt json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(Options{Handler: http.NotFoundHandler()})
+	m.Configure(NewStore(configPath), 5410)
+	m.Start()
+
+	status := m.Status()
+	if status.State != StateDisabled {
+		t.Fatalf("state = %s, want %s", status.State, StateDisabled)
+	}
+	if !strings.Contains(status.Message, "read tunnel config") {
+		t.Fatalf("expected corrupt config error in status.Message, got %q", status.Message)
 	}
 }

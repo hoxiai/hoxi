@@ -3,6 +3,7 @@ package gateway
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -29,7 +30,11 @@ func TestDesktopIntentRoundTrip(t *testing.T) {
 	notified := 0
 	gw.SetDesktopIntentNotifier(func() { notified++ })
 
-	gw.QueueDesktopIntent(DesktopIntent{SessionID: " ses_abc ", MessageID: " msg_a_1 "})
+	gw.QueueDesktopIntent(DesktopIntent{
+		SessionID: " ses_abc ",
+		MessageID: " msg_a_1 ",
+		Directory: "  /repo/project/  ",
+	})
 	if notified != 1 {
 		t.Fatalf("notifier calls = %d, want 1", notified)
 	}
@@ -38,7 +43,7 @@ func TestDesktopIntentRoundTrip(t *testing.T) {
 	if !ok {
 		t.Fatal("expected a pending intent")
 	}
-	if intent.SessionID != "ses_abc" || intent.MessageID != "msg_a_1" {
+	if intent.SessionID != "ses_abc" || intent.MessageID != "msg_a_1" || intent.Directory != "/repo/project" {
 		t.Fatalf("unexpected intent: %+v", intent)
 	}
 
@@ -47,17 +52,34 @@ func TestDesktopIntentRoundTrip(t *testing.T) {
 	}
 }
 
-func TestDesktopIntentIgnoresEmptySession(t *testing.T) {
+func TestDesktopIntentIgnoresEmptyOrInvalidInputs(t *testing.T) {
 	gw := New(0, "test", t.TempDir(), nil, nil)
 	notified := 0
 	gw.SetDesktopIntentNotifier(func() { notified++ })
 
-	gw.QueueDesktopIntent(DesktopIntent{SessionID: "   "})
-	if notified != 0 {
-		t.Fatalf("notifier calls = %d, want 0", notified)
+	invalidCases := []DesktopIntent{
+		{SessionID: "   "},
+		{SessionID: "ses_"},
+		{SessionID: "abc_123"},
+		{SessionID: "ses_bad.dot"},
+		{SessionID: "ses_bad/slash"},
+		{SessionID: "ses_" + strings.Repeat("a", 96)},
+		{SessionID: "ses_valid", MessageID: "msg_"},
+		{SessionID: "ses_valid", MessageID: "not_msg_1"},
+		{SessionID: "ses_valid", MessageID: "msg_bad.dot"},
+		{SessionID: "ses_valid", MessageID: "msg_" + strings.Repeat("a", 96)},
+		{SessionID: "ses_valid", Directory: "relative/path"},
+		{SessionID: "ses_valid", Directory: "/repo/with\nnewline"},
+		{SessionID: "ses_valid", Directory: "/repo/with\x00null"},
 	}
-	if _, ok := consumeIntentInTest(t, gw); ok {
-		t.Fatal("expected no pending intent")
+	for i, tc := range invalidCases {
+		gw.QueueDesktopIntent(tc)
+		if notified != 0 {
+			t.Fatalf("case %d (%+v): notifier calls = %d, want 0", i, tc, notified)
+		}
+		if got, ok := consumeIntentInTest(t, gw); ok {
+			t.Fatalf("case %d (%+v): expected no pending intent, got %+v", i, tc, got)
+		}
 	}
 }
 

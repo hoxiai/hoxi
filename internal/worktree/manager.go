@@ -691,10 +691,26 @@ func ensureGitExclude(repoRoot string, patterns ...string) {
 	_ = os.MkdirAll(filepath.Dir(excludeFile), 0o755)
 	data, _ := os.ReadFile(excludeFile)
 	content := string(data)
+	existing := make(map[string]bool)
+	for _, rawLine := range strings.Split(content, "\n") {
+		line := strings.TrimSpace(strings.TrimSuffix(rawLine, "\r"))
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		existing[line] = true
+		existing[strings.TrimSuffix(line, "/")] = true
+	}
 	var toAppend strings.Builder
 	for _, pattern := range patterns {
 		pattern = strings.TrimSpace(pattern)
-		if pattern == "" || strings.Contains(content, pattern) {
+		if pattern == "" {
+			continue
+		}
+		norm := strings.TrimSuffix(pattern, "/")
+		if existing[pattern] || existing[norm] {
+			continue
+		}
+		if strings.TrimPrefix(norm, "/") == ".claude" && len(trackedPathsUnder(repoRoot, ".claude")) > 0 {
 			continue
 		}
 		if len(content) > 0 && !strings.HasSuffix(content, "\n") && toAppend.Len() == 0 {
@@ -702,6 +718,8 @@ func ensureGitExclude(repoRoot string, patterns ...string) {
 		}
 		toAppend.WriteString(pattern)
 		toAppend.WriteByte('\n')
+		existing[pattern] = true
+		existing[norm] = true
 	}
 	if toAppend.Len() > 0 {
 		_ = os.WriteFile(excludeFile, append(data, []byte(toAppend.String())...), 0o644)

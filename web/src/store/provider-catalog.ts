@@ -456,12 +456,23 @@ export function extractFlattenedModels(
   return out;
 }
 
-export function rankModelSearch(models: FlattenedModel[], rawQuery: string): FlattenedModel[] {
+export interface SearchableModelEntry {
+  providerID: string;
+  providerName: string;
+  modelID: string;
+  modelName: string;
+  free?: boolean;
+  multiplier?: string;
+  connected?: boolean;
+  isCustom?: boolean;
+}
+
+export function rankModelSearch<T extends SearchableModelEntry>(models: T[], rawQuery: string): T[] {
   const q = rawQuery.trim().toLowerCase();
   if (!q) return models;
   const tokens = q.split(/\s+/).filter(Boolean);
 
-  const scored: Array<{ item: FlattenedModel; score: number }> = [];
+  const scored: Array<{ item: T; score: number }> = [];
   for (const m of models) {
     const idLower = m.modelID.toLowerCase();
     const nameLower = m.modelName.toLowerCase();
@@ -476,6 +487,7 @@ export function rankModelSearch(models: FlattenedModel[], rawQuery: string): Fla
     if (idLower === q || nameLower === q) score += 200;
     else if (idLower.startsWith(q) || nameLower.startsWith(q)) score += 120;
     else if (idLower.includes(q) || nameLower.includes(q)) score += 70;
+    if (provLower.includes(q)) score += 15;
     if (m.connected) score += 40;
     if (m.free) score += 25;
     if (m.isCustom) score += 20;
@@ -486,6 +498,44 @@ export function rankModelSearch(models: FlattenedModel[], rawQuery: string): Fla
   return scored
     .sort((a, b) => b.score - a.score || a.item.modelName.localeCompare(b.item.modelName))
     .map((s) => s.item);
+}
+
+export function resolveRecentModelEntries<T extends { providerID: string; modelID: string }>(
+  models: T[],
+  limit = Infinity
+): T[] {
+  const byKey = new Map(models.map((m) => [`${m.providerID}/${m.modelID}`, m]));
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const item of workspace.recentModels) {
+    const key = `${item.providerID}/${item.modelID}`;
+    const found = byKey.get(key);
+    if (!found || seen.has(key)) continue;
+    seen.add(key);
+    out.push(found);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+export function resolveFavoriteModelEntries<T extends { providerID: string; modelID: string }>(
+  models: T[],
+  options?: { limit?: number; excludeKey?: string }
+): T[] {
+  const limit = options?.limit ?? Infinity;
+  const excludeKey = options?.excludeKey || "";
+  const byKey = new Map(models.map((m) => [`${m.providerID}/${m.modelID}`, m]));
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const item of workspace.favoriteModels) {
+    const key = `${item.providerID}/${item.modelID}`;
+    const found = byKey.get(key);
+    if (!found || key === excludeKey || seen.has(key)) continue;
+    seen.add(key);
+    out.push(found);
+    if (out.length >= limit) break;
+  }
+  return out;
 }
 
 export function getConnectedProviderModelGroups(): ConnectedProviderGroup[] {
@@ -550,7 +600,7 @@ export function getConnectedProviderModelGroups(): ConnectedProviderGroup[] {
   return sorted;
 }
 
-const LOCAL_CLI_RUNTIME_PROVIDERS = new Set(["antigravity", "claude-code", "codebuddy", "qoder"]);
+export const LOCAL_CLI_RUNTIME_PROVIDERS: ReadonlySet<string> = new Set(["antigravity", "claude-code", "codebuddy", "qoder"]);
 
 /**
  * Internal LLM calls (session titles, commit messages, observer audits) go
@@ -565,9 +615,9 @@ export function isInternalLLMModel(model?: { providerID?: string; modelID?: stri
   if (providerID === AUTO_PROVIDER_ID) return false;
   if (LOCAL_CLI_RUNTIME_PROVIDERS.has(providerID)) return false;
   const provider = workspace.providers.find((p) => p.id === providerID);
-  // Providers may not be loaded yet (startup, tests): keep the candidate and
-  // let the backend resolve it instead of dropping a valid HTTP model.
-  if (!provider) return true;
+  // Unknown or not-yet-loaded providers are rejected: background calls must
+  // only reach a provider the user has visibly configured.
+  if (!provider) return false;
   if (provider.source === "runner") return false;
   return Boolean(provider.models?.[modelID]);
 }

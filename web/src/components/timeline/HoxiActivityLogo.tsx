@@ -24,7 +24,7 @@ export default function HoxiActivityLogo(props: { active?: boolean }) {
         stroke-dasharray="23 77"
       />
       {/* Preserve the favicon geometry inside a compact, tile-free face. */}
-      <svg x="3" y="3" width="18" height="18" viewBox="12 11 40 40" overflow="visible">
+      <svg x="4.5" y="4.5" width="15" height="15" viewBox="12 11 40 40" overflow="visible">
         <g transform="translate(3.2, 4.8) scale(0.9)" fill="currentColor">
           <g data-slot="face">
             <path d="M32 8L52 21H44L32 13L20 21H12L32 8Z" />

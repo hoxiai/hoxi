@@ -26,9 +26,18 @@ async function withReviewFixture(
   try {
     // With no observer and no worker model, nothing can be resolved and no request may be sent.
     setWorkspace(
+      "providers",
+      (options.observer
+        ? [
+            { id: "observer", name: "Observer", source: "api", models: { "obs-model": { name: "Obs" } } },
+            { id: "worker", name: "Worker", source: "api", models: { "worker-model": { name: "Worker" } } },
+          ]
+        : []) as never,
+    );
+    setWorkspace(
       "defaultAI",
       "model",
-      (options.observer ? { providerID: "worker", modelID: "worker-model" } : undefined) as never,
+      (options.observer ? { providerID: "worker", modelID: "worker-model" } : null) as never,
     );
     setWorkspace("observerModel", options.observer ? "observer/obs-model" : "");
     setWorkspace("globalConfig", reconcile({}) as never);

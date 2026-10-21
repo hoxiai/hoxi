@@ -1,6 +1,9 @@
 package workspace
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -124,7 +127,7 @@ func TestSavingAutoProjectPromotesItWithoutChangingItsID(t *testing.T) {
 	}
 }
 
-func TestFolderMoveTriggersRelinkAfterProfileUpdate(t *testing.T) {
+func TestExplicitFolderReplaceRelinksAndKeepsFolderID(t *testing.T) {
 	homeDir := setupTestEnv(t)
 	oldRoot := mkdirTempProject(t, homeDir, "old-project")
 	newRoot := mkdirTempProject(t, homeDir, "new-project")
@@ -134,6 +137,7 @@ func TestFolderMoveTriggersRelinkAfterProfileUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	folderID := store.List()[0].Folders[0].ID
 	var gotProjectID, gotOld, gotNew string
 	store.SetFolderRelinkHandler(func(projectID, oldPath, newPath string) error {
 		gotProjectID, gotOld, gotNew = projectID, oldPath, newPath
@@ -142,16 +146,301 @@ func TestFolderMoveTriggersRelinkAfterProfileUpdate(t *testing.T) {
 	if err := os.RemoveAll(oldRoot); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Update(projectID, saveWorkspaceRequest{
-		Folders: []workspaceFolderInput{{Path: newRoot, IsPrimary: true}},
-	}); err != nil {
+	saved, err := store.Update(projectID, saveWorkspaceRequest{
+		Folders: []workspaceFolderInput{{ID: folderID, Path: newRoot, IsPrimary: true}},
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
 	if gotProjectID != projectID || gotOld != oldRoot || gotNew != newRoot {
 		t.Fatalf("relink = (%q, %q, %q), want (%q, %q, %q)",
 			gotProjectID, gotOld, gotNew, projectID, oldRoot, newRoot)
 	}
+	if len(saved.Folders) != 1 || saved.Folders[0].ID != folderID {
+		t.Fatalf("explicit replace must keep the folder ID %q: %+v", folderID, saved.Folders)
+	}
 	if got, ok := store.ProjectIDForDirectory(newRoot); !ok || got != projectID {
 		t.Fatalf("new root project = %q, %v; want %q", got, ok, projectID)
+	}
+}
+
+func TestFolderPathChangeWithoutIDNeverRelinks(t *testing.T) {
+	homeDir := setupTestEnv(t)
+	oldRoot := mkdirTempProject(t, homeDir, "old-project")
+	newRoot := mkdirTempProject(t, homeDir, "new-project")
+
+	store := NewStore("")
+	ws, err := store.Create(saveWorkspaceRequest{Folders: []workspaceFolderInput{{Path: oldRoot, IsPrimary: true}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	relinked := false
+	store.SetFolderRelinkHandler(func(_, _, _ string) error { relinked = true; return nil })
+	if err := os.RemoveAll(oldRoot); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Update(ws.ID, saveWorkspaceRequest{
+		Folders: []workspaceFolderInput{{Path: newRoot, IsPrimary: true}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if relinked {
+		t.Fatal("a path change without a folder ID must not relink sessions")
+	}
+}
+
+func TestExplicitReplaceKeepsSessionsWhenOldFolderStillExists(t *testing.T) {
+	homeDir := setupTestEnv(t)
+	a := mkdirTempProject(t, homeDir, "proj-a")
+	b := mkdirTempProject(t, homeDir, "proj-b")
+
+	store := NewStore("")
+	ws, err := store.Create(saveWorkspaceRequest{Folders: []workspaceFolderInput{{Path: a, IsPrimary: true}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	relinked := false
+	store.SetFolderRelinkHandler(func(_, _, _ string) error { relinked = true; return nil })
+	if _, err := store.Update(ws.ID, saveWorkspaceRequest{
+		Folders: []workspaceFolderInput{{ID: ws.Folders[0].ID, Path: b, IsPrimary: true}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if relinked {
+		t.Fatal("an existing old folder must not have its sessions moved")
+	}
+}
+
+// Regression: re-saving a workspace whose middle folder was deleted must not
+// relink that folder's sessions into an unrelated sibling folder.
+func TestDeletedMiddleFolderIsNotRelinkedToSibling(t *testing.T) {
+	homeDir := setupTestEnv(t)
+	a := mkdirTempProject(t, homeDir, "proj-a")
+	b := mkdirTempProject(t, homeDir, "proj-b")
+	c := mkdirTempProject(t, homeDir, "proj-c")
+
+	store := NewStore("")
+	ws, err := store.Create(saveWorkspaceRequest{
+		Name: "multi",
+		Folders: []workspaceFolderInput{
+			{Path: a, IsPrimary: true}, {Path: b}, {Path: c},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var relinks [][2]string
+	store.SetFolderRelinkHandler(func(_, oldPath, newPath string) error {
+		relinks = append(relinks, [2]string{oldPath, newPath})
+		return nil
+	})
+	if err := os.RemoveAll(b); err != nil {
+		t.Fatal(err)
+	}
+	// User only renames the workspace; the UI still lists all three folders.
+	saved, err := store.Update(ws.ID, saveWorkspaceRequest{
+		Name: "multi-renamed",
+		Folders: []workspaceFolderInput{
+			{Path: a, IsPrimary: true}, {Path: b}, {Path: c},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range relinks {
+		t.Errorf("unexpected relink %s -> %s", r[0], r[1])
+	}
+	if len(saved.Folders) != 3 || saved.Folders[1].Path != b || saved.Folders[1].ID != ws.Folders[1].ID {
+		t.Fatalf("missing folder must be kept with its ID: %+v", saved.Folders)
+	}
+}
+
+func TestDeletedPrimaryFolderIsNotRelinkedToSibling(t *testing.T) {
+	homeDir := setupTestEnv(t)
+	a := mkdirTempProject(t, homeDir, "proj-a")
+	b := mkdirTempProject(t, homeDir, "proj-b")
+
+	store := NewStore("")
+	ws, err := store.Create(saveWorkspaceRequest{
+		Folders: []workspaceFolderInput{{Path: a, IsPrimary: true}, {Path: b}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	relinked := false
+	store.SetFolderRelinkHandler(func(_, _, _ string) error { relinked = true; return nil })
+	if err := os.RemoveAll(a); err != nil {
+		t.Fatal(err)
+	}
+	// Re-save with the missing primary still listed, then with it removed:
+	// neither may move the primary's sessions into b.
+	kept, err := store.Update(ws.ID, saveWorkspaceRequest{
+		Folders: []workspaceFolderInput{{Path: a, IsPrimary: true}, {Path: b}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(kept.Folders) != 2 || kept.Folders[0].Path != a {
+		t.Fatalf("missing primary must be kept: %+v", kept.Folders)
+	}
+	dropped, err := store.Update(ws.ID, saveWorkspaceRequest{
+		Folders: []workspaceFolderInput{{Path: b, IsPrimary: true}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if relinked {
+		t.Fatal("deleting the primary folder must not relink its sessions")
+	}
+	if len(dropped.Folders) != 1 || dropped.Folders[0].ID != ws.Folders[1].ID {
+		t.Fatalf("surviving folder must keep its ID: %+v", dropped.Folders)
+	}
+}
+
+func TestSaveAbsorbsHiddenProjectsForEveryFolder(t *testing.T) {
+	homeDir := setupTestEnv(t)
+	a := mkdirTempProject(t, homeDir, "proj-a")
+	b := mkdirTempProject(t, homeDir, "proj-b")
+	c := mkdirTempProject(t, homeDir, "proj-c")
+
+	store := NewStore("")
+	hiddenB, err := store.EnsureProjectForDirectory(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hiddenC, err := store.EnsureProjectForDirectory(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws, err := store.Create(saveWorkspaceRequest{
+		Folders: []workspaceFolderInput{{Path: a, IsPrimary: true}, {Path: b}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ws.ID != hiddenB {
+		t.Fatalf("hidden owner of a non-primary folder must be promoted: got %q want %q", ws.ID, hiddenB)
+	}
+	updated, err := store.Update(ws.ID, saveWorkspaceRequest{
+		Folders: []workspaceFolderInput{{Path: a, IsPrimary: true}, {Path: b}, {Path: c}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := store.CanonicalProjectID(hiddenC); !ok || got != updated.ID {
+		t.Fatalf("absorbed hidden ID resolves to %q, %v; want %q", got, ok, updated.ID)
+	}
+	owners := 0
+	for _, profile := range store.List() {
+		for _, folder := range profile.Folders {
+			if folder.Path == c {
+				owners++
+			}
+		}
+	}
+	if owners != 1 {
+		t.Fatalf("folder c owned by %d projects, want 1", owners)
+	}
+}
+
+func TestSaveRejectsFolderOfAnotherVisibleWorkspace(t *testing.T) {
+	homeDir := setupTestEnv(t)
+	a := mkdirTempProject(t, homeDir, "proj-a")
+	b := mkdirTempProject(t, homeDir, "proj-b")
+
+	store := NewStore("")
+	if _, err := store.Create(saveWorkspaceRequest{Folders: []workspaceFolderInput{{Path: a, IsPrimary: true}}}); err != nil {
+		t.Fatal(err)
+	}
+	other, err := store.Create(saveWorkspaceRequest{Folders: []workspaceFolderInput{{Path: b, IsPrimary: true}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Create(saveWorkspaceRequest{
+		Folders: []workspaceFolderInput{{Path: b, IsPrimary: true}, {Path: a}},
+	}); err == nil {
+		t.Fatal("creating a workspace with a folder owned by another workspace must fail")
+	}
+	if _, err := store.Update(other.ID, saveWorkspaceRequest{
+		Folders: []workspaceFolderInput{{Path: b, IsPrimary: true}, {Path: a}},
+	}); err == nil {
+		t.Fatal("adding a folder owned by another workspace must fail")
+	}
+}
+
+func TestReAddingRemovedFolderReusesProjectID(t *testing.T) {
+	homeDir := setupTestEnv(t)
+	root := mkdirTempProject(t, homeDir, "project")
+
+	store := NewStore("")
+	ws, err := store.Create(saveWorkspaceRequest{Folders: []workspaceFolderInput{{Path: root, IsPrimary: true}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed, err := store.Remove(ws.ID); !removed || err != nil {
+		t.Fatalf("remove = %v, %v", removed, err)
+	}
+	// Survives a restart through the persisted tombstone.
+	reopened := NewStore("")
+	again, err := reopened.Create(saveWorkspaceRequest{Folders: []workspaceFolderInput{{Path: root, IsPrimary: true}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.ID != ws.ID {
+		t.Fatalf("re-added project ID = %q, want %q", again.ID, ws.ID)
+	}
+
+	if _, err := reopened.Remove(again.ID); err != nil {
+		t.Fatal(err)
+	}
+	ensured, err := reopened.EnsureProjectForDirectory(root)
+	if err != nil || ensured != ws.ID {
+		t.Fatalf("session registration after removal = %q, %v; want %q", ensured, err, ws.ID)
+	}
+}
+
+func TestEnsureProjectRejectsHomeAndRoot(t *testing.T) {
+	homeDir := setupTestEnv(t)
+	store := NewStore("")
+	for _, dir := range []string{homeDir, "/"} {
+		if id, err := store.EnsureProjectForDirectory(dir); err == nil {
+			t.Fatalf("EnsureProjectForDirectory(%q) = %q, want error", dir, id)
+		}
+	}
+	if len(store.List()) != 0 {
+		t.Fatalf("no project may be registered: %+v", store.List())
+	}
+}
+
+func TestResolveProjectDoesNotRegister(t *testing.T) {
+	homeDir := setupTestEnv(t)
+	root := mkdirTempProject(t, homeDir, "project")
+	store := NewStore("")
+	mux := http.NewServeMux()
+	store.RegisterRoutes(mux)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/hoxi/projects/resolve?directory="+root, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("resolve status = %d: %s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		ProjectID string `json:"projectID"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || body.ProjectID != "" {
+		t.Fatalf("unregistered directory resolved to %q, %v", body.ProjectID, err)
+	}
+	if len(store.List()) != 0 {
+		t.Fatal("GET resolve must not register a project")
+	}
+
+	id, err := store.EnsureProjectForDirectory(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/hoxi/projects/resolve?directory="+root, nil))
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || body.ProjectID != id {
+		t.Fatalf("registered directory resolved to %q, %v; want %q", body.ProjectID, err, id)
 	}
 }

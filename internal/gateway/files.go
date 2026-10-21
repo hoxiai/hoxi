@@ -19,8 +19,6 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
-
-	"github.com/hoxiai/hoxi/internal/hoxipaths"
 )
 
 const (
@@ -378,12 +376,14 @@ func isBinaryImageMime(mimeType string) bool {
 }
 
 func (g *Gateway) handleFileContent(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		g.proxy.ServeHTTP(w, r)
-		return
-	}
+	remote := isTunnelRequest(r)
 	rawPath := strings.TrimSpace(r.URL.Query().Get("path"))
-	if rawPath == "" {
+	if r.Method != http.MethodGet || rawPath == "" {
+		// Tunnel requests never fall through to the OpenCode proxy.
+		if remote {
+			writeJSONError(w, http.StatusForbidden, "route is not available over the remote tunnel")
+			return
+		}
 		g.proxy.ServeHTTP(w, r)
 		return
 	}
@@ -399,6 +399,13 @@ func (g *Gateway) handleFileContent(w http.ResponseWriter, r *http.Request) {
 	targetPath, info, outsideWorkspace, err := g.resolveLocalFileTarget(rawPath, rawDir, sessionID, true)
 	if targetPath != "" && isSensitiveCredentialPath(targetPath) {
 		writeJSONError(w, http.StatusForbidden, "access to sensitive credential file is forbidden")
+		return
+	}
+	// outsideWorkspace is judged against request-supplied directories too, so
+	// remote reads must also land inside a registered workspace or worktree.
+	// Checked before existence so the tunnel cannot probe arbitrary paths.
+	if remote && (outsideWorkspace || !g.tunnelFilePathAllowed(targetPath, sessionID)) {
+		writeJSONError(w, http.StatusForbidden, "path is outside the workspace")
 		return
 	}
 	if err != nil {
@@ -527,6 +534,10 @@ func (g *Gateway) handleFileList(w http.ResponseWriter, r *http.Request) {
 
 	if isSensitiveCredentialPath(targetDir) {
 		writeJSONError(w, http.StatusForbidden, "access to sensitive directory is forbidden")
+		return
+	}
+	if isTunnelRequest(r) && !g.tunnelFilePathAllowed(targetDir, sessionID) {
+		writeJSONError(w, http.StatusForbidden, "path is outside the workspace")
 		return
 	}
 
@@ -661,26 +672,4 @@ func (g *Gateway) handleFileOpen(w http.ResponseWriter, r *http.Request) {
 		"ok":           true,
 		"resolvedPath": targetPath,
 	})
-}
-
-func isSensitiveCredentialPath(targetPath string) bool {
-	resolved := filepath.Clean(targetPath)
-	if sym, err := filepath.EvalSymlinks(resolved); err == nil && sym != "" {
-		resolved = filepath.Clean(sym)
-	}
-	slashPath := strings.ToLower(filepath.ToSlash(resolved))
-	base := strings.ToLower(filepath.Base(resolved))
-
-	if strings.Contains(slashPath, "/.hoxi/") && hoxipaths.IsProtectedStateFile(base) {
-		return true
-	}
-	if strings.Contains(slashPath, "/opencode/") && (base == "auth.json" || base == "config.json" || base == "opencode.json" || base == "opencode.jsonc") {
-		return true
-	}
-	for _, dirToken := range []string{"/.ssh/", "/.aws/", "/.gnupg/", "/.kube/"} {
-		if strings.Contains(slashPath, dirToken) {
-			return true
-		}
-	}
-	return false
 }

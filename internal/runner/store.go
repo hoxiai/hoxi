@@ -31,6 +31,9 @@ type Store struct {
 	cacheMaxBytes    int64
 	cachedSessions   int
 	cachedBytes      int64
+	// canonicalProject maps a stored project ID to its live project (see
+	// ProjectResolver); nil treats every ID as live. Protected by mu.
+	canonicalProject func(projectID string) (string, bool)
 }
 
 type storedSession struct {
@@ -248,8 +251,7 @@ func (s *Store) Update(sessionID string, fn func(*SessionRecord)) (SessionRecord
 	return cloneRecord(updated), true, nil
 }
 
-// SetProjectID assigns attribution without touching activity timestamps.
-// Startup backfill must not reorder the sidebar or reset history collapsing.
+// updateWithoutActivity commits fn without touching activity timestamps.
 func (s *Store) updateWithoutActivity(sessionID string, fn func(*SessionRecord)) (SessionRecord, bool, error) {
 	ss := s.lockSession(sessionID, false)
 	if ss == nil {
@@ -265,6 +267,8 @@ func (s *Store) updateWithoutActivity(sessionID string, fn func(*SessionRecord))
 	return cloneRecord(updated), true, nil
 }
 
+// SetProjectID assigns attribution without touching activity timestamps.
+// Startup backfill must not reorder the sidebar or reset history collapsing.
 func (s *Store) SetProjectID(sessionID, projectID string) error {
 	_, _, err := s.updateWithoutActivity(sessionID, func(r *SessionRecord) {
 		r.ProjectID = projectID
@@ -275,8 +279,13 @@ func (s *Store) SetProjectID(sessionID, projectID string) error {
 // RelinkSession moves a conversation to a new project root without changing
 // its activity timestamp. Engine resume handles belong to the old directory,
 // so they are cleared and the next turn rehydrates context in the new root.
-func (s *Store) RelinkSession(sessionID, projectDir, worktreePath, branch, baseCommit string) (SessionRecord, bool, error) {
+// A non-empty sandboxMode replaces the record's mode, e.g. when the new root
+// cannot host an isolated worktree.
+func (s *Store) RelinkSession(sessionID, projectDir, worktreePath, branch, baseCommit, sandboxMode string) (SessionRecord, bool, error) {
 	return s.updateWithoutActivity(sessionID, func(r *SessionRecord) {
+		if sandboxMode != "" {
+			r.SandboxMode = sandboxMode
+		}
 		r.ProjectDir = projectDir
 		r.WorktreePath = worktreePath
 		r.Branch, r.BaseCommit = branch, baseCommit
@@ -313,13 +322,16 @@ func (s *Store) List(directory string) []SessionInfo {
 	return s.ListProject("", directory)
 }
 
-// ListProject lists sessions owned by projectID. Legacy records without an ID
-// still match by their strict directory scope until the startup backfill runs;
-// directory is only a fallback, never a second ownership source.
+// ListProject lists sessions owned by projectID. A record whose ID is an
+// alias of projectID (a merged hidden project) belongs to it too. Records
+// without an ID, or whose ID no longer names a live project (removed
+// workspace), still match by their strict directory scope; directory is only
+// a fallback, never a second ownership source for a live project.
 func (s *Store) ListProject(projectID, directory string) []SessionInfo {
 	projectID = strings.TrimSpace(projectID)
 	normFilter := normalizeComparePath(directory)
 	s.mu.RLock()
+	canonical := s.canonicalProject
 	metas := make([]SessionRecord, 0, len(s.records))
 	for _, ss := range s.records {
 		if ss.meta.ID != "" {
@@ -327,11 +339,37 @@ func (s *Store) ListProject(projectID, directory string) []SessionInfo {
 		}
 	}
 	s.mu.RUnlock()
+	type resolvedOwner struct {
+		id   string
+		live bool
+	}
+	owners := make(map[string]resolvedOwner)
+	resolve := func(id string) resolvedOwner {
+		if canonical == nil {
+			return resolvedOwner{id: id, live: true}
+		}
+		if owner, ok := owners[id]; ok {
+			return owner
+		}
+		live, ok := canonical(id)
+		owner := resolvedOwner{id: live, live: ok}
+		owners[id] = owner
+		return owner
+	}
 	var out []SessionInfo
 	for _, rec := range metas {
 		if projectID != "" {
 			if rec.ProjectID != projectID {
-				if rec.ProjectID != "" || normFilter == "" || !sessionMatchesDirectory(rec, normFilter) {
+				fallback := rec.ProjectID == ""
+				if !fallback {
+					owner := resolve(rec.ProjectID)
+					if owner.live && owner.id == projectID {
+						out = append(out, rec.ToSessionInfo())
+						continue
+					}
+					fallback = !owner.live
+				}
+				if !fallback || normFilter == "" || !sessionMatchesDirectory(rec, normFilter) {
 					continue
 				}
 			}

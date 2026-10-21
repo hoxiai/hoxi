@@ -4,7 +4,6 @@ import { hoxiAPI } from "../services/api";
 import type { SessionInfo } from "../services/sse-types";
 import { AUTO_PROVIDER_ID, resolveAutoModelTarget } from "./auto-models";
 import { resolveInternalLLMModel } from "./provider-catalog";
-import { findBestFallbackModel } from "./provider-health";
 import { workspace, type SelectedModel } from "./workspace-state";
 
 export const MANUAL_TITLES_KEY = "hoxi-session-manual-titles:v1";
@@ -259,8 +258,7 @@ function resolveTitleModel(hint?: SelectedModel): SelectedModel | null {
     small,
     fallback,
     parseFullModelKey(workspace.globalConfig?.model),
-    workspace.defaultAI?.model,
-    findBestFallbackModel(undefined, { httpOnly: true })
+    workspace.defaultAI?.model
   );
 }
 

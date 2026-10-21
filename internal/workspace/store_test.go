@@ -222,11 +222,11 @@ func TestStoreLifecycleAndPersistence(t *testing.T) {
 	}
 
 	// 6. Remove and ListDismissed
-	if store.Remove("   ") {
-		t.Fatal("expected false when removing empty target")
+	if removed, err := store.Remove("   "); removed || err != nil {
+		t.Fatalf("expected false when removing empty target, got %v, %v", removed, err)
 	}
-	if !store.Remove(upserted.ID) {
-		t.Fatal("expected true when removing existing workspace by ID")
+	if removed, err := store.Remove(upserted.ID); !removed || err != nil {
+		t.Fatalf("expected true when removing existing workspace by ID, got %v, %v", removed, err)
 	}
 	dismissed := store.ListDismissed()
 	if len(dismissed) == 0 {
@@ -353,5 +353,54 @@ func TestWorkspaceHTTPHandlers(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("expected 405 for OPTIONS, got %d", rec.Code)
+	}
+}
+
+func TestCorruptStoreIsBackedUpNotOverwritten(t *testing.T) {
+	homeDir := setupTestEnv(t)
+	seed := mkdirTempProject(t, homeDir, "seed")
+	path := userHoxiWorkspacesPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	corrupt := []byte("{not json")
+	if err := os.WriteFile(path, corrupt, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store := NewStore(seed)
+	if len(store.List()) != 1 {
+		t.Fatalf("expected an in-memory seed after backup, got %+v", store.List())
+	}
+	backups, _ := filepath.Glob(path + ".corrupt-*")
+	if len(backups) != 1 {
+		t.Fatalf("expected one corrupt backup, got %v", backups)
+	}
+	raw, err := os.ReadFile(backups[0])
+	if err != nil || !bytes.Equal(raw, corrupt) {
+		t.Fatalf("backup content = %q, %v", raw, err)
+	}
+}
+
+func TestPersistIsAtomicAndRollsBackOnFailure(t *testing.T) {
+	homeDir := setupTestEnv(t)
+	a := mkdirTempProject(t, homeDir, "proj-a")
+	b := mkdirTempProject(t, homeDir, "proj-b")
+	store := NewStore("")
+	if _, err := store.Create(saveWorkspaceRequest{Folders: []workspaceFolderInput{{Path: a, IsPrimary: true}}}); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Dir(userHoxiWorkspacesPath())
+	if leftovers, _ := filepath.Glob(filepath.Join(dir, "workspaces.json.tmp-*")); len(leftovers) != 0 {
+		t.Fatalf("temp files left behind: %v", leftovers)
+	}
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+	if _, err := store.Create(saveWorkspaceRequest{Folders: []workspaceFolderInput{{Path: b, IsPrimary: true}}}); err == nil {
+		t.Skip("directory permissions are not enforced for this user")
+	}
+	if len(store.List()) != 1 {
+		t.Fatalf("failed save must roll back memory, got %+v", store.List())
 	}
 }

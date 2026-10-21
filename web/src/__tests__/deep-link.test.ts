@@ -1,4 +1,13 @@
+import { reconcile, unwrap } from "solid-js/store";
 import { buildMessageLink } from "../components/timeline/session-export";
+import {
+  clearPendingDeepLink,
+  openSessionDeepLink,
+  pendingDeepLink,
+  resolvePendingDeepLink,
+  setWorkspace,
+  workspace,
+} from "../store/workspace";
 import { assertEqual, describe, it } from "./test-harness";
 
 describe("session deep links", () => {
@@ -15,5 +24,30 @@ describe("session deep links", () => {
 
   it("escapes ids", () => {
     assertEqual(buildMessageLink("ses_a b", "msg/a"), "hoxi://session/ses_a%20b?message=msg%2Fa");
+  });
+
+  it("drops a pending deep link when the project changes or TTL expires", () => {
+    const saved = structuredClone(unwrap(workspace));
+    try {
+      setWorkspace({
+        rootDir: "/repo-a",
+        bootstrappingSessions: false,
+        sessions: [],
+      });
+      openSessionDeepLink({ sessionID: "ses_missing" });
+      assertEqual(pendingDeepLink()?.sessionID, "ses_missing");
+
+      // Switching to an unrelated project clears the pending link so it never fires later.
+      setWorkspace("rootDir", "/repo-b");
+      resolvePendingDeepLink();
+      assertEqual(pendingDeepLink(), null);
+
+      // Expired links are cleared immediately on re-evaluation.
+      openSessionDeepLink({ sessionID: "ses_expired" }, { ttlMs: -1 });
+      assertEqual(pendingDeepLink(), null);
+    } finally {
+      clearPendingDeepLink();
+      setWorkspace(reconcile(saved));
+    }
   });
 });

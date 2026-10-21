@@ -98,8 +98,8 @@ agy 发起 run_command
 - `agy_process.go`：`cmd.Env = append(os.Environ(), HOXI_RUNNER_SESSION_ID=…, HOXI_HOOK_URL=…, HOXI_HOOK_TOKEN=<每个进程随机生成 32 字节 hex>)`。保持 `--sandbox --mode accept-edits`，**禁止** `--dangerously-skip-permissions`。
 - `hook_gate.go`：
   - 路由 `POST /api/hoxi/runner/hook/pretool`，只接受来自 127.0.0.1 的请求，用 `subtle.ConstantTimeCompare` 校验 token 与会话的对应关系。
-  - 校验 `conversationId` 与会话记录的 externalID 一致（首次 `init` 之前允许为空），`toolCall.args.Cwd` / `workspacePaths` 必须落在会话目录内。
-  - 策略：把 `.opencode/lib/permission-policy.js` 的 `DESTRUCTIVE_RE` / `DESTRUCTIVE_GIT_RE` / `SAFE_COMMANDS` / 命令链拆分移植到 Go。JS 的 `(?<!>)` 是后行断言，Go 的 RE2 不支持，需要改写。再用同一份 fixture 做 JS 和 Go 的一致性测试。规则与 `hoxi-permissions.js` 一致：破坏性命令 → ask，安全命令 → auto_approve，其余 → ask。
+  - 校验 `conversationId` 与会话记录的 externalID 一致（首次 `init` 之前允许为空），`toolCall.args.Cwd` / `workspacePaths` 必须落在会话目录内（`pathWithin` 同时解析多层符号链接与悬空符号链接，防止经符号链接越界）。
+  - 策略：把 `.opencode/lib/permission-policy.js` 移植到 Go（`internal/runner/permission_policy.go`），只解析一次命令链（绝不把命令段拼回字符串二次解析），对含转义/引号拼接/`$(`/反引号/变量展开的模糊语法一律 fail-closed（`ask`），按完整 token 匹配只读安全白名单并拦截高危参数（`find -exec/-delete/-fprint*`、`fd -x`、`rg --pre`、`git diff|log|show --output`、`go -exec/-toolexec/-o`、`go env -w` 等），同时对去混淆文本检测破坏性指令（含 git 参数缩写 `--forc`/`--har`、组合短参数 `-uf`、`+refspec` 强推）。再用同一份 `.opencode/lib/permission-policy.cases.json` 做 JS 和 Go 的一致性测试。规则与 `hoxi-permissions.js` 一致：破坏性命令 → ask，安全命令 → auto_approve，其余 → ask。
   - ask：生成 `PermissionRequest{id:"per_agy_<seq>", sessionID, permission:"bash", patterns:[CommandLine], metadata:{command, cwd, source:"antigravity"}, always:[命令前缀], tool:{messageID, callID}}`，其中 `callID` 通过 `stepIdx` 映射到 translate.go 为该 step 生成的 tool part。然后推送 `permission.asked`，在 channel 上等待。
   - 会话内的 always 规则只存在 Hoxi 自己的会话记录里，**不写** agy 的 `settings.json`，避免污染用户的全局权限。
   - Stop、进程退出或会话删除时，所有挂起的请求统一以 deny 结束，并推送 `permission.replied`。
@@ -108,13 +108,13 @@ agy 发起 run_command
 - `translate.go`：
   - 工具报错 `tool call denied by pre-tool hook: …` → ToolCard 显示 `error`，标注"已被拒绝"。
   - `… timed out and was killed` → `error`，标注"审批超时"。
-  - 工具分类（`hookToolAction`）：
-    - 只读类（`read_file` / `view_file` / `list_dir` / `find_by_name` / `grep_search` / `list_resources` / `read_url_content` / 浏览器读取等）→ `auto_approve`。读取与安全命令（`cat`）同属非破坏性操作，`--sandbox` 仍会拦截工作区外的写入。
-    - 写/改类（`write_to_file` / `write_file` / `replace_file_content` / `multi_replace_file_content` / `sed_file` / `notebook_edit`）→ 目标落在 worktree 内则 `auto_approve`（与 `accept-edits` 一致），相对路径按 worktree 解析，区外直接 `deny` 并回传原因。
-    - MCP / 浏览器 JS / 显式 unsandboxed 等（`call_mcp_tool` / `execute_browser_javascript` / `execute_url` / `unsandboxed` / `run_workflow`）→ 推送 `permission:"tool"` 审批卡片；`always` 只记住完全相同的工具 + 参数，不写 agy 全局配置。
+  - 工具分类（`hookToolAction`，仅使用精确名称白名单，禁止按 `read_*` / `list_*` 等前缀自动放行）：
+    - 只读类（`read_file` / `view_file` / `list_dir` / `find_by_name` / `grep_search` / `list_resources` / 浏览器读取等）→ 携带路径参数的读/列/搜工具仅当路径落在会话 worktree 内（含符号链接与悬空符号链接校验）时 `auto_approve`；路径在 worktree 外或缺失时推送 `permission:"tool"` 审批卡片。
+    - 写/改类（`write_to_file` / `write_file` / `replace_file_content` / `multi_replace_file_content` / `sed_file` / `notebook_edit`）→ 相对路径按 worktree 解析；区外（含指向区外的符号链接/悬空符号链接）直接 `deny` 并回传原因；落在 worktree 内但命中控制执行的敏感路径（`.git/**`、`.agents/**`、`.opencode/**`、`.claude/**`、`.hoxi/**`、`.vscode/settings.json`、`.envrc`）或未携带可识别路径参数时推送 `permission:"tool"` 审批卡片；其余区内普通文件 `auto_approve`。
+    - 网络外发与高风险工具（`read_url_content` / `search_web` / `call_mcp_tool` / `mcp` / `execute_browser_javascript` / `execute_url` / `unsandboxed` / `run_workflow`）→ 推送 `permission:"tool"` 审批卡片；`always` 只记住完全相同的工具 + 参数，不写 agy 全局配置。
     - 控制类工具（`finish` / `task_boundary` / `ask_question`）→ 返回 `allow`，不阻塞轮次结束。
     - 未知工具 → 推送 `permission:"tool"` 审批卡片。无头模式会把需要权限的未知工具直接 soft-deny 并结束轮次，交给 Hoxi 审批才能让用户有机会放行。
-  - 命令归一化：`hook_gate.go` 在套用共享策略前会校验并去掉位于 worktree 内的 `cd <dir> &&` 前缀，并把受信目录下的绝对工具链路径（如 `/usr/local/go/bin/go`、`/opt/homebrew/bin/npm`）按 basename 归一，避免 agent 常见写法被误判为 `ask`。
+  - 命令归一化：`permission_policy.go` 在单次解析后的命令段上校验并去掉位于会话 worktree 内的无引号简单 `cd <dir>` 首段（不重新拼接字符串解析），并把受信目录下的绝对工具链路径（如 `/usr/local/go/bin/go`、`/opt/homebrew/bin/npm`）按 basename 归一，避免 agent 常见写法被误判为 `ask`。
   - 原有的 `denied_actions` 提示保留作兜底（hook 没装上，或其它未覆盖工具需要权限时），文案改成引导用户检查 hook 安装状态。
 
 ### 3.5 前端

@@ -2,7 +2,6 @@
 import {
   createEffect,
   createMemo,
-  createSignal,
   For,
   Match,
   onCleanup,
@@ -27,13 +26,17 @@ import {
   activeDirectory,
   activeSession,
   buildTaskOverview,
-  fetchConvoyPlans,
-  fetchConvoyPlansForSession,
-  isConvoyPlanTerminal,
-  resolveParentSessionID,
+  collectAncestorSessionIDs,
+  isTaskNodeExpanded,
+  loadTaskOverviewPlans,
+  resetTaskOverviewPlans,
   selectSession,
+  startTaskOverviewPolling,
+  taskOverviewFailed,
+  taskOverviewLoading,
+  taskOverviewPlans,
+  toggleTaskNodeExpanded,
   workspace,
-  type ConvoyPlan,
   type TaskGroupID,
   type TaskNodeStatus,
   type TaskOverviewNode,
@@ -102,7 +105,7 @@ function StatusIcon(props: { status: TaskNodeStatus }) {
 }
 
 function TaskNodeRow(props: { node: TaskOverviewNode; depth: number }) {
-  const [expanded, setExpanded] = createSignal(props.depth === 0);
+  const expanded = () => isTaskNodeExpanded(props.node.id, props.depth);
   const hasChildren = () => props.node.children.length > 0;
   const openSession = () => {
     const id = props.node.sessionID;
@@ -114,7 +117,7 @@ function TaskNodeRow(props: { node: TaskOverviewNode; depth: number }) {
       <div class="group flex items-center gap-1.5 rounded-lg px-1.5 py-1 hover:bg-[var(--bg-hover)]">
         <button
           type="button"
-          onClick={() => setExpanded((value) => !value)}
+          onClick={() => toggleTaskNodeExpanded(props.node.id, props.depth)}
           class={`shrink-0 rounded p-0.5 text-[var(--text-muted)] hover:bg-[var(--bg-inset)] hover:text-[var(--text-primary)] cursor-pointer ${
             hasChildren() ? "" : "invisible"
           }`}
@@ -165,84 +168,29 @@ function TaskNodeRow(props: { node: TaskOverviewNode; depth: number }) {
 }
 
 export default function TaskOverviewView() {
-  const [plans, setPlans] = createSignal<ConvoyPlan[]>([]);
-  const [loading, setLoading] = createSignal(false);
-  const [failed, setFailed] = createSignal(false);
-  let requestSeq = 0;
-  let lastScope = "";
-
   const directory = createMemo(() => activeDirectory() ?? "");
-  const relatedSessionIDs = createMemo(() => {
-    const ids: string[] = [];
-    const seen = new Set<string>();
-    let current = workspace.activeSessionID;
-    for (let depth = 0; depth < 8; depth++) {
-      const sessionID = current;
-      if (!sessionID || seen.has(sessionID)) break;
-      seen.add(sessionID);
-      ids.push(sessionID);
-      current = resolveParentSessionID(sessionID);
-    }
-    return ids;
-  });
+  // Joined-ID equality keeps stream flushes from re-triggering plan loads.
+  const relatedSessionIDs = createMemo(
+    () => collectAncestorSessionIDs(workspace.activeSessionID),
+    [],
+    { equals: (prev, next) => prev.join(",") === next.join(",") }
+  );
+  const visible = () => workspace.inspectorOpen && workspace.inspectorTab === "tasks";
 
-  const load = (dir: string, sessionIDs: string[]) => {
-    const seq = ++requestSeq;
-    const scope = `${dir}|${sessionIDs.join(",")}`;
-    if (scope !== lastScope) {
-      lastScope = scope;
-      setPlans([]);
-    }
-    setLoading(true);
-    const scoped = sessionIDs.map((id) =>
-      fetchConvoyPlansForSession(id).catch(() => [] as ConvoyPlan[])
-    );
-    Promise.all([
-      dir ? fetchConvoyPlans(dir) : Promise.resolve([] as ConvoyPlan[]),
-      ...scoped,
-    ])
-      .then(([byDirectory, ...bySession]) => {
-        if (seq !== requestSeq) return;
-        const merged = new Map<string, ConvoyPlan>();
-        for (const plan of byDirectory) merged.set(plan.id, plan);
-        for (const list of bySession) {
-          for (const plan of list) merged.set(plan.id, plan);
-        }
-        setPlans([...merged.values()]);
-        setFailed(false);
-      })
-      .catch(() => {
-        if (seq === requestSeq) setFailed(true);
-      })
-      .finally(() => {
-        if (seq === requestSeq) setLoading(false);
-      });
-  };
-
+  // Fetch and poll only while the Tasks tab is visible.
   createEffect(() => {
+    if (!visible()) return;
     const dir = directory();
     const sessionIDs = relatedSessionIDs();
     if (!dir && sessionIDs.length === 0) {
-      requestSeq++;
-      setPlans([]);
-      setFailed(false);
-      setLoading(false);
+      resetTaskOverviewPlans();
       return;
     }
-    load(dir, sessionIDs);
+    void loadTaskOverviewPlans(dir, sessionIDs);
+    onCleanup(startTaskOverviewPolling(dir, sessionIDs));
   });
 
-  createEffect(() => {
-    if (!workspace.inspectorOpen || workspace.inspectorTab !== "tasks") return;
-    const hasActive = plans().some((plan) => !isConvoyPlanTerminal(plan.status));
-    if (!hasActive) return;
-    const dir = directory();
-    const sessionIDs = relatedSessionIDs();
-    const timer = setInterval(() => load(dir, sessionIDs), 2500);
-    onCleanup(() => clearInterval(timer));
-  });
-
-  const groups = createMemo(() => buildTaskOverview(plans()));
+  const groups = createMemo(() => buildTaskOverview(taskOverviewPlans()));
   const total = createMemo(() => groups().reduce((sum, group) => sum + group.nodes.length, 0));
 
   return (
@@ -256,7 +204,7 @@ export default function TaskOverviewView() {
               {activeSession()?.title || t("tasks.noSession")}
             </div>
           </div>
-          <Show when={loading()}>
+          <Show when={taskOverviewLoading()}>
             <LoaderCircle size={12} class="ml-auto shrink-0 animate-spin text-[var(--text-muted)]" />
           </Show>
         </div>
@@ -271,7 +219,7 @@ export default function TaskOverviewView() {
             when={total() > 0}
             fallback={
               <p class="px-2 py-1 text-[11px] text-[var(--text-faint)]">
-                {failed() ? t("tasks.loadFailed") : t("tasks.empty")}
+                {taskOverviewFailed() ? t("tasks.loadFailed") : t("tasks.empty")}
               </p>
             }
           >

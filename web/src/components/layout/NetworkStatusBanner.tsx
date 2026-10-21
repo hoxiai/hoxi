@@ -9,6 +9,8 @@ interface NetworkStatusBannerProps {
   onRetry: () => void;
 }
 
+type NetworkState = "idle" | "offline" | "reconnecting" | "recovered";
+
 export default function NetworkStatusBanner(props: NetworkStatusBannerProps) {
   const [showReconnect, setShowReconnect] = createSignal(false);
   const [showRecovered, setShowRecovered] = createSignal(false);
@@ -42,46 +44,64 @@ export default function NetworkStatusBanner(props: NetworkStatusBannerProps) {
     if (recoveredTimer) clearTimeout(recoveredTimer);
   });
 
+  const state = (): NetworkState => {
+    if (!props.online()) return "offline";
+    if (showReconnect()) return "reconnecting";
+    if (showRecovered()) return "recovered";
+    return "idle";
+  };
+
+  const title = () => {
+    switch (state()) {
+      case "offline":
+        return t("network.offlineTitle");
+      case "reconnecting":
+        return t("network.reconnectingTitle");
+      case "recovered":
+        return t("network.recoveredTitle");
+      default:
+        return "";
+    }
+  };
+
+  const description = () => {
+    switch (state()) {
+      case "offline":
+        return t("network.offlineDescription");
+      case "reconnecting":
+        return t("network.reconnectingDescription");
+      default:
+        return "";
+    }
+  };
+
   return (
-    <Show when={!props.online() || showReconnect() || showRecovered()}>
+    <Show when={state() !== "idle"}>
       <div
         role="status"
         aria-live="polite"
-        class={`fixed top-14 left-1/2 z-[200] flex w-[calc(100vw-24px)] max-w-[620px] -translate-x-1/2 items-center gap-3 rounded-xl border px-3.5 py-2.5 shadow-lg backdrop-blur-xl sm:px-4 ${
-          !props.online() || showReconnect()
-            ? "border-amber-500/30 bg-[var(--bg-elevated)]/95 text-[var(--text-primary)]"
-            : "border-emerald-500/30 bg-[var(--bg-elevated)]/95 text-[var(--text-primary)]"
+        title={description() || undefined}
+        style={{ "--wails-draggable": "no-drag" } as any}
+        class={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors ${
+          state() === "recovered"
+            ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+            : "border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400"
         }`}
       >
-        <Show when={!props.online() || showReconnect()} fallback={<Check size={16} class="shrink-0 text-emerald-500" />}>
-          <WifiOff size={16} class="shrink-0 text-amber-500" />
+        <Show
+          when={state() === "recovered"}
+          fallback={<WifiOff size={12} class="shrink-0" />}
+        >
+          <Check size={12} class="shrink-0" />
         </Show>
-        <div class="min-w-0 flex-1">
-          <div class="text-[12px] font-semibold">
-            {!props.online()
-              ? t("network.offlineTitle")
-              : showReconnect()
-                ? t("network.reconnectingTitle")
-                : t("network.recoveredTitle")}
-          </div>
-          <Show when={!props.online()}>
-            <div class="mt-0.5 text-[11px] leading-relaxed text-[var(--text-secondary)]">
-              {t("network.offlineDescription")}
-            </div>
-          </Show>
-          <Show when={showReconnect()}>
-            <div class="mt-0.5 text-[11px] leading-relaxed text-[var(--text-secondary)]">
-              {t("network.reconnectingDescription")}
-            </div>
-          </Show>
-        </div>
+        <span class="whitespace-nowrap">{title()}</span>
         <Show when={props.online() && showReconnect()}>
           <button
             type="button"
             onClick={props.onRetry}
-            class="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] px-2.5 py-1.5 text-[11px] font-medium text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-hover)]"
+            class="inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 text-[11px] font-medium transition-opacity hover:opacity-70"
           >
-            <RefreshCw size={12} />
+            <RefreshCw size={11} />
             {t("network.retry")}
           </button>
         </Show>

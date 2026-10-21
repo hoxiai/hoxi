@@ -465,7 +465,7 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
                 class="inline-flex items-center gap-1 rounded-md border border-[var(--danger-border)] bg-[var(--danger-surface)] px-2 py-0.5 text-[11px] font-medium text-[var(--danger-text)] hover:opacity-90 disabled:opacity-60 transition-opacity cursor-pointer"
               >
                 <span class="inline-block w-2 h-2 rounded-[1.5px] bg-current shrink-0" />
-                <span>
+                <span class={stoppingCmd() ? "" : "hidden group-hover/tool:inline"}>
                   {stoppingCmd() ? t("toolCard.stoppingCommand") : t("toolCard.stopCommand")}
                 </span>
               </button>

@@ -112,7 +112,7 @@ describe("skills capability", () => {
     assertEqual(unconfirmed?.status, "unconfirmed");
   });
 
-  it("buildSlashCommandSuggestions attaches skillSelection for opencode and filters hidden skills", () => {
+  it("buildSlashCommandSuggestions attaches skillSelection for every runtime and filters hidden skills", () => {
     const skills: SkillDescriptor[] = [
       {
         key: "skl_visible",
@@ -155,17 +155,58 @@ describe("skills capability", () => {
     assertEqual(opencodeItems[2].label, "/github-pr");
     assertEqual(opencodeItems[2].source, "mcp");
 
-    // Non-opencode runtime excludes skills
+    // CLI runtimes share the same catalog and keep the selection key
     const claudeItems = buildSlashCommandSuggestions({
       commands,
       skills,
       query: "",
       runtime: "claude-code",
     });
+    assertEqual(claudeItems.length, 4);
+    assertEqual(claudeItems[0].label, "/frontend-design");
+    assertEqual(claudeItems[0].skillSelection?.key, "skl_visible");
     assertTrue(
-      claudeItems.every((item) => item.source !== "skill"),
-      "non-opencode must not include skills"
+      claudeItems.some((item) => item.label === "/init" && item.source === "command"),
+      "commands must remain visible for non-opencode runtimes"
     );
+  });
+
+  it("keeps the full skill catalog visible in slash suggestions", () => {
+    const skills: SkillDescriptor[] = Array.from({ length: 20 }, (_, i) => ({
+      key: `skl_${i}`,
+      name: `skill-${i}`,
+      description: `Skill ${i}`,
+      runtime: "opencode",
+      source: "user",
+      sourceLabel: `~/.agents/skills/skill-${i}/SKILL.md`,
+      canOpenLocation: true,
+    }));
+    const items = buildSlashCommandSuggestions({
+      commands: [],
+      skills,
+      query: "",
+      runtime: "opencode",
+    });
+    assertEqual(items.length, 20);
+    assertEqual(items[19].label, "/skill-19");
+  });
+
+  it("marks inline skill delivery as loaded without a native skill tool", () => {
+    const userTurn = {
+      info: { id: "msg_user_inline", sessionID: "ses_inline", role: "user" as const, time: { created: 200 } },
+      parts: [
+        {
+          id: "prt_text_inline",
+          sessionID: "ses_inline",
+          messageID: "msg_user_inline",
+          type: "text" as const,
+          text: "ship it",
+          metadata: { hoxiSkill: { key: "skl_inline", name: "release", mode: "inline" } },
+        },
+      ],
+    };
+    const status = resolveTurnSkillStatus([userTurn], 0, false);
+    assertEqual(status?.status, "loaded");
   });
 
   it("transfers draft composer skill cleanly to newly created session", () => {

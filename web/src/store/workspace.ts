@@ -54,6 +54,7 @@ export * from "./command-sandbox";
 export * from "./code-index";
 export * from "./browser";
 export * from "./remote-tunnel";
+export * from "./deep-link";
 
 
 

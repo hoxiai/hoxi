@@ -24,6 +24,10 @@ async function withTitleFixture(run: () => Promise<void>) {
   setWorkspace("sessions", [{
     id, title: "New Thread", directory: "/title-test", time: { created: 1, updated: 1 },
   }]);
+  // Background title calls only reach providers the user visibly configured.
+  setWorkspace("providers", [{
+    id: titleModel.providerID, name: "Test", source: "api", models: { [titleModel.modelID]: { name: "Test" } },
+  }] as never);
   hoxiAPI.renameSession = async (sessionID, title) => ({
     id: sessionID, title, directory: "/title-test", time: { created: 1, updated: 2 },
   });
@@ -101,6 +105,18 @@ describe("Manual session titles", () => {
       assertEqual(workspace.sessions[0].title, "Generated title");
       assertEqual(hasManualSessionTitle(id), false);
       assertEqual(loadManualSessionTitles().has(id), false);
+    });
+  });
+
+  it("never sends titles to an unknown provider", async () => {
+    await withTitleFixture(async () => {
+      let summaries = 0;
+      hoxiAPI.summarizeSessionTitle = async () => { summaries++; return { ok: true, title: "Leaked" }; };
+      setWorkspace("sessions", 0, "title", "Initial summary");
+      setWorkspace("defaultAI", "model", null);
+      setWorkspace("globalConfig", reconcile({}) as never);
+      await summarizeAndRenameSession(id, "Prompt", { providerID: "opencode", modelID: "free" }, automaticRename);
+      assertEqual(summaries, 0);
     });
   });
 });

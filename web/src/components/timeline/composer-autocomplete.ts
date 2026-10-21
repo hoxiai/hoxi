@@ -50,31 +50,29 @@ export function buildSlashCommandSuggestions(params: {
   const items: AutocompleteItem[] = [];
   const seenSkills = new Set<string>();
 
-  if (params.runtime === "opencode") {
-    for (const sk of params.skills) {
-      if (checkHidden(sk.key)) continue;
-      seenSkills.add(sk.name);
-      if (
-        !q ||
-        sk.name.toLowerCase().includes(q) ||
-        (sk.description ?? "").toLowerCase().includes(q)
-      ) {
-        items.push({
-          type: "command",
-          source: "skill",
-          label: `/${sk.name}`,
-          detail: sk.description || t("skills.groupSkills"),
-          insertText: "",
-          skillSelection: { key: sk.key, name: sk.name },
-        });
-      }
+  for (const sk of params.skills) {
+    if (checkHidden(sk.key)) continue;
+    seenSkills.add(sk.name);
+    if (
+      !q ||
+      sk.name.toLowerCase().includes(q) ||
+      (sk.description ?? "").toLowerCase().includes(q)
+    ) {
+      items.push({
+        type: "command",
+        source: "skill",
+        label: `/${sk.name}`,
+        detail: sk.description || t("skills.groupSkills"),
+        insertText: "",
+        skillSelection: { key: sk.key, name: sk.name },
+      });
     }
   }
 
   for (const c of params.commands) {
     const src = c.source === "skill" || c.source === "mcp" ? c.source : "command";
     if (src === "skill") {
-      // Only expose skills when backed by a verified SkillDescriptor in opencode runtime
+      // Skills are surfaced from the verified catalog above so they always carry a selection key.
       continue;
     }
     if (seenSkills.has(c.name)) continue;
@@ -94,7 +92,9 @@ export function buildSlashCommandSuggestions(params: {
     }
   }
 
-  return items.slice(0, 12);
+  // The popover is scrollable, so keep a generous cap instead of hiding the
+  // majority of the skill catalog once the list grows past a dozen entries.
+  return items.slice(0, MAX_SLASH_SUGGESTIONS);
 }
 
 export interface AutocompleteToken {
@@ -171,6 +171,7 @@ export function applyAutocompleteToken(
   };
 }
 
+const MAX_SLASH_SUGGESTIONS = 100;
 const FILE_SEARCH_CACHE_TTL_MS = 15_000;
 const COMMAND_CACHE_TTL_MS = 30_000;
 const MAX_FILE_SEARCH_CACHE = 48;
@@ -258,11 +259,7 @@ export function createComposerAutocomplete(
           cachedCmds && Date.now() <= cachedCmds.expiresAt ? cachedCmds.commands : null;
         const cachedSkills = skillsByDirCache.get(dirKey);
         let skills =
-          runtime === "opencode"
-            ? cachedSkills && Date.now() <= cachedSkills.expiresAt
-              ? cachedSkills.skills
-              : null
-            : [];
+          cachedSkills && Date.now() <= cachedSkills.expiresAt ? cachedSkills.skills : null;
 
         const tasks: Promise<void>[] = [];
         if (!cmds) {
@@ -281,7 +278,7 @@ export function createComposerAutocomplete(
               })
           );
         }
-        if (runtime === "opencode" && !skills) {
+        if (!skills) {
           tasks.push(
             skillsAPI
               .fetchSkillsList({

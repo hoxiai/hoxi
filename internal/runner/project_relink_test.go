@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -76,5 +77,81 @@ func TestRelinkProjectMovesWorktreeAndRepairsGitPointer(t *testing.T) {
 	}
 	if _, err := exec.Command("git", "-C", wantWorktree, "status", "--porcelain").CombinedOutput(); err != nil {
 		t.Fatalf("git pointer was not repaired: %v", err)
+	}
+}
+
+func TestRelinkProjectToNonGitDirectorySwitchesWorktreeSessionToLocal(t *testing.T) {
+	oldRoot := t.TempDir()
+	newRoot := t.TempDir()
+	svc := NewService(oldRoot, nil, nil, t.TempDir())
+	oldWorktree := filepath.Join(oldRoot, ".hoxi", "worktrees", "ses_relink_nongit")
+	if err := svc.store.Put(SessionRecord{
+		ID: "ses_relink_nongit", ProjectID: "prj_relink", Runtime: "claude-code",
+		ProjectDir: oldRoot, WorktreePath: oldWorktree, Branch: "hoxi/ses_relink_nongit", BaseCommit: "abc1234",
+		SandboxMode: "worktree", CreatedAt: 11, UpdatedAt: 22,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := svc.RelinkProject("prj_relink", oldRoot, newRoot); err != nil {
+		t.Fatal(err)
+	}
+	rec, ok := svc.store.Get("ses_relink_nongit")
+	if !ok {
+		t.Fatal("relinked session disappeared")
+	}
+	if rec.SandboxMode != "local" {
+		t.Fatalf("SandboxMode = %q, want local", rec.SandboxMode)
+	}
+	if normalizeComparePath(rec.ProjectDir) != normalizeComparePath(newRoot) ||
+		normalizeComparePath(rec.WorktreePath) != normalizeComparePath(newRoot) {
+		t.Fatalf("relinked paths = %q / %q, want %q", rec.ProjectDir, rec.WorktreePath, newRoot)
+	}
+	if rec.Branch != "" || rec.BaseCommit != "" {
+		t.Fatalf("expected branch/baseCommit cleared on non-git fallback, got %q / %q", rec.Branch, rec.BaseCommit)
+	}
+	binding, known, err := svc.worktrees.BindingForSession("ses_relink_nongit")
+	if err != nil || !known || binding.Isolated ||
+		normalizeComparePath(binding.Directory) != normalizeComparePath(newRoot) {
+		t.Fatalf("binding = %+v, %v, %v", binding, known, err)
+	}
+}
+
+func TestRelinkProjectSkipsSessionWithActiveTurnProcess(t *testing.T) {
+	oldRoot := t.TempDir()
+	newRoot := t.TempDir()
+	svc := NewService(oldRoot, nil, nil, t.TempDir())
+	if err := svc.worktrees.ForDirectory(oldRoot).UseLocalDirectory("ses_relink_busy"); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.store.Put(SessionRecord{
+		ID: "ses_relink_busy", ProjectID: "prj_relink", Runtime: "claude-code",
+		ProjectDir: oldRoot, WorktreePath: oldRoot, SandboxMode: "local",
+		CreatedAt: 11, UpdatedAt: 22,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	svc.mu.Lock()
+	svc.procs["ses_relink_busy"] = &activeProcess{}
+	svc.mu.Unlock()
+	t.Cleanup(func() {
+		svc.mu.Lock()
+		delete(svc.procs, "ses_relink_busy")
+		svc.mu.Unlock()
+	})
+
+	err := svc.RelinkProject("prj_relink", oldRoot, newRoot)
+	if err == nil || !strings.Contains(err.Error(), "session is running") {
+		t.Fatalf("RelinkProject err = %v, want running session error", err)
+	}
+	rec, ok := svc.store.Get("ses_relink_busy")
+	if !ok || normalizeComparePath(rec.ProjectDir) != normalizeComparePath(oldRoot) ||
+		normalizeComparePath(rec.WorktreePath) != normalizeComparePath(oldRoot) {
+		t.Fatalf("busy session was modified: %+v, %v", rec, ok)
+	}
+	binding, known, bindErr := svc.worktrees.BindingForSession("ses_relink_busy")
+	if bindErr != nil || !known || normalizeComparePath(binding.Directory) != normalizeComparePath(oldRoot) {
+		t.Fatalf("busy session binding changed: %+v, %v, %v", binding, known, bindErr)
 	}
 }

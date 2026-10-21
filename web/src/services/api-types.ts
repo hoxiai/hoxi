@@ -111,6 +111,7 @@ export interface ProjectInfo {
 }
 
 export interface WorkspaceFolderInput {
+  id?: string;
   path: string;
   isPrimary?: boolean;
 }

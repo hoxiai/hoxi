@@ -43,6 +43,10 @@ var (
 )
 
 type workspaceFolderInput struct {
+	// ID names an existing folder of the profile being saved. Sending a known
+	// ID with a different path is an explicit relocation; without an ID a
+	// path change never moves sessions.
+	ID        string `json:"id,omitempty"`
 	Path      string `json:"path"`
 	IsPrimary bool   `json:"isPrimary"`
 }
@@ -55,16 +59,19 @@ type workspaceFolder struct {
 }
 
 type workspaceProfile struct {
-	ID        string            `json:"id"`
-	Name      string            `json:"name"`
-	Color     string            `json:"color,omitempty"`
-	Folders   []workspaceFolder `json:"folders"`
+	ID      string            `json:"id"`
+	Name    string            `json:"name"`
+	Color   string            `json:"color,omitempty"`
+	Folders []workspaceFolder `json:"folders"`
 	// Hidden projects are registered automatically for directories that own
 	// sessions but were never saved as a workspace. They keep stable session
 	// attribution without adding rows to the sidebar.
-	Hidden    bool   `json:"hidden,omitempty"`
-	CreatedAt string `json:"createdAt"`
-	UpdatedAt string `json:"updatedAt"`
+	Hidden bool `json:"hidden,omitempty"`
+	// Aliases are IDs of hidden projects merged into this profile. Sessions
+	// still carrying an alias ID resolve to this profile.
+	Aliases   []string `json:"aliases,omitempty"`
+	CreatedAt string   `json:"createdAt"`
+	UpdatedAt string   `json:"updatedAt"`
 }
 
 type saveWorkspaceRequest struct {
@@ -77,6 +84,16 @@ type saveWorkspaceRequest struct {
 type workspaceStoreFile struct {
 	Workspaces []workspaceProfile `json:"workspaces"`
 	Dismissed  []string           `json:"dismissed,omitempty"`
+	Removed    []removedProject   `json:"removed,omitempty"`
+}
+
+// removedProject is a tombstone for a folder whose project was removed.
+// Registering the folder again reuses the ID, so sessions created before
+// the removal stay attributed to it.
+type removedProject struct {
+	Path    string   `json:"path"`
+	ID      string   `json:"id"`
+	Aliases []string `json:"aliases,omitempty"`
 }
 
 func userHoxiWorkspacesPath() string {
@@ -134,9 +151,7 @@ func CleanValidProjectDir(dir string) string {
 	if err != nil || !stat.IsDir() {
 		return ""
 	}
-	comp := comparableFolderPath(resolved)
-	home := comparableFolderPath(canonicalHomeDir())
-	if comp == home || comp == "/" || comp == "\\" || filepath.Dir(resolved) == resolved {
+	if isForbiddenProjectRoot(resolved) {
 		return ""
 	}
 	if strings.Contains(resolved, ".app/Contents") {
@@ -152,11 +167,27 @@ func ResolveInitialRootDir(candidate string) string {
 	return newWorkspaceStore("").PrimaryRootDir("")
 }
 
+// isForbiddenProjectRoot reports whether resolved is the user's home
+// directory or a filesystem root. Neither may own a project: every session
+// on the machine would be attributed to it.
+func isForbiddenProjectRoot(resolved string) bool {
+	comp := comparableFolderPath(resolved)
+	home := comparableFolderPath(canonicalHomeDir())
+	return comp == home || comp == "/" || comp == "\\" || filepath.Dir(resolved) == resolved
+}
+
 func validateWorkspaceFolders(inputs []workspaceFolderInput) ([]workspaceFolderInput, error) {
+	return validateWorkspaceFoldersKeeping(inputs, nil)
+}
+
+// validateWorkspaceFoldersKeeping canonicalizes folders and moves the primary
+// first. Missing paths are dropped unless keepMissing accepts them: updates
+// keep folders that are already saved but temporarily absent on disk, so a
+// re-save never silently forgets them.
+func validateWorkspaceFoldersKeeping(inputs []workspaceFolderInput, keepMissing func(comp string) bool) ([]workspaceFolderInput, error) {
 	if len(inputs) == 0 {
 		return nil, errors.New("A workspace needs at least one folder.")
 	}
-	home := comparableFolderPath(canonicalHomeDir())
 	canonical := make([]workspaceFolderInput, 0, len(inputs))
 	seen := make(map[string]struct{}, len(inputs))
 
@@ -171,36 +202,44 @@ func validateWorkspaceFolders(inputs []workspaceFolderInput) ([]workspaceFolderI
 		}
 		stat, err := os.Stat(resolved)
 		if err != nil || !stat.IsDir() {
-			continue
+			if err == nil || keepMissing == nil || !keepMissing(comparableFolderPath(resolved)) {
+				continue
+			}
 		}
 		comp := comparableFolderPath(resolved)
 		if _, ok := seen[comp]; ok {
 			continue
 		}
 		seen[comp] = struct{}{}
-		if comp == home || comp == "/" || comp == "\\" || filepath.Dir(resolved) == resolved {
+		if isForbiddenProjectRoot(resolved) {
 			return nil, errors.New("Filesystem roots and the home directory cannot be workspace folders.")
 		}
-		canonical = append(canonical, workspaceFolderInput{Path: resolved, IsPrimary: item.IsPrimary})
+		canonical = append(canonical, workspaceFolderInput{
+			ID: strings.TrimSpace(item.ID), Path: resolved, IsPrimary: item.IsPrimary,
+		})
 	}
 
 	if len(canonical) == 0 {
 		return nil, errors.New("A workspace needs at least one folder.")
 	}
-	var primary workspaceFolderInput
-	others := make([]workspaceFolderInput, 0, len(canonical)-1)
-	for _, f := range canonical {
-		if f.IsPrimary && primary.Path == "" {
-			primary = workspaceFolderInput{Path: f.Path, IsPrimary: true}
-		} else {
-			others = append(others, workspaceFolderInput{Path: f.Path, IsPrimary: false})
+	primaryIndex := 0
+	for index, f := range canonical {
+		if f.IsPrimary {
+			primaryIndex = index
+			break
 		}
 	}
-	if primary.Path == "" && len(others) > 0 {
-		primary = workspaceFolderInput{Path: others[0].Path, IsPrimary: true}
-		others = others[1:]
+	ordered := make([]workspaceFolderInput, 0, len(canonical))
+	primary := canonical[primaryIndex]
+	primary.IsPrimary = true
+	ordered = append(ordered, primary)
+	for index, f := range canonical {
+		if index != primaryIndex {
+			f.IsPrimary = false
+			ordered = append(ordered, f)
+		}
 	}
-	return append([]workspaceFolderInput{primary}, others...), nil
+	return ordered, nil
 }
 
 func generateWorkspaceUUID() string {

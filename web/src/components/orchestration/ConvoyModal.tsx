@@ -19,10 +19,10 @@ import {
 import { locale, t } from "../../i18n";
 import {
   cancelConvoyPlan,
+  createConvoyHistoryLoader,
   createConvoyPlan,
   draftConvoyPlan,
   fetchConvoyPlan,
-  fetchConvoyPlans,
   retryConvoyPlan,
   selectSession,
   workspace,
@@ -100,6 +100,8 @@ export default function ConvoyModal(props: {
   const [error, setError] = createSignal<string | null>(null);
   let lastDirectory = "";
   let draftGeneration = 0;
+  const historyLoader = createConvoyHistoryLoader();
+  onCleanup(() => historyLoader.invalidate());
 
   const updateTask = (index: number, patch: Partial<DraftTask>) => {
     setTasks((current) => current.map((task, i) => (i === index ? { ...task, ...patch } : task)));
@@ -128,9 +130,11 @@ export default function ConvoyModal(props: {
   };
 
   createEffect(() => {
-    if (!props.open) return;
     const directory = props.directory?.trim() ?? "";
-    if (!directory) return;
+    if (!props.open || !directory) {
+      historyLoader.invalidate();
+      return;
+    }
     if (directory !== lastDirectory) {
       lastDirectory = directory;
       draftGeneration++;
@@ -141,14 +145,14 @@ export default function ConvoyModal(props: {
       setDraftedBy("");
       setDrafting(false);
     }
-    fetchConvoyPlans(directory)
-      .then((plans) => {
-        setHistory(plans);
-        if (untrack(() => plan())) return;
-        const active = plans.find((item) => !isTerminal(item.status));
-        if (active) setPlan(active);
-      })
-      .catch(() => {});
+    void historyLoader.load(directory).then((plans) => {
+      // Stale-read guard: drop responses for another directory or a closed modal.
+      if (!plans || untrack(() => !props.open || (props.directory?.trim() ?? "") !== directory)) return;
+      setHistory(plans);
+      if (untrack(() => plan())) return;
+      const active = plans.find((item) => !isTerminal(item.status));
+      if (active) setPlan(active);
+    });
   });
 
   // Keep the history entry in sync while the live view polls.
@@ -167,12 +171,18 @@ export default function ConvoyModal(props: {
   createEffect(() => {
     const current = plan();
     if (!props.open || !current || isTerminal(current.status)) return;
+    let disposed = false;
     const timer = setInterval(() => {
       fetchConvoyPlan(current.id)
-        .then((next) => setPlan(next))
+        .then((next) => {
+          if (!disposed && untrack(() => plan())?.id === next.id) setPlan(next);
+        })
         .catch(() => {});
     }, 1500);
-    onCleanup(() => clearInterval(timer));
+    onCleanup(() => {
+      disposed = true;
+      clearInterval(timer);
+    });
   });
 
   const canRetry = createMemo(() => {

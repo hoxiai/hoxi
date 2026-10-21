@@ -309,7 +309,6 @@ export function SessionNavItem(props: SessionNavItemProps) {
                 type="button"
                 class="inline-flex h-5 w-5 items-center justify-center rounded-md text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
                 onClick={(ev) => startEditing(ev)}
-                title={t("leftNav.renameSessionTooltip")}
               >
                 <Pencil size={11} class="shrink-0 block" />
               </button>

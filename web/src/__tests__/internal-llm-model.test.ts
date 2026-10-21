@@ -1,5 +1,6 @@
 import { unwrap } from "solid-js/store";
 import {
+  findBestFallbackModel,
   isInternalLLMModel,
   resolveInternalLLMModel,
   setWorkspace,
@@ -31,6 +32,7 @@ describe("Internal LLM role models", () => {
       assertEqual(isInternalLLMModel({ providerID: "ainode", modelID: "missing" }), false);
       assertEqual(isInternalLLMModel({ providerID: "hoxi-auto", modelID: "free" }), false);
       assertEqual(isInternalLLMModel(null), false);
+      assertEqual(isInternalLLMModel({ providerID: "unloaded", modelID: "x" }), false);
     });
   });
 
@@ -40,5 +42,26 @@ describe("Internal LLM role models", () => {
       assertDeepEqual(resolveInternalLLMModel(HTTP_MODEL), HTTP_MODEL);
       assertEqual(resolveInternalLLMModel(CLI_MODEL, null, undefined), null);
     });
+  });
+
+  it("never falls back to unconnected or CLI runtime providers", () => {
+    const saved = structuredClone(unwrap(workspace.providers));
+    const savedConnected = [...workspace.connectedProviders];
+    setWorkspace("providers", [
+      { id: "opencode", name: "OpenCode", source: "api", models: { free: { name: "Free" } } },
+      { id: "codebuddy", name: "CodeBuddy", source: "api", models: { flash: { name: "Flash" } } },
+      { id: "ainode", name: "AINode", source: "api", models: { "deepseek-flash": { name: "DeepSeek Flash" } } },
+    ] as never);
+    try {
+      setWorkspace("connectedProviders", []);
+      assertEqual(findBestFallbackModel(undefined, { httpOnly: true }), null);
+      setWorkspace("connectedProviders", ["codebuddy"]);
+      assertEqual(findBestFallbackModel(undefined, { httpOnly: true }), null);
+      setWorkspace("connectedProviders", ["codebuddy", "ainode"]);
+      assertEqual(findBestFallbackModel(undefined, { httpOnly: true })?.providerID, "ainode");
+    } finally {
+      setWorkspace("providers", saved);
+      setWorkspace("connectedProviders", savedConnected);
+    }
   });
 });

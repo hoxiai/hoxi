@@ -1,6 +1,11 @@
 package app
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"github.com/hoxiai/hoxi/internal/gateway"
+)
 
 func TestParseSessionDeepLink(t *testing.T) {
 	cases := []struct {
@@ -20,15 +25,18 @@ func TestParseSessionDeepLink(t *testing.T) {
 		{name: "auth callback", raw: "hoxi://auth-callback?state=x", ok: false},
 		{name: "foreign scheme", raw: "wails://wails/#session=ses_abc123", ok: false},
 		{name: "missing session", raw: "hoxi://session", ok: false},
+		{name: "bare prefix", raw: "hoxi://session/ses_", ok: false},
 		{name: "bad prefix", raw: "hoxi://session/abc123", ok: false},
+		{name: "dot in session id", raw: "hoxi://session/ses_abc.123", ok: false},
+		{name: "too long session id", raw: "hoxi://session/ses_" + strings.Repeat("a", 96), ok: false},
 		{name: "invalid characters", raw: "hoxi://session/ses_bad%3Cid%3E", ok: false},
 		{name: "empty", raw: "   ", ok: false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			intent, ok := parseSessionDeepLink(tc.raw)
+			intent, ok := ParseDeepLink(tc.raw)
 			if ok != tc.ok {
-				t.Fatalf("parseSessionDeepLink(%q) ok = %v, want %v", tc.raw, ok, tc.ok)
+				t.Fatalf("ParseDeepLink(%q) ok = %v, want %v", tc.raw, ok, tc.ok)
 			}
 			if !ok {
 				return
@@ -44,12 +52,20 @@ func TestParseSessionDeepLink(t *testing.T) {
 }
 
 func TestParseSessionDeepLinkDropsInvalidMessageAnchor(t *testing.T) {
-	intent, ok := parseSessionDeepLink("hoxi://session/ses_abc123?message=msg%20with%20space")
-	if !ok {
-		t.Fatal("expected session deep link to parse")
-	}
-	if intent.MessageID != "" {
-		t.Fatalf("expected invalid message anchor to be dropped, got %q", intent.MessageID)
+	for _, raw := range []string{
+		"hoxi://session/ses_abc123?message=msg%20with%20space",
+		"hoxi://session/ses_abc123?message=not_msg_prefix",
+		"hoxi://session/ses_abc123?message=msg_",
+		"hoxi://session/ses_abc123?message=msg_bad.dot",
+		"hoxi://session/ses_abc123?message=msg_" + strings.Repeat("a", 96),
+	} {
+		intent, ok := ParseDeepLink(raw)
+		if !ok {
+			t.Fatalf("expected session deep link %q to parse", raw)
+		}
+		if intent.MessageID != "" {
+			t.Fatalf("expected invalid message anchor in %q to be dropped, got %q", raw, intent.MessageID)
+		}
 	}
 }
 
@@ -62,5 +78,30 @@ func TestIsAuthCallbackDeepLink(t *testing.T) {
 	}
 	if isAuthCallbackDeepLink("https://hoxi.ai/auth-callback") {
 		t.Fatal("expected non-hoxi scheme not to be treated as auth callback")
+	}
+	if isAuthCallbackDeepLink("://bad-url") {
+		t.Fatal("expected malformed URL not to be treated as auth callback")
+	}
+}
+
+func TestOnURLOpenOnlyRevealsWindowForValidDeepLink(t *testing.T) {
+	gw := gateway.New(0, "test", t.TempDir(), nil, nil)
+	app := &DesktopApp{gateway: gw}
+
+	app.onURLOpen("hoxi://unsupported/path")
+	if app.revealOnStartup {
+		t.Fatal("expected unsupported deep link not to reveal window")
+	}
+	if _, ok := gw.ConsumeDesktopIntent(); ok {
+		t.Fatal("expected no desktop intent for unsupported deep link")
+	}
+
+	app.onURLOpen("hoxi://session/ses_abc123?message=msg_456")
+	if !app.revealOnStartup {
+		t.Fatal("expected valid session deep link to reveal window")
+	}
+	intent, ok := gw.ConsumeDesktopIntent()
+	if !ok || intent.SessionID != "ses_abc123" || intent.MessageID != "msg_456" {
+		t.Fatalf("unexpected queued intent: %+v (ok=%v)", intent, ok)
 	}
 }

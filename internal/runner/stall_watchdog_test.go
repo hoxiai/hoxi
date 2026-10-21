@@ -2,19 +2,22 @@ package runner
 
 import (
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
 
+// shortenTurnGraces lowers the drain/abort grace periods once for the whole
+// test binary. They are never restored: watchdog and Abort goroutines started
+// by a finished test may still read them, so restoring them in t.Cleanup was a
+// data race.
+var shortenTurnGraces sync.Once
+
 func newStallTestService(t *testing.T) *Service {
 	t.Helper()
-	prevOrphan := orphanDrainGrace
-	prevAbort := abortInterruptGrace
-	orphanDrainGrace = 120 * time.Millisecond
-	abortInterruptGrace = 120 * time.Millisecond
-	t.Cleanup(func() {
-		orphanDrainGrace = prevOrphan
-		abortInterruptGrace = prevAbort
+	shortenTurnGraces.Do(func() {
+		orphanDrainGrace = 120 * time.Millisecond
+		abortInterruptGrace = 120 * time.Millisecond
 	})
 	svc := NewService(t.TempDir(), nil, nil, filepath.Join(t.TempDir(), "sessions.json"))
 	svc.stall = stallPolicy{warnAfter: 5 * time.Minute, abortAfter: 30 * time.Minute}.normalized()

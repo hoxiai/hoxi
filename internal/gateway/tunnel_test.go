@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,26 +12,123 @@ import (
 )
 
 func TestTunnelRouteAllowlist(t *testing.T) {
-	allowed := []string{
-		"/healthz", "/api/hoxi/bootstrap", "/api/hoxi/sessions", "/api/hoxi/sessions/ses_1/message",
-		"/api/hoxi/event", "/api/hoxi/permission/per_1", "/api/hoxi/worktree/diff", "/file", "/file/content",
-		"/api/hoxi/provider/models",
+	get, post := http.MethodGet, http.MethodPost
+	type route struct{ method, path string }
+	allowed := []route{
+		{get, "/healthz"}, {get, "/api/hoxi/bootstrap"}, {get, "/api/hoxi/system-info"},
+		{get, "/api/hoxi/provider/models"}, {get, "/api/hoxi/runner/claude-code/models"},
+		{get, "/api/hoxi/runner/antigravity/models"}, {get, "/api/hoxi/runner/qoder/models"},
+		{get, "/api/hoxi/runner/codebuddy/models"},
+		{get, "/api/hoxi/sessions"}, {post, "/api/hoxi/sessions"}, {get, "/api/hoxi/sessions/status"},
+		{get, "/api/hoxi/sessions/ses_1"}, {get, "/api/hoxi/sessions/ses_1/message"},
+		{get, "/api/hoxi/sessions/ses_1/diff"},
+		{post, "/api/hoxi/sessions/ses_1/prompt"}, {post, "/api/hoxi/sessions/ses_1/prompt_async"},
+		{post, "/api/hoxi/sessions/ses_1/abort"}, {post, "/api/hoxi/sessions/ses_1/stop_tool"},
+		{post, "/api/hoxi/sessions/ses_1/revert"}, {post, "/api/hoxi/sessions/ses_1/unrevert"},
+		{post, "/api/hoxi/sessions/ses_1/fork"},
+		{get, "/api/hoxi/event"}, {get, "/api/hoxi/permission"}, {post, "/api/hoxi/permission/per_1/reply"},
+		{get, "/api/hoxi/worktree/status"}, {get, "/api/hoxi/worktree/diff"}, {get, "/api/hoxi/worktree/branches"},
+		{get, "/api/hoxi/worktree/verify-status"}, {post, "/api/hoxi/worktree/commit"}, {post, "/api/hoxi/worktree/apply"},
+		{post, "/api/hoxi/attachments"}, {get, "/api/hoxi/attachments/att_1"}, {get, "/api/hoxi/attachments/att_1/content"},
+		{get, "/api/hoxi/skills/list"}, {get, "/api/hoxi/workspaces"},
+		{get, "/file/content"}, {get, "/api/file/content"}, {get, "/api/hoxi/file/content"},
+		{get, "/api/hoxi/file/list"}, {get, "/api/hoxi/file/search"},
 	}
-	for _, p := range allowed {
-		if !tunnelRouteAllowed(p) {
-			t.Errorf("%s should be reachable over the tunnel", p)
+	for _, r := range allowed {
+		if !tunnelRouteAllowed(r.method, r.path) {
+			t.Errorf("%s %s should be reachable over the tunnel", r.method, r.path)
 		}
 	}
-	denied := []string{
-		"/", "/api/hoxi/tunnel/status", "/api/hoxi/tunnel/pair", "/api/hoxi/auth", "/api/hoxi/models-config",
-		"/api/hoxi/provider/keys", "/api/hoxi/provider/fetch-models", "/api/hoxi/provider/test-model",
-		"/api/hoxi/provider/auto-pools", "/api/hoxi/provider/models/x", "/provider", "/global/config", "/api/hoxi/browser", "/api/hoxi/clipboard", "/api/hoxi/sessionsx",
-		"/api/hoxi/sessions/../tunnel/pair", "/session", "/pty/1/connect", "/config", "/auth/openai",
+	denied := []route{
+		{get, "/"}, {get, "/api/hoxi/tunnel/status"}, {post, "/api/hoxi/tunnel/pair"}, {post, "/api/hoxi/tunnel/disable"},
+		{get, "/api/hoxi/auth"}, {get, "/api/hoxi/models-config"},
+		{get, "/api/hoxi/provider/keys"}, {post, "/api/hoxi/provider/fetch-models"}, {post, "/api/hoxi/provider/test-model"},
+		{get, "/api/hoxi/provider/auto-pools"}, {get, "/api/hoxi/provider/models/x"}, {get, "/provider"}, {get, "/global/config"},
+		{get, "/api/hoxi/browser"}, {get, "/api/hoxi/clipboard/images"}, {get, "/api/hoxi/sessionsx"},
+		{get, "/api/hoxi/sessions/../tunnel/pair"}, {get, "/session"}, {get, "/pty/1/connect"}, {get, "/config"}, {get, "/auth/openai"},
+		{post, "/api/hoxi/desktop/notify"}, {post, "/api/hoxi/desktop/focus"}, {get, "/api/hoxi/dev-pulse"},
+		// Raw OpenCode passthrough and command-running local helpers.
+		{get, "/file"}, {post, "/file"}, {get, "/api/file"}, {post, "/api/hoxi/file/open"}, {post, "/api/hoxi/file/validate"},
+		// Worktree routes that execute commands, write config, push, check out or delete.
+		{post, "/api/hoxi/worktree/verify-run"}, {post, "/api/hoxi/worktree/verify-config"}, {post, "/api/hoxi/worktree/verify-stop"},
+		{post, "/api/hoxi/worktree/push"}, {post, "/api/hoxi/worktree/checkout"}, {post, "/api/hoxi/worktree/prune-sandboxes"},
+		{post, "/api/hoxi/worktree/setup-retry"}, {post, "/api/hoxi/worktree/create"}, {post, "/api/hoxi/worktree/sync"},
+		{post, "/api/hoxi/worktree/revert-file"}, {post, "/api/hoxi/worktree/rename-branch"},
+		{http.MethodDelete, "/api/hoxi/worktree/ses_1"}, {get, "/api/hoxi/worktree/unknown"},
+		// Runner hooks and legacy runner planes.
+		{post, "/api/hoxi/runner/antigravity/hook"}, {get, "/api/hoxi/runner/antigravity/hook"},
+		{post, "/api/hoxi/runner/hook/pretool"}, {post, "/api/hoxi/runner/hook/claude-pretool"},
+		{get, "/api/hoxi/runner/sessions"}, {post, "/api/hoxi/runner/sessions/ses_1/prompt"},
+		{get, "/api/hoxi/runner/permission"}, {post, "/api/hoxi/runner/permission/per_1/reply"}, {get, "/api/hoxi/runner/event"},
+		{get, "/api/hoxi/runner/unknown/models"},
+		// Workspaces are read-only remotely.
+		{post, "/api/hoxi/workspaces"}, {http.MethodPut, "/api/hoxi/workspaces/ws_1"},
+		{http.MethodDelete, "/api/hoxi/workspaces"}, {get, "/api/hoxi/workspaces/ws_1"}, {get, "/api/hoxi/projects/resolve"},
+		// Unknown sub-routes under allowed domains default to deny.
+		{post, "/api/hoxi/sessions/ses_1/runtime"}, {post, "/api/hoxi/sessions/ses_1/summarize"},
+		{get, "/api/hoxi/sessions/ses_1/event"}, {get, "/api/hoxi/sessions/ses_1/message/extra"},
+		{get, "/api/hoxi/sessions/ses_1/unknown"}, {get, "/api/hoxi/skills/detail"}, {get, "/api/hoxi/attachments/a/b/c"},
+		{get, "/api/hoxi/permission/per_1"}, {get, "/api/hoxi/sessions//message"}, {get, "/api/hoxi/sessions/"},
+		// Methods are part of the allow-list.
+		{http.MethodPatch, "/api/hoxi/sessions/ses_1"}, {http.MethodDelete, "/api/hoxi/sessions/ses_1"},
+		{post, "/api/hoxi/sessions/ses_1/message"}, {get, "/api/hoxi/permission/per_1/reply"},
+		{post, "/api/hoxi/event"}, {post, "/file/content"}, {post, "/api/hoxi/file/list"},
+		{http.MethodOptions, "/api/hoxi/sessions"}, {http.MethodHead, "/healthz"}, {get, "/api/hoxi/worktree/commit"},
 	}
-	for _, p := range denied {
-		if tunnelRouteAllowed(p) {
-			t.Errorf("%s must stay desktop-only", p)
+	for _, r := range denied {
+		if tunnelRouteAllowed(r.method, r.path) {
+			t.Errorf("%s %s must stay desktop-only", r.method, r.path)
 		}
+	}
+}
+
+func TestTunnelRejectsEncodedPathsAndBareFileContent(t *testing.T) {
+	g := New(0, "test", t.TempDir(), nil, nil)
+	g.SetGatewayToken("loopback-secret")
+	for _, target := range []string{
+		"/api/hoxi/sessions/ses_1%2F..%2F..%2Ftunnel%2Fpair",
+		"/api/hoxi/permission/per%2F1/reply",
+		"/file/content",
+		"/api/file/content?directory=/tmp",
+		"/api/hoxi/file/content?path=",
+		"/file?path=.",
+	} {
+		rec := httptest.NewRecorder()
+		g.serveTunnelRequest(rec, localRequest(http.MethodGet, target, nil))
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("GET %s over tunnel = %d, want 403", target, rec.Code)
+		}
+	}
+	rec := httptest.NewRecorder()
+	g.serveTunnelRequest(rec, localRequest(http.MethodPost, "/file/content?path=a.go", strings.NewReader("{}")))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("POST /file/content over tunnel = %d, want 403", rec.Code)
+	}
+}
+
+func TestTunnelCommitRejectsPush(t *testing.T) {
+	for body, want := range map[string]bool{
+		`{"sessionID":"ses_1","message":"m","push":false}`: true,
+		`{"sessionID":"ses_1","message":"m"}`:              true,
+		`{"sessionID":"ses_1","message":"m","push":true}`:  false,
+		`{"push":tru`: false,
+	} {
+		r := localRequest(http.MethodPost, "/api/hoxi/worktree/commit", strings.NewReader(body))
+		if got := tunnelBodyAllowed(r); got != want {
+			t.Errorf("commit body %s allowed = %v, want %v", body, got, want)
+		}
+		if want {
+			restored, _ := io.ReadAll(r.Body)
+			if string(restored) != body {
+				t.Errorf("commit body not restored: %q", restored)
+			}
+		}
+	}
+	g := New(0, "test", t.TempDir(), nil, nil)
+	rec := httptest.NewRecorder()
+	g.serveTunnelRequest(rec, localRequest(http.MethodPost, "/api/hoxi/worktree/commit", strings.NewReader(`{"push":true}`)))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("commit+push over tunnel = %d, want 403", rec.Code)
 	}
 }
 

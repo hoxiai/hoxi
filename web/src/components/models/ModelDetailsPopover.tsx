@@ -222,10 +222,10 @@ export function ModelDetailsPopover(props: {
 
         <section class="space-y-2 border-t border-[var(--border-subtle)] pt-3">
           <h3 class="font-medium text-[var(--text-primary)]">{t("models.detailStatus")}</h3>
-          <div class="flex flex-wrap items-center gap-2">
-            <span class="text-[var(--text-muted)]">
+          <div class="space-y-1.5">
+            <div class="text-[var(--text-muted)]">
               {t(props.model.connected ? "models.connected" : "models.needsApiKey")}
-            </span>
+            </div>
             <ProviderHealthBadge providerID={props.model.providerID} modelID={props.model.modelID} compact={false} />
           </div>
         </section>

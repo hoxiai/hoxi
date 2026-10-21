@@ -53,7 +53,6 @@ export function SessionRenamePopover(props: {
       <form
         ref={panel}
         role="dialog"
-        aria-label={t("leftNav.renameSessionTooltip")}
         class="fixed z-[100] w-72 max-w-[calc(100vw-16px)] rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-3 shadow-xl"
         style={{ top: `${position().top}px`, left: `${position().left}px` }}
         onClick={(ev) => ev.stopPropagation()}
@@ -66,7 +65,6 @@ export function SessionRenamePopover(props: {
         }}
       >
         <label class="block text-[12px] font-medium text-[var(--text-primary)]">
-          {t("leftNav.renameSessionTooltip")}
           <input
             ref={input}
             type="text"

@@ -125,4 +125,47 @@ describe("unified task overview", () => {
       ]
     );
   });
+
+  it("reports errored subagents as failed and interrupted work consistently as cancelled", () => {
+    setWorkspace({
+      activeSessionID: "ses_root",
+      sessions: [
+        session("ses_root"),
+        session("ses_err_child", "ses_root", 2),
+        session("ses_int_child", "ses_root", 3),
+      ],
+      messagesBySession: {
+        ses_err_child: [
+          {
+            info: {
+              id: "msg_err",
+              sessionID: "ses_err_child",
+              role: "assistant",
+              time: { created: 2 },
+              error: { name: "Error", message: "boom" },
+            } as never,
+            parts: [],
+          },
+        ],
+      },
+      statusBySession: {},
+      interruptedBySession: { ses_int_child: "stopped" },
+    });
+
+    const groups = buildTaskOverview([
+      convoyPlan({ id: "plan_older", status: "running", updatedAt: 10, tasks: [] }),
+      convoyPlan({ id: "plan_newer", status: "running", updatedAt: 20, tasks: [] }),
+    ]);
+    assertDeepEqual(
+      groups[0].nodes.map((n) => n.id),
+      ["convoy:plan_newer", "convoy:plan_older"]
+    );
+    assertDeepEqual(
+      groups[1].nodes.map((n) => [n.id, n.status]),
+      [
+        ["subagent:ses_err_child", "failed"],
+        ["subagent:ses_int_child", "cancelled"],
+      ]
+    );
+  });
 });

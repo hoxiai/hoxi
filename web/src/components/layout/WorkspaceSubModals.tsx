@@ -15,6 +15,7 @@ import {
   workspace,
   workspaceDisplayName,
   workspacePrimaryFolder,
+  visibleSavedWorkspaces,
 } from "../../store/workspace";
 import { FolderIcon } from "./left-nav-helpers";
 
@@ -104,8 +105,7 @@ export function ManageWorkspacesModalView() {
     }> = [];
     const coveredDirs = new Set<string>();
 
-    for (const saved of workspace.savedWorkspaces) {
-      if (saved.hidden || isDismissedProjectPath(saved.id)) continue;
+    for (const saved of visibleSavedWorkspaces()) {
       const primary = workspacePrimaryFolder(saved);
       if (isDismissedProjectPath(primary)) continue;
       for (const f of saved.folders) {

@@ -243,18 +243,20 @@ export async function switchWorkspace(
   });
 
   const selectPromise = targetSessionID ? selectSession(targetSessionID) : null;
-  const projectID = await syncActiveProjectID(cleaned);
-  if (normalizeFolderPath(workspace.rootDir) !== cleaned) return;
-
+  // Project resolution and the session list run in parallel: the backend
+  // resolves the project from the directory when no ID is passed yet.
+  const knownProjectID = findWorkspaceProfileByDir(cleaned)?.id || null;
   try {
     await Promise.all([
-      bootstrapProjectSessions(cleaned, selectInitial, projectID),
+      syncActiveProjectID(cleaned),
+      bootstrapProjectSessions(cleaned, selectInitial, knownProjectID),
       ...(selectPromise ? [selectPromise] : []),
     ]);
   } catch (err) {
     setWorkspace("bootstrappingSessions", false);
     console.error("switch workspace error:", err);
   }
+  if (normalizeFolderPath(workspace.rootDir) !== cleaned) return;
 
   if (workspace.providers.length === 0) void loadProviders();
   if (workspace.projects.length === 0) void loadProjects();

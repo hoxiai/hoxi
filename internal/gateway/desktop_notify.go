@@ -38,6 +38,11 @@ func (g *Gateway) registerDesktopNotifyRoute(mux *http.ServeMux) {
 			writeJSONError(w, http.StatusBadRequest, "invalid notification payload")
 			return
 		}
+		sessionID := strings.TrimSpace(body.SessionID)
+		if sessionID != "" && !validDesktopEntityID(sessionID, desktopSessionIDPrefix) {
+			writeJSONError(w, http.StatusBadRequest, "invalid sessionID")
+			return
+		}
 		g.notifyMu.RLock()
 		notifyFn := g.onDesktopNotify
 		g.notifyMu.RUnlock()
@@ -48,7 +53,7 @@ func (g *Gateway) registerDesktopNotifyRoute(mux *http.ServeMux) {
 		err := notifyFn(DesktopNotification{
 			Title:     strings.TrimSpace(body.Title),
 			Body:      strings.TrimSpace(body.Body),
-			SessionID: strings.TrimSpace(body.SessionID),
+			SessionID: sessionID,
 		})
 		if err != nil {
 			writeJSONError(w, http.StatusServiceUnavailable, err.Error())

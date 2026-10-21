@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -240,8 +241,8 @@ func TestRetryRerunsOnlyUnfinishedTasks(t *testing.T) {
 	if task := taskByID(retried, "stable"); task.Status != StatusSucceeded || task.SessionID != stableSession {
 		t.Fatalf("succeeded task was reset: %#v", task)
 	}
-	if task := taskByID(retried, "flaky"); task.Status != StatusQueued || task.Error != "" {
-		t.Fatalf("failed task was not reset: %#v", task)
+	if task := taskByID(retried, "flaky"); task.Status != StatusQueued || task.Error != "" || task.SessionID != "" {
+		t.Fatalf("failed task was not reset cleanly: %#v", task)
 	}
 
 	final := waitTerminal(t, svc, plan.ID)
@@ -438,5 +439,59 @@ func TestCancelAbortsRunningSessionsAndQueuedTasks(t *testing.T) {
 func TestCreateWithoutSessionBackendFails(t *testing.T) {
 	if _, err := NewService(nil).Create(PlanRequest{Directory: t.TempDir(), Tasks: []TaskSpec{{ID: "a", Prompt: "x"}}}); err == nil {
 		t.Fatal("expected an error without a session backend")
+	}
+}
+
+func TestRetryPersistenceFailureRestoresPreviousTaskState(t *testing.T) {
+	fake := newFakeSessions(true)
+	flaky := &flakySessions{fakeSessions: fake, failures: 1}
+	storeDir := filepath.Join(t.TempDir(), "plans")
+	store := NewStore(storeDir)
+	svc := NewService(flaky, WithStore(store))
+	plan, err := svc.Create(PlanRequest{
+		Directory:   t.TempDir(),
+		Concurrency: 1,
+		Tasks: []TaskSpec{
+			{ID: "flaky", Prompt: "flaky work"},
+			{ID: "dep", Prompt: "dependent work", DependsOn: []string{"flaky"}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	failed := waitTerminal(t, svc, plan.ID)
+	if failed.Status != StatusFailed {
+		t.Fatalf("status = %s, want failed", failed.Status)
+	}
+	oldSession := taskByID(failed, "flaky").SessionID
+	if oldSession == "" {
+		t.Fatal("expected failed task to have a session ID")
+	}
+
+	// Replace the store directory with a plain file so persisting the retry fails.
+	if err := os.RemoveAll(storeDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(storeDir, []byte("blocked"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := svc.Retry(plan.ID); err == nil {
+		t.Fatal("expected Retry to fail when persistence fails")
+	}
+	after, ok := svc.Get(plan.ID)
+	if !ok {
+		t.Fatal("plan missing after failed retry")
+	}
+	if after.Status != StatusFailed {
+		t.Fatalf("plan status after failed retry = %s, want %s", after.Status, StatusFailed)
+	}
+	flakyTask := taskByID(after, "flaky")
+	if flakyTask.Status != StatusFailed || flakyTask.SessionID != oldSession || flakyTask.Error == "" {
+		t.Fatalf("failed task state was not restored after retry persist error: %#v", flakyTask)
+	}
+	depTask := taskByID(after, "dep")
+	if depTask.Status != StatusBlocked {
+		t.Fatalf("blocked task state was left as %s, want %s", depTask.Status, StatusBlocked)
 	}
 }

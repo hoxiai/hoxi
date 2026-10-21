@@ -7,7 +7,6 @@ import {
   type WorkspaceReviewResult,
   type WorkspaceReviewScope,
 } from "../services/api";
-import { findBestFallbackModel } from "./provider-health";
 import { resolveInternalLLMModel } from "./provider-catalog";
 import { AUTO_PROVIDER_ID, resolveAutoModelTarget } from "./auto-models";
 import {
@@ -87,7 +86,6 @@ export function resolveObserverModel(workerProviderID: string): {
     parseProviderModelKey(
       typeof workspace.globalConfig?.model === "string" ? workspace.globalConfig.model : ""
     ),
-    findBestFallbackModel(workerProviderID, { httpOnly: true }),
     workspace.selectedModel,
     workspace.defaultAI?.model
   );

@@ -5,7 +5,13 @@ import { Check, ChevronDown, Clock, Cpu, Search, Star, X } from "lucide-solid";
 import { Presence } from "../motion/Presence";
 import { ProviderIcon } from "../icons";
 import { t } from "../../i18n";
-import { workspace, type ConnectedProviderGroup } from "../../store/workspace";
+import {
+  isCustomOrConfiguredProvider,
+  rankModelSearch,
+  resolveFavoriteModelEntries,
+  resolveRecentModelEntries,
+  type ConnectedProviderGroup,
+} from "../../store/workspace";
 import { getMultiplierBadgeClass } from "./model-selector-utils";
 
 export interface ModelRoleExtraOption {
@@ -21,6 +27,8 @@ interface PickerModel {
   fullKey: string;
   free: boolean;
   multiplier?: string;
+  connected?: boolean;
+  isCustom?: boolean;
 }
 
 type Row =
@@ -42,30 +50,6 @@ interface PopoverBox {
   bottom?: number;
   width: number;
   maxHeight: number;
-}
-
-function rankPickerModels(models: PickerModel[], rawQuery: string): PickerModel[] {
-  const q = rawQuery.trim().toLowerCase();
-  if (!q) return models;
-  const tokens = q.split(/\s+/).filter(Boolean);
-  const scored: Array<{ model: PickerModel; score: number }> = [];
-  for (const model of models) {
-    const id = model.modelID.toLowerCase();
-    const name = model.modelName.toLowerCase();
-    const provider = `${model.providerName} ${model.providerID}`.toLowerCase();
-    const tags = `${model.free ? " free" : ""}${model.multiplier ? ` ${model.multiplier.toLowerCase()}` : ""}`;
-    const haystack = `${id} ${name} ${provider}${tags}`;
-    if (!tokens.every((token) => haystack.includes(token))) continue;
-    let score = 0;
-    if (id === q || name === q) score += 200;
-    else if (id.startsWith(q) || name.startsWith(q)) score += 120;
-    else if (id.includes(q) || name.includes(q)) score += 70;
-    if (provider.includes(q)) score += 15;
-    scored.push({ model, score });
-  }
-  return scored
-    .sort((a, b) => b.score - a.score || a.model.modelName.localeCompare(b.model.modelName))
-    .map((entry) => entry.model);
 }
 
 function modelRow(prefix: string, model: PickerModel): Row {
@@ -104,8 +88,9 @@ export default function ModelRolePicker(props: {
   let searchRef: HTMLInputElement | undefined;
 
   const allModels = createMemo<PickerModel[]>(() =>
-    props.groups.flatMap((group) =>
-      group.models.map((model) => ({
+    props.groups.flatMap((group) => {
+      const custom = isCustomOrConfiguredProvider(group.providerID);
+      return group.models.map((model) => ({
         providerID: group.providerID,
         providerName: group.providerName,
         modelID: model.id,
@@ -113,8 +98,10 @@ export default function ModelRolePicker(props: {
         fullKey: model.fullKey,
         free: model.free,
         multiplier: model.multiplier,
-      }))
-    )
+        connected: true,
+        isCustom: custom,
+      }));
+    })
   );
 
   const currentModel = createMemo(() => allModels().find((model) => model.fullKey === props.value));
@@ -131,35 +118,11 @@ export default function ModelRolePicker(props: {
     return slash >= 0 ? props.value.slice(slash + 1) : props.value;
   });
 
-  const recentModels = createMemo<PickerModel[]>(() => {
-    const byKey = new Map(allModels().map((model) => [model.fullKey, model]));
-    const seen = new Set<string>();
-    const out: PickerModel[] = [];
-    for (const item of workspace.recentModels) {
-      const key = `${item.providerID}/${item.modelID}`;
-      const model = byKey.get(key);
-      if (!model || seen.has(key)) continue;
-      seen.add(key);
-      out.push(model);
-      if (out.length >= 4) break;
-    }
-    return out;
-  });
+  const recentModels = createMemo<PickerModel[]>(() => resolveRecentModelEntries(allModels(), 4));
 
-  const favoriteModels = createMemo<PickerModel[]>(() => {
-    const byKey = new Map(allModels().map((model) => [model.fullKey, model]));
-    const seen = new Set<string>();
-    const out: PickerModel[] = [];
-    for (const item of workspace.favoriteModels) {
-      const key = `${item.providerID}/${item.modelID}`;
-      const model = byKey.get(key);
-      if (!model || model.fullKey === props.value || seen.has(key)) continue;
-      seen.add(key);
-      out.push(model);
-      if (out.length >= 6) break;
-    }
-    return out;
-  });
+  const favoriteModels = createMemo<PickerModel[]>(() =>
+    resolveFavoriteModelEntries(allModels(), { limit: 6, excludeKey: props.value })
+  );
 
   const rows = createMemo<Row[]>(() => {
     const out: Row[] = [];
@@ -182,7 +145,7 @@ export default function ModelRolePicker(props: {
 
     const q = query().trim();
     if (q) {
-      for (const model of rankPickerModels(allModels(), q)) out.push(modelRow("search", model));
+      for (const model of rankModelSearch(allModels(), q)) out.push(modelRow("search", model));
       return out;
     }
 

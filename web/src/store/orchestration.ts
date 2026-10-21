@@ -51,3 +51,34 @@ export function cancelConvoyPlan(planID: string): Promise<ConvoyPlan> {
 export function retryConvoyPlan(planID: string): Promise<ConvoyPlan> {
   return apiRetryConvoyPlan(planID);
 }
+
+export interface ConvoyHistoryLoader {
+  /** Resolves the directory's plans, or null when superseded or invalidated. */
+  load(directory: string): Promise<ConvoyPlan[] | null>;
+  /** Drops every in-flight request (modal closed, directory changed, unmount). */
+  invalidate(): void;
+}
+
+/**
+ * Generation-guarded convoy history loader: a late response for a previous
+ * directory or a closed modal can never overwrite the current view.
+ */
+export function createConvoyHistoryLoader(
+  fetcher: (directory: string) => Promise<ConvoyPlan[]> = fetchConvoyPlans
+): ConvoyHistoryLoader {
+  let generation = 0;
+  return {
+    async load(directory: string): Promise<ConvoyPlan[] | null> {
+      const current = ++generation;
+      try {
+        const plans = await fetcher(directory);
+        return current === generation ? plans : null;
+      } catch {
+        return null;
+      }
+    },
+    invalidate() {
+      generation++;
+    },
+  };
+}

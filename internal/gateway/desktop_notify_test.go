@@ -43,6 +43,14 @@ func TestDesktopNotifyRouteRejectsBadInput(t *testing.T) {
 	if res.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("status = %d, want 405", res.Code)
 	}
+	res = serve(gw, http.MethodPost, "/api/hoxi/desktop/notify", `{"title":"Hoxi","sessionID":"bad_session_id"}`)
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 for invalid sessionID", res.Code)
+	}
+	res = serve(gw, http.MethodPost, "/api/hoxi/desktop/notify", `{"title":"Hoxi","sessionID":"ses_bad.dot"}`)
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 for sessionID with disallowed chars", res.Code)
+	}
 	res = serve(gw, http.MethodPost, "/api/hoxi/desktop/notify", `{"title":"Hoxi"}`)
 	if res.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503 when delivery fails", res.Code)
@@ -50,7 +58,7 @@ func TestDesktopNotifyRouteRejectsBadInput(t *testing.T) {
 }
 
 func TestDesktopNotifyStaysOffTunnel(t *testing.T) {
-	if tunnelRouteAllowed("/api/hoxi/desktop/notify") {
+	if tunnelRouteAllowed(http.MethodPost, "/api/hoxi/desktop/notify") {
 		t.Fatal("desktop notifications must not be reachable over the remote tunnel")
 	}
 }

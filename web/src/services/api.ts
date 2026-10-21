@@ -326,7 +326,7 @@ export const hoxiAPI = {
     input: { callID?: string; partID?: string; command?: string },
     directory?: string
   ): Promise<{ ok: boolean; stopped: number }> {
-    return requestJSON(withDir(`${sessionPath(sessionID)}/stop_tool`, directory), {
+    return requestJSON(withDir(`${sessionPath(sessionID)}/stop-tool`, directory), {
       method: "POST",
       body: JSON.stringify(input),
     });

@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -206,7 +207,7 @@ func (s *Service) decideHookCall(r *http.Request, cred hookCredential, p hookPay
 	args, _ := json.Marshal(p.ToolCall.Args)
 	callID := fmt.Sprintf("call_%s_%d", cred.messageID, p.StepIdx)
 	action := hookToolAction(p.ToolCall.Name)
-	if (action == hookActionAsk || action == hookActionUnknown) &&
+	if action != hookActionCommand &&
 		s.gate.hasToolAlways(cred.sessionID, hookToolGrantKey(p.ToolCall.Name, p.ToolCall.Args)) {
 		return hookDecisionApprove, ""
 	}
@@ -216,20 +217,34 @@ func (s *Service) decideHookCall(r *http.Request, cred hookCredential, p hookPay
 
 	switch action {
 	case hookActionRead:
-		// Reads are non-destructive and follow the same policy as safe shell
-		// commands (`cat`), so Hoxi grants them instead of letting agy's
-		// headless mode soft-deny the call. The sandbox still blocks writes
-		// outside the worktree.
-		return hookDecisionApprove, ""
+		if isReadToolAllowedInWorktree(rec.WorktreePath, p.ToolCall.Name, p.ToolCall.Args) {
+			return hookDecisionApprove, ""
+		}
+		approved, reason := s.gateToolCall(r, cred, p.ToolCall.Name, p.ToolCall.Args, callID)
+		if approved {
+			return hookDecisionApprove, ""
+		}
+		return hookDecisionDeny, reason
 	case hookActionEdit:
 		path := resolveHookToolPath(rec.WorktreePath, p.ToolCall.Args)
 		if path == "" {
-			return "allow", ""
+			approved, reason := s.gateToolCall(r, cred, p.ToolCall.Name, p.ToolCall.Args, callID)
+			if approved {
+				return hookDecisionApprove, ""
+			}
+			return hookDecisionDeny, reason
 		}
-		if pathWithin(rec.WorktreePath, path) {
-			return hookDecisionApprove, ""
+		if !pathWithin(rec.WorktreePath, path) {
+			return hookDecisionDeny, fmt.Sprintf("Hoxi blocked %s outside this session's directory: %s", p.ToolCall.Name, path)
 		}
-		return hookDecisionDeny, fmt.Sprintf("Hoxi blocked %s outside this session's directory: %s", p.ToolCall.Name, path)
+		if isProtectedWorktreePath(rec.WorktreePath, path) {
+			approved, reason := s.gateToolCall(r, cred, p.ToolCall.Name, p.ToolCall.Args, callID)
+			if approved {
+				return hookDecisionApprove, ""
+			}
+			return hookDecisionDeny, reason
+		}
+		return hookDecisionApprove, ""
 	case hookActionAsk:
 		approved, reason := s.gateToolCall(r, cred, p.ToolCall.Name, p.ToolCall.Args, callID)
 		if approved {
@@ -615,32 +630,104 @@ func isLoopbackRemote(remoteAddr string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-func pathWithin(base, target string) bool {
-	resolve := func(p string) string {
-		p = filepath.Clean(strings.TrimSpace(p))
-		if real, err := filepath.EvalSymlinks(p); err == nil {
-			return real
-		}
-		// Writes often target a file that does not exist yet. Resolve the
-		// nearest existing ancestor so /var vs /private/var symlinks on macOS
-		// cannot make an in-worktree path look like an escape.
-		suffix := ""
-		for cur := p; ; {
-			parent := filepath.Dir(cur)
-			if parent == cur {
-				return p
-			}
-			suffix = filepath.Join(filepath.Base(cur), suffix)
-			cur = parent
-			if real, err := filepath.EvalSymlinks(cur); err == nil {
-				return filepath.Join(real, suffix)
-			}
-		}
-	}
-	if strings.TrimSpace(base) == "" {
+var protectedWorktreeDirs = map[string]bool{
+	".git":      true,
+	".agents":   true,
+	".opencode": true,
+	".claude":   true,
+	".hoxi":     true,
+	".envrc":    true,
+}
+
+func isProtectedRelPath(rel string) bool {
+	slash := strings.ToLower(filepath.ToSlash(filepath.Clean(rel)))
+	if slash == "." || slash == "" {
 		return false
 	}
-	rel, err := filepath.Rel(resolve(base), resolve(target))
+	if slash == ".vscode/settings.json" || strings.HasSuffix(slash, "/.vscode/settings.json") {
+		return true
+	}
+	for _, part := range strings.Split(slash, "/") {
+		if protectedWorktreeDirs[part] {
+			return true
+		}
+	}
+	return false
+}
+
+// isProtectedWorktreePath reports whether an edit target inside the worktree
+// touches execution-controlling paths (.git/**, .agents/**, .opencode/**,
+// .claude/**, .hoxi/**, .vscode/settings.json, .envrc) that must ask the user.
+func isProtectedWorktreePath(base, target string) bool {
+	cleanBase := filepath.Clean(strings.TrimSpace(base))
+	cleanTarget := filepath.Clean(strings.TrimSpace(target))
+	if rel, err := filepath.Rel(cleanBase, cleanTarget); err == nil && isProtectedRelPath(rel) {
+		return true
+	}
+	realBase, okBase := resolvePathWithSymlinks(base, 0)
+	realTarget, okTarget := resolvePathWithSymlinks(target, 0)
+	if !okBase || !okTarget {
+		return true
+	}
+	rel, err := filepath.Rel(realBase, realTarget)
+	return err != nil || isProtectedRelPath(rel)
+}
+
+func resolvePathWithSymlinks(p string, depth int) (string, bool) {
+	if depth > 40 {
+		return "", false
+	}
+	p = filepath.Clean(strings.TrimSpace(p))
+	if p == "" {
+		return "", false
+	}
+	if real, err := filepath.EvalSymlinks(p); err == nil {
+		return real, true
+	}
+	suffix := ""
+	for cur := p; ; {
+		if real, err := filepath.EvalSymlinks(cur); err == nil {
+			return filepath.Join(real, suffix), true
+		}
+		info, err := os.Lstat(cur)
+		if err == nil {
+			if info.Mode()&os.ModeSymlink == 0 {
+				return "", false
+			}
+			link, err := os.Readlink(cur)
+			if err != nil {
+				return "", false
+			}
+			if !filepath.IsAbs(link) {
+				link = filepath.Join(filepath.Dir(cur), link)
+			}
+			return resolvePathWithSymlinks(filepath.Join(link, suffix), depth+1)
+		}
+		if !os.IsNotExist(err) {
+			return "", false
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return p, true
+		}
+		suffix = filepath.Join(filepath.Base(cur), suffix)
+		cur = parent
+	}
+}
+
+func pathWithin(base, target string) bool {
+	if strings.TrimSpace(base) == "" || strings.TrimSpace(target) == "" {
+		return false
+	}
+	realBase, ok := resolvePathWithSymlinks(base, 0)
+	if !ok {
+		return false
+	}
+	realTarget, ok := resolvePathWithSymlinks(target, 0)
+	if !ok {
+		return false
+	}
+	rel, err := filepath.Rel(realBase, realTarget)
 	if err != nil {
 		return false
 	}

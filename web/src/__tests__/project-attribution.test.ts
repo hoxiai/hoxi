@@ -42,7 +42,7 @@ describe("project attribution", () => {
     }
   });
 
-  it("learns the project ID from the first event when boot has not resolved it yet", () => {
+  it("admits by directory before boot resolves the project, without writing activeProjectID", () => {
     const saved = structuredClone(unwrap(workspace));
     try {
       setWorkspace({
@@ -56,8 +56,24 @@ describe("project attribution", () => {
         projectID: "prj_boot",
         directory: "/repo",
       }));
-      assertEqual(workspace.activeProjectID, "prj_boot");
+      assertEqual(workspace.activeProjectID, null);
       assertEqual(workspace.sessions.some((s) => s.id === "created"), true);
+    } finally {
+      setWorkspace(reconcile(saved));
+    }
+  });
+
+  it("rejects a foreign project ID for a loaded session without attribution", () => {
+    const saved = structuredClone(unwrap(workspace));
+    try {
+      setWorkspace({
+        rootDir: "/repo",
+        activeProjectID: "prj_root",
+        sessions: [session("legacy", { directory: "/repo", title: "legacy" })],
+        worktreeBySession: {},
+      });
+      replaceSessionFromEvent(session("legacy", { projectID: "prj_other", directory: "/repo", title: "stolen" }));
+      assertEqual(workspace.sessions.find((s) => s.id === "legacy")?.title, "legacy");
     } finally {
       setWorkspace(reconcile(saved));
     }

@@ -72,7 +72,7 @@ export default function WorkspaceModal() {
           );
           if (prof && prof.folders.length > 0) {
             setFolders(
-              prof.folders.map((f) => ({ path: f.path, isPrimary: f.isPrimary }))
+              prof.folders.map((f) => ({ id: f.id, path: f.path, isPrimary: f.isPrimary }))
             );
           } else if (fallbackDir) {
             setFolders([{ path: fallbackDir, isPrimary: true }]);
@@ -147,9 +147,15 @@ export default function WorkspaceModal() {
       const prof = targetProfile();
       const modalMode = mode();
       const selectedPrimary = folders().find((folder) => folder.isPrimary);
-      const orderedFolders = selectedPrimary
-        ? [selectedPrimary, ...folders().filter((folder) => folder !== selectedPrimary)]
-        : folders();
+      const orderedFolders = (
+        selectedPrimary
+          ? [selectedPrimary, ...folders().filter((folder) => folder !== selectedPrimary)]
+          : folders()
+      ).map((folder, index, all) =>
+        !folder.id && index === 0 && all.length === 1 && prof?.folders.length === 1
+          ? { ...folder, id: prof.folders[0].id }
+          : folder
+      );
       const saved = await saveWorkspaceProfile(
         {
           name: name().trim() || undefined,

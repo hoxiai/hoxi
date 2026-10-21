@@ -652,6 +652,8 @@ func (s *Service) steerOpenCodeTurn(ctx context.Context, rec SessionRecord, mode
 			seq,
 			text,
 			skillSelection,
+			false,
+			"",
 			storedParts,
 			deliveryParts,
 		)

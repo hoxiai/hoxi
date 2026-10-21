@@ -49,12 +49,13 @@ type Status struct {
 }
 
 type Manager struct {
-	opts   Options
-	mu     sync.Mutex
-	cancel context.CancelFunc
-	done   chan struct{}
-	status Status
-	peer   *peer
+	opts      Options
+	restartMu sync.Mutex
+	mu        sync.Mutex
+	cancel    context.CancelFunc
+	done      chan struct{}
+	status    Status
+	peer      *peer
 }
 
 // ErrOffline is returned by Notify when no tunnel is connected.
@@ -91,7 +92,12 @@ func NewManager(opts Options) *Manager {
 		opts.Dialer = &websocket.Dialer{Proxy: http.ProxyFromEnvironment, HandshakeTimeout: 15 * time.Second}
 	}
 	if opts.HTTPClient == nil {
-		opts.HTTPClient = &http.Client{Timeout: 15 * time.Second}
+		opts.HTTPClient = &http.Client{
+			Timeout: 15 * time.Second,
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		}
 	}
 	return &Manager{opts: opts, status: Status{State: StateDisabled}}
 }
@@ -119,13 +125,26 @@ func (m *Manager) store() *Store {
 func (m *Manager) Start() {
 	cfg, err := m.store().Load()
 	if err != nil {
-		m.setStatus(Status{State: StateDisabled})
+		m.restartMu.Lock()
+		defer m.restartMu.Unlock()
+		m.stopLocked()
+		status := Status{State: StateDisabled}
+		if !errors.Is(err, os.ErrNotExist) {
+			status.Message = err.Error()
+		}
+		m.setStatus(status)
 		return
 	}
 	m.restart(cfg)
 }
 
 func (m *Manager) Stop() {
+	m.restartMu.Lock()
+	defer m.restartMu.Unlock()
+	m.stopLocked()
+}
+
+func (m *Manager) stopLocked() {
 	m.mu.Lock()
 	cancel, done := m.cancel, m.done
 	m.cancel, m.done = nil, nil
@@ -134,6 +153,14 @@ func (m *Manager) Stop() {
 		cancel()
 		<-done
 	}
+	m.mu.Lock()
+	if m.status.Enabled {
+		m.status.State = StateOffline
+		m.status.ConnectedAt = nil
+	} else {
+		m.status = Status{State: StateDisabled}
+	}
+	m.mu.Unlock()
 }
 
 func (m *Manager) Status() Status {
@@ -149,7 +176,9 @@ func (m *Manager) setStatus(status Status) {
 }
 
 func (m *Manager) restart(cfg Config) {
-	m.Stop()
+	m.restartMu.Lock()
+	defer m.restartMu.Unlock()
+	m.stopLocked()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	m.mu.Lock()
@@ -257,7 +286,11 @@ func (m *Manager) Pair(ctx context.Context, controllerURL, code, name string) er
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	response, err := m.opts.HTTPClient.Do(req)
+	client := *m.opts.HTTPClient
+	client.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	response, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("connect GoPanel: %w", err)
 	}

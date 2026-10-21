@@ -1,4 +1,4 @@
-import { createMemo } from "solid-js";
+import { createMemo, Show, type Accessor } from "solid-js";
 import {
   Command,
   PanelLeft,
@@ -15,6 +15,7 @@ import { t } from "../../i18n";
 import { isPlaceholderSessionTitle } from "../../store/session-title";
 import BranchManagerPopover from "./BranchManagerPopover";
 import HeaderOverflowMenu from "./HeaderOverflowMenu";
+import NetworkStatusBanner from "./NetworkStatusBanner";
 
 interface CompactHeaderProps {
   leftNavOpen: boolean;
@@ -22,6 +23,12 @@ interface CompactHeaderProps {
   inspectorOpen: boolean;
   onToggleInspector: () => void;
   onOpenCommandPalette: () => void;
+  network?: {
+    online: Accessor<boolean>;
+    connected: Accessor<boolean>;
+    streamStarted: Accessor<boolean>;
+    onRetry: () => void;
+  };
 }
 
 export default function CompactHeader(props: CompactHeaderProps) {
@@ -92,6 +99,17 @@ export default function CompactHeader(props: CompactHeaderProps) {
       </div>
 
       <div class="flex shrink-0 items-center gap-1.5 text-[12px]">
+        <Show when={props.network}>
+          {(network) => (
+            <NetworkStatusBanner
+              online={network().online}
+              connected={network().connected}
+              streamStarted={network().streamStarted}
+              onRetry={network().onRetry}
+            />
+          )}
+        </Show>
+
         <button
           class="hoxi-press inline-flex items-center justify-center w-7 h-7 rounded-lg text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer"
           style={{ "--wails-draggable": "no-drag" } as any}

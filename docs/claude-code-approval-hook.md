@@ -37,10 +37,11 @@
 
 - `issueClaudeHook`（`internal/runner/claude_hook_gate.go`）给每个 turn 签发一份一次性凭证，绑定 runtime、会话和消息。它会追加 `--settings <inline JSON>`，把 hook 注册到 `*` matcher 上（所有工具都会经过 hook，但只有 `Bash` 走命令审批，其他工具返回空决定，仍由 Claude 自己的权限模式处理）。同时注入 `HOXI_HOOK_TOKEN`、`HOXI_RUNNER_SESSION_ID`，并把 `NO_PROXY` 加上回环地址。这样不会改写 `~/.claude`，在终端或 IDE 里直接启动的 Claude Code 也不受影响。
 - plan 模式不挂 hook，继续由 Claude 自己做只读限制。
-- `POST /api/hoxi/runner/hook/claude-pretool` 和 agy 共用 `gateCommand` / `awaitApproval`：
-  - 安全命令，或命中会话内 always 规则的命令 → `allow`
-  - 其他命令（包括 `rm`、`sudo`、`git push --force` 等破坏性命令）→ `per_rnr_*` 请求、ApprovalGateCard，状态栏显示 Attention
-  - 破坏性命令永远不会被记成 always 规则
+- `POST /api/hoxi/runner/hook/claude-pretool` 和 agy 共用 `gateCommand` / `awaitApproval`（及 `permission_policy.go` 单次解析策略与 `pathWithin` 符号链接/悬空符号链接校验）：
+  - `cwd` 超出会话 worktree（含经符号链接/悬空符号链接指向区外）→ `deny`
+  - 无模糊 Shell 语法、所有命令段均命中 token 级只读白名单（可剥离指向会话 worktree 内的无引号简单 `cd <dir>` 首段），或命中会话内 always 规则的非破坏性命令 → `allow`
+  - 其他命令（包括含引号/转义/`$(`/反引号的命令、危险参数如 `find -exec/-delete/-fprint*` / `fd -x` / `rg --pre` / `git --output` / `go env -w`，以及 `rm`、`unlink`、`sudo`、`git push --force`/`-uf`/`+refspec`、`git reset --hard`/`--har` 等破坏性命令）→ `per_rnr_*` 请求、ApprovalGateCard，状态栏显示 Attention
+  - 破坏性命令（含转义/引号混淆变体）永远不会被记成 always 规则
 - doom-loop 守卫（`internal/runner/doom_loop.go`）：同一会话连续 3 次以相同参数调用同一工具（参数按 key 排序后比较；`BashOutput`、`TaskOutput` 等轮询工具除外）时，第 3 次调用会先发出 `doom_loop` 审批。拒绝时返回 `deny`，并把原因交给模型；允许一次后重新计数；选择 always 后本会话不再检查该工具。Antigravity 的 `run_command` / `view_file` 也走同一个守卫。
 - Stop、进程退出、超时（580s，早于 hook 的 600s timeout）或 hook 连接断开时，待审批的请求都会变成 `deny`。
 - 手动端到端测试：`go test -tags claude_e2e -run ClaudeHookE2E -v ./internal/runner/`

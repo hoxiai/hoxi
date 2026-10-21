@@ -72,6 +72,29 @@ type planRun struct {
 	// epoch advances on every retry. A superseded scheduler or task must not
 	// write results into the new run.
 	epoch int64
+	// seq advances on every persisted snapshot so out-of-order writes outside
+	// Service.mu cannot overwrite a newer state.
+	seq uint64
+}
+
+type planSnapshot struct {
+	plan Plan
+	seq  uint64
+}
+
+func clonePlan(plan Plan) Plan {
+	tasks := make([]TaskState, len(plan.Tasks))
+	for i, task := range plan.Tasks {
+		task.DependsOn = append([]string(nil), task.DependsOn...)
+		tasks[i] = task
+	}
+	plan.Tasks = tasks
+	return plan
+}
+
+func snapshotLocked(run *planRun) planSnapshot {
+	run.seq++
+	return planSnapshot{plan: clonePlan(run.plan), seq: run.seq}
 }
 
 // Option configures optional Service dependencies.
@@ -121,9 +144,9 @@ func (s *Service) restore() {
 				}
 			}
 			plan.UpdatedAt = now
-			_ = s.store.Save(plan)
+			_ = s.store.SaveSeq(plan, 1)
 		}
-		s.plans[plan.ID] = &planRun{plan: plan}
+		s.plans[plan.ID] = &planRun{plan: plan, seq: 1}
 	}
 }
 
@@ -172,17 +195,19 @@ func (s *Service) Create(request PlanRequest) (Plan, error) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	run := &planRun{plan: plan, cancel: cancel, epoch: 1}
-	s.mu.Lock()
-	s.plans[plan.ID] = run
-	if err := s.persistLocked(run); err != nil {
-		delete(s.plans, plan.ID)
-		s.mu.Unlock()
+	snap := snapshotLocked(run)
+	if err := s.persist(snap); err != nil {
 		cancel()
 		return Plan{}, fmt.Errorf("could not persist orchestration plan: %w", err)
 	}
-	s.pruneLocked(directory)
+	s.mu.Lock()
+	s.plans[plan.ID] = run
+	evicted := s.pruneLocked(directory)
 	epoch := run.epoch
 	s.mu.Unlock()
+	for _, id := range evicted {
+		_ = s.store.Delete(id)
+	}
 	go s.run(ctx, plan.ID, request, epoch)
 	snapshot, _ := s.Get(plan.ID)
 	return snapshot, nil
@@ -195,9 +220,7 @@ func (s *Service) Get(id string) (Plan, bool) {
 	if run == nil {
 		return Plan{}, false
 	}
-	plan := run.plan
-	plan.Tasks = append([]TaskState(nil), run.plan.Tasks...)
-	return plan, true
+	return clonePlan(run.plan), true
 }
 
 func (s *Service) List(directory string) []Plan {
@@ -209,9 +232,7 @@ func (s *Service) List(directory string) []Plan {
 		if directory != "" && run.plan.Directory != directory {
 			continue
 		}
-		plan := run.plan
-		plan.Tasks = append([]TaskState(nil), run.plan.Tasks...)
-		plans = append(plans, plan)
+		plans = append(plans, clonePlan(run.plan))
 	}
 	sortPlans(plans)
 	return plans
@@ -239,9 +260,7 @@ func (s *Service) ListBySession(sessionID string) []Plan {
 		if !owned {
 			continue
 		}
-		plan := run.plan
-		plan.Tasks = append([]TaskState(nil), run.plan.Tasks...)
-		plans = append(plans, plan)
+		plans = append(plans, clonePlan(run.plan))
 	}
 	sortPlans(plans)
 	return plans
@@ -263,6 +282,7 @@ func (s *Service) Cancel(id string) (Plan, error) {
 		s.mu.Unlock()
 		return Plan{}, ErrPlanNotFound
 	}
+	var snap planSnapshot
 	if !terminal(run.plan.Status) {
 		run.plan.Status = StatusCancelled
 		for i := range run.plan.Tasks {
@@ -271,11 +291,10 @@ func (s *Service) Cancel(id string) (Plan, error) {
 			}
 		}
 		run.plan.UpdatedAt = time.Now().UnixMilli()
-		_ = s.persistLocked(run)
+		snap = snapshotLocked(run)
 	}
 	cancel := run.cancel
-	plan := run.plan
-	plan.Tasks = append([]TaskState(nil), run.plan.Tasks...)
+	plan := clonePlan(run.plan)
 	// Collect live sessions before cancelling: a cancelled task marks itself
 	// cancelled at once and would otherwise drop out of the abort list.
 	var live []string
@@ -285,6 +304,9 @@ func (s *Service) Cancel(id string) (Plan, error) {
 		}
 	}
 	s.mu.Unlock()
+	if snap.plan.ID != "" {
+		_ = s.persist(snap)
+	}
 	if cancel != nil {
 		cancel()
 	}
@@ -316,6 +338,7 @@ func (s *Service) Retry(id string) (Plan, error) {
 			return Plan{}, ErrPlanStopping
 		}
 	}
+	prevPlan := clonePlan(run.plan)
 	request := PlanRequest{
 		Directory:   run.plan.Directory,
 		Title:       run.plan.Title,
@@ -327,11 +350,16 @@ func (s *Service) Retry(id string) (Plan, error) {
 	}
 	for i := range run.plan.Tasks {
 		task := &run.plan.Tasks[i]
-		request.Tasks = append(request.Tasks, TaskSpec{ID: task.ID, Prompt: task.Prompt, DependsOn: task.DependsOn})
+		request.Tasks = append(request.Tasks, TaskSpec{
+			ID:        task.ID,
+			Prompt:    task.Prompt,
+			DependsOn: append([]string(nil), task.DependsOn...),
+		})
 		if task.Status == StatusSucceeded {
 			continue
 		}
 		task.Status = StatusQueued
+		task.SessionID = ""
 		task.Summary = ""
 		task.Error = ""
 		task.StartedAt = 0
@@ -344,16 +372,20 @@ func (s *Service) Retry(id string) (Plan, error) {
 	epoch := run.epoch
 	ctx, cancel := context.WithCancel(context.Background())
 	run.cancel = cancel
-	if err := s.persistLocked(run); err != nil {
-		run.plan.Status = StatusFailed
-		run.plan.Error = "could not persist retry: " + err.Error()
-		s.mu.Unlock()
+	snap := snapshotLocked(run)
+	plan := clonePlan(run.plan)
+	s.mu.Unlock()
+
+	if err := s.persist(snap); err != nil {
 		cancel()
+		s.mu.Lock()
+		if run.epoch == epoch {
+			run.plan = prevPlan
+			run.cancel = nil
+		}
+		s.mu.Unlock()
 		return Plan{}, fmt.Errorf("could not persist orchestration plan: %w", err)
 	}
-	plan := run.plan
-	plan.Tasks = append([]TaskState(nil), run.plan.Tasks...)
-	s.mu.Unlock()
 	go s.run(ctx, id, request, epoch)
 	return plan, nil
 }
@@ -398,12 +430,16 @@ func (s *Service) run(ctx context.Context, id string, request PlanRequest, epoch
 		}
 		finished := len(running) == 0 && len(launch) == 0
 		if finished {
-			s.finish(id, epoch)
+			snap := s.finishLocked(id, epoch)
 			s.mu.Unlock()
+			if snap.plan.ID != "" {
+				_ = s.persist(snap)
+			}
 			return
 		}
-		_ = s.persistLocked(run)
+		snap := snapshotLocked(run)
 		s.mu.Unlock()
+		_ = s.persist(snap)
 
 		var wg sync.WaitGroup
 		for _, index := range launch {
@@ -453,10 +489,11 @@ func (s *Service) executeTask(ctx context.Context, planID string, index int, spe
 		return
 	}
 	s.mu.Lock()
+	var snap planSnapshot
 	if run := s.plans[planID]; run != nil && run.epoch == epoch {
 		run.plan.Tasks[index].SessionID = sessionID
 		run.plan.UpdatedAt = time.Now().UnixMilli()
-		_ = s.persistLocked(run)
+		snap = snapshotLocked(run)
 	} else {
 		s.mu.Unlock()
 		// A retry superseded this task while its session was starting.
@@ -464,6 +501,7 @@ func (s *Service) executeTask(ctx context.Context, planID string, index int, spe
 		return
 	}
 	s.mu.Unlock()
+	_ = s.persist(snap)
 	if ctx.Err() != nil {
 		s.completeTask(planID, epoch, taskID, sessionID, "", ctx.Err())
 		return
@@ -480,9 +518,9 @@ func (s *Service) executeTask(ctx context.Context, planID string, index int, spe
 
 func (s *Service) completeTask(planID string, epoch int64, taskID, sessionID, summary string, err error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	run := s.plans[planID]
 	if run == nil || run.epoch != epoch {
+		s.mu.Unlock()
 		return
 	}
 	for i := range run.plan.Tasks {
@@ -508,13 +546,15 @@ func (s *Service) completeTask(planID string, epoch int64, taskID, sessionID, su
 		break
 	}
 	run.plan.UpdatedAt = time.Now().UnixMilli()
-	_ = s.persistLocked(run)
+	snap := snapshotLocked(run)
+	s.mu.Unlock()
+	_ = s.persist(snap)
 }
 
-func (s *Service) finish(planID string, epoch int64) {
+func (s *Service) finishLocked(planID string, epoch int64) planSnapshot {
 	run := s.plans[planID]
 	if run == nil || run.epoch != epoch {
-		return
+		return planSnapshot{}
 	}
 	status := StatusSucceeded
 	for _, task := range run.plan.Tasks {
@@ -536,25 +576,23 @@ func (s *Service) finish(planID string, epoch int64) {
 	}
 	run.plan.Status = status
 	run.plan.UpdatedAt = time.Now().UnixMilli()
-	_ = s.persistLocked(run)
+	return snapshotLocked(run)
 }
 
-func (s *Service) persistLocked(run *planRun) error {
-	if s.store == nil || run == nil {
+func (s *Service) persist(snap planSnapshot) error {
+	if s.store == nil || snap.plan.ID == "" {
 		return nil
 	}
-	snapshot := run.plan
-	snapshot.Tasks = append([]TaskState(nil), run.plan.Tasks...)
-	return s.store.Save(snapshot)
+	return s.store.SaveSeq(snap.plan, snap.seq)
 }
 
 const maxPersistedPlansPerDirectory = 50
 
 // pruneLocked keeps recent history bounded without ever dropping an active
 // plan or a plan from another workspace.
-func (s *Service) pruneLocked(directory string) {
+func (s *Service) pruneLocked(directory string) []string {
 	if s.store == nil {
-		return
+		return nil
 	}
 	var finished []*planRun
 	for _, run := range s.plans {
@@ -563,15 +601,17 @@ func (s *Service) pruneLocked(directory string) {
 		}
 	}
 	if len(finished) <= maxPersistedPlansPerDirectory {
-		return
+		return nil
 	}
 	sort.Slice(finished, func(i, j int) bool {
 		return finished[i].plan.CreatedAt < finished[j].plan.CreatedAt
 	})
+	evicted := make([]string, 0, len(finished)-maxPersistedPlansPerDirectory)
 	for _, run := range finished[:len(finished)-maxPersistedPlansPerDirectory] {
 		delete(s.plans, run.plan.ID)
-		_ = s.store.Delete(run.plan.ID)
+		evicted = append(evicted, run.plan.ID)
 	}
+	return evicted
 }
 
 func convoyPrompt(spec TaskSpec, isolated bool) string {

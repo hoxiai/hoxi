@@ -12,13 +12,18 @@ import (
 const desktopIntentEvent = "hoxi:desktop-intent"
 
 const (
-	maxDeepLinkIDLength = 160
+	maxDeepLinkIDLength = 96
 	sessionIDPrefix     = "ses_"
+	messageIDPrefix     = "msg_"
 )
 
-// parseSessionDeepLink extracts a session navigation intent from links such as
+// ParseDeepLink extracts a session navigation intent from links such as
 // hoxi://session/ses_123?message=msg_456. It intentionally rejects unknown
 // shapes so the URL can still fall through to the auth callback handler.
+func ParseDeepLink(raw string) (gateway.DesktopIntent, bool) {
+	return parseSessionDeepLink(raw)
+}
+
 func parseSessionDeepLink(raw string) (gateway.DesktopIntent, bool) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
@@ -50,20 +55,22 @@ func parseSessionDeepLink(raw string) (gateway.DesktopIntent, bool) {
 	}
 
 	messageID := strings.TrimSpace(parsed.Query().Get("message"))
-	if messageID != "" && !validDeepLinkID(messageID, "") {
+	if messageID != "" && !validDeepLinkID(messageID, messageIDPrefix) {
 		messageID = ""
 	}
 	return gateway.DesktopIntent{SessionID: sessionID, MessageID: messageID}, true
 }
 
 // isAuthCallbackDeepLink reports whether the URL is the account authorization
-// callback handled by the auth service. Malformed URLs are left to the auth
-// service so it can reject them with its own validation.
+// callback handled by the auth service.
 func isAuthCallbackDeepLink(raw string) bool {
 	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return false
+	}
 	parsed, err := url.Parse(trimmed)
 	if err != nil {
-		return true
+		return false
 	}
 	if !strings.EqualFold(parsed.Scheme, "hoxi") {
 		return false
@@ -72,7 +79,7 @@ func isAuthCallbackDeepLink(raw string) bool {
 }
 
 func validDeepLinkID(value, prefix string) bool {
-	if value == "" || len(value) > maxDeepLinkIDLength {
+	if value == "" || len(value) <= len(prefix) || len(value) > maxDeepLinkIDLength {
 		return false
 	}
 	if prefix != "" && !strings.HasPrefix(value, prefix) {
@@ -83,7 +90,7 @@ func validDeepLinkID(value, prefix string) bool {
 		case char >= 'a' && char <= 'z':
 		case char >= 'A' && char <= 'Z':
 		case char >= '0' && char <= '9':
-		case char == '_' || char == '-' || char == '.':
+		case char == '_' || char == '-':
 		default:
 			return false
 		}

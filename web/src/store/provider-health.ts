@@ -1,5 +1,6 @@
 // web/src/store/provider-health.ts
 import type { ModelTelemetryStats, ProviderIncident, ProviderTelemetryStats } from "../services/api";
+import { LOCAL_CLI_RUNTIME_PROVIDERS } from "./provider-catalog";
 import { workspace, type SelectedModel } from "./workspace-state";
 
 export type ProviderRiskTag =
@@ -216,8 +217,10 @@ export function findBestFallbackModel(
 
   for (const prov of workspace.providers) {
     if (excludeProviderID && prov.id === excludeProviderID) continue;
-    if (options?.httpOnly && prov.source === "runner") continue;
-    if (!connected.has(prov.id) && prov.id !== "opencode") continue;
+    if (options?.httpOnly && (prov.source === "runner" || LOCAL_CLI_RUNTIME_PROVIDERS.has(prov.id))) continue;
+    // Only providers the user connected are eligible; never fall back to an
+    // unconnected hosted pool (e.g. `opencode`) the user did not choose.
+    if (!connected.has(prov.id)) continue;
     const modelKeys = Object.keys(prov.models || {});
     if (modelKeys.length === 0) continue;
     const defModel = workspace.defaultModels[prov.id] || modelKeys[0];

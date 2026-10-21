@@ -84,3 +84,38 @@ export function normalizeTodoItems(
     };
   });
 }
+
+/** ID of the latest user turn in `turns`, or null when there is none. */
+export function findLatestUserTurnID(turns: readonly MessageTurn[]): string | null {
+  for (let i = turns.length - 1; i >= 0; i--) {
+    if (turns[i].info.role === "user") return turns[i].info.id;
+  }
+  return null;
+}
+
+/**
+ * Revert/fork are task controls, not message metadata: completed exchanges
+ * keep only time + copy, while the in-flight, interrupted, or failed exchange
+ * keeps them. `index` is the position of the user turn within `turns`.
+ */
+export function isUserTurnTaskActive(
+  turns: readonly MessageTurn[],
+  index: number,
+  state: { busy: boolean; interrupted: boolean; latestUserTurnID?: string | null }
+): boolean {
+  const turn = turns[index];
+  if (!turn) return false;
+  const latestID = state.latestUserTurnID !== undefined ? state.latestUserTurnID : findLatestUserTurnID(turns);
+  if (turn.info.id !== latestID) return false;
+  if (state.busy || state.interrupted) return true;
+  let lastAssistant: MessageTurn | undefined;
+  for (let i = index + 1; i < turns.length && turns[i].info.role === "assistant"; i++) {
+    lastAssistant = turns[i];
+  }
+  // A stopped turn is still completed server-side, so its persisted finish
+  // reason must keep the controls available after a reload.
+  if (!lastAssistant || lastAssistant.info.error || lastAssistant.info.finish === "aborted") {
+    return true;
+  }
+  return !lastAssistant.info.time?.completed;
+}

@@ -195,30 +195,41 @@ export async function stopSessionToolCommand(
 ): Promise<void> {
   const id = (sessionID || workspace.activeSessionID || "").trim();
   if (!id) return;
-  setWorkspace(
-    produce((state) => {
-      const turns = state.messagesBySession[id];
-      if (!turns) return;
-      for (let i = turns.length - 1; i >= 0; i--) {
-        const parts = turns[i].parts;
-        for (let j = parts.length - 1; j >= 0; j--) {
-          const p = parts[j];
-          if (p.type !== "tool") continue;
-          if (
-            (input.partID && p.id === input.partID) ||
-            (input.callID && p.callID === input.callID)
-          ) {
+  const matchesTarget = (p: { id?: string; callID?: string }) =>
+    Boolean(
+      (input.partID && p.id === input.partID) || (input.callID && p.callID === input.callID)
+    );
+  const setStoppedFlag = (flag: unknown): unknown => {
+    let previous: unknown;
+    setWorkspace(
+      produce((state) => {
+        const turns = state.messagesBySession[id];
+        if (!turns) return;
+        for (let i = turns.length - 1; i >= 0; i--) {
+          const parts = turns[i].parts;
+          for (let j = parts.length - 1; j >= 0; j--) {
+            const p = parts[j];
+            if (p.type !== "tool" || !matchesTarget(p)) continue;
             const stateObj = p.state as { metadata?: Record<string, unknown> };
-            stateObj.metadata = { ...(stateObj.metadata || {}), stoppedByUser: true };
+            const metadata = { ...(stateObj.metadata || {}) };
+            previous = metadata.stoppedByUser;
+            if (flag === undefined) delete metadata.stoppedByUser;
+            else metadata.stoppedByUser = flag;
+            stateObj.metadata = metadata;
             return;
           }
         }
-      }
-    })
-  );
+      })
+    );
+    return previous;
+  };
+  const previous = setStoppedFlag(true);
   try {
     await hoxiAPI.stopToolCommand(id, input, sessionDirectory(id));
   } catch (err) {
+    // Nothing was stopped (session not run by the runner, or no matching
+    // process): roll back the optimistic flag.
+    setStoppedFlag(previous);
     console.warn("stop tool command warning:", err);
   }
 }

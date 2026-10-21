@@ -84,7 +84,7 @@ func (g *Gateway) routeConversation(w http.ResponseWriter, r *http.Request) bool
 	}
 	// Runtime switches, tool-stop actions, and skill-selected prompts always go to the runner.
 	hasSkill := (action == "prompt" || action == "prompt_async") && requestHasSkillSelection(r)
-	if action != "runtime" && action != "stop_tool" && !hasSkill && !g.runner.OwnsSession(id) {
+	if action != "runtime" && action != "stop-tool" && !hasSkill && !g.runner.OwnsSession(id) {
 		if r.Method == http.MethodDelete && action == "" {
 			g.runner.DeleteSessionAttachments(id)
 		}

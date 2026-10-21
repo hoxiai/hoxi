@@ -204,12 +204,20 @@ Flutter + Riverpod + GoRouter + Dio，四栏：沟通 · 工程 · 专栏 · 我
     - **语音引擎常驻与打断**：语音通话保持单一 `.voiceChat` 原生音频引擎常驻（严禁每轮对话销毁重建 `AVAudioEngine`），并保留 `onUserBargeIn`（AI 播报时用户开口或点击即中止当前播报与生成流）。
     - **不伪造结果**：未取得真实数据时显示不可用；提交、接收、完成分别表述，不把“已下发”写成“已完成”。
 
+12. **AI 编码红线 (AI Guardrails, 来自真实事故)** —— 详见 [`docs/ai-coding-guardrails.md`](docs/ai-coding-guardrails.md)，修改审批、隧道、工作区/会话迁移、持久化、进程控制前必读
+    - **审批策略只解析一次、失败即 ask**：禁止把拆好的命令段重新拼成字符串再解析；含引号/反斜杠/`$(`/反引号等无法确定语义的输入不得走安全白名单；白名单按 token 锚定（禁止 `\b`）；未知工具与网络工具一律 ask，禁止按工具名前缀放行；Go 与 JS 策略必须同步修改并写入 `.opencode/lib/cases.json`。
+    - **隧道白名单只用显式「方法 + 路由」清单**，禁止前缀匹配；执行命令、`open` 程序、工作区外文件、凭据与 OpenCode 原始透传永不经隧道开放。
+    - **禁止用启发式推断破坏性操作**（按数组下标或 `os.Stat` 猜"移动"、"匹配不到就扩大 kill 范围"等）；迁移/删除/杀进程只在显式指令下执行，范围严格限定在本会话。
+    - **校验函数不得静默丢弃输入**后交给按位置对比的逻辑；状态文件写入必须原子且处理错误，解析失败先备份、不得覆盖。
+    - **后台 LLM 不得自动回退到用户未选择的提供商**。
+    - **安全相关改动必须带拒绝路径测试**；Go 改动须通过 `go test -race`；复现测试转为正式回归测试，禁止 `zz_scratch_*` 留在工作区。
+
 ### 2.3 新增代码归属
 
 | 当你需要新增 / 修改... | 必须放入的位置 (Target Location) | 严禁放入的位置 (Forbidden) | 典范参考 (Canonical Example) |
 | :--- | :--- | :--- | :--- |
 | **Go 独立业务域与 HTTP 路由** | `internal/<domain>/` 独立子包，在 [`internal/gateway/gateway.go`](internal/gateway/gateway.go) 注册 | 严禁塞入 `internal/provider` 或 `internal/gateway` | [`internal/worktree/`](internal/worktree/manager.go) |
-| **经 GoPanel 隧道开放的路由** | [`internal/gateway/tunnel.go`](internal/gateway/tunnel.go) 白名单 + `tunnel_test.go`，同步更新双仓契约文档 | 严禁绕过白名单直接放行，或开放账号、提供商配置等管理接口 | [`docs/gopanel-hoxi-remote-tunnel.md`](docs/gopanel-hoxi-remote-tunnel.md) |
+| **经 GoPanel 隧道开放的路由** | [`internal/gateway/tunnel.go`](internal/gateway/tunnel.go) 显式「方法 + 路由」白名单 + `tunnel_test.go`（允许与相邻拒绝用例），同步更新双仓契约文档 | 严禁前缀放行、绕过白名单，或开放账号、提供商配置、命令执行、`open`、工作区外文件等接口 | [`docs/gopanel-hoxi-remote-tunnel.md`](docs/gopanel-hoxi-remote-tunnel.md) |
 | **Go 网关自发轻量 LLM 调用** | 领域包接收 `gateway` 注入的 [`llm.Client`](internal/llm/llm.go)，不 `import provider` | 严禁业务包直接 `import internal/provider`；严禁手写 `http.Post` 拼接 `/v1/messages` 或 `/chat/completions` | [`internal/promptassist/`](internal/promptassist/service.go)、[`internal/gateway/assist.go`](internal/gateway/assist.go) |
 | **直连 OpenCode (`opencode serve`)** | 一律使用 [`internal/opencode/ocapi`](internal/opencode/ocapi/client.go)（共享 `Transport`、Basic Auth 与 `LimitReader`） | 严禁自建回环 `http.Client`/`Transport` 或手动调用 `SetBasicAuth("opencode", ...)` | [`internal/opencode/ocapi/client.go`](internal/opencode/ocapi/client.go) |
 | **`~/.hoxi` 与引擎路径解析** | 一律使用 [`internal/hoxipaths`](internal/hoxipaths/hoxipaths.go)（`DBPath`、`EngineDataDir`、`EngineStateDir`、`Home`） | 严禁在各包硬编码 `~/.hoxi/hoxi.db`、`~/.hoxi/engine-data` 或重复解析环境变量 | [`internal/hoxipaths/hoxipaths.go`](internal/hoxipaths/hoxipaths.go) |
@@ -226,6 +234,8 @@ Flutter + Riverpod + GoRouter + Dio，四栏：沟通 · 工程 · 专栏 · 我
 ### 2.4 专项文档
 
 修改以下子系统前，先阅读对应文档：
+
+- **AI 编码红线与提交前自检清单（审批门控、隧道、迁移、持久化、进程控制、外发、前端分层）** → [`docs/ai-coding-guardrails.md`](docs/ai-coding-guardrails.md)
 
 - **整体架构、OpenCode REST/SSE 协议契约、Worktree 状态机** → [`DEVELOPMENT.md`](DEVELOPMENT.md)
 - **Hoxi ⇄ GoPanel 远程隧道与审批推送（`internal/tunnel` + 网关路由白名单，双仓同步）** → [`docs/gopanel-hoxi-remote-tunnel.md`](docs/gopanel-hoxi-remote-tunnel.md)

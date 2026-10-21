@@ -33,7 +33,6 @@ var (
 		"grep_search":                   true,
 		"read_resource":                 true,
 		"list_resources":                true,
-		"read_url_content":              true,
 		"read_browser_page":             true,
 		"browser_get_dom":               true,
 		"browser_get_network_request":   true,
@@ -43,9 +42,15 @@ var (
 		"capture_browser_screenshot":    true,
 		"list_permissions":              true,
 		"list_plugin_accounts":          true,
-		"search_web":                    true,
 		"search_marketplace":            true,
 		"command_status":                true,
+	}
+	hookPathScopedReadTools = map[string]bool{
+		"read_file":    true,
+		"view_file":    true,
+		"list_dir":     true,
+		"find_by_name": true,
+		"grep_search":  true,
 	}
 	hookEditTools = map[string]bool{
 		"write_to_file":              true,
@@ -62,6 +67,8 @@ var (
 		"execute_url":                true,
 		"unsandboxed":                true,
 		"run_workflow":               true,
+		"read_url_content":           true,
+		"search_web":                 true,
 	}
 	// Control tools never act on the workspace, so gating them would only
 	// block the end of a turn on a question the user does not need to answer.
@@ -72,9 +79,9 @@ var (
 	}
 )
 
-// hookToolAction classifies the tools agy sends through PreToolUse. Unknown
-// tools go through Hoxi's approval gate instead of agy's headless policy,
-// which would soft-deny anything that needs permission and end the turn.
+// hookToolAction classifies the tools agy sends through PreToolUse using an
+// exact-name allowlist. Unknown tools go through Hoxi's approval gate instead
+// of prefix-based auto-approval or agy's headless soft-deny.
 func hookToolAction(name string) string {
 	lower := strings.ToLower(strings.TrimSpace(name))
 	if lower == hookToolRunCommand {
@@ -92,14 +99,20 @@ func hookToolAction(name string) string {
 	if hookPassthroughTools[lower] {
 		return hookActionPassthrough
 	}
-	switch {
-	case strings.HasPrefix(lower, "read_"), strings.HasPrefix(lower, "view_"),
-		strings.HasPrefix(lower, "list_"), strings.HasPrefix(lower, "find_"),
-		strings.HasPrefix(lower, "grep_"), strings.HasPrefix(lower, "browser_get_"),
-		strings.HasPrefix(lower, "capture_browser_"):
-		return hookActionRead
-	}
 	return hookActionUnknown
+}
+
+// isReadToolAllowedInWorktree reports whether a read-class tool may be
+// auto-approved without prompting. Path-scoped filesystem inspection tools
+// must carry a path inside the session worktree; any other read tool that
+// carries a path argument must also stay inside the worktree.
+func isReadToolAllowedInWorktree(worktree, tool string, args map[string]interface{}) bool {
+	lower := strings.ToLower(strings.TrimSpace(tool))
+	path := resolveHookToolPath(worktree, args)
+	if hookPathScopedReadTools[lower] {
+		return path != "" && pathWithin(worktree, path)
+	}
+	return path == "" || pathWithin(worktree, path)
 }
 
 // resolveHookToolPath normalizes the file args agy uses across read/write
@@ -107,31 +120,46 @@ func hookToolAction(name string) string {
 // unquoted before resolving relative paths against the worktree.
 func resolveHookToolPath(base string, args map[string]interface{}) string {
 	raw := firstString(args["Path"], args["AbsolutePath"], args["TargetFile"],
-		args["file_path"], args["File"], args["path"], args["DirectoryPath"], args["SearchPath"])
+		args["target_file"], args["file_path"], args["filePath"], args["File"],
+		args["file"], args["path"], args["DirectoryPath"], args["directory_path"],
+		args["SearchPath"], args["search_path"], args["SearchDirectory"],
+		args["search_directory"], args["Directory"], args["directory"],
+		args["NotebookPath"], args["notebook_path"])
 	raw = strings.TrimSpace(raw)
 	if len(raw) >= 2 && raw[0] == '"' && raw[len(raw)-1] == '"' {
 		if unquoted, err := strconv.Unquote(raw); err == nil {
-			raw = unquoted
+			raw = strings.TrimSpace(unquoted)
 		}
 	}
 	if raw == "" {
 		return ""
 	}
 	if raw == "~" || strings.HasPrefix(raw, "~/") {
-		if home, err := os.UserHomeDir(); err == nil {
-			raw = filepath.Join(home, strings.TrimPrefix(raw, "~"))
+		home, err := os.UserHomeDir()
+		if err != nil || home == "" {
+			return ""
 		}
+		raw = filepath.Join(home, strings.TrimPrefix(raw, "~"))
+	} else if strings.HasPrefix(raw, "~") {
+		return ""
 	}
 	if !filepath.IsAbs(raw) {
+		if strings.TrimSpace(base) == "" {
+			return ""
+		}
 		raw = filepath.Join(base, raw)
 	}
-	return raw
+	return filepath.Clean(raw)
 }
 
 // gateToolCall asks the user before a tool that can reach outside the
-// worktree (MCP, browser JavaScript, explicit unsandboxed execution) runs.
+// worktree (MCP, browser JavaScript, network egress, explicit unsandboxed
+// execution, or protected/out-of-worktree file access) runs.
 func (s *Service) gateToolCall(r *http.Request, cred hookCredential, tool string, args map[string]interface{}, callID string) (bool, string) {
 	key := hookToolGrantKey(tool, args)
+	if s.gate.hasToolAlways(cred.sessionID, key) {
+		return true, ""
+	}
 	id := runnerPermissionID + randomHex(12)
 	pretty, _ := json.MarshalIndent(args, "", "  ")
 	meta := map[string]interface{}{

@@ -1,6 +1,6 @@
 // web/src/components/timeline/composer-subcomponents.tsx
 import { createEffect, For, Show } from "solid-js";
-import { AlertCircle, ClipboardPaste, FileText, LoaderCircle, Slash, Sparkles, X } from "lucide-solid";
+import { AlertCircle, AtSign, ClipboardPaste, FileText, LoaderCircle, Slash, Sparkles, X } from "lucide-solid";
 import { FileIcon } from "../icons";
 import { t } from "../../i18n";
 import type { SkillSelection } from "../../services/api";
@@ -46,7 +46,7 @@ export function ComposerAutocompletePopover(props: {
               <button
                 type="button"
                 data-ac-index={idx()}
-                class={`w-full flex items-center justify-between gap-3 rounded-lg px-2.5 py-1.5 text-left text-[13px] transition-colors cursor-pointer ${
+                class={`w-full flex flex-col gap-0.5 rounded-lg px-2.5 py-1 text-left text-[13px] transition-colors cursor-pointer ${
                   idx() === props.selectedIndex
                     ? "bg-[var(--accent-surface)] text-[var(--accent-text)]"
                     : "text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
@@ -54,11 +54,11 @@ export function ComposerAutocompletePopover(props: {
                 onMouseEnter={() => props.onSelectIndex(idx())}
                 onClick={() => props.onApply(item)}
               >
-                <span class="inline-flex items-center gap-2 min-w-0 font-mono truncate">
+                <span class="flex w-full items-center gap-2 min-w-0 font-mono">
                   {item.source === "skill" ? (
                     <Sparkles size={12} class="text-[var(--accent-primary)] shrink-0" />
                   ) : item.type === "context" ? (
-                    <Slash size={12} class="text-[var(--accent-primary)] shrink-0" />
+                    <AtSign size={12} class="text-[var(--accent-primary)] shrink-0" />
                   ) : item.type === "file" ? (
                     <FileIcon
                       node={{
@@ -68,16 +68,16 @@ export function ComposerAutocompletePopover(props: {
                       class="w-3.5 h-3.5 shrink-0"
                     />
                   ) : null}
-                  <span class="truncate">{item.label}</span>
+                  <span class="truncate">
+                    {item.type === "context" ? item.label.replace(/^@/, "") : item.label}
+                  </span>
                   <Show when={item.hints && item.hints.length > 0}>
-                    <span class="text-[11px] text-[var(--text-faint)] truncate">
+                    <span class="shrink-0 font-sans text-[11px] text-[var(--text-faint)]">
                       {item.hints!.join(" ")}
                     </span>
                   </Show>
-                </span>
-                <span class="inline-flex items-center gap-1.5 shrink-0 max-w-[220px]">
                   <Show when={item.source}>
-                    <span class="rounded bg-[var(--bg-inset)] px-1.5 py-0.5 text-[11px] font-medium uppercase tracking-wider text-[var(--text-faint)]">
+                    <span class="ml-auto shrink-0 rounded bg-[var(--bg-inset)] px-1.5 py-0.5 font-sans text-[10px] font-medium uppercase tracking-wider text-[var(--text-faint)]">
                       {item.source === "skill"
                         ? t("skills.groupSkills")
                         : item.source === "mcp"
@@ -85,12 +85,12 @@ export function ComposerAutocompletePopover(props: {
                         : t("skills.groupCommands")}
                     </span>
                   </Show>
-                  <Show when={item.detail}>
-                    <span class="text-[11px] text-[var(--text-muted)] truncate">
-                      {item.detail}
-                    </span>
-                  </Show>
                 </span>
+                <Show when={item.detail}>
+                  <span class="w-full truncate font-sans text-[11px] leading-tight text-[var(--text-muted)]">
+                    {item.detail}
+                  </span>
+                </Show>
               </button>
             )}
           </For>

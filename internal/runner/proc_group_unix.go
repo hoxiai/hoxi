@@ -245,11 +245,20 @@ func subtreeMatchesNeedles(pids []int, byPID map[int]procSnapshot, needles []str
 	return false
 }
 
-// stopChildToolProcesses terminates running child tool command process trees
-// under cliPID (or under the managed `opencode serve` daemon when cliPID <= 0)
-// without signalling the parent CLI / daemon process itself, allowing the
-// agent session turn to receive the interrupted tool result and continue.
+// stopChildToolProcesses terminates the child tool command process trees under
+// the session's own CLI process (cliPID) whose command line matches command,
+// without signalling the CLI itself, so the turn receives the interrupted tool
+// result and continues. It never looks outside cliPID's tree (the shared
+// `opencode serve` daemon serves every OpenCode session, its terminals and MCP
+// servers) and kills nothing when no candidate matches command.
 func stopChildToolProcesses(cliPID int, command string) int {
+	if cliPID <= 1 {
+		return 0
+	}
+	needles := commandMatchNeedles(command)
+	if len(needles) == 0 {
+		return 0
+	}
 	byPID, children := readProcessSnapshots()
 	if len(byPID) == 0 {
 		return 0
@@ -264,65 +273,41 @@ func stopChildToolProcesses(cliPID int, command string) int {
 		protected[selfPGID] = true
 	}
 
-	needles := commandMatchNeedles(command)
-	var candidateRoots []int
-
-	if cliPID > 1 {
-		protected[cliPID] = true
-		if p, ok := byPID[cliPID]; ok && p.pgid > 1 {
-			protected[p.pgid] = true
-		}
-		parentPID := cliPID
-		// If cliPID is a wrapper (e.g. sandbox-exec or sh wrapper) whose single
-		// child is the agent runtime binary itself, step into that binary.
-		if direct := children[parentPID]; len(direct) == 1 {
-			only := direct[0]
-			if isAgentRuntimeProcessArgs(byPID[only].args) && len(children[only]) > 0 {
-				protected[only] = true
-				parentPID = only
-			}
-		}
-		for _, c := range children[parentPID] {
-			if !protected[c] && !isNonToolHelperArgs(byPID[c].args) {
-				candidateRoots = append(candidateRoots, c)
-			}
-		}
-	} else {
-		// OpenCode runtime: find child tool processes of `opencode serve`.
-		for _, p := range byPID {
-			if p.pid <= 1 || p.pid == selfPID {
-				continue
-			}
-			if (p.ppid == selfPID && strings.Contains(p.args, "opencode")) ||
-				strings.Contains(p.args, "opencode serve --hostname 127.0.0.1") {
-				protected[p.pid] = true
-				if p.pgid > 1 {
-					protected[p.pgid] = true
-				}
-				for _, c := range children[p.pid] {
-					if !protected[c] && !isNonToolHelperArgs(byPID[c].args) {
-						candidateRoots = append(candidateRoots, c)
-					}
-				}
-			}
-		}
-	}
-
-	if len(candidateRoots) == 0 {
+	if _, ok := byPID[cliPID]; !ok {
 		return 0
 	}
+	var candidateRoots []int
+	protected[cliPID] = true
+	if p := byPID[cliPID]; p.pgid > 1 {
+		protected[p.pgid] = true
+	}
+	parentPID := cliPID
+	// If cliPID is a wrapper (e.g. sandbox-exec or sh wrapper) whose single
+	// child is the agent runtime binary itself, step into that binary.
+	if direct := children[parentPID]; len(direct) == 1 {
+		only := direct[0]
+		if isAgentRuntimeProcessArgs(byPID[only].args) && len(children[only]) > 0 {
+			protected[only] = true
+			parentPID = only
+		}
+	}
+	for _, c := range children[parentPID] {
+		if !protected[c] && !isNonToolHelperArgs(byPID[c].args) {
+			candidateRoots = append(candidateRoots, c)
+		}
+	}
 
+	// Only subtrees whose command line matches are stopped; no match means
+	// nothing is killed (never fall back to every candidate).
 	var selectedRoots []int
-	if len(needles) > 0 {
-		for _, root := range candidateRoots {
-			sub := collectSubtreePIDs(root, children)
-			if subtreeMatchesNeedles(sub, byPID, needles) {
-				selectedRoots = append(selectedRoots, root)
-			}
+	for _, root := range candidateRoots {
+		sub := collectSubtreePIDs(root, children)
+		if subtreeMatchesNeedles(sub, byPID, needles) {
+			selectedRoots = append(selectedRoots, root)
 		}
 	}
 	if len(selectedRoots) == 0 {
-		selectedRoots = candidateRoots
+		return 0
 	}
 
 	targetSet := make(map[int]bool)

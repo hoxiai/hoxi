@@ -18,7 +18,6 @@ import CustomProviderModelSection from "./CustomProviderModelSection";
 import ProviderQualityCard from "./ProviderQualityCard";
 import {
   extractCustomProviderFormState,
-  guessFetchedModelDraft,
   listExistingCustomProviders,
   PROVIDER_VARIANTS,
   type ModelProbeResult,
@@ -37,7 +36,6 @@ export default function CustomEndpointTab() {
   // Fetch & probe models state
   const [fetching, setFetching] = createSignal(false);
   const [fetchedModels, setFetchedModels] = createSignal<Array<{ id: string; name: string }>>([]);
-  const [selectedFetched, setSelectedFetched] = createSignal<Record<string, boolean>>({});
   const [modelProbes, setModelProbes] = createSignal<Record<string, ModelProbeResult>>({});
   const [saving, setSaving] = createSignal(false);
   const [feedback, setFeedback] = createSignal<{ ok: boolean; text: string } | null>(null);
@@ -52,7 +50,6 @@ export default function CustomEndpointTab() {
   const loadProviderIntoForm = (editID: string | null) => {
     setFeedback(null);
     setFetchedModels([]);
-    setSelectedFetched({});
     setModelProbes({});
 
     const next = extractCustomProviderFormState(editID);
@@ -99,39 +96,11 @@ export default function CustomEndpointTab() {
       }
       const remoteList = Array.isArray(res.models) ? res.models : [];
       setFetchedModels(remoteList);
-      const existingIDs = new Set(models().map((m) => m.id.trim()).filter(Boolean));
-      const initialSel: Record<string, boolean> = {};
-      for (const rm of remoteList) {
-        initialSel[rm.id] = existingIDs.has(rm.id);
-      }
-      setSelectedFetched(initialSel);
     } catch (err: any) {
       setFeedback({ ok: false, text: err?.message || t("models.fetchModelsFailed") });
     } finally {
       setFetching(false);
     }
-  };
-
-  const applyFetchedModels = () => {
-    const sel = selectedFetched();
-    const chosen = fetchedModels().filter((m) => sel[m.id]);
-    if (chosen.length === 0) return;
-
-    const existingMap = new Map<string, CustomProviderModelDraft>();
-    for (const m of models()) {
-      const id = m.id.trim();
-      if (id) existingMap.set(id, m);
-    }
-    const newlyAdded: string[] = [];
-    for (const rm of chosen) {
-      if (!existingMap.has(rm.id)) {
-        existingMap.set(rm.id, guessFetchedModelDraft(rm));
-        newlyAdded.push(rm.id);
-      }
-    }
-    setModels(Array.from(existingMap.values()));
-    setFetchedModels([]);
-    for (const mid of newlyAdded.slice(0, 3)) void onProbeModel(mid);
   };
 
   const onProbeModel = async (
@@ -448,9 +417,6 @@ export default function CustomEndpointTab() {
           setModels={setModels}
           fetchedModels={fetchedModels}
           setFetchedModels={setFetchedModels}
-          selectedFetched={selectedFetched}
-          setSelectedFetched={setSelectedFetched}
-          onApplyFetchedModels={applyFetchedModels}
           headers={headers}
           setHeaders={setHeaders}
           modelProbes={modelProbes}

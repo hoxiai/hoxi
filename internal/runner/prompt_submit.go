@@ -104,13 +104,13 @@ func (s *Service) startPrompt(ctx context.Context, sessionID, directory string, 
 	if err := validateSessionDirectory(rec); err != nil {
 		return http.StatusBadRequest, err
 	}
+	var resolvedSkill ResolvedSkill
 	if body.SkillSelection != nil {
-		if rec.Runtime != "" && rec.Runtime != "opencode" {
-			return http.StatusConflict, fmt.Errorf("runtime %q does not support native skills", rec.Runtime)
-		}
-		if err := s.validateSkillSelection(ctx, rec.WorktreePath, rec.ID, *body.SkillSelection); err != nil {
+		resolved, err := s.resolveSkillSelection(ctx, rec.WorktreePath, rec.ID, rec.Runtime, *body.SkillSelection)
+		if err != nil {
 			return http.StatusConflict, err
 		}
+		resolvedSkill = resolved
 	}
 	if rec.Runtime == "opencode" {
 		s.mu.Lock()
@@ -190,6 +190,8 @@ func (s *Service) startPrompt(ctx context.Context, sessionID, directory string, 
 			seq,
 			promptText,
 			body.SkillSelection,
+			rec.Runtime != "opencode",
+			resolvedSkill.Content,
 			storedParts,
 			deliveryParts,
 		)
@@ -210,6 +212,9 @@ func (s *Service) startPrompt(ctx context.Context, sessionID, directory string, 
 		err = s.startOpenCodeTurn(rec, mode, modelID, effort, body.System, userInfo, storedParts, deliveryParts)
 	} else {
 		input := runtimeMemoryContext(rec) + runtimeContext(rec)
+		if body.SkillSelection != nil {
+			input += formatInlineSkillPrompt(body.SkillSelection.Name, resolvedSkill.Content, "") + "\n\n"
+		}
 		if body.System != "" {
 			input += body.System + "\n\n"
 		}

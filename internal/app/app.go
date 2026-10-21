@@ -534,25 +534,30 @@ func (a *DesktopApp) onSecondInstance(_ options.SecondInstanceData) {
 }
 
 func (a *DesktopApp) onURLOpen(rawURL string) {
-	a.showWindow()
 	// Session deep links navigate the existing window; they never touch the auth flow.
-	if intent, ok := parseSessionDeepLink(rawURL); ok {
+	if intent, ok := ParseDeepLink(rawURL); ok {
+		a.showWindow()
 		if a.gateway != nil {
 			a.gateway.QueueDesktopIntent(intent)
 		}
 		return
 	}
 	if !isAuthCallbackDeepLink(rawURL) {
-		a.logger.Warn("ignored unsupported URL scheme callback")
+		if a.logger != nil {
+			a.logger.Warn("ignored unsupported URL scheme callback")
+		}
 		return
 	}
+	a.showWindow()
 	// URL events can arrive before OnStartup; the gateway already owns the live auth attempt.
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		if err := a.gateway.HandleAuthCallback(ctx, rawURL); err != nil {
 			// Callback URLs and transport errors can contain credentials. Never log them.
-			a.logger.Warn("desktop authorization callback was not completed; polling remains available")
+			if a.logger != nil {
+				a.logger.Warn("desktop authorization callback was not completed; polling remains available")
+			}
 		}
 	}()
 }

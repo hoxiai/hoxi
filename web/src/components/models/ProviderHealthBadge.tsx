@@ -108,16 +108,41 @@ export function ProviderHealthBadge(props: {
     return "";
   });
 
+  const tooltip = () =>
+    t("models.qualityScoresTooltip", {
+      status: statusText(),
+      stability: formatHealthScore(health().stabilityScore),
+      quality: formatHealthScore(health().qualityScore),
+      turns: health().totalTurns,
+      audits: health().qualitySampleCount,
+    });
+
+  /** 紧凑模式只展示数字，避免长标签挤占同行空间 */
+  const compactScore = (score: number | null) =>
+    score === null ? t("models.qualityNoData") : String(score);
+
   return (
+    <Show
+      when={!props.compact}
+      fallback={
+        <span
+          class="inline-flex shrink-0 items-center gap-1 whitespace-nowrap text-[11px] leading-none text-[var(--text-muted)]"
+          title={tooltip()}
+        >
+          <span class={`h-1.5 w-1.5 shrink-0 rounded-full ${statusColors(health().status).dot}`} />
+          <span class="font-mono">
+            {t("models.qualityStabilityShort")} {compactScore(health().stabilityScore)}
+          </span>
+          <span class="opacity-40">·</span>
+          <span class="font-mono">
+            {t("models.qualityQualityShort")} {compactScore(health().qualityScore)}
+          </span>
+        </span>
+      }
+    >
       <span
         class="inline-flex flex-wrap items-center gap-1 text-[11px] font-normal leading-relaxed text-[var(--text-muted)]"
-        title={t("models.qualityScoresTooltip", {
-          status: statusText(),
-          stability: formatHealthScore(health().stabilityScore),
-          quality: formatHealthScore(health().qualityScore),
-          turns: health().totalTurns,
-          audits: health().qualitySampleCount,
-        })}
+        title={tooltip()}
       >
         <span class="font-mono">
           {t("models.qualityStabilityScore")}: {formatHealthScore(health().stabilityScore)}
@@ -125,25 +150,24 @@ export function ProviderHealthBadge(props: {
         <span class="font-mono">
           · {t("models.qualityQualityScore")}: {formatHealthScore(health().qualityScore)}
         </span>
-        <Show when={!props.compact}>
-          <Show
-            when={primaryRisk()}
-            fallback={
-              <Show when={health().codePassRate !== null || health().avgTps || health().avgTtftMs}>
-                <span class="opacity-85 font-mono">
-                  ·{" "}
-                  {health().codePassRate !== null
-                    ? `${health().codePassRate}%`
-                    : health().avgTps
-                    ? `${health().avgTps}t/s`
-                    : formatTtftLabel(health().avgTtftMs)}
-                </span>
-              </Show>
-            }
-          >
-            <span class="opacity-95">· {primaryRisk()}</span>
-          </Show>
+        <Show
+          when={primaryRisk()}
+          fallback={
+            <Show when={health().codePassRate !== null || health().avgTps || health().avgTtftMs}>
+              <span class="opacity-85 font-mono">
+                ·{" "}
+                {health().codePassRate !== null
+                  ? `${health().codePassRate}%`
+                  : health().avgTps
+                  ? `${health().avgTps}t/s`
+                  : formatTtftLabel(health().avgTtftMs)}
+              </span>
+            </Show>
+          }
+        >
+          <span class="opacity-95">· {primaryRisk()}</span>
         </Show>
       </span>
+    </Show>
   );
 }

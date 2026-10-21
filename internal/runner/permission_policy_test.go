@@ -60,6 +60,11 @@ func TestSplitCommandChainMatchesJSSeparators(t *testing.T) {
 
 func TestDecideCommandPermissionInNormalizesRunnerCommands(t *testing.T) {
 	worktree := t.TempDir()
+	outside := t.TempDir()
+	escapeLink := filepath.Join(worktree, "escape-link")
+	if err := os.Symlink(outside, escapeLink); err != nil {
+		t.Fatal(err)
+	}
 	cases := []struct {
 		command string
 		want    string
@@ -68,22 +73,27 @@ func TestDecideCommandPermissionInNormalizesRunnerCommands(t *testing.T) {
 		{"cd " + worktree + " && /usr/local/go/bin/go vet ./...", "allow"},
 		{"/opt/homebrew/bin/npm run build", "allow"},
 		{"cd " + worktree + " && /usr/local/go/bin/go test ./... 2>&1", "allow"},
+		{"cd " + worktree + " && /usr/local/go/bin/go test ./... && cat /etc/hosts", "allow"},
 		{"cd /tmp && go test ./...", "ask"},
+		{"cd " + escapeLink + " && go test ./...", "ask"},
+		{"cd " + worktree, "ask"},
 		{"/tmp/not-a-toolchain/go test ./...", "ask"},
 		{"cd " + worktree + " && rm -rf build", "ask"},
-		{"cd " + worktree + " && /usr/local/go/bin/go test ./... && cat /etc/hosts", "allow"},
+		{`cd .' ls' ; r\m -rf .`, "ask"},
+		{`cd .' ls' ; unlink ~/important`, "ask"},
+		{`cd .' ls' ; git push origin +main`, "ask"},
+		{"cd " + worktree + " && fd . -x unlink {}", "ask"},
+		{"cd " + worktree + " && git diff --output=/tmp/x", "ask"},
+		{"cd " + worktree + " && rg --pre ./evil.sh x .", "ask"},
+		{"cd " + worktree + " && find . -fprintf ~/.zshrc x", "ask"},
+		{"cd " + worktree + " && go env -w GOPROXY=https://evil.example", "ask"},
+		{"cd " + worktree + " && npx tsc-anything", "ask"},
+		{"cd " + worktree + " && git reset --har", "ask"},
+		{"cd " + worktree + " && git push -uf", "ask"},
 	}
 	for _, c := range cases {
 		if got := decideCommandPermissionIn(c.command, worktree); got != c.want {
 			t.Errorf("decideIn(%q) = %q, want %q", c.command, got, c.want)
 		}
-	}
-}
-
-func TestNormalizeCommandForPolicyKeepsOutsideCD(t *testing.T) {
-	worktree := t.TempDir()
-	in := "cd /tmp && go test ./..."
-	if got := normalizeCommandForPolicy(in, worktree); got != in {
-		t.Fatalf("normalize(%q) = %q, want unchanged", in, got)
 	}
 }

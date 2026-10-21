@@ -143,7 +143,11 @@ func (p *peer) handleOpen(ctx context.Context, f frame) {
 	streamCtx, cancel := context.WithCancel(ctx)
 	s := &stream{incoming: make(chan chunk, 16), cancel: cancel, closed: make(chan struct{})}
 	s.bodyReader, s.bodyWriter = io.Pipe()
-	p.streams.Store(f.StreamID, s)
+	// GoPanel only reuses an id after it considers the old stream gone; close
+	// ours locally (a Reset frame would also kill the new stream upstream).
+	if old, loaded := p.streams.Swap(f.StreamID, s); loaded {
+		old.(*stream).close()
+	}
 	go s.pumpBody()
 	go p.serve(streamCtx, f.StreamID, s, open)
 }
@@ -203,7 +207,8 @@ func (s *stream) pumpBody() {
 
 func (p *peer) serve(ctx context.Context, streamID uint64, s *stream, open openFrame) {
 	defer func() {
-		p.streams.Delete(streamID)
+		// Only remove our own entry: a reused stream id may already map to a newer stream.
+		p.streams.CompareAndDelete(streamID, s)
 		s.close()
 	}()
 	if open.ServiceID != ServicePublicID {
@@ -219,15 +224,26 @@ func (p *peer) serve(ctx context.Context, streamID uint64, s *stream, open openF
 		p.reset(streamID, err.Error())
 		return
 	}
-	w := &responseWriter{peer: p, streamID: streamID, header: http.Header{}}
+	w := &responseWriter{peer: p, streamID: streamID, stream: s, header: http.Header{}}
 	if !serveRecovering(p.handler, w, req) {
-		p.reset(streamID, "hoxi gateway aborted the request")
+		if !s.isClosed() {
+			p.reset(streamID, "hoxi gateway aborted the request")
+		}
 		return
 	}
-	if ctx.Err() != nil {
+	if ctx.Err() != nil || s.isClosed() {
 		return
 	}
 	w.finish()
+}
+
+func (s *stream) isClosed() bool {
+	select {
+	case <-s.closed:
+		return true
+	default:
+		return false
+	}
 }
 
 // serveRecovering reports false when the handler panicked, including the
@@ -281,6 +297,12 @@ func buildRequest(ctx context.Context, open openFrame, body io.Reader) (*http.Re
 	}
 	req.Host = "127.0.0.1"
 	req.RemoteAddr = "tunnel"
+	if !open.HasBody {
+		// GoPanel announced no body: ignore Content-Length and stray Data frames.
+		req.Body = http.NoBody
+		req.ContentLength = 0
+		return req, nil
+	}
 	req.ContentLength = -1
 	if n, err := strconv.ParseInt(req.Header.Get("Content-Length"), 10, 64); err == nil && n >= 0 {
 		req.ContentLength = n
@@ -296,15 +318,22 @@ func buildRequest(ctx context.Context, open openFrame, body io.Reader) (*http.Re
 type responseWriter struct {
 	peer        *peer
 	streamID    uint64
+	stream      *stream
 	header      http.Header
 	wroteHeader bool
 	err         error
 }
 
+var errStreamClosed = errors.New("tunnel stream closed")
+
 func (w *responseWriter) Header() http.Header { return w.header }
 
 func (w *responseWriter) WriteHeader(status int) {
 	if w.wroteHeader || w.err != nil || status < 200 {
+		return
+	}
+	if w.stream != nil && w.stream.isClosed() {
+		w.err = errStreamClosed
 		return
 	}
 	w.wroteHeader = true
@@ -327,6 +356,11 @@ func (w *responseWriter) Write(data []byte) (int, error) {
 		return 0, w.err
 	}
 	for offset := 0; offset < len(data); offset += chunkSize {
+		// A reset or replaced stream must not keep emitting frames on its id.
+		if w.stream != nil && w.stream.isClosed() {
+			w.err = errStreamClosed
+			return offset, w.err
+		}
 		end := min(offset+chunkSize, len(data))
 		if err := w.peer.send(frame{Type: frameData, StreamID: w.streamID, Payload: encodeData(dataHTTP, data[offset:end])}); err != nil {
 			w.err = err

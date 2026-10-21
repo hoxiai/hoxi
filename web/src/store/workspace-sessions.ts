@@ -156,8 +156,11 @@ export function replaceSessionFromEvent(info: SessionInfo, eventDirectory?: stri
     const eventProjectID = (session.projectID || "").trim();
     if (eventProjectID && activeProjectID) {
       if (eventProjectID === activeProjectID) return true;
+      // A foreign project ID is only accepted for a session already loaded
+      // under that same project; an unattributed loaded session must not be
+      // pulled into another project by an event.
       const loaded = workspace.sessions.find((s) => s.id === session.id);
-      return Boolean(loaded && (!loaded.projectID || loaded.projectID === eventProjectID));
+      return Boolean(loaded?.projectID && loaded.projectID === eventProjectID);
     }
     const directory = normalize(session.directory) || normalize(fallbackDirectory);
     // Only Hoxi worktrees belong to the root, not arbitrary nested project folders.
@@ -176,11 +179,8 @@ export function replaceSessionFromEvent(info: SessionInfo, eventDirectory?: stri
     }
     return false;
   };
+  // activeProjectID is owned by syncActiveProjectID; SSE events never write it.
   if (belongs(info, eventDirectory)) {
-    const eventProjectID = (info.projectID || "").trim();
-    if (eventProjectID && !activeProjectID) {
-      setWorkspace("activeProjectID", eventProjectID);
-    }
     const directory = info.directory || workspace.sessions.find((s) => s.id === info.id)?.directory ||
       eventDirectory;
     replaceSession(directory ? { ...info, directory } : info);
@@ -268,25 +268,6 @@ export async function loadSessionMessages(sessionID: string): Promise<void> {
   }
   if (!isCurrent()) return;
   await refreshSessionDiff(sessionID);
-}
-
-export const DESKTOP_INTENT_EVENT = "hoxi:desktop-intent";
-
-export interface SessionDeepLink {
-  sessionID: string;
-  messageID?: string;
-}
-
-// Pulls the pending navigation queued by a hoxi:// deep link or the CLI.
-// The gateway clears it on read, so polling is safe and idempotent.
-export async function consumeDesktopIntent(): Promise<SessionDeepLink | null> {
-  try {
-    const intent = await hoxiAPI.consumeDesktopIntent();
-    if (!intent) return null;
-    return { sessionID: intent.sessionID, messageID: intent.messageID };
-  } catch {
-    return null;
-  }
 }
 
 export async function selectSession(sessionID: string): Promise<void> {

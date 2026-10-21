@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -17,7 +18,11 @@ type workspaceStore struct {
 	storagePath   string
 	workspaces    []workspaceProfile
 	dismissed     []string
+	removed       []removedProject
 	relinkHandler func(projectID, oldPath, newPath string) error
+	// persistBlocked is set when the existing file could not be read or
+	// backed up; writing would destroy data the user may still recover.
+	persistBlocked error
 }
 
 type Store = workspaceStore
@@ -44,32 +49,58 @@ func newWorkspaceStore(rootDir string) *workspaceStore {
 	return s
 }
 
+// loadFromDisk reads the store file. A corrupt file is moved aside before the
+// store reseeds, and an unreadable file blocks writes, so a parse error never
+// silently replaces the user's projects.
 func (s *workspaceStore) loadFromDisk(seedRootDir string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	loaded := false
 	if s.storagePath != "" {
-		if data, err := os.ReadFile(s.storagePath); err == nil {
+		data, err := os.ReadFile(s.storagePath)
+		switch {
+		case err == nil:
 			var parsed workspaceStoreFile
-			if err := json.Unmarshal(data, &parsed); err == nil {
+			if parseErr := json.Unmarshal(data, &parsed); parseErr == nil {
 				if parsed.Workspaces != nil {
 					s.workspaces = parsed.Workspaces
 				}
 				if parsed.Dismissed != nil {
 					s.dismissed = parsed.Dismissed
 				}
+				s.removed = parsed.Removed
 				loaded = true
+			} else if backup, backupErr := s.backupCorruptFileLocked(); backupErr != nil {
+				s.persistBlocked = fmt.Errorf("workspaces file is corrupt and could not be backed up: %w", backupErr)
+				log.Printf("workspace store: %v (parse error: %v)", s.persistBlocked, parseErr)
+				return
+			} else {
+				log.Printf("workspace store: corrupt %s moved to %s: %v", s.storagePath, backup, parseErr)
 			}
+		case !errors.Is(err, os.ErrNotExist):
+			s.persistBlocked = fmt.Errorf("workspaces file is unreadable: %w", err)
+			log.Printf("workspace store: %v", s.persistBlocked)
+			return
 		}
 	}
 
 	if !loaded && strings.TrimSpace(seedRootDir) != "" {
 		if ws, err := s.buildSeededWorkspace(seedRootDir); err == nil {
 			s.workspaces = []workspaceProfile{ws}
-			s.persistLocked()
+			if err := s.persistLocked(); err != nil {
+				log.Printf("workspace store: persist seed: %v", err)
+			}
 		}
 	}
+}
+
+func (s *workspaceStore) backupCorruptFileLocked() (string, error) {
+	backup := fmt.Sprintf("%s.corrupt-%s", s.storagePath, time.Now().UTC().Format("20060102T150405.000000000"))
+	if err := os.Rename(s.storagePath, backup); err != nil {
+		return "", err
+	}
+	return backup, nil
 }
 
 func (s *workspaceStore) buildSeededWorkspace(rootDir string) (workspaceProfile, error) {
@@ -90,18 +121,101 @@ func (s *workspaceStore) buildSeededWorkspace(rootDir string) (workspaceProfile,
 	}, nil
 }
 
-func (s *workspaceStore) persistLocked() {
+// persistLocked atomically replaces the store file: temp file in the same
+// directory, fsync, then rename. Callers hold s.mu.
+func (s *workspaceStore) persistLocked() error {
 	if s.storagePath == "" {
-		return
+		return nil
 	}
-	_ = os.MkdirAll(filepath.Dir(s.storagePath), 0o755)
+	if s.persistBlocked != nil {
+		return s.persistBlocked
+	}
 	payload := workspaceStoreFile{
 		Workspaces: s.workspaces,
 		Dismissed:  s.dismissed,
+		Removed:    s.removed,
 	}
-	if raw, err := json.MarshalIndent(payload, "", "  "); err == nil {
-		_ = os.WriteFile(s.storagePath, append(raw, '\n'), 0o644)
+	raw, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		return err
 	}
+	return writeFileAtomic(s.storagePath, append(raw, '\n'), 0o644)
+}
+
+func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	cleanup := func() { _ = os.Remove(tmpName) }
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		cleanup()
+		return err
+	}
+	if err := os.Chmod(tmpName, mode); err != nil {
+		cleanup()
+		return err
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		cleanup()
+		return err
+	}
+	if d, err := os.Open(dir); err == nil {
+		_ = d.Sync()
+		_ = d.Close()
+	}
+	return nil
+}
+
+// storeState is an in-memory snapshot used to roll back a mutation whose
+// persistence failed, so memory never diverges from disk.
+type storeState struct {
+	workspaces []workspaceProfile
+	dismissed  []string
+	removed    []removedProject
+}
+
+func (s *workspaceStore) snapshotLocked() storeState {
+	ws := make([]workspaceProfile, len(s.workspaces))
+	for i, profile := range s.workspaces {
+		ws[i] = cloneProfile(profile)
+	}
+	return storeState{
+		workspaces: ws,
+		dismissed:  append([]string(nil), s.dismissed...),
+		removed:    append([]removedProject(nil), s.removed...),
+	}
+}
+
+// commitLocked persists the current state or restores prev on failure.
+func (s *workspaceStore) commitLocked(prev storeState) error {
+	if err := s.persistLocked(); err != nil {
+		s.workspaces, s.dismissed, s.removed = prev.workspaces, prev.dismissed, prev.removed
+		log.Printf("workspace store: persist failed: %v", err)
+		return fmt.Errorf("save workspaces: %w", err)
+	}
+	return nil
+}
+
+func cloneProfile(profile workspaceProfile) workspaceProfile {
+	profile.Folders = append([]workspaceFolder(nil), profile.Folders...)
+	profile.Aliases = append([]string(nil), profile.Aliases...)
+	return profile
 }
 
 func (s *workspaceStore) addDismissedLocked(target string) {
@@ -195,7 +309,9 @@ func (s *workspaceStore) List() []workspaceProfile {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	out := make([]workspaceProfile, len(s.workspaces))
-	copy(out, s.workspaces)
+	for i, profile := range s.workspaces {
+		out[i] = cloneProfile(profile)
+	}
 	return out
 }
 
@@ -207,181 +323,17 @@ func (s *workspaceStore) ListDismissed() []string {
 	return out
 }
 
-func (s *workspaceStore) Create(input saveWorkspaceRequest) (workspaceProfile, error) {
-	folders, err := validateWorkspaceFolders(input.Folders)
-	if err != nil {
-		return workspaceProfile{}, err
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if existing, ok := s.findProjectLocked(folders[0].Path); ok && existing.Hidden {
-		return s.promoteHiddenLocked(existing, folders, input)
-	}
-
-	primaryPath := folders[0].Path
-	name := s.resolveNameLocked(input.Name, primaryPath, "")
-	color := normalizeWorkspaceIdentityColor(input.Color)
-	if color == "" {
-		color = defaultWorkspaceIdentityColor
-	}
-	now := time.Now().UTC().Format(time.RFC3339)
-	wsFolders := make([]workspaceFolder, len(folders))
-	for idx, f := range folders {
-		wsFolders[idx] = workspaceFolder{
-			ID:        generateWorkspaceUUID(),
-			Path:      f.Path,
-			IsPrimary: f.IsPrimary,
-			Position:  idx,
-		}
-	}
-	created := workspaceProfile{
-		ID:        generateWorkspaceUUID(),
-		Name:      name,
-		Color:     color,
-		Folders:   wsFolders,
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
-	s.workspaces = append(s.workspaces, created)
-	for _, f := range created.Folders {
-		s.removeDismissedLocked(f.Path)
-	}
-	s.removeDismissedLocked(created.ID)
-	s.persistLocked()
-	return created, nil
-}
-
-func (s *workspaceStore) Update(id string, input saveWorkspaceRequest) (result workspaceProfile, err error) {
-	cleanID := strings.TrimSpace(id)
-	if cleanID == "" {
-		return workspaceProfile{}, errors.New("workspace ID is required")
-	}
-	s.mu.Lock()
-	var relinks []folderRelink
-	defer func() {
-		s.mu.Unlock()
-		if err == nil {
-			s.dispatchFolderRelinks(relinks)
-		}
-	}()
-
-	targetIdx := -1
-	for i, ws := range s.workspaces {
-		if ws.ID == cleanID {
-			targetIdx = i
-			break
-		}
-	}
-	if targetIdx == -1 {
-		compTarget := comparableFolderPath(cleanID)
-		for i, ws := range s.workspaces {
-			for _, f := range ws.Folders {
-				if comparableFolderPath(f.Path) == compTarget {
-					targetIdx = i
-					break
-				}
-			}
-			if targetIdx != -1 {
-				break
-			}
-		}
-	}
-	if targetIdx == -1 {
-		folders, err := validateWorkspaceFolders(input.Folders)
-		if err != nil {
-			return workspaceProfile{}, err
-		}
-		primaryPath := folders[0].Path
-		name := s.resolveNameLocked(input.Name, primaryPath, "")
-		color := normalizeWorkspaceIdentityColor(input.Color)
-		if color == "" {
-			color = defaultWorkspaceIdentityColor
-		}
-		now := time.Now().UTC().Format(time.RFC3339)
-		wsFolders := make([]workspaceFolder, len(folders))
-		for idx, f := range folders {
-			wsFolders[idx] = workspaceFolder{
-				ID:        generateWorkspaceUUID(),
-				Path:      f.Path,
-				IsPrimary: f.IsPrimary,
-				Position:  idx,
-			}
-		}
-		created := workspaceProfile{
-			ID:        generateWorkspaceUUID(),
-			Name:      name,
-			Color:     color,
-			Folders:   wsFolders,
-			CreatedAt: now,
-			UpdatedAt: now,
-		}
-		s.workspaces = append(s.workspaces, created)
-		for _, f := range created.Folders {
-			s.removeDismissedLocked(f.Path)
-		}
-		s.removeDismissedLocked(created.ID)
-		s.persistLocked()
-		return created, nil
-	}
-
-	before := s.workspaces[targetIdx]
-	folders, err := validateWorkspaceFolders(input.Folders)
-	if err != nil {
-		return workspaceProfile{}, err
-	}
-	primaryPath := folders[0].Path
-	name := s.resolveNameLocked(input.Name, primaryPath, before.ID)
-	color := normalizeWorkspaceIdentityColor(input.Color)
-	if color == "" {
-		color = before.Color
-	}
-	if color == "" {
-		color = defaultWorkspaceIdentityColor
-	}
-	wsFolders := make([]workspaceFolder, len(folders))
-	existingMap := make(map[string]workspaceFolder, len(before.Folders))
-	for _, f := range before.Folders {
-		existingMap[comparableFolderPath(f.Path)] = f
-	}
-	for idx, f := range folders {
-		foundID := generateWorkspaceUUID()
-		if old, ok := existingMap[comparableFolderPath(f.Path)]; ok && old.ID != "" {
-			foundID = old.ID
-		}
-		wsFolders[idx] = workspaceFolder{
-			ID:        foundID,
-			Path:      f.Path,
-			IsPrimary: f.IsPrimary,
-			Position:  idx,
-		}
-	}
-	updated := workspaceProfile{
-		ID:        before.ID,
-		Name:      name,
-		Color:     color,
-		Folders:   wsFolders,
-		CreatedAt: before.CreatedAt,
-		UpdatedAt: time.Now().UTC().Format(time.RFC3339),
-	}
-	s.workspaces[targetIdx] = updated
-	for _, f := range updated.Folders {
-		s.removeDismissedLocked(f.Path)
-	}
-	s.removeDismissedLocked(updated.ID)
-	relinks = changedFolderPaths(before, updated)
-	s.persistLocked()
-	return updated, nil
-}
-
-func (s *workspaceStore) Remove(idOrPath string) bool {
+// Remove drops every profile matching an ID or folder path. Each folder
+// leaves a tombstone so re-adding it later reuses the project ID.
+func (s *workspaceStore) Remove(idOrPath string) (bool, error) {
 	target := strings.TrimSpace(idOrPath)
 	if target == "" {
-		return false
+		return false, nil
 	}
 	compTarget := comparableFolderPath(target)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	prev := s.snapshotLocked()
 
 	next := make([]workspaceProfile, 0, len(s.workspaces))
 	removed := false
@@ -398,6 +350,7 @@ func (s *workspaceStore) Remove(idOrPath string) bool {
 			s.addDismissedLocked(ws.ID)
 			for _, f := range ws.Folders {
 				s.addDismissedLocked(f.Path)
+				s.addTombstoneLocked(f.Path, ws)
 			}
 			continue
 		}
@@ -406,8 +359,10 @@ func (s *workspaceStore) Remove(idOrPath string) bool {
 
 	s.addDismissedLocked(target)
 	s.workspaces = next
-	s.persistLocked()
-	return removed
+	if err := s.commitLocked(prev); err != nil {
+		return false, err
+	}
+	return removed, nil
 }
 
 func (s *workspaceStore) registerRoutes(mux *http.ServeMux) {
@@ -456,7 +411,11 @@ func (s *workspaceStore) registerRoutes(mux *http.ServeMux) {
 			if id == "" {
 				id = strings.TrimSpace(r.URL.Query().Get("path"))
 			}
-			deleted := s.Remove(id)
+			deleted, err := s.Remove(id)
+			if err != nil {
+				writeJSONError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
 			writeJSON(w, http.StatusOK, map[string]any{
 				"ok":        true,
 				"deleted":   deleted,

@@ -137,12 +137,16 @@ Type(1B) | StreamID(8B, BigEndian uint64) | Payload(≤ 4MB)
 ## 6. Hoxi 桌面侧（`hoxi`）
 
 - **`internal/tunnel`**：配对、连接管理、帧协议与进程内分发。收到 Open 帧后构造请求：`Host` 改为 `127.0.0.1`，丢弃逐跳头、`Origin`、`Referer`、`Cookie`、`Authorization`、`X-Hoxi-Token`、`Sec-*`、`X-Forwarded-*`、`X-GoPanel-*`；`serviceId` 不是 `hoxi-gateway`、`upgrade = true` 或 URI 非法时直接 Reset。
-- **路由白名单（`internal/gateway/tunnel.go`）**：经隧道只能访问
-  - 前缀：`/api/hoxi/sessions`、`/event`、`/permission`、`/worktree`、`/runner`、`/workspaces`、`/attachments`、`/skills`、`/file`
-  - 精确：`/healthz`、`/api/hoxi/bootstrap`、`/api/hoxi/system-info`、`/file`、`/file/content`、`/api/file/content`、`/api/hoxi/provider/models`（只读脱敏模型列表：仅 `{source, providers: [{id, name, models: [{id, name}]}]}`，不含密钥、baseURL 或请求头）
+- **路由白名单（`internal/gateway/tunnel.go`）**：采用显式「HTTP 方法 + 路径模式」逐段匹配（`*` 仅匹配单个非空路径段，**不做任何前缀匹配**），路径必须已是 `path.Clean` 规范形式且不得包含编码斜杠（`%2F`）。经隧道仅开放：
+  - **基础与模型列表（只读）**：`GET /healthz`、`GET /api/hoxi/bootstrap`、`GET /api/hoxi/system-info`、`GET /api/hoxi/provider/models`（只读脱敏模型列表：仅 `{source, providers: [{id, name, models: [{id, name}]}]}`，不含密钥、`baseURL` 或请求头）、`GET /api/hoxi/runner/{antigravity,claude-code,codebuddy,qoder}/models`
+  - **会话平面**：`GET /api/hoxi/sessions`、`POST /api/hoxi/sessions`、`GET /api/hoxi/sessions/status`、`GET /api/hoxi/sessions/*`、`GET /api/hoxi/sessions/*/message`、`GET /api/hoxi/sessions/*/diff`、`POST /api/hoxi/sessions/*/{prompt,prompt_async,abort,stop_tool,revert,unrevert,fork}`
+  - **事件与审批平面**：`GET /api/hoxi/event`、`GET /api/hoxi/permission`、`POST /api/hoxi/permission/*/reply`
+  - **Worktree 审查与提交**：`GET /api/hoxi/worktree/{status,diff,branches,verify-status}`、`POST /api/hoxi/worktree/commit`（请求体仅允许 `push=false`，携带 `push=true` 或非法 JSON 返回 403）、`POST /api/hoxi/worktree/apply`。命令执行与写配置/分支变更类接口（`verify-run`、`verify-config`、`verify-stop`、`push`、`checkout`、`setup-retry`、`prune-sandboxes`、`create`、`sync`、`revert-file`、`rename-branch`、`DELETE` 等）一律仅限桌面本机
+  - **附件、Skill 与工作区（只读）**：`POST /api/hoxi/attachments`、`GET /api/hoxi/attachments/*`、`GET /api/hoxi/attachments/*/content`、`GET /api/hoxi/skills/list`、`GET /api/hoxi/workspaces`（新建/修改/删除工作区仅限桌面本机）
+  - **工作区内文件读取与搜索（`internal/gateway/files.go`）**：`GET /file/content`、`GET /api/file/content`、`GET /api/hoxi/file/content`（均必须携带非空 `?path=`，绝不回退到 OpenCode 原始代理）、`GET /api/hoxi/file/list`、`GET /api/hoxi/file/search`。经隧道访问的目标路径与搜索根目录必须位于网关根目录、已注册工作区目录或会话绑定的 worktree 内（解析软链接防越界，不信任请求自带的越界 `directory` 参数，并拦截敏感凭据文件）；`/file`、`/api/file`、`POST /api/hoxi/file/open`、`POST /api/hoxi/file/validate` 一律 403
 
-  其余一律 403，包括隧道与账号管理、`/api/hoxi/models-config`（含提供商配置）及其它 `/api/hoxi/provider/*` 接口、浏览器、剪贴板、对话框、更新器以及 OpenCode 原始透传（`/session`、`/pty`、`/config`、`/auth` 等）。路径必须是 `path.Clean` 后的形式，`..` 绕过会被拒绝。
-- **本机网关令牌不出机器**：隧道请求访问 `/file` 时由网关在进程内注入令牌；`/api/hoxi/bootstrap` 对隧道请求不返回 `gatewayToken`，也不种令牌 Cookie。
+  其余所有路由（包括隧道与账号管理、`/api/hoxi/models-config` 及其它 `/api/hoxi/provider/*` 接口、Runner Hook 与旧版 `/api/hoxi/runner/*` 会话接口、浏览器、剪贴板、对话框、更新器以及 `/session`、`/pty`、`/config`、`/auth`、`/file` 等 OpenCode 原始透传）一律返回 403。
+- **本机网关令牌不出机器**：网关在转发隧道请求前显式剥离 `X-Hoxi-Token` 且绝不注入本机令牌（受令牌保护的 OpenCode 原始透传对隧道始终不可达）；`/api/hoxi/bootstrap` 对隧道请求不返回 `gatewayToken`，也不种令牌 Cookie。
 - **凭据文件**：release `~/.hoxi/tunnel.json`，dev `~/.hoxi/tunnel-dev.json`（两个变体可同时运行，互不挤占隧道）。临时文件 + `os.Rename` 原子写入，权限 `0600`，已加入受保护状态文件列表；状态接口从不返回 token。
 - **管理接口**（只在本机可访问，隧道白名单不包含）：
   - `GET /api/hoxi/tunnel/status` → `{enabled, state: disabled|connecting|online|offline, controllerUrl, nodeId, name, message, connectedAt}`

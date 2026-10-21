@@ -22,6 +22,8 @@ import {
   isNonChatUtilityModelID,
   openProviderModal,
   peekAutoModelTarget,
+  resolveFavoriteModelEntries,
+  resolveRecentModelEntries,
   selectModel,
   setReasoningEffort,
   toggleFavoriteModel,
@@ -292,17 +294,10 @@ export default function ModelSelector() {
       });
     }
     if (r === "favorites") {
-      return allWithAuto.filter((m) => isFavoriteModel(m.providerID, m.modelID));
+      return resolveFavoriteModelEntries(allWithAuto);
     }
     if (r === "recent") {
-      const out: FlattenedModel[] = [];
-      for (const rm of workspace.recentModels) {
-        const found = allWithAuto.find(
-          (m) => m.providerID === rm.providerID && m.modelID === rm.modelID
-        );
-        if (found) out.push(found);
-      }
-      return out;
+      return resolveRecentModelEntries(allWithAuto);
     }
     if (r === "connected") {
       return [...pool].sort((a, b) => {

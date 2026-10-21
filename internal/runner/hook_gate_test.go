@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -182,10 +183,42 @@ func TestHookGateGatesUnknownTools(t *testing.T) {
 	if d := f.callHook(t, body); d.Decision != "auto_approve" {
 		t.Fatalf("repeat unknown tool should reuse the always grant, got %q", d.Decision)
 	}
+	for _, tool := range []string{
+		"read_secret",
+		"view_secret",
+		"list_secrets",
+		"find_secrets",
+		"grep_secrets",
+		"browser_get_cookies",
+		"capture_browser_cookies",
+		"read_url_content",
+		"search_web",
+	} {
+		call, _ := json.Marshal(map[string]interface{}{
+			"conversationId": "conv-1",
+			"stepIdx":        8,
+			"toolCall": map[string]interface{}{
+				"name": tool,
+				"args": map[string]interface{}{"url": "https://example.com"},
+			},
+		})
+		res := f.asyncHook(t, call)
+		evt := waitForEvent(t, events, "permission.asked")
+		if evt.Properties["permission"] != "tool" {
+			t.Fatalf("%s must ask through Hoxi, got %#v", tool, evt.Properties)
+		}
+		reqID, _ := evt.Properties["id"].(string)
+		f.reply(t, reqID, "reject", "blocked")
+		if d := <-res; d.Decision != "deny" {
+			t.Fatalf("%s after reject: %q", tool, d.Decision)
+		}
+	}
 }
 
-func TestHookGateAutoApprovesReads(t *testing.T) {
+func TestHookGateAutoApprovesReadsInWorktreeAndGatesOutsideReads(t *testing.T) {
 	f := newGateFixture(t)
+	events, unsub := f.svc.Subscribe("ses_agy_gate")
+	defer unsub()
 	read := func(tool, path string) []byte {
 		raw, _ := json.Marshal(map[string]interface{}{
 			"conversationId": "conv-1",
@@ -193,25 +226,33 @@ func TestHookGateAutoApprovesReads(t *testing.T) {
 			"workspacePaths": []string{f.dir},
 			"toolCall": map[string]interface{}{
 				"name": tool,
-				"args": map[string]interface{}{"Path": path, "AbsolutePath": path, "toolSummary": "Read file"},
+				"args": map[string]interface{}{"Path": path, "AbsolutePath": path, "DirectoryPath": path, "SearchPath": path, "toolSummary": "Read file"},
 			},
 		})
 		return raw
 	}
-	for _, tool := range []string{"view_file", "read_file"} {
+	outsideFile := filepath.Join(t.TempDir(), "outside.txt")
+	for _, tool := range []string{"view_file", "read_file", "list_dir", "find_by_name", "grep_search"} {
 		if d := f.callHook(t, read(tool, filepath.Join(f.dir, "inside.txt"))); d.Decision != "auto_approve" {
 			t.Fatalf("%s inside workspace: %q", tool, d.Decision)
 		}
-		// Headless agy soft-denies any read it cannot prompt for, including
-		// paths outside the worktree; reads are safe under Hoxi's policy.
-		if d := f.callHook(t, read(tool, filepath.Join(t.TempDir(), "outside.txt"))); d.Decision != "auto_approve" {
-			t.Fatalf("%s outside workspace: %q", tool, d.Decision)
+		res := f.asyncHook(t, read(tool, outsideFile))
+		asked := waitForEvent(t, events, "permission.asked")
+		if asked.Properties["permission"] != "tool" {
+			t.Fatalf("%s outside workspace must ask, got %#v", tool, asked.Properties)
+		}
+		id, _ := asked.Properties["id"].(string)
+		f.reply(t, id, "once", "")
+		if d := <-res; d.Decision != "auto_approve" {
+			t.Fatalf("%s outside workspace after once: %q", tool, d.Decision)
 		}
 	}
 }
 
 func TestHookGateEditsStayInsideWorktree(t *testing.T) {
 	f := newGateFixture(t)
+	events, unsub := f.svc.Subscribe("ses_agy_gate")
+	defer unsub()
 	write := func(tool, path string) []byte {
 		raw, _ := json.Marshal(map[string]interface{}{
 			"conversationId": "conv-1",
@@ -234,6 +275,69 @@ func TestHookGateEditsStayInsideWorktree(t *testing.T) {
 		if d := f.callHook(t, write(tool, "sub/inside.txt")); d.Decision != "auto_approve" {
 			t.Fatalf("%s relative target: %q", tool, d.Decision)
 		}
+		if d := f.callHook(t, write(tool, ".vscode/extensions.json")); d.Decision != "auto_approve" {
+			t.Fatalf("%s non-protected .vscode file: %q", tool, d.Decision)
+		}
+	}
+
+	// Execution-controlling paths inside the worktree must still ask.
+	for _, rel := range []string{
+		".git/config",
+		".git/hooks/pre-commit",
+		".agents/hooks.json",
+		".opencode/plugins/hoxi-permissions.js",
+		".claude/settings.json",
+		".hoxi/config.json",
+		".vscode/settings.json",
+		".envrc",
+	} {
+		res := f.asyncHook(t, write("write_to_file", filepath.Join(f.dir, rel)))
+		asked := waitForEvent(t, events, "permission.asked")
+		if asked.Properties["permission"] != "tool" {
+			t.Fatalf("protected path %s must ask, got %#v", rel, asked.Properties)
+		}
+		id, _ := asked.Properties["id"].(string)
+		f.reply(t, id, "reject", "protected path")
+		if d := <-res; d.Decision != "deny" {
+			t.Fatalf("protected path %s after reject: %q", rel, d.Decision)
+		}
+	}
+
+	// Edit calls without a recognized path argument must ask instead of returning "allow".
+	noPath, _ := json.Marshal(map[string]interface{}{
+		"conversationId": "conv-1",
+		"stepIdx":        5,
+		"toolCall": map[string]interface{}{
+			"name": "write_to_file",
+			"args": map[string]interface{}{"unrecognized": "foo.txt"},
+		},
+	})
+	res := f.asyncHook(t, noPath)
+	asked := waitForEvent(t, events, "permission.asked")
+	id, _ := asked.Properties["id"].(string)
+	f.reply(t, id, "reject", "missing path")
+	if d := <-res; d.Decision != "deny" {
+		t.Fatalf("edit without path after reject: %q", d.Decision)
+	}
+
+	// Symlinks (including dangling symlinks) escaping the worktree must be rejected.
+	outsideDir := t.TempDir()
+	escapeExisting := filepath.Join(f.dir, "escape-existing")
+	if err := os.Symlink(outsideDir, escapeExisting); err != nil {
+		t.Fatal(err)
+	}
+	escapeDangling := filepath.Join(f.dir, "escape-dangling")
+	if err := os.Symlink(filepath.Join(outsideDir, "nonexistent-target.txt"), escapeDangling); err != nil {
+		t.Fatal(err)
+	}
+	if pathWithin(f.dir, filepath.Join(escapeExisting, "file.txt")) {
+		t.Fatal("pathWithin must reject symlink pointing outside worktree")
+	}
+	if pathWithin(f.dir, escapeDangling) {
+		t.Fatal("pathWithin must reject dangling symlink pointing outside worktree")
+	}
+	if d := f.callHook(t, write("write_to_file", escapeDangling)); d.Decision != "deny" {
+		t.Fatalf("edit via dangling symlink outside worktree: %q", d.Decision)
 	}
 }
 

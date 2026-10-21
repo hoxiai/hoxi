@@ -5,7 +5,6 @@ import { hoxiAPI, type CommitAndPushResponse } from "../services/api";
 import type { MessagePart, SnapshotFileDiff } from "../services/sse-types";
 import { AUTO_PROVIDER_ID, isModelFree, resolveAutoModelTarget } from "./auto-models";
 import { resolveInternalLLMModel } from "./provider-catalog";
-import { findBestFallbackModel } from "./provider-health";
 import { canSteerSession } from "./session-capabilities";
 import { workspace, type SelectedModel } from "./workspace-state";
 import { activeDirectory, sessionDirectory } from "./session-query";
@@ -280,8 +279,7 @@ export async function generateSmartCommitMessage(
     resolveEffectiveCommitModel(),
     parseProviderModelKey(workspace.globalConfig?.model),
     workspace.defaultAI?.model,
-    workspace.selectedModel,
-    findBestFallbackModel(undefined, { httpOnly: true })
+    workspace.selectedModel
   );
   if (!targetModel) {
     return fallback;

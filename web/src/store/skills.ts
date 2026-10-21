@@ -182,7 +182,7 @@ export async function loadSkillsCatalog(options?: {
   if (!dir) {
     setSkillsStore({
       skills: [],
-      supported: rt === "opencode",
+      supported: true,
       runtime: rt,
       directory: "",
       loading: false,
@@ -326,17 +326,11 @@ export async function revalidateSkillForTargetDirectory(params: {
   selection: SkillSelection;
 }): Promise<{ ok: true; selection: SkillSelection } | { ok: false; reason: string }> {
   const { sessionID, directory, runtime, selection } = params;
-  if (runtime !== "opencode") {
-    return {
-      ok: false,
-      reason: t("skills.unsupportedTitle", { runtime }),
-    };
-  }
   try {
     const resp = await skillsAPI.fetchSkillsList({
       directory,
       sessionID,
-      runtime: "opencode",
+      runtime,
     });
     if (!resp.supported) {
       return {
@@ -407,6 +401,15 @@ export function resolveTurnSkillStatus(
   if (!userTurn || userTurn.info.role !== "user") return null;
   const skill = extractUserTurnSkillSelection(userTurn.parts);
   if (!skill) return null;
+  // CLI runtimes receive the SKILL.md body inline with the prompt, so the
+  // selection is already delivered even though no native `skill` tool runs.
+  for (const part of userTurn.parts ?? []) {
+    if (part.type !== "text") continue;
+    const raw = part.metadata?.hoxiSkill;
+    if (raw && typeof raw === "object" && raw.mode === "inline") {
+      return { skill, status: "loaded" };
+    }
+  }
 
   let isLatestCycle = true;
   let hasCompletedMatch = false;

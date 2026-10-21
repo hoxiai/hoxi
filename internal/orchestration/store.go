@@ -20,13 +20,18 @@ const maxPlanFileSize = 2 << 20
 type Store struct {
 	dir string
 	mu  sync.Mutex
+	seq map[string]uint64
 }
 
 func NewStore(dir string) *Store {
-	return &Store{dir: strings.TrimSpace(dir)}
+	return &Store{dir: strings.TrimSpace(dir), seq: make(map[string]uint64)}
 }
 
 func (s *Store) Save(plan Plan) error {
+	return s.SaveSeq(plan, 0)
+}
+
+func (s *Store) SaveSeq(plan Plan, seq uint64) error {
 	if s == nil || s.dir == "" {
 		return errors.New("orchestration store is not configured")
 	}
@@ -39,6 +44,9 @@ func (s *Store) Save(plan Plan) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if seq > 0 && seq <= s.seq[plan.ID] {
+		return nil
+	}
 	if err := os.MkdirAll(s.dir, 0o700); err != nil {
 		return err
 	}
@@ -68,6 +76,12 @@ func (s *Store) Save(plan Plan) error {
 	if err := os.Rename(tmpName, s.path(plan.ID)); err != nil {
 		_ = os.Remove(tmpName)
 		return err
+	}
+	if s.seq == nil {
+		s.seq = make(map[string]uint64)
+	}
+	if seq > s.seq[plan.ID] {
+		s.seq[plan.ID] = seq
 	}
 	return nil
 }
@@ -114,6 +128,7 @@ func (s *Store) Delete(id string) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	delete(s.seq, id)
 	err := os.Remove(s.path(id))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil

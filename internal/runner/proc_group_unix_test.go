@@ -315,3 +315,94 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Continued 
 	}
 }
 
+// startSleepingTurn runs a fake CLI turn whose tool child is `sleep <arg>`
+// and returns the turn plus the child's pid.
+func startSleepingTurn(t *testing.T, svc *Service, sessionID, arg string) (*activeProcess, int) {
+	t.Helper()
+	pidFile := filepath.Join(t.TempDir(), "tool_pid")
+	t.Setenv("HOXI_TEST_PIDFILE", pidFile)
+	ap := startFakeCLITurn(t, svc, sessionID, `cat >/dev/null
+sleep `+arg+` &
+echo "$!" > "$HOXI_TEST_PIDFILE"
+wait
+`)
+	pid := readPID(t, pidFile)
+	t.Cleanup(func() {
+		_ = syscall.Kill(pid, syscall.SIGKILL)
+		waitTurnDone(t, ap, 4*orphanDrainGrace+2*time.Second)
+	})
+	return ap, pid
+}
+
+func assertProcessAlive(t *testing.T, pid int) {
+	t.Helper()
+	if err := syscall.Kill(pid, 0); errors.Is(err, syscall.ESRCH) {
+		t.Fatalf("process %d was killed but should have survived", pid)
+	}
+}
+
+// A stop request whose command matches nothing must kill nothing (it used to
+// fall back to every child of the CLI).
+func TestStopToolCommandNoMatchKillsNothing(t *testing.T) {
+	svc := newStallTestService(t)
+	_, childPID := startSleepingTurn(t, svc, "ses_stop_nomatch", "301")
+
+	stopped, err := svc.StopToolCommand("ses_stop_nomatch", "", "", "npm run dev")
+	if !errors.Is(err, errToolProcessNotFound) || stopped != 0 {
+		t.Fatalf("stopped=%d err=%v, want 0 and errToolProcessNotFound", stopped, err)
+	}
+	stopped, err = svc.StopToolCommand("ses_stop_nomatch", "", "", "")
+	if !errors.Is(err, errToolProcessNotFound) || stopped != 0 {
+		t.Fatalf("empty command: stopped=%d err=%v, want not found", stopped, err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	assertProcessAlive(t, childPID)
+	if _, ok := svc.stoppedTools.Load("ses_stop_nomatch\x00call:"); ok {
+		t.Fatal("failed stop left a stopped-tool mark behind")
+	}
+}
+
+// Stopping a command in one session must never reach another session's
+// processes, even when their command lines are identical.
+func TestStopToolCommandSparesSiblingSession(t *testing.T) {
+	svc := newStallTestService(t)
+	_, siblingPID := startSleepingTurn(t, svc, "ses_stop_sibling", "302")
+	_, targetPID := startSleepingTurn(t, svc, "ses_stop_target", "302")
+
+	stopped, err := svc.StopToolCommand("ses_stop_target", "", "", "sleep 302")
+	if err != nil || stopped == 0 {
+		t.Fatalf("stopped=%d err=%v, want the target's child stopped", stopped, err)
+	}
+	assertProcessGone(t, targetPID)
+	assertProcessAlive(t, siblingPID)
+}
+
+// Sessions without a runner-owned CLI process (OpenCode sessions live in the
+// shared daemon) are refused instead of scanning the daemon's children.
+func TestStopToolCommandRefusesSessionWithoutRunnerProcess(t *testing.T) {
+	svc := newStallTestService(t)
+	if _, err := svc.StopToolCommand("ses_not_running", "", "", "sleep 1"); !errors.Is(err, errSessionNotRunning) {
+		t.Fatalf("err = %v, want errSessionNotRunning", err)
+	}
+	registerStallTestProcess(svc, "ses_opencode_turn", time.Now())
+	if _, err := svc.StopToolCommand("ses_opencode_turn", "", "", "sleep 1"); !errors.Is(err, errSessionNotRunning) {
+		t.Fatalf("OpenCode turn: err = %v, want errSessionNotRunning", err)
+	}
+}
+
+// Stopped-tool marks are dropped once the turn ends.
+func TestStopToolCommandClearsMarksWhenTurnEnds(t *testing.T) {
+	svc := newStallTestService(t)
+	ap, _ := startSleepingTurn(t, svc, "ses_stop_marks", "303")
+	if _, err := svc.StopToolCommand("ses_stop_marks", "toolu_marks", "", "sleep 303"); err != nil {
+		t.Fatal(err)
+	}
+	waitTurnDone(t, ap, 4*orphanDrainGrace+2*time.Second)
+	deadline := time.Now().Add(2 * time.Second)
+	for svc.isToolMarkedStopped("ses_stop_marks", "", "toolu_marks") {
+		if time.Now().After(deadline) {
+			t.Fatal("stopped-tool mark leaked past the end of the turn")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}

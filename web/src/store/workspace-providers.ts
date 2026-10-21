@@ -22,7 +22,6 @@ import {
   splitAgyModelEffortSuffix,
 } from "./provider-catalog";
 import { parseModelString, updateSessionAI } from "./session-ai";
-import { getComposerSkill, selectComposerSkill, setComposerSkillNotice } from "./skills";
 import {
   DEFAULT_AGENTS,
   EFFORT_KEY,
@@ -34,7 +33,6 @@ import {
   type ReasoningEffort,
   type SelectedModel,
 } from "./workspace-state";
-import { sessionRuntimeForID } from "./session-query";
 
 export const MASKED_SECRET = "********";
 
@@ -112,16 +110,6 @@ export function selectModel(model: SelectedModel, _autoRetryOnError = false) {
     }
   }
   updateSessionAI(patch);
-  const activeSID = workspace.activeSessionID;
-  const nextRuntime = sessionRuntimeForID(activeSID);
-  const currentSkill = getComposerSkill(activeSID);
-  if (currentSkill && nextRuntime !== "opencode") {
-    selectComposerSkill(activeSID, null);
-    setComposerSkillNotice(
-      activeSID,
-      t("skills.runtimeSwitchedCleared", { name: currentSkill.name, runtime: nextRuntime })
-    );
-  }
   pushRecentModel(model);
   try {
     if (!workspace.activeSessionID) {

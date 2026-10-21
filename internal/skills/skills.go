@@ -130,18 +130,6 @@ func (s *Service) handleList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if rc.Runtime != "opencode" {
-		writeJSON(w, http.StatusOK, ListResponse{
-			Runtime:           rc.Runtime,
-			Supported:         false,
-			Directory:         rc.Directory,
-			SessionID:         rc.SessionID,
-			Skills:            []SkillDescriptor{},
-			UnsupportedReason: fmt.Sprintf("Runtime %q does not support native skill catalog yet", rc.Runtime),
-		})
-		return
-	}
-
 	entries, err := s.loadOpenCodeCatalog(r.Context(), rc, true)
 	if err != nil {
 		writeJSONError(w, http.StatusBadGateway, "failed to load skills from OpenCode: "+err.Error())
@@ -154,7 +142,7 @@ func (s *Service) handleList(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, ListResponse{
-		Runtime:   "opencode",
+		Runtime:   rc.Runtime,
 		Supported: true,
 		Directory: rc.Directory,
 		SessionID: rc.SessionID,
@@ -183,11 +171,6 @@ func (s *Service) handleDetail(w http.ResponseWriter, r *http.Request) {
 		writeErrorResponse(w, err)
 		return
 	}
-	if rc.Runtime != "opencode" {
-		writeJSONError(w, http.StatusConflict, fmt.Sprintf("runtime %q does not support native skills", rc.Runtime))
-		return
-	}
-
 	entries, err := s.loadOpenCodeCatalog(r.Context(), rc, false)
 	if err != nil {
 		writeJSONError(w, http.StatusBadGateway, "failed to load skill detail: "+err.Error())
@@ -216,36 +199,42 @@ func (s *Service) handleDetail(w http.ResponseWriter, r *http.Request) {
 	writeJSONError(w, http.StatusNotFound, "skill not found in active directory")
 }
 
-// VerifySelection checks that sel.Key and sel.Name match an active OpenCode skill
-// in the session's effective directory.
-func (s *Service) VerifySelection(ctx context.Context, directory, sessionID string, sel SkillSelection) (SkillDescriptor, error) {
+// ResolveSelection checks that sel.Key and sel.Name match an active skill in the
+// session's effective directory and returns its content for inline delivery.
+func (s *Service) ResolveSelection(ctx context.Context, directory, sessionID string, sel SkillSelection) (SkillDetail, error) {
 	key := strings.TrimSpace(sel.Key)
 	name := strings.TrimSpace(sel.Name)
 	if key == "" || name == "" || !strings.HasPrefix(key, "skl_") {
-		return SkillDescriptor{}, fmt.Errorf("%w: invalid skill selection", ErrBadRequest)
+		return SkillDetail{}, fmt.Errorf("%w: invalid skill selection", ErrBadRequest)
 	}
-	rc, err := s.resolveContext(ctx, directory, sessionID, "opencode")
+	rc, err := s.resolveContext(ctx, directory, sessionID, "")
 	if err != nil {
-		return SkillDescriptor{}, err
-	}
-	if rc.Runtime != "opencode" {
-		return SkillDescriptor{}, fmt.Errorf("%w: runtime %q does not support native skills", ErrUnsupported, rc.Runtime)
+		return SkillDetail{}, err
 	}
 	entries, err := s.loadOpenCodeCatalog(ctx, rc, true)
 	if err != nil {
-		return SkillDescriptor{}, err
+		return SkillDetail{}, err
 	}
 	for _, entry := range entries {
 		if entry.detail.Name == name && entry.detail.Key == key {
-			return entry.detail.SkillDescriptor, nil
+			return entry.detail, nil
 		}
 	}
 	for _, entry := range entries {
 		if entry.detail.Name == name {
-			return SkillDescriptor{}, fmt.Errorf("%w: skill %q source changed in the active directory; please re-select the skill", ErrForbidden, name)
+			return SkillDetail{}, fmt.Errorf("%w: skill %q source changed in the active directory; please re-select the skill", ErrForbidden, name)
 		}
 	}
-	return SkillDescriptor{}, fmt.Errorf("%w: skill %q is not available in the active directory", ErrNotFound, name)
+	return SkillDetail{}, fmt.Errorf("%w: skill %q is not available in the active directory", ErrNotFound, name)
+}
+
+// VerifySelection validates a skill selection without loading its content.
+func (s *Service) VerifySelection(ctx context.Context, directory, sessionID string, sel SkillSelection) (SkillDescriptor, error) {
+	detail, err := s.ResolveSelection(ctx, directory, sessionID, sel)
+	if err != nil {
+		return SkillDescriptor{}, err
+	}
+	return detail.SkillDescriptor, nil
 }
 
 func (s *Service) resolveContext(ctx context.Context, directory, sessionID, requestedRuntime string) (RequestContext, error) {
@@ -355,7 +344,7 @@ func buildSkillEntry(rc RequestContext, item OpenCodeSkillInfo) cachedSkillEntry
 		Key:             key,
 		Name:            name,
 		Description:     desc,
-		Runtime:         "opencode",
+		Runtime:         rc.Runtime,
 		Source:          source,
 		SourceLabel:     sourceLabel,
 		CanOpenLocation: canOpen,

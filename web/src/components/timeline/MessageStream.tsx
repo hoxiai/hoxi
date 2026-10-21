@@ -16,7 +16,9 @@ import {
   appSettings,
   canForkSession,
   canRevertSession,
+  findLatestUserTurnID,
   forkFromMessage,
+  isUserTurnTaskActive as isUserTurnTaskActiveInStore,
   resolveTurnSkillStatus,
   revertToHere,
   stopSessionTask,
@@ -97,34 +99,16 @@ export default function MessageStream(props: { hidden?: boolean }) {
     return st.type === "busy" || st.type === "retry";
   });
 
-  const latestUserTurnID = createMemo(() => {
-    const list = turns();
-    for (let i = list.length - 1; i >= 0; i--) {
-      if (list[i].info.role === "user") return list[i].info.id;
-    }
-    return null;
-  });
+  const latestUserTurnID = createMemo(() => findLatestUserTurnID(turns()));
 
-  // Revert/fork are task controls, not message metadata: completed exchanges
-  // keep only time + copy, while the in-flight, interrupted, or failed exchange
-  // keeps them.
   const isUserTurnTaskActive = (turn: MessageTurn, index: number): boolean => {
     if (turn.info.id !== latestUserTurnID()) return false;
     const sessionID = workspace.activeSessionID;
-    if (isSessionBusy() || (sessionID && workspace.interruptedBySession[sessionID])) {
-      return true;
-    }
-    const list = turns();
-    let lastAssistant: MessageTurn | undefined;
-    for (let i = index + 1; i < list.length && list[i].info.role === "assistant"; i++) {
-      lastAssistant = list[i];
-    }
-    // A stopped turn is still completed server-side, so its persisted finish
-    // reason must keep the controls available after a reload.
-    if (!lastAssistant || lastAssistant.info.error || lastAssistant.info.finish === "aborted") {
-      return true;
-    }
-    return !lastAssistant.info.time?.completed;
+    return isUserTurnTaskActiveInStore(turns(), index, {
+      busy: isSessionBusy(),
+      interrupted: Boolean(sessionID && workspace.interruptedBySession[sessionID]),
+      latestUserTurnID: latestUserTurnID(),
+    });
   };
 
   const pendingForSession = createMemo(() => {

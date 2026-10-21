@@ -82,3 +82,30 @@ func TestStoreRejectsUnsafePlanID(t *testing.T) {
 		t.Fatalf("plan escaped the store directory: %v", err)
 	}
 }
+
+func TestStoreSaveSeqDropsStaleSnapshot(t *testing.T) {
+	store := NewStore(t.TempDir())
+	newer := Plan{
+		ID:     "plan_seq_test",
+		Status: StatusSucceeded,
+		Tasks:  []TaskState{{ID: "a", Prompt: "work", Status: StatusSucceeded, SessionID: "ses_new"}},
+	}
+	stale := Plan{
+		ID:     "plan_seq_test",
+		Status: StatusRunning,
+		Tasks:  []TaskState{{ID: "a", Prompt: "work", Status: StatusRunning, SessionID: "ses_old"}},
+	}
+	if err := store.SaveSeq(newer, 2); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveSeq(stale, 1); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded) != 1 || loaded[0].Status != StatusSucceeded || loaded[0].Tasks[0].SessionID != "ses_new" {
+		t.Fatalf("stale snapshot overwrote newer state: %#v", loaded)
+	}
+}

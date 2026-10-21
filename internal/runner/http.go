@@ -40,7 +40,7 @@ type Service struct {
 	editedFiles    sync.Map // session ID -> editedFilesEntry
 	userSkillByMsg sync.Map // message ID -> userSkillOverride
 	stoppedTools   sync.Map // sessionID\x00(part|call):id -> bool
-	skillValidator func(ctx context.Context, directory, sessionID string, sel SkillSelection) error
+	skillResolver  func(ctx context.Context, directory, sessionID string, sel SkillSelection) (ResolvedSkill, error)
 	projectResolver ProjectResolver
 }
 
@@ -318,7 +318,7 @@ func (s *Service) handleSessionSubroutes(w http.ResponseWriter, r *http.Request)
 		s.handleRuntimeSwitch(w, r, sessionID)
 	case "abort":
 		s.handleSessionAbort(w, r, sessionID)
-	case "stop_tool":
+	case "stop-tool":
 		s.handleSessionStopTool(w, r, sessionID)
 	case "summarize":
 		s.handleSessionSummarize(w, r, sessionID)

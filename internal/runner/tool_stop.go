@@ -2,10 +2,10 @@ package runner
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
-	"time"
 )
 
 // StopToolRequest identifies a running tool invocation inside a session turn
@@ -27,7 +27,14 @@ func (s *Service) handleSessionStopTool(w http.ResponseWriter, r *http.Request, 
 	}
 	stopped, err := s.StopToolCommand(sessionID, body.CallID, body.PartID, body.Command)
 	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		status := http.StatusInternalServerError
+		switch {
+		case errors.Is(err, errSessionNotRunning):
+			status = http.StatusConflict
+		case errors.Is(err, errToolProcessNotFound):
+			status = http.StatusNotFound
+		}
+		writeJSONError(w, status, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -36,14 +43,31 @@ func (s *Service) handleSessionStopTool(w http.ResponseWriter, r *http.Request, 
 	})
 }
 
+var (
+	// errSessionNotRunning: the session has no runner-owned CLI process.
+	// OpenCode sessions run inside the shared `opencode serve` daemon and are
+	// stopped through OpenCode's own abort instead.
+	errSessionNotRunning = errors.New("session not running in runner")
+	// errToolProcessNotFound: no child process of the session matched the tool.
+	errToolProcessNotFound = errors.New("no running process matched the tool command")
+)
+
 // StopToolCommand terminates the running child tool/shell process for a tool
-// invocation while keeping the parent Agent CLI / OpenCode turn alive so the
-// conversation can continue with the interrupted tool output.
+// invocation while keeping the parent Agent CLI turn alive so the conversation
+// can continue with the interrupted tool output. Only processes inside the
+// session's own CLI process tree are candidates.
 func (s *Service) StopToolCommand(sessionID, callID, partID, command string) (int, error) {
 	sessionID = strings.TrimSpace(sessionID)
 	callID = strings.TrimSpace(callID)
 	partID = strings.TrimSpace(partID)
 	command = strings.TrimSpace(command)
+
+	s.mu.Lock()
+	ap := s.procs[sessionID]
+	s.mu.Unlock()
+	if ap == nil || ap.cmd == nil || ap.cmd.Process == nil {
+		return 0, errSessionNotRunning
+	}
 
 	var matchedPart *MessagePart
 	if rec, ok := s.store.Get(sessionID); ok {
@@ -64,20 +88,19 @@ func (s *Service) StopToolCommand(sessionID, callID, partID, command string) (in
 		}
 	}
 
+	// Mark before killing so the tool result produced by the kill is
+	// decorated; the marks are dropped again if nothing was stopped.
 	s.markToolStopped(sessionID, partID, callID)
-
-	s.mu.Lock()
-	ap := s.procs[sessionID]
-	s.mu.Unlock()
-	if ap != nil {
-		s.noteActivity(ap)
+	s.noteActivity(ap)
+	stopped := stopChildToolProcesses(ap.cmd.Process.Pid, command)
+	if stopped == 0 {
+		s.clearToolStopped(sessionID, partID, callID)
+		return 0, errToolProcessNotFound
 	}
-
-	cliPID := 0
-	if ap != nil && ap.cmd != nil && ap.cmd.Process != nil {
-		cliPID = ap.cmd.Process.Pid
-	}
-	stopped := stopChildToolProcesses(cliPID, command)
+	go func() {
+		<-ap.done
+		s.clearToolStopped(sessionID, partID, callID)
+	}()
 
 	if matchedPart != nil && matchedPart.State != nil {
 		updated := clonePart(*matchedPart)
@@ -85,16 +108,6 @@ func (s *Service) StopToolCommand(sessionID, callID, partID, command string) (in
 			updated.State.Metadata = make(map[string]interface{})
 		}
 		updated.State.Metadata["stoppedByUser"] = true
-		if ap == nil && (updated.State.Status == "running" || updated.State.Status == "pending") {
-			now := time.Now().UnixMilli()
-			start := now
-			if updated.State.Time != nil && updated.State.Time.Start > 0 {
-				start = updated.State.Time.Start
-			}
-			updated.State.Status = "completed"
-			updated.State.Time = &PartTime{Start: start, End: now}
-			appendStoppedNotice(&updated)
-		}
 		s.broadcast(sessionID, SSEEvent{
 			Type:       "message.part.updated",
 			Properties: map[string]interface{}{"part": updated},
@@ -150,6 +163,15 @@ func (s *Service) markToolStopped(sessionID, partID, callID string) {
 	}
 	if callID != "" {
 		s.stoppedTools.Store(sessionID+"\x00call:"+callID, true)
+	}
+}
+
+func (s *Service) clearToolStopped(sessionID, partID, callID string) {
+	if partID != "" {
+		s.stoppedTools.Delete(sessionID + "\x00part:" + partID)
+	}
+	if callID != "" {
+		s.stoppedTools.Delete(sessionID + "\x00call:" + callID)
 	}
 }
 

@@ -1,7 +1,10 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
 	"path"
 	"strings"
@@ -12,46 +15,163 @@ import (
 
 type tunnelRequestKey struct{}
 
-// Routes the mobile app may reach through the GoPanel tunnel. Everything else
-// (tunnel and account management, provider config and keys, browser, clipboard, dialogs,
-// updater, raw OpenCode passthrough) stays desktop-only.
-var tunnelRoutePrefixes = []string{
-	"/api/hoxi/sessions",
-	"/api/hoxi/event",
-	"/api/hoxi/permission",
-	"/api/hoxi/worktree",
-	"/api/hoxi/runner",
-	"/api/hoxi/workspaces",
-	"/api/hoxi/attachments",
-	"/api/hoxi/skills",
-	"/api/hoxi/file",
+// tunnelRoute is one (method, path pattern) the mobile app may reach through
+// the GoPanel tunnel. Patterns match segment by segment; "*" matches exactly
+// one non-empty segment. Nothing is matched by prefix, so a route added to a
+// domain package stays desktop-only until it is listed here (and in
+// docs/gopanel-hoxi-remote-tunnel.md).
+type tunnelRoute struct {
+	method  string
+	pattern string
 }
 
-var tunnelExactRoutes = map[string]bool{
-	"/healthz":              true,
-	"/api/hoxi/bootstrap":   true,
-	"/api/hoxi/system-info": true,
+// Everything not listed (tunnel and account management, provider config and
+// keys, browser, clipboard, dialogs, updater, file open/validate, worktree
+// command execution, raw OpenCode passthrough, legacy runner routes, runner
+// hooks) is answered with 403.
+var tunnelRoutes = []tunnelRoute{
+	{http.MethodGet, "/healthz"},
+	{http.MethodGet, "/api/hoxi/bootstrap"},
+	{http.MethodGet, "/api/hoxi/system-info"},
 	// Sanitized model ids/names only; models-config and the other provider
 	// routes carry keys and stay desktop-only.
-	"/api/hoxi/provider/models": true,
-	"/file":                     true,
-	"/file/content":             true,
-	"/api/file/content":         true,
+	{http.MethodGet, "/api/hoxi/provider/models"},
+	{http.MethodGet, "/api/hoxi/runner/antigravity/models"},
+	{http.MethodGet, "/api/hoxi/runner/claude-code/models"},
+	{http.MethodGet, "/api/hoxi/runner/codebuddy/models"},
+	{http.MethodGet, "/api/hoxi/runner/qoder/models"},
+
+	// Session plane. Steering is a prompt sent while the session is busy.
+	{http.MethodGet, "/api/hoxi/sessions"},
+	{http.MethodPost, "/api/hoxi/sessions"},
+	{http.MethodGet, "/api/hoxi/sessions/status"},
+	{http.MethodGet, "/api/hoxi/sessions/*"},
+	{http.MethodGet, "/api/hoxi/sessions/*/message"},
+	{http.MethodGet, "/api/hoxi/sessions/*/diff"},
+	{http.MethodPost, "/api/hoxi/sessions/*/prompt"},
+	{http.MethodPost, "/api/hoxi/sessions/*/prompt_async"},
+	{http.MethodPost, "/api/hoxi/sessions/*/abort"},
+	{http.MethodPost, "/api/hoxi/sessions/*/stop_tool"},
+	{http.MethodPost, "/api/hoxi/sessions/*/revert"},
+	{http.MethodPost, "/api/hoxi/sessions/*/unrevert"},
+	{http.MethodPost, "/api/hoxi/sessions/*/fork"},
+
+	// Event and approval planes.
+	{http.MethodGet, "/api/hoxi/event"},
+	{http.MethodGet, "/api/hoxi/permission"},
+	{http.MethodPost, "/api/hoxi/permission/*/reply"},
+
+	// Worktree review. commit is accepted only with push=false (see
+	// tunnelBodyAllowed); push, checkout, verify-*, setup-retry, prune and
+	// delete stay desktop-only.
+	{http.MethodGet, "/api/hoxi/worktree/status"},
+	{http.MethodGet, "/api/hoxi/worktree/diff"},
+	{http.MethodGet, "/api/hoxi/worktree/branches"},
+	{http.MethodGet, "/api/hoxi/worktree/verify-status"},
+	{http.MethodPost, "/api/hoxi/worktree/commit"},
+	{http.MethodPost, "/api/hoxi/worktree/apply"},
+
+	{http.MethodPost, "/api/hoxi/attachments"},
+	{http.MethodGet, "/api/hoxi/attachments/*"},
+	{http.MethodGet, "/api/hoxi/attachments/*/content"},
+	{http.MethodGet, "/api/hoxi/skills/list"},
+	{http.MethodGet, "/api/hoxi/workspaces"},
+
+	// Local file reads, confined to workspace folders and session worktrees
+	// for tunnel requests (see tunnelFilePathAllowed). The content routes
+	// also require ?path= so nothing falls through to the OpenCode proxy.
+	{http.MethodGet, "/file/content"},
+	{http.MethodGet, "/api/file/content"},
+	{http.MethodGet, "/api/hoxi/file/content"},
+	{http.MethodGet, "/api/hoxi/file/list"},
+	{http.MethodGet, "/api/hoxi/file/search"},
 }
 
-func tunnelRouteAllowed(requestPath string) bool {
+var tunnelFileContentRoutes = map[string]bool{
+	"/file/content":          true,
+	"/api/file/content":      true,
+	"/api/hoxi/file/content": true,
+}
+
+func tunnelPatternMatch(pattern, requestPath string) bool {
+	want := strings.Split(pattern, "/")
+	got := strings.Split(requestPath, "/")
+	if len(want) != len(got) {
+		return false
+	}
+	for i := range want {
+		if want[i] == "*" {
+			if got[i] == "" {
+				return false
+			}
+			continue
+		}
+		if want[i] != got[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// tunnelRouteAllowed reports whether method + path is on the remote allow-list.
+// The path must already be in path.Clean form so "..", "//" and trailing
+// slashes cannot reach a different handler than the one that was checked.
+func tunnelRouteAllowed(method, requestPath string) bool {
 	if requestPath == "" || path.Clean(requestPath) != requestPath {
 		return false
 	}
-	if tunnelExactRoutes[requestPath] {
-		return true
-	}
-	for _, prefix := range tunnelRoutePrefixes {
-		if requestPath == prefix || strings.HasPrefix(requestPath, prefix+"/") {
+	for _, route := range tunnelRoutes {
+		if route.method == method && tunnelPatternMatch(route.pattern, requestPath) {
 			return true
 		}
 	}
 	return false
+}
+
+// tunnelRequestAllowed applies the route table plus the per-route query rules.
+func tunnelRequestAllowed(r *http.Request) bool {
+	// Encoded separators ("%2F") would let the mux and the allow-list see
+	// different paths; no legitimate mobile route needs them.
+	if r.URL.RawPath != "" {
+		return false
+	}
+	if !tunnelRouteAllowed(r.Method, r.URL.Path) {
+		return false
+	}
+	if tunnelFileContentRoutes[r.URL.Path] && strings.TrimSpace(r.URL.Query().Get("path")) == "" {
+		return false
+	}
+	return true
+}
+
+const maxTunnelInspectedBody = 16 << 20
+
+// tunnelBodyAllowed rejects request bodies that would turn an allowed route
+// into a desktop-only operation. The body is restored for the real handler.
+func tunnelBodyAllowed(r *http.Request) bool {
+	if r.Method != http.MethodPost || r.URL.Path != "/api/hoxi/worktree/commit" {
+		return true
+	}
+	if r.Body == nil || r.Body == http.NoBody {
+		return true
+	}
+	raw, err := io.ReadAll(io.LimitReader(r.Body, maxTunnelInspectedBody+1))
+	_ = r.Body.Close()
+	if err != nil || len(raw) > maxTunnelInspectedBody {
+		return false
+	}
+	r.Body = io.NopCloser(bytes.NewReader(raw))
+	r.ContentLength = int64(len(raw))
+	var body struct {
+		Push bool `json:"push"`
+	}
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return true
+	}
+	if json.Unmarshal(raw, &body) != nil {
+		return false
+	}
+	return !body.Push
 }
 
 func isTunnelRequest(r *http.Request) bool {
@@ -61,18 +181,75 @@ func isTunnelRequest(r *http.Request) bool {
 
 // serveTunnelRequest is the handler the tunnel manager calls in-process. The
 // tunnel package already rewrote Host to loopback and dropped Origin, cookies
-// and credentials; this layer applies the route allowlist and lets /file reach
-// the token-guarded OpenCode passthrough.
+// and credentials; this layer applies the route allow-list. The loopback
+// gateway token is never attached to tunnel requests, so the token-guarded
+// raw OpenCode passthrough stays unreachable even if a route slipped through.
 func (g *Gateway) serveTunnelRequest(w http.ResponseWriter, r *http.Request) {
-	if !tunnelRouteAllowed(r.URL.Path) {
+	if !tunnelRequestAllowed(r) || !tunnelBodyAllowed(r) {
 		writeJSONError(w, http.StatusForbidden, "route is not available over the remote tunnel")
 		return
 	}
 	r = r.WithContext(context.WithValue(r.Context(), tunnelRequestKey{}, true))
-	if tok := g.GatewayToken(); tok != "" {
-		r.Header.Set(gatewayTokenHeader, tok)
+	r.Header.Del(gatewayTokenHeader)
+	if r.URL.Path == "/api/hoxi/file/search" && !g.tunnelSearchRootAllowed(r) {
+		writeJSONError(w, http.StatusForbidden, "path is outside the workspace")
+		return
 	}
 	g.ServeHTTP(w, r)
+}
+
+// tunnelAllowedRoots lists the directories a tunnel request may read: the
+// gateway root, every registered workspace folder and, when known, the
+// session's bound worktree. Request-supplied directories are deliberately not
+// trusted here.
+func (g *Gateway) tunnelAllowedRoots(sessionID string) []string {
+	var roots []string
+	if g.rootDir != "" {
+		roots = append(roots, g.rootDir)
+	}
+	if g.workspaces != nil {
+		for _, ws := range g.workspaces.List() {
+			for _, folder := range ws.Folders {
+				if strings.TrimSpace(folder.Path) != "" {
+					roots = append(roots, folder.Path)
+				}
+			}
+		}
+	}
+	if sessionID = strings.TrimSpace(sessionID); sessionID != "" && g.worktrees != nil {
+		if binding, known, err := g.worktrees.BindingForSession(sessionID); err == nil && known && binding.Directory != "" {
+			roots = append(roots, binding.Directory)
+		}
+	}
+	return roots
+}
+
+// tunnelFilePathAllowed reports whether target lies inside a workspace folder
+// or session worktree. Symlinks are resolved by isPathWithinDir.
+func (g *Gateway) tunnelFilePathAllowed(target, sessionID string) bool {
+	if strings.TrimSpace(target) == "" {
+		return false
+	}
+	for _, root := range g.tunnelAllowedRoots(sessionID) {
+		if isPathWithinDir(root, target) {
+			return true
+		}
+	}
+	return false
+}
+
+// tunnelSearchRootAllowed mirrors handleFileSearch's base directory choice.
+func (g *Gateway) tunnelSearchRootAllowed(r *http.Request) bool {
+	q := r.URL.Query()
+	sessionID := strings.TrimSpace(q.Get("sessionID"))
+	baseDir := g.rootDir
+	if dirs := g.candidateBaseDirs(strings.TrimSpace(q.Get("directory")), sessionID); len(dirs) > 0 {
+		baseDir = dirs[0]
+	}
+	if strings.TrimSpace(baseDir) == "" {
+		return true // handler returns an empty result without touching disk
+	}
+	return g.tunnelFilePathAllowed(baseDir, sessionID)
 }
 
 // StartRemoteTunnel enables GoPanel pairing with the credential at configPath

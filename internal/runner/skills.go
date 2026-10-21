@@ -17,15 +17,22 @@ type SkillSelection struct {
 	Name string `json:"name"`
 }
 
+// ResolvedSkill carries the verified selection plus its SKILL.md body for
+// runtimes that cannot invoke a native skill tool.
+type ResolvedSkill struct {
+	Name    string
+	Content string
+}
+
 type userSkillOverride struct {
 	originalText string
 	selection    SkillSelection
 }
 
-func (s *Service) SetSkillValidator(fn func(ctx context.Context, directory, sessionID string, sel SkillSelection) error) {
+func (s *Service) SetSkillResolver(fn func(ctx context.Context, directory, sessionID string, sel SkillSelection) (ResolvedSkill, error)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.skillValidator = fn
+	s.skillResolver = fn
 }
 
 // ResolveSessionContext returns the canonical runtime, working directory, and project root
@@ -89,28 +96,33 @@ func (s *Service) ResolveSessionContext(ctx context.Context, sessionID, director
 	return "", "", "", false, nil
 }
 
-func (s *Service) validateSkillSelection(ctx context.Context, directory, sessionID string, sel SkillSelection) error {
+func (s *Service) resolveSkillSelection(ctx context.Context, directory, sessionID, runtime string, sel SkillSelection) (ResolvedSkill, error) {
 	key := strings.TrimSpace(sel.Key)
 	name := strings.TrimSpace(sel.Name)
 	if key == "" || name == "" || !strings.HasPrefix(key, "skl_") {
-		return errors.New("invalid skillSelection: key and name are required")
+		return ResolvedSkill{}, errors.New("invalid skillSelection: key and name are required")
 	}
 	s.mu.Lock()
-	validator := s.skillValidator
+	resolver := s.skillResolver
 	s.mu.Unlock()
-	if validator != nil {
-		return validator(ctx, directory, sessionID, SkillSelection{Key: key, Name: name})
+	clean := SkillSelection{Key: key, Name: name}
+	if resolver != nil {
+		return resolver(ctx, directory, sessionID, clean)
 	}
-	return s.verifyOpenCodeSkillFallback(ctx, directory, SkillSelection{Key: key, Name: name})
+	return s.resolveSkillFallback(ctx, directory, runtime, clean)
 }
 
-func (s *Service) verifyOpenCodeSkillFallback(ctx context.Context, directory string, sel SkillSelection) error {
+func (s *Service) resolveSkillFallback(ctx context.Context, directory, runtime string, sel SkillSelection) (ResolvedSkill, error) {
 	var items []struct {
 		Name     string `json:"name"`
 		Location string `json:"location"`
+		Content  string `json:"content"`
 	}
 	if err := s.openCodeJSON(ctx, http.MethodGet, "/skill", directory, nil, &items); err != nil {
-		return fmt.Errorf("failed to verify skill in OpenCode: %w", err)
+		return ResolvedSkill{}, fmt.Errorf("failed to verify skill in OpenCode: %w", err)
+	}
+	if runtime == "" {
+		runtime = "opencode"
 	}
 	cleanDir := canonicalizeRunnerPath(directory)
 	foundName := false
@@ -129,16 +141,16 @@ func (s *Service) verifyOpenCodeSkillFallback(ctx context.Context, directory str
 				loc = resolved
 			}
 		}
-		sum := sha256.Sum256([]byte("opencode\x00" + cleanDir + "\x00" + sel.Name + "\x00" + loc))
+		sum := sha256.Sum256([]byte(runtime + "\x00" + cleanDir + "\x00" + sel.Name + "\x00" + loc))
 		expectedKey := "skl_" + hex.EncodeToString(sum[:10])
 		if expectedKey == sel.Key {
-			return nil
+			return ResolvedSkill{Name: sel.Name, Content: item.Content}, nil
 		}
 	}
 	if foundName {
-		return fmt.Errorf("skill %q source changed in the active directory; please re-select the skill", sel.Name)
+		return ResolvedSkill{}, fmt.Errorf("skill %q source changed in the active directory; please re-select the skill", sel.Name)
 	}
-	return fmt.Errorf("skill %q is not available in the active directory", sel.Name)
+	return ResolvedSkill{}, fmt.Errorf("skill %q is not available in the active directory", sel.Name)
 }
 
 func canonicalizeRunnerPath(p string) string {
@@ -159,6 +171,21 @@ func canonicalizeRunnerPath(p string) string {
 		return filepath.Clean(trimmed)
 	}
 	return filepath.Clean(trimmed)
+}
+
+// formatInlineSkillPrompt embeds the SKILL.md body directly for CLI runtimes
+// that do not expose a native `skill` tool.
+func formatInlineSkillPrompt(skillName, content, userText string) string {
+	name := strings.TrimSpace(skillName)
+	body := strings.TrimSpace(content)
+	header := fmt.Sprintf("Follow the %q skill instructions below for this request.", name)
+	if body != "" {
+		header += fmt.Sprintf("\n\n<skill_content name=%q>\n%s\n</skill_content>", name, body)
+	}
+	if trimmed := strings.TrimSpace(userText); trimmed != "" {
+		return header + "\n\n" + trimmed
+	}
+	return header
 }
 
 func formatSkillPromptInstruction(skillName, userText string) string {
@@ -195,6 +222,8 @@ func applySkillSelectionToTurnParts(
 	seq int64,
 	userText string,
 	sel *SkillSelection,
+	inline bool,
+	content string,
 	storedParts []MessagePart,
 	deliveryParts []MessagePart,
 ) ([]MessagePart, []MessagePart) {
@@ -204,6 +233,15 @@ func applySkillSelectionToTurnParts(
 	skillMeta := map[string]interface{}{
 		"key":  strings.TrimSpace(sel.Key),
 		"name": strings.TrimSpace(sel.Name),
+	}
+	if inline {
+		skillMeta["mode"] = "inline"
+	}
+	formatDelivery := func(text string) string {
+		if inline {
+			return formatInlineSkillPrompt(sel.Name, content, text)
+		}
+		return formatSkillPromptInstruction(sel.Name, text)
 	}
 
 	// Ensure storedParts has a text part carrying the user's original text and hoxiSkill metadata.
@@ -232,12 +270,12 @@ func applySkillSelectionToTurnParts(
 		storedParts = append([]MessagePart{textPart}, storedParts...)
 	}
 
-	// Ensure deliveryParts has a text part formatted with the explicit native skill request.
+	// Ensure deliveryParts carries the skill instruction (native tool or inline body).
 	hasDeliveryText := false
 	for i := range deliveryParts {
 		if deliveryParts[i].Type == "text" {
 			hasDeliveryText = true
-			deliveryParts[i].Text = formatSkillPromptInstruction(sel.Name, deliveryParts[i].Text)
+			deliveryParts[i].Text = formatDelivery(deliveryParts[i].Text)
 			break
 		}
 	}
@@ -247,7 +285,7 @@ func applySkillSelectionToTurnParts(
 			SessionID: sessionID,
 			MessageID: userMsgID,
 			Type:      "text",
-			Text:      formatSkillPromptInstruction(sel.Name, userText),
+			Text:      formatDelivery(userText),
 		}
 		deliveryParts = append([]MessagePart{deliveryPart}, deliveryParts...)
 	}

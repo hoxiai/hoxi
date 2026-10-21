@@ -78,13 +78,17 @@ export function isInvalidProjectPath(p?: string | null): boolean {
   return false;
 }
 
+/** Saved workspaces the user can see: excludes auto-registered hidden projects and dismissed ones. */
+export function visibleSavedWorkspaces(): WorkspaceProfile[] {
+  return workspace.savedWorkspaces.filter((saved) => !saved.hidden && !isDismissedProjectPath(saved.id));
+}
+
 export function resolveDefaultProjectDir(preferredRoot?: string | null): string {
   const pref = normalizeFolderPath(preferredRoot);
   if (pref && !isInvalidProjectPath(pref) && !isDismissedProjectPath(pref)) {
     return pref;
   }
-  for (const saved of workspace.savedWorkspaces) {
-    if (saved.hidden || isDismissedProjectPath(saved.id)) continue;
+  for (const saved of visibleSavedWorkspaces()) {
     const primary = normalizeFolderPath(workspacePrimaryFolder(saved));
     if (primary && !isInvalidProjectPath(primary) && !isDismissedProjectPath(primary)) {
       return primary;

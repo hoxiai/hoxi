@@ -1,6 +1,5 @@
 import { createSignal, onCleanup, onMount } from "solid-js";
 import ThreePaneShell from "./components/layout/ThreePaneShell";
-import NetworkStatusBanner from "./components/layout/NetworkStatusBanner";
 import { hoxiAPI } from "./services/api";
 import { connectEventStream } from "./services/sse";
 import { watchNetworkStatus } from "./services/network";
@@ -348,10 +347,14 @@ export default function App() {
     })();
   });
 
-  return <><ThreePaneShell /><NetworkStatusBanner
-    online={online}
-    connected={() => workspace.connected}
-    streamStarted={eventStreamStarted}
-    onRetry={() => retryEventStream?.()}
-  /></>;
+  return (
+    <ThreePaneShell
+      network={{
+        online,
+        connected: () => workspace.connected,
+        streamStarted: eventStreamStarted,
+        onRetry: () => retryEventStream?.(),
+      }}
+    />
+  );
 }

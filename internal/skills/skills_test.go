@@ -169,18 +169,32 @@ func TestSkillsListAndDetailContract(t *testing.T) {
 		t.Fatalf("expected VerifySelection to reject workspace A key in workspace B")
 	}
 
-	// 5. Non-opencode session returns Supported=false without falling back to OpenCode catalog
+	// 5. Non-opencode sessions share the same catalog and can resolve inline content
 	claudeReq := httptest.NewRequest(http.MethodGet, "/api/hoxi/skills/list?directory="+workspaceA+"&sessionID=ses_claude", nil)
 	claudeRec := httptest.NewRecorder()
 	mux.ServeHTTP(claudeRec, claudeReq)
 	if claudeRec.Code != http.StatusOK {
-		t.Fatalf("expected 200 for unsupported runtime list, got %d", claudeRec.Code)
+		t.Fatalf("expected 200 for claude-code list, got %d", claudeRec.Code)
 	}
 	var claudeList ListResponse
 	if err := json.Unmarshal(claudeRec.Body.Bytes(), &claudeList); err != nil {
 		t.Fatal(err)
 	}
-	if claudeList.Supported || claudeList.Runtime != "claude-code" || len(claudeList.Skills) != 0 {
-		t.Fatalf("expected unsupported empty list for claude-code, got %+v", claudeList)
+	if !claudeList.Supported || claudeList.Runtime != "claude-code" || len(claudeList.Skills) != 2 {
+		t.Fatalf("expected claude-code to receive the catalog, got %+v", claudeList)
+	}
+	claudeSkill := claudeList.Skills[1]
+	if claudeSkill.Runtime != "claude-code" {
+		t.Fatalf("expected descriptor runtime claude-code, got %+v", claudeSkill)
+	}
+	detail, err := svc.ResolveSelection(context.Background(), workspaceA, "ses_claude", SkillSelection{
+		Key:  claudeSkill.Key,
+		Name: "review-changes",
+	})
+	if err != nil {
+		t.Fatalf("expected claude-code selection to resolve, got %v", err)
+	}
+	if detail.Content != "# Body A" {
+		t.Fatalf("expected inline skill content, got %q", detail.Content)
 	}
 }

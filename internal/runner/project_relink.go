@@ -24,50 +24,96 @@ func (s *Service) RelinkProject(projectID, oldRoot, newRoot string) error {
 
 	var errs []error
 	for _, info := range s.store.ListProject(projectID, oldRoot) {
-		rec, ok := s.store.Get(info.ID)
-		if !ok || normalizeComparePath(rec.ProjectDir) != normalizeComparePath(oldRoot) {
-			continue
-		}
-		if err := s.relinkSession(rec, newRoot); err != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", rec.ID, err))
+		if err := s.relinkSession(info.ID, oldRoot, newRoot); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", info.ID, err))
 		}
 	}
 	return errors.Join(errs...)
 }
 
-func (s *Service) relinkSession(rec SessionRecord, newRoot string) error {
+// relinkSession moves one conversation under its turn lock. A running session
+// is skipped with an error rather than having its directory pulled out from
+// under the process. The previous worktree binding is restored if anything
+// after ForgetSession fails, so the session never ends up unbound.
+func (s *Service) relinkSession(sessionID, oldRoot, newRoot string) error {
+	unlock := s.turnMu.lock(sessionID)
+	defer unlock()
+	s.mu.Lock()
+	busy := s.procs[sessionID] != nil
+	s.mu.Unlock()
+	if busy {
+		return errors.New("session is running; it was not relinked")
+	}
+	rec, ok := s.store.Get(sessionID)
+	if !ok || normalizeComparePath(rec.ProjectDir) != normalizeComparePath(oldRoot) {
+		return nil
+	}
+
 	manager := s.worktrees.ForDirectory(newRoot)
+	mode := rec.sandboxMode()
 	newWorktree := newRoot
 	branch, baseCommit := "", ""
-	if rec.sandboxMode() == "worktree" {
+	if mode == "worktree" {
 		newWorktree = relocatedWorktreePath(rec, newRoot)
-		if _, err := os.Stat(newWorktree); err != nil {
+		if _, err := os.Stat(newWorktree); err == nil {
+			branch, baseCommit = rec.Branch, rec.BaseCommit
+		} else {
 			meta, createErr := manager.CreateOnBranch(rec.ID, rec.RetainedBranch)
 			if createErr != nil {
 				return fmt.Errorf("relocated worktree missing and could not be recreated: %w", createErr)
 			}
-			newWorktree = meta.Directory
-			branch, baseCommit = meta.Branch, meta.BaseCommit
+			if meta.Isolated {
+				newWorktree, branch, baseCommit = meta.Directory, meta.Branch, meta.BaseCommit
+			} else {
+				// The new root is not a Git repository: an isolated
+				// worktree is impossible, so the session runs locally
+				// instead of pretending apply/discard are isolated.
+				mode, newWorktree = "local", newRoot
+			}
+		}
+	}
+
+	oldBinding, oldKnown, _ := s.worktrees.BindingForSession(rec.ID)
+	restoreOld := func() {
+		s.worktrees.ForgetSession(rec.ID)
+		if !oldKnown {
+			return
+		}
+		if info, err := os.Stat(rec.ProjectDir); err != nil || !info.IsDir() {
+			return
+		}
+		oldManager := s.worktrees.ForDirectory(rec.ProjectDir)
+		if oldBinding.Isolated {
+			_ = oldManager.RestoreSession(rec.ID, oldBinding.Directory, rec.Branch, rec.BaseCommit)
 		} else {
-			branch, baseCommit = rec.Branch, rec.BaseCommit
+			_ = oldManager.UseLocalDirectory(rec.ID)
 		}
 	}
 
 	s.worktrees.ForgetSession(rec.ID)
-	if rec.sandboxMode() == "worktree" {
-		if err := manager.RestoreSession(rec.ID, newWorktree, branch, baseCommit); err != nil {
-			return err
-		}
+	var bindErr error
+	if mode == "worktree" {
+		bindErr = manager.RestoreSession(rec.ID, newWorktree, branch, baseCommit)
+	} else {
+		bindErr = manager.UseLocalDirectory(rec.ID)
+	}
+	if bindErr != nil {
+		restoreOld()
+		return bindErr
+	}
+	if mode == "worktree" {
 		manager.RepairWorktrees(newRoot, []string{newWorktree})
-	} else if err := manager.UseLocalDirectory(rec.ID); err != nil {
-		return err
 	}
 
-	if rec.sandboxMode() != "worktree" {
-		branch, baseCommit = "", ""
+	sandboxMode := ""
+	if mode != rec.sandboxMode() {
+		sandboxMode = mode
 	}
-	_, _, err := s.store.RelinkSession(rec.ID, newRoot, newWorktree, branch, baseCommit)
-	return err
+	if _, _, err := s.store.RelinkSession(rec.ID, newRoot, newWorktree, branch, baseCommit, sandboxMode); err != nil {
+		restoreOld()
+		return err
+	}
+	return nil
 }
 
 func relocatedWorktreePath(rec SessionRecord, newRoot string) string {

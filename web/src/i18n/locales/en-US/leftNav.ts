@@ -27,7 +27,6 @@ export const leftNav = {
   collapseSessions: "Collapse",
   confirmDelete: "Delete",
   cancelDelete: "Cancel",
-  renameSessionTooltip: "Rename session (or double-click title)",
   exportSessionTooltip: "Export session to Markdown",
   renamePlaceholder: "Session title…",
   accountAndProviders: "Account & Providers",

@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, lazy, onCleanup, onMount, Show, Suspense, untrack } from "solid-js";
+import { createEffect, createMemo, createSignal, lazy, onCleanup, onMount, Show, Suspense, untrack, type Accessor } from "solid-js";
 import CompactHeader from "./CompactHeader";
 import CommandPalette, { type CommandPaletteMode } from "./CommandPalette";
 import UpdateBadge from "./UpdateBadge";
@@ -10,14 +10,14 @@ import InspectorPane from "../inspector/InspectorPane";
 import {
   appSettings,
   closeSettingsModal,
-  consumeDesktopIntent,
-  DESKTOP_INTENT_EVENT,
   leaderboardState,
   LEFT_PANE_MAX,
   LEFT_PANE_MIN,
   leftNavOpen,
   leftWidth,
+  openSessionDeepLink,
   openSettingsModal,
+  parseSessionHashLink,
   RIGHT_PANE_MAX,
   RIGHT_PANE_MIN,
   rightWidth,
@@ -27,6 +27,7 @@ import {
   setLeftWidth,
   setRightWidth,
   setWorkspace,
+  startDeepLinkNavigation,
   workspace,
 } from "../../store/workspace";
 
@@ -38,7 +39,16 @@ const SettingsModal = lazy(() => import("../settings/SettingsModal"));
 const PANE_GUTTERS = 20;
 const CENTER_PANE_MIN = 560;
 
-export default function ThreePaneShell() {
+interface ThreePaneShellProps {
+  network?: {
+    online: Accessor<boolean>;
+    connected: Accessor<boolean>;
+    streamStarted: Accessor<boolean>;
+    onRetry: () => void;
+  };
+}
+
+export default function ThreePaneShell(props: ThreePaneShellProps = {}) {
   const [windowWidth, setWindowWidth] = createSignal(window.innerWidth);
   const [resizingSide, setResizingSide] = createSignal<"left" | "right" | null>(null);
   const [inspectorEverOpened, setInspectorEverOpened] = createSignal(workspace.inspectorOpen);
@@ -90,27 +100,6 @@ export default function ThreePaneShell() {
   let activeResizeCleanup: (() => void) | null = null;
   onCleanup(() => activeResizeCleanup?.());
 
-  const [pendingDeepLink, setPendingDeepLink] = createSignal<{ sessionID: string; messageID?: string } | null>(null);
-
-  const focusSessionLink = (sessionID: string, messageID?: string) => {
-    void selectSession(sessionID).then(() => {
-      if (!messageID) return;
-      setTimeout(() => {
-        window.dispatchEvent(new CustomEvent("hoxi:focus-message", { detail: { messageID } }));
-      }, 350);
-    });
-  };
-
-  // Deep links may arrive before session bootstrap finishes; wait until the
-  // target session is known so the initial project restore cannot steal focus.
-  createEffect(() => {
-    const link = pendingDeepLink();
-    if (!link || workspace.bootstrappingSessions) return;
-    if (!workspace.sessions.some((session) => session.id === link.sessionID)) return;
-    setPendingDeepLink(null);
-    focusSessionLink(link.sessionID, link.messageID);
-  });
-
   onMount(() => {
     const onKeyDown = (ev: KeyboardEvent) => {
       if ((ev.metaKey || ev.ctrlKey) && ev.key.toLowerCase() === "k" && !ev.shiftKey && !ev.altKey) {
@@ -154,26 +143,11 @@ export default function ThreePaneShell() {
       if (sessionID) void selectSession(sessionID);
     };
     const onWindowResize = () => setWindowWidth(window.innerWidth);
-    const focusFromLocationHash = () => {
-      const raw = window.location.hash.replace(/^#/, "");
-      if (!raw) return;
-      const params = new URLSearchParams(raw);
-      const sessionID = params.get("session");
-      if (!sessionID) return;
-      setPendingDeepLink({ sessionID, messageID: params.get("message") ?? undefined });
-    };
-    const wailsRuntime = (window as any).runtime;
-    const consumeIntent = () => {
-      void consumeDesktopIntent().then((intent) => {
-        if (intent) setPendingDeepLink(intent);
-      });
-    };
-    const onDesktopIntent = () => consumeIntent();
-    if (typeof wailsRuntime?.EventsOn === "function") {
-      wailsRuntime.EventsOn(DESKTOP_INTENT_EVENT, onDesktopIntent);
-    }
+    // Deep-link navigation (pending lifecycle, workspace switching, desktop
+    // intents) lives in the store; the shell only feeds it hash changes.
+    const focusFromLocationHash = () => openSessionDeepLink(parseSessionHashLink(window.location.hash));
+    const stopDeepLinks = startDeepLinkNavigation();
     focusFromLocationHash();
-    consumeIntent();
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("hashchange", focusFromLocationHash);
     window.addEventListener("hoxi:notification-click", onNotificationClick);
@@ -183,7 +157,7 @@ export default function ThreePaneShell() {
       window.removeEventListener("hashchange", focusFromLocationHash);
       window.removeEventListener("hoxi:notification-click", onNotificationClick);
       window.removeEventListener("resize", onWindowResize);
-      wailsRuntime?.EventsOff?.(DESKTOP_INTENT_EVENT);
+      stopDeepLinks();
     });
   });
 
@@ -236,6 +210,7 @@ export default function ThreePaneShell() {
   return (
     <div class="h-screen w-screen flex flex-col bg-[var(--bg-canvas)] text-[var(--text-primary)] overflow-hidden">
       <CompactHeader
+        network={props.network}
         leftNavOpen={leftNavOpen()}
         onToggleLeftNav={() => setLeftNavOpen((open) => !open)}
         inspectorOpen={workspace.inspectorOpen}
