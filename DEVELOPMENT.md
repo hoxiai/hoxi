@@ -294,6 +294,18 @@ export type OpenCodeEvent =
       };
     }
   | {
+      // 全局执行状态快照（仅 Hoxi 自有，非 OpenCode 原生）：连接建立时与每次
+      // SSE tick 推送一次，覆盖所有项目的托管会话。`scope: "managed"` 表示
+      // 该集合来自 runner 进程表，未被列出的托管会话即为 idle；客户端因此不必
+      // 按项目轮询，切换项目也不会把其它项目正在运行的会话误判为空闲。
+      type: "hoxi.status.snapshot";
+      properties: {
+        scope: "managed";
+        busy: string[];
+        stalled?: Record<string, number>; // sessionID -> 停滞开始时间（unix ms）
+      };
+    }
+  | {
       type: "session.error";
       properties: {
         sessionID?: string;

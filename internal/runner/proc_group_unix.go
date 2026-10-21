@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net/url"
 	"os"
 	"os/exec"
 	"strconv"
@@ -245,14 +246,60 @@ func subtreeMatchesNeedles(pids []int, byPID map[int]procSnapshot, needles []str
 	return false
 }
 
+// toolStopScope describes which process tree a per-tool stop may touch.
+type toolStopScope struct {
+	// stepIntoRuntime unwraps a single wrapper child (sandbox-exec, sh) that
+	// directly runs the agent CLI. Per-session CLI trees need it; the shared
+	// OpenCode daemon must never be unwrapped.
+	stepIntoRuntime bool
+	// requireUnique refuses to kill when more than one subtree matches, so a
+	// shared daemon cannot lose another session's identical command.
+	requireUnique bool
+}
+
 // stopChildToolProcesses terminates the child tool command process trees under
 // the session's own CLI process (cliPID) whose command line matches command,
 // without signalling the CLI itself, so the turn receives the interrupted tool
-// result and continues. It never looks outside cliPID's tree (the shared
-// `opencode serve` daemon serves every OpenCode session, its terminals and MCP
-// servers) and kills nothing when no candidate matches command.
+// result and continues. It never looks outside cliPID's tree and kills nothing
+// when no candidate matches command.
 func stopChildToolProcesses(cliPID int, command string) int {
-	if cliPID <= 1 {
+	return stopToolProcessesUnder(cliPID, command, toolStopScope{stepIntoRuntime: true})
+}
+
+// stopOpenCodeToolProcess terminates one tool command owned by the shared
+// `opencode serve` daemon. Every OpenCode session, terminal and MCP server is
+// a child of that daemon, so the match must be unique: zero or several
+// matches kill nothing rather than guessing.
+func stopOpenCodeToolProcess(daemonPID int, command string) int {
+	return stopToolProcessesUnder(daemonPID, command, toolStopScope{requireUnique: true})
+}
+
+// openCodeDaemonPID resolves the pid of the `opencode serve` process that owns
+// the engine port in baseURL, so a per-tool stop can look inside its children.
+func openCodeDaemonPID(baseURL string) int {
+	u, err := url.Parse(strings.TrimSpace(baseURL))
+	if err != nil {
+		return 0
+	}
+	port := strings.TrimSpace(u.Port())
+	if port == "" {
+		return 0
+	}
+	byPID, _ := readProcessSnapshots()
+	for pid, snap := range byPID {
+		args := snap.args
+		if !strings.Contains(args, "opencode") || !strings.Contains(args, "serve") {
+			continue
+		}
+		if strings.Contains(args, "--port "+port) || strings.Contains(args, "--port="+port) {
+			return pid
+		}
+	}
+	return 0
+}
+
+func stopToolProcessesUnder(rootPID int, command string, scope toolStopScope) int {
+	if rootPID <= 1 {
 		return 0
 	}
 	needles := commandMatchNeedles(command)
@@ -273,22 +320,24 @@ func stopChildToolProcesses(cliPID int, command string) int {
 		protected[selfPGID] = true
 	}
 
-	if _, ok := byPID[cliPID]; !ok {
+	if _, ok := byPID[rootPID]; !ok {
 		return 0
 	}
 	var candidateRoots []int
-	protected[cliPID] = true
-	if p := byPID[cliPID]; p.pgid > 1 {
+	protected[rootPID] = true
+	if p := byPID[rootPID]; p.pgid > 1 {
 		protected[p.pgid] = true
 	}
-	parentPID := cliPID
-	// If cliPID is a wrapper (e.g. sandbox-exec or sh wrapper) whose single
+	parentPID := rootPID
+	// If rootPID is a wrapper (e.g. sandbox-exec or sh wrapper) whose single
 	// child is the agent runtime binary itself, step into that binary.
-	if direct := children[parentPID]; len(direct) == 1 {
-		only := direct[0]
-		if isAgentRuntimeProcessArgs(byPID[only].args) && len(children[only]) > 0 {
-			protected[only] = true
-			parentPID = only
+	if scope.stepIntoRuntime {
+		if direct := children[parentPID]; len(direct) == 1 {
+			only := direct[0]
+			if isAgentRuntimeProcessArgs(byPID[only].args) && len(children[only]) > 0 {
+				protected[only] = true
+				parentPID = only
+			}
 		}
 	}
 	for _, c := range children[parentPID] {
@@ -307,6 +356,9 @@ func stopChildToolProcesses(cliPID int, command string) int {
 		}
 	}
 	if len(selectedRoots) == 0 {
+		return 0
+	}
+	if scope.requireUnique && len(selectedRoots) > 1 {
 		return 0
 	}
 

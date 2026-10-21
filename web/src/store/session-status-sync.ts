@@ -56,7 +56,10 @@ function finishIdleSessions(sessionIDs: string[]): void {
  * snapshot omits are idle; this is safe across projects because the runner
  * tracks every Hoxi-managed session in one process table.
  */
-export function applyManagedStatusSnapshot(busySessionIDs: string[]): void {
+export function applyManagedStatusSnapshot(
+  busySessionIDs: string[],
+  stalledBySession: Record<string, number> = {}
+): void {
   managedSnapshotSeen = true;
   const busy = new Set(busySessionIDs.filter((id) => typeof id === "string" && id));
   const now = Date.now();
@@ -65,6 +68,12 @@ export function applyManagedStatusSnapshot(busySessionIDs: string[]): void {
   setWorkspace(
     produce((state) => {
       for (const sid of busy) {
+        const prevIdx = state.sessionIndex[sid];
+        if (!prevIdx) {
+          state.sessionIndex[sid] = { managed: true, updated: 0 };
+        } else if (!prevIdx.managed) {
+          prevIdx.managed = true;
+        }
         if (state.statusBySession[sid]?.type === "busy" || state.statusBySession[sid]?.type === "retry") {
           continue;
         }
@@ -74,7 +83,11 @@ export function applyManagedStatusSnapshot(busySessionIDs: string[]): void {
       }
       for (const [sid, current] of Object.entries(state.statusBySession)) {
         if (current?.type !== "busy" && current?.type !== "retry") continue;
-        if (busy.has(sid)) continue;
+        if (busy.has(sid)) {
+          const since = stalledBySession[sid];
+          if (since) state.stalledSinceBySession[sid] = since;
+          continue;
+        }
         if (!isManagedSession(sid)) continue;
         // A prompt dispatched moments ago may not have reached the process
         // table yet; do not race the snapshot against it.

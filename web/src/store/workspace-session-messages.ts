@@ -192,9 +192,9 @@ export async function stopSessionTask(sessionID?: string | null): Promise<void> 
 export async function stopSessionToolCommand(
   sessionID: string,
   input: { callID?: string; partID?: string; command?: string }
-): Promise<void> {
+): Promise<boolean> {
   const id = (sessionID || workspace.activeSessionID || "").trim();
-  if (!id) return;
+  if (!id) return false;
   const matchesTarget = (p: { id?: string; callID?: string }) =>
     Boolean(
       (input.partID && p.id === input.partID) || (input.callID && p.callID === input.callID)
@@ -226,11 +226,14 @@ export async function stopSessionToolCommand(
   const previous = setStoppedFlag(true);
   try {
     await hoxiAPI.stopToolCommand(id, input, sessionDirectory(id));
+    return true;
   } catch (err) {
-    // Nothing was stopped (session not run by the runner, or no matching
-    // process): roll back the optimistic flag.
+    // Nothing was stopped (no matching process, or several candidates so the
+    // backend refused to guess): roll back the optimistic flag and let the
+    // caller surface why instead of failing silently.
     setStoppedFlag(previous);
     console.warn("stop tool command warning:", err);
+    return false;
   }
 }
 

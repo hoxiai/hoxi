@@ -97,16 +97,20 @@ func (s *Service) handleUnifiedSSE(w http.ResponseWriter, r *http.Request) {
 // statusSnapshotFrame reports the runner's own process table only: these are
 // the sessions Hoxi executes and tracks regardless of the active project. It is
 // a pure in-memory read, so the periodic refresh stays cheap. Stall flags ride
-// on the existing `session.stall` events and are never cleared by a project switch.
+// along so a reconnect restores Attention for stalled sessions in every project.
 func (s *Service) statusSnapshotFrame() string {
 	busy := s.busySessionIDs()
 	sort.Strings(busy)
-	raw, err := json.Marshal(busy)
+	busyRaw, err := json.Marshal(busy)
 	if err != nil {
 		return ""
 	}
-	return fmt.Sprintf("data: {\"type\":%q,\"properties\":{\"scope\":%q,\"busy\":%s}}\n\n",
-		statusSnapshotEventType, statusSnapshotScope, raw)
+	stalledRaw, err := json.Marshal(s.stalledSessions())
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf("data: {\"type\":%q,\"properties\":{\"scope\":%q,\"busy\":%s,\"stalled\":%s}}\n\n",
+		statusSnapshotEventType, statusSnapshotScope, busyRaw, stalledRaw)
 }
 
 func (s *Service) serveSSE(w http.ResponseWriter, r *http.Request, sessionID string) {

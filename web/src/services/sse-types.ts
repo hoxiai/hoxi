@@ -364,5 +364,7 @@ export type OpenCodeEvent =
       properties: {
         scope: "managed";
         busy: string[];
+        // sessionID -> unix ms when the turn was flagged as stalled.
+        stalled?: Record<string, number>;
       };
     };

@@ -140,6 +140,24 @@ describe("permission command chains", () => {
       { permission: "patch", patterns: [".claude/settings.json"] },
       { permission: "edit", patterns: [".vscode/settings.json"] },
       { permission: "edit", patterns: [".envrc"] },
+      {
+        permission: "tool",
+        patterns: ["Write"],
+        metadata: {
+          source: "claude-code",
+          args: '{"file_path":"/repo/.claude/settings.json"}',
+          destructive: true,
+        },
+      },
+      {
+        permission: "tool",
+        patterns: ["Read"],
+        metadata: {
+          source: "claude-code",
+          args: '{"file_path":"/etc/passwd"}',
+          externalDirectory: true,
+        },
+      },
     ]) {
       assertEqual(isDestructivePermissionRequest(req), true);
       for (const mode of ["auto", "smart", "manual"] as const) {

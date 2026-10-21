@@ -144,7 +144,8 @@ func (s *Service) decideClaudeHookCall(r *http.Request, cred hookCredential, p c
 	if strings.EqualFold(p.PermissionMode, "plan") {
 		return "", ""
 	}
-	if p.ToolName == "Bash" {
+	lowerTool := strings.ToLower(strings.TrimSpace(p.ToolName))
+	if lowerTool == "bash" {
 		approved, reason := s.gateCommand(r, cred, rec, approvalAsk{
 			command:     p.ToolInput.Command,
 			cwd:         p.Cwd,
@@ -163,7 +164,6 @@ func (s *Service) decideClaudeHookCall(r *http.Request, cred hookCredential, p c
 		_ = json.Unmarshal(p.rawInput, &argsMap)
 	}
 	baseDir := firstNonEmptyStr(strings.TrimSpace(p.Cwd), rec.WorktreePath)
-	lowerTool := strings.ToLower(strings.TrimSpace(p.ToolName))
 
 	switch {
 	case lowerTool == "edit" || lowerTool == "multiedit" || lowerTool == "write" || lowerTool == "notebookedit":
@@ -191,7 +191,7 @@ func (s *Service) decideClaudeHookCall(r *http.Request, cred hookCredential, p c
 	case lowerTool == "glob" || lowerTool == "grep" || lowerTool == "ls":
 		path := resolveHookToolPath(baseDir, argsMap)
 		cwdOK := strings.TrimSpace(p.Cwd) == "" || pathWithin(rec.WorktreePath, p.Cwd)
-		if cwdOK && (path == "" || pathWithin(rec.WorktreePath, path)) {
+		if cwdOK && !hasEscapingSearchPattern(argsMap) && (path == "" || pathWithin(rec.WorktreePath, path)) {
 			return "", ""
 		}
 		if approved, reason := s.gateToolCall(r, cred, p.ToolName, argsMap, p.ToolUseID); approved {
@@ -200,16 +200,35 @@ func (s *Service) decideClaudeHookCall(r *http.Request, cred hookCredential, p c
 			return "deny", reason
 		}
 
-	case lowerTool == "webfetch" || lowerTool == "websearch" || lowerTool == "remotetrigger" ||
-		lowerTool == "mcp" || strings.HasPrefix(lowerTool, "mcp__"):
-		if approved, reason := s.gateToolCall(r, cred, p.ToolName, argsMap, p.ToolUseID); approved {
-			return "allow", ""
-		} else {
-			return "deny", reason
-		}
+	case isClaudePassthroughTool(lowerTool):
+		return "", ""
 	}
 
-	return "", ""
+	// Unknown and external/network/MCP tools must ask the user (Guardrail §1).
+	if approved, reason := s.gateToolCall(r, cred, p.ToolName, argsMap, p.ToolUseID); approved {
+		return "allow", ""
+	} else {
+		return "deny", reason
+	}
+}
+
+var claudePassthroughTools = map[string]bool{
+	"todowrite":       true,
+	"todoread":        true,
+	"task":            true,
+	"agent":           true,
+	"exitplanmode":    true,
+	"enterplanmode":   true,
+	"askuserquestion": true,
+	"skill":           true,
+	"slashcommand":    true,
+	"toolsearch":      true,
+	"taskoutput":      true,
+	"taskstop":        true,
+}
+
+func isClaudePassthroughTool(lowerTool string) bool {
+	return claudePassthroughTools[lowerTool]
 }
 
 func writeClaudeHookDecision(w http.ResponseWriter, decision, reason string) {

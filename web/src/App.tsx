@@ -68,15 +68,20 @@ export default function App() {
     const watchdogTimer = setInterval(() => {
       trimSessionTranscripts();
       // Managed sessions converge through the stream's global status snapshot,
-      // so polling is only needed for unadopted OpenCode sessions and approvals.
+      // so status polling is only needed for unadopted OpenCode sessions.
       const hasUnmanagedBusy = Object.entries(workspace.statusBySession).some(
         ([sid, s]) =>
           (s?.type === "busy" || s?.type === "retry") && !isManagedSession(sid)
       );
+      const hasBusySession = Object.values(workspace.statusBySession).some(
+        (s) => s?.type === "busy" || s?.type === "retry"
+      );
       if (hasUnmanagedBusy) {
         void syncSessionStatuses();
       }
-      if (hasUnmanagedBusy || workspace.pendingPermissions.length > 0) {
+      // Approvals still need the REST fallback: an approval raised before the
+      // stream connected (or while the user was elsewhere) is only visible there.
+      if (hasBusySession || workspace.pendingPermissions.length > 0) {
         void syncPendingPermissions();
       }
     }, 4000);
@@ -340,7 +345,7 @@ export default function App() {
               break;
             case "hoxi.status.snapshot":
               if (Array.isArray(evt.properties.busy)) {
-                applyManagedStatusSnapshot(evt.properties.busy);
+                applyManagedStatusSnapshot(evt.properties.busy, evt.properties.stalled ?? {});
               }
               break;
             case "session.error":

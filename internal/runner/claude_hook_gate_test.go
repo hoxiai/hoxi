@@ -279,6 +279,53 @@ func TestClaudeHookGatesProtectedEditsOutsideReadsAndExternalTools(t *testing.T)
 	if d := <-resWeb; d != "allow|" {
 		t.Fatalf("expected allow after once for WebFetch, got %q", d)
 	}
+
+	// 4. Lowercase "bash" tool name is gated identically to "Bash".
+	resLowerBash := f.asyncDecide(t, f.payload("bash", "rm -rf build", "", "cc-uuid-1"))
+	asked4 := waitForEvent(t, events, "permission.asked")
+	id4, _ := asked4.Properties["id"].(string)
+	f.reply(t, id4, "reject", "no rm")
+	if d := <-resLowerBash; !strings.HasPrefix(d, "deny|") {
+		t.Fatalf("expected deny for lowercase bash rm, got %q", d)
+	}
+
+	// 5. Glob with an escaping pattern must NOT be auto-allowed as in-worktree.
+	resEscapingGlob := callTool("Glob", "toolu_glob_escape", map[string]interface{}{
+		"pattern": "../../etc/passwd",
+	})
+	asked5 := waitForEvent(t, events, "permission.asked")
+	meta5, _ := asked5.Properties["metadata"].(map[string]interface{})
+	if meta5["externalDirectory"] != true {
+		t.Fatalf("expected externalDirectory metadata on escaping Glob, got %#v", meta5)
+	}
+	id5, _ := asked5.Properties["id"].(string)
+	f.reply(t, id5, "reject", "stay in worktree")
+	if d := <-resEscapingGlob; !strings.HasPrefix(d, "deny|") {
+		t.Fatalf("expected deny on escaping Glob, got %q", d)
+	}
+
+	// 6. Safe internal orchestration tools (TodoWrite) pass through, while unknown tools ask.
+	rawTodo, _ := json.Marshal(map[string]interface{}{
+		"session_id":      "cc-uuid-1",
+		"cwd":             f.dir,
+		"permission_mode": "acceptEdits",
+		"hook_event_name": "PreToolUse",
+		"tool_name":       "TodoWrite",
+		"tool_use_id":     "toolu_todo",
+		"tool_input":      map[string]interface{}{"todos": []interface{}{}},
+	})
+	if d := f.decide(t, rawTodo); d != "" {
+		t.Fatalf("TodoWrite should pass through, got %q", d)
+	}
+	resUnknown := callTool("CustomExternalTool", "toolu_custom", map[string]interface{}{
+		"target": "prod",
+	})
+	asked6 := waitForEvent(t, events, "permission.asked")
+	id6, _ := asked6.Properties["id"].(string)
+	f.reply(t, id6, "reject", "unknown tool")
+	if d := <-resUnknown; !strings.HasPrefix(d, "deny|") {
+		t.Fatalf("expected deny on unknown tool, got %q", d)
+	}
 }
 
 func TestClaudeHookDestructiveAlwaysAsks(t *testing.T) {

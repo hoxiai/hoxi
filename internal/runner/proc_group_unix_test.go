@@ -5,6 +5,7 @@ package runner
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -377,17 +378,82 @@ func TestStopToolCommandSparesSiblingSession(t *testing.T) {
 	assertProcessAlive(t, siblingPID)
 }
 
-// Sessions without a runner-owned CLI process (OpenCode sessions live in the
-// shared daemon) are refused instead of scanning the daemon's children.
+// Sessions without a runner-owned CLI process and without an OpenCode backing
+// session are refused instead of scanning unrelated process trees.
 func TestStopToolCommandRefusesSessionWithoutRunnerProcess(t *testing.T) {
 	svc := newStallTestService(t)
 	if _, err := svc.StopToolCommand("ses_not_running", "", "", "sleep 1"); !errors.Is(err, errSessionNotRunning) {
 		t.Fatalf("err = %v, want errSessionNotRunning", err)
 	}
-	registerStallTestProcess(svc, "ses_opencode_turn", time.Now())
-	if _, err := svc.StopToolCommand("ses_opencode_turn", "", "", "sleep 1"); !errors.Is(err, errSessionNotRunning) {
-		t.Fatalf("OpenCode turn: err = %v, want errSessionNotRunning", err)
+	// An OpenCode turn has no CLI process of its own: the stop is attempted
+	// inside the shared daemon tree and reports "not found" when nothing
+	// matches, rather than refusing the session outright.
+	ap := registerStallTestProcess(svc, "ses_opencode_turn", time.Now())
+	ap.runtime = "opencode"
+	if _, err := svc.StopToolCommand("ses_opencode_turn", "", "", "sleep 1"); !errors.Is(err, errToolProcessNotFound) {
+		t.Fatalf("OpenCode turn: err = %v, want errToolProcessNotFound", err)
 	}
+}
+
+// A tool command inside the shared OpenCode daemon is stopped by its unique
+// command match; the daemon itself and unrelated children survive.
+func TestStopOpenCodeToolProcessStopsUniqueMatch(t *testing.T) {
+	// `opencode serve` spawns every tool command detached, in its own process
+	// group; the fake daemon reproduces that with setpgrp.
+	daemon, pidFile := startFakeDaemon(t, `perl -e 'setpgrp(0, 0); exec "sleep", "305"' & echo $! > "$HOXI_TEST_PIDFILE"; sleep 306`)
+	t.Cleanup(func() {
+		_ = syscall.Kill(daemon.Process.Pid, syscall.SIGKILL)
+		_ = daemon.Wait()
+	})
+	daemonPID := readPID(t, pidFile)
+
+	if stopped := stopOpenCodeToolProcess(daemon.Process.Pid, "sleep 305"); stopped == 0 {
+		t.Fatal("unique tool command was not stopped")
+	}
+	assertProcessGone(t, daemonPID)
+	if err := syscall.Kill(daemon.Process.Pid, 0); err != nil {
+		t.Fatalf("daemon was signalled: %v", err)
+	}
+}
+
+// Two matching subtrees under the shared daemon are ambiguous: the stop must
+// refuse instead of killing another session's identical command.
+func TestStopOpenCodeToolProcessRefusesAmbiguousMatch(t *testing.T) {
+	daemon, pidFile := startFakeDaemon(t, `perl -e 'setpgrp(0, 0); exec "sleep", "307"' & echo $! > "$HOXI_TEST_PIDFILE.1"; perl -e 'setpgrp(0, 0); exec "sleep", "307"' & echo $! > "$HOXI_TEST_PIDFILE.2"; sleep 308`)
+	t.Cleanup(func() {
+		_ = syscall.Kill(daemon.Process.Pid, syscall.SIGKILL)
+		_ = daemon.Wait()
+	})
+	first := readPID(t, pidFile+".1")
+	second := readPID(t, pidFile+".2")
+	t.Cleanup(func() {
+		_ = syscall.Kill(first, syscall.SIGKILL)
+		_ = syscall.Kill(second, syscall.SIGKILL)
+	})
+
+	if stopped := stopOpenCodeToolProcess(daemon.Process.Pid, "sleep 307"); stopped != 0 {
+		t.Fatalf("ambiguous match killed %d processes, want none", stopped)
+	}
+	assertProcessAlive(t, first)
+	assertProcessAlive(t, second)
+}
+
+// startFakeDaemon runs script as a stand-in for `opencode serve`: the script is
+// the root process and everything it backgrounds becomes its children.
+func startFakeDaemon(t *testing.T, script string) (*exec.Cmd, string) {
+	t.Helper()
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "fake-opencode-serve")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"+script+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	pidFile := filepath.Join(dir, "pid")
+	cmd := exec.Command(bin)
+	cmd.Env = append(os.Environ(), "HOXI_TEST_PIDFILE="+pidFile)
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	return cmd, pidFile
 }
 
 // Stopped-tool marks are dropped once the turn ends.

@@ -6,7 +6,12 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
+
+// toolStopMarkTTL bounds how long a stopped-tool mark may decorate events when
+// the session has no runner-owned process to wait on (OpenCode turns).
+const toolStopMarkTTL = 2 * time.Minute
 
 // StopToolRequest identifies a running tool invocation inside a session turn
 // that the user wants to terminate without aborting the parent session turn.
@@ -65,12 +70,16 @@ func (s *Service) StopToolCommand(sessionID, callID, partID, command string) (in
 	s.mu.Lock()
 	ap := s.procs[sessionID]
 	s.mu.Unlock()
-	if ap == nil || ap.cmd == nil || ap.cmd.Process == nil {
+	rec, hasRec := s.store.Get(sessionID)
+	openCodeSession := hasRec && rec.Runtime == "opencode"
+	// OpenCode turns run inside the shared daemon, so their tool commands are
+	// reachable without a runner-owned CLI process.
+	if ap == nil && !openCodeSession {
 		return 0, errSessionNotRunning
 	}
 
 	var matchedPart *MessagePart
-	if rec, ok := s.store.Get(sessionID); ok {
+	if hasRec {
 		matchedPart = findTargetRunningToolPart(rec.Turns, partID, callID)
 		if matchedPart != nil {
 			if partID == "" {
@@ -91,16 +100,35 @@ func (s *Service) StopToolCommand(sessionID, callID, partID, command string) (in
 	// Mark before killing so the tool result produced by the kill is
 	// decorated; the marks are dropped again if nothing was stopped.
 	s.markToolStopped(sessionID, partID, callID)
-	s.noteActivity(ap)
-	stopped := stopChildToolProcesses(ap.cmd.Process.Pid, command)
+	if ap != nil {
+		s.noteActivity(ap)
+	}
+	stopped := 0
+	switch {
+	case ap != nil && ap.cmd != nil && ap.cmd.Process != nil:
+		stopped = stopChildToolProcesses(ap.cmd.Process.Pid, command)
+	case openCodeSession && s.openCode != nil:
+		// OpenCode tool commands are children of the shared `opencode serve`
+		// daemon; only a unique command match inside that tree is stopped.
+		if daemonPID := openCodeDaemonPID(s.openCode.BaseURL()); daemonPID > 1 {
+			stopped = stopOpenCodeToolProcess(daemonPID, command)
+		}
+	}
 	if stopped == 0 {
 		s.clearToolStopped(sessionID, partID, callID)
 		return 0, errToolProcessNotFound
 	}
-	go func() {
-		<-ap.done
-		s.clearToolStopped(sessionID, partID, callID)
-	}()
+	if ap != nil {
+		go func() {
+			<-ap.done
+			s.clearToolStopped(sessionID, partID, callID)
+		}()
+	} else {
+		go func() {
+			time.Sleep(toolStopMarkTTL)
+			s.clearToolStopped(sessionID, partID, callID)
+		}()
+	}
 
 	if matchedPart != nil && matchedPart.State != nil {
 		updated := clonePart(*matchedPart)

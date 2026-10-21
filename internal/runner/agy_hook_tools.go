@@ -107,6 +107,9 @@ func hookToolAction(name string) string {
 // must carry a path inside the session worktree; any other read tool that
 // carries a path argument must also stay inside the worktree.
 func isReadToolAllowedInWorktree(worktree, tool string, args map[string]interface{}) bool {
+	if hasEscapingSearchPattern(args) {
+		return false
+	}
 	lower := strings.ToLower(strings.TrimSpace(tool))
 	path := resolveHookToolPath(worktree, args)
 	if hookPathScopedReadTools[lower] {
@@ -115,13 +118,29 @@ func isReadToolAllowedInWorktree(worktree, tool string, args map[string]interfac
 	return path == "" || pathWithin(worktree, path)
 }
 
-// resolveHookToolPath normalizes the file args agy uses across read/write
-// tools. agy sometimes double-encodes string args, so quoted values are
-// unquoted before resolving relative paths against the worktree.
-func resolveHookToolPath(base string, args map[string]interface{}) string {
+func hasEscapingSearchPattern(args map[string]interface{}) bool {
+	for _, k := range []string{"pattern", "Pattern", "glob", "Glob", "Include", "include"} {
+		p := strings.TrimSpace(firstString(args[k]))
+		if len(p) >= 2 && p[0] == '"' && p[len(p)-1] == '"' {
+			if unquoted, err := strconv.Unquote(p); err == nil {
+				p = strings.TrimSpace(unquoted)
+			}
+		}
+		if p == "" {
+			continue
+		}
+		if strings.HasPrefix(p, "/") || strings.HasPrefix(p, "~") || p == ".." ||
+			strings.HasPrefix(p, "../") || strings.Contains(p, "/../") || strings.HasSuffix(p, "/..") {
+			return true
+		}
+	}
+	return false
+}
+
+func rawHookToolPath(args map[string]interface{}) string {
 	raw := firstString(args["Path"], args["AbsolutePath"], args["TargetFile"],
-		args["target_file"], args["file_path"], args["filePath"], args["File"],
-		args["file"], args["path"], args["DirectoryPath"], args["directory_path"],
+		args["target_file"], args["file_path"], args["filePath"], args["filepath"], args["File"],
+		args["file"], args["path"], args[" target"], args["target"], args["DirectoryPath"], args["directory_path"],
 		args["SearchPath"], args["search_path"], args["SearchDirectory"],
 		args["search_directory"], args["Directory"], args["directory"],
 		args["NotebookPath"], args["notebook_path"])
@@ -131,6 +150,14 @@ func resolveHookToolPath(base string, args map[string]interface{}) string {
 			raw = strings.TrimSpace(unquoted)
 		}
 	}
+	return raw
+}
+
+// resolveHookToolPath normalizes the file args agy uses across read/write
+// tools. agy sometimes double-encodes string args, so quoted values are
+// unquoted before resolving relative paths against the worktree.
+func resolveHookToolPath(base string, args map[string]interface{}) string {
+	raw := rawHookToolPath(args)
 	if raw == "" {
 		return ""
 	}
@@ -152,12 +179,53 @@ func resolveHookToolPath(base string, args map[string]interface{}) string {
 	return filepath.Clean(raw)
 }
 
+func (s *Service) inspectHookToolRisk(sessionID, tool string, args map[string]interface{}) (filepathOut, worktree string, destructive, externalDir bool) {
+	worktree = ""
+	if rec, ok := s.store.Get(sessionID); ok {
+		worktree = strings.TrimSpace(rec.WorktreePath)
+	}
+	rawPath := rawHookToolPath(args)
+	resolved := resolveHookToolPath(worktree, args)
+	if resolved != "" {
+		filepathOut = resolved
+	} else {
+		filepathOut = rawPath
+	}
+	lowerTool := strings.ToLower(strings.TrimSpace(tool))
+	if lowerTool == "unsandboxed" {
+		destructive = true
+	}
+	if hasEscapingSearchPattern(args) {
+		externalDir = true
+		destructive = true
+	}
+	if filepathOut != "" {
+		if isProtectedRelPath(filepathOut) || (rawPath != "" && isProtectedRelPath(rawPath)) {
+			destructive = true
+		}
+		if isDestructiveCommand(filepathOut) || (rawPath != "" && isDestructiveCommand(rawPath)) {
+			destructive = true
+		}
+		if worktree != "" && resolved != "" {
+			if !pathWithin(worktree, resolved) {
+				externalDir = true
+				destructive = true
+			} else if (hookEditTools[lowerTool] || lowerTool == "edit" || lowerTool == "multiedit" || lowerTool == "write" || lowerTool == "notebookedit") &&
+				isProtectedWorktreePath(worktree, resolved) {
+				destructive = true
+			}
+		}
+	}
+	return filepathOut, worktree, destructive, externalDir
+}
+
 // gateToolCall asks the user before a tool that can reach outside the
 // worktree (MCP, browser JavaScript, network egress, explicit unsandboxed
 // execution, or protected/out-of-worktree file access) runs.
 func (s *Service) gateToolCall(r *http.Request, cred hookCredential, tool string, args map[string]interface{}, callID string) (bool, string) {
 	key := hookToolGrantKey(tool, args)
-	if s.gate.hasToolAlways(cred.sessionID, key) {
+	targetPath, worktree, destructive, externalDir := s.inspectHookToolRisk(cred.sessionID, tool, args)
+	if !destructive && s.gate.hasToolAlways(cred.sessionID, key) {
 		return true, ""
 	}
 	id := runnerPermissionID + randomHex(12)
@@ -166,6 +234,18 @@ func (s *Service) gateToolCall(r *http.Request, cred hookCredential, tool string
 		"tool":   tool,
 		"args":   string(pretty),
 		"source": firstNonEmptyStr(cred.runtime, string(RuntimeAntigravity)),
+	}
+	if worktree != "" {
+		meta["cwd"] = worktree
+	}
+	if targetPath != "" {
+		meta["filepath"] = targetPath
+	}
+	if destructive {
+		meta["destructive"] = true
+	}
+	if externalDir {
+		meta["externalDirectory"] = true
 	}
 	if desc := firstString(args["toolSummary"], args["description"], args["Action"]); desc != "" {
 		meta["description"] = desc
@@ -185,7 +265,9 @@ func (s *Service) gateToolCall(r *http.Request, cred hookCredential, tool string
 	answer := s.awaitReply(r, cred, id, req)
 	switch answer.Reply {
 	case "always":
-		s.gate.addToolAlways(cred.sessionID, key, tool, summarizeToolGrantPattern(tool, args), answer.Source)
+		if !destructive {
+			s.gate.addToolAlways(cred.sessionID, key, tool, summarizeToolGrantPattern(tool, args), answer.Source)
+		}
 		return true, ""
 	case "once":
 		return true, ""

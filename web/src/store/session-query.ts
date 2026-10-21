@@ -72,10 +72,12 @@ export function sessionDirectory(sessionID: string | null): string | undefined {
   if (!known) return workspace.rootDir || undefined;
   // A known session without a directory may still be rooted in the active
   // project (unadopted OpenCode sessions often omit it). A session attributed
-  // to a different project must never inherit the active root.
+  // to a different project, or seen only in the global busy snapshot while not
+  // present in the active project's session list, must never inherit the active root.
   const projectID = session?.projectID || indexed?.projectID;
   const activeProjectID = (workspace.activeProjectID || "").trim();
   if (projectID && activeProjectID && projectID !== activeProjectID) return undefined;
+  if (!session && indexed && !indexed.directory && !indexed.projectID) return undefined;
   return workspace.rootDir || undefined;
 }
 

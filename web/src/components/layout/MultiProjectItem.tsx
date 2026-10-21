@@ -180,7 +180,11 @@ export default function MultiProjectTreeItem(props: {
   // Running work elsewhere must stay visible: the header shows a live count for
   // sessions of this project that are still executing.
   const runningCount = createMemo(() =>
-    countRunningSessionsForProject(props.proj.path, isActive() ? workspace.sessions : props.cachedSessions)
+    countRunningSessionsForProject(
+      props.proj.path,
+      isActive() ? workspace.sessions : props.cachedSessions,
+      props.proj.folders
+    )
   );
   const [everExpanded, setEverExpanded] = createSignal(props.expanded);
   const [everArchivedOpen, setEverArchivedOpen] = createSignal(props.isArchivedOpen);

@@ -326,6 +326,9 @@ func summarizePermissionItem(item map[string]interface{}) (string, string) {
 	if cmd := firstString(meta["command"], meta["cmd"], item["pattern"]); cmd != "" {
 		return cmd, firstNonEmptyStr(tool, "bash")
 	}
+	if args := firstString(meta["args"]); args != "" {
+		return firstNonEmptyStr(tool, "tool") + " " + args, tool
+	}
 	if patterns, ok := item["patterns"].([]string); ok && len(patterns) > 0 {
 		return strings.Join(patterns, " "), tool
 	}
@@ -340,9 +343,6 @@ func summarizePermissionItem(item map[string]interface{}) (string, string) {
 			return strings.Join(parts, " "), tool
 		}
 	}
-	if args := firstString(meta["args"]); args != "" {
-		return tool + " " + args, tool
-	}
 	return firstNonEmptyStr(firstString(item["title"], meta["description"]), tool, "permission"), tool
 }
 
@@ -351,18 +351,35 @@ func isDestructivePermissionItem(perm, summary string, item map[string]interface
 	if lowerPerm == "doom_loop" || lowerPerm == "external_directory" {
 		return true
 	}
+	meta, _ := item["metadata"].(map[string]interface{})
+	if d, _ := meta["destructive"].(bool); d {
+		return true
+	}
+	if ext, _ := meta["externalDirectory"].(bool); ext {
+		return true
+	}
 	if isDestructiveCommand(summary) {
 		return true
 	}
 	switch lowerPerm {
 	case "edit", "write", "patch", "multiedit", "apply_patch", "tool":
+		if strings.EqualFold(strings.TrimSpace(firstString(meta["tool"])), "unsandboxed") {
+			return true
+		}
 		if isProtectedRelPath(summary) {
 			return true
 		}
-		meta, _ := item["metadata"].(map[string]interface{})
 		for _, k := range []string{"filepath", "filePath", "path", "target"} {
-			if p := firstString(meta[k]); p != "" && isProtectedRelPath(p) {
+			if p := firstString(meta[k]); p != "" && (isProtectedRelPath(p) || isDestructiveCommand(p)) {
 				return true
+			}
+		}
+		if rawArgs := firstString(meta["args"]); strings.HasPrefix(strings.TrimSpace(rawArgs), "{") {
+			var parsed map[string]interface{}
+			if json.Unmarshal([]byte(rawArgs), &parsed) == nil {
+				if p := rawHookToolPath(parsed); p != "" && (isProtectedRelPath(p) || isDestructiveCommand(p)) {
+					return true
+				}
 			}
 		}
 	}

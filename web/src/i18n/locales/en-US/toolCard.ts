@@ -51,5 +51,7 @@ export const toolCard = {
   stopCommand: "Stop",
   stoppingCommand: "Stopping…",
   stopCommandTooltip: "Stop this command without ending the session",
+  stopCommandFailed: "No process stopped",
+  stopCommandFailedTooltip: "No single matching process was found, so nothing was stopped",
   stoppedByUser: "Stopped by user",
 };

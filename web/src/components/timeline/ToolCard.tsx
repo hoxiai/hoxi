@@ -50,6 +50,7 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
   const [elapsed, setElapsed] = createSignal(0);
   const [copiedCmd, setCopiedCmd] = createSignal(false);
   const [stoppingCmd, setStoppingCmd] = createSignal(false);
+  const [stopFailed, setStopFailed] = createSignal(false);
   let outputRef: HTMLPreElement | undefined;
   let rollingShellRef: HTMLDivElement | undefined;
 
@@ -199,12 +200,16 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
     e.stopPropagation();
     if (stoppingCmd()) return;
     setStoppingCmd(true);
+    setStopFailed(false);
     try {
-      await stopSessionToolCommand(props.part.sessionID, {
+      const stopped = await stopSessionToolCommand(props.part.sessionID, {
         callID: props.part.callID,
         partID: props.part.id,
         command: shellCmd(),
       });
+      // The backend refuses when no process matches or the match is ambiguous;
+      // say so instead of leaving the button looking inert.
+      if (!stopped) setStopFailed(true);
     } finally {
       setStoppingCmd(false);
     }
@@ -474,6 +479,15 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
             <Show when={isShell() && !isRunning() && isStoppedByUser()}>
               <span class="rounded bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[11px] text-[var(--text-muted)]">
                 {t("toolCard.stoppedByUser")}
+              </span>
+            </Show>
+
+            <Show when={isShell() && isRunning() && stopFailed()}>
+              <span
+                class="rounded bg-[var(--danger-surface)] px-1.5 py-0.5 text-[11px] text-[var(--danger-text)]"
+                title={t("toolCard.stopCommandFailedTooltip")}
+              >
+                {t("toolCard.stopCommandFailed")}
               </span>
             </Show>
 

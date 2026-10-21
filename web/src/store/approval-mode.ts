@@ -189,27 +189,81 @@ export function setApprovalMode(mode: ApprovalMode): void {
   }
 }
 
+// Approvals waiting on a session in another project are invisible to a query
+// scoped to the active project, so the refresh also covers the directories of
+// sessions that are still running.
+function permissionSyncScopes(primary?: string): string[] {
+  const scopes = new Set<string>();
+  const add = (value?: string | null) => {
+    const clean = normalizeFolderPath(value);
+    if (!clean) return;
+    scopes.add(clean);
+    const wtIdx = clean.indexOf("/.hoxi/worktrees/");
+    if (wtIdx > 0) scopes.add(clean.slice(0, wtIdx));
+  };
+  add(primary);
+  add(workspace.rootDir);
+  for (const [sid, status] of Object.entries(workspace.statusBySession)) {
+    if (status?.type === "busy" || status?.type === "retry") add(sessionDirectory(sid));
+  }
+  return Array.from(scopes);
+}
+
+function resolvePermissionDirectory(req: PermissionRequest): string | undefined {
+  const sessionDir = normalizeFolderPath(sessionDirectory(req.sessionID));
+  if (sessionDir) return sessionDir;
+  const metaDir =
+    typeof req.metadata?.directory === "string"
+      ? req.metadata.directory
+      : typeof req.metadata?.cwd === "string"
+        ? req.metadata.cwd
+        : undefined;
+  const cleanMeta = normalizeFolderPath(metaDir);
+  if (cleanMeta) return cleanMeta;
+  const indexed = workspace.sessionIndex[req.sessionID];
+  if (indexed) {
+    if (indexed.projectID && workspace.activeProjectID && indexed.projectID !== workspace.activeProjectID) {
+      return undefined;
+    }
+    if (!indexed.projectID && !workspace.sessions.some((s) => s.id === req.sessionID)) {
+      return undefined;
+    }
+  }
+  return normalizeFolderPath(workspace.rootDir) || undefined;
+}
+
+function isDirectoryInScopes(dir: string | undefined, scopes: Set<string>): boolean {
+  if (!dir) return false;
+  if (scopes.has(dir)) return true;
+  const wtIdx = dir.indexOf("/.hoxi/worktrees/");
+  if (wtIdx > 0 && scopes.has(dir.slice(0, wtIdx))) return true;
+  return false;
+}
+
 export async function syncPendingPermissions(directory?: string): Promise<void> {
-  const scope = normalizeFolderPath(directory || workspace.rootDir);
+  const scopes = permissionSyncScopes(directory);
   try {
-    const list = await hoxiAPI.listPermissions(scope || undefined);
-    if (!Array.isArray(list)) return;
-    const remoteIDs = new Set(list.map((r) => r.id));
+    const results = await Promise.allSettled(
+      scopes.map((scope) => hoxiAPI.listPermissions(scope))
+    );
+    const merged = new Map<string, PermissionRequest>();
+    const answeredScopes = new Set<string>();
+    results.forEach((res, index) => {
+      if (res.status !== "fulfilled" || !Array.isArray(res.value)) return;
+      answeredScopes.add(scopes[index]);
+      for (const req of res.value) if (req?.id) merged.set(req.id, req);
+    });
+    if (answeredScopes.size === 0) return;
+    const remoteIDs = new Set(merged.keys());
     if (workspace.pendingPermissions.length > 0) {
-      // A snapshot only speaks for the directory it was taken in. Requests from
-      // other projects must survive; otherwise switching projects would drop
-      // approvals that are still waiting on the user.
-      const inScope = (sessionID: string) => {
-        if (!scope) return true;
-        const dir = normalizeFolderPath(sessionDirectory(sessionID));
-        if (dir) return dir === scope;
-        return normalizeFolderPath(workspace.rootDir) === scope;
-      };
+      // A snapshot only speaks for the directories it was taken in. Requests
+      // from projects we did not query must survive; otherwise switching
+      // projects would drop approvals that are still waiting on the user.
       setWorkspace("pendingPermissions", (prev) =>
-        prev.filter((p) => remoteIDs.has(p.id) || !inScope(p.sessionID))
+        prev.filter((p) => remoteIDs.has(p.id) || !isDirectoryInScopes(resolvePermissionDirectory(p), answeredScopes))
       );
     }
-    for (const req of list) {
+    for (const req of merged.values()) {
       handleIncomingPermissionRequest(req);
     }
   } catch {

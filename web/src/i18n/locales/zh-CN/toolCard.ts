@@ -52,5 +52,7 @@ export const toolCard: ToolCardI18n = {
   stopCommand: "终止命令",
   stoppingCommand: "正在终止…",
   stopCommandTooltip: "仅终止当前命令，保持会话继续进行",
+  stopCommandFailed: "未找到可终止的进程",
+  stopCommandFailedTooltip: "没有匹配到唯一的目标进程，未终止任何进程",
   stoppedByUser: "已手动终止",
 };

@@ -120,10 +120,21 @@ export function badgeFor(
  */
 export function countRunningSessionsForProject(
   projectPath: string,
-  sessions: SessionInfo[]
+  sessions: SessionInfo[],
+  extraFolders?: Array<{ path: string } | string>
 ): number {
-  const root = normalizeFolderPath(projectPath);
-  if (!root) return 0;
+  const roots = new Set<string>();
+  const addRoot = (p?: string | null) => {
+    const clean = normalizeFolderPath(p);
+    if (clean) roots.add(clean);
+  };
+  addRoot(projectPath);
+  if (extraFolders) {
+    for (const f of extraFolders) {
+      addRoot(typeof f === "string" ? f : f?.path);
+    }
+  }
+  if (roots.size === 0) return 0;
   const seen = new Set<string>();
   let count = 0;
   const isRunning = (id: string) => {
@@ -139,7 +150,14 @@ export function countRunningSessionsForProject(
     if (entry.parentID || seen.has(id) || !isRunning(id)) continue;
     const dir = normalizeFolderPath(entry.directory);
     if (!dir) continue;
-    if (dir !== root && !dir.startsWith(`${root}/.hoxi/worktrees/`)) continue;
+    let matches = false;
+    for (const root of roots) {
+      if (dir === root || dir.startsWith(`${root}/.hoxi/worktrees/`)) {
+        matches = true;
+        break;
+      }
+    }
+    if (!matches) continue;
     seen.add(id);
     count++;
   }
