@@ -3,8 +3,10 @@ import {
   computeTurnWindowSlice,
   INITIAL_VISIBLE_TURNS,
   MAX_AUTO_EXPANDED_TURNS,
+  nextProgressiveTurnLimit,
   resolveNextWindowLimit,
   TURN_BATCH_SIZE,
+  TURN_MOUNT_CHUNK,
 } from "../components/timeline/turn-window";
 import {
   type ActivityBarSegment,
@@ -15,7 +17,7 @@ import {
 } from "../components/timeline/TaskTimelineBar";
 import type { MessageTurn } from "../store/workspace";
 import { resolveMergedTurnParts } from "../components/timeline/context-activity-turns";
-import { assertEqual, describe, it } from "./test-harness";
+import { assertEqual, assertTrue, describe, it } from "./test-harness";
 
 function mockTurn(id: string, role: "user" | "assistant" = "assistant"): MessageTurn {
   return {
@@ -124,6 +126,21 @@ describe("TurnWindow limit resolution & session-switching lifecycle", () => {
     });
     assertEqual(limitA, INITIAL_VISIBLE_TURNS);
     assertEqual(stateA.limit, INITIAL_VISIBLE_TURNS);
+  });
+
+  it("mounts older turns in bounded animation-frame chunks", () => {
+    let limit = INITIAL_VISIBLE_TURNS;
+    const target = INITIAL_VISIBLE_TURNS + TURN_BATCH_SIZE;
+    const steps: number[] = [];
+    while (limit < target) {
+      limit = nextProgressiveTurnLimit(limit, target);
+      steps.push(limit);
+    }
+    assertEqual(steps.length, Math.ceil(TURN_BATCH_SIZE / TURN_MOUNT_CHUNK));
+    assertTrue(steps.every((value, index) => index === 0 || value - steps[index - 1] <= TURN_MOUNT_CHUNK));
+    assertEqual(limit, target);
+    assertEqual(nextProgressiveTurnLimit(target, target), target);
+    assertEqual(nextProgressiveTurnLimit(5, 100, 0), 6);
   });
 
   it("caps automatic streaming tail expansion at MAX_AUTO_EXPANDED_TURNS", () => {

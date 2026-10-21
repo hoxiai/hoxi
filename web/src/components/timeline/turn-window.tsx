@@ -5,6 +5,7 @@ import {
   createMemo,
   createSignal,
   Index,
+  onCleanup,
   Show,
 } from "solid-js";
 import type { MessageInfo } from "../../services/sse-types";
@@ -26,6 +27,18 @@ import {
 export const INITIAL_VISIBLE_TURNS = 12;
 export const TURN_BATCH_SIZE = 12;
 export const MAX_AUTO_EXPANDED_TURNS = 32;
+// Older turns are mounted in small animation-frame chunks so opening the
+// "earlier messages" fold (or "load all") never blocks a single long frame.
+export const TURN_MOUNT_CHUNK = 4;
+
+export function nextProgressiveTurnLimit(
+  current: number,
+  target: number,
+  chunk = TURN_MOUNT_CHUNK
+): number {
+  if (current >= target) return current;
+  return Math.min(current + Math.max(1, chunk), target);
+}
 
 export function filterVisibleTurnsByRevert(
   rawTurns: MessageTurn[],
@@ -161,6 +174,8 @@ export function createTurnWindow(
   const [revision, setRevision] = createSignal(0);
   let prependingLock = false;
   let lastActiveSessionID: string | null = null;
+  let mountFrame: number | undefined;
+  let mountRevision = 0;
 
   const windowFor = (sid: string | null) => {
     const key = sid ?? "";
@@ -198,15 +213,25 @@ export function createTurnWindow(
     return limit;
   });
 
-  const setVisibleLimit = (next: number) => {
-    windowFor(sessionID()).limit = next;
+  const setVisibleLimit = (next: number, sid = sessionID()) => {
+    windowFor(sid).limit = next;
     setRevision((value) => value + 1);
+  };
+
+  const cancelProgressiveMount = () => {
+    mountRevision++;
+    if (mountFrame !== undefined) {
+      cancelAnimationFrame(mountFrame);
+      mountFrame = undefined;
+    }
+    prependingLock = false;
   };
 
   createEffect(() => {
     sessionID();
-    prependingLock = false;
+    cancelProgressiveMount();
   });
+  onCleanup(cancelProgressiveMount);
 
   const slice = createMemo(() => computeTurnWindowSlice(turns(), visibleLimit()));
   const startIndex = createMemo(() => slice().startIndex);
@@ -214,41 +239,65 @@ export function createTurnWindow(
   const hiddenUserCount = createMemo(() => slice().hiddenUserCount);
   const visibleTurns = createMemo(() => slice().visibleTurns);
 
-  const preserveScrollOnPrepend = (scroller: HTMLElement | undefined, fn: () => void) => {
-    if (!scroller) {
-      fn();
+  // Mounts older turns in animation-frame chunks and compensates the scroll
+  // position after each chunk. A single big `setVisibleLimit` used to mount the
+  // whole hidden history (or a full 12-turn batch of heavy turns) in one task,
+  // which is what made opening the folded conversation stall.
+  const mountEarlierProgressively = (
+    scroller: HTMLElement | undefined,
+    targetLimit: number
+  ) => {
+    const sid = sessionID();
+    const target = Math.min(targetLimit, turns().length);
+    if (!sid || hiddenCount() <= 0 || target <= visibleLimit()) return;
+
+    cancelProgressiveMount();
+    const revision = mountRevision;
+    prependingLock = true;
+
+    if (typeof requestAnimationFrame !== "function") {
+      setVisibleLimit(target, sid);
+      prependingLock = false;
       return;
     }
-    const prevScrollHeight = scroller.scrollHeight;
-    const prevScrollTop = scroller.scrollTop;
-    fn();
-    queueMicrotask(() => {
-      const delta = scroller.scrollHeight - prevScrollHeight;
-      if (delta > 0) {
-        scroller.scrollTop = prevScrollTop + delta;
-      }
-      requestAnimationFrame(() => {
+
+    const pump = () => {
+      mountFrame = undefined;
+      if (revision !== mountRevision || sessionID() !== sid) return;
+      if (hiddenCount() <= 0 || visibleLimit() >= target) {
         prependingLock = false;
-      });
-    });
+        return;
+      }
+
+      const prevScrollHeight = scroller?.scrollHeight ?? 0;
+      const prevScrollTop = scroller?.scrollTop ?? 0;
+      setVisibleLimit(
+        nextProgressiveTurnLimit(visibleLimit(), target),
+        sid
+      );
+      if (scroller) {
+        const delta = scroller.scrollHeight - prevScrollHeight;
+        if (delta > 0) scroller.scrollTop = prevScrollTop + delta;
+      }
+
+      if (sessionID() === sid && visibleLimit() < target) {
+        mountFrame = requestAnimationFrame(pump);
+      } else {
+        prependingLock = false;
+      }
+    };
+    pump();
   };
 
   const loadEarlierBatch = (scroller?: HTMLElement, count = TURN_BATCH_SIZE) => {
-    const hidden = hiddenCount();
-    if (hidden <= 0) return;
-    prependingLock = true;
-    preserveScrollOnPrepend(scroller, () => {
-      setVisibleLimit(visibleLimit() + Math.max(count, TURN_BATCH_SIZE));
-    });
+    mountEarlierProgressively(
+      scroller,
+      visibleLimit() + Math.max(count, TURN_BATCH_SIZE)
+    );
   };
 
   const loadAllEarlier = (scroller?: HTMLElement) => {
-    const total = turns().length;
-    if (hiddenCount() <= 0) return;
-    prependingLock = true;
-    preserveScrollOnPrepend(scroller, () => {
-      setVisibleLimit(total + INITIAL_VISIBLE_TURNS);
-    });
+    mountEarlierProgressively(scroller, turns().length);
   };
 
   const ensureTurnVisible = (messageID: string) => {
