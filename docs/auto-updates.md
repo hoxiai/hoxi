@@ -125,7 +125,12 @@ optionally `HOXI_RELEASE_API_URL`, and pinned official archive URLs and independ
 verified lowercase SHA-256 values:
 
 - `HOXI_SPARKLE_ARCHIVE_URL`, `HOXI_SPARKLE_ARCHIVE_SHA256`: official Sparkle release archive.
-- `HOXI_OPENCODE_ARCHIVE_URL`, `HOXI_OPENCODE_ARCHIVE_SHA256`: official macOS arm64 ZIP with root `opencode` executable.
+
+The OpenCode version, per-platform release URLs and SHA-256 digests are pinned in
+`internal/opencode/opencode.lock`. Go embeds that file for auto-install, and the
+release workflows read it through `node scripts/opencode-lock.mjs` instead of
+repository variables, so the bundled sidecar and the runtime fallback cannot
+drift. Bump the lock and the sidecar together; CI verifies both.
 
 Missing settings fail the production job. Archives are checked before extraction
 or execution. Select immutable version URLs, not latest aliases. CI signs the

@@ -10,6 +10,7 @@ import {
 } from "./release-artifact.mjs";
 import { releasePayload, publishRelease } from "./release-publisher.mjs";
 import { sparkleConfig, validateSparkle, validateSparkleApp, frameworkFiles, verifyUpdateSignature } from "./sparkle.mjs";
+import { loadOpenCodeLock } from "./opencode-lock.mjs";
 
 test("release versions accept only complete numeric releases", () => {
   for (const version of ["0.2.1", "1.0.0", "v2.3.4"]) {
@@ -93,6 +94,25 @@ test("publisher rejects HTTP errors, non-confirmations and confirmations for a d
 // Test shell routing in a disposable project. Native DMG verification is exercised
 // separately against a real packaged app; this fixture isolates orchestration.
 const scripts = path.dirname(fileURLToPath(import.meta.url));
+
+test("opencode.lock pins every shipped platform and release workflows consume it", () => {
+  const lock = loadOpenCodeLock();
+  assert.match(lock.version, /^\d+\.\d+\.\d+$/);
+  assert.equal(Object.keys(lock.assets).length, 6);
+
+  const macWorkflow = fs.readFileSync(path.join(scripts, "../.github/workflows/release.yml"), "utf8");
+  assert.match(macWorkflow, /node scripts\/opencode-lock\.mjs verify/);
+  assert.match(macWorkflow, /opencode-lock\.mjs url darwin\/arm64/);
+  assert.match(macWorkflow, /opencode-lock\.mjs sha256 darwin\/arm64/);
+  assert.doesNotMatch(macWorkflow, /vars\.HOXI_OPENCODE_ARCHIVE_(URL|SHA256)/);
+
+  const crossWorkflow = fs.readFileSync(path.join(scripts, "../.github/workflows/release-cross-platform.yml"), "utf8");
+  assert.doesNotMatch(crossWorkflow, /releases\/latest\/download/);
+  for (const platform of ["windows/amd64", "linux/amd64"]) {
+    assert.ok(crossWorkflow.includes(`opencode-lock.mjs url ${platform}`), `workflow must use the lock URL for ${platform}`);
+    assert.ok(crossWorkflow.includes(`opencode-lock.mjs verify-archive ${platform}`), `workflow must verify ${platform}`);
+  }
+});
 
 test("tag workflow gates publication on tests, versioned artifacts and notarization", () => {
   const workflow = fs.readFileSync(path.join(scripts, "../.github/workflows/release.yml"), "utf8");

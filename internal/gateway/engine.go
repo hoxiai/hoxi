@@ -38,34 +38,25 @@ func (g *Gateway) handleEngineInstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The desktop host serialises installs (and the boot-time bootstrap) on
+	// its own engine mutex, so concurrent requests simply wait and then see
+	// the healthy engine.
 	g.engineMu.Lock()
 	installer := g.engineInstaller
+	g.engineMu.Unlock()
 	if installer == nil {
-		g.engineMu.Unlock()
 		writeJSONError(w, http.StatusServiceUnavailable, "engine installer is unavailable in this host")
 		return
 	}
-	if g.engineInstalling {
-		g.engineMu.Unlock()
-		writeJSONError(w, http.StatusConflict, "engine install already in progress")
-		return
-	}
-	g.engineInstalling = true
-	g.engineMu.Unlock()
-	defer func() {
-		g.engineMu.Lock()
-		g.engineInstalling = false
-		g.engineMu.Unlock()
-	}()
 
 	ctx, cancel := context.WithTimeout(r.Context(), engineInstallTimeout)
 	defer cancel()
-	if err := installer(ctx); err != nil {
+	binPath, err := installer(ctx)
+	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	binPath := opencode.FindBinary("opencode")
 	writeJSON(w, http.StatusOK, engineInstallResponse{
 		OK:              true,
 		OpenCodeBinPath: binPath,

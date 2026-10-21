@@ -22,10 +22,16 @@ const (
 )
 
 // respawner restarts the daemon with the binary, port and password it was
-// first started with, so the gateway's upstream URL stays valid.
-type respawner func() (*exec.Cmd, error)
+// first started with, so the gateway's upstream URL stays valid. A pending
+// restart is abandoned once the generation changes, so a manual EnsureEngine
+// retry cannot be raced into a second daemon by an older supervisor.
+type respawner struct {
+	generation uint64
+	start      func() (*exec.Cmd, error)
+}
 
-// startOpenCode starts the daemon and remembers how to restart it.
+// startOpenCode starts the daemon and remembers how to restart it. Every
+// explicit start gets a new generation, invalidating respawns of older ones.
 func (a *DesktopApp) startOpenCode(ctx context.Context, binPath string, port int, password string) (*exec.Cmd, error) {
 	start := func() (*exec.Cmd, error) {
 		if seeded, err := skills.SeedDefaults(); err != nil {
@@ -36,16 +42,23 @@ func (a *DesktopApp) startOpenCode(ctx context.Context, binPath string, port int
 		cfgPath := provider.EnsureHoxiModelsConfig(a.cfg.RootDir)
 		return opencode.StartDaemonWithBin(ctx, binPath, a.cfg.RootDir, cfgPath, port, password, a.logger, a.browserEnv...)
 	}
+	a.childMu.Lock()
+	a.childGen++
+	generation := a.childGen
+	a.childMu.Unlock()
 	child, err := start()
 	if err != nil {
 		return nil, err
 	}
 	a.childMu.Lock()
-	a.respawn = func() (*exec.Cmd, error) {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		return start()
+	a.respawn = &respawner{
+		generation: generation,
+		start: func() (*exec.Cmd, error) {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			return start()
+		},
 	}
 	a.childMu.Unlock()
 	return child, nil
@@ -54,32 +67,41 @@ func (a *DesktopApp) startOpenCode(ctx context.Context, binPath string, port int
 // EnsureEngine resolves (downloading and verifying when needed) the OpenCode
 // binary and makes sure the supervised daemon is healthy on the boot-time
 // loopback port. The settings page uses it to install or retry after a failed
-// background bootstrap.
-func (a *DesktopApp) EnsureEngine(ctx context.Context) error {
+// background bootstrap. It reports the resolved binary path.
+func (a *DesktopApp) EnsureEngine(ctx context.Context) (string, error) {
 	a.engineMu.Lock()
 	defer a.engineMu.Unlock()
 
 	if a.openCodePort == 0 || a.openCodePass == "" {
-		return errors.New("opencode endpoint is not configured")
+		return "", errors.New("opencode endpoint is not configured")
 	}
 	binPath, err := opencode.ResolveOrInstall(ctx, a.cfg.OpenCode, a.logger)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if err := opencode.WaitForHealth(ctx, a.openCodePort, a.openCodePass, 2*time.Second); err == nil {
-		return nil
+		return binPath, nil
 	}
 
 	// Detach the stale child before killing it: its waiter then sees a newer
 	// owner and neither clears the status nor triggers an automatic respawn.
+	// That waiter is the only one reaping it; wait for it so the port is free.
 	a.childMu.Lock()
 	stale := a.child
+	staleDone := a.childDone
 	a.child = nil
 	a.respawns = nil
 	a.childMu.Unlock()
 	if stale != nil && stale.Process != nil {
 		_ = stale.Process.Kill()
-		_, _ = stale.Process.Wait()
+		if staleDone != nil {
+			select {
+			case <-staleDone:
+			case <-time.After(5 * time.Second):
+			case <-ctx.Done():
+				return "", ctx.Err()
+			}
+		}
 	}
 
 	startCtx := a.runCtx
@@ -88,10 +110,10 @@ func (a *DesktopApp) EnsureEngine(ctx context.Context) error {
 	}
 	child, err := a.startOpenCode(startCtx, binPath, a.openCodePort, a.openCodePass)
 	if err != nil {
-		return err
+		return "", err
 	}
 	a.setChild(child)
-	return nil
+	return binPath, nil
 }
 
 // respawnBudget reports the backoff for the next restart, or false once the
@@ -114,7 +136,7 @@ func (a *DesktopApp) respawnBudget(now time.Time) (time.Duration, bool) {
 }
 
 // respawnChild runs after an unexpected daemon exit.
-func (a *DesktopApp) respawnChild(restart respawner) {
+func (a *DesktopApp) respawnChild(restart *respawner) {
 	delay, ok := a.respawnBudget(time.Now())
 	if !ok {
 		if a.logger != nil {
@@ -123,13 +145,17 @@ func (a *DesktopApp) respawnChild(restart respawner) {
 		return
 	}
 	time.Sleep(delay)
+	// Serialise with EnsureEngine / BootstrapOpenCodeAsync: if one of them has
+	// already brought up a new daemon, there is nothing to restart.
+	a.engineMu.Lock()
+	defer a.engineMu.Unlock()
 	a.childMu.Lock()
-	stopped := a.childStopped
+	stale := a.childStopped || a.child != nil || a.childGen != restart.generation
 	a.childMu.Unlock()
-	if stopped {
+	if stale {
 		return
 	}
-	child, err := restart()
+	child, err := restart.start()
 	if err != nil {
 		if a.logger != nil {
 			a.logger.Error("opencode daemon restart failed", "source", "opencode", "error", err)

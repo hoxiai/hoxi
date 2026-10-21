@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net"
@@ -52,15 +53,7 @@ func TestOpenCodeResolverAndPathEnrichment(t *testing.T) {
 }
 
 func TestPinnedReleaseArchiveChecksums(t *testing.T) {
-	platforms := []string{
-		"darwin/arm64",
-		"darwin/amd64",
-		"linux/arm64",
-		"linux/amd64",
-		"windows/arm64",
-		"windows/amd64",
-	}
-	for _, platform := range platforms {
+	for _, platform := range releasePlatforms {
 		goos, goarch, _ := strings.Cut(platform, "/")
 		pinned := pinnedReleaseSHA256[platform]
 		if !isSHA256Hex(pinned) {
@@ -73,6 +66,80 @@ func TestPinnedReleaseArchiveChecksums(t *testing.T) {
 	}
 	if _, err := expectedArchiveSHA256("freebsd", "amd64"); err == nil {
 		t.Fatal("expected error for a platform without a pinned checksum")
+	}
+}
+
+func TestReleaseLockDrivesOfficialURLs(t *testing.T) {
+	t.Setenv("HOXI_OPENCODE_MIRROR", "")
+	t.Setenv("HOXI_OPENCODE_VERSION", "")
+	for _, platform := range releasePlatforms {
+		goos, goarch, _ := strings.Cut(platform, "/")
+		urls, isZip, err := OfficialReleaseURLs(goos, goarch)
+		if err != nil {
+			t.Fatalf("%s: %v", platform, err)
+		}
+		asset := pinnedRelease.Assets[platform]
+		name, wantZip, err := releaseAssetFile(goos, goarch)
+		if err != nil {
+			t.Fatalf("%s: %v", platform, err)
+		}
+		if len(urls) != 1 || urls[0] != asset.URL {
+			t.Fatalf("%s URLs = %v, want the locked %q", platform, urls, asset.URL)
+		}
+		if !strings.HasSuffix(asset.URL, "/v"+pinnedReleaseVersion+"/"+name) {
+			t.Fatalf("%s URL %q does not point at %s", platform, asset.URL, name)
+		}
+		if isZip != wantZip {
+			t.Fatalf("%s isZip = %v, want %v", platform, isZip, wantZip)
+		}
+	}
+}
+
+func TestParseReleaseLockRejectsDrift(t *testing.T) {
+	valid, err := json.Marshal(pinnedRelease)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := parseReleaseLock(valid); err != nil {
+		t.Fatalf("embedded lock must parse: %v", err)
+	}
+
+	mutate := func(change func(lock map[string]any, assets map[string]any)) []byte {
+		var lock map[string]any
+		if err := json.Unmarshal(valid, &lock); err != nil {
+			t.Fatal(err)
+		}
+		assets := lock["assets"].(map[string]any)
+		change(lock, assets)
+		raw, err := json.Marshal(lock)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return raw
+	}
+
+	cases := map[string][]byte{
+		"prefixed version": mutate(func(lock map[string]any, _ map[string]any) { lock["version"] = "v" + pinnedReleaseVersion }),
+		"missing platform": mutate(func(_ map[string]any, assets map[string]any) { delete(assets, "darwin/arm64") }),
+		"unknown platform": mutate(func(_ map[string]any, assets map[string]any) {
+			assets["freebsd/amd64"] = map[string]any{"url": "https://github.com/anomalyco/opencode/releases/download/v" + pinnedReleaseVersion + "/opencode-freebsd-x64.tar.gz", "sha256": strings.Repeat("a", 64)}
+		}),
+		"bad digest": mutate(func(_ map[string]any, assets map[string]any) {
+			assets["darwin/arm64"].(map[string]any)["sha256"] = "not-a-digest"
+		}),
+		"plain http": mutate(func(_ map[string]any, assets map[string]any) {
+			asset := assets["darwin/arm64"].(map[string]any)
+			asset["url"] = strings.Replace(asset["url"].(string), "https://", "http://", 1)
+		}),
+		"version drift": mutate(func(_ map[string]any, assets map[string]any) {
+			asset := assets["darwin/arm64"].(map[string]any)
+			asset["url"] = strings.Replace(asset["url"].(string), "/v"+pinnedReleaseVersion+"/", "/v0.0.1/", 1)
+		}),
+	}
+	for name, raw := range cases {
+		if _, err := parseReleaseLock(raw); err == nil {
+			t.Fatalf("%s: expected the lock to be rejected", name)
+		}
 	}
 }
 

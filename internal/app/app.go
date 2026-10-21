@@ -99,13 +99,14 @@ type DesktopApp struct {
 	childMu         sync.Mutex
 	child           *exec.Cmd
 	childDone       chan struct{}
+	childGen        uint64
 	childStopped    bool
 	engineMu        sync.Mutex
 	runCtx          context.Context
 	openCodePort    int
 	openCodePass    string
 	identity        AppIdentity
-	respawn         respawner
+	respawn         *respawner
 	respawns        []time.Time
 	gateway         *gateway.Gateway
 	status          *statusbar.Tracker
@@ -388,6 +389,12 @@ func (a *DesktopApp) setChild(c *exec.Cmd) {
 		_ = c.Wait()
 		return
 	}
+	// Never orphan a previous daemon: detach it first (its waiter then sees a
+	// newer owner and neither clears the status nor respawns), then kill it and
+	// let that waiter reap it.
+	if prev := a.child; prev != nil && prev != c && prev.Process != nil {
+		_ = prev.Process.Kill()
+	}
 	a.child = c
 	if a.status != nil {
 		a.status.SetAvailable(true)
@@ -428,6 +435,7 @@ func (a *DesktopApp) setChild(c *exec.Cmd) {
 func (a *DesktopApp) killChild() {
 	a.childMu.Lock()
 	a.childStopped = true
+	a.childGen++
 	if a.status != nil {
 		a.status.SetAvailable(false)
 	}
@@ -442,7 +450,18 @@ func (a *DesktopApp) killChild() {
 	}
 }
 
+// BootstrapOpenCodeAsync resolves (downloading when missing) and starts the
+// daemon in the background. It shares engineMu with EnsureEngine so a settings
+// page retry and the boot-time bootstrap never download or start twice.
 func (a *DesktopApp) BootstrapOpenCodeAsync(ctx context.Context, port int, password string) {
+	a.engineMu.Lock()
+	defer a.engineMu.Unlock()
+	a.childMu.Lock()
+	running := a.child != nil
+	a.childMu.Unlock()
+	if running {
+		return
+	}
 	binPath, err := opencode.ResolveOrInstall(ctx, a.cfg.OpenCode, a.logger)
 	if err != nil {
 		a.logger.Error("background opencode resolution failed", "error", err)

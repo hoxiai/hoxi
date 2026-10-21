@@ -65,7 +65,9 @@ jobs:
         shell: bash
         run: |
           OPENCODE_ZIP="opencode-windows-x64.zip"
-          curl -fsSL -o "$OPENCODE_ZIP" https://github.com/anomalyco/opencode/releases/latest/download/opencode-windows-x64.zip
+          node scripts/opencode-lock.mjs verify
+          curl -fsSL -o "$OPENCODE_ZIP" "$(node scripts/opencode-lock.mjs url windows/amd64)"
+          node scripts/opencode-lock.mjs verify-archive windows/amd64 "$OPENCODE_ZIP"
           7z e "$OPENCODE_ZIP" opencode.exe -obuild/bin/
           rm -f "$OPENCODE_ZIP"
           test -f build/bin/opencode.exe
@@ -138,7 +140,9 @@ jobs:
       - name: Bundle OpenCode Runtime
         run: |
           OPENCODE_TAR="opencode-linux-x64.tar.gz"
-          curl -fsSL -o "$OPENCODE_TAR" https://github.com/anomalyco/opencode/releases/latest/download/opencode-linux-x64.tar.gz
+          node scripts/opencode-lock.mjs verify
+          curl -fsSL -o "$OPENCODE_TAR" "$(node scripts/opencode-lock.mjs url linux/amd64)"
+          node scripts/opencode-lock.mjs verify-archive linux/amd64 "$OPENCODE_TAR"
           tar -xzf "$OPENCODE_TAR" -C build/bin/ opencode
           rm -f "$OPENCODE_TAR"
           chmod +x build/bin/opencode

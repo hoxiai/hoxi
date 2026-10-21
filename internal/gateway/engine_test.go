@@ -25,20 +25,20 @@ func TestEngineInstallRoute(t *testing.T) {
 	}
 
 	calls := 0
-	gw.SetEngineInstaller(func(context.Context) error {
+	gw.SetEngineInstaller(func(context.Context) (string, error) {
 		calls++
-		return nil
+		return "/opt/custom/opencode", nil
 	})
 	recOK := httptest.NewRecorder()
 	gw.ServeHTTP(recOK, localRequest(http.MethodPost, "/api/hoxi/engine/install", nil))
 	if recOK.Code != http.StatusOK || calls != 1 {
 		t.Fatalf("expected installer to run once and return 200, got %d calls=%d", recOK.Code, calls)
 	}
-	if !strings.Contains(recOK.Body.String(), `"ok":true`) {
+	if !strings.Contains(recOK.Body.String(), `"ok":true`) || !strings.Contains(recOK.Body.String(), `"openCodeBinPath":"/opt/custom/opencode"`) {
 		t.Fatalf("unexpected response body: %s", recOK.Body.String())
 	}
 
-	gw.SetEngineInstaller(func(context.Context) error { return errors.New("download failed") })
+	gw.SetEngineInstaller(func(context.Context) (string, error) { return "", errors.New("download failed") })
 	recErr := httptest.NewRecorder()
 	gw.ServeHTTP(recErr, localRequest(http.MethodPost, "/api/hoxi/engine/install", nil))
 	if recErr.Code != http.StatusInternalServerError || !strings.Contains(recErr.Body.String(), "download failed") {

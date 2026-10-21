@@ -79,11 +79,12 @@ jobs:
         env:
           SPARKLE_URL: ${{ vars.HOXI_SPARKLE_ARCHIVE_URL }}
           SPARKLE_SHA256: ${{ vars.HOXI_SPARKLE_ARCHIVE_SHA256 }}
-          OPENCODE_URL: ${{ vars.HOXI_OPENCODE_ARCHIVE_URL }}
-          OPENCODE_SHA256: ${{ vars.HOXI_OPENCODE_ARCHIVE_SHA256 }}
           SPARKLE_PRIVATE_KEY: ${{ secrets.HOXI_SPARKLE_PRIVATE_KEY }}
           HOXI_RELEASE_KEY: ${{ secrets.HOXI_RELEASE_KEY }}
         run: |
+          node scripts/opencode-lock.mjs verify
+          OPENCODE_URL="$(node scripts/opencode-lock.mjs url darwin/arm64)"
+          OPENCODE_SHA256="$(node scripts/opencode-lock.mjs sha256 darwin/arm64)"
           : "${HOXI_SPARKLE_PUBLIC_KEY:?Sparkle public key required}"
           : "${HOXI_SPARKLE_FEED_URL:?Official feed URL required}"
           : "${SPARKLE_PRIVATE_KEY:?Sparkle private key required}"

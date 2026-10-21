@@ -78,8 +78,7 @@ type Gateway struct {
 	updateDirectories     map[string]bool
 	pulseCache            devPulseCache
 	engineMu              sync.Mutex
-	engineInstaller       func(context.Context) error
-	engineInstalling      bool
+	engineInstaller       func(context.Context) (string, error)
 }
 
 func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statusbar.Tracker) *Gateway {
@@ -197,8 +196,9 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 func (g *Gateway) SetBrowserAgentToken(token string) { g.browser.SetAgentToken(token) }
 
 // SetEngineInstaller lets the desktop host resolve, verify and restart the
-// supervised OpenCode daemon when the user asks to install or retry.
-func (g *Gateway) SetEngineInstaller(fn func(context.Context) error) {
+// supervised OpenCode daemon when the user asks to install or retry. The
+// installer reports the binary path it actually resolved.
+func (g *Gateway) SetEngineInstaller(fn func(context.Context) (string, error)) {
 	g.engineMu.Lock()
 	g.engineInstaller = fn
 	g.engineMu.Unlock()

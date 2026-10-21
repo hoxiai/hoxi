@@ -199,13 +199,17 @@ func releaseVersion() string {
 
 // expectedArchiveSHA256 resolves the trusted checksum for the current platform.
 // Admin-provided archives must supply HOXI_OPENCODE_SHA256; we never fall back
-// to unverified downloads.
+// to unverified downloads. A HOXI_OPENCODE_VERSION override without its own
+// checksum fails up front: the pinned digests only match the pinned release.
 func expectedArchiveSHA256(goos, goarch string) (string, error) {
 	if override := strings.ToLower(strings.TrimSpace(os.Getenv("HOXI_OPENCODE_SHA256"))); override != "" {
 		if !isSHA256Hex(override) {
 			return "", errors.New("HOXI_OPENCODE_SHA256 must be a 64-character hex SHA-256 digest")
 		}
 		return override, nil
+	}
+	if version := releaseVersion(); version != pinnedReleaseVersion {
+		return "", fmt.Errorf("HOXI_OPENCODE_VERSION=%s overrides the pinned OpenCode %s; set HOXI_OPENCODE_SHA256 to the SHA-256 of the %s/%s archive for that version", version, pinnedReleaseVersion, goos, goarch)
 	}
 	if pinned, ok := pinnedReleaseSHA256[goos+"/"+goarch]; ok && pinned != "" {
 		return pinned, nil
@@ -240,45 +244,30 @@ func OfficialReleaseURL(goos, goarch string) (url string, isZip bool, err error)
 }
 
 func OfficialReleaseURLs(goos, goarch string) (urls []string, isZip bool, err error) {
-	var osName string
-	switch goos {
-	case "darwin":
-		osName = "darwin"
-		isZip = true
-	case "linux":
-		osName = "linux"
-		isZip = false
-	case "windows":
-		osName = "windows"
-		isZip = true
-	default:
-		return nil, false, fmt.Errorf("unsupported OS: %s", goos)
+	asset, err := lockedReleaseAsset(goos, goarch)
+	if err != nil {
+		return nil, false, err
 	}
-
-	var archName string
-	switch goarch {
-	case "arm64":
-		archName = "arm64"
-	case "amd64":
-		archName = "x64"
-	default:
-		return nil, false, fmt.Errorf("unsupported architecture: %s", goarch)
+	name, isZip, err := releaseAssetFile(goos, goarch)
+	if err != nil {
+		return nil, false, err
 	}
-
-	ext := ".tar.gz"
-	if isZip {
-		ext = ".zip"
-	}
-	asset := fmt.Sprintf("opencode-%s-%s%s", osName, archName, ext)
 
 	version := releaseVersion()
-	// 支持通过环境变量指定镜像加速（可带版本目录，也兼容旧的无版本布局）
+	// 支持通过环境变量指定镜像加速（仅版本目录布局；无版本的旧布局无法区分版本，已移除）
 	var candidates []string
 	if custom := strings.TrimRight(os.Getenv("HOXI_OPENCODE_MIRROR"), "/"); custom != "" {
-		candidates = append(candidates, custom+"/v"+version+"/"+asset, custom+"/"+asset)
+		candidates = append(candidates, custom+"/v"+version+"/"+name)
 	}
-	// GitHub 官方源：固定版本，配合 release_pins.go 的 SHA-256 校验
-	candidates = append(candidates, "https://github.com/anomalyco/opencode/releases/download/v"+version+"/"+asset)
+	// GitHub 官方源：固定版本，配合 opencode.lock 的 SHA-256 校验
+	officialURL := asset.URL
+	if version != pinnedReleaseVersion {
+		officialURL, err = releaseURLForVersion(asset.URL, version)
+		if err != nil {
+			return nil, false, err
+		}
+	}
+	candidates = append(candidates, officialURL)
 
 	return candidates, isZip, nil
 }
@@ -296,7 +285,6 @@ func downloadOfficialOpenCode(ctx context.Context, logger *slog.Logger) (string,
 	if runtime.GOOS == "windows" {
 		binName = "opencode.exe"
 	}
-	targetPath := filepath.Join(binDir, binName)
 
 	dlURLs, isZip, err := OfficialReleaseURLs(runtime.GOOS, runtime.GOARCH)
 	if err != nil {
@@ -308,65 +296,102 @@ func downloadOfficialOpenCode(ctx context.Context, logger *slog.Logger) (string,
 	}
 
 	client := &http.Client{Timeout: 90 * time.Second}
-	var archiveBytes []byte
-
-	// 顺序尝试镜像源，直到成功
-	var lastErr error
-	for _, dlURL := range dlURLs {
-		req, reqErr := http.NewRequestWithContext(ctx, http.MethodGet, dlURL, nil)
-		if reqErr != nil {
-			lastErr = reqErr
-			continue
-		}
-		resp, doErr := client.Do(req)
-		if doErr != nil {
-			lastErr = doErr
-			continue
-		}
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			resp.Body.Close()
-			lastErr = fmt.Errorf("download %s returned HTTP %d", dlURL, resp.StatusCode)
-			continue
-		}
-
-		data, readErr := io.ReadAll(io.LimitReader(resp.Body, 250*1024*1024))
-		resp.Body.Close()
-		if readErr != nil {
-			lastErr = readErr
-			continue
-		}
-
-		archiveBytes = data
-		lastErr = nil
-		break
-	}
-
-	if len(archiveBytes) == 0 {
-		return "", fmt.Errorf("failed to download opencode from all mirrors: %w", lastErr)
-	}
-
-	if err := verifyArchiveSHA256(archiveBytes, expectedSHA); err != nil {
-		return "", err
-	}
-
-	var binBytes []byte
-	if isZip {
-		binBytes, err = extractBinaryFromZip(archiveBytes, binName)
-	} else {
-		binBytes, err = extractBinaryFromTarGz(archiveBytes, binName)
-	}
+	targetPath, err := installFromMirrors(ctx, client, dlURLs, isZip, expectedSHA, binDir, binName)
 	if err != nil {
 		return "", err
 	}
+	logger.Info("installed official opencode binary", "path", targetPath, "version", releaseVersion())
+	return targetPath, nil
+}
 
-	tmpPath := targetPath + ".tmp"
-	if err := os.WriteFile(tmpPath, binBytes, 0o755); err != nil {
+// installFromMirrors tries each mirror in order. An archive is accepted only
+// if its SHA-256 matches expectedSHA; a mismatching or broken mirror falls
+// through to the next candidate. The binary is written to a unique temp file
+// in binDir and renamed into place, so concurrent installs never interleave.
+func installFromMirrors(ctx context.Context, client *http.Client, dlURLs []string, isZip bool, expectedSHA, binDir, binName string) (string, error) {
+	var lastErr error
+	for _, dlURL := range dlURLs {
+		archive, err := fetchArchive(ctx, client, dlURL)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if err := verifyArchiveSHA256(archive, expectedSHA); err != nil {
+			lastErr = fmt.Errorf("%s: %w", dlURL, err)
+			continue
+		}
+		var binBytes []byte
+		if isZip {
+			binBytes, err = extractBinaryFromZip(archive, binName)
+		} else {
+			binBytes, err = extractBinaryFromTarGz(archive, binName)
+		}
+		if err != nil {
+			lastErr = fmt.Errorf("%s: %w", dlURL, err)
+			continue
+		}
+		return writeBinaryAtomically(binDir, binName, binBytes)
+	}
+	if lastErr == nil {
+		lastErr = errors.New("no download candidates")
+	}
+	return "", fmt.Errorf("failed to download opencode from all mirrors: %w", lastErr)
+}
+
+func fetchArchive(ctx context.Context, client *http.Client, dlURL string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, dlURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("download %s returned HTTP %d", dlURL, resp.StatusCode)
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 250*1024*1024))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) == 0 {
+		return nil, fmt.Errorf("download %s returned an empty body", dlURL)
+	}
+	return data, nil
+}
+
+func writeBinaryAtomically(binDir, binName string, binBytes []byte) (string, error) {
+	targetPath := filepath.Join(binDir, binName)
+	tmp, err := os.CreateTemp(binDir, "."+binName+".*.tmp")
+	if err != nil {
+		return "", err
+	}
+	tmpPath := tmp.Name()
+	committed := false
+	defer func() {
+		if !committed {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if _, err := tmp.Write(binBytes); err != nil {
+		_ = tmp.Close()
+		return "", err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return "", err
+	}
+	if err := tmp.Close(); err != nil {
+		return "", err
+	}
+	if err := os.Chmod(tmpPath, 0o755); err != nil {
 		return "", err
 	}
 	if err := os.Rename(tmpPath, targetPath); err != nil {
 		return "", err
 	}
-	logger.Info("installed official opencode binary", "path", targetPath, "version", releaseVersion())
+	committed = true
 	return targetPath, nil
 }
 

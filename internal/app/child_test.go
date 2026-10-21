@@ -83,14 +83,14 @@ func TestUnexpectedExitRespawnsDaemon(t *testing.T) {
 	a := &DesktopApp{status: tracker}
 	defer a.killChild()
 	restarted := make(chan *exec.Cmd, 1)
-	a.respawn = func() (*exec.Cmd, error) {
+	a.respawn = &respawner{start: func() (*exec.Cmd, error) {
 		child := exec.Command("sleep", "30")
 		if err := child.Start(); err != nil {
 			return nil, err
 		}
 		restarted <- child
 		return child, nil
-	}
+	}}
 	crash := exec.Command("sh", "-c", "exit 1")
 	if err := crash.Start(); err != nil {
 		t.Fatal(err)
@@ -123,10 +123,10 @@ func TestUnexpectedExitRespawnsDaemon(t *testing.T) {
 func TestShutdownDoesNotRespawnDaemon(t *testing.T) {
 	a := &DesktopApp{}
 	called := make(chan struct{}, 1)
-	a.respawn = func() (*exec.Cmd, error) {
+	a.respawn = &respawner{start: func() (*exec.Cmd, error) {
 		called <- struct{}{}
 		return nil, nil
-	}
+	}}
 	child := exec.Command("sleep", "30")
 	if err := child.Start(); err != nil {
 		t.Fatal(err)
