@@ -232,6 +232,8 @@ func Run(distFS fs.FS) {
 		return
 	}
 	gw.SetGatewayToken(gatewayToken)
+	gw.StartRemoteTunnel(hoxipaths.TunnelConfigPath(identity.Variant), listener.Addr().(*net.TCPAddr).Port)
+	defer gw.StopRemoteTunnel()
 	browserToken, err := generateRandomHex(32)
 	if err != nil {
 		logger.Error("failed to generate browser credential", "error", err)
@@ -469,6 +471,7 @@ func (a *DesktopApp) shutdown(_ context.Context) {
 	}
 	a.killChild()
 	if a.gateway != nil {
+		a.gateway.StopRemoteTunnel()
 		a.gateway.CloseBrowser()
 	}
 	updater.StopNative()

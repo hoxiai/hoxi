@@ -550,9 +550,16 @@ export function recordProbeTelemetry(
   setWorkspace(
     produce((state) => {
       const rec = (state.providerTelemetry[pid] ||= emptyStats(pid));
+      const now = Date.now();
       rec.lastProbeOk = ok;
       if (latencyMs && latencyMs > 0) {
         rec.lastProbeLatencyMs = latencyMs;
+      }
+      const m = ensureModelStats(rec, modelID);
+      if (m) {
+        m.lastProbeOk = ok;
+        m.lastProbeLatencyMs = latencyMs && latencyMs > 0 ? latencyMs : undefined;
+        m.updatedAt = now;
       }
       if (!ok && error) {
         const isTimeout = isTimeoutErrorText(error);
@@ -564,7 +571,7 @@ export function recordProbeTelemetry(
           modelID
         );
       }
-      rec.updatedAt = Date.now();
+      rec.updatedAt = now;
     })
   );
   schedulePersistTelemetry();

@@ -14,13 +14,13 @@
      - **语音唤醒 → 实时语音即操作系统**：「**语音唤醒（“嘿 Hoxi” / “你好灵光”） → 进入 1:1 灵光全屏全双工连续语音对话 → 手机端只直接受控 `GoPanel 线上服务器` 与 `Hoxi 本地电脑（端口 5417 反向加密隧道）` 两大底座；所有垂直业务（如 `runshoply.com` / `iqingpu.com` 独立站店铺管理、`qingpu.ai` 跨境上品）统一作为可插拔 `Skill`（`internal/skills`）挂载在底座上由语音一句话触发执行**」，保持手机端主脉络极致简单、免发版无限扩展。
    - **四栏极简架构**：
      - **Tab 0 `沟通` (`features/chat_hub`)**：对标阿里「灵光」的极简 AI 对话与 **1:1 全屏实时语音通话中枢**。支持**语音唤醒**、**30 分钟以上免动手全双工连续语音对话**（iOS `AVAudioSession.Mode.voiceChat` 硬件回声消除 AEC + 50 秒 `SFSpeechRecognitionTask` 无缝轮转 + `onUserBargeIn` **开口即打断 / 点击打断**），双模支持 **端到端实时语音大模型（`Qwen-Omni-Turbo-Realtime` / `GPT-4o-Mini-Realtime` WebSocket 24kHz PCM16）** 与 **Pipecat 级 `StreamingSentenceChunker` 流式分句神经语音播报**。
-     - **Tab 1 `工程` (`features/ai_workspace` & `features/server`)**：统一纳管 **Hoxi 本地电脑 (`nodeType: 'hoxi'`, 端口 `5417`)** 与 **GoPanel 线上服务器 (`nodeType: 'gopanel'`)**，顶部三段切换 `待我处理 (Attention)` · `AI 编码 (Worktree Sessions & Skills)` · `主机与容器 (100% 保留 GoPanel 原有 CPU/Docker/SSL/Website/DB 能力)`。
+     - **Tab 1 `工程` (`features/ai_workspace` & `features/server`)**：统一纳管 **Hoxi 本地电脑 (`nodeType: 'hoxi'`，局域网桥接或 GoPanel 隧道中继)** 与 **GoPanel 线上服务器 (`nodeType: 'gopanel'`)**，顶部三段切换 `待我处理 (Attention)` · `AI 编码 (Worktree Sessions & Skills)` · `主机与容器 (100% 保留 GoPanel 原有 CPU/Docker/SSL/Website/DB 能力)`。
      - **Tab 2 `专栏` (`features/portal`)**：实时直连 `hoxi.ai` 的 **大模型实战性价比排行榜**、**一人公司五维就绪度交互式自测雷达** 与 **6 大项目 / 业务 Skills 协同全景**。
-     - **Tab 3 `我的` (`features/settings`)**：双底座受控节点扫码配对（局域网 `:5417` + GoPanel 反向隧道 `/api/tunnel/hoxi-nodes/:id/proxy/*`）与安全锁。
+     - **Tab 3 `我的` (`features/settings`)**：双底座受控节点扫码配对、经 GoPanel 反向隧道添加 Hoxi 电脑（`/api/tunnel/hoxi-nodes/:id/proxy/*`，已实现）与安全锁；局域网 `:5417` 直连尚未实现。
 
 ### 2. 双底座 + 可插拔业务 Skills 生态矩阵 (Dual-Base & Pluggable Skills Matrix)
 手机端通过语音唤醒后，只与 **两大受控底座** 通信，其余业务统一作为 **Agent Skills (`SKILL.md`)** 挂载在底座执行：
-1. **底座一：Hoxi Desktop (`hoxi`, 端口 `5417`)**：本地电脑多 Agent 并行研发工作台（同局域网 `:5417` 直连或外网经 GoPanel `WSS /api/tunnel/connect` 9 字节二进制多路复用隧道穿透；语音直接新建隔离 Worktree 会话、下发单测/编码/Skill 指令、批准安全门控、提交 Git 代码、停止会话）。
+1. **底座一：Hoxi Desktop (`hoxi`)**：本地电脑多 Agent 并行研发工作台（外网经 GoPanel `WSS /api/tunnel/connect` 隧道由 `internal/tunnel` 进程内接入，Mac 不开放端口；局域网 `:5417` 直连为规划项；语音直接新建隔离 Worktree 会话、下发单测/编码/Skill 指令、批准安全门控、提交 Git 代码、停止会话）。
 2. **底座二：GoPanel (`gopanel_v2`)**：轻量级 Linux 服务器与容器面板（100% 保留原有运维能力，语音巡检 CPU/内存/负载，语音直接启停/重启 Docker 容器、续期 SSL 证书、触发网站 CI/CD 流水线、同步数据库实例）。
 3. **网关底座：AINode (`api.ainode.run`) & `hoxi.ai`**：统一高可用大模型路由、`wss://.../v1/realtime` 实时语音网关、大模型真实会话性价比评测榜与一人公司五维就绪度评估门户。
 4. **业务 Skill 1：`shoply-ops` (`runshoply.com` / `iqingpu.com`)**：多店铺独立站矩阵与 SaaS 运营 Skill（挂载于 Hoxi/GoPanel，语音触发查店/开店/免密后台链接、全平台店铺大盘、客户订阅权益对账 `reconcile`、建站咨询线索跟进 `leads` 及 `remote-ops.mjs` 双节点自动化运维）。
@@ -225,7 +225,7 @@
 修改以下特定子系统前，请先按需阅读对应的专项契约文档（Single Source of Truth）：
 
 - **整体架构、OpenCode REST/SSE 协议契约、Worktree 状态机与移动端实时语音架构** → [`DEVELOPMENT.md`](DEVELOPMENT.md)
-- **Hoxi ⇄ GoPanel 远程通信与反向加密隧道架构规范（端口 `5417`，双仓同步）** → [`docs/gopanel-hoxi-remote-tunnel.md`](docs/gopanel-hoxi-remote-tunnel.md)
+- **Hoxi ⇄ GoPanel 远程隧道契约（`internal/tunnel` + 网关路由白名单，双仓同步）** → [`docs/gopanel-hoxi-remote-tunnel.md`](docs/gopanel-hoxi-remote-tunnel.md)
 - **移动端 Hoxi App（沟通 · 工程 · 专栏 · 我的）产品形态、6 大业务情报与双节点声控指南** → [`client/README.zh-CN.md`](client/README.zh-CN.md)、[`client/README.md`](client/README.md)
 - **跨 CLI 会话接管（Handoff IR）与本地 CLI 协议桥接** → [`HANDOFF_AND_CLI_BRIDGE.md`](HANDOFF_AND_CLI_BRIDGE.md)
 - **内置无头 Chrome 浏览器检视器、人工接管与安全边界** → [`BROWSER.md`](BROWSER.md)、[`internal/browser/README.md`](internal/browser/README.md)

@@ -1,190 +1,185 @@
-# Hoxi ⇄ GoPanel 远程通信与反向加密隧道架构规范（端口 `5417`）
+# Hoxi ⇄ GoPanel 远程隧道契约
 
-> **文档状态**：已定稿（与 `gopanel_v2/docs/hoxi-remote-tunnel.md` 双仓同步）  
-> **核心目标**：在 **100% 保留 GoPanel 原有全部服务器运营能力** 的前提下，复用 GoPanel 成熟的二进制多路复用隧道底座（`app/service/tunnel_*.go`），让手机端（`client/`）无论在局域网还是外网 4G/5G 下，都能通过语音或聊天实时了解业务信息并远程控制家里/办公室的 **Hoxi 本地电脑（默认受控端口 `5417`）**。
+> 双仓同一份契约：`hoxi/docs/gopanel-hoxi-remote-tunnel.md` 与 `gopanel_v2/docs/hoxi-remote-tunnel.md` 内容保持一致，修改任一侧必须同步另一侧。
+> 本文只描述**已实现并有测试覆盖**的行为；规划项单独列在「尚未实现」中，不能当作现有能力引用。
 
----
+## 1. 目标与现状
 
-## 1. 架构拓扑与设计铁律
+让手机 Hoxi App 在任意网络下控制家里或办公室的 Hoxi 桌面：Mac 主动外连公网 GoPanel，手机只访问 GoPanel，由 GoPanel 经已有的隧道把请求转给 Mac。Mac 不开放任何监听端口。
+
+| 能力 | 状态 |
+| --- | --- |
+| Hoxi 桌面与 GoPanel 配对、长连接、断线重连 | 已实现 |
+| 手机经 GoPanel 访问 Hoxi 的 HTTP 接口 | 已实现 |
+| 手机经 GoPanel 订阅 Hoxi SSE（`/api/hoxi/event`） | 已实现，逐块转发不缓冲 |
+| 手机在服务器列表中发现并添加 Hoxi 电脑 | 已实现 |
+| 经隧道的 WebSocket（终端 `/pty`） | 未实现，GoPanel 返回 501 |
+| 同局域网手机直连 Mac（`5417` 监听） | 未实现，见第 9 节 |
+| 手机推送通知（审批提醒） | 未实现 |
+
+## 2. 拓扑
 
 ```text
-┌──────────────────────────────────────────────────────────────────────────────────┐
-│                     Hoxi 手机 App (`client/` — 沟通 · 工程 · 专栏 · 我的)          │
-│   • 语音/聊天查 6 大业务情报 (ChatInformationEngine)                              │
-│   • 语音/聊天直控 GoPanel 服务器 & Hoxi 本地电脑 (ChatActionExecutor)              │
-└───────────────────┬──────────────────────────────────────────┬───────────────────┘
-                    │                                          │
-   [路径 A：同 Wi-Fi / Tailscale 局域网直连]      [路径 B：外网 4G/5G 经 GoPanel 公网中继]
-   HTTP/SSE/WS -> http://<Mac-LAN-IP>:5417       HTTPS/WSS -> https://<gopanel-domain>
-   Header: X-Hoxi-Token: <PairingToken>          Header: Authorization: Bearer <GoPanel-JWT>
-                    │                                          │
-                    │                                          ▼
-                    │               ┌──────────────────────────────────────────────┐
-                    │               │       GoPanel 公网云服务器 (`gopanel_v2`)      │
-                    │               │  1. 原有服务器运营能力 100% 直达 (/api/*)：    │
-                    │               │     主机监控 / 容器 / 网站 / SSL / 数据库 /   │
-                    │               │     应用商店 / 文件 / 防火墙 / 任务 / 远端Code│
-                    │               │  2. Hoxi 隧道透明代理网关：                   │
-                    │               │     • GET /api/tunnel/hoxi-nodes             │
-                    │               │     • ALL /api/tunnel/hoxi-nodes/:id/proxy/* │
-                    │               └──────────────────────┬───────────────────────┘
-                    │                                      │
-                    │                        [WSS /api/tunnel/connect]
-                    │                   (9-Byte 二进制多路复用帧 · 穿透家庭 NAT)
-                    │                   Header: X-GoPanel-Tunnel-Client / Token
-                    │                                      │
-                    ▼                                      ▼
-┌──────────────────────────────────────────────────────────────────────────────────┐
-│                  家里 / 办公室的 Hoxi 本地电脑 (`hoxi` — macOS)                    │
-│   • 远程受控桥接端口：127.0.0.1:5417（开启局域网配对时兼听 0.0.0.0:5417）          │
-│   • 内置隧道客户端 (`internal/tunnel`)：主动外连 GoPanel 并同步 127.0.0.1:5417     │
-│   • 统一网关平面：/api/hoxi/sessions · /api/hoxi/event (SSE) · /api/hoxi/permission│
-└──────────────────────────────────────────────────────────────────────────────────┘
+手机 Hoxi App
+  │  HTTPS  https://<gopanel>/api/tunnel/hoxi-nodes/<nodeId>/proxy/api/hoxi/...
+  │  X-Auth: <GoPanel 登录 JWT>（可带 EntranceCode）
+  ▼
+公网 GoPanel（gopanel_v2）
+  │  JWT 管理员鉴权 → 请求头白名单 → 本机隧道入口 127.0.0.1:<随机端口>
+  │  （复用网站隧道的 serveTunnelHTTP，按 serviceId=hoxi-gateway 选路）
+  ▼  WSS /api/tunnel/connect（Mac 主动外连，9 字节头二进制多路复用帧）
+Hoxi 桌面（hoxi，internal/tunnel）
+  │  路由白名单 → 进程内交给 Gateway.ServeHTTP（不经端口）
+  ▼
+/api/hoxi/sessions · /api/hoxi/event · /api/hoxi/permission · /api/hoxi/worktree …
 ```
 
-### 三大设计铁律
-1. **GoPanel 原有运营能力零损保留**：
-   - GoPanel 作为线上 Linux 服务器管理面板的全部核心能力（系统监控、Docker/Podman 容器、Nginx 网站与流水线、SSL 证书、MySQL/PG/Redis 数据库、应用商店、文件/进程/防火墙资源管理、任务中心、以及服务器本机 `/api/code/*` 编码工作区）保持 **100% 原生可用**。
-   - Hoxi 远程通信作为增量能力挂载在 GoPanel 现有的 `/api/tunnel/*` 命名空间下，不侵入 GoPanel 任何既有业务模块。
-2. **端口统一约定为 `5417`**：
-   - Hoxi 端口谱系：
-     - `5410`：Hoxi Desktop Release 本地回环端口（`DefaultReleaseBridgeAddr = "127.0.0.1:5410"`）
-     - **`5417`**：**Hoxi 远程控制与 GoPanel 隧道桥接专用端口（`DefaultRemoteBridgePort = 5417`）**
-     - `5420`：Hoxi Desktop Dev 本地回环端口（`DefaultDevBridgeAddr = "127.0.0.1:5420"`）
-   - Hoxi 本地电脑向 GoPanel 隧道注册本机服务时，固定声明 `TargetHost: "127.0.0.1", TargetPort: 5417`。
-3. **100% 复用 GoPanel 现有二进制隧道帧协议**：
-   - 严禁发明第二套不兼容的隧道协议。Hoxi 桌面端直接实现与 `gopanel_v2/app/service/tunnel_protocol.go` 完全一致的二进制帧协议，天然支持 **HTTP REST、SSE (`text/event-stream` 零缓冲 Flush) 与 WebSocket (`/pty` 终端双向流)**。
+隧道底座（配对、帧协议、心跳、服务注册、本机入口）是 GoPanel 原有的「双端网站隧道」，本方案没有新增协议，只新增了 Hoxi 客户端、GoPanel 的两条手机路由和手机端中继连接。
 
----
+## 3. 使用流程
 
-## 2. 线缆协议契约（与 `gopanel_v2` 100% 对齐）
+1. **GoPanel 签发配对码**：GoPanel 管理后台 → 节点 → 隧道设置，生成 10 分钟有效、一次性的 32 位十六进制配对码（`POST /api/tunnel/pairing`）。
+2. **Hoxi 桌面配对**：Hoxi 设置 → 系统 → 经 GoPanel 远程控制，填写 GoPanel 地址、配对码和设备名，点「配对」。Hoxi 调用 GoPanel `POST /api/tunnel/pair/exchange` 换取长期凭据，随即连接并上报服务。GoPanel 节点列表中出现一个 `connectMode = tunnel` 的节点。
+3. **手机添加**：手机「服务器列表」中已登录的 GoPanel 卡片右侧点电脑图标，列出该 GoPanel 下在线的 Hoxi 电脑，选中后保存为一个 Hoxi 节点（中继地址），之后与普通 Hoxi 节点一样使用。
 
-### 2.1 配对码签发与长期凭据交换
-1. **签发一次性配对码（GoPanel 端已有）**：
-   - 路由：`POST /api/tunnel/pairing`（需 GoPanel Admin JWT）
-   - 响应：`{"code": "<32-char-hex>", "expiresAt": "2026-10-21T10:35:00Z"}`（10 分钟有效，一次性消费）。
-2. **Hoxi 本地电脑交换长期隧道凭据（GoPanel 端已有）**：
-   - 路由：`POST /api/tunnel/pair/exchange`
-   - 请求体：
-     ```json
-     {
-       "code": "<32-char-hex>",
-       "name": "Hugh's Mac Studio (Hoxi)",
-       "hostname": "Mac-Studio.local",
-       "version": "hoxi-0.2.9"
-     }
-     ```
-   - 响应体：
-     ```json
-     {
-       "nodeId": 3,
-       "clientId": "550e8400-e29b-41d4-a716-446655440000",
-       "token": "<64-char-hex-secret>"
-     }
-     ```
-   - Hoxi 桌面端将 `{controllerUrl, nodeId, clientId, token}` 原子加密落盘至 `~/.hoxi/tunnel.json`。
+解除：Hoxi 设置中点「解除配对」删除本机凭据；GoPanel 上的节点需管理员在 GoPanel 删除。
 
-### 2.2 出站 WebSocket 隧道连接与 `5417` 服务注册
-1. **建立长连接（GoPanel 端已有）**：
-   - 路由：`WSS /api/tunnel/connect`
-   - 认证请求头：
-     - `X-GoPanel-Tunnel-Client: <clientId>`
-     - `X-GoPanel-Tunnel-Token: <token>`
-2. **二进制帧格式（9 字节定长头 + 载荷）**：
-   ```text
-   +----------+------------------------+-------------------+
-   | Type(1B) | StreamID (8B, uint64)  | Payload (0..4MB)  |
-   +----------+------------------------+-------------------+
-   ```
-   - `0x01` `tunnelFrameOpen`：GoPanel 打开一条新请求流（JSON：`serviceId`, `method`, `requestUri`, `headers`, `hasBody`, `upgrade`）
-   - `0x02` `tunnelFrameResponse`：Hoxi 返回 HTTP 状态码与响应头（JSON：`status`, `headers`）
-   - `0x03` `tunnelFrameData`：流式数据块（首字节 `0x00`=HTTP/SSE 字节流，`0x01`=WS Text，`0x02`=WS Binary）
-   - `0x04` `tunnelFrameEnd`：流正常结束
-   - `0x05` `tunnelFrameReset`：流异常重置
-   - `0x06` `tunnelFramePing` / `0x07` `tunnelFramePong`：20 秒心跳保活（65 秒读超时，断线 1s~30s 指数退避自动重连）
-   - `0x08` `tunnelFrameServiceSync`：连接成功后 Hoxi 立即上报本机 `5417` 受控网关服务：
-     ```json
-     {
-       "hostname": "Mac-Studio.local",
-       "version": "hoxi-0.2.9",
-       "services": [
-         {
-           "publicId": "hoxi-gateway-5417",
-           "name": "Hoxi Desktop Gateway",
-           "scheme": "http",
-           "targetHost": "127.0.0.1",
-           "targetPort": 5417,
-           "enabled": true
-         }
-       ]
-     }
-     ```
+## 4. 线缆协议（与 `gopanel_v2/app/service/tunnel_protocol.go` 逐字节一致）
 
----
+### 4.1 配对
 
-## 3. GoPanel 侧增量接口规划（`gopanel_v2`）
+`POST /api/tunnel/pair/exchange`（无需登录，配对码即凭证）
 
-GoPanel 现有的 `serveTunnelIngress` 仅面向本机 Caddy 网站反代。为了让 **Hoxi 手机 App (`client/`)** 直接通过 GoPanel 远程控制已连入的 **Hoxi 本地电脑（端口 `5417`）**，在 `gopanel_v2/app/router/tunnel.go` 与 `app/api/tunnel.go` 中增量暴露以下 2 个受 JWT 保护的接口：
+```json
+{"code": "<32 hex>", "name": "Studio", "hostname": "Mac-Studio.local", "version": "0.2.9"}
+```
 
-### 3.1 查询在线的 Hoxi 本地电脑节点列表
-- **路由**：`GET /api/tunnel/hoxi-nodes`（需登录 JWT）
-- **响应示例**：
-  ```json
-  {
-    "code": 200,
-    "msg": "success",
-    "data": {
-      "items": [
-        {
-          "nodeId": 3,
-          "name": "Hugh's Mac Studio (Hoxi)",
-          "hostname": "Mac-Studio.local",
-          "version": "hoxi-0.2.9",
-          "status": "online",
-          "serviceId": "hoxi-gateway-5417",
-          "targetPort": 5417,
-          "lastSeenAt": "2026-10-21T10:25:00Z"
-        }
-      ]
-    }
-  }
-  ```
+响应使用 GoPanel 包装，**`code` 为 0 表示成功**：
 
-### 3.2 透明代理转发至 Hoxi 本地电脑 `5417` 端口
-- **路由**：`ALL /api/tunnel/hoxi-nodes/:nodeId/proxy/*`（支持 `GET`, `POST`, `PUT`, `DELETE`、SSE 流及 WebSocket Upgrade）
-- **转发逻辑**：
-  1. 校验当前请求的 GoPanel 登录凭证（JWT 或 API Token）。
-  2. 查找 `nodeId` 下 `targetPort == 5417`（或 `publicId == "hoxi-gateway-5417"`）的 `TunnelService` 与在线 `tunnelGatewayPeer`。
-  3. 剥离前缀 `/api/tunnel/hoxi-nodes/:nodeId/proxy`，将剩余路径与 Query（例如 `/api/hoxi/sessions?directory=...` 或 `/api/hoxi/event?directory=...`）直接交由 `serveTunnelHTTP` / `serveTunnelWebSocket` 通过隧道转发至 Hoxi 本地电脑的 `127.0.0.1:5417`！
-  4. 对于 `Content-Type: text/event-stream`（如 `/api/hoxi/event`），每收到一帧 `tunnelFrameData` 立即调用 `flusher.Flush()`，确保手机端 120Hz SSE 实时流与语音播报零缓冲延迟。
+```json
+{"code": 0, "msg": "Success", "data": {"nodeId": 3, "clientId": "<uuid>", "token": "<64 hex>"}}
+```
 
----
+### 4.2 长连接
 
-## 4. Hoxi 桌面端侧增量规划（`hoxi`）
+`GET /api/tunnel/connect`（WebSocket Upgrade），请求头 `X-GoPanel-Tunnel-Client: <clientId>`、`X-GoPanel-Tunnel-Token: <token>`。公网 GoPanel 必须使用 HTTPS（WSS）；明文 HTTP 只允许回环地址用于本地开发。
 
-1. **监听 `5417` 受控桥接端口（`internal/hoxipaths` & `internal/app`）**：
-   - 在 `internal/hoxipaths/hoxipaths.go` 定义 `DefaultRemoteBridgePort = 5417` 与 `DefaultRemoteBridgeAddr = "127.0.0.1:5417"`。
-   - 当用户在桌面端开启「允许局域网手机直连」时，额外在 `0.0.0.0:5417` 启动受 `X-Hoxi-Token` 严格保护的监听器；仅开启「GoPanel 隧道远程控制」时，仅需监听 `127.0.0.1:5417`，零本地端口暴露。
-2. **移动端令牌准入守卫（`internal/gateway/security.go`）**：
-   - 未携带有效 `X-Hoxi-Token` 的请求继续严格执行 `trustedHost(r.Host)`（仅限 `127.0.0.1` / `localhost` / `wails`）。
-   - 携带有效 `X-Hoxi-Token`（ConstantTimeCompare 校验通过）的请求，放行局域网 Host（`192.168.x.x:5417` / `100.x.x.x:5417`）与隧道转发请求。
-3. **内置 GoPanel 隧道客户端（`internal/tunnel/`）**：
-   - 提供桌面端 REST 接口：
-     - `GET /api/hoxi/tunnel/status`：查看当前与 GoPanel 的隧道连接状态、延时与局域网 `:5417` 配对二维码信息。
-     - `POST /api/hoxi/tunnel/pair`：传入 `{controllerUrl, code, name}`，一键完成与 GoPanel 的配对并自动连接 `WSS /api/tunnel/connect`，同步 `127.0.0.1:5417` 服务。
-     - `POST /api/hoxi/tunnel/disable`：断开并停用远程隧道。
+### 4.3 帧
 
----
+```text
+Type(1B) | StreamID(8B, BigEndian uint64) | Payload(≤ 4MB)
+```
 
-## 5. 手机端 (`client/`) 双模路由与全能力协同规划
+| Type | 名称 | 方向 | 载荷 |
+| --- | --- | --- | --- |
+| 1 | Open | GoPanel → Hoxi | JSON `serviceId, method, requestUri, headers, hasBody, upgrade` |
+| 2 | Response | Hoxi → GoPanel | JSON `status, headers` |
+| 3 | Data | 双向 | 首字节 `0`=HTTP 字节流，`1`/`2`=WS 文本/二进制 |
+| 4 | End | 双向 | 空 |
+| 5 | Reset | 双向 | 错误原因文本 |
+| 6 / 7 | Ping / Pong | 双向 | 时间戳 |
+| 8 | ServiceSync | Hoxi → GoPanel | 见 4.4 |
 
-1. **GoPanel 原有运营能力 100% 保持直通**：
-   - 在 Tab 1 `工程 -> 主机与容器` 及「沟通」页语音指令中，所有面向 GoPanel 的请求继续直连 `https://<gopanel-url>/api/...`（主机监控、Docker 容器、网站、SSL、数据库、应用商店、文件/进程/防火墙、任务中心）。
-2. **Hoxi 本地电脑「局域网 `:5417` + GoPanel 隧道」智能双路由**：
-   - `ServerConnection`（`nodeType == 'hoxi'`）支持同时保存：
-     - `lanUrl`: `http://<mac-lan-ip>:5417`
-     - `relayUrl`: `https://<gopanel-url>/api/tunnel/hoxi-nodes/<nodeId>/proxy`
-   - 手机端访问 Hoxi 本地电脑时：
-     - 若处于同一 Wi-Fi 且 `lanUrl`（`:5417`）健康探测在 `180ms` 内响应，优先走局域网 `:5417` 极速直连；
-     - 若人在外网（4G/5G）或局域网不可达，**自动无感切换至 `relayUrl`（经 GoPanel 隧道穿透至家里 Mac 的 `127.0.0.1:5417`）**。
-   - 无论走局域网 `:5417` 还是走 GoPanel 隧道，手机端「沟通」页的 **1:1 灵光实时语音通话**、**6 大业务情报查询 (`ChatInformationEngine`)** 与 **12 类声控直达动作 (`ChatActionExecutor`)** 均完全透明运行。
+心跳 20 秒，读超时 65 秒，写超时 15 秒；断线后 1s 起指数退避至 30s 重连，连上后退避归零。GoPanel 每条请求流缓冲 32 帧、Hoxi 每条请求体缓冲 16 块，超出即 Reset（见第 8 节）。
+
+### 4.4 服务注册
+
+连接建立后 Hoxi 立即发送：
+
+```json
+{
+  "hostname": "Mac-Studio.local",
+  "version": "0.2.9",
+  "services": [{
+    "publicId": "hoxi-gateway",
+    "name": "Hoxi Desktop Gateway",
+    "scheme": "http",
+    "targetHost": "127.0.0.1",
+    "targetPort": 5410,
+    "enabled": true
+  }]
+}
+```
+
+`publicId = "hoxi-gateway"` 是 GoPanel 识别 Hoxi 电脑的唯一依据。`targetPort` 是 Hoxi 本机桥接端口（release 5410、dev 5420），**仅用于展示**：Hoxi 在进程内处理请求，不会回连这个端口。
+
+## 5. GoPanel 侧接口（`gopanel_v2`）
+
+两条路由挂在 `/api/tunnel` 管理组，与其他管理接口一样要求管理员 JWT（`X-Auth`）。
+
+### 5.1 `GET /api/tunnel/hoxi-nodes`
+
+返回注册了启用状态 `hoxi-gateway` 服务的隧道节点；`status` 按隧道是否在线实时计算。
+
+```json
+{"code": 0, "msg": "Success", "data": {"items": [{
+  "nodeId": 3, "name": "Studio", "hostname": "Mac-Studio.local", "version": "0.2.9",
+  "status": "online", "serviceId": "hoxi-gateway", "targetPort": 5410,
+  "lastSeenAt": "2026-10-21T10:25:00Z"
+}]}}
+```
+
+### 5.2 `ALL /api/tunnel/hoxi-nodes/:nodeId/proxy/*`
+
+把 `/<*>?<query>` 转发给该节点的 Hoxi 网关。
+
+- **请求头白名单**：只透传 `Accept`、`Accept-Language`、`Cache-Control`、`Content-Type`、`Last-Event-ID`、`X-Hoxi-Directory`。`X-Auth`、`Authorization`、`Cookie`、`EntranceCode` 等 GoPanel 凭据不会离开 GoPanel；查询串经 `SanitizeNodeProxyQuery` 去掉 GoPanel 凭据参数。
+- **响应**：状态码与响应头原样回传，但丢弃 `Set-Cookie`（Hoxi 不能在 GoPanel 域名下种 Cookie）与逐跳头；响应体每读到一块就写出并 Flush，SSE 实时到达手机。
+- **错误**：隧道层错误使用 Hoxi 网关格式 `{"error": "..."}` 与真实 HTTP 状态码，便于手机端按 Hoxi 协议处理：
+  - `503`：节点离线、节点未注册 `hoxi-gateway`、隧道入口未启动
+  - `502`：转发途中失败
+  - `501`：WebSocket Upgrade（暂不支持）
+  - JWT 失效仍由 GoPanel 中间件返回其标准包装（HTTP 200，`code = 401`）
+- 实现：`app/api/tunnel_hoxi.go`、`app/service/tunnel_hoxi.go`；转发经现有 `serveTunnelIngress`，没有复制帧处理逻辑。写操作照常记入 GoPanel 操作日志。
+
+## 6. Hoxi 桌面侧（`hoxi`）
+
+- **`internal/tunnel`**：配对、连接管理、帧协议与进程内分发。收到 Open 帧后构造请求：`Host` 改为 `127.0.0.1`，丢弃逐跳头、`Origin`、`Referer`、`Cookie`、`Authorization`、`X-Hoxi-Token`、`Sec-*`、`X-Forwarded-*`、`X-GoPanel-*`；`serviceId` 不是 `hoxi-gateway`、`upgrade = true` 或 URI 非法时直接 Reset。
+- **路由白名单（`internal/gateway/tunnel.go`）**：经隧道只能访问
+  - 前缀：`/api/hoxi/sessions`、`/event`、`/permission`、`/worktree`、`/runner`、`/workspaces`、`/attachments`、`/skills`、`/file`
+  - 精确：`/healthz`、`/api/hoxi/bootstrap`、`/api/hoxi/system-info`、`/file`、`/file/content`、`/api/file/content`
+
+  其余一律 403，包括隧道与账号管理、`/api/hoxi/models-config`（含提供商配置）、浏览器、剪贴板、对话框、更新器以及 OpenCode 原始透传（`/session`、`/pty`、`/config`、`/auth` 等）。路径必须是 `path.Clean` 后的形式，`..` 绕过会被拒绝。
+- **本机网关令牌不出机器**：隧道请求访问 `/file` 时由网关在进程内注入令牌；`/api/hoxi/bootstrap` 对隧道请求不返回 `gatewayToken`，也不种令牌 Cookie。
+- **凭据文件**：release `~/.hoxi/tunnel.json`，dev `~/.hoxi/tunnel-dev.json`（两个变体可同时运行，互不挤占隧道）。临时文件 + `os.Rename` 原子写入，权限 `0600`，已加入受保护状态文件列表；状态接口从不返回 token。
+- **管理接口**（只在本机可访问，隧道白名单不包含）：
+  - `GET /api/hoxi/tunnel/status` → `{enabled, state: disabled|connecting|online|offline, controllerUrl, nodeId, name, message, connectedAt}`
+  - `POST /api/hoxi/tunnel/pair` `{controllerUrl, code, name}`
+  - `POST /api/hoxi/tunnel/disable`：断开并删除本机凭据
+- 只有桌面主进程（含 `--no-desktop` 守护模式）启用隧道；CLI 临时拉起的 headless 网关没有凭据路径，配对会在兑换配对码**之前**被拒绝，避免在 GoPanel 留下孤儿节点。
+- 桌面 UI：设置 → 系统 → 经 GoPanel 远程控制（`web/src/components/settings/RemoteTunnelControls.tsx`）。
+
+## 7. 手机端（`client/`）
+
+- **中继地址**：`https://<gopanel>/api/tunnel/hoxi-nodes/<nodeId>/proxy`，作为 `nodeType = 'hoxi'` 的 `ServerConnection.url` 保存；现有 Hoxi 适配器把 `/api/hoxi/...` 直接拼在后面，无需改业务代码。
+- **凭据**：中继连接复用所属 GoPanel 的登录 JWT 与安全入口，由现有鉴权拦截器发送 `X-Auth` 与 `EntranceCode`。GoPanel 重新登录保存连接时，会同步刷新它名下所有中继连接的凭据。
+- **地址规范化**：`normalizeServerAddress` 不再把中继路径当作安全入口剥离（`isHoxiRelayUrl`），App 每次启动时的迁移也会保留中继路径。
+- **入口**：服务器列表 → GoPanel 卡片的电脑图标 → `HoxiRelayNodesSheet`；离线电脑不可选。
+- 代码：`lib/shared/models/server_connection.dart`、`lib/features/server/data/hoxi_relay_repository.dart`、`lib/features/server/presentation/widgets/hoxi_relay_nodes_sheet.dart`。
+
+## 8. 安全模型与已知限制
+
+- **信任边界**：配对即授权。能以管理员身份登录这台 GoPanel 的人，可以在白名单范围内远程操作这台 Mac（新建会话、下发指令、批准审批）。Hoxi 自身的破坏性命令审批门控照常生效，但审批本身也能经手机远程批准。只与自己控制的 GoPanel 配对。
+- **凭据**：GoPanel JWT 只在手机与 GoPanel 之间；隧道 token 只在 Mac 与 GoPanel 之间，以 `0600` 明文文件保存在 Mac 上（尚未接入钥匙串）；Hoxi 本机网关令牌不离开 Mac。
+- **无端到端加密**：GoPanel 能看到经它转发的请求和响应明文（会话内容、Diff）。传输加密依赖手机 ↔ GoPanel、Mac ↔ GoPanel 两段 TLS。
+- **无流控**：手机读得慢时 GoPanel 单流 32 帧缓冲会溢出并 Reset 该流（SSE 断开后由手机端重连）；大文件下载不适合走隧道。
+- **单连接**：同一凭据只保留最新的一条隧道，旧连接会被替换。
+- **JWT 有效期**：GoPanel 管理员登录默认 72 小时，过期后需在手机重新登录 GoPanel（中继连接随之刷新）。
+
+## 9. 尚未实现
+
+- 经隧道转发 WebSocket（手机远程终端）。GoPanel 侧已支持，Hoxi 侧需要回连本机端口或实现进程内 Hijack。
+- 同局域网直连：Hoxi 额外监听 `5417`（受令牌保护），手机按「局域网探测 → 失败回落中继」双路由。`5417` 端口号保留给该功能，当前版本不监听。
+- 隧道 token 存入 macOS 钥匙串；手机推送通知；节点身份与传输地址分离后的自动切换。
+
+## 10. 验证
+
+| 范围 | 命令 / 测试 |
+| --- | --- |
+| Hoxi 隧道客户端 | `go test ./internal/tunnel/`（配对、`0600` 凭据、ServiceSync、请求转发、凭据头剥离、Reset 场景、解除配对） |
+| Hoxi 路由白名单 | `go test ./internal/gateway/ -run Tunnel` |
+| GoPanel 代理 | `go test ./app/service/ -run HoxiTunnel`（SSE 逐块到达、GoPanel 凭据不泄漏、丢弃 Set-Cookie、未注册服务拒绝） |
+| 手机中继连接 | `flutter test test/hoxi_relay_test.dart` |
+| 双仓互通 | 用临时 `go.work` 同时引入两个模块，让真实 GoPanel `HandleTunnelConnection` 与真实 Hoxi `tunnel.Manager` 对接：SSE 首块约 2ms 到达、200KB 请求体完整。该测试不入库，修改帧协议时需重跑 |
+
+尚未做真机联调：真实公网 GoPanel + 真实 Mac + 手机 4G 下的端到端验收、长时间 SSE 稳定性与重连表现。

@@ -15,6 +15,7 @@ import { network } from "./network";
 import { skills } from "./skills";
 import { commandPalette } from "./commandPalette";
 import { forge } from "./forge";
+import { remoteTunnel } from "./remoteTunnel";
 
 export const zhCN: I18nDictionary = {
   common,
@@ -32,6 +33,7 @@ export const zhCN: I18nDictionary = {
   skills,
   commandPalette,
   forge,
+  remoteTunnel,
 };
 
 export default zhCN;

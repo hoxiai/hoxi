@@ -48,6 +48,8 @@ type modelTelemetryStats struct {
 	LastAuditSummary   string    `json:"lastAuditSummary,omitempty"`
 	TtftSamplesMs      []int64   `json:"ttftSamplesMs,omitempty"`
 	TpsSamples         []float64 `json:"tpsSamples,omitempty"`
+	LastProbeLatencyMs int64     `json:"lastProbeLatencyMs,omitempty"`
+	LastProbeOk        *bool     `json:"lastProbeOk,omitempty"`
 	UpdatedAt          int64     `json:"updatedAt"`
 }
 
@@ -251,6 +253,11 @@ func (s *modelStatsStore) recordProbeResult(providerID string, ok bool, latencyM
 	rec.LastProbeLatencyMs = latencyMs
 	rec.LastProbeOk = &ok
 	rec.UpdatedAt = time.Now().UnixMilli()
+	if m := ensureModelRecordLocked(rec, modelID); m != nil {
+		m.LastProbeLatencyMs = latencyMs
+		m.LastProbeOk = &ok
+		m.UpdatedAt = rec.UpdatedAt
+	}
 
 	if !ok && errMsg != "" {
 		incType := "api_error"

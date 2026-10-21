@@ -151,11 +151,13 @@ export const hoxiAPI = {
 
   getGitDailyPulse(
     directory?: string,
-    sessionID?: string
+    sessionID?: string,
+    force = false
   ): Promise<import("./api-types").GitDailyPulseResponse> {
     const params = new URLSearchParams();
     if (directory) params.set("directory", directory);
     if (sessionID) params.set("sessionID", sessionID);
+    if (force) params.set("refresh", "1");
     const qs = params.toString();
     return requestJSON(`/api/hoxi/dev-pulse${qs ? `?${qs}` : ""}`);
   },

@@ -1,0 +1,23 @@
+// web/src/i18n/locales/zh-CN/remoteTunnel.ts
+export const remoteTunnel = {
+  title: "经 GoPanel 远程控制",
+  tip: "本机主动外连公网 GoPanel，手机 Hoxi App 在任何网络下都能访问这台电脑；本机不开放端口，远程请求只能访问会话、审批、工作树审查与附件",
+  stateDisabled: "未配对",
+  stateConnecting: "连接中",
+  stateOnline: "已连接",
+  stateOffline: "已断开，正在重试",
+  controllerLabel: "GoPanel 地址",
+  controllerPlaceholder: "https://panel.example.com",
+  codeLabel: "配对码",
+  codePlaceholder: "GoPanel → 节点 → 隧道 中生成的 32 位配对码",
+  nameLabel: "设备名称",
+  namePlaceholder: "默认使用本机主机名",
+  pairAction: "配对",
+  pairing: "配对中",
+  disableAction: "解除配对",
+  disableConfirm: "确定解除与 GoPanel 的配对？解除后手机将无法远程访问，需重新配对",
+  nodeLabel: "GoPanel 节点 #{id}",
+  loadError: "无法读取远程隧道状态",
+  pairError: "配对失败",
+  disableError: "解除配对失败",
+};

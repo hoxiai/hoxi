@@ -14,6 +14,7 @@ import { network } from "./network";
 import { skills } from "./skills";
 import { commandPalette } from "./commandPalette";
 import { forge } from "./forge";
+import { remoteTunnel } from "./remoteTunnel";
 
 export const enUS = {
   common,
@@ -31,6 +32,7 @@ export const enUS = {
   skills,
   commandPalette,
   forge,
+  remoteTunnel,
 };
 
 export default enUS;

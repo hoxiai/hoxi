@@ -153,7 +153,8 @@ export async function refreshDailyDevPulse(manual = false): Promise<void> {
   try {
     const res = await hoxiAPI.getGitDailyPulse(
       workspace.rootDir || undefined,
-      workspace.activeSessionID || undefined
+      workspace.activeSessionID || undefined,
+      manual
     );
     if (res) {
       const sig = JSON.stringify(res);

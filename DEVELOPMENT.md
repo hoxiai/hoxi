@@ -607,8 +607,8 @@ Go 网关在转发 `/event` SSE 流及多运行时事件时，旁路解析事件
 | [`client/ios/Runner/AppDelegate.swift`](client/ios/Runner/AppDelegate.swift) | iOS `.voiceChat` 硬件回声消除、50s 连续语音识别无缝轮转、24kHz PCM16 播放与原生打断检测 |
 | [`client/android/app/src/main/kotlin/ai/hoxi/app/MainActivity.kt`](client/android/app/src/main/kotlin/ai/hoxi/app/MainActivity.kt) | Android 连续语音识别自动重启、`AudioTrack` PCM16 播放、屏幕常亮锁与原生打断检测 |
 
-### 11.3 Hoxi ⇄ GoPanel 远程通信与反向隧道架构（端口 `5417`）
-- **100% 保留 GoPanel 原有服务器运营能力**，并复用 `gopanel_v2` 的 9 字节二进制多路复用隧道协议（`WSS /api/tunnel/connect`），将家里/办公室的 **Hoxi 本地电脑（默认受控端口 `127.0.0.1:5417`）** 安全挂载至公网 GoPanel 节点（`ALL /api/tunnel/hoxi-nodes/:nodeId/proxy/*`）。
-- 手机端支持 **局域网 `:5417` 直连 + GoPanel 隧道远程穿透** 智能双路由无缝切换，完整协议与帧定义见双仓同步规范：[`docs/gopanel-hoxi-remote-tunnel.md`](docs/gopanel-hoxi-remote-tunnel.md)。
+### 11.3 Hoxi ⇄ GoPanel 远程隧道
+- 复用 `gopanel_v2` 原有的 9 字节二进制多路复用隧道（`WSS /api/tunnel/connect`）：Hoxi 桌面（`internal/tunnel`）配对后主动外连，以 `publicId = hoxi-gateway` 注册网关服务，收到的请求在进程内交给网关并经路由白名单过滤，Mac 不开放端口。
+- 手机经 GoPanel `ALL /api/tunnel/hoxi-nodes/:nodeId/proxy/*` 访问 HTTP 与 SSE；WebSocket 与局域网 `:5417` 直连尚未实现。完整契约、安全模型与验证方式见双仓同步文档：[`docs/gopanel-hoxi-remote-tunnel.md`](docs/gopanel-hoxi-remote-tunnel.md)。
 
 

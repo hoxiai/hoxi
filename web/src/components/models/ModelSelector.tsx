@@ -41,6 +41,7 @@ import {
   type FlattenedModel,
 } from "./model-selector-utils";
 import { ModelDetailsPopover } from "./ModelDetailsPopover";
+import { ModelProbeBadge, ModelProbeButton } from "./ModelProbeControl";
 import { SelectedModelHoverCard } from "./SelectedModelHoverCard";
 
 function effortOptionLabel(level: ConcreteReasoningEffort): string {
@@ -597,6 +598,10 @@ export default function ModelSelector() {
                                   {item.multiplier}
                                 </span>
                               </Show>
+                              <ModelProbeBadge
+                                providerID={item.providerID}
+                                modelID={item.modelID}
+                              />
                             </span>
                             <span class="block truncate text-[11px] text-[var(--text-muted)]">
                               {item.providerID === AUTO_PROVIDER_ID && peekAutoModelTarget(item.modelID)
@@ -624,6 +629,12 @@ export default function ModelSelector() {
                           </button>
 
                           <div class="flex items-center gap-1 shrink-0">
+                            <ModelProbeButton
+                              providerID={item.providerID}
+                              modelID={item.modelID}
+                              modelName={item.modelName}
+                              source={item.source}
+                            />
                             <button
                               type="button"
                               aria-haspopup="dialog"

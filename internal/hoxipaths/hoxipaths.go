@@ -36,6 +36,8 @@ var protectedStateFiles = []string{
 	"auth.json",
 	"device-id",
 	"telemetry.json",
+	"tunnel.json",
+	"tunnel-dev.json",
 }
 
 // Home returns ~/.hoxi (or $HOXI_HOME when set), or "" when the user home directory is unknown.
@@ -96,6 +98,15 @@ func IsProtectedStateFile(baseName string) bool {
 		}
 	}
 	return false
+}
+
+// TunnelConfigPath returns the GoPanel tunnel credential file. Dev and release
+// builds pair separately so both can run without evicting each other's tunnel.
+func TunnelConfigPath(variant string) string {
+	if variant == "dev" {
+		return Join("tunnel-dev.json")
+	}
+	return Join("tunnel.json")
 }
 
 // BinDir returns ~/.hoxi/bin, where Hoxi installs its managed binaries.

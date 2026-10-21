@@ -1,0 +1,23 @@
+// web/src/i18n/locales/en-US/remoteTunnel.ts
+export const remoteTunnel = {
+  title: "Remote control via GoPanel",
+  tip: "This Mac dials out to your public GoPanel, so the Hoxi mobile app can reach it from anywhere. No local port is opened, and remote requests can only reach sessions, approvals, worktree review and attachments",
+  stateDisabled: "Not paired",
+  stateConnecting: "Connecting",
+  stateOnline: "Connected",
+  stateOffline: "Disconnected, retrying",
+  controllerLabel: "GoPanel URL",
+  controllerPlaceholder: "https://panel.example.com",
+  codeLabel: "Pairing code",
+  codePlaceholder: "32-character code from GoPanel → Nodes → Tunnel",
+  nameLabel: "Device name",
+  namePlaceholder: "Defaults to this Mac's hostname",
+  pairAction: "Pair",
+  pairing: "Pairing",
+  disableAction: "Unpair",
+  disableConfirm: "Unpair this Mac from GoPanel? The phone loses remote access until you pair again",
+  nodeLabel: "GoPanel node #{id}",
+  loadError: "Could not read the remote tunnel status",
+  pairError: "Pairing failed",
+  disableError: "Could not unpair",
+};

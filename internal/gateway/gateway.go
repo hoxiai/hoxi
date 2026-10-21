@@ -29,6 +29,7 @@ import (
 	"github.com/hoxiai/hoxi/internal/sandbox"
 	"github.com/hoxiai/hoxi/internal/skills"
 	"github.com/hoxiai/hoxi/internal/statusbar"
+	"github.com/hoxiai/hoxi/internal/tunnel"
 	"github.com/hoxiai/hoxi/internal/updater"
 	"github.com/hoxiai/hoxi/internal/workspace"
 	"github.com/hoxiai/hoxi/internal/worktree"
@@ -57,6 +58,7 @@ type Gateway struct {
 	recallSvc             *recall.Service
 	orchestration         *orchestration.Service
 	forge                 *forge.Service
+	tunnel                *tunnel.Manager
 	onOpenDirectoryDialog func() (string, error)
 	onFocusDesktop        func(directory, sessionID string)
 	dialogMu              sync.RWMutex
@@ -172,6 +174,7 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 		return err
 	})
 	providers.SetBusyCheck(g.isAnySessionBusy)
+	g.tunnel = tunnel.NewManager(tunnel.Options{Handler: http.HandlerFunc(g.serveTunnelRequest), Version: buildinfo.Version})
 
 	g.registerRoutes(distFS)
 	return g
@@ -272,12 +275,16 @@ func (g *Gateway) registerRoutes(distFS fs.FS) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	})
 
-	g.mux.HandleFunc("/api/hoxi/bootstrap", func(w http.ResponseWriter, _ *http.Request) {
+	g.mux.HandleFunc("/api/hoxi/bootstrap", func(w http.ResponseWriter, r *http.Request) {
 		var st statusbar.Summary
 		if g.status != nil {
 			st = g.status.Snapshot()
 		}
+		// The loopback gateway token never leaves the machine via the tunnel.
 		tok := g.GatewayToken()
+		if isTunnelRequest(r) {
+			tok = ""
+		}
 		if tok != "" {
 			http.SetCookie(w, &http.Cookie{
 				Name:     gatewayTokenCookieName,
@@ -347,6 +354,7 @@ func (g *Gateway) registerRoutes(distFS fs.FS) {
 	g.providers.RegisterRoutes(g.mux)
 	g.handoff.RegisterRoutes(g.mux)
 	g.worktrees.RegisterRoutes(g.mux)
+	g.tunnel.RegisterRoutes(g.mux)
 	g.workspaces.RegisterRoutes(g.mux)
 	g.browser.RegisterRoutes(g.mux)
 	if g.runner != nil {

@@ -368,6 +368,8 @@ export interface ModelTelemetryStats {
   lastAuditSummary?: string;
   ttftSamplesMs?: number[];
   tpsSamples?: number[];
+  lastProbeLatencyMs?: number;
+  lastProbeOk?: boolean;
   updatedAt: number;
 }
 

@@ -1,8 +1,7 @@
 import { createMemo, Index, onMount, Show } from "solid-js";
-import { ChevronRight, RefreshCw, Trophy } from "lucide-solid";
+import { ChevronRight, Trophy } from "lucide-solid";
 import {
   computeDailyDevPulseStats,
-  isDailyPulseSyncing,
   openDiffInInspector,
   openLeaderboardModal,
   refreshDailyDevPulse,
@@ -49,20 +48,6 @@ export default function DevPulseContent(props: { onNavigate: () => void }) {
 
   return (
     <div class="select-text">
-      <div class="flex items-center justify-end">
-        <button
-          type="button"
-          onClick={() => void refreshDailyDevPulse(true)}
-          class="inline-flex items-center justify-center h-6 w-6 rounded-md text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
-          title={t("header.pulseRefreshTooltip")}
-        >
-          <RefreshCw
-            size={12}
-            class={isDailyPulseSyncing() ? "animate-spin text-[var(--accent-primary)]" : ""}
-          />
-        </button>
-      </div>
-
       <div class="mt-3 grid grid-cols-2 gap-2">
         <div class="rounded-lg bg-[var(--bg-inset)]/60 px-2.5 py-2">
           <div class="text-[11px] text-[var(--text-muted)]">{t("header.pulseTodayTokens")}</div>

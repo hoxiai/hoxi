@@ -300,6 +300,23 @@ func TestDevPulseWithGitRepositoryAndCache(t *testing.T) {
 	if recCached.Code != http.StatusOK {
 		t.Fatalf("expected 200 for cached dev-pulse, got %d", recCached.Code)
 	}
+
+	// A manual refresh must bypass the TTL cache and see the new file
+	if err := os.WriteFile(filepath.Join(repoDir, "extra.go"), []byte("package main\nvar y = 2\n"), 0o644); err != nil {
+		t.Fatalf("write extra.go: %v", err)
+	}
+	recForced := httptest.NewRecorder()
+	gw.ServeHTTP(recForced, localRequest(http.MethodGet, "/api/hoxi/dev-pulse?directory="+repoDir+"&refresh=1", nil))
+	if recForced.Code != http.StatusOK {
+		t.Fatalf("expected 200 for forced dev-pulse, got %d", recForced.Code)
+	}
+	var forcedPulse gitDailyPulseResponse
+	if err := json.Unmarshal(recForced.Body.Bytes(), &forcedPulse); err != nil {
+		t.Fatalf("unmarshal forced dev-pulse: %v", err)
+	}
+	if forcedPulse.UncommittedFiles != 3 {
+		t.Fatalf("expected refresh to bypass cache and count 3 files, got %+v", forcedPulse)
+	}
 }
 
 func TestSPAStaticHandlerAndReverseProxyWithSSETap(t *testing.T) {

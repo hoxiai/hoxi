@@ -6,10 +6,17 @@ import {
   ChevronRight,
   MoreHorizontal,
   Palette,
+  RefreshCw,
   Settings,
   Sparkles,
 } from "lucide-solid";
-import { desktopUpdater, openSettingsModal, workspace } from "../../store/workspace";
+import {
+  desktopUpdater,
+  isDailyPulseSyncing,
+  openSettingsModal,
+  refreshDailyDevPulse,
+  workspace,
+} from "../../store/workspace";
 import { t } from "../../i18n";
 import ThemeStyleContent from "./ThemeStyleContent";
 import DevPulseContent from "./DevPulseContent";
@@ -92,7 +99,7 @@ export default function HeaderOverflowMenu() {
             data-state={state()}
             role="menu"
             style={{ "--hoxi-origin": "top right" }}
-            class="hoxi-popover absolute right-0 top-full mt-2 z-50 w-[300px] rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-1.5 shadow-xl"
+            class="hoxi-popover absolute right-0 top-full mt-2 z-50 w-[252px] rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-1.5 shadow-xl"
           >
             <Show
               when={panel()}
@@ -168,6 +175,20 @@ export default function HeaderOverflowMenu() {
                     <span class="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
                       {current() === "appearance" ? t("header.appearanceTitle") : t("header.pulseTitle")}
                     </span>
+                    <Show when={current() === "pulse"}>
+                      <button
+                        type="button"
+                        onClick={() => void refreshDailyDevPulse(true)}
+                        class="ml-auto inline-flex h-6 w-6 items-center justify-center rounded-md text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+                        title={t("header.pulseRefreshTooltip")}
+                        aria-label={t("header.pulseRefreshTooltip")}
+                      >
+                        <RefreshCw
+                          size={12}
+                          class={isDailyPulseSyncing() ? "animate-spin text-[var(--accent-primary)]" : ""}
+                        />
+                      </button>
+                    </Show>
                   </div>
 
                   <div class="px-1.5 pb-1.5">

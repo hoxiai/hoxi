@@ -128,9 +128,11 @@ func (g *Gateway) handleDevPulse(w http.ResponseWriter, r *http.Request) {
 		workDir = dir
 	}
 
+	forced := strings.TrimSpace(r.URL.Query().Get("refresh")) != ""
+
 	now := time.Now()
 	g.pulseCache.mu.Lock()
-	if g.pulseCache.dir == workDir && !g.pulseCache.at.IsZero() && now.Sub(g.pulseCache.at) < devPulseCacheTTL {
+	if !forced && g.pulseCache.dir == workDir && !g.pulseCache.at.IsZero() && now.Sub(g.pulseCache.at) < devPulseCacheTTL {
 		cached := g.pulseCache.res
 		g.pulseCache.mu.Unlock()
 		writeJSON(w, http.StatusOK, cached)
