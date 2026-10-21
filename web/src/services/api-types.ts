@@ -209,6 +209,7 @@ export interface SystemRuntimeInfo {
   openCodeVersion: string;
   openCodePort: number;
   openCodeReady?: boolean;
+  openCodeSource?: "bundled" | "downloaded" | "external" | string;
   wsBaseURL: string;
   rootDir: string;
   userConfigPath: string;

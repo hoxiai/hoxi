@@ -543,14 +543,9 @@ export async function toggleDisabledProvider(providerID: string, disabled: boole
 }
 
 /** Restarts the OpenCode instance and reloads providers and agents from it. */
-export async function reloadOpenCodeEngine(): Promise<void> {
-  await disposeOpenCodeInstance();
-  await Promise.allSettled([loadProviders(), loadAgents(workspace.rootDir || undefined)]);
-}
-
-/** Installs the pinned engine when missing and restarts the supervised daemon. */
-export async function installOpenCodeEngine(): Promise<void> {
-  await hoxiAPI.installEngine();
+/** Installs the pinned engine when missing, or restarts the supervised daemon. */
+export async function installOpenCodeEngine(restart = false): Promise<void> {
+  await hoxiAPI.installEngine(restart);
   await Promise.allSettled([
     loadProviders(true),
     loadAgents(workspace.rootDir || undefined),

@@ -1,6 +1,6 @@
 // web/src/components/settings/SettingsSystemRuntimeTab.tsx
 import { createSignal, onMount, Show } from "solid-js";
-import { Activity, ArrowUpCircle, CheckCircle2, Cpu, Download, ExternalLink, KeyRound, RefreshCw, RotateCcw, ShieldCheck } from "lucide-solid";
+import { Activity, ArrowUpCircle, CheckCircle2, Download, ExternalLink, KeyRound, RefreshCw, RotateCcw, ShieldCheck } from "lucide-solid";
 import type { SystemRuntimeInfo } from "../../services/api";
 import {
   appSettings,
@@ -12,7 +12,6 @@ import {
   openExternalURL,
   openProviderModal,
   refreshDesktopUpdateStatus,
-  reloadOpenCodeEngine,
   resetAllAppSettings,
   resetProviderTelemetry,
   startDesktopUpdate,
@@ -26,7 +25,6 @@ import { RemoteTunnelControls } from "./RemoteTunnelControls";
 
 export function SystemRuntimeSettingsTab() {
   const [sysInfo, setSysInfo] = createSignal<SystemRuntimeInfo | null>(null);
-  const [reloading, setReloading] = createSignal(false);
   const [installingEngine, setInstallingEngine] = createSignal(false);
   const [actionToast, setActionToast] = createSignal<string | null>(null);
 
@@ -51,27 +49,18 @@ export function SystemRuntimeSettingsTab() {
     setTimeout(() => setActionToast(null), 3000);
   };
 
-  const onReloadEngine = async () => {
-    if (reloading()) return;
-    setReloading(true);
-    try {
-      await reloadOpenCodeEngine();
-      await fetchInfo();
-      showToast(t("settings.reloadEngineSuccess"));
-    } catch {
-      /* ignore */
-    } finally {
-      setReloading(false);
-    }
-  };
-
-  const onInstallEngine = async () => {
+  const onEngineAction = async () => {
     if (installingEngine()) return;
+    const restart = engineReady();
     setInstallingEngine(true);
     try {
-      await installOpenCodeEngine();
+      await installOpenCodeEngine(restart);
       await fetchInfo();
-      showToast(t("settings.engineInstallSuccess"));
+      showToast(
+        restart
+          ? t("settings.engineRestartSuccess")
+          : t("settings.engineInstallSuccess")
+      );
     } catch (err) {
       showToast(
         t("settings.engineInstallFailed", {
@@ -85,6 +74,19 @@ export function SystemRuntimeSettingsTab() {
 
   const engineReady = () =>
     sysInfo() ? Boolean(sysInfo()!.openCodeReady) : workspace.connected;
+
+  const engineSourceLabel = () => {
+    switch (sysInfo()?.openCodeSource) {
+      case "bundled":
+        return t("settings.engineSourceBundled");
+      case "downloaded":
+        return t("settings.engineSourceDownloaded");
+      case "external":
+        return t("settings.engineSourceExternal");
+      default:
+        return t("settings.runtimeNotDetected");
+    }
+  };
 
   const onClearTelemetry = async () => {
     await resetProviderTelemetry();
@@ -364,6 +366,12 @@ export function SystemRuntimeSettingsTab() {
           </span>
         </SettingRow>
 
+        <SettingRow label={t("settings.engineSourceLabel")}>
+          <span class="text-[13px] text-[var(--text-secondary)]">
+            {engineSourceLabel()}
+          </span>
+        </SettingRow>
+
         <SettingRow label={t("settings.runtimeConfigPathLabel")}>
           <span
             class="max-w-[320px] truncate font-mono text-[13px] text-[var(--text-secondary)] selectable-text"
@@ -408,31 +416,29 @@ export function SystemRuntimeSettingsTab() {
         <div class="p-4 flex flex-wrap items-center gap-3">
           <button
             type="button"
-            disabled={reloading()}
-            onClick={() => void onReloadEngine()}
-            class="inline-flex items-center gap-2 rounded-xl bg-[var(--accent-primary)] px-4 py-2 text-[13px] font-medium text-[var(--accent-foreground)] hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
-          >
-            <Cpu size={14} />
-            {reloading()
-              ? t("settings.reloadingEngineBtn")
-              : t("settings.reloadEngineBtn")}
-          </button>
-
-          <button
-            type="button"
             disabled={installingEngine()}
-            onClick={() => void onInstallEngine()}
-            class="inline-flex items-center gap-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] px-4 py-2 text-[13px] font-medium text-[var(--text-primary)] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-wait"
+            onClick={() => void onEngineAction()}
+            class="inline-flex items-center gap-2 rounded-xl bg-[var(--accent-primary)] px-4 py-2 text-[13px] font-medium text-[var(--accent-foreground)] hover:opacity-90 transition-opacity cursor-pointer disabled:opacity-50 disabled:cursor-wait"
           >
             <Show
               when={installingEngine()}
-              fallback={<Download size={14} class="text-[var(--accent-primary)]" />}
+              fallback={
+                engineReady() ? (
+                  <RotateCcw size={14} />
+                ) : (
+                  <Download size={14} />
+                )
+              }
             >
               <Spinner class="h-3.5 w-3.5" />
             </Show>
             {installingEngine()
-              ? t("settings.engineInstallingBtn")
-              : t("settings.engineInstallBtn")}
+              ? engineReady()
+                ? t("settings.engineRestartingBtn")
+                : t("settings.engineInstallingBtn")
+              : engineReady()
+                ? t("settings.engineRestartBtn")
+                : t("settings.engineInstallBtn")}
           </button>
 
           <button

@@ -100,13 +100,16 @@ export const hoxiAPI = {
     return requestJSON("/api/hoxi/system-info");
   },
 
-  installEngine(): Promise<{
+  installEngine(restart = false): Promise<{
     ok: boolean;
     openCodeBinPath: string;
     openCodeVersion: string;
     ready: boolean;
   }> {
-    return requestJSON("/api/hoxi/engine/install", { method: "POST" });
+    return requestJSON("/api/hoxi/engine/install", {
+      method: "POST",
+      body: JSON.stringify({ restart }),
+    });
   },
 
   getKeepAwake(): Promise<import("./api-types").KeepAwakeStatusResponse> {
