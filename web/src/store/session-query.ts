@@ -9,6 +9,7 @@ import {
 } from "../services/api";
 import type { SessionInfo, SessionRuntime } from "../services/sse-types";
 import { AUTO_PROVIDER_ID, peekAutoModelTarget } from "./auto-models";
+import { indexedSession } from "./session-index";
 import { workspace } from "./workspace-state";
 
 export function isSessionArchived(session: SessionInfo): boolean {
@@ -35,9 +36,15 @@ export function isManagedSession(sessionID?: string | null): boolean {
   const session = workspace.sessions.find((s) => s.id === sessionID);
   if (session?.managed !== undefined) return Boolean(session.managed);
   if (session?.runtime && session.runtime !== "opencode") return true;
+  const indexed = indexedSession(sessionID);
+  if (indexed?.managed !== undefined) return Boolean(indexed.managed);
+  if (indexed?.runtime && indexed.runtime !== "opencode") return true;
   return isRunnerSessionID(sessionID);
 }
 
+// Directory lookups must not fall back to the active project for a session that
+// belongs elsewhere: a wrong directory sends writes, diffs and approvals into
+// the wrong workspace. Only a session we know nothing about uses the root.
 export function sessionDirectory(sessionID: string | null): string | undefined {
   if (!sessionID) return undefined;
   const meta = workspace.worktreeBySession[sessionID];
@@ -52,6 +59,23 @@ export function sessionDirectory(sessionID: string | null): string | undefined {
       return parentMeta?.directory || parentSession?.directory;
     }
   }
+  const indexed = indexedSession(sessionID);
+  if (indexed?.directory) return indexed.directory;
+  const parentID = session?.parentID ?? indexed?.parentID;
+  if (parentID) {
+    const parentIndexed = indexedSession(parentID);
+    if (parentIndexed?.directory) return parentIndexed.directory;
+    const parentSession = workspace.sessions.find((s) => s.id === parentID);
+    if (parentSession?.directory) return parentSession.directory;
+  }
+  const known = session || indexed;
+  if (!known) return workspace.rootDir || undefined;
+  // A known session without a directory may still be rooted in the active
+  // project (unadopted OpenCode sessions often omit it). A session attributed
+  // to a different project must never inherit the active root.
+  const projectID = session?.projectID || indexed?.projectID;
+  const activeProjectID = (workspace.activeProjectID || "").trim();
+  if (projectID && activeProjectID && projectID !== activeProjectID) return undefined;
   return workspace.rootDir || undefined;
 }
 

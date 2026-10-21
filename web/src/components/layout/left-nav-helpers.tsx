@@ -13,6 +13,7 @@ import {
   visibleSavedWorkspaces,
 } from "../../store/workspace";
 import { t } from "../../i18n";
+import type { SessionInfo } from "../../services/sse-types";
 
 export { shortenPath };
 
@@ -110,6 +111,39 @@ export function badgeFor(
   if (status === "busy") return "running";
   if (workspace.unreadCompletedBySession[sessionID]) return "completed";
   return "idle";
+}
+
+/**
+ * Counts executing sessions that belong to one project, even when the user is
+ * viewing a different project. Status is global, so the sidebar can show that
+ * work is still running elsewhere without loading those projects' transcripts.
+ */
+export function countRunningSessionsForProject(
+  projectPath: string,
+  sessions: SessionInfo[]
+): number {
+  const root = normalizeFolderPath(projectPath);
+  if (!root) return 0;
+  const seen = new Set<string>();
+  let count = 0;
+  const isRunning = (id: string) => {
+    const status = workspace.statusBySession[id]?.type;
+    return status === "busy" || status === "retry";
+  };
+  for (const session of sessions) {
+    if (session.parentID || !isRunning(session.id) || seen.has(session.id)) continue;
+    seen.add(session.id);
+    count++;
+  }
+  for (const [id, entry] of Object.entries(workspace.sessionIndex)) {
+    if (entry.parentID || seen.has(id) || !isRunning(id)) continue;
+    const dir = normalizeFolderPath(entry.directory);
+    if (!dir) continue;
+    if (dir !== root && !dir.startsWith(`${root}/.hoxi/worktrees/`)) continue;
+    seen.add(id);
+    count++;
+  }
+  return count;
 }
 
 export function basename(p: string): string {

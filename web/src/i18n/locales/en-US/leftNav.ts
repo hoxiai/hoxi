@@ -63,6 +63,7 @@ export const leftNav = {
   saveWorkspaceChanges: "Save changes",
   savingWorkspace: "Saving…",
   folderCountBadge: "{count} folders",
+  runningInProject: "{count} running",
   handoffBtn: "Import",
   handoffTooltip: "Import local CLI sessions",
   handoffModalTitle: "Import Session",

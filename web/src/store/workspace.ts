@@ -6,6 +6,7 @@ export * from "./workspace-state";
 export * from "./layout";
 export * from "./inspector";
 export * from "./session-query";
+export * from "./session-index";
 export * from "./workspace-folders";
 export * from "./global-config";
 export * from "./workspace-providers";

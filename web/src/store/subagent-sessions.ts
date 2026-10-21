@@ -5,6 +5,7 @@ import { hoxiAPI } from "../services/api";
 import type { ToolPart } from "../services/sse-types";
 import { lookupSubagentParent, subagentChildIDFromPart } from "./message-lookup";
 import { isSessionBusy } from "./session-query";
+import { indexedSession } from "./session-index";
 import { subagentDisplayTitle, type SubagentTitle } from "./session-title";
 import { workspace } from "./workspace-state";
 
@@ -160,6 +161,8 @@ export function resolveParentSessionID(sessionID: string | null | undefined): st
   if (!sessionID) return null;
   const info = workspace.sessions.find((s) => s.id === sessionID);
   if (info?.parentID) return info.parentID;
+  const indexedParent = indexedSession(sessionID)?.parentID;
+  if (indexedParent) return indexedParent;
   return lookupSubagentParent(sessionID);
 }
 

@@ -354,4 +354,15 @@ export type OpenCodeEvent =
       // have been missed while its upstream leg reconnected.
       type: "server.heartbeat" | "hoxi.stream.resync";
       properties: Record<string, never>;
+    }
+  | {
+      // Authoritative busy set for every Hoxi-managed session across all
+      // projects. `scope: "managed"` means the runner's process table, so an
+      // omitted session really is idle. It lets the sidebar keep showing
+      // running work after the user switches projects.
+      type: "hoxi.status.snapshot";
+      properties: {
+        scope: "managed";
+        busy: string[];
+      };
     };

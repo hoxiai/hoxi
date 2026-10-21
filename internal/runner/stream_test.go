@@ -56,13 +56,13 @@ func TestUnifiedSSEStreamMergesRunnerAndFilteredOpenCodeEvents(t *testing.T) {
 	tracker := statusbar.NewTracker()
 	svc := NewService(root, nil, tracker, filepath.Join(t.TempDir(), "store.json"))
 	rec := SessionRecord{
-		ID:          "ses_hoxi_123",
-		Runtime:     "opencode",
-		ExternalID:  "ses_managed_engine",
-		ProjectDir:  root,
+		ID:           "ses_hoxi_123",
+		Runtime:      "opencode",
+		ExternalID:   "ses_managed_engine",
+		ProjectDir:   root,
 		WorktreePath: root,
-		SandboxMode: "local",
-		OpenCodeIDs: []string{"ses_managed_engine"},
+		SandboxMode:  "local",
+		OpenCodeIDs:  []string{"ses_managed_engine"},
 	}
 	if err := svc.store.Put(rec); err != nil {
 		t.Fatal(err)
@@ -122,5 +122,61 @@ func TestUnifiedSSEStreamMergesRunnerAndFilteredOpenCodeEvents(t *testing.T) {
 	}
 	if tracker.Snapshot().Running != 1 {
 		t.Fatalf("expected statusbar tracker to record busy session from unified SSE, got %+v", tracker.Snapshot())
+	}
+}
+
+func TestStatusSnapshotListsBusySessionsAcrossProjects(t *testing.T) {
+	root := t.TempDir()
+	svc := NewService(root, nil, statusbar.NewTracker(), filepath.Join(t.TempDir(), "store.json"))
+	other := t.TempDir()
+
+	svc.mu.Lock()
+	svc.procs["ses_agy_alpha"] = &activeProcess{sessionID: "ses_agy_alpha", done: make(chan struct{})}
+	svc.childBusy["ses_cld_child"] = true
+	svc.mu.Unlock()
+
+	frame := svc.statusSnapshotFrame()
+	if !strings.Contains(frame, statusSnapshotEventType) || !strings.Contains(frame, statusSnapshotScope) {
+		t.Fatalf("snapshot frame missing type/scope: %s", frame)
+	}
+	for _, want := range []string{"ses_agy_alpha", "ses_cld_child"} {
+		if !strings.Contains(frame, want) {
+			t.Fatalf("snapshot omitted busy session %s: %s", want, frame)
+		}
+	}
+	if strings.Contains(frame, other) || strings.Contains(frame, root) {
+		t.Fatalf("snapshot leaked project directories: %s", frame)
+	}
+
+	svc.mu.Lock()
+	delete(svc.procs, "ses_agy_alpha")
+	delete(svc.childBusy, "ses_cld_child")
+	svc.mu.Unlock()
+	if frame := svc.statusSnapshotFrame(); !strings.Contains(frame, `"busy":[]`) {
+		t.Fatalf("idle snapshot must send an empty authoritative set: %s", frame)
+	}
+}
+
+func TestUnifiedSSEStartsWithStatusSnapshot(t *testing.T) {
+	root := t.TempDir()
+	svc := NewService(root, nil, statusbar.NewTracker(), filepath.Join(t.TempDir(), "store.json"))
+	svc.mu.Lock()
+	svc.procs["ses_qdr_running"] = &activeProcess{sessionID: "ses_qdr_running", done: make(chan struct{})}
+	svc.mu.Unlock()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	w := &streamReadyWriter{ResponseRecorder: httptest.NewRecorder()}
+	w.onFlush = func() {
+		if strings.Contains(w.Body.String(), "ses_qdr_running") {
+			cancel()
+			return
+		}
+		w.onFlush = func() { cancel() }
+	}
+	svc.handleUnifiedSSE(w, httptest.NewRequest("GET", "/api/hoxi/event", nil).WithContext(ctx))
+	body := w.Body.String()
+	if !strings.Contains(body, statusSnapshotEventType) || !strings.Contains(body, "ses_qdr_running") {
+		t.Fatalf("unified stream did not start with the busy snapshot: %s", body)
 	}
 }

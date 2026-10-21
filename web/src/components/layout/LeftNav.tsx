@@ -6,6 +6,7 @@ import {
   archiveSession,
   bootstrapProjectSessions,
   discardSession,
+  indexSessions,
   isInvalidProjectPath,
   loadProjects,
   startNewThreadDraft,
@@ -145,7 +146,11 @@ export default function LeftNav() {
         setProjectSessions((prev) => ({ ...prev, [clean]: workspace.sessions.slice() }));
       } else {
         const list = await hoxiAPI.listSessions(clean);
-        setProjectSessions((prev) => ({ ...prev, [clean]: Array.isArray(list) ? list : [] }));
+        const sessions = Array.isArray(list) ? list : [];
+        // Other projects' sessions must be indexed too, so their busy badges and
+        // approvals stay addressable after the user switches away.
+        indexSessions(sessions.map((s) => (s.directory ? s : { ...s, directory: clean })));
+        setProjectSessions((prev) => ({ ...prev, [clean]: sessions }));
       }
     } catch (err) {
       console.error(`Failed to load sessions for ${clean}:`, err);
@@ -187,7 +192,9 @@ export default function LeftNav() {
       for (const clean of otherPaths) {
         tasks.push(
           hoxiAPI.listSessions(clean).then((list) => {
-            setProjectSessions((prev) => ({ ...prev, [clean]: Array.isArray(list) ? list : [] }));
+            const sessions = Array.isArray(list) ? list : [];
+            indexSessions(sessions.map((s) => (s.directory ? s : { ...s, directory: clean })));
+            setProjectSessions((prev) => ({ ...prev, [clean]: sessions }));
           }).catch((err) => {
             console.error(`Failed to refresh sessions for ${clean}:`, err);
           })

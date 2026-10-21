@@ -8,6 +8,7 @@ import {
   appSettings,
   applySessionDiffEvent,
   applyPartDeltaBatch,
+  applyManagedStatusSnapshot,
   applyStreamFrameBatch,
   bootstrapProjectSessions,
   drainNextQueuedPrompt,
@@ -16,7 +17,9 @@ import {
   handleSessionErrorEvent,
   isDismissedProjectPath,
   isInvalidProjectPath,
+  isManagedSession,
   isSessionBusy,
+  indexSessionFromEvent,
   lastPromptDispatchedAt,
   loadAgents,
   loadProjects,
@@ -64,11 +67,16 @@ export default function App() {
     });
     const watchdogTimer = setInterval(() => {
       trimSessionTranscripts();
-      const hasBusySession = Object.values(workspace.statusBySession).some(
-        (s) => s?.type === "busy" || s?.type === "retry"
+      // Managed sessions converge through the stream's global status snapshot,
+      // so polling is only needed for unadopted OpenCode sessions and approvals.
+      const hasUnmanagedBusy = Object.entries(workspace.statusBySession).some(
+        ([sid, s]) =>
+          (s?.type === "busy" || s?.type === "retry") && !isManagedSession(sid)
       );
-      if (hasBusySession || workspace.pendingPermissions.length > 0) {
+      if (hasUnmanagedBusy) {
         void syncSessionStatuses();
+      }
+      if (hasUnmanagedBusy || workspace.pendingPermissions.length > 0) {
         void syncPendingPermissions();
       }
     }, 4000);
@@ -194,6 +202,7 @@ export default function App() {
               break;
             case "session.updated":
             case "session.created":
+              indexSessionFromEvent(evt.properties.info, directory);
               replaceSessionFromEvent(evt.properties.info, directory);
               break;
             case "session.deleted": {
@@ -328,6 +337,11 @@ export default function App() {
               setWorkspace("pendingQuestions", (prev) =>
                 prev.filter((q) => q.id !== evt.properties.requestID)
               );
+              break;
+            case "hoxi.status.snapshot":
+              if (Array.isArray(evt.properties.busy)) {
+                applyManagedStatusSnapshot(evt.properties.busy);
+              }
               break;
             case "session.error":
               if (evt.properties.sessionID) {

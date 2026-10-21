@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 )
@@ -33,6 +34,10 @@ const (
 
 	heartbeatEventType = "server.heartbeat"
 	resyncEventType    = "hoxi.stream.resync"
+	// statusSnapshotEventType carries the authoritative busy set for every
+	// Hoxi-managed session, regardless of which project the client is viewing.
+	statusSnapshotEventType = "hoxi.status.snapshot"
+	statusSnapshotScope     = "managed"
 )
 
 var (
@@ -80,7 +85,28 @@ func (s *Service) handleUnifiedSSE(w http.ResponseWriter, r *http.Request) {
 	}
 
 	startSSE(w, flusher)
-	streamSSE(r.Context(), w, flusher, ch, upstream, sseHeartbeatInterval, heartbeatFrame)
+	// The first frame is the authoritative busy set, so a client that switched
+	// projects never has to poll every project to learn what is still running.
+	if frame := s.statusSnapshotFrame(); frame != "" {
+		_, _ = io.WriteString(w, frame)
+		flusher.Flush()
+	}
+	streamSSE(r.Context(), w, flusher, ch, upstream, sseHeartbeatInterval, heartbeatFrame, s.statusSnapshotFrame)
+}
+
+// statusSnapshotFrame reports the runner's own process table only: these are
+// the sessions Hoxi executes and tracks regardless of the active project. It is
+// a pure in-memory read, so the periodic refresh stays cheap. Stall flags ride
+// on the existing `session.stall` events and are never cleared by a project switch.
+func (s *Service) statusSnapshotFrame() string {
+	busy := s.busySessionIDs()
+	sort.Strings(busy)
+	raw, err := json.Marshal(busy)
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf("data: {\"type\":%q,\"properties\":{\"scope\":%q,\"busy\":%s}}\n\n",
+		statusSnapshotEventType, statusSnapshotScope, raw)
 }
 
 func (s *Service) serveSSE(w http.ResponseWriter, r *http.Request, sessionID string) {
@@ -94,7 +120,7 @@ func (s *Service) serveSSE(w http.ResponseWriter, r *http.Request, sessionID str
 	defer unsub()
 
 	startSSE(w, flusher)
-	streamSSE(r.Context(), w, flusher, ch, nil, sseKeepaliveInterval, ": keepalive\n\n")
+	streamSSE(r.Context(), w, flusher, ch, nil, sseKeepaliveInterval, ": keepalive\n\n", nil)
 }
 
 func startSSE(w http.ResponseWriter, flusher http.Flusher) {
@@ -107,6 +133,8 @@ func startSSE(w http.ResponseWriter, flusher http.Flusher) {
 }
 
 // streamSSE writes runner events and raw upstream frames until the client leaves.
+// snapshot, when set, is written on every tick before the heartbeat so a client
+// that missed events can still converge on the authoritative state.
 func streamSSE(
 	ctx context.Context,
 	w http.ResponseWriter,
@@ -115,6 +143,7 @@ func streamSSE(
 	upstream <-chan string,
 	every time.Duration,
 	heartbeat string,
+	snapshot func() string,
 ) {
 	ticker := time.NewTicker(every)
 	defer ticker.Stop()
@@ -123,6 +152,11 @@ func streamSSE(
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			if snapshot != nil {
+				if frame := snapshot(); frame != "" {
+					_, _ = io.WriteString(w, frame)
+				}
+			}
 			_, _ = io.WriteString(w, heartbeat)
 		case evt := <-ch:
 			raw, err := json.Marshal(evt)

@@ -47,6 +47,7 @@ import {
   extractChildSubagentSessionId,
 } from "./subagent-sessions";
 import { forgetPromptQueueState } from "./prompt-queue";
+import { indexSession, indexSessions } from "./session-index";
 
 const sessionMessageLoads = new Map<string, Promise<void>>();
 
@@ -95,6 +96,7 @@ export function syncSessionFieldsInPlace(target: SessionInfo, source: SessionInf
 }
 
 export function reconcileSessionsInPlace(incomingList: SessionInfo[]): void {
+  indexSessions(incomingList);
   setWorkspace(
     produce((state) => {
       const existingById = new Map(state.sessions.map((s) => [s.id, s]));
@@ -122,6 +124,7 @@ export function reconcileSessionsInPlace(incomingList: SessionInfo[]): void {
 export function replaceSession(info: SessionInfo) {
   if (isSessionDeleted(info.id)) return;
   registerRunnerSessions([info]);
+  indexSession(info);
   if (info.sandboxMode && info.directory) {
     setWorkspace("worktreeBySession", info.id, {
       sessionID: info.id, isolated: info.sandboxMode === "worktree", directory: info.directory,
@@ -185,6 +188,14 @@ export function replaceSessionFromEvent(info: SessionInfo, eventDirectory?: stri
       eventDirectory;
     replaceSession(directory ? { ...info, directory } : info);
   }
+}
+
+// Sessions from other projects still need to be known by directory so status,
+// approvals and prompts never get retargeted at the active project.
+export function indexSessionFromEvent(info: SessionInfo, eventDirectory?: string): void {
+  if (!info?.id) return;
+  const directory = info.directory || eventDirectory;
+  indexSession(directory ? { ...info, directory } : info);
 }
 
 // Idle turns an empty snapshot proves stale (cache seeds); busy sessions may still be persisting.
@@ -592,6 +603,7 @@ export function purgeSessionsFromStoreState(
     delete state.interruptedBySession[id];
     delete state.queuedPromptsBySession[id];
     delete state.composerDraftEditBySession[id];
+    delete state.sessionIndex[id];
   }
   state.sessions = state.sessions.filter(
     (s) => !idSet.has(s.id) && (!s.parentID || !idSet.has(s.parentID))

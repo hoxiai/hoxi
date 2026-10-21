@@ -17,6 +17,7 @@ import type { SessionInfo } from "../../services/sse-types";
 import { Icon, Spinner } from "../icons";
 import {
   FolderIcon,
+  countRunningSessionsForProject,
   resolveActiveRootSessionID,
   shortenPath,
   type ProjectNavEntry,
@@ -176,6 +177,11 @@ export default function MultiProjectTreeItem(props: {
   const isSelectedSession = createSelector<string | null, string>(() =>
     isActive() ? resolveActiveRootSessionID() : null
   );
+  // Running work elsewhere must stay visible: the header shows a live count for
+  // sessions of this project that are still executing.
+  const runningCount = createMemo(() =>
+    countRunningSessionsForProject(props.proj.path, isActive() ? workspace.sessions : props.cachedSessions)
+  );
   const [everExpanded, setEverExpanded] = createSignal(props.expanded);
   const [everArchivedOpen, setEverArchivedOpen] = createSignal(props.isArchivedOpen);
 
@@ -250,6 +256,16 @@ export default function MultiProjectTreeItem(props: {
           >
             {props.proj.name}
           </span>
+
+          <Show when={runningCount() > 0}>
+            <span
+              class="shrink-0 inline-flex items-center gap-1 rounded px-1.5 py-0.2 text-[11px] font-mono bg-[var(--accent-surface)] text-[var(--accent-primary)]"
+              title={t("leftNav.runningInProject", { count: runningCount() })}
+            >
+              <span class="hoxi-pulse-dot w-1.5 h-1.5 rounded-full bg-[var(--accent-primary)]" />
+              {runningCount()}
+            </span>
+          </Show>
 
           <Show when={props.proj.folders.length > 1}>
             <span

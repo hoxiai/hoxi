@@ -174,6 +174,15 @@ export interface ReviewCommentItem {
 export type ProviderModalTab = "providers" | "custom" | "auto" | "models" | "agents" | "subagents" | "policy";
 export type WorkspaceModalMode = "create" | "edit" | "delete" | "manage" | null;
 
+export interface SessionIndexEntry {
+  directory?: string;
+  projectID?: string;
+  parentID?: string;
+  managed?: boolean;
+  runtime?: SessionInfo["runtime"];
+  updated: number;
+}
+
 export interface WorkspaceState {
   appVersion: string;
   connected: boolean;
@@ -185,6 +194,10 @@ export interface WorkspaceState {
   recentProjects: string[];
   projectOrder: string[];
   sessions: SessionInfo[];
+  // Cross-project metadata of every session seen by the stream or a project
+  // list. It survives project switches so status/approval reconciliation never
+  // mistakes a foreign session for one rooted in the active project.
+  sessionIndex: Record<string, SessionIndexEntry>;
   archivedSessionIDs: string[];
   activeSessionID: string | null;
   activeProjectID: string | null;
@@ -419,6 +432,7 @@ export const [workspace, setWorkspace] = createStore<WorkspaceState>({
   recentProjects: initialRecentProjects(),
   projectOrder: initialProjectOrder(),
   sessions: [],
+  sessionIndex: {},
   archivedSessionIDs: initialArchivedSessions(ARCHIVED_SESSIONS_KEY),
   activeSessionID: null,
   activeProjectID: null,

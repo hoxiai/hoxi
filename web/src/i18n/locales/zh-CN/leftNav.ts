@@ -64,6 +64,7 @@ export const leftNav: LeftNavI18n = {
   saveWorkspaceChanges: "保存修改",
   savingWorkspace: "保存中…",
   folderCountBadge: "{count} 个目录",
+  runningInProject: "{count} 个运行中",
   handoffBtn: "导入会话",
   handoffTooltip: "导入本机 CLI 历史会话",
   handoffModalTitle: "导入外部会话",

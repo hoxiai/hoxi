@@ -19,6 +19,7 @@ import {
 } from "./settings";
 import { setWorkspace, workspace } from "./workspace-state";
 import { sessionDirectory } from "./session-query";
+import { normalizeFolderPath } from "./workspace-folders";
 import { fetchGlobalConfig, updateGlobalPermissions } from "./global-config";
 import {
   commandCandidates as extractPermissionCommands,
@@ -189,13 +190,23 @@ export function setApprovalMode(mode: ApprovalMode): void {
 }
 
 export async function syncPendingPermissions(directory?: string): Promise<void> {
+  const scope = normalizeFolderPath(directory || workspace.rootDir);
   try {
-    const list = await hoxiAPI.listPermissions(directory || workspace.rootDir || undefined);
+    const list = await hoxiAPI.listPermissions(scope || undefined);
     if (!Array.isArray(list)) return;
     const remoteIDs = new Set(list.map((r) => r.id));
     if (workspace.pendingPermissions.length > 0) {
+      // A snapshot only speaks for the directory it was taken in. Requests from
+      // other projects must survive; otherwise switching projects would drop
+      // approvals that are still waiting on the user.
+      const inScope = (sessionID: string) => {
+        if (!scope) return true;
+        const dir = normalizeFolderPath(sessionDirectory(sessionID));
+        if (dir) return dir === scope;
+        return normalizeFolderPath(workspace.rootDir) === scope;
+      };
       setWorkspace("pendingPermissions", (prev) =>
-        prev.filter((p) => remoteIDs.has(p.id))
+        prev.filter((p) => remoteIDs.has(p.id) || !inScope(p.sessionID))
       );
     }
     for (const req of list) {
