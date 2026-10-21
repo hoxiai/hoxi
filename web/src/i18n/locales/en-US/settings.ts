@@ -142,6 +142,8 @@ export const settings = {
   sectionSidebarModeDesc: "Default layout mode for the left sidebar.",
   sidebarMultiDesc: "Tree of all workspaces and sessions",
   sidebarSingleDesc: "One active workspace with a quick switcher",
+  sidebarAttentionDesc: "Approvals, unread completions and paused tasks across projects",
+  sidebarRunningDesc: "All executing tasks grouped by project",
   sectionDiffStyleTitle: "Diff View",
   sectionDiffStyleDesc: "Default layout when inspecting code changes.",
   diffUnifiedTitle: "Unified View",

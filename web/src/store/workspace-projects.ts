@@ -7,6 +7,7 @@ import {
   SIDEBAR_PROJECT_MODE_KEY,
   setWorkspace,
   workspace,
+  type SidebarProjectMode,
 } from "./workspace-state";
 import { loadAgents, loadProviders } from "./workspace-providers";
 import { isPlaceholderSessionTitle, preserveSessionTitle, sortSessionsByActivity } from "./session-title";
@@ -460,7 +461,7 @@ export function reorderProjects(
   setProjectOrder(list);
 }
 
-export function setSidebarProjectMode(mode: "single" | "multi" | "recent") {
+export function setSidebarProjectMode(mode: SidebarProjectMode) {
   setWorkspace("sidebarProjectMode", mode);
   try { localStorage.setItem(SIDEBAR_PROJECT_MODE_KEY, mode); } catch { /* ignore */ }
 }

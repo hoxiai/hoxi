@@ -183,6 +183,8 @@ export interface SessionIndexEntry {
   updated: number;
 }
 
+export type SidebarProjectMode = "multi" | "single" | "recent" | "attention" | "running";
+
 export interface WorkspaceState {
   appVersion: string;
   connected: boolean;
@@ -208,7 +210,7 @@ export interface WorkspaceState {
   defaultAI: SessionAIConfig;
   aiBySession: Record<string, SessionAIConfig>;
   sessionSandboxMode: "local" | "worktree";
-  sidebarProjectMode: "single" | "multi" | "recent";
+  sidebarProjectMode: SidebarProjectMode;
   inspectorTab: "diffs" | "memory" | "files" | "skills" | "terminal" | "browser" | "tasks";
   inspectorOpen: boolean;
   inspectorMaximized: boolean;
@@ -395,10 +397,14 @@ function initialProjectOrder(): string[] {
   return [];
 }
 
-function initialSidebarProjectMode(): "single" | "multi" | "recent" {
+const SIDEBAR_PROJECT_MODES: SidebarProjectMode[] = ["multi", "single", "recent", "attention", "running"];
+
+function initialSidebarProjectMode(): SidebarProjectMode {
   try {
     const saved = localStorage.getItem(SIDEBAR_PROJECT_MODE_KEY);
-    if (saved === "single" || saved === "multi" || saved === "recent") return saved;
+    if (SIDEBAR_PROJECT_MODES.includes(saved as SidebarProjectMode)) {
+      return saved as SidebarProjectMode;
+    }
   } catch {
     /* ignore */
   }

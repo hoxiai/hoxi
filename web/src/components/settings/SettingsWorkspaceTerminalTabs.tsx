@@ -21,6 +21,7 @@ import {
   updateGlobalPermissions,
   workspace,
   type DiffLayoutMode,
+  type SidebarProjectMode,
   type WorktreeApplyStrategy,
 } from "../../store/workspace";
 import { t } from "../../i18n";
@@ -70,13 +71,23 @@ export function WorkspaceGitSettingsTab() {
           label={t("settings.sectionSidebarModeTitle")}
           tip={t("settings.sectionSidebarModeDesc")}
         >
-          <SegmentedPills<"multi" | "single" | "recent">
+          <SegmentedPills<SidebarProjectMode>
             value={workspace.sidebarProjectMode}
             options={[
               {
                 id: "multi",
                 label: () => t("leftNav.multiProject"),
                 tip: () => t("settings.sidebarMultiDesc"),
+              },
+              {
+                id: "attention",
+                label: () => t("leftNav.attentionTasks"),
+                tip: () => t("settings.sidebarAttentionDesc"),
+              },
+              {
+                id: "running",
+                label: () => t("leftNav.runningTasks"),
+                tip: () => t("settings.sidebarRunningDesc"),
               },
               {
                 id: "single",

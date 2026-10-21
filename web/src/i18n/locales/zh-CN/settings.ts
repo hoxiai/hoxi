@@ -143,6 +143,8 @@ export const settings: SettingsI18n = {
   sectionSidebarModeDesc: "选择左侧栏的项目与会话组织方式",
   sidebarMultiDesc: "以树形浏览所有工作区与会话",
   sidebarSingleDesc: "聚焦单个工作区，快速切换",
+  sidebarAttentionDesc: "跨项目汇总待审批、已完成未读与暂停任务",
+  sidebarRunningDesc: "按项目分组展示所有执行中的任务",
   sectionDiffStyleTitle: "差异视图",
   sectionDiffStyleDesc: "设置变更面板与工具卡片中代码对比的默认样式",
   diffUnifiedTitle: "单栏视图",

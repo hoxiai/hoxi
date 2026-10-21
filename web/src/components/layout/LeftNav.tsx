@@ -1,7 +1,7 @@
 // web/src/components/layout/LeftNav.tsx
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 import { Presence } from "../motion/Presence";
-import { ArrowRightLeft, Check, Clock, Folder, FolderPlus, Layers, Plus, RefreshCw, Search } from "lucide-solid";
+import { Activity, ArrowRightLeft, Bell, Check, Clock, Folder, FolderPlus, Layers, Plus, RefreshCw, Search } from "lucide-solid";
 import {
   archiveSession,
   bootstrapProjectSessions,
@@ -18,6 +18,7 @@ import {
   setProjectOrder,
   setSidebarProjectMode,
   switchWorkspace,
+  type SidebarProjectMode,
   unarchiveSession,
   workspace,
 } from "../../store/workspace";
@@ -28,6 +29,7 @@ import { buildAllProjects, collectPendingSessionIDs, findProjectDropTarget, same
 import MultiProjectTreeItem from "./MultiProjectItem";
 import { sameSessionArray } from "./SessionHistory";
 import SingleProjectNavView, { RecentTasksNavView } from "./SingleProjectNavView";
+import { AttentionNavView, RunningNavView } from "./CrossProjectNavView";
 import UserAccountMenu from "./UserAccountMenu";
 import { t } from "../../i18n";
 import { matchesProjectSessionSearch } from "./session-search";
@@ -383,8 +385,9 @@ export default function LeftNav() {
   });
 
   createEffect(() => {
-    if (workspace.sidebarProjectMode !== "recent" &&
-      !(workspace.sidebarProjectMode === "multi" && filterQuery().trim())) return;
+    const mode = workspace.sidebarProjectMode;
+    if (mode !== "recent" && mode !== "attention" && mode !== "running" &&
+      !(mode === "multi" && filterQuery().trim())) return;
     const activeRoot = normalizeFolderPath(workspace.rootDir);
     for (const p of allProjects()) {
       const clean = normalizeFolderPath(p.path);
@@ -395,12 +398,14 @@ export default function LeftNav() {
   });
 
   const modeOptions: Array<{
-    id: "single" | "multi" | "recent";
+    id: SidebarProjectMode;
     label: () => string;
     icon: typeof Folder;
   }> = [
-    { id: "single", label: () => t("leftNav.singleProject"), icon: Folder },
     { id: "multi", label: () => t("leftNav.multiProject"), icon: Layers },
+    { id: "attention", label: () => t("leftNav.attentionTasks"), icon: Bell },
+    { id: "running", label: () => t("leftNav.runningTasks"), icon: Activity },
+    { id: "single", label: () => t("leftNav.singleProject"), icon: Folder },
     { id: "recent", label: () => t("leftNav.recentTasks"), icon: Clock },
   ];
 
@@ -459,7 +464,7 @@ export default function LeftNav() {
                 ref={modeMenuRef}
                 data-state={state()}
                 style={{ "--hoxi-origin": "top right" }}
-                class="hoxi-popover absolute right-0 top-full mt-1 w-36 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-1 z-50 space-y-0.5"
+                class="hoxi-popover absolute right-0 top-full mt-1 w-44 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-1 z-50 space-y-0.5"
               >
                 <For each={modeOptions}>
                   {(opt) => {
@@ -608,7 +613,33 @@ export default function LeftNav() {
         </div>
       </Show>
 
-      {/* MODE B: SINGLE-PROJECT FOCUSED VIEW */}
+      {/* MODE B: ATTENTION INBOX (approvals / completed / paused) */}
+      <Show when={workspace.sidebarProjectMode === "attention"}>
+        <AttentionNavView
+          allProjects={allProjects()}
+          projectSessions={projectSessions()}
+          filterQuery={filterQuery()}
+          pendingSessions={pendingSessions()}
+          onSelectSession={(p, id) => void onSelectSessionInProject(p, id)}
+          onArchiveSession={(p, ev, id) => void onArchiveInProject(p, ev, id)}
+          onDiscardSession={(p, ev, id) => onDiscardInProject(p, ev, id)}
+        />
+      </Show>
+
+      {/* MODE C: RUNNING TASKS BY PROJECT */}
+      <Show when={workspace.sidebarProjectMode === "running"}>
+        <RunningNavView
+          allProjects={allProjects()}
+          projectSessions={projectSessions()}
+          filterQuery={filterQuery()}
+          pendingSessions={pendingSessions()}
+          onSelectSession={(p, id) => void onSelectSessionInProject(p, id)}
+          onArchiveSession={(p, ev, id) => void onArchiveInProject(p, ev, id)}
+          onDiscardSession={(p, ev, id) => onDiscardInProject(p, ev, id)}
+        />
+      </Show>
+
+      {/* MODE D: SINGLE-PROJECT FOCUSED VIEW */}
       <Show when={workspace.sidebarProjectMode === "single"}>
         <SingleProjectNavView
           allProjects={allProjects()}
@@ -620,7 +651,7 @@ export default function LeftNav() {
         />
       </Show>
 
-      {/* MODE C: RECENT TASKS FLAT VIEW */}
+      {/* MODE E: RECENT TASKS FLAT VIEW */}
       <Show when={workspace.sidebarProjectMode === "recent"}>
         <RecentTasksNavView
           allProjects={allProjects()}

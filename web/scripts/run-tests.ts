@@ -25,6 +25,7 @@ import "../src/__tests__/session-scroll.test";
 import "../src/__tests__/reading-position.test";
 import "../src/__tests__/transcript-controls.test";
 import "../src/__tests__/session-history.test";
+import "../src/__tests__/cross-project-nav.test";
 import "../src/__tests__/cross-project-status.test";
 import "../src/__tests__/deep-link.test";
 import "../src/__tests__/task-overview.test";
