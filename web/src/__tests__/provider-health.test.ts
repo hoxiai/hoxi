@@ -1,7 +1,11 @@
 // web/src/__tests__/provider-health.test.ts
 import {
   deriveHierarchicalRules,
+  exactAllowRules,
   extractPermissionDiffs,
+  isExactRule,
+  isPersistableRule,
+  rulesForReply,
 } from "../components/approval/approval-helpers";
 import {
   countDiffLines,
@@ -40,6 +44,88 @@ describe("approval & toolcard pure helpers", () => {
 
     const rules = deriveHierarchicalRules(req, "git push --force origin main");
     assertDeepEqual(rules, ["git push *", "git *"]);
+  });
+
+  it("only persists exact permission rules and never wildcard prefixes", () => {
+    assertEqual(isExactRule("git status"), true);
+    assertEqual(isExactRule("git *"), false);
+    assertEqual(isExactRule("src/*.ts"), false);
+    assertEqual(isExactRule("  "), false);
+
+    const shell: PermissionRequest = {
+      id: "perm_shell",
+      sessionID: "ses_1",
+      permission: "bash",
+      patterns: ["git status"],
+      always: ["git *"],
+      metadata: {},
+    };
+    assertDeepEqual(exactAllowRules(shell), { "git status": "allow" });
+
+    // The broad "always" patterns OpenCode suggests must never be persisted,
+    // otherwise `git push --force` would skip the approval gate.
+    const force: PermissionRequest = {
+      ...shell,
+      patterns: ["git push --force origin main"],
+      always: ["git push *", "git *"],
+    };
+    assertDeepEqual(exactAllowRules(force), { "git push --force origin main": "allow" });
+    const install: PermissionRequest = {
+      ...shell,
+      patterns: ["npm install lodash"],
+      always: ["npm *", "npm install *"],
+    };
+    assertDeepEqual(exactAllowRules(install), { "npm install lodash": "allow" });
+    assertDeepEqual(
+      exactAllowRules({ ...shell, patterns: ["git *", "*"] }),
+      {},
+      "wildcards must not become global allow rules"
+    );
+
+    const fileEdit: PermissionRequest = {
+      ...shell,
+      permission: "edit",
+      patterns: ["src/main.ts"],
+      always: ["*"],
+    };
+    assertDeepEqual(
+      exactAllowRules(fileEdit),
+      {},
+      "relative file paths must not leak into the global config"
+    );
+    assertEqual(isPersistableRule("*", "deny"), false);
+    assertEqual(isPersistableRule("git *", "deny"), true);
+    assertEqual(isPersistableRule("git *", "allow"), false);
+  });
+
+  it("persists exact rules on always, deny-only rules on reject, and nothing for destructive requests", () => {
+    const req: PermissionRequest = {
+      id: "perm_reply",
+      sessionID: "ses_1",
+      permission: "bash",
+      patterns: ["npm install lodash"],
+      always: ["npm *"],
+      metadata: {},
+    };
+    assertDeepEqual(rulesForReply(req, "once", false, {}), {});
+    assertDeepEqual(rulesForReply(req, "always", false, {}), {
+      "npm install lodash": "allow",
+    });
+    assertDeepEqual(
+      rulesForReply(req, "always", false, { "npm install lodash": "deny" }),
+      {},
+      "an explicit deny must win over the implicit allow"
+    );
+    assertDeepEqual(
+      rulesForReply(req, "reject", false, { "npm install lodash": "allow", "npm *": "deny" }),
+      { "npm *": "deny" },
+      "only deny picks persist on reject"
+    );
+    assertDeepEqual(rulesForReply(req, "always", true, {}), {});
+    assertDeepEqual(rulesForReply(req, "always", true, { "npm *": "deny" }), {});
+    assertDeepEqual(rulesForReply(req, "always", false, {}, { "npm *": "allow" }), {
+      "npm *": "allow",
+    });
   });
 
   it("processes terminal carriage returns and counts diff lines accurately", () => {

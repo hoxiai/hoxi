@@ -25,6 +25,8 @@ export const approval = {
   autoApproveRules: "Approval rules ({count})",
   ruleAlwaysAllow: "Always Allow",
   ruleAlwaysDeny: "Always Deny",
+  ruleScopeHint:
+    "Picking a rule also answers this request. Exact rules are saved to the global permission config; rules with * apply to this session only. Destructive requests can only be denied",
   modeMenuTitle: "Approval Mode",
   modeMenuBadge: "Destructive Gated",
   modeAutoLabel: "Auto Approve",

@@ -25,6 +25,8 @@ export const approval: ApprovalI18n = {
   autoApproveRules: "放行规则 ({count})",
   ruleAlwaysAllow: "始终允许",
   ruleAlwaysDeny: "始终拒绝",
+  ruleScopeHint:
+    "点击规则会同时回复本次请求；精确规则写入全局权限配置，带 * 的规则仅在本会话生效；破坏性请求只能拒绝",
   modeMenuTitle: "确认模式",
   modeMenuBadge: "高危始终拦截",
   modeAutoLabel: "自动确认",

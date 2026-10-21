@@ -213,6 +213,8 @@ export interface SessionPromptInput {
 
    `always` 的语义按运行时区分：Runner（Claude Code / Antigravity）对 `bash` 记住**完全相同的整条命令**，对工具记住 **工具名 + 完整参数哈希**；OpenCode 侧由 `hoxi-permissions.js` 与全局 `permission` 配置决定。两种授权都只存在于内存（进程重启即失效），破坏性命令永不记忆，可在设置页「当前会话临时放行授权」查看与撤销。经 GoPanel 隧道回复时 `always` 一律返回 403，手机端只能 `once` / `reject`。
 
+   卡片内的「放行规则」列表是即时生效的写入路径：点「始终允许 / 始终拒绝」会直接落盘对应规则并同时回复本次请求，不必再点外侧按钮（`approval-helpers.ts` 的 `rulesForReply` / `exactAllowRules`）。**只持久化精确规则**：OpenCode 在 `permission.ask` 之前就按已保存的 glob 模式判定，因此 `git *`、`npm *`、`*` 这类通配前缀绝不写入全局 `permission`（否则 `git push --force` 会绕过审批门控），只通过本次 `reply: "always"` 的会话授权生效；「始终拒绝」可持久化通配前缀（fail closed）。破坏性请求隐藏「始终允许」，只保留「始终拒绝」。
+
    每一次完成决策（桌面、隧道或系统自动拒绝）都会写入 `~/.hoxi/approval-audit.json`（原子写入、`0600`、最多 500 条、密钥自动脱敏），可在 `GET /api/hoxi/permission/audit` 查询；该接口与 `GET|DELETE /api/hoxi/permission/grants` 都仅限桌面本机。
 
 ### 4.4 内置 PTY 终端与 WebSocket 协议
@@ -458,6 +460,7 @@ function scheduleFlush(applyDeltaToStore: (key: string, delta: string) => void) 
   - `[Approve Once]` -> `reply: "once"`
   - `[Always Allow Command/Call in Session]` -> `reply: "always"`（Runner 请求按命令或工具+参数区分，破坏性请求不显示该按钮）
   - `[Reject]` -> `reply: "reject"`（可附原因；Runner 作为 deny 理由回给模型，OpenCode 作为拒绝说明，不再额外下发新 prompt）
+  - 「放行规则」列表的 `始终允许 / 始终拒绝` 是即时生效路径：点击即写入对应规则并同时回复本次请求；仅精确规则落盘，通配前缀只走本次会话授权
 
 ### 6.5 Pierre Diff 审查器与 WebGL Xterm 终端集成
 - **`PierreDiffViewer`**：监听 `session.diff` 事件或轮询 `GET /session/{sessionID}/diff`，将返回的 `SnapshotFileDiff[]` 渲染为可折叠的文件变更卡片列表，支持一键切換 `Unified` 与 `Split` 视图。

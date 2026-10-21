@@ -101,6 +101,92 @@ export function extractPermissionDiffs(request: PermissionRequest): ExtractedPer
   return [];
 }
 
+const WILDCARD_RE = /[*?[]/;
+
+/** A persisted allow rule must be exact; OpenCode matches saved patterns as globs. */
+export function isExactRule(rule: string): boolean {
+  return Boolean(rule.trim()) && !WILDCARD_RE.test(rule);
+}
+
+/**
+ * Whether a rule may be written to the global permission config.
+ *
+ * Allows must be exact (`git status`, `src/main.ts`) — a saved glob would let
+ * `git push --force` skip the approval gate. Denies may be broader, but never
+ * the bare `*` catch-all: saving `edit: { "*": "deny" }` would disable the
+ * tool for every session with no obvious way back.
+ */
+export function isPersistableRule(rule: string, decision: "allow" | "deny"): boolean {
+  const trimmed = rule.trim();
+  if (!trimmed) return false;
+  if (decision === "allow") return isExactRule(trimmed);
+  return trimmed !== "*";
+}
+
+/**
+ * Exact allow rules Hoxi is willing to persist for a request.
+ *
+ * Wildcards are refused on purpose: OpenCode evaluates the persisted
+ * `permission` patterns in its core before Hoxi sees the request, so saving
+ * the suggested `git *` (or `npm *`) would let a destructive variant such as
+ * `git push --force` run without ever reaching the approval gate.
+ *
+ * Only shell commands are persisted. Edit / webfetch patterns are paths and
+ * URLs relative to one worktree, while `.hoxi/models.json` is global — saving
+ * them would grant the same relative path in every project. Those stay
+ * session-scoped through `reply: "always"`.
+ */
+export function exactAllowRules(
+  request: PermissionRequest,
+  destructive = false
+): Record<string, "allow" | "deny"> {
+  if (destructive) return {};
+  const permission = String(request.permission || "bash").toLowerCase();
+  if (permission !== "bash" && permission !== "shell") return {};
+  const rules: Record<string, "allow" | "deny"> = {};
+  for (const raw of request.patterns ?? []) {
+    const resource = String(raw ?? "").trim();
+    if (!isExactRule(resource)) continue;
+    rules[resource] = "allow";
+  }
+  return rules;
+}
+
+/**
+ * Rules persisted alongside a reply. `always` saves the exact allow rules so
+ * the decision survives a restart instead of only this session; `reject` only
+ * keeps explicitly picked deny rules. Destructive requests persist nothing.
+ */
+export function rulesForReply(
+  request: PermissionRequest,
+  mode: "once" | "always" | "reject",
+  destructive: boolean,
+  selected: Record<string, "allow" | "deny">,
+  override?: Record<string, "allow" | "deny">
+): Record<string, "allow" | "deny"> {
+  if (override) return override;
+  if (destructive) return {};
+  const denied = persistable(selected, "deny");
+  if (mode === "reject") return denied;
+  if (mode === "always") {
+    const allowed = { ...exactAllowRules(request), ...persistable(selected, "allow") };
+    for (const rule of Object.keys(denied)) delete allowed[rule];
+    return allowed;
+  }
+  return {};
+}
+
+function persistable(
+  selected: Record<string, "allow" | "deny">,
+  decision: "allow" | "deny"
+): Record<string, "allow" | "deny"> {
+  return Object.fromEntries(
+    Object.entries(selected).filter(
+      ([rule, picked]) => picked === decision && isPersistableRule(rule, picked)
+    )
+  );
+}
+
 /**
  * Derives hierarchical command/file rules from `request.always`, `metadata.rules`, or bash tokens.
  */

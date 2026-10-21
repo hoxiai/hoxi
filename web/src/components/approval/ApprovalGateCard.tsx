@@ -28,7 +28,12 @@ import {
 import { DiffChanges, FileIcon } from "../icons";
 import FileDiffBlock from "../inspector/LazyFileDiffBlock";
 import { t } from "../../i18n";
-import { deriveHierarchicalRules, extractPermissionDiffs } from "./approval-helpers";
+import {
+  deriveHierarchicalRules,
+  extractPermissionDiffs,
+  isPersistableRule,
+  rulesForReply,
+} from "./approval-helpers";
 
 /**
  * Ported from kilocode PermissionDock.tsx & PermissionDiff.tsx:
@@ -110,13 +115,38 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
     });
   };
 
-  const reply = async (mode: PermissionReplyMode) => {
+  /**
+   * The rule list is the write path: picking a rule settles the pending request
+   * in one go, so a selection never dead-ends when the outer Always button is
+   * hidden. Deny rules are persisted as picked (fail closed, except the bare
+   * `*` catch-all). Allow rules are only persisted when exact: a saved glob
+   * like `git *` would let a destructive variant (`git push --force`) skip the
+   * gate, so a wildcard prefix only settles this request through the
+   * session-scoped "always" reply. Destructive requests can only pick a deny
+   * rule (AGENTS 2.2.6).
+   */
+  const applyRuleDecision = (rule: string, decision: "allow" | "deny") => {
+    if (busy()) return;
+    if (decision === "allow" && isDestructive()) return;
+    toggleRuleDecision(rule, decision);
+    void reply(
+      decision === "allow" ? "always" : "reject",
+      isPersistableRule(rule, decision) ? { [rule]: decision } : {}
+    );
+  };
+
+  const reply = async (
+    mode: PermissionReplyMode,
+    rulesOverride?: Record<string, "allow" | "deny">
+  ) => {
     if (busy()) return;
     setBusy(mode);
     setError(null);
     try {
       await replyPermissionRequest(props.request, mode, {
-        rules: selectedRules(),
+        rules:
+          rulesOverride ??
+          rulesForReply(props.request, mode, isDestructive(), selectedRules()),
         note: feedback(),
       });
     } catch (err) {
@@ -274,6 +304,9 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
 
             <Show when={rulesExpanded()}>
               <div class="mt-1.5 space-y-1 border-t border-[var(--border-subtle)] pt-1.5">
+                <p class="pb-1 text-[11px] leading-relaxed text-[var(--text-muted)]">
+                  {t("approval.ruleScopeHint")}
+                </p>
                 <For each={rules()}>
                   {(rule) => {
                     const dec = () => selectedRules()[rule];
@@ -283,21 +316,25 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
                           {rule}
                         </code>
                         <div class="flex items-center gap-1 shrink-0">
+                          <Show when={!isDestructive()}>
+                            <button
+                              type="button"
+                              disabled={!!busy()}
+                              onClick={() => applyRuleDecision(rule, "allow")}
+                              class={`rounded px-2 py-0.5 text-[12px] font-medium transition-colors cursor-pointer disabled:opacity-50 ${
+                                dec() === "allow"
+                                  ? "bg-[var(--ok-surface)] text-[var(--ok-text)] border border-[var(--ok-border)]"
+                                  : "text-[var(--text-muted)] hover:bg-[var(--bg-hover)]"
+                              }`}
+                            >
+                              {t("approval.ruleAlwaysAllow")}
+                            </button>
+                          </Show>
                           <button
                             type="button"
-                            onClick={() => toggleRuleDecision(rule, "allow")}
-                            class={`rounded px-2 py-0.5 text-[12px] font-medium transition-colors cursor-pointer ${
-                              dec() === "allow"
-                                ? "bg-[var(--ok-surface)] text-[var(--ok-text)] border border-[var(--ok-border)]"
-                                : "text-[var(--text-muted)] hover:bg-[var(--bg-hover)]"
-                            }`}
-                          >
-                            {t("approval.ruleAlwaysAllow")}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => toggleRuleDecision(rule, "deny")}
-                            class={`rounded px-2 py-0.5 text-[12px] font-medium transition-colors cursor-pointer ${
+                            disabled={!!busy()}
+                            onClick={() => applyRuleDecision(rule, "deny")}
+                            class={`rounded px-2 py-0.5 text-[12px] font-medium transition-colors cursor-pointer disabled:opacity-50 ${
                               dec() === "deny"
                                 ? "bg-[var(--danger-surface)] text-[var(--danger-text)] border border-[var(--danger-border)]"
                                 : "text-[var(--text-muted)] hover:bg-[var(--bg-hover)]"
