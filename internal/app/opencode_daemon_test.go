@@ -239,3 +239,43 @@ func TestEnsureEngineRestartInvalidatesPendingRespawn(t *testing.T) {
 	}
 	waitForEngineHealth(t, port, 2*time.Second)
 }
+
+// A freshly installed binary that cannot run is rolled back to the previous
+// managed one instead of leaving the user without an engine.
+func TestStartResolvedEngineRollsBackBrokenBinary(t *testing.T) {
+	bin := fakeOpenCodeBinary(t)
+	backupPath := opencode.BinaryBackupPath(bin)
+	if err := os.Rename(bin, backupPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bin, []byte("not an executable"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	port := freeEnginePort(t)
+	a := newEngineTestApp(t, bin, port)
+	defer a.killChild()
+
+	child, err := a.startResolvedEngine(context.Background(), bin, port, fakeEnginePassword)
+	if err != nil {
+		t.Fatalf("startResolvedEngine: %v", err)
+	}
+	if child == nil {
+		t.Fatal("expected the rolled-back daemon to start")
+	}
+	if _, err := os.Stat(backupPath); !os.IsNotExist(err) {
+		t.Fatalf("backup must be consumed by the rollback, stat err=%v", err)
+	}
+	waitForEngineHealth(t, port, 3*time.Second)
+}
+
+// Without a backup the start failure is returned unchanged; nothing is invented.
+func TestStartResolvedEngineReportsFailureWithoutBackup(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "opencode")
+	if err := os.WriteFile(bin, []byte("not an executable"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a := newEngineTestApp(t, bin, freeEnginePort(t))
+	if _, err := a.startResolvedEngine(context.Background(), bin, a.openCodePort, fakeEnginePassword); err == nil {
+		t.Fatal("expected the start failure to surface")
+	}
+}

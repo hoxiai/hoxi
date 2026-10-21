@@ -189,7 +189,12 @@ func Run(distFS fs.FS) {
 		openCodePass: password,
 	}
 	defer app.killChild()
-	gw.SetEngineInstaller(app.EnsureEngine)
+	gw.SetEngineInstaller(func(ctx context.Context, restart bool) (string, error) {
+		if restart {
+			return app.RestartEngine(ctx)
+		}
+		return app.EnsureEngine(ctx)
+	})
 
 	// The plugin must know the actual fallback port before OpenCode starts.
 	host, _, addrErr := net.SplitHostPort(cfg.Address)
@@ -467,7 +472,7 @@ func (a *DesktopApp) BootstrapOpenCodeAsync(ctx context.Context, port int, passw
 		a.logger.Error("background opencode resolution failed", "error", err)
 		return
 	}
-	child, err := a.startOpenCode(ctx, binPath, port, password)
+	child, err := a.startResolvedEngine(ctx, binPath, port, password)
 	if err != nil {
 		a.logger.Error("background opencode daemon start failed", "error", err)
 		return
@@ -641,7 +646,12 @@ func StartEphemeralHeadless(ctx context.Context, rootDir string) (string, func()
 		openCodePort: port,
 		openCodePass: password,
 	}
-	gw.SetEngineInstaller(dapp.EnsureEngine)
+	gw.SetEngineInstaller(func(ctx context.Context, restart bool) (string, error) {
+		if restart {
+			return dapp.RestartEngine(ctx)
+		}
+		return dapp.EnsureEngine(ctx)
+	})
 
 	if localBin := opencode.FindBinary(dapp.cfg.OpenCode); localBin != "" {
 		if child, startErr := dapp.startOpenCode(ctx, localBin, port, password); startErr == nil {

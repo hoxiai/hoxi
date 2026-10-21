@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/hoxiai/hoxi/internal/auth"
 	"github.com/hoxiai/hoxi/internal/browser"
@@ -78,7 +79,10 @@ type Gateway struct {
 	updateDirectories     map[string]bool
 	pulseCache            devPulseCache
 	engineMu              sync.Mutex
-	engineInstaller       func(context.Context) (string, error)
+	engineInstaller       func(context.Context, bool) (string, error)
+	engineReadyMu         sync.Mutex
+	engineReadyAt         time.Time
+	engineReadyOK         bool
 }
 
 func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statusbar.Tracker) *Gateway {
@@ -197,8 +201,9 @@ func (g *Gateway) SetBrowserAgentToken(token string) { g.browser.SetAgentToken(t
 
 // SetEngineInstaller lets the desktop host resolve, verify and restart the
 // supervised OpenCode daemon when the user asks to install or retry. The
-// installer reports the binary path it actually resolved.
-func (g *Gateway) SetEngineInstaller(fn func(context.Context) (string, error)) {
+// installer reports the binary path it actually resolved; restart forces a
+// fresh process even when the current one is healthy.
+func (g *Gateway) SetEngineInstaller(fn func(context.Context, bool) (string, error)) {
 	g.engineMu.Lock()
 	g.engineInstaller = fn
 	g.engineMu.Unlock()

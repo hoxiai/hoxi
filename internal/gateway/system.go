@@ -29,6 +29,7 @@ type systemRuntimeInfoResponse struct {
 	OpenCodeVersion     string            `json:"openCodeVersion"`
 	OpenCodePort        int               `json:"openCodePort"`
 	OpenCodeReady       bool              `json:"openCodeReady"`
+	OpenCodeSource      string            `json:"openCodeSource"`
 	WSBaseURL           string            `json:"wsBaseURL"`
 	RootDir             string            `json:"rootDir"`
 	UserConfigPath      string            `json:"userConfigPath"`
@@ -100,6 +101,7 @@ func (g *Gateway) handleSystemRuntimeInfo(w http.ResponseWriter, r *http.Request
 		OpenCodeVersion:     ver,
 		OpenCodePort:        g.openCodePort,
 		OpenCodeReady:       g.engineReady(),
+		OpenCodeSource:      openCodeBinarySource(binPath),
 		WSBaseURL:           g.wsBaseURL,
 		RootDir:             g.rootDir,
 		UserConfigPath:      provider.UserHoxiModelsPath(),

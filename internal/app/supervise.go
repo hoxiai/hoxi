@@ -64,11 +64,40 @@ func (a *DesktopApp) startOpenCode(ctx context.Context, binPath string, port int
 	return child, nil
 }
 
+// startResolvedEngine starts binPath and rolls back to the previous managed
+// binary when a freshly installed one cannot serve. A backup only exists after
+// an install replaced an older binary, so external binaries never roll back.
+func (a *DesktopApp) startResolvedEngine(ctx context.Context, binPath string, port int, password string) (*exec.Cmd, error) {
+	child, err := a.startOpenCode(ctx, binPath, port, password)
+	if err == nil {
+		opencode.DiscardBinaryBackup(binPath)
+		return child, nil
+	}
+	restored, restoreErr := opencode.RestoreBinaryBackup(binPath)
+	if restoreErr != nil || !restored {
+		return nil, err
+	}
+	if a.logger != nil {
+		a.logger.Warn("new opencode binary failed to start; rolled back to the previous one", "error", err)
+	}
+	return a.startOpenCode(ctx, binPath, port, password)
+}
+
 // EnsureEngine resolves (downloading and verifying when needed) the OpenCode
 // binary and makes sure the supervised daemon is healthy on the boot-time
 // loopback port. The settings page uses it to install or retry after a failed
 // background bootstrap. It reports the resolved binary path.
 func (a *DesktopApp) EnsureEngine(ctx context.Context) (string, error) {
+	return a.ensureEngine(ctx, false)
+}
+
+// RestartEngine replaces a running daemon with a fresh process on the same
+// endpoint, reusing the installed binary and its credentials.
+func (a *DesktopApp) RestartEngine(ctx context.Context) (string, error) {
+	return a.ensureEngine(ctx, true)
+}
+
+func (a *DesktopApp) ensureEngine(ctx context.Context, restart bool) (string, error) {
 	a.engineMu.Lock()
 	defer a.engineMu.Unlock()
 
@@ -79,8 +108,10 @@ func (a *DesktopApp) EnsureEngine(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := opencode.WaitForHealth(ctx, a.openCodePort, a.openCodePass, 2*time.Second); err == nil {
-		return binPath, nil
+	if !restart {
+		if err := opencode.WaitForHealth(ctx, a.openCodePort, a.openCodePass, 2*time.Second); err == nil {
+			return binPath, nil
+		}
 	}
 
 	// Detach the stale child before killing it: its waiter then sees a newer
@@ -108,7 +139,7 @@ func (a *DesktopApp) EnsureEngine(ctx context.Context) (string, error) {
 	if startCtx == nil {
 		startCtx = ctx
 	}
-	child, err := a.startOpenCode(startCtx, binPath, a.openCodePort, a.openCodePass)
+	child, err := a.startResolvedEngine(startCtx, binPath, a.openCodePort, a.openCodePass)
 	if err != nil {
 		return "", err
 	}

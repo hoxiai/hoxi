@@ -388,11 +388,64 @@ func writeBinaryAtomically(binDir, binName string, binBytes []byte) (string, err
 	if err := os.Chmod(tmpPath, 0o755); err != nil {
 		return "", err
 	}
+	// Keep the binary we are replacing until the new one proves it can serve,
+	// so a broken release can be rolled back instead of leaving the machine
+	// with an engine that no longer starts.
+	if err := keepBinaryBackup(targetPath); err != nil {
+		return "", err
+	}
 	if err := os.Rename(tmpPath, targetPath); err != nil {
 		return "", err
 	}
 	committed = true
 	return targetPath, nil
+}
+
+// binaryBackupSuffix names the rollback copy of the managed binary.
+const binaryBackupSuffix = ".previous"
+
+// BinaryBackupPath reports where the previous managed binary is kept.
+func BinaryBackupPath(binPath string) string {
+	binPath = strings.TrimSpace(binPath)
+	if binPath == "" {
+		return ""
+	}
+	return binPath + binaryBackupSuffix
+}
+
+func keepBinaryBackup(targetPath string) error {
+	if !isExecutableFile(targetPath) {
+		return nil
+	}
+	backupPath := BinaryBackupPath(targetPath)
+	_ = os.Remove(backupPath)
+	if err := os.Rename(targetPath, backupPath); err != nil {
+		return fmt.Errorf("keep previous opencode binary: %w", err)
+	}
+	return nil
+}
+
+// RestoreBinaryBackup puts the previous managed binary back in place after the
+// new one failed to start. It reports whether a backup was restored.
+func RestoreBinaryBackup(binPath string) (bool, error) {
+	backupPath := BinaryBackupPath(binPath)
+	if backupPath == "" || !isExecutableFile(backupPath) {
+		return false, nil
+	}
+	if err := os.Remove(binPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return false, err
+	}
+	if err := os.Rename(backupPath, binPath); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// DiscardBinaryBackup drops the rollback copy once the new binary is healthy.
+func DiscardBinaryBackup(binPath string) {
+	if backupPath := BinaryBackupPath(binPath); backupPath != "" {
+		_ = os.Remove(backupPath)
+	}
 }
 
 const maxExtractedBinaryBytes = 250 * 1024 * 1024

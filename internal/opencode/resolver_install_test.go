@@ -160,3 +160,54 @@ func assertNoTempFiles(t *testing.T, dir string) {
 		}
 	}
 }
+
+// Installing over an existing binary keeps the old one until the caller has
+// proven the replacement runs; rollback and discard both clean up.
+func TestInstalledBinaryKeepsPreviousCopyUntilDiscarded(t *testing.T) {
+	archive := zipWithBinary(t, "opencode", []byte("new-binary"))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(archive) }))
+	defer srv.Close()
+
+	binDir := t.TempDir()
+	binPath := filepath.Join(binDir, "opencode")
+	if err := os.WriteFile(binPath, []byte("old-binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	installed, err := installFromMirrors(context.Background(), srv.Client(), []string{srv.URL + "/o.zip"}, true, sha256Hex(archive), binDir, "opencode")
+	if err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	backup, err := os.ReadFile(BinaryBackupPath(installed))
+	if err != nil || string(backup) != "old-binary" {
+		t.Fatalf("backup = %q (%v), want the previous binary", backup, err)
+	}
+
+	restored, err := RestoreBinaryBackup(installed)
+	if err != nil || !restored {
+		t.Fatalf("restore = %v, %v; want true, nil", restored, err)
+	}
+	content, err := os.ReadFile(installed)
+	if err != nil || string(content) != "old-binary" {
+		t.Fatalf("restored binary = %q (%v)", content, err)
+	}
+	if restored, err := RestoreBinaryBackup(installed); restored || err != nil {
+		t.Fatalf("second restore = %v, %v; want false, nil", restored, err)
+	}
+}
+
+func TestDiscardBinaryBackupRemovesRollbackCopy(t *testing.T) {
+	binPath := filepath.Join(t.TempDir(), "opencode")
+	if err := os.WriteFile(binPath, []byte("current"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(BinaryBackupPath(binPath), []byte("previous"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	DiscardBinaryBackup(binPath)
+	if restored, _ := RestoreBinaryBackup(binPath); restored {
+		t.Fatal("discarded backup must not be restorable")
+	}
+	if _, err := os.Stat(binPath); err != nil {
+		t.Fatalf("current binary was removed: %v", err)
+	}
+}
