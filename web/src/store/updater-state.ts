@@ -1,4 +1,5 @@
 // web/src/store/updater-state.ts
+import { createSignal } from "solid-js";
 import { createStore } from "solid-js/store";
 import { updaterAPI, type UpdateCheckResult } from "../services/api";
 import { t } from "../i18n";
@@ -71,4 +72,28 @@ export async function checkDesktopUpdate(force = false): Promise<UpdateCheckResu
     });
     return null;
   }
+}
+
+const [updateModalOpen, setUpdateModalOpen] = createSignal(false);
+
+export function isUpdateModalOpen(): boolean {
+  return updateModalOpen();
+}
+
+export function openDesktopUpdateModal(): void {
+  setUpdateModalOpen(true);
+}
+
+export function closeDesktopUpdateModal(): void {
+  setUpdateModalOpen(false);
+}
+
+/** True while a release newer than the running build is published. */
+export function hasDesktopUpdate(): boolean {
+  return Boolean(desktopUpdater.result?.needUpdate);
+}
+
+/** True once Sparkle accepted the install; new mutations stay paused until relaunch. */
+export function isUpdateDraining(): boolean {
+  return desktopUpdater.draining;
 }

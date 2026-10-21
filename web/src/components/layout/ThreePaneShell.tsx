@@ -1,7 +1,9 @@
 import { createEffect, createMemo, createSignal, lazy, onCleanup, onMount, Show, Suspense, untrack, type Accessor } from "solid-js";
 import CompactHeader from "./CompactHeader";
 import CommandPalette, { type CommandPaletteMode } from "./CommandPalette";
-import UpdateBadge from "./UpdateBadge";
+import UpdateModal from "./UpdateModal";
+import UpdateDrainNotice from "./UpdateDrainNotice";
+import UpdateWatcher from "./UpdateWatcher";
 import LeftNav from "./LeftNav";
 import MessageStream from "../timeline/MessageStream";
 import Composer from "../timeline/Composer";
@@ -224,6 +226,8 @@ export default function ThreePaneShell(props: ThreePaneShellProps = {}) {
         }}
       />
 
+      <UpdateDrainNotice />
+
       <main class="flex-1 flex min-h-0 pb-2 pr-2">
         {/* Left Navigation Sidebar (outer clips width transition; inner keeps fixed width for zero text reflow) */}
         <div
@@ -342,7 +346,8 @@ export default function ThreePaneShell(props: ThreePaneShellProps = {}) {
       </main>
 
       <CommandPalette mode={paletteMode()} onClose={() => setPaletteMode(null)} />
-      <UpdateBadge />
+      <UpdateWatcher />
+      <UpdateModal />
 
       {/* Workspace, Session Handoff, Leaderboard Modals & Full-Screen Settings Control Center */}
       <Suspense>

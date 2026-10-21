@@ -12,7 +12,10 @@ import {
 } from "lucide-solid";
 import {
   desktopUpdater,
+  hasDesktopUpdate,
   isDailyPulseSyncing,
+  isUpdateDraining,
+  openDesktopUpdateModal,
   openSettingsModal,
   refreshDailyDevPulse,
   workspace,
@@ -20,7 +23,6 @@ import {
 import { t } from "../../i18n";
 import ThemeStyleContent from "./ThemeStyleContent";
 import DevPulseContent from "./DevPulseContent";
-import { openDesktopUpdateModal } from "./UpdateBadge";
 
 type Panel = "appearance" | "pulse" | null;
 
@@ -35,8 +37,7 @@ export default function HeaderOverflowMenu() {
     setPanel(null);
   };
 
-  const hasUpdate = () => Boolean(desktopUpdater.result?.needUpdate || desktopUpdater.draining);
-  const showDot = () => hasUpdate() || !workspace.connected;
+  const hasUpdate = () => hasDesktopUpdate() || isUpdateDraining();
 
   createEffect(() => {
     if (!open()) return;
@@ -87,7 +88,7 @@ export default function HeaderOverflowMenu() {
         aria-expanded={open()}
       >
         <MoreHorizontal size={16} />
-        <Show when={showDot()}>
+        <Show when={hasUpdate()}>
           <span class="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-[var(--accent-primary)]" />
         </Show>
       </button>
@@ -123,7 +124,7 @@ export default function HeaderOverflowMenu() {
                     >
                       <Sparkles size={14} class="shrink-0" />
                       <span class="flex-1 min-w-0 truncate">
-                        {desktopUpdater.draining
+                        {isUpdateDraining()
                           ? t("header.updateRestartRequired")
                           : t("header.updateAvailableBadge", {
                               version: `v${desktopUpdater.result?.latestVersion || ""}`,

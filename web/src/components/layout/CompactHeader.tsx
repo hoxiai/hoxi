@@ -15,6 +15,7 @@ import { t } from "../../i18n";
 import { isPlaceholderSessionTitle } from "../../store/session-title";
 import BranchManagerPopover from "./BranchManagerPopover";
 import HeaderOverflowMenu from "./HeaderOverflowMenu";
+import UpdateIndicator from "./UpdateIndicator";
 import NetworkStatusBanner from "./NetworkStatusBanner";
 
 interface CompactHeaderProps {
@@ -99,6 +100,8 @@ export default function CompactHeader(props: CompactHeaderProps) {
       </div>
 
       <div class="flex shrink-0 items-center gap-1.5 text-[12px]">
+        <UpdateIndicator />
+
         <Show when={props.network}>
           {(network) => (
             <NetworkStatusBanner
