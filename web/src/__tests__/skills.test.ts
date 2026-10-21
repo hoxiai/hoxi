@@ -3,8 +3,11 @@ import { assertEqual, assertTrue, describe, it } from "./test-harness";
 import {
   extractUserTurnSkillSelection,
   getComposerSkill,
+  installSkillFromMarketplace,
+  loadSkillMarketplace,
   resolveTurnSkillStatus,
   selectComposerSkill,
+  skillsStore,
   transferDraftComposerSkill,
 } from "../store/skills";
 import { buildSlashCommandSuggestions } from "../components/timeline/composer-autocomplete";
@@ -217,6 +220,64 @@ describe("skills capability", () => {
     assertEqual(getComposerSkill(null), null);
     assertEqual(getComposerSkill("ses_new_123")?.key, "skl_draft");
     selectComposerSkill("ses_new_123", null);
+  });
+
+  it("loads the marketplace catalog and records installed state after an install", async () => {
+    const original = globalThis.fetch;
+    const calls: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      calls.push(`${init?.method || "GET"} ${url}`);
+      if (url.startsWith("/api/hoxi/skills/marketplace/install")) {
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            reload: true,
+            skill: {
+              slug: "demo-skill",
+              name: "demo-skill",
+              contentUrl: "https://hoxi.ai/skills/demo-skill/SKILL.md",
+              contentSha256: "a".repeat(64),
+              installed: true,
+              installedDigest: "a".repeat(64),
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      return new Response(
+        JSON.stringify({
+          source: "https://hoxi.ai",
+          cacheHint: "metadata only",
+          skills: [
+            {
+              slug: "demo-skill",
+              name: "demo-skill",
+              description: "Demo",
+              contentUrl: "https://hoxi.ai/skills/demo-skill/SKILL.md",
+              contentSha256: "a".repeat(64),
+              installed: false,
+            },
+          ],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    }) as typeof fetch;
+
+    try {
+      const list = await loadSkillMarketplace({ forceRefresh: true });
+      assertEqual(list?.length, 1);
+      assertEqual(skillsStore.marketplace[0].installed, false);
+      assertEqual(skillsStore.marketplaceSource, "https://hoxi.ai");
+
+      const ok = await installSkillFromMarketplace("demo-skill", { overwrite: false });
+      assertTrue(ok);
+      assertEqual(skillsStore.marketplace[0].installed, true);
+      assertEqual(skillsStore.marketplace[0].updateAvailable, false);
+      assertTrue(calls.some((entry) => entry === "POST /api/hoxi/skills/marketplace/install"));
+    } finally {
+      globalThis.fetch = original;
+    }
   });
 
   it("extracts skill name in ToolCard extractDescription", () => {

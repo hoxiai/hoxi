@@ -30,7 +30,7 @@ func TestTunnelRouteAllowlist(t *testing.T) {
 		{get, "/api/hoxi/worktree/status"}, {get, "/api/hoxi/worktree/diff"}, {get, "/api/hoxi/worktree/branches"},
 		{get, "/api/hoxi/worktree/verify-status"}, {post, "/api/hoxi/worktree/commit"}, {post, "/api/hoxi/worktree/apply"},
 		{post, "/api/hoxi/attachments"}, {get, "/api/hoxi/attachments/att_1"}, {get, "/api/hoxi/attachments/att_1/content"},
-		{get, "/api/hoxi/skills/list"}, {get, "/api/hoxi/workspaces"},
+		{get, "/api/hoxi/skills/list"}, {get, "/api/hoxi/skills/marketplace"}, {get, "/api/hoxi/workspaces"},
 		{get, "/file/content"}, {get, "/api/file/content"}, {get, "/api/hoxi/file/content"},
 		{get, "/api/hoxi/file/list"}, {get, "/api/hoxi/file/search"},
 	}
@@ -68,6 +68,8 @@ func TestTunnelRouteAllowlist(t *testing.T) {
 		{post, "/api/hoxi/sessions/ses_1/runtime"}, {post, "/api/hoxi/sessions/ses_1/summarize"},
 		{get, "/api/hoxi/sessions/ses_1/event"}, {get, "/api/hoxi/sessions/ses_1/message/extra"},
 		{get, "/api/hoxi/sessions/ses_1/unknown"}, {get, "/api/hoxi/skills/detail"}, {get, "/api/hoxi/attachments/a/b/c"},
+		// Installing a skill writes ~/.hoxi and changes agent capability.
+		{post, "/api/hoxi/skills/marketplace/install"}, {post, "/api/hoxi/skills/marketplace"},
 		{get, "/api/hoxi/permission/per_1"}, {get, "/api/hoxi/permission/audit"}, {http.MethodDelete, "/api/hoxi/permission/audit"},
 		{get, "/api/hoxi/permission/grants"}, {http.MethodDelete, "/api/hoxi/permission/grants"},
 		{get, "/api/hoxi/sessions//message"}, {get, "/api/hoxi/sessions/"},

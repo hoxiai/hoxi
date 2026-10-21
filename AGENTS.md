@@ -17,7 +17,7 @@
 - **前端工作区**（`web/`）：Vite + SolidJS + Tailwind 三栏布局；SSE 增量经 `requestAnimationFrame` 批处理；Subagent 嵌套时间线、`ThoughtBox`、`ToolCard`（含内联 LSP 诊断）；`@pierre/diffs` 代码审查、`@xterm/xterm` + WebGL 终端、无头 Chrome 浏览器（`internal/browser`）
 - **会话能力**：Git Worktree 会话隔离（`internal/worktree`，`?directory=` 作用域）、运行中纠偏（Steer）与停止、按消息回滚（Revert）与分叉（Fork）、8 维度会话压缩记忆（`.opencode/plugins/hoxi-memory.js`）、会话目标上报（`hoxi-goal.js`）
 - **外部 CLI 会话接管**（`internal/handoff`）：从 Claude / Codex / Gemini / Grok / OpenCode / Trae / Qoder / CodeBuddy 导入会话
-- **Agent Skills**（`internal/skills`）：本地与市场 Skill 发现、安装；内置默认 Skill `shoply-ops`、`skill-authoring`（`internal/skills/defaults/`），在桌面 Agent 会话内由 Agent 加载
+- **Agent Skills**（`internal/skills`）：本地 Skill 发现（OpenCode `/skill`）、内置默认 Skill `shoply-ops`、`skill-authoring`（`internal/skills/defaults/`），以及 hoxi.ai 线上技能目录（`GET /api/hoxi/skills/marketplace`）与显式安装（`POST /api/hoxi/skills/marketplace/install`，校验 `sha256` 后原子写入 `~/.hoxi/skills/<slug>/`，不自动安装、不执行远程脚本、不经隧道开放）
 - **GoPanel 反向隧道**（`internal/tunnel` + `internal/gateway/tunnel.go`）：Mac 主动外连 GoPanel，路由白名单内的 HTTP / SSE 在进程内交给网关；Mac 不开放公网端口。待处理审批经 Notify 帧交给 GoPanel 发 APNs
 
 ### 1.2 手机端（`client/`）
@@ -58,7 +58,7 @@ Flutter + Riverpod + GoRouter + Dio，四栏：沟通 · 工程 · 专栏 · 我
 │   ├── recall/                       # [业务层] Cross-session semantic / BM25 memory recall & indexing
 │   ├── runner/                       # [业务层] Multi-runtime execution engine (OpenCode/Claude/Antigravity/Qoder/CodeBuddy): process adapters, translators, hook gates, session store & revert
 │   ├── sandbox/                      # [业务层] OS-level Seatbelt / Bubblewrap execution sandbox policy & profiles
-│   ├── skills/                       # [业务层] Local & marketplace Agent Skills discovery, parser, installer & embedded defaults
+│   ├── skills/                       # [业务层] Local Agent Skills discovery + hoxi.ai catalog client & verified installer + embedded defaults
 │   ├── statusbar/                    # [底座层] Running/Attention tracker, attention notices & macOS NSStatusBar (CGo)
 │   ├── telemetry/                    # [业务层] Local token/cost/latency metrics & session usage ledger
 │   ├── textindex/                    # [底座层] Pure-Go BM25 / trigram full-text search index primitive

@@ -63,4 +63,26 @@ export const skills = {
     "Skill \"{name}\" is unavailable in the new sandbox and was deselected.",
   runtimeSwitchedCleared:
     "Skill \"{name}\" cleared; skills currently require OpenCode.",
+  tabLocal: "Local",
+  tabMarketplace: "Marketplace",
+  marketplaceHint:
+    "hoxi.ai publishes metadata only. Installing downloads SKILL.md, verifies its SHA-256 digest, then writes it to ~/.hoxi/skills. Nothing is installed automatically.",
+  marketplaceEmpty: "No marketplace skills yet.",
+  marketplaceLoading: "Loading marketplace…",
+  marketplaceSource: "From {host}",
+  install: "Install",
+  installing: "Installing…",
+  installed: "Installed",
+  updateAvailable: "Update available",
+  reinstall: "Overwrite",
+  installSuccess: "Installed \"{name}\". Refresh to use it from local skills.",
+  installFailed: "Install failed: {message}",
+  installedBadge: "Installed",
+  marketplaceBrowse: "Marketplace",
+  localDiffers: "Local copy differs",
+  overwriteTitle: "Overwrite local skill \"{name}\"?",
+  overwriteBody:
+    "A local SKILL.md with different content already exists. Overwriting discards your local changes and only runs after you confirm.",
+  overwriteConfirm: "Overwrite",
+  cancel: "Cancel",
 };

@@ -75,6 +75,9 @@ var tunnelRoutes = []tunnelRoute{
 	{http.MethodGet, "/api/hoxi/attachments/*"},
 	{http.MethodGet, "/api/hoxi/attachments/*/content"},
 	{http.MethodGet, "/api/hoxi/skills/list"},
+	// Marketplace catalog is published metadata only; installing writes
+	// ~/.hoxi and stays desktop-only.
+	{http.MethodGet, "/api/hoxi/skills/marketplace"},
 	{http.MethodGet, "/api/hoxi/workspaces"},
 
 	// Local file reads, confined to workspace folders and session worktrees

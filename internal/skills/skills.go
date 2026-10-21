@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -91,8 +92,9 @@ type cachedCatalog struct {
 }
 
 type Service struct {
-	openCode *ocapi.Client
-	resolver ContextResolver
+	openCode    *ocapi.Client
+	resolver    ContextResolver
+	marketplace *MarketplaceService
 
 	mu    sync.RWMutex
 	cache map[string]cachedCatalog
@@ -109,9 +111,17 @@ func NewService(openCodeURL, password string, resolver ContextResolver) *Service
 	}
 }
 
+// SetMarketplace attaches the hoxi.ai catalog client. Without it the
+// marketplace routes answer 503 and the local catalog keeps working.
+func (s *Service) SetMarketplace(m *MarketplaceService) {
+	s.marketplace = m
+}
+
 func (s *Service) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/hoxi/skills/list", s.handleList)
 	mux.HandleFunc("/api/hoxi/skills/detail", s.handleDetail)
+	mux.HandleFunc("/api/hoxi/skills/marketplace", s.handleMarketplaceList)
+	mux.HandleFunc("/api/hoxi/skills/marketplace/install", s.handleMarketplaceInstall)
 }
 
 func (s *Service) handleList(w http.ResponseWriter, r *http.Request) {
@@ -197,6 +207,57 @@ func (s *Service) handleDetail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSONError(w, http.StatusNotFound, "skill not found in active directory")
+}
+
+func (s *Service) handleMarketplaceList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONError(w, http.StatusMethodNotAllowed, "GET required")
+		return
+	}
+	if s.marketplace == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "skills marketplace is not configured")
+		return
+	}
+	forceRefresh := r.URL.Query().Get("refresh") == "1" || r.URL.Query().Get("refresh") == "true"
+	res, err := s.marketplace.List(r.Context(), forceRefresh)
+	if err != nil {
+		writeErrorResponse(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+func (s *Service) handleMarketplaceInstall(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSONError(w, http.StatusMethodNotAllowed, "POST required")
+		return
+	}
+	if s.marketplace == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "skills marketplace is not configured")
+		return
+	}
+	var body struct {
+		Slug      string `json:"slug"`
+		Overwrite bool   `json:"overwrite"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 8<<10)).Decode(&body); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	installed, err := s.marketplace.Install(r.Context(), body.Slug, body.Overwrite)
+	if err != nil {
+		writeErrorResponse(w, err)
+		return
+	}
+	// The engine only rescans on dispose, so the caller is told to refresh.
+	s.mu.Lock()
+	s.cache = make(map[string]cachedCatalog)
+	s.mu.Unlock()
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"ok":     true,
+		"skill":  installed,
+		"reload": true,
+	})
 }
 
 // ResolveSelection checks that sel.Key and sel.Name match an active skill in the
@@ -517,8 +578,12 @@ func writeErrorResponse(w http.ResponseWriter, err error) {
 		writeJSONError(w, http.StatusForbidden, err.Error())
 	case errors.Is(err, ErrNotFound):
 		writeJSONError(w, http.StatusNotFound, err.Error())
-	case errors.Is(err, ErrUnsupported):
+	case errors.Is(err, ErrUnsupported), errors.Is(err, ErrSkillAlreadyInstalled):
 		writeJSONError(w, http.StatusConflict, err.Error())
+	case errors.Is(err, ErrMarketplaceUnavailable):
+		writeJSONError(w, http.StatusBadGateway, err.Error())
+	case errors.Is(err, ErrSkillDigestMismatch), errors.Is(err, ErrSkillContentInvalid):
+		writeJSONError(w, http.StatusBadGateway, err.Error())
 	default:
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 	}

@@ -4,6 +4,7 @@ import { createStore } from "solid-js/store";
 import { t } from "../i18n";
 import {
   skillsAPI,
+  type MarketplaceSkill,
   type MessageInfo,
   type MessagePart,
   type SkillDescriptor,
@@ -37,6 +38,13 @@ interface SkillsStoreState {
   detailError: string | null;
   selectedBySession: Record<string, SkillSelection | null>;
   noticeBySession: Record<string, string | null>;
+  marketplace: MarketplaceSkill[];
+  marketplaceSource: string;
+  marketplaceHint: string;
+  marketplaceLoading: boolean;
+  marketplaceError: string | null;
+  installingSlug: string | null;
+  installNotice: string | null;
 }
 
 function loadHiddenSkills(): string[] {
@@ -90,6 +98,13 @@ export const [skillsStore, setSkillsStore] = createStore<SkillsStoreState>({
   detailError: null,
   selectedBySession: {},
   noticeBySession: {},
+  marketplace: [],
+  marketplaceSource: "",
+  marketplaceHint: "",
+  marketplaceLoading: false,
+  marketplaceError: null,
+  installingSlug: null,
+  installNotice: null,
 });
 
 const catalogCache = new Map<string, { response: SkillListResponse; expiresAt: number }>();
@@ -302,6 +317,81 @@ export async function loadSkillDetail(
     setSkillsStore({ detail: null, detailLoading: false, detailError: msg });
     return null;
   }
+}
+
+let marketplaceRequestGen = 0;
+
+export async function loadSkillMarketplace(options?: {
+  forceRefresh?: boolean;
+}): Promise<MarketplaceSkill[] | null> {
+  const reqGen = ++marketplaceRequestGen;
+  setSkillsStore({ marketplaceLoading: true, marketplaceError: null });
+  try {
+    const resp = await skillsAPI.fetchMarketplaceSkills({
+      refresh: Boolean(options?.forceRefresh),
+    });
+    if (reqGen !== marketplaceRequestGen) return null;
+    const list = Array.isArray(resp?.skills) ? resp.skills : [];
+    setSkillsStore({
+      marketplace: list,
+      marketplaceSource: resp?.source || "",
+      marketplaceHint: resp?.cacheHint || "",
+      marketplaceLoading: false,
+      marketplaceError: null,
+    });
+    return list;
+  } catch (err) {
+    if (reqGen !== marketplaceRequestGen) return null;
+    const msg = err instanceof Error ? err.message : String(err || "Failed to load skills marketplace");
+    setSkillsStore({ marketplaceLoading: false, marketplaceError: msg, marketplace: [] });
+    return null;
+  }
+}
+
+export async function installSkillFromMarketplace(
+  slug: string,
+  options?: { overwrite?: boolean }
+): Promise<boolean> {
+  const clean = (slug || "").trim();
+  if (!clean) return false;
+  setSkillsStore({ installingSlug: clean, installNotice: null });
+  try {
+    const resp = await skillsAPI.installMarketplaceSkill({
+      slug: clean,
+      overwrite: Boolean(options?.overwrite),
+    });
+    const installed = resp?.skill;
+    const nextMarketplace = skillsStore.marketplace.map((item) =>
+      item.slug === clean
+        ? {
+            ...item,
+            installed: true,
+            installedDigest: installed?.installedDigest || item.contentSha256,
+            updateAvailable: false,
+          }
+        : item
+    );
+    setSkillsStore("marketplace", nextMarketplace);
+    invalidateSkillsCatalogCache();
+    setSkillsStore({
+      installingSlug: null,
+      installNotice: t("skills.installSuccess", { name: installed?.name || clean }),
+    });
+    return true;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err || "");
+    setSkillsStore({
+      installingSlug: null,
+      installNotice: msg
+        ? t("skills.installFailed", { message: msg })
+        : t("skills.installFailed", { message: clean }),
+    });
+    return false;
+  }
+}
+
+export function clearSkillInstallNotice() {
+  setSkillsStore("installNotice", null);
 }
 
 export function openSkillInInspector(key?: string) {

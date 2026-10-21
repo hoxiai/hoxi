@@ -64,4 +64,26 @@ export const skills: SkillsI18n = {
     "技能「{name}」在新沙箱中不可用，已取消选择",
   runtimeSwitchedCleared:
     "已取消技能「{name}」，当前仅支持 OpenCode",
+  tabLocal: "本地技能",
+  tabMarketplace: "线上市集",
+  marketplaceHint:
+    "hoxi.ai 只发布元数据；安装时会下载 SKILL.md、校验 SHA-256 后写入 ~/.hoxi/skills，不会自动安装",
+  marketplaceEmpty: "线上暂无技能",
+  marketplaceLoading: "正在读取线上市集…",
+  marketplaceSource: "来源 {host}",
+  install: "安装",
+  installing: "安装中…",
+  installed: "已安装",
+  updateAvailable: "有更新",
+  reinstall: "覆盖更新",
+  installSuccess: "已安装技能「{name}」，刷新后可在本地技能中使用",
+  installFailed: "安装失败：{message}",
+  installedBadge: "本地已有",
+  marketplaceBrowse: "线上市集",
+  localDiffers: "本地已改动",
+  overwriteTitle: "覆盖本地技能「{name}」？",
+  overwriteBody:
+    "本地已存在同名 SKILL.md，且内容与线上不同。覆盖会丢弃本地改动，只在确认后执行",
+  overwriteConfirm: "确认覆盖",
+  cancel: "取消",
 };

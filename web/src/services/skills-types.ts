@@ -32,3 +32,39 @@ export interface SkillListResponse {
   unsupportedReason?: string;
   cacheHint?: string;
 }
+
+export interface MarketplaceSkill {
+  slug: string;
+  name: string;
+  description?: string;
+  category?: string;
+  categoryLabel?: string;
+  author?: string;
+  version?: string;
+  runtime?: string;
+  contentUrl: string;
+  contentSha256: string;
+  homepageUrl?: string;
+  repoUrl?: string;
+  badge?: string;
+  badgeTone?: string;
+  icon?: string;
+  compatibility?: string;
+  highlights?: string[];
+  order?: number;
+  installed: boolean;
+  installedDigest?: string;
+  updateAvailable?: boolean;
+}
+
+export interface MarketplaceSkillListResponse {
+  skills: MarketplaceSkill[];
+  source: string;
+  cacheHint?: string;
+}
+
+export interface MarketplaceInstallResponse {
+  ok: boolean;
+  skill: MarketplaceSkill;
+  reload: boolean;
+}

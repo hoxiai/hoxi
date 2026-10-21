@@ -31,6 +31,7 @@ import {
   workspace,
 } from "../../store/workspace";
 import { invalidateComposerSkillsAutocompleteCache } from "../timeline/composer-autocomplete";
+import SkillsMarketplaceView from "./SkillsMarketplaceView";
 
 const SOURCE_ORDER: SkillSource[] = ["project", "user", "builtin", "external"];
 
@@ -64,6 +65,7 @@ export default function SkillsInspectorView() {
   const [query, setQuery] = createSignal("");
   const [showHidden, setShowHidden] = createSignal(false);
   const [showRefreshHint, setShowRefreshHint] = createSignal(false);
+  const [tab, setTab] = createSignal<"local" | "marketplace">("local");
 
   const sessionID = () => workspace.activeSessionID;
   const directory = () => activeDirectory() || workspace.rootDir || "";
@@ -193,7 +195,32 @@ export default function SkillsInspectorView() {
           </div>
         </div>
 
-        <Show when={skillsStore.supported && !skillsStore.selectedKey}>
+        <div class="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => setTab("local")}
+            class={`rounded-md px-2 py-1 text-[11px] font-medium transition-colors cursor-pointer ${
+              tab() === "local"
+                ? "bg-[var(--accent-surface)] text-[var(--accent-text)]"
+                : "text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+            }`}
+          >
+            {t("skills.tabLocal")}
+          </button>
+          <button
+            type="button"
+            onClick={() => setTab("marketplace")}
+            class={`rounded-md px-2 py-1 text-[11px] font-medium transition-colors cursor-pointer ${
+              tab() === "marketplace"
+                ? "bg-[var(--accent-surface)] text-[var(--accent-text)]"
+                : "text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+            }`}
+          >
+            {t("skills.tabMarketplace")}
+          </button>
+        </div>
+
+        <Show when={tab() === "local" && skillsStore.supported && !skillsStore.selectedKey}>
           <div class="relative flex items-center">
             <Search size={13} class="absolute left-2.5 text-[var(--text-faint)] pointer-events-none" />
             <input
@@ -206,7 +233,7 @@ export default function SkillsInspectorView() {
           </div>
         </Show>
 
-        <Show when={showRefreshHint()}>
+        <Show when={tab() === "local" && showRefreshHint()}>
           <div class="flex items-start gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-2.5 py-1.5 text-[11px] text-[var(--text-muted)]">
             <Info size={12} class="mt-0.5 shrink-0 text-[var(--accent-primary)]" />
             <span>{t("skills.cacheNotice")}</span>
@@ -216,6 +243,7 @@ export default function SkillsInspectorView() {
 
       {/* Body */}
       <div class="flex-1 min-h-0 overflow-y-auto p-3">
+        <Show when={tab() === "marketplace"} fallback={
         <Show
           when={!skillsStore.loading || skillsStore.skills.length > 0}
           fallback={
@@ -504,6 +532,9 @@ export default function SkillsInspectorView() {
               </Show>
             </Show>
           </Show>
+        </Show>
+        }>
+          <SkillsMarketplaceView />
         </Show>
       </div>
     </div>
