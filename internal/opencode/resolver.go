@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
@@ -361,7 +362,13 @@ func fetchArchive(ctx context.Context, client *http.Client, dlURL string) ([]byt
 	return data, nil
 }
 
+// installMu serialises the backup+rename commit so two concurrent installs
+// cannot steal each other's rollback copy.
+var installMu sync.Mutex
+
 func writeBinaryAtomically(binDir, binName string, binBytes []byte) (string, error) {
+	installMu.Lock()
+	defer installMu.Unlock()
 	targetPath := filepath.Join(binDir, binName)
 	tmp, err := os.CreateTemp(binDir, "."+binName+".*.tmp")
 	if err != nil {
@@ -420,6 +427,9 @@ func keepBinaryBackup(targetPath string) error {
 	backupPath := BinaryBackupPath(targetPath)
 	_ = os.Remove(backupPath)
 	if err := os.Rename(targetPath, backupPath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
 		return fmt.Errorf("keep previous opencode binary: %w", err)
 	}
 	return nil

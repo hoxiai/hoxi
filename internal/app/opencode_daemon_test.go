@@ -148,6 +148,23 @@ func waitForEngineHealth(t *testing.T, port int, timeout time.Duration) {
 	}
 }
 
+// waitForRegisteredChild blocks until the supervisor owns the daemon, so a test
+// cannot exit between a successful health probe and setChild and orphan it.
+func waitForRegisteredChild(t *testing.T, a *DesktopApp, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		a.childMu.Lock()
+		registered := a.child != nil
+		a.childMu.Unlock()
+		if registered {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("daemon was never registered with the supervisor")
+}
+
 // EnsureEngine is the settings-page retry: a healthy daemon must be reused,
 // never downloaded or started a second time.
 func TestEnsureEngineIsIdempotent(t *testing.T) {
@@ -201,6 +218,7 @@ func TestUnexpectedDaemonExitIsRespawned(t *testing.T) {
 	}
 	waitForLaunches(t, logPath, 2, respawnDelay+5*time.Second)
 	waitForEngineHealth(t, port, 3*time.Second)
+	waitForRegisteredChild(t, a, 3*time.Second)
 }
 
 // A pending automatic respawn must be abandoned when EnsureEngine restarts the
@@ -262,6 +280,7 @@ func TestStartResolvedEngineRollsBackBrokenBinary(t *testing.T) {
 	if child == nil {
 		t.Fatal("expected the rolled-back daemon to start")
 	}
+	a.setChild(child)
 	if _, err := os.Stat(backupPath); !os.IsNotExist(err) {
 		t.Fatalf("backup must be consumed by the rollback, stat err=%v", err)
 	}
