@@ -65,7 +65,7 @@ export function filterVisibleTurnsByRevert(
 export interface TurnWindowController {
   visibleTurns: Accessor<MessageTurn[]>;
   hiddenCount: Accessor<number>;
-  hiddenUserCount: Accessor<number>;
+  hiddenMessageCount: Accessor<number>;
   startIndex: Accessor<number>;
   mergeStartIndex: Accessor<number>;
   globalIndex: (visibleIndex: number) => number;
@@ -82,7 +82,7 @@ export function computeTurnWindowSlice(
   startIndex: number;
   visibleTurns: MessageTurn[];
   hiddenCount: number;
-  hiddenUserCount: number;
+  hiddenMessageCount: number;
   promptIndex?: number;
   anchorIndex?: number;
   indexes: number[];
@@ -112,19 +112,46 @@ export function computeTurnWindowSlice(
   // Only older user messages make the "earlier messages" banner meaningful.
   // Long agent runs fold their tool/reasoning steps into activity groups, so a
   // single-message conversation can hide many turns without hiding a message.
-  let hiddenUserCount = 0;
+  let hiddenMessageCount = 0;
   for (let index = 0; index < start; index++) {
-    if (index !== promptIndex && turns[index]?.info.role === "user") hiddenUserCount++;
+    if (index !== promptIndex && turns[index]?.info.role === "user") hiddenMessageCount++;
   }
   return {
     startIndex: start,
     visibleTurns: indexes.map((index) => turns[index]),
     hiddenCount: start - context.length,
-    hiddenUserCount,
+    hiddenMessageCount,
     promptIndex,
     anchorIndex,
     indexes,
   };
+}
+
+/**
+ * Grows the window until at least `count` older *messages* (user turns) are
+ * revealed. The banner promises message counts, so a batch must never advance
+ * by raw turns: a single long agent run folds many assistant steps into one
+ * activity group, and 12 turns could reveal zero messages.
+ */
+export function resolveLimitForEarlierMessages(
+  turns: MessageTurn[],
+  limit: number,
+  count: number
+): number {
+  if (count <= 0) return limit;
+  const slice = computeTurnWindowSlice(turns, limit);
+  const hiddenMessages: number[] = [];
+  for (let index = 0; index < slice.startIndex; index++) {
+    if (index !== slice.promptIndex && turns[index]?.info.role === "user") hiddenMessages.push(index);
+  }
+  if (hiddenMessages.length === 0) return limit;
+  const reveal = Math.min(count, hiddenMessages.length);
+  const targetIndex = hiddenMessages[hiddenMessages.length - reveal]!;
+  return Math.max(limit + 1, turns.length - targetIndex);
+}
+
+export function countUserMessages(turns: MessageTurn[]): number {
+  return turns.reduce((total, turn) => total + (turn.info.role === "user" ? 1 : 0), 0);
 }
 
 export function resolveNextWindowLimit(params: {
@@ -236,7 +263,7 @@ export function createTurnWindow(
   const slice = createMemo(() => computeTurnWindowSlice(turns(), visibleLimit()));
   const startIndex = createMemo(() => slice().startIndex);
   const hiddenCount = createMemo(() => slice().hiddenCount);
-  const hiddenUserCount = createMemo(() => slice().hiddenUserCount);
+  const hiddenMessageCount = createMemo(() => slice().hiddenMessageCount);
   const visibleTurns = createMemo(() => slice().visibleTurns);
 
   // Mounts older turns in animation-frame chunks and compensates the scroll
@@ -292,7 +319,7 @@ export function createTurnWindow(
   const loadEarlierBatch = (scroller?: HTMLElement, count = TURN_BATCH_SIZE) => {
     mountEarlierProgressively(
       scroller,
-      visibleLimit() + Math.max(count, TURN_BATCH_SIZE)
+      resolveLimitForEarlierMessages(turns(), visibleLimit(), count)
     );
   };
 
@@ -312,14 +339,19 @@ export function createTurnWindow(
   const handleTopScroll = (scroller: HTMLElement) => {
     if (prependingLock || hiddenCount() <= 0) return;
     if (scroller.scrollTop <= 120) {
-      loadEarlierBatch(scroller, TURN_BATCH_SIZE);
+      // Scrolling is incremental: reveal one older message per top hit. Counting
+      // turns here would leave the reader stuck at the top of a long folded run.
+      mountEarlierProgressively(
+        scroller,
+        resolveLimitForEarlierMessages(turns(), visibleLimit(), 1)
+      );
     }
   };
 
   return {
     visibleTurns,
     hiddenCount,
-    hiddenUserCount,
+    hiddenMessageCount,
     startIndex,
     mergeStartIndex: () => slice().anchorIndex ?? startIndex(),
     globalIndex: (index) => slice().indexes[index],
@@ -331,19 +363,18 @@ export function createTurnWindow(
 }
 
 export function EarlierTurnsBanner(props: {
-  hiddenCount: number;
-  hiddenUserCount: number;
+  hiddenMessageCount: number;
   totalCount: number;
   onLoadBatch: () => void;
   onLoadAll: () => void;
 }) {
-  const nextBatchCount = () => Math.min(props.hiddenCount, TURN_BATCH_SIZE);
+  const nextBatchCount = () => Math.min(props.hiddenMessageCount, TURN_BATCH_SIZE);
 
   return (
-    <Show when={props.hiddenUserCount > 0}>
+    <Show when={props.hiddenMessageCount > 0}>
       <div class="mb-5 flex flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-[var(--border-subtle)] bg-[var(--bg-inset)]/50 px-4 py-2.5 text-center select-none">
         <div class="text-[12px] text-[var(--text-faint)]">
-          {t("timeline.hiddenTurnsHint", { count: props.hiddenCount })}
+          {t("timeline.hiddenTurnsHint", { count: props.hiddenMessageCount })}
         </div>
         <div class="flex items-center gap-2">
           <button
@@ -355,7 +386,7 @@ export function EarlierTurnsBanner(props: {
             <span>{t("timeline.loadEarlierTurns", { count: nextBatchCount() })}</span>
           </button>
 
-          <Show when={props.hiddenCount > TURN_BATCH_SIZE}>
+          <Show when={props.hiddenMessageCount > TURN_BATCH_SIZE}>
             <button
               type="button"
               onClick={props.onLoadAll}

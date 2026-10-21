@@ -38,6 +38,7 @@ import {
 } from "./message-stream-parts";
 import {
   AssistantTurnItem,
+  countUserMessages,
   createTurnWindow,
   EarlierTurnsBanner,
   filterVisibleTurnsByRevert,
@@ -444,9 +445,8 @@ export default function MessageStream(props: { hidden?: boolean }) {
         >
           <div class="flex flex-col">
             <EarlierTurnsBanner
-              hiddenCount={turnWindow.hiddenCount()}
-              hiddenUserCount={turnWindow.hiddenUserCount()}
-              totalCount={turns().length}
+              hiddenMessageCount={turnWindow.hiddenMessageCount()}
+              totalCount={countUserMessages(turns())}
               onLoadBatch={() => turnWindow.loadEarlierBatch(scroller)}
               onLoadAll={() => turnWindow.loadAllEarlier(scroller)}
             />

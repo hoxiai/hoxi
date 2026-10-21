@@ -1,9 +1,11 @@
 // web/src/__tests__/turn-window.test.ts
 import {
   computeTurnWindowSlice,
+  countUserMessages,
   INITIAL_VISIBLE_TURNS,
   MAX_AUTO_EXPANDED_TURNS,
   nextProgressiveTurnLimit,
+  resolveLimitForEarlierMessages,
   resolveNextWindowLimit,
   TURN_BATCH_SIZE,
   TURN_MOUNT_CHUNK,
@@ -58,7 +60,7 @@ describe("TurnWindow windowing slice & prompt cycle protection", () => {
     assertEqual(slice.visibleTurns.length, INITIAL_VISIBLE_TURNS + TURN_BATCH_SIZE + 1);
     assertEqual(slice.hiddenCount + slice.visibleTurns.length, turns.length);
     // A single prompt owns every folded step, so no earlier *message* is hidden.
-    assertEqual(slice.hiddenUserCount, 0);
+    assertEqual(slice.hiddenMessageCount, 0);
     const expanded = computeTurnWindowSlice(turns, INITIAL_VISIBLE_TURNS + TURN_BATCH_SIZE);
     assertEqual(expanded.visibleTurns.length, slice.visibleTurns.length + TURN_BATCH_SIZE);
     const all = computeTurnWindowSlice(turns, turns.length);
@@ -85,13 +87,52 @@ describe("TurnWindow windowing slice & prompt cycle protection", () => {
     assertEqual(slice.visibleTurns[0].info.id, "t4");
     assertEqual(slice.hiddenCount, 4);
     // t0 is a genuinely hidden earlier message; t4 is carried as the visible prompt.
-    assertEqual(slice.hiddenUserCount, 1);
+    assertEqual(slice.hiddenMessageCount, 1);
 
     // If limit is 7 (all turns), startIndex is 0.
     const full = computeTurnWindowSlice(turns, 7);
     assertEqual(full.startIndex, 0);
     assertEqual(full.visibleTurns.length, 7);
     assertEqual(full.hiddenCount, 0);
+  });
+});
+
+describe("TurnWindow earlier-message batch sizing", () => {
+  it("counts hidden user messages instead of raw folded assistant steps", () => {
+    const turns: MessageTurn[] = [
+      mockTurn("u0", "user"),
+      mockTurn("a0"),
+      mockTurn("a1"),
+      mockTurn("a2"),
+      mockTurn("u1", "user"),
+      mockTurn("a3"),
+      mockTurn("a4"),
+    ];
+    assertEqual(countUserMessages(turns), 2);
+    const slice = computeTurnWindowSlice(turns, 3);
+    assertEqual(slice.hiddenMessageCount, 1);
+    assertTrue(slice.hiddenCount > slice.hiddenMessageCount);
+  });
+
+  it("grows the window until the requested number of messages is revealed", () => {
+    // 4 older prompts, each followed by 10 folded assistant steps.
+    const turns: MessageTurn[] = [];
+    for (let prompt = 0; prompt < 5; prompt++) {
+      turns.push(mockTurn(`u${prompt}`, "user"));
+      for (let step = 0; step < 10; step++) turns.push(mockTurn(`a${prompt}_${step}`));
+    }
+    const limit = 11; // tail: u4 + its 10 steps
+    const before = computeTurnWindowSlice(turns, limit);
+    assertEqual(before.hiddenMessageCount, 4);
+
+    const next = resolveLimitForEarlierMessages(turns, limit, 1);
+    const after = computeTurnWindowSlice(turns, next);
+    assertEqual(after.hiddenMessageCount, 3);
+    assertEqual(after.visibleTurns[0].info.id, "u3");
+
+    const all = resolveLimitForEarlierMessages(turns, next, TURN_BATCH_SIZE);
+    assertEqual(computeTurnWindowSlice(turns, all).hiddenMessageCount, 0);
+    assertEqual(resolveLimitForEarlierMessages(turns, turns.length, 1), turns.length);
   });
 });
 
