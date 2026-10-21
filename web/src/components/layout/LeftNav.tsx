@@ -1,12 +1,13 @@
 // web/src/components/layout/LeftNav.tsx
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 import { Presence } from "../motion/Presence";
-import { ArrowRightLeft, Check, Clock, Folder, FolderPlus, Layers, Plus, Search } from "lucide-solid";
+import { ArrowRightLeft, Check, Clock, Folder, FolderPlus, Layers, Plus, RefreshCw, Search } from "lucide-solid";
 import {
   archiveSession,
   bootstrapProjectSessions,
   discardSession,
   isInvalidProjectPath,
+  loadProjects,
   startNewThreadDraft,
   normalizeFolderPath,
   openCreateWorkspaceModal,
@@ -30,12 +31,15 @@ import UserAccountMenu from "./UserAccountMenu";
 import { t } from "../../i18n";
 import { matchesProjectSessionSearch } from "./session-search";
 
+const SYNC_MIN_SPIN_MS = 600;
+
 export default function LeftNav() {
   const [filterQuery, setFilterQuery] = createSignal("");
   const [showSearch, setShowSearch] = createSignal(false);
   const [modeMenuOpen, setModeMenuOpen] = createSignal(false);
   const [creatingForPath, setCreatingForPath] = createSignal<string | null>(null);
   const [creatingGlobal, setCreatingGlobal] = createSignal(false);
+  const [syncingLists, setSyncingLists] = createSignal(false);
   let modeBtnRef: HTMLButtonElement | undefined;
   let modeMenuRef: HTMLDivElement | undefined;
 
@@ -160,6 +164,44 @@ export default function LeftNav() {
       void loadSessionsForProject(path);
     }
   });
+
+  const refreshSessionLists = async () => {
+    if (syncingLists()) return;
+    setSyncingLists(true);
+    const startedAt = Date.now();
+    try {
+      const activeRoot = normalizeFolderPath(workspace.rootDir);
+      await loadProjects();
+      const tasks: Array<Promise<unknown>> = [];
+      if (activeRoot && !isInvalidProjectPath(activeRoot)) {
+        tasks.push(bootstrapProjectSessions(activeRoot, false));
+      }
+      const otherPaths = new Set<string>();
+      for (const proj of allProjects()) {
+        const clean = normalizeFolderPath(proj.path);
+        if (!clean || clean === activeRoot || isInvalidProjectPath(clean)) continue;
+        if (projectSessions()[clean] !== undefined || expandedProjects().has(clean)) {
+          otherPaths.add(clean);
+        }
+      }
+      for (const clean of otherPaths) {
+        tasks.push(
+          hoxiAPI.listSessions(clean).then((list) => {
+            setProjectSessions((prev) => ({ ...prev, [clean]: Array.isArray(list) ? list : [] }));
+          }).catch((err) => {
+            console.error(`Failed to refresh sessions for ${clean}:`, err);
+          })
+        );
+      }
+      await Promise.all(tasks);
+    } catch (err) {
+      console.error("Failed to refresh session lists:", err);
+    } finally {
+      const remaining = SYNC_MIN_SPIN_MS - (Date.now() - startedAt);
+      if (remaining > 0) await new Promise((r) => setTimeout(r, remaining));
+      setSyncingLists(false);
+    }
+  };
 
   const toggleProject = async (path: string) => {
     if (suppressNextProjectClick) {
@@ -359,21 +401,33 @@ export default function LeftNav() {
     <aside class="relative h-full w-full flex flex-col bg-transparent pl-2 select-none">
       {/* Unified Minimal Header: New Thread + Mode Switcher + Search + New Workspace */}
       <div class="pl-1.5 pr-2.5 pt-1 pb-1.5 flex items-center justify-between gap-1 shrink-0">
-        <button
-          type="button"
-          onClick={onCreateGlobalNewThread}
-          disabled={creatingGlobal()}
-          class="inline-flex items-center gap-2 rounded-lg px-2 py-1.5 text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer group min-w-0"
-          title={`${t("leftNav.newThread")}`}
-        >
-          <Show
-            when={!creatingGlobal()}
-            fallback={<Spinner class="w-3.5 h-3.5 text-[var(--accent-primary)] shrink-0" />}
+        <div class="group/newthread relative flex min-w-0 items-center">
+          <button
+            type="button"
+            onClick={onCreateGlobalNewThread}
+            disabled={creatingGlobal()}
+            class="inline-flex items-center gap-2 rounded-lg px-2 py-1.5 text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer min-w-0"
+            title={`${t("leftNav.newThread")}`}
           >
-            <Icon name="new-session" size="small" class="text-[var(--accent-primary)] shrink-0" />
-          </Show>
-          <span class="text-[13px] font-medium truncate">{t("leftNav.newThread")}</span>
-        </button>
+            <Show
+              when={!creatingGlobal()}
+              fallback={<Spinner class="w-3.5 h-3.5 text-[var(--accent-primary)] shrink-0" />}
+            >
+              <Icon name="new-session" size="small" class="text-[var(--accent-primary)] shrink-0" />
+            </Show>
+            <span class="text-[13px] font-medium truncate">{t("leftNav.newThread")}</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => void refreshSessionLists()}
+            disabled={syncingLists()}
+            title={t("leftNav.syncSessions")}
+            aria-label={t("leftNav.syncSessions")}
+            class="inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md text-[var(--text-muted)] opacity-0 transition-opacity hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] group-hover/newthread:opacity-100 group-focus-within/newthread:opacity-100 [@media(hover:none)]:opacity-100 cursor-pointer"
+          >
+            <RefreshCw size={12.5} class={syncingLists() ? "animate-spin" : ""} />
+          </button>
+        </div>
 
         <div class="flex items-center gap-0.5 shrink-0">
           {/* Sidebar Mode Switcher (Single / Multi / Recent Tasks) */}

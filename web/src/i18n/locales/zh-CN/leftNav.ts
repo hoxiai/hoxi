@@ -3,6 +3,7 @@ import type { LeftNavI18n } from "../../types";
 
 export const leftNav: LeftNavI18n = {
   accountSignOutFailed: "无法确认已退出登录，请重试",
+  syncSessions: "同步会话列表",
   newThread: "新对话",
   creating: "创建中…",
   multiProject: "多项目",

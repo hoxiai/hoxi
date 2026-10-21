@@ -2,6 +2,7 @@
 
 export const leftNav = {
   accountSignOutFailed: "Sign out could not be confirmed. Please try again.",
+  syncSessions: "Sync session list",
   newThread: "New Thread",
   creating: "Creating…",
   multiProject: "Multi-Project",
