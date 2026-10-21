@@ -39,13 +39,16 @@ type ApprovalGrant struct {
 	SessionID    string `json:"sessionID"`
 	SessionTitle string `json:"sessionTitle,omitempty"`
 	Runtime      string `json:"runtime,omitempty"`
-	Kind         string `json:"kind"`    // "bash" | "tool" | "doom_loop"
-	Tool         string `json:"tool"`    // "bash" or tool name
-	Key          string `json:"key"`     // internal lookup key
-	Pattern      string `json:"pattern"` // redacted human-readable command or args summary
-	Scope        string `json:"scope"`   // "session_memory"
-	Source       string `json:"source"`  // "desktop"
-	CreatedAt    int64  `json:"createdAt"`
+	Kind         string `json:"kind"` // "bash" | "tool" | "doom_loop"
+	Tool         string `json:"tool"` // "bash" or tool name
+	// Key is the internal lookup key (the raw command or a tool+args hash).
+	// It is never serialized: it can contain credentials the redacted
+	// Pattern hides, and only the gate needs it.
+	Key       string `json:"-"`       // internal lookup key
+	Pattern   string `json:"pattern"` // redacted human-readable command or args summary
+	Scope     string `json:"scope"`   // "session_memory"
+	Source    string `json:"source"`  // "desktop"
+	CreatedAt int64  `json:"createdAt"`
 }
 
 // ApprovalAuditEntry records one completed permission decision on disk.
@@ -93,7 +96,16 @@ type approvalAuditStore struct {
 	ocSnapshots    map[string]openCodePermSnapshot
 }
 
-var approvalSecretRe = regexp.MustCompile(`(?i)(bearer\s+\S+|(?:sk-|ghp_|github_pat_|sk-ant-)[a-z0-9_\-]+|(?:api[_-]?key|token|password|secret|authorization|opencode_server_password)\s*[=:]\s*[^\s,;"']+)`)
+var (
+	// Bearer tokens and vendor-prefixed keys are secret on their own.
+	approvalSecretTokenRe = regexp.MustCompile(`(?i)bearer\s+[^\s"']+|(?:sk-|ghp_|github_pat_|sk-ant-)[a-z0-9_\-]+`)
+	// `key=value`, `key: value` and JSON `"key":"value"` forms keep the key
+	// name and redact only the value, so the audit entry stays readable.
+	// Quoted values keep their quotes: an unbalanced quote would make the
+	// preview look like a truncated command.
+	approvalSecretQuotedRe = regexp.MustCompile(`(?i)((?:api[_-]?key|access[_-]?key|token|password|passwd|secret|authorization|opencode_server_password)["']?\s*[=:]\s*)(["'])(?:[^"']*)(["'])`)
+	approvalSecretBareRe   = regexp.MustCompile(`(?i)((?:api[_-]?key|access[_-]?key|token|password|passwd|secret|authorization|opencode_server_password)["']?\s*[=:]\s*)([^\s,;"'}]+)`)
+)
 
 func newApprovalAuditStore(customStorePath string) *approvalAuditStore {
 	path := ""
@@ -365,7 +377,9 @@ func redactApprovalText(v string, limit int) string {
 	if len(v) > 4096 {
 		v = v[:4096]
 	}
-	v = approvalSecretRe.ReplaceAllString(v, "[redacted]")
+	v = approvalSecretTokenRe.ReplaceAllString(v, "[redacted]")
+	v = approvalSecretQuotedRe.ReplaceAllString(v, "${1}${2}[redacted]${3}")
+	v = approvalSecretBareRe.ReplaceAllString(v, "${1}[redacted]")
 	v = strings.Map(func(r rune) rune {
 		if r == '\n' || r == '\t' {
 			return ' '
@@ -451,10 +465,26 @@ func (s *Service) recordRunnerApprovalAudit(cred hookCredential, req map[string]
 }
 
 func (s *Service) recordOpenCodeApprovalAudit(id, directory, reply, message, source string) {
+	s.recordOpenCodeAudit(id, "", directory, reply, message, source)
+}
+
+// recordOpenCodeAudit writes one OpenCode decision. fallbackSessionID covers
+// decisions Hoxi makes itself (a stopped session's pending requests) and any
+// reply that arrives before the permission snapshot was captured.
+func (s *Service) recordOpenCodeAudit(id, fallbackSessionID, directory, reply, message, source string) {
 	if s.audit == nil {
 		return
 	}
-	snap, _ := s.audit.lookupOpenCodePerm(id)
+	snap, ok := s.audit.lookupOpenCodePerm(id)
+	if !ok {
+		snap = openCodePermSnapshot{
+			SessionID:  strings.TrimSpace(fallbackSessionID),
+			Permission: "permission",
+			Tool:       "opencode",
+			Summary:    id,
+			Directory:  strings.TrimSpace(directory),
+		}
+	}
 	title, rt, sessionDir := s.enrichSessionMeta(snap.SessionID)
 	if rt == "" {
 		rt = "opencode"

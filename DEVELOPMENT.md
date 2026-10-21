@@ -207,9 +207,13 @@ export interface SessionPromptInput {
    Content-Type: application/json
 
    {
-     "reply": "once" // "once" (仅本次放行) | "always" (本会话同类匹配自动放行) | "reject" (拒绝并附带原因)
+     "reply": "once" // "once" (仅本次放行) | "always" (仅本会话、仅内存、可撤销) | "reject" (拒绝并附带原因)
    }
    ```
+
+   `always` 的语义按运行时区分：Runner（Claude Code / Antigravity）对 `bash` 记住**完全相同的整条命令**，对工具记住 **工具名 + 完整参数哈希**；OpenCode 侧由 `hoxi-permissions.js` 与全局 `permission` 配置决定。两种授权都只存在于内存（进程重启即失效），破坏性命令永不记忆，可在设置页「当前会话临时放行授权」查看与撤销。经 GoPanel 隧道回复时 `always` 一律返回 403，手机端只能 `once` / `reject`。
+
+   每一次完成决策（桌面、隧道或系统自动拒绝）都会写入 `~/.hoxi/approval-audit.json`（原子写入、`0600`、最多 500 条、密钥自动脱敏），可在 `GET /api/hoxi/permission/audit` 查询；该接口与 `GET|DELETE /api/hoxi/permission/grants` 都仅限桌面本机。
 
 ### 4.4 内置 PTY 终端与 WebSocket 协议
 右侧审查面板的 `Terminal` 标签页直接对接 OpenCode 的原生 PTY 管理器：
@@ -440,8 +444,8 @@ function scheduleFlush(applyDeltaToStore: (key: string, delta: string) => void) 
 - **`ThoughtBox`**：绑定 `ReasoningPart` (`type === "reasoning"`)。在 `time.end` 未到达前显示 `Thinking...` 动态微光标题并自动流式滚动最新推理行；当 `time.end` 到达后，标题更新为 `Thought for X.Xs` 并自动平滑折叠，保持主回答区干净清爽。
 - **`ApprovalGateCard`**：绑定 `permission.asked` 事件。内联插入在当前执行流底部，带琥珀色高亮边框，清晰列出请求的权限类型（如 `bash`）与完整命令字符串，提供：
   - `[Approve Once]` -> `reply: "once"`
-  - `[Always Allow in Session]` -> `reply: "always"`
-  - `[Reject]` -> `reply: "reject"`
+  - `[Always Allow Command/Call in Session]` -> `reply: "always"`（Runner 请求按命令或工具+参数区分，破坏性请求不显示该按钮）
+  - `[Reject]` -> `reply: "reject"`（可附原因；Runner 作为 deny 理由回给模型，OpenCode 作为拒绝说明，不再额外下发新 prompt）
 
 ### 6.5 Pierre Diff 审查器与 WebGL Xterm 终端集成
 - **`PierreDiffViewer`**：监听 `session.diff` 事件或轮询 `GET /session/{sessionID}/diff`，将返回的 `SnapshotFileDiff[]` 渲染为可折叠的文件变更卡片列表，支持一键切換 `Unified` 与 `Split` 视图。

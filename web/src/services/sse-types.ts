@@ -196,7 +196,8 @@ export interface ApprovalGrant {
   runtime?: string;
   kind: "bash" | "tool" | "doom_loop" | string;
   tool: string;
-  key: string;
+  // The raw lookup key (command text or tool+args hash) stays server-side:
+  // it can contain credentials that `pattern` redacts.
   pattern: string;
   scope: "session_memory" | string;
   source: "desktop" | string;

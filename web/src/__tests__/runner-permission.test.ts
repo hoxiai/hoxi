@@ -83,7 +83,6 @@ describe("Antigravity runner permission routing", () => {
                 sessionID: "ses_1",
                 kind: "bash",
                 tool: "bash",
-                key: "npm install",
                 pattern: "npm install",
                 scope: "session_memory",
                 source: "desktop",

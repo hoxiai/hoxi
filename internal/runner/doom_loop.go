@@ -28,8 +28,8 @@ var doomLoopPollingTools = map[string]bool{
 
 type doomLoopGuard struct {
 	mu     sync.Mutex
-	recent map[string][]string       // session → fingerprints of its latest calls
-	turn   map[string]string         // session → turn the recent calls belong to
+	recent map[string][]string         // session → fingerprints of its latest calls
+	turn   map[string]string           // session → turn the recent calls belong to
 	exempt map[string]map[string]int64 // session → tools the user always allows (createdAt ms)
 }
 

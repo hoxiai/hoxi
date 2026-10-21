@@ -1,0 +1,88 @@
+package runner
+
+import (
+	"encoding/json"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// The audit log is rendered in Settings and copied into bug reports, so a
+// secret that survives redaction is a leak with a long tail.
+func TestRedactApprovalTextCoversQuotedAndJSONSecrets(t *testing.T) {
+	cases := map[string]string{
+		`mysql --password="hunter2" db`:                          `hunter2`,
+		`deploy --token='abc123'`:                                `abc123`,
+		`mysql --password=hunter2`:                               `hunter2`,
+		`curl -H 'x-api-key: abc123' https://x`:                  `abc123`,
+		`curl -H "Authorization: Bearer sk-secret-token-123456"`: `sk-secret-token-123456`,
+		`{"password":"hunter2","apiKey":"sk-live-abcdef"}`:       `hunter2`,
+		`{"api_key":"sk-live-abcdef"}`:                           `sk-live-abcdef`,
+		`export OPENCODE_SERVER_PASSWORD=s3cret`:                 `s3cret`,
+	}
+	for input, secret := range cases {
+		got := redactApprovalText(input, 400)
+		if strings.Contains(got, secret) {
+			t.Errorf("redact(%q) = %q still contains %q", input, got, secret)
+		}
+	}
+	if got := redactApprovalText(`export FOO=bar`, 400); got != `export FOO=bar` {
+		t.Errorf("ordinary env assignment must stay readable, got %q", got)
+	}
+}
+
+func TestApprovalGrantJSONOmitsRawKey(t *testing.T) {
+	g := newApprovalGate()
+	g.addAlways("ses_x", `curl -H 'Authorization: Bearer sk-live-123456' https://x`, "desktop")
+	raw, err := json.Marshal(g.listGrants())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "sk-live-123456") || strings.Contains(string(raw), `"key"`) {
+		t.Fatalf("serialized grants leaked the raw key: %s", raw)
+	}
+}
+
+func TestOpenCodeAuditWithoutSnapshotKeepsSessionAndRedacts(t *testing.T) {
+	dir := t.TempDir()
+	svc := NewService(dir, nil, nil, filepath.Join(t.TempDir(), "sessions.json"))
+	if err := svc.store.Put(SessionRecord{ID: "ses_oc_audit", Runtime: "opencode", ProjectDir: dir, WorktreePath: dir, ExternalID: "oc-1"}); err != nil {
+		t.Fatal(err)
+	}
+	// A reply that beats the 4s listPermissions poll: no snapshot exists yet,
+	// but the caller knows which session stopped it.
+	svc.recordOpenCodeAudit("per_oc_unseen", "ses_oc_audit", dir, "reject", "the session was stopped", "system")
+	entries := svc.audit.list("ses_oc_audit", 10)
+	if len(entries) != 1 {
+		t.Fatalf("expected one audit entry, got %+v", entries)
+	}
+	e := entries[0]
+	if e.SessionID != "ses_oc_audit" || e.Source != "system" || e.Decision != "reject" {
+		t.Fatalf("unexpected entry: %+v", e)
+	}
+	if e.Directory == "" {
+		t.Fatalf("entry lost its directory: %+v", e)
+	}
+}
+
+func TestOpenCodePermissionEventFeedsTheAuditSnapshot(t *testing.T) {
+	dir := t.TempDir()
+	svc := NewService(dir, nil, nil, filepath.Join(t.TempDir(), "sessions.json"))
+	if err := svc.store.Put(SessionRecord{ID: "ses_oc_event", Runtime: "opencode", ProjectDir: dir, WorktreePath: dir, ExternalID: "oc-event"}); err != nil {
+		t.Fatal(err)
+	}
+	rec, _ := svc.store.Get("ses_oc_event")
+	raw := []byte(`{"type":"permission.asked","properties":{"id":"per_oc_event","sessionID":"oc-event","permission":"bash","patterns":["mysql --password=\"hunter2\" db"]}}`)
+	svc.relayOpenCodeEvent(rec, raw)
+	svc.recordOpenCodeApprovalAudit("per_oc_event", dir, "once", "", "tunnel")
+	entries := svc.audit.list("ses_oc_event", 10)
+	if len(entries) != 1 {
+		t.Fatalf("expected one audit entry, got %+v", entries)
+	}
+	if entries[0].Source != "tunnel" || entries[0].Summary == "per_oc_event" {
+		t.Fatalf("permission.asked was not captured before the reply: %+v", entries[0])
+	}
+	if strings.Contains(entries[0].Summary, "hunter2") {
+		t.Fatalf("audit summary leaked a password: %q", entries[0].Summary)
+	}
+}

@@ -2,12 +2,12 @@
 // internal/runner/permission_policy.go. Keep both ports and
 // .opencode/lib/permission-policy.cases.json in sync.
 const DESTRUCTIVE_RE =
-  /\b(rm|rmdir|unlink|shred|truncate|srm|sudo|chmod|chown|mkfs|dd|diskutil|killall|reboot|shutdown)\b|[>|]\s*(?:\/etc\/|(?:\~|\$HOME|\$\{HOME\})\/\.(?:zshrc|zshenv|zprofile|bashrc|bash_profile|profile|ssh\b|gnupg\b|netrc\b|npmrc\b))|\bfind\b[^\n;&|]*\s-(delete|exec\w*|ok\w*|fprint\w*|fls)\b|\b(curl|wget)\b[^\n|]*\|\s*(sh|bash|zsh)\b|\b(?:npm|pnpm|yarn|cargo)\s+publish\b|\bterraform\s+(?:destroy|apply)\b|\bkubectl\s+delete\b|\bdocker\s+(?:system\s+prune|rm|rmi)\b/i;
+  /\b(rm|rmdir|unlink|shred|truncate|srm|sudo|chmod|chown|mkfs|dd|diskutil|killall|reboot|shutdown)|\bkill\s+(?:-[A-Za-z0-9]+\s+)*(?:[A-Za-z0-9]+\s+)?[-?\d%]|\bpkill\b|[>|]\s*(?:\/etc\/|(?:\~|\$HOME|\$\{HOME\})\/\.(?:zshrc|zshenv|zprofile|bashrc|bash_profile|profile|ssh\b|gnupg\b|netrc\b|npmrc\b))|(?:^|[\s'"=(@])(?:[^\s;&|]*\/)?\.(?:ssh|aws|gnupg|kube)\/|(?:^|[\s'"=(@])(?:[^\s;&|]*\/)?\.(?:netrc|npmrc|git-credentials)(?:$|[\s;&|'"])|\.claude\/\.credentials\.json|\.docker\/config\.json|(?:^|[\s'"=(@])(?:[^\s;&|]*\/)?\.env(?:\.(?:local|production|development|staging|test))?(?:$|[\s;&|'"])|\bfind\b[^\n;&|]*\s-(delete|exec\w*|ok\w*|fprint\w*|fls)\b|\b(curl|wget)\b[^\n|]*\|\s*(sh|bash|zsh)\b|\b(?:npm|pnpm|yarn|cargo)\s+publish\b|\bterraform\s+(?:destroy|apply)\b|\bkubectl\s+delete\b|\bdocker\s+(?:system\s+prune|rm|rmi)\b/i;
 
 // Match Git global options, option abbreviations (`--forc`, `--har`), combined
 // short flags (`-uf`), `+refspec` force pushes and `:refspec` deletions.
 const DESTRUCTIVE_GIT_RE =
-  /\bgit\b[^\n;&|]*?\b(?:branch\b[^\n;&|]*(?:\s--(?:delete|force)(?:[=\s]|$)|\s-[a-zA-Z]*[dDf][a-zA-Z]*(?:\s|$))|worktree\s+(?:remove|prune)\b|push\b[^\n;&|]*(?:\s--f(?:o(?:r\S*)?)?(?:[=\s]|$)|\s--d(?:e(?:l\S*)?)?(?:[=\s]|$)|\s--mi\S*|\s--pru\S*|\s-[a-zA-Z]*[fd][a-zA-Z]*(?:\s|$)|\s\+\S|\s:\S)|reset\b[^\n;&|]*\s--h(?:a\S*)?(?:[=\s]|$)|clean\b[^\n;&|]*\s-[a-zA-Z]*f|checkout\b[^\n;&|]*(?:\s--(?:\s|$)|\s-[a-zA-Z]*f[a-zA-Z]*(?:\s|$))|restore\b)/;
+  /\bgit\b[^\n;&|]*?\b(?:branch\b[^\n;&|]*(?:\s--(?:delete|force)(?:[=\s]|$)|\s-[a-zA-Z]*[dDf][a-zA-Z]*(?:\s|$))|worktree\s+(?:remove|prune)\b|push\b[^\n;&|]*(?:\s--f(?:o(?:r\S*)?)?(?:[=\s]|$)|\s--d(?:e(?:l\S*)?)?(?:[=\s]|$)|\s--mi\S*|\s--pru\S*|\s-[a-zA-Z]*[fd][a-zA-Z]*(?:\s|$)|\s\+\S|\s:\S)|reset\b[^\n;&|]*\s--h(?:a\S*)?(?:[=\s]|$)|clean\b[^\n;&|]*\s-[a-zA-Z]*f|checkout\b[^\n;&|]*(?:\s--(?:\s|$)|\s-[a-zA-Z]*f[a-zA-Z]*(?:\s|$)|\s\.(?:[;&|]|\s|\/|$))|restore\b|stash\s+(?:drop|clear)\b|switch\b[^\n;&|]*(?:\s-[a-zA-Z]*f[a-zA-Z]*(?:\s|$)|\s--force(?:[=\s]|$)|\s--discard-changes(?:[=\s]|$)))/;
 
 const TRAILING_PAREN_RE = /\)\s*$/;
 const DOLLAR_EXPAND_RE = /[A-Za-z0-9_{('"@*#?!$-]/;

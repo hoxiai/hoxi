@@ -3,6 +3,7 @@ package runner
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -560,10 +561,14 @@ func TestApprovalAuditAndSessionGrantsLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
+	grantsRaw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var grantsResp struct {
 		Grants []ApprovalGrant `json:"grants"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&grantsResp); err != nil {
+	if err := json.Unmarshal(grantsRaw, &grantsResp); err != nil {
 		t.Fatal(err)
 	}
 	grants := grantsResp.Grants
@@ -572,6 +577,11 @@ func TestApprovalAuditAndSessionGrantsLifecycle(t *testing.T) {
 	}
 	if strings.Contains(grants[0].Pattern, "sk-secret-token-123456") {
 		t.Fatalf("grant pattern leaked secret: %q", grants[0].Pattern)
+	}
+	// The raw key (which still contains the command verbatim) must never leave
+	// the process: only the redacted pattern is serialized.
+	if strings.Contains(string(grantsRaw), "sk-secret-token-123456") || strings.Contains(string(grantsRaw), `"key"`) {
+		t.Fatalf("grant response leaked the raw key: %s", grantsRaw)
 	}
 
 	// Revoke the grant via DELETE /api/hoxi/permission/grants?id=...

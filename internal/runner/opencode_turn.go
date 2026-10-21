@@ -436,6 +436,9 @@ func (s *Service) rejectOpenCodeSessionPermissions(ctx context.Context, rec Sess
 			continue
 		}
 		_, _, _ = s.openCodeRaw(ctx, http.MethodPost, "/permission/"+url.PathEscape(pid)+"/reply", directoryQuery(rec.WorktreePath, nil), replyBody)
+		// Hoxi rejected this itself because the session stopped, so record it
+		// like any other decision (source "system", not a user choice).
+		s.recordOpenCodeAudit(pid, rec.ID, rec.WorktreePath, "reject", "the session was stopped", "system")
 		repliedEvt := SSEEvent{
 			Type:       "permission.replied",
 			Properties: map[string]interface{}{"sessionID": rec.ID, "requestID": pid, "reply": "reject"},
@@ -539,6 +542,12 @@ func (s *Service) relayOpenCodeEventWithFiles(rec SessionRecord, raw []byte, fil
 		return
 	}
 	s.noteOpenCodeActivity(rec.ID, evt)
+	if evt.Type == "permission.asked" && s.audit != nil {
+		// Capture the request as soon as the engine announces it, so a reply
+		// that beats the 4s listPermissions poll is still audited with its
+		// session, command and risk instead of a bare request ID.
+		s.audit.rememberOpenCodePerm(evt.Properties, rec.WorktreePath)
+	}
 	if evt.Type == "session.status" || evt.Type == "session.idle" {
 		if evt.Type == "session.idle" || isOpenCodeIdleStatus(evt.Properties["status"]) {
 			s.mu.Lock()
