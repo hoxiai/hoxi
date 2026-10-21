@@ -45,4 +45,32 @@ export const approval: ApprovalI18n = {
   highRiskBadge: "高危拦截",
   doomLoopNotice: "{tool} 连续多次使用相同参数，可能陷入循环。是否继续？",
   switchToAutoApprove: "切换为自动确认",
+  allowSessionCommand: "本会话允许此命令",
+  allowSessionToolCall: "本会话允许此调用",
+  sessionGrantScopeCommand:
+    "仅在本会话内存中记住此条完整命令，重启即失效，可在设置中随时撤销",
+  sessionGrantScopeTool:
+    "仅在本会话内存中记住此工具与完全相同的参数，可在设置中随时撤销",
+  expiresIn: "{seconds} 秒后超时自动拒绝",
+  toolArgsLabel: "工具调用参数",
+  grantsSectionTitle: "当前会话临时放行授权（内存）",
+  grantsSectionDesc:
+    "点击「本会话允许」后生成的临时白名单，仅保存在进程内存中（重启即失效），且绝不包含破坏性命令",
+  grantsEmpty: "当前没有生效中的会话级临时放行",
+  revokeGrant: "撤销",
+  revokeAllGrants: "全部撤销 ({count})",
+  auditSectionTitle: "权限审批审计日志",
+  auditSectionDesc:
+    "持久化记录每一次桌面端、远程隧道或超时自动拒绝的审批决策（~/.hoxi/approval-audit.json）",
+  auditEmpty: "暂无审批审计记录",
+  auditRefresh: "刷新",
+  auditClear: "清空记录",
+  sourceDesktop: "桌面端",
+  sourceTunnel: "远程隧道",
+  sourceSystem: "系统超时/中断",
+  decisionOnce: "允许一次",
+  decisionAlways: "本会话允许",
+  decisionReject: "已拒绝",
+  decisionTimeout: "超时拒绝",
+  decisionInterrupted: "已中断",
 };

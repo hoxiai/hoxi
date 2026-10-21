@@ -5,8 +5,6 @@ import (
 	"regexp"
 	"strings"
 	"sync"
-
-	"github.com/hoxiai/hoxi/internal/agentcli"
 )
 
 // Go port of .opencode/lib/permission-policy.js, used by the Claude Code and
@@ -26,11 +24,11 @@ import (
 //     token resolves inside the session worktree.
 
 var (
-	destructiveRe = regexp.MustCompile(`(?i)\b(rm|rmdir|unlink|shred|truncate|srm|sudo|chmod|chown|mkfs|dd|diskutil|killall|reboot|shutdown)\b|[>|]\s*/etc/|\bfind\b[^\n;&|]*\s-(delete|exec\w*|ok\w*|fprint\w*|fls)\b|\b(curl|wget)\b[^\n|]*\|\s*(sh|bash|zsh)\b`)
+	destructiveRe = regexp.MustCompile(`(?i)\b(rm|rmdir|unlink|shred|truncate|srm|sudo|chmod|chown|mkfs|dd|diskutil|killall|reboot|shutdown)\b|[>|]\s*(?:/etc/|(?:\~|\$HOME|\$\{HOME\})/\.(?:zshrc|zshenv|zprofile|bashrc|bash_profile|profile|ssh\b|gnupg\b|netrc\b|npmrc\b))|\bfind\b[^\n;&|]*\s-(delete|exec\w*|ok\w*|fprint\w*|fls)\b|\b(curl|wget)\b[^\n|]*\|\s*(sh|bash|zsh)\b|\b(?:npm|pnpm|yarn|cargo)\s+publish\b|\bterraform\s+(?:destroy|apply)\b|\bkubectl\s+delete\b|\bdocker\s+(?:system\s+prune|rm|rmi)\b`)
 
 	// Git option abbreviations (`--forc`, `--har`), combined short flags
 	// (`-uf`), `+refspec` force pushes and `:refspec` deletions count too.
-	destructiveGitRe = regexp.MustCompile(`\bgit\b[^\n;&|]*?\b(?:branch\b[^\n;&|]*(?:\s--(?:delete|force)(?:[=\s]|$)|\s-[a-zA-Z]*[dDf][a-zA-Z]*(?:\s|$))|worktree\s+(?:remove|prune)\b|push\b[^\n;&|]*(?:\s--f(?:o(?:r\S*)?)?(?:[=\s]|$)|\s--d(?:e(?:l\S*)?)?(?:[=\s]|$)|\s--mi\S*|\s--pru\S*|\s-[a-zA-Z]*[fd][a-zA-Z]*(?:\s|$)|\s\+\S|\s:\S)|reset\b[^\n;&|]*\s--h(?:a\S*)?(?:[=\s]|$)|clean\b[^\n;&|]*\s-[a-zA-Z]*f)`)
+	destructiveGitRe = regexp.MustCompile(`\bgit\b[^\n;&|]*?\b(?:branch\b[^\n;&|]*(?:\s--(?:delete|force)(?:[=\s]|$)|\s-[a-zA-Z]*[dDf][a-zA-Z]*(?:\s|$))|worktree\s+(?:remove|prune)\b|push\b[^\n;&|]*(?:\s--f(?:o(?:r\S*)?)?(?:[=\s]|$)|\s--d(?:e(?:l\S*)?)?(?:[=\s]|$)|\s--mi\S*|\s--pru\S*|\s-[a-zA-Z]*[fd][a-zA-Z]*(?:\s|$)|\s\+\S|\s:\S)|reset\b[^\n;&|]*\s--h(?:a\S*)?(?:[=\s]|$)|clean\b[^\n;&|]*\s-[a-zA-Z]*f|checkout\b[^\n;&|]*(?:\s--(?:\s|$)|\s-[a-zA-Z]*f[a-zA-Z]*(?:\s|$))|restore\b)`)
 
 	deobfuscator = strings.NewReplacer(`\`, "", `'`, "", `"`, "")
 
@@ -234,8 +232,7 @@ func isWorktreeCD(segment, worktree string) bool {
 // already recognizes. Only binaries inside trustedToolDirs are rewritten.
 var toolchainBases = setOf("go", "npm", "pnpm", "yarn", "cargo", "pytest", "tsc", "npx", "node", "git")
 
-// systemToolDirs must match SYSTEM_TOOL_DIRS in permission-policy.js; the Go
-// gate also trusts the per-user toolchain dirs from agentcli.
+// systemToolDirs must match SYSTEM_TOOL_DIRS in permission-policy.js.
 var systemToolDirs = []string{"/usr/local/go/bin", "/usr/local/bin", "/opt/homebrew/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"}
 
 var (
@@ -245,9 +242,8 @@ var (
 
 func trustedToolDirs() map[string]bool {
 	trustedToolDirsOnce.Do(func() {
-		dirs := append(agentcli.CommonUserBinDirs(), systemToolDirs...)
-		trustedToolDirsSet = make(map[string]bool, len(dirs))
-		for _, dir := range dirs {
+		trustedToolDirsSet = make(map[string]bool, len(systemToolDirs))
+		for _, dir := range systemToolDirs {
 			if dir = strings.TrimSpace(dir); dir != "" {
 				trustedToolDirsSet[filepath.Clean(dir)] = true
 			}

@@ -149,11 +149,16 @@ const maxTunnelInspectedBody = 16 << 20
 // tunnelBodyAllowed rejects request bodies that would turn an allowed route
 // into a desktop-only operation. The body is restored for the real handler.
 func tunnelBodyAllowed(r *http.Request) bool {
-	if r.Method != http.MethodPost || r.URL.Path != "/api/hoxi/worktree/commit" {
+	if r.Method != http.MethodPost {
+		return true
+	}
+	isCommit := r.URL.Path == "/api/hoxi/worktree/commit"
+	isPermReply := tunnelPatternMatch("/api/hoxi/permission/*/reply", r.URL.Path)
+	if !isCommit && !isPermReply {
 		return true
 	}
 	if r.Body == nil || r.Body == http.NoBody {
-		return true
+		return isCommit
 	}
 	raw, err := io.ReadAll(io.LimitReader(r.Body, maxTunnelInspectedBody+1))
 	_ = r.Body.Close()
@@ -162,6 +167,15 @@ func tunnelBodyAllowed(r *http.Request) bool {
 	}
 	r.Body = io.NopCloser(bytes.NewReader(raw))
 	r.ContentLength = int64(len(raw))
+	if isPermReply {
+		var body struct {
+			Reply string `json:"reply"`
+		}
+		if json.Unmarshal(raw, &body) != nil {
+			return false
+		}
+		return body.Reply == "once" || body.Reply == "reject"
+	}
 	var body struct {
 		Push bool `json:"push"`
 	}

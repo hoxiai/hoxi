@@ -185,7 +185,7 @@ func (s *Service) gateToolCall(r *http.Request, cred hookCredential, tool string
 	answer := s.awaitReply(r, cred, id, req)
 	switch answer.Reply {
 	case "always":
-		s.gate.addToolAlways(cred.sessionID, key)
+		s.gate.addToolAlways(cred.sessionID, key, tool, summarizeToolGrantPattern(tool, args), answer.Source)
 		return true, ""
 	case "once":
 		return true, ""
@@ -201,4 +201,119 @@ func hookToolGrantKey(tool string, args map[string]interface{}) string {
 	raw, _ := json.Marshal(args)
 	sum := sha256.Sum256(raw)
 	return "tool:" + tool + ":" + hex.EncodeToString(sum[:8])
+}
+
+func summarizeToolGrantPattern(tool string, args map[string]interface{}) string {
+	if len(args) == 0 {
+		return tool
+	}
+	raw, err := json.Marshal(args)
+	if err != nil {
+		return tool
+	}
+	return redactApprovalText(tool+" "+string(raw), 200)
+}
+
+var protectedWorktreeDirs = map[string]bool{
+	".git":      true,
+	".agents":   true,
+	".opencode": true,
+	".claude":   true,
+	".hoxi":     true,
+	".envrc":    true,
+}
+
+func isProtectedRelPath(rel string) bool {
+	slash := strings.ToLower(filepath.ToSlash(filepath.Clean(rel)))
+	if slash == "." || slash == "" {
+		return false
+	}
+	if slash == ".vscode/settings.json" || strings.HasSuffix(slash, "/.vscode/settings.json") {
+		return true
+	}
+	for _, part := range strings.Split(slash, "/") {
+		if protectedWorktreeDirs[part] {
+			return true
+		}
+	}
+	return false
+}
+
+// isProtectedWorktreePath reports whether an edit target inside the worktree
+// touches execution-controlling paths (.git/**, .agents/**, .opencode/**,
+// .claude/**, .hoxi/**, .vscode/settings.json, .envrc) that must ask the user.
+func isProtectedWorktreePath(base, target string) bool {
+	cleanBase := filepath.Clean(strings.TrimSpace(base))
+	cleanTarget := filepath.Clean(strings.TrimSpace(target))
+	if rel, err := filepath.Rel(cleanBase, cleanTarget); err == nil && isProtectedRelPath(rel) {
+		return true
+	}
+	realBase, okBase := resolvePathWithSymlinks(base, 0)
+	realTarget, okTarget := resolvePathWithSymlinks(target, 0)
+	if !okBase || !okTarget {
+		return true
+	}
+	rel, err := filepath.Rel(realBase, realTarget)
+	return err != nil || isProtectedRelPath(rel)
+}
+
+func resolvePathWithSymlinks(p string, depth int) (string, bool) {
+	if depth > 40 {
+		return "", false
+	}
+	p = filepath.Clean(strings.TrimSpace(p))
+	if p == "" {
+		return "", false
+	}
+	if real, err := filepath.EvalSymlinks(p); err == nil {
+		return real, true
+	}
+	suffix := ""
+	for cur := p; ; {
+		if real, err := filepath.EvalSymlinks(cur); err == nil {
+			return filepath.Join(real, suffix), true
+		}
+		info, err := os.Lstat(cur)
+		if err == nil {
+			if info.Mode()&os.ModeSymlink == 0 {
+				return "", false
+			}
+			link, err := os.Readlink(cur)
+			if err != nil {
+				return "", false
+			}
+			if !filepath.IsAbs(link) {
+				link = filepath.Join(filepath.Dir(cur), link)
+			}
+			return resolvePathWithSymlinks(filepath.Join(link, suffix), depth+1)
+		}
+		if !os.IsNotExist(err) {
+			return "", false
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return p, true
+		}
+		suffix = filepath.Join(filepath.Base(cur), suffix)
+		cur = parent
+	}
+}
+
+func pathWithin(base, target string) bool {
+	if strings.TrimSpace(base) == "" || strings.TrimSpace(target) == "" {
+		return false
+	}
+	realBase, ok := resolvePathWithSymlinks(base, 0)
+	if !ok {
+		return false
+	}
+	realTarget, ok := resolvePathWithSymlinks(target, 0)
+	if !ok {
+		return false
+	}
+	rel, err := filepath.Rel(realBase, realTarget)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
 }

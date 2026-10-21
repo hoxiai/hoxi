@@ -534,3 +534,141 @@ func TestIssueHookEnvWithoutBaseURLIsPassthrough(t *testing.T) {
 		t.Fatalf("expected no hook env before SetHookBaseURL, got %v", env)
 	}
 }
+
+func TestApprovalAuditAndSessionGrantsLifecycle(t *testing.T) {
+	f := newGateFixture(t)
+	events, unsub := f.svc.Subscribe("ses_agy_gate")
+	defer unsub()
+
+	cmd := "curl -H 'Authorization: Bearer sk-secret-token-123456' https://example.com/api"
+	result := f.asyncHook(t, f.payload(cmd, "", "conv-1"))
+	asked := waitForEvent(t, events, "permission.asked")
+	if _, ok := asked.Properties["expiresAt"].(int64); !ok {
+		t.Fatalf("expected expiresAt on permission.asked, got %#v", asked.Properties["expiresAt"])
+	}
+	id, _ := asked.Properties["id"].(string)
+	if code := f.reply(t, id, "always", "ok with Authorization: Bearer sk-note-secret"); code != http.StatusOK {
+		t.Fatalf("reply status %d", code)
+	}
+	if d := <-result; d.Decision != "auto_approve" {
+		t.Fatalf("always decision: %+v", d)
+	}
+
+	// Verify active grants via HTTP GET /api/hoxi/permission/grants.
+	resp, err := http.Get(f.srv.URL + "/api/hoxi/permission/grants")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var grantsResp struct {
+		Grants []ApprovalGrant `json:"grants"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&grantsResp); err != nil {
+		t.Fatal(err)
+	}
+	grants := grantsResp.Grants
+	if len(grants) != 1 || grants[0].SessionID != "ses_agy_gate" || grants[0].Kind != "bash" {
+		t.Fatalf("unexpected grants: %+v", grants)
+	}
+	if strings.Contains(grants[0].Pattern, "sk-secret-token-123456") {
+		t.Fatalf("grant pattern leaked secret: %q", grants[0].Pattern)
+	}
+
+	// Revoke the grant via DELETE /api/hoxi/permission/grants?id=...
+	delReq, _ := http.NewRequest(http.MethodDelete, f.srv.URL+"/api/hoxi/permission/grants?id="+grants[0].ID, nil)
+	delResp, err := http.DefaultClient.Do(delReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	delResp.Body.Close()
+	if delResp.StatusCode != http.StatusOK {
+		t.Fatalf("delete grant status %d", delResp.StatusCode)
+	}
+
+	// Repeat command must ask again now that the grant was revoked.
+	result2 := f.asyncHook(t, f.payload(cmd, "", "conv-1"))
+	asked2 := waitForEvent(t, events, "permission.asked")
+	id2, _ := asked2.Properties["id"].(string)
+	f.reply(t, id2, "reject", "no longer allowed")
+	if d := <-result2; d.Decision != "deny" {
+		t.Fatalf("expected deny after grant revocation, got %+v", d)
+	}
+
+	// Verify persistent audit log via HTTP GET /api/hoxi/permission/audit and reload from disk.
+	auditResp, err := http.Get(f.srv.URL + "/api/hoxi/permission/audit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer auditResp.Body.Close()
+	var auditBody struct {
+		Entries []ApprovalAuditEntry `json:"entries"`
+	}
+	if err := json.NewDecoder(auditResp.Body).Decode(&auditBody); err != nil {
+		t.Fatal(err)
+	}
+	entries := auditBody.Entries
+	if len(entries) != 2 || entries[0].Decision != "reject" || entries[1].Decision != "always" {
+		t.Fatalf("unexpected audit entries: %+v", entries)
+	}
+	for _, e := range entries {
+		if strings.Contains(e.Summary, "sk-secret") || strings.Contains(e.Message, "sk-note-secret") {
+			t.Fatalf("audit entry leaked secret: %+v", e)
+		}
+	}
+	reloaded := newApprovalAuditStore(f.svc.audit.path)
+	if len(reloaded.list("", 10)) != 2 {
+		t.Fatalf("expected 2 persisted entries on disk, got %d", len(reloaded.list("", 10)))
+	}
+}
+
+func TestApprovalRejectsAlwaysFromTunnelAndDeduplicatesCallID(t *testing.T) {
+	f := newGateFixture(t)
+	events, unsub := f.svc.Subscribe("ses_agy_gate")
+	defer unsub()
+
+	// Two concurrent hook invocations with the same stepIdx/callID coalesce into one pending card.
+	body := f.payload("npm install react", "", "conv-1")
+	res1 := f.asyncHook(t, body)
+	asked := waitForEvent(t, events, "permission.asked")
+	id, _ := asked.Properties["id"].(string)
+	res2 := f.asyncHook(t, body)
+	time.Sleep(40 * time.Millisecond)
+	if len(f.svc.listPendingApprovals("")) != 1 {
+		t.Fatalf("expected deduplicated single pending approval, got %d", len(f.svc.listPendingApprovals("")))
+	}
+
+	// Tunnel attempt with reply="always" is rejected with 403 and leaves the request pending.
+	alwaysBody, _ := json.Marshal(map[string]string{"reply": "always"})
+	tunnelReq, _ := http.NewRequest(http.MethodPost, f.srv.URL+"/api/hoxi/permission/"+id+"/reply", bytes.NewReader(alwaysBody))
+	tunnelReq.Header.Set("Content-Type", "application/json")
+	tunnelReq.Header.Set("X-Hoxi-Request-Source", "tunnel")
+	tunnelResp, err := http.DefaultClient.Do(tunnelReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tunnelResp.Body.Close()
+	if tunnelResp.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected 403 for tunnel always, got %d", tunnelResp.StatusCode)
+	}
+
+	// Tunnel reply="once" succeeds, unblocks both deduplicated waiters, and records source="tunnel".
+	onceBody, _ := json.Marshal(map[string]string{"reply": "once"})
+	onceReq, _ := http.NewRequest(http.MethodPost, f.srv.URL+"/api/hoxi/permission/"+id+"/reply", bytes.NewReader(onceBody))
+	onceReq.Header.Set("Content-Type", "application/json")
+	onceReq.Header.Set("X-Hoxi-Request-Source", "tunnel")
+	onceResp, err := http.DefaultClient.Do(onceReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	onceResp.Body.Close()
+	if onceResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 for tunnel once, got %d", onceResp.StatusCode)
+	}
+	if d1, d2 := <-res1, <-res2; d1.Decision != "auto_approve" || d2.Decision != "auto_approve" {
+		t.Fatalf("deduplicated waiters did not both resolve: %+v / %+v", d1, d2)
+	}
+	entries := f.svc.audit.list("ses_agy_gate", 10)
+	if len(entries) != 1 || entries[0].Source != "tunnel" || entries[0].Decision != "once" {
+		t.Fatalf("expected single tunnel once audit entry, got %+v", entries)
+	}
+}

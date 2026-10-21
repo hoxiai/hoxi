@@ -181,10 +181,43 @@ export interface PermissionRequest {
   patterns: string[];
   metadata: Record<string, any>;
   always: string[];
+  createdAt?: number;
+  expiresAt?: number;
   tool?: {
     messageID: string;
     callID: string;
   };
+}
+
+export interface ApprovalGrant {
+  id: string;
+  sessionID: string;
+  sessionTitle?: string;
+  runtime?: string;
+  kind: "bash" | "tool" | "doom_loop" | string;
+  tool: string;
+  key: string;
+  pattern: string;
+  scope: "session_memory" | string;
+  source: "desktop" | string;
+  createdAt: number;
+}
+
+export interface ApprovalAuditEntry {
+  id: string;
+  timestamp: number;
+  requestID: string;
+  sessionID: string;
+  sessionTitle?: string;
+  runtime?: string;
+  permission: string;
+  tool?: string;
+  summary: string;
+  directory?: string;
+  destructive?: boolean;
+  decision: "once" | "always" | "reject" | "timeout" | "interrupted" | string;
+  source: "desktop" | "tunnel" | "system" | string;
+  message?: string;
 }
 
 export interface QuestionOption {

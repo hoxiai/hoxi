@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Doom-loop guard for CLI runtimes, mirroring OpenCode's built-in check: a
@@ -27,13 +28,17 @@ var doomLoopPollingTools = map[string]bool{
 
 type doomLoopGuard struct {
 	mu     sync.Mutex
-	recent map[string][]string        // session → fingerprints of its latest calls
-	turn   map[string]string          // session → turn the recent calls belong to
-	exempt map[string]map[string]bool // session → tools the user always allows
+	recent map[string][]string       // session → fingerprints of its latest calls
+	turn   map[string]string         // session → turn the recent calls belong to
+	exempt map[string]map[string]int64 // session → tools the user always allows (createdAt ms)
 }
 
 func newDoomLoopGuard() *doomLoopGuard {
-	return &doomLoopGuard{recent: make(map[string][]string), turn: make(map[string]string), exempt: make(map[string]map[string]bool)}
+	return &doomLoopGuard{
+		recent: make(map[string][]string),
+		turn:   make(map[string]string),
+		exempt: make(map[string]map[string]int64),
+	}
 }
 
 // observe records a call and reports whether it completes a run of
@@ -46,7 +51,7 @@ func (g *doomLoopGuard) observe(sessionID, turnID, tool string, input json.RawMe
 	fp := toolCallFingerprint(tool, input)
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if g.exempt[sessionID][tool] {
+	if g.exempt[sessionID][tool] > 0 {
 		return false
 	}
 	if g.turn[sessionID] != turnID {
@@ -79,9 +84,9 @@ func (g *doomLoopGuard) settle(sessionID, tool string, always bool) {
 		return
 	}
 	if g.exempt[sessionID] == nil {
-		g.exempt[sessionID] = make(map[string]bool)
+		g.exempt[sessionID] = make(map[string]int64)
 	}
-	g.exempt[sessionID][tool] = true
+	g.exempt[sessionID][tool] = time.Now().UnixMilli()
 }
 
 // forget drops a session's guard state once it is deleted.
@@ -91,6 +96,52 @@ func (g *doomLoopGuard) forget(sessionID string) {
 	delete(g.recent, sessionID)
 	delete(g.turn, sessionID)
 	delete(g.exempt, sessionID)
+}
+
+func (g *doomLoopGuard) listExemptGrants() []ApprovalGrant {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	var out []ApprovalGrant
+	for sid, tools := range g.exempt {
+		for tool, createdAt := range tools {
+			key := "doom_loop:" + tool
+			out = append(out, ApprovalGrant{
+				ID:        makeGrantID(sid, "doom_loop", key),
+				SessionID: sid,
+				Kind:      "doom_loop",
+				Tool:      tool,
+				Key:       key,
+				Pattern:   tool,
+				Scope:     "session_memory",
+				Source:    "desktop",
+				CreatedAt: createdAt,
+			})
+		}
+	}
+	return out
+}
+
+func (g *doomLoopGuard) revokeExemptGrants(id, sessionID string, all bool) int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	revoked := 0
+	for sid, tools := range g.exempt {
+		if sessionID != "" && sid != sessionID {
+			continue
+		}
+		for tool := range tools {
+			key := "doom_loop:" + tool
+			gid := makeGrantID(sid, "doom_loop", key)
+			if all || (sessionID != "" && id == "") || (id != "" && gid == id) {
+				delete(tools, tool)
+				revoked++
+			}
+		}
+		if len(tools) == 0 {
+			delete(g.exempt, sid)
+		}
+	}
+	return revoked
 }
 
 // toolCallFingerprint hashes the tool name and its input with keys sorted,

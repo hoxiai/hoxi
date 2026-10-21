@@ -1,9 +1,10 @@
 // web/src/components/approval/ApprovalGateCard.tsx
-import { createMemo, createSignal, For, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 import {
   Check,
   ChevronDown,
   ChevronUp,
+  Clock,
   ExternalLink,
   LoaderCircle,
   ShieldAlert,
@@ -41,6 +42,21 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
   const [rulesExpanded, setRulesExpanded] = createSignal(false);
   const [selectedRules, setSelectedRules] = createSignal<Record<string, "allow" | "deny">>({});
   const [error, setError] = createSignal<string | null>(null);
+  const [nowMs, setNowMs] = createSignal(Date.now());
+
+  createEffect(() => {
+    const exp = Number(props.request.expiresAt ?? 0);
+    if (!exp) return;
+    setNowMs(Date.now());
+    const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
+    onCleanup(() => window.clearInterval(timer));
+  });
+
+  const remainingSeconds = createMemo(() => {
+    const exp = Number(props.request.expiresAt ?? 0);
+    if (!exp) return null;
+    return Math.max(0, Math.ceil((exp - nowMs()) / 1000));
+  });
 
   const command = createMemo(() => {
     const meta = props.request.metadata ?? {};
@@ -51,9 +67,36 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
     return "";
   });
 
+  const toolArgsText = createMemo(() => {
+    const args = props.request.metadata?.args;
+    if (args === undefined || args === null) return "";
+    if (typeof args === "string") return args.trim();
+    try {
+      return JSON.stringify(args, null, 2);
+    } catch {
+      return String(args);
+    }
+  });
+
   const diffs = createMemo(() => extractPermissionDiffs(props.request));
   const rules = createMemo(() => deriveHierarchicalRules(props.request, command()));
   const isDestructive = createMemo(() => isDestructivePermissionRequest(props.request));
+  const isRunner = createMemo(() => isRunnerPermissionID(props.request.id));
+
+  const alwaysButtonLabel = createMemo(() => {
+    if (isRunner()) {
+      if (props.request.permission === "tool") return t("approval.allowSessionToolCall");
+      if (props.request.permission === "bash") return t("approval.allowSessionCommand");
+    }
+    return t("approval.allowAlways");
+  });
+
+  const runnerScopeHint = createMemo(() => {
+    if (!isRunner() || isDestructive()) return "";
+    if (props.request.permission === "tool") return t("approval.sessionGrantScopeTool");
+    if (props.request.permission === "bash") return t("approval.sessionGrantScopeCommand");
+    return "";
+  });
 
   const toggleRuleDecision = (rule: string, decision: "allow" | "deny") => {
     setSelectedRules((prev) => {
@@ -105,9 +148,17 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
             · {String(props.request.metadata?.description)}
           </span>
         </Show>
-        <span class="ml-auto rounded-md bg-[var(--bg-panel)]/70 px-2 py-0.5 font-mono text-[11px] text-[var(--warn-text)]">
-          {props.request.permission || "tool"}
-        </span>
+        <div class="ml-auto flex items-center gap-1.5 shrink-0">
+          <Show when={remainingSeconds() !== null}>
+            <span class="inline-flex items-center gap-1 rounded-md border border-[var(--warn-border)] bg-[var(--bg-panel)]/70 px-1.5 py-0.5 font-mono text-[10.5px] text-[var(--warn-text)]">
+              <Clock size={10} />
+              {t("approval.expiresIn", { seconds: remainingSeconds() ?? 0 })}
+            </span>
+          </Show>
+          <span class="rounded-md bg-[var(--bg-panel)]/70 px-2 py-0.5 font-mono text-[11px] text-[var(--warn-text)]">
+            {props.request.permission || "tool"}
+          </span>
+        </div>
       </div>
 
       <div class="px-3.5 py-2.5 space-y-2.5 max-h-[290px] overflow-y-auto">
@@ -137,6 +188,26 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
           <div class="flex items-start gap-2 rounded-lg bg-[var(--bg-code)] px-3 py-2 font-mono text-[var(--text-primary)]" style={{ "font-size": "var(--app-code-text-size)" }}>
             <Terminal size={13} class="mt-0.5 text-[var(--accent-primary)] shrink-0" />
             <pre class="whitespace-pre-wrap break-all selectable-text">{command()}</pre>
+          </div>
+        </Show>
+
+        <Show when={toolArgsText()}>
+          <div class="space-y-1">
+            <div class="text-[10.5px] font-medium text-[var(--text-muted)]">
+              {t("approval.toolArgsLabel")}
+            </div>
+            <pre
+              class="max-h-[120px] overflow-auto rounded-lg bg-[var(--bg-code)] px-2.5 py-1.5 font-mono leading-relaxed text-[var(--text-primary)] selectable-text whitespace-pre-wrap break-all"
+              style={{ "font-size": "var(--app-code-text-size)" }}
+            >
+              {toolArgsText()}
+            </pre>
+          </div>
+        </Show>
+
+        <Show when={runnerScopeHint()}>
+          <div class="text-[11px] leading-relaxed text-[var(--text-muted)]">
+            {runnerScopeHint()}
           </div>
         </Show>
 
@@ -286,17 +357,19 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
                 </Show>
                 {t("approval.allowOnce")}
               </button>
-              <button
-                type="button"
-                class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--accent-border)] bg-[var(--accent-surface)] hover:opacity-90 px-3 py-1 text-[12px] font-medium text-[var(--accent-primary)] disabled:opacity-50 transition-opacity cursor-pointer"
-                disabled={!!busy()}
-                onClick={() => void reply("always")}
-              >
-                <Show when={busy() !== "always"} fallback={<LoaderCircle size={12} class="animate-spin" />}>
-                  <Zap size={12} />
-                </Show>
-                {t("approval.allowAlways")}
-              </button>
+              <Show when={!isDestructive()}>
+                <button
+                  type="button"
+                  class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--accent-border)] bg-[var(--accent-surface)] hover:opacity-90 px-3 py-1 text-[12px] font-medium text-[var(--accent-primary)] disabled:opacity-50 transition-opacity cursor-pointer"
+                  disabled={!!busy()}
+                  onClick={() => void reply("always")}
+                >
+                  <Show when={busy() !== "always"} fallback={<LoaderCircle size={12} class="animate-spin" />}>
+                    <Zap size={12} />
+                  </Show>
+                  {alwaysButtonLabel()}
+                </button>
+              </Show>
               <button
                 type="button"
                 class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--danger-border)] bg-[var(--danger-surface)] hover:opacity-90 px-3 py-1 text-[12px] font-medium text-[var(--danger-text)] disabled:opacity-50 transition-opacity cursor-pointer"

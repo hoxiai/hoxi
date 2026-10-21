@@ -1,9 +1,16 @@
 // web/src/store/approval-mode.ts
+import { createSignal } from "solid-js";
 import { t } from "../i18n";
-import { hoxiAPI, isRunnerPermissionID, runnerAPI } from "../services/api";
+import {
+  hoxiAPI,
+  isRunnerPermissionID,
+  runnerAPI,
+  type ApprovalAuditEntry,
+  type ApprovalGrant,
+} from "../services/api";
 import type { AgyHookStatus } from "../services/runner-api";
 import type { PermissionRequest } from "../services/sse-types";
-export type { AgyHookStatus };
+export type { AgyHookStatus, ApprovalAuditEntry, ApprovalGrant };
 import {
   appSettings,
   triggerDesktopNotification,
@@ -13,7 +20,6 @@ import {
 import { setWorkspace, workspace } from "./workspace-state";
 import { sessionDirectory } from "./session-query";
 import { fetchGlobalConfig, updateGlobalPermissions } from "./global-config";
-import { sessionAIConfig } from "./session-ai";
 import {
   commandCandidates as extractPermissionCommands,
   isDestructivePermissionRequest,
@@ -22,6 +28,12 @@ import {
 } from "../../../.opencode/lib/permission-policy.js";
 
 export { extractPermissionCommands, isDestructivePermissionRequest, isRunnerPermissionID, isSafeCommandPermissionRequest };
+
+const [approvalGrants, setApprovalGrants] = createSignal<ApprovalGrant[]>([]);
+const [approvalAuditEntries, setApprovalAuditEntries] = createSignal<ApprovalAuditEntry[]>([]);
+const [approvalRecordsLoading, setApprovalRecordsLoading] = createSignal(false);
+
+export { approvalAuditEntries, approvalGrants, approvalRecordsLoading };
 
 
 const SMART_AUTO_PERMISSIONS = new Set([
@@ -199,8 +211,8 @@ export type PermissionReplyMode = "once" | "always" | "reject";
 /**
  * Answers a docked permission request from the approval card. Selected rule
  * patterns are merged into `permission.<tool>` first (OpenCode only; runner
- * rules live in the Go gate). A reject note travels with the reply for runner
- * requests and is sent as a steering prompt for OpenCode sessions.
+ * rules live in the Go gate). A reject note travels with the reply as the
+ * rejection reason across both Runner and OpenCode without triggering a new turn.
  */
 export async function replyPermissionRequest(
   req: PermissionRequest,
@@ -219,7 +231,7 @@ export async function replyPermissionRequest(
   }
   const note = (options.note ?? "").trim();
   try {
-    await hoxiAPI.replyPermission(req.id, mode, dir, runner && mode === "reject" ? note : undefined);
+    await hoxiAPI.replyPermission(req.id, mode, dir, mode === "reject" && note ? note : undefined);
   } catch (err) {
     if (isPermissionGoneError(err)) {
       markPermissionResolved(req.id);
@@ -228,15 +240,49 @@ export async function replyPermissionRequest(
     throw err;
   }
   markPermissionResolved(req.id);
-  if (!runner && mode === "reject" && note && req.sessionID) {
-    const ai = sessionAIConfig(req.sessionID);
-    await hoxiAPI.sendPromptAsync(req.sessionID, note, {
-      agent: ai.agent,
-      model: ai.model || undefined,
-      variant: ai.effort || undefined,
-      directory: dir,
-    });
+  if (mode === "always") {
+    void loadApprovalGrants();
   }
+  void loadApprovalAudit();
+}
+
+export async function loadApprovalGrants(sessionID?: string): Promise<ApprovalGrant[]> {
+  try {
+    const list = await hoxiAPI.listApprovalGrants(sessionID ? { sessionID } : undefined);
+    setApprovalGrants(list);
+    return list;
+  } catch {
+    return approvalGrants();
+  }
+}
+
+export async function revokeApprovalGrant(id: string): Promise<void> {
+  if (!id) return;
+  const res = await hoxiAPI.revokeApprovalGrants({ id });
+  setApprovalGrants(res.grants);
+}
+
+export async function revokeAllApprovalGrants(sessionID?: string): Promise<void> {
+  const res = await hoxiAPI.revokeApprovalGrants(sessionID ? { sessionID } : { all: true });
+  setApprovalGrants(res.grants);
+}
+
+export async function loadApprovalAudit(limit = 200): Promise<ApprovalAuditEntry[]> {
+  setApprovalRecordsLoading(true);
+  try {
+    const list = await hoxiAPI.listApprovalAudit({ limit });
+    setApprovalAuditEntries(list);
+    return list;
+  } catch {
+    return approvalAuditEntries();
+  } finally {
+    setApprovalRecordsLoading(false);
+  }
+}
+
+export async function clearApprovalAudit(): Promise<void> {
+  await hoxiAPI.clearApprovalAudit();
+  setApprovalAuditEntries([]);
 }
 
 export function fetchAgyHookStatus(): Promise<AgyHookStatus> {

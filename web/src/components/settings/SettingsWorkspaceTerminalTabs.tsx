@@ -25,6 +25,7 @@ import {
 } from "../../store/workspace";
 import { t } from "../../i18n";
 import { AgyApprovalHookControls } from "./AgyApprovalHookControls";
+import { ApprovalAuditGrantsSection } from "./ApprovalAuditGrantsSection";
 import {
   SegmentedPills,
   SettingGroup,
@@ -322,6 +323,9 @@ export function TerminalSafetySettingsTab() {
 
       {/* 3. Antigravity approval hook (agy headless PreToolUse gate) */}
       <AgyApprovalHookControls />
+
+      {/* 4. Active session grants & persistent approval audit log */}
+      <ApprovalAuditGrantsSection />
     </div>
   );
 }

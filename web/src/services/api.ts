@@ -1,5 +1,7 @@
 // web/src/services/api.ts
 import type {
+  ApprovalAuditEntry,
+  ApprovalGrant,
   MessageInfo,
   MessagePart,
   PermissionRequest,
@@ -10,7 +12,7 @@ import type {
   SnapshotFileDiff,
 } from "./sse-types";
 
-export type { MessageInfo, MessagePart };
+export type { ApprovalAuditEntry, ApprovalGrant, MessageInfo, MessagePart };
 import type {
   AgentInfo,
   BootstrapInfo,
@@ -385,6 +387,39 @@ export const hoxiAPI = {
       method: "POST",
       body: JSON.stringify({ reply, ...(message ? { message } : {}) }),
     });
+  },
+  async listApprovalGrants(params?: { sessionID?: string; directory?: string }): Promise<ApprovalGrant[]> {
+    const q = new URLSearchParams();
+    if (params?.sessionID) q.set("sessionID", params.sessionID);
+    if (params?.directory) q.set("directory", params.directory);
+    const qs = q.toString();
+    const res = await requestJSON<{ grants?: ApprovalGrant[] }>(`/api/hoxi/permission/grants${qs ? `?${qs}` : ""}`);
+    return Array.isArray(res?.grants) ? res.grants : [];
+  },
+  async revokeApprovalGrants(params: { id?: string; sessionID?: string; all?: boolean }): Promise<{ revoked: number; grants: ApprovalGrant[] }> {
+    const q = new URLSearchParams();
+    if (params.id) q.set("id", params.id);
+    if (params.sessionID) q.set("sessionID", params.sessionID);
+    if (params.all) q.set("all", "1");
+    const qs = q.toString();
+    const res = await requestJSON<{ revoked?: number; grants?: ApprovalGrant[] }>(`/api/hoxi/permission/grants${qs ? `?${qs}` : ""}`, {
+      method: "DELETE",
+    });
+    return {
+      revoked: Number(res?.revoked ?? 0),
+      grants: Array.isArray(res?.grants) ? res.grants : [],
+    };
+  },
+  async listApprovalAudit(params?: { sessionID?: string; limit?: number }): Promise<ApprovalAuditEntry[]> {
+    const q = new URLSearchParams();
+    if (params?.sessionID) q.set("sessionID", params.sessionID);
+    if (params?.limit) q.set("limit", String(params.limit));
+    const qs = q.toString();
+    const res = await requestJSON<{ entries?: ApprovalAuditEntry[] }>(`/api/hoxi/permission/audit${qs ? `?${qs}` : ""}`);
+    return Array.isArray(res?.entries) ? res.entries : [];
+  },
+  async clearApprovalAudit(): Promise<void> {
+    await requestJSON("/api/hoxi/permission/audit", { method: "DELETE" });
   },
   // Interactive Question Dock (Kilo QuestionDock)
   listQuestions(directory?: string): Promise<QuestionRequest[]> {

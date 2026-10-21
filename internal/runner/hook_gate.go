@@ -11,8 +11,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -53,12 +51,16 @@ type approvalAsk struct {
 type approvalReply struct {
 	Reply   string
 	Message string
+	Source  string
 }
 
 type pendingApproval struct {
-	req   map[string]interface{}
-	sid   string
-	reply chan approvalReply
+	req     map[string]interface{}
+	sid     string
+	callKey string
+	reply   chan approvalReply
+	done    chan struct{}
+	result  approvalReply
 }
 
 type approvalGate struct {
@@ -67,8 +69,9 @@ type approvalGate struct {
 	autoInstall bool
 	tokens      map[[32]byte]hookCredential
 	pending     map[string]*pendingApproval
-	always      map[string]map[string]bool
-	toolAlways  map[string]map[string]bool
+	byCallKey   map[string]*pendingApproval
+	always      map[string]map[string]ApprovalGrant
+	toolAlways  map[string]map[string]ApprovalGrant
 	waitLimit   time.Duration
 }
 
@@ -76,8 +79,9 @@ func newApprovalGate() *approvalGate {
 	return &approvalGate{
 		tokens:     make(map[[32]byte]hookCredential),
 		pending:    make(map[string]*pendingApproval),
-		always:     make(map[string]map[string]bool),
-		toolAlways: make(map[string]map[string]bool),
+		byCallKey:  make(map[string]*pendingApproval),
+		always:     make(map[string]map[string]ApprovalGrant),
+		toolAlways: make(map[string]map[string]ApprovalGrant),
 		waitLimit:  agyhook.ClientTimeout - 5*time.Second,
 	}
 }
@@ -158,7 +162,7 @@ func (s *Service) cancelSessionApprovals(sessionID, reason string) {
 	s.gate.mu.Unlock()
 	for _, p := range targets {
 		select {
-		case p.reply <- approvalReply{Reply: "reject", Message: reason}:
+		case p.reply <- approvalReply{Reply: "reject", Message: reason, Source: "system"}:
 		default:
 		}
 	}
@@ -319,7 +323,7 @@ func (s *Service) awaitApproval(r *http.Request, cred hookCredential, ask approv
 	answer := s.awaitReply(r, cred, id, req)
 	switch answer.Reply {
 	case "always":
-		s.gate.addAlways(cred.sessionID, command)
+		s.gate.addAlways(cred.sessionID, command, answer.Source)
 		return true, ""
 	case "once":
 		return true, ""
@@ -331,89 +335,180 @@ func (s *Service) awaitApproval(r *http.Request, cred hookCredential, ask approv
 	return false, reason
 }
 
+func pendingCallKey(sessionID string, req map[string]interface{}) string {
+	toolMap, _ := req["tool"].(map[string]interface{})
+	callID, _ := toolMap["callID"].(string)
+	callID = strings.TrimSpace(callID)
+	if sessionID == "" || callID == "" {
+		return ""
+	}
+	perm, _ := req["permission"].(string)
+	return sessionID + "\x00" + perm + "\x00" + callID
+}
+
 // awaitReply publishes a permission request and blocks until the user
 // answers, the hook call is interrupted, or the wait limit passes.
 func (s *Service) awaitReply(r *http.Request, cred hookCredential, id string, req map[string]interface{}) approvalReply {
-	pa := &pendingApproval{req: req, sid: cred.sessionID, reply: make(chan approvalReply, 1)}
+	callKey := pendingCallKey(cred.sessionID, req)
 	s.gate.mu.Lock()
-	s.gate.pending[id] = pa
+	if callKey != "" {
+		if existing := s.gate.byCallKey[callKey]; existing != nil {
+			s.gate.mu.Unlock()
+			select {
+			case <-existing.done:
+				return existing.result
+			case <-r.Context().Done():
+				return approvalReply{Reply: "reject", Message: "approval hook was interrupted", Source: "system"}
+			}
+		}
+	}
 	limit := s.gate.waitLimit
+	nowMs := time.Now().UnixMilli()
+	req["createdAt"] = nowMs
+	if limit > 0 {
+		req["expiresAt"] = nowMs + limit.Milliseconds()
+	}
+	pa := &pendingApproval{
+		req:     req,
+		sid:     cred.sessionID,
+		callKey: callKey,
+		reply:   make(chan approvalReply, 1),
+		done:    make(chan struct{}),
+	}
+	s.gate.pending[id] = pa
+	if callKey != "" {
+		s.gate.byCallKey[callKey] = pa
+	}
 	s.gate.mu.Unlock()
 	if s.status != nil {
 		s.status.SetPendingApproval(id, cred.sessionID, true)
 	}
 	s.broadcast(cred.sessionID, SSEEvent{Type: "permission.asked", Properties: req})
 
-	answer := approvalReply{Reply: "reject", Message: "approval timed out"}
+	answer := approvalReply{Reply: "reject", Message: "approval timed out", Source: "system"}
+	decision := "timeout"
 	timer := time.NewTimer(limit)
 	defer timer.Stop()
 	select {
 	case answer = <-pa.reply:
+		decision = answer.Reply
+		if answer.Source == "system" && answer.Reply == "reject" && answer.Message != "approval timed out" {
+			decision = "interrupted"
+		}
 	case <-r.Context().Done():
-		answer = approvalReply{Reply: "reject", Message: "approval hook was interrupted"}
+		answer = approvalReply{Reply: "reject", Message: "approval hook was interrupted", Source: "system"}
+		decision = "interrupted"
 	case <-timer.C:
 	}
 
 	s.gate.mu.Lock()
+	pa.result = answer
+	close(pa.done)
 	delete(s.gate.pending, id)
+	if callKey != "" && s.gate.byCallKey[callKey] == pa {
+		delete(s.gate.byCallKey, callKey)
+	}
 	s.gate.mu.Unlock()
 	if s.status != nil {
 		s.status.SetPendingApproval(id, cred.sessionID, false)
 	}
+	s.recordRunnerApprovalAudit(cred, req, decision, answer)
 	s.broadcast(cred.sessionID, SSEEvent{Type: "permission.replied", Properties: map[string]interface{}{
-		"sessionID": cred.sessionID, "requestID": id, "reply": answer.Reply,
+		"sessionID": cred.sessionID,
+		"requestID": id,
+		"reply":     answer.Reply,
+		"source":    firstNonEmptyStr(answer.Source, "desktop"),
+		"reason":    answer.Message,
 	}})
 	return answer
 }
 
 // Session "always" grants live in Hoxi only, never in agy's global settings,
 // and never cover destructive commands (AGENTS.md rule 6).
-func (g *approvalGate) addAlways(sessionID, command string) {
-	if isDestructiveCommand(command) {
+func (g *approvalGate) addAlways(sessionID, command, source string) {
+	trimmed := strings.TrimSpace(command)
+	if trimmed == "" || isDestructiveCommand(trimmed) {
 		return
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if g.always[sessionID] == nil {
-		g.always[sessionID] = make(map[string]bool)
+		g.always[sessionID] = make(map[string]ApprovalGrant)
 	}
-	g.always[sessionID][strings.TrimSpace(command)] = true
+	g.always[sessionID][trimmed] = ApprovalGrant{
+		ID:        makeGrantID(sessionID, "bash", trimmed),
+		SessionID: sessionID,
+		Kind:      "bash",
+		Tool:      "bash",
+		Key:       trimmed,
+		Pattern:   redactApprovalText(trimmed, 240),
+		Scope:     "session_memory",
+		Source:    firstNonEmptyStr(source, "desktop"),
+		CreatedAt: time.Now().UnixMilli(),
+	}
 }
 
 func (g *approvalGate) hasAlways(sessionID, command string) bool {
-	if isDestructiveCommand(command) {
+	trimmed := strings.TrimSpace(command)
+	if trimmed == "" || isDestructiveCommand(trimmed) {
 		return false
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	return g.always[sessionID][strings.TrimSpace(command)]
+	_, ok := g.always[sessionID][trimmed]
+	return ok
 }
 
 // Tool "always" grants are keyed by tool + exact args, so allowing one MCP
 // call never blanket-approves a different one.
-func (g *approvalGate) addToolAlways(sessionID, key string) {
+func (g *approvalGate) addToolAlways(sessionID, key, tool, pattern, source string) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if g.toolAlways[sessionID] == nil {
-		g.toolAlways[sessionID] = make(map[string]bool)
+		g.toolAlways[sessionID] = make(map[string]ApprovalGrant)
 	}
-	g.toolAlways[sessionID][key] = true
+	g.toolAlways[sessionID][key] = ApprovalGrant{
+		ID:        makeGrantID(sessionID, "tool", key),
+		SessionID: sessionID,
+		Kind:      "tool",
+		Tool:      firstNonEmptyStr(strings.TrimSpace(tool), "tool"),
+		Key:       key,
+		Pattern:   firstNonEmptyStr(strings.TrimSpace(pattern), tool, key),
+		Scope:     "session_memory",
+		Source:    firstNonEmptyStr(source, "desktop"),
+		CreatedAt: time.Now().UnixMilli(),
+	}
 }
 
 func (g *approvalGate) hasToolAlways(sessionID, key string) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	return g.toolAlways[sessionID][key]
+	_, ok := g.toolAlways[sessionID][key]
+	return ok
+}
+
+func (g *approvalGate) forgetSession(sessionID string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	delete(g.always, sessionID)
+	delete(g.toolAlways, sessionID)
 }
 
 func (s *Service) handlePermissionRoutes(w http.ResponseWriter, r *http.Request) {
 	sub := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/hoxi/runner/permission"), "/")
-	if sub == "" {
+	switch sub {
+	case "":
 		if r.Method != http.MethodGet {
 			writeJSONError(w, http.StatusMethodNotAllowed, "GET required")
 			return
 		}
 		writeJSON(w, http.StatusOK, s.listPendingApprovals(r.URL.Query().Get("directory")))
+		return
+	case "audit":
+		s.handleApprovalAudit(w, r)
+		return
+	case "grants":
+		s.handleApprovalGrants(w, r)
 		return
 	}
 	id, action, _ := strings.Cut(sub, "/")
@@ -426,12 +521,19 @@ func (s *Service) handlePermissionRoutes(w http.ResponseWriter, r *http.Request)
 
 func (s *Service) handleUnifiedPermissionRoutes(w http.ResponseWriter, r *http.Request) {
 	sub := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/hoxi/permission"), "/")
-	if sub == "" {
+	switch sub {
+	case "":
 		if r.Method != http.MethodGet {
 			writeJSONError(w, http.StatusMethodNotAllowed, "GET required")
 			return
 		}
 		writeJSON(w, http.StatusOK, s.listUnifiedPermissions(r.Context(), r.URL.Query().Get("directory")))
+		return
+	case "audit":
+		s.handleApprovalAudit(w, r)
+		return
+	case "grants":
+		s.handleApprovalGrants(w, r)
 		return
 	}
 	id, action, _ := strings.Cut(sub, "/")
@@ -448,10 +550,28 @@ func (s *Service) handleUnifiedPermissionRoutes(w http.ResponseWriter, r *http.R
 		writeJSONError(w, http.StatusBadRequest, "invalid reply")
 		return
 	}
-	status, respRaw, err := s.replyOpenCodePermission(r.Context(), id, r.URL.Query().Get("directory"), raw)
+	var parsedReply struct {
+		Reply   string `json:"reply"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(raw, &parsedReply); err != nil ||
+		(parsedReply.Reply != "once" && parsedReply.Reply != "always" && parsedReply.Reply != "reject") {
+		writeJSONError(w, http.StatusBadRequest, "reply must be once, always or reject")
+		return
+	}
+	source := requestApprovalSource(r)
+	if source == "tunnel" && parsedReply.Reply == "always" {
+		writeJSONError(w, http.StatusForbidden, "always approval is not allowed over the remote tunnel")
+		return
+	}
+	dir := r.URL.Query().Get("directory")
+	status, respRaw, err := s.replyOpenCodePermission(r.Context(), id, dir, raw)
 	if err != nil {
 		writeJSONError(w, http.StatusBadGateway, "opencode service unavailable: "+err.Error())
 		return
+	}
+	if status >= 200 && status < 300 {
+		s.recordOpenCodeApprovalAudit(id, dir, parsedReply.Reply, parsedReply.Message, source)
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
@@ -538,6 +658,11 @@ func (s *Service) replyRunnerPermission(w http.ResponseWriter, r *http.Request, 
 		writeJSONError(w, http.StatusBadRequest, "reply must be once, always or reject")
 		return
 	}
+	source := requestApprovalSource(r)
+	if source == "tunnel" && body.Reply == "always" {
+		writeJSONError(w, http.StatusForbidden, "always approval is not allowed over the remote tunnel")
+		return
+	}
 	s.gate.mu.Lock()
 	pa := s.gate.pending[id]
 	s.gate.mu.Unlock()
@@ -546,7 +671,7 @@ func (s *Service) replyRunnerPermission(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	select {
-	case pa.reply <- approvalReply{Reply: body.Reply, Message: body.Message}:
+	case pa.reply <- approvalReply{Reply: body.Reply, Message: body.Message, Source: source}:
 		writeJSON(w, http.StatusOK, true)
 	default:
 		writeJSONError(w, http.StatusConflict, "permission request already answered")
@@ -588,6 +713,9 @@ func (s *Service) listUnifiedPermissions(ctx context.Context, directory string) 
 						item["sessionID"] = hoxiID
 					}
 				}
+				if s.audit != nil {
+					s.audit.rememberOpenCodePerm(item, dir)
+				}
 				out = append(out, item)
 			}
 		}
@@ -628,110 +756,6 @@ func isLoopbackRemote(remoteAddr string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
-}
-
-var protectedWorktreeDirs = map[string]bool{
-	".git":      true,
-	".agents":   true,
-	".opencode": true,
-	".claude":   true,
-	".hoxi":     true,
-	".envrc":    true,
-}
-
-func isProtectedRelPath(rel string) bool {
-	slash := strings.ToLower(filepath.ToSlash(filepath.Clean(rel)))
-	if slash == "." || slash == "" {
-		return false
-	}
-	if slash == ".vscode/settings.json" || strings.HasSuffix(slash, "/.vscode/settings.json") {
-		return true
-	}
-	for _, part := range strings.Split(slash, "/") {
-		if protectedWorktreeDirs[part] {
-			return true
-		}
-	}
-	return false
-}
-
-// isProtectedWorktreePath reports whether an edit target inside the worktree
-// touches execution-controlling paths (.git/**, .agents/**, .opencode/**,
-// .claude/**, .hoxi/**, .vscode/settings.json, .envrc) that must ask the user.
-func isProtectedWorktreePath(base, target string) bool {
-	cleanBase := filepath.Clean(strings.TrimSpace(base))
-	cleanTarget := filepath.Clean(strings.TrimSpace(target))
-	if rel, err := filepath.Rel(cleanBase, cleanTarget); err == nil && isProtectedRelPath(rel) {
-		return true
-	}
-	realBase, okBase := resolvePathWithSymlinks(base, 0)
-	realTarget, okTarget := resolvePathWithSymlinks(target, 0)
-	if !okBase || !okTarget {
-		return true
-	}
-	rel, err := filepath.Rel(realBase, realTarget)
-	return err != nil || isProtectedRelPath(rel)
-}
-
-func resolvePathWithSymlinks(p string, depth int) (string, bool) {
-	if depth > 40 {
-		return "", false
-	}
-	p = filepath.Clean(strings.TrimSpace(p))
-	if p == "" {
-		return "", false
-	}
-	if real, err := filepath.EvalSymlinks(p); err == nil {
-		return real, true
-	}
-	suffix := ""
-	for cur := p; ; {
-		if real, err := filepath.EvalSymlinks(cur); err == nil {
-			return filepath.Join(real, suffix), true
-		}
-		info, err := os.Lstat(cur)
-		if err == nil {
-			if info.Mode()&os.ModeSymlink == 0 {
-				return "", false
-			}
-			link, err := os.Readlink(cur)
-			if err != nil {
-				return "", false
-			}
-			if !filepath.IsAbs(link) {
-				link = filepath.Join(filepath.Dir(cur), link)
-			}
-			return resolvePathWithSymlinks(filepath.Join(link, suffix), depth+1)
-		}
-		if !os.IsNotExist(err) {
-			return "", false
-		}
-		parent := filepath.Dir(cur)
-		if parent == cur {
-			return p, true
-		}
-		suffix = filepath.Join(filepath.Base(cur), suffix)
-		cur = parent
-	}
-}
-
-func pathWithin(base, target string) bool {
-	if strings.TrimSpace(base) == "" || strings.TrimSpace(target) == "" {
-		return false
-	}
-	realBase, ok := resolvePathWithSymlinks(base, 0)
-	if !ok {
-		return false
-	}
-	realTarget, ok := resolvePathWithSymlinks(target, 0)
-	if !ok {
-		return false
-	}
-	rel, err := filepath.Rel(realBase, realTarget)
-	if err != nil {
-		return false
-	}
-	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
 }
 
 func randomHex(n int) string {

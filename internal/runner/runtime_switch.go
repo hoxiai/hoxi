@@ -258,6 +258,7 @@ func (s *Service) deleteConversation(ctx context.Context, id string) error {
 	unlock := s.turnMu.lock(id)
 	defer unlock()
 	s.doomLoop.forget(id)
+	s.gate.forgetSession(id)
 	s.mu.Lock()
 	ap := s.procs[id]
 	s.mu.Unlock()

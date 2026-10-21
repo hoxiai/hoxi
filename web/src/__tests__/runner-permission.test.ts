@@ -69,6 +69,71 @@ describe("Antigravity runner permission routing", () => {
       assertEqual(m.calls[0].url, "/api/hoxi/permission?directory=%2Fproject");
     } finally { m.restore(); }
   });
+
+  it("lists and revokes session grants and queries/clears the approval audit log", async () => {
+    const m = mockFetch((url) => {
+      if (url.startsWith("/api/hoxi/permission/grants")) {
+        return {
+          status: 200,
+          body: {
+            revoked: 1,
+            grants: [
+              {
+                id: "gr_1",
+                sessionID: "ses_1",
+                kind: "bash",
+                tool: "bash",
+                key: "npm install",
+                pattern: "npm install",
+                scope: "session_memory",
+                source: "desktop",
+                createdAt: 1000,
+              },
+            ],
+          },
+        };
+      }
+      return {
+        status: 200,
+        body: {
+          entries: [
+            {
+              id: "aud_1",
+              timestamp: 1000,
+              requestID: "per_rnr_1",
+              sessionID: "ses_1",
+              permission: "bash",
+              summary: "npm install",
+              decision: "always",
+              source: "desktop",
+            },
+          ],
+        },
+      };
+    });
+    try {
+      const grants = await hoxiAPI.listApprovalGrants({ sessionID: "ses_1" });
+      assertEqual(grants.length, 1);
+      assertEqual(grants[0].id, "gr_1");
+      assertEqual(m.calls[0].url, "/api/hoxi/permission/grants?sessionID=ses_1");
+
+      const revoked = await hoxiAPI.revokeApprovalGrants({ id: "gr_1" });
+      assertEqual(revoked.revoked, 1);
+      assertEqual(m.calls[1].url, "/api/hoxi/permission/grants?id=gr_1");
+      assertEqual(m.calls[1].method, "DELETE");
+
+      const audit = await hoxiAPI.listApprovalAudit({ limit: 50 });
+      assertEqual(audit.length, 1);
+      assertEqual(audit[0].id, "aud_1");
+      assertEqual(m.calls[2].url, "/api/hoxi/permission/audit?limit=50");
+
+      await hoxiAPI.clearApprovalAudit();
+      assertEqual(m.calls[3].url, "/api/hoxi/permission/audit");
+      assertEqual(m.calls[3].method, "DELETE");
+    } finally {
+      m.restore();
+    }
+  });
 });
 
 // internal/runner/permission_policy_test.go runs the same fixture against the Go port.

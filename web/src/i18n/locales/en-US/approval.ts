@@ -46,4 +46,32 @@ export const approval = {
   doomLoopNotice:
     "{tool} was called repeatedly with identical input; it may be stuck. Continue?",
   switchToAutoApprove: "Switch to Auto Approve",
+  allowSessionCommand: "Always Allow Command (Session)",
+  allowSessionToolCall: "Always Allow Exact Call (Session)",
+  sessionGrantScopeCommand:
+    "Remembers this exact command in memory for the current session only; cleared on restart and revocable in Settings",
+  sessionGrantScopeTool:
+    "Remembers this tool + exact arguments in memory for the current session only; revocable in Settings",
+  expiresIn: "Auto-rejects in {seconds}s",
+  toolArgsLabel: "Tool Arguments",
+  grantsSectionTitle: "Active Session Grants (In-Memory)",
+  grantsSectionDesc:
+    "Created when you choose Always Allow in a session. Stored in memory only (cleared on restart) and never covers destructive commands",
+  grantsEmpty: "No active session grants",
+  revokeGrant: "Revoke",
+  revokeAllGrants: "Revoke All ({count})",
+  auditSectionTitle: "Approval Audit Log",
+  auditSectionDesc:
+    "Persistent record of every desktop, remote tunnel, or timed-out approval decision (~/.hoxi/approval-audit.json)",
+  auditEmpty: "No approval decisions recorded yet",
+  auditRefresh: "Refresh",
+  auditClear: "Clear Log",
+  sourceDesktop: "Desktop",
+  sourceTunnel: "Remote Tunnel",
+  sourceSystem: "System",
+  decisionOnce: "Allow Once",
+  decisionAlways: "Session Always",
+  decisionReject: "Rejected",
+  decisionTimeout: "Timed Out",
+  decisionInterrupted: "Interrupted",
 };

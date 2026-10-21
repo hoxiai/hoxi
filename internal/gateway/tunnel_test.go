@@ -68,7 +68,9 @@ func TestTunnelRouteAllowlist(t *testing.T) {
 		{post, "/api/hoxi/sessions/ses_1/runtime"}, {post, "/api/hoxi/sessions/ses_1/summarize"},
 		{get, "/api/hoxi/sessions/ses_1/event"}, {get, "/api/hoxi/sessions/ses_1/message/extra"},
 		{get, "/api/hoxi/sessions/ses_1/unknown"}, {get, "/api/hoxi/skills/detail"}, {get, "/api/hoxi/attachments/a/b/c"},
-		{get, "/api/hoxi/permission/per_1"}, {get, "/api/hoxi/sessions//message"}, {get, "/api/hoxi/sessions/"},
+		{get, "/api/hoxi/permission/per_1"}, {get, "/api/hoxi/permission/audit"}, {http.MethodDelete, "/api/hoxi/permission/audit"},
+		{get, "/api/hoxi/permission/grants"}, {http.MethodDelete, "/api/hoxi/permission/grants"},
+		{get, "/api/hoxi/sessions//message"}, {get, "/api/hoxi/sessions/"},
 		// Methods are part of the allow-list.
 		{http.MethodPatch, "/api/hoxi/sessions/ses_1"}, {http.MethodDelete, "/api/hoxi/sessions/ses_1"},
 		{post, "/api/hoxi/sessions/ses_1/message"}, {get, "/api/hoxi/permission/per_1/reply"},
@@ -129,6 +131,33 @@ func TestTunnelCommitRejectsPush(t *testing.T) {
 	g.serveTunnelRequest(rec, localRequest(http.MethodPost, "/api/hoxi/worktree/commit", strings.NewReader(`{"push":true}`)))
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("commit+push over tunnel = %d, want 403", rec.Code)
+	}
+}
+
+func TestTunnelPermissionReplyRejectsAlways(t *testing.T) {
+	for body, want := range map[string]bool{
+		`{"reply":"once"}`:                      true,
+		`{"reply":"reject","message":"reason"}`: true,
+		`{"reply":"always"}`:                    false,
+		`{}`:                                    false,
+		`{"reply":"once`:                        false,
+	} {
+		r := localRequest(http.MethodPost, "/api/hoxi/permission/per_rnr_1/reply", strings.NewReader(body))
+		if got := tunnelBodyAllowed(r); got != want {
+			t.Errorf("permission reply body %s allowed = %v, want %v", body, got, want)
+		}
+		if want {
+			restored, _ := io.ReadAll(r.Body)
+			if string(restored) != body {
+				t.Errorf("permission reply body not restored: %q", restored)
+			}
+		}
+	}
+	g := New(0, "test", t.TempDir(), nil, nil)
+	rec := httptest.NewRecorder()
+	g.serveTunnelRequest(rec, localRequest(http.MethodPost, "/api/hoxi/permission/per_rnr_1/reply", strings.NewReader(`{"reply":"always"}`)))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("permission reply=always over tunnel = %d, want 403", rec.Code)
 	}
 }
 

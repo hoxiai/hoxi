@@ -59,5 +59,12 @@
   { "command": "'r'm -rf dist", "decision": "ask", "destructive": true },
   { "command": "ls$IFS-la", "decision": "ask", "destructive": false },
   { "command": "echo hello", "decision": "ask", "destructive": false },
+  { "command": "echo x > ~/.zshrc", "decision": "ask", "destructive": true },
+  { "command": "echo key >> ~/.ssh/authorized_keys", "decision": "ask", "destructive": true },
+  { "command": "git checkout -- .", "decision": "ask", "destructive": true },
+  { "command": "git restore .", "decision": "ask", "destructive": true },
+  { "command": "npm publish", "decision": "ask", "destructive": true },
+  { "command": "terraform destroy -auto-approve", "decision": "ask", "destructive": true },
+  { "command": "kubectl delete pod api", "decision": "ask", "destructive": true },
   { "command": "", "decision": "ask", "destructive": false }
 ]

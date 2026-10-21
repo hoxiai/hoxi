@@ -256,6 +256,11 @@ func (g *Gateway) SetDesktopFocusHandler(fn func(directory, sessionID string)) {
 }
 
 func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if isTunnelRequest(r) {
+		r.Header.Set(runner.ApprovalSourceHeader, "tunnel")
+	} else {
+		r.Header.Set(runner.ApprovalSourceHeader, "desktop")
+	}
 	if !g.allowRequest(w, r) {
 		return
 	}
