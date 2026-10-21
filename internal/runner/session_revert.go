@@ -53,6 +53,29 @@ func (s *Service) handleSessionRevert(w http.ResponseWriter, r *http.Request, se
 	unlock := s.turnMu.lock(sessionID)
 	defer unlock()
 
+	preRec, ok := s.store.Get(sessionID)
+	if !ok {
+		writeJSONError(w, http.StatusNotFound, "session not found")
+		return
+	}
+	if preRec.Subagent {
+		writeJSONError(w, http.StatusConflict, errSubagentSessionReadOnly.Error())
+		return
+	}
+	preTurns := preRec.Turns
+	if len(preRec.RevertedTurns) > len(preTurns) {
+		preTurns = preRec.RevertedTurns
+	}
+	preTargetIdx := messageTurnIndex(preTurns, body.MessageID)
+	if preTargetIdx < 0 {
+		writeJSONError(w, http.StatusNotFound, "message not found in session")
+		return
+	}
+	if body.PartID != "" && messagePartIndex(preTurns[preTargetIdx], body.PartID) < 0 {
+		writeJSONError(w, http.StatusBadRequest, "partID not found in message")
+		return
+	}
+
 	s.mu.Lock()
 	ap := s.procs[sessionID]
 	s.mu.Unlock()
@@ -78,6 +101,15 @@ func (s *Service) handleSessionRevert(w http.ResponseWriter, r *http.Request, se
 	if len(rec.RevertedTurns) > len(allTurns) {
 		allTurns = rec.RevertedTurns
 	}
+	targetIdx := messageTurnIndex(allTurns, body.MessageID)
+	if targetIdx < 0 {
+		writeJSONError(w, http.StatusNotFound, "message not found in session")
+		return
+	}
+	if body.PartID != "" && messagePartIndex(allTurns[targetIdx], body.PartID) < 0 {
+		writeJSONError(w, http.StatusBadRequest, "partID not found in message")
+		return
+	}
 
 	createdSnapshot := ""
 	if rec.Revert == nil {
@@ -86,14 +118,10 @@ func (s *Service) handleSessionRevert(w http.ResponseWriter, r *http.Request, se
 		}
 	}
 
-	targetSnap := ""
-	if rec.Snapshots != nil {
-		targetSnap = rec.Snapshots[body.MessageID]
-	}
-	if targetSnap == "" {
-		if headSnap, err := worktree.HeadTree(rec.WorktreePath); err == nil {
-			targetSnap = headSnap
-		}
+	targetSnap := resolveRevertSnapshot(rec, allTurns, targetIdx)
+	if rec.Revert == nil && targetSnap != "" && createdSnapshot == "" {
+		writeJSONError(w, http.StatusInternalServerError, "failed to capture workspace snapshot for revert")
+		return
 	}
 	if targetSnap != "" && strings.TrimSpace(rec.WorktreePath) != "" {
 		if err := worktree.RestoreSnapshot(rec.WorktreePath, targetSnap); err != nil {
@@ -232,6 +260,10 @@ func (s *Service) handleSessionFork(w http.ResponseWriter, r *http.Request, sess
 	if len(rec.RevertedTurns) > len(allTurns) {
 		allTurns = rec.RevertedTurns
 	}
+	if messageID != "" && messageTurnIndex(allTurns, messageID) < 0 {
+		writeJSONError(w, http.StatusNotFound, "message not found in session")
+		return
+	}
 
 	forkID := GenerateRunnerSessionID(rec.Runtime)
 	now := time.Now().UnixMilli()
@@ -244,8 +276,13 @@ func (s *Service) handleSessionFork(w http.ResponseWriter, r *http.Request, sess
 		title = title + " (fork)"
 	}
 
+	forkProjectID := rec.ProjectID
+	if forkProjectID == "" {
+		forkProjectID, _ = s.ensureProjectID(rec.ProjectDir)
+	}
 	forkRec := SessionRecord{
 		ID:               forkID,
+		ProjectID:        forkProjectID,
 		Runtime:          rec.Runtime,
 		ProjectDir:       rec.ProjectDir,
 		SandboxMode:      rec.SandboxMode,
@@ -258,14 +295,27 @@ func (s *Service) handleSessionFork(w http.ResponseWriter, r *http.Request, sess
 		ContextPending:   len(forkTurns) > 0,
 		ContextTurnCount: len(forkTurns),
 		Turns:            forkTurns,
+		Snapshots:        copyTurnSnapshots(rec.Snapshots, forkTurns),
 	}
 	if err := s.provisionSessionDirectory(&forkRec); err != nil {
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if rec.SandboxMode == "worktree" && strings.TrimSpace(rec.WorktreePath) != "" && strings.TrimSpace(forkRec.WorktreePath) != "" {
-		if snap, err := worktree.CreateSnapshot(rec.WorktreePath); err == nil && snap != "" {
-			_ = worktree.RestoreSnapshot(forkRec.WorktreePath, snap)
+		snap, snapErr := worktree.CreateSnapshot(rec.WorktreePath)
+		if snapErr != nil || snap == "" {
+			_ = s.worktrees.ForDirectory(rec.ProjectDir).RemoveWithOptions(forkID, true, false)
+			msg := "failed to snapshot source workspace"
+			if snapErr != nil {
+				msg = fmt.Sprintf("%s: %v", msg, snapErr)
+			}
+			writeJSONError(w, http.StatusInternalServerError, msg)
+			return
+		}
+		if err := worktree.RestoreSnapshot(forkRec.WorktreePath, snap); err != nil {
+			_ = s.worktrees.ForDirectory(rec.ProjectDir).RemoveWithOptions(forkID, true, false)
+			writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("failed to copy workspace snapshot: %v", err))
+			return
 		}
 	}
 
@@ -279,6 +329,62 @@ func (s *Service) handleSessionFork(w http.ResponseWriter, r *http.Request, sess
 		Properties: map[string]interface{}{"info": info},
 	})
 	writeJSON(w, http.StatusOK, info)
+}
+
+func messageTurnIndex(turns []MessageTurn, messageID string) int {
+	for i := range turns {
+		if turns[i].Info.ID == messageID {
+			return i
+		}
+	}
+	return -1
+}
+
+func messagePartIndex(turn MessageTurn, partID string) int {
+	for i := range turn.Parts {
+		if turn.Parts[i].ID == partID {
+			return i
+		}
+	}
+	return -1
+}
+
+// resolveRevertSnapshot returns the workspace checkpoint for the boundary.
+// Checkpoints are captured per user prompt; a tool-level undo targets an
+// assistant message, so it falls back to the checkpoint that opened its exchange
+// instead of resetting the worktree to HEAD.
+func resolveRevertSnapshot(rec SessionRecord, turns []MessageTurn, targetIdx int) string {
+	if targetIdx < 0 || targetIdx >= len(turns) {
+		return ""
+	}
+	if snap := strings.TrimSpace(rec.Snapshots[turns[targetIdx].Info.ID]); snap != "" {
+		return snap
+	}
+	if turns[targetIdx].Info.Role != "assistant" {
+		return ""
+	}
+	for i := targetIdx - 1; i >= 0; i-- {
+		if turns[i].Info.Role == "user" {
+			return strings.TrimSpace(rec.Snapshots[turns[i].Info.ID])
+		}
+	}
+	return ""
+}
+
+func copyTurnSnapshots(snapshots map[string]string, turns []MessageTurn) map[string]string {
+	if len(snapshots) == 0 {
+		return nil
+	}
+	out := make(map[string]string)
+	for _, turn := range turns {
+		if snap := strings.TrimSpace(snapshots[turn.Info.ID]); snap != "" {
+			out[turn.Info.ID] = snap
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func truncateTurnsForRevert(turns []MessageTurn, messageID, partID string) []MessageTurn {

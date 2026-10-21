@@ -20,6 +20,7 @@ import (
 	"github.com/hoxiai/hoxi/internal/diagnostics"
 	"github.com/hoxiai/hoxi/internal/forge"
 	"github.com/hoxiai/hoxi/internal/handoff"
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
 	"github.com/hoxiai/hoxi/internal/leaderboard"
 	"github.com/hoxiai/hoxi/internal/opencode/ocapi"
 	"github.com/hoxiai/hoxi/internal/orchestration"
@@ -62,6 +63,11 @@ type Gateway struct {
 	onOpenDirectoryDialog func() (string, error)
 	onFocusDesktop        func(directory, sessionID string)
 	dialogMu              sync.RWMutex
+	notifyMu              sync.RWMutex
+	onDesktopNotify       func(DesktopNotification) error
+	intentMu              sync.Mutex
+	pendingIntent         *DesktopIntent
+	onDesktopIntent       func()
 	originMu              sync.RWMutex
 	uiOrigins             map[string]bool
 	gatewayToken          string
@@ -135,6 +141,10 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 	wireAssistRoutes(providers, wtMgr)
 	handoffSvc := handoff.NewService(openCodePort, password, rootDir, providers)
 	runnerSvc = runner.NewService(rootDir, wtMgr, status, "")
+	runnerSvc.SetProjectResolver(workspaces)
+	workspaces.SetFolderRelinkHandler(func(projectID, oldPath, newPath string) error {
+		return runnerSvc.RelinkProject(projectID, oldPath, newPath)
+	})
 	runnerSvc.ConfigureOpenCode(targetURL.String(), password)
 	authSvc := auth.NewService(nil)
 	updaterSvc := updater.NewChecker(buildinfo.Version, nil)
@@ -163,7 +173,11 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 	}
 	g.recallSvc = recall.NewService(&gatewayRecallSource{g: g})
 	if g.runner != nil {
-		g.orchestration = orchestration.NewService(convoySessions{runner: g.runner})
+		options := []orchestration.Option{orchestration.WithLLM(providers)}
+		if dir := hoxipaths.Join("orchestration"); dir != "" {
+			options = append(options, orchestration.WithStore(orchestration.NewStore(dir)))
+		}
+		g.orchestration = orchestration.NewService(convoySessions{runner: g.runner}, options...)
 	}
 	g.skills = skills.NewService(targetURL.String(), password, g.resolveSkillContext)
 	runnerSvc.SetSkillValidator(func(ctx context.Context, directory, sessionID string, sel runner.SkillSelection) error {
@@ -340,8 +354,26 @@ func (g *Gateway) registerRoutes(distFS fs.FS) {
 			return
 		}
 		focusFn(strings.TrimSpace(body.Directory), strings.TrimSpace(body.SessionID))
+		g.QueueDesktopIntent(DesktopIntent{
+			SessionID: body.SessionID,
+			Directory: body.Directory,
+		})
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	})
+
+	g.mux.HandleFunc("/api/hoxi/desktop/intent", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSONError(w, http.StatusMethodNotAllowed, "POST required")
+			return
+		}
+		intent, ok := g.ConsumeDesktopIntent()
+		if !ok {
+			writeJSON(w, http.StatusOK, map[string]any{"intent": nil})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"intent": intent})
+	})
+	g.registerDesktopNotifyRoute(g.mux)
 
 	g.mux.HandleFunc("/api/hoxi/system-info", g.handleSystemRuntimeInfo)
 	g.mux.HandleFunc("/api/hoxi/engine/install", g.handleEngineInstall)

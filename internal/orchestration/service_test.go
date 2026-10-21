@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -100,6 +101,185 @@ func taskByID(plan Plan, id string) TaskState {
 		}
 	}
 	return TaskState{}
+}
+
+type flakySessions struct {
+	*fakeSessions
+	mu       sync.Mutex
+	failures int
+}
+
+func (f *flakySessions) Run(ctx context.Context, sessionID, prompt string, req PlanRequest) (string, error) {
+	f.mu.Lock()
+	if f.failures > 0 && strings.Contains(prompt, "flaky work") {
+		f.failures--
+		f.mu.Unlock()
+		return "", errors.New("flaky failure")
+	}
+	f.mu.Unlock()
+	return f.fakeSessions.Run(ctx, sessionID, prompt, req)
+}
+
+func TestPlanPersistsAcrossServiceRestart(t *testing.T) {
+	workspace := t.TempDir()
+	store := NewStore(filepath.Join(t.TempDir(), "plans"))
+	svc := NewService(newFakeSessions(true), WithStore(store))
+	plan, err := svc.Create(PlanRequest{
+		Directory: workspace,
+		Mode:      "build",
+		Tasks:     []TaskSpec{{ID: "a", Prompt: "alpha work"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := waitTerminal(t, svc, plan.ID)
+	if done.Status != StatusSucceeded {
+		t.Fatalf("plan status = %s, want succeeded", done.Status)
+	}
+
+	restarted := NewService(newFakeSessions(true), WithStore(store))
+	restored, ok := restarted.Get(plan.ID)
+	if !ok {
+		t.Fatal("persisted plan was not restored")
+	}
+	if restored.Status != StatusSucceeded || restored.Mode != "build" {
+		t.Fatalf("restored plan = %#v", restored)
+	}
+	if task := taskByID(restored, "a"); task.Status != StatusSucceeded || task.SessionID != done.Tasks[0].SessionID {
+		t.Fatalf("restored task = %#v", task)
+	}
+}
+
+func TestRestoreMarksInterruptedTasksFailed(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "plans"))
+	now := time.Now().UnixMilli()
+	plan := Plan{
+		ID: "plan_interrupted_test", Title: "Interrupted", Directory: t.TempDir(),
+		Status: StatusRunning, CreatedAt: now, UpdatedAt: now,
+		Tasks: []TaskState{
+			{ID: "done", Prompt: "done work", Status: StatusSucceeded, SessionID: "ses_hoxi_done"},
+			{ID: "live", Prompt: "live work", Status: StatusRunning, SessionID: "ses_hoxi_live"},
+		},
+	}
+	if err := store.Save(plan); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService(newFakeSessions(true), WithStore(store))
+	restored, ok := svc.Get(plan.ID)
+	if !ok {
+		t.Fatal("plan was not restored")
+	}
+	if restored.Status != StatusFailed || restored.Error == "" {
+		t.Fatalf("restored plan = %#v", restored)
+	}
+	if task := taskByID(restored, "done"); task.Status != StatusSucceeded {
+		t.Fatalf("completed task was rewritten: %#v", task)
+	}
+	live := taskByID(restored, "live")
+	if live.Status != StatusFailed || live.Error == "" || live.SessionID != "ses_hoxi_live" {
+		t.Fatalf("interrupted task = %#v", live)
+	}
+	persisted, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(persisted) != 1 || persisted[0].Status != StatusFailed {
+		t.Fatalf("interrupted state was not persisted: %#v", persisted)
+	}
+}
+
+func TestListBySessionFindsOwningPlan(t *testing.T) {
+	svc := NewService(newFakeSessions(true))
+	plan, err := svc.Create(PlanRequest{
+		Directory: t.TempDir(),
+		Tasks:     []TaskSpec{{ID: "a", Prompt: "alpha work"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := waitTerminal(t, svc, plan.ID)
+	sessionID := taskByID(done, "a").SessionID
+	found := svc.ListBySession(sessionID)
+	if len(found) != 1 || found[0].ID != plan.ID {
+		t.Fatalf("ListBySession(%q) = %#v", sessionID, found)
+	}
+	if other := svc.ListBySession("ses_unknown"); len(other) != 0 {
+		t.Fatalf("unknown session returned %#v", other)
+	}
+}
+
+func TestRetryRerunsOnlyUnfinishedTasks(t *testing.T) {
+	fake := newFakeSessions(true)
+	flaky := &flakySessions{fakeSessions: fake, failures: 1}
+	svc := NewService(flaky)
+	plan, err := svc.Create(PlanRequest{
+		Directory:   t.TempDir(),
+		Concurrency: 2,
+		Tasks: []TaskSpec{
+			{ID: "stable", Prompt: "stable work"},
+			{ID: "flaky", Prompt: "flaky work"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := waitTerminal(t, svc, plan.ID)
+	if first.Status != StatusFailed {
+		t.Fatalf("first run status = %s, want failed", first.Status)
+	}
+	stableSession := taskByID(first, "stable").SessionID
+	if task := taskByID(first, "flaky"); task.Status != StatusFailed || task.SessionID == "" {
+		t.Fatalf("flaky task = %#v", task)
+	}
+	createdBefore := len(fake.created)
+
+	retried, err := svc.Retry(plan.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task := taskByID(retried, "stable"); task.Status != StatusSucceeded || task.SessionID != stableSession {
+		t.Fatalf("succeeded task was reset: %#v", task)
+	}
+	if task := taskByID(retried, "flaky"); task.Status != StatusQueued || task.Error != "" {
+		t.Fatalf("failed task was not reset: %#v", task)
+	}
+
+	final := waitTerminal(t, svc, plan.ID)
+	if final.Status != StatusSucceeded {
+		t.Fatalf("retried plan status = %s, want succeeded", final.Status)
+	}
+	if task := taskByID(final, "stable"); task.SessionID != stableSession {
+		t.Fatalf("succeeded task was rerun: %#v", task)
+	}
+	if len(fake.created) != createdBefore+1 {
+		t.Fatalf("sessions created = %d, want %d", len(fake.created), createdBefore+1)
+	}
+}
+
+func TestRetryRejectsActivePlan(t *testing.T) {
+	fake := newFakeSessions(false)
+	fake.block = make(chan struct{})
+	svc := NewService(fake)
+	plan, err := svc.Create(PlanRequest{
+		Directory: t.TempDir(),
+		Tasks:     []TaskSpec{{ID: "a", Prompt: "alpha work"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if current, ok := svc.Get(plan.ID); ok && taskByID(current, "a").Status == StatusRunning {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if _, err := svc.Retry(plan.ID); !errors.Is(err, ErrPlanActive) {
+		t.Fatalf("retry error = %v, want ErrPlanActive", err)
+	}
+	_, _ = svc.Cancel(plan.ID)
+	close(fake.block)
+	waitTerminal(t, svc, plan.ID)
 }
 
 func TestIsolatedPlanMergesPrerequisitesIntoDependents(t *testing.T) {

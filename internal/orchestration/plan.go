@@ -40,6 +40,9 @@ type Plan struct {
 	ID          string      `json:"id"`
 	Title       string      `json:"title"`
 	Directory   string      `json:"directory"`
+	Mode        string      `json:"mode,omitempty"`
+	Provider    string      `json:"provider,omitempty"`
+	Model       string      `json:"model,omitempty"`
 	Concurrency int         `json:"concurrency"`
 	Isolated    bool        `json:"isolated"` // every task runs in its own git worktree
 	Status      string      `json:"status"`

@@ -8,6 +8,7 @@ export const inspector = {
     skills: "Skills",
     terminal: "Terminal",
     browser: "Browser",
+    tasks: "Tasks",
     maximize: "Maximize Inspector (cover chat area)",
     restore: "Restore split view",
   },

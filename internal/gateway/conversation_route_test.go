@@ -47,7 +47,11 @@ func newConversationGateway(t *testing.T) (*Gateway, func() []upstreamCall) {
 	t.Setenv("HOXI_SESSION_STORE_DIR", t.TempDir())
 	gw := New(upstream.Listener.Addr().(*net.TCPAddr).Port, "pass", root, nil, nil)
 	rec := runner.SessionRecord{ID: "ses_cld_owned", Runtime: "claude-code", ProjectDir: root, WorktreePath: root,
-		SandboxMode: "local", Title: "owned", UpdatedAt: 10, OpenCodeIDs: []string{"ses_engine"}}
+		SandboxMode: "local", Title: "owned", UpdatedAt: 10, OpenCodeIDs: []string{"ses_engine"},
+		Turns: []runner.MessageTurn{{
+			Info:  runner.MessageInfo{ID: "msg", SessionID: "ses_cld_owned", Role: "user"},
+			Parts: []runner.MessagePart{{ID: "prt", SessionID: "ses_cld_owned", MessageID: "msg", Type: "text", Text: "hi"}},
+		}}}
 	if err := gw.runner.Store().Put(rec); err != nil {
 		t.Fatal(err)
 	}
@@ -272,5 +276,59 @@ func TestSkillSelectionProbeKeepsLargeBodies(t *testing.T) {
 		if string(got) != tc.payload {
 			t.Fatalf("body changed: got %d bytes, want %d", len(got), len(tc.payload))
 		}
+	}
+}
+
+func TestConversationListFiltersByProjectID(t *testing.T) {
+	gw, _ := newConversationGateway(t)
+	rootProject, err := gw.workspaces.EnsureProjectForDirectory(gw.rootDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherRoot := t.TempDir()
+	otherProject, err := gw.workspaces.EnsureProjectForDirectory(otherRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, rec := range []runner.SessionRecord{
+		{ID: "ses_in_root", ProjectID: rootProject, Runtime: "claude-code", ProjectDir: gw.rootDir, WorktreePath: gw.rootDir, SandboxMode: "local", UpdatedAt: 11},
+		{ID: "ses_in_other", ProjectID: otherProject, Runtime: "claude-code", ProjectDir: otherRoot, WorktreePath: otherRoot, SandboxMode: "local", UpdatedAt: 12},
+	} {
+		if err := gw.runner.Store().Put(rec); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	res := serve(gw, http.MethodGet, "/api/hoxi/sessions?projectID="+url.QueryEscape(rootProject), "")
+	if res.Code != http.StatusOK {
+		t.Fatalf("list: %d %s", res.Code, res.Body.String())
+	}
+	var list []struct {
+		ID        string `json:"id"`
+		ProjectID string `json:"projectID"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &list); err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	for _, item := range list {
+		seen[item.ID] = true
+		if item.ID == "ses_oc" && item.ProjectID != rootProject {
+			t.Fatalf("unadopted OpenCode session project = %q, want %q", item.ProjectID, rootProject)
+		}
+	}
+	if !seen["ses_in_root"] || seen["ses_in_other"] {
+		t.Fatalf("project-filtered list = %+v", list)
+	}
+
+	res = serve(gw, http.MethodGet, "/api/hoxi/projects/resolve?directory="+url.QueryEscape(gw.rootDir), "")
+	var resolved struct {
+		ProjectID string `json:"projectID"`
+	}
+	if res.Code != http.StatusOK || json.Unmarshal(res.Body.Bytes(), &resolved) != nil {
+		t.Fatalf("resolve: %d %s", res.Code, res.Body.String())
+	}
+	if resolved.ProjectID != rootProject {
+		t.Fatalf("resolved project = %q, want %q", resolved.ProjectID, rootProject)
 	}
 }

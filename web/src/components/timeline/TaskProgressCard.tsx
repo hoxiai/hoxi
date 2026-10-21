@@ -25,16 +25,18 @@ import { Spinner, TextShimmer } from "../icons";
 import { t } from "../../i18n";
 import {
   collectCycleStepItems,
-  collectTaskCycleTurns,
   type CycleStepItem,
-  findLatestTodoPart,
   hasActiveSubagentInCycle,
   isTodoListStale,
-  type NormalizedTodoItem,
-  normalizeTodoItems,
   resolveTaskChangedFiles,
   summarizeTodoActivity,
 } from "./task-progress-helpers";
+import {
+  collectTaskCycleTurns,
+  findLatestTodoPart,
+  type NormalizedTodoItem,
+  normalizeTodoItems,
+} from "../../store/task-progress";
 import TaskProgressDetails from "./TaskProgressDetails";
 import TaskProgressStaleHint from "./TaskProgressStaleHint";
 

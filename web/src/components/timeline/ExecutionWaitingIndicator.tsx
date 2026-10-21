@@ -1,13 +1,15 @@
 import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 import { t } from "../../i18n";
-import { Spinner, TextShimmer } from "../icons";
+import { TextShimmer } from "../icons";
 import type { ToolPart } from "../../services/sse-types";
+import HoxiActivityLogo from "./HoxiActivityLogo";
 
 export default function ExecutionWaitingIndicator(props: {
   completedSteps: number;
   steps: ToolPart[];
   startedAt?: number;
   activeStepLabel?: string;
+  awaitingApproval?: boolean;
 }) {
   const mountedAt = Date.now();
   const resolveStart = () =>
@@ -24,8 +26,9 @@ export default function ExecutionWaitingIndicator(props: {
     onCleanup(() => clearInterval(timer));
   });
 
-  const headerText = () =>
-    props.completedSteps > 0 || Boolean(props.activeStepLabel)
+  const headerText = () => props.awaitingApproval
+    ? t("timeline.waitingApprovalBadge")
+    : props.completedSteps > 0 || Boolean(props.activeStepLabel)
       ? t("timeline.executing")
       : t("timeline.thinking");
 
@@ -36,13 +39,10 @@ export default function ExecutionWaitingIndicator(props: {
     >
       <div class="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[13px] text-[var(--accent-primary)]">
         <div class="flex min-w-0 flex-1 basis-48 items-center gap-2">
-          <span class="relative inline-flex shrink-0 items-center justify-center">
-            <span class="absolute h-5 w-5 rounded-full bg-[var(--accent-primary)]/15 animate-ping" />
-            <Spinner class="relative h-4 w-4" />
-          </span>
+          <HoxiActivityLogo active={!props.awaitingApproval} />
           <Show
-            when={props.activeStepLabel}
-            fallback={<TextShimmer text={headerText()} active={true} class="shrink-0 font-medium" />}
+            when={props.activeStepLabel && !props.awaitingApproval}
+            fallback={<TextShimmer text={headerText()} active={!props.awaitingApproval} class="shrink-0 font-medium" />}
           >
             <span class="min-w-0 truncate text-[12px] text-[var(--text-secondary)]" title={props.activeStepLabel}>
               {props.activeStepLabel}

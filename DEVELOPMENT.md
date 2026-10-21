@@ -417,17 +417,17 @@ function scheduleFlush(applyDeltaToStore: (key: string, delta: string) => void) 
    - 左侧预留 `76px` 空白区供 macOS 原生红绿灯（Traffic Lights）嵌入，整栏设置 `style="--wails-draggable: drag"` 支持拖拽窗口。
    - 中间展示当前项目名、Git Worktree 沙箱分支胶囊（如 `hoxi/ses_01J...`）以及一键合入按钮 `Apply to Main`。
    - 右侧展示 OpenCode 引擎在线状态指示灯与右侧审查栏折叠开关。
-2. **左栏 (`LeftNav` - 宽度 `240px`，可拖拽缩放)**：
+2. **左栏 (`LeftNav` - 默认 `268px`，可拖拽缩放 `220–360px`，开关与宽度持久化)**：
    - 顶部 `+ New Isolated Session` 按钮（点击触发 Worktree 沙箱创建 + OpenCode Session 创建）。
    - 按时间分组的会话列表，每项实时展示：会话标题、状态徽标（蓝点 Running / 黄点 Approval / 空闲）、以及该会话的变更统计（如 `+128 -34`）。
-3. **中栏 (`MessageStream` + `Composer` - 弹性自适应 `flex-1`)**：
+3. **中栏 (`MessageStream` + `Composer` - 弹性自适应 `flex-1`，目标最小 `560px`)**：
    - 消息流按 `MessagePart` 顺序渲染：`ReasoningPart` -> `ToolPart` -> `TextPart`。
    - 底部 Composer 支持：
      - `Mode` 切换胶囊：`Build`（全权限编码） / `Plan`（只读架构规划）。
      - `Model` 选择器：读取 `GET /provider` 动态切换模型。
      - `@` 符号唤起文件模糊搜索（调用 `GET /find/file`）。
      - 生成中展示红色 `Stop` 按钮（调用 `POST /session/{id}/abort`）。
-4. **右栏 (`InspectorPane` - 宽度 `380px`，可拖拽宽度)**：
+4. **右栏 (`InspectorPane` - 默认 `420px`，可拖拽 `340–640px`，按可用宽度动态收窄，空间不足时自动收起，宽度持久化)**：
    - 四个高频标签页：`Diffs (N)` | `Memory (8-Dim)` | `Files` | `Terminal`。
 
 ### 6.3 Kilo Code 风格动态工具卡片 (`ToolCard`)
@@ -536,7 +536,7 @@ stateDiagram-v2
 
 ### 9.1 Wails 窗口配置与单实例锁
 在 [`internal/app/app.go`](internal/app/app.go) 中配置 Wails `options.App`：
-- `Title: "hoxi"`，`Width: 1200`，`Height: 760`，`MinWidth: 880`，`MinHeight: 560`。
+- `Title: "hoxi"`，`Width: 1360`，`Height: 860`，`MinWidth: 880`，`MinHeight: 560`。
 - `HideWindowOnClose: runtime.GOOS == "darwin"`：点击左上角红叉仅隐藏窗口，保持后台 Agent 继续执行任务。
 - `SingleInstanceLock`：固定 UUID 锁，在 `OnSecondInstanceLaunch` 中调用 `wailsruntime.WindowShow(ctx)` 唤醒已有窗口。
 - `Mac: &mac.Options{ TitleBar: mac.TitleBarHiddenInset(), WebviewIsTransparent: true, WindowIsTranslucent: true }`：启用原生毛玻璃背景与内嵌交通灯。

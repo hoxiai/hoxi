@@ -32,6 +32,9 @@ const (
 	framePing
 	framePong
 	frameServiceSync
+	// frameNotify (Hoxi → GoPanel, stream 0) carries an attention notice that
+	// GoPanel turns into a phone push. GoPanel builds that predate it ignore it.
+	frameNotify
 )
 
 const (

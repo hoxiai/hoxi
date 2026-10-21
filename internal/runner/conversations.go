@@ -43,7 +43,14 @@ func directoryQuery(directory string, extra url.Values) url.Values {
 func (s *Service) handleConversationsRoot(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		writeJSON(w, http.StatusOK, s.listConversations(r.Context(), r.URL.Query().Get("directory")))
+		directory := r.URL.Query().Get("directory")
+		projectID := strings.TrimSpace(r.URL.Query().Get("projectID"))
+		if projectID == "" && directory != "" {
+			if resolved, ok := s.projectIDForDirectory(directory); ok {
+				projectID = resolved
+			}
+		}
+		writeJSON(w, http.StatusOK, s.listConversations(r.Context(), projectID, directory))
 	case http.MethodPost:
 		s.handleConversationCreate(w, r)
 	default:
@@ -52,14 +59,14 @@ func (s *Service) handleConversationsRoot(w http.ResponseWriter, r *http.Request
 }
 
 // listConversations degrades to Hoxi's own sessions when OpenCode is down.
-func (s *Service) listConversations(ctx context.Context, directory string) []json.RawMessage {
+func (s *Service) listConversations(ctx context.Context, projectID, directory string) []json.RawMessage {
 	type entry struct {
 		updated int64
 		raw     json.RawMessage
 	}
 	var entries []entry
 	owned := make(map[string]bool)
-	for _, info := range s.store.List(directory) {
+	for _, info := range s.store.ListProject(projectID, s.projectScopeDirectory(projectID, directory)) {
 		raw, err := json.Marshal(info)
 		if err != nil {
 			continue
@@ -67,9 +74,13 @@ func (s *Service) listConversations(ctx context.Context, directory string) []jso
 		owned[info.ID] = true
 		entries = append(entries, entry{info.Time.Updated, raw})
 	}
-	status, raw, err := s.openCodeRaw(ctx, http.MethodGet, "/session", directoryQuery(directory, url.Values{"limit": {"200"}}), nil)
-	var items []json.RawMessage
-	if err == nil && status == http.StatusOK && json.Unmarshal(raw, &items) == nil {
+	seenEngine := make(map[string]bool)
+	for _, engineDir := range s.conversationDirectories(projectID, directory) {
+		status, raw, err := s.openCodeRaw(ctx, http.MethodGet, "/session", directoryQuery(engineDir, url.Values{"limit": {"200"}}), nil)
+		var items []json.RawMessage
+		if err != nil || status != http.StatusOK || json.Unmarshal(raw, &items) != nil {
+			continue
+		}
 		for _, item := range items {
 			var info struct {
 				ID   string `json:"id"`
@@ -78,11 +89,16 @@ func (s *Service) listConversations(ctx context.Context, directory string) []jso
 				} `json:"time"`
 				Metadata map[string]interface{} `json:"metadata"`
 			}
-			if json.Unmarshal(item, &info) != nil || info.ID == "" || owned[info.ID] ||
+			if json.Unmarshal(item, &info) != nil || info.ID == "" || owned[info.ID] || seenEngine[info.ID] ||
 				s.IsManagedOpenCodeSession(info.ID) || info.Metadata["hoxiConversation"] != nil {
 				continue
 			}
-			entries = append(entries, entry{info.Time.Updated, item})
+			seenEngine[info.ID] = true
+			entryProjectID := projectID
+			if entryProjectID == "" {
+				entryProjectID, _ = s.projectIDForDirectory(engineDir)
+			}
+			entries = append(entries, entry{info.Time.Updated, withProjectID(item, entryProjectID)})
 		}
 	}
 	sort.SliceStable(entries, func(i, j int) bool { return entries[i].updated > entries[j].updated })
@@ -93,33 +109,114 @@ func (s *Service) listConversations(ctx context.Context, directory string) []jso
 	return out
 }
 
+// projectScopeDirectory supplies a legacy path fallback when a request only
+// carries a project ID.
+func (s *Service) projectScopeDirectory(projectID, directory string) string {
+	if strings.TrimSpace(directory) != "" || projectID == "" || s.projectResolver == nil {
+		return directory
+	}
+	if roots := s.projectResolver.ProjectRoots(projectID); len(roots) > 0 {
+		return roots[0]
+	}
+	return directory
+}
+
+// conversationDirectories lists the engine roots that belong to one project.
+// Falling back to the request directory keeps legacy/unresolved projects and
+// the global feed working while still covering every folder of a multi-root
+// project.
+func (s *Service) conversationDirectories(projectID, directory string) []string {
+	var dirs []string
+	seen := make(map[string]bool)
+	add := func(dir string) {
+		dir = strings.TrimSpace(dir)
+		if seen[dir] {
+			return
+		}
+		seen[dir] = true
+		dirs = append(dirs, dir)
+	}
+	if projectID != "" && s.projectResolver != nil {
+		for _, root := range s.projectResolver.ProjectRoots(projectID) {
+			add(root)
+		}
+	}
+	if len(dirs) == 0 {
+		add(directory)
+	}
+	return dirs
+}
+
+// withProjectID gives unadopted OpenCode sessions the same stable attribution
+// as Hoxi-owned conversations before they are adopted.
+func withProjectID(item json.RawMessage, projectID string) json.RawMessage {
+	if strings.TrimSpace(projectID) == "" {
+		return item
+	}
+	var object map[string]json.RawMessage
+	if json.Unmarshal(item, &object) != nil {
+		return item
+	}
+	if _, exists := object["projectID"]; exists {
+		return item
+	}
+	raw, err := json.Marshal(projectID)
+	if err != nil {
+		return item
+	}
+	object["projectID"] = raw
+	merged, err := json.Marshal(object)
+	if err != nil {
+		return item
+	}
+	return merged
+}
+
 func (s *Service) handleConversationStatuses(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSONError(w, http.StatusMethodNotAllowed, "GET required")
 		return
 	}
-	writeJSON(w, http.StatusOK, s.conversationStatuses(r.Context(), r.URL.Query().Get("directory")))
+	directory := r.URL.Query().Get("directory")
+	projectID := strings.TrimSpace(r.URL.Query().Get("projectID"))
+	if projectID == "" && directory != "" {
+		if resolved, ok := s.projectIDForDirectory(directory); ok {
+			projectID = resolved
+		}
+	}
+	writeJSON(w, http.StatusOK, s.conversationStatuses(r.Context(), projectID, directory))
 }
 
 // conversationStatuses reports engine-handle activity under the conversation
 // ID only, via the runner's own process table.
-func (s *Service) conversationStatuses(ctx context.Context, directory string) map[string]json.RawMessage {
+func (s *Service) conversationStatuses(ctx context.Context, projectID, directory string) map[string]json.RawMessage {
 	out := make(map[string]json.RawMessage)
-	status, raw, err := s.openCodeRaw(ctx, http.MethodGet, "/session/status", directoryQuery(directory, nil), nil)
-	var engine map[string]json.RawMessage
-	if err == nil && status == http.StatusOK && json.Unmarshal(raw, &engine) == nil {
+	for _, engineDir := range s.conversationDirectories(projectID, directory) {
+		status, raw, err := s.openCodeRaw(ctx, http.MethodGet, "/session/status", directoryQuery(engineDir, nil), nil)
+		var engine map[string]json.RawMessage
+		if err != nil || status != http.StatusOK || json.Unmarshal(raw, &engine) != nil {
+			continue
+		}
 		for id, st := range engine {
 			if !s.IsManagedOpenCodeSession(id) {
 				out[id] = st
 			}
 		}
 	}
+	allowed := make(map[string]bool)
+	for _, info := range s.store.ListProject(projectID, s.projectScopeDirectory(projectID, directory)) {
+		allowed[info.ID] = true
+	}
 	for _, id := range s.busySessionIDs() {
-		out[id] = json.RawMessage(`{"type":"busy"}`)
+		if allowed[id] {
+			out[id] = json.RawMessage(`{"type":"busy"}`)
+		}
 	}
 	// Reconnecting clients restore the stall notice from the snapshot.
 	for id, since := range s.stalledSessions() {
-		out[id] = json.RawMessage(fmt.Sprintf(`{"type":"busy","stalledSince":%d}`, since))
+		if allowed[id] {
+			out[id] = json.RawMessage(fmt.Sprintf(`{"type":"busy","stalledSince":%d}`, since))
+		}
 	}
 	return out
 }
@@ -169,11 +266,16 @@ func (s *Service) CreateConversation(ctx context.Context, body CreateSessionRequ
 	if err != nil {
 		return SessionInfo{}, http.StatusBadRequest, err
 	}
+	projectID, err := s.ensureProjectID(projDir)
+	if err != nil {
+		return SessionInfo{}, http.StatusBadRequest, err
+	}
 	sessionID := GenerateRunnerSessionID("opencode")
 	now := time.Now().UnixMilli()
 	title := strings.TrimSpace(body.Title)
 	rec := SessionRecord{
 		ID:          sessionID,
+		ProjectID:   projectID,
 		Runtime:     "opencode",
 		ProjectDir:  projDir,
 		SandboxMode: sandboxMode,

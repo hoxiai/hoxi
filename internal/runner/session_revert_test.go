@@ -205,6 +205,182 @@ func TestSessionRevertUnrevertAndFork(t *testing.T) {
 	}
 }
 
+func TestSessionRevertRejectsUnknownTarget(t *testing.T) {
+	repo := initTestGitRepo(t)
+	trackedFile := filepath.Join(repo, "README.md")
+	if err := os.WriteFile(trackedFile, []byte("working state\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	storeDir := filepath.Join(t.TempDir(), "sessions")
+	svc := NewService(repo, worktree.NewManager(repo), nil, storeDir)
+	turns := []MessageTurn{
+		{
+			Info:  MessageInfo{ID: "msg_u_1", SessionID: "ses_hoxi_stale", Role: "user"},
+			Parts: []MessagePart{{ID: "prt_u_1", SessionID: "ses_hoxi_stale", MessageID: "msg_u_1", Type: "text", Text: "prompt"}},
+		},
+		{
+			Info:  MessageInfo{ID: "msg_a_1", SessionID: "ses_hoxi_stale", Role: "assistant"},
+			Parts: []MessagePart{{ID: "prt_a_1", SessionID: "ses_hoxi_stale", MessageID: "msg_a_1", Type: "text", Text: "reply"}},
+		},
+	}
+	if err := svc.Store().Put(SessionRecord{
+		ID:           "ses_hoxi_stale",
+		Runtime:      "claude-code",
+		ProjectDir:   repo,
+		WorktreePath: repo,
+		SandboxMode:  "local",
+		Turns:        turns,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+	svc.RegisterRoutes(mux)
+	req := httptest.NewRequest(http.MethodPost, "/api/hoxi/runner/sessions/ses_hoxi_stale/revert", strings.NewReader(`{"messageID":"msg_missing"}`))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for unknown revert target, got %d: %s", w.Code, w.Body.String())
+	}
+
+	got, err := os.ReadFile(trackedFile)
+	if err != nil || string(got) != "working state\n" {
+		t.Fatalf("unknown revert target must not touch the worktree, got %q (%v)", string(got), err)
+	}
+	stored, ok := svc.Store().Get("ses_hoxi_stale")
+	if !ok || stored.Revert != nil || len(stored.Turns) != len(turns) {
+		t.Fatalf("unknown revert target must not mutate the session, got %+v", stored)
+	}
+}
+
+func TestSessionRevertToolTargetUsesExchangeCheckpoint(t *testing.T) {
+	repo := initTestGitRepo(t)
+	trackedFile := filepath.Join(repo, "README.md")
+	if err := os.WriteFile(trackedFile, []byte("after turn 1\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	exchangeSnap, err := worktree.CreateSnapshot(repo)
+	if err != nil || exchangeSnap == "" {
+		t.Fatalf("CreateSnapshot exchange checkpoint: %v", err)
+	}
+	if err := os.WriteFile(trackedFile, []byte("after tool edit\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	storeDir := filepath.Join(t.TempDir(), "sessions")
+	svc := NewService(repo, worktree.NewManager(repo), nil, storeDir)
+	turns := []MessageTurn{
+		{
+			Info:  MessageInfo{ID: "msg_u_1", SessionID: "ses_hoxi_tool", Role: "user"},
+			Parts: []MessagePart{{ID: "prt_u_1", SessionID: "ses_hoxi_tool", MessageID: "msg_u_1", Type: "text", Text: "first prompt"}},
+		},
+		{
+			Info:  MessageInfo{ID: "msg_a_1", SessionID: "ses_hoxi_tool", Role: "assistant"},
+			Parts: []MessagePart{{ID: "prt_a_1", SessionID: "ses_hoxi_tool", MessageID: "msg_a_1", Type: "text", Text: "first reply"}},
+		},
+		{
+			Info:  MessageInfo{ID: "msg_u_2", SessionID: "ses_hoxi_tool", Role: "user"},
+			Parts: []MessagePart{{ID: "prt_u_2", SessionID: "ses_hoxi_tool", MessageID: "msg_u_2", Type: "text", Text: "second prompt"}},
+		},
+		{
+			Info:  MessageInfo{ID: "msg_a_2", SessionID: "ses_hoxi_tool", Role: "assistant"},
+			Parts: []MessagePart{{ID: "prt_edit", SessionID: "ses_hoxi_tool", MessageID: "msg_a_2", Type: "tool", Tool: "edit"}},
+		},
+	}
+	if err := svc.Store().Put(SessionRecord{
+		ID:           "ses_hoxi_tool",
+		Runtime:      "claude-code",
+		ProjectDir:   repo,
+		WorktreePath: repo,
+		SandboxMode:  "local",
+		Turns:        turns,
+		Snapshots:    map[string]string{"msg_u_2": exchangeSnap},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+	svc.RegisterRoutes(mux)
+	req := httptest.NewRequest(http.MethodPost, "/api/hoxi/runner/sessions/ses_hoxi_tool/revert", strings.NewReader(`{"messageID":"msg_a_2","partID":"prt_edit"}`))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("tool revert status = %d: %s", w.Code, w.Body.String())
+	}
+
+	got, err := os.ReadFile(trackedFile)
+	if err != nil || string(got) != "after turn 1\n" {
+		t.Fatalf("expected tool revert to restore the exchange checkpoint, got %q (%v)", string(got), err)
+	}
+	reloaded, ok := NewStore(storeDir).Get("ses_hoxi_tool")
+	if !ok || reloaded.Revert == nil || reloaded.Revert.PartID != "prt_edit" {
+		t.Fatalf("expected part-level revert boundary on disk, got %+v", reloaded)
+	}
+}
+
+func TestSessionForkRejectsUnknownMessageAndCopiesSnapshots(t *testing.T) {
+	repo := initTestGitRepo(t)
+	snap1, err := worktree.CreateSnapshot(repo)
+	if err != nil || snap1 == "" {
+		t.Fatalf("CreateSnapshot snap1: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("after turn 1\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	storeDir := filepath.Join(t.TempDir(), "sessions")
+	svc := NewService(repo, worktree.NewManager(repo), nil, storeDir)
+	turns := []MessageTurn{
+		{
+			Info:  MessageInfo{ID: "msg_u_1", SessionID: "ses_hoxi_fork", Role: "user"},
+			Parts: []MessagePart{{ID: "prt_u_1", SessionID: "ses_hoxi_fork", MessageID: "msg_u_1", Type: "text", Text: "first prompt"}},
+		},
+		{
+			Info:  MessageInfo{ID: "msg_a_1", SessionID: "ses_hoxi_fork", Role: "assistant"},
+			Parts: []MessagePart{{ID: "prt_a_1", SessionID: "ses_hoxi_fork", MessageID: "msg_a_1", Type: "text", Text: "first reply"}},
+		},
+	}
+	if err := svc.Store().Put(SessionRecord{
+		ID:           "ses_hoxi_fork",
+		Runtime:      "claude-code",
+		ProjectDir:   repo,
+		WorktreePath: repo,
+		SandboxMode:  "local",
+		Turns:        turns,
+		Snapshots:    map[string]string{"msg_u_1": snap1},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+	svc.RegisterRoutes(mux)
+	req := httptest.NewRequest(http.MethodPost, "/api/hoxi/runner/sessions/ses_hoxi_fork/fork", strings.NewReader(`{"messageID":"msg_missing"}`))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for unknown fork target, got %d: %s", w.Code, w.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/hoxi/runner/sessions/ses_hoxi_fork/fork", strings.NewReader(`{"messageID":"msg_a_1"}`))
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("fork status = %d: %s", w.Code, w.Body.String())
+	}
+	var forkedInfo SessionInfo
+	if err := json.Unmarshal(w.Body.Bytes(), &forkedInfo); err != nil {
+		t.Fatal(err)
+	}
+	forkedRec, ok := NewStore(storeDir).Get(forkedInfo.ID)
+	if !ok || len(forkedRec.Turns) != 2 {
+		t.Fatalf("unexpected forked record: %+v", forkedRec)
+	}
+	if forkedRec.Snapshots["msg_u_1"] != snap1 {
+		t.Fatalf("expected fork to inherit the exchange checkpoint, got %+v", forkedRec.Snapshots)
+	}
+}
+
 func TestUnifiedPermissionEndpointMergesAndRoutesReplies(t *testing.T) {
 	repo := initTestGitRepo(t)
 	var repliedEngineID string

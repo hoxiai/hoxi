@@ -1,4 +1,10 @@
 // web/src/services/api-types.ts
+export interface DesktopIntent {
+  sessionID: string;
+  messageID?: string;
+  directory?: string;
+}
+
 export interface PromptAttachment {
   type: "file";
   mime: string;
@@ -121,8 +127,15 @@ export interface WorkspaceProfile {
   name: string;
   color: string;
   folders: WorkspaceFolder[];
+  hidden?: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface ProjectResolveResponse {
+  projectID: string;
+  directory: string;
+  roots: string[];
 }
 
 export interface SaveWorkspaceInput {

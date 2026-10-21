@@ -72,6 +72,10 @@ func (s *Service) CreateSession(body CreateSessionRequest, directory string) (Se
 	if body.CommandSandbox && !sandbox.Available() {
 		return SessionInfo{}, http.StatusBadRequest, errors.New(sandbox.UnavailableReason())
 	}
+	projectID, err := s.ensureProjectID(projDir)
+	if err != nil {
+		return SessionInfo{}, http.StatusBadRequest, err
+	}
 	sessionID := GenerateRunnerSessionID(rt)
 
 	modelID := strings.TrimSpace(body.ModelID)
@@ -115,6 +119,7 @@ func (s *Service) CreateSession(body CreateSessionRequest, directory string) (Se
 	now := time.Now().UnixMilli()
 	rec := SessionRecord{
 		ID:             sessionID,
+		ProjectID:      projectID,
 		Runtime:        rt,
 		ProjectDir:     projDir,
 		SandboxMode:    sandboxMode,

@@ -12,6 +12,7 @@ import {
   GitCompare,
   Globe,
   Link2,
+  ListChecks,
   MessageSquare,
   Moon,
   Plus,
@@ -138,6 +139,13 @@ export default function CommandPalette(props: CommandPaletteProps) {
         label: t("commandPalette.actionOpenMemory"),
         icon: Brain,
         run: () => setWorkspace({ inspectorOpen: true, inspectorTab: "memory" }),
+      },
+      {
+        id: "open-tasks",
+        group: "actions",
+        label: t("commandPalette.actionOpenTasks"),
+        icon: ListChecks,
+        run: () => setWorkspace({ inspectorOpen: true, inspectorTab: "tasks" }),
       },
       {
         id: "open-skills",

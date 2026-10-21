@@ -209,3 +209,35 @@ func bindingFromDirectory(directory string) (SessionBinding, error) {
 	}
 	return SessionBinding{Directory: filepath.Clean(abs), Isolated: true}, nil
 }
+
+// ForgetSession drops an in-memory binding before it is restored under a new
+// project root, so BindingForSession cannot see two owners.
+func (m *worktreeManager) ForgetSession(sessionID string) {
+	sessionID = sanitizeSessionID(sessionID)
+	if sessionID == "" {
+		return
+	}
+	m.roots.Lock()
+	managers := make([]*worktreeManager, 0, len(m.roots.managers))
+	for _, scoped := range m.roots.managers {
+		managers = append(managers, scoped)
+	}
+	m.roots.Unlock()
+	for _, scoped := range managers {
+		scoped.mu.Lock()
+		delete(scoped.sessions, sessionID)
+		scoped.mu.Unlock()
+	}
+}
+
+// RepairWorktrees fixes the absolute gitdir pointers after a project folder was
+// moved on disk. It is best-effort: a missing or non-git path is ignored.
+func (m *worktreeManager) RepairWorktrees(rootDir string, directories []string) {
+	for _, directory := range directories {
+		directory = strings.TrimSpace(directory)
+		if directory == "" {
+			continue
+		}
+		_, _ = runGit(rootDir, "worktree", "repair", directory)
+	}
+}

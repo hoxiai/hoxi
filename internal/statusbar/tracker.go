@@ -28,6 +28,7 @@ type Tracker struct {
 	keepAwakeCmd       *exec.Cmd
 	startKeepAwakeHook func() (func(), error)
 	keepAwakeStopHook  func()
+	approvalListener   func(ApprovalNotice)
 }
 
 func NewTracker() *Tracker {
@@ -98,8 +99,9 @@ func (t *Tracker) SetPendingApproval(requestID, sessionID string, pending bool) 
 		return
 	}
 	t.mu.Lock()
+	var announce func()
 	if pending {
-		t.pendingApprovals[requestID] = sessionID
+		announce = t.addPendingLocked("approval", requestID, sessionID, "")
 	} else {
 		delete(t.pendingApprovals, requestID)
 	}
@@ -107,6 +109,9 @@ func (t *Tracker) SetPendingApproval(requestID, sessionID string, pending bool) 
 	summary := t.snapshotLocked()
 	t.mu.Unlock()
 	Update(summary)
+	if announce != nil {
+		announce()
+	}
 }
 
 // SetProviderDegraded flags a provider with persistent internal LLM failures so
@@ -181,6 +186,7 @@ func (t *Tracker) InspectSSELine(line string) {
 	}
 
 	changed := false
+	var announce func()
 	t.mu.Lock()
 	switch evtType {
 	case "session.status":
@@ -210,11 +216,16 @@ func (t *Tracker) InspectSSELine(line string) {
 		}
 	case "permission.asked", "question.asked":
 		var p struct {
-			ID        string `json:"id"`
-			SessionID string `json:"sessionID"`
+			ID         string `json:"id"`
+			SessionID  string `json:"sessionID"`
+			Permission string `json:"permission"`
 		}
 		if json.Unmarshal(evtProps, &p) == nil && p.ID != "" {
-			t.pendingApprovals[p.ID] = p.SessionID
+			kind := "approval"
+			if evtType == "question.asked" {
+				kind = "question"
+			}
+			announce = t.addPendingLocked(kind, p.ID, p.SessionID, p.Permission)
 			changed = true
 		}
 	case "permission.replied", "question.replied", "question.rejected":
@@ -235,5 +246,8 @@ func (t *Tracker) InspectSSELine(line string) {
 
 	if changed {
 		Update(summary)
+	}
+	if announce != nil {
+		announce()
 	}
 }

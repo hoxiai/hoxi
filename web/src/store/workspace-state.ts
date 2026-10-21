@@ -187,6 +187,7 @@ export interface WorkspaceState {
   sessions: SessionInfo[];
   archivedSessionIDs: string[];
   activeSessionID: string | null;
+  activeProjectID: string | null;
   sessionSetupError: string | null;
   newThreadRequest: number;
   agents: AgentInfo[];
@@ -195,7 +196,7 @@ export interface WorkspaceState {
   aiBySession: Record<string, SessionAIConfig>;
   sessionSandboxMode: "local" | "worktree";
   sidebarProjectMode: "single" | "multi" | "recent";
-  inspectorTab: "diffs" | "memory" | "files" | "skills" | "terminal" | "browser";
+  inspectorTab: "diffs" | "memory" | "files" | "skills" | "terminal" | "browser" | "tasks";
   inspectorOpen: boolean;
   inspectorMaximized: boolean;
   inspectedFilePath: string | null;
@@ -420,6 +421,7 @@ export const [workspace, setWorkspace] = createStore<WorkspaceState>({
   sessions: [],
   archivedSessionIDs: initialArchivedSessions(ARCHIVED_SESSIONS_KEY),
   activeSessionID: null,
+  activeProjectID: null,
   sessionSetupError: null,
   newThreadRequest: 0,
   agents: DEFAULT_AGENTS,

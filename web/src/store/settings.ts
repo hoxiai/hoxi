@@ -2,6 +2,7 @@
 import { createSignal } from "solid-js";
 import { createStore } from "solid-js/store";
 import { hoxiAPI, type SystemRuntimeInfo } from "../services/api";
+import { deliverDesktopNotification } from "../services/desktop-notify";
 import { setWorkspace, THEME_KEY, workspace, type ProviderModalTab } from "./workspace-state";
 
 export type ApprovalMode = "auto" | "smart" | "manual";
@@ -551,33 +552,16 @@ export function triggerDesktopNotification(
   }, NOTIFICATION_DEDUPE_MS);
 
   playNotificationSound();
+  void deliverDesktopNotification({ title, body, sessionID: options.sessionID });
+}
 
-  if (typeof window === "undefined" || !("Notification" in window)) return;
-  try {
-    const show = () => {
-      const notification = new Notification(title, { body, silent: true });
-      notification.onclick = () => {
-        window.focus();
-        if (options.sessionID) {
-          window.dispatchEvent(
-            new CustomEvent("hoxi:notification-click", {
-              detail: { sessionID: options.sessionID },
-            })
-          );
-        }
-        notification.close();
-      };
-    };
-    if (Notification.permission === "granted") {
-      show();
-    } else if (Notification.permission !== "denied") {
-      void Notification.requestPermission().then((perm) => {
-        if (perm === "granted") show();
-      });
-    }
-  } catch {
-    /* ignore notification errors in embedded webview */
-  }
+// Components must route side effects through the store layer.
+export function sendDesktopNotification(request: {
+  title: string;
+  body: string;
+  sessionID?: string;
+}): void {
+  void deliverDesktopNotification(request);
 }
 
 export function buildCombinedSystemPrompt(

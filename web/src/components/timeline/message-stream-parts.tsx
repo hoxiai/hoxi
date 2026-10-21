@@ -506,40 +506,6 @@ export function AssistantTurnFooter(props: {
             />
 
             <div class="flex items-center gap-2 flex-wrap text-[12px] text-[var(--text-faint)]">
-
-              <Show when={summary().finalText.length > 0}>
-                <ActionIconButton
-                  label={copied() ? t("common.copied") : t("common.copy")}
-                  onClick={() => void copyResponse()}
-                >
-                  <Show when={copied()} fallback={<Icon name="copy" size="small" />}>
-                    <Icon name="check" size="small" class="text-[var(--ok-text)]" />
-                  </Show>
-                </ActionIconButton>
-
-                <ActionIconButton
-                  label={
-                    downloaded()
-                      ? t("timeline.downloadedMarkdown")
-                      : t("timeline.downloadMarkdown")
-                  }
-                  onClick={downloadMarkdown}
-                >
-                  <Show when={downloaded()} fallback={<Icon name="download" size="small" />}>
-                    <Icon name="check" size="small" class="text-[var(--ok-text)]" />
-                  </Show>
-                </ActionIconButton>
-
-                <ActionIconButton
-                  label={linkCopied() ? t("common.copied") : t("commandPalette.actionCopySessionLink")}
-                  onClick={() => void copyLink()}
-                >
-                  <Show when={linkCopied()} fallback={<Icon name="link" size="small" />}>
-                    <Icon name="check" size="small" class="text-[var(--ok-text)]" />
-                  </Show>
-                </ActionIconButton>
-              </Show>
-
               <Show when={interruptMode()}>
                 {(mode) => (
                   <span
@@ -559,24 +525,6 @@ export function AssistantTurnFooter(props: {
                     </span>
                   </span>
                 )}
-              </Show>
-
-              <Show when={durationLabel()}>
-                <TurnTelemetryPopover
-                  durationLabel={durationLabel()}
-                  durationMs={Math.max(
-                    0,
-                    (summary().completed || 0) - (summary().created || 0)
-                  )}
-                  providerID={summary().providerID}
-                  modelID={summary().modelID}
-                  toolCount={summary().toolCount}
-                  inputTokens={summary().inputTokens}
-                  outputTokens={summary().outputTokens}
-                  reasoningTokens={summary().reasoningTokens}
-                  cacheReadTokens={summary().cacheReadTokens}
-                  cost={summary().cost}
-                />
               </Show>
 
               <Show when={isLatestTurn() && interruptMode() && !props.isSessionBusy}>
@@ -604,6 +552,61 @@ export function AssistantTurnFooter(props: {
               <Show when={isLatestTurn()}>
                 <ObserverAuditBadge sessionID={props.info.sessionID} />
               </Show>
+
+              <div class="pointer-events-none flex items-center gap-2 opacity-0 transition-opacity duration-150 motion-reduce:transition-none group-hover/turn:pointer-events-auto group-hover/turn:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100">
+                <Show when={summary().finalText.length > 0}>
+                  <div class="flex items-center gap-1">
+                    <ActionIconButton
+                      label={copied() ? t("common.copied") : t("common.copy")}
+                      onClick={() => void copyResponse()}
+                    >
+                      <Show when={copied()} fallback={<Icon name="copy" size="small" />}>
+                        <Icon name="check" size="small" class="text-[var(--ok-text)]" />
+                      </Show>
+                    </ActionIconButton>
+
+                    <ActionIconButton
+                      label={
+                        downloaded()
+                          ? t("timeline.downloadedMarkdown")
+                          : t("timeline.downloadMarkdown")
+                      }
+                      onClick={downloadMarkdown}
+                    >
+                      <Show when={downloaded()} fallback={<Icon name="download" size="small" />}>
+                        <Icon name="check" size="small" class="text-[var(--ok-text)]" />
+                      </Show>
+                    </ActionIconButton>
+
+                    <ActionIconButton
+                      label={linkCopied() ? t("common.copied") : t("commandPalette.actionCopySessionLink")}
+                      onClick={() => void copyLink()}
+                    >
+                      <Show when={linkCopied()} fallback={<Icon name="link" size="small" />}>
+                        <Icon name="check" size="small" class="text-[var(--ok-text)]" />
+                      </Show>
+                    </ActionIconButton>
+                  </div>
+                </Show>
+
+                <Show when={durationLabel()}>
+                  <TurnTelemetryPopover
+                    durationLabel={durationLabel()}
+                    durationMs={Math.max(
+                      0,
+                      (summary().completed || 0) - (summary().created || 0)
+                    )}
+                    providerID={summary().providerID}
+                    modelID={summary().modelID}
+                    toolCount={summary().toolCount}
+                    inputTokens={summary().inputTokens}
+                    outputTokens={summary().outputTokens}
+                    reasoningTokens={summary().reasoningTokens}
+                    cacheReadTokens={summary().cacheReadTokens}
+                    cost={summary().cost}
+                  />
+                </Show>
+              </div>
             </div>
           </div>
         </Show>
@@ -617,6 +620,7 @@ export function LiveExecutionControlBar(props: {
   sessionID: string | null;
   isSessionBusy: boolean;
   showThinking: boolean;
+  awaitingApproval?: boolean;
   completedSteps?: number;
   steps?: import("../../services/sse-types").ToolPart[];
   startedAt?: number;
@@ -644,6 +648,7 @@ export function LiveExecutionControlBar(props: {
     <>
       <Show when={props.showThinking}>
         <ExecutionWaitingIndicator
+          awaitingApproval={props.awaitingApproval}
           completedSteps={props.completedSteps ?? 0}
           steps={props.steps ?? []}
           startedAt={props.startedAt}

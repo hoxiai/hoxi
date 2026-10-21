@@ -17,6 +17,7 @@ func (s *Service) childSessionFactory(parent SessionRecord, modelID, mode string
 		now := time.Now().UnixMilli()
 		child := SessionRecord{
 			ID:           GenerateRunnerSessionID(parent.Runtime),
+			ProjectID:    parent.ProjectID,
 			ParentID:     parent.ID,
 			Subagent:     true,
 			Runtime:      parent.Runtime,

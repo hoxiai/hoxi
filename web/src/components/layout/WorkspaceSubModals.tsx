@@ -105,7 +105,7 @@ export function ManageWorkspacesModalView() {
     const coveredDirs = new Set<string>();
 
     for (const saved of workspace.savedWorkspaces) {
-      if (isDismissedProjectPath(saved.id)) continue;
+      if (saved.hidden || isDismissedProjectPath(saved.id)) continue;
       const primary = workspacePrimaryFolder(saved);
       if (isDismissedProjectPath(primary)) continue;
       for (const f of saved.folders) {

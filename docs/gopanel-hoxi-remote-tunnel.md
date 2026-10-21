@@ -15,7 +15,8 @@
 | 手机在服务器列表中发现并添加 Hoxi 电脑 | 已实现 |
 | 经隧道的 WebSocket（终端 `/pty`） | 未实现，GoPanel 返回 501 |
 | 同局域网手机直连 Mac（`5417` 监听） | 未实现，见第 9 节 |
-| 手机推送通知（审批提醒） | 未实现 |
+| iPhone 审批提醒推送（APNs），点开进入语音审批 | 已实现，待真机验收；需在 GoPanel 配置 APNs 密钥 |
+| Android 推送 | 未实现（国内无统一通道，需厂商推送或第三方） |
 
 ## 2. 拓扑
 
@@ -79,6 +80,7 @@ Type(1B) | StreamID(8B, BigEndian uint64) | Payload(≤ 4MB)
 | 5 | Reset | 双向 | 错误原因文本 |
 | 6 / 7 | Ping / Pong | 双向 | 时间戳 |
 | 8 | ServiceSync | Hoxi → GoPanel | 见 4.4 |
+| 9 | Notify | Hoxi → GoPanel | 待处理提醒，StreamID 为 0，见第 11 节；旧版 GoPanel 会忽略 |
 
 心跳 20 秒，读超时 65 秒，写超时 15 秒；断线后 1s 起指数退避至 30s 重连，连上后退避归零。GoPanel 每条请求流缓冲 32 帧、Hoxi 每条请求体缓冲 16 块，超出即 Reset（见第 8 节）。
 
@@ -170,7 +172,7 @@ Type(1B) | StreamID(8B, BigEndian uint64) | Payload(≤ 4MB)
 
 - 经隧道转发 WebSocket（手机远程终端）。GoPanel 侧已支持，Hoxi 侧需要回连本机端口或实现进程内 Hijack。
 - 同局域网直连：Hoxi 额外监听 `5417`（受令牌保护），手机按「局域网探测 → 失败回落中继」双路由。`5417` 端口号保留给该功能，当前版本不监听。
-- 隧道 token 存入 macOS 钥匙串；手机推送通知；节点身份与传输地址分离后的自动切换。
+- 隧道 token 存入 macOS 钥匙串；Android 推送；节点身份与传输地址分离后的自动切换。
 
 ## 10. 验证
 
@@ -181,5 +183,25 @@ Type(1B) | StreamID(8B, BigEndian uint64) | Payload(≤ 4MB)
 | GoPanel 代理 | `go test ./app/service/ -run HoxiTunnel`（SSE 逐块到达、GoPanel 凭据不泄漏、丢弃 Set-Cookie、未注册服务拒绝） |
 | 手机中继连接 | `flutter test test/hoxi_relay_test.dart` |
 | 双仓互通 | 用临时 `go.work` 同时引入两个模块，让真实 GoPanel `HandleTunnelConnection` 与真实 Hoxi `tunnel.Manager` 对接：SSE 首块约 2ms 到达、200KB 请求体完整。该测试不入库，修改帧协议时需重跑 |
+
+## 11. 审批提醒推送
+
+Agent 等待审批或向用户提问时，iPhone 收到通知；点开后 App 连接对应的 Hoxi 电脑、打开语音通话，并由助手读出待处理事项，用户用语音回答，经意图识别与确认卡片执行。
+
+```text
+Hoxi statusbar.Tracker（OpenCode permission/question.asked 与 Runner PreToolUse 审批）
+  → 新增待处理项只通知一次 → tunnel.Manager.Notify → Notify 帧（类型 9）
+  → GoPanel HandleHoxiNotice（仅限注册了 hoxi-gateway 的节点，按 requestId 去重 10 分钟）
+  → APNs（.p8 token 认证，HTTP/2，collapse-id = hoxi-node-<nodeId>）→ 已注册的 iPhone
+  → 点开：按 panel + nodeId 找到中继连接 → 切换节点 → 打开语音通话 → 自动询问“有哪些操作在等我审批”
+```
+
+- **内容最小化**：Notify 载荷只有 `kind`（approval / question）、`requestId`、`sessionId`、`permission`、`pending`；推送正文只说“有 N 项操作等待审批”，**不含命令、代码或会话内容**（这些会经过 Apple 并显示在锁屏上）。细节由手机点开后经隧道读取
+- **设备注册**：手机在存在中继节点时申请通知权限，并向对应 GoPanel `POST /api/push/devices` 注册 `{platform: ios, token, environment, name, panelUrl}`（管理员 JWT）；`environment` 由构建配置决定（Debug / Profile 为 sandbox，Release 为 production，与 `aps-environment` 授权一致）；同一 token 重复注册即更新
+- **APNs 配置**：GoPanel 后台 → 节点 → 手机推送，填写 Team ID、Key ID、Bundle ID（默认 `ai.hoxi.app`）与 `.p8` 内容，可发送测试推送。接口：`GET/POST /api/push/apns`、`POST /api/push/test`。`.p8` 加密存储且不经接口返回
+- **失效设备**：APNs 返回 410 / BadDeviceToken / DeviceTokenNotForTopic 时自动停用该设备
+- **限制**：离线期间产生的提醒不排队（重新打开 App 仍能看到待处理项）；OpenCode 运行时的审批依赖网关 SSE 旁路观测，桌面端没有任何客户端订阅事件流时可能漏报；未做真机验收
+
+验证：Hoxi `go test ./internal/statusbar/ ./internal/tunnel/`（只通知一次、不含命令文本、Notify 帧类型固定为 9）；GoPanel `go test ./app/service/ -run 'APNs|HoxiNotice|TunnelNotify|RegisterPushDevice'`（ES256 JWT 与请求头、经真实隧道读循环触发推送、去重、停用失效设备、通用正文）；手机 `flutter test test/push_notification_test.dart`，iOS 模拟器构建通过。
 
 尚未做真机联调：真实公网 GoPanel + 真实 Mac + 手机 4G 下的端到端验收、长时间 SSE 稳定性与重连表现。

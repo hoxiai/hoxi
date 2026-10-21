@@ -10,11 +10,13 @@ import {
 } from "../components/timeline/ContextActivityGroupView";
 import {
   collectCycleStepItems,
-  findLatestTodoPart,
   isTodoListStale,
-  normalizeTodoItems,
   summarizeTodoActivity,
 } from "../components/timeline/task-progress-helpers";
+import {
+  findLatestTodoPart,
+  normalizeTodoItems,
+} from "../store/task-progress";
 import {
   collectCycleChangedFiles,
   collectSessionChangedFiles,

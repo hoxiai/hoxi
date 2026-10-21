@@ -14,6 +14,7 @@ export const commandPalette = {
   actionOpenFiles: "Open files",
   actionOpenDiffs: "Open changes",
   actionOpenMemory: "Open memory",
+  actionOpenTasks: "Open task overview",
   actionOpenSkills: "Open skills",
   actionOpenTerminal: "Open terminal",
   actionOpenBrowser: "Open browser",

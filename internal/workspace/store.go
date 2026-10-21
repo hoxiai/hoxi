@@ -13,10 +13,11 @@ import (
 )
 
 type workspaceStore struct {
-	mu          sync.RWMutex
-	storagePath string
-	workspaces  []workspaceProfile
-	dismissed   []string
+	mu            sync.RWMutex
+	storagePath   string
+	workspaces    []workspaceProfile
+	dismissed     []string
+	relinkHandler func(projectID, oldPath, newPath string) error
 }
 
 type Store = workspaceStore
@@ -138,21 +139,30 @@ func (s *workspaceStore) PrimaryRootDir(fallback string) string {
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	for _, ws := range s.workspaces {
-		for _, f := range ws.Folders {
-			if f.IsPrimary {
+	savedRoot := func(includeHidden bool) string {
+		for _, ws := range s.workspaces {
+			if ws.Hidden && !includeHidden {
+				continue
+			}
+			for _, f := range ws.Folders {
+				if f.IsPrimary {
+					if valid := CleanValidProjectDir(f.Path); valid != "" {
+						return valid
+					}
+				}
+			}
+			for _, f := range ws.Folders {
 				if valid := CleanValidProjectDir(f.Path); valid != "" {
 					return valid
 				}
 			}
 		}
-		for _, f := range ws.Folders {
-			if valid := CleanValidProjectDir(f.Path); valid != "" {
-				return valid
-			}
-		}
+		return ""
 	}
-	return ""
+	if root := savedRoot(false); root != "" {
+		return root
+	}
+	return savedRoot(true)
 }
 
 func (s *workspaceStore) resolveNameLocked(rawName, primaryPath, excludeID string) string {
@@ -205,6 +215,10 @@ func (s *workspaceStore) Create(input saveWorkspaceRequest) (workspaceProfile, e
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if existing, ok := s.findProjectLocked(folders[0].Path); ok && existing.Hidden {
+		return s.promoteHiddenLocked(existing, folders, input)
+	}
+
 	primaryPath := folders[0].Path
 	name := s.resolveNameLocked(input.Name, primaryPath, "")
 	color := normalizeWorkspaceIdentityColor(input.Color)
@@ -238,13 +252,19 @@ func (s *workspaceStore) Create(input saveWorkspaceRequest) (workspaceProfile, e
 	return created, nil
 }
 
-func (s *workspaceStore) Update(id string, input saveWorkspaceRequest) (workspaceProfile, error) {
+func (s *workspaceStore) Update(id string, input saveWorkspaceRequest) (result workspaceProfile, err error) {
 	cleanID := strings.TrimSpace(id)
 	if cleanID == "" {
 		return workspaceProfile{}, errors.New("workspace ID is required")
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	var relinks []folderRelink
+	defer func() {
+		s.mu.Unlock()
+		if err == nil {
+			s.dispatchFolderRelinks(relinks)
+		}
+	}()
 
 	targetIdx := -1
 	for i, ws := range s.workspaces {
@@ -349,6 +369,7 @@ func (s *workspaceStore) Update(id string, input saveWorkspaceRequest) (workspac
 		s.removeDismissedLocked(f.Path)
 	}
 	s.removeDismissedLocked(updated.ID)
+	relinks = changedFolderPaths(before, updated)
 	s.persistLocked()
 	return updated, nil
 }
@@ -447,4 +468,5 @@ func (s *workspaceStore) registerRoutes(mux *http.ServeMux) {
 	}
 	mux.HandleFunc("/api/hoxi/workspaces", handler)
 	mux.HandleFunc("/api/hoxi/workspaces/", handler)
+	mux.HandleFunc("/api/hoxi/projects/resolve", s.handleResolveProject)
 }

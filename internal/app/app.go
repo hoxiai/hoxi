@@ -26,6 +26,7 @@ import (
 	"github.com/hoxiai/hoxi/internal/diagnostics"
 	"github.com/hoxiai/hoxi/internal/gateway"
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
+	"github.com/hoxiai/hoxi/internal/notify"
 	"github.com/hoxiai/hoxi/internal/opencode"
 	"github.com/hoxiai/hoxi/internal/statusbar"
 	"github.com/hoxiai/hoxi/internal/telemetry"
@@ -108,6 +109,7 @@ type DesktopApp struct {
 	respawns        []time.Time
 	gateway         *gateway.Gateway
 	status          *statusbar.Tracker
+	notifier        *notify.Service
 	wsServer        *http.Server
 	browserEnv      []string
 }
@@ -180,6 +182,7 @@ func Run(distFS fs.FS) {
 		logger:       logger,
 		gateway:      gw,
 		status:       statusTracker,
+		notifier:     notify.NewService(),
 		runCtx:       ctx,
 		openCodePort: port,
 		openCodePass: password,
@@ -299,6 +302,20 @@ func Run(distFS fs.FS) {
 		return
 	}
 
+	gw.SetDesktopNotifier(func(notification gateway.DesktopNotification) error {
+		return app.notifier.Show(notify.Request{
+			Title:     notification.Title,
+			Body:      notification.Body,
+			SessionID: notification.SessionID,
+		})
+	})
+	app.notifier.SetOnClick(func(sessionID string) {
+		app.showWindow()
+		if sessionID != "" {
+			gw.QueueDesktopIntent(gateway.DesktopIntent{SessionID: sessionID})
+		}
+	})
+
 	gw.SetOpenDirectoryDialog(func() (string, error) {
 		ctx := app.desktopContext()
 		if ctx == nil {
@@ -311,11 +328,16 @@ func Run(distFS fs.FS) {
 	gw.SetDesktopFocusHandler(func(_, _ string) {
 		app.showWindow()
 	})
+	gw.SetDesktopIntentNotifier(func() {
+		if ctx := app.desktopContext(); ctx != nil {
+			wailsruntime.EventsEmit(ctx, desktopIntentEvent)
+		}
+	})
 
 	err = wails.Run(&options.App{
 		Title:                    identity.Title,
-		Width:                    1200,
-		Height:                   760,
+		Width:                    1360,
+		Height:                   860,
 		MinWidth:                 880,
 		MinHeight:                560,
 		HideWindowOnClose:        runtime.GOOS == "darwin",
@@ -442,6 +464,9 @@ func (a *DesktopApp) startup(ctx context.Context) {
 	a.contextMu.Unlock()
 	statusbar.Start(ctx)
 	statusbar.Update(a.status.Snapshot())
+	if a.notifier != nil {
+		a.notifier.Start()
+	}
 	installNativeAbout(a.identity.Title, buildinfo.Version)
 	telemetry.ReportLaunch(a.logger)
 	if BuildVariant == "release" {
@@ -486,6 +511,17 @@ func (a *DesktopApp) onSecondInstance(_ options.SecondInstanceData) {
 
 func (a *DesktopApp) onURLOpen(rawURL string) {
 	a.showWindow()
+	// Session deep links navigate the existing window; they never touch the auth flow.
+	if intent, ok := parseSessionDeepLink(rawURL); ok {
+		if a.gateway != nil {
+			a.gateway.QueueDesktopIntent(intent)
+		}
+		return
+	}
+	if !isAuthCallbackDeepLink(rawURL) {
+		a.logger.Warn("ignored unsupported URL scheme callback")
+		return
+	}
 	// URL events can arrive before OnStartup; the gateway already owns the live auth attempt.
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)

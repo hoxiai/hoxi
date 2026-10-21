@@ -3,6 +3,7 @@
 // domain module owns its own actions; this file only re-exports them so that
 // components can import everything from "store/workspace".
 export * from "./workspace-state";
+export * from "./layout";
 export * from "./inspector";
 export * from "./session-query";
 export * from "./workspace-folders";
@@ -47,6 +48,8 @@ export * from "./telemetry";
 export * from "./session-capabilities";
 export * from "./session-transcripts";
 export * from "./orchestration";
+export * from "./task-progress";
+export * from "./task-overview";
 export * from "./command-sandbox";
 export * from "./code-index";
 export * from "./browser";

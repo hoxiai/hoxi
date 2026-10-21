@@ -248,6 +248,46 @@ func (s *Store) Update(sessionID string, fn func(*SessionRecord)) (SessionRecord
 	return cloneRecord(updated), true, nil
 }
 
+// SetProjectID assigns attribution without touching activity timestamps.
+// Startup backfill must not reorder the sidebar or reset history collapsing.
+func (s *Store) updateWithoutActivity(sessionID string, fn func(*SessionRecord)) (SessionRecord, bool, error) {
+	ss := s.lockSession(sessionID, false)
+	if ss == nil {
+		return SessionRecord{}, false, nil
+	}
+	defer s.finishSession(ss)
+	s.ensureTurnsLocked(ss)
+	updated := cloneRecord(ss.rec)
+	fn(&updated)
+	if err := s.commitLocked(updated, ss); err != nil {
+		return cloneRecord(ss.rec), true, err
+	}
+	return cloneRecord(updated), true, nil
+}
+
+func (s *Store) SetProjectID(sessionID, projectID string) error {
+	_, _, err := s.updateWithoutActivity(sessionID, func(r *SessionRecord) {
+		r.ProjectID = projectID
+	})
+	return err
+}
+
+// RelinkSession moves a conversation to a new project root without changing
+// its activity timestamp. Engine resume handles belong to the old directory,
+// so they are cleared and the next turn rehydrates context in the new root.
+func (s *Store) RelinkSession(sessionID, projectDir, worktreePath, branch, baseCommit string) (SessionRecord, bool, error) {
+	return s.updateWithoutActivity(sessionID, func(r *SessionRecord) {
+		r.ProjectDir = projectDir
+		r.WorktreePath = worktreePath
+		r.Branch, r.BaseCommit = branch, baseCommit
+		r.ExternalID = ""
+		r.OpenCodeIDs = nil
+		r.OpenCodeDirectories = nil
+		r.ContextPending = len(r.Turns) > 0
+		r.ContextTurnCount = len(r.Turns)
+	})
+}
+
 func (s *Store) Delete(sessionID string) error {
 	ss := s.lockSession(sessionID, false)
 	if ss == nil {
@@ -270,6 +310,14 @@ func (s *Store) Delete(sessionID string) error {
 }
 
 func (s *Store) List(directory string) []SessionInfo {
+	return s.ListProject("", directory)
+}
+
+// ListProject lists sessions owned by projectID. Legacy records without an ID
+// still match by their strict directory scope until the startup backfill runs;
+// directory is only a fallback, never a second ownership source.
+func (s *Store) ListProject(projectID, directory string) []SessionInfo {
+	projectID = strings.TrimSpace(projectID)
 	normFilter := normalizeComparePath(directory)
 	s.mu.RLock()
 	metas := make([]SessionRecord, 0, len(s.records))
@@ -281,7 +329,13 @@ func (s *Store) List(directory string) []SessionInfo {
 	s.mu.RUnlock()
 	var out []SessionInfo
 	for _, rec := range metas {
-		if normFilter != "" && !sessionMatchesDirectory(rec, normFilter) {
+		if projectID != "" {
+			if rec.ProjectID != projectID {
+				if rec.ProjectID != "" || normFilter == "" || !sessionMatchesDirectory(rec, normFilter) {
+					continue
+				}
+			}
+		} else if normFilter != "" && !sessionMatchesDirectory(rec, normFilter) {
 			continue
 		}
 		out = append(out, rec.ToSessionInfo())

@@ -11,7 +11,8 @@ import {
   getFilename,
   kiloToolIconName,
 } from "./tool-card-helpers";
-import type { CycleStepItem, NormalizedTodoItem } from "./task-progress-helpers";
+import type { NormalizedTodoItem } from "../../store/task-progress";
+import type { CycleStepItem } from "./task-progress-helpers";
 
 export default function TaskProgressDetails(props: {
   sessionID: string | null;

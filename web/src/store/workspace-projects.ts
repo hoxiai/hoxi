@@ -115,7 +115,36 @@ export async function selectInitialProjectSession(
   }
 }
 
-export async function bootstrapProjectSessions(directory: string, selectInitial = true): Promise<void> {
+// Resolves the stable project ID for the active root. The backend registers a
+// hidden project on first use, so sessions keep their attribution even when
+// the folder was never saved as a workspace.
+export async function syncActiveProjectID(directory: string): Promise<string | null> {
+  const cleaned = normalizeFolderPath(directory);
+  if (!cleaned || isInvalidProjectPath(cleaned)) {
+    setWorkspace("activeProjectID", null);
+    return null;
+  }
+  const known = findWorkspaceProfileByDir(cleaned);
+  if (known?.id) {
+    setWorkspace("activeProjectID", known.id);
+    return known.id;
+  }
+  let projectID: string | null = null;
+  try {
+    projectID = (await hoxiAPI.resolveProject(cleaned)).projectID || null;
+  } catch (err) {
+    console.warn("resolve project failed:", err);
+  }
+  if (normalizeFolderPath(workspace.rootDir) !== cleaned) return null;
+  setWorkspace("activeProjectID", projectID);
+  return projectID;
+}
+
+export async function bootstrapProjectSessions(
+  directory: string,
+  selectInitial = true,
+  projectID?: string | null
+): Promise<void> {
   const cleaned = normalizeFolderPath(directory);
   if (!cleaned || isInvalidProjectPath(cleaned)) {
     setWorkspace("bootstrappingSessions", false);
@@ -123,10 +152,10 @@ export async function bootstrapProjectSessions(directory: string, selectInitial 
   }
   let rawSessions: SessionInfo[];
   try {
-    rawSessions = await hoxiAPI.listSessions(cleaned);
+    rawSessions = await hoxiAPI.listSessions(cleaned, projectID || undefined);
   } catch {
     await new Promise((r) => setTimeout(r, 400));
-    rawSessions = await hoxiAPI.listSessions(cleaned);
+    rawSessions = await hoxiAPI.listSessions(cleaned, projectID || undefined);
   }
   if (normalizeFolderPath(workspace.rootDir) !== cleaned) return;
   const sessions = (Array.isArray(rawSessions) ? rawSessions : []).filter(
@@ -209,14 +238,17 @@ export async function switchWorkspace(
     inspectedFileDiff: null,
     inspectedDiffFile: null,
     activeSessionID: targetSessionID,
+    activeProjectID: null,
     bootstrappingSessions: hydratedSessions.length === 0 && !targetSessionID,
   });
 
   const selectPromise = targetSessionID ? selectSession(targetSessionID) : null;
+  const projectID = await syncActiveProjectID(cleaned);
+  if (normalizeFolderPath(workspace.rootDir) !== cleaned) return;
 
   try {
     await Promise.all([
-      bootstrapProjectSessions(cleaned, selectInitial),
+      bootstrapProjectSessions(cleaned, selectInitial, projectID),
       ...(selectPromise ? [selectPromise] : []),
     ]);
   } catch (err) {
@@ -278,6 +310,7 @@ export async function saveWorkspaceProfile(
   input: SaveWorkspaceInput,
   existingID?: string | null
 ): Promise<WorkspaceProfile> {
+  const previous = existingID ? findWorkspaceProfileById(existingID) : undefined;
   const saved = existingID
     ? await hoxiAPI.updateWorkspace(existingID, input)
     : await hoxiAPI.createWorkspace(input);
@@ -295,6 +328,20 @@ export async function saveWorkspaceProfile(
   if (saved?.id) {
     unrecordDismissedProject(saved.id);
     for (const f of saved.folders || []) unrecordDismissedProject(f.path);
+  }
+  // The backend relinked sessions while saving. If the active root moved,
+  // switch to the new path so transcripts, diffs and terminals follow it.
+  const previousPrimary = normalizeFolderPath(workspacePrimaryFolder(previous));
+  const savedPrimary = normalizeFolderPath(workspacePrimaryFolder(saved));
+  if (
+    previousPrimary && savedPrimary && previousPrimary !== savedPrimary &&
+    normalizeFolderPath(workspace.rootDir) === previousPrimary
+  ) {
+    await switchWorkspace(savedPrimary, {
+      selectInitial: false,
+      targetSessionID: workspace.activeSessionID ?? undefined,
+      cachedSessions: workspace.sessions.slice(),
+    });
   }
   return saved;
 }

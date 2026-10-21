@@ -19,6 +19,7 @@ import {
 import {
   appSettings,
   playNotificationSound,
+  sendDesktopNotification,
   updateAppSetting,
   type ColorScheme,
   type FontScale,
@@ -200,18 +201,10 @@ export function ChatComposerTab() {
   };
 
   const testDesktopNotification = () => {
-    if (typeof window === "undefined" || !("Notification" in window)) return;
-    if (Notification.permission === "granted") {
-      new Notification("Hoxi", { body: t("settings.desktopNotificationsDesc") });
-    } else {
-      void Notification.requestPermission().then((perm) => {
-        if (perm === "granted") {
-          new Notification("Hoxi", {
-            body: t("settings.desktopNotificationsDesc"),
-          });
-        }
-      });
-    }
+    sendDesktopNotification({
+      title: "Hoxi",
+      body: t("settings.desktopNotificationsDesc"),
+    });
   };
 
   return (

@@ -17,9 +17,11 @@ import type {
   BranchListResponse,
   CodeAuditRequest,
   CodeAuditResult,
+  DesktopIntent,
   FileContentResponse,
   FileValidateResponse,
   ProjectInfo,
+  ProjectResolveResponse,
   PromptAttachment,
   ProviderAuthAuthorization,
   ProviderAuthMethod,
@@ -164,11 +166,21 @@ export const hoxiAPI = {
 
   // Sessions: one Hoxi endpoint. The gateway routes each session to its owner
   // (Hoxi conversation store or a not-yet-adopted OpenCode session).
-  async listSessions(directory?: string): Promise<SessionInfo[]> {
-    const list = await requestJSON<SessionInfo[]>(withDir(SESSIONS, directory));
+  async listSessions(directory?: string, projectID?: string): Promise<SessionInfo[]> {
+    const params = new URLSearchParams();
+    if (directory) params.set("directory", directory);
+    if (projectID) params.set("projectID", projectID);
+    const qs = params.toString();
+    const list = await requestJSON<SessionInfo[]>(`${SESSIONS}${qs ? `?${qs}` : ""}`);
     if (!Array.isArray(list)) return [];
     registerRunnerSessions(list);
     return list;
+  },
+
+  async resolveProject(directory: string): Promise<ProjectResolveResponse> {
+    return requestJSON<ProjectResolveResponse>(
+      `/api/hoxi/projects/resolve?directory=${encodeURIComponent(directory)}`
+    );
   },
 
   async getSessionStatuses(directory?: string): Promise<Record<string, SessionStatus>> {
@@ -179,6 +191,21 @@ export const hoxiAPI = {
     const info = await requestJSON<SessionInfo>(withDir(sessionPath(sessionID), directory));
     if (info?.id) registerRunnerSessions([info]);
     return info;
+  },
+
+  // Desktop deep links and the CLI queue navigation intents in the gateway.
+  // Consuming clears the pending intent so a reload never replays it.
+  async consumeDesktopIntent(): Promise<DesktopIntent | null> {
+    const res = await requestJSON<{ intent?: DesktopIntent | null }>("/api/hoxi/desktop/intent", {
+      method: "POST",
+    });
+    const intent = res?.intent;
+    if (!intent || typeof intent.sessionID !== "string" || !intent.sessionID.trim()) return null;
+    return {
+      sessionID: intent.sessionID.trim(),
+      messageID: typeof intent.messageID === "string" && intent.messageID.trim() ? intent.messageID.trim() : undefined,
+      directory: typeof intent.directory === "string" && intent.directory.trim() ? intent.directory.trim() : undefined,
+    };
   },
 
   async createSession(

@@ -1,0 +1,61 @@
+[data-component="hoxi-activity-logo"] {
+  display: block;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  overflow: visible;
+}
+
+[data-component="hoxi-activity-logo"] [data-slot="orbit"] {
+  transform-origin: 12px 12px;
+  opacity: 0.8;
+}
+
+[data-component="hoxi-activity-logo"] [data-slot="face"] {
+  transform-origin: 32px 32px;
+}
+
+[data-component="hoxi-activity-logo"] [data-slot="eye"] {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+[data-component="hoxi-activity-logo"][data-active="true"] [data-slot="face"] {
+  animation: hoxi-activity-breathe 2.8s ease-in-out infinite;
+}
+
+[data-component="hoxi-activity-logo"][data-active="true"] [data-slot="orbit"] {
+  animation: hoxi-activity-orbit 2.6s linear infinite;
+}
+
+[data-component="hoxi-activity-logo"][data-active="true"] [data-wink] {
+  animation: hoxi-activity-wink 4.8s linear infinite;
+}
+
+[data-component="hoxi-activity-logo"][data-active="false"] [data-slot="orbit"] {
+  opacity: 0.2;
+}
+
+[data-component="hoxi-activity-logo"][data-paused] [data-slot] {
+  animation-play-state: paused;
+}
+
+@keyframes hoxi-activity-breathe {
+  0%, 100% { transform: translateY(0) scale(1); }
+  50% { transform: translateY(-0.6px) scale(1.015); }
+}
+
+@keyframes hoxi-activity-orbit {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes hoxi-activity-wink {
+  0%, 68%, 73%, 100% { transform: scaleY(1); }
+  70%, 71% { transform: scaleY(0.13); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-component="hoxi-activity-logo"] [data-slot] {
+    animation: none !important;
+  }
+}

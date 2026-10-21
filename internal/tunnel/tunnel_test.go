@@ -236,3 +236,27 @@ func TestPairWithoutStorePathIsRefused(t *testing.T) {
 		t.Fatal("pairing code must not be redeemed without a credential store")
 	}
 }
+
+func TestNotifySendsFrameWhileOnlineOnly(t *testing.T) {
+	// Wire value shared with gopanel_v2 tunnelFrameNotify.
+	if frameNotify != 9 {
+		t.Fatalf("frameNotify = %d, must stay 9", frameNotify)
+	}
+	m := NewManager(Options{Handler: http.NotFoundHandler()})
+	if err := m.Notify(map[string]string{"kind": "approval"}); err != ErrOffline {
+		t.Fatalf("offline notify err = %v", err)
+	}
+	m, conn, _ := pairedManager(t, http.NotFoundHandler())
+	readFrame(t, conn) // service sync
+	deadline := time.Now().Add(5 * time.Second)
+	for m.Status().State != StateOnline && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err := m.Notify(map[string]string{"kind": "approval", "requestId": "per_1"}); err != nil {
+		t.Fatal(err)
+	}
+	f := readFrame(t, conn)
+	if f.Type != frameNotify || f.StreamID != 0 || !strings.Contains(string(f.Payload), "per_1") {
+		t.Fatalf("frame = %d %d %s", f.Type, f.StreamID, f.Payload)
+	}
+}

@@ -59,6 +59,7 @@ export const models: ModelsI18n = {
   noMcpServers: "尚未配置任何 MCP 服务",
   favorites: "收藏",
   searchModels: "搜索模型…",
+  clearSearch: "清除搜索",
   manageKeys: "管理服务商",
   noModelsFound: "当前视图下未找到模型",
   connectProviderOrAdd: "连接服务商 / 添加自定义模型",
@@ -201,6 +202,7 @@ export const models: ModelsI18n = {
   tabModels: "模型路由",
   allConnected: "全部已连接",
   recent: "最近使用",
+  lastSelectedTitle: "上次选择",
   customAgentsTitle: "添加自定义角色",
   customAgentsSubtitle:
     "创建带独立提示词与模型的自定义模式",

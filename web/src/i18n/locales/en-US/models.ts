@@ -59,6 +59,7 @@ export const models = {
   noMcpServers: "No MCP servers configured yet.",
   favorites: "Favorites",
   searchModels: "Search models…",
+  clearSearch: "Clear search",
   manageKeys: "Manage Keys",
   noModelsFound: "No models found in this view.",
   connectProviderOrAdd: "Connect Provider / Add Custom Model",
@@ -202,6 +203,7 @@ export const models = {
   tabModels: "Model Routing",
   allConnected: "All Connected",
   recent: "Recent",
+  lastSelectedTitle: "Last selected",
   customAgentsTitle: "Add Custom Role",
   customAgentsSubtitle:
     "Custom modes with their own prompts and models",

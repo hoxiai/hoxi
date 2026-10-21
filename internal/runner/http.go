@@ -41,6 +41,7 @@ type Service struct {
 	userSkillByMsg sync.Map // message ID -> userSkillOverride
 	stoppedTools   sync.Map // sessionID\x00(part|call):id -> bool
 	skillValidator func(ctx context.Context, directory, sessionID string, sel SkillSelection) error
+	projectResolver ProjectResolver
 }
 
 func NewService(rootDir string, worktrees *worktree.Manager, status *statusbar.Tracker, customStorePath string) *Service {
@@ -70,8 +71,8 @@ func NewService(rootDir string, worktrees *worktree.Manager, status *statusbar.T
 			continue
 		}
 		if info.SandboxMode == "local" {
-			if _, err := existingDirectory(info.ProjectID); err == nil {
-				_ = svc.worktrees.ForDirectory(info.ProjectID).UseLocalDirectory(info.ID)
+			if _, err := existingDirectory(rec.ProjectDir); err == nil {
+				_ = svc.worktrees.ForDirectory(rec.ProjectDir).UseLocalDirectory(info.ID)
 			}
 		} else {
 			_ = svc.worktrees.ForDirectory(rec.ProjectDir).RestoreSession(rec.ID, rec.WorktreePath, rec.Branch, rec.BaseCommit)

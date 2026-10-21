@@ -45,7 +45,11 @@ func (s *gatewayRecallSource) runnerSessions(directory string) []recall.Session 
 	if s.g == nil || s.g.runner == nil {
 		return nil
 	}
-	infos := s.g.runner.Store().List(directory)
+	projectID := ""
+	if s.g.workspaces != nil {
+		projectID, _ = s.g.workspaces.ProjectIDForDirectory(directory)
+	}
+	infos := s.g.runner.Store().ListProject(projectID, directory)
 	sessions := make([]recall.Session, 0, len(infos))
 	for _, info := range infos {
 		if info.ParentID != "" || info.Time.Archived > 0 {

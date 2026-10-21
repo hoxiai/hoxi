@@ -104,6 +104,41 @@
   }
 }
 
+/* Compact activity arc, matching the conversation logo's orbit. */
+[data-component="arc-spinner"] {
+  display: block;
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+}
+
+[data-component="arc-spinner"] [data-slot="orbit"] {
+  transform-origin: 7px 7px;
+  opacity: 0.8;
+}
+
+[data-component="arc-spinner"][data-active="true"] [data-slot="orbit"] {
+  animation: arc-spinner-orbit 2.6s linear infinite;
+}
+
+[data-component="arc-spinner"][data-active="false"] [data-slot="orbit"] {
+  opacity: 0.2;
+}
+
+[data-component="arc-spinner"][data-paused] [data-slot="orbit"] {
+  animation-play-state: paused;
+}
+
+@keyframes arc-spinner-orbit {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-component="arc-spinner"] [data-slot="orbit"] {
+    animation: none !important;
+  }
+}
+
 /* Kilo Zero-Timer CSS TextShimmer */
 [data-component="text-shimmer"] {
   --text-shimmer-step: 45ms;

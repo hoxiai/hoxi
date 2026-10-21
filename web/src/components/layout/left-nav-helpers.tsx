@@ -121,6 +121,7 @@ export function buildAllProjects(): ProjectNavEntry[] {
   const secondaryPaths = new Set<string>();
 
   for (const saved of workspace.savedWorkspaces) {
+    if (saved.hidden) continue;
     const primary = normalizeFolderPath(workspacePrimaryFolder(saved));
     if (
       !primary ||

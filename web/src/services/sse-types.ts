@@ -17,6 +17,7 @@ export interface SessionInfo {
   id: string;
   title: string;
   slug?: string;
+  projectID?: string;
   parentID?: string;
   directory?: string;
   runtime?: SessionRuntime;
@@ -74,6 +75,7 @@ export interface MessageInfo {
   mode?: string;
   cost?: number;
   tokens?: MessageTokens;
+  finish?: string;
   error?: MessageError;
 }
 

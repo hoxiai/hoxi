@@ -54,6 +54,27 @@ type Manager struct {
 	cancel context.CancelFunc
 	done   chan struct{}
 	status Status
+	peer   *peer
+}
+
+// ErrOffline is returned by Notify when no tunnel is connected.
+var ErrOffline = errors.New("remote tunnel is not connected")
+
+// Notify sends an attention notice to GoPanel for phone push. Notices are not
+// queued: one raised while offline is dropped, and the phone still sees the
+// pending item when it next opens the node.
+func (m *Manager) Notify(notice any) error {
+	m.mu.Lock()
+	p := m.peer
+	m.mu.Unlock()
+	if p == nil {
+		return ErrOffline
+	}
+	f, err := jsonFrame(frameNotify, 0, notice)
+	if err != nil {
+		return err
+	}
+	return p.send(f)
 }
 
 func NewManager(opts Options) *Manager {
@@ -183,7 +204,14 @@ func (m *Manager) connect(ctx context.Context, cfg Config) (bool, error) {
 		return false, fmt.Errorf("connect GoPanel: %w", err)
 	}
 	p := newPeer(conn, m.opts.Handler)
-	defer p.close()
+	defer func() {
+		m.mu.Lock()
+		if m.peer == p {
+			m.peer = nil
+		}
+		m.mu.Unlock()
+		p.close()
+	}()
 	m.mu.Lock()
 	targetPort := m.opts.TargetPort
 	m.mu.Unlock()
@@ -191,6 +219,9 @@ func (m *Manager) connect(ctx context.Context, cfg Config) (bool, error) {
 		return false, err
 	}
 	now := time.Now()
+	m.mu.Lock()
+	m.peer = p
+	m.mu.Unlock()
 	m.setStatus(Status{Enabled: true, State: StateOnline, ControllerURL: cfg.ControllerURL, NodeID: cfg.NodeID, Name: cfg.Name, ConnectedAt: &now})
 	go p.heartbeat(ctx)
 	return true, p.readLoop(ctx)

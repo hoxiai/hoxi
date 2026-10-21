@@ -9,11 +9,22 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/llm"
 )
+
+var (
+	ErrPlanNotFound = errors.New("orchestration plan not found")
+	ErrPlanActive   = errors.New("orchestration plan is still running")
+	ErrPlanStopping = errors.New("a task is still stopping; try again shortly")
+)
+
+const interruptedError = "interrupted by a Hoxi restart"
 
 // Sessions runs convoy tasks as Hoxi conversations. The gateway implements it
 // over the runner, so convoy sessions share the UI's session plane: they are
@@ -49,6 +60,8 @@ type SessionRequest struct {
 // changes; otherwise tasks share the directory and run one at a time.
 type Service struct {
 	sessions Sessions
+	store    *Store
+	llm      llm.Client
 	mu       sync.Mutex
 	plans    map[string]*planRun
 }
@@ -56,15 +69,68 @@ type Service struct {
 type planRun struct {
 	plan   Plan
 	cancel context.CancelFunc
+	// epoch advances on every retry. A superseded scheduler or task must not
+	// write results into the new run.
+	epoch int64
 }
 
-func NewService(sessions Sessions) *Service {
-	return &Service{sessions: sessions, plans: make(map[string]*planRun)}
+// Option configures optional Service dependencies.
+type Option func(*Service)
+
+// WithStore persists plans so history and retries survive app restarts.
+func WithStore(store *Store) Option {
+	return func(s *Service) { s.store = store }
+}
+
+// WithLLM enables drafting a convoy plan from a natural-language goal.
+func WithLLM(client llm.Client) Option {
+	return func(s *Service) { s.llm = client }
+}
+
+func NewService(sessions Sessions, options ...Option) *Service {
+	s := &Service{sessions: sessions, plans: make(map[string]*planRun)}
+	for _, option := range options {
+		option(s)
+	}
+	s.restore()
+	return s
+}
+
+// restore loads persisted plans. Plans that were mid-flight when Hoxi exited
+// can no longer resume their child processes, so they surface as failed tasks
+// that the user can retry explicitly.
+func (s *Service) restore() {
+	if s.store == nil {
+		return
+	}
+	plans, err := s.store.Load()
+	if err != nil {
+		return
+	}
+	now := time.Now().UnixMilli()
+	for _, plan := range plans {
+		if !terminal(plan.Status) {
+			plan.Status = StatusFailed
+			plan.Error = interruptedError
+			for i := range plan.Tasks {
+				task := &plan.Tasks[i]
+				if task.Status == StatusRunning || task.Status == StatusQueued {
+					task.Status = StatusFailed
+					task.Error = interruptedError
+					task.EndedAt = now
+				}
+			}
+			plan.UpdatedAt = now
+			_ = s.store.Save(plan)
+		}
+		s.plans[plan.ID] = &planRun{plan: plan}
+	}
 }
 
 func (s *Service) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/hoxi/orchestration/plans", s.handlePlans)
 	mux.HandleFunc("/api/hoxi/orchestration/plans/", s.handlePlan)
+	mux.HandleFunc("/api/hoxi/orchestration/draft", s.HandleDraft)
 }
 
 func (s *Service) Create(request PlanRequest) (Plan, error) {
@@ -90,6 +156,9 @@ func (s *Service) Create(request PlanRequest) (Plan, error) {
 		ID:          newPlanID(),
 		Title:       request.Title,
 		Directory:   directory,
+		Mode:        request.Mode,
+		Provider:    request.Provider,
+		Model:       request.Model,
 		Concurrency: request.Concurrency,
 		Status:      StatusRunning,
 		CreatedAt:   time.Now().UnixMilli(),
@@ -102,10 +171,19 @@ func (s *Service) Create(request PlanRequest) (Plan, error) {
 		}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
+	run := &planRun{plan: plan, cancel: cancel, epoch: 1}
 	s.mu.Lock()
-	s.plans[plan.ID] = &planRun{plan: plan, cancel: cancel}
+	s.plans[plan.ID] = run
+	if err := s.persistLocked(run); err != nil {
+		delete(s.plans, plan.ID)
+		s.mu.Unlock()
+		cancel()
+		return Plan{}, fmt.Errorf("could not persist orchestration plan: %w", err)
+	}
+	s.pruneLocked(directory)
+	epoch := run.epoch
 	s.mu.Unlock()
-	go s.run(ctx, plan.ID, request)
+	go s.run(ctx, plan.ID, request, epoch)
 	snapshot, _ := s.Get(plan.ID)
 	return snapshot, nil
 }
@@ -135,7 +213,47 @@ func (s *Service) List(directory string) []Plan {
 		plan.Tasks = append([]TaskState(nil), run.plan.Tasks...)
 		plans = append(plans, plan)
 	}
+	sortPlans(plans)
 	return plans
+}
+
+// ListBySession finds the plans that own sessionID as one of their task
+// sessions. The UI uses it to keep the plan visible while a task's isolated
+// worktree directory is the active one.
+func (s *Service) ListBySession(sessionID string) []Plan {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return []Plan{}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	plans := make([]Plan, 0, 1)
+	for _, run := range s.plans {
+		owned := false
+		for _, task := range run.plan.Tasks {
+			if task.SessionID == sessionID {
+				owned = true
+				break
+			}
+		}
+		if !owned {
+			continue
+		}
+		plan := run.plan
+		plan.Tasks = append([]TaskState(nil), run.plan.Tasks...)
+		plans = append(plans, plan)
+	}
+	sortPlans(plans)
+	return plans
+}
+
+func sortPlans(plans []Plan) {
+	sort.Slice(plans, func(i, j int) bool {
+		if plans[i].CreatedAt == plans[j].CreatedAt {
+			return plans[i].ID > plans[j].ID
+		}
+		return plans[i].CreatedAt > plans[j].CreatedAt
+	})
 }
 
 func (s *Service) Cancel(id string) (Plan, error) {
@@ -143,7 +261,7 @@ func (s *Service) Cancel(id string) (Plan, error) {
 	run := s.plans[id]
 	if run == nil {
 		s.mu.Unlock()
-		return Plan{}, errors.New("orchestration plan not found")
+		return Plan{}, ErrPlanNotFound
 	}
 	if !terminal(run.plan.Status) {
 		run.plan.Status = StatusCancelled
@@ -153,6 +271,7 @@ func (s *Service) Cancel(id string) (Plan, error) {
 			}
 		}
 		run.plan.UpdatedAt = time.Now().UnixMilli()
+		_ = s.persistLocked(run)
 	}
 	cancel := run.cancel
 	plan := run.plan
@@ -166,7 +285,9 @@ func (s *Service) Cancel(id string) (Plan, error) {
 		}
 	}
 	s.mu.Unlock()
-	cancel()
+	if cancel != nil {
+		cancel()
+	}
 	go func() {
 		for _, sessionID := range live {
 			s.sessions.Abort(sessionID)
@@ -175,16 +296,78 @@ func (s *Service) Cancel(id string) (Plan, error) {
 	return plan, nil
 }
 
+// Retry restarts a terminal plan's unfinished tasks. Tasks that already
+// succeeded keep their sessions and results; failed, blocked and cancelled
+// tasks run again with fresh sessions, in dependency order.
+func (s *Service) Retry(id string) (Plan, error) {
+	s.mu.Lock()
+	run := s.plans[id]
+	if run == nil {
+		s.mu.Unlock()
+		return Plan{}, ErrPlanNotFound
+	}
+	if !terminal(run.plan.Status) {
+		s.mu.Unlock()
+		return Plan{}, ErrPlanActive
+	}
+	for _, task := range run.plan.Tasks {
+		if task.Status == StatusRunning {
+			s.mu.Unlock()
+			return Plan{}, ErrPlanStopping
+		}
+	}
+	request := PlanRequest{
+		Directory:   run.plan.Directory,
+		Title:       run.plan.Title,
+		Mode:        run.plan.Mode,
+		Model:       run.plan.Model,
+		Provider:    run.plan.Provider,
+		Concurrency: run.plan.Concurrency,
+		Tasks:       make([]TaskSpec, 0, len(run.plan.Tasks)),
+	}
+	for i := range run.plan.Tasks {
+		task := &run.plan.Tasks[i]
+		request.Tasks = append(request.Tasks, TaskSpec{ID: task.ID, Prompt: task.Prompt, DependsOn: task.DependsOn})
+		if task.Status == StatusSucceeded {
+			continue
+		}
+		task.Status = StatusQueued
+		task.Summary = ""
+		task.Error = ""
+		task.StartedAt = 0
+		task.EndedAt = 0
+	}
+	run.plan.Status = StatusRunning
+	run.plan.Error = ""
+	run.plan.UpdatedAt = time.Now().UnixMilli()
+	run.epoch++
+	epoch := run.epoch
+	ctx, cancel := context.WithCancel(context.Background())
+	run.cancel = cancel
+	if err := s.persistLocked(run); err != nil {
+		run.plan.Status = StatusFailed
+		run.plan.Error = "could not persist retry: " + err.Error()
+		s.mu.Unlock()
+		cancel()
+		return Plan{}, fmt.Errorf("could not persist orchestration plan: %w", err)
+	}
+	plan := run.plan
+	plan.Tasks = append([]TaskState(nil), run.plan.Tasks...)
+	s.mu.Unlock()
+	go s.run(ctx, id, request, epoch)
+	return plan, nil
+}
+
 func terminal(status string) bool {
 	return status == StatusSucceeded || status == StatusFailed || status == StatusCancelled
 }
 
-func (s *Service) run(ctx context.Context, id string, request PlanRequest) {
+func (s *Service) run(ctx context.Context, id string, request PlanRequest, epoch int64) {
 	running := make(map[string]bool)
 	for {
 		s.mu.Lock()
 		run := s.plans[id]
-		if run == nil {
+		if run == nil || run.epoch != epoch {
 			s.mu.Unlock()
 			return
 		}
@@ -215,10 +398,11 @@ func (s *Service) run(ctx context.Context, id string, request PlanRequest) {
 		}
 		finished := len(running) == 0 && len(launch) == 0
 		if finished {
-			s.finish(id)
+			s.finish(id, epoch)
 			s.mu.Unlock()
 			return
 		}
+		_ = s.persistLocked(run)
 		s.mu.Unlock()
 
 		var wg sync.WaitGroup
@@ -227,7 +411,7 @@ func (s *Service) run(ctx context.Context, id string, request PlanRequest) {
 			wg.Add(1)
 			go func(index int, spec TaskSpec) {
 				defer wg.Done()
-				s.executeTask(ctx, id, index, spec, request)
+				s.executeTask(ctx, id, index, spec, request, epoch)
 				s.mu.Lock()
 				delete(running, spec.ID)
 				s.mu.Unlock()
@@ -237,18 +421,20 @@ func (s *Service) run(ctx context.Context, id string, request PlanRequest) {
 	}
 }
 
-func (s *Service) executeTask(ctx context.Context, planID string, index int, spec TaskSpec, request PlanRequest) {
+func (s *Service) executeTask(ctx context.Context, planID string, index int, spec TaskSpec, request PlanRequest, epoch int64) {
 	taskID := spec.ID
 	s.mu.Lock()
 	run := s.plans[planID]
-	isolated := run != nil && run.plan.Isolated
+	if run == nil || run.epoch != epoch {
+		s.mu.Unlock()
+		return
+	}
+	isolated := run.plan.Isolated
 	var prerequisites []string
-	if run != nil {
-		for _, dep := range spec.DependsOn {
-			for _, task := range run.plan.Tasks {
-				if task.ID == dep && task.SessionID != "" {
-					prerequisites = append(prerequisites, task.SessionID)
-				}
+	for _, dep := range spec.DependsOn {
+		for _, task := range run.plan.Tasks {
+			if task.ID == dep && task.SessionID != "" {
+				prerequisites = append(prerequisites, task.SessionID)
 			}
 		}
 	}
@@ -263,34 +449,40 @@ func (s *Service) executeTask(ctx context.Context, planID string, index int, spe
 		Isolated:  isolated,
 	})
 	if err != nil {
-		s.completeTask(planID, taskID, "", "", err)
+		s.completeTask(planID, epoch, taskID, "", "", err)
 		return
 	}
 	s.mu.Lock()
-	if run := s.plans[planID]; run != nil {
+	if run := s.plans[planID]; run != nil && run.epoch == epoch {
 		run.plan.Tasks[index].SessionID = sessionID
 		run.plan.UpdatedAt = time.Now().UnixMilli()
+		_ = s.persistLocked(run)
+	} else {
+		s.mu.Unlock()
+		// A retry superseded this task while its session was starting.
+		s.sessions.Abort(sessionID)
+		return
 	}
 	s.mu.Unlock()
 	if ctx.Err() != nil {
-		s.completeTask(planID, taskID, sessionID, "", ctx.Err())
+		s.completeTask(planID, epoch, taskID, sessionID, "", ctx.Err())
 		return
 	}
 	if isolated && len(prerequisites) > 0 {
 		if err := s.sessions.Merge(sessionID, prerequisites); err != nil {
-			s.completeTask(planID, taskID, sessionID, "", fmt.Errorf("could not combine prerequisite changes: %w", err))
+			s.completeTask(planID, epoch, taskID, sessionID, "", fmt.Errorf("could not combine prerequisite changes: %w", err))
 			return
 		}
 	}
 	summary, err := s.sessions.Run(ctx, sessionID, convoyPrompt(spec, isolated), request)
-	s.completeTask(planID, taskID, sessionID, clip(summary, 2000), err)
+	s.completeTask(planID, epoch, taskID, sessionID, clip(summary, 2000), err)
 }
 
-func (s *Service) completeTask(planID, taskID, sessionID, summary string, err error) {
+func (s *Service) completeTask(planID string, epoch int64, taskID, sessionID, summary string, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	run := s.plans[planID]
-	if run == nil {
+	if run == nil || run.epoch != epoch {
 		return
 	}
 	for i := range run.plan.Tasks {
@@ -316,11 +508,12 @@ func (s *Service) completeTask(planID, taskID, sessionID, summary string, err er
 		break
 	}
 	run.plan.UpdatedAt = time.Now().UnixMilli()
+	_ = s.persistLocked(run)
 }
 
-func (s *Service) finish(planID string) {
+func (s *Service) finish(planID string, epoch int64) {
 	run := s.plans[planID]
-	if run == nil {
+	if run == nil || run.epoch != epoch {
 		return
 	}
 	status := StatusSucceeded
@@ -343,6 +536,42 @@ func (s *Service) finish(planID string) {
 	}
 	run.plan.Status = status
 	run.plan.UpdatedAt = time.Now().UnixMilli()
+	_ = s.persistLocked(run)
+}
+
+func (s *Service) persistLocked(run *planRun) error {
+	if s.store == nil || run == nil {
+		return nil
+	}
+	snapshot := run.plan
+	snapshot.Tasks = append([]TaskState(nil), run.plan.Tasks...)
+	return s.store.Save(snapshot)
+}
+
+const maxPersistedPlansPerDirectory = 50
+
+// pruneLocked keeps recent history bounded without ever dropping an active
+// plan or a plan from another workspace.
+func (s *Service) pruneLocked(directory string) {
+	if s.store == nil {
+		return
+	}
+	var finished []*planRun
+	for _, run := range s.plans {
+		if run.plan.Directory == directory && terminal(run.plan.Status) {
+			finished = append(finished, run)
+		}
+	}
+	if len(finished) <= maxPersistedPlansPerDirectory {
+		return
+	}
+	sort.Slice(finished, func(i, j int) bool {
+		return finished[i].plan.CreatedAt < finished[j].plan.CreatedAt
+	})
+	for _, run := range finished[:len(finished)-maxPersistedPlansPerDirectory] {
+		delete(s.plans, run.plan.ID)
+		_ = s.store.Delete(run.plan.ID)
+	}
 }
 
 func convoyPrompt(spec TaskSpec, isolated bool) string {

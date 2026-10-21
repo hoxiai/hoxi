@@ -10,7 +10,7 @@ import {
 } from "../../store/workspace";
 import { stopSessionTask } from "../../store/workspace-session-messages";
 import type { SessionInfo } from "../../services/sse-types";
-import { Icon, Spinner } from "../icons";
+import { ArcSpinner, Icon, Spinner } from "../icons";
 import { downloadSessionExport } from "../timeline/session-export";
 import { t } from "../../i18n";
 import { badgeFor } from "./left-nav-helpers";
@@ -195,7 +195,7 @@ export function SessionNavItem(props: SessionNavItemProps) {
           </span>
         </Show>
         <span
-          class={`session-row-title truncate text-[15px] flex-1 leading-snug ${
+          class={`session-row-title truncate text-[14px] flex-1 leading-snug ${
             props.isArchived ? "text-[var(--text-muted)]" : ""
           }`}
           title={props.session.title || ""}
@@ -232,15 +232,15 @@ export function SessionNavItem(props: SessionNavItemProps) {
             </span>
           </Show>
 
-          {/* Right-side status: Spinner icon when running / busy; relative time when finished / idle */}
+          {/* Compact activity arc while busy; relative time when finished or idle. */}
           <Show
             when={!isBusy()}
             fallback={
               <span
-                class="inline-flex items-center text-[var(--status-running)] shrink-0 select-none"
-                title={t("common.working")}
+                class="inline-flex items-center text-[var(--accent-primary)] shrink-0 select-none"
+                title={badge() === "approval" ? t("timeline.waitingApprovalBadge") : t("common.working")}
               >
-                <Spinner class="w-3 h-3 text-[var(--status-running)]" />
+                <ArcSpinner active={badge() !== "approval"} />
               </span>
             }
           >

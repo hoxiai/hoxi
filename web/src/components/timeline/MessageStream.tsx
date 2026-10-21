@@ -11,6 +11,7 @@ import {
   Show,
 } from "solid-js";
 import type { MessagePart, SessionStatus, ToolPart } from "../../services/sse-types";
+import type { MessageTurn } from "../../store/workspace";
 import {
   appSettings,
   canForkSession,
@@ -95,6 +96,36 @@ export default function MessageStream(props: { hidden?: boolean }) {
     const st = activeStatus();
     return st.type === "busy" || st.type === "retry";
   });
+
+  const latestUserTurnID = createMemo(() => {
+    const list = turns();
+    for (let i = list.length - 1; i >= 0; i--) {
+      if (list[i].info.role === "user") return list[i].info.id;
+    }
+    return null;
+  });
+
+  // Revert/fork are task controls, not message metadata: completed exchanges
+  // keep only time + copy, while the in-flight, interrupted, or failed exchange
+  // keeps them.
+  const isUserTurnTaskActive = (turn: MessageTurn, index: number): boolean => {
+    if (turn.info.id !== latestUserTurnID()) return false;
+    const sessionID = workspace.activeSessionID;
+    if (isSessionBusy() || (sessionID && workspace.interruptedBySession[sessionID])) {
+      return true;
+    }
+    const list = turns();
+    let lastAssistant: MessageTurn | undefined;
+    for (let i = index + 1; i < list.length && list[i].info.role === "assistant"; i++) {
+      lastAssistant = list[i];
+    }
+    // A stopped turn is still completed server-side, so its persisted finish
+    // reason must keep the controls available after a reload.
+    if (!lastAssistant || lastAssistant.info.error || lastAssistant.info.finish === "aborted") {
+      return true;
+    }
+    return !lastAssistant.info.time?.completed;
+  };
 
   const pendingForSession = createMemo(() => {
     const id = workspace.activeSessionID;
@@ -461,7 +492,7 @@ export default function MessageStream(props: { hidden?: boolean }) {
                       data-turn-id={turn.info.id}
                       style={{ "--hoxi-order": String(Math.min(Math.max(turnWindow.visibleTurns().length - 1 - idx(), 0), 5)) }}
                       class={`hoxi-item-enter group/turn flex flex-col items-end rounded-xl transition-colors ${
-                        idx() === 0 ? "mt-0" : "mt-5"
+                        idx() === 0 ? "mt-0" : "mt-6"
                       } ${
                         activeMatchTurnID() === turn.info.id
                           ? "ring-2 ring-[var(--accent-primary)] p-1.5"
@@ -617,30 +648,32 @@ export default function MessageStream(props: { hidden?: boolean }) {
                           </Show>
                         </ActionIconButton>
 
-                        <ActionIconButton
-                          disabled={!canForkSession(workspace.activeSessionID)}
-                          label={
-                            !canForkSession(workspace.activeSessionID)
-                              ? t("timeline.runnerFeatureUnsupported")
-                              : t("timeline.forkBtn")
-                          }
-                          onClick={() => void onForkFromMessage(turn.info.id)}
-                        >
-                          <Icon name="fork" size="small" />
-                        </ActionIconButton>
+                        <Show when={isUserTurnTaskActive(turn, globalIndex())}>
+                          <ActionIconButton
+                            disabled={!canForkSession(workspace.activeSessionID)}
+                            label={
+                              !canForkSession(workspace.activeSessionID)
+                                ? t("timeline.runnerFeatureUnsupported")
+                                : t("timeline.forkBtn")
+                            }
+                            onClick={() => void onForkFromMessage(turn.info.id)}
+                          >
+                            <Icon name="fork" size="small" />
+                          </ActionIconButton>
 
-                        <ActionIconButton
-                          disabled={!canRevertSession(workspace.activeSessionID)}
-                          variant="warn"
-                          label={
-                            !canRevertSession(workspace.activeSessionID)
-                              ? t("timeline.runnerFeatureUnsupported")
-                              : t("timeline.revertBtn")
-                          }
-                          onClick={() => void onRevertToMessage(turn.info.id)}
-                        >
-                          <Icon name="arrow-undo-down" size="small" />
-                        </ActionIconButton>
+                          <ActionIconButton
+                            disabled={!canRevertSession(workspace.activeSessionID)}
+                            variant="warn"
+                            label={
+                              !canRevertSession(workspace.activeSessionID)
+                                ? t("timeline.runnerFeatureUnsupported")
+                                : t("timeline.revertBtn")
+                            }
+                            onClick={() => void onRevertToMessage(turn.info.id)}
+                          >
+                            <Icon name="arrow-undo-down" size="small" />
+                          </ActionIconButton>
+                        </Show>
                       </div>
                     </div>
                   </Show>
@@ -653,6 +686,7 @@ export default function MessageStream(props: { hidden?: boolean }) {
                 sessionID={workspace.activeSessionID}
                 isSessionBusy={isSessionBusy()}
                 showThinking={showThinkingPlaceholder()}
+                awaitingApproval={pendingForSession().length > 0}
                 completedSteps={executionCycleMeta().count}
                 steps={executionCycleMeta().steps}
                 startedAt={executionCycleMeta().startedAt}

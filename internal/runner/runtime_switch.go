@@ -136,6 +136,11 @@ func (s *Service) adoptOpenCodeSession(ctx context.Context, id, directory string
 	} else if err = s.worktrees.ForDirectory(dir).UseLocalDirectory(id); err != nil {
 		return SessionRecord{}, err
 	}
+	projectID, err := s.ensureProjectID(rec.ProjectDir)
+	if err != nil {
+		return SessionRecord{}, err
+	}
+	rec.ProjectID = projectID
 	return rec, nil
 }
 

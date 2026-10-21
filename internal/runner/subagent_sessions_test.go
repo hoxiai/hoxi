@@ -37,7 +37,7 @@ func TestSubagentChildSessionsArePersistedRoutedAndCleanedUp(t *testing.T) {
 	if len(child.Turns) != 2 || child.Turns[0].Parts[0].Text != "Audit backend" {
 		t.Fatalf("child events must be routed into the child transcript, got %+v", child.Turns)
 	}
-	if busy := svc.conversationStatuses(context.Background(), ""); string(busy[ids[0]]) != `{"type":"busy"}` {
+	if busy := svc.conversationStatuses(context.Background(), "", ""); string(busy[ids[0]]) != `{"type":"busy"}` {
 		t.Fatalf("running subagent must report busy, got %v", busy)
 	}
 	parentRec, _ := svc.store.Get(parent.ID)

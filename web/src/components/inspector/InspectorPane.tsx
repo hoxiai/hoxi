@@ -3,6 +3,7 @@ import { Maximize2, Minimize2 } from "lucide-solid";
 import MemoryBankView from "./MemoryBankView";
 import FileTreeView from "./FileTreeView";
 import SkillsInspectorView from "../skills/SkillsInspectorView";
+import TaskOverviewView from "../tasks/TaskOverviewView";
 import { isSessionBusy, setWorkspace, workspace } from "../../store/workspace";
 import { collectCycleChangedFiles } from "../timeline/tool-card-state";
 import { t } from "../../i18n";
@@ -11,9 +12,9 @@ const PierreDiffViewer = lazy(() => import("./PierreDiffViewer"));
 const WebGLTerminal = lazy(() => import("../terminal/WebGLTerminal"));
 const BrowserInspector = lazy(() => import("./BrowserInspector"));
 
-type TabID = "diffs" | "memory" | "files" | "skills" | "terminal" | "browser";
+type TabID = "diffs" | "memory" | "files" | "skills" | "terminal" | "browser" | "tasks";
 
-const PRIMARY_TABS: TabID[] = ["diffs", "files", "terminal"];
+const PRIMARY_TABS: TabID[] = ["diffs", "files", "terminal", "tasks"];
 const SECONDARY_TABS: TabID[] = ["browser", "memory", "skills"];
 
 export default function InspectorPane() {
@@ -24,6 +25,7 @@ export default function InspectorPane() {
     skills: workspace.inspectorTab === "skills",
     terminal: workspace.inspectorTab === "terminal",
     browser: workspace.inspectorTab === "browser",
+    tasks: workspace.inspectorTab === "tasks",
   });
 
   createEffect(() => {
@@ -74,6 +76,8 @@ export default function InspectorPane() {
         return t("inspector.tabs.terminal");
       case "browser":
         return t("inspector.tabs.browser");
+      case "tasks":
+        return t("inspector.tabs.tasks");
     }
   };
 
@@ -149,6 +153,11 @@ export default function InspectorPane() {
           <Show when={visitedTabs().browser}>
             <div class="hoxi-tab-panel" data-active={workspace.inspectorTab === "browser" ? "true" : "false"} aria-hidden={workspace.inspectorTab !== "browser"}>
               <BrowserInspector />
+            </div>
+          </Show>
+          <Show when={visitedTabs().tasks}>
+            <div class="hoxi-tab-panel" data-active={workspace.inspectorTab === "tasks" ? "true" : "false"} aria-hidden={workspace.inspectorTab !== "tasks"}>
+              <TaskOverviewView />
             </div>
           </Show>
         </Suspense>

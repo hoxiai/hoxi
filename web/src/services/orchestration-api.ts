@@ -28,6 +28,9 @@ export interface ConvoyPlan {
   id: string;
   title: string;
   directory: string;
+  mode?: string;
+  provider?: string;
+  model?: string;
   concurrency: number;
   /** True when every task runs in its own git worktree (false: shared folder, serial). */
   isolated?: boolean;
@@ -48,11 +51,38 @@ export interface ConvoyPlanRequest {
   tasks: ConvoyTaskSpec[];
 }
 
+export interface ConvoyDraftRequest {
+  directory: string;
+  goal: string;
+  locale?: string;
+  providerID?: string;
+  modelID?: string;
+  maxTasks?: number;
+}
+
+export async function draftConvoyPlan(request: ConvoyDraftRequest): Promise<ConvoyPlanRequest> {
+  return requestJSON<ConvoyPlanRequest>("/api/hoxi/orchestration/draft", {
+    method: "POST",
+    body: JSON.stringify(request),
+  });
+}
+
 export async function createConvoyPlan(request: ConvoyPlanRequest): Promise<ConvoyPlan> {
   return requestJSON<ConvoyPlan>("/api/hoxi/orchestration/plans", {
     method: "POST",
     body: JSON.stringify(request),
   });
+}
+
+export async function fetchConvoyPlans(directory: string): Promise<ConvoyPlan[]> {
+  const query = directory ? `?directory=${encodeURIComponent(directory)}` : "";
+  return requestJSON<ConvoyPlan[]>(`/api/hoxi/orchestration/plans${query}`);
+}
+
+export async function fetchConvoyPlansForSession(sessionID: string): Promise<ConvoyPlan[]> {
+  return requestJSON<ConvoyPlan[]>(
+    `/api/hoxi/orchestration/plans?session=${encodeURIComponent(sessionID)}`
+  );
 }
 
 export async function fetchConvoyPlan(planID: string): Promise<ConvoyPlan> {
@@ -62,6 +92,13 @@ export async function fetchConvoyPlan(planID: string): Promise<ConvoyPlan> {
 export async function cancelConvoyPlan(planID: string): Promise<ConvoyPlan> {
   return requestJSON<ConvoyPlan>(
     `/api/hoxi/orchestration/plans/${encodeURIComponent(planID)}/cancel`,
+    { method: "POST" }
+  );
+}
+
+export async function retryConvoyPlan(planID: string): Promise<ConvoyPlan> {
+  return requestJSON<ConvoyPlan>(
+    `/api/hoxi/orchestration/plans/${encodeURIComponent(planID)}/retry`,
     { method: "POST" }
   );
 }

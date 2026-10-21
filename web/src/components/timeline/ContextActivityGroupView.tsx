@@ -21,12 +21,12 @@ import {
   DiffChanges,
   Icon,
   type IconName,
-  Spinner,
   TextReveal,
   TextShimmer,
 } from "../icons";
 import { resolveSubagentCurrentStepLabel } from "./SubagentInlineTimeline";
 import { liveReasoningTicker, reasoningHeading, reasoningSummary } from "./ThoughtBox";
+import HoxiActivityLogo from "./HoxiActivityLogo";
 
 import {
   extractCommand,
@@ -474,7 +474,7 @@ export default function ContextActivityGroupView(props: {
               }
             >
               <span class="text-[var(--accent-primary)] inline-flex items-center shrink-0">
-                <Spinner class="w-3.5 h-3.5" />
+                <HoxiActivityLogo active={!hasPendingApproval()} />
               </span>
             </Show>
 
@@ -490,7 +490,7 @@ export default function ContextActivityGroupView(props: {
                       : tI18n("timeline.thought")}
                   </span>
                   <Show when={stats().badges.length > 0}>
-                    <span class="hidden sm:inline-flex items-center gap-2 text-[var(--text-muted)] shrink-0">
+                    <span class="hidden sm:inline-flex items-center gap-2 text-[var(--text-muted)] shrink-0 opacity-0 transition-opacity duration-150 group-hover/activity:opacity-100 group-focus-within/activity:opacity-100">
                       <span class="text-[var(--text-faint)]">·</span>
                       <For each={stats().badges}>
                         {(badge) => (
@@ -514,7 +514,7 @@ export default function ContextActivityGroupView(props: {
               }
             >
               <span class="font-medium text-[var(--accent-primary)] shrink-0">
-                <TextShimmer text={activeStepDisplay().action} active={true} />
+                <TextShimmer text={activeStepDisplay().action} active={!hasPendingApproval()} />
               </span>
               <Show when={activeStepDisplay().detail}>
                 <span class="font-mono text-[12px] text-[var(--text-secondary)] truncate max-w-[360px] inline-flex items-center min-w-0">

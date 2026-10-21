@@ -432,13 +432,13 @@ export function AssistantTurnItem(props: {
             ? { "content-visibility": "auto", "contain-intrinsic-size": "auto 140px" }
             : {}),
         }}
-        class={`hoxi-item-enter flex flex-col gap-y-2.5 px-1 rounded-xl transition-colors ${
+        class={`hoxi-item-enter group/turn flex flex-col gap-y-2.5 px-1 rounded-xl transition-colors ${
           merged().isVisuallyEmpty && !props.turn.info.error
             ? "mt-0"
             : props.globalIndex === 0
               ? "mt-0"
                 : merged().isFirstVisualTurnInCycle
-                  ? "mt-4"
+                  ? "mt-5"
                   : "mt-2.5"
         } ${
           isHighlighted()

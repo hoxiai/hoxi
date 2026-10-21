@@ -3,7 +3,8 @@ import { Show } from "solid-js";
 import { History } from "lucide-solid";
 import { t } from "../../i18n";
 import { TextShimmer } from "../icons";
-import type { NormalizedTodoItem, TodoActivitySummary } from "./task-progress-helpers";
+import type { NormalizedTodoItem } from "../../store/task-progress";
+import type { TodoActivitySummary } from "./task-progress-helpers";
 
 /**
  * Shown when the model keeps working without updating its todo list, so a frozen `0/4`

@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, lazy, onCleanup, onMount, Show, Suspense } from "solid-js";
+import { createEffect, createMemo, createSignal, lazy, onCleanup, onMount, Show, Suspense, untrack } from "solid-js";
 import CompactHeader from "./CompactHeader";
 import CommandPalette, { type CommandPaletteMode } from "./CommandPalette";
 import UpdateBadge from "./UpdateBadge";
@@ -10,9 +10,22 @@ import InspectorPane from "../inspector/InspectorPane";
 import {
   appSettings,
   closeSettingsModal,
+  consumeDesktopIntent,
+  DESKTOP_INTENT_EVENT,
   leaderboardState,
+  LEFT_PANE_MAX,
+  LEFT_PANE_MIN,
+  leftNavOpen,
+  leftWidth,
   openSettingsModal,
+  RIGHT_PANE_MAX,
+  RIGHT_PANE_MIN,
+  rightWidth,
+  saveLayoutPrefs,
   selectSession,
+  setLeftNavOpen,
+  setLeftWidth,
+  setRightWidth,
   setWorkspace,
   workspace,
 } from "../../store/workspace";
@@ -22,18 +35,38 @@ const ExternalHandoffModal = lazy(() => import("../handoff/ExternalHandoffModal"
 const ModelLeaderboardModal = lazy(() => import("../models/ModelLeaderboardModal"));
 const SettingsModal = lazy(() => import("../settings/SettingsModal"));
 
-const LEFT_MIN = 220;
-const LEFT_MAX = 360;
-const RIGHT_MIN = 340;
-const RIGHT_MAX = 640;
+const PANE_GUTTERS = 20;
+const CENTER_PANE_MIN = 560;
 
 export default function ThreePaneShell() {
-  const [leftNavOpen, setLeftNavOpen] = createSignal(true);
-  const [leftWidth, setLeftWidth] = createSignal(268);
-  const [rightWidth, setRightWidth] = createSignal(420);
+  const [windowWidth, setWindowWidth] = createSignal(window.innerWidth);
   const [resizingSide, setResizingSide] = createSignal<"left" | "right" | null>(null);
   const [inspectorEverOpened, setInspectorEverOpened] = createSignal(workspace.inspectorOpen);
   const [paletteMode, setPaletteMode] = createSignal<CommandPaletteMode | null>(null);
+
+  const effectiveLeftWidth = () => (leftNavOpen() ? leftWidth() : 0);
+  const rightPaneCeiling = () =>
+    Math.max(
+      RIGHT_PANE_MIN,
+      windowWidth() - PANE_GUTTERS - effectiveLeftWidth() - CENTER_PANE_MIN
+    );
+  const inspectorWidth = createMemo(() =>
+    Math.min(rightWidth(), RIGHT_PANE_MAX, rightPaneCeiling())
+  );
+  const inspectorFits = () =>
+    windowWidth() - PANE_GUTTERS - effectiveLeftWidth() - RIGHT_PANE_MIN >= CENTER_PANE_MIN;
+
+  createEffect(() => {
+    if (inspectorFits()) return;
+    if (!untrack(() => workspace.inspectorOpen) || workspace.inspectorMaximized) return;
+    setWorkspace("inspectorOpen", false);
+    setWorkspace("inspectorMaximized", false);
+  });
+
+  createEffect(() => {
+    if (resizingSide()) return;
+    saveLayoutPrefs();
+  });
 
   createEffect(() => {
     if (workspace.inspectorOpen) {
@@ -56,6 +89,27 @@ export default function ThreePaneShell() {
 
   let activeResizeCleanup: (() => void) | null = null;
   onCleanup(() => activeResizeCleanup?.());
+
+  const [pendingDeepLink, setPendingDeepLink] = createSignal<{ sessionID: string; messageID?: string } | null>(null);
+
+  const focusSessionLink = (sessionID: string, messageID?: string) => {
+    void selectSession(sessionID).then(() => {
+      if (!messageID) return;
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent("hoxi:focus-message", { detail: { messageID } }));
+      }, 350);
+    });
+  };
+
+  // Deep links may arrive before session bootstrap finishes; wait until the
+  // target session is known so the initial project restore cannot steal focus.
+  createEffect(() => {
+    const link = pendingDeepLink();
+    if (!link || workspace.bootstrappingSessions) return;
+    if (!workspace.sessions.some((session) => session.id === link.sessionID)) return;
+    setPendingDeepLink(null);
+    focusSessionLink(link.sessionID, link.messageID);
+  });
 
   onMount(() => {
     const onKeyDown = (ev: KeyboardEvent) => {
@@ -99,30 +153,37 @@ export default function ThreePaneShell() {
       const sessionID = (event as CustomEvent<{ sessionID?: string }>).detail?.sessionID;
       if (sessionID) void selectSession(sessionID);
     };
+    const onWindowResize = () => setWindowWidth(window.innerWidth);
     const focusFromLocationHash = () => {
       const raw = window.location.hash.replace(/^#/, "");
       if (!raw) return;
       const params = new URLSearchParams(raw);
       const sessionID = params.get("session");
       if (!sessionID) return;
-      const messageID = params.get("message");
-      void selectSession(sessionID).then(() => {
-        if (!messageID) return;
-        setTimeout(() => {
-          window.dispatchEvent(
-            new CustomEvent("hoxi:focus-message", { detail: { messageID } })
-          );
-        }, 350);
+      setPendingDeepLink({ sessionID, messageID: params.get("message") ?? undefined });
+    };
+    const wailsRuntime = (window as any).runtime;
+    const consumeIntent = () => {
+      void consumeDesktopIntent().then((intent) => {
+        if (intent) setPendingDeepLink(intent);
       });
     };
+    const onDesktopIntent = () => consumeIntent();
+    if (typeof wailsRuntime?.EventsOn === "function") {
+      wailsRuntime.EventsOn(DESKTOP_INTENT_EVENT, onDesktopIntent);
+    }
     focusFromLocationHash();
+    consumeIntent();
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("hashchange", focusFromLocationHash);
     window.addEventListener("hoxi:notification-click", onNotificationClick);
+    window.addEventListener("resize", onWindowResize);
     onCleanup(() => {
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("hashchange", focusFromLocationHash);
       window.removeEventListener("hoxi:notification-click", onNotificationClick);
+      window.removeEventListener("resize", onWindowResize);
+      wailsRuntime?.EventsOff?.(DESKTOP_INTENT_EVENT);
     });
   });
 
@@ -131,7 +192,7 @@ export default function ThreePaneShell() {
     activeResizeCleanup?.();
     setResizingSide(side);
     const startX = ev.clientX;
-    const startWidth = side === "left" ? leftWidth() : rightWidth();
+    const startWidth = side === "left" ? leftWidth() : inspectorWidth();
     let rafId = 0;
     let pendingX = startX;
 
@@ -139,9 +200,11 @@ export default function ThreePaneShell() {
       rafId = 0;
       const delta = pendingX - startX;
       if (side === "left") {
-        setLeftWidth(Math.min(LEFT_MAX, Math.max(LEFT_MIN, startWidth + delta)));
+        setLeftWidth(Math.min(LEFT_PANE_MAX, Math.max(LEFT_PANE_MIN, startWidth + delta)));
       } else {
-        setRightWidth(Math.min(RIGHT_MAX, Math.max(RIGHT_MIN, startWidth - delta)));
+        setRightWidth(
+          Math.min(RIGHT_PANE_MAX, rightPaneCeiling(), Math.max(RIGHT_PANE_MIN, startWidth - delta))
+        );
       }
     };
 
@@ -241,7 +304,7 @@ export default function ThreePaneShell() {
                 aria-hidden={!isNewConversation()}
               >
                 <div class="min-h-0 overflow-hidden">
-                  <ParticleLogo />
+                  <ParticleLogo play={isNewConversation()} />
                 </div>
               </div>
               <Composer />
@@ -287,13 +350,13 @@ export default function ThreePaneShell() {
               ? { width: "0px" }
               : workspace.inspectorMaximized
                 ? undefined
-                : { width: `${rightWidth()}px` }
+                : { width: `${inspectorWidth()}px` }
           }
         >
           <div
             class="h-full"
             style={{
-              width: workspace.inspectorMaximized ? "100%" : `${rightWidth()}px`,
+              width: workspace.inspectorMaximized ? "100%" : `${inspectorWidth()}px`,
             }}
           >
             <Show when={inspectorEverOpened()}>

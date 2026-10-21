@@ -27,7 +27,7 @@ function formatTokenValue(n: number): string {
  * Displays a live circular SVG progress ring of context window utilization,
  * cache read/write breakdown, cumulative session cost, and 1-click 8-Dim Compaction.
  */
-export default function ContextProgressPill(props: { minPercent?: number }) {
+export default function ContextProgressPill() {
   const [open, setOpen] = createSignal(false);
   const [compacting, setCompacting] = createSignal(false);
   const [notice, setNotice] = createSignal("");
@@ -99,13 +99,6 @@ export default function ContextProgressPill(props: { minPercent?: number }) {
     };
   });
 
-  const visibleStats = createMemo(() => {
-    const current = stats();
-    if (!current) return null;
-    const threshold = props.minPercent ?? 70;
-    return current.percent >= threshold || open() ? current : null;
-  });
-
   const usageColor = createMemo(() => {
     const p = stats()?.percent ?? 0;
     if (p >= 85) return "var(--status-danger)";
@@ -145,7 +138,7 @@ export default function ContextProgressPill(props: { minPercent?: number }) {
   const circumference = 2 * Math.PI * radius;
 
   return (
-    <Show when={visibleStats()}>
+    <Show when={stats()}>
       {(s) => (
         <div ref={containerRef} class="relative inline-flex items-center">
           <button

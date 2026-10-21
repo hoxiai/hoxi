@@ -1,23 +1,31 @@
 // web/src/components/orchestration/ConvoyModal.tsx
-import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, Show, untrack } from "solid-js";
 import { Presence } from "../motion/Presence";
 import {
   CheckCircle2,
+  ExternalLink,
   LoaderCircle,
   MinusCircle,
   Play,
   Plus,
+  RotateCcw,
+  Sparkles,
   Square,
   Trash2,
   Workflow,
   X,
   XCircle,
 } from "lucide-solid";
-import { t } from "../../i18n";
+import { locale, t } from "../../i18n";
 import {
   cancelConvoyPlan,
   createConvoyPlan,
+  draftConvoyPlan,
   fetchConvoyPlan,
+  fetchConvoyPlans,
+  retryConvoyPlan,
+  selectSession,
+  workspace,
   type ConvoyPlan,
   type ConvoyTaskSpec,
   type ConvoyTaskStatus,
@@ -80,10 +88,18 @@ export default function ConvoyModal(props: {
   onClose: () => void;
 }) {
   const [tasks, setTasks] = createSignal<DraftTask[]>([newTask(1)]);
+  const [title, setTitle] = createSignal("");
+  const [goal, setGoal] = createSignal("");
+  const [draftedBy, setDraftedBy] = createSignal("");
+  const [drafting, setDrafting] = createSignal(false);
   const [concurrency, setConcurrency] = createSignal(3);
   const [plan, setPlan] = createSignal<ConvoyPlan | null>(null);
+  const [history, setHistory] = createSignal<ConvoyPlan[]>([]);
   const [starting, setStarting] = createSignal(false);
+  const [retrying, setRetrying] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
+  let lastDirectory = "";
+  let draftGeneration = 0;
 
   const updateTask = (index: number, patch: Partial<DraftTask>) => {
     setTasks((current) => current.map((task, i) => (i === index ? { ...task, ...patch } : task)));
@@ -112,6 +128,43 @@ export default function ConvoyModal(props: {
   };
 
   createEffect(() => {
+    if (!props.open) return;
+    const directory = props.directory?.trim() ?? "";
+    if (!directory) return;
+    if (directory !== lastDirectory) {
+      lastDirectory = directory;
+      draftGeneration++;
+      setPlan(null);
+      setHistory([]);
+      setTitle("");
+      setGoal("");
+      setDraftedBy("");
+      setDrafting(false);
+    }
+    fetchConvoyPlans(directory)
+      .then((plans) => {
+        setHistory(plans);
+        if (untrack(() => plan())) return;
+        const active = plans.find((item) => !isTerminal(item.status));
+        if (active) setPlan(active);
+      })
+      .catch(() => {});
+  });
+
+  // Keep the history entry in sync while the live view polls.
+  createEffect(() => {
+    const current = plan();
+    if (!current) return;
+    setHistory((items) => {
+      const index = items.findIndex((item) => item.id === current.id);
+      if (index < 0) return [current, ...items];
+      const next = items.slice();
+      next[index] = current;
+      return next;
+    });
+  });
+
+  createEffect(() => {
     const current = plan();
     if (!props.open || !current || isTerminal(current.status)) return;
     const timer = setInterval(() => {
@@ -122,12 +175,79 @@ export default function ConvoyModal(props: {
     onCleanup(() => clearInterval(timer));
   });
 
+  const canRetry = createMemo(() => {
+    const current = plan();
+    if (!current || !isTerminal(current.status)) return false;
+    return (
+      current.tasks.every((task) => task.status !== "running") &&
+      current.tasks.some((task) => task.status !== "succeeded")
+    );
+  });
+
+  const retry = async () => {
+    const current = plan();
+    if (!current || retrying()) return;
+    setRetrying(true);
+    setError(null);
+    try {
+      setPlan(await retryConvoyPlan(current.id));
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setRetrying(false);
+    }
+  };
+
+  const openSession = (sessionID?: string) => {
+    if (!sessionID) return;
+    void selectSession(sessionID);
+    props.onClose();
+  };
+
   createEffect(() => {
     if (!props.open) {
+      draftGeneration++;
       setError(null);
       setStarting(false);
+      setDrafting(false);
     }
   });
+
+  const generateDraft = async () => {
+    const dir = props.directory?.trim();
+    const text = goal().trim();
+    if (!dir || !text || drafting()) return;
+    const generation = ++draftGeneration;
+    setDrafting(true);
+    setError(null);
+    try {
+      const model = workspace.selectedModel;
+      const draft = await draftConvoyPlan({
+        directory: dir,
+        goal: text,
+        locale: locale(),
+        ...(model ? { providerID: model.providerID, modelID: model.modelID } : {}),
+      });
+      if (generation !== draftGeneration) return;
+      setTitle(draft.title ?? "");
+      setConcurrency(draft.concurrency > 0 ? draft.concurrency : 3);
+      setDraftedBy(draft.model || "");
+      setTasks(
+        draft.tasks.length > 0
+          ? draft.tasks.map((task) => ({
+              id: task.id,
+              prompt: task.prompt,
+              depends: (task.dependsOn ?? []).join(", "),
+            }))
+          : [newTask(1)]
+      );
+    } catch (err) {
+      if (generation !== draftGeneration) return;
+      setError(String(err));
+    } finally {
+      if (generation === draftGeneration) setDrafting(false);
+    }
+  };
 
   const start = async () => {
     const dir = props.directory?.trim();
@@ -154,6 +274,7 @@ export default function ConvoyModal(props: {
     try {
       const created = await createConvoyPlan({
         directory: dir,
+        ...(title().trim() ? { title: title().trim() } : {}),
         concurrency: concurrency(),
         tasks: specs,
       });
@@ -176,8 +297,13 @@ export default function ConvoyModal(props: {
   };
 
   const reset = () => {
+    draftGeneration++;
     setPlan(null);
     setError(null);
+    setTitle("");
+    setGoal("");
+    setDraftedBy("");
+    setDrafting(false);
   };
 
   return (
@@ -216,6 +342,65 @@ export default function ConvoyModal(props: {
             when={plan()}
             fallback={
               <div class="max-h-[60vh] overflow-y-auto p-3">
+                <Show when={history().length > 0}>
+                  <div class="mb-3">
+                    <div class="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-[var(--text-muted)]">
+                      {t("timeline.convoyHistory")}
+                    </div>
+                    <div class="flex flex-col gap-1">
+                      <For each={history().slice(0, 6)}>
+                        {(item) => (
+                          <button
+                            type="button"
+                            onClick={() => setPlan(item)}
+                            class="flex items-center gap-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2 py-1.5 text-left text-[12px] hover:bg-[var(--bg-hover)] cursor-pointer"
+                          >
+                            <StatusIcon status={item.status} />
+                            <span class="min-w-0 flex-1 truncate text-[var(--text-primary)]">{item.title}</span>
+                            <span class={`shrink-0 text-[11px] ${statusColor[item.status]}`}>{statusLabel(item.status)}</span>
+                          </button>
+                        )}
+                      </For>
+                    </div>
+                  </div>
+                </Show>
+                <div class="mb-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-2">
+                  <div class="mb-1.5 flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-[var(--text-muted)]">
+                    <Sparkles size={12} class="text-[var(--accent-primary)]" />
+                    {t("timeline.convoyDraftLabel")}
+                  </div>
+                  <textarea
+                    value={goal()}
+                    onInput={(event) => setGoal(event.currentTarget.value)}
+                    placeholder={t("timeline.convoyDraftPlaceholder")}
+                    rows={2}
+                    class="w-full resize-y rounded-lg border border-[var(--border-strong)] bg-[var(--bg-inset)] px-2 py-1.5 text-[12px] leading-snug text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]"
+                  />
+                  <div class="mt-1.5 flex items-center gap-2">
+                    <p class="min-w-0 flex-1 text-[11px] text-[var(--text-faint)]">
+                      {draftedBy()
+                        ? t("timeline.convoyDraftBy", { model: draftedBy() })
+                        : t("timeline.convoyDraftNote")}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => void generateDraft()}
+                      disabled={drafting() || !props.directory || !goal().trim()}
+                      class="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-[var(--border-strong)] px-2 py-1 text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                    >
+                      <Show when={!drafting()} fallback={<LoaderCircle size={12} class="animate-spin" />}>
+                        <Sparkles size={12} />
+                      </Show>
+                      {drafting() ? t("timeline.convoyDraftGenerating") : t("timeline.convoyDraftGenerate")}
+                    </button>
+                  </div>
+                </div>
+                <input
+                  value={title()}
+                  onInput={(event) => setTitle(event.currentTarget.value)}
+                  placeholder={t("timeline.convoyTitlePlaceholder")}
+                  class="mb-2 w-full rounded-lg border border-[var(--border-strong)] bg-[var(--bg-inset)] px-2 py-1 text-[12px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]"
+                />
                 <For each={tasks()}>
                   {(task, index) => (
                     <div class="mb-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-2">
@@ -298,9 +483,17 @@ export default function ConvoyModal(props: {
                       <span class="font-mono text-[var(--text-primary)]">{task.id}</span>
                       <span class={`text-[11px] ${statusColor[task.status]}`}>{statusLabel(task.status)}</span>
                       <Show when={task.sessionID}>
-                        <span class="ml-auto truncate font-mono text-[11px] text-[var(--text-faint)]">
-                          {t("timeline.convoySessionLabel", { id: task.sessionID || "" })}
-                        </span>
+                        <button
+                          type="button"
+                          onClick={() => openSession(task.sessionID)}
+                          title={t("timeline.convoyOpenSession")}
+                          class="ml-auto inline-flex min-w-0 items-center gap-1 rounded-md px-1.5 py-0.5 font-mono text-[11px] text-[var(--text-faint)] hover:bg-[var(--bg-hover)] hover:text-[var(--accent-primary)] cursor-pointer"
+                        >
+                          <ExternalLink size={11} class="shrink-0" />
+                          <span class="truncate">
+                            {t("timeline.convoySessionLabel", { id: task.sessionID || "" })}
+                          </span>
+                        </button>
                       </Show>
                     </div>
                     <Show when={task.summary}>
@@ -326,6 +519,19 @@ export default function ConvoyModal(props: {
                   <Square size={11} /> {t("timeline.convoyCancel")}
                 </button>
               </Show>
+              <Show when={canRetry()}>
+                <button
+                  type="button"
+                  onClick={() => void retry()}
+                  disabled={retrying()}
+                  class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-strong)] px-2 py-1 text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                >
+                  <Show when={!retrying()} fallback={<LoaderCircle size={11} class="animate-spin" />}>
+                    <RotateCcw size={11} />
+                  </Show>
+                  {t("timeline.convoyRetry")}
+                </button>
+              </Show>
               <div class="ml-auto flex items-center gap-2">
                 <Show when={isTerminal(plan()?.status ?? "queued")}>
                   <button
@@ -333,7 +539,7 @@ export default function ConvoyModal(props: {
                     onClick={reset}
                     class="rounded-lg border border-[var(--border-strong)] px-2 py-1 text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] cursor-pointer"
                   >
-                    {t("timeline.convoyStart")}
+                    {t("timeline.convoyNewPlan")}
                   </button>
                 </Show>
                 <button

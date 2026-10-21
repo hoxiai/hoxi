@@ -43,8 +43,10 @@ func (s *Service) startPrompt(ctx context.Context, sessionID, directory string, 
 		if adoptErr != nil {
 			if adoptErr.Error() == "cannot change runtime while the session is running" {
 				dir := s.resolveUnmanagedSessionDir(sessionID, directory)
+				projectID, _ := s.ensureProjectID(dir)
 				rec = SessionRecord{
 					ID:           sessionID,
+					ProjectID:    projectID,
 					Runtime:      "opencode",
 					ExternalID:   sessionID,
 					ProjectDir:   dir,

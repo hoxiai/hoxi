@@ -15,6 +15,7 @@ import { skills } from "./skills";
 import { commandPalette } from "./commandPalette";
 import { forge } from "./forge";
 import { remoteTunnel } from "./remoteTunnel";
+import { tasks } from "./tasks";
 
 export const enUS = {
   common,
@@ -33,6 +34,7 @@ export const enUS = {
   commandPalette,
   forge,
   remoteTunnel,
+  tasks,
 };
 
 export default enUS;

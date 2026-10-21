@@ -24,6 +24,7 @@ import {
 } from "../../store/workspace";
 import { t } from "../../i18n";
 import { getConnectedProviderModelGroups } from "./model-selector-utils";
+import ModelRolePicker from "./ModelRolePicker";
 
 function agentIcon(name: string) {
   const lower = name.toLowerCase();
@@ -296,27 +297,14 @@ export default function AgentRolesTab() {
                           {t("models.agentDedicatedModelLabel")}
                         </span>
                         <div class="flex items-center gap-1.5">
-                          <select
-                            value={agent.model}
-                            onChange={(e) => void applyAgentModel(agent.id, e.currentTarget.value)}
-                            class="w-[240px] rounded-xl border border-[var(--border-strong)] bg-[var(--bg-panel)] px-3 py-1.5 text-[12px] font-medium text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)] cursor-pointer"
-                          >
-                            <option value="">{t("models.agentModelFollowDefault")}</option>
-                            <For each={connectedGroups()}>
-                              {(grp) => (
-                                <optgroup label={`${grp.providerName} (${grp.providerID})`}>
-                                  <For each={grp.models}>
-                                    {(m) => (
-                                      <option value={m.fullKey}>
-                                        {m.name} ({m.id})
-                                        {m.free ? ` · [${t("models.freeModel")}]` : ""}
-                                      </option>
-                                    )}
-                                  </For>
-                                </optgroup>
-                              )}
-                            </For>
-                          </select>
+                          <ModelRolePicker
+                            value={agent.model || ""}
+                            groups={connectedGroups()}
+                            allowEmpty
+                            emptyLabel={t("models.agentModelFollowDefault")}
+                            triggerClass="w-[240px]"
+                            onChange={(val) => void applyAgentModel(agent.id, val)}
+                          />
 
                           <Show when={agent.model}>
                             <button
@@ -469,26 +457,14 @@ export default function AgentRolesTab() {
                 <label class="block text-[11px] font-medium text-[var(--text-secondary)] mb-1">
                   {t("models.agentDedicatedModelLabel")}
                 </label>
-                <select
+                <ModelRolePicker
                   value={newAgentModel()}
-                  onChange={(e) => setNewAgentModel(e.currentTarget.value)}
-                  class="w-full rounded-xl border border-[var(--border-strong)] bg-[var(--bg-panel)] px-3 py-1.5 text-[12px] font-medium text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]"
-                >
-                  <option value="">{t("models.agentModelFollowDefault")}</option>
-                  <For each={connectedGroups()}>
-                    {(grp) => (
-                      <optgroup label={`${grp.providerName} (${grp.providerID})`}>
-                        <For each={grp.models}>
-                          {(m) => (
-                            <option value={m.fullKey}>
-                              {m.name} ({m.id}){m.free ? ` · [${t("models.freeModel")}]` : ""}
-                            </option>
-                          )}
-                        </For>
-                      </optgroup>
-                    )}
-                  </For>
-                </select>
+                  groups={connectedGroups()}
+                  allowEmpty
+                  emptyLabel={t("models.agentModelFollowDefault")}
+                  triggerClass="w-full"
+                  onChange={(val) => setNewAgentModel(val)}
+                />
               </div>
             </div>
 

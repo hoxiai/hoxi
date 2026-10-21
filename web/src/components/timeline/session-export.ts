@@ -142,13 +142,8 @@ export async function downloadSessionExport(sessionID: string, format: "markdown
 }
 
 export function buildMessageLink(sessionID: string, messageID?: string): string {
-  const params = new URLSearchParams({ session: sessionID });
-  if (messageID) params.set("message", messageID);
-  const hash = `#${params.toString()}`;
-  if (typeof window !== "undefined" && window.location?.href) {
-    return `${window.location.origin}${window.location.pathname}${hash}`;
-  }
-  return `hoxi://session/${encodeURIComponent(sessionID)}${messageID ? `?message=${encodeURIComponent(messageID)}` : ""}`;
+  const query = messageID ? `?message=${encodeURIComponent(messageID)}` : "";
+  return `hoxi://session/${encodeURIComponent(sessionID)}${query}`;
 }
 
 export async function copyMessageLink(sessionID: string, messageID?: string): Promise<boolean> {

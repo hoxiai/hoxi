@@ -12,6 +12,7 @@ import {
 } from "../../store/workspace";
 import { t } from "../../i18n";
 import { getInternalLLMProviderModelGroups } from "./model-selector-utils";
+import ModelRolePicker, { type ModelRoleExtraOption } from "./ModelRolePicker";
 
 export default function ModelsRoleTab() {
   const [savingKey, setSavingKey] = createSignal<string | null>(null);
@@ -63,42 +64,23 @@ export default function ModelsRoleTab() {
 
   const renderModelSelect = (opts: {
     roleKey: string;
-    value: string;
+    value: () => string;
     allowEmpty: boolean;
     emptyLabel?: string;
-    extraOptions?: Array<{ value: string; label: string }>;
+    extraOptions?: ModelRoleExtraOption[];
     onChange: (val: string) => void;
   }) => (
     <div class="flex items-center gap-2 shrink-0">
-      <div class="relative">
-        <select
-          value={opts.value}
-          onChange={(e) => opts.onChange(e.currentTarget.value)}
-          class="w-[270px] rounded-xl border border-[var(--border-strong)] bg-[var(--bg-panel)] px-3 py-1.5 text-[12px] font-medium text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]"
-        >
-          <Show when={opts.allowEmpty}>
-            <option value="">{opts.emptyLabel || t("models.useGlobalDefault")}</option>
-          </Show>
-          <For each={opts.extraOptions || []}>
-            {(opt) => <option value={opt.value}>{opt.label}</option>}
-          </For>
-          <For each={connectedGroups()}>
-            {(grp) => (
-              <optgroup label={`${grp.providerName} (${grp.providerID})`}>
-                <For each={grp.models}>
-                  {(m) => (
-                    <option value={m.fullKey}>
-                      {m.name} ({m.id}){m.free ? ` · [${t("models.freeModel")}]` : ""}{m.multiplier ? ` · [${m.multiplier}]` : ""}
-                    </option>
-                  )}
-                </For>
-              </optgroup>
-            )}
-          </For>
-        </select>
-      </div>
+      <ModelRolePicker
+        value={opts.value()}
+        groups={connectedGroups()}
+        allowEmpty={opts.allowEmpty}
+        emptyLabel={opts.emptyLabel}
+        extraOptions={opts.extraOptions}
+        onChange={opts.onChange}
+      />
 
-      <Show when={opts.allowEmpty && opts.value}>
+      <Show when={opts.allowEmpty && opts.value()}>
         <button
           type="button"
           onClick={() => opts.onChange("")}
@@ -151,7 +133,7 @@ export default function ModelsRoleTab() {
           </div>
           {renderModelSelect({
             roleKey: "model",
-            value: currentDefaultModel(),
+            value: currentDefaultModel,
             allowEmpty: false,
             onChange: (val) => void applyRolePatch("model", { model: val }),
           })}
@@ -169,7 +151,7 @@ export default function ModelsRoleTab() {
           </div>
           {renderModelSelect({
             roleKey: "small_model",
-            value: currentSmallModel(),
+            value: currentSmallModel,
             allowEmpty: true,
             onChange: (val) =>
               void applyRolePatch("small_model", { small_model: val || null }),
@@ -188,7 +170,7 @@ export default function ModelsRoleTab() {
           </div>
           {renderModelSelect({
             roleKey: "commit_model",
-            value: commitModelSpec(),
+            value: commitModelSpec,
             allowEmpty: true,
             emptyLabel: t("models.commitModelFollowSmallOption"),
             extraOptions: [
@@ -216,7 +198,7 @@ export default function ModelsRoleTab() {
           </div>
           {renderModelSelect({
             roleKey: "subagent_model",
-            value: currentSubagentModel(),
+            value: currentSubagentModel,
             allowEmpty: true,
             onChange: (val) =>
               void applyRolePatch("subagent_model", { subagent_model: val || null }),
@@ -235,7 +217,7 @@ export default function ModelsRoleTab() {
           </div>
           {renderModelSelect({
             roleKey: "compaction",
-            value: currentCompactionModel(),
+            value: currentCompactionModel,
             allowEmpty: true,
             onChange: (val) =>
               void applyRolePatch("compaction", {
@@ -273,7 +255,7 @@ export default function ModelsRoleTab() {
           </div>
           {renderModelSelect({
             roleKey: "observer_model",
-            value: workspace.observerModel,
+            value: () => workspace.observerModel,
             allowEmpty: true,
             emptyLabel: t("models.useGlobalDefault"),
             onChange: (val) => {
@@ -335,7 +317,7 @@ export default function ModelsRoleTab() {
                   </div>
                   {renderModelSelect({
                     roleKey: `mode:${agent.name}`,
-                    value: modeVal(),
+                    value: modeVal,
                     allowEmpty: true,
                     onChange: (val) =>
                       void applyRolePatch(`mode:${agent.name}`, {

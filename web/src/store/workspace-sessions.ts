@@ -69,6 +69,7 @@ function nextActiveSessionCandidate(excludeID?: string): SessionInfo | undefined
 export function syncSessionFieldsInPlace(target: SessionInfo, source: SessionInfo): void {
   if (target.title !== source.title) target.title = source.title;
   if (target.slug !== source.slug) target.slug = source.slug;
+  if (target.projectID !== source.projectID) target.projectID = source.projectID;
   if (target.directory !== source.directory) target.directory = source.directory;
   if (target.parentID !== source.parentID) target.parentID = source.parentID;
   if (target.runtime !== source.runtime) target.runtime = source.runtime;
@@ -148,9 +149,16 @@ export function replaceSessionFromEvent(info: SessionInfo, eventDirectory?: stri
   const ownsDirectory = (directory: string) => directory === root ||
     (directory.startsWith(worktrees) && /^[^/\\]+$/.test(directory.slice(worktrees.length)));
   const visited = new Set<string>();
+  const activeProjectID = (workspace.activeProjectID || "").trim();
   const belongs = (session: SessionInfo, fallbackDirectory?: string): boolean => {
     if (visited.has(session.id)) return false;
     visited.add(session.id);
+    const eventProjectID = (session.projectID || "").trim();
+    if (eventProjectID && activeProjectID) {
+      if (eventProjectID === activeProjectID) return true;
+      const loaded = workspace.sessions.find((s) => s.id === session.id);
+      return Boolean(loaded && (!loaded.projectID || loaded.projectID === eventProjectID));
+    }
     const directory = normalize(session.directory) || normalize(fallbackDirectory);
     // Only Hoxi worktrees belong to the root, not arbitrary nested project folders.
     if (ownsDirectory(directory)) return true;
@@ -169,6 +177,10 @@ export function replaceSessionFromEvent(info: SessionInfo, eventDirectory?: stri
     return false;
   };
   if (belongs(info, eventDirectory)) {
+    const eventProjectID = (info.projectID || "").trim();
+    if (eventProjectID && !activeProjectID) {
+      setWorkspace("activeProjectID", eventProjectID);
+    }
     const directory = info.directory || workspace.sessions.find((s) => s.id === info.id)?.directory ||
       eventDirectory;
     replaceSession(directory ? { ...info, directory } : info);
@@ -256,6 +268,25 @@ export async function loadSessionMessages(sessionID: string): Promise<void> {
   }
   if (!isCurrent()) return;
   await refreshSessionDiff(sessionID);
+}
+
+export const DESKTOP_INTENT_EVENT = "hoxi:desktop-intent";
+
+export interface SessionDeepLink {
+  sessionID: string;
+  messageID?: string;
+}
+
+// Pulls the pending navigation queued by a hoxi:// deep link or the CLI.
+// The gateway clears it on read, so polling is safe and idempotent.
+export async function consumeDesktopIntent(): Promise<SessionDeepLink | null> {
+  try {
+    const intent = await hoxiAPI.consumeDesktopIntent();
+    if (!intent) return null;
+    return { sessionID: intent.sessionID, messageID: intent.messageID };
+  } catch {
+    return null;
+  }
 }
 
 export async function selectSession(sessionID: string): Promise<void> {

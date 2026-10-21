@@ -113,8 +113,8 @@ export default function ApprovalModePill() {
         ref={buttonRef}
         type="button"
         onClick={() => setOpen((v) => !v)}
-        class={`inline-flex items-center rounded-lg transition-colors cursor-pointer ${
-          isDefaultAuto() ? "p-1.5" : "gap-1 px-2 py-1 text-[12px] font-medium"
+        class={`inline-flex items-center justify-center rounded-lg transition-colors cursor-pointer ${
+          isDefaultAuto() ? "h-7 w-7" : "gap-1 px-2 py-1 text-[12px] font-medium"
         } ${
           open()
             ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]"
@@ -136,7 +136,7 @@ export default function ApprovalModePill() {
                 : "text-[var(--accent-primary)]"
           }
         >
-          {renderModeIcon(currentMode(), 12.5)}
+          {renderModeIcon(currentMode(), isDefaultAuto() ? 15 : 12.5)}
         </span>
         <Show when={!isDefaultAuto()}>
           <span>{currentShortLabel()}</span>

@@ -2,6 +2,7 @@ package orchestration
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -10,6 +11,10 @@ import (
 func (s *Service) handlePlans(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
+		if sessionID := strings.TrimSpace(r.URL.Query().Get("session")); sessionID != "" {
+			writeOrchestrationJSON(w, http.StatusOK, s.ListBySession(sessionID))
+			return
+		}
 		writeOrchestrationJSON(w, http.StatusOK, s.List(r.URL.Query().Get("directory")))
 	case http.MethodPost:
 		var request PlanRequest
@@ -52,6 +57,20 @@ func (s *Service) handlePlan(w http.ResponseWriter, r *http.Request) {
 		plan, err := s.Cancel(id)
 		if err != nil {
 			writeOrchestrationError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		writeOrchestrationJSON(w, http.StatusOK, plan)
+	case action == "retry" && r.Method == http.MethodPost:
+		plan, err := s.Retry(id)
+		if err != nil {
+			switch {
+			case errors.Is(err, ErrPlanNotFound):
+				writeOrchestrationError(w, http.StatusNotFound, err.Error())
+			case errors.Is(err, ErrPlanActive), errors.Is(err, ErrPlanStopping):
+				writeOrchestrationError(w, http.StatusConflict, err.Error())
+			default:
+				writeOrchestrationError(w, http.StatusInternalServerError, err.Error())
+			}
 			return
 		}
 		writeOrchestrationJSON(w, http.StatusOK, plan)

@@ -59,8 +59,12 @@ type workspaceProfile struct {
 	Name      string            `json:"name"`
 	Color     string            `json:"color,omitempty"`
 	Folders   []workspaceFolder `json:"folders"`
-	CreatedAt string            `json:"createdAt"`
-	UpdatedAt string            `json:"updatedAt"`
+	// Hidden projects are registered automatically for directories that own
+	// sessions but were never saved as a workspace. They keep stable session
+	// attribution without adding rows to the sidebar.
+	Hidden    bool   `json:"hidden,omitempty"`
+	CreatedAt string `json:"createdAt"`
+	UpdatedAt string `json:"updatedAt"`
 }
 
 type saveWorkspaceRequest struct {

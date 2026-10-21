@@ -40,6 +40,7 @@ import {
   scheduleRefreshWorktreeStatus,
   selectSession,
   setWorkspace,
+  syncActiveProjectID,
   syncApprovalModeToOpenCodeConfig,
   syncPendingPermissions,
   syncSessionStatuses,
@@ -88,6 +89,7 @@ export default function App() {
         setWorkspace({
           appVersion: boot.appVersion,
           rootDir: bootRoot,
+          activeProjectID: null,
           wsBaseURL: boot.wsBaseURL,
         });
 
@@ -121,13 +123,14 @@ export default function App() {
         }
 
         if (activeRoot) {
+          const projectID = await syncActiveProjectID(activeRoot);
           if (eagerSessionsPromise && activeRoot === eagerBootRoot) {
             await eagerSessionsPromise;
             if (workspace.sessions.length === 0) {
-              await bootstrapProjectSessions(activeRoot);
+              await bootstrapProjectSessions(activeRoot, true, projectID);
             }
           } else {
-            await bootstrapProjectSessions(activeRoot);
+            await bootstrapProjectSessions(activeRoot, true, projectID);
           }
         } else {
           setWorkspace("bootstrappingSessions", false);
@@ -149,7 +152,9 @@ export default function App() {
             resyncRequested = false;
             await Promise.allSettled([
               syncSessionStatuses(), syncPendingPermissions(), resyncResidentTranscripts(),
-              workspace.rootDir ? bootstrapProjectSessions(workspace.rootDir, false) : Promise.resolve(),
+              workspace.rootDir
+                ? bootstrapProjectSessions(workspace.rootDir, false, workspace.activeProjectID)
+                : Promise.resolve(),
               hoxiAPI.listQuestions().then((questions) => {
                 if (Array.isArray(questions)) setWorkspace("pendingQuestions", questions);
               }),

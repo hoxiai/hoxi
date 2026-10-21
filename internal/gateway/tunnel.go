@@ -6,6 +6,7 @@ import (
 	"path"
 	"strings"
 
+	"github.com/hoxiai/hoxi/internal/statusbar"
 	"github.com/hoxiai/hoxi/internal/tunnel"
 )
 
@@ -76,6 +77,13 @@ func (g *Gateway) serveTunnelRequest(w http.ResponseWriter, r *http.Request) {
 // bridge port reported to GoPanel for display.
 func (g *Gateway) StartRemoteTunnel(configPath string, targetPort int) {
 	g.tunnel.Configure(tunnel.NewStore(configPath), targetPort)
+	if g.status != nil {
+		// Pending approvals and agent questions become phone pushes via GoPanel.
+		// The notice holds ids only, never command text (see statusbar.ApprovalNotice).
+		g.status.SetApprovalListener(func(n statusbar.ApprovalNotice) {
+			_ = g.tunnel.Notify(n)
+		})
+	}
 	g.tunnel.Start()
 }
 

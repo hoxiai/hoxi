@@ -84,7 +84,7 @@ export function resolveDefaultProjectDir(preferredRoot?: string | null): string 
     return pref;
   }
   for (const saved of workspace.savedWorkspaces) {
-    if (isDismissedProjectPath(saved.id)) continue;
+    if (saved.hidden || isDismissedProjectPath(saved.id)) continue;
     const primary = normalizeFolderPath(workspacePrimaryFolder(saved));
     if (primary && !isInvalidProjectPath(primary) && !isDismissedProjectPath(primary)) {
       return primary;

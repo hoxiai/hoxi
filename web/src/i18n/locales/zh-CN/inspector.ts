@@ -9,6 +9,7 @@ export const inspector: InspectorI18n = {
     skills: "技能",
     terminal: "终端",
     browser: "浏览器",
+    tasks: "任务",
     maximize: "全屏展开",
     restore: "退出全屏",
   },

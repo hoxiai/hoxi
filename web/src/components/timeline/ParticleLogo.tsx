@@ -1,10 +1,16 @@
-import { onCleanup, onMount } from "solid-js";
+import { createEffect, on, onCleanup, onMount } from "solid-js";
 
 const WIDTH = 640;
 const HEIGHT = 240;
 const COUNT = 1024;
-const ASSEMBLE_MS = 2800;
-const FLIGHT_MS = 650;
+const ASSEMBLE_MS = 1800;
+const FLIGHT_MS = 450;
+const ACCENT_FALLBACK = "#2563eb";
+
+function readAccentColor(element: HTMLElement): string {
+  const value = getComputedStyle(element).getPropertyValue("--accent-primary").trim();
+  return value || ACCENT_FALLBACK;
+}
 
 interface Particle {
   tx: number;
@@ -18,8 +24,9 @@ interface Particle {
   delay: number;
 }
 
-export default function ParticleLogo() {
+export default function ParticleLogo(props: { play?: boolean }) {
   let canvas!: HTMLCanvasElement;
+  let restartLogo: (() => void) | null = null;
 
   onMount(() => {
     const context = canvas.getContext("2d");
@@ -73,6 +80,7 @@ export default function ParticleLogo() {
       };
     });
 
+    let accent = readAccentColor(canvas);
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
     let frame = 0;
     let startedAt = performance.now();
@@ -86,7 +94,7 @@ export default function ParticleLogo() {
 
     const draw = () => {
       context.clearRect(0, 0, WIDTH, HEIGHT);
-      context.fillStyle = "#2563eb";
+      context.fillStyle = accent;
       context.beginPath();
       for (const particle of particles) {
         if (!assembled && previousTime - startedAt < particle.delay) continue;
@@ -159,6 +167,23 @@ export default function ParticleLogo() {
       }
     }
 
+    // Replay the assemble flight whenever a fresh conversation is revealed;
+    // the canvas stays mounted so the drawer can animate its collapse.
+    const restart = () => {
+      cancelAnimationFrame(frame);
+      frame = 0;
+      mouseX = mouseY = -9999;
+      assembled = reducedMotion.matches;
+      for (const particle of particles) {
+        particle.x = particle.sx;
+        particle.y = particle.sy;
+        particle.vx = particle.vy = 0;
+      }
+      startedAt = previousTime = performance.now();
+      if (assembled) settle();
+      else wake();
+    };
+
     const resize = () => {
       const bounds = canvas.getBoundingClientRect();
       if (!bounds.width) return;
@@ -182,7 +207,12 @@ export default function ParticleLogo() {
       wake();
     };
     const resume = () => {
-      previousTime = performance.now();
+      const now = performance.now();
+      // The canvas can stay mounted while the drawer is collapsed; if the
+      // flight timed out off-screen, replay it instead of snapping to the
+      // assembled wordmark.
+      if (!assembled && now - startedAt > ASSEMBLE_MS) startedAt = now;
+      previousTime = now;
       wake();
     };
     const motionChanged = () => {
@@ -197,8 +227,18 @@ export default function ParticleLogo() {
       visible = entries[0]?.isIntersecting ?? false;
       if (visible) resume();
     });
+    const themeObserver = new MutationObserver(() => {
+      const next = readAccentColor(canvas);
+      if (next === accent) return;
+      accent = next;
+      draw();
+    });
     resizeObserver.observe(canvas);
     visibilityObserver.observe(canvas);
+    themeObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["class", "data-color-scheme"],
+    });
     canvas.addEventListener("pointermove", move);
     canvas.addEventListener("pointerleave", leave);
     canvas.addEventListener("pointerup", leave);
@@ -211,12 +251,14 @@ export default function ParticleLogo() {
       startedAt = previousTime = performance.now();
       wake();
     }
+    restartLogo = restart;
 
     onCleanup(() => {
       disposed = true;
       cancelAnimationFrame(frame);
       resizeObserver.disconnect();
       visibilityObserver.disconnect();
+      themeObserver.disconnect();
       canvas.removeEventListener("pointermove", move);
       canvas.removeEventListener("pointerleave", leave);
       canvas.removeEventListener("pointerup", leave);
@@ -225,6 +267,18 @@ export default function ParticleLogo() {
       reducedMotion.removeEventListener("change", motionChanged);
     });
   });
+
+  // Replay the assemble flight only when a new conversation becomes visible.
+  createEffect(
+    on(
+      () => props.play,
+      (play, previous) => {
+        if (!play || previous) return;
+        restartLogo?.();
+      },
+      { defer: true }
+    )
+  );
 
   return (
     <div class="mx-auto mb-4 w-[min(100%,480px)] shrink-0 px-6" aria-hidden="true">

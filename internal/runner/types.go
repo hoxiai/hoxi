@@ -2,6 +2,7 @@ package runner
 
 import (
 	"encoding/json"
+	"strings"
 
 	"github.com/hoxiai/hoxi/internal/agentcli"
 )
@@ -244,6 +245,7 @@ type SSEEvent struct {
 
 type SessionRecord struct {
 	ID                  string            `json:"id"`
+	ProjectID           string            `json:"projectID,omitempty"`
 	ParentID            string            `json:"parentID,omitempty"`
 	Subagent            bool              `json:"subagent,omitempty"`
 	Runtime             string            `json:"runtime"`
@@ -284,7 +286,7 @@ func (r SessionRecord) ToSessionInfo() SessionInfo {
 		ParentID:       r.ParentID,
 		Managed:        true,
 		Slug:           r.ID,
-		ProjectID:      r.ProjectDir,
+		ProjectID:      strings.TrimSpace(r.ProjectID),
 		Directory:      dir,
 		Title:          r.Title,
 		Time:           SessionTime{Created: r.CreatedAt, Updated: r.UpdatedAt, Archived: r.ArchivedAt},

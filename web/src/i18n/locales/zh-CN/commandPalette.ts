@@ -14,6 +14,7 @@ export const commandPalette = {
   actionOpenFiles: "打开文件",
   actionOpenDiffs: "打开变更",
   actionOpenMemory: "打开记忆",
+  actionOpenTasks: "打开任务总览",
   actionOpenSkills: "打开技能",
   actionOpenTerminal: "打开终端",
   actionOpenBrowser: "打开浏览器",
