@@ -158,6 +158,28 @@ const IGNORE_DIRS = new Set([
   ".gomodcache",
 ]);
 
+const GO_BASE_PACKAGES = new Set([
+  "agentcli",
+  "agyhook",
+  "buildinfo",
+  "claudeconfig",
+  "diagnostics",
+  "hoxipaths",
+  "llm",
+  "notify",
+  "opencode/ocapi",
+  "opencode/ocstate",
+  "statusbar",
+  "textindex",
+]);
+
+const GO_ALLOWED_DOMAIN_IMPORTS: Record<string, string[]> = {
+  opencode: ["sandbox"],
+  provider: ["skills"],
+  runner: ["attachment", "sandbox", "worktree"],
+  telemetry: ["auth"],
+};
+
 const SOURCE_EXT = /\.(go|ts|tsx|js|m|dart)$/;
 
 function walkRepo(dir: string): string[] {
@@ -195,6 +217,12 @@ for (const file of files) {
   }
 
   const baseName = path.basename(rel);
+  if (/^zz_scratch_/.test(baseName)) {
+    console.error(
+      `  ✗ [scratch file violation] ${rel} must be converted to a permanent regression test or removed before finishing.`
+    );
+    violations++;
+  }
 
   // Enforce unidirectional frontend layering & naming: components -> store -> services
   if (rel.startsWith("web/src/services/")) {
@@ -229,9 +257,17 @@ for (const file of files) {
       console.error(`  ✗ [fragment violation] ${rel} must not split out a separate *-storage.ts scaffold file; keep persistence inside its domain store module.`);
       violations++;
     }
+    if (/\bEvents(?:On|Off)\s*\(|\bwindow\b[^\n]*\.runtime\b/.test(content)) {
+      console.error(`  ✗ [layering violation] ${rel} must not access Wails window.runtime or EventsOn/EventsOff directly in store/; wrap host runtime bridges in web/src/services/.`);
+      violations++;
+    }
   } else if (rel.startsWith("web/src/components/")) {
     if (/\blocalStorage\b/.test(content)) {
       console.error(`  ✗ [layering violation] ${rel} must not access localStorage directly in components/; move persistence into web/src/store/.`);
+      violations++;
+    }
+    if (/\bEvents(?:On|Off)\s*\(|\bwindow\b[^\n]*\.runtime\b/.test(content)) {
+      console.error(`  ✗ [layering violation] ${rel} must not access Wails window.runtime or EventsOn/EventsOff directly in components/; route through web/src/services/ and web/src/store/.`);
       violations++;
     }
     const { hasRuntimeImportStmt, runtimeSymbols } = extractRuntimeServiceImports(content);
@@ -295,6 +331,50 @@ for (const file of files) {
     ) {
       console.error(`  ✗ [layering violation] ${rel} must not reverse-import internal/gateway, internal/app, or internal/cli.`);
       violations++;
+    }
+    if (
+      !rel.startsWith("internal/app/") &&
+      !rel.startsWith("internal/cli/") &&
+      !rel.startsWith("internal/gateway/") &&
+      !rel.startsWith("internal/provider/") &&
+      !rel.endsWith("_test.go") &&
+      /"github\.com\/hoxiai\/hoxi\/internal\/provider"/.test(content)
+    ) {
+      console.error(`  ✗ [layering violation] ${rel} must not import internal/provider directly; inject llm.Client from internal/gateway.`);
+      violations++;
+    }
+    if (
+      rel === "internal/gateway/tunnel.go" &&
+      /\btunnelRoutePrefixes\b/.test(content)
+    ) {
+      console.error(`  ✗ [tunnel guard violation] ${rel} must use explicit (method, pattern) tunnelRoutes, never prefix-based tunnelRoutePrefixes.`);
+      violations++;
+    }
+    if (!rel.endsWith("_test.go")) {
+      const pkgDir = path.posix.dirname(rel).replace(/^internal\//, "");
+      const internalImports = [
+        ...content.matchAll(/"github\.com\/hoxiai\/hoxi\/internal\/([^"]+)"/g),
+      ].map((m) => m[1]);
+      if (GO_BASE_PACKAGES.has(pkgDir)) {
+        for (const imp of internalImports) {
+          if (!GO_BASE_PACKAGES.has(imp)) {
+            console.error(
+              `  ✗ [layering violation] base package ${rel} (${pkgDir}) must not import non-base package internal/${imp}.`
+            );
+            violations++;
+          }
+        }
+      } else if (pkgDir !== "app" && pkgDir !== "cli" && pkgDir !== "gateway") {
+        const allowedDomains = new Set(GO_ALLOWED_DOMAIN_IMPORTS[pkgDir] || []);
+        for (const imp of internalImports) {
+          if (imp !== pkgDir && !GO_BASE_PACKAGES.has(imp) && !allowedDomains.has(imp)) {
+            console.error(
+              `  ✗ [layering violation] domain package ${rel} (${pkgDir}) must not cross-import domain package internal/${imp}; wire cross-domain coordination in internal/gateway.`
+            );
+            violations++;
+          }
+        }
+      }
     }
     if (
       !rel.startsWith("internal/provider/") &&
