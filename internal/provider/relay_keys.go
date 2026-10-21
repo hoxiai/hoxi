@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -48,18 +49,28 @@ func relayKeysPath() string {
 	return hoxipaths.Join("relay-keys.json")
 }
 
-func readRelayKeyDoc(path string) relayKeyDoc {
+func readRelayKeyDoc(path string) (relayKeyDoc, error) {
 	doc := relayKeyDoc{Version: 1}
 	if path == "" {
-		return doc
+		return doc, errors.New("relay key store is unavailable")
 	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return doc
+		if os.IsNotExist(err) {
+			return doc, nil
+		}
+		return doc, err
+	}
+	if len(strings.TrimSpace(string(raw))) == 0 {
+		return doc, nil
 	}
 	var parsed relayKeyDoc
-	if json.Unmarshal(raw, &parsed) != nil {
-		return doc
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		backupPath := fmt.Sprintf("%s.corrupt-%d", path, time.Now().UnixNano())
+		if renameErr := os.Rename(path, backupPath); renameErr != nil {
+			return doc, fmt.Errorf("corrupt relay key store (%v) and backup failed: %w", err, renameErr)
+		}
+		return doc, nil
 	}
 	for _, k := range parsed.Keys {
 		if strings.TrimSpace(k.ID) != "" && strings.TrimSpace(k.Hash) != "" {
@@ -67,7 +78,7 @@ func readRelayKeyDoc(path string) relayKeyDoc {
 		}
 	}
 	sort.Slice(doc.Keys, func(i, j int) bool { return doc.Keys[i].CreatedAt > doc.Keys[j].CreatedAt })
-	return doc
+	return doc, nil
 }
 
 func writeRelayKeyDoc(path string, doc relayKeyDoc) error {
@@ -77,6 +88,7 @@ func writeRelayKeyDoc(path string, doc relayKeyDoc) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
+	sort.Slice(doc.Keys, func(i, j int) bool { return doc.Keys[i].CreatedAt > doc.Keys[j].CreatedAt })
 	raw, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
 		return err
@@ -85,15 +97,55 @@ func writeRelayKeyDoc(path string, doc relayKeyDoc) error {
 	if err != nil {
 		return err
 	}
-	defer os.Remove(f.Name())
+	tmpName := f.Name()
+	defer os.Remove(tmpName)
 	if _, err := f.Write(append(raw, '\n')); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
 		_ = f.Close()
 		return err
 	}
 	if err := f.Close(); err != nil {
 		return err
 	}
-	return os.Rename(f.Name(), path)
+	if err := os.Chmod(tmpName, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
+}
+
+func (s *Service) cachedRelayKeys(path string) []relayKeyRecord {
+	s.relayMu.Lock()
+	if s.relayKeysLoaded && s.relayKeysPath == path {
+		out := append([]relayKeyRecord(nil), s.relayKeys...)
+		s.relayMu.Unlock()
+		return out
+	}
+	s.relayMu.Unlock()
+
+	doc, err := readRelayKeyDoc(path)
+	if err != nil {
+		return nil
+	}
+	s.relayMu.Lock()
+	if !s.relayKeysLoaded || s.relayKeysPath != path {
+		s.relayKeysPath = path
+		s.relayKeysLoaded = true
+		s.relayKeys = append([]relayKeyRecord(nil), doc.Keys...)
+	}
+	out := append([]relayKeyRecord(nil), s.relayKeys...)
+	s.relayMu.Unlock()
+	return out
+}
+
+func (s *Service) setCachedRelayKeys(path string, keys []relayKeyRecord) {
+	s.relayMu.Lock()
+	s.relayKeysPath = path
+	s.relayKeysLoaded = true
+	s.relayKeys = append([]relayKeyRecord(nil), keys...)
+	s.relayMu.Unlock()
 }
 
 func hashRelayToken(token string) string {
@@ -135,14 +187,18 @@ func (s *Service) CreateRelayKey(label string) (RelayKeyInfo, string, error) {
 		CreatedAt: time.Now().UnixMilli(),
 	}
 	path := relayKeysPath()
-	s.relayMu.Lock()
-	defer s.relayMu.Unlock()
-	doc := readRelayKeyDoc(path)
+	s.relayPersistMu.Lock()
+	defer s.relayPersistMu.Unlock()
+	doc, err := readRelayKeyDoc(path)
+	if err != nil {
+		return RelayKeyInfo{}, "", err
+	}
 	doc.Version = 1
 	doc.Keys = append(doc.Keys, relayKeyRecord{RelayKeyInfo: info, Hash: hashRelayToken(token)})
 	if err := writeRelayKeyDoc(path, doc); err != nil {
 		return RelayKeyInfo{}, "", err
 	}
+	s.setCachedRelayKeys(path, doc.Keys)
 	return info, token, nil
 }
 
@@ -154,9 +210,12 @@ func (s *Service) RevokeRelayKey(id string) error {
 		return errors.New("key id is required")
 	}
 	path := relayKeysPath()
-	s.relayMu.Lock()
-	defer s.relayMu.Unlock()
-	doc := readRelayKeyDoc(path)
+	s.relayPersistMu.Lock()
+	defer s.relayPersistMu.Unlock()
+	doc, err := readRelayKeyDoc(path)
+	if err != nil {
+		return err
+	}
 	kept := doc.Keys[:0]
 	removed := false
 	for _, k := range doc.Keys {
@@ -167,19 +226,22 @@ func (s *Service) RevokeRelayKey(id string) error {
 		kept = append(kept, k)
 	}
 	if !removed {
+		s.setCachedRelayKeys(path, doc.Keys)
 		return nil
 	}
 	doc.Keys = kept
-	return writeRelayKeyDoc(path, doc)
+	if err := writeRelayKeyDoc(path, doc); err != nil {
+		return err
+	}
+	s.setCachedRelayKeys(path, doc.Keys)
+	return nil
 }
 
 // RelayKeys lists the stored keys without secrets.
 func (s *Service) RelayKeys() []RelayKeyInfo {
-	s.relayMu.Lock()
-	defer s.relayMu.Unlock()
-	doc := readRelayKeyDoc(relayKeysPath())
-	out := make([]RelayKeyInfo, 0, len(doc.Keys))
-	for _, k := range doc.Keys {
+	keys := s.cachedRelayKeys(relayKeysPath())
+	out := make([]RelayKeyInfo, 0, len(keys))
+	for _, k := range keys {
 		out = append(out, k.RelayKeyInfo)
 	}
 	return out
@@ -193,23 +255,35 @@ func (s *Service) verifyRelayToken(token string) bool {
 		return false
 	}
 	path := relayKeysPath()
-	s.relayMu.Lock()
-	defer s.relayMu.Unlock()
-	doc := readRelayKeyDoc(path)
+	keys := s.cachedRelayKeys(path)
 	computed := hashRelayToken(token)
-	matched := -1
-	for i, k := range doc.Keys {
+	matchedID := ""
+	var lastUsed int64
+	for _, k := range keys {
 		if subtle.ConstantTimeCompare([]byte(k.Hash), []byte(computed)) == 1 {
-			matched = i
+			matchedID = k.ID
+			lastUsed = k.LastUsed
 		}
 	}
-	if matched < 0 {
+	if matchedID == "" {
 		return false
 	}
 	now := time.Now().UnixMilli()
-	if now-doc.Keys[matched].LastUsed >= 60_000 {
-		doc.Keys[matched].LastUsed = now
-		_ = writeRelayKeyDoc(path, doc)
+	if now-lastUsed >= 60_000 {
+		s.relayPersistMu.Lock()
+		if doc, err := readRelayKeyDoc(path); err == nil {
+			updated := false
+			for i := range doc.Keys {
+				if doc.Keys[i].ID == matchedID && now-doc.Keys[i].LastUsed >= 60_000 {
+					doc.Keys[i].LastUsed = now
+					updated = true
+				}
+			}
+			if updated && writeRelayKeyDoc(path, doc) == nil {
+				s.setCachedRelayKeys(path, doc.Keys)
+			}
+		}
+		s.relayPersistMu.Unlock()
 	}
 	return true
 }

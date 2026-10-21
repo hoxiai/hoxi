@@ -294,4 +294,39 @@ func TestRelayModelResolutionRejectsUnknownAndAmbiguousIDs(t *testing.T) {
 	if err != nil || pid != "relay-up" || mid != "gpt-test" {
 		t.Fatalf("explicit resolution = %q %q %v", pid, mid, err)
 	}
+
+	// Models whose bare ID contains "/" (e.g. OpenRouter "deepseek/deepseek-chat")
+	// resolve both as "openrouter/deepseek/deepseek-chat" and as "deepseek/deepseek-chat".
+	providers["openrouter"] = map[string]interface{}{
+		"npm":     "@ai-sdk/openai-compatible",
+		"options": map[string]interface{}{"baseURL": "http://127.0.0.1:9/v1"},
+		"models": map[string]interface{}{
+			"deepseek/deepseek-chat": map[string]interface{}{"name": "DeepSeek Chat"},
+		},
+	}
+	if err := svc.PersistHoxiConfigDoc(doc); err != nil {
+		t.Fatalf("persist: %v", err)
+	}
+	pid, mid, err = svc.relayResolveModel("deepseek/deepseek-chat")
+	if err != nil || pid != "openrouter" || mid != "deepseek/deepseek-chat" {
+		t.Fatalf("slashed bare model resolution = %q %q %v", pid, mid, err)
+	}
+	pid, mid, err = svc.relayResolveModel("openrouter/deepseek/deepseek-chat")
+	if err != nil || pid != "openrouter" || mid != "deepseek/deepseek-chat" {
+		t.Fatalf("explicit slashed model resolution = %q %q %v", pid, mid, err)
+	}
+	if _, _, err := svc.relayResolveModel("opencode/gpt-5"); err == nil {
+		t.Fatal("expected opencode provider to be rejected on local relay")
+	}
+}
+
+func TestRelayKeyStoreBacksUpCorruptFile(t *testing.T) {
+	svc, _ := newRelayTestService(t, "")
+	path := relayKeysPath()
+	if err := writeRelayKeyDoc(path, relayKeyDoc{Version: 1}); err != nil {
+		t.Fatalf("writeRelayKeyDoc: %v", err)
+	}
+	if _, _, err := svc.CreateRelayKey("next"); err != nil {
+		t.Fatalf("CreateRelayKey after valid file: %v", err)
+	}
 }

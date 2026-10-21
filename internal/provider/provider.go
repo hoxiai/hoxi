@@ -29,7 +29,11 @@ type Service struct {
 	reloadPending     bool
 	reloadLoopRunning bool
 	relayMu           sync.Mutex
+	relayPersistMu    sync.Mutex
 	relayBaseURL      string
+	relayKeysPath     string
+	relayKeysLoaded   bool
+	relayKeys         []relayKeyRecord
 }
 
 func NewService(openCodePort int, password, rootDir string, proxy http.Handler) *Service {

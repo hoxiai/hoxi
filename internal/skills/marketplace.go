@@ -112,6 +112,22 @@ func NewMarketplaceService(baseURL string, client *http.Client) *MarketplaceServ
 	}
 	if client == nil {
 		client = &http.Client{Timeout: marketplaceTimeout}
+	} else {
+		copied := *client
+		client = &copied
+	}
+	prevRedirect := client.CheckRedirect
+	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 5 {
+			return fmt.Errorf("%w: too many redirects", ErrMarketplaceUnavailable)
+		}
+		if err := validateMarketplaceDownloadURL(req.URL); err != nil {
+			return err
+		}
+		if prevRedirect != nil {
+			return prevRedirect(req, via)
+		}
+		return nil
 	}
 	return &MarketplaceService{
 		baseURL: baseURL,
@@ -157,14 +173,18 @@ func (s *MarketplaceService) Install(ctx context.Context, slug string, overwrite
 	if err != nil {
 		return MarketplaceSkill{}, err
 	}
-	var entry *MarketplaceSkill
+	var (
+		entry MarketplaceSkill
+		found bool
+	)
 	for i := range skills {
 		if skills[i].Slug == slug {
-			entry = &skills[i]
+			entry = skills[i]
+			found = true
 			break
 		}
 	}
-	if entry == nil {
+	if !found {
 		return MarketplaceSkill{}, fmt.Errorf("%w: skill %q is not in the catalog", ErrNotFound, slug)
 	}
 
@@ -175,8 +195,12 @@ func (s *MarketplaceService) Install(ctx context.Context, slug string, overwrite
 	target := filepath.Join(root, slug, "SKILL.md")
 	if existing, err := os.ReadFile(target); err == nil {
 		sum := sha256.Sum256(existing)
-		if strings.EqualFold(hex.EncodeToString(sum[:]), entry.ContentSHA256) {
-			return *entry, nil
+		digest := hex.EncodeToString(sum[:])
+		if strings.EqualFold(digest, entry.ContentSHA256) {
+			entry.Installed = true
+			entry.InstalledDigest = digest
+			entry.UpdateAvailable = false
+			return entry, nil
 		}
 		if !overwrite {
 			return MarketplaceSkill{}, fmt.Errorf("%w: %s exists with different content", ErrSkillAlreadyInstalled, slug)
@@ -204,7 +228,7 @@ func (s *MarketplaceService) Install(ctx context.Context, slug string, overwrite
 	entry.Installed = true
 	entry.InstalledDigest = digest
 	entry.UpdateAvailable = false
-	return *entry, nil
+	return entry, nil
 }
 
 func (s *MarketplaceService) catalog(ctx context.Context, forceRefresh bool) ([]MarketplaceSkill, error) {
@@ -261,17 +285,11 @@ func sanitizeMarketplaceSkill(item MarketplaceSkill) (MarketplaceSkill, error) {
 	}
 	raw := strings.TrimSpace(item.ContentURL)
 	parsed, err := url.Parse(raw)
-	if err != nil || parsed.Host == "" {
+	if err != nil {
 		return MarketplaceSkill{}, fmt.Errorf("%w: invalid contentUrl", ErrBadRequest)
 	}
-	if parsed.Scheme != "https" && parsed.Scheme != "http" {
-		return MarketplaceSkill{}, fmt.Errorf("%w: unsupported scheme %q", ErrBadRequest, parsed.Scheme)
-	}
-	if parsed.Scheme == "http" && !isLoopbackHost(parsed.Hostname()) {
-		return MarketplaceSkill{}, fmt.Errorf("%w: plain http is only allowed for loopback", ErrBadRequest)
-	}
-	if !marketplaceHostAllowed(parsed.Hostname()) {
-		return MarketplaceSkill{}, fmt.Errorf("%w: host %q is not approved for skill downloads", ErrBadRequest, parsed.Hostname())
+	if err := validateMarketplaceDownloadURL(parsed); err != nil {
+		return MarketplaceSkill{}, err
 	}
 	if len(item.ContentSHA256) != 64 {
 		return MarketplaceSkill{}, fmt.Errorf("%w: invalid contentSha256", ErrBadRequest)
@@ -286,7 +304,40 @@ func sanitizeMarketplaceSkill(item MarketplaceSkill) (MarketplaceSkill, error) {
 	}
 	item.ContentURL = parsed.String()
 	item.ContentSHA256 = strings.ToLower(item.ContentSHA256)
+	item.RepoURL = sanitizeSafeWebURL(item.RepoURL)
+	item.HomepageURL = sanitizeSafeWebURL(item.HomepageURL)
 	return item, nil
+}
+
+func validateMarketplaceDownloadURL(parsed *url.URL) error {
+	if parsed == nil || parsed.Host == "" {
+		return fmt.Errorf("%w: invalid contentUrl", ErrBadRequest)
+	}
+	if parsed.Scheme != "https" && parsed.Scheme != "http" {
+		return fmt.Errorf("%w: unsupported scheme %q", ErrBadRequest, parsed.Scheme)
+	}
+	if parsed.Scheme == "http" && !isLoopbackHost(parsed.Hostname()) {
+		return fmt.Errorf("%w: plain http is only allowed for loopback", ErrBadRequest)
+	}
+	if !marketplaceHostAllowed(parsed.Hostname()) {
+		return fmt.Errorf("%w: host %q is not approved for skill downloads", ErrBadRequest, parsed.Hostname())
+	}
+	return nil
+}
+
+func sanitizeSafeWebURL(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+	u, err := url.Parse(trimmed)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	if u.Scheme != "https" && u.Scheme != "http" {
+		return ""
+	}
+	return u.String()
 }
 
 func marketplaceHostAllowed(host string) bool {
@@ -401,6 +452,10 @@ func writeSkillFile(target string, data []byte) error {
 	tmpName := tmp.Name()
 	defer os.Remove(tmpName)
 	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
 		tmp.Close()
 		return err
 	}

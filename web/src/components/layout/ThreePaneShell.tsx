@@ -12,6 +12,7 @@ import InspectorPane from "../inspector/InspectorPane";
 import {
   appSettings,
   closeSettingsModal,
+  isUpdateModalOpen,
   leaderboardState,
   LEFT_PANE_MAX,
   LEFT_PANE_MIN,
@@ -132,6 +133,7 @@ export default function ThreePaneShell(props: ThreePaneShellProps = {}) {
         ev.key === "Escape" &&
         !ev.defaultPrevented &&
         (appSettings.modalOpen || workspace.providerModalOpen) &&
+        !isUpdateModalOpen() &&
         !leaderboardState.modalOpen &&
         !workspace.handoffModalOpen &&
         workspace.workspaceModalMode === null

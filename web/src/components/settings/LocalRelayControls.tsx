@@ -1,7 +1,7 @@
 // web/src/components/settings/LocalRelayControls.tsx
 // Local OpenAI-compatible relay: endpoint discovery plus hk-* key management.
 // The relay listens on loopback only and is never opened over the GoPanel tunnel.
-import { createSignal, For, onMount, Show } from "solid-js";
+import { createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import { Check, Copy, KeyRound, Plus, ShieldAlert, Trash2 } from "lucide-solid";
 import { t } from "../../i18n";
 import {
@@ -29,12 +29,17 @@ function formatTime(ms?: number): string {
 
 function CopyField(props: { label: string; value: string }) {
   const [copied, setCopied] = createSignal(false);
+  let copyTimer: ReturnType<typeof setTimeout> | undefined;
+  onCleanup(() => {
+    if (copyTimer !== undefined) clearTimeout(copyTimer);
+  });
   const onCopy = async () => {
     if (!props.value) return;
     try {
       await navigator.clipboard.writeText(props.value);
+      if (copyTimer !== undefined) clearTimeout(copyTimer);
       setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
+      copyTimer = setTimeout(() => setCopied(false), 1500);
     } catch {
       setCopied(false);
     }

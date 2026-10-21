@@ -542,6 +542,7 @@ func (g *Service) handleModelsConfig(w http.ResponseWriter, r *http.Request) {
 var managedGlobalConfigKeys = []string{
 	"model",
 	"small_model",
+	"subagent_model",
 	"agent",
 	"permission",
 	"mcp",

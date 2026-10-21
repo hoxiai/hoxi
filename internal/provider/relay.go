@@ -221,39 +221,53 @@ func (s *Service) relayResolveModel(raw string) (providerID, modelID string, err
 	for k, v := range s.loadHoxiProvidersMap() {
 		merged[k] = v
 	}
+	var unknownProvider string
 	if pid, mid, ok := strings.Cut(raw, "/"); ok {
 		pid, mid = strings.TrimSpace(pid), strings.TrimSpace(mid)
 		if pid == "" || mid == "" {
 			return "", "", errors.New("model must be \"provider/model\" or a configured model id")
 		}
+		if pid == "opencode" || pid == "opencode-go" {
+			return "", "", errors.New("provider " + pid + " is not supported on the local relay")
+		}
 		pObj, _ := merged[pid].(map[string]any)
-		if pObj == nil {
-			return "", "", errors.New("unknown provider " + pid)
+		if pObj != nil {
+			if !relayProviderHasModel(pObj, mid) {
+				return "", "", errors.New("provider " + pid + " does not expose model " + mid)
+			}
+			return pid, mid, nil
 		}
-		if !relayProviderHasModel(pObj, mid) {
-			return "", "", errors.New("provider " + pid + " does not expose model " + mid)
-		}
-		return pid, mid, nil
+		unknownProvider = pid
 	}
 
-	var matches []string
+	type modelMatch struct {
+		pid string
+		mid string
+	}
+	var matches []modelMatch
 	for _, pid := range sortedKeys(merged) {
 		if pid == AutoProviderID || pid == "opencode" || pid == "opencode-go" {
 			continue
 		}
 		pObj, _ := merged[pid].(map[string]any)
 		if relayProviderHasModel(pObj, raw) && !relayProviderIsAnthropicNative(pid, pObj) {
-			matches = append(matches, pid+"/"+raw)
+			matches = append(matches, modelMatch{pid: pid, mid: raw})
 		}
 	}
 	switch len(matches) {
 	case 1:
-		pid, mid, _ := strings.Cut(matches[0], "/")
-		return pid, mid, nil
+		return matches[0].pid, matches[0].mid, nil
 	case 0:
+		if unknownProvider != "" {
+			return "", "", errors.New("unknown provider " + unknownProvider)
+		}
 		return "", "", errors.New("unknown model " + raw + "; call GET /v1/models for the available ids")
 	default:
-		return "", "", errors.New("model " + raw + " is ambiguous; use one of: " + strings.Join(matches, ", "))
+		qualified := make([]string, 0, len(matches))
+		for _, m := range matches {
+			qualified = append(qualified, m.pid+"/"+m.mid)
+		}
+		return "", "", errors.New("model " + raw + " is ambiguous; use one of: " + strings.Join(qualified, ", "))
 	}
 }
 

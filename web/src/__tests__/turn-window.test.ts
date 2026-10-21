@@ -134,6 +134,15 @@ describe("TurnWindow earlier-message batch sizing", () => {
     assertEqual(computeTurnWindowSlice(turns, all).hiddenMessageCount, 0);
     assertEqual(resolveLimitForEarlierMessages(turns, turns.length, 1), turns.length);
   });
+
+  it("advances the window by a turn batch when hidden turns belong to a single prompt", () => {
+    const turns = [mockTurn("prompt", "user"), ...Array.from({ length: 100 }, (_, i) => mockTurn(`step_${i}`))];
+    const before = computeTurnWindowSlice(turns, INITIAL_VISIBLE_TURNS);
+    assertEqual(before.hiddenMessageCount, 0);
+    assertTrue(before.hiddenCount > 0);
+    const nextLimit = resolveLimitForEarlierMessages(turns, INITIAL_VISIBLE_TURNS, 1);
+    assertEqual(nextLimit, INITIAL_VISIBLE_TURNS + TURN_BATCH_SIZE);
+  });
 });
 
 describe("TurnWindow limit resolution & session-switching lifecycle", () => {

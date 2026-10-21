@@ -144,7 +144,12 @@ export function resolveLimitForEarlierMessages(
   for (let index = 0; index < slice.startIndex; index++) {
     if (index !== slice.promptIndex && turns[index]?.info.role === "user") hiddenMessages.push(index);
   }
-  if (hiddenMessages.length === 0) return limit;
+  if (hiddenMessages.length === 0) {
+    if (slice.hiddenCount > 0) {
+      return Math.min(turns.length, limit + TURN_BATCH_SIZE * count);
+    }
+    return limit;
+  }
   const reveal = Math.min(count, hiddenMessages.length);
   const targetIndex = hiddenMessages[hiddenMessages.length - reveal]!;
   return Math.max(limit + 1, turns.length - targetIndex);

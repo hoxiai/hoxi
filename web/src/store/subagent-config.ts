@@ -44,6 +44,14 @@ const NON_SUBAGENT_IDS = new Set([
   "summary",
 ]);
 
+export function isReservedAgentID(id: string): boolean {
+  const clean = (id || "").trim().toLowerCase();
+  return (
+    NON_SUBAGENT_IDS.has(clean) ||
+    (BUILTIN_SUBAGENT_IDS as readonly string[]).includes(clean)
+  );
+}
+
 type ConfigDoc = Record<string, any> | undefined;
 
 function agentMap(config: ConfigDoc): Record<string, any> {
@@ -100,9 +108,17 @@ export function readSubagents(config: ConfigDoc = workspace.globalConfig): Subag
     ids.add(id);
   }
   const engineByID = new Map(engineSubagents().map((entry) => [entry.id, entry]));
+  for (const id of engineByID.keys()) {
+    if (NON_SUBAGENT_IDS.has(id)) continue;
+    if (agentEntry(config, id).mode === "primary") continue;
+    ids.add(id);
+  }
   return [...ids]
     .filter((id) => !NON_SUBAGENT_IDS.has(id))
-    .map((id) => mergeEngineEntry(toEntry(id, agentEntry(config, id)), engineByID.get(id)))
+    .map((id) => {
+      const raw = agentEntry(config, id);
+      return mergeEngineEntry(toEntry(id, raw), raw, engineByID.get(id));
+    })
     .sort((a, b) => {
       const builtinDelta = Number(b.builtin) - Number(a.builtin);
       if (builtinDelta !== 0) return builtinDelta;
@@ -114,9 +130,18 @@ export function readSubagents(config: ConfigDoc = workspace.globalConfig): Subag
 }
 
 /** The engine's description fills the gap for builtins the user never configured. */
-function mergeEngineEntry(entry: SubagentEntry, engine?: SubagentEntry): SubagentEntry {
+function mergeEngineEntry(
+  entry: SubagentEntry,
+  rawConfig: Record<string, any>,
+  engine?: SubagentEntry
+): SubagentEntry {
   if (!engine) return entry;
-  return { ...entry, description: entry.description || engine.description };
+  return {
+    ...entry,
+    description: entry.description || engine.description,
+    mode: typeof rawConfig.mode === "string" ? entry.mode : engine.mode,
+    hidden: typeof rawConfig.hidden === "boolean" ? entry.hidden : engine.hidden,
+  };
 }
 
 function toEntry(id: string, entry: Record<string, any>): SubagentEntry {
@@ -250,6 +275,9 @@ export async function createSubagent(input: {
   model?: string;
   readOnly?: boolean;
 }): Promise<void> {
+  if (isReservedAgentID(input.id)) {
+    throw new Error(`Reserved agent id: ${input.id}`);
+  }
   const entry: Record<string, unknown> = {
     mode: "subagent",
     description: input.description,

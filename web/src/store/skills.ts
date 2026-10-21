@@ -373,6 +373,7 @@ export async function installSkillFromMarketplace(
     );
     setSkillsStore("marketplace", nextMarketplace);
     invalidateSkillsCatalogCache();
+    void loadSkillsCatalog({ forceRefresh: true });
     setSkillsStore({
       installingSlug: null,
       installNotice: t("skills.installSuccess", { name: installed?.name || clean }),

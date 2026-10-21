@@ -80,9 +80,13 @@ func TestMarketplaceListsAndInstallsVerifiedSkill(t *testing.T) {
 		t.Fatalf("installed body = %q", string(data))
 	}
 
-	// A second install of identical content is a no-op, not an error.
-	if _, err := svc.Install(context.Background(), "demo-skill", false); err != nil {
+	// A second install of identical content is a no-op, not an error, and still reports Installed=true.
+	again, err := svc.Install(context.Background(), "demo-skill", false)
+	if err != nil {
 		t.Fatalf("idempotent install failed: %v", err)
+	}
+	if !again.Installed || again.InstalledDigest == "" {
+		t.Fatalf("idempotent install should report Installed=true, got %+v", again)
 	}
 }
 
@@ -165,6 +169,55 @@ func TestMarketplaceRejectsInvalidSlugsAndHosts(t *testing.T) {
 		}); err == nil {
 			t.Fatalf("contentUrl %q should be rejected", rawURL)
 		}
+	}
+
+	cleaned, err := sanitizeMarketplaceSkill(MarketplaceSkill{
+		Slug:          "demo-skill",
+		ContentURL:    "https://hoxi.ai/skills/demo-skill/SKILL.md",
+		ContentSHA256: strings.Repeat("a", 64),
+		RepoURL:       "javascript:alert(1)",
+		HomepageURL:   "https://hoxi.ai/skills/demo-skill",
+	})
+	if err != nil {
+		t.Fatalf("sanitizeMarketplaceSkill failed: %v", err)
+	}
+	if cleaned.RepoURL != "" {
+		t.Fatalf("javascript: repoUrl must be stripped, got %q", cleaned.RepoURL)
+	}
+	if cleaned.HomepageURL != "https://hoxi.ai/skills/demo-skill" {
+		t.Fatalf("https homepageUrl should be preserved, got %q", cleaned.HomepageURL)
+	}
+}
+
+func TestMarketplaceRejectsRedirectToUnapprovedHost(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	redirectSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/hoxi/skills":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code": 200,
+				"data": map[string]any{
+					"items": []map[string]any{{
+						"slug":          "demo-skill",
+						"name":          "demo-skill",
+						"contentUrl":    "http://" + r.Host + "/redirect",
+						"contentSha256": digestOf(marketplaceBody),
+					}},
+				},
+			})
+		case "/redirect":
+			http.Redirect(w, r, "https://evil.example.com/SKILL.md", http.StatusFound)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer redirectSrv.Close()
+
+	svc := NewMarketplaceService(redirectSrv.URL, redirectSrv.Client())
+	if _, err := svc.Install(context.Background(), "demo-skill", false); err == nil {
+		t.Fatal("redirect to unapproved host must be rejected")
 	}
 }
 

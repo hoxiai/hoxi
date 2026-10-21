@@ -1,5 +1,5 @@
 // web/src/components/models/SubagentSettingsTab.tsx
-import { createMemo, createSignal, For, onMount, Show } from "solid-js";
+import { createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import {
   Bot,
   Check,
@@ -13,11 +13,11 @@ import {
   Users,
 } from "lucide-solid";
 import {
-  BUILTIN_SUBAGENT_IDS,
   createSubagent,
   deleteSubagent,
   effectiveAllowedSubagents,
   fetchGlobalConfig,
+  isReservedAgentID,
   legacySubagentModel,
   loadAgents,
   migrateLegacySubagentModel,
@@ -57,10 +57,16 @@ export default function SubagentSettingsTab() {
   const [savingId, setSavingId] = createSignal<string | null>(null);
   const [feedback, setFeedback] = createSignal<SaveState>(null);
   const [expandedPrompts, setExpandedPrompts] = createSignal<Record<string, boolean>>({});
+  const [allowlistOpen, setAllowlistOpen] = createSignal<Record<string, boolean>>({});
   const [legacyDismissed, setLegacyDismissed] = createSignal(false);
   const [editingId, setEditingId] = createSignal<string | null>(null);
   const [editDesc, setEditDesc] = createSignal("");
   const [editPrompt, setEditPrompt] = createSignal("");
+  let feedbackTimer: ReturnType<typeof setTimeout> | undefined;
+
+  onCleanup(() => {
+    if (feedbackTimer !== undefined) clearTimeout(feedbackTimer);
+  });
 
   const [newId, setNewId] = createSignal("");
   const [newDesc, setNewDesc] = createSignal("");
@@ -87,8 +93,9 @@ export default function SubagentSettingsTab() {
   });
 
   const markSaved = (id: string, ok: boolean) => {
+    if (feedbackTimer !== undefined) clearTimeout(feedbackTimer);
     setFeedback({ id, ok });
-    setTimeout(() => {
+    feedbackTimer = setTimeout(() => {
       if (feedback()?.id === id) setFeedback(null);
     }, 2000);
   };
@@ -135,6 +142,7 @@ export default function SubagentSettingsTab() {
     const next = allow.includes(subagentID)
       ? allow.filter((id) => id !== subagentID)
       : [...allow, subagentID];
+    setAllowlistOpen((prev) => ({ ...prev, [primaryID]: true }));
     await onDelegation(primaryID, { kind: "allowlist", allow: next });
   };
 
@@ -158,7 +166,7 @@ export default function SubagentSettingsTab() {
       .replace(/[^a-z0-9_-]/g, "-");
     const prompt = newPrompt().trim();
     if (!id || !prompt || creating()) return;
-    if ((BUILTIN_SUBAGENT_IDS as readonly string[]).includes(id) || subagentIDs().includes(id)) return;
+    if (isReservedAgentID(id) || subagentIDs().includes(id)) return;
     setCreating(true);
     try {
       await createSubagent({
@@ -330,6 +338,12 @@ export default function SubagentSettingsTab() {
             <For each={primaryAgents()}>
               {(agent) => {
                 const policy = createMemo(() => readDelegationPolicy(agent.name, workspace.globalConfig));
+                const isAllowlist = () =>
+                  policy().kind === "allowlist" || Boolean(allowlistOpen()[agent.name]);
+                const allowItems = () => {
+                  const p = policy();
+                  return p.kind === "allowlist" ? p.allow : [];
+                };
                 const allowed = createMemo(() =>
                   effectiveAllowedSubagents(agent.name, subagentIDs(), workspace.globalConfig)
                 );
@@ -349,11 +363,16 @@ export default function SubagentSettingsTab() {
                       </div>
                       <div class="flex shrink-0 items-center gap-1.5">
                         <select
-                          value={delegationSelectValue(policy())}
+                          value={isAllowlist() ? "allowlist" : delegationSelectValue(policy())}
                           onChange={(event) => {
                             const kind = event.currentTarget.value;
+                            if (kind === "allowlist") {
+                              setAllowlistOpen((prev) => ({ ...prev, [agent.name]: true }));
+                              void onDelegation(agent.name, { kind: "allowlist", allow: allowItems() });
+                              return;
+                            }
+                            setAllowlistOpen((prev) => ({ ...prev, [agent.name]: false }));
                             if (kind === "inherit") void onDelegation(agent.name, { kind: "inherit" });
-                            else if (kind === "allowlist") void onDelegation(agent.name, { kind: "allowlist", allow: [] });
                             else void onDelegation(agent.name, { kind: "all", action: kind as TaskPermissionMode });
                           }}
                           class="rounded-lg border border-[var(--border-strong)] bg-[var(--bg-panel)] px-2 py-1 text-[11px] text-[var(--text-primary)] outline-none cursor-pointer"
@@ -368,7 +387,7 @@ export default function SubagentSettingsTab() {
                       </div>
                     </div>
 
-                    <Show when={policy().kind === "allowlist"}>
+                    <Show when={isAllowlist()}>
                       <div class="space-y-1.5 border-t border-[var(--border-subtle)] pt-2">
                         <div class="text-[11px] text-[var(--text-muted)]">
                           {t("models.subagentsAllowlistHint")}
@@ -376,9 +395,7 @@ export default function SubagentSettingsTab() {
                         <div class="flex flex-wrap gap-1.5">
                           <For each={subagents()}>
                             {(entry) => {
-                              const checked = () =>
-                                policy().kind === "allowlist" &&
-                                (policy() as { allow: string[] }).allow.includes(entry.id);
+                              const checked = () => allowItems().includes(entry.id);
                               return (
                                 <label class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2 py-1 text-[11px] text-[var(--text-secondary)] cursor-pointer select-none">
                                   <input
@@ -393,7 +410,7 @@ export default function SubagentSettingsTab() {
                             }}
                           </For>
                         </div>
-                        <Show when={(policy() as { allow?: string[] }).allow?.length === 0}>
+                        <Show when={allowItems().length === 0}>
                           <div class="text-[11px] text-rose-400">
                             {t("models.subagentsNoAllowlist")}
                           </div>

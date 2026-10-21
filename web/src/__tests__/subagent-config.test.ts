@@ -3,6 +3,7 @@ import { describe, it, assertDeepEqual, assertEqual } from "./test-harness";
 import {
   buildDelegationTaskValue,
   effectiveAllowedSubagents,
+  isReservedAgentID,
   readDelegationPolicy,
   readGlobalTaskPolicy,
   readSubagents,
@@ -83,5 +84,12 @@ describe("subagent config", () => {
       }),
       { "*": "deny", reviewer: "allow", old: null }
     );
+  });
+
+  it("blocks reserved primary, system and builtin agent ids from custom creation", () => {
+    for (const id of ["build", "plan", "ask", "debug", "compaction", "title", "summary", "general", "explore", "scout"]) {
+      assertEqual(isReservedAgentID(id), true, `expected ${id} to be reserved`);
+    }
+    assertEqual(isReservedAgentID("custom-reviewer"), false);
   });
 });
