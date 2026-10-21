@@ -57,3 +57,33 @@ func TestSplitCommandChainMatchesJSSeparators(t *testing.T) {
 		}
 	}
 }
+
+func TestDecideCommandPermissionInNormalizesRunnerCommands(t *testing.T) {
+	worktree := t.TempDir()
+	cases := []struct {
+		command string
+		want    string
+	}{
+		{"cd " + filepath.Join(worktree, "go-fast") + " && /usr/local/go/bin/go test ./... -count=1 | tail -80", "allow"},
+		{"cd " + worktree + " && /usr/local/go/bin/go vet ./...", "allow"},
+		{"/opt/homebrew/bin/npm run build", "allow"},
+		{"cd " + worktree + " && /usr/local/go/bin/go test ./... 2>&1", "allow"},
+		{"cd /tmp && go test ./...", "ask"},
+		{"/tmp/not-a-toolchain/go test ./...", "ask"},
+		{"cd " + worktree + " && rm -rf build", "ask"},
+		{"cd " + worktree + " && /usr/local/go/bin/go test ./... && cat /etc/hosts", "allow"},
+	}
+	for _, c := range cases {
+		if got := decideCommandPermissionIn(c.command, worktree); got != c.want {
+			t.Errorf("decideIn(%q) = %q, want %q", c.command, got, c.want)
+		}
+	}
+}
+
+func TestNormalizeCommandForPolicyKeepsOutsideCD(t *testing.T) {
+	worktree := t.TempDir()
+	in := "cd /tmp && go test ./..."
+	if got := normalizeCommandForPolicy(in, worktree); got != in {
+		t.Fatalf("normalize(%q) = %q, want unchanged", in, got)
+	}
+}

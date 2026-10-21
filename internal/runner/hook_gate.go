@@ -206,7 +206,8 @@ func (s *Service) decideHookCall(r *http.Request, cred hookCredential, p hookPay
 	args, _ := json.Marshal(p.ToolCall.Args)
 	callID := fmt.Sprintf("call_%s_%d", cred.messageID, p.StepIdx)
 	action := hookToolAction(p.ToolCall.Name)
-	if action == hookActionAsk && s.gate.hasToolAlways(cred.sessionID, hookToolGrantKey(p.ToolCall.Name, p.ToolCall.Args)) {
+	if (action == hookActionAsk || action == hookActionUnknown) &&
+		s.gate.hasToolAlways(cred.sessionID, hookToolGrantKey(p.ToolCall.Name, p.ToolCall.Args)) {
 		return hookDecisionApprove, ""
 	}
 	if ok, reason := s.gateDoomLoop(r, cred, p.ToolCall.Name, args, callID); !ok {
@@ -250,8 +251,17 @@ func (s *Service) decideHookCall(r *http.Request, cred hookCredential, p hookPay
 			return hookDecisionApprove, ""
 		}
 		return hookDecisionDeny, reason
+	case hookActionPassthrough:
+		return "allow", ""
 	}
-	return "allow", ""
+	// Unknown tools are gated instead of passed through: agy's headless mode
+	// soft-denies any tool that needs permission, which ends the turn without
+	// giving the user a chance to approve it.
+	approved, reason := s.gateToolCall(r, cred, p.ToolCall.Name, p.ToolCall.Args, callID)
+	if approved {
+		return hookDecisionApprove, ""
+	}
+	return hookDecisionDeny, reason
 }
 
 // gateCommand applies the shared command policy and, when needed, blocks on
@@ -263,7 +273,7 @@ func (s *Service) gateCommand(r *http.Request, cred hookCredential, rec SessionR
 	if ask.cwd != "" && !pathWithin(rec.WorktreePath, ask.cwd) {
 		return false, "command working directory is outside this session's directory"
 	}
-	if decideCommandPermission(ask.command) == "allow" || s.gate.hasAlways(cred.sessionID, ask.command) {
+	if decideCommandPermissionIn(ask.command, rec.WorktreePath) == "allow" || s.gate.hasAlways(cred.sessionID, ask.command) {
 		return true, ""
 	}
 	return s.awaitApproval(r, cred, ask)

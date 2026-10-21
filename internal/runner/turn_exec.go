@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hoxiai/hoxi/internal/agentcli"
 	"github.com/hoxiai/hoxi/internal/attachment"
 	"github.com/hoxiai/hoxi/internal/diagnostics"
 )
@@ -304,9 +305,7 @@ func (s *Service) startTurnProcess(
 	}
 	cmd := exec.Command(binPath, args...)
 	cmd.Dir = rec.WorktreePath
-	if len(hookEnv) > 0 {
-		cmd.Env = append(os.Environ(), hookEnv...)
-	}
+	cmd.Env = agentcli.WithUserBinPath(append(os.Environ(), hookEnv...))
 
 	stdinPipe, err := cmd.StdinPipe()
 	if err != nil {

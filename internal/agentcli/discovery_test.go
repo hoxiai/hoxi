@@ -85,3 +85,39 @@ func TestCodeBuddyAndQoderModelDiscovery(t *testing.T) {
 		t.Fatalf("FormatClaudeModelName(claude-fable-6-1) = %q, want Claude Fable 6.1", got)
 	}
 }
+
+func TestWithUserBinPathPrependsMissingDirs(t *testing.T) {
+	env := []string{"FOO=1", "PATH=/usr/bin:/opt/homebrew/bin"}
+	got := WithUserBinPath(env)
+	if env[1] != "PATH=/usr/bin:/opt/homebrew/bin" {
+		t.Fatalf("input env was mutated: %#v", env)
+	}
+	path := ""
+	for _, kv := range got {
+		if strings.HasPrefix(kv, "PATH=") {
+			path = strings.TrimPrefix(kv, "PATH=")
+		}
+	}
+	if !strings.HasSuffix(path, "/usr/bin:/opt/homebrew/bin") {
+		t.Fatalf("original PATH order lost: %q", path)
+	}
+	if strings.Count(path, "/opt/homebrew/bin") != 1 {
+		t.Fatalf("/opt/homebrew/bin duplicated: %q", path)
+	}
+	if first := filepath.SplitList(path)[0]; first == "/usr/bin" {
+		t.Fatalf("user bin dirs were not prepended: %q", path)
+	}
+}
+
+func TestWithUserBinPathAddsPATHWhenMissing(t *testing.T) {
+	got := WithUserBinPath([]string{"FOO=1"})
+	found := false
+	for _, kv := range got {
+		if strings.HasPrefix(kv, "PATH=") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("PATH was not added: %#v", got)
+	}
+}

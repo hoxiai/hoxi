@@ -16,10 +16,12 @@ import (
 // gate (1.4.3 introduced read_file after view_file).
 
 const (
-	hookActionCommand = "command"
-	hookActionRead    = "read"
-	hookActionEdit    = "edit"
-	hookActionAsk     = "ask"
+	hookActionCommand     = "command"
+	hookActionRead        = "read"
+	hookActionEdit        = "edit"
+	hookActionAsk         = "ask"
+	hookActionPassthrough = "passthrough"
+	hookActionUnknown     = "unknown"
 )
 
 var (
@@ -61,10 +63,18 @@ var (
 		"unsandboxed":                true,
 		"run_workflow":               true,
 	}
+	// Control tools never act on the workspace, so gating them would only
+	// block the end of a turn on a question the user does not need to answer.
+	hookPassthroughTools = map[string]bool{
+		"finish":        true,
+		"task_boundary": true,
+		"ask_question":  true,
+	}
 )
 
 // hookToolAction classifies the tools agy sends through PreToolUse. Unknown
-// tools fall back to agy's own policy instead of being auto-approved.
+// tools go through Hoxi's approval gate instead of agy's headless policy,
+// which would soft-deny anything that needs permission and end the turn.
 func hookToolAction(name string) string {
 	lower := strings.ToLower(strings.TrimSpace(name))
 	if lower == hookToolRunCommand {
@@ -79,6 +89,9 @@ func hookToolAction(name string) string {
 	if hookAskTools[lower] {
 		return hookActionAsk
 	}
+	if hookPassthroughTools[lower] {
+		return hookActionPassthrough
+	}
 	switch {
 	case strings.HasPrefix(lower, "read_"), strings.HasPrefix(lower, "view_"),
 		strings.HasPrefix(lower, "list_"), strings.HasPrefix(lower, "find_"),
@@ -86,7 +99,7 @@ func hookToolAction(name string) string {
 		strings.HasPrefix(lower, "capture_browser_"):
 		return hookActionRead
 	}
-	return "unknown"
+	return hookActionUnknown
 }
 
 // resolveHookToolPath normalizes the file args agy uses across read/write

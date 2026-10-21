@@ -67,6 +67,51 @@ func CommonUserBinDirs() []string {
 	return dirs
 }
 
+// WithUserBinPath prepends CommonUserBinDirs to PATH. Agent CLIs spawned by
+// the GUI app inherit a minimal PATH, so a `#!/usr/bin/env node` launcher
+// fails with "env: node: No such file or directory" even though node is
+// installed under fnm, nvm, volta or a package-manager bin directory.
+func WithUserBinPath(env []string) []string {
+	pathIndex, current := -1, ""
+	for i, kv := range env {
+		if strings.HasPrefix(kv, "PATH=") {
+			pathIndex, current = i, kv[len("PATH="):]
+			break
+		}
+	}
+	seen := make(map[string]bool)
+	var parts []string
+	for _, dir := range filepath.SplitList(current) {
+		if dir = strings.TrimSpace(dir); dir != "" {
+			seen[filepath.Clean(dir)] = true
+			parts = append(parts, dir)
+		}
+	}
+	var prepend []string
+	for _, dir := range CommonUserBinDirs() {
+		dir = strings.TrimSpace(dir)
+		if dir == "" {
+			continue
+		}
+		key := filepath.Clean(dir)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		prepend = append(prepend, dir)
+	}
+	if len(prepend) == 0 {
+		return env
+	}
+	next := strings.Join(append(prepend, parts...), string(os.PathListSeparator))
+	out := append([]string(nil), env...)
+	if pathIndex >= 0 {
+		out[pathIndex] = "PATH=" + next
+		return out
+	}
+	return append(out, "PATH="+next)
+}
+
 // FirstExecutableFile returns the first candidate that is an existing file.
 func FirstExecutableFile(candidates ...string) string {
 	for _, c := range candidates {

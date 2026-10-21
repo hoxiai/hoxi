@@ -139,14 +139,48 @@ func TestHookGateRejectsBadCredentials(t *testing.T) {
 	}
 }
 
-func TestHookGateAutoApprovesSafeCommandsAndPassesUncoveredTools(t *testing.T) {
+func TestHookGateAutoApprovesSafeCommandsAndPassesControlTools(t *testing.T) {
 	f := newGateFixture(t)
 	if d := f.callHook(t, f.payload("git status && go test ./...", "", "conv-1")); d.Decision != "auto_approve" {
 		t.Fatalf("safe command: %q", d.Decision)
 	}
-	other, _ := json.Marshal(map[string]interface{}{"toolCall": map[string]interface{}{"name": "finish"}})
-	if d := f.callHook(t, other); d.Decision != "allow" {
-		t.Fatalf("uncovered tool should pass through, got %q", d.Decision)
+	for _, tool := range []string{"finish", "task_boundary", "ask_question"} {
+		other, _ := json.Marshal(map[string]interface{}{"toolCall": map[string]interface{}{"name": tool}})
+		if d := f.callHook(t, other); d.Decision != "allow" {
+			t.Fatalf("control tool %s should pass through, got %q", tool, d.Decision)
+		}
+	}
+}
+
+func TestHookGateGatesUnknownTools(t *testing.T) {
+	f := newGateFixture(t)
+	events, unsub := f.svc.Subscribe("ses_agy_gate")
+	defer unsub()
+	body, _ := json.Marshal(map[string]interface{}{
+		"conversationId": "conv-1",
+		"stepIdx":        7,
+		"toolCall": map[string]interface{}{
+			"name": "mystery_action",
+			"args": map[string]interface{}{"Target": "workspace"},
+		},
+	})
+	result := f.asyncHook(t, body)
+	asked := waitForEvent(t, events, "permission.asked")
+	if asked.Properties["permission"] != "tool" {
+		t.Fatalf("unknown tool should ask through Hoxi, got %#v", asked.Properties)
+	}
+	id, _ := asked.Properties["id"].(string)
+	if id == "" {
+		t.Fatalf("missing permission id")
+	}
+	if code := f.reply(t, id, "always", ""); code != http.StatusOK {
+		t.Fatalf("reply status %d", code)
+	}
+	if d := <-result; d.Decision != "auto_approve" {
+		t.Fatalf("unknown tool after approval: %q", d.Decision)
+	}
+	if d := f.callHook(t, body); d.Decision != "auto_approve" {
+		t.Fatalf("repeat unknown tool should reuse the always grant, got %q", d.Decision)
 	}
 }
 

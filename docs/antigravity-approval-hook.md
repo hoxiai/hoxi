@@ -112,7 +112,9 @@ agy 发起 run_command
     - 只读类（`read_file` / `view_file` / `list_dir` / `find_by_name` / `grep_search` / `list_resources` / `read_url_content` / 浏览器读取等）→ `auto_approve`。读取与安全命令（`cat`）同属非破坏性操作，`--sandbox` 仍会拦截工作区外的写入。
     - 写/改类（`write_to_file` / `write_file` / `replace_file_content` / `multi_replace_file_content` / `sed_file` / `notebook_edit`）→ 目标落在 worktree 内则 `auto_approve`（与 `accept-edits` 一致），相对路径按 worktree 解析，区外直接 `deny` 并回传原因。
     - MCP / 浏览器 JS / 显式 unsandboxed 等（`call_mcp_tool` / `execute_browser_javascript` / `execute_url` / `unsandboxed` / `run_workflow`）→ 推送 `permission:"tool"` 审批卡片；`always` 只记住完全相同的工具 + 参数，不写 agy 全局配置。
-    - 未知工具 → 返回 `allow`，交回 agy 默认策略，避免误放行。
+    - 控制类工具（`finish` / `task_boundary` / `ask_question`）→ 返回 `allow`，不阻塞轮次结束。
+    - 未知工具 → 推送 `permission:"tool"` 审批卡片。无头模式会把需要权限的未知工具直接 soft-deny 并结束轮次，交给 Hoxi 审批才能让用户有机会放行。
+  - 命令归一化：`hook_gate.go` 在套用共享策略前会校验并去掉位于 worktree 内的 `cd <dir> &&` 前缀，并把受信目录下的绝对工具链路径（如 `/usr/local/go/bin/go`、`/opt/homebrew/bin/npm`）按 basename 归一，避免 agent 常见写法被误判为 `ask`。
   - 原有的 `denied_actions` 提示保留作兜底（hook 没装上，或其它未覆盖工具需要权限时），文案改成引导用户检查 hook 安装状态。
 
 ### 3.5 前端
