@@ -137,9 +137,9 @@ Type(1B) | StreamID(8B, BigEndian uint64) | Payload(≤ 4MB)
 - **`internal/tunnel`**：配对、连接管理、帧协议与进程内分发。收到 Open 帧后构造请求：`Host` 改为 `127.0.0.1`，丢弃逐跳头、`Origin`、`Referer`、`Cookie`、`Authorization`、`X-Hoxi-Token`、`Sec-*`、`X-Forwarded-*`、`X-GoPanel-*`；`serviceId` 不是 `hoxi-gateway`、`upgrade = true` 或 URI 非法时直接 Reset。
 - **路由白名单（`internal/gateway/tunnel.go`）**：经隧道只能访问
   - 前缀：`/api/hoxi/sessions`、`/event`、`/permission`、`/worktree`、`/runner`、`/workspaces`、`/attachments`、`/skills`、`/file`
-  - 精确：`/healthz`、`/api/hoxi/bootstrap`、`/api/hoxi/system-info`、`/file`、`/file/content`、`/api/file/content`
+  - 精确：`/healthz`、`/api/hoxi/bootstrap`、`/api/hoxi/system-info`、`/file`、`/file/content`、`/api/file/content`、`/api/hoxi/provider/models`（只读脱敏模型列表：仅 `{source, providers: [{id, name, models: [{id, name}]}]}`，不含密钥、baseURL 或请求头）
 
-  其余一律 403，包括隧道与账号管理、`/api/hoxi/models-config`（含提供商配置）、浏览器、剪贴板、对话框、更新器以及 OpenCode 原始透传（`/session`、`/pty`、`/config`、`/auth` 等）。路径必须是 `path.Clean` 后的形式，`..` 绕过会被拒绝。
+  其余一律 403，包括隧道与账号管理、`/api/hoxi/models-config`（含提供商配置）及其它 `/api/hoxi/provider/*` 接口、浏览器、剪贴板、对话框、更新器以及 OpenCode 原始透传（`/session`、`/pty`、`/config`、`/auth` 等）。路径必须是 `path.Clean` 后的形式，`..` 绕过会被拒绝。
 - **本机网关令牌不出机器**：隧道请求访问 `/file` 时由网关在进程内注入令牌；`/api/hoxi/bootstrap` 对隧道请求不返回 `gatewayToken`，也不种令牌 Cookie。
 - **凭据文件**：release `~/.hoxi/tunnel.json`，dev `~/.hoxi/tunnel-dev.json`（两个变体可同时运行，互不挤占隧道）。临时文件 + `os.Rename` 原子写入，权限 `0600`，已加入受保护状态文件列表；状态接口从不返回 token。
 - **管理接口**（只在本机可访问，隧道白名单不包含）：

@@ -12,7 +12,7 @@ import (
 type tunnelRequestKey struct{}
 
 // Routes the mobile app may reach through the GoPanel tunnel. Everything else
-// (tunnel and account management, provider keys, browser, clipboard, dialogs,
+// (tunnel and account management, provider config and keys, browser, clipboard, dialogs,
 // updater, raw OpenCode passthrough) stays desktop-only.
 var tunnelRoutePrefixes = []string{
 	"/api/hoxi/sessions",
@@ -30,9 +30,12 @@ var tunnelExactRoutes = map[string]bool{
 	"/healthz":              true,
 	"/api/hoxi/bootstrap":   true,
 	"/api/hoxi/system-info": true,
-	"/file":                 true,
-	"/file/content":         true,
-	"/api/file/content":     true,
+	// Sanitized model ids/names only; models-config and the other provider
+	// routes carry keys and stay desktop-only.
+	"/api/hoxi/provider/models": true,
+	"/file":                     true,
+	"/file/content":             true,
+	"/api/file/content":         true,
 }
 
 func tunnelRouteAllowed(requestPath string) bool {
