@@ -8,6 +8,7 @@ import {
   FolderGit2,
   KeyRound,
   MessageSquareText,
+  RadioTower,
   Moon,
   ScrollText,
   Settings,
@@ -38,6 +39,7 @@ import ProviderCatalogTab from "../models/ProviderCatalogTab";
 import { ChatComposerTab, GeneralAppearanceTab } from "./SettingsGeneralChatTabs";
 import { SystemRuntimeSettingsTab } from "./SettingsSystemRuntimeTab";
 import { PrivacySettingsTab } from "./PrivacyControls";
+import { LocalRelaySettingsTab } from "./LocalRelayControls";
 import DiagnosticsTab from "./DiagnosticsTab";
 import {
   TerminalSafetySettingsTab,
@@ -93,6 +95,7 @@ export default function SettingsModal() {
         },
         { id: "auto", label: () => t("models.tabAutoPools"), icon: Zap },
         { id: "models", label: () => t("models.tabModels"), icon: SlidersHorizontal },
+        { id: "relay", label: () => t("relay.title"), icon: RadioTower },
       ],
     },
     {
@@ -332,6 +335,11 @@ export default function SettingsModal() {
                   <Show when={activeTab() === "diagnostics"}>
                     <div class="hoxi-view-enter">
                       <DiagnosticsTab />
+                    </div>
+                  </Show>
+                  <Show when={activeTab() === "relay"}>
+                    <div class="hoxi-view-enter">
+                      <LocalRelaySettingsTab />
                     </div>
                   </Show>
                 </div>

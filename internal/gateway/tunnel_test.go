@@ -47,6 +47,11 @@ func TestTunnelRouteAllowlist(t *testing.T) {
 		{get, "/api/hoxi/browser"}, {get, "/api/hoxi/clipboard/images"}, {get, "/api/hoxi/sessionsx"},
 		{get, "/api/hoxi/sessions/../tunnel/pair"}, {get, "/session"}, {get, "/pty/1/connect"}, {get, "/config"}, {get, "/auth/openai"},
 		{post, "/api/hoxi/desktop/notify"}, {post, "/api/hoxi/desktop/focus"}, {get, "/api/hoxi/dev-pulse"},
+		// The local OpenAI-compatible relay plane mints and consumes provider
+		// credentials, so neither its data routes nor its key admin route may
+		// ever be reachable from a paired GoPanel.
+		{get, "/v1/models"}, {post, "/v1/chat/completions"}, {get, "/api/hoxi/provider/relay/keys"},
+		{post, "/api/hoxi/provider/relay/keys"}, {http.MethodDelete, "/api/hoxi/provider/relay/keys"},
 		// Raw OpenCode passthrough and command-running local helpers.
 		{get, "/file"}, {post, "/file"}, {get, "/api/file"}, {post, "/api/hoxi/file/open"}, {post, "/api/hoxi/file/validate"},
 		// Worktree routes that execute commands, write config, push, check out or delete.

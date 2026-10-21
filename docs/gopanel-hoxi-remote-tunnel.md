@@ -145,7 +145,8 @@ Type(1B) | StreamID(8B, BigEndian uint64) | Payload(≤ 4MB)
   - **附件、Skill 与工作区（只读）**：`POST /api/hoxi/attachments`、`GET /api/hoxi/attachments/*`、`GET /api/hoxi/attachments/*/content`、`GET /api/hoxi/skills/list`、`GET /api/hoxi/skills/marketplace`（hoxi.ai 技能目录元数据，不含正文与安装动作）、`GET /api/hoxi/workspaces`（新建/修改/删除工作区仅限桌面本机；`POST /api/hoxi/skills/marketplace/install` 会写入 `~/.hoxi` 并改变 Agent 能力，仅限桌面本机）
   - **工作区内文件读取与搜索（`internal/gateway/files.go`）**：`GET /file/content`、`GET /api/file/content`、`GET /api/hoxi/file/content`（均必须携带非空 `?path=`，绝不回退到 OpenCode 原始代理）、`GET /api/hoxi/file/list`、`GET /api/hoxi/file/search`。经隧道访问的目标路径与搜索根目录必须位于网关根目录、已注册工作区目录或会话绑定的 worktree 内（解析软链接防越界，不信任请求自带的越界 `directory` 参数，并拦截敏感凭据文件）；`/file`、`/api/file`、`POST /api/hoxi/file/open`、`POST /api/hoxi/file/validate` 一律 403
 
-  其余所有路由（包括隧道与账号管理、`/api/hoxi/models-config` 及其它 `/api/hoxi/provider/*` 接口、Runner Hook 与旧版 `/api/hoxi/runner/*` 会话接口、浏览器、剪贴板、对话框、更新器以及 `/session`、`/pty`、`/config`、`/auth`、`/file` 等 OpenCode 原始透传）一律返回 403。
+  其余所有路由（包括隧道与账号管理、`/api/hoxi/models-config` 及其它 `/api/hoxi/provider/*` 接口、**本机模型中转**、Runner Hook 与旧版 `/api/hoxi/runner/*` 会话接口、浏览器、剪贴板、对话框、更新器以及 `/session`、`/pty`、`/config`、`/auth`、`/file` 等 OpenCode 原始透传）一律返回 403。
+- **本机模型中转不进隧道**：`POST /v1/chat/completions`、`GET /v1/models` 与中转 Key 管理 `GET|POST|DELETE /api/hoxi/provider/relay/keys` 只监听回环地址，**永远不加入隧道白名单**。中转 Key（`hk-*`）能驱动用户已配置的全部服务商并消耗其额度，等同于上游凭据的代理凭证；因此配对即授权的远程端不得创建、查看或使用它。`internal/gateway/tunnel_test.go` 同时断言这几条路径被拒绝。
 - **本机网关令牌不出机器**：网关在转发隧道请求前显式剥离 `X-Hoxi-Token` 且绝不注入本机令牌（受令牌保护的 OpenCode 原始透传对隧道始终不可达）；`/api/hoxi/bootstrap` 对隧道请求不返回 `gatewayToken`，也不种令牌 Cookie。
 - **凭据文件**：release `~/.hoxi/tunnel.json`，dev `~/.hoxi/tunnel-dev.json`（两个变体可同时运行，互不挤占隧道）。临时文件 + `os.Rename` 原子写入，权限 `0600`，已加入受保护状态文件列表；状态接口从不返回 token。
 - **管理接口**（只在本机可访问，隧道白名单不包含）：

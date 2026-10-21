@@ -64,7 +64,7 @@ func TestHomeOverrideServerURLAndProtectedStateFiles(t *testing.T) {
 		t.Fatalf("ServerBaseURL() = %s, want https://mirror.hoxi.ai", got)
 	}
 
-	for _, name := range []string{"models.json", "auth.json", "auto-pools.json", "workspaces.json", "device-id", "telemetry.json"} {
+	for _, name := range []string{"models.json", "auth.json", "auto-pools.json", "workspaces.json", "device-id", "telemetry.json", "relay-keys.json"} {
 		if !IsProtectedStateFile(name) {
 			t.Fatalf("expected %s to be protected state file", name)
 		}

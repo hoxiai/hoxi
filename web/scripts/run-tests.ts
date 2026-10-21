@@ -38,6 +38,7 @@ import "../src/__tests__/diagnostics.test";
 import "../src/__tests__/appearance.test";
 import "../src/__tests__/network.test";
 import "../src/__tests__/telemetry.test";
+import "../src/__tests__/local-relay.test";
 import "../src/__tests__/auto-models.test";
 import "../src/__tests__/workspace-review.test";
 import "../src/__tests__/session-goal.test";

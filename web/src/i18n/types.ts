@@ -19,6 +19,7 @@ export type SettingsI18n = I18nDictionary["settings"];
 export type NetworkI18n = I18nDictionary["network"];
 export type SkillsI18n = I18nDictionary["skills"];
 export type CommandPaletteI18n = I18nDictionary["commandPalette"];
+export type RelayI18n = I18nDictionary["relay"];
 
 export type Locale = "zh-CN" | "en-US";
 

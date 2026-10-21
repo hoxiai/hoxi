@@ -226,6 +226,10 @@ func (g *Gateway) CloseBrowser() {
 
 func (g *Gateway) SetWSBaseURL(wsURL string) {
 	g.wsBaseURL = wsURL
+	if g.providers != nil {
+		httpBase := strings.Replace(strings.Replace(wsURL, "wss://", "https://", 1), "ws://", "http://", 1)
+		g.providers.SetRelayBaseURL(httpBase)
+	}
 	if g.handoff != nil {
 		g.handoff.SetWSBaseURL(wsURL)
 	}
@@ -261,6 +265,30 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		r.Header.Set(runner.ApprovalSourceHeader, "tunnel")
 	} else {
 		r.Header.Set(runner.ApprovalSourceHeader, "desktop")
+	}
+	// The local OpenAI-compatible relay authenticates with its own hk-* keys
+	// instead of the gateway token, and desktop AI clients (VS Code
+	// extensions, Electron apps, curl) send Origins and Sec-Fetch-Site values
+	// the browser guard rejects. The Host check still applies, so a
+	// DNS-rebinding page cannot reach it.
+	if provider.IsRelayPath(r.URL.Path) {
+		// Defense in depth: even if a future edit added /v1/* to the tunnel
+		// allow-list, a remote caller still cannot spend the user's provider
+		// credits with a relay key.
+		if isTunnelRequest(r) {
+			writeJSONError(w, http.StatusForbidden, "the local model relay is not available over the remote tunnel")
+			return
+		}
+		if !trustedHost(r.Host) {
+			http.Error(w, "untrusted Host", http.StatusForbidden)
+			return
+		}
+		if g.providers == nil {
+			writeJSONError(w, http.StatusServiceUnavailable, "provider service is not available")
+			return
+		}
+		g.providers.ServeRelay(w, r)
+		return
 	}
 	if !g.allowRequest(w, r) {
 		return

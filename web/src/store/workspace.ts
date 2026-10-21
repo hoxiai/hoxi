@@ -54,6 +54,7 @@ export * from "./command-sandbox";
 export * from "./code-index";
 export * from "./browser";
 export * from "./remote-tunnel";
+export * from "./relay";
 export * from "./deep-link";
 export * from "./subagent-config";
 

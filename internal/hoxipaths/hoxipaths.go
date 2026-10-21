@@ -39,6 +39,7 @@ var protectedStateFiles = []string{
 	"tunnel.json",
 	"tunnel-dev.json",
 	"approval-audit.json",
+	"relay-keys.json",
 }
 
 // Home returns ~/.hoxi (or $HOXI_HOME when set), or "" when the user home directory is unknown.

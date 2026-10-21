@@ -28,6 +28,8 @@ type Service struct {
 	reloadMu          sync.Mutex
 	reloadPending     bool
 	reloadLoopRunning bool
+	relayMu           sync.Mutex
+	relayBaseURL      string
 }
 
 func NewService(openCodePort int, password, rootDir string, proxy http.Handler) *Service {
@@ -63,6 +65,7 @@ func (s *Service) RegisterRoutes(mux *http.ServeMux) {
 		mux.HandleFunc("/api/hoxi/provider/"+action, s.serveAssist(action))
 	}
 	mux.HandleFunc("/api/hoxi/provider/auto-pools", s.handleAutoPoolsConfig)
+	mux.HandleFunc("/api/hoxi/provider/relay/keys", s.handleRelayAdmin)
 	mux.HandleFunc("/api/hoxi/provider/models", s.handleModelCatalog)
 	mux.HandleFunc("/api/hoxi/models-config", s.handleModelsConfig)
 	mux.HandleFunc("/global/config", s.handleGlobalConfigProxy)

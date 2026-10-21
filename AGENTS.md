@@ -19,6 +19,7 @@
 - **外部 CLI 会话接管**（`internal/handoff`）：从 Claude / Codex / Gemini / Grok / OpenCode / Trae / Qoder / CodeBuddy 导入会话
 - **Agent Skills**（`internal/skills`）：本地 Skill 发现（OpenCode `/skill`）、内置默认 Skill `shoply-ops`、`skill-authoring`（`internal/skills/defaults/`），以及 hoxi.ai 线上技能目录（`GET /api/hoxi/skills/marketplace`）与显式安装（`POST /api/hoxi/skills/marketplace/install`，校验 `sha256` 后原子写入 `~/.hoxi/skills/<slug>/`，不自动安装、不执行远程脚本、不经隧道开放）
 - **GoPanel 反向隧道**（`internal/tunnel` + `internal/gateway/tunnel.go`）：Mac 主动外连 GoPanel，路由白名单内的 HTTP / SSE 在进程内交给网关；Mac 不开放公网端口。待处理审批经 Notify 帧交给 GoPanel 发 APNs
+- **本机模型中转**（`internal/provider/relay.go` + `relay_keys.go`）：在回环地址上暴露 OpenAI 兼容的 `GET /v1/models` 与 `POST /v1/chat/completions`，供 Cline / Continue / Cherry Studio / Open WebUI / aider 等本机工具复用已配置服务商；只重写 `model` 字段并注入上游 Key，body 与 SSE 原样透传（tools / 多模态不被翻译层破坏）。认证使用独立 `hk-*` Key（`~/.hoxi/relay-keys.json` 仅存 SHA-256 哈希，明文只在创建时返回一次），不把上游凭据下发给客户端；`hoxi-auto` 走自动路由池。该平面**永不进入隧道白名单**
 
 ### 1.2 手机端（`client/`）
 
@@ -171,7 +172,7 @@ Flutter + Riverpod + GoRouter + Dio，四栏：沟通 · 工程 · 专栏 · 我
 6. **安全门控、网络外发边界、子进程消毒与资源边界 (Safety, Egress, Subprocess & Resource Hygiene)**
    - **破坏性操作人工审批**：包含破坏性指令（`rm`, `sudo`, `chmod`, `chown`, `diskutil`, `mkfs`, `git push --force`, `git reset --hard`）的 Shell 操作严禁自动放行，必须在 `hoxi-permissions.js` 及多运行时 PreToolUse Hook 中返回 `"ask"`，触发状态栏 `Attention` 与 `<ApprovalGateCard />` 人工确认。
    - **本地网关与连接复用**：Go 网关仅监听 `127.0.0.1`，反向代理 `http.Transport` 必须配置 `Proxy: nil`（防系统代理 502）与 `FlushInterval: -1`（SSE 零缓冲）并复用长生命周期 `http.Transport`（严禁单次请求新建 Transport 导致连接泄漏）；读取外部 HTTP 响应或进程输出必须使用 `io.LimitReader` 限制体积。
-   - **网络外发边界 (`Network Egress Boundary`)**：Hoxi 为开源本地工具，不提供托管的 AI 服务，AI 请求直连用户配置的提供商或 CLI，不经 Hoxi 中转。网关辅助外发（匿名启动上报、更新检查、账号登录、模型价格/排行榜同步）严禁携带提示词、代码、Diff 或会话内容；后台发起的 LLM 调用必须在 UI 中明确说明目的地，不得静默外发代码上下文。经 GoPanel 隧道的推送通知只携带待处理数量与标识，不含命令、代码或会话内容。
+   - **网络外发边界 (`Network Egress Boundary`)**：Hoxi 为开源本地工具，不提供托管的 AI 服务，AI 请求直连用户配置的提供商或 CLI，不经 Hoxi 云端中转。唯一的「中转」是本机回环的 OpenAI 兼容中转（`internal/provider/relay.go`），它同样把请求原样发往用户自己配置的服务商，且不经隧道开放。网关辅助外发（匿名启动上报、更新检查、账号登录、模型价格/排行榜同步）严禁携带提示词、代码、Diff 或会话内容；后台发起的 LLM 调用必须在 UI 中明确说明目的地，不得静默外发代码上下文。经 GoPanel 隧道的推送通知只携带待处理数量与标识，不含命令、代码或会话内容。
    - **外部子进程非交互消毒与 SQLite 防锁 (`Subprocess & SQLite Hygiene`)**：执行 `git` 或外部 CLI 子进程必须绑定 `context.Context` 超时并剥离交互式环境变量（设置 `GIT_TERMINAL_PROMPT=0`、`GCM_INTERACTIVE=never`，剥离 `GIT_ASKPASS`/`SSH_ASKPASS`/`GIT_EDITOR`）；读取外部 CLI 的 SQLite 库必须携带只读模式与 `_busy_timeout`，严禁阻塞外部进程。
    - **本地状态原子落盘与日志脱敏 (`Atomic Persistence & Secret Redaction`)**：`~/.hoxi/` 与 `.hoxi/` 状态文件写入必须采用「写临时文件 + `os.Rename` 原子替换」并加锁保护；写入诊断环（`internal/diagnostics`）或日志前必须自动脱敏 `Authorization`、`Bearer`、`x-api-key`、`OPENCODE_SERVER_PASSWORD` 等敏感凭据。
 
@@ -217,6 +218,7 @@ Flutter + Riverpod + GoRouter + Dio，四栏：沟通 · 工程 · 专栏 · 我
 | 当你需要新增 / 修改... | 必须放入的位置 (Target Location) | 严禁放入的位置 (Forbidden) | 典范参考 (Canonical Example) |
 | :--- | :--- | :--- | :--- |
 | **Go 独立业务域与 HTTP 路由** | `internal/<domain>/` 独立子包，在 [`internal/gateway/gateway.go`](internal/gateway/gateway.go) 注册 | 严禁塞入 `internal/provider` 或 `internal/gateway` | [`internal/worktree/`](internal/worktree/manager.go) |
+| **本机 OpenAI 兼容中转与中转 Key** | [`internal/provider/relay.go`](internal/provider/relay.go) + [`relay_keys.go`](internal/provider/relay_keys.go)，仅监听回环，Key 存 `~/.hoxi/relay-keys.json`（只存哈希） | 严禁加入 [`internal/gateway/tunnel.go`](internal/gateway/tunnel.go) 白名单，严禁把上游 `apiKey` 直接当客户端 token 下发 | [`internal/provider/relay.go`](internal/provider/relay.go) |
 | **经 GoPanel 隧道开放的路由** | [`internal/gateway/tunnel.go`](internal/gateway/tunnel.go) 显式「方法 + 路由」白名单 + `tunnel_test.go`（允许与相邻拒绝用例），同步更新双仓契约文档 | 严禁前缀放行、绕过白名单，或开放账号、提供商配置、命令执行、`open`、工作区外文件等接口 | [`docs/gopanel-hoxi-remote-tunnel.md`](docs/gopanel-hoxi-remote-tunnel.md) |
 | **Go 网关自发轻量 LLM 调用** | 领域包接收 `gateway` 注入的 [`llm.Client`](internal/llm/llm.go)，不 `import provider` | 严禁业务包直接 `import internal/provider`；严禁手写 `http.Post` 拼接 `/v1/messages` 或 `/chat/completions` | [`internal/promptassist/`](internal/promptassist/service.go)、[`internal/gateway/assist.go`](internal/gateway/assist.go) |
 | **直连 OpenCode (`opencode serve`)** | 一律使用 [`internal/opencode/ocapi`](internal/opencode/ocapi/client.go)（共享 `Transport`、Basic Auth 与 `LimitReader`） | 严禁自建回环 `http.Client`/`Transport` 或手动调用 `SetBasicAuth("opencode", ...)` | [`internal/opencode/ocapi/client.go`](internal/opencode/ocapi/client.go) |

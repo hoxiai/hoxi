@@ -15,6 +15,7 @@ export type SettingsTab =
   | "system"
   | "privacy"
   | "diagnostics"
+  | "relay"
   | ProviderModalTab;
 export type ThemeMode = "light" | "dark" | "system";
 export type ColorScheme = "blue" | "classic" | "warm" | "midnight";
