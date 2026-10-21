@@ -347,14 +347,55 @@ function isSafeCommand(command, worktree) {
   return segments.length > 0 && segments.every(isSafeSegment);
 }
 
+const EDIT_PERMISSIONS = new Set([
+  "edit",
+  "write",
+  "patch",
+  "multiedit",
+  "apply_patch",
+]);
+
+const PROTECTED_PATH_SEGMENTS = new Set([
+  ".git",
+  ".agents",
+  ".opencode",
+  ".claude",
+  ".hoxi",
+  ".envrc",
+]);
+
+export function isProtectedPath(rawPath) {
+  if (typeof rawPath !== "string" || !rawPath.trim()) return false;
+  const slash = rawPath.trim().replaceAll("\\", "/").toLowerCase();
+  if (slash === ".vscode/settings.json" || slash.endsWith("/.vscode/settings.json")) {
+    return true;
+  }
+  const parts = slash.split("/").filter(Boolean);
+  return parts.some((p) => PROTECTED_PATH_SEGMENTS.has(p));
+}
+
 function matchesDestructive(blob) {
   return DESTRUCTIVE_RE.test(blob) || DESTRUCTIVE_GIT_RE.test(blob);
 }
 
 export function isDestructivePermissionRequest(input) {
   const permission = String(input?.permission || input?.type || "").toLowerCase();
-  if (permission === "doom_loop") return true;
+  if (permission === "doom_loop" || permission === "external_directory") return true;
   if (READ_PERMISSIONS.has(permission)) return false;
+  if (EDIT_PERMISSIONS.has(permission)) {
+    const candidates = [
+      ...(Array.isArray(input?.patterns) ? input.patterns : []),
+      input?.pattern,
+      input?.metadata?.filepath,
+      input?.metadata?.filePath,
+      input?.metadata?.path,
+      input?.metadata?.target,
+      ...(Array.isArray(input?.metadata?.files)
+        ? input.metadata.files.map((f) => f?.filePath || f?.filepath || f?.file || f?.path || "")
+        : []),
+    ];
+    if (candidates.some(isProtectedPath)) return true;
+  }
   const blob = [permission, ...commandCandidates(input)].join("\n");
   const deobfuscated = blob.replace(/[\\'"]/g, "");
   return matchesDestructive(blob) || matchesDestructive(deobfuscated);

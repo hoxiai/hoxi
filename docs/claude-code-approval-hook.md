@@ -35,7 +35,7 @@
 
 ## 3. 接入方案
 
-- `issueClaudeHook`（`internal/runner/claude_hook_gate.go`）给每个 turn 签发一份一次性凭证，绑定 runtime、会话和消息。它会追加 `--settings <inline JSON>`，把 hook 注册到 `*` matcher 上（所有工具都会经过 hook，但只有 `Bash` 走命令审批，其他工具返回空决定，仍由 Claude 自己的权限模式处理）。同时注入 `HOXI_HOOK_TOKEN`、`HOXI_RUNNER_SESSION_ID`，并把 `NO_PROXY` 加上回环地址。这样不会改写 `~/.claude`，在终端或 IDE 里直接启动的 Claude Code 也不受影响。
+- `issueClaudeHook`（`internal/runner/claude_hook_gate.go`）给每个 turn 签发一份一次性凭证，绑定 runtime、会话和消息。它会追加 `--settings <inline JSON>`，把 hook 注册到 `*` matcher 上（`Bash` 走命令审批；工作树内普通文件的 `Read`/`Edit`/`Write` 透传给 Claude `acceptEdits` 模式；工作树外读写、工作树内受保护路径如 `.git/`/`.claude/`/`.opencode/`/`.envrc` 的修改、以及 `WebFetch`/`WebSearch`/`mcp__*` 等外部工具走 `gateToolCall` 审批并由 Hoxi 返回 `allow`/`deny`）。同时注入 `HOXI_HOOK_TOKEN`、`HOXI_RUNNER_SESSION_ID`，并把 `NO_PROXY` 加上回环地址。这样不会改写 `~/.claude`，在终端或 IDE 里直接启动的 Claude Code 也不受影响。
 - plan 模式不挂 hook，继续由 Claude 自己做只读限制。
 - `POST /api/hoxi/runner/hook/claude-pretool` 和 agy 共用 `gateCommand` / `awaitApproval`（及 `permission_policy.go` 单次解析策略与 `pathWithin` 符号链接/悬空符号链接校验）：
   - `cwd` 超出会话 worktree（含经符号链接/悬空符号链接指向区外）→ `deny`

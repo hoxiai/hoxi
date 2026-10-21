@@ -187,8 +187,30 @@ func TestClaudeHookSafeCommandsAndOtherTools(t *testing.T) {
 	if d := f.decide(t, f.payload("Bash", "git status && go test ./...", "", "cc-uuid-1")); d != "allow|" {
 		t.Fatalf("safe command: %q", d)
 	}
-	if d := f.decide(t, f.payload("WebFetch", "", "", "cc-uuid-1")); d != "" {
-		t.Fatalf("non-Bash tool should be left to Claude Code, got %q", d)
+	// Normal in-worktree Edit and Read pass through to Claude Code's acceptEdits mode.
+	editInWorktree, _ := json.Marshal(map[string]interface{}{
+		"session_id":      "cc-uuid-1",
+		"cwd":             f.dir,
+		"permission_mode": "acceptEdits",
+		"hook_event_name": "PreToolUse",
+		"tool_name":       "Edit",
+		"tool_use_id":     "toolu_edit_1",
+		"tool_input":      map[string]interface{}{"file_path": filepath.Join(f.dir, "src", "main.go")},
+	})
+	if d := f.decide(t, editInWorktree); d != "" {
+		t.Fatalf("in-worktree Edit should be left to Claude Code, got %q", d)
+	}
+	readInWorktree, _ := json.Marshal(map[string]interface{}{
+		"session_id":      "cc-uuid-1",
+		"cwd":             f.dir,
+		"permission_mode": "acceptEdits",
+		"hook_event_name": "PreToolUse",
+		"tool_name":       "Read",
+		"tool_use_id":     "toolu_read_1",
+		"tool_input":      map[string]interface{}{"file_path": filepath.Join(f.dir, "README.md")},
+	})
+	if d := f.decide(t, readInWorktree); d != "" {
+		t.Fatalf("in-worktree Read should be left to Claude Code, got %q", d)
 	}
 	plan := map[string]interface{}{}
 	_ = json.Unmarshal(f.payload("Bash", "python3 sum.py", "", "cc-uuid-1"), &plan)
@@ -196,6 +218,66 @@ func TestClaudeHookSafeCommandsAndOtherTools(t *testing.T) {
 	raw, _ := json.Marshal(plan)
 	if d := f.decide(t, raw); d != "" {
 		t.Fatalf("plan mode should be left to Claude Code, got %q", d)
+	}
+}
+
+func TestClaudeHookGatesProtectedEditsOutsideReadsAndExternalTools(t *testing.T) {
+	f := newClaudeGateFixture(t)
+	events, unsub := f.svc.Subscribe("ses_cc_gate")
+	defer unsub()
+
+	callTool := func(tool, callID string, input map[string]interface{}) chan string {
+		raw, _ := json.Marshal(map[string]interface{}{
+			"session_id":      "cc-uuid-1",
+			"cwd":             f.dir,
+			"permission_mode": "acceptEdits",
+			"hook_event_name": "PreToolUse",
+			"tool_name":       tool,
+			"tool_use_id":     callID,
+			"tool_input":      input,
+		})
+		return f.asyncDecide(t, raw)
+	}
+
+	// 1. Protected in-worktree path (.claude/settings.json) must ask.
+	resProtected := callTool("Write", "toolu_prot", map[string]interface{}{
+		"file_path": filepath.Join(f.dir, ".claude", "settings.json"),
+	})
+	asked1 := waitForEvent(t, events, "permission.asked")
+	if asked1.Properties["permission"] != "tool" {
+		t.Fatalf("expected tool permission for protected edit, got %#v", asked1.Properties)
+	}
+	id1, _ := asked1.Properties["id"].(string)
+	f.reply(t, id1, "reject", "do not touch .claude")
+	if d := <-resProtected; !strings.HasPrefix(d, "deny|") || !strings.Contains(d, "do not touch .claude") {
+		t.Fatalf("expected deny on protected path, got %q", d)
+	}
+
+	// 2. Out-of-worktree Read must ask and return allow when approved.
+	outsideFile := filepath.Join(t.TempDir(), "secrets.txt")
+	resReadOutside := callTool("Read", "toolu_out_read", map[string]interface{}{
+		"file_path": outsideFile,
+	})
+	asked2 := waitForEvent(t, events, "permission.asked")
+	id2, _ := asked2.Properties["id"].(string)
+	f.reply(t, id2, "once", "")
+	if d := <-resReadOutside; d != "allow|" {
+		t.Fatalf("expected allow after once for out-of-worktree Read, got %q", d)
+	}
+
+	// 3. WebFetch / MCP tools must ask and return allow when approved (instead of silent denial under --permission-prompts none).
+	resWeb := callTool("WebFetch", "toolu_web", map[string]interface{}{
+		"url": "https://example.com",
+	})
+	asked3 := waitForEvent(t, events, "permission.asked")
+	meta3, _ := asked3.Properties["metadata"].(map[string]interface{})
+	if meta3["source"] != "claude-code" {
+		t.Fatalf("expected claude-code source metadata, got %#v", meta3)
+	}
+	id3, _ := asked3.Properties["id"].(string)
+	f.reply(t, id3, "once", "")
+	if d := <-resWeb; d != "allow|" {
+		t.Fatalf("expected allow after once for WebFetch, got %q", d)
 	}
 }
 

@@ -131,6 +131,21 @@ describe("permission command chains", () => {
       shouldAutoApprovePermission({ permission: "bash", patterns: ["git status"] }, "manual"),
       false
     );
+
+    // 4. Protected paths and external_directory always ask in every mode (including auto & smart)
+    for (const req of [
+      { permission: "external_directory", patterns: ["/Users/hugh/.ssh/config"] },
+      { permission: "edit", patterns: [".git/config"] },
+      { permission: "write", metadata: { filepath: "/repo/.opencode/plugins/hoxi-permissions.js" } },
+      { permission: "patch", patterns: [".claude/settings.json"] },
+      { permission: "edit", patterns: [".vscode/settings.json"] },
+      { permission: "edit", patterns: [".envrc"] },
+    ]) {
+      assertEqual(isDestructivePermissionRequest(req), true);
+      for (const mode of ["auto", "smart", "manual"] as const) {
+        assertEqual(shouldAutoApprovePermission(req, mode), false);
+      }
+    }
   });
 });
 

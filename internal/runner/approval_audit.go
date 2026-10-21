@@ -278,7 +278,7 @@ func (s *approvalAuditStore) rememberOpenCodePerm(item map[string]interface{}, d
 		perm, _ = item["type"].(string)
 	}
 	summary, tool := summarizePermissionItem(item)
-	destructive := isDestructiveCommand(summary) || strings.EqualFold(perm, "doom_loop")
+	destructive := isDestructivePermissionItem(perm, summary, item)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -332,6 +332,29 @@ func summarizePermissionItem(item map[string]interface{}) (string, string) {
 		return tool + " " + args, tool
 	}
 	return firstNonEmptyStr(firstString(item["title"], meta["description"]), tool, "permission"), tool
+}
+
+func isDestructivePermissionItem(perm, summary string, item map[string]interface{}) bool {
+	lowerPerm := strings.ToLower(strings.TrimSpace(perm))
+	if lowerPerm == "doom_loop" || lowerPerm == "external_directory" {
+		return true
+	}
+	if isDestructiveCommand(summary) {
+		return true
+	}
+	switch lowerPerm {
+	case "edit", "write", "patch", "multiedit", "apply_patch", "tool":
+		if isProtectedRelPath(summary) {
+			return true
+		}
+		meta, _ := item["metadata"].(map[string]interface{})
+		for _, k := range []string{"filepath", "filePath", "path", "target"} {
+			if p := firstString(meta[k]); p != "" && isProtectedRelPath(p) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func redactApprovalText(v string, limit int) string {
@@ -409,7 +432,7 @@ func (s *Service) recordRunnerApprovalAudit(cred hookCredential, req map[string]
 			source = "desktop"
 		}
 	}
-	destructive := isDestructiveCommand(summary) || strings.EqualFold(perm, "doom_loop")
+	destructive := isDestructivePermissionItem(perm, summary, req)
 	s.audit.record(ApprovalAuditEntry{
 		Timestamp:    time.Now().UnixMilli(),
 		RequestID:    reqID,

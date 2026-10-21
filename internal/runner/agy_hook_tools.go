@@ -165,7 +165,7 @@ func (s *Service) gateToolCall(r *http.Request, cred hookCredential, tool string
 	meta := map[string]interface{}{
 		"tool":   tool,
 		"args":   string(pretty),
-		"source": string(RuntimeAntigravity),
+		"source": firstNonEmptyStr(cred.runtime, string(RuntimeAntigravity)),
 	}
 	if desc := firstString(args["toolSummary"], args["description"], args["Action"]); desc != "" {
 		meta["description"] = desc
