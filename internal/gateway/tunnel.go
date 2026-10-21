@@ -51,7 +51,7 @@ var tunnelRoutes = []tunnelRoute{
 	{http.MethodPost, "/api/hoxi/sessions/*/prompt"},
 	{http.MethodPost, "/api/hoxi/sessions/*/prompt_async"},
 	{http.MethodPost, "/api/hoxi/sessions/*/abort"},
-	{http.MethodPost, "/api/hoxi/sessions/*/stop_tool"},
+	{http.MethodPost, "/api/hoxi/sessions/*/stop-tool"},
 	{http.MethodPost, "/api/hoxi/sessions/*/revert"},
 	{http.MethodPost, "/api/hoxi/sessions/*/unrevert"},
 	{http.MethodPost, "/api/hoxi/sessions/*/fork"},

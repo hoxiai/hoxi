@@ -23,7 +23,7 @@ func TestTunnelRouteAllowlist(t *testing.T) {
 		{get, "/api/hoxi/sessions/ses_1"}, {get, "/api/hoxi/sessions/ses_1/message"},
 		{get, "/api/hoxi/sessions/ses_1/diff"},
 		{post, "/api/hoxi/sessions/ses_1/prompt"}, {post, "/api/hoxi/sessions/ses_1/prompt_async"},
-		{post, "/api/hoxi/sessions/ses_1/abort"}, {post, "/api/hoxi/sessions/ses_1/stop_tool"},
+		{post, "/api/hoxi/sessions/ses_1/abort"}, {post, "/api/hoxi/sessions/ses_1/stop-tool"},
 		{post, "/api/hoxi/sessions/ses_1/revert"}, {post, "/api/hoxi/sessions/ses_1/unrevert"},
 		{post, "/api/hoxi/sessions/ses_1/fork"},
 		{get, "/api/hoxi/event"}, {get, "/api/hoxi/permission"}, {post, "/api/hoxi/permission/per_1/reply"},
@@ -195,5 +195,42 @@ func TestTunnelModelListIsSanitized(t *testing.T) {
 	}
 	if !strings.Contains(body, `"id":"m1"`) || !strings.Contains(body, `"name":"Model One"`) {
 		t.Fatalf("tunnel model list missing configured model: %s", body)
+	}
+}
+
+func TestTunnelRoutesMatchContractDoc(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "gopanel-hoxi-remote-tunnel.md"))
+	if err != nil {
+		t.Fatalf("read tunnel contract doc: %v", err)
+	}
+	doc := string(raw)
+	for _, r := range tunnelRoutes {
+		exact := r.method + " " + r.pattern
+		if strings.Contains(doc, "`"+exact+"`") {
+			continue
+		}
+		// Check brace-expanded shorthand in the doc, e.g. `POST /api/hoxi/sessions/*/{prompt,...,stop-tool,...}`.
+		matched := false
+		for _, seg := range strings.Split(doc, "`") {
+			if !strings.HasPrefix(seg, r.method+" /") {
+				continue
+			}
+			open, close := strings.IndexByte(seg, '{'), strings.IndexByte(seg, '}')
+			if open < 0 || close < open {
+				continue
+			}
+			for _, item := range strings.Split(seg[open+1:close], ",") {
+				if seg[:open]+strings.TrimSpace(item)+seg[close+1:] == exact {
+					matched = true
+					break
+				}
+			}
+			if matched {
+				break
+			}
+		}
+		if !matched {
+			t.Errorf("tunnel route %q in tunnel.go is not documented in docs/gopanel-hoxi-remote-tunnel.md", exact)
+		}
 	}
 }
