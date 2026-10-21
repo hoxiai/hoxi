@@ -1,6 +1,6 @@
 // web/src/components/models/CustomEndpointTab.tsx
 import { createEffect, createMemo, createSignal, For, Show, untrack } from "solid-js";
-import { ArrowLeft, Check, LoaderCircle, Lock, Plus, RefreshCw, Trash2 } from "lucide-solid";
+import { ArrowLeft, Check, Eye, EyeOff, LoaderCircle, Lock, Plus, RefreshCw, Trash2 } from "lucide-solid";
 import { hoxiAPI } from "../../services/api";
 import {
   disconnectProvider,
@@ -29,6 +29,7 @@ export default function CustomEndpointTab() {
   const [npmPkg, setNpmPkg] = createSignal<string>("@ai-sdk/openai-compatible");
   const [baseURL, setBaseURL] = createSignal("");
   const [apiKey, setApiKey] = createSignal("");
+  const [showApiKey, setShowApiKey] = createSignal(false);
   const [preserveExistingKey, setPreserveExistingKey] = createSignal(false);
   const [models, setModels] = createSignal<CustomProviderModelDraft[]>([]);
   const [headers, setHeaders] = createSignal<Array<{ key: string; value: string }>>([]);
@@ -378,20 +379,34 @@ export default function CustomEndpointTab() {
             <label class="block text-[12px] font-medium text-[var(--text-secondary)] mb-1">
               {t("models.apiKeyOptional")}
             </label>
-            <input
-              type="password"
-              disabled={isReadOnlyImported()}
-              placeholder={t("models.customApiKeyPlaceholder")}
-              value={apiKey()}
-              onFocus={() => {
-                if (apiKey() === MASKED_SECRET) setApiKey("");
-              }}
-              onBlur={() => {
-                if (!apiKey().trim() && preserveExistingKey()) setApiKey(MASKED_SECRET);
-              }}
-              onInput={(e) => setApiKey(e.currentTarget.value)}
-              class="w-full rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] px-3 py-2 font-mono text-[12px] text-[var(--text-primary)] disabled:opacity-60 outline-none focus:border-[var(--accent-primary)] selectable-text"
-            />
+            <div class="relative">
+              <input
+                type={showApiKey() ? "text" : "password"}
+                disabled={isReadOnlyImported()}
+                placeholder={t("models.customApiKeyPlaceholder")}
+                value={apiKey()}
+                onFocus={() => {
+                  if (apiKey() === MASKED_SECRET) setApiKey("");
+                }}
+                onBlur={() => {
+                  if (!apiKey().trim() && preserveExistingKey()) setApiKey(MASKED_SECRET);
+                }}
+                onInput={(e) => setApiKey(e.currentTarget.value)}
+                class="w-full rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] pl-3 pr-9 py-2 font-mono text-[12px] text-[var(--text-primary)] disabled:opacity-60 outline-none focus:border-[var(--accent-primary)] selectable-text"
+              />
+              <button
+                type="button"
+                disabled={isReadOnlyImported()}
+                onClick={() => setShowApiKey((v) => !v)}
+                title={showApiKey() ? t("models.hideApiKey") : t("models.showApiKey")}
+                aria-label={showApiKey() ? t("models.hideApiKey") : t("models.showApiKey")}
+                class="absolute right-2 top-1/2 -translate-y-1/2 inline-flex items-center justify-center rounded-md p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] disabled:opacity-50 cursor-pointer"
+              >
+                <Show when={showApiKey()} fallback={<Eye size={14} />}>
+                  <EyeOff size={14} />
+                </Show>
+              </button>
+            </div>
           </div>
           <div class="col-span-2">
             <button

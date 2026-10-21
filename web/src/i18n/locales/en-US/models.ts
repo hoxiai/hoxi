@@ -13,6 +13,8 @@ export const models = {
   apiKeyPlaceholder: "Enter your {provider} API key…",
   apiKeyConnectedPlaceholder:
     "•••••••••••••••• (Connected — enter new key to replace)",
+  showApiKey: "Show API key",
+  hideApiKey: "Hide API key",
   baseUrl: "Base URL (OpenAI-compatible) *",
   baseUrlPlaceholder: "e.g. https://api.openai.com/v1",
   customBaseUrl: "Custom Base URL",

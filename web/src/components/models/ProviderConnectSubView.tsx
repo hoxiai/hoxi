@@ -4,6 +4,8 @@ import {
   ArrowLeft,
   Check,
   ExternalLink,
+  Eye,
+  EyeOff,
   LoaderCircle,
   Pencil,
 } from "lucide-solid";
@@ -37,6 +39,7 @@ export function ProviderConnectView(props: {
 
   const [authMethodIndex, setAuthMethodIndex] = createSignal(0);
   const [apiKey, setApiKey] = createSignal("");
+  const [showApiKey, setShowApiKey] = createSignal(false);
   const [baseURL, setBaseURL] = createSignal(initialBaseURL());
   const [extraModelID, setExtraModelID] = createSignal("");
   const [oauthState, setOauthState] = createSignal<ProviderAuthAuthorization | null>(null);
@@ -252,19 +255,32 @@ export function ProviderConnectView(props: {
             <label class="block text-[12px] font-medium text-[var(--text-secondary)] mb-1.5">
               {t("models.apiKey")}
             </label>
-            <input
-              type="password"
-              placeholder={
-                props.connected
-                  ? t("models.apiKeyConnectedPlaceholder")
-                  : t("models.apiKeyPlaceholder", {
-                      provider: props.provider.name || props.provider.id,
-                    })
-              }
-              value={apiKey()}
-              onInput={(e) => setApiKey(e.currentTarget.value)}
-              class="w-full rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] px-3.5 py-2.5 font-mono text-[13px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)] selectable-text"
-            />
+            <div class="relative">
+              <input
+                type={showApiKey() ? "text" : "password"}
+                placeholder={
+                  props.connected
+                    ? t("models.apiKeyConnectedPlaceholder")
+                    : t("models.apiKeyPlaceholder", {
+                        provider: props.provider.name || props.provider.id,
+                      })
+                }
+                value={apiKey()}
+                onInput={(e) => setApiKey(e.currentTarget.value)}
+                class="w-full rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] pl-3.5 pr-10 py-2.5 font-mono text-[13px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)] selectable-text"
+              />
+              <button
+                type="button"
+                onClick={() => setShowApiKey((v) => !v)}
+                title={showApiKey() ? t("models.hideApiKey") : t("models.showApiKey")}
+                aria-label={showApiKey() ? t("models.hideApiKey") : t("models.showApiKey")}
+                class="absolute right-2.5 top-1/2 -translate-y-1/2 inline-flex items-center justify-center rounded-md p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
+              >
+                <Show when={showApiKey()} fallback={<Eye size={14} />}>
+                  <EyeOff size={14} />
+                </Show>
+              </button>
+            </div>
           </div>
 
           <div>

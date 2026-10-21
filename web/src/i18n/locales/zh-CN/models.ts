@@ -14,6 +14,8 @@ export const models: ModelsI18n = {
   apiKeyPlaceholder: "输入您的 {provider} API 密钥…",
   apiKeyConnectedPlaceholder:
     "•••••••••••••••• (已连接 — 输入新密钥以替换)",
+  showApiKey: "显示密钥",
+  hideApiKey: "隐藏密钥",
   baseUrl: "基础 URL (兼容 OpenAI) *",
   baseUrlPlaceholder: "例如 https://api.openai.com/v1",
   customBaseUrl: "自定义 Base URL",
