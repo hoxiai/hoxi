@@ -52,6 +52,7 @@ export function filterVisibleTurnsByRevert(
 export interface TurnWindowController {
   visibleTurns: Accessor<MessageTurn[]>;
   hiddenCount: Accessor<number>;
+  hiddenUserCount: Accessor<number>;
   startIndex: Accessor<number>;
   mergeStartIndex: Accessor<number>;
   globalIndex: (visibleIndex: number) => number;
@@ -64,7 +65,15 @@ export interface TurnWindowController {
 export function computeTurnWindowSlice(
   turns: MessageTurn[],
   limit: number
-): { startIndex: number; visibleTurns: MessageTurn[]; hiddenCount: number; promptIndex?: number; anchorIndex?: number; indexes: number[] } {
+): {
+  startIndex: number;
+  visibleTurns: MessageTurn[];
+  hiddenCount: number;
+  hiddenUserCount: number;
+  promptIndex?: number;
+  anchorIndex?: number;
+  indexes: number[];
+} {
   let start = Math.max(0, turns.length - limit);
   // Preserve short prompt cycles, but never mount an unbounded number of steps
   // just to find their user prompt. Carry that prompt as a separate context row.
@@ -87,10 +96,18 @@ export function computeTurnWindowSlice(
   }
   const context = [promptIndex, anchorIndex].filter((index): index is number => index !== undefined);
   const indexes = [...context, ...Array.from({ length: turns.length - start }, (_, index) => start + index)];
+  // Only older user messages make the "earlier messages" banner meaningful.
+  // Long agent runs fold their tool/reasoning steps into activity groups, so a
+  // single-message conversation can hide many turns without hiding a message.
+  let hiddenUserCount = 0;
+  for (let index = 0; index < start; index++) {
+    if (index !== promptIndex && turns[index]?.info.role === "user") hiddenUserCount++;
+  }
   return {
     startIndex: start,
     visibleTurns: indexes.map((index) => turns[index]),
     hiddenCount: start - context.length,
+    hiddenUserCount,
     promptIndex,
     anchorIndex,
     indexes,
@@ -194,6 +211,7 @@ export function createTurnWindow(
   const slice = createMemo(() => computeTurnWindowSlice(turns(), visibleLimit()));
   const startIndex = createMemo(() => slice().startIndex);
   const hiddenCount = createMemo(() => slice().hiddenCount);
+  const hiddenUserCount = createMemo(() => slice().hiddenUserCount);
   const visibleTurns = createMemo(() => slice().visibleTurns);
 
   const preserveScrollOnPrepend = (scroller: HTMLElement | undefined, fn: () => void) => {
@@ -252,6 +270,7 @@ export function createTurnWindow(
   return {
     visibleTurns,
     hiddenCount,
+    hiddenUserCount,
     startIndex,
     mergeStartIndex: () => slice().anchorIndex ?? startIndex(),
     globalIndex: (index) => slice().indexes[index],
@@ -264,6 +283,7 @@ export function createTurnWindow(
 
 export function EarlierTurnsBanner(props: {
   hiddenCount: number;
+  hiddenUserCount: number;
   totalCount: number;
   onLoadBatch: () => void;
   onLoadAll: () => void;
@@ -271,7 +291,7 @@ export function EarlierTurnsBanner(props: {
   const nextBatchCount = () => Math.min(props.hiddenCount, TURN_BATCH_SIZE);
 
   return (
-    <Show when={props.hiddenCount > 0}>
+    <Show when={props.hiddenUserCount > 0}>
       <div class="mb-5 flex flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-[var(--border-subtle)] bg-[var(--bg-inset)]/50 px-4 py-2.5 text-center select-none">
         <div class="text-[12px] text-[var(--text-faint)]">
           {t("timeline.hiddenTurnsHint", { count: props.hiddenCount })}

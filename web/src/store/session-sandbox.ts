@@ -114,10 +114,14 @@ export async function newIsolatedSession(
       setWorkspace("worktreeBySession", session.id, localMeta(session.id, directory));
     }
   } catch (error) {
-    reportSetupError(error);
+    if (workspace.rootDir === directory) {
+      reportSetupError(error);
+      if (session && workspace.activeSessionID === session.id) {
+        setWorkspace("activeSessionID", previousSessionID);
+      }
+    }
     if (session) {
       removeSessionFromStore(session.id);
-      if (workspace.activeSessionID === session.id) setWorkspace("activeSessionID", previousSessionID);
       try {
         await hoxiAPI.deleteSession(session.id, directory || undefined);
       } catch (cleanupError) {
@@ -126,13 +130,17 @@ export async function newIsolatedSession(
     }
     throw error;
   }
-  setWorkspace("messagesBySession", session.id, []);
-  setWorkspace("diffsBySession", session.id, []);
-  setWorkspace("loadingMessagesBySession", session.id, false);
-  setWorkspace("unreadCompletedBySession", session.id, false);
-  replaceSession(session);
+  // The user may have switched workspaces while the session was being
+  // provisioned. Never inject it into the workspace that is active now.
+  if (workspace.rootDir === directory) {
+    setWorkspace("messagesBySession", session.id, []);
+    setWorkspace("diffsBySession", session.id, []);
+    setWorkspace("loadingMessagesBySession", session.id, false);
+    setWorkspace("unreadCompletedBySession", session.id, false);
+    replaceSession(session);
+    setWorkspace("activeSessionID", session.id);
+  }
   initializeSessionAI(session.id, initialAI);
-  if (workspace.rootDir === directory) setWorkspace("activeSessionID", session.id);
   options?.onSessionCreated?.(session.id);
   return session.id;
 }

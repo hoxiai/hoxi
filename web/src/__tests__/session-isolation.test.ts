@@ -300,6 +300,7 @@ describe("session worktree isolation", () => {
       assertEqual(setupDirectory, "/repo");
       assertEqual(sessionDirectory(id), meta.directory);
       assertEqual(workspace.activeSessionID, "other-session");
+      assertEqual(workspace.sessions.some((session) => session.id === id), false);
     });
   });
 

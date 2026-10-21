@@ -281,16 +281,32 @@ func (s *Store) List(directory string) []SessionInfo {
 	s.mu.RUnlock()
 	var out []SessionInfo
 	for _, rec := range metas {
-		if normFilter != "" {
-			normProj, normWt := normalizeComparePath(rec.ProjectDir), normalizeComparePath(rec.WorktreePath)
-			if normFilter != normProj && normFilter != normWt && !strings.HasPrefix(normWt, normFilter+"/") && !strings.HasPrefix(normFilter, normProj+"/") {
-				continue
-			}
+		if normFilter != "" && !sessionMatchesDirectory(rec, normFilter) {
+			continue
 		}
 		out = append(out, rec.ToSessionInfo())
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Time.Updated > out[j].Time.Updated })
 	return out
+}
+
+// sessionMatchesDirectory reports whether rec belongs to the workspace rooted
+// at the already-normalized directory. A session belongs to exactly one
+// project root, which also owns the isolated worktrees it provisions under
+// .hoxi/worktrees. Nested projects stay separate workspaces even though one
+// path is a prefix of the other.
+func sessionMatchesDirectory(rec SessionRecord, normFilter string) bool {
+	normProj := normalizeComparePath(rec.ProjectDir)
+	normWt := normalizeComparePath(rec.WorktreePath)
+	if normFilter == normProj || normFilter == normWt {
+		return true
+	}
+	prefix := normFilter + "/.hoxi/worktrees/"
+	if !strings.HasPrefix(normWt, prefix) {
+		return false
+	}
+	id := strings.TrimPrefix(normWt, prefix)
+	return id != "" && !strings.Contains(id, "/")
 }
 
 func (s *Store) ChildSessionIDs(parentID string) ([]string, int64) {

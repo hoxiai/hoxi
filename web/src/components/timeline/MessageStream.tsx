@@ -430,6 +430,7 @@ export default function MessageStream(props: { hidden?: boolean }) {
           <div class="flex flex-col">
             <EarlierTurnsBanner
               hiddenCount={turnWindow.hiddenCount()}
+              hiddenUserCount={turnWindow.hiddenUserCount()}
               totalCount={turns().length}
               onLoadBatch={() => turnWindow.loadEarlierBatch(scroller)}
               onLoadAll={() => turnWindow.loadAllEarlier(scroller)}

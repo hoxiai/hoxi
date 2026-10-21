@@ -55,6 +55,8 @@ describe("TurnWindow windowing slice & prompt cycle protection", () => {
     assertEqual(slice.visibleTurns.at(-1)?.info.id, "step_999");
     assertEqual(slice.visibleTurns.length, INITIAL_VISIBLE_TURNS + TURN_BATCH_SIZE + 1);
     assertEqual(slice.hiddenCount + slice.visibleTurns.length, turns.length);
+    // A single prompt owns every folded step, so no earlier *message* is hidden.
+    assertEqual(slice.hiddenUserCount, 0);
     const expanded = computeTurnWindowSlice(turns, INITIAL_VISIBLE_TURNS + TURN_BATCH_SIZE);
     assertEqual(expanded.visibleTurns.length, slice.visibleTurns.length + TURN_BATCH_SIZE);
     const all = computeTurnWindowSlice(turns, turns.length);
@@ -80,6 +82,8 @@ describe("TurnWindow windowing slice & prompt cycle protection", () => {
     assertEqual(slice.visibleTurns.length, 3);
     assertEqual(slice.visibleTurns[0].info.id, "t4");
     assertEqual(slice.hiddenCount, 4);
+    // t0 is a genuinely hidden earlier message; t4 is carried as the visible prompt.
+    assertEqual(slice.hiddenUserCount, 1);
 
     // If limit is 7 (all turns), startIndex is 0.
     const full = computeTurnWindowSlice(turns, 7);
