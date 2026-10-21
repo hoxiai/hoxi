@@ -29,7 +29,7 @@ func normalizeAntigravityModelID(raw string) string {
 		return ""
 	}
 	lower := strings.ToLower(trimmed)
-	if _, _, rev := discoverAntigravityCLIModels(); len(rev) > 0 {
+	if rev := agentcli.CachedAgyReverseSlug(); len(rev) > 0 {
 		if mapped, ok := rev[lower]; ok {
 			return mapped
 		}

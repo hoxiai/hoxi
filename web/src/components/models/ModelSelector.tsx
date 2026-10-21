@@ -15,6 +15,7 @@ import {
   AUTO_PROVIDER_ID,
   buildAutoVirtualProvider,
   clampReasoningEffort,
+  lookupModelContextLimit,
   inferModelEffortCapabilities,
   isCustomOrConfiguredProvider,
   isFavoriteModel,
@@ -232,6 +233,7 @@ export default function ModelSelector() {
       defaultEffort: effortCaps.defaultEffort,
       image: false,
       toolcall: true,
+      contextLimit: lookupModelContextLimit(sel.providerID, sel.modelID),
       free: false,
     };
   });

@@ -9,6 +9,7 @@ export * from "./workspace-folders";
 export * from "./global-config";
 export * from "./workspace-providers";
 export * from "./provider-catalog";
+export * from "./model-limits";
 export * from "./session-ai";
 export * from "./workspace-projects";
 export * from "./workspace-sessions";

@@ -2,7 +2,7 @@
 import { createSignal } from "solid-js";
 import { hoxiAPI, type GitDailyPulseResponse, type ModelPricingItem } from "../services/api";
 import { leaderboardState, syncOfficialModelPricing } from "./leaderboard-state";
-import { canonicalModelKey } from "./provider-catalog";
+import { canonicalModelKey } from "./model-limits";
 import { workspace } from "./workspace-state";
 
 export interface DailyModelUsageItem {

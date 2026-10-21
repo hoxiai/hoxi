@@ -340,6 +340,9 @@ func TestRunnerModelsEndpointsIncludeInstalledAndModels(t *testing.T) {
 	}
 	t.Setenv("GEMINI_HOME", binDir)
 	t.Setenv("PATH", agyBinDir)
+	t.Setenv("CODEBUDDY_BIN", filepath.Join(agyBinDir, "codebuddy"))
+	t.Setenv("QODER_CN_BIN", filepath.Join(agyBinDir, "qoderclicn"))
+	t.Setenv("QODER_BIN", "")
 	agyScript := "#!/bin/sh\nprintf 'gemini-4-argon-thinking   Gemini 4 Argon (High)\\nclaude-sonnet-5-5-thinking Claude Sonnet 5.5 (Thinking)\\n'\n"
 	if err := os.WriteFile(filepath.Join(agyBinDir, "agy"), []byte(agyScript), 0o755); err != nil {
 		t.Fatal(err)

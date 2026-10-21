@@ -3,6 +3,13 @@ import { t } from "../i18n";
 import type { ProviderInfo } from "../services/api";
 import { AUTO_PROVIDER_ID, buildAutoVirtualProvider, isModelFree } from "./auto-models";
 import { leaderboardState } from "./leaderboard-state";
+import {
+  canonicalModelKey,
+  inferOfficialModelPricingAndLimits,
+  normalizeModelLookupKey,
+  resolveModelContextLimit,
+  type InferredModelSpec,
+} from "./model-limits";
 import { workspace, type ReasoningEffort, type SelectedModel } from "./workspace-state";
 
 export type ConcreteReasoningEffort = Exclude<ReasoningEffort, "">;
@@ -296,162 +303,6 @@ export function formatPricePerMillion(cost?: number, currency?: string): string 
   return `${sym}${val < 1 ? val.toFixed(2) : val.toFixed(2).replace(/\.00$/, "")}/M`;
 }
 
-interface InferredModelSpec {
-  inputCost?: number;
-  outputCost?: number;
-  currency?: string;
-  contextLimit?: number;
-  outputLimit?: number;
-}
-
-function normalizeModelLookupKey(raw: string): string {
-  let s = (raw || "").trim().toLowerCase();
-  for (const pfx of ["cn:", "intl:", "global:", "models/"]) {
-    if (s.startsWith(pfx)) s = s.slice(pfx.length);
-  }
-  const slashIdx = s.lastIndexOf("/");
-  if (slashIdx >= 0 && slashIdx < s.length - 1) {
-    s = s.slice(slashIdx + 1);
-  }
-  return s;
-}
-
-export function canonicalModelKey(raw?: string): string {
-  if (!raw) return "";
-  return normalizeModelLookupKey(raw)
-    .replace(/（.*?）|\(.*?\)/g, "")
-    .trim()
-    .replace(/[._\s]+/g, "-")
-    .replace(/-\d{8}$/, "")
-    .replace(/-thinking$/, "");
-}
-
-function inferOfficialModelPricingAndLimits(
-  modelID: string,
-  modelName?: string
-): InferredModelSpec {
-  const s = `${normalizeModelLookupKey(modelID)} ${(modelName || "").toLowerCase()}`;
-
-  // Anthropic Claude family
-  if (s.includes("claude")) {
-    if (s.includes("opus") || s.includes("fable")) {
-      return { inputCost: 5.0, outputCost: 25.0, contextLimit: 200_000, outputLimit: 64_000 };
-    }
-    if (s.includes("haiku")) {
-      return { inputCost: 0.8, outputCost: 4.0, contextLimit: 200_000, outputLimit: 64_000 };
-    }
-    return { inputCost: 3.0, outputCost: 15.0, contextLimit: 200_000, outputLimit: 64_000 };
-  }
-
-  // Google Gemini family
-  if (s.includes("gemini")) {
-    if (s.includes("lite")) {
-      return { inputCost: 0.1, outputCost: 0.4, contextLimit: 1_000_000, outputLimit: 65_536 };
-    }
-    if (s.includes("flash")) {
-      return { inputCost: 0.35, outputCost: 1.4, contextLimit: 1_000_000, outputLimit: 65_536 };
-    }
-    return { inputCost: 1.25, outputCost: 10.0, contextLimit: 1_000_000, outputLimit: 65_536 };
-  }
-
-  // OpenAI GPT / o-series / Codex family
-  if (
-    s.startsWith("gpt") ||
-    s.includes(" gpt-") ||
-    /^o\d+(-|\b)/.test(s) ||
-    s.includes("codex")
-  ) {
-    if (s.includes("nano")) {
-      return { inputCost: 0.1, outputCost: 0.4, contextLimit: 400_000, outputLimit: 128_000 };
-    }
-    if (s.includes("mini") || s.includes("luna")) {
-      return { inputCost: 0.25, outputCost: 1.0, contextLimit: 400_000, outputLimit: 128_000 };
-    }
-    if (s.includes("astra") || s.includes("gpt-6")) {
-      return { inputCost: 6.0, outputCost: 24.0, contextLimit: 1_000_000, outputLimit: 128_000 };
-    }
-    if (s.includes("sol") || s.includes("gpt-5.5")) {
-      return { inputCost: 3.0, outputCost: 12.0, contextLimit: 1_000_000, outputLimit: 128_000 };
-    }
-    return { inputCost: 2.0, outputCost: 8.0, contextLimit: 400_000, outputLimit: 128_000 };
-  }
-
-  // DeepSeek family
-  if (s.includes("deepseek")) {
-    if (s.includes("flash") || s.includes("lite")) {
-      return { inputCost: 0.14, outputCost: 0.28, contextLimit: 1_000_000, outputLimit: 64_000 };
-    }
-    if (s.includes("pro") || s.includes("reasoner") || /\b(r\d+|v[4-9]\d*)\b/.test(s)) {
-      return { inputCost: 0.55, outputCost: 2.19, contextLimit: 1_000_000, outputLimit: 128_000 };
-    }
-    return { inputCost: 0.27, outputCost: 1.1, contextLimit: 128_000, outputLimit: 32_000 };
-  }
-
-  // Alibaba Qwen / QwQ family
-  if (s.includes("qwen") || s.startsWith("qwq")) {
-    if (s.includes("flash") || s.includes("turbo")) {
-      return { inputCost: 0.15, outputCost: 0.6, contextLimit: 1_000_000, outputLimit: 64_000 };
-    }
-    if (s.includes("plus") || s.includes("coder") || s.startsWith("qwq")) {
-      return { inputCost: 0.4, outputCost: 1.2, contextLimit: 1_000_000, outputLimit: 64_000 };
-    }
-    return { inputCost: 1.2, outputCost: 6.0, contextLimit: 1_000_000, outputLimit: 64_000 };
-  }
-
-  // Zhipu GLM / CodeGeeX family
-  if (s.includes("glm") || s.includes("codegeex")) {
-    if (s.includes("flash") || s.includes("air")) {
-      return { inputCost: 0.1, outputCost: 0.4, contextLimit: 1_000_000, outputLimit: 64_000 };
-    }
-    return { inputCost: 0.7, outputCost: 2.8, contextLimit: 1_000_000, outputLimit: 64_000 };
-  }
-
-  // Moonshot Kimi family
-  if (s.includes("kimi") || s.includes("moonshot")) {
-    if (s.includes("code")) {
-      return { inputCost: 0.6, outputCost: 2.5, contextLimit: 256_000, outputLimit: 32_000 };
-    }
-    if (s.includes("preview") || s.includes("k2")) {
-      return { inputCost: 0.8, outputCost: 3.2, contextLimit: 1_000_000, outputLimit: 64_000 };
-    }
-    return { inputCost: 1.5, outputCost: 6.0, contextLimit: 1_000_000, outputLimit: 64_000 };
-  }
-
-  // Tencent Hunyuan (hy3 / hy4 / hunyuan) family
-  if (/^hy\d/.test(s) || s.includes("hunyuan")) {
-    if (s.startsWith("hy3")) {
-      return { inputCost: 0.08, outputCost: 0.3, contextLimit: 192_000, outputLimit: 64_000 };
-    }
-    return { inputCost: 0.3, outputCost: 1.2, contextLimit: 1_000_000, outputLimit: 64_000 };
-  }
-
-  // xAI Grok family
-  if (s.includes("grok")) {
-    if (s.includes("mini") || s.includes("fast")) {
-      return { inputCost: 0.3, outputCost: 0.5, contextLimit: 131_072, outputLimit: 32_000 };
-    }
-    return { inputCost: 3.0, outputCost: 15.0, contextLimit: 256_000, outputLimit: 64_000 };
-  }
-
-  // ByteDance Doubao / Seed family
-  if (s.includes("doubao") || s.includes("seed-")) {
-    if (s.includes("lite") || s.includes("flash")) {
-      return { inputCost: 0.1, outputCost: 0.3, contextLimit: 256_000, outputLimit: 32_000 };
-    }
-    return { inputCost: 0.3, outputCost: 1.2, contextLimit: 256_000, outputLimit: 64_000 };
-  }
-
-  // Mistral / Codestral family
-  if (s.includes("mistral") || s.includes("codestral") || s.includes("pixtral")) {
-    if (s.includes("codestral") || s.includes("small")) {
-      return { inputCost: 0.3, outputCost: 0.9, contextLimit: 256_000, outputLimit: 32_000 };
-    }
-    return { inputCost: 2.0, outputCost: 6.0, contextLimit: 128_000, outputLimit: 32_000 };
-  }
-
-  return {};
-}
-
 export function extractFlattenedModels(
   providers: ProviderInfo[],
   connectedIds: Set<string>,
@@ -489,9 +340,8 @@ export function extractFlattenedModels(
       if (!mInfo || typeof mInfo !== "object") continue;
       const inCost = mInfo.cost?.input;
       const outCost = mInfo.cost?.output;
-      const ctx = mInfo.limit?.context;
       const outLim = mInfo.limit?.output;
-      if (inCost !== undefined || outCost !== undefined || ctx || outLim) {
+      if (inCost !== undefined || outCost !== undefined || outLim) {
         const key = canonicalModelKey(mID);
         if (!key) continue;
         const prev = catalogSpecs.get(key);
@@ -499,7 +349,6 @@ export function extractFlattenedModels(
           inputCost: inCost !== undefined && inCost > 0 ? inCost : prev?.inputCost,
           outputCost: outCost !== undefined && outCost > 0 ? outCost : prev?.outputCost,
           currency: prev?.currency || "USD",
-          contextLimit: ctx || prev?.contextLimit,
           outputLimit: outLim || prev?.outputLimit,
         });
       }
@@ -566,12 +415,13 @@ export function extractFlattenedModels(
         priceCurrency = mInfo.cost?.currency || "USD";
       }
 
-      const contextLimit =
-        mInfo.limit?.context ??
-        cfgModel?.limit?.context ??
-        hoxiSpec?.contextLimit ??
-        catSpec?.contextLimit ??
-        prefixSpec.contextLimit;
+      const contextLimit = resolveModelContextLimit({
+        providerID: p.id,
+        modelID: mID,
+        modelName,
+        model: mInfo,
+        configured: cfgModel,
+      });
       const outputLimit =
         mInfo.limit?.output ??
         cfgModel?.limit?.output ??

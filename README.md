@@ -52,7 +52,9 @@ Giving agents blanket shell access risks `rm -rf` or `git push --force`. Approvi
 ### 4. Stepping Away from Your Desk (Mobile AI + [GoPanel](https://github.com/hoxiai/gopanel) Server Ops)
 Solo builders and lean teams don't just write code—they also deploy and maintain servers. Being away from your laptop shouldn't stall a long-running agent or leave a production alert unanswered.
 - **Mobile AI Command Center ([`client/`](client/README.md))**: Connect your iOS/Android phone to your Hoxi desktop or remote nodes. Watch live SSE streams, review Git worktree diffs, steer active agents, and approve/reject pending permission gates in one tap.
-- **Mobile Server Management for [GoPanel](https://github.com/hoxiai/gopanel)**: The same mobile app natively speaks the [GoPanel](https://github.com/hoxiai/gopanel) protocol—inspect server CPU/RAM/disk load, restart Docker containers, manage Nginx websites & SSL certificates, check databases, and drive server-side GoPanel Code agents directly from your pocket.
+- **Mobile "Chat & Voice as the OS" Super-Assistant ([`client/`](client/README.md) — `Chat · Engineering · Column · Me`)**:
+  - **1:1 Lingguang Full-Duplex Realtime Voice Call**: Continuous 30+ minute hands-free voice calls with native `.voiceChat` Hardware AEC, 50s seamless ASR rollover, **Speak or Tap to Interrupt (`onUserBargeIn`)**, and native `Qwen-Omni-Turbo-Realtime` / `GPT-4o-Mini-Realtime` WebSocket 24kHz PCM16 streaming.
+  - **Voice/Chat Business Intelligence & Direct Node Control**: Ask in natural voice for live briefings across **Hoxi Desktop**, **[GoPanel](https://github.com/hoxiai/gopanel)**, **Qingpu AI (`qingpu.ai`)**, **Shoply (`iqingpu.com`)**, and **hoxi.ai**, or speak commands to switch between your **Hoxi Local Computer** and **GoPanel Server**, run unit tests, inspect/commit Git worktree changes, approve PreToolUse safety gates, restart Docker containers, and renew SSL certificates directly inside the conversation.
 
 ### 5. Context Rot, Endpoint Degradation & Electron Bloat
 Long sessions forget early architectural constraints; third-party API gateways silently degrade or stall; Electron forks eat 1.5 GB+ RAM per window.

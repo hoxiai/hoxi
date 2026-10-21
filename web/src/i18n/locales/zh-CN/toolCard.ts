@@ -49,4 +49,8 @@ export const toolCard: ToolCardI18n = {
   gatheredContext: "已读取上下文",
   waitingForOutput: "等待命令输出…",
   noOutput: "执行完成（无输出）",
+  stopCommand: "终止命令",
+  stoppingCommand: "正在终止…",
+  stopCommandTooltip: "仅终止当前命令，保持会话继续进行",
+  stoppedByUser: "已手动终止",
 };

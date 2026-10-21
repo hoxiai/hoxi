@@ -256,7 +256,7 @@ const subagentPollInterval = 3 * time.Second
 
 // orphanDrainGrace is how long stdout/stderr may stay open after the CLI
 // exits before leftover holders are treated as orphans.
-const orphanDrainGrace = 2 * time.Second
+var orphanDrainGrace = 2 * time.Second
 
 func (s *Service) startTurnProcess(
 	rec SessionRecord,

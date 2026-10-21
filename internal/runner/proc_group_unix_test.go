@@ -253,3 +253,65 @@ wait
 		t.Fatalf("watchdog stop ended with %+v, want %s", err, stallErrorName)
 	}
 }
+
+func TestStopToolCommandKeepsTurnAliveAndContinues(t *testing.T) {
+	svc := newStallTestService(t)
+	sessionID := "ses_stop_tool"
+	events, unsub := svc.Subscribe(sessionID)
+	defer unsub()
+
+	pidFile := filepath.Join(t.TempDir(), "tool_pid")
+	t.Setenv("HOXI_TEST_PIDFILE", pidFile)
+
+	ap := startFakeCLITurn(t, svc, sessionID, `cat >/dev/null
+echo '{"type":"assistant","message":{"id":"msg_1","role":"assistant","content":[{"type":"tool_use","id":"toolu_slow_test","name":"Bash","input":{"command":"sleep 300"}}]}}'
+sleep 300 &
+child_pid=$!
+echo "$child_pid" > "$HOXI_TEST_PIDFILE"
+wait "$child_pid"
+rc=$?
+echo "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"toolu_slow_test\",\"content\":\"exit code $rc\",\"is_error\":true}]}}"
+echo '{"type":"result","subtype":"success","is_error":false,"result":"Continued after user stopped slow test"}'
+`)
+	childPID := readPID(t, pidFile)
+
+	stopped, err := svc.StopToolCommand(sessionID, "toolu_slow_test", "", "sleep 300")
+	if err != nil {
+		t.Fatalf("StopToolCommand error: %v", err)
+	}
+	if stopped == 0 {
+		t.Fatalf("expected StopToolCommand to terminate at least 1 child process, got 0")
+	}
+
+	assertProcessGone(t, childPID)
+	waitTurnDone(t, ap, 4*orphanDrainGrace+2*time.Second)
+
+	var finish string
+	var sawStoppedMeta bool
+	for {
+		select {
+		case evt := <-events:
+			switch evt.Type {
+			case "message.updated":
+				if info, ok := evt.Properties["info"].(MessageInfo); ok && info.Finish != "" {
+					finish = info.Finish
+				}
+			case "message.part.updated":
+				if part, ok := evt.Properties["part"].(MessagePart); ok && part.CallID == "toolu_slow_test" && part.State != nil {
+					if v, _ := part.State.Metadata["stoppedByUser"].(bool); v {
+						sawStoppedMeta = true
+					}
+				}
+			}
+		default:
+			if finish != "stop" {
+				t.Fatalf("expected turn to continue and finish with 'stop', got %q", finish)
+			}
+			if !sawStoppedMeta {
+				t.Fatalf("expected tool part to carry stoppedByUser=true metadata")
+			}
+			return
+		}
+	}
+}
+

@@ -63,7 +63,9 @@ var ignoredFolders = map[string]bool{
 	".webkit-cache": true, "__pycache__": true, ".pytest_cache": true,
 	"mypy_cache": true, ".history": true, ".gradle": true,
 	// Hoxi-specific
-	".hoxi": true, "worktrees": true, "Pods": true, "DerivedData": true,
+	".hoxi": true, ".claude": true, "worktrees": true,
+	"Pods": true, "DerivedData": true, ".dart_tool": true, ".pub-cache": true,
+	"go-build": true, "go-build-cache": true, ".gocache": true, ".gomodcache": true,
 	".venv": true, "venv": true, "coverage": true, ".bundle": true,
 }
 

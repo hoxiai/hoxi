@@ -420,6 +420,9 @@ export function InlineDiagnosticsDisplay(props: { diagnostics: DiagnosticItem[] 
 export function ToolCardExpandedBody(props: {
   part: ToolPart;
   isShell: boolean;
+  isRunning?: boolean;
+  stoppingCmd?: boolean;
+  onStopCommand?: (e: MouseEvent) => void;
   isEdit: boolean;
   isTodo: boolean;
   isQuestion: boolean;
@@ -449,6 +452,20 @@ export function ToolCardExpandedBody(props: {
               <code class="truncate text-[#e6edf3] selectable-text">{props.shellCmd}</code>
             </div>
             <div class="flex items-center gap-1 shrink-0">
+              <Show when={props.isRunning && props.onStopCommand}>
+                <button
+                  type="button"
+                  disabled={props.stoppingCmd}
+                  onClick={(e) => props.onStopCommand?.(e)}
+                  title={t("toolCard.stopCommandTooltip")}
+                  class="inline-flex items-center gap-1 rounded border border-[#f85149]/40 bg-[#f85149]/15 px-2 py-0.5 text-[11px] font-medium text-[#ff7b72] hover:bg-[#f85149]/25 disabled:opacity-60 transition-colors cursor-pointer mr-1"
+                >
+                  <span class="inline-block w-2 h-2 rounded-[1.5px] bg-current shrink-0" />
+                  <span>
+                    {props.stoppingCmd ? t("toolCard.stoppingCommand") : t("toolCard.stopCommand")}
+                  </span>
+                </button>
+              </Show>
               <ActionIconButton
                 variant="dark"
                 tooltipSide="left"

@@ -8,6 +8,14 @@ import (
 
 func newStallTestService(t *testing.T) *Service {
 	t.Helper()
+	prevOrphan := orphanDrainGrace
+	prevAbort := abortInterruptGrace
+	orphanDrainGrace = 120 * time.Millisecond
+	abortInterruptGrace = 120 * time.Millisecond
+	t.Cleanup(func() {
+		orphanDrainGrace = prevOrphan
+		abortInterruptGrace = prevAbort
+	})
 	svc := NewService(t.TempDir(), nil, nil, filepath.Join(t.TempDir(), "sessions.json"))
 	svc.stall = stallPolicy{warnAfter: 5 * time.Minute, abortAfter: 30 * time.Minute}.normalized()
 	return svc

@@ -38,6 +38,7 @@
    - [9.1 Wails 窗口配置与单实例锁](#91-wails-窗口配置与单实例锁)
    - [9.2 Objective-C `NSStatusBar` 状态机联动](#92-objective-c-nsstatusbar-状态机联动)
 10. [多运行时执行引擎与跨软件会话接管 (`internal/runner/` & `internal/handoff/`)](#10-多运行时执行引擎与跨软件会话接管-internalrunner--internalhandoff)
+11. [移动端「沟通即操作系统」与全双工实时语音架构 (`client/`)](#11-移动端沟通即操作系统与全双工实时语音架构-client)
 
 ---
 
@@ -562,4 +563,52 @@ Go 网关在转发 `/event` SSE 流及多运行时事件时，旁路解析事件
 2. **跨软件会话接管与本地 CLI 协议桥接（[`internal/handoff/`](internal/handoff/)）**：
    - 支持一键扫描本机 Grok CLI、Claude Code、OpenAI Codex、Google Antigravity、OpenCode CLI、Trae、Qoder、CodeBuddy 的历史会话，归一化为统一 IR 并物化写入会话存储与 `.opencode/memory/sessions/<sessionID>.md` 8 维交接记忆。
    - 详见专项蓝图：[`HANDOFF_AND_CLI_BRIDGE.md`](HANDOFF_AND_CLI_BRIDGE.md)。
+
+---
+
+## 11. 移动端「沟通即操作系统」与全双工实时语音架构 (`client/`)
+
+移动端 [`client/`](client/)（Flutter + Riverpod + GoRouter）定位于**一人公司随身 AI 幕僚与双栖控制中枢**，采用 **「沟通 · 工程 · 专栏 · 我的」** 四栏导航（[`HoxiNavigationShell`](client/lib/app/presentation/hoxi_navigation_shell.dart)），核心设计原则为 **「通过聊天/实时语音了解所有业务信息 + 通过聊天/实时语音直接解决所有事情」**。
+
+### 11.1 全双工实时语音通话四层架构（对标阿里「灵光」）
+
+```text
+┌────────────────────────────────────────────────────────────────────────────┐
+│ 1. 1:1 灵光全屏极简流体 UI (ChatHubVoiceCallSheet)                         │
+│    • 纯净 #F7F8FA 画布 + 顶栏「通话记录 | 灵光 | 音色切换 | 字(字幕开关)」 │
+│    • 中央 60fps 64 控制点简谐贝塞尔流体球 (_LingguangFluidBlobPainter)     │
+│    • 下方「■ 说话或点击打断」+ 底部三圆钮「✕ 挂断 | 🎤 静音 | 📹 声控条」 │
+├────────────────────────────────────────────────────────────────────────────┤
+│ 2. 端到端实时语音大模型 & 流式分句调度层 (RealtimeVoiceModelService)       │
+│    • WebSocket 24kHz PCM16 端到端：Qwen-Omni-Turbo-Realtime / GPT-4o-Mini  │
+│    • 内置 server_vad 服务端断句 + execute_hoxi_command Function Calling     │
+│    • 零配置兜底：1.15s VAD 智能断句 + Pipecat 级 StreamingSentenceChunker  │
+├────────────────────────────────────────────────────────────────────────────┤
+│ 3. 6 大项目实时情报引擎 & 12 类声控执行器 (ChatInformationEngine/Executor) │
+│    • 并行采集 OmnichannelSnapshot（Hoxi 电脑/GoPanel/轻铺/Shoply/hoxi.ai） │
+│    • 语音直达控制：切换节点、新建会话、下发指令、审批门控、Git提交、容器运维│
+├────────────────────────────────────────────────────────────────────────────┤
+│ 4. iOS / Android 原生常驻全双工音频底座 (AppDelegate.swift / MainActivity) │
+│    • 单实例 AVAudioSession.Mode.voiceChat（硬件回声消除 Hardware AEC）      │
+│    • 50s 自动无缝轮转 SFSpeechRecognitionTask + _committedTranscriptLength │
+│    • 原生开口即打断 (onUserBargeIn)：AI 播报时检测新词立即掐断 TTS 与 SSE  │
+└────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 11.2 移动端关键模块职责索引
+
+| 模块路径 | 核心职责说明 |
+| :--- | :--- |
+| [`client/lib/features/chat_hub/data/chat_information_engine.dart`](client/lib/features/chat_hub/data/chat_information_engine.dart) | 并行拉取 6 大项目实时快照（`OmnichannelSnapshot`），构造大模型 System Prompt 与结构化全景简报 |
+| [`client/lib/features/chat_hub/data/chat_action_executor.dart`](client/lib/features/chat_hub/data/chat_action_executor.dart) | 识别并直接执行 12 类语音/聊天控制指令（Hoxi 本地电脑 Git/单测/审批/会话 + GoPanel 容器/SSL/网站/数据库） |
+| [`client/lib/features/chat_hub/data/realtime_voice_model_service.dart`](client/lib/features/chat_hub/data/realtime_voice_model_service.dart) | 直连 `wss://.../v1/realtime`（`Qwen-Omni-Turbo-Realtime` / `GPT-4o-Mini-Realtime`）双向 24kHz PCM16 音频流与工具调用 |
+| [`client/lib/features/chat_hub/data/chat_voice_service.dart`](client/lib/features/chat_hub/data/chat_voice_service.dart) | 全双工语音控制器、`StreamingSentenceChunker` 流式分句器、音色切换（`Chelsie`/`Cherry`/`Ethan`）与 `onUserBargeIn` 打断联动 |
+| [`client/lib/features/chat_hub/presentation/widgets/chat_hub_voice_call_sheet.dart`](client/lib/features/chat_hub/presentation/widgets/chat_hub_voice_call_sheet.dart) | 1:1 复刻「灵光」全屏实时语音通话界面与受控节点声控快捷胶囊条 |
+| [`client/ios/Runner/AppDelegate.swift`](client/ios/Runner/AppDelegate.swift) | iOS `.voiceChat` 硬件回声消除、50s 连续语音识别无缝轮转、24kHz PCM16 播放与原生打断检测 |
+| [`client/android/app/src/main/kotlin/ai/hoxi/app/MainActivity.kt`](client/android/app/src/main/kotlin/ai/hoxi/app/MainActivity.kt) | Android 连续语音识别自动重启、`AudioTrack` PCM16 播放、屏幕常亮锁与原生打断检测 |
+
+### 11.3 Hoxi ⇄ GoPanel 远程通信与反向隧道架构（端口 `5417`）
+- **100% 保留 GoPanel 原有服务器运营能力**，并复用 `gopanel_v2` 的 9 字节二进制多路复用隧道协议（`WSS /api/tunnel/connect`），将家里/办公室的 **Hoxi 本地电脑（默认受控端口 `127.0.0.1:5417`）** 安全挂载至公网 GoPanel 节点（`ALL /api/tunnel/hoxi-nodes/:nodeId/proxy/*`）。
+- 手机端支持 **局域网 `:5417` 直连 + GoPanel 隧道远程穿透** 智能双路由无缝切换，完整协议与帧定义见双仓同步规范：[`docs/gopanel-hoxi-remote-tunnel.md`](docs/gopanel-hoxi-remote-tunnel.md)。
+
 

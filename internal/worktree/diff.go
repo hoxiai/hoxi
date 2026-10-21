@@ -438,7 +438,7 @@ func computeDiffSingleRepo(repo gitRepoTarget, diffTarget, fingerprint string, n
 
 	untracked, _ := runGitRaw(repo.Dir, "ls-files", "--others", "--exclude-standard", "-z")
 	for _, rel := range strings.Split(untracked, "\x00") {
-		if rel == "" || strings.HasPrefix(rel, ".hoxi/") {
+		if rel == "" || strings.HasPrefix(rel, ".hoxi/") || isIgnoredUntrackedWorktreePath(rel) {
 			continue
 		}
 		slashRel := filepath.ToSlash(rel)

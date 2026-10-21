@@ -12,6 +12,7 @@ import {
   resumeSubagentTask,
   revertToHere,
   selectSession,
+  stopSessionToolCommand,
 } from "../../store/workspace";
 import { t } from "../../i18n";
 import { DiffChanges, FileIcon, Icon, Spinner, TextShimmer, ToolStatusTitle } from "../icons";
@@ -48,6 +49,7 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
   const [everExpanded, setEverExpanded] = createSignal(props.defaultExpanded ?? false);
   const [elapsed, setElapsed] = createSignal(0);
   const [copiedCmd, setCopiedCmd] = createSignal(false);
+  const [stoppingCmd, setStoppingCmd] = createSignal(false);
   let outputRef: HTMLPreElement | undefined;
   let rollingShellRef: HTMLDivElement | undefined;
 
@@ -185,6 +187,26 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
       setTimeout(() => setCopiedCmd(false), 1600);
     } catch {
       /* ignore */
+    }
+  };
+
+  const isStoppedByUser = () =>
+    Boolean(
+      (props.part.state as { metadata?: Record<string, unknown> }).metadata?.stoppedByUser
+    );
+
+  const stopCommand = async (e: MouseEvent) => {
+    e.stopPropagation();
+    if (stoppingCmd()) return;
+    setStoppingCmd(true);
+    try {
+      await stopSessionToolCommand(props.part.sessionID, {
+        callID: props.part.callID,
+        partID: props.part.id,
+        command: shellCmd(),
+      });
+    } finally {
+      setStoppingCmd(false);
     }
   };
 
@@ -434,6 +456,27 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
               </ActionIconButton>
             </Show>
 
+            <Show when={isShell() && isRunning()}>
+              <button
+                type="button"
+                disabled={stoppingCmd()}
+                onClick={(e) => void stopCommand(e)}
+                title={t("toolCard.stopCommandTooltip")}
+                class="inline-flex items-center gap-1 rounded-md border border-[var(--danger-border)] bg-[var(--danger-surface)] px-2 py-0.5 text-[11px] font-medium text-[var(--danger-text)] hover:opacity-90 disabled:opacity-60 transition-opacity cursor-pointer"
+              >
+                <span class="inline-block w-2 h-2 rounded-[1.5px] bg-current shrink-0" />
+                <span>
+                  {stoppingCmd() ? t("toolCard.stoppingCommand") : t("toolCard.stopCommand")}
+                </span>
+              </button>
+            </Show>
+
+            <Show when={isShell() && !isRunning() && isStoppedByUser()}>
+              <span class="rounded bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[11px] text-[var(--text-muted)]">
+                {t("toolCard.stoppedByUser")}
+              </span>
+            </Show>
+
             <Show when={elapsed() >= 0.05}>
               <span class="font-mono text-[12px] text-[var(--text-faint)] tabular-nums">
                 {elapsed().toFixed(1)}s
@@ -515,6 +558,9 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
                       <ToolCardExpandedBody
                         part={props.part}
                         isShell={isShell()}
+                        isRunning={isRunning()}
+                        stoppingCmd={stoppingCmd()}
+                        onStopCommand={(e) => void stopCommand(e)}
                         isEdit={isEdit()}
                         isTodo={isTodo()}
                         isQuestion={isQuestion()}

@@ -24,6 +24,22 @@ func ResolveQoderBinaries() (intlBin, cnBin string) {
 	if os.Getenv("QODER_BIN") != "" || os.Getenv("QODER_CN_BIN") != "" {
 		return intlBin, cnBin
 	}
+	if qHome := strings.TrimSpace(os.Getenv("QODER_HOME")); qHome != "" {
+		intlBin = FirstExecutableFile(
+			filepath.Join(qHome, "bin", "qodercli", "qodercli"),
+			filepath.Join(qHome, "entry", "qodercli"),
+			filepath.Join(qHome, "entry", "qoder"),
+			filepath.Join(qHome, "bin", "qodercli"),
+		)
+		cnBin = FirstExecutableFile(
+			filepath.Join(qHome, "bin", "qoderclicn", "qoderclicn"),
+			filepath.Join(qHome, "entry", "qodercn"),
+			filepath.Join(qHome, "entry", "qoder-cn"),
+			filepath.Join(qHome, "bin", "qoderclicn"),
+			filepath.Join(qHome, "bin", "qodercn"),
+		)
+		return intlBin, cnBin
+	}
 
 	if p, err := exec.LookPath("qodercli"); err == nil {
 		intlBin = p

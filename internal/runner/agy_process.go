@@ -386,6 +386,8 @@ type activeProcess struct {
 	fileURLs         sync.Map
 }
 
+var abortInterruptGrace = 2 * time.Second
+
 func (ap *activeProcess) Abort() {
 	ap.mu.Lock()
 	ap.aborted = true
@@ -413,7 +415,7 @@ func (ap *activeProcess) Abort() {
 	_ = signalProcessGroup(proc, os.Interrupt)
 	select {
 	case <-ap.done:
-	case <-time.After(2 * time.Second):
+	case <-time.After(abortInterruptGrace):
 		tree = append(tree, descendantPIDs(proc.Pid)...)
 	}
 	_ = signalProcessGroup(proc, os.Kill)

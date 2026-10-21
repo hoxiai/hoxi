@@ -172,7 +172,11 @@ func shouldSkipFallbackDir(name string) bool {
 		return true
 	}
 	switch name {
-	case ".git", ".hoxi", "node_modules", "vendor", "dist", "build", "target", "out", ".next", "__pycache__", ".venv", "venv", "Pods", "DerivedData":
+	case ".git", ".hg", ".svn", ".hoxi", ".claude",
+		"node_modules", ".pnpm-store", "vendor", "dist", "build", "target", "out",
+		".next", ".nuxt", ".turbo", ".cache", "__pycache__", ".pytest_cache",
+		".venv", "venv", "Pods", "DerivedData", ".dart_tool", ".pub-cache",
+		"go-build", "go-build-cache", ".gocache", ".gomodcache":
 		return true
 	default:
 		return false

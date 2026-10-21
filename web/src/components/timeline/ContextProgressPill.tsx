@@ -3,8 +3,8 @@ import { createEffect, createMemo, createSignal, onCleanup, Show } from "solid-j
 import { Presence } from "../motion/Presence";
 import { Minimize2, LoaderCircle } from "lucide-solid";
 import {
-  activeModelInfo,
   compactSessionContext,
+  contextLimitForSelection,
   isAutoModel,
   isSessionBusy,
   resolveAutoModelTarget,
@@ -51,6 +51,11 @@ export default function ContextProgressPill(props: { minPercent?: number }) {
     });
   });
 
+  const contextLimit = createMemo(() => {
+    const selected = workspace.selectedModel;
+    return contextLimitForSelection(selected?.providerID, selected?.modelID);
+  });
+
   const stats = createMemo(() => {
     const id = workspace.activeSessionID;
     if (!id) return null;
@@ -78,9 +83,8 @@ export default function ContextProgressPill(props: { minPercent?: number }) {
 
     const used =
       latestInput + latestOutput + latestReasoning + latestCacheRead + latestCacheWrite;
-    const modelMeta = activeModelInfo();
-    const limit = modelMeta?.limit?.context || 200_000;
-    const percent = Math.min(100, Math.round((used / limit) * 100));
+    const limit = contextLimit();
+    const percent = limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 0;
 
     return {
       used,

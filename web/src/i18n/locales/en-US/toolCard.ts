@@ -48,4 +48,8 @@ export const toolCard = {
   gatheredContext: "Gathered context",
   waitingForOutput: "Waiting for output…",
   noOutput: "Command completed with no output.",
+  stopCommand: "Stop",
+  stoppingCommand: "Stopping…",
+  stopCommandTooltip: "Stop this command without ending the session",
+  stoppedByUser: "Stopped by user",
 };

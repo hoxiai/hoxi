@@ -9,6 +9,28 @@ import (
 	"strings"
 )
 
+func isIgnoredUntrackedWorktreePath(rel string) bool {
+	slash := strings.Trim(filepath.ToSlash(strings.TrimSpace(rel)), "/")
+	if slash == "" {
+		return true
+	}
+	if strings.HasPrefix(slash, ".hoxi/") || slash == ".hoxi" ||
+		strings.HasPrefix(slash, ".claude/") || slash == ".claude" ||
+		strings.HasPrefix(slash, ".opencode/memory/sessions/") {
+		return true
+	}
+	for _, seg := range strings.Split(slash, "/") {
+		switch seg {
+		case ".hoxi", ".claude", "node_modules", ".pnpm-store",
+			"go-build", "go-build-cache", ".gocache", ".gomodcache",
+			".dart_tool", ".pub-cache", "Pods", "DerivedData",
+			".venv", "venv", "__pycache__":
+			return true
+		}
+	}
+	return false
+}
+
 func snapshotWorktree(dir, sessionID string) error {
 	statusOut, err := runGit(dir, "status", "--porcelain")
 	if err != nil {
@@ -38,7 +60,7 @@ func CreateSnapshot(dir string) (string, error) {
 		return "", fmt.Errorf("not a git repository: %w", err)
 	}
 	repoRoot := filepath.Clean(strings.TrimSpace(topLevel))
-	ensureGitExclude(repoRoot, ".hoxi/")
+	ensureGitExclude(repoRoot, ".hoxi/", ".claude/")
 
 	tmpFile, err := os.CreateTemp("", "hoxi-snap-index-*")
 	if err != nil {
@@ -50,7 +72,7 @@ func CreateSnapshot(dir string) (string, error) {
 	defer os.Remove(tmpIndex)
 
 	_, _ = runGitWithIndex(repoRoot, tmpIndex, "read-tree", "HEAD")
-	if _, err := runGitWithIndex(repoRoot, tmpIndex, "add", "-A"); err != nil {
+	if _, err := runGitWithIndex(repoRoot, tmpIndex, "add", "-A", "--", ".", ":(exclude).hoxi", ":(exclude).claude"); err != nil {
 		return "", fmt.Errorf("stage snapshot: %w", err)
 	}
 	tree, err := runGitWithIndex(repoRoot, tmpIndex, "write-tree")
@@ -97,7 +119,7 @@ func RestoreSnapshot(dir, treeHash string) error {
 	currentFilesOut, err := runGitRaw(repoRoot, "ls-files", "-c", "-o", "--exclude-standard", "-z")
 	if err == nil {
 		for _, rel := range strings.Split(currentFilesOut, "\x00") {
-			if rel == "" || keep[rel] || strings.HasPrefix(rel, ".hoxi/") || strings.HasPrefix(rel, ".opencode/") {
+			if rel == "" || keep[rel] || strings.HasPrefix(rel, ".hoxi/") || strings.HasPrefix(rel, ".opencode/") || isIgnoredUntrackedWorktreePath(rel) {
 				continue
 			}
 			_ = os.Remove(filepath.Join(repoRoot, filepath.FromSlash(rel)))
@@ -173,7 +195,7 @@ func CapturePortableSnapshot(dir string) (*PortableGitSnapshot, error) {
 	if out, lsErr := runGitRaw(repoRoot, "ls-files", "--others", "--exclude-standard", "-z"); lsErr == nil && out != "" {
 		var totalBytes int64
 		for _, entry := range strings.Split(out, "\x00") {
-			if entry == "" || strings.HasPrefix(entry, ".hoxi/") || strings.HasPrefix(entry, ".opencode/") || isRootEnvFile(entry) {
+			if entry == "" || strings.HasPrefix(entry, ".hoxi/") || strings.HasPrefix(entry, ".opencode/") || isIgnoredUntrackedWorktreePath(entry) || isRootEnvFile(entry) {
 				continue
 			}
 			absPath := filepath.Join(repoRoot, filepath.FromSlash(entry))

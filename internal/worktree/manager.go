@@ -160,7 +160,7 @@ func (m *worktreeManager) CreateOnBranch(sessionID, retainedBranch string) (work
 		return worktreeMeta{}, fmt.Errorf("create worktrees dir: %w", err)
 	}
 	markSpotlightNoIndex(worktreesRoot)
-	ensureGitExclude(repoRoot, ".hoxi/")
+	ensureGitExclude(repoRoot, ".hoxi/", ".claude/")
 
 	worktreeDir := filepath.Join(worktreesRoot, sessionID)
 	branch := "hoxi/" + sessionID
@@ -674,11 +674,37 @@ func sanitizeSessionID(id string) string {
 	return b.String()
 }
 
-func ensureGitExclude(repoRoot, pattern string) {
+func ensureGitExclude(repoRoot string, patterns ...string) {
+	if len(patterns) == 0 {
+		return
+	}
 	excludeFile := filepath.Join(repoRoot, ".git", "info", "exclude")
-	data, err := os.ReadFile(excludeFile)
-	if err == nil && !strings.Contains(string(data), pattern) {
-		_ = os.WriteFile(excludeFile, append(data, []byte("\n"+pattern+"\n")...), 0o644)
+	if info, err := os.Stat(filepath.Join(repoRoot, ".git")); err == nil && !info.IsDir() {
+		if relOrAbs, gErr := runGit(repoRoot, "rev-parse", "--git-path", "info/exclude"); gErr == nil && strings.TrimSpace(relOrAbs) != "" {
+			p := strings.TrimSpace(relOrAbs)
+			if !filepath.IsAbs(p) {
+				p = filepath.Join(repoRoot, p)
+			}
+			excludeFile = filepath.Clean(p)
+		}
+	}
+	_ = os.MkdirAll(filepath.Dir(excludeFile), 0o755)
+	data, _ := os.ReadFile(excludeFile)
+	content := string(data)
+	var toAppend strings.Builder
+	for _, pattern := range patterns {
+		pattern = strings.TrimSpace(pattern)
+		if pattern == "" || strings.Contains(content, pattern) {
+			continue
+		}
+		if len(content) > 0 && !strings.HasSuffix(content, "\n") && toAppend.Len() == 0 {
+			toAppend.WriteByte('\n')
+		}
+		toAppend.WriteString(pattern)
+		toAppend.WriteByte('\n')
+	}
+	if toAppend.Len() > 0 {
+		_ = os.WriteFile(excludeFile, append(data, []byte(toAppend.String())...), 0o644)
 	}
 }
 

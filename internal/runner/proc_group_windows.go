@@ -23,3 +23,5 @@ func signalProcessGroup(p *os.Process, sig os.Signal) error {
 func descendantPIDs(pid int) []int { return nil }
 
 func killPIDs(pids []int) {}
+
+func stopChildToolProcesses(cliPID int, command string) int { return 0 }

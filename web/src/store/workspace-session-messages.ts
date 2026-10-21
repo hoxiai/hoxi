@@ -189,6 +189,40 @@ export async function stopSessionTask(sessionID?: string | null): Promise<void> 
   void loadSessionMessages(id);
 }
 
+export async function stopSessionToolCommand(
+  sessionID: string,
+  input: { callID?: string; partID?: string; command?: string }
+): Promise<void> {
+  const id = (sessionID || workspace.activeSessionID || "").trim();
+  if (!id) return;
+  setWorkspace(
+    produce((state) => {
+      const turns = state.messagesBySession[id];
+      if (!turns) return;
+      for (let i = turns.length - 1; i >= 0; i--) {
+        const parts = turns[i].parts;
+        for (let j = parts.length - 1; j >= 0; j--) {
+          const p = parts[j];
+          if (p.type !== "tool") continue;
+          if (
+            (input.partID && p.id === input.partID) ||
+            (input.callID && p.callID === input.callID)
+          ) {
+            const stateObj = p.state as { metadata?: Record<string, unknown> };
+            stateObj.metadata = { ...(stateObj.metadata || {}), stoppedByUser: true };
+            return;
+          }
+        }
+      }
+    })
+  );
+  try {
+    await hoxiAPI.stopToolCommand(id, input, sessionDirectory(id));
+  } catch (err) {
+    console.warn("stop tool command warning:", err);
+  }
+}
+
 export async function resumePausedSession(
   sessionID?: string | null,
   extraInstruction?: string

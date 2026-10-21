@@ -241,7 +241,14 @@ func runtimeStateDirs() []string {
 		filepath.Join(home, ".gemini"),
 		filepath.Join(home, ".antigravity"),
 		filepath.Join(home, ".cache"),
+		filepath.Join(home, ".npm"),
+		filepath.Join(home, "go", "pkg"),
 		filepath.Join(home, "Library", "Caches"),
+	}
+	for _, envKey := range []string{"GOCACHE", "GOMODCACHE", "npm_config_cache"} {
+		if v := strings.TrimSpace(os.Getenv(envKey)); v != "" && filepath.IsAbs(v) {
+			candidates = append(candidates, v)
+		}
 	}
 	var dirs []string
 	for _, dir := range candidates {

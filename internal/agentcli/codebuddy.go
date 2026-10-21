@@ -20,6 +20,12 @@ func ResolveCodeBuddyBinary() string {
 		}
 		return ""
 	}
+	if cbHome := strings.TrimSpace(os.Getenv("CODEBUDDY_HOME")); cbHome != "" {
+		return FirstExecutableFile(
+			filepath.Join(cbHome, "bin", "codebuddy"),
+			filepath.Join(cbHome, "bin", "cbc"),
+		)
+	}
 	for _, name := range []string{"codebuddy", "cbc"} {
 		if p, err := exec.LookPath(name); err == nil {
 			return p

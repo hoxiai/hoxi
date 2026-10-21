@@ -59,9 +59,10 @@
 独立开发者与精干团队既要写代码，又要管线上服务器。开了 `accept-edits` 怕 Agent 一句 `rm -rf` 删库；关了又得死盯屏幕点确认；出门在外服务器告警还得找地方开电脑。
 - **跨引擎统一高危门控（Safety Gate）**：普通读写自动放行；一旦涉及 `rm`、`sudo`、`chmod`、`diskutil`、`git push --force`、`git reset --hard` 等高危指令，无论底层是 OpenCode、Claude Code 还是 Antigravity，一律经 PreToolUse Hook 硬拦截，macOS 状态栏亮起 `Attention` 徽章并弹出内联审批卡。
 - **运行时中途纠偏（Steer）+ 内置隔离浏览器**：Agent 思路偏了无需强杀重来，随时插入指令实时纠偏；内置会话独占 Headless Chrome，遇到登录框或验证码一键切换**人工接管**，输完密码交回 Agent 继续跑。
-- **手机端双栖掌上指挥台（[`client/`](client/README.zh-CN.md)）**：同一个 Flutter 手机 App（iOS / Android）原生对接两类节点：
-  1. **连 Hoxi 桌面端**：下楼拿快递或喝咖啡时，用手机实时看 Agent 流式输出、审阅 Git Worktree Diff、中途发送 `Steer` 纠偏、一键审批高危命令。
-  2. **连 [GoPanel (`hoxiai/gopanel`)](https://github.com/hoxiai/gopanel) 服务器节点**：直接在手机上充当**服务器掌上管理面板**——实时查看服务器 CPU/内存/磁盘/网络监控、启停与排查 Docker 容器、管理 Nginx 站点与反向代理、续签 SSL 证书、运维数据库，以及远程调度服务器上的 GoPanel AI 编码会话。
+- **手机端「沟通即操作系统」随身幕僚（[`client/`](client/README.zh-CN.md) — `沟通 · 工程 · 专栏 · 我的`）**：
+  1. **1:1 灵光级全屏实时语音通话**：内置硬件回声消除（`.voiceChat` AEC）与 50 秒无缝语音识别轮转，支持 **30 分钟+ 免动手全双工连续对话**与**说话或点击即打断（Voice Barge-in）**；原生直连 `Qwen-Omni-Turbo-Realtime` / `GPT-4o-Mini-Realtime` 端到端语音大模型与 Pipecat 级流式分句 TTS。
+  2. **语音/聊天掌握 6 大项目业务信息**：一句话实时播报 **Hoxi 本地电脑研发进展**、**GoPanel 服务器水位**、**轻铺 AI（`qingpu.ai`）四阶段跨境上品漏斗**、**Shoply（`iqingpu.com`）独立站订单与营收**、**hoxi.ai 实时模型比价与五维就绪度**。
+  3. **语音/聊天直接遥控 Hoxi 本地电脑 & [GoPanel](https://github.com/hoxiai/gopanel) 服务器**：直接开口说 *“切换到 Hoxi 本地电脑”*、*“让本地电脑跑单测”*、*“查看/提交本地电脑 Git 改动”*、*“批准所有待审操作”*、*“重启 GoPanel 容器”*、*“续期 SSL 证书”*，无需切去二级菜单即可直接执行闭环。
 
 ---
 

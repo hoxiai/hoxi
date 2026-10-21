@@ -39,6 +39,7 @@ type Service struct {
 	childTurns     sync.Map // session ID -> childTurnsEntry
 	editedFiles    sync.Map // session ID -> editedFilesEntry
 	userSkillByMsg sync.Map // message ID -> userSkillOverride
+	stoppedTools   sync.Map // sessionID\x00(part|call):id -> bool
 	skillValidator func(ctx context.Context, directory, sessionID string, sel SkillSelection) error
 }
 
@@ -134,6 +135,7 @@ func (s *Service) Subscribe(sessionID string) (chan SSEEvent, func()) {
 
 func (s *Service) broadcast(sessionID string, evts ...SSEEvent) {
 	for _, evt := range evts {
+		s.decorateStoppedToolEvent(sessionID, &evt)
 		if evt.Type == "session.error" {
 			if entry := sessionErrorDiagnostic(sessionID, evt.Properties["error"]); entry != nil {
 				if rec, ok := s.store.Get(sessionID); ok {
@@ -315,6 +317,8 @@ func (s *Service) handleSessionSubroutes(w http.ResponseWriter, r *http.Request)
 		s.handleRuntimeSwitch(w, r, sessionID)
 	case "abort":
 		s.handleSessionAbort(w, r, sessionID)
+	case "stop_tool":
+		s.handleSessionStopTool(w, r, sessionID)
 	case "summarize":
 		s.handleSessionSummarize(w, r, sessionID)
 	case "revert":

@@ -142,12 +142,20 @@ const IGNORE_DIRS = new Set([
   ".hoxi",
   ".claude",
   ".dart_tool",
+  ".pub-cache",
   "node_modules",
+  ".pnpm-store",
+  "vendor",
   "dist",
   "build",
   "wailsjs",
   "Pods",
+  "DerivedData",
   "ephemeral",
+  "go-build",
+  "go-build-cache",
+  ".gocache",
+  ".gomodcache",
 ]);
 
 const SOURCE_EXT = /\.(go|ts|tsx|js|m|dart)$/;

@@ -149,6 +149,9 @@ func GeminiHomeDir() string {
 
 // ResolveAgyBinary locates the Antigravity CLI (`agy`) binary.
 func ResolveAgyBinary() string {
+	if env := strings.TrimSpace(os.Getenv("AGY_BIN")); env != "" {
+		return FirstExecutableFile(env)
+	}
 	if gRoot := GeminiHomeDir(); gRoot != "" {
 		candidate := filepath.Join(gRoot, "bin", "agy")
 		if p := FirstExecutableFile(candidate); p != "" {
@@ -262,6 +265,20 @@ func CachedAgyCLISlugs() []string {
 	agyModelsMu.Lock()
 	defer agyModelsMu.Unlock()
 	return append([]string(nil), agyCachedSlugs...)
+}
+
+// CachedAgyReverseSlug returns a copy of the cached display-name -> slug map without spawning a process.
+func CachedAgyReverseSlug() map[string]string {
+	agyModelsMu.Lock()
+	defer agyModelsMu.Unlock()
+	if len(agyCachedReverseSlug) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(agyCachedReverseSlug))
+	for k, v := range agyCachedReverseSlug {
+		out[k] = v
+	}
+	return out
 }
 
 // FormatClaudeModelName derives a human-readable label for any Claude model slug or alias
