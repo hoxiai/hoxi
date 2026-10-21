@@ -21,6 +21,7 @@ import { hoxiAPI } from "../../services/api";
 import {
   activeDirectory,
   addReviewComment,
+  openExternalURL,
   openFileInInspector,
   revertWorktreeFileChanges,
   synthesizeLocalCommitMessage,
@@ -37,12 +38,7 @@ import {
 
 export function openRemoteCompareURL(url: string) {
   if (!url) return;
-  const wailsRuntime = (window as any).runtime;
-  if (typeof wailsRuntime?.BrowserOpenURL === "function") {
-    wailsRuntime.BrowserOpenURL(url);
-    return;
-  }
-  window.open(url, "_blank", "noopener,noreferrer");
+  openExternalURL(url);
 }
 
 const MAX_META_CACHE_ENTRIES = 48;

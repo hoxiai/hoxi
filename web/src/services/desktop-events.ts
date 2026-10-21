@@ -23,3 +23,14 @@ export function onDesktopIntent(callback: () => void): () => void {
   const off = eventsOn(DESKTOP_INTENT_EVENT, () => callback());
   return typeof off === "function" ? off : () => {};
 }
+
+/** Opens an external URL through the Wails host browser bridge or `window.open` fallback. */
+export function openExternalBrowserURL(url: string): void {
+  if (typeof window === "undefined" || !url) return;
+  const runtime = (window as unknown as { runtime?: { BrowserOpenURL?: (target: string) => void } }).runtime;
+  if (typeof runtime?.BrowserOpenURL === "function") {
+    runtime.BrowserOpenURL(url);
+    return;
+  }
+  window.open(url, "_blank", "noopener,noreferrer");
+}

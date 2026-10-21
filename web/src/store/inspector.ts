@@ -1,6 +1,7 @@
 // web/src/store/inspector.ts
 // Inspector panel navigation (files / diffs / browser) and per-session review comments.
 import { hoxiAPI } from "../services/api";
+import { openExternalBrowserURL } from "../services/desktop-events";
 import type { SnapshotFileDiff } from "../services/sse-types";
 import { extractFileSuffix, getResolvedFilePath, normalizeCandidatePath } from "./file-links";
 import { setWorkspace, workspace, type ReviewCommentItem } from "./workspace-state";
@@ -125,12 +126,7 @@ export function openURLInInspector(url: string) {
 export function openExternalURL(url: string) {
   const trimmed = url.trim();
   if (!trimmed || !/^https?:\/\//i.test(trimmed)) return;
-  const wailsRuntime = (window as any).runtime;
-  if (typeof wailsRuntime?.BrowserOpenURL === "function") {
-    wailsRuntime.BrowserOpenURL(trimmed);
-    return;
-  }
-  window.open(trimmed, "_blank", "noopener,noreferrer");
+  openExternalBrowserURL(trimmed);
 }
 
 export async function openExternalFile(
