@@ -47,6 +47,7 @@ import "../src/__tests__/session-capabilities.test";
 import "../src/__tests__/turn-window.test";
 import "../src/__tests__/session-transcripts.test";
 import "../src/__tests__/internal-llm-model.test";
+import "../src/__tests__/subagent-config.test";
 import "../src/__tests__/model-limits.test";
 
 console.log("[test] Running Hoxi frontend unit tests...");

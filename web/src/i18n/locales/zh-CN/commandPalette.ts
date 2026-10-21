@@ -24,6 +24,7 @@ export const commandPalette = {
   actionStop: "停止当前任务",
   actionProviders: "管理模型与提供商",
   actionAgents: "Agent 角色",
+  actionSubagents: "子代理",
   actionPermissions: "权限与 MCP",
   actionDiagnostics: "诊断",
   shortcutNewThread: "⌘N",

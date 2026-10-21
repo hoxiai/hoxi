@@ -24,6 +24,7 @@ export const commandPalette = {
   actionStop: "Stop current task",
   actionProviders: "Manage models & providers",
   actionAgents: "Agent roles",
+  actionSubagents: "Subagents",
   actionPermissions: "Permissions & MCP",
   actionDiagnostics: "Diagnostics",
   shortcutNewThread: "⌘N",

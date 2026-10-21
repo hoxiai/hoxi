@@ -542,7 +542,6 @@ func (g *Service) handleModelsConfig(w http.ResponseWriter, r *http.Request) {
 var managedGlobalConfigKeys = []string{
 	"model",
 	"small_model",
-	"subagent_model",
 	"agent",
 	"permission",
 	"mcp",
@@ -551,7 +550,7 @@ var managedGlobalConfigKeys = []string{
 
 // overlayHoxiGlobalConfig makes .hoxi/models.json authoritative over the OpenCode
 // config snapshot loaded at process start, so routing roles (small_model,
-// subagent_model, agent models) reflect edits immediately without a daemon restart.
+// agent models and agent permissions) reflect edits immediately without a daemon restart.
 func overlayHoxiGlobalConfig(cfg, doc map[string]interface{}) {
 	for key, value := range doc {
 		if key == "$schema" || key == "provider" {

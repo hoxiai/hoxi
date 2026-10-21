@@ -37,6 +37,8 @@ function agentIcon(name: string) {
 
 // Hoxi-owned agents injected by the runtime overlay; they cannot be removed.
 const BUILTIN_MODE_IDS = new Set(["build", "plan", "ask", "debug", "compaction"]);
+// Subagent-mode agents are configured in the Subagents tab.
+const SUBAGENT_ONLY_IDS = new Set(["general", "explore", "scout"]);
 
 export default function AgentRolesTab() {
   const [savingKey, setSavingKey] = createSignal<string | null>(null);
@@ -47,6 +49,7 @@ export default function AgentRolesTab() {
   const [newAgentDesc, setNewAgentDesc] = createSignal("");
   const [newAgentModel, setNewAgentModel] = createSignal("");
   const [newAgentPrompt, setNewAgentPrompt] = createSignal("");
+  const [newAgentMode, setNewAgentMode] = createSignal<"primary" | "subagent">("primary");
   const [creating, setCreating] = createSignal(false);
   const [formFeedback, setFormFeedback] = createSignal<{ ok: boolean; text: string } | null>(null);
 
@@ -105,7 +108,7 @@ export default function AgentRolesTab() {
       const existing = cfg?.agent?.[id] ?? {};
       const entry: Record<string, any> = {
         ...existing,
-        mode: "primary",
+        mode: newAgentMode(),
         description: newAgentDesc().trim() || `Custom ${id} mode`,
         prompt,
       };
@@ -117,6 +120,7 @@ export default function AgentRolesTab() {
       setNewAgentDesc("");
       setNewAgentModel("");
       setNewAgentPrompt("");
+      setNewAgentMode("primary");
       await loadAgents(workspace.rootDir || undefined);
       setFormFeedback({ ok: true, text: t("models.agentSaved", { id }) });
       setTimeout(() => setFormFeedback(null), 3000);
@@ -215,9 +219,10 @@ export default function AgentRolesTab() {
     // Custom Agents from globalConfig.agent
     const cfgAgent = workspace.globalConfig?.agent || {};
     for (const [key, val] of Object.entries(cfgAgent)) {
-      if (BUILTIN_MODE_IDS.has(key)) continue;
+      if (BUILTIN_MODE_IDS.has(key) || SUBAGENT_ONLY_IDS.has(key)) continue;
       if (val && typeof val === "object") {
         const item = val as Record<string, any>;
+        if (item.mode === "subagent") continue;
         list.push({
           id: key,
           name: key,
@@ -455,16 +460,18 @@ export default function AgentRolesTab() {
 
               <div>
                 <label class="block text-[11px] font-medium text-[var(--text-secondary)] mb-1">
-                  {t("models.agentDedicatedModelLabel")}
+                  {t("models.agentModeLabel")}
                 </label>
-                <ModelRolePicker
-                  value={newAgentModel()}
-                  groups={connectedGroups()}
-                  allowEmpty
-                  emptyLabel={t("models.agentModelFollowDefault")}
-                  triggerClass="w-full"
-                  onChange={(val) => setNewAgentModel(val)}
-                />
+                <select
+                  value={newAgentMode()}
+                  onChange={(event) =>
+                    setNewAgentMode(event.currentTarget.value === "subagent" ? "subagent" : "primary")
+                  }
+                  class="w-full rounded-xl border border-[var(--border-strong)] bg-[var(--bg-panel)] px-3 py-1.5 text-[12px] text-[var(--text-primary)] outline-none cursor-pointer"
+                >
+                  <option value="primary">{t("models.agentModePrimary")}</option>
+                  <option value="subagent">{t("models.agentModeSubagent")}</option>
+                </select>
               </div>
             </div>
 

@@ -4,6 +4,7 @@ import { Dynamic } from "solid-js/web";
 import {
   ArrowRightLeft,
   Bot,
+  Users,
   Brain,
   CornerDownLeft,
   Cpu,
@@ -188,6 +189,13 @@ export default function CommandPalette(props: CommandPaletteProps) {
         label: t("commandPalette.actionAgents"),
         icon: Bot,
         run: () => openSettingsModal("agents"),
+      },
+      {
+        id: "subagents",
+        group: "actions",
+        label: t("commandPalette.actionSubagents"),
+        icon: Users,
+        run: () => openSettingsModal("subagents"),
       },
       {
         id: "permissions",

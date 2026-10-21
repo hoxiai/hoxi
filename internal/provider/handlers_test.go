@@ -316,9 +316,8 @@ func TestModelsConfigAndProxyRoutes(t *testing.T) {
 	// Routing roles must come from .hoxi/models.json even though the OpenCode
 	// snapshot was loaded at boot and never received this PATCH.
 	rec = doMuxReq(t, mux, http.MethodPatch, "/global/config", map[string]any{
-		"small_model":    "custom-oai/gpt-4o",
-		"subagent_model": "custom-oai/gpt-4o",
-		"agent":          map[string]any{"build": map[string]any{"model": "custom-oai/gpt-4o"}},
+		"small_model": "custom-oai/gpt-4o",
+		"agent":       map[string]any{"build": map[string]any{"model": "custom-oai/gpt-4o"}},
 	})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("PATCH routing roles failed: %d %s", rec.Code, rec.Body.String())
@@ -327,11 +326,30 @@ func TestModelsConfigAndProxyRoutes(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &globalCfg); err != nil {
 		t.Fatalf("invalid /global/config response: %v", err)
 	}
-	if globalCfg["small_model"] != "custom-oai/gpt-4o" || globalCfg["subagent_model"] != "custom-oai/gpt-4o" {
+	if globalCfg["small_model"] != "custom-oai/gpt-4o" {
 		t.Fatalf("routing roles missing from /global/config: %s", rec.Body.String())
 	}
 	if agent, _ := globalCfg["agent"].(map[string]any); agent == nil || agent["build"] == nil {
 		t.Fatalf("agent model override missing from /global/config: %s", rec.Body.String())
+	}
+
+	// Delegation policy lives on the agent's own permission.task subtree; the
+	// subagent settings tab writes it and expects it back from /global/config.
+	rec = doMuxReq(t, mux, http.MethodPatch, "/global/config", map[string]any{
+		"agent": map[string]any{
+			"build": map[string]any{"permission": map[string]any{"task": map[string]any{"*": "deny", "reviewer": "allow"}}},
+		},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PATCH agent permission.task failed: %d %s", rec.Code, rec.Body.String())
+	}
+	globalCfg = nil
+	if err := json.Unmarshal(rec.Body.Bytes(), &globalCfg); err != nil {
+		t.Fatalf("invalid /global/config response: %v", err)
+	}
+	taskValue, _ := globalCfg["agent"].(map[string]any)["build"].(map[string]any)["permission"].(map[string]any)["task"].(map[string]any)
+	if taskValue["*"] != "deny" || taskValue["reviewer"] != "allow" {
+		t.Fatalf("agent permission.task missing from /global/config: %s", rec.Body.String())
 	}
 
 	rec = doMuxReq(t, mux, http.MethodPatch, "/global/config", map[string]any{"small_model": nil})

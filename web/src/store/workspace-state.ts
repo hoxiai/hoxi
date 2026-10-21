@@ -171,7 +171,7 @@ export interface ReviewCommentItem {
   snippet?: string;
 }
 
-export type ProviderModalTab = "providers" | "custom" | "auto" | "models" | "agents" | "policy";
+export type ProviderModalTab = "providers" | "custom" | "auto" | "models" | "agents" | "subagents" | "policy";
 export type WorkspaceModalMode = "create" | "edit" | "delete" | "manage" | null;
 
 export interface WorkspaceState {

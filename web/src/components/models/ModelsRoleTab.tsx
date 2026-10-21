@@ -34,13 +34,6 @@ export default function ModelsRoleTab() {
     () => (typeof workspace.globalConfig?.small_model === "string" ? workspace.globalConfig.small_model : "")
   );
 
-  const currentSubagentModel = createMemo(
-    () =>
-      typeof workspace.globalConfig?.subagent_model === "string"
-        ? workspace.globalConfig.subagent_model
-        : ""
-  );
-
   const currentCompactionModel = createMemo(
     () =>
       typeof workspace.globalConfig?.agent?.compaction?.model === "string"
@@ -186,24 +179,8 @@ export default function ModelsRoleTab() {
           })}
         </div>
 
-        {/* Subagent Model */}
-        <div class="flex items-center justify-between gap-4 px-4 py-3.5">
-          <div class="min-w-0">
-            <div class="text-[13px] font-semibold text-[var(--text-primary)]">
-              {t("models.subagentModelTitle")}
-            </div>
-            <div class="text-[12px] text-[var(--text-muted)]">
-              {t("models.subagentModelDesc")}
-            </div>
-          </div>
-          {renderModelSelect({
-            roleKey: "subagent_model",
-            value: currentSubagentModel,
-            allowEmpty: true,
-            onChange: (val) =>
-              void applyRolePatch("subagent_model", { subagent_model: val || null }),
-          })}
-        </div>
+        {/* Subagent models live per agent in the Subagents tab: OpenCode has no
+            subagent_model key, so a role-level picker here would be ignored. */}
 
         {/* Compaction Model */}
         <div class="flex items-center justify-between gap-4 px-4 py-3.5">

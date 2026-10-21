@@ -14,6 +14,7 @@ import {
   ShieldCheck,
   SlidersHorizontal,
   Sun,
+  Users,
   Terminal as TerminalIcon,
   Zap,
 } from "lucide-solid";
@@ -29,6 +30,7 @@ import {
 import { t } from "../../i18n";
 import AgentPolicyMcpTab from "../models/AgentPolicyMcpTab";
 import AgentRolesTab from "../models/AgentRolesTab";
+import SubagentSettingsTab from "../models/SubagentSettingsTab";
 import AutoModelPoolTab from "../models/AutoModelPoolTab";
 import CustomEndpointTab from "../models/CustomEndpointTab";
 import ModelsRoleTab from "../models/ModelsRoleTab";
@@ -63,6 +65,7 @@ export default function SettingsModal() {
       tab === "auto" ||
       tab === "models" ||
       tab === "agents" ||
+      tab === "subagents" ||
       tab === "policy"
     );
   };
@@ -101,6 +104,7 @@ export default function SettingsModal() {
           icon: Bot,
           badge: () => workspace.agents.length,
         },
+        { id: "subagents", label: () => t("models.tabSubagents"), icon: Users },
         { id: "policy", label: () => t("models.tabPolicy"), icon: ShieldCheck },
         { id: "terminal", label: () => t("settings.tabTerminal"), icon: TerminalIcon },
         { id: "privacy", label: () => t("privacy.title"), icon: ShieldCheck },
@@ -278,6 +282,11 @@ export default function SettingsModal() {
               <Show when={activeTab() === "agents"}>
                 <div class="flex-1 min-h-0 flex flex-col hoxi-view-enter">
                   <AgentRolesTab />
+                </div>
+              </Show>
+              <Show when={activeTab() === "subagents"}>
+                <div class="flex-1 min-h-0 flex flex-col hoxi-view-enter">
+                  <SubagentSettingsTab />
                 </div>
               </Show>
               <Show when={activeTab() === "policy"}>
