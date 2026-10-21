@@ -18,6 +18,9 @@ build/preflight/
 .hoxi/
 .opencode/memory/sessions/
 
+# Mobile app lives in a separate private repository
+/client/
+
 # Environment & Secrets
 .env
 .env.local
