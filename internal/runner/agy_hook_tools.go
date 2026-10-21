@@ -208,8 +208,13 @@ func (s *Service) inspectHookToolRisk(sessionID, tool string, args map[string]in
 		}
 		if worktree != "" && resolved != "" {
 			if !pathWithin(worktree, resolved) {
+				// Crossing into a sibling workspace folder or an SDK cache is
+				// routine; only credential and execution-controlling paths
+				// must keep asking (same rule as the shared policy port).
 				externalDir = true
-				destructive = true
+				if isSensitiveExternalPath(resolved) {
+					destructive = true
+				}
 			} else if (hookEditTools[lowerTool] || lowerTool == "edit" || lowerTool == "multiedit" || lowerTool == "write" || lowerTool == "notebookedit") &&
 				isProtectedWorktreePath(worktree, resolved) {
 				destructive = true

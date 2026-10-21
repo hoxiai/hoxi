@@ -132,9 +132,15 @@ describe("permission command chains", () => {
       false
     );
 
-    // 4. Protected paths and external_directory always ask in every mode (including auto & smart)
+    // 4. Credential and execution-controlling paths always ask in every mode
     for (const req of [
       { permission: "external_directory", patterns: ["/Users/hugh/.ssh/config"] },
+      { permission: "external_directory", patterns: ["/Users/hugh/.ssh/*"] },
+      { permission: "external_directory", patterns: ["/etc/passwd"] },
+      { permission: "external_directory", patterns: ["/Users/hugh/.zshrc"] },
+      { permission: "external_directory", patterns: ["/Users/hugh/.hoxi/hoxi.db"] },
+      { permission: "external_directory", patterns: ["/Users/hugh/.config/opencode/opencode.json"] },
+      { permission: "external_directory", patterns: [] },
       { permission: "edit", patterns: [".git/config"] },
       { permission: "write", metadata: { filepath: "/repo/.opencode/plugins/hoxi-permissions.js" } },
       { permission: "patch", patterns: [".claude/settings.json"] },
@@ -163,6 +169,20 @@ describe("permission command chains", () => {
       for (const mode of ["auto", "smart", "manual"] as const) {
         assertEqual(shouldAutoApprovePermission(req, mode), false);
       }
+    }
+
+    // 5. Routine cross-directory access (sibling workspace folders, SDK
+    // caches) must not re-prompt in auto mode; OpenCode raises one
+    // external_directory request per read/write outside the session dir.
+    for (const path of [
+      "/Users/hugh/code/hoxi/apay/app/themes/ainode/*",
+      "/Users/hugh/fvm/versions/3.44.9/*",
+      "/Users/hugh/code/kuaiqin/shoply/admin/src/**",
+    ]) {
+      const req = { permission: "external_directory", patterns: [path] };
+      assertEqual(isDestructivePermissionRequest(req), false, path);
+      assertEqual(shouldAutoApprovePermission(req, "auto"), true, path);
+      assertEqual(shouldAutoApprovePermission(req, "manual"), false, path);
     }
   });
 });

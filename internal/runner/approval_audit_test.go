@@ -86,3 +86,53 @@ func TestOpenCodePermissionEventFeedsTheAuditSnapshot(t *testing.T) {
 		t.Fatalf("audit summary leaked a password: %q", entries[0].Summary)
 	}
 }
+
+// OpenCode raises external_directory for every read/write outside the session
+// directory. Treating all of them as destructive made "auto approve" prompt on
+// routine sibling-folder work, so only credential/execution targets stay high
+// risk.
+func TestExternalDirectoryRiskClassifiesRoutineAndSensitiveTargets(t *testing.T) {
+	routine := []map[string]interface{}{
+		{"permission": "external_directory", "patterns": []interface{}{"/Users/hugh/code/hoxi/apay/app/themes/ainode/*"}},
+		{"permission": "external_directory", "patterns": []interface{}{"/Users/hugh/fvm/versions/3.44.9/*"}},
+		{"permission": "external_directory", "patterns": []interface{}{"/Users/hugh/code/kuaiqin/shoply/admin/src/**"}},
+	}
+	for _, item := range routine {
+		perm, _ := item["permission"].(string)
+		if isDestructivePermissionItem(perm, "", item) {
+			t.Errorf("routine external target classified destructive: %v", item["patterns"])
+		}
+	}
+
+	sensitive := []map[string]interface{}{
+		{"permission": "external_directory", "patterns": []interface{}{"/Users/hugh/.ssh/config"}},
+		{"permission": "external_directory", "patterns": []interface{}{"/Users/hugh/.ssh/*"}},
+		{"permission": "external_directory", "patterns": []interface{}{"/etc/passwd"}},
+		{"permission": "external_directory", "patterns": []interface{}{"/Users/hugh/.zshrc"}},
+		{"permission": "external_directory", "patterns": []interface{}{"/Users/hugh/.hoxi/hoxi.db"}},
+		{"permission": "external_directory", "patterns": []interface{}{"/Users/hugh/.config/opencode/opencode.json"}},
+		{"permission": "external_directory", "patterns": []interface{}{}},
+		{"permission": "tool", "patterns": []interface{}{"Read"}, "metadata": map[string]interface{}{"externalDirectory": true, "args": `{"file_path":"/etc/passwd"}`}},
+	}
+	for _, item := range sensitive {
+		perm, _ := item["permission"].(string)
+		if !isDestructivePermissionItem(perm, "", item) {
+			t.Errorf("sensitive external target must stay destructive: %v", item["patterns"])
+		}
+	}
+
+	// A tool request flagged externalDirectory for a sibling folder is routine
+	// too, but destructive metadata always wins.
+	if isDestructivePermissionItem("tool", "", map[string]interface{}{
+		"permission": "tool",
+		"metadata":   map[string]interface{}{"externalDirectory": true, "args": `{"file_path":"/Users/hugh/code/hoxi/ainode/src/a.ts"}`},
+	}) {
+		t.Error("sibling-folder tool access must not be classified destructive")
+	}
+	if !isDestructivePermissionItem("tool", "", map[string]interface{}{
+		"permission": "tool",
+		"metadata":   map[string]interface{}{"externalDirectory": true, "destructive": true},
+	}) {
+		t.Error("explicit destructive metadata must still win")
+	}
+}

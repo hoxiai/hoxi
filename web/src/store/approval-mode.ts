@@ -53,6 +53,9 @@ const SMART_AUTO_PERMISSIONS = new Set([
   "webfetch",
   "task",
   "skill",
+  // Sibling workspace folders and SDK caches are routine edits; credential and
+  // execution-controlling targets are filtered by isDestructivePermissionRequest.
+  "external_directory",
 ]);
 
 export function shouldAutoApprovePermission(

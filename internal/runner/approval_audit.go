@@ -348,14 +348,17 @@ func summarizePermissionItem(item map[string]interface{}) (string, string) {
 
 func isDestructivePermissionItem(perm, summary string, item map[string]interface{}) bool {
 	lowerPerm := strings.ToLower(strings.TrimSpace(perm))
-	if lowerPerm == "doom_loop" || lowerPerm == "external_directory" {
+	if lowerPerm == "doom_loop" {
 		return true
 	}
 	meta, _ := item["metadata"].(map[string]interface{})
 	if d, _ := meta["destructive"].(bool); d {
 		return true
 	}
-	if ext, _ := meta["externalDirectory"].(bool); ext {
+	if lowerPerm == "external_directory" {
+		return !externalDirectoryTargetsAreRoutine(item)
+	}
+	if ext, _ := meta["externalDirectory"].(bool); ext && !externalDirectoryTargetsAreRoutine(item) {
 		return true
 	}
 	if isDestructiveCommand(summary) {

@@ -365,6 +365,54 @@ const PROTECTED_PATH_SEGMENTS = new Set([
   ".envrc",
 ]);
 
+// Shell/credential dotfiles and OS-level execution hooks are the only
+// cross-directory targets that stay manual: everything else outside the
+// session directory (sibling workspace folders, SDK caches) is routine.
+const SENSITIVE_BASENAMES = new Set([
+  ".zshrc", ".zshenv", ".zprofile", ".zlogin",
+  ".bashrc", ".bash_profile", ".bash_login", ".profile",
+  ".gitconfig", ".git-credentials", ".netrc", ".npmrc",
+  ".curlrc", ".wgetrc", ".envrc", "authorized_keys",
+]);
+
+const SENSITIVE_PATH_PREFIXES = [
+  "/etc/",
+  "/private/etc/",
+  "/library/launchagents/",
+  "/library/launchdaemons/",
+  "/library/startupitems/",
+];
+
+const SENSITIVE_PATH_FRAGMENTS = [
+  "/.config/opencode/",
+  "/.config/hoxi/",
+  "/.config/claude/",
+  "/.ssh/",
+  "/.aws/",
+  "/.gnupg/",
+  "/.kube/",
+  "/library/keychains/",
+];
+
+function isSensitiveExternalPath(rawPath) {
+  if (typeof rawPath !== "string") return false;
+  const trimmed = rawPath.trim();
+  if (!trimmed) return false;
+  const candidates = [trimmed];
+  const stripped = trimmed.replace(/\/?\*+$/, "");
+  if (stripped && stripped !== trimmed) candidates.push(stripped);
+  for (const cand of candidates) {
+    if (isProtectedPath(cand)) return true;
+    const slash = cand.replaceAll("\\", "/").toLowerCase();
+    const base = slash.slice(slash.lastIndexOf("/") + 1);
+    if (SENSITIVE_BASENAMES.has(base)) return true;
+    if (SENSITIVE_PATH_PREFIXES.some((p) => slash.startsWith(p))) return true;
+    if (SENSITIVE_PATH_FRAGMENTS.some((p) => slash.includes(p))) return true;
+    if (matchesDestructive(`bash\n${cand}`)) return true;
+  }
+  return false;
+}
+
 export function isProtectedPath(rawPath) {
   if (typeof rawPath !== "string" || !rawPath.trim()) return false;
   const slash = rawPath.trim().replaceAll("\\", "/").toLowerCase();
@@ -405,11 +453,41 @@ function extractToolArgPaths(rawArgs) {
   return out;
 }
 
+export function externalDirectoryTargets(input) {
+  const meta = input?.metadata || {};
+  const out = [];
+  for (const value of [
+    ...(Array.isArray(input?.patterns) ? input.patterns : []),
+    input?.pattern,
+    meta.filepath,
+    meta.filePath,
+    meta.path,
+    meta.target,
+    ...(Array.isArray(meta.directories) ? meta.directories : []),
+    ...(Array.isArray(meta.files)
+      ? meta.files.map((f) => f?.filePath || f?.filepath || f?.file || f?.path || "")
+      : []),
+    ...extractToolArgPaths(meta.args),
+  ]) {
+    if (typeof value === "string" && value.trim()) out.push(value.trim());
+  }
+  return out;
+}
+
 export function isDestructivePermissionRequest(input) {
   const permission = String(input?.permission || input?.type || "").toLowerCase();
-  if (permission === "doom_loop" || permission === "external_directory") return true;
-  if (input?.metadata?.destructive === true || input?.metadata?.externalDirectory === true) {
-    return true;
+  if (permission === "doom_loop") return true;
+  if (permission === "external_directory") {
+    // OpenCode raises this for every read/write outside the session directory,
+    // including sibling folders the user already registered as a workspace.
+    // Only credential/execution-controlling targets keep asking.
+    const targets = externalDirectoryTargets(input);
+    return targets.length === 0 || targets.some(isSensitiveExternalPath);
+  }
+  if (input?.metadata?.destructive === true) return true;
+  if (input?.metadata?.externalDirectory === true) {
+    const targets = externalDirectoryTargets(input);
+    if (targets.length === 0 || targets.some(isSensitiveExternalPath)) return true;
   }
   if (READ_PERMISSIONS.has(permission)) return false;
   if (EDIT_PERMISSIONS.has(permission) || permission === "tool") {
