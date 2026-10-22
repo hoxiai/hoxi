@@ -89,7 +89,13 @@ export async function handleSessionErrorEvent(
     const status = error.data?.statusCode;
     markAutoCandidateCooldown(autoState.target.providerID, autoState.target.modelID, errText, status);
     const isElapsedFast = Date.now() - autoState.dispatchedAt < 45_000;
+    // A model the engine no longer knows can never succeed by retrying it, so
+    // the pool must advance exactly like it does for a rate limit.
+    const isModelUnavailable =
+      error.name === "ProviderModelNotFoundError" ||
+      /model not found|model.*not.*available/i.test(errText);
     const isRateOrTransient =
+      isModelUnavailable ||
       status === 429 ||
       status === 502 ||
       status === 503 ||

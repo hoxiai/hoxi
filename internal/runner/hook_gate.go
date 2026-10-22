@@ -10,7 +10,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -222,7 +221,8 @@ func (s *Service) decideHookCall(r *http.Request, cred hookCredential, p hookPay
 
 	switch action {
 	case hookActionRead:
-		if isReadToolAllowedInWorktree(rec.WorktreePath, p.ToolCall.Name, p.ToolCall.Args) {
+		if isReadToolAllowedInWorktree(rec.WorktreePath, p.ToolCall.Name, p.ToolCall.Args) &&
+			!isSecretFilePath(resolveHookToolPath(rec.WorktreePath, p.ToolCall.Args)) {
 			return hookDecisionApprove, ""
 		}
 		approved, reason := s.gateToolCall(r, cred, p.ToolCall.Name, p.ToolCall.Args, callID)
@@ -239,17 +239,17 @@ func (s *Service) decideHookCall(r *http.Request, cred hookCredential, p hookPay
 			}
 			return hookDecisionDeny, reason
 		}
-		if !pathWithin(rec.WorktreePath, path) {
-			return hookDecisionDeny, fmt.Sprintf("Hoxi blocked %s outside this session's directory: %s", p.ToolCall.Name, path)
+		if pathWithin(rec.WorktreePath, path) && !isProtectedWorktreePath(rec.WorktreePath, path) &&
+			s.policyApprovesWorktreeEdit(rec, path) {
+			return hookDecisionApprove, ""
 		}
-		if isProtectedWorktreePath(rec.WorktreePath, path) {
-			approved, reason := s.gateToolCall(r, cred, p.ToolCall.Name, p.ToolCall.Args, callID)
-			if approved {
-				return hookDecisionApprove, ""
-			}
-			return hookDecisionDeny, reason
+		// Outside the worktree, protected paths, and edits the policy wants
+		// confirmed all go through the same gate as every other runtime.
+		approved, reason := s.gateToolCall(r, cred, p.ToolCall.Name, p.ToolCall.Args, callID)
+		if approved {
+			return hookDecisionApprove, ""
 		}
-		return hookDecisionApprove, ""
+		return hookDecisionDeny, reason
 	case hookActionAsk:
 		approved, reason := s.gateToolCall(r, cred, p.ToolCall.Name, p.ToolCall.Args, callID)
 		if approved {
@@ -293,7 +293,20 @@ func (s *Service) gateCommand(r *http.Request, cred hookCredential, rec SessionR
 	if ask.cwd != "" && !pathWithin(rec.WorktreePath, ask.cwd) {
 		return false, "command working directory is outside this session's directory"
 	}
-	if decideCommandPermissionIn(ask.command, rec.WorktreePath) == "allow" || s.gate.hasAlways(cred.sessionID, ask.command) {
+	if s.gate.hasAlways(cred.sessionID, ask.command) {
+		return true, ""
+	}
+	item := map[string]interface{}{
+		"permission": "bash",
+		"patterns":   []string{ask.command},
+		"metadata":   map[string]interface{}{"command": ask.command, "source": ask.source},
+	}
+	if s.policyApproves(item, rec.WorktreePath) {
+		// Read-only commands are routine; only audit what the policy let
+		// through beyond them.
+		if decideCommandPermissionIn(ask.command, rec.WorktreePath) != "allow" {
+			s.recordPolicyApproval(cred, item)
+		}
 		return true, ""
 	}
 	return s.awaitApproval(r, cred, ask)
@@ -536,6 +549,9 @@ func (s *Service) handleUnifiedPermissionRoutes(w http.ResponseWriter, r *http.R
 	case "grants":
 		s.handleApprovalGrants(w, r)
 		return
+	case "policy":
+		s.handleApprovalPolicy(w, r)
+		return
 	}
 	id, action, _ := strings.Cut(sub, "/")
 	if action != "reply" || r.Method != http.MethodPost {
@@ -577,78 +593,6 @@ func (s *Service) handleUnifiedPermissionRoutes(w http.ResponseWriter, r *http.R
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	_, _ = w.Write(respRaw)
-}
-
-func (s *Service) replyOpenCodePermission(ctx context.Context, id, directory string, raw []byte) (int, []byte, error) {
-	path := "/permission/" + url.PathEscape(id) + "/reply"
-	primary := strings.TrimSpace(directory)
-	rememberedDir := ""
-	if s.audit != nil {
-		if snap, ok := s.audit.lookupOpenCodePerm(id); ok {
-			rememberedDir = strings.TrimSpace(snap.Directory)
-		}
-	}
-	if primary == "" {
-		primary = rememberedDir
-	}
-	status, respRaw, err := s.openCodeRaw(ctx, http.MethodPost, path, directoryQuery(primary, nil), raw)
-	if err != nil || status != http.StatusNotFound {
-		return status, respRaw, err
-	}
-	candidates := s.openCodeCandidateDirs("")
-	if rememberedDir != "" {
-		candidates = append([]string{rememberedDir}, candidates...)
-	}
-	seen := map[string]bool{normalizeComparePath(primary): true}
-	for _, candidate := range candidates {
-		key := normalizeComparePath(candidate)
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		if st, body, retryErr := s.openCodeRaw(ctx, http.MethodPost, path, directoryQuery(candidate, nil), raw); retryErr == nil && st != http.StatusNotFound {
-			return st, body, nil
-		}
-	}
-	return status, respRaw, nil
-}
-
-func (s *Service) openCodeCandidateDirs(directory string) []string {
-	seen := make(map[string]bool)
-	out := make([]string, 0, 4)
-	add := func(d string) {
-		trimmed := strings.TrimSpace(d)
-		key := normalizeComparePath(trimmed)
-		if !seen[key] {
-			seen[key] = true
-			out = append(out, trimmed)
-		}
-	}
-	normFilter := normalizeComparePath(directory)
-	add(directory)
-	addRec := func(rec SessionRecord, ok bool) {
-		if !ok || rec.Runtime != "opencode" {
-			return
-		}
-		if normFilter != "" && normalizeComparePath(rec.ProjectDir) != normFilter && normalizeComparePath(rec.WorktreePath) != normFilter {
-			return
-		}
-		if rec.WorktreePath != "" {
-			add(rec.WorktreePath)
-		}
-		if rec.ProjectDir != "" {
-			add(rec.ProjectDir)
-		}
-	}
-	for _, sid := range s.busySessionIDs() {
-		addRec(s.store.Meta(sid))
-	}
-	if normFilter == "" {
-		for _, info := range s.store.List("") {
-			addRec(s.store.Meta(info.ID))
-		}
-	}
-	return out
 }
 
 func (s *Service) replyRunnerPermission(w http.ResponseWriter, r *http.Request, id string) {
@@ -744,6 +688,10 @@ func (s *Service) listUnifiedPermissions(ctx context.Context, directory string) 
 				}
 				if s.audit != nil {
 					s.audit.rememberOpenCodePerm(item, dir)
+				}
+				sessionID, _ := item["sessionID"].(string)
+				if s.claimOpenCodePermission(item, sessionID, dir, nil) {
+					continue
 				}
 				out = append(out, item)
 			}

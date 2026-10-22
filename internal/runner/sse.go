@@ -194,7 +194,7 @@ func (s *Service) pumpOpenCodeEvents(ctx context.Context, directory string, out 
 			if resp.StatusCode == http.StatusOK {
 				opened := time.Now()
 				if attempt == 0 || sendFrame(ctx, out, resyncFrame) {
-					s.relayOpenCodeFrames(connCtx, cancel, resp.Body, out)
+					s.relayOpenCodeFrames(connCtx, cancel, resp.Body, out, directory)
 				}
 				if time.Since(opened) >= upstreamStableAfter {
 					delay = upstreamRetryMin
@@ -215,7 +215,7 @@ func (s *Service) pumpOpenCodeEvents(ctx context.Context, directory string, out 
 // relayOpenCodeFrames forwards complete SSE frames, so a frame cut off by a
 // disconnect is dropped instead of merging into the next event. A silent
 // socket is cancelled so the pump can reconnect.
-func (s *Service) relayOpenCodeFrames(ctx context.Context, cancel context.CancelFunc, body io.Reader, out chan<- string) {
+func (s *Service) relayOpenCodeFrames(ctx context.Context, cancel context.CancelFunc, body io.Reader, out chan<- string, directory string) {
 	idle := time.AfterFunc(upstreamIdleTimeout, cancel)
 	defer idle.Stop()
 
@@ -238,7 +238,8 @@ func (s *Service) relayOpenCodeFrames(ctx context.Context, cancel context.Cancel
 		}
 		if strings.HasPrefix(line, "data:") && keep {
 			// The unified stream sends its own heartbeat.
-			if strings.Contains(line, `"`+heartbeatEventType+`"`) || !s.AllowOpenCodeSSELine(line) {
+			if strings.Contains(line, `"`+heartbeatEventType+`"`) || !s.AllowOpenCodeSSELine(line) ||
+				s.claimOpenCodeSSELine(line, directory) {
 				keep = false
 			} else {
 				line = trimSummaryDiffPatches(line)

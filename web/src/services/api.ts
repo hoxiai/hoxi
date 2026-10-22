@@ -2,6 +2,8 @@
 import type {
   ApprovalAuditEntry,
   ApprovalGrant,
+  ApprovalPolicy,
+  ApprovalPolicyState,
   MessageInfo,
   MessagePart,
   PermissionRequest,
@@ -12,7 +14,7 @@ import type {
   SnapshotFileDiff,
 } from "./sse-types";
 
-export type { ApprovalAuditEntry, ApprovalGrant, MessageInfo, MessagePart };
+export type { ApprovalAuditEntry, ApprovalGrant, ApprovalPolicy, ApprovalPolicyState, MessageInfo, MessagePart };
 import type {
   AgentInfo,
   BootstrapInfo,
@@ -427,6 +429,12 @@ export const hoxiAPI = {
   },
   async clearApprovalAudit(): Promise<void> {
     await requestJSON("/api/hoxi/permission/audit", { method: "DELETE" });
+  },
+  fetchApprovalPolicy(): Promise<ApprovalPolicyState> {
+    return requestJSON("/api/hoxi/permission/policy");
+  },
+  updateApprovalPolicy(policy: ApprovalPolicy): Promise<ApprovalPolicyState> {
+    return requestJSON("/api/hoxi/permission/policy", { method: "PUT", body: JSON.stringify(policy) });
   },
   // Interactive Question Dock (Kilo QuestionDock)
   listQuestions(directory?: string): Promise<QuestionRequest[]> {

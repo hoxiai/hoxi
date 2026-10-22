@@ -103,12 +103,32 @@ func applyThreeWay(dir, patch string) error {
 	return nil
 }
 
-// HasCommittedHead reports whether dir is inside a git repository with at
-// least one commit, the precondition for creating isolated worktrees.
+// HasCommittedHead reports whether dir is itself the root of a git repository
+// with at least one commit, the precondition for creating isolated worktrees.
+// A subdirectory of a repository does not qualify: git worktree would check
+// out the whole parent repository, so the session would silently work on a
+// different project than the folder the user opened.
 func HasCommittedHead(dir string) bool {
 	if strings.TrimSpace(dir) == "" {
 		return false
 	}
-	_, err := runGit(dir, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
+	topLevel, err := runGit(dir, "rev-parse", "--show-toplevel")
+	if err != nil || strings.TrimSpace(topLevel) == "" {
+		return false
+	}
+	if !sameRootPath(topLevel, dir) {
+		return false
+	}
+	_, err = runGit(dir, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
 	return err == nil
+}
+
+// sameRootPath compares two directories after resolving symlinks.
+func sameRootPath(left, right string) bool {
+	leftCanonical, leftErr := filepath.EvalSymlinks(left)
+	rightCanonical, rightErr := filepath.EvalSymlinks(right)
+	if leftErr != nil || rightErr != nil {
+		return false
+	}
+	return filepath.Clean(leftCanonical) == filepath.Clean(rightCanonical)
 }

@@ -87,7 +87,7 @@ func (s *Service) provisionSessionDirectory(rec *SessionRecord) error {
 		return fmt.Errorf("failed to create isolated git worktree: %w", err)
 	}
 	if !meta.Isolated {
-		return errors.New("cannot create an isolated Git worktree; ensure the project has at least one commit")
+		return errors.New("cannot create an isolated Git worktree; the folder must be the root of a Git repository with at least one commit")
 	}
 	if err := ValidateWorktreeDir(meta.Directory, rec.ProjectDir); err != nil {
 		return err

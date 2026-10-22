@@ -290,7 +290,7 @@ func (s *approvalAuditStore) rememberOpenCodePerm(item map[string]interface{}, d
 		perm, _ = item["type"].(string)
 	}
 	summary, tool := summarizePermissionItem(item)
-	destructive := isDestructivePermissionItem(perm, summary, item)
+	destructive := isDestructivePermissionRequest(item)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -344,45 +344,6 @@ func summarizePermissionItem(item map[string]interface{}) (string, string) {
 		}
 	}
 	return firstNonEmptyStr(firstString(item["title"], meta["description"]), tool, "permission"), tool
-}
-
-func isDestructivePermissionItem(perm, summary string, item map[string]interface{}) bool {
-	lowerPerm := strings.ToLower(strings.TrimSpace(perm))
-	if lowerPerm == "doom_loop" {
-		return true
-	}
-	meta, _ := item["metadata"].(map[string]interface{})
-	if d, _ := meta["destructive"].(bool); d {
-		return true
-	}
-	if lowerPerm == "external_directory" {
-		return !externalDirectoryTargetsAreRoutine(item)
-	}
-	if ext, _ := meta["externalDirectory"].(bool); ext && !externalDirectoryTargetsAreRoutine(item) {
-		return true
-	}
-	switch lowerPerm {
-	case "edit", "write", "patch", "multiedit", "apply_patch", "tool":
-		if strings.EqualFold(strings.TrimSpace(firstString(meta["tool"])), "unsandboxed") {
-			return true
-		}
-		if lowerPerm != "tool" && (isProtectedRelPath(summary) || isSensitiveExternalPath(summary)) {
-			return true
-		}
-		for _, p := range externalDirectoryTargets(item) {
-			if lowerPerm == "tool" && strings.EqualFold(strings.TrimSpace(p), strings.TrimSpace(firstString(meta["tool"], item["patterns"]))) {
-				continue
-			}
-			if isProtectedRelPath(p) || isSensitiveExternalPath(p) {
-				return true
-			}
-		}
-		if cmd := firstString(meta["command"], meta["cmd"]); cmd != "" && isDestructiveCommand(cmd) {
-			return true
-		}
-		return false
-	}
-	return isDestructiveCommand(summary)
 }
 
 func redactApprovalText(v string, limit int) string {
@@ -462,7 +423,7 @@ func (s *Service) recordRunnerApprovalAudit(cred hookCredential, req map[string]
 			source = "desktop"
 		}
 	}
-	destructive := isDestructivePermissionItem(perm, summary, req)
+	destructive := isDestructivePermissionRequest(req)
 	s.audit.record(ApprovalAuditEntry{
 		Timestamp:    time.Now().UnixMilli(),
 		RequestID:    reqID,

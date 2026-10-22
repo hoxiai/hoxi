@@ -168,7 +168,8 @@ func (s *Service) decideClaudeHookCall(r *http.Request, cred hookCredential, p c
 	switch {
 	case lowerTool == "edit" || lowerTool == "multiedit" || lowerTool == "write" || lowerTool == "notebookedit":
 		path := resolveHookToolPath(baseDir, argsMap)
-		if path != "" && pathWithin(rec.WorktreePath, path) && !isProtectedWorktreePath(rec.WorktreePath, path) {
+		if path != "" && pathWithin(rec.WorktreePath, path) && !isProtectedWorktreePath(rec.WorktreePath, path) &&
+			s.policyApprovesWorktreeEdit(rec, path) {
 			return "", ""
 		}
 		if approved, reason := s.gateToolCall(r, cred, p.ToolName, argsMap, p.ToolUseID); approved {
@@ -179,7 +180,7 @@ func (s *Service) decideClaudeHookCall(r *http.Request, cred hookCredential, p c
 
 	case lowerTool == "read" || lowerTool == "notebookread":
 		path := resolveHookToolPath(baseDir, argsMap)
-		if path != "" && pathWithin(rec.WorktreePath, path) {
+		if path != "" && pathWithin(rec.WorktreePath, path) && !isSecretFilePath(path) {
 			return "", ""
 		}
 		if approved, reason := s.gateToolCall(r, cred, p.ToolName, argsMap, p.ToolUseID); approved {
@@ -204,7 +205,8 @@ func (s *Service) decideClaudeHookCall(r *http.Request, cred hookCredential, p c
 		return "", ""
 	}
 
-	// Unknown and external/network/MCP tools must ask the user (Guardrail §1).
+	// Unknown and external/network/MCP tools are never passed through: the
+	// approval policy decides them like every other runtime's requests.
 	if approved, reason := s.gateToolCall(r, cred, p.ToolName, argsMap, p.ToolUseID); approved {
 		return "allow", ""
 	} else {

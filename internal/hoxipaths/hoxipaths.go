@@ -39,6 +39,7 @@ var protectedStateFiles = []string{
 	"tunnel.json",
 	"tunnel-dev.json",
 	"approval-audit.json",
+	"approval-policy.json",
 	"relay-keys.json",
 }
 
@@ -109,6 +110,12 @@ func TunnelConfigPath(variant string) string {
 		return Join("tunnel-dev.json")
 	}
 	return Join("tunnel.json")
+}
+
+// ApprovalPolicyPath returns ~/.hoxi/approval-policy.json, the approval mode
+// and per-tool overrides every runtime's approval gate reads.
+func ApprovalPolicyPath() string {
+	return Join("approval-policy.json")
 }
 
 // BinDir returns ~/.hoxi/bin, where Hoxi installs its managed binaries.

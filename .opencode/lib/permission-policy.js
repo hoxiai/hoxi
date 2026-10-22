@@ -1,6 +1,9 @@
-// Shared by the OpenCode plugin, desktop approval modes, and the Go port in
-// internal/runner/permission_policy.go. Keep both ports and
-// .opencode/lib/permission-policy.cases.json in sync.
+// The approval decision itself lives in Go (internal/runner/approval_decision.go):
+// it answers every runtime's requests, with or without a window open. The
+// desktop uses this port only to explain a docked request (e.g. the
+// destructive warning on the approval card). Keep it identical to the Go
+// port: .opencode/lib/permission-policy.cases.json covers commands and
+// .opencode/lib/permission-request.cases.json covers whole requests.
 const DESTRUCTIVE_RE =
   /\b(rm|rmdir|unlink|shred|truncate|srm|sudo|chmod|chown|mkfs|dd|diskutil|killall|reboot|shutdown)\b|\bkill\s+(?:-[A-Za-z0-9]+\s+)*(?:[A-Za-z0-9]+\s+)?[-?\d%]|\bpkill\b|[>|]\s*(?:\/etc\/|(?:\~|\$HOME|\$\{HOME\})\/\.(?:zshrc|zshenv|zprofile|bashrc|bash_profile|profile|ssh\b|gnupg\b|netrc\b|npmrc\b))|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.(?:ssh|aws|gnupg|kube)\/|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.(?:netrc|npmrc|git-credentials)(?:$|[\s;&|'"*?])|\.claude\/\.credentials\.json|\.docker\/config\.json|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.en(?:v(?:\.(?:local|prod(?:uction)?|dev(?:elopment)?|stag(?:e|ing)|test(?:ing)?|ci|preview|secret\w*|key\w*|private\w*|bak|backup)(?:\.local)?)?|\?|\*)(?:$|[\s;&|'"*?])|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.envrc(?:$|[\s;&|'"*?])|\bfind\b[^\n;&|]*\s-(delete|exec\w*|ok\w*|fprint\w*|fls)\b|\b(curl|wget)\b[^\n|]*\|\s*(sh|bash|zsh)\b|\b(?:npm|pnpm|yarn|cargo)\s+publish\b|\bterraform\s+(?:destroy|apply)\b|\bkubectl\s+delete\b|\bdocker\s+(?:system\s+prune|rm|rmi)\b/i;
 
@@ -414,6 +417,17 @@ const SENSITIVE_PATH_FRAGMENTS = [
 const SENSITIVE_ENV_BASENAME_RE =
   /^\.en(?:v(?:\.(?:local|prod(?:uction)?|dev(?:elopment)?|stag(?:e|ing)|test(?:ing)?|ci|preview|secret\w*|key\w*|private\w*|bak|backup)(?:\.local)?)?|\?|\*)$/i;
 
+// Reading these can expose credentials; mirrors isSecretFilePath in
+// internal/runner/external_path_risk.go and OpenCode's own `*.env` read rule.
+function isSecretPath(rawPath) {
+  if (typeof rawPath !== "string") return false;
+  const slash = rawPath.trim().replaceAll("\\", "/").toLowerCase().replace(/\/+$/, "");
+  if (!slash) return false;
+  const base = slash.slice(slash.lastIndexOf("/") + 1);
+  if (SENSITIVE_BASENAMES.has(base) || SENSITIVE_ENV_BASENAME_RE.test(base)) return true;
+  return SENSITIVE_PATH_FRAGMENTS.some((p) => `/${slash}/`.includes(p));
+}
+
 function stripWorktreePrefix(slash) {
   const marker = "/.hoxi/worktrees/";
   const idx = slash.lastIndexOf(marker);
@@ -538,7 +552,18 @@ export function isDestructivePermissionRequest(input) {
     const targets = externalDirectoryTargets(input);
     if (targets.length === 0 || targets.some(isSensitiveExternalPath)) return true;
   }
-  if (READ_PERMISSIONS.has(permission)) return false;
+  if (READ_PERMISSIONS.has(permission)) {
+    // Search patterns are not paths; only a file read can expose a secret.
+    if (permission !== "read") return false;
+    const meta = input?.metadata || {};
+    return [
+      ...(Array.isArray(input?.patterns) ? input.patterns : []),
+      input?.pattern,
+      meta.filepath,
+      meta.filePath,
+      meta.path,
+    ].some(isSecretPath);
+  }
   if (EDIT_PERMISSIONS.has(permission) || permission === "tool") {
     const toolName = String(input?.metadata?.tool || input?.patterns?.[0] || "").trim().toLowerCase();
     if (toolName === "unsandboxed") return true;

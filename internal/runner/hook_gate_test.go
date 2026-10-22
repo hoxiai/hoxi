@@ -30,6 +30,7 @@ func newGateFixture(t *testing.T) *gateFixture {
 	dir := t.TempDir()
 	tracker := statusbar.NewTracker()
 	svc := NewService(dir, nil, tracker, filepath.Join(t.TempDir(), "sessions.json"))
+	setTestApprovalPolicy(t, svc, ApprovalPolicy{Mode: ApprovalModeSmart})
 	if err := svc.store.Put(SessionRecord{ID: "ses_agy_gate", Runtime: "antigravity", ProjectDir: dir, WorktreePath: dir, ExternalID: "conv-1"}); err != nil {
 		t.Fatal(err)
 	}
@@ -192,8 +193,6 @@ func TestHookGateGatesUnknownTools(t *testing.T) {
 		"grep_secrets",
 		"browser_get_cookies",
 		"capture_browser_cookies",
-		"read_url_content",
-		"search_web",
 	} {
 		call, _ := json.Marshal(map[string]interface{}{
 			"conversationId": "conv-1",
@@ -213,6 +212,24 @@ func TestHookGateGatesUnknownTools(t *testing.T) {
 		if d := <-res; d.Decision != "deny" {
 			t.Fatalf("%s after reject: %q", tool, d.Decision)
 		}
+	}
+	// Network tools follow the webfetch rule: allowed in smart mode, asked in manual.
+	for _, tool := range []string{"read_url_content", "search_web"} {
+		call, _ := json.Marshal(map[string]interface{}{
+			"conversationId": "conv-1",
+			"toolCall":       map[string]interface{}{"name": tool, "args": map[string]interface{}{"Url": "https://example.com"}},
+		})
+		if d := f.callHook(t, call); d.Decision != "auto_approve" {
+			t.Fatalf("%s in smart mode: %q", tool, d.Decision)
+		}
+		setTestApprovalPolicy(t, f.svc, ApprovalPolicy{Mode: ApprovalModeManual})
+		res := f.asyncHook(t, call)
+		reqID, _ := waitForEvent(t, events, "permission.asked").Properties["id"].(string)
+		f.reply(t, reqID, "reject", "manual")
+		if d := <-res; d.Decision != "deny" {
+			t.Fatalf("%s in manual mode after reject: %q", tool, d.Decision)
+		}
+		setTestApprovalPolicy(t, f.svc, ApprovalPolicy{Mode: ApprovalModeSmart})
 	}
 }
 
@@ -236,6 +253,15 @@ func TestHookGateAutoApprovesReadsInWorktreeAndGatesOutsideReads(t *testing.T) {
 	for _, tool := range []string{"view_file", "read_file", "list_dir", "find_by_name", "grep_search"} {
 		if d := f.callHook(t, read(tool, filepath.Join(f.dir, "inside.txt"))); d.Decision != "auto_approve" {
 			t.Fatalf("%s inside workspace: %q", tool, d.Decision)
+		}
+		if d := f.callHook(t, read(tool, outsideFile)); d.Decision != "auto_approve" {
+			t.Fatalf("%s routine outside read in smart mode: %q", tool, d.Decision)
+		}
+	}
+	setTestApprovalPolicy(t, f.svc, ApprovalPolicy{Mode: ApprovalModeManual})
+	for _, tool := range []string{"view_file", "read_file", "list_dir", "find_by_name", "grep_search"} {
+		if d := f.callHook(t, read(tool, filepath.Join(f.dir, "inside.txt"))); d.Decision != "auto_approve" {
+			t.Fatalf("%s inside workspace in manual mode: %q", tool, d.Decision)
 		}
 		res := f.asyncHook(t, read(tool, outsideFile))
 		asked := waitForEvent(t, events, "permission.asked")
@@ -269,8 +295,10 @@ func TestHookGateEditsStayInsideWorktree(t *testing.T) {
 		if d := f.callHook(t, write(tool, filepath.Join(f.dir, "inside.txt"))); d.Decision != "auto_approve" {
 			t.Fatalf("%s inside workspace: %q", tool, d.Decision)
 		}
-		if d := f.callHook(t, write(tool, filepath.Join(t.TempDir(), "outside.txt"))); d.Decision != "deny" {
-			t.Fatalf("%s outside workspace: %q", tool, d.Decision)
+		// Routine targets outside the worktree follow the approval mode, as
+		// OpenCode's external_directory requests do.
+		if d := f.callHook(t, write(tool, filepath.Join(t.TempDir(), "outside.txt"))); d.Decision != "auto_approve" {
+			t.Fatalf("%s outside workspace in smart mode: %q", tool, d.Decision)
 		}
 		// Relative targets are resolved against the session worktree.
 		if d := f.callHook(t, write(tool, "sub/inside.txt")); d.Decision != "auto_approve" {
@@ -337,8 +365,30 @@ func TestHookGateEditsStayInsideWorktree(t *testing.T) {
 	if pathWithin(f.dir, escapeDangling) {
 		t.Fatal("pathWithin must reject dangling symlink pointing outside worktree")
 	}
-	if d := f.callHook(t, write("write_to_file", escapeDangling)); d.Decision != "deny" {
-		t.Fatalf("edit via dangling symlink outside worktree: %q", d.Decision)
+
+	// Manual mode asks for outside edits (including a symlink escape) and
+	// for ordinary in-worktree edits.
+	setTestApprovalPolicy(t, f.svc, ApprovalPolicy{Mode: ApprovalModeManual})
+	for _, target := range []string{escapeDangling, filepath.Join(t.TempDir(), "outside.txt"), filepath.Join(f.dir, "inside.txt")} {
+		res := f.asyncHook(t, write("write_to_file", target))
+		asked := waitForEvent(t, events, "permission.asked")
+		id, _ := asked.Properties["id"].(string)
+		f.reply(t, id, "reject", "manual")
+		if d := <-res; d.Decision != "deny" {
+			t.Fatalf("manual edit of %s after reject: %q", target, d.Decision)
+		}
+	}
+	// A credential path outside the worktree asks even in auto mode.
+	setTestApprovalPolicy(t, f.svc, ApprovalPolicy{Mode: ApprovalModeAuto})
+	res = f.asyncHook(t, write("write_to_file", filepath.Join(t.TempDir(), ".ssh", "authorized_keys")))
+	asked = waitForEvent(t, events, "permission.asked")
+	if meta, _ := asked.Properties["metadata"].(map[string]interface{}); meta["destructive"] != true {
+		t.Fatalf("credential edit must be destructive, got %#v", asked.Properties)
+	}
+	id, _ = asked.Properties["id"].(string)
+	f.reply(t, id, "reject", "no")
+	if d := <-res; d.Decision != "deny" {
+		t.Fatalf("credential edit after reject: %q", d.Decision)
 	}
 }
 
@@ -362,8 +412,8 @@ func TestHookGateEditsAcceptQuotedPaths(t *testing.T) {
 			"args": map[string]interface{}{"TargetFile": `"` + filepath.Join(t.TempDir(), "outside.txt") + `"`},
 		},
 	})
-	if d := f.callHook(t, outside); d.Decision != "deny" {
-		t.Fatalf("quoted outside path: %q", d.Decision)
+	if d := f.callHook(t, outside); d.Decision != "auto_approve" {
+		t.Fatalf("quoted routine outside path in smart mode: %q", d.Decision)
 	}
 }
 

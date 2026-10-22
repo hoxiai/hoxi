@@ -25,6 +25,7 @@ type Service struct {
 	status      *statusbar.Tracker
 	gate        *approvalGate
 	audit       *approvalAuditStore
+	policy      *approvalPolicyStore
 	doomLoop    *doomLoopGuard
 	stall       stallPolicy
 
@@ -37,12 +38,18 @@ type Service struct {
 	openCode        *ocapi.Client
 	managedOpenCode sync.Map
 	// childTurns caches OpenCode subagent transcripts read while filtering diffs.
-	childTurns     sync.Map // session ID -> childTurnsEntry
-	editedFiles    sync.Map // session ID -> editedFilesEntry
-	userSkillByMsg sync.Map // message ID -> userSkillOverride
-	stoppedTools   sync.Map // sessionID\x00(part|call):id -> bool
-	skillResolver  func(ctx context.Context, directory, sessionID string, sel SkillSelection) (ResolvedSkill, error)
+	childTurns      sync.Map // session ID -> childTurnsEntry
+	editedFiles     sync.Map // session ID -> editedFilesEntry
+	userSkillByMsg  sync.Map // message ID -> userSkillOverride
+	stoppedTools    sync.Map // sessionID\x00(part|call):id -> bool
+	skillResolver   func(ctx context.Context, directory, sessionID string, sel SkillSelection) (ResolvedSkill, error)
 	projectResolver ProjectResolver
+	// permissionRules returns OpenCode's `permission` block; onPolicySaved
+	// keeps OpenCode asking Hoxi after the approval policy changes.
+	permissionRules func() map[string]interface{}
+	onPolicySaved   func()
+	// openCodeAutoReplies tracks OpenCode requests the policy is answering.
+	openCodeAutoReplies sync.Map // request ID -> openCodeAutoReply* state
 }
 
 func NewService(rootDir string, worktrees *worktree.Manager, status *statusbar.Tracker, customStorePath string) *Service {
@@ -61,6 +68,7 @@ func NewService(rootDir string, worktrees *worktree.Manager, status *statusbar.T
 		status:      status,
 		gate:        newApprovalGate(),
 		audit:       newApprovalAuditStore(customStorePath),
+		policy:      newApprovalPolicyStore(customStorePath),
 		doomLoop:    newDoomLoopGuard(),
 		stall:       stallPolicyFromEnv(),
 		procs:       make(map[string]*activeProcess),

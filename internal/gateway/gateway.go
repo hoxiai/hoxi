@@ -149,6 +149,8 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 		return runnerSvc.RelinkProject(projectID, oldPath, newPath)
 	})
 	runnerSvc.ConfigureOpenCode(targetURL.String(), password)
+	runnerSvc.SetPermissionRulesSource(providers.PermissionRules)
+	runnerSvc.SetApprovalPolicyHook(providers.EnforceAskPermissions)
 	authSvc := auth.NewService(nil)
 	updaterSvc := updater.NewChecker(buildinfo.Version, nil)
 	leaderboardSvc := leaderboard.NewService("", nil)

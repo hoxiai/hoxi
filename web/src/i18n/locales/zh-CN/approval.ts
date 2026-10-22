@@ -95,6 +95,7 @@ export const approval: ApprovalI18n = {
   sourceDesktop: "桌面端",
   sourceTunnel: "远程隧道",
   sourceSystem: "系统超时/中断",
+  sourcePolicy: "审批模式自动放行",
   decisionOnce: "允许一次",
   decisionAlways: "本会话允许",
   decisionReject: "已拒绝",

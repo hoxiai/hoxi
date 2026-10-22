@@ -2,14 +2,21 @@
 import { createEffect, createMemo, createSignal, onCleanup, Show } from "solid-js";
 import type { MessageInfo, SessionStatus } from "../../services/sse-types";
 import {
+  compactSessionContext,
   computeProviderHealth,
   findBestFallbackModel,
   getEffectivePoolCandidates,
+  isContextOverflowError,
   isModelFree,
+  isModelUnavailableError,
   isRunnerStallError,
+  isSessionBusy,
   isUserAbortError,
   openDiagnostics,
   openProviderModal,
+  refreshProviders,
+  resolveAutoModelTarget,
+  isAutoModel,
   retryLastUserPrompt,
   selectModel,
   workspace,
@@ -24,10 +31,61 @@ import { t } from "../../i18n";
  */
 export function AssistantErrorCard(props: { info: MessageInfo }) {
   const isStall = () => isRunnerStallError(props.info);
+  const isOverflow = () => isContextOverflowError(props.info);
+  const [compacting, setCompacting] = createSignal(false);
+  const [compactNotice, setCompactNotice] = createSignal("");
+
+  const onCompactAndRetry = async () => {
+    const sessionID = props.info.sessionID;
+    const selected = workspace.selectedModel;
+    if (!sessionID || !selected || compacting() || isSessionBusy(sessionID)) return;
+    const model = isAutoModel(selected)
+      ? resolveAutoModelTarget(selected, { advance: false })
+      : selected;
+    if (!model) {
+      setCompactNotice(t("timeline.contextCompactUnavailable"));
+      return;
+    }
+    setCompactNotice("");
+    setCompacting(true);
+    try {
+      const compacted = await compactSessionContext(sessionID, model);
+      if (!compacted) {
+        setCompactNotice(t("timeline.contextCompactUnavailable"));
+        return;
+      }
+      await retryLastUserPrompt(sessionID);
+    } catch (err) {
+      console.error("compact before retry failed:", err);
+      setCompactNotice(t("timeline.contextCompactFailed"));
+    } finally {
+      setCompacting(false);
+    }
+  };
+
+  const isModelUnavailable = () => isModelUnavailableError(props.info);
+  const [reloading, setReloading] = createSignal(false);
+  const reloadCatalog = async () => {
+    if (reloading()) return;
+    setReloading(true);
+    try {
+      await refreshProviders(true);
+    } finally {
+      setReloading(false);
+    }
+  };
   const errTitle = () =>
-    isStall() ? t("timeline.stalledErrorTitle") : props.info.error?.name || t("timeline.apiError");
+    isStall()
+      ? t("timeline.stalledErrorTitle")
+      : isOverflow()
+        ? t("timeline.contextOverflowTitle")
+        : isModelUnavailable()
+          ? t("timeline.modelNotLoadedTitle")
+          : props.info.error?.name || t("timeline.apiError");
   const errMessage = () =>
     (isStall() && t("timeline.stalledErrorMessage")) ||
+    (isOverflow() && t("timeline.contextOverflowMessage")) ||
+    (isModelUnavailable() && t("timeline.modelNotLoadedMessage")) ||
     props.info.error?.data?.message ||
     props.info.error?.name ||
     t("timeline.modelRequestFailed");
@@ -130,17 +188,52 @@ export function AssistantErrorCard(props: { info: MessageInfo }) {
               >
                 {t("diagnostics.view")}
               </button>
-              <Show when={workspace.selectedModel}>
-                {(sel) => (
-                  <button
-                    type="button"
-                    onClick={() => void retryLastUserPrompt(props.info.sessionID)}
-                    class="inline-flex items-center gap-1.5 rounded-lg bg-[var(--accent-primary)] px-2.5 py-1 text-[11px] font-medium text-[var(--accent-foreground)] hover:opacity-90 transition-opacity cursor-pointer"
-                  >
-                    <Icon name="arrow-up" size="small" />
-                    <span>{t("timeline.retryWithModel", { model: sel().modelID })}</span>
-                  </button>
-                )}
+              <Show
+                when={isOverflow()}
+                fallback={
+                  <Show when={workspace.selectedModel}>
+                    {(sel) => (
+                      <button
+                        type="button"
+                        onClick={() => void retryLastUserPrompt(props.info.sessionID)}
+                        class="inline-flex items-center gap-1.5 rounded-lg bg-[var(--accent-primary)] px-2.5 py-1 text-[11px] font-medium text-[var(--accent-foreground)] hover:opacity-90 transition-opacity cursor-pointer"
+                      >
+                        <Icon name="arrow-up" size="small" />
+                        <span>{t("timeline.retryWithModel", { model: sel().modelID })}</span>
+                      </button>
+                    )}
+                  </Show>
+                }
+              >
+                <button
+                  type="button"
+                  disabled={compacting() || isSessionBusy(props.info.sessionID)}
+                  aria-busy={compacting()}
+                  onClick={() => void onCompactAndRetry()}
+                  class="inline-flex items-center gap-1.5 rounded-lg bg-[var(--accent-primary)] px-2.5 py-1 text-[11px] font-medium text-[var(--accent-foreground)] hover:opacity-90 transition-opacity disabled:opacity-50 cursor-pointer"
+                >
+                  <Icon name={compacting() ? "circle-check" : "compress"} size="small" />
+                  <span>{t("timeline.contextOverflowCompactRetry")}</span>
+                </button>
+              </Show>
+
+              <Show when={compactNotice()}>
+                <span role="status" class="text-[11px] text-[var(--danger-text)]">
+                  {compactNotice()}
+                </span>
+              </Show>
+
+              <Show when={isModelUnavailable()}>
+                <button
+                  type="button"
+                  disabled={reloading()}
+                  aria-busy={reloading()}
+                  onClick={() => void reloadCatalog()}
+                  class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--accent-border)] bg-[var(--accent-surface)] px-2.5 py-1 text-[11px] font-medium text-[var(--accent-text)] hover:opacity-90 transition-opacity disabled:opacity-50 cursor-pointer"
+                >
+                  <Icon name={reloading() ? "circle-check" : "reset"} size="small" />
+                  <span>{t("timeline.reloadModelCatalog")}</span>
+                </button>
               </Show>
 
               <Show when={recommendedFallback()}>

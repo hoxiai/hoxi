@@ -30,6 +30,7 @@ func newClaudeGateFixture(t *testing.T) *claudeGateFixture {
 	dir := t.TempDir()
 	tracker := statusbar.NewTracker()
 	svc := NewService(dir, nil, tracker, filepath.Join(t.TempDir(), "sessions.json"))
+	setTestApprovalPolicy(t, svc, ApprovalPolicy{Mode: ApprovalModeSmart})
 	if err := svc.store.Put(SessionRecord{ID: "ses_cc_gate", Runtime: "claude-code", ProjectDir: dir, WorktreePath: dir, ExternalID: "cc-uuid-1"}); err != nil {
 		t.Fatal(err)
 	}
@@ -253,8 +254,13 @@ func TestClaudeHookGatesProtectedEditsOutsideReadsAndExternalTools(t *testing.T)
 		t.Fatalf("expected deny on protected path, got %q", d)
 	}
 
-	// 2. Out-of-worktree Read must ask and return allow when approved.
+	// 2. Smart mode reads a routine out-of-worktree file without asking;
+	// manual mode asks and returns allow when approved.
 	outsideFile := filepath.Join(t.TempDir(), "secrets.txt")
+	if d := <-callTool("Read", "toolu_out_read_smart", map[string]interface{}{"file_path": outsideFile}); d != "allow|" {
+		t.Fatalf("smart mode out-of-worktree Read: %q", d)
+	}
+	setTestApprovalPolicy(t, f.svc, ApprovalPolicy{Mode: ApprovalModeManual})
 	resReadOutside := callTool("Read", "toolu_out_read", map[string]interface{}{
 		"file_path": outsideFile,
 	})
@@ -279,6 +285,8 @@ func TestClaudeHookGatesProtectedEditsOutsideReadsAndExternalTools(t *testing.T)
 	if d := <-resWeb; d != "allow|" {
 		t.Fatalf("expected allow after once for WebFetch, got %q", d)
 	}
+
+	setTestApprovalPolicy(t, f.svc, ApprovalPolicy{Mode: ApprovalModeSmart})
 
 	// 4. Lowercase "bash" tool name is gated identically to "Bash".
 	resLowerBash := f.asyncDecide(t, f.payload("bash", "rm -rf build", "", "cc-uuid-1"))

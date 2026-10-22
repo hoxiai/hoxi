@@ -26,7 +26,8 @@ func inspectOpenCodeError(line string) {
 				Name string `json:"name"`
 				Data struct {
 					metadata
-					StatusCode int `json:"statusCode"`
+					Message    string `json:"message"`
+					StatusCode int    `json:"statusCode"`
 				} `json:"data"`
 			} `json:"error"`
 		} `json:"properties"`
@@ -48,7 +49,7 @@ func inspectOpenCodeError(line string) {
 		return
 	}
 	p := value.Properties
-	entry := diagnostics.SessionError(p.Error.Name, p.Error.Data.StatusCode)
+	entry := diagnostics.SessionError(p.Error.Name, p.Error.Data.Message, p.Error.Data.StatusCode)
 	if entry == nil {
 		return
 	}

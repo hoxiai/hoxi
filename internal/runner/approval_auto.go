@@ -1,0 +1,252 @@
+package runner
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/url"
+	"path/filepath"
+	"strings"
+	"time"
+)
+
+// approvalSourcePolicy marks decisions the approval policy made without the
+// user, in audit entries and permission.replied events.
+const approvalSourcePolicy = "policy"
+
+const (
+	openCodeAutoReplyInflight = 1
+	openCodeAutoReplyFailed   = 2
+)
+
+func (s *Service) currentPermissionRules() map[string]interface{} {
+	s.mu.Lock()
+	fn := s.permissionRules
+	s.mu.Unlock()
+	if fn == nil {
+		return nil
+	}
+	return fn()
+}
+
+// policyApproves reports whether item may run without asking the user.
+func (s *Service) policyApproves(item map[string]interface{}, worktree string) bool {
+	return approvalAutoApproves(item, s.ApprovalPolicy(), s.currentPermissionRules(), worktree)
+}
+
+// policyApprovesWorktreeEdit reports whether an in-worktree, non-protected
+// edit may run without asking (it may not in manual mode or with edit=ask).
+func (s *Service) policyApprovesWorktreeEdit(rec SessionRecord, path string) bool {
+	target := path
+	if rel, err := filepath.Rel(rec.WorktreePath, path); err == nil && rec.WorktreePath != "" {
+		target = filepath.ToSlash(rel)
+	}
+	return s.policyApproves(map[string]interface{}{"permission": "edit", "patterns": []string{target}}, rec.WorktreePath)
+}
+
+func (s *Service) sessionWorktree(sessionID string) string {
+	if rec, ok := s.store.Get(sessionID); ok {
+		return rec.WorktreePath
+	}
+	return ""
+}
+
+// recordPolicyApproval audits a request the policy let through, so the
+// approval history still shows what ran without a prompt.
+func (s *Service) recordPolicyApproval(cred hookCredential, req map[string]interface{}) {
+	if _, ok := req["id"].(string); !ok {
+		req["id"] = runnerPermissionID + randomHex(12)
+	}
+	s.recordRunnerApprovalAudit(cred, req, "once", approvalReply{Reply: "once", Source: approvalSourcePolicy})
+}
+
+// autoReplyOpenCode answers an OpenCode permission request on the policy's
+// behalf. Each request is answered once; a failed reply is never retried
+// and stays visible as a normal pending request.
+func (s *Service) autoReplyOpenCode(id, sessionID, directory string, onFail func()) {
+	if id == "" {
+		return
+	}
+	if _, loaded := s.openCodeAutoReplies.LoadOrStore(id, openCodeAutoReplyInflight); loaded {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		status, _, err := s.replyOpenCodePermission(ctx, id, directory, []byte(`{"reply":"once"}`))
+		switch {
+		case err == nil && status >= 200 && status < 300:
+			s.recordOpenCodeAudit(id, sessionID, directory, "once", "", approvalSourcePolicy)
+			s.openCodeAutoReplies.Delete(id)
+		case err == nil && status == http.StatusNotFound:
+			// Already answered elsewhere.
+			s.openCodeAutoReplies.Delete(id)
+		default:
+			s.openCodeAutoReplies.Store(id, openCodeAutoReplyFailed)
+			if onFail != nil {
+				onFail()
+			}
+		}
+	}()
+}
+
+func (s *Service) openCodeAutoReplyState(id string) int {
+	if v, ok := s.openCodeAutoReplies.Load(id); ok {
+		state, _ := v.(int)
+		return state
+	}
+	return 0
+}
+
+// claimOpenCodePermission decides a pending OpenCode request. It returns true
+// when the request is handled by the policy (or already being handled) and
+// must not reach the user.
+func (s *Service) claimOpenCodePermission(item map[string]interface{}, sessionID, directory string, onFail func()) bool {
+	id, _ := item["id"].(string)
+	if id == "" || !s.openCode.Available() {
+		return false
+	}
+	switch s.openCodeAutoReplyState(id) {
+	case openCodeAutoReplyInflight:
+		return true
+	case openCodeAutoReplyFailed:
+		return false
+	}
+	if !s.policyApproves(item, directory) {
+		return false
+	}
+	s.autoReplyOpenCode(id, sessionID, directory, onFail)
+	return true
+}
+
+// claimOpenCodeSSELine handles permission.asked frames on the raw OpenCode
+// stream (sessions the runner does not drive). It reports whether the frame
+// was answered by the policy and must be dropped.
+func (s *Service) claimOpenCodeSSELine(line, directory string) bool {
+	if !strings.Contains(line, `"permission.asked"`) {
+		return false
+	}
+	var envelope struct {
+		Type       string                 `json:"type"`
+		Properties map[string]interface{} `json:"properties"`
+		Directory  string                 `json:"directory"`
+		Payload    *struct {
+			Type       string                 `json:"type"`
+			Properties map[string]interface{} `json:"properties"`
+		} `json:"payload"`
+	}
+	if json.Unmarshal([]byte(strings.TrimSpace(strings.TrimPrefix(line, "data:"))), &envelope) != nil {
+		return false
+	}
+	if envelope.Payload != nil {
+		envelope.Type, envelope.Properties = envelope.Payload.Type, envelope.Payload.Properties
+	}
+	if envelope.Type != "permission.asked" || envelope.Properties == nil {
+		return false
+	}
+	dir := firstNonEmptyStr(envelope.Directory, directory)
+	sessionID, _ := envelope.Properties["sessionID"].(string)
+	if s.audit != nil {
+		s.audit.rememberOpenCodePerm(envelope.Properties, dir)
+	}
+	return s.claimOpenCodePermission(envelope.Properties, sessionID, dir, nil)
+}
+
+// reconcilePendingApprovals lets requests that are already waiting through
+// when a policy change now allows them, as the desktop used to do locally.
+func (s *Service) reconcilePendingApprovals() {
+	s.gate.mu.Lock()
+	pending := make([]*pendingApproval, 0, len(s.gate.pending))
+	for _, pa := range s.gate.pending {
+		pending = append(pending, pa)
+	}
+	s.gate.mu.Unlock()
+	for _, pa := range pending {
+		if s.policyApproves(pa.req, s.sessionWorktree(pa.sid)) {
+			select {
+			case pa.reply <- approvalReply{Reply: "once", Source: approvalSourcePolicy}:
+			default:
+			}
+		}
+	}
+	if s.openCode == nil || !s.openCode.Available() {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		s.listUnifiedPermissions(ctx, "")
+	}()
+}
+
+func (s *Service) replyOpenCodePermission(ctx context.Context, id, directory string, raw []byte) (int, []byte, error) {
+	path := "/permission/" + url.PathEscape(id) + "/reply"
+	primary := strings.TrimSpace(directory)
+	rememberedDir := ""
+	if s.audit != nil {
+		if snap, ok := s.audit.lookupOpenCodePerm(id); ok {
+			rememberedDir = strings.TrimSpace(snap.Directory)
+		}
+	}
+	if primary == "" {
+		primary = rememberedDir
+	}
+	status, respRaw, err := s.openCodeRaw(ctx, http.MethodPost, path, directoryQuery(primary, nil), raw)
+	if err != nil || status != http.StatusNotFound {
+		return status, respRaw, err
+	}
+	candidates := s.openCodeCandidateDirs("")
+	if rememberedDir != "" {
+		candidates = append([]string{rememberedDir}, candidates...)
+	}
+	seen := map[string]bool{normalizeComparePath(primary): true}
+	for _, candidate := range candidates {
+		key := normalizeComparePath(candidate)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		if st, body, retryErr := s.openCodeRaw(ctx, http.MethodPost, path, directoryQuery(candidate, nil), raw); retryErr == nil && st != http.StatusNotFound {
+			return st, body, nil
+		}
+	}
+	return status, respRaw, nil
+}
+
+func (s *Service) openCodeCandidateDirs(directory string) []string {
+	seen := make(map[string]bool)
+	out := make([]string, 0, 4)
+	add := func(d string) {
+		trimmed := strings.TrimSpace(d)
+		key := normalizeComparePath(trimmed)
+		if !seen[key] {
+			seen[key] = true
+			out = append(out, trimmed)
+		}
+	}
+	normFilter := normalizeComparePath(directory)
+	add(directory)
+	addRec := func(rec SessionRecord, ok bool) {
+		if !ok || rec.Runtime != "opencode" {
+			return
+		}
+		if normFilter != "" && normalizeComparePath(rec.ProjectDir) != normFilter && normalizeComparePath(rec.WorktreePath) != normFilter {
+			return
+		}
+		if rec.WorktreePath != "" {
+			add(rec.WorktreePath)
+		}
+		if rec.ProjectDir != "" {
+			add(rec.ProjectDir)
+		}
+	}
+	for _, sid := range s.busySessionIDs() {
+		addRec(s.store.Meta(sid))
+	}
+	if normFilter == "" {
+		for _, info := range s.store.List("") {
+			addRec(s.store.Meta(info.ID))
+		}
+	}
+	return out
+}

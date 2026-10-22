@@ -5,7 +5,6 @@ import { connectEventStream } from "./services/sse";
 import { watchNetworkStatus } from "./services/network";
 import {
   advanceSessionGoal,
-  appSettings,
   applySessionDiffEvent,
   applyPartDeltaBatch,
   applyManagedStatusSnapshot,
@@ -22,6 +21,7 @@ import {
   indexSessionFromEvent,
   lastPromptDispatchedAt,
   loadAgents,
+  loadApprovalPolicy,
   loadProjects,
   loadProviders,
   loadProviderTelemetry,
@@ -43,7 +43,6 @@ import {
   selectSession,
   setWorkspace,
   syncActiveProjectID,
-  syncApprovalModeToOpenCodeConfig,
   syncPendingPermissions,
   syncSessionStatuses,
   triggerDesktopNotification,
@@ -118,8 +117,8 @@ export default function App() {
         void loadProviders();
         void loadProviderTelemetry();
         void loadAgents();
-        void syncApprovalModeToOpenCodeConfig(appSettings.approvalMode, {
-          preserveCustomRules: true,
+        void loadApprovalPolicy().catch((e) => {
+          console.warn("Failed to load approval policy:", e);
         });
         void syncPendingPermissions(eagerBootRoot || undefined);
         void hoxiAPI

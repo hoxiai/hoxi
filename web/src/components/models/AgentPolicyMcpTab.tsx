@@ -11,6 +11,7 @@ import { t } from "../../i18n";
 import {
   appSettings,
   approvalGrants,
+  approvalPolicy,
   fetchGlobalConfig,
   resolveEffectivePermissionSummary,
   setApprovalMode,
@@ -78,7 +79,11 @@ export default function AgentPolicyMcpTab() {
   const currentMode = (): ApprovalMode => appSettings.approvalMode || "auto";
 
   const effective = createMemo(() =>
-    resolveEffectivePermissionSummary(currentMode(), workspace.globalConfig?.permission)
+    resolveEffectivePermissionSummary(
+      currentMode(),
+      workspace.globalConfig?.permission,
+      approvalPolicy()
+    )
   );
 
   const showSavedFeedback = (ok: boolean, text: string) => {
@@ -88,9 +93,13 @@ export default function AgentPolicyMcpTab() {
     }, 2200);
   };
 
-  const onSelectPreset = (mode: ApprovalMode) => {
-    setApprovalMode(mode);
-    showSavedFeedback(true, t("models.policyUpdated"));
+  const onSelectPreset = async (mode: ApprovalMode) => {
+    try {
+      await setApprovalMode(mode);
+      showSavedFeedback(true, t("models.policyUpdated"));
+    } catch (err: any) {
+      showSavedFeedback(false, err?.message || t("models.policyUpdateFailed"));
+    }
   };
 
   const onChangeToolRule = async (
@@ -146,7 +155,7 @@ export default function AgentPolicyMcpTab() {
                 return (
                   <button
                     type="button"
-                    onClick={() => onSelectPreset(opt.id)}
+                    onClick={() => void onSelectPreset(opt.id)}
                     class={`flex flex-col justify-between rounded-2xl border p-4 text-left transition-colors cursor-pointer ${
                       isSelected()
                         ? "border-[var(--accent-border)] bg-[var(--accent-surface)]/45"

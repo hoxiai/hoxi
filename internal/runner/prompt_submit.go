@@ -121,6 +121,9 @@ func (s *Service) startPrompt(ctx context.Context, sessionID, directory string, 
 			if body.Model != nil {
 				modelID, providerID = body.Model.ModelID, body.Model.ProviderID
 			}
+			if checkErr := s.ensureOpenCodeModelAvailable(ctx, rec.WorktreePath, firstNonEmptyStr(providerID, rec.ProviderID), firstNonEmptyStr(modelID, rec.ModelID)); checkErr != nil {
+				return http.StatusConflict, checkErr
+			}
 			err := s.steerOpenCodeTurn(ctx, rec, firstNonEmptyStr(body.Agent, rec.Mode, "build"), modelID, providerID, body.Variant, body.System, promptText, body.Parts, body.SkillSelection)
 			if err != nil {
 				return http.StatusBadGateway, err
@@ -209,6 +212,9 @@ func (s *Service) startPrompt(ctx context.Context, sessionID, directory string, 
 
 	var err error
 	if rec.Runtime == "opencode" {
+		if checkErr := s.ensureOpenCodeModelAvailable(ctx, rec.WorktreePath, rec.ProviderID, modelID); checkErr != nil {
+			return http.StatusConflict, checkErr
+		}
 		err = s.startOpenCodeTurn(rec, mode, modelID, effort, body.System, userInfo, storedParts, deliveryParts)
 	} else {
 		input := runtimeMemoryContext(rec) + runtimeContext(rec)

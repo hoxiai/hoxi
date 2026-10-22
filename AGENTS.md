@@ -13,7 +13,7 @@
 - **宿主**（`internal/app`）：Wails v2 + `WKWebView`，窗口半透明、单实例锁、macOS 下关窗隐藏驻留；WebView 请求经 Wails AssetServer 进程内交给网关，另在回环地址监听桥接端口（release `127.0.0.1:5410`、dev `127.0.0.1:5420`，被占用时回落随机端口）供 WebSocket 与 CLI 使用
 - **状态栏**（`internal/statusbar`）：`NSStatusBar` 显示 `Running` / `Attention` 计数；新增待审批项时只回调一次，不含命令文本（经隧道转为手机推送）
 - **OpenCode 运行时**（`internal/opencode`）：官方 `opencode` 进程监管，每次启动生成随机 `OPENCODE_SERVER_PASSWORD` 并以 HTTP Basic Auth 访问
-- **多运行时引擎**（`internal/runner`）：统一驱动 Claude Code、Antigravity（`agy`）、Qoder、CodeBuddy 子进程，翻译为统一事件流；Claude Code 与 Antigravity 经 PreToolUse Hook 接入同一审批平面
+- **多运行时引擎**（`internal/runner`）：统一驱动 Claude Code、Antigravity（`agy`）、Qoder、CodeBuddy 子进程，翻译为统一事件流；Claude Code 与 Antigravity 经 PreToolUse Hook 接入同一审批平面，审批决策统一由 `internal/runner/approval_decision.go` 判定，策略存于 `~/.hoxi/approval-policy.json`
 - **前端工作区**（`web/`）：Vite + SolidJS + Tailwind 三栏布局；SSE 增量经 `requestAnimationFrame` 批处理；Subagent 嵌套时间线、`ThoughtBox`、`ToolCard`（含内联 LSP 诊断）；`@pierre/diffs` 代码审查、`@xterm/xterm` + WebGL 终端、无头 Chrome 浏览器（`internal/browser`）
 - **会话能力**：Git Worktree 会话隔离（`internal/worktree`，`?directory=` 作用域）、运行中纠偏（Steer）与停止、按消息回滚（Revert）与分叉（Fork）、8 维度会话压缩记忆（`.opencode/plugins/hoxi-memory.js`）、会话目标上报（`hoxi-goal.js`）
 - **外部 CLI 会话接管**（`internal/handoff`）：从 Claude / Codex / Gemini / Grok / OpenCode / Trae / Qoder / CodeBuddy 导入会话
@@ -87,8 +87,8 @@ Flutter + Riverpod + GoRouter + Dio，四栏：沟通 · 工程 · 专栏 · 我
 │           ├── ai_workspace/         # 工程：Hoxi (/api/hoxi/*) 与 GoPanel (/api/code/*) 编码会话、Git 审查与终端
 │           └── server/container/database/website/ssl/apps/resources/task_center/auth/settings
 ├── .opencode/
-│   ├── plugins/                      # hoxi-permissions.js, hoxi-memory.js & hoxi-goal.js
-│   ├── lib/                          # permission-policy.js + cases.json (shared safety-gate rules)
+│   ├── plugins/                      # hoxi-memory.js & hoxi-goal.js
+│   ├── lib/                          # permission-policy.js + permission-policy.cases.json + permission-request.cases.json (shared safety-gate rules)
 │   ├── skills/                       # Project-local Agent Skills
 │   └── memory/                       # Long-term project.md & per-session compaction records
 ├── docs/                             # Approval hooks, remote tunnel, auto-updates, release & direct-distribution guides (+ assets/)
@@ -170,7 +170,7 @@ Flutter + Riverpod + GoRouter + Dio，四栏：沟通 · 工程 · 专栏 · 我
    - 会话处于 `busy` 时必须支持实时纠偏（`Steer`）与中止（`Stop`），工具卡片（`ToolCard`）与推理抽屉（`ThoughtBox`）必须准确反映 `pending` / `running` / `completed` / `error` 四态与耗时，且状态变更需实时同步至 macOS 状态栏（`Running` / `Attention`）。
 
 6. **安全门控、网络外发边界、子进程消毒与资源边界 (Safety, Egress, Subprocess & Resource Hygiene)**
-   - **破坏性操作人工审批**：包含破坏性指令（`rm`, `sudo`, `chmod`, `chown`, `diskutil`, `mkfs`, `git push --force`, `git reset --hard`）的 Shell 操作严禁自动放行，必须在 `hoxi-permissions.js` 及多运行时 PreToolUse Hook 中返回 `"ask"`，触发状态栏 `Attention` 与 `<ApprovalGateCard />` 人工确认。
+   - **破坏性操作人工审批**：包含破坏性指令（`rm`, `sudo`, `chmod`, `chown`, `diskutil`, `mkfs`, `git push --force`, `git reset --hard`）的 Shell 操作与敏感文件读取（`.env` 等）严禁自动放行，必须由 Go 审批策略（`approvalAutoApproves` / `isDestructivePermissionRequest`）在所有模式下交给用户，触发状态栏 `Attention` 与 `<ApprovalGateCard />` 人工确认。
    - **本地网关与连接复用**：Go 网关仅监听 `127.0.0.1`，反向代理 `http.Transport` 必须配置 `Proxy: nil`（防系统代理 502）与 `FlushInterval: -1`（SSE 零缓冲）并复用长生命周期 `http.Transport`（严禁单次请求新建 Transport 导致连接泄漏）；读取外部 HTTP 响应或进程输出必须使用 `io.LimitReader` 限制体积。
    - **网络外发边界 (`Network Egress Boundary`)**：Hoxi 为开源本地工具，不提供托管的 AI 服务，AI 请求直连用户配置的提供商或 CLI，不经 Hoxi 云端中转。唯一的「中转」是本机回环的 OpenAI 兼容中转（`internal/provider/relay.go`），它同样把请求原样发往用户自己配置的服务商，且不经隧道开放。网关辅助外发（匿名启动上报、更新检查、账号登录、模型价格/排行榜同步）严禁携带提示词、代码、Diff 或会话内容；后台发起的 LLM 调用必须在 UI 中明确说明目的地，不得静默外发代码上下文。经 GoPanel 隧道的推送通知只携带待处理数量与标识，不含命令、代码或会话内容。
    - **外部子进程非交互消毒与 SQLite 防锁 (`Subprocess & SQLite Hygiene`)**：执行 `git` 或外部 CLI 子进程必须绑定 `context.Context` 超时并剥离交互式环境变量（设置 `GIT_TERMINAL_PROMPT=0`、`GCM_INTERACTIVE=never`，剥离 `GIT_ASKPASS`/`SSH_ASKPASS`/`GIT_EDITOR`）；读取外部 CLI 的 SQLite 库必须携带只读模式与 `_busy_timeout`，严禁阻塞外部进程。
@@ -206,7 +206,7 @@ Flutter + Riverpod + GoRouter + Dio，四栏：沟通 · 工程 · 专栏 · 我
     - **不伪造结果**：未取得真实数据时显示不可用；提交、接收、完成分别表述，不把“已下发”写成“已完成”。
 
 12. **AI 编码红线 (AI Guardrails, 来自真实事故)** —— 详见 [`docs/ai-coding-guardrails.md`](docs/ai-coding-guardrails.md)，修改审批、隧道、工作区/会话迁移、持久化、进程控制前必读
-    - **审批策略只解析一次、失败即 ask**：禁止把拆好的命令段重新拼成字符串再解析；含引号/反斜杠/`$(`/反引号等无法确定语义的输入不得走安全白名单；白名单按 token 锚定（禁止 `\b`）；未知工具与网络工具一律 ask，禁止按工具名前缀放行；Go 与 JS 策略必须同步修改并写入 `.opencode/lib/cases.json`。
+    - **审批策略只解析一次、失败即 ask**：禁止把拆好的命令段重新拼成字符串再解析；含引号/反斜杠/`$(`/反引号等无法确定语义的输入不得走安全白名单；白名单按 token 锚定（禁止 `\b`）；未知工具与网络工具按策略判定，禁止按工具名前缀放行；Go 与 JS 策略必须同步修改并写入两个 fixture：`.opencode/lib/permission-policy.cases.json`（命令级）和 `.opencode/lib/permission-request.cases.json`（请求级）。
     - **隧道白名单只用显式「方法 + 路由」清单**，禁止前缀匹配；执行命令、`open` 程序、工作区外文件、凭据与 OpenCode 原始透传永不经隧道开放。
     - **禁止用启发式推断破坏性操作**（按数组下标或 `os.Stat` 猜"移动"、"匹配不到就扩大 kill 范围"等）；迁移/删除/杀进程只在显式指令下执行，范围严格限定在本会话。
     - **校验函数不得静默丢弃输入**后交给按位置对比的逻辑；状态文件写入必须原子且处理错误，解析失败先备份、不得覆盖。

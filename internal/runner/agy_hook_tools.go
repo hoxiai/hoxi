@@ -224,9 +224,10 @@ func (s *Service) inspectHookToolRisk(sessionID, tool string, args map[string]in
 	return filepathOut, worktree, destructive, externalDir
 }
 
-// gateToolCall asks the user before a tool that can reach outside the
-// worktree (MCP, browser JavaScript, network egress, explicit unsandboxed
-// execution, or protected/out-of-worktree file access) runs.
+// gateToolCall decides a tool that can reach outside the worktree (MCP,
+// browser JavaScript, network egress, explicit unsandboxed execution, or
+// protected/out-of-worktree file access): the approval policy lets it run or
+// the user is asked. Destructive calls always reach the user.
 func (s *Service) gateToolCall(r *http.Request, cred hookCredential, tool string, args map[string]interface{}, callID string) (bool, string) {
 	key := hookToolGrantKey(tool, args)
 	targetPath, worktree, destructive, externalDir := s.inspectHookToolRisk(cred.sessionID, tool, args)
@@ -266,6 +267,10 @@ func (s *Service) gateToolCall(r *http.Request, cred hookCredential, tool string
 			"messageID": cred.messageID,
 			"callID":    callID,
 		},
+	}
+	if s.policyApproves(req, worktree) {
+		s.recordPolicyApproval(cred, req)
+		return true, ""
 	}
 	answer := s.awaitReply(r, cred, id, req)
 	switch answer.Reply {

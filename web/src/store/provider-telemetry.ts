@@ -376,6 +376,43 @@ export function isRunnerStallError(info?: MessageInfo | null): boolean {
   return info?.error?.name === "RunnerStalledError";
 }
 
+/**
+ * The running engine does not know this provider/model (usually a stale model
+ * catalog after models.json changed). Switching model or refreshing the catalog
+ * is the only way forward; retrying the same request cannot help.
+ */
+export function isModelUnavailableError(info?: MessageInfo | null): boolean {
+  if (!info?.error) return false;
+  const name = (info.error.name || "").toLowerCase();
+  const msg = (info.error.data?.message || "").toLowerCase();
+  return (
+    name === "providermodelnotfounderror" ||
+    msg.includes("model not found") ||
+    msg.includes("is not loaded in the running engine")
+  );
+}
+
+/**
+ * The model rejected the request because the conversation no longer fits its
+ * window. Retrying the same prompt cannot help: the session has to be compacted
+ * (or branched) first, so the error card offers compaction instead of a retry.
+ */
+export function isContextOverflowError(info?: MessageInfo | null): boolean {
+  const name = (info?.error?.name || "").toLowerCase();
+  const msg = (info?.error?.data?.message || "").toLowerCase();
+  return (
+    name === "contextoverflowerror" ||
+    name === "messageoutputlengtherror" ||
+    msg.includes("context limit") ||
+    msg.includes("context length") ||
+    msg.includes("context window") ||
+    msg.includes("maximum context") ||
+    msg.includes("too many tokens") ||
+    msg.includes("prompt is too long") ||
+    msg.includes("reduce the length")
+  );
+}
+
 export function recordAssistantTurnUpdated(info: MessageInfo) {
   if (info.role !== "assistant") return;
   const pid = info.providerID || resolveSessionProvider(info.sessionID)?.providerID;

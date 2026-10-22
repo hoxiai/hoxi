@@ -99,7 +99,7 @@ agy 发起 run_command
 - `hook_gate.go`：
   - 路由 `POST /api/hoxi/runner/hook/pretool`，只接受来自 127.0.0.1 的请求，用 `subtle.ConstantTimeCompare` 校验 token 与会话的对应关系。
   - 校验 `conversationId` 与会话记录的 externalID 一致（首次 `init` 之前允许为空），`toolCall.args.Cwd` / `workspacePaths` 必须落在会话目录内（`pathWithin` 同时解析多层符号链接与悬空符号链接，防止经符号链接越界）。
-  - 策略：把 `.opencode/lib/permission-policy.js` 移植到 Go（`internal/runner/permission_policy.go`），只解析一次命令链（绝不把命令段拼回字符串二次解析），对含转义/引号拼接/`$(`/反引号/变量展开的模糊语法一律 fail-closed（`ask`），按完整 token 匹配只读安全白名单并拦截高危参数（`find -exec/-delete/-fprint*`、`fd -x`、`rg --pre`、`git diff|log|show --output`、`go -exec/-toolexec/-o`、`go env -w` 等），同时对去混淆文本检测破坏性指令（含 git 参数缩写 `--forc`/`--har`、组合短参数 `-uf`、`+refspec` 强推）。再用同一份 `.opencode/lib/permission-policy.cases.json` 做 JS 和 Go 的一致性测试。规则与 `hoxi-permissions.js` 一致：破坏性命令 → ask，安全命令 → auto_approve，其余 → ask。
+  - 策略：把 `.opencode/lib/permission-policy.js` 移植到 Go（`internal/runner/permission_policy.go` 与 `internal/runner/approval_decision.go`），只解析一次命令链（绝不把命令段拼回字符串二次解析），对含转义/引号拼接/`$(`/反引号/变量展开的模糊语法一律 fail-closed（`ask`），按完整 token 匹配只读安全白名单并拦截高危参数（`find -exec/-delete/-fprint*`、`fd -x`、`rg --pre`、`git diff|log|show --output`、`go -exec/-toolexec/-o`、`go env -w` 等），同时对去混淆文本检测破坏性指令（含 git 参数缩写 `--forc`/`--har`、组合短参数 `-uf`、`+refspec` 强推）。再用 `.opencode/lib/permission-policy.cases.json`（命令级）与 `.opencode/lib/permission-request.cases.json`（请求级）做 JS 和 Go 的一致性测试。所有审批决策统一由 Go 的 `approvalAutoApproves` 根据 `~/.hoxi/approval-policy.json` 判定：破坏性命令与敏感凭据读取在所有模式下都必须询问用户。
   - ask：生成 `PermissionRequest{id:"per_agy_<seq>", sessionID, permission:"bash", patterns:[CommandLine], metadata:{command, cwd, source:"antigravity"}, always:[命令前缀], tool:{messageID, callID}}`，其中 `callID` 通过 `stepIdx` 映射到 translate.go 为该 step 生成的 tool part。然后推送 `permission.asked`，在 channel 上等待。
   - 会话内的 always 规则只存在 Hoxi 自己的会话记录里，**不写** agy 的 `settings.json`，避免污染用户的全局权限。
   - Stop、进程退出或会话删除时，所有挂起的请求统一以 deny 结束，并推送 `permission.replied`。
@@ -109,8 +109,8 @@ agy 发起 run_command
   - 工具报错 `tool call denied by pre-tool hook: …` → ToolCard 显示 `error`，标注"已被拒绝"。
   - `… timed out and was killed` → `error`，标注"审批超时"。
   - 工具分类（`hookToolAction`，仅使用精确名称白名单，禁止按 `read_*` / `list_*` 等前缀自动放行）：
-    - 只读类（`read_file` / `view_file` / `list_dir` / `find_by_name` / `grep_search` / `list_resources` / 浏览器读取等）→ 携带路径参数的读/列/搜工具仅当路径落在会话 worktree 内（含符号链接与悬空符号链接校验）时 `auto_approve`；路径在 worktree 外或缺失时推送 `permission:"tool"` 审批卡片。
-    - 写/改类（`write_to_file` / `write_file` / `replace_file_content` / `multi_replace_file_content` / `sed_file` / `notebook_edit`）→ 相对路径按 worktree 解析；区外（含指向区外的符号链接/悬空符号链接）直接 `deny` 并回传原因；落在 worktree 内但命中控制执行的敏感路径（`.git/**`、`.agents/**`、`.opencode/**`、`.claude/**`、`.hoxi/**`、`.vscode/settings.json`、`.envrc`）或未携带可识别路径参数时推送 `permission:"tool"` 审批卡片；其余区内普通文件 `auto_approve`。
+    - 只读类（`read_file` / `view_file` / `list_dir` / `find_by_name` / `grep_search` / `list_resources` / 浏览器读取等）→ 携带路径参数的读/列/搜工具当路径落在会话 worktree 内（含符号链接与悬空符号链接校验）且非 `.env` 等敏感凭据文件时直接 `auto_approve`；`.env` 等敏感文件在所有模式下推送 `permission:"tool"` 审批卡片；路径在 worktree 外或缺失时进入门控并按 `~/.hoxi/approval-policy.json` 策略决定。
+    - 写/改类（`write_to_file` / `write_file` / `replace_file_content` / `multi_replace_file_content` / `sed_file` / `notebook_edit`）→ 相对路径按 worktree 解析；落在 worktree 内外的常规路径按 `~/.hoxi/approval-policy.json` 策略决定（`auto` / `smart` 放行，`manual` 询问）；命中控制执行的敏感路径（`.git/**`、`.agents/**`、`.opencode/**`、`.claude/**`、`.hoxi/**`、`.vscode/settings.json`、`.envrc`、`.ssh/**` 等）或未携带可识别路径参数时在所有模式下推送 `permission:"tool"` 审批卡片。
     - 网络外发与高风险工具（`read_url_content` / `search_web` / `call_mcp_tool` / `mcp` / `execute_browser_javascript` / `execute_url` / `unsandboxed` / `run_workflow`）→ 推送 `permission:"tool"` 审批卡片；`always` 只记住完全相同的工具 + 参数，不写 agy 全局配置。
     - 控制类工具（`finish` / `task_boundary` / `ask_question`）→ 返回 `allow`，不阻塞轮次结束。
     - 未知工具 → 推送 `permission:"tool"` 审批卡片。无头模式会把需要权限的未知工具直接 soft-deny 并结束轮次，交给 Hoxi 审批才能让用户有机会放行。
@@ -151,7 +151,7 @@ agy 发起 run_command
 
 与原方案的差异：
 
-- 安全命令（策略判定为 allow）由 Go 端直接 `auto_approve`，不推送卡片，与 OpenCode 下 `hoxi-permissions.js` 的行为一致。其余命令推送 `permission.asked`，再由前端已有的 auto / smart / manual 审批模式决定是否自动回复。破坏性命令在任何模式下都需要手动确认。
+- 审批决策统一由 Go 端 `approvalAutoApproves`（`internal/runner/approval_decision.go`）按 `~/.hoxi/approval-policy.json`（`auto` / `smart` / `manual` 及工具覆盖）判定：策略允许的请求由 Go 直接 `auto_approve`，不推送 `permission.asked` 事件、不计入状态栏 Attention；策略不允许的请求（含任何模式下的破坏性命令与敏感凭据读取）推送 `permission.asked` 等待用户确认。前端只负责展示与编辑策略，不再替用户自动回复。
 - 会话内的 always 规则只保存在内存里，按完全相同的命令匹配，Hoxi 重启后失效。破坏性命令永远不会被 always 记住。
 
 未实现：设置页里的 hook 安装状态显示与按钮（后端接口已就绪）。

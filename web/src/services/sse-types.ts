@@ -217,8 +217,23 @@ export interface ApprovalAuditEntry {
   directory?: string;
   destructive?: boolean;
   decision: "once" | "always" | "reject" | "timeout" | "interrupted" | string;
-  source: "desktop" | "tunnel" | "system" | string;
+  source: "desktop" | "tunnel" | "system" | "policy" | string;
   message?: string;
+}
+
+/** Approval mode and per-tool overrides; the Go gate applies them to every runtime. */
+export interface ApprovalPolicy {
+  mode: "auto" | "smart" | "manual";
+  edit?: "" | "allow" | "ask";
+  webfetch?: "" | "allow" | "ask";
+  bash?: "" | "allow" | "smart" | "ask";
+  updatedAt?: number;
+}
+
+export interface ApprovalPolicyState {
+  policy: ApprovalPolicy;
+  /** False until the policy was saved once (the desktop migrates legacy settings then). */
+  exists: boolean;
 }
 
 export interface QuestionOption {

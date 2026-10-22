@@ -421,7 +421,11 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
                   type="button"
                   class="ml-auto inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
                   disabled={!!busy()}
-                  onClick={() => setApprovalMode("auto")}
+                  onClick={() =>
+                    void setApprovalMode("auto").catch((err) => {
+                      console.warn("Failed to set approval mode:", err);
+                    })
+                  }
                 >
                   <Zap size={11} class="text-[var(--ok-text)]" />
                   {t("approval.switchToAutoApprove")}

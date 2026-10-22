@@ -78,6 +78,7 @@ func TestTunnelRouteAllowlist(t *testing.T) {
 		{post, "/api/hoxi/skills/marketplace/install"}, {post, "/api/hoxi/skills/marketplace"},
 		{get, "/api/hoxi/permission/per_1"}, {get, "/api/hoxi/permission/audit"}, {http.MethodDelete, "/api/hoxi/permission/audit"},
 		{get, "/api/hoxi/permission/grants"}, {http.MethodDelete, "/api/hoxi/permission/grants"},
+		{get, "/api/hoxi/permission/policy"}, {http.MethodPut, "/api/hoxi/permission/policy"},
 		{get, "/api/hoxi/sessions//message"}, {get, "/api/hoxi/sessions/"},
 		// Methods are part of the allow-list.
 		{http.MethodPatch, "/api/hoxi/sessions/ses_1"}, {http.MethodDelete, "/api/hoxi/sessions/ses_1"},

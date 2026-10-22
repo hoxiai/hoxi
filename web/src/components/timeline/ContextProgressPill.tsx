@@ -48,6 +48,16 @@ export default function ContextProgressPill() {
 
   const contextLimit = createMemo(() => {
     const selected = workspace.selectedModel;
+    // Prefer the window the session is actually running on: a session started on
+    // one model and continued on another must not report against the new model.
+    const id = workspace.activeSessionID;
+    const turns = id ? workspace.messagesBySession[id] ?? [] : [];
+    for (let i = turns.length - 1; i >= 0; i--) {
+      const info = turns[i]?.info;
+      if (info?.providerID && info?.modelID) {
+        return contextLimitForSelection(info.providerID, info.modelID);
+      }
+    }
     return contextLimitForSelection(selected?.providerID, selected?.modelID);
   });
 
@@ -60,6 +70,7 @@ export default function ContextProgressPill() {
     let latestReasoning = 0;
     let latestCacheRead = 0;
     let latestCacheWrite = 0;
+    let latestTotal = 0;
     let totalCost = 0;
 
     for (const turn of turns) {
@@ -73,18 +84,23 @@ export default function ContextProgressPill() {
         latestReasoning = t.reasoning || 0;
         latestCacheRead = t.cache?.read || 0;
         latestCacheWrite = t.cache?.write || 0;
+        latestTotal = t.total || 0;
       }
     }
 
     const used =
-      latestInput + latestOutput + latestReasoning + latestCacheRead + latestCacheWrite;
+      latestTotal > 0
+        ? latestTotal
+        : latestInput + latestOutput + latestCacheRead + latestCacheWrite;
     const limit = contextLimit();
-    const percent = limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 0;
+    const rawPercent = limit > 0 ? Math.round((used / limit) * 100) : 0;
+    const percent = Math.min(100, rawPercent);
 
     return {
       used,
       limit,
       percent,
+      overLimit: rawPercent > 100,
       input: latestInput,
       output: latestOutput,
       reasoning: latestReasoning,
@@ -95,9 +111,10 @@ export default function ContextProgressPill() {
   });
 
   const usageColor = createMemo(() => {
-    const p = stats()?.percent ?? 0;
-    if (p >= 85) return "var(--status-danger)";
-    if (p >= 65) return "var(--status-warning)";
+    const s = stats();
+    if (!s) return "var(--accent-primary)";
+    if (s.overLimit || s.percent >= 85) return "var(--status-danger)";
+    if (s.percent >= 65) return "var(--status-warning)";
     return "var(--accent-primary)";
   });
 
@@ -196,6 +213,17 @@ export default function ContextProgressPill() {
                   / {formatCompactNumber(s().limit)}
                 </span>
               </div>
+
+              <Show when={s().overLimit}>
+                <p role="status" class="mt-2 text-[11px] leading-relaxed text-[var(--danger-text)]">
+                  {t("timeline.contextOverLimitHint")}
+                </p>
+              </Show>
+              <Show when={!s().overLimit && s().percent >= 85}>
+                <p role="status" class="mt-2 text-[11px] leading-relaxed text-[var(--status-warning)]">
+                  {t("timeline.contextNearLimitHint", { percent: s().percent })}
+                </p>
+              </Show>
 
               <div class="mt-3 h-[3px] w-full overflow-hidden rounded-full bg-[var(--bg-inset)]">
                 <div

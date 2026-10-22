@@ -347,7 +347,7 @@ func (s *Service) startOpenCodeTurn(rec SessionRecord, mode, modelID, effort, sy
 			payload["system"] = system
 		}
 		err := s.openCodeJSON(ctx, "POST", "/session/"+rec.ExternalID+"/message", rec.WorktreePath, payload, nil)
-		if err != nil && (strings.Contains(err.Error(), "OpenCode HTTP 404") || strings.Contains(err.Error(), "NotFoundError") || strings.Contains(err.Error(), "Session not found")) {
+		if isMissingEngineSession(err) {
 			var info SessionInfo
 			if createErr := s.openCodeJSON(ctx, "POST", "/session", rec.WorktreePath, map[string]interface{}{"title": rec.Title, "metadata": map[string]string{"hoxiConversation": rec.ID}}, &info); createErr == nil && info.ID != "" {
 				rec, _, _ = s.store.Update(rec.ID, func(r *SessionRecord) {
@@ -432,7 +432,7 @@ func (s *Service) startOpenCodeTurn(rec SessionRecord, mode, modelID, effort, sy
 		if stallErr := ap.stall.abortError(); stallErr != nil {
 			s.broadcast(rec.ID, SSEEvent{Type: "session.error", Properties: map[string]interface{}{"sessionID": rec.ID, "error": stallErr}})
 		} else if err != nil && !ap.wasAborted() {
-			s.broadcast(rec.ID, SSEEvent{Type: "session.error", Properties: map[string]interface{}{"sessionID": rec.ID, "error": &MessageError{Name: "OpenCodeError", Data: &MessageErrorData{Message: err.Error()}}}})
+			s.broadcast(rec.ID, SSEEvent{Type: "session.error", Properties: map[string]interface{}{"sessionID": rec.ID, "error": openCodeEngineError(err)}})
 		}
 	}()
 	return nil
@@ -579,6 +579,12 @@ func (s *Service) relayOpenCodeEventWithFiles(rec SessionRecord, raw []byte, fil
 			// session, command and risk instead of a bare request ID.
 			s.audit.rememberOpenCodePerm(evt.Properties, rec.WorktreePath)
 		}
+		// The policy answers what it allows before anyone sees it, so the
+		// status bar and phone push only count requests that need the user.
+		published := evt
+		if s.claimOpenCodePermission(evt.Properties, rec.ID, rec.WorktreePath, func() { s.publishOpenCodeEvent(rec.ID, published) }) {
+			return
+		}
 	}
 	if evt.Type == "session.status" || evt.Type == "session.idle" {
 		if evt.Type == "session.idle" || isOpenCodeIdleStatus(evt.Properties["status"]) {
@@ -613,11 +619,15 @@ func (s *Service) relayOpenCodeEventWithFiles(rec SessionRecord, raw []byte, fil
 	case "session.diff":
 		evt.Properties["diff"] = s.filterLocalSessionDiffEvent(rec.ID, evt.Properties["diff"])
 	}
+	s.publishOpenCodeEvent(rec.ID, evt)
+}
+
+func (s *Service) publishOpenCodeEvent(sessionID string, evt SSEEvent) {
 	if s.status != nil {
 		data, _ := json.Marshal(evt)
 		s.status.InspectSSELine("data: " + string(data))
 	}
-	s.broadcast(rec.ID, evt)
+	s.broadcast(sessionID, evt)
 }
 
 func isOpenCodeIdleStatus(raw interface{}) bool {

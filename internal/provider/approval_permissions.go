@@ -1,0 +1,77 @@
+package provider
+
+import (
+	"os"
+
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
+)
+
+// approvalPermissionKeys are the OpenCode permissions Hoxi's approval policy
+// decides. OpenCode must ask for them so every request reaches the runner's
+// policy; an "allow" here would run the tool before Hoxi ever sees it.
+var approvalPermissionKeys = []string{"edit", "webfetch", "websearch", "codesearch", "bash"}
+
+// normalizeApprovalPermissions keeps OpenCode asking Hoxi. Pattern objects
+// saved from approval cards get a "*": "ask" fallback, because OpenCode's
+// built-in default for an unmatched pattern is allow (a single "git *" rule
+// would otherwise let every other command run unasked). "deny" stays.
+// Turning legacy "allow" values into "ask" waits until the approval policy
+// file exists, so the desktop can first migrate them into the policy.
+func normalizeApprovalPermissions(doc map[string]interface{}, enforceAsk bool) bool {
+	perm, _ := doc["permission"].(map[string]interface{})
+	if perm == nil {
+		if !enforceAsk {
+			return false
+		}
+		perm = map[string]interface{}{}
+		doc["permission"] = perm
+	}
+	changed := false
+	for _, key := range approvalPermissionKeys {
+		switch v := perm[key].(type) {
+		case nil:
+			if enforceAsk {
+				perm[key] = "ask"
+				changed = true
+			}
+		case string:
+			if v != "ask" && v != "deny" && enforceAsk {
+				perm[key] = "ask"
+				changed = true
+			}
+		case map[string]interface{}:
+			_, star := v["*"]
+			_, doubleStar := v["**"]
+			if !star && !doubleStar {
+				v["*"] = "ask"
+				changed = true
+			}
+		}
+	}
+	return changed
+}
+
+func approvalPolicyExists() bool {
+	path := hoxipaths.ApprovalPolicyPath()
+	if path == "" {
+		return false
+	}
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+// PermissionRules returns the OpenCode `permission` block, whose pattern
+// rules the runner's approval policy applies to every runtime.
+func (g *Service) PermissionRules() map[string]interface{} {
+	perm, _ := g.loadHoxiConfigDoc()["permission"].(map[string]interface{})
+	return perm
+}
+
+// EnforceAskPermissions rewrites the OpenCode permission block after the
+// approval policy is saved, and reloads OpenCode once no session is busy.
+func (g *Service) EnforceAskPermissions() {
+	doc := g.loadHoxiConfigDoc()
+	if normalizeApprovalPermissions(doc, approvalPolicyExists()) {
+		_ = g.persistHoxiConfigDoc(doc)
+	}
+}

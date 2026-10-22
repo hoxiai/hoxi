@@ -52,6 +52,9 @@ func externalDirectoryTargets(item map[string]interface{}) []string {
 			}
 		}
 	}
+	for _, f := range metadataFilePaths(meta) {
+		add(f)
+	}
 	if rawArgs := firstString(meta["args"]); strings.HasPrefix(strings.TrimSpace(rawArgs), "{") {
 		var parsed map[string]interface{}
 		if json.Unmarshal([]byte(rawArgs), &parsed) == nil {
@@ -134,6 +137,28 @@ func isSensitiveExternalPath(rawPath string) bool {
 			if strings.Contains(slashDir, fragment) {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+// isSecretFilePath reports whether reading p could expose credentials: .env
+// variants, shell/credential dotfiles and key directories. It is narrower than
+// isSensitiveExternalPath, so reading .git or /etc/hosts inside a session
+// stays routine while `.env` asks in every mode, matching OpenCode's own
+// read defaults (`*.env`, `*.env.*` ask; `*.env.example` allowed).
+func isSecretFilePath(p string) bool {
+	slash := strings.TrimRight(strings.ToLower(filepath.ToSlash(strings.TrimSpace(p))), "/")
+	if slash == "" {
+		return false
+	}
+	base := slash[strings.LastIndex(slash, "/")+1:]
+	if sensitiveExternalBasenames[base] || sensitiveEnvBasenameRe.MatchString(base) {
+		return true
+	}
+	for _, fragment := range sensitiveExternalFragments {
+		if strings.Contains("/"+slash+"/", fragment) {
+			return true
 		}
 	}
 	return false

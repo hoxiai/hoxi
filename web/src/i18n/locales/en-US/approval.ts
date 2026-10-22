@@ -96,6 +96,7 @@ export const approval = {
   sourceDesktop: "Desktop",
   sourceTunnel: "Remote Tunnel",
   sourceSystem: "System",
+  sourcePolicy: "Approval mode",
   decisionOnce: "Allow Once",
   decisionAlways: "Session Always",
   decisionReject: "Rejected",

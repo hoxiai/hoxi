@@ -293,3 +293,29 @@ func TestPromoteLocalSessionToWorktreeTransfersWorkingStateAndContext(t *testing
 	}
 }
 
+
+// A non-git folder nested inside a git repository must fail closed when the
+// caller asks for isolation: creating a parent worktree would silently run the
+// session outside the folder the user opened.
+func TestNestedNonGitFolderFailsClosedOnIsolation(t *testing.T) {
+	repo := initTestGitRepo(t)
+	nested := filepath.Join(repo, "docs")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService(repo, nil, nil, filepath.Join(t.TempDir(), "sessions.json"))
+	body, _ := json.Marshal(map[string]string{
+		"runtime": "claude-code", "directory": nested, "sandboxMode": "worktree", "modelID": "test-model",
+	})
+	w := httptest.NewRecorder()
+	svc.handleCreateSession(w, httptest.NewRequest(http.MethodPost, "/sessions", bytes.NewReader(body)))
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "Git repository") {
+		t.Fatalf("nested isolation: %d %s", w.Code, w.Body.String())
+	}
+	if len(svc.Store().List(nested)) != 0 || len(svc.Store().List(repo)) != 0 {
+		t.Fatal("failed nested isolation left a session behind")
+	}
+	if _, err := os.Stat(filepath.Join(repo, ".hoxi", "worktrees")); !os.IsNotExist(err) {
+		t.Fatal("failed nested isolation created a worktree in the parent repository")
+	}
+}

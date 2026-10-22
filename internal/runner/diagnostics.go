@@ -7,7 +7,7 @@ import (
 )
 
 func sessionErrorDiagnostic(sessionID string, failure interface{}) *diagnostics.Entry {
-	var name string
+	var name, reason string
 	var status int
 	switch value := failure.(type) {
 	case *MessageError:
@@ -15,16 +15,19 @@ func sessionErrorDiagnostic(sessionID string, failure interface{}) *diagnostics.
 			name = value.Name
 			if value.Data != nil {
 				status = value.Data.StatusCode
+				reason = value.Data.Message
 			}
 		}
 	case MessageError:
 		name = value.Name
 		if value.Data != nil {
 			status = value.Data.StatusCode
+			reason = value.Data.Message
 		}
 	case map[string]interface{}:
 		name, _ = value["name"].(string)
 		if data, ok := value["data"].(map[string]interface{}); ok {
+			reason, _ = data["message"].(string)
 			switch code := data["statusCode"].(type) {
 			case int:
 				status = code
@@ -40,7 +43,7 @@ func sessionErrorDiagnostic(sessionID string, failure interface{}) *diagnostics.
 			}
 		}
 	}
-	entry := diagnostics.SessionError(name, status)
+	entry := diagnostics.SessionError(name, reason, status)
 	if entry != nil {
 		entry.Source, entry.SessionID = "runner", sessionID
 	}

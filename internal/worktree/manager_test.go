@@ -555,3 +555,39 @@ func TestMultiRepoSubdirectoriesStatusDiffRevertAndCommit(t *testing.T) {
 	}
 }
 
+
+// A folder nested inside a git repository is a separate project. Isolating it
+// would check out the parent repository, so the session would work on files
+// outside the folder the user opened and be listed under both workspaces.
+func TestNestedDirectoryDoesNotBorrowParentRepository(t *testing.T) {
+	repo := initTempGitRepo(t)
+	nested := filepath.Join(repo, "docs")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if HasCommittedHead(nested) {
+		t.Fatal("a subdirectory must not claim the parent repository's HEAD")
+	}
+	if !HasCommittedHead(repo) {
+		t.Fatal("the repository root must support isolation")
+	}
+
+	meta, err := NewManager(nested).Create("ses_nested_docs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.Isolated || normalizedPath(meta.Directory) != normalizedPath(nested) {
+		t.Fatalf("nested session was isolated into %+v", meta)
+	}
+	if _, err := os.Stat(filepath.Join(repo, ".hoxi", "worktrees", "ses_nested_docs")); !os.IsNotExist(err) {
+		t.Fatal("nested session created a worktree in the parent repository")
+	}
+}
+
+func normalizedPath(path string) string {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return filepath.Clean(resolved)
+	}
+	return filepath.Clean(path)
+}

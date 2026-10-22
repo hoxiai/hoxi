@@ -141,6 +141,19 @@ func (m *worktreeManager) CreateOnBranch(sessionID, retainedBranch string) (work
 		m.storeMeta(meta)
 		return meta, nil
 	}
+	// A folder nested inside a repository is its own project here. Checking out
+	// the parent repository would put the session in another workspace and let
+	// it edit files outside the folder the user opened, so it stays shared.
+	if !sameRootPath(topLevel, m.rootDir) {
+		meta := worktreeMeta{
+			SessionID: sessionID,
+			Isolated:  false,
+			Directory: m.rootDir,
+			CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		}
+		m.storeMeta(meta)
+		return meta, nil
+	}
 
 	repoRoot := filepath.Clean(strings.TrimSpace(topLevel))
 	baseCommit, err := runGit(repoRoot, "rev-parse", "HEAD")

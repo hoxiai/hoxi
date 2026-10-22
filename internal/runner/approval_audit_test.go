@@ -101,8 +101,7 @@ func TestExternalDirectoryRiskClassifiesRoutineAndSensitiveTargets(t *testing.T)
 		{"permission": "edit", "patterns": []interface{}{"/repo/.hoxi/worktrees/ses_123/src/App.tsx"}},
 	}
 	for _, item := range routine {
-		perm, _ := item["permission"].(string)
-		if isDestructivePermissionItem(perm, "", item) {
+		if isDestructivePermissionRequest(item) {
 			t.Errorf("routine external target classified destructive: %v", item["patterns"])
 		}
 	}
@@ -125,21 +124,20 @@ func TestExternalDirectoryRiskClassifiesRoutineAndSensitiveTargets(t *testing.T)
 		{"permission": "edit", "patterns": []interface{}{"/repo/.hoxi/worktrees/ses_123/.git/config"}},
 	}
 	for _, item := range sensitive {
-		perm, _ := item["permission"].(string)
-		if !isDestructivePermissionItem(perm, "", item) {
+		if !isDestructivePermissionRequest(item) {
 			t.Errorf("sensitive external target must stay destructive: %v", item["patterns"])
 		}
 	}
 
 	// A tool request flagged externalDirectory for a sibling folder is routine
 	// too, but destructive metadata always wins.
-	if isDestructivePermissionItem("tool", "", map[string]interface{}{
+	if isDestructivePermissionRequest(map[string]interface{}{
 		"permission": "tool",
 		"metadata":   map[string]interface{}{"externalDirectory": true, "args": `{"file_path":"/Users/hugh/code/hoxi/ainode/src/a.ts"}`},
 	}) {
 		t.Error("sibling-folder tool access must not be classified destructive")
 	}
-	if !isDestructivePermissionItem("tool", "", map[string]interface{}{
+	if !isDestructivePermissionRequest(map[string]interface{}{
 		"permission": "tool",
 		"metadata":   map[string]interface{}{"externalDirectory": true, "destructive": true},
 	}) {

@@ -6,7 +6,7 @@
 
 ---
 
-## 1. 审批门控（PreToolUse Hook / `hoxi-permissions.js`）
+## 1. 审批门控（PreToolUse Hook / `approval_decision.go`）
 
 **事故**：`normalizeCommandForPolicy` 先剥离 `cd <tok>`（按空白切分、不识别引号），再用 `" && "` 拼回字符串重新解析。`cd .' ls' ; r\m -rf .` 被判为 `allow`。
 
@@ -16,10 +16,11 @@
 - **白名单按 token 锚定**，禁止用 `\b` 作命令名边界（`npx tsc-x`、`ls.x` 会命中）。
 - 安全命令的危险参数必须显式拦截：`find -exec/-ok/-delete/-fprint*/-fls`、`fd -x/-X/--exec`、`rg --pre`、`git diff|log|show --output`、`go env -w`、`go * -exec/-toolexec/-vettool/-o`。
 - 破坏性判定覆盖变体：`+refspec` 强推、组合短参数（`-uf`）、长参数缩写（`--forc`、`--har`）。
-- **未知工具一律 ask**。禁止按工具名前缀（`read_*`、`list_*`…）自动放行；网络类工具（`search_web`、`read_url_content`）视为外发，必须 ask。
-- worktree 内的写操作仍需对**能控制执行的路径**询问：`.git/**`、`.agents/**`、`.opencode/**`、`.claude/**`、`.hoxi/**`、`.envrc`、`.vscode/settings.json`。Agent 不得能自行关掉门控。
-- **Go 与 JS 两套策略必须对齐**：任何规则改动同时修改 `internal/runner/permission_policy.go` 与 `.opencode/lib/permission-policy.js`，并把用例写进共享的 `.opencode/lib/cases.json`。只改一边视为未完成。
-- 每发现一个绕过，必须作为回归用例写进 `cases.json`。
+- **未知工具一律 ask**。禁止按工具名前缀（`read_*`、`list_*`…）自动放行；网络类工具（`search_web`、`read_url_content`）视为外发，必须走策略判定。
+- worktree 内的写操作仍需对**能控制执行的路径**询问：`.git/**`、`.agents/**`、`.opencode/**`、`.claude/**`、`.hoxi/**`、`.envrc`、`.vscode/settings.json`；worktree 内外读取 `.env`（`.env.example` 除外）等敏感凭据文件在任何模式下都必须询问。Agent 不得能自行关掉门控。
+- **OpenCode 的 `permission` 必须保持 `ask`，对象规则必须有 `"*": "ask"` 兜底**（`provider.normalizeApprovalPermissions`），否则 OpenCode 会在内部直接放行并绕过 Hoxi。
+- **Go 与 JS 两套策略必须对齐**：任何规则改动同时修改 `internal/runner/permission_policy.go` / `approval_decision.go` 与 `.opencode/lib/permission-policy.js`，并把用例写进共享的两个 fixture：`.opencode/lib/permission-policy.cases.json`（命令级）和 `.opencode/lib/permission-request.cases.json`（请求级）。只改一边视为未完成。
+- 每发现一个绕过，必须作为回归用例写进对应 `*.cases.json`。
 
 自检：对你新增的每条"allow"路径，尝试用引号、反斜杠、`;`/`&&`/`|` 链接、`$()` 构造绕过，并写成用例。
 

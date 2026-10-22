@@ -64,6 +64,59 @@ type Service struct {
 	llm      llm.Client
 	mu       sync.Mutex
 	plans    map[string]*planRun
+	// sharedLocks serializes tasks of plans that share one working tree. Only
+	// isolated plans get per-task worktrees; without this, two convoys started
+	// on the same folder would edit the same files at the same time.
+	sharedLocks sharedDirLocks
+}
+
+// sharedDirLocks is a per-directory mutex whose waiters honor cancellation.
+type sharedDirLocks struct {
+	mu   sync.Mutex
+	dirs map[string]*sharedDirLock
+}
+
+type sharedDirLock struct {
+	ch chan struct{}
+	// refs counts holders plus waiters so an idle directory can be forgotten.
+	refs int
+}
+
+// acquire blocks until the directory is free or ctx is cancelled. It reports
+// false when the caller was cancelled before getting the lock.
+func (l *sharedDirLocks) acquire(ctx context.Context, directory string) (func(), bool) {
+	l.mu.Lock()
+	if l.dirs == nil {
+		l.dirs = make(map[string]*sharedDirLock)
+	}
+	entry := l.dirs[directory]
+	if entry == nil {
+		entry = &sharedDirLock{ch: make(chan struct{}, 1)}
+		l.dirs[directory] = entry
+	}
+	entry.refs++
+	l.mu.Unlock()
+
+	release := func() {
+		<-entry.ch
+		l.drop(directory, entry)
+	}
+	select {
+	case entry.ch <- struct{}{}:
+		return release, true
+	case <-ctx.Done():
+		l.drop(directory, entry)
+		return nil, false
+	}
+}
+
+func (l *sharedDirLocks) drop(directory string, entry *sharedDirLock) {
+	l.mu.Lock()
+	entry.refs--
+	if entry.refs == 0 && l.dirs[directory] == entry {
+		delete(l.dirs, directory)
+	}
+	l.mu.Unlock()
 }
 
 type planRun struct {
@@ -475,6 +528,18 @@ func (s *Service) executeTask(ctx context.Context, planID string, index int, spe
 		}
 	}
 	s.mu.Unlock()
+
+	if !isolated {
+		// Shared-directory plans run one task per directory, not just one per
+		// plan: a second convoy on the same folder must not edit files
+		// concurrently with this one.
+		release, ok := s.sharedLocks.acquire(ctx, request.Directory)
+		if !ok {
+			s.completeTask(planID, epoch, taskID, "", "", ctx.Err())
+			return
+		}
+		defer release()
+	}
 
 	sessionID, err := s.sessions.Create(ctx, SessionRequest{
 		Directory: request.Directory,

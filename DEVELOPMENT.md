@@ -32,7 +32,7 @@
    - [7.2 Go Worktree 管理器接口契约 (`internal/worktree/`)](#72-go-worktree-管理器接口契约-internalworktree)
 8. [OpenCode 插件体系：安全门控与 8 维记忆沉淀](#8-opencode-插件体系安全门控与-8-维记忆沉淀)
    - [8.1 真实 `@opencode-ai/plugin` Hook 签名](#81-真实-opencode-aiplugin-hook-签名)
-   - [8.2 权限智能分流插件 (`hoxi-permissions.js`)](#82-权限智能分流插件-hoxi-permissionsjs)
+   - [8.2 统一审批策略门控 (`approval_decision.go` & `permission-policy.js`)](#82-统一审批策略门控-approval_decisiongo--permission-policyjs)
    - [8.3 8 维度结构化记忆插件 (`hoxi-memory.js`)](#83-8-维度结构化记忆插件-hoxi-memoryjs)
 9. [macOS 原生宿主与状态栏托盘 (`internal/app/` & `internal/statusbar/`)](#9-macos-原生宿主与状态栏托盘-internalapp--internalstatusbar)
    - [9.1 Wails 窗口配置与单实例锁](#91-wails-窗口配置与单实例锁)
@@ -199,7 +199,7 @@ export interface SessionPromptInput {
 ```
 
 ### 4.3 权限审批与追问回复契约
-当 Agent 触发敏感操作（如未被 `hoxi-permissions.js` 自动放行的 `rm -rf`、`sudo`、跨目录写文件）时：
+当 Agent 触发需要人工确认的操作（未被 Go 统一审批策略 `approvalAutoApproves` 自动放行的请求，或任何模式下的 `rm -rf`、`sudo`、`.env` 读取、受保护路径写入等）时：
 1. SSE 收到 `permission.asked` 事件，包含 `id`（即 `requestID`，格式 `per_...`）、`sessionID`、`permission`（如 `"bash"` 或 `"edit"`）、`patterns`（命令内容或路径列表）、`metadata`、`tool: { messageID, callID }`。
 2. 用户在前端 `ApprovalGateCard` 点击按钮后，前端调用：
    ```http
@@ -211,7 +211,7 @@ export interface SessionPromptInput {
    }
    ```
 
-   `always` 的语义按运行时区分：Runner（Claude Code / Antigravity）对 `bash` 记住**完全相同的整条命令**，对工具记住 **工具名 + 完整参数哈希**；OpenCode 侧由 `hoxi-permissions.js` 与全局 `permission` 配置决定。两种授权都只存在于内存（进程重启即失效），破坏性命令永不记忆，可在设置页「当前会话临时放行授权」查看与撤销。经 GoPanel 隧道回复时 `always` 一律返回 403，手机端只能 `once` / `reject`。
+   `always` 的语义按运行时区分：Runner（Claude Code / Antigravity）对 `bash` 记住**完全相同的整条命令**，对工具记住 **工具名 + 完整参数哈希**；OpenCode 侧由 Go 统一审批策略（`~/.hoxi/approval-policy.json`）与全局 `permission` 精确对象规则（自动补 `"*": "ask"` 兜底）共同决定。会话级授权只存在于内存（进程重启即失效），破坏性命令永不记忆，可在设置页「当前会话临时放行授权」查看与撤销。经 GoPanel 隧道回复时 `always` 一律返回 403，手机端只能 `once` / `reject`。
 
    卡片内的「放行规则」列表是即时生效的写入路径：点「始终允许 / 始终拒绝」会直接落盘对应规则并同时回复本次请求，不必再点外侧按钮（`approval-helpers.ts` 的 `rulesForReply` / `exactAllowRules`）。**只持久化精确规则**：OpenCode 在 `permission.ask` 之前就按已保存的 glob 模式判定，因此 `git *`、`npm *`、`*` 这类通配前缀绝不写入全局 `permission`（否则 `git push --force` 会绕过审批门控），只通过本次 `reply: "always"` 的会话授权生效；「始终拒绝」可持久化通配前缀（fail closed）。破坏性请求隐藏「始终允许」，只保留「始终拒绝」。
 
@@ -535,11 +535,10 @@ stateDiagram-v2
 - `"experimental.session.compacting"?: (input: { sessionID: string }, output: { context: string[]; prompt?: string }) => Promise<void>`
 - `event?: (input: { event: Event }) => Promise<void>`
 
-### 8.2 权限智能分流插件 (`hoxi-permissions.js`)
-放置在 [`.opencode/plugins/hoxi-permissions.js`](.opencode/plugins/hoxi-permissions.js)，共享策略规则位于 [`.opencode/lib/permission-policy.js`](.opencode/lib/permission-policy.js) 与 [`.opencode/lib/cases.json`](.opencode/lib/cases.json)，实现“安全命令秒过、高危指令拦截并点亮状态栏”：
-1. 命中破坏性原语（`rm`, `sudo`, `chmod`, `chown`, `mkfs`, `dd`, `diskutil`, `git push --force`, `git reset --hard` 等），强制返回 `output.status = "ask"`，挂起等待前端 `<ApprovalGateCard />` 人工审批。
-2. 文件读取、搜索或工作区内安全开发测试命令自动放行（`output.status = "allow"`）。
-3. 其它未知外部命令根据当前会话审批模式（`ApprovalMode`）决策询问或放行。
+### 8.2 统一审批策略门控 (`approval_decision.go` & `permission-policy.js`)
+审批决策统一收口在 Go 端 [`internal/runner/approval_decision.go`](internal/runner/approval_decision.go)（策略持久化于 `~/.hoxi/approval-policy.json`），与前端 [`.opencode/lib/permission-policy.js`](.opencode/lib/permission-policy.js) 共享命令级（[`.opencode/lib/permission-policy.cases.json`](.opencode/lib/permission-policy.cases.json)）与请求级（[`.opencode/lib/permission-request.cases.json`](.opencode/lib/permission-request.cases.json)）两套一致性测试集：
+1. 命中破坏性原语（`rm`, `sudo`, `chmod`, `chown`, `mkfs`, `dd`, `diskutil`, `git push --force`, `git reset --hard` 等）、控制执行的受保护路径或 `.env` 等敏感凭据读取，在所有模式下强制挂起等待 `<ApprovalGateCard />` 人工审批。
+2. OpenCode 全局配置的 `edit` / `webfetch` / `bash` 统一保持 `"ask"`（对象规则自动补 `"*": "ask"` 兜底），收到 `permission.asked` 或 PreToolUse Hook 时由 Go 端 `approvalAutoApproves` 按当前策略（`auto` / `smart` / `manual` 及工具覆盖）决定直接放行或广播给客户端。
 
 ### 8.3 8 维度结构化记忆插件 (`hoxi-memory.js`)
 放置在 [`.opencode/plugins/hoxi-memory.js`](.opencode/plugins/hoxi-memory.js)，实现 **8 维度上下文压缩协议**：

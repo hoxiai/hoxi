@@ -34,6 +34,26 @@ func newFakeSessions(isolate bool) *fakeSessions {
 
 func (f *fakeSessions) CanIsolate(string) bool { return f.isolate }
 
+// blockAll makes Run block until the returned function is called. Calling the
+// returned function more than once is safe.
+func (f *fakeSessions) blockAll() func() {
+	block := make(chan struct{})
+	f.mu.Lock()
+	f.block = block
+	f.mu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			f.mu.Lock()
+			if f.block == block {
+				f.block = nil
+			}
+			f.mu.Unlock()
+			close(block)
+		})
+	}
+}
+
 func (f *fakeSessions) Create(_ context.Context, req SessionRequest) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -493,5 +513,119 @@ func TestRetryPersistenceFailureRestoresPreviousTaskState(t *testing.T) {
 	depTask := taskByID(after, "dep")
 	if depTask.Status != StatusBlocked {
 		t.Fatalf("blocked task state was left as %s, want %s", depTask.Status, StatusBlocked)
+	}
+}
+
+// Two convoys started on the same non-isolated folder must not run at the same
+// time: they share one working tree, so concurrent tasks would edit the same
+// files. Serializing per plan alone is not enough.
+func TestPlansSharingDirectoryRunOneTaskAtATime(t *testing.T) {
+	fake := newFakeSessions(false)
+	unblock := fake.blockAll()
+	defer unblock()
+	svc := NewService(fake)
+	directory := t.TempDir()
+
+	var wg sync.WaitGroup
+	plans := make([]Plan, 0, 2)
+	var mu sync.Mutex
+	for _, title := range []string{"first", "second"} {
+		wg.Add(1)
+		go func(title string) {
+			defer wg.Done()
+			plan, err := svc.Create(PlanRequest{
+				Directory: directory,
+				Title:     title,
+				Tasks:     []TaskSpec{{ID: "a", Prompt: title + " work"}},
+			})
+			if err != nil {
+				t.Errorf("create %s: %v", title, err)
+				return
+			}
+			mu.Lock()
+			plans = append(plans, plan)
+			mu.Unlock()
+		}(title)
+	}
+	wg.Wait()
+	if len(plans) != 2 {
+		t.Fatalf("created %d plans, want 2", len(plans))
+	}
+
+	// Wait for the first task to start holding the directory, then confirm no
+	// second task from the other plan can join it.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		fake.mu.Lock()
+		running := fake.running
+		fake.mu.Unlock()
+		if running == 1 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	for i := 0; i < 20; i++ {
+		fake.mu.Lock()
+		running, peak := fake.running, fake.peak
+		fake.mu.Unlock()
+		if running != 1 || peak != 1 {
+			t.Fatalf("peak concurrency across plans sharing a directory = %d (running %d), want 1", peak, running)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	unblock()
+	for _, plan := range plans {
+		done := waitTerminal(t, svc, plan.ID)
+		if done.Status != StatusSucceeded {
+			t.Fatalf("plan %s finished as %s", done.ID, done.Status)
+		}
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if fake.peak != 1 {
+		t.Fatalf("peak concurrency = %d, want 1", fake.peak)
+	}
+}
+
+// A cancelled waiter must not keep the directory locked for later plans.
+func TestCancelledPlanReleasesSharedDirectoryLock(t *testing.T) {
+	fake := newFakeSessions(false)
+	unblock := fake.blockAll()
+	defer unblock()
+	svc := NewService(fake)
+	directory := t.TempDir()
+
+	first, err := svc.Create(PlanRequest{Directory: directory, Tasks: []TaskSpec{{ID: "a", Prompt: "hold"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		fake.mu.Lock()
+		running := fake.running
+		fake.mu.Unlock()
+		if running == 1 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	second, err := svc.Create(PlanRequest{Directory: directory, Tasks: []TaskSpec{{ID: "a", Prompt: "wait"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Cancel(second.ID); err != nil {
+		t.Fatal(err)
+	}
+	unblock()
+
+	waitTerminal(t, svc, first.ID)
+	third, err := svc.Create(PlanRequest{Directory: directory, Tasks: []TaskSpec{{ID: "a", Prompt: "after"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan := waitTerminal(t, svc, third.ID); plan.Status != StatusSucceeded {
+		t.Fatalf("plan after a cancelled waiter = %s", plan.Status)
 	}
 }

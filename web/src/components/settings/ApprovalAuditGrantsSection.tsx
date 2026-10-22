@@ -69,6 +69,8 @@ function sourceLabel(source: string): string {
       return t("approval.sourceTunnel");
     case "system":
       return t("approval.sourceSystem");
+    case "policy":
+      return t("approval.sourcePolicy");
     default:
       return t("approval.sourceDesktop");
   }

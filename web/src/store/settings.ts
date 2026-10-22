@@ -49,6 +49,7 @@ export interface AppSettingsState {
   detectedGitUserEmail: string;
   sendShortcut: SendShortcutMode;
   approvalMode: ApprovalMode;
+  /** Legacy localStorage override; migrated to ~/.hoxi/approval-policy.json on startup. */
   bashApprovalRule: BashApprovalRule;
   reasoningDisplay: ReasoningDisplayMode;
   autoScrollStream: boolean;

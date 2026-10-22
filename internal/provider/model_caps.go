@@ -171,6 +171,9 @@ func normalizeDocModelVariants(doc map[string]interface{}) {
 				continue
 			}
 			isChat := !isNonChatUtilityModel(mid)
+			if isChat {
+				ensureModelTokenLimit(mObj, mid)
+			}
 			_, hasExplicitAttachment := mObj["attachment"]
 			attachBool, _ := mObj["attachment"].(bool)
 			if !attachBool {

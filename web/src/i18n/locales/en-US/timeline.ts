@@ -99,6 +99,16 @@ export const timeline = {
   compactAction: "Compact context",
   contextCompactUnavailable: "This runtime manages its own context, so it cannot be compacted here",
   contextCompactFailed: "Context compaction failed, please try again",
+  contextOverflowTitle: "Context window full",
+  contextOverflowMessage:
+    "The conversation no longer fits this model's context window. Compact the context, then retry.",
+  contextOverflowCompactRetry: "Compact and retry",
+  modelNotLoadedTitle: "Model not loaded in the engine",
+  modelNotLoadedMessage:
+    "The running engine does not know this model, so nothing was sent. Reload the model catalog or pick another model, then retry.",
+  reloadModelCatalog: "Reload model catalog",
+  contextOverLimitHint: "This conversation is past the window — compact before sending more",
+  contextNearLimitHint: "Context is {percent}% full — compact before the next long turn",
   inputTokens: "Input tokens",
   outputTokens: "Output tokens",
   reasoningTokens: "Reasoning",

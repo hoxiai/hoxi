@@ -14,7 +14,12 @@ import {
 } from "../components/timeline/tool-card-helpers";
 import type { PermissionRequest, ToolPart } from "../services/sse-types";
 import { computeProviderHealth } from "../store/provider-health";
-import { emptyStats, pushSample } from "../store/provider-telemetry";
+import {
+  emptyStats,
+  isContextOverflowError,
+  isModelUnavailableError,
+  pushSample,
+} from "../store/provider-telemetry";
 import { setWorkspace } from "../store/workspace";
 import { assertDeepEqual, assertEqual, assertTrue, describe, it } from "./test-harness";
 
@@ -331,5 +336,80 @@ describe("provider telemetry health scoring", () => {
     assertEqual(health.status, "degraded");
     assertDeepEqual(pushSample([90], 0, true), [90, 0]);
     assertDeepEqual(pushSample([90], 0), [90]);
+  });
+});
+
+describe("context overflow detection", () => {
+  const info = (error?: { name: string; message?: string; statusCode?: number }) =>
+    ({
+      id: "msg_1",
+      sessionID: "ses_1",
+      role: "assistant",
+      time: { created: 1 },
+      error: error && {
+        name: error.name,
+        data: { message: error.message, statusCode: error.statusCode },
+      },
+    } as any);
+
+  it("recognizes context-window failures by error name and by message", () => {
+    assertEqual(isContextOverflowError(info({ name: "ContextOverflowError" })), true);
+    assertEqual(isContextOverflowError(info({ name: "MessageOutputLengthError" })), true);
+    assertEqual(
+      isContextOverflowError(
+        info({ name: "APIError", message: "This model's maximum context length is 128000 tokens" })
+      ),
+      true
+    );
+    assertEqual(
+      isContextOverflowError(info({ name: "APIError", message: "prompt is too long: 200001 tokens" })),
+      true
+    );
+    assertEqual(isContextOverflowError(info({ name: "APIError", message: "Insufficient balance" })), false);
+    assertEqual(isContextOverflowError(info({ name: "APIError", statusCode: 429 })), false);
+    assertEqual(isContextOverflowError(info(undefined)), false);
+    assertEqual(isContextOverflowError(null), false);
+  });
+
+  it("keeps aborts and watchdog stalls out of the overflow path", () => {
+    assertEqual(isContextOverflowError(info({ name: "MessageAbortedError", message: "Aborted" })), false);
+    assertEqual(isContextOverflowError(info({ name: "RunnerStalledError" })), false);
+  });
+});
+
+describe("model unavailable detection", () => {
+  const info = (error?: { name: string; message?: string; statusCode?: number }) =>
+    ({
+      id: "msg_1",
+      sessionID: "ses_1",
+      role: "assistant",
+      time: { created: 1 },
+      error: error && {
+        name: error.name,
+        data: { message: error.message, statusCode: error.statusCode },
+      },
+    } as any);
+
+  it("recognizes a stale engine model catalog", () => {
+    assertEqual(isModelUnavailableError(info({ name: "ProviderModelNotFoundError" })), true);
+    assertEqual(
+      isModelUnavailableError(
+        info({ name: "UnknownError", message: "Model not found: subapi/QoderCN-DeepSeek-Flash." })
+      ),
+      true
+    );
+    assertEqual(
+      isModelUnavailableError(
+        info({ name: "OpenCodeError", message: 'model "subapi/x" is not loaded in the running engine' })
+      ),
+      true
+    );
+  });
+
+  it("does not misclassify unrelated failures", () => {
+    assertEqual(isModelUnavailableError(info({ name: "APIError", message: "Insufficient balance" })), false);
+    assertEqual(isModelUnavailableError(info({ name: "MessageAbortedError", message: "Aborted" })), false);
+    assertEqual(isModelUnavailableError(info(undefined)), false);
+    assertEqual(isModelUnavailableError(null), false);
   });
 });

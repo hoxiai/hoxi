@@ -103,7 +103,9 @@ export default function ApprovalModePill() {
   });
 
   const onSelect = (mode: ApprovalMode) => {
-    setApprovalMode(mode);
+    void setApprovalMode(mode).catch((err) => {
+      console.warn("Failed to set approval mode:", err);
+    });
     setOpen(false);
   };
 

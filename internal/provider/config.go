@@ -215,6 +215,8 @@ func ensureHoxiModelsConfig(rootDir string) string {
 		mergeHoxiSkillsPath(doc, skillLayers, dir)
 	}
 	normalizeDocModelVariants(doc)
+	ensureCompactionDefaults(doc)
+	normalizeApprovalPermissions(doc, approvalPolicyExists())
 	if err := persistHoxiModelsFiles(uPath, wPath, doc); err == nil && legacyOverlay != "" {
 		_ = os.Remove(legacyOverlay)
 	}
@@ -304,6 +306,25 @@ func (g *Service) loadOpenCodeImportedProviderMap() map[string]interface{} {
 	return loadOpenCodeImportedProvidersFromDisk()
 }
 
+// ensureCompactionDefaults makes automatic compaction explicit instead of
+// relying on the engine default. A model whose window Hoxi had to infer used to
+// arrive as `limit.context == 0`, which short-circuits the engine's overflow
+// check and silently disables compaction; now that the window is filled in, the
+// auto flag is the last thing that must not be off by accident.
+//
+// A user setting is never overwritten: only a missing `compaction` object, or a
+// missing `auto` key inside it, is filled in.
+func ensureCompactionDefaults(doc map[string]interface{}) {
+	cur, _ := doc["compaction"].(map[string]interface{})
+	if cur == nil {
+		cur = map[string]interface{}{}
+	}
+	if _, hasAuto := cur["auto"]; !hasAuto {
+		cur["auto"] = true
+	}
+	doc["compaction"] = cur
+}
+
 func (g *Service) loadHoxiConfigDoc() map[string]interface{} {
 	doc := map[string]interface{}{
 		"$schema":  "https://opencode.ai/config.json",
@@ -318,6 +339,7 @@ func (g *Service) loadHoxiConfigDoc() map[string]interface{} {
 		doc["provider"] = map[string]interface{}{}
 	}
 	normalizeDocModelVariants(doc)
+	ensureCompactionDefaults(doc)
 	return doc
 }
 
@@ -332,6 +354,8 @@ func (g *Service) loadHoxiProvidersMap() map[string]interface{} {
 func (g *Service) persistHoxiConfigDoc(doc map[string]interface{}) error {
 	doc["$schema"] = "https://opencode.ai/config.json"
 	normalizeDocModelVariants(doc)
+	ensureCompactionDefaults(doc)
+	normalizeApprovalPermissions(doc, approvalPolicyExists())
 	if err := persistHoxiModelsFiles(userHoxiModelsPath(), g.workspaceHoxiModelsPath(), doc); err != nil {
 		return err
 	}
@@ -547,6 +571,7 @@ var managedGlobalConfigKeys = []string{
 	"permission",
 	"mcp",
 	"disabled_providers",
+	"compaction",
 }
 
 // overlayHoxiGlobalConfig makes .hoxi/models.json authoritative over the OpenCode
