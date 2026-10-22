@@ -11,6 +11,12 @@ import { workspace } from "./workspace-state";
 
 export const AUTO_BREAKERS_STORAGE_KEY = "hoxi-auto-breakers:v1";
 
+// A locally reported failure opens the circuit optimistically for a short
+// window; the authoritative backend snapshot (with its class-aware cooldown)
+// replaces it on the next sync. A bounded window prevents a candidate from
+// showing as cooling forever when the app stays offline.
+const OPTIMISTIC_OPEN_TTL_MS = 90_000;
+
 type BreakerMap = Record<string, CandidateBreakerSnapshot>;
 
 function loadInitialBreakers(): BreakerMap {
@@ -153,21 +159,24 @@ export function reportAutoCandidateOutcome(input: CandidateOutcomeInput): void {
   if (!input.providerID || !input.modelID) return;
   void hoxiAPI.reportCandidateOutcome(input).catch(() => {});
   if (!input.ok) {
-    // Optimistically reflect the open circuit so selection reacts immediately.
+    // Optimistically reflect the open circuit so selection reacts immediately,
+    // bounded by a TTL so it can never linger past the backend's own cooldown.
     const key = candidateBreakerKey(input.providerID, input.modelID);
+    const now = Date.now();
     const next: BreakerMap = { ...providerBreakersSignal() };
     const prev = next[key];
+    const existingUntil = prev?.openUntil && prev.openUntil > now ? prev.openUntil : 0;
     next[key] = {
       providerID: input.providerID,
       modelID: input.modelID,
       phase: "open",
       open: true,
-      openUntil: prev?.openUntil,
+      openUntil: existingUntil || now + OPTIMISTIC_OPEN_TTL_MS,
       score: 0,
       latencyEwmaMs: prev?.latencyEwmaMs,
       consecutiveFailures: (prev?.consecutiveFailures ?? 0) + 1,
       lastClass: input.class,
-      updatedAt: Date.now(),
+      updatedAt: now,
     };
     setProviderBreakersSignal(next);
     persistBreakers(next);

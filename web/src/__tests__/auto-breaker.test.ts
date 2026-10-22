@@ -2,6 +2,7 @@
 import type { CandidateBreakerSnapshot } from "../services/api";
 import {
   applyProviderBreakers,
+  getCandidateBreaker,
   isCandidateBreakerOpen,
   isCandidateCoolingDown,
   reportAutoCandidateOutcome,
@@ -53,6 +54,9 @@ describe("shared candidate circuit breaker in auto-pool selection", () => {
     reportAutoCandidateOutcome({ providerID: "alpha", modelID: "m", ok: false, message: "429", statusCode: 429 });
     assertTrue(isCandidateBreakerOpen("alpha", "m"));
     assertTrue(isCandidateCoolingDown("alpha", "m"));
+    // The optimistic open must carry a bounded expiry, never an indefinite one.
+    const optimistic = getCandidateBreaker("alpha", "m");
+    assertTrue(Boolean(optimistic?.openUntil && optimistic.openUntil > Date.now()));
 
     const target = resolveAutoModelTarget("free", { advance: true });
     assertDeepEqual(target, { providerID: "beta", modelID: "m" });

@@ -20,6 +20,7 @@
 - **Agent Skills**（`internal/skills`）：本地 Skill 发现（OpenCode `/skill`）、内置默认 Skill `shoply-ops`、`skill-authoring`（`internal/skills/defaults/`），以及 hoxi.ai 线上技能目录（`GET /api/hoxi/skills/marketplace`）与显式安装（`POST /api/hoxi/skills/marketplace/install`，校验 `sha256` 后原子写入 `~/.hoxi/skills/<slug>/`，不自动安装、不执行远程脚本、不经隧道开放）
 - **GoPanel 反向隧道**（`internal/tunnel` + `internal/gateway/tunnel.go`）：Mac 主动外连 GoPanel，路由白名单内的 HTTP / SSE 在进程内交给网关；Mac 不开放公网端口。待处理审批经 Notify 帧交给 GoPanel 发 APNs
 - **本机模型中转**（`internal/provider/relay.go` + `relay_keys.go`）：在回环地址上暴露 OpenAI 兼容的 `GET /v1/models` 与 `POST /v1/chat/completions`，供 Cline / Continue / Cherry Studio / Open WebUI / aider 等本机工具复用已配置服务商；只重写 `model` 字段并注入上游 Key，body 与 SSE 原样透传（tools / 多模态不被翻译层破坏）。认证使用独立 `hk-*` Key（`~/.hoxi/relay-keys.json` 仅存 SHA-256 哈希，明文只在创建时返回一次），不把上游凭据下发给客户端；`hoxi-auto` 走自动路由池。该平面**永不进入隧道白名单**
+- **模型池候选熔断与选模**（`internal/provider/auto_router.go` + `breaker.go`）：`hoxi-auto` 自动池按策略（`round-robin` / `priority` / `smart-health`）选模；按 `provider/model` 记录失败分类（transient / rate_limit / quota / config）与延迟 EWMA，失败即冷却、到期自愈（状态存 `~/.hoxi/provider-breakers.json`，配置类错误也会过期）。**所有策略**都跳过熔断中的候选与比最快健康候选慢 3 倍以上的慢模型，`smart-health` 额外按健康分排序（快且稳优先）。判定的延迟口径为 TTFT，会话侧（`web/src/store/auto-breaker.ts`）消费同一快照并经 `POST /api/hoxi/provider/candidate-outcome` 回报结果，路由不经隧道开放
 
 ### 1.2 手机端（`client/`）
 
@@ -55,7 +56,7 @@ Flutter + Riverpod + GoRouter + Dio，四栏：沟通 · 工程 · 专栏 · 我
 │   │   └── ocstate/                  # [底座层] External OpenCode SQLite reader & Console account sync into hoxi.db
 │   ├── orchestration/                # [业务层] Multi-agent DAG convoys on the runner session plane: per-task worktrees & dependency merge
 │   ├── promptassist/                 # [业务层] Composer prompt enhancement & session title summarization via llm.Client
-│   ├── provider/                     # [业务层] Provider config, models.json, llm.Client implementation, probing & model stats
+│   ├── provider/                     # [业务层] Provider config, models.json, llm.Client implementation, probing, candidate breaker & model stats
 │   ├── recall/                       # [业务层] Cross-session semantic / BM25 memory recall & indexing
 │   ├── runner/                       # [业务层] Multi-runtime execution engine (OpenCode/Claude/Antigravity/Qoder/CodeBuddy): process adapters, translators, hook gates, session store & revert
 │   ├── sandbox/                      # [业务层] OS-level Seatbelt / Bubblewrap execution sandbox policy & profiles
