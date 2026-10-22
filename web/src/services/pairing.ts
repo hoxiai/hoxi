@@ -20,4 +20,7 @@ export const pairingAPI = {
   getCode(): Promise<PairingCode> {
     return requestJSON("/api/hoxi/pairing/qr");
   },
+  rotate(): Promise<PairingCode> {
+    return requestJSON("/api/hoxi/pairing/rotate", { method: "POST", body: "{}" });
+  },
 };

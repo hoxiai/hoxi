@@ -136,6 +136,30 @@ func (s *Service) Token() (string, error) {
 	return s.token()
 }
 
+// Rotate replaces the pairing token, invalidating any previously scanned QR and
+// every saved LAN connection, and returns the freshly generated code.
+func (s *Service) Rotate() (Code, error) {
+	if err := s.rotateToken(); err != nil {
+		return Code{}, err
+	}
+	return s.Code()
+}
+
+func (s *Service) rotateToken() error {
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		return err
+	}
+	token := hex.EncodeToString(buf)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := writeToken(s.tokenPath, token); err != nil {
+		return err
+	}
+	s.cached = token
+	return nil
+}
+
 // token returns the persisted pairing token, creating and storing it on first
 // use. A successful value is cached in memory so repeated calls stay stable.
 func (s *Service) token() (string, error) {

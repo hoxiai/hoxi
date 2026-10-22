@@ -28,3 +28,17 @@ export async function loadPairingCode(): Promise<void> {
     setPairing("busy", false);
   }
 }
+
+// Replaces the pairing token and refreshes the shown code; any previously
+// scanned QR or saved LAN connection stops working.
+export async function rotatePairingToken(): Promise<void> {
+  if (pairing.busy) return;
+  setPairing({ busy: true, error: "" });
+  try {
+    setPairing({ code: await pairingAPI.rotate(), loaded: true });
+  } catch {
+    setPairing({ loaded: true, error: t("pairing.rotateError") });
+  } finally {
+    setPairing("busy", false);
+  }
+}

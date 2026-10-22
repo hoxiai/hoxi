@@ -8,5 +8,8 @@ export const pairing = {
   addressTip: "局域网地址：{url}。地址与配对令牌保存在本机，请仅在与手机同一可信网络下展示此码",
   noLanHint: "未找到局域网地址，请先把本机接入 Wi-Fi 或有线网络，再刷新",
   qrAlt: "配对二维码",
+  rotateAction: "重新生成令牌",
+  rotateConfirm: "确定重新生成配对令牌？当前二维码与已扫码的手机会失去局域网访问，需重新扫描新码",
+  rotateError: "无法重新生成配对令牌",
   loadError: "无法生成配对二维码",
 };

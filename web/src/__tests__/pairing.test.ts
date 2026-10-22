@@ -1,5 +1,5 @@
 import { pairingAPI, type PairingCode } from "../services/pairing";
-import { loadPairingCode, pairing, setPairing } from "../store/pairing";
+import { loadPairingCode, pairing, rotatePairingToken, setPairing } from "../store/pairing";
 import { assertEqual, assertTrue, describe, it } from "./test-harness";
 
 function reset() {
@@ -57,6 +57,21 @@ describe("lan pairing code", () => {
       assertEqual(pairing.busy, false);
       assertTrue(pairing.error.length > 0, "error message should be set");
       assertEqual(pairing.code, null);
+    } finally {
+      Object.assign(pairingAPI, api);
+      reset();
+    }
+  });
+
+  it("rotates the pairing token", async () => {
+    const api = { ...pairingAPI };
+    try {
+      pairingAPI.getCode = async () => availableCode;
+      await loadPairingCode();
+      pairingAPI.rotate = async () => ({ ...availableCode, token: "b".repeat(64) });
+      await rotatePairingToken();
+      assertEqual(pairing.busy, false);
+      assertEqual(pairing.code?.token, "b".repeat(64));
     } finally {
       Object.assign(pairingAPI, api);
       reset();

@@ -132,6 +132,36 @@ func TestCodeOmitsRelayWhenUnset(t *testing.T) {
 	}
 }
 
+func TestRotateChangesTokenAndInvalidatesOld(t *testing.T) {
+	svc, _ := newTestService(t, "192.168.1.20")
+	first, err := svc.Code()
+	if err != nil {
+		t.Fatalf("Code: %v", err)
+	}
+	authorize := func(token string) bool {
+		req := httptest.NewRequest(http.MethodGet, "/api/hoxi/bootstrap", nil)
+		req.Header.Set("X-Auth", token)
+		return svc.Authorize(req)
+	}
+	if !authorize(first.Token) {
+		t.Fatal("first token should authorize")
+	}
+
+	rotated, err := svc.Rotate()
+	if err != nil {
+		t.Fatalf("Rotate: %v", err)
+	}
+	if rotated.Token == first.Token {
+		t.Fatal("rotate must issue a new token")
+	}
+	if authorize(first.Token) {
+		t.Fatal("old token must be rejected after rotation")
+	}
+	if !authorize(rotated.Token) {
+		t.Fatal("rotated token should authorize")
+	}
+}
+
 func TestAuthorizeMatchesPairingToken(t *testing.T) {
 	svc, _ := newTestService(t, "192.168.1.5")
 	code, err := svc.Code()

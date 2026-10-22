@@ -6,13 +6,18 @@
 import { onMount, Show } from "solid-js";
 import { RefreshCw } from "lucide-solid";
 import { t } from "../../i18n";
-import { loadPairingCode, pairing } from "../../store/workspace";
+import { loadPairingCode, pairing, rotatePairingToken } from "../../store/workspace";
 import { HelpTip, SettingGroup } from "./setting-controls";
 
 export function PairingQrPanel() {
   onMount(() => {
     void loadPairingCode();
   });
+
+  const onRotate = () => {
+    if (!confirm(t("pairing.rotateConfirm"))) return;
+    void rotatePairingToken();
+  };
 
   return (
     <SettingGroup title={t("pairing.title")} tip={t("pairing.tip")}>
@@ -51,6 +56,14 @@ export function PairingQrPanel() {
                   <RefreshCw size={14} />
                 </button>
               </div>
+              <button
+                type="button"
+                class="cursor-pointer text-[12px] text-[var(--text-muted)] underline-offset-2 hover:text-[var(--text-primary)] hover:underline disabled:opacity-50"
+                disabled={pairing.busy}
+                onClick={onRotate}
+              >
+                {t("pairing.rotateAction")}
+              </button>
             </Show>
           )}
         </Show>

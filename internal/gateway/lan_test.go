@@ -93,6 +93,7 @@ func TestLANRequestEnforcesRemoteAllowList(t *testing.T) {
 		{http.MethodPost, "/api/hoxi/tunnel/pair"},
 		// The LAN pairing token itself must never be readable from another LAN device.
 		{http.MethodGet, "/api/hoxi/pairing/qr"},
+		{http.MethodPost, "/api/hoxi/pairing/rotate"},
 		{http.MethodGet, "/api/hoxi/cloudflared/status"},
 		{http.MethodPost, "/api/hoxi/cloudflared/enable"},
 		{http.MethodGet, "/api/hoxi/auth"},

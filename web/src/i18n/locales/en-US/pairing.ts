@@ -8,5 +8,8 @@ export const pairing = {
   addressTip: "Local address: {url}. The address and pairing token are stored on this Mac, so share the QR only on a network you trust",
   noLanHint: "No local network address found. Connect this Mac to Wi-Fi or Ethernet, then refresh",
   qrAlt: "Pairing QR code",
+  rotateAction: "Regenerate token",
+  rotateConfirm: "Regenerate the pairing token? The current QR and any phone that paired with it lose LAN access until they scan the new code",
+  rotateError: "Could not regenerate the pairing token",
   loadError: "Could not generate the pairing QR",
 };

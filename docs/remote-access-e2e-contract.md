@@ -24,7 +24,7 @@
 
 | 能力 | 状态 | 位置 |
 | --- | --- | --- |
-| 桌面生成局域网配对二维码（含局域网 IPv4、端口 `5417`、配对令牌） | 已实现 | [`internal/pairing`](../internal/pairing/pairing.go)、`GET /api/hoxi/pairing/qr` |
+| 桌面生成局域网配对二维码（含局域网 IPv4、端口 `5417`、配对令牌；配置 Cloudflare Tunnel 时另带 `relay`），并支持重新生成令牌（`POST /api/hoxi/pairing/rotate`，旧码立即失效） | 已实现 | [`internal/pairing`](../internal/pairing/pairing.go)、`GET /api/hoxi/pairing/qr` |
 | 桌面监听局域网 `:5417`，用配对令牌鉴权，复用远程路由白名单；仅接受局域网来源（loopback / RFC1918 / ULA / 链路本地 / CGNAT），公网来源一律 403 | 已实现 | [`internal/gateway/lan.go`](../internal/gateway/lan.go)、[`internal/app/app.go`](../internal/app/app.go) |
 | 手机扫码直连（Hoxi 节点二维码，`type=hoxi`） | 已实现（手机端既有扫码流程） | `client/lib/features/auth/...` |
 | 反向代理入口（loopback `127.0.0.1:5418`，供 cloudflared 等本地转发器指向；配对令牌鉴权 + 远程路由白名单；**不做来源地址过滤**，由转发器自身的前置鉴权把关） | 已实现 | [`internal/gateway/ingress.go`](../internal/gateway/ingress.go)、[`internal/app/app.go`](../internal/app/app.go) |

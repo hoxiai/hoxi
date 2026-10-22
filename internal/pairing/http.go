@@ -12,6 +12,7 @@ import (
 // this desktop's LAN pairing token remotely.
 func (s *Service) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/hoxi/pairing/qr", s.handleQR)
+	mux.HandleFunc("/api/hoxi/pairing/rotate", s.handleRotate)
 }
 
 func (s *Service) handleQR(w http.ResponseWriter, r *http.Request) {
@@ -22,6 +23,19 @@ func (s *Service) handleQR(w http.ResponseWriter, r *http.Request) {
 	code, err := s.Code()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not build pairing code")
+		return
+	}
+	writeJSON(w, http.StatusOK, code)
+}
+
+func (s *Service) handleRotate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	code, err := s.Rotate()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not rotate the pairing token")
 		return
 	}
 	writeJSON(w, http.StatusOK, code)
