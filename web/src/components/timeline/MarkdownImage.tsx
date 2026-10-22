@@ -4,6 +4,7 @@ import {
   appSettings,
   openExternalURL,
   openFileInInspector,
+  openImagePreview,
   openURLInInspector,
   workspace,
 } from "../../store/workspace";
@@ -107,7 +108,7 @@ export default function MarkdownImage(props: { src: string; alt: string; title?:
     !isDataImage() &&
     (!/^[a-z][a-z0-9+.-]*:/i.test(rawSrc()) || /^[a-zA-Z]:[\\/]/.test(rawSrc()));
   const localPath = () => (isLocal() ? stripFileLineSuffix(rawSrc()) : "");
-  const canOpen = () => Boolean(localPath()) || isRemote();
+  const canOpen = () => Boolean(localPath()) || isRemote() || isDataImage();
   const displaySrc = () => (isRemote() || isDataImage() ? rawSrc() : resolved());
 
   createEffect(() => {
@@ -166,21 +167,35 @@ export default function MarkdownImage(props: { src: string; alt: string; title?:
     e.preventDefault();
     const path = localPath();
     if (path) {
-      openFileInInspector(path);
+      openImagePreview({
+        src: displaySrc(),
+        alt: props.alt || path,
+        originalLabel: t("timeline.openInInspectorTooltip"),
+        onOpenOriginal: () => openFileInInspector(path),
+      });
       return;
     }
-    if (!isRemote()) return;
+    if (!isRemote() && !isDataImage()) return;
+    if (isDataImage()) {
+      openImagePreview({ src: rawSrc(), alt: props.alt || "" });
+      return;
+    }
     const target =
       e.metaKey || e.ctrlKey
         ? appSettings.linkOpenTarget === "external"
           ? "inspector"
           : "external"
         : appSettings.linkOpenTarget;
-    if (target === "external") {
-      openExternalURL(rawSrc());
-    } else {
-      openURLInInspector(rawSrc());
-    }
+    openImagePreview({
+      src: rawSrc(),
+      alt: props.alt || rawSrc(),
+      originalLabel:
+        target === "external"
+          ? t("timeline.openInExternalBrowserTooltip")
+          : t("timeline.openInBrowserTooltip"),
+      onOpenOriginal: () =>
+        target === "external" ? openExternalURL(rawSrc()) : openURLInInspector(rawSrc()),
+    });
   };
 
   const openTitle = () => {

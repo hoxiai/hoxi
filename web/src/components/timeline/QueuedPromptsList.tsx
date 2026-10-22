@@ -4,6 +4,7 @@ import { ArrowUp, Clock, Pencil, Sparkles, Trash2 } from "lucide-solid";
 import {
   canSteerSession,
   editQueuedPrompt,
+  openImagePreview,
   type QueuedPromptItem,
   removeQueuedPrompt,
   sendQueuedPromptNow,
@@ -52,13 +53,23 @@ export default function QueuedPromptsList(props: {
                     <div class="flex flex-wrap gap-2">
                       <For each={item.attachments}>
                         {(att) => (
-                          <div class="overflow-hidden rounded-lg border border-[var(--border-subtle)] max-w-[200px]">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              openImagePreview({
+                                src: att.url,
+                                alt: att.filename || "attachment",
+                              })
+                            }
+                            title={t("timeline.previewImageTooltip")}
+                            class="block max-w-[200px] overflow-hidden rounded-lg border border-[var(--border-subtle)] cursor-zoom-in transition-colors hover:border-[var(--accent-border)]"
+                          >
                             <img
                               src={att.url}
                               alt={att.filename || "attachment"}
                               class="max-h-36 w-auto object-contain block"
                             />
-                          </div>
+                          </button>
                         )}
                       </For>
                     </div>

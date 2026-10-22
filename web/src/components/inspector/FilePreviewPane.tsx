@@ -13,7 +13,13 @@ import {
 } from "lucide-solid";
 import type { FileContentResponse } from "../../services/api";
 import type { SnapshotFileDiff } from "../../services/sse-types";
-import { openDiffInInspector, openExternalFile, setWorkspace, workspace } from "../../store/workspace";
+import {
+  openDiffInInspector,
+  openExternalFile,
+  openImagePreview,
+  setWorkspace,
+  workspace,
+} from "../../store/workspace";
 import { DiffChanges, FileIcon } from "../icons";
 import { computeChangedFileLines } from "../timeline/file-diff-lines";
 import MarkdownView from "../timeline/MarkdownView";
@@ -475,11 +481,23 @@ export default function FilePreviewPane(props: FilePreviewPaneProps) {
             }
           >
             <div class="flex flex-col items-center justify-center p-6 min-h-full bg-[var(--bg-inset)]">
-              <img
-                src={imageDataUrl()}
-                alt={props.previewPath || ""}
-                class="max-w-full max-h-[72vh] object-contain rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-2 shadow-sm"
-              />
+              <button
+                type="button"
+                onClick={() =>
+                  openImagePreview({
+                    src: imageDataUrl(),
+                    alt: props.previewPath || "",
+                  })
+                }
+                title={t("timeline.previewImageTooltip")}
+                class="cursor-zoom-in rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-2 shadow-sm transition-colors hover:border-[var(--accent-border)]"
+              >
+                <img
+                  src={imageDataUrl()}
+                  alt={props.previewPath || ""}
+                  class="max-w-full max-h-[72vh] object-contain"
+                />
+              </button>
               <Show when={props.previewMeta?.size}>
                 <div class="mt-2 text-[11px] font-mono text-[var(--text-muted)]">
                   {formatByteSize(props.previewMeta?.size)}

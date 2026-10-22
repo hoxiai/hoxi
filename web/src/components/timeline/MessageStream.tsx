@@ -18,6 +18,7 @@ import {
   canRevertSession,
   findLatestUserTurnID,
   forkFromMessage,
+  openImagePreview,
   isUserTurnTaskActive as isUserTurnTaskActiveInStore,
   resolveTurnSkillStatus,
   revertToHere,
@@ -589,16 +590,24 @@ export default function MessageStream(props: { hidden?: boolean }) {
                                         </a>
                                       }
                                     >
-                                      <div
+                                      <button
+                                        type="button"
                                         data-part-id={fp.id}
-                                        class="overflow-hidden rounded-lg border border-[var(--border-subtle)] max-w-[260px]"
+                                        onClick={() =>
+                                          openImagePreview({
+                                            src: fp.url,
+                                            alt: fp.filename || "attachment",
+                                          })
+                                        }
+                                        title={t("timeline.previewImageTooltip")}
+                                        class="block max-w-[260px] overflow-hidden rounded-lg border border-[var(--border-subtle)] cursor-zoom-in transition-colors hover:border-[var(--accent-border)]"
                                       >
                                         <img
                                           src={fp.url}
                                           alt={fp.filename || "attachment"}
                                           class="max-h-48 w-auto object-contain block"
                                         />
-                                      </div>
+                                      </button>
                                     </Show>
                                   );
                                 })()}

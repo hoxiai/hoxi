@@ -8,6 +8,7 @@ import LeftNav from "./LeftNav";
 import MessageStream from "../timeline/MessageStream";
 import Composer from "../timeline/Composer";
 import ParticleLogo from "../timeline/ParticleLogo";
+import ImagePreviewOverlay from "../preview/ImagePreviewOverlay";
 import InspectorPane from "../inspector/InspectorPane";
 import {
   appSettings,
@@ -347,6 +348,7 @@ export default function ThreePaneShell(props: ThreePaneShellProps = {}) {
         </div>
       </main>
 
+      <ImagePreviewOverlay />
       <CommandPalette mode={paletteMode()} onClose={() => setPaletteMode(null)} />
       <UpdateWatcher />
       <UpdateModal />

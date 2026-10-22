@@ -58,6 +58,7 @@ export * from "./remote-tunnel";
 export * from "./relay";
 export * from "./deep-link";
 export * from "./subagent-config";
+export * from "./image-viewer";
 
 
 
