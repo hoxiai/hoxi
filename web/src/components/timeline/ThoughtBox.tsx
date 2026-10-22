@@ -17,8 +17,25 @@ function clean(value: string): string {
     .replace(/`([^`]+)`/g, "$1")
     .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
     .replace(/<[^>]+>/g, " ")
+    .replace(/\*\*[ \t]*\*\*/g, " · ")
     .replace(/[*_~]+/g, "")
     .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Normalizes raw reasoning text from providers and Codex-style summary streams:
+ * strips stray `<think>` / `<thinking>` wrappers and splits adjacent bold
+ * phase headings (`**Heading 1****Heading 2**`) onto separate paragraph lines.
+ */
+export function normalizeReasoningText(raw: string): string {
+  return (raw ?? "")
+    .replace(/\[REDACTED\]/g, "")
+    .replace(/<\/?think(?:ing)?>/gi, "")
+    .replace(/<\/(?:t(?:h(?:i(?:n(?:k(?:i(?:n(?:g)?)?)?)?)?)?)?)?$/i, "")
+    .replace(/([^\s*])\*\*[ \t]*\*\*(?=[^\s*])/g, "$1**\n\n**")
+    .replace(/([^\s*])\*\*[ \t]*\*\*$/g, "$1**")
+    .replace(/\r\n?/g, "\n")
     .trim();
 }
 
@@ -51,7 +68,7 @@ function pick(src: string, expr: RegExp, group = 1): ReasoningHeading | undefine
  * so the Thought header shows the live reasoning phase title.
  */
 export function reasoningHeading(text: string, partial = false): ReasoningHeading {
-  const src = text.replace(/\r\n?/g, "\n").trim();
+  const src = normalizeReasoningText(text);
   if (partial && !src.includes("\n")) {
     const mark = src.startsWith("**") ? "**" : src.startsWith("__") ? "__" : "";
     if (mark && src.length > mark.length && !src.slice(mark.length).includes(mark)) {
@@ -98,7 +115,7 @@ export function reasoningSummary(body: string): string {
  * continuously reflects current thinking progress without expanding a 240px box.
  */
 export function liveReasoningTicker(rawText: string, isStreaming = false): string {
-  const src = (rawText ?? "").replace(/\[REDACTED\]/g, "").replace(/\r\n?/g, "\n").trim();
+  const src = normalizeReasoningText(rawText);
   if (!src) return "";
 
   if (!isStreaming) {
@@ -145,7 +162,7 @@ export default function ThoughtBox(props: { part: ReasoningPart; revealKey?: str
   const streaming = () =>
     props.part.time?.end == null &&
     (!props.part.sessionID || isSessionBusy(props.part.sessionID));
-  const hasContent = () => Boolean(props.part.text && props.part.text.trim().length > 0);
+  const hasContent = () => normalizeReasoningText(props.part.text ?? "").length > 0;
 
   const resolveDefaultOpen = () => {
     const id = props.part.id;
@@ -265,7 +282,7 @@ export default function ThoughtBox(props: { part: ReasoningPart; revealKey?: str
 
   const bodyContent = createMemo(() => {
     if (!open() && !everOpened()) return "";
-    const full = (props.part.text ?? "").replace(/\[REDACTED\]/g, "").trim();
+    const full = normalizeReasoningText(props.part.text ?? "");
     const parsed = reasoningHeading(full, streaming());
     return parsed.body || full;
   });
