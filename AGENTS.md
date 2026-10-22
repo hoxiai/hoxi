@@ -19,6 +19,7 @@
 - **外部 CLI 会话接管**（`internal/handoff`）：从 Claude / Codex / Gemini / Grok / OpenCode / Trae / Qoder / CodeBuddy 导入会话
 - **Agent Skills**（`internal/skills`）：本地 Skill 发现（OpenCode `/skill`）、内置默认 Skill `shoply-ops`、`skill-authoring`（`internal/skills/defaults/`），以及 hoxi.ai 线上技能目录（`GET /api/hoxi/skills/marketplace`）与显式安装（`POST /api/hoxi/skills/marketplace/install`，校验 `sha256` 后原子写入 `~/.hoxi/skills/<slug>/`，不自动安装、不执行远程脚本、不经隧道开放）
 - **GoPanel 反向隧道**（`internal/tunnel` + `internal/gateway/tunnel.go`）：Mac 主动外连 GoPanel，路由白名单内的 HTTP / SSE 在进程内交给网关；Mac 不开放公网端口。待处理审批经 Notify 帧交给 GoPanel 发 APNs
+- **局域网配对二维码**（`internal/pairing` + 设置 → 远程）：桌面端生成含本机局域网 IPv4、端口 `5417` 与配对令牌的二维码（`GET /api/hoxi/pairing/qr`，返回 data:PNG），手机 App 扫码后经局域网直连；桌面监听 `:5417`（`internal/gateway/lan.go`）用配对令牌鉴权并复用远程路由白名单，令牌存 `~/.hoxi/pairing.json`（0600，属受保护状态文件）。该路由与 `5417` 监听均**不对隧道开放**；`5417` 为明文 + 令牌（跨网端到端加密仍为规划，见 [`docs/remote-access-e2e-contract.md`](docs/remote-access-e2e-contract.md)）
 - **本机模型中转**（`internal/provider/relay.go` + `relay_keys.go`）：在回环地址上暴露 OpenAI 兼容的 `GET /v1/models` 与 `POST /v1/chat/completions`，供 Cline / Continue / Cherry Studio / Open WebUI / aider 等本机工具复用已配置服务商；只重写 `model` 字段并注入上游 Key，body 与 SSE 原样透传（tools / 多模态不被翻译层破坏）。认证使用独立 `hk-*` Key（`~/.hoxi/relay-keys.json` 仅存 SHA-256 哈希，明文只在创建时返回一次），不把上游凭据下发给客户端；`hoxi-auto` 走自动路由池。该平面**永不进入隧道白名单**
 - **模型池候选熔断与选模**（`internal/provider/auto_router.go` + `breaker.go`）：`hoxi-auto` 自动池按策略（`round-robin` / `priority` / `smart-health`）选模；按 `provider/model` 记录失败分类（transient / rate_limit / quota / config）与延迟 EWMA，失败即冷却、到期自愈（状态存 `~/.hoxi/provider-breakers.json`，配置类错误也会过期）。**所有策略**都跳过熔断中的候选与比最快健康候选慢 3 倍以上的慢模型，`smart-health` 额外按健康分排序（快且稳优先）。判定的延迟口径为 TTFT，会话侧（`web/src/store/auto-breaker.ts`）消费同一快照并经 `POST /api/hoxi/provider/candidate-outcome` 回报结果，路由不经隧道开放
 
@@ -55,6 +56,7 @@ Flutter + Riverpod + GoRouter + Dio，四栏：沟通 · 工程 · 专栏 · 我
 │   │   ├── ocapi/                    # [底座层] Shared loopback HTTP/SSE client & Basic Auth transport for `opencode serve`
 │   │   └── ocstate/                  # [底座层] External OpenCode SQLite reader & Console account sync into hoxi.db
 │   ├── orchestration/                # [业务层] Multi-agent DAG convoys on the runner session plane: per-task worktrees & dependency merge
+│   ├── pairing/                      # [业务层] Local-network pairing QR: LAN IPv4 discovery, persisted pairing token & PNG QR
 │   ├── promptassist/                 # [业务层] Composer prompt enhancement & session title summarization via llm.Client
 │   ├── provider/                     # [业务层] Provider config, models.json, llm.Client implementation, probing, candidate breaker & model stats
 │   ├── recall/                       # [业务层] Cross-session semantic / BM25 memory recall & indexing
@@ -63,6 +65,7 @@ Flutter + Riverpod + GoRouter + Dio，四栏：沟通 · 工程 · 专栏 · 我
 │   ├── skills/                       # [业务层] Local Agent Skills discovery + hoxi.ai catalog client & verified installer + embedded defaults
 │   ├── statusbar/                    # [底座层] Running/Attention tracker, attention notices & macOS NSStatusBar (CGo)
 │   ├── telemetry/                    # [业务层] Local token/cost/latency metrics & session usage ledger
+│   ├── testutil/execstub/            # [测试辅助] Fake CLI executables for tests (symlink to the test binary + sidecar sh script; avoids macOS first-exec scans)
 │   ├── textindex/                    # [底座层] Pure-Go BM25 / trigram full-text search index primitive
 │   ├── tunnel/                       # [业务层] GoPanel reverse tunnel client: pairing, frame protocol, in-process dispatch & Notify
 │   ├── updater/                      # [业务层] Sparkle-based native auto-update checker & appcast
@@ -244,6 +247,7 @@ Flutter + Riverpod + GoRouter + Dio，四栏：沟通 · 工程 · 专栏 · 我
 
 - **整体架构、OpenCode REST/SSE 协议契约、Worktree 状态机** → [`DEVELOPMENT.md`](DEVELOPMENT.md)
 - **Hoxi ⇄ GoPanel 远程隧道与审批推送（`internal/tunnel` + 网关路由白名单，双仓同步）** → [`docs/gopanel-hoxi-remote-tunnel.md`](docs/gopanel-hoxi-remote-tunnel.md)
+- **远程可达性与端到端加密（局域网直连、配对票据、盲目中继回落；LAN 已实现，跨网 E2E 为草案）** → [`docs/remote-access-e2e-contract.md`](docs/remote-access-e2e-contract.md)
 - **移动端现状、控制链路与语音实现边界** → [`client/AGENTS.md`](client/AGENTS.md)、[`client/README.zh-CN.md`](client/README.zh-CN.md)、[`client/VOICE_REMOTE_ARCHITECTURE.md`](client/VOICE_REMOTE_ARCHITECTURE.md)、[`client/ROADMAP.md`](client/ROADMAP.md)
 - **跨 CLI 会话接管（Handoff IR）与本地 CLI 协议桥接** → [`HANDOFF_AND_CLI_BRIDGE.md`](HANDOFF_AND_CLI_BRIDGE.md)
 - **内置无头 Chrome 浏览器检视器、人工接管与安全边界** → [`BROWSER.md`](BROWSER.md)、[`internal/browser/README.md`](internal/browser/README.md)
@@ -259,7 +263,7 @@ Flutter + Riverpod + GoRouter + Dio，四栏：沟通 · 工程 · 专栏 · 我
 
 | 项目 | 说明 |
 | --- | --- |
-| 局域网直连 | Hoxi 额外监听 `5417`（受令牌保护），手机按“局域网探测 → 失败回落中继”双路由；`5417` 当前不监听 |
+| 远程端到端加密与盲目中继 | 跨网直连优先、打不通回落只转发密文的中继，中继读不到内容；配对票据服务与数据面分离。LAN 直连与 `5417` 令牌监听**已实现**，跨网部分见 [`docs/remote-access-e2e-contract.md`](docs/remote-access-e2e-contract.md) |
 | 隧道 WebSocket | 经隧道使用远程终端（`/pty`），当前 GoPanel 返回 501 |
 | 隧道凭据入钥匙串 | 当前为 `0600` 明文文件 |
 | 手机端数据外发说明 | 在模型网关配置处与首次对话前说明上下文发往哪个网关、包含哪些内容 |

@@ -13,7 +13,16 @@ import (
 	"github.com/hoxiai/hoxi/internal/tunnel"
 )
 
-type tunnelRequestKey struct{}
+// remoteSourceKey marks a request as coming from a paired remote controller and
+// records which transport it arrived on. The GoPanel tunnel and the LAN pairing
+// listener share the same route allow-list and file-root confinement; only the
+// transport and the approval-source label differ.
+type remoteSourceKey struct{}
+
+const (
+	remoteSourceTunnel = "tunnel"
+	remoteSourceLAN    = "lan"
+)
 
 // tunnelRoute is one (method, path pattern) the mobile app may reach through
 // the GoPanel tunnel. Patterns match segment by segment; "*" matches exactly
@@ -191,10 +200,14 @@ func tunnelBodyAllowed(r *http.Request) bool {
 	return !body.Push
 }
 
-func isTunnelRequest(r *http.Request) bool {
-	remote, _ := r.Context().Value(tunnelRequestKey{}).(bool)
-	return remote
+func remoteSource(r *http.Request) string {
+	source, _ := r.Context().Value(remoteSourceKey{}).(string)
+	return source
 }
+
+// isRemoteRequest reports whether the request arrived from a paired remote
+// controller (GoPanel tunnel or LAN pairing), not a local desktop caller.
+func isRemoteRequest(r *http.Request) bool { return remoteSource(r) != "" }
 
 // serveTunnelRequest is the handler the tunnel manager calls in-process. The
 // tunnel package already rewrote Host to loopback and dropped Origin, cookies
@@ -202,11 +215,18 @@ func isTunnelRequest(r *http.Request) bool {
 // gateway token is never attached to tunnel requests, so the token-guarded
 // raw OpenCode passthrough stays unreachable even if a route slipped through.
 func (g *Gateway) serveTunnelRequest(w http.ResponseWriter, r *http.Request) {
+	g.serveRemoteRequest(w, r, remoteSourceTunnel)
+}
+
+// serveRemoteRequest applies the paired-controller route allow-list and file
+// confinement, tags the request with its transport source for the approval
+// audit, and serves it in-process.
+func (g *Gateway) serveRemoteRequest(w http.ResponseWriter, r *http.Request, source string) {
 	if !tunnelRequestAllowed(r) || !tunnelBodyAllowed(r) {
-		writeJSONError(w, http.StatusForbidden, "route is not available over the remote tunnel")
+		writeJSONError(w, http.StatusForbidden, "route is not available for remote controllers")
 		return
 	}
-	r = r.WithContext(context.WithValue(r.Context(), tunnelRequestKey{}, true))
+	r = r.WithContext(context.WithValue(r.Context(), remoteSourceKey{}, source))
 	r.Header.Del(gatewayTokenHeader)
 	if r.URL.Path == "/api/hoxi/file/search" && !g.tunnelSearchRootAllowed(r) {
 		writeJSONError(w, http.StatusForbidden, "path is outside the workspace")

@@ -44,6 +44,7 @@ import "../src/__tests__/appearance.test";
 import "../src/__tests__/network.test";
 import "../src/__tests__/telemetry.test";
 import "../src/__tests__/local-relay.test";
+import "../src/__tests__/pairing.test";
 import "../src/__tests__/auto-models.test";
 import "../src/__tests__/auto-breaker.test";
 import "../src/__tests__/workspace-review.test";
@@ -60,7 +61,8 @@ import "../src/__tests__/updater-state.test";
 
 console.log("[test] Running Hoxi frontend unit tests...");
 runAllTests().then((failed) => {
-  if (failed > 0) {
-    process.exit(1);
-  }
+  // Exit explicitly: store modules under test leave long timers (debounce/TTL)
+  // armed, which would otherwise keep Node alive for seconds after the last
+  // test. Flush stdout first so piped output is not truncated.
+  process.stdout.write("", () => process.exit(failed > 0 ? 1 : 0));
 });

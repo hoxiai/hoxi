@@ -15,6 +15,7 @@ import { skills } from "./skills";
 import { commandPalette } from "./commandPalette";
 import { forge } from "./forge";
 import { remoteTunnel } from "./remoteTunnel";
+import { pairing } from "./pairing";
 import { relay } from "./relay";
 import { tasks } from "./tasks";
 
@@ -35,6 +36,7 @@ export const enUS = {
   commandPalette,
   forge,
   remoteTunnel,
+  pairing,
   relay,
   tasks,
 };

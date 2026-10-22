@@ -112,6 +112,7 @@ type DesktopApp struct {
 	status          *statusbar.Tracker
 	notifier        *notify.Service
 	wsServer        *http.Server
+	lanServer       *http.Server
 	browserEnv      []string
 }
 
@@ -267,6 +268,26 @@ func Run(distFS fs.FS) {
 			logger.Error("loopback server stopped unexpectedly", "error", err)
 		}
 	}()
+
+	// LAN pairing listener: the phone dials this Mac directly on the local
+	// network using the QR from Settings → Remote. Token-gated and best effort:
+	// if the port is taken, desktop access still works over loopback/GoPanel.
+	if lanListener, lanErr := net.Listen("tcp", fmt.Sprintf(":%d", hoxipaths.DefaultLANPairingPort)); lanErr == nil {
+		defer lanListener.Close()
+		app.lanServer = &http.Server{
+			Handler:           http.HandlerFunc(gw.ServeLANRequest),
+			ReadHeaderTimeout: 10 * time.Second,
+			IdleTimeout:       90 * time.Second,
+		}
+		lanServer := app.lanServer
+		go func() {
+			if err := lanServer.Serve(lanListener); err != nil && err != http.ErrServerClosed {
+				logger.Error("LAN pairing listener stopped unexpectedly", "error", err)
+			}
+		}()
+	} else {
+		logger.Warn("LAN pairing port unavailable; mobile LAN pairing is disabled", "port", hoxipaths.DefaultLANPairingPort, "error", lanErr)
+	}
 
 	opencode.ReapOrphanedDaemons(logger)
 

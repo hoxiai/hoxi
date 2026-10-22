@@ -65,7 +65,7 @@ type ApprovalAuditEntry struct {
 	Directory    string `json:"directory,omitempty"`
 	Destructive  bool   `json:"destructive,omitempty"`
 	Decision     string `json:"decision"` // "once" | "always" | "reject" | "timeout" | "interrupted"
-	Source       string `json:"source"`   // "desktop" | "tunnel" | "system"
+	Source       string `json:"source"`   // "desktop" | "tunnel" | "lan" | "system"
 	Message      string `json:"message,omitempty"`
 }
 
@@ -386,10 +386,26 @@ func requestApprovalSource(r *http.Request) string {
 	if r == nil {
 		return "desktop"
 	}
-	if strings.EqualFold(strings.TrimSpace(r.Header.Get(ApprovalSourceHeader)), "tunnel") {
+	switch strings.ToLower(strings.TrimSpace(r.Header.Get(ApprovalSourceHeader))) {
+	case "tunnel":
 		return "tunnel"
+	case "lan":
+		return "lan"
+	default:
+		return "desktop"
 	}
-	return "desktop"
+}
+
+// isRemoteApprovalSource reports whether an approval originated from a paired
+// remote controller (GoPanel tunnel or LAN pairing) rather than the desktop.
+// Remote sources may not change the approval policy, audit or grants.
+func isRemoteApprovalSource(source string) bool {
+	switch strings.ToLower(strings.TrimSpace(source)) {
+	case "tunnel", "lan":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *Service) enrichSessionMeta(sessionID string) (title, runtime, dir string) {
@@ -525,8 +541,8 @@ func (s *Service) revokeApprovalGrants(id, sessionID string, all bool) int {
 }
 
 func (s *Service) handleApprovalAudit(w http.ResponseWriter, r *http.Request) {
-	if requestApprovalSource(r) == "tunnel" {
-		writeJSONError(w, http.StatusForbidden, "route is not available over the remote tunnel")
+	if isRemoteApprovalSource(requestApprovalSource(r)) {
+		writeJSONError(w, http.StatusForbidden, "route is not available for remote controllers")
 		return
 	}
 	switch r.Method {
@@ -566,8 +582,8 @@ func (s *Service) handleApprovalAudit(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) handleApprovalGrants(w http.ResponseWriter, r *http.Request) {
-	if requestApprovalSource(r) == "tunnel" {
-		writeJSONError(w, http.StatusForbidden, "route is not available over the remote tunnel")
+	if isRemoteApprovalSource(requestApprovalSource(r)) {
+		writeJSONError(w, http.StatusForbidden, "route is not available for remote controllers")
 		return
 	}
 	q := r.URL.Query()

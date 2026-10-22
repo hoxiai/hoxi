@@ -46,6 +46,7 @@ import { SystemRuntimeSettingsTab } from "./SettingsSystemRuntimeTab";
 import { PrivacySettingsTab } from "./PrivacyControls";
 import { LocalRelaySettingsTab } from "./LocalRelayControls";
 import { RemoteTunnelControls } from "./RemoteTunnelControls";
+import { PairingQrPanel } from "./PairingQrPanel";
 import { SettingsExtensionsTab } from "./SettingsExtensionsTab";
 import DiagnosticsTab from "./DiagnosticsTab";
 import ErrorLogTab from "./ErrorLogTab";
@@ -544,7 +545,8 @@ export default function SettingsModal() {
                     </div>
                   </Show>
                   <Show when={activeTab() === "remote"}>
-                    <div class="hoxi-view-enter">
+                    <div class="hoxi-view-enter space-y-6">
+                      <PairingQrPanel />
                       <RemoteTunnelControls />
                     </div>
                   </Show>

@@ -27,6 +27,10 @@ const (
 	DefaultReleaseBridgeAddr = "127.0.0.1:5410"
 	// DefaultDevBridgeAddr is the default loopback gateway address for dev builds.
 	DefaultDevBridgeAddr = "127.0.0.1:5420"
+	// DefaultLANPairingPort is the LAN port the mobile app pairs over when it
+	// scans the desktop's local-network QR code. The listener is not opened
+	// yet; the QR only records the address, port and token it will accept.
+	DefaultLANPairingPort = 5417
 )
 
 var protectedStateFiles = []string{
@@ -38,6 +42,7 @@ var protectedStateFiles = []string{
 	"telemetry.json",
 	"tunnel.json",
 	"tunnel-dev.json",
+	"pairing.json",
 	"approval-audit.json",
 	"approval-policy.json",
 	"relay-keys.json",
@@ -110,6 +115,13 @@ func TunnelConfigPath(variant string) string {
 		return Join("tunnel-dev.json")
 	}
 	return Join("tunnel.json")
+}
+
+// PairingTokenPath returns ~/.hoxi/pairing.json, the stable token encoded in
+// the desktop's LAN pairing QR code. It is written 0600 and never leaves the
+// machine except inside the QR the user chooses to display.
+func PairingTokenPath() string {
+	return Join("pairing.json")
 }
 
 // ApprovalPolicyPath returns ~/.hoxi/approval-policy.json, the approval mode

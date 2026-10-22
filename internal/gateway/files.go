@@ -376,12 +376,12 @@ func isBinaryImageMime(mimeType string) bool {
 }
 
 func (g *Gateway) handleFileContent(w http.ResponseWriter, r *http.Request) {
-	remote := isTunnelRequest(r)
+	remote := isRemoteRequest(r)
 	rawPath := strings.TrimSpace(r.URL.Query().Get("path"))
 	if r.Method != http.MethodGet || rawPath == "" {
-		// Tunnel requests never fall through to the OpenCode proxy.
+		// Remote requests never fall through to the OpenCode proxy.
 		if remote {
-			writeJSONError(w, http.StatusForbidden, "route is not available over the remote tunnel")
+			writeJSONError(w, http.StatusForbidden, "route is not available for remote controllers")
 			return
 		}
 		g.proxy.ServeHTTP(w, r)
@@ -536,7 +536,7 @@ func (g *Gateway) handleFileList(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusForbidden, "access to sensitive directory is forbidden")
 		return
 	}
-	if isTunnelRequest(r) && !g.tunnelFilePathAllowed(targetDir, sessionID) {
+	if isRemoteRequest(r) && !g.tunnelFilePathAllowed(targetDir, sessionID) {
 		writeJSONError(w, http.StatusForbidden, "path is outside the workspace")
 		return
 	}

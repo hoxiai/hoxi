@@ -25,6 +25,7 @@ import (
 	"github.com/hoxiai/hoxi/internal/leaderboard"
 	"github.com/hoxiai/hoxi/internal/opencode/ocapi"
 	"github.com/hoxiai/hoxi/internal/orchestration"
+	"github.com/hoxiai/hoxi/internal/pairing"
 	"github.com/hoxiai/hoxi/internal/provider"
 	"github.com/hoxiai/hoxi/internal/recall"
 	"github.com/hoxiai/hoxi/internal/runner"
@@ -61,6 +62,7 @@ type Gateway struct {
 	orchestration         *orchestration.Service
 	forge                 *forge.Service
 	tunnel                *tunnel.Manager
+	pairing               *pairing.Service
 	onOpenDirectoryDialog func() (string, error)
 	onFocusDesktop        func(directory, sessionID string)
 	dialogMu              sync.RWMutex
@@ -200,6 +202,7 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 	})
 	providers.SetBusyCheck(g.isAnySessionBusy)
 	g.tunnel = tunnel.NewManager(tunnel.Options{Handler: http.HandlerFunc(g.serveTunnelRequest), Version: buildinfo.Version})
+	g.pairing = pairing.NewService(hoxipaths.PairingTokenPath(), hoxipaths.DefaultLANPairingPort)
 
 	g.registerRoutes(distFS)
 	return g
@@ -268,8 +271,8 @@ func (g *Gateway) SetDesktopFocusHandler(fn func(directory, sessionID string)) {
 }
 
 func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if isTunnelRequest(r) {
-		r.Header.Set(runner.ApprovalSourceHeader, "tunnel")
+	if source := remoteSource(r); source != "" {
+		r.Header.Set(runner.ApprovalSourceHeader, source)
 	} else {
 		r.Header.Set(runner.ApprovalSourceHeader, "desktop")
 	}
@@ -282,8 +285,8 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// Defense in depth: even if a future edit added /v1/* to the tunnel
 		// allow-list, a remote caller still cannot spend the user's provider
 		// credits with a relay key.
-		if isTunnelRequest(r) {
-			writeJSONError(w, http.StatusForbidden, "the local model relay is not available over the remote tunnel")
+		if isRemoteRequest(r) {
+			writeJSONError(w, http.StatusForbidden, "the local model relay is not available to remote controllers")
 			return
 		}
 		if !trustedHost(r.Host) {
@@ -343,9 +346,9 @@ func (g *Gateway) registerRoutes(distFS fs.FS) {
 		if g.status != nil {
 			st = g.status.Snapshot()
 		}
-		// The loopback gateway token never leaves the machine via the tunnel.
+		// The loopback gateway token never leaves the machine to a remote caller.
 		tok := g.GatewayToken()
-		if isTunnelRequest(r) {
+		if isRemoteRequest(r) {
 			tok = ""
 		}
 		if tok != "" {
@@ -439,6 +442,7 @@ func (g *Gateway) registerRoutes(distFS fs.FS) {
 	g.handoff.RegisterRoutes(g.mux)
 	g.worktrees.RegisterRoutes(g.mux)
 	g.tunnel.RegisterRoutes(g.mux)
+	g.pairing.RegisterRoutes(g.mux)
 	g.workspaces.RegisterRoutes(g.mux)
 	g.browser.RegisterRoutes(g.mux)
 	if g.runner != nil {

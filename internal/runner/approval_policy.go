@@ -181,8 +181,8 @@ type approvalPolicyResponse struct {
 }
 
 func (s *Service) handleApprovalPolicy(w http.ResponseWriter, r *http.Request) {
-	if requestApprovalSource(r) == "tunnel" {
-		writeJSONError(w, http.StatusForbidden, "the approval policy cannot be changed over the remote tunnel")
+	if isRemoteApprovalSource(requestApprovalSource(r)) {
+		writeJSONError(w, http.StatusForbidden, "the approval policy cannot be changed by a remote controller")
 		return
 	}
 	switch r.Method {
