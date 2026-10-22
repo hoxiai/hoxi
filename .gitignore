@@ -18,7 +18,7 @@ build/preflight/
 .hoxi/
 .claude/
 # Legacy memory location; Hoxi now writes .hoxi/memory/ (kept out of git too)
-.opencode/memory/sessions/
+.opencode/memory/
 
 # Mobile app lives in a separate private repository
 /client/
