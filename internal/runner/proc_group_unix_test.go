@@ -400,15 +400,16 @@ func TestStopToolCommandRefusesSessionWithoutRunnerProcess(t *testing.T) {
 func TestStopOpenCodeToolProcessStopsUniqueMatch(t *testing.T) {
 	// `opencode serve` spawns every tool command detached, in its own process
 	// group; the fake daemon reproduces that with setpgrp.
-	daemon, pidFile := startFakeDaemon(t, `perl -e 'setpgrp(0, 0); exec "sleep", "305"' & echo $! > "$HOXI_TEST_PIDFILE"; sleep 306`)
+	marker := openCodeStopMarker("ses_engine", "call_stop_1")
+	daemon, pidFile := startFakeDaemon(t, `perl -e 'setpgrp(0, 0); exec "sh", "-c", "`+marker+`\nsleep 305\nwait"' & echo $! > "$HOXI_TEST_PIDFILE"; sleep 306`)
 	t.Cleanup(func() {
 		_ = syscall.Kill(daemon.Process.Pid, syscall.SIGKILL)
 		_ = daemon.Wait()
 	})
 	daemonPID := readPID(t, pidFile)
 
-	if stopped := stopOpenCodeToolProcess(daemon.Process.Pid, "sleep 305"); stopped == 0 {
-		t.Fatal("unique tool command was not stopped")
+	if stopped := stopOpenCodeToolProcessByMarker(daemon.Process.Pid, marker); stopped == 0 {
+		t.Fatal("tagged tool command was not stopped")
 	}
 	assertProcessGone(t, daemonPID)
 	if err := syscall.Kill(daemon.Process.Pid, 0); err != nil {
@@ -416,10 +417,28 @@ func TestStopOpenCodeToolProcessStopsUniqueMatch(t *testing.T) {
 	}
 }
 
-// Two matching subtrees under the shared daemon are ambiguous: the stop must
-// refuse instead of killing another session's identical command.
-func TestStopOpenCodeToolProcessRefusesAmbiguousMatch(t *testing.T) {
-	daemon, pidFile := startFakeDaemon(t, `perl -e 'setpgrp(0, 0); exec "sleep", "307"' & echo $! > "$HOXI_TEST_PIDFILE.1"; perl -e 'setpgrp(0, 0); exec "sleep", "307"' & echo $! > "$HOXI_TEST_PIDFILE.2"; sleep 308`)
+// A marker that no subtree carries must kill nothing.
+func TestStopOpenCodeToolProcessByMarkerIgnoresUnknownMarker(t *testing.T) {
+	marker := openCodeStopMarker("ses_engine", "call_present")
+	daemon, pidFile := startFakeDaemon(t, `perl -e 'setpgrp(0, 0); exec "sh", "-c", "`+marker+`\nsleep 309\nwait"' & echo $! > "$HOXI_TEST_PIDFILE"; sleep 310`)
+	t.Cleanup(func() {
+		_ = syscall.Kill(daemon.Process.Pid, syscall.SIGKILL)
+		_ = daemon.Wait()
+	})
+	child := readPID(t, pidFile)
+	t.Cleanup(func() { _ = syscall.Kill(child, syscall.SIGKILL) })
+
+	other := openCodeStopMarker("ses_engine", "call_absent")
+	if stopped := stopOpenCodeToolProcessByMarker(daemon.Process.Pid, other); stopped != 0 {
+		t.Fatalf("unknown marker killed %d processes, want none", stopped)
+	}
+	assertProcessAlive(t, child)
+}
+
+// Two subtrees carrying the same marker are ambiguous: the stop refuses.
+func TestStopOpenCodeToolProcessByMarkerRefusesAmbiguousMatch(t *testing.T) {
+	marker := openCodeStopMarker("ses_engine", "call_dup")
+	daemon, pidFile := startFakeDaemon(t, `perl -e 'setpgrp(0, 0); exec "sh", "-c", "`+marker+`\nsleep 311\nwait"' & echo $! > "$HOXI_TEST_PIDFILE.1"; perl -e 'setpgrp(0, 0); exec "sh", "-c", "`+marker+`\nsleep 311\nwait"' & echo $! > "$HOXI_TEST_PIDFILE.2"; sleep 312`)
 	t.Cleanup(func() {
 		_ = syscall.Kill(daemon.Process.Pid, syscall.SIGKILL)
 		_ = daemon.Wait()
@@ -431,11 +450,37 @@ func TestStopOpenCodeToolProcessRefusesAmbiguousMatch(t *testing.T) {
 		_ = syscall.Kill(second, syscall.SIGKILL)
 	})
 
-	if stopped := stopOpenCodeToolProcess(daemon.Process.Pid, "sleep 307"); stopped != 0 {
-		t.Fatalf("ambiguous match killed %d processes, want none", stopped)
+	if stopped := stopOpenCodeToolProcessByMarker(daemon.Process.Pid, marker); stopped != 0 {
+		t.Fatalf("ambiguous marker killed %d processes, want none", stopped)
 	}
 	assertProcessAlive(t, first)
 	assertProcessAlive(t, second)
+}
+
+// The plugin tag is stripped from tool parts so the UI shows the real command.
+func TestStripOpenCodeStopMarker(t *testing.T) {
+	part := MessagePart{
+		Type: "tool",
+		Tool: "bash",
+		State: &ToolState{
+			Status: "running",
+			Input:  map[string]interface{}{"command": openCodeStopMarker("ses_e", "call_1") + "\necho hi"},
+		},
+	}
+	stripOpenCodeStopMarker(&part)
+	if got := part.State.Input["command"]; got != "echo hi" {
+		t.Fatalf("command = %v, want the untagged command", got)
+	}
+
+	untouched := MessagePart{
+		Type:  "tool",
+		Tool:  "bash",
+		State: &ToolState{Status: "running", Input: map[string]interface{}{"command": "echo hi"}},
+	}
+	stripOpenCodeStopMarker(&untouched)
+	if got := untouched.State.Input["command"]; got != "echo hi" {
+		t.Fatalf("untagged command changed to %v", got)
+	}
 }
 
 // startFakeDaemon runs script as a stand-in for `opencode serve`: the script is

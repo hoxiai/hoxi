@@ -103,33 +103,44 @@ function command(snapshot, input) {
   );
 }
 
+// stopMarker tags every bash command with its engine session and tool call so
+// Hoxi can stop exactly one command inside the shared `opencode serve` daemon.
+// macOS hides other processes' environments, so the tag has to live in the
+// command line itself; it is a shell comment and never affects execution.
+function stopMarker(input) {
+  if (typeof input?.sessionID !== "string" || typeof input?.callID !== "string") return undefined;
+  if (!input.sessionID || !input.callID) return undefined;
+  return `# hoxi-stop:${input.sessionID}:${input.callID}`;
+}
+
 export const HoxiSandboxPlugin = async () => ({
   "tool.execute.before": async (input, output) => {
-    const value = snapshot(input?.sessionID);
-    if (!value) return;
-    if (!command(value, input)) return;
     const args = output?.args;
-    if (!args || typeof args !== "object") return;
-
-    if (input.tool === "bash") {
-      const original = args.command;
-      if (typeof original !== "string" || original.trim() === "") {
-        throw new Error("Hoxi sandbox requires a non-empty shell command");
+    const isBash = input?.tool === "bash" && args && typeof args === "object" && typeof args.command === "string";
+    // Wrap in the sandbox first, then tag the final command: the tag must stay
+    // the first line of what actually runs, so a stop can find this exact
+    // process and the UI can strip it back to the user's command.
+    const value = isBash || (input?.tool !== "bash" && output?.args) ? snapshot(input?.sessionID) : undefined;
+    if (value) {
+      if (!command(value, input)) return;
+      if (isBash) {
+        const original = args.command;
+        if (typeof original !== "string" || original.trim() === "") {
+          throw new Error("Hoxi sandbox requires a non-empty shell command");
+        }
+        args.command = `${quote(executable)} -f ${quote(value.profilePath)} -- /bin/sh -c ${quote(original)}`;
+      } else if (input.tool === "apply_patch") {
+        const targets = patchTargets(args);
+        if (targets.length === 0) throw new Error("Hoxi sandbox could not read the patch file paths");
+        for (const target of targets) assertWritable(target, value.workspace);
+      } else if (FILE_WRITE_TOOLS.has(input.tool)) {
+        const target = args.filePath ?? args.path ?? args.file;
+        assertWritable(target, value.workspace);
       }
-      args.command = `${quote(executable)} -f ${quote(value.profilePath)} -- /bin/sh -c ${quote(original)}`;
-      return;
     }
-
-    if (input.tool === "apply_patch") {
-      const targets = patchTargets(args);
-      if (targets.length === 0) throw new Error("Hoxi sandbox could not read the patch file paths");
-      for (const target of targets) assertWritable(target, value.workspace);
-      return;
-    }
-
-    if (FILE_WRITE_TOOLS.has(input.tool)) {
-      const target = args.filePath ?? args.path ?? args.file;
-      assertWritable(target, value.workspace);
+    const tag = isBash ? stopMarker(input) : undefined;
+    if (tag) {
+      args.command = `${tag}\n${args.command}`;
     }
   },
 });

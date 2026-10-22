@@ -109,9 +109,14 @@ func (s *Service) StopToolCommand(sessionID, callID, partID, command string) (in
 		stopped = stopChildToolProcesses(ap.cmd.Process.Pid, command)
 	case openCodeSession && s.openCode != nil:
 		// OpenCode tool commands are children of the shared `opencode serve`
-		// daemon; only a unique command match inside that tree is stopped.
+		// daemon. The sandbox plugin tags each bash command with its engine
+		// session and call ID, so the exact subtree is located by that marker
+		// instead of guessing from the command text.
 		if daemonPID := openCodeDaemonPID(s.openCode.BaseURL()); daemonPID > 1 {
-			stopped = stopOpenCodeToolProcess(daemonPID, command)
+			marker := openCodeStopMarker(rec.ExternalID, callID)
+			if marker != "" {
+				stopped = stopOpenCodeToolProcessByMarker(daemonPID, marker)
+			}
 		}
 	}
 	if stopped == 0 {

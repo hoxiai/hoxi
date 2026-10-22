@@ -26,6 +26,6 @@ func killPIDs(pids []int) {}
 
 func stopChildToolProcesses(cliPID int, command string) int { return 0 }
 
-func stopOpenCodeToolProcess(daemonPID int, command string) int { return 0 }
-
 func openCodeDaemonPID(baseURL string) int { return 0 }
+
+func stopOpenCodeToolProcessByMarker(daemonPID int, marker string) int { return 0 }

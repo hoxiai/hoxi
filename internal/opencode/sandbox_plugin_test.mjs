@@ -35,9 +35,12 @@ test("sandbox plugin", async (t) => {
     const hooks = await HoxiSandboxPlugin();
     const output = { args: { command: "echo 'hi' > out.txt" } };
     await hooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_sandbox", callID: "c1" }, output);
-    assert.ok(output.args.command.startsWith("'/usr/bin/sandbox-exec' -f "));
+    // The stop marker is the first line of the final command, after wrapping.
+    assert.ok(output.args.command.startsWith("# hoxi-stop:ses_sandbox:c1\n"));
+    assert.ok(output.args.command.includes("'/usr/bin/sandbox-exec' -f "));
     assert.ok(output.args.command.includes(profilePath));
-    assert.ok(output.args.command.includes("/bin/sh -c 'echo '\\''hi'\\'' > out.txt'"));
+    assert.ok(output.args.command.includes("/bin/sh -c "));
+    assert.ok(output.args.command.includes("echo '\\''hi'\\'' > out.txt"));
     assert.ok(output.args.command.endsWith("'"));
   });
 
@@ -121,11 +124,22 @@ test("sandbox plugin", async (t) => {
     );
   });
 
-  await t.test("leaves sessions without a snapshot untouched", async () => {
+  await t.test("tags bash for per-command stop without a snapshot", async () => {
     fixture("deny");
     const hooks = await HoxiSandboxPlugin();
     const output = { args: { command: "echo hi" } };
     await hooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_other", callID: "c8" }, output);
-    assert.equal(output.args.command, "echo hi");
+    // A session without a sandbox snapshot keeps its command but still gets
+    // the stop marker, so OpenCode stops remain precise.
+    assert.equal(output.args.command, "# hoxi-stop:ses_other:c8\necho hi");
+  });
+
+  await t.test("does not tag non-bash tools", async () => {
+    fixture("deny");
+    const hooks = await HoxiSandboxPlugin();
+    const inside = path.join(fixture("deny").workspace, "a.txt");
+    const output = { args: { filePath: inside } };
+    await hooks["tool.execute.before"]({ tool: "write", sessionID: "ses_tag", callID: "c9" }, output);
+    assert.deepEqual(output, { args: { filePath: inside } });
   });
 });

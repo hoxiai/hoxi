@@ -249,12 +249,8 @@ func subtreeMatchesNeedles(pids []int, byPID map[int]procSnapshot, needles []str
 // toolStopScope describes which process tree a per-tool stop may touch.
 type toolStopScope struct {
 	// stepIntoRuntime unwraps a single wrapper child (sandbox-exec, sh) that
-	// directly runs the agent CLI. Per-session CLI trees need it; the shared
-	// OpenCode daemon must never be unwrapped.
+	// directly runs the agent CLI. Only per-session CLI trees need it.
 	stepIntoRuntime bool
-	// requireUnique refuses to kill when more than one subtree matches, so a
-	// shared daemon cannot lose another session's identical command.
-	requireUnique bool
 }
 
 // stopChildToolProcesses terminates the child tool command process trees under
@@ -264,14 +260,6 @@ type toolStopScope struct {
 // when no candidate matches command.
 func stopChildToolProcesses(cliPID int, command string) int {
 	return stopToolProcessesUnder(cliPID, command, toolStopScope{stepIntoRuntime: true})
-}
-
-// stopOpenCodeToolProcess terminates one tool command owned by the shared
-// `opencode serve` daemon. Every OpenCode session, terminal and MCP server is
-// a child of that daemon, so the match must be unique: zero or several
-// matches kill nothing rather than guessing.
-func stopOpenCodeToolProcess(daemonPID int, command string) int {
-	return stopToolProcessesUnder(daemonPID, command, toolStopScope{requireUnique: true})
 }
 
 // openCodeDaemonPID resolves the pid of the `opencode serve` process that owns
@@ -358,14 +346,70 @@ func stopToolProcessesUnder(rootPID int, command string, scope toolStopScope) in
 	if len(selectedRoots) == 0 {
 		return 0
 	}
-	if scope.requireUnique && len(selectedRoots) > 1 {
+	return killSubtrees(selectedRoots, byPID, children, protected)
+}
+
+const stopMarkerPrefix = "# hoxi-stop:"
+
+// openCodeStopMarker is the shell comment the sandbox plugin prepends to every
+// bash command. It names the engine session and tool call, so a stop can find
+// exactly one command inside the shared daemon instead of guessing from the
+// command text (macOS hides other processes' environments, and `ps` escapes
+// multi-line commands).
+func openCodeStopMarker(engineSessionID, callID string) string {
+	engineSessionID = strings.TrimSpace(engineSessionID)
+	callID = strings.TrimSpace(callID)
+	if engineSessionID == "" || callID == "" {
+		return ""
+	}
+	return stopMarkerPrefix + engineSessionID + ":" + callID
+}
+
+// stopOpenCodeToolProcessByMarker kills the single subtree under daemonPID
+// whose command line carries marker. It never signals the daemon and kills
+// nothing unless exactly one subtree matches.
+func stopOpenCodeToolProcessByMarker(daemonPID int, marker string) int {
+	if daemonPID <= 1 || strings.TrimSpace(marker) == "" {
 		return 0
 	}
+	byPID, children := readProcessSnapshots()
+	if len(byPID) == 0 {
+		return 0
+	}
+	selfPID := os.Getpid()
+	selfPGID, _ := syscall.Getpgid(selfPID)
+	protected := map[int]bool{
+		1:         true,
+		selfPID:   true,
+		daemonPID: true,
+	}
+	if selfPGID > 1 {
+		protected[selfPGID] = true
+	}
+	if p := byPID[daemonPID]; p.pgid > 1 {
+		protected[p.pgid] = true
+	}
 
+	var roots []int
+	for _, root := range children[daemonPID] {
+		if protected[root] {
+			continue
+		}
+		if subtreeMatchesNeedles(collectSubtreePIDs(root, children), byPID, []string{marker}) {
+			roots = append(roots, root)
+		}
+	}
+	if len(roots) != 1 {
+		return 0
+	}
+	return killSubtrees(roots, byPID, children, protected)
+}
+
+func killSubtrees(roots []int, byPID map[int]procSnapshot, children map[int][]int, protected map[int]bool) int {
 	targetSet := make(map[int]bool)
 	var targetPIDs []int
 	targetPGIDs := make(map[int]bool)
-	for _, root := range selectedRoots {
+	for _, root := range roots {
 		for _, pid := range collectSubtreePIDs(root, children) {
 			if pid <= 1 || protected[pid] || targetSet[pid] {
 				continue
