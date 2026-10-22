@@ -53,14 +53,14 @@ export function GeneralAppearanceTab() {
             value={locale()}
             options={[
               {
-                id: "zh-CN",
-                label: () => t("settings.langZhLabel"),
-                tip: () => t("settings.langZhDesc"),
-              },
-              {
                 id: "en-US",
                 label: () => t("settings.langEnLabel"),
                 tip: () => t("settings.langEnDesc"),
+              },
+              {
+                id: "zh-CN",
+                label: () => t("settings.langZhLabel"),
+                tip: () => t("settings.langZhDesc"),
               },
             ]}
             onChange={(val) => setLocale(val)}
