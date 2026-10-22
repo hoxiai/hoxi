@@ -275,6 +275,17 @@ export function AssistantTurnFooter(props: {
     return false;
   });
 
+  // Commit belongs to the latest exchange only; historical cards keep their
+  // revert/view actions but must not offer to commit today's tree.
+  const isLatestExchange = createMemo(() => {
+    if (!props.turns || typeof props.turnIndex !== "number") return true;
+    let lastUserIndex = -1;
+    props.turns.forEach((turn, index) => {
+      if (turn.info.role === "user") lastUserIndex = index;
+    });
+    return props.turnIndex > lastUserIndex;
+  });
+
   const interruptMode = createMemo<"paused" | "stopped" | null>(() => {
     const sessionInterrupt = workspace.interruptedBySession[props.info.sessionID];
     if (isLatestTurn() && sessionInterrupt) {
@@ -484,10 +495,9 @@ export function AssistantTurnFooter(props: {
       {(summary) => (
         <Show when={!isTurnExecuting()}>
           <div class="mt-4 space-y-2 select-none">
-            {/* Commit lives on the session-level composer chip so it survives
-                later tasks; per-turn cards keep only review/undo actions. */}
             <ChangedFilesSummary
               files={summary().changedFiles}
+              commitSessionID={isLatestExchange() ? props.info.sessionID : undefined}
               onUndo={
                 canRevertSession(props.info.sessionID)
                   ? () => void revertToHere(props.info.sessionID, summary().revertMessageID)

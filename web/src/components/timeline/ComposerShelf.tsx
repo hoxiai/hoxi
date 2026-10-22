@@ -8,14 +8,12 @@ import {
   X,
 } from "lucide-solid";
 import {
-  canQuickCommitSession,
   clearReviewComments,
   isSessionBusy,
   openFileInInspector,
   removeReviewComment,
   resolveRootSessionID,
   setWorkspace,
-  uncommittedSessionFiles,
   workspace,
 } from "../../store/workspace";
 import ApprovalGateCard from "../approval/ApprovalGateCard";
@@ -45,22 +43,14 @@ export default function ComposerShelf() {
     return filterVisibleTurnsByRevert(turns, activeSession()?.revert);
   });
 
-  // Prefer the live transcript while the agent is running, then fall back to the
-  // real uncommitted worktree diff so the chip (and its commit button) survives
-  // after the turn that produced the changes and while a newer task runs.
+  // Transient chip: it tracks the live transcript only while the agent is
+  // working and clears once the turn settles. The durable commit affordance
+  // lives on the latest per-turn "view changes" card instead.
   const changedFiles = createMemo(() => {
     const id = sessionID();
-    if (!id) return [];
-    if (isSessionBusy(id)) {
-      const live = collectSessionChangedFiles(visibleTurns(), id);
-      if (live.length > 0) return live;
-    }
-    return uncommittedSessionFiles(id);
+    if (!id || !isSessionBusy(id)) return [];
+    return collectSessionChangedFiles(visibleTurns(), id);
   });
-
-  const quickCommitSessionID = createMemo(() =>
-    canQuickCommitSession(sessionID()) ? sessionID()! : undefined
-  );
 
   const pendingPermissions = createMemo(() => {
     const id = sessionID();
@@ -140,11 +130,7 @@ export default function ComposerShelf() {
       <div class="mb-2 flex items-center justify-center gap-2 flex-wrap empty:hidden">
         <RevertBanner />
         <PlanFollowupBar />
-        <ChangedFilesSummary
-          files={changedFiles()}
-          variant="pill"
-          commitSessionID={quickCommitSessionID()}
-        />
+        <ChangedFilesSummary files={changedFiles()} variant="pill" />
 
         {/* Queued Inline Diff ReviewComments Pill + Upward Popover */}
         <Show when={reviewComments().length > 0}>
