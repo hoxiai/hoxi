@@ -32,6 +32,23 @@ func openCodeStopMarker(engineSessionID, callID string) string {
 	return stopMarkerPrefix + engineSessionID + ":" + callID
 }
 
+// stripLeadingStopMarkers drops every leading `# hoxi-stop:` line. Leading
+// lines are shell comments, so the command that remains is what actually ran.
+func stripLeadingStopMarkers(command string) string {
+	rest := command
+	for {
+		line := strings.TrimLeft(rest, " \t")
+		if !strings.HasPrefix(line, stopMarkerPrefix) {
+			return rest
+		}
+		nl := strings.IndexByte(line, '\n')
+		if nl < 0 {
+			return ""
+		}
+		rest = line[nl+1:]
+	}
+}
+
 // StopToolRequest identifies a running tool invocation inside a session turn
 // that the user wants to terminate without aborting the parent session turn.
 type StopToolRequest struct {
@@ -126,13 +143,15 @@ func (s *Service) StopToolCommand(sessionID, callID, partID, command string) (in
 	switch {
 	case ap != nil && ap.cmd != nil && ap.cmd.Process != nil:
 		stopped = stopChildToolProcesses(ap.cmd.Process.Pid, command)
-	case openCodeSession && s.openCode != nil:
+	case openCodeSession && s.openCode != nil && isRunningBashPart(matchedPart):
 		// OpenCode tool commands are children of the shared `opencode serve`
 		// daemon. The sandbox plugin tags each bash command with its engine
 		// session and call ID, so the exact subtree is located by that marker
-		// instead of guessing from the command text.
+		// instead of guessing from the command text. The marker is built only
+		// from a bash call this session knows is running, never read back from
+		// command text, so tags a model forges cannot redirect the stop.
 		if daemonPID := openCodeDaemonPID(s.openCode.BaseURL()); daemonPID > 1 {
-			marker := openCodeStopMarker(rec.ExternalID, callID)
+			marker := openCodeStopMarker(rec.ExternalID, matchedPart.CallID)
 			if marker != "" {
 				stopped = stopOpenCodeToolProcessByMarker(daemonPID, marker)
 			}
@@ -167,6 +186,13 @@ func (s *Service) StopToolCommand(sessionID, callID, partID, command string) (in
 	}
 
 	return stopped, nil
+}
+
+func isRunningBashPart(p *MessagePart) bool {
+	if p == nil || p.Type != "tool" || p.Tool != "bash" || p.State == nil {
+		return false
+	}
+	return p.State.Status == "running" || p.State.Status == "pending"
 }
 
 func findTargetRunningToolPart(turns []MessageTurn, partID, callID string) *MessagePart {

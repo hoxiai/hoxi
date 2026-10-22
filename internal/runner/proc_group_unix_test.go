@@ -480,16 +480,48 @@ func TestStripOpenCodeStopMarker(t *testing.T) {
 	if got := untouched.State.Input["command"]; got != "echo hi" {
 		t.Fatalf("untagged command changed to %v", got)
 	}
+
+	// History written before the plugin dropped echoed tags holds tags the
+	// model copied, with invented call IDs, after the real one.
+	forged := MessagePart{
+		Type: "tool",
+		Tool: "bash",
+		State: &ToolState{
+			Status: "completed",
+			Input: map[string]interface{}{"command": openCodeStopMarker("ses_e", "call_2") + "\n" +
+				"# hoxi-stop:ses_e:call_01_r8s0t2u4v6w8x0y2z4a6b8c0d\n  # hoxi-stop:ses_e:call_fake\ngo test ./..."},
+			Title: openCodeStopMarker("ses_e", "call_2") + "\ngo test ./...",
+		},
+	}
+	stripOpenCodeStopMarker(&forged)
+	if got := forged.State.Input["command"]; got != "go test ./..." {
+		t.Fatalf("command = %q, want every leading tag stripped", got)
+	}
+	if got := forged.State.Title; got != "go test ./..." {
+		t.Fatalf("title = %q, want the tag stripped", got)
+	}
+
+	// Only leading lines are tags; a later line may be heredoc data.
+	heredoc := "cat > notes.md <<'EOF'\n# hoxi-stop:ses_e:call_3\nEOF"
+	inner := MessagePart{
+		Type:  "tool",
+		Tool:  "bash",
+		State: &ToolState{Status: "completed", Input: map[string]interface{}{"command": heredoc}},
+	}
+	stripOpenCodeStopMarker(&inner)
+	if got := inner.State.Input["command"]; got != heredoc {
+		t.Fatalf("heredoc command changed to %q", got)
+	}
 }
 
 // startFakeDaemon runs script as a stand-in for `opencode serve`: the script is
 // the root process and everything it backgrounds becomes its children.
-func startFakeDaemon(t *testing.T, script string) (*exec.Cmd, string) {
+func startFakeDaemon(t *testing.T, script string, args ...string) (*exec.Cmd, string) {
 	t.Helper()
 	dir := t.TempDir()
 	bin := execstub.Write(t, dir, "fake-opencode-serve", script+"\n")
 	pidFile := filepath.Join(dir, "pid")
-	cmd := exec.Command(bin)
+	cmd := exec.Command(bin, args...)
 	cmd.Env = append(os.Environ(), "HOXI_TEST_PIDFILE="+pidFile)
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)

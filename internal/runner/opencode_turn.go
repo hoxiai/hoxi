@@ -143,19 +143,21 @@ func (s *Service) resolveOpenCodeVariant(ctx context.Context, directory, provide
 	return e
 }
 
-// stripOpenCodeStopMarker removes the sandbox plugin's `# hoxi-stop:` tag from
-// a bash tool part, so the UI and the model only ever see the user's command.
+// stripOpenCodeStopMarker removes the sandbox plugin's `# hoxi-stop:` tags from
+// a bash tool part, so the UI only ever shows the user's command. OpenCode
+// stores the tagged command as both the input and the title, and history
+// written before the plugin dropped echoed tags holds extra tags the model
+// copied in front of its own commands, so every leading tag line goes.
 func stripOpenCodeStopMarker(part *MessagePart) {
-	if part == nil || part.Type != "tool" || part.Tool != "bash" || part.State == nil || part.State.Input == nil {
+	if part == nil || part.Type != "tool" || part.Tool != "bash" || part.State == nil {
 		return
 	}
-	raw, ok := part.State.Input["command"].(string)
-	if !ok || !strings.HasPrefix(raw, stopMarkerPrefix) {
-		return
+	if raw, ok := part.State.Input["command"].(string); ok {
+		if clean := stripLeadingStopMarkers(raw); clean != raw {
+			part.State.Input["command"] = clean
+		}
 	}
-	if nl := strings.IndexByte(raw, '\n'); nl >= 0 {
-		part.State.Input["command"] = raw[nl+1:]
-	}
+	part.State.Title = stripLeadingStopMarkers(part.State.Title)
 }
 
 func (s *Service) normalizeOpenCodePart(rec SessionRecord, part *MessagePart, fileURLByMsgAndName map[string]string) bool {

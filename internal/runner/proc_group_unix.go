@@ -379,7 +379,7 @@ func stopOpenCodeToolProcessByMarker(daemonPID int, marker string) int {
 		if protected[root] {
 			continue
 		}
-		if subtreeMatchesNeedles(collectSubtreePIDs(root, children), byPID, []string{marker}) {
+		if subtreeCarriesStopMarker(collectSubtreePIDs(root, children), byPID, marker) {
 			roots = append(roots, root)
 		}
 	}
@@ -387,6 +387,48 @@ func stopOpenCodeToolProcessByMarker(daemonPID int, marker string) int {
 		return 0
 	}
 	return killSubtrees(roots, byPID, children, protected)
+}
+
+// subtreeCarriesStopMarker reports whether any process in pids carries marker
+// as a whole token. A bare substring match would let the tag of `call_1` hit
+// `call_12`, so the marker must not run on into further ID characters; what
+// follows the real tag is the command's line break, which `ps` prints as an
+// escape (`\012`) or `?`.
+func subtreeCarriesStopMarker(pids []int, byPID map[int]procSnapshot, marker string) bool {
+	for _, pid := range pids {
+		if argsCarryStopMarker(byPID[pid].args, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func argsCarryStopMarker(args, marker string) bool {
+	if marker == "" {
+		return false
+	}
+	for offset := 0; offset < len(args); {
+		i := strings.Index(args[offset:], marker)
+		if i < 0 {
+			return false
+		}
+		end := offset + i + len(marker)
+		if end == len(args) || !isStopMarkerIDByte(args[end]) {
+			return true
+		}
+		offset += i + 1
+	}
+	return false
+}
+
+// isStopMarkerIDByte reports bytes that may continue an engine session or
+// tool call ID (`ses_…`, `call_…`, `toolu_…`, `functions.bash:0`).
+func isStopMarkerIDByte(b byte) bool {
+	switch {
+	case b >= 'a' && b <= 'z', b >= 'A' && b <= 'Z', b >= '0' && b <= '9':
+		return true
+	}
+	return b == '_' || b == '-' || b == '.' || b == ':'
 }
 
 func killSubtrees(roots []int, byPID map[int]procSnapshot, children map[int][]int, protected map[int]bool) int {
