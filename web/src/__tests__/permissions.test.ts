@@ -6,9 +6,15 @@ import {
   handleIncomingPermissionRequest,
   isDestructivePermissionRequest,
   markPermissionResolved,
+  replyPermissionRequest,
   resolveEffectivePermissionSummary,
+  resolvePermissionCategory,
+  setApprovalMode,
   shouldAutoApprovePermission,
+  syncApprovalModeToOpenCodeConfig,
+  updateToolPermissionRule,
 } from "../store/approval-mode";
+import { appSettings, setAppSettings } from "../store/settings";
 import { setWorkspace, workspace } from "../store/workspace";
 import { assertEqual, describe, it } from "./test-harness";
 
@@ -241,6 +247,280 @@ describe("permission command chains", () => {
       assertEqual(summary.hasCustomToolOverrides, true);
     } finally {
       setWorkspace("globalConfig", prevConfig);
+    }
+  });
+
+  it("classifies real runtime tool names across Claude Code, Antigravity, Qoder, and CodeBuddy and enforces ask/deny + reject paths", async () => {
+    const prevConfig = workspace.globalConfig;
+    const origReply = hoxiAPI.replyPermission;
+    try {
+      setWorkspace("globalConfig", {
+        permission: {
+          edit: "ask",
+          webfetch: "ask",
+          bash: "ask",
+        },
+      });
+
+      const runtimeEditRequests = [
+        { permission: "NotebookEdit", patterns: ["analysis.ipynb"] },
+        {
+          id: "per_rnr_cc_nb",
+          sessionID: "ses_cc",
+          permission: "tool",
+          patterns: ["NotebookEdit"],
+          metadata: { source: "claude-code", tool: "NotebookEdit", args: '{"notebook_path":"analysis.ipynb"}' },
+        },
+        {
+          id: "per_rnr_agy_w",
+          sessionID: "ses_agy",
+          permission: "tool",
+          patterns: ["write_to_file"],
+          metadata: { source: "antigravity", tool: "write_to_file", args: '{"TargetFile":"src/main.ts"}' },
+        },
+        {
+          id: "per_rnr_agy_r",
+          sessionID: "ses_agy",
+          permission: "tool",
+          patterns: ["replace_file_content"],
+          metadata: { source: "antigravity", tool: "replace_file_content", args: '{"TargetFile":"src/main.ts"}' },
+        },
+        {
+          id: "per_rnr_agy_mr",
+          sessionID: "ses_agy",
+          permission: "tool",
+          patterns: ["multi_replace_file_content"],
+          metadata: { source: "antigravity", tool: "multi_replace_file_content", args: '{"TargetFile":"src/main.ts"}' },
+        },
+        {
+          id: "per_rnr_qoder_w",
+          sessionID: "ses_qoder",
+          permission: "tool",
+          patterns: ["write_file"],
+          metadata: { source: "qoder", tool: "write_file", args: '{"file_path":"src/main.ts"}' },
+        },
+        {
+          id: "per_rnr_cb_s",
+          sessionID: "ses_cb",
+          permission: "tool",
+          patterns: ["sed_file"],
+          metadata: { source: "codebuddy", tool: "sed_file", args: '{"file_path":"src/main.ts"}' },
+        },
+      ];
+
+      for (const req of runtimeEditRequests) {
+        assertEqual(resolvePermissionCategory(req), "edit", JSON.stringify(req));
+        assertEqual(shouldAutoApprovePermission(req, "auto"), false, `auto edit=ask: ${JSON.stringify(req)}`);
+        assertEqual(shouldAutoApprovePermission(req, "smart"), false, `smart edit=ask: ${JSON.stringify(req)}`);
+      }
+
+      const runtimeWebRequests = [
+        { permission: "read_url_content", patterns: ["https://example.com"] },
+        { permission: "search_web", patterns: ["hoxi"] },
+        {
+          id: "per_rnr_agy_url",
+          sessionID: "ses_agy",
+          permission: "tool",
+          patterns: ["read_url_content"],
+          metadata: { source: "antigravity", tool: "read_url_content", args: '{"Url":"https://example.com"}' },
+        },
+        {
+          id: "per_rnr_agy_search",
+          sessionID: "ses_agy",
+          permission: "tool",
+          patterns: ["search_web"],
+          metadata: { source: "antigravity", tool: "search_web", args: '{"query":"hoxi"}' },
+        },
+        {
+          id: "per_rnr_cc_wf",
+          sessionID: "ses_cc",
+          permission: "tool",
+          patterns: ["WebFetch"],
+          metadata: { source: "claude-code", tool: "WebFetch", args: '{"url":"https://example.com"}' },
+        },
+        {
+          id: "per_rnr_cc_ws",
+          sessionID: "ses_cc",
+          permission: "tool",
+          patterns: ["WebSearch"],
+          metadata: { source: "claude-code", tool: "WebSearch", args: '{"query":"hoxi"}' },
+        },
+      ];
+
+      for (const req of runtimeWebRequests) {
+        assertEqual(resolvePermissionCategory(req), "webfetch", JSON.stringify(req));
+        assertEqual(shouldAutoApprovePermission(req, "auto"), false, `auto webfetch=ask: ${JSON.stringify(req)}`);
+        assertEqual(shouldAutoApprovePermission(req, "smart"), false, `smart webfetch=ask: ${JSON.stringify(req)}`);
+      }
+
+      // Verify rejection path across runtimes (OpenCode + Runner)
+      const replies: Array<{ id: string; mode: string; message?: string }> = [];
+      hoxiAPI.replyPermission = async (id, mode, _dir, message) => {
+        replies.push({ id, mode, message });
+      };
+      for (const req of [
+        { id: "per_oc_1", sessionID: "ses_oc", permission: "edit", patterns: ["a.ts"] },
+        runtimeEditRequests[1],
+        runtimeEditRequests[2],
+        runtimeWebRequests[2],
+      ]) {
+        await replyPermissionRequest(req as PermissionRequest, "reject", { note: "blocked by policy" });
+      }
+      assertEqual(replies.length, 4);
+      for (const r of replies) {
+        assertEqual(r.mode, "reject");
+        assertEqual(r.message, "blocked by policy");
+      }
+    } finally {
+      hoxiAPI.replyPermission = origReply;
+      setWorkspace("globalConfig", prevConfig);
+    }
+  });
+
+  it("preserves deny and path/domain rule objects during startup sync and does not write defaults on fetch failure", async () => {
+    const prevConfig = workspace.globalConfig;
+    const origGet = hoxiAPI.getGlobalConfig;
+    const origUpdate = hoxiAPI.updateGlobalConfig;
+    try {
+      // 1. When getGlobalConfig fails, syncApprovalModeToOpenCodeConfig must NOT call updateGlobalConfig
+      let updateCalls = 0;
+      hoxiAPI.getGlobalConfig = async () => {
+        throw new Error("gateway unavailable");
+      };
+      hoxiAPI.updateGlobalConfig = async () => {
+        updateCalls++;
+        return {};
+      };
+      await syncApprovalModeToOpenCodeConfig("auto", { preserveCustomRules: true });
+      assertEqual(updateCalls, 0);
+
+      // 2. When existing config has edit: "deny" and webfetch domain allowlist object, preserve both verbatim
+      const domainRules = { "https://docs.hoxi.ai/*": "allow", "*": "ask" };
+      let patchedPerm: Record<string, any> | undefined;
+      hoxiAPI.getGlobalConfig = async () => ({
+        permission: {
+          edit: "deny",
+          webfetch: domainRules,
+          bash: "ask",
+        },
+      });
+      hoxiAPI.updateGlobalConfig = async (patch) => {
+        patchedPerm = patch.permission;
+        return { permission: patchedPerm };
+      };
+      await syncApprovalModeToOpenCodeConfig("auto", { preserveCustomRules: true });
+      // No patch needed because edit="deny", webfetch=domainRules, bash="ask" are all preserved
+      assertEqual(patchedPerm, undefined);
+
+      // 3. Rule objects and deny are respected by shouldAutoApprovePermission
+      setWorkspace("globalConfig", {
+        permission: {
+          edit: "deny",
+          webfetch: domainRules,
+        },
+      });
+      assertEqual(
+        shouldAutoApprovePermission({ permission: "edit", patterns: ["src/App.tsx"] }, "auto"),
+        false
+      );
+      assertEqual(
+        shouldAutoApprovePermission(
+          { permission: "webfetch", patterns: ["https://docs.hoxi.ai/guide"] },
+          "auto"
+        ),
+        true
+      );
+      assertEqual(
+        shouldAutoApprovePermission(
+          { permission: "webfetch", patterns: ["https://untrusted.example.com/page"] },
+          "auto"
+        ),
+        false
+      );
+    } finally {
+      hoxiAPI.getGlobalConfig = origGet;
+      hoxiAPI.updateGlobalConfig = origUpdate;
+      setWorkspace("globalConfig", prevConfig);
+    }
+  });
+
+  it("does not relax approval mode when saving a tool permission rule fails, and keeps shell ask independent of file edits", async () => {
+    const prevConfig = workspace.globalConfig;
+    const prevMode = appSettings.approvalMode;
+    const prevBashRule = appSettings.bashApprovalRule;
+    const origUpdate = hoxiAPI.updateGlobalConfig;
+    try {
+      // 1. Start in manual mode; saving edit="allow" fails -> mode and bash remain manual/ask, ls is NOT auto-approved
+      setApprovalMode("manual");
+      setWorkspace("globalConfig", {
+        permission: { edit: "ask", webfetch: "ask", bash: "ask" },
+      });
+      hoxiAPI.updateGlobalConfig = async () => {
+        throw new Error("save failed");
+      };
+      let failed = false;
+      try {
+        await updateToolPermissionRule("edit", "allow");
+      } catch {
+        failed = true;
+      }
+      assertEqual(failed, true);
+      assertEqual(appSettings.approvalMode, "manual");
+      assertEqual(
+        shouldAutoApprovePermission({ permission: "bash", patterns: ["ls"] }, appSettings.approvalMode),
+        false
+      );
+      assertEqual(
+        shouldAutoApprovePermission({ permission: "edit", patterns: ["src/App.tsx"] }, appSettings.approvalMode),
+        false
+      );
+
+      // 2. When saving succeeds: allow file edits while keeping shell at "ask" (manual)
+      hoxiAPI.updateGlobalConfig = async (patch) => ({
+        permission: {
+          ...(workspace.globalConfig?.permission || {}),
+          ...(patch.permission || {}),
+        },
+      });
+      await updateToolPermissionRule("edit", "allow");
+      assertEqual(
+        shouldAutoApprovePermission({ permission: "edit", patterns: ["src/App.tsx"] }, appSettings.approvalMode),
+        true
+      );
+      assertEqual(
+        shouldAutoApprovePermission({ permission: "bash", patterns: ["ls"] }, appSettings.approvalMode),
+        false
+      );
+      assertEqual(
+        shouldAutoApprovePermission({ permission: "webfetch", patterns: ["https://example.com"] }, appSettings.approvalMode),
+        false
+      );
+
+      // 3. Starting from auto mode, setting bash="ask" only changes bash and leaves edit="allow" and webfetch="allow"
+      setApprovalMode("auto");
+      setWorkspace("globalConfig", {
+        permission: { edit: "allow", webfetch: "allow", bash: "ask" },
+      });
+      await updateToolPermissionRule("bash", "ask");
+      const summary = resolveEffectivePermissionSummary(
+        appSettings.approvalMode,
+        workspace.globalConfig?.permission
+      );
+      assertEqual(summary.edit, "allow");
+      assertEqual(summary.webfetch, "allow");
+      assertEqual(summary.bash, "ask");
+      assertEqual(
+        shouldAutoApprovePermission({ permission: "edit", patterns: ["src/App.tsx"] }, appSettings.approvalMode),
+        true
+      );
+      assertEqual(
+        shouldAutoApprovePermission({ permission: "bash", patterns: ["ls"] }, appSettings.approvalMode),
+        false
+      );
+    } finally {
+      hoxiAPI.updateGlobalConfig = origUpdate;
+      setWorkspace("globalConfig", prevConfig);
+      setAppSettings({ approvalMode: prevMode, bashApprovalRule: prevBashRule });
     }
   });
 });

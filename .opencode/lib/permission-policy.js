@@ -354,6 +354,15 @@ const EDIT_PERMISSIONS = new Set([
   "patch",
   "multiedit",
   "apply_patch",
+  "notebookedit",
+  "notebook_edit",
+  "write_to_file",
+  "write_file",
+  "create_file",
+  "edit_file",
+  "replace_file_content",
+  "multi_replace_file_content",
+  "sed_file",
 ]);
 
 const PROTECTED_PATH_SEGMENTS = new Set([

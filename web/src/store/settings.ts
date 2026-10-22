@@ -6,6 +6,7 @@ import { deliverDesktopNotification } from "../services/desktop-notify";
 import { setWorkspace, THEME_KEY, workspace, type ProviderModalTab } from "./workspace-state";
 
 export type ApprovalMode = "auto" | "smart" | "manual";
+export type BashApprovalRule = "" | "allow" | "smart" | "ask";
 
 export type SettingsTab =
   | "general"
@@ -47,6 +48,7 @@ export interface AppSettingsState {
   detectedGitUserEmail: string;
   sendShortcut: SendShortcutMode;
   approvalMode: ApprovalMode;
+  bashApprovalRule: BashApprovalRule;
   reasoningDisplay: ReasoningDisplayMode;
   autoScrollStream: boolean;
   confirmBeforeRevert: boolean;
@@ -88,6 +90,7 @@ const DEFAULT_SETTINGS: PersistedSettings = {
   userEmail: "",
   sendShortcut: "enter",
   approvalMode: "auto",
+  bashApprovalRule: "",
   reasoningDisplay: "auto-collapse",
   autoScrollStream: true,
   confirmBeforeRevert: true,
@@ -179,6 +182,12 @@ export function loadInitialSettings(): PersistedSettings {
         parsed.approvalMode === "manual"
           ? parsed.approvalMode
           : DEFAULT_SETTINGS.approvalMode,
+      bashApprovalRule:
+        parsed.bashApprovalRule === "allow" ||
+        parsed.bashApprovalRule === "smart" ||
+        parsed.bashApprovalRule === "ask"
+          ? parsed.bashApprovalRule
+          : DEFAULT_SETTINGS.bashApprovalRule,
       reasoningDisplay:
         parsed.reasoningDisplay === "auto-collapse" ||
         parsed.reasoningDisplay === "expanded" ||
@@ -276,6 +285,7 @@ function persistAppSettings() {
       userEmail: appSettings.userEmail,
       sendShortcut: appSettings.sendShortcut,
       approvalMode: appSettings.approvalMode,
+      bashApprovalRule: appSettings.bashApprovalRule,
       reasoningDisplay: appSettings.reasoningDisplay,
       autoScrollStream: appSettings.autoScrollStream,
       confirmBeforeRevert: appSettings.confirmBeforeRevert,
