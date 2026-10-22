@@ -82,6 +82,7 @@ export function sessionDirectory(sessionID: string | null): string | undefined {
 }
 
 export function activeDirectory(): string | undefined {
+  if (!workspace.activeSessionID) return workspace.rootDir || undefined;
   return sessionDirectory(workspace.activeSessionID);
 }
 

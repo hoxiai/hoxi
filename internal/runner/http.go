@@ -321,7 +321,7 @@ func (s *Service) handleSessionSubroutes(w http.ResponseWriter, r *http.Request)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(raw)
+		_, _ = w.Write(SanitizeOpenCodeToolJSON(raw))
 	case "prompt", "prompt_async":
 		s.handleSessionPrompt(w, r, sessionID)
 	case "runtime":

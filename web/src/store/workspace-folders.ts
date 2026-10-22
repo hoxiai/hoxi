@@ -57,6 +57,12 @@ export function normalizeFolderPath(p?: string | null): string {
   return trimmed.replace(/[\\/]+$/, "");
 }
 
+export function stripWorktreePath(p?: string | null): string {
+  const norm = normalizeFolderPath(p);
+  if (!norm) return "";
+  return norm.replace(/[\\/]\.hoxi[\\/]worktrees[\\/][^\\/]+$/, "");
+}
+
 export function shortenPath(p: string): string {
   if (!p) return "";
   const winMatch = p.match(/^[A-Za-z]:[\\/]Users[\\/]([^\\/]+)([\\/].*)?$/);
@@ -115,7 +121,7 @@ export function findWorkspaceProfileById(id?: string | null): WorkspaceProfile |
 }
 
 export function findWorkspaceProfileByDir(dir?: string | null): WorkspaceProfile | undefined {
-  const norm = normalizeFolderPath(dir);
+  const norm = stripWorktreePath(dir);
   if (!norm) return undefined;
   const primaryMatch = workspace.savedWorkspaces.find((w) =>
     w.folders.some((f) => f.isPrimary && normalizeFolderPath(f.path) === norm)
@@ -146,11 +152,16 @@ export function activeWorkspaceFolders(): WorkspaceFolder[] {
 }
 
 export function workspaceFoldersForDir(dir: string): WorkspaceFolder[] {
-  const profile = findWorkspaceProfileByDir(dir);
+  const cleaned = normalizeFolderPath(dir);
+  const profile = findWorkspaceProfileByDir(cleaned);
   if (profile && profile.folders.length > 0) {
+    if (cleaned && stripWorktreePath(cleaned) !== cleaned) {
+      return profile.folders.map((f) =>
+        f.isPrimary ? { ...f, path: cleaned } : f
+      );
+    }
     return profile.folders;
   }
-  const cleaned = normalizeFolderPath(dir);
   if (!cleaned || isInvalidProjectPath(cleaned)) return [];
   return [{ id: "primary", path: cleaned, isPrimary: true, position: 0 }];
 }
@@ -174,11 +185,16 @@ export function buildWorkspaceFoldersSystemPrompt(
   folders: Array<{ path: string; isPrimary: boolean }> = activeWorkspaceFolders()
 ): string | undefined {
   const primary = folders.find((f) => f.isPrimary) ?? folders[0];
-  if (!primary || folders.length <= 1) return undefined;
+  if (!primary?.path || isInvalidProjectPath(primary.path)) return undefined;
   const additional = folders.filter(
     (f) => normalizeFolderPath(f.path) !== normalizeFolderPath(primary.path)
   );
-  if (additional.length === 0) return undefined;
+  if (additional.length === 0) {
+    return [
+      "Workspace context for this session:",
+      `- Primary folder (default working directory): ${JSON.stringify(primary.path)}`,
+    ].join("\n");
+  }
   return [
     "Workspace context for this session:",
     `- Primary folder (default working directory): ${JSON.stringify(primary.path)}`,

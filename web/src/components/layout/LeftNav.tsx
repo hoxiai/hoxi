@@ -145,7 +145,7 @@ export default function LeftNav() {
     setLoadingProjects((prev) => (prev[clean] ? prev : { ...prev, [clean]: true }));
     try {
       if (clean === normalizeFolderPath(workspace.rootDir)) {
-        await bootstrapProjectSessions(clean);
+        await bootstrapProjectSessions(clean, false);
         setProjectSessions((prev) => ({ ...prev, [clean]: workspace.sessions.slice() }));
       } else {
         const proj = allProjects().find((p) => normalizeFolderPath(p.path) === clean);
@@ -222,20 +222,33 @@ export default function LeftNav() {
     }
   };
 
-  const toggleProject = async (path: string) => {
+  const toggleProject = async (path: string, ev?: MouseEvent) => {
     if (suppressNextProjectClick) {
       suppressNextProjectClick = false;
       return;
     }
     const clean = normalizeFolderPath(path);
+    if (!clean) return;
+    const isRoot = clean === normalizeFolderPath(workspace.rootDir);
+    const clickedChevron = Boolean(
+      (ev?.target as HTMLElement | null)?.closest("[data-project-chevron]")
+    );
     const next = new Set(expandedProjects());
+    if (!isRoot && !(clickedChevron && next.has(clean))) {
+      next.add(clean);
+      setExpandedProjects(next);
+      const cached = projectSessions()[clean] || projectSessions()[path];
+      startNewThreadDraft();
+      await switchWorkspace(clean, { selectInitial: false, cachedSessions: cached });
+      setProjectSessions((prev) => ({ ...prev, [clean]: workspace.sessions.slice() }));
+      return;
+    }
     if (next.has(clean)) {
       next.delete(clean);
       setExpandedProjects(next);
     } else {
       next.add(clean);
       setExpandedProjects(next);
-      const isRoot = clean === normalizeFolderPath(workspace.rootDir);
       if (!isRoot && projectSessions()[clean] === undefined && !loadingProjects()[clean]) {
         await loadSessionsForProject(clean);
       }
@@ -305,12 +318,13 @@ export default function LeftNav() {
     const normPath = normalizeFolderPath(path);
     setCreatingForPath(path);
     try {
+      setExpandedProjects((prev) => (prev.has(normPath) ? prev : new Set([...prev, normPath])));
+      startNewThreadDraft();
       if (normPath && normPath !== normalizeFolderPath(workspace.rootDir)) {
         const cached = projectSessions()[normPath] || projectSessions()[path];
         await switchWorkspace(normPath, { selectInitial: false, cachedSessions: cached });
+        setProjectSessions((prev) => ({ ...prev, [normPath]: workspace.sessions.slice() }));
       }
-      setExpandedProjects((prev) => (prev.has(normPath) ? prev : new Set([...prev, normPath])));
-      startNewThreadDraft();
     } catch (err) {
       console.error("Failed to create thread in project:", err);
     } finally {
@@ -596,7 +610,7 @@ export default function LeftNav() {
                   cachedSessions={cached()}
                   pendingSessions={pendingSessions()}
                   onPointerDown={onProjectPointerDown}
-                  onToggleProject={(p) => void toggleProject(p)}
+                  onToggleProject={(p, ev) => void toggleProject(p, ev)}
                   onToggleArchived={toggleArchivedForProject}
                   onCreateThread={(e, p) => void onCreateThreadInProject(e, p)}
                   onSelectSession={(p, id) => void onSelectSessionInProject(p, id)}

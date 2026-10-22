@@ -233,7 +233,8 @@ export function createComposerAutocomplete(
   createEffect(() => {
     const val = text();
     const cursor = cursorOffset ? cursorOffset() : val.length;
-    const dir = sessionDirectory(sessionID());
+    const sid = sessionID();
+    const dir = (sid ? sessionDirectory(sid) : workspace.rootDir) || workspace.rootDir || undefined;
     const token = findAutocompleteToken(val, cursor);
     setActiveToken(token);
 

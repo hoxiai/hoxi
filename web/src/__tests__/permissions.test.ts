@@ -4,6 +4,7 @@ import { hoxiAPI, type ApprovalPolicy } from "../services/api";
 import type { PermissionRequest } from "../services/sse-types";
 import {
   approvalPolicy,
+  grantableClasses,
   handleIncomingPermissionRequest,
   isDestructivePermissionRequest,
   loadApprovalPolicy,
@@ -333,5 +334,52 @@ describe("dock stability", () => {
         assertEqual(workspace.pendingPermissions.length, 0);
       }
     );
+  });
+});
+
+describe("session kind grant", () => {
+  const destructive = (id: string, classes?: unknown) =>
+    ({
+      id,
+      sessionID: "ses_grant",
+      permission: "bash",
+      patterns: ["rm -rf build"],
+      metadata: classes === undefined ? {} : { hoxiGrantClasses: classes },
+    }) as unknown as PermissionRequest;
+
+  it("offers the session grant only for classes Go annotated", () => {
+    assertDeepEqual(grantableClasses(destructive("per_g1", ["dir-delete", "temp-delete"])), [
+      "dir-delete",
+      "temp-delete",
+    ]);
+    assertDeepEqual(grantableClasses(destructive("per_g2")), []);
+    assertDeepEqual(grantableClasses(destructive("per_g3", "dir-delete")), []);
+    assertDeepEqual(grantableClasses(destructive("per_g4", ["dir-delete", 7])), ["dir-delete"]);
+  });
+
+  it("sends grantClass only together with a one-time approval", async () => {
+    const calls: Array<{ mode: string; grantClass?: boolean }> = [];
+    const origReply = hoxiAPI.replyPermission;
+    const origGrants = hoxiAPI.listApprovalGrants;
+    hoxiAPI.replyPermission = async (_id, mode, _dir, _message, grantClass) => {
+      calls.push({ mode, grantClass });
+    };
+    hoxiAPI.listApprovalGrants = async () => [];
+    try {
+      await replyPermissionRequest(destructive("per_g5", ["dir-delete"]), "once", { grantClass: true });
+      await replyPermissionRequest(destructive("per_g6", ["dir-delete"]), "reject", { grantClass: true });
+      await replyPermissionRequest(destructive("per_g7", ["dir-delete"]), "once");
+      assertDeepEqual(
+        calls.map((c) => [c.mode, Boolean(c.grantClass)]),
+        [
+          ["once", true],
+          ["reject", false],
+          ["once", false],
+        ]
+      );
+    } finally {
+      hoxiAPI.replyPermission = origReply;
+      hoxiAPI.listApprovalGrants = origGrants;
+    }
   });
 });

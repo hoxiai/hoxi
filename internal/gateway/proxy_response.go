@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -19,18 +20,28 @@ func filterRunnerResponse(resp *http.Response, svc *runner.Service) error {
 		resp.Header.Del("Content-Length")
 		return nil
 	}
-	if resp.StatusCode != http.StatusOK || resp.Request == nil || resp.Request.URL.Path != "/session" {
+	if resp.StatusCode != http.StatusOK || resp.Request == nil {
+		return nil
+	}
+	requestPath := resp.Request.URL.Path
+	isSessionList := requestPath == "/session"
+	segments := strings.Split(strings.TrimPrefix(requestPath, "/"), "/")
+	isMessage := len(segments) >= 3 && segments[0] == "session" && segments[2] == "message"
+	if !isSessionList && !isMessage {
 		return nil
 	}
 	// Limit to 16 MB to prevent memory exhaustion from a malicious or broken upstream.
-	const maxSessionListSize = 16 * 1024 * 1024
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxSessionListSize))
+	const maxOpenCodeResponseSize = 16 * 1024 * 1024
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxOpenCodeResponseSize+1))
+	_ = resp.Body.Close()
 	if err != nil {
 		return err
 	}
-	_ = resp.Body.Close()
+	if len(raw) > maxOpenCodeResponseSize {
+		return fmt.Errorf("OpenCode response exceeds %d bytes", maxOpenCodeResponseSize)
+	}
 	var sessions []json.RawMessage
-	if json.Unmarshal(raw, &sessions) == nil {
+	if isSessionList && json.Unmarshal(raw, &sessions) == nil {
 		kept := make([]json.RawMessage, 0, len(sessions))
 		for _, item := range sessions {
 			var info struct {
@@ -46,6 +57,9 @@ func filterRunnerResponse(resp *http.Response, svc *runner.Service) error {
 		if err != nil {
 			return err
 		}
+	}
+	if isMessage {
+		raw = runner.SanitizeOpenCodeToolJSON(raw)
 	}
 	resp.Body = io.NopCloser(bytes.NewReader(raw))
 	resp.ContentLength = int64(len(raw))
@@ -64,7 +78,7 @@ func (r *runnerEventReader) Read(p []byte) (int, error) {
 	for len(r.pending) == 0 {
 		line, err := r.reader.ReadBytes('\n')
 		if len(line) > 0 && r.allow(string(line)) {
-			r.pending = line
+			r.pending = []byte(runner.SanitizeOpenCodeDisplaySSELine(string(line)))
 		}
 		if err != nil && len(r.pending) == 0 {
 			return 0, err

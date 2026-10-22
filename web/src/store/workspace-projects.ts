@@ -73,8 +73,17 @@ export function recordRecentProject(directory: string) {
 
 export async function selectInitialProjectSession(
   sessions: SessionInfo[],
-  expectedRootDir = normalizeFolderPath(workspace.rootDir)
+  expectedRootDir = normalizeFolderPath(workspace.rootDir),
+  expectedNewThreadReq = workspace.newThreadRequest
 ): Promise<void> {
+  if (
+    normalizeFolderPath(workspace.rootDir) !== expectedRootDir ||
+    workspace.newThreadRequest !== expectedNewThreadReq ||
+    workspace.activeSessionID !== null
+  ) {
+    setWorkspace("bootstrappingSessions", false);
+    return;
+  }
   const unarchived = sessions.filter((s) => !s.parentID && !isSessionArchived(s));
   if (unarchived.length === 0) {
     setWorkspace("bootstrappingSessions", false);
@@ -98,7 +107,8 @@ export async function selectInitialProjectSession(
     for (const next of candidates.slice(1, 6)) {
       if (
         workspace.activeSessionID !== first.id ||
-        normalizeFolderPath(workspace.rootDir) !== expectedRootDir
+        normalizeFolderPath(workspace.rootDir) !== expectedRootDir ||
+        workspace.newThreadRequest !== expectedNewThreadReq
       ) {
         break;
       }
@@ -106,7 +116,8 @@ export async function selectInitialProjectSession(
       if ((workspace.messagesBySession[next.id]?.length ?? 0) > 0 || isSessionBusy(next.id)) {
         if (
           workspace.activeSessionID === first.id &&
-          normalizeFolderPath(workspace.rootDir) === expectedRootDir
+          normalizeFolderPath(workspace.rootDir) === expectedRootDir &&
+          workspace.newThreadRequest === expectedNewThreadReq
         ) {
           await selectSession(next.id);
         }
@@ -151,6 +162,7 @@ export async function bootstrapProjectSessions(
     setWorkspace("bootstrappingSessions", false);
     return;
   }
+  const initialNewThreadReq = workspace.newThreadRequest;
   const effectiveProjectID =
     projectID !== undefined
       ? projectID
@@ -189,8 +201,15 @@ export async function bootstrapProjectSessions(
   void refreshWorktreeStatus("__root__");
   void syncSessionStatuses(cleaned);
   void syncPendingPermissions(cleaned);
-  if (selectInitial) await selectInitialProjectSession(titledSessions, cleaned);
-  else setWorkspace("bootstrappingSessions", false);
+  if (
+    selectInitial &&
+    workspace.newThreadRequest === initialNewThreadReq &&
+    !workspace.activeSessionID
+  ) {
+    await selectInitialProjectSession(titledSessions, cleaned, initialNewThreadReq);
+  } else {
+    setWorkspace("bootstrappingSessions", false);
+  }
 }
 
 export interface SwitchWorkspaceOptions {

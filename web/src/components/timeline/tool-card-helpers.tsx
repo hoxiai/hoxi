@@ -200,7 +200,16 @@ export function getDirectory(p: string): string {
 
 function extractRawField(raw: string, key: string): string | undefined {
   const m = raw.match(new RegExp(`"${key}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)`));
-  return m?.[1] ? m[1].replace(/\\"/g, '"').replace(/\\n/g, " ").trim() : undefined;
+  if (!m?.[1]) return undefined;
+  let value: string;
+  try {
+    value = JSON.parse(`"${m[1]}"`);
+  } catch {
+    value = m[1].replace(/\\"/g, '"').replace(/\\n/g, "\n");
+  }
+  // Keep command line boundaries: the first lines can be Hoxi's private
+  // stop tag, which must be stripped without swallowing the real command.
+  return (key === "command" || key === "cmd" ? value : value.replace(/\r?\n/g, " ")).trim();
 }
 
 const RAW_KEYS = [
@@ -262,11 +271,30 @@ export function extractTargetFile(part: ToolPart): string | null {
 
 export function extractCommand(part: ToolPart): string {
   const input = resolveToolInput(part);
-  return String(input.command || input.cmd || input.script || "");
+  const command = String(input.command || input.cmd || input.script || "");
+  return isShellTool(part.tool) ? cleanShellDisplayText(command) : command;
+}
+
+// Old histories and pending/raw events may predate backend normalization.
+// Clean their display text without mutating tool input or actual shell output.
+function cleanShellDisplayText(text: string): string {
+  return text.replace(
+    /^(?:[ \t]*(?:#?[ \t]*hoxi-stop:[^\r\n]*(?:\r?\n(?:[ \t]*trap : EXIT[ \t]*(?:\r?\n|$))?|$)|trap : EXIT[ \t]+# hoxi-stop:[^\r\n]*(?:\r?\n|$)))+/,
+    ""
+  );
 }
 
 export function extractDescription(part: ToolPart): string {
   const input = resolveToolInput(part);
+  if (isShellTool(part.tool)) {
+    for (const value of [input.description, part.state.title]) {
+      if (typeof value === "string") {
+        const description = cleanShellDisplayText(value).trim();
+        if (description) return description;
+      }
+    }
+    return extractCommand(part).split(/\r?\n/, 1)[0].trim();
+  }
   if (isQuestionTool(part.tool)) return questionSummaryText(part, findQuestionReply(part.callID));
   if ((part.tool || "").toLowerCase() === "skill") {
     const skillName =

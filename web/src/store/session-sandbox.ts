@@ -20,6 +20,8 @@ import {
 import { exitSessionWorktree, removeSessionFromStore, replaceSession } from "./workspace-sessions";
 import { isManagedSession, isSessionBusy, sessionRuntimeForID } from "./session-query";
 import { refreshWorktreeStatus } from "./session-diffs";
+import { indexSession } from "./session-index";
+import { normalizeFolderPath } from "./workspace-folders";
 
 const pendingSandboxChanges = new Map<string, Promise<void>>();
 
@@ -73,9 +75,13 @@ function reportSetupError(error: unknown): void {
 
 export async function newIsolatedSession(
   title?: string,
-  options?: { isolated?: boolean; onSessionCreated?: (sessionID: string) => void }
+  options?: {
+    isolated?: boolean;
+    directory?: string;
+    onSessionCreated?: (sessionID: string) => void;
+  }
 ): Promise<string> {
-  const directory = workspace.rootDir;
+  const directory = normalizeFolderPath(options?.directory) || workspace.rootDir;
   const initialAI = { ...workspace.defaultAI };
   const previousSessionID = workspace.activeSessionID;
   const runtime = resolveRunnerRuntimeForProvider(
@@ -114,7 +120,7 @@ export async function newIsolatedSession(
       setWorkspace("worktreeBySession", session.id, localMeta(session.id, directory));
     }
   } catch (error) {
-    if (workspace.rootDir === directory) {
+    if (normalizeFolderPath(workspace.rootDir) === normalizeFolderPath(directory)) {
       reportSetupError(error);
       if (session && workspace.activeSessionID === session.id) {
         setWorkspace("activeSessionID", previousSessionID);
@@ -130,14 +136,16 @@ export async function newIsolatedSession(
     }
     throw error;
   }
+  const attributed = session.directory ? session : { ...session, directory };
+  indexSession(attributed);
   // The user may have switched workspaces while the session was being
   // provisioned. Never inject it into the workspace that is active now.
-  if (workspace.rootDir === directory) {
+  if (normalizeFolderPath(workspace.rootDir) === normalizeFolderPath(directory)) {
     setWorkspace("messagesBySession", session.id, []);
     setWorkspace("diffsBySession", session.id, []);
     setWorkspace("loadingMessagesBySession", session.id, false);
     setWorkspace("unreadCompletedBySession", session.id, false);
-    replaceSession(session);
+    replaceSession(attributed);
     setWorkspace("activeSessionID", session.id);
   }
   initializeSessionAI(session.id, initialAI);

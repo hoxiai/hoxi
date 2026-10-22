@@ -105,7 +105,8 @@ export default function SingleProjectNavView(props: {
   const onSelectProjectSingle = async (path: string) => {
     setProjectMenuOpen(false);
     if (normalizeFolderPath(path) !== normalizeFolderPath(workspace.rootDir)) {
-      await switchWorkspace(path);
+      const wasNewThreadDraft = workspace.activeSessionID === null;
+      await switchWorkspace(path, { selectInitial: !wasNewThreadDraft });
     }
   };
 

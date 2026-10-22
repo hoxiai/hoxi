@@ -48,6 +48,7 @@ import {
 } from "./subagent-sessions";
 import { forgetPromptQueueState } from "./prompt-queue";
 import { indexSession, indexSessions } from "./session-index";
+import { normalizeFolderPath } from "./workspace-folders";
 
 const sessionMessageLoads = new Map<string, Promise<void>>();
 
@@ -100,15 +101,31 @@ export function reconcileSessionsInPlace(incomingList: SessionInfo[]): void {
   setWorkspace(
     produce((state) => {
       const existingById = new Map(state.sessions.map((s) => [s.id, s]));
+      const incomingIds = new Set(incomingList.map((s) => s.id));
+      const root = normalizeFolderPath(state.rootDir);
       const next: SessionInfo[] = [];
-      let orderOrLengthChanged = state.sessions.length !== incomingList.length;
+      for (const s of state.sessions) {
+        if (incomingIds.has(s.id) || isSessionDeleted(s.id)) continue;
+        const sDir = normalizeFolderPath(
+          state.worktreeBySession[s.id]?.directory || s.directory
+        );
+        const ownsDir =
+          !sDir ||
+          sDir === root ||
+          sDir.startsWith(`${root}/.hoxi/worktrees/`);
+        if (ownsDir && (s.id === state.activeSessionID || isSessionBusy(s.id))) {
+          next.push(s);
+        }
+      }
+      let orderOrLengthChanged = state.sessions.length !== incomingList.length + next.length;
       for (let i = 0; i < incomingList.length; i++) {
         const incoming = incomingList[i];
         const existing = existingById.get(incoming.id);
+        const targetIdx = next.length;
         if (existing) {
           syncSessionFieldsInPlace(existing, incoming);
           next.push(existing);
-          if (state.sessions[i]?.id !== incoming.id) orderOrLengthChanged = true;
+          if (state.sessions[targetIdx]?.id !== incoming.id) orderOrLengthChanged = true;
         } else {
           next.push(incoming);
           orderOrLengthChanged = true;

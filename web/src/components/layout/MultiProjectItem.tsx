@@ -164,7 +164,7 @@ export default function MultiProjectTreeItem(props: {
   cachedSessions: SessionInfo[];
   pendingSessions: Set<string>;
   onPointerDown: (ev: PointerEvent, fromPath: string) => void;
-  onToggleProject: (path: string) => void;
+  onToggleProject: (path: string, ev?: MouseEvent) => void;
   onToggleArchived: (path: string) => void;
   onCreateThread: (e: MouseEvent, path: string) => void;
   onSelectSession: (path: string, sessionID: string) => void;
@@ -229,7 +229,7 @@ export default function MultiProjectTreeItem(props: {
       <div
         data-project-header={props.proj.path}
         onPointerDown={(ev) => props.onPointerDown(ev, props.proj.path)}
-        onClick={() => props.onToggleProject(props.proj.path)}
+        onClick={(ev) => props.onToggleProject(props.proj.path, ev)}
         title={shortenPath(props.proj.path)}
         class={`group/proj flex items-center justify-between gap-1.5 rounded-lg px-2.5 py-1.5 cursor-pointer active:cursor-grabbing transition-colors ${
           props.isDraggingThis
@@ -239,6 +239,7 @@ export default function MultiProjectTreeItem(props: {
       >
         <div class="flex items-center gap-1.5 min-w-0 flex-1">
           <span
+            data-project-chevron
             class="hoxi-chevron shrink-0 text-[var(--text-faint)] group-hover/proj:text-[var(--text-muted)] transition-colors"
             data-open={props.expanded ? "true" : "false"}
           >

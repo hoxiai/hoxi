@@ -237,7 +237,7 @@ func (s *Service) relayOpenCodeFrames(ctx context.Context, cancel context.Cancel
 			continue
 		}
 		if strings.HasPrefix(line, "data:") && keep {
-			line = sanitizeOpenCodePermissionSSELine(line)
+			line = SanitizeOpenCodeDisplaySSELine(line)
 			// The unified stream sends its own heartbeat.
 			if strings.Contains(line, `"`+heartbeatEventType+`"`) || !s.AllowOpenCodeSSELine(line) ||
 				s.claimOpenCodeSSELine(line, directory) {

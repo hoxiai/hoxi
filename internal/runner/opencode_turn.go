@@ -143,19 +143,6 @@ func (s *Service) resolveOpenCodeVariant(ctx context.Context, directory, provide
 	return e
 }
 
-// stripOpenCodeStopMarker removes the sandbox plugin's `# hoxi-stop:` tag from
-// a bash tool part, so the UI and the model only ever see the user's command.
-func stripOpenCodeStopMarker(part *MessagePart) {
-	if part == nil || part.Type != "tool" || part.Tool != "bash" || part.State == nil || part.State.Input == nil {
-		return
-	}
-	raw, ok := part.State.Input["command"].(string)
-	if !ok || !strings.HasPrefix(raw, stopMarkerPrefix) {
-		return
-	}
-	part.State.Input["command"] = stripOpenCodeStopMarkerText(raw)
-}
-
 func (s *Service) normalizeOpenCodePart(rec SessionRecord, part *MessagePart, fileURLByMsgAndName map[string]string) bool {
 	stripOpenCodeStopMarker(part)
 	if part.Type == "file" && strings.HasPrefix(strings.TrimSpace(part.URL), "data:") {

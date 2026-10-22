@@ -310,7 +310,8 @@ export default function Composer() {
     }
     try {
       const payload = await buildPayloadWithReviews(withPastes, draftSessionID);
-      const id = await submitSessionPrompt(payload, sessionID(), {
+      const id = await submitSessionPrompt(payload, draftSessionID, {
+        directory: draftDirectory,
         attachments,
         skillSelection: currentSkill,
       });

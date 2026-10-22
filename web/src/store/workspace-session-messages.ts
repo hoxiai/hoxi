@@ -27,7 +27,11 @@ import {
   renameSessionTitle,
   replaceSession,
 } from "./workspace-sessions";
-import { buildWorkspaceFoldersSystemPrompt, workspaceFoldersForDir } from "./workspace-folders";
+import {
+  buildWorkspaceFoldersSystemPrompt,
+  normalizeFolderPath,
+  workspaceFoldersForDir,
+} from "./workspace-folders";
 import {
   isSessionBusy,
   isSessionDeleted,
@@ -291,6 +295,7 @@ export async function dispatchSessionPrompt(
     agent?: string;
     model?: { providerID: string; modelID: string };
     effort?: ReasoningEffort;
+    directory?: string;
     attachments?: Array<{ type: "file"; mime: string; filename?: string; url: string }>;
     skillSelection?: import("../services/api").SkillSelection;
     forceImmediate?: boolean;
@@ -301,6 +306,7 @@ export async function dispatchSessionPrompt(
 ): Promise<string> {
   let id = targetSessionID ?? workspace.activeSessionID;
   const isBrandNewSession = !id;
+  const requestedDir = normalizeFolderPath(options?.directory) || workspace.rootDir;
   if (id && isSessionDeleted(id)) throw new Error(t("timeline.sessionUnavailable"));
   if (id && !workspace.aiBySession[id]) {
     await loadSessionMessages(id);
@@ -346,10 +352,6 @@ export async function dispatchSessionPrompt(
     throw new Error(t("timeline.modelDoesNotSupportImages", { model: effectiveModel.modelID }));
   }
   const effort = options?.effort ?? config.effort;
-  const initialDirectory = id ? sessionDirectory(id) : workspace.rootDir;
-  const system = buildCombinedSystemPrompt(buildWorkspaceFoldersSystemPrompt(
-    workspaceFoldersForDir(initialDirectory || "")
-  ));
 
   if (id) {
     await waitForSessionSandbox(id);
@@ -444,6 +446,7 @@ export async function dispatchSessionPrompt(
 
   if (!id) {
     id = await newIsolatedSession(undefined, {
+      directory: requestedDir,
       onSessionCreated: (createdID) => {
         transferDraftComposerSkill(createdID);
         stageOptimisticTurn(createdID);
@@ -452,10 +455,14 @@ export async function dispatchSessionPrompt(
   }
   stageOptimisticTurn(id);
   initializeSessionAI(id, config);
+  const targetDir = sessionDirectory(id) || requestedDir || undefined;
+  const system = buildCombinedSystemPrompt(
+    buildWorkspaceFoldersSystemPrompt(workspaceFoldersForDir(targetDir || ""))
+  );
 
   try {
     if (effectiveSkill) {
-      const finalDir = sessionDirectory(id) || workspace.rootDir || "";
+      const finalDir = targetDir || workspace.rootDir || "";
       const finalRuntime = resolveRunnerRuntimeForProvider(
         effectiveModel?.providerID,
         Boolean(workspace.hoxiProviders?.[effectiveModel?.providerID || ""])
@@ -507,7 +514,7 @@ export async function dispatchSessionPrompt(
         agent: effectiveAgent,
         model: effectiveModel,
         variant: effort || undefined,
-        directory: sessionDirectory(id),
+        directory: targetDir,
         system,
         attachments,
         skillSelection: effectiveSkill,
