@@ -144,6 +144,12 @@ export default function SettingsModal() {
           icon: Zap,
           keywords: () => ["hoxi-auto", t("models.tabAutoPools")],
         },
+        {
+          id: "diagnostics",
+          label: () => t("diagnostics.title"),
+          icon: ScrollText,
+          keywords: () => [t("diagnostics.localHint")],
+        },
       ],
     },
     {
@@ -257,11 +263,6 @@ export default function SettingsModal() {
             t("settings.usageTotalTokens"),
             t("settings.usageTotalCost"),
           ],
-        },
-        {
-          id: "diagnostics",
-          label: () => t("diagnostics.title"),
-          icon: ScrollText,
         },
         {
           id: "errorLog",

@@ -21,6 +21,10 @@ import (
 const (
 	requestLogDefaultLimit = 200
 	requestLogMaxLimit     = 500
+	// requestLogPendingWindow bounds how long an unfinished call is treated as
+	// in progress. A turn killed mid-flight never records a completion time, so
+	// only recent ones are shown as running instead of stale forever.
+	requestLogPendingWindow = 30 * time.Minute
 )
 
 // requestLogEntry is one local model call. It carries timing and token counts
@@ -88,7 +92,8 @@ func (g *Gateway) handleRequestLog(w http.ResponseWriter, r *http.Request) {
 }
 
 func (g *Gateway) collectRequestLog() []requestLogEntry {
-	entries := queryOpenCodeRequestLog()
+	cutoffMs := time.Now().Add(-requestLogPendingWindow).UnixMilli()
+	entries := queryOpenCodeRequestLog(cutoffMs)
 	if g.runner == nil {
 		sort.SliceStable(entries, func(i, j int) bool { return entries[i].Time > entries[j].Time })
 		return entries
@@ -105,7 +110,7 @@ func (g *Gateway) collectRequestLog() []requestLogEntry {
 		}
 		store.VisitTurns(rec.ID, func(full runner.SessionRecord) {
 			for i := range full.Turns {
-				if entry, ok := requestLogFromTurn(full.Turns[i], rec, runtime); ok {
+				if entry, ok := requestLogFromTurn(full.Turns[i], rec, runtime, cutoffMs); ok {
 					entries = append(entries, entry)
 				}
 			}
@@ -115,7 +120,7 @@ func (g *Gateway) collectRequestLog() []requestLogEntry {
 	return entries
 }
 
-func requestLogFromTurn(turn runner.MessageTurn, rec runner.SessionRecord, runtime string) (requestLogEntry, bool) {
+func requestLogFromTurn(turn runner.MessageTurn, rec runner.SessionRecord, runtime string, cutoffMs int64) (requestLogEntry, bool) {
 	info := turn.Info
 	if info.Role != "assistant" {
 		return requestLogEntry{}, false
@@ -123,7 +128,8 @@ func requestLogFromTurn(turn runner.MessageTurn, rec runner.SessionRecord, runti
 	tokens := info.Tokens
 	hasTokens := tokens != nil && (tokens.Input > 0 || tokens.Output > 0 || tokens.Cache.Read > 0)
 	failed := info.Error != nil
-	if !hasTokens && !failed {
+	inProgress := info.Time.Completed == 0 && info.Time.Created >= cutoffMs
+	if !hasTokens && !failed && !inProgress {
 		return requestLogEntry{}, false
 	}
 	entry := requestLogEntry{
@@ -145,11 +151,12 @@ func requestLogFromTurn(turn runner.MessageTurn, rec runner.SessionRecord, runti
 		entry.CacheWriteTokens = int64(tokens.Cache.Write)
 	}
 	entry.FirstTokenMs = turnFirstTokenMs(turn, info.Time.Created)
-	if failed {
+	switch {
+	case failed:
 		entry.Level = "error"
 		entry.Status = requestErrorStatus(info.Error)
 		entry.Error = requestErrorText(info.Error)
-	} else if info.Time.Completed == 0 {
+	case inProgress:
 		entry.Level = "pending"
 	}
 	return entry, true
@@ -206,7 +213,7 @@ func trimLogText(v string) string {
 	return v
 }
 
-func queryOpenCodeRequestLog() []requestLogEntry {
+func queryOpenCodeRequestLog(cutoffMs int64) []requestLogEntry {
 	dbPath := hoxipaths.DBPath()
 	if dbPath == "" {
 		return nil
@@ -242,9 +249,10 @@ WHERE json_extract(m.data, '$.role') = 'assistant'
     OR CAST(COALESCE(json_extract(m.data, '$.tokens.output'), 0) AS INTEGER) > 0
     OR CAST(COALESCE(json_extract(m.data, '$.tokens.cache.read'), 0) AS INTEGER) > 0
     OR json_extract(m.data, '$.error') IS NOT NULL
+    OR (json_extract(m.data, '$.time.completed') IS NULL AND m.time_created >= %d)
   )
 ORDER BY m.time_created DESC
-LIMIT %d;`, handoff.SQLNotImportedTitleClause("s.title"), requestLogMaxLimit)
+LIMIT %d;`, handoff.SQLNotImportedTitleClause("s.title"), cutoffMs, requestLogMaxLimit)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
@@ -275,9 +283,10 @@ LIMIT %d;`, handoff.SQLNotImportedTitleClause("s.title"), requestLogMaxLimit)
 	entries := make([]requestLogEntry, 0, len(rows))
 	for _, row := range rows {
 		level := "info"
-		if strings.TrimSpace(row.Error) != "" || row.Status >= 400 {
+		switch {
+		case strings.TrimSpace(row.Error) != "" || row.Status >= 400:
 			level = "error"
-		} else if row.Completed == 0 {
+		case row.Completed == 0:
 			level = "pending"
 		}
 		entries = append(entries, requestLogEntry{
