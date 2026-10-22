@@ -12,6 +12,7 @@ import {
   revokeLocalRelayKey,
 } from "../../store/workspace";
 import { SettingGroup, SettingRow } from "./setting-controls";
+import { confirmAction } from "./confirm-dialog";
 
 const inputClass =
   "w-full rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-3 py-2 text-[13px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] focus:border-[var(--accent-border)] focus:outline-none";
@@ -161,7 +162,9 @@ export function LocalRelaySettingsTab() {
                       class={buttonClass}
                       disabled={localRelay.busy}
                       onClick={() => {
-                        if (confirm(t("relay.revokeConfirm"))) void revokeLocalRelayKey(key.id);
+                        void (async () => {
+                          if (await confirmAction(t("relay.revokeConfirm"))) void revokeLocalRelayKey(key.id);
+                        })();
                       }}
                     >
                       <Trash2 size={14} />

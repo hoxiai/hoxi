@@ -8,14 +8,15 @@ import { RefreshCw } from "lucide-solid";
 import { t } from "../../i18n";
 import { loadPairingCode, pairing, rotatePairingToken } from "../../store/workspace";
 import { HelpTip, SettingGroup } from "./setting-controls";
+import { confirmAction } from "./confirm-dialog";
 
 export function PairingQrPanel() {
   onMount(() => {
     void loadPairingCode();
   });
 
-  const onRotate = () => {
-    if (!confirm(t("pairing.rotateConfirm"))) return;
+  const onRotate = async () => {
+    if (!(await confirmAction(t("pairing.rotateConfirm")))) return;
     void rotatePairingToken();
   };
 

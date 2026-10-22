@@ -10,6 +10,7 @@ import {
 import { t } from "../../i18n";
 import { Spinner } from "../icons";
 import { SettingGroup, SettingRow } from "./setting-controls";
+import { confirmAction } from "./confirm-dialog";
 
 type HookState = "installed" | "outdated" | "missing" | "error";
 
@@ -95,8 +96,8 @@ export function AgyApprovalHookControls() {
     void run("load");
   });
 
-  const onUninstall = () => {
-    if (!confirm(t("settings.agyHookUninstallConfirm"))) return;
+  const onUninstall = async () => {
+    if (!(await confirmAction(t("settings.agyHookUninstallConfirm")))) return;
     void run("uninstall");
   };
 

@@ -12,6 +12,7 @@ import {
   loadCloudflaredStatus,
 } from "../../store/workspace";
 import { SettingGroup } from "./setting-controls";
+import { confirmAction } from "./confirm-dialog";
 
 const inputClass =
   "w-full rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-3 py-2 text-[13px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] focus:border-[var(--accent-border)] focus:outline-none";
@@ -63,8 +64,8 @@ export function CloudflaredControls() {
     if (ok) setToken("");
   };
 
-  const onDisable = () => {
-    if (!confirm(t("cloudflared.disableConfirm"))) return;
+  const onDisable = async () => {
+    if (!(await confirmAction(t("cloudflared.disableConfirm")))) return;
     void disableCloudflared();
   };
 

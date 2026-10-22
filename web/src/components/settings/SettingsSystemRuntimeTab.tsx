@@ -20,6 +20,7 @@ import {
 import { Spinner } from "../icons";
 import { t } from "../../i18n";
 import { SettingGroup, SettingRow, ToggleSwitch } from "./setting-controls";
+import { confirmAction } from "./confirm-dialog";
 
 export function SystemRuntimeSettingsTab() {
   const [sysInfo, setSysInfo] = createSignal<SystemRuntimeInfo | null>(null);
@@ -91,8 +92,8 @@ export function SystemRuntimeSettingsTab() {
     showToast(t("settings.resetTelemetrySuccess"));
   };
 
-  const onResetSettings = () => {
-    if (!confirm(t("settings.resetSettingsConfirm"))) return;
+  const onResetSettings = async () => {
+    if (!(await confirmAction(t("settings.resetSettingsConfirm")))) return;
     resetAllAppSettings();
     showToast(t("settings.resetSettingsSuccess"));
   };

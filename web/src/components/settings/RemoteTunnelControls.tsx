@@ -17,6 +17,7 @@ import {
   requestRemoteTunnel,
 } from "../../store/workspace";
 import { SettingGroup } from "./setting-controls";
+import { confirmAction } from "./confirm-dialog";
 
 const inputClass =
   "w-full rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-3 py-2 text-[13px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] focus:border-[var(--accent-border)] focus:outline-none";
@@ -114,8 +115,8 @@ export function RemoteTunnelControls() {
     if (ok) setCode("");
   };
 
-  const onDisable = () => {
-    if (!confirm(t("remoteTunnel.disableConfirm"))) return;
+  const onDisable = async () => {
+    if (!(await confirmAction(t("remoteTunnel.disableConfirm")))) return;
     void disableRemoteTunnel();
   };
 
