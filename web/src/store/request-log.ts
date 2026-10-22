@@ -17,7 +17,7 @@ export async function loadRequestLog() {
   setRequestLogLoading(true);
   setRequestLogError("");
   try {
-    const res = await hoxiAPI.getRequestLog(200);
+    const res = await hoxiAPI.getRequestLog(500);
     if (request !== generation) return;
     setRequestLog(Array.isArray(res?.entries) ? res.entries : []);
     setRequestLogTotal(res?.total || 0);
