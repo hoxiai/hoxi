@@ -26,6 +26,9 @@ func TestAttributionPreferencePersistsAndDefaultsOn(t *testing.T) {
 			t.Fatalf("malformed preference %q must keep attribution on", raw)
 		}
 	}
+	if backups, _ := filepath.Glob(path + ".corrupt-*"); len(backups) == 0 {
+		t.Fatal("expected malformed attribution files to be backed up with .corrupt-* suffix")
+	}
 
 	t.Cleanup(func() { SetAttributionEnabled(true) })
 	if err := SaveAttribution(path, false); err != nil {

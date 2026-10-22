@@ -441,7 +441,7 @@ func (s *Service) awaitReply(r *http.Request, cred hookCredential, id string, re
 // and never cover destructive commands (AGENTS.md rule 6).
 func (g *approvalGate) addAlways(sessionID, command, source string) {
 	trimmed := strings.TrimSpace(command)
-	if trimmed == "" || isDestructiveCommand(trimmed) {
+	if trimmed == "" || isDestructiveCommand(trimmed) || isOpaqueShellCommand(trimmed, "") {
 		return
 	}
 	g.mu.Lock()
@@ -464,7 +464,7 @@ func (g *approvalGate) addAlways(sessionID, command, source string) {
 
 func (g *approvalGate) hasAlways(sessionID, command string) bool {
 	trimmed := strings.TrimSpace(command)
-	if trimmed == "" || isDestructiveCommand(trimmed) {
+	if trimmed == "" || isDestructiveCommand(trimmed) || isOpaqueShellCommand(trimmed, "") {
 		return false
 	}
 	g.mu.Lock()
@@ -686,6 +686,7 @@ func (s *Service) listUnifiedPermissions(ctx context.Context, directory string) 
 						meta["directory"] = dir
 					}
 				}
+				sanitizeOpenCodePermissionItem(item)
 				if s.audit != nil {
 					s.audit.rememberOpenCodePerm(item, dir)
 				}

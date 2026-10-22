@@ -24,7 +24,7 @@ import (
 //     token resolves inside the session worktree.
 
 var (
-	destructiveRe = regexp.MustCompile(`(?i)\b(rm|rmdir|unlink|shred|truncate|srm|sudo|chmod|chown|mkfs|dd|diskutil|killall|reboot|shutdown)\b|\bkill\s+(?:-[A-Za-z0-9]+\s+)*(?:[A-Za-z0-9]+\s+)?[-?\d%]|\bpkill\b|[>|]\s*(?:/etc/|(?:\~|\$HOME|\$\{HOME\})/\.(?:zshrc|zshenv|zprofile|bashrc|bash_profile|profile|ssh\b|gnupg\b|netrc\b|npmrc\b))|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*/)?\.(?:ssh|aws|gnupg|kube)/|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*/)?\.(?:netrc|npmrc|git-credentials)(?:$|[\s;&|'"*?])|\.claude/\.credentials\.json|\.docker/config\.json|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*/)?\.en(?:v(?:\.(?:local|prod(?:uction)?|dev(?:elopment)?|stag(?:e|ing)|test(?:ing)?|ci|preview|secret\w*|key\w*|private\w*|bak|backup)(?:\.local)?)?|\?|\*)(?:$|[\s;&|'"*?])|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*/)?\.envrc(?:$|[\s;&|'"*?])|\bfind\b[^\n;&|]*\s-(delete|exec\w*|ok\w*|fprint\w*|fls)\b|\b(curl|wget)\b[^\n|]*\|\s*(sh|bash|zsh)\b|\b(?:npm|pnpm|yarn|cargo)\s+publish\b|\bterraform\s+(?:destroy|apply)\b|\bkubectl\s+delete\b|\bdocker\s+(?:system\s+prune|rm|rmi)\b`)
+	destructiveRe = regexp.MustCompile(`(?i)\b(rm|rmdir|unlink|shred|truncate|srm|sudo|chmod|chown|mkfs|dd|diskutil|killall|reboot|shutdown)\b|\bkill\s+(?:-[A-Za-z0-9]+\s+)*(?:[A-Za-z0-9]+\s+)?[-?\d%]|\bpkill\b|[>|]\s*(?:/etc/|(?:\~|\$HOME|\$\{HOME\})/\.(?:zshrc|zshenv|zprofile|bashrc|bash_profile|profile|ssh\b|gnupg\b|netrc\b|npmrc\b))|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*/)?\.(?:ssh|aws|gnupg|kube)/|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*/)?\.(?:netrc|npmrc|git-credentials|credentials\.json)(?:$|[\s;&|'"*?])|\.claude/\.credentials\.json|\.hoxi/(?:models|auth|cloudflared|pairing|relay-keys|approval-policy|hoxi)\.(?:json|db)|\.docker/config\.json|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*/)?\.en(?:v(?:\.(?:local|prod(?:uction)?|dev(?:elopment)?|stag(?:e|ing)|test(?:ing)?|ci|preview|secret\w*|key\w*|private\w*|bak|backup)(?:\.local)?)?|\?|\*)(?:$|[\s;&|'"*?])|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*/)?\.envrc(?:$|[\s;&|'"*?])|\bfind\b[^\n;&|]*\s-(delete|exec\w*|ok\w*|fprint\w*|fls)\b|\b(curl|wget)\b[^\n|]*\|\s*(sh|bash|zsh)\b|\b(?:npm|pnpm|yarn|cargo)\s+publish\b|\bterraform\s+(?:destroy|apply)\b|\bkubectl\s+delete\b|\bdocker\s+(?:system\s+prune|rm|rmi)\b`)
 
 	// Git option abbreviations (`--forc`, `--har`), combined short flags
 	// (`-uf`), `+refspec` force pushes and `:refspec` deletions count too.
@@ -51,6 +51,12 @@ var (
 	cargoUnsafeRe    = regexp.MustCompile(`^(--config|-Z|--target-dir|--manifest-path)`)
 	gitBranchShortRe = regexp.MustCompile(`^-(?:[arv]+)$`)
 	gitBranchLongRe  = regexp.MustCompile(`^(?:--all|--remotes|--verbose|--show-current|--no-color)$`)
+
+	benignPathExportRe     = regexp.MustCompile(`^export[ \t]+PATH=[A-Za-z0-9_./:$~{}-]+$`)
+	envVarAssignmentWordRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
+	inlineScriptExecTools  = setOf("python", "python3", "node", "perl", "ruby", "php")
+	inlineScriptFlags      = setOf("-c", "-e", "--eval", "-p", "--print", "-")
+	interpValueFlags       = setOf("-m", "-W", "-X", "-r", "--require", "--import", "-I", "-C")
 )
 
 var (
@@ -74,6 +80,7 @@ func setOf(items ...string) map[string]bool {
 
 // isDestructiveCommand mirrors isDestructivePermissionRequest for a bash request.
 func isDestructiveCommand(command string) bool {
+	command = unwrapSandboxCommand(command)
 	blob := "bash\n" + maskCommandDataArguments(strings.TrimSpace(command))
 	return matchesDestructive(blob) || matchesDestructive(deobfuscator.Replace(blob))
 }
@@ -97,6 +104,7 @@ func decideCommandPermissionIn(command, worktree string) string {
 }
 
 func isSafeCommand(command, worktree string) bool {
+	command = unwrapSandboxCommand(command)
 	if hasUnsafeShellSyntax(command) {
 		return false
 	}
@@ -273,67 +281,7 @@ func normalizeAbsoluteTool(word string) string {
 // splitCommandChain mirrors the JS SHELL_SPLIT_RE split. RE2 has no
 // lookaround, so the `|` / `&` rules are checked by hand.
 func splitCommandChain(command string) []string {
-	var segments []string
-	var cur strings.Builder
-	var quote byte
-	flush := func() {
-		seg := strings.TrimSpace(trailingParenRe.ReplaceAllString(cur.String(), ""))
-		if seg != "" {
-			segments = append(segments, seg)
-		}
-		cur.Reset()
-	}
-	s := command
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		next := byte(0)
-		if i+1 < len(s) {
-			next = s[i+1]
-		}
-		if quote == '\'' {
-			if c == '\'' {
-				quote = 0
-			}
-			cur.WriteByte(c)
-			continue
-		}
-		if c == '\\' && i+1 < len(s) {
-			cur.WriteByte(c)
-			cur.WriteByte(next)
-			i++
-			continue
-		}
-		if quote == '"' {
-			switch {
-			case c == '"':
-				quote = 0
-				cur.WriteByte(c)
-			case c == '$' && next == '(':
-				flush()
-				i++
-			case c == '`':
-				flush()
-			default:
-				cur.WriteByte(c)
-			}
-			continue
-		}
-		switch {
-		case c == '\'' || c == '"':
-			quote = c
-			cur.WriteByte(c)
-		case c == '&' && next == '&', c == '|' && next == '|', c == '$' && next == '(':
-			flush()
-			i++
-		case c == ';', c == '\n', c == '`', c == '|':
-			flush()
-		case c == '&' && (i == 0 || s[i-1] != '>') && next != '>':
-			flush()
-		default:
-			cur.WriteByte(c)
-		}
-	}
-	flush()
+	segments, _ := splitCommandChainWithPipes(command)
 	return segments
 }
 
@@ -479,4 +427,279 @@ func isReadOnlyGitBranch(args []string) bool {
 		}
 	}
 	return true
+}
+
+// isOpaqueShellCommand reports whether a shell command uses indirection,
+// obfuscation, variable expansion, nested shells, or inline script evaluation
+// whose reach cannot be statically verified before execution. Such commands
+// must ask the user in every approval mode (including auto and trusted).
+func isOpaqueShellCommand(command, worktree string) bool {
+	command = strings.TrimSpace(unwrapSandboxCommand(command))
+	if command == "" || hasShellGrouping(command) || hasOpaqueShellSyntax(command) {
+		return true
+	}
+	segments, pipedIn := splitCommandChainWithPipes(command)
+	if len(segments) > 1 && !pipedIn[0] && isWorktreeCD(segments[0], worktree) {
+		segments = segments[1:]
+		pipedIn = pipedIn[1:]
+	}
+	if len(segments) == 0 {
+		return true
+	}
+	outsideCWD := false
+	hasExec := false
+	for i, rawSeg := range segments {
+		seg := strings.TrimSpace(rawSeg)
+		if seg == "" || strings.HasPrefix(seg, "#") {
+			continue
+		}
+		hasExec = true
+		if hasDollarExpansion(seg) && !isBenignPathExport(seg) {
+			return true
+		}
+		words := shellWords(seg)
+		cmdIdx := 0
+		for cmdIdx < len(words) && envVarAssignmentWordRe.MatchString(words[cmdIdx]) {
+			cmdIdx++
+		}
+		if cmdIdx >= len(words) {
+			continue
+		}
+		cmdWords := words[cmdIdx:]
+		base := filepath.Base(normalizeAbsoluteTool(cmdWords[0]))
+		args := cmdWords[1:]
+		if base == "cd" || base == "pushd" || base == "popd" {
+			if base != "cd" || !isScopedCDSegment(seg, worktree) {
+				outsideCWD = true
+			}
+			continue
+		}
+		if outsideCWD && !isRecoverableSegment(cmdWords, "") {
+			return true
+		}
+		if dataArgInterpreters[base] {
+			return true
+		}
+		if inlineScriptExecTools[base] && (pipedIn[i] || hasInlineScriptFlag(base, args)) {
+			return true
+		}
+	}
+	return !hasExec
+}
+
+func hasOpaqueShellSyntax(s string) bool {
+	var quote byte
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		prev, next := byte(0), byte(0)
+		if i > 0 {
+			prev = s[i-1]
+		}
+		if i+1 < len(s) {
+			next = s[i+1]
+		}
+		if quote == '\'' {
+			if c == '\'' {
+				quote = 0
+				if next != 0 && !isWordBoundary(next) {
+					return true
+				}
+			}
+			continue
+		}
+		if c == '`' || (c == '$' && next == '(') {
+			return true
+		}
+		if quote == '"' {
+			if c == '\\' && i+1 < len(s) {
+				i++
+				continue
+			}
+			if c == '"' {
+				quote = 0
+				if next != 0 && !isWordBoundary(next) {
+					return true
+				}
+			}
+			continue
+		}
+		if c == '\\' || c == '(' || c == ')' || c == '{' || c == '}' {
+			return true
+		}
+		if c == '<' && next == '<' {
+			return true
+		}
+		if c == '\'' || c == '"' {
+			if prev != 0 && !isWordBoundary(prev) && prev != '=' {
+				return true
+			}
+			quote = c
+		}
+	}
+	return quote != 0
+}
+
+func hasDollarExpansion(s string) bool {
+	var quote byte
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		next := byte(0)
+		if i+1 < len(s) {
+			next = s[i+1]
+		}
+		switch {
+		case quote == '\'':
+			if c == '\'' {
+				quote = 0
+			}
+		case quote == '"':
+			if c == '\\' && i+1 < len(s) {
+				i++
+				continue
+			}
+			if c == '"' {
+				quote = 0
+			} else if c == '$' && next != 0 && next != '"' && dollarExpandRe.MatchString(string(next)) {
+				return true
+			}
+		default:
+			if c == '\'' || c == '"' {
+				quote = c
+			} else if c == '$' && next != 0 && dollarExpandRe.MatchString(string(next)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func isBenignPathExport(seg string) bool {
+	trimmed := strings.TrimSpace(seg)
+	if !benignPathExportRe.MatchString(trimmed) {
+		return false
+	}
+	rest := strings.ReplaceAll(strings.ReplaceAll(trimmed, "${PATH}", ""), "$PATH", "")
+	return !strings.Contains(rest, "$")
+}
+
+func isScopedCDSegment(seg, worktree string) bool {
+	if strings.TrimSpace(worktree) != "" {
+		return isWorktreeCD(seg, worktree)
+	}
+	m := cdSegmentRe.FindStringSubmatch(strings.TrimSpace(seg))
+	if m == nil {
+		return false
+	}
+	target := m[1]
+	if strings.HasPrefix(target, "/") || strings.HasPrefix(target, "~") || strings.HasPrefix(target, "-") {
+		return false
+	}
+	for _, part := range strings.Split(filepath.ToSlash(target), "/") {
+		if part == ".." {
+			return false
+		}
+	}
+	return true
+}
+
+func hasInlineScriptFlag(base string, args []string) bool {
+	if len(args) == 0 {
+		return true
+	}
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--" {
+			return false
+		}
+		if a == "-" || inlineScriptFlags[a] ||
+			strings.HasPrefix(a, "-c") || strings.HasPrefix(a, "-e") ||
+			strings.HasPrefix(a, "--eval=") || strings.HasPrefix(a, "--print=") {
+			return true
+		}
+		if (base == "perl" || base == "ruby") && strings.HasPrefix(a, "-") && !strings.HasPrefix(a, "--") && strings.ContainsAny(a[1:], "ep") {
+			return true
+		}
+		if (base == "php") && (a == "-r" || strings.HasPrefix(a, "-r")) {
+			return true
+		}
+		if interpValueFlags[a] {
+			i++
+			continue
+		}
+		if !strings.HasPrefix(a, "-") {
+			return false
+		}
+	}
+	return false
+}
+
+func splitCommandChainWithPipes(command string) ([]string, []bool) {
+	var segments []string
+	var pipedIn []bool
+	var cur strings.Builder
+	var quote byte
+	lastPipe := false
+	flush := func(nextPipe bool) {
+		seg := strings.TrimSpace(trailingParenRe.ReplaceAllString(cur.String(), ""))
+		if seg != "" {
+			segments = append(segments, seg)
+			pipedIn = append(pipedIn, lastPipe)
+		}
+		cur.Reset()
+		lastPipe = nextPipe
+	}
+	s := stripOpenCodeStopMarkerText(command)
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		next := byte(0)
+		if i+1 < len(s) {
+			next = s[i+1]
+		}
+		if quote == '\'' {
+			if c == '\'' {
+				quote = 0
+			}
+			cur.WriteByte(c)
+			continue
+		}
+		if c == '\\' && i+1 < len(s) {
+			cur.WriteByte(c)
+			cur.WriteByte(next)
+			i++
+			continue
+		}
+		if quote == '"' {
+			switch {
+			case c == '"':
+				quote = 0
+				cur.WriteByte(c)
+			case c == '$' && next == '(':
+				flush(false)
+				i++
+			case c == '`':
+				flush(false)
+			default:
+				cur.WriteByte(c)
+			}
+			continue
+		}
+		switch {
+		case c == '\'' || c == '"':
+			quote = c
+			cur.WriteByte(c)
+		case c == '&' && next == '&', c == '|' && next == '|', c == '$' && next == '(':
+			flush(false)
+			i++
+		case c == '|':
+			flush(true)
+		case c == ';', c == '\n', c == '`':
+			flush(false)
+		case c == '&' && (i == 0 || s[i-1] != '>') && next != '>':
+			flush(false)
+		default:
+			cur.WriteByte(c)
+		}
+	}
+	flush(false)
+	return segments, pipedIn
 }

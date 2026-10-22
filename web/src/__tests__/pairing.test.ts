@@ -77,4 +77,26 @@ describe("lan pairing code", () => {
       reset();
     }
   });
+
+  it("does not let an in-flight loadPairingCode block rotatePairingToken or overwrite it", async () => {
+    const api = { ...pairingAPI };
+    let resolveLoad!: (code: PairingCode) => void;
+    try {
+      pairingAPI.getCode = () => new Promise<PairingCode>((r) => { resolveLoad = r; });
+      pairingAPI.rotate = async () => ({ ...availableCode, token: "c".repeat(64) });
+
+      const loadPromise = loadPairingCode();
+      const rotatePromise = rotatePairingToken();
+      await rotatePromise;
+      assertEqual(pairing.code?.token, "c".repeat(64));
+
+      resolveLoad(availableCode);
+      await loadPromise;
+      assertEqual(pairing.code?.token, "c".repeat(64), "stale load must not overwrite rotated token");
+      assertEqual(pairing.busy, false);
+    } finally {
+      Object.assign(pairingAPI, api);
+      reset();
+    }
+  });
 });

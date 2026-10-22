@@ -79,34 +79,44 @@ function legacyApprovalPolicy(): ApprovalPolicy {
   return { mode, edit: pick(perm.edit), webfetch: pick(perm.webfetch), bash };
 }
 
+let approvalPolicyGen = 0;
+
 export async function loadApprovalPolicy(): Promise<void> {
+  const gen = ++approvalPolicyGen;
   let state = await hoxiAPI.fetchApprovalPolicy();
+  if (gen !== approvalPolicyGen) return;
   if (!state.exists) {
     try {
       await fetchGlobalConfig();
     } catch {
       /* use what is cached */
     }
+    if (gen !== approvalPolicyGen) return;
     state = await hoxiAPI.updateApprovalPolicy(legacyApprovalPolicy());
+    if (gen !== approvalPolicyGen) return;
   }
   applyApprovalPolicy(state.policy);
 }
 
 export async function setApprovalMode(mode: ApprovalMode): Promise<void> {
+  const gen = ++approvalPolicyGen;
   // Switching approval modes clears per-tool overrides.
-  applyApprovalPolicy((await hoxiAPI.updateApprovalPolicy({ mode })).policy);
+  const state = await hoxiAPI.updateApprovalPolicy({ mode });
+  if (gen !== approvalPolicyGen) return;
+  applyApprovalPolicy(state.policy);
 }
 
 export async function updateToolPermissionRule(
   tool: "edit" | "webfetch" | "bash",
   value: "allow" | "smart" | "ask"
 ): Promise<void> {
+  const gen = ++approvalPolicyGen;
   const cur = approvalPolicy();
   const v = tool === "bash" ? value : value === "ask" ? "ask" : "allow";
   const preset = presetRule(cur.mode, tool);
-  applyApprovalPolicy(
-    (await hoxiAPI.updateApprovalPolicy({ ...cur, [tool]: v === preset ? "" : v })).policy
-  );
+  const state = await hoxiAPI.updateApprovalPolicy({ ...cur, [tool]: v === preset ? "" : v });
+  if (gen !== approvalPolicyGen) return;
+  applyApprovalPolicy(state.policy);
 }
 
 export interface EffectivePermissionSummary {

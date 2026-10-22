@@ -1,13 +1,14 @@
 // Package pairing issues the local-network pairing QR the Hoxi mobile app
 // scans to reach this desktop directly.
 //
-// The desktop gateway is loopback-only today, so the QR records the LAN
-// address, port and token that the LAN listener will accept once it ships
-// (see DefaultLANPairingPort). The token lives in ~/.hoxi/pairing.json (0600)
-// and never leaves the machine except inside the QR the user chooses to show.
+// The QR records the LAN address, port (DefaultLANPairingPort, served by
+// internal/gateway/lan.go), optional relay URL, and pairing token. The token
+// lives in ~/.hoxi/pairing.json (0600) and never leaves the machine except
+// inside the QR the user chooses to show.
 package pairing
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -17,6 +18,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Payload is the scannable pairing record the mobile app reads. It mirrors the
@@ -192,18 +194,43 @@ func readToken(path string) string {
 	if err != nil {
 		return ""
 	}
+	if len(bytes.TrimSpace(data)) == 0 {
+		return ""
+	}
 	var rec struct {
 		Token string `json:"token"`
 	}
 	if json.Unmarshal(data, &rec) != nil {
+		backupCorruptTokenFile(path)
 		return ""
 	}
-	return strings.TrimSpace(rec.Token)
+	tok := strings.TrimSpace(rec.Token)
+	if tok == "" {
+		backupCorruptTokenFile(path)
+		return ""
+	}
+	return tok
+}
+
+func backupCorruptTokenFile(path string) {
+	if path == "" {
+		return
+	}
+	backup := fmt.Sprintf("%s.corrupt-%d", path, time.Now().UTC().UnixNano())
+	_ = os.Rename(path, backup)
 }
 
 func writeToken(path, token string) error {
 	if path == "" {
 		return nil
+	}
+	if data, err := os.ReadFile(path); err == nil && len(bytes.TrimSpace(data)) > 0 {
+		var rec struct {
+			Token string `json:"token"`
+		}
+		if json.Unmarshal(data, &rec) != nil || strings.TrimSpace(rec.Token) == "" {
+			backupCorruptTokenFile(path)
+		}
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
@@ -227,6 +254,10 @@ func writeToken(path, token string) error {
 		_ = tmp.Close()
 		return err
 	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
 	if err := tmp.Close(); err != nil {
 		return err
 	}
@@ -241,15 +272,49 @@ func defaultHostname() string {
 	return strings.TrimSpace(name)
 }
 
+func isCGNATIPv4(v4 net.IP) bool {
+	return len(v4) == net.IPv4len && v4[0] == 100 && v4[1] >= 64 && v4[1] <= 127
+}
+
+func selectLANIPv4(ips []net.IP) string {
+	cgnatFallback := ""
+	linkLocalFallback := ""
+	for _, ip := range ips {
+		v4 := ip.To4()
+		if v4 == nil || v4.IsLoopback() {
+			continue
+		}
+		if v4.IsPrivate() {
+			return v4.String()
+		}
+		if isCGNATIPv4(v4) {
+			if cgnatFallback == "" {
+				cgnatFallback = v4.String()
+			}
+			continue
+		}
+		if v4.IsLinkLocalUnicast() {
+			if linkLocalFallback == "" {
+				linkLocalFallback = v4.String()
+			}
+		}
+	}
+	if cgnatFallback != "" {
+		return cgnatFallback
+	}
+	return linkLocalFallback
+}
+
 // primaryLANIPv4 returns the machine's most likely LAN address: a private
-// IPv4 on an up, non-loopback interface, falling back to any global unicast
-// IPv4. It returns "" when only loopback or link-local addresses exist.
+// RFC1918 IPv4 on an up, non-loopback interface, falling back to CGNAT /
+// Tailscale (100.64.0.0/10) or link-local (169.254.0.0/16). Public IPv4
+// addresses are never returned because the LAN listener refuses public clients.
 func primaryLANIPv4() string {
 	ifaces, err := net.Interfaces()
 	if err != nil {
 		return ""
 	}
-	fallback := ""
+	var ips []net.IP
 	for _, iface := range ifaces {
 		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
 			continue
@@ -259,24 +324,13 @@ func primaryLANIPv4() string {
 			continue
 		}
 		for _, addr := range addrs {
-			var ip net.IP
 			switch v := addr.(type) {
 			case *net.IPNet:
-				ip = v.IP
+				ips = append(ips, v.IP)
 			case *net.IPAddr:
-				ip = v.IP
-			}
-			v4 := ip.To4()
-			if v4 == nil || v4.IsLoopback() || v4.IsLinkLocalUnicast() {
-				continue
-			}
-			if v4.IsPrivate() {
-				return v4.String()
-			}
-			if fallback == "" {
-				fallback = v4.String()
+				ips = append(ips, v.IP)
 			}
 		}
 	}
-	return fallback
+	return selectLANIPv4(ips)
 }

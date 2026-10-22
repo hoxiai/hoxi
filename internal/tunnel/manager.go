@@ -172,6 +172,7 @@ func (m *Manager) Start() {
 }
 
 func (m *Manager) Stop() {
+	m.CancelPair()
 	m.restartMu.Lock()
 	defer m.restartMu.Unlock()
 	m.stopLocked()
@@ -315,6 +316,7 @@ func (m *Manager) Pair(ctx context.Context, controllerURL, code, name string) er
 	if err != nil {
 		return err
 	}
+	m.CancelPair()
 	return m.exchangeAndConnect(ctx, normalized, code, name)
 }
 

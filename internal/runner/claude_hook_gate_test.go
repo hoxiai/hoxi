@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -337,6 +338,51 @@ func TestClaudeHookGatesProtectedEditsOutsideReadsAndExternalTools(t *testing.T)
 	if d := <-resUnknown; !strings.HasPrefix(d, "deny|") {
 		t.Fatalf("expected deny on unknown tool, got %q", d)
 	}
+
+	// 7. Symlink inside worktree pointing to .env must be gated as a secret read.
+	if err := os.WriteFile(filepath.Join(f.dir, ".env"), []byte("SECRET=1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	symlinkEnv := filepath.Join(f.dir, "readme-link.txt")
+	if err := os.Symlink(filepath.Join(f.dir, ".env"), symlinkEnv); err != nil {
+		t.Fatal(err)
+	}
+	resSymlinkEnv := callTool("Read", "toolu_symlink_env", map[string]interface{}{
+		"file_path": symlinkEnv,
+	})
+	asked7 := waitForEvent(t, events, "permission.asked")
+	if meta7, _ := asked7.Properties["metadata"].(map[string]interface{}); meta7["destructive"] != true {
+		t.Fatalf("expected symlink to .env to be marked destructive, got %#v", asked7.Properties)
+	}
+	id7, _ := asked7.Properties["id"].(string)
+	f.reply(t, id7, "reject", "no symlink secret")
+	if d := <-resSymlinkEnv; !strings.HasPrefix(d, "deny|") {
+		t.Fatalf("expected deny on symlink to .env, got %q", d)
+	}
+
+	// 8. Relative file_path when p.Cwd is outside the worktree must be gated as an external edit.
+	setTestApprovalPolicy(t, f.svc, ApprovalPolicy{Mode: ApprovalModeManual})
+	outsideCwd := t.TempDir()
+	rawRelOutside, _ := json.Marshal(map[string]interface{}{
+		"session_id":      "cc-uuid-1",
+		"cwd":             outsideCwd,
+		"permission_mode": "acceptEdits",
+		"hook_event_name": "PreToolUse",
+		"tool_name":       "Write",
+		"tool_use_id":     "toolu_rel_outside",
+		"tool_input":      map[string]interface{}{"file_path": "escaped.go"},
+	})
+	resRelOutside := f.asyncDecide(t, rawRelOutside)
+	asked8 := waitForEvent(t, events, "permission.asked")
+	if meta8, _ := asked8.Properties["metadata"].(map[string]interface{}); meta8["externalDirectory"] != true {
+		t.Fatalf("expected relative path under external cwd to be flagged externalDirectory, got %#v", asked8.Properties)
+	}
+	id8, _ := asked8.Properties["id"].(string)
+	f.reply(t, id8, "reject", "outside cwd")
+	if d := <-resRelOutside; !strings.HasPrefix(d, "deny|") {
+		t.Fatalf("expected deny on relative path under external cwd, got %q", d)
+	}
+	setTestApprovalPolicy(t, f.svc, ApprovalPolicy{Mode: ApprovalModeSmart})
 }
 
 func TestClaudeHookDestructiveAlwaysAsks(t *testing.T) {

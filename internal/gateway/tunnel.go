@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
 	"path"
+	"path/filepath"
 	"strings"
 
 	"github.com/hoxiai/hoxi/internal/statusbar"
@@ -219,6 +221,30 @@ func (g *Gateway) serveTunnelRequest(w http.ResponseWriter, r *http.Request) {
 	g.serveRemoteRequest(w, r, remoteSourceTunnel)
 }
 
+// droppedRemoteHeader reports whether an incoming header must be stripped on
+// remote controller paths (tunnel, LAN pairing, reverse-proxy ingress) before
+// reaching the loopback gateway and downstream handlers.
+func droppedRemoteHeader(key string) bool {
+	lower := strings.ToLower(strings.TrimSpace(key))
+	switch lower {
+	case "origin", "referer", "cookie", "authorization", "x-auth", "x-hoxi-token":
+		return true
+	}
+	return strings.HasPrefix(lower, "sec-") ||
+		strings.HasPrefix(lower, "x-forwarded-") ||
+		strings.HasPrefix(lower, "x-gopanel-")
+}
+
+func sanitizeRemoteRequest(r *http.Request) {
+	r.Host = "127.0.0.1"
+	for key := range r.Header {
+		if droppedRemoteHeader(key) {
+			delete(r.Header, key)
+		}
+	}
+	stripGatewayTokenFromRequest(r)
+}
+
 // serveRemoteRequest applies the paired-controller route allow-list and file
 // confinement, tags the request with its transport source for the approval
 // audit, and serves it in-process.
@@ -227,13 +253,109 @@ func (g *Gateway) serveRemoteRequest(w http.ResponseWriter, r *http.Request, sou
 		writeJSONError(w, http.StatusForbidden, "route is not available for remote controllers")
 		return
 	}
+	if !g.tunnelRequestDirectoriesAllowed(r) {
+		writeJSONError(w, http.StatusForbidden, "path is outside the workspace")
+		return
+	}
 	r = r.WithContext(context.WithValue(r.Context(), remoteSourceKey{}, source))
-	r.Header.Del(gatewayTokenHeader)
+	sanitizeRemoteRequest(r)
 	if r.URL.Path == "/api/hoxi/file/search" && !g.tunnelSearchRootAllowed(r) {
 		writeJSONError(w, http.StatusForbidden, "path is outside the workspace")
 		return
 	}
 	g.ServeHTTP(w, r)
+}
+
+func worktreeParentRepo(dir string) string {
+	slash := filepath.ToSlash(filepath.Clean(strings.TrimSpace(dir)))
+	if idx := strings.Index(slash, "/.hoxi/worktrees/"); idx > 0 {
+		return filepath.FromSlash(slash[:idx])
+	}
+	return ""
+}
+
+func remoteSessionPathID(requestPath string) string {
+	if sid, ok := sessionPathID(requestPath); ok {
+		return sid
+	}
+	if strings.HasPrefix(requestPath, "/api/hoxi/sessions/") {
+		parts := strings.Split(strings.TrimPrefix(requestPath, "/api/hoxi/sessions/"), "/")
+		if len(parts) > 0 && parts[0] != "" && parts[0] != "status" {
+			return parts[0]
+		}
+	}
+	return ""
+}
+
+func (g *Gateway) tunnelRequestDirectoriesAllowed(r *http.Request) bool {
+	q, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil || len(q["directory"]) > 1 {
+		return false
+	}
+	sessionID := strings.TrimSpace(q.Get("sessionID"))
+	if sessionID == "" {
+		sessionID = remoteSessionPathID(r.URL.Path)
+	}
+	var dirs []string
+	for _, d := range q["directory"] {
+		if strings.TrimSpace(d) != "" {
+			dirs = append(dirs, strings.TrimSpace(d))
+		}
+	}
+	for _, d := range r.Header.Values(sessionDirectoryHeader) {
+		if strings.TrimSpace(d) != "" {
+			dirs = append(dirs, strings.TrimSpace(d))
+		}
+	}
+	if r.Method == http.MethodPost && r.Body != nil && r.Body != http.NoBody &&
+		!strings.HasPrefix(strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Type"))), "multipart/") {
+		raw, readErr := io.ReadAll(io.LimitReader(r.Body, maxTunnelInspectedBody+1))
+		_ = r.Body.Close()
+		if readErr != nil || len(raw) > maxTunnelInspectedBody {
+			return false
+		}
+		r.Body = io.NopCloser(bytes.NewReader(raw))
+		r.ContentLength = int64(len(raw))
+		var body struct {
+			SessionID string `json:"sessionID"`
+			Directory string `json:"directory"`
+		}
+		if len(bytes.TrimSpace(raw)) > 0 && json.Unmarshal(raw, &body) == nil {
+			if sessionID == "" && strings.TrimSpace(body.SessionID) != "" {
+				sessionID = strings.TrimSpace(body.SessionID)
+			}
+			if strings.TrimSpace(body.Directory) != "" {
+				dirs = append(dirs, strings.TrimSpace(body.Directory))
+			}
+		}
+	}
+	if sessionID != "" && sessionID != "__root__" && g.worktrees != nil {
+		binding, known, bindErr := g.worktrees.BindingForSession(sessionID)
+		if bindErr != nil {
+			return false
+		}
+		if known && binding.Directory != "" {
+			parent := worktreeParentRepo(binding.Directory)
+			for _, d := range dirs {
+				if !sameDirectory(d, binding.Directory) && (parent == "" || !sameDirectory(d, parent)) {
+					return false
+				}
+			}
+		}
+	}
+	for _, d := range dirs {
+		if !g.tunnelFilePathAllowed(d, sessionID) {
+			return false
+		}
+	}
+	for _, extraRaw := range q["extraDir"] {
+		for _, part := range strings.Split(extraRaw, ",") {
+			if trimmed := strings.TrimSpace(part); trimmed != "" && !g.tunnelFilePathAllowed(trimmed, sessionID) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // tunnelAllowedRoots lists the directories a tunnel request may read: the

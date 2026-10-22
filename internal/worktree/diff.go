@@ -453,12 +453,36 @@ func computeDiffSingleRepo(repo gitRepoTarget, diffTarget, fingerprint string, n
 			continue
 		}
 		full := filepath.Join(repo.Dir, rel)
-		info, err := os.Stat(full)
+		info, err := os.Lstat(full)
 		if err != nil || info.IsDir() {
 			continue
 		}
 		generated := classifyGeneratedFile(relFile)
 		stamp := fileStatStamp(repo.Dir, slashRel)
+		if info.Mode()&os.ModeSymlink != 0 {
+			target, linkErr := os.Readlink(full)
+			if linkErr != nil {
+				continue
+			}
+			patch := fmt.Sprintf("diff --git a/%s b/%s\nnew file mode 120000\n--- /dev/null\n+++ b/%s\n@@ -0,0 +1,1 @@\n+%s", relFile, relFile, relFile, target)
+			seen[relFile] = struct{}{}
+			results = append(results, worktreeFileDiff{
+				File:          relFile,
+				Patch:         patch,
+				Additions:     1,
+				Deletions:     0,
+				Status:        "added",
+				Repo:          repo.RelPrefix,
+				RepoDir:       repoDir,
+				Branch:        repoBranch,
+				GeneratedLike: generated,
+				Stamp:         stamp,
+			})
+			continue
+		}
+		if !info.Mode().IsRegular() || !regularFileStaysWithinRepo(repo.Dir, full) {
+			continue
+		}
 		if info.Size() > maxSingleFilePatchBytes {
 			seen[relFile] = struct{}{}
 			results = append(results, worktreeFileDiff{
@@ -654,5 +678,16 @@ func (m *worktreeManager) DiffForFiles(sessionID string, edited map[string]struc
 		}
 	}
 	return results, nil
+}
+
+func regularFileStaysWithinRepo(repoDir, fullPath string) bool {
+	resolvedRepo, errRepo := filepath.EvalSymlinks(repoDir)
+	resolvedFile, errFile := filepath.EvalSymlinks(fullPath)
+	if errRepo != nil || errFile != nil {
+		return false
+	}
+	resolvedRepo = filepath.Clean(resolvedRepo)
+	resolvedFile = filepath.Clean(resolvedFile)
+	return resolvedFile == resolvedRepo || strings.HasPrefix(resolvedFile, resolvedRepo+string(filepath.Separator))
 }
 

@@ -166,7 +166,13 @@ func readGrokAPIKey(path string, now time.Time) string {
 	var bestExpiry time.Time
 	var fallbackKey string
 	var fallbackExpiry time.Time
-	for _, entry := range authMap {
+	keys := make([]string, 0, len(authMap))
+	for k := range authMap {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		entry := authMap[k]
 		key := strings.TrimSpace(entry.Key)
 		if key == "" {
 			continue

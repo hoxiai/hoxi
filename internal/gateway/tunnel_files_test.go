@@ -142,3 +142,76 @@ func TestSensitiveCredentialPaths(t *testing.T) {
 		}
 	}
 }
+
+func initGatewayGitRepo(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	convoyTestGit(t, dir, "init", "-q", "-b", "main")
+	writeTestFile(t, filepath.Join(dir, "base.txt"), "base\n")
+	convoyTestGit(t, dir, "add", ".")
+	convoyTestGit(t, dir, "commit", "-q", "-m", "base")
+	return dir
+}
+
+func TestTunnelDiffDoesNotFollowSecretSymlink(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("HOXI_HOME", filepath.Join(home, ".hoxi"))
+	root := initGatewayGitRepo(t)
+	outside := writeTestFile(t, filepath.Join(t.TempDir(), ".ssh", "id_audit"), "SYNTHETIC_AUDIT_SECRET\n")
+	if err := os.Symlink(outside, filepath.Join(root, "innocent.txt")); err != nil {
+		t.Fatal(err)
+	}
+	g := New(0, "test", root, nil, nil)
+	defer g.CloseBrowser()
+	query := url.Values{"directory": {root}, "path": {"innocent.txt"}}
+	denied := tunnelGet(g, "/api/hoxi/file/content?"+query.Encode())
+	if denied.Code != http.StatusForbidden {
+		t.Fatalf("control file read was not denied: %d", denied.Code)
+	}
+	got := tunnelGet(g, "/api/hoxi/worktree/diff?"+url.Values{"directory": {root}}.Encode())
+	if strings.Contains(got.Body.String(), "SYNTHETIC_AUDIT_SECRET") {
+		t.Fatalf("remote diff leaked symlink target content: HTTP %d %s", got.Code, got.Body.String())
+	}
+}
+
+func TestTunnelWorktreeRoutesStayInsideRegisteredRoots(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("HOXI_HOME", filepath.Join(home, ".hoxi"))
+	root, outside := initGatewayGitRepo(t), initGatewayGitRepo(t)
+	writeTestFile(t, filepath.Join(outside, "outside.txt"), "OUTSIDE_WORKSPACE_AUDIT\n")
+	g := New(0, "test", root, nil, nil)
+	defer g.CloseBrowser()
+	queries := []url.Values{
+		{"directory": {outside}, "sessionID": {"ses_unknown"}},
+		{"directory": {root}, "extraDir": {outside}},
+	}
+	for _, q := range queries {
+		got := tunnelGet(g, "/api/hoxi/worktree/diff?"+q.Encode())
+		if got.Code != http.StatusForbidden || strings.Contains(got.Body.String(), "OUTSIDE_WORKSPACE_AUDIT") {
+			t.Fatalf("unregistered directory accepted for %v: HTTP %d %s", q, got.Code, got.Body.String())
+		}
+	}
+}
+
+func TestFileReadInWorktreeDoesNotFallBackToMainRepo(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("HOXI_HOME", filepath.Join(home, ".hoxi"))
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "deleted.go"), "MAIN_WORKSPACE_ONLY\n")
+	sandbox := filepath.Join(root, ".hoxi", "worktrees", "ses_isolated")
+	if err := os.MkdirAll(sandbox, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	g := New(0, "test", root, nil, nil)
+	defer g.CloseBrowser()
+	if err := g.worktrees.RestoreSession("ses_isolated", sandbox, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	got := tunnelGet(g, "/api/hoxi/file/content?"+url.Values{"directory": {sandbox}, "sessionID": {"ses_isolated"}, "path": {"deleted.go"}}.Encode())
+	if strings.Contains(got.Body.String(), "MAIN_WORKSPACE_ONLY") {
+		t.Fatalf("session file read returned main workspace content: HTTP %d %s", got.Code, got.Body.String())
+	}
+}

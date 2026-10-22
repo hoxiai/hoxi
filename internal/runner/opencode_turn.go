@@ -153,9 +153,7 @@ func stripOpenCodeStopMarker(part *MessagePart) {
 	if !ok || !strings.HasPrefix(raw, stopMarkerPrefix) {
 		return
 	}
-	if nl := strings.IndexByte(raw, '\n'); nl >= 0 {
-		part.State.Input["command"] = raw[nl+1:]
-	}
+	part.State.Input["command"] = stripOpenCodeStopMarkerText(raw)
 }
 
 func (s *Service) normalizeOpenCodePart(rec SessionRecord, part *MessagePart, fileURLByMsgAndName map[string]string) bool {
@@ -563,6 +561,7 @@ func (s *Service) relayOpenCodeEventWithFiles(rec SessionRecord, raw []byte, fil
 	}
 	s.noteOpenCodeActivity(rec.ID, evt)
 	if evt.Type == "permission.asked" {
+		sanitizeOpenCodePermissionItem(evt.Properties)
 		if rec.WorktreePath != "" && evt.Properties != nil {
 			meta, _ := evt.Properties["metadata"].(map[string]interface{})
 			if meta == nil {

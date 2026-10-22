@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -25,6 +26,8 @@ const (
 	// in progress. A turn killed mid-flight never records a completion time, so
 	// only recent ones are shown as running instead of stale forever.
 	requestLogPendingWindow = 30 * time.Minute
+	// requestLogMaxAge bounds how far back runner session transcripts are scanned.
+	requestLogMaxAge = 7 * 24 * time.Hour
 )
 
 // requestLogEntry is one local model call. It carries timing and token counts
@@ -95,7 +98,9 @@ func (g *Gateway) handleRequestLog(w http.ResponseWriter, r *http.Request) {
 }
 
 func (g *Gateway) collectRequestLog() []requestLogEntry {
-	cutoffMs := time.Now().Add(-requestLogPendingWindow).UnixMilli()
+	now := time.Now()
+	cutoffMs := now.Add(-requestLogPendingWindow).UnixMilli()
+	earliestMs := now.Add(-requestLogMaxAge).UnixMilli()
 	entries := queryOpenCodeRequestLog(cutoffMs)
 	if g.runner == nil {
 		sort.SliceStable(entries, func(i, j int) bool { return entries[i].Time > entries[j].Time })
@@ -103,8 +108,21 @@ func (g *Gateway) collectRequestLog() []requestLogEntry {
 	}
 	store := g.runner.Store()
 	for _, info := range store.List("") {
+		if info.Time.Updated > 0 && info.Time.Updated < earliestMs {
+			continue
+		}
+		if len(entries) >= requestLogMaxLimit {
+			sort.SliceStable(entries, func(i, j int) bool { return entries[i].Time > entries[j].Time })
+			entries = entries[:requestLogMaxLimit]
+			if info.Time.Updated > 0 && info.Time.Updated < entries[len(entries)-1].Time && info.Time.Updated < cutoffMs {
+				break
+			}
+		}
 		rec, ok := store.Meta(info.ID)
 		if !ok || rec.Subagent {
+			continue
+		}
+		if rec.UpdatedAt > 0 && rec.UpdatedAt < earliestMs {
 			continue
 		}
 		runtime := strings.TrimSpace(rec.Runtime)
@@ -112,8 +130,16 @@ func (g *Gateway) collectRequestLog() []requestLogEntry {
 			continue
 		}
 		store.VisitTurns(rec.ID, func(full runner.SessionRecord) {
+			var maxCreated int64
 			for i := range full.Turns {
-				if entry, ok := requestLogFromTurn(full.Turns[i], rec, runtime, cutoffMs); ok {
+				if full.Turns[i].Info.Time.Created > maxCreated {
+					maxCreated = full.Turns[i].Info.Time.Created
+				}
+			}
+			for i := range full.Turns {
+				tInfo := full.Turns[i].Info
+				isLatest := tInfo.Time.Created >= maxCreated && strings.TrimSpace(tInfo.Finish) == ""
+				if entry, ok := requestLogFromTurn(full.Turns[i], rec, runtime, cutoffMs, isLatest); ok {
 					entries = append(entries, entry)
 				}
 			}
@@ -123,7 +149,7 @@ func (g *Gateway) collectRequestLog() []requestLogEntry {
 	return entries
 }
 
-func requestLogFromTurn(turn runner.MessageTurn, rec runner.SessionRecord, runtime string, cutoffMs int64) (requestLogEntry, bool) {
+func requestLogFromTurn(turn runner.MessageTurn, rec runner.SessionRecord, runtime string, cutoffMs int64, isLatest bool) (requestLogEntry, bool) {
 	info := turn.Info
 	if info.Role != "assistant" {
 		return requestLogEntry{}, false
@@ -131,7 +157,7 @@ func requestLogFromTurn(turn runner.MessageTurn, rec runner.SessionRecord, runti
 	tokens := info.Tokens
 	hasTokens := tokens != nil && (tokens.Input > 0 || tokens.Output > 0 || tokens.Cache.Read > 0)
 	failed := info.Error != nil
-	inProgress := info.Time.Completed == 0 && info.Time.Created >= cutoffMs
+	inProgress := isLatest && info.Time.Completed == 0 && info.Time.Created >= cutoffMs
 	if !hasTokens && !failed && !inProgress {
 		return requestLogEntry{}, false
 	}
@@ -209,7 +235,13 @@ func requestErrorText(err *runner.MessageError) string {
 	return trimLogText(err.Name)
 }
 
+var requestLogSecretPattern = regexp.MustCompile(`(?i)(bearer\s+\S+|(?:sk-|hk-|ghp_|github_pat_|sk-ant-)[a-z0-9_\-]+|(?:api[_-]?key|token|password|secret|authorization)\s*[=:]\s*[^\s,;]+)`)
+
 func trimLogText(v string) string {
+	if len(v) > 4096 {
+		v = v[:4096]
+	}
+	v = requestLogSecretPattern.ReplaceAllString(v, "[redacted]")
 	v = strings.Join(strings.Fields(v), " ")
 	if len(v) > 240 {
 		v = v[:240]

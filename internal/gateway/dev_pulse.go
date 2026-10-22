@@ -225,6 +225,9 @@ func (g *Gateway) collectRunnerDailyUsage(startOfTodayMs int64, res *gitDailyPul
 
 	var (
 		turns                       int
+		sessions                    int
+		toolsTotal, toolsFailed     int
+		latestTurnTs                int64
 		input, output, reasoning    int64
 		cacheRead, cacheWrite, cost float64
 	)
@@ -240,11 +243,24 @@ func (g *Gateway) collectRunnerDailyUsage(startOfTodayMs int64, res *gitDailyPul
 		if runtime == "" || runtime == "opencode" {
 			continue
 		}
+		hasTurnToday := false
 		store.VisitTurns(rec.ID, func(full runner.SessionRecord) {
 			for i := range full.Turns {
 				turn := full.Turns[i]
+				if turn.Info.Time.Created >= startOfTodayMs {
+					hasTurnToday = true
+				}
 				if turn.Info.Role != "assistant" || turn.Info.Time.Created < startOfTodayMs {
 					continue
+				}
+				for _, part := range turn.Parts {
+					if part.Type != "tool" {
+						continue
+					}
+					toolsTotal++
+					if part.State != nil && part.State.Status == "error" {
+						toolsFailed++
+					}
 				}
 				tokens := turn.Info.Tokens
 				if tokens == nil {
@@ -254,6 +270,10 @@ func (g *Gateway) collectRunnerDailyUsage(startOfTodayMs int64, res *gitDailyPul
 					continue
 				}
 				turns++
+				turnTs := turn.Info.Time.Created
+				if turnTs > latestTurnTs {
+					latestTurnTs = turnTs
+				}
 				input += int64(tokens.Input)
 				output += int64(tokens.Output)
 				reasoning += int64(tokens.Reasoning)
@@ -269,6 +289,15 @@ func (g *Gateway) collectRunnerDailyUsage(startOfTodayMs int64, res *gitDailyPul
 				})
 			}
 		})
+		if hasTurnToday {
+			sessions++
+		}
+	}
+	res.DbSessionsCount += sessions
+	res.DbToolCallsTotal += toolsTotal
+	res.DbToolCallsFailed += toolsFailed
+	if latestTurnTs > res.DbLatestTurnTs {
+		res.DbLatestTurnTs = latestTurnTs
 	}
 	if turns == 0 {
 		return

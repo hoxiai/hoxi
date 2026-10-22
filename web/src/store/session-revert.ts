@@ -23,7 +23,25 @@ export interface PendingRevertRequest {
 export const [pendingRevertConfirm, setPendingRevertConfirm] =
   createSignal<PendingRevertRequest | null>(null);
 
-const MUTATING_TOOLS = new Set(["edit", "write", "patch", "multiedit", "apply_patch"]);
+const MUTATING_TOOLS = new Set([
+  "edit",
+  "write",
+  "patch",
+  "multiedit",
+  "apply_patch",
+  "notebookedit",
+  "notebook_edit",
+  "write_to_file",
+  "write_file",
+  "create_file",
+  "edit_file",
+  "replace_file_content",
+  "multi_replace_file_content",
+  "sed_file",
+  "insert_edit_into_file",
+  "str_replace_editor",
+  "str_replace_based_edit_tool",
+]);
 
 function collectAffectedRevertFiles(sessionID: string, messageID: string, partID?: string): string[] {
   const turns = workspace.messagesBySession[sessionID] ?? [];
@@ -37,7 +55,20 @@ function collectAffectedRevertFiles(sessionID: string, messageID: string, partID
         for (const f of p.files) if (f) files.add(f);
       } else if (p.type === "tool" && p.state.status === "completed" && MUTATING_TOOLS.has(p.tool.toLowerCase())) {
         const inp = (p.state.input || {}) as Record<string, any>;
-        const fp = inp.filePath || inp.path || inp.file || (p.state.metadata as any)?.filediff?.file;
+        const fp =
+          inp.filePath ||
+          inp.filepath ||
+          inp.file_path ||
+          inp.Path ||
+          inp.AbsolutePath ||
+          inp.TargetFile ||
+          inp.target_file ||
+          inp.path ||
+          inp.file ||
+          inp.File ||
+          inp.NotebookPath ||
+          inp.notebook_path ||
+          (p.state.metadata as any)?.filediff?.file;
         if (typeof fp === "string" && fp.trim()) files.add(fp.trim());
       }
     }

@@ -4,10 +4,10 @@
 // destructive warning on the approval card). Keep it identical to the Go
 // port: .opencode/lib/permission-policy.cases.json covers commands and
 // .opencode/lib/permission-request.cases.json covers whole requests.
-import { maskCommandDataArguments } from "./command-data-args.js";
+import { DATA_ARG_INTERPRETERS, maskCommandDataArguments } from "./command-data-args.js";
 
 const DESTRUCTIVE_RE =
-  /\b(rm|rmdir|unlink|shred|truncate|srm|sudo|chmod|chown|mkfs|dd|diskutil|killall|reboot|shutdown)\b|\bkill\s+(?:-[A-Za-z0-9]+\s+)*(?:[A-Za-z0-9]+\s+)?[-?\d%]|\bpkill\b|[>|]\s*(?:\/etc\/|(?:\~|\$HOME|\$\{HOME\})\/\.(?:zshrc|zshenv|zprofile|bashrc|bash_profile|profile|ssh\b|gnupg\b|netrc\b|npmrc\b))|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.(?:ssh|aws|gnupg|kube)\/|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.(?:netrc|npmrc|git-credentials)(?:$|[\s;&|'"*?])|\.claude\/\.credentials\.json|\.docker\/config\.json|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.en(?:v(?:\.(?:local|prod(?:uction)?|dev(?:elopment)?|stag(?:e|ing)|test(?:ing)?|ci|preview|secret\w*|key\w*|private\w*|bak|backup)(?:\.local)?)?|\?|\*)(?:$|[\s;&|'"*?])|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.envrc(?:$|[\s;&|'"*?])|\bfind\b[^\n;&|]*\s-(delete|exec\w*|ok\w*|fprint\w*|fls)\b|\b(curl|wget)\b[^\n|]*\|\s*(sh|bash|zsh)\b|\b(?:npm|pnpm|yarn|cargo)\s+publish\b|\bterraform\s+(?:destroy|apply)\b|\bkubectl\s+delete\b|\bdocker\s+(?:system\s+prune|rm|rmi)\b/i;
+  /\b(rm|rmdir|unlink|shred|truncate|srm|sudo|chmod|chown|mkfs|dd|diskutil|killall|reboot|shutdown)\b|\bkill\s+(?:-[A-Za-z0-9]+\s+)*(?:[A-Za-z0-9]+\s+)?[-?\d%]|\bpkill\b|[>|]\s*(?:\/etc\/|(?:\~|\$HOME|\$\{HOME\})\/\.(?:zshrc|zshenv|zprofile|bashrc|bash_profile|profile|ssh\b|gnupg\b|netrc\b|npmrc\b))|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.(?:ssh|aws|gnupg|kube)\/|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.(?:netrc|npmrc|git-credentials|credentials\.json)(?:$|[\s;&|'"*?])|\.claude\/\.credentials\.json|\.hoxi\/(?:models|auth|cloudflared|pairing|relay-keys|approval-policy|hoxi)\.(?:json|db)|\.docker\/config\.json|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.en(?:v(?:\.(?:local|prod(?:uction)?|dev(?:elopment)?|stag(?:e|ing)|test(?:ing)?|ci|preview|secret\w*|key\w*|private\w*|bak|backup)(?:\.local)?)?|\?|\*)(?:$|[\s;&|'"*?])|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.envrc(?:$|[\s;&|'"*?])|\bfind\b[^\n;&|]*\s-(delete|exec\w*|ok\w*|fprint\w*|fls)\b|\b(curl|wget)\b[^\n|]*\|\s*(sh|bash|zsh)\b|\b(?:npm|pnpm|yarn|cargo)\s+publish\b|\bterraform\s+(?:destroy|apply)\b|\bkubectl\s+delete\b|\bdocker\s+(?:system\s+prune|rm|rmi)\b/i;
 
 // Match Git global options, option abbreviations (`--forc`, `--har`), combined
 // short flags (`-uf`), `+refspec` force pushes and `:refspec` deletions.
@@ -31,6 +31,12 @@ const PNPM_SCRIPT_RE = /^(test|build|lint|check)(:[\w.:-]+)?$/;
 const CARGO_UNSAFE_RE = /^(--config|-Z|--target-dir|--manifest-path)/;
 const GIT_BRANCH_SHORT_RE = /^-(?:[arv]+)$/;
 const GIT_BRANCH_LONG_RE = /^(?:--all|--remotes|--verbose|--show-current|--no-color)$/;
+const BENIGN_PATH_EXPORT_RE = /^export[ \t]+PATH=[A-Za-z0-9_./:$~{}-]+$/;
+const ENV_VAR_ASSIGNMENT_WORD_RE = /^[A-Za-z_][A-Za-z0-9_]*=/;
+const RM_FLAG_RE = /^(?:-[rRfdvi]+|--(?:recursive|force|dir|verbose))$/;
+const INLINE_SCRIPT_EXEC_TOOLS = new Set(["python", "python3", "node", "perl", "ruby", "php"]);
+const INLINE_SCRIPT_FLAGS = new Set(["-c", "-e", "--eval", "-p", "--print", "-"]);
+const INTERP_VALUE_FLAGS = new Set(["-m", "-W", "-X", "-r", "--require", "--import", "-I", "-C"]);
 
 const SIMPLE_SAFE_TOOLS = new Set([
   "ls", "pwd", "cat", "head", "tail", "wc", "find", "grep", "rg", "fd",
@@ -63,10 +69,27 @@ function pushText(out, value) {
 // `'/usr/bin/sandbox-exec' -f '<profile>' -- /bin/sh -c '<command>'`; judge the
 // wrapped command, not the wrapper.
 const SANDBOX_WRAP_RE = /^'?\/usr\/bin\/sandbox-exec'?\s+-f\s+(?:'[^']*'|\S+)\s+--\s+\/bin\/sh\s+-c\s+'((?:[^']|'\\'')*)'$/;
+const OPEN_CODE_STOP_MARKER_RE =
+  /^(?:[ \t]*(?:# hoxi-stop:[^\r\n]*(?:\r?\n(?:[ \t]*trap : (?:EXIT|\S+)(?:[ \t]*\r?\n|$))?|$)|trap : EXIT[ \t]+# hoxi-stop:[^\r\n]*(?:\r?\n|$)))+/;
+
+export function stripOpenCodeStopMarkerText(raw) {
+  const s = String(raw ?? "");
+  if (!s.includes("# hoxi-stop:")) return s;
+  return s.replace(OPEN_CODE_STOP_MARKER_RE, "");
+}
 
 export function unwrapSandboxCommand(command) {
-  const match = SANDBOX_WRAP_RE.exec(String(command || "").trim());
-  return match ? match[1].replaceAll("'\\''", "'") : command;
+  let cur = String(command ?? "");
+  for (let i = 0; i < 4; i++) {
+    let next = stripOpenCodeStopMarkerText(cur);
+    const match = SANDBOX_WRAP_RE.exec(next.trim());
+    if (match) {
+      next = stripOpenCodeStopMarkerText(match[1].replaceAll("'\\''", "'"));
+    }
+    if (next === cur) break;
+    cur = next;
+  }
+  return cur;
 }
 
 export function commandCandidates(input) {
@@ -192,14 +215,24 @@ function normalizeAbsoluteTool(word) {
 }
 
 export function splitCommandChain(command) {
-  const s = String(command || "");
+  return splitCommandChainWithPipes(command).segments;
+}
+
+function splitCommandChainWithPipes(command) {
+  const s = stripOpenCodeStopMarkerText(command);
   const segments = [];
+  const pipedIn = [];
   let cur = "";
   let quote = "";
-  const flush = () => {
+  let lastPipe = false;
+  const flush = (nextPipe = false) => {
     const seg = cur.replace(TRAILING_PAREN_RE, "").trim();
-    if (seg) segments.push(seg);
+    if (seg) {
+      segments.push(seg);
+      pipedIn.push(lastPipe);
+    }
     cur = "";
+    lastPipe = nextPipe;
   };
   for (let i = 0; i < s.length; i++) {
     const c = s[i];
@@ -219,10 +252,10 @@ export function splitCommandChain(command) {
         quote = "";
         cur += c;
       } else if (c === "$" && next === "(") {
-        flush();
+        flush(false);
         i++;
       } else if (c === "`") {
-        flush();
+        flush(false);
       } else {
         cur += c;
       }
@@ -232,18 +265,20 @@ export function splitCommandChain(command) {
       quote = c;
       cur += c;
     } else if ((c === "&" && next === "&") || (c === "|" && next === "|") || (c === "$" && next === "(")) {
-      flush();
+      flush(false);
       i++;
-    } else if (c === ";" || c === "\n" || c === "`" || c === "|") {
-      flush();
+    } else if (c === "|") {
+      flush(true);
+    } else if (c === ";" || c === "\n" || c === "`") {
+      flush(false);
     } else if (c === "&" && (i === 0 || s[i - 1] !== ">") && next !== ">") {
-      flush();
+      flush(false);
     } else {
       cur += c;
     }
   }
-  flush();
-  return segments;
+  flush(false);
+  return { segments, pipedIn };
 }
 
 function stripNullRedirects(words) {
@@ -345,6 +380,7 @@ function isSafeSegment(segment) {
 }
 
 function isSafeCommand(command, worktree) {
+  command = unwrapSandboxCommand(command);
   if (hasUnsafeShellSyntax(command)) return false;
   let segments = splitCommandChain(command);
   if (segments.length > 0 && isWorktreeCD(segments[0], worktree)) {
@@ -354,30 +390,12 @@ function isSafeCommand(command, worktree) {
 }
 
 const EDIT_PERMISSIONS = new Set([
-  "edit",
-  "write",
-  "patch",
-  "multiedit",
-  "apply_patch",
-  "notebookedit",
-  "notebook_edit",
-  "write_to_file",
-  "write_file",
-  "create_file",
-  "edit_file",
-  "replace_file_content",
-  "multi_replace_file_content",
-  "sed_file",
+  "edit", "write", "patch", "multiedit", "apply_patch", "notebookedit", "notebook_edit",
+  "write_to_file", "write_file", "create_file", "edit_file", "replace_file_content",
+  "multi_replace_file_content", "sed_file",
 ]);
 
-const PROTECTED_PATH_SEGMENTS = new Set([
-  ".git",
-  ".agents",
-  ".opencode",
-  ".claude",
-  ".hoxi",
-  ".envrc",
-]);
+const PROTECTED_PATH_SEGMENTS = new Set([".git", ".agents", ".opencode", ".claude", ".hoxi", ".envrc"]);
 
 // Shell/credential dotfiles and OS-level execution hooks are the only
 // cross-directory targets that stay manual: everything else outside the
@@ -387,47 +405,41 @@ const SENSITIVE_BASENAMES = new Set([
   ".bashrc", ".bash_profile", ".bash_login", ".profile",
   ".gitconfig", ".git-credentials", ".netrc", ".npmrc",
   ".pypirc", ".curlrc", ".wgetrc", ".envrc", "authorized_keys",
-  "id_rsa", "id_ed25519", "id_ecdsa", "id_dsa",
+  "id_rsa", "id_ed25519", "id_ecdsa", "id_dsa", ".credentials.json",
 ]);
 
-const SENSITIVE_PATH_PREFIXES = [
-  "/etc/",
-  "/private/etc/",
-  "/root/",
-  "/var/root/",
-  "/private/var/root/",
-];
+const SENSITIVE_PATH_PREFIXES = ["/etc/", "/private/etc/", "/root/", "/var/root/", "/private/var/root/"];
 
 const SENSITIVE_PATH_FRAGMENTS = [
-  "/.config/opencode/",
-  "/.config/hoxi/",
-  "/.config/claude/",
-  "/.config/gh/",
-  "/.config/gcloud/",
-  "/.ssh/",
-  "/.aws/",
-  "/.gnupg/",
-  "/.kube/",
-  "/.docker/",
-  "/.azure/",
-  "/library/keychains/",
-  "/library/launchagents/",
-  "/library/launchdaemons/",
-  "/library/startupitems/",
+  "/.config/opencode/", "/.config/hoxi/", "/.config/claude/", "/.config/gh/", "/.config/gcloud/",
+  "/.hoxi/", "/.claude/", "/.ssh/", "/.aws/", "/.gnupg/", "/.kube/", "/.docker/", "/.azure/",
+  "/library/keychains/", "/library/launchagents/", "/library/launchdaemons/", "/library/startupitems/",
 ];
 
 const SENSITIVE_ENV_BASENAME_RE =
   /^\.en(?:v(?:\.(?:local|prod(?:uction)?|dev(?:elopment)?|stag(?:e|ing)|test(?:ing)?|ci|preview|secret\w*|key\w*|private\w*|bak|backup)(?:\.local)?)?|\?|\*)$/i;
 
+function isRoutineHoxiSubpath(slash) {
+  return (
+    slash.includes("/.hoxi/skills/") ||
+    slash.includes("/.hoxi/attachments/") ||
+    slash.startsWith(".hoxi/skills/") ||
+    slash.startsWith(".hoxi/attachments/")
+  );
+}
+
 // Reading these can expose credentials; mirrors isSecretFilePath in
 // internal/runner/external_path_risk.go and OpenCode's own `*.env` read rule.
 function isSecretPath(rawPath) {
   if (typeof rawPath !== "string") return false;
-  const slash = rawPath.trim().replaceAll("\\", "/").toLowerCase().replace(/\/+$/, "");
+  const rawSlash = rawPath.trim().replaceAll("\\", "/").toLowerCase().replace(/\/+$/, "");
+  const slash = stripWorktreePrefix(rawSlash).replace(/\/+$/, "");
   if (!slash) return false;
   const base = slash.slice(slash.lastIndexOf("/") + 1);
   if (SENSITIVE_BASENAMES.has(base) || SENSITIVE_ENV_BASENAME_RE.test(base)) return true;
-  return SENSITIVE_PATH_FRAGMENTS.some((p) => `/${slash}/`.includes(p));
+  if (isRoutineHoxiSubpath(slash)) return false;
+  const normalized = slash.replace(/^\/+/, "");
+  return SENSITIVE_PATH_FRAGMENTS.some((p) => `/${normalized}/`.includes(p));
 }
 
 function stripWorktreePrefix(slash) {
@@ -455,12 +467,15 @@ function isSensitiveExternalPath(rawPath) {
   if (stripped && stripped !== trimmed) candidates.push(stripped);
   for (const cand of candidates) {
     if (isProtectedPath(cand)) return true;
-    const slash = cand.replaceAll("\\", "/").toLowerCase().replace(/\/+$/, "") || "/";
+    const rawSlash = cand.replaceAll("\\", "/").toLowerCase().replace(/\/+$/, "");
+    const slash = stripWorktreePrefix(rawSlash).replace(/\/+$/, "") || "/";
     const slashDir = slash === "/" ? "/" : `${slash}/`;
     const base = slash.slice(slash.lastIndexOf("/") + 1);
     if (SENSITIVE_BASENAMES.has(base) || SENSITIVE_ENV_BASENAME_RE.test(base)) return true;
+    if (isRoutineHoxiSubpath(slash)) continue;
     if (SENSITIVE_PATH_PREFIXES.some((p) => slashDir.startsWith(p))) return true;
-    if (SENSITIVE_PATH_FRAGMENTS.some((p) => slashDir.includes(p))) return true;
+    const normalizedDir = `/${slashDir.replace(/^\/+/, "")}`;
+    if (SENSITIVE_PATH_FRAGMENTS.some((p) => normalizedDir.includes(p))) return true;
   }
   return false;
 }
@@ -599,6 +614,167 @@ export function isSafeCommandPermissionRequest(input, options) {
   const worktree = options?.worktree || input?.metadata?.worktree || "";
   const candidates = commandCandidates(input);
   return candidates.length > 0 && candidates.every((cmd) => isSafeCommand(cmd, worktree));
+}
+
+function hasOpaqueShellSyntax(s) {
+  let quote = "";
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    const prev = i > 0 ? s[i - 1] : "";
+    const next = i + 1 < s.length ? s[i + 1] : "";
+    if (quote === "'") {
+      if (c === "'") {
+        quote = "";
+        if (next && !isWordBoundary(next)) return true;
+      }
+      continue;
+    }
+    if (c === "`" || (c === "$" && next === "(")) return true;
+    if (quote === '"') {
+      if (c === "\\" && i + 1 < s.length) {
+        i++;
+        continue;
+      }
+      if (c === '"') {
+        quote = "";
+        if (next && !isWordBoundary(next)) return true;
+      }
+      continue;
+    }
+    if (c === "\\" || c === "(" || c === ")" || c === "{" || c === "}") return true;
+    if (c === "<" && next === "<") return true;
+    if (c === "'" || c === '"') {
+      if (prev && !isWordBoundary(prev) && prev !== "=") return true;
+      quote = c;
+    }
+  }
+  return quote !== "";
+}
+
+function hasDollarExpansion(s) {
+  let quote = "";
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    const next = i + 1 < s.length ? s[i + 1] : "";
+    if (quote === "'") {
+      if (c === "'") quote = "";
+    } else if (quote === '"') {
+      if (c === "\\" && i + 1 < s.length) {
+        i++;
+      } else if (c === '"') {
+        quote = "";
+      } else if (c === "$" && next && next !== '"' && DOLLAR_EXPAND_RE.test(next)) {
+        return true;
+      }
+    } else if (c === "'" || c === '"') {
+      quote = c;
+    } else if (c === "$" && next && DOLLAR_EXPAND_RE.test(next)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function isBenignPathExport(seg) {
+  const trimmed = String(seg || "").trim();
+  if (!BENIGN_PATH_EXPORT_RE.test(trimmed)) return false;
+  const rest = trimmed.replaceAll("${PATH}", "").replaceAll("$PATH", "");
+  return !rest.includes("$");
+}
+
+function isScopedCDSegment(seg, worktree) {
+  if (String(worktree || "").trim()) return isWorktreeCD(seg, worktree);
+  const m = CD_SEGMENT_RE.exec(String(seg || "").trim());
+  if (!m) return false;
+  const target = m[1];
+  if (target.startsWith("/") || target.startsWith("~") || target.startsWith("-")) return false;
+  return !target.split("/").includes("..");
+}
+
+function isTempOnlyCleanupSegment(words) {
+  const cleaned = stripNullRedirects(words);
+  if (!cleaned || cleaned.length === 0) return false;
+  const cmd = normalizeAbsoluteTool(cleaned[0]);
+  const base = cmd.includes("/") ? cmd.slice(cmd.lastIndexOf("/") + 1) : cmd;
+  if (base !== "rm" && base !== "rmdir" && base !== "unlink") return false;
+  let i = 1;
+  while (i < cleaned.length && cleaned[i] !== "--" && cleaned[i].startsWith("-")) {
+    if (!RM_FLAG_RE.test(cleaned[i])) return false;
+    i++;
+  }
+  if (i < cleaned.length && cleaned[i] === "--") i++;
+  const paths = cleaned.slice(i);
+  return paths.length > 0 && paths.every((p) => (p.startsWith("/tmp/") || p.startsWith("/private/tmp/")) && !p.includes("..") && !/[$[~]/.test(p));
+}
+
+function hasInlineScriptFlag(base, args) {
+  if (args.length === 0) return true;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === "--") return false;
+    if (a === "-" || INLINE_SCRIPT_FLAGS.has(a) || a.startsWith("-c") || a.startsWith("-e") || a.startsWith("--eval=") || a.startsWith("--print=")) {
+      return true;
+    }
+    if ((base === "perl" || base === "ruby") && a.startsWith("-") && !a.startsWith("--") && /[ep]/.test(a.slice(1))) return true;
+    if (base === "php" && a.startsWith("-r")) return true;
+    if (INTERP_VALUE_FLAGS.has(a)) { i++; continue; }
+    if (!a.startsWith("-")) return false;
+  }
+  return false;
+}
+
+export function isOpaqueShellCommand(command, worktree = "") {
+  const unwrapped = unwrapSandboxCommand(command).trim();
+  if (!unwrapped || hasOpaqueShellSyntax(unwrapped)) return true;
+  let { segments, pipedIn } = splitCommandChainWithPipes(unwrapped);
+  if (segments.length > 1 && !pipedIn[0] && isWorktreeCD(segments[0], worktree)) {
+    segments = segments.slice(1);
+    pipedIn = pipedIn.slice(1);
+  }
+  if (segments.length === 0) return true;
+  let outsideCWD = false;
+  let hasExec = false;
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i].trim();
+    if (!seg || seg.startsWith("#")) continue;
+    hasExec = true;
+    if (hasDollarExpansion(seg) && !isBenignPathExport(seg)) return true;
+    const words = shellWords(seg);
+    let cmdIdx = 0;
+    while (cmdIdx < words.length && ENV_VAR_ASSIGNMENT_WORD_RE.test(words[cmdIdx])) cmdIdx++;
+    if (cmdIdx >= words.length) continue;
+    const cmdWords = words.slice(cmdIdx);
+    const norm = normalizeAbsoluteTool(cmdWords[0]);
+    const base = norm.includes("/") ? norm.slice(norm.lastIndexOf("/") + 1) : norm;
+    const args = cmdWords.slice(1);
+    if (base === "cd" || base === "pushd" || base === "popd") {
+      if (base !== "cd" || !isScopedCDSegment(seg, worktree)) outsideCWD = true;
+      continue;
+    }
+    if (outsideCWD && !isTempOnlyCleanupSegment(cmdWords)) return true;
+    if (DATA_ARG_INTERPRETERS.has(base)) return true;
+    if (INLINE_SCRIPT_EXEC_TOOLS.has(base) && (pipedIn[i] || hasInlineScriptFlag(base, args))) {
+      return true;
+    }
+  }
+  return !hasExec;
+}
+
+export function isOpaquePermissionRequest(input, options) {
+  const worktree = options?.worktree || input?.metadata?.worktree || "";
+  const permission = String(input?.permission || input?.type || "").toLowerCase();
+  const meta = input?.metadata || {};
+  const candidates = commandCandidates(input);
+  const isBash =
+    permission === "bash" ||
+    permission === "shell" ||
+    permission === "run_command" ||
+    typeof meta.command === "string" ||
+    typeof meta.cmd === "string" ||
+    Array.isArray(meta.commands);
+  if (!isBash) return false;
+  if (candidates.length === 0) return true;
+  return candidates.some((cmd) => isOpaqueShellCommand(cmd, worktree));
 }
 
 export function decidePermission(input, options) {

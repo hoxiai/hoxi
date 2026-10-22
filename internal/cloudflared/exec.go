@@ -43,6 +43,8 @@ func execRun(ctx context.Context, bin string, env, args []string, onLine func(st
 	return cmdHandle{cmd: cmd}, nil
 }
 
+const maxLineBufferBytes = 64 << 10
+
 // lineWriter splits a process output stream into lines and forwards each one.
 type lineWriter struct {
 	mu     sync.Mutex
@@ -61,6 +63,13 @@ func (w *lineWriter) Write(p []byte) (int, error) {
 		}
 		line := string(bytes.TrimRight(w.buf[:i], "\r"))
 		w.buf = w.buf[i+1:]
+		if w.onLine != nil {
+			w.onLine(line)
+		}
+	}
+	for len(w.buf) > maxLineBufferBytes {
+		line := string(bytes.TrimRight(w.buf[:maxLineBufferBytes], "\r"))
+		w.buf = w.buf[maxLineBufferBytes:]
 		if w.onLine != nil {
 			w.onLine(line)
 		}

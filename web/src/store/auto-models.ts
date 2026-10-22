@@ -381,6 +381,14 @@ export function getCandidateCooldownRemainingMs(providerID: string, modelID: str
   return Math.max(local, candidateBreakerRemainingMs(providerID, modelID));
 }
 
+/** Raw local cooldown entry (reason + expiry) for a candidate, if any. */
+export function getAutoCandidateCooldown(
+  providerID: string,
+  modelID: string
+): AutoCandidateCooldown | undefined {
+  return autoCooldownsSignal()[`${providerID}/${modelID}`];
+}
+
 export function markAutoCandidateCooldown(
   providerID: string,
   modelID: string,

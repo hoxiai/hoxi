@@ -41,15 +41,30 @@ func TestNormalizeApprovalPermissionsKeepsOpenCodeAsking(t *testing.T) {
 	}
 }
 
-func TestNormalizeApprovalPermissionsCreatesTheBlockOnlyWhenEnforcing(t *testing.T) {
+func TestNormalizeApprovalPermissionsCreatesBlockOnFreshInstallAndOverwritesStarAllow(t *testing.T) {
 	doc := map[string]interface{}{}
-	if normalizeApprovalPermissions(doc, false) || doc["permission"] != nil {
-		t.Fatal("no permission block must be invented before migration")
+	if !normalizeApprovalPermissions(doc, false) {
+		t.Fatal("fresh install without permission block must default to ask")
 	}
-	if !normalizeApprovalPermissions(doc, true) {
-		t.Fatal("enforcing must create the block")
-	}
-	if perm := doc["permission"].(map[string]interface{}); perm["bash"] != "ask" || perm["edit"] != "ask" {
+	perm, _ := doc["permission"].(map[string]interface{})
+	if perm == nil || perm["bash"] != "ask" || perm["edit"] != "ask" || perm["codesearch"] != "ask" {
 		t.Fatalf("permission: %v", perm)
+	}
+
+	starAllowDoc := map[string]interface{}{
+		"permission": map[string]interface{}{
+			"bash":     map[string]interface{}{"git *": "allow", "*": "allow"},
+			"webfetch": map[string]interface{}{"https://docs.hoxi.ai/*": "allow", "**": "allow"},
+		},
+	}
+	if !normalizeApprovalPermissions(starAllowDoc, false) {
+		t.Fatal("wildcard allow in pattern map must be rewritten to ask")
+	}
+	starPerm := starAllowDoc["permission"].(map[string]interface{})
+	if bash := starPerm["bash"].(map[string]interface{}); bash["*"] != "ask" || bash["git *"] != "allow" {
+		t.Fatalf("bash wildcard allow not overwritten: %v", bash)
+	}
+	if web := starPerm["webfetch"].(map[string]interface{}); web["*"] != "ask" || web["**"] != nil {
+		t.Fatalf("webfetch ** allow not cleaned up: %v", web)
 	}
 }

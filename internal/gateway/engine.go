@@ -62,6 +62,15 @@ func (g *Gateway) invalidateEngineReadyCache() {
 	g.engineReadyMu.Unlock()
 }
 
+// StartEnginePrewarm warms the OpenCode daemon's per-directory caches for every
+// known project folder, so the first expand of a workspace never waits on the
+// engine's lazy per-directory start. It runs until ctx is cancelled.
+func (g *Gateway) StartEnginePrewarm(ctx context.Context) {
+	if g.runner != nil {
+		g.runner.StartProjectPrewarm(ctx)
+	}
+}
+
 // openCodeBinarySource classifies the resolved binary for the settings page:
 // bundled with the app, downloaded by Hoxi, or user-provided.
 func openCodeBinarySource(binPath string) string {

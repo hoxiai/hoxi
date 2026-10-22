@@ -104,13 +104,13 @@ func callSimpleLLM(parentCtx context.Context, req llmCompletionRequest) (text st
 		}
 		if req.Breaker != nil && req.ProviderID != "" && req.ModelID != "" {
 			if resultErr == nil {
-				req.Breaker.RecordSuccess(req.ProviderID, req.ModelID, time.Since(started).Milliseconds())
+				req.Breaker.RecordSuccess(req.ProviderID, req.ModelID, 0)
 			} else {
 				class := classifyCandidateFailure(status, resultErr, nil)
 				if quotaExhausted {
 					class = breakerClassQuota
 				}
-				req.Breaker.RecordFailure(req.ProviderID, req.ModelID, class, status, time.Since(started).Milliseconds(), resultErr.Error())
+				req.Breaker.RecordFailure(req.ProviderID, req.ModelID, class, status, 0, resultErr.Error())
 			}
 		}
 	}()

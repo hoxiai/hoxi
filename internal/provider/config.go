@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -67,11 +68,14 @@ func readJSONMapFile(path string) map[string]interface{} {
 		return nil
 	}
 	data, err := os.ReadFile(path)
-	if err != nil {
+	if err != nil || len(strings.TrimSpace(string(data))) == 0 {
 		return nil
 	}
 	var out map[string]interface{}
 	if err := json.Unmarshal(data, &out); err != nil {
+		if dir := openCodeConfigDir(); dir == "" || !strings.HasPrefix(filepath.Clean(path), filepath.Clean(dir)+string(filepath.Separator)) {
+			_ = os.Rename(path, path+".corrupt-"+strconv.FormatInt(time.Now().UnixMilli(), 10))
+		}
 		return nil
 	}
 	return out
@@ -99,6 +103,7 @@ func writeJSONMapFile(path string, payload interface{}) error {
 		_ = f.Close()
 		return err
 	}
+	_ = f.Sync()
 	if err := f.Close(); err != nil {
 		return err
 	}
@@ -351,12 +356,16 @@ func (g *Service) loadHoxiProvidersMap() map[string]interface{} {
 	return map[string]interface{}{}
 }
 
-func (g *Service) persistHoxiConfigDoc(doc map[string]interface{}) error {
+func (g *Service) persistHoxiConfigFiles(doc map[string]interface{}) error {
 	doc["$schema"] = "https://opencode.ai/config.json"
 	normalizeDocModelVariants(doc)
 	ensureCompactionDefaults(doc)
 	normalizeApprovalPermissions(doc, approvalPolicyExists())
-	if err := persistHoxiModelsFiles(userHoxiModelsPath(), g.workspaceHoxiModelsPath(), doc); err != nil {
+	return persistHoxiModelsFiles(userHoxiModelsPath(), g.workspaceHoxiModelsPath(), doc)
+}
+
+func (g *Service) persistHoxiConfigDoc(doc map[string]interface{}) error {
+	if err := g.persistHoxiConfigFiles(doc); err != nil {
 		return err
 	}
 	g.reloadOpenCodeGlobalConfig()
@@ -468,15 +477,16 @@ func (g *Service) handleGlobalDispose(w http.ResponseWriter, r *http.Request) {
 }
 
 func (g *Service) handleModelsConfig(w http.ResponseWriter, r *http.Request) {
-	importedMap := g.loadOpenCodeImportedProviderMap()
-	doc := g.loadHoxiConfigDoc()
-	hoxiMap, _ := doc["provider"].(map[string]interface{})
-	if hoxiMap == nil {
-		hoxiMap = map[string]interface{}{}
-	}
-
 	switch r.Method {
 	case http.MethodGet:
+		g.configPersistMu.Lock()
+		importedMap := g.loadOpenCodeImportedProviderMap()
+		doc := g.loadHoxiConfigDoc()
+		g.configPersistMu.Unlock()
+		hoxiMap, _ := doc["provider"].(map[string]interface{})
+		if hoxiMap == nil {
+			hoxiMap = map[string]interface{}{}
+		}
 		openCodeIDs := make([]string, 0, len(importedMap))
 		for k := range importedMap {
 			if _, inHoxi := hoxiMap[k]; !inHoxi {
@@ -503,6 +513,14 @@ func (g *Service) handleModelsConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		cleaned := stripNullsMap(req.Config)
 
+		g.configPersistMu.Lock()
+		importedMap := g.loadOpenCodeImportedProviderMap()
+		doc := g.loadHoxiConfigDoc()
+		hoxiMap, _ := doc["provider"].(map[string]interface{})
+		if hoxiMap == nil {
+			hoxiMap = map[string]interface{}{}
+		}
+
 		// If taking over an OpenCode-imported provider and apiKey wasn't re-entered, inherit apiKey from imported config
 		if impProv, ok := importedMap[pid].(map[string]interface{}); ok {
 			if impOpts, ok := impProv["options"].(map[string]interface{}); ok {
@@ -522,10 +540,13 @@ func (g *Service) handleModelsConfig(w http.ResponseWriter, r *http.Request) {
 		g.normalizeAndStoreMultiKeys(pid, cleaned)
 		hoxiMap[pid] = cleaned
 		doc["provider"] = hoxiMap
-		if err := g.persistHoxiConfigDoc(doc); err != nil {
+		err := g.persistHoxiConfigFiles(doc)
+		g.configPersistMu.Unlock()
+		if err != nil {
 			writeJSONError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+		g.reloadOpenCodeGlobalConfig()
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"ok":            true,
 			"hoxiProviders": hoxiMap,
@@ -538,18 +559,29 @@ func (g *Service) handleModelsConfig(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, http.StatusBadRequest, "providerID is required")
 			return
 		}
+		g.configPersistMu.Lock()
+		importedMap := g.loadOpenCodeImportedProviderMap()
+		doc := g.loadHoxiConfigDoc()
+		hoxiMap, _ := doc["provider"].(map[string]interface{})
+		if hoxiMap == nil {
+			hoxiMap = map[string]interface{}{}
+		}
 		if _, inHoxi := hoxiMap[pid]; !inHoxi {
 			if _, isImported := importedMap[pid]; isImported {
+				g.configPersistMu.Unlock()
 				writeJSONError(w, http.StatusForbidden, "OpenCode imported provider is read-only")
 				return
 			}
 		}
 		delete(hoxiMap, pid)
 		doc["provider"] = hoxiMap
-		if err := g.persistHoxiConfigDoc(doc); err != nil {
+		err := g.persistHoxiConfigFiles(doc)
+		g.configPersistMu.Unlock()
+		if err != nil {
 			writeJSONError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+		g.reloadOpenCodeGlobalConfig()
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"ok":            true,
 			"hoxiProviders": hoxiMap,
@@ -666,12 +698,16 @@ func (g *Service) handleGlobalConfigProxy(w http.ResponseWriter, r *http.Request
 		if err == nil && len(raw) > 0 {
 			var patch map[string]interface{}
 			if json.Unmarshal(raw, &patch) == nil && patch != nil {
+				g.configPersistMu.Lock()
 				doc := g.loadHoxiConfigDoc()
 				deepMergeMap(doc, patch)
-				if err := g.persistHoxiConfigDoc(doc); err != nil {
-					writeJSONError(w, http.StatusInternalServerError, err.Error())
+				persistErr := g.persistHoxiConfigFiles(doc)
+				g.configPersistMu.Unlock()
+				if persistErr != nil {
+					writeJSONError(w, http.StatusInternalServerError, persistErr.Error())
 					return
 				}
+				g.reloadOpenCodeGlobalConfig()
 			}
 		}
 	}

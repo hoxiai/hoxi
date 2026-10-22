@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -104,11 +106,30 @@ func (m *Manager) Status() Status {
 	return m.status
 }
 
-// Hostname returns the configured Cloudflare public hostname, or "".
+// Hostname returns the configured Cloudflare public hostname when the tunnel
+// is enabled, or "" when disabled.
 func (m *Manager) Hostname() string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if !m.enabled {
+		return ""
+	}
 	return m.hostname
+}
+
+func normalizeHostname(raw string) string {
+	h := strings.TrimSpace(raw)
+	lower := strings.ToLower(h)
+	switch {
+	case strings.HasPrefix(lower, "https://"):
+		h = h[len("https://"):]
+	case strings.HasPrefix(lower, "http://"):
+		h = h[len("http://"):]
+	}
+	if i := strings.IndexByte(h, '/'); i >= 0 {
+		h = h[:i]
+	}
+	return strings.TrimSpace(strings.TrimRight(h, "/"))
 }
 
 // Start loads the stored settings and launches the supervisor when enabled.
@@ -120,13 +141,17 @@ func (m *Manager) Start() {
 		m.mu.Lock()
 		m.enabled = false
 		m.mu.Unlock()
-		m.publish(StateDisabled, "")
+		msg := ""
+		if !errors.Is(err, os.ErrNotExist) {
+			msg = err.Error()
+		}
+		m.publish(StateDisabled, msg)
 		return
 	}
 	m.mu.Lock()
 	m.enabled = cfg.Enabled
 	m.token = cfg.Token
-	m.hostname = cfg.Hostname
+	m.hostname = normalizeHostname(cfg.Hostname)
 	m.mu.Unlock()
 	m.restartLocked()
 }
@@ -144,16 +169,17 @@ func (m *Manager) Enable(token, hostname string) error {
 	if token == "" {
 		return errors.New("a Cloudflare connector token is required")
 	}
-	cfg := Config{Enabled: true, Token: token, Hostname: strings.TrimSpace(hostname)}
+	hostname = normalizeHostname(hostname)
+	m.lifecycle.Lock()
+	defer m.lifecycle.Unlock()
+	cfg := Config{Enabled: true, Token: token, Hostname: hostname}
 	if err := m.store.Save(cfg); err != nil {
 		return err
 	}
-	m.lifecycle.Lock()
-	defer m.lifecycle.Unlock()
 	m.mu.Lock()
 	m.enabled = true
 	m.token = token
-	m.hostname = cfg.Hostname
+	m.hostname = hostname
 	m.mu.Unlock()
 	m.restartLocked()
 	return nil
@@ -166,11 +192,13 @@ func (m *Manager) Disable() error {
 	defer m.lifecycle.Unlock()
 	m.mu.Lock()
 	cfg := Config{Enabled: false, Token: m.token, Hostname: m.hostname}
-	m.enabled = false
 	m.mu.Unlock()
 	if err := m.store.Save(cfg); err != nil {
 		return err
 	}
+	m.mu.Lock()
+	m.enabled = false
+	m.mu.Unlock()
 	m.restartLocked()
 	return nil
 }
@@ -186,6 +214,7 @@ func (m *Manager) restartLocked() {
 		m.publish(StateDisabled, "")
 		return
 	}
+	m.publish(StateStarting, "")
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	m.mu.Lock()
@@ -235,7 +264,13 @@ func (m *Manager) supervise(ctx context.Context) {
 		args := []string{"--no-autoupdate", "tunnel", "run"}
 		env := []string{"TUNNEL_TOKEN=" + token}
 		m.publish(StateStarting, "")
-		h, err := m.run(ctx, bin, env, args, m.onLine)
+		var connected atomic.Bool
+		h, err := m.run(ctx, bin, env, args, func(line string) {
+			if strings.Contains(line, onlineMarker) {
+				connected.Store(true)
+			}
+			m.onLine(line)
+		})
 		if err != nil {
 			if ctx.Err() != nil {
 				return
@@ -246,6 +281,9 @@ func (m *Manager) supervise(ctx context.Context) {
 			waitErr := h.Wait()
 			if ctx.Err() != nil {
 				return
+			}
+			if connected.Load() {
+				backoff = time.Second
 			}
 			message := "cloudflared exited"
 			if waitErr != nil {

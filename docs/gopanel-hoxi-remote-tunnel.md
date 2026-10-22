@@ -15,7 +15,7 @@
 | 手机经 GoPanel 订阅 Hoxi SSE（`/api/hoxi/event`） | 已实现，逐块转发不缓冲 |
 | 手机在服务器列表中发现并添加 Hoxi 电脑 | 已实现 |
 | 经隧道的 WebSocket（终端 `/pty`） | 未实现，GoPanel 返回 501 |
-| 同局域网手机直连 Mac（`5417` 监听） | 未实现，见第 9 节 |
+| 同局域网手机直连 Mac（`5417` 监听） | 已实现（`internal/gateway/lan.go` + `internal/pairing`，明文 + 配对令牌；跨网端到端加密仍为规划，见第 9 节） |
 | iPhone 审批提醒推送（APNs），点开进入语音审批 | 已实现，待真机验收；需在 GoPanel 配置 APNs 密钥 |
 | Android 推送 | 未实现（国内无统一通道，需厂商推送或第三方） |
 
@@ -40,11 +40,11 @@ Hoxi 桌面（hoxi，internal/tunnel）
 
 ## 3. 使用流程
 
-1. **GoPanel 签发配对码**：GoPanel 管理后台 → 节点 → 隧道设置，生成 10 分钟有效、一次性的 32 位十六进制配对码（`POST /api/tunnel/pairing`）。
+1. **GoPanel 签发配对码**：GoPanel 管理后台 → 隧道 → 本机服务与连接 → 公网主控，生成 10 分钟有效、一次性的 32 位十六进制配对码（`POST /api/tunnel/pairing`）。
 2. **Hoxi 桌面配对**：Hoxi 设置 → 系统 → 经 GoPanel 远程控制，填写 GoPanel 地址、配对码和设备名，点「配对」。Hoxi 调用 GoPanel `POST /api/tunnel/pair/exchange` 换取长期凭据，随即连接并上报服务。GoPanel 节点列表中出现一个 `connectMode = tunnel` 的节点。
 3. **手机添加**：手机「服务器列表」中已登录的 GoPanel 卡片右侧点电脑图标，列出该 GoPanel 下在线的 Hoxi 电脑，选中后保存为一个 Hoxi 节点（中继地址），之后与普通 Hoxi 节点一样使用。
 
-**一键授权（推荐，替代手动配对码）**：Hoxi 设置里只填 GoPanel 地址（`ip:端口`，无需安全入口）点「一键授权」，桌面调用 `POST /api/tunnel/pair/request` 打开一条待批准请求并展示授权码；管理员在 GoPanel 后台「节点 → 隧道」批准后，桌面轮询到批准结果，自动兑换一次性配对码并连接。桌面不需要安全入口，因为配对相关端点对入口豁免；但管理员批准与手机侧管理接口仍需安全入口（见 §5.3 与 §8）。
+**一键授权（推荐，替代手动配对码）**：Hoxi 设置里只填 GoPanel 地址（`ip:端口`，无需安全入口）点「一键授权」，桌面调用 `POST /api/tunnel/pair/request` 打开一条待批准请求并展示授权码；管理员在 GoPanel 后台「隧道 → 待处理配对请求」批准后，桌面轮询到批准结果，自动兑换一次性配对码并连接。桌面不需要安全入口，因为配对相关端点对入口豁免；但管理员批准与手机侧管理接口仍需安全入口（见 §5.3 与 §8）。
 
 解除：Hoxi 设置中点「解除配对」删除本机凭据；GoPanel 上的节点需管理员在 GoPanel 删除。
 
@@ -141,11 +141,11 @@ Type(1B) | StreamID(8B, BigEndian uint64) | Payload(≤ 4MB)
 
 桌面发起、面板确认的配对流程；除 `approve`/`deny` 外均对安全入口豁免（加入 `shouldBypassEntrance`）。
 
-- `POST /api/tunnel/pair/request`（免鉴权、免入口）body `{name, hostname, version}` → `{code:0, data:{requestId, userCode, expiresAt, pollToken}}`，`expiresAt` 为 RFC3339。创建一条 pending 请求，短 TTL、按来源 IP 限流。
-- `GET /api/tunnel/pair/request/:id`（免鉴权、免入口）轮询状态；桌面用请求头 **`X-GoPanel-Tunnel-PollToken`** 携带 `pollToken` 鉴权。→ `{code:0, data:{state, code}}`，`state ∈ waiting|approved|denied|expired`；仅 `approved` 时下发一次性 `code`（仍走 `/api/tunnel/pair/exchange` 兑换，不直接发 token）。
-- `POST /api/tunnel/pair/request/:id/approve`、`/deny`（管理组：管理员 JWT + 安全入口）：批准时生成一次性配对码；拒绝置 `denied`。
+- `POST /api/tunnel/pair/request`（免鉴权、免入口）body `{name, hostname, version}` → `{code:0, data:{requestId, userCode, expiresAt, pollToken}}`，`expiresAt` 为 RFC3339。创建一条 `waiting` 请求，TTL 10 分钟；限流按来源 IP 固定窗口 5 次/分钟 + 全局 60 次/分钟，超限返回 `ErrTunnelPairRequestTooFrequent`。
+- `GET /api/tunnel/pair/request/:id`（免鉴权、免入口）轮询状态；桌面用请求头 **`X-GoPanel-Tunnel-PollToken`** 携带 `pollToken` 鉴权（也接受 `?pollToken=`）。→ `{code:0, data:{state, code}}`，`state ∈ waiting|approved|denied|expired`；仅 `approved` 且尚未下发过时返回一次性 `code`（仍走 `/api/tunnel/pair/exchange` 兑换，不直接发 token）。`pollToken` 错误、`:id` 未知一律拒绝。
+- `GET /api/tunnel/pair/requests`、`POST /api/tunnel/pair/request/:id/approve`、`POST /api/tunnel/pair/request/:id/deny`（管理组：管理员 JWT + 安全入口）。approve 仅在 `waiting` 且未过期时置 `approved`（重复批准、已过期、已拒绝、未知 id → 拒绝），deny 置 `denied`；列表只返回未过期的 `waiting` 请求。
 
-`pollToken` 单次签发、只存哈希，响应从不回显；批准与拒绝计入 GoPanel 操作日志。
+`pollToken` 只在创建响应一次性下发、服务端只存哈希，后续响应与日志都不回显；一次性配对码只在首次批准后轮询时下发、只存哈希，兑换成功后在 `tunnel_pair_requests.node_id` 回填关联节点。批准与拒绝计入 GoPanel 操作日志。
 
 ## 6. Hoxi 桌面侧（`hoxi`）
 
@@ -193,7 +193,7 @@ Type(1B) | StreamID(8B, BigEndian uint64) | Payload(≤ 4MB)
 ## 9. 尚未实现
 
 - 经隧道转发 WebSocket（手机远程终端）。GoPanel 侧已支持，Hoxi 侧需要回连本机端口或实现进程内 Hijack。
-- 同局域网直连：Hoxi 额外监听 `5417`（受令牌保护），手机按「局域网探测 → 失败回落中继」双路由。`5417` 端口号保留给该功能，当前版本不监听。
+- 跨网端到端加密（E2E）：同局域网 `5417` 配对令牌直连（`internal/gateway/lan.go`）与本机 `127.0.0.1:5418` 反向代理入口（`internal/gateway/ingress.go`）已实现，但跨网端到端加密信封与盲目中继尚未实现（见 [`docs/remote-access-e2e-contract.md`](remote-access-e2e-contract.md)）。
 - 隧道 token 存入 macOS 钥匙串；Android 推送；节点身份与传输地址分离后的自动切换。
 
 ## 10. 验证

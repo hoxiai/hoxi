@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
 import { Brain, LoaderCircle, RefreshCw } from "lucide-solid";
 import { hoxiAPI } from "../../services/api";
 import { activeDirectory, workspace } from "../../store/workspace";
@@ -40,9 +40,12 @@ export default function MemoryBankView() {
     setError(null);
     const dir = activeDirectory();
     const sid = workspace.activeSessionID;
-    const candidates: string[] = [];
-    if (scope() === "session" && sid) candidates.push(...sessionMemoryFiles(sid));
-    candidates.push(PROJECT_MEMORY_FILE, LEGACY_PROJECT_MEMORY_FILE);
+    const candidates: string[] =
+      scope() === "session"
+        ? sid
+          ? sessionMemoryFiles(sid)
+          : []
+        : [PROJECT_MEMORY_FILE, LEGACY_PROJECT_MEMORY_FILE];
     try {
       for (const file of candidates) {
         try {
@@ -129,11 +132,13 @@ export default function MemoryBankView() {
       <div class={`inspector-scroll flex-1 min-h-0 overflow-y-auto px-2.5 py-2.5 space-y-2 ${memoryEnterClass()}`}>
         <Show when={dims().length > 0}>
           <div class="flex flex-wrap gap-1">
-            {dims().map((d) => (
-              <span class="rounded bg-[var(--bg-inset)] px-1.5 py-[1px] font-mono text-[11px] text-[var(--text-secondary)]">
-                {d}
-              </span>
-            ))}
+            <For each={dims()}>
+              {(d) => (
+                <span class="rounded bg-[var(--bg-inset)] px-1.5 py-[1px] font-mono text-[11px] text-[var(--text-secondary)]">
+                  {d}
+                </span>
+              )}
+            </For>
           </div>
         </Show>
 

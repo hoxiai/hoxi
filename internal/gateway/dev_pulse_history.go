@@ -227,6 +227,46 @@ ORDER BY day;`, startMs, handoff.SQLNotImportedTitleClause("s.title"))
 	for key, sessions := range sessionsByDay {
 		day(key).Sessions += len(sessions)
 	}
+
+	toolSQL := fmt.Sprintf(`
+SELECT
+  day,
+  COUNT(*) AS tools_total,
+  SUM(is_error) AS tools_failed
+FROM (
+  SELECT
+    date(p.time_created / 1000, 'unixepoch', 'localtime') AS day,
+    MAX(CASE WHEN json_extract(p.data, '$.state.status') = 'error' THEN 1 ELSE 0 END) AS is_error
+  FROM part p
+  JOIN session s ON s.id = p.session_id
+  WHERE p.time_created >= %d
+    AND json_extract(p.data, '$.type') = 'tool'
+    AND %s
+  GROUP BY date(p.time_created / 1000, 'unixepoch', 'localtime'), COALESCE(json_extract(p.data, '$.callID'), p.id)
+)
+GROUP BY day
+ORDER BY day;`, startMs, handoff.SQLNotImportedTitleClause("s.title"))
+
+	tCtx, tCancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer tCancel()
+	tCmd := exec.CommandContext(tCtx, "sqlite3", "-json", "-readonly", "-cmd", ".timeout 5000", dbPath, toolSQL)
+	if tOut, err := tCmd.Output(); err == nil && len(bytes.TrimSpace(tOut)) > 0 {
+		var toolRows []struct {
+			Day         string `json:"day"`
+			ToolsTotal  int    `json:"tools_total"`
+			ToolsFailed int    `json:"tools_failed"`
+		}
+		if json.Unmarshal(bytes.TrimSpace(tOut), &toolRows) == nil {
+			for _, tr := range toolRows {
+				if tr.Day == "" {
+					continue
+				}
+				target := day(tr.Day)
+				target.ToolCallsTotal += tr.ToolsTotal
+				target.ToolCallsFailed += tr.ToolsFailed
+			}
+		}
+	}
 }
 
 func mergeHistoryModel(target *historyDay, incoming historyModelStat) {
@@ -277,6 +317,17 @@ func (g *Gateway) collectRunnerHistory(startMs int64, day func(string) *historyD
 				if turn.Info.Role != "assistant" || turn.Info.Time.Created < startMs {
 					continue
 				}
+				key := historyDayKey(turn.Info.Time.Created, loc)
+				for _, part := range turn.Parts {
+					if part.Type != "tool" {
+						continue
+					}
+					target := day(key)
+					target.ToolCallsTotal++
+					if part.State != nil && part.State.Status == "error" {
+						target.ToolCallsFailed++
+					}
+				}
 				tokens := turn.Info.Tokens
 				if tokens == nil {
 					continue
@@ -284,7 +335,6 @@ func (g *Gateway) collectRunnerHistory(startMs int64, day func(string) *historyD
 				if tokens.Input == 0 && tokens.Output == 0 && tokens.Cache.Read == 0 {
 					continue
 				}
-				key := historyDayKey(turn.Info.Time.Created, loc)
 				target := day(key)
 				target.Turns++
 				target.InputTokens += int64(tokens.Input)

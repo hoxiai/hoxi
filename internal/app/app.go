@@ -177,6 +177,7 @@ func Run(distFS fs.FS) {
 	statusTracker := statusbar.NewTracker()
 	gw := gateway.New(port, password, cfg.RootDir, distFS, statusTracker)
 	gw.EnableAgyApprovalHook()
+	gw.StartEnginePrewarm(ctx)
 	defer gw.CloseBrowser()
 
 	app := &DesktopApp{
@@ -283,6 +284,7 @@ func Run(distFS fs.FS) {
 			IdleTimeout:       90 * time.Second,
 		}
 		lanServer := app.lanServer
+		defer lanServer.Close()
 		go func() {
 			if err := lanServer.Serve(lanListener); err != nil && err != http.ErrServerClosed {
 				logger.Error("LAN pairing listener stopped unexpectedly", "error", err)
@@ -303,6 +305,7 @@ func Run(distFS fs.FS) {
 			IdleTimeout:       90 * time.Second,
 		}
 		ingressServer := app.ingressServer
+		defer ingressServer.Close()
 		go func() {
 			if err := ingressServer.Serve(ingressListener); err != nil && err != http.ErrServerClosed {
 				logger.Error("remote ingress listener stopped unexpectedly", "error", err)
@@ -349,6 +352,14 @@ func Run(distFS fs.FS) {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		_ = wsServer.Shutdown(shutdownCtx)
+		if app.lanServer != nil {
+			_ = app.lanServer.Shutdown(shutdownCtx)
+		}
+		if app.ingressServer != nil {
+			_ = app.ingressServer.Shutdown(shutdownCtx)
+		}
+		gw.StopCloudflared()
+		gw.StopRemoteTunnel()
 		return
 	}
 
@@ -565,13 +576,20 @@ func (a *DesktopApp) startup(ctx context.Context) {
 
 func (a *DesktopApp) shutdown(_ context.Context) {
 	statusbar.Stop()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
 	if a.wsServer != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
 		_ = a.wsServer.Shutdown(ctx)
+	}
+	if a.lanServer != nil {
+		_ = a.lanServer.Shutdown(ctx)
+	}
+	if a.ingressServer != nil {
+		_ = a.ingressServer.Shutdown(ctx)
 	}
 	a.killChild()
 	if a.gateway != nil {
+		a.gateway.StopCloudflared()
 		a.gateway.StopRemoteTunnel()
 		a.gateway.CloseBrowser()
 	}
@@ -673,6 +691,7 @@ func StartEphemeralHeadless(ctx context.Context, rootDir string) (string, func()
 	statusTracker := statusbar.NewTracker()
 	gw := gateway.New(port, password, rootDir, nil, statusTracker)
 	gw.EnableAgyApprovalHook()
+	gw.StartEnginePrewarm(ctx)
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

@@ -65,6 +65,12 @@ func TestCollectRunnerDailyUsageFoldsNativeRuntimes(t *testing.T) {
 		pulseTokenMessage("msg_a1", "ses_agy_today", "gemini-4-argon-high", today, 1000, 200, 50, 400),
 		pulseTokenMessage("msg_a2", "ses_agy_today", "gemini-4-argon-high", today+1, 300, 100, 0, 200),
 	)
+	_, _, _ = svc.Store().Update("ses_agy_today", func(r *runner.SessionRecord) {
+		r.Turns[0].Parts = []runner.MessagePart{
+			{Type: "tool", State: &runner.ToolState{Status: "completed"}},
+			{Type: "tool", State: &runner.ToolState{Status: "error"}},
+		}
+	})
 	put("ses_qdr_today", string(runner.RuntimeQoder),
 		pulseTokenMessage("msg_q1", "ses_qdr_today", "DeepSeek-Flash", today, 500, 20, 0, 0),
 	)
@@ -105,6 +111,15 @@ func TestCollectRunnerDailyUsageFoldsNativeRuntimes(t *testing.T) {
 	wantTotal := wantInput + wantOutput + wantReasoning + wantCacheRead
 	if res.DbTotalTokens != wantTotal {
 		t.Fatalf("total tokens = %d, want %d", res.DbTotalTokens, wantTotal)
+	}
+	if res.DbLatestTurnTs != today+1 {
+		t.Fatalf("latest turn ts = %d, want %d", res.DbLatestTurnTs, today+1)
+	}
+	if res.DbSessionsCount != 2 {
+		t.Fatalf("sessions count = %d, want 2", res.DbSessionsCount)
+	}
+	if res.DbToolCallsTotal != 2 || res.DbToolCallsFailed != 1 {
+		t.Fatalf("tool calls = %d total / %d failed, want 2 / 1", res.DbToolCallsTotal, res.DbToolCallsFailed)
 	}
 
 	var antigravity, qoder *dailyModelStat

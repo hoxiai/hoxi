@@ -6,7 +6,8 @@ import "strings"
 // stable classification. reason is only inspected, never persisted, so
 // free-form provider text never reaches the log.
 func ClassifyErrorName(name, reason string) string {
-	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(reason)), "model not found") {
+	lower := strings.ToLower(strings.TrimSpace(reason))
+	if strings.HasPrefix(lower, "model not found") || strings.Contains(lower, "is not loaded in the running engine") {
 		return "ProviderModelNotFoundError"
 	}
 	return strings.TrimSpace(name)

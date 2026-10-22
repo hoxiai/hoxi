@@ -77,7 +77,13 @@ func TestDevPulseHistoryAggregatesGitAndRunner(t *testing.T) {
 		ProjectDir: repo, WorktreePath: repo, SandboxMode: "local",
 		Title: "hist", CreatedAt: startOfToday, UpdatedAt: now.UnixMilli(),
 		Turns: []runner.MessageTurn{
-			{Info: pulseTokenMessage("msg_h1", "ses_agy_hist", "gemini-4-argon-high", now.UnixMilli(), 1000, 100, 0, 0)},
+			{
+				Info: pulseTokenMessage("msg_h1", "ses_agy_hist", "gemini-4-argon-high", now.UnixMilli(), 1000, 100, 0, 0),
+				Parts: []runner.MessagePart{
+					{Type: "tool", State: &runner.ToolState{Status: "completed"}},
+					{Type: "tool", State: &runner.ToolState{Status: "error"}},
+				},
+			},
 			{Info: pulseTokenMessage("msg_h2", "ses_agy_hist", "gemini-4-argon-high", now.UnixMilli()+1, 500, 50, 0, 0)},
 			// Yesterday's turn must land on its own day, not today.
 			{Info: pulseTokenMessage("msg_h3", "ses_agy_hist", "gemini-4-argon-high", startOfToday-3600_000, 4000, 400, 0, 0)},
@@ -122,6 +128,9 @@ func TestDevPulseHistoryAggregatesGitAndRunner(t *testing.T) {
 	}
 	if todayRow.Turns != 2 {
 		t.Fatalf("turns = %d, want 2", todayRow.Turns)
+	}
+	if todayRow.ToolCallsTotal != 2 || todayRow.ToolCallsFailed != 1 {
+		t.Fatalf("tool calls = %d total / %d failed, want 2 / 1", todayRow.ToolCallsTotal, todayRow.ToolCallsFailed)
 	}
 
 	yRow := historyDayByDate(res.Days, yesterday)

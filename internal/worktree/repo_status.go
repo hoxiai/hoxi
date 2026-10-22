@@ -325,7 +325,15 @@ func computeStatusSingleRepo(
 
 	for _, rel := range untrackedFiles {
 		full := filepath.Join(repo.Dir, rel)
-		if info, statErr := os.Stat(full); statErr == nil && !info.IsDir() && info.Size() <= maxUntrackedFileSize {
+		info, statErr := os.Lstat(full)
+		if statErr != nil || info.IsDir() {
+			continue
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			additions++
+			continue
+		}
+		if info.Mode().IsRegular() && regularFileStaysWithinRepo(repo.Dir, full) && info.Size() <= maxUntrackedFileSize {
 			if data, readErr := os.ReadFile(full); readErr == nil && len(data) > 0 {
 				cnt := bytes.Count(data, []byte{'\n'})
 				if data[len(data)-1] != '\n' {

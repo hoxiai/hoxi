@@ -1,7 +1,15 @@
 // web/src/__tests__/usage-history.test.ts
-import type { DevPulseHistoryDay, ModelPricingItem } from "../services/api";
+import { hoxiAPI, type DevPulseHistoryDay, type DevPulseHistoryResponse, type ModelPricingItem } from "../services/api";
 import { leaderboardState, setLeaderboardState } from "../store/leaderboard-state";
-import { priceHistoryDay, usageHistoryTotals, type UsageHistoryDay } from "../store/usage-history";
+import {
+  loadUsageHistory,
+  priceHistoryDay,
+  usageHistory,
+  usageHistoryLoading,
+  usageHistoryRange,
+  usageHistoryTotals,
+  type UsageHistoryDay,
+} from "../store/usage-history";
 import { assertEqual, assertTrue, describe, it } from "./test-harness";
 
 function pricingItem(slug: string, input: number, output: number, currency = "USD"): ModelPricingItem {
@@ -140,5 +148,47 @@ describe("usage history pricing", () => {
     assertEqual(totals.commits, 3, "commits");
     assertEqual(totals.additions, 14, "additions");
     assertEqual(totals.unpricedModels.join(","), "x", "unpriced union");
+  });
+
+  it("ignores stale loadUsageHistory responses when range changes", async () => {
+    const origHistory = hoxiAPI.getDevPulseHistory;
+    let resolve7!: (res: DevPulseHistoryResponse) => void;
+    let resolve30!: (res: DevPulseHistoryResponse) => void;
+    try {
+      hoxiAPI.getDevPulseHistory = (days) => {
+        if (days === 7) return new Promise<DevPulseHistoryResponse>((r) => { resolve7 = r; });
+        return new Promise<DevPulseHistoryResponse>((r) => { resolve30 = r; });
+      };
+
+      const p7 = loadUsageHistory(7, true);
+      await new Promise((r) => setTimeout(r, 10));
+      const p30 = loadUsageHistory(30, true);
+      await new Promise((r) => setTimeout(r, 10));
+      assertEqual(usageHistoryRange(), 30);
+      assertEqual(usageHistoryLoading(), true);
+
+      resolve30({
+        days: [historyDay({ date: "2026-10-22", turns: 9 })],
+        startDate: "2026-09-23",
+        endDate: "2026-10-22",
+        timezone: "UTC",
+      });
+      await p30;
+      assertEqual(usageHistory().length, 1);
+      assertEqual(usageHistory()[0].turns, 9);
+      assertEqual(usageHistoryLoading(), false);
+
+      // Stale 7-day response finishes later and must be ignored
+      resolve7({
+        days: [historyDay({ date: "2026-10-22", turns: 1 })],
+        startDate: "2026-10-16",
+        endDate: "2026-10-22",
+        timezone: "UTC",
+      });
+      await p7;
+      assertEqual(usageHistory()[0].turns, 9, "stale 7d response must not overwrite 30d state");
+    } finally {
+      hoxiAPI.getDevPulseHistory = origHistory;
+    }
   });
 });

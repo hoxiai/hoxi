@@ -72,6 +72,8 @@ var (
 	// The OpenCode sandbox plugin rewrites bash commands into a sandbox-exec
 	// wrapper; the wrapped command is what the policy judges.
 	sandboxWrapRe = regexp.MustCompile(`^'?/usr/bin/sandbox-exec'?\s+-f\s+(?:'[^']*'|\S+)\s+--\s+/bin/sh\s+-c\s+'((?:[^']|'\\'')*)'$`)
+
+	openCodeStopMarkerRe = regexp.MustCompile(`^(?:[ \t]*(?:# hoxi-stop:[^\r\n]*(?:\r?\n(?:[ \t]*trap : (?:EXIT|\S+)(?:[ \t]*\r?\n|$))?|$)|trap : EXIT[ \t]+# hoxi-stop:[^\r\n]*(?:\r?\n|$)))+`)
 )
 
 // approvalAutoApproves reports whether item may run without asking the user
@@ -79,6 +81,9 @@ var (
 // (written by "always allow" on an approval card) apply to every runtime.
 // worktree scopes a leading `cd` in smart-mode command checks.
 func approvalAutoApproves(item map[string]interface{}, pol ApprovalPolicy, rules map[string]interface{}, worktree string) bool {
+	if isOpaquePermissionRequest(item, worktree) {
+		return false
+	}
 	if isDestructivePermissionRequest(item) &&
 		!(pol.Mode == ApprovalModeTrusted && trustedRecoverableRequest(item, worktree)) {
 		return false
@@ -208,11 +213,97 @@ func permissionCategory(item map[string]interface{}) string {
 	return permissionCategoryOther
 }
 
-func unwrapSandboxCommand(command string) string {
-	if m := sandboxWrapRe.FindStringSubmatch(strings.TrimSpace(command)); m != nil {
-		return strings.ReplaceAll(m[1], `'\''`, "'")
+func stripOpenCodeStopMarkerText(raw string) string {
+	if !strings.Contains(raw, stopMarkerPrefix) {
+		return raw
 	}
-	return command
+	return openCodeStopMarkerRe.ReplaceAllString(raw, "")
+}
+
+func stripStopMarkerValue(v interface{}) (interface{}, bool) {
+	switch val := v.(type) {
+	case string:
+		cleaned := stripOpenCodeStopMarkerText(val)
+		return cleaned, cleaned != val
+	case []string:
+		changed := false
+		out := make([]string, 0, len(val))
+		for _, s := range val {
+			cleaned := stripOpenCodeStopMarkerText(s)
+			if cleaned != s {
+				changed = true
+			}
+			if strings.TrimSpace(cleaned) != "" || strings.TrimSpace(s) == "" {
+				out = append(out, cleaned)
+			}
+		}
+		if !changed {
+			return val, false
+		}
+		return out, true
+	case []interface{}:
+		changed := false
+		out := make([]interface{}, 0, len(val))
+		for _, elem := range val {
+			if s, ok := elem.(string); ok {
+				cleaned := stripOpenCodeStopMarkerText(s)
+				if cleaned != s {
+					changed = true
+				}
+				if strings.TrimSpace(cleaned) != "" || strings.TrimSpace(s) == "" {
+					out = append(out, cleaned)
+				}
+			} else {
+				out = append(out, elem)
+			}
+		}
+		if !changed {
+			return val, false
+		}
+		return out, true
+	}
+	return v, false
+}
+
+func sanitizeOpenCodePermissionItem(item map[string]interface{}) bool {
+	if item == nil {
+		return false
+	}
+	changed := false
+	for _, key := range []string{"patterns", "pattern", "always", "title"} {
+		if v, exists := item[key]; exists {
+			if cleaned, ok := stripStopMarkerValue(v); ok {
+				item[key] = cleaned
+				changed = true
+			}
+		}
+	}
+	if meta, ok := item["metadata"].(map[string]interface{}); ok && meta != nil {
+		for _, key := range []string{"command", "cmd", "commands"} {
+			if v, exists := meta[key]; exists {
+				if cleaned, ok := stripStopMarkerValue(v); ok {
+					meta[key] = cleaned
+					changed = true
+				}
+			}
+		}
+	}
+	return changed
+}
+
+func unwrapSandboxCommand(command string) string {
+	cur := command
+	for i := 0; i < 4; i++ {
+		next := stripOpenCodeStopMarkerText(cur)
+		if m := sandboxWrapRe.FindStringSubmatch(strings.TrimSpace(next)); m != nil {
+			next = stripOpenCodeStopMarkerText(strings.ReplaceAll(m[1], `'\''`, "'"))
+		}
+		if next == cur {
+			break
+		}
+		cur = next
+	}
+	return cur
 }
 
 // commandCandidates mirrors commandCandidates in permission-policy.js.
@@ -343,6 +434,32 @@ func readTargets(item map[string]interface{}) []string {
 	return out
 }
 
+func isOpaquePermissionRequest(item map[string]interface{}, worktree string) bool {
+	if worktree == "" {
+		worktree = firstString(itemMetadata(item)["worktree"])
+	}
+	category := permissionCategory(item)
+	candidates := commandCandidates(item)
+	if category != permissionCategoryBash {
+		meta := itemMetadata(item)
+		_, hasCommand := meta["command"].(string)
+		_, hasCmd := meta["cmd"].(string)
+		_, hasCommands := meta["commands"].([]interface{})
+		if !hasCommand && !hasCmd && !hasCommands {
+			return false
+		}
+	}
+	if len(candidates) == 0 {
+		return true
+	}
+	for _, cmd := range candidates {
+		if isOpaqueShellCommand(cmd, worktree) {
+			return true
+		}
+	}
+	return false
+}
+
 func isSafeCommandPermissionRequest(item map[string]interface{}, worktree string) bool {
 	if isDestructivePermissionRequest(item) {
 		return false
@@ -450,7 +567,11 @@ func ruleDecision(entry interface{}, targets []string, category string) (string,
 
 func globToRegexp(pattern string, loose bool) *regexp.Regexp {
 	var b strings.Builder
-	b.WriteString("(?i)^")
+	if loose {
+		b.WriteString("(?is)^")
+	} else {
+		b.WriteString("(?i)^")
+	}
 	for i := 0; i < len(pattern); i++ {
 		switch c := pattern[i]; c {
 		case '*':

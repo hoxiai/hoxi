@@ -17,6 +17,7 @@ import {
   modelSupportsImageInput,
   resolveAutoModelTarget,
 } from "./auto-models";
+import { reportAutoCandidateOutcome } from "./auto-breaker";
 import { newIsolatedSession, waitForSessionSandbox } from "./session-sandbox";
 import { buildCombinedSystemPrompt } from "./settings";
 import { setWorkspace, workspace, type ReasoningEffort } from "./workspace-state";
@@ -88,12 +89,19 @@ export async function handleSessionErrorEvent(
     const errText = error.data?.message || error.name || "error";
     const status = error.data?.statusCode;
     markAutoCandidateCooldown(autoState.target.providerID, autoState.target.modelID, errText, status);
+    reportAutoCandidateOutcome({
+      providerID: autoState.target.providerID,
+      modelID: autoState.target.modelID,
+      ok: false,
+      statusCode: status,
+      message: errText,
+    });
     const isElapsedFast = Date.now() - autoState.dispatchedAt < 45_000;
     // A model the engine no longer knows can never succeed by retrying it, so
     // the pool must advance exactly like it does for a rate limit.
     const isModelUnavailable =
       error.name === "ProviderModelNotFoundError" ||
-      /model not found|model.*not.*available/i.test(errText);
+      /model not found|model.*not.*available|is not loaded in the running engine/i.test(errText);
     const isRateOrTransient =
       isModelUnavailable ||
       status === 429 ||
@@ -477,7 +485,8 @@ export async function dispatchSessionPrompt(
     if (options?.beforeSend) {
       await options.beforeSend();
     }
-    if (isAuto && chosenModel && effectiveModel) {
+    const usedAutoPool = Boolean(isAuto && chosenModel && effectiveModel);
+    if (usedAutoPool && chosenModel && effectiveModel) {
       lastAutoDispatchBySession.set(id, {
         poolID: chosenModel.modelID,
         target: effectiveModel,
@@ -493,16 +502,33 @@ export async function dispatchSessionPrompt(
       lastAutoDispatchBySession.delete(id);
     }
     markSessionPromptDispatched(id);
-    await hoxiAPI.sendPromptAsync(id, promptText, {
-      agent: effectiveAgent,
-      model: effectiveModel,
-      variant: effort || undefined,
-      directory: sessionDirectory(id),
-      system,
-      attachments,
-      skillSelection: effectiveSkill,
-      runtime: resolveRunnerRuntimeForProvider(effectiveModel?.providerID, Boolean(workspace.hoxiProviders?.[effectiveModel?.providerID || ""])),
-    });
+    try {
+      await hoxiAPI.sendPromptAsync(id, promptText, {
+        agent: effectiveAgent,
+        model: effectiveModel,
+        variant: effort || undefined,
+        directory: sessionDirectory(id),
+        system,
+        attachments,
+        skillSelection: effectiveSkill,
+        runtime: resolveRunnerRuntimeForProvider(effectiveModel?.providerID, Boolean(workspace.hoxiProviders?.[effectiveModel?.providerID || ""])),
+      });
+    } catch (sendErr) {
+      if (usedAutoPool && effectiveModel) {
+        const errMsg = sendErr instanceof Error ? sendErr.message : String(sendErr || "error");
+        const statusMatch = errMsg.match(/\bHTTP (\d{3})\b/);
+        const statusCode = statusMatch ? Number(statusMatch[1]) : undefined;
+        markAutoCandidateCooldown(effectiveModel.providerID, effectiveModel.modelID, errMsg, statusCode);
+        reportAutoCandidateOutcome({
+          providerID: effectiveModel.providerID,
+          modelID: effectiveModel.modelID,
+          ok: false,
+          statusCode,
+          message: errMsg,
+        });
+      }
+      throw sendErr;
+    }
     if (!lastInterruptAtBySession.has(id)) {
       markSessionPromptDispatched(id);
     }

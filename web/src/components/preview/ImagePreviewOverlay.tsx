@@ -62,6 +62,7 @@ export default function ImagePreviewOverlay() {
     if (!imageViewer()) return;
     if (ev.key === "Escape") {
       ev.preventDefault();
+      ev.stopImmediatePropagation();
       closeImagePreview();
       return;
     }
@@ -78,8 +79,8 @@ export default function ImagePreviewOverlay() {
   };
 
   const listenKeys = (ev: KeyboardEvent) => handleKeyDown(ev);
-  window.addEventListener("keydown", listenKeys);
-  onCleanup(() => window.removeEventListener("keydown", listenKeys));
+  window.addEventListener("keydown", listenKeys, { capture: true });
+  onCleanup(() => window.removeEventListener("keydown", listenKeys, { capture: true }));
 
   return (
     <Presence when={imageViewer() !== null}>
@@ -103,7 +104,10 @@ export default function ImagePreviewOverlay() {
                   <Show when={payload()?.onOpenOriginal}>
                     <button
                       type="button"
-                      onClick={() => payload()?.onOpenOriginal?.()}
+                      onClick={() => {
+                        payload()?.onOpenOriginal?.();
+                        closeImagePreview();
+                      }}
                       class="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[12px] text-white/80 hover:bg-white/10 hover:text-white cursor-pointer"
                     >
                       <ExternalLink size={13} />

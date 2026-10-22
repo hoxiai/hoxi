@@ -9,6 +9,38 @@ import (
 	"testing"
 )
 
+func TestAllProjectRootsEnumeratesProjectsOncePerFolder(t *testing.T) {
+	homeDir := setupTestEnv(t)
+	first := mkdirTempProject(t, homeDir, "first")
+	second := mkdirTempProject(t, homeDir, "second")
+
+	store := NewStore("")
+	if _, err := store.EnsureProjectForDirectory(first); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.EnsureProjectForDirectory(second); err != nil {
+		t.Fatal(err)
+	}
+	// Re-resolving an existing project must not duplicate its root.
+	if _, err := store.EnsureProjectForDirectory(first); err != nil {
+		t.Fatal(err)
+	}
+
+	roots := store.AllProjectRoots()
+	if len(roots) != 2 || !containsString(roots, first) || !containsString(roots, second) {
+		t.Fatalf("AllProjectRoots = %v, want [%s %s]", roots, first, second)
+	}
+}
+
+func containsString(list []string, want string) bool {
+	for _, v := range list {
+		if v == want {
+			return true
+		}
+	}
+	return false
+}
+
 func TestEnsureProjectForDirectoryKeepsStableIDForWorktrees(t *testing.T) {
 	homeDir := setupTestEnv(t)
 	root := mkdirTempProject(t, homeDir, "project")

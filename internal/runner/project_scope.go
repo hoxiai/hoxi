@@ -18,6 +18,13 @@ type projectCanonicalizer interface {
 	CanonicalProjectID(projectID string) (string, bool)
 }
 
+// projectEnumerator is optionally implemented by a ProjectResolver that can
+// enumerate every live project folder, so the runner can prewarm the engine per
+// directory without importing workspace storage.
+type projectEnumerator interface {
+	AllProjectRoots() []string
+}
+
 // SetProjectResolver wires project attribution and backfills legacy sessions
 // that predate stable project IDs. It is safe to call more than once.
 func (s *Service) SetProjectResolver(resolver ProjectResolver) {

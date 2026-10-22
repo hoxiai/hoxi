@@ -90,7 +90,7 @@ func TestCodeWithoutLANHostIsUnavailable(t *testing.T) {
 	}
 }
 
-func TestPrimaryLANIPv4IsNeverLoopbackOrLinkLocal(t *testing.T) {
+func TestPrimaryLANIPv4IsNeverLoopbackOrPublic(t *testing.T) {
 	got := primaryLANIPv4()
 	if got == "" {
 		t.Skip("no LAN address on this host")
@@ -99,8 +99,27 @@ func TestPrimaryLANIPv4IsNeverLoopbackOrLinkLocal(t *testing.T) {
 	if ip == nil || ip.To4() == nil {
 		t.Fatalf("primaryLANIPv4 = %q, not an IPv4 address", got)
 	}
-	if ip.IsLoopback() || ip.IsLinkLocalUnicast() {
-		t.Fatalf("primaryLANIPv4 = %q must not be loopback or link-local", got)
+	v4 := ip.To4()
+	if v4.IsLoopback() {
+		t.Fatalf("primaryLANIPv4 = %q must not be loopback", got)
+	}
+	if !v4.IsPrivate() && !isCGNATIPv4(v4) && !v4.IsLinkLocalUnicast() {
+		t.Fatalf("primaryLANIPv4 = %q must not be a public IPv4 address", got)
+	}
+}
+
+func TestSelectLANIPv4NeverFallsBackToPublic(t *testing.T) {
+	if got := selectLANIPv4([]net.IP{net.ParseIP("8.8.8.8"), net.ParseIP("203.0.113.10"), net.ParseIP("127.0.0.1")}); got != "" {
+		t.Fatalf("selectLANIPv4(public + loopback) = %q, want empty", got)
+	}
+	if got := selectLANIPv4([]net.IP{net.ParseIP("8.8.8.8"), net.ParseIP("169.254.10.20")}); got != "169.254.10.20" {
+		t.Fatalf("selectLANIPv4(public + link-local) = %q, want 169.254.10.20", got)
+	}
+	if got := selectLANIPv4([]net.IP{net.ParseIP("169.254.10.20"), net.ParseIP("100.100.10.5")}); got != "100.100.10.5" {
+		t.Fatalf("selectLANIPv4(link-local + CGNAT) = %q, want 100.100.10.5", got)
+	}
+	if got := selectLANIPv4([]net.IP{net.ParseIP("100.100.10.5"), net.ParseIP("192.168.1.9")}); got != "192.168.1.9" {
+		t.Fatalf("selectLANIPv4(CGNAT + RFC1918) = %q, want 192.168.1.9", got)
 	}
 }
 
@@ -191,6 +210,39 @@ func TestAuthorizeMatchesPairingToken(t *testing.T) {
 	}
 	if svc.Authorize(nil) {
 		t.Error("nil request must not authorize")
+	}
+}
+
+func TestAuthorizeWithoutTokenHeaderDoesNotCreateTokenFile(t *testing.T) {
+	svc, path := newTestService(t, "192.168.1.5")
+	req := httptest.NewRequest(http.MethodGet, "/api/hoxi/bootstrap", nil)
+	if svc.Authorize(req) {
+		t.Fatal("request without token must not authorize")
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("unauthenticated request should not create %s: err = %v", path, err)
+	}
+}
+
+func TestCorruptTokenFileIsBackedUpBeforeRegeneration(t *testing.T) {
+	svc, path := newTestService(t, "192.168.1.5")
+	if err := os.WriteFile(path, []byte("{not-json"), 0o600); err != nil {
+		t.Fatalf("write corrupt file: %v", err)
+	}
+	code, err := svc.Code()
+	if err != nil {
+		t.Fatalf("Code: %v", err)
+	}
+	if len(code.Token) != 64 {
+		t.Fatalf("token = %q, want 64-hex token", code.Token)
+	}
+	matches, err := filepath.Glob(path + ".corrupt-*")
+	if err != nil || len(matches) != 1 {
+		t.Fatalf("expected 1 corrupt backup file, got %v (err=%v)", matches, err)
+	}
+	raw, err := os.ReadFile(matches[0])
+	if err != nil || string(raw) != "{not-json" {
+		t.Fatalf("corrupt backup content = %q (err=%v), want {not-json", string(raw), err)
 	}
 }
 

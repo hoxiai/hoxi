@@ -55,20 +55,23 @@ func canonicalModelID(raw string) string {
 		s = strings.ReplaceAll(s, "--", "-")
 	}
 	s = strings.TrimPrefix(s, "~")
-	s = trimDateSuffix(s)
-	s = strings.TrimSuffix(s, "-thinking")
-	for _, suffix := range []string{"@eu", "@us", "@cn", ":thinking", ":free", ":fast"} {
-		s = strings.TrimSuffix(s, suffix)
-	}
 	for {
-		trimmed := false
+		prev := s
+		s = trimDateSuffix(s)
+		if strings.HasSuffix(s, "-thinking") && len(s) > len("-thinking") {
+			s = strings.TrimSuffix(s, "-thinking")
+		}
+		for _, suffix := range []string{"@eu", "@us", "@cn", ":thinking", ":free", ":fast"} {
+			if strings.HasSuffix(s, suffix) && len(s) > len(suffix) {
+				s = strings.TrimSuffix(s, suffix)
+			}
+		}
 		for _, suffix := range variantSuffixes {
 			if strings.HasSuffix(s, suffix) && len(s) > len(suffix) {
 				s = strings.TrimSuffix(s, suffix)
-				trimmed = true
 			}
 		}
-		if !trimmed {
+		if s == prev {
 			break
 		}
 	}
@@ -138,6 +141,36 @@ func hasAnyToken(key string, tokens ...string) bool {
 	return false
 }
 
+// hasSegmentRun reports whether key contains the consecutive dash-delimited
+// segments in order (e.g. `hasSegmentRun("gpt-5-6", "5", "6")` or `"5-6"`).
+func hasSegmentRun(key string, segments ...string) bool {
+	var want []string
+	for _, seg := range segments {
+		for _, p := range strings.Split(seg, "-") {
+			if p != "" {
+				want = append(want, p)
+			}
+		}
+	}
+	if len(want) == 0 {
+		return false
+	}
+	parts := strings.Split(key, "-")
+	for i := 0; i+len(want) <= len(parts); i++ {
+		match := true
+		for j, w := range want {
+			if parts[i+j] != w {
+				match = false
+				break
+			}
+		}
+		if match {
+			return true
+		}
+	}
+	return false
+}
+
 // versionAfter returns the first numeric token that follows family in a
 // dash-delimited key, so `claude-opus-5-5`, `officeace-claude-sonnet-5-5` and
 // `grok-4-7` all yield their family version.
@@ -195,10 +228,10 @@ func knownModelTokenLimit(key string) (modelTokenLimit, bool) {
 		return modelTokenLimit{Context: 1_048_576, Output: 65_536}, true
 
 	case hasToken(key, "gpt") || hasToken(key, "codex") || isOSeriesModel(key):
-		if hasAnyToken(key, "astra") || hasToken(key, "6") || hasAnyToken(key, "5-6") {
+		if hasAnyToken(key, "astra") || versionAfter(key, "gpt") >= 6 || hasSegmentRun(key, "5", "6") {
 			return modelTokenLimit{Context: 1_050_000, Output: 128_000}, true
 		}
-		if hasToken(key, "sol") || hasAnyToken(key, "5-5") {
+		if hasToken(key, "sol") || hasSegmentRun(key, "5", "5") {
 			return modelTokenLimit{Context: 1_000_000, Output: 128_000}, true
 		}
 		return modelTokenLimit{Context: 400_000, Output: 128_000}, true
@@ -217,7 +250,7 @@ func knownModelTokenLimit(key string) (modelTokenLimit, bool) {
 		return modelTokenLimit{Context: 1_000_000, Output: 131_072}, true
 
 	case hasAnyToken(key, "glm", "codegeex"):
-		if hasToken(key, "4") || hasAnyToken(key, "4-7", "4-6", "4-5") {
+		if hasToken(key, "4") || hasSegmentRun(key, "4", "7") || hasSegmentRun(key, "4", "6") || hasSegmentRun(key, "4", "5") {
 			return modelTokenLimit{Context: 200_000, Output: 131_072}, true
 		}
 		return modelTokenLimit{Context: 1_000_000, Output: 131_072}, true
@@ -310,10 +343,17 @@ func ensureModelTokenLimit(modelObj map[string]interface{}, modelID string) {
 		name, _ := modelObj["name"].(string)
 		limit, ok = knownModelTokenLimit(canonicalModelID(name))
 	}
+	cur, _ := modelObj["limit"].(map[string]interface{})
 	if !ok {
+		if cur != nil {
+			if context := positiveNumber(cur["context"]); context > 0 {
+				if output := positiveNumber(cur["output"]); output >= context {
+					cur["output"] = max(context/4, 1)
+				}
+			}
+		}
 		return
 	}
-	cur, _ := modelObj["limit"].(map[string]interface{})
 	if cur == nil {
 		cur = map[string]interface{}{}
 	}
@@ -328,9 +368,14 @@ func ensureModelTokenLimit(modelObj map[string]interface{}, modelID string) {
 	// its context would therefore compact on every single turn, so keep at least
 	// a quarter of the window free for the conversation itself.
 	if context := positiveNumber(cur["context"]); context > 0 {
-		if output := positiveNumber(cur["output"]); output == 0 || output > context*3/4 {
-			cur["output"] = max(context/4, 8192)
+		output := positiveNumber(cur["output"])
+		if output == 0 || output > context*3/4 {
+			output = max(context/4, 8192)
 		}
+		if output >= context {
+			output = max(context/4, 1)
+		}
+		cur["output"] = output
 	}
 	modelObj["limit"] = cur
 }

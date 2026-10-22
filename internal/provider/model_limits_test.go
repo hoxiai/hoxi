@@ -16,6 +16,8 @@ func TestCanonicalModelIDStripsVariantAndChannelLabels(t *testing.T) {
 		{"claude-opus-5-5", "claude-opus-5-5"},
 		{"anthropic/claude-sonnet-5-5", "claude-sonnet-5-5"},
 		{"models/deepseek-v4.1-flash-1017", "deepseek-v4-1-flash"},
+		{"deepseek-v4.1-flash-1017-free", "deepseek-v4-1-flash"},
+		{"claude-sonnet-4-5-20250929-thinking", "claude-sonnet-4-5"},
 		{"deepseek-v4.1-flash:thinking", "deepseek-v4-1-flash"},
 		{"kimi-k3 (2026-10-22)", "kimi-k3"},
 		{"", ""},
@@ -36,11 +38,16 @@ func TestKnownModelTokenLimitFamilies(t *testing.T) {
 		{"deepseek-v3.2", 163_840},
 		{"claude-opus-5-5", 1_000_000},
 		{"claude-sonnet-4-6", 200_000},
+		{"claude-sonnet-4-5-20250929-thinking", 200_000},
 		{"claude-haiku-4-5", 200_000},
 		{"gpt-6.1-sol", 1_050_000},
 		{"gpt-6-astra", 1_050_000},
+		{"gpt-5.6", 1_050_000},
+		{"gpt-5.5", 1_000_000},
+		{"gpt-4.6", 400_000},
 		{"gemini-3.7-flash", 1_048_576},
 		{"glm-5.3-flash-solo", 1_000_000},
+		{"glm-4.6", 200_000},
 		{"kimi-k3", 1_048_576},
 		{"kimi-k2", 131_072},
 		{"mimo-v2.6-pro-solo", 1_048_576},
@@ -113,6 +120,21 @@ func TestEnsureModelTokenLimitLeavesRoomForConversation(t *testing.T) {
 	}
 	if output < 8192 {
 		t.Fatalf("output %d must keep at least a minimal generation budget", output)
+	}
+
+	// Small context models (e.g. context: 4096) must clamp output below context
+	// even when knownModelTokenLimit returns false or when 8192 >= context.
+	for _, id := range []string{"deepseek-v4.1-flash-solo", "custom-small-local"} {
+		small := map[string]interface{}{
+			"limit": map[string]interface{}{"context": 4096, "output": 4096},
+		}
+		ensureModelTokenLimit(small, id)
+		sLim := small["limit"].(map[string]interface{})
+		sCtx := positiveNumber(sLim["context"])
+		sOut := positiveNumber(sLim["output"])
+		if sCtx != 4096 || sOut <= 0 || sOut >= sCtx {
+			t.Fatalf("%s: small context %d output %d must stay below context", id, sCtx, sOut)
+		}
 	}
 }
 

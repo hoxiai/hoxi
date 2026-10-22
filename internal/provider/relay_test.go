@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func newRelayTestService(t *testing.T, upstreamURL string) (*Service, *http.ServeMux) {
@@ -328,5 +329,69 @@ func TestRelayKeyStoreBacksUpCorruptFile(t *testing.T) {
 	}
 	if _, _, err := svc.CreateRelayKey("next"); err != nil {
 		t.Fatalf("CreateRelayKey after valid file: %v", err)
+	}
+}
+
+func TestRelayAutoModelRespectsFreePoolAndSkipsDisabledAndUtilityModels(t *testing.T) {
+	svc, _ := newRelayTestService(t, "http://127.0.0.1:9/v1")
+	doc := map[string]interface{}{
+		"disabled_providers": []string{"disabled-up"},
+		"provider": map[string]interface{}{
+			"disabled-up": map[string]interface{}{
+				"npm":     "@ai-sdk/openai-compatible",
+				"options": map[string]interface{}{"baseURL": "http://127.0.0.1:9/v1"},
+				"models": map[string]interface{}{
+					"qwen-free": map[string]interface{}{"name": "Disabled Free", "free": true},
+				},
+			},
+			"relay-up": map[string]interface{}{
+				"npm":     "@ai-sdk/openai-compatible",
+				"options": map[string]interface{}{"baseURL": "http://127.0.0.1:9/v1"},
+				"models": map[string]interface{}{
+					"text-embedding-3-small": map[string]interface{}{"name": "Embed", "free": true},
+					"paid-pro":               map[string]interface{}{"name": "Paid Pro"},
+					"qwen-coder:free":        map[string]interface{}{"name": "Qwen Free"},
+				},
+			},
+		},
+	}
+	if err := svc.PersistHoxiConfigDoc(doc); err != nil {
+		t.Fatalf("PersistHoxiConfigDoc: %v", err)
+	}
+
+	pid, mid, err := svc.relayResolveModel("hoxi-auto")
+	if err != nil {
+		t.Fatalf("relayResolveModel(hoxi-auto): %v", err)
+	}
+	if pid != "relay-up" || mid != "qwen-coder:free" {
+		t.Fatalf("hoxi-auto resolved to %s/%s, want relay-up/qwen-coder:free", pid, mid)
+	}
+}
+
+func TestRelayChatRecordsHeaderTTFTNotFullStreamDuration(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		time.Sleep(120 * time.Millisecond)
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer upstream.Close()
+
+	svc, mux := newRelayTestService(t, upstream.URL+"/v1")
+	_, token, err := svc.CreateRelayKey("")
+	if err != nil {
+		t.Fatalf("CreateRelayKey: %v", err)
+	}
+	rec := doRelayReq(t, mux, http.MethodPost, "/v1/chat/completions", token,
+		`{"model":"relay-up/gpt-test","stream":true,"messages":[]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("stream status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	lat := svc.breaker.LatencyMs("relay-up", "gpt-test")
+	if lat <= 0 || lat >= 80 {
+		t.Fatalf("breaker latency = %v ms, want header TTFT (<80ms, not 120ms body sleep)", lat)
 	}
 }

@@ -19,33 +19,39 @@ var approvalPermissionKeys = []string{"edit", "webfetch", "websearch", "codesear
 // file exists, so the desktop can first migrate them into the policy.
 func normalizeApprovalPermissions(doc map[string]interface{}, enforceAsk bool) bool {
 	perm, _ := doc["permission"].(map[string]interface{})
+	changed := false
 	if perm == nil {
-		if !enforceAsk {
-			return false
-		}
 		perm = map[string]interface{}{}
 		doc["permission"] = perm
+		changed = true
 	}
-	changed := false
 	for _, key := range approvalPermissionKeys {
 		switch v := perm[key].(type) {
 		case nil:
-			if enforceAsk {
-				perm[key] = "ask"
-				changed = true
-			}
+			perm[key] = "ask"
+			changed = true
 		case string:
-			if v != "ask" && v != "deny" && enforceAsk {
+			if v != "ask" && v != "deny" && (enforceAsk || v != "allow") {
 				perm[key] = "ask"
 				changed = true
 			}
 		case map[string]interface{}:
-			_, star := v["*"]
-			_, doubleStar := v["**"]
-			if !star && !doubleStar {
+			if ds, exists := v["**"]; exists && ds != "ask" && ds != "deny" {
+				delete(v, "**")
+				changed = true
+			}
+			star := v["*"]
+			doubleStar := v["**"]
+			if (star != "ask" && star != "deny") && (doubleStar != "ask" && doubleStar != "deny") {
+				v["*"] = "ask"
+				changed = true
+			} else if star != nil && star != "ask" && star != "deny" {
 				v["*"] = "ask"
 				changed = true
 			}
+		default:
+			perm[key] = "ask"
+			changed = true
 		}
 	}
 	return changed

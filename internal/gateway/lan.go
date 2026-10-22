@@ -36,7 +36,11 @@ func isLANClient(remoteAddr string) bool {
 	if h, _, err := net.SplitHostPort(host); err == nil {
 		host = h
 	}
-	ip := net.ParseIP(strings.Trim(strings.TrimSpace(host), "[]"))
+	host = strings.Trim(strings.TrimSpace(host), "[]")
+	if i := strings.IndexByte(host, '%'); i >= 0 {
+		host = host[:i]
+	}
+	ip := net.ParseIP(host)
 	if ip == nil {
 		return false
 	}

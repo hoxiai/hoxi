@@ -11,7 +11,7 @@ const MASKED_DATA_ARGUMENT = "Q";
 const setOf = (...items) => new Set(items);
 
 // Run their arguments or input as shell commands: masking is skipped anywhere.
-const DATA_ARG_INTERPRETERS = setOf("sh", "bash", "zsh", "dash", "ksh", "fish", "eval", "exec", "source", ".",
+export const DATA_ARG_INTERPRETERS = setOf("sh", "bash", "zsh", "dash", "ksh", "fish", "eval", "exec", "source", ".",
   "xargs", "env", "sudo", "su", "doas", "nohup", "time", "command", "builtin", "ssh", "parallel",
   "watch", "osascript");
 // Can execute text they are fed; only block masking when echo/printf text

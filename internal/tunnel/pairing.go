@@ -114,8 +114,18 @@ func (m *Manager) RequestPair(ctx context.Context, controllerURL, name string) e
 		done:          make(chan struct{}),
 	}
 	m.mu.Lock()
+	prev := m.pending
+	if prev != nil {
+		prev.cancel()
+	}
 	m.pending = p
+	if !m.status.Enabled {
+		m.status.Message = ""
+	}
 	m.mu.Unlock()
+	if prev != nil {
+		<-prev.done
+	}
 	go m.pollPending(pollCtx, p)
 	return nil
 }
@@ -149,6 +159,17 @@ func (m *Manager) clearPending(p *pendingPair) {
 	m.mu.Unlock()
 }
 
+func (m *Manager) failPending(p *pendingPair, err error) {
+	m.mu.Lock()
+	if m.pending == p {
+		m.pending = nil
+	}
+	if err != nil {
+		m.status.Message = err.Error()
+	}
+	m.mu.Unlock()
+}
+
 // pollPending polls GoPanel until the request is approved, denied or expired,
 // the overall deadline passes, or the context is canceled.
 func (m *Manager) pollPending(ctx context.Context, p *pendingPair) {
@@ -175,7 +196,14 @@ func (m *Manager) pollPending(ctx context.Context, p *pendingPair) {
 			case PendingApproved:
 				if strings.TrimSpace(code) != "" {
 					m.setPendingState(p, PendingApproved)
-					_ = m.exchangeAndConnect(ctx, p.controllerURL, code, p.name)
+					if err := m.exchangeAndConnect(ctx, p.controllerURL, code, p.name); err != nil {
+						if ctx.Err() == nil {
+							m.failPending(p, err)
+						} else {
+							m.clearPending(p)
+						}
+						return
+					}
 					m.clearPending(p)
 					return
 				}

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -18,7 +19,10 @@ import (
 
 // requestLogContentMaxChars bounds each text part so an enormous reply cannot
 // blow up the response. The tail is dropped with a marker instead.
-const requestLogContentMaxChars = 20000
+const (
+	requestLogContentMaxChars = 20000
+	requestLogContentMaxBytes = 4 << 20
+)
 
 // requestContentPart is one visible chunk of a request: the user's input text
 // or the model's text/reasoning output. Roles and kinds let the UI label them.
@@ -124,36 +128,53 @@ func openCodeRequestContent(sessionID, messageID string) requestContent {
 	if _, err := os.Stat(dbPath); err != nil {
 		return requestContent{}
 	}
+	msgLit := sqlLiteral(messageID)
+	sesLit := sqlLiteral(sessionID)
 	sqlQuery := fmt.Sprintf(`SELECT json_object(
+  'found', (SELECT COUNT(*) FROM message WHERE id = %s),
   'input', COALESCE((
     SELECT json_group_array(json_object('data', d.data)) FROM (
       SELECT p.data AS data FROM part p WHERE p.message_id = (
         SELECT m.id FROM message m
-        WHERE m.session_id = %s AND json_extract(m.data, '$.role') = 'user'
+        WHERE m.session_id = COALESCE(NULLIF(%s, ''), (SELECT m2.session_id FROM message m2 WHERE m2.id = %s))
+          AND json_extract(m.data, '$.role') = 'user'
           AND m.time_created <= (SELECT time_created FROM message WHERE id = %s)
         ORDER BY m.time_created DESC, m.id DESC LIMIT 1
-      ) ORDER BY p.time_created, p.id
+      ) AND json_extract(p.data, '$.type') IN ('text', 'reasoning')
+      ORDER BY p.time_created, p.id
     ) d
   ), json('[]')),
   'output', COALESCE((
     SELECT json_group_array(json_object('data', d.data)) FROM (
-      SELECT p.data AS data FROM part p WHERE p.message_id = %s ORDER BY p.time_created, p.id
+      SELECT p.data AS data FROM part p
+      WHERE p.message_id = %s
+        AND json_extract(p.data, '$.type') IN ('text', 'reasoning')
+      ORDER BY p.time_created, p.id
     ) d
   ), json('[]'))
-);`, sqlLiteral(sessionID), sqlLiteral(messageID), sqlLiteral(messageID))
+);`, msgLit, sesLit, msgLit, msgLit, msgLit)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "sqlite3", "-readonly", "-cmd", ".timeout 5000", dbPath, sqlQuery)
-	out, err := cmd.Output()
-	if err != nil || len(bytes.TrimSpace(out)) == 0 {
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return requestContent{}
+	}
+	if err := cmd.Start(); err != nil {
+		return requestContent{}
+	}
+	out, readErr := io.ReadAll(io.LimitReader(stdout, requestLogContentMaxBytes))
+	_ = cmd.Wait()
+	if readErr != nil || len(bytes.TrimSpace(out)) == 0 {
 		return requestContent{}
 	}
 	var payload struct {
+		Found  int        `json:"found"`
 		Input  []partData `json:"input"`
 		Output []partData `json:"output"`
 	}
-	if err := json.Unmarshal(bytes.TrimSpace(out), &payload); err != nil {
+	if err := json.Unmarshal(bytes.TrimSpace(out), &payload); err != nil || payload.Found == 0 {
 		return requestContent{}
 	}
 	content := requestContent{Found: true}

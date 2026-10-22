@@ -288,6 +288,9 @@ func (s *Service) startTurnProcess(
 		s.ensureAgyHookInstalled()
 		hookEnv, revokeHook = s.issueHookEnv(rec.ID, asstMsgID)
 	} else if rec.Runtime == string(RuntimeCodeBuddy) || rec.Runtime == string(RuntimeQoder) {
+		if !isReadOnlyAgentMode(mode) && s.ApprovalPolicy().requiresApprovalGate() {
+			return fmt.Errorf("runtime %s does not support PreToolUse approval gate; refusing to run in non-read-only mode %q under %s approval policy", rec.Runtime, mode, firstNonEmptyStr(s.ApprovalPolicy().Mode, ApprovalModeAuto))
+		}
 		diagnostics.Record(diagnostics.Entry{
 			Time:      time.Now(),
 			Kind:      "runner_turn",

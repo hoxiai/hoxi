@@ -211,6 +211,27 @@ func (s *workspaceStore) ProjectRoots(projectID string) []string {
 	return nil
 }
 
+// AllProjectRoots returns every live project folder path across all profiles,
+// de-duplicated. Callers use it to warm per-directory engine state ahead of
+// the first interactive request.
+func (s *workspaceStore) AllProjectRoots() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var roots []string
+	seen := make(map[string]bool)
+	for _, ws := range s.workspaces {
+		for _, folder := range ws.Folders {
+			path := strings.TrimSpace(folder.Path)
+			if path == "" || seen[path] {
+				continue
+			}
+			seen[path] = true
+			roots = append(roots, path)
+		}
+	}
+	return roots
+}
+
 // handleResolveProject resolves a directory without registering it. Hidden
 // projects are created when a session is created, so a read-only GET (which
 // may arrive through the remote tunnel) never mutates the store.

@@ -496,8 +496,29 @@ func (m *worktreeManager) DiffFile(sessionID, relPath string) (worktreeFileDiff,
 
 	// Fallback: check if it is an untracked file
 	full := filepath.Join(repoDir, filepath.FromSlash(repoRelPath))
-	info, statErr := os.Stat(full)
+	info, statErr := os.Lstat(full)
 	if statErr != nil || info.IsDir() {
+		return worktreeFileDiff{}, fmt.Errorf("file diff not found: %s", cleaned)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		target, linkErr := os.Readlink(full)
+		if linkErr != nil {
+			return worktreeFileDiff{}, fmt.Errorf("file diff not found: %s", cleaned)
+		}
+		patch := fmt.Sprintf("diff --git a/%s b/%s\nnew file mode 120000\n--- /dev/null\n+++ b/%s\n@@ -0,0 +1,1 @@\n+%s", cleaned, cleaned, cleaned, target)
+		return worktreeFileDiff{
+			File:          cleaned,
+			Patch:         patch,
+			Additions:     1,
+			Deletions:     0,
+			Status:        "added",
+			Repo:          relPrefix,
+			Branch:        repoBranch,
+			GeneratedLike: generated,
+			Stamp:         stamp,
+		}, nil
+	}
+	if !info.Mode().IsRegular() || !regularFileStaysWithinRepo(repoDir, full) {
 		return worktreeFileDiff{}, fmt.Errorf("file diff not found: %s", cleaned)
 	}
 	if info.Size() > maxSingleFilePatchBytes {

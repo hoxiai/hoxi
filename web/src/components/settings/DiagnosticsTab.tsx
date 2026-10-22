@@ -290,15 +290,15 @@ export default function DiagnosticsTab() {
             <tbody>
               <For each={rows()}>
                 {(entry) => {
-                  const when = formatWhen(entry.time);
-                  const pending = isPending(entry);
-                  const timedOut = () => pending && nowMs() - entry.time >= TIMEOUT_MS;
+                  const when = () => formatWhen(entry.time);
+                  const pending = () => isPending(entry);
+                  const timedOut = () => pending() && nowMs() - entry.time >= TIMEOUT_MS;
                   return (
                     <tr class={`border-b border-[var(--border-subtle)]/70 last:border-0 ${rowTone(entry)}`}>
                       <Show when={visible("time")}>
                         <td class="whitespace-nowrap px-3 py-2 font-mono text-[11px] leading-4 text-[var(--text-secondary)]">
-                          <div>{when.date}</div>
-                          <div class="text-[var(--text-muted)]">{when.time}</div>
+                          <div>{when().date}</div>
+                          <div class="text-[var(--text-muted)]">{when().time}</div>
                         </td>
                       </Show>
                       <Show when={visible("providerModel")}>
@@ -314,9 +314,9 @@ export default function DiagnosticsTab() {
                         <td class="px-3 py-2">
                           <span
                             class={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium ${timedOut() ? "bg-[var(--danger-surface)] text-[var(--danger-text)]" : badgeClass(entry)}`}
-                            title={pending ? formatDuration(nowMs() - entry.time) : statusTitle(entry)}
+                            title={pending() ? formatDuration(nowMs() - entry.time) : statusTitle(entry)}
                           >
-                            <Show when={pending}>
+                            <Show when={pending()}>
                               <span class="h-1.5 w-1.5 animate-pulse rounded-full bg-current" aria-hidden="true" />
                             </Show>
                             {timedOut() ? t("diagnostics.statusTimeout") : badgeText(entry)}
@@ -328,12 +328,12 @@ export default function DiagnosticsTab() {
                       </Show>
                       <Show when={visible("duration")}>
                         <td class="px-3 py-2 text-right font-mono text-[11px] text-[var(--text-secondary)]">
-                          {formatDuration(pending ? nowMs() - entry.time : entry.durationMs)}
+                          {formatDuration(pending() ? nowMs() - entry.time : entry.durationMs)}
                         </td>
                       </Show>
                       <Show when={visible("tokens")}>
                         <td class="px-3 py-2 font-mono text-[11px] leading-4 text-[var(--text-secondary)]">
-                          <Show when={!pending || totalTokens(entry) > 0} fallback={<span class="text-[var(--text-muted)]">{t("diagnostics.noError")}</span>}>
+                          <Show when={!pending() || totalTokens(entry) > 0} fallback={<span class="text-[var(--text-muted)]">{t("diagnostics.noError")}</span>}>
                             <button
                               type="button"
                               class="group block w-full text-left cursor-pointer"
@@ -411,6 +411,8 @@ function RequestDetail(props: { entry: RequestLogEntry; onClose: () => void }) {
   createEffect(() => {
     const id = props.entry.id;
     const sessionID = props.entry.sessionID;
+    void props.entry.level;
+    void props.entry.completed;
     setContent(null);
     setContentFailed(false);
     let cancelled = false;

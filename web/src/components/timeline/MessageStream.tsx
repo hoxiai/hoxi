@@ -18,6 +18,7 @@ import {
   canRevertSession,
   findLatestUserTurnID,
   forkFromMessage,
+  imageViewerOpen,
   openImagePreview,
   isUserTurnTaskActive as isUserTurnTaskActiveInStore,
   resolveTurnSkillStatus,
@@ -295,6 +296,7 @@ export default function MessageStream(props: { hidden?: boolean }) {
         isSessionBusy() &&
         !ev.defaultPrevented &&
         !searchOpen() &&
+        !imageViewerOpen() &&
         !appSettings.modalOpen &&
         !workspace.providerModalOpen &&
         !workspace.arenaModalOpen &&

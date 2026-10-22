@@ -2,9 +2,15 @@ package runner
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/hoxiai/hoxi/internal/testutil/execstub"
+	"github.com/hoxiai/hoxi/internal/worktree"
 )
 
 func TestDestructiveRequestsMatchSharedFixture(t *testing.T) {
@@ -129,6 +135,9 @@ func TestPermissionRuleObjectsOnlyDecideTheirOwnTargets(t *testing.T) {
 	if !approvalAutoApproves(req("bash", "npm install lodash"), smart, rules, "") {
 		t.Error("an allow pattern must let its command run in smart mode")
 	}
+	if !approvalAutoApproves(req("bash", "npm install lodash\necho done"), smart, rules, "") {
+		t.Error("an allow pattern with * must also match multi-line commands")
+	}
 	if approvalAutoApproves(req("bash", "docker build ."), auto, rules, "") {
 		t.Error("an ask pattern must ask in auto mode")
 	}
@@ -164,5 +173,81 @@ func TestSmartModeDropsLeadingWorktreeCD(t *testing.T) {
 	}
 	if approvalAutoApproves(req("bash", "cd /tmp && git status"), smart, nil, worktree) {
 		t.Error("cd outside the worktree must ask in smart mode")
+	}
+	taggedWrapped := "# hoxi-stop:ses_1:call_1\ntrap : EXIT\n'/usr/bin/sandbox-exec' -f '/tmp/p.sb' -- /bin/sh -c 'git status'"
+	if !approvalAutoApproves(req("bash", taggedWrapped), smart, nil, worktree) {
+		t.Error("sandbox-wrapped safe command with stop marker must auto-approve in smart mode")
+	}
+	item := map[string]interface{}{
+		"permission": "bash",
+		"patterns":   []interface{}{"# hoxi-stop:ses_1:call_1\ntrap : EXIT\nnpm install lodash"},
+		"metadata":   map[string]interface{}{"command": "# hoxi-stop:ses_1:call_1\ntrap : EXIT\nnpm install lodash"},
+	}
+	sanitizeOpenCodePermissionItem(item)
+	if got := stringList(item["patterns"]); len(got) != 1 || got[0] != "npm install lodash" {
+		t.Errorf("sanitized patterns = %v, want [npm install lodash]", got)
+	}
+	if meta, _ := item["metadata"].(map[string]interface{}); meta["command"] != "npm install lodash" {
+		t.Errorf("sanitized metadata.command = %v, want npm install lodash", meta["command"])
+	}
+}
+
+func TestOpaqueShellCommandsRequireApprovalInAutoAndTrusted(t *testing.T) {
+	t.Parallel()
+	worktree := t.TempDir()
+	for _, mode := range []string{ApprovalModeAuto, ApprovalModeTrusted} {
+		for _, command := range []string{
+			`P=.env; cat $P`,
+			`cat "$HOXI_AUDIT_PATH"`,
+			`printf 'echo harmless' | sh`,
+			`bash -c 'echo harmless'`,
+			`python3 -c 'import pathlib; print(pathlib.Path(".env").read_text())'`,
+			`node -e 'console.log(1)'`,
+		} {
+			item := req("bash", command)
+			if approvalAutoApproves(item, ApprovalPolicy{Mode: mode}, nil, worktree) {
+				t.Errorf("opaque shell %q was auto-approved in %s mode", command, mode)
+			}
+		}
+	}
+}
+
+func TestUngatedRuntimesRefuseNonReadOnlyTurnsWhenApprovalGateRequired(t *testing.T) {
+	binDir := t.TempDir()
+	markerFile := filepath.Join(t.TempDir(), "ran.txt")
+	execstub.Write(t, binDir, "qodercli", "#!/bin/sh\necho ran > "+markerFile+"\nexit 0\n")
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	repo := initTestGitRepo(t)
+	storeDir := filepath.Join(t.TempDir(), "sessions")
+	svc := NewService(repo, worktree.NewManager(repo), nil, storeDir)
+	defer svc.CloseAll()
+
+	if _, err := svc.policy.set(ApprovalPolicy{Mode: ApprovalModeManual}); err != nil {
+		t.Fatal(err)
+	}
+	rec := SessionRecord{
+		ID:           "ses_qoder_manual",
+		Runtime:      string(RuntimeQoder),
+		ProjectDir:   repo,
+		WorktreePath: repo,
+		SandboxMode:  "local",
+		ModelID:      "auto",
+		Mode:         "build",
+	}
+	if err := svc.Store().Put(rec); err != nil {
+		t.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+	svc.RegisterRoutes(mux)
+	httpReq := httptest.NewRequest(http.MethodPost, "/api/hoxi/runner/sessions/ses_qoder_manual/prompt", strings.NewReader(`{"text":"edit main.go"}`))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httpReq)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("expected 409 Conflict for ungated Qoder turn under manual policy, got %d: %s", w.Code, w.Body.String())
+	}
+	if _, err := os.Stat(markerFile); !os.IsNotExist(err) {
+		t.Fatalf("ungated Qoder binary must not be executed under manual approval policy")
 	}
 }

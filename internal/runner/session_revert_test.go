@@ -606,3 +606,80 @@ func TestSessionRevertFailurePreservesState(t *testing.T) {
 		t.Fatalf("expected 2 turns preserved, got %d", len(stored.Turns))
 	}
 }
+
+func TestSessionForkPreservesCommandSandbox(t *testing.T) {
+	t.Parallel()
+	repo := initTestGitRepo(t)
+	svc := NewService(repo, worktree.NewManager(repo), nil, filepath.Join(t.TempDir(), "sessions"))
+	defer svc.CloseAll()
+	rec := SessionRecord{
+		ID:             "ses_hoxi_sbx_fork",
+		Runtime:        "claude-code",
+		ProjectDir:     repo,
+		WorktreePath:   repo,
+		SandboxMode:    "local",
+		CommandSandbox: true,
+	}
+	if err := svc.Store().Put(rec); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/hoxi/runner/sessions/ses_hoxi_sbx_fork/fork", strings.NewReader(`{}`))
+	w := httptest.NewRecorder()
+	svc.handleSessionFork(w, req, rec.ID)
+	if w.Code != http.StatusOK {
+		t.Fatalf("fork failed: %d %s", w.Code, w.Body.String())
+	}
+	var info SessionInfo
+	if err := json.Unmarshal(w.Body.Bytes(), &info); err != nil {
+		t.Fatal(err)
+	}
+	if !info.CommandSandbox {
+		t.Fatal("forked SessionInfo dropped CommandSandbox")
+	}
+	forked, ok := svc.Store().Get(info.ID)
+	if !ok || !forked.CommandSandbox {
+		t.Fatal("forked SessionRecord dropped CommandSandbox")
+	}
+}
+
+func TestLocalSessionRevertPreservesUnrelatedChanges(t *testing.T) {
+	t.Parallel()
+	repo := initTestGitRepo(t)
+	before, err := worktree.CreateSnapshot(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService(repo, worktree.NewManager(repo), nil, filepath.Join(t.TempDir(), "sessions"))
+	defer svc.CloseAll()
+	rec := SessionRecord{
+		ID:           "ses_local_scoped",
+		Runtime:      "claude-code",
+		ProjectDir:   repo,
+		WorktreePath: repo,
+		SandboxMode:  "local",
+		Turns: []MessageTurn{{
+			Info:  MessageInfo{ID: "msg_scoped", SessionID: "ses_local_scoped", Role: "user"},
+			Parts: []MessagePart{{ID: "prt_scoped", Type: "text", Text: "edit README"}},
+		}},
+		Snapshots: map[string]string{"msg_scoped": before},
+	}
+	if err := svc.Store().Put(rec); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("changed by session A\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	unrelated := filepath.Join(repo, "session-b.txt")
+	if err := os.WriteFile(unrelated, []byte("independent work by session B\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/hoxi/runner/sessions/ses_local_scoped/revert", strings.NewReader(`{"messageID":"msg_scoped"}`))
+	w := httptest.NewRecorder()
+	svc.handleSessionRevert(w, req, rec.ID)
+	if w.Code != http.StatusOK {
+		t.Fatalf("revert failed: %d %s", w.Code, w.Body.String())
+	}
+	if _, err := os.Stat(unrelated); err != nil {
+		t.Fatalf("reverting session A deleted unrelated session B file: %v", err)
+	}
+}

@@ -13,6 +13,12 @@ extern void HoxiQuitApplication(void);
 
 @implementation HoxiStatusBarController
 
+- (void)dealloc {
+    [_statusItem release];
+    [_summaryItem release];
+    [super dealloc];
+}
+
 - (void)showMainWindow:(id)sender {
     HoxiShowMainWindow();
 }
@@ -145,39 +151,44 @@ static NSImage *hoxi_create_statusbar_summary(int attention, int running, int av
 
 void hoxi_statusbar_start(void) {
     hoxi_run_on_main(^{
-        if (hoxiStatusBarController != nil) {
-            return;
+        @autoreleasepool {
+            if (hoxiStatusBarController != nil) {
+                return;
+            }
+
+            hoxiStatusBarController = [HoxiStatusBarController new];
+            hoxiStatusBarController.statusItem = [[NSStatusBar systemStatusBar] statusItemWithLength:NSVariableStatusItemLength];
+
+            NSStatusBarButton *button = hoxiStatusBarController.statusItem.button;
+            button.image = hoxi_create_statusbar_icon();
+            button.imagePosition = NSImageOnly;
+            button.toolTip = @"Hoxi Workspace";
+
+            NSMenu *menu = [NSMenu new];
+            NSMenuItem *openWorkspace = [[NSMenuItem alloc] initWithTitle:@"唤醒 Hoxi 工作台"
+                                                                   action:@selector(showMainWindow:)
+                                                            keyEquivalent:@""];
+            openWorkspace.target = hoxiStatusBarController;
+            [menu addItem:openWorkspace];
+            [openWorkspace release];
+
+            hoxiStatusBarController.summaryItem = [[[NSMenuItem alloc] initWithTitle:@"Agent: Idle"
+                                                                               action:nil
+                                                                        keyEquivalent:@""] autorelease];
+            hoxiStatusBarController.summaryItem.enabled = NO;
+            [menu addItem:hoxiStatusBarController.summaryItem];
+            [menu addItem:[NSMenuItem separatorItem]];
+
+            NSMenuItem *quitApplication = [[NSMenuItem alloc] initWithTitle:@"退出 Hoxi"
+                                                                     action:@selector(quitApplication:)
+                                                              keyEquivalent:@"q"];
+            quitApplication.target = hoxiStatusBarController;
+            [menu addItem:quitApplication];
+            [quitApplication release];
+            hoxiStatusBarController.statusItem.menu = menu;
+            [menu release];
+            [NSApp dockTile].badgeLabel = @"";
         }
-
-        hoxiStatusBarController = [HoxiStatusBarController new];
-        hoxiStatusBarController.statusItem = [[NSStatusBar systemStatusBar] statusItemWithLength:NSVariableStatusItemLength];
-
-        NSStatusBarButton *button = hoxiStatusBarController.statusItem.button;
-        button.image = hoxi_create_statusbar_icon();
-        button.imagePosition = NSImageOnly;
-        button.toolTip = @"Hoxi Workspace";
-
-        NSMenu *menu = [NSMenu new];
-        NSMenuItem *openWorkspace = [[NSMenuItem alloc] initWithTitle:@"唤醒 Hoxi 工作台"
-                                                               action:@selector(showMainWindow:)
-                                                        keyEquivalent:@""];
-        openWorkspace.target = hoxiStatusBarController;
-        [menu addItem:openWorkspace];
-
-        hoxiStatusBarController.summaryItem = [[NSMenuItem alloc] initWithTitle:@"Agent: Idle"
-                                                                           action:nil
-                                                                    keyEquivalent:@""];
-        hoxiStatusBarController.summaryItem.enabled = NO;
-        [menu addItem:hoxiStatusBarController.summaryItem];
-        [menu addItem:[NSMenuItem separatorItem]];
-
-        NSMenuItem *quitApplication = [[NSMenuItem alloc] initWithTitle:@"退出 Hoxi"
-                                                                 action:@selector(quitApplication:)
-                                                          keyEquivalent:@"q"];
-        quitApplication.target = hoxiStatusBarController;
-        [menu addItem:quitApplication];
-        hoxiStatusBarController.statusItem.menu = menu;
-        [NSApp dockTile].badgeLabel = @"";
     });
 }
 
@@ -185,32 +196,39 @@ void hoxi_statusbar_update(int attention, int running, int queued, int available
     // The block may run later on the main queue, so own the text before Go frees it.
     char *badgeCopy = badge != NULL ? strdup(badge) : NULL;
     hoxi_run_on_main(^{
-        NSString *badgeText = badgeCopy != NULL ? [NSString stringWithUTF8String:badgeCopy] : @"";
-        free(badgeCopy);
-        if (hoxiStatusBarController == nil) {
-            return;
-        }
+        @autoreleasepool {
+            NSString *badgeText = badgeCopy != NULL ? [NSString stringWithUTF8String:badgeCopy] : @"";
+            free(badgeCopy);
+            if (hoxiStatusBarController == nil) {
+                return;
+            }
 
-        NSStatusBarButton *button = hoxiStatusBarController.statusItem.button;
-        button.image = hoxi_create_statusbar_summary(attention, running, available);
-        if (!available) {
-            button.toolTip = @"Hoxi: OpenCode 引擎正在启动";
-            hoxiStatusBarController.summaryItem.title = @"OpenCode 正在连接...";
-            [NSApp dockTile].badgeLabel = @"";
-            return;
+            NSStatusBarButton *button = hoxiStatusBarController.statusItem.button;
+            button.image = hoxi_create_statusbar_summary(attention, running, available);
+            if (!available) {
+                button.toolTip = @"Hoxi: OpenCode 引擎正在启动";
+                hoxiStatusBarController.summaryItem.title = @"OpenCode 正在连接...";
+                [NSApp dockTile].badgeLabel = @"";
+                return;
+            }
+            button.toolTip = [NSString stringWithFormat:@"Hoxi：待审批 %d · 运行中 %d", attention, running];
+            hoxiStatusBarController.summaryItem.title = [NSString stringWithFormat:@"待审批 %d · 运行中 %d", attention, running];
+            [NSApp dockTile].badgeLabel = badgeText;
         }
-        button.toolTip = [NSString stringWithFormat:@"Hoxi：待审批 %d · 运行中 %d", attention, running];
-        hoxiStatusBarController.summaryItem.title = [NSString stringWithFormat:@"待审批 %d · 运行中 %d", attention, running];
-        [NSApp dockTile].badgeLabel = badgeText;
     });
 }
 
 void hoxi_statusbar_stop(void) {
     hoxi_run_on_main(^{
-        [NSApp dockTile].badgeLabel = @"";
-        if (hoxiStatusBarController != nil) {
-            [[NSStatusBar systemStatusBar] removeStatusItem:hoxiStatusBarController.statusItem];
-            hoxiStatusBarController = nil;
+        @autoreleasepool {
+            [NSApp dockTile].badgeLabel = @"";
+            if (hoxiStatusBarController != nil) {
+                [[NSStatusBar systemStatusBar] removeStatusItem:hoxiStatusBarController.statusItem];
+                hoxiStatusBarController.statusItem = nil;
+                hoxiStatusBarController.summaryItem = nil;
+                [hoxiStatusBarController release];
+                hoxiStatusBarController = nil;
+            }
         }
     });
 }

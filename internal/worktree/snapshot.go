@@ -179,6 +179,131 @@ func RestoreSnapshot(dir, treeHash string) error {
 	return nil
 }
 
+// SnapshotChangedPaths returns the repo-relative slash paths that differ
+// between two snapshot tree hashes in dir.
+func SnapshotChangedPaths(dir, fromTree, toTree string) ([]string, error) {
+	dir = strings.TrimSpace(dir)
+	fromTree = strings.TrimSpace(fromTree)
+	toTree = strings.TrimSpace(toTree)
+	if dir == "" || fromTree == "" || toTree == "" {
+		return nil, fmt.Errorf("directory and snapshot trees are required")
+	}
+	topLevel, err := runGit(dir, "rev-parse", "--show-toplevel")
+	if err != nil || strings.TrimSpace(topLevel) == "" {
+		return nil, fmt.Errorf("not a git repository: %w", err)
+	}
+	repoRoot := filepath.Clean(strings.TrimSpace(topLevel))
+	if fromTree == toTree {
+		if _, err := runGitRaw(repoRoot, "ls-tree", "-d", fromTree); err != nil {
+			return nil, fmt.Errorf("list snapshot files: %w", err)
+		}
+		return nil, nil
+	}
+	out, err := runGitRaw(repoRoot, "diff-tree", "-r", "--name-only", "-z", fromTree, toTree)
+	if err != nil {
+		return nil, fmt.Errorf("diff snapshot trees: %w", err)
+	}
+	seen := make(map[string]struct{})
+	var paths []string
+	for _, entry := range strings.Split(out, "\x00") {
+		rel := strings.Trim(filepath.ToSlash(strings.TrimSpace(entry)), "/")
+		if rel == "" || strings.HasPrefix(rel, ".hoxi/") || strings.HasPrefix(rel, ".opencode/") || isIgnoredUntrackedWorktreePath(rel) {
+			continue
+		}
+		if _, ok := seen[rel]; ok {
+			continue
+		}
+		seen[rel] = struct{}{}
+		paths = append(paths, rel)
+	}
+	return paths, nil
+}
+
+// RestoreSnapshotPaths restores only the specified paths in dir to match
+// treeHash, removing any target path that did not exist in treeHash and leaving
+// all other tracked and untracked files in the shared repository untouched.
+func RestoreSnapshotPaths(dir, treeHash string, paths []string) error {
+	dir = strings.TrimSpace(dir)
+	treeHash = strings.TrimSpace(treeHash)
+	if dir == "" || treeHash == "" {
+		return fmt.Errorf("directory and snapshot tree are required")
+	}
+	topLevel, err := runGit(dir, "rev-parse", "--show-toplevel")
+	if err != nil || strings.TrimSpace(topLevel) == "" {
+		return fmt.Errorf("not a git repository: %w", err)
+	}
+	repoRoot := filepath.Clean(strings.TrimSpace(topLevel))
+
+	treeFilesOut, err := runGitRaw(repoRoot, "ls-tree", "-r", "--name-only", "-z", treeHash)
+	if err != nil {
+		return fmt.Errorf("list snapshot files: %w", err)
+	}
+	inTree := make(map[string]bool)
+	for _, entry := range strings.Split(treeFilesOut, "\x00") {
+		if entry != "" {
+			inTree[entry] = true
+		}
+	}
+
+	seen := make(map[string]bool)
+	var toCheckout, toRemove []string
+	for _, raw := range paths {
+		rel := normalizeSnapshotRepoRelPath(repoRoot, raw)
+		if rel == "" || seen[rel] || strings.HasPrefix(rel, ".git/") || rel == ".git" ||
+			strings.HasPrefix(rel, ".hoxi/") || strings.HasPrefix(rel, ".opencode/") || isIgnoredUntrackedWorktreePath(rel) {
+			continue
+		}
+		seen[rel] = true
+		if inTree[rel] {
+			toCheckout = append(toCheckout, rel)
+		} else {
+			toRemove = append(toRemove, rel)
+		}
+	}
+	for _, rel := range toRemove {
+		_ = os.Remove(filepath.Join(repoRoot, filepath.FromSlash(rel)))
+	}
+	if len(toCheckout) > 0 {
+		tmpFile, err := os.CreateTemp("", "hoxi-restore-paths-index-*")
+		if err != nil {
+			return err
+		}
+		tmpIndex := tmpFile.Name()
+		_ = tmpFile.Close()
+		_ = os.Remove(tmpIndex)
+		defer os.Remove(tmpIndex)
+
+		if _, err := runGitWithIndex(repoRoot, tmpIndex, "read-tree", treeHash); err != nil {
+			return fmt.Errorf("read snapshot tree: %w", err)
+		}
+		checkoutArgs := append([]string{"checkout-index", "-f", "--"}, toCheckout...)
+		if _, err := runGitWithIndex(repoRoot, tmpIndex, checkoutArgs...); err != nil {
+			return fmt.Errorf("checkout snapshot files: %w", err)
+		}
+	}
+	globalRepoDiffCache.invalidate(repoRoot)
+	return nil
+}
+
+func normalizeSnapshotRepoRelPath(repoRoot, raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+	if filepath.IsAbs(trimmed) {
+		rel, err := filepath.Rel(repoRoot, filepath.Clean(trimmed))
+		if err != nil || rel == "." || rel == ".." || strings.HasPrefix(filepath.ToSlash(rel), "../") {
+			return ""
+		}
+		return filepath.ToSlash(rel)
+	}
+	cleaned := filepath.ToSlash(filepath.Clean(trimmed))
+	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") || strings.HasPrefix(cleaned, "/") {
+		return ""
+	}
+	return cleaned
+}
+
 func runGitWithIndex(workDir, indexPath string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), gitCommandTimeout)
 	defer cancel()

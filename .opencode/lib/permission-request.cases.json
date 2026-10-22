@@ -28,6 +28,10 @@
   { "name": "command in metadata", "destructive": true, "request": { "permission": "bash", "metadata": { "command": "git push origin main --force" } } },
   { "name": "safe command", "destructive": false, "request": { "permission": "bash", "patterns": ["git status"] } },
   { "name": "sandbox-wrapped rm", "destructive": true, "request": { "permission": "bash", "patterns": ["'/usr/bin/sandbox-exec' -f '/tmp/p.sb' -- /bin/sh -c 'rm -rf build'"] } },
+  { "name": "sandbox-wrapped git status with stop marker", "destructive": false, "request": { "permission": "bash", "patterns": ["# hoxi-stop:ses_1:call_1\ntrap : EXIT\n'/usr/bin/sandbox-exec' -f '/tmp/p.sb' -- /bin/sh -c 'git status'"] } },
+  { "name": "sandbox-wrapped rm with stop marker", "destructive": true, "request": { "permission": "bash", "patterns": ["# hoxi-stop:ses_1:call_1\ntrap : EXIT\n'/usr/bin/sandbox-exec' -f '/tmp/p.sb' -- /bin/sh -c 'rm -rf build'"] } },
+  { "name": "hoxi models.json read", "destructive": true, "request": { "permission": "read", "patterns": ["/Users/u/.hoxi/models.json"] } },
+  { "name": "claude credentials read", "destructive": true, "request": { "permission": "read", "patterns": ["/Users/u/.claude/.credentials.json"] } },
   { "name": "cat dotenv", "destructive": true, "request": { "permission": "bash", "patterns": ["cat .env"] } },
   { "name": "webfetch", "destructive": false, "request": { "permission": "webfetch", "patterns": ["https://example.com/docs"] } }
 ]

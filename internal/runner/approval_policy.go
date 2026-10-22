@@ -60,6 +60,20 @@ func (p ApprovalPolicy) effectiveRule(category string) string {
 	return "allow"
 }
 
+// requiresApprovalGate reports whether the policy requires an active approval
+// gate for editing, shell execution, or web access. Runtimes without a
+// PreToolUse approval gate (e.g. Qoder, CodeBuddy) cannot enforce non-"allow"
+// rules in non-read-only modes.
+func (p ApprovalPolicy) requiresApprovalGate() bool {
+	return p.effectiveRule(permissionCategoryEdit) != "allow" ||
+		p.effectiveRule(permissionCategoryBash) != "allow" ||
+		p.effectiveRule(permissionCategoryWebfetch) != "allow"
+}
+
+func isReadOnlyAgentMode(mode string) bool {
+	return strings.EqualFold(strings.TrimSpace(mode), "plan")
+}
+
 // validate rejects unknown values instead of silently dropping them.
 func (p ApprovalPolicy) validate() error {
 	switch p.Mode {
@@ -97,6 +111,17 @@ func newApprovalPolicyStore(customStorePath string) *approvalPolicyStore {
 	return s
 }
 
+func (s *approvalPolicyStore) seedDefaultLocked() {
+	if s.path == "" {
+		return
+	}
+	raw, err := json.MarshalIndent(defaultApprovalPolicy(), "", "  ")
+	if err != nil {
+		return
+	}
+	_ = writeApprovalAuditAtomic(s.path, append(raw, '\n'))
+}
+
 func (s *approvalPolicyStore) load() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -105,22 +130,26 @@ func (s *approvalPolicyStore) load() {
 	}
 	raw, err := os.ReadFile(s.path)
 	if err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
+		if errors.Is(err, os.ErrNotExist) {
+			s.seedDefaultLocked()
+		} else {
 			s.blocked = fmt.Errorf("approval policy file is unreadable: %w", err)
 		}
 		return
 	}
 	var p ApprovalPolicy
 	if err := json.Unmarshal(raw, &p); err != nil || p.validate() != nil {
-		// Keep the bad file for inspection; the next explicit save replaces it.
+		// Keep the bad file for inspection; restore a clean default file on disk.
 		backup := fmt.Sprintf("%s.corrupt-%s", s.path, time.Now().UTC().Format("20060102T150405.000000000"))
 		if renameErr := os.Rename(s.path, backup); renameErr != nil {
 			s.blocked = fmt.Errorf("approval policy file is invalid and could not be backed up: %w", renameErr)
+			return
 		}
+		s.seedDefaultLocked()
 		return
 	}
 	s.policy = p
-	s.exists = true
+	s.exists = p.UpdatedAt > 0 || p != defaultApprovalPolicy()
 }
 
 func (s *approvalPolicyStore) get() (ApprovalPolicy, bool) {

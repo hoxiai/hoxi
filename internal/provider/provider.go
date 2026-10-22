@@ -29,6 +29,7 @@ type Service struct {
 	reloadMu          sync.Mutex
 	reloadPending     bool
 	reloadLoopRunning bool
+	configPersistMu   sync.Mutex
 	relayMu           sync.Mutex
 	relayPersistMu    sync.Mutex
 	relayBaseURL      string

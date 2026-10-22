@@ -44,10 +44,12 @@ func TestIngressRequestEnforcesRemoteAllowList(t *testing.T) {
 	denied := []struct{ method, path string }{
 		{http.MethodGet, "/api/hoxi/tunnel/status"},
 		{http.MethodPost, "/api/hoxi/tunnel/pair"},
+		{http.MethodPost, "/api/hoxi/tunnel/pair/request"},
 		{http.MethodGet, "/api/hoxi/pairing/qr"},
 		{http.MethodPost, "/api/hoxi/pairing/rotate"},
 		{http.MethodGet, "/api/hoxi/cloudflared/status"},
 		{http.MethodPost, "/api/hoxi/cloudflared/enable"},
+		{http.MethodPost, "/api/hoxi/cloudflared/disable"},
 		{http.MethodGet, "/api/hoxi/auth"},
 		{http.MethodGet, "/api/hoxi/models-config"},
 		{http.MethodGet, "/api/hoxi/provider/keys"},
@@ -59,5 +61,53 @@ func TestIngressRequestEnforcesRemoteAllowList(t *testing.T) {
 		if code := ingressRequest(t, g, r.method, r.path, token); code != http.StatusForbidden {
 			t.Errorf("%s %s over ingress = %d, want 403", r.method, r.path, code)
 		}
+	}
+}
+
+func TestIngressRequestSanitizesHeadersAndAcceptsExternalOrigin(t *testing.T) {
+	g, token := lanGateway(t)
+
+	var seenHeader http.Header
+	var seenQuery string
+	var seenWails bool
+	g.mux = http.NewServeMux()
+	g.mux.HandleFunc("/api/hoxi/workspaces", func(w http.ResponseWriter, r *http.Request) {
+		seenHeader = r.Header.Clone()
+		seenQuery = r.URL.RawQuery
+		seenWails = nativeWailsRequest(r)
+		writeJSON(w, http.StatusOK, map[string]any{"items": []any{}})
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/hoxi/workspaces?hoxiToken=leaked&dir=x", nil)
+	req.Host = "abc123.node.hoxi.work"
+	req.RemoteAddr = "127.0.0.1:51000"
+	req.Header.Set("X-Auth", token)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Origin", "https://abc123.node.hoxi.work")
+	req.Header.Set("Referer", "https://abc123.node.hoxi.work/app")
+	req.Header.Set("Cookie", "CF_Authorization=jwt; hoxi_gateway_token=secret")
+	req.Header.Set("X-Hoxi-Token", "secret")
+	req.Header.Set("Sec-Fetch-Site", "cross-site")
+	req.Header.Set("X-Forwarded-Proto", "https")
+	req.Header.Set("X-GoPanel-Tunnel-Client", "cid")
+
+	rec := httptest.NewRecorder()
+	g.ServeIngressRequest(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /api/hoxi/workspaces over ingress with external Origin = %d, want 200", rec.Code)
+	}
+	if seenWails {
+		t.Fatal("ingress request must not be treated as native Wails request")
+	}
+	for _, h := range []string{
+		"Origin", "Referer", "Cookie", "Authorization", "X-Auth", "X-Hoxi-Token",
+		"Sec-Fetch-Site", "X-Forwarded-Proto", "X-GoPanel-Tunnel-Client",
+	} {
+		if got := seenHeader.Get(h); got != "" {
+			t.Errorf("header %s leaked to downstream handler: %q", h, got)
+		}
+	}
+	if seenQuery != "dir=x" {
+		t.Errorf("RawQuery = %q, want dir=x (hoxiToken stripped)", seenQuery)
 	}
 }

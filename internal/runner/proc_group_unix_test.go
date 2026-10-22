@@ -463,12 +463,25 @@ func TestStripOpenCodeStopMarker(t *testing.T) {
 		Tool: "bash",
 		State: &ToolState{
 			Status: "running",
-			Input:  map[string]interface{}{"command": openCodeStopMarker("ses_e", "call_1") + "\necho hi"},
+			Input:  map[string]interface{}{"command": openCodeStopMarker("ses_e", "call_1") + "\ntrap : EXIT\necho hi"},
 		},
 	}
 	stripOpenCodeStopMarker(&part)
 	if got := part.State.Input["command"]; got != "echo hi" {
 		t.Fatalf("command = %v, want the untagged command", got)
+	}
+
+	wrappedPart := MessagePart{
+		Type: "tool",
+		Tool: "bash",
+		State: &ToolState{
+			Status: "running",
+			Input:  map[string]interface{}{"command": openCodeStopMarker("ses_e", "call_1") + "\ntrap : EXIT\n'/usr/bin/sandbox-exec' -f '/tmp/p.sb' -- /bin/sh -c 'git status'"},
+		},
+	}
+	stripOpenCodeStopMarker(&wrappedPart)
+	if got := unwrapSandboxCommand(wrappedPart.State.Input["command"].(string)); got != "git status" {
+		t.Fatalf("unwrapSandboxCommand = %q, want 'git status'", got)
 	}
 
 	untouched := MessagePart{
@@ -480,6 +493,39 @@ func TestStripOpenCodeStopMarker(t *testing.T) {
 	if got := untouched.State.Input["command"]; got != "echo hi" {
 		t.Fatalf("untagged command changed to %v", got)
 	}
+}
+
+func TestSelectOpenCodeDaemonPIDPrefersLeaf(t *testing.T) {
+	byPID := map[int]procSnapshot{
+		100: {pid: 100, ppid: 1, pgid: 100, args: "/bin/sh -c opencode serve --hostname 127.0.0.1 --port 5432"},
+		200: {pid: 200, ppid: 100, pgid: 100, args: "/usr/local/bin/opencode serve --hostname 127.0.0.1 --port 5432"},
+	}
+	children := map[int][]int{
+		1:   {100},
+		100: {200},
+	}
+	if got := selectOpenCodeDaemonPID(byPID, children, "5432"); got != 200 {
+		t.Fatalf("selectOpenCodeDaemonPID = %d, want leaf daemon PID 200", got)
+	}
+}
+
+func TestStopOpenCodeToolProcessSubagentCallIDFallbackAndTrapExit(t *testing.T) {
+	subagentMarker := openCodeStopMarker("ses_subagent", "call_sub_1") + `\ntrap : EXIT`
+	// Notice the single command `sleep 307` without `\nwait`: `trap : EXIT` prevents `/bin/sh -c` from tail-call execve'ing into `sleep 307` and losing the marker from argv.
+	daemon, pidFile := startFakeDaemon(t, `perl -e 'setpgrp(0, 0); exec "/bin/sh", "-c", "`+subagentMarker+`\nsleep 307"' & echo $! > "$HOXI_TEST_PIDFILE"; sleep 308`)
+	t.Cleanup(func() {
+		_ = syscall.Kill(daemon.Process.Pid, syscall.SIGKILL)
+		_ = daemon.Wait()
+	})
+	toolPID := readPID(t, pidFile)
+	t.Cleanup(func() { _ = syscall.Kill(toolPID, syscall.SIGKILL) })
+
+	// Stop using parent session ID `ses_parent` which does not match `ses_subagent`, so it falls back to unique callID `call_sub_1`.
+	parentMarker := openCodeStopMarker("ses_parent", "call_sub_1")
+	if stopped := stopOpenCodeToolProcessByMarker(daemon.Process.Pid, parentMarker); stopped == 0 {
+		t.Fatal("expected subagent tool process to be stopped via unique callID fallback")
+	}
+	assertProcessGone(t, toolPID)
 }
 
 // startFakeDaemon runs script as a stand-in for `opencode serve`: the script is

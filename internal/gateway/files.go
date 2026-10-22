@@ -136,28 +136,19 @@ func (g *Gateway) candidateBaseDirs(rawDir, sessionID string) []string {
 		}
 		seen[cleaned] = struct{}{}
 		dirs = append(dirs, cleaned)
-
-		// If the directory is inside a Hoxi worktree (.hoxi/worktrees/<id>),
-		// also add the parent repository root so untracked/gitignored root files resolve.
-		slash := filepath.ToSlash(cleaned)
-		if idx := strings.Index(slash, "/.hoxi/worktrees/"); idx > 0 {
-			parentRepo := filepath.FromSlash(slash[:idx])
-			if parentRepo != "" {
-				if _, pExists := seen[parentRepo]; !pExists {
-					seen[parentRepo] = struct{}{}
-					dirs = append(dirs, parentRepo)
-				}
-			}
-		}
 	}
 
 	if sessionID != "" && g.worktrees != nil {
 		if binding, known, err := g.worktrees.BindingForSession(sessionID); err == nil && known && binding.Directory != "" {
 			add(binding.Directory)
+			return dirs
 		}
 	}
 	if rawDir != "" {
 		add(rawDir)
+		if len(dirs) > 0 {
+			return dirs
+		}
 	}
 	if g.rootDir != "" {
 		add(g.rootDir)
@@ -298,22 +289,26 @@ func (g *Gateway) resolveLocalFileTarget(rawPath, rawDir, sessionID string, allo
 		} else if !os.IsNotExist(err) {
 			return target, nil, checkOutside(target), err
 		}
-		// If the absolute path pointed inside an older/cleaned worktree (.hoxi/worktrees/<id>/...),
-		// try resolving the relative suffix against the parent repo or active candidate dirs.
+		// If the absolute path pointed inside an older/cleaned worktree (.hoxi/worktrees/<id>/...)
+		// whose worktree directory no longer exists on disk, try resolving the relative suffix
+		// against the parent repo or active candidate dirs.
 		slash := filepath.ToSlash(target)
 		if idx := strings.Index(slash, "/.hoxi/worktrees/"); idx > 0 {
 			rest := slash[idx+len("/.hoxi/worktrees/"):]
 			if slashIdx := strings.IndexByte(rest, '/'); slashIdx > 0 {
-				relSuffix := filepath.FromSlash(rest[slashIdx+1:])
-				parentRepo := filepath.FromSlash(slash[:idx])
-				altTarget := filepath.Join(parentRepo, relSuffix)
-				if info, err := os.Stat(altTarget); err == nil {
-					return altTarget, info, checkOutside(altTarget), nil
-				}
-				for _, d := range dirs {
-					cand := filepath.Join(d, relSuffix)
-					if info, err := os.Stat(cand); err == nil {
-						return cand, info, checkOutside(cand), nil
+				wtRoot := filepath.FromSlash(slash[:idx+len("/.hoxi/worktrees/")+slashIdx])
+				if _, wtErr := os.Stat(wtRoot); os.IsNotExist(wtErr) {
+					relSuffix := filepath.FromSlash(rest[slashIdx+1:])
+					parentRepo := filepath.FromSlash(slash[:idx])
+					altTarget := filepath.Join(parentRepo, relSuffix)
+					if info, err := os.Stat(altTarget); err == nil {
+						return altTarget, info, checkOutside(altTarget), nil
+					}
+					for _, d := range dirs {
+						cand := filepath.Join(d, relSuffix)
+						if info, err := os.Stat(cand); err == nil {
+							return cand, info, checkOutside(cand), nil
+						}
 					}
 				}
 			}

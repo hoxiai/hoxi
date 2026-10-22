@@ -33,26 +33,36 @@ function errorText(err: unknown, fallback: string): string {
   return fallback;
 }
 
+let remoteTunnelGen = 0;
+
 /** The in-flight one-click request, if any, for the UI to render the code and countdown. */
 export function remoteTunnelPending(): RemoteTunnelPending | undefined {
   return remoteTunnel.status.pending;
 }
 
 export async function loadRemoteTunnelStatus(): Promise<void> {
+  const gen = ++remoteTunnelGen;
   try {
-    setRemoteTunnel({ status: await remoteTunnelAPI.getStatus(), loaded: true });
+    const status = await remoteTunnelAPI.getStatus();
+    if (gen !== remoteTunnelGen) return;
+    setRemoteTunnel({ status, loaded: true, error: "" });
   } catch (err) {
+    if (gen !== remoteTunnelGen) return;
     setRemoteTunnel({ loaded: true, error: errorText(err, t("remoteTunnel.loadError")) });
   }
 }
 
 export async function requestRemoteTunnel(req: RemoteTunnelRequestPairRequest): Promise<boolean> {
   if (remoteTunnel.busy) return false;
+  ++remoteTunnelGen;
   setRemoteTunnel({ busy: true, error: "" });
   try {
-    setRemoteTunnel("status", await remoteTunnelAPI.requestPair(req));
+    const status = await remoteTunnelAPI.requestPair(req);
+    ++remoteTunnelGen;
+    setRemoteTunnel({ status, loaded: true, error: "" });
     return true;
   } catch (err) {
+    ++remoteTunnelGen;
     setRemoteTunnel("error", errorText(err, t("remoteTunnel.requestError")));
     return false;
   } finally {
@@ -61,20 +71,32 @@ export async function requestRemoteTunnel(req: RemoteTunnelRequestPairRequest): 
 }
 
 export async function cancelRemoteTunnel(): Promise<void> {
+  if (remoteTunnel.busy) return;
+  ++remoteTunnelGen;
+  setRemoteTunnel({ busy: true, error: "" });
   try {
-    setRemoteTunnel("status", await remoteTunnelAPI.cancelPair());
+    const status = await remoteTunnelAPI.cancelPair();
+    ++remoteTunnelGen;
+    setRemoteTunnel({ status, loaded: true, error: "" });
   } catch (err) {
+    ++remoteTunnelGen;
     setRemoteTunnel("error", errorText(err, t("remoteTunnel.cancelError")));
+  } finally {
+    setRemoteTunnel("busy", false);
   }
 }
 
 export async function pairRemoteTunnel(req: RemoteTunnelPairRequest): Promise<boolean> {
   if (remoteTunnel.busy) return false;
+  ++remoteTunnelGen;
   setRemoteTunnel({ busy: true, error: "" });
   try {
-    setRemoteTunnel("status", await remoteTunnelAPI.pair(req));
+    const status = await remoteTunnelAPI.pair(req);
+    ++remoteTunnelGen;
+    setRemoteTunnel({ status, loaded: true, error: "" });
     return true;
   } catch (err) {
+    ++remoteTunnelGen;
     setRemoteTunnel("error", errorText(err, t("remoteTunnel.pairError")));
     return false;
   } finally {
@@ -84,10 +106,14 @@ export async function pairRemoteTunnel(req: RemoteTunnelPairRequest): Promise<bo
 
 export async function disableRemoteTunnel(): Promise<void> {
   if (remoteTunnel.busy) return;
+  ++remoteTunnelGen;
   setRemoteTunnel({ busy: true, error: "" });
   try {
-    setRemoteTunnel("status", await remoteTunnelAPI.disable());
+    const status = await remoteTunnelAPI.disable();
+    ++remoteTunnelGen;
+    setRemoteTunnel({ status, loaded: true, error: "" });
   } catch (err) {
+    ++remoteTunnelGen;
     setRemoteTunnel("error", errorText(err, t("remoteTunnel.disableError")));
   } finally {
     setRemoteTunnel("busy", false);

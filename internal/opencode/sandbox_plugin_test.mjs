@@ -35,8 +35,9 @@ test("sandbox plugin", async (t) => {
     const hooks = await HoxiSandboxPlugin();
     const output = { args: { command: "echo 'hi' > out.txt" } };
     await hooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_sandbox", callID: "c1" }, output);
-    // The stop marker is the first line of the final command, after wrapping.
-    assert.ok(output.args.command.startsWith("# hoxi-stop:ses_sandbox:c1\n"));
+    // The stop marker is the first line of the final command, after wrapping,
+    // followed by `trap : EXIT` so the shell does not tail-exec away the tag.
+    assert.ok(output.args.command.startsWith("# hoxi-stop:ses_sandbox:c1\ntrap : EXIT\n"));
     assert.ok(output.args.command.includes("'/usr/bin/sandbox-exec' -f "));
     assert.ok(output.args.command.includes(profilePath));
     assert.ok(output.args.command.includes("/bin/sh -c "));
@@ -131,7 +132,7 @@ test("sandbox plugin", async (t) => {
     await hooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_other", callID: "c8" }, output);
     // A session without a sandbox snapshot keeps its command but still gets
     // the stop marker, so OpenCode stops remain precise.
-    assert.equal(output.args.command, "# hoxi-stop:ses_other:c8\necho hi");
+    assert.equal(output.args.command, "# hoxi-stop:ses_other:c8\ntrap : EXIT\necho hi");
   });
 
   await t.test("does not tag non-bash tools", async () => {

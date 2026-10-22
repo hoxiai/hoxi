@@ -1,7 +1,7 @@
 // web/src/components/settings/UsageHistoryTab.tsx
 // Daily token/cost/code history. Reads raw counters from the gateway and prices
 // them with the same resolver as the header pulse.
-import { createMemo, onMount, Show } from "solid-js";
+import { createMemo, For, onMount, Show } from "solid-js";
 import { RefreshCw } from "lucide-solid";
 import { t } from "../../i18n";
 import {
@@ -98,19 +98,21 @@ export default function UsageHistoryTab() {
         </div>
         <div class="flex items-center gap-1.5">
           <div class="flex items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-0.5">
-            {USAGE_HISTORY_RANGES.map((range: UsageHistoryRange) => (
-              <button
-                type="button"
-                class={`rounded-md px-2 py-1 text-[11px] font-medium transition-colors cursor-pointer ${
-                  usageHistoryRange() === range
-                    ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]"
-                    : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]"
-                }`}
-                onClick={() => void loadUsageHistory(range)}
-              >
-                {t("settings.usageRangeDays", { days: range })}
-              </button>
-            ))}
+            <For each={USAGE_HISTORY_RANGES}>
+              {(range: UsageHistoryRange) => (
+                <button
+                  type="button"
+                  class={`rounded-md px-2 py-1 text-[11px] font-medium transition-colors cursor-pointer ${
+                    usageHistoryRange() === range
+                      ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]"
+                      : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]"
+                  }`}
+                  onClick={() => void loadUsageHistory(range)}
+                >
+                  {t("settings.usageRangeDays", { days: range })}
+                </button>
+              )}
+            </For>
           </div>
           <button
             type="button"
@@ -206,12 +208,9 @@ export default function UsageHistoryTab() {
                 </tr>
               </thead>
               <tbody>
-                {usageHistory()
-                  .slice()
-                  .reverse()
-                  .map((day) => (
-                    <DayRow day={day} />
-                  ))}
+                <For each={usageHistory().slice().reverse()}>
+                  {(day) => <DayRow day={day} />}
+                </For>
               </tbody>
             </table>
           </div>

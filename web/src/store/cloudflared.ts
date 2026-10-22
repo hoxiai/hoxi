@@ -2,6 +2,7 @@
 import { createStore } from "solid-js/store";
 import { t } from "../i18n";
 import { cloudflaredAPI, type CloudflaredStatus } from "../services/cloudflared";
+import { loadPairingCode } from "./pairing";
 
 export const [cloudflared, setCloudflared] = createStore<{
   status: CloudflaredStatus;
@@ -14,6 +15,8 @@ export const [cloudflared, setCloudflared] = createStore<{
   busy: false,
   error: "",
 });
+
+let cloudflaredGen = 0;
 
 // requestJSON throws "HTTP <status>: <body>"; surface the gateway's {"error"} text.
 function errorText(err: unknown, fallback: string): string {
@@ -29,20 +32,29 @@ function errorText(err: unknown, fallback: string): string {
 }
 
 export async function loadCloudflaredStatus(): Promise<void> {
+  const gen = ++cloudflaredGen;
   try {
-    setCloudflared({ status: await cloudflaredAPI.getStatus(), loaded: true });
+    const status = await cloudflaredAPI.getStatus();
+    if (gen !== cloudflaredGen) return;
+    setCloudflared({ status, loaded: true, error: "" });
   } catch (err) {
+    if (gen !== cloudflaredGen) return;
     setCloudflared({ loaded: true, error: errorText(err, t("cloudflared.loadError")) });
   }
 }
 
 export async function enableCloudflared(token: string, hostname: string): Promise<boolean> {
   if (cloudflared.busy) return false;
+  ++cloudflaredGen;
   setCloudflared({ busy: true, error: "" });
   try {
-    setCloudflared("status", await cloudflaredAPI.enable(token, hostname));
+    const status = await cloudflaredAPI.enable(token, hostname);
+    ++cloudflaredGen;
+    setCloudflared({ status, loaded: true, error: "" });
+    void loadPairingCode();
     return true;
   } catch (err) {
+    ++cloudflaredGen;
     setCloudflared("error", errorText(err, t("cloudflared.enableError")));
     return false;
   } finally {
@@ -52,10 +64,15 @@ export async function enableCloudflared(token: string, hostname: string): Promis
 
 export async function disableCloudflared(): Promise<void> {
   if (cloudflared.busy) return;
+  ++cloudflaredGen;
   setCloudflared({ busy: true, error: "" });
   try {
-    setCloudflared("status", await cloudflaredAPI.disable());
+    const status = await cloudflaredAPI.disable();
+    ++cloudflaredGen;
+    setCloudflared({ status, loaded: true, error: "" });
+    void loadPairingCode();
   } catch (err) {
+    ++cloudflaredGen;
     setCloudflared("error", errorText(err, t("cloudflared.disableError")));
   } finally {
     setCloudflared("busy", false);

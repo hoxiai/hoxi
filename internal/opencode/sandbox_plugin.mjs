@@ -106,11 +106,12 @@ function command(snapshot, input) {
 // stopMarker tags every bash command with its engine session and tool call so
 // Hoxi can stop exactly one command inside the shared `opencode serve` daemon.
 // macOS hides other processes' environments, so the tag has to live in the
-// command line itself; it is a shell comment and never affects execution.
+// command line itself; `trap : EXIT` keeps the shell from tail-execing a
+// single command and replacing the tagged argv in `ps`.
 function stopMarker(input) {
   if (typeof input?.sessionID !== "string" || typeof input?.callID !== "string") return undefined;
   if (!input.sessionID || !input.callID) return undefined;
-  return `# hoxi-stop:${input.sessionID}:${input.callID}`;
+  return `# hoxi-stop:${input.sessionID}:${input.callID}\ntrap : EXIT`;
 }
 
 export const HoxiSandboxPlugin = async () => ({

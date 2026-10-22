@@ -68,6 +68,9 @@ func TestApprovalPolicyPersistsAndRejectsInvalidValues(t *testing.T) {
 	if code != http.StatusOK || got.Exists || got.Policy.Mode != ApprovalModeAuto {
 		t.Fatalf("default policy: %d %+v", code, got)
 	}
+	if info, err := os.Stat(policyPath); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("default policy file must be seeded on startup with 0600: %v %v", info, err)
+	}
 	for _, bad := range []map[string]string{
 		{"mode": "yolo"},
 		{"mode": "auto", "bash": "sometimes"},
@@ -77,8 +80,8 @@ func TestApprovalPolicyPersistsAndRejectsInvalidValues(t *testing.T) {
 			t.Fatalf("invalid policy %v accepted: %d", bad, code)
 		}
 	}
-	if _, err := os.Stat(policyPath); !os.IsNotExist(err) {
-		t.Fatalf("rejected policies must not be written: %v", err)
+	if code, got := policyRequest(t, srv, http.MethodGet, "", nil); code != http.StatusOK || got.Exists || got.Policy.Mode != ApprovalModeAuto {
+		t.Fatalf("rejected policies must not overwrite seeded default: %d %+v", code, got)
 	}
 	code, got = policyRequest(t, srv, http.MethodPut, "", ApprovalPolicy{Mode: ApprovalModeManual, Edit: "allow"})
 	if code != http.StatusOK || !got.Exists || got.Policy.Mode != ApprovalModeManual || got.Policy.Edit != "allow" {

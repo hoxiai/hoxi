@@ -29,6 +29,7 @@ const [usageHistoryLoading, setUsageHistoryLoading] = createSignal(false);
 const [usageHistoryError, setUsageHistoryError] = createSignal("");
 
 let inFlight = false;
+let historyGeneration = 0;
 
 export { usageHistory, usageHistoryRange, usageHistoryLoading, usageHistoryError, setUsageHistoryRange };
 
@@ -63,7 +64,8 @@ export async function loadUsageHistory(
   days: UsageHistoryRange = usageHistoryRange(),
   manual = false
 ): Promise<void> {
-  if (inFlight && !manual) return;
+  if (inFlight && !manual && days === usageHistoryRange()) return;
+  const gen = ++historyGeneration;
   inFlight = true;
   setUsageHistoryRange(days);
   setUsageHistoryLoading(true);
@@ -71,18 +73,23 @@ export async function loadUsageHistory(
   try {
     // Pricing must be present before the days are priced.
     await syncOfficialModelPricing();
+    if (gen !== historyGeneration) return;
     const res = await hoxiAPI.getDevPulseHistory(days, workspace.rootDir || undefined);
+    if (gen !== historyGeneration) return;
     if (!res || !Array.isArray(res.days)) {
       setUsageHistory([]);
       return;
     }
     setUsageHistory(res.days.map(priceHistoryDay));
   } catch (err: any) {
+    if (gen !== historyGeneration) return;
     setUsageHistory([]);
     setUsageHistoryError(String(err?.message || err || ""));
   } finally {
-    inFlight = false;
-    setUsageHistoryLoading(false);
+    if (gen === historyGeneration) {
+      inFlight = false;
+      setUsageHistoryLoading(false);
+    }
   }
 }
 

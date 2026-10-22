@@ -17,8 +17,9 @@ func (g *Gateway) servePairedRequest(w http.ResponseWriter, r *http.Request, sou
 	}
 	// The shared host/origin guard trusts loopback authorities only. The pairing
 	// token, not the Host header, is the access control here, so present a
-	// trusted authority before the request reaches that guard.
-	r.Host = "127.0.0.1"
+	// trusted authority and strip untrusted browser/proxy headers before the
+	// request reaches that guard.
+	sanitizeRemoteRequest(r)
 	g.serveRemoteRequest(w, r, source)
 }
 

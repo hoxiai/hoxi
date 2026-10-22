@@ -1,6 +1,7 @@
 package handoff
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"path/filepath"
@@ -44,6 +45,7 @@ type Service struct {
 	credSyncMu       sync.Mutex
 	credSyncStarted  bool
 	credSyncStop     chan struct{}
+	credSyncDone     chan struct{}
 	codexAuthApplied string
 }
 
@@ -85,35 +87,62 @@ func (g *Service) startCredentialSync() {
 	if g.credSyncStarted {
 		return
 	}
+	stop := make(chan struct{})
+	done := make(chan struct{})
 	g.credSyncStarted = true
-	g.credSyncStop = make(chan struct{})
-	go g.credentialSyncLoop()
+	g.credSyncStop = stop
+	g.credSyncDone = done
+	go g.credentialSyncLoop(stop, done)
 }
 
 // StopCredentialSync ends the background sync. Tests that start it must call
 // this so the goroutine is gone before the test mutates the environment.
 func (g *Service) StopCredentialSync() {
 	g.credSyncMu.Lock()
-	defer g.credSyncMu.Unlock()
-	if g.credSyncStop == nil {
-		return
-	}
-	close(g.credSyncStop)
+	stop := g.credSyncStop
+	done := g.credSyncDone
 	g.credSyncStop = nil
+	g.credSyncDone = nil
+	g.credSyncStarted = false
+	g.credSyncMu.Unlock()
+	if stop != nil {
+		close(stop)
+	}
+	if done != nil {
+		<-done
+	}
 }
 
-func (g *Service) credentialSyncLoop() {
+func (g *Service) credentialSyncLoop(stop <-chan struct{}, done chan<- struct{}) {
+	defer close(done)
 	g.syncCodexCredential()
 	ticker := time.NewTicker(credentialSyncInterval)
 	defer ticker.Stop()
 	for {
 		select {
-		case <-g.credSyncStop:
+		case <-stop:
 			return
 		case <-ticker.C:
 			g.syncCodexCredential()
 		}
 	}
+}
+
+func isImportedCodexProvider(raw interface{}) bool {
+	prov, ok := raw.(map[string]interface{})
+	if !ok || prov == nil {
+		return false
+	}
+	return strings.TrimSpace(asString(prov["name"])) == "OpenAI Codex (Local)"
+}
+
+func (g *Service) pushCodexEngineAuth(body map[string]interface{}, timeout time.Duration) bool {
+	if g == nil || g.openCode == nil || !g.openCode.Available() || body == nil {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	return g.openCode.JSON(ctx, http.MethodPut, "/auth/openai", nil, body, nil) == nil
 }
 
 // syncCodexCredential re-reads the Codex CLI credential and forwards it to the
@@ -122,7 +151,7 @@ func (g *Service) credentialSyncLoop() {
 // pushed until the user has actually imported Codex, so an unrelated openai
 // provider is left untouched.
 func (g *Service) syncCodexCredential() {
-	if _, imported := g.loadHoxiProvidersMap()["openai"]; !imported {
+	if !isImportedCodexProvider(g.loadHoxiProvidersMap()["openai"]) {
 		return
 	}
 	cDir := codexHomeDir()
@@ -136,15 +165,16 @@ func (g *Service) syncCodexCredential() {
 	}
 	g.credSyncMu.Lock()
 	unchanged := fingerprint == g.codexAuthApplied
-	if !unchanged {
-		g.codexAuthApplied = fingerprint
-	}
 	g.credSyncMu.Unlock()
 	if unchanged {
 		return
 	}
-	g.sendEngineAuth("openai", body, 5*time.Second)
 	g.mergeOpenCodeEngineAuthFile(map[string]interface{}{"openai": body})
+	if g.pushCodexEngineAuth(body, 5*time.Second) {
+		g.credSyncMu.Lock()
+		g.codexAuthApplied = fingerprint
+		g.credSyncMu.Unlock()
+	}
 }
 
 func (g *Service) RegisterRoutes(mux *http.ServeMux) {

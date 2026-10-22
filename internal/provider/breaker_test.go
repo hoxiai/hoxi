@@ -7,6 +7,9 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -253,6 +256,68 @@ func TestBreakerPersistsAcrossReload(t *testing.T) {
 	snap, ok := reloaded.Snapshot()["p/m"]
 	if !ok || snap.LastClass != string(breakerClassConfig) {
 		t.Fatalf("expected persisted config class, got %+v", snap)
+	}
+}
+
+func TestBreakerFailureDoesNotInitializeLatencyAndStaleLatencyExpires(t *testing.T) {
+	_, dir := setupIsolatedEnv(t)
+	store := newBreakerStore(dir)
+	now := time.Now()
+	store.nowFn = func() time.Time { return now }
+
+	// A timeout on an untested candidate must not initialize LatencyEwmaMs.
+	store.RecordFailure("untested", "m", breakerClassTransient, 504, 15000, "timeout")
+	if got := store.LatencyMs("untested", "m"); got != 0 {
+		t.Fatalf("failure on untested model initialized LatencyMs = %v, want 0", got)
+	}
+
+	// Once a baseline exists, a failure blends at 15% weight.
+	store.RecordSuccess("tested", "m", 1000)
+	store.RecordFailure("tested", "m", breakerClassTransient, 504, 11000, "timeout")
+	if got := store.LatencyMs("tested", "m"); got < 2400 || got > 2600 {
+		t.Fatalf("blended latency = %v, want ~2500", got)
+	}
+
+	// After the staleness window, LatencyMs decays to 0 so slow candidates can be re-probed.
+	now = now.Add(31 * time.Minute)
+	if got := store.LatencyMs("tested", "m"); got != 0 {
+		t.Fatalf("stale latency = %v, want 0 after 31m", got)
+	}
+}
+
+func TestBreakerExpiredOpenConsistencyAndCorruptBackup(t *testing.T) {
+	_, dir := setupIsolatedEnv(t)
+	store := newBreakerStore(dir)
+	now := time.Now()
+	store.nowFn = func() time.Time { return now }
+
+	store.RecordFailure("p", "m", breakerClassRateLimit, 429, 0, "429")
+	now = now.Add(5 * time.Minute)
+
+	allowed, evalScore := store.Evaluate("p", "m")
+	score := store.Score("p", "m")
+	snap := store.Snapshot()["p/m"]
+	if !allowed || evalScore != 0.3 || score != 0.3 || snap.Open || snap.Score != 0.3 {
+		t.Fatalf("expired-open mismatch: allowed=%v eval=%v score=%v snap=%+v", allowed, evalScore, score, snap)
+	}
+
+	// Corrupt JSON file is backed up to .corrupt-<ms> on read.
+	corruptPath := filepath.Join(dir, "corrupt-models.json")
+	if err := os.WriteFile(corruptPath, []byte("{not-json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := readJSONMapFile(corruptPath); got != nil {
+		t.Fatalf("expected nil for corrupt JSON, got %v", got)
+	}
+	entries, _ := os.ReadDir(dir)
+	backedUp := false
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "corrupt-models.json.corrupt-") {
+			backedUp = true
+		}
+	}
+	if !backedUp {
+		t.Fatal("expected corrupt JSON file to be backed up with .corrupt- suffix")
 	}
 }
 

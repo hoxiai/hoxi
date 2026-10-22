@@ -1,6 +1,7 @@
 package tunnel
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Config is the long-lived tunnel credential issued by GoPanel pairing.
@@ -47,12 +49,26 @@ func (s *Store) Load() (Config, error) {
 	}
 	var cfg Config
 	if err := json.Unmarshal(data, &cfg); err != nil {
+		if len(bytes.TrimSpace(data)) > 0 {
+			backupCorruptTunnelFile(s.path)
+		}
 		return Config{}, fmt.Errorf("read tunnel config: %w", err)
 	}
 	if !cfg.valid() {
+		if len(bytes.TrimSpace(data)) > 0 {
+			backupCorruptTunnelFile(s.path)
+		}
 		return Config{}, os.ErrNotExist
 	}
 	return cfg, nil
+}
+
+func backupCorruptTunnelFile(path string) {
+	if path == "" {
+		return
+	}
+	backup := fmt.Sprintf("%s.corrupt-%d", path, time.Now().UTC().UnixNano())
+	_ = os.Rename(path, backup)
 }
 
 func (s *Store) Save(cfg Config) error {
@@ -60,6 +76,12 @@ func (s *Store) Save(cfg Config) error {
 	defer s.mu.Unlock()
 	if s.path == "" {
 		return errors.New("tunnel config path is unknown")
+	}
+	if existing, err := os.ReadFile(s.path); err == nil && len(bytes.TrimSpace(existing)) > 0 {
+		var prev Config
+		if json.Unmarshal(existing, &prev) != nil || !prev.valid() {
+			backupCorruptTunnelFile(s.path)
+		}
 	}
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
@@ -78,6 +100,10 @@ func (s *Store) Save(cfg Config) error {
 		return err
 	}
 	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
 		_ = tmp.Close()
 		return err
 	}

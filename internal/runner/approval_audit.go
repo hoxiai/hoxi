@@ -279,6 +279,7 @@ func (s *approvalAuditStore) clear() error {
 }
 
 func (s *approvalAuditStore) rememberOpenCodePerm(item map[string]interface{}, directory string) {
+	sanitizeOpenCodePermissionItem(item)
 	id, _ := item["id"].(string)
 	id = strings.TrimSpace(id)
 	if id == "" || strings.HasPrefix(id, runnerPermissionID) {
@@ -323,27 +324,37 @@ func (s *approvalAuditStore) lookupOpenCodePerm(id string) (openCodePermSnapshot
 func summarizePermissionItem(item map[string]interface{}) (string, string) {
 	meta, _ := item["metadata"].(map[string]interface{})
 	tool := firstString(meta["tool"], item["permission"], item["type"])
-	if cmd := firstString(meta["command"], meta["cmd"], item["pattern"]); cmd != "" {
+	if cmd := stripOpenCodeStopMarkerText(firstString(meta["command"], meta["cmd"], item["pattern"])); cmd != "" {
 		return cmd, firstNonEmptyStr(tool, "bash")
 	}
 	if args := firstString(meta["args"]); args != "" {
 		return firstNonEmptyStr(tool, "tool") + " " + args, tool
 	}
 	if patterns, ok := item["patterns"].([]string); ok && len(patterns) > 0 {
-		return strings.Join(patterns, " "), tool
-	}
-	if rawPatterns, ok := item["patterns"].([]interface{}); ok && len(rawPatterns) > 0 {
-		parts := make([]string, 0, len(rawPatterns))
-		for _, p := range rawPatterns {
-			if s, ok := p.(string); ok && strings.TrimSpace(s) != "" {
-				parts = append(parts, strings.TrimSpace(s))
+		parts := make([]string, 0, len(patterns))
+		for _, p := range patterns {
+			if cleaned := strings.TrimSpace(stripOpenCodeStopMarkerText(p)); cleaned != "" {
+				parts = append(parts, cleaned)
 			}
 		}
 		if len(parts) > 0 {
 			return strings.Join(parts, " "), tool
 		}
 	}
-	return firstNonEmptyStr(firstString(item["title"], meta["description"]), tool, "permission"), tool
+	if rawPatterns, ok := item["patterns"].([]interface{}); ok && len(rawPatterns) > 0 {
+		parts := make([]string, 0, len(rawPatterns))
+		for _, p := range rawPatterns {
+			if s, ok := p.(string); ok {
+				if cleaned := strings.TrimSpace(stripOpenCodeStopMarkerText(s)); cleaned != "" {
+					parts = append(parts, cleaned)
+				}
+			}
+		}
+		if len(parts) > 0 {
+			return strings.Join(parts, " "), tool
+		}
+	}
+	return firstNonEmptyStr(stripOpenCodeStopMarkerText(firstString(item["title"], meta["description"])), tool, "permission"), tool
 }
 
 func redactApprovalText(v string, limit int) string {

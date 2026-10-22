@@ -10,6 +10,7 @@ import {
   cancelRemoteTunnel,
   disableRemoteTunnel,
   loadRemoteTunnelStatus,
+  openExternalURL,
   pairRemoteTunnel,
   remoteTunnel,
   requestRemoteTunnel,
@@ -57,6 +58,13 @@ export function RemoteTunnelControls() {
   const pending = () => remoteTunnel.status.pending;
   const waiting = () => pending()?.state === "waiting";
   const showForm = () => !remoteTunnel.status.enabled && !waiting();
+  const panelBaseUrl = () => (controllerUrl().trim() || remoteTunnel.status.controllerUrl || "").replace(/\/+$/, "");
+  // Deep-link into the GoPanel node page, where the tunnel authorization
+  // request is approved (节点 → 隧道设置 → 授权请求).
+  const panelUrl = () => {
+    const base = panelBaseUrl();
+    return base ? `${base}/node/index` : "";
+  };
 
   let refreshTimer: number | undefined;
 
@@ -90,7 +98,13 @@ export function RemoteTunnelControls() {
 
   const onAuthorize = async (event: Event) => {
     event.preventDefault();
-    await requestRemoteTunnel({ controllerUrl: controllerUrl().trim(), name: name().trim() });
+    const ok = await requestRemoteTunnel({ controllerUrl: controllerUrl().trim(), name: name().trim() });
+    // Jump straight to GoPanel so an admin can approve the pending request
+    // without opening the console by hand.
+    if (ok) {
+      const target = panelUrl();
+      if (target) openExternalURL(target);
+    }
   };
 
   const onPair = async (event: Event) => {
@@ -141,14 +155,14 @@ export function RemoteTunnelControls() {
             <p class="text-[12px] text-[var(--text-muted)]">{t("remoteTunnel.expiresIn", { time: remaining() })}</p>
             <p class="text-[12px] text-[var(--text-secondary)]">{t("remoteTunnel.waitingHint")}</p>
             <div class="flex items-center gap-2">
-              <button type="button" class={buttonClass} onClick={() => void cancelRemoteTunnel()}>
+              <button type="button" class={buttonClass} disabled={remoteTunnel.busy} onClick={() => void cancelRemoteTunnel()}>
                 <span>{t("remoteTunnel.cancelAction")}</span>
               </button>
-              <Show when={controllerUrl().trim()}>
-                <a class={linkButtonClass} href={controllerUrl().trim()} target="_blank" rel="noreferrer">
+              <Show when={panelUrl()}>
+                <button type="button" class={linkButtonClass} onClick={() => openExternalURL(panelUrl())}>
                   <ExternalLink size={13} />
                   <span>{t("remoteTunnel.openPanelAction")}</span>
-                </a>
+                </button>
               </Show>
             </div>
           </div>

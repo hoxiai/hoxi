@@ -23,13 +23,13 @@ import {
   deleteCustomAutoPool,
   extractFlattenedModels,
   fetchFreeTierGuides,
+  filterSlowCandidates,
   getAutoPoolDescription,
   getAutoPoolDisplayName,
-  getCandidateCooldownRemainingMs,
+  getCandidatePoolStatus,
   getEffectivePoolCandidates,
   getFreeTierGuideItems,
   getStoredPoolCandidates,
-  isCandidateCoolingDown,
   openExternalURL,
   openProviderModal,
   peekAutoModelTarget,
@@ -42,6 +42,7 @@ import {
   workspace,
   type AutoPoolCandidate,
   type AutoRotationStrategy,
+  type CandidatePoolStatus,
   type FreeTierGuideItem,
 } from "../../store/workspace";
 import { ProviderIcon } from "../icons";
@@ -54,6 +55,69 @@ function formatCooldownRemain(ms: number): string {
   const min = Math.ceil(sec / 60);
   if (min < 60) return `${min}m`;
   return `${Math.ceil(min / 60)}h`;
+}
+
+function failClassLabel(cls?: string): string | null {
+  switch (cls) {
+    case "rate_limit":
+      return t("models.autoPoolFailRateLimit");
+    case "quota":
+      return t("models.autoPoolFailQuota");
+    case "config":
+      return t("models.autoPoolFailConfig");
+    case "transient":
+      return t("models.autoPoolFailTransient");
+    case undefined:
+    case "":
+      return null;
+    default:
+      return t("models.autoPoolFailUnknown");
+  }
+}
+
+function latencyNote(latencyMs: number | null): string {
+  return latencyMs && latencyMs > 0
+    ? t("models.autoPoolLatencyNote", { ms: Math.round(latencyMs) })
+    : "";
+}
+
+function candidateStatusView(st: CandidatePoolStatus): {
+  label: string;
+  cls: string;
+  title: string;
+} {
+  switch (st.state) {
+    case "breaker": {
+      const bits = [failClassLabel(st.failClass)];
+      if (st.consecutiveFailures) {
+        bits.push(t("models.autoPoolFailStreak", { count: st.consecutiveFailures }));
+      }
+      bits.push(latencyNote(st.latencyMs));
+      return {
+        label: t("models.autoPoolBreakerStatus", { remain: formatCooldownRemain(st.remainMs) }),
+        cls: "bg-[var(--err-surface)] text-[var(--err)]",
+        title: bits.filter(Boolean).join(" · "),
+      };
+    }
+    case "cooldown":
+      return {
+        label: t("models.autoPoolCoolingDown", { remain: formatCooldownRemain(st.remainMs) }),
+        cls: "bg-amber-500/15 text-amber-500",
+        title: latencyNote(st.latencyMs),
+      };
+    case "slow":
+      return {
+        label: t("models.autoPoolSlowStatus"),
+        cls: "bg-[var(--bg-hover)] text-[var(--text-muted)]",
+        title: latencyNote(st.latencyMs),
+      };
+    default:
+      return {
+        label: t("models.autoPoolReadyStatus"),
+        cls: "bg-[var(--ok-surface)] text-[var(--ok-text)]",
+        title: latencyNote(st.latencyMs),
+      };
+  }
 }
 
 export default function AutoModelPoolTab() {
@@ -121,8 +185,22 @@ export default function AutoModelPoolTab() {
 
   const readyCount = createMemo(
     () =>
-      effectiveCandidates().filter((c) => !isCandidateCoolingDown(c.providerID, c.modelID)).length
+      effectiveCandidates().filter((c) => {
+        const st = getCandidatePoolStatus(c.providerID, c.modelID).state;
+        return st !== "breaker" && st !== "cooldown";
+      }).length
   );
+
+  // Candidates the generational filter would sidestep this rotation (healthy but
+  // far slower than the fastest peer). Derived from the same helper selection
+  // uses, so the badge can never claim "ready" for a model that never runs.
+  const slowKeys = createMemo<Set<string>>(() => {
+    const cands = effectiveCandidates();
+    if (cands.length <= 1) return new Set<string>();
+    const key = (c: { providerID: string; modelID: string }) => `${c.providerID}/${c.modelID}`;
+    const kept = new Set(filterSlowCandidates(cands).map(key));
+    return new Set(cands.filter((c) => !kept.has(key(c))).map(key));
+  });
 
   const activeTarget = createMemo(() => peekAutoModelTarget(selectedPoolID()));
 
@@ -135,6 +213,18 @@ export default function AutoModelPoolTab() {
       if (freeFilterOnly() && !m.free) return false;
       return true;
     });
+  });
+
+  const validSelection = createMemo(
+    () =>
+      Boolean(selectedAddKey()) &&
+      addableModels().some((m) => `${m.providerID}/${m.modelID}` === selectedAddKey())
+  );
+
+  createEffect(() => {
+    if (selectedAddKey() && !validSelection()) {
+      setSelectedAddKey("");
+    }
   });
 
   const lookupModelMeta = (providerID: string, modelID: string) => {
@@ -163,7 +253,7 @@ export default function AutoModelPoolTab() {
 
   const handleAddCandidate = async () => {
     const rawKey = selectedAddKey();
-    if (!rawKey || !rawKey.includes("/")) return;
+    if (!rawKey || !rawKey.includes("/") || !validSelection()) return;
     const idx = rawKey.indexOf("/");
     const providerID = rawKey.slice(0, idx);
     const modelID = rawKey.slice(idx + 1);
@@ -425,9 +515,17 @@ export default function AutoModelPoolTab() {
               <For each={effectiveCandidates()}>
                 {(cand, idx) => {
                   const meta = () => lookupModelMeta(cand.providerID, cand.modelID);
-                  const cooling = () => isCandidateCoolingDown(cand.providerID, cand.modelID);
-                  const remainMs = () =>
-                    getCandidateCooldownRemainingMs(cand.providerID, cand.modelID);
+                  const status = (): CandidatePoolStatus => {
+                    const st = getCandidatePoolStatus(cand.providerID, cand.modelID);
+                    if (
+                      st.state === "ready" &&
+                      slowKeys().has(`${cand.providerID}/${cand.modelID}`)
+                    ) {
+                      return { ...st, state: "slow" };
+                    }
+                    return st;
+                  };
+                  const view = () => candidateStatusView(status());
                   const isCurrentTarget = () =>
                     activeTarget()?.providerID === cand.providerID &&
                     activeTarget()?.modelID === cand.modelID;
@@ -460,17 +558,10 @@ export default function AutoModelPoolTab() {
 
                       <div class="flex items-center gap-1 shrink-0">
                         <span
-                          class={`rounded-md px-1.5 py-0.5 text-[11px] font-semibold ${
-                            cooling()
-                              ? "bg-amber-500/15 text-amber-500"
-                              : "bg-[var(--ok-surface)] text-[var(--ok-text)]"
-                          }`}
+                          title={view().title}
+                          class={`rounded-md px-1.5 py-0.5 text-[11px] font-semibold ${view().cls}`}
                         >
-                          {cooling()
-                            ? t("models.autoPoolCoolingDown", {
-                                remain: formatCooldownRemain(remainMs()),
-                              })
-                            : t("models.autoPoolReadyStatus")}
+                          {view().label}
                         </span>
                         <button
                           type="button"
@@ -524,7 +615,7 @@ export default function AutoModelPoolTab() {
               />
               <button
                 type="button"
-                disabled={addableModels().length === 0}
+                disabled={!validSelection()}
                 onClick={() => void handleAddCandidate()}
                 class="shrink-0 inline-flex items-center gap-1 rounded-xl border border-[var(--accent-border)] bg-[var(--accent-surface)] px-2.5 py-1 text-[12px] font-semibold text-[var(--accent-primary)] hover:opacity-90 disabled:opacity-40 cursor-pointer"
               >

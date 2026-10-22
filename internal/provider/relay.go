@@ -198,9 +198,9 @@ func (s *Service) relayResolveModel(raw string) (providerID, modelID string, err
 		return "", "", errors.New("model is required")
 	}
 	if raw == AutoProviderID || strings.HasPrefix(raw, AutoProviderID+"/") {
-		poolID := strings.TrimPrefix(raw, AutoProviderID+"/")
-		if poolID == raw {
-			poolID = ""
+		poolID := strings.TrimSpace(strings.TrimPrefix(raw, AutoProviderID+"/"))
+		if poolID == raw || poolID == "" {
+			poolID = "free"
 		}
 		// The auto pool may contain Anthropic-native or CLI-only entries that
 		// this OpenAI-compatible plane cannot serve. Rotate past them instead of
@@ -388,14 +388,18 @@ func (s *Service) serveRelayChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ttftMs := elapsedMs()
+	if ttftMs <= 0 {
+		ttftMs = 1
+	}
 	copyRelayHeaders(w.Header(), resp.Header)
 	w.WriteHeader(resp.StatusCode)
 	if err := streamRelayBody(w, resp.Body); err != nil {
-		s.recordBreakerFailure(providerID, modelID, classifyCandidateFailure(resp.StatusCode, err, nil), resp.StatusCode, elapsedMs(), err.Error())
+		s.recordBreakerFailure(providerID, modelID, classifyCandidateFailure(resp.StatusCode, err, nil), resp.StatusCode, ttftMs, err.Error())
 		recordRelayFailure(providerID, modelID, resp.StatusCode, started)
 		return
 	}
-	s.recordBreakerSuccess(providerID, modelID, elapsedMs())
+	s.recordBreakerSuccess(providerID, modelID, ttftMs)
 }
 
 func (s *Service) relayProviderConfig(providerID string) (map[string]any, bool) {

@@ -1,13 +1,16 @@
 package worktree
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
 )
@@ -42,23 +45,42 @@ func SetAttributionEnabled(enabled bool) { attributionOff.Store(!enabled) }
 // home is unknown.
 func AttributionPath() string { return hoxipaths.Join(AttributionFile) }
 
-// LoadAttribution reads the stored preference. A missing, unreadable or
-// malformed file keeps the default (enabled).
-func LoadAttribution(path string) AttributionState {
-	if strings.TrimSpace(path) == "" {
-		return AttributionState{Enabled: true}
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return AttributionState{Enabled: true}
-	}
+func parseAttributionJSON(data []byte) (bool, bool) {
 	var stored struct {
 		Enabled *bool `json:"enabled"`
 	}
 	if json.Unmarshal(data, &stored) != nil || stored.Enabled == nil {
+		return false, false
+	}
+	return *stored.Enabled, true
+}
+
+func backupCorruptAttributionLocked(path string, data []byte) {
+	if len(bytes.TrimSpace(data)) == 0 {
+		return
+	}
+	backup := fmt.Sprintf("%s.corrupt-%s", path, time.Now().UTC().Format("20060102T150405.000000000"))
+	_ = os.Rename(path, backup)
+}
+
+// LoadAttribution reads the stored preference. A missing, unreadable or
+// malformed file keeps the default (enabled) and backs up any corrupt file.
+func LoadAttribution(path string) AttributionState {
+	if strings.TrimSpace(path) == "" {
 		return AttributionState{Enabled: true}
 	}
-	return AttributionState{Enabled: *stored.Enabled}
+	attributionMu.Lock()
+	defer attributionMu.Unlock()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return AttributionState{Enabled: true}
+	}
+	enabled, ok := parseAttributionJSON(data)
+	if !ok {
+		backupCorruptAttributionLocked(path, data)
+		return AttributionState{Enabled: true}
+	}
+	return AttributionState{Enabled: enabled}
 }
 
 // SaveAttribution atomically persists the preference (0600) and applies it.
@@ -68,6 +90,11 @@ func SaveAttribution(path string, enabled bool) error {
 	}
 	attributionMu.Lock()
 	defer attributionMu.Unlock()
+	if data, err := os.ReadFile(path); err == nil {
+		if _, ok := parseAttributionJSON(data); !ok {
+			backupCorruptAttributionLocked(path, data)
+		}
+	}
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err

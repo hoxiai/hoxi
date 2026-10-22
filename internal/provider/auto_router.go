@@ -223,10 +223,82 @@ func (g *Service) resolveBackendAutoCandidate(providerID, modelID string) (strin
 	return g.selectAutoCandidate(poolID, nil)
 }
 
+func (g *Service) disabledProvidersSet() map[string]bool {
+	out := map[string]bool{}
+	doc := g.loadHoxiConfigDoc()
+	switch raw := doc["disabled_providers"].(type) {
+	case []interface{}:
+		for _, item := range raw {
+			if s, ok := item.(string); ok && strings.TrimSpace(s) != "" {
+				out[strings.TrimSpace(s)] = true
+				out[strings.ToLower(strings.TrimSpace(s))] = true
+			}
+		}
+	case []string:
+		for _, s := range raw {
+			if strings.TrimSpace(s) != "" {
+				out[strings.TrimSpace(s)] = true
+				out[strings.ToLower(strings.TrimSpace(s))] = true
+			}
+		}
+	}
+	return out
+}
+
+func isNonChatUtilityCandidate(modelID string, mObj map[string]interface{}) bool {
+	if isNonChatUtilityModel(modelID) {
+		return true
+	}
+	if mObj == nil {
+		return false
+	}
+	if name, _ := mObj["name"].(string); strings.TrimSpace(name) != "" && isNonChatUtilityModel(name) {
+		return true
+	}
+	if tc, ok := mObj["tool_call"].(bool); ok && !tc {
+		return true
+	}
+	if caps, ok := mObj["capabilities"].(map[string]interface{}); ok {
+		if tc, ok := caps["toolcall"].(bool); ok && !tc {
+			return true
+		}
+	}
+	return false
+}
+
+func isFreeCandidateModel(providerID, modelID string, mObj map[string]interface{}) bool {
+	lowerID := strings.ToLower(strings.TrimSpace(modelID))
+	if strings.HasSuffix(lowerID, ":free") || strings.HasSuffix(lowerID, "-free") {
+		return true
+	}
+	if mObj != nil {
+		if free, ok := mObj["free"].(bool); ok && free {
+			return true
+		}
+		if mult, ok := mObj["multiplier"].(string); ok && strings.TrimSpace(mult) == "0x" {
+			return true
+		}
+		if cost, ok := mObj["cost"].(map[string]interface{}); ok {
+			inVal, hasIn := cost["input"]
+			outVal, hasOut := cost["output"]
+			if hasIn && positiveNumber(inVal) == 0 && (!hasOut || positiveNumber(outVal) == 0) {
+				return true
+			}
+		} else if providerID == "opencode" || providerID == "opencode-go" {
+			return true
+		}
+	}
+	return false
+}
+
 // autoPoolCandidateList resolves a pool id into concrete candidates. A
 // customized pool is authoritative: when the user removes every candidate we
 // must not silently pick a deleted model again.
 func (g *Service) autoPoolCandidateList(poolID string) []AutoPoolCandidate {
+	poolID = strings.TrimSpace(poolID)
+	if poolID == "" {
+		poolID = "free"
+	}
 	pools := g.loadAutoPoolsMap()
 	var candidates []AutoPoolCandidate
 	customized := false
@@ -251,11 +323,16 @@ func (g *Service) autoPoolCandidateList(poolID string) []AutoPoolCandidate {
 	// Preset pools that were never customized keep their candidates empty in the
 	// store (the UI derives smart defaults), so the catalog fallback is required.
 	if len(candidates) == 0 && !customized {
+		disabledSet := g.disabledProvidersSet()
 		merged := g.loadOpenCodeImportedProviderMap()
 		for k, v := range g.loadHoxiProvidersMap() {
 			merged[k] = v
 		}
+		var allChat, freeOnly []AutoPoolCandidate
 		for _, pid := range sortedKeys(merged) {
+			if pid == AutoProviderID || disabledSet[pid] || disabledSet[strings.ToLower(pid)] {
+				continue
+			}
 			pObj, ok := merged[pid].(map[string]interface{})
 			if !ok {
 				continue
@@ -265,14 +342,31 @@ func (g *Service) autoPoolCandidateList(poolID string) []AutoPoolCandidate {
 				continue
 			}
 			for _, mid := range sortedKeys(mMap) {
-				candidates = append(candidates, AutoPoolCandidate{ProviderID: pid, ModelID: mid})
+				mObj, _ := mMap[mid].(map[string]interface{})
+				if isNonChatUtilityCandidate(mid, mObj) {
+					continue
+				}
+				cand := AutoPoolCandidate{ProviderID: pid, ModelID: mid}
+				allChat = append(allChat, cand)
+				if isFreeCandidateModel(pid, mid, mObj) {
+					freeOnly = append(freeOnly, cand)
+				}
 			}
+		}
+		if poolID == "free" {
+			candidates = freeOnly
+		} else {
+			candidates = allChat
 		}
 	}
 	return candidates
 }
 
 func (g *Service) autoPoolStrategy(poolID string) string {
+	poolID = strings.TrimSpace(poolID)
+	if poolID == "" {
+		poolID = "free"
+	}
 	if pools, ok := g.loadAutoPoolsMap()[poolID].(map[string]interface{}); ok {
 		if s, ok := pools["strategy"].(string); ok && strings.TrimSpace(s) != "" {
 			return strings.TrimSpace(s)
@@ -293,6 +387,10 @@ func (g *Service) autoPoolStrategy(poolID string) string {
 // models never shadow a healthy one; when every candidate is cooling down the
 // least-bad one is returned so the caller degrades instead of hard-failing.
 func (g *Service) selectAutoCandidate(poolID string, exclude map[string]bool) (string, string) {
+	poolID = strings.TrimSpace(poolID)
+	if poolID == "" {
+		poolID = "free"
+	}
 	candidates := g.autoPoolCandidateList(poolID)
 	if len(candidates) == 0 {
 		return AutoProviderID, poolID
@@ -456,6 +554,11 @@ func (g *Service) handleAutoPoolsConfig(w http.ResponseWriter, r *http.Request) 
 			writeJSONError(w, http.StatusBadRequest, "Invalid JSON payload")
 			return
 		}
+		if req.AutoPools == nil && (strings.TrimSpace(req.PoolID) == "" || req.Pool == nil) {
+			writeJSONError(w, http.StatusBadRequest, "poolID/pool or autoPools is required")
+			return
+		}
+		g.configPersistMu.Lock()
 		doc := g.loadAutoPoolsDoc()
 		existing, _ := doc["autoPools"].(map[string]interface{})
 		if existing == nil {
@@ -471,18 +574,18 @@ func (g *Service) handleAutoPoolsConfig(w http.ResponseWriter, r *http.Request) 
 			cleaned := stripNullsMap(req.Pool)
 			cleaned["id"] = pid
 			existing[pid] = cleaned
-		} else {
-			writeJSONError(w, http.StatusBadRequest, "poolID/pool or autoPools is required")
-			return
 		}
 		doc["autoPools"] = existing
-		if err := g.persistAutoPoolsDoc(doc); err != nil {
+		err := g.persistAutoPoolsDoc(doc)
+		poolsSnapshot := g.loadAutoPoolsMap()
+		g.configPersistMu.Unlock()
+		if err != nil {
 			writeJSONError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"ok":        true,
-			"autoPools": g.loadAutoPoolsMap(),
+			"autoPools": poolsSnapshot,
 		})
 
 	case http.MethodDelete:
@@ -491,8 +594,10 @@ func (g *Service) handleAutoPoolsConfig(w http.ResponseWriter, r *http.Request) 
 			writeJSONError(w, http.StatusBadRequest, "poolID is required")
 			return
 		}
+		g.configPersistMu.Lock()
 		doc := g.loadAutoPoolsDoc()
 		existing, _ := doc["autoPools"].(map[string]interface{})
+		var err error
 		if existing != nil {
 			defaults := defaultAutoPoolsMap()
 			if defPool, isPreset := defaults[poolID]; isPreset {
@@ -501,14 +606,17 @@ func (g *Service) handleAutoPoolsConfig(w http.ResponseWriter, r *http.Request) 
 				delete(existing, poolID)
 			}
 			doc["autoPools"] = existing
-			if err := g.persistAutoPoolsDoc(doc); err != nil {
-				writeJSONError(w, http.StatusInternalServerError, err.Error())
-				return
-			}
+			err = g.persistAutoPoolsDoc(doc)
+		}
+		poolsSnapshot := g.loadAutoPoolsMap()
+		g.configPersistMu.Unlock()
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
+			return
 		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"ok":        true,
-			"autoPools": g.loadAutoPoolsMap(),
+			"autoPools": poolsSnapshot,
 		})
 
 	default:

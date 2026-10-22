@@ -97,7 +97,7 @@ func (m *worktreeManager) scoped(dir, sessionID string) *worktreeManager {
 			scoped.mu.RLock()
 			meta, ok := scoped.sessions[sessionID]
 			scoped.mu.RUnlock()
-			if ok && meta.Directory == abs {
+			if ok && (meta.Directory == abs || sameDirectory(meta.Directory, dir)) {
 				m.roots.Unlock()
 				return scoped
 			}
@@ -126,6 +126,42 @@ func (m *worktreeManager) scoped(dir, sessionID string) *worktreeManager {
 		}
 	}
 	return m
+}
+
+func sandboxParentRoot(dir string) string {
+	slash := filepath.ToSlash(filepath.Clean(strings.TrimSpace(dir)))
+	if idx := strings.Index(slash, "/.hoxi/worktrees/"); idx > 0 {
+		return filepath.FromSlash(slash[:idx])
+	}
+	return ""
+}
+
+func sameDirectory(left, right string) bool {
+	l, errL := bindingFromDirectory(strings.TrimSpace(left))
+	r, errR := bindingFromDirectory(strings.TrimSpace(right))
+	return errL == nil && errR == nil && l.Directory == r.Directory
+}
+
+func (m *worktreeManager) sessionAllowsDirectory(sessionID, dir string) bool {
+	sessionID = sanitizeSessionID(sessionID)
+	dir = strings.TrimSpace(dir)
+	if sessionID == "" || sessionID == "__root__" {
+		return true
+	}
+	binding, known, err := m.BindingForSession(sessionID)
+	if err != nil {
+		return false
+	}
+	if !known || dir == "" {
+		return true
+	}
+	if sameDirectory(dir, binding.Directory) {
+		return true
+	}
+	if parent := sandboxParentRoot(binding.Directory); parent != "" && sameDirectory(dir, parent) {
+		return true
+	}
+	return false
 }
 
 func (m *worktreeManager) storeMeta(meta worktreeMeta) {

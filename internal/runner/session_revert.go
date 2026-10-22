@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -25,6 +26,7 @@ func (s *Service) recordTurnSnapshot(sessionID, messageID string) {
 		r.Revert = nil
 		r.RevertedTurns = nil
 		r.RevertSnapshot = ""
+		r.RevertPaths = nil
 		if err == nil && snap != "" {
 			if r.Snapshots == nil {
 				r.Snapshots = make(map[string]string)
@@ -130,16 +132,32 @@ func (s *Service) handleSessionRevert(w http.ResponseWriter, r *http.Request, se
 		baseSnap = strings.TrimSpace(rec.RevertSnapshot)
 	}
 	codeChanged := targetSnap != "" && baseSnap != "" && baseSnap != targetSnap
+	var revertPaths []string
 	if targetSnap != "" && strings.TrimSpace(rec.WorktreePath) != "" {
-		if err := worktree.RestoreSnapshot(rec.WorktreePath, targetSnap); err != nil {
-			writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("failed to restore workspace snapshot: %v", err))
+		if scopePaths, scoped, scopeErr := s.resolveLocalRevertPaths(rec, allTurns, targetIdx, body.PartID, targetSnap, baseSnap); scopeErr != nil {
+			writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("failed to restore workspace snapshot: %v", scopeErr))
 			return
+		} else if scoped {
+			if err := worktree.RestoreSnapshotPaths(rec.WorktreePath, targetSnap, scopePaths); err != nil {
+				writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("failed to restore workspace snapshot: %v", err))
+				return
+			}
+			revertPaths = scopePaths
+			codeChanged = len(scopePaths) > 0
+		} else {
+			if err := worktree.RestoreSnapshot(rec.WorktreePath, targetSnap); err != nil {
+				writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("failed to restore workspace snapshot: %v", err))
+				return
+			}
 		}
 	}
 
 	if rec.Revert == nil {
 		rec.RevertSnapshot = createdSnapshot
 		rec.RevertedTurns = cloneTurns(allTurns)
+		rec.RevertPaths = revertPaths
+	} else if len(revertPaths) > 0 {
+		rec.RevertPaths = mergeStringLists(rec.RevertPaths, revertPaths)
 	}
 
 	rec.Turns = truncateTurnsForRevert(allTurns, body.MessageID, body.PartID)
@@ -200,7 +218,13 @@ func (s *Service) handleSessionUnrevert(w http.ResponseWriter, r *http.Request, 
 	}
 
 	if rec.RevertSnapshot != "" && strings.TrimSpace(rec.WorktreePath) != "" {
-		if err := worktree.RestoreSnapshot(rec.WorktreePath, rec.RevertSnapshot); err != nil {
+		var err error
+		if len(rec.RevertPaths) > 0 {
+			err = worktree.RestoreSnapshotPaths(rec.WorktreePath, rec.RevertSnapshot, rec.RevertPaths)
+		} else {
+			err = worktree.RestoreSnapshot(rec.WorktreePath, rec.RevertSnapshot)
+		}
+		if err != nil {
 			writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("failed to restore workspace snapshot: %v", err))
 			return
 		}
@@ -211,6 +235,7 @@ func (s *Service) handleSessionUnrevert(w http.ResponseWriter, r *http.Request, 
 	rec.Revert = nil
 	rec.RevertedTurns = nil
 	rec.RevertSnapshot = ""
+	rec.RevertPaths = nil
 	rec.UpdatedAt = time.Now().UnixMilli()
 
 	if rec.Runtime == "opencode" && rec.ExternalID != "" {
@@ -294,6 +319,7 @@ func (s *Service) handleSessionFork(w http.ResponseWriter, r *http.Request, sess
 		Runtime:          rec.Runtime,
 		ProjectDir:       rec.ProjectDir,
 		SandboxMode:      rec.SandboxMode,
+		CommandSandbox:   rec.CommandSandbox,
 		ModelID:          rec.ModelID,
 		ProviderID:       rec.ProviderID,
 		Mode:             rec.Mode,
@@ -466,4 +492,201 @@ func sliceTurnsForFork(turns []MessageTurn, messageID, newSessionID string) []Me
 		}
 	}
 	return cloned
+}
+
+// resolveLocalRevertPaths scopes file restoration in shared ("local") checkouts
+// so reverting one session does not wipe out unrelated files created or edited
+// by another session or by the user. Isolated `.hoxi/worktrees/<id>` sessions
+// own their worktree exclusively and continue to restore the full snapshot.
+func (s *Service) resolveLocalRevertPaths(
+	rec SessionRecord,
+	turns []MessageTurn,
+	targetIdx int,
+	partID, targetSnap, baseSnap string,
+) ([]string, bool, error) {
+	if isIsolatedWorktree(rec.WorktreePath) {
+		return nil, false, nil
+	}
+	if baseSnap == "" {
+		if snap, err := worktree.CreateSnapshot(rec.WorktreePath); err == nil {
+			baseSnap = snap
+		}
+	}
+	changed, err := worktree.SnapshotChangedPaths(rec.WorktreePath, targetSnap, baseSnap)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(changed) == 0 {
+		return nil, true, nil
+	}
+	changedSet := make(map[string]bool, len(changed))
+	for _, p := range changed {
+		changedSet[p] = true
+	}
+
+	revertedSlice := turns[targetIdx:]
+	explicit := collectTurnEditedRelPaths(rec.WorktreePath, revertedSlice, partID)
+	if len(explicit) > 0 {
+		var scoped []string
+		for _, p := range explicit {
+			if changedSet[p] {
+				scoped = append(scoped, p)
+			}
+		}
+		return scoped, true, nil
+	}
+
+	otherTouched := s.otherLocalSessionEditedPaths(rec.ID, rec.WorktreePath)
+	hasAsst := false
+	for _, t := range revertedSlice {
+		if t.Info.Role == "assistant" {
+			hasAsst = true
+			break
+		}
+	}
+	if !hasAsst {
+		mentioned := matchMentionedChangedPaths(revertedSlice, changed)
+		var scoped []string
+		for _, p := range mentioned {
+			if !otherTouched[p] {
+				scoped = append(scoped, p)
+			}
+		}
+		return scoped, true, nil
+	}
+	if len(otherTouched) > 0 {
+		var scoped []string
+		for _, p := range changed {
+			if !otherTouched[p] {
+				scoped = append(scoped, p)
+			}
+		}
+		return scoped, true, nil
+	}
+	return changed, true, nil
+}
+
+func (s *Service) otherLocalSessionEditedPaths(excludeSessionID, worktreePath string) map[string]bool {
+	out := make(map[string]bool)
+	normDir := normalizeComparePath(worktreePath)
+	if normDir == "" || s.store == nil {
+		return out
+	}
+	for _, info := range s.store.List("") {
+		if info.ID == excludeSessionID {
+			continue
+		}
+		other, ok := s.store.Get(info.ID)
+		if !ok || normalizeComparePath(other.WorktreePath) != normDir {
+			continue
+		}
+		for _, p := range collectTurnEditedRelPaths(worktreePath, other.Turns, "") {
+			out[p] = true
+		}
+	}
+	return out
+}
+
+func collectTurnEditedRelPaths(worktreePath string, turns []MessageTurn, startPartID string) []string {
+	seen := make(map[string]bool)
+	var out []string
+	addPath := func(raw string) {
+		rel := normalizeWorktreeRelPath(worktreePath, raw)
+		if rel != "" && !seen[rel] {
+			seen[rel] = true
+			out = append(out, rel)
+		}
+	}
+	for idx, turn := range turns {
+		start := 0
+		if idx == 0 && startPartID != "" {
+			if pIdx := messagePartIndex(turn, startPartID); pIdx >= 0 {
+				start = pIdx
+			}
+		}
+		for _, part := range turn.Parts[start:] {
+			if part.Type == "patch" {
+				if files, ok := part.Metadata["files"]; ok {
+					for _, f := range stringList(files) {
+						addPath(f)
+					}
+				}
+			}
+			if part.Type != "tool" || part.State == nil {
+				continue
+			}
+			toolLower := strings.ToLower(strings.TrimSpace(part.Tool))
+			if !editToolNames[toolLower] {
+				continue
+			}
+			for _, key := range editTargetKeys {
+				for _, f := range stringList(part.State.Input[key]) {
+					addPath(f)
+				}
+			}
+			if diff, ok := part.State.Metadata["filediff"].(map[string]interface{}); ok {
+				for _, f := range stringList(firstString(diff["file"], diff["path"], diff["filePath"])) {
+					addPath(f)
+				}
+			}
+		}
+	}
+	return out
+}
+
+func normalizeWorktreeRelPath(worktreePath, raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+	if filepath.IsAbs(trimmed) {
+		rel, err := filepath.Rel(filepath.Clean(worktreePath), filepath.Clean(trimmed))
+		if err != nil || rel == "." || rel == ".." || strings.HasPrefix(filepath.ToSlash(rel), "../") {
+			return ""
+		}
+		return filepath.ToSlash(rel)
+	}
+	cleaned := filepath.ToSlash(filepath.Clean(trimmed))
+	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") || strings.HasPrefix(cleaned, "/") {
+		return ""
+	}
+	return cleaned
+}
+
+func matchMentionedChangedPaths(turns []MessageTurn, changed []string) []string {
+	var textBuf strings.Builder
+	for _, t := range turns {
+		for _, p := range t.Parts {
+			if p.Text != "" {
+				textBuf.WriteString(" ")
+				textBuf.WriteString(strings.ToLower(p.Text))
+			}
+		}
+	}
+	corpus := textBuf.String()
+	if strings.TrimSpace(corpus) == "" {
+		return nil
+	}
+	var matched []string
+	for _, rel := range changed {
+		lowerRel := strings.ToLower(rel)
+		base := strings.ToLower(filepath.Base(rel))
+		stem := strings.TrimSuffix(base, filepath.Ext(base))
+		if strings.Contains(corpus, lowerRel) || strings.Contains(corpus, base) || (len(stem) >= 3 && strings.Contains(corpus, stem)) {
+			matched = append(matched, rel)
+		}
+	}
+	return matched
+}
+
+func mergeStringLists(a, b []string) []string {
+	seen := make(map[string]bool, len(a)+len(b))
+	var out []string
+	for _, s := range append(append([]string(nil), a...), b...) {
+		if s != "" && !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	return out
 }

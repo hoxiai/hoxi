@@ -15,14 +15,18 @@ export const [gitAttribution, setGitAttribution] = createStore({
 });
 
 let loading: Promise<void> | undefined;
+let gitAttributionGen = 0;
 
 export function loadGitAttribution(): Promise<void> {
   if (loading) return loading;
+  const gen = ++gitAttributionGen;
   loading = (async () => {
     try {
       const settings = await gitAttributionAPI.get();
+      if (gen !== gitAttributionGen) return;
       setGitAttribution({ enabled: settings.enabled !== false, loaded: true, error: "" });
     } catch {
+      if (gen !== gitAttributionGen) return;
       setGitAttribution({ loaded: true, error: t("settings.gitAttributionLoadError") });
     } finally {
       loading = undefined;
@@ -33,12 +37,17 @@ export function loadGitAttribution(): Promise<void> {
 
 export async function saveGitAttribution(enabled: boolean): Promise<void> {
   if (gitAttribution.saving) return;
+  const gen = ++gitAttributionGen;
   setGitAttribution({ saving: true, error: "" });
   try {
     const settings = await gitAttributionAPI.put(enabled);
-    setGitAttribution({ enabled: settings.enabled !== false, loaded: true });
+    if (gen === gitAttributionGen) {
+      setGitAttribution({ enabled: settings.enabled !== false, loaded: true, error: "" });
+    }
   } catch {
-    setGitAttribution("error", t("settings.gitAttributionSaveError"));
+    if (gen === gitAttributionGen) {
+      setGitAttribution("error", t("settings.gitAttributionSaveError"));
+    }
   } finally {
     setGitAttribution("saving", false);
   }

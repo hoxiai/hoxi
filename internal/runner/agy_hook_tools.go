@@ -176,16 +176,43 @@ func resolveHookToolPath(base string, args map[string]interface{}) string {
 		}
 		raw = filepath.Join(base, raw)
 	}
-	return filepath.Clean(raw)
+	cleaned := filepath.Clean(raw)
+	resolveInBase := func(resolved string) string {
+		if strings.TrimSpace(base) != "" {
+			if realBase, ok := resolvePathWithSymlinks(base, 0); ok && realBase != "" {
+				if rel, err := filepath.Rel(realBase, resolved); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+					return filepath.Join(filepath.Clean(base), rel)
+				}
+			}
+		}
+		return resolved
+	}
+	if resolved, err := filepath.EvalSymlinks(cleaned); err == nil && resolved != "" {
+		return resolveInBase(resolved)
+	}
+	if info, err := os.Lstat(cleaned); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		if resolved, ok := resolvePathWithSymlinks(cleaned, 0); ok && resolved != "" {
+			return resolveInBase(resolved)
+		}
+	}
+	return cleaned
 }
 
 func (s *Service) inspectHookToolRisk(sessionID, tool string, args map[string]interface{}) (filepathOut, worktree string, destructive, externalDir bool) {
+	return s.inspectHookToolRiskIn(sessionID, tool, "", args)
+}
+
+func (s *Service) inspectHookToolRiskIn(sessionID, tool, cwd string, args map[string]interface{}) (filepathOut, worktree string, destructive, externalDir bool) {
 	worktree = ""
 	if rec, ok := s.store.Get(sessionID); ok {
 		worktree = strings.TrimSpace(rec.WorktreePath)
 	}
+	baseDir := firstNonEmptyStr(strings.TrimSpace(cwd), worktree)
 	rawPath := rawHookToolPath(args)
-	resolved := resolveHookToolPath(worktree, args)
+	resolved := resolveHookToolPath(baseDir, args)
+	if resolved == "" && strings.TrimSpace(cwd) != "" && (worktree == "" || !pathWithin(worktree, cwd)) {
+		resolved = filepath.Clean(strings.TrimSpace(cwd))
+	}
 	if resolved != "" {
 		filepathOut = resolved
 	} else {
@@ -206,13 +233,16 @@ func (s *Service) inspectHookToolRisk(sessionID, tool string, args map[string]in
 		if isSensitiveExternalPath(filepathOut) || (rawPath != "" && isSensitiveExternalPath(rawPath)) {
 			destructive = true
 		}
+		if isSecretFilePath(filepathOut) || (rawPath != "" && isSecretFilePath(rawPath)) {
+			destructive = true
+		}
 		if worktree != "" && resolved != "" {
 			if !pathWithin(worktree, resolved) {
 				// Crossing into a sibling workspace folder or an SDK cache is
 				// routine; only credential and execution-controlling paths
 				// must keep asking (same rule as the shared policy port).
 				externalDir = true
-				if isSensitiveExternalPath(resolved) {
+				if isSensitiveExternalPath(resolved) || isSecretFilePath(resolved) {
 					destructive = true
 				}
 			} else if (hookEditTools[lowerTool] || lowerTool == "edit" || lowerTool == "multiedit" || lowerTool == "write" || lowerTool == "notebookedit") &&
@@ -229,8 +259,12 @@ func (s *Service) inspectHookToolRisk(sessionID, tool string, args map[string]in
 // protected/out-of-worktree file access): the approval policy lets it run or
 // the user is asked. Destructive calls always reach the user.
 func (s *Service) gateToolCall(r *http.Request, cred hookCredential, tool string, args map[string]interface{}, callID string) (bool, string) {
+	return s.gateToolCallIn(r, cred, tool, args, callID, "")
+}
+
+func (s *Service) gateToolCallIn(r *http.Request, cred hookCredential, tool string, args map[string]interface{}, callID, cwd string) (bool, string) {
 	key := hookToolGrantKey(tool, args)
-	targetPath, worktree, destructive, externalDir := s.inspectHookToolRisk(cred.sessionID, tool, args)
+	targetPath, worktree, destructive, externalDir := s.inspectHookToolRiskIn(cred.sessionID, tool, cwd, args)
 	if !destructive && s.gate.hasToolAlways(cred.sessionID, key) {
 		return true, ""
 	}

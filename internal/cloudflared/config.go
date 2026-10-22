@@ -8,11 +8,14 @@
 package cloudflared
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 )
 
 // Config is the persisted Cloudflare Tunnel connector settings.
@@ -42,9 +45,20 @@ func (s *Store) Load() (Config, error) {
 	}
 	var cfg Config
 	if err := json.Unmarshal(data, &cfg); err != nil {
+		if len(bytes.TrimSpace(data)) > 0 {
+			backupCorruptConfigFile(s.path)
+		}
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+func backupCorruptConfigFile(path string) {
+	if path == "" {
+		return
+	}
+	backup := fmt.Sprintf("%s.corrupt-%d", path, time.Now().UTC().UnixNano())
+	_ = os.Rename(path, backup)
 }
 
 func (s *Store) Save(cfg Config) error {
@@ -52,6 +66,12 @@ func (s *Store) Save(cfg Config) error {
 	defer s.mu.Unlock()
 	if s.path == "" {
 		return errors.New("cloudflared config path is unknown")
+	}
+	if existing, err := os.ReadFile(s.path); err == nil && len(bytes.TrimSpace(existing)) > 0 {
+		var prev Config
+		if json.Unmarshal(existing, &prev) != nil {
+			backupCorruptConfigFile(s.path)
+		}
 	}
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
@@ -71,6 +91,10 @@ func (s *Store) Save(cfg Config) error {
 		return err
 	}
 	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
 		_ = tmp.Close()
 		return err
 	}

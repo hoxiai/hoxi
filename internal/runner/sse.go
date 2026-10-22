@@ -237,6 +237,7 @@ func (s *Service) relayOpenCodeFrames(ctx context.Context, cancel context.Cancel
 			continue
 		}
 		if strings.HasPrefix(line, "data:") && keep {
+			line = sanitizeOpenCodePermissionSSELine(line)
 			// The unified stream sends its own heartbeat.
 			if strings.Contains(line, `"`+heartbeatEventType+`"`) || !s.AllowOpenCodeSSELine(line) ||
 				s.claimOpenCodeSSELine(line, directory) {
@@ -250,6 +251,42 @@ func (s *Service) relayOpenCodeFrames(ctx context.Context, cancel context.Cancel
 		}
 		frame.WriteString(line)
 	}
+}
+
+func sanitizeOpenCodePermissionSSELine(line string) string {
+	if !strings.Contains(line, `"permission.asked"`) || !strings.Contains(line, stopMarkerPrefix) {
+		return line
+	}
+	trimmed := strings.TrimRight(line, "\r\n")
+	suffix := line[len(trimmed):]
+	payload := strings.TrimSpace(strings.TrimPrefix(trimmed, "data:"))
+	dec := json.NewDecoder(strings.NewReader(payload))
+	dec.UseNumber()
+	var root map[string]interface{}
+	if dec.Decode(&root) != nil {
+		return line
+	}
+	changed := false
+	if t, _ := root["type"].(string); t == "permission.asked" {
+		if props, ok := root["properties"].(map[string]interface{}); ok && sanitizeOpenCodePermissionItem(props) {
+			changed = true
+		}
+	}
+	if inner, ok := root["payload"].(map[string]interface{}); ok {
+		if t, _ := inner["type"].(string); t == "permission.asked" {
+			if props, ok := inner["properties"].(map[string]interface{}); ok && sanitizeOpenCodePermissionItem(props) {
+				changed = true
+			}
+		}
+	}
+	if !changed {
+		return line
+	}
+	raw, err := json.Marshal(root)
+	if err != nil {
+		return line
+	}
+	return "data: " + string(raw) + suffix
 }
 
 // trimSummaryDiffPatches drops unified diff bodies from message summaries before

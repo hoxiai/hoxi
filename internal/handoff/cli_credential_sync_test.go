@@ -51,21 +51,25 @@ func TestReadGrokAPIKeySkipsExpiredEntries(t *testing.T) {
 		t.Fatalf("expected the newest expired key as fallback, got %q", got)
 	}
 
-	// A key the CLI stores without an expiry is always usable.
-	if err := os.WriteFile(path, []byte(`{"default":{"key":"key-static"}}`), 0o600); err != nil {
+	// A key the CLI stores without an expiry is always usable, and multiple
+	// static keys are selected deterministically by sorted map key.
+	if err := os.WriteFile(path, []byte(`{"zeta":{"key":"key-z"},"alpha":{"key":"key-a"}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if got := readGrokAPIKey(path, now); got != "key-static" {
-		t.Fatalf("expected the static key, got %q", got)
+	for i := 0; i < 20; i++ {
+		if got := readGrokAPIKey(path, now); got != "key-a" {
+			t.Fatalf("expected deterministic static key 'key-a', got %q", got)
+		}
 	}
 }
 
 // recordingAuthServer counts how often the engine receives an openai credential.
 type recordingAuthServer struct {
-	mu    sync.Mutex
-	puts  []map[string]interface{}
-	close func()
-	port  int
+	mu       sync.Mutex
+	puts     []map[string]interface{}
+	failNext bool
+	close    func()
+	port     int
 }
 
 func newRecordingAuthServer(t *testing.T) *recordingAuthServer {
@@ -76,6 +80,12 @@ func newRecordingAuthServer(t *testing.T) *recordingAuthServer {
 		var body map[string]interface{}
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		rec.mu.Lock()
+		if rec.failNext {
+			rec.failNext = false
+			rec.mu.Unlock()
+			writeJSONError(w, http.StatusServiceUnavailable, "engine starting")
+			return
+		}
 		rec.puts = append(rec.puts, body)
 		rec.mu.Unlock()
 		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
@@ -140,15 +150,36 @@ func TestSyncCodexCredentialFollowsCLIAndNeverRefreshes(t *testing.T) {
 		t.Fatalf("sync before import pushed %d credentials", got)
 	}
 
+	// An unrelated user-configured "openai" provider must also be left alone.
+	if err := svc.persistHoxiConfigDoc(map[string]interface{}{
+		"provider": map[string]interface{}{"openai": map[string]interface{}{"name": "OpenAI"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	svc.syncCodexCredential()
+	if got := rec.putCount(); got != 0 {
+		t.Fatalf("sync with user OpenAI provider pushed %d credentials", got)
+	}
+
 	if err := svc.persistHoxiConfigDoc(map[string]interface{}{
 		"provider": map[string]interface{}{"openai": map[string]interface{}{"name": "OpenAI Codex (Local)"}},
 	}); err != nil {
 		t.Fatal(err)
 	}
 
+	// If the engine is temporarily unavailable, codexAuthApplied is not marked
+	// applied so the next tick retries.
+	rec.mu.Lock()
+	rec.failNext = true
+	rec.mu.Unlock()
+	svc.syncCodexCredential()
+	if got := rec.putCount(); got != 0 {
+		t.Fatalf("failed engine PUT should not record a put, got %d", got)
+	}
+
 	svc.syncCodexCredential()
 	if rec.lastAccess() != "access-old" {
-		t.Fatalf("expected the CLI access token to be forwarded, got %q", rec.lastAccess())
+		t.Fatalf("expected the CLI access token to be forwarded on retry, got %q", rec.lastAccess())
 	}
 
 	// The refresh token is forwarded verbatim and the expiry is left unknown:
@@ -222,5 +253,18 @@ func TestCodexImportReportsUnknownExpiry(t *testing.T) {
 	defer rec.mu.Unlock()
 	if len(rec.puts) != 1 || rec.puts[0]["expires"] != float64(0) {
 		t.Fatalf("import must not invent an expiry, got %#v", rec.puts)
+	}
+}
+
+func TestStartAndStopCredentialSyncRaceFree(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	rec := newRecordingAuthServer(t)
+	root := t.TempDir()
+	svc := NewService(rec.port, "testpass", root, provider.NewService(0, "", root, nil))
+	for i := 0; i < 5; i++ {
+		svc.startCredentialSync()
+		svc.StopCredentialSync()
 	}
 }

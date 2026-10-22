@@ -35,16 +35,8 @@ didReceiveNotificationResponse:(UNNotificationResponse *)response
 @end
 
 static HoxiNotificationDelegate *hoxiNotificationDelegate;
-static BOOL hoxiNotificationStarted = NO;
+static _Atomic(int) hoxiNotificationStarted = 0;
 static _Atomic(NSInteger) hoxiCachedAuthStatus = UNAuthorizationStatusNotDetermined;
-
-static void hoxi_run_on_main(dispatch_block_t block) {
-    if ([NSThread isMainThread]) {
-        block();
-        return;
-    }
-    dispatch_async(dispatch_get_main_queue(), block);
-}
 
 static void hoxi_refresh_auth_status_async(void) {
     [[UNUserNotificationCenter currentNotificationCenter]
@@ -122,15 +114,26 @@ static BOOL hoxi_schedule_notification(NSString *title,
 }
 
 void hoxi_notify_start(void) {
-    hoxi_run_on_main(^{
-        if (hoxiNotificationStarted || NSBundle.mainBundle.bundleIdentifier.length == 0) {
+    @autoreleasepool {
+        if (atomic_load(&hoxiNotificationStarted) || NSBundle.mainBundle.bundleIdentifier.length == 0) {
             return;
         }
-        hoxiNotificationStarted = YES;
-        hoxiNotificationDelegate = [[HoxiNotificationDelegate alloc] init];
-        [UNUserNotificationCenter currentNotificationCenter].delegate = hoxiNotificationDelegate;
-        hoxi_refresh_auth_status_async();
-    });
+        dispatch_block_t block = ^{
+            @autoreleasepool {
+                if (atomic_exchange(&hoxiNotificationStarted, 1) != 0) {
+                    return;
+                }
+                hoxiNotificationDelegate = [[HoxiNotificationDelegate alloc] init];
+                [UNUserNotificationCenter currentNotificationCenter].delegate = hoxiNotificationDelegate;
+                hoxi_refresh_auth_status_async();
+            }
+        };
+        if ([NSThread isMainThread]) {
+            block();
+            return;
+        }
+        dispatch_sync(dispatch_get_main_queue(), block);
+    }
 }
 
 // Returns 0 when the host cannot deliver notifications (no app bundle or
@@ -216,11 +219,13 @@ int hoxi_notify_show(const char* title, const char* body, const char* sessionID,
 // Returns the UNAuthorizationStatus raw value, or -1 when the host has no app
 // bundle and therefore no native notification transport.
 int hoxi_notify_authorization_status(void) {
-    if (NSBundle.mainBundle.bundleIdentifier.length == 0) {
-        return -1;
+    @autoreleasepool {
+        if (NSBundle.mainBundle.bundleIdentifier.length == 0) {
+            return -1;
+        }
+        hoxi_notify_start();
+        return (int)hoxi_query_auth_status();
     }
-    hoxi_notify_start();
-    return (int)hoxi_query_auth_status();
 }
 
 // Prompts for notification authorization when it has not been decided yet and
@@ -228,48 +233,52 @@ int hoxi_notify_authorization_status(void) {
 // unavailable). A denied app cannot re-prompt here; the user must re-enable it
 // in System Settings.
 int hoxi_notify_request_authorization(void) {
-    if (NSBundle.mainBundle.bundleIdentifier.length == 0) {
-        return -1;
-    }
-    hoxi_notify_start();
+    @autoreleasepool {
+        if (NSBundle.mainBundle.bundleIdentifier.length == 0) {
+            return -1;
+        }
+        hoxi_notify_start();
 
-    NSInteger status = hoxi_query_auth_status();
-    if (status == UNAuthorizationStatusDenied ||
-        status == UNAuthorizationStatusAuthorized ||
-        status == UNAuthorizationStatusProvisional) {
-        return (int)status;
-    }
+        NSInteger status = hoxi_query_auth_status();
+        if (status == UNAuthorizationStatusDenied ||
+            status == UNAuthorizationStatusAuthorized ||
+            status == UNAuthorizationStatusProvisional) {
+            return (int)status;
+        }
 
-    __block NSInteger resolved = UNAuthorizationStatusNotDetermined;
-    __block int finished = 0;
-    dispatch_semaphore_t sem = dispatch_semaphore_create(0);
-    dispatch_retain(sem);
+        __block NSInteger resolved = UNAuthorizationStatusNotDetermined;
+        __block int finished = 0;
+        dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+        dispatch_retain(sem);
 
-    // Never block the main thread: requestAuthorization completion can depend on
-    // the run loop, so issue the prompt from a background queue and wait there.
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-        [[UNUserNotificationCenter currentNotificationCenter]
-            requestAuthorizationWithOptions:(UNAuthorizationOptionAlert | UNAuthorizationOptionSound)
-                          completionHandler:^(BOOL granted, NSError *error) {
-            NSInteger next = UNAuthorizationStatusDenied;
-            if (granted && error == nil) {
-                next = UNAuthorizationStatusAuthorized;
-            } else if (error != nil) {
-                next = atomic_load(&hoxiCachedAuthStatus);
+        // Never block the main thread: requestAuthorization completion can depend on
+        // the run loop, so issue the prompt from a background queue and wait there.
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+            @autoreleasepool {
+                [[UNUserNotificationCenter currentNotificationCenter]
+                    requestAuthorizationWithOptions:(UNAuthorizationOptionAlert | UNAuthorizationOptionSound)
+                                  completionHandler:^(BOOL granted, NSError *error) {
+                    NSInteger next = UNAuthorizationStatusDenied;
+                    if (granted && error == nil) {
+                        next = UNAuthorizationStatusAuthorized;
+                    } else if (error != nil) {
+                        next = atomic_load(&hoxiCachedAuthStatus);
+                    }
+                    atomic_store(&hoxiCachedAuthStatus, next);
+                    resolved = next;
+                    finished = 1;
+                    dispatch_semaphore_signal(sem);
+                    dispatch_release(sem);
+                }];
             }
-            atomic_store(&hoxiCachedAuthStatus, next);
-            resolved = next;
-            finished = 1;
-            dispatch_semaphore_signal(sem);
-            dispatch_release(sem);
-        }];
-    });
+        });
 
-    dispatch_time_t timeout = dispatch_time(DISPATCH_TIME_NOW, 60 * NSEC_PER_SEC);
-    long timedOut = dispatch_semaphore_wait(sem, timeout);
-    dispatch_release(sem);
-    if (timedOut != 0 || !finished) {
-        return (int)atomic_load(&hoxiCachedAuthStatus);
+        dispatch_time_t timeout = dispatch_time(DISPATCH_TIME_NOW, 60 * NSEC_PER_SEC);
+        long timedOut = dispatch_semaphore_wait(sem, timeout);
+        dispatch_release(sem);
+        if (timedOut != 0 || !finished) {
+            return (int)atomic_load(&hoxiCachedAuthStatus);
+        }
+        return (int)resolved;
     }
-    return (int)resolved;
 }

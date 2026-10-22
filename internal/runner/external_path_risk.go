@@ -72,6 +72,7 @@ var sensitiveExternalBasenames = map[string]bool{
 	".gitconfig": true, ".git-credentials": true, ".netrc": true, ".npmrc": true,
 	".pypirc": true, ".curlrc": true, ".wgetrc": true, ".envrc": true, "authorized_keys": true,
 	"id_rsa": true, "id_ed25519": true, "id_ecdsa": true, "id_dsa": true,
+	".credentials.json": true,
 }
 
 var sensitiveEnvBasenameRe = regexp.MustCompile(`(?i)^\.en(?:v(?:\.(?:local|prod(?:uction)?|dev(?:elopment)?|stag(?:e|ing)|test(?:ing)?|ci|preview|secret\w*|key\w*|private\w*|bak|backup)(?:\.local)?)?|\?|\*)$`)
@@ -82,6 +83,8 @@ var sensitiveExternalFragments = []string{
 	"/.config/claude/",
 	"/.config/gh/",
 	"/.config/gcloud/",
+	"/.hoxi/",
+	"/.claude/",
 	"/.ssh/",
 	"/.aws/",
 	"/.gnupg/",
@@ -102,6 +105,13 @@ var sensitiveExternalPrefixes = []string{
 	"/private/var/root/",
 }
 
+func isRoutineHoxiSubpath(slash string) bool {
+	return strings.Contains(slash, "/.hoxi/skills/") ||
+		strings.Contains(slash, "/.hoxi/attachments/") ||
+		strings.HasPrefix(slash, ".hoxi/skills/") ||
+		strings.HasPrefix(slash, ".hoxi/attachments/")
+}
+
 func isSensitiveExternalPath(rawPath string) bool {
 	trimmed := strings.TrimSpace(rawPath)
 	if trimmed == "" {
@@ -116,7 +126,8 @@ func isSensitiveExternalPath(rawPath string) bool {
 		if isProtectedRelPath(cand) {
 			return true
 		}
-		slash := strings.TrimRight(strings.ToLower(filepath.ToSlash(cand)), "/")
+		rawSlash := strings.TrimRight(strings.ToLower(filepath.ToSlash(cand)), "/")
+		slash := strings.TrimRight(stripWorktreePrefix(rawSlash), "/")
 		if slash == "" {
 			slash = "/"
 		}
@@ -128,13 +139,17 @@ func isSensitiveExternalPath(rawPath string) bool {
 		if sensitiveExternalBasenames[base] || sensitiveEnvBasenameRe.MatchString(base) {
 			return true
 		}
+		if isRoutineHoxiSubpath(slash) {
+			continue
+		}
 		for _, prefix := range sensitiveExternalPrefixes {
 			if strings.HasPrefix(slashDir, prefix) {
 				return true
 			}
 		}
+		normDir := "/" + strings.TrimLeft(slashDir, "/")
 		for _, fragment := range sensitiveExternalFragments {
-			if strings.Contains(slashDir, fragment) {
+			if strings.Contains(normDir, fragment) {
 				return true
 			}
 		}
@@ -148,7 +163,28 @@ func isSensitiveExternalPath(rawPath string) bool {
 // stays routine while `.env` asks in every mode, matching OpenCode's own
 // read defaults (`*.env`, `*.env.*` ask; `*.env.example` allowed).
 func isSecretFilePath(p string) bool {
-	slash := strings.TrimRight(strings.ToLower(filepath.ToSlash(strings.TrimSpace(p))), "/")
+	if isSecretFilePathLexical(p) {
+		return true
+	}
+	cleaned := filepath.Clean(strings.TrimSpace(p))
+	if filepath.IsAbs(cleaned) {
+		if resolved, err := filepath.EvalSymlinks(cleaned); err == nil && resolved != "" && resolved != cleaned {
+			if isSecretFilePathLexical(resolved) {
+				return true
+			}
+		}
+		if resolved, ok := resolvePathWithSymlinks(cleaned, 0); ok && resolved != "" && resolved != cleaned {
+			if isSecretFilePathLexical(resolved) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func isSecretFilePathLexical(p string) bool {
+	rawSlash := strings.TrimRight(strings.ToLower(filepath.ToSlash(strings.TrimSpace(p))), "/")
+	slash := strings.TrimRight(stripWorktreePrefix(rawSlash), "/")
 	if slash == "" {
 		return false
 	}
@@ -156,8 +192,12 @@ func isSecretFilePath(p string) bool {
 	if sensitiveExternalBasenames[base] || sensitiveEnvBasenameRe.MatchString(base) {
 		return true
 	}
+	if isRoutineHoxiSubpath(slash) {
+		return false
+	}
+	norm := "/" + strings.TrimLeft(slash, "/") + "/"
 	for _, fragment := range sensitiveExternalFragments {
-		if strings.Contains("/"+slash+"/", fragment) {
+		if strings.Contains(norm, fragment) {
 			return true
 		}
 	}

@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -262,6 +263,47 @@ func stopChildToolProcesses(cliPID int, command string) int {
 	return stopToolProcessesUnder(cliPID, command, toolStopScope{stepIntoRuntime: true})
 }
 
+func matchesOpenCodeServePort(args, port string) bool {
+	if port == "" || !strings.Contains(args, "opencode") || !strings.Contains(args, "serve") {
+		return false
+	}
+	return strings.Contains(args, "--port "+port) || strings.Contains(args, "--port="+port)
+}
+
+func selectOpenCodeDaemonPID(byPID map[int]procSnapshot, children map[int][]int, port string) int {
+	matching := make(map[int]bool)
+	for pid, snap := range byPID {
+		if matchesOpenCodeServePort(snap.args, port) {
+			matching[pid] = true
+		}
+	}
+	if len(matching) == 0 {
+		return 0
+	}
+	bestPID := 0
+	for pid := range matching {
+		hasMatchingDescendant := false
+		for _, subPID := range collectSubtreePIDs(pid, children) {
+			if subPID != pid && matching[subPID] {
+				hasMatchingDescendant = true
+				break
+			}
+		}
+		if !hasMatchingDescendant && (bestPID == 0 || pid > bestPID) {
+			bestPID = pid
+		}
+	}
+	if bestPID != 0 {
+		return bestPID
+	}
+	for pid := range matching {
+		if bestPID == 0 || pid > bestPID {
+			bestPID = pid
+		}
+	}
+	return bestPID
+}
+
 // openCodeDaemonPID resolves the pid of the `opencode serve` process that owns
 // the engine port in baseURL, so a per-tool stop can look inside its children.
 func openCodeDaemonPID(baseURL string) int {
@@ -273,17 +315,8 @@ func openCodeDaemonPID(baseURL string) int {
 	if port == "" {
 		return 0
 	}
-	byPID, _ := readProcessSnapshots()
-	for pid, snap := range byPID {
-		args := snap.args
-		if !strings.Contains(args, "opencode") || !strings.Contains(args, "serve") {
-			continue
-		}
-		if strings.Contains(args, "--port "+port) || strings.Contains(args, "--port="+port) {
-			return pid
-		}
-	}
-	return 0
+	byPID, children := readProcessSnapshots()
+	return selectOpenCodeDaemonPID(byPID, children, port)
 }
 
 func stopToolProcessesUnder(rootPID int, command string, scope toolStopScope) int {
@@ -349,6 +382,34 @@ func stopToolProcessesUnder(rootPID int, command string, scope toolStopScope) in
 	return killSubtrees(selectedRoots, byPID, children, protected)
 }
 
+func extractStopMarkerCallID(marker string) string {
+	line := strings.TrimSpace(marker)
+	if nl := strings.IndexByte(line, '\n'); nl >= 0 {
+		line = strings.TrimSpace(line[:nl])
+	}
+	if !strings.HasPrefix(line, stopMarkerPrefix) {
+		return ""
+	}
+	rest := strings.TrimPrefix(line, stopMarkerPrefix)
+	idx := strings.LastIndexByte(rest, ':')
+	if idx < 0 {
+		return ""
+	}
+	return strings.TrimSpace(rest[idx+1:])
+}
+
+func subtreeMatchesRegexp(pids []int, byPID map[int]procSnapshot, re *regexp.Regexp) bool {
+	if re == nil {
+		return false
+	}
+	for _, pid := range pids {
+		if args := byPID[pid].args; args != "" && re.MatchString(args) {
+			return true
+		}
+	}
+	return false
+}
+
 // stopOpenCodeToolProcessByMarker kills the single subtree under daemonPID
 // whose command line carries marker. It never signals the daemon and kills
 // nothing unless exactly one subtree matches.
@@ -374,13 +435,42 @@ func stopOpenCodeToolProcessByMarker(daemonPID int, marker string) int {
 		protected[p.pgid] = true
 	}
 
-	var roots []int
+	var candidateRoots []int
 	for _, root := range children[daemonPID] {
 		if protected[root] {
 			continue
 		}
-		if subtreeMatchesNeedles(collectSubtreePIDs(root, children), byPID, []string{marker}) {
-			roots = append(roots, root)
+		args := byPID[root].args
+		if isAgentRuntimeProcessArgs(args) || isNonToolHelperArgs(args) {
+			protected[root] = true
+			continue
+		}
+		candidateRoots = append(candidateRoots, root)
+	}
+
+	exactMarker := strings.TrimSpace(marker)
+	if nl := strings.IndexByte(exactMarker, '\n'); nl >= 0 {
+		exactMarker = strings.TrimSpace(exactMarker[:nl])
+	}
+
+	var roots []int
+	if exactMarker != "" && !strings.HasPrefix(exactMarker, stopMarkerPrefix+":") {
+		for _, root := range candidateRoots {
+			if subtreeMatchesNeedles(collectSubtreePIDs(root, children), byPID, []string{exactMarker}) {
+				roots = append(roots, root)
+			}
+		}
+	}
+	if len(roots) == 0 {
+		if callID := extractStopMarkerCallID(marker); callID != "" {
+			re, err := regexp.Compile(regexp.QuoteMeta(stopMarkerPrefix) + `[^:\s\\]+:` + regexp.QuoteMeta(callID) + `(?:$|\\012|[^A-Za-z0-9_-])`)
+			if err == nil {
+				for _, root := range candidateRoots {
+					if subtreeMatchesRegexp(collectSubtreePIDs(root, children), byPID, re) {
+						roots = append(roots, root)
+					}
+				}
+			}
 		}
 	}
 	if len(roots) != 1 {

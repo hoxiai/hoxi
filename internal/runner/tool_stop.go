@@ -133,6 +133,9 @@ func (s *Service) StopToolCommand(sessionID, callID, partID, command string) (in
 		// instead of guessing from the command text.
 		if daemonPID := openCodeDaemonPID(s.openCode.BaseURL()); daemonPID > 1 {
 			marker := openCodeStopMarker(rec.ExternalID, callID)
+			if marker == "" && callID != "" {
+				marker = stopMarkerPrefix + ":" + callID
+			}
 			if marker != "" {
 				stopped = stopOpenCodeToolProcessByMarker(daemonPID, marker)
 			}

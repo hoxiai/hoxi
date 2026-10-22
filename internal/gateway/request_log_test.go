@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -149,5 +151,87 @@ func TestRequestLogRejectsBadLimit(t *testing.T) {
 	gw.ServeHTTP(rec, localRequest(http.MethodPost, "/api/hoxi/request-log", nil))
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("status %d", rec.Code)
+	}
+}
+
+func TestRequestLogRedactsSecretsAndSkipsAbortedOrAncientSessions(t *testing.T) {
+	t.Setenv("OPENCODE_DB", "")
+	t.Setenv("HOXI_DB_PATH", filepath.Join(t.TempDir(), "missing.db"))
+
+	if got := trimLogText("auth failed: Bearer secret-tok-123 and sk-abc123456789 and api_key=mysecret"); strings.Contains(got, "secret-tok-123") || strings.Contains(got, "sk-abc123456789") || strings.Contains(got, "mysecret") {
+		t.Fatalf("trimLogText leaked secret: %q", got)
+	}
+
+	repo := t.TempDir()
+	svc := runner.NewService(repo, nil, nil, filepath.Join(t.TempDir(), "sessions"))
+	now := time.Now().UnixMilli()
+
+	// An unfinished turn superseded by a newer turn or marked aborted must not stay pending.
+	superseded := runner.MessageInfo{
+		ID: "msg_superseded", SessionID: "ses_active", Role: "assistant",
+		Time: runner.MessageTime{Created: now - 5000},
+	}
+	aborted := runner.MessageInfo{
+		ID: "msg_aborted", SessionID: "ses_active", Role: "assistant", Finish: "aborted",
+		Time: runner.MessageTime{Created: now - 2000},
+	}
+	latest := pulseTokenMessage("msg_done", "ses_active", "claude-sonnet", now, 50, 10, 0, 0)
+	if err := svc.Store().Put(runner.SessionRecord{
+		ID: "ses_active", Runtime: string(runner.RuntimeClaudeCode), ProjectDir: repo, WorktreePath: repo,
+		Title: "active", CreatedAt: now - 5000, UpdatedAt: now,
+		Turns: []runner.MessageTurn{{Info: superseded}, {Info: aborted}, {Info: latest}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Ancient session older than requestLogMaxAge must be skipped.
+	ancientTs := time.Now().Add(-requestLogMaxAge - 24*time.Hour).UnixMilli()
+	ancientTurn := pulseTokenMessage("msg_ancient", "ses_ancient", "claude-sonnet", ancientTs, 500, 100, 0, 0)
+	if err := svc.Store().Put(runner.SessionRecord{
+		ID: "ses_ancient", Runtime: string(runner.RuntimeClaudeCode), ProjectDir: repo, WorktreePath: repo,
+		Title: "ancient", CreatedAt: ancientTs, UpdatedAt: ancientTs,
+		Turns: []runner.MessageTurn{{Info: ancientTurn}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	gw := New(0, "pass", repo, nil, nil)
+	gw.runner = svc
+	entries := gw.collectRequestLog()
+	if len(entries) != 1 || entries[0].ID != "msg_done" {
+		t.Fatalf("expected only msg_done, got %+v", entries)
+	}
+}
+
+func TestOpenCodeRequestContentWithoutSessionIDAndMissingMessage(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "hoxi.db")
+	t.Setenv("OPENCODE_DB", "")
+	t.Setenv("HOXI_DB_PATH", dbPath)
+
+	schema := `
+CREATE TABLE session (id TEXT PRIMARY KEY, title TEXT);
+CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, data TEXT);
+CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, time_created INTEGER, data TEXT);
+INSERT INTO session VALUES ('ses_oc', 'OpenCode Session');
+INSERT INTO message VALUES ('m_user', 'ses_oc', 1000, '{"role":"user"}');
+INSERT INTO message VALUES ('m_asst', 'ses_oc', 2000, '{"role":"assistant"}');
+INSERT INTO part VALUES ('p_u1', 'm_user', 'ses_oc', 1000, '{"type":"text","text":"hello from user"}');
+INSERT INTO part VALUES ('p_u_blob', 'm_user', 'ses_oc', 1001, '{"type":"file","url":"data:image/png;base64,AAAA"}');
+INSERT INTO part VALUES ('p_a1', 'm_asst', 'ses_oc', 2000, '{"type":"text","text":"hello from assistant"}');
+`
+	if out, err := exec.Command("sqlite3", dbPath, schema).CombinedOutput(); err != nil {
+		t.Fatalf("sqlite3 init: %v %s", err, out)
+	}
+
+	// Empty sessionID resolves from the target message row.
+	got := openCodeRequestContent("", "m_asst")
+	if !got.Found || len(got.Input) != 1 || got.Input[0].Text != "hello from user" || len(got.Output) != 1 || got.Output[0].Text != "hello from assistant" {
+		t.Fatalf("unexpected openCodeRequestContent without sessionID: %+v", got)
+	}
+
+	// Non-existent messageID returns Found: false.
+	missing := openCodeRequestContent("", "m_does_not_exist")
+	if missing.Found {
+		t.Fatalf("expected Found=false for missing messageID, got %+v", missing)
 	}
 }

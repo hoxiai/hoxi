@@ -9,7 +9,7 @@ import { createSignal } from "solid-js";
 import { hoxiAPI, type CandidateBreakerSnapshot, type CandidateOutcomeInput } from "../services/api";
 import { workspace } from "./workspace-state";
 
-export const AUTO_BREAKERS_STORAGE_KEY = "hoxi-auto-breakers:v1";
+export const AUTO_BREAKERS_STORAGE_KEY = "hoxi:auto-breakers:v1";
 
 // A locally reported failure opens the circuit optimistically for a short
 // window; the authoritative backend snapshot (with its class-aware cooldown)
@@ -157,30 +157,51 @@ export function applyProviderBreakers(next: BreakerMap): void {
  */
 export function reportAutoCandidateOutcome(input: CandidateOutcomeInput): void {
   if (!input.providerID || !input.modelID) return;
-  void hoxiAPI.reportCandidateOutcome(input).catch(() => {});
+  const key = candidateBreakerKey(input.providerID, input.modelID);
+  const now = Date.now();
+  const statusCode = input.statusCode ?? (input as { status?: number }).status;
   if (!input.ok) {
-    // Optimistically reflect the open circuit so selection reacts immediately,
-    // bounded by a TTL so it can never linger past the backend's own cooldown.
-    const key = candidateBreakerKey(input.providerID, input.modelID);
-    const now = Date.now();
-    const next: BreakerMap = { ...providerBreakersSignal() };
-    const prev = next[key];
-    const existingUntil = prev?.openUntil && prev.openUntil > now ? prev.openUntil : 0;
-    next[key] = {
-      providerID: input.providerID,
-      modelID: input.modelID,
-      phase: "open",
-      open: true,
-      openUntil: existingUntil || now + OPTIMISTIC_OPEN_TTL_MS,
-      score: 0,
-      latencyEwmaMs: prev?.latencyEwmaMs,
-      consecutiveFailures: (prev?.consecutiveFailures ?? 0) + 1,
-      lastClass: input.class,
-      updatedAt: now,
-    };
-    setProviderBreakersSignal(next);
-    persistBreakers(next);
+    if (statusCode !== 400) {
+      // Optimistically reflect the open circuit so selection reacts immediately,
+      // bounded by a TTL so it can never linger past the backend's own cooldown.
+      const next: BreakerMap = { ...providerBreakersSignal() };
+      const prev = next[key];
+      const existingUntil = prev?.openUntil && prev.openUntil > now ? prev.openUntil : 0;
+      next[key] = {
+        providerID: input.providerID,
+        modelID: input.modelID,
+        phase: "open",
+        open: true,
+        openUntil: existingUntil || now + OPTIMISTIC_OPEN_TTL_MS,
+        score: 0,
+        latencyEwmaMs: prev?.latencyEwmaMs,
+        consecutiveFailures: (prev?.consecutiveFailures ?? 0) + 1,
+        lastClass: input.class,
+        updatedAt: now,
+      };
+      setProviderBreakersSignal(next);
+      persistBreakers(next);
+    }
+  } else {
+    const prev = providerBreakersSignal()[key];
+    if (prev?.open) {
+      const next: BreakerMap = { ...providerBreakersSignal() };
+      next[key] = {
+        ...prev,
+        phase: "closed",
+        open: false,
+        openUntil: undefined,
+        consecutiveFailures: 0,
+        updatedAt: now,
+      };
+      setProviderBreakersSignal(next);
+      persistBreakers(next);
+    }
   }
+  void hoxiAPI
+    .reportCandidateOutcome(input)
+    .then(() => syncProviderBreakers())
+    .catch(() => {});
 }
 
 /** Clears breaker state for a candidate, a provider, or everything. */

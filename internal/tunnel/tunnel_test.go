@@ -544,6 +544,14 @@ func TestStartSurfacesCorruptConfigError(t *testing.T) {
 	if !strings.Contains(status.Message, "read tunnel config") {
 		t.Fatalf("expected corrupt config error in status.Message, got %q", status.Message)
 	}
+	matches, err := filepath.Glob(configPath + ".corrupt-*")
+	if err != nil || len(matches) != 1 {
+		t.Fatalf("expected 1 corrupt backup file, got %v (err=%v)", matches, err)
+	}
+	raw, err := os.ReadFile(matches[0])
+	if err != nil || string(raw) != "{corrupt json" {
+		t.Fatalf("corrupt backup = %q (err=%v), want {corrupt json", string(raw), err)
+	}
 }
 
 func TestRequestPairApprovedConnectsAndRegistersGateway(t *testing.T) {
@@ -591,39 +599,23 @@ func TestRequestPairApprovedConnectsAndRegistersGateway(t *testing.T) {
 	}
 }
 
-func TestRequestPairDeniedStopsWithoutCredential(t *testing.T) {
-	fc := newFakeController(t)
-	m, configPath := oneClickManager(t, http.NotFoundHandler())
-	if err := m.RequestPair(t.Context(), fc.server.URL, ""); err != nil {
-		t.Fatalf("request pair: %v", err)
-	}
-	fc.setPairState(PendingDenied)
-	if !waitFor(t, 2*time.Second, func() bool {
-		p := m.Status().Pending
-		return p != nil && p.State == PendingDenied
-	}) {
-		t.Fatalf("pending = %+v, want denied", m.Status().Pending)
-	}
-	if _, err := os.Stat(configPath); !os.IsNotExist(err) {
-		t.Fatalf("credential must not be written on denial: %v", err)
-	}
-}
-
-func TestRequestPairExpiredFromController(t *testing.T) {
-	fc := newFakeController(t)
-	m, configPath := oneClickManager(t, http.NotFoundHandler())
-	if err := m.RequestPair(t.Context(), fc.server.URL, ""); err != nil {
-		t.Fatalf("request pair: %v", err)
-	}
-	fc.setPairState(PendingExpired)
-	if !waitFor(t, 2*time.Second, func() bool {
-		p := m.Status().Pending
-		return p != nil && p.State == PendingExpired
-	}) {
-		t.Fatalf("pending = %+v, want expired", m.Status().Pending)
-	}
-	if _, err := os.Stat(configPath); !os.IsNotExist(err) {
-		t.Fatalf("credential must not be written when the request expires: %v", err)
+func TestRequestPairDeniedAndExpiredStopWithoutCredential(t *testing.T) {
+	for _, state := range []string{PendingDenied, PendingExpired} {
+		fc := newFakeController(t)
+		m, configPath := oneClickManager(t, http.NotFoundHandler())
+		if err := m.RequestPair(t.Context(), fc.server.URL, ""); err != nil {
+			t.Fatalf("request pair: %v", err)
+		}
+		fc.setPairState(state)
+		if !waitFor(t, 2*time.Second, func() bool {
+			p := m.Status().Pending
+			return p != nil && p.State == state
+		}) {
+			t.Fatalf("pending = %+v, want %s", m.Status().Pending, state)
+		}
+		if _, err := os.Stat(configPath); !os.IsNotExist(err) {
+			t.Fatalf("credential must not be written on %s: %v", state, err)
+		}
 	}
 }
 
@@ -631,14 +623,11 @@ func TestRequestPairTimesOutWhenNeverApproved(t *testing.T) {
 	fc := newFakeController(t)
 	configPath := filepath.Join(t.TempDir(), "tunnel.json")
 	m := NewManager(Options{
-		Handler:      http.NotFoundHandler(),
-		Hostname:     func() string { return "mac.local" },
-		PollInterval: 10 * time.Millisecond,
-		PollTimeout:  80 * time.Millisecond,
+		Handler: http.NotFoundHandler(), Hostname: func() string { return "mac.local" },
+		PollInterval: 10 * time.Millisecond, PollTimeout: 80 * time.Millisecond,
 	})
 	m.Configure(NewStore(configPath), 5410)
 	t.Cleanup(m.Stop)
-
 	if err := m.RequestPair(t.Context(), fc.server.URL, ""); err != nil {
 		t.Fatalf("request pair: %v", err)
 	}
@@ -656,36 +645,28 @@ func TestRequestPairTimesOutWhenNeverApproved(t *testing.T) {
 	}
 }
 
-func TestRequestPairRejectsControllerError(t *testing.T) {
+func TestRequestPairRejectsControllerAndNetworkErrors(t *testing.T) {
 	fc := newFakeController(t)
 	fc.rejectRequests()
 	m, configPath := oneClickManager(t, http.NotFoundHandler())
-	err := m.RequestPair(t.Context(), fc.server.URL, "")
-	if err == nil || !strings.Contains(err.Error(), "pairing is disabled") {
+	if err := m.RequestPair(t.Context(), fc.server.URL, ""); err == nil || !strings.Contains(err.Error(), "pairing is disabled") {
 		t.Fatalf("err = %v, want the GoPanel rejection message", err)
 	}
 	if m.Status().Pending != nil {
 		t.Fatalf("pending = %+v, want nil after a rejected request", m.Status().Pending)
 	}
-	if _, err := os.Stat(configPath); !os.IsNotExist(err) {
-		t.Fatalf("credential must not be written on rejection: %v", err)
-	}
-}
-
-func TestRequestPairSurfacesNetworkError(t *testing.T) {
 	server := httptest.NewServer(http.NotFoundHandler())
-	url := server.URL
+	deadURL := server.URL
 	server.Close()
-	m, configPath := oneClickManager(t, http.NotFoundHandler())
-	if err := m.RequestPair(t.Context(), url, ""); err == nil {
+	if err := m.RequestPair(t.Context(), deadURL, ""); err == nil {
 		t.Fatal("expected a network error when GoPanel is unreachable")
 	}
 	if _, err := os.Stat(configPath); !os.IsNotExist(err) {
-		t.Fatalf("credential must not be written on a network error: %v", err)
+		t.Fatalf("credential must not be written on error: %v", err)
 	}
 }
 
-func TestRequestPairCancelStopsPollingAndDoesNotPersist(t *testing.T) {
+func TestRequestPairCancelUnpairStopAndPairStopPolling(t *testing.T) {
 	fc := newFakeController(t)
 	m, configPath := oneClickManager(t, http.NotFoundHandler())
 	if err := m.RequestPair(t.Context(), fc.server.URL, ""); err != nil {
@@ -699,29 +680,71 @@ func TestRequestPairCancelStopsPollingAndDoesNotPersist(t *testing.T) {
 		t.Fatal("pending must clear when canceled")
 	}
 	before := fc.polls()
-	time.Sleep(120 * time.Millisecond)
+	time.Sleep(80 * time.Millisecond)
 	if after := fc.polls(); after != before {
 		t.Fatalf("polling continued after cancel: %d -> %d", before, after)
 	}
 	if _, err := os.Stat(configPath); !os.IsNotExist(err) {
 		t.Fatalf("credential must not be written after cancel: %v", err)
 	}
-}
 
-func TestUnpairCancelsPendingRequest(t *testing.T) {
-	fc := newFakeController(t)
-	m, _ := oneClickManager(t, http.NotFoundHandler())
 	if err := m.RequestPair(t.Context(), fc.server.URL, ""); err != nil {
 		t.Fatalf("request pair: %v", err)
 	}
-	if !waitFor(t, 2*time.Second, func() bool { return fc.polls() >= 1 }) {
-		t.Fatal("expected the poll loop to run")
+	if err := m.Unpair(); err != nil || m.Status().Pending != nil {
+		t.Fatalf("Unpair() must clear pending: err=%v pending=%+v", err, m.Status().Pending)
 	}
-	if err := m.Unpair(); err != nil {
-		t.Fatal(err)
+
+	if err := m.RequestPair(t.Context(), fc.server.URL, ""); err != nil {
+		t.Fatalf("request pair: %v", err)
 	}
+	m.Stop()
 	if m.Status().Pending != nil {
-		t.Fatal("pending must clear when the tunnel is unpaired")
+		t.Fatal("Stop() must cancel and clear pending one-click pairing")
+	}
+
+	if err := m.RequestPair(t.Context(), fc.server.URL, ""); err != nil {
+		t.Fatalf("request pair: %v", err)
+	}
+	if err := m.Pair(t.Context(), fc.server.URL, strings.Repeat("ab", 16), "Studio"); err != nil {
+		t.Fatalf("manual pair: %v", err)
+	}
+	conn := <-fc.conns
+	t.Cleanup(func() { _ = conn.Close() })
+	if m.Status().Pending != nil {
+		t.Fatal("manual Pair() must cancel any pending one-click pairing")
+	}
+}
+
+func TestRequestPairRecordsExchangeFailure(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/tunnel/pair/request", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "msg": "Success", "data": map[string]any{
+			"requestId": "req_bad", "userCode": "ABCD-EFGH",
+			"expiresAt": time.Now().Add(time.Minute).UTC().Format(time.RFC3339),
+			"pollToken": "poll-secret",
+		}})
+	})
+	mux.HandleFunc("/api/tunnel/pair/request/", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "msg": "Success", "data": map[string]any{
+			"state": PendingApproved, "code": oneClickCode,
+		}})
+	})
+	mux.HandleFunc("/api/tunnel/pair/exchange", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 500, "msg": "code already consumed"})
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	m, _ := oneClickManager(t, http.NotFoundHandler())
+	if err := m.RequestPair(t.Context(), srv.URL, "Studio"); err != nil {
+		t.Fatalf("request pair: %v", err)
+	}
+	if !waitFor(t, 2*time.Second, func() bool { return m.Status().Pending == nil }) {
+		t.Fatal("expected pending request to clear after exchange failure")
+	}
+	if msg := m.Status().Message; !strings.Contains(msg, "code already consumed") {
+		t.Fatalf("Status().Message = %q, want exchange error", msg)
 	}
 }
 

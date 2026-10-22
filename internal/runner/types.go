@@ -272,6 +272,7 @@ type SessionRecord struct {
 	Revert              *SessionRevert    `json:"revert,omitempty"`
 	RevertedTurns       []MessageTurn     `json:"revertedTurns,omitempty"`
 	RevertSnapshot      string            `json:"revertSnapshot,omitempty"`
+	RevertPaths         []string          `json:"revertPaths,omitempty"`
 	Snapshots           map[string]string `json:"snapshots,omitempty"`
 	OpenCodeIDs         []string          `json:"openCodeIDs,omitempty"`
 	OpenCodeDirectories map[string]string `json:"openCodeDirectories,omitempty"`

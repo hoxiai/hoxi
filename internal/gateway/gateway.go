@@ -208,6 +208,17 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 	g.cloudflared = cloudflared.NewManager(cloudflared.Options{IngressURL: "http://" + hoxipaths.DefaultRemoteIngressAddr})
 	g.pairing.SetRelayURL(func() string {
 		host := strings.TrimSpace(g.cloudflared.Hostname())
+		lower := strings.ToLower(host)
+		switch {
+		case strings.HasPrefix(lower, "https://"):
+			host = host[len("https://"):]
+		case strings.HasPrefix(lower, "http://"):
+			host = host[len("http://"):]
+		}
+		if i := strings.IndexByte(host, '/'); i >= 0 {
+			host = host[:i]
+		}
+		host = strings.TrimSpace(strings.TrimRight(host, "/"))
 		if host == "" {
 			return ""
 		}

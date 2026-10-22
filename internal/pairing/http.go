@@ -48,12 +48,12 @@ func (s *Service) Authorize(r *http.Request) bool {
 	if r == nil {
 		return false
 	}
-	want, err := s.Token()
-	if err != nil || want == "" {
-		return false
-	}
 	got := tokenFromRequest(r)
 	if got == "" {
+		return false
+	}
+	want, err := s.Token()
+	if err != nil || want == "" {
 		return false
 	}
 	return subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1

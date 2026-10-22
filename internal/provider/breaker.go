@@ -53,6 +53,9 @@ const (
 	// breakerMinPersistInterval throttles disk writes; phase changes force a
 	// write immediately regardless of this interval.
 	breakerMinPersistInterval = 1500 * time.Millisecond
+	// breakerLatencyStaleAfter ages out old latency averages so a candidate that
+	// was once slow is eventually re-probed instead of starved forever.
+	breakerLatencyStaleAfter = 30 * time.Minute
 )
 
 type breakerPhase string
@@ -105,10 +108,13 @@ type BreakerSnapshot struct {
 
 type breakerStore struct {
 	mu          sync.Mutex
+	saveMu      sync.Mutex
 	filePath    string
 	items       map[string]*candidateBreaker
 	nowFn       func() time.Time
 	lastSavedAt time.Time
+	saveSeq     uint64
+	writtenSeq  uint64
 }
 
 func newBreakerStore(rootDir string) *breakerStore {
@@ -176,24 +182,44 @@ func (s *breakerStore) loadFromDisk() {
 	}
 }
 
-func (s *breakerStore) saveLocked(force bool) {
+func (s *breakerStore) prepareSaveLocked(force bool) (map[string]interface{}, uint64, bool) {
 	if s.filePath == "" {
-		return
+		return nil, 0, false
 	}
 	now := s.now()
 	if !force && now.Sub(s.lastSavedAt) < breakerMinPersistInterval {
-		return
+		return nil, 0, false
 	}
 	s.evictLocked()
+	candidates := make(map[string]candidateBreaker, len(s.items))
+	for k, v := range s.items {
+		if v != nil {
+			candidates[k] = *v
+		}
+	}
+	s.saveSeq++
+	seq := s.saveSeq
+	s.lastSavedAt = now
 	doc := map[string]interface{}{
 		"version":    breakerStateVersion,
 		"updatedAt":  now.UnixMilli(),
-		"candidates": s.items,
+		"candidates": candidates,
 	}
-	if err := writeJSONMapFile(s.filePath, doc); err != nil {
+	return doc, seq, true
+}
+
+func (s *breakerStore) writeSnapshot(doc map[string]interface{}, seq uint64) {
+	if doc == nil || s.filePath == "" {
 		return
 	}
-	s.lastSavedAt = now
+	s.saveMu.Lock()
+	defer s.saveMu.Unlock()
+	if seq <= s.writtenSeq {
+		return
+	}
+	if err := writeJSONMapFile(s.filePath, doc); err == nil {
+		s.writtenSeq = seq
+	}
 }
 
 func (s *breakerStore) evictLocked() {
@@ -239,7 +265,6 @@ func (s *breakerStore) RecordSuccess(providerID, modelID string, latencyMs int64
 		return
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	rec := s.entryLocked(providerID, modelID)
 	rec.Successes++
 	rec.ConsecutiveFailures = 0
@@ -258,7 +283,11 @@ func (s *breakerStore) RecordSuccess(providerID, modelID string, latencyMs int64
 	}
 	decayCountersLocked(rec)
 	rec.UpdatedAt = s.now().UnixMilli()
-	s.saveLocked(phaseChanged)
+	doc, seq, shouldSave := s.prepareSaveLocked(phaseChanged)
+	s.mu.Unlock()
+	if shouldSave {
+		s.writeSnapshot(doc, seq)
+	}
 }
 
 // RecordFailure counts a failure and opens the circuit once the class threshold
@@ -272,20 +301,16 @@ func (s *breakerStore) RecordFailure(providerID, modelID string, class breakerCl
 		return
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	rec := s.entryLocked(providerID, modelID)
 	rec.Failures++
 	rec.ConsecutiveFailures++
 	rec.LastClass = class
 	rec.LastReason = truncateReason(reason)
-	if latencyMs > 0 {
-		// A timeout carries a latency signal for scoring too, but weight it
-		// lightly so a slow failure does not masquerade as a healthy sample.
-		if rec.LatencySamples == 0 || rec.LatencyEwmaMs <= 0 {
-			rec.LatencyEwmaMs = float64(latencyMs)
-		} else {
-			rec.LatencyEwmaMs = 0.85*rec.LatencyEwmaMs + 0.15*float64(latencyMs)
-		}
+	if latencyMs > 0 && rec.LatencySamples > 0 && rec.LatencyEwmaMs > 0 {
+		// A timeout carries a latency signal for scoring too, but only blend it
+		// lightly into an existing baseline so a single failure on an untested
+		// model never initializes LatencyEwmaMs to the timeout duration.
+		rec.LatencyEwmaMs = 0.85*rec.LatencyEwmaMs + 0.15*float64(latencyMs)
 		rec.LatencySamples++
 	}
 	decayCountersLocked(rec)
@@ -301,7 +326,11 @@ func (s *breakerStore) RecordFailure(providerID, modelID string, class breakerCl
 		phaseChanged = true
 	}
 	rec.UpdatedAt = s.now().UnixMilli()
-	s.saveLocked(phaseChanged)
+	doc, seq, shouldSave := s.prepareSaveLocked(phaseChanged)
+	s.mu.Unlock()
+	if shouldSave {
+		s.writeSnapshot(doc, seq)
+	}
 }
 
 func decayCountersLocked(rec *candidateBreaker) {
@@ -356,11 +385,7 @@ func (s *breakerStore) Score(providerID, modelID string) float64 {
 	if !ok || rec == nil {
 		return 0.54
 	}
-	if rec.Phase == breakerOpen {
-		return 0
-	}
-	reliability := float64(rec.Successes+1) / float64(rec.Successes+rec.Failures+2)
-	return 0.6*reliability + 0.4*latencyFactor(rec.LatencyEwmaMs, rec.LatencySamples)
+	return candidateEffectiveScore(rec, s.now().UnixMilli())
 }
 
 // latencyFactor maps an average latency onto 0.15..1.0. Untested candidates sit
@@ -388,15 +413,15 @@ func (s *breakerStore) Snapshot() map[string]BreakerSnapshot {
 		if rec == nil {
 			continue
 		}
-		open := rec.Phase == breakerOpen && rec.OpenUntil > nowMs
+		open := rec.Phase == breakerOpen && (rec.OpenUntil <= 0 || rec.OpenUntil > nowMs)
 		out[key] = BreakerSnapshot{
 			ProviderID:          rec.ProviderID,
 			ModelID:             rec.ModelID,
 			Phase:               string(rec.Phase),
 			Open:                open,
 			OpenUntil:           rec.OpenUntil,
-			Score:               round3(candidateScore(rec)),
-			LatencyEwmaMs:       rec.LatencyEwmaMs,
+			Score:               round3(candidateEffectiveScore(rec, nowMs)),
+			LatencyEwmaMs:       effectiveLatencyMs(rec, nowMs),
 			ConsecutiveFailures: rec.ConsecutiveFailures,
 			LastClass:           string(rec.LastClass),
 			UpdatedAt:           rec.UpdatedAt,
@@ -419,14 +444,34 @@ func (s *breakerStore) Evaluate(providerID, modelID string) (allowed bool, score
 	if !ok || rec == nil {
 		return true, 0.54
 	}
-	if rec.Phase == breakerOpen {
-		if rec.OpenUntil > 0 && s.now().UnixMilli() >= rec.OpenUntil {
-			// Expired cooldown: treat as a recoverable probe candidate.
-			return true, 0.3
-		}
+	nowMs := s.now().UnixMilli()
+	if rec.Phase == breakerOpen && (rec.OpenUntil <= 0 || nowMs < rec.OpenUntil) {
 		return false, 0
 	}
-	return true, candidateScore(rec)
+	return true, candidateEffectiveScore(rec, nowMs)
+}
+
+func candidateEffectiveScore(rec *candidateBreaker, nowMs int64) float64 {
+	if rec == nil {
+		return 0.54
+	}
+	if rec.Phase == breakerOpen {
+		if rec.OpenUntil > 0 && nowMs >= rec.OpenUntil {
+			return 0.3
+		}
+		return 0
+	}
+	return candidateScore(rec)
+}
+
+func effectiveLatencyMs(rec *candidateBreaker, nowMs int64) float64 {
+	if rec == nil || rec.LatencySamples <= 0 || rec.LatencyEwmaMs <= 0 {
+		return 0
+	}
+	if rec.UpdatedAt > 0 && nowMs-rec.UpdatedAt > breakerLatencyStaleAfter.Milliseconds() {
+		return 0
+	}
+	return rec.LatencyEwmaMs
 }
 
 // candidateScore blends reliability and latency into a 0..1 health score.
@@ -456,8 +501,9 @@ func (s *breakerStore) cooldownRemainingMs(providerID, modelID string) int64 {
 }
 
 // LatencyMs returns the observed latency average in milliseconds, or 0 when the
-// candidate has no latency sample yet. Selection uses it to skip a candidate
-// that is much slower than a healthy peer.
+// candidate has no latency sample yet or the sample has aged past the staleness
+// window. Selection uses it to skip a candidate that is much slower than a
+// healthy peer without starving it permanently.
 func (s *breakerStore) LatencyMs(providerID, modelID string) float64 {
 	providerID, modelID = strings.TrimSpace(providerID), strings.TrimSpace(modelID)
 	if providerID == "" || modelID == "" {
@@ -466,10 +512,10 @@ func (s *breakerStore) LatencyMs(providerID, modelID string) float64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	rec, ok := s.items[breakerKey(providerID, modelID)]
-	if !ok || rec == nil || rec.LatencySamples <= 0 {
+	if !ok || rec == nil {
 		return 0
 	}
-	return rec.LatencyEwmaMs
+	return effectiveLatencyMs(rec, s.now().UnixMilli())
 }
 
 func round3(v float64) float64 {
@@ -634,7 +680,6 @@ func (s *breakerStore) handleOutcome(w http.ResponseWriter, r *http.Request) {
 // ids are empty. It mirrors the "clear cooldown" affordance in the UI.
 func (s *breakerStore) clear(providerID, modelID string) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if providerID == "" && modelID == "" {
 		s.items = make(map[string]*candidateBreaker)
 	} else if providerID != "" && modelID != "" {
@@ -647,7 +692,11 @@ func (s *breakerStore) clear(providerID, modelID string) {
 			}
 		}
 	}
-	s.saveLocked(true)
+	doc, seq, shouldSave := s.prepareSaveLocked(true)
+	s.mu.Unlock()
+	if shouldSave {
+		s.writeSnapshot(doc, seq)
+	}
 }
 
 // recordBreakerSuccess and recordBreakerFailure are nil-safe Service helpers so

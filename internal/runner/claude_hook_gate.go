@@ -172,7 +172,7 @@ func (s *Service) decideClaudeHookCall(r *http.Request, cred hookCredential, p c
 			s.policyApprovesWorktreeEdit(rec, path) {
 			return "", ""
 		}
-		if approved, reason := s.gateToolCall(r, cred, p.ToolName, argsMap, p.ToolUseID); approved {
+		if approved, reason := s.gateToolCallIn(r, cred, p.ToolName, argsMap, p.ToolUseID, p.Cwd); approved {
 			return "allow", ""
 		} else {
 			return "deny", reason
@@ -183,7 +183,7 @@ func (s *Service) decideClaudeHookCall(r *http.Request, cred hookCredential, p c
 		if path != "" && pathWithin(rec.WorktreePath, path) && !isSecretFilePath(path) {
 			return "", ""
 		}
-		if approved, reason := s.gateToolCall(r, cred, p.ToolName, argsMap, p.ToolUseID); approved {
+		if approved, reason := s.gateToolCallIn(r, cred, p.ToolName, argsMap, p.ToolUseID, p.Cwd); approved {
 			return "allow", ""
 		} else {
 			return "deny", reason
@@ -195,7 +195,7 @@ func (s *Service) decideClaudeHookCall(r *http.Request, cred hookCredential, p c
 		if cwdOK && !hasEscapingSearchPattern(argsMap) && (path == "" || pathWithin(rec.WorktreePath, path)) {
 			return "", ""
 		}
-		if approved, reason := s.gateToolCall(r, cred, p.ToolName, argsMap, p.ToolUseID); approved {
+		if approved, reason := s.gateToolCallIn(r, cred, p.ToolName, argsMap, p.ToolUseID, p.Cwd); approved {
 			return "allow", ""
 		} else {
 			return "deny", reason
@@ -207,7 +207,7 @@ func (s *Service) decideClaudeHookCall(r *http.Request, cred hookCredential, p c
 
 	// Unknown and external/network/MCP tools are never passed through: the
 	// approval policy decides them like every other runtime's requests.
-	if approved, reason := s.gateToolCall(r, cred, p.ToolName, argsMap, p.ToolUseID); approved {
+	if approved, reason := s.gateToolCallIn(r, cred, p.ToolName, argsMap, p.ToolUseID, p.Cwd); approved {
 		return "allow", ""
 	} else {
 		return "deny", reason
