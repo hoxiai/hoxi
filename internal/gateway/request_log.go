@@ -31,6 +31,7 @@ type requestLogEntry struct {
 	Time             int64  `json:"time"`
 	Completed        int64  `json:"completed,omitempty"`
 	DurationMs       int64  `json:"durationMs"`
+	FirstTokenMs     int64  `json:"firstTokenMs,omitempty"`
 	ProviderID       string `json:"providerID"`
 	Account          string `json:"account,omitempty"`
 	ModelID          string `json:"modelID"`
@@ -143,6 +144,7 @@ func requestLogFromTurn(turn runner.MessageTurn, rec runner.SessionRecord, runti
 		entry.CacheReadTokens = int64(tokens.Cache.Read)
 		entry.CacheWriteTokens = int64(tokens.Cache.Write)
 	}
+	entry.FirstTokenMs = turnFirstTokenMs(turn, info.Time.Created)
 	if failed {
 		entry.Level = "error"
 		entry.Status = requestErrorStatus(info.Error)
@@ -151,6 +153,32 @@ func requestLogFromTurn(turn runner.MessageTurn, rec runner.SessionRecord, runti
 		entry.Level = "pending"
 	}
 	return entry, true
+}
+
+// turnFirstTokenMs measures time to first visible token: the earliest text or
+// reasoning part start after the assistant turn was created.
+func turnFirstTokenMs(turn runner.MessageTurn, created int64) int64 {
+	if created <= 0 {
+		return 0
+	}
+	first := int64(0)
+	for i := range turn.Parts {
+		part := turn.Parts[i]
+		if part.Type != "text" && part.Type != "reasoning" {
+			continue
+		}
+		start := part.Time.Start
+		if start <= 0 || start <= created {
+			continue
+		}
+		if first == 0 || start < first {
+			first = start
+		}
+	}
+	if first == 0 {
+		return 0
+	}
+	return first - created
 }
 
 func requestErrorStatus(err *runner.MessageError) int {
@@ -200,7 +228,11 @@ SELECT
   CAST(COALESCE(json_extract(m.data, '$.tokens.cache.read'), 0) AS INTEGER) AS cache_read,
   CAST(COALESCE(json_extract(m.data, '$.tokens.cache.write'), 0) AS INTEGER) AS cache_write,
   CAST(COALESCE(json_extract(m.data, '$.error.data.statusCode'), 0) AS INTEGER) AS status,
-  COALESCE(json_extract(m.data, '$.error.data.message'), json_extract(m.data, '$.error.name'), '') AS error
+  COALESCE(json_extract(m.data, '$.error.data.message'), json_extract(m.data, '$.error.name'), '') AS error,
+  COALESCE((
+    SELECT MIN(p.time_created) FROM part p
+    WHERE p.message_id = m.id AND json_extract(p.data, '$.type') IN ('text', 'reasoning')
+  ), 0) AS first_part
 FROM message m
 JOIN session s ON s.id = m.session_id
 WHERE json_extract(m.data, '$.role') = 'assistant'
@@ -235,6 +267,7 @@ LIMIT %d;`, handoff.SQLNotImportedTitleClause("s.title"), requestLogMaxLimit)
 		CacheWrite int64  `json:"cache_write"`
 		Status     int    `json:"status"`
 		Error      string `json:"error"`
+		FirstPart  int64  `json:"first_part"`
 	}
 	if err := json.Unmarshal(bytes.TrimSpace(out), &rows); err != nil {
 		return nil
@@ -253,6 +286,7 @@ LIMIT %d;`, handoff.SQLNotImportedTitleClause("s.title"), requestLogMaxLimit)
 			ModelID: row.ModelID, Client: "local", Status: row.Status, Level: level,
 			InputTokens: row.Input, OutputTokens: row.Output, ReasoningTokens: row.Reasoning,
 			CacheReadTokens: row.CacheRead, CacheWriteTokens: row.CacheWrite, Error: trimLogText(row.Error),
+			FirstTokenMs: durationFromMillis(row.Time, row.FirstPart),
 		})
 	}
 	return entries

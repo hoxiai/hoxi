@@ -6,20 +6,34 @@ import {
   loadRequestLog, requestLog, requestLogError, requestLogLoading, requestLogTotal,
 } from "../../store/workspace";
 import type { RequestLogEntry } from "../../services/api";
+
 const control = "rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] cursor-pointer";
 const button = "inline-flex items-center justify-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] disabled:opacity-50 cursor-pointer";
+const headCell = "px-3 py-2 text-left font-medium";
 
-type ColumnKey = "time" | "provider" | "status" | "model" | "client" | "usage" | "error";
+type ColumnKey = "time" | "provider" | "status" | "model" | "firstToken" | "duration" | "tokens" | "error";
 
-const COLUMNS: ColumnKey[] = ["time", "provider", "status", "model", "client", "usage", "error"];
+const COLUMNS: ColumnKey[] = ["time", "provider", "status", "model", "firstToken", "duration", "tokens", "error"];
+
+const COLUMN_WIDTH: Record<ColumnKey, string> = {
+  time: "w-[86px]",
+  provider: "w-[128px]",
+  status: "w-[76px]",
+  model: "",
+  firstToken: "w-[72px]",
+  duration: "w-[72px]",
+  tokens: "w-[156px]",
+  error: "w-[180px]",
+};
 
 const COLUMN_LABEL: Record<ColumnKey, () => string> = {
   time: () => t("diagnostics.colTime"),
   provider: () => t("diagnostics.colProvider"),
   status: () => t("diagnostics.colStatus"),
   model: () => t("diagnostics.colModel"),
-  client: () => t("diagnostics.colClient"),
-  usage: () => t("diagnostics.colUsage"),
+  firstToken: () => t("diagnostics.colFirstToken"),
+  duration: () => t("diagnostics.colDuration"),
+  tokens: () => t("diagnostics.colTokens"),
   error: () => t("diagnostics.colError"),
 };
 
@@ -43,16 +57,28 @@ function totalTokens(entry: RequestLogEntry): number {
   return entry.inputTokens + entry.outputTokens + entry.reasoningTokens + entry.cacheReadTokens + entry.cacheWriteTokens;
 }
 
-function statusTone(entry: RequestLogEntry): string {
-  if (entry.level === "error" || (entry.status && entry.status >= 400)) return "bg-[var(--danger-surface)] text-[var(--danger-text)]";
-  if (entry.level === "pending") return "bg-[var(--warn-surface)] text-[var(--warn-text)]";
+function isFailed(entry: RequestLogEntry): boolean {
+  return entry.level === "error" || (!!entry.status && entry.status >= 400);
+}
+
+function isPending(entry: RequestLogEntry): boolean {
+  return entry.level === "pending";
+}
+
+function badgeClass(entry: RequestLogEntry): string {
+  if (isFailed(entry)) return "bg-[var(--danger-surface)] text-[var(--danger-text)]";
+  if (isPending(entry)) return "bg-[var(--warn-surface)] text-[var(--warn-text)]";
   return "bg-emerald-500/10 text-emerald-600";
 }
 
-function statusText(entry: RequestLogEntry): string {
-  if (entry.level === "pending") return t("diagnostics.statusPending");
-  if (entry.status) return String(entry.status);
-  return entry.level === "error" ? t("diagnostics.error") : "200";
+function badgeText(entry: RequestLogEntry): string {
+  if (isFailed(entry)) return t("diagnostics.statusFailed");
+  if (isPending(entry)) return t("diagnostics.statusPending");
+  return t("diagnostics.statusSuccess");
+}
+
+function statusTitle(entry: RequestLogEntry): string {
+  return entry.status ? `HTTP ${entry.status}` : badgeText(entry);
 }
 
 export default function DiagnosticsTab() {
@@ -75,8 +101,8 @@ export default function DiagnosticsTab() {
     if (provider() && entry.providerID !== provider()) return false;
     if (model() && entry.modelID !== model()) return false;
     if (pendingOnly() && entry.level !== "pending") return false;
-    if (level() === "error" && entry.level !== "error") return false;
-    if (level() === "info" && entry.level === "error") return false;
+    if (level() === "error" && !isFailed(entry)) return false;
+    if (level() === "info" && isFailed(entry)) return false;
     return true;
   }));
   const visible = (key: ColumnKey) => !hidden().includes(key);
@@ -146,16 +172,17 @@ export default function DiagnosticsTab() {
 
       <Show when={rows().length > 0}>
         <div class="overflow-x-auto rounded-xl border border-[var(--border-subtle)]">
-          <table class="w-full border-collapse text-[12px]">
+          <table class="w-full table-fixed border-collapse text-[12px]">
             <thead>
-              <tr class="border-b border-[var(--border-subtle)] text-left text-[11px] text-[var(--text-muted)]">
-                <Show when={visible("time")}><th class="px-3 py-2 font-medium">{t("diagnostics.colTime")}</th></Show>
-                <Show when={visible("provider")}><th class="px-3 py-2 font-medium">{t("diagnostics.colProvider")}</th></Show>
-                <Show when={visible("status")}><th class="px-3 py-2 font-medium">{t("diagnostics.colStatus")}</th></Show>
-                <Show when={visible("model")}><th class="px-3 py-2 font-medium">{t("diagnostics.colModel")}</th></Show>
-                <Show when={visible("client")}><th class="px-3 py-2 font-medium">{t("diagnostics.colClient")}</th></Show>
-                <Show when={visible("usage")}><th class="px-3 py-2 font-medium">{t("diagnostics.colUsage")}</th></Show>
-                <Show when={visible("error")}><th class="px-3 py-2 font-medium">{t("diagnostics.colError")}</th></Show>
+              <tr class="border-b border-[var(--border-subtle)] text-[11px] text-[var(--text-muted)]">
+                <Show when={visible("time")}><th class={`${headCell} ${COLUMN_WIDTH.time}`}>{t("diagnostics.colTime")}</th></Show>
+                <Show when={visible("provider")}><th class={`${headCell} ${COLUMN_WIDTH.provider}`}>{t("diagnostics.colProvider")}</th></Show>
+                <Show when={visible("status")}><th class={`${headCell} ${COLUMN_WIDTH.status}`}>{t("diagnostics.colStatus")}</th></Show>
+                <Show when={visible("model")}><th class={`${headCell} ${COLUMN_WIDTH.model}`}>{t("diagnostics.colModel")}</th></Show>
+                <Show when={visible("firstToken")}><th class={`${headCell} ${COLUMN_WIDTH.firstToken} text-right`}>{t("diagnostics.colFirstToken")}</th></Show>
+                <Show when={visible("duration")}><th class={`${headCell} ${COLUMN_WIDTH.duration} text-right`}>{t("diagnostics.colDuration")}</th></Show>
+                <Show when={visible("tokens")}><th class={`${headCell} ${COLUMN_WIDTH.tokens}`}>{t("diagnostics.colTokens")}</th></Show>
+                <Show when={visible("error")}><th class={`${headCell} ${COLUMN_WIDTH.error}`}>{t("diagnostics.colError")}</th></Show>
                 <th class="sticky right-0 bg-[var(--bg-canvas)] px-3 py-2 text-right font-medium shadow-[-8px_0_8px_-8px_var(--border-strong)]">{t("diagnostics.colDetails")}</th>
               </tr>
             </thead>
@@ -163,8 +190,9 @@ export default function DiagnosticsTab() {
               <For each={rows()}>
                 {(entry) => {
                   const when = formatWhen(entry.time);
+                  const failed = isFailed(entry);
                   return (
-                    <tr class={`border-b border-[var(--border-subtle)]/70 align-top last:border-0 ${entry.level === "error" ? "bg-[var(--danger-surface)]/35" : ""}`}>
+                    <tr class={`border-b border-[var(--border-subtle)]/70 last:border-0 ${failed ? "bg-[var(--danger-surface)]/35" : ""}`}>
                       <Show when={visible("time")}>
                         <td class="whitespace-nowrap px-3 py-2 font-mono text-[11px] leading-4 text-[var(--text-secondary)]">
                           <div>{when.date}</div>
@@ -173,25 +201,36 @@ export default function DiagnosticsTab() {
                       </Show>
                       <Show when={visible("provider")}>
                         <td class="px-3 py-2">
-                          <div class="text-[var(--text-primary)]">{entry.providerID}</div>
-                          <Show when={entry.account}><div class="text-[11px] text-[var(--text-muted)]">{entry.account}</div></Show>
+                          <div class="truncate text-[var(--text-primary)]" title={entry.providerID}>{entry.providerID}</div>
+                          <Show when={entry.account}><div class="truncate text-[11px] text-[var(--text-muted)]" title={entry.account}>{entry.account}</div></Show>
                         </td>
                       </Show>
                       <Show when={visible("status")}>
-                        <td class="px-3 py-2"><span class={`rounded-full px-2 py-0.5 text-[11px] font-medium ${statusTone(entry)}`}>{statusText(entry)}</span></td>
+                        <td class="px-3 py-2">
+                          <span class={`inline-block rounded-full px-2 py-0.5 text-[11px] font-medium ${badgeClass(entry)}`} title={statusTitle(entry)}>{badgeText(entry)}</span>
+                        </td>
                       </Show>
-                      <Show when={visible("model")}><td class="max-w-[220px] truncate px-3 py-2 font-mono text-[11px] text-[var(--text-secondary)]">{entry.modelID}</td></Show>
-                      <Show when={visible("client")}><td class="px-3 py-2 text-[var(--text-muted)]">{t("diagnostics.clientLocal")}</td></Show>
-                      <Show when={visible("usage")}>
-                        <td class="whitespace-nowrap px-3 py-2 font-mono text-[11px] leading-4 text-[var(--text-secondary)]">
-                          <div>{formatDuration(entry.durationMs)}</div>
-                          <div class="text-[var(--text-muted)]">{t("diagnostics.usageLine", { input: formatCompactNumber(entry.inputTokens), output: formatCompactNumber(entry.outputTokens), total: formatCompactNumber(totalTokens(entry)) })}</div>
+                      <Show when={visible("model")}>
+                        <td class="truncate px-3 py-2 font-mono text-[11px] text-[var(--text-secondary)]" title={entry.modelID}>{entry.modelID}</td>
+                      </Show>
+                      <Show when={visible("firstToken")}>
+                        <td class="px-3 py-2 text-right font-mono text-[11px] text-[var(--text-secondary)]">{formatDuration(entry.firstTokenMs || 0)}</td>
+                      </Show>
+                      <Show when={visible("duration")}>
+                        <td class="px-3 py-2 text-right font-mono text-[11px] text-[var(--text-secondary)]">{formatDuration(entry.durationMs)}</td>
+                      </Show>
+                      <Show when={visible("tokens")}>
+                        <td class="px-3 py-2 font-mono text-[11px] leading-4 text-[var(--text-secondary)]">
+                          <div class="text-[var(--text-primary)]" title={totalTokens(entry).toLocaleString()}>{formatCompactNumber(totalTokens(entry))}</div>
+                          <div class="truncate text-[11px] text-[var(--text-muted)]" title={t("diagnostics.usageLine", { input: entry.inputTokens.toLocaleString(), output: entry.outputTokens.toLocaleString(), total: totalTokens(entry).toLocaleString() })}>
+                            {t("diagnostics.tokensInOut", { input: formatCompactNumber(entry.inputTokens), output: formatCompactNumber(entry.outputTokens) })}
+                          </div>
                         </td>
                       </Show>
                       <Show when={visible("error")}>
-                        <td class="max-w-[260px] truncate px-3 py-2 text-[var(--text-secondary)]" title={entry.error || ""}>{entry.error || t("diagnostics.noError")}</td>
+                        <td class="truncate px-3 py-2 text-[11px] text-[var(--danger-text)]" title={entry.error || ""}>{entry.error || t("diagnostics.noError")}</td>
                       </Show>
-                      <td class={`sticky right-0 px-3 py-2 text-right shadow-[-8px_0_8px_-8px_var(--border-strong)] ${entry.level === "error" ? "bg-[var(--danger-surface)]" : "bg-[var(--bg-canvas)]"}`}>
+                      <td class={`sticky right-0 px-3 py-2 text-right shadow-[-8px_0_8px_-8px_var(--border-strong)] ${failed ? "bg-[var(--danger-surface)]" : "bg-[var(--bg-canvas)]"}`}>
                         <button type="button" class={button} onClick={() => setSelected(entry)}>{t("diagnostics.details")}</button>
                       </td>
                     </tr>
@@ -224,15 +263,17 @@ function RequestDetail(props: { entry: RequestLogEntry; onClose: () => void }) {
       <dl class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1.5 text-[12px]">
         <dt class="text-[var(--text-muted)]">{t("diagnostics.colTime")}</dt><dd class="font-mono text-[var(--text-secondary)]">{when().date} {when().time}</dd>
         <dt class="text-[var(--text-muted)]">{t("diagnostics.provider")}</dt><dd class="text-[var(--text-secondary)]">{props.entry.providerID}</dd>
-        <dt class="text-[var(--text-muted)]">{t("diagnostics.colModel")}</dt><dd class="font-mono text-[var(--text-secondary)]">{props.entry.modelID}</dd>
-        <dt class="text-[var(--text-muted)]">{t("diagnostics.colClient")}</dt><dd class="text-[var(--text-secondary)]">{t("diagnostics.clientLocal")}</dd>
-        <dt class="text-[var(--text-muted)]">{t("diagnostics.session")}</dt><dd class="break-all font-mono text-[var(--text-secondary)]">{props.entry.sessionID}</dd>
-        <dt class="text-[var(--text-muted)]">{t("diagnostics.colStatus")}</dt><dd class="font-mono text-[var(--text-secondary)]">{statusText(props.entry)}</dd>
-        <dt class="text-[var(--text-muted)]">{t("diagnostics.colUsage")}</dt>
+        <dt class="text-[var(--text-muted)]">{t("diagnostics.colModel")}</dt><dd class="break-all font-mono text-[var(--text-secondary)]">{props.entry.modelID}</dd>
+        <dt class="text-[var(--text-muted)]">{t("diagnostics.colStatus")}</dt><dd class="font-mono text-[var(--text-secondary)]">{statusTitle(props.entry)}</dd>
+        <dt class="text-[var(--text-muted)]">{t("diagnostics.colFirstToken")}</dt><dd class="font-mono text-[var(--text-secondary)]">{formatDuration(props.entry.firstTokenMs || 0)}</dd>
+        <dt class="text-[var(--text-muted)]">{t("diagnostics.colDuration")}</dt><dd class="font-mono text-[var(--text-secondary)]">{formatDuration(props.entry.durationMs)}</dd>
+        <dt class="text-[var(--text-muted)]">{t("diagnostics.colTokens")}</dt>
         <dd class="font-mono text-[var(--text-secondary)]">
-          {formatDuration(props.entry.durationMs)} · {t("diagnostics.usageLine", { input: props.entry.inputTokens.toLocaleString(), output: props.entry.outputTokens.toLocaleString(), total: totalTokens(props.entry).toLocaleString() })}
+          {t("diagnostics.usageLine", { input: props.entry.inputTokens.toLocaleString(), output: props.entry.outputTokens.toLocaleString(), total: totalTokens(props.entry).toLocaleString() })}
           <div class="text-[var(--text-muted)]">{t("diagnostics.cacheLine", { cache: props.entry.cacheReadTokens.toLocaleString(), reasoning: props.entry.reasoningTokens.toLocaleString() })}</div>
         </dd>
+        <dt class="text-[var(--text-muted)]">{t("diagnostics.colClient")}</dt><dd class="text-[var(--text-secondary)]">{t("diagnostics.clientLocal")}</dd>
+        <dt class="text-[var(--text-muted)]">{t("diagnostics.session")}</dt><dd class="break-all font-mono text-[var(--text-secondary)]">{props.entry.sessionID}</dd>
         <Show when={props.entry.error}>
           <dt class="text-[var(--text-muted)]">{t("diagnostics.colError")}</dt>
           <dd class="whitespace-pre-wrap break-words font-mono text-[var(--danger-text)]">{props.entry.error}</dd>
