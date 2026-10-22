@@ -22,6 +22,7 @@ type Service struct {
 	rootDir           string
 	proxy             http.Handler
 	stats             *modelStatsStore
+	breaker           *breakerStore
 	assistMu          sync.RWMutex
 	assist            map[string]http.HandlerFunc
 	isBusyFn          func() bool
@@ -42,6 +43,7 @@ func NewService(openCodePort int, password, rootDir string, proxy http.Handler) 
 		rootDir:  rootDir,
 		proxy:    proxy,
 		stats:    newModelStatsStore(rootDir),
+		breaker:  newBreakerStore(rootDir),
 	}
 }
 
@@ -77,6 +79,9 @@ func (s *Service) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/provider", s.handleProviderProxy)
 	if s.stats != nil {
 		s.stats.registerRoutes(mux)
+	}
+	if s.breaker != nil {
+		s.breaker.registerRoutes(mux)
 	}
 }
 

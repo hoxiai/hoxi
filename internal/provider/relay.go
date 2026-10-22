@@ -205,14 +205,16 @@ func (s *Service) relayResolveModel(raw string) (providerID, modelID string, err
 		// The auto pool may contain Anthropic-native or CLI-only entries that
 		// this OpenAI-compatible plane cannot serve. Rotate past them instead of
 		// failing the whole request on the first unlucky pick.
+		exclude := map[string]bool{}
 		for attempt := 0; attempt < relayAutoAttempts; attempt++ {
-			pid, mid := s.resolveBackendAutoCandidate(AutoProviderID, poolID)
+			pid, mid := s.selectAutoCandidate(poolID, exclude)
 			if pid == AutoProviderID || strings.TrimSpace(mid) == "" {
 				break
 			}
 			if s.relayCandidateCompatible(pid) {
 				return pid, mid, nil
 			}
+			exclude[breakerKey(pid, mid)] = true
 		}
 		return "", "", errors.New("no OpenAI-compatible model is available in the auto pool " + strings.TrimSpace(poolID))
 	}
@@ -366,8 +368,10 @@ func (s *Service) serveRelayChat(w http.ResponseWriter, r *http.Request) {
 	}
 	client := &http.Client{Transport: transport}
 	started := time.Now()
+	elapsedMs := func() int64 { return time.Since(started).Milliseconds() }
 	resp, err := client.Do(outReq)
 	if err != nil {
+		s.recordBreakerFailure(providerID, modelID, classifyCandidateFailure(0, err, nil), 0, elapsedMs(), err.Error())
 		recordRelayFailure(providerID, modelID, 0, started)
 		writeJSON(w, http.StatusBadGateway, map[string]any{
 			"error": map[string]any{"message": "upstream request failed: " + err.Error(), "type": "upstream_error"},
@@ -378,6 +382,7 @@ func (s *Service) serveRelayChat(w http.ResponseWriter, r *http.Request) {
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		rawErr, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+		s.recordBreakerFailure(providerID, modelID, classifyCandidateFailure(resp.StatusCode, nil, rawErr), resp.StatusCode, elapsedMs(), string(rawErr))
 		recordRelayFailure(providerID, modelID, resp.StatusCode, started)
 		writeRelayUpstreamError(w, resp.StatusCode, rawErr)
 		return
@@ -386,8 +391,11 @@ func (s *Service) serveRelayChat(w http.ResponseWriter, r *http.Request) {
 	copyRelayHeaders(w.Header(), resp.Header)
 	w.WriteHeader(resp.StatusCode)
 	if err := streamRelayBody(w, resp.Body); err != nil {
+		s.recordBreakerFailure(providerID, modelID, classifyCandidateFailure(resp.StatusCode, err, nil), resp.StatusCode, elapsedMs(), err.Error())
 		recordRelayFailure(providerID, modelID, resp.StatusCode, started)
+		return
 	}
+	s.recordBreakerSuccess(providerID, modelID, elapsedMs())
 }
 
 func (s *Service) relayProviderConfig(providerID string) (map[string]any, bool) {

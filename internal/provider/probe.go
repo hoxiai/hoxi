@@ -116,6 +116,7 @@ func (g *Service) handleTestProviderModel(w http.ResponseWriter, r *http.Request
 		Timeout:    15 * time.Second,
 		Transport:  providerTransport,
 		Stats:      g.stats,
+		Breaker:    g.breaker,
 	})
 	latency := time.Since(start).Milliseconds()
 	if err != nil {

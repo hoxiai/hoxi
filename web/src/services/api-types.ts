@@ -416,6 +416,32 @@ export interface ProviderTelemetryStats {
   updatedAt: number;
 }
 
+// Candidate-level circuit breaker snapshot, keyed by "provider/model" in the
+// /api/hoxi/provider/candidates response. An open breaker means the candidate is
+// cooling down after failures and must be skipped by auto-pool rotation.
+export interface CandidateBreakerSnapshot {
+  providerID: string;
+  modelID: string;
+  phase: "closed" | "open";
+  open: boolean;
+  openUntil?: number;
+  score: number;
+  latencyEwmaMs?: number;
+  consecutiveFailures: number;
+  lastClass?: string;
+  updatedAt: number;
+}
+
+export interface CandidateOutcomeInput {
+  providerID: string;
+  modelID: string;
+  ok: boolean;
+  statusCode?: number;
+  message?: string;
+  latencyMs?: number;
+  class?: string;
+}
+
 export interface CodeAuditResult {
   ok: boolean;
   score: number;
@@ -557,6 +583,7 @@ export interface RequestLogEntry {
   time: number;
   completed?: number;
   durationMs: number;
+  firstTokenMs?: number;
   providerID: string;
   account?: string;
   modelID: string;

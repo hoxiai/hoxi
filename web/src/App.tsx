@@ -25,6 +25,7 @@ import {
   loadProjects,
   loadProviders,
   loadProviderTelemetry,
+  syncProviderBreakers,
   loadSavedWorkspaces,
   loadSessionMessages,
   loadSessionMessagesOnly,
@@ -116,6 +117,7 @@ export default function App() {
         // Kick off non-blocking background loads while awaiting saved workspaces & projects
         void loadProviders();
         void loadProviderTelemetry();
+        void syncProviderBreakers();
         void loadAgents();
         void loadApprovalPolicy().catch((e) => {
           console.warn("Failed to load approval policy:", e);
@@ -181,6 +183,7 @@ export default function App() {
           if (connected) {
             void loadProviders();
             void loadProviderTelemetry();
+            void syncProviderBreakers();
             resyncFromServer();
             if (
               workspace.rootDir &&

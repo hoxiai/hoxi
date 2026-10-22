@@ -219,6 +219,13 @@ func (g *Service) resolveBackendAutoCandidate(providerID, modelID string) (strin
 	if poolID == "" {
 		poolID = "free"
 	}
+	return g.selectAutoCandidate(poolID, nil)
+}
+
+// autoPoolCandidateList resolves a pool id into concrete candidates. A
+// customized pool is authoritative: when the user removes every candidate we
+// must not silently pick a deleted model again.
+func (g *Service) autoPoolCandidateList(poolID string) []AutoPoolCandidate {
 	pools := g.loadAutoPoolsMap()
 	var candidates []AutoPoolCandidate
 	customized := false
@@ -242,15 +249,13 @@ func (g *Service) resolveBackendAutoCandidate(providerID, modelID string) (strin
 
 	// Preset pools that were never customized keep their candidates empty in the
 	// store (the UI derives smart defaults), so the catalog fallback is required.
-	// A customized pool is authoritative: when the user removes every candidate
-	// we must not silently pick a deleted model again.
 	if len(candidates) == 0 && !customized {
 		merged := g.loadOpenCodeImportedProviderMap()
 		for k, v := range g.loadHoxiProvidersMap() {
 			merged[k] = v
 		}
-		for pid, pVal := range merged {
-			pObj, ok := pVal.(map[string]interface{})
+		for _, pid := range sortedKeys(merged) {
+			pObj, ok := merged[pid].(map[string]interface{})
 			if !ok {
 				continue
 			}
@@ -258,26 +263,123 @@ func (g *Service) resolveBackendAutoCandidate(providerID, modelID string) (strin
 			if !ok {
 				continue
 			}
-			for mid := range mMap {
-				candidates = append(candidates, AutoPoolCandidate{
-					ProviderID: pid,
-					ModelID:    mid,
-				})
+			for _, mid := range sortedKeys(mMap) {
+				candidates = append(candidates, AutoPoolCandidate{ProviderID: pid, ModelID: mid})
+			}
+		}
+	}
+	return candidates
+}
+
+func (g *Service) autoPoolStrategy(poolID string) string {
+	if pools, ok := g.loadAutoPoolsMap()[poolID].(map[string]interface{}); ok {
+		if s, ok := pools["strategy"].(string); ok && strings.TrimSpace(s) != "" {
+			return strings.TrimSpace(s)
+		}
+	}
+	switch poolID {
+	case "daily":
+		return "priority"
+	case "frontier":
+		return "smart-health"
+	default:
+		return "round-robin"
+	}
+}
+
+// selectAutoCandidate picks one candidate from a pool, honoring the pool
+// strategy and skipping candidates whose circuit breaker is open. Unhealthy
+// models never shadow a healthy one; when every candidate is cooling down the
+// least-bad one is returned so the caller degrades instead of hard-failing.
+func (g *Service) selectAutoCandidate(poolID string, exclude map[string]bool) (string, string) {
+	candidates := g.autoPoolCandidateList(poolID)
+	if len(candidates) == 0 {
+		return AutoProviderID, poolID
+	}
+
+	filtered := candidates[:0:0]
+	for _, c := range candidates {
+		if exclude != nil && exclude[breakerKey(c.ProviderID, c.ModelID)] {
+			continue
+		}
+		filtered = append(filtered, c)
+	}
+	if len(filtered) == 0 {
+		return AutoProviderID, poolID
+	}
+
+	allowed := make([]AutoPoolCandidate, 0, len(filtered))
+	scores := make([]float64, 0, len(filtered))
+	blocked := make([]AutoPoolCandidate, 0, len(filtered))
+	if g.breaker == nil {
+		allowed = append(allowed, filtered...)
+		scores = make([]float64, len(filtered))
+	} else {
+		for _, c := range filtered {
+			ok, score := g.breaker.Evaluate(c.ProviderID, c.ModelID)
+			if ok {
+				allowed = append(allowed, c)
+				scores = append(scores, score)
+			} else {
+				blocked = append(blocked, c)
 			}
 		}
 	}
 
-	if len(candidates) == 0 {
-		return providerID, modelID
+	strategy := g.autoPoolStrategy(poolID)
+
+	if len(allowed) == 0 {
+		return g.leastBadCandidate(poolID, blocked)
 	}
 
 	autoRouterMu.Lock()
-	cur := autoPoolCursor[poolID]
-	autoPoolCursor[poolID] = cur + 1
+	cursor := autoPoolCursor[poolID]
+	autoPoolCursor[poolID] = cursor + 1
 	autoRouterMu.Unlock()
 
-	chosen := candidates[cur%uint64(len(candidates))]
-	return chosen.ProviderID, chosen.ModelID
+	switch strategy {
+	case "priority":
+		chosen := allowed[0]
+		return chosen.ProviderID, chosen.ModelID
+	case "smart-health":
+		best := 0.0
+		for _, s := range scores {
+			if s > best {
+				best = s
+			}
+		}
+		top := make([]AutoPoolCandidate, 0, len(allowed))
+		for i, c := range allowed {
+			if scores[i] >= best-0.001 {
+				top = append(top, c)
+			}
+		}
+		chosen := top[cursor%uint64(len(top))]
+		return chosen.ProviderID, chosen.ModelID
+	default: // round-robin
+		chosen := allowed[cursor%uint64(len(allowed))]
+		return chosen.ProviderID, chosen.ModelID
+	}
+}
+
+// leastBadCandidate is the all-cooling-down fallback: prefer the candidate whose
+// cooldown ends soonest so the pool recovers fastest.
+func (g *Service) leastBadCandidate(poolID string, blocked []AutoPoolCandidate) (string, string) {
+	if len(blocked) == 0 {
+		return AutoProviderID, poolID
+	}
+	best := blocked[0]
+	bestRemaining := int64(-1)
+	for _, c := range blocked {
+		remaining := int64(0)
+		if g.breaker != nil {
+			remaining = g.breaker.cooldownRemainingMs(c.ProviderID, c.ModelID)
+		}
+		if bestRemaining < 0 || remaining < bestRemaining {
+			best, bestRemaining = c, remaining
+		}
+	}
+	return best.ProviderID, best.ModelID
 }
 
 type saveAutoPoolRequest struct {

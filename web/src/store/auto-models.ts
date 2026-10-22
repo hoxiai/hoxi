@@ -3,6 +3,12 @@ import { createSignal } from "solid-js";
 import { t } from "../i18n";
 import { hoxiAPI, leaderboardAPI, type ProviderInfo, type ProviderModelInfo } from "../services/api";
 import { setWorkspace, workspace, type SelectedModel } from "./workspace-state";
+import {
+  candidateBreakerRemainingMs,
+  candidateBreakerScore,
+  clearCandidateBreaker,
+  isCandidateBreakerOpen,
+} from "./auto-breaker";
 
 export const AUTO_PROVIDER_ID = "hoxi-auto";
 export const AUTO_POOLS_STORAGE_KEY = "hoxi-auto-pools:v1";
@@ -356,15 +362,15 @@ export function getStoredPoolCandidates(poolID: string): AutoPoolCandidate[] {
 export function isCandidateCoolingDown(providerID: string, modelID: string): boolean {
   const key = `${providerID}/${modelID}`;
   const entry = autoCooldownsSignal()[key];
-  if (!entry) return false;
-  return entry.until > Date.now();
+  if (entry && entry.until > Date.now()) return true;
+  return isCandidateBreakerOpen(providerID, modelID);
 }
 
 export function getCandidateCooldownRemainingMs(providerID: string, modelID: string): number {
   const key = `${providerID}/${modelID}`;
   const entry = autoCooldownsSignal()[key];
-  if (!entry) return 0;
-  return Math.max(0, entry.until - Date.now());
+  const local = entry ? Math.max(0, entry.until - Date.now()) : 0;
+  return Math.max(local, candidateBreakerRemainingMs(providerID, modelID));
 }
 
 export function markAutoCandidateCooldown(
@@ -399,6 +405,7 @@ export function clearAutoPoolCooldowns(poolID?: string): void {
   if (!poolID) {
     setAutoCooldownsSignal({});
     persistCooldownsLocal({});
+    void clearCandidateBreaker();
     return;
   }
   const cands = getEffectivePoolCandidates(poolID);
@@ -408,11 +415,20 @@ export function clearAutoPoolCooldowns(poolID?: string): void {
   }
   setAutoCooldownsSignal(next);
   persistCooldownsLocal(next);
+  void (async () => {
+    for (const c of cands) {
+      await clearCandidateBreaker(c.providerID, c.modelID);
+    }
+  })();
 }
 
 function candidateHealthScore(c: AutoPoolCandidate): number {
+  // The shared breaker's health score (reliability + latency EWMA) is the
+  // backend's own measurement. When local telemetry has no evidence yet, rely on
+  // it alone so a backend-measured fast model still outranks a slow one.
+  const backend = candidateBreakerScore(c.providerID, c.modelID);
   const pStats = workspace.providerTelemetry?.[c.providerID];
-  if (!pStats) return 75;
+  if (!pStats) return backend !== null ? backend * 100 : 75;
   const mStats = pStats.models?.[c.modelID] || pStats;
   let score = 80;
   if (mStats.totalTurns > 0) {
@@ -427,6 +443,9 @@ function candidateHealthScore(c: AutoPoolCandidate): number {
       mStats.ttftSamplesMs.reduce((a, b) => a + b, 0) / mStats.ttftSamplesMs.length;
     if (avgTtft < 1500) score += 8;
     else if (avgTtft > 6000) score -= 12;
+  }
+  if (backend !== null) {
+    score = score * 0.5 + backend * 100 * 0.5;
   }
   return score;
 }

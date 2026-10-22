@@ -9,6 +9,7 @@ import {
 } from "../services/api";
 import type { MessageInfo, MessagePart } from "../services/sse-types";
 import { PROVIDER_TELEMETRY_KEY, setWorkspace, workspace } from "./workspace-state";
+import { reportAutoCandidateOutcome } from "./auto-breaker";
 
 const MAX_SAMPLES = 30;
 const MAX_INCIDENTS = 10;
@@ -458,6 +459,13 @@ export function recordAssistantTurnUpdated(info: MessageInfo) {
       })
     );
     schedulePersistTelemetry();
+    reportAutoCandidateOutcome({
+      providerID: pid,
+      modelID: mid,
+      ok: false,
+      statusCode,
+      message: errMsg,
+    });
     return;
   }
 
@@ -500,6 +508,12 @@ export function recordAssistantTurnUpdated(info: MessageInfo) {
       })
     );
     schedulePersistTelemetry();
+    reportAutoCandidateOutcome({
+      providerID: pid,
+      modelID: mid,
+      ok: true,
+      latencyMs: durationMs > 0 ? durationMs : undefined,
+    });
   }
 }
 

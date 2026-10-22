@@ -49,6 +49,7 @@ func (s *Service) Complete(ctx context.Context, target llm.Target, req llm.Reque
 		Timeout:     req.Timeout,
 		Transport:   transport,
 		Stats:       s.stats,
+		Breaker:     s.breaker,
 	})
 }
 

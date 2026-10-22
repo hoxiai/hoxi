@@ -58,6 +58,7 @@ type llmCompletionRequest struct {
 	Timeout         time.Duration
 	Transport       *http.Transport
 	Stats           *modelStatsStore
+	Breaker         *breakerStore
 }
 
 type llmAttemptResult struct {
@@ -80,6 +81,7 @@ func callSimpleLLM(parentCtx context.Context, req llmCompletionRequest) (text st
 	status := 0
 	readFailed := false
 	attempts := 0
+	quotaExhausted := false
 	defer func() {
 		level, message := "info", "internal request completed"
 		if resultErr != nil {
@@ -100,6 +102,17 @@ func callSimpleLLM(parentCtx context.Context, req llmCompletionRequest) (text st
 		if req.Stats != nil {
 			req.Stats.recordLLMRequest(req.ProviderID, req.ModelID, attempts, resultErr)
 		}
+		if req.Breaker != nil && req.ProviderID != "" && req.ModelID != "" {
+			if resultErr == nil {
+				req.Breaker.RecordSuccess(req.ProviderID, req.ModelID, time.Since(started).Milliseconds())
+			} else {
+				class := classifyCandidateFailure(status, resultErr, nil)
+				if quotaExhausted {
+					class = breakerClassQuota
+				}
+				req.Breaker.RecordFailure(req.ProviderID, req.ModelID, class, status, time.Since(started).Milliseconds(), resultErr.Error())
+			}
+		}
 	}()
 	for attempt := 1; ; attempt++ {
 		attempts = attempt
@@ -110,6 +123,7 @@ func callSimpleLLM(parentCtx context.Context, req llmCompletionRequest) (text st
 		}
 		res := attemptSimpleLLM(parentCtx, req, llmAttemptWindow(remaining, llmMaxAttempts-attempt+1))
 		status, readFailed = res.status, res.readFailed
+		quotaExhausted = quotaExhausted || res.quotaExhausted
 		if res.err == nil {
 			return res.text, nil
 		}
