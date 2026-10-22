@@ -7,7 +7,7 @@ import { AUTO_PROVIDER_ID, isModelFree, resolveAutoModelTarget } from "./auto-mo
 import { resolveInternalLLMModel } from "./provider-catalog";
 import { canSteerSession } from "./session-capabilities";
 import { workspace, type SelectedModel } from "./workspace-state";
-import { activeDirectory, sessionDirectory } from "./session-query";
+import { activeDirectory, isSessionBusy, sessionDirectory } from "./session-query";
 import { submitSessionPrompt } from "./session-goal";
 import { refreshWorktreeStatus } from "./session-diffs";
 import { loadSessionMessages, loadSessionMessagesOnly } from "./workspace-sessions";
@@ -317,6 +317,22 @@ export async function generateSmartCommitMessage(
     setAiCommitFallbackNotice(true);
   }
   return fallback;
+}
+
+/**
+ * Real uncommitted worktree files for a session (from the git diff, not the
+ * transcript). Keeps the commit affordance tied to what is actually pending
+ * instead of whichever turn last touched files.
+ */
+export function uncommittedSessionFiles(sessionID?: string | null): SnapshotFileDiff[] {
+  if (!sessionID) return [];
+  return workspace.diffsBySession[sessionID] ?? [];
+}
+
+/** Whether the session can be committed right now: pending files and idle. */
+export function canQuickCommitSession(sessionID?: string | null): boolean {
+  if (!sessionID || isSessionBusy(sessionID)) return false;
+  return uncommittedSessionFiles(sessionID).length > 0;
 }
 
 export async function executeTaskCommitAndPush(

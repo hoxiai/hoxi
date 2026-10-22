@@ -2,7 +2,7 @@ import { reconcile, unwrap } from "solid-js/store";
 import { t } from "../i18n";
 import { hoxiAPI, type CommitAndPushResponse } from "../services/api";
 import type { SnapshotFileDiff } from "../services/sse-types";
-import { commitModelSpec, executeTaskCommitAndPush, generateSmartCommitMessage, setCommitModelSpec } from "../store/git-commit";
+import { canQuickCommitSession, commitModelSpec, executeTaskCommitAndPush, generateSmartCommitMessage, setCommitModelSpec, uncommittedSessionFiles } from "../store/git-commit";
 import { sessionDirectory, setWorkspace, workspace } from "../store/workspace";
 import { assertDeepEqual, assertEqual, assertTrue, describe, it } from "./test-harness";
 
@@ -258,5 +258,34 @@ describe("task commit and push", () => {
       assertEqual(msg, "feat(src): update task");
       assertDeepEqual(calls.worktreeDiff, [[id, directory]]);
     });
+  });
+});
+
+describe("uncommitted session commit gate", () => {
+  it("tracks real worktree diffs and only allows committing while idle with pending files", () => {
+    const saved = structuredClone(unwrap(workspace));
+    try {
+      const id = `ses_gate_${++nextID}`;
+      const diffs: SnapshotFileDiff[] = [{
+        file: "src/a.ts", before: "", after: "x\n", status: "added",
+        additions: 1, deletions: 0,
+      }];
+      setWorkspace("diffsBySession", reconcile({ [id]: diffs }));
+      setWorkspace("statusBySession", reconcile({ [id]: { type: "idle" } }));
+
+      assertDeepEqual(uncommittedSessionFiles(id), diffs, "the chip reads real worktree diffs");
+      assertEqual(canQuickCommitSession(id), true, "idle session with pending files can commit");
+      assertEqual(canQuickCommitSession(""), false, "no session cannot commit");
+      assertEqual(canQuickCommitSession("ses_absent"), false, "session without diffs cannot commit");
+
+      setWorkspace("statusBySession", id, { type: "busy" });
+      assertEqual(canQuickCommitSession(id), false, "busy session cannot commit");
+
+      setWorkspace("statusBySession", id, { type: "idle" });
+      setWorkspace("diffsBySession", id, []);
+      assertEqual(canQuickCommitSession(id), false, "no pending files cannot commit");
+    } finally {
+      setWorkspace(reconcile(saved));
+    }
   });
 });
