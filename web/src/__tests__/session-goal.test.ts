@@ -27,6 +27,10 @@ function toolPart(tool: string, status: "completed" | "pending", input: Record<s
   return { id: `prt_${tool}_${status}`, sessionID: "ses", messageID: "msg", type: "tool", callID: "c", tool, state } as never;
 }
 
+function textPart(text: string): MessageTurn["parts"][number] {
+  return { id: "prt_text", sessionID: "ses", messageID: "msg", type: "text", text } as never;
+}
+
 describe("session goal command parsing", () => {
   it("recognises the goal commands and leaves ordinary text alone", () => {
     assertDeepEqual(parseGoalCommand("/goal"), { kind: "status" });
@@ -102,6 +106,48 @@ describe("session goal turn evidence", () => {
 
   it("returns an empty turn when there is no assistant message yet", () => {
     assertDeepEqual(collectTurnEvidence([userTurn()], false), { interrupted: false, errored: false, completedTools: 0 });
+  });
+
+  it("aggregates every OpenCode step of the latest turn instead of only the final message", () => {
+    const turns = [
+      userTurn(),
+      assistantTurn([toolPart("bash", "completed", { command: "go test ./..." })]),
+      assistantTurn([toolPart("edit", "completed", {}), toolPart("goal_report", "completed", { status: "complete", reason: "tests pass" })]),
+      assistantTurn([textPart("All done.")]),
+    ];
+    const evidence = collectTurnEvidence(turns, false);
+    assertEqual(evidence.completedTools, 2, "tool steps before the closing text still count as progress");
+    assertDeepEqual(evidence.report, { status: "complete", reason: "tests pass" });
+    assertDeepEqual(decideGoalTurn(evidence, 0), { kind: "complete", reason: "tests pass" });
+  });
+
+  it("reads a runtime-neutral verdict line that ends the final reply", () => {
+    const complete = collectTurnEvidence([
+      userTurn(),
+      assistantTurn([toolPart("bash", "completed", {}), textPart("Fixed it.\n\n`[[goal:complete]] go test ./... passes`")]),
+    ], false);
+    assertDeepEqual(complete.report, { status: "complete", reason: "go test ./... passes" });
+    const blocked = collectTurnEvidence([userTurn(), assistantTurn([textPart("[[GOAL:blocked]] needs the staging API key")])], false);
+    assertDeepEqual(blocked.report, { status: "blocked", reason: "needs the staging API key" });
+  });
+
+  it("ignores verdict lines that are not the final word of the latest turn", () => {
+    const quoted = collectTurnEvidence([userTurn(), assistantTurn([textPart("I will print [[goal:complete]] later.\n[[goal:complete]] x\nStill working.")])], false);
+    assertEqual(quoted.report, undefined, "a verdict followed by more text does not count");
+    const thenActed = collectTurnEvidence([
+      userTurn(),
+      assistantTurn([textPart("[[goal:complete]] done")]),
+      assistantTurn([toolPart("bash", "completed", {})]),
+    ], false);
+    assertEqual(thenActed.report, undefined, "a verdict followed by a tool call does not count");
+    const older = collectTurnEvidence([
+      userTurn(),
+      assistantTurn([textPart("[[goal:complete]] old")]),
+      userTurn(),
+      assistantTurn([toolPart("edit", "completed", {}), textPart("Next step done.")]),
+    ], false);
+    assertEqual(older.report, undefined, "a verdict from an earlier turn does not count");
+    assertEqual(older.completedTools, 1);
   });
 });
 

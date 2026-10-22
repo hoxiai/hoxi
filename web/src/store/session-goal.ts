@@ -21,13 +21,22 @@ import {
 
 const advancing = new Set<string>();
 
+// Every runtime understands a plain-text verdict; goal_report only exists where
+// the hoxi-goal OpenCode plugin is loaded, so it is offered but never required.
+const VERDICT_INSTRUCTIONS = [
+  "When the objective is fully met and verified, end your final reply with this exact last line:",
+  "[[goal:complete]] <one sentence on what you verified>",
+  "If you are genuinely blocked and cannot proceed safely, end your final reply with this exact last line instead:",
+  "[[goal:blocked]] <the concrete blocker>",
+  "Otherwise do not write either line. If a goal_report tool is available you may call it instead.",
+];
+
 function startPrompt(objective: string): string {
   return [
     `Session goal: ${objective}`,
     "",
     "Work toward this objective across turns. Make concrete progress each turn and verify it.",
-    'When the objective is fully met and verified, call the goal_report tool with status "complete".',
-    'If you are genuinely blocked and cannot proceed safely, call goal_report with status "blocked" and the reason.',
+    ...VERDICT_INSTRUCTIONS,
   ].join("\n");
 }
 
@@ -35,7 +44,7 @@ function continuePrompt(objective: string): string {
   return [
     `Continue working toward the session goal: ${objective}`,
     "Take the next concrete step.",
-    'Call goal_report with status "complete" once the objective is met and verified, or status "blocked" with a reason if you cannot proceed safely.',
+    "End your final reply with `[[goal:complete]] <what you verified>` once the objective is met and verified, or `[[goal:blocked]] <blocker>` if you cannot proceed safely; otherwise write neither.",
   ].join("\n");
 }
 

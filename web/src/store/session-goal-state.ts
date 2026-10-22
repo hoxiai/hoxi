@@ -70,20 +70,47 @@ export function decideGoalTurn(evidence: GoalTurnEvidence, continuations: number
   return { kind: "continue" };
 }
 
-/** Reads the most recent assistant turn; goal_report is only trusted once it completed. */
+/**
+ * Runtime-neutral verdict line. Native CLI runtimes (Claude Code, Antigravity,
+ * Qoder, CodeBuddy) and stock OpenCode have no goal_report tool, so the agent
+ * ends its final reply with `[[goal:complete]] <evidence>` or
+ * `[[goal:blocked]] <reason>` as the last line instead.
+ */
+const GOAL_VERDICT_LINE = /^\[\[goal:(complete|blocked)\]\]\s*(.*)$/i;
+const GOAL_REASON_MAX = 2000;
+
+function verdictFromText(text: string): GoalTurnEvidence["report"] {
+  const lines = text.split("\n").map((line) => line.trim()).filter(Boolean);
+  const last = (lines[lines.length - 1] ?? "").replace(/^[`*_\s]+|[`*_\s]+$/g, "");
+  const match = GOAL_VERDICT_LINE.exec(last);
+  if (!match) return undefined;
+  const status = match[1].toLowerCase() as "complete" | "blocked";
+  return { status, reason: match[2].trim().slice(0, GOAL_REASON_MAX) };
+}
+
+/**
+ * Reads the latest turn: every assistant message after the last user message.
+ * OpenCode stores one assistant message per model step, so the final message
+ * alone usually holds only the closing text. A completed goal_report tool call,
+ * or a verdict line ending the final reply with no tool call after it, is the
+ * agent's verdict.
+ */
 export function collectTurnEvidence(turns: readonly MessageTurn[], interrupted: boolean): GoalTurnEvidence {
-  let last: MessageTurn | undefined;
-  for (let i = turns.length - 1; i >= 0; i--) {
-    if (turns[i].info.role === "assistant") {
-      last = turns[i];
-      break;
-    }
-  }
+  let start = turns.length;
+  while (start > 0 && turns[start - 1].info.role !== "user") start--;
+  const steps = turns.slice(start).filter((turn) => turn.info.role === "assistant");
+  const last = steps[steps.length - 1];
   if (!last) return { interrupted, errored: false, completedTools: 0 };
 
   let completedTools = 0;
   let report: GoalTurnEvidence["report"];
-  for (const part of last.parts as MessagePart[]) {
+  let finalText = "";
+  for (const part of steps.flatMap((step) => step.parts as MessagePart[])) {
+    if (part.type === "text") {
+      if (part.text.trim()) finalText = part.text;
+      continue;
+    }
+    if (part.type === "tool") finalText = "";
     if (part.type !== "tool" || part.state.status !== "completed") continue;
     if (part.tool !== GOAL_REPORT_TOOL) {
       completedTools++;
@@ -95,6 +122,7 @@ export function collectTurnEvidence(turns: readonly MessageTurn[], interrupted: 
       report = { status, reason: typeof reason === "string" ? reason : "" };
     }
   }
+  report ??= verdictFromText(finalText);
   return { interrupted, errored: Boolean(last.info.error), completedTools, report };
 }
 
