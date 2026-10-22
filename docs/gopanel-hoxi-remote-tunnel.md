@@ -44,7 +44,7 @@ Hoxi 桌面（hoxi，internal/tunnel）
 2. **Hoxi 桌面配对**：Hoxi 设置 → 系统 → 经 GoPanel 远程控制，填写 GoPanel 地址、配对码和设备名，点「配对」。Hoxi 调用 GoPanel `POST /api/tunnel/pair/exchange` 换取长期凭据，随即连接并上报服务。GoPanel 节点列表中出现一个 `connectMode = tunnel` 的节点。
 3. **手机添加**：手机「服务器列表」中已登录的 GoPanel 卡片右侧点电脑图标，列出该 GoPanel 下在线的 Hoxi 电脑，选中后保存为一个 Hoxi 节点（中继地址），之后与普通 Hoxi 节点一样使用。
 
-**一键授权（推荐，替代手动配对码）**：Hoxi 设置里只填 GoPanel 地址（`ip:端口`，无需安全入口）点「一键授权」，桌面调用 `POST /api/tunnel/pair/request` 打开一条待批准请求并展示授权码；管理员在 GoPanel 后台「节点 → 隧道」批准后，桌面轮询到批准结果，自动兑换一次性配对码并连接。桌面不需要安全入口，因为配对相关端点对入口豁免；但管理员批准与手机侧管理接口仍需安全入口（见 §9）。
+**一键授权（推荐，替代手动配对码）**：Hoxi 设置里只填 GoPanel 地址（`ip:端口`，无需安全入口）点「一键授权」，桌面调用 `POST /api/tunnel/pair/request` 打开一条待批准请求并展示授权码；管理员在 GoPanel 后台「节点 → 隧道」批准后，桌面轮询到批准结果，自动兑换一次性配对码并连接。桌面不需要安全入口，因为配对相关端点对入口豁免；但管理员批准与手机侧管理接口仍需安全入口（见 §5.3 与 §8）。
 
 解除：Hoxi 设置中点「解除配对」删除本机凭据；GoPanel 上的节点需管理员在 GoPanel 删除。
 
@@ -184,6 +184,7 @@ Type(1B) | StreamID(8B, BigEndian uint64) | Payload(≤ 4MB)
 
 - **信任边界**：配对即授权。能以管理员身份登录这台 GoPanel 的人，可以在白名单范围内远程操作这台 Mac（新建会话、下发指令、批准审批）。Hoxi 自身的破坏性命令审批门控照常生效，但审批本身也能经手机远程批准。只与自己控制的 GoPanel 配对。
 - **凭据**：GoPanel JWT 只在手机与 GoPanel 之间；隧道 token 只在 Mac 与 GoPanel 之间，以 `0600` 明文文件保存在 Mac 上（尚未接入钥匙串）；Hoxi 本机网关令牌不离开 Mac。
+- **一键授权与安全入口**：`/api/tunnel/pair/request` 与其轮询接口对安全入口豁免，桌面只填 GoPanel 的 `ip:端口`；`pollToken` 只在 GoPanel 与桌面之间流转，桌面 `/api/hoxi/tunnel/status` 从不回显 pollToken 或隧道 token。GoPanel 后台的批准/拒绝与手机侧管理接口仍需管理员 JWT 与安全入口。拒绝、过期或超时会停止轮询且不落盘，不会在 GoPanel 留下孤儿节点。
 - **无端到端加密**：GoPanel 能看到经它转发的请求和响应明文（会话内容、Diff）。传输加密依赖手机 ↔ GoPanel、Mac ↔ GoPanel 两段 TLS。
 - **无流控**：手机读得慢时 GoPanel 单流 32 帧缓冲会溢出并 Reset 该流（SSE 断开后由手机端重连）；大文件下载不适合走隧道。
 - **单连接**：同一凭据只保留最新的一条隧道，旧连接会被替换。
@@ -199,7 +200,7 @@ Type(1B) | StreamID(8B, BigEndian uint64) | Payload(≤ 4MB)
 
 | 范围 | 命令 / 测试 |
 | --- | --- |
-| Hoxi 隧道客户端 | `go test ./internal/tunnel/`（配对、`0600` 凭据、ServiceSync、请求转发、凭据头剥离、Reset 场景、解除配对） |
+| Hoxi 隧道客户端 | `go test ./internal/tunnel/`（配对、`0600` 凭据、ServiceSync、请求转发、凭据头剥离、Reset 场景、解除配对；一键授权：批准后自动连接、拒绝/过期/超时/网络错误/取消均不落盘、无凭据路径时拒绝且不产生孤儿请求） |
 | Hoxi 路由白名单 | `go test ./internal/gateway/ -run Tunnel` |
 | GoPanel 代理 | `go test ./app/service/ -run HoxiTunnel`（SSE 逐块到达、GoPanel 凭据不泄漏、丢弃 Set-Cookie、未注册服务拒绝） |
 | 手机中继连接 | `flutter test test/hoxi_relay_test.dart` |
