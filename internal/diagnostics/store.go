@@ -101,7 +101,6 @@ func Record(e Entry) {
 	}
 }
 
-var secret = regexp.MustCompile(`(?i)(bearer\s+\S+|(?:sk-|ghp_|github_pat_|sk-ant-)[a-z0-9_\-]+|(?:api[_-]?key|token|password|secret|authorization)\s*[=:]\s*[^\s,;]+)`)
 var urlPattern = regexp.MustCompile(`https?://[^\s]+`)
 var privatePath = regexp.MustCompile(`(?:/Users/|/home/|[A-Za-z]:\\Users\\)[^\s]+`)
 var payload = regexp.MustCompile(`(?i)\b(prompt|output|headers|messages|completion|response body)\b\s*[=:]`)
@@ -114,7 +113,7 @@ func clean(v string, limit int) string {
 	if payload.MatchString(v) {
 		return "[content omitted]"
 	}
-	v = secret.ReplaceAllString(v, "[redacted]")
+	v = RedactSecrets(v)
 	v = urlPattern.ReplaceAllString(v, "[url]")
 	v = privatePath.ReplaceAllString(v, "[path]")
 	v = strings.Map(func(r rune) rune {

@@ -21,12 +21,15 @@ func testStore(t *testing.T) *store {
 }
 
 func TestSanitize(t *testing.T) {
-	for _, value := range []string{"Bearer private-value", "api_key=private-value", "token=private-value", "https://user:private-value@host/path?q=secret", "/Users/alice/private-value", "prompt=private-value", "output:private-value", "headers=private-value", "sk-private-value"} {
+	for _, value := range []string{"Bearer private-value", "api_key=private-value", "token=private-value", "https://user:private-value@host/path?q=secret", "/Users/alice/private-value", "prompt=private-value", "output:private-value", "headers=private-value", "sk-private-value", "PW=private-value", "DB_PASS=private-value", "client_secret=private-value", "mysql -uroot -pprivate-value", "curl -u admin:private-value x", "postgres://app:private-value@db/app"} {
 		e := sanitize(Entry{Message: value, ModelID: value})
 		b, _ := json.Marshal(e)
 		if bytes.Contains(b, []byte("private-value")) {
 			t.Errorf("leaked %q: %s", value, b)
 		}
+	}
+	if got := sanitize(Entry{Message: "pwd failed: exit 1"}).Message; got != "pwd failed: exit 1" {
+		t.Errorf("ordinary text was redacted: %q", got)
 	}
 	e := sanitize(Entry{Message: strings.Repeat("a", 20000), SessionID: strings.Repeat("b", 20000)})
 	if len(e.Message) > 256 || len(e.SessionID) > 128 {

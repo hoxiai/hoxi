@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -17,6 +16,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/hoxiai/hoxi/internal/diagnostics"
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
 )
 
@@ -96,17 +96,6 @@ type approvalAuditStore struct {
 	ocSnapshots    map[string]openCodePermSnapshot
 }
 
-var (
-	// Bearer tokens and vendor-prefixed keys are secret on their own.
-	approvalSecretTokenRe = regexp.MustCompile(`(?i)bearer\s+[^\s"']+|(?:sk-|ghp_|github_pat_|sk-ant-)[a-z0-9_\-]+`)
-	// `key=value`, `key: value` and JSON `"key":"value"` forms keep the key
-	// name and redact only the value, so the audit entry stays readable.
-	// Quoted values keep their quotes: an unbalanced quote would make the
-	// preview look like a truncated command.
-	approvalSecretQuotedRe = regexp.MustCompile(`(?i)((?:api[_-]?key|access[_-]?key|token|password|passwd|secret|authorization|opencode_server_password)["']?\s*[=:]\s*)(["'])(?:[^"']*)(["'])`)
-	approvalSecretBareRe   = regexp.MustCompile(`(?i)((?:api[_-]?key|access[_-]?key|token|password|passwd|secret|authorization|opencode_server_password)["']?\s*[=:]\s*)([^\s,;"'}]+)`)
-)
-
 func newApprovalAuditStore(customStorePath string) *approvalAuditStore {
 	path := ""
 	if trimmed := strings.TrimSpace(customStorePath); trimmed != "" {
@@ -119,37 +108,69 @@ func newApprovalAuditStore(customStorePath string) *approvalAuditStore {
 		entries:     []ApprovalAuditEntry{},
 		ocSnapshots: make(map[string]openCodePermSnapshot),
 	}
-	s.loadFromDisk()
+	if seq, snapshot, ok := s.loadFromDisk(); ok {
+		// Best effort: the in-memory entries are already clean, and the next
+		// record retries the write if this one fails.
+		_ = s.persistSnapshot(s.path, seq, snapshot)
+	}
 	return s
 }
 
-func (s *approvalAuditStore) loadFromDisk() {
+// loadFromDisk reads the audit file and re-redacts entries written before the
+// current redaction rules. It reports a snapshot to write back when any entry
+// changed, so plaintext secrets do not survive on disk.
+func (s *approvalAuditStore) loadFromDisk() (uint64, []ApprovalAuditEntry, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.path == "" {
-		return
+		return 0, nil, false
 	}
 	raw, err := os.ReadFile(s.path)
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
 			s.persistBlocked = fmt.Errorf("approval audit file is unreadable: %w", err)
 		}
-		return
+		return 0, nil, false
 	}
 	var doc approvalAuditFileDoc
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		backup := fmt.Sprintf("%s.corrupt-%s", s.path, time.Now().UTC().Format("20060102T150405.000000000"))
 		if renameErr := os.Rename(s.path, backup); renameErr != nil {
 			s.persistBlocked = fmt.Errorf("approval audit file is corrupt and could not be backed up: %w", renameErr)
-			return
+			return 0, nil, false
 		}
 		s.entries = []ApprovalAuditEntry{}
-		return
+		return 0, nil, false
 	}
 	if len(doc.Entries) > maxApprovalAuditEntries {
 		doc.Entries = doc.Entries[:maxApprovalAuditEntries]
 	}
+	changed := false
+	for i := range doc.Entries {
+		changed = reRedactApprovalAuditEntry(&doc.Entries[i]) || changed
+	}
 	s.entries = doc.Entries
+	if !changed {
+		return 0, nil, false
+	}
+	s.seq++
+	snapshot := make([]ApprovalAuditEntry, len(s.entries))
+	copy(snapshot, s.entries)
+	return s.seq, snapshot, true
+}
+
+// reRedactApprovalAuditEntry applies the current secret rules to a stored
+// entry. It does not truncate again: stored fields are already bounded and a
+// second "…" would change entries that hold no secret.
+func reRedactApprovalAuditEntry(e *ApprovalAuditEntry) bool {
+	changed := false
+	for _, field := range []*string{&e.Summary, &e.Message, &e.SessionTitle} {
+		if clean := diagnostics.RedactSecrets(*field); clean != *field {
+			*field = clean
+			changed = true
+		}
+	}
+	return changed
 }
 
 func (s *approvalAuditStore) record(e ApprovalAuditEntry) {
@@ -354,9 +375,7 @@ func redactApprovalText(v string, limit int) string {
 	if len(v) > 4096 {
 		v = v[:4096]
 	}
-	v = approvalSecretTokenRe.ReplaceAllString(v, "[redacted]")
-	v = approvalSecretQuotedRe.ReplaceAllString(v, "${1}${2}[redacted]${3}")
-	v = approvalSecretBareRe.ReplaceAllString(v, "${1}[redacted]")
+	v = diagnostics.RedactSecrets(v)
 	v = strings.Map(func(r rune) rune {
 		if r == '\n' || r == '\t' {
 			return ' '
