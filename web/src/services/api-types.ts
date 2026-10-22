@@ -551,6 +551,34 @@ export interface DevPulseHistoryDay {
   models: DevPulseHistoryModelStat[];
 }
 
+export interface RequestLogEntry {
+  id: string;
+  sessionID: string;
+  time: number;
+  completed?: number;
+  durationMs: number;
+  providerID: string;
+  account?: string;
+  modelID: string;
+  client: string;
+  status?: number;
+  level: "info" | "error" | "pending" | string;
+  retry?: number;
+  inputTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  error?: string;
+}
+
+export interface RequestLogResponse {
+  entries: RequestLogEntry[];
+  total: number;
+  local: boolean;
+  timezone: string;
+}
+
 export interface DevPulseHistoryResponse {
   days: DevPulseHistoryDay[];
   startDate: string;

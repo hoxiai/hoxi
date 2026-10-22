@@ -35,6 +35,7 @@ export * from "./settings";
 export * from "./daily-pulse";
 export * from "./model-pricing";
 export * from "./usage-history";
+export * from "./request-log";
 export * from "./auth-state";
 export * from "./handoff";
 export * from "./updater-state";

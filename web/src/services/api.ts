@@ -171,6 +171,10 @@ export const hoxiAPI = {
     return requestJSON(`/api/hoxi/dev-pulse${qs ? `?${qs}` : ""}`);
   },
 
+  getRequestLog(limit = 200): Promise<import("./api-types").RequestLogResponse> {
+    return requestJSON(`/api/hoxi/request-log?limit=${limit}`);
+  },
+
   getDevPulseHistory(days = 30, directory?: string): Promise<import("./api-types").DevPulseHistoryResponse> {
     const params = new URLSearchParams();
     params.set("days", String(days));
