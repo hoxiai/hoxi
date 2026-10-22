@@ -6,8 +6,10 @@ package statusbar
 #cgo CFLAGS: -fblocks
 #cgo LDFLAGS: -framework Cocoa
 
+#include <stdlib.h>
+
 void hoxi_statusbar_start(void);
-void hoxi_statusbar_update(int attention, int running, int queued, int available);
+void hoxi_statusbar_update(int attention, int running, int queued, int available, const char *badge);
 void hoxi_statusbar_stop(void);
 */
 import "C"
@@ -15,6 +17,7 @@ import "C"
 import (
 	"context"
 	"sync"
+	"unsafe"
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -36,7 +39,9 @@ func Update(summary Summary) {
 	if summary.Available {
 		available = 1
 	}
-	C.hoxi_statusbar_update(C.int(summary.Attention), C.int(summary.Running), C.int(summary.Queued), available)
+	badge := C.CString(summary.DockBadgeLabel())
+	defer C.free(unsafe.Pointer(badge))
+	C.hoxi_statusbar_update(C.int(summary.Attention), C.int(summary.Running), C.int(summary.Queued), available, badge)
 }
 
 func Stop() {

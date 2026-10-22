@@ -1,6 +1,7 @@
 //go:build darwin
 
 #import <Cocoa/Cocoa.h>
+#import <string.h>
 
 extern void HoxiShowMainWindow(void);
 extern void HoxiQuitApplication(void);
@@ -180,8 +181,12 @@ void hoxi_statusbar_start(void) {
     });
 }
 
-void hoxi_statusbar_update(int attention, int running, int queued, int available) {
+void hoxi_statusbar_update(int attention, int running, int queued, int available, const char *badge) {
+    // The block may run later on the main queue, so own the text before Go frees it.
+    char *badgeCopy = badge != NULL ? strdup(badge) : NULL;
     hoxi_run_on_main(^{
+        NSString *badgeText = badgeCopy != NULL ? [NSString stringWithUTF8String:badgeCopy] : @"";
+        free(badgeCopy);
         if (hoxiStatusBarController == nil) {
             return;
         }
@@ -196,7 +201,7 @@ void hoxi_statusbar_update(int attention, int running, int queued, int available
         }
         button.toolTip = [NSString stringWithFormat:@"Hoxi：待审批 %d · 运行中 %d", attention, running];
         hoxiStatusBarController.summaryItem.title = [NSString stringWithFormat:@"待审批 %d · 运行中 %d", attention, running];
-        [NSApp dockTile].badgeLabel = attention > 0 ? [NSString stringWithFormat:@"%d", attention] : @"";
+        [NSApp dockTile].badgeLabel = badgeText;
     });
 }
 
