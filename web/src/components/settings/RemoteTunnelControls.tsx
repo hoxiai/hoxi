@@ -1,14 +1,18 @@
 // web/src/components/settings/RemoteTunnelControls.tsx
 // Pairs this desktop with a public GoPanel so the mobile app can reach it
-// through the reverse tunnel. Pairing codes are issued in GoPanel → Nodes.
-import { createSignal, onCleanup, onMount, Show } from "solid-js";
-import { Link2, Unlink } from "lucide-solid";
+// through the reverse tunnel. The primary path is one-click: fill in the
+// GoPanel host:port, click Authorize, then approve in GoPanel → Nodes →
+// Tunnel. Pasting a code by hand stays available as a fallback.
+import { createEffect, createSignal, onCleanup, onMount, Show } from "solid-js";
+import { ExternalLink, Link2, Unlink } from "lucide-solid";
 import { t } from "../../i18n";
 import {
+  cancelRemoteTunnel,
   disableRemoteTunnel,
   loadRemoteTunnelStatus,
   pairRemoteTunnel,
   remoteTunnel,
+  requestRemoteTunnel,
 } from "../../store/workspace";
 import { SettingGroup } from "./setting-controls";
 
@@ -16,6 +20,8 @@ const inputClass =
   "w-full rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-3 py-2 text-[13px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] focus:border-[var(--accent-border)] focus:outline-none";
 const buttonClass =
   "hoxi-press inline-flex items-center gap-1.5 rounded-xl border border-[var(--border-strong)] px-4 py-2 text-[13px] font-medium hover:bg-[var(--bg-hover)] disabled:opacity-50 cursor-pointer";
+const linkButtonClass =
+  "hoxi-press inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] cursor-pointer";
 
 function stateLabel(): string {
   switch (remoteTunnel.status.state) {
@@ -46,13 +52,46 @@ export function RemoteTunnelControls() {
   const [controllerUrl, setControllerUrl] = createSignal("");
   const [code, setCode] = createSignal("");
   const [name, setName] = createSignal("");
+  const [now, setNow] = createSignal(Date.now());
+
+  const pending = () => remoteTunnel.status.pending;
+  const waiting = () => pending()?.state === "waiting";
+  const showForm = () => !remoteTunnel.status.enabled && !waiting();
+
+  let refreshTimer: number | undefined;
 
   onMount(() => {
     void loadRemoteTunnelStatus();
-    // Reconnects happen in the backend; refresh so the badge follows them.
-    const timer = setInterval(() => void loadRemoteTunnelStatus(), 5000);
-    onCleanup(() => clearInterval(timer));
+    // Ticks the authorization-code countdown.
+    const clock = setInterval(() => setNow(Date.now()), 1000);
+    onCleanup(() => clearInterval(clock));
   });
+
+  // Poll faster (2s) while an approval is pending, otherwise follow reconnects
+  // at a calmer 5s.
+  createEffect(() => {
+    const active = waiting();
+    if (refreshTimer !== undefined) clearInterval(refreshTimer);
+    refreshTimer = setInterval(() => void loadRemoteTunnelStatus(), active ? 2000 : 5000);
+  });
+
+  onCleanup(() => {
+    if (refreshTimer !== undefined) clearInterval(refreshTimer);
+  });
+
+  const remaining = () => {
+    const expiresAt = pending()?.expiresAt;
+    if (!expiresAt) return "";
+    const ms = new Date(expiresAt).getTime() - now();
+    if (ms <= 0) return "00:00";
+    const total = Math.floor(ms / 1000);
+    return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
+  };
+
+  const onAuthorize = async (event: Event) => {
+    event.preventDefault();
+    await requestRemoteTunnel({ controllerUrl: controllerUrl().trim(), name: name().trim() });
+  };
 
   const onPair = async (event: Event) => {
     event.preventDefault();
@@ -92,8 +131,38 @@ export function RemoteTunnelControls() {
           <p class="text-[12px] text-amber-600">{remoteTunnel.status.message}</p>
         </Show>
 
-        <Show when={!remoteTunnel.status.enabled}>
-          <form class="grid gap-3 sm:grid-cols-2" onSubmit={(event) => void onPair(event)}>
+        <Show when={waiting()}>
+          <div class="space-y-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-4 py-4">
+            <p class="text-[13px] font-medium text-[var(--text-primary)]">{t("remoteTunnel.waitingTitle")}</p>
+            <div class="flex items-baseline gap-3">
+              <span class="text-[12px] text-[var(--text-secondary)]">{t("remoteTunnel.userCodeLabel")}</span>
+              <span class="font-mono text-[22px] font-semibold tracking-[0.2em] text-[var(--text-primary)]">{pending()?.userCode}</span>
+            </div>
+            <p class="text-[12px] text-[var(--text-muted)]">{t("remoteTunnel.expiresIn", { time: remaining() })}</p>
+            <p class="text-[12px] text-[var(--text-secondary)]">{t("remoteTunnel.waitingHint")}</p>
+            <div class="flex items-center gap-2">
+              <button type="button" class={buttonClass} onClick={() => void cancelRemoteTunnel()}>
+                <span>{t("remoteTunnel.cancelAction")}</span>
+              </button>
+              <Show when={controllerUrl().trim()}>
+                <a class={linkButtonClass} href={controllerUrl().trim()} target="_blank" rel="noreferrer">
+                  <ExternalLink size={13} />
+                  <span>{t("remoteTunnel.openPanelAction")}</span>
+                </a>
+              </Show>
+            </div>
+          </div>
+        </Show>
+
+        <Show when={pending()?.state === "denied"}>
+          <p class="text-[12px] text-rose-500">{t("remoteTunnel.pendingDenied")}</p>
+        </Show>
+        <Show when={pending()?.state === "expired"}>
+          <p class="text-[12px] text-amber-600">{t("remoteTunnel.pendingExpired")}</p>
+        </Show>
+
+        <Show when={showForm()}>
+          <form class="grid gap-3 sm:grid-cols-2" onSubmit={(event) => void onAuthorize(event)}>
             <label class="space-y-1 sm:col-span-2">
               <span class="text-[12px] text-[var(--text-secondary)]">{t("remoteTunnel.controllerLabel")}</span>
               <input
@@ -105,19 +174,7 @@ export function RemoteTunnelControls() {
                 onInput={(event) => setControllerUrl(event.currentTarget.value)}
               />
             </label>
-            <label class="space-y-1">
-              <span class="text-[12px] text-[var(--text-secondary)]">{t("remoteTunnel.codeLabel")}</span>
-              <input
-                class={`${inputClass} font-mono`}
-                required
-                autocomplete="off"
-                spellcheck={false}
-                value={code()}
-                placeholder={t("remoteTunnel.codePlaceholder")}
-                onInput={(event) => setCode(event.currentTarget.value)}
-              />
-            </label>
-            <label class="space-y-1">
+            <label class="space-y-1 sm:col-span-2">
               <span class="text-[12px] text-[var(--text-secondary)]">{t("remoteTunnel.nameLabel")}</span>
               <input
                 class={inputClass}
@@ -129,10 +186,34 @@ export function RemoteTunnelControls() {
             <div class="sm:col-span-2">
               <button type="submit" class={buttonClass} disabled={remoteTunnel.busy}>
                 <Link2 size={14} />
-                <span>{remoteTunnel.busy ? t("remoteTunnel.pairing") : t("remoteTunnel.pairAction")}</span>
+                <span>{remoteTunnel.busy ? t("remoteTunnel.requesting") : t("remoteTunnel.requestAction")}</span>
               </button>
             </div>
           </form>
+
+          <details class="rounded-xl border border-[var(--border-subtle)] px-4 py-3">
+            <summary class="cursor-pointer text-[12px] text-[var(--text-secondary)]">{t("remoteTunnel.manualToggle")}</summary>
+            <form class="mt-3 grid gap-3 sm:grid-cols-2" onSubmit={(event) => void onPair(event)}>
+              <label class="space-y-1 sm:col-span-2">
+                <span class="text-[12px] text-[var(--text-secondary)]">{t("remoteTunnel.codeLabel")}</span>
+                <input
+                  class={`${inputClass} font-mono`}
+                  required
+                  autocomplete="off"
+                  spellcheck={false}
+                  value={code()}
+                  placeholder={t("remoteTunnel.codePlaceholder")}
+                  onInput={(event) => setCode(event.currentTarget.value)}
+                />
+              </label>
+              <div class="sm:col-span-2">
+                <button type="submit" class={buttonClass} disabled={remoteTunnel.busy}>
+                  <Link2 size={14} />
+                  <span>{remoteTunnel.busy ? t("remoteTunnel.pairing") : t("remoteTunnel.pairAction")}</span>
+                </button>
+              </div>
+            </form>
+          </details>
         </Show>
 
         <Show when={remoteTunnel.error}>

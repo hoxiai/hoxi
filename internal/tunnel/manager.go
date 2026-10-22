@@ -24,6 +24,25 @@ const (
 	StateOffline    = "offline"
 )
 
+// Pending states surfaced while a one-click pairing request waits for an
+// administrator to approve it in GoPanel. They mirror the poll response so the
+// UI can render the authorization code, a countdown and the outcome.
+const (
+	PendingWaiting  = "waiting"
+	PendingApproved = "approved"
+	PendingDenied   = "denied"
+	PendingExpired  = "expired"
+)
+
+// Pending is the in-flight one-click pairing request, safe to return to the UI.
+// It never carries the poll token or the tunnel credential.
+type Pending struct {
+	RequestID string    `json:"requestId"`
+	UserCode  string    `json:"userCode"`
+	ExpiresAt time.Time `json:"expiresAt"`
+	State     string    `json:"state"`
+}
+
 // Options wires the manager to the gateway without importing it.
 type Options struct {
 	// Handler serves every tunnelled request in-process. The gateway passes a
@@ -35,6 +54,12 @@ type Options struct {
 	Hostname   func() string
 	Dialer     *websocket.Dialer
 	HTTPClient *http.Client
+
+	// PollInterval and PollTimeout bound the one-click pairing poll loop: the
+	// first wait before re-checking GoPanel, and the overall deadline. Both
+	// default (2s, 10min) and are overridden in tests.
+	PollInterval time.Duration
+	PollTimeout  time.Duration
 }
 
 // Status is safe to return to the UI: it never includes the tunnel token.
@@ -46,6 +71,7 @@ type Status struct {
 	Name          string     `json:"name,omitempty"`
 	Message       string     `json:"message,omitempty"`
 	ConnectedAt   *time.Time `json:"connectedAt,omitempty"`
+	Pending       *Pending   `json:"pending,omitempty"`
 }
 
 type Manager struct {
@@ -56,6 +82,7 @@ type Manager struct {
 	done      chan struct{}
 	status    Status
 	peer      *peer
+	pending   *pendingPair
 }
 
 // ErrOffline is returned by Notify when no tunnel is connected.
@@ -98,6 +125,12 @@ func NewManager(opts Options) *Manager {
 				return http.ErrUseLastResponse
 			},
 		}
+	}
+	if opts.PollInterval <= 0 {
+		opts.PollInterval = 2 * time.Second
+	}
+	if opts.PollTimeout <= 0 {
+		opts.PollTimeout = 10 * time.Minute
 	}
 	return &Manager{opts: opts, status: Status{State: StateDisabled}}
 }
@@ -166,7 +199,20 @@ func (m *Manager) stopLocked() {
 func (m *Manager) Status() Status {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.status
+	status := m.status
+	// Copy the pending request so the returned value never shares mutable state
+	// with the poll goroutine.
+	if m.pending != nil {
+		status.Pending = &Pending{
+			RequestID: m.pending.requestID,
+			UserCode:  m.pending.userCode,
+			ExpiresAt: m.pending.expiresAt,
+			State:     m.pending.state,
+		}
+	} else {
+		status.Pending = nil
+	}
+	return status
 }
 
 func (m *Manager) setStatus(status Status) {
@@ -257,17 +303,24 @@ func (m *Manager) connect(ctx context.Context, cfg Config) (bool, error) {
 }
 
 // Pair redeems a one-time GoPanel pairing code, stores the credential and
-// connects. GoPanel creates a tunnel node for this desktop on success.
+// connects. GoPanel creates a tunnel node for this desktop on success. This is
+// the manual path (the user pastes a code); the one-click flow uses RequestPair.
 func (m *Manager) Pair(ctx context.Context, controllerURL, code, name string) error {
 	// Check before redeeming: a consumed code with nowhere to store the
 	// credential would leave an orphan node on GoPanel.
 	if m.store().path == "" {
 		return errors.New("remote tunnel is not available in this Hoxi process")
 	}
-	controllerURL, err := normalizeControllerURL(controllerURL)
+	normalized, err := normalizeControllerURL(controllerURL)
 	if err != nil {
 		return err
 	}
+	return m.exchangeAndConnect(ctx, normalized, code, name)
+}
+
+// exchangeAndConnect redeems a one-time pairing code, persists the credential
+// and starts the tunnel. controllerURL must already be normalized.
+func (m *Manager) exchangeAndConnect(ctx context.Context, controllerURL, code, name string) error {
 	code = strings.TrimSpace(code)
 	if decoded, err := hex.DecodeString(code); err != nil || len(decoded) != 16 {
 		return errors.New("pairing code must be the 32-character code issued by GoPanel")
@@ -327,9 +380,11 @@ func (m *Manager) Pair(ctx context.Context, controllerURL, code, name string) er
 	return nil
 }
 
-// Unpair disconnects and deletes the local credential. The GoPanel node stays
-// until an administrator deletes it there.
+// Unpair disconnects, cancels any in-flight one-click request and deletes the
+// local credential. The GoPanel node stays until an administrator deletes it
+// there.
 func (m *Manager) Unpair() error {
+	m.CancelPair()
 	m.Stop()
 	if err := m.store().Delete(); err != nil {
 		return err

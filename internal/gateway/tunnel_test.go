@@ -41,8 +41,9 @@ func TestTunnelRouteAllowlist(t *testing.T) {
 	}
 	denied := []route{
 		{get, "/"}, {get, "/api/hoxi/tunnel/status"}, {post, "/api/hoxi/tunnel/pair"}, {post, "/api/hoxi/tunnel/disable"},
+		{post, "/api/hoxi/tunnel/pair/request"}, {post, "/api/hoxi/tunnel/pair/cancel"}, {get, "/api/hoxi/tunnel/pair/request/req_1"},
 		// The LAN pairing token must never be readable from a paired GoPanel.
-		{get, "/api/hoxi/pairing/qr"}, {post, "/api/hoxi/pairing/qr"},
+		{get, "/api/hoxi/pairing/qr"}, {post, "/api/hoxi/pairing/qr"}, {post, "/api/hoxi/pairing/rotate"},
 		// The Cloudflare connector token and control must stay desktop-only.
 		{get, "/api/hoxi/cloudflared/status"}, {post, "/api/hoxi/cloudflared/enable"}, {post, "/api/hoxi/cloudflared/disable"},
 		{get, "/api/hoxi/auth"}, {get, "/api/hoxi/models-config"},

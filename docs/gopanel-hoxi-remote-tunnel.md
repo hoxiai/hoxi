@@ -10,6 +10,7 @@
 | 能力 | 状态 |
 | --- | --- |
 | Hoxi 桌面与 GoPanel 配对、长连接、断线重连 | 已实现 |
+| 桌面一键授权（桌面只填 GoPanel 地址，面板确认后自动连接） | 桌面端已实现；GoPanel 侧接口见 §5.3 |
 | 手机经 GoPanel 访问 Hoxi 的 HTTP 接口 | 已实现 |
 | 手机经 GoPanel 订阅 Hoxi SSE（`/api/hoxi/event`） | 已实现，逐块转发不缓冲 |
 | 手机在服务器列表中发现并添加 Hoxi 电脑 | 已实现 |
@@ -42,6 +43,8 @@ Hoxi 桌面（hoxi，internal/tunnel）
 1. **GoPanel 签发配对码**：GoPanel 管理后台 → 节点 → 隧道设置，生成 10 分钟有效、一次性的 32 位十六进制配对码（`POST /api/tunnel/pairing`）。
 2. **Hoxi 桌面配对**：Hoxi 设置 → 系统 → 经 GoPanel 远程控制，填写 GoPanel 地址、配对码和设备名，点「配对」。Hoxi 调用 GoPanel `POST /api/tunnel/pair/exchange` 换取长期凭据，随即连接并上报服务。GoPanel 节点列表中出现一个 `connectMode = tunnel` 的节点。
 3. **手机添加**：手机「服务器列表」中已登录的 GoPanel 卡片右侧点电脑图标，列出该 GoPanel 下在线的 Hoxi 电脑，选中后保存为一个 Hoxi 节点（中继地址），之后与普通 Hoxi 节点一样使用。
+
+**一键授权（推荐，替代手动配对码）**：Hoxi 设置里只填 GoPanel 地址（`ip:端口`，无需安全入口）点「一键授权」，桌面调用 `POST /api/tunnel/pair/request` 打开一条待批准请求并展示授权码；管理员在 GoPanel 后台「节点 → 隧道」批准后，桌面轮询到批准结果，自动兑换一次性配对码并连接。桌面不需要安全入口，因为配对相关端点对入口豁免；但管理员批准与手机侧管理接口仍需安全入口（见 §9）。
 
 解除：Hoxi 设置中点「解除配对」删除本机凭据；GoPanel 上的节点需管理员在 GoPanel 删除。
 
@@ -132,7 +135,17 @@ Type(1B) | StreamID(8B, BigEndian uint64) | Payload(≤ 4MB)
   - `502`：转发途中失败
   - `501`：WebSocket Upgrade（暂不支持）
   - JWT 失效仍由 GoPanel 中间件返回其标准包装（HTTP 200，`code = 401`）
-- 实现：`app/api/tunnel_hoxi.go`、`app/service/tunnel_hoxi.go`；转发经现有 `serveTunnelIngress`，没有复制帧处理逻辑。写操作照常记入 GoPanel 操作日志。
+   - 实现：`app/api/tunnel_hoxi.go`、`app/service/tunnel_hoxi.go`；转发经现有 `serveTunnelIngress`，没有复制帧处理逻辑。写操作照常记入 GoPanel 操作日志。
+
+### 5.3 一键授权（`/api/tunnel/pair/request*`）
+
+桌面发起、面板确认的配对流程；除 `approve`/`deny` 外均对安全入口豁免（加入 `shouldBypassEntrance`）。
+
+- `POST /api/tunnel/pair/request`（免鉴权、免入口）body `{name, hostname, version}` → `{code:0, data:{requestId, userCode, expiresAt, pollToken}}`，`expiresAt` 为 RFC3339。创建一条 pending 请求，短 TTL、按来源 IP 限流。
+- `GET /api/tunnel/pair/request/:id`（免鉴权、免入口）轮询状态；桌面用请求头 **`X-GoPanel-Tunnel-PollToken`** 携带 `pollToken` 鉴权。→ `{code:0, data:{state, code}}`，`state ∈ waiting|approved|denied|expired`；仅 `approved` 时下发一次性 `code`（仍走 `/api/tunnel/pair/exchange` 兑换，不直接发 token）。
+- `POST /api/tunnel/pair/request/:id/approve`、`/deny`（管理组：管理员 JWT + 安全入口）：批准时生成一次性配对码；拒绝置 `denied`。
+
+`pollToken` 单次签发、只存哈希，响应从不回显；批准与拒绝计入 GoPanel 操作日志。
 
 ## 6. Hoxi 桌面侧（`hoxi`）
 
@@ -150,9 +163,12 @@ Type(1B) | StreamID(8B, BigEndian uint64) | Payload(≤ 4MB)
 - **本机网关令牌不出机器**：网关在转发隧道请求前显式剥离 `X-Hoxi-Token` 且绝不注入本机令牌（受令牌保护的 OpenCode 原始透传对隧道始终不可达）；`/api/hoxi/bootstrap` 对隧道请求不返回 `gatewayToken`，也不种令牌 Cookie。
 - **凭据文件**：release `~/.hoxi/tunnel.json`，dev `~/.hoxi/tunnel-dev.json`（两个变体可同时运行，互不挤占隧道）。临时文件 + `os.Rename` 原子写入，权限 `0600`，已加入受保护状态文件列表；状态接口从不返回 token。
 - **管理接口**（只在本机可访问，隧道白名单不包含）：
-  - `GET /api/hoxi/tunnel/status` → `{enabled, state: disabled|connecting|online|offline, controllerUrl, nodeId, name, message, connectedAt}`
-  - `POST /api/hoxi/tunnel/pair` `{controllerUrl, code, name}`
+  - `GET /api/hoxi/tunnel/status` → `{enabled, state: disabled|connecting|online|offline, controllerUrl, nodeId, name, message, connectedAt, pending?}`；`pending` 为进行中的一键授权 `{requestId, userCode, expiresAt, state: waiting|approved|denied|expired}`，从不含投票令牌或隧道 token
+  - `POST /api/hoxi/tunnel/pair` `{controllerUrl, code, name}`：手动配对码路径
+  - `POST /api/hoxi/tunnel/pair/request` `{controllerUrl, name}`：一键授权，打开待批准请求并返回最新 Status（含 `pending`）
+  - `POST /api/hoxi/tunnel/pair/cancel` `{}`：取消进行中的一键授权请求
   - `POST /api/hoxi/tunnel/disable`：断开并删除本机凭据
+- 一键授权由 `internal/tunnel/pairing.go` 实现：`RequestPair` 打开请求后由后台轮询协程等待批准，批准即兑换一次性码并连接；超时、拒绝、过期或被取消（`CancelPair`/解除配对）都会停止轮询且不落盘。轮询间隔与总超时由 `Options.PollInterval`（默认 2s）与 `Options.PollTimeout`（默认 10min）控制。
 - 只有桌面主进程（含 `--no-desktop` 守护模式）启用隧道；CLI 临时拉起的 headless 网关没有凭据路径，配对会在兑换配对码**之前**被拒绝，避免在 GoPanel 留下孤儿节点。
 - 桌面 UI：设置 → 系统 → 经 GoPanel 远程控制（`web/src/components/settings/RemoteTunnelControls.tsx`）。
 

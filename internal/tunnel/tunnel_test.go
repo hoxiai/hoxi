@@ -18,27 +18,66 @@ import (
 const testClientID = "550e8400-e29b-41d4-a716-446655440000"
 const testToken = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
-// fakeController plays GoPanel: it issues a credential on pair/exchange and
-// hands the tunnel WebSocket to the test.
+// oneClickCode is the one-time code GoPanel issues when it approves a request
+// opened by /api/tunnel/pair/request.
+const oneClickCode = "efefefefefefefefefefefefefefefef"
+
+// fakeController plays GoPanel: it issues a credential on pair/exchange, opens
+// and polls one-click pairing requests, and hands the tunnel WebSocket to the
+// test.
 type fakeController struct {
 	server *httptest.Server
 	conns  chan *websocket.Conn
+
+	mu          sync.Mutex
+	state       string // waiting|approved|denied|expired
+	pollCount   int
+	requestHits int
+	rejectReq   bool
 }
 
 func newFakeController(t *testing.T) *fakeController {
 	t.Helper()
-	fc := &fakeController{conns: make(chan *websocket.Conn, 8)}
+	fc := &fakeController{conns: make(chan *websocket.Conn, 8), state: PendingWaiting}
 	upgrader := websocket.Upgrader{}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/tunnel/pair/exchange", func(w http.ResponseWriter, r *http.Request) {
 		var req map[string]string
 		_ = json.NewDecoder(r.Body).Decode(&req)
-		if req["code"] != strings.Repeat("ab", 16) {
+		if req["code"] != strings.Repeat("ab", 16) && req["code"] != oneClickCode {
 			_ = json.NewEncoder(w).Encode(map[string]any{"code": 500, "msg": "pairing code is invalid"})
 			return
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "msg": "Success", "data": map[string]any{
 			"nodeId": 7, "clientId": testClientID, "token": testToken,
+		}})
+	})
+	mux.HandleFunc("/api/tunnel/pair/request", func(w http.ResponseWriter, r *http.Request) {
+		fc.mu.Lock()
+		fc.requestHits++
+		reject := fc.rejectReq
+		fc.mu.Unlock()
+		if reject {
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 500, "msg": "pairing is disabled"})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "msg": "Success", "data": map[string]any{
+			"requestId": "req_1", "userCode": "ABCD-EFGH",
+			"expiresAt": time.Now().Add(10 * time.Minute).UTC().Format(time.RFC3339),
+			"pollToken": "poll-secret",
+		}})
+	})
+	mux.HandleFunc("/api/tunnel/pair/request/", func(w http.ResponseWriter, r *http.Request) {
+		fc.mu.Lock()
+		fc.pollCount++
+		state := fc.state
+		fc.mu.Unlock()
+		code := ""
+		if state == PendingApproved {
+			code = oneClickCode
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "msg": "Success", "data": map[string]any{
+			"state": state, "code": code,
 		}})
 	})
 	mux.HandleFunc("/api/tunnel/connect", func(w http.ResponseWriter, r *http.Request) {
@@ -55,6 +94,59 @@ func newFakeController(t *testing.T) *fakeController {
 	fc.server = httptest.NewServer(mux)
 	t.Cleanup(fc.server.Close)
 	return fc
+}
+
+func (fc *fakeController) setPairState(state string) {
+	fc.mu.Lock()
+	fc.state = state
+	fc.mu.Unlock()
+}
+
+func (fc *fakeController) rejectRequests() {
+	fc.mu.Lock()
+	fc.rejectReq = true
+	fc.mu.Unlock()
+}
+
+func (fc *fakeController) polls() int {
+	fc.mu.Lock()
+	defer fc.mu.Unlock()
+	return fc.pollCount
+}
+
+func (fc *fakeController) requests() int {
+	fc.mu.Lock()
+	defer fc.mu.Unlock()
+	return fc.requestHits
+}
+
+func waitFor(t *testing.T, timeout time.Duration, cond func() bool) bool {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return true
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	return cond()
+}
+
+// oneClickManager wires a manager with a fast poll loop and a real credential
+// path so the one-click flow can be exercised.
+func oneClickManager(t *testing.T, handler http.Handler) (*Manager, string) {
+	t.Helper()
+	configPath := filepath.Join(t.TempDir(), "tunnel.json")
+	m := NewManager(Options{
+		Handler:      handler,
+		Version:      "test",
+		Hostname:     func() string { return "mac.local" },
+		PollInterval: 10 * time.Millisecond,
+		PollTimeout:  5 * time.Second,
+	})
+	m.Configure(NewStore(configPath), 5410)
+	t.Cleanup(m.Stop)
+	return m, configPath
 }
 
 func readFrame(t *testing.T, conn *websocket.Conn) frame {
@@ -451,5 +543,216 @@ func TestStartSurfacesCorruptConfigError(t *testing.T) {
 	}
 	if !strings.Contains(status.Message, "read tunnel config") {
 		t.Fatalf("expected corrupt config error in status.Message, got %q", status.Message)
+	}
+}
+
+func TestRequestPairApprovedConnectsAndRegistersGateway(t *testing.T) {
+	fc := newFakeController(t)
+	m, configPath := oneClickManager(t, http.NotFoundHandler())
+
+	if err := m.RequestPair(t.Context(), fc.server.URL, "Studio"); err != nil {
+		t.Fatalf("request pair: %v", err)
+	}
+	pending := m.Status().Pending
+	if pending == nil || pending.State != PendingWaiting || pending.UserCode == "" || pending.RequestID == "" {
+		t.Fatalf("pending = %+v", pending)
+	}
+	if pending.ExpiresAt.IsZero() {
+		t.Fatal("pending.expiresAt must carry the GoPanel deadline")
+	}
+	raw, _ := json.Marshal(m.Status())
+	if strings.Contains(string(raw), testToken) || strings.Contains(string(raw), "poll-secret") {
+		t.Fatal("status must not expose the tunnel token or poll token")
+	}
+
+	fc.setPairState(PendingApproved)
+	var conn *websocket.Conn
+	select {
+	case conn = <-fc.conns:
+	case <-time.After(5 * time.Second):
+		t.Fatal("approved request did not connect the tunnel")
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	if sync := readFrame(t, conn); sync.Type != frameServiceSync {
+		t.Fatalf("first frame type = %d, want service sync", sync.Type)
+	}
+	info, err := os.Stat(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("credential mode = %v, want 0600", info.Mode().Perm())
+	}
+	if !waitFor(t, 5*time.Second, func() bool { return m.Status().State == StateOnline }) {
+		t.Fatalf("state = %s, want online", m.Status().State)
+	}
+	if m.Status().Pending != nil {
+		t.Fatal("pending must clear once the request is approved and connected")
+	}
+}
+
+func TestRequestPairDeniedStopsWithoutCredential(t *testing.T) {
+	fc := newFakeController(t)
+	m, configPath := oneClickManager(t, http.NotFoundHandler())
+	if err := m.RequestPair(t.Context(), fc.server.URL, ""); err != nil {
+		t.Fatalf("request pair: %v", err)
+	}
+	fc.setPairState(PendingDenied)
+	if !waitFor(t, 2*time.Second, func() bool {
+		p := m.Status().Pending
+		return p != nil && p.State == PendingDenied
+	}) {
+		t.Fatalf("pending = %+v, want denied", m.Status().Pending)
+	}
+	if _, err := os.Stat(configPath); !os.IsNotExist(err) {
+		t.Fatalf("credential must not be written on denial: %v", err)
+	}
+}
+
+func TestRequestPairExpiredFromController(t *testing.T) {
+	fc := newFakeController(t)
+	m, configPath := oneClickManager(t, http.NotFoundHandler())
+	if err := m.RequestPair(t.Context(), fc.server.URL, ""); err != nil {
+		t.Fatalf("request pair: %v", err)
+	}
+	fc.setPairState(PendingExpired)
+	if !waitFor(t, 2*time.Second, func() bool {
+		p := m.Status().Pending
+		return p != nil && p.State == PendingExpired
+	}) {
+		t.Fatalf("pending = %+v, want expired", m.Status().Pending)
+	}
+	if _, err := os.Stat(configPath); !os.IsNotExist(err) {
+		t.Fatalf("credential must not be written when the request expires: %v", err)
+	}
+}
+
+func TestRequestPairTimesOutWhenNeverApproved(t *testing.T) {
+	fc := newFakeController(t)
+	configPath := filepath.Join(t.TempDir(), "tunnel.json")
+	m := NewManager(Options{
+		Handler:      http.NotFoundHandler(),
+		Hostname:     func() string { return "mac.local" },
+		PollInterval: 10 * time.Millisecond,
+		PollTimeout:  80 * time.Millisecond,
+	})
+	m.Configure(NewStore(configPath), 5410)
+	t.Cleanup(m.Stop)
+
+	if err := m.RequestPair(t.Context(), fc.server.URL, ""); err != nil {
+		t.Fatalf("request pair: %v", err)
+	}
+	if !waitFor(t, 2*time.Second, func() bool {
+		p := m.Status().Pending
+		return p != nil && p.State == PendingExpired
+	}) {
+		t.Fatalf("pending = %+v, want expired after the overall timeout", m.Status().Pending)
+	}
+	if fc.polls() == 0 {
+		t.Fatal("expected at least one poll before the timeout")
+	}
+	if _, err := os.Stat(configPath); !os.IsNotExist(err) {
+		t.Fatalf("credential must not be written on timeout: %v", err)
+	}
+}
+
+func TestRequestPairRejectsControllerError(t *testing.T) {
+	fc := newFakeController(t)
+	fc.rejectRequests()
+	m, configPath := oneClickManager(t, http.NotFoundHandler())
+	err := m.RequestPair(t.Context(), fc.server.URL, "")
+	if err == nil || !strings.Contains(err.Error(), "pairing is disabled") {
+		t.Fatalf("err = %v, want the GoPanel rejection message", err)
+	}
+	if m.Status().Pending != nil {
+		t.Fatalf("pending = %+v, want nil after a rejected request", m.Status().Pending)
+	}
+	if _, err := os.Stat(configPath); !os.IsNotExist(err) {
+		t.Fatalf("credential must not be written on rejection: %v", err)
+	}
+}
+
+func TestRequestPairSurfacesNetworkError(t *testing.T) {
+	server := httptest.NewServer(http.NotFoundHandler())
+	url := server.URL
+	server.Close()
+	m, configPath := oneClickManager(t, http.NotFoundHandler())
+	if err := m.RequestPair(t.Context(), url, ""); err == nil {
+		t.Fatal("expected a network error when GoPanel is unreachable")
+	}
+	if _, err := os.Stat(configPath); !os.IsNotExist(err) {
+		t.Fatalf("credential must not be written on a network error: %v", err)
+	}
+}
+
+func TestRequestPairCancelStopsPollingAndDoesNotPersist(t *testing.T) {
+	fc := newFakeController(t)
+	m, configPath := oneClickManager(t, http.NotFoundHandler())
+	if err := m.RequestPair(t.Context(), fc.server.URL, ""); err != nil {
+		t.Fatalf("request pair: %v", err)
+	}
+	if !waitFor(t, 2*time.Second, func() bool { return fc.polls() >= 1 }) {
+		t.Fatal("expected the poll loop to run")
+	}
+	m.CancelPair()
+	if m.Status().Pending != nil {
+		t.Fatal("pending must clear when canceled")
+	}
+	before := fc.polls()
+	time.Sleep(120 * time.Millisecond)
+	if after := fc.polls(); after != before {
+		t.Fatalf("polling continued after cancel: %d -> %d", before, after)
+	}
+	if _, err := os.Stat(configPath); !os.IsNotExist(err) {
+		t.Fatalf("credential must not be written after cancel: %v", err)
+	}
+}
+
+func TestUnpairCancelsPendingRequest(t *testing.T) {
+	fc := newFakeController(t)
+	m, _ := oneClickManager(t, http.NotFoundHandler())
+	if err := m.RequestPair(t.Context(), fc.server.URL, ""); err != nil {
+		t.Fatalf("request pair: %v", err)
+	}
+	if !waitFor(t, 2*time.Second, func() bool { return fc.polls() >= 1 }) {
+		t.Fatal("expected the poll loop to run")
+	}
+	if err := m.Unpair(); err != nil {
+		t.Fatal(err)
+	}
+	if m.Status().Pending != nil {
+		t.Fatal("pending must clear when the tunnel is unpaired")
+	}
+}
+
+func TestRequestPairWithoutStorePathIsRefused(t *testing.T) {
+	fc := newFakeController(t)
+	m := NewManager(Options{Handler: http.NotFoundHandler()})
+	if err := m.RequestPair(t.Context(), fc.server.URL, ""); err == nil {
+		t.Fatal("request must fail when no credential path is configured")
+	}
+	if fc.requests() != 0 {
+		t.Fatal("no pending request may be opened without a credential store")
+	}
+}
+
+func TestRequestPairDoesNotFollowRedirects(t *testing.T) {
+	redirectTargetHit := false
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		redirectTargetHit = true
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "msg": "Success", "data": map[string]any{}})
+	}))
+	t.Cleanup(target.Close)
+	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+"/api/tunnel/pair/request", http.StatusFound)
+	}))
+	t.Cleanup(redirector.Close)
+
+	m, _ := oneClickManager(t, http.NotFoundHandler())
+	if err := m.RequestPair(t.Context(), redirector.URL, "Studio"); err == nil {
+		t.Fatal("expected the request to reject a redirect response")
+	}
+	if redirectTargetHit {
+		t.Fatal("RequestPair followed an HTTP redirect and leaked the request")
 	}
 }
