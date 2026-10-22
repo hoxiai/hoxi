@@ -3,7 +3,7 @@ import { t } from "../i18n";
 import { hoxiAPI, type CommitAndPushResponse } from "../services/api";
 import type { SnapshotFileDiff } from "../services/sse-types";
 import { canQuickCommitSession, commitModelSpec, executeTaskCommitAndPush, generateSmartCommitMessage, setCommitModelSpec, uncommittedSessionFiles } from "../store/git-commit";
-import { sessionDirectory, setWorkspace, workspace } from "../store/workspace";
+import { sessionDirectory, setGitAttribution, setWorkspace, workspace } from "../store/workspace";
 import { assertDeepEqual, assertEqual, assertTrue, describe, it } from "./test-harness";
 
 let nextID = 0;
@@ -129,6 +129,7 @@ describe("task commit and push", () => {
       assertEqual(prompt, [
         t("timeline.gitAgentCommitPrompt", { directory: JSON.stringify(directory) }),
         t("timeline.gitAgentCommitPushPrompt"),
+        t("timeline.gitAgentCommitAttributionPrompt"),
       ].join("\n\n"));
       assertEqual(options?.directory, directory);
       assertDeepEqual(options?.model, backgroundAI.model);
@@ -217,7 +218,24 @@ describe("task commit and push", () => {
         t("timeline.gitAgentCommitPrompt", { directory: JSON.stringify(directory) }),
         t("timeline.gitAgentCommitOnlyPrompt"),
         t("timeline.gitAgentCommitMessagePrompt", { message: JSON.stringify(message) }),
+        t("timeline.gitAgentCommitAttributionPrompt"),
       ].join("\n\n"));
+    });
+  });
+
+  it("drops the attribution instruction when commit attribution is off", async () => {
+    await withCommitFixture(async ({ id, directory, calls }) => {
+      setGitAttribution("enabled", false);
+      try {
+        assertEqual(await executeTaskCommitAndPush(id, { push: false }), id);
+      } finally {
+        setGitAttribution("enabled", true);
+      }
+      assertEqual(calls.send[0][1], [
+        t("timeline.gitAgentCommitPrompt", { directory: JSON.stringify(directory) }),
+        t("timeline.gitAgentCommitOnlyPrompt"),
+      ].join("\n\n"));
+      assertEqual(String(calls.send[0][1]).includes("code@hoxi.ai"), false);
     });
   });
 
@@ -228,6 +246,7 @@ describe("task commit and push", () => {
       assertEqual(calls.send[0][1], [
         t("timeline.gitAgentCommitPrompt", { directory: JSON.stringify(directory) }),
         t("timeline.gitAgentCommitPushPrompt"),
+        t("timeline.gitAgentCommitAttributionPrompt"),
       ].join("\n\n"));
     });
   });

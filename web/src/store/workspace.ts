@@ -27,6 +27,7 @@ export * from "./session-title";
 export * from "./session-goal-state";
 export * from "./session-goal";
 export * from "./git-commit";
+export * from "./git-attribution";
 export * from "./approval-mode";
 export * from "./provider-telemetry";
 export * from "./provider-health";

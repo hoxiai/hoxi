@@ -46,6 +46,7 @@ var protectedStateFiles = []string{
 	"approval-audit.json",
 	"approval-policy.json",
 	"relay-keys.json",
+	"git-attribution.json",
 }
 
 // Home returns ~/.hoxi (or $HOXI_HOME when set), or "" when the user home directory is unknown.

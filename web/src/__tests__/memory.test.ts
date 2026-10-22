@@ -146,4 +146,33 @@ describe("8-dim session memory", () => {
       await fs.rm(tmpDir, { recursive: true, force: true });
     }
   });
+
+  it("injects the commit attribution rule only while the desktop setting allows it", async () => {
+    const fs = await (Function('return import("node:fs/promises")')() as Promise<any>);
+    const os = await (Function('return import("node:os")')() as Promise<any>);
+    const path = await (Function('return import("node:path")')() as Promise<any>);
+    const env = (globalThis as any).process.env as Record<string, string | undefined>;
+    const previousHome = env.HOXI_HOME;
+    const hoxiHome = await fs.mkdtemp(path.join(os.tmpdir(), "hoxi-attr-home-"));
+    const project = await fs.mkdtemp(path.join(os.tmpdir(), "hoxi-attr-proj-"));
+    const systemFor = async (sessionID: string) => {
+      const plugin = await HoxiMemoryPlugin({ directory: project });
+      const out = { system: [] as string[] };
+      await plugin["experimental.chat.system.transform"]({ sessionID }, out);
+      return out.system.join("\n");
+    };
+    try {
+      env.HOXI_HOME = hoxiHome;
+      assertTrue((await systemFor("ses_default")).includes("Co-authored-by: Hoxi"), "missing setting keeps attribution on");
+      await fs.writeFile(path.join(hoxiHome, "git-attribution.json"), '{"enabled":false}\n', "utf8");
+      assertEqual((await systemFor("ses_off")).includes("hoxi_git_attribution"), false);
+      await fs.writeFile(path.join(hoxiHome, "git-attribution.json"), '{"enabled":true}\n', "utf8");
+      assertTrue((await systemFor("ses_on")).includes("Co-authored-by: Hoxi"));
+    } finally {
+      if (previousHome === undefined) delete env.HOXI_HOME;
+      else env.HOXI_HOME = previousHome;
+      await fs.rm(hoxiHome, { recursive: true, force: true });
+      await fs.rm(project, { recursive: true, force: true });
+    }
+  });
 });

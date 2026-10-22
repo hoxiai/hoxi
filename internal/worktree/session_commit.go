@@ -444,7 +444,10 @@ func (m *worktreeManager) CommitSessionChanges(sessionID, message string, push b
 		if !bytes.Equal(config, tempConfig) {
 			return fail(errors.New("session commit cannot safely preserve worktreeConfig or conditional include configuration"))
 		}
-		if _, err := sessionGit(dir, candidateIndex, temp, nil, "-c", "core.bare=false", "commit", "-m", appendHoxiCoAuthor(message)); err != nil {
+		// Read the preference once so the appended trailer and the hook check agree
+		// even if the setting changes mid-commit.
+		attribution := AttributionEnabled()
+		if _, err := sessionGit(dir, candidateIndex, temp, nil, "-c", "core.bare=false", "commit", "-m", withCoAuthor(message, attribution)); err != nil {
 			return fail(err)
 		}
 		out, err := sessionGit(dir, candidateIndex, temp, nil, "log", "-1", "--format=%H %T %P")
@@ -456,7 +459,7 @@ func (m *worktreeManager) CommitSessionChanges(sessionID, message string, push b
 			return fail(errors.New("commit hook changed the candidate tree or parent; commit not published"))
 		}
 		body, err := sessionGit(dir, candidateIndex, temp, nil, "log", "-1", "--format=%B")
-		if err != nil || !strings.Contains(string(body), HoxiCoAuthorTrailer) {
+		if err != nil || (attribution && !strings.Contains(string(body), HoxiCoAuthorTrailer)) {
 			return fail(errors.New("commit hook removed Hoxi attribution; commit not published"))
 		}
 		newHead = parts[0]

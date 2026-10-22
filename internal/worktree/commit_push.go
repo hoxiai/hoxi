@@ -13,10 +13,7 @@ import (
 	"time"
 )
 
-const (
-	HoxiCoAuthorTrailer = "Co-authored-by: Hoxi <code@hoxi.ai>"
-	gitPushTimeout      = 45 * time.Second
-)
+const gitPushTimeout = 45 * time.Second
 
 type CommitAndPushResult struct {
 	OK         bool   `json:"ok"`
@@ -26,18 +23,6 @@ type CommitAndPushResult struct {
 	Pushed     bool   `json:"pushed"`
 	Message    string `json:"message,omitempty"`
 	CompareURL string `json:"compareURL,omitempty"`
-}
-
-func appendHoxiCoAuthor(msg string) string {
-	msg = strings.TrimSpace(msg)
-	if msg == "" {
-		return msg
-	}
-	lower := strings.ToLower(msg)
-	if strings.Contains(lower, "co-authored-by:") && strings.Contains(lower, "code@hoxi.ai") {
-		return msg
-	}
-	return msg + "\n\n" + HoxiCoAuthorTrailer
 }
 
 func parseBranchFromPorcelainHeader(headerLine string) string {
@@ -366,7 +351,7 @@ func resolveGitRemoteURLFast(repoDir, preferredRemote string) string {
 				if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
 					currentRemote = ""
 					if strings.HasPrefix(line, `[remote "`) && strings.HasSuffix(line, `"]`) {
-						currentRemote = line[len(`[remote "`): len(line)-2]
+						currentRemote = line[len(`[remote "`) : len(line)-2]
 					}
 					continue
 				}

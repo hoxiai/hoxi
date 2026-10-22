@@ -22,6 +22,7 @@ import {
   lastPromptDispatchedAt,
   loadAgents,
   loadApprovalPolicy,
+  loadGitAttribution,
   loadProjects,
   loadProviders,
   loadProviderTelemetry,
@@ -122,6 +123,7 @@ export default function App() {
         void loadApprovalPolicy().catch((e) => {
           console.warn("Failed to load approval policy:", e);
         });
+        void loadGitAttribution();
         void syncPendingPermissions(eagerBootRoot || undefined);
         void hoxiAPI
           .listQuestions()

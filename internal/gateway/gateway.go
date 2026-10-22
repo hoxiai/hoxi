@@ -337,6 +337,8 @@ func (g *Gateway) registerRoutes(distFS fs.FS) {
 	g.mux.Handle("/api/hoxi/diagnostics", diagnosticHandler)
 	g.mux.Handle("/api/hoxi/diagnostics/", diagnosticHandler)
 	g.mux.HandleFunc("/api/hoxi/telemetry", g.handleTelemetry)
+	loadGitAttribution()
+	g.mux.HandleFunc("/api/hoxi/git/attribution", g.handleGitAttribution)
 	g.mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	})

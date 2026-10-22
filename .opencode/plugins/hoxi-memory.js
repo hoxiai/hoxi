@@ -1,5 +1,6 @@
 // .opencode/plugins/hoxi-memory.js
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 
 const SECRET_PATTERNS = [
@@ -39,6 +40,19 @@ const HOXI_GIT_ATTRIBUTION_RULE = `<hoxi_git_attribution>
 When creating any git commit in a project developed with Hoxi, always append the co-author trailer at the end of the commit message (separated by a blank line):
 Co-authored-by: Hoxi <code@hoxi.ai>
 </hoxi_git_attribution>`;
+
+// gitAttributionEnabled mirrors internal/worktree.LoadAttribution: the rule is
+// injected unless ~/.hoxi/git-attribution.json (or $HOXI_HOME) explicitly opts
+// out. Missing or malformed state keeps attribution on.
+async function gitAttributionEnabled() {
+  const home = process.env.HOXI_HOME?.trim() || path.join(os.homedir(), ".hoxi");
+  try {
+    const stored = JSON.parse(await fs.readFile(path.join(home, "git-attribution.json"), "utf8"));
+    return stored?.enabled !== false;
+  } catch {
+    return true;
+  }
+}
 
 function redactSecrets(text) {
   if (typeof text !== "string" || !text) return "";
@@ -324,6 +338,7 @@ export const HoxiMemoryPlugin = async ({ client, directory } = {}) => {
       return frozenSessionSystemBlocks.get(cacheKey);
     }
     const blocks = [];
+    if (await gitAttributionEnabled()) blocks.push(HOXI_GIT_ATTRIBUTION_RULE);
     try {
       const content = await fs.readFile(projectMemoryPath, "utf8");
       const sanitized = stripVolatileMemoryHeader(redactSecrets(content.trim()));
@@ -356,7 +371,6 @@ export const HoxiMemoryPlugin = async ({ client, directory } = {}) => {
 
   return {
     "experimental.chat.system.transform": async (input, output) => {
-      output.system.push(HOXI_GIT_ATTRIBUTION_RULE);
       const blocks = await resolveFrozenBlocks(input?.sessionID);
       for (const block of blocks) {
         output.system.push(block);

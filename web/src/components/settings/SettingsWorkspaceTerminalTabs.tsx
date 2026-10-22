@@ -1,14 +1,19 @@
 // web/src/components/settings/SettingsWorkspaceTerminalTabs.tsx
+import { onMount, Show } from "solid-js";
 import {
   Columns2,
   FolderGit2,
   GitMerge,
   LayoutList,
+  Signature,
   SlidersHorizontal,
 } from "lucide-solid";
 import {
   appSettings,
+  gitAttribution,
+  loadGitAttribution,
   openProviderModal,
+  saveGitAttribution,
   setObserverAutoAudit,
   setSessionSandboxMode,
   setSidebarProjectMode,
@@ -27,6 +32,9 @@ import {
 } from "./setting-controls";
 
 export function WorkspaceGitSettingsTab() {
+  onMount(() => {
+    void loadGitAttribution();
+  });
   return (
     <div class="space-y-5">
       {/* 1. Workspace, Sandbox & Diffs Group */}
@@ -137,7 +145,21 @@ export function WorkspaceGitSettingsTab() {
             onChange={(val) => updateAppSetting("worktreeApplyMode", val)}
           />
         </SettingRow>
+
+        <SettingRow
+          icon={Signature}
+          label={t("settings.gitAttributionTitle")}
+          tip={t("settings.gitAttributionDesc")}
+        >
+          <ToggleSwitch
+            checked={gitAttribution.enabled}
+            onChange={(val) => void saveGitAttribution(val)}
+          />
+        </SettingRow>
       </SettingGroup>
+      <Show when={gitAttribution.error}>
+        <p role="alert" class="px-1 text-[13px] text-red-500">{gitAttribution.error}</p>
+      </Show>
 
       {/* 2. Observer AI Code Audit */}
       <SettingGroup

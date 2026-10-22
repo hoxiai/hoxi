@@ -381,6 +381,7 @@ export const timeline: TimelineI18n = {
   gitAgentCommitOnlyPrompt: "仅本地提交，不要推送",
   gitAgentCommitPushPrompt: "提交后执行 `git push` 推送到远端",
   gitAgentCommitMessagePrompt: "使用以下精确文本作为提交说明：{message}",
+  gitAgentCommitAttributionPrompt: "提交说明末尾空一行后加上 `Co-authored-by: Hoxi <code@hoxi.ai>`",
   gitSessionRequired: "请先选择具有明确工作目录的会话，再进行提交",
   gitSessionDiffUnavailable: "会话改动快照不可靠，已拒绝提交整个工作区",
   gitSessionNothingToCommit: "当前会话没有未提交的修改",
