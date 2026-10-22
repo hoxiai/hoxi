@@ -113,6 +113,7 @@ type DesktopApp struct {
 	notifier        *notify.Service
 	wsServer        *http.Server
 	lanServer       *http.Server
+	ingressServer   *http.Server
 	browserEnv      []string
 }
 
@@ -287,6 +288,26 @@ func Run(distFS fs.FS) {
 		}()
 	} else {
 		logger.Warn("LAN pairing port unavailable; mobile LAN pairing is disabled", "port", hoxipaths.DefaultLANPairingPort, "error", lanErr)
+	}
+
+	// Reverse-proxy ingress: a local forwarder (for example cloudflared for a
+	// Cloudflare Tunnel) proxies public requests to this loopback port. The
+	// pairing token and the remote route allow-list still gate every request.
+	if ingressListener, ingressErr := net.Listen("tcp", hoxipaths.DefaultRemoteIngressAddr); ingressErr == nil {
+		defer ingressListener.Close()
+		app.ingressServer = &http.Server{
+			Handler:           http.HandlerFunc(gw.ServeIngressRequest),
+			ReadHeaderTimeout: 10 * time.Second,
+			IdleTimeout:       90 * time.Second,
+		}
+		ingressServer := app.ingressServer
+		go func() {
+			if err := ingressServer.Serve(ingressListener); err != nil && err != http.ErrServerClosed {
+				logger.Error("remote ingress listener stopped unexpectedly", "error", err)
+			}
+		}()
+	} else {
+		logger.Warn("remote ingress port unavailable; relay access is disabled", "addr", hoxipaths.DefaultRemoteIngressAddr, "error", ingressErr)
 	}
 
 	opencode.ReapOrphanedDaemons(logger)

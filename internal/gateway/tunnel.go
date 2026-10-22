@@ -22,6 +22,7 @@ type remoteSourceKey struct{}
 const (
 	remoteSourceTunnel = "tunnel"
 	remoteSourceLAN    = "lan"
+	remoteSourceRelay  = "relay"
 )
 
 // tunnelRoute is one (method, path pattern) the mobile app may reach through

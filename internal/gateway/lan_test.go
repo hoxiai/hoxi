@@ -25,12 +25,50 @@ func lanRequest(t *testing.T, g *Gateway, method, path, token string) int {
 	t.Helper()
 	req := httptest.NewRequest(method, path, nil)
 	req.Host = "192.168.1.5:5417"
+	// A same-LAN source address; httptest defaults to a public TEST-NET IP,
+	// which the listener correctly refuses.
+	req.RemoteAddr = "192.168.1.30:40000"
 	if token != "" {
 		req.Header.Set("X-Auth", token)
 	}
 	rec := httptest.NewRecorder()
 	g.ServeLANRequest(rec, req)
 	return rec.Code
+}
+
+func TestLANRequestRejectsPublicSource(t *testing.T) {
+	g, token := lanGateway(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	req.Host = "192.168.1.5:5417"
+	req.RemoteAddr = "8.8.8.8:33333"
+	req.Header.Set("X-Auth", token)
+	rec := httptest.NewRecorder()
+	g.ServeLANRequest(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("GET /healthz from a public source with a valid token = %d, want 403", rec.Code)
+	}
+}
+
+func TestIsLANClient(t *testing.T) {
+	cases := map[string]bool{
+		"127.0.0.1:5000":     true,
+		"[::1]:5000":         true,
+		"192.168.1.30:40000": true,
+		"10.0.0.9:1234":      true,
+		"172.16.4.4:80":      true,
+		"100.101.102.103:80": true,  // CGNAT / Tailscale-style
+		"169.254.1.1:80":     true,  // link-local
+		"8.8.8.8:53":         false, // public
+		"1.1.1.1:80":         false,
+		"":                   false,
+		"not-an-address":     false,
+	}
+	for addr, want := range cases {
+		if got := isLANClient(addr); got != want {
+			t.Errorf("isLANClient(%q) = %v, want %v", addr, got, want)
+		}
+	}
 }
 
 func TestLANRequestRequiresPairingToken(t *testing.T) {

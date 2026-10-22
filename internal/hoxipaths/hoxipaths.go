@@ -28,9 +28,13 @@ const (
 	// DefaultDevBridgeAddr is the default loopback gateway address for dev builds.
 	DefaultDevBridgeAddr = "127.0.0.1:5420"
 	// DefaultLANPairingPort is the LAN port the mobile app pairs over when it
-	// scans the desktop's local-network QR code. The listener is not opened
-	// yet; the QR only records the address, port and token it will accept.
+	// scans the desktop's local-network QR code. The desktop listens on it,
+	// gated by the pairing token and restricted to local-network sources.
 	DefaultLANPairingPort = 5417
+	// DefaultRemoteIngressAddr is the loopback address a local reverse proxy
+	// (for example cloudflared for a Cloudflare Tunnel) forwards remote requests
+	// to. It must stay on loopback: the pairing token still gates every request.
+	DefaultRemoteIngressAddr = "127.0.0.1:5418"
 )
 
 var protectedStateFiles = []string{

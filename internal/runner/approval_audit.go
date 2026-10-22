@@ -65,7 +65,7 @@ type ApprovalAuditEntry struct {
 	Directory    string `json:"directory,omitempty"`
 	Destructive  bool   `json:"destructive,omitempty"`
 	Decision     string `json:"decision"` // "once" | "always" | "reject" | "timeout" | "interrupted"
-	Source       string `json:"source"`   // "desktop" | "tunnel" | "lan" | "system"
+	Source       string `json:"source"`   // "desktop" | "tunnel" | "lan" | "relay" | "system"
 	Message      string `json:"message,omitempty"`
 }
 
@@ -391,17 +391,20 @@ func requestApprovalSource(r *http.Request) string {
 		return "tunnel"
 	case "lan":
 		return "lan"
+	case "relay":
+		return "relay"
 	default:
 		return "desktop"
 	}
 }
 
 // isRemoteApprovalSource reports whether an approval originated from a paired
-// remote controller (GoPanel tunnel or LAN pairing) rather than the desktop.
-// Remote sources may not change the approval policy, audit or grants.
+// remote controller (GoPanel tunnel, LAN pairing or a relay ingress) rather
+// than the desktop. Remote sources may not change the approval policy, audit or
+// grants.
 func isRemoteApprovalSource(source string) bool {
 	switch strings.ToLower(strings.TrimSpace(source)) {
-	case "tunnel", "lan":
+	case "tunnel", "lan", "relay":
 		return true
 	default:
 		return false
