@@ -10,6 +10,7 @@ import (
 )
 
 func TestOpenCodeEngineErrorFromHTTPError(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name      string
 		status    int
@@ -73,6 +74,7 @@ func TestOpenCodeEngineErrorFromHTTPError(t *testing.T) {
 }
 
 func TestOpenCodeEngineErrorKeepsClassificationForDiagnostics(t *testing.T) {
+	t.Parallel()
 	failure := openCodeEngineError(&ocapi.HTTPError{
 		Status: 500,
 		Body:   `{"name":"UnknownError","data":{"message":"Model not found: subapi/QoderCN-DeepSeek-Flash."}}`,
@@ -84,6 +86,7 @@ func TestOpenCodeEngineErrorKeepsClassificationForDiagnostics(t *testing.T) {
 }
 
 func TestOpenCodeEngineErrorWithoutHTTPStatus(t *testing.T) {
+	t.Parallel()
 	got := openCodeEngineError(errors.New("dial tcp 127.0.0.1:4096: connect: connection refused"))
 	if got == nil || got.Name != "OpenCodeError" || got.Data == nil || got.Data.StatusCode != 0 {
 		t.Fatalf("%+v", got)
@@ -97,6 +100,7 @@ func TestOpenCodeEngineErrorWithoutHTTPStatus(t *testing.T) {
 }
 
 func TestOpenCodeEngineErrorBoundsReason(t *testing.T) {
+	t.Parallel()
 	long := "Model not found: " + strings.Repeat("x", engineErrorMessageMax*2)
 	got := openCodeEngineError(&ocapi.HTTPError{Status: 500, Body: fmt.Sprintf(`{"name":"UnknownError","data":{"message":%q}}`, long)})
 	if got == nil || got.Data == nil || len(got.Data.Message) > engineErrorMessageMax {
@@ -105,6 +109,7 @@ func TestOpenCodeEngineErrorBoundsReason(t *testing.T) {
 }
 
 func TestIsMissingEngineSession(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		err  error
 		want bool

@@ -6,17 +6,21 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"github.com/hoxiai/hoxi/internal/testutil/execstub"
 )
+
+func TestMain(m *testing.M) {
+	execstub.Main()
+	os.Exit(m.Run())
+}
 
 func testService(t *testing.T, script string) *Service {
 	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("shell-script gh stub is not available on Windows")
 	}
-	path := filepath.Join(t.TempDir(), "gh")
-	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+script+"\n"), 0o755); err != nil {
-		t.Fatalf("write gh stub: %v", err)
-	}
+	path := execstub.Write(t, t.TempDir(), "gh", script+"\n")
 	return &Service{ghPath: path, timeout: defaultTimeout}
 }
 

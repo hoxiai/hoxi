@@ -7,6 +7,7 @@ import (
 )
 
 func TestReadOnlyModesMapOntoEveryRuntimePlanPolicy(t *testing.T) {
+	t.Parallel()
 	for mode, want := range map[string]bool{
 		"ask": true, " Ask ": true, "plan": true, "build": false, "debug": false, "": false,
 	} {
@@ -39,6 +40,7 @@ func TestReadOnlyModesMapOntoEveryRuntimePlanPolicy(t *testing.T) {
 }
 
 func TestAskModeGetsNoClaudeHook(t *testing.T) {
+	t.Parallel()
 	svc := NewService(t.TempDir(), nil, nil, filepath.Join(t.TempDir(), "sessions.json"))
 	svc.SetHookBaseURL("http://127.0.0.1:1")
 	if args, env, revoke := svc.issueClaudeHook("ask", "ses_cc_ask", "msg"); args != nil || env != nil {

@@ -51,6 +51,7 @@ func TestNonInteractiveGitEnvSanitization(t *testing.T) {
 }
 
 func TestCreateWorktreeSyncsEnvMarksSpotlightAndRunsSetupScript(t *testing.T) {
+	t.Parallel()
 	repoDir := initTempGitRepo(t)
 
 	if err := os.WriteFile(filepath.Join(repoDir, ".env"), []byte("API_KEY=secret123\n"), 0o600); err != nil {
@@ -122,6 +123,7 @@ func TestCreateWorktreeSyncsEnvMarksSpotlightAndRunsSetupScript(t *testing.T) {
 }
 
 func TestPortableSnapshotCaptureApplyAndTransfer(t *testing.T) {
+	t.Parallel()
 	repoDir := initTempGitRepo(t)
 	if err := os.WriteFile(filepath.Join(repoDir, "staged.txt"), []byte("base\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -176,6 +178,7 @@ func TestPortableSnapshotCaptureApplyAndTransfer(t *testing.T) {
 }
 
 func TestDiffGeneratedClassificationLargeSuppressionAndDiffFileOnDemand(t *testing.T) {
+	t.Parallel()
 	repoDir := initTempGitRepo(t)
 	mgr := NewManager(repoDir)
 	meta, err := mgr.Create("ses_large_diff")
@@ -239,6 +242,7 @@ func TestDiffGeneratedClassificationLargeSuppressionAndDiffFileOnDemand(t *testi
 }
 
 func TestQuarantineTrackerAndWorktreeHealthClassification(t *testing.T) {
+	t.Parallel()
 	q := newQuarantineTracker()
 	now := time.Now()
 	q.now = func() time.Time { return now }
@@ -288,6 +292,7 @@ func TestQuarantineTrackerAndWorktreeHealthClassification(t *testing.T) {
 }
 
 func TestBaseBranchDriftSyncAndAbsentRestorableRecovery(t *testing.T) {
+	t.Parallel()
 	repoDir := initTempGitRepo(t)
 	mgr := NewManager(repoDir)
 
@@ -376,6 +381,7 @@ func TestBaseBranchDriftSyncAndAbsentRestorableRecovery(t *testing.T) {
 }
 
 func TestBuildRemoteCompareURLAndStatus(t *testing.T) {
+	t.Parallel()
 	if got := buildRemoteCompareURL("git@github.com:hoxiai/hoxi.git", "main", "hoxi/ses_123"); got != "https://github.com/hoxiai/hoxi/compare/main...hoxi/ses_123?expand=1" {
 		t.Fatalf("unexpected GitHub SSH compareURL: %q", got)
 	}
@@ -408,6 +414,7 @@ func TestBuildRemoteCompareURLAndStatus(t *testing.T) {
 }
 
 func TestMultiDirectoryAndNestedGitReposStatusAndDiff(t *testing.T) {
+	t.Parallel()
 	primary := initTempGitRepo(t)
 	extraRepo := initTempGitRepo(t)
 
@@ -441,6 +448,7 @@ func TestMultiDirectoryAndNestedGitReposStatusAndDiff(t *testing.T) {
 }
 
 func TestOnDemandNestedGitRepoLoadingWhenRootIsGitRepo(t *testing.T) {
+	t.Parallel()
 	root := initTempGitRepo(t)
 	subA := initSubGitRepo(t, root, filepath.Join("plugins", "app", "stripe"), "main")
 	subB := initSubGitRepo(t, root, filepath.Join("plugins", "app", "paypal"), "main")

@@ -136,7 +136,7 @@ func TestShutdownDoesNotRespawnDaemon(t *testing.T) {
 	select {
 	case <-called:
 		t.Fatal("an intentional shutdown must not restart the daemon")
-	case <-time.After(1500 * time.Millisecond):
+	case <-time.After(respawnQuietWindow()):
 	}
 }
 

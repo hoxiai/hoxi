@@ -7,6 +7,7 @@ import (
 )
 
 func TestClaudeStreamsBeforeResultAndIsolatesAssistantMessages(t *testing.T) {
+	t.Parallel()
 	tr := NewTurnTranslator("ses_cld_test", string(RuntimeClaudeCode), "msg_turn", "msg_user", "claude-code", "sonnet", "build", "")
 	var partIDs []string
 	for _, message := range []struct{ id, text string }{{"msg_first", "Checking files."}, {"msg_second", "Finished checking."}} {
@@ -35,6 +36,7 @@ func TestClaudeStreamsBeforeResultAndIsolatesAssistantMessages(t *testing.T) {
 }
 
 func TestClaudeReasoningBlockIndexesAreScopedToAssistantMessage(t *testing.T) {
+	t.Parallel()
 	tr := NewTurnTranslator("ses_cld_test", string(RuntimeClaudeCode), "msg_turn", "msg_user", "claude-code", "sonnet", "build", "")
 	for _, id := range []string{"msg_first", "msg_second"} {
 		tr.FeedLine(`{"type":"stream_event","event":{"type":"message_start","message":{"id":"` + id + `"}}}`)
@@ -46,6 +48,7 @@ func TestClaudeReasoningBlockIndexesAreScopedToAssistantMessage(t *testing.T) {
 }
 
 func TestClaudeArgsEnablePartialMessages(t *testing.T) {
+	t.Parallel()
 	args := strings.Join(BuildClaudeArgs("build", "sonnet", "", ""), " ")
 	for _, flag := range []string{"--output-format stream-json", "--include-partial-messages", "--verbose"} {
 		if !strings.Contains(args, flag) {
@@ -55,6 +58,7 @@ func TestClaudeArgsEnablePartialMessages(t *testing.T) {
 }
 
 func TestClaudeReasoningSnapshotCompletesStreamedPart(t *testing.T) {
+	t.Parallel()
 	tr := NewTurnTranslator("ses_cld_test", string(RuntimeClaudeCode), "msg_turn", "msg_user", "claude-code", "sonnet", "build", "")
 	tr.stepStartMs[0] = 1
 	tr.FeedLine(`{"type":"stream_event","event":{"type":"message_start","message":{"id":"msg_first"}}}`)
@@ -70,6 +74,7 @@ func TestClaudeReasoningSnapshotCompletesStreamedPart(t *testing.T) {
 }
 
 func TestClaudeThinkingPlusTextDoesNotDuplicateReplyOnSplitAssistantSnapshots(t *testing.T) {
+	t.Parallel()
 	tr := NewTurnTranslator("ses_cld_test", string(RuntimeCodeBuddy), "msg_turn", "msg_user", "codebuddy", "hy3", "build", "")
 	tr.FeedLine(`{"type":"stream_event","event":{"type":"message_start","message":{"id":"01a1533e"}}}`)
 	tr.FeedLine(`{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Thinking first"}}}`)
@@ -99,6 +104,7 @@ func TestClaudeThinkingPlusTextDoesNotDuplicateReplyOnSplitAssistantSnapshots(t 
 }
 
 func TestClaudeAPIRetryBecomesRetryStatusUntilOutputResumes(t *testing.T) {
+	t.Parallel()
 	tr := NewTurnTranslator("ses_cld_test", string(RuntimeClaudeCode), "msg_turn", "msg_user", "claude-code", "sonnet", "build", "")
 	before := time.Now().UnixMilli()
 	events := tr.FeedLine(`{"type":"system","subtype":"api_retry","attempt":2,"max_retries":10,"retry_delay_ms":4000,"error_status":529,"error":"overloaded","session_id":"abc"}`)
@@ -123,6 +129,7 @@ func TestClaudeAPIRetryBecomesRetryStatusUntilOutputResumes(t *testing.T) {
 }
 
 func TestClaudeRetryMessageFallsBackForUnknownCategories(t *testing.T) {
+	t.Parallel()
 	if got := claudeRetryMessage("unknown", nil); got != "API request failed" {
 		t.Fatalf("got %q", got)
 	}

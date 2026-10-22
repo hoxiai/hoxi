@@ -79,6 +79,7 @@ func newRunTestService(t *testing.T, engineURL string) (*Service, string) {
 }
 
 func TestRunPromptAndWaitReturnsAssistantText(t *testing.T) {
+	t.Parallel()
 	var aborts atomic.Int32
 	engine := fakeTurnEngine(t, "convoy task done", nil, &aborts)
 	svc, id := newRunTestService(t, engine.URL)
@@ -104,6 +105,7 @@ func TestRunPromptAndWaitReturnsAssistantText(t *testing.T) {
 }
 
 func TestRunPromptAndWaitAbortsOnCancel(t *testing.T) {
+	t.Parallel()
 	var aborts atomic.Int32
 	hold := make(chan struct{})
 	defer close(hold)

@@ -9,6 +9,7 @@ import (
 )
 
 func TestUpdateDirectoriesSkipsInvalidParents(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	file := filepath.Join(root, "file")
 	if err := os.WriteFile(file, nil, 0o600); err != nil {
@@ -48,6 +49,7 @@ func TestUpdateDirectoriesSkipsInvalidParents(t *testing.T) {
 }
 
 func TestUpdateDirectoriesSkipsMissingChildren(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	sandbox := filepath.Join(root, ".hoxi", "worktrees", "sandbox")
 	if err := os.MkdirAll(sandbox, 0o700); err != nil {
@@ -82,6 +84,7 @@ func TestUpdateDirectoriesSkipsMissingChildren(t *testing.T) {
 }
 
 func TestUpdateDirectoriesFailsClosedOnFilesystemErrors(t *testing.T) {
+	t.Parallel()
 	for _, stage := range []string{"parent-stat", "read-dir", "child-stat"} {
 		t.Run(stage, func(t *testing.T) {
 			root := t.TempDir()
@@ -119,6 +122,7 @@ func TestUpdateDirectoriesFailsClosedOnFilesystemErrors(t *testing.T) {
 }
 
 func TestUpdateDirectoriesFailsClosedOnPermissionErrors(t *testing.T) {
+	t.Parallel()
 	for _, stage := range []string{"parent-stat", "read-dir", "child-stat"} {
 		t.Run(stage, func(t *testing.T) {
 			root := t.TempDir()

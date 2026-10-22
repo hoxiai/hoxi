@@ -117,6 +117,7 @@ func runClaudeTurnThroughGate(t *testing.T, prompt, reply string) claudeE2EResul
 }
 
 func TestClaudeHookE2EApprovedPythonRuns(t *testing.T) {
+	t.Parallel()
 	res := runClaudeTurnThroughGate(t, "Run exactly this shell command with the Bash tool, do not change it and do not use any other tool, then report its output in one line: python3 sum.py", "once")
 	if len(res.asked) == 0 || !strings.Contains(strings.Join(res.commands, "\n"), "python3 sum.py") {
 		t.Fatalf("gate never asked for python3 sum.py (asked %v); events:\n%s", res.commands, res.events)
@@ -131,6 +132,7 @@ func TestClaudeHookE2EApprovedPythonRuns(t *testing.T) {
 }
 
 func TestClaudeHookE2ERejectedDestructiveIsBlocked(t *testing.T) {
+	t.Parallel()
 	res := runClaudeTurnThroughGate(t, "Run exactly this shell command with the Bash tool, do not change it, do not retry and do not use any other tool, then report the result in one line: rm -f probe.txt", "reject")
 	if len(res.asked) == 0 {
 		t.Fatalf("destructive command did not ask; events:\n%s", res.events)

@@ -9,6 +9,7 @@ import (
 )
 
 func TestApplyStopsWhenSnapshotCommitFails(t *testing.T) {
+	t.Parallel()
 	repoDir := initTempGitRepo(t)
 	mgr := NewManager(repoDir)
 	info, err := mgr.Create("ses_apply_fail")
@@ -41,6 +42,7 @@ func TestApplyStopsWhenSnapshotCommitFails(t *testing.T) {
 }
 
 func TestRemoveKeepsBranchWhenWorktreeRemoveFails(t *testing.T) {
+	t.Parallel()
 	repoDir := initTempGitRepo(t)
 	mgr := NewManager(repoDir)
 	info, err := mgr.Create("ses_rm_fail")
@@ -67,6 +69,7 @@ func TestRemoveKeepsBranchWhenWorktreeRemoveFails(t *testing.T) {
 }
 
 func TestReusedWorktreeBranchCannotUndoNewProjectCommits(t *testing.T) {
+	t.Parallel()
 	root := initTempGitRepo(t)
 	mgr := NewManager(root)
 	first, err := mgr.Create("ses_reuse")

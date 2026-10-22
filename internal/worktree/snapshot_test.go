@@ -8,6 +8,7 @@ import (
 )
 
 func TestSnapshotPreservesTrackedClaudeEditsAndStagedIndex(t *testing.T) {
+	t.Parallel()
 	repoDir := initTempGitRepo(t)
 
 	// Commit a tracked .claude/settings.json file at v1.
@@ -117,6 +118,7 @@ func TestSnapshotPreservesTrackedClaudeEditsAndStagedIndex(t *testing.T) {
 }
 
 func TestEnsureGitExcludeExactLineMatch(t *testing.T) {
+	t.Parallel()
 	repoDir := initTempGitRepo(t)
 	excludePath := filepath.Join(repoDir, ".git", "info", "exclude")
 

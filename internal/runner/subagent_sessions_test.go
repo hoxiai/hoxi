@@ -10,6 +10,7 @@ import (
 )
 
 func TestSubagentChildSessionsArePersistedRoutedAndCleanedUp(t *testing.T) {
+	t.Parallel()
 	svc := NewService(t.TempDir(), nil, nil, filepath.Join(t.TempDir(), "sessions"))
 	parent := SessionRecord{ID: "ses_agy_parent", Runtime: string(RuntimeAntigravity), ProjectDir: "/repo", WorktreePath: "/repo/.hoxi/worktrees/ses_agy_parent", Title: "Audit"}
 	if err := svc.store.Put(parent); err != nil {

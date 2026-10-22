@@ -9,6 +9,7 @@ import (
 )
 
 func TestRelinkProjectMovesLocalSessionWithoutTouchingActivity(t *testing.T) {
+	t.Parallel()
 	oldRoot := t.TempDir()
 	newRoot := t.TempDir()
 	svc := NewService(oldRoot, nil, nil, t.TempDir())
@@ -38,6 +39,7 @@ func TestRelinkProjectMovesLocalSessionWithoutTouchingActivity(t *testing.T) {
 }
 
 func TestRelinkProjectMovesWorktreeAndRepairsGitPointer(t *testing.T) {
+	t.Parallel()
 	oldRoot := initTestGitRepo(t)
 	newRoot := oldRoot + "-moved"
 	svc := NewService(oldRoot, nil, nil, t.TempDir())
@@ -81,6 +83,7 @@ func TestRelinkProjectMovesWorktreeAndRepairsGitPointer(t *testing.T) {
 }
 
 func TestRelinkProjectToNonGitDirectorySwitchesWorktreeSessionToLocal(t *testing.T) {
+	t.Parallel()
 	oldRoot := t.TempDir()
 	newRoot := t.TempDir()
 	svc := NewService(oldRoot, nil, nil, t.TempDir())
@@ -118,6 +121,7 @@ func TestRelinkProjectToNonGitDirectorySwitchesWorktreeSessionToLocal(t *testing
 }
 
 func TestRelinkProjectSkipsSessionWithActiveTurnProcess(t *testing.T) {
+	t.Parallel()
 	oldRoot := t.TempDir()
 	newRoot := t.TempDir()
 	svc := NewService(oldRoot, nil, nil, t.TempDir())

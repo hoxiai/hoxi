@@ -10,6 +10,7 @@ import (
 )
 
 func TestConfineRuntimeCommandDisabled(t *testing.T) {
+	t.Parallel()
 	svc := &Service{}
 	bin, args, err := svc.confineRuntimeCommand(SessionRecord{WorktreePath: t.TempDir()}, "/bin/echo", []string{"hi"})
 	if err != nil {
@@ -21,6 +22,7 @@ func TestConfineRuntimeCommandDisabled(t *testing.T) {
 }
 
 func TestConfineRuntimeCommandWrapsWorkspace(t *testing.T) {
+	t.Parallel()
 	if !sandbox.Available() {
 		t.Skip("seatbelt backend unavailable")
 	}
@@ -51,6 +53,7 @@ func TestConfineRuntimeCommandWrapsWorkspace(t *testing.T) {
 }
 
 func TestReadableGitDir(t *testing.T) {
+	t.Parallel()
 	project := t.TempDir()
 	if got := writableGitDir(project); got != "" {
 		t.Fatalf("expected no git dir, got %q", got)

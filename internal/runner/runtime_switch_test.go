@@ -24,6 +24,7 @@ func switchRuntime(t *testing.T, s *Service, id, rt, dir string) *httptest.Respo
 }
 
 func TestRuntimeSwitchPreservesConversationAndSandbox(t *testing.T) {
+	t.Parallel()
 	root := initTestGitRepo(t)
 	svc := NewService(root, nil, nil, filepath.Join(t.TempDir(), "sessions.json"))
 	meta, err := svc.worktrees.Create("ses_original")
@@ -88,6 +89,7 @@ func TestRuntimeSwitchPreservesConversationAndSandbox(t *testing.T) {
 }
 
 func TestManagedOpenCodeTurnStreamsPersistsAndResumes(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	storePath := filepath.Join(t.TempDir(), "sessions.json")
 	svc := NewService(root, nil, nil, storePath)
@@ -223,6 +225,7 @@ func TestManagedOpenCodeTurnStreamsPersistsAndResumes(t *testing.T) {
 }
 
 func TestManagedOpenCodeStopAbortsBackingSession(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	svc := NewService(root, nil, nil, filepath.Join(t.TempDir(), "sessions.json"))
 	rec := SessionRecord{ID: "ses_stable_stop", Runtime: "opencode", ExternalID: "ses_engine_stop", ProjectDir: root, WorktreePath: root, SandboxMode: "local", ProviderID: "test", ModelID: "model"}
@@ -372,6 +375,7 @@ func TestNativeRuntimeHandoffUsesHistoryWithoutReusingOtherEngineResumeID(t *tes
 }
 
 func TestDeleteManagedConversationRemovesAllScopedEngineHandles(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	svc := NewService(root, nil, nil, filepath.Join(t.TempDir(), "sessions.json"))
 	rec := SessionRecord{ID: "ses_delete_adopted", Runtime: "claude-code", ProjectDir: root, WorktreePath: root, SandboxMode: "local", OpenCodeIDs: []string{"ses_original_delete", "ses_backing_delete"}, OpenCodeDirectories: map[string]string{"ses_original_delete": root, "ses_backing_delete": root + "/old-sandbox"}}
@@ -399,6 +403,7 @@ func TestDeleteManagedConversationRemovesAllScopedEngineHandles(t *testing.T) {
 }
 
 func TestNewAndAdoptedOpenCodeSessionsShareTurnDriver(t *testing.T) {
+	t.Parallel()
 	root := initTestGitRepo(t)
 	svc := NewService(root, nil, nil, filepath.Join(t.TempDir(), "sessions.json"))
 	var mu sync.Mutex
@@ -506,6 +511,7 @@ func TestNewAndAdoptedOpenCodeSessionsShareTurnDriver(t *testing.T) {
 }
 
 func TestRuntimeContextOmitsInlineBase64DataURLs(t *testing.T) {
+	t.Parallel()
 	rec := SessionRecord{
 		ID:             "ses_ctx",
 		Runtime:        "claude-code",
@@ -535,6 +541,7 @@ func TestRuntimeContextOmitsInlineBase64DataURLs(t *testing.T) {
 }
 
 func TestSteerOpenCodeTurnWaitsForPostMessageAsyncCompletion(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	svc := NewService(root, nil, nil, filepath.Join(t.TempDir(), "sessions"))
 	rec := SessionRecord{

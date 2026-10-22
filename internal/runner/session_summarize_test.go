@@ -11,6 +11,7 @@ import (
 )
 
 func TestSessionSummarizeForwardsToOpenCodeAndRefreshesTurns(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	var mu sync.Mutex
 	var summarizeBody map[string]string
@@ -73,6 +74,7 @@ func TestSessionSummarizeForwardsToOpenCodeAndRefreshesTurns(t *testing.T) {
 }
 
 func TestSessionSummarizePreservesConcurrentUpdates(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	started := make(chan struct{})
 	release := make(chan struct{})
@@ -125,6 +127,7 @@ func TestSessionSummarizePreservesConcurrentUpdates(t *testing.T) {
 }
 
 func TestSessionSummarizeSkipsNativeRuntimes(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	called := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

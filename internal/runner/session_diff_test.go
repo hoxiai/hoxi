@@ -11,6 +11,7 @@ import (
 )
 
 func TestSessionEditedFileSetCachesOpenCodeChildTranscripts(t *testing.T) {
+	t.Parallel()
 	ws := t.TempDir()
 	var hits atomic.Int32
 	var failChild atomic.Bool

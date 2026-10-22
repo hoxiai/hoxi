@@ -50,6 +50,7 @@ func configGitUser(dir string) {
 }
 
 func TestSanitizeSessionIDAndPorcelainHeader(t *testing.T) {
+	t.Parallel()
 	cases := map[string]string{
 		"ses_123-abc":          "ses_123-abc",
 		"../evil/../../passwd": "evilpasswd",
@@ -79,6 +80,7 @@ func TestSanitizeSessionIDAndPorcelainHeader(t *testing.T) {
 }
 
 func TestRootDirAndNonGitCreate(t *testing.T) {
+	t.Parallel()
 	dir1 := t.TempDir()
 	dir2 := t.TempDir()
 	mgr := NewManager(dir1)
@@ -124,6 +126,7 @@ func TestRootDirAndNonGitCreate(t *testing.T) {
 }
 
 func TestWorktreeLifecycleCreateDiffRevertApplyRemove(t *testing.T) {
+	t.Parallel()
 	repoDir := initTempGitRepo(t)
 	mgr := NewManager(repoDir)
 
@@ -233,6 +236,7 @@ func TestWorktreeLifecycleCreateDiffRevertApplyRemove(t *testing.T) {
 }
 
 func TestBranchesCheckoutRenameApplyMergeAndPrune(t *testing.T) {
+	t.Parallel()
 	repoDir := initTempGitRepo(t)
 	mgr := NewManager(repoDir)
 
@@ -314,6 +318,7 @@ func TestBranchesCheckoutRenameApplyMergeAndPrune(t *testing.T) {
 }
 
 func TestWorktreeHTTPRoutes(t *testing.T) {
+	t.Parallel()
 	repoDir := initTempGitRepo(t)
 	mgr := NewManager(repoDir)
 	mux := http.NewServeMux()
@@ -483,6 +488,7 @@ func initSubGitRepo(t *testing.T, parentDir, relPath, branch string) string {
 }
 
 func TestMultiRepoSubdirectoriesStatusDiffRevertAndCommit(t *testing.T) {
+	t.Parallel()
 	parentDir := t.TempDir()
 	repoA := initSubGitRepo(t, parentDir, "service-a", "main")
 	repoB := initSubGitRepo(t, parentDir, filepath.Join("packages", "service-b"), "feat/sub")
@@ -560,6 +566,7 @@ func TestMultiRepoSubdirectoriesStatusDiffRevertAndCommit(t *testing.T) {
 // would check out the parent repository, so the session would work on files
 // outside the folder the user opened and be listed under both workspaces.
 func TestNestedDirectoryDoesNotBorrowParentRepository(t *testing.T) {
+	t.Parallel()
 	repo := initTempGitRepo(t)
 	nested := filepath.Join(repo, "docs")
 	if err := os.MkdirAll(nested, 0o755); err != nil {

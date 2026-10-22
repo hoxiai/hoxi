@@ -35,7 +35,10 @@ try {
   console.error(`[exec-failed] ${entry}:`, err);
   process.exit(1);
 } finally {
-  try {
-    unlinkSync(outfile);
-  } catch {}
+  // esbuild writes a sibling .css when the bundle imports stylesheets.
+  for (const file of [outfile, outfile.replace(/\.mjs$/, ".css")]) {
+    try {
+      unlinkSync(file);
+    } catch {}
+  }
 }

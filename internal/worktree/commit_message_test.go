@@ -3,6 +3,7 @@ package worktree
 import "testing"
 
 func TestCleanGeneratedCommitMessage(t *testing.T) {
+	t.Parallel()
 	truncatedReasoningJSON := `{"choices":[{"finish_reason":"length","index":0,"logprobs":null,"message":{"content":"","reasoning_content":"The user wants a git commit message..."}}]}`
 	if msg := cleanGeneratedCommitMessage(truncatedReasoningJSON); msg != "" {
 		t.Fatalf("expected cleanGeneratedCommitMessage to reject raw JSON, got %q", msg)

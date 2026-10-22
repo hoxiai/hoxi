@@ -18,7 +18,15 @@ import (
 const (
 	respawnLimit  = 3
 	respawnWindow = 5 * time.Minute
-	respawnDelay  = time.Second
+)
+
+// Variables rather than constants so tests can shorten the waits instead of
+// sleeping through real seconds.
+var (
+	// respawnDelay is the base backoff before an automatic restart.
+	respawnDelay = time.Second
+	// engineProbeTimeout bounds EnsureEngine's check for an already healthy daemon.
+	engineProbeTimeout = 2 * time.Second
 )
 
 // respawner restarts the daemon with the binary, port and password it was
@@ -109,7 +117,7 @@ func (a *DesktopApp) ensureEngine(ctx context.Context, restart bool) (string, er
 		return "", err
 	}
 	if !restart {
-		if err := opencode.WaitForHealth(ctx, a.openCodePort, a.openCodePass, 2*time.Second); err == nil {
+		if err := opencode.WaitForHealth(ctx, a.openCodePort, a.openCodePass, engineProbeTimeout); err == nil {
 			return binPath, nil
 		}
 	}

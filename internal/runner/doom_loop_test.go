@@ -20,6 +20,7 @@ func (f *claudeGateFixture) toolPayload(tool string, input map[string]interface{
 }
 
 func TestClaudeHookAsksBeforeTheThirdIdenticalCall(t *testing.T) {
+	t.Parallel()
 	f := newClaudeGateFixture(t)
 	events, unsub := f.svc.Subscribe("ses_cc_gate")
 	defer unsub()
@@ -46,6 +47,7 @@ func TestClaudeHookAsksBeforeTheThirdIdenticalCall(t *testing.T) {
 }
 
 func TestDoomLoopGuardIgnoresPollingAndKeyOrder(t *testing.T) {
+	t.Parallel()
 	g := newDoomLoopGuard()
 	for i := 0; i < 5; i++ {
 		if g.observe("s", "m", "BashOutput", json.RawMessage(`{"bash_id":"1"}`)) {
@@ -71,6 +73,7 @@ func TestDoomLoopGuardIgnoresPollingAndKeyOrder(t *testing.T) {
 }
 
 func TestDoomLoopGuardResetsBetweenTurns(t *testing.T) {
+	t.Parallel()
 	g := newDoomLoopGuard()
 	cmd := json.RawMessage(`{"command":"go test ./..."}`)
 	for _, turn := range []string{"msg_1", "msg_2", "msg_3", "msg_4"} {

@@ -27,6 +27,7 @@ func (w *streamReadyWriter) Flush() {
 }
 
 func TestSSESubscribesBeforeHeadersAreFlushed(t *testing.T) {
+	t.Parallel()
 	svc := NewService(t.TempDir(), nil, nil, filepath.Join(t.TempDir(), "store.json"))
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -52,6 +53,7 @@ func TestSSESubscribesBeforeHeadersAreFlushed(t *testing.T) {
 }
 
 func TestUnifiedSSEStreamMergesRunnerAndFilteredOpenCodeEvents(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	tracker := statusbar.NewTracker()
 	svc := NewService(root, nil, tracker, filepath.Join(t.TempDir(), "store.json"))
@@ -126,6 +128,7 @@ func TestUnifiedSSEStreamMergesRunnerAndFilteredOpenCodeEvents(t *testing.T) {
 }
 
 func TestStatusSnapshotListsBusySessionsAcrossProjects(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	svc := NewService(root, nil, statusbar.NewTracker(), filepath.Join(t.TempDir(), "store.json"))
 	other := t.TempDir()
@@ -158,6 +161,7 @@ func TestStatusSnapshotListsBusySessionsAcrossProjects(t *testing.T) {
 }
 
 func TestUnifiedSSEStartsWithStatusSnapshot(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	svc := NewService(root, nil, statusbar.NewTracker(), filepath.Join(t.TempDir(), "store.json"))
 	svc.mu.Lock()

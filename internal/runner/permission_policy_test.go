@@ -17,6 +17,7 @@ type policyCase struct {
 // The same fixture drives web/src/__tests__/permissions.test.ts, so the Go
 // port and .opencode/lib/permission-policy.js cannot drift apart silently.
 func TestPermissionPolicyMatchesSharedFixture(t *testing.T) {
+	t.Parallel()
 	raw, err := os.ReadFile(filepath.Join("..", "..", ".opencode", "lib", "permission-policy.cases.json"))
 	if err != nil {
 		t.Fatalf("read shared fixture: %v", err)
@@ -39,6 +40,7 @@ func TestPermissionPolicyMatchesSharedFixture(t *testing.T) {
 }
 
 func TestSplitCommandChainMatchesJSSeparators(t *testing.T) {
+	t.Parallel()
 	cases := map[string][]string{
 		"git status && git diff": {"git status", "git diff"},
 		"a || b; c\nd":           {"a", "b", "c", "d"},
@@ -59,6 +61,7 @@ func TestSplitCommandChainMatchesJSSeparators(t *testing.T) {
 }
 
 func TestDecideCommandPermissionInNormalizesRunnerCommands(t *testing.T) {
+	t.Parallel()
 	worktree := t.TempDir()
 	outside := t.TempDir()
 	escapeLink := filepath.Join(worktree, "escape-link")

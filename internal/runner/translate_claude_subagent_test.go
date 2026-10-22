@@ -10,6 +10,7 @@ import (
 const claudeAgentCall = "toolu_01JmgWEGdMGnxScFoaRDSA9v"
 
 func TestClaudeRecordedAgentSubagentGetsItsOwnChildSession(t *testing.T) {
+	t.Parallel()
 	tr := NewTurnTranslator("ses_cld", string(RuntimeClaudeCode), "msg_turn", "msg_user", "claude-code", "haiku", "build", "")
 	children := &childRecorder{}
 	tr.createChild = children.create
@@ -65,6 +66,7 @@ func TestClaudeRecordedAgentSubagentGetsItsOwnChildSession(t *testing.T) {
 }
 
 func TestClaudeBackgroundAgentWaitsForTaskNotification(t *testing.T) {
+	t.Parallel()
 	tr := NewTurnTranslator("ses_cld", string(RuntimeClaudeCode), "msg_turn", "msg_user", "claude-code", "haiku", "build", "")
 	tr.createChild = (&childRecorder{}).create
 	tr.FeedLine(`{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","id":"tu1","name":"Agent","input":{"description":"bg","prompt":"p","run_in_background":true}}]}}`)
@@ -79,6 +81,7 @@ func TestClaudeBackgroundAgentWaitsForTaskNotification(t *testing.T) {
 }
 
 func TestClaudeSubagentReportUnwrapsHandBackFrame(t *testing.T) {
+	t.Parallel()
 	framed := "[Subagent hand-back] header text. The report follows:\n  line one\n  \n  - item\nagentId: abc (use SendMessage)\n<usage>x</usage>"
 	if got := claudeSubagentReport(framed); got != "line one\n\n- item" {
 		t.Fatalf("got %q", got)

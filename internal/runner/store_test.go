@@ -38,6 +38,7 @@ func seedStore(t *testing.T, dir string) *Store {
 }
 
 func TestStorePersistsTranscriptPerSession(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	seedStore(t, dir).Flush()
 
@@ -61,6 +62,7 @@ func TestStorePersistsTranscriptPerSession(t *testing.T) {
 }
 
 func TestStoreMetadataUpdateAppendsPendingDeltasWithoutRewrite(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	store := seedStore(t, dir)
 	turnsPath := filepath.Join(dir, "ses_cld_1", sessionTurnsFile)
@@ -79,6 +81,7 @@ func TestStoreMetadataUpdateAppendsPendingDeltasWithoutRewrite(t *testing.T) {
 }
 
 func TestStoreRewritesTranscriptWhenTurnsReplaced(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	store := seedStore(t, dir)
 	if _, _, err := store.Update("ses_cld_1", func(r *SessionRecord) { r.Turns = nil }); err != nil {
@@ -90,6 +93,7 @@ func TestStoreRewritesTranscriptWhenTurnsReplaced(t *testing.T) {
 }
 
 func TestStoreCompactsRepeatedPartUpdates(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	store := seedStore(t, dir)
 	for i := 0; i < 500; i++ {
@@ -105,6 +109,7 @@ func TestStoreCompactsRepeatedPartUpdates(t *testing.T) {
 }
 
 func TestStoreSkipsTornTrailingLine(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	seedStore(t, dir).Flush()
 	f, err := os.OpenFile(filepath.Join(dir, "ses_cld_1", sessionTurnsFile), os.O_APPEND|os.O_WRONLY, 0o600)
@@ -120,6 +125,7 @@ func TestStoreSkipsTornTrailingLine(t *testing.T) {
 }
 
 func TestStoreRejectsUnsafeIDsAndDeletesDirectory(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	store := seedStore(t, dir)
 	for _, id := range []string{"", "..", "../escape", "a/b", `a\b`} {
@@ -139,6 +145,7 @@ func TestStoreRejectsUnsafeIDsAndDeletesDirectory(t *testing.T) {
 }
 
 func TestStoreMigratesLegacySingleFile(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	legacy := filepath.Join(root, legacyStoreFile)
 	doc := map[string]any{"sessions": []SessionRecord{{
@@ -169,6 +176,7 @@ func TestStoreMigratesLegacySingleFile(t *testing.T) {
 }
 
 func TestRunnerMultiRuntimeMemoryInjectionAndSync(t *testing.T) {
+	t.Parallel()
 	workDir := t.TempDir()
 	storeDir := t.TempDir()
 	svc := NewService(workDir, nil, nil, storeDir)
@@ -242,6 +250,7 @@ func TestRunnerMultiRuntimeMemoryInjectionAndSync(t *testing.T) {
 }
 
 func TestSyncSessionMemoryNeverSeedsPlaceholderProjectMemory(t *testing.T) {
+	t.Parallel()
 	projDir := t.TempDir()
 	workDir := t.TempDir()
 	svc := NewService(projDir, nil, nil, t.TempDir())
@@ -287,6 +296,7 @@ func TestSyncSessionMemoryNeverSeedsPlaceholderProjectMemory(t *testing.T) {
 }
 
 func TestRuntimeMemoryContextReadsLegacyOpencodeMemory(t *testing.T) {
+	t.Parallel()
 	projDir := t.TempDir()
 	legacySessDir := filepath.Join(projDir, ".opencode", "memory", "sessions")
 	if err := os.MkdirAll(legacySessDir, 0o755); err != nil {
@@ -303,6 +313,7 @@ func TestRuntimeMemoryContextReadsLegacyOpencodeMemory(t *testing.T) {
 }
 
 func TestProjectMemoryRootForIsolatedSession(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	wt := filepath.Join(root, ".hoxi", "worktrees", "ses_wt")
 	svc := NewService(root, nil, nil, t.TempDir())

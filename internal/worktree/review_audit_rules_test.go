@@ -6,6 +6,7 @@ import (
 )
 
 func TestEvaluateStaticCodeRulesAndParseObserverAudit(t *testing.T) {
+	t.Parallel()
 	bigFileLines := strings.Repeat("const x = 1;\n", 805)
 	diffs := []auditDiffFile{
 		{
@@ -49,6 +50,7 @@ func TestEvaluateStaticCodeRulesAndParseObserverAudit(t *testing.T) {
 }
 
 func TestParseObserverAuditScoreValidation(t *testing.T) {
+	t.Parallel()
 	for _, text := range []string{
 		"``` json\n{\"score\":68,\"summary\":\"ok\"}\n```",
 		"```JSON\n{\"score\":68,\"summary\":\"ok\"}\n```",

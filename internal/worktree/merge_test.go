@@ -40,6 +40,7 @@ func readMergeFile(t *testing.T, path string) string {
 }
 
 func TestMergeWorkingStateCombinesTransitiveChanges(t *testing.T) {
+	t.Parallel()
 	dirs := newMergeFixture(t, "a", "b", "c")
 	// b depends on a, so its working tree already carries a's edit.
 	reviewTestWrite(t, filepath.Join(dirs["a"], "f.txt"), "a\nB-from-a\nc\nd\ne\nf\ng\n")
@@ -58,6 +59,7 @@ func TestMergeWorkingStateCombinesTransitiveChanges(t *testing.T) {
 }
 
 func TestMergeWorkingStateRestoresTargetOnConflict(t *testing.T) {
+	t.Parallel()
 	dirs := newMergeFixture(t, "a", "b", "d")
 	reviewTestWrite(t, filepath.Join(dirs["a"], "f.txt"), "a\nb\nc\nd\ne\nf\nG-from-a\n")
 	reviewTestWrite(t, filepath.Join(dirs["b"], "f.txt"), "a\nB-from-b\nc\nd\ne\nf\ng\n")
@@ -81,6 +83,7 @@ func TestMergeWorkingStateRestoresTargetOnConflict(t *testing.T) {
 }
 
 func TestMergeWorkingStateRejectsDivergentNewFiles(t *testing.T) {
+	t.Parallel()
 	dirs := newMergeFixture(t, "a", "b")
 	reviewTestWrite(t, filepath.Join(dirs["a"], "same.txt"), "from a\n")
 	reviewTestWrite(t, filepath.Join(dirs["b"], "same.txt"), "from b\n")

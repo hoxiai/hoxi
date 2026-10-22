@@ -16,6 +16,7 @@ import (
 )
 
 func TestSessionRevertUnrevertAndFork(t *testing.T) {
+	t.Parallel()
 	repo := initTestGitRepo(t)
 	trackedFile := filepath.Join(repo, "README.md")
 	untrackedFile := filepath.Join(repo, "generated.txt")
@@ -206,6 +207,7 @@ func TestSessionRevertUnrevertAndFork(t *testing.T) {
 }
 
 func TestSessionRevertRejectsUnknownTarget(t *testing.T) {
+	t.Parallel()
 	repo := initTestGitRepo(t)
 	trackedFile := filepath.Join(repo, "README.md")
 	if err := os.WriteFile(trackedFile, []byte("working state\n"), 0644); err != nil {
@@ -255,6 +257,7 @@ func TestSessionRevertRejectsUnknownTarget(t *testing.T) {
 }
 
 func TestSessionRevertToolTargetUsesExchangeCheckpoint(t *testing.T) {
+	t.Parallel()
 	repo := initTestGitRepo(t)
 	trackedFile := filepath.Join(repo, "README.md")
 	if err := os.WriteFile(trackedFile, []byte("after turn 1\n"), 0644); err != nil {
@@ -320,6 +323,7 @@ func TestSessionRevertToolTargetUsesExchangeCheckpoint(t *testing.T) {
 }
 
 func TestSessionRevertReportsCodeChanged(t *testing.T) {
+	t.Parallel()
 	repo := initTestGitRepo(t)
 	trackedFile := filepath.Join(repo, "README.md")
 
@@ -397,6 +401,7 @@ func TestSessionRevertReportsCodeChanged(t *testing.T) {
 }
 
 func TestSessionForkRejectsUnknownMessageAndCopiesSnapshots(t *testing.T) {
+	t.Parallel()
 	repo := initTestGitRepo(t)
 	snap1, err := worktree.CreateSnapshot(repo)
 	if err != nil || snap1 == "" {
@@ -459,6 +464,7 @@ func TestSessionForkRejectsUnknownMessageAndCopiesSnapshots(t *testing.T) {
 }
 
 func TestUnifiedPermissionEndpointMergesAndRoutesReplies(t *testing.T) {
+	t.Parallel()
 	repo := initTestGitRepo(t)
 	var repliedEngineID string
 	var repliedBody string
@@ -545,6 +551,7 @@ func TestUnifiedPermissionEndpointMergesAndRoutesReplies(t *testing.T) {
 }
 
 func TestSessionRevertFailurePreservesState(t *testing.T) {
+	t.Parallel()
 	repo := initTestGitRepo(t)
 	storeDir := filepath.Join(t.TempDir(), "sessions")
 	svc := NewService(repo, worktree.NewManager(repo), nil, storeDir)

@@ -27,7 +27,17 @@ func TestMain(m *testing.M) {
 	if len(os.Args) > 1 && os.Args[1] == "serve" {
 		os.Exit(runFakeOpenCodeDaemon(os.Args[2:]))
 	}
+	// The fake daemon answers on loopback within milliseconds; production
+	// backoffs would only make the suite sleep.
+	respawnDelay = 20 * time.Millisecond
+	engineProbeTimeout = 500 * time.Millisecond
 	os.Exit(m.Run())
+}
+
+// respawnQuietWindow is how long a test waits to prove that no automatic
+// respawn happens: past the backoff plus scheduling slack.
+func respawnQuietWindow() time.Duration {
+	return respawnDelay + 300*time.Millisecond
 }
 
 func runFakeOpenCodeDaemon(args []string) int {

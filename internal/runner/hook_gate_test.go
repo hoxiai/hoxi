@@ -109,6 +109,7 @@ func (f *gateFixture) reply(t *testing.T, id, reply, message string) int {
 }
 
 func TestHookGateRejectsBadCredentials(t *testing.T) {
+	t.Parallel()
 	f := newGateFixture(t)
 	post := func(token, session string) int {
 		req, _ := http.NewRequest(http.MethodPost, f.srv.URL+hookPreToolPath, bytes.NewReader(f.payload("git status", "", "")))
@@ -143,6 +144,7 @@ func TestHookGateRejectsBadCredentials(t *testing.T) {
 }
 
 func TestHookGateAutoApprovesSafeCommandsAndPassesControlTools(t *testing.T) {
+	t.Parallel()
 	f := newGateFixture(t)
 	if d := f.callHook(t, f.payload("git status && go test ./...", "", "conv-1")); d.Decision != "auto_approve" {
 		t.Fatalf("safe command: %q", d.Decision)
@@ -156,6 +158,7 @@ func TestHookGateAutoApprovesSafeCommandsAndPassesControlTools(t *testing.T) {
 }
 
 func TestHookGateGatesUnknownTools(t *testing.T) {
+	t.Parallel()
 	f := newGateFixture(t)
 	events, unsub := f.svc.Subscribe("ses_agy_gate")
 	defer unsub()
@@ -234,6 +237,7 @@ func TestHookGateGatesUnknownTools(t *testing.T) {
 }
 
 func TestHookGateAutoApprovesReadsInWorktreeAndGatesOutsideReads(t *testing.T) {
+	t.Parallel()
 	f := newGateFixture(t)
 	events, unsub := f.svc.Subscribe("ses_agy_gate")
 	defer unsub()
@@ -277,6 +281,7 @@ func TestHookGateAutoApprovesReadsInWorktreeAndGatesOutsideReads(t *testing.T) {
 }
 
 func TestHookGateEditsStayInsideWorktree(t *testing.T) {
+	t.Parallel()
 	f := newGateFixture(t)
 	events, unsub := f.svc.Subscribe("ses_agy_gate")
 	defer unsub()
@@ -393,6 +398,7 @@ func TestHookGateEditsStayInsideWorktree(t *testing.T) {
 }
 
 func TestHookGateEditsAcceptQuotedPaths(t *testing.T) {
+	t.Parallel()
 	f := newGateFixture(t)
 	raw, _ := json.Marshal(map[string]interface{}{
 		"conversationId": "conv-1",
@@ -418,6 +424,7 @@ func TestHookGateEditsAcceptQuotedPaths(t *testing.T) {
 }
 
 func TestHookGateDeniesForeignConversationAndDirectory(t *testing.T) {
+	t.Parallel()
 	f := newGateFixture(t)
 	if d := f.callHook(t, f.payload("git status", "", "conv-other")); d.Decision != "deny" {
 		t.Fatalf("foreign conversation: %q", d.Decision)
@@ -431,6 +438,7 @@ func TestHookGateDeniesForeignConversationAndDirectory(t *testing.T) {
 }
 
 func TestHookGateAsksUserAndRelaysOnce(t *testing.T) {
+	t.Parallel()
 	f := newGateFixture(t)
 	events, unsub := f.svc.Subscribe("ses_agy_gate")
 	defer unsub()
@@ -474,6 +482,7 @@ func TestHookGateAsksUserAndRelaysOnce(t *testing.T) {
 }
 
 func TestHookGateRejectCarriesUserMessage(t *testing.T) {
+	t.Parallel()
 	f := newGateFixture(t)
 	events, unsub := f.svc.Subscribe("ses_agy_gate")
 	defer unsub()
@@ -487,6 +496,7 @@ func TestHookGateRejectCarriesUserMessage(t *testing.T) {
 }
 
 func TestHookGateAlwaysSkipsRepeatsButNeverDestructive(t *testing.T) {
+	t.Parallel()
 	f := newGateFixture(t)
 	events, unsub := f.svc.Subscribe("ses_agy_gate")
 	defer unsub()
@@ -513,6 +523,7 @@ func TestHookGateAlwaysSkipsRepeatsButNeverDestructive(t *testing.T) {
 }
 
 func TestHookGateAsksForRiskyTools(t *testing.T) {
+	t.Parallel()
 	f := newGateFixture(t)
 	events, unsub := f.svc.Subscribe("ses_agy_gate")
 	defer unsub()
@@ -566,6 +577,7 @@ func TestHookGateAsksForRiskyTools(t *testing.T) {
 }
 
 func TestHookGateTimesOutClosed(t *testing.T) {
+	t.Parallel()
 	f := newGateFixture(t)
 	f.svc.gate.waitLimit = 50 * time.Millisecond
 	d := f.callHook(t, f.payload("rm -rf build", "", "conv-1"))
@@ -578,6 +590,7 @@ func TestHookGateTimesOutClosed(t *testing.T) {
 }
 
 func TestIssueHookEnvWithoutBaseURLIsPassthrough(t *testing.T) {
+	t.Parallel()
 	svc := NewService(t.TempDir(), nil, nil, filepath.Join(t.TempDir(), "sessions.json"))
 	env, revoke := svc.issueHookEnv("ses_agy_x", "msg")
 	defer revoke()
@@ -587,6 +600,7 @@ func TestIssueHookEnvWithoutBaseURLIsPassthrough(t *testing.T) {
 }
 
 func TestApprovalAuditAndSessionGrantsLifecycle(t *testing.T) {
+	t.Parallel()
 	f := newGateFixture(t)
 	events, unsub := f.svc.Subscribe("ses_agy_gate")
 	defer unsub()
@@ -682,6 +696,7 @@ func TestApprovalAuditAndSessionGrantsLifecycle(t *testing.T) {
 }
 
 func TestApprovalRejectsAlwaysFromTunnelAndDeduplicatesCallID(t *testing.T) {
+	t.Parallel()
 	f := newGateFixture(t)
 	events, unsub := f.svc.Subscribe("ses_agy_gate")
 	defer unsub()

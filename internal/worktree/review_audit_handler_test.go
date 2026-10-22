@@ -42,6 +42,7 @@ func postJSON(t *testing.T, h http.HandlerFunc, body any) *httptest.ResponseReco
 }
 
 func TestHandleAuditRequiresValidObserverScore(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name       string
 		content    string
@@ -98,6 +99,7 @@ func TestHandleAuditRequiresValidObserverScore(t *testing.T) {
 }
 
 func TestHandleAuditWithoutClientOrModel(t *testing.T) {
+	t.Parallel()
 	m := NewManager(t.TempDir())
 	rec := postJSON(t, m.HandleAudit, auditCodeRequest{ObserverProviderID: "observer", ObserverModelID: "model"})
 	if !strings.Contains(rec.Body.String(), "Observer model is not configured") {
@@ -111,6 +113,7 @@ func TestHandleAuditWithoutClientOrModel(t *testing.T) {
 }
 
 func TestHandleGenerateCommitMessage(t *testing.T) {
+	t.Parallel()
 	m := NewManager(t.TempDir())
 	client := &fakeLLM{text: "<think>x</think>\nfeat(git): add one-click commit"}
 	m.SetReviewLLM(client, nil)

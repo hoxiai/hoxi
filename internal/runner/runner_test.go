@@ -14,10 +14,12 @@ import (
 
 	"github.com/hoxiai/hoxi/internal/agentcli"
 	"github.com/hoxiai/hoxi/internal/statusbar"
+	"github.com/hoxiai/hoxi/internal/testutil/execstub"
 	"github.com/hoxiai/hoxi/internal/worktree"
 )
 
 func TestAgyEventTranslationWithPhase0Fixtures(t *testing.T) {
+	t.Parallel()
 	tr := NewTurnTranslator("ses_agy_test", string(RuntimeAntigravity), "msg_a_1", "msg_u_1", "antigravity", "claude-sonnet-4-6", "build", "")
 	tr.lookupThink = func(extID string, stepIdx int) string {
 		if extID == "00000000-0000-0000-0000-000000000001" && stepIdx == 1 {
@@ -93,6 +95,7 @@ func TestAgyEventTranslationWithPhase0Fixtures(t *testing.T) {
 }
 
 func TestAgyDeniedToolAndInterruptTranslation(t *testing.T) {
+	t.Parallel()
 	tr := NewTurnTranslator("ses_agy_2", string(RuntimeAntigravity), "msg_a_2", "msg_u_2", "antigravity", "claude-sonnet-4-6", "build", "")
 	lines := []string{
 		`{"conversation_id":"c2","event":"step_update","step_update":{"conversation_id":"c2","duration_seconds":0,"state":"ERROR","step_index":2,"step_type":"tool","tool_info":{"error":{"message":"user denied permission to run command","type":"CommandExecutionError"},"name":"run_command","output":"","parameters":{"CommandLine":"rm -f probe.txt"}},"tool_name":"run_command"}}`,
@@ -133,6 +136,7 @@ func TestAgyDeniedToolAndInterruptTranslation(t *testing.T) {
 }
 
 func TestBuildAgyArgsAndWorktreeValidation(t *testing.T) {
+	t.Parallel()
 	args := BuildAgyArgs("build", "claude-sonnet-4-6", "high", "conv-123")
 	joined := strings.Join(args, " ")
 	for _, must := range []string{
@@ -287,9 +291,7 @@ printf '%s\n' '{"conversation_id":"conv-synth-99","event":"init","init":{"model"
 printf '%s\n' '{"conversation_id":"conv-synth-99","event":"step_update","step_update":{"conversation_id":"conv-synth-99","state":"ACTIVE","step_index":1,"step_type":"agent_response","text_delta":"SYNTH_OK"}}'
 printf '%s\n' '{"conversation_id":"conv-synth-99","event":"result","result":{"conversation_id":"conv-synth-99","response":"SYNTH_OK","status":"DONE"}}'
 `
-	if err := os.WriteFile(filepath.Join(agyDir, "agy"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	execstub.Write(t, agyDir, "agy", script)
 
 	ch, unsub := svc.Subscribe(created.ID)
 	defer unsub()
@@ -344,20 +346,12 @@ func TestRunnerModelsEndpointsIncludeInstalledAndModels(t *testing.T) {
 	t.Setenv("QODER_CN_BIN", filepath.Join(agyBinDir, "qoderclicn"))
 	t.Setenv("QODER_BIN", "")
 	agyScript := "#!/bin/sh\nprintf 'gemini-4-argon-thinking   Gemini 4 Argon (High)\\nclaude-sonnet-5-5-thinking Claude Sonnet 5.5 (Thinking)\\n'\n"
-	if err := os.WriteFile(filepath.Join(agyBinDir, "agy"), []byte(agyScript), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(agyBinDir, "claude"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	execstub.Write(t, agyBinDir, "agy", agyScript)
+	execstub.Write(t, agyBinDir, "claude", "exit 0\n")
 	cbScript := "#!/bin/sh\nprintf '  --model <model>  Currently supported: (default-model, hy4-preview, deepseek-v4.1-flash, gpt-5.5)\\n'\n"
-	if err := os.WriteFile(filepath.Join(agyBinDir, "codebuddy"), []byte(cbScript), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	execstub.Write(t, agyBinDir, "codebuddy", cbScript)
 	qoderScript := "#!/bin/sh\nprintf 'auto\\nqwen3-coder-plus\\ndeepseek-v3\\n'\n"
-	if err := os.WriteFile(filepath.Join(agyBinDir, "qoderclicn"), []byte(qoderScript), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	execstub.Write(t, agyBinDir, "qoderclicn", qoderScript)
 
 	svc := NewService(t.TempDir(), nil, nil, filepath.Join(t.TempDir(), "store.json"))
 	mux := http.NewServeMux()
@@ -406,6 +400,7 @@ func TestCodeBuddyAndQoderArgs(t *testing.T) {
 }
 
 func TestImageOnlyPromptAndAttachmentEncoding(t *testing.T) {
+	t.Parallel()
 	const tinyPNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
 	wtDir := t.TempDir()
 	parts := []MessagePart{
@@ -443,6 +438,7 @@ func TestImageOnlyPromptAndAttachmentEncoding(t *testing.T) {
 }
 
 func TestRuntimeCapabilitiesMatrix(t *testing.T) {
+	t.Parallel()
 	// 1. Subagent: all capabilities false
 	subCaps := RuntimeCapabilities("opencode", true)
 	if subCaps.Approval || subCaps.Steer || subCaps.Resume || subCaps.Revert || subCaps.Fork || subCaps.Attachments || subCaps.CostStats {

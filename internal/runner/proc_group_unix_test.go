@@ -12,16 +12,15 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/testutil/execstub"
 )
 
 // startFakeCLITurn runs script as a Qoder turn (no approval hooks involved).
 func startFakeCLITurn(t *testing.T, svc *Service, sessionID, script string) *activeProcess {
 	t.Helper()
 	ws := t.TempDir()
-	bin := filepath.Join(t.TempDir(), "fake-cli")
-	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"+script), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	bin := execstub.Write(t, t.TempDir(), "fake-cli", script)
 	rec := SessionRecord{ID: sessionID, Runtime: string(RuntimeQoder), ProjectDir: ws, WorktreePath: ws}
 	if err := svc.store.Put(rec); err != nil {
 		t.Fatal(err)
@@ -488,10 +487,7 @@ func TestStripOpenCodeStopMarker(t *testing.T) {
 func startFakeDaemon(t *testing.T, script string) (*exec.Cmd, string) {
 	t.Helper()
 	dir := t.TempDir()
-	bin := filepath.Join(dir, "fake-opencode-serve")
-	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"+script+"\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	bin := execstub.Write(t, dir, "fake-opencode-serve", script+"\n")
 	pidFile := filepath.Join(dir, "pid")
 	cmd := exec.Command(bin)
 	cmd.Env = append(os.Environ(), "HOXI_TEST_PIDFILE="+pidFile)

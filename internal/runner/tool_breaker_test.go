@@ -12,6 +12,7 @@ func toolPart(id, tool, status, errText string) MessagePart {
 }
 
 func TestToolBreakerStopsTurnAfterRepeatedInvalidArguments(t *testing.T) {
+	t.Parallel()
 	svc := NewService(t.TempDir(), nil, nil, filepath.Join(t.TempDir(), "store.json"))
 	ap := &activeProcess{sessionID: "ses_loop", done: make(chan struct{})}
 	svc.procs["ses_loop"] = ap
@@ -36,6 +37,7 @@ func TestToolBreakerStopsTurnAfterRepeatedInvalidArguments(t *testing.T) {
 }
 
 func TestToolBreakerStreakResetsOnProgress(t *testing.T) {
+	t.Parallel()
 	var st toolFailureStreak
 	invalid := func(id string) MessagePart {
 		return toolPart(id, "invalid", "completed", "")

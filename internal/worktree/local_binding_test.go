@@ -11,6 +11,7 @@ import (
 )
 
 func TestLocalSessionCommitRejectsAnotherProject(t *testing.T) {
+	t.Parallel()
 	root, manager, base := sessionFixture(t)
 	other, _, _ := sessionFixture(t)
 	if err := manager.UseLocalDirectory("ses_local_bound"); err != nil {

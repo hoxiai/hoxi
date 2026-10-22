@@ -46,6 +46,7 @@ func sessionFixture(t *testing.T) (string, *Manager, string) {
 }
 
 func TestSessionCommitContentIsolationAndCumulative(t *testing.T) {
+	t.Parallel()
 	dir, manager, base := sessionFixture(t)
 	after := strings.Replace(base, "one\n", "SESSION\n", 1)
 	current := strings.Replace(after, "nine\n", "UNRELATED\n", 1)
@@ -88,6 +89,7 @@ func TestSessionCommitContentIsolationAndCumulative(t *testing.T) {
 }
 
 func TestSessionCommitRejectsUnsafeChanges(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"missing-before", "missing-after", "stale", "conflict", "staged", "intent-to-add", "traversal", "outside", "git", "symlink", "binary", "mode", "status", "duplicate", "index-lock", "missing-current", "missing-head"} {
 		t.Run(kind, func(t *testing.T) {
 			dir, manager, base := sessionFixture(t)
@@ -166,6 +168,7 @@ func TestSessionCommitRejectsUnsafeChanges(t *testing.T) {
 }
 
 func TestSessionCommitAddDelete(t *testing.T) {
+	t.Parallel()
 	dir, manager, base := sessionFixture(t)
 	sessionTestWrite(t, dir, "new.txt", "new\n")
 	if err := os.Remove(filepath.Join(dir, "file.txt")); err != nil {
@@ -184,6 +187,7 @@ func TestSessionCommitAddDelete(t *testing.T) {
 }
 
 func TestSessionCommitHooksAndExternalHEAD(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"reject", "mutate-index", "move-head"} {
 		t.Run(kind, func(t *testing.T) {
 			dir, manager, base := sessionFixture(t)
@@ -215,6 +219,7 @@ func TestSessionCommitHooksAndExternalHEAD(t *testing.T) {
 }
 
 func TestSessionCommitRoute(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"scoped", "empty", "legacy", "missing-snapshot"} {
 		t.Run(kind, func(t *testing.T) {
 			dir, _, base := sessionFixture(t)
@@ -255,6 +260,7 @@ func TestSessionCommitRoute(t *testing.T) {
 }
 
 func TestSessionCommitEmptyFilesAndPush(t *testing.T) {
+	t.Parallel()
 	dir, manager, _ := sessionFixture(t)
 	remote := t.TempDir()
 	sessionTestGit(t, remote, "init", "--bare")
@@ -286,6 +292,7 @@ func TestSessionCommitEmptyFilesAndPush(t *testing.T) {
 }
 
 func TestSessionCommitLinkedWorktree(t *testing.T) {
+	t.Parallel()
 	dir, manager, base := sessionFixture(t)
 	meta, err := manager.Create("ses_commit")
 	if err != nil {
@@ -307,6 +314,7 @@ func TestSessionCommitLinkedWorktree(t *testing.T) {
 }
 
 func TestSessionCommitRejectsUnsafeAddDelete(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"added-collision", "deleted-recreated", "deleted-conflict", "invalid-added-before", "invalid-deleted-after", "tracked-symlink", "symlink-alias", "non-utf8"} {
 		t.Run(kind, func(t *testing.T) {
 			dir, manager, base := sessionFixture(t)
@@ -355,6 +363,7 @@ func TestSessionCommitRejectsUnsafeAddDelete(t *testing.T) {
 }
 
 func TestSessionCommitRejectsContextDependentConfig(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"worktree-hooks", "worktree-signing", "worktree-benign", "onbranch-hooks", "onbranch-signing", "inactive-include", "nested-include", "gitdir-include"} {
 		t.Run(kind, func(t *testing.T) {
 			dir, manager, base := sessionFixture(t)
@@ -431,6 +440,7 @@ func TestSessionCommitRejectsContextDependentConfig(t *testing.T) {
 }
 
 func TestSessionCommitRouteBinding(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"omitted", "sandbox", "body-root", "query-root", "hidden-query-root", "invalid-directory", "duplicate-query", "ambiguous"} {
 		t.Run(kind, func(t *testing.T) {
 			dir, manager, base := sessionFixture(t)
@@ -497,6 +507,7 @@ func TestSessionCommitRouteBinding(t *testing.T) {
 }
 
 func TestSessionCommitCumulativeAdditionCheckpoint(t *testing.T) {
+	t.Parallel()
 	dir, manager, _ := sessionFixture(t)
 	sessionTestWrite(t, dir, "new.txt", "initial\n")
 	if _, err := manager.CommitSessionChanges("session", "initial addition", false, []SessionDiff{sessionTestDiff("new.txt", "", "initial\n", "added")}); err != nil {
@@ -528,6 +539,7 @@ func TestSessionCommitCumulativeAdditionCheckpoint(t *testing.T) {
 }
 
 func TestSessionCommitCheckpointAncestorAndWriteFailure(t *testing.T) {
+	t.Parallel()
 	t.Run("non-ancestor", func(t *testing.T) {
 		dir, manager, _ := sessionFixture(t)
 		sessionTestWrite(t, dir, "new.txt", "initial\n")
@@ -564,6 +576,7 @@ func TestSessionCommitCheckpointAncestorAndWriteFailure(t *testing.T) {
 }
 
 func TestSessionCommitCheckpointPreservesIndependentChanges(t *testing.T) {
+	t.Parallel()
 	dir, manager, base := sessionFixture(t)
 	sessionTestWrite(t, dir, "new.txt", base)
 	if _, err := manager.CommitSessionChanges("session", "addition", false, []SessionDiff{sessionTestDiff("new.txt", "", base, "added")}); err != nil {
@@ -599,6 +612,7 @@ func TestSessionCommitCheckpointPreservesIndependentChanges(t *testing.T) {
 }
 
 func TestSessionCommitRouteRequiresSessionID(t *testing.T) {
+	t.Parallel()
 	dir, manager, base := sessionFixture(t)
 	sessionTestWrite(t, dir, "file.txt", "changed\n")
 	for _, id := range []string{"", "   "} {
@@ -617,6 +631,7 @@ func TestSessionCommitRouteRequiresSessionID(t *testing.T) {
 }
 
 func TestSessionCommitCheckpointRejectsUnsafeContinuation(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"stale", "conflict", "corrupt", "wrong-session", "wrong-blob"} {
 		t.Run(kind, func(t *testing.T) {
 			dir, manager, _ := sessionFixture(t)
@@ -673,6 +688,7 @@ func TestSessionCommitCheckpointRejectsUnsafeContinuation(t *testing.T) {
 }
 
 func TestSessionCommitModifiedSameLineCheckpoint(t *testing.T) {
+	t.Parallel()
 	dir, manager, base := sessionFixture(t)
 	for i, first := range []string{"SESSION", "SECOND", "THIRD"} {
 		after := strings.Replace(base, "one\n", first+"\n", 1)
@@ -720,6 +736,7 @@ func TestSessionCommitModifiedSameLineCheckpoint(t *testing.T) {
 }
 
 func TestSessionCommitModifiedCheckpointValidation(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"non-ancestor", "wrong-blob"} {
 		t.Run(kind, func(t *testing.T) {
 			dir, manager, base := sessionFixture(t)

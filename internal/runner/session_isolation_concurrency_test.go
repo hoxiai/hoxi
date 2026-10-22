@@ -41,6 +41,7 @@ func initTestGitRepoAt(t *testing.T, dir string) string {
 // provisioned under its own project, never sharing the parent's sandbox, and
 // listing either workspace must not return the other's sessions.
 func TestConcurrentNestedProjectSessionsStayIsolated(t *testing.T) {
+	t.Parallel()
 	parent := initTestGitRepo(t)
 	child := initTestGitRepoAt(t, filepath.Join(parent, "client"))
 

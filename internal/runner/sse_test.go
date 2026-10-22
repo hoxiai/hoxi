@@ -28,6 +28,7 @@ func collectFrames(t *testing.T, out <-chan string, want int) []string {
 }
 
 func TestOpenCodePumpReconnectsAndAsksClientsToResync(t *testing.T) {
+	t.Parallel()
 	var conns atomic.Int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n := conns.Add(1)
@@ -74,6 +75,7 @@ func TestOpenCodePumpReconnectsAndAsksClientsToResync(t *testing.T) {
 }
 
 func TestOpenCodePumpRetriesUntilUpstreamComesUp(t *testing.T) {
+	t.Parallel()
 	var attempts atomic.Int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if attempts.Add(1) <= 2 {
@@ -102,6 +104,7 @@ func TestOpenCodePumpRetriesUntilUpstreamComesUp(t *testing.T) {
 }
 
 func TestUnifiedSSEHeartbeatIsADataEvent(t *testing.T) {
+	t.Parallel()
 	if !strings.HasPrefix(heartbeatFrame, "data: ") || !strings.Contains(heartbeatFrame, heartbeatEventType) {
 		t.Fatalf("heartbeat must reach EventSource listeners: %q", heartbeatFrame)
 	}

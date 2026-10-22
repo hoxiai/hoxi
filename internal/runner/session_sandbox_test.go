@@ -121,6 +121,7 @@ fi
 }
 
 func TestRunnerLocalModeWorksWithoutGitAndWorktreeModeFailsClosed(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	svc := NewService(root, nil, nil, filepath.Join(t.TempDir(), "sessions.json"))
 	info := createSandboxSession(t, svc, string(RuntimeClaudeCode), root, "")
@@ -141,6 +142,7 @@ func TestRunnerLocalModeWorksWithoutGitAndWorktreeModeFailsClosed(t *testing.T) 
 }
 
 func TestRunnerModeSwitchPreservesChangesAndUpdatesExecutionDirectory(t *testing.T) {
+	t.Parallel()
 	root := initTestGitRepo(t)
 	svc := NewService(root, nil, nil, filepath.Join(t.TempDir(), "sessions.json"))
 	info := createSandboxSession(t, svc, "claude-code", root, "local")
@@ -190,6 +192,7 @@ func TestRunnerModeSwitchPreservesChangesAndUpdatesExecutionDirectory(t *testing
 }
 
 func TestRunnerDirectoryValidationAndLegacyMode(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	wt := filepath.Join(root, ".hoxi", "worktrees", "legacy")
 	if err := os.MkdirAll(wt, 0700); err != nil {
@@ -209,6 +212,7 @@ func TestRunnerDirectoryValidationAndLegacyMode(t *testing.T) {
 }
 
 func TestLocalRunnerGitOperationsKeepTheirProjectAfterReload(t *testing.T) {
+	t.Parallel()
 	root, project := t.TempDir(), initTestGitRepo(t)
 	storePath := filepath.Join(t.TempDir(), "sessions.json")
 	svc := NewService(root, nil, nil, storePath)
@@ -232,6 +236,7 @@ func TestLocalRunnerGitOperationsKeepTheirProjectAfterReload(t *testing.T) {
 }
 
 func TestExplicitRunnerDiscardHonorsBranchChoice(t *testing.T) {
+	t.Parallel()
 	for _, keep := range []bool{true, false} {
 		t.Run(fmt.Sprint(keep), func(t *testing.T) {
 			root := initTestGitRepo(t)
@@ -262,6 +267,7 @@ func TestExplicitRunnerDiscardHonorsBranchChoice(t *testing.T) {
 }
 
 func TestPromoteLocalSessionToWorktreeTransfersWorkingStateAndContext(t *testing.T) {
+	t.Parallel()
 	root := initTestGitRepo(t)
 	svc := NewService(root, nil, nil, filepath.Join(t.TempDir(), "sessions.json"))
 	info := createSandboxSession(t, svc, "claude-code", root, "local")
@@ -298,6 +304,7 @@ func TestPromoteLocalSessionToWorktreeTransfersWorkingStateAndContext(t *testing
 // caller asks for isolation: creating a parent worktree would silently run the
 // session outside the folder the user opened.
 func TestNestedNonGitFolderFailsClosedOnIsolation(t *testing.T) {
+	t.Parallel()
 	repo := initTestGitRepo(t)
 	nested := filepath.Join(repo, "docs")
 	if err := os.MkdirAll(nested, 0o755); err != nil {

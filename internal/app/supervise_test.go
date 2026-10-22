@@ -48,7 +48,7 @@ func TestSetChildStopsPreviousDaemon(t *testing.T) {
 	select {
 	case <-respawned:
 		t.Fatal("replacing a daemon triggered an automatic respawn")
-	case <-time.After(1500 * time.Millisecond):
+	case <-time.After(respawnQuietWindow()):
 	}
 }
 

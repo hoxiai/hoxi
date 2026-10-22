@@ -19,6 +19,7 @@ func decodeTrimmedPayload(t *testing.T, line string) map[string]interface{} {
 }
 
 func TestTrimSummaryDiffPatchesDropsOnlyPatchBodies(t *testing.T) {
+	t.Parallel()
 	line := `data: {"type":"message.updated","properties":{"info":{"id":"msg_1","time":{"created":1792489905921},"summary":{"diffs":[{"file":"web/a.ts","patch":"@@ -1 +1 @@","additions":3,"deletions":1},{"file":"web/b.ts","patch":"long diff"}]}}}}` + "\n"
 
 	got := trimSummaryDiffPatches(line)
@@ -45,6 +46,7 @@ func TestTrimSummaryDiffPatchesDropsOnlyPatchBodies(t *testing.T) {
 }
 
 func TestTrimSummaryDiffPatchesHandlesGlobalEventEnvelope(t *testing.T) {
+	t.Parallel()
 	line := `data: {"directory":"/tmp/ws","payload":{"type":"message.updated","properties":{"info":{"id":"msg_2","summary":{"diffs":[{"file":"a.go","patch":"xxx"}]}}}}}` + "\n"
 	got := trimSummaryDiffPatches(line)
 	if strings.Contains(got, `"patch"`) {
@@ -59,6 +61,7 @@ func TestTrimSummaryDiffPatchesHandlesGlobalEventEnvelope(t *testing.T) {
 }
 
 func TestTrimSummaryDiffPatchesLeavesOtherFramesByteIdentical(t *testing.T) {
+	t.Parallel()
 	frames := []string{
 		`data: {"type":"message.part.delta","properties":{"sessionID":"ses_1","delta":"hi"}}` + "\n",
 		`data: {"type":"message.updated","properties":{"info":{"id":"msg_3"}}}` + "\n",

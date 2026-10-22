@@ -8,6 +8,7 @@ import (
 )
 
 func TestWorktreeSetupFailureCaptureAndRetry(t *testing.T) {
+	t.Parallel()
 	repoDir := initTempGitRepo(t)
 	if err := os.MkdirAll(filepath.Join(repoDir, ".hoxi"), 0o755); err != nil {
 		t.Fatal(err)
@@ -54,6 +55,7 @@ func TestWorktreeSetupFailureCaptureAndRetry(t *testing.T) {
 }
 
 func TestWorktreeVerifyRunTestAndPreviewURLDetection(t *testing.T) {
+	t.Parallel()
 	repoDir := initTempGitRepo(t)
 	mgr := NewManager(repoDir)
 	meta, err := mgr.Create("ses_verify_run")

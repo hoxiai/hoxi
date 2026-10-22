@@ -95,6 +95,7 @@ func runAgyThroughGate(t *testing.T, reply string) (string, string) {
 }
 
 func TestAgyHookE2EOnceRunsCommand(t *testing.T) {
+	t.Parallel()
 	out, probe := runAgyThroughGate(t, "once")
 	if probe != "deleted" || strings.Contains(out, "denied_actions") {
 		t.Fatalf("approved rm did not run (probe %s):\n%s", probe, out)
@@ -102,6 +103,7 @@ func TestAgyHookE2EOnceRunsCommand(t *testing.T) {
 }
 
 func TestAgyHookE2ERejectBlocksCommand(t *testing.T) {
+	t.Parallel()
 	out, probe := runAgyThroughGate(t, "reject")
 	if probe != "present" || !strings.Contains(out, "denied by pre-tool hook") || !strings.Contains(out, "e2e says no") {
 		t.Fatalf("rejected rm was not blocked with the user's reason (probe %s):\n%s", probe, out)

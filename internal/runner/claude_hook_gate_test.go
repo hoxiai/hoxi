@@ -151,6 +151,7 @@ func (f *claudeGateFixture) reply(t *testing.T, id, reply, message string) int {
 }
 
 func TestClaudeHookAsksForPythonAndAllowsOnce(t *testing.T) {
+	t.Parallel()
 	f := newClaudeGateFixture(t)
 	events, unsub := f.svc.Subscribe("ses_cc_gate")
 	defer unsub()
@@ -184,6 +185,7 @@ func TestClaudeHookAsksForPythonAndAllowsOnce(t *testing.T) {
 }
 
 func TestClaudeHookSafeCommandsAndOtherTools(t *testing.T) {
+	t.Parallel()
 	f := newClaudeGateFixture(t)
 	if d := f.decide(t, f.payload("Bash", "git status && go test ./...", "", "cc-uuid-1")); d != "allow|" {
 		t.Fatalf("safe command: %q", d)
@@ -223,6 +225,7 @@ func TestClaudeHookSafeCommandsAndOtherTools(t *testing.T) {
 }
 
 func TestClaudeHookGatesProtectedEditsOutsideReadsAndExternalTools(t *testing.T) {
+	t.Parallel()
 	f := newClaudeGateFixture(t)
 	events, unsub := f.svc.Subscribe("ses_cc_gate")
 	defer unsub()
@@ -337,6 +340,7 @@ func TestClaudeHookGatesProtectedEditsOutsideReadsAndExternalTools(t *testing.T)
 }
 
 func TestClaudeHookDestructiveAlwaysAsks(t *testing.T) {
+	t.Parallel()
 	f := newClaudeGateFixture(t)
 	events, unsub := f.svc.Subscribe("ses_cc_gate")
 	defer unsub()
@@ -360,6 +364,7 @@ func TestClaudeHookDestructiveAlwaysAsks(t *testing.T) {
 }
 
 func TestClaudeHookCancelledOnStop(t *testing.T) {
+	t.Parallel()
 	f := newClaudeGateFixture(t)
 	events, unsub := f.svc.Subscribe("ses_cc_gate")
 	defer unsub()
@@ -378,6 +383,7 @@ func TestClaudeHookCancelledOnStop(t *testing.T) {
 }
 
 func TestClaudeHookDeniesForeignSessionAndDirectory(t *testing.T) {
+	t.Parallel()
 	f := newClaudeGateFixture(t)
 	if d := f.decide(t, f.payload("Bash", "git status", "", "cc-uuid-other")); !strings.HasPrefix(d, "deny|") {
 		t.Fatalf("foreign session: %q", d)
@@ -391,6 +397,7 @@ func TestClaudeHookDeniesForeignSessionAndDirectory(t *testing.T) {
 }
 
 func TestClaudeHookCredentialIsBoundToRuntime(t *testing.T) {
+	t.Parallel()
 	f := newClaudeGateFixture(t)
 	agyEnv, revokeAgy := f.svc.issueHookEnv("ses_cc_gate", "msg_a")
 	defer revokeAgy()
@@ -424,6 +431,7 @@ func TestClaudeHookCredentialIsBoundToRuntime(t *testing.T) {
 }
 
 func TestIssueClaudeHookSkipsPlanModeAndMissingBaseURL(t *testing.T) {
+	t.Parallel()
 	svc := NewService(t.TempDir(), nil, nil, filepath.Join(t.TempDir(), "sessions.json"))
 	if args, env, revoke := svc.issueClaudeHook("build", "ses_cc_x", "msg"); args != nil || env != nil {
 		revoke()

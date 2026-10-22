@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/hoxiai/hoxi/internal/testutil/execstub"
 )
 
 func withHookPaths(t *testing.T, exe string) string {
@@ -135,10 +137,7 @@ func TestAgyHookCommandShellBehavior(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	exe := filepath.Join(dir, "hoxi")
-	if err := os.WriteFile(exe, []byte("#!/bin/sh\necho \"ran $1\"\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	exe := execstub.Write(t, dir, "hoxi", "echo \"ran $1\"\n")
 	out, err := exec.Command("sh", "-c", agyHookCommand(exe)).Output()
 	if err != nil || strings.TrimSpace(string(out)) != "ran agy-hook" {
 		t.Fatalf("present binary: %q %v", out, err)

@@ -7,6 +7,7 @@ import (
 )
 
 func TestBuildObserverAuditPromptFencesGuidanceAndNotesOmittedFiles(t *testing.T) {
+	t.Parallel()
 	req := auditCodeRequest{
 		WorkerProviderID: "p",
 		WorkerModelID:    "m",
@@ -33,6 +34,7 @@ func TestBuildObserverAuditPromptFencesGuidanceAndNotesOmittedFiles(t *testing.T
 }
 
 func TestBuildObserverAuditPromptWithoutGuidanceIsUnchanged(t *testing.T) {
+	t.Parallel()
 	prompt := buildObserverAuditPrompt(auditCodeRequest{WorkerProviderID: "p", WorkerModelID: "m", Locale: "zh-CN"})
 	if strings.Contains(prompt, "review_guidance") {
 		t.Fatal("no guidance block expected without REVIEW.md")
@@ -43,12 +45,14 @@ func TestBuildObserverAuditPromptWithoutGuidanceIsUnchanged(t *testing.T) {
 }
 
 func TestNoChangesReviewSummaryFollowsLocale(t *testing.T) {
+	t.Parallel()
 	if noChangesReviewSummary("zh-CN") != "没有需要审查的改动。" || noChangesReviewSummary("en-US") != "No changes to review." {
 		t.Fatal("no-change summary must follow the request locale")
 	}
 }
 
 func TestAuditDiffsFromReviewCopiesEveryField(t *testing.T) {
+	t.Parallel()
 	out := auditDiffsFromReview([]ReviewFileDiff{
 		{File: "a.go", Before: "old", After: "new", Additions: 2, Deletions: 1},
 	})

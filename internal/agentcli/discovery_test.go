@@ -1,11 +1,12 @@
 package agentcli
 
 import (
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/testutil/execstub"
 )
 
 func TestCodeBuddyAndQoderModelDiscovery(t *testing.T) {
@@ -37,14 +38,12 @@ func TestCodeBuddyAndQoderModelDiscovery(t *testing.T) {
 		t.Fatalf("unexpected CodeBuddy parsed models: %v", cbModels)
 	}
 	tmpDir := t.TempDir()
-	intlBin := filepath.Join(tmpDir, "qodercli")
-	cnBin := filepath.Join(tmpDir, "qoderclicn")
-	_ = os.WriteFile(intlBin, []byte("#!/bin/sh\nprintf 'MODEL\\nAuto\\nclaude-sonnet-4-6\\n'\n"), 0o755)
-	_ = os.WriteFile(cnBin, []byte("#!/bin/sh\nprintf 'MODEL\\nAuto\\nQwen3.8-Max\\nQwen3.8-Flash\\n'\n"), 0o755)
+	intlBin := execstub.Write(t, tmpDir, "qodercli", "printf 'MODEL\\nAuto\\nclaude-sonnet-4-6\\n'\n")
+	cnBin := execstub.Write(t, tmpDir, "qoderclicn", "printf 'MODEL\\nAuto\\nQwen3.8-Max\\nQwen3.8-Flash\\n'\n")
 	t.Setenv("QODER_BIN", intlBin)
 	t.Setenv("QODER_CN_BIN", cnBin)
-	// Under a loaded full-suite run, the first exec of a fresh script can stall
-	// on macOS security checks past the production probe timeout.
+	// execstub avoids the macOS first-exec scan of fresh scripts; keep headroom
+	// over the production probe timeout for a loaded full-suite run anyway.
 	prevTimeout := qoderProbeTimeout
 	qoderProbeTimeout = 30 * time.Second
 	t.Cleanup(func() { qoderProbeTimeout = prevTimeout })

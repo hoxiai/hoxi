@@ -35,7 +35,12 @@ type Service struct {
 	pending       *authorization
 	generation    uint64
 	launchBrowser func(string)
+	// pollInterval paces device-token polling; zero means defaultPollInterval.
+	// Tests shorten it so they do not wait on real seconds.
+	pollInterval time.Duration
 }
+
+const defaultPollInterval = 2 * time.Second
 
 type authorization struct {
 	state     string
@@ -311,7 +316,11 @@ func (s *Service) runPollWorker(attempt *authorization) {
 		}
 		s.mu.Unlock()
 	}()
-	ticker := time.NewTicker(2 * time.Second)
+	interval := s.pollInterval
+	if interval <= 0 {
+		interval = defaultPollInterval
+	}
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	platform := devicePlatform()

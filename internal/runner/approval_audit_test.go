@@ -10,6 +10,7 @@ import (
 // The audit log is rendered in Settings and copied into bug reports, so a
 // secret that survives redaction is a leak with a long tail.
 func TestRedactApprovalTextCoversQuotedAndJSONSecrets(t *testing.T) {
+	t.Parallel()
 	cases := map[string]string{
 		`mysql --password="hunter2" db`:                          `hunter2`,
 		`deploy --token='abc123'`:                                `abc123`,
@@ -32,6 +33,7 @@ func TestRedactApprovalTextCoversQuotedAndJSONSecrets(t *testing.T) {
 }
 
 func TestApprovalGrantJSONOmitsRawKey(t *testing.T) {
+	t.Parallel()
 	g := newApprovalGate()
 	g.addAlways("ses_x", `curl -H 'Authorization: Bearer sk-live-123456' https://x`, "desktop")
 	raw, err := json.Marshal(g.listGrants())
@@ -44,6 +46,7 @@ func TestApprovalGrantJSONOmitsRawKey(t *testing.T) {
 }
 
 func TestOpenCodeAuditWithoutSnapshotKeepsSessionAndRedacts(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	svc := NewService(dir, nil, nil, filepath.Join(t.TempDir(), "sessions.json"))
 	if err := svc.store.Put(SessionRecord{ID: "ses_oc_audit", Runtime: "opencode", ProjectDir: dir, WorktreePath: dir, ExternalID: "oc-1"}); err != nil {
@@ -66,6 +69,7 @@ func TestOpenCodeAuditWithoutSnapshotKeepsSessionAndRedacts(t *testing.T) {
 }
 
 func TestOpenCodePermissionEventFeedsTheAuditSnapshot(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	svc := NewService(dir, nil, nil, filepath.Join(t.TempDir(), "sessions.json"))
 	if err := svc.store.Put(SessionRecord{ID: "ses_oc_event", Runtime: "opencode", ProjectDir: dir, WorktreePath: dir, ExternalID: "oc-event"}); err != nil {
@@ -92,6 +96,7 @@ func TestOpenCodePermissionEventFeedsTheAuditSnapshot(t *testing.T) {
 // routine sibling-folder work, so only credential/execution targets stay high
 // risk.
 func TestExternalDirectoryRiskClassifiesRoutineAndSensitiveTargets(t *testing.T) {
+	t.Parallel()
 	routine := []map[string]interface{}{
 		{"permission": "external_directory", "patterns": []interface{}{"/Users/hugh/code/hoxi/apay/app/themes/ainode/*"}},
 		{"permission": "external_directory", "patterns": []interface{}{"/Users/hugh/fvm/versions/3.44.9/*"}},

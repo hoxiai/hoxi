@@ -14,6 +14,7 @@ import (
 )
 
 func TestConcurrentWorkspaceRoutes(t *testing.T) {
+	t.Parallel()
 	a, b := initTempGitRepo(t), initTempGitRepo(t)
 	m := NewManager(a)
 	mux := http.NewServeMux()
@@ -56,6 +57,7 @@ func TestConcurrentWorkspaceRoutes(t *testing.T) {
 }
 
 func TestMetadataReadsDuringGitMutation(t *testing.T) {
+	t.Parallel()
 	dir := initTempGitRepo(t)
 	m := NewManager(dir)
 	// A blocked hook models a slow Git operation without blocking metadata readers.
@@ -91,6 +93,7 @@ func TestMetadataReadsDuringGitMutation(t *testing.T) {
 }
 
 func TestDiffBatchedPatches(t *testing.T) {
+	t.Parallel()
 	dir := initTempGitRepo(t)
 	for _, name := range []string{"space name.txt", "binary.dat", "deleted.txt"} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte("old\n"), 0o644); err != nil {

@@ -6,6 +6,7 @@ import (
 )
 
 func TestStreamedPartsKeepEmptyTextOnWire(t *testing.T) {
+	t.Parallel()
 	for _, runtime := range []string{string(RuntimeClaudeCode), string(RuntimeAntigravity)} {
 		for _, partType := range []string{"text", "reasoning"} {
 			t.Run(runtime+"/"+partType, func(t *testing.T) {
@@ -50,6 +51,7 @@ func TestStreamedPartsKeepEmptyTextOnWire(t *testing.T) {
 }
 
 func TestNonTextPartsStillOmitEmptyText(t *testing.T) {
+	t.Parallel()
 	for _, partType := range []string{"tool", "file"} {
 		raw, err := json.Marshal(MessagePart{ID: "part", Type: partType})
 		if err != nil {

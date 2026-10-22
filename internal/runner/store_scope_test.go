@@ -31,6 +31,7 @@ func assertListIDs(t *testing.T, store *Store, directory string, want ...string)
 }
 
 func TestStoreListScopesSessionsToTheirOwnWorkspace(t *testing.T) {
+	t.Parallel()
 	base := t.TempDir()
 	outer := filepath.Join(base, "outer")
 	inner := filepath.Join(outer, "inner")
@@ -56,6 +57,7 @@ func TestStoreListScopesSessionsToTheirOwnWorkspace(t *testing.T) {
 }
 
 func TestStoreListIncludesWorktreeSessionForItsWorktreeDirectory(t *testing.T) {
+	t.Parallel()
 	base := t.TempDir()
 	project := filepath.Join(base, "project")
 	worktree := filepath.Join(project, ".hoxi", "worktrees", "ses_isolated")
@@ -81,6 +83,7 @@ func listProjectIDs(store *Store, projectID, directory string) []string {
 }
 
 func TestStoreListProjectUsesStableProjectID(t *testing.T) {
+	t.Parallel()
 	base := t.TempDir()
 	first := filepath.Join(base, "first")
 	second := filepath.Join(base, "second")
@@ -124,6 +127,7 @@ func (r fixedProjectResolver) ProjectRoots(string) []string {
 }
 
 func TestSetProjectResolverBackfillsLegacySessionsOnce(t *testing.T) {
+	t.Parallel()
 	workDir := t.TempDir()
 	svc := NewService(workDir, nil, nil, t.TempDir())
 	for _, rec := range []SessionRecord{

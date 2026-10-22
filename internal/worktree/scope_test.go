@@ -7,6 +7,7 @@ import (
 )
 
 func TestBindingForSessionAcrossRootsAndRecovery(t *testing.T) {
+	t.Parallel()
 	root := initTempGitRepo(t)
 	other := initTempGitRepo(t)
 	mgr := NewManager(root)
@@ -48,6 +49,7 @@ func TestBindingForSessionAcrossRootsAndRecovery(t *testing.T) {
 }
 
 func TestBindingCanonicalizesSymlinkAndRejectsSiblingAmbiguity(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	sandbox := filepath.Join(root, ".hoxi", "worktrees", "ses_link")
 	if err := os.MkdirAll(sandbox, 0o755); err != nil {

@@ -103,6 +103,7 @@ func hasStatus(evts []SSEEvent, sessionID, status string) bool {
 }
 
 func TestAgyRecordedSubagentsBecomeChildSessionsWithReports(t *testing.T) {
+	t.Parallel()
 	tr, children := newAgyTestTranslator(fixtureTranscriptLookup(t))
 	var all []SSEEvent
 	for _, line := range readFixtureLines(t, agyRecordedRun) {
@@ -168,6 +169,7 @@ func TestAgyRecordedSubagentsBecomeChildSessionsWithReports(t *testing.T) {
 }
 
 func TestAgySubagentReportsWithoutTranscriptFallBackToDispatchOrder(t *testing.T) {
+	t.Parallel()
 	tr, _ := newAgyTestTranslator(func(string, int) string { return "" })
 	for _, line := range readFixtureLines(t, agyRecordedRun) {
 		tr.FeedLine(line)
@@ -192,6 +194,7 @@ func agyDispatchLines() []string {
 }
 
 func TestAgyToolShapedDispatchAndScheduleWait(t *testing.T) {
+	t.Parallel()
 	tr, children := newAgyTestTranslator(func(string, int) string { return "" })
 	for _, line := range agyDispatchLines() {
 		tr.FeedLine(line)
@@ -217,6 +220,7 @@ func TestAgyToolShapedDispatchAndScheduleWait(t *testing.T) {
 }
 
 func TestAgyInterruptedTurnFailsOutstandingSubagents(t *testing.T) {
+	t.Parallel()
 	tr, _ := newAgyTestTranslator(func(string, int) string { return "" })
 	for _, line := range agyDispatchLines() {
 		tr.FeedLine(line)
@@ -231,6 +235,7 @@ func TestAgyInterruptedTurnFailsOutstandingSubagents(t *testing.T) {
 }
 
 func TestAgyAbandonedTurnClosesChildren(t *testing.T) {
+	t.Parallel()
 	tr, _ := newAgyTestTranslator(func(string, int) string { return "" })
 	for _, line := range agyDispatchLines() {
 		tr.FeedLine(line)
@@ -245,6 +250,7 @@ func TestAgyAbandonedTurnClosesChildren(t *testing.T) {
 }
 
 func TestAgyForeignConversationStepsNeverClobberParent(t *testing.T) {
+	t.Parallel()
 	tr, _ := newAgyTestTranslator(func(string, int) string { return "" })
 	for _, line := range agyDispatchLines() {
 		tr.FeedLine(line)
@@ -332,6 +338,7 @@ func TestPollSubagentActivityMirrorsTranscriptIntoChildSession(t *testing.T) {
 }
 
 func TestParseAgySystemMessage(t *testing.T) {
+	t.Parallel()
 	sender, body := parseAgySystemMessage("The following is a <SYSTEM_MESSAGE> not actually sent by the user.\n\n<SYSTEM_MESSAGE>\n[Message] timestamp=2026-10-19T03:53:09Z sender=abc-1 priority=MESSAGE_PRIORITY_HIGH content=Report line 1\nline 2\n</SYSTEM_MESSAGE>")
 	if sender != "abc-1" || body != "Report line 1\nline 2" {
 		t.Fatalf("got sender=%q body=%q", sender, body)

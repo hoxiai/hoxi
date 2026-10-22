@@ -10,6 +10,7 @@ import (
 )
 
 func TestSummarizeDoesNotBlockOtherConversation(t *testing.T) {
+	t.Parallel()
 	entered, release := make(chan struct{}), make(chan struct{})
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -69,6 +70,7 @@ func TestSummarizeDoesNotBlockOtherConversation(t *testing.T) {
 }
 
 func TestStreamOverflowResyncsWithoutBlockingOtherSubscribers(t *testing.T) {
+	t.Parallel()
 	svc := NewService(t.TempDir(), nil, nil, filepath.Join(t.TempDir(), "sessions"))
 	slow, stopSlow := svc.Subscribe("")
 	defer stopSlow()
@@ -96,6 +98,7 @@ func TestStreamOverflowResyncsWithoutBlockingOtherSubscribers(t *testing.T) {
 }
 
 func TestTurnLockRegistryReleasesUnusedEntries(t *testing.T) {
+	t.Parallel()
 	var locks sessionTurnLocks
 	for _, id := range []string{"a", "b", "a"} {
 		unlock := locks.lock(id)
@@ -107,6 +110,7 @@ func TestTurnLockRegistryReleasesUnusedEntries(t *testing.T) {
 }
 
 func TestChildCleanupFlushesAndUnpinsAbortedTranscript(t *testing.T) {
+	t.Parallel()
 	dir := filepath.Join(t.TempDir(), "sessions")
 	svc := NewService(t.TempDir(), nil, nil, dir)
 	if err := svc.store.Put(SessionRecord{ID: "child", Subagent: true}); err != nil {

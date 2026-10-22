@@ -2,21 +2,33 @@ package auth
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"sync"
 	"testing"
 	"time"
 )
 
+// testPollInterval keeps the poll worker from waiting on the 2s production cadence.
+const testPollInterval = 10 * time.Millisecond
+
 func TestPollGuardsLateResponses(t *testing.T) {
 	for _, action := range []string{"logout", "restart", "server change"} {
 		t.Run(action, func(t *testing.T) {
 			entered, release := make(chan struct{}), make(chan struct{})
+			var enteredOnce sync.Once
 			s := testService(t, func(w http.ResponseWriter, r *http.Request) {
-				close(entered)
+				// Only the stale "old" attempt may answer authorized; a restarted
+				// attempt keeps polling and must stay pending.
+				if r.URL.Query().Get("state") != "old" {
+					_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "status": "pending"})
+					return
+				}
+				enteredOnce.Do(func() { close(entered) })
 				<-release
 				authorizedResponse(w)
 			})
+			s.pollInterval = testPollInterval
 			var once sync.Once
 			unblock := func() { once.Do(func() { close(release) }) }
 			t.Cleanup(unblock)
@@ -53,11 +65,13 @@ func TestPollGuardsLateResponses(t *testing.T) {
 
 func TestPollRejectsHTTPError(t *testing.T) {
 	responded := make(chan struct{})
+	var respondedOnce sync.Once
 	s := testService(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		authorizedResponse(w)
-		close(responded)
+		respondedOnce.Do(func() { close(responded) })
 	})
+	s.pollInterval = testPollInterval
 	ctx, cancel := context.WithCancel(context.Background())
 	attempt := &authorization{state: "pending", baseURL: s.ServerBaseURL(), expiresAt: time.Now().Add(3 * time.Minute), ctx: ctx, cancel: cancel}
 	s.pending = attempt

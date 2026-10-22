@@ -10,6 +10,7 @@ import (
 )
 
 func TestStoreConversationLockDoesNotBlockOtherSessionsOrMetadata(t *testing.T) {
+	t.Parallel()
 	s := seedStore(t, t.TempDir())
 	if err := s.Put(SessionRecord{ID: "other"}); err != nil {
 		t.Fatal(err)
@@ -36,6 +37,7 @@ func TestStoreConversationLockDoesNotBlockOtherSessionsOrMetadata(t *testing.T) 
 }
 
 func TestStoreChildRevisionDoesNotCancelParentRevision(t *testing.T) {
+	t.Parallel()
 	s := NewStore(t.TempDir())
 	for _, rec := range []SessionRecord{{ID: "parent"}, {ID: "child", ParentID: "parent"}} {
 		if err := s.Put(rec); err != nil {
@@ -57,6 +59,7 @@ func TestStoreChildRevisionDoesNotCancelParentRevision(t *testing.T) {
 }
 
 func TestStoreEvictsIdleTranscriptsAndReloadsDeltas(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	s := seedStore(t, dir)
 	s.cacheMaxSessions = 1
@@ -83,6 +86,7 @@ func TestStoreEvictsIdleTranscriptsAndReloadsDeltas(t *testing.T) {
 }
 
 func TestStoreEvictionHonorsByteBudgetAndRevertHistory(t *testing.T) {
+	t.Parallel()
 	s := NewStore(t.TempDir())
 	s.cacheMaxBytes = 128
 	turn := MessageTurn{Info: MessageInfo{ID: "msg_1"}, Parts: []MessagePart{{ID: "prt_1", MessageID: "msg_1", Type: "text", Text: strings.Repeat("x", 4096)}}}
@@ -102,6 +106,7 @@ func TestStoreEvictionHonorsByteBudgetAndRevertHistory(t *testing.T) {
 }
 
 func TestStoreConcurrentSameSessionUpdatesSurviveReload(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	s := seedStore(t, dir)
 	s.SetActive("ses_cld_1", true)
@@ -125,6 +130,7 @@ func TestStoreConcurrentSameSessionUpdatesSurviveReload(t *testing.T) {
 }
 
 func TestStoreFailedWriteRetainsLatestDeltasUntilRetry(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	s := seedStore(t, dir)
 	s.SetActive("ses_cld_1", true)

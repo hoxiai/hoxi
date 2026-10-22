@@ -15,6 +15,7 @@ import (
 )
 
 func TestIsolatedRunnerRestoresSandboxSelector(t *testing.T) {
+	t.Parallel()
 	project := initTestGitRepo(t)
 	root := t.TempDir()
 	path := filepath.Join(t.TempDir(), "sessions.json")
@@ -43,6 +44,7 @@ func TestIsolatedRunnerRestoresSandboxSelector(t *testing.T) {
 }
 
 func TestRenamedRunnerBranchSurvivesLocalReentryAndRestart(t *testing.T) {
+	t.Parallel()
 	root := initTestGitRepo(t)
 	path := filepath.Join(t.TempDir(), "sessions.json")
 	svc := NewService(root, nil, nil, path)
@@ -76,6 +78,7 @@ func TestRenamedRunnerBranchSurvivesLocalReentryAndRestart(t *testing.T) {
 }
 
 func TestRunnerExitPersistenceFailurePreservesWorktree(t *testing.T) {
+	t.Parallel()
 	for _, force := range []bool{false, true} {
 		t.Run(map[bool]string{false: "clean", true: "discard"}[force], func(t *testing.T) {
 			root := initTestGitRepo(t)
@@ -117,6 +120,7 @@ func TestRunnerExitPersistenceFailurePreservesWorktree(t *testing.T) {
 }
 
 func TestRunningRunnerRejectsGenericApplyBeforeSnapshot(t *testing.T) {
+	t.Parallel()
 	root := initTestGitRepo(t)
 	svc := NewService(root, nil, nil, filepath.Join(t.TempDir(), "sessions.json"))
 	info := createSandboxSession(t, svc, "claude-code", root, "worktree")
@@ -147,6 +151,7 @@ func TestRunningRunnerRejectsGenericApplyBeforeSnapshot(t *testing.T) {
 }
 
 func TestRunnerExitRemovalFailureRollsBackPersistedMode(t *testing.T) {
+	t.Parallel()
 	root := initTestGitRepo(t)
 	path := filepath.Join(t.TempDir(), "sessions.json")
 	svc := NewService(root, nil, nil, path)
@@ -166,6 +171,7 @@ func TestRunnerExitRemovalFailureRollsBackPersistedMode(t *testing.T) {
 }
 
 func TestRunnerApplyGuardSerializesWithTurnStart(t *testing.T) {
+	t.Parallel()
 	svc := NewService(t.TempDir(), nil, nil, filepath.Join(t.TempDir(), "sessions.json"))
 	if err := svc.store.Put(SessionRecord{ID: "test"}); err != nil {
 		t.Fatal(err)

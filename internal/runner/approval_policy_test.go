@@ -59,6 +59,7 @@ func newPolicyServer(t *testing.T, storePath string) (*Service, *httptest.Server
 }
 
 func TestApprovalPolicyPersistsAndRejectsInvalidValues(t *testing.T) {
+	t.Parallel()
 	storePath := filepath.Join(t.TempDir(), "sessions.json")
 	policyPath := filepath.Join(filepath.Dir(storePath), approvalPolicyFile)
 	_, srv := newPolicyServer(t, storePath)
@@ -93,6 +94,7 @@ func TestApprovalPolicyPersistsAndRejectsInvalidValues(t *testing.T) {
 }
 
 func TestApprovalPolicyIsNotReachableOverTheTunnel(t *testing.T) {
+	t.Parallel()
 	_, srv := newPolicyServer(t, filepath.Join(t.TempDir(), "sessions.json"))
 	if code, _ := policyRequest(t, srv, http.MethodGet, "tunnel", nil); code != http.StatusForbidden {
 		t.Fatalf("tunnel GET: %d", code)
@@ -103,6 +105,7 @@ func TestApprovalPolicyIsNotReachableOverTheTunnel(t *testing.T) {
 }
 
 func TestCorruptApprovalPolicyIsBackedUpNotTrusted(t *testing.T) {
+	t.Parallel()
 	storePath := filepath.Join(t.TempDir(), "sessions.json")
 	policyPath := filepath.Join(filepath.Dir(storePath), approvalPolicyFile)
 	if err := os.WriteFile(policyPath, []byte(`{"mode":"yolo"}`), 0o600); err != nil {
@@ -122,6 +125,7 @@ func TestCorruptApprovalPolicyIsBackedUpNotTrusted(t *testing.T) {
 }
 
 func TestAutoModeRunsWithoutPromptOrAttention(t *testing.T) {
+	t.Parallel()
 	f := newGateFixture(t)
 	setTestApprovalPolicy(t, f.svc, ApprovalPolicy{Mode: ApprovalModeAuto})
 	events, unsub := f.svc.Subscribe("ses_agy_gate")
@@ -153,6 +157,7 @@ func TestAutoModeRunsWithoutPromptOrAttention(t *testing.T) {
 }
 
 func TestManualModeAsksForReadOnlyCommandsAndWorktreeEdits(t *testing.T) {
+	t.Parallel()
 	f := newClaudeGateFixture(t)
 	setTestApprovalPolicy(t, f.svc, ApprovalPolicy{Mode: ApprovalModeManual})
 	events, unsub := f.svc.Subscribe("ses_cc_gate")
@@ -180,6 +185,7 @@ func TestManualModeAsksForReadOnlyCommandsAndWorktreeEdits(t *testing.T) {
 }
 
 func TestSecretReadsInsideTheWorktreeAlwaysAsk(t *testing.T) {
+	t.Parallel()
 	f := newClaudeGateFixture(t)
 	setTestApprovalPolicy(t, f.svc, ApprovalPolicy{Mode: ApprovalModeAuto})
 	events, unsub := f.svc.Subscribe("ses_cc_gate")
@@ -225,6 +231,7 @@ func TestSecretReadsInsideTheWorktreeAlwaysAsk(t *testing.T) {
 }
 
 func TestPolicyChangeReleasesWaitingRequests(t *testing.T) {
+	t.Parallel()
 	f := newGateFixture(t)
 	events, unsub := f.svc.Subscribe("ses_agy_gate")
 	defer unsub()
@@ -303,6 +310,7 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 }
 
 func TestOpenCodeRequestsAreAnsweredByThePolicy(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	tracker := statusbar.NewTracker()
 	svc := NewService(dir, nil, tracker, filepath.Join(t.TempDir(), "sessions.json"))
@@ -368,4 +376,23 @@ func TestOpenCodeRequestsAreAnsweredByThePolicy(t *testing.T) {
 	if svc.claimOpenCodeSSELine(`data: {"type":"permission.asked","properties":{"id":"per_oc_raw_rm","permission":"bash","patterns":["rm -rf x"]}}`, dir) {
 		t.Fatal("destructive raw frame must reach the user")
 	}
+
+	// The auto-reply goroutine audits after the engine answers, so wait for
+	// the audit writes as well; they land in the store directory and would
+	// otherwise race t.TempDir cleanup.
+	waitFor(t, "all policy audits", func() bool {
+		for _, id := range []string{"per_oc_ok", "per_oc_list_ok", "per_oc_raw"} {
+			found := false
+			for _, e := range svc.audit.list("", 50) {
+				if e.RequestID == id && e.Source == approvalSourcePolicy {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return false
+			}
+		}
+		return true
+	})
 }

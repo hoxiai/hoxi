@@ -21,6 +21,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/testutil/execstub"
 )
 
 func TestOpenCodeResolverAndPathEnrichment(t *testing.T) {
@@ -242,26 +244,15 @@ func TestResolveVersionAndCaching(t *testing.T) {
 	}
 
 	tmpDir := t.TempDir()
-	badBin := filepath.Join(tmpDir, "bad-opencode")
-	if err := os.WriteFile(badBin, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
-		t.Fatalf("write bad script: %v", err)
-	}
+	badBin := execstub.Write(t, tmpDir, "bad-opencode", "exit 1\n")
 	if got := ResolveVersion(badBin); got != "" {
 		t.Fatalf("expected empty version for failing binary, got %q", got)
 	}
 
-	verBin := filepath.Join(tmpDir, "fake-opencode")
-	script := "#!/bin/sh\necho 'opencode 1.18.0'\necho 'extra line'\n"
-	if err := os.WriteFile(verBin, []byte(script), 0o755); err != nil {
-		t.Fatalf("write version script: %v", err)
-	}
+	verBin := execstub.Write(t, tmpDir, "fake-opencode", "echo 'opencode 1.18.0'\necho 'extra line'\n")
 
-	secondBin := filepath.Join(tmpDir, "fake-opencode-2")
 	countFile := filepath.Join(tmpDir, "invocations.log")
-	secondScript := "#!/bin/sh\necho x >> '" + countFile + "'\necho 'opencode 1.19.0'\n"
-	if err := os.WriteFile(secondBin, []byte(secondScript), 0o755); err != nil {
-		t.Fatalf("write second version script: %v", err)
-	}
+	secondBin := execstub.Write(t, tmpDir, "fake-opencode-2", "echo x >> '"+countFile+"'\necho 'opencode 1.19.0'\n")
 
 	got := ResolveVersion(verBin)
 	if got != "opencode 1.18.0" {

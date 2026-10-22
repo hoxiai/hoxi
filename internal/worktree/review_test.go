@@ -57,6 +57,7 @@ func findReviewFile(t *testing.T, snap ReviewSnapshot, name string) ReviewFileDi
 }
 
 func TestCollectUncommittedReviewUsesHeadGuidanceAndIncludesUntracked(t *testing.T) {
+	t.Parallel()
 	dir := newReviewRepo(t, "Base rule: keep functions small.\n")
 	reviewTestWrite(t, filepath.Join(dir, "README.md"), "one\ntwo\n")
 	reviewTestWrite(t, filepath.Join(dir, "new.txt"), "hello\n")
@@ -84,6 +85,7 @@ func TestCollectUncommittedReviewUsesHeadGuidanceAndIncludesUntracked(t *testing
 }
 
 func TestCollectBranchReviewDiffsAgainstMergeBaseAndBaseGuidance(t *testing.T) {
+	t.Parallel()
 	dir := newReviewRepo(t, "Base rule: no panics in handlers.\n")
 	reviewTestGit(t, dir, "checkout", "-q", "-b", "feature")
 	reviewTestWrite(t, filepath.Join(dir, "src.go"), "package x\n")
@@ -119,6 +121,7 @@ func TestCollectBranchReviewDiffsAgainstMergeBaseAndBaseGuidance(t *testing.T) {
 }
 
 func TestReviewGuidanceIsTruncatedToLimit(t *testing.T) {
+	t.Parallel()
 	dir := newReviewRepo(t, strings.Repeat("字", reviewMaxGuidanceRunes+500))
 	snap, err := CollectReviewSnapshot(dir, ReviewUncommitted, "")
 	if err != nil {
@@ -130,6 +133,7 @@ func TestReviewGuidanceIsTruncatedToLimit(t *testing.T) {
 }
 
 func TestCollectReviewRejectsBadInput(t *testing.T) {
+	t.Parallel()
 	dir := newReviewRepo(t, "rules\n")
 	if _, err := CollectReviewSnapshot("relative/path", ReviewUncommitted, ""); err == nil {
 		t.Fatal("relative directory must be rejected")
@@ -149,6 +153,7 @@ func TestCollectReviewRejectsBadInput(t *testing.T) {
 }
 
 func TestSafeReviewPathRejectsEscapes(t *testing.T) {
+	t.Parallel()
 	for path, want := range map[string]bool{
 		"a/b.go": true, "../x": false, "a/../../x": false, "/etc/passwd": false, ".": false, "": false,
 	} {

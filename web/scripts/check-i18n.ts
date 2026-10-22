@@ -162,10 +162,11 @@ if (trailingFullStops.length > 0) {
   console.log('  ✓ No zh-CN translation strings end with "。"');
 }
 
+// Set exitCode instead of calling process.exit() so run-script.js can delete
+// its temporary bundle.
 if (hasError) {
   console.error("\n[i18n-check] ✗ Validation failed! Please fix the discrepancies above.\n");
-  process.exit(1);
+  process.exitCode = 1;
 } else {
   console.log("\n[i18n-check] ✓ All language packs and source usages are 100% synchronized and valid.\n");
-  process.exit(0);
 }

@@ -8,6 +8,7 @@ import (
 )
 
 func TestDestructiveRequestsMatchSharedFixture(t *testing.T) {
+	t.Parallel()
 	raw, err := os.ReadFile(filepath.Join("..", "..", ".opencode", "lib", "permission-request.cases.json"))
 	if err != nil {
 		t.Fatalf("read shared fixture: %v", err)
@@ -47,6 +48,7 @@ func toolReq(tool string, meta map[string]interface{}) map[string]interface{} {
 }
 
 func TestApprovalModesDecideEveryCategory(t *testing.T) {
+	t.Parallel()
 	auto := ApprovalPolicy{Mode: ApprovalModeAuto}
 	smart := ApprovalPolicy{Mode: ApprovalModeSmart}
 	manual := ApprovalPolicy{Mode: ApprovalModeManual}
@@ -88,6 +90,7 @@ func TestApprovalModesDecideEveryCategory(t *testing.T) {
 }
 
 func TestApprovalOverridesReplaceTheModePreset(t *testing.T) {
+	t.Parallel()
 	pol := ApprovalPolicy{Mode: ApprovalModeManual, Edit: "allow"}
 	if !approvalAutoApproves(req("edit", "src/a.ts"), pol, nil, "") {
 		t.Error("edit=allow must apply in manual mode")
@@ -109,6 +112,7 @@ func TestApprovalOverridesReplaceTheModePreset(t *testing.T) {
 }
 
 func TestPermissionRuleObjectsOnlyDecideTheirOwnTargets(t *testing.T) {
+	t.Parallel()
 	auto := ApprovalPolicy{Mode: ApprovalModeAuto}
 	smart := ApprovalPolicy{Mode: ApprovalModeSmart}
 	manual := ApprovalPolicy{Mode: ApprovalModeManual}
@@ -152,6 +156,7 @@ func TestPermissionRuleObjectsOnlyDecideTheirOwnTargets(t *testing.T) {
 }
 
 func TestSmartModeDropsLeadingWorktreeCD(t *testing.T) {
+	t.Parallel()
 	worktree := t.TempDir()
 	smart := ApprovalPolicy{Mode: ApprovalModeSmart}
 	if !approvalAutoApproves(req("bash", "cd "+worktree+" && git status"), smart, nil, worktree) {
