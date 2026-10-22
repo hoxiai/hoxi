@@ -119,7 +119,7 @@ func TestConversationRoutesToOwningBackend(t *testing.T) {
 		t.Fatalf("owned summarize: %d %s", res.Code, res.Body.String())
 	}
 	res = serve(gw, http.MethodPost, "/api/hoxi/sessions/ses_cld_owned/revert", `{"messageID":"msg"}`)
-	if res.Code != http.StatusOK || !strings.Contains(res.Body.String(), `"revert":{"messageID":"msg"}`) {
+	if res.Code != http.StatusOK || !strings.Contains(res.Body.String(), `"revert":{"messageID":"msg","codeChanged":false}`) {
 		t.Fatalf("owned revert: %d %s", res.Code, res.Body.String())
 	}
 	res = serve(gw, http.MethodGet, "/api/hoxi/sessions/ses_cld_owned/diff", "")

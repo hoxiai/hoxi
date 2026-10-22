@@ -36,6 +36,7 @@ export interface SessionInfo {
     partID?: string;
     snapshot?: string;
     diff?: string;
+    codeChanged?: boolean;
   };
   capabilities?: SessionCapabilities;
 }

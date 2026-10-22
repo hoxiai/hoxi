@@ -123,6 +123,13 @@ func (s *Service) handleSessionRevert(w http.ResponseWriter, r *http.Request, se
 		writeJSONError(w, http.StatusInternalServerError, "failed to capture workspace snapshot for revert")
 		return
 	}
+	// baseSnap is the workspace tree before this revert was applied. A revert
+	// with no diff against the checkpoint only rolled back conversation turns.
+	baseSnap := createdSnapshot
+	if rec.Revert != nil {
+		baseSnap = strings.TrimSpace(rec.RevertSnapshot)
+	}
+	codeChanged := targetSnap != "" && baseSnap != "" && baseSnap != targetSnap
 	if targetSnap != "" && strings.TrimSpace(rec.WorktreePath) != "" {
 		if err := worktree.RestoreSnapshot(rec.WorktreePath, targetSnap); err != nil {
 			writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("failed to restore workspace snapshot: %v", err))
@@ -137,8 +144,9 @@ func (s *Service) handleSessionRevert(w http.ResponseWriter, r *http.Request, se
 
 	rec.Turns = truncateTurnsForRevert(allTurns, body.MessageID, body.PartID)
 	rec.Revert = &SessionRevert{
-		MessageID: body.MessageID,
-		PartID:    body.PartID,
+		MessageID:   body.MessageID,
+		PartID:      body.PartID,
+		CodeChanged: codeChanged,
 	}
 	rec.UpdatedAt = time.Now().UnixMilli()
 

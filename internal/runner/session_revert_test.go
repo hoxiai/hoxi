@@ -319,6 +319,83 @@ func TestSessionRevertToolTargetUsesExchangeCheckpoint(t *testing.T) {
 	}
 }
 
+func TestSessionRevertReportsCodeChanged(t *testing.T) {
+	repo := initTestGitRepo(t)
+	trackedFile := filepath.Join(repo, "README.md")
+
+	cleanSnap, err := worktree.CreateSnapshot(repo)
+	if err != nil || cleanSnap == "" {
+		t.Fatalf("CreateSnapshot clean: %v", err)
+	}
+
+	storeDir := filepath.Join(t.TempDir(), "sessions")
+	svc := NewService(repo, worktree.NewManager(repo), nil, storeDir)
+	turns := []MessageTurn{
+		{
+			Info:  MessageInfo{ID: "msg_u_1", SessionID: "ses_hoxi_code", Role: "user"},
+			Parts: []MessagePart{{ID: "prt_u_1", SessionID: "ses_hoxi_code", MessageID: "msg_u_1", Type: "text", Text: "just a question"}},
+		},
+		{
+			Info:  MessageInfo{ID: "msg_a_1", SessionID: "ses_hoxi_code", Role: "assistant"},
+			Parts: []MessagePart{{ID: "prt_a_1", SessionID: "ses_hoxi_code", MessageID: "msg_a_1", Type: "text", Text: "just an answer"}},
+		},
+	}
+	if err := svc.Store().Put(SessionRecord{
+		ID:           "ses_hoxi_code",
+		Runtime:      "claude-code",
+		ProjectDir:   repo,
+		WorktreePath: repo,
+		SandboxMode:  "local",
+		Turns:        turns,
+		Snapshots:    map[string]string{"msg_u_1": cleanSnap},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+	svc.RegisterRoutes(mux)
+
+	// Conversation-only revert: the workspace matches the checkpoint, so the
+	// revert must not claim any code was rolled back.
+	req := httptest.NewRequest(http.MethodPost, "/api/hoxi/runner/sessions/ses_hoxi_code/revert", strings.NewReader(`{"messageID":"msg_u_1"}`))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("conversation-only revert status = %d: %s", w.Code, w.Body.String())
+	}
+	var info SessionInfo
+	if err := json.Unmarshal(w.Body.Bytes(), &info); err != nil {
+		t.Fatal(err)
+	}
+	if info.Revert == nil || info.Revert.CodeChanged {
+		t.Fatalf("expected codeChanged=false for conversation-only revert, got %+v", info.Revert)
+	}
+
+	// Undo, then edit a file before reverting the same checkpoint.
+	req = httptest.NewRequest(http.MethodPost, "/api/hoxi/runner/sessions/ses_hoxi_code/unrevert", strings.NewReader(`{}`))
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("unrevert status = %d: %s", w.Code, w.Body.String())
+	}
+	if err := os.WriteFile(trackedFile, []byte("code edited\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/hoxi/runner/sessions/ses_hoxi_code/revert", strings.NewReader(`{"messageID":"msg_u_1"}`))
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("code revert status = %d: %s", w.Code, w.Body.String())
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &info); err != nil {
+		t.Fatal(err)
+	}
+	if info.Revert == nil || !info.Revert.CodeChanged {
+		t.Fatalf("expected codeChanged=true when files were rolled back, got %+v", info.Revert)
+	}
+}
+
 func TestSessionForkRejectsUnknownMessageAndCopiesSnapshots(t *testing.T) {
 	repo := initTestGitRepo(t)
 	snap1, err := worktree.CreateSnapshot(repo)

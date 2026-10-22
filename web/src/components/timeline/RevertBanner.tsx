@@ -35,6 +35,11 @@ export default function RevertBanner() {
 
   const revertBoundary = createMemo(() => activeSession()?.revert?.messageID ?? null);
 
+  // Only surface the reverted-state chip when the revert actually rolled back
+  // workspace files. Conversation-only reverts restore the composer draft and
+  // need no standing notice. Older payloads omit codeChanged, so keep showing.
+  const codeReverted = createMemo(() => activeSession()?.revert?.codeChanged !== false);
+
   const revertedTurnCount = createMemo(() => {
     const id = workspace.activeSessionID;
     const boundary = revertBoundary();
@@ -202,7 +207,7 @@ export default function RevertBanner() {
         )}
       </Show>
 
-      <Show when={revertBoundary()}>
+      <Show when={revertBoundary() && codeReverted()}>
         <div class="inline-flex items-center gap-1.5 rounded-full border border-[var(--warn-border)] bg-[var(--warn-surface)]/90 px-2.5 py-1 shadow-xs">
           <Undo2 size={12.5} class="text-[var(--warn-text)] shrink-0" />
           <span class="truncate text-[11px] font-medium text-[var(--warn-text)]">

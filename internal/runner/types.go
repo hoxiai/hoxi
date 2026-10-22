@@ -38,6 +38,10 @@ type SessionTime struct {
 type SessionRevert struct {
 	MessageID string `json:"messageID"`
 	PartID    string `json:"partID,omitempty"`
+	// CodeChanged reports whether the revert rolled back any workspace file
+	// changes. Conversation-only reverts leave it false so the UI can avoid
+	// claiming code was reverted when nothing was touched.
+	CodeChanged bool `json:"codeChanged"`
 }
 
 type SessionCapabilities struct {
