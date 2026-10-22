@@ -48,7 +48,10 @@ type requestLogEntry struct {
 	ReasoningTokens  int64  `json:"reasoningTokens"`
 	CacheReadTokens  int64  `json:"cacheReadTokens"`
 	CacheWriteTokens int64  `json:"cacheWriteTokens"`
-	Error            string `json:"error,omitempty"`
+	// Cost is what the runtime recorded, if anything. The frontend prices from
+	// the catalog when it is zero, so this is only a reported figure.
+	Cost  float64 `json:"cost,omitempty"`
+	Error string  `json:"error,omitempty"`
 }
 
 type requestLogResponse struct {
@@ -150,6 +153,7 @@ func requestLogFromTurn(turn runner.MessageTurn, rec runner.SessionRecord, runti
 		entry.CacheReadTokens = int64(tokens.Cache.Read)
 		entry.CacheWriteTokens = int64(tokens.Cache.Write)
 	}
+	entry.Cost = info.Cost
 	entry.FirstTokenMs = turnFirstTokenMs(turn, info.Time.Created)
 	switch {
 	case failed:
@@ -234,6 +238,7 @@ SELECT
   CAST(COALESCE(json_extract(m.data, '$.tokens.reasoning'), 0) AS INTEGER) AS reasoning,
   CAST(COALESCE(json_extract(m.data, '$.tokens.cache.read'), 0) AS INTEGER) AS cache_read,
   CAST(COALESCE(json_extract(m.data, '$.tokens.cache.write'), 0) AS INTEGER) AS cache_write,
+  CAST(COALESCE(json_extract(m.data, '$.cost'), 0) AS REAL) AS cost,
   CAST(COALESCE(json_extract(m.data, '$.error.data.statusCode'), 0) AS INTEGER) AS status,
   COALESCE(json_extract(m.data, '$.error.data.message'), json_extract(m.data, '$.error.name'), '') AS error,
   COALESCE((
@@ -272,10 +277,11 @@ LIMIT %d;`, handoff.SQLNotImportedTitleClause("s.title"), cutoffMs, requestLogMa
 		Output     int64  `json:"output"`
 		Reasoning  int64  `json:"reasoning"`
 		CacheRead  int64  `json:"cache_read"`
-		CacheWrite int64  `json:"cache_write"`
-		Status     int    `json:"status"`
-		Error      string `json:"error"`
-		FirstPart  int64  `json:"first_part"`
+		CacheWrite int64   `json:"cache_write"`
+		Cost       float64 `json:"cost"`
+		Status     int     `json:"status"`
+		Error      string  `json:"error"`
+		FirstPart  int64   `json:"first_part"`
 	}
 	if err := json.Unmarshal(bytes.TrimSpace(out), &rows); err != nil {
 		return nil
@@ -294,7 +300,7 @@ LIMIT %d;`, handoff.SQLNotImportedTitleClause("s.title"), cutoffMs, requestLogMa
 			DurationMs: durationFromMillis(row.Time, row.Completed), ProviderID: row.ProviderID,
 			ModelID: row.ModelID, Client: "local", Status: row.Status, Level: level,
 			InputTokens: row.Input, OutputTokens: row.Output, ReasoningTokens: row.Reasoning,
-			CacheReadTokens: row.CacheRead, CacheWriteTokens: row.CacheWrite, Error: trimLogText(row.Error),
+			CacheReadTokens: row.CacheRead, CacheWriteTokens: row.CacheWrite, Cost: row.Cost, Error: trimLogText(row.Error),
 			FirstTokenMs: durationFromMillis(row.Time, row.FirstPart),
 		})
 	}

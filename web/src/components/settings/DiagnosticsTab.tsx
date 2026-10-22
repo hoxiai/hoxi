@@ -1,10 +1,10 @@
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 import { ChevronLeft, ChevronRight, Columns3, RefreshCw, X } from "lucide-solid";
 import { locale, t } from "../../i18n";
-import { formatCompactNumber } from "../../i18n/format";
+import { formatCompactNumber, formatUsd } from "../../i18n/format";
 import {
-  loadRequestContent, loadRequestLog, requestLog, requestLogError, requestLogLoading,
-  requestLogTotal,
+  estimateTokenCostUsd, loadRequestContent, loadRequestLog, requestLog, requestLogError,
+  requestLogLoading, requestLogTotal, syncOfficialModelPricing,
 } from "../../store/workspace";
 import type { RequestLogContent, RequestLogContentPart, RequestLogEntry } from "../../services/api";
 
@@ -12,10 +12,10 @@ const control = "rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-pa
 const button = "inline-flex items-center justify-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] disabled:opacity-40 disabled:cursor-default cursor-pointer";
 const headCell = "px-3 py-2 text-left font-medium";
 
-type ColumnKey = "time" | "providerModel" | "status" | "firstToken" | "duration" | "tokens" | "error";
+type ColumnKey = "time" | "providerModel" | "status" | "firstToken" | "duration" | "tokens" | "cost" | "error";
 type StatusFilter = "" | "ok" | "failed" | "pending";
 
-const COLUMNS: ColumnKey[] = ["time", "providerModel", "status", "firstToken", "duration", "tokens", "error"];
+const COLUMNS: ColumnKey[] = ["time", "providerModel", "status", "firstToken", "duration", "tokens", "cost", "error"];
 const SLOW_OPTIONS = [0, 5000, 10000, 30000];
 const PAGE_SIZES = [20, 50, 100];
 // A call still running after this long is flagged as timed out.
@@ -29,8 +29,9 @@ const COLUMN_WIDTH: Record<ColumnKey, string> = {
   status: "w-[76px]",
   firstToken: "w-[72px]",
   duration: "w-[72px]",
-  tokens: "w-[156px]",
-  error: "w-[180px]",
+  tokens: "w-[148px]",
+  cost: "w-[84px]",
+  error: "w-[160px]",
 };
 
 const COLUMN_LABEL: Record<ColumnKey, () => string> = {
@@ -40,8 +41,22 @@ const COLUMN_LABEL: Record<ColumnKey, () => string> = {
   firstToken: () => t("diagnostics.colFirstToken"),
   duration: () => t("diagnostics.colDuration"),
   tokens: () => t("diagnostics.colTokens"),
+  cost: () => t("diagnostics.colCost"),
   error: () => t("diagnostics.colError"),
 };
+
+// Prefer the runtime-reported cost; fall back to the shared catalog estimate so
+// the row agrees with the usage history and the daily pulse.
+function entryCost(entry: RequestLogEntry): number | null {
+  if (entry.cost && entry.cost > 0) return entry.cost;
+  return estimateTokenCostUsd(entry.modelID, {
+    input: entry.inputTokens,
+    output: entry.outputTokens,
+    reasoning: entry.reasoningTokens,
+    cacheRead: entry.cacheReadTokens,
+    cacheWrite: entry.cacheWriteTokens,
+  });
+}
 
 function formatDuration(ms: number): string {
   if (ms <= 0) return "—";
@@ -117,6 +132,7 @@ export default function DiagnosticsTab() {
   const [nowMs, setNowMs] = createSignal(Date.now());
 
   createEffect(() => {
+    void syncOfficialModelPricing();
     const timer = setTimeout(() => void loadRequestLog(), 0);
     onCleanup(() => clearTimeout(timer));
   });
@@ -157,6 +173,10 @@ export default function DiagnosticsTab() {
     if (needle && !`${entry.providerID} ${entry.modelID} ${entry.sessionID} ${entry.error || ""}`.toLowerCase().includes(needle)) return false;
     return true;
   }));
+
+  const totalCost = createMemo(() => filtered().reduce((sum, entry) => sum + (entryCost(entry) ?? 0), 0));
+  const unpricedModels = createMemo(() =>
+    unique(filtered().filter((entry) => entryCost(entry) === null).map((entry) => entry.modelID)));
 
   const pageCount = createMemo(() => Math.max(1, Math.ceil(filtered().length / pageSize())));
   const rows = createMemo(() => {
@@ -251,6 +271,7 @@ export default function DiagnosticsTab() {
                 <Show when={visible("firstToken")}><th class={`${headCell} ${COLUMN_WIDTH.firstToken} text-right`}>{t("diagnostics.colFirstToken")}</th></Show>
                 <Show when={visible("duration")}><th class={`${headCell} ${COLUMN_WIDTH.duration} text-right`}>{t("diagnostics.colDuration")}</th></Show>
                 <Show when={visible("tokens")}><th class={`${headCell} ${COLUMN_WIDTH.tokens}`}>{t("diagnostics.colTokens")}</th></Show>
+                <Show when={visible("cost")}><th class={`${headCell} ${COLUMN_WIDTH.cost} text-right`}>{t("diagnostics.colCost")}</th></Show>
                 <Show when={visible("error")}><th class={`${headCell} ${COLUMN_WIDTH.error}`}>{t("diagnostics.colError")}</th></Show>
                 <th class="sticky right-0 bg-[var(--bg-canvas)] px-3 py-2 text-right font-medium shadow-[-8px_0_8px_-8px_var(--border-strong)]">{t("diagnostics.colDetails")}</th>
               </tr>
@@ -315,6 +336,11 @@ export default function DiagnosticsTab() {
                           </Show>
                         </td>
                       </Show>
+                      <Show when={visible("cost")}>
+                        <td class="px-3 py-2 text-right font-mono text-[11px] text-[var(--text-secondary)]">
+                          {(() => { const cost = entryCost(entry); return cost === null ? t("diagnostics.noError") : formatUsd(cost); })()}
+                        </td>
+                      </Show>
                       <Show when={visible("error")}>
                         <td class="truncate px-3 py-2 text-[11px] text-[var(--danger-text)]" title={entry.error || ""}>{entry.error || t("diagnostics.noError")}</td>
                       </Show>
@@ -327,6 +353,16 @@ export default function DiagnosticsTab() {
               </For>
             </tbody>
           </table>
+        </div>
+      </Show>
+
+      <Show when={rows().length > 0}>
+        <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] text-[var(--text-muted)]">
+          <span title={t("diagnostics.costNote")}>{t("diagnostics.summaryCost", { cost: formatUsd(totalCost()) })}</span>
+          <Show when={unpricedModels().length > 0}>
+            <span class="text-[var(--warn-text)]" title={unpricedModels().join(", ")}>{t("diagnostics.costUnpriced", { models: unpricedModels().slice(0, 3).join(", ") })}</span>
+          </Show>
+          <span class="text-[var(--text-faint)]">{t("diagnostics.costNote")}</span>
         </div>
       </Show>
 
@@ -391,6 +427,10 @@ function RequestDetail(props: { entry: RequestLogEntry; onClose: () => void }) {
         <dd class="font-mono text-[var(--text-secondary)]">
           {t("diagnostics.usageLine", { input: props.entry.inputTokens.toLocaleString(), output: props.entry.outputTokens.toLocaleString(), total: totalTokens(props.entry).toLocaleString() })}
           <div class="text-[var(--text-muted)]">{t("diagnostics.cacheLine", { cache: props.entry.cacheReadTokens.toLocaleString(), reasoning: props.entry.reasoningTokens.toLocaleString() })}</div>
+        </dd>
+        <dt class="text-[var(--text-muted)]">{t("diagnostics.colCost")}</dt>
+        <dd class="font-mono text-[var(--text-secondary)]">
+          {(() => { const cost = entryCost(props.entry); return cost === null ? t("diagnostics.noError") : formatUsd(cost); })()}
         </dd>
         <dt class="text-[var(--text-muted)]">{t("diagnostics.colClient")}</dt><dd class="text-[var(--text-secondary)]">{t("diagnostics.clientLocal")}</dd>
         <dt class="text-[var(--text-muted)]">{t("diagnostics.session")}</dt><dd class="break-all font-mono text-[var(--text-secondary)]">{props.entry.sessionID}</dd>

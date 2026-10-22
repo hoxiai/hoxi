@@ -596,6 +596,7 @@ export interface RequestLogEntry {
   reasoningTokens: number;
   cacheReadTokens: number;
   cacheWriteTokens: number;
+  cost?: number;
   error?: string;
 }
 
