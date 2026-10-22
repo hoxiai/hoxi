@@ -9,23 +9,32 @@ const [requestLogLoading, setRequestLogLoading] = createSignal(false);
 const [requestLogError, setRequestLogError] = createSignal("");
 
 let generation = 0;
+let signature = "";
 
 export { requestLog, requestLogTotal, requestLogLoading, requestLogError };
 
-export async function loadRequestLog() {
+// silent skips the loading flag so background refreshes do not flash the view,
+// and an unchanged payload is dropped so the list does not re-render needlessly.
+export async function loadRequestLog(opts: { silent?: boolean } = {}) {
   const request = ++generation;
-  setRequestLogLoading(true);
+  if (!opts.silent) setRequestLogLoading(true);
   setRequestLogError("");
   try {
     const res = await hoxiAPI.getRequestLog(500);
     if (request !== generation) return;
-    setRequestLog(Array.isArray(res?.entries) ? res.entries : []);
-    setRequestLogTotal(res?.total || 0);
+    const entries = Array.isArray(res?.entries) ? res.entries : [];
+    const next = JSON.stringify(entries);
+    if (next !== signature) {
+      signature = next;
+      setRequestLog(entries);
+      setRequestLogTotal(res?.total || 0);
+    }
   } catch (err: any) {
     if (request !== generation) return;
+    signature = "";
     setRequestLog([]);
     setRequestLogError(String(err?.message || err || ""));
   } finally {
-    if (request === generation) setRequestLogLoading(false);
+    if (!opts.silent && request === generation) setRequestLogLoading(false);
   }
 }

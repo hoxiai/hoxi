@@ -15,6 +15,7 @@ export const diagnostics = {
   durationSeconds: "{seconds}s",
   durationMinutes: "{minutes}m {seconds}s",
   statusPending: "In progress",
+  statusTimeout: "Timed out",
   colTime: "Time",
   colProvider: "Provider",
   colProviderModel: "Provider / Model",

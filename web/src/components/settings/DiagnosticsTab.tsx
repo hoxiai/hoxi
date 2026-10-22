@@ -16,7 +16,11 @@ type StatusFilter = "" | "ok" | "failed" | "pending";
 
 const COLUMNS: ColumnKey[] = ["time", "providerModel", "status", "firstToken", "duration", "tokens", "error"];
 const SLOW_OPTIONS = [0, 5000, 10000, 30000];
-const PAGE_SIZES = [25, 50, 100];
+const PAGE_SIZES = [20, 50, 100];
+// A call still running after this long is flagged as timed out.
+const TIMEOUT_MS = 60_000;
+// Background refresh cadence while the log is open.
+const REFRESH_MS = 5000;
 
 const COLUMN_WIDTH: Record<ColumnKey, string> = {
   time: "w-[86px]",
@@ -82,6 +86,18 @@ function statusTitle(entry: RequestLogEntry): string {
   return entry.status ? `HTTP ${entry.status}` : badgeText(entry);
 }
 
+function rowTone(entry: RequestLogEntry): string {
+  if (isFailed(entry)) return "bg-[var(--danger-surface)]/35";
+  if (isPending(entry)) return "bg-[var(--warn-surface)]/25";
+  return "";
+}
+
+function cellTone(entry: RequestLogEntry): string {
+  if (isFailed(entry)) return "bg-[var(--danger-surface)]";
+  if (isPending(entry)) return "bg-[var(--warn-surface)]";
+  return "bg-[var(--bg-canvas)]";
+}
+
 function slowLabel(value: number): string {
   return value === 0 ? t("diagnostics.slowNone") : t("diagnostics.slowOver", { seconds: value / 1000 });
 }
@@ -96,11 +112,28 @@ export default function DiagnosticsTab() {
   const [slowMs, setSlowMs] = createSignal(0);
   const [query, setQuery] = createSignal("");
   const [page, setPage] = createSignal(1);
-  const [pageSize, setPageSize] = createSignal(50);
+  const [pageSize, setPageSize] = createSignal(20);
+  const [nowMs, setNowMs] = createSignal(Date.now());
 
   createEffect(() => {
     const timer = setTimeout(() => void loadRequestLog(), 0);
     onCleanup(() => clearTimeout(timer));
+  });
+
+  // Keep the list live while the tab is open; unchanged payloads are dropped so
+  // the view only re-renders when something actually changed.
+  createEffect(() => {
+    const poll = setInterval(() => void loadRequestLog({ silent: true }), REFRESH_MS);
+    onCleanup(() => clearInterval(poll));
+  });
+
+  // Tick the elapsed clock once a second only while something is running.
+  const hasPending = createMemo(() => requestLog().some(isPending));
+  createEffect(() => {
+    if (!hasPending()) return;
+    setNowMs(Date.now());
+    const tick = setInterval(() => setNowMs(Date.now()), 1000);
+    onCleanup(() => clearInterval(tick));
   });
 
   // Any filter change returns to the first page so the view never looks empty.
@@ -225,9 +258,10 @@ export default function DiagnosticsTab() {
               <For each={rows()}>
                 {(entry) => {
                   const when = formatWhen(entry.time);
-                  const failed = isFailed(entry);
+                  const pending = isPending(entry);
+                  const timedOut = () => pending && nowMs() - entry.time >= TIMEOUT_MS;
                   return (
-                    <tr class={`border-b border-[var(--border-subtle)]/70 last:border-0 ${failed ? "bg-[var(--danger-surface)]/35" : ""}`}>
+                    <tr class={`border-b border-[var(--border-subtle)]/70 last:border-0 ${rowTone(entry)}`}>
                       <Show when={visible("time")}>
                         <td class="whitespace-nowrap px-3 py-2 font-mono text-[11px] leading-4 text-[var(--text-secondary)]">
                           <div>{when.date}</div>
@@ -245,7 +279,15 @@ export default function DiagnosticsTab() {
                       </Show>
                       <Show when={visible("status")}>
                         <td class="px-3 py-2">
-                          <span class={`inline-block rounded-full px-2 py-0.5 text-[11px] font-medium ${badgeClass(entry)}`} title={statusTitle(entry)}>{badgeText(entry)}</span>
+                          <span
+                            class={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium ${timedOut() ? "bg-[var(--danger-surface)] text-[var(--danger-text)]" : badgeClass(entry)}`}
+                            title={pending ? formatDuration(nowMs() - entry.time) : statusTitle(entry)}
+                          >
+                            <Show when={pending}>
+                              <span class="h-1.5 w-1.5 animate-pulse rounded-full bg-current" aria-hidden="true" />
+                            </Show>
+                            {timedOut() ? t("diagnostics.statusTimeout") : badgeText(entry)}
+                          </span>
                         </td>
                       </Show>
                       <Show when={visible("firstToken")}>
@@ -253,21 +295,23 @@ export default function DiagnosticsTab() {
                       </Show>
                       <Show when={visible("duration")}>
                         <td class="px-3 py-2 text-right font-mono text-[11px] text-[var(--text-secondary)]">
-                          {formatDuration(isPending(entry) ? Date.now() - entry.time : entry.durationMs)}
+                          {formatDuration(pending ? nowMs() - entry.time : entry.durationMs)}
                         </td>
                       </Show>
                       <Show when={visible("tokens")}>
                         <td class="px-3 py-2 font-mono text-[11px] leading-4 text-[var(--text-secondary)]">
-                          <div class="text-[var(--text-primary)]" title={totalTokens(entry).toLocaleString()}>{formatCompactNumber(totalTokens(entry))}</div>
-                          <div class="truncate text-[11px] text-[var(--text-muted)]" title={t("diagnostics.usageLine", { input: entry.inputTokens.toLocaleString(), output: entry.outputTokens.toLocaleString(), total: totalTokens(entry).toLocaleString() })}>
-                            {t("diagnostics.tokensInOut", { input: formatCompactNumber(entry.inputTokens), output: formatCompactNumber(entry.outputTokens) })}
-                          </div>
+                          <Show when={!pending || totalTokens(entry) > 0} fallback={<span class="text-[var(--text-muted)]">{t("diagnostics.noError")}</span>}>
+                            <div class="text-[var(--text-primary)]" title={totalTokens(entry).toLocaleString()}>{formatCompactNumber(totalTokens(entry))}</div>
+                            <div class="truncate text-[11px] text-[var(--text-muted)]" title={t("diagnostics.usageLine", { input: entry.inputTokens.toLocaleString(), output: entry.outputTokens.toLocaleString(), total: totalTokens(entry).toLocaleString() })}>
+                              {t("diagnostics.tokensInOut", { input: formatCompactNumber(entry.inputTokens), output: formatCompactNumber(entry.outputTokens) })}
+                            </div>
+                          </Show>
                         </td>
                       </Show>
                       <Show when={visible("error")}>
                         <td class="truncate px-3 py-2 text-[11px] text-[var(--danger-text)]" title={entry.error || ""}>{entry.error || t("diagnostics.noError")}</td>
                       </Show>
-                      <td class={`sticky right-0 px-3 py-2 text-right shadow-[-8px_0_8px_-8px_var(--border-strong)] ${failed ? "bg-[var(--danger-surface)]" : "bg-[var(--bg-canvas)]"}`}>
+                      <td class={`sticky right-0 px-3 py-2 text-right shadow-[-8px_0_8px_-8px_var(--border-strong)] ${cellTone(entry)}`}>
                         <button type="button" class={button} onClick={() => setSelected(entry)}>{t("diagnostics.details")}</button>
                       </td>
                     </tr>

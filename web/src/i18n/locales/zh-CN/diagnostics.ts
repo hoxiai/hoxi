@@ -15,6 +15,7 @@ export const diagnostics = {
   durationSeconds: "{seconds}秒",
   durationMinutes: "{minutes}分{seconds}秒",
   statusPending: "进行中",
+  statusTimeout: "超时",
   colTime: "时间",
   colProvider: "提供商",
   colProviderModel: "提供商 / 模型",
