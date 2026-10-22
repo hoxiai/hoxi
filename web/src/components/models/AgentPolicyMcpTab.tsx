@@ -6,6 +6,7 @@ import {
   Shield,
   ShieldAlert,
   ShieldCheck,
+  ShieldOff,
 } from "lucide-solid";
 import { t } from "../../i18n";
 import {
@@ -32,12 +33,14 @@ interface PresetCardOption {
   labelKey:
     | "approval.modeAutoLabel"
     | "approval.modeSmartLabel"
-    | "approval.modeManualLabel";
+    | "approval.modeManualLabel"
+    | "approval.modeTrustedLabel";
   descKey:
     | "approval.modeAutoDesc"
     | "approval.modeSmartDesc"
-    | "approval.modeManualDesc";
-  badgeKey?: "approval.modeAutoBadge";
+    | "approval.modeManualDesc"
+    | "approval.modeTrustedDesc";
+  badgeKey?: "approval.modeAutoBadge" | "approval.modeTrustedBadge";
 }
 
 const PRESET_OPTIONS: PresetCardOption[] = [
@@ -57,9 +60,16 @@ const PRESET_OPTIONS: PresetCardOption[] = [
     labelKey: "approval.modeManualLabel",
     descKey: "approval.modeManualDesc",
   },
+  {
+    id: "trusted",
+    labelKey: "approval.modeTrustedLabel",
+    descKey: "approval.modeTrustedDesc",
+    badgeKey: "approval.modeTrustedBadge",
+  },
 ];
 
 function renderPresetIcon(mode: ApprovalMode, size = 15) {
+  if (mode === "trusted") return <ShieldOff size={size} class="shrink-0" />;
   if (mode === "auto") return <ShieldCheck size={size} class="shrink-0" />;
   if (mode === "smart") return <Shield size={size} class="shrink-0" />;
   return <ShieldAlert size={size} class="shrink-0" />;
@@ -148,7 +158,7 @@ export default function AgentPolicyMcpTab() {
             </span>
           </div>
 
-          <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
             <For each={PRESET_OPTIONS}>
               {(opt) => {
                 const isSelected = () => currentMode() === opt.id;
@@ -168,7 +178,9 @@ export default function AgentPolicyMcpTab() {
                           <span
                             class={`flex h-7 w-7 items-center justify-center rounded-lg ${
                               isSelected()
-                                ? opt.id === "manual"
+                                ? opt.id === "trusted"
+                                  ? "bg-[var(--danger-text)] text-white"
+                                  : opt.id === "manual"
                                   ? "bg-[var(--warn-text)] text-white"
                                   : opt.id === "auto"
                                     ? "bg-[var(--ok-text)] text-white"
@@ -194,7 +206,11 @@ export default function AgentPolicyMcpTab() {
 
                     <Show when={opt.badgeKey}>
                       <div class="mt-3 pt-2 border-t border-[var(--border-subtle)]/60 flex items-center">
-                        <span class="rounded px-1.5 py-0.5 text-[11px] font-medium bg-[var(--ok-surface)] text-[var(--ok-text)] border border-[var(--ok-border)]">
+                        <span
+                          class={`rounded px-1.5 py-0.5 text-[11px] font-medium ${
+                            opt.id === "trusted" ? "bg-[var(--danger-surface)] text-[var(--danger-text)] border border-[var(--danger-border)]" : "bg-[var(--ok-surface)] text-[var(--ok-text)] border border-[var(--ok-border)]"
+                          }`}
+                        >
                           {t(opt.badgeKey!)}
                         </span>
                       </div>

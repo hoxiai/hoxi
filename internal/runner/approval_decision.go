@@ -79,7 +79,8 @@ var (
 // (written by "always allow" on an approval card) apply to every runtime.
 // worktree scopes a leading `cd` in smart-mode command checks.
 func approvalAutoApproves(item map[string]interface{}, pol ApprovalPolicy, rules map[string]interface{}, worktree string) bool {
-	if isDestructivePermissionRequest(item) {
+	if isDestructivePermissionRequest(item) &&
+		!(pol.Mode == ApprovalModeTrusted && trustedRecoverableRequest(item, worktree)) {
 		return false
 	}
 	perm := permissionName(item)
@@ -325,7 +326,11 @@ func isDestructivePermissionRequest(item map[string]interface{}) bool {
 			return false
 		}
 	}
-	blob := perm + "\n" + strings.Join(commandCandidates(item), "\n")
+	candidates := commandCandidates(item)
+	for i, cmd := range candidates {
+		candidates[i] = maskCommandDataArguments(cmd)
+	}
+	blob := perm + "\n" + strings.Join(candidates, "\n")
 	return matchesDestructive(blob) || matchesDestructive(deobfuscator.Replace(blob))
 }
 

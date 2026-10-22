@@ -20,6 +20,8 @@
 - worktree 内的写操作仍需对**能控制执行的路径**询问：`.git/**`、`.agents/**`、`.opencode/**`、`.claude/**`、`.hoxi/**`、`.envrc`、`.vscode/settings.json`；worktree 内外读取 `.env`（`.env.example` 除外）等敏感凭据文件在任何模式下都必须询问。Agent 不得能自行关掉门控。
 - **OpenCode 的 `permission` 必须保持 `ask`，对象规则必须有 `"*": "ask"` 兜底**（`provider.normalizeApprovalPermissions`），否则 OpenCode 会在内部直接放行并绕过 Hoxi。
 - **Go 与 JS 两套策略必须对齐**：任何规则改动同时修改 `internal/runner/permission_policy.go` / `approval_decision.go` 与 `.opencode/lib/permission-policy.js`，并把用例写进共享的两个 fixture：`.opencode/lib/permission-policy.cases.json`（命令级）和 `.opencode/lib/permission-request.cases.json`（请求级）。只改一边视为未完成。
+- **破坏性判定不扫描数据参数**：提交说明（`git commit -m`）、搜索词（`rg`/`grep` 的模式）、`echo`/`printf` 文本先经 `maskCommandDataArguments` 替换再匹配，避免 `-m "restore …"`、`rg "Shutdown"` 误报。只替换整词字面量；含 `$`/反引号/`$(`/heredoc/子 Shell 的命令、链中出现 `sh`/`bash`/`eval`/`xargs`/`sudo` 等执行器、或 `echo` 文本被管道或文件喂给 `awk`/`sed`/`python`/`node` 时一律不替换。重定向目标永远不算数据。
+- **完全信任模式（`trusted`）只放行可恢复的破坏性操作**（实现见 `internal/runner/approval_trusted.go`）：隔离 worktree 内的路径删除与 `git reset --hard`/`checkout --`/`restore`/`clean`，以及临时目录下的具体条目。新增放行形式前必须同时写允许用例和“越界/伪装”拒绝用例（`approval_trusted_test.go`），硬底线清单见 AGENTS.md 第 6 条，不得因“用户已选择完全信任”而放宽。
 - 每发现一个绕过，必须作为回归用例写进对应 `*.cases.json`。
 
 自检：对你新增的每条"allow"路径，尝试用引号、反斜杠、`;`/`&&`/`|` 链接、`$()` 构造绕过，并写成用例。

@@ -74,7 +74,7 @@ func setOf(items ...string) map[string]bool {
 
 // isDestructiveCommand mirrors isDestructivePermissionRequest for a bash request.
 func isDestructiveCommand(command string) bool {
-	blob := "bash\n" + strings.TrimSpace(command)
+	blob := "bash\n" + maskCommandDataArguments(strings.TrimSpace(command))
 	return matchesDestructive(blob) || matchesDestructive(deobfuscator.Replace(blob))
 }
 

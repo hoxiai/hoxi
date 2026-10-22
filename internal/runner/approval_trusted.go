@@ -1,0 +1,342 @@
+package runner
+
+import (
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+)
+
+// ApprovalModeTrusted behaves like auto mode and additionally lets through
+// destructive commands whose effect stays inside the session's own Hoxi git
+// worktree, where the per-prompt checkpoints (message rollback) and git can
+// undo them, or that only delete throwaway files under the system temp
+// directories. Everything else that is destructive still reaches the user:
+// secret reads, credential/sensitive paths, execution-controlling files
+// (.git, .opencode, .claude, .hoxi, ...), sudo, force pushes, publishing,
+// shared git state (branches, stash, worktrees), process control and the
+// doom-loop guard. See AGENTS.md rule 6.
+const ApprovalModeTrusted = "trusted"
+
+var (
+	trustedGlobReplacer = strings.NewReplacer("*", "x", "?", "x")
+	rmFlagRe            = regexp.MustCompile(`^(?:-[rRfdvi]+|--(?:recursive|force|dir|verbose))$`)
+	chmodFlagRe         = regexp.MustCompile(`^(?:-[Rvf]+|--(?:recursive|verbose|silent|quiet))$`)
+	chmodModeRe         = regexp.MustCompile(`^(?:[0-7]{3,4}|[ugoa]*[-+=][rwxX]+)$`)
+	gitRefRe            = regexp.MustCompile(`^[A-Za-z0-9_./~^-]+$`)
+	gitCleanFlagRe      = regexp.MustCompile(`^(?:-[fdxXnqi]+|--(?:force|dry-run|quiet))$`)
+	gitRestoreFlagRe    = regexp.MustCompile(`^(?:-[WSq]+|--(?:staged|worktree|quiet|source=[A-Za-z0-9_./~^-]+))$`)
+)
+
+// isIsolatedWorktree reports whether dir is a Hoxi session worktree, as
+// opposed to the user's own checkout ("local" sandbox mode).
+func isIsolatedWorktree(dir string) bool {
+	slash := filepath.ToSlash(filepath.Clean(strings.TrimSpace(dir)))
+	return strings.Contains(slash, "/.hoxi/worktrees/")
+}
+
+// trustedRecoverableRequest reports whether a destructive shell request only
+// affects the isolated worktree in a recoverable way.
+func trustedRecoverableRequest(item map[string]interface{}, worktree string) bool {
+	meta := itemMetadata(item)
+	// Only real shell requests; a doom-loop or other request that merely
+	// names a shell tool is never relaxed.
+	perm := permissionName(item)
+	if perm != "bash" && !(perm == "tool" && bashToolNames[strings.ToLower(firstString(meta["tool"]))]) {
+		return false
+	}
+	if destructive, _ := meta["destructive"].(bool); destructive {
+		return false
+	}
+	if external, _ := meta["externalDirectory"].(bool); external {
+		return false
+	}
+	candidates := commandCandidates(item)
+	if len(candidates) == 0 {
+		return false
+	}
+	isolated := isIsolatedWorktree(worktree)
+	if !isolated {
+		worktree = "" // only temp-directory deletions are relaxed outside a worktree
+	}
+	for _, cmd := range candidates {
+		if !isRecoverableWorktreeCommand(cmd, worktree) {
+			return false
+		}
+	}
+	return true
+}
+
+// isRecoverableWorktreeCommand accepts a command only when every segment is
+// either not destructive at all or one of the recoverable forms below. An
+// empty worktree means the session runs in the user's own checkout: then
+// only temp-directory deletions qualify. Destructive segments must be plain
+// words (no expansion, escapes or glued quotes); after any `cd` the working
+// directory is unknown, so only absolute temp paths still qualify.
+func isRecoverableWorktreeCommand(command, worktree string) bool {
+	// A `# hoxi-stop:` marker line is a comment segment and passes as non-destructive.
+	if hasShellGrouping(command) {
+		return false
+	}
+	segments := splitCommandChain(command)
+	if worktree != "" && len(segments) > 0 && isWorktreeCD(segments[0], worktree) {
+		segments = segments[1:]
+	}
+	if len(segments) == 0 {
+		return false
+	}
+	cwd := worktree
+	for _, seg := range segments {
+		words := shellWords(seg)
+		if len(words) == 0 {
+			continue
+		}
+		switch base := filepath.Base(words[0]); {
+		case base == "cd" || base == "pushd" || base == "popd":
+			cwd = ""
+			continue
+		case dataArgInterpreters[base]:
+			// `curl ... | sh`, `xargs rm`, `sudo ...`: each half can look
+			// harmless while the pipeline is not.
+			return false
+		}
+		if !isDestructiveCommand(seg) {
+			continue
+		}
+		if strings.ContainsAny(seg, "$\\") || hasUnsafeShellSyntax(trustedGlobReplacer.Replace(seg)) {
+			return false
+		}
+		if !isRecoverableSegment(words, cwd) {
+			return false
+		}
+	}
+	return true
+}
+
+// hasShellGrouping reports subshells, command substitution, functions and
+// brace groups (outside single quotes), plus unbalanced quotes.
+func hasShellGrouping(s string) bool {
+	var quote byte
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case quote == '\'':
+			if c == '\'' {
+				quote = 0
+			}
+		case c == '\\':
+			i++
+		case quote == '"':
+			if c == '"' {
+				quote = 0
+			} else if c == '`' || (c == '$' && i+1 < len(s) && s[i+1] == '(') {
+				return true
+			}
+		case c == '\'' || c == '"':
+			quote = c
+		case c == '`' || c == '(' || c == ')' || c == '{' || c == '}':
+			return true
+		}
+	}
+	return quote != 0
+}
+
+func isRecoverableSegment(words []string, worktree string) bool {
+	words, ok := stripNullRedirects(words)
+	if !ok || len(words) == 0 {
+		return false
+	}
+	name := words[0]
+	if strings.Contains(name, "/") {
+		if !trustedToolDirs()[filepath.Dir(filepath.Clean(name))] {
+			return false
+		}
+		name = filepath.Base(name)
+	}
+	args := words[1:]
+	switch name {
+	case "rm", "rmdir", "unlink":
+		return flaggedWorktreePaths(args, rmFlagRe, worktree)
+	case "chmod":
+		i := 0
+		for i < len(args) && chmodFlagRe.MatchString(args[i]) {
+			i++
+		}
+		if i >= len(args) || !chmodModeRe.MatchString(args[i]) {
+			return false
+		}
+		return allWorktreePaths(args[i+1:], worktree)
+	case "git":
+		return worktree != "" && isRecoverableGitSegment(args, worktree)
+	}
+	return false
+}
+
+func flaggedWorktreePaths(args []string, flagRe *regexp.Regexp, worktree string) bool {
+	i := 0
+	for i < len(args) && args[i] != "--" && strings.HasPrefix(args[i], "-") {
+		if !flagRe.MatchString(args[i]) {
+			return false
+		}
+		i++
+	}
+	if i < len(args) && args[i] == "--" {
+		i++
+	}
+	return allWorktreePaths(args[i:], worktree)
+}
+
+func allWorktreePaths(paths []string, worktree string) bool {
+	if len(paths) == 0 {
+		return false
+	}
+	for _, p := range paths {
+		if !(worktree != "" && isWorktreePathArg(p, worktree)) && !isTempPathArg(p) {
+			return false
+		}
+	}
+	return true
+}
+
+// trustedTempRoots are the system temp directories whose contents are
+// throwaway by definition.
+func trustedTempRoots() []string {
+	roots := []string{"/tmp", "/private/tmp"}
+	if dir := strings.TrimSpace(os.TempDir()); dir != "" {
+		roots = append(roots, filepath.Clean(dir))
+	}
+	return roots
+}
+
+// isTempPathArg accepts an absolute path strictly below a temp root. The root
+// itself, and globs that start a segment there (`/tmp/*`), keep asking.
+func isTempPathArg(arg string) bool {
+	if !filepath.IsAbs(arg) || strings.ContainsAny(arg, "$[~") {
+		return false
+	}
+	for _, part := range strings.Split(filepath.ToSlash(arg), "/") {
+		if part == ".." || (part != "" && strings.ContainsAny(part[:1], "*?.") && strings.ContainsAny(part, "*?")) {
+			return false
+		}
+	}
+	target := filepath.Clean(arg)
+	if strings.ContainsAny(target, "*?") {
+		// The glob must sit inside a named entry (`/tmp/probe*`), so the
+		// directory it lists is the temp root's child level at most.
+		target = target[:strings.IndexAny(target, "*?")] + "x"
+	}
+	for _, root := range trustedTempRoots() {
+		if pathWithin(root, target) && !samePath(root, target) && !isSecretFilePath(target) {
+			return true
+		}
+	}
+	return false
+}
+
+func samePath(a, b string) bool {
+	ra, okA := resolvePathWithSymlinks(a, 0)
+	rb, okB := resolvePathWithSymlinks(b, 0)
+	return okA && okB && filepath.Clean(ra) == filepath.Clean(rb)
+}
+
+// isWorktreePathArg accepts a path that stays inside the worktree after
+// symlink resolution and is neither execution-controlling nor a secret.
+// Globs are allowed except dot-globs (which can match `..`); the worktree
+// root itself may only be reached through a glob (`rm -rf *`).
+func isWorktreePathArg(arg, worktree string) bool {
+	if arg == "" || strings.HasPrefix(arg, "-") || strings.HasPrefix(arg, "~") || strings.ContainsAny(arg, "$[") {
+		return false
+	}
+	for _, part := range strings.Split(filepath.ToSlash(arg), "/") {
+		if part == ".." || (strings.HasPrefix(part, ".") && strings.ContainsAny(part, "*?")) {
+			return false
+		}
+	}
+	target := arg
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(worktree, target)
+	}
+	target = filepath.Clean(target)
+	globbed := strings.ContainsAny(target, "*?")
+	if globbed {
+		target = filepath.Dir(target[:strings.IndexAny(target, "*?")] + "x")
+	}
+	if !pathWithin(worktree, target) {
+		return false
+	}
+	rel, err := filepath.Rel(filepath.Clean(worktree), target)
+	if err != nil {
+		return false
+	}
+	if rel == "." {
+		return globbed
+	}
+	return !isProtectedRelPath(rel) && !isSecretFilePath(rel) && !isProtectedWorktreePath(worktree, target)
+}
+
+// isRecoverableGitSegment accepts only commands that discard work inside this
+// worktree. Branches, the stash and worktree lists are shared by every
+// session of the repository, so they keep asking.
+func isRecoverableGitSegment(args []string, worktree string) bool {
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		return false // global options such as -C can point at another repository
+	}
+	rest := args[1:]
+	switch args[0] {
+	case "reset":
+		hard, refs := false, 0
+		for _, a := range rest {
+			switch {
+			case a == "--hard":
+				hard = true
+			case a == "-q" || a == "--quiet":
+			case gitRefRe.MatchString(a) && !strings.HasPrefix(a, "-"):
+				refs++
+			default:
+				return false
+			}
+		}
+		return hard && refs <= 1
+	case "checkout":
+		dash := -1
+		for i, a := range rest {
+			if a == "--" {
+				dash = i
+				break
+			}
+		}
+		if dash < 0 {
+			return len(rest) == 1 && rest[0] == "."
+		}
+		before := rest[:dash]
+		if len(before) > 1 || (len(before) == 1 && (!gitRefRe.MatchString(before[0]) || strings.HasPrefix(before[0], "-"))) {
+			return false
+		}
+		return allWorktreePaths(rest[dash+1:], worktree)
+	case "restore":
+		i := 0
+		for i < len(rest) && rest[i] != "--" && strings.HasPrefix(rest[i], "-") {
+			if !gitRestoreFlagRe.MatchString(rest[i]) {
+				return false
+			}
+			i++
+		}
+		if i < len(rest) && rest[i] == "--" {
+			i++
+		}
+		return allWorktreePaths(rest[i:], worktree)
+	case "clean":
+		i := 0
+		for i < len(rest) && rest[i] != "--" && strings.HasPrefix(rest[i], "-") {
+			if !gitCleanFlagRe.MatchString(rest[i]) {
+				return false
+			}
+			i++
+		}
+		if i < len(rest) && rest[i] == "--" {
+			i++
+		}
+		return i == len(rest) || allWorktreePaths(rest[i:], worktree)
+	}
+	return false
+}

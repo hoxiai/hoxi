@@ -42,6 +42,11 @@ export const approval: ApprovalI18n = {
   modeManualShort: "手动确认",
   modeManualDesc:
     "每次编辑、Shell 命令或外部操作前确认",
+  modeTrustedLabel: "完全信任",
+  modeTrustedShort: "完全信任",
+  modeTrustedBadge: "高风险",
+  modeTrustedDesc:
+    "在自动确认基础上，放行隔离工作树内可回滚的删除与 Git 丢弃操作，以及临时目录清理；读取密钥、工作树外敏感路径、sudo、强制推送、发布、结束进程和死循环仍需确认",
   modeTooltip: "确认模式：{mode}（点击切换）",
   openPolicySettings: "权限与审批…",
   pageTitle: "权限与审批",

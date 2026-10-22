@@ -95,7 +95,7 @@ Flutter + Riverpod + GoRouter + Dio，四栏：沟通 · 工程 · 专栏 · 我
 │           └── server/container/database/website/ssl/apps/resources/task_center/auth/settings
 ├── .opencode/                        # Upstream OpenCode config root; Hoxi only reads it, never writes memory here
 │   ├── plugins/                      # hoxi-memory.js & hoxi-goal.js
-│   ├── lib/                          # permission-policy.js + permission-policy.cases.json + permission-request.cases.json (shared safety-gate rules)
+│   ├── lib/                          # permission-policy.js + command-data-args.js + permission-policy.cases.json + permission-request.cases.json (shared safety-gate rules)
 │   └── skills/                       # Project-local Agent Skills
 ├── .hoxi/                            # Hoxi-local project state (git-ignored): memory/, worktrees/, attachments/
 │   └── memory/                       # project.md & per-session compaction records (legacy .opencode/memory is read-only)
@@ -179,7 +179,9 @@ Flutter + Riverpod + GoRouter + Dio，四栏：沟通 · 工程 · 专栏 · 我
    - 会话处于 `busy` 时必须支持实时纠偏（`Steer`）与中止（`Stop`），工具卡片（`ToolCard`）与推理抽屉（`ThoughtBox`）必须准确反映 `pending` / `running` / `completed` / `error` 四态与耗时，且状态变更需实时同步至 macOS 状态栏（`Running` / `Attention`）。
 
 6. **安全门控、网络外发边界、子进程消毒与资源边界 (Safety, Egress, Subprocess & Resource Hygiene)**
-   - **破坏性操作人工审批**：包含破坏性指令（`rm`, `sudo`, `chmod`, `chown`, `diskutil`, `mkfs`, `git push --force`, `git reset --hard`）的 Shell 操作与敏感文件读取（`.env` 等）严禁自动放行，必须由 Go 审批策略（`approvalAutoApproves` / `isDestructivePermissionRequest`）在所有模式下交给用户，触发状态栏 `Attention` 与 `<ApprovalGateCard />` 人工确认。
+   - **破坏性操作人工审批**：包含破坏性指令（`rm`, `sudo`, `chmod`, `chown`, `diskutil`, `mkfs`, `git push --force`, `git reset --hard`）的 Shell 操作与敏感文件读取（`.env` 等）严禁自动放行，必须由 Go 审批策略（`approvalAutoApproves` / `isDestructivePermissionRequest`）交给用户，触发状态栏 `Attention` 与 `<ApprovalGateCard />` 人工确认。破坏性判定只扫描命令本身：提交说明、搜索词、`echo` 文本等字面量数据参数先由 `maskCommandDataArguments`（Go `command_data_args.go` / JS `command-data-args.js`）替换后再匹配，无法确定语义（命令替换、heredoc、管道进 Shell/解释器）时不做替换。
+     - **唯一例外——用户显式选择的「完全信任」模式（`trusted`，`internal/runner/approval_trusted.go`）**：只放行两类可恢复操作：① 隔离会话 worktree（`.hoxi/worktrees/`）内的 `rm`/`rmdir`/`unlink`/`chmod`（路径须解析后仍在 worktree 内，且不是受保护路径或密钥文件），以及 `git reset --hard`、`git checkout -- <路径>`/`checkout .`、`git restore`、`git clean`；② 删除系统临时目录（`/tmp`、`$TMPDIR`）下的具体条目。
+     - **在任何模式下（含完全信任）都必须询问的硬底线**：读取密钥与凭据文件、工作树外的敏感/凭据路径、可控制执行的路径（`.git`、`.opencode`、`.claude`、`.hoxi`、`.envrc`、`.vscode/settings.json`）、`sudo`、`git push --force`/删除远端分支、共享 git 状态（分支删除、`stash drop`、`worktree remove`）、发布类（`npm`/`cargo publish`、`terraform apply`、`kubectl delete`）、结束进程（`kill`/`pkill`/`killall`）、磁盘与系统命令、`curl … | sh` 等管道执行、`unsandboxed` 工具和死循环检测。任何无法确定语义的命令（变量展开、子 Shell、命令替换、`cd` 后的相对路径）一律询问。完全信任模式只能在桌面端开启，不经隧道或局域网修改。
    - **本地网关与连接复用**：Go 网关仅监听 `127.0.0.1`，反向代理 `http.Transport` 必须配置 `Proxy: nil`（防系统代理 502）与 `FlushInterval: -1`（SSE 零缓冲）并复用长生命周期 `http.Transport`（严禁单次请求新建 Transport 导致连接泄漏）；读取外部 HTTP 响应或进程输出必须使用 `io.LimitReader` 限制体积。
    - **网络外发边界 (`Network Egress Boundary`)**：Hoxi 为开源本地工具，不提供托管的 AI 服务，AI 请求直连用户配置的提供商或 CLI，不经 Hoxi 云端中转。唯一的「中转」是本机回环的 OpenAI 兼容中转（`internal/provider/relay.go`），它同样把请求原样发往用户自己配置的服务商，且不经隧道开放。网关辅助外发（匿名启动上报、更新检查、账号登录、模型价格/排行榜同步）严禁携带提示词、代码、Diff 或会话内容；后台发起的 LLM 调用必须在 UI 中明确说明目的地，不得静默外发代码上下文。经 GoPanel 隧道的推送通知只携带待处理数量与标识，不含命令、代码或会话内容。
    - **外部子进程非交互消毒与 SQLite 防锁 (`Subprocess & SQLite Hygiene`)**：执行 `git` 或外部 CLI 子进程必须绑定 `context.Context` 超时并剥离交互式环境变量（设置 `GIT_TERMINAL_PROMPT=0`、`GCM_INTERACTIVE=never`，剥离 `GIT_ASKPASS`/`SSH_ASKPASS`/`GIT_EDITOR`）；读取外部 CLI 的 SQLite 库必须携带只读模式与 `_busy_timeout`，严禁阻塞外部进程。

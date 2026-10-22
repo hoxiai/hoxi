@@ -4,6 +4,8 @@
 // destructive warning on the approval card). Keep it identical to the Go
 // port: .opencode/lib/permission-policy.cases.json covers commands and
 // .opencode/lib/permission-request.cases.json covers whole requests.
+import { maskCommandDataArguments } from "./command-data-args.js";
+
 const DESTRUCTIVE_RE =
   /\b(rm|rmdir|unlink|shred|truncate|srm|sudo|chmod|chown|mkfs|dd|diskutil|killall|reboot|shutdown)\b|\bkill\s+(?:-[A-Za-z0-9]+\s+)*(?:[A-Za-z0-9]+\s+)?[-?\d%]|\bpkill\b|[>|]\s*(?:\/etc\/|(?:\~|\$HOME|\$\{HOME\})\/\.(?:zshrc|zshenv|zprofile|bashrc|bash_profile|profile|ssh\b|gnupg\b|netrc\b|npmrc\b))|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.(?:ssh|aws|gnupg|kube)\/|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.(?:netrc|npmrc|git-credentials)(?:$|[\s;&|'"*?])|\.claude\/\.credentials\.json|\.docker\/config\.json|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.en(?:v(?:\.(?:local|prod(?:uction)?|dev(?:elopment)?|stag(?:e|ing)|test(?:ing)?|ci|preview|secret\w*|key\w*|private\w*|bak|backup)(?:\.local)?)?|\?|\*)(?:$|[\s;&|'"*?])|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.envrc(?:$|[\s;&|'"*?])|\bfind\b[^\n;&|]*\s-(delete|exec\w*|ok\w*|fprint\w*|fls)\b|\b(curl|wget)\b[^\n|]*\|\s*(sh|bash|zsh)\b|\b(?:npm|pnpm|yarn|cargo)\s+publish\b|\bterraform\s+(?:destroy|apply)\b|\bkubectl\s+delete\b|\bdocker\s+(?:system\s+prune|rm|rmi)\b/i;
 
@@ -587,7 +589,7 @@ export function isDestructivePermissionRequest(input) {
       Array.isArray(input?.metadata?.commands);
     if (!hasCommandMeta) return false;
   }
-  const blob = [permission, ...commandCandidates(input)].join("\n");
+  const blob = [permission, ...commandCandidates(input).map(maskCommandDataArguments)].join("\n");
   const deobfuscated = blob.replace(/[\\'"\[\]]/g, "");
   return matchesDestructive(blob) || matchesDestructive(deobfuscated);
 }

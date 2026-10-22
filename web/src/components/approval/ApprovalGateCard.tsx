@@ -416,7 +416,7 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
                 <X size={12} />
                 {t("approval.reject")}…
               </button>
-              <Show when={!isDestructive() && appSettings.approvalMode !== "auto"}>
+              <Show when={!isDestructive() && appSettings.approvalMode !== "auto" && appSettings.approvalMode !== "trusted"}>
                 <button
                   type="button"
                   class="ml-auto inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"

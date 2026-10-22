@@ -7,6 +7,7 @@ import {
   Shield,
   ShieldAlert,
   ShieldCheck,
+  ShieldOff,
   SlidersHorizontal,
 } from "lucide-solid";
 import {
@@ -22,16 +23,19 @@ interface ApprovalModeOption {
   labelKey:
     | "approval.modeAutoLabel"
     | "approval.modeSmartLabel"
-    | "approval.modeManualLabel";
+    | "approval.modeManualLabel"
+    | "approval.modeTrustedLabel";
   shortKey:
     | "approval.modeAutoShort"
     | "approval.modeSmartShort"
-    | "approval.modeManualShort";
+    | "approval.modeManualShort"
+    | "approval.modeTrustedShort";
   descKey:
     | "approval.modeAutoDesc"
     | "approval.modeSmartDesc"
-    | "approval.modeManualDesc";
-  badgeKey?: "approval.modeAutoBadge";
+    | "approval.modeManualDesc"
+    | "approval.modeTrustedDesc";
+  badgeKey?: "approval.modeAutoBadge" | "approval.modeTrustedBadge";
 }
 
 const MODE_OPTIONS: ApprovalModeOption[] = [
@@ -54,9 +58,17 @@ const MODE_OPTIONS: ApprovalModeOption[] = [
     shortKey: "approval.modeManualShort",
     descKey: "approval.modeManualDesc",
   },
+  {
+    id: "trusted",
+    labelKey: "approval.modeTrustedLabel",
+    shortKey: "approval.modeTrustedShort",
+    descKey: "approval.modeTrustedDesc",
+    badgeKey: "approval.modeTrustedBadge",
+  },
 ];
 
 function renderModeIcon(mode: ApprovalMode, size = 12.5) {
+  if (mode === "trusted") return <ShieldOff size={size} class="shrink-0" />;
   if (mode === "auto") return <ShieldCheck size={size} class="shrink-0" />;
   if (mode === "smart") return <Shield size={size} class="shrink-0" />;
   return <ShieldAlert size={size} class="shrink-0" />;
@@ -73,6 +85,7 @@ export default function ApprovalModePill() {
     const mode = currentMode();
     if (mode === "auto") return t("approval.modeAutoShort");
     if (mode === "smart") return t("approval.modeSmartShort");
+    if (mode === "trusted") return t("approval.modeTrustedShort");
     return t("approval.modeManualShort");
   };
 
@@ -120,7 +133,9 @@ export default function ApprovalModePill() {
         } ${
           open()
             ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]"
-            : currentMode() === "manual"
+            : currentMode() === "trusted"
+              ? "bg-[var(--danger-surface)] text-[var(--danger-text)] border border-[var(--danger-border)] hover:brightness-105"
+              : currentMode() === "manual"
               ? "bg-[var(--warn-surface)] text-[var(--warn-text)] border border-[var(--warn-border)] hover:brightness-105"
               : currentMode() === "auto"
                 ? "text-[var(--ok-text)] hover:bg-[var(--bg-hover)]"
@@ -131,7 +146,9 @@ export default function ApprovalModePill() {
       >
         <span
           class={
-            currentMode() === "manual"
+            currentMode() === "trusted"
+              ? "text-[var(--danger-text)]"
+              : currentMode() === "manual"
               ? "text-[var(--warn-text)]"
               : currentMode() === "auto"
                 ? "text-[var(--ok-text)]"
@@ -185,7 +202,9 @@ export default function ApprovalModePill() {
                     <div
                       class={`mt-0.5 p-1 rounded-lg shrink-0 ${
                         isSelected()
-                          ? opt.id === "manual"
+                          ? opt.id === "trusted"
+                            ? "bg-[var(--danger-text)] text-white"
+                            : opt.id === "manual"
                             ? "bg-[var(--warn-text)] text-white"
                             : opt.id === "auto"
                               ? "bg-[var(--ok-text)] text-white"
@@ -208,7 +227,11 @@ export default function ApprovalModePill() {
                           {t(opt.labelKey)}
                         </span>
                         <Show when={opt.badgeKey}>
-                          <span class="rounded px-1.5 py-[1px] text-[11px] font-medium bg-[var(--ok-surface)] text-[var(--ok-text)] border border-[var(--ok-border)]">
+                          <span
+                            class={`rounded px-1.5 py-[1px] text-[11px] font-medium ${
+                              opt.id === "trusted" ? "bg-[var(--danger-surface)] text-[var(--danger-text)] border border-[var(--danger-border)]" : "bg-[var(--ok-surface)] text-[var(--ok-text)] border border-[var(--ok-border)]"
+                            }`}
+                          >
                             {t(opt.badgeKey!)}
                           </span>
                         </Show>

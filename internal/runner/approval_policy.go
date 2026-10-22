@@ -63,9 +63,9 @@ func (p ApprovalPolicy) effectiveRule(category string) string {
 // validate rejects unknown values instead of silently dropping them.
 func (p ApprovalPolicy) validate() error {
 	switch p.Mode {
-	case ApprovalModeAuto, ApprovalModeSmart, ApprovalModeManual:
+	case ApprovalModeAuto, ApprovalModeSmart, ApprovalModeManual, ApprovalModeTrusted:
 	default:
-		return fmt.Errorf("mode must be auto, smart or manual")
+		return fmt.Errorf("mode must be auto, smart, manual or trusted")
 	}
 	for name, value := range map[string]string{"edit": p.Edit, "webfetch": p.Webfetch} {
 		if value != "" && value != "allow" && value != "ask" {

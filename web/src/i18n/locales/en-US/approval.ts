@@ -42,6 +42,11 @@ export const approval = {
   modeManualShort: "Manual",
   modeManualDesc:
     "Asks before every edit, shell command and external action",
+  modeTrustedLabel: "Full Trust",
+  modeTrustedShort: "Trusted",
+  modeTrustedBadge: "High risk",
+  modeTrustedDesc:
+    "Auto mode plus recoverable deletes and Git discards inside an isolated worktree, and temp-directory cleanup; secret reads, sensitive paths outside the worktree, sudo, force pushes, publishing, killing processes and loop detection still ask",
   modeTooltip: "Approval mode: {mode} (click to switch)",
   openPolicySettings: "Permissions & Approval…",
   pageTitle: "Permissions & Approval",
