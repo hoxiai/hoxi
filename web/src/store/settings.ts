@@ -2,7 +2,13 @@
 import { createSignal } from "solid-js";
 import { createStore } from "solid-js/store";
 import { hoxiAPI, type SystemRuntimeInfo } from "../services/api";
-import { deliverDesktopNotification } from "../services/desktop-notify";
+import {
+  deliverDesktopNotification,
+  fetchDesktopNotificationPermission,
+  requestDesktopNotificationPermission as requestNativeDesktopNotificationPermission,
+  type DesktopNotificationPermission,
+} from "../services/desktop-notify";
+import { openExternalBrowserURL } from "../services/desktop-events";
 import { setWorkspace, THEME_KEY, workspace, type ProviderModalTab } from "./workspace-state";
 
 export type ApprovalMode = "auto" | "smart" | "manual";
@@ -581,6 +587,28 @@ export function sendDesktopNotification(request: {
   sessionID?: string;
 }): void {
   void deliverDesktopNotification(request);
+}
+
+// Latest known host notification permission; null until first loaded so the UI
+// can distinguish "checking" from a real state.
+export const [desktopNotificationPermission, setDesktopNotificationPermission] =
+  createSignal<DesktopNotificationPermission | null>(null);
+
+export async function refreshDesktopNotificationPermission(): Promise<DesktopNotificationPermission> {
+  const permission = await fetchDesktopNotificationPermission();
+  setDesktopNotificationPermission(permission);
+  return permission;
+}
+
+export async function requestDesktopNotificationPermission(): Promise<DesktopNotificationPermission> {
+  const permission = await requestNativeDesktopNotificationPermission();
+  setDesktopNotificationPermission(permission);
+  return permission;
+}
+
+// Opens macOS System Settings › Notifications so a denied app can be re-enabled.
+export function openNotificationSystemSettings(): void {
+  openExternalBrowserURL("x-apple.systempreferences:com.apple.preference.notifications");
 }
 
 export function buildCombinedSystemPrompt(

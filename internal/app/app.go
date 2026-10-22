@@ -315,6 +315,14 @@ func Run(distFS fs.FS) {
 			SessionID: notification.SessionID,
 		})
 	})
+	gw.SetDesktopNotificationPermission(
+		func() gateway.DesktopNotificationPermission {
+			return desktopNotificationPermission(app.notifier.Status())
+		},
+		func() gateway.DesktopNotificationPermission {
+			return desktopNotificationPermission(app.notifier.RequestPermission())
+		},
+	)
 	app.notifier.SetOnClick(func(sessionID string) {
 		app.showWindow()
 		if sessionID != "" {
@@ -686,4 +694,18 @@ func StartEphemeralHeadless(ctx context.Context, rootDir string) (string, func()
 		}
 	}
 	return "http://" + loopbackAddr, cleanup, nil
+}
+
+// desktopNotificationPermission converts the notify layer's status into the
+// gateway's transport-neutral payload. "unavailable" means the build has no
+// native notification transport (headless, no app bundle or non-darwin host).
+func desktopNotificationPermission(status notify.PermissionStatus) gateway.DesktopNotificationPermission {
+	value := string(status)
+	if value == "" {
+		value = string(notify.PermissionUnknown)
+	}
+	return gateway.DesktopNotificationPermission{
+		Available: status != notify.PermissionUnavailable,
+		Status:    value,
+	}
 }

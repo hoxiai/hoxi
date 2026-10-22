@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"testing"
@@ -60,5 +61,74 @@ func TestDesktopNotifyRouteRejectsBadInput(t *testing.T) {
 func TestDesktopNotifyStaysOffTunnel(t *testing.T) {
 	if tunnelRouteAllowed(http.MethodPost, "/api/hoxi/desktop/notify") {
 		t.Fatal("desktop notifications must not be reachable over the remote tunnel")
+	}
+	if tunnelRouteAllowed(http.MethodGet, "/api/hoxi/desktop/notify/permission") {
+		t.Fatal("notification permission must not be reachable over the remote tunnel")
+	}
+	if tunnelRouteAllowed(http.MethodPost, "/api/hoxi/desktop/notify/permission") {
+		t.Fatal("notification permission prompt must not be reachable over the remote tunnel")
+	}
+}
+
+func TestDesktopNotifyPermissionUnavailable(t *testing.T) {
+	gw := New(0, "test", t.TempDir(), nil, nil)
+	res := serve(gw, http.MethodGet, "/api/hoxi/desktop/notify/permission", "")
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", res.Code)
+	}
+	var payload DesktopNotificationPermission
+	if err := json.Unmarshal(res.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if payload.Available || payload.Status != "unavailable" {
+		t.Fatalf("unexpected payload: %+v", payload)
+	}
+}
+
+func TestDesktopNotifyPermissionStatusAndPrompt(t *testing.T) {
+	gw := New(0, "test", t.TempDir(), nil, nil)
+	asked := 0
+	gw.SetDesktopNotificationPermission(
+		func() DesktopNotificationPermission {
+			return DesktopNotificationPermission{Available: true, Status: "notDetermined"}
+		},
+		func() DesktopNotificationPermission {
+			asked++
+			return DesktopNotificationPermission{Available: true, Status: "authorized"}
+		},
+	)
+
+	res := serve(gw, http.MethodGet, "/api/hoxi/desktop/notify/permission", "")
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", res.Code)
+	}
+	var payload DesktopNotificationPermission
+	if err := json.Unmarshal(res.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !payload.Available || payload.Status != "notDetermined" {
+		t.Fatalf("unexpected status payload: %+v", payload)
+	}
+	if asked != 0 {
+		t.Fatalf("GET must not prompt, asked = %d", asked)
+	}
+
+	res = serve(gw, http.MethodPost, "/api/hoxi/desktop/notify/permission", "")
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", res.Code)
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !payload.Available || payload.Status != "authorized" {
+		t.Fatalf("unexpected prompt payload: %+v", payload)
+	}
+	if asked != 1 {
+		t.Fatalf("prompt calls = %d, want 1", asked)
+	}
+
+	res = serve(gw, http.MethodDelete, "/api/hoxi/desktop/notify/permission", "")
+	if res.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want 405", res.Code)
 	}
 }

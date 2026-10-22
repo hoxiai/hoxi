@@ -15,11 +15,32 @@ type DesktopNotification struct {
 	SessionID string
 }
 
+// DesktopNotificationPermission is the host's notification authorization state.
+// Available is false when the build has no native transport (headless, no app
+// bundle or non-darwin host).
+type DesktopNotificationPermission struct {
+	Available bool   `json:"available"`
+	Status    string `json:"status"`
+}
+
 // SetDesktopNotifier wires the native notification transport. It is nil in
 // headless mode, where the route reports notifications as unavailable.
 func (g *Gateway) SetDesktopNotifier(fn func(DesktopNotification) error) {
 	g.notifyMu.Lock()
 	g.onDesktopNotify = fn
+	g.notifyMu.Unlock()
+}
+
+// SetDesktopNotificationPermission wires the native permission inspection and
+// prompt. Both hooks are nil in headless mode, where the routes report
+// notifications as unavailable.
+func (g *Gateway) SetDesktopNotificationPermission(
+	status func() DesktopNotificationPermission,
+	request func() DesktopNotificationPermission,
+) {
+	g.notifyMu.Lock()
+	g.onDesktopNotifyStatus = status
+	g.onDesktopNotifyAsk = request
 	g.notifyMu.Unlock()
 }
 
@@ -60,5 +81,30 @@ func (g *Gateway) registerDesktopNotifyRoute(mux *http.ServeMux) {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	})
+
+	mux.HandleFunc("/api/hoxi/desktop/notify/permission", func(w http.ResponseWriter, r *http.Request) {
+		g.notifyMu.RLock()
+		statusFn := g.onDesktopNotifyStatus
+		askFn := g.onDesktopNotifyAsk
+		g.notifyMu.RUnlock()
+
+		unavailable := DesktopNotificationPermission{Available: false, Status: "unavailable"}
+		switch r.Method {
+		case http.MethodGet:
+			if statusFn == nil {
+				writeJSON(w, http.StatusOK, unavailable)
+				return
+			}
+			writeJSON(w, http.StatusOK, statusFn())
+		case http.MethodPost:
+			if askFn == nil {
+				writeJSON(w, http.StatusOK, unavailable)
+				return
+			}
+			writeJSON(w, http.StatusOK, askFn())
+		default:
+			writeJSONError(w, http.StatusMethodNotAllowed, "GET or POST required")
+		}
 	})
 }

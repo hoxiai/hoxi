@@ -15,6 +15,20 @@ const (
 // ErrUnavailable means the host cannot deliver system notifications.
 var ErrUnavailable = errors.New("desktop notifications are unavailable")
 
+// PermissionStatus mirrors the macOS UNAuthorizationStatus plus an explicit
+// unavailable state for hosts that have no native notification transport.
+type PermissionStatus string
+
+const (
+	PermissionUnavailable   PermissionStatus = "unavailable"
+	PermissionUnknown       PermissionStatus = "unknown"
+	PermissionNotDetermined PermissionStatus = "notDetermined"
+	PermissionDenied        PermissionStatus = "denied"
+	PermissionAuthorized    PermissionStatus = "authorized"
+	PermissionProvisional   PermissionStatus = "provisional"
+	PermissionEphemeral     PermissionStatus = "ephemeral"
+)
+
 type Request struct {
 	Title     string
 	Body      string
@@ -42,6 +56,32 @@ func (s *Service) Start() {
 	}
 	active.Store(s)
 	platformStart()
+}
+
+// Status reports whether the host can deliver notifications and the current
+// authorization state. It never mutates the cached state or prompts the user.
+func (s *Service) Status() PermissionStatus {
+	if s == nil {
+		return PermissionUnavailable
+	}
+	status := platformStatus()
+	if status == "" {
+		return PermissionUnknown
+	}
+	return status
+}
+
+// RequestPermission asks the host to prompt for notification authorization and
+// returns the resulting status. On a decided status it is a no-op query.
+func (s *Service) RequestPermission() PermissionStatus {
+	if s == nil {
+		return PermissionUnavailable
+	}
+	status := platformRequestPermission()
+	if status == "" {
+		return PermissionUnknown
+	}
+	return status
 }
 
 func (s *Service) SetOnClick(fn func(sessionID string)) {

@@ -66,6 +66,8 @@ type Gateway struct {
 	dialogMu              sync.RWMutex
 	notifyMu              sync.RWMutex
 	onDesktopNotify       func(DesktopNotification) error
+	onDesktopNotifyStatus func() DesktopNotificationPermission
+	onDesktopNotifyAsk    func() DesktopNotificationPermission
 	intentMu              sync.Mutex
 	pendingIntent         *DesktopIntent
 	onDesktopIntent       func()

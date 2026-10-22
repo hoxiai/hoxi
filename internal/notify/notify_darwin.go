@@ -9,6 +9,8 @@ package notify
 
 void hoxi_notify_start(void);
 int hoxi_notify_show(const char* title, const char* body, const char* sessionID, const char* identifier);
+int hoxi_notify_authorization_status(void);
+int hoxi_notify_request_authorization(void);
 */
 import "C"
 
@@ -23,6 +25,33 @@ var notificationSequence atomic.Uint64
 
 func platformStart() {
 	C.hoxi_notify_start()
+}
+
+func platformStatus() PermissionStatus {
+	return permissionStatusFromCode(int(C.hoxi_notify_authorization_status()))
+}
+
+func platformRequestPermission() PermissionStatus {
+	return permissionStatusFromCode(int(C.hoxi_notify_request_authorization()))
+}
+
+// permissionStatusFromCode maps a UNAuthorizationStatus raw value (or the -1
+// sentinel for "no native transport") to a PermissionStatus.
+func permissionStatusFromCode(code int) PermissionStatus {
+	switch code {
+	case 0:
+		return PermissionNotDetermined
+	case 1:
+		return PermissionDenied
+	case 2:
+		return PermissionAuthorized
+	case 3:
+		return PermissionProvisional
+	case 4:
+		return PermissionEphemeral
+	default:
+		return PermissionUnavailable
+	}
 }
 
 func platformShow(req Request) error {

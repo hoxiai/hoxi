@@ -1,5 +1,5 @@
 // web/src/components/settings/SettingsGeneralChatTabs.tsx
-import { For } from "solid-js";
+import { createSignal, For, onMount, Show } from "solid-js";
 import {
   Bell,
   CheckCircle2,
@@ -21,7 +21,11 @@ import {
 } from "lucide-solid";
 import {
   appSettings,
+  desktopNotificationPermission,
+  openNotificationSystemSettings,
   playNotificationSound,
+  refreshDesktopNotificationPermission,
+  requestDesktopNotificationPermission,
   sendDesktopNotification,
   updateAppSetting,
   type ColorScheme,
@@ -248,6 +252,12 @@ export function GeneralAppearanceTab() {
 }
 
 export function ChatComposerTab() {
+  const [permissionBusy, setPermissionBusy] = createSignal(false);
+
+  onMount(() => {
+    void refreshDesktopNotificationPermission();
+  });
+
   const testNotificationSound = () => {
     playNotificationSound(true);
   };
@@ -257,6 +267,47 @@ export function ChatComposerTab() {
       title: "Hoxi",
       body: t("settings.desktopNotificationsDesc"),
     });
+    void refreshDesktopNotificationPermission();
+  };
+
+  const askForPermission = async () => {
+    setPermissionBusy(true);
+    try {
+      await requestDesktopNotificationPermission();
+    } finally {
+      setPermissionBusy(false);
+    }
+  };
+
+  const permissionStatus = () => desktopNotificationPermission()?.status;
+
+  const permissionLabel = () => {
+    switch (permissionStatus()) {
+      case "authorized":
+        return t("settings.notificationPermissionAuthorized");
+      case "provisional":
+        return t("settings.notificationPermissionProvisional");
+      case "denied":
+        return t("settings.notificationPermissionDenied");
+      case "notDetermined":
+        return t("settings.notificationPermissionNotDetermined");
+      case "unavailable":
+        return t("settings.notificationPermissionUnavailable");
+      default:
+        return t("settings.notificationPermissionUnknown");
+    }
+  };
+
+  const permissionTone = () => {
+    const status = permissionStatus();
+    if (status === "authorized" || status === "provisional") return "ok";
+    if (status === "denied") return "bad";
+    return "muted";
+  };
+
+  const showPermissionAction = () => {
+    const status = permissionStatus();
+    return status === "notDetermined" || status === "denied" || status === "unknown";
   };
 
   return (
@@ -368,6 +419,43 @@ export function ChatComposerTab() {
         title={t("settings.sectionNotificationsTitle")}
         tip={t("settings.sectionNotificationsDesc")}
       >
+        <SettingRow
+          icon={ShieldAlert}
+          label={t("settings.notificationPermissionLabel")}
+          tip={t("settings.notificationPermissionDesc")}
+        >
+          <span
+            class={`inline-flex items-center rounded-lg border px-2.5 py-1 text-[12px] font-medium ${
+              permissionTone() === "ok"
+                ? "border-[var(--ok-border)] bg-[var(--ok-surface)] text-[var(--ok-text)]"
+                : permissionTone() === "bad"
+                  ? "border-[var(--danger-border)] bg-[var(--danger-surface)] text-[var(--danger-text)]"
+                  : "border-[var(--border-subtle)] bg-[var(--bg-panel)] text-[var(--text-muted)]"
+            }`}
+          >
+            {permissionLabel()}
+          </span>
+          <Show when={permissionStatus() === "denied"}>
+            <button
+              type="button"
+              onClick={() => openNotificationSystemSettings()}
+              class="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-3 py-1 text-[13px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+            >
+              {t("settings.openSystemSettingsBtn")}
+            </button>
+          </Show>
+          <Show when={showPermissionAction() && permissionStatus() !== "denied"}>
+            <button
+              type="button"
+              disabled={permissionBusy()}
+              onClick={() => void askForPermission()}
+              class="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-3 py-1 text-[13px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {t("settings.requestPermissionBtn")}
+            </button>
+          </Show>
+        </SettingRow>
+
         <SettingRow
           icon={Bell}
           label={t("settings.desktopNotificationsLabel")}
