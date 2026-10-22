@@ -13,6 +13,25 @@ import (
 // the session has no runner-owned process to wait on (OpenCode turns).
 const toolStopMarkTTL = 2 * time.Minute
 
+// stopMarkerPrefix prefixes the shell comment the sandbox plugin prepends to
+// every bash command. It is platform independent because both the stop path and
+// the event relay read it on every OS.
+const stopMarkerPrefix = "# hoxi-stop:"
+
+// openCodeStopMarker is the shell comment the sandbox plugin prepends to every
+// bash command. It names the engine session and tool call, so a stop can find
+// exactly one command inside the shared daemon instead of guessing from the
+// command text (macOS hides other processes' environments, and `ps` escapes
+// multi-line commands).
+func openCodeStopMarker(engineSessionID, callID string) string {
+	engineSessionID = strings.TrimSpace(engineSessionID)
+	callID = strings.TrimSpace(callID)
+	if engineSessionID == "" || callID == "" {
+		return ""
+	}
+	return stopMarkerPrefix + engineSessionID + ":" + callID
+}
+
 // StopToolRequest identifies a running tool invocation inside a session turn
 // that the user wants to terminate without aborting the parent session turn.
 type StopToolRequest struct {

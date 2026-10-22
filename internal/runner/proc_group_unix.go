@@ -349,22 +349,6 @@ func stopToolProcessesUnder(rootPID int, command string, scope toolStopScope) in
 	return killSubtrees(selectedRoots, byPID, children, protected)
 }
 
-const stopMarkerPrefix = "# hoxi-stop:"
-
-// openCodeStopMarker is the shell comment the sandbox plugin prepends to every
-// bash command. It names the engine session and tool call, so a stop can find
-// exactly one command inside the shared daemon instead of guessing from the
-// command text (macOS hides other processes' environments, and `ps` escapes
-// multi-line commands).
-func openCodeStopMarker(engineSessionID, callID string) string {
-	engineSessionID = strings.TrimSpace(engineSessionID)
-	callID = strings.TrimSpace(callID)
-	if engineSessionID == "" || callID == "" {
-		return ""
-	}
-	return stopMarkerPrefix + engineSessionID + ":" + callID
-}
-
 // stopOpenCodeToolProcessByMarker kills the single subtree under daemonPID
 // whose command line carries marker. It never signals the daemon and kills
 // nothing unless exactly one subtree matches.
