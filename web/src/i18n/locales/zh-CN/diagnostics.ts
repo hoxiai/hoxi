@@ -1,5 +1,8 @@
 export const diagnostics = {
   title: "请求日志",
+  errorLogTitle: "错误日志",
+  errorLogSubtitle: "本机运行时记录的错误与警告，不含对话内容",
+  errorLogEmpty: "没有符合条件的错误日志",
   subtitle: "本机发出的模型请求，按时间倒序保留（最多 {count} 条）",
   view: "查看诊断",
   advancedFilters: "会话与供应商筛选",

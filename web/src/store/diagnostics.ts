@@ -41,7 +41,7 @@ export function openDiagnostics(scope: { sessionID?: string; providerID?: string
   });
   setDiagnostics("actionError", "");
   setWorkspace("providerModalOpen", false);
-  openSettingsModal("diagnostics");
+  openSettingsModal(scope.sessionID || scope.providerID ? "errorLog" : "diagnostics");
 }
 
 export async function refreshDiagnostics() {

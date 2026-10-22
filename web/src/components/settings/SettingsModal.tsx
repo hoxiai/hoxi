@@ -48,6 +48,7 @@ import { LocalRelaySettingsTab } from "./LocalRelayControls";
 import { RemoteTunnelControls } from "./RemoteTunnelControls";
 import { SettingsExtensionsTab } from "./SettingsExtensionsTab";
 import DiagnosticsTab from "./DiagnosticsTab";
+import ErrorLogTab from "./ErrorLogTab";
 import UsageHistoryTab from "./UsageHistoryTab";
 import { WorkspaceGitSettingsTab } from "./SettingsWorkspaceTerminalTabs";
 
@@ -261,6 +262,11 @@ export default function SettingsModal() {
           id: "diagnostics",
           label: () => t("diagnostics.title"),
           icon: ScrollText,
+        },
+        {
+          id: "errorLog",
+          label: () => t("diagnostics.errorLogTitle"),
+          icon: ShieldCheck,
         },
       ],
     },
@@ -490,7 +496,7 @@ export default function SettingsModal() {
 
             <Show when={!isModelTab()}>
               <div class="min-w-0 flex-1 overflow-y-auto p-6 sm:p-8">
-                <div class="mx-auto w-full max-w-4xl">
+                <div class={`mx-auto w-full ${activeTab() === "diagnostics" || activeTab() === "errorLog" ? "max-w-6xl" : "max-w-4xl"}`}>
                   <Show when={activeTab() === "general"}>
                     <div class="hoxi-view-enter">
                       <GeneralAppearanceTab />
@@ -529,6 +535,11 @@ export default function SettingsModal() {
                   <Show when={activeTab() === "diagnostics"}>
                     <div class="hoxi-view-enter">
                       <DiagnosticsTab />
+                    </div>
+                  </Show>
+                  <Show when={activeTab() === "errorLog"}>
+                    <div class="hoxi-view-enter">
+                      <ErrorLogTab />
                     </div>
                   </Show>
                   <Show when={activeTab() === "remote"}>

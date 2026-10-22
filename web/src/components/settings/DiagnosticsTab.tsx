@@ -146,7 +146,7 @@ export default function DiagnosticsTab() {
 
       <Show when={rows().length > 0}>
         <div class="overflow-x-auto rounded-xl border border-[var(--border-subtle)]">
-          <table class="w-full min-w-[860px] border-collapse text-[12px]">
+          <table class="w-full border-collapse text-[12px]">
             <thead>
               <tr class="border-b border-[var(--border-subtle)] text-left text-[11px] text-[var(--text-muted)]">
                 <Show when={visible("time")}><th class="px-3 py-2 font-medium">{t("diagnostics.colTime")}</th></Show>
@@ -156,7 +156,7 @@ export default function DiagnosticsTab() {
                 <Show when={visible("client")}><th class="px-3 py-2 font-medium">{t("diagnostics.colClient")}</th></Show>
                 <Show when={visible("usage")}><th class="px-3 py-2 font-medium">{t("diagnostics.colUsage")}</th></Show>
                 <Show when={visible("error")}><th class="px-3 py-2 font-medium">{t("diagnostics.colError")}</th></Show>
-                <th class="px-3 py-2 text-right font-medium">{t("diagnostics.colDetails")}</th>
+                <th class="sticky right-0 bg-[var(--bg-canvas)] px-3 py-2 text-right font-medium shadow-[-8px_0_8px_-8px_var(--border-strong)]">{t("diagnostics.colDetails")}</th>
               </tr>
             </thead>
             <tbody>
@@ -191,7 +191,7 @@ export default function DiagnosticsTab() {
                       <Show when={visible("error")}>
                         <td class="max-w-[260px] truncate px-3 py-2 text-[var(--text-secondary)]" title={entry.error || ""}>{entry.error || t("diagnostics.noError")}</td>
                       </Show>
-                      <td class="px-3 py-2 text-right">
+                      <td class={`sticky right-0 px-3 py-2 text-right shadow-[-8px_0_8px_-8px_var(--border-strong)] ${entry.level === "error" ? "bg-[var(--danger-surface)]" : "bg-[var(--bg-canvas)]"}`}>
                         <button type="button" class={button} onClick={() => setSelected(entry)}>{t("diagnostics.details")}</button>
                       </td>
                     </tr>
@@ -215,7 +215,8 @@ export default function DiagnosticsTab() {
 function RequestDetail(props: { entry: RequestLogEntry; onClose: () => void }) {
   const when = () => formatWhen(props.entry.time);
   return (
-    <section class="space-y-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)]/40 p-4">
+    <div class="fixed inset-0 z-[80] flex justify-end bg-black/30" onClick={props.onClose}>
+    <section class="flex h-full w-[min(440px,92vw)] flex-col gap-3 overflow-y-auto border-l border-[var(--border-subtle)] bg-[var(--bg-panel)] p-4 shadow-2xl" onClick={(event) => event.stopPropagation()}>
       <div class="flex items-center justify-between gap-3">
         <h4 class="text-[13px] font-semibold text-[var(--text-primary)]">{t("diagnostics.detailTitle")}</h4>
         <button type="button" class={button} onClick={props.onClose}><X size={13} />{t("diagnostics.closeDetail")}</button>
@@ -237,9 +238,10 @@ function RequestDetail(props: { entry: RequestLogEntry; onClose: () => void }) {
           <dd class="whitespace-pre-wrap break-words font-mono text-[var(--danger-text)]">{props.entry.error}</dd>
         </Show>
       </dl>
-      <pre class="max-h-72 overflow-auto whitespace-pre-wrap break-all rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-3 font-mono text-[11px] text-[var(--text-secondary)]">{JSON.stringify(props.entry, null, 2)}</pre>
+      <pre class="overflow-auto whitespace-pre-wrap break-all rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] p-3 font-mono text-[11px] text-[var(--text-secondary)]">{JSON.stringify(props.entry, null, 2)}</pre>
       <p class="text-[11px] text-[var(--text-faint)]">{t("diagnostics.detailsHint")}</p>
     </section>
+    </div>
   );
 }
 

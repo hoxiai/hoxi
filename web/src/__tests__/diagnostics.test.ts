@@ -47,7 +47,7 @@ describe("Diagnostics", () => {
       setWorkspace("providerModalOpen", true);
       openDiagnostics({ providerID: "provider-a" });
       assertEqual(workspace.providerModalOpen, false);
-      assertEqual(appSettings.activeTab, "diagnostics");
+      assertEqual(appSettings.activeTab, "errorLog");
       assertEqual(appSettings.modalOpen, true);
       assertEqual(diagnostics.filters.providerID, "provider-a");
       assertEqual(diagnostics.filters.kind, "request");

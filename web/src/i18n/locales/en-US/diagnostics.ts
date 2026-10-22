@@ -1,5 +1,8 @@
 export const diagnostics = {
   title: "Request log",
+  errorLogTitle: "Error log",
+  errorLogSubtitle: "Errors and warnings recorded on this computer, with no conversation content",
+  errorLogEmpty: "No error log entries match",
   subtitle: "Model requests sent from this computer, newest first (up to {count})",
   view: "View diagnostics",
   advancedFilters: "Session & provider filters",
