@@ -2,4 +2,4 @@
 package buildinfo
 
 // Version is overridden by build-desktop.sh with the validated release version.
-var Version = "0.3.1"
+var Version = "0.3.2"
