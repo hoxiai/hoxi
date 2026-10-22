@@ -213,6 +213,13 @@ const [lastResolvedByPoolSignal, setLastResolvedByPoolSignal] = createSignal<
   Record<string, SelectedModel>
 >({});
 
+// Session affinity: once a session resolves an Auto pool it keeps reusing the
+// same candidate turn after turn while that candidate stays healthy, so the
+// upstream prompt-cache prefix stays warm instead of failing over to a cold
+// model on every turn. Rotation resumes only when the pinned candidate is gone,
+// cooling down or excluded. Keyed by sessionID, value is pool + candidate.
+const sessionAutoTarget = new Map<string, { poolID: string; providerID: string; modelID: string }>();
+
 function persistAutoPoolsLocal(pools: Record<string, AutoModelPoolConfig>) {
   try {
     localStorage.setItem(AUTO_POOLS_STORAGE_KEY, JSON.stringify(pools));
@@ -492,7 +499,13 @@ export function modelSupportsImageInput(providerID: string, modelID: string): bo
 
 export function resolveAutoModelTarget(
   poolIDOrModel: string | SelectedModel,
-  opts?: { advance?: boolean; excludeKeys?: Set<string>; requireImage?: boolean }
+  opts?: {
+    advance?: boolean;
+    excludeKeys?: Set<string>;
+    requireImage?: boolean;
+    /** Pin the resolved candidate to this session across turns (cache warmth). */
+    sessionID?: string;
+  }
 ): SelectedModel | null {
   const poolID =
     typeof poolIDOrModel === "string"
@@ -529,6 +542,22 @@ export function resolveAutoModelTarget(
   // strategy, so a slow-but-working model stops absorbing the rotation.
   const activePool = filterSlowCandidates(basePool);
 
+  // Session affinity short-circuit: reuse the candidate already pinned to this
+  // session when it survived the exclude / image / cooldown / slowness filters
+  // above. This keeps the prompt cache warm and does not consume a pool cursor
+  // slot, so other sessions still rotate fairly.
+  if (opts?.sessionID) {
+    const pinned = sessionAutoTarget.get(opts.sessionID);
+    if (pinned && pinned.poolID === poolID) {
+      const match = activePool.find(
+        (c) => c.providerID === pinned.providerID && c.modelID === pinned.modelID
+      );
+      if (match) {
+        return { providerID: match.providerID, modelID: match.modelID };
+      }
+    }
+  }
+
   let chosen: AutoPoolCandidate;
   const cursor = poolCursorsSignal()[poolID] ?? 0;
 
@@ -546,6 +575,13 @@ export function resolveAutoModelTarget(
     }
   }
 
+  if (opts?.sessionID) {
+    sessionAutoTarget.set(opts.sessionID, {
+      poolID,
+      providerID: chosen.providerID,
+      modelID: chosen.modelID,
+    });
+  }
   if (opts?.advance) {
     setLastResolvedByPoolSignal((prev) => ({
       ...prev,

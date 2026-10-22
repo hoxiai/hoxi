@@ -109,6 +109,7 @@ export async function handleSessionErrorEvent(
         advance: true,
         excludeKeys: autoState.triedKeys,
         requireImage: retryHasImage,
+        sessionID,
       });
       if (
         nextCand &&
@@ -311,7 +312,11 @@ export async function dispatchSessionPrompt(
   const isAuto = isAutoModel(chosenModel);
   const resolvedConcrete =
     isAuto && chosenModel
-      ? resolveAutoModelTarget(chosenModel, { advance: true, requireImage: hasImageAttachment })
+      ? resolveAutoModelTarget(chosenModel, {
+          advance: true,
+          requireImage: hasImageAttachment,
+          sessionID: id ?? undefined,
+        })
       : null;
   const effectiveModel = resolvedConcrete
     ? { ...resolvedConcrete }
