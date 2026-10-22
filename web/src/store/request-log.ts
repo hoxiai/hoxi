@@ -1,25 +1,21 @@
 // Local model-call log. Each row is one request this computer sent; the detail
 // panel shows the metadata captured for that call and nothing from the prompt.
 import { createSignal } from "solid-js";
+import { createStore, reconcile } from "solid-js/store";
 import { hoxiAPI, type RequestLogContent, type RequestLogEntry } from "../services/api";
 
-const [requestLog, setRequestLog] = createSignal<RequestLogEntry[]>([]);
+// A store (not a signal) so a refresh reconciles by message id: untouched rows
+// keep their identity and are not re-created in the table.
+const [requestLog, setRequestLog] = createStore<RequestLogEntry[]>([]);
 const [requestLogTotal, setRequestLogTotal] = createSignal(0);
 const [requestLogLoading, setRequestLogLoading] = createSignal(false);
 const [requestLogError, setRequestLogError] = createSignal("");
 
 let generation = 0;
-let signature = "";
 
 export { requestLog, requestLogTotal, requestLogLoading, requestLogError };
 
-// On-demand input/output for one logged call, read from the local store.
-export function loadRequestContent(id: string, sessionID: string): Promise<RequestLogContent> {
-  return hoxiAPI.getRequestLogContent(id, sessionID);
-}
-
-// silent skips the loading flag so background refreshes do not flash the view,
-// and an unchanged payload is dropped so the list does not re-render needlessly.
+// silent skips the loading flag so background refreshes do not flash the view.
 export async function loadRequestLog(opts: { silent?: boolean } = {}) {
   const request = ++generation;
   if (!opts.silent) setRequestLogLoading(true);
@@ -28,18 +24,19 @@ export async function loadRequestLog(opts: { silent?: boolean } = {}) {
     const res = await hoxiAPI.getRequestLog(500);
     if (request !== generation) return;
     const entries = Array.isArray(res?.entries) ? res.entries : [];
-    const next = JSON.stringify(entries);
-    if (next !== signature) {
-      signature = next;
-      setRequestLog(entries);
-      setRequestLogTotal(res?.total || 0);
-    }
+    // Unchanged rows keep their identity, so nothing re-renders for them.
+    setRequestLog(reconcile(entries, { key: "id" }));
+    setRequestLogTotal(res?.total || 0);
   } catch (err: any) {
     if (request !== generation) return;
-    signature = "";
-    setRequestLog([]);
+    setRequestLog(reconcile([], { key: "id" }));
     setRequestLogError(String(err?.message || err || ""));
   } finally {
     if (!opts.silent && request === generation) setRequestLogLoading(false);
   }
+}
+
+// On-demand input/output for one logged call, read from the local store.
+export function loadRequestContent(id: string, sessionID: string): Promise<RequestLogContent> {
+  return hoxiAPI.getRequestLogContent(id, sessionID);
 }

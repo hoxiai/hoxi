@@ -137,20 +137,20 @@ export default function DiagnosticsTab() {
     onCleanup(() => clearTimeout(timer));
   });
 
-  // Keep the list live while the tab is open; unchanged payloads are dropped so
-  // the view only re-renders when something actually changed.
-  createEffect(() => {
-    const poll = setInterval(() => void loadRequestLog({ silent: true }), REFRESH_MS);
-    onCleanup(() => clearInterval(poll));
-  });
-
-  // Tick the elapsed clock once a second only while something is running.
-  const hasPending = createMemo(() => requestLog().some(isPending));
+  // Only keep refreshing while something is running: tick the elapsed clock once
+  // a second and re-poll for completion. When idle there is no polling at all,
+  // so browsing pages never competes with a background query. Manual refresh
+  // stays available.
+  const hasPending = createMemo(() => requestLog.some(isPending));
   createEffect(() => {
     if (!hasPending()) return;
     setNowMs(Date.now());
     const tick = setInterval(() => setNowMs(Date.now()), 1000);
-    onCleanup(() => clearInterval(tick));
+    const poll = setInterval(() => void loadRequestLog({ silent: true }), REFRESH_MS);
+    onCleanup(() => {
+      clearInterval(tick);
+      clearInterval(poll);
+    });
   });
 
   // Any filter change returns to the first page so the view never looks empty.
@@ -159,10 +159,10 @@ export default function DiagnosticsTab() {
     setPage(1);
   });
 
-  const providers = createMemo(() => unique(requestLog().map((entry) => entry.providerID)));
-  const models = createMemo(() => unique(requestLog().map((entry) => entry.modelID)));
+  const providers = createMemo(() => unique(requestLog.map((entry) => entry.providerID)));
+  const models = createMemo(() => unique(requestLog.map((entry) => entry.modelID)));
 
-  const filtered = createMemo(() => requestLog().filter((entry) => {
+  const filtered = createMemo(() => requestLog.filter((entry) => {
     if (provider() && entry.providerID !== provider()) return false;
     if (model() && entry.modelID !== model()) return false;
     if (status() === "ok" && (isFailed(entry) || isPending(entry))) return false;
@@ -174,9 +174,20 @@ export default function DiagnosticsTab() {
     return true;
   }));
 
-  const totalCost = createMemo(() => filtered().reduce((sum, entry) => sum + (entryCost(entry) ?? 0), 0));
-  const unpricedModels = createMemo(() =>
-    unique(filtered().filter((entry) => entryCost(entry) === null).map((entry) => entry.modelID)));
+  // Price the whole filtered set exactly once and share the result with both the
+  // total and each row, instead of re-pricing per row and per aggregate.
+  const pricing = createMemo(() => {
+    const byEntry = new Map<RequestLogEntry, number | null>();
+    const unpriced = new Set<string>();
+    let total = 0;
+    for (const entry of filtered()) {
+      const cost = entryCost(entry);
+      byEntry.set(entry, cost);
+      if (cost === null) unpriced.add(entry.modelID);
+      else total += cost;
+    }
+    return { byEntry, total, unpriced: Array.from(unpriced).sort() };
+  });
 
   const pageCount = createMemo(() => Math.max(1, Math.ceil(filtered().length / pageSize())));
   const rows = createMemo(() => {
@@ -338,7 +349,7 @@ export default function DiagnosticsTab() {
                       </Show>
                       <Show when={visible("cost")}>
                         <td class="px-3 py-2 text-right font-mono text-[11px] text-[var(--text-secondary)]">
-                          {(() => { const cost = entryCost(entry); return cost === null ? t("diagnostics.noError") : formatUsd(cost); })()}
+                          {(() => { const cost = pricing().byEntry.get(entry); return cost == null ? t("diagnostics.noError") : formatUsd(cost); })()}
                         </td>
                       </Show>
                       <Show when={visible("error")}>
@@ -358,9 +369,9 @@ export default function DiagnosticsTab() {
 
       <Show when={rows().length > 0}>
         <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] text-[var(--text-muted)]">
-          <span title={t("diagnostics.costNote")}>{t("diagnostics.summaryCost", { cost: formatUsd(totalCost()) })}</span>
-          <Show when={unpricedModels().length > 0}>
-            <span class="text-[var(--warn-text)]" title={unpricedModels().join(", ")}>{t("diagnostics.costUnpriced", { models: unpricedModels().slice(0, 3).join(", ") })}</span>
+          <span title={t("diagnostics.costNote")}>{t("diagnostics.summaryCost", { cost: formatUsd(pricing().total) })}</span>
+          <Show when={pricing().unpriced.length > 0}>
+            <span class="text-[var(--warn-text)]" title={pricing().unpriced.join(", ")}>{t("diagnostics.costUnpriced", { models: pricing().unpriced.slice(0, 3).join(", ") })}</span>
           </Show>
           <span class="text-[var(--text-faint)]">{t("diagnostics.costNote")}</span>
         </div>
