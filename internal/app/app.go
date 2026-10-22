@@ -245,6 +245,8 @@ func Run(distFS fs.FS) {
 	gw.SetGatewayToken(gatewayToken)
 	gw.StartRemoteTunnel(hoxipaths.TunnelConfigPath(identity.Variant), listener.Addr().(*net.TCPAddr).Port)
 	defer gw.StopRemoteTunnel()
+	gw.StartCloudflared(hoxipaths.CloudflaredConfigPath(), logger)
+	defer gw.StopCloudflared()
 	browserToken, err := generateRandomHex(32)
 	if err != nil {
 		logger.Error("failed to generate browser credential", "error", err)

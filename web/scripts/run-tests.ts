@@ -45,6 +45,7 @@ import "../src/__tests__/network.test";
 import "../src/__tests__/telemetry.test";
 import "../src/__tests__/local-relay.test";
 import "../src/__tests__/pairing.test";
+import "../src/__tests__/cloudflared.test";
 import "../src/__tests__/auto-models.test";
 import "../src/__tests__/auto-breaker.test";
 import "../src/__tests__/workspace-review.test";

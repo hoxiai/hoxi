@@ -45,6 +45,8 @@ func TestIngressRequestEnforcesRemoteAllowList(t *testing.T) {
 		{http.MethodGet, "/api/hoxi/tunnel/status"},
 		{http.MethodPost, "/api/hoxi/tunnel/pair"},
 		{http.MethodGet, "/api/hoxi/pairing/qr"},
+		{http.MethodGet, "/api/hoxi/cloudflared/status"},
+		{http.MethodPost, "/api/hoxi/cloudflared/enable"},
 		{http.MethodGet, "/api/hoxi/auth"},
 		{http.MethodGet, "/api/hoxi/models-config"},
 		{http.MethodGet, "/api/hoxi/provider/keys"},

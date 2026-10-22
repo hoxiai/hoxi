@@ -17,6 +17,7 @@ import (
 	"github.com/hoxiai/hoxi/internal/auth"
 	"github.com/hoxiai/hoxi/internal/browser"
 	"github.com/hoxiai/hoxi/internal/buildinfo"
+	"github.com/hoxiai/hoxi/internal/cloudflared"
 	"github.com/hoxiai/hoxi/internal/codeindex"
 	"github.com/hoxiai/hoxi/internal/diagnostics"
 	"github.com/hoxiai/hoxi/internal/forge"
@@ -63,6 +64,7 @@ type Gateway struct {
 	forge                 *forge.Service
 	tunnel                *tunnel.Manager
 	pairing               *pairing.Service
+	cloudflared           *cloudflared.Manager
 	onOpenDirectoryDialog func() (string, error)
 	onFocusDesktop        func(directory, sessionID string)
 	dialogMu              sync.RWMutex
@@ -203,6 +205,7 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 	providers.SetBusyCheck(g.isAnySessionBusy)
 	g.tunnel = tunnel.NewManager(tunnel.Options{Handler: http.HandlerFunc(g.serveTunnelRequest), Version: buildinfo.Version})
 	g.pairing = pairing.NewService(hoxipaths.PairingTokenPath(), hoxipaths.DefaultLANPairingPort)
+	g.cloudflared = cloudflared.NewManager(cloudflared.Options{IngressURL: "http://" + hoxipaths.DefaultRemoteIngressAddr})
 
 	g.registerRoutes(distFS)
 	return g
@@ -445,6 +448,7 @@ func (g *Gateway) registerRoutes(distFS fs.FS) {
 	g.worktrees.RegisterRoutes(g.mux)
 	g.tunnel.RegisterRoutes(g.mux)
 	g.pairing.RegisterRoutes(g.mux)
+	g.cloudflared.RegisterRoutes(g.mux)
 	g.workspaces.RegisterRoutes(g.mux)
 	g.browser.RegisterRoutes(g.mux)
 	if g.runner != nil {

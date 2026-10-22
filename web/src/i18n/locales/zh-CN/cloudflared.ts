@@ -1,0 +1,22 @@
+// web/src/i18n/locales/zh-CN/cloudflared.ts
+export const cloudflared = {
+  title: "Cloudflare Tunnel 中继",
+  tip: "运行受监管的 Cloudflare Tunnel 连接器，让 Hoxi App 在其它网络中也能访问这台电脑。粘贴 Cloudflare Zero Trust 的连接器令牌，并把 tunnel 的公开主机名服务指向本机入口地址。Cloudflare 在边缘终结 TLS，因此只有在端到端加密落地后内容才真正私密",
+  stateDisabled: "未启用",
+  stateStarting: "连接中",
+  stateOnline: "已连接",
+  stateMissing: "未找到 cloudflared",
+  stateOffline: "已断开，正在重试",
+  tokenLabel: "连接器令牌",
+  tokenPlaceholder: "粘贴 Cloudflare 中的 tunnel 连接器令牌",
+  hostnameLabel: "公开主机名",
+  hostnamePlaceholder: "abc123.node.hoxi.work",
+  enableAction: "启用",
+  disableAction: "停用",
+  disableConfirm: "确定停用 Cloudflare Tunnel 连接器？停用后手机将无法从局域网外访问，需重新启用",
+  ingressHint: "把 tunnel 的公开主机名服务指向 {url}",
+  missingHint: "未安装 cloudflared。请先安装（brew install cloudflared）或把可执行文件放到 ~/.hoxi/bin，再重新启用",
+  loadError: "无法读取 Cloudflare Tunnel 状态",
+  enableError: "无法启用 Cloudflare Tunnel 连接器",
+  disableError: "无法停用 Cloudflare Tunnel 连接器",
+};

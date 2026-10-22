@@ -61,6 +61,7 @@ export * from "./code-index";
 export * from "./browser";
 export * from "./remote-tunnel";
 export * from "./pairing";
+export * from "./cloudflared";
 export * from "./relay";
 export * from "./deep-link";
 export * from "./subagent-config";

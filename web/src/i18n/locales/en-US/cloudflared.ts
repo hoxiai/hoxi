@@ -1,0 +1,22 @@
+// web/src/i18n/locales/en-US/cloudflared.ts
+export const cloudflared = {
+  title: "Cloudflare Tunnel relay",
+  tip: "Run a supervised Cloudflare Tunnel connector so the Hoxi app can reach this Mac from another network. Paste the connector token from Cloudflare Zero Trust and set the tunnel's public hostname service to the local ingress URL. Cloudflare terminates TLS at its edge, so content is only private once end-to-end encryption lands",
+  stateDisabled: "Not enabled",
+  stateStarting: "Connecting",
+  stateOnline: "Connected",
+  stateMissing: "cloudflared not found",
+  stateOffline: "Disconnected, retrying",
+  tokenLabel: "Connector token",
+  tokenPlaceholder: "Paste the tunnel connector token from Cloudflare",
+  hostnameLabel: "Public hostname",
+  hostnamePlaceholder: "abc123.node.hoxi.work",
+  enableAction: "Enable",
+  disableAction: "Disable",
+  disableConfirm: "Disable the Cloudflare Tunnel connector? Remote access outside the local network stops until you enable it again",
+  ingressHint: "Point the tunnel's public hostname service at {url}",
+  missingHint: "cloudflared is not installed. Install it (brew install cloudflared) or place the binary in ~/.hoxi/bin, then enable again",
+  loadError: "Could not read the Cloudflare Tunnel status",
+  enableError: "Could not enable the Cloudflare Tunnel connector",
+  disableError: "Could not disable the Cloudflare Tunnel connector",
+};

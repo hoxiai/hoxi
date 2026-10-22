@@ -17,6 +17,7 @@ import { commandPalette } from "./commandPalette";
 import { forge } from "./forge";
 import { remoteTunnel } from "./remoteTunnel";
 import { pairing } from "./pairing";
+import { cloudflared } from "./cloudflared";
 import { relay } from "./relay";
 import { tasks } from "./tasks";
 
@@ -38,6 +39,7 @@ export const zhCN: I18nDictionary = {
   forge,
   remoteTunnel,
   pairing,
+  cloudflared,
   relay,
   tasks,
 };

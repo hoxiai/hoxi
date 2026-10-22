@@ -28,6 +28,7 @@
 | 桌面监听局域网 `:5417`，用配对令牌鉴权，复用远程路由白名单；仅接受局域网来源（loopback / RFC1918 / ULA / 链路本地 / CGNAT），公网来源一律 403 | 已实现 | [`internal/gateway/lan.go`](../internal/gateway/lan.go)、[`internal/app/app.go`](../internal/app/app.go) |
 | 手机扫码直连（Hoxi 节点二维码，`type=hoxi`） | 已实现（手机端既有扫码流程） | `client/lib/features/auth/...` |
 | 反向代理入口（loopback `127.0.0.1:5418`，供 cloudflared 等本地转发器指向；配对令牌鉴权 + 远程路由白名单；**不做来源地址过滤**，由转发器自身的前置鉴权把关） | 已实现 | [`internal/gateway/ingress.go`](../internal/gateway/ingress.go)、[`internal/app/app.go`](../internal/app/app.go) |
+| 受监管的 Cloudflare Tunnel 连接器（设置 → 远程：粘贴 connector token、启停、运行状态；token 存 `~/.hoxi/cloudflared.json`，0600；二进制仅在 PATH / `~/.hoxi/bin` 解析，不自动下载） | 已实现 | [`internal/cloudflared`](../internal/cloudflared/manager.go) |
 | GoPanel 反向隧道（**明文**，GoPanel 可见内容） | 已实现 | [`docs/gopanel-hoxi-remote-tunnel.md`](gopanel-hoxi-remote-tunnel.md) |
 | 端到端加密传输、配对票据服务、盲目中继回落 | **未实现** | 本文 |
 
@@ -109,7 +110,7 @@ v2 在保留 `type`/`entrance` 的基础上增加端点公钥与中继提示：
 ## 8. 中继 provider 配置面
 
 - **自建 GoPanel**（现有）：作为可达性通道，配合应用层 E2E 后即变成盲中继。
-- **Cloudflare Tunnel**：仅做可达性（`cloudflared` 主动外连、不开公网端口）；边缘终结 TLS，故**必须叠加应用层 E2E** 才盲。桌面侧的落点是反向代理入口 `http://127.0.0.1:5418`（`internal/gateway/ingress.go`，配对令牌鉴权 + 远程白名单），`cloudflared` 的 `service` 指到这里；域名用 `<opaque-id>.node.hoxi.work`（CNAME → `<tunnel-id>.cfargotunnel.com`，Proxied），由后端用 Cloudflare API 自动开通，或用户自带。
+- **Cloudflare Tunnel**：仅做可达性（`cloudflared` 主动外连、不开公网端口）；边缘终结 TLS，故**必须叠加应用层 E2E** 才盲。桌面侧的落点是反向代理入口 `http://127.0.0.1:5418`（`internal/gateway/ingress.go`，配对令牌鉴权 + 远程白名单），`cloudflared` 的 `service` 指到这里；连接器由 Hoxi 监管（`internal/cloudflared`，设置 → 远程 粘贴 connector token 并启停），域名用 `<opaque-id>.node.hoxi.work`（CNAME → `<tunnel-id>.cfargotunnel.com`，Proxied），由后端用 Cloudflare API 自动开通，或用户自带。
 - **Cloudflare TURN / Realtime**：语音等实时通道打不通时回落，DTLS 本身即盲。
 - **EdgeOne**：与 Cloudflare 同构，作配对票据服务的备选 provider。
 
@@ -118,10 +119,11 @@ v2 在保留 `type`/`entrance` 的基础上增加端点公钥与中继提示：
 ## 9. 分期与验收
 
 1. **LAN 直连**（已完成）：出码 + `5417` 令牌监听 + 手机既有扫码流程。
-2. **E2E 契约评审**：本文 + 向量化测试设计评审通过后再动连接层。
-3. **E2E 传输**：QUIC 直连 + 打洞 + DERP/TURN 回落；HTTP/SSE over QUIC；QR v2 + TOFU。
-4. **配对票据服务**：边缘函数 + 限流 + 单次兑付。
-5. **语音实时**：Cloudflare TURN 回落（可选）。
+2. **反向代理入口 + Cloudflare 连接器**（已完成）：loopback `:5418` 入口 + 受监管的 `cloudflared`（设置 → 远程 粘贴 connector token 并启停）。
+3. **E2E 契约评审**：本文 + 向量化测试设计评审通过后再动连接层。
+4. **E2E 传输**：QUIC 直连 + 打洞 + DERP/TURN 回落；HTTP/SSE over QUIC；QR v2 + TOFU。
+5. **配对票据服务 + Cloudflare 开通控制面**：边缘函数 + 限流 + 单次兑付；后端用 Cloudflare API 建 tunnel/DNS 并下发 connector token。
+6. **语音实时**：Cloudflare TURN 回落（可选）。
 
 验收要点：直连优先命中率、打洞失败回落可读密文、中继侧抓包无明文、票据一次性与过期、拒绝路径测试（无票据/错公钥/重放均拒）。
 

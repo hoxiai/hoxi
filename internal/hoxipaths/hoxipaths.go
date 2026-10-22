@@ -47,6 +47,7 @@ var protectedStateFiles = []string{
 	"tunnel.json",
 	"tunnel-dev.json",
 	"pairing.json",
+	"cloudflared.json",
 	"approval-audit.json",
 	"approval-policy.json",
 	"relay-keys.json",
@@ -127,6 +128,13 @@ func TunnelConfigPath(variant string) string {
 // machine except inside the QR the user chooses to display.
 func PairingTokenPath() string {
 	return Join("pairing.json")
+}
+
+// CloudflaredConfigPath returns ~/.hoxi/cloudflared.json, the Cloudflare Tunnel
+// connector settings (enabled flag, connector token, hostname). Written 0600;
+// the token is never returned by the HTTP API.
+func CloudflaredConfigPath() string {
+	return Join("cloudflared.json")
 }
 
 // ApprovalPolicyPath returns ~/.hoxi/approval-policy.json, the approval mode
