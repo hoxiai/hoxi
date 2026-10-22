@@ -1,22 +1,26 @@
 // web/src/components/settings/SettingsModal.tsx
-import { createMemo, For, Show } from "solid-js";
+import { createMemo, createSignal, For, Show } from "solid-js";
 import { Presence } from "../motion/Presence";
 import {
   ArrowLeft,
+  Blocks,
   Bot,
   Cpu,
   FolderGit2,
+  Globe,
   KeyRound,
   MessageSquareText,
   RadioTower,
   Moon,
   ScrollText,
+  Search,
   Settings,
   ShieldCheck,
   SlidersHorizontal,
+  Smartphone,
   Sun,
   Users,
-  Terminal as TerminalIcon,
+  X,
   Zap,
 } from "lucide-solid";
 import {
@@ -40,13 +44,14 @@ import { ChatComposerTab, GeneralAppearanceTab } from "./SettingsGeneralChatTabs
 import { SystemRuntimeSettingsTab } from "./SettingsSystemRuntimeTab";
 import { PrivacySettingsTab } from "./PrivacyControls";
 import { LocalRelaySettingsTab } from "./LocalRelayControls";
+import { RemoteTunnelControls } from "./RemoteTunnelControls";
+import { SettingsExtensionsTab } from "./SettingsExtensionsTab";
 import DiagnosticsTab from "./DiagnosticsTab";
-import {
-  TerminalSafetySettingsTab,
-  WorkspaceGitSettingsTab,
-} from "./SettingsWorkspaceTerminalTabs";
+import { WorkspaceGitSettingsTab } from "./SettingsWorkspaceTerminalTabs";
 
 export default function SettingsModal() {
+  const [searchQuery, setSearchQuery] = createSignal("");
+
   const isMac =
     typeof navigator !== "undefined" &&
     /Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent);
@@ -82,8 +87,38 @@ export default function SettingsModal() {
 
   const navGroups: Array<{
     groupLabel: () => string;
-    items: Array<{ id: SettingsTab; label: () => string; icon: any; badge?: () => number }>;
+    items: Array<{
+      id: SettingsTab;
+      label: () => string;
+      icon: any;
+      badge?: () => number;
+      keywords?: () => string[];
+    }>;
   }> = [
+    {
+      groupLabel: () => t("settings.groupPreferences"),
+      items: [
+        {
+          id: "general",
+          label: () => t("settings.tabGeneral"),
+          icon: Settings,
+          keywords: () => [
+            t("settings.sectionThemeTitle"),
+            t("settings.sectionTerminalTitle"),
+            t("settings.sectionSidebarHistoryTitle"),
+          ],
+        },
+        {
+          id: "chat",
+          label: () => t("settings.tabChat"),
+          icon: MessageSquareText,
+          keywords: () => [
+            t("settings.sectionSendShortcutTitle"),
+            t("settings.sectionNotificationsTitle"),
+          ],
+        },
+      ],
+    },
     {
       groupLabel: () => t("settings.groupModels"),
       items: [
@@ -92,43 +127,150 @@ export default function SettingsModal() {
           label: () => t("models.tabCatalog"),
           icon: KeyRound,
           badge: () => workspace.connectedProviders.length,
+          keywords: () => [t("models.tabCustom"), "API Key", "Provider"],
         },
-        { id: "auto", label: () => t("models.tabAutoPools"), icon: Zap },
-        { id: "models", label: () => t("models.tabModels"), icon: SlidersHorizontal },
-        { id: "relay", label: () => t("relay.title"), icon: RadioTower },
+        {
+          id: "models",
+          label: () => t("models.tabModels"),
+          icon: SlidersHorizontal,
+          keywords: () => [t("models.selectModel")],
+        },
+        {
+          id: "auto",
+          label: () => t("models.tabAutoPools"),
+          icon: Zap,
+          keywords: () => ["hoxi-auto", t("models.tabAutoPools")],
+        },
       ],
     },
     {
-      groupLabel: () => t("settings.groupAgentSafety"),
+      groupLabel: () => t("settings.groupAgentsExtensions"),
       items: [
         {
           id: "agents",
           label: () => t("models.tabAgents"),
           icon: Bot,
           badge: () => workspace.agents.length,
+          keywords: () => [
+            t("settings.sectionCustomInstructionsTitle"),
+            t("models.customAgentsTitle"),
+          ],
         },
-        { id: "subagents", label: () => t("models.tabSubagents"), icon: Users },
-        { id: "policy", label: () => t("models.tabPolicy"), icon: ShieldCheck },
-        { id: "terminal", label: () => t("settings.tabTerminal"), icon: TerminalIcon },
-        { id: "privacy", label: () => t("privacy.title"), icon: ShieldCheck },
+        {
+          id: "subagents",
+          label: () => t("models.tabSubagents"),
+          icon: Users,
+          keywords: () => [t("models.subagentsTitle")],
+        },
+        {
+          id: "extensions",
+          label: () => t("settings.tabExtensions"),
+          icon: Blocks,
+          keywords: () => [
+            "Skills",
+            "MCP",
+            t("models.mcpTitle"),
+            t("settings.extensionsTitle"),
+          ],
+        },
       ],
     },
     {
-      groupLabel: () => t("settings.groupWorkspace"),
+      groupLabel: () => t("settings.groupWorkspaceGit"),
       items: [
-        { id: "general", label: () => t("settings.tabGeneral"), icon: Settings },
-        { id: "chat", label: () => t("settings.tabChat"), icon: MessageSquareText },
-        { id: "workspace", label: () => t("settings.tabWorkspace"), icon: FolderGit2 },
+        {
+          id: "workspace",
+          label: () => t("settings.tabWorkspace"),
+          icon: FolderGit2,
+          keywords: () => [
+            t("settings.sectionSandboxTitle"),
+            t("settings.sectionDiffStyleTitle"),
+            t("settings.sectionCodeAuditTitle"),
+            "Worktree",
+            "Diff",
+          ],
+        },
+      ],
+    },
+    {
+      groupLabel: () => t("settings.groupSafetyPrivacy"),
+      items: [
+        {
+          id: "policy",
+          label: () => t("models.tabPolicy"),
+          icon: ShieldCheck,
+          keywords: () => [
+            t("approval.modeAutoLabel"),
+            t("models.policyTitle"),
+            t("settings.sectionSafetyPolicyTitle"),
+            t("settings.sectionAgyHookTitle"),
+          ],
+        },
+        {
+          id: "privacy",
+          label: () => t("privacy.title"),
+          icon: Globe,
+          keywords: () => [t("privacy.telemetryTitle")],
+        },
+      ],
+    },
+    {
+      groupLabel: () => t("settings.groupDevicesIntegrations"),
+      items: [
+        {
+          id: "remote",
+          label: () => t("settings.tabRemote"),
+          icon: Smartphone,
+          keywords: () => [t("remoteTunnel.title"), "GoPanel"],
+        },
+        {
+          id: "relay",
+          label: () => t("relay.title"),
+          icon: RadioTower,
+          keywords: () => ["OpenAI", "127.0.0.1"],
+        },
       ],
     },
     {
       groupLabel: () => t("settings.groupSystem"),
       items: [
-        { id: "system", label: () => t("settings.tabSystem"), icon: Cpu },
-        { id: "diagnostics", label: () => t("diagnostics.title"), icon: ScrollText },
+        {
+          id: "system",
+          label: () => t("settings.tabSystem"),
+          icon: Cpu,
+          keywords: () => [
+            t("settings.sectionUpdaterTitle"),
+            t("settings.sectionRuntimeTitle"),
+            t("settings.sectionMaintenanceTitle"),
+            "OpenCode",
+          ],
+        },
+        {
+          id: "diagnostics",
+          label: () => t("diagnostics.title"),
+          icon: ScrollText,
+        },
       ],
     },
   ];
+
+  const filteredNavGroups = createMemo(() => {
+    const q = searchQuery().trim().toLowerCase();
+    if (!q) return navGroups;
+    return navGroups
+      .map((grp) => {
+        const groupMatch = grp.groupLabel().toLowerCase().includes(q);
+        const items = grp.items.filter((item) => {
+          if (groupMatch) return true;
+          if (item.label().toLowerCase().includes(q)) return true;
+          if (item.id.toLowerCase().includes(q)) return true;
+          const kws = item.keywords ? item.keywords() : [];
+          return kws.some((kw) => kw.toLowerCase().includes(q));
+        });
+        return { ...grp, items };
+      })
+      .filter((grp) => grp.items.length > 0);
+  });
 
   const activeBreadcrumb = createMemo(() => {
     const cur = activeTab();
@@ -210,52 +352,87 @@ export default function SettingsModal() {
 
         {/* Full-Screen Body: Left Grouped Sidebar Island + Right Content Island */}
         <div class="flex-1 flex flex-col sm:flex-row min-h-0 px-2 pb-2 gap-2">
-          <nav class="pane-island sm:w-60 shrink-0 p-3 flex sm:flex-col justify-between overflow-x-auto sm:overflow-y-auto bg-[var(--bg-panel)]">
-            <div class="flex sm:block gap-2 sm:space-y-4">
-              <For each={navGroups}>
-                {(group) => (
-                  <div class="flex sm:block items-center gap-1 sm:space-y-1">
-                    <div class="hidden sm:block px-3 pb-1 text-[11px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
-                      {group.groupLabel()}
-                    </div>
-                    <For each={group.items}>
-                      {(item) => {
-                        const IconComp = item.icon;
-                        const isActive = () =>
-                          activeTab() === item.id ||
-                          (item.id === "providers" && activeTab() === "custom");
-                        const badgeVal = () => (item.badge ? item.badge() : 0);
-                        return (
-                          <button
-                            type="button"
-                            onClick={() => selectTab(item.id)}
-                            class={`hoxi-press flex w-full items-center justify-between gap-2 rounded-xl px-3 py-2 text-left text-[13px] font-medium cursor-pointer ${
-                              isActive()
-                                ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]"
-                                : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
-                            }`}
-                          >
-                            <span class="inline-flex items-center gap-2.5 min-w-0">
-                              <IconComp
-                                size={15}
-                                class={`shrink-0 ${
-                                  item.id === "auto" && !isActive() ? "text-[var(--ok)]" : ""
-                                }`}
-                              />
-                              <span class="whitespace-nowrap sm:truncate">{item.label()}</span>
-                            </span>
-                            <Show when={badgeVal() > 0}>
-                              <span class="shrink-0 rounded-full bg-[var(--bg-inset)] px-2 py-0.5 font-mono text-[11px] text-[var(--text-secondary)]">
-                                {badgeVal()}
-                              </span>
-                            </Show>
-                          </button>
-                        );
-                      }}
-                    </For>
+          <nav class="pane-island sm:w-64 shrink-0 p-3 flex sm:flex-col justify-between overflow-x-auto sm:overflow-y-auto bg-[var(--bg-panel)]">
+            <div class="flex sm:block gap-2 sm:space-y-4 w-full">
+              {/* Settings Search Filter */}
+              <div class="hidden sm:block pb-1">
+                <div class="relative">
+                  <Search
+                    size={13}
+                    class="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--text-faint)]"
+                  />
+                  <input
+                    type="text"
+                    value={searchQuery()}
+                    onInput={(e) => setSearchQuery(e.currentTarget.value)}
+                    placeholder={t("settings.searchSettingsPlaceholder")}
+                    class="w-full rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)] pl-8 pr-7 py-1.5 text-[12px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none focus:border-[var(--accent-primary)] transition-colors"
+                  />
+                  <Show when={searchQuery().trim().length > 0}>
+                    <button
+                      type="button"
+                      onClick={() => setSearchQuery("")}
+                      class="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-[var(--text-faint)] hover:text-[var(--text-primary)] cursor-pointer"
+                    >
+                      <X size={12} />
+                    </button>
+                  </Show>
+                </div>
+              </div>
+
+              <Show
+                when={filteredNavGroups().length > 0}
+                fallback={
+                  <div class="hidden sm:block px-3 py-6 text-center text-[12px] text-[var(--text-muted)]">
+                    {t("settings.searchNoResults")}
                   </div>
-                )}
-              </For>
+                }
+              >
+                <For each={filteredNavGroups()}>
+                  {(group) => (
+                    <div class="flex sm:block items-center gap-1 sm:space-y-1">
+                      <div class="hidden sm:block px-3 pb-1 text-[11px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
+                        {group.groupLabel()}
+                      </div>
+                      <For each={group.items}>
+                        {(item) => {
+                          const IconComp = item.icon;
+                          const isActive = () =>
+                            activeTab() === item.id ||
+                            (item.id === "providers" && activeTab() === "custom");
+                          const badgeVal = () => (item.badge ? item.badge() : 0);
+                          return (
+                            <button
+                              type="button"
+                              onClick={() => selectTab(item.id)}
+                              class={`hoxi-press flex w-full items-center justify-between gap-2 rounded-xl px-3 py-2 text-left text-[13px] font-medium cursor-pointer ${
+                                isActive()
+                                  ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]"
+                                  : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+                              }`}
+                            >
+                              <span class="inline-flex items-center gap-2.5 min-w-0">
+                                <IconComp
+                                  size={15}
+                                  class={`shrink-0 ${
+                                    item.id === "auto" && !isActive() ? "text-[var(--ok)]" : ""
+                                  }`}
+                                />
+                                <span class="whitespace-nowrap sm:truncate">{item.label()}</span>
+                              </span>
+                              <Show when={badgeVal() > 0}>
+                                <span class="shrink-0 rounded-full bg-[var(--bg-inset)] px-2 py-0.5 font-mono text-[11px] text-[var(--text-secondary)]">
+                                  {badgeVal()}
+                                </span>
+                              </Show>
+                            </button>
+                          );
+                        }}
+                      </For>
+                    </div>
+                  )}
+                </For>
+              </Show>
             </div>
           </nav>
 
@@ -312,14 +489,14 @@ export default function SettingsModal() {
                       <ChatComposerTab />
                     </div>
                   </Show>
+                  <Show when={activeTab() === "extensions"}>
+                    <div class="hoxi-view-enter">
+                      <SettingsExtensionsTab />
+                    </div>
+                  </Show>
                   <Show when={activeTab() === "workspace"}>
                     <div class="hoxi-view-enter">
                       <WorkspaceGitSettingsTab />
-                    </div>
-                  </Show>
-                  <Show when={activeTab() === "terminal"}>
-                    <div class="hoxi-view-enter">
-                      <TerminalSafetySettingsTab />
                     </div>
                   </Show>
                   <Show when={activeTab() === "system"}>
@@ -335,6 +512,11 @@ export default function SettingsModal() {
                   <Show when={activeTab() === "diagnostics"}>
                     <div class="hoxi-view-enter">
                       <DiagnosticsTab />
+                    </div>
+                  </Show>
+                  <Show when={activeTab() === "remote"}>
+                    <div class="hoxi-view-enter">
+                      <RemoteTunnelControls />
                     </div>
                   </Show>
                   <Show when={activeTab() === "relay"}>

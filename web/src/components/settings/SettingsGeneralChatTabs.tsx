@@ -1,7 +1,9 @@
 // web/src/components/settings/SettingsGeneralChatTabs.tsx
+import { For } from "solid-js";
 import {
   Bell,
   CheckCircle2,
+  ChevronRight,
   CornerDownLeft,
   ExternalLink,
   Globe,
@@ -12,6 +14,7 @@ import {
   ShieldAlert,
   Sparkles,
   Sun,
+  Terminal as TerminalIcon,
   Timer,
   Type,
   Volume2,
@@ -30,7 +33,6 @@ import {
 } from "../../store/workspace";
 import { locale, setLocale, t } from "../../i18n";
 import {
-  HelpTip,
   SegmentedPills,
   SettingGroup,
   SettingRow,
@@ -131,6 +133,47 @@ export function GeneralAppearanceTab() {
         </SettingRow>
       </SettingGroup>
 
+      {/* 2. Terminal Appearance */}
+      <SettingGroup
+        title={t("settings.sectionTerminalTitle")}
+        tip={t("settings.sectionTerminalDesc")}
+      >
+        <SettingRow
+          icon={TerminalIcon}
+          label={t("settings.terminalFontSizeLabel")}
+          tip={t("settings.terminalFontSizeDesc")}
+        >
+          <div class="inline-flex gap-0.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)] p-1">
+            <For each={[11, 12, 13, 14, 15, 16]}>
+              {(sz) => (
+                <button
+                  type="button"
+                  onClick={() => updateAppSetting("terminalFontSize", sz)}
+                  class={`rounded-lg px-3 py-1 font-mono text-[13px] font-medium transition-colors cursor-pointer ${
+                    appSettings.terminalFontSize === sz
+                      ? "bg-[var(--bg-panel)] text-[var(--accent-primary)] shadow-2xs"
+                      : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                  }`}
+                >
+                  {sz}px
+                </button>
+              )}
+            </For>
+          </div>
+        </SettingRow>
+
+        <SettingRow
+          label={t("settings.terminalCursorBlinkLabel")}
+          tip={t("settings.terminalCursorBlinkDesc")}
+        >
+          <ToggleSwitch
+            checked={appSettings.terminalCursorBlink}
+            onChange={(val) => updateAppSetting("terminalCursorBlink", val)}
+          />
+        </SettingRow>
+      </SettingGroup>
+
+      {/* 3. Session History & Collapsible Thresholds */}
       <SettingGroup
         title={t("settings.sectionSidebarHistoryTitle")}
         tip={t("settings.sectionSidebarHistoryDesc")}
@@ -144,52 +187,61 @@ export function GeneralAppearanceTab() {
             onChange={(val) => updateAppSetting("sidebarAutoCollapse", val)}
           />
         </SettingRow>
-        <SettingRow
-          label={t("settings.sidebarMinSessionsLabel")}
-          tip={t("settings.sidebarMinSessionsDesc")}
-        >
-          <input
-            type="number"
-            min={1}
-            max={100}
-            step={1}
-            aria-label={t("settings.sidebarMinSessionsLabel")}
-            value={appSettings.sidebarMinSessions}
-            disabled={!appSettings.sidebarAutoCollapse}
-            onChange={(ev) => {
-              const input = ev.currentTarget;
-              if (input.validity.valid && Number.isInteger(input.valueAsNumber)) {
-                updateAppSetting("sidebarMinSessions", input.valueAsNumber);
-              } else {
-                input.value = String(appSettings.sidebarMinSessions);
-              }
-            }}
-            class="w-24 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-3.5 py-2 text-[13px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)] disabled:opacity-50 disabled:cursor-not-allowed"
-          />
-        </SettingRow>
-        <SettingRow
-          label={t("settings.sidebarRecentMinutesLabel")}
-          tip={t("settings.sidebarRecentMinutesDesc")}
-        >
-          <input
-            type="number"
-            min={0}
-            max={10080}
-            step={1}
-            aria-label={t("settings.sidebarRecentMinutesLabel")}
-            value={appSettings.sidebarRecentMinutes}
-            disabled={!appSettings.sidebarAutoCollapse}
-            onChange={(ev) => {
-              const input = ev.currentTarget;
-              if (input.validity.valid && Number.isInteger(input.valueAsNumber)) {
-                updateAppSetting("sidebarRecentMinutes", input.valueAsNumber);
-              } else {
-                input.value = String(appSettings.sidebarRecentMinutes);
-              }
-            }}
-            class="w-24 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-3.5 py-2 text-[13px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)] disabled:opacity-50 disabled:cursor-not-allowed"
-          />
-        </SettingRow>
+
+        <details class="group/thresholds">
+          <summary class="flex cursor-pointer list-none items-center gap-1.5 px-5 py-2.5 text-[12px] font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)] [&::-webkit-details-marker]:hidden">
+            <ChevronRight size={13} class="transition-transform group-open/thresholds:rotate-90" />
+            <span>{t("settings.sidebarAdvancedThresholds")}</span>
+          </summary>
+          <div class="divide-y divide-[var(--border-subtle)]/55 border-t border-[var(--border-subtle)]/55">
+            <SettingRow
+              label={t("settings.sidebarMinSessionsLabel")}
+              tip={t("settings.sidebarMinSessionsDesc")}
+            >
+              <input
+                type="number"
+                min={1}
+                max={100}
+                step={1}
+                aria-label={t("settings.sidebarMinSessionsLabel")}
+                value={appSettings.sidebarMinSessions}
+                disabled={!appSettings.sidebarAutoCollapse}
+                onChange={(ev) => {
+                  const input = ev.currentTarget;
+                  if (input.validity.valid && Number.isInteger(input.valueAsNumber)) {
+                    updateAppSetting("sidebarMinSessions", input.valueAsNumber);
+                  } else {
+                    input.value = String(appSettings.sidebarMinSessions);
+                  }
+                }}
+                class="w-24 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-3.5 py-2 text-[13px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)] disabled:opacity-50 disabled:cursor-not-allowed"
+              />
+            </SettingRow>
+            <SettingRow
+              label={t("settings.sidebarRecentMinutesLabel")}
+              tip={t("settings.sidebarRecentMinutesDesc")}
+            >
+              <input
+                type="number"
+                min={0}
+                max={10080}
+                step={1}
+                aria-label={t("settings.sidebarRecentMinutesLabel")}
+                value={appSettings.sidebarRecentMinutes}
+                disabled={!appSettings.sidebarAutoCollapse}
+                onChange={(ev) => {
+                  const input = ev.currentTarget;
+                  if (input.validity.valid && Number.isInteger(input.valueAsNumber)) {
+                    updateAppSetting("sidebarRecentMinutes", input.valueAsNumber);
+                  } else {
+                    input.value = String(appSettings.sidebarRecentMinutes);
+                  }
+                }}
+                class="w-24 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-3.5 py-2 text-[13px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)] disabled:opacity-50 disabled:cursor-not-allowed"
+              />
+            </SettingRow>
+          </div>
+        </details>
       </SettingGroup>
     </div>
   );
@@ -210,7 +262,9 @@ export function ChatComposerTab() {
   return (
     <div class="space-y-6">
       {/* 1. Composer & Stream Preferences */}
-      <SettingGroup>
+      <SettingGroup
+        title={t("settings.sectionStreamPrefsTitle")}
+      >
         <SettingRow
           icon={CornerDownLeft}
           label={t("settings.sectionSendShortcutTitle")}
@@ -307,7 +361,13 @@ export function ChatComposerTab() {
             onChange={(val) => updateAppSetting("confirmBeforeRevert", val)}
           />
         </SettingRow>
+      </SettingGroup>
 
+      {/* 2. Notifications & Alerts */}
+      <SettingGroup
+        title={t("settings.sectionNotificationsTitle")}
+        tip={t("settings.sectionNotificationsDesc")}
+      >
         <SettingRow
           icon={Bell}
           label={t("settings.desktopNotificationsLabel")}
@@ -376,27 +436,7 @@ export function ChatComposerTab() {
             onChange={(val) => updateAppSetting("notifyOnStall", val)}
           />
         </SettingRow>
-
       </SettingGroup>
-
-      {/* 2. Global Custom Instructions */}
-      <section class="space-y-2">
-        <div class="flex items-center gap-2 px-1">
-          <h3 class="text-[13px] font-semibold text-[var(--text-secondary)]">
-            {t("settings.sectionCustomInstructionsTitle")}
-          </h3>
-          <HelpTip text={t("settings.sectionCustomInstructionsDesc")} />
-        </div>
-        <textarea
-          rows={3}
-          value={appSettings.customSystemPrompt}
-          placeholder={t("settings.customInstructionsPlaceholder")}
-          onInput={(ev) =>
-            updateAppSetting("customSystemPrompt", ev.currentTarget.value)
-          }
-          class="w-full rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-inset)]/35 p-4 font-mono text-[13px] leading-relaxed text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none focus:border-[var(--accent-primary)] resize-y"
-        />
-      </section>
     </div>
   );
 }

@@ -6,6 +6,7 @@ import {
   handleIncomingPermissionRequest,
   isDestructivePermissionRequest,
   markPermissionResolved,
+  resolveEffectivePermissionSummary,
   shouldAutoApprovePermission,
 } from "../store/approval-mode";
 import { setWorkspace, workspace } from "../store/workspace";
@@ -198,6 +199,49 @@ describe("permission command chains", () => {
     assertEqual(isDestructivePermissionRequest(wtEdit), false);
     assertEqual(shouldAutoApprovePermission(wtEdit, "auto"), true);
     assertEqual(shouldAutoApprovePermission(wtEdit, "smart"), true);
+  });
+
+  it("respects custom per-tool ask/deny rules in globalConfig.permission across auto and smart modes", () => {
+    const prevConfig = workspace.globalConfig;
+    try {
+      setWorkspace("globalConfig", {
+        permission: {
+          edit: "ask",
+          bash: "allow",
+          webfetch: "ask",
+        },
+      });
+      // Even in auto or smart mode, explicit edit="ask" or webfetch="ask" must not auto-approve
+      assertEqual(
+        shouldAutoApprovePermission({ permission: "edit", patterns: ["src/App.tsx"] }, "auto"),
+        false
+      );
+      assertEqual(
+        shouldAutoApprovePermission({ permission: "edit", patterns: ["src/App.tsx"] }, "smart"),
+        false
+      );
+      assertEqual(
+        shouldAutoApprovePermission({ permission: "webfetch", patterns: ["https://example.com"] }, "auto"),
+        false
+      );
+      // Bash remains allowed in auto mode (non-destructive) when bash="allow"
+      assertEqual(
+        shouldAutoApprovePermission({ permission: "bash", patterns: ["npm test"] }, "auto"),
+        true
+      );
+
+      const summary = resolveEffectivePermissionSummary("auto", {
+        edit: "ask",
+        bash: "allow",
+        webfetch: "deny",
+      });
+      assertEqual(summary.edit, "ask");
+      assertEqual(summary.bash, "allow");
+      assertEqual(summary.webfetch, "ask");
+      assertEqual(summary.hasCustomToolOverrides, true);
+    } finally {
+      setWorkspace("globalConfig", prevConfig);
+    }
   });
 });
 

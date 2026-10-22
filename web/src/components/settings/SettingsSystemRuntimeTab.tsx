@@ -1,11 +1,10 @@
 // web/src/components/settings/SettingsSystemRuntimeTab.tsx
 import { createSignal, onMount, Show } from "solid-js";
-import { Activity, ArrowUpCircle, CheckCircle2, Download, ExternalLink, KeyRound, RefreshCw, RotateCcw, ShieldCheck } from "lucide-solid";
+import { Activity, ArrowUpCircle, CheckCircle2, ChevronRight, Download, ExternalLink, KeyRound, RefreshCw, RotateCcw, ShieldCheck } from "lucide-solid";
 import type { SystemRuntimeInfo } from "../../services/api";
 import {
   appSettings,
   checkDesktopUpdate,
-  closeSettingsModal,
   desktopUpdater,
   fetchSystemRuntimeInfo,
   installOpenCodeEngine,
@@ -21,7 +20,6 @@ import {
 import { Spinner } from "../icons";
 import { t } from "../../i18n";
 import { SettingGroup, SettingRow, ToggleSwitch } from "./setting-controls";
-import { RemoteTunnelControls } from "./RemoteTunnelControls";
 
 export function SystemRuntimeSettingsTab() {
   const [sysInfo, setSysInfo] = createSignal<SystemRuntimeInfo | null>(null);
@@ -313,9 +311,6 @@ export function SystemRuntimeSettingsTab() {
         </Show>
       </SettingGroup>
 
-      {/* Remote control from the mobile app via GoPanel */}
-      <RemoteTunnelControls />
-
       {/* 2. OpenCode Runtime Diagnostics */}
       <SettingGroup
         title={t("settings.sectionRuntimeTitle")}
@@ -351,41 +346,9 @@ export function SystemRuntimeSettingsTab() {
           </span>
         </SettingRow>
 
-        <SettingRow label={t("settings.runtimePortLabel")}>
-          <span class="font-mono text-[13px] text-[var(--text-secondary)]">
-            127.0.0.1:{sysInfo()?.openCodePort || "—"}
-          </span>
-        </SettingRow>
-
-        <SettingRow label={t("settings.runtimeBinaryLabel")}>
-          <span
-            class="max-w-[320px] truncate font-mono text-[13px] text-[var(--text-secondary)] selectable-text"
-            title={sysInfo()?.openCodeBinPath}
-          >
-            {sysInfo()?.openCodeBinPath || t("settings.runtimeNotDetected")}
-          </span>
-        </SettingRow>
-
         <SettingRow label={t("settings.engineSourceLabel")}>
           <span class="text-[13px] text-[var(--text-secondary)]">
             {engineSourceLabel()}
-          </span>
-        </SettingRow>
-
-        <SettingRow label={t("settings.runtimeConfigPathLabel")}>
-          <span
-            class="max-w-[320px] truncate font-mono text-[13px] text-[var(--text-secondary)] selectable-text"
-            title={sysInfo()?.userConfigPath}
-          >
-            {sysInfo()?.userConfigPath || "~/.hoxi/models.json"}
-          </span>
-        </SettingRow>
-
-        <SettingRow label={t("settings.runtimePlatformLabel")}>
-          <span class="font-mono text-[13px] text-[var(--text-secondary)]">
-            {sysInfo()
-              ? `${sysInfo()!.os}/${sysInfo()!.arch} (${sysInfo()!.goVersion})`
-              : "—"}
           </span>
         </SettingRow>
 
@@ -406,6 +369,46 @@ export function SystemRuntimeSettingsTab() {
             }}
           />
         </SettingRow>
+
+        <details class="group/rtpaths">
+          <summary class="flex cursor-pointer list-none items-center gap-1.5 px-5 py-2.5 text-[12px] font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)] [&::-webkit-details-marker]:hidden">
+            <ChevronRight size={13} class="transition-transform group-open/rtpaths:rotate-90" />
+            <span>{t("settings.runtimeAdvancedPaths")}</span>
+          </summary>
+          <div class="divide-y divide-[var(--border-subtle)]/55 border-t border-[var(--border-subtle)]/55">
+            <SettingRow label={t("settings.runtimePortLabel")}>
+              <span class="font-mono text-[13px] text-[var(--text-secondary)]">
+                127.0.0.1:{sysInfo()?.openCodePort || "—"}
+              </span>
+            </SettingRow>
+
+            <SettingRow label={t("settings.runtimeBinaryLabel")}>
+              <span
+                class="max-w-[320px] truncate font-mono text-[13px] text-[var(--text-secondary)] selectable-text"
+                title={sysInfo()?.openCodeBinPath}
+              >
+                {sysInfo()?.openCodeBinPath || t("settings.runtimeNotDetected")}
+              </span>
+            </SettingRow>
+
+            <SettingRow label={t("settings.runtimeConfigPathLabel")}>
+              <span
+                class="max-w-[320px] truncate font-mono text-[13px] text-[var(--text-secondary)] selectable-text"
+                title={sysInfo()?.userConfigPath}
+              >
+                {sysInfo()?.userConfigPath || "~/.hoxi/models.json"}
+              </span>
+            </SettingRow>
+
+            <SettingRow label={t("settings.runtimePlatformLabel")}>
+              <span class="font-mono text-[13px] text-[var(--text-secondary)]">
+                {sysInfo()
+                  ? `${sysInfo()!.os}/${sysInfo()!.arch} (${sysInfo()!.goVersion})`
+                  : "—"}
+              </span>
+            </SettingRow>
+          </div>
+        </details>
       </SettingGroup>
 
       {/* 3. Maintenance Actions */}
@@ -444,7 +447,6 @@ export function SystemRuntimeSettingsTab() {
           <button
             type="button"
             onClick={() => {
-              closeSettingsModal();
               openProviderModal("providers");
             }}
             class="inline-flex items-center gap-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] px-4 py-2 text-[13px] font-medium text-[var(--text-primary)] transition-colors cursor-pointer"

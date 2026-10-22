@@ -1,6 +1,7 @@
 // web/src/components/models/AgentRolesTab.tsx
 import { createMemo, createSignal, For, onMount, Show } from "solid-js";
 import {
+  ArrowRight,
   Bot,
   Bug,
   Check,
@@ -15,10 +16,15 @@ import {
   RotateCcw,
   Sparkles,
   Trash2,
+  Users,
 } from "lucide-solid";
 import {
+  appSettings,
   fetchGlobalConfig,
+  isReservedAgentID,
   loadAgents,
+  openSettingsModal,
+  updateAppSetting,
   updateGlobalModelConfig,
   workspace,
 } from "../../store/workspace";
@@ -44,12 +50,11 @@ export default function AgentRolesTab() {
   const [savingKey, setSavingKey] = createSignal<string | null>(null);
   const [savedKey, setSavedKey] = createSignal<string | null>(null);
 
-  // New Custom Agent Form State
+  // New Custom Agent Form State (always primary mode; subagents live in SubagentSettingsTab)
   const [newAgentId, setNewAgentId] = createSignal("");
   const [newAgentDesc, setNewAgentDesc] = createSignal("");
   const [newAgentModel, setNewAgentModel] = createSignal("");
   const [newAgentPrompt, setNewAgentPrompt] = createSignal("");
-  const [newAgentMode, setNewAgentMode] = createSignal<"primary" | "subagent">("primary");
   const [creating, setCreating] = createSignal(false);
   const [formFeedback, setFormFeedback] = createSignal<{ ok: boolean; text: string } | null>(null);
 
@@ -100,7 +105,7 @@ export default function AgentRolesTab() {
       .toLowerCase()
       .replace(/[^a-z0-9_-]/g, "-");
     const prompt = newAgentPrompt().trim();
-    if (!id || id === "build" || id === "plan" || !prompt || creating()) return;
+    if (!id || isReservedAgentID(id) || !prompt || creating()) return;
     setCreating(true);
     setFormFeedback(null);
     try {
@@ -108,7 +113,7 @@ export default function AgentRolesTab() {
       const existing = cfg?.agent?.[id] ?? {};
       const entry: Record<string, any> = {
         ...existing,
-        mode: newAgentMode(),
+        mode: "primary",
         description: newAgentDesc().trim() || `Custom ${id} mode`,
         prompt,
       };
@@ -120,7 +125,6 @@ export default function AgentRolesTab() {
       setNewAgentDesc("");
       setNewAgentModel("");
       setNewAgentPrompt("");
-      setNewAgentMode("primary");
       await loadAgents(workspace.rootDir || undefined);
       setFormFeedback({ ok: true, text: t("models.agentSaved", { id }) });
       setTimeout(() => setFormFeedback(null), 3000);
@@ -254,6 +258,27 @@ export default function AgentRolesTab() {
             </p>
           </div>
         </div>
+
+        {/* Global Custom Instructions */}
+        <section class="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/40 p-4 space-y-2.5">
+          <div>
+            <h4 class="text-[13px] font-semibold text-[var(--text-primary)]">
+              {t("settings.sectionCustomInstructionsTitle")}
+            </h4>
+            <p class="text-[12px] text-[var(--text-muted)]">
+              {t("settings.sectionCustomInstructionsDesc")}
+            </p>
+          </div>
+          <textarea
+            rows={3}
+            value={appSettings.customSystemPrompt}
+            placeholder={t("settings.customInstructionsPlaceholder")}
+            onInput={(ev) =>
+              updateAppSetting("customSystemPrompt", ev.currentTarget.value)
+            }
+            class="w-full rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-3 font-mono text-[12px] leading-relaxed text-[var(--text-primary)] placeholder:text-[var(--text-faint)] outline-none focus:border-[var(--accent-primary)] resize-y"
+          />
+        </section>
 
         {/* Agent Cards List */}
         <div class="space-y-3">
@@ -433,13 +458,25 @@ export default function AgentRolesTab() {
 
         {/* Add Custom Agent Section */}
         <div class="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/40 p-5 space-y-4">
-          <div>
-            <h4 class="text-[13px] font-semibold text-[var(--text-primary)]">
-              {t("models.customAgentsTitle")}
-            </h4>
-            <p class="text-[12px] text-[var(--text-muted)]">
-              {t("models.customAgentsSubtitle")}
-            </p>
+          <div class="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h4 class="text-[13px] font-semibold text-[var(--text-primary)]">
+                {t("models.customAgentsTitle")}
+              </h4>
+              <p class="text-[12px] text-[var(--text-muted)]">
+                {t("models.customAgentsSubtitle")}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => openSettingsModal("subagents")}
+              class="inline-flex items-center gap-1.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-3 py-1.5 text-[12px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer shrink-0"
+              title={t("models.goToSubagentsHint")}
+            >
+              <Users size={13} class="text-[var(--accent-primary)]" />
+              <span>{t("models.goToSubagentsBtn")}</span>
+              <ArrowRight size={12} />
+            </button>
           </div>
 
           <form onSubmit={(e) => void onAddCustomAgent(e)} class="space-y-3">
@@ -460,18 +497,16 @@ export default function AgentRolesTab() {
 
               <div>
                 <label class="block text-[11px] font-medium text-[var(--text-secondary)] mb-1">
-                  {t("models.agentModeLabel")}
+                  {t("models.agentDedicatedModelLabel")}
                 </label>
-                <select
-                  value={newAgentMode()}
-                  onChange={(event) =>
-                    setNewAgentMode(event.currentTarget.value === "subagent" ? "subagent" : "primary")
-                  }
-                  class="w-full rounded-xl border border-[var(--border-strong)] bg-[var(--bg-panel)] px-3 py-1.5 text-[12px] text-[var(--text-primary)] outline-none cursor-pointer"
-                >
-                  <option value="primary">{t("models.agentModePrimary")}</option>
-                  <option value="subagent">{t("models.agentModeSubagent")}</option>
-                </select>
+                <ModelRolePicker
+                  value={newAgentModel()}
+                  groups={connectedGroups()}
+                  allowEmpty
+                  emptyLabel={t("models.agentModelFollowDefault")}
+                  triggerClass="w-full"
+                  onChange={(val) => setNewAgentModel(val)}
+                />
               </div>
             </div>
 

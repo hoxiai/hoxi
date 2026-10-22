@@ -43,7 +43,32 @@ export const approval = {
   modeManualDesc:
     "Asks before every edit, shell command and external action",
   modeTooltip: "Approval mode: {mode} (click to switch)",
-  openPolicySettings: "Permission Rules & MCP…",
+  openPolicySettings: "Permissions & Approval…",
+  pageTitle: "Permissions & Approval",
+  pageSubtitle:
+    "Mode presets define default behavior, per-tool rules allow fine-grained overrides, and destructive commands always require manual confirmation",
+  presetSectionTitle: "Approval Mode Preset",
+  presetSectionDesc: "Shared with the quick mode switcher next to the session composer",
+  toolRulesSectionTitle: "Per-Tool Rules",
+  toolRulesSectionDesc:
+    "Saved immediately; tighten specific tools to ask each time under Auto or Smart mode",
+  shellAllowNormal: "Allow Normal",
+  shellAllowSafeOnly: "Safe Read/Test",
+  effectiveSummaryTitle: "Effective Policy Summary",
+  effectiveSummaryCustomBadge: "Custom Overrides Active",
+  effectiveReadLabel: "Read & Search (read / glob / grep / lsp)",
+  effectiveReadValue: "Always auto-allowed",
+  effectiveEditLabel: "File Edits & Writes (edit / write / patch)",
+  effectiveShellLabel: "Shell Commands (bash)",
+  effectiveWebfetchLabel: "Web Fetch & Search (webfetch / websearch)",
+  effectiveDestructiveLabel:
+    "Destructive Commands & Sensitive Paths (rm / sudo / git push --force / .ssh / .env)",
+  effectiveDestructiveValue: "Always requires manual confirmation (enforced)",
+  effectiveValueAllow: "Auto-allowed",
+  effectiveValueSafeShell: "Read/test commands auto-allowed; mutating commands ask",
+  effectiveValueNormalShell: "Non-destructive commands auto-allowed",
+  effectiveValueAsk: "Ask for confirmation each time",
+  advancedHookAndAuditTitle: "Advanced: Approval Hook & Audit History",
   highRiskBadge: "High Risk",
   doomLoopNotice:
     "{tool} was called repeatedly with identical input; it may be stuck. Continue?",

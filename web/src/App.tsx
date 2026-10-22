@@ -118,7 +118,9 @@ export default function App() {
         void loadProviders();
         void loadProviderTelemetry();
         void loadAgents();
-        void syncApprovalModeToOpenCodeConfig(appSettings.approvalMode);
+        void syncApprovalModeToOpenCodeConfig(appSettings.approvalMode, {
+          preserveCustomRules: true,
+        });
         void syncPendingPermissions(eagerBootRoot || undefined);
         void hoxiAPI
           .listQuestions()

@@ -16,6 +16,8 @@ export type SettingsTab =
   | "privacy"
   | "diagnostics"
   | "relay"
+  | "remote"
+  | "extensions"
   | ProviderModalTab;
 export type ThemeMode = "light" | "dark" | "system";
 export type ColorScheme = "blue" | "classic" | "warm" | "midnight";
@@ -64,7 +66,6 @@ export interface AppSettingsState {
 }
 
 export const APP_SETTINGS_KEY = "hoxi-app-settings:v1";
-const APPROVAL_DEFAULT_AUTO_MIGRATION_KEY = "hoxi-approval-default-auto:v2";
 
 type PersistedSettings = Omit<
   AppSettingsState,
@@ -109,7 +110,7 @@ function isColorScheme(value: unknown): value is ColorScheme {
   return typeof value === "string" && (COLOR_SCHEMES as string[]).includes(value);
 }
 
-function loadInitialSettings(): PersistedSettings {
+export function loadInitialSettings(): PersistedSettings {
   let baseTheme: ThemeMode = "light";
   try {
     const savedLegacyTheme = localStorage.getItem(THEME_KEY);
@@ -128,15 +129,6 @@ function loadInitialSettings(): PersistedSettings {
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== "object") {
       return { ...DEFAULT_SETTINGS, themeMode: baseTheme };
-    }
-    let migrateApprovalAuto = false;
-    try {
-      if (localStorage.getItem(APPROVAL_DEFAULT_AUTO_MIGRATION_KEY) !== "1") {
-        localStorage.setItem(APPROVAL_DEFAULT_AUTO_MIGRATION_KEY, "1");
-        migrateApprovalAuto = true;
-      }
-    } catch {
-      /* ignore */
     }
     return {
       colorScheme: isColorScheme(parsed.colorScheme) ? parsed.colorScheme : "blue",
@@ -181,11 +173,10 @@ function loadInitialSettings(): PersistedSettings {
         parsed.sendShortcut === "enter" || parsed.sendShortcut === "mod-enter"
           ? parsed.sendShortcut
           : DEFAULT_SETTINGS.sendShortcut,
-      approvalMode: migrateApprovalAuto
-        ? "auto"
-        : parsed.approvalMode === "auto" ||
-            parsed.approvalMode === "smart" ||
-            parsed.approvalMode === "manual"
+      approvalMode:
+        parsed.approvalMode === "auto" ||
+        parsed.approvalMode === "smart" ||
+        parsed.approvalMode === "manual"
           ? parsed.approvalMode
           : DEFAULT_SETTINGS.approvalMode,
       reasoningDisplay:
@@ -411,21 +402,24 @@ if (typeof window !== "undefined" && window.matchMedia) {
 }
 
 export function openSettingsModal(tab: SettingsTab = "general") {
+  const resolvedTab: SettingsTab = tab === "terminal" ? "general" : tab;
   if (
-    tab === "providers" ||
-    tab === "custom" ||
-    tab === "auto" ||
-    tab === "models" ||
-    tab === "policy"
+    resolvedTab === "providers" ||
+    resolvedTab === "custom" ||
+    resolvedTab === "auto" ||
+    resolvedTab === "models" ||
+    resolvedTab === "agents" ||
+    resolvedTab === "subagents" ||
+    resolvedTab === "policy"
   ) {
-    if (tab !== "custom") {
+    if (resolvedTab !== "custom") {
       setWorkspace("editingProviderID", null);
     }
-    setWorkspace({ providerModalTab: tab, providerModalOpen: false });
+    setWorkspace({ providerModalTab: resolvedTab, providerModalOpen: false });
   } else {
     setWorkspace("providerModalOpen", false);
   }
-  setAppSettings({ activeTab: tab, modalOpen: true });
+  setAppSettings({ activeTab: resolvedTab, modalOpen: true });
 }
 
 export function openProviderModal(

@@ -1,6 +1,6 @@
 import { reconcile, unwrap } from "solid-js/store";
 import {
-  APP_SETTINGS_KEY, appSettings, resetAllAppSettings, setAppSettings,
+  APP_SETTINGS_KEY, appSettings, loadInitialSettings, openSettingsModal, resetAllAppSettings, setAppSettings,
   syncSettingsSideEffects, updateAppSetting,
 } from "../store/settings";
 import { setWorkspace, workspace } from "../store/workspace";
@@ -73,6 +73,32 @@ describe("appearance preferences", () => {
       assertEqual(root.dataset.colorScheme, "blue");
       assertEqual(root.classList.contains("dark"), false);
       assertEqual(JSON.parse(saved.get(APP_SETTINGS_KEY)!).colorScheme, "blue");
+    });
+  });
+
+  it("preserves explicit manual/smart approvalMode on load without forced auto migration", () => {
+    withAppearanceFixture((_root, saved) => {
+      saved.set(APP_SETTINGS_KEY, JSON.stringify({ approvalMode: "manual", defaultSandboxMode: "worktree" }));
+      const loadedManual = loadInitialSettings();
+      assertEqual(loadedManual.approvalMode, "manual");
+      assertEqual(loadedManual.defaultSandboxMode, "worktree");
+
+      saved.set(APP_SETTINGS_KEY, JSON.stringify({ approvalMode: "smart" }));
+      const loadedSmart = loadInitialSettings();
+      assertEqual(loadedSmart.approvalMode, "smart");
+    });
+  });
+
+  it("normalizes legacy terminal settings tab to general and routes new domain tabs", () => {
+    withAppearanceFixture(() => {
+      openSettingsModal("terminal");
+      assertEqual(appSettings.activeTab, "general");
+
+      openSettingsModal("extensions");
+      assertEqual(appSettings.activeTab, "extensions");
+
+      openSettingsModal("remote");
+      assertEqual(appSettings.activeTab, "remote");
     });
   });
 });

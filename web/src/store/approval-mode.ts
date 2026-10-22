@@ -37,6 +37,19 @@ const [approvalRecordsLoading, setApprovalRecordsLoading] = createSignal(false);
 export { approvalAuditEntries, approvalGrants, approvalRecordsLoading };
 
 
+const EDIT_PERMISSIONS = new Set([
+  "edit",
+  "write",
+  "patch",
+  "multiedit",
+  "apply_patch",
+]);
+
+const WEBFETCH_PERMISSIONS = new Set([
+  "webfetch",
+  "websearch",
+]);
+
 const SMART_AUTO_PERMISSIONS = new Set([
   "read",
   "glob",
@@ -58,9 +71,65 @@ const SMART_AUTO_PERMISSIONS = new Set([
   "external_directory",
 ]);
 
+export function resolvePermissionCategory(
+  req: Partial<PermissionRequest> & Record<string, any>
+): "read" | "edit" | "webfetch" | "bash" | "other" {
+  const perm = String(req?.permission || req?.type || "").toLowerCase();
+  if (READ_PERMISSIONS.has(perm)) return "read";
+  if (EDIT_PERMISSIONS.has(perm)) return "edit";
+  if (WEBFETCH_PERMISSIONS.has(perm)) return "webfetch";
+  if (perm === "bash" || perm === "shell") return "bash";
+  if (perm === "tool") {
+    const toolName = String(req?.metadata?.tool || req?.patterns?.[0] || "")
+      .trim()
+      .toLowerCase();
+    if (READ_PERMISSIONS.has(toolName)) return "read";
+    if (EDIT_PERMISSIONS.has(toolName)) return "edit";
+    if (WEBFETCH_PERMISSIONS.has(toolName)) return "webfetch";
+  }
+  return "other";
+}
+
+export interface EffectivePermissionSummary {
+  mode: ApprovalMode;
+  edit: "allow" | "ask";
+  bash: "allow" | "smart" | "ask";
+  webfetch: "allow" | "ask";
+  hasCustomToolOverrides: boolean;
+}
+
+export function resolveEffectivePermissionSummary(
+  mode: ApprovalMode = appSettings.approvalMode || "auto",
+  permissionConfig: Record<string, any> | undefined = workspace.globalConfig?.permission
+): EffectivePermissionSummary {
+  if (mode === "manual") {
+    return {
+      mode,
+      edit: "ask",
+      bash: "ask",
+      webfetch: "ask",
+      hasCustomToolOverrides: false,
+    };
+  }
+  const edit: "allow" | "ask" =
+    permissionConfig?.edit === "ask" || permissionConfig?.edit === "deny" ? "ask" : "allow";
+  const webfetch: "allow" | "ask" =
+    permissionConfig?.webfetch === "ask" || permissionConfig?.webfetch === "deny" ? "ask" : "allow";
+  const bash: "allow" | "smart" | "ask" = mode === "smart" ? "smart" : "allow";
+  const hasCustomToolOverrides = edit !== "allow" || webfetch !== "allow";
+  return {
+    mode,
+    edit,
+    bash,
+    webfetch,
+    hasCustomToolOverrides,
+  };
+}
+
 export function shouldAutoApprovePermission(
   req: Partial<PermissionRequest> & Record<string, any>,
-  mode: ApprovalMode
+  mode: ApprovalMode,
+  permissionOverride?: Record<string, any>
 ): boolean {
   // Rule 6 hard guarantee: destructive operations always require manual confirmation
   if (isDestructivePermissionRequest(req)) return false;
@@ -70,6 +139,18 @@ export function shouldAutoApprovePermission(
 
   if (mode === "manual") {
     return false;
+  }
+
+  // Respect explicit per-tool "ask" / "deny" rules configured in global permissions
+  const permCfg = permissionOverride ?? workspace.globalConfig?.permission;
+  if (permCfg && typeof permCfg === "object") {
+    const category = resolvePermissionCategory(req);
+    if (category === "edit" && (permCfg.edit === "ask" || permCfg.edit === "deny")) {
+      return false;
+    }
+    if (category === "webfetch" && (permCfg.webfetch === "ask" || permCfg.webfetch === "deny")) {
+      return false;
+    }
   }
 
   if (mode === "smart") {
@@ -89,7 +170,7 @@ export function shouldAutoApprovePermission(
     return false;
   }
 
-  // mode === "auto": auto-approve all non-destructive tool requests
+  // mode === "auto": auto-approve all non-destructive tool requests (unless overridden above)
   return true;
 }
 
@@ -162,17 +243,31 @@ export function handleIncomingPermissionRequest(req: PermissionRequest): void {
     });
 }
 
-export async function syncApprovalModeToOpenCodeConfig(mode: ApprovalMode): Promise<void> {
+export async function syncApprovalModeToOpenCodeConfig(
+  mode: ApprovalMode,
+  options?: { preserveCustomRules?: boolean }
+): Promise<void> {
   try {
     const cfg = await fetchGlobalConfig().catch(() => ({} as Record<string, any>));
     const existingPerm =
       cfg?.permission && typeof cfg.permission === "object" ? cfg.permission : {};
-    const desiredEdit = mode === "manual" ? "ask" : "allow";
-    const desiredWebfetch = mode === "manual" ? "ask" : "allow";
+    const preserve = Boolean(options?.preserveCustomRules) && mode !== "manual";
+    const desiredEdit =
+      mode === "manual"
+        ? "ask"
+        : preserve && (existingPerm.edit === "ask" || existingPerm.edit === "allow")
+          ? existingPerm.edit
+          : "allow";
+    const desiredWebfetch =
+      mode === "manual"
+        ? "ask"
+        : preserve && (existingPerm.webfetch === "ask" || existingPerm.webfetch === "allow")
+          ? existingPerm.webfetch
+          : "allow";
     if (
       existingPerm.edit === desiredEdit &&
       existingPerm.webfetch === desiredWebfetch &&
-      existingPerm.bash === "ask"
+      (existingPerm.bash === "ask" || typeof existingPerm.bash === "object")
     ) {
       return;
     }
@@ -187,18 +282,71 @@ export async function syncApprovalModeToOpenCodeConfig(mode: ApprovalMode): Prom
   }
 }
 
-export function setApprovalMode(mode: ApprovalMode): void {
-  updateAppSetting("approvalMode", mode);
-  void syncApprovalModeToOpenCodeConfig(mode);
-
-  // Immediately evaluate any currently docked permissions under the new mode
+function reevaluatePendingPermissions(
+  mode: ApprovalMode,
+  permissionOverride?: Record<string, any>
+): void {
   const pending = [...workspace.pendingPermissions];
   for (const req of pending) {
-    if (shouldAutoApprovePermission(req, mode)) {
+    if (shouldAutoApprovePermission(req, mode, permissionOverride)) {
       setWorkspace("pendingPermissions", (prev) => prev.filter((p) => p.id !== req.id));
       handleIncomingPermissionRequest(req);
     }
   }
+}
+
+export function setApprovalMode(mode: ApprovalMode): void {
+  updateAppSetting("approvalMode", mode);
+  const presetPerm =
+    mode === "manual"
+      ? { edit: "ask", webfetch: "ask" }
+      : { edit: "allow", webfetch: "allow" };
+  if (workspace.globalConfig?.permission && typeof workspace.globalConfig.permission === "object") {
+    setWorkspace("globalConfig", "permission", (prev: Record<string, any>) => ({
+      ...(prev || {}),
+      ...presetPerm,
+    }));
+  }
+  void syncApprovalModeToOpenCodeConfig(mode);
+  reevaluatePendingPermissions(mode, presetPerm);
+}
+
+export async function updateToolPermissionRule(
+  tool: "edit" | "webfetch" | "bash",
+  value: "allow" | "smart" | "ask"
+): Promise<void> {
+  if (tool === "bash") {
+    const nextMode: ApprovalMode =
+      value === "ask" ? "manual" : value === "smart" ? "smart" : "auto";
+    updateAppSetting("approvalMode", nextMode);
+    if (nextMode === "manual") {
+      await updateGlobalPermissions({ edit: "ask", webfetch: "ask", bash: "ask" });
+    } else {
+      await syncApprovalModeToOpenCodeConfig(nextMode, { preserveCustomRules: true });
+    }
+    reevaluatePendingPermissions(nextMode);
+    return;
+  }
+
+  const ruleMode: "allow" | "ask" = value === "ask" ? "ask" : "allow";
+  const currentMode = appSettings.approvalMode || "auto";
+  if (currentMode === "manual" && ruleMode === "allow") {
+    const otherTool = tool === "edit" ? "webfetch" : "edit";
+    updateAppSetting("approvalMode", "smart");
+    await updateGlobalPermissions({
+      [tool]: "allow",
+      [otherTool]: "ask",
+      bash: "ask",
+    });
+    reevaluatePendingPermissions("smart", { [tool]: "allow", [otherTool]: "ask" });
+    return;
+  }
+
+  await updateGlobalPermissions({
+    [tool]: ruleMode,
+    bash: "ask",
+  });
+  reevaluatePendingPermissions(currentMode);
 }
 
 // Approvals waiting on a session in another project are invisible to a query

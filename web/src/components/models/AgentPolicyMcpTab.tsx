@@ -1,289 +1,250 @@
 // web/src/components/models/AgentPolicyMcpTab.tsx
-import { createSignal, For, onMount, Show } from "solid-js";
-import { Check, Cpu, Plus, Trash2 } from "lucide-solid";
+import { createMemo, createSignal, For, onMount, Show } from "solid-js";
+import {
+  Check,
+  ChevronRight,
+  Shield,
+  ShieldAlert,
+  ShieldCheck,
+} from "lucide-solid";
 import { t } from "../../i18n";
 import {
-  deleteMcpServer,
+  appSettings,
+  approvalGrants,
   fetchGlobalConfig,
-  isPermissionMode,
-  saveMcpServer,
-  updateGlobalPermissions,
-  type PermissionMode as PermMode,
+  resolveEffectivePermissionSummary,
+  setApprovalMode,
+  updateToolPermissionRule,
+  workspace,
+  type ApprovalMode,
 } from "../../store/workspace";
+import { AgyApprovalHookControls } from "../settings/AgyApprovalHookControls";
+import { ApprovalAuditGrantsSection } from "../settings/ApprovalAuditGrantsSection";
+import {
+  SegmentedPills,
+  SettingGroup,
+  SettingRow,
+} from "../settings/setting-controls";
+
+interface PresetCardOption {
+  id: ApprovalMode;
+  labelKey:
+    | "approval.modeAutoLabel"
+    | "approval.modeSmartLabel"
+    | "approval.modeManualLabel";
+  descKey:
+    | "approval.modeAutoDesc"
+    | "approval.modeSmartDesc"
+    | "approval.modeManualDesc";
+  badgeKey?: "approval.modeAutoBadge";
+}
+
+const PRESET_OPTIONS: PresetCardOption[] = [
+  {
+    id: "auto",
+    labelKey: "approval.modeAutoLabel",
+    descKey: "approval.modeAutoDesc",
+    badgeKey: "approval.modeAutoBadge",
+  },
+  {
+    id: "smart",
+    labelKey: "approval.modeSmartLabel",
+    descKey: "approval.modeSmartDesc",
+  },
+  {
+    id: "manual",
+    labelKey: "approval.modeManualLabel",
+    descKey: "approval.modeManualDesc",
+  },
+];
+
+function renderPresetIcon(mode: ApprovalMode, size = 15) {
+  if (mode === "auto") return <ShieldCheck size={size} class="shrink-0" />;
+  if (mode === "smart") return <Shield size={size} class="shrink-0" />;
+  return <ShieldAlert size={size} class="shrink-0" />;
+}
 
 export default function AgentPolicyMcpTab() {
-  const [permEdit, setPermEdit] = createSignal<PermMode>("allow");
-  const [permBash, setPermBash] = createSignal<PermMode>("ask");
-  const [permWebfetch, setPermWebfetch] = createSignal<PermMode>("allow");
-  const [mcpServers, setMcpServers] = createSignal<Record<string, any>>({});
-  const [mcpName, setMcpName] = createSignal("");
-  const [mcpType, setMcpType] = createSignal<"local" | "remote">("local");
-  const [mcpTarget, setMcpTarget] = createSignal("");
-  const [saving, setSaving] = createSignal(false);
   const [feedback, setFeedback] = createSignal<{ ok: boolean; text: string } | null>(null);
 
   onMount(async () => {
     try {
-      const cfg = await fetchGlobalConfig();
-      const perm = cfg?.permission ?? {};
-      if (isPermissionMode(perm.edit)) setPermEdit(perm.edit);
-      if (isPermissionMode(perm.bash)) setPermBash(perm.bash);
-      if (isPermissionMode(perm.webfetch)) setPermWebfetch(perm.webfetch);
-      if (cfg?.mcp && typeof cfg.mcp === "object") {
-        setMcpServers(cfg.mcp);
-      }
+      await fetchGlobalConfig();
     } catch {
       /* ignore */
     }
   });
 
-  const onSavePermissions = async () => {
-    if (saving()) return;
-    setSaving(true);
-    setFeedback(null);
-    try {
-      await updateGlobalPermissions({
-        edit: permEdit(),
-        bash: permBash(),
-        webfetch: permWebfetch(),
-      });
-      setFeedback({ ok: true, text: t("models.policyUpdated") });
-      setTimeout(() => setFeedback(null), 3000);
-    } catch (err: any) {
-      setFeedback({ ok: false, text: err?.message || t("models.policyUpdateFailed") });
-    } finally {
-      setSaving(false);
-    }
+  const currentMode = (): ApprovalMode => appSettings.approvalMode || "auto";
+
+  const effective = createMemo(() =>
+    resolveEffectivePermissionSummary(currentMode(), workspace.globalConfig?.permission)
+  );
+
+  const showSavedFeedback = (ok: boolean, text: string) => {
+    setFeedback({ ok, text });
+    setTimeout(() => {
+      if (feedback()?.text === text) setFeedback(null);
+    }, 2200);
   };
 
-  const onAddMcpServer = async (ev: Event) => {
-    ev.preventDefault();
-    const id = mcpName().trim().replace(/[^a-zA-Z0-9_-]/g, "-");
-    const target = mcpTarget().trim();
-    if (!id || !target || saving()) return;
-    setSaving(true);
-    setFeedback(null);
-    try {
-      const entry =
-        mcpType() === "local"
-          ? { type: "local", command: target.split(/\s+/), enabled: true }
-          : { type: "remote", url: target, enabled: true };
-      const cfg = await saveMcpServer(id, entry);
-      setMcpServers(cfg?.mcp && typeof cfg.mcp === "object" ? cfg.mcp : { [id]: entry });
-      setMcpName("");
-      setMcpTarget("");
-      setFeedback({ ok: true, text: t("models.mcpAdded", { id }) });
-      setTimeout(() => setFeedback(null), 3000);
-    } catch (err: any) {
-      setFeedback({ ok: false, text: err?.message || t("models.mcpAddFailed") });
-    } finally {
-      setSaving(false);
-    }
+  const onSelectPreset = (mode: ApprovalMode) => {
+    setApprovalMode(mode);
+    showSavedFeedback(true, t("models.policyUpdated"));
   };
 
-  const onRemoveMcpServer = async (id: string) => {
-    if (saving()) return;
-    setSaving(true);
+  const onChangeToolRule = async (
+    tool: "edit" | "webfetch" | "bash",
+    val: "allow" | "smart" | "ask"
+  ) => {
     try {
-      const cfg = await deleteMcpServer(id);
-      setMcpServers(cfg?.mcp && typeof cfg.mcp === "object" ? cfg.mcp : {});
-      setFeedback({ ok: true, text: t("models.mcpRemoved", { id }) });
-      setTimeout(() => setFeedback(null), 3000);
+      await updateToolPermissionRule(tool, val);
+      showSavedFeedback(true, t("models.policyUpdated"));
     } catch (err: any) {
-      setFeedback({ ok: false, text: err?.message || t("models.mcpRemoveFailed") });
-    } finally {
-      setSaving(false);
+      showSavedFeedback(false, err?.message || t("models.policyUpdateFailed"));
     }
   };
 
   return (
     <div class="flex-1 overflow-y-auto p-6 sm:p-8">
       <div class="mx-auto w-full max-w-4xl space-y-6">
-        {/* Section 1: Auto-Approve Permissions */}
-        <div class="space-y-3">
-          <div class="flex items-center justify-between">
+        {/* Page Header */}
+        <div class="flex items-center gap-3 rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/50 px-4 py-3">
+          <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[var(--accent-surface)] text-[var(--accent-primary)]">
+            <ShieldCheck size={16} />
+          </div>
+          <div>
+            <h3 class="text-[13px] font-semibold text-[var(--text-primary)]">
+              {t("approval.pageTitle")}
+            </h3>
+            <p class="text-[12px] text-[var(--text-secondary)]">
+              {t("approval.pageSubtitle")}
+            </p>
+          </div>
+        </div>
+
+        {/* 1. Approval Mode Preset */}
+        <div class="space-y-2.5">
+          <div class="flex items-center justify-between px-1">
             <div>
-              <h3 class="text-[13px] font-semibold text-[var(--text-primary)]">
-                {t("models.policyTitle")}
-              </h3>
+              <h4 class="text-[13px] font-semibold text-[var(--text-primary)]">
+                {t("approval.presetSectionTitle")}
+              </h4>
               <p class="text-[12px] text-[var(--text-muted)]">
-                {t("models.policySubtitle")}
+                {t("approval.presetSectionDesc")}
               </p>
             </div>
-            <button
-              type="button"
-              disabled={saving()}
-              onClick={() => void onSavePermissions()}
-              class="inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] px-3.5 py-1.5 text-[12px] font-medium text-[var(--accent-foreground)] hover:opacity-90 disabled:opacity-50 cursor-pointer"
-            >
-              <Check size={13} />
-              {t("models.savePolicy")}
-            </button>
+            <span class="rounded-md bg-[var(--warn-surface)] border border-[var(--warn-border)] px-2 py-0.5 text-[11px] font-medium text-[var(--warn-text)]">
+              {t("approval.modeMenuBadge")}
+            </span>
           </div>
 
           <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            {/* Edit / Write Policy */}
-            <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)] p-3 space-y-2">
-              <div class="text-[12px] font-medium text-[var(--text-primary)]">
-                {t("models.fileEdits")}
-              </div>
-              <div class="text-[11px] text-[var(--text-muted)]">{t("models.fileEditsHint")}</div>
-              <div class="inline-flex rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-0.5 w-full">
-                <For each={["allow", "ask"] as PermMode[]}>
-                  {(m) => (
-                    <button
-                      type="button"
-                      onClick={() => setPermEdit(m)}
-                      class={`flex-1 rounded-md py-1 text-[11px] font-medium capitalize cursor-pointer ${
-                        permEdit() === m
-                          ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]"
-                          : "text-[var(--text-muted)]"
-                      }`}
-                    >
-                      {m === "allow" ? t("models.autoAllow") : t("models.ask")}
-                    </button>
-                  )}
-                </For>
-              </div>
-            </div>
+            <For each={PRESET_OPTIONS}>
+              {(opt) => {
+                const isSelected = () => currentMode() === opt.id;
+                return (
+                  <button
+                    type="button"
+                    onClick={() => onSelectPreset(opt.id)}
+                    class={`flex flex-col justify-between rounded-2xl border p-4 text-left transition-colors cursor-pointer ${
+                      isSelected()
+                        ? "border-[var(--accent-border)] bg-[var(--accent-surface)]/45"
+                        : "border-[var(--border-subtle)] bg-[var(--bg-elevated)]/40 hover:border-[var(--border-strong)]"
+                    }`}
+                  >
+                    <div class="space-y-2">
+                      <div class="flex items-center justify-between gap-2">
+                        <div class="flex items-center gap-2">
+                          <span
+                            class={`flex h-7 w-7 items-center justify-center rounded-lg ${
+                              isSelected()
+                                ? opt.id === "manual"
+                                  ? "bg-[var(--warn-text)] text-white"
+                                  : opt.id === "auto"
+                                    ? "bg-[var(--ok-text)] text-white"
+                                    : "bg-[var(--accent-primary)] text-[var(--accent-foreground)]"
+                                : "bg-[var(--bg-inset)] text-[var(--text-muted)]"
+                            }`}
+                          >
+                            {renderPresetIcon(opt.id, 14)}
+                          </span>
+                          <span class="text-[13px] font-semibold text-[var(--text-primary)]">
+                            {t(opt.labelKey)}
+                          </span>
+                        </div>
+                        <Show when={isSelected()}>
+                          <Check size={14} class="text-[var(--accent-primary)] shrink-0" />
+                        </Show>
+                      </div>
 
-            {/* Bash / Command Policy */}
-            <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)] p-3 space-y-2">
-              <div class="text-[12px] font-medium text-[var(--text-primary)]">
-                {t("models.shellCommands")}
-              </div>
-              <div class="text-[11px] text-[var(--text-muted)]">{t("models.shellCommandsHint")}</div>
-              <div class="inline-flex rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-0.5 w-full">
-                <For each={["allow", "ask"] as PermMode[]}>
-                  {(m) => (
-                    <button
-                      type="button"
-                      onClick={() => setPermBash(m)}
-                      class={`flex-1 rounded-md py-1 text-[11px] font-medium capitalize cursor-pointer ${
-                        permBash() === m
-                          ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]"
-                          : "text-[var(--text-muted)]"
-                      }`}
-                    >
-                      {m === "allow" ? t("models.autoAllow") : t("models.ask")}
-                    </button>
-                  )}
-                </For>
-              </div>
-            </div>
-
-            {/* Webfetch / Network Policy */}
-            <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)] p-3 space-y-2">
-              <div class="text-[12px] font-medium text-[var(--text-primary)]">
-                {t("models.webFetch")}
-              </div>
-              <div class="text-[11px] text-[var(--text-muted)]">{t("models.webFetchHint")}</div>
-              <div class="inline-flex rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-0.5 w-full">
-                <For each={["allow", "ask"] as PermMode[]}>
-                  {(m) => (
-                    <button
-                      type="button"
-                      onClick={() => setPermWebfetch(m)}
-                      class={`flex-1 rounded-md py-1 text-[11px] font-medium capitalize cursor-pointer ${
-                        permWebfetch() === m
-                          ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]"
-                          : "text-[var(--text-muted)]"
-                      }`}
-                    >
-                      {m === "allow" ? t("models.autoAllow") : t("models.ask")}
-                    </button>
-                  )}
-                </For>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Section 2: MCP Servers */}
-        <div class="border-t border-[var(--border-subtle)] pt-5 space-y-3">
-          <div>
-            <h3 class="text-[13px] font-semibold text-[var(--text-primary)]">
-              {t("models.mcpTitle")}
-            </h3>
-            <p class="text-[12px] text-[var(--text-muted)]">
-              {t("models.mcpSubtitle")}
-            </p>
-          </div>
-
-          <form onSubmit={onAddMcpServer} class="flex items-center gap-2">
-            <input
-              type="text"
-              placeholder={t("models.mcpServerId")}
-              value={mcpName()}
-              onInput={(e) => setMcpName(e.currentTarget.value)}
-              class="w-40 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] px-3 py-1.5 font-mono text-[12px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]"
-            />
-            <select
-              value={mcpType()}
-              onChange={(e) => setMcpType(e.currentTarget.value as "local" | "remote")}
-              class="rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] px-2.5 py-1.5 text-[12px] text-[var(--text-primary)] outline-none"
-            >
-              <option value="local">{t("models.localCommand")}</option>
-              <option value="remote">{t("models.remoteUrl")}</option>
-            </select>
-            <input
-              type="text"
-              placeholder={
-                mcpType() === "local"
-                  ? "npx -y @modelcontextprotocol/server-filesystem ."
-                  : "https://mcp.hoxi.ai/sse"
-              }
-              value={mcpTarget()}
-              onInput={(e) => setMcpTarget(e.currentTarget.value)}
-              class="flex-1 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] px-3 py-1.5 font-mono text-[12px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]"
-            />
-            <button
-              type="submit"
-              disabled={saving() || !mcpName().trim() || !mcpTarget().trim()}
-              class="inline-flex items-center gap-1 rounded-xl bg-[var(--accent-primary)] px-3.5 py-1.5 text-[12px] font-medium text-[var(--accent-foreground)] disabled:opacity-40 cursor-pointer"
-            >
-              <Plus size={13} />
-              {t("models.add")}
-            </button>
-          </form>
-
-          <div class="space-y-1.5">
-            <Show
-              when={Object.keys(mcpServers()).length > 0}
-              fallback={
-                <div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-3.5 py-3 text-[12px] text-[var(--text-muted)]">
-                  {t("models.noMcpServers")}
-                </div>
-              }
-            >
-              <For each={Object.entries(mcpServers())}>
-                {([id, srv]) => (
-                  <div class="flex items-center justify-between rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-inset)] px-3.5 py-2">
-                    <div class="flex items-center gap-2.5 min-w-0">
-                      <Cpu size={14} class="text-[var(--accent-primary)] shrink-0" />
-                      <span class="font-mono text-[12px] font-semibold text-[var(--text-primary)]">
-                        {id}
-                      </span>
-                      <span class="truncate font-mono text-[11px] text-[var(--text-muted)]">
-                        {Array.isArray(srv?.command)
-                          ? srv.command.join(" ")
-                          : srv?.url || srv?.type || "mcp"}
-                      </span>
+                      <p class="text-[12px] leading-relaxed text-[var(--text-muted)]">
+                        {t(opt.descKey)}
+                      </p>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => void onRemoveMcpServer(id)}
-                      class="text-[var(--text-muted)] hover:text-[var(--danger-text)] p-1 cursor-pointer"
-                      title={t("models.removeMcpTooltip")}
-                    >
-                      <Trash2 size={13} />
-                    </button>
-                  </div>
-                )}
-              </For>
-            </Show>
+
+                    <Show when={opt.badgeKey}>
+                      <div class="mt-3 pt-2 border-t border-[var(--border-subtle)]/60 flex items-center">
+                        <span class="rounded px-1.5 py-0.5 text-[11px] font-medium bg-[var(--ok-surface)] text-[var(--ok-text)] border border-[var(--ok-border)]">
+                          {t(opt.badgeKey!)}
+                        </span>
+                      </div>
+                    </Show>
+                  </button>
+                );
+              }}
+            </For>
           </div>
         </div>
+
+        {/* 2. Per-Tool Fine-Grained Rules */}
+        <SettingGroup
+          title={t("approval.toolRulesSectionTitle")}
+          tip={t("approval.toolRulesSectionDesc")}
+        >
+          <SettingRow
+            label={t("models.fileEdits")}
+            tip={t("models.fileEditsHint")}
+          >
+            <SegmentedPills<"allow" | "ask">
+              value={effective().edit}
+              options={[
+                { id: "allow", label: () => t("models.autoAllow") },
+                { id: "ask", label: () => t("models.ask") },
+              ]}
+              onChange={(m) => void onChangeToolRule("edit", m)}
+            />
+          </SettingRow>
+
+          <SettingRow
+            label={t("models.shellCommands")}
+            tip={t("models.shellCommandsHint")}
+          >
+            <SegmentedPills<"allow" | "smart" | "ask">
+              value={effective().bash}
+              options={[
+                { id: "allow", label: () => t("approval.shellAllowNormal") },
+                { id: "smart", label: () => t("approval.shellAllowSafeOnly") },
+                { id: "ask", label: () => t("models.ask") },
+              ]}
+              onChange={(m) => void onChangeToolRule("bash", m)}
+            />
+          </SettingRow>
+
+          <SettingRow
+            label={t("models.webFetch")}
+            tip={t("models.webFetchHint")}
+          >
+            <SegmentedPills<"allow" | "ask">
+              value={effective().webfetch}
+              options={[
+                { id: "allow", label: () => t("models.autoAllow") },
+                { id: "ask", label: () => t("models.ask") },
+              ]}
+              onChange={(m) => void onChangeToolRule("webfetch", m)}
+            />
+          </SettingRow>
+        </SettingGroup>
 
         <Show when={feedback()}>
           <div
@@ -296,6 +257,97 @@ export default function AgentPolicyMcpTab() {
             {feedback()!.text}
           </div>
         </Show>
+
+        {/* 3. Effective Policy Summary */}
+        <div class="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/35 p-4 space-y-3">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <h4 class="text-[13px] font-semibold text-[var(--text-primary)]">
+              {t("approval.effectiveSummaryTitle")}
+            </h4>
+            <Show when={effective().hasCustomToolOverrides}>
+              <span class="rounded-full border border-[var(--accent-border)] bg-[var(--accent-surface)] px-2.5 py-0.5 text-[11px] font-medium text-[var(--accent-primary)]">
+                {t("approval.effectiveSummaryCustomBadge")}
+              </span>
+            </Show>
+          </div>
+
+          <div class="divide-y divide-[var(--border-subtle)]/60 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] text-[12px]">
+            <div class="flex flex-wrap items-center justify-between gap-2 px-3.5 py-2.5">
+              <span class="text-[var(--text-secondary)]">{t("approval.effectiveReadLabel")}</span>
+              <span class="font-medium text-[var(--ok-text)]">{t("approval.effectiveReadValue")}</span>
+            </div>
+
+            <div class="flex flex-wrap items-center justify-between gap-2 px-3.5 py-2.5">
+              <span class="text-[var(--text-secondary)]">{t("approval.effectiveEditLabel")}</span>
+              <span
+                class={`font-medium ${
+                  effective().edit === "allow" ? "text-[var(--ok-text)]" : "text-[var(--warn-text)]"
+                }`}
+              >
+                {effective().edit === "allow"
+                  ? t("approval.effectiveValueAllow")
+                  : t("approval.effectiveValueAsk")}
+              </span>
+            </div>
+
+            <div class="flex flex-wrap items-center justify-between gap-2 px-3.5 py-2.5">
+              <span class="text-[var(--text-secondary)]">{t("approval.effectiveShellLabel")}</span>
+              <span
+                class={`font-medium ${
+                  effective().bash === "allow"
+                    ? "text-[var(--ok-text)]"
+                    : effective().bash === "smart"
+                      ? "text-[var(--accent-primary)]"
+                      : "text-[var(--warn-text)]"
+                }`}
+              >
+                {effective().bash === "allow"
+                  ? t("approval.effectiveValueNormalShell")
+                  : effective().bash === "smart"
+                    ? t("approval.effectiveValueSafeShell")
+                    : t("approval.effectiveValueAsk")}
+              </span>
+            </div>
+
+            <div class="flex flex-wrap items-center justify-between gap-2 px-3.5 py-2.5">
+              <span class="text-[var(--text-secondary)]">{t("approval.effectiveWebfetchLabel")}</span>
+              <span
+                class={`font-medium ${
+                  effective().webfetch === "allow" ? "text-[var(--ok-text)]" : "text-[var(--warn-text)]"
+                }`}
+              >
+                {effective().webfetch === "allow"
+                  ? t("approval.effectiveValueAllow")
+                  : t("approval.effectiveValueAsk")}
+              </span>
+            </div>
+
+            <div class="flex flex-wrap items-center justify-between gap-2 px-3.5 py-2.5 bg-[var(--danger-surface)]/30">
+              <span class="font-medium text-[var(--text-primary)]">
+                {t("approval.effectiveDestructiveLabel")}
+              </span>
+              <span class="inline-flex items-center gap-1 font-semibold text-[var(--danger-text)]">
+                <ShieldAlert size={13} />
+                {t("approval.effectiveDestructiveValue")}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* 4. Collapsible Advanced Section: Antigravity Hook & Approval Audit / Session Grants */}
+        <details
+          class="group/adv rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/25 p-4"
+          open={approvalGrants().length > 0}
+        >
+          <summary class="flex cursor-pointer list-none items-center gap-2 text-[13px] font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] [&::-webkit-details-marker]:hidden">
+            <ChevronRight size={15} class="transition-transform group-open/adv:rotate-90" />
+            <span>{t("approval.advancedHookAndAuditTitle")}</span>
+          </summary>
+          <div class="mt-4 space-y-6">
+            <AgyApprovalHookControls />
+            <ApprovalAuditGrantsSection />
+          </div>
+        </details>
       </div>
     </div>
   );
