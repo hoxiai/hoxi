@@ -494,7 +494,8 @@ func (g *Service) importCodexCLIProvider() LocalCLIImportResponse {
 	if cDir == "" {
 		return LocalCLIImportResponse{OK: false, ToolID: string(ExternalToolCodex), Error: "~/.codex not found"}
 	}
-	raw, err := os.ReadFile(filepath.Join(cDir, "auth.json"))
+	authPath := filepath.Join(cDir, "auth.json")
+	raw, err := os.ReadFile(authPath)
 	if err != nil {
 		return LocalCLIImportResponse{OK: false, ToolID: string(ExternalToolCodex), Error: "~/.codex/auth.json not found"}
 	}
@@ -503,24 +504,10 @@ func (g *Service) importCodexCLIProvider() LocalCLIImportResponse {
 		return LocalCLIImportResponse{OK: false, ToolID: string(ExternalToolCodex), Error: "Invalid ~/.codex/auth.json"}
 	}
 
-	var authBody map[string]interface{}
-	apiKey := strings.TrimSpace(asString(doc["OPENAI_API_KEY"]))
-	var access string
-	if apiKey != "" {
-		authBody = map[string]interface{}{"type": "api", "key": apiKey}
-	} else if tokens, ok := doc["tokens"].(map[string]interface{}); ok {
-		access = strings.TrimSpace(asString(tokens["access_token"]))
-		refresh := strings.TrimSpace(asString(tokens["refresh_token"]))
-		accountID := strings.TrimSpace(asString(tokens["account_id"]))
-		if access != "" && refresh != "" {
-			authBody = map[string]interface{}{
-				"type":      "oauth",
-				"access":    access,
-				"refresh":   refresh,
-				"expires":   time.Now().Add(24 * time.Hour).UnixMilli(),
-				"accountId": accountID,
-			}
-		}
+	authBody := readCodexAuthBody(authPath)
+	apiKey := ""
+	if authBody != nil {
+		apiKey = strings.TrimSpace(asString(authBody["key"]))
 	}
 	if authBody == nil {
 		return LocalCLIImportResponse{OK: false, ToolID: string(ExternalToolCodex), Error: "No valid tokens in ~/.codex/auth.json"}
@@ -576,4 +563,49 @@ func (g *Service) importCodexCLIProvider() LocalCLIImportResponse {
 		ProviderID: "openai",
 		Models:     models,
 	}
+}
+
+// readCodexAuthBody reads the credential the Codex CLI currently holds.
+// Hoxi never refreshes it and never writes it back: the CLI is the only
+// owner of the refresh token, and refreshing from both sides logs one of
+// them out. The expiry is therefore reported as unknown (0) rather than
+// invented, so the engine keeps using this access token until the CLI
+// rotates the file.
+func readCodexAuthBody(path string) map[string]interface{} {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var doc map[string]interface{}
+	if json.Unmarshal(raw, &doc) != nil {
+		return nil
+	}
+	if apiKey := strings.TrimSpace(asString(doc["OPENAI_API_KEY"])); apiKey != "" {
+		return map[string]interface{}{"type": "api", "key": apiKey}
+	}
+	tokens, ok := doc["tokens"].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	access := strings.TrimSpace(asString(tokens["access_token"]))
+	refresh := strings.TrimSpace(asString(tokens["refresh_token"]))
+	if access == "" || refresh == "" {
+		return nil
+	}
+	return map[string]interface{}{
+		"type":      "oauth",
+		"access":    access,
+		"refresh":   refresh,
+		"expires":   int64(0),
+		"accountId": strings.TrimSpace(asString(tokens["account_id"])),
+	}
+}
+
+// codexAuthFingerprint identifies a credential without the refresh token,
+// which is only forwarded verbatim and must never be what we compare on.
+func codexAuthFingerprint(body map[string]interface{}) string {
+	if body == nil {
+		return ""
+	}
+	return asString(body["type"]) + "\x00" + asString(body["key"]) + "\x00" + asString(body["access"]) + "\x00" + asString(body["accountId"])
 }

@@ -40,6 +40,11 @@ type Service struct {
 	cacheMu      sync.RWMutex
 	inFlightScan map[string]*handoffScanCall
 	previewCache map[string]cachedHandoffPreview
+
+	credSyncMu       sync.Mutex
+	credSyncStarted  bool
+	credSyncStop     chan struct{}
+	codexAuthApplied string
 }
 
 // ProviderConfig is the slice of Hoxi's provider configuration that handoff
@@ -66,6 +71,80 @@ func NewService(openCodePort int, password, rootDir string, providers ProviderCo
 func (g *Service) SetWSBaseURL(wsURL string) {
 	g.wsBaseURL = wsURL
 	g.syncLocalCLIBridgeURLs()
+	g.startCredentialSync()
+}
+
+const credentialSyncInterval = 60 * time.Second
+
+// startCredentialSync keeps imported CLI credentials current. It runs once,
+// from the moment the gateway has its loopback address. Grok needs nothing
+// here: its bridge re-reads ~/.grok/auth.json on every request.
+func (g *Service) startCredentialSync() {
+	g.credSyncMu.Lock()
+	defer g.credSyncMu.Unlock()
+	if g.credSyncStarted {
+		return
+	}
+	g.credSyncStarted = true
+	g.credSyncStop = make(chan struct{})
+	go g.credentialSyncLoop()
+}
+
+// StopCredentialSync ends the background sync. Tests that start it must call
+// this so the goroutine is gone before the test mutates the environment.
+func (g *Service) StopCredentialSync() {
+	g.credSyncMu.Lock()
+	defer g.credSyncMu.Unlock()
+	if g.credSyncStop == nil {
+		return
+	}
+	close(g.credSyncStop)
+	g.credSyncStop = nil
+}
+
+func (g *Service) credentialSyncLoop() {
+	g.syncCodexCredential()
+	ticker := time.NewTicker(credentialSyncInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-g.credSyncStop:
+			return
+		case <-ticker.C:
+			g.syncCodexCredential()
+		}
+	}
+}
+
+// syncCodexCredential re-reads the Codex CLI credential and forwards it to the
+// engine only when the access token changed. It never refreshes the token and
+// never writes ~/.codex: the CLI rotates the file, Hoxi follows it. Nothing is
+// pushed until the user has actually imported Codex, so an unrelated openai
+// provider is left untouched.
+func (g *Service) syncCodexCredential() {
+	if _, imported := g.loadHoxiProvidersMap()["openai"]; !imported {
+		return
+	}
+	cDir := codexHomeDir()
+	if cDir == "" {
+		return
+	}
+	body := readCodexAuthBody(filepath.Join(cDir, "auth.json"))
+	fingerprint := codexAuthFingerprint(body)
+	if fingerprint == "" {
+		return
+	}
+	g.credSyncMu.Lock()
+	unchanged := fingerprint == g.codexAuthApplied
+	if !unchanged {
+		g.codexAuthApplied = fingerprint
+	}
+	g.credSyncMu.Unlock()
+	if unchanged {
+		return
+	}
+	g.sendEngineAuth("openai", body, 5*time.Second)
+	g.mergeOpenCodeEngineAuthFile(map[string]interface{}{"openai": body})
 }
 
 func (g *Service) RegisterRoutes(mux *http.ServeMux) {

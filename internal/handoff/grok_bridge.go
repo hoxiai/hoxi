@@ -60,19 +60,7 @@ func loadGrokLocalCredentials() grokLocalCredentials {
 		return out
 	}
 
-	if authData, err := os.ReadFile(filepath.Join(gDir, "auth.json")); err == nil {
-		var authMap map[string]struct {
-			Key string `json:"key"`
-		}
-		if json.Unmarshal(authData, &authMap) == nil {
-			for _, entry := range authMap {
-				if strings.TrimSpace(entry.Key) != "" {
-					out.APIKey = strings.TrimSpace(entry.Key)
-					break
-				}
-			}
-		}
-	}
+	out.APIKey = readGrokAPIKey(filepath.Join(gDir, "auth.json"), time.Now())
 
 	if verData, err := os.ReadFile(filepath.Join(gDir, "version.json")); err == nil {
 		var verObj struct {
@@ -152,6 +140,70 @@ func loadGrokLocalCredentials() grokLocalCredentials {
 		out.Models = appendUniqueString([]string{out.DefaultModel}, out.Models...)
 	}
 	return out
+}
+
+// grokAuthEntry is one credential in ~/.grok/auth.json. The Grok CLI refreshes
+// the file itself; Hoxi only reads it and must never write a token back.
+type grokAuthEntry struct {
+	Key       string `json:"key"`
+	ExpiresAt string `json:"expires_at"`
+}
+
+// readGrokAPIKey returns the newest credential that has not expired. A key
+// without expires_at never expires. When every key is expired the newest one
+// is returned anyway: the CLI may not have refreshed yet, and a stale key
+// fails the request instead of silently dropping the provider.
+func readGrokAPIKey(path string, now time.Time) string {
+	authData, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	var authMap map[string]grokAuthEntry
+	if json.Unmarshal(authData, &authMap) != nil {
+		return ""
+	}
+	var bestKey string
+	var bestExpiry time.Time
+	var fallbackKey string
+	var fallbackExpiry time.Time
+	for _, entry := range authMap {
+		key := strings.TrimSpace(entry.Key)
+		if key == "" {
+			continue
+		}
+		expiry, hasExpiry := parseGrokExpiry(entry.ExpiresAt)
+		if !hasExpiry {
+			return key
+		}
+		if fallbackKey == "" || expiry.After(fallbackExpiry) {
+			fallbackKey = key
+			fallbackExpiry = expiry
+		}
+		if !expiry.After(now) {
+			continue
+		}
+		if bestKey == "" || expiry.After(bestExpiry) {
+			bestKey = key
+			bestExpiry = expiry
+		}
+	}
+	if bestKey != "" {
+		return bestKey
+	}
+	return fallbackKey
+}
+
+func parseGrokExpiry(raw string) (time.Time, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return time.Time{}, false
+	}
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339} {
+		if ts, err := time.Parse(layout, raw); err == nil {
+			return ts, true
+		}
+	}
+	return time.Time{}, false
 }
 
 func detectGrokCLIStatus(hoxiMap map[string]interface{}) LocalCLIStatusItem {

@@ -224,6 +224,9 @@ func (g *Gateway) CloseBrowser() {
 	if g.runner != nil {
 		g.runner.CloseAll()
 	}
+	if g.handoff != nil {
+		g.handoff.StopCredentialSync()
+	}
 }
 
 func (g *Gateway) SetWSBaseURL(wsURL string) {
