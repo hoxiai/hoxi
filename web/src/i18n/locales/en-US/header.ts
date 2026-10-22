@@ -69,6 +69,8 @@ export const header = {
   updateDrainingNotice: "New tasks are paused until the update finishes and Hoxi restarts.",
   updateInstallFailed: "Could not open the native updater.",
   updateCheckFailed: "Failed to check for updates.",
+  updateNotificationTitle: "Hoxi update available",
+  updateNotificationBody: "Version {version} is ready; open Hoxi to install it",
   updateError: "Update error: {error}",
   updateReleaseNotesFallback: "Performance optimizations and stability fixes.",
   pulseTokensSub: "In {input} · Out {output} · Think {reasoning}",

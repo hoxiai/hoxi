@@ -8,6 +8,14 @@ uses the configured official website appcast for authenticated installation.
 Automatic checks are enabled. Background downloads are disabled: Sparkle couples
 them to install-on-quit staging, which has no public veto for active agent tasks.
 Users confirm downloading and restarting in the native dialog.
+
+The workspace JSON check is not startup-only: it runs at launch, every 30 minutes,
+and on window focus, visibility or network recovery. Automatic re-checks share a
+10-minute minimum gap, never stack while one is in flight, and a failed background
+check keeps the last known-good result instead of replacing it with an error. When
+an unattended window discovers a new release it posts one native notification per
+version (version number only, no session content); an attended window stays silent
+and just shows the header badge.
 Discovering, displaying, ignoring, or dismissing an available update leaves the
 workspace writable. The standard UI's Install reply is intercepted before Sparkle
 can download or stage an update. A busy workspace prompts a native confirmation:

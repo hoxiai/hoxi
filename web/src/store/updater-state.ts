@@ -3,6 +3,7 @@ import { createSignal } from "solid-js";
 import { createStore } from "solid-js/store";
 import { updaterAPI, type UpdateCheckResult } from "../services/api";
 import { t } from "../i18n";
+import { appSettings, sendDesktopNotification } from "./settings";
 
 export interface DesktopUpdaterState {
   isChecking: boolean;
@@ -23,6 +24,79 @@ export const [desktopUpdater, setDesktopUpdater] = createStore<DesktopUpdaterSta
   result: null,
   error: null,
 });
+
+/** Minimum spacing between successful checks; startup, focus and timers all share it. */
+export const UPDATE_CHECK_MIN_GAP_MS = 10 * 60_000;
+
+const NOTIFIED_VERSION_KEY = "hoxi:update-notified-version";
+
+let lastSuccessfulCheckAt = 0;
+let inFlightCheck: Promise<UpdateCheckResult | null> | null = null;
+
+function readNotifiedVersion(): string {
+  try {
+    return localStorage.getItem(NOTIFIED_VERSION_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
+function rememberNotifiedVersion(version: string): void {
+  try {
+    localStorage.setItem(NOTIFIED_VERSION_KEY, version);
+  } catch {
+    /* storage unavailable */
+  }
+}
+
+/** True when an automatic re-check is worth the request. */
+export function shouldAutoCheckUpdate(
+  nowMs: number,
+  lastSuccessMs: number,
+  checking: boolean
+): boolean {
+  if (checking) return false;
+  if (lastSuccessMs <= 0) return true;
+  return nowMs - lastSuccessMs >= UPDATE_CHECK_MIN_GAP_MS;
+}
+
+/** Notify once per published version, and only while the window is unattended. */
+export function shouldNotifyUpdate(
+  needUpdate: boolean,
+  latestVersion: string,
+  notifiedVersion: string,
+  focused: boolean,
+  notificationsEnabled: boolean
+): boolean {
+  if (!needUpdate || !notificationsEnabled) return false;
+  if (focused) return false;
+  const version = latestVersion.trim();
+  if (!version) return false;
+  return version !== notifiedVersion;
+}
+
+function isWindowFocused(): boolean {
+  return typeof document !== "undefined" && document.hasFocus();
+}
+
+function notifyDesktopUpdateIfNeeded(res: UpdateCheckResult): void {
+  if (
+    !shouldNotifyUpdate(
+      res.needUpdate,
+      res.latestVersion,
+      readNotifiedVersion(),
+      isWindowFocused(),
+      appSettings.desktopNotifications
+    )
+  ) {
+    return;
+  }
+  rememberNotifiedVersion(res.latestVersion.trim());
+  sendDesktopNotification({
+    title: t("header.updateNotificationTitle"),
+    body: t("header.updateNotificationBody", { version: `v${res.latestVersion.trim()}` }),
+  });
+}
 
 export async function refreshDesktopUpdateStatus(): Promise<void> {
   try {
@@ -47,30 +121,46 @@ export async function startDesktopUpdate(): Promise<void> {
   }
 }
 
-export async function checkDesktopUpdate(force = false): Promise<UpdateCheckResult | null> {
-  if (desktopUpdater.isChecking && !force) {
-    return desktopUpdater.result;
-  }
-
-  setDesktopUpdater({ isChecking: true, error: null });
+async function runUpdateCheck(): Promise<UpdateCheckResult | null> {
+  setDesktopUpdater("isChecking", true);
   void refreshDesktopUpdateStatus();
 
   try {
     const res = await updaterAPI.checkUpdate();
+    lastSuccessfulCheckAt = Date.now();
     setDesktopUpdater({
       isChecking: false,
       hasChecked: true,
       result: res,
       error: null,
     });
+    notifyDesktopUpdateIfNeeded(res);
     return res;
-  } catch (err: any) {
+  } catch (err: unknown) {
+    // A transient background failure must not replace a known-good result.
+    const message =
+      err instanceof Error ? err.message : t("header.updateCheckFailed");
     setDesktopUpdater({
       isChecking: false,
       hasChecked: true,
-      error: err?.message || t("header.updateCheckFailed"),
+      error: desktopUpdater.result ? null : message,
     });
     return null;
+  }
+}
+
+export async function checkDesktopUpdate(force = false): Promise<UpdateCheckResult | null> {
+  if (inFlightCheck) return inFlightCheck;
+  if (!force && !shouldAutoCheckUpdate(Date.now(), lastSuccessfulCheckAt, desktopUpdater.isChecking)) {
+    return desktopUpdater.result;
+  }
+
+  const task = runUpdateCheck();
+  inFlightCheck = task;
+  try {
+    return await task;
+  } finally {
+    if (inFlightCheck === task) inFlightCheck = null;
   }
 }
 

@@ -70,6 +70,8 @@ export const header: HeaderI18n = {
   updateDrainingNotice: "更新完成并重启 Hoxi 前，新任务将暂停",
   updateInstallFailed: "无法打开原生更新器",
   updateCheckFailed: "检查更新失败",
+  updateNotificationTitle: "Hoxi 有新版本",
+  updateNotificationBody: "版本 {version} 已就绪，打开 Hoxi 即可安装",
   updateError: "更新出错：{error}",
   updateReleaseNotesFallback: "性能优化与稳定性修复",
   pulseTokensSub: "输入 {input} · 输出 {output} · 思考 {reasoning}",
