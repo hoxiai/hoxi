@@ -73,3 +73,48 @@ func TestHomeOverrideServerURLAndProtectedStateFiles(t *testing.T) {
 		t.Fatalf("expected notes.txt not to be protected state file")
 	}
 }
+
+func TestProjectMemoryPaths(t *testing.T) {
+	root := filepath.Join(string(filepath.Separator), "repo", "demo")
+	if got, want := ProjectMemoryDir(root), filepath.Join(root, ".hoxi", "memory"); got != want {
+		t.Fatalf("ProjectMemoryDir() = %s, want %s", got, want)
+	}
+	if got, want := LegacyProjectMemoryDir(root), filepath.Join(root, ".opencode", "memory"); got != want {
+		t.Fatalf("LegacyProjectMemoryDir() = %s, want %s", got, want)
+	}
+	if got, want := ProjectMemoryFile(root), filepath.Join(root, ".hoxi", "memory", "project.md"); got != want {
+		t.Fatalf("ProjectMemoryFile() = %s, want %s", got, want)
+	}
+	if got, want := ProjectSessionMemoryFile(root, "ses_1"), filepath.Join(root, ".hoxi", "memory", "sessions", "ses_1.md"); got != want {
+		t.Fatalf("ProjectSessionMemoryFile() = %s, want %s", got, want)
+	}
+	if got, want := LegacyProjectSessionMemoryFile(root, "ses_1"), filepath.Join(root, ".opencode", "memory", "sessions", "ses_1.md"); got != want {
+		t.Fatalf("LegacyProjectSessionMemoryFile() = %s, want %s", got, want)
+	}
+	if ProjectMemoryDir("  ") != "" {
+		t.Fatal("blank project root must yield no memory dir")
+	}
+	if dirs := ProjectMemoryDirs(root); len(dirs) != 2 || dirs[0] != ProjectMemoryDir(root) || dirs[1] != LegacyProjectMemoryDir(root) {
+		t.Fatalf("ProjectMemoryDirs() = %v", dirs)
+	}
+	if ProjectMemoryRelPath() != filepath.Join(".hoxi", "memory") {
+		t.Fatalf("ProjectMemoryRelPath() = %s", ProjectMemoryRelPath())
+	}
+}
+
+func TestProjectRootForWorktree(t *testing.T) {
+	root := filepath.Join(string(filepath.Separator), "repo", "demo")
+	cases := map[string]string{
+		filepath.Join(root, ".hoxi", "worktrees", "ses_1"):       root,
+		filepath.Join(root, ".hoxi", "worktrees", "ses_1", "in"): "",
+		filepath.Join(root, ".hoxi", "worktrees"):                "",
+		root: "",
+		"":   "",
+		filepath.Join(root, ".opencode", "memory"): "",
+	}
+	for dir, want := range cases {
+		if got := ProjectRootForWorktree(dir); got != want {
+			t.Fatalf("ProjectRootForWorktree(%q) = %q, want %q", dir, got, want)
+		}
+	}
+}

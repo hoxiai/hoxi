@@ -36,7 +36,7 @@ const COMPONENT_SERVICE_READONLY_ALLOWLIST: Record<
   },
   "web/src/components/inspector/MemoryBankView.tsx": {
     allowed: ["hoxiAPI.readFileContent"],
-    reason: "Read-only loading of .opencode/memory markdown files in the Memory inspector",
+    reason: "Read-only loading of .hoxi/memory markdown files (with legacy .opencode/memory fallback) in the Memory inspector",
   },
   "web/src/components/inspector/PullRequestBadge.tsx": {
     allowed: ["fetchPullRequest"],

@@ -143,7 +143,7 @@ export const inspector = {
     nextSteps: "Next Steps",
     save: "Save Memory",
     notFound:
-      "project.md not created yet — it will be generated on first context compaction.",
+      "project.md not created yet — create .hoxi/memory/project.md for long-lived project rules (injected into every turn, keep it short)",
     reload: "Reload memory",
     sessionMemoryTab: "Session Memory",
     projectMemoryTab: "Project Memory",

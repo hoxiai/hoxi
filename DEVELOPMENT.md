@@ -542,9 +542,9 @@ stateDiagram-v2
 
 ### 8.3 8 维度结构化记忆插件 (`hoxi-memory.js`)
 放置在 [`.opencode/plugins/hoxi-memory.js`](.opencode/plugins/hoxi-memory.js)，实现 **8 维度上下文压缩协议**：
-1. 在每次对话构造 System Prompt 时（`experimental.chat.system.transform`），自动把 `.opencode/memory/project.md` 与当前会话交接记忆 `.opencode/memory/sessions/<sessionID>.md` 注入模型上下文。
+1. 在每次对话构造 System Prompt 时（`experimental.chat.system.transform`），自动把项目根 `.hoxi/memory/project.md` 与当前会话交接记忆 `.hoxi/memory/sessions/<sessionID>.md` 注入模型上下文（兼容读取旧版 `.opencode/memory/` 数据）。
 2. 在会话触发上下文压缩时（`experimental.session.compacting`），将压缩 Prompt 替换为标准 8 维度结构化模板（`Goals`, `Constraints`, `Key Facts`, `Changed Files`, `Errors & Fixes`, `Todo`, `Progress`, `Next Steps`）。
-3. 在会话进入空闲状态时（`event` 收到 `session.idle`），将会话关键进展归档至 `.opencode/memory/sessions/<sessionID>.md`。
+3. 在会话进入空闲状态时（`event` 收到 `session.idle`），将会话关键进展归档至 `.hoxi/memory/sessions/<sessionID>.md`。
 
 ---
 
@@ -579,7 +579,7 @@ Go 网关在转发 `/event` SSE 流及多运行时事件时，旁路解析事件
    - 除默认 `opencode` 运行时外，原生支持驱动 **Claude Code (`claude`)**、**Google Antigravity (`agy`)**、**Qoder** 与 **CodeBuddy** 子进程，并将各 CLI 的流式 JSONL 事件实时转译为统一的 OpenCode SSE 事件契约（`message.updated`、`message.part.delta`、`permission.asked`、`session.status`），使前端 Timeline、ToolCard、ThoughtBox、ApprovalGateCard 与状态栏托盘对底层运行时完全透明。
    - 详见专项文档：[`docs/antigravity-runner-probe.md`](docs/antigravity-runner-probe.md)、[`docs/antigravity-approval-hook.md`](docs/antigravity-approval-hook.md)、[`docs/claude-code-approval-hook.md`](docs/claude-code-approval-hook.md)。
 2. **跨软件会话接管与本地 CLI 协议桥接（[`internal/handoff/`](internal/handoff/)）**：
-   - 支持一键扫描本机 Grok CLI、Claude Code、OpenAI Codex、Google Antigravity、OpenCode CLI、Trae、Qoder、CodeBuddy 的历史会话，归一化为统一 IR 并物化写入会话存储与 `.opencode/memory/sessions/<sessionID>.md` 8 维交接记忆。
+   - 支持一键扫描本机 Grok CLI、Claude Code、OpenAI Codex、Google Antigravity、OpenCode CLI、Trae、Qoder、CodeBuddy 的历史会话，归一化为统一 IR 并物化写入会话存储与 `.hoxi/memory/sessions/<sessionID>.md` 8 维交接记忆。
    - 详见专项蓝图：[`HANDOFF_AND_CLI_BRIDGE.md`](HANDOFF_AND_CLI_BRIDGE.md)。
 
 ---

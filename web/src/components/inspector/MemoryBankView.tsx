@@ -4,7 +4,13 @@ import { hoxiAPI } from "../../services/api";
 import { activeDirectory, workspace } from "../../store/workspace";
 import { t } from "../../i18n";
 
-const PROJECT_MEMORY_FILE = ".opencode/memory/project.md";
+const PROJECT_MEMORY_FILE = ".hoxi/memory/project.md";
+const LEGACY_PROJECT_MEMORY_FILE = ".opencode/memory/project.md";
+
+/** Memory moved from .opencode/memory to .hoxi/memory; keep reading both. */
+function sessionMemoryFiles(id: string): string[] {
+  return [`.hoxi/memory/sessions/${id}.md`, `.opencode/memory/sessions/${id}.md`];
+}
 
 /** Parse the 8-dimension headings out of the memory markdown for a compact index. */
 function dimensions(text: string): string[] {
@@ -20,14 +26,9 @@ export default function MemoryBankView() {
   const [loading, setLoading] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
 
-  const sessionMemoryFile = createMemo(() => {
-    const id = workspace.activeSessionID;
-    return id ? `.opencode/memory/sessions/${id}.md` : PROJECT_MEMORY_FILE;
-  });
-
   const activeFile = createMemo(() =>
     scope() === "session" && workspace.activeSessionID
-      ? sessionMemoryFile()
+      ? sessionMemoryFiles(workspace.activeSessionID)[0]
       : PROJECT_MEMORY_FILE
   );
 
@@ -39,28 +40,28 @@ export default function MemoryBankView() {
     setError(null);
     const dir = activeDirectory();
     const sid = workspace.activeSessionID;
+    const candidates: string[] = [];
+    if (scope() === "session" && sid) candidates.push(...sessionMemoryFiles(sid));
+    candidates.push(PROJECT_MEMORY_FILE, LEGACY_PROJECT_MEMORY_FILE);
     try {
-      if (scope() === "session" && sid) {
+      for (const file of candidates) {
         try {
-          const res = await hoxiAPI.readFileContent(sessionMemoryFile(), dir);
+          const res = await hoxiAPI.readFileContent(file, dir);
           if (gen !== requestGen) return;
           if (res?.content?.trim()) {
             setContent(res.content);
             return;
           }
-        } catch {
+        } catch (err) {
           if (gen !== requestGen) return;
-          // Fallback to project memory if session memory file does not exist yet
+          if (file === candidates[candidates.length - 1]) {
+            console.error("read memory failed:", err);
+          }
+          // Try the next location: current path, legacy path, then project memory.
         }
       }
-      const res = await hoxiAPI.readFileContent(PROJECT_MEMORY_FILE, dir);
-      if (gen !== requestGen) return;
-      setContent(res?.content ?? "");
-    } catch (err) {
-      if (gen !== requestGen) return;
-      console.error("read memory failed:", err);
-      setError(t("inspector.memory.notFound"));
       setContent("");
+      setError(t("inspector.memory.notFound"));
     } finally {
       if (gen === requestGen) {
         setLoading(false);

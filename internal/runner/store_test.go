@@ -203,16 +203,26 @@ func TestRunnerMultiRuntimeMemoryInjectionAndSync(t *testing.T) {
 	if err := svc.store.Put(rec); err != nil {
 		t.Fatal(err)
 	}
+	memDir := filepath.Join(workDir, ".hoxi", "memory")
+	if err := os.MkdirAll(memDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(memDir, "project.md"), []byte("# Project\n- Real project rule\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	svc.syncSessionMemoryFile(rec.ID)
 
-	sessMemPath := filepath.Join(workDir, ".opencode", "memory", "sessions", rec.ID+".md")
+	sessMemPath := filepath.Join(workDir, ".hoxi", "memory", "sessions", rec.ID+".md")
 	rawSess, err := os.ReadFile(sessMemPath)
 	if err != nil {
 		t.Fatalf("expected session memory file created: %v", err)
 	}
 	if !strings.Contains(string(rawSess), "## 1. Primary Request and Intent") || !strings.Contains(string(rawSess), "internal/runner/memory.go") {
 		t.Fatalf("unexpected session memory content: %s", string(rawSess))
+	}
+	if _, err := os.Stat(filepath.Join(workDir, ".opencode")); !os.IsNotExist(err) {
+		t.Fatalf("memory sync must never create .opencode, stat err = %v", err)
 	}
 
 	injected := runtimeMemoryContext(rec)
@@ -231,3 +241,87 @@ func TestRunnerMultiRuntimeMemoryInjectionAndSync(t *testing.T) {
 	}
 }
 
+func TestSyncSessionMemoryNeverSeedsPlaceholderProjectMemory(t *testing.T) {
+	projDir := t.TempDir()
+	workDir := t.TempDir()
+	svc := NewService(projDir, nil, nil, t.TempDir())
+	rec := SessionRecord{
+		ID:           "ses_hoxi_mem_seed",
+		Runtime:      string(RuntimeClaudeCode),
+		ProjectDir:   projDir,
+		WorktreePath: workDir,
+		Turns: []MessageTurn{{
+			Info:  MessageInfo{ID: "msg_u1", SessionID: "ses_hoxi_mem_seed", Role: "user"},
+			Parts: []MessagePart{{ID: "prt_u1", SessionID: "ses_hoxi_mem_seed", MessageID: "msg_u1", Type: "text", Text: "hi"}},
+		}},
+	}
+	if err := svc.store.Put(rec); err != nil {
+		t.Fatal(err)
+	}
+	svc.syncSessionMemoryFile(rec.ID)
+	projFile := filepath.Join(projDir, ".hoxi", "memory", "project.md")
+	if _, err := os.Stat(projFile); !os.IsNotExist(err) {
+		t.Fatalf("project.md must not be seeded when the project has none, stat err = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(projDir, ".opencode")); !os.IsNotExist(err) {
+		t.Fatalf("memory sync must never create .opencode, stat err = %v", err)
+	}
+	if got := runtimeMemoryContext(rec); strings.Contains(got, "<project_memory>") {
+		t.Fatalf("expected no project memory block, got: %s", got)
+	}
+
+	// A pre-migration .opencode/memory/project.md is still honored and copied
+	// forward once so the user does not lose long-lived project rules.
+	legacyProj := filepath.Join(projDir, ".opencode", "memory", "project.md")
+	if err := os.MkdirAll(filepath.Dir(legacyProj), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacyProj, []byte("# Project\n- Real rule\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	svc.syncSessionMemoryFile(rec.ID)
+	raw, err := os.ReadFile(projFile)
+	if err != nil || !strings.Contains(string(raw), "Real rule") {
+		t.Fatalf("expected legacy project.md migrated to .hoxi/memory, got %q, %v", raw, err)
+	}
+}
+
+func TestRuntimeMemoryContextReadsLegacyOpencodeMemory(t *testing.T) {
+	projDir := t.TempDir()
+	legacySessDir := filepath.Join(projDir, ".opencode", "memory", "sessions")
+	if err := os.MkdirAll(legacySessDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(legacySessDir, "ses_legacy.md"), []byte("## 8. Next Steps\n- Resume legacy work\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rec := SessionRecord{ID: "ses_legacy", ProjectDir: projDir, WorktreePath: projDir}
+	got := runtimeMemoryContext(rec)
+	if !strings.Contains(got, "Resume legacy work") {
+		t.Fatalf("expected legacy session memory to be injected, got: %s", got)
+	}
+}
+
+func TestProjectMemoryRootForIsolatedSession(t *testing.T) {
+	root := t.TempDir()
+	wt := filepath.Join(root, ".hoxi", "worktrees", "ses_wt")
+	svc := NewService(root, nil, nil, t.TempDir())
+	rec := SessionRecord{ID: "ses_wt", ProjectDir: root, WorktreePath: wt, SandboxMode: "worktree"}
+	if err := os.MkdirAll(wt, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rec.Turns = []MessageTurn{{
+		Info:  MessageInfo{ID: "msg_u1", SessionID: "ses_wt", Role: "user"},
+		Parts: []MessagePart{{ID: "prt_u1", SessionID: "ses_wt", MessageID: "msg_u1", Type: "text", Text: "hello"}},
+	}}
+	if err := svc.store.Put(rec); err != nil {
+		t.Fatal(err)
+	}
+	svc.syncSessionMemoryFile(rec.ID)
+	if _, err := os.Stat(filepath.Join(root, ".hoxi", "memory", "sessions", "ses_wt.md")); err != nil {
+		t.Fatalf("isolated session memory must live at the project root: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(wt, ".hoxi", "memory")); !os.IsNotExist(err) {
+		t.Fatalf("worktree must not hold its own memory copy, stat err = %v", err)
+	}
+}

@@ -78,6 +78,21 @@ function createSessionLedger() {
   };
 }
 
+function normalizeSpace(text) {
+  return String(text || "").replace(/\s+/g, " ").trim();
+}
+
+// constraintClauses pulls only the constraining sentences out of a user turn.
+// A single-sentence turn is already recorded verbatim under Goals, so it is not
+// duplicated into Constraints.
+function constraintClauses(text) {
+  const whole = normalizeSpace(text);
+  return String(text || "")
+    .split(/(?<=[.!?])\s+|[。！？；;\n]+/)
+    .map(normalizeSpace)
+    .filter((clause) => clause && clause !== whole && CONSTRAINT_RE.test(clause));
+}
+
 function noteMessage(ledger, info) {
   if (!ledger || !info?.id) return;
   ledger.roles.set(info.id, info.role || "");
@@ -108,7 +123,7 @@ function notePart(ledger, part, role) {
     if (resolvedRole === "user") {
       pushUnique(ledger.goals, text, 6);
       ledger.latestUser = truncate(redactSecrets(text), 400);
-      if (CONSTRAINT_RE.test(text)) pushUnique(ledger.constraints, text, 6);
+      for (const clause of constraintClauses(text)) pushUnique(ledger.constraints, clause, 6);
     } else if (resolvedRole === "assistant") {
       ledger.progress = truncate(redactSecrets(text), 600);
     }
@@ -239,14 +254,34 @@ function stripVolatileMemoryHeader(markdown) {
     .trim();
 }
 
+// projectMemoryRoot maps an isolated session directory
+// (<root>/.hoxi/worktrees/<session-id>) back to the project root so memory
+// outlives worktree removal. Any other directory is its own project root.
+function projectMemoryRoot(dir) {
+  const slash = String(dir || "").replace(/\\/g, "/").replace(/\/+$/, "");
+  const marker = "/.hoxi/worktrees/";
+  const idx = slash.lastIndexOf(marker);
+  if (idx <= 0) return String(dir || "");
+  const rest = slash.slice(idx + marker.length);
+  if (!rest || rest.includes("/")) return String(dir || "");
+  return slash.slice(0, idx);
+}
+
 export const HoxiMemoryPlugin = async ({ client, directory } = {}) => {
   const baseDir = directory || process.cwd();
-  const memoryDir = path.join(baseDir, ".opencode", "memory");
+  const memoryRoot = projectMemoryRoot(baseDir);
+  // Memory is Hoxi state, so it lives under .hoxi/. Writing .opencode/ in a
+  // project makes OpenCode treat it as a config root and install
+  // @opencode-ai/plugin there, so that directory is only read for legacy data.
+  const memoryDir = path.join(memoryRoot, ".hoxi", "memory");
+  const legacyMemoryDir = path.join(memoryRoot, ".opencode", "memory");
   const projectMemoryPath = path.join(memoryDir, "project.md");
+  const legacyProjectMemoryPath = path.join(legacyMemoryDir, "project.md");
   const sessionsMemoryDir = path.join(memoryDir, "sessions");
   const ledgers = new Map();
   // Freeze injected system blocks per session so output.system remains 100%
-  // byte-stable across turns and never busts the LLM KV prefix cache.
+  // byte-stable across turns and never busts the LLM KV prefix cache (edits to
+  // project.md apply from the next session onward).
   const frozenSessionSystemBlocks = new Map();
 
   const ensure = (sessionID) => {
@@ -294,19 +329,22 @@ export const HoxiMemoryPlugin = async ({ client, directory } = {}) => {
       const sanitized = stripVolatileMemoryHeader(redactSecrets(content.trim()));
       if (sanitized) blocks.push(`<project_memory>\n${sanitized}\n</project_memory>`);
     } catch {
-      // project.md does not exist yet
-    }
-    if (cacheKey) {
+      // Current project.md does not exist; fall back to the pre-migration copy.
       try {
-        const sessionMemoryPath = path.join(sessionsMemoryDir, `${cacheKey}.md`);
-        const sessionContent = await fs.readFile(sessionMemoryPath, "utf8");
-        const sanitizedSession = stripVolatileMemoryHeader(redactSecrets(sessionContent.trim()));
-        if (sanitizedSession) {
-          blocks.push(`<session_handoff_memory>\n${sanitizedSession}\n</session_handoff_memory>`);
-        }
+        const legacy = await fs.readFile(legacyProjectMemoryPath, "utf8");
+        const sanitized = stripVolatileMemoryHeader(redactSecrets(legacy.trim()));
+        if (sanitized) blocks.push(`<project_memory>\n${sanitized}\n</project_memory>`);
       } catch {
-        // session memory does not exist yet
+        // project.md does not exist yet
       }
+    }
+    // The session's own 8-dim ledger (sessions/<id>.md) is intentionally not
+    // injected back into the same session: OpenCode already replays that
+    // session's full history (or its compaction summary) on every turn, so the
+    // ledger would only duplicate tokens. Runtime switches and handoffs carry
+    // context through the runner (runtimeMemoryContext / runtimeContext) and
+    // the imported transcript instead.
+    if (cacheKey) {
       if (frozenSessionSystemBlocks.size >= 128) {
         const oldestKey = frozenSessionSystemBlocks.keys().next().value;
         if (oldestKey !== undefined) frozenSessionSystemBlocks.delete(oldestKey);

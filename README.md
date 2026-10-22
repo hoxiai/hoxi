@@ -58,7 +58,7 @@ Solo builders and lean teams don't just write code—they also deploy and mainta
 
 ### 5. Context Rot, Endpoint Degradation & Electron Bloat
 Long sessions forget early architectural constraints; third-party API gateways silently degrade or stall; Electron forks eat 1.5 GB+ RAM per window.
-- **8-Dimension Persistent Memory**: Automatically compacts long sessions into `.opencode/memory/` across 8 structured sections (*Goals, Constraints, Key Facts, Changed Files, Errors & Fixes, Todo, Progress, Next Steps*).
+- **8-Dimension Persistent Memory**: Automatically compacts long sessions into `.hoxi/memory/` across 8 structured sections (*Goals, Constraints, Key Facts, Changed Files, Errors & Fixes, Todo, Progress, Next Steps*).
 - **Role-Based Model Routing**: Use frontier models for primary coding while routing title generation, background subagents, memory compaction, and Git commit messages to fast/cheap or local models (Ollama / vLLM)—or 0ms local rule synthesis.
 - **Provider Telemetry & Observer Audits**: Tracks live TTFT, timeout rates, tool-call accuracy, and hallucination loops per endpoint, with optional automated post-edit diff scoring via an independent **Observer** referee model.
 - **Native Wails v2 + SolidJS 120Hz Shell**: Built on macOS `WKWebView` + fine-grained SolidJS signals (`requestAnimationFrame` token batching, zero VDOM) + WebGL Xterm.

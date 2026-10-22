@@ -159,6 +159,95 @@ func EngineStateDir() string {
 	return join(Home(), "engine-state")
 }
 
+// Per-project memory lives in the project's own .hoxi directory, never in the
+// upstream .opencode config directory. Creating .opencode/ in a project makes
+// OpenCode treat it as a config root and install @opencode-ai/plugin into it,
+// which is why Hoxi keeps its state under .hoxi/ and only reads the legacy
+// .opencode/memory location for sessions created before the move.
+const (
+	// ProjectMemoryDirName is the project-level Hoxi state directory.
+	ProjectMemoryDirName = ".hoxi"
+	// ProjectMemoryDataDirName is the memory subdirectory under ProjectMemoryDirName.
+	ProjectMemoryDataDirName = "memory"
+	// LegacyOpenCodeDirName is the upstream OpenCode config directory name.
+	LegacyOpenCodeDirName = ".opencode"
+)
+
+// ProjectMemoryDir returns <projectRoot>/.hoxi/memory.
+func ProjectMemoryDir(projectRoot string) string {
+	if strings.TrimSpace(projectRoot) == "" {
+		return ""
+	}
+	return filepath.Join(projectRoot, ProjectMemoryDirName, ProjectMemoryDataDirName)
+}
+
+// LegacyProjectMemoryDir returns <projectRoot>/.opencode/memory, the location
+// Hoxi used before memory moved under .hoxi. Read-only compatibility only.
+func LegacyProjectMemoryDir(projectRoot string) string {
+	if strings.TrimSpace(projectRoot) == "" {
+		return ""
+	}
+	return filepath.Join(projectRoot, LegacyOpenCodeDirName, ProjectMemoryDataDirName)
+}
+
+// ProjectMemoryDirs returns the memory roots to consult for a project, current
+// location first and the legacy one second.
+func ProjectMemoryDirs(projectRoot string) []string {
+	current := ProjectMemoryDir(projectRoot)
+	legacy := LegacyProjectMemoryDir(projectRoot)
+	if current == "" {
+		return nil
+	}
+	return []string{current, legacy}
+}
+
+// ProjectMemoryFile returns the project-level memory file for projectRoot.
+func ProjectMemoryFile(projectRoot string) string {
+	return join(ProjectMemoryDir(projectRoot), "project.md")
+}
+
+// LegacyProjectMemoryFile returns the legacy project-level memory file.
+func LegacyProjectMemoryFile(projectRoot string) string {
+	return join(LegacyProjectMemoryDir(projectRoot), "project.md")
+}
+
+// ProjectSessionMemoryFile returns the session memory file for sessionID.
+func ProjectSessionMemoryFile(projectRoot, sessionID string) string {
+	return join(ProjectMemoryDir(projectRoot), "sessions", sessionID+".md")
+}
+
+// LegacyProjectSessionMemoryFile returns the legacy session memory file.
+func LegacyProjectSessionMemoryFile(projectRoot, sessionID string) string {
+	return join(LegacyProjectMemoryDir(projectRoot), "sessions", sessionID+".md")
+}
+
+// ProjectMemoryRelPath returns the current, project-relative memory directory.
+func ProjectMemoryRelPath() string {
+	return filepath.Join(ProjectMemoryDirName, ProjectMemoryDataDirName)
+}
+
+// ProjectRootForWorktree returns the project root owning an isolated session
+// worktree (<root>/.hoxi/worktrees/<session-id>), or "" when dir is not one.
+// Memory and other per-project state must be addressed at the project root so
+// removing a worktree never discards them.
+func ProjectRootForWorktree(dir string) string {
+	cleaned := filepath.Clean(strings.TrimSpace(dir))
+	if cleaned == "" || !filepath.IsAbs(cleaned) {
+		return ""
+	}
+	slash := filepath.ToSlash(cleaned)
+	marker := "/" + filepath.ToSlash(ProjectMemoryDirName) + "/worktrees/"
+	idx := strings.LastIndex(slash, marker)
+	if idx < 0 {
+		return ""
+	}
+	rest := slash[idx+len(marker):]
+	if rest == "" || strings.Contains(rest, "/") {
+		return ""
+	}
+	return filepath.FromSlash(slash[:idx])
+}
+
 // EngineOpenCodeDir returns the engine's OpenCode data directory, which holds
 // the engine-scoped auth.json.
 func EngineOpenCodeDir() string {

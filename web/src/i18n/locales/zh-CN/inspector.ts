@@ -143,7 +143,7 @@ export const inspector: InspectorI18n = {
     nextSteps: "后续计划",
     save: "保存记忆",
     notFound:
-      "project.md 尚未生成 — 将在首次压缩上下文时自动创建",
+      "project.md 尚未创建 — 可手动创建 .hoxi/memory/project.md 记录项目长期约定（每轮都会注入，请保持简短）",
     reload: "刷新记忆",
     sessionMemoryTab: "会话记忆",
     projectMemoryTab: "项目记忆",

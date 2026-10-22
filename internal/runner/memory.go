@@ -8,44 +8,60 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/hoxipaths"
 )
 
 var (
-	memoryWriteMu      sync.Mutex
+	memoryWriteMu       sync.Mutex
 	volatileUpdatedLine = regexp.MustCompile(`(?m)^Updated:\s*[^\r\n]+\r?\n?`)
 )
-
-const defaultProjectMemoryTemplate = `# Hoxi Project Memory (8-Dimension Structured Context)
-
-## 1. Primary Request and Intent
-- Build and maintain the project workspace with high engineering discipline.
-
-## 2. Key Technical Concepts
-- Follow repository architecture boundaries, type safety, and verification gates.
-
-## 3. Files and Code Sections
-- Core files are tracked per session in .opencode/memory/sessions/.
-
-## 4. Errors and Fixes
-- Document root causes and verified fixes as turns complete.
-
-## 5. Problem Solving
-- Prefer minimal, root-cause changes backed by automated tests.
-
-## 6. All User Messages
-- User intent history is indexed per session.
-
-## 7. Pending Tasks
-- Check active session memory for in-progress and pending items.
-
-## 8. Current Work
-- Initialized by Hoxi multi-runtime memory engine.
-`
 
 // stripVolatileMemoryHeader removes dynamic "Updated: <timestamp>" headers so
 // injected system/context prefixes remain 100% byte-identical for LLM KV caches.
 func stripVolatileMemoryHeader(md string) string {
 	return strings.TrimSpace(volatileUpdatedLine.ReplaceAllString(md, ""))
+}
+
+// projectMemoryDir returns the project root whose .hoxi/memory holds the
+// session memory. Isolated sessions run inside <root>/.hoxi/worktrees/<id>, so
+// memory must be addressed at the root to survive worktree removal.
+func projectMemoryDir(rec SessionRecord) string {
+	for _, dir := range []string{rec.ProjectDir, rec.WorktreePath} {
+		if root := hoxipaths.ProjectRootForWorktree(dir); root != "" {
+			return root
+		}
+	}
+	if dir := strings.TrimSpace(rec.ProjectDir); dir != "" {
+		return dir
+	}
+	return strings.TrimSpace(rec.WorktreePath)
+}
+
+// memoryCandidates lists every memory file location to consult, current
+// (.hoxi/memory) first, then the worktree copy, then the pre-migration
+// .opencode/memory location so existing sessions keep their context.
+func memoryCandidates(rec SessionRecord, rel string) []string {
+	var paths []string
+	seen := make(map[string]bool)
+	add := func(root string) {
+		root = strings.TrimSpace(root)
+		if root == "" {
+			return
+		}
+		for _, base := range []string{hoxipaths.ProjectMemoryDir(root), hoxipaths.LegacyProjectMemoryDir(root)} {
+			p := filepath.Join(base, rel)
+			if seen[p] {
+				continue
+			}
+			seen[p] = true
+			paths = append(paths, p)
+		}
+	}
+	add(projectMemoryDir(rec))
+	add(rec.WorktreePath)
+	add(rec.ProjectDir)
+	return paths
 }
 
 // runtimeMemoryContext returns the frozen 8-dimension <project_memory> and
@@ -55,25 +71,14 @@ func runtimeMemoryContext(rec SessionRecord) string {
 	if rec.ExternalID != "" && !rec.ContextPending {
 		return ""
 	}
-	workDir := strings.TrimSpace(rec.WorktreePath)
-	projDir := strings.TrimSpace(rec.ProjectDir)
-	if workDir == "" && projDir == "" {
+	if projectMemoryDir(rec) == "" {
 		return ""
 	}
 
-	projMem := readFirstNonEmptyFile(
-		filepath.Join(workDir, ".opencode", "memory", "project.md"),
-		filepath.Join(projDir, ".opencode", "memory", "project.md"),
-	)
-	sessMem := readFirstNonEmptyFile(
-		filepath.Join(workDir, ".opencode", "memory", "sessions", rec.ID+".md"),
-		filepath.Join(projDir, ".opencode", "memory", "sessions", rec.ID+".md"),
-	)
+	projMem := readFirstNonEmptyFile(memoryCandidates(rec, "project.md")...)
+	sessMem := readFirstNonEmptyFile(memoryCandidates(rec, filepath.Join("sessions", rec.ID+".md"))...)
 	if rec.ExternalID != "" && sessMem == "" {
-		sessMem = readFirstNonEmptyFile(
-			filepath.Join(workDir, ".opencode", "memory", "sessions", rec.ExternalID+".md"),
-			filepath.Join(projDir, ".opencode", "memory", "sessions", rec.ExternalID+".md"),
-		)
+		sessMem = readFirstNonEmptyFile(memoryCandidates(rec, filepath.Join("sessions", rec.ExternalID+".md"))...)
 	}
 
 	projClean := stripVolatileMemoryHeader(projMem)
@@ -97,27 +102,26 @@ func runtimeMemoryContext(rec SessionRecord) string {
 }
 
 // syncSessionMemoryFile synthesizes and atomically writes the 8-dimension
-// session memory (.opencode/memory/sessions/<sessionID>.md) and ensures
-// .opencode/memory/project.md exists in the session's active directory.
+// session memory (<project>/.hoxi/memory/sessions/<sessionID>.md) and mirrors
+// the project's existing project.md into the session's worktree when missing.
 func (s *Service) syncSessionMemoryFile(sessionID string) {
 	rec, ok := s.store.Get(sessionID)
 	if !ok || len(rec.Turns) == 0 {
 		return
 	}
-	targetDir := strings.TrimSpace(rec.WorktreePath)
-	if targetDir == "" {
-		targetDir = strings.TrimSpace(rec.ProjectDir)
-	}
-	if targetDir == "" {
+	targetRoot := projectMemoryDir(rec)
+	if targetRoot == "" {
 		return
 	}
-	if st, err := os.Stat(targetDir); err != nil || !st.IsDir() {
+	if st, err := os.Stat(targetRoot); err != nil || !st.IsDir() {
 		return
 	}
 
-	// If OpenCode plugin already wrote a richer session file under ExternalID, mirror or merge it.
-	sessionsDir := filepath.Join(targetDir, ".opencode", "memory", "sessions")
-	projFile := filepath.Join(targetDir, ".opencode", "memory", "project.md")
+	// Memory lives at the project root, never inside the removable worktree and
+	// never under .opencode (creating that directory makes OpenCode install its
+	// plugin bundle into the user's project).
+	sessionsDir := filepath.Join(hoxipaths.ProjectMemoryDir(targetRoot), "sessions")
+	projFile := hoxipaths.ProjectMemoryFile(targetRoot)
 
 	memoryWriteMu.Lock()
 	defer memoryWriteMu.Unlock()
@@ -126,15 +130,14 @@ func (s *Service) syncSessionMemoryFile(sessionID string) {
 		return
 	}
 
-	// Ensure project.md exists in targetDir (seed from ProjectDir if available).
+	// Mirror an existing project.md into a project that has none, falling back
+	// to a pre-migration .opencode copy. No placeholder is ever seeded: project
+	// memory is injected into every turn, so boilerplate would cost tokens
+	// without adding project knowledge.
 	if _, err := os.Stat(projFile); err != nil {
-		seed := defaultProjectMemoryTemplate
-		if rec.ProjectDir != "" && rec.ProjectDir != targetDir {
-			if raw, readErr := os.ReadFile(filepath.Join(rec.ProjectDir, ".opencode", "memory", "project.md")); readErr == nil && len(strings.TrimSpace(string(raw))) > 0 {
-				seed = string(raw)
-			}
+		if raw, readErr := os.ReadFile(hoxipaths.LegacyProjectMemoryFile(targetRoot)); readErr == nil && len(strings.TrimSpace(string(raw))) > 0 {
+			_ = writeFileAtomic(projFile, raw)
 		}
-		_ = writeFileAtomic(projFile, []byte(seed))
 	}
 
 	md := buildEightDimSessionMarkdown(rec)
@@ -146,13 +149,13 @@ func (s *Service) syncSessionMemoryFile(sessionID string) {
 
 func buildEightDimSessionMarkdown(rec SessionRecord) string {
 	var (
-		userMessages  []string
-		filesTouched  []string
-		seenFiles     = make(map[string]bool)
+		userMessages   []string
+		filesTouched   []string
+		seenFiles      = make(map[string]bool)
 		errorsObserved []string
-		pendingTodos  []string
-		lastAssistant string
-		toolCount     int
+		pendingTodos   []string
+		lastAssistant  string
+		toolCount      int
 	)
 
 	addFile := func(raw string) {
@@ -324,4 +327,3 @@ func readFirstNonEmptyFile(paths ...string) string {
 	}
 	return ""
 }
-

@@ -216,7 +216,9 @@ func (m *worktreeManager) CreateOnBranch(sessionID, retainedBranch string) (work
 		return worktreeMeta{}, fmt.Errorf("resolve worktree base: %w", err)
 	}
 
-	// Symlink .opencode into the worktree so plugins and memory are shared
+	// Share an existing project .opencode (plugins/skills) with the worktree.
+	// Hoxi never creates .opencode itself: it only links one the user or this
+	// repository already tracks. Memory lives in the project root .hoxi/memory.
 	srcOpenCode := filepath.Join(repoRoot, ".opencode")
 	dstOpenCode := filepath.Join(worktreeDir, ".opencode")
 	if _, err := os.Stat(srcOpenCode); err == nil {
@@ -687,8 +689,19 @@ func sanitizeSessionID(id string) string {
 	return b.String()
 }
 
+// EnsureGitExclude appends patterns to <repo>/.git/info/exclude without
+// touching tracked .gitignore files. It is a no-op outside a Git repository so
+// Hoxi never creates a .git directory in a plain folder.
+func EnsureGitExclude(repoRoot string, patterns ...string) {
+	ensureGitExclude(repoRoot, patterns...)
+}
+
 func ensureGitExclude(repoRoot string, patterns ...string) {
 	if len(patterns) == 0 {
+		return
+	}
+	gitPath := filepath.Join(repoRoot, ".git")
+	if _, err := os.Stat(gitPath); err != nil {
 		return
 	}
 	excludeFile := filepath.Join(repoRoot, ".git", "info", "exclude")

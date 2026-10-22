@@ -15,7 +15,7 @@
 - **OpenCode 运行时**（`internal/opencode`）：官方 `opencode` 进程监管，每次启动生成随机 `OPENCODE_SERVER_PASSWORD` 并以 HTTP Basic Auth 访问
 - **多运行时引擎**（`internal/runner`）：统一驱动 Claude Code、Antigravity（`agy`）、Qoder、CodeBuddy 子进程，翻译为统一事件流；Claude Code 与 Antigravity 经 PreToolUse Hook 接入同一审批平面，审批决策统一由 `internal/runner/approval_decision.go` 判定，策略存于 `~/.hoxi/approval-policy.json`
 - **前端工作区**（`web/`）：Vite + SolidJS + Tailwind 三栏布局；SSE 增量经 `requestAnimationFrame` 批处理；Subagent 嵌套时间线、`ThoughtBox`、`ToolCard`（含内联 LSP 诊断）；`@pierre/diffs` 代码审查、`@xterm/xterm` + WebGL 终端、无头 Chrome 浏览器（`internal/browser`）
-- **会话能力**：Git Worktree 会话隔离（`internal/worktree`，`?directory=` 作用域）、运行中纠偏（Steer）与停止、按消息回滚（Revert）与分叉（Fork）、8 维度会话压缩记忆（`.opencode/plugins/hoxi-memory.js`）、会话目标上报（`hoxi-goal.js`）
+- **会话能力**：Git Worktree 会话隔离（`internal/worktree`，`?directory=` 作用域）、运行中纠偏（Steer）与停止、按消息回滚（Revert）与分叉（Fork）、8 维度会话压缩记忆（插件 `.opencode/plugins/hoxi-memory.js`，数据写 `<project>/.hoxi/memory/`）、会话目标上报（`hoxi-goal.js`）
 - **外部 CLI 会话接管**（`internal/handoff`）：从 Claude / Codex / Gemini / Grok / OpenCode / Trae / Qoder / CodeBuddy 导入会话
 - **Agent Skills**（`internal/skills`）：本地 Skill 发现（OpenCode `/skill`）、内置默认 Skill `shoply-ops`、`skill-authoring`（`internal/skills/defaults/`），以及 hoxi.ai 线上技能目录（`GET /api/hoxi/skills/marketplace`）与显式安装（`POST /api/hoxi/skills/marketplace/install`，校验 `sha256` 后原子写入 `~/.hoxi/skills/<slug>/`，不自动安装、不执行远程脚本、不经隧道开放）
 - **GoPanel 反向隧道**（`internal/tunnel` + `internal/gateway/tunnel.go`）：Mac 主动外连 GoPanel，路由白名单内的 HTTP / SSE 在进程内交给网关；Mac 不开放公网端口。待处理审批经 Notify 帧交给 GoPanel 发 APNs
@@ -86,11 +86,12 @@ Flutter + Riverpod + GoRouter + Dio，四栏：沟通 · 工程 · 专栏 · 我
 │           ├── portal/               # 专栏：hoxi.ai 文章、模型信息与五维自测
 │           ├── ai_workspace/         # 工程：Hoxi (/api/hoxi/*) 与 GoPanel (/api/code/*) 编码会话、Git 审查与终端
 │           └── server/container/database/website/ssl/apps/resources/task_center/auth/settings
-├── .opencode/
+├── .opencode/                        # Upstream OpenCode config root; Hoxi only reads it, never writes memory here
 │   ├── plugins/                      # hoxi-memory.js & hoxi-goal.js
 │   ├── lib/                          # permission-policy.js + permission-policy.cases.json + permission-request.cases.json (shared safety-gate rules)
-│   ├── skills/                       # Project-local Agent Skills
-│   └── memory/                       # Long-term project.md & per-session compaction records
+│   └── skills/                       # Project-local Agent Skills
+├── .hoxi/                            # Hoxi-local project state (git-ignored): memory/, worktrees/, attachments/
+│   └── memory/                       # project.md & per-session compaction records (legacy .opencode/memory is read-only)
 ├── docs/                             # Approval hooks, remote tunnel, auto-updates, release & direct-distribution guides (+ assets/)
 ├── scripts/                          # AI one-click release, DMG packaging, notarization & release publishing
 ├── README.md / README.zh-CN.md       # Bilingual landing docs
@@ -156,6 +157,7 @@ Flutter + Riverpod + GoRouter + Dio，四栏：沟通 · 工程 · 专栏 · 我
 
 2. **OpenCode 上游零侵入 (Upstream Zero-Fork)**
    - 严禁 Fork 或修改 `opencode` 内部源码；所有定制能力仅通过 Go 进程监管、反向代理或 `.opencode/plugins/` 插件钩子扩展。
+   - **严禁在用户项目里创建 `.opencode/`**：该目录是上游 OpenCode 的配置根，一旦存在，`opencode serve` 会把它当作配置目录并在其中安装 `@opencode-ai/plugin` 依赖（`package.json` + `node_modules`），污染用户仓库。Hoxi 的项目级状态（记忆、工作树、附件）一律写 `<project>/.hoxi/`，路径解析走 [`internal/hoxipaths`](internal/hoxipaths/hoxipaths.go)（`ProjectMemoryDir` / `ProjectSessionMemoryFile`）；旧版 `.opencode/memory/` 仅作为只读回退，不做写入。
 
 3. **三大统一网关平面与 Git Worktree 强隔离 (Unified Gateway Planes & Worktree Scoping)**
    - **会话、事件流与权限审批三大平面统一收口**：前端（[`web/src/services/api.ts`](web/src/services/api.ts)、[`sse.ts`](web/src/services/sse.ts)）与 CLI 的所有会话操作必须统一走 `/api/hoxi/sessions`，SSE 事件流必须统一订阅 `/api/hoxi/event`，权限审批必须统一走 `/api/hoxi/permission`（由 `gateway` 与 `runner` 合并路由 OpenCode 与 Claude/Antigravity/Qoder/CodeBuddy 运行时），**严禁前端直接裸调上游 `/session`、`/event` 或 `/permission` 接口**。
@@ -222,7 +224,7 @@ Flutter + Riverpod + GoRouter + Dio，四栏：沟通 · 工程 · 专栏 · 我
 | **经 GoPanel 隧道开放的路由** | [`internal/gateway/tunnel.go`](internal/gateway/tunnel.go) 显式「方法 + 路由」白名单 + `tunnel_test.go`（允许与相邻拒绝用例），同步更新双仓契约文档 | 严禁前缀放行、绕过白名单，或开放账号、提供商配置、命令执行、`open`、工作区外文件等接口 | [`docs/gopanel-hoxi-remote-tunnel.md`](docs/gopanel-hoxi-remote-tunnel.md) |
 | **Go 网关自发轻量 LLM 调用** | 领域包接收 `gateway` 注入的 [`llm.Client`](internal/llm/llm.go)，不 `import provider` | 严禁业务包直接 `import internal/provider`；严禁手写 `http.Post` 拼接 `/v1/messages` 或 `/chat/completions` | [`internal/promptassist/`](internal/promptassist/service.go)、[`internal/gateway/assist.go`](internal/gateway/assist.go) |
 | **直连 OpenCode (`opencode serve`)** | 一律使用 [`internal/opencode/ocapi`](internal/opencode/ocapi/client.go)（共享 `Transport`、Basic Auth 与 `LimitReader`） | 严禁自建回环 `http.Client`/`Transport` 或手动调用 `SetBasicAuth("opencode", ...)` | [`internal/opencode/ocapi/client.go`](internal/opencode/ocapi/client.go) |
-| **`~/.hoxi` 与引擎路径解析** | 一律使用 [`internal/hoxipaths`](internal/hoxipaths/hoxipaths.go)（`DBPath`、`EngineDataDir`、`EngineStateDir`、`Home`） | 严禁在各包硬编码 `~/.hoxi/hoxi.db`、`~/.hoxi/engine-data` 或重复解析环境变量 | [`internal/hoxipaths/hoxipaths.go`](internal/hoxipaths/hoxipaths.go) |
+| **`~/.hoxi` 与引擎路径解析** | 一律使用 [`internal/hoxipaths`](internal/hoxipaths/hoxipaths.go)（`DBPath`、`EngineDataDir`、`EngineStateDir`、`Home`，项目侧用 `ProjectMemoryDir` / `ProjectSessionMemoryFile` / `ProjectRootForWorktree`） | 严禁在各包硬编码 `~/.hoxi/hoxi.db`、`~/.hoxi/engine-data`、`<project>/.hoxi/memory` 或 `<project>/.opencode/memory`，严禁在用户项目里创建 `.opencode/` | [`internal/hoxipaths/hoxipaths.go`](internal/hoxipaths/hoxipaths.go) |
 | **外部 CLI 会话扫描 / 凭证桥接** | `internal/handoff/<tool>.go` 单文件高内聚 | 严禁把工具 A 的函数塞进工具 B、`types.go` 或 `service.go` | [`internal/handoff/codex.go`](internal/handoff/codex.go) |
 | **多运行时 Agent 子进程驱动** | `internal/runner/` 对应进程 adapter 与协议 translator | 严禁侵入或修改 `internal/opencode` | [`internal/runner/`](internal/runner/http.go) |
 | **前端 HTTP / REST / SSE 客户端** | `web/src/services/`，复用 [`requestJSON`](web/src/services/http.ts) | 严禁反向导入 `store/` 或 `components/`；严禁混入纯 UI 工具 | [`web/src/services/http.ts`](web/src/services/http.ts) |

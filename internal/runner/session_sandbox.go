@@ -74,6 +74,11 @@ func validateSessionDirectory(rec SessionRecord) error {
 }
 
 func (s *Service) provisionSessionDirectory(rec *SessionRecord) error {
+	// .hoxi/ holds Hoxi state (memory, worktrees, attachments). Excluding it here
+	// keeps it out of git status for local sessions that never create a worktree.
+	if strings.TrimSpace(rec.ProjectDir) != "" {
+		worktree.EnsureGitExclude(rec.ProjectDir, ".hoxi/")
+	}
 	if rec.SandboxMode == "local" {
 		rec.WorktreePath = rec.ProjectDir
 		rec.Branch, rec.BaseCommit = "", ""

@@ -55,9 +55,29 @@ describe("8-dim session memory", () => {
     assertTrue(markdown.includes("Cover locked worktree removal"));
     assertTrue(markdown.includes("Apply now stops when the snapshot commit fails."));
     assertEqual(markdown.includes("## 1. Goals\n## 2. Constraints"), false);
+    const constraints = markdown.split("## 2. Constraints")[1].split("## 3.")[0];
+    assertTrue(constraints.includes("- Never swallow git errors."));
+    assertEqual(constraints.includes("Fix the apply path"), false);
   });
 
-  it("freezes system prompt memory per session across turns and skips redundant HTTP fetches when ledger has evidence", async () => {
+  it("does not duplicate a single-sentence user turn into Constraints", () => {
+    const ledger = createSessionLedger();
+    // "\u4e0d\u8981" = "do not" (zh) and "\u3002" = full-width period; escaped to satisfy check:i18n.
+    ingestMessages(ledger, [
+      {
+        info: { id: "msg_user", role: "user" },
+        parts: [{ type: "text", messageID: "msg_user", text: "\u4e0d\u8981 create the .opencode directory" }],
+      },
+      {
+        info: { id: "msg_user2", role: "user" },
+        parts: [{ type: "text", messageID: "msg_user2", text: "Update the plugin\u3002\u4e0d\u8981 touch AGENTS.md" }],
+      },
+    ]);
+    assertDeepEqual(ledger.constraints, ["\u4e0d\u8981 touch AGENTS.md"]);
+    assertEqual(ledger.goals.length, 2);
+  });
+
+  it("freezes project memory per session, never re-injects the session's own ledger, and skips redundant HTTP fetches", async () => {
     const fs = await (Function('return import("node:fs/promises")')() as Promise<any>);
     const os = await (Function('return import("node:os")')() as Promise<any>);
     const path = await (Function('return import("node:path")')() as Promise<any>);
@@ -71,19 +91,29 @@ describe("8-dim session memory", () => {
       },
     };
     try {
-      const sessionsDir = path.join(tmpDir, ".opencode", "memory", "sessions");
-      await fs.mkdir(sessionsDir, { recursive: true });
+      // Pre-migration memory lives under .opencode/memory and must still be read.
+      const legacyMemoryDir = path.join(tmpDir, ".opencode", "memory");
+      const legacySessionsDir = path.join(legacyMemoryDir, "sessions");
+      await fs.mkdir(legacySessionsDir, { recursive: true });
       await fs.writeFile(
-        path.join(sessionsDir, "ses_resumed.md"),
-        "# Session Memory (ses_resumed)\nUpdated: 2026-10-18T01:00:00.000Z\n\n## 1. Goals\n- Keep KV prefix stable\n",
+        path.join(legacyMemoryDir, "project.md"),
+        "# Project\nUpdated: 2026-10-18T00:00:00.000Z\n- Keep KV prefix stable\n",
+        "utf8"
+      );
+      await fs.writeFile(
+        path.join(legacySessionsDir, "ses_resumed.md"),
+        "# Session Memory (ses_resumed)\nUpdated: 2026-10-18T01:00:00.000Z\n\n## 1. Goals\n- Old session ledger\n",
         "utf8"
       );
 
       const plugin = await HoxiMemoryPlugin({ client: mockClient, directory: tmpDir });
       const turn1Out = { system: [] as string[] };
       await plugin["experimental.chat.system.transform"]({ sessionID: "ses_resumed" }, turn1Out);
-      assertTrue(turn1Out.system.some((b) => b.includes("Keep KV prefix stable")));
+      assertTrue(turn1Out.system.some((b) => b.includes("<project_memory>") && b.includes("Keep KV prefix stable")));
       assertTrue(!turn1Out.system.some((b) => b.includes("Updated:")));
+      assertTrue(!turn1Out.system.some((b) => b.includes("session_handoff_memory") || b.includes("Old session ledger")));
+
+      await fs.writeFile(path.join(legacyMemoryDir, "project.md"), "# Project\n- Edited mid-session\n", "utf8");
 
       await plugin.event({
         event: {
@@ -107,6 +137,11 @@ describe("8-dim session memory", () => {
       const turn2Out = { system: [] as string[] };
       await plugin["experimental.chat.system.transform"]({ sessionID: "ses_resumed" }, turn2Out);
       assertDeepEqual(turn2Out.system, turn1Out.system);
+
+      // New writes go to .hoxi/memory so OpenCode never sees a project .opencode
+      // config root it would populate with a plugin bundle.
+      const written = await fs.readFile(path.join(tmpDir, ".hoxi", "memory", "sessions", "ses_resumed.md"), "utf8");
+      assertTrue(written.includes("New turn goal"));
     } finally {
       await fs.rm(tmpDir, { recursive: true, force: true });
     }

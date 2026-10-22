@@ -96,9 +96,16 @@ func (g *Service) materializeExternalSession(ctx context.Context, req HandoffImp
 		return HandoffImportResponse{}, fmt.Errorf("insert session history: %w", err)
 	}
 
-	relMemPath := filepath.Join(".opencode", "memory", "sessions", newSessionID+".md")
-	absMemPath := filepath.Join(targetDir, relMemPath)
-	_ = writeEightDimHandoffMemory(absMemPath, newSessionID, targetDir, detail)
+	// Memory is Hoxi state and belongs under .hoxi/, never under the upstream
+	// .opencode config root (which OpenCode would then populate with a plugin
+	// dependency bundle inside the user's project).
+	memoryRoot := hoxipaths.ProjectRootForWorktree(targetDir)
+	if memoryRoot == "" {
+		memoryRoot = targetDir
+	}
+	relMemPath := filepath.Join(hoxipaths.ProjectMemoryRelPath(), "sessions", newSessionID+".md")
+	absMemPath := filepath.Join(memoryRoot, relMemPath)
+	_ = writeEightDimHandoffMemory(absMemPath, newSessionID, memoryRoot, detail)
 
 	return HandoffImportResponse{
 		OK:                 true,

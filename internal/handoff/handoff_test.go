@@ -253,6 +253,12 @@ func TestHandoffImportEndpoint(t *testing.T) {
 		if _, err := os.Stat(memAbs); err != nil {
 			t.Fatalf("expected memory file at %s: %v", memAbs, err)
 		}
+		if !strings.HasPrefix(filepath.ToSlash(resp.MemoryPath), ".hoxi/memory/") {
+			t.Fatalf("imported memory must live under .hoxi/memory, got %s", resp.MemoryPath)
+		}
+		if _, err := os.Stat(filepath.Join(workspaceDir, ".opencode")); !os.IsNotExist(err) {
+			t.Fatalf("handoff import must not create .opencode, stat err = %v", err)
+		}
 	}
 
 	// Verify message and part rows were inserted in SQLite DB

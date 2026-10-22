@@ -30,7 +30,7 @@
 │  ├─ 1. 创建目标会话与 Hoxi 会话记录 (`~/.hoxi/sessions/<id>/`)                │
 │  ├─ 2. 注入历史消息与 Part: 写入会话存储与 OpenCode SQLite (`opencode.db`)    │
 │  │     生成单调递增 msg_* / prt_* ID，保留完整时间线、ThoughtBox 与 ToolCard  │
-│  ├─ 3. 生成 8 维交接记忆: `.opencode/memory/sessions/<new-session-id>.md`     │
+│  ├─ 3. 生成 8 维交接记忆: `.hoxi/memory/sessions/<new-session-id>.md`     │
 │  │     并通过 `.opencode/plugins/hoxi-memory.js` 自动注入 System Prompt      │
 │  └─ 4. Git 分支与工作树对齐: 检测源会话 `git_branch` / `head_commit` 状态     │
 ├──────────────────────────────────────────────────────────────────────────────┤
@@ -180,7 +180,7 @@ type NormalizedTurn struct {
        - 若含思考过程：生成 `type: "reasoning"` 的 `part`（前端自动渲染为可折叠 `<ThoughtBox />`）。
        - 若含工具调用：为每个工具生成 `type: "tool"` 的 `part`（`state.status = "completed"`，前端自动渲染为带输入输出详情的 `<ToolCard />`）。
        - 若含回复正文：生成 `type: "text"` 的 `part`。
-4. **生成并注入 8 维结构化交接记忆 (`.opencode/memory/sessions/<sessionID>.md`)**：
+4. **生成并注入 8 维结构化交接记忆 (`.hoxi/memory/sessions/<sessionID>.md`)**：
    - 提取源会话的：
      1. `## 1. Goals`（首轮用户需求 + 源会话标题与核心目标）
      2. `## 2. Constraints`（工作目录、源工具、Git 分支与 Commit 约束）
@@ -190,8 +190,8 @@ type NormalizedTurn struct {
      6. `## 6. Todo`（从 `plan.json` 或最近任务计划提取的待办项）
      7. `## 7. Progress`（最后轮次进展 `last_turn_summary` 与已完成轮次统计）
      8. `## 8. Next Steps`（无缝续做指引：基于上述已落盘的对话历史与代码现状继续执行下一步）
-   - 写入 `<targetDir>/.opencode/memory/sessions/<sessionID>.md`。
-   - 升级 `.opencode/plugins/hoxi-memory.js`：在 `experimental.chat.system.transform` 钩子中，除了读取 `project.md`，还根据 `input.sessionID` 自动读取 `.opencode/memory/sessions/${input.sessionID}.md` 并作为 `<session_handoff_memory>` 注入 System Prompt！
+   - 写入 `<targetDir>/.hoxi/memory/sessions/<sessionID>.md`（隔离会话写到项目根 `.hoxi/memory/`，不写入可删除的 worktree；旧版 `.opencode/memory/` 仅作为读取回退）。
+   - 升级 `.opencode/plugins/hoxi-memory.js`：在 `experimental.chat.system.transform` 钩子中，除了读取 `project.md`，还根据 `input.sessionID` 自动读取 `.hoxi/memory/sessions/${input.sessionID}.md` 并作为 `<session_handoff_memory>` 注入 System Prompt！
 
 ---
 
@@ -245,7 +245,7 @@ type NormalizedTurn struct {
       "ok": true,
       "session": { "id": "ses_...", "title": "...", "directory": "..." },
       "importedTurns": 14,
-      "memoryPath": ".opencode/memory/sessions/ses_....md",
+      "memoryPath": ".hoxi/memory/sessions/ses_....md",
       "targetDirectory": "/path/to/project"
     }
     ```
@@ -279,7 +279,7 @@ type NormalizedTurn struct {
 5. `internal/handoff/gemini.go`：Google Antigravity (`agy`) 会话扫描器（`~/.gemini/antigravity/brain/*` transcript 解析）。
 6. `internal/handoff/opencode.go`：本机外部 OpenCode CLI 历史会话扫描器。
 7. `internal/handoff/trae.go`、`qoder.go`、`codebuddy.go`：Trae、Qoder（通义灵码）、CodeBuddy（腾讯云）会话与本地配置扫描器。
-8. `internal/handoff/materialize.go`：Hoxi / OpenCode 会话物化写入器 + 8 维交接记忆 `.opencode/memory/sessions/<id>.md` 生成器。
+8. `internal/handoff/materialize.go`：Hoxi / OpenCode 会话物化写入器 + 8 维交接记忆 `.hoxi/memory/sessions/<id>.md` 生成器。
 
 ### 5.2 前端模块 (`web/src/components/handoff/` & `models/`)
 1. `web/src/components/handoff/ExternalHandoffModal.tsx` & `ExternalHandoffPreviewPane.tsx`：跨软件会话接管中心弹窗与实时详情预览面板（支持 8 大来源过滤、当前工程置顶、8 维记忆预览与一键接管续做）。
