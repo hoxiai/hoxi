@@ -4,6 +4,7 @@ import type { ProviderInfo } from "../services/api";
 import { AUTO_PROVIDER_ID, buildAutoVirtualProvider, isModelFree } from "./auto-models";
 import { leaderboardState } from "./leaderboard-state";
 import {
+  buildModelLimitIndex,
   canonicalModelKey,
   inferOfficialModelPricingAndLimits,
   normalizeModelLookupKey,
@@ -313,6 +314,7 @@ export function extractFlattenedModels(
   );
   const cfgProviders = globalConfig?.provider ?? {};
   const out: FlattenedModel[] = [];
+  const limitIndex = buildModelLimitIndex(providers);
 
   // 1. Index official pricing synced from https://hoxi.ai/api/hoxi/models
   const hoxiSpecs = new Map<string, InferredModelSpec>();
@@ -421,6 +423,7 @@ export function extractFlattenedModels(
         modelName,
         model: mInfo,
         configured: cfgModel,
+        limitIndex,
       });
       const outputLimit =
         mInfo.limit?.output ??

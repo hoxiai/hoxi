@@ -392,6 +392,7 @@ export const models: ModelsI18n = {
   autoPoolResetDefault: "恢复默认",
   autoPoolClearCooldowns: "清除冷却",
   autoPoolAddCandidate: "添加",
+  autoPoolSelectModel: "选择模型…",
   autoPoolFilterFreeOnly: "仅免费",
   autoPoolNoCandidates: "暂无可用模型，请连接服务商或免费渠道",
   autoPoolUseNow: "设为当前模型",

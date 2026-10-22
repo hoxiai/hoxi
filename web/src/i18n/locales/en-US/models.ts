@@ -394,6 +394,7 @@ export const models = {
   autoPoolResetDefault: "Reset",
   autoPoolClearCooldowns: "Clear Cooldown",
   autoPoolAddCandidate: "Add",
+  autoPoolSelectModel: "Select a model…",
   autoPoolFilterFreeOnly: "Free Only",
   autoPoolNoCandidates: "No models yet; connect a provider or free channel.",
   autoPoolUseNow: "Use Pool",

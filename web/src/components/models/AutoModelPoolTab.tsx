@@ -45,6 +45,7 @@ import {
   type FreeTierGuideItem,
 } from "../../store/workspace";
 import { ProviderIcon } from "../icons";
+import CandidateModelPicker from "./CandidateModelPicker";
 import { locale, t } from "../../i18n";
 
 function formatCooldownRemain(ms: number): string {
@@ -90,8 +91,23 @@ export default function AutoModelPoolTab() {
 
   const connectedSet = createMemo(() => new Set(workspace.connectedProviders));
 
+  // Only providers that can actually contribute candidates need flattening.
+  // The full catalog carries thousands of models across ~200 providers, and
+  // flattening it on every provider refresh is what made this tab feel slow.
+  const relevantProviders = createMemo(() => {
+    const conn = connectedSet();
+    const cfgProviders = workspace.globalConfig?.provider ?? {};
+    return workspace.providers.filter(
+      (p) =>
+        p.id === AUTO_PROVIDER_ID ||
+        conn.has(p.id) ||
+        Boolean(cfgProviders[p.id]) ||
+        p.id === "opencode"
+    );
+  });
+
   const realConnectedModels = createMemo(() =>
-    extractFlattenedModels(workspace.providers, connectedSet(), workspace.globalConfig).filter(
+    extractFlattenedModels(relevantProviders(), connectedSet(), workspace.globalConfig).filter(
       (m) => m.providerID !== AUTO_PROVIDER_ID && m.connected
     )
   );
@@ -146,7 +162,7 @@ export default function AutoModelPoolTab() {
   };
 
   const handleAddCandidate = async () => {
-    const rawKey = selectedAddKey() || (addableModels()[0] ? `${addableModels()[0].providerID}/${addableModels()[0].modelID}` : "");
+    const rawKey = selectedAddKey();
     if (!rawKey || !rawKey.includes("/")) return;
     const idx = rawKey.indexOf("/");
     const providerID = rawKey.slice(0, idx);
@@ -501,20 +517,11 @@ export default function AutoModelPoolTab() {
               >
                 {t("models.autoPoolFilterFreeOnly")}
               </button>
-              <select
+              <CandidateModelPicker
+                models={addableModels()}
                 value={selectedAddKey()}
-                onChange={(e) => setSelectedAddKey(e.currentTarget.value)}
-                class="flex-1 min-w-0 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-panel)] px-2.5 py-1 text-[12px] text-[var(--text-primary)] outline-none"
-              >
-                <For each={addableModels()}>
-                  {(m) => (
-                    <option value={`${m.providerID}/${m.modelID}`}>
-                      {m.providerName} / {m.modelName} ({m.modelID})
-                      {m.free ? ` · [${t("models.freeModel")}]` : ""}
-                    </option>
-                  )}
-                </For>
-              </select>
+                onChange={(value) => setSelectedAddKey(value)}
+              />
               <button
                 type="button"
                 disabled={addableModels().length === 0}

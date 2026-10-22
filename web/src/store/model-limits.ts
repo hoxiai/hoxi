@@ -157,10 +157,56 @@ export interface ModelLimitSource {
     limit?: { context?: number; output?: number };
     name?: string;
   } | null;
+  limitIndex?: ModelLimitIndex;
+}
+
+export interface ModelLimitIndex {
+  catalog: Map<string, number>;
+  pricing: Map<string, number>;
 }
 
 function positive(value: unknown): number | undefined {
   return typeof value === "number" && value > 0 ? value : undefined;
+}
+
+function pricingAliasKeys(item: { slug?: string; apiName?: string; gatewayModelName?: string; aaSlug?: string; name?: string }): string[] {
+  const keys: string[] = [];
+  for (const rawKey of [item?.slug, item?.apiName, item?.gatewayModelName, item?.aaSlug, item?.name]) {
+    const key = canonicalModelKey(rawKey);
+    if (key) keys.push(key);
+  }
+  return keys;
+}
+
+/**
+ * Builds canonical-key -> context-window indexes for the provider catalog and the
+ * synced pricing catalog in two passes. Callers that resolve limits for many
+ * models at once (e.g. flattening the catalog) must pass this index instead of
+ * falling back to `contextFromCatalog` / `contextFromPricing`, which rescan the
+ * whole catalogs per model and degrade to O(n^2).
+ */
+export function buildModelLimitIndex(providers: ProviderInfo[]): ModelLimitIndex {
+  const catalog = new Map<string, number>();
+  for (const provider of providers) {
+    for (const [id, info] of Object.entries(provider.models || {})) {
+      const context = positive(info?.limit?.context);
+      if (!context) continue;
+      const key = canonicalModelKey(id);
+      if (!key || catalog.has(key)) continue;
+      catalog.set(key, context);
+    }
+  }
+
+  const pricing = new Map<string, number>();
+  for (const item of leaderboardState.pricingCatalog || []) {
+    const context = positive(item?.contextWindow);
+    if (!context) continue;
+    for (const key of pricingAliasKeys(item)) {
+      if (!pricing.has(key)) pricing.set(key, context);
+    }
+  }
+
+  return { catalog, pricing };
 }
 
 export function contextFromCatalog(
@@ -195,11 +241,19 @@ export function contextFromPricing(modelID: string, modelName?: string): number 
 export function resolveModelContextLimit(source: ModelLimitSource): number | undefined {
   const modelID = source.modelID;
   const modelName = source.modelName || source.model?.name || source.configured?.name;
+  const index = source.limitIndex;
+  const fromCatalog = index
+    ? index.catalog.get(canonicalModelKey(modelID))
+    : contextFromCatalog(modelID, workspace.providers);
+  const fromPricing = index
+    ? index.pricing.get(canonicalModelKey(modelID)) ??
+      index.pricing.get(canonicalModelKey(modelName))
+    : contextFromPricing(modelID, modelName);
   return (
     positive(source.model?.limit?.context) ??
     positive(source.configured?.limit?.context) ??
-    contextFromPricing(modelID, modelName) ??
-    contextFromCatalog(modelID, workspace.providers) ??
+    fromPricing ??
+    fromCatalog ??
     positive(inferOfficialModelPricingAndLimits(modelID, modelName).contextLimit)
   );
 }
