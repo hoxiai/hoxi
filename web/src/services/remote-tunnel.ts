@@ -36,9 +36,22 @@ export interface RemoteTunnelRequestPairRequest {
   name: string;
 }
 
+/** Desktop-side QR the phone scans to add this Mac as a relay node. No credential. */
+export interface RemoteRelayQr {
+  available: boolean;
+  panel?: string;
+  nodeId?: number;
+  name?: string;
+  payload?: string;
+  qrPng?: string;
+}
+
 export const remoteTunnelAPI = {
   getStatus(): Promise<RemoteTunnelStatus> {
     return requestJSON("/api/hoxi/tunnel/status");
+  },
+  getRelayQr(): Promise<RemoteRelayQr> {
+    return requestJSON("/api/hoxi/tunnel/qr");
   },
   requestPair(req: RemoteTunnelRequestPairRequest): Promise<RemoteTunnelStatus> {
     return requestJSON("/api/hoxi/tunnel/pair/request", { method: "POST", body: JSON.stringify(req) });

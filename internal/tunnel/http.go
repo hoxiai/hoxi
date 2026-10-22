@@ -10,6 +10,7 @@ import (
 // allowlist keeps these routes unreachable through the tunnel itself.
 func (m *Manager) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/hoxi/tunnel/status", m.handleStatus)
+	mux.HandleFunc("/api/hoxi/tunnel/qr", m.handleQR)
 	mux.HandleFunc("/api/hoxi/tunnel/pair", m.handlePair)
 	mux.HandleFunc("/api/hoxi/tunnel/pair/request", m.handlePairRequest)
 	mux.HandleFunc("/api/hoxi/tunnel/pair/cancel", m.handlePairCancel)
@@ -22,6 +23,14 @@ func (m *Manager) handleStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, m.Status())
+}
+
+func (m *Manager) handleQR(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	writeJSON(w, http.StatusOK, m.RelayQRInfo())
 }
 
 func (m *Manager) handlePair(w http.ResponseWriter, r *http.Request) {

@@ -10,6 +10,7 @@ import { t } from "../../i18n";
 import {
   cancelRemoteTunnel,
   disableRemoteTunnel,
+  loadRelayQr,
   loadRemoteTunnelStatus,
   openExternalURL,
   pairRemoteTunnel,
@@ -89,6 +90,17 @@ export function RemoteTunnelControls() {
     if (refreshTimer !== undefined) clearInterval(refreshTimer);
   });
 
+  // Fetch the phone-facing relay QR once the tunnel is paired (and whenever the
+  // paired node changes), so it can be shown right below the status.
+  let lastQrKey = "";
+  createEffect(() => {
+    const nodeId = remoteTunnel.status.nodeId ?? 0;
+    const key = remoteTunnel.status.enabled && nodeId ? `${remoteTunnel.status.controllerUrl}#${nodeId}` : "";
+    if (key === lastQrKey) return;
+    lastQrKey = key;
+    void loadRelayQr();
+  });
+
   const remaining = () => {
     const expiresAt = pending()?.expiresAt;
     if (!expiresAt) return "";
@@ -145,6 +157,20 @@ export function RemoteTunnelControls() {
         </div>
         <Show when={remoteTunnel.status.state === "offline" && remoteTunnel.status.message}>
           <p class="text-[12px] text-amber-600">{remoteTunnel.status.message}</p>
+        </Show>
+
+        <Show when={remoteTunnel.relayQr?.available && remoteTunnel.relayQr?.qrPng}>
+          <div class="flex flex-col items-center gap-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-4 py-4">
+            <p class="text-[13px] font-medium text-[var(--text-primary)]">{t("remoteTunnel.qrTitle")}</p>
+            <img
+              src={remoteTunnel.relayQr!.qrPng}
+              alt={t("remoteTunnel.qrAlt")}
+              class="h-48 w-48 rounded-xl border border-[var(--border-subtle)] bg-white p-2"
+            />
+            <p class="max-w-[260px] text-center text-[11px] leading-relaxed text-[var(--text-muted)]">
+              {t("remoteTunnel.qrHint")}
+            </p>
+          </div>
         </Show>
 
         <Show when={waiting()}>

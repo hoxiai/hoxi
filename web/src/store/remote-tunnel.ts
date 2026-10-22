@@ -2,6 +2,7 @@ import { createStore } from "solid-js/store";
 import { t } from "../i18n";
 import {
   remoteTunnelAPI,
+  type RemoteRelayQr,
   type RemoteTunnelPairRequest,
   type RemoteTunnelPending,
   type RemoteTunnelRequestPairRequest,
@@ -10,11 +11,13 @@ import {
 
 export const [remoteTunnel, setRemoteTunnel] = createStore<{
   status: RemoteTunnelStatus;
+  relayQr: RemoteRelayQr | null;
   loaded: boolean;
   busy: boolean;
   error: string;
 }>({
   status: { enabled: false, state: "disabled" },
+  relayQr: null,
   loaded: false,
   busy: false,
   error: "",
@@ -49,6 +52,17 @@ export async function loadRemoteTunnelStatus(): Promise<void> {
   } catch (err) {
     if (gen !== remoteTunnelGen) return;
     setRemoteTunnel({ loaded: true, error: errorText(err, t("remoteTunnel.loadError")) });
+  }
+}
+
+// Loads the desktop-side relay QR the phone scans. The backend returns
+// available=false until the desktop is paired, so callers can refresh freely.
+export async function loadRelayQr(): Promise<void> {
+  try {
+    const qr = await remoteTunnelAPI.getRelayQr();
+    setRemoteTunnel("relayQr", qr);
+  } catch {
+    setRemoteTunnel("relayQr", null);
   }
 }
 

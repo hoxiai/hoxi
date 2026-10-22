@@ -168,6 +168,7 @@ Type(1B) | StreamID(8B, BigEndian uint64) | Payload(≤ 4MB)
 - **凭据文件**：release `~/.hoxi/tunnel.json`，dev `~/.hoxi/tunnel-dev.json`（两个变体可同时运行，互不挤占隧道）。临时文件 + `os.Rename` 原子写入，权限 `0600`，已加入受保护状态文件列表；状态接口从不返回 token。
 - **管理接口**（只在本机可访问，隧道白名单不包含）：
   - `GET /api/hoxi/tunnel/status` → `{enabled, state: disabled|connecting|online|offline, controllerUrl, nodeId, name, message, connectedAt, pending?}`；`pending` 为进行中的一键授权 `{requestId, userCode, expiresAt, state: waiting|approved|denied|expired}`，从不含投票令牌或隧道 token
+  - `GET /api/hoxi/tunnel/qr` → `{available, panel?, nodeId?, name?, payload?, qrPng?}`：桌面侧展示给手机扫的中继二维码（`payload` 为 `{"type":"gopanel-relay","panel","nodeId","name"}`，只带面板地址与节点身份、不含凭据；`qrPng` 为 `data:image/png;base64,`）；未配对时 `available=false`
   - `POST /api/hoxi/tunnel/pair` `{controllerUrl, code, name}`：手动配对码路径
   - `POST /api/hoxi/tunnel/pair/request` `{controllerUrl, name}`：一键授权，打开待批准请求并返回最新 Status（含 `pending`）
   - `POST /api/hoxi/tunnel/pair/cancel` `{}`：取消进行中的一键授权请求
@@ -182,7 +183,7 @@ Type(1B) | StreamID(8B, BigEndian uint64) | Payload(≤ 4MB)
 - **凭据**：中继连接复用所属 GoPanel 的登录 JWT 与安全入口，由现有鉴权拦截器发送 `X-Auth` 与 `EntranceCode`。GoPanel 重新登录保存连接时，会同步刷新它名下所有中继连接的凭据。
 - **地址规范化**：`normalizeServerAddress` 不再把中继路径当作安全入口剥离（`isHoxiRelayUrl`），App 每次启动时的迁移也会保留中继路径。
 - **入口**：服务器列表 → GoPanel 卡片的电脑图标 → `HoxiRelayNodesSheet`；离线电脑不可选。
-- **扫码添加中继节点**：面板「主机 → 隧道 → 隧道节点」对 Hoxi 节点可出「手机扫码」二维码，payload 为 `{"type":"gopanel-relay","panel":"<面板根地址>","nodeId":N,"name":"..."}`，只带面板地址与节点身份、不含凭据；手机扫码后若已登录同面板就直接保存为经中继访问的 Hoxi 节点，否则提示先登录面板（缺省不签发登录态）。
+- **扫码添加中继节点**：两个位置都能出同一种二维码（payload 为 `{"type":"gopanel-relay","panel":"<面板根地址>","nodeId":N,"name":"..."}`，只带面板地址与节点身份、不含凭据）：① Hoxi 桌面配对成功后，设置 → 远程 直接展示（`GET /api/hoxi/tunnel/qr`）；② 面板「主机 → 隧道 → 隧道节点」对 Hoxi 节点的「手机扫码」。手机扫码后若已登录同面板就直接保存为经中继访问的 Hoxi 节点，否则提示先登录面板（不签发登录态）。
 - 代码：`lib/shared/models/server_connection.dart`、`lib/features/server/data/hoxi_relay_repository.dart`、`lib/features/server/presentation/widgets/hoxi_relay_nodes_sheet.dart`、`lib/features/auth/presentation/screens/qr_scanner_screen.dart`。
 
 ## 8. 安全模型与已知限制

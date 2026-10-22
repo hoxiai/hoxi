@@ -362,6 +362,47 @@ func TestUnpairNotifiesControllerWithTunnelCredential(t *testing.T) {
 	}
 }
 
+func TestRelayQRInfoRequiresPairing(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "tunnel.json")
+	m := NewManager(Options{Handler: http.NotFoundHandler(), Version: "test", Hostname: func() string { return "mac.local" }})
+	m.Configure(NewStore(configPath), 5410)
+	t.Cleanup(m.Stop)
+
+	if qr := m.RelayQRInfo(); qr.Available {
+		t.Fatalf("unpaired QR = %+v, want unavailable", qr)
+	}
+
+	fc := newFakeController(t)
+	if err := m.Pair(t.Context(), fc.server.URL, strings.Repeat("ab", 16), "Studio"); err != nil {
+		t.Fatalf("pair: %v", err)
+	}
+	conn := <-fc.conns
+	t.Cleanup(func() { _ = conn.Close() })
+
+	if !waitFor(t, 5*time.Second, func() bool { return m.RelayQRInfo().Available }) {
+		t.Fatal("paired manager should expose a relay QR")
+	}
+	qr := m.RelayQRInfo()
+	if qr.NodeID != 7 || qr.Panel != fc.server.URL || !strings.HasPrefix(qr.QRPng, "data:image/png;base64,") {
+		t.Fatalf("relay QR = %+v", qr)
+	}
+	var payload struct {
+		Type   string `json:"type"`
+		Panel  string `json:"panel"`
+		NodeID uint   `json:"nodeId"`
+		Name   string `json:"name"`
+	}
+	if err := json.Unmarshal([]byte(qr.Payload), &payload); err != nil {
+		t.Fatalf("payload = %q: %v", qr.Payload, err)
+	}
+	if payload.Type != "gopanel-relay" || payload.NodeID != 7 || payload.Panel != fc.server.URL {
+		t.Fatalf("payload = %+v", payload)
+	}
+	if strings.Contains(qr.Payload, testToken) {
+		t.Fatal("relay QR must not embed the tunnel token")
+	}
+}
+
 func TestRejectedCredentialClearsLocalStoreAndStops(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -621,4 +662,3 @@ func TestStartSurfacesCorruptConfigError(t *testing.T) {
 		t.Fatalf("corrupt backup = %q (err=%v), want {corrupt json", string(raw), err)
 	}
 }
-
