@@ -1,7 +1,8 @@
 // web/src/components/timeline/ContextProgressPill.tsx
-import { createEffect, createMemo, createSignal, onCleanup, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 import { Presence } from "../motion/Presence";
 import { Minimize2, LoaderCircle } from "lucide-solid";
+import type { MessagePart } from "../../services/sse-types";
 import {
   compactSessionContext,
   contextLimitForSelection,
@@ -15,6 +16,54 @@ import { formatCompactNumber } from "../../i18n/format";
 
 function formatTokenValue(n: number): string {
   return n > 0 ? formatCompactNumber(n, { maxDecimals: 1 }) : "—";
+}
+
+/** Rough token estimate from a part's text; the model's per-turn totals stay authoritative. */
+function estimatePartTokens(part: MessagePart): number {
+  let chars = 0;
+  switch (part.type) {
+    case "text":
+    case "reasoning":
+      chars = part.text?.length ?? 0;
+      break;
+    case "tool": {
+      const st = part.state;
+      try {
+        chars = JSON.stringify(st.input ?? {}).length;
+      } catch {
+        // unserializable input: keep the estimate at zero
+      }
+      if (st.status === "completed") chars += (st.output ?? "").length;
+      if (st.status === "error") chars += (st.error ?? "").length;
+      break;
+    }
+    case "file":
+      chars = (part.filename?.length ?? 0) + (part.url?.length ?? 0);
+      break;
+    case "patch":
+      chars = (part.files ?? []).join(",").length;
+      break;
+  }
+  return Math.ceil(chars / 4);
+}
+
+function contributorLabel(part: MessagePart, role: "user" | "assistant"): string {
+  switch (part.type) {
+    case "text":
+      return role === "user"
+        ? t("timeline.contextPartUser")
+        : t("timeline.contextPartAssistant");
+    case "reasoning":
+      return t("timeline.contextPartReasoning");
+    case "tool":
+      return `${t("timeline.contextPartTool")} · ${part.tool}`;
+    case "file":
+      return t("timeline.contextPartFile");
+    case "patch":
+      return t("timeline.contextPartPatch");
+    default:
+      return "";
+  }
 }
 
 /**
@@ -116,6 +165,25 @@ export default function ContextProgressPill() {
     if (s.overLimit || s.percent >= 85) return "var(--status-danger)";
     if (s.percent >= 65) return "var(--status-warning)";
     return "var(--accent-primary)";
+  });
+
+  // A session's biggest single parts, so a token spike can be traced to one item.
+  // Local estimate only: the engine's own system prompt and tool schemas are not
+  // visible here, so this is a hint, not an authoritative breakdown.
+  const topContributors = createMemo(() => {
+    const id = workspace.activeSessionID;
+    if (!id) return [];
+    const turns = workspace.messagesBySession[id] ?? [];
+    const items: Array<{ key: string; label: string; tokens: number }> = [];
+    for (const turn of turns) {
+      for (const part of turn.parts) {
+        const tokens = estimatePartTokens(part);
+        if (tokens <= 0) continue;
+        items.push({ key: part.id, label: contributorLabel(part, turn.info.role), tokens });
+      }
+    }
+    items.sort((a, b) => b.tokens - a.tokens);
+    return items.slice(0, 3);
   });
 
   const onCompact = async () => {
@@ -272,6 +340,31 @@ export default function ContextProgressPill() {
                   </div>
                 </dl>
               </div>
+
+              <Show when={topContributors().length > 0}>
+                <div class="mt-4">
+                  <div class="mb-2 flex items-baseline justify-between gap-3">
+                    <span class="text-[11px] font-medium tracking-[0.04em] text-[var(--text-faint)]">
+                      {t("timeline.contextTopContributors")}
+                    </span>
+                    <span class="text-[11px] text-[var(--text-faint)]">
+                      {t("timeline.contextEstimated")}
+                    </span>
+                  </div>
+                  <ul class="space-y-1.5 text-[11px]">
+                    <For each={topContributors()}>
+                      {(item) => (
+                        <li class="flex items-baseline justify-between gap-2">
+                          <span class="truncate text-[var(--text-muted)]">{item.label}</span>
+                          <span class="font-mono tabular-nums text-[var(--text-secondary)]">
+                            ~{formatCompactNumber(item.tokens)}
+                          </span>
+                        </li>
+                      )}
+                    </For>
+                  </ul>
+                </div>
+              </Show>
 
               <div class="mt-3 flex items-baseline justify-between gap-3 border-t border-[var(--border-subtle)] pt-2.5 text-[11px]">
                 <span class="text-[var(--text-muted)]">{t("timeline.sessionCost")}</span>
