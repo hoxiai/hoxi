@@ -563,120 +563,120 @@ func (g *Service) importOpenCodeCLIProvider() LocalCLIImportResponse {
 		g.purgeStaleConsoleSessionAuth(authMap)
 	}
 
-	doc := g.loadHoxiConfigDoc()
-	provMap, _ := doc["provider"].(map[string]interface{})
-	if provMap == nil {
-		provMap = map[string]interface{}{}
-	}
 	authByLower := make(map[string]map[string]interface{}, len(authMap))
 	for pid, raw := range authMap {
 		if cred, ok := raw.(map[string]interface{}); ok {
 			authByLower[strings.ToLower(pid)] = cred
 		}
 	}
-	changed := false
-	enabledIDs := make([]string, 0, len(provDefs))
-	foldedAliases := make([]string, 0, len(provDefs))
-	for _, pid := range sortedStringKeys(provDefs) {
-		def, _ := provDefs[pid].(map[string]interface{})
-		if def == nil {
-			continue
+	g.syncOpenCodeEngineAuth(authMap)
+	var mutated bool
+	if err := g.updateHoxiConfigDoc(func(doc map[string]interface{}) error {
+		provMap, _ := doc["provider"].(map[string]interface{})
+		if provMap == nil {
+			provMap = map[string]interface{}{}
 		}
-		targetID := resolveOpenCodeProviderID(pid, authMap, provMap)
-		if targetID == "" {
-			targetID = pid
-		}
-		enabledIDs = append(enabledIDs, targetID)
+		enabledIDs := make([]string, 0, len(provDefs))
+		foldedAliases := make([]string, 0, len(provDefs))
+		for _, pid := range sortedStringKeys(provDefs) {
+			def, _ := provDefs[pid].(map[string]interface{})
+			if def == nil {
+				continue
+			}
+			targetID := resolveOpenCodeProviderID(pid, authMap, provMap)
+			if targetID == "" {
+				targetID = pid
+			}
+			enabledIDs = append(enabledIDs, targetID)
 
-		// Fold a case-only duplicate (e.g. config "Hoxi" vs credential "hoxi")
-		// into the credentialed provider instead of leaving a dead second entry.
-		if targetID != pid {
-			foldedAliases = append(foldedAliases, pid)
-			if dupRaw, exists := provMap[pid]; exists {
-				if dup, ok := dupRaw.(map[string]interface{}); ok {
-					if targetRaw, ok := provMap[targetID].(map[string]interface{}); ok {
-						mergeOpenCodeProviderDefinition(targetRaw, dup)
-					} else {
-						provMap[targetID] = cloneStringAnyMap(dup)
+			// Fold a case-only duplicate (e.g. config "Hoxi" vs credential "hoxi")
+			// into the credentialed provider instead of leaving a dead second entry.
+			if targetID != pid {
+				foldedAliases = append(foldedAliases, pid)
+				if dupRaw, exists := provMap[pid]; exists {
+					if dup, ok := dupRaw.(map[string]interface{}); ok {
+						if targetRaw, ok := provMap[targetID].(map[string]interface{}); ok {
+							mergeOpenCodeProviderDefinition(targetRaw, dup)
+						} else {
+							provMap[targetID] = cloneStringAnyMap(dup)
+						}
+					}
+					delete(provMap, pid)
+					mutated = true
+				}
+			}
+
+			targetRaw, exists := provMap[targetID]
+			target, _ := targetRaw.(map[string]interface{})
+			if target == nil {
+				target = map[string]interface{}{}
+				exists = false
+			}
+			if mergeOpenCodeProviderDefinition(target, def) || !exists {
+				provMap[targetID] = target
+				mutated = true
+			}
+			if cred := authByLower[strings.ToLower(targetID)]; cred != nil {
+				if key := strings.TrimSpace(asString(cred["key"])); key != "" {
+					opts, _ := target["options"].(map[string]interface{})
+					if opts == nil {
+						opts = map[string]interface{}{}
+					}
+					if strings.TrimSpace(asString(opts["apiKey"])) == "" {
+						opts["apiKey"] = key
+						target["options"] = opts
+						mutated = true
 					}
 				}
-				delete(provMap, pid)
-				changed = true
 			}
 		}
 
-		targetRaw, exists := provMap[targetID]
-		target, _ := targetRaw.(map[string]interface{})
-		if target == nil {
-			target = map[string]interface{}{}
-			exists = false
-		}
-		if mergeOpenCodeProviderDefinition(target, def) || !exists {
-			provMap[targetID] = target
-			changed = true
-		}
-		if cred := authByLower[strings.ToLower(targetID)]; cred != nil {
-			if key := strings.TrimSpace(asString(cred["key"])); key != "" {
-				opts, _ := target["options"].(map[string]interface{})
-				if opts == nil {
-					opts = map[string]interface{}{}
+		// Sync is an explicit request to make the merged provider usable, so enable
+		// the credential-backed id. The folded alias must stay disabled: upstream
+		// OpenCode also loads ~/.config/opencode/opencode.json, and without the flag
+		// that file would re-register the duplicate (e.g. "Hoxi") next to the
+		// synced provider (e.g. "hoxi").
+		if len(enabledIDs) > 0 || len(foldedAliases) > 0 {
+			disabled := stringListFromAny(doc["disabled_providers"])
+			// Provider ids are case-sensitive upstream, so only the exact target id
+			// is re-enabled; the differently-cased alias is disabled on purpose.
+			enabledExact := make(map[string]struct{}, len(enabledIDs))
+			for _, id := range enabledIDs {
+				enabledExact[id] = struct{}{}
+			}
+			next := make([]string, 0, len(disabled)+len(foldedAliases))
+			seen := make(map[string]struct{}, len(disabled)+len(foldedAliases))
+			for _, id := range disabled {
+				if _, drop := enabledExact[id]; drop {
+					continue
 				}
-				if strings.TrimSpace(asString(opts["apiKey"])) == "" {
-					opts["apiKey"] = key
-					target["options"] = opts
-					changed = true
+				if _, duplicate := seen[id]; duplicate {
+					continue
 				}
+				seen[id] = struct{}{}
+				next = append(next, id)
+			}
+			for _, alias := range foldedAliases {
+				if _, isTarget := enabledExact[alias]; isTarget {
+					continue
+				}
+				if _, duplicate := seen[alias]; duplicate {
+					continue
+				}
+				seen[alias] = struct{}{}
+				next = append(next, alias)
+			}
+			if !equalStringSlices(next, disabled) {
+				doc["disabled_providers"] = next
+				mutated = true
 			}
 		}
-	}
-
-	// Sync is an explicit request to make the merged provider usable, so enable
-	// the credential-backed id. The folded alias must stay disabled: upstream
-	// OpenCode also loads ~/.config/opencode/opencode.json, and without the flag
-	// that file would re-register the duplicate (e.g. "Hoxi") next to the
-	// synced provider (e.g. "hoxi").
-	if len(enabledIDs) > 0 || len(foldedAliases) > 0 {
-		disabled := stringListFromAny(doc["disabled_providers"])
-		// Provider ids are case-sensitive upstream, so only the exact target id
-		// is re-enabled; the differently-cased alias is disabled on purpose.
-		enabledExact := make(map[string]struct{}, len(enabledIDs))
-		for _, id := range enabledIDs {
-			enabledExact[id] = struct{}{}
-		}
-		next := make([]string, 0, len(disabled)+len(foldedAliases))
-		seen := make(map[string]struct{}, len(disabled)+len(foldedAliases))
-		for _, id := range disabled {
-			if _, drop := enabledExact[id]; drop {
-				continue
-			}
-			if _, duplicate := seen[id]; duplicate {
-				continue
-			}
-			seen[id] = struct{}{}
-			next = append(next, id)
-		}
-		for _, alias := range foldedAliases {
-			if _, isTarget := enabledExact[alias]; isTarget {
-				continue
-			}
-			if _, duplicate := seen[alias]; duplicate {
-				continue
-			}
-			seen[alias] = struct{}{}
-			next = append(next, alias)
-		}
-		if !equalStringSlices(next, disabled) {
-			doc["disabled_providers"] = next
-			changed = true
-		}
-	}
-	g.syncOpenCodeEngineAuth(authMap)
-	if changed {
 		doc["provider"] = provMap
-		if err := g.persistHoxiConfigDoc(doc); err != nil {
-			return LocalCLIImportResponse{OK: false, ToolID: string(ExternalToolOpenCode), Error: err.Error()}
-		}
-	} else if len(authMap) > 0 || consoleState != nil {
+		return nil
+	}); err != nil {
+		return LocalCLIImportResponse{OK: false, ToolID: string(ExternalToolOpenCode), Error: err.Error()}
+	}
+	if !mutated && (len(authMap) > 0 || consoleState != nil) {
 		g.reloadOpenCodeGlobalConfig()
 	}
 
@@ -690,8 +690,9 @@ func (g *Service) importOpenCodeCLIProvider() LocalCLIImportResponse {
 		latestProvider = "opencode-go"
 	}
 	providerID, _, models := resolveOpenCodeSyncTarget(provDefs, authMap, latestProvider, latestModel)
-	providerID = resolveOpenCodeProviderID(providerID, authMap, provMap)
-	models = appendUniqueString(models, openCodeProviderModelIDs(provMap, providerID)...)
+	latestProviders := g.loadHoxiProvidersMap()
+	providerID = resolveOpenCodeProviderID(providerID, authMap, latestProviders)
+	models = appendUniqueString(models, openCodeProviderModelIDs(latestProviders, providerID)...)
 	_, liveModels := g.fetchLiveOpenCodeProviderModels(providerID)
 	models = appendUniqueString(models, liveModels...)
 	// If no models found, return empty to signal the need for user configuration.

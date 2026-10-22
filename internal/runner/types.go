@@ -273,6 +273,9 @@ type SessionRecord struct {
 	RevertedTurns       []MessageTurn     `json:"revertedTurns,omitempty"`
 	RevertSnapshot      string            `json:"revertSnapshot,omitempty"`
 	RevertPaths         []string          `json:"revertPaths,omitempty"`
+	// RevertScope records which part of the workspace an unrevert may restore:
+	// the whole exclusive worktree or only RevertPaths (which may be empty).
+	RevertScope string `json:"revertScope,omitempty"`
 	Snapshots           map[string]string `json:"snapshots,omitempty"`
 	OpenCodeIDs         []string          `json:"openCodeIDs,omitempty"`
 	OpenCodeDirectories map[string]string `json:"openCodeDirectories,omitempty"`

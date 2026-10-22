@@ -21,61 +21,56 @@ func (g *Service) httpBridgeBaseURL() string {
 }
 
 func (g *Service) syncLocalCLIBridgeURLs() {
-	doc := g.loadHoxiConfigDoc()
-	provMap, _ := doc["provider"].(map[string]interface{})
-	if provMap == nil {
-		return
-	}
-	changed := false
-	deprecatedBridges := map[string]string{
-		"claude-code": "/api/hoxi/bridge/claude-code/v1",
-		"google":      "/api/hoxi/bridge/gemini-antigravity/v1",
-	}
-	for pid, suffix := range deprecatedBridges {
-		pObj, ok := provMap[pid].(map[string]interface{})
-		if !ok {
-			continue
+	_ = g.updateHoxiConfigDoc(func(doc map[string]interface{}) error {
+		provMap, _ := doc["provider"].(map[string]interface{})
+		if provMap == nil {
+			return nil
 		}
-		opts, _ := pObj["options"].(map[string]interface{})
-		curURL, _ := opts["baseURL"].(string)
-		curKey, _ := opts["apiKey"].(string)
-		if strings.Contains(curURL, suffix) ||
-			curKey == "hoxi-local-antigravity-bridge" ||
-			curKey == "hoxi-local-claude-code-bridge" ||
-			curKey == "antigravity-local-oauth" ||
-			curKey == "claude-code-local-oauth" ||
-			strings.HasPrefix(curKey, "ya29.") ||
-			strings.HasPrefix(curKey, "sk-ant-oat") {
-			delete(provMap, pid)
-			changed = true
-			continue
+		deprecatedBridges := map[string]string{
+			"claude-code": "/api/hoxi/bridge/claude-code/v1",
+			"google":      "/api/hoxi/bridge/gemini-antigravity/v1",
 		}
-		if models, ok := pObj["models"].(map[string]interface{}); ok {
-			for mid := range models {
-				if strings.ContainsAny(mid, " ()") {
-					delete(models, mid)
-					changed = true
+		for pid, suffix := range deprecatedBridges {
+			pObj, ok := provMap[pid].(map[string]interface{})
+			if !ok {
+				continue
+			}
+			opts, _ := pObj["options"].(map[string]interface{})
+			curURL, _ := opts["baseURL"].(string)
+			curKey, _ := opts["apiKey"].(string)
+			if strings.Contains(curURL, suffix) ||
+				curKey == "hoxi-local-antigravity-bridge" ||
+				curKey == "hoxi-local-claude-code-bridge" ||
+				curKey == "antigravity-local-oauth" ||
+				curKey == "claude-code-local-oauth" ||
+				strings.HasPrefix(curKey, "ya29.") ||
+				strings.HasPrefix(curKey, "sk-ant-oat") {
+				delete(provMap, pid)
+				continue
+			}
+			if models, ok := pObj["models"].(map[string]interface{}); ok {
+				for mid := range models {
+					if strings.ContainsAny(mid, " ()") {
+						delete(models, mid)
+					}
 				}
 			}
 		}
-	}
 
-	if pObj, ok := provMap["grok-cli"].(map[string]interface{}); ok {
-		if opts, ok := pObj["options"].(map[string]interface{}); ok {
-			suffix := "/api/hoxi/bridge/grok-cli/v1"
-			expected := g.httpBridgeBaseURL() + suffix
-			if cur, _ := opts["baseURL"].(string); strings.Contains(cur, suffix) && cur != expected {
-				opts["baseURL"] = expected
-				pObj["options"] = opts
-				provMap["grok-cli"] = pObj
-				changed = true
+		if pObj, ok := provMap["grok-cli"].(map[string]interface{}); ok {
+			if opts, ok := pObj["options"].(map[string]interface{}); ok {
+				suffix := "/api/hoxi/bridge/grok-cli/v1"
+				expected := g.httpBridgeBaseURL() + suffix
+				if cur, _ := opts["baseURL"].(string); strings.Contains(cur, suffix) && cur != expected {
+					opts["baseURL"] = expected
+					pObj["options"] = opts
+					provMap["grok-cli"] = pObj
+				}
 			}
 		}
-	}
-	if changed {
 		doc["provider"] = provMap
-		_ = g.persistHoxiConfigDoc(doc)
-	}
+		return nil
+	})
 }
 
 func (g *Service) handleLocalCLIStatus(w http.ResponseWriter, r *http.Request) {

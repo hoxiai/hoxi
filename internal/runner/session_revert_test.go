@@ -70,8 +70,16 @@ func TestSessionRevertUnrevertAndFork(t *testing.T) {
 			Parts: []MessagePart{{ID: "prt_u_2", SessionID: "ses_hoxi_1", MessageID: "msg_u_2", Type: "text", Text: "second prompt"}},
 		},
 		{
-			Info:  MessageInfo{ID: "msg_a_2", SessionID: "ses_hoxi_1", Role: "assistant"},
-			Parts: []MessagePart{{ID: "prt_a_2", SessionID: "ses_hoxi_1", MessageID: "msg_a_2", Type: "text", Text: "second reply"}},
+			Info: MessageInfo{ID: "msg_a_2", SessionID: "ses_hoxi_1", Role: "assistant"},
+			Parts: []MessagePart{
+				{ID: "prt_a_2", SessionID: "ses_hoxi_1", MessageID: "msg_a_2", Type: "text", Text: "second reply"},
+				// Shared checkouts only revert files the session recorded through
+				// structured edit tools, never every path a snapshot diff finds.
+				{ID: "prt_edit_readme", SessionID: "ses_hoxi_1", MessageID: "msg_a_2", Type: "tool", Tool: "edit",
+					State: &ToolState{Input: map[string]interface{}{"filePath": "README.md"}}},
+				{ID: "prt_write_generated", SessionID: "ses_hoxi_1", MessageID: "msg_a_2", Type: "tool", Tool: "write",
+					State: &ToolState{Input: map[string]interface{}{"filePath": "generated.txt"}}},
+			},
 		},
 	}
 
@@ -287,8 +295,9 @@ func TestSessionRevertToolTargetUsesExchangeCheckpoint(t *testing.T) {
 			Parts: []MessagePart{{ID: "prt_u_2", SessionID: "ses_hoxi_tool", MessageID: "msg_u_2", Type: "text", Text: "second prompt"}},
 		},
 		{
-			Info:  MessageInfo{ID: "msg_a_2", SessionID: "ses_hoxi_tool", Role: "assistant"},
-			Parts: []MessagePart{{ID: "prt_edit", SessionID: "ses_hoxi_tool", MessageID: "msg_a_2", Type: "tool", Tool: "edit"}},
+			Info: MessageInfo{ID: "msg_a_2", SessionID: "ses_hoxi_tool", Role: "assistant"},
+			Parts: []MessagePart{{ID: "prt_edit", SessionID: "ses_hoxi_tool", MessageID: "msg_a_2", Type: "tool", Tool: "edit",
+				State: &ToolState{Input: map[string]interface{}{"filePath": "README.md"}}}},
 		},
 	}
 	if err := svc.Store().Put(SessionRecord{
@@ -340,8 +349,12 @@ func TestSessionRevertReportsCodeChanged(t *testing.T) {
 			Parts: []MessagePart{{ID: "prt_u_1", SessionID: "ses_hoxi_code", MessageID: "msg_u_1", Type: "text", Text: "just a question"}},
 		},
 		{
-			Info:  MessageInfo{ID: "msg_a_1", SessionID: "ses_hoxi_code", Role: "assistant"},
-			Parts: []MessagePart{{ID: "prt_a_1", SessionID: "ses_hoxi_code", MessageID: "msg_a_1", Type: "text", Text: "just an answer"}},
+			Info: MessageInfo{ID: "msg_a_1", SessionID: "ses_hoxi_code", Role: "assistant"},
+			Parts: []MessagePart{
+				{ID: "prt_a_1", SessionID: "ses_hoxi_code", MessageID: "msg_a_1", Type: "text", Text: "just an answer"},
+				{ID: "prt_a_edit", SessionID: "ses_hoxi_code", MessageID: "msg_a_1", Type: "tool", Tool: "edit",
+					State: &ToolState{Input: map[string]interface{}{"filePath": "README.md"}}},
+			},
 		},
 	}
 	if err := svc.Store().Put(SessionRecord{
@@ -681,5 +694,99 @@ func TestLocalSessionRevertPreservesUnrelatedChanges(t *testing.T) {
 	}
 	if _, err := os.Stat(unrelated); err != nil {
 		t.Fatalf("reverting session A deleted unrelated session B file: %v", err)
+	}
+}
+
+// A completed assistant turn must not turn a snapshot diff into permission to
+// delete files the session never recorded as its own edits.
+func TestLocalRevertWithoutAttributionPreservesUnrelatedFile(t *testing.T) {
+	t.Parallel()
+	repo := initTestGitRepo(t)
+	before, err := worktree.CreateSnapshot(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService(repo, worktree.NewManager(repo), nil, filepath.Join(t.TempDir(), "sessions"))
+	defer svc.CloseAll()
+	rec := SessionRecord{
+		ID:           "ses_local_heuristic",
+		Runtime:      "claude-code",
+		ProjectDir:   repo,
+		WorktreePath: repo,
+		SandboxMode:  "local",
+		Turns: []MessageTurn{
+			{Info: MessageInfo{ID: "msg_u", SessionID: "ses_local_heuristic", Role: "user"},
+				Parts: []MessagePart{{ID: "prt_u", Type: "text", Text: "edit README"}}},
+			{Info: MessageInfo{ID: "msg_a", SessionID: "ses_local_heuristic", Role: "assistant"},
+				Parts: []MessagePart{{ID: "prt_a", Type: "text", Text: "done"}}},
+		},
+		Snapshots: map[string]string{"msg_u": before},
+	}
+	if err := svc.Store().Put(rec); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("agent edit\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	unrelated := filepath.Join(repo, "manual-note.txt")
+	if err := os.WriteFile(unrelated, []byte("user work\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/hoxi/sessions/"+rec.ID+"/revert", strings.NewReader(`{"messageID":"msg_u"}`))
+	w := httptest.NewRecorder()
+	svc.handleSessionRevert(w, req, rec.ID)
+	if w.Code != http.StatusOK {
+		t.Fatalf("revert failed: %d %s", w.Code, w.Body.String())
+	}
+	if _, err := os.Stat(unrelated); err != nil {
+		t.Fatalf("revert without attribution deleted unrelated user work: %v", err)
+	}
+}
+
+// Undoing a conversation-only revert must not restore the whole repository.
+func TestUnrevertOfConversationOnlyRevertPreservesLaterWork(t *testing.T) {
+	t.Parallel()
+	repo := initTestGitRepo(t)
+	before, err := worktree.CreateSnapshot(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService(repo, worktree.NewManager(repo), nil, filepath.Join(t.TempDir(), "sessions"))
+	defer svc.CloseAll()
+	rec := SessionRecord{
+		ID:           "ses_local_conversation",
+		Runtime:      "claude-code",
+		ProjectDir:   repo,
+		WorktreePath: repo,
+		SandboxMode:  "local",
+		Turns: []MessageTurn{{Info: MessageInfo{ID: "msg_u", SessionID: "ses_local_conversation", Role: "user"},
+			Parts: []MessagePart{{ID: "prt_u", Type: "text", Text: "question"}}}},
+		Snapshots: map[string]string{"msg_u": before},
+	}
+	if err := svc.Store().Put(rec); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/hoxi/sessions/"+rec.ID+"/revert", strings.NewReader(`{"messageID":"msg_u"}`))
+	w := httptest.NewRecorder()
+	svc.handleSessionRevert(w, req, rec.ID)
+	if w.Code != http.StatusOK {
+		t.Fatalf("revert failed: %d %s", w.Code, w.Body.String())
+	}
+	saved, _ := svc.Store().Get(rec.ID)
+	if saved.Revert == nil || saved.Revert.CodeChanged || len(saved.RevertPaths) > 0 {
+		t.Fatalf("expected a conversation-only revert, got %+v", saved)
+	}
+	later := filepath.Join(repo, "later-note.txt")
+	if err := os.WriteFile(later, []byte("created after revert\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	req = httptest.NewRequest(http.MethodPost, "/api/hoxi/sessions/"+rec.ID+"/unrevert", strings.NewReader(`{}`))
+	w = httptest.NewRecorder()
+	svc.handleSessionUnrevert(w, req, rec.ID)
+	if w.Code != http.StatusOK {
+		t.Fatalf("unrevert failed: %d %s", w.Code, w.Body.String())
+	}
+	if _, err := os.Stat(later); err != nil {
+		t.Fatalf("undoing conversation-only revert deleted later user work: %v", err)
 	}
 }

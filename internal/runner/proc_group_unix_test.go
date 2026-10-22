@@ -17,6 +17,8 @@ import (
 )
 
 // startFakeCLITurn runs script as a Qoder turn (no approval hooks involved).
+// Qoder has no PreToolUse gate, so only read-only modes may start; these tests
+// exercise process-group handling, not tool approvals.
 func startFakeCLITurn(t *testing.T, svc *Service, sessionID, script string) *activeProcess {
 	t.Helper()
 	ws := t.TempDir()
@@ -26,7 +28,7 @@ func startFakeCLITurn(t *testing.T, svc *Service, sessionID, script string) *act
 		t.Fatal(err)
 	}
 	user := MessageInfo{ID: "msg_u_" + sessionID, SessionID: sessionID, Role: "user"}
-	if err := svc.startTurnProcess(rec, bin, "build", "m", "", "hi", user, nil, nil, "msg_a_"+sessionID); err != nil {
+	if err := svc.startTurnProcess(rec, bin, "plan", "m", "", "hi", user, nil, nil, "msg_a_"+sessionID); err != nil {
 		t.Fatalf("start turn: %v", err)
 	}
 	svc.mu.Lock()

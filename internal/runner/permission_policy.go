@@ -54,10 +54,62 @@ var (
 
 	benignPathExportRe     = regexp.MustCompile(`^export[ \t]+PATH=[A-Za-z0-9_./:$~{}-]+$`)
 	envVarAssignmentWordRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
-	inlineScriptExecTools  = setOf("python", "python3", "node", "perl", "ruby", "php")
 	inlineScriptFlags      = setOf("-c", "-e", "--eval", "-p", "--print", "-")
 	interpValueFlags       = setOf("-m", "-W", "-X", "-r", "--require", "--import", "-I", "-C")
+	awkTools               = setOf("awk", "gawk", "mawk", "nawk")
+	interpreterVersionRe   = regexp.MustCompile(`^[0-9]+(?:\.[0-9]+)*$`)
+	awkExecRe              = regexp.MustCompile(`(?i)\bsystem\s*\(`)
 )
+
+// inlineScriptTool resolves an interpreter binary, including version-suffixed
+// names such as python3.12, node20 or ruby3.2, to its canonical family.
+func inlineScriptTool(base string) (string, bool) {
+	for _, name := range []string{"python", "python3", "node", "perl", "ruby", "php"} {
+		if base == name {
+			return name, true
+		}
+		if rest := strings.TrimPrefix(base, name); rest != base && interpreterVersionRe.MatchString(rest) {
+			return name, true
+		}
+	}
+	if base == "nodejs" {
+		return "node", true
+	}
+	return "", false
+}
+
+// awkProgramExecutes reports whether an awk-family invocation carries an inline
+// program whose reach cannot be verified: system() calls, command pipes, or a
+// program read from a file all execute outside the shell's static view.
+func awkProgramExecutes(base string, args []string) bool {
+	if !awkTools[base] {
+		return false
+	}
+	var program []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--":
+			continue
+		case a == "-f" || a == "--file" || strings.HasPrefix(a, "-f") || strings.HasPrefix(a, "--file="):
+			return true
+		case a == "-F" || a == "--field-separator" || a == "-v" || a == "--assign":
+			i++
+			continue
+		case strings.HasPrefix(a, "-F") || strings.HasPrefix(a, "-v") || strings.HasPrefix(a, "--"):
+			continue
+		case strings.HasPrefix(a, "-") && a != "-":
+			continue
+		default:
+			program = append(program, a)
+		}
+	}
+	if len(program) == 0 {
+		return true
+	}
+	text := strings.Join(program, " ")
+	return awkExecRe.MatchString(text) || strings.Contains(text, "|")
+}
 
 var (
 	simpleSafeTools = setOf("ls", "pwd", "cat", "head", "tail", "wc", "find", "grep", "rg", "fd",
@@ -480,7 +532,10 @@ func isOpaqueShellCommand(command, worktree string) bool {
 		if dataArgInterpreters[base] {
 			return true
 		}
-		if inlineScriptExecTools[base] && (pipedIn[i] || hasInlineScriptFlag(base, args)) {
+		if awkProgramExecutes(base, args) {
+			return true
+		}
+		if family, ok := inlineScriptTool(base); ok && (pipedIn[i] || hasInlineScriptFlag(family, args)) {
 			return true
 		}
 	}

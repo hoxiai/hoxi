@@ -1,8 +1,11 @@
 package provider
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -121,20 +124,21 @@ func TestConfigHelpersAndEnsureHoxiModelsConfig(t *testing.T) {
 		t.Fatalf("did not expect imported-prov to be duplicated into Hoxi config")
 	}
 
-	// Test deepMergeMap, stripNullsMap, and PersistHoxiConfigDoc
-	doc := svc.LoadHoxiConfigDoc()
-	deepMergeMap(doc, map[string]interface{}{
-		"provider": map[string]interface{}{
-			"legacy-custom": nil, // delete key
-			"new-prov": map[string]interface{}{
-				"models": map[string]interface{}{
-					"m1": map[string]interface{}{"name": "Model 1"},
+	// Test deepMergeMap, stripNullsMap, and the config write transaction.
+	if err := svc.UpdateHoxiConfigDoc(func(doc map[string]interface{}) error {
+		deepMergeMap(doc, map[string]interface{}{
+			"provider": map[string]interface{}{
+				"legacy-custom": nil, // delete key
+				"new-prov": map[string]interface{}{
+					"models": map[string]interface{}{
+						"m1": map[string]interface{}{"name": "Model 1"},
+					},
 				},
 			},
-		},
-	})
-	if err := svc.PersistHoxiConfigDoc(doc); err != nil {
-		t.Fatalf("PersistHoxiConfigDoc failed: %v", err)
+		})
+		return nil
+	}); err != nil {
+		t.Fatalf("UpdateHoxiConfigDoc failed: %v", err)
 	}
 
 	reloaded := svc.LoadHoxiProvidersMap()
@@ -276,5 +280,34 @@ func TestIsLoopbackURL(t *testing.T) {
 		if isLoopbackURL(u) {
 			t.Errorf("expected %q NOT to be recognized as loopback URL", u)
 		}
+	}
+}
+
+// A stale whole-document writer (as used by CLI import) must not erase a
+// provider another writer saved after the stale snapshot was read.
+func TestStaleConfigWriterCannotLoseSavedProvider(t *testing.T) {
+	home, root := setupIsolatedEnv(t)
+	t.Setenv("HOXI_HOME", filepath.Join(home, ".hoxi"))
+	svc := NewService(0, "test", root, nil)
+	staleDoc := svc.LoadHoxiConfigDoc()
+	r := httptest.NewRequest(http.MethodPost, "/api/hoxi/models-config", strings.NewReader(`{"providerID":"user-saved","config":{"options":{"apiKey":"synthetic-user-key"},"models":{"m":{}}}}`))
+	w := httptest.NewRecorder()
+	svc.handleModelsConfig(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("user save failed: %d %s", w.Code, w.Body.String())
+	}
+	providers, _ := staleDoc["provider"].(map[string]interface{})
+	providers["cli-import"] = map[string]interface{}{"options": map[string]interface{}{"apiKey": "synthetic-cli-key"}, "models": map[string]interface{}{"m": map[string]interface{}{}}}
+	staleDoc["provider"] = providers
+	if err := svc.PersistHoxiConfigDoc(staleDoc); err != nil {
+		t.Fatal(err)
+	}
+	doc := readJSONMapFile(userHoxiModelsPath())
+	saved, ok := doc["provider"].(map[string]interface{})["user-saved"]
+	if !ok {
+		t.Fatal("stale writer overwrote a successful provider save and lost its key")
+	}
+	if key := saved.(map[string]interface{})["options"].(map[string]interface{})["apiKey"]; key != "synthetic-user-key" {
+		t.Fatalf("saved key changed: %v", key)
 	}
 }

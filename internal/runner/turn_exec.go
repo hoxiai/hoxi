@@ -15,7 +15,6 @@ import (
 
 	"github.com/hoxiai/hoxi/internal/agentcli"
 	"github.com/hoxiai/hoxi/internal/attachment"
-	"github.com/hoxiai/hoxi/internal/diagnostics"
 )
 
 func (s *Service) prepareTurnAttachments(
@@ -288,17 +287,12 @@ func (s *Service) startTurnProcess(
 		s.ensureAgyHookInstalled()
 		hookEnv, revokeHook = s.issueHookEnv(rec.ID, asstMsgID)
 	} else if rec.Runtime == string(RuntimeCodeBuddy) || rec.Runtime == string(RuntimeQoder) {
-		if !isReadOnlyAgentMode(mode) && s.ApprovalPolicy().requiresApprovalGate() {
-			return fmt.Errorf("runtime %s does not support PreToolUse approval gate; refusing to run in non-read-only mode %q under %s approval policy", rec.Runtime, mode, firstNonEmptyStr(s.ApprovalPolicy().Mode, ApprovalModeAuto))
+		// Every approval mode keeps the mandatory floor (secret reads,
+		// destructive commands, opaque execution), and these runtimes have no
+		// PreToolUse gate to ask. Only verifiable read-only modes may run.
+		if !isReadOnlyAgentMode(mode) {
+			return fmt.Errorf("runtime %s does not support PreToolUse approval gate; refusing to run in non-read-only mode %q", rec.Runtime, mode)
 		}
-		diagnostics.Record(diagnostics.Entry{
-			Time:      time.Now(),
-			Kind:      "runner_turn",
-			Level:     "warn",
-			Source:    "runner",
-			Message:   fmt.Sprintf("runtime %s does not support PreToolUse approval gate; tools will run un-gated", rec.Runtime),
-			SessionID: rec.ID,
-		})
 	}
 
 	binPath, args, err := s.confineRuntimeCommand(rec, binPath, args)

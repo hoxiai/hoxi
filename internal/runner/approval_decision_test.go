@@ -251,3 +251,45 @@ func TestUngatedRuntimesRefuseNonReadOnlyTurnsWhenApprovalGateRequired(t *testin
 		t.Fatalf("ungated Qoder binary must not be executed under manual approval policy")
 	}
 }
+
+// Qoder and CodeBuddy have no PreToolUse gate, so the mandatory approval floor
+// (secrets, destructive commands, opaque execution) cannot be honored in any
+// non-read-only mode, including auto and trusted.
+func TestUngatedRuntimesRefusedInAutoAndTrusted(t *testing.T) {
+	for _, runtime := range []string{string(RuntimeQoder), string(RuntimeCodeBuddy)} {
+		for _, mode := range []string{ApprovalModeAuto, ApprovalModeTrusted} {
+			t.Run(runtime+"/"+mode, func(t *testing.T) {
+				repo := initTestGitRepo(t)
+				svc := NewService(repo, worktree.NewManager(repo), nil, filepath.Join(t.TempDir(), "sessions"))
+				defer svc.CloseAll()
+				if _, err := svc.policy.set(ApprovalPolicy{Mode: mode}); err != nil {
+					t.Fatal(err)
+				}
+				rec := SessionRecord{ID: "ses_ungated_" + mode, Runtime: runtime, ProjectDir: repo, WorktreePath: repo, SandboxMode: "local", Mode: "build", ModelID: "auto"}
+				if err := svc.Store().Put(rec); err != nil {
+					t.Fatal(err)
+				}
+				bin := execstub.Write(t, t.TempDir(), "auditcli", "#!/bin/sh\ncat >/dev/null\nexit 0\n")
+				err := svc.startTurnProcess(rec, bin, "build", "auto", "", "audit", MessageInfo{ID: "msg_user", SessionID: rec.ID, Role: "user"}, nil, nil, "msg_asst")
+				if err == nil {
+					t.Fatalf("started ungated %s under %s policy despite the mandatory approval floor", runtime, mode)
+				}
+			})
+		}
+	}
+}
+
+// Interpreter checks must cover version-suffixed binaries and awk programs that
+// call system() or pipe to a command.
+func TestOpaqueInterpreterVariantsAsk(t *testing.T) {
+	for _, mode := range []string{ApprovalModeAuto, ApprovalModeTrusted} {
+		for _, command := range []string{`python3.12 -c 'print(1)'`, `awk 'BEGIN {system("id")}'`, `awk 'BEGIN{print "id" | "sh"}'`} {
+			t.Run(mode+"/"+command, func(t *testing.T) {
+				item := map[string]interface{}{"permission": "bash", "patterns": []string{command}}
+				if approvalAutoApproves(item, ApprovalPolicy{Mode: mode}, nil, "") {
+					t.Fatalf("automatically approved inline interpreter command in %s", mode)
+				}
+			})
+		}
+	}
+}

@@ -653,5 +653,20 @@
     "command": "python3 -c 'import pathlib; print(pathlib.Path(\".env\").read_text())'",
     "decision": "ask",
     "destructive": true
+  },
+  {
+    "command": "python3.12 -c 'print(1)'",
+    "decision": "ask",
+    "destructive": false
+  },
+  {
+    "command": "awk 'BEGIN {system(\"id\")}'",
+    "decision": "ask",
+    "destructive": false
+  },
+  {
+    "command": "awk 'BEGIN{print \"id\" | \"sh\"}'",
+    "decision": "ask",
+    "destructive": false
   }
 ]

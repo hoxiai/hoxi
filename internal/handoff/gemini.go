@@ -551,22 +551,23 @@ func detectGeminiCLIStatus(g *Service, hoxiMap map[string]interface{}) LocalCLIS
 }
 
 func (g *Service) removeStaleProviderBridge(providerID, bridgePathFragment string) {
-	doc := g.loadHoxiConfigDoc()
-	provMap, _ := doc["provider"].(map[string]interface{})
-	if provMap == nil {
-		return
-	}
-	pObj, ok := provMap[providerID].(map[string]interface{})
-	if !ok {
-		return
-	}
-	opts, _ := pObj["options"].(map[string]interface{})
-	baseURL, _ := opts["baseURL"].(string)
-	if strings.Contains(baseURL, bridgePathFragment) {
-		delete(provMap, providerID)
-		doc["provider"] = provMap
-		_ = g.persistHoxiConfigDoc(doc)
-	}
+	_ = g.updateHoxiConfigDoc(func(doc map[string]interface{}) error {
+		provMap, _ := doc["provider"].(map[string]interface{})
+		if provMap == nil {
+			return nil
+		}
+		pObj, ok := provMap[providerID].(map[string]interface{})
+		if !ok {
+			return nil
+		}
+		opts, _ := pObj["options"].(map[string]interface{})
+		baseURL, _ := opts["baseURL"].(string)
+		if strings.Contains(baseURL, bridgePathFragment) {
+			delete(provMap, providerID)
+			doc["provider"] = provMap
+		}
+		return nil
+	})
 }
 
 func (g *Service) importGeminiCLIProvider() LocalCLIImportResponse {
@@ -612,19 +613,20 @@ func (g *Service) importGeminiCLIProvider() LocalCLIImportResponse {
 			},
 		}
 	}
-	doc := g.loadHoxiConfigDoc()
-	provMap, _ := doc["provider"].(map[string]interface{})
-	if provMap == nil {
-		provMap = map[string]interface{}{}
-	}
-	provMap["google"] = map[string]interface{}{
-		"name":    "Google Gemini (API Key)",
-		"npm":     "@ai-sdk/google",
-		"options": map[string]interface{}{"apiKey": apiKey},
-		"models":  modelsMap,
-	}
-	doc["provider"] = provMap
-	if err := g.persistHoxiConfigDoc(doc); err != nil {
+	if err := g.updateHoxiConfigDoc(func(doc map[string]interface{}) error {
+		provMap, _ := doc["provider"].(map[string]interface{})
+		if provMap == nil {
+			provMap = map[string]interface{}{}
+		}
+		provMap["google"] = map[string]interface{}{
+			"name":    "Google Gemini (API Key)",
+			"npm":     "@ai-sdk/google",
+			"options": map[string]interface{}{"apiKey": apiKey},
+			"models":  modelsMap,
+		}
+		doc["provider"] = provMap
+		return nil
+	}); err != nil {
 		return LocalCLIImportResponse{OK: false, ToolID: string(ExternalToolGemini), Error: err.Error()}
 	}
 	return LocalCLIImportResponse{

@@ -13,6 +13,37 @@ import (
 	"github.com/hoxiai/hoxi/internal/worktree"
 )
 
+// Revert scope kinds. An unrevert may restore the whole exclusive worktree or
+// only the exact path set captured for a shared checkout. An empty path set is
+// a conversation-only revert and must never fall back to a whole-tree restore.
+const (
+	revertScopeWorkspace = "workspace"
+	revertScopePaths     = "paths"
+)
+
+func mergeRevertScope(current, next string) string {
+	if current == revertScopeWorkspace || next == revertScopeWorkspace {
+		return revertScopeWorkspace
+	}
+	return revertScopePaths
+}
+
+// revertScopeFor resolves the persisted scope, including records written before
+// RevertScope existed. Local checkouts default to paths so an empty set can
+// never be mistaken for a full restore.
+func revertScopeFor(rec SessionRecord) string {
+	switch strings.TrimSpace(rec.RevertScope) {
+	case revertScopeWorkspace:
+		return revertScopeWorkspace
+	case revertScopePaths:
+		return revertScopePaths
+	}
+	if isIsolatedWorktree(rec.WorktreePath) {
+		return revertScopeWorkspace
+	}
+	return revertScopePaths
+}
+
 func (s *Service) recordTurnSnapshot(sessionID, messageID string) {
 	if strings.TrimSpace(sessionID) == "" || strings.TrimSpace(messageID) == "" {
 		return
@@ -27,6 +58,7 @@ func (s *Service) recordTurnSnapshot(sessionID, messageID string) {
 		r.RevertedTurns = nil
 		r.RevertSnapshot = ""
 		r.RevertPaths = nil
+		r.RevertScope = ""
 		if err == nil && snap != "" {
 			if r.Snapshots == nil {
 				r.Snapshots = make(map[string]string)
@@ -133,6 +165,9 @@ func (s *Service) handleSessionRevert(w http.ResponseWriter, r *http.Request, se
 	}
 	codeChanged := targetSnap != "" && baseSnap != "" && baseSnap != targetSnap
 	var revertPaths []string
+	// Default to paths so a revert that restores nothing (no checkpoint, or a
+	// conversation-only revert) can never widen into a whole-tree restore.
+	revertScope := revertScopePaths
 	if targetSnap != "" && strings.TrimSpace(rec.WorktreePath) != "" {
 		if scopePaths, scoped, scopeErr := s.resolveLocalRevertPaths(rec, allTurns, targetIdx, body.PartID, targetSnap, baseSnap); scopeErr != nil {
 			writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("failed to restore workspace snapshot: %v", scopeErr))
@@ -149,6 +184,7 @@ func (s *Service) handleSessionRevert(w http.ResponseWriter, r *http.Request, se
 				writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("failed to restore workspace snapshot: %v", err))
 				return
 			}
+			revertScope = revertScopeWorkspace
 		}
 	}
 
@@ -156,8 +192,12 @@ func (s *Service) handleSessionRevert(w http.ResponseWriter, r *http.Request, se
 		rec.RevertSnapshot = createdSnapshot
 		rec.RevertedTurns = cloneTurns(allTurns)
 		rec.RevertPaths = revertPaths
-	} else if len(revertPaths) > 0 {
-		rec.RevertPaths = mergeStringLists(rec.RevertPaths, revertPaths)
+		rec.RevertScope = revertScope
+	} else {
+		rec.RevertScope = mergeRevertScope(rec.RevertScope, revertScope)
+		if len(revertPaths) > 0 {
+			rec.RevertPaths = mergeStringLists(rec.RevertPaths, revertPaths)
+		}
 	}
 
 	rec.Turns = truncateTurnsForRevert(allTurns, body.MessageID, body.PartID)
@@ -219,10 +259,12 @@ func (s *Service) handleSessionUnrevert(w http.ResponseWriter, r *http.Request, 
 
 	if rec.RevertSnapshot != "" && strings.TrimSpace(rec.WorktreePath) != "" {
 		var err error
-		if len(rec.RevertPaths) > 0 {
-			err = worktree.RestoreSnapshotPaths(rec.WorktreePath, rec.RevertSnapshot, rec.RevertPaths)
-		} else {
+		if revertScopeFor(rec) == revertScopeWorkspace {
 			err = worktree.RestoreSnapshot(rec.WorktreePath, rec.RevertSnapshot)
+		} else {
+			// A paths-scoped revert (including an empty set) must never widen to
+			// a whole-tree restore: later user work would be deleted.
+			err = worktree.RestoreSnapshotPaths(rec.WorktreePath, rec.RevertSnapshot, rec.RevertPaths)
 		}
 		if err != nil {
 			writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("failed to restore workspace snapshot: %v", err))
@@ -236,6 +278,7 @@ func (s *Service) handleSessionUnrevert(w http.ResponseWriter, r *http.Request, 
 	rec.RevertedTurns = nil
 	rec.RevertSnapshot = ""
 	rec.RevertPaths = nil
+	rec.RevertScope = ""
 	rec.UpdatedAt = time.Now().UnixMilli()
 
 	if rec.Runtime == "opencode" && rec.ExternalID != "" {
@@ -498,6 +541,11 @@ func sliceTurnsForFork(turns []MessageTurn, messageID, newSessionID string) []Me
 // so reverting one session does not wipe out unrelated files created or edited
 // by another session or by the user. Isolated `.hoxi/worktrees/<id>` sessions
 // own their worktree exclusively and continue to restore the full snapshot.
+//
+// In a shared checkout only paths this session recorded through structured edit
+// tool calls (or patch parts) are attributable. Shell edits, unrecorded changes
+// and the user's own edits cannot be told apart from a snapshot diff, so a
+// revert without explicit attribution restores conversation state only.
 func (s *Service) resolveLocalRevertPaths(
 	rec SessionRecord,
 	turns []MessageTurn,
@@ -523,68 +571,14 @@ func (s *Service) resolveLocalRevertPaths(
 	for _, p := range changed {
 		changedSet[p] = true
 	}
-
-	revertedSlice := turns[targetIdx:]
-	explicit := collectTurnEditedRelPaths(rec.WorktreePath, revertedSlice, partID)
-	if len(explicit) > 0 {
-		var scoped []string
-		for _, p := range explicit {
-			if changedSet[p] {
-				scoped = append(scoped, p)
-			}
-		}
-		return scoped, true, nil
-	}
-
-	otherTouched := s.otherLocalSessionEditedPaths(rec.ID, rec.WorktreePath)
-	hasAsst := false
-	for _, t := range revertedSlice {
-		if t.Info.Role == "assistant" {
-			hasAsst = true
-			break
+	explicit := collectTurnEditedRelPaths(rec.WorktreePath, turns[targetIdx:], partID)
+	var scoped []string
+	for _, p := range explicit {
+		if changedSet[p] {
+			scoped = append(scoped, p)
 		}
 	}
-	if !hasAsst {
-		mentioned := matchMentionedChangedPaths(revertedSlice, changed)
-		var scoped []string
-		for _, p := range mentioned {
-			if !otherTouched[p] {
-				scoped = append(scoped, p)
-			}
-		}
-		return scoped, true, nil
-	}
-	if len(otherTouched) > 0 {
-		var scoped []string
-		for _, p := range changed {
-			if !otherTouched[p] {
-				scoped = append(scoped, p)
-			}
-		}
-		return scoped, true, nil
-	}
-	return changed, true, nil
-}
-
-func (s *Service) otherLocalSessionEditedPaths(excludeSessionID, worktreePath string) map[string]bool {
-	out := make(map[string]bool)
-	normDir := normalizeComparePath(worktreePath)
-	if normDir == "" || s.store == nil {
-		return out
-	}
-	for _, info := range s.store.List("") {
-		if info.ID == excludeSessionID {
-			continue
-		}
-		other, ok := s.store.Get(info.ID)
-		if !ok || normalizeComparePath(other.WorktreePath) != normDir {
-			continue
-		}
-		for _, p := range collectTurnEditedRelPaths(worktreePath, other.Turns, "") {
-			out[p] = true
-		}
-	}
-	return out
+	return scoped, true, nil
 }
 
 func collectTurnEditedRelPaths(worktreePath string, turns []MessageTurn, startPartID string) []string {
@@ -651,32 +645,6 @@ func normalizeWorktreeRelPath(worktreePath, raw string) string {
 		return ""
 	}
 	return cleaned
-}
-
-func matchMentionedChangedPaths(turns []MessageTurn, changed []string) []string {
-	var textBuf strings.Builder
-	for _, t := range turns {
-		for _, p := range t.Parts {
-			if p.Text != "" {
-				textBuf.WriteString(" ")
-				textBuf.WriteString(strings.ToLower(p.Text))
-			}
-		}
-	}
-	corpus := textBuf.String()
-	if strings.TrimSpace(corpus) == "" {
-		return nil
-	}
-	var matched []string
-	for _, rel := range changed {
-		lowerRel := strings.ToLower(rel)
-		base := strings.ToLower(filepath.Base(rel))
-		stem := strings.TrimSuffix(base, filepath.Ext(base))
-		if strings.Contains(corpus, lowerRel) || strings.Contains(corpus, base) || (len(stem) >= 3 && strings.Contains(corpus, stem)) {
-			matched = append(matched, rel)
-		}
-	}
-	return matched
 }
 
 func mergeStringLists(a, b []string) []string {

@@ -60,16 +60,9 @@ func (p ApprovalPolicy) effectiveRule(category string) string {
 	return "allow"
 }
 
-// requiresApprovalGate reports whether the policy requires an active approval
-// gate for editing, shell execution, or web access. Runtimes without a
-// PreToolUse approval gate (e.g. Qoder, CodeBuddy) cannot enforce non-"allow"
-// rules in non-read-only modes.
-func (p ApprovalPolicy) requiresApprovalGate() bool {
-	return p.effectiveRule(permissionCategoryEdit) != "allow" ||
-		p.effectiveRule(permissionCategoryBash) != "allow" ||
-		p.effectiveRule(permissionCategoryWebfetch) != "allow"
-}
-
+// isReadOnlyAgentMode reports whether a mode is verifiably read-only for a
+// runtime without an approval gate. Only Plan is accepted: Ask still leaves the
+// CLI free to run shell tools that the hard floor cannot gate.
 func isReadOnlyAgentMode(mode string) bool {
 	return strings.EqualFold(strings.TrimSpace(mode), "plan")
 }

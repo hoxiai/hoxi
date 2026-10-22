@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -279,5 +280,28 @@ func TestTunnelRoutesMatchContractDoc(t *testing.T) {
 		if !matched {
 			t.Errorf("tunnel route %q in tunnel.go is not documented in docs/gopanel-hoxi-remote-tunnel.md", exact)
 		}
+	}
+}
+
+// A JSON body labelled multipart/form-data must not skip the remote directory
+// guard; only the attachment upload route actually parses multipart.
+func TestTunnelMultipartLabelCannotSkipDirectoryGuard(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("HOXI_HOME", filepath.Join(home, ".hoxi"))
+	root, outside := t.TempDir(), t.TempDir()
+	g := New(0, "test", root, nil, nil)
+	defer g.CloseBrowser()
+	raw, _ := json.Marshal(map[string]interface{}{"runtime": "claude-code", "directory": outside, "sandboxMode": "local"})
+	for _, contentType := range []string{"application/json", "multipart/form-data; boundary=audit"} {
+		t.Run(contentType, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/api/hoxi/sessions", bytes.NewReader(raw))
+			r.Header.Set("Content-Type", contentType)
+			w := httptest.NewRecorder()
+			g.serveTunnelRequest(w, r)
+			if w.Code != http.StatusForbidden {
+				t.Fatalf("outside directory accepted with content type %q: HTTP %d %s", contentType, w.Code, w.Body.String())
+			}
+		})
 	}
 }

@@ -111,7 +111,7 @@ func (s *Service) LoadHoxiProvidersMap() map[string]interface{} {
 }
 
 func (s *Service) PersistHoxiConfigDoc(doc map[string]interface{}) error {
-	return s.persistHoxiConfigDoc(doc)
+	return s.persistMergedConfigDoc(doc)
 }
 
 func (s *Service) ReloadOpenCodeGlobalConfig() {

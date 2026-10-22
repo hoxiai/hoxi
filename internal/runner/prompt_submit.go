@@ -133,8 +133,8 @@ func (s *Service) startPrompt(ctx context.Context, sessionID, directory string, 
 	}
 
 	mode := firstNonEmptyStr(body.Agent, rec.Mode, "build")
-	if !RuntimeCapabilities(rec.Runtime, false).Approval && !isReadOnlyAgentMode(mode) && s.ApprovalPolicy().requiresApprovalGate() {
-		return http.StatusConflict, fmt.Errorf("runtime %s does not support the unified approval gate required by %s approval policy; switch to Plan mode or a runtime with approval gate support", rec.Runtime, firstNonEmptyStr(s.ApprovalPolicy().Mode, ApprovalModeAuto))
+	if !RuntimeCapabilities(rec.Runtime, false).Approval && !isReadOnlyAgentMode(mode) {
+		return http.StatusConflict, fmt.Errorf("runtime %s does not support the unified approval gate; switch to Plan mode or a runtime with approval gate support", rec.Runtime)
 	}
 	modelID := rec.ModelID
 	if body.Model != nil && strings.TrimSpace(body.Model.ModelID) != "" {

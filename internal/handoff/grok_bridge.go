@@ -274,22 +274,23 @@ func (g *Service) importGrokCLIProvider() LocalCLIImportResponse {
 	}
 
 	bridgeURL := g.httpBridgeBaseURL() + "/api/hoxi/bridge/grok-cli/v1"
-	doc := g.loadHoxiConfigDoc()
-	provMap, _ := doc["provider"].(map[string]interface{})
-	if provMap == nil {
-		provMap = map[string]interface{}{}
-	}
-	provMap["grok-cli"] = map[string]interface{}{
-		"name": "Grok CLI (Local)",
-		"npm":  "@ai-sdk/openai-compatible",
-		"options": map[string]interface{}{
-			"baseURL": bridgeURL,
-			"apiKey":  "hoxi-local-grok-cli-bridge",
-		},
-		"models": modelsMap,
-	}
-	doc["provider"] = provMap
-	if err := g.persistHoxiConfigDoc(doc); err != nil {
+	if err := g.updateHoxiConfigDoc(func(doc map[string]interface{}) error {
+		provMap, _ := doc["provider"].(map[string]interface{})
+		if provMap == nil {
+			provMap = map[string]interface{}{}
+		}
+		provMap["grok-cli"] = map[string]interface{}{
+			"name": "Grok CLI (Local)",
+			"npm":  "@ai-sdk/openai-compatible",
+			"options": map[string]interface{}{
+				"baseURL": bridgeURL,
+				"apiKey":  "hoxi-local-grok-cli-bridge",
+			},
+			"models": modelsMap,
+		}
+		doc["provider"] = provMap
+		return nil
+	}); err != nil {
 		return LocalCLIImportResponse{
 			OK:     false,
 			ToolID: string(ExternalToolGrok),

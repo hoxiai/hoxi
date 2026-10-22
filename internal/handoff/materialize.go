@@ -139,19 +139,6 @@ func (g *Service) ensureHandoffModelReady(source ExternalToolID, providerID, mod
 		_ = g.importCodexCLIProvider()
 	}
 
-	doc := g.loadHoxiConfigDoc()
-	provMap, _ = doc["provider"].(map[string]interface{})
-	pObj, ok := provMap[providerID].(map[string]interface{})
-	if !ok {
-		return
-	}
-	modelsMap, _ := pObj["models"].(map[string]interface{})
-	opts, _ := pObj["options"].(map[string]interface{})
-	baseURL, _ := opts["baseURL"].(string)
-	textOnly := strings.Contains(baseURL, "/api/hoxi/bridge/claude-code/v1") || strings.Contains(baseURL, "/api/hoxi/bridge/gemini-antigravity/v1")
-	if modelsMap == nil {
-		modelsMap = map[string]interface{}{}
-	}
 	candidates := []string{modelID}
 	if detail != nil && isNativeCLIProvider(source, providerID) {
 		candidates = appendUniqueString(candidates, detail.Summary.Model)
@@ -159,24 +146,34 @@ func (g *Service) ensureHandoffModelReady(source ExternalToolID, providerID, mod
 			candidates = appendUniqueString(candidates, t.ModelID)
 		}
 	}
-	changed := false
-	for _, mID := range candidates {
-		mID = strings.TrimSpace(mID)
-		if mID != "" && !strings.ContainsAny(mID, " ()") && modelsMap[mID] == nil {
-			modelsMap[mID] = map[string]interface{}{
-				"name": mID, "tool_call": !textOnly, "reasoning": true, "attachment": true,
-				"modalities": map[string]interface{}{"input": []string{"text", "image"}, "output": []string{"text"}},
-				"limit":      map[string]interface{}{"context": 200000, "output": 32768},
-			}
-			changed = true
+	_ = g.updateHoxiConfigDoc(func(doc map[string]interface{}) error {
+		provMap, _ := doc["provider"].(map[string]interface{})
+		pObj, ok := provMap[providerID].(map[string]interface{})
+		if !ok {
+			return nil
 		}
-	}
-	if changed {
+		modelsMap, _ := pObj["models"].(map[string]interface{})
+		opts, _ := pObj["options"].(map[string]interface{})
+		baseURL, _ := opts["baseURL"].(string)
+		textOnly := strings.Contains(baseURL, "/api/hoxi/bridge/claude-code/v1") || strings.Contains(baseURL, "/api/hoxi/bridge/gemini-antigravity/v1")
+		if modelsMap == nil {
+			modelsMap = map[string]interface{}{}
+		}
+		for _, mID := range candidates {
+			mID = strings.TrimSpace(mID)
+			if mID != "" && !strings.ContainsAny(mID, " ()") && modelsMap[mID] == nil {
+				modelsMap[mID] = map[string]interface{}{
+					"name": mID, "tool_call": !textOnly, "reasoning": true, "attachment": true,
+					"modalities": map[string]interface{}{"input": []string{"text", "image"}, "output": []string{"text"}},
+					"limit":      map[string]interface{}{"context": 200000, "output": 32768},
+				}
+			}
+		}
 		pObj["models"] = modelsMap
 		provMap[providerID] = pObj
 		doc["provider"] = provMap
-		_ = g.persistHoxiConfigDoc(doc)
-	}
+		return nil
+	})
 }
 
 func isNativeCLIProvider(source ExternalToolID, providerID string) bool {

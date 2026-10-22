@@ -13,7 +13,7 @@
 - **宿主**（`internal/app`）：Wails v2 + `WKWebView`，窗口半透明、单实例锁、macOS 下关窗隐藏驻留；WebView 请求经 Wails AssetServer 进程内交给网关，另在回环地址监听桥接端口（release `127.0.0.1:5410`、dev `127.0.0.1:5420`，被占用时回落随机端口）供 WebSocket 与 CLI 使用
 - **状态栏**（`internal/statusbar`）：`NSStatusBar` 显示 `Running` / `Attention` 计数；新增待审批项时只回调一次，不含命令文本（经隧道转为手机推送）
 - **OpenCode 运行时**（`internal/opencode`）：官方 `opencode` 进程监管，每次启动生成随机 `OPENCODE_SERVER_PASSWORD` 并以 HTTP Basic Auth 访问
-- **多运行时引擎**（`internal/runner`）：统一驱动 Claude Code、Antigravity（`agy`）、Qoder、CodeBuddy 子进程，翻译为统一事件流；Claude Code 与 Antigravity 经 PreToolUse Hook 接入同一审批平面，审批决策统一由 `internal/runner/approval_decision.go` 判定，策略存于 `~/.hoxi/approval-policy.json`
+- **多运行时引擎**（`internal/runner`）：统一驱动 Claude Code、Antigravity（`agy`）、Qoder、CodeBuddy 子进程，翻译为统一事件流；Claude Code 与 Antigravity 经 PreToolUse Hook 接入同一审批平面，审批决策统一由 `internal/runner/approval_decision.go` 判定，策略存于 `~/.hoxi/approval-policy.json`。Qoder / CodeBuddy 没有 PreToolUse 门控能力，无法执行任何模式都保留的硬底线审批，因此只允许在只读模式（Plan）运行，非只读模式一律拒绝启动
 - **前端工作区**（`web/`）：Vite + SolidJS + Tailwind 三栏布局；SSE 增量经 `requestAnimationFrame` 批处理；Subagent 嵌套时间线、`ThoughtBox`、`ToolCard`（含内联 LSP 诊断）；`@pierre/diffs` 代码审查、`@xterm/xterm` + WebGL 终端、无头 Chrome 浏览器（`internal/browser`）
 - **会话能力**：Git Worktree 会话隔离（`internal/worktree`，`?directory=` 作用域）、运行中纠偏（Steer）与停止、按消息回滚（Revert）与分叉（Fork）、会话目标 `/goal`（按整轮判定进展，智能体以回复末行 `[[goal:complete]]` / `[[goal:blocked]]` 或 `goal_report` 工具上报，所有运行时可用）；runner 在原生 CLI 运行时首轮与切换运行时时注入 `<project>/.hoxi/memory/` 记忆。8 维度压缩提示词与 system 前缀冻结位于 `.opencode/plugins/hoxi-memory.js`（`goal_report` 位于 `hoxi-goal.js`），**仅在 OpenCode 打开本仓库时加载，桌面端未内置**——桌面端只注入 `internal/opencode` 的浏览器与沙箱插件
 - **外部 CLI 会话接管**（`internal/handoff`）：从 Claude / Codex / Gemini / Grok / OpenCode / Trae / Qoder / CodeBuddy 导入会话

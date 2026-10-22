@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"path"
@@ -161,6 +163,48 @@ func tunnelRequestAllowed(r *http.Request) bool {
 
 const maxTunnelInspectedBody = 16 << 20
 
+// tunnelMultipartBodyRoute reports whether path is the only route that parses a
+// multipart request body. Anything else is JSON, so the directory guard must
+// inspect it even when a caller labels the request multipart/form-data.
+func tunnelMultipartBodyRoute(path string) bool {
+	return path == "/api/hoxi/attachments"
+}
+
+// multipartDirectoryFields extracts the directory and sessionID form fields
+// from a buffered multipart body without consuming the original request.
+func multipartDirectoryFields(raw []byte, contentType string) (sessionID, directory string, ok bool) {
+	mediaType, params, err := mime.ParseMediaType(contentType)
+	if err != nil || mediaType != "multipart/form-data" || params["boundary"] == "" {
+		return "", "", false
+	}
+	reader := multipart.NewReader(bytes.NewReader(raw), params["boundary"])
+	for {
+		part, err := reader.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return "", "", false
+		}
+		name := strings.TrimSpace(part.FormName())
+		if part.FileName() != "" || (name != "directory" && name != "sessionID") {
+			_, _ = io.Copy(io.Discard, io.LimitReader(part, maxTunnelInspectedBody+1))
+			continue
+		}
+		value, err := io.ReadAll(io.LimitReader(part, 4096))
+		if err != nil {
+			return "", "", false
+		}
+		if name == "directory" && directory == "" {
+			directory = strings.TrimSpace(string(value))
+		}
+		if name == "sessionID" && sessionID == "" {
+			sessionID = strings.TrimSpace(string(value))
+		}
+	}
+	return sessionID, directory, true
+}
+
 // tunnelBodyAllowed rejects request bodies that would turn an allowed route
 // into a desktop-only operation. The body is restored for the real handler.
 func tunnelBodyAllowed(r *http.Request) bool {
@@ -308,8 +352,7 @@ func (g *Gateway) tunnelRequestDirectoriesAllowed(r *http.Request) bool {
 			dirs = append(dirs, strings.TrimSpace(d))
 		}
 	}
-	if r.Method == http.MethodPost && r.Body != nil && r.Body != http.NoBody &&
-		!strings.HasPrefix(strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Type"))), "multipart/") {
+	if r.Method == http.MethodPost && r.Body != nil && r.Body != http.NoBody {
 		raw, readErr := io.ReadAll(io.LimitReader(r.Body, maxTunnelInspectedBody+1))
 		_ = r.Body.Close()
 		if readErr != nil || len(raw) > maxTunnelInspectedBody {
@@ -317,16 +360,36 @@ func (g *Gateway) tunnelRequestDirectoriesAllowed(r *http.Request) bool {
 		}
 		r.Body = io.NopCloser(bytes.NewReader(raw))
 		r.ContentLength = int64(len(raw))
-		var body struct {
-			SessionID string `json:"sessionID"`
-			Directory string `json:"directory"`
-		}
-		if len(bytes.TrimSpace(raw)) > 0 && json.Unmarshal(raw, &body) == nil {
-			if sessionID == "" && strings.TrimSpace(body.SessionID) != "" {
-				sessionID = strings.TrimSpace(body.SessionID)
+		contentType := strings.TrimSpace(r.Header.Get("Content-Type"))
+		if strings.HasPrefix(strings.ToLower(contentType), "multipart/") {
+			// A multipart body is only legitimate on the one route that parses
+			// it. Everywhere else the handler still decodes JSON, so a
+			// multipart label must not skip the directory guard.
+			if !tunnelMultipartBodyRoute(r.URL.Path) {
+				return false
 			}
-			if strings.TrimSpace(body.Directory) != "" {
-				dirs = append(dirs, strings.TrimSpace(body.Directory))
+			mpSession, mpDir, ok := multipartDirectoryFields(raw, contentType)
+			if !ok {
+				return false
+			}
+			if sessionID == "" && mpSession != "" {
+				sessionID = mpSession
+			}
+			if mpDir != "" {
+				dirs = append(dirs, mpDir)
+			}
+		} else {
+			var body struct {
+				SessionID string `json:"sessionID"`
+				Directory string `json:"directory"`
+			}
+			if len(bytes.TrimSpace(raw)) > 0 && json.Unmarshal(raw, &body) == nil {
+				if sessionID == "" && strings.TrimSpace(body.SessionID) != "" {
+					sessionID = strings.TrimSpace(body.SessionID)
+				}
+				if strings.TrimSpace(body.Directory) != "" {
+					dirs = append(dirs, strings.TrimSpace(body.Directory))
+				}
 			}
 		}
 	}

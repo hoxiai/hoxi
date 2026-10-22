@@ -538,11 +538,6 @@ func (g *Service) importCodexCLIProvider() LocalCLIImportResponse {
 			},
 		}
 	}
-	cfgDoc := g.loadHoxiConfigDoc()
-	provMap, _ := cfgDoc["provider"].(map[string]interface{})
-	if provMap == nil {
-		provMap = map[string]interface{}{}
-	}
 	provEntry := map[string]interface{}{
 		"name":   "OpenAI Codex (Local)",
 		"npm":    "@ai-sdk/openai",
@@ -551,9 +546,15 @@ func (g *Service) importCodexCLIProvider() LocalCLIImportResponse {
 	if apiKey != "" {
 		provEntry["options"] = map[string]interface{}{"apiKey": apiKey}
 	}
-	provMap["openai"] = provEntry
-	cfgDoc["provider"] = provMap
-	if err := g.persistHoxiConfigDoc(cfgDoc); err != nil {
+	if err := g.updateHoxiConfigDoc(func(cfgDoc map[string]interface{}) error {
+		provMap, _ := cfgDoc["provider"].(map[string]interface{})
+		if provMap == nil {
+			provMap = map[string]interface{}{}
+		}
+		provMap["openai"] = provEntry
+		cfgDoc["provider"] = provMap
+		return nil
+	}); err != nil {
 		return LocalCLIImportResponse{OK: false, ToolID: string(ExternalToolCodex), Error: err.Error()}
 	}
 

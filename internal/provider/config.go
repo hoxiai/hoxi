@@ -364,14 +364,6 @@ func (g *Service) persistHoxiConfigFiles(doc map[string]interface{}) error {
 	return persistHoxiModelsFiles(userHoxiModelsPath(), g.workspaceHoxiModelsPath(), doc)
 }
 
-func (g *Service) persistHoxiConfigDoc(doc map[string]interface{}) error {
-	if err := g.persistHoxiConfigFiles(doc); err != nil {
-		return err
-	}
-	g.reloadOpenCodeGlobalConfig()
-	return nil
-}
-
 func (g *Service) isBusy() bool {
 	g.reloadMu.Lock()
 	fn := g.isBusyFn

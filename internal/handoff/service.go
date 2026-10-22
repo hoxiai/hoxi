@@ -57,6 +57,7 @@ type ProviderConfig interface {
 	LoadHoxiConfigDoc() map[string]interface{}
 	LoadHoxiProvidersMap() map[string]interface{}
 	PersistHoxiConfigDoc(doc map[string]interface{}) error
+	UpdateHoxiConfigDoc(mutate func(doc map[string]interface{}) error) error
 	ReloadOpenCodeGlobalConfig()
 }
 
@@ -487,6 +488,15 @@ func (g *Service) persistHoxiConfigDoc(doc map[string]interface{}) error {
 		return nil
 	}
 	return g.providers.PersistHoxiConfigDoc(doc)
+}
+
+// updateHoxiConfigDoc performs an atomic read-modify-write of the provider
+// config so a stale snapshot can never overwrite a concurrent save.
+func (g *Service) updateHoxiConfigDoc(mutate func(doc map[string]interface{}) error) error {
+	if g.providers == nil {
+		return nil
+	}
+	return g.providers.UpdateHoxiConfigDoc(mutate)
 }
 
 func (g *Service) reloadOpenCodeGlobalConfig() {
