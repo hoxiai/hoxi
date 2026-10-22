@@ -2,6 +2,7 @@ package provider
 
 import (
 	"encoding/json"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -326,11 +327,16 @@ func (g *Service) selectAutoCandidate(poolID string, exclude map[string]bool) (s
 		}
 	}
 
-	strategy := g.autoPoolStrategy(poolID)
-
 	if len(allowed) == 0 {
 		return g.leastBadCandidate(poolID, blocked)
 	}
+
+	// Skip a candidate that is drastically slower than a healthy peer, in every
+	// strategy, so a slow-but-working model stops absorbing the rotation while a
+	// faster one is available. The fastest candidate is always kept.
+	allowed, scores = g.filterSlowCandidates(allowed, scores)
+
+	strategy := g.autoPoolStrategy(poolID)
 
 	autoRouterMu.Lock()
 	cursor := autoPoolCursor[poolID]
@@ -360,6 +366,42 @@ func (g *Service) selectAutoCandidate(poolID string, exclude map[string]bool) (s
 		chosen := allowed[cursor%uint64(len(allowed))]
 		return chosen.ProviderID, chosen.ModelID
 	}
+}
+
+// filterSlowCandidates drops any candidate whose observed latency is far worse
+// than the fastest healthy peer, keeping scores aligned. Candidates with no
+// latency sample are always kept so an untested model still gets a chance.
+func (g *Service) filterSlowCandidates(allowed []AutoPoolCandidate, scores []float64) ([]AutoPoolCandidate, []float64) {
+	if g.breaker == nil || len(allowed) <= 1 {
+		return allowed, scores
+	}
+	lat := make([]float64, len(allowed))
+	fastest := math.MaxFloat64
+	for i, c := range allowed {
+		lat[i] = g.breaker.LatencyMs(c.ProviderID, c.ModelID)
+		if lat[i] > 0 && lat[i] < fastest {
+			fastest = lat[i]
+		}
+	}
+	if fastest == math.MaxFloat64 {
+		return allowed, scores
+	}
+	threshold := fastest * 3
+	if threshold < 3000 {
+		threshold = 3000
+	}
+	nextAllowed := make([]AutoPoolCandidate, 0, len(allowed))
+	nextScores := make([]float64, 0, len(allowed))
+	for i, c := range allowed {
+		if lat[i] <= 0 || lat[i] <= threshold {
+			nextAllowed = append(nextAllowed, c)
+			nextScores = append(nextScores, scores[i])
+		}
+	}
+	if len(nextAllowed) == 0 {
+		return allowed, scores
+	}
+	return nextAllowed, nextScores
 }
 
 // leastBadCandidate is the all-cooling-down fallback: prefer the candidate whose

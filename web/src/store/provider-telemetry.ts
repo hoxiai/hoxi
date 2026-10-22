@@ -192,6 +192,7 @@ interface ActiveTurnContext {
   providerID: string;
   modelID: string;
   firstTokenRecorded: boolean;
+  ttftMs: number;
   consecutiveToolErrors: number;
 }
 
@@ -233,6 +234,7 @@ export function recordPromptDispatched(
     providerID: pid,
     modelID: mid,
     firstTokenRecorded: false,
+    ttftMs: 0,
     consecutiveToolErrors: 0,
   });
 }
@@ -242,6 +244,7 @@ export function recordFirstToken(sessionID: string) {
   if (!ctx || ctx.firstTokenRecorded || !ctx.providerID) return;
   ctx.firstTokenRecorded = true;
   const ttftMs = Math.max(40, Date.now() - ctx.dispatchedAt);
+  ctx.ttftMs = ttftMs;
 
   setWorkspace(
     produce((state) => {
@@ -508,11 +511,14 @@ export function recordAssistantTurnUpdated(info: MessageInfo) {
       })
     );
     schedulePersistTelemetry();
+    // Report time-to-first-token, not the full agentic turn duration, so the
+    // shared breaker's latency average reflects the model's responsiveness.
+    const ttftMs = activeTurnsBySession.get(info.sessionID)?.ttftMs ?? 0;
     reportAutoCandidateOutcome({
       providerID: pid,
       modelID: mid,
       ok: true,
-      latencyMs: durationMs > 0 ? durationMs : undefined,
+      latencyMs: ttftMs > 0 ? ttftMs : undefined,
     });
   }
 }

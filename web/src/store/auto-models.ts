@@ -7,6 +7,7 @@ import {
   candidateBreakerRemainingMs,
   candidateBreakerScore,
   clearCandidateBreaker,
+  filterSlowCandidates,
   isCandidateBreakerOpen,
 } from "./auto-breaker";
 
@@ -516,7 +517,7 @@ export function resolveAutoModelTarget(
   if (allCands.length === 0) return null;
 
   const readyCands = allCands.filter((c) => !isCandidateCoolingDown(c.providerID, c.modelID));
-  const activePool =
+  const basePool =
     readyCands.length > 0
       ? readyCands
       : [...allCands].sort(
@@ -524,6 +525,9 @@ export function resolveAutoModelTarget(
             getCandidateCooldownRemainingMs(a.providerID, a.modelID) -
             getCandidateCooldownRemainingMs(b.providerID, b.modelID)
         );
+  // Skip a candidate that is drastically slower than a healthy peer in every
+  // strategy, so a slow-but-working model stops absorbing the rotation.
+  const activePool = filterSlowCandidates(basePool);
 
   let chosen: AutoPoolCandidate;
   const cursor = poolCursorsSignal()[poolID] ?? 0;

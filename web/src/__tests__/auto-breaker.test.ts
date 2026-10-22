@@ -12,13 +12,19 @@ import {
 } from "../store/workspace";
 import { assertDeepEqual, assertEqual, assertTrue, describe, it } from "./test-harness";
 
-function snap(providerID: string, modelID: string, score: number): CandidateBreakerSnapshot {
+function snap(
+  providerID: string,
+  modelID: string,
+  score: number,
+  latencyMs?: number
+): CandidateBreakerSnapshot {
   return {
     providerID,
     modelID,
     phase: "closed",
     open: false,
     score,
+    latencyEwmaMs: latencyMs,
     consecutiveFailures: 0,
     updatedAt: Date.now(),
   };
@@ -84,5 +90,35 @@ describe("shared candidate circuit breaker in auto-pool selection", () => {
     await resetAutoPoolToDefault("frontier");
     applyProviderBreakers({});
     assertEqual(isCandidateBreakerOpen("alpha", "m"), false);
+  });
+
+  it("skips a much slower candidate even in a round-robin pool", async () => {
+    setWorkspace("providers", [
+      { id: "alpha", name: "Alpha", models: { m: { id: "m", name: "M", capabilities: { toolcall: true } } } },
+      { id: "beta", name: "Beta", models: { m: { id: "m", name: "M", capabilities: { toolcall: true } } } },
+    ]);
+    setWorkspace("connectedProviders", ["alpha", "beta"]);
+
+    await saveAutoPool("free", {
+      id: "free",
+      preset: true,
+      strategy: "round-robin",
+      customized: true,
+      candidates: [
+        { providerID: "alpha", modelID: "m" },
+        { providerID: "beta", modelID: "m" },
+      ],
+    });
+
+    applyProviderBreakers({
+      "alpha/m": snap("alpha", "m", 0.9, 9000),
+      "beta/m": snap("beta", "m", 0.9, 700),
+    });
+
+    const target = resolveAutoModelTarget("free", { advance: true });
+    assertDeepEqual(target, { providerID: "beta", modelID: "m" });
+
+    await resetAutoPoolToDefault("free");
+    applyProviderBreakers({});
   });
 });

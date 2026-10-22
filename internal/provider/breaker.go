@@ -455,6 +455,23 @@ func (s *breakerStore) cooldownRemainingMs(providerID, modelID string) int64 {
 	return remaining
 }
 
+// LatencyMs returns the observed latency average in milliseconds, or 0 when the
+// candidate has no latency sample yet. Selection uses it to skip a candidate
+// that is much slower than a healthy peer.
+func (s *breakerStore) LatencyMs(providerID, modelID string) float64 {
+	providerID, modelID = strings.TrimSpace(providerID), strings.TrimSpace(modelID)
+	if providerID == "" || modelID == "" {
+		return 0
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rec, ok := s.items[breakerKey(providerID, modelID)]
+	if !ok || rec == nil || rec.LatencySamples <= 0 {
+		return 0
+	}
+	return rec.LatencyEwmaMs
+}
+
 func round3(v float64) float64 {
 	return float64(int(v*1000+0.5)) / 1000
 }

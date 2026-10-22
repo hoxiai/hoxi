@@ -154,6 +154,35 @@ func TestSelectAutoCandidateAllOpenFallback(t *testing.T) {
 	}
 }
 
+func TestSelectAutoCandidateSkipsMuchSlowerCandidate(t *testing.T) {
+	_, dir := setupIsolatedEnv(t)
+	svc := NewService(0, "password", dir, nil)
+	savePool(t, svc, "daily", "priority", []AutoPoolCandidate{
+		{ProviderID: "slow", ModelID: "m"},
+		{ProviderID: "fast", ModelID: "m"},
+	})
+	for i := 0; i < 4; i++ {
+		svc.breaker.RecordSuccess("slow", "m", 8000)
+		svc.breaker.RecordSuccess("fast", "m", 800)
+	}
+	if pid, _ := svc.selectAutoCandidate("daily", nil); pid != "fast" {
+		t.Fatalf("priority must skip a drastically slower lead candidate, got %s", pid)
+	}
+
+	// A modest difference must not be filtered: the lead candidate stays first.
+	savePool(t, svc, "free", "priority", []AutoPoolCandidate{
+		{ProviderID: "a", ModelID: "m"},
+		{ProviderID: "b", ModelID: "m"},
+	})
+	for i := 0; i < 4; i++ {
+		svc.breaker.RecordSuccess("a", "m", 1000)
+		svc.breaker.RecordSuccess("b", "m", 2000)
+	}
+	if pid, _ := svc.selectAutoCandidate("free", nil); pid != "a" {
+		t.Fatalf("a modest slowdown must not be filtered, got %s", pid)
+	}
+}
+
 func TestSelectAutoCandidateHonorsExclude(t *testing.T) {
 	_, dir := setupIsolatedEnv(t)
 	svc := NewService(0, "password", dir, nil)

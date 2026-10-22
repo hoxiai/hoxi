@@ -7,6 +7,7 @@
 // and rank the faster, healthier ones.
 import { createSignal } from "solid-js";
 import { hoxiAPI, type CandidateBreakerSnapshot, type CandidateOutcomeInput } from "../services/api";
+import { workspace } from "./workspace-state";
 
 export const AUTO_BREAKERS_STORAGE_KEY = "hoxi-auto-breakers:v1";
 
@@ -77,6 +78,54 @@ export function candidateBreakerScore(
   const snap = getCandidateBreaker(providerID, modelID);
   if (!snap || typeof snap.score !== "number") return null;
   return snap.score;
+}
+
+/**
+ * Best available latency estimate for a candidate in milliseconds: the shared
+ * breaker's EWMA (backend-observed) first, then the local time-to-first-token
+ * average. Returns null when neither has evidence.
+ */
+export function candidateEffectiveLatencyMs(
+  providerID: string,
+  modelID: string
+): number | null {
+  const snap = getCandidateBreaker(providerID, modelID);
+  if (snap && typeof snap.latencyEwmaMs === "number" && snap.latencyEwmaMs > 0) {
+    return snap.latencyEwmaMs;
+  }
+  const rec = workspace.providerTelemetry?.[providerID];
+  if (!rec) return null;
+  const m = rec.models?.[modelID] || rec;
+  const samples = m.ttftSamplesMs;
+  if (Array.isArray(samples) && samples.length > 0) {
+    const avg = samples.reduce((a, b) => a + b, 0) / samples.length;
+    return avg > 0 ? avg : null;
+  }
+  return null;
+}
+
+const SLOW_FACTOR = 3;
+const SLOW_FLOOR_MS = 3000;
+
+/**
+ * Drops candidates that are drastically slower than the fastest measured peer,
+ * so a slow-but-working model stops absorbing the rotation while a faster one is
+ * healthy. Candidates with no latency sample are always kept, and the result is
+ * never empty. This runs for every strategy, not just smart-health.
+ */
+export function filterSlowCandidates<T extends { providerID: string; modelID: string }>(
+  cands: T[]
+): T[] {
+  if (cands.length <= 1) return cands;
+  const lats = cands.map((c) => candidateEffectiveLatencyMs(c.providerID, c.modelID));
+  let fastest = Number.POSITIVE_INFINITY;
+  for (const l of lats) {
+    if (l !== null && l > 0 && l < fastest) fastest = l;
+  }
+  if (!Number.isFinite(fastest)) return cands;
+  const threshold = Math.max(fastest * SLOW_FACTOR, SLOW_FLOOR_MS);
+  const kept = cands.filter((_, i) => lats[i] === null || (lats[i] as number) <= threshold);
+  return kept.length > 0 ? kept : cands;
 }
 
 export async function syncProviderBreakers(): Promise<void> {
