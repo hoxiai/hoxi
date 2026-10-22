@@ -3,6 +3,7 @@ import { locale, t } from "../../i18n";
 import {
   clearLocalPromptHistory,
   loadTelemetrySettings,
+  openExternalURL,
   saveTelemetryEnabled,
   telemetry,
 } from "../../store/workspace";
@@ -51,8 +52,30 @@ export function PrivacySettingsTab() {
         </Show>
       </section>
       <div class="flex flex-wrap gap-x-4 gap-y-2 text-[13px]">
-        <a class={linkClass} href={legalURL("privacy")} target="_blank" rel="noopener noreferrer">{t("privacy.policyLink")}</a>
-        <a class={linkClass} href={legalURL("terms")} target="_blank" rel="noopener noreferrer">{t("privacy.termsLink")}</a>
+        <a
+          class={linkClass}
+          href={legalURL("privacy")}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => {
+            e.preventDefault();
+            openExternalURL(legalURL("privacy"));
+          }}
+        >
+          {t("privacy.policyLink")}
+        </a>
+        <a
+          class={linkClass}
+          href={legalURL("terms")}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => {
+            e.preventDefault();
+            openExternalURL(legalURL("terms"));
+          }}
+        >
+          {t("privacy.termsLink")}
+        </a>
       </div>
       <section class="space-y-3 border-t border-[var(--border-subtle)] pt-5">
         <h4 class="font-semibold">{t("privacy.localData")}</h4>
