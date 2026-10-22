@@ -16,12 +16,17 @@ import (
 
 	"github.com/hoxiai/hoxi/internal/handoff"
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
+	"github.com/hoxiai/hoxi/internal/runner"
 	"github.com/hoxiai/hoxi/internal/worktree"
 )
 
 const (
-	maxUntrackedFilesToCount = 24
+	// Untracked files are counted by reading them, so the scan is bounded by a
+	// byte budget rather than a small file count: a handful of generated files
+	// must not silently hide the rest of an agent's day.
+	maxUntrackedFilesToCount = 500
 	maxUntrackedFileSize     = 64 * 1024
+	maxUntrackedTotalBytes   = 4 << 20
 )
 
 type dailyModelStat struct {
@@ -38,13 +43,19 @@ type dailyModelStat struct {
 }
 
 type gitDailyPulseResponse struct {
-	TodayCommits         int              `json:"todayCommits"`
-	CommittedAdditions   int              `json:"committedAdditions"`
-	CommittedDeletions   int              `json:"committedDeletions"`
-	CommittedFiles       int              `json:"committedFiles"`
-	UncommittedAdditions int              `json:"uncommittedAdditions"`
-	UncommittedDeletions int              `json:"uncommittedDeletions"`
-	UncommittedFiles     int              `json:"uncommittedFiles"`
+	TodayCommits       int `json:"todayCommits"`
+	CommittedAdditions int `json:"committedAdditions"`
+	CommittedDeletions int `json:"committedDeletions"`
+	CommittedFiles     int `json:"committedFiles"`
+	// ChangedFiles is the union of committed and uncommitted paths, so a file
+	// both committed and still dirty today is counted once.
+	ChangedFiles         int `json:"changedFiles,omitempty"`
+	UncommittedAdditions int `json:"uncommittedAdditions"`
+	UncommittedDeletions int `json:"uncommittedDeletions"`
+	UncommittedFiles     int `json:"uncommittedFiles"`
+	// UncommittedTruncated reports that untracked-file line counting stopped at
+	// its read budget, so additions are a lower bound rather than a total.
+	UncommittedTruncated bool             `json:"uncommittedTruncated,omitempty"`
 	Branch               string           `json:"branch,omitempty"`
 	HeadCommit           string           `json:"headCommit,omitempty"`
 	HeadSubject          string           `json:"headSubject,omitempty"`
@@ -118,6 +129,7 @@ func (g *Gateway) handleDevPulse(w http.ResponseWriter, r *http.Request) {
 	}
 
 	dir := strings.TrimSpace(r.URL.Query().Get("directory"))
+	sessionID := strings.TrimSpace(r.URL.Query().Get("sessionID"))
 	workDir := g.rootDir
 	if g.worktrees != nil {
 		if rt := g.worktrees.RootDir(); rt != "" {
@@ -126,6 +138,11 @@ func (g *Gateway) handleDevPulse(w http.ResponseWriter, r *http.Request) {
 	}
 	if dir != "" {
 		workDir = dir
+	}
+	// A sandboxed session commits inside its own worktree, so the pulse must
+	// read code velocity from that worktree rather than the project root.
+	if sessionID != "" && g.sessionPulseDirectory(sessionID) != "" {
+		workDir = g.sessionPulseDirectory(sessionID)
 	}
 
 	forced := strings.TrimSpace(r.URL.Query().Get("refresh")) != ""
@@ -150,7 +167,11 @@ func (g *Gateway) handleDevPulse(w http.ResponseWriter, r *http.Request) {
 	// 1. Query authoritative OpenCode SQLite DB for today's exact token & cost usage
 	queryOpenCodeDailyDB(startOfTodayMs, &res)
 
-	// 2. Query Git repository for today's source code additions & deletions
+	// 2. Native CLI runtimes (Claude Code, Antigravity, Qoder, CodeBuddy) never
+	// write to hoxi.db, so their usage is only in the runner transcript store.
+	g.collectRunnerDailyUsage(startOfTodayMs, &res)
+
+	// 3. Query Git repository for today's source code additions & deletions
 	if workDir != "" {
 		collectGitDailyStats(workDir, startOfToday, &res)
 	}
@@ -164,10 +185,146 @@ func (g *Gateway) handleDevPulse(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, res)
 }
 
+// sessionPulseDirectory returns the directory a session actually works in, or
+// "" when the session is unknown or its directory is unavailable.
+func (g *Gateway) sessionPulseDirectory(sessionID string) string {
+	if g.runner == nil {
+		return ""
+	}
+	rec, ok := g.runner.Store().Meta(sessionID)
+	if !ok {
+		return ""
+	}
+	dir := strings.TrimSpace(rec.WorktreePath)
+	if dir == "" {
+		dir = strings.TrimSpace(rec.ProjectDir)
+	}
+	if dir == "" {
+		return ""
+	}
+	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+		return ""
+	}
+	return dir
+}
+
+// collectRunnerDailyUsage folds native-runtime token usage into the pulse.
+// OpenCode sessions are skipped: their turns mirror hoxi.db, which the SQLite
+// step already counted, so adding them here would double count.
+func (g *Gateway) collectRunnerDailyUsage(startOfTodayMs int64, res *gitDailyPulseResponse) {
+	if g.runner == nil {
+		return
+	}
+	store := g.runner.Store()
+	// key -> index into res.DbModels; append may reallocate, so never keep raw
+	// pointers into the slice.
+	index := make(map[string]int, len(res.DbModels))
+	for i := range res.DbModels {
+		index[res.DbModels[i].ProviderID+"/"+res.DbModels[i].ModelID] = i
+	}
+
+	var (
+		turns                       int
+		input, output, reasoning    int64
+		cacheRead, cacheWrite, cost float64
+	)
+	for _, info := range store.List("") {
+		if info.Time.Updated < startOfTodayMs {
+			continue
+		}
+		rec, ok := store.Meta(info.ID)
+		if !ok || rec.Subagent {
+			continue
+		}
+		runtime := strings.TrimSpace(rec.Runtime)
+		if runtime == "" || runtime == "opencode" {
+			continue
+		}
+		store.VisitTurns(rec.ID, func(full runner.SessionRecord) {
+			for i := range full.Turns {
+				turn := full.Turns[i]
+				if turn.Info.Role != "assistant" || turn.Info.Time.Created < startOfTodayMs {
+					continue
+				}
+				tokens := turn.Info.Tokens
+				if tokens == nil {
+					continue
+				}
+				if tokens.Input == 0 && tokens.Output == 0 && tokens.Cache.Read == 0 {
+					continue
+				}
+				turns++
+				input += int64(tokens.Input)
+				output += int64(tokens.Output)
+				reasoning += int64(tokens.Reasoning)
+				cacheRead += float64(tokens.Cache.Read)
+				cacheWrite += float64(tokens.Cache.Write)
+				cost += turn.Info.Cost
+
+				mergeDailyModel(res, index, dailyModelUsage{
+					ProviderID: runtime,
+					ModelID:    firstNonEmptyString(turn.Info.ModelID, rec.ModelID, "unknown"),
+					Tokens:     *tokens,
+					Cost:       turn.Info.Cost,
+				})
+			}
+		})
+	}
+	if turns == 0 {
+		return
+	}
+	res.DbTurnsCount += turns
+	res.DbInputTokens += input
+	res.DbOutputTokens += output
+	res.DbReasoningTokens += reasoning
+	res.DbCacheReadTokens += int64(cacheRead)
+	res.DbCacheWriteTokens += int64(cacheWrite)
+	res.DbTotalTokens += input + output + reasoning + int64(cacheRead) + int64(cacheWrite)
+	res.DbTotalCost += cost
+}
+
+type dailyModelUsage struct {
+	ProviderID string
+	ModelID    string
+	Tokens     runner.MessageTokens
+	Cost       float64
+}
+
+func mergeDailyModel(res *gitDailyPulseResponse, index map[string]int, u dailyModelUsage) {
+	key := u.ProviderID + "/" + u.ModelID
+	at, ok := index[key]
+	if !ok {
+		res.DbModels = append(res.DbModels, dailyModelStat{
+			ProviderID: u.ProviderID,
+			ModelID:    u.ModelID,
+		})
+		at = len(res.DbModels) - 1
+		index[key] = at
+	}
+	m := &res.DbModels[at]
+	m.Turns++
+	m.InputTokens += int64(u.Tokens.Input)
+	m.OutputTokens += int64(u.Tokens.Output)
+	m.ReasoningTokens += int64(u.Tokens.Reasoning)
+	m.CacheReadTokens += int64(u.Tokens.Cache.Read)
+	m.CacheWriteTokens += int64(u.Tokens.Cache.Write)
+	m.TotalTokens += int64(u.Tokens.Input + u.Tokens.Output + u.Tokens.Reasoning + u.Tokens.Cache.Read + u.Tokens.Cache.Write)
+	m.Cost += u.Cost
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}
+
 func collectGitDailyStats(workDir string, startOfToday time.Time, res *gitDailyPulseResponse) {
+	committedFileSet := make(map[string]struct{})
 	sinceArg := "--since=" + startOfToday.Format(time.RFC3339)
 	if logOut, err := worktree.RunGitRaw(workDir, "log", sinceArg, "--no-merges", "--numstat", "--pretty=format:COMMIT:%H"); err == nil {
-		committedFileSet := make(map[string]struct{})
 		for _, rawLine := range strings.Split(logOut, "\n") {
 			line := strings.TrimSpace(rawLine)
 			if line == "" {
@@ -220,6 +377,8 @@ func collectGitDailyStats(workDir string, startOfToday time.Time, res *gitDailyP
 	}
 
 	untrackedReadCount := 0
+	untrackedReadBytes := int64(0)
+	untrackedTruncated := false
 	if porcelain, err := worktree.RunGitRaw(workDir, "status", "--porcelain", "-b"); err == nil {
 		for _, rawLine := range strings.Split(porcelain, "\n") {
 			if strings.HasPrefix(rawLine, "## ") {
@@ -236,23 +395,43 @@ func collectGitDailyStats(workDir string, startOfToday time.Time, res *gitDailyP
 				continue
 			}
 			uncommittedFileSet[rel] = struct{}{}
-			if untrackedReadCount >= maxUntrackedFilesToCount {
+			if untrackedTruncated || untrackedReadCount >= maxUntrackedFilesToCount {
+				untrackedTruncated = true
 				continue
 			}
 			full := filepath.Join(workDir, rel)
-			if info, err := os.Stat(full); err == nil && !info.IsDir() && info.Size() <= maxUntrackedFileSize {
-				untrackedReadCount++
-				if data, err := os.ReadFile(full); err == nil && len(data) > 0 && bytes.IndexByte(data, 0) == -1 {
-					cnt := bytes.Count(data, []byte{'\n'})
-					if data[len(data)-1] != '\n' {
-						cnt++
-					}
-					res.UncommittedAdditions += cnt
-				}
+			info, err := os.Stat(full)
+			if err != nil || info.IsDir() || info.Size() > maxUntrackedFileSize {
+				continue
 			}
+			if untrackedReadBytes+info.Size() > maxUntrackedTotalBytes {
+				untrackedTruncated = true
+				continue
+			}
+			data, err := os.ReadFile(full)
+			if err != nil || len(data) == 0 || bytes.IndexByte(data, 0) != -1 {
+				continue
+			}
+			untrackedReadCount++
+			untrackedReadBytes += int64(len(data))
+			cnt := bytes.Count(data, []byte{'\n'})
+			if data[len(data)-1] != '\n' {
+				cnt++
+			}
+			res.UncommittedAdditions += cnt
 		}
 	}
 	res.UncommittedFiles = len(uncommittedFileSet)
+	res.UncommittedTruncated = untrackedTruncated
+
+	changed := make(map[string]struct{}, len(committedFileSet)+len(uncommittedFileSet))
+	for file := range committedFileSet {
+		changed[file] = struct{}{}
+	}
+	for file := range uncommittedFileSet {
+		changed[file] = struct{}{}
+	}
+	res.ChangedFiles = len(changed)
 }
 
 func queryOpenCodeDailyDB(startOfTodayMs int64, res *gitDailyPulseResponse) {
@@ -314,11 +493,6 @@ SELECT json_object(
             OR CAST(COALESCE(json_extract(m.data, '$.tokens.output'), 0) AS INTEGER) > 0
             OR CAST(COALESCE(json_extract(m.data, '$.tokens.cache.read'), 0) AS INTEGER) > 0
           )
-        GROUP BY
-          m.time_created,
-          COALESCE(json_extract(m.data, '$.modelID'), ''),
-          CAST(COALESCE(json_extract(m.data, '$.tokens.input'), 0) AS INTEGER),
-          CAST(COALESCE(json_extract(m.data, '$.tokens.output'), 0) AS INTEGER)
       )
       GROUP BY provider_id, model_id
       ORDER BY total_tokens DESC
@@ -330,9 +504,33 @@ SELECT json_object(
     JOIN message m ON m.session_id = s.id
     WHERE m.time_created >= %d
       AND %s
-      AND s.title NOT LIKE '%%(fork #%%'
+  ),
+  'toolsTotal', (
+    SELECT COUNT(*) FROM (
+      SELECT 1 FROM part p
+      JOIN session s ON s.id = p.session_id
+      WHERE p.time_created >= %d
+        AND json_extract(p.data, '$.type') = 'tool'
+        AND %s
+      GROUP BY COALESCE(json_extract(p.data, '$.callID'), p.id)
+    )
+  ),
+  'toolsFailed', (
+    SELECT COUNT(*) FROM (
+      SELECT 1 FROM part p
+      JOIN session s ON s.id = p.session_id
+      WHERE p.time_created >= %d
+        AND json_extract(p.data, '$.type') = 'tool'
+        AND json_extract(p.data, '$.state.status') = 'error'
+        AND %s
+      GROUP BY COALESCE(json_extract(p.data, '$.callID'), p.id)
+    )
   )
-);`, startOfTodayMs, handoff.SQLNotImportedTitleClause("s.title"), startOfTodayMs, handoff.SQLNotImportedTitleClause("s.title"))
+);`,
+		startOfTodayMs, handoff.SQLNotImportedTitleClause("s.title"),
+		startOfTodayMs, handoff.SQLNotImportedTitleClause("s.title"),
+		startOfTodayMs, handoff.SQLNotImportedTitleClause("s.title"),
+		startOfTodayMs, handoff.SQLNotImportedTitleClause("s.title"))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 	defer cancel()

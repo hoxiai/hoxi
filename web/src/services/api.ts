@@ -169,6 +169,13 @@ export const hoxiAPI = {
     return requestJSON(`/api/hoxi/dev-pulse${qs ? `?${qs}` : ""}`);
   },
 
+  getDevPulseHistory(days = 30, directory?: string): Promise<import("./api-types").DevPulseHistoryResponse> {
+    const params = new URLSearchParams();
+    params.set("days", String(days));
+    if (directory) params.set("directory", directory);
+    return requestJSON(`/api/hoxi/dev-pulse/history?${params.toString()}`);
+  },
+
   // Sessions: one Hoxi endpoint. The gateway routes each session to its owner
   // (Hoxi conversation store or a not-yet-adopted OpenCode session).
   async listSessions(directory?: string, projectID?: string): Promise<SessionInfo[]> {

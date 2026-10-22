@@ -3,6 +3,7 @@ import { createMemo, createSignal, For, Show } from "solid-js";
 import { Presence } from "../motion/Presence";
 import {
   ArrowLeft,
+  BarChart3,
   Blocks,
   Bot,
   Cpu,
@@ -47,6 +48,7 @@ import { LocalRelaySettingsTab } from "./LocalRelayControls";
 import { RemoteTunnelControls } from "./RemoteTunnelControls";
 import { SettingsExtensionsTab } from "./SettingsExtensionsTab";
 import DiagnosticsTab from "./DiagnosticsTab";
+import UsageHistoryTab from "./UsageHistoryTab";
 import { WorkspaceGitSettingsTab } from "./SettingsWorkspaceTerminalTabs";
 
 export default function SettingsModal() {
@@ -243,6 +245,16 @@ export default function SettingsModal() {
             t("settings.sectionRuntimeTitle"),
             t("settings.sectionMaintenanceTitle"),
             "OpenCode",
+          ],
+        },
+        {
+          id: "usage",
+          label: () => t("settings.tabUsage"),
+          icon: BarChart3,
+          keywords: () => [
+            t("settings.usageTitle"),
+            t("settings.usageTotalTokens"),
+            t("settings.usageTotalCost"),
           ],
         },
         {
@@ -507,6 +519,11 @@ export default function SettingsModal() {
                   <Show when={activeTab() === "privacy"}>
                     <div class="hoxi-view-enter">
                       <PrivacySettingsTab />
+                    </div>
+                  </Show>
+                  <Show when={activeTab() === "usage"}>
+                    <div class="hoxi-view-enter">
+                      <UsageHistoryTab />
                     </div>
                   </Show>
                   <Show when={activeTab() === "diagnostics"}>

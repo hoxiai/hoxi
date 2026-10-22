@@ -47,6 +47,7 @@ func TestTunnelRouteAllowlist(t *testing.T) {
 		{get, "/api/hoxi/browser"}, {get, "/api/hoxi/clipboard/images"}, {get, "/api/hoxi/sessionsx"},
 		{get, "/api/hoxi/sessions/../tunnel/pair"}, {get, "/session"}, {get, "/pty/1/connect"}, {get, "/config"}, {get, "/auth/openai"},
 		{post, "/api/hoxi/desktop/notify"}, {post, "/api/hoxi/desktop/focus"}, {get, "/api/hoxi/dev-pulse"},
+		{get, "/api/hoxi/dev-pulse/history"},
 		// The local OpenAI-compatible relay plane mints and consumes provider
 		// credentials, so neither its data routes nor its key admin route may
 		// ever be reachable from a paired GoPanel.

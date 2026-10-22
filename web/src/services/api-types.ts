@@ -489,6 +489,10 @@ export interface GitDailyPulseResponse {
   uncommittedAdditions: number;
   uncommittedDeletions: number;
   uncommittedFiles: number;
+  /** Union of committed and uncommitted paths; avoids double counting. */
+  changedFiles?: number;
+  /** Untracked-line counting hit its read budget, so additions are a lower bound. */
+  uncommittedTruncated?: boolean;
   branch?: string;
   headCommit?: string;
   headSubject?: string;
@@ -516,6 +520,42 @@ export interface GitDailyPulseResponse {
     cacheWriteTokens?: number;
     cost: number;
   }>;
+}
+
+export interface DevPulseHistoryModelStat {
+  providerID: string;
+  modelID: string;
+  turns: number;
+  inputTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+}
+
+export interface DevPulseHistoryDay {
+  date: string;
+  turns: number;
+  sessions: number;
+  inputTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  toolCallsTotal: number;
+  toolCallsFailed: number;
+  commits: number;
+  additions: number;
+  deletions: number;
+  files: number;
+  models: DevPulseHistoryModelStat[];
+}
+
+export interface DevPulseHistoryResponse {
+  days: DevPulseHistoryDay[];
+  startDate: string;
+  endDate: string;
+  timezone: string;
 }
 
 export interface FileContentResponse {

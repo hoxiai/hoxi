@@ -62,13 +62,13 @@ describe("daily pulse market cost", () => {
     );
   });
 
-  it("converts CNY market prices to USD", () => {
+  it("converts CNY market prices to USD with the shared fallback rate", () => {
     withPricingCatalog(
       [
         pricingItem({
           slug: "glm-5.3-flash",
           apiName: "glm-5.3-flash",
-          price: { currency: "CNY", input: 7.2, output: 14.4 },
+          price: { currency: "CNY", input: 7, output: 14 },
         }),
       ],
       () => {
@@ -160,7 +160,7 @@ describe("daily pulse market cost", () => {
     );
   });
 
-  it("returns null for models without a market price", () => {
+  it("returns null when the id names no known vendor", () => {
     withPricingCatalog([pricingItem({ slug: "known-model", price: { currency: "USD", input: 1, output: 2 } })], () => {
       assertEqual(
         estimateModelMarketCostUsd("my-private-model", {
@@ -174,6 +174,126 @@ describe("daily pulse market cost", () => {
         "unmatched model"
       );
     });
+  });
+
+  it("prices an unknown variant of a known vendor from its vendor price band", () => {
+    withPricingCatalog(
+      [
+        pricingItem({ slug: "deepseek-v4-flash", price: { currency: "CNY", input: 3, output: 9, cacheRead: 0.1 } }),
+        pricingItem({ slug: "deepseek-v4-pro", price: { currency: "CNY", input: 9, output: 27, cacheRead: 0.3 } }),
+        pricingItem({ slug: "claude-opus-5", price: { currency: "USD", input: 5, output: 25 } }),
+      ],
+      () => {
+        // `deepseek-flash` is not in the catalog under any alias, but it names
+        // a vendor and a budget tier, so it must land in DeepSeek budget rates
+        // instead of the cross-vendor mean (which is ~7x too high).
+        approx(
+          estimateModelMarketCostUsd("deepseek-flash", {
+            input: 1_000_000,
+            output: 0,
+            reasoning: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+          }),
+          3 / 7,
+          "vendor budget band"
+        );
+      }
+    );
+  });
+
+  it("treats an unknown free variant as free rather than pricing it", () => {
+    withPricingCatalog([pricingItem({ slug: "deepseek-v4-flash", price: { currency: "USD", input: 1, output: 2 } })], () => {
+      assertEqual(
+        estimateModelMarketCostUsd("deepseek-v9-flash-free", {
+          input: 1_000_000,
+          output: 100_000,
+          reasoning: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+        }),
+        0,
+        "free variant"
+      );
+    });
+  });
+
+  it("strips a 4-digit snapshot label before falling back", () => {
+    withPricingCatalog(
+      [pricingItem({ slug: "deepseek-v4-1-flash", price: { currency: "USD", input: 0.3, output: 1.2 } })],
+      () => {
+        approx(
+          estimateModelMarketCostUsd("deepseek-v4.1-flash-1017", {
+            input: 1_000_000,
+            output: 0,
+            reasoning: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+          }),
+          0.3,
+          "mmdd suffix"
+        );
+      }
+    );
+  });
+
+  it("matches a version-less reseller id to the real upstream row", () => {
+    withPricingCatalog(
+      [
+        pricingItem({ slug: "deepseek-v4-flash", price: { currency: "USD", input: 0.43, output: 1.29, cacheRead: 0.014 } }),
+        pricingItem({ slug: "deepseek-v4-pro", price: { currency: "USD", input: 1.29, output: 3.86, cacheRead: 0.043 } }),
+      ],
+      () => {
+        // `deepseek-flash` has no version, but every word of it appears in
+        // `deepseek-v4-flash`, so it must inherit that row (including the cheap
+        // cache rate) rather than a band median.
+        approx(
+          estimateModelMarketCostUsd("deepseek-flash", {
+            input: 1_000_000,
+            output: 0,
+            reasoning: 0,
+            cacheRead: 10_000_000,
+            cacheWrite: 0,
+          }),
+          0.57,
+          "version-less flash"
+        );
+        approx(
+          estimateModelMarketCostUsd("QoderCN-DeepSeek-Flash", {
+            input: 1_000_000,
+            output: 0,
+            reasoning: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+          }),
+          0.43,
+          "prefixed version-less id"
+        );
+      }
+    );
+  });
+
+  it("prefers the base model over a point release when traits tie", () => {
+    withPricingCatalog(
+      [
+        pricingItem({ slug: "gpt-6-sol", price: { currency: "USD", input: 2, output: 10 } }),
+        pricingItem({ slug: "gpt-6-1-sol", price: { currency: "USD", input: 2, output: 10 } }),
+        pricingItem({ slug: "gpt-6-sol-vision", price: { currency: "USD", input: 9, output: 40 } }),
+      ],
+      () => {
+        approx(
+          estimateModelMarketCostUsd("gpt-6.2-sol", {
+            input: 1_000_000,
+            output: 0,
+            reasoning: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+          }),
+          2,
+          "version drift"
+        );
+      }
+    );
   });
 
   it("overrides recorded cost with market price and keeps recorded cost when unmatched", async () => {
@@ -235,9 +355,49 @@ describe("daily pulse market cost", () => {
       const unmatched = stats.modelsUsed.find((m) => m.modelID === "my-private-model");
       approx(matched?.cost ?? null, 7.5, "matched model market cost");
       approx(unmatched?.cost ?? null, 3.5, "unmatched model recorded cost");
+      // The UI must be able to say the total is partial instead of silently
+      // showing a number that omits an unpriced model.
+      assertEqual(stats.unpricedModels.join(","), "my-private-model", "unpriced models");
     } finally {
       hoxiAPI.getGitDailyPulse = originalGetGitDailyPulse;
       setLeaderboardState("pricingCatalog", savedCatalog);
     }
+  });
+
+  it("prices deployment variants and reseller ids from the family row", () => {
+    withPricingCatalog(
+      [
+        pricingItem({
+          slug: "deepseek-v4.1-flash",
+          price: { currency: "USD", input: 0.3, output: 1.2 },
+        }),
+      ],
+      () => {
+        // Provider never reports a recorded cost, so an exact-key miss used to
+        // show $0.00 for the model that produced almost all of the day's spend.
+        approx(
+          estimateModelMarketCostUsd("deepseek-v4.1-flash-solo", {
+            input: 1_000_000,
+            output: 0,
+            reasoning: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+          }),
+          0.3,
+          "deployment suffix"
+        );
+        approx(
+          estimateModelMarketCostUsd("CodeArts-deepseek-v4.1-flash", {
+            input: 1_000_000,
+            output: 0,
+            reasoning: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+          }),
+          0.3,
+          "reseller prefix"
+        );
+      }
+    );
   });
 });

@@ -19,6 +19,8 @@ import "../src/__tests__/runner-sandbox.test";
 import "../src/__tests__/session-ai.test";
 import "../src/__tests__/git-commit.test";
 import "../src/__tests__/daily-pulse-cost.test";
+import "../src/__tests__/usage-history.test";
+import "../src/__tests__/format-units.test";
 import "../src/__tests__/session-title.test";
 import "../src/__tests__/timeline-scroll.test";
 import "../src/__tests__/session-scroll.test";

@@ -8,21 +8,7 @@ import {
 } from "../../store/workspace";
 import { ProviderIcon } from "../icons";
 import { t } from "../../i18n";
-
-function formatCompactTokens(n: number): string {
-  if (!n || n <= 0) return "0";
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
-  if (n >= 10_000) return `${(n / 1_000).toFixed(1)}k`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(2)}k`;
-  return n.toLocaleString();
-}
-
-function formatUsd(amount: number): string {
-  if (!amount || amount <= 0) return "$0.00";
-  if (amount >= 0.01) return `$${amount.toFixed(2)}`;
-  if (amount >= 0.001) return `$${amount.toFixed(3)}`;
-  return "<$0.001";
-}
+import { formatCompactNumber as formatCompactTokens, formatUsd } from "../../i18n/format";
 
 export default function DevPulseContent(props: { onNavigate: () => void }) {
   const stats = createMemo(() => computeDailyDevPulseStats());
@@ -61,12 +47,21 @@ export default function DevPulseContent(props: { onNavigate: () => void }) {
 
         <div
           class="rounded-lg bg-[var(--bg-inset)]/60 px-2.5 py-2"
-          title={t("header.pulseCostTooltip")}
+          title={
+            stats().unpricedModels.length > 0
+              ? t("header.pulseCostUnpriced", { models: stats().unpricedModels.join(", ") })
+              : t("header.pulseCostTooltip")
+          }
         >
           <div class="text-[11px] text-[var(--text-muted)]">{t("header.pulseTodayCost")}</div>
           <div class="mt-1 font-mono text-[15px] font-semibold text-[var(--text-primary)] leading-tight">
             {formatUsd(stats().totalCost)}
           </div>
+          <Show when={stats().unpricedModels.length > 0}>
+            <div class="mt-0.5 text-[10px] leading-tight text-[var(--warn-text)]">
+              {t("header.pulseCostPartial")}
+            </div>
+          </Show>
         </div>
 
         <button

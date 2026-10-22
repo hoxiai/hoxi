@@ -19,5 +19,13 @@ export const common = {
   loading: "Loading…",
   error: "Error",
   success: "Success",
+  unitK: "k",
+  unitM: "M",
+  unitB: "B",
+  unitT: "T",
+  // Chinese scales, kept for key parity; only read when the locale is zh-CN.
+  unitWan: "万",
+  unitYi: "亿",
+  unitWanYi: "万亿",
   new: "New",
 };

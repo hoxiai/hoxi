@@ -20,5 +20,12 @@ export const common: CommonI18n = {
   loading: "加载中…",
   error: "错误",
   success: "成功",
+  unitK: "k",
+  unitM: "M",
+  unitB: "B",
+  unitT: "T",
+  unitWan: "万",
+  unitYi: "亿",
+  unitWanYi: "万亿",
   new: "新建",
 };

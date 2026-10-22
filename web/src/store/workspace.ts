@@ -33,6 +33,8 @@ export * from "./provider-health";
 export * from "./provider-audit";
 export * from "./settings";
 export * from "./daily-pulse";
+export * from "./model-pricing";
+export * from "./usage-history";
 export * from "./auth-state";
 export * from "./handoff";
 export * from "./updater-state";

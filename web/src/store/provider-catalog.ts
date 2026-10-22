@@ -1,5 +1,6 @@
 // web/src/store/provider-catalog.ts
 import { t } from "../i18n";
+import { formatCompactNumber } from "../i18n/format";
 import type { ProviderInfo } from "../services/api";
 import { AUTO_PROVIDER_ID, buildAutoVirtualProvider, isModelFree } from "./auto-models";
 import { leaderboardState } from "./leaderboard-state";
@@ -11,6 +12,7 @@ import {
   resolveModelContextLimit,
   type InferredModelSpec,
 } from "./model-limits";
+import { convertToUsdPerMillion } from "./model-pricing";
 import { workspace, type ReasoningEffort, type SelectedModel } from "./workspace-state";
 
 export type ConcreteReasoningEffort = Exclude<ReasoningEffort, "">;
@@ -288,12 +290,7 @@ export function getModelSourceInfo(model: FlattenedModel): ModelSourceInfo {
 
 export function formatTokenLimit(n?: number): string | null {
   if (!n || n <= 0) return null;
-  if (n >= 1_000_000) {
-    const m = n / 1_000_000;
-    return `${Number.isInteger(m) ? m : m.toFixed(1)}M`;
-  }
-  if (n >= 1_000) return `${Math.round(n / 1_000)}k`;
-  return String(n);
+  return formatCompactNumber(n, { maxDecimals: 1 });
 }
 
 export function formatPricePerMillion(cost?: number, currency?: string): string | null {
@@ -316,16 +313,26 @@ export function extractFlattenedModels(
   const out: FlattenedModel[] = [];
   const limitIndex = buildModelLimitIndex(providers);
 
-  // 1. Index official pricing synced from https://hoxi.ai/api/hoxi/models
+  // 1. Index official pricing synced from https://hoxi.ai/api/hoxi/models.
+  // The catalog mixes CNY and USD rows; everything is normalized to USD so the
+  // price shown in the picker matches what the dev-pulse bills.
   const hoxiSpecs = new Map<string, InferredModelSpec>();
   for (const item of leaderboardState.pricingCatalog || []) {
     if (!item) continue;
     const hasPrice = Boolean(item.isFree || (item.price && (item.price.input > 0 || item.price.output > 0)));
     if (!hasPrice && !item.contextWindow) continue;
     const spec: InferredModelSpec = {
-      inputCost: item.isFree ? 0 : hasPrice ? item.price.input : undefined,
-      outputCost: item.isFree ? 0 : hasPrice ? item.price.output : undefined,
-      currency: item.price?.currency || "USD",
+      inputCost: item.isFree
+        ? 0
+        : hasPrice
+          ? convertToUsdPerMillion(item.price.input, item.price.currency)
+          : undefined,
+      outputCost: item.isFree
+        ? 0
+        : hasPrice
+          ? convertToUsdPerMillion(item.price.output, item.price.currency)
+          : undefined,
+      currency: "USD",
       contextLimit: item.contextWindow || undefined,
       outputLimit: item.maxOutputTokens || undefined,
     };
@@ -414,7 +421,9 @@ export function extractFlattenedModels(
       } else {
         inCost = mInfo.cost?.input ?? catSpec?.inputCost ?? prefixSpec.inputCost;
         outCost = mInfo.cost?.output ?? catSpec?.outputCost ?? prefixSpec.outputCost;
-        priceCurrency = mInfo.cost?.currency || "USD";
+        // Engine-provided costs carry no currency field and are USD by
+        // convention; keep the picker aligned with dev-pulse accounting.
+        priceCurrency = "USD";
       }
 
       const contextLimit = resolveModelContextLimit({

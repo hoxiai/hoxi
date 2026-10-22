@@ -16,6 +16,7 @@ export type SettingsTab =
   | "system"
   | "privacy"
   | "diagnostics"
+  | "usage"
   | "relay"
   | "remote"
   | "extensions"

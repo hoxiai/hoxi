@@ -293,6 +293,14 @@ func TestDevPulseWithGitRepositoryAndCache(t *testing.T) {
 	if pulse.UncommittedFiles != 2 || pulse.UncommittedAdditions < 3 {
 		t.Fatalf("unexpected uncommitted stats: %+v", pulse)
 	}
+	// main.go is committed today and still dirty, so the union must stay at 2
+	// rather than the 1+2=3 that naive addition produced.
+	if pulse.ChangedFiles != 2 {
+		t.Fatalf("changed files = %d, want the committed+uncommitted union (2)", pulse.ChangedFiles)
+	}
+	if pulse.UncommittedTruncated {
+		t.Fatalf("tiny tree must not report a truncated untracked scan")
+	}
 
 	// Second GET should hit the in-memory TTL cache
 	recCached := httptest.NewRecorder()

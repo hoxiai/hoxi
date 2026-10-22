@@ -11,15 +11,10 @@ import {
   workspace,
 } from "../../store/workspace";
 import { t } from "../../i18n";
-
-function formatCompactNumber(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1).replace(/\.0$/, "")}k`;
-  return String(n);
-}
+import { formatCompactNumber } from "../../i18n/format";
 
 function formatTokenValue(n: number): string {
-  return n > 0 ? formatCompactNumber(n) : "—";
+  return n > 0 ? formatCompactNumber(n, { maxDecimals: 1 }) : "—";
 }
 
 /**

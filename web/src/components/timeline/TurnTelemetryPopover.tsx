@@ -11,6 +11,7 @@ import {
 import { Presence } from "../motion/Presence";
 import { AlertTriangle } from "lucide-solid";
 import { t } from "../../i18n";
+import { formatCompactNumber as formatCompactTokens } from "../../i18n/format";
 import { computeProviderHealth, workspace } from "../../store/workspace";
 import { ProviderIcon } from "../icons";
 import {
@@ -22,13 +23,6 @@ import {
 function formatScore(score: number | null | undefined): string {
   if (score === null || score === undefined) return "—";
   return t("models.qualityScoreBadge", { score });
-}
-
-function formatCompactTokens(count: number): string {
-  if (!count || count <= 0) return "0";
-  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`;
-  if (count >= 1_000) return `${(count / 1_000).toFixed(1)}k`;
-  return String(Math.round(count));
 }
 
 export default function TurnTelemetryPopover(props: {

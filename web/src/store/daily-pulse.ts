@@ -1,8 +1,8 @@
 // web/src/store/daily-pulse.ts
 import { createSignal } from "solid-js";
-import { hoxiAPI, type GitDailyPulseResponse, type ModelPricingItem } from "../services/api";
-import { leaderboardState, syncOfficialModelPricing } from "./leaderboard-state";
-import { canonicalModelKey } from "./model-limits";
+import { hoxiAPI, type GitDailyPulseResponse } from "../services/api";
+import { syncOfficialModelPricing } from "./leaderboard-state";
+import { estimateTokenCostUsd, resolveUsdPriceSpec } from "./model-pricing";
 import { workspace } from "./workspace-state";
 
 export interface DailyModelUsageItem {
@@ -45,6 +45,8 @@ export interface DailyDevPulseStats {
   toolCallsTotal: number;
   toolSuccessRate: number;
   modelsUsed: DailyModelUsageItem[];
+  /** Model ids the synced catalog cannot price at all; their cost is excluded. */
+  unpricedModels: string[];
 }
 
 export function getTodayDateKey(): string {
@@ -62,73 +64,16 @@ function normalizeTs(ts?: number): number {
   return ts < 1e12 ? ts * 1000 : ts;
 }
 
-const MARKET_CNY_PER_USD = 7.2;
-const MARKET_CACHE_READ_RATIO = 0.1;
-const MARKET_CACHE_WRITE_RATIO = 1.25;
-
-interface MarketPriceSpec {
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheWrite: number;
-}
-
-function convertToUsdPerMillion(value: number, currency?: string): number {
-  return (currency || "").toUpperCase() === "CNY" ? value / MARKET_CNY_PER_USD : value;
-}
-
-let cachedMarketPriceIndex: { source: ModelPricingItem[]; index: Map<string, MarketPriceSpec> } | null =
-  null;
-
-function getMarketPriceIndex(): Map<string, MarketPriceSpec> {
-  const source = leaderboardState.pricingCatalog;
-  if (cachedMarketPriceIndex && cachedMarketPriceIndex.source === source) {
-    return cachedMarketPriceIndex.index;
-  }
-  const index = new Map<string, MarketPriceSpec>();
-  for (const item of source || []) {
-    if (!item) continue;
-    let spec: MarketPriceSpec;
-    if (item.isFree) {
-      spec = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
-    } else {
-      const rawInput = item.price?.input || 0;
-      const rawOutput = item.price?.output > 0 ? item.price.output : rawInput;
-      if (rawInput <= 0 && rawOutput <= 0) continue;
-      const input = convertToUsdPerMillion(rawInput, item.price?.currency);
-      const output = convertToUsdPerMillion(rawOutput, item.price?.currency);
-      const cacheRead =
-        item.price?.cacheRead && item.price.cacheRead > 0
-          ? convertToUsdPerMillion(item.price.cacheRead, item.price?.currency)
-          : input * MARKET_CACHE_READ_RATIO;
-      const cacheWrite =
-        item.price?.cacheWrite && item.price.cacheWrite > 0
-          ? convertToUsdPerMillion(item.price.cacheWrite, item.price?.currency)
-          : input * MARKET_CACHE_WRITE_RATIO;
-      spec = { input, output, cacheRead, cacheWrite };
-    }
-    for (const rawKey of [item.slug, item.apiName, item.gatewayModelName, item.aaSlug, item.name]) {
-      const key = canonicalModelKey(rawKey);
-      if (key) index.set(key, spec);
-    }
-  }
-  cachedMarketPriceIndex = { source, index };
-  return index;
-}
-
 export function estimateModelMarketCostUsd(
   modelID: string,
   tokens: DailyTokenBreakdown
 ): number | null {
-  const spec = getMarketPriceIndex().get(canonicalModelKey(modelID));
-  if (!spec) return null;
-  return (
-    (tokens.input * spec.input +
-      (tokens.output + tokens.reasoning) * spec.output +
-      tokens.cacheRead * spec.cacheRead +
-      tokens.cacheWrite * spec.cacheWrite) /
-    1_000_000
-  );
+  return estimateTokenCostUsd(modelID, tokens);
+}
+
+/** True when the model id cannot be priced from the synced catalog at all. */
+export function isModelPriceKnown(modelID: string): boolean {
+  return resolveUsdPriceSpec(modelID) !== undefined;
 }
 
 const [gitDailyPulse, setGitDailyPulse] = createSignal<GitDailyPulseResponse>({
@@ -188,6 +133,7 @@ export function computeDailyDevPulseStats(): DailyDevPulseStats {
   let totalCost = 0;
   let todayTurnsCount = pulse.dbTurnsCount || 0;
   const latestDbTs = pulse.dbLatestTurnTs || 0;
+  const unpricedModels = new Set<string>();
 
   const byModel = new Map<string, DailyModelUsageItem>();
   const dbModels = pulse.dbModels || [];
@@ -200,9 +146,9 @@ export function computeDailyDevPulseStats(): DailyDevPulseStats {
       cacheWrite: m.cacheWriteTokens || 0,
     };
     const hasBreakdown = Object.values(tokens).some((v) => v > 0);
-    const cost = hasBreakdown
-      ? (estimateModelMarketCostUsd(m.modelID, tokens) ?? (m.cost || 0))
-      : m.cost || 0;
+    const estimated = hasBreakdown ? estimateModelMarketCostUsd(m.modelID, tokens) : null;
+    if (hasBreakdown && estimated === null) unpricedModels.add(m.modelID);
+    const cost = estimated ?? (m.cost || 0);
     totalCost += cost;
     const key = `${m.providerID}/${m.modelID}`;
     byModel.set(key, {
@@ -243,15 +189,16 @@ export function computeDailyDevPulseStats(): DailyDevPulseStats {
     const pid = info.providerID || workspace.selectedModel?.providerID || "unknown";
     const mid = info.modelID || workspace.selectedModel?.modelID || "auto";
     const mKey = `${pid}/${mid}`;
+    const estimatedTurn = estimateModelMarketCostUsd(mid, {
+      input: inTok,
+      output: outTok,
+      reasoning: reasonTok,
+      cacheRead: cRead,
+      cacheWrite: cWrite,
+    });
+    if (estimatedTurn === null) unpricedModels.add(mid);
     const turnCost =
-      estimateModelMarketCostUsd(mid, {
-        input: inTok,
-        output: outTok,
-        reasoning: reasonTok,
-        cacheRead: cRead,
-        cacheWrite: cWrite,
-      }) ??
-      (typeof info.cost === "number" && info.cost > 0 ? info.cost : 0);
+      estimatedTurn ?? (typeof info.cost === "number" && info.cost > 0 ? info.cost : 0);
 
     inputTokens += inTok;
     outputTokens += outTok;
@@ -290,7 +237,8 @@ export function computeDailyDevPulseStats(): DailyDevPulseStats {
   const totalAdditions = committedAdditions + uncommittedAdditions;
   const totalDeletions = committedDeletions + uncommittedDeletions;
   const netLines = totalAdditions - totalDeletions;
-  const changedFilesCount = (pulse.committedFiles || 0) + (pulse.uncommittedFiles || 0);
+  const changedFilesCount =
+    pulse.changedFiles || (pulse.committedFiles || 0) + (pulse.uncommittedFiles || 0);
 
   const modelsUsed = Array.from(byModel.values())
     .sort((a, b) => b.totalTokens - a.totalTokens || b.cost - a.cost)
@@ -320,5 +268,6 @@ export function computeDailyDevPulseStats(): DailyDevPulseStats {
     toolCallsTotal,
     toolSuccessRate,
     modelsUsed,
+    unpricedModels: Array.from(unpricedModels),
   };
 }
