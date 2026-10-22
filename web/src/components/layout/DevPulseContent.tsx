@@ -1,9 +1,10 @@
 import { createMemo, Index, onMount, Show } from "solid-js";
-import { ChevronRight, Trophy } from "lucide-solid";
+import { BarChart3, ChevronRight, Trophy } from "lucide-solid";
 import {
   computeDailyDevPulseStats,
   openDiffInInspector,
   openLeaderboardModal,
+  openSettingsModal,
   refreshDailyDevPulse,
 } from "../../store/workspace";
 import { ProviderIcon } from "../icons";
@@ -112,6 +113,20 @@ export default function DevPulseContent(props: { onNavigate: () => void }) {
       </Show>
 
       <div class="mt-2 pt-2 border-t border-[var(--border-subtle)]">
+        <button
+          type="button"
+          onClick={() => {
+            props.onNavigate();
+            openSettingsModal("usage");
+          }}
+          class="w-full flex items-center justify-between rounded-lg px-2 py-1.5 text-[12px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer group"
+        >
+          <div class="flex items-center gap-1.5 truncate">
+            <BarChart3 size={13} class="text-[var(--accent-primary)] shrink-0" />
+            <span class="truncate font-medium">{t("header.pulseViewUsageHistory")}</span>
+          </div>
+          <ChevronRight size={13} class="text-[var(--text-muted)] group-hover:translate-x-0.5 transition-transform shrink-0" />
+        </button>
         <button
           type="button"
           onClick={() => {

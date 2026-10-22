@@ -107,6 +107,7 @@ export const header = {
   pulseModelTurns: "{count} turns",
   pulseNoModelActivity: "No model activity recorded today yet",
   pulseConnectedProviders: "{count} providers connected",
+  pulseViewUsageHistory: "View full usage history",
   pulseLeaderboardEntry: "Model Benchmarks & Provider Directory",
   leaderboardModalTitle: "Model Benchmarks & Provider Directory",
   leaderboardModalSubtitle: "Model benchmarks and provider directory. Configure your own provider.",

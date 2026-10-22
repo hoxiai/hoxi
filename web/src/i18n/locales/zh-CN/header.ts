@@ -108,6 +108,7 @@ export const header: HeaderI18n = {
   pulseModelTurns: "{count} 轮",
   pulseNoModelActivity: "今日暂无模型调用记录",
   pulseConnectedProviders: "已连接 {count} 个服务商",
+  pulseViewUsageHistory: "查看完整用量历史",
   pulseLeaderboardEntry: "模型评测排行与服务商目录",
   leaderboardModalTitle: "模型评测排行与服务商目录",
   leaderboardModalSubtitle: "模型基准评测与服务商目录；Hoxi 不提供推理服务",
