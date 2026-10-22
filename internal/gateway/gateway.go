@@ -206,6 +206,13 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 	g.tunnel = tunnel.NewManager(tunnel.Options{Handler: http.HandlerFunc(g.serveTunnelRequest), Version: buildinfo.Version})
 	g.pairing = pairing.NewService(hoxipaths.PairingTokenPath(), hoxipaths.DefaultLANPairingPort)
 	g.cloudflared = cloudflared.NewManager(cloudflared.Options{IngressURL: "http://" + hoxipaths.DefaultRemoteIngressAddr})
+	g.pairing.SetRelayURL(func() string {
+		host := strings.TrimSpace(g.cloudflared.Hostname())
+		if host == "" {
+			return ""
+		}
+		return "https://" + host
+	})
 
 	g.registerRoutes(distFS)
 	return g

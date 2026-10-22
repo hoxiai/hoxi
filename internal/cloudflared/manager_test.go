@@ -107,6 +107,9 @@ func TestManagerEnableConnectsAndDisableStops(t *testing.T) {
 	if !st.Enabled || !st.HasToken || st.Hostname != "abc.node.hoxi.work" {
 		t.Fatalf("status = %+v", st)
 	}
+	if m.Hostname() != "abc.node.hoxi.work" {
+		t.Fatalf("Hostname() = %q", m.Hostname())
+	}
 	// The connector token must never appear in the status payload.
 	raw, _ := json.Marshal(st)
 	if strings.Contains(string(raw), "cf-connector-token") {

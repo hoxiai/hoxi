@@ -104,6 +104,34 @@ func TestPrimaryLANIPv4IsNeverLoopbackOrLinkLocal(t *testing.T) {
 	}
 }
 
+func TestCodeIncludesRelayWhenConfigured(t *testing.T) {
+	svc, _ := newTestService(t, "192.168.1.20")
+	svc.SetRelayURL(func() string { return "https://abc123.node.hoxi.work" })
+
+	code, err := svc.Code()
+	if err != nil {
+		t.Fatalf("Code: %v", err)
+	}
+	if code.Relay != "https://abc123.node.hoxi.work" {
+		t.Fatalf("relay = %q", code.Relay)
+	}
+	if code.URL != "http://192.168.1.20:5417" {
+		t.Fatalf("url = %q", code.URL)
+	}
+}
+
+func TestCodeOmitsRelayWhenUnset(t *testing.T) {
+	svc, _ := newTestService(t, "192.168.1.20")
+
+	code, err := svc.Code()
+	if err != nil {
+		t.Fatalf("Code: %v", err)
+	}
+	if code.Relay != "" {
+		t.Fatalf("relay = %q, want empty", code.Relay)
+	}
+}
+
 func TestAuthorizeMatchesPairingToken(t *testing.T) {
 	svc, _ := newTestService(t, "192.168.1.5")
 	code, err := svc.Code()

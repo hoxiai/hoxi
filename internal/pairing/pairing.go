@@ -27,6 +27,7 @@ type Payload struct {
 	Token     string `json:"token"`
 	Type      string `json:"type"`
 	Entrance  string `json:"entrance"`
+	Relay     string `json:"relay,omitempty"`
 	Host      string `json:"host"`
 	Port      int    `json:"port"`
 	Hostname  string `json:"hostname"`
@@ -47,6 +48,7 @@ type Service struct {
 	port      int
 	hostname  func() string
 	lanHost   func() string
+	relayURL  func() string
 
 	mu     sync.Mutex
 	cached string
@@ -63,6 +65,15 @@ func NewService(tokenPath string, port int) *Service {
 	}
 }
 
+// SetRelayURL registers a callback returning this desktop's off-LAN relay URL
+// (for example a Cloudflare Tunnel public hostname), or "" when none is
+// configured. It is embedded in the QR so the phone can fall back to it.
+func (s *Service) SetRelayURL(fn func() string) {
+	s.mu.Lock()
+	s.relayURL = fn
+	s.mu.Unlock()
+}
+
 // Code assembles the current pairing record. When the machine has no usable
 // LAN address, Available is false and no QR image is produced; the caller
 // should tell the user to join a network instead of showing a dead code.
@@ -77,6 +88,9 @@ func (s *Service) Code() (Code, error) {
 		Port:     s.port,
 		Hostname: s.hostname(),
 	}}
+	if relay := s.relay(); relay != "" {
+		code.Relay = relay
+	}
 	host := strings.TrimSpace(s.lanHost())
 	if host == "" {
 		return code, nil
@@ -85,21 +99,35 @@ func (s *Service) Code() (Code, error) {
 	code.URL = fmt.Sprintf("http://%s:%d", host, s.port)
 	code.Available = true
 
-	scannable, err := json.Marshal(map[string]string{
+	scannable := map[string]string{
 		"url":      code.URL,
 		"token":    code.Token,
 		"type":     code.Type,
 		"entrance": code.Entrance,
-	})
+	}
+	if code.Relay != "" {
+		scannable["relay"] = code.Relay
+	}
+	encoded, err := json.Marshal(scannable)
 	if err != nil {
 		return Code{}, err
 	}
-	png, err := encodeQR(string(scannable))
+	png, err := encodeQR(string(encoded))
 	if err != nil {
 		return Code{}, err
 	}
 	code.QRPng = "data:image/png;base64," + png
 	return code, nil
+}
+
+func (s *Service) relay() string {
+	s.mu.Lock()
+	fn := s.relayURL
+	s.mu.Unlock()
+	if fn == nil {
+		return ""
+	}
+	return strings.TrimSpace(fn())
 }
 
 // Token returns this desktop's stable pairing token, creating and persisting it

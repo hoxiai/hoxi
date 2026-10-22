@@ -104,6 +104,13 @@ func (m *Manager) Status() Status {
 	return m.status
 }
 
+// Hostname returns the configured Cloudflare public hostname, or "".
+func (m *Manager) Hostname() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.hostname
+}
+
 // Start loads the stored settings and launches the supervisor when enabled.
 func (m *Manager) Start() {
 	m.lifecycle.Lock()
