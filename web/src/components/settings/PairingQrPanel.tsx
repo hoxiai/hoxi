@@ -1,73 +1,62 @@
 // web/src/components/settings/PairingQrPanel.tsx
-// Shows the LAN pairing QR the Hoxi mobile app scans to reach this Mac
-// directly on the local network. The code is fetched on demand so its token is
-// only rendered when the user asks for it.
-import { createSignal, Show } from "solid-js";
-import { QrCode, RefreshCw } from "lucide-solid";
+// Shows the LAN pairing QR the Hoxi mobile app scans to reach this Mac on the
+// local network. The QR is shown directly: opening this panel is the deliberate
+// action. The address and token stay out of the visible text and appear in a
+// tooltip instead, so the panel stays clean.
+import { onMount, Show } from "solid-js";
+import { RefreshCw } from "lucide-solid";
 import { t } from "../../i18n";
 import { loadPairingCode, pairing } from "../../store/workspace";
-import { SettingGroup } from "./setting-controls";
-
-const buttonClass =
-  "hoxi-press inline-flex items-center gap-1.5 rounded-xl border border-[var(--border-strong)] px-4 py-2 text-[13px] font-medium hover:bg-[var(--bg-hover)] disabled:opacity-50 cursor-pointer";
+import { HelpTip, SettingGroup } from "./setting-controls";
 
 export function PairingQrPanel() {
-  const [revealed, setRevealed] = createSignal(false);
-
-  const onShow = () => {
-    setRevealed(true);
+  onMount(() => {
     void loadPairingCode();
-  };
+  });
 
   return (
     <SettingGroup title={t("pairing.title")} tip={t("pairing.tip")}>
-      <div class="space-y-4 px-5 py-4">
-        <Show
-          when={revealed()}
-          fallback={
-            <button type="button" class={buttonClass} onClick={onShow}>
-              <QrCode size={14} />
-              <span>{t("pairing.showAction")}</span>
-            </button>
-          }
-        >
-          <Show when={pairing.busy}>
-            <p class="text-[13px] text-[var(--text-muted)]">{t("pairing.loading")}</p>
-          </Show>
-          <Show when={pairing.error}>
-            <p role="alert" class="text-[12px] text-rose-500">
-              {pairing.error}
-            </p>
-          </Show>
-          <Show when={pairing.code}>
-            {(code) => (
-              <Show
-                when={code().available}
-                fallback={<p class="text-[13px] text-amber-600">{t("pairing.noLanHint")}</p>}
-              >
-                <div class="flex flex-col items-center gap-4 sm:flex-row sm:items-start">
-                  <img
-                    src={code().qrPng}
-                    alt={t("pairing.qrAlt")}
-                    class="h-56 w-56 shrink-0 rounded-xl border border-[var(--border-subtle)] bg-white p-2"
-                  />
-                  <div class="space-y-2 text-[13px]">
-                    <p class="font-medium text-[var(--text-primary)]">{t("pairing.scanHint")}</p>
-                    <p class="break-all font-mono text-[12px] text-[var(--text-muted)]">{code().url}</p>
-                    <button
-                      type="button"
-                      class={buttonClass}
-                      disabled={pairing.busy}
-                      onClick={() => void loadPairingCode()}
-                    >
-                      <RefreshCw size={14} />
-                      <span>{t("pairing.refreshAction")}</span>
-                    </button>
-                  </div>
-                </div>
-              </Show>
-            )}
-          </Show>
+      <div class="flex flex-col items-center gap-3 px-5 py-6">
+        <Show when={pairing.error}>
+          <p role="alert" class="text-[12px] text-rose-500">
+            {pairing.error}
+          </p>
+        </Show>
+
+        <Show when={pairing.code}>
+          {(code) => (
+            <Show
+              when={code().available}
+              fallback={
+                <p class="text-center text-[13px] text-amber-600">
+                  {t("pairing.noLanHint")}
+                </p>
+              }
+            >
+              <img
+                src={code().qrPng}
+                alt={t("pairing.qrAlt")}
+                class="h-56 w-56 rounded-xl border border-[var(--border-subtle)] bg-white p-2"
+              />
+              <div class="flex items-center gap-2 text-[13px]">
+                <span class="text-[var(--text-secondary)]">{t("pairing.scanHint")}</span>
+                <HelpTip text={t("pairing.addressTip", { url: code().url })} />
+                <button
+                  type="button"
+                  class="hoxi-press inline-flex cursor-pointer items-center rounded-lg p-1 text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] disabled:opacity-50"
+                  disabled={pairing.busy}
+                  aria-label={t("pairing.refreshAction")}
+                  onClick={() => void loadPairingCode()}
+                >
+                  <RefreshCw size={14} />
+                </button>
+              </div>
+            </Show>
+          )}
+        </Show>
+
+        <Show when={!pairing.code && !pairing.error}>
+          <p class="text-[13px] text-[var(--text-muted)]">{t("pairing.loading")}</p>
         </Show>
       </div>
     </SettingGroup>
