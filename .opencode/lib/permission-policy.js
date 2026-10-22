@@ -372,27 +372,54 @@ const SENSITIVE_BASENAMES = new Set([
   ".zshrc", ".zshenv", ".zprofile", ".zlogin",
   ".bashrc", ".bash_profile", ".bash_login", ".profile",
   ".gitconfig", ".git-credentials", ".netrc", ".npmrc",
-  ".curlrc", ".wgetrc", ".envrc", "authorized_keys",
+  ".pypirc", ".curlrc", ".wgetrc", ".envrc", "authorized_keys",
+  "id_rsa", "id_ed25519", "id_ecdsa", "id_dsa",
 ]);
 
 const SENSITIVE_PATH_PREFIXES = [
   "/etc/",
   "/private/etc/",
-  "/library/launchagents/",
-  "/library/launchdaemons/",
-  "/library/startupitems/",
+  "/root/",
+  "/var/root/",
+  "/private/var/root/",
 ];
 
 const SENSITIVE_PATH_FRAGMENTS = [
   "/.config/opencode/",
   "/.config/hoxi/",
   "/.config/claude/",
+  "/.config/gh/",
+  "/.config/gcloud/",
   "/.ssh/",
   "/.aws/",
   "/.gnupg/",
   "/.kube/",
+  "/.docker/",
+  "/.azure/",
   "/library/keychains/",
+  "/library/launchagents/",
+  "/library/launchdaemons/",
+  "/library/startupitems/",
 ];
+
+const SENSITIVE_ENV_BASENAME_RE =
+  /^\.en(?:v(?:\.(?:local|prod(?:uction)?|dev(?:elopment)?|stag(?:e|ing)|test(?:ing)?|ci|preview|secret\w*|key\w*|private\w*|bak|backup)(?:\.local)?)?|\?|\*)$/i;
+
+function stripWorktreePrefix(slash) {
+  const marker = "/.hoxi/worktrees/";
+  const idx = slash.lastIndexOf(marker);
+  if (idx !== -1) {
+    const rest = slash.slice(idx + marker.length);
+    const nextSlash = rest.indexOf("/");
+    return nextSlash === -1 ? "" : rest.slice(nextSlash + 1);
+  }
+  if (slash.startsWith(".hoxi/worktrees/")) {
+    const rest = slash.slice(".hoxi/worktrees/".length);
+    const nextSlash = rest.indexOf("/");
+    return nextSlash === -1 ? "" : rest.slice(nextSlash + 1);
+  }
+  return slash;
+}
 
 function isSensitiveExternalPath(rawPath) {
   if (typeof rawPath !== "string") return false;
@@ -403,19 +430,29 @@ function isSensitiveExternalPath(rawPath) {
   if (stripped && stripped !== trimmed) candidates.push(stripped);
   for (const cand of candidates) {
     if (isProtectedPath(cand)) return true;
-    const slash = cand.replaceAll("\\", "/").toLowerCase();
+    const slash = cand.replaceAll("\\", "/").toLowerCase().replace(/\/+$/, "") || "/";
+    const slashDir = slash === "/" ? "/" : `${slash}/`;
     const base = slash.slice(slash.lastIndexOf("/") + 1);
-    if (SENSITIVE_BASENAMES.has(base)) return true;
-    if (SENSITIVE_PATH_PREFIXES.some((p) => slash.startsWith(p))) return true;
-    if (SENSITIVE_PATH_FRAGMENTS.some((p) => slash.includes(p))) return true;
-    if (matchesDestructive(`bash\n${cand}`)) return true;
+    if (SENSITIVE_BASENAMES.has(base) || SENSITIVE_ENV_BASENAME_RE.test(base)) return true;
+    if (SENSITIVE_PATH_PREFIXES.some((p) => slashDir.startsWith(p))) return true;
+    if (SENSITIVE_PATH_FRAGMENTS.some((p) => slashDir.includes(p))) return true;
   }
   return false;
 }
 
 export function isProtectedPath(rawPath) {
   if (typeof rawPath !== "string" || !rawPath.trim()) return false;
-  const slash = rawPath.trim().replaceAll("\\", "/").toLowerCase();
+  const rawSlash = rawPath.trim().replaceAll("\\", "/").toLowerCase();
+  const slash = stripWorktreePrefix(rawSlash);
+  if (!slash) return false;
+  if (
+    slash.includes("/.hoxi/skills/") ||
+    slash.includes("/.hoxi/attachments/") ||
+    slash.startsWith(".hoxi/skills/") ||
+    slash.startsWith(".hoxi/attachments/")
+  ) {
+    return false;
+  }
   if (slash === ".vscode/settings.json" || slash.endsWith("/.vscode/settings.json")) {
     return true;
   }
@@ -459,10 +496,13 @@ export function externalDirectoryTargets(input) {
   for (const value of [
     ...(Array.isArray(input?.patterns) ? input.patterns : []),
     input?.pattern,
+    ...(Array.isArray(input?.always) ? input.always : []),
     meta.filepath,
     meta.filePath,
     meta.path,
     meta.target,
+    meta.parentDir,
+    meta.dir,
     ...(Array.isArray(meta.directories) ? meta.directories : []),
     ...(Array.isArray(meta.files)
       ? meta.files.map((f) => f?.filePath || f?.filepath || f?.file || f?.path || "")
@@ -494,8 +534,8 @@ export function isDestructivePermissionRequest(input) {
     const toolName = String(input?.metadata?.tool || input?.patterns?.[0] || "").trim().toLowerCase();
     if (toolName === "unsandboxed") return true;
     const candidates = [
-      ...(Array.isArray(input?.patterns) ? input.patterns : []),
-      input?.pattern,
+      ...(permission === "tool" ? [] : Array.isArray(input?.patterns) ? input.patterns : []),
+      ...(permission === "tool" ? [] : [input?.pattern]),
       input?.metadata?.filepath,
       input?.metadata?.filePath,
       input?.metadata?.path,
@@ -505,12 +545,13 @@ export function isDestructivePermissionRequest(input) {
         : []),
       ...extractToolArgPaths(input?.metadata?.args),
     ];
-    if (candidates.some(isProtectedPath)) return true;
-    for (const cand of candidates) {
-      if (typeof cand === "string" && cand.trim() && matchesDestructive(`bash\n${cand.trim()}`)) {
-        return true;
-      }
-    }
+    if (candidates.some(isProtectedPath) || candidates.some(isSensitiveExternalPath)) return true;
+    if (EDIT_PERMISSIONS.has(permission)) return false;
+    const hasCommandMeta =
+      typeof input?.metadata?.command === "string" ||
+      typeof input?.metadata?.cmd === "string" ||
+      Array.isArray(input?.metadata?.commands);
+    if (!hasCommandMeta) return false;
   }
   const blob = [permission, ...commandCandidates(input)].join("\n");
   const deobfuscated = blob.replace(/[\\'"\[\]]/g, "");
@@ -527,6 +568,6 @@ export function isSafeCommandPermissionRequest(input, options) {
 export function decidePermission(input, options) {
   if (isDestructivePermissionRequest(input)) return "ask";
   const permission = String(input?.permission || input?.type || "").toLowerCase();
-  if (READ_PERMISSIONS.has(permission)) return "allow";
+  if (READ_PERMISSIONS.has(permission) || permission === "external_directory") return "allow";
   return isSafeCommandPermissionRequest(input, options) ? "allow" : "ask";
 }

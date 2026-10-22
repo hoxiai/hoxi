@@ -151,16 +151,23 @@ export async function bootstrapProjectSessions(
     setWorkspace("bootstrappingSessions", false);
     return;
   }
+  const effectiveProjectID =
+    projectID !== undefined
+      ? projectID
+      : normalizeFolderPath(workspace.rootDir) === cleaned
+        ? workspace.activeProjectID
+        : undefined;
   let rawSessions: SessionInfo[];
   try {
-    rawSessions = await hoxiAPI.listSessions(cleaned, projectID || undefined);
+    rawSessions = await hoxiAPI.listSessions(cleaned, effectiveProjectID || undefined);
   } catch {
     await new Promise((r) => setTimeout(r, 400));
-    rawSessions = await hoxiAPI.listSessions(cleaned, projectID || undefined);
+    rawSessions = await hoxiAPI.listSessions(cleaned, effectiveProjectID || undefined);
   }
   if (normalizeFolderPath(workspace.rootDir) !== cleaned) return;
   const sessions = (Array.isArray(rawSessions) ? rawSessions : []).filter(
-    (s) => !isSessionDeleted(s.id)
+    (s) => !isSessionDeleted(s.id) &&
+      (!effectiveProjectID || !s.projectID || s.projectID === effectiveProjectID)
   );
   const titledSessions = sessions.map(preserveSessionTitle);
   reconcileSessionsInPlace(titledSessions);

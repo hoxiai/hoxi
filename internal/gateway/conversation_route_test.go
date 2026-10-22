@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"io"
 	"net"
+	"os"
+	"path/filepath"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -330,5 +332,63 @@ func TestConversationListFiltersByProjectID(t *testing.T) {
 	}
 	if resolved.ProjectID != rootProject {
 		t.Fatalf("resolved project = %q, want %q", resolved.ProjectID, rootProject)
+	}
+}
+
+func TestConversationListDoesNotLeakNestedOpenCodeSessions(t *testing.T) {
+	root := t.TempDir()
+	child := filepath.Join(root, "child")
+	if err := os.MkdirAll(child, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/session":
+			_ = json.NewEncoder(w).Encode([]map[string]interface{}{
+				{"id": "ses_parent_engine", "directory": root, "time": map[string]int64{"updated": 1}},
+				{"id": "ses_child_engine", "directory": child, "time": map[string]int64{"updated": 2}},
+			})
+		case r.URL.Path == "/session/status":
+			_, _ = io.WriteString(w, `{}`)
+		default:
+			_, _ = io.WriteString(w, `[]`)
+		}
+	}))
+	t.Cleanup(upstream.Close)
+	t.Setenv("HOXI_SESSION_STORE_DIR", t.TempDir())
+	gw := New(upstream.Listener.Addr().(*net.TCPAddr).Port, "pass", root, nil, nil)
+	parentProject, err := gw.workspaces.EnsureProjectForDirectory(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	childProject, err := gw.workspaces.EnsureProjectForDirectory(child)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := func(projectID, directory string) []string {
+		t.Helper()
+		res := serve(gw, http.MethodGet, "/api/hoxi/sessions?projectID="+url.QueryEscape(projectID)+
+			"&directory="+url.QueryEscape(directory), "")
+		if res.Code != http.StatusOK {
+			t.Fatalf("list: %d %s", res.Code, res.Body.String())
+		}
+		var list []struct {
+			ID string `json:"id"`
+		}
+		if err := json.Unmarshal(res.Body.Bytes(), &list); err != nil {
+			t.Fatal(err)
+		}
+		out := make([]string, 0, len(list))
+		for _, item := range list {
+			out = append(out, item.ID)
+		}
+		return out
+	}
+	if got := ids(parentProject, root); len(got) != 1 || got[0] != "ses_parent_engine" {
+		t.Fatalf("parent list = %v", got)
+	}
+	if got := ids(childProject, child); len(got) != 1 || got[0] != "ses_child_engine" {
+		t.Fatalf("child list = %v", got)
 	}
 }

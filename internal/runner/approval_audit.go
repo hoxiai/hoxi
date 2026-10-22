@@ -361,32 +361,28 @@ func isDestructivePermissionItem(perm, summary string, item map[string]interface
 	if ext, _ := meta["externalDirectory"].(bool); ext && !externalDirectoryTargetsAreRoutine(item) {
 		return true
 	}
-	if isDestructiveCommand(summary) {
-		return true
-	}
 	switch lowerPerm {
 	case "edit", "write", "patch", "multiedit", "apply_patch", "tool":
 		if strings.EqualFold(strings.TrimSpace(firstString(meta["tool"])), "unsandboxed") {
 			return true
 		}
-		if isProtectedRelPath(summary) {
+		if lowerPerm != "tool" && (isProtectedRelPath(summary) || isSensitiveExternalPath(summary)) {
 			return true
 		}
-		for _, k := range []string{"filepath", "filePath", "path", "target"} {
-			if p := firstString(meta[k]); p != "" && (isProtectedRelPath(p) || isDestructiveCommand(p)) {
+		for _, p := range externalDirectoryTargets(item) {
+			if lowerPerm == "tool" && strings.EqualFold(strings.TrimSpace(p), strings.TrimSpace(firstString(meta["tool"], item["patterns"]))) {
+				continue
+			}
+			if isProtectedRelPath(p) || isSensitiveExternalPath(p) {
 				return true
 			}
 		}
-		if rawArgs := firstString(meta["args"]); strings.HasPrefix(strings.TrimSpace(rawArgs), "{") {
-			var parsed map[string]interface{}
-			if json.Unmarshal([]byte(rawArgs), &parsed) == nil {
-				if p := rawHookToolPath(parsed); p != "" && (isProtectedRelPath(p) || isDestructiveCommand(p)) {
-					return true
-				}
-			}
+		if cmd := firstString(meta["command"], meta["cmd"]); cmd != "" && isDestructiveCommand(cmd) {
+			return true
 		}
+		return false
 	}
-	return false
+	return isDestructiveCommand(summary)
 }
 
 func redactApprovalText(v string, limit int) string {

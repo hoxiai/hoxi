@@ -444,3 +444,83 @@ func TestResolveProjectDoesNotRegister(t *testing.T) {
 		t.Fatalf("registered directory resolved to %q, %v; want %q", body.ProjectID, err, id)
 	}
 }
+
+func TestCreatingNestedWorkspaceKeepsParentSeparate(t *testing.T) {
+	homeDir := setupTestEnv(t)
+	parent := mkdirTempProject(t, homeDir, "parent")
+	child := mkdirTempProject(t, parent, "client")
+
+	store := NewStore("")
+	parentID, err := store.EnsureProjectForDirectory(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Create(saveWorkspaceRequest{
+		Folders: []workspaceFolderInput{{Path: parent, IsPrimary: true}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	childProfile, err := store.Create(saveWorkspaceRequest{
+		Folders: []workspaceFolderInput{{Path: child, IsPrimary: true}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if childProfile.ID == parentID {
+		t.Fatal("nested workspace reused the parent project ID")
+	}
+	if got, _ := store.ProjectIDForDirectory(parent); got != parentID {
+		t.Fatalf("parent project = %q, want %q", got, parentID)
+	}
+	if got, _ := store.ProjectIDForDirectory(child); got != childProfile.ID {
+		t.Fatalf("child project = %q, want %q", got, childProfile.ID)
+	}
+}
+
+func TestFolderCannotBelongToTwoVisibleWorkspaces(t *testing.T) {
+	homeDir := setupTestEnv(t)
+	parent := mkdirTempProject(t, homeDir, "parent")
+	child := mkdirTempProject(t, parent, "client")
+
+	store := NewStore("")
+	if _, err := store.Create(saveWorkspaceRequest{
+		Folders: []workspaceFolderInput{
+			{Path: parent, IsPrimary: true},
+			{Path: child, IsPrimary: false},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Create(saveWorkspaceRequest{
+		Folders: []workspaceFolderInput{{Path: child, IsPrimary: true}},
+	}); err == nil {
+		t.Fatal("expected the child folder to be rejected while the parent owns it")
+	}
+}
+
+func TestLegacyDuplicateFolderPrefersChildWorkspace(t *testing.T) {
+	homeDir := setupTestEnv(t)
+	parent := mkdirTempProject(t, homeDir, "parent")
+	child := mkdirTempProject(t, parent, "client")
+
+	store := NewStore("")
+	store.workspaces = []workspaceProfile{
+		{
+			ID: "parent", Name: "parent",
+			Folders: []workspaceFolder{
+				{ID: "p1", Path: parent, IsPrimary: true},
+				{ID: "p2", Path: child, IsPrimary: false},
+			},
+		},
+		{
+			ID: "child", Name: "child",
+			Folders: []workspaceFolder{{ID: "c1", Path: child, IsPrimary: true}},
+		},
+	}
+	if got, _ := store.ProjectIDForDirectory(child); got != "child" {
+		t.Fatalf("child directory resolved to %q, want its own workspace", got)
+	}
+	if got, _ := store.ProjectIDForDirectory(parent); got != "parent" {
+		t.Fatalf("parent directory resolved to %q, want parent", got)
+	}
+}

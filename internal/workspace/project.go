@@ -59,36 +59,52 @@ func hoxiWorktreeRoot(path string) string {
 	return filepath.FromSlash(slash[:index])
 }
 
-// findProjectLocked matches a directory to the workspace that owns it. Hoxi
-// worktrees under <root>/.hoxi/worktrees/<session> belong to root's project;
-// nested project folders stay separate. Visible workspaces win over hidden
-// projects if legacy data lists the same folder twice.
+// findProjectLocked matches a directory to the workspace that owns it. A
+// profile whose primary folder is the directory always wins over a parent
+// workspace that merely lists it as a secondary folder. Hoxi worktrees under
+// <root>/.hoxi/worktrees/<session> belong to root's project; nested project
+// folders stay separate.
 func (s *workspaceStore) findProjectLocked(directory string) (workspaceProfile, bool) {
 	target := projectComparePath(directory)
 	if target == "" {
 		return workspaceProfile{}, false
 	}
-	var hidden *workspaceProfile
-	for i, ws := range s.workspaces {
-		for _, folder := range ws.Folders {
-			root := projectComparePath(folder.Path)
-			if root == "" {
-				continue
-			}
-			if target == root || strings.HasPrefix(target, root+"/.hoxi/worktrees/") {
+	find := func(primaryOnly bool) (workspaceProfile, bool) {
+		var hidden *workspaceProfile
+		for index := range s.workspaces {
+			ws := &s.workspaces[index]
+			for _, folder := range ws.Folders {
+				if primaryOnly && !folder.IsPrimary {
+					continue
+				}
+				root := projectComparePath(folder.Path)
+				if root == "" {
+					continue
+				}
+				matches := target == root
+				if !matches && !primaryOnly {
+					matches = strings.HasPrefix(target, root+"/.hoxi/worktrees/")
+				}
+				if !matches {
+					continue
+				}
 				if !ws.Hidden {
-					return ws, true
+					return *ws, true
 				}
 				if hidden == nil {
-					hidden = &s.workspaces[i]
+					hidden = ws
 				}
 			}
 		}
+		if hidden != nil {
+			return *hidden, true
+		}
+		return workspaceProfile{}, false
 	}
-	if hidden != nil {
-		return *hidden, true
+	if ws, ok := find(true); ok {
+		return ws, true
 	}
-	return workspaceProfile{}, false
+	return find(false)
 }
 
 // ProjectIDForDirectory returns the stable project ID that owns directory.

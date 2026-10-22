@@ -114,9 +114,10 @@ func clipRunes(value string, max int) string {
 }
 
 type upstreamSession struct {
-	ID       string `json:"id"`
-	Title    string `json:"title"`
-	ParentID string `json:"parentID"`
+	ID        string `json:"id"`
+	Title     string `json:"title"`
+	ParentID  string `json:"parentID"`
+	Directory string `json:"directory"`
 	Time     struct {
 		Created  int64 `json:"created"`
 		Updated  int64 `json:"updated"`
@@ -155,9 +156,25 @@ func (s *gatewayRecallSource) openCodeSessions(ctx context.Context, directory st
 		sessions []recall.Session
 		permits  = make(chan struct{}, 4)
 	)
+	requestedProject := ""
+	if s.g.workspaces != nil {
+		requestedProject, _ = s.g.workspaces.ProjectIDForDirectory(directory)
+	}
 	for _, item := range listed {
 		if item.ID == "" || item.ParentID != "" || item.Time.Archived > 0 {
 			continue
+		}
+		if item.Directory != "" && requestedProject != "" {
+			itemProject := ""
+			if s.g.workspaces != nil {
+				itemProject, _ = s.g.workspaces.ProjectIDForDirectory(item.Directory)
+			}
+			if itemProject != "" && itemProject != requestedProject {
+				continue
+			}
+			if itemProject == "" && !sameDirectory(item.Directory, directory) {
+				continue
+			}
 		}
 		// Engine handles of runner conversations are already recalled, with
 		// their persisted turns, under the conversation's own ID.
@@ -173,10 +190,14 @@ func (s *gatewayRecallSource) openCodeSessions(ctx context.Context, directory st
 			if err := s.getJSON(ctx, "/session/"+url.PathEscape(item.ID)+"/message", directory, &turns); err != nil {
 				return
 			}
+			sessionDir := directory
+			if item.Directory != "" {
+				sessionDir = item.Directory
+			}
 			session := recall.Session{
 				ID:        item.ID,
 				Title:     item.Title,
-				Directory: directory,
+				Directory: sessionDir,
 				UpdatedAt: item.Time.Updated,
 			}
 			for _, turn := range turns {

@@ -166,6 +166,13 @@ func (s *Service) noteOpenCodeChildEvent(rec SessionRecord, evt SSEEvent) bool {
 	if sid == "" || sid == rec.ExternalID || !ap.isOpenCodeChild(sid) {
 		return false
 	}
+	if evt.Type == "permission.asked" || evt.Type == "permission.replied" ||
+		evt.Type == "question.asked" || evt.Type == "question.replied" {
+		if evt.Properties != nil {
+			evt.Properties["sessionID"] = rec.ExternalID
+		}
+		return false
+	}
 	s.noteOpenCodeActivity(rec.ID, evt)
 	return true
 }

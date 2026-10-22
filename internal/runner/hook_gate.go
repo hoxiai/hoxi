@@ -582,16 +582,31 @@ func (s *Service) handleUnifiedPermissionRoutes(w http.ResponseWriter, r *http.R
 func (s *Service) replyOpenCodePermission(ctx context.Context, id, directory string, raw []byte) (int, []byte, error) {
 	path := "/permission/" + url.PathEscape(id) + "/reply"
 	primary := strings.TrimSpace(directory)
+	rememberedDir := ""
+	if s.audit != nil {
+		if snap, ok := s.audit.lookupOpenCodePerm(id); ok {
+			rememberedDir = strings.TrimSpace(snap.Directory)
+		}
+	}
+	if primary == "" {
+		primary = rememberedDir
+	}
 	status, respRaw, err := s.openCodeRaw(ctx, http.MethodPost, path, directoryQuery(primary, nil), raw)
 	if err != nil || status != http.StatusNotFound {
 		return status, respRaw, err
 	}
-	for _, candidate := range s.openCodeCandidateDirs("") {
-		if normalizeComparePath(candidate) == normalizeComparePath(primary) {
+	candidates := s.openCodeCandidateDirs("")
+	if rememberedDir != "" {
+		candidates = append([]string{rememberedDir}, candidates...)
+	}
+	seen := map[string]bool{normalizeComparePath(primary): true}
+	for _, candidate := range candidates {
+		key := normalizeComparePath(candidate)
+		if seen[key] {
 			continue
 		}
-		st, body, retryErr := s.openCodeRaw(ctx, http.MethodPost, path, directoryQuery(candidate, nil), raw)
-		if retryErr == nil && st != http.StatusNotFound {
+		seen[key] = true
+		if st, body, retryErr := s.openCodeRaw(ctx, http.MethodPost, path, directoryQuery(candidate, nil), raw); retryErr == nil && st != http.StatusNotFound {
 			return st, body, nil
 		}
 	}
@@ -604,23 +619,19 @@ func (s *Service) openCodeCandidateDirs(directory string) []string {
 	add := func(d string) {
 		trimmed := strings.TrimSpace(d)
 		key := normalizeComparePath(trimmed)
-		if seen[key] {
-			return
+		if !seen[key] {
+			seen[key] = true
+			out = append(out, trimmed)
 		}
-		seen[key] = true
-		out = append(out, trimmed)
 	}
 	normFilter := normalizeComparePath(directory)
 	add(directory)
-	for _, sid := range s.busySessionIDs() {
-		rec, ok := s.store.Meta(sid)
+	addRec := func(rec SessionRecord, ok bool) {
 		if !ok || rec.Runtime != "opencode" {
-			continue
+			return
 		}
-		if normFilter != "" &&
-			normalizeComparePath(rec.ProjectDir) != normFilter &&
-			normalizeComparePath(rec.WorktreePath) != normFilter {
-			continue
+		if normFilter != "" && normalizeComparePath(rec.ProjectDir) != normFilter && normalizeComparePath(rec.WorktreePath) != normFilter {
+			return
 		}
 		if rec.WorktreePath != "" {
 			add(rec.WorktreePath)
@@ -629,18 +640,12 @@ func (s *Service) openCodeCandidateDirs(directory string) []string {
 			add(rec.ProjectDir)
 		}
 	}
+	for _, sid := range s.busySessionIDs() {
+		addRec(s.store.Meta(sid))
+	}
 	if normFilter == "" {
 		for _, info := range s.store.List("") {
-			rec, ok := s.store.Meta(info.ID)
-			if !ok || rec.Runtime != "opencode" {
-				continue
-			}
-			if rec.WorktreePath != "" {
-				add(rec.WorktreePath)
-			}
-			if rec.ProjectDir != "" {
-				add(rec.ProjectDir)
-			}
+			addRec(s.store.Meta(info.ID))
 		}
 	}
 	return out
@@ -695,6 +700,19 @@ func (s *Service) listUnifiedPermissions(ctx context.Context, directory string) 
 			}
 		}
 	}
+	s.mu.Lock()
+	for hoxiID, ap := range s.procs {
+		if ap == nil {
+			continue
+		}
+		ap.openCodeChildren.Range(func(key, _ interface{}) bool {
+			if childID, ok := key.(string); ok && childID != "" {
+				engineToHoxi[childID] = hoxiID
+			}
+			return true
+		})
+	}
+	s.mu.Unlock()
 	out := make([]map[string]interface{}, 0)
 	seenIDs := make(map[string]bool)
 	for _, dir := range s.openCodeCandidateDirs(directory) {
@@ -712,6 +730,16 @@ func (s *Service) listUnifiedPermissions(ctx context.Context, directory string) 
 				if sid, ok := item["sessionID"].(string); ok {
 					if hoxiID := engineToHoxi[sid]; hoxiID != "" {
 						item["sessionID"] = hoxiID
+					}
+				}
+				if dir != "" {
+					meta, _ := item["metadata"].(map[string]interface{})
+					if meta == nil {
+						meta = make(map[string]interface{})
+						item["metadata"] = meta
+					}
+					if firstString(meta["directory"], meta["cwd"]) == "" {
+						meta["directory"] = dir
 					}
 				}
 				if s.audit != nil {

@@ -141,4 +141,48 @@ describe("Cross-project sidebar views", () => {
       },
     );
   });
+
+  it("deduplicates cross-project sessions, excludes running sessions from paused, and includes stalled sessions", () => {
+    withWorkspace(
+      {
+        rootDir: "/repo-a",
+        bootstrappingSessions: false,
+        sessions: [
+          session("ses_dup", 500),
+          session("ses_running_stale_interrupted", 400),
+          session("ses_stalled", 300),
+        ],
+        statusBySession: {
+          ses_running_stale_interrupted: { type: "busy" },
+          ses_stalled: { type: "busy" },
+        },
+        interruptedBySession: {
+          ses_running_stale_interrupted: "paused",
+        },
+        stalledSinceBySession: {
+          ses_stalled: 12345,
+        },
+      },
+      () => {
+        const items = collectCrossProjectSessions({
+          allProjects: PROJECTS,
+          projectSessions: { "/repo-b": [session("ses_dup", 500)] },
+          filterQuery: "",
+        });
+        assertDeepEqual(
+          items.map((i) => i.session.id),
+          ["ses_dup", "ses_running_stale_interrupted", "ses_stalled"],
+        );
+        const sections = partitionAttentionSessions(items, new Set());
+        assertDeepEqual(
+          sections.map((s) => s.id),
+          ["paused"],
+        );
+        assertDeepEqual(
+          sections[0].items.map((i) => i.session.id),
+          ["ses_stalled"],
+        );
+      },
+    );
+  });
 });

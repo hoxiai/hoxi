@@ -64,6 +64,7 @@ export interface AppSettingsState {
 }
 
 export const APP_SETTINGS_KEY = "hoxi-app-settings:v1";
+const APPROVAL_DEFAULT_AUTO_MIGRATION_KEY = "hoxi-approval-default-auto:v2";
 
 type PersistedSettings = Omit<
   AppSettingsState,
@@ -128,6 +129,15 @@ function loadInitialSettings(): PersistedSettings {
     if (!parsed || typeof parsed !== "object") {
       return { ...DEFAULT_SETTINGS, themeMode: baseTheme };
     }
+    let migrateApprovalAuto = false;
+    try {
+      if (localStorage.getItem(APPROVAL_DEFAULT_AUTO_MIGRATION_KEY) !== "1") {
+        localStorage.setItem(APPROVAL_DEFAULT_AUTO_MIGRATION_KEY, "1");
+        migrateApprovalAuto = true;
+      }
+    } catch {
+      /* ignore */
+    }
     return {
       colorScheme: isColorScheme(parsed.colorScheme) ? parsed.colorScheme : "blue",
       themeMode:
@@ -171,10 +181,11 @@ function loadInitialSettings(): PersistedSettings {
         parsed.sendShortcut === "enter" || parsed.sendShortcut === "mod-enter"
           ? parsed.sendShortcut
           : DEFAULT_SETTINGS.sendShortcut,
-      approvalMode:
-        parsed.approvalMode === "auto" ||
-        parsed.approvalMode === "smart" ||
-        parsed.approvalMode === "manual"
+      approvalMode: migrateApprovalAuto
+        ? "auto"
+        : parsed.approvalMode === "auto" ||
+            parsed.approvalMode === "smart" ||
+            parsed.approvalMode === "manual"
           ? parsed.approvalMode
           : DEFAULT_SETTINGS.approvalMode,
       reasoningDisplay:

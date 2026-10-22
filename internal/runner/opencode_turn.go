@@ -428,11 +428,15 @@ func (s *Service) rejectOpenCodeSessionPermissions(ctx context.Context, rec Sess
 	if err != nil || status != http.StatusOK || json.Unmarshal(raw, &perms) != nil {
 		return
 	}
+	s.mu.Lock()
+	ap := s.procs[rec.ID]
+	s.mu.Unlock()
 	replyBody := []byte(`{"reply":"reject","message":"the session was stopped"}`)
 	for _, item := range perms {
 		sid, _ := item["sessionID"].(string)
 		pid, _ := item["id"].(string)
-		if pid == "" || (sid != rec.ExternalID && sid != rec.ID) {
+		isChild := ap != nil && ap.isOpenCodeChild(sid)
+		if pid == "" || (sid != rec.ExternalID && sid != rec.ID && !isChild) {
 			continue
 		}
 		_, _, _ = s.openCodeRaw(ctx, http.MethodPost, "/permission/"+url.PathEscape(pid)+"/reply", directoryQuery(rec.WorktreePath, nil), replyBody)
@@ -542,11 +546,23 @@ func (s *Service) relayOpenCodeEventWithFiles(rec SessionRecord, raw []byte, fil
 		return
 	}
 	s.noteOpenCodeActivity(rec.ID, evt)
-	if evt.Type == "permission.asked" && s.audit != nil {
-		// Capture the request as soon as the engine announces it, so a reply
-		// that beats the 4s listPermissions poll is still audited with its
-		// session, command and risk instead of a bare request ID.
-		s.audit.rememberOpenCodePerm(evt.Properties, rec.WorktreePath)
+	if evt.Type == "permission.asked" {
+		if rec.WorktreePath != "" && evt.Properties != nil {
+			meta, _ := evt.Properties["metadata"].(map[string]interface{})
+			if meta == nil {
+				meta = make(map[string]interface{})
+				evt.Properties["metadata"] = meta
+			}
+			if firstString(meta["directory"], meta["cwd"]) == "" {
+				meta["directory"] = rec.WorktreePath
+			}
+		}
+		if s.audit != nil {
+			// Capture the request as soon as the engine announces it, so a reply
+			// that beats the 4s listPermissions poll is still audited with its
+			// session, command and risk instead of a bare request ID.
+			s.audit.rememberOpenCodePerm(evt.Properties, rec.WorktreePath)
+		}
 	}
 	if evt.Type == "session.status" || evt.Type == "session.idle" {
 		if evt.Type == "session.idle" || isOpenCodeIdleStatus(evt.Properties["status"]) {

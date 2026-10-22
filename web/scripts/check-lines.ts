@@ -4,10 +4,13 @@ import path from "node:path";
 
 const MAX_LINES = 800;
 
-// Static SVG icon lookup tables explicitly exempted by AGENTS.md Rule #1
+// Static SVG icon lookup tables and generated l10n tables explicitly exempted by AGENTS.md Rule #1
 const EXEMPT_SUFFIXES = [
   "web/src/components/icons/file-icons/types.ts",
   "web/src/components/icons/file-icons/icon-maps.ts",
+  "client/lib/l10n/gen/app_localizations.dart",
+  "client/lib/l10n/gen/app_localizations_en.dart",
+  "client/lib/l10n/gen/app_localizations_zh.dart",
 ];
 
 // Read-only services/ calls permitted directly in components/ (all writes must go through store/).

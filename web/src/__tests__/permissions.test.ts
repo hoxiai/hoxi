@@ -164,6 +164,13 @@ describe("permission command chains", () => {
           externalDirectory: true,
         },
       },
+      { permission: "external_directory", patterns: ["/Users/hugh/.ssh"] },
+      { permission: "external_directory", patterns: ["/etc"] },
+      { permission: "external_directory", patterns: ["/Users/hugh/Library/LaunchAgents/*"] },
+      { permission: "external_directory", patterns: ["/Users/hugh/.config/gh/hosts.yml"] },
+      { permission: "external_directory", patterns: ["/Users/hugh/code/hoxi/apay/.env.production"] },
+      { permission: "edit", patterns: ["/Users/hugh/.ssh/authorized_keys"] },
+      { permission: "edit", patterns: ["/repo/.hoxi/worktrees/ses_123/.git/config"] },
     ]) {
       assertEqual(isDestructivePermissionRequest(req), true);
       for (const mode of ["auto", "smart", "manual"] as const) {
@@ -172,18 +179,25 @@ describe("permission command chains", () => {
     }
 
     // 5. Routine cross-directory access (sibling workspace folders, SDK
-    // caches) must not re-prompt in auto mode; OpenCode raises one
-    // external_directory request per read/write outside the session dir.
+    // caches) and worktree files must not re-prompt in auto/smart mode.
     for (const path of [
       "/Users/hugh/code/hoxi/apay/app/themes/ainode/*",
       "/Users/hugh/fvm/versions/3.44.9/*",
       "/Users/hugh/code/kuaiqin/shoply/admin/src/**",
+      "/Users/hugh/code/hoxi/apay/src/truncate.ts",
+      "/Users/hugh/.hoxi/skills/shoply-ops/*",
     ]) {
       const req = { permission: "external_directory", patterns: [path] };
       assertEqual(isDestructivePermissionRequest(req), false, path);
+      assertEqual(decidePermission(req), "allow", path);
       assertEqual(shouldAutoApprovePermission(req, "auto"), true, path);
+      assertEqual(shouldAutoApprovePermission(req, "smart"), true, path);
       assertEqual(shouldAutoApprovePermission(req, "manual"), false, path);
     }
+    const wtEdit = { permission: "edit", patterns: ["/repo/.hoxi/worktrees/ses_123/src/shutdown.ts"] };
+    assertEqual(isDestructivePermissionRequest(wtEdit), false);
+    assertEqual(shouldAutoApprovePermission(wtEdit, "auto"), true);
+    assertEqual(shouldAutoApprovePermission(wtEdit, "smart"), true);
   });
 });
 

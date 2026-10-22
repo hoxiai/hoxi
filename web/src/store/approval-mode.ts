@@ -74,6 +74,15 @@ export function shouldAutoApprovePermission(
 
   if (mode === "smart") {
     if (SMART_AUTO_PERMISSIONS.has(perm)) return true;
+    if (perm === "tool") {
+      if (req?.metadata?.externalDirectory === true) return true;
+      const toolName = String(req?.metadata?.tool || req?.patterns?.[0] || "")
+        .trim()
+        .toLowerCase();
+      if (READ_PERMISSIONS.has(toolName) || SMART_AUTO_PERMISSIONS.has(toolName)) {
+        return true;
+      }
+    }
     if (perm === "bash" || perm === "shell") {
       return isSafeCommandPermissionRequest(req);
     }
@@ -136,7 +145,7 @@ export function handleIncomingPermissionRequest(req: PermissionRequest): void {
   if (inFlightAutoApprovals.has(req.id)) return;
   inFlightAutoApprovals.add(req.id);
 
-  const dir = sessionDirectory(req.sessionID);
+  const dir = resolvePermissionDirectory(req);
   void hoxiAPI
     .replyPermission(req.id, "once", dir)
     .then(() => markPermissionResolved(req.id))
@@ -213,8 +222,6 @@ function permissionSyncScopes(primary?: string): string[] {
 }
 
 function resolvePermissionDirectory(req: PermissionRequest): string | undefined {
-  const sessionDir = normalizeFolderPath(sessionDirectory(req.sessionID));
-  if (sessionDir) return sessionDir;
   const metaDir =
     typeof req.metadata?.directory === "string"
       ? req.metadata.directory
@@ -223,6 +230,8 @@ function resolvePermissionDirectory(req: PermissionRequest): string | undefined 
         : undefined;
   const cleanMeta = normalizeFolderPath(metaDir);
   if (cleanMeta) return cleanMeta;
+  const sessionDir = normalizeFolderPath(sessionDirectory(req.sessionID));
+  if (sessionDir) return sessionDir;
   const indexed = workspace.sessionIndex[req.sessionID];
   if (indexed) {
     if (indexed.projectID && workspace.activeProjectID && indexed.projectID !== workspace.activeProjectID) {
@@ -287,7 +296,7 @@ export async function replyPermissionRequest(
   mode: PermissionReplyMode,
   options: { rules?: Record<string, "allow" | "deny">; note?: string } = {}
 ): Promise<void> {
-  const dir = sessionDirectory(req.sessionID);
+  const dir = resolvePermissionDirectory(req);
   const runner = isRunnerPermissionID(req.id);
   const rules = Object.entries(options.rules ?? {});
   if (!runner && rules.length > 0) {

@@ -3,6 +3,7 @@ package runner
 import (
 	"encoding/json"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -33,7 +34,11 @@ func externalDirectoryTargets(item map[string]interface{}) []string {
 			out = append(out, strings.TrimSpace(s))
 		}
 	}
-	for _, raw := range []interface{}{item["patterns"], item["pattern"], meta["filepath"], meta["filePath"], meta["path"], meta["target"], meta["directories"]} {
+	for _, raw := range []interface{}{
+		item["patterns"], item["pattern"], item["always"],
+		meta["filepath"], meta["filePath"], meta["path"], meta["target"],
+		meta["parentDir"], meta["dir"], meta["directories"],
+	} {
 		switch v := raw.(type) {
 		case string:
 			add(v)
@@ -62,26 +67,36 @@ var sensitiveExternalBasenames = map[string]bool{
 	".zshrc": true, ".zshenv": true, ".zprofile": true, ".zlogin": true,
 	".bashrc": true, ".bash_profile": true, ".bash_login": true, ".profile": true,
 	".gitconfig": true, ".git-credentials": true, ".netrc": true, ".npmrc": true,
-	".curlrc": true, ".wgetrc": true, ".envrc": true, "authorized_keys": true,
+	".pypirc": true, ".curlrc": true, ".wgetrc": true, ".envrc": true, "authorized_keys": true,
+	"id_rsa": true, "id_ed25519": true, "id_ecdsa": true, "id_dsa": true,
 }
+
+var sensitiveEnvBasenameRe = regexp.MustCompile(`(?i)^\.en(?:v(?:\.(?:local|prod(?:uction)?|dev(?:elopment)?|stag(?:e|ing)|test(?:ing)?|ci|preview|secret\w*|key\w*|private\w*|bak|backup)(?:\.local)?)?|\?|\*)$`)
 
 var sensitiveExternalFragments = []string{
 	"/.config/opencode/",
 	"/.config/hoxi/",
 	"/.config/claude/",
+	"/.config/gh/",
+	"/.config/gcloud/",
 	"/.ssh/",
 	"/.aws/",
 	"/.gnupg/",
 	"/.kube/",
+	"/.docker/",
+	"/.azure/",
 	"/library/keychains/",
+	"/library/launchagents/",
+	"/library/launchdaemons/",
+	"/library/startupitems/",
 }
 
 var sensitiveExternalPrefixes = []string{
 	"/etc/",
 	"/private/etc/",
-	"/library/launchagents/",
-	"/library/launchdaemons/",
-	"/library/startupitems/",
+	"/root/",
+	"/var/root/",
+	"/private/var/root/",
 }
 
 func isSensitiveExternalPath(rawPath string) bool {
@@ -98,23 +113,27 @@ func isSensitiveExternalPath(rawPath string) bool {
 		if isProtectedRelPath(cand) {
 			return true
 		}
-		slash := strings.ToLower(filepath.ToSlash(cand))
+		slash := strings.TrimRight(strings.ToLower(filepath.ToSlash(cand)), "/")
+		if slash == "" {
+			slash = "/"
+		}
+		slashDir := slash + "/"
+		if slash == "/" {
+			slashDir = "/"
+		}
 		base := slash[strings.LastIndex(slash, "/")+1:]
-		if sensitiveExternalBasenames[base] {
+		if sensitiveExternalBasenames[base] || sensitiveEnvBasenameRe.MatchString(base) {
 			return true
 		}
 		for _, prefix := range sensitiveExternalPrefixes {
-			if strings.HasPrefix(slash, prefix) {
+			if strings.HasPrefix(slashDir, prefix) {
 				return true
 			}
 		}
 		for _, fragment := range sensitiveExternalFragments {
-			if strings.Contains(slash, fragment) {
+			if strings.Contains(slashDir, fragment) {
 				return true
 			}
-		}
-		if isDestructiveCommand(cand) {
-			return true
 		}
 	}
 	return false

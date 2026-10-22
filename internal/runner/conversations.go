@@ -83,8 +83,9 @@ func (s *Service) listConversations(ctx context.Context, projectID, directory st
 		}
 		for _, item := range items {
 			var info struct {
-				ID   string `json:"id"`
-				Time struct {
+				ID        string `json:"id"`
+				Directory string `json:"directory"`
+				Time      struct {
 					Updated int64 `json:"updated"`
 				} `json:"time"`
 				Metadata map[string]interface{} `json:"metadata"`
@@ -93,11 +94,28 @@ func (s *Service) listConversations(ctx context.Context, projectID, directory st
 				s.IsManagedOpenCodeSession(info.ID) || info.Metadata["hoxiConversation"] != nil {
 				continue
 			}
-			seenEngine[info.ID] = true
 			entryProjectID := projectID
 			if entryProjectID == "" {
 				entryProjectID, _ = s.projectIDForDirectory(engineDir)
 			}
+			itemProjectID := ""
+			if itemDir := strings.TrimSpace(info.Directory); itemDir != "" {
+				itemProjectID, _ = s.projectIDForDirectory(itemDir)
+				// OpenCode may return sessions from nested directories that share
+				// its git workspace. Filter by the session's own directory instead
+				// of trusting the query root.
+				if entryProjectID != "" && itemProjectID != "" && itemProjectID != entryProjectID {
+					continue
+				}
+				if entryProjectID != "" && itemProjectID == "" &&
+					normalizeComparePath(itemDir) != normalizeComparePath(engineDir) {
+					continue
+				}
+			}
+			if entryProjectID == "" {
+				entryProjectID = itemProjectID
+			}
+			seenEngine[info.ID] = true
 			entries = append(entries, entry{info.Time.Updated, withProjectID(item, entryProjectID)})
 		}
 	}

@@ -11,6 +11,7 @@ import {
 } from "../../store/workspace";
 import type { ProjectNavEntry } from "./left-nav-helpers";
 import { compareSessionRunning } from "./session-history";
+import { matchesProjectSearch, matchesSessionSearch } from "./session-search";
 
 export interface CrossProjectSession {
   session: SessionInfo;
@@ -37,9 +38,7 @@ function isRunning(sessionID: string): boolean {
 
 function matchesQuery(item: CrossProjectSession, query: string): boolean {
   if (!query) return true;
-  const title = (item.session.title || "").toLowerCase();
-  const slug = (item.session.slug || "").toLowerCase();
-  return title.includes(query) || slug.includes(query) || item.proj.name.toLowerCase().includes(query);
+  return matchesSessionSearch(item.session, query) || matchesProjectSearch(item.proj, query);
 }
 
 /** Active root sessions live in `workspace.sessions`; other projects use the cache. */
@@ -57,10 +56,12 @@ function sessionsForProject(
 export function collectCrossProjectSessions(source: CrossProjectSource): CrossProjectSession[] {
   const query = source.filterQuery.trim().toLowerCase();
   const activeRoot = normalizeFolderPath(workspace.rootDir);
+  const seen = new Set<string>();
   const out: CrossProjectSession[] = [];
   for (const proj of source.allProjects) {
     for (const session of sessionsForProject(source, proj, activeRoot)) {
-      if (session.parentID || isSessionArchived(session)) continue;
+      if (!session?.id || seen.has(session.id) || session.parentID || isSessionArchived(session)) continue;
+      seen.add(session.id);
       const item = { session, proj };
       if (!matchesQuery(item, query)) continue;
       out.push(item);
@@ -108,7 +109,9 @@ export function partitionAttentionSessions(
     const id = item.session.id;
     if (pendingSessions.has(id)) buckets.approvals.push(item);
     else if (workspace.unreadCompletedBySession[id]) buckets.completed.push(item);
-    else if (workspace.interruptedBySession[id]) buckets.paused.push(item);
+    else if ((!isRunning(id) && workspace.interruptedBySession[id]) || workspace.stalledSinceBySession[id]) {
+      buckets.paused.push(item);
+    }
   }
   for (const id of ATTENTION_ORDER) {
     buckets[id].sort(

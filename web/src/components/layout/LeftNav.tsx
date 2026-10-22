@@ -8,6 +8,7 @@ import {
   discardSession,
   indexSessions,
   isInvalidProjectPath,
+  isSessionDeleted,
   loadProjects,
   startNewThreadDraft,
   normalizeFolderPath,
@@ -147,8 +148,11 @@ export default function LeftNav() {
         await bootstrapProjectSessions(clean);
         setProjectSessions((prev) => ({ ...prev, [clean]: workspace.sessions.slice() }));
       } else {
-        const list = await hoxiAPI.listSessions(clean);
-        const sessions = Array.isArray(list) ? list : [];
+        const proj = allProjects().find((p) => normalizeFolderPath(p.path) === clean);
+        const list = await hoxiAPI.listSessions(clean, proj?.workspaceId);
+        const sessions = (Array.isArray(list) ? list : []).filter(
+          (s) => !isSessionDeleted(s.id) && (!proj?.workspaceId || !s.projectID || s.projectID === proj.workspaceId)
+        );
         // Other projects' sessions must be indexed too, so their busy badges and
         // approvals stay addressable after the user switches away.
         indexSessions(sessions.map((s) => (s.directory ? s : { ...s, directory: clean })));
@@ -183,18 +187,24 @@ export default function LeftNav() {
       if (activeRoot && !isInvalidProjectPath(activeRoot)) {
         tasks.push(bootstrapProjectSessions(activeRoot, false));
       }
-      const otherPaths = new Set<string>();
+      const otherPaths = new Map<string, string | undefined>();
+      const crossProjectMode =
+        workspace.sidebarProjectMode === "recent" ||
+        workspace.sidebarProjectMode === "attention" ||
+        workspace.sidebarProjectMode === "running";
       for (const proj of allProjects()) {
         const clean = normalizeFolderPath(proj.path);
         if (!clean || clean === activeRoot || isInvalidProjectPath(clean)) continue;
-        if (projectSessions()[clean] !== undefined || expandedProjects().has(clean)) {
-          otherPaths.add(clean);
+        if (projectSessions()[clean] !== undefined || expandedProjects().has(clean) || crossProjectMode) {
+          otherPaths.set(clean, proj.workspaceId);
         }
       }
-      for (const clean of otherPaths) {
+      for (const [clean, projID] of otherPaths.entries()) {
         tasks.push(
-          hoxiAPI.listSessions(clean).then((list) => {
-            const sessions = Array.isArray(list) ? list : [];
+          hoxiAPI.listSessions(clean, projID).then((list) => {
+            const sessions = (Array.isArray(list) ? list : []).filter(
+              (s) => !isSessionDeleted(s.id) && (!projID || !s.projectID || s.projectID === projID)
+            );
             indexSessions(sessions.map((s) => (s.directory ? s : { ...s, directory: clean })));
             setProjectSessions((prev) => ({ ...prev, [clean]: sessions }));
           }).catch((err) => {

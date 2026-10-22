@@ -203,7 +203,7 @@ func (s *Service) inspectHookToolRisk(sessionID, tool string, args map[string]in
 		if isProtectedRelPath(filepathOut) || (rawPath != "" && isProtectedRelPath(rawPath)) {
 			destructive = true
 		}
-		if isDestructiveCommand(filepathOut) || (rawPath != "" && isDestructiveCommand(rawPath)) {
+		if isSensitiveExternalPath(filepathOut) || (rawPath != "" && isSensitiveExternalPath(rawPath)) {
 			destructive = true
 		}
 		if worktree != "" && resolved != "" {
@@ -310,9 +310,36 @@ var protectedWorktreeDirs = map[string]bool{
 	".envrc":    true,
 }
 
+func stripWorktreePrefix(slash string) string {
+	const marker = "/.hoxi/worktrees/"
+	if idx := strings.LastIndex(slash, marker); idx != -1 {
+		rest := slash[idx+len(marker):]
+		if nextSlash := strings.IndexByte(rest, '/'); nextSlash != -1 {
+			return rest[nextSlash+1:]
+		}
+		return ""
+	}
+	const relMarker = ".hoxi/worktrees/"
+	if strings.HasPrefix(slash, relMarker) {
+		rest := slash[len(relMarker):]
+		if nextSlash := strings.IndexByte(rest, '/'); nextSlash != -1 {
+			return rest[nextSlash+1:]
+		}
+		return ""
+	}
+	return slash
+}
+
 func isProtectedRelPath(rel string) bool {
-	slash := strings.ToLower(filepath.ToSlash(filepath.Clean(rel)))
+	rawSlash := strings.ToLower(filepath.ToSlash(filepath.Clean(rel)))
+	slash := stripWorktreePrefix(rawSlash)
 	if slash == "." || slash == "" {
+		return false
+	}
+	if strings.Contains(slash, "/.hoxi/skills/") ||
+		strings.Contains(slash, "/.hoxi/attachments/") ||
+		strings.HasPrefix(slash, ".hoxi/skills/") ||
+		strings.HasPrefix(slash, ".hoxi/attachments/") {
 		return false
 	}
 	if slash == ".vscode/settings.json" || strings.HasSuffix(slash, "/.vscode/settings.json") {
