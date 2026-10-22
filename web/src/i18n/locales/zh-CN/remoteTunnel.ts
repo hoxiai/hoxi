@@ -1,5 +1,6 @@
 // web/src/i18n/locales/zh-CN/remoteTunnel.ts
 export const remoteTunnel = {
+  tabLabel: "GoPanel",
   title: "经 GoPanel 远程控制",
   tip: "本机主动外连公网 GoPanel，手机 Hoxi App 在任何网络下都能访问这台电脑；本机不开放端口，远程请求只能访问会话、审批、工作树审查与附件",
   stateDisabled: "未配对",
@@ -15,7 +16,7 @@ export const remoteTunnel = {
   requestAction: "一键授权",
   requesting: "正在发起",
   waitingTitle: "等待面板确认",
-  waitingHint: "请在 GoPanel 后台：节点 → 隧道设置，点击允许",
+  waitingHint: "请在打开的 GoPanel 页面「待处理配对请求」中点击允许",
   userCodeLabel: "授权码",
   expiresIn: "剩余 {time}",
   cancelAction: "取消",

@@ -637,6 +637,11 @@ func (g *approvalGate) listGrants() []ApprovalGrant {
 			out = append(out, gr)
 		}
 	}
+	for _, classes := range g.classGrants {
+		for _, gr := range classes {
+			out = append(out, gr)
+		}
+	}
 	return out
 }
 
@@ -656,6 +661,20 @@ func (g *approvalGate) revokeGrants(id, sessionID string, all bool) int {
 		}
 		if len(cmds) == 0 {
 			delete(g.always, sid)
+		}
+	}
+	for sid, classes := range g.classGrants {
+		if sessionID != "" && sid != sessionID {
+			continue
+		}
+		for k, gr := range classes {
+			if all || (sessionID != "" && id == "") || (id != "" && gr.ID == id) {
+				delete(classes, k)
+				revoked++
+			}
+		}
+		if len(classes) == 0 {
+			delete(g.classGrants, sid)
 		}
 	}
 	for sid, tools := range g.toolAlways {

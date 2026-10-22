@@ -76,8 +76,15 @@ func (g *Service) PermissionRules() map[string]interface{} {
 // EnforceAskPermissions rewrites the OpenCode permission block after the
 // approval policy is saved, and reloads OpenCode once no session is busy.
 func (g *Service) EnforceAskPermissions() {
+	g.configPersistMu.Lock()
 	doc := g.loadHoxiConfigDoc()
-	if normalizeApprovalPermissions(doc, approvalPolicyExists()) {
-		_ = g.persistHoxiConfigDoc(doc)
+	changed := normalizeApprovalPermissions(doc, approvalPolicyExists())
+	var err error
+	if changed {
+		err = g.persistHoxiConfigFiles(doc)
+	}
+	g.configPersistMu.Unlock()
+	if changed && err == nil {
+		g.reloadOpenCodeGlobalConfig()
 	}
 }

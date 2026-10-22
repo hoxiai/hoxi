@@ -78,6 +78,13 @@ export const approval = {
   doomLoopNotice:
     "{tool} was called repeatedly with identical input; it may be stuck. Continue?",
   switchToAutoApprove: "Switch to Auto Approve",
+  allowSessionClass: "Allow This Kind (Session)",
+  sessionClassScope: "Stop asking in this session for: {classes} (revocable under approval records)",
+  grantClassSeparator: ", ",
+  grantClassTempDelete: "deleting files in temp directories",
+  grantClassDirDelete: "deleting files in this session's directory",
+  grantClassGitDiscard: "discarding file changes in this session's directory",
+  grantKindClass: "kind",
   allowSessionCommand: "Always Allow Command (Session)",
   allowSessionToolCall: "Always Allow Exact Call (Session)",
   sessionGrantScopeCommand:
@@ -101,6 +108,7 @@ export const approval = {
   sourceDesktop: "Desktop",
   sourceTunnel: "Remote Tunnel",
   sourceSystem: "System",
+  sourceGrant: "Session kind grant",
   sourcePolicy: "Approval mode",
   decisionOnce: "Allow Once",
   decisionAlways: "Session Always",

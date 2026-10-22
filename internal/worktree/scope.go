@@ -103,6 +103,9 @@ func (m *worktreeManager) scoped(dir, sessionID string) *worktreeManager {
 			}
 		}
 		m.roots.Unlock()
+		if parent := sandboxParentRoot(dir); parent != "" {
+			return m.ForDirectory(parent)
+		}
 		return m.ForDirectory(dir)
 	}
 	if sessionID == "" || sessionID == "__root__" {

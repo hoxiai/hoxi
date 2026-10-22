@@ -1,5 +1,6 @@
 // web/src/i18n/locales/zh-CN/cloudflared.ts
 export const cloudflared = {
+  tabLabel: "Cloudflare",
   title: "Cloudflare Tunnel 中继",
   tip: "运行受监管的 Cloudflare Tunnel 连接器，让 Hoxi App 在其它网络中也能访问这台电脑。粘贴 Cloudflare Zero Trust 的连接器令牌，并把 tunnel 的公开主机名服务指向本机入口地址。Cloudflare 在边缘终结 TLS，因此只有在端到端加密落地后内容才真正私密",
   stateDisabled: "未启用",

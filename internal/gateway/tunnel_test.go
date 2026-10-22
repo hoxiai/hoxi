@@ -156,6 +156,7 @@ func TestTunnelPermissionReplyRejectsAlways(t *testing.T) {
 		`{"reply":"once"}`:                      true,
 		`{"reply":"reject","message":"reason"}`: true,
 		`{"reply":"always"}`:                    false,
+		`{"reply":"once","grantClass":true}`:    false,
 		`{}`:                                    false,
 		`{"reply":"once`:                        false,
 	} {

@@ -403,10 +403,16 @@ export const hoxiAPI = {
   listPermissions(directory?: string): Promise<PermissionRequest[]> {
     return requestJSON(withDir("/api/hoxi/permission", directory));
   },
-  replyPermission(requestID: string, reply: "once" | "always" | "reject", directory?: string, message?: string): Promise<void> {
+  replyPermission(
+    requestID: string,
+    reply: "once" | "always" | "reject",
+    directory?: string,
+    message?: string,
+    grantClass?: boolean
+  ): Promise<void> {
     return requestJSON(withDir(`/api/hoxi/permission/${encodeURIComponent(requestID)}/reply`, directory), {
       method: "POST",
-      body: JSON.stringify({ reply, ...(message ? { message } : {}) }),
+      body: JSON.stringify({ reply, ...(message ? { message } : {}), ...(grantClass ? { grantClass: true } : {}) }),
     });
   },
   async listApprovalGrants(params?: { sessionID?: string; directory?: string }): Promise<ApprovalGrant[]> {

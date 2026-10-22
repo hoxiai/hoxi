@@ -598,3 +598,67 @@ func normalizedPath(path string) string {
 	}
 	return filepath.Clean(path)
 }
+
+func TestDiffFileBlocksUntrackedEnvIgnoredUnchangedAndEscapingSymlinks(t *testing.T) {
+	t.Parallel()
+	repo := initTempGitRepo(t)
+	outside := t.TempDir()
+	mgr := NewManager(repo)
+
+	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte("ignored-secret.txt\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runGit(repo, "add", ".gitignore"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runGit(repo, "commit", "-m", "chore: ignore secret"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".env"), []byte("API_KEY=dotenv-secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "ignored-secret.txt"), []byte("ignored-secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repo, ".hoxi", "memory"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".hoxi", "memory", "project.md"), []byte("internal-memory\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	secretFile := filepath.Join(outside, "id_ed25519")
+	if err := os.WriteFile(secretFile, []byte("PRIVATE-KEY\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(secretFile, filepath.Join(repo, "leak.txt")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(repo, "escape-dir")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "new.txt"), []byte("safe-untracked\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, blocked := range []string{
+		".env",
+		"ignored-secret.txt",
+		".hoxi/memory/project.md",
+		"README.md",
+		"leak.txt",
+		"escape-dir/id_ed25519",
+	} {
+		if diff, err := mgr.DiffFile("__root__", blocked); err == nil {
+			t.Fatalf("DiffFile(%q) succeeded unexpectedly: %+v", blocked, diff)
+		}
+	}
+
+	diff, err := mgr.DiffFile("__root__", "new.txt")
+	if err != nil {
+		t.Fatalf("DiffFile(new.txt) failed: %v", err)
+	}
+	if diff.Status != "added" || !strings.Contains(diff.Patch, "+safe-untracked") {
+		t.Fatalf("unexpected DiffFile(new.txt): %+v", diff)
+	}
+}
+

@@ -88,6 +88,11 @@ type Manager struct {
 // ErrOffline is returned by Notify when no tunnel is connected.
 var ErrOffline = errors.New("remote tunnel is not connected")
 
+// errTunnelUnauthorized marks a permanent credential rejection: GoPanel no
+// longer accepts this desktop's tunnel token (revoked or node deleted). The
+// manager clears the local credential and stops retrying instead of looping.
+var errTunnelUnauthorized = errors.New("tunnel credential rejected by GoPanel")
+
 // Notify sends an attention notice to GoPanel for phone push. Notices are not
 // queued: one raised while offline is dropped, and the phone still sees the
 // pending item when it next opens the node.
@@ -245,6 +250,10 @@ func (m *Manager) run(ctx context.Context, cfg Config) {
 		if ctx.Err() != nil {
 			return
 		}
+		if errors.Is(err, errTunnelUnauthorized) {
+			m.forgetCredential()
+			return
+		}
 		if connected {
 			backoff = time.Second
 		}
@@ -275,6 +284,9 @@ func (m *Manager) connect(ctx context.Context, cfg Config) (bool, error) {
 	conn, response, err := m.opts.Dialer.DialContext(ctx, endpoint, header)
 	if err != nil {
 		if response != nil {
+			if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
+				return false, errTunnelUnauthorized
+			}
 			return false, fmt.Errorf("GoPanel rejected the tunnel (HTTP %d)", response.StatusCode)
 		}
 		return false, fmt.Errorf("connect GoPanel: %w", err)
@@ -383,14 +395,53 @@ func (m *Manager) exchangeAndConnect(ctx context.Context, controllerURL, code, n
 }
 
 // Unpair disconnects, cancels any in-flight one-click request and deletes the
-// local credential. The GoPanel node stays until an administrator deletes it
-// there.
+// local credential. It returns immediately; asking GoPanel to delete this
+// desktop's node is a best-effort background step so the UI never waits on the
+// network or on an unreachable panel.
 func (m *Manager) Unpair() error {
 	m.CancelPair()
 	m.Stop()
+	if cfg, err := m.store().Load(); err == nil {
+		go m.revokeOnController(cfg)
+	}
 	if err := m.store().Delete(); err != nil {
 		return err
 	}
 	m.setStatus(Status{State: StateDisabled})
 	return nil
+}
+
+// revokeOnController posts this desktop's credential to GoPanel's self-unpair
+// endpoint so no orphan node is left behind. It is best-effort: an offline
+// panel or an already-deleted node is ignored, because the local credential is
+// removed regardless.
+func (m *Manager) revokeOnController(cfg Config) {
+	if cfg.ControllerURL == "" || cfg.ClientID == "" || cfg.Token == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.ControllerURL+"/api/tunnel/unpair", nil)
+	if err != nil {
+		return
+	}
+	req.Header.Set("X-GoPanel-Tunnel-Client", cfg.ClientID)
+	req.Header.Set("X-GoPanel-Tunnel-Token", cfg.Token)
+	client := *m.opts.HTTPClient
+	client.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	response, err := client.Do(req)
+	if err != nil {
+		return
+	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 1<<20))
+	_ = response.Body.Close()
+}
+
+// forgetCredential drops a credential GoPanel no longer accepts so the desktop
+// stops retrying and the settings panel returns to "not paired".
+func (m *Manager) forgetCredential() {
+	_ = m.store().Delete()
+	m.setStatus(Status{State: StateDisabled})
 }

@@ -45,9 +45,8 @@ import { ChatComposerTab, GeneralAppearanceTab } from "./SettingsGeneralChatTabs
 import { SystemRuntimeSettingsTab } from "./SettingsSystemRuntimeTab";
 import { PrivacySettingsTab } from "./PrivacyControls";
 import { LocalRelaySettingsTab } from "./LocalRelayControls";
-import { RemoteTunnelControls } from "./RemoteTunnelControls";
 import { PairingQrPanel } from "./PairingQrPanel";
-import { CloudflaredControls } from "./CloudflaredControls";
+import { RemoteAccessTabs } from "./RemoteAccessTabs";
 import { SettingsExtensionsTab } from "./SettingsExtensionsTab";
 import DiagnosticsTab from "./DiagnosticsTab";
 import ErrorLogTab from "./ErrorLogTab";
@@ -548,8 +547,7 @@ export default function SettingsModal() {
                   <Show when={activeTab() === "remote"}>
                     <div class="hoxi-view-enter space-y-6">
                       <PairingQrPanel />
-                      <CloudflaredControls />
-                      <RemoteTunnelControls />
+                      <RemoteAccessTabs />
                     </div>
                   </Show>
                   <Show when={activeTab() === "relay"}>

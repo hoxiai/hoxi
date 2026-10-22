@@ -1,5 +1,6 @@
 // web/src/i18n/locales/en-US/remoteTunnel.ts
 export const remoteTunnel = {
+  tabLabel: "GoPanel",
   title: "Remote control via GoPanel",
   tip: "This Mac dials out to your public GoPanel, so the Hoxi mobile app can reach it from anywhere. No local port is opened, and remote requests can only reach sessions, approvals, worktree review and attachments",
   stateDisabled: "Not paired",
@@ -15,7 +16,7 @@ export const remoteTunnel = {
   requestAction: "Authorize",
   requesting: "Requesting",
   waitingTitle: "Waiting for approval",
-  waitingHint: "In the GoPanel console, open Nodes → Tunnel settings and click Allow",
+  waitingHint: "In the opened GoPanel page, open Pending pair requests and click Allow",
   userCodeLabel: "Authorization code",
   expiresIn: "Expires in {time}",
   cancelAction: "Cancel",

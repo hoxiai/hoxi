@@ -13,6 +13,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/hoxiai/hoxi/internal/sandbox"
 )
 
 // The /api/hoxi/sessions collection: Hoxi conversations plus the OpenCode
@@ -284,6 +286,9 @@ func (s *Service) CreateConversation(ctx context.Context, body CreateSessionRequ
 	if err != nil {
 		return SessionInfo{}, http.StatusBadRequest, err
 	}
+	if body.CommandSandbox && !sandbox.Available() {
+		return SessionInfo{}, http.StatusBadRequest, errors.New(sandbox.UnavailableReason())
+	}
 	projectID, err := s.ensureProjectID(projDir)
 	if err != nil {
 		return SessionInfo{}, http.StatusBadRequest, err
@@ -292,18 +297,19 @@ func (s *Service) CreateConversation(ctx context.Context, body CreateSessionRequ
 	now := time.Now().UnixMilli()
 	title := strings.TrimSpace(body.Title)
 	rec := SessionRecord{
-		ID:          sessionID,
-		ProjectID:   projectID,
-		Runtime:     "opencode",
-		ProjectDir:  projDir,
-		SandboxMode: sandboxMode,
-		ModelID:     strings.TrimSpace(body.ModelID),
-		ProviderID:  strings.TrimSpace(body.ProviderID),
-		Mode:        firstNonEmptyStr(body.Mode, "build"),
-		Title:       title,
-		CreatedAt:   now,
-		UpdatedAt:   now,
-		Turns:       []MessageTurn{},
+		ID:             sessionID,
+		ProjectID:      projectID,
+		Runtime:        "opencode",
+		ProjectDir:     projDir,
+		SandboxMode:    sandboxMode,
+		CommandSandbox: body.CommandSandbox,
+		ModelID:        strings.TrimSpace(body.ModelID),
+		ProviderID:     strings.TrimSpace(body.ProviderID),
+		Mode:           firstNonEmptyStr(body.Mode, "build"),
+		Title:          title,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+		Turns:          []MessageTurn{},
 	}
 	if err := s.provisionSessionDirectory(&rec); err != nil {
 		return SessionInfo{}, http.StatusBadRequest, err
@@ -334,6 +340,7 @@ func (s *Service) CreateConversation(ctx context.Context, body CreateSessionRequ
 	if err := s.store.Put(rec); err != nil {
 		return SessionInfo{}, http.StatusInternalServerError, err
 	}
+	_ = syncOpenCodeCommandSandbox(rec)
 	s.managedOpenCode.Store(rec.ExternalID, true)
 	info := rec.ToSessionInfo()
 	s.broadcast(sessionID, SSEEvent{

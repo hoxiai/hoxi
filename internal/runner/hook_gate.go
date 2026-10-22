@@ -1,7 +1,6 @@
 package runner
 
 import (
-	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -63,25 +62,29 @@ type pendingApproval struct {
 }
 
 type approvalGate struct {
-	mu          sync.Mutex
-	baseURL     string
-	autoInstall bool
-	tokens      map[[32]byte]hookCredential
-	pending     map[string]*pendingApproval
-	byCallKey   map[string]*pendingApproval
-	always      map[string]map[string]ApprovalGrant
-	toolAlways  map[string]map[string]ApprovalGrant
-	waitLimit   time.Duration
+	mu           sync.Mutex
+	baseURL      string
+	autoInstall  bool
+	tokens       map[[32]byte]hookCredential
+	pending      map[string]*pendingApproval
+	byCallKey    map[string]*pendingApproval
+	always       map[string]map[string]ApprovalGrant
+	toolAlways   map[string]map[string]ApprovalGrant
+	classGrants  map[string]map[string]ApprovalGrant // session -> recoverable class
+	openCodeAsks map[string]openCodeAsk              // OpenCode request ID -> request shown to the user
+	waitLimit    time.Duration
 }
 
 func newApprovalGate() *approvalGate {
 	return &approvalGate{
-		tokens:     make(map[[32]byte]hookCredential),
-		pending:    make(map[string]*pendingApproval),
-		byCallKey:  make(map[string]*pendingApproval),
-		always:     make(map[string]map[string]ApprovalGrant),
-		toolAlways: make(map[string]map[string]ApprovalGrant),
-		waitLimit:  agyhook.ClientTimeout - 5*time.Second,
+		tokens:       make(map[[32]byte]hookCredential),
+		pending:      make(map[string]*pendingApproval),
+		byCallKey:    make(map[string]*pendingApproval),
+		always:       make(map[string]map[string]ApprovalGrant),
+		toolAlways:   make(map[string]map[string]ApprovalGrant),
+		classGrants:  make(map[string]map[string]ApprovalGrant),
+		openCodeAsks: make(map[string]openCodeAsk),
+		waitLimit:    agyhook.ClientTimeout - 5*time.Second,
 	}
 }
 
@@ -309,6 +312,11 @@ func (s *Service) gateCommand(r *http.Request, cred hookCredential, rec SessionR
 		}
 		return true, ""
 	}
+	if s.classGrantApproves(item, cred.sessionID, rec.WorktreePath) {
+		item["id"] = runnerPermissionID + randomHex(12)
+		s.recordRunnerApprovalAudit(cred, item, "once", approvalReply{Reply: "once", Source: grantSourceSession})
+		return true, ""
+	}
 	return s.awaitApproval(r, cred, ask)
 }
 
@@ -334,6 +342,7 @@ func (s *Service) awaitApproval(r *http.Request, cred hookCredential, ask approv
 			"callID":    ask.callID,
 		},
 	}
+	annotateGrantClasses(req, s.sessionWorktree(cred.sessionID))
 	answer := s.awaitReply(r, cred, id, req)
 	switch answer.Reply {
 	case "always":
@@ -506,221 +515,7 @@ func (g *approvalGate) forgetSession(sessionID string) {
 	defer g.mu.Unlock()
 	delete(g.always, sessionID)
 	delete(g.toolAlways, sessionID)
-}
-
-func (s *Service) handlePermissionRoutes(w http.ResponseWriter, r *http.Request) {
-	sub := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/hoxi/runner/permission"), "/")
-	switch sub {
-	case "":
-		if r.Method != http.MethodGet {
-			writeJSONError(w, http.StatusMethodNotAllowed, "GET required")
-			return
-		}
-		writeJSON(w, http.StatusOK, s.listPendingApprovals(r.URL.Query().Get("directory")))
-		return
-	case "audit":
-		s.handleApprovalAudit(w, r)
-		return
-	case "grants":
-		s.handleApprovalGrants(w, r)
-		return
-	}
-	id, action, _ := strings.Cut(sub, "/")
-	if action != "reply" || r.Method != http.MethodPost {
-		writeJSONError(w, http.StatusNotFound, "unknown permission endpoint")
-		return
-	}
-	s.replyRunnerPermission(w, r, id)
-}
-
-func (s *Service) handleUnifiedPermissionRoutes(w http.ResponseWriter, r *http.Request) {
-	sub := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/hoxi/permission"), "/")
-	switch sub {
-	case "":
-		if r.Method != http.MethodGet {
-			writeJSONError(w, http.StatusMethodNotAllowed, "GET required")
-			return
-		}
-		writeJSON(w, http.StatusOK, s.listUnifiedPermissions(r.Context(), r.URL.Query().Get("directory")))
-		return
-	case "audit":
-		s.handleApprovalAudit(w, r)
-		return
-	case "grants":
-		s.handleApprovalGrants(w, r)
-		return
-	case "policy":
-		s.handleApprovalPolicy(w, r)
-		return
-	}
-	id, action, _ := strings.Cut(sub, "/")
-	if action != "reply" || r.Method != http.MethodPost {
-		writeJSONError(w, http.StatusNotFound, "unknown permission endpoint")
-		return
-	}
-	if strings.HasPrefix(id, runnerPermissionID) {
-		s.replyRunnerPermission(w, r, id)
-		return
-	}
-	raw, err := io.ReadAll(io.LimitReader(r.Body, 64<<10))
-	if err != nil {
-		writeJSONError(w, http.StatusBadRequest, "invalid reply")
-		return
-	}
-	var parsedReply struct {
-		Reply   string `json:"reply"`
-		Message string `json:"message"`
-	}
-	if err := json.Unmarshal(raw, &parsedReply); err != nil ||
-		(parsedReply.Reply != "once" && parsedReply.Reply != "always" && parsedReply.Reply != "reject") {
-		writeJSONError(w, http.StatusBadRequest, "reply must be once, always or reject")
-		return
-	}
-	source := requestApprovalSource(r)
-	if source == "tunnel" && parsedReply.Reply == "always" {
-		writeJSONError(w, http.StatusForbidden, "always approval is not allowed over the remote tunnel")
-		return
-	}
-	dir := r.URL.Query().Get("directory")
-	status, respRaw, err := s.replyOpenCodePermission(r.Context(), id, dir, raw)
-	if err != nil {
-		writeJSONError(w, http.StatusBadGateway, "opencode service unavailable: "+err.Error())
-		return
-	}
-	if status >= 200 && status < 300 {
-		s.recordOpenCodeApprovalAudit(id, dir, parsedReply.Reply, parsedReply.Message, source)
-	}
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(status)
-	_, _ = w.Write(respRaw)
-}
-
-func (s *Service) replyRunnerPermission(w http.ResponseWriter, r *http.Request, id string) {
-	var body struct {
-		Reply   string `json:"reply"`
-		Message string `json:"message"`
-	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&body); err != nil {
-		writeJSONError(w, http.StatusBadRequest, "invalid reply")
-		return
-	}
-	if body.Reply != "once" && body.Reply != "always" && body.Reply != "reject" {
-		writeJSONError(w, http.StatusBadRequest, "reply must be once, always or reject")
-		return
-	}
-	source := requestApprovalSource(r)
-	if source == "tunnel" && body.Reply == "always" {
-		writeJSONError(w, http.StatusForbidden, "always approval is not allowed over the remote tunnel")
-		return
-	}
-	s.gate.mu.Lock()
-	pa := s.gate.pending[id]
-	s.gate.mu.Unlock()
-	if pa == nil {
-		writeJSONError(w, http.StatusNotFound, "permission request not found")
-		return
-	}
-	select {
-	case pa.reply <- approvalReply{Reply: body.Reply, Message: body.Message, Source: source}:
-		writeJSON(w, http.StatusOK, true)
-	default:
-		writeJSONError(w, http.StatusConflict, "permission request already answered")
-	}
-}
-
-func (s *Service) listUnifiedPermissions(ctx context.Context, directory string) []map[string]interface{} {
-	engineToHoxi := make(map[string]string)
-	for _, info := range s.store.List("") {
-		rec, ok := s.store.Meta(info.ID)
-		if !ok {
-			continue
-		}
-		if rec.ExternalID != "" {
-			engineToHoxi[rec.ExternalID] = rec.ID
-		}
-		for _, ocID := range rec.OpenCodeIDs {
-			if ocID != "" {
-				engineToHoxi[ocID] = rec.ID
-			}
-		}
-	}
-	s.mu.Lock()
-	for hoxiID, ap := range s.procs {
-		if ap == nil {
-			continue
-		}
-		ap.openCodeChildren.Range(func(key, _ interface{}) bool {
-			if childID, ok := key.(string); ok && childID != "" {
-				engineToHoxi[childID] = hoxiID
-			}
-			return true
-		})
-	}
-	s.mu.Unlock()
-	out := make([]map[string]interface{}, 0)
-	seenIDs := make(map[string]bool)
-	for _, dir := range s.openCodeCandidateDirs(directory) {
-		status, raw, err := s.openCodeRaw(ctx, http.MethodGet, "/permission", directoryQuery(dir, nil), nil)
-		var enginePerms []map[string]interface{}
-		if err == nil && status == http.StatusOK && json.Unmarshal(raw, &enginePerms) == nil {
-			for _, item := range enginePerms {
-				pid, _ := item["id"].(string)
-				if pid != "" {
-					if seenIDs[pid] {
-						continue
-					}
-					seenIDs[pid] = true
-				}
-				if sid, ok := item["sessionID"].(string); ok {
-					if hoxiID := engineToHoxi[sid]; hoxiID != "" {
-						item["sessionID"] = hoxiID
-					}
-				}
-				if dir != "" {
-					meta, _ := item["metadata"].(map[string]interface{})
-					if meta == nil {
-						meta = make(map[string]interface{})
-						item["metadata"] = meta
-					}
-					if firstString(meta["directory"], meta["cwd"]) == "" {
-						meta["directory"] = dir
-					}
-				}
-				sanitizeOpenCodePermissionItem(item)
-				if s.audit != nil {
-					s.audit.rememberOpenCodePerm(item, dir)
-				}
-				sessionID, _ := item["sessionID"].(string)
-				if s.claimOpenCodePermission(item, sessionID, dir, nil) {
-					continue
-				}
-				out = append(out, item)
-			}
-		}
-	}
-	out = append(out, s.listPendingApprovals(directory)...)
-	return out
-}
-
-func (s *Service) listPendingApprovals(directory string) []map[string]interface{} {
-	dir := normalizeComparePath(directory)
-	s.gate.mu.Lock()
-	all := make([]*pendingApproval, 0, len(s.gate.pending))
-	for _, p := range s.gate.pending {
-		all = append(all, p)
-	}
-	s.gate.mu.Unlock()
-	out := make([]map[string]interface{}, 0, len(all))
-	for _, p := range all {
-		if dir != "" {
-			rec, ok := s.store.Get(p.sid)
-			if !ok || (normalizeComparePath(rec.ProjectDir) != dir && normalizeComparePath(rec.WorktreePath) != dir) {
-				continue
-			}
-		}
-		out = append(out, p.req)
-	}
-	return out
+	delete(g.classGrants, sessionID)
 }
 
 func writeHookDecision(w http.ResponseWriter, decision, reason string) {

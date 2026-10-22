@@ -474,7 +474,7 @@ func isOpaqueShellCommand(command, worktree string) bool {
 			}
 			continue
 		}
-		if outsideCWD && !isRecoverableSegment(cmdWords, "") {
+		if outsideCWD && !isRecoverableSegment(cmdWords, "", map[string]bool{}) {
 			return true
 		}
 		if dataArgInterpreters[base] {

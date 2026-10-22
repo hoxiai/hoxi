@@ -67,6 +67,20 @@ func trustedRecoverableRequest(item map[string]interface{}, worktree string) boo
 	return true
 }
 
+// Recoverable work comes in classes. Full trust mode accepts every class;
+// a session grant ("此类都允许") only ever covers the grantable ones.
+const (
+	recoverClassTempDelete = "temp-delete" // named entries under /tmp or $TMPDIR
+	recoverClassDirDelete  = "dir-delete"  // non-protected paths in the session directory
+	recoverClassDirWipe    = "dir-wipe"    // a glob at the session directory root (`rm -rf *`)
+	recoverClassGitDiscard = "git-discard" // git checkout -- / checkout . / restore / clean
+	recoverClassGitReset   = "git-reset"   // git reset --hard moves the branch
+	recoverClassGitClean   = "git-clean"   // git clean deletes untracked (and with -x ignored) files
+	recoverClassChmod      = "chmod"
+)
+
+var sessionGrantableClasses = setOf(recoverClassTempDelete, recoverClassDirDelete, recoverClassGitDiscard)
+
 // isRecoverableWorktreeCommand accepts a command only when every segment is
 // either not destructive at all or one of the recoverable forms below. An
 // empty worktree means the session runs in the user's own checkout: then
@@ -74,8 +88,14 @@ func trustedRecoverableRequest(item map[string]interface{}, worktree string) boo
 // words (no expansion, escapes or glued quotes); after any `cd` the working
 // directory is unknown, so only absolute temp paths still qualify.
 func isRecoverableWorktreeCommand(command, worktree string) bool {
+	return recoverableCommandClasses(command, worktree, map[string]bool{})
+}
+
+// recoverableCommandClasses is isRecoverableWorktreeCommand that also records
+// the class of every destructive segment in classes.
+func recoverableCommandClasses(command, worktree string, classes map[string]bool) bool {
 	// A `# hoxi-stop:` marker line is a comment segment and passes as non-destructive.
-	if hasShellGrouping(command) {
+	if hasShellGrouping(command) || isOpaqueShellCommand(command, worktree) {
 		return false
 	}
 	segments := splitCommandChain(command)
@@ -106,7 +126,7 @@ func isRecoverableWorktreeCommand(command, worktree string) bool {
 		if strings.ContainsAny(seg, "$\\") || hasUnsafeShellSyntax(trustedGlobReplacer.Replace(seg)) {
 			return false
 		}
-		if !isRecoverableSegment(words, cwd) {
+		if !isRecoverableSegment(words, cwd, classes) {
 			return false
 		}
 	}
@@ -141,7 +161,7 @@ func hasShellGrouping(s string) bool {
 	return quote != 0
 }
 
-func isRecoverableSegment(words []string, worktree string) bool {
+func isRecoverableSegment(words []string, worktree string, classes map[string]bool) bool {
 	words, ok := stripNullRedirects(words)
 	if !ok || len(words) == 0 {
 		return false
@@ -156,7 +176,7 @@ func isRecoverableSegment(words []string, worktree string) bool {
 	args := words[1:]
 	switch name {
 	case "rm", "rmdir", "unlink":
-		return flaggedWorktreePaths(args, rmFlagRe, worktree)
+		return flaggedWorktreePaths(args, rmFlagRe, worktree, classes)
 	case "chmod":
 		i := 0
 		for i < len(args) && chmodFlagRe.MatchString(args[i]) {
@@ -165,14 +185,15 @@ func isRecoverableSegment(words []string, worktree string) bool {
 		if i >= len(args) || !chmodModeRe.MatchString(args[i]) {
 			return false
 		}
-		return allWorktreePaths(args[i+1:], worktree)
+		classes[recoverClassChmod] = true
+		return allWorktreePaths(args[i+1:], worktree, map[string]bool{})
 	case "git":
-		return worktree != "" && isRecoverableGitSegment(args, worktree)
+		return worktree != "" && isRecoverableGitSegment(args, worktree, classes)
 	}
 	return false
 }
 
-func flaggedWorktreePaths(args []string, flagRe *regexp.Regexp, worktree string) bool {
+func flaggedWorktreePaths(args []string, flagRe *regexp.Regexp, worktree string, classes map[string]bool) bool {
 	i := 0
 	for i < len(args) && args[i] != "--" && strings.HasPrefix(args[i], "-") {
 		if !flagRe.MatchString(args[i]) {
@@ -183,19 +204,45 @@ func flaggedWorktreePaths(args []string, flagRe *regexp.Regexp, worktree string)
 	if i < len(args) && args[i] == "--" {
 		i++
 	}
-	return allWorktreePaths(args[i:], worktree)
+	return allWorktreePaths(args[i:], worktree, classes)
 }
 
-func allWorktreePaths(paths []string, worktree string) bool {
+// allWorktreePaths accepts paths inside the session directory or under a
+// temp root and records the deletion class of each one.
+func allWorktreePaths(paths []string, worktree string, classes map[string]bool) bool {
 	if len(paths) == 0 {
 		return false
 	}
 	for _, p := range paths {
-		if !(worktree != "" && isWorktreePathArg(p, worktree)) && !isTempPathArg(p) {
+		switch {
+		case worktree != "" && isWorktreePathArg(p, worktree):
+			if isWorktreeRootGlob(p, worktree) {
+				classes[recoverClassDirWipe] = true
+			} else {
+				classes[recoverClassDirDelete] = true
+			}
+		case isTempPathArg(p):
+			classes[recoverClassTempDelete] = true
+		default:
 			return false
 		}
 	}
 	return true
+}
+
+// isWorktreeRootGlob reports a glob that lists the session directory root
+// itself (`*`, `./*`), which empties the whole checkout.
+func isWorktreeRootGlob(arg, worktree string) bool {
+	if !strings.ContainsAny(arg, "*?") {
+		return false
+	}
+	target := arg
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(worktree, target)
+	}
+	target = filepath.Clean(target)
+	dir := filepath.Dir(target[:strings.IndexAny(target, "*?")] + "x")
+	return samePath(dir, worktree) || filepath.Clean(dir) == filepath.Clean(worktree)
 }
 
 // trustedTempRoots are the system temp directories whose contents are
@@ -277,7 +324,7 @@ func isWorktreePathArg(arg, worktree string) bool {
 // isRecoverableGitSegment accepts only commands that discard work inside this
 // worktree. Branches, the stash and worktree lists are shared by every
 // session of the repository, so they keep asking.
-func isRecoverableGitSegment(args []string, worktree string) bool {
+func isRecoverableGitSegment(args []string, worktree string, classes map[string]bool) bool {
 	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
 		return false // global options such as -C can point at another repository
 	}
@@ -296,6 +343,7 @@ func isRecoverableGitSegment(args []string, worktree string) bool {
 				return false
 			}
 		}
+		classes[recoverClassGitReset] = true
 		return hard && refs <= 1
 	case "checkout":
 		dash := -1
@@ -306,13 +354,15 @@ func isRecoverableGitSegment(args []string, worktree string) bool {
 			}
 		}
 		if dash < 0 {
+			classes[recoverClassGitDiscard] = true
 			return len(rest) == 1 && rest[0] == "."
 		}
 		before := rest[:dash]
 		if len(before) > 1 || (len(before) == 1 && (!gitRefRe.MatchString(before[0]) || strings.HasPrefix(before[0], "-"))) {
 			return false
 		}
-		return allWorktreePaths(rest[dash+1:], worktree)
+		classes[recoverClassGitDiscard] = true
+		return allWorktreePaths(rest[dash+1:], worktree, map[string]bool{})
 	case "restore":
 		i := 0
 		for i < len(rest) && rest[i] != "--" && strings.HasPrefix(rest[i], "-") {
@@ -324,7 +374,8 @@ func isRecoverableGitSegment(args []string, worktree string) bool {
 		if i < len(rest) && rest[i] == "--" {
 			i++
 		}
-		return allWorktreePaths(rest[i:], worktree)
+		classes[recoverClassGitDiscard] = true
+		return allWorktreePaths(rest[i:], worktree, map[string]bool{})
 	case "clean":
 		i := 0
 		for i < len(rest) && rest[i] != "--" && strings.HasPrefix(rest[i], "-") {
@@ -336,7 +387,8 @@ func isRecoverableGitSegment(args []string, worktree string) bool {
 		if i < len(rest) && rest[i] == "--" {
 			i++
 		}
-		return i == len(rest) || allWorktreePaths(rest[i:], worktree)
+		classes[recoverClassGitClean] = true
+		return i == len(rest) || allWorktreePaths(rest[i:], worktree, map[string]bool{})
 	}
 	return false
 }

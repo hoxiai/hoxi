@@ -17,6 +17,8 @@ import type { PermissionRequest } from "../../services/sse-types";
 import {
   appSettings,
   isDestructivePermissionRequest,
+  grantableClasses,
+  grantClassLabel,
   isPermissionGoneError,
   isRunnerPermissionID,
   markPermissionResolved,
@@ -41,7 +43,7 @@ import {
  * and Reject-with-Feedback steering.
  */
 export default function ApprovalGateCard(props: { request: PermissionRequest }) {
-  const [busy, setBusy] = createSignal<null | "once" | "always" | "reject">(null);
+  const [busy, setBusy] = createSignal<null | "once" | "always" | "reject" | "class">(null);
   const [rejecting, setRejecting] = createSignal(false);
   const [feedback, setFeedback] = createSignal("");
   const [rulesExpanded, setRulesExpanded] = createSignal(false);
@@ -87,6 +89,25 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
   const rules = createMemo(() => deriveHierarchicalRules(props.request, command()));
   const isDestructive = createMemo(() => isDestructivePermissionRequest(props.request));
   const isRunner = createMemo(() => isRunnerPermissionID(props.request.id));
+  const sessionClasses = createMemo(() => grantableClasses(props.request));
+
+  const grantSessionClass = async () => {
+    if (busy()) return;
+    setBusy("class");
+    setError(null);
+    try {
+      await replyPermissionRequest(props.request, "once", { grantClass: true });
+    } catch (err) {
+      if (isPermissionGoneError(err)) {
+        markPermissionResolved(props.request.id);
+        return;
+      }
+      console.error("session grant failed:", err);
+      setError(String(err));
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const alwaysButtonLabel = createMemo(() => {
     if (isRunner()) {
@@ -394,6 +415,22 @@ export default function ApprovalGateCard(props: { request: PermissionRequest }) 
                 </Show>
                 {t("approval.allowOnce")}
               </button>
+              <Show when={sessionClasses().length > 0}>
+                <button
+                  type="button"
+                  class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--accent-border)] bg-[var(--accent-surface)] hover:opacity-90 px-3 py-1 text-[12px] font-medium text-[var(--accent-primary)] disabled:opacity-50 transition-opacity cursor-pointer"
+                  disabled={!!busy()}
+                  title={t("approval.sessionClassScope", {
+                    classes: sessionClasses().map(grantClassLabel).join(t("approval.grantClassSeparator")),
+                  })}
+                  onClick={() => void grantSessionClass()}
+                >
+                  <Show when={busy() !== "class"} fallback={<LoaderCircle size={12} class="animate-spin" />}>
+                    <Zap size={12} />
+                  </Show>
+                  {t("approval.allowSessionClass")}
+                </button>
+              </Show>
               <Show when={!isDestructive()}>
                 <button
                   type="button"

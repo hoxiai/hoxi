@@ -79,3 +79,20 @@ func TestBindingCanonicalizesSymlinkAndRejectsSiblingAmbiguity(t *testing.T) {
 		t.Fatalf("sibling ambiguity should fail closed: known=%v err=%v", known, err)
 	}
 }
+
+func TestScopedResolvesParentManagerWhenGivenDiskSandboxPath(t *testing.T) {
+	t.Parallel()
+	root := initTempGitRepo(t)
+	mgr := NewManager(root)
+	meta, err := mgr.Create("ses_disk_sandbox")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fresh := NewManager(t.TempDir())
+	scoped := fresh.scoped(meta.Directory, "ses_disk_sandbox")
+	if normalizedPath(scoped.RootDir()) != normalizedPath(root) {
+		t.Fatalf("scoped.RootDir() = %q, want parent repo %q", scoped.RootDir(), root)
+	}
+}
+

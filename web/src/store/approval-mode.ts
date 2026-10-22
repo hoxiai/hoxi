@@ -323,7 +323,7 @@ export type PermissionReplyMode = "once" | "always" | "reject";
 export async function replyPermissionRequest(
   req: PermissionRequest,
   mode: PermissionReplyMode,
-  options: { rules?: Record<string, "allow" | "deny">; note?: string } = {}
+  options: { rules?: Record<string, "allow" | "deny">; note?: string; grantClass?: boolean } = {}
 ): Promise<void> {
   const dir = resolvePermissionDirectory(req);
   const runner = isRunnerPermissionID(req.id);
@@ -337,7 +337,13 @@ export async function replyPermissionRequest(
   }
   const note = (options.note ?? "").trim();
   try {
-    await hoxiAPI.replyPermission(req.id, mode, dir, mode === "reject" && note ? note : undefined);
+    await hoxiAPI.replyPermission(
+      req.id,
+      mode,
+      dir,
+      mode === "reject" && note ? note : undefined,
+      options.grantClass && mode === "once"
+    );
   } catch (err) {
     if (isPermissionGoneError(err)) {
       markPermissionResolved(req.id);
@@ -346,10 +352,32 @@ export async function replyPermissionRequest(
     throw err;
   }
   markPermissionResolved(req.id);
-  if (mode === "always") {
+  if (mode === "always" || options.grantClass) {
     void loadApprovalGrants();
   }
   void loadApprovalAudit();
+}
+
+/**
+ * Classes of recoverable work Go offers for a session grant on this request
+ * ("本会话内此类都允许"); empty when the request can only be allowed once.
+ */
+export function grantableClasses(req: Partial<PermissionRequest> & Record<string, any>): string[] {
+  const raw = req?.metadata?.hoxiGrantClasses;
+  return Array.isArray(raw) ? raw.filter((c): c is string => typeof c === "string") : [];
+}
+
+export function grantClassLabel(cls: string): string {
+  switch (cls) {
+    case "temp-delete":
+      return t("approval.grantClassTempDelete");
+    case "dir-delete":
+      return t("approval.grantClassDirDelete");
+    case "git-discard":
+      return t("approval.grantClassGitDiscard");
+    default:
+      return cls;
+  }
 }
 
 export async function loadApprovalGrants(sessionID?: string): Promise<ApprovalGrant[]> {

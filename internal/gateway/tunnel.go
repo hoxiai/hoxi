@@ -184,12 +184,13 @@ func tunnelBodyAllowed(r *http.Request) bool {
 	r.ContentLength = int64(len(raw))
 	if isPermReply {
 		var body struct {
-			Reply string `json:"reply"`
+			Reply      string `json:"reply"`
+			GrantClass bool   `json:"grantClass"`
 		}
 		if json.Unmarshal(raw, &body) != nil {
 			return false
 		}
-		return body.Reply == "once" || body.Reply == "reject"
+		return (body.Reply == "once" || body.Reply == "reject") && !body.GrantClass
 	}
 	var body struct {
 		Push bool `json:"push"`

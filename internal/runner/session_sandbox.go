@@ -226,6 +226,9 @@ func (s *Service) setCommandSandbox(sessionID string, enabled bool) (SessionInfo
 	if !ok {
 		return SessionInfo{}, errors.New("runner session not found")
 	}
+	if updated.Runtime == "opencode" {
+		_ = syncOpenCodeCommandSandbox(updated)
+	}
 	info := updated.ToSessionInfo()
 	s.broadcast(sessionID, SSEEvent{Type: "session.updated", Properties: map[string]interface{}{"info": info}})
 	return info, nil

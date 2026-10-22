@@ -63,7 +63,7 @@ func (s *Service) recordPolicyApproval(cred hookCredential, req map[string]inter
 // autoReplyOpenCode answers an OpenCode permission request on the policy's
 // behalf. Each request is answered once; a failed reply is never retried
 // and stays visible as a normal pending request.
-func (s *Service) autoReplyOpenCode(id, sessionID, directory string, onFail func()) {
+func (s *Service) autoReplyOpenCode(id, sessionID, directory, source string, onFail func()) {
 	if id == "" {
 		return
 	}
@@ -76,7 +76,7 @@ func (s *Service) autoReplyOpenCode(id, sessionID, directory string, onFail func
 		status, _, err := s.replyOpenCodePermission(ctx, id, directory, []byte(`{"reply":"once"}`))
 		switch {
 		case err == nil && status >= 200 && status < 300:
-			s.recordOpenCodeAudit(id, sessionID, directory, "once", "", approvalSourcePolicy)
+			s.recordOpenCodeAudit(id, sessionID, directory, "once", "", source)
 			s.openCodeAutoReplies.Delete(id)
 		case err == nil && status == http.StatusNotFound:
 			// Already answered elsewhere.
@@ -112,11 +112,19 @@ func (s *Service) claimOpenCodePermission(item map[string]interface{}, sessionID
 	case openCodeAutoReplyFailed:
 		return false
 	}
-	if !s.policyApproves(item, directory) {
-		return false
+	if s.policyApproves(item, directory) {
+		s.autoReplyOpenCode(id, sessionID, directory, approvalSourcePolicy, onFail)
+		return true
 	}
-	s.autoReplyOpenCode(id, sessionID, directory, onFail)
-	return true
+	if s.classGrantApproves(item, sessionID, directory) {
+		s.autoReplyOpenCode(id, sessionID, directory, grantSourceSession, onFail)
+		return true
+	}
+	// Shown to the user: offer a session grant when Go would honour one, and
+	// keep the request so a grant reply is judged against it.
+	annotateGrantClasses(item, directory)
+	s.gate.rememberOpenCodeAsk(id, openCodeAsk{item: item, sessionID: sessionID, dir: directory})
+	return false
 }
 
 // claimOpenCodeSSELine handles permission.asked frames on the raw OpenCode
@@ -162,11 +170,19 @@ func (s *Service) reconcilePendingApprovals() {
 	}
 	s.gate.mu.Unlock()
 	for _, pa := range pending {
-		if s.policyApproves(pa.req, s.sessionWorktree(pa.sid)) {
-			select {
-			case pa.reply <- approvalReply{Reply: "once", Source: approvalSourcePolicy}:
-			default:
-			}
+		dir := s.sessionWorktree(pa.sid)
+		source := ""
+		switch {
+		case s.policyApproves(pa.req, dir):
+			source = approvalSourcePolicy
+		case s.classGrantApproves(pa.req, pa.sid, dir):
+			source = grantSourceSession
+		default:
+			continue
+		}
+		select {
+		case pa.reply <- approvalReply{Reply: "once", Source: source}:
+		default:
 		}
 	}
 	if s.openCode == nil || !s.openCode.Available() {

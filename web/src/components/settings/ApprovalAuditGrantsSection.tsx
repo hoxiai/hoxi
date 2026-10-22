@@ -6,6 +6,7 @@ import {
   approvalGrants,
   approvalRecordsLoading,
   clearApprovalAudit,
+  grantClassLabel,
   loadApprovalAudit,
   loadApprovalGrants,
   revokeAllApprovalGrants,
@@ -66,18 +67,22 @@ function decisionBadgeClass(decision: string): string {
 function sourceLabel(source: string): string {
   switch (source) {
     case "tunnel":
+    case "lan":
+    case "relay":
       return t("approval.sourceTunnel");
     case "system":
       return t("approval.sourceSystem");
     case "policy":
       return t("approval.sourcePolicy");
+    case "grant":
+      return t("approval.sourceGrant");
     default:
       return t("approval.sourceDesktop");
   }
 }
 
 function sourceBadgeClass(source: string): string {
-  if (source === "tunnel") {
+  if (source === "tunnel" || source === "lan" || source === "relay") {
     return "border-[var(--warn-border)] bg-[var(--warn-surface)] text-[var(--warn-text)]";
   }
   return "border-[var(--border-subtle)] bg-[var(--bg-inset)] text-[var(--text-muted)]";
@@ -169,7 +174,7 @@ export function ApprovalAuditGrantsSection() {
                   <div class="min-w-0 flex-1 space-y-1">
                     <div class="flex flex-wrap items-center gap-1.5">
                       <span class="rounded border border-[var(--accent-border)] bg-[var(--accent-surface)] px-1.5 py-0.5 font-mono text-[10.5px] text-[var(--accent-primary)]">
-                        {grant.tool || grant.kind}
+                        {grant.kind === "class" ? t("approval.grantKindClass") : grant.tool || grant.kind}
                       </span>
                       <span class="truncate font-medium text-[var(--text-primary)]">
                         {grant.sessionTitle || grant.sessionID}
@@ -179,7 +184,7 @@ export function ApprovalAuditGrantsSection() {
                       </span>
                     </div>
                     <pre class="overflow-x-auto rounded bg-[var(--bg-inset)] px-2 py-1 font-mono text-[11px] text-[var(--text-secondary)] whitespace-pre-wrap break-all">
-                      {grant.pattern}
+                      {grant.kind === "class" ? grantClassLabel(grant.pattern) : grant.pattern}
                     </pre>
                   </div>
                   <button

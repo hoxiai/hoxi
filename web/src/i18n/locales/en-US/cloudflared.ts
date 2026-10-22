@@ -1,5 +1,6 @@
 // web/src/i18n/locales/en-US/cloudflared.ts
 export const cloudflared = {
+  tabLabel: "Cloudflare",
   title: "Cloudflare Tunnel relay",
   tip: "Run a supervised Cloudflare Tunnel connector so the Hoxi app can reach this Mac from another network. Paste the connector token from Cloudflare Zero Trust and set the tunnel's public hostname service to the local ingress URL. Cloudflare terminates TLS at its edge, so content is only private once end-to-end encryption lands",
   stateDisabled: "Not enabled",

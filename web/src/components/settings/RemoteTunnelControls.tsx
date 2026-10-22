@@ -1,8 +1,9 @@
 // web/src/components/settings/RemoteTunnelControls.tsx
 // Pairs this desktop with a public GoPanel so the mobile app can reach it
 // through the reverse tunnel. The primary path is one-click: fill in the
-// GoPanel host:port, click Authorize, then approve in GoPanel → Nodes →
-// Tunnel. Pasting a code by hand stays available as a fallback.
+// GoPanel host:port, click Authorize, then approve in GoPanel → Host →
+// Tunnel → Pending pair requests (the panel is opened automatically).
+// Pasting a code by hand stays available as a fallback.
 import { createEffect, createSignal, onCleanup, onMount, Show } from "solid-js";
 import { ExternalLink, Link2, Unlink } from "lucide-solid";
 import { t } from "../../i18n";
@@ -59,11 +60,11 @@ export function RemoteTunnelControls() {
   const waiting = () => pending()?.state === "waiting";
   const showForm = () => !remoteTunnel.status.enabled && !waiting();
   const panelBaseUrl = () => (controllerUrl().trim() || remoteTunnel.status.controllerUrl || "").replace(/\/+$/, "");
-  // Deep-link into the GoPanel node page, where the tunnel authorization
-  // request is approved (节点 → 隧道设置 → 授权请求).
+  // Deep-link into the GoPanel tunnel page, opening the pending pair-request
+  // tab directly so an admin only has to click Allow.
   const panelUrl = () => {
     const base = panelBaseUrl();
-    return base ? `${base}/node/index` : "";
+    return base ? `${base}/host/tunnel?tab=requests` : "";
   };
 
   let refreshTimer: number | undefined;

@@ -495,30 +495,16 @@ func (m *worktreeManager) DiffFile(sessionID, relPath string) (worktreeFileDiff,
 	}
 
 	// Fallback: check if it is an untracked file
-	full := filepath.Join(repoDir, filepath.FromSlash(repoRelPath))
-	info, statErr := os.Lstat(full)
-	if statErr != nil || info.IsDir() {
+	if isIgnoredUntrackedWorktreePath(repoRelPath) || isRootEnvFile(repoRelPath) {
 		return worktreeFileDiff{}, fmt.Errorf("file diff not found: %s", cleaned)
 	}
-	if info.Mode()&os.ModeSymlink != 0 {
-		target, linkErr := os.Readlink(full)
-		if linkErr != nil {
-			return worktreeFileDiff{}, fmt.Errorf("file diff not found: %s", cleaned)
-		}
-		patch := fmt.Sprintf("diff --git a/%s b/%s\nnew file mode 120000\n--- /dev/null\n+++ b/%s\n@@ -0,0 +1,1 @@\n+%s", cleaned, cleaned, cleaned, target)
-		return worktreeFileDiff{
-			File:          cleaned,
-			Patch:         patch,
-			Additions:     1,
-			Deletions:     0,
-			Status:        "added",
-			Repo:          relPrefix,
-			Branch:        repoBranch,
-			GeneratedLike: generated,
-			Stamp:         stamp,
-		}, nil
+	untrackedOut, untrackedErr := runGitRaw(repoDir, "ls-files", "--others", "--exclude-standard", "-z", "--", repoRelPath)
+	if untrackedErr != nil || strings.TrimSpace(strings.TrimSuffix(untrackedOut, "\x00")) == "" {
+		return worktreeFileDiff{}, fmt.Errorf("file diff not found: %s", cleaned)
 	}
-	if !info.Mode().IsRegular() || !regularFileStaysWithinRepo(repoDir, full) {
+	full := filepath.Join(repoDir, filepath.FromSlash(repoRelPath))
+	info, statErr := os.Lstat(full)
+	if statErr != nil || !info.Mode().IsRegular() || !regularFileStaysWithinRepo(repoDir, full) {
 		return worktreeFileDiff{}, fmt.Errorf("file diff not found: %s", cleaned)
 	}
 	if info.Size() > maxSingleFilePatchBytes {
