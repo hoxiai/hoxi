@@ -606,6 +606,19 @@ export interface RequestLogResponse {
   timezone: string;
 }
 
+export interface RequestLogContentPart {
+  role: "user" | "assistant" | string;
+  kind: "text" | "reasoning" | string;
+  text: string;
+}
+
+export interface RequestLogContent {
+  input: RequestLogContentPart[];
+  output: RequestLogContentPart[];
+  found: boolean;
+  truncated?: boolean;
+}
+
 export interface DevPulseHistoryResponse {
   days: DevPulseHistoryDay[];
   startDate: string;

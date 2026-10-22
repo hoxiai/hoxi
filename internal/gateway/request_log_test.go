@@ -87,6 +87,55 @@ func TestRequestLogListsNativeCallsNewestFirst(t *testing.T) {
 	}
 }
 
+func TestRequestLogContentReturnsInputAndOutput(t *testing.T) {
+	t.Setenv("OPENCODE_DB", "")
+	t.Setenv("HOXI_DB_PATH", filepath.Join(t.TempDir(), "missing.db"))
+
+	repo := t.TempDir()
+	svc := runner.NewService(repo, nil, nil, filepath.Join(t.TempDir(), "sessions"))
+	now := time.Now().UnixMilli()
+	user := pulseTokenMessage("msg_user", "ses_content", "claude-sonnet", now-1000, 0, 0, 0, 0)
+	user.Role = "user"
+	assistant := pulseTokenMessage("msg_asst", "ses_content", "claude-sonnet", now, 10, 5, 0, 0)
+	if err := svc.Store().Put(runner.SessionRecord{
+		ID: "ses_content", Runtime: string(runner.RuntimeClaudeCode), ProjectDir: repo, WorktreePath: repo,
+		Title: "content", CreatedAt: now - 1000, UpdatedAt: now,
+		Turns: []runner.MessageTurn{
+			{Info: user, Parts: []runner.MessagePart{{Type: "text", Text: "build the store"}}},
+			{Info: assistant, Parts: []runner.MessagePart{
+				{Type: "reasoning", Text: "weighing options"},
+				{Type: "text", Text: "Done."},
+			}},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	gw := New(0, "pass", repo, nil, nil)
+	gw.runner = svc
+	rec := httptest.NewRecorder()
+	gw.ServeHTTP(rec, localRequest(http.MethodGet, "/api/hoxi/request-log/content?id=msg_asst&sessionID=ses_content", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	var res requestContent
+	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil {
+		t.Fatal(err)
+	}
+	if !res.Found || len(res.Input) != 1 || res.Input[0].Role != "user" || res.Input[0].Text != "build the store" {
+		t.Fatalf("input: %+v", res)
+	}
+	if len(res.Output) != 2 || res.Output[0].Kind != "reasoning" || res.Output[1].Text != "Done." {
+		t.Fatalf("output: %+v", res)
+	}
+
+	missing := httptest.NewRecorder()
+	gw.ServeHTTP(missing, localRequest(http.MethodGet, "/api/hoxi/request-log/content", nil))
+	if missing.Code != http.StatusBadRequest {
+		t.Fatalf("missing id status %d", missing.Code)
+	}
+}
+
 func TestRequestLogRejectsBadLimit(t *testing.T) {
 	t.Setenv("OPENCODE_DB", "")
 	t.Setenv("HOXI_DB_PATH", filepath.Join(t.TempDir(), "missing.db"))

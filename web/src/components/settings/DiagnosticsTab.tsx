@@ -3,9 +3,10 @@ import { ChevronLeft, ChevronRight, Columns3, RefreshCw, X } from "lucide-solid"
 import { locale, t } from "../../i18n";
 import { formatCompactNumber } from "../../i18n/format";
 import {
-  loadRequestLog, requestLog, requestLogError, requestLogLoading, requestLogTotal,
+  loadRequestContent, loadRequestLog, requestLog, requestLogError, requestLogLoading,
+  requestLogTotal,
 } from "../../store/workspace";
-import type { RequestLogEntry } from "../../services/api";
+import type { RequestLogContent, RequestLogContentPart, RequestLogEntry } from "../../services/api";
 
 const control = "rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] cursor-pointer";
 const button = "inline-flex items-center justify-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2.5 py-1 text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] disabled:opacity-40 disabled:cursor-default cursor-pointer";
@@ -301,10 +302,16 @@ export default function DiagnosticsTab() {
                       <Show when={visible("tokens")}>
                         <td class="px-3 py-2 font-mono text-[11px] leading-4 text-[var(--text-secondary)]">
                           <Show when={!pending || totalTokens(entry) > 0} fallback={<span class="text-[var(--text-muted)]">{t("diagnostics.noError")}</span>}>
-                            <div class="text-[var(--text-primary)]" title={totalTokens(entry).toLocaleString()}>{formatCompactNumber(totalTokens(entry))}</div>
-                            <div class="truncate text-[11px] text-[var(--text-muted)]" title={t("diagnostics.usageLine", { input: entry.inputTokens.toLocaleString(), output: entry.outputTokens.toLocaleString(), total: totalTokens(entry).toLocaleString() })}>
-                              {t("diagnostics.tokensInOut", { input: formatCompactNumber(entry.inputTokens), output: formatCompactNumber(entry.outputTokens) })}
-                            </div>
+                            <button
+                              type="button"
+                              class="group block w-full text-left cursor-pointer"
+                              title={t("diagnostics.contentClickHint")}
+                              onClick={() => setSelected(entry)}
+                            >
+                              <div class="text-[var(--text-primary)] group-hover:text-[var(--accent-primary)] group-hover:underline" title={t("diagnostics.usageLine", { input: entry.inputTokens.toLocaleString(), output: entry.outputTokens.toLocaleString(), total: totalTokens(entry).toLocaleString() })}>
+                                {t("diagnostics.tokensInOut", { input: formatCompactNumber(entry.inputTokens), output: formatCompactNumber(entry.outputTokens) })}
+                              </div>
+                            </button>
                           </Show>
                         </td>
                       </Show>
@@ -351,6 +358,21 @@ export default function DiagnosticsTab() {
 
 function RequestDetail(props: { entry: RequestLogEntry; onClose: () => void }) {
   const when = () => formatWhen(props.entry.time);
+  const [content, setContent] = createSignal<RequestLogContent | null>(null);
+  const [contentFailed, setContentFailed] = createSignal(false);
+
+  createEffect(() => {
+    const id = props.entry.id;
+    const sessionID = props.entry.sessionID;
+    setContent(null);
+    setContentFailed(false);
+    let cancelled = false;
+    void loadRequestContent(id, sessionID)
+      .then((res) => { if (!cancelled) setContent(res); })
+      .catch(() => { if (!cancelled) setContentFailed(true); });
+    onCleanup(() => { cancelled = true; });
+  });
+
   return (
     <div class="fixed inset-0 z-[80] flex justify-end bg-black/30" onClick={props.onClose}>
     <section class="flex h-full w-[min(440px,92vw)] flex-col gap-3 overflow-y-auto border-l border-[var(--border-subtle)] bg-[var(--bg-panel)] p-4 shadow-2xl" onClick={(event) => event.stopPropagation()}>
@@ -377,10 +399,52 @@ function RequestDetail(props: { entry: RequestLogEntry; onClose: () => void }) {
           <dd class="whitespace-pre-wrap break-words font-mono text-[var(--danger-text)]">{props.entry.error}</dd>
         </Show>
       </dl>
+      <Show
+        when={content()}
+        fallback={
+          <p class="rounded-lg border border-dashed border-[var(--border-subtle)] px-3 py-2 text-[11px] text-[var(--text-muted)]">
+            {contentFailed() ? t("diagnostics.contentUnavailable") : t("diagnostics.contentLoading")}
+          </p>
+        }
+      >
+        {(loaded) => (
+          <Show when={loaded().found} fallback={<p class="rounded-lg border border-dashed border-[var(--border-subtle)] px-3 py-2 text-[11px] text-[var(--text-muted)]">{t("diagnostics.contentUnavailable")}</p>}>
+            <ContentSection title={t("diagnostics.contentInput")} parts={loaded().input} emptyText={t("diagnostics.contentInputEmpty")} />
+            <ContentSection title={t("diagnostics.contentOutput")} parts={loaded().output} emptyText={t("diagnostics.contentOutputEmpty")} />
+            <Show when={loaded().truncated}><p class="text-[10px] text-[var(--text-faint)]">{t("diagnostics.contentTruncated")}</p></Show>
+            <p class="text-[10px] leading-relaxed text-[var(--text-faint)]">{t("diagnostics.contentScopeHint")}</p>
+          </Show>
+        )}
+      </Show>
       <pre class="overflow-auto whitespace-pre-wrap break-all rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)] p-3 font-mono text-[11px] text-[var(--text-secondary)]">{JSON.stringify(props.entry, null, 2)}</pre>
       <p class="text-[11px] text-[var(--text-faint)]">{t("diagnostics.detailsHint")}</p>
     </section>
     </div>
+  );
+}
+
+function ContentSection(props: { title: string; parts: RequestLogContentPart[]; emptyText: string }) {
+  return (
+    <section class="space-y-1.5">
+      <h5 class="text-[12px] font-semibold text-[var(--text-secondary)]">{props.title}</h5>
+      <Show
+        when={props.parts.length > 0}
+        fallback={<p class="rounded-lg border border-dashed border-[var(--border-subtle)] px-3 py-2 text-[11px] text-[var(--text-muted)]">{props.emptyText}</p>}
+      >
+        <div class="space-y-1.5">
+          <For each={props.parts}>
+            {(part) => (
+              <div class="overflow-hidden rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-inset)]">
+                <Show when={part.kind === "reasoning"}>
+                  <div class="border-b border-[var(--border-subtle)] px-2.5 py-1 text-[10px] font-medium text-[var(--text-faint)]">{t("diagnostics.contentReasoning")}</div>
+                </Show>
+                <pre class="max-h-64 overflow-auto whitespace-pre-wrap break-words px-2.5 py-2 font-mono text-[11px] text-[var(--text-primary)]">{part.text}</pre>
+              </div>
+            )}
+          </For>
+        </div>
+      </Show>
+    </section>
   );
 }
 

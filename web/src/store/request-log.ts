@@ -1,7 +1,7 @@
 // Local model-call log. Each row is one request this computer sent; the detail
 // panel shows the metadata captured for that call and nothing from the prompt.
 import { createSignal } from "solid-js";
-import { hoxiAPI, type RequestLogEntry } from "../services/api";
+import { hoxiAPI, type RequestLogContent, type RequestLogEntry } from "../services/api";
 
 const [requestLog, setRequestLog] = createSignal<RequestLogEntry[]>([]);
 const [requestLogTotal, setRequestLogTotal] = createSignal(0);
@@ -12,6 +12,11 @@ let generation = 0;
 let signature = "";
 
 export { requestLog, requestLogTotal, requestLogLoading, requestLogError };
+
+// On-demand input/output for one logged call, read from the local store.
+export function loadRequestContent(id: string, sessionID: string): Promise<RequestLogContent> {
+  return hoxiAPI.getRequestLogContent(id, sessionID);
+}
 
 // silent skips the loading flag so background refreshes do not flash the view,
 // and an unchanged payload is dropped so the list does not re-render needlessly.

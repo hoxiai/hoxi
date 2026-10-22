@@ -177,6 +177,12 @@ export const hoxiAPI = {
     return requestJSON(`/api/hoxi/request-log?limit=${limit}`);
   },
 
+  getRequestLogContent(id: string, sessionID?: string): Promise<import("./api-types").RequestLogContent> {
+    const params = new URLSearchParams({ id });
+    if (sessionID) params.set("sessionID", sessionID);
+    return requestJSON(`/api/hoxi/request-log/content?${params.toString()}`);
+  },
+
   getDevPulseHistory(days = 30, directory?: string): Promise<import("./api-types").DevPulseHistoryResponse> {
     const params = new URLSearchParams();
     params.set("days", String(days));
