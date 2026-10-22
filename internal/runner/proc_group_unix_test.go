@@ -463,12 +463,27 @@ func TestStripOpenCodeStopMarker(t *testing.T) {
 		Tool: "bash",
 		State: &ToolState{
 			Status: "running",
-			Input:  map[string]interface{}{"command": openCodeStopMarker("ses_e", "call_1") + "\necho hi"},
+			Input:  map[string]interface{}{"command": openCodeStopMarker("ses_e", "call_1") + "\n" + openCodeStopTrap + "\necho hi"},
+			Title:  openCodeStopMarker("ses_e", "call_1") + "\n" + openCodeStopTrap + "\necho hi",
 		},
 	}
 	stripOpenCodeStopMarker(&part)
 	if got := part.State.Input["command"]; got != "echo hi" {
 		t.Fatalf("command = %v, want the untagged command", got)
+	}
+	if got := part.State.Title; got != "echo hi" {
+		t.Fatalf("title = %q, want the tag and stop trap stripped", got)
+	}
+
+	// Tags written before the stop trap existed have no trap line.
+	legacy := MessagePart{
+		Type:  "tool",
+		Tool:  "bash",
+		State: &ToolState{Status: "completed", Input: map[string]interface{}{"command": openCodeStopMarker("ses_e", "call_0") + "\necho hi"}},
+	}
+	stripOpenCodeStopMarker(&legacy)
+	if got := legacy.State.Input["command"]; got != "echo hi" {
+		t.Fatalf("legacy command = %v, want the untagged command", got)
 	}
 
 	untouched := MessagePart{

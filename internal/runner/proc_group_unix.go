@@ -386,7 +386,78 @@ func stopOpenCodeToolProcessByMarker(daemonPID int, marker string) int {
 	if len(roots) != 1 {
 		return 0
 	}
+	// Only the tagged shell itself has the stop trap. Anything else falls
+	// back to killing the subtree.
+	if root := roots[0]; argsCarryStopMarker(byPID[root].args, marker) {
+		return stopOpenCodeToolShell(root, byPID, children, protected)
+	}
 	return killSubtrees(roots, byPID, children, protected)
+}
+
+// openCodeShellExitGrace bounds how long a stop waits for the tagged shell to
+// exit through its stop trap before killing it outright.
+const openCodeShellExitGrace = 2 * time.Second
+
+// stopOpenCodeToolShell ends one OpenCode bash command so that its shell exits
+// with a code instead of dying from a signal (see openCodeStopTrap). The shell
+// gets SIGUSR1, which its trap holds until the running command is gone, and
+// only its descendants are terminated. Once the shell has exited, whatever is
+// left of its process group (background jobs that still hold its output) is
+// killed too. A shell that does not exit in time, because it predates the trap
+// or the command replaced it, is killed with its subtree as before.
+func stopOpenCodeToolShell(shell int, byPID map[int]procSnapshot, children map[int][]int, protected map[int]bool) int {
+	if shell <= 1 || protected[shell] {
+		return 0
+	}
+	shellPGID := byPID[shell].pgid
+	if err := syscall.Kill(shell, syscall.SIGUSR1); err != nil {
+		return 0
+	}
+	signalled := map[int]time.Time{}
+	signal := func(pid int, sig syscall.Signal) {
+		if pgid := byPID[pid].pgid; pgid > 1 && pgid != shellPGID && !protected[pgid] {
+			_ = syscall.Kill(-pgid, sig)
+		}
+		_ = syscall.Kill(pid, sig)
+	}
+	deadline := time.Now().Add(openCodeShellExitGrace)
+	for processAlive(shell) {
+		if time.Now().After(deadline) {
+			byPID, children = readProcessSnapshots()
+			return len(signalled) + killSubtrees([]int{shell}, byPID, children, protected)
+		}
+		for _, pid := range collectSubtreePIDs(shell, children)[1:] {
+			if pid <= 1 || protected[pid] {
+				continue
+			}
+			first, seen := signalled[pid]
+			switch {
+			case !seen:
+				signalled[pid] = time.Now()
+				signal(pid, syscall.SIGTERM)
+			case time.Since(first) > 150*time.Millisecond:
+				signal(pid, syscall.SIGKILL)
+			}
+		}
+		time.Sleep(15 * time.Millisecond)
+		byPID, children = readProcessSnapshots()
+	}
+	// Background jobs outlive the shell in its process group and keep its
+	// output open, which also holds the tool result back.
+	if shellPGID > 1 && !protected[shellPGID] {
+		byPID, _ = readProcessSnapshots()
+		for pid, snap := range byPID {
+			if snap.pgid == shellPGID && pid > 1 && !protected[pid] {
+				signalled[pid] = time.Now()
+				_ = syscall.Kill(pid, syscall.SIGKILL)
+			}
+		}
+	}
+	return len(signalled) + 1
+}
+
+func processAlive(pid int) bool {
+	return !errors.Is(syscall.Kill(pid, 0), syscall.ESRCH)
 }
 
 // subtreeCarriesStopMarker reports whether any process in pids carries marker

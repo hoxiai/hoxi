@@ -109,6 +109,24 @@ function command(snapshot, input) {
 // command line itself; it is a shell comment and never affects execution.
 const STOP_MARKER_PREFIX = "# hoxi-stop:";
 const LEADING_STOP_MARKER_RE = /^[ \t]*# hoxi-stop:[^\n]*(?:\n|$)/;
+const LEADING_LINE_RE = /^[ \t]*([^\n]*)(?:\n|$)/;
+
+// STOP_TRAP follows the tag. OpenCode's bash tool only returns early when the
+// shell exits with a code; a shell killed by a signal leaves the tool waiting
+// for its full timeout. A stop therefore sends the shell SIGUSR1 and only
+// terminates what it runs, and this trap prints the stop notice and exits 130
+// once that command is gone, so the tool returns at once and the model reads
+// that the user stopped it. The EXIT trap keeps sh and bash from exec-ing the
+// last command in place of the shell, which would drop the tag and the trap.
+// It must match openCodeStopTrap in internal/runner exactly.
+const STOP_TRAP = String.raw`trap 'printf "\n[Command stopped by user]\n"; exit 130' USR1; trap : EXIT`;
+
+// The trap is POSIX shell syntax; Windows shells and PowerShell cannot run it.
+function trapSupported() {
+  if (process.platform === "win32") return false;
+  const shell = path.basename(process.env.SHELL || "").toLowerCase();
+  return !shell.startsWith("pwsh") && !shell.startsWith("powershell");
+}
 
 function stopMarker(input) {
   if (typeof input?.sessionID !== "string" || typeof input?.callID !== "string") return undefined;
@@ -116,17 +134,24 @@ function stopMarker(input) {
   return `${STOP_MARKER_PREFIX}${input.sessionID}:${input.callID}`;
 }
 
-// stripStopMarkers drops every leading `# hoxi-stop:` line. Leading lines are
-// always shell comments, so this never changes what runs; later lines are left
-// alone because they may sit inside a heredoc or a quoted string. Not
-// exported: OpenCode loads every export of a plugin module as a plugin.
+// stripStopMarkers drops every leading `# hoxi-stop:` line and the stop trap.
+// Tag lines are shell comments and the trap only matters for a stop, so this
+// never changes what the command does; later lines are left alone because they
+// may sit inside a heredoc or a quoted string. Not exported: OpenCode loads
+// every export of a plugin module as a plugin.
 function stripStopMarkers(command) {
   if (typeof command !== "string") return command;
   let rest = command;
-  for (let match = LEADING_STOP_MARKER_RE.exec(rest); match; match = LEADING_STOP_MARKER_RE.exec(rest)) {
-    rest = rest.slice(match[0].length);
+  for (;;) {
+    const match = LEADING_STOP_MARKER_RE.exec(rest);
+    if (match) {
+      rest = rest.slice(match[0].length);
+      continue;
+    }
+    const line = LEADING_LINE_RE.exec(rest);
+    if (!line || line[1].trimEnd() !== STOP_TRAP) return rest;
+    rest = rest.slice(line[0].length);
   }
-  return rest;
 }
 
 // OpenCode persists the tagged command as the tool input while the tool runs
@@ -184,7 +209,13 @@ export const HoxiSandboxPlugin = async () => ({
     }
     if (!isBash) return;
     const tag = stopMarker(input);
-    args.command = tag ? `${tag}\n${final}` : final;
+    if (!tag) {
+      args.command = final;
+    } else if (trapSupported()) {
+      args.command = `${tag}\n${STOP_TRAP}\n${final}`;
+    } else {
+      args.command = `${tag}\n${final}`;
+    }
   },
   "experimental.chat.messages.transform": async (_input, output) => {
     cleanHistory(output?.messages);
