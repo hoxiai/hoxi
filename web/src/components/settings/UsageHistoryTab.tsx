@@ -328,6 +328,12 @@ export default function UsageHistoryTab() {
           <UsageHeatmap points={heatPoints()} />
           <section class="space-y-2">
             <h4 class="text-[12px] font-semibold text-[var(--text-secondary)]">
+              {t("settings.usageTodayTitle")} · {todayDate}
+            </h4>
+            <MetricGrid totals={todayTotals()} />
+          </section>
+          <section class="space-y-2">
+            <h4 class="text-[12px] font-semibold text-[var(--text-secondary)]">
               {t("settings.usageByModelTitle")}
             </h4>
             <Show
@@ -365,12 +371,6 @@ export default function UsageHistoryTab() {
                 </For>
               </ul>
             </Show>
-          </section>
-          <section class="space-y-2">
-            <h4 class="text-[12px] font-semibold text-[var(--text-secondary)]">
-              {t("settings.usageTodayTitle")} · {todayDate}
-            </h4>
-            <MetricGrid totals={todayTotals()} />
           </section>
         </div>
       </Show>

@@ -80,9 +80,9 @@ export function UsageHeatmap(props: { points: Array<{ date: string; tokens: numb
   const cells = createMemo(() => grid().weeks.flat());
 
   return (
-    <div class="space-y-2">
-      <div class="overflow-x-auto pb-1">
-        <div class="inline-flex gap-1">
+    <div class="flex flex-col items-center gap-2">
+      <div class="w-full overflow-x-auto pb-1">
+        <div class="mx-auto flex w-max gap-1">
           <div
             class="grid grid-rows-7 text-[10px] text-[var(--text-faint)]"
             style={{ "grid-auto-rows": `${CELL}px`, gap: `${GAP}px` }}
