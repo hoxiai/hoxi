@@ -486,7 +486,7 @@ export default function SettingsModal() {
 
             <Show when={!isModelTab()}>
               <div class="min-w-0 flex-1 overflow-y-auto p-6 sm:p-8">
-                <div class={`mx-auto w-full ${activeTab() === "diagnostics" || activeTab() === "errorLog" ? "max-w-7xl" : "max-w-4xl"}`}>
+                <div class={`mx-auto w-full ${activeTab() === "usage" || activeTab() === "diagnostics" ? "max-w-6xl" : "max-w-4xl"}`}>
                   <Show when={activeTab() === "general"}>
                     <div class="hoxi-view-enter">
                       <GeneralAppearanceTab />

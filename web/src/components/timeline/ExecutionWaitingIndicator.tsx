@@ -3,6 +3,7 @@ import { t } from "../../i18n";
 import { TextShimmer } from "../icons";
 import type { ToolPart } from "../../services/sse-types";
 import HoxiActivityLogo from "./HoxiActivityLogo";
+import { formatElapsedSeconds } from "./duration-label";
 
 export default function ExecutionWaitingIndicator(props: {
   completedSteps: number;
@@ -60,7 +61,7 @@ export default function ExecutionWaitingIndicator(props: {
           </Show>
           <Show when={elapsed() >= 0.05}>
             <span class="font-mono text-[11px] tabular-nums text-[var(--accent-text)]">
-              {t("timeline.executionElapsed", { time: elapsed().toFixed(1) })}
+              {t("timeline.executionElapsed", { time: formatElapsedSeconds(elapsed()) })}
             </span>
           </Show>
         </div>

@@ -27,6 +27,7 @@ import {
 import { resolveSubagentCurrentStepLabel } from "./SubagentInlineTimeline";
 import { liveReasoningTicker, reasoningHeading, reasoningSummary } from "./ThoughtBox";
 import HoxiActivityLogo from "./HoxiActivityLogo";
+import { formatElapsedSeconds } from "./duration-label";
 
 import {
   extractCommand,
@@ -51,6 +52,9 @@ export {
   isWorkPart,
   isExplorationPart,
   isAttentionToolPart,
+  splitInlineThinking,
+  extractVisibleAssistantText,
+  expandInlineThinkingParts,
 } from "./context-activity-parts";
 export {
   groupAssistantParts,
@@ -423,16 +427,11 @@ export default function ContextActivityGroupView(props: {
   const durationLabel = createMemo(() => {
     const { start, end } = timeRange();
     if (!start) return "";
-    if (isRunning()) {
-      const sec = Math.max(0, (now() - start) / 1000);
-      return sec >= 0.05 ? `${sec.toFixed(1)}s` : "";
-    }
-    if (!end || end <= start) return "";
-    const sec = (end - start) / 1000;
+    const endAt = isRunning() ? now() : end;
+    if (!endAt || endAt <= start) return "";
+    const sec = (endAt - start) / 1000;
     if (sec < 0.05) return "";
-    return sec < 60
-      ? `${sec.toFixed(1)}s`
-      : `${Math.floor(sec / 60)}m ${Math.round(sec % 60)}s`;
+    return formatElapsedSeconds(sec);
   });
 
   return (

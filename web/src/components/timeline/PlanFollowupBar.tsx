@@ -10,6 +10,7 @@ import {
   workspace,
 } from "../../store/workspace";
 import { t } from "../../i18n";
+import { extractVisibleAssistantText } from "./context-activity-parts";
 
 /**
  * Ported from kilocode plan-followup.ts & SuggestBar.tsx:
@@ -41,7 +42,7 @@ export default function PlanFollowupBar() {
 
     const planText = (lastTurn.parts ?? [])
       .filter((p): p is Extract<typeof p, { type: "text" }> => p.type === "text")
-      .map((p) => p.text.trim())
+      .map((p) => extractVisibleAssistantText(p.text).trim())
       .filter(Boolean)
       .join("\n\n");
 

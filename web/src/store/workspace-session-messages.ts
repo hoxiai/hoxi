@@ -59,6 +59,7 @@ interface AutoDispatchState {
   effort?: ReasoningEffort;
   attachments?: Array<{ type: "file"; mime: string; filename?: string; url: string }>;
   skillSelection?: SkillSelection;
+  system?: string;
   triedKeys: Set<string>;
   dispatchedAt: number;
 }
@@ -139,6 +140,7 @@ export async function handleSessionErrorEvent(
             directory: sessionDirectory(sessionID),
             attachments: autoState.attachments,
             skillSelection: autoState.skillSelection,
+            system: autoState.system,
             runtime: resolveRunnerRuntimeForProvider(
               nextCand.providerID,
               Boolean(workspace.hoxiProviders?.[nextCand.providerID || ""])
@@ -298,6 +300,11 @@ export async function dispatchSessionPrompt(
     directory?: string;
     attachments?: Array<{ type: "file"; mime: string; filename?: string; url: string }>;
     skillSelection?: import("../services/api").SkillSelection;
+    /**
+     * Extra system instructions for this turn only. They reach the model as a
+     * system prefix and never appear in the timeline as a user message.
+     */
+    system?: string;
     forceImmediate?: boolean;
     /** false for automatic dispatches that must not move the reader's scroll position. */
     followTimeline?: boolean;
@@ -369,6 +376,7 @@ export async function dispatchSessionPrompt(
       effort,
       attachments,
       skillSelection: effectiveSkill,
+      system: options?.system,
     });
     if (options?.followTimeline !== false) requestTimelineFollow(id);
     return id;
@@ -456,9 +464,11 @@ export async function dispatchSessionPrompt(
   stageOptimisticTurn(id);
   initializeSessionAI(id, config);
   const targetDir = sessionDirectory(id) || requestedDir || undefined;
-  const system = buildCombinedSystemPrompt(
+  // Caller-supplied instructions ride along as a system prefix so the visible
+  // user message stays exactly what the user (or the triggering action) said.
+  const system = [options?.system?.trim(), buildCombinedSystemPrompt(
     buildWorkspaceFoldersSystemPrompt(workspaceFoldersForDir(targetDir || ""))
-  );
+  )].filter(Boolean).join("\n\n") || undefined;
 
   try {
     if (effectiveSkill) {
@@ -502,6 +512,7 @@ export async function dispatchSessionPrompt(
         effort: effort || undefined,
         attachments,
         skillSelection: effectiveSkill,
+        system,
         triedKeys: new Set([`${effectiveModel.providerID}/${effectiveModel.modelID}`]),
         dispatchedAt: Date.now(),
       });
@@ -626,6 +637,7 @@ export async function sendQueuedPromptNow(sessionID: string, itemID: string): Pr
       effort: target.effort,
       attachments: target.attachments,
       skillSelection: target.skillSelection,
+      system: target.system,
       forceImmediate: true,
     });
   } catch (err) {
@@ -671,6 +683,7 @@ export async function drainNextQueuedPrompt(sessionID: string): Promise<void> {
         effort: next.effort,
         attachments: next.attachments,
         skillSelection: validatedSkill,
+        system: next.system,
         forceImmediate: true,
         followTimeline: false,
       });

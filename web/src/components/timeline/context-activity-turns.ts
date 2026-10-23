@@ -1,13 +1,18 @@
 // web/src/components/timeline/context-activity-turns.ts
 import type { MessageInfo, MessagePart } from "../../services/sse-types";
 import type { MessageTurn } from "../../store/workspace";
-import { isVisibleTextPart, isWorkPart } from "./context-activity-parts";
+import {
+  expandInlineThinkingParts,
+  isVisibleTextPart,
+  isWorkPart,
+} from "./context-activity-parts";
 
 export type TurnRenderItem =
   | { kind: "single"; part: MessagePart }
   | { kind: "activity-group"; parts: MessagePart[] };
 
 export function groupAssistantParts(parts: MessagePart[]): TurnRenderItem[] {
+  const expanded = expandInlineThinkingParts(parts);
   const items: TurnRenderItem[] = [];
   let buffer: MessagePart[] = [];
 
@@ -17,7 +22,7 @@ export function groupAssistantParts(parts: MessagePart[]): TurnRenderItem[] {
     buffer = [];
   };
 
-  for (const part of parts) {
+  for (const part of expanded) {
     if (isWorkPart(part)) {
       buffer.push(part);
     } else if (isVisibleTextPart(part)) {
@@ -131,11 +136,12 @@ export function resolveMergedTurnParts(
     }
   }
 
-  const firstTextIdx = turn.parts.findIndex(isVisibleTextPart);
+  const turnParts = expandInlineThinkingParts(turn.parts);
+  const firstTextIdx = turnParts.findIndex(isVisibleTextPart);
   const error = Boolean(turn.info.error);
   // Leading work joins the open run; this turn renders from its first visible text.
-  const own = error || !runOpen ? turn.parts : firstTextIdx < 0 ? [] : turn.parts.slice(firstTextIdx);
-  const ownsRun = !error && (runOpen ? firstTextIdx >= 0 : turn.parts.some(isRenderablePart));
+  const own = error || !runOpen ? turnParts : firstTextIdx < 0 ? [] : turnParts.slice(firstTextIdx);
+  const ownsRun = !error && (runOpen ? firstTextIdx >= 0 : turnParts.some(isRenderablePart));
 
   const carriedWork: MessagePart[] = [];
   const carriedTurnIDs: string[] = [];
@@ -145,8 +151,9 @@ export function resolveMergedTurnParts(
     for (; i < allTurns.length && allTurns[i].info.role === "assistant"; i++) {
       const next = allTurns[i];
       if (next.info.error) break;
-      const nextTextIdx = next.parts.findIndex(isVisibleTextPart);
-      const lead = (nextTextIdx < 0 ? next.parts : next.parts.slice(0, nextTextIdx)).filter(isWorkPart);
+      const nextParts = expandInlineThinkingParts(next.parts);
+      const nextTextIdx = nextParts.findIndex(isVisibleTextPart);
+      const lead = (nextTextIdx < 0 ? nextParts : nextParts.slice(0, nextTextIdx)).filter(isWorkPart);
       if (lead.length > 0) {
         carriedWork.push(...lead);
         carriedTurnIDs.push(next.info.id);
@@ -178,7 +185,9 @@ export function resolveTurnNavigationTarget(turns: MessageTurn[], messageID: str
   const sourceIndex = turns.findIndex((turn) => turn.info.id === messageID);
   const source = turns[sourceIndex];
   if (!source || source.info.role !== "assistant") return messageID;
-  const partIDs = new Set(partID ? [partID] : source.parts.map((part) => part.id));
+  const partIDs = new Set(
+    partID ? [partID, `${partID}#thinking`] : source.parts.map((part) => part.id)
+  );
   const ownParts = resolveMergedTurnParts(turns, sourceIndex).effectiveParts;
   if (source.info.error || ownParts.some((part) => partIDs.has(part.id))) return messageID;
   let cycleStart = sourceIndex;

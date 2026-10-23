@@ -22,8 +22,18 @@ func ingressRequest(t *testing.T, g *Gateway, method, path, token string) int {
 	return rec.Code
 }
 
+func ingressGateway(t *testing.T) (*Gateway, string, string) {
+	t.Helper()
+	g, lanToken := lanGateway(t)
+	relayToken, err := g.pairing.RelayToken()
+	if err != nil {
+		t.Fatalf("relay pairing token: %v", err)
+	}
+	return g, lanToken, relayToken
+}
+
 func TestIngressRequestRequiresPairingToken(t *testing.T) {
-	g, token := lanGateway(t)
+	g, lanToken, relayToken := ingressGateway(t)
 
 	if code := ingressRequest(t, g, http.MethodGet, "/healthz", ""); code != http.StatusUnauthorized {
 		t.Fatalf("GET /healthz without a token = %d, want 401", code)
@@ -31,15 +41,22 @@ func TestIngressRequestRequiresPairingToken(t *testing.T) {
 	if code := ingressRequest(t, g, http.MethodGet, "/healthz", "not-the-token"); code != http.StatusUnauthorized {
 		t.Fatalf("GET /healthz with a wrong token = %d, want 401", code)
 	}
-	// A valid token from a public source address still works: the forwarder is
-	// the one exposing this gateway, and it dials in from loopback.
-	if code := ingressRequest(t, g, http.MethodGet, "/healthz", token); code != http.StatusOK {
-		t.Fatalf("GET /healthz with the pairing token = %d, want 200", code)
+	// A leaked LAN token must NOT authorize requests on the public relay ingress.
+	if code := ingressRequest(t, g, http.MethodGet, "/healthz", lanToken); code != http.StatusUnauthorized {
+		t.Fatalf("GET /healthz over ingress with the LAN token = %d, want 401", code)
+	}
+	// Conversely, the relay token must NOT authorize requests on the LAN listener.
+	if code := lanRequest(t, g, http.MethodGet, "/healthz", relayToken); code != http.StatusUnauthorized {
+		t.Fatalf("GET /healthz over LAN with the relay token = %d, want 401", code)
+	}
+	// A valid relay token from a public source address works on the ingress.
+	if code := ingressRequest(t, g, http.MethodGet, "/healthz", relayToken); code != http.StatusOK {
+		t.Fatalf("GET /healthz with the relay token = %d, want 200", code)
 	}
 }
 
 func TestIngressRequestEnforcesRemoteAllowList(t *testing.T) {
-	g, token := lanGateway(t)
+	g, _, relayToken := ingressGateway(t)
 
 	denied := []struct{ method, path string }{
 		{http.MethodGet, "/api/hoxi/tunnel/status"},
@@ -58,14 +75,14 @@ func TestIngressRequestEnforcesRemoteAllowList(t *testing.T) {
 		{http.MethodGet, "/session"},
 	}
 	for _, r := range denied {
-		if code := ingressRequest(t, g, r.method, r.path, token); code != http.StatusForbidden {
+		if code := ingressRequest(t, g, r.method, r.path, relayToken); code != http.StatusForbidden {
 			t.Errorf("%s %s over ingress = %d, want 403", r.method, r.path, code)
 		}
 	}
 }
 
 func TestIngressRequestSanitizesHeadersAndAcceptsExternalOrigin(t *testing.T) {
-	g, token := lanGateway(t)
+	g, _, relayToken := ingressGateway(t)
 
 	var seenHeader http.Header
 	var seenQuery string
@@ -81,8 +98,8 @@ func TestIngressRequestSanitizesHeadersAndAcceptsExternalOrigin(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/hoxi/workspaces?hoxiToken=leaked&dir=x", nil)
 	req.Host = "abc123.node.hoxi.work"
 	req.RemoteAddr = "127.0.0.1:51000"
-	req.Header.Set("X-Auth", token)
-	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-Auth", relayToken)
+	req.Header.Set("Authorization", "Bearer "+relayToken)
 	req.Header.Set("Origin", "https://abc123.node.hoxi.work")
 	req.Header.Set("Referer", "https://abc123.node.hoxi.work/app")
 	req.Header.Set("Cookie", "CF_Authorization=jwt; hoxi_gateway_token=secret")

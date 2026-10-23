@@ -4,6 +4,7 @@ import { appSettings, isSessionBusy } from "../../store/workspace";
 import { Icon, TextReveal, TextShimmer } from "../icons";
 import MarkdownView from "./MarkdownView";
 import { t } from "../../i18n";
+import { formatElapsedSeconds } from "./duration-label";
 
 type ReasoningPart = Extract<MessagePart, { type: "reasoning" }>;
 
@@ -338,7 +339,7 @@ export default function ThoughtBox(props: { part: ReasoningPart; revealKey?: str
           </Show>
           <Show when={!streaming() && durationSec() >= 0.05}>
             <span class="shrink-0 font-mono text-[12px] tabular-nums text-[var(--text-faint)]">
-              {durationSec().toFixed(1)}s
+              {formatElapsedSeconds(durationSec())}
             </span>
           </Show>
           <span

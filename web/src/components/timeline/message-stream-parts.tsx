@@ -1,8 +1,12 @@
 // web/src/components/timeline/message-stream-parts.tsx
-import { createMemo, createSignal, Match, onCleanup, Show, Switch } from "solid-js";
+import { createMemo, createSignal, For, Match, onCleanup, Show, Switch } from "solid-js";
 import ThoughtBox from "./ThoughtBox";
 import ToolCard from "./ToolCard";
 import MarkdownView from "./MarkdownView";
+import {
+  expandInlineThinkingParts,
+  extractVisibleAssistantText,
+} from "./context-activity-parts";
 import ContextActivityGroupComponent, {
   groupAssistantParts,
   hasLiveTailRenderedOutput,
@@ -42,6 +46,7 @@ import {
   deriveMarkdownDownloadFilename,
 } from "./tool-card-state";
 import ExecutionWaitingIndicator from "./ExecutionWaitingIndicator";
+import { formatElapsedSeconds } from "./duration-label";
 import StalledNotice from "./StalledNotice";
 import ChangedFilesSummary from "./ChangedFilesSummary";
 import TurnTelemetryPopover from "./TurnTelemetryPopover";
@@ -89,7 +94,7 @@ export function resolveActiveCycleStepLabel(
   }
   const lastTurn = cycleTurns[cycleTurns.length - 1];
   if (lastTurn && !lastTurn.info.time?.completed) {
-    const hasOpenReasoning = lastTurn.parts.some(
+    const hasOpenReasoning = expandInlineThinkingParts(lastTurn.parts).some(
       (p) => p.type === "reasoning" && !p.time?.end
     );
     if (hasOpenReasoning) return t("timeline.thinking");
@@ -122,25 +127,31 @@ export function ContextActivityGroupView(props: {
 }
 
 export function PartView(props: { part: MessagePart; revealKey?: string }) {
-  const part = () => props.part;
+  const expanded = createMemo(() =>
+    props.part ? expandInlineThinkingParts([props.part]) : []
+  );
   return (
-    <div data-part-id={part()?.id}>
-      <Switch>
-        <Match when={part()?.type === "reasoning"}>
-          <ThoughtBox
-            part={part() as Extract<MessagePart, { type: "reasoning" }>}
-            revealKey={props.revealKey}
-          />
-        </Match>
-        <Match when={part()?.type === "tool"}>
-          <ToolCard part={part() as Extract<MessagePart, { type: "tool" }>} />
-        </Match>
-        <Match when={part()?.type === "text"}>
-          <div>
-            <MarkdownView content={(part() as Extract<MessagePart, { type: "text" }>).text} />
-          </div>
-        </Match>
-      </Switch>
+    <div data-part-id={props.part?.id}>
+      <For each={expanded()}>
+        {(part) => (
+          <Switch>
+            <Match when={part.type === "reasoning"}>
+              <ThoughtBox
+                part={part as Extract<MessagePart, { type: "reasoning" }>}
+                revealKey={props.revealKey}
+              />
+            </Match>
+            <Match when={part.type === "tool"}>
+              <ToolCard part={part as Extract<MessagePart, { type: "tool" }>} />
+            </Match>
+            <Match when={part.type === "text"}>
+              <div>
+                <MarkdownView content={extractVisibleAssistantText((part as Extract<MessagePart, { type: "text" }>).text)} />
+              </div>
+            </Match>
+          </Switch>
+        )}
+      </For>
     </div>
   );
 }
@@ -352,7 +363,7 @@ export function AssistantTurnFooter(props: {
 
       const ownTexts = props.parts
         .filter((p): p is Extract<MessagePart, { type: "text" }> => p.type === "text")
-        .map((p) => p.text.trim())
+        .map((p) => extractVisibleAssistantText(p.text).trim())
         .filter(Boolean);
 
       if (ownTexts.length > 0) {
@@ -361,7 +372,7 @@ export function AssistantTurnFooter(props: {
         for (let i = cycleTurns.length - 1; i >= 0; i--) {
           const stepTexts = cycleTurns[i].parts
             .filter((p): p is Extract<MessagePart, { type: "text" }> => p.type === "text")
-            .map((p) => p.text.trim())
+            .map((p) => extractVisibleAssistantText(p.text).trim())
             .filter(Boolean);
           if (stepTexts.length > 0) {
             textChunks.push(...stepTexts);
@@ -394,7 +405,8 @@ export function AssistantTurnFooter(props: {
 
     const texts = props.parts
       .filter((p): p is Extract<MessagePart, { type: "text" }> => p.type === "text")
-      .map((t) => t.text)
+      .map((t) => extractVisibleAssistantText(t.text).trim())
+      .filter(Boolean)
       .join("\n\n")
       .trim();
     const toolCount = props.parts.filter((p) => p.type === "tool" && !isTodoTool(p)).length;
@@ -425,7 +437,7 @@ export function AssistantTurnFooter(props: {
     }
     const sec = (summary.completed - summary.created) / 1000;
     if (sec < 0.05) return "";
-    return sec < 60 ? `${sec.toFixed(1)}s` : `${Math.floor(sec / 60)}m ${Math.round(sec % 60)}s`;
+    return formatElapsedSeconds(sec);
   });
 
   const copyResponse = async () => {

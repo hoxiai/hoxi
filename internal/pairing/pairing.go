@@ -25,15 +25,16 @@ import (
 // JSON shape the phone's QR scanner already understands:
 // {"url","token","type","entrance"}.
 type Payload struct {
-	URL       string `json:"url"`
-	Token     string `json:"token"`
-	Type      string `json:"type"`
-	Entrance  string `json:"entrance"`
-	Relay     string `json:"relay,omitempty"`
-	Host      string `json:"host"`
-	Port      int    `json:"port"`
-	Hostname  string `json:"hostname"`
-	Available bool   `json:"available"`
+	URL        string `json:"url"`
+	Token      string `json:"token"`
+	RelayToken string `json:"relayToken,omitempty"`
+	Type       string `json:"type"`
+	Entrance   string `json:"entrance"`
+	Relay      string `json:"relay,omitempty"`
+	Host       string `json:"host"`
+	Port       int    `json:"port"`
+	Hostname   string `json:"hostname"`
+	Available  bool   `json:"available"`
 }
 
 // Code is a Payload plus the rendered QR image.
@@ -52,8 +53,9 @@ type Service struct {
 	lanHost   func() string
 	relayURL  func() string
 
-	mu     sync.Mutex
-	cached string
+	mu          sync.Mutex
+	cached      string
+	cachedRelay string
 }
 
 // NewService returns a Service that stores its token at tokenPath and
@@ -80,18 +82,19 @@ func (s *Service) SetRelayURL(fn func() string) {
 // LAN address, Available is false and no QR image is produced; the caller
 // should tell the user to join a network instead of showing a dead code.
 func (s *Service) Code() (Code, error) {
-	token, err := s.token()
+	lanToken, relayToken, err := s.tokens()
 	if err != nil {
 		return Code{}, err
 	}
 	code := Code{Payload: Payload{
 		Type:     "hoxi",
-		Token:    token,
+		Token:    lanToken,
 		Port:     s.port,
 		Hostname: s.hostname(),
 	}}
 	if relay := s.relay(); relay != "" {
 		code.Relay = relay
+		code.RelayToken = relayToken
 	}
 	host := strings.TrimSpace(s.lanHost())
 	if host == "" {
@@ -109,6 +112,7 @@ func (s *Service) Code() (Code, error) {
 	}
 	if code.Relay != "" {
 		scannable["relay"] = code.Relay
+		scannable["relayToken"] = code.RelayToken
 	}
 	encoded, err := json.Marshal(scannable)
 	if err != nil {
@@ -132,14 +136,24 @@ func (s *Service) relay() string {
 	return strings.TrimSpace(fn())
 }
 
-// Token returns this desktop's stable pairing token, creating and persisting it
-// on first use.
+// Token returns this desktop's stable LAN pairing token, creating and
+// persisting it on first use.
 func (s *Service) Token() (string, error) {
-	return s.token()
+	lanToken, _, err := s.tokens()
+	return lanToken, err
 }
 
-// Rotate replaces the pairing token, invalidating any previously scanned QR and
-// every saved LAN connection, and returns the freshly generated code.
+// RelayToken returns this desktop's reverse-proxy / tunnel relay token, kept
+// separate from the cleartext LAN pairing token so a LAN leak cannot authorize
+// requests through the public relay ingress.
+func (s *Service) RelayToken() (string, error) {
+	_, relayToken, err := s.tokens()
+	return relayToken, err
+}
+
+// Rotate replaces both the LAN and relay pairing tokens, invalidating any
+// previously scanned QR and every saved connection, and returns the freshly
+// generated code.
 func (s *Service) Rotate() (Code, error) {
 	if err := s.rotateToken(); err != nil {
 		return Code{}, err
@@ -147,69 +161,96 @@ func (s *Service) Rotate() (Code, error) {
 	return s.Code()
 }
 
-func (s *Service) rotateToken() error {
+func randomHexToken() (string, error) {
 	buf := make([]byte, 32)
 	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buf), nil
+}
+
+func (s *Service) rotateToken() error {
+	lanToken, err := randomHexToken()
+	if err != nil {
 		return err
 	}
-	token := hex.EncodeToString(buf)
+	relayToken, err := randomHexToken()
+	if err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := writeToken(s.tokenPath, token); err != nil {
+	if err := writeTokens(s.tokenPath, lanToken, relayToken); err != nil {
 		return err
 	}
-	s.cached = token
+	s.cached = lanToken
+	s.cachedRelay = relayToken
 	return nil
 }
 
-// token returns the persisted pairing token, creating and storing it on first
-// use. A successful value is cached in memory so repeated calls stay stable.
-func (s *Service) token() (string, error) {
+// tokens returns the persisted LAN and relay pairing tokens, creating and
+// storing any missing value on first use.
+func (s *Service) tokens() (string, string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.cached != "" {
-		return s.cached, nil
+	if s.cached != "" && s.cachedRelay != "" {
+		return s.cached, s.cachedRelay, nil
 	}
-	if token := readToken(s.tokenPath); token != "" {
-		s.cached = token
-		return token, nil
+	lanToken, relayToken := readTokens(s.tokenPath)
+	changed := false
+	if lanToken == "" {
+		var err error
+		lanToken, err = randomHexToken()
+		if err != nil {
+			return "", "", err
+		}
+		changed = true
 	}
-	buf := make([]byte, 32)
-	if _, err := rand.Read(buf); err != nil {
-		return "", err
+	if relayToken == "" || relayToken == lanToken {
+		var err error
+		relayToken, err = randomHexToken()
+		if err != nil {
+			return "", "", err
+		}
+		changed = true
 	}
-	token := hex.EncodeToString(buf)
-	if err := writeToken(s.tokenPath, token); err != nil {
-		return "", err
+	if changed {
+		if err := writeTokens(s.tokenPath, lanToken, relayToken); err != nil {
+			return "", "", err
+		}
 	}
-	s.cached = token
-	return token, nil
+	s.cached = lanToken
+	s.cachedRelay = relayToken
+	return lanToken, relayToken, nil
 }
 
-func readToken(path string) string {
+type tokenRecord struct {
+	Token      string `json:"token"`
+	RelayToken string `json:"relayToken,omitempty"`
+}
+
+func readTokens(path string) (string, string) {
 	if path == "" {
-		return ""
+		return "", ""
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return ""
+		return "", ""
 	}
 	if len(bytes.TrimSpace(data)) == 0 {
-		return ""
+		return "", ""
 	}
-	var rec struct {
-		Token string `json:"token"`
-	}
+	var rec tokenRecord
 	if json.Unmarshal(data, &rec) != nil {
 		backupCorruptTokenFile(path)
-		return ""
+		return "", ""
 	}
 	tok := strings.TrimSpace(rec.Token)
 	if tok == "" {
 		backupCorruptTokenFile(path)
-		return ""
+		return "", ""
 	}
-	return tok
+	return tok, strings.TrimSpace(rec.RelayToken)
 }
 
 func backupCorruptTokenFile(path string) {
@@ -220,14 +261,12 @@ func backupCorruptTokenFile(path string) {
 	_ = os.Rename(path, backup)
 }
 
-func writeToken(path, token string) error {
+func writeTokens(path, lanToken, relayToken string) error {
 	if path == "" {
 		return nil
 	}
 	if data, err := os.ReadFile(path); err == nil && len(bytes.TrimSpace(data)) > 0 {
-		var rec struct {
-			Token string `json:"token"`
-		}
+		var rec tokenRecord
 		if json.Unmarshal(data, &rec) != nil || strings.TrimSpace(rec.Token) == "" {
 			backupCorruptTokenFile(path)
 		}
@@ -235,9 +274,10 @@ func writeToken(path, token string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	data, err := json.MarshalIndent(struct {
-		Token string `json:"token"`
-	}{Token: token}, "", "  ")
+	data, err := json.MarshalIndent(tokenRecord{
+		Token:      lanToken,
+		RelayToken: relayToken,
+	}, "", "  ")
 	if err != nil {
 		return err
 	}

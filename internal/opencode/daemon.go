@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -70,6 +71,58 @@ func seedOpenCodeAuthIfNeeded(targetOpenCodeDir string) {
 	}
 }
 
+// envWithout returns env with the named keys removed (case-sensitive on unix).
+func envWithout(env []string, keys ...string) []string {
+	if len(keys) == 0 {
+		return env
+	}
+	drop := make(map[string]struct{}, len(keys))
+	for _, key := range keys {
+		drop[key] = struct{}{}
+	}
+	out := make([]string, 0, len(env))
+	for _, entry := range env {
+		name, _, _ := strings.Cut(entry, "=")
+		if _, ok := drop[name]; ok {
+			continue
+		}
+		out = append(out, entry)
+	}
+	return out
+}
+
+var (
+	ansiEscapePattern  = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-_]`)
+	versionLinePattern = regexp.MustCompile(`(?i)^(?:opencode\s+)?v?\d+\.\d+\.\d+`)
+)
+
+// parseVersionOutput extracts the version line from CLI output that may carry
+// ANSI escapes, leading warning lines or stack frames.
+func parseVersionOutput(out []byte) string {
+	cleaned := ansiEscapePattern.ReplaceAllString(string(out), "")
+	var fallback string
+	for _, line := range strings.Split(cleaned, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if versionLinePattern.MatchString(line) {
+			return line
+		}
+		if fallback == "" && !isNoiseLine(line) {
+			fallback = line
+		}
+	}
+	return fallback
+}
+
+func isNoiseLine(line string) bool {
+	lower := strings.ToLower(line)
+	return strings.HasPrefix(lower, "warning") ||
+		strings.HasPrefix(lower, "at ") ||
+		strings.HasPrefix(lower, "node:")
+}
+
 func ResolveVersion(binPath string) string {
 	binPath = strings.TrimSpace(binPath)
 	if binPath == "" {
@@ -96,7 +149,9 @@ func ResolveVersion(binPath string) string {
 
 		ctx, cancel := context.WithTimeout(context.Background(), resolveVersionTimeout)
 		cmd := exec.CommandContext(ctx, binPath, "--version")
-		cmd.Env = append(os.Environ(),
+		// Drop inherited color-forcing vars: with FORCE_COLOR set the CLI ignores
+		// NO_COLOR and prints an ANSI-colored warning on top of the version line.
+		cmd.Env = append(envWithout(os.Environ(), "FORCE_COLOR", "CLICOLOR_FORCE", "CLICOLOR"),
 			"CI=1",
 			"NO_COLOR=1",
 			"GIT_TERMINAL_PROMPT=0",
@@ -107,8 +162,7 @@ func ResolveVersion(binPath string) string {
 
 		ver := ""
 		if err == nil {
-			lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-			ver = strings.TrimSpace(lines[0])
+			ver = parseVersionOutput(out)
 		}
 
 		cachedOpenCodeVerMu.Lock()

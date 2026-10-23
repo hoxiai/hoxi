@@ -8,13 +8,16 @@ import (
 )
 
 var (
-	thinkBlockRegex = regexp.MustCompile(`(?is)<think>.*?</think>`)
-	codeFenceRegex  = regexp.MustCompile("(?s)```.*?```")
+	thinkBlockRegex         = regexp.MustCompile(`(?is)<think(?:ing)?>.*?</think(?:ing)?>`)
+	unclosedThinkBlockRegex = regexp.MustCompile(`(?is)<think(?:ing)?>.*$`)
+	codeFenceRegex          = regexp.MustCompile("(?s)```.*?```")
 )
 
-// StripThinking removes <think>…</think> reasoning blocks from model output.
+// StripThinking removes <think>…</think> and <thinking>…</thinking> reasoning
+// blocks (including unclosed trailing blocks) from model output.
 func StripThinking(s string) string {
-	return thinkBlockRegex.ReplaceAllString(s, "")
+	cleaned := thinkBlockRegex.ReplaceAllString(s, "")
+	return unclosedThinkBlockRegex.ReplaceAllString(cleaned, "")
 }
 
 // StripCodeFences replaces fenced code blocks with repl.

@@ -2,16 +2,21 @@ package gateway
 
 import "net/http"
 
-// servePairedRequest authenticates a paired controller with the LAN pairing
-// token and serves the request under the paired-controller route allow-list.
-// The LAN listener and the reverse-proxy ingress both use it; they differ only
-// in how the request reaches the gateway.
+// servePairedRequest authenticates a paired controller with the transport's
+// pairing token (LAN token for 5417, relay token for 5418) and serves the
+// request under the paired-controller route allow-list.
 func (g *Gateway) servePairedRequest(w http.ResponseWriter, r *http.Request, source string) {
 	if r.URL.RawPath != "" {
 		writeJSONError(w, http.StatusForbidden, "route is not available for remote controllers")
 		return
 	}
-	if !g.pairing.Authorize(r) {
+	authorized := false
+	if source == remoteSourceRelay {
+		authorized = g.pairing.AuthorizeRelay(r)
+	} else {
+		authorized = g.pairing.Authorize(r)
+	}
+	if !authorized {
 		writeJSONError(w, http.StatusUnauthorized, "invalid pairing token")
 		return
 	}

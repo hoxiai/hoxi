@@ -16,6 +16,12 @@ func TestCleanAndFallbackSummarizeTitle(t *testing.T) {
 	if got := cleanSummarizedTitle("   <think>only thought</think>  ", "en-US"); got != "" {
 		t.Errorf("expected empty cleaned title, got %q", got)
 	}
+	if got := cleanSummarizedTitle("<thinking>**Drafting title****Refining concise wording**</thinking>\n修复 Codex Thinking 标签兼容", "zh-CN"); got != "修复 Codex Thinking 标签兼容" {
+		t.Errorf("cleanSummarizedTitle with <thinking> = %q, want %q", got, "修复 Codex Thinking 标签兼容")
+	}
+	if got := cleanSummarizedTitle("<thinking>**Running build and mobile checks**", "en-US"); got != "" {
+		t.Errorf("expected empty cleaned title for unclosed <thinking>, got %q", got)
+	}
 
 	fbZh := fallbackSummarizeTitle("请帮我排查 desktop_gateway.go 里的 CORS 配置问题。顺便加上单元测试。", "zh-CN")
 	if fbZh == "" || fbZh == "新任务会话" {

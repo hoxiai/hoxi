@@ -481,7 +481,7 @@ func normalizeRunnerTool(rawName string, rawParams map[string]interface{}) (norm
 	for k, v := range rawParams {
 		clean[k] = v
 	}
-	if fp := firstString(clean["AbsolutePath"], clean["TargetFile"], clean["SearchPath"], clean["DirectoryPath"], clean["file_path"], clean["path"]); fp != "" {
+	if fp := firstString(clean["AbsolutePath"], clean["TargetFile"], clean["Path"], clean["SearchPath"], clean["DirectoryPath"], clean["file_path"], clean["path"]); fp != "" {
 		clean["filePath"] = fp
 	}
 	if cmd := firstString(clean["CommandLine"], clean["command"]); cmd != "" {
@@ -491,7 +491,7 @@ func normalizeRunnerTool(rawName string, rawParams map[string]interface{}) (norm
 	switch lower {
 	case "view_file", "read", "read_file":
 		normTool = "read"
-	case "write_to_file", "write", "create_file":
+	case "write_to_file", "write_file", "write", "create_file":
 		normTool = "write"
 	case "replace_file_content", "multi_replace_file_content", "sed_file", "edit", "edit_file":
 		normTool = "edit"

@@ -257,7 +257,7 @@ export const timeline: TimelineI18n = {
   executing: "执行中…",
   executionPreparing: "正在准备下一步…",
   executionStillWorking: "正在处理任务",
-  executionElapsed: "{time}s",
+  executionElapsed: "{time}",
   executionStepsDone: "{count} 步",
   executionStepNumber: "{count} 步",
   executionStepDetails: "步骤详情",

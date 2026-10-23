@@ -129,8 +129,8 @@ describe("task commit and push", () => {
       assertEqual(prompt, [
         t("timeline.gitAgentCommitPrompt", { directory: JSON.stringify(directory) }),
         t("timeline.gitAgentCommitPushPrompt"),
-        t("timeline.gitAgentCommitAttributionPrompt"),
       ].join("\n\n"));
+      assertTrue(String(options?.system).includes(t("timeline.gitAgentCommitAttributionPrompt")), "attribution rides in the system prefix");
       assertEqual(options?.directory, directory);
       assertDeepEqual(options?.model, backgroundAI.model);
       assertEqual(options?.variant, "high");
@@ -218,8 +218,8 @@ describe("task commit and push", () => {
         t("timeline.gitAgentCommitPrompt", { directory: JSON.stringify(directory) }),
         t("timeline.gitAgentCommitOnlyPrompt"),
         t("timeline.gitAgentCommitMessagePrompt", { message: JSON.stringify(message) }),
-        t("timeline.gitAgentCommitAttributionPrompt"),
       ].join("\n\n"));
+      assertTrue(String(calls.send[0][2]?.system).includes(t("timeline.gitAgentCommitAttributionPrompt")), "attribution rides in the system prefix");
     });
   });
 
@@ -236,6 +236,7 @@ describe("task commit and push", () => {
         t("timeline.gitAgentCommitOnlyPrompt"),
       ].join("\n\n"));
       assertEqual(String(calls.send[0][1]).includes("code@hoxi.ai"), false);
+      assertEqual(String(calls.send[0][2]?.system || "").includes("code@hoxi.ai"), false);
     });
   });
 
@@ -248,7 +249,8 @@ describe("task commit and push", () => {
       } finally {
         setGitAttribution("mode", "auto");
       }
-      assertEqual(String(calls.send[0][1]).includes(t("timeline.gitAgentCommitAttributionPrompt")), true);
+      assertTrue(String(calls.send[0][2]?.system).includes(t("timeline.gitAgentCommitAttributionPrompt")), "attribution rides in the system prefix");
+      assertEqual(String(calls.send[0][1]).includes("code@hoxi.ai"), false);
     });
   });
 
@@ -260,6 +262,7 @@ describe("task commit and push", () => {
       assertEqual(await executeTaskCommitAndPush(id, { push: false }), id);
       assertEqual(calls.send.length, 1);
       assertEqual(String(calls.send[0][1]).includes("code@hoxi.ai"), false);
+      assertEqual(String(calls.send[0][2]?.system || "").includes("code@hoxi.ai"), false);
       assertEqual(gitAttribution.mode, "auto");
     });
   });
@@ -271,8 +274,8 @@ describe("task commit and push", () => {
       assertEqual(calls.send[0][1], [
         t("timeline.gitAgentCommitPrompt", { directory: JSON.stringify(directory) }),
         t("timeline.gitAgentCommitPushPrompt"),
-        t("timeline.gitAgentCommitAttributionPrompt"),
       ].join("\n\n"));
+      assertTrue(String(calls.send[0][2]?.system).includes(t("timeline.gitAgentCommitAttributionPrompt")), "attribution rides in the system prefix");
     });
   });
 

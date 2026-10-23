@@ -3,6 +3,7 @@ package runner
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -92,6 +93,121 @@ func TestAgyEventTranslationWithPhase0Fixtures(t *testing.T) {
 	if got := strings.Join(toolStatuses, ","); got != wantStatuses {
 		t.Fatalf("expected tool status sequence %q, got %q", wantStatuses, got)
 	}
+}
+
+func TestAgyEditStepsRecoverPayloadFromTranscript(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("GEMINI_HOME", home)
+	const conv = "11111111-2222-3333-4444-555555555555"
+	logDir := agyTranscriptLogDir(filepath.Join(home, "antigravity-cli", "brain"), conv)
+	if err := os.MkdirAll(logDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// One planner turn queues a write and two edits; agy runs them later as
+	// separate stdout steps that only repeat the path. Arguments are stored
+	// JSON-encoded, the way transcript.jsonl writes them.
+	row, err := json.Marshal(map[string]interface{}{
+		"step_index": 7,
+		"type":       "PLANNER_RESPONSE",
+		"tool_calls": []map[string]interface{}{
+			{"name": "write_file", "args": map[string]string{
+				"Path":    `"/repo/new.txt"`,
+				"Content": `"package new\n"`,
+			}},
+			{"name": "edit_file", "args": map[string]string{
+				"Path":        `"/repo/a.go"`,
+				"Target":      `"const a = 1\n"`,
+				"Replacement": `"const a = 2\n"`,
+			}},
+			{"name": "edit_file", "args": map[string]string{
+				"Path":        `"/repo/b.go"`,
+				"Target":      `"old\n"`,
+				"Replacement": `"new\n"`,
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(logDir, "transcript.jsonl"), append(row, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	tr := NewTurnTranslator("ses_agy_edit", string(RuntimeAntigravity), "msg_a_edit", "msg_u_edit", "antigravity", "gemini", "build", "")
+	step := func(idx int, path string) string {
+		return fmt.Sprintf(`{"conversation_id":"%s","event":"step_update","step_update":{"conversation_id":"%s","state":"DONE","step_index":%d,"step_type":"tool","tool_name":"edit_file","tool_info":{"name":"edit_file","parameters":{"Path":"%s"}}}}`, conv, conv, idx, path)
+	}
+	var evts []SSEEvent
+	for _, idx := range []int{40, 41, 42} {
+		name := []string{"new.txt", "a.go", "b.go"}[idx-40]
+		evts = append(evts, tr.FeedLine(step(idx, "/repo/"+name))...)
+	}
+
+	var got []MessagePart
+	for _, evt := range evts {
+		if evt.Type != "message.part.updated" {
+			continue
+		}
+		if p := evt.Properties["part"].(MessagePart); p.Type == "tool" && p.State != nil && p.State.Status == "completed" {
+			got = append(got, p)
+		}
+	}
+	if len(got) != 3 {
+		t.Fatalf("expected 3 completed edit steps, got %d", len(got))
+	}
+	if got[0].Tool != "write" || got[0].State.Input["Content"] != "package new\n" || got[0].State.Input["filePath"] != "/repo/new.txt" {
+		t.Fatalf("write payload not recovered: tool=%s input=%v", got[0].Tool, got[0].State.Input)
+	}
+	if got[1].Tool != "edit" || got[1].State.Input["Target"] != "const a = 1\n" || got[1].State.Input["Replacement"] != "const a = 2\n" {
+		t.Fatalf("first edit paired with the wrong payload: %+v", got[1].State.Input)
+	}
+	if got[2].State.Input["Target"] != "old\n" || got[2].State.Input["filePath"] != "/repo/b.go" {
+		t.Fatalf("second edit paired with the wrong payload: %+v", got[2].State.Input)
+	}
+}
+
+func TestAgyEditPayloadNeverOverridesStdout(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("GEMINI_HOME", home)
+	const conv = "22222222-3333-4444-5555-666666666666"
+	logDir := agyTranscriptLogDir(filepath.Join(home, "antigravity-cli", "brain"), conv)
+	if err := os.MkdirAll(logDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	row, err := json.Marshal(map[string]interface{}{
+		"step_index": 3,
+		"type":       "PLANNER_RESPONSE",
+		"tool_calls": []map[string]interface{}{
+			{"name": "replace_file_content", "args": map[string]string{
+				"TargetFile":         `"/repo/planned.go"`,
+				"TargetContent":      `"planned"`,
+				"ReplacementContent": `"planned-new"`,
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(logDir, "transcript.jsonl"), append(row, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	tr := NewTurnTranslator("ses_agy_keep", string(RuntimeAntigravity), "msg_a_keep", "msg_u_keep", "antigravity", "gemini", "build", "")
+	line := fmt.Sprintf(`{"conversation_id":"%s","event":"step_update","step_update":{"conversation_id":"%s","state":"DONE","step_index":9,"step_type":"tool","tool_name":"replace_file_content","tool_info":{"name":"replace_file_content","parameters":{"TargetFile":"/repo/actual.go","TargetContent":"actual","ReplacementContent":"actual-new"}}}}`, conv, conv)
+	evts := tr.FeedLine(line)
+	for _, evt := range evts {
+		if evt.Type != "message.part.updated" {
+			continue
+		}
+		p := evt.Properties["part"].(MessagePart)
+		if p.Type == "tool" && p.State != nil && p.State.Status == "completed" {
+			if p.State.Input["filePath"] != "/repo/actual.go" || p.State.Input["TargetContent"] != "actual" {
+				t.Fatalf("stdout payload was overwritten by the transcript: %+v", p.State.Input)
+			}
+			return
+		}
+	}
+	t.Fatal("completed tool part not found")
 }
 
 func TestAgyDeniedToolAndInterruptTranslation(t *testing.T) {

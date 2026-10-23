@@ -32,6 +32,7 @@ export function enqueueSessionPrompt(
     effort?: QueuedPromptItem["effort"];
     attachments?: QueuedPromptAttachment[];
     skillSelection?: SkillSelection;
+    system?: string;
   }
 ): QueuedPromptItem {
   const config = sessionAIConfig(sessionID);
@@ -46,6 +47,7 @@ export function enqueueSessionPrompt(
     effort: options?.effort ?? config.effort,
     attachments: options?.attachments ?? [],
     ...(options?.skillSelection ? { skillSelection: { ...options.skillSelection } } : {}),
+    ...(options?.system?.trim() ? { system: options.system.trim() } : {}),
   };
   const current = workspace.queuedPromptsBySession[sessionID] ?? [];
   setWorkspace("queuedPromptsBySession", sessionID, [...current, item]);

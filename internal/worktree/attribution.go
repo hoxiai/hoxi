@@ -229,7 +229,9 @@ func SaveAttribution(path string, mode AttributionMode) error {
 	if err := f.Chmod(0o600); err != nil {
 		return err
 	}
-	if err := json.NewEncoder(f).Encode(AttributionState{Mode: mode}); err != nil {
+	// Enabled mirrors the pre-mode toggle so an older Hoxi build reading this
+	// file sees the closest behaviour: never -> off, auto/always -> on.
+	if err := json.NewEncoder(f).Encode(AttributionState{Mode: mode, Enabled: mode != AttributionNever}); err != nil {
 		return err
 	}
 	if err := f.Sync(); err != nil {

@@ -260,7 +260,7 @@ export const timeline = {
   executing: "Executing…",
   executionPreparing: "Preparing next step…",
   executionStillWorking: "Working on task",
-  executionElapsed: "{time}s",
+  executionElapsed: "{time}",
   executionStepsDone: "{count} steps",
   executionStepNumber: "{count} steps",
   executionStepDetails: "Step details",

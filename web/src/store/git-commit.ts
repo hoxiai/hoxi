@@ -354,11 +354,15 @@ export async function executeTaskCommitAndPush(
     t("timeline.gitAgentCommitPrompt", { directory: JSON.stringify(directory) }),
     t(options?.push === false ? "timeline.gitAgentCommitOnlyPrompt" : "timeline.gitAgentCommitPushPrompt"),
     customMessage ? t("timeline.gitAgentCommitMessagePrompt", { message: JSON.stringify(customMessage) }) : "",
-    gitAttributionEnabledFor(directory) ? t("timeline.gitAgentCommitAttributionPrompt") : "",
   ].filter(Boolean).join("\n\n");
+  // Attribution is an instruction to the model, not part of what the user said:
+  // send it as a turn-scoped system prefix so the timeline shows only the task.
+  const system = gitAttributionEnabledFor(directory)
+    ? t("timeline.gitAgentCommitAttributionPrompt")
+    : undefined;
   // Dispatch is not completion; the agent reports actual Git results in the timeline.
   // Override only this prompt; the session's saved model remains unchanged.
-  return submitSessionPrompt(prompt, activeID, { agent: "build", model: cheapModel });
+  return submitSessionPrompt(prompt, activeID, { agent: "build", model: cheapModel, system });
 }
 
 function worktreeTarget(directory?: string): { sessionID: string | null; key: string; directory?: string } {

@@ -223,6 +223,30 @@ describe("session AI configuration", () => {
     });
   });
 
+  it("keeps caller system instructions out of the visible user message", async () => {
+    await withAIFixture(async (a) => {
+      initializeSessionAI(a, configA);
+      setWorkspace("rootDir", `/ai-test/${a}`);
+      let sentText = "";
+      let sentSystem = "";
+      let optimistic = "";
+      hoxiAPI.sendPromptAsync = async (_id, text, options) => {
+        sentText = text;
+        sentSystem = options?.system || "";
+        optimistic = String(workspace.messagesBySession[a]?.at(-1)?.parts[0]?.type === "text"
+          ? (workspace.messagesBySession[a]?.at(-1)?.parts[0] as any).text
+          : "");
+      };
+      await submitSessionPrompt("commit the pending files", a, {
+        forceImmediate: true,
+        system: "End the commit message with the Hoxi trailer",
+      });
+      assertEqual(sentText, "commit the pending files");
+      assertTrue(sentSystem.includes("End the commit message with the Hoxi trailer"));
+      assertEqual(optimistic.includes("Hoxi trailer"), false, "system text must not leak into the timeline message");
+    });
+  });
+
   it("copies fork configuration independently and removes only the deleted session's persisted config", async () => {
     await withAIFixture(async (a, b) => {
       initializeSessionAI(a, configA);

@@ -29,8 +29,9 @@ type TurnTranslator struct {
 	stepStartMs  map[int]int64
 	hasTextPart  bool
 	turnFinished bool
-	lookupThink  func(externalID string, stepIndex int) string
-	lookupStep   func(externalID string, stepIndex int) string
+	lookupThink   func(externalID string, stepIndex int) string
+	lookupStep    func(externalID string, stepIndex int) string
+	editPayloads  *agyEditPayloadCursor
 
 	// mu serialises stdout feeding against the subagent activity poller.
 	mu             sync.Mutex
@@ -107,6 +108,7 @@ func (t *TurnTranslator) noteAgyConversation(id string) bool {
 	if !t.convPinned {
 		t.convPinned = true
 		t.externalID = id
+		t.editPayloads = newAgyEditPayloadCursor(id)
 	}
 	return id == t.externalID
 }
@@ -368,6 +370,16 @@ func (t *TurnTranslator) handleAgyToolStep(su *agyStepUpdate, now int64) []SSEEv
 		output = su.ToolInfo.Output
 		if su.ToolInfo.Error != nil {
 			errMsg = su.ToolInfo.Error.Message
+		}
+	}
+	if t.editPayloads != nil && agyEditPayloadNames[strings.ToLower(strings.TrimSpace(rawName))] && agyParamsLackEditPayload(rawParams) {
+		if name, full := t.editPayloads.next(); full != nil {
+			rawParams = mergeAgyEditParams(rawParams, full)
+			// Stdout names every edit step edit_file, even the writes, so the
+			// planned call is what distinguishes creating a file from editing one.
+			if name != "" {
+				rawName = name
+			}
 		}
 	}
 	normTool, title, cleanInput := normalizeRunnerTool(rawName, rawParams)

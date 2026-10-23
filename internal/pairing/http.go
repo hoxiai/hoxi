@@ -41,10 +41,21 @@ func (s *Service) handleRotate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, code)
 }
 
-// Authorize reports whether the request carries this desktop's pairing token in
-// the X-Auth header or as an Authorization: Bearer value, compared in constant
-// time. The mobile app sends the token both ways after scanning the QR code.
+// Authorize reports whether the request carries this desktop's LAN pairing
+// token in the X-Auth header or as an Authorization: Bearer value, compared in
+// constant time.
 func (s *Service) Authorize(r *http.Request) bool {
+	return s.authorizeWith(r, s.Token)
+}
+
+// AuthorizeRelay reports whether the request carries this desktop's relay
+// pairing token. Keeping the relay token distinct from the LAN token ensures a
+// token exposed over cleartext LAN probing cannot authorize public relay calls.
+func (s *Service) AuthorizeRelay(r *http.Request) bool {
+	return s.authorizeWith(r, s.RelayToken)
+}
+
+func (s *Service) authorizeWith(r *http.Request, wantFn func() (string, error)) bool {
 	if r == nil {
 		return false
 	}
@@ -52,7 +63,7 @@ func (s *Service) Authorize(r *http.Request) bool {
 	if got == "" {
 		return false
 	}
-	want, err := s.Token()
+	want, err := wantFn()
 	if err != nil || want == "" {
 		return false
 	}

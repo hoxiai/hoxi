@@ -21,17 +21,28 @@ import {
   collectCycleChangedFiles,
   collectSessionChangedFiles,
   deriveMarkdownDownloadFilename,
+  resolveToolFileDiff,
 } from "../components/timeline/tool-card-state";
-import type { MessagePart } from "../services/sse-types";
+import type { MessagePart, ToolPart } from "../services/sse-types";
 import { filterLocalSessionDiffsByTurns } from "../store/message-lookup";
 import { type MessageTurn, setWorkspace } from "../store/workspace";
 import { firstMatchingPartID } from "../components/timeline/TranscriptSearchBar";
+import { formatElapsedSeconds } from "../components/timeline/duration-label";
 import {
   parseInline,
   parseMarkdownBlocks,
   stabilizeBlockToken,
 } from "../components/timeline/markdown-parser";
-import { liveReasoningTicker } from "../components/timeline/ThoughtBox";
+import {
+  liveReasoningTicker,
+  normalizeReasoningText,
+  reasoningHeading,
+} from "../components/timeline/ThoughtBox";
+import {
+  expandInlineThinkingParts,
+  extractVisibleAssistantText,
+  splitInlineThinking,
+} from "../components/timeline/context-activity-parts";
 import { assertDeepEqual, assertEqual, assertTrue, describe, it } from "./test-harness";
 
 const sid = "ses_tp";
@@ -53,6 +64,17 @@ const reasoningPart = (id: string, text: string): MessagePart => ({
 });
 const todoInput = (statuses: string[]) => ({
   todos: statuses.map((status, i) => ({ id: String(i), content: `item ${i}`, status })),
+});
+
+describe("elapsed duration labels", () => {
+  it("keeps tenths under a minute and folds longer spans", () => {
+    assertEqual(formatElapsedSeconds(0.4), "0.4s");
+    assertEqual(formatElapsedSeconds(12.4), "12.4s");
+    assertEqual(formatElapsedSeconds(59.9), "59.9s");
+    assertEqual(formatElapsedSeconds(60), "1m 0s");
+    assertEqual(formatElapsedSeconds(123.4), "2m 3s");
+    assertEqual(formatElapsedSeconds(3723), "1h 2m");
+  });
 });
 
 describe("task progress todo staleness", () => {
@@ -444,6 +466,51 @@ describe("task progress todo staleness", () => {
     setWorkspace("worktreeDiffsBySession", sid, []);
   });
 
+  it("reads Antigravity edit_file and write_file payloads as diffs", () => {
+    const editPart: ToolPart = {
+      id: "agy_edit",
+      sessionID: sid,
+      messageID: "msg_agy",
+      type: "tool",
+      callID: "agy_edit",
+      tool: "edit",
+      state: {
+        status: "completed",
+        input: {
+          filePath: "client/lib/chat_hub_controller.dart",
+          Path: "client/lib/chat_hub_controller.dart",
+          Target: "const a = 1;",
+          Replacement: "const a = 2;\nconst b = 3;",
+        },
+        output: "",
+        title: "Edit chat_hub_controller.dart",
+        metadata: {},
+        time: { start: 1, end: 2 },
+      },
+    };
+    assertDeepEqual(resolveToolFileDiff(editPart, true, "client/lib/chat_hub_controller.dart"), {
+      file: "client/lib/chat_hub_controller.dart",
+      patch: undefined,
+      before: "const a = 1;",
+      after: "const a = 2;\nconst b = 3;",
+      additions: 2,
+      deletions: 1,
+    });
+
+    const writePart: ToolPart = {
+      ...editPart,
+      id: "agy_write",
+      tool: "write",
+      state: {
+        ...editPart.state,
+        input: { filePath: "client/lib/new_file.dart", Content: "line 1\nline 2" },
+      },
+    };
+    const written = resolveToolFileDiff(writePart, true, "client/lib/new_file.dart");
+    assertEqual(written?.additions, 2);
+    assertEqual(written?.deletions, 0);
+  });
+
   it("keeps streaming markdown blocks and inline tokens stable without intermediate layout thrashing", () => {
     // 1. Ordered list streaming: `\n2` / `\n2.` / `\n2. ` must stay inside the same list block
     // and preserve item[0] object identity via stabilizeBlockToken.
@@ -564,6 +631,109 @@ describe("task progress todo staleness", () => {
     assertEqual(
       deriveMarkdownDownloadFilename("Plain short reply without heading", undefined, "2026-10-19"),
       "hoxi-note-2026-10-19.md"
+    );
+  });
+
+  it("normalizes Codex concatenated reasoning headings and inline <thinking> blocks without breaking part identity", () => {
+    const concatenated =
+      "**Running build and mobile checks****Checking Go build and Flutter status****Reviewing potential frontend issue**";
+    assertEqual(
+      normalizeReasoningText(concatenated),
+      "**Running build and mobile checks**\n\n**Checking Go build and Flutter status**\n\n**Reviewing potential frontend issue**"
+    );
+    assertEqual(
+      liveReasoningTicker(concatenated, true),
+      "Reviewing potential frontend issue"
+    );
+    assertEqual(
+      reasoningHeading(concatenated).title,
+      "Running build and mobile checks"
+    );
+    assertEqual(
+      liveReasoningTicker(
+        "<thinking>**Running build and mobile checks****Checking Go build and Flutter status****Reviewing potential frontend issue**",
+        true
+      ),
+      "Reviewing potential frontend issue"
+    );
+    assertEqual(
+      reasoningHeading(
+        "<thinking>**Running build and mobile checks****Checking Go build and Flutter status****Reviewing potential frontend issue**</thinking>"
+      ).title,
+      "Running build and mobile checks"
+    );
+
+    // Unclosed <thinking> emitted right before tool call stays pure reasoning work
+    const unclosedPart = textPart(
+      "prt_unclosed_think",
+      "<thinking>**Inspecting workspace layout****Checking git status**"
+    );
+    const expandedUnclosed = expandInlineThinkingParts([
+      unclosedPart,
+      done("call_1", "bash", { command: "git status" }),
+    ]);
+    assertEqual(expandedUnclosed.length, 2);
+    assertEqual(expandedUnclosed[0].type, "reasoning");
+    assertEqual(expandedUnclosed[0].id, "prt_unclosed_think");
+    assertEqual(
+      expandedUnclosed[0].type === "reasoning" ? expandedUnclosed[0].text : "",
+      "**Inspecting workspace layout****Checking git status**"
+    );
+
+    // Closed <thinking>...</thinking> followed by visible answer splits into reasoning + visible text
+    const mixedPart = textPart(
+      "prt_mixed",
+      "<thinking>**Checking tests****Preparing final summary**</thinking>\n\nAll tests passed."
+    );
+    assertEqual(extractVisibleAssistantText(mixedPart.type === "text" ? mixedPart.text : ""), "All tests passed.");
+    const split = splitInlineThinking(mixedPart.type === "text" ? mixedPart.text : "");
+    assertTrue(split.hasLeadingThinking);
+    assertEqual(split.thinkingText, "**Checking tests****Preparing final summary**");
+    assertEqual(split.visibleText, "All tests passed.");
+
+    const turns = [
+      {
+        info: { id: "msg_1", sessionID: sid, role: "assistant" as const, time: { created: 1 } },
+        parts: [unclosedPart, done("call_1", "bash", { command: "git status" })],
+      },
+      {
+        info: { id: "msg_2", sessionID: sid, role: "assistant" as const, time: { created: 2, completed: 3 } },
+        parts: [mixedPart],
+      },
+    ];
+    const merged0 = resolveMergedTurnParts(turns, 0);
+    const grouped0 = groupAssistantParts(merged0.effectiveParts);
+    assertEqual(grouped0.length, 1);
+    assertEqual(grouped0[0].kind, "activity-group");
+    assertEqual(grouped0[0].kind === "activity-group" ? grouped0[0].parts.length : 0, 3);
+
+    const merged1 = resolveMergedTurnParts(turns, 1);
+    const grouped1 = groupAssistantParts(merged1.effectiveParts);
+    assertEqual(grouped1.length, 1);
+    assertEqual(grouped1[0].kind, "single");
+    assertEqual(
+      grouped1[0].kind === "single" && grouped1[0].part.type === "text" ? grouped1[0].part.text : "",
+      "All tests passed."
+    );
+
+    // Verify stabilizeTurnRenderItems keeps identical object references across streaming deltas
+    if (mixedPart.type === "text") {
+      mixedPart.text =
+        "<thinking>**Checking tests****Preparing final summary**</thinking>\n\nAll tests passed with 0 errors.";
+    }
+    const grouped0Next = stabilizeTurnRenderItems(
+      grouped0,
+      groupAssistantParts(resolveMergedTurnParts(turns, 0).effectiveParts)
+    );
+    const grouped1Next = stabilizeTurnRenderItems(
+      grouped1,
+      groupAssistantParts(resolveMergedTurnParts(turns, 1).effectiveParts)
+    );
+    assertTrue(grouped0Next === grouped0);
+    assertTrue(grouped1Next === grouped1);
+    assertEqual(
+      grouped1Next[0].kind === "single" && grouped1Next[0].part.type === "text" ? grouped1Next[0].part.text : "",
+      "All tests passed with 0 errors."
     );
   });
 });

@@ -5,8 +5,10 @@ import type { MessagePart, ToolPart } from "../../services/sse-types";
 import type { MessageTurn } from "../../store/workspace";
 import "./task-timeline.css";
 import TranscriptSearchBar from "./TranscriptSearchBar";
+import { expandInlineThinkingParts } from "./context-activity-parts";
 import { formatToolDisplayName } from "./tool-card-helpers";
 import { t } from "../../i18n";
+import { formatElapsedSeconds } from "./duration-label";
 
 export interface ActivityBarSegment {
   id: string;
@@ -103,7 +105,7 @@ export function buildTurnSegments(turns: MessageTurn[]): ActivityBarSegment[] {
     const anchorTurn = userTurn ?? turnsInGroup[0];
     const parts: MessagePart[] = [];
     for (const turn of turnsInGroup) {
-      if (turn.info.role === "assistant") parts.push(...turn.parts);
+      if (turn.info.role === "assistant") parts.push(...expandInlineThinkingParts(turn.parts));
     }
     type PartMeta = NonNullable<ReturnType<typeof classifyPart>>;
     const metas: PartMeta[] = [];
@@ -489,7 +491,7 @@ export default function TaskTimelineBar(props: {
                   </span>
                 </Show>
                 <Show when={duration() !== undefined}>
-                  <span class="task-activity-history-duration">{((duration() ?? 0) / 1000).toFixed(1)}s</span>
+                  <span class="task-activity-history-duration">{formatElapsedSeconds((duration() ?? 0) / 1000)}</span>
                 </Show>
               </div>
             );

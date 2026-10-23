@@ -34,6 +34,7 @@ import {
   resolveToolFileDiagnostics, resolveToolFileDiff, resolveToolFileDiffs,
   resolveToolTodoItems,
 } from "./tool-card-state";
+import { formatElapsedSeconds } from "./duration-label";
 
 // Silence shorter than this is normal model latency, not worth flagging.
 const RUNNER_IDLE_HINT_SECONDS = 15;
@@ -493,7 +494,7 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
 
             <Show when={elapsed() >= 0.05}>
               <span class="font-mono text-[12px] text-[var(--text-faint)] tabular-nums">
-                {elapsed().toFixed(1)}s
+                {formatElapsedSeconds(elapsed())}
               </span>
             </Show>
 

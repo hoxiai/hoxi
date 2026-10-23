@@ -20,15 +20,20 @@ import (
 const agySubagentLogChunk = 1 << 20
 
 type agyTranscriptRow struct {
-	StepIndex int    `json:"step_index"`
-	Type      string `json:"type"`
-	CreatedAt string `json:"created_at"`
-	Thinking  string `json:"thinking"`
-	Content   string `json:"content"`
-	ToolCalls []struct {
-		Name string                 `json:"name"`
-		Args map[string]interface{} `json:"args"`
-	} `json:"tool_calls"`
+	StepIndex int           `json:"step_index"`
+	Type      string        `json:"type"`
+	CreatedAt string        `json:"created_at"`
+	Thinking  string        `json:"thinking"`
+	Content   string        `json:"content"`
+	ToolCalls []agyToolCall `json:"tool_calls"`
+}
+
+// agyToolCall is one planned tool invocation recorded in a transcript row.
+// One PLANNER_RESPONSE can carry several; agy then runs them one stdout step
+// at a time, and those steps only repeat the file path.
+type agyToolCall struct {
+	Name string                 `json:"name"`
+	Args map[string]interface{} `json:"args"`
 }
 
 // decodeAgyToolArgs unwraps transcript tool arguments, which agy stores as
@@ -118,6 +123,139 @@ func lookupAgyTranscriptContent(conversationID string, stepIndex int) string {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+}
+
+// agyEditPayloadNames are the tools whose stdout steps carry only the file
+// path; the text being written lives in the transcript instead.
+var agyEditPayloadNames = map[string]bool{
+	"edit_file":                  true,
+	"write_file":                 true,
+	"write_to_file":              true,
+	"replace_file_content":       true,
+	"multi_replace_file_content": true,
+	"sed_file":                   true,
+}
+
+// agyEditPayloadCursor walks a conversation transcript in order and hands back
+// the planned arguments of each edit, one per stdout step. agy runs the calls
+// of one PLANNER_RESPONSE as consecutive steps and never reorders them.
+type agyEditPayloadCursor struct {
+	conversationID string
+	offset         int64
+	pending        []agyToolCall
+}
+
+func newAgyEditPayloadCursor(conversationID string) *agyEditPayloadCursor {
+	return &agyEditPayloadCursor{conversationID: strings.TrimSpace(conversationID)}
+}
+
+func (c *agyEditPayloadCursor) next() (string, map[string]interface{}) {
+	c.pull()
+	if len(c.pending) == 0 {
+		return "", nil
+	}
+	call := c.pending[0]
+	c.pending = c.pending[1:]
+	return call.Name, call.Args
+}
+
+// pull reads transcript rows appended since the last call. transcript.jsonl is
+// read before transcript_full.jsonl, which repeats the same rows.
+func (c *agyEditPayloadCursor) pull() {
+	if c.conversationID == "" || !validStoreID(c.conversationID) {
+		return
+	}
+	var path string
+	for _, root := range agyBrainRoots() {
+		dir := agyTranscriptLogDir(root, c.conversationID)
+		for _, name := range []string{"transcript.jsonl", "transcript_full.jsonl"} {
+			candidate := filepath.Join(dir, name)
+			if st, err := os.Stat(candidate); err == nil && st.Size() > c.offset {
+				path = candidate
+				break
+			}
+		}
+		if path != "" {
+			break
+		}
+	}
+	if path == "" {
+		return
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	buf := make([]byte, min(fileSize(f)-c.offset, agySubagentLogChunk))
+	n, err := f.ReadAt(buf, c.offset)
+	if err != nil && err != io.EOF {
+		return
+	}
+	buf = buf[:n]
+	end := bytes.LastIndexByte(buf, '\n')
+	if end < 0 {
+		if len(buf) == agySubagentLogChunk {
+			c.offset += int64(len(buf))
+		}
+		return
+	}
+	for _, line := range bytes.Split(buf[:end], []byte{'\n'}) {
+		var row agyTranscriptRow
+		if json.Unmarshal(bytes.TrimSpace(line), &row) != nil {
+			continue
+		}
+		for _, call := range row.ToolCalls {
+			if agyEditPayloadNames[call.Name] {
+				call.Args = decodeAgyToolArgs(call.Args)
+				c.pending = append(c.pending, call)
+			}
+		}
+	}
+	c.offset += int64(end + 1)
+}
+
+func fileSize(f *os.File) int64 {
+	st, err := f.Stat()
+	if err != nil {
+		return 0
+	}
+	return st.Size()
+}
+
+// mergeAgyEditParams fills the gaps in what stdout reported from the planned
+// call. Stdout wins where both have a value, so a path agy rewrote at
+// execution time is never replaced by the planned one.
+func mergeAgyEditParams(stdout, planned map[string]interface{}) map[string]interface{} {
+	if len(stdout) == 0 {
+		return planned
+	}
+	merged := make(map[string]interface{}, len(stdout)+len(planned))
+	for k, v := range planned {
+		merged[k] = v
+	}
+	for k, v := range stdout {
+		if s, ok := v.(string); ok && strings.TrimSpace(s) == "" {
+			continue
+		}
+		merged[k] = v
+	}
+	return merged
+}
+
+// agyParamsLackEditPayload reports whether stdout omitted the text of an edit,
+// which is all current agy sends for edit_file and write_file.
+func agyParamsLackEditPayload(params map[string]interface{}) bool {
+	for _, key := range []string{
+		"TargetContent", "targetContent", "ReplacementContent", "replacementContent",
+		"CodeContent", "codeContent", "Content", "content", "old_string", "new_string",
+		"oldString", "newString", "Target", "Replacement",
+	} {
+		if s, ok := params[key].(string); ok && strings.TrimSpace(s) != "" {
+			return false
+		}
+	}
+	return true
 }
 
 // resolveAgySubagentLog trusts a reported log_uri only inside a brain root,

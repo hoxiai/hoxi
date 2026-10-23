@@ -134,6 +134,9 @@ func TestCodeIncludesRelayWhenConfigured(t *testing.T) {
 	if code.Relay != "https://abc123.node.hoxi.work" {
 		t.Fatalf("relay = %q", code.Relay)
 	}
+	if len(code.RelayToken) != 64 || code.RelayToken == code.Token {
+		t.Fatalf("relayToken = %q (len=%d), want distinct 64-hex token from LAN token %q", code.RelayToken, len(code.RelayToken), code.Token)
+	}
 	if code.URL != "http://192.168.1.20:5417" {
 		t.Fatalf("url = %q", code.URL)
 	}
@@ -146,8 +149,51 @@ func TestCodeOmitsRelayWhenUnset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Code: %v", err)
 	}
-	if code.Relay != "" {
-		t.Fatalf("relay = %q, want empty", code.Relay)
+	if code.Relay != "" || code.RelayToken != "" {
+		t.Fatalf("relay = %q, relayToken = %q, want both empty", code.Relay, code.RelayToken)
+	}
+}
+
+func TestAuthorizeIsolatesLANAndRelayTokens(t *testing.T) {
+	svc, path := newTestService(t, "192.168.1.20")
+	svc.SetRelayURL(func() string { return "https://abc123.node.hoxi.work" })
+
+	code, err := svc.Code()
+	if err != nil {
+		t.Fatalf("Code: %v", err)
+	}
+	lanReq := httptest.NewRequest(http.MethodGet, "/api/hoxi/bootstrap", nil)
+	lanReq.Header.Set("X-Auth", code.Token)
+	relayReq := httptest.NewRequest(http.MethodGet, "/api/hoxi/bootstrap", nil)
+	relayReq.Header.Set("X-Auth", code.RelayToken)
+
+	if !svc.Authorize(lanReq) {
+		t.Fatal("LAN token must authorize LAN request")
+	}
+	if svc.Authorize(relayReq) {
+		t.Fatal("relay token must NOT authorize LAN request")
+	}
+	if !svc.AuthorizeRelay(relayReq) {
+		t.Fatal("relay token must authorize relay request")
+	}
+	if svc.AuthorizeRelay(lanReq) {
+		t.Fatal("LAN token must NOT authorize relay request")
+	}
+
+	// Verify upgrading a legacy single-token file preserves the LAN token and
+	// mints a distinct relay token.
+	legacyToken := strings.Repeat("a", 64)
+	if err := os.WriteFile(path, []byte(`{"token":"`+legacyToken+`"}`), 0o600); err != nil {
+		t.Fatalf("write legacy token: %v", err)
+	}
+	reloaded := NewService(path, 5417)
+	gotLAN, err := reloaded.Token()
+	if err != nil || gotLAN != legacyToken {
+		t.Fatalf("reloaded Token() = %q (err=%v), want %q", gotLAN, err, legacyToken)
+	}
+	gotRelay, err := reloaded.RelayToken()
+	if err != nil || len(gotRelay) != 64 || gotRelay == legacyToken {
+		t.Fatalf("reloaded RelayToken() = %q (err=%v), want distinct 64-hex token", gotRelay, err)
 	}
 }
 

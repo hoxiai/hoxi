@@ -446,6 +446,7 @@ export function resolveToolFileDiffs(
     input.old_string ??
     input.TargetContent ??
     input.targetContent ??
+    input.Target ??
     chunksBefore;
   const after =
     meta?.filediff?.after ??
@@ -453,6 +454,8 @@ export function resolveToolFileDiffs(
     input.new_string ??
     input.ReplacementContent ??
     input.replacementContent ??
+    input.Replacement ??
+    input.Content ??
     input.content ??
     input.file_text ??
     input.CodeContent ??

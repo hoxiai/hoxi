@@ -144,6 +144,8 @@ export interface QueuedPromptItem {
   effort?: ReasoningEffort;
   attachments: QueuedPromptAttachment[];
   skillSelection?: SkillSelection;
+  /** Turn-scoped system instructions, kept out of the visible user message. */
+  system?: string;
 }
 
 export interface ComposerDraftEdit {

@@ -1,6 +1,8 @@
 import type { MessageInfo, MessagePart } from "../../services/sse-types";
 import { hoxiAPI } from "../../services/api";
 import { sessionDirectory, workspace } from "../../store/workspace";
+import { expandInlineThinkingParts } from "./context-activity-parts";
+import { normalizeReasoningText } from "./ThoughtBox";
 
 function formatTime(value?: number): string {
   if (!value) return "";
@@ -32,7 +34,7 @@ function renderPart(part: MessagePart): string {
     case "text":
       return part.text.trim();
     case "reasoning": {
-      const text = part.text.trim();
+      const text = normalizeReasoningText(part.text).trim();
       if (!text) return "";
       return `<details>\n<summary>Reasoning</summary>\n\n${text}\n\n</details>`;
     }
@@ -86,7 +88,9 @@ export function buildSessionMarkdown(
   ];
 
   const body = turns.map((turn) => {
-    const parts = turn.parts.map(renderPart).filter(Boolean).join("\n\n");
+    const rawParts =
+      turn.info.role === "assistant" ? expandInlineThinkingParts(turn.parts) : turn.parts;
+    const parts = rawParts.map(renderPart).filter(Boolean).join("\n\n");
     return [turnHeading(turn.info), "", parts].filter(Boolean).join("\n");
   });
 

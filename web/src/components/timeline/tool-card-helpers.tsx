@@ -253,7 +253,7 @@ export function extractTargetFile(part: ToolPart): string | null {
       : null;
   const raw =
     input.filePath || input.file_path || input.path || input.file ||
-    input.filename || input.targetFile || input.TargetFile || input.target_file ||
+    input.filename || input.targetFile || input.TargetFile || input.target_file || input.Path ||
     input.AbsolutePath || input.notebook_path || firstMetaFile || patchMatch?.[1]?.trim() ||
     (part.state.status !== "pending"
       ? part.state.metadata?.filePath || part.state.metadata?.filepath

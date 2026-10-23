@@ -56,6 +56,20 @@ func TestAttributionPreferencePersistsAndDefaultsToAuto(t *testing.T) {
 	if LoadAttribution(path).Mode != AttributionNever {
 		t.Fatal("an explicit mode must persist")
 	}
+	// Older Hoxi builds only read `enabled`, so the mirror must stay coherent.
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"enabled":false`) {
+		t.Fatalf("never must persist enabled:false for older builds, got %s", raw)
+	}
+	if err := SaveAttribution(path, AttributionAuto); err != nil {
+		t.Fatal(err)
+	}
+	if raw, err = os.ReadFile(path); err != nil || !strings.Contains(string(raw), `"enabled":true`) {
+		t.Fatalf("auto must persist enabled:true for older builds, got %s (err=%v)", raw, err)
+	}
 	info, err := os.Stat(path)
 	if err != nil {
 		t.Fatal(err)

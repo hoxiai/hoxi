@@ -446,7 +446,9 @@ export function AssistantTurnItem(props: {
     const matchID = props.activeMatchTurnID;
     if (!matchID) return new Set<string>();
     return new Set(
-      props.allTurns.find((turn) => turn.info.id === matchID)?.parts.map((part) => part.id) ?? []
+      props.allTurns
+        .find((turn) => turn.info.id === matchID)
+        ?.parts.flatMap((part) => [part.id, `${part.id}#thinking`]) ?? []
     );
   });
 
