@@ -1,368 +1,237 @@
-// web/src/components/timeline/TaskProgressCard.tsx
+// Compact task-plan entry anchored to the composer's upper-right edge.
 import {
   createEffect,
   createMemo,
   createSignal,
+  createUniqueId,
+  For,
+  Match,
+  on,
   onCleanup,
   Show,
-  untrack,
+  Switch,
 } from "solid-js";
-import {
-  CheckCircle2,
-  ChevronDown,
-  ChevronUp,
-  ListTodo,
-  PauseCircle,
-  X,
-} from "lucide-solid";
-import type { SnapshotFileDiff } from "../../services/sse-types";
-import {
-  isSessionBusy,
-  openDiffInInspector,
-  workspace,
-} from "../../store/workspace";
-import { Spinner, TextShimmer } from "../icons";
+import { Check, Circle, ListTodo, Minus, Pause, X } from "lucide-solid";
 import { t } from "../../i18n";
-import {
-  collectCycleStepItems,
-  type CycleStepItem,
-  hasActiveSubagentInCycle,
-  isTodoListStale,
-  resolveTaskChangedFiles,
-  summarizeTodoActivity,
-} from "./task-progress-helpers";
+import { isSessionBusy, workspace } from "../../store/workspace";
 import {
   collectTaskCycleTurns,
   findLatestTodoPart,
-  type NormalizedTodoItem,
   normalizeTodoItems,
+  type NormalizedTodoItem,
 } from "../../store/task-progress";
-import TaskProgressDetails from "./TaskProgressDetails";
-import TaskProgressStaleHint from "./TaskProgressStaleHint";
+import { hasActiveSubagentInCycle } from "./task-progress-helpers";
 
 export default function TaskProgressCard() {
-  const [expanded, setExpanded] = createSignal(false);
-  const [dismissedSigBySession, setDismissedSigBySession] = createSignal<
-    Record<string, string>
-  >({});
-  const [justFinishedBySession, setJustFinishedBySession] = createSignal<
-    Record<string, boolean>
-  >({});
-  const wasAliveSessions = new Set<string>();
-  const finishTimers = new Map<string, ReturnType<typeof setTimeout>>();
-
-  onCleanup(() => {
-    for (const timer of finishTimers.values()) clearTimeout(timer);
-    finishTimers.clear();
-  });
+  const [preview, setPreview] = createSignal(false);
+  const [pinned, setPinned] = createSignal(false);
+  const [completionVisible, setCompletionVisible] = createSignal(false);
+  const [fading, setFading] = createSignal(false);
+  const panelID = createUniqueId();
+  let container: HTMLDivElement | undefined;
+  let trigger: HTMLButtonElement | undefined;
+  let openTimer: ReturnType<typeof setTimeout> | undefined;
+  let closeTimer: ReturnType<typeof setTimeout> | undefined;
+  let finishTimer: ReturnType<typeof setTimeout> | undefined;
+  let fadeTimer: ReturnType<typeof setTimeout> | undefined;
 
   const sessionID = () => workspace.activeSessionID;
-  const isBusy = createMemo(() => isSessionBusy(sessionID()));
-  const interruptedState = createMemo(() => {
-    const id = sessionID();
-    return id ? workspace.interruptedBySession[id] : undefined;
-  });
-
   const cycleTurns = createMemo(() => collectTaskCycleTurns(sessionID()));
-
-  const latestTodo = createMemo(() => findLatestTodoPart(cycleTurns()));
-  const rawTodos = createMemo(() => latestTodo()?.todos ?? []);
-
-  const hasRunningSubagent = createMemo(() =>
-    hasActiveSubagentInCycle(cycleTurns(), sessionID())
+  const cycleID = createMemo(() => `${sessionID() ?? ""}:${cycleTurns()[0]?.info.id ?? ""}`);
+  const isAlive = createMemo(() =>
+    isSessionBusy(sessionID()) || hasActiveSubagentInCycle(cycleTurns(), sessionID())
   );
-
-  const isSessionAlive = createMemo(() => isBusy() || hasRunningSubagent());
-
-  const todos = createMemo<NormalizedTodoItem[]>(() =>
-    normalizeTodoItems(
-      rawTodos(),
-      isSessionAlive(),
-      Boolean(interruptedState())
-    )
-  );
-
-  const cycleSteps = createMemo<CycleStepItem[]>(() =>
-    collectCycleStepItems(cycleTurns(), sessionID(), isSessionAlive(), latestTodo()?.partID)
-  );
-
-  const todoActivity = createMemo(() => summarizeTodoActivity(cycleSteps()));
-  const isTodoStale = createMemo(() => isTodoListStale(todos(), todoActivity()));
-
-  const currentStep = createMemo<CycleStepItem | undefined>(() => {
-    const list = cycleSteps();
-    if (list.length === 0) return undefined;
-    const running = [...list].reverse().find((s) => s.status === "running");
-    return running ?? list[list.length - 1];
-  });
-
-  const changedFiles = createMemo<SnapshotFileDiff[]>(() =>
-    resolveTaskChangedFiles(cycleTurns(), sessionID())
-  );
-
-  const diffTotals = createMemo(() => {
-    let additions = 0;
-    let deletions = 0;
-    for (const d of changedFiles()) {
-      additions += d.additions ?? 0;
-      deletions += d.deletions ?? 0;
-    }
-    return { additions, deletions };
-  });
-
-  const completedTodoCount = createMemo(
-    () => todos().filter((t) => t.status === "completed").length
-  );
-
-  const activeTodo = createMemo(
-    () =>
-      todos().find((t) => t.status === "in_progress") ??
-      todos().find((t) => t.status === "interrupted") ??
-      todos().find((t) => t.status === "pending")
-  );
-
-  const allTodosCompleted = createMemo(
-    () =>
-      todos().length > 0 &&
-      todos().every((t) => t.status === "completed" || t.status === "cancelled") &&
-      !isSessionAlive()
-  );
-
-  const progressSignature = createMemo(() => {
-    const todoPart = todos()
-      .map((item) => `${item.id || item.content}:${item.status}`)
-      .join("|");
-    return `${todoPart}#steps:${cycleSteps().length}#files:${changedFiles().length}#alive:${isSessionAlive()}`;
-  });
-
-  const isDismissed = createMemo(() => {
+  const interrupted = () => {
     const id = sessionID();
-    if (!id || isSessionAlive()) return false;
-    return dismissedSigBySession()[id] === progressSignature();
-  });
+    return Boolean(id && workspace.interruptedBySession[id]);
+  };
+  const todos = createMemo(() => normalizeTodoItems(
+    findLatestTodoPart(cycleTurns())?.todos ?? [], isAlive(), interrupted()
+  ));
+  const completed = createMemo(() => todos().filter((todo) => todo.status === "completed").length);
+  const isSettled = createMemo(() => todos().length > 0 && todos().every(
+    (todo) => todo.status === "completed" || todo.status === "cancelled"
+  ));
+  const expanded = () => preview() || pinned();
+  const visible = () => todos().length > 0 && (
+    isAlive() || !isSettled() || completionVisible() || expanded()
+  );
+  const summary = () => t("timeline.tasksProgress", { completed: completed(), total: todos().length });
+  const ringLength = 2 * Math.PI * 8;
 
-  const clearFinishTimer = (id: string) => {
-    const existing = finishTimers.get(id);
-    if (existing) {
-      clearTimeout(existing);
-      finishTimers.delete(id);
-    }
+  const clearHoverTimers = () => {
+    clearTimeout(openTimer);
+    clearTimeout(closeTimer);
+  };
+  const close = () => {
+    clearHoverTimers();
+    setPreview(false);
+    setPinned(false);
   };
 
-  const dismissCard = () => {
-    const id = sessionID();
-    const sig = progressSignature();
-    if (!id || !sig) return;
-    clearFinishTimer(id);
-    setExpanded(false);
-    setJustFinishedBySession((prev) => ({ ...prev, [id]: false }));
-    setDismissedSigBySession((prev) => ({ ...prev, [id]: sig }));
-  };
-
-  // Track live running -> completed transition so only sessions that JUST finished
-  // display the 3-second completion summary before auto-closing.
+  // Hover/pin state belongs to one task cycle, never the next session or prompt.
+  createEffect(on(cycleID, () => close()));
   createEffect(() => {
-    const id = sessionID();
-    if (!id) return;
-    const alive = isSessionAlive();
-    if (alive) {
-      wasAliveSessions.add(id);
-      clearFinishTimer(id);
-      if (untrack(() => justFinishedBySession()[id])) {
-        setJustFinishedBySession((prev) => ({ ...prev, [id]: false }));
-      }
-      if (untrack(() => dismissedSigBySession()[id])) {
-        setDismissedSigBySession((prev) => {
-          const next = { ...prev };
-          delete next[id];
-          return next;
-        });
-      }
-      return;
-    }
-
-    if (wasAliveSessions.has(id)) {
-      wasAliveSessions.delete(id);
-      clearFinishTimer(id);
-      if (!untrack(() => interruptedState())) {
-        setJustFinishedBySession((prev) => ({ ...prev, [id]: true }));
-        const timer = setTimeout(() => {
-          finishTimers.delete(id);
-          setExpanded(false);
-          setJustFinishedBySession((prev) => ({ ...prev, [id]: false }));
-        }, 3000);
-        finishTimers.set(id, timer);
-      }
-    }
+    if (todos().length === 0) close();
   });
+  createEffect(on(() => [cycleID(), isAlive(), isSettled()] as const, (next, previous) => {
+    clearTimeout(finishTimer);
+    clearTimeout(fadeTimer);
+    setFading(false);
+    const justSettled = previous?.[0] === next[0] && (previous[1] || !previous[2]);
+    if (!next[1] && next[2] && justSettled) {
+      setCompletionVisible(true);
+      finishTimer = setTimeout(() => {
+        setFading(true);
+        fadeTimer = setTimeout(() => setCompletionVisible(false), 200);
+      }, 3000);
+    } else {
+      setCompletionVisible(false);
+    }
+  }));
 
   createEffect(() => {
     if (!expanded()) return;
-    const onPointerDown = (e: PointerEvent) => {
-      if (containerRef && !containerRef.contains(e.target as Node)) {
-        setExpanded(false);
-      }
+    const onPointerDown = (event: PointerEvent) => {
+      if (!container?.contains(event.target as Node)) close();
     };
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setExpanded(false);
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      const restoreFocus = container?.contains(document.activeElement);
+      close();
+      if (restoreFocus) trigger?.focus();
     };
     document.addEventListener("pointerdown", onPointerDown, true);
-    document.addEventListener("keydown", onKeyDown);
+    document.addEventListener("keydown", onKeyDown, true);
     onCleanup(() => {
       document.removeEventListener("pointerdown", onPointerDown, true);
-      document.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener("keydown", onKeyDown, true);
     });
   });
-
-  let containerRef: HTMLDivElement | undefined;
-
-  // Tool activity alone belongs in the conversation, not the task shelf.
-  const shouldShow = createMemo(() => {
-    const id = sessionID();
-    if (!id || isDismissed()) return false;
-    if (todos().length === 0) return false;
-    if (isSessionAlive()) return true;
-    if (interruptedState() === "paused") {
-      return true;
-    }
-    return Boolean(justFinishedBySession()[id]);
+  onCleanup(() => {
+    clearHoverTimers();
+    clearTimeout(finishTimer);
+    clearTimeout(fadeTimer);
   });
 
+  const statusLabel = (todo: NormalizedTodoItem) => {
+    switch (todo.status) {
+      case "completed": return t("timeline.taskStatusCompleted");
+      case "cancelled": return t("timeline.taskStatusCancelled");
+      case "interrupted": return t("timeline.taskStatusPaused");
+      case "in_progress": return isAlive()
+        ? t("timeline.taskStatusRunning") : t("timeline.taskStatusPaused");
+      default: return t("timeline.taskStatusPending");
+    }
+  };
+
   return (
-    <Show when={shouldShow()}>
-      <div ref={containerRef} class="relative inline-flex items-center">
-        {/* Compact Pill Trigger */}
-        <div
-          class={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[12px] transition-colors ${
-            expanded()
-              ? "border-[var(--accent-border)] bg-[var(--accent-surface)]/70 text-[var(--text-primary)]"
-              : "border-[var(--border-subtle)] bg-[var(--bg-inset)]/90 text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]"
+    <Show when={visible()}>
+      <div
+        ref={container}
+        class={`relative z-40 ml-auto shrink-0 transition-opacity duration-200 motion-reduce:transition-none ${
+          fading() && !expanded() ? "opacity-0" : "opacity-100"
+        }`}
+        onPointerEnter={(event) => {
+          if (event.pointerType !== "mouse") return;
+          clearHoverTimers();
+          openTimer = setTimeout(() => setPreview(true), 250);
+        }}
+        onPointerLeave={() => {
+          clearHoverTimers();
+          closeTimer = setTimeout(() => setPreview(false), 150);
+        }}
+      >
+        <button
+          ref={trigger}
+          type="button"
+          aria-label={summary()}
+          aria-expanded={expanded()}
+          aria-controls={expanded() ? panelID : undefined}
+          aria-haspopup="dialog"
+          class={`flex h-7 w-7 cursor-pointer items-center justify-center rounded-full outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[var(--accent-primary)] ${
+            expanded() ? "bg-[var(--bg-hover)] text-[var(--text-primary)]"
+              : "text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
           }`}
+          onClick={() => {
+            const wasPinned = pinned();
+            clearHoverTimers();
+            setPreview(false);
+            setPinned(!wasPinned);
+          }}
+          onKeyDown={(event) => {
+            if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+            event.preventDefault();
+            setPinned(true);
+          }}
         >
-          <button
-            type="button"
-            class="inline-flex items-center gap-1.5 text-left min-w-0 cursor-pointer"
-            onClick={() => {
-              setExpanded((v) => !v);
-            }}
-          >
-            <Show
-              when={isSessionAlive()}
-              fallback={
-                <Show
-                  when={interruptedState()}
-                  fallback={
-                    <Show
-                      when={allTodosCompleted()}
-                      fallback={<ListTodo size={12.5} class="text-[var(--accent-primary)] shrink-0" />}
-                    >
-                      <CheckCircle2 size={12.5} class="text-[var(--ok-text)] shrink-0" />
-                    </Show>
-                  }
-                >
-                  <PauseCircle size={12.5} class="text-[var(--warn-text)] shrink-0" />
-                </Show>
-              }
-            >
-              <span class="text-[var(--accent-primary)] shrink-0 inline-flex items-center">
-                <Spinner class="w-3 h-3" />
-              </span>
+          <span class="relative flex h-[18px] w-[18px] items-center justify-center" aria-hidden="true">
+            <svg viewBox="0 0 20 20" class="absolute inset-0 h-full w-full -rotate-90 fill-none" stroke-width="1.25">
+              <circle cx="10" cy="10" r="8" class="stroke-[var(--border-subtle)]" />
+              <circle
+                cx="10" cy="10" r="8" stroke="currentColor" stroke-linecap="round"
+                stroke-dasharray={String(ringLength)}
+                stroke-dashoffset={ringLength * (1 - completed() / Math.max(1, todos().length))}
+                class={`transition-[stroke-dashoffset] duration-300 motion-reduce:transition-none ${
+                  completed() === todos().length ? "text-[var(--ok-text)]" : "text-[var(--accent-primary)]/70"
+                }`}
+              />
+            </svg>
+            <Show when={completed() === todos().length} fallback={<ListTodo size={9} />}>
+              <Check size={10} class="text-[var(--ok-text)]" />
             </Show>
+          </span>
+        </button>
 
-            <span class="font-medium text-[var(--text-primary)] shrink-0">
-              {t("timeline.tasksProgress", {
-                completed: completedTodoCount(),
-                total: todos().length,
-              })}
-            </span>
-
-            <Show when={!expanded() && activeTodo()}>
-              <span class="hidden sm:inline-flex items-center gap-1 text-[var(--text-muted)] truncate max-w-[200px]">
-                <span>·</span>
-                <TextShimmer
-                  text={activeTodo()!.content}
-                  active={isSessionAlive() && activeTodo()!.status === "in_progress"}
-                  class="truncate"
-                />
-              </span>
-            </Show>
-
-            <span class="text-[var(--text-muted)] inline-flex items-center">
-              {expanded() ? <ChevronDown size={12} /> : <ChevronUp size={12} />}
-            </span>
-          </button>
-
-          <Show when={!isSessionAlive()}>
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                dismissCard();
-              }}
-              class="p-0.5 rounded-full text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
-              title={t("common.close")}
-            >
-              <X size={12} />
-            </button>
-          </Show>
-        </div>
-
-        {/* Upward Floating Popover */}
         <Show when={expanded()}>
-          <div class="absolute left-1/2 -translate-x-1/2 bottom-[calc(100%+6px)] z-40 w-[min(560px,calc(100vw-32px))] rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)]/98 backdrop-blur-xl p-3 shadow-2xl animate-in fade-in zoom-in-95 duration-150">
-            <div class="flex items-center justify-between gap-2 text-[12px]">
-              <div class="flex items-center gap-2 font-medium text-[var(--text-primary)]">
-                <ListTodo size={13} class="text-[var(--accent-primary)]" />
-                <span>
-                  {t("timeline.tasksProgress", {
-                    completed: completedTodoCount(),
-                    total: todos().length,
-                  })}
-                </span>
-                <Show when={cycleSteps().length > 0}>
-                  <span class="rounded bg-[var(--bg-inset)] px-1.5 py-0.5 font-mono text-[11px] text-[var(--text-muted)]">
-                    {t("timeline.stepsCompleted", { count: cycleSteps().length })}
-                  </span>
-                </Show>
-              </div>
-              <div class="flex items-center gap-1.5">
-                <Show when={changedFiles().length > 0}>
-                  <button
-                    type="button"
-                    onClick={() => openDiffInInspector(changedFiles()[0], "session")}
-                    class="inline-flex items-center gap-1 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2 py-0.5 text-[11px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
-                  >
-                    <span>{t("timeline.filesAttached", { count: changedFiles().length })}</span>
-                  </button>
-                </Show>
+          {/* Padding bridges the gap so moving from trigger to panel keeps it open. */}
+          <div class="absolute right-0 bottom-full w-[min(340px,calc(100vw-64px))] pb-1.5">
+            <div
+              id={panelID} role="dialog" aria-label={t("timeline.taskListLabel")}
+              class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-3 shadow-xl"
+            >
+              <div class="mb-2 flex items-center justify-between gap-3">
+                <span class="text-[12px] font-medium text-[var(--text-secondary)]">{summary()}</span>
                 <button
-                  type="button"
-                  onClick={() => setExpanded(false)}
-                  class="p-0.5 rounded text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer"
-                  title={t("common.close")}
+                  type="button" aria-label={t("common.close")}
+                  class="flex h-5 w-5 cursor-pointer items-center justify-center rounded text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] focus-visible:outline focus-visible:outline-[var(--accent-primary)]"
+                  onClick={() => { close(); trigger?.focus(); }}
                 >
-                  <X size={13} />
+                  <X size={12} />
                 </button>
               </div>
+              <ul class="max-h-[min(280px,50vh)] space-y-2 overflow-y-auto overscroll-contain selectable-text">
+                <For each={todos()}>
+                  {(todo) => (
+                    <li class="flex items-start gap-2 text-[12px] leading-relaxed">
+                      <span class="mt-1 inline-flex shrink-0" role="img" aria-label={statusLabel(todo)} title={statusLabel(todo)}>
+                        <Switch fallback={<Circle size={12} class="text-[var(--text-faint)]" stroke-width={1.5} />}>
+                          <Match when={todo.status === "completed"}>
+                            <Check size={12} class="text-[var(--text-muted)]" />
+                          </Match>
+                          <Match when={todo.status === "cancelled"}>
+                            <Minus size={12} class="text-[var(--text-faint)]" />
+                          </Match>
+                          <Match when={todo.status === "interrupted" || (todo.status === "in_progress" && !isAlive())}>
+                            <Pause size={12} class="text-[var(--text-muted)]" />
+                          </Match>
+                          <Match when={todo.status === "in_progress"}>
+                            <Circle size={12} class="text-[var(--accent-primary)]" stroke-width={3} />
+                          </Match>
+                        </Switch>
+                      </span>
+                      <span class={`min-w-0 break-words ${
+                        todo.status === "completed" || todo.status === "cancelled" ? "text-[var(--text-muted)]"
+                          : todo.status === "in_progress" && isAlive() ? "font-medium text-[var(--text-primary)]"
+                            : "text-[var(--text-secondary)]"
+                      }`}>{todo.content}</span>
+                    </li>
+                  )}
+                </For>
+              </ul>
             </div>
-
-            <Show when={isTodoStale()}>
-              <TaskProgressStaleHint
-                activeTodo={activeTodo()}
-                summary={todoActivity()}
-                isSessionAlive={isSessionAlive()}
-              />
-            </Show>
-
-            <TaskProgressDetails
-              sessionID={sessionID()}
-              todos={todos()}
-              isSessionAlive={isSessionAlive()}
-              currentStep={currentStep()}
-              cycleSteps={cycleSteps()}
-              changedFiles={changedFiles()}
-              diffTotals={diffTotals()}
-            />
           </div>
         </Show>
       </div>

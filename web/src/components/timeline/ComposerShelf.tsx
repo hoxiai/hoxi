@@ -22,6 +22,7 @@ import { FileIcon } from "../icons";
 import ChangedFilesSummary from "./ChangedFilesSummary";
 import PlanFollowupBar from "./PlanFollowupBar";
 import RevertBanner from "./RevertBanner";
+import TaskProgressCard from "./TaskProgressCard";
 import { collectSessionChangedFiles } from "./tool-card-state";
 import { filterVisibleTurnsByRevert } from "./turn-window";
 import { t } from "../../i18n";
@@ -130,94 +131,96 @@ export default function ComposerShelf() {
         </div>
       </Show>
 
-      {/* Single-line status shelf: revert, plan follow-up, changed files, review comments */}
-      <div class="mb-2 flex items-center justify-center gap-2 flex-wrap empty:hidden">
-        <RevertBanner />
-        <PlanFollowupBar />
-        <ChangedFilesSummary files={changedFiles()} variant="pill" />
+      {/* Context chips share one shelf with the compact task entry on the right. */}
+      <div class="mb-2 flex items-center gap-2">
+        <div class="flex min-w-0 flex-1 items-center justify-center gap-2 flex-wrap empty:hidden">
+          <RevertBanner />
+          <PlanFollowupBar />
+          <ChangedFilesSummary files={changedFiles()} variant="pill" />
 
-        {/* Queued Inline Diff ReviewComments Pill + Upward Popover */}
-        <Show when={reviewComments().length > 0}>
-
-          <div ref={reviewContainerRef} class="relative inline-flex items-center">
-            <div class="inline-flex items-center gap-1.5 rounded-full border border-[var(--accent-border)] bg-[var(--accent-surface)]/45 px-2.5 py-1 text-[12px]">
-              <button
-                type="button"
-                class="inline-flex items-center gap-1.5 text-left cursor-pointer"
-                onClick={() => setReviewsExpanded((v) => !v)}
-              >
-                <MessageSquareText size={12.5} class="text-[var(--accent-primary)] shrink-0" />
-                <span class="font-semibold text-[var(--text-primary)]">
-                  {reviewComments().length === 1
-                    ? t("timeline.reviewCommentSingular", { count: reviewComments().length })
-                    : t("timeline.reviewCommentPlural", { count: reviewComments().length })}
-                </span>
-                <Show when={reviewFileCount() > 1}>
-                  <span class="text-[11px] text-[var(--text-muted)]">
-                    {t("timeline.filesCount", { count: reviewFileCount() })}
+          {/* Queued Inline Diff ReviewComments Pill + Upward Popover */}
+          <Show when={reviewComments().length > 0}>
+            <div ref={reviewContainerRef} class="relative inline-flex items-center">
+              <div class="inline-flex items-center gap-1.5 rounded-full border border-[var(--accent-border)] bg-[var(--accent-surface)]/45 px-2.5 py-1 text-[12px]">
+                <button
+                  type="button"
+                  class="inline-flex items-center gap-1.5 text-left cursor-pointer"
+                  onClick={() => setReviewsExpanded((v) => !v)}
+                >
+                  <MessageSquareText size={12.5} class="text-[var(--accent-primary)] shrink-0" />
+                  <span class="font-semibold text-[var(--text-primary)]">
+                    {reviewComments().length === 1
+                      ? t("timeline.reviewCommentSingular", { count: reviewComments().length })
+                      : t("timeline.reviewCommentPlural", { count: reviewComments().length })}
                   </span>
-                </Show>
-                <span class="text-[var(--text-muted)] inline-flex items-center">
-                  {reviewsExpanded() ? <ChevronDown size={12} /> : <ChevronUp size={12} />}
-                </span>
-              </button>
+                  <Show when={reviewFileCount() > 1}>
+                    <span class="text-[11px] text-[var(--text-muted)]">
+                      {t("timeline.filesCount", { count: reviewFileCount() })}
+                    </span>
+                  </Show>
+                  <span class="text-[var(--text-muted)] inline-flex items-center">
+                    {reviewsExpanded() ? <ChevronDown size={12} /> : <ChevronUp size={12} />}
+                  </span>
+                </button>
 
-              <button
-                type="button"
-                class="text-[11px] text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer ml-1"
-                onClick={() => {
-                  const id = sessionID();
-                  if (id) clearReviewComments(id);
-                }}
-              >
-                {t("timeline.clearAll")}
-              </button>
-            </div>
+                <button
+                  type="button"
+                  class="text-[11px] text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer ml-1"
+                  onClick={() => {
+                    const id = sessionID();
+                    if (id) clearReviewComments(id);
+                  }}
+                >
+                  {t("timeline.clearAll")}
+                </button>
+              </div>
 
-            <Show when={reviewsExpanded()}>
-              <div class="absolute left-1/2 -translate-x-1/2 bottom-[calc(100%+6px)] z-40 w-[min(480px,calc(100vw-32px))] rounded-xl border border-[var(--accent-border)] bg-[var(--bg-elevated)]/98 backdrop-blur-xl p-2.5 shadow-2xl animate-in fade-in zoom-in-95 duration-150">
-                <div class="space-y-1 max-h-48 overflow-y-auto">
-                  <For each={reviewComments()}>
-                    {(item) => (
-                      <div class="flex items-center justify-between gap-2 rounded-lg bg-[var(--bg-panel)]/80 px-2.5 py-1.5 text-[12px]">
-                        <div class="flex items-center gap-2 min-w-0 flex-1">
+              <Show when={reviewsExpanded()}>
+                <div class="absolute left-1/2 -translate-x-1/2 bottom-[calc(100%+6px)] z-40 w-[min(480px,calc(100vw-32px))] rounded-xl border border-[var(--accent-border)] bg-[var(--bg-elevated)]/98 backdrop-blur-xl p-2.5 shadow-2xl animate-in fade-in zoom-in-95 duration-150">
+                  <div class="space-y-1 max-h-48 overflow-y-auto">
+                    <For each={reviewComments()}>
+                      {(item) => (
+                        <div class="flex items-center justify-between gap-2 rounded-lg bg-[var(--bg-panel)]/80 px-2.5 py-1.5 text-[12px]">
+                          <div class="flex items-center gap-2 min-w-0 flex-1">
+                            <button
+                              type="button"
+                              onClick={() => openFileInInspector(item.file)}
+                              class="inline-flex items-center gap-1.5 font-mono text-[11px] font-medium text-[var(--accent-text)] hover:underline shrink-0 cursor-pointer"
+                              title={t("timeline.openInInspectorTooltip")}
+                            >
+                              <FileIcon
+                                node={{ path: item.file, type: "file" }}
+                                class="w-3.5 h-3.5 shrink-0"
+                              />
+                              <span>
+                                {item.file}
+                                {item.line ? `:${item.line}` : ""}
+                              </span>
+                              <ExternalLink size={10} />
+                            </button>
+                            <span class="text-[var(--text-secondary)] truncate">{item.body}</span>
+                          </div>
                           <button
                             type="button"
-                            onClick={() => openFileInInspector(item.file)}
-                            class="inline-flex items-center gap-1.5 font-mono text-[11px] font-medium text-[var(--accent-text)] hover:underline shrink-0 cursor-pointer"
-                            title={t("timeline.openInInspectorTooltip")}
+                            onClick={() => {
+                              const id = sessionID();
+                              if (id) removeReviewComment(id, item.id);
+                            }}
+                            class="text-[var(--text-muted)] hover:text-[var(--danger-text)] p-0.5 cursor-pointer"
+                            title={t("timeline.removeCommentTooltip")}
                           >
-                            <FileIcon
-                              node={{ path: item.file, type: "file" }}
-                              class="w-3.5 h-3.5 shrink-0"
-                            />
-                            <span>
-                              {item.file}
-                              {item.line ? `:${item.line}` : ""}
-                            </span>
-                            <ExternalLink size={10} />
+                            <X size={12} />
                           </button>
-                          <span class="text-[var(--text-secondary)] truncate">{item.body}</span>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const id = sessionID();
-                            if (id) removeReviewComment(id, item.id);
-                          }}
-                          class="text-[var(--text-muted)] hover:text-[var(--danger-text)] p-0.5 cursor-pointer"
-                          title={t("timeline.removeCommentTooltip")}
-                        >
-                          <X size={12} />
-                        </button>
-                      </div>
-                    )}
-                  </For>
+                      )}
+                    </For>
+                  </div>
                 </div>
-              </div>
-            </Show>
-          </div>
-        </Show>
+              </Show>
+            </div>
+          </Show>
+        </div>
+        <TaskProgressCard />
       </div>
     </>
   );
