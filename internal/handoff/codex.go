@@ -248,6 +248,11 @@ func parseCodexRolloutFile(rolloutPath string, baseTs int64, defaultModel string
 
 	var turns []NormalizedTurn
 	toolCallIDIndex := map[string]int{} // map callID to turn index in turns slice
+	var pendingUsage TurnUsage
+	pendingUsageReady := false
+	var pendingLegacyUsage TurnUsage
+	pendingLegacyUsageReady := false
+	legacyUsageByTurn := make(map[int]TurnUsage)
 
 	scanner := bufio.NewScanner(rc)
 	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
@@ -263,12 +268,27 @@ func parseCodexRolloutFile(rolloutPath string, baseTs int64, defaultModel string
 			continue
 		}
 		step++
-		ts := baseTs + step*1000
+		ts := parseTimeMs(asString(item["timestamp"]))
+		if ts <= 0 {
+			ts = baseTs + step*1000
+		}
 		payload, _ := item["payload"].(map[string]interface{})
-		// Codex records per-turn usage on event_msg/token_count, and sometimes
-		// on the response item itself. Attach it to the assistant turn in flight.
+		// Modern Codex records usage on token_usage_record; older files fall back
+		// to event_msg/token_count. Attach usage only to an assistant turn.
 		if usage := codexItemUsage(item, payload); !usage.empty() {
-			attachCodexUsage(&turns, usage, ts, defaultModel)
+			if asString(payload["type"]) == "token_count" {
+				if len(turns) > 0 && turns[len(turns)-1].Role == "assistant" {
+					legacyUsageByTurn[len(turns)-1] = usage
+				} else {
+					pendingLegacyUsage = usage
+					pendingLegacyUsageReady = true
+				}
+			} else if len(turns) > 0 && turns[len(turns)-1].Role == "assistant" {
+				attachCodexUsage(&turns, usage, ts, defaultModel)
+			} else {
+				pendingUsage = pendingUsage.add(usage)
+				pendingUsageReady = true
+			}
 		}
 		if asString(item["type"]) != "response_item" || payload == nil {
 			continue
@@ -384,6 +404,27 @@ func parseCodexRolloutFile(rolloutPath string, baseTs int64, defaultModel string
 				}
 			}
 		}
+		if pendingUsageReady && len(turns) > 0 && turns[len(turns)-1].Role == "assistant" {
+			attachCodexUsage(&turns, pendingUsage, ts, defaultModel)
+			pendingUsage = TurnUsage{}
+			pendingUsageReady = false
+		}
+		if pendingLegacyUsageReady && len(turns) > 0 && turns[len(turns)-1].Role == "assistant" {
+			legacyUsageByTurn[len(turns)-1] = pendingLegacyUsage
+			pendingLegacyUsage = TurnUsage{}
+			pendingLegacyUsageReady = false
+		}
+	}
+	if pendingUsageReady && len(turns) > 0 && turns[len(turns)-1].Role == "assistant" {
+		attachCodexUsage(&turns, pendingUsage, baseTs+step*1000, defaultModel)
+	}
+	if pendingLegacyUsageReady && len(turns) > 0 && turns[len(turns)-1].Role == "assistant" {
+		legacyUsageByTurn[len(turns)-1] = pendingLegacyUsage
+	}
+	for turnIndex, usage := range legacyUsageByTurn {
+		if turnIndex >= 0 && turnIndex < len(turns) && turns[turnIndex].Role == "assistant" && turns[turnIndex].Usage.empty() {
+			turns[turnIndex].Usage = usage
+		}
 	}
 	return turns
 }
@@ -392,36 +433,33 @@ func codexItemUsage(item, payload map[string]interface{}) TurnUsage {
 	if payload == nil {
 		payload = map[string]interface{}{}
 	}
-	if usage := parseTurnUsage(payload["usage"]); !usage.empty() {
-		return usage
+	// token_usage_record is emitted once per model response; sum its usage
+	// records. Its turn_token_usage and thread_token_usage siblings are already
+	// cumulative snapshots. token_count is a legacy fallback and must not be
+	// combined with records when modern records exist.
+	if asString(item["type"]) == "token_usage_record" {
+		return parseTurnUsage(payload["usage"])
 	}
-	if usage := parseTurnUsage(item["usage"]); !usage.empty() {
-		return usage
+	if asString(payload["type"]) == "token_count" {
+		info, _ := payload["info"].(map[string]interface{})
+		if usage := parseTurnUsage(info["last_token_usage"]); !usage.empty() {
+			return usage
+		}
+		if usage := parseTurnUsage(payload["last_token_usage"]); !usage.empty() {
+			return usage
+		}
+		// Old token_count formats may expose only one usage object. Prefer the
+		// latest per-turn snapshot when available; never use thread total here.
+		if usage := parseTurnUsage(info["turn_token_usage"]); !usage.empty() {
+			return usage
+		}
+		return parseTurnUsage(payload)
 	}
-	info, _ := payload["info"].(map[string]interface{})
-	if usage := parseTurnUsage(info["total_token_usage"]); !usage.empty() {
-		return usage
-	}
-	if usage := parseTurnUsage(info["last_token_usage"]); !usage.empty() {
-		return usage
-	}
-	if usage := parseTurnUsage(info); !usage.empty() {
-		return usage
-	}
-	if asString(payload["type"]) != "token_count" {
-		return TurnUsage{}
-	}
-	return parseTurnUsage(payload)
+	return TurnUsage{}
 }
 
 func attachCodexUsage(turns *[]NormalizedTurn, usage TurnUsage, ts int64, model string) {
 	if len(*turns) == 0 || (*turns)[len(*turns)-1].Role != "assistant" {
-		*turns = append(*turns, NormalizedTurn{
-			Role:      "assistant",
-			Timestamp: ts,
-			ModelID:   model,
-			Usage:     usage,
-		})
 		return
 	}
 	last := &(*turns)[len(*turns)-1]

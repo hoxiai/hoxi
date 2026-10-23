@@ -75,7 +75,7 @@ export function createProjectSessionLists() {
 
   function updateSession(directory: string, sessionID: string, update: (info: SessionInfo) => SessionInfo | null): void {
     const path = normalizeFolderPath(directory);
-    advance(path);
+    if (sessions()[path]) advance(path);
     setSessions((prev) => {
       const list = prev[path];
       if (!list) return prev;

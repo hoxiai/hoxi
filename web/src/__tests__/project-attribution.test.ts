@@ -1,7 +1,7 @@
 import { reconcile, unwrap } from "solid-js/store";
 import type { SessionInfo } from "../services/sse-types";
 import { hoxiAPI } from "../services/api";
-import { setWorkspace, workspace } from "../store/workspace";
+import { filterProjectSessions, setWorkspace, workspace } from "../store/workspace";
 import { renameSessionTitle, replaceSession, replaceSessionFromEvent } from "../store/workspace-sessions";
 import { assertEqual, describe, it } from "./test-harness";
 
@@ -110,6 +110,77 @@ describe("project attribution", () => {
       });
       replaceSessionFromEvent(session("legacy", { projectID: "prj_other", directory: "/repo", title: "stolen" }));
       assertEqual(workspace.sessions.find((s) => s.id === "legacy")?.title, "legacy");
+    } finally {
+      setWorkspace(reconcile(saved));
+    }
+  });
+
+  it("falls back to directory ownership for a removed project ID", () => {
+    const saved = structuredClone(unwrap(workspace));
+    try {
+      setWorkspace({
+        rootDir: "/repo",
+        activeProjectID: "prj_new",
+        savedWorkspaces: [{
+          id: "prj_new",
+          name: "Repo",
+          color: "#5EA0F7",
+          folders: [{ id: "folder", path: "/repo", isPrimary: true, position: 0 }],
+          createdAt: "",
+          updatedAt: "",
+        }],
+        sessions: [],
+        worktreeBySession: {},
+      });
+      const owned = filterProjectSessions(
+        [session("legacy-project", { projectID: "prj_removed", directory: "/repo" })],
+        "/repo",
+        "prj_new"
+      );
+      assertEqual(owned.some((item) => item.id === "legacy-project"), true);
+    } finally {
+      setWorkspace(reconcile(saved));
+    }
+  });
+
+  it("does not directory-fallback a live foreign project from a scoped list", () => {
+    const saved = structuredClone(unwrap(workspace));
+    try {
+      setWorkspace({
+        rootDir: "/repo",
+        activeProjectID: "prj_new",
+        savedWorkspaces: [
+          {
+            id: "prj_new", name: "Repo", color: "#5EA0F7",
+            folders: [{ id: "a", path: "/repo", isPrimary: true, position: 0 }],
+            createdAt: "", updatedAt: "",
+          },
+          {
+            id: "prj_other", name: "Other", color: "#5EA0F7",
+            folders: [{ id: "b", path: "/other", isPrimary: true, position: 0 }],
+            createdAt: "", updatedAt: "",
+          },
+        ],
+        sessions: [],
+        worktreeBySession: {},
+      });
+      const owned = filterProjectSessions(
+        [session("live-foreign", { projectID: "prj_other", directory: "/repo/.hoxi/worktrees/ses_x" })],
+        "/repo",
+        "prj_new"
+      );
+      assertEqual(owned.length, 0);
+    } finally {
+      setWorkspace(reconcile(saved));
+    }
+  });
+
+  it("rejects directory-less foreign sessions before project resolution", () => {
+    const saved = structuredClone(unwrap(workspace));
+    try {
+      setWorkspace({ rootDir: "/repo", activeProjectID: null, savedWorkspaces: [], sessions: [], worktreeBySession: {} });
+      replaceSessionFromEvent(session("directory-less-foreign", { projectID: "prj_other" }));
+      assertEqual(workspace.sessions.some((item) => item.id === "directory-less-foreign"), false);
     } finally {
       setWorkspace(reconcile(saved));
     }

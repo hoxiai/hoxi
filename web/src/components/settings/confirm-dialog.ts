@@ -4,14 +4,11 @@
 // This renders a themed in-app dialog and resolves with the user's choice.
 import { t } from "../../i18n";
 
-let active: HTMLElement | null = null;
+let closeActive: ((value: boolean) => void) | null = null;
 
 export function confirmAction(message: string): Promise<boolean> {
   return new Promise((resolve) => {
-    if (active) {
-      active.remove();
-      active = null;
-    }
+    closeActive?.(false);
 
     const overlay = document.createElement("div");
     overlay.className = "fixed inset-0 z-[200] flex items-center justify-center bg-black/45 p-4";
@@ -49,7 +46,7 @@ export function confirmAction(message: string): Promise<boolean> {
     function close(value: boolean) {
       document.removeEventListener("keydown", onKey, true);
       overlay.remove();
-      if (active === overlay) active = null;
+      if (closeActive === close) closeActive = null;
       resolve(value);
     }
 
@@ -63,7 +60,7 @@ export function confirmAction(message: string): Promise<boolean> {
     card.append(text, actions);
     overlay.append(card);
     document.body.append(overlay);
-    active = overlay;
+    closeActive = close;
     document.addEventListener("keydown", onKey, true);
     confirm.focus();
   });

@@ -12,6 +12,7 @@ import {
   resumeSubagentTask,
   revertToHere,
   selectSession,
+  sessionsWithPendingPermission,
   stopSessionToolCommand,
 } from "../../store/workspace";
 import { t } from "../../i18n";
@@ -25,7 +26,7 @@ import {
   ActionIconButton,
   extractCommand, extractDescription, extractRollingShellLines,
   extractShellOutput, extractTargetFile, formatToolDisplayName, getDirectory, getFilename,
-  InlineDiagnosticsDisplay, isEditingTool, isQuestionTool, isReadTool, isShellTool,
+  InlineDiagnosticsDisplay, isEditingTool, isQuestionTool, isReadTool, isShellTool, isShellAwaitingFirstOutput,
   isTaskTool, isTodoTool, kiloToolIconName, processCarriageReturns,
   ToolCardExpandedBody, type ToolPart,
 } from "./tool-card-helpers";
@@ -90,6 +91,10 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
   const description = createMemo(() => extractDescription(props.part));
   const shellOut = createMemo(() =>
     isShell() && everExpanded() ? extractShellOutput(props.part.state, props.part.id) : ""
+  );
+  const awaitingFirstOutput = createMemo(() =>
+    isShellAwaitingFirstOutput(props.part, isRunning(), elapsed()) &&
+    !sessionsWithPendingPermission().has(props.part.sessionID)
   );
 
   // Rolling 5 lines of shell output while running & collapsed (ported from Kilo ShellRollingResults)
@@ -506,6 +511,12 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
             </span>
           </div>
         </div>
+
+        <Show when={awaitingFirstOutput()}>
+          <div class="ml-3 mt-1 border-l-2 border-[var(--border-subtle)] py-1 pl-3 text-[12px] leading-relaxed text-[var(--text-muted)]" role="status">
+            {t("toolCard.outputPendingHint")}
+          </div>
+        </Show>
 
         {/* Inline nested step list for Subagent `task` tool calls */}
         <Show when={everExpanded() && isTask() && childSessionID()}>

@@ -45,13 +45,25 @@ export function indexedSession(sessionID: string | null | undefined): SessionInd
 }
 
 /** Stable attribution wins; legacy sessions fall back to exact roots or Hoxi worktrees. */
-export function sessionBelongsToProject(info: SessionInfo, directory: string, projectID?: string | null): boolean {
+export function sessionBelongsToProject(
+  info: SessionInfo,
+  directory: string,
+  projectID?: string | null,
+  allowRemovedProjectDirectoryFallback = false
+): boolean {
   const root = normalizeFolderPath(directory);
   if (!root) return false;
   const expectedID = projectID || findWorkspaceProfileByDir(root)?.id;
   const indexed = indexedSession(info.id);
   const ownerID = info.projectID || indexed?.projectID;
-  if (ownerID && expectedID) return ownerID === expectedID;
+  if (ownerID) {
+    if (expectedID && ownerID === expectedID) return true;
+    const ownerIsLive = workspace.savedWorkspaces.some((saved) => saved.id === ownerID);
+    // A backend-scoped session list can contain an old owner ID only after
+    // ListProject has confirmed that ID is no longer live. Global/background
+    // events do not carry that guarantee and must stay strictly attributed.
+    if (!allowRemovedProjectDirectoryFallback || ownerIsLive) return false;
+  }
   const sessionDir = normalizeFolderPath(info.directory || indexed?.directory ||
     workspace.worktreeBySession[info.id]?.directory);
   const profile = findWorkspaceProfileByDir(root);
@@ -64,13 +76,14 @@ export function sessionBelongsToProject(info: SessionInfo, directory: string, pr
     if (parent?.directory) return roots.includes(stripWorktreePath(parent.directory));
   }
   // A directory-less legacy item is still accepted from its scoped list.
-  return true;
+  return !ownerID;
 }
 
 export function filterProjectSessions(list: SessionInfo[], directory: string, projectID?: string | null): SessionInfo[] {
   const seen = new Set<string>();
   return list.filter((info) => {
-    if (!info?.id || seen.has(info.id) || !sessionBelongsToProject(info, directory, projectID)) return false;
+    if (!info?.id || seen.has(info.id) ||
+      !sessionBelongsToProject(info, directory, projectID, true)) return false;
     seen.add(info.id);
     return true;
   });

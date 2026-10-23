@@ -96,6 +96,19 @@ describe("sidebar project session lists", () => {
     });
   });
 
+  it("does not discard the first load when an optimistic update has no cached list", async () => {
+    await withListsFixture(async (lists) => {
+      setWorkspace({ rootDir: "/repo", sessions: [] });
+      const response = deferred<SessionInfo[]>();
+      hoxiAPI.listSessions = () => response.promise;
+      const loading = lists.load("/repo");
+      lists.updateSession("/repo", "ses_a", (info) => ({ ...info, title: "updated" }));
+      response.resolve([session("ses_a", "/repo")]);
+      await loading;
+      assertDeepEqual(ids(lists.sessions()["/repo"]), ["ses_a"]);
+    });
+  });
+
   it("still opens the initial task when a reconnect refresh lands before the startup load", async () => {
     await withListsFixture(async () => {
       setWorkspace({ rootDir: "/repo", sessions: [], bootstrappingSessions: true });

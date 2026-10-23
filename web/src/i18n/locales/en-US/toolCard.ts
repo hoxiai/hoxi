@@ -47,6 +47,7 @@ export const toolCard = {
   gatheringContext: "Gathering context",
   gatheredContext: "Gathered context",
   waitingForOutput: "Waiting for output…",
+  outputPendingHint: "No command output received yet; scripts or pipes such as tail may hold logs until completion. Expand to inspect the command, or stop it if needed",
   noOutput: "Command completed with no output.",
   stopCommand: "Stop",
   stoppingCommand: "Stopping…",

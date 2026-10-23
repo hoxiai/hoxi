@@ -13,6 +13,8 @@ import {
   type UsageHistoryDay,
 } from "../store/usage-history";
 import { assertEqual, assertTrue, describe, it } from "./test-harness";
+import { formatDurationMs } from "../components/settings/usage-format";
+import { locale, setLocale } from "../i18n";
 
 function pricingItem(slug: string, input: number, output: number, currency = "USD"): ModelPricingItem {
   return {
@@ -62,6 +64,17 @@ function usageDay(
 }
 
 describe("usage history pricing", () => {
+  it("formats rounded durations with valid minute and second fields", () => {
+    const previous = locale();
+    setLocale("en-US");
+    try {
+      assertEqual(formatDurationMs(119_999), "2m 0s", "duration carry");
+      assertEqual(formatDurationMs(59_999), "1m 0s", "second carry");
+    } finally {
+      setLocale(previous);
+    }
+  });
+
   it("prices every model in a day with the shared resolver", () => {
     withPricingCatalog(
       [pricingItem("claude-opus-5", 5, 25), pricingItem("deepseek-v4-flash", 3, 9, "CNY")],

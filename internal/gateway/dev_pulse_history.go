@@ -118,8 +118,9 @@ func (g *Gateway) handleDevPulseHistory(w http.ResponseWriter, r *http.Request) 
 			end = todayStart
 		}
 		// Clamp an over-long custom window to the most recent max days.
-		if end.Sub(start) > time.Duration(historyMaxDays)*24*time.Hour {
-			start = end.AddDate(0, 0, -(historyMaxDays - 1))
+		oldestAllowed := end.AddDate(0, 0, -(historyMaxDays - 1))
+		if start.Before(oldestAllowed) {
+			start = oldestAllowed
 		}
 		days = 0
 		for d := start; !d.After(end); d = d.AddDate(0, 0, 1) {
@@ -330,11 +331,11 @@ func mergeHistoryModel(target *historyDay, incoming historyModelStat) {
 		m.InputTokens += incoming.InputTokens
 		m.OutputTokens += incoming.OutputTokens
 		m.ReasoningTokens += incoming.ReasoningTokens
-	m.CacheReadTokens += incoming.CacheReadTokens
-	m.CacheWriteTokens += incoming.CacheWriteTokens
-	m.DurationSumMs += incoming.DurationSumMs
-	m.DurationSamples += incoming.DurationSamples
-	return
+		m.CacheReadTokens += incoming.CacheReadTokens
+		m.CacheWriteTokens += incoming.CacheWriteTokens
+		m.DurationSumMs += incoming.DurationSumMs
+		m.DurationSamples += incoming.DurationSamples
+		return
 	}
 	target.Models = append(target.Models, incoming)
 }

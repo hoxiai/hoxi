@@ -14,6 +14,7 @@ export const diagnostics = {
   cacheLine: "缓存读取: {cache} / 推理: {reasoning}",
   durationSeconds: "{seconds}秒",
   durationMinutes: "{minutes}分{seconds}秒",
+  durationMilliseconds: "{milliseconds}毫秒",
   statusPending: "进行中",
   statusTimeout: "超时",
   colTime: "时间",

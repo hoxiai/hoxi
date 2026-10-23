@@ -24,6 +24,13 @@ type PromptRequest struct {
 	ClientRequestID string          `json:"clientRequestId,omitempty"`
 }
 
+// Stable execution guidance shared by desktop, mobile, CLI and orchestration
+// prompts. Keep it out of visible user text and out of the approval policy.
+const commandExecutionGuidance = `Hoxi command execution:
+Keep build, test and workspace-check progress visible. Unless the user explicitly requests it, do not pipe long-running checks into tail/head or filters that suppress progress: tail -N waits for EOF, and grep may buffer output.
+Use the tool's bounded output when available. If a full log is needed, save it to a unique temporary file and inspect bounded excerpts while the command runs. Preserve and check the original command's exit status; a successful tail/grep does not prove the check passed.
+Set a suitable tool timeout and test timeout. If a check stays silent, inspect its current stage and existing log before retrying; do not start duplicate checks or repeatedly wait without reporting progress. Reuse build caches unless a clean build is required.`
+
 // PromptReceipt is returned by POST .../prompt and .../prompt_async so callers
 // can correlate node-assigned instruction/message IDs and detect deduplicated retries.
 type PromptReceipt struct {
@@ -170,6 +177,7 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 	if err := validateSessionDirectory(rec); err != nil {
 		return http.StatusBadRequest, PromptReceipt{}, err
 	}
+	body.System = strings.TrimSpace(commandExecutionGuidance + "\n\n" + body.System)
 	var resolvedSkill ResolvedSkill
 	if body.SkillSelection != nil {
 		resolved, err := s.resolveSkillSelection(ctx, rec.WorktreePath, rec.ID, rec.Runtime, *body.SkillSelection)

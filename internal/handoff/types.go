@@ -352,13 +352,34 @@ func parseTurnUsage(raw interface{}) TurnUsage {
 	if reasoning == 0 {
 		reasoning = asInt64(m["reasoning_tokens"])
 	}
+	if reasoning == 0 {
+		reasoning = asInt64(m["reasoning_output_tokens"])
+	}
+	if asInt64(m["reasoning_output_tokens"]) > 0 && output >= reasoning {
+		output -= reasoning
+	}
 	cacheRead := asInt64(m["cache_read_input_tokens"])
 	if cacheRead == 0 {
 		cacheRead = asInt64(m["cache_read_tokens"])
 	}
+	// Codex reports cached input as a subset of input_tokens; normalize it to
+	// the same disjoint categories used by the handoff usage ledger.
+	codexCachedInput := asInt64(m["cached_input_tokens"])
+	if codexCachedInput > 0 {
+		cacheRead = codexCachedInput
+	}
 	cacheWrite := asInt64(m["cache_creation_input_tokens"])
 	if cacheWrite == 0 {
 		cacheWrite = asInt64(m["cache_write_tokens"])
+	}
+	if cacheWrite == 0 {
+		cacheWrite = asInt64(m["cache_write_input_tokens"])
+	}
+	if codexCachedInput > 0 || asInt64(m["cache_write_input_tokens"]) > 0 {
+		input -= cacheRead + cacheWrite
+		if input < 0 {
+			input = 0
+		}
 	}
 	cost := asFloat64(m["cost"])
 	if cost == 0 {
@@ -384,8 +405,10 @@ func ImportedSessionTitlePrefixes() []string {
 		"[Grok CLI]%",
 		"[Claude Code]%",
 		"[Codex%",
+		"[OpenAI Codex]%",
 		"[Gemini%",
 		"[Antigravity]%",
+		"[Antigravity (Gemini)]%",
 		"[CodeBuddy]%",
 		"[Trae]%",
 		"[Qoder]%",

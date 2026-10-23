@@ -259,7 +259,10 @@ func insertNormalizedTurnsToOpenCodeDB(
 
 	for idx, turn := range turns {
 		seq++
-		ts := baseTs + int64(idx*1000)
+		ts := turn.Timestamp
+		if ts <= 0 {
+			ts = baseTs + int64(idx*1000)
+		}
 		msgID := makeAscendingOpenCodeID("msg", ts, seq)
 
 		if turn.Role == "user" {

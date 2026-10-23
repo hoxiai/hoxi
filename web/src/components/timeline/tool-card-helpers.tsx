@@ -342,6 +342,13 @@ function rawShellOutputFromState(state: ToolState): string {
   return "";
 }
 
+// Only describe the lack of output, never infer whether the process is stuck.
+// Approval waits (pending) and historical/interrupted tools must stay quiet.
+export function isShellAwaitingFirstOutput(part: ToolPart, active: boolean, elapsedSeconds: number): boolean {
+  return active && part.state.status === "running" && isShellTool(part.tool) &&
+    elapsedSeconds >= 15 && rawShellOutputFromState(part.state).trim().length === 0;
+}
+
 export function extractShellOutput(state: ToolState, partID?: string): string {
   const full = partID ? getFullToolOutput(partID) : undefined;
   const raw = full ?? rawShellOutputFromState(state);

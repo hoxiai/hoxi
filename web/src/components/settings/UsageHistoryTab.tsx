@@ -2,7 +2,7 @@
 // Usage & cost panel. Defaults to a year overview (heatmap + today's tally);
 // picking a window switches to a plain daily list, since the bar charts no
 // longer add anything over the table.
-import { createMemo, createSignal, For, onMount, Show, type JSX } from "solid-js";
+import { createMemo, createSignal, For, onCleanup, onMount, Show, type JSX } from "solid-js";
 import { ChevronRight, RefreshCw, X } from "lucide-solid";
 import { t } from "../../i18n";
 import {
@@ -39,6 +39,10 @@ function toDateInput(date: Date): string {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${date.getFullYear()}-${month}-${day}`;
+}
+
+function addCalendarDays(date: Date, days: number): Date {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate() + days);
 }
 
 type UsageDetailRange = "today" | "yesterday" | "week" | "month";
@@ -209,17 +213,19 @@ function ListSkeleton(props: { rows?: number }) {
 
 export default function UsageHistoryTab() {
   const initial = usageSelection();
-  const todayDate = toDateInput(new Date());
+  const [todayDate, setTodayDate] = createSignal(toDateInput(new Date()));
   const [customOpen, setCustomOpen] = createSignal(initial.kind === "custom");
   const [customStart, setCustomStart] = createSignal(
-    initial.kind === "custom" ? initial.range.start : toDateInput(new Date(Date.now() - 13 * 86_400_000))
+    initial.kind === "custom" ? initial.range.start : toDateInput(addCalendarDays(new Date(), -13))
   );
   const [customEnd, setCustomEnd] = createSignal(
-    initial.kind === "custom" ? initial.range.end : todayDate
+    initial.kind === "custom" ? initial.range.end : todayDate()
   );
 
   onMount(() => {
     void loadUsageHistory(usageSelection());
+    const timer = window.setInterval(() => setTodayDate(toDateInput(new Date())), 60_000);
+    onCleanup(() => window.clearInterval(timer));
   });
 
   const isOverview = () => usageSelection().kind === "overview";
@@ -231,15 +237,15 @@ export default function UsageHistoryTab() {
   const detailDays = createMemo(() => {
     const all = usageHistory();
     const range = detailRange();
-    if (range === "today") return all.filter((day) => day.date === todayDate);
+    if (range === "today") return all.filter((day) => day.date === todayDate());
     if (range === "yesterday") {
-      const yesterday = toDateInput(new Date(Date.now() - 86_400_000));
+      const yesterday = toDateInput(addCalendarDays(new Date(), -1));
       return all.filter((day) => day.date === yesterday);
     }
     const start = toDateInput(
       range === "week" ? startOfWeek(new Date()) : new Date(new Date().getFullYear(), new Date().getMonth(), 1)
     );
-    return all.filter((day) => day.date >= start && day.date <= todayDate);
+    return all.filter((day) => day.date >= start && day.date <= todayDate());
   });
   const detailTotals = createMemo(() => usageHistoryTotals(detailDays()));
   const periodModels = createMemo(() => usageHistoryModels(detailDays()));
@@ -258,7 +264,9 @@ export default function UsageHistoryTab() {
     return day ? usageHistoryModels([day]) : [];
   });
 
-  const hasData = createMemo(() => usageHistory().some((day) => day.totalTokens > 0 || day.turns > 0));
+  const hasData = createMemo(() => usageHistory().some((day) =>
+    day.totalTokens > 0 || day.turns > 0 || day.commits > 0 || day.additions > 0 || day.deletions > 0
+  ));
 
   const isPresetActive = (range: UsageHistoryRange) => {
     const sel = usageSelection();
@@ -326,7 +334,7 @@ export default function UsageHistoryTab() {
                 type="date"
                 class="bg-transparent text-[11px] text-[var(--text-primary)] outline-none"
                 aria-label={t("settings.usageCustomFrom")}
-                max={todayDate}
+                max={todayDate()}
                 value={customStart()}
                 onInput={(e) => {
                   setCustomStart(e.currentTarget.value);
@@ -338,7 +346,7 @@ export default function UsageHistoryTab() {
                 type="date"
                 class="bg-transparent text-[11px] text-[var(--text-primary)] outline-none"
                 aria-label={t("settings.usageCustomTo")}
-                max={todayDate}
+                max={todayDate()}
                 value={customEnd()}
                 onInput={(e) => {
                   setCustomEnd(e.currentTarget.value);

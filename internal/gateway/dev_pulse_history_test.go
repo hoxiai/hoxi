@@ -259,3 +259,24 @@ func TestDevPulseHistoryClampsWindow(t *testing.T) {
 		t.Fatalf("days = %d, want clamp to %d", len(res.Days), historyMaxDays)
 	}
 }
+
+func TestDevPulseHistoryCustomWindowClampsInclusiveDayCount(t *testing.T) {
+	t.Setenv("OPENCODE_DB", "")
+	t.Setenv("HOXI_DB_PATH", filepath.Join(t.TempDir(), "hoxi.db"))
+	gw := New(0, "pass", t.TempDir(), nil, nil)
+	now := time.Now()
+	end := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	start := end.AddDate(0, 0, -historyMaxDays)
+	rec := httptest.NewRecorder()
+	gw.ServeHTTP(rec, localRequest(http.MethodGet, "/api/hoxi/dev-pulse/history?start="+start.Format("2006-01-02")+"&end="+end.Format("2006-01-02"), nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var res devPulseHistoryResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Days) != historyMaxDays {
+		t.Fatalf("days = %d, want inclusive clamp to %d", len(res.Days), historyMaxDays)
+	}
+}

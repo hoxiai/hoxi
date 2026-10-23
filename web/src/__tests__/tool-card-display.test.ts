@@ -3,6 +3,7 @@ import {
   extractDescription,
   extractShellOutput,
   extractRollingShellLines,
+  isShellAwaitingFirstOutput,
 } from "../components/timeline/tool-card-helpers";
 import type { ToolPart, ToolState } from "../services/sse-types";
 import { assertDeepEqual, assertEqual, describe, it } from "./test-harness";
@@ -16,6 +17,24 @@ function shellPart(state: ToolState): ToolPart {
 }
 
 describe("shell tool display", () => {
+  it("shows a first-output hint for silent live commands, clearing it on output or completion", () => {
+    const part = shellPart({ status: "running", input: { command: "node scripts/check-workspace.mjs --mode tenant 2>&1 | grep -Ev '^\\s+(git|gofmt|php|node)' | tail -120" }, time: { start: 1 } });
+    assertEqual(isShellAwaitingFirstOutput(part, true, 14.9), false);
+    assertEqual(isShellAwaitingFirstOutput(part, true, 15), true);
+    assertEqual(isShellAwaitingFirstOutput(part, false, 60), false);
+    for (const key of ["output", "stdout"]) {
+      part.state.metadata = { [key]: "[gate] running checks" };
+      assertEqual(isShellAwaitingFirstOutput(part, true, 60), false);
+    }
+    part.state = { status: "pending", input: {}, raw: "" };
+    assertEqual(isShellAwaitingFirstOutput(part, true, 60), false);
+    part.state = { status: "completed", input: {}, output: "", title: "", metadata: {}, time: { start: 1, end: 2 } };
+    assertEqual(isShellAwaitingFirstOutput(part, true, 60), false);
+    part.state = { status: "running", input: {}, time: { start: 1 } };
+    part.tool = "read";
+    assertEqual(isShellAwaitingFirstOutput(part, true, 60), false);
+  });
+
   it("cleans historical and live tool cards in every lifecycle state without changing stop identities or input", () => {
     const states: ToolState[] = [
       { status: "pending", input: { command: taggedCommand }, raw: "", title: marker.slice(2) },

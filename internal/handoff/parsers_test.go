@@ -23,6 +23,23 @@ func runSQLite(t *testing.T, dbPath, sql string) {
 	}
 }
 
+func TestImportedSessionTitlePrefixesMatchActualLabels(t *testing.T) {
+	clause := SQLNotImportedTitleClause("title")
+	for _, title := range []string{"[OpenAI Codex] task", "[Antigravity (Gemini)] task"} {
+		matched := false
+		for _, pattern := range ImportedSessionTitlePrefixes() {
+			prefix := strings.TrimSuffix(pattern, "%")
+			if strings.HasPrefix(title, prefix) {
+				matched = strings.Contains(clause, "title NOT LIKE '"+pattern+"'")
+				break
+			}
+		}
+		if !matched {
+			t.Errorf("imported title %q has no matching exclusion prefix in %q", title, clause)
+		}
+	}
+}
+
 func setupSyntheticCLIHome(t *testing.T, workspaceDir string) string {
 	t.Helper()
 	homeDir := t.TempDir()
@@ -90,7 +107,7 @@ func setupSyntheticCLIHome(t *testing.T, workspaceDir string) string {
 	codexLines := []string{
 		`{"type":"session_meta","payload":{"id":"codex-sess-1","cwd":"` + workspaceDir + `"}}`,
 		`{"type":"response_item","payload":{"type":"message","role":"user","content":"# AGENTS.md instructions for project"}}`,
-		`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Implement codex feature in codex_feat.go"}]}}`,
+		`{"type":"response_item","timestamp":"2026-10-17T10:00:02Z","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Implement codex feature in codex_feat.go"}]}}`,
 		`{"type":"response_item","payload":{"type":"reasoning","summary":[{"text":"Planning codex feature"}]}}`,
 		`{"type":"response_item","payload":{"type":"message","role":"assistant","phase":"commentary","content":[{"text":"Checking files first"}]}}`,
 		`{"type":"response_item","payload":{"type":"function_call","call_id":"call_cx_1","name":"write_file","arguments":"{\"filePath\":\"codex_feat.go\"}"}}`,
@@ -98,7 +115,8 @@ func setupSyntheticCLIHome(t *testing.T, workspaceDir string) string {
 		`{"type":"response_item","payload":{"type":"custom_tool_call","call_id":"call_cx_2","name":"exec_command","input":"go test ./..."}}`,
 		`{"type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"call_cx_2","output":[{"text":"ok"}]}}`,
 		`{"type":"response_item","payload":{"type":"message","role":"assistant","content":"Codex feature complete."}}`,
-		`{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":900,"output_tokens":40,"reasoning_tokens":10}}}}`,
+		`{"type":"token_usage_record","payload":{"turn_id":"turn-1","usage":{"input_tokens":900,"cached_input_tokens":300,"output_tokens":40,"reasoning_output_tokens":10,"cache_write_input_tokens":20},"turn_token_usage":{"input_tokens":900,"cached_input_tokens":300,"output_tokens":40,"reasoning_output_tokens":10,"cache_write_input_tokens":20},"thread_token_usage":{"input_tokens":900,"cached_input_tokens":300,"output_tokens":40,"reasoning_output_tokens":10,"cache_write_input_tokens":20}}}`,
+		`{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1800,"cached_input_tokens":600,"output_tokens":80,"reasoning_output_tokens":20},"last_token_usage":{"input_tokens":900,"cached_input_tokens":300,"output_tokens":40,"reasoning_output_tokens":10,"cache_write_input_tokens":20}}}}`,
 	}
 	_ = os.WriteFile(rolloutPath, []byte(strings.Join(codexLines, "\n")+"\n"), 0o644)
 
@@ -470,10 +488,13 @@ func TestSyntheticDiscoveryAndDetailAllSources(t *testing.T) {
 	if len(codexDetail.Turns) != 2 || !reflect.DeepEqual(codexDetail.ChangedFiles, []string{"codex_feat.go"}) {
 		t.Fatalf("unexpected codex detail: turns=%d changed=%v", len(codexDetail.Turns), codexDetail.ChangedFiles)
 	}
+	if codexDetail.Turns[0].Timestamp != parseTimeMs("2026-10-17T10:00:02Z") {
+		t.Fatalf("expected Codex source timestamp preserved, got %d", codexDetail.Turns[0].Timestamp)
+	}
 	if len(codexDetail.Turns[1].Tools) != 2 || codexDetail.Turns[1].Tools[0].Output != "wrote codex_feat.go" {
 		t.Fatalf("unexpected codex tools: %+v", codexDetail.Turns[1].Tools)
 	}
-	if codexDetail.Turns[1].Usage.Input != 900 || codexDetail.Turns[1].Usage.Output != 40 || codexDetail.Turns[1].Usage.Reasoning != 10 {
+	if codexDetail.Turns[1].Usage.Input != 580 || codexDetail.Turns[1].Usage.Output != 30 || codexDetail.Turns[1].Usage.Reasoning != 10 || codexDetail.Turns[1].Usage.CacheRead != 300 || codexDetail.Turns[1].Usage.CacheWrite != 20 {
 		t.Fatalf("expected codex token_count attached, got %+v", codexDetail.Turns[1].Usage)
 	}
 

@@ -2,6 +2,7 @@ import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "so
 import { ChevronLeft, ChevronRight, Columns3, RefreshCw, X } from "lucide-solid";
 import { locale, t } from "../../i18n";
 import { formatCompactNumber, formatUsd } from "../../i18n/format";
+import { formatDurationMs } from "./usage-format";
 import {
   estimateTokenCostUsd, loadRequestContent, loadRequestLog, requestLog, requestLogError,
   requestLogLoading, requestLogTotal, syncOfficialModelPricing,
@@ -56,14 +57,6 @@ function entryCost(entry: RequestLogEntry): number | null {
     cacheRead: entry.cacheReadTokens,
     cacheWrite: entry.cacheWriteTokens,
   });
-}
-
-function formatDuration(ms: number): string {
-  if (ms <= 0) return "—";
-  if (ms < 1000) return `${ms}ms`;
-  const seconds = Math.round(ms / 1000);
-  if (seconds < 60) return t("diagnostics.durationSeconds", { seconds });
-  return t("diagnostics.durationMinutes", { minutes: Math.floor(seconds / 60), seconds: seconds % 60 });
 }
 
 function formatWhen(ms: number): { date: string; time: string } {
@@ -314,7 +307,7 @@ export default function DiagnosticsTab() {
                         <td class="px-3 py-2">
                           <span
                             class={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium ${timedOut() ? "bg-[var(--danger-surface)] text-[var(--danger-text)]" : badgeClass(entry)}`}
-                            title={pending() ? formatDuration(nowMs() - entry.time) : statusTitle(entry)}
+                            title={pending() ? formatDurationMs(nowMs() - entry.time) : statusTitle(entry)}
                           >
                             <Show when={pending()}>
                               <span class="h-1.5 w-1.5 animate-pulse rounded-full bg-current" aria-hidden="true" />
@@ -324,11 +317,11 @@ export default function DiagnosticsTab() {
                         </td>
                       </Show>
                       <Show when={visible("firstToken")}>
-                        <td class="px-3 py-2 text-right font-mono text-[11px] text-[var(--text-secondary)]">{formatDuration(entry.firstTokenMs || 0)}</td>
+                        <td class="px-3 py-2 text-right font-mono text-[11px] text-[var(--text-secondary)]">{formatDurationMs(entry.firstTokenMs || 0)}</td>
                       </Show>
                       <Show when={visible("duration")}>
                         <td class="px-3 py-2 text-right font-mono text-[11px] text-[var(--text-secondary)]">
-                          {formatDuration(pending() ? nowMs() - entry.time : entry.durationMs)}
+                          {formatDurationMs(pending() ? nowMs() - entry.time : entry.durationMs)}
                         </td>
                       </Show>
                       <Show when={visible("tokens")}>
@@ -434,8 +427,8 @@ function RequestDetail(props: { entry: RequestLogEntry; onClose: () => void }) {
         <dt class="text-[var(--text-muted)]">{t("diagnostics.provider")}</dt><dd class="text-[var(--text-secondary)]">{props.entry.providerID}</dd>
         <dt class="text-[var(--text-muted)]">{t("diagnostics.colModel")}</dt><dd class="break-all font-mono text-[var(--text-secondary)]">{props.entry.modelID}</dd>
         <dt class="text-[var(--text-muted)]">{t("diagnostics.colStatus")}</dt><dd class="font-mono text-[var(--text-secondary)]">{statusTitle(props.entry)}</dd>
-        <dt class="text-[var(--text-muted)]">{t("diagnostics.colFirstToken")}</dt><dd class="font-mono text-[var(--text-secondary)]">{formatDuration(props.entry.firstTokenMs || 0)}</dd>
-        <dt class="text-[var(--text-muted)]">{t("diagnostics.colDuration")}</dt><dd class="font-mono text-[var(--text-secondary)]">{formatDuration(props.entry.durationMs)}</dd>
+        <dt class="text-[var(--text-muted)]">{t("diagnostics.colFirstToken")}</dt><dd class="font-mono text-[var(--text-secondary)]">{formatDurationMs(props.entry.firstTokenMs || 0)}</dd>
+        <dt class="text-[var(--text-muted)]">{t("diagnostics.colDuration")}</dt><dd class="font-mono text-[var(--text-secondary)]">{formatDurationMs(props.entry.durationMs)}</dd>
         <dt class="text-[var(--text-muted)]">{t("diagnostics.colTokens")}</dt>
         <dd class="font-mono text-[var(--text-secondary)]">
           {t("diagnostics.usageLine", { input: props.entry.inputTokens.toLocaleString(), output: props.entry.outputTokens.toLocaleString(), total: totalTokens(props.entry).toLocaleString() })}

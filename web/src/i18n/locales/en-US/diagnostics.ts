@@ -14,6 +14,7 @@ export const diagnostics = {
   cacheLine: "cache read: {cache} / reasoning: {reasoning}",
   durationSeconds: "{seconds}s",
   durationMinutes: "{minutes}m {seconds}s",
+  durationMilliseconds: "{milliseconds}ms",
   statusPending: "In progress",
   statusTimeout: "Timed out",
   colTime: "Time",

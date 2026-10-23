@@ -180,7 +180,7 @@ func TestManagedOpenCodeTurnStreamsPersistsAndResumes(t *testing.T) {
 	defer unsub()
 	for attempt := 0; attempt < 2; attempt++ {
 		w := httptest.NewRecorder()
-		svc.handleSessionPrompt(w, httptest.NewRequest("POST", "/prompt", strings.NewReader(`{"text":"next","model":{"providerID":"provider","modelID":"model"}}`)), info.ID)
+		svc.handleSessionPrompt(w, httptest.NewRequest("POST", "/prompt", strings.NewReader(`{"text":"next","system":"Keep custom instructions","model":{"providerID":"provider","modelID":"model"}}`)), info.ID)
 		if w.Code != 200 {
 			t.Fatalf("prompt: %d %s", w.Code, w.Body)
 		}
@@ -211,6 +211,11 @@ func TestManagedOpenCodeTurnStreamsPersistsAndResumes(t *testing.T) {
 	defer mu.Unlock()
 	if len(systems) != 2 || !strings.Contains(systems[0], "Previously agreed constraint") || !strings.Contains(systems[1], "Previously agreed constraint") {
 		t.Fatalf("lost initial context on resume: %v", systems)
+	}
+	for _, system := range systems {
+		if !strings.HasPrefix(system, commandExecutionGuidance) || !strings.Contains(system, "Keep custom instructions") {
+			t.Fatalf("missing execution guidance or custom instructions: %s", system)
+		}
 	}
 	rec, _ := NewStore(storePath).Get(info.ID)
 	if rec.ID != info.ID || len(rec.Turns) != 5 || rec.Runtime != "opencode" || rec.ProviderID != "provider" {
@@ -254,9 +259,13 @@ func TestManagedOpenCodeStopAbortsBackingSession(t *testing.T) {
 			writeJSON(w, 200, true)
 		case "/session/ses_engine_stop/prompt_async":
 			var payload struct {
-				Parts []MessagePart `json:"parts"`
+				Parts  []MessagePart `json:"parts"`
+				System string        `json:"system"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&payload)
+			if !strings.HasPrefix(payload.System, commandExecutionGuidance) {
+				t.Error("steering omitted command execution guidance")
+			}
 			steered <- payload.Parts[0].Text
 			writeJSON(w, 200, true)
 		default:
@@ -358,6 +367,9 @@ func TestNativeRuntimeHandoffUsesHistoryWithoutReusingOtherEngineResumeID(t *tes
 		args, _ := os.ReadFile(argsLog)
 		if !strings.Contains(string(input), "historical task requirement") || !strings.Contains(string(input), "current user request") || strings.Contains(string(args), "previous-engine-resume") {
 			t.Fatalf("bad handoff: %s %s", args, input)
+		}
+		if !strings.Contains(string(input), "Keep build, test and workspace-check progress visible") {
+			t.Fatalf("missing command execution guidance for %s: %s", rt, input)
 		}
 		rec, _ := svc.store.Get(info.ID)
 		for _, turn := range rec.Turns {

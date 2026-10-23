@@ -48,6 +48,7 @@ export const toolCard: ToolCardI18n = {
   gatheringContext: "正在读取上下文",
   gatheredContext: "已读取上下文",
   waitingForOutput: "等待命令输出…",
+  outputPendingHint: "尚未收到命令输出，脚本或 tail 等管道可能在结束后才返回日志；可展开查看命令，必要时终止命令",
   noOutput: "执行完成（无输出）",
   stopCommand: "终止命令",
   stoppingCommand: "正在终止…",
