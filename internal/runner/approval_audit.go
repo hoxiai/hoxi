@@ -65,7 +65,8 @@ type ApprovalAuditEntry struct {
 	Directory    string `json:"directory,omitempty"`
 	Destructive  bool   `json:"destructive,omitempty"`
 	Decision     string `json:"decision"` // "once" | "always" | "reject" | "timeout" | "interrupted"
-	Source       string `json:"source"`   // "desktop" | "tunnel" | "lan" | "relay" | "system"
+	Source       string `json:"source"` // "desktop" | "tunnel" | "lan" | "relay" | "system" | "policy" | "unattended" | "timeout"
+	Category     string `json:"category,omitempty"`
 	Message      string `json:"message,omitempty"`
 }
 
@@ -487,7 +488,30 @@ func (s *Service) recordRunnerApprovalAudit(cred hookCredential, req map[string]
 		Decision:     decision,
 		Source:       source,
 		Message:      answer.Message,
+		Category:     firstString(req["hoxiCategory"]),
 	})
+}
+
+// recordUnattendedDeny writes the hard-refuse audit row and the deferred list
+// entry. The summary is redacted by the audit store; the reason shown to the
+// model never includes the command.
+func (s *Service) recordUnattendedDeny(cred hookCredential, req map[string]interface{}, category string) {
+	if req == nil {
+		return
+	}
+	req["hoxiCategory"] = category
+	if _, ok := req["id"].(string); !ok {
+		req["id"] = runnerPermissionID + randomHex(12)
+	}
+	reason := unattendedDenyReason(category)
+	s.recordRunnerApprovalAudit(cred, req, "reject", approvalReply{Reply: "reject", Message: reason, Source: approvalSourceUnattended})
+	s.rememberDeferred(cred.sessionID, firstString(req["id"]), category, permissionSummaryText(req))
+	s.noteTurn(cred.sessionID, "deny")
+}
+
+func permissionSummaryText(req map[string]interface{}) string {
+	summary, _ := summarizePermissionItem(req)
+	return summary
 }
 
 func (s *Service) recordOpenCodeApprovalAudit(id, directory, reply, message, source string) {

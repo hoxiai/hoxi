@@ -29,6 +29,7 @@ type PathRule struct {
 type FilesystemProfile struct {
 	AllowWrite []PathRule
 	DenyWrite  []PathRule
+	DenyRead   []PathRule
 	DenyNames  []string
 	// NameDenyExemptions lists explicitly granted roots where DenyNames do not
 	// apply, e.g. the repository's .git directory for a worktree session.
@@ -149,6 +150,7 @@ func DefaultProfile(workspace string, network NetworkMode, extraWritable ...stri
 		Filesystem: FilesystemProfile{
 			AllowWrite:         allow,
 			DenyWrite:          deny,
+			DenyRead:           secretReadRules(workspace),
 			DenyNames:          []string{".git"},
 			NameDenyExemptions: nameDenyExemptions,
 			TemporaryDirectory: "/private/tmp",
@@ -182,6 +184,55 @@ func protectedStateRules() []PathRule {
 		filepath.Join(home, ".gemini", "config", "hooks.json"),
 	} {
 		rules = append(rules, PathRule{Path: file, Kind: PathLiteral})
+	}
+	return rules
+}
+
+// secretReadRules are credential directories and files a sandboxed command
+// must not read. Paths are under the real home directory, never a hard-coded
+// username. Worktree .env files are denied at the worktree root and one level
+// of common subdirectories; Seatbelt has no glob for ".env but not
+// .env.example", so the example names are not listed and stay readable.
+func secretReadRules(workspace string) []PathRule {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return nil
+	}
+	var rules []PathRule
+	for _, dir := range []string{".ssh", ".aws", ".gnupg", ".kube", ".azure", filepath.Join(".config", "gh"), filepath.Join(".config", "gcloud")} {
+		rules = append(rules, PathRule{Path: filepath.Join(home, dir), Kind: PathSubtree})
+	}
+	for _, file := range []string{
+		filepath.Join(".docker", "config.json"),
+		".netrc", ".npmrc", ".pypirc", ".git-credentials",
+	} {
+		rules = append(rules, PathRule{Path: filepath.Join(home, file), Kind: PathLiteral})
+	}
+	rules = append(rules, PathRule{Path: filepath.Join(home, ".cargo"), Kind: PathSubtree})
+	rules = append(rules, PathRule{Path: filepath.Join(home, "Library", "Keychains"), Kind: PathSubtree})
+	if hoxi := hoxipaths.Home(); hoxi != "" {
+		for _, name := range hoxipaths.ProtectedStateFiles() {
+			rules = append(rules, PathRule{Path: filepath.Join(hoxi, name), Kind: PathLiteral})
+		}
+		for _, file := range hoxipaths.DBFiles() {
+			rules = append(rules, PathRule{Path: file, Kind: PathLiteral})
+		}
+	}
+	rules = append(rules, worktreeEnvRules(workspace)...)
+	return rules
+}
+
+func worktreeEnvRules(workspace string) []PathRule {
+	if strings.TrimSpace(workspace) == "" {
+		return nil
+	}
+	names := []string{".env", ".env.local", ".env.production", ".env.development"}
+	dirs := []string{workspace, filepath.Join(workspace, "web"), filepath.Join(workspace, "client"), filepath.Join(workspace, "server")}
+	var rules []PathRule
+	for _, dir := range dirs {
+		for _, name := range names {
+			rules = append(rules, PathRule{Path: filepath.Join(dir, name), Kind: PathLiteral})
+		}
 	}
 	return rules
 }

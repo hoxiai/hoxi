@@ -52,6 +52,9 @@ func (s *Service) handleUnifiedPermissionRoutes(w http.ResponseWriter, r *http.R
 	case "policy":
 		s.handleApprovalPolicy(w, r)
 		return
+	case "deferred":
+		s.handleDeferred(w, r)
+		return
 	}
 	id, action, _ := strings.Cut(sub, "/")
 	if action != "reply" || r.Method != http.MethodPost {
@@ -82,6 +85,10 @@ func (s *Service) handleUnifiedPermissionRoutes(w http.ResponseWriter, r *http.R
 		writeJSONError(w, http.StatusForbidden, "always approval is not allowed over the remote tunnel")
 		return
 	}
+	if _, loaded := s.openCodeAutoReplies.LoadOrStore(id, openCodeAutoReplyInflight); loaded {
+		writeJSONError(w, http.StatusConflict, "permission request already answered")
+		return
+	}
 	dir := r.URL.Query().Get("directory")
 	auditReply := parsedReply.Reply
 	var granted []string
@@ -110,8 +117,12 @@ func (s *Service) handleUnifiedPermissionRoutes(w http.ResponseWriter, r *http.R
 	}
 	status, respRaw, err := s.replyOpenCodePermission(r.Context(), id, dir, raw)
 	if err != nil {
+		s.openCodeAutoReplies.Delete(id)
 		writeJSONError(w, http.StatusBadGateway, "opencode service unavailable: "+err.Error())
 		return
+	}
+	if status == http.StatusNotFound || status >= 300 {
+		s.openCodeAutoReplies.Delete(id)
 	}
 	if status >= 200 && status < 300 {
 		s.gate.forgetOpenCodeAsk(id)

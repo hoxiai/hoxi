@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -573,6 +574,39 @@ func TestHookGateAsksForRiskyTools(t *testing.T) {
 	f.reply(t, id, "reject", "no browser JS")
 	if d := <-result; d.Decision != "deny" || !strings.Contains(d.Reason, "no browser JS") {
 		t.Fatalf("reject risky tool: %+v", d)
+	}
+}
+
+func TestApprovalTimeoutRacesTheUserReply(t *testing.T) {
+	t.Parallel()
+	f := newGateFixture(t)
+	f.svc.gate.waitLimit = 30 * time.Millisecond
+	events, unsub := f.svc.Subscribe("ses_agy_gate")
+	defer unsub()
+	result := f.asyncHook(t, f.payload("rm -rf build", "", "conv-1"))
+	id, _ := waitForEvent(t, events, "permission.asked").Properties["id"].(string)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		_ = f.reply(t, id, "once", "")
+	}()
+	d := <-result
+	wg.Wait()
+	if d.Decision != "auto_approve" && d.Decision != "deny" {
+		t.Fatalf("race produced no single decision: %+v", d)
+	}
+	replied := 0
+	deadline := time.After(time.Second)
+	for replied < 1 {
+		select {
+		case evt := <-events:
+			if evt.Type == "permission.replied" {
+				replied++
+			}
+		case <-deadline:
+			t.Fatal("no permission.replied")
+		}
 	}
 }
 

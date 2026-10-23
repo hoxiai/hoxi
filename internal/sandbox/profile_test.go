@@ -247,6 +247,84 @@ func TestEnforcedWriteProtectsHoxiStateAndHooks(t *testing.T) {
 	}
 }
 
+func TestSandboxDeniesSecretReadsUnderFakeHome(t *testing.T) {
+	if !Available() {
+		t.Skip("seatbelt backend unavailable")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	secret := filepath.Join(home, ".ssh", "id_ed25519")
+	if err := os.MkdirAll(filepath.Dir(secret), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(secret, []byte("not-a-real-key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	workspace := t.TempDir()
+	plain := filepath.Join(workspace, "readme.txt")
+	if err := os.WriteFile(plain, []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	profile, err := DefaultProfile(workspace, NetworkDeny)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin, args, err := WrapShell(profile, "head -c0 "+shellQuote(secret))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runCommand(bin, args...); err == nil {
+		t.Fatal("sandboxed read of a fake ~/.ssh key succeeded")
+	}
+	bin, args, err = WrapShell(profile, "head -c5 "+shellQuote(plain))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runCommand(bin, args...); err != nil {
+		t.Fatalf("sandboxed read of a workspace file failed: %v", err)
+	}
+}
+
+func TestSandboxDeniesGitControlWrites(t *testing.T) {
+	if !Available() {
+		t.Skip("seatbelt backend unavailable")
+	}
+	workspace := t.TempDir()
+	for _, dir := range []string{".git/hooks", ".git"} {
+		if err := os.MkdirAll(filepath.Join(workspace, dir), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(workspace, ".git", "config"), []byte("[core]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	profile, err := DefaultProfile(workspace, NetworkDeny)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{
+		filepath.Join(workspace, ".git", "hooks", "pre-commit"),
+		filepath.Join(workspace, ".git", "config"),
+		filepath.Join(workspace, ".git", "config.worktree"),
+	} {
+		bin, args, err := WrapShell(profile, "printf x > "+shellQuote(target))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := runCommand(bin, args...); err == nil {
+			t.Fatalf("sandboxed write of %s succeeded", target)
+		}
+	}
+	plain := filepath.Join(workspace, "note.txt")
+	bin, args, err := WrapShell(profile, "printf x > "+shellQuote(plain))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runCommand(bin, args...); err != nil {
+		t.Fatalf("sandboxed write of a workspace file failed: %v", err)
+	}
+}
+
 func TestGitMetadataDirResolvesLinkedWorktree(t *testing.T) {
 	root := t.TempDir()
 	common := filepath.Join(root, "repo", ".git")

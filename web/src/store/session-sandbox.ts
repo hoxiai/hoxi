@@ -89,7 +89,8 @@ export async function newIsolatedSession(
     Boolean(workspace.hoxiProviders?.[initialAI.model?.providerID || ""])
   );
   const isRunner = runtime !== "opencode";
-  const shouldIsolate = options?.isolated ?? (appSettings.defaultSandboxMode === "worktree");
+  const unattended = appSettings.approvalMode === "unattended";
+  const shouldIsolate = unattended || (options?.isolated ?? (appSettings.defaultSandboxMode === "worktree"));
   let session: SessionInfo | undefined;
   setWorkspace("sessionSetupError", null);
   try {
@@ -100,6 +101,7 @@ export async function newIsolatedSession(
       providerID: initialAI.model?.providerID,
       mode: initialAI.agent,
       sandboxMode: shouldIsolate ? "worktree" : "local",
+      commandSandbox: unattended ? true : undefined,
     });
     if (isRunner || session.managed) {
       const wtDir = session.directory || directory;

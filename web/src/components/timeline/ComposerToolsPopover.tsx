@@ -11,6 +11,7 @@ import {
   Workflow,
 } from "lucide-solid";
 import { t } from "../../i18n";
+import { appSettings } from "../../store/workspace";
 
 export default function ComposerToolsPopover(props: {
   workspaceReady: boolean;
@@ -145,6 +146,9 @@ export default function ComposerToolsPopover(props: {
               </span>
             </button>
 
+            <Show when={props.sandboxMode === "local" && appSettings.approvalMode === "unattended"}>
+              <p class="px-2.5 py-1.5 text-[11px] text-[var(--danger-text)]">{t("approval.unattendedNotIsolated")}</p>
+            </Show>
             <Show when={props.sandboxMode === "local"}>
               <button
                 type="button"

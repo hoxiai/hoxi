@@ -224,10 +224,11 @@ export interface ApprovalAuditEntry {
 
 /** Approval mode and per-tool overrides; the Go gate applies them to every runtime. */
 export interface ApprovalPolicy {
-  mode: "auto" | "smart" | "manual" | "trusted";
+  mode: "auto" | "smart" | "manual" | "trusted" | "unattended";
   edit?: "" | "allow" | "ask";
   webfetch?: "" | "allow" | "ask";
   bash?: "" | "allow" | "smart" | "ask";
+  approvalTimeoutSeconds?: number;
   updatedAt?: number;
 }
 

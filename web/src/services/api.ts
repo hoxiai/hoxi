@@ -249,6 +249,7 @@ export const hoxiAPI = {
       providerID?: string;
       mode?: string;
       sandboxMode?: "local" | "worktree";
+      commandSandbox?: boolean;
     }
   ): Promise<SessionInfo> {
     const info = await requestJSON<SessionInfo>(withDir(SESSIONS, directory), {
@@ -459,6 +460,12 @@ export const hoxiAPI = {
   },
   updateApprovalPolicy(policy: ApprovalPolicy): Promise<ApprovalPolicyState> {
     return requestJSON("/api/hoxi/permission/policy", { method: "PUT", body: JSON.stringify(policy) });
+  },
+  listDeferred(): Promise<Array<{ id: string; sessionID: string; category?: string; command: string; reason?: string; createdAt: number; resolved?: boolean }>> {
+    return requestJSON("/api/hoxi/permission/deferred");
+  },
+  resolveDeferred(id: string): Promise<void> {
+    return requestJSON("/api/hoxi/permission/deferred", { method: "POST", body: JSON.stringify({ id }) });
   },
   // Interactive Question Dock (Kilo QuestionDock)
   listQuestions(directory?: string): Promise<QuestionRequest[]> {

@@ -5,15 +5,32 @@ package statusbar
 // (Hoxi → GoPanel → APNs) and are shown on a lock screen. The phone fetches
 // the details over the authenticated tunnel after the user opens it.
 type ApprovalNotice struct {
-	Kind       string `json:"kind"` // "approval" or "question"
-	RequestID  string `json:"requestId"`
+	Kind       string `json:"kind"` // "approval", "question" or "summary"
+	RequestID  string `json:"requestId,omitempty"`
 	SessionID  string `json:"sessionId"`
 	Permission string `json:"permission,omitempty"`
-	Pending    int    `json:"pending"`
+	Pending    int    `json:"pending,omitempty"`
+	// Summary counts only. Never a title, command, path or code.
+	Status    string `json:"status,omitempty"`
+	Allowed   int    `json:"allowed,omitempty"`
+	Denied    int    `json:"denied,omitempty"`
+	TimedOut  int    `json:"timedOut,omitempty"`
+	Deferred  int    `json:"deferred,omitempty"`
 }
 
 // SetApprovalListener registers fn for newly pending approvals and questions.
 // Each request is announced once; fn runs on its own goroutine.
+// Announce delivers one notice. Summary notices are not pending requests and
+// do not change the Attention count.
+func (t *Tracker) Announce(n ApprovalNotice) {
+	t.mu.Lock()
+	listener := t.approvalListener
+	t.mu.Unlock()
+	if listener != nil {
+		go listener(n)
+	}
+}
+
 func (t *Tracker) SetApprovalListener(fn func(ApprovalNotice)) {
 	t.mu.Lock()
 	t.approvalListener = fn

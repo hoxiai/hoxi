@@ -25,6 +25,7 @@ type Service struct {
 	status      *statusbar.Tracker
 	gate        *approvalGate
 	audit       *approvalAuditStore
+	deferred    *deferredStore
 	policy      *approvalPolicyStore
 	doomLoop    *doomLoopGuard
 	stall       stallPolicy
@@ -48,8 +49,19 @@ type Service struct {
 	// keeps OpenCode asking Hoxi after the approval policy changes.
 	permissionRules func() map[string]interface{}
 	onPolicySaved   func()
+	// onSummary delivers the end-of-turn count line. Counts only, no command text.
+	onSummary func(sessionID, body string)
 	// openCodeAutoReplies tracks OpenCode requests the policy is answering.
 	openCodeAutoReplies sync.Map // request ID -> openCodeAutoReply* state
+	turnStats           sync.Map // session ID -> *turnCounts
+}
+
+// SetSummaryNotifier receives the end-of-turn count line. The body contains
+// counts only, never a command, path or session title.
+func (s *Service) SetSummaryNotifier(fn func(sessionID, body string)) {
+	if s != nil {
+		s.onSummary = fn
+	}
 }
 
 func NewService(rootDir string, worktrees *worktree.Manager, status *statusbar.Tracker, customStorePath string) *Service {
@@ -68,6 +80,7 @@ func NewService(rootDir string, worktrees *worktree.Manager, status *statusbar.T
 		status:      status,
 		gate:        newApprovalGate(),
 		audit:       newApprovalAuditStore(customStorePath),
+		deferred:    newDeferredStore(customStorePath),
 		policy:      newApprovalPolicyStore(customStorePath),
 		doomLoop:    newDoomLoopGuard(),
 		stall:       stallPolicyFromEnv(),
@@ -190,6 +203,7 @@ func (s *Service) persistEventToStore(sessionID string, evt SSEEvent) {
 	case "session.idle", "session.error":
 		s.store.FlushSession(sessionID)
 		s.store.SetActive(sessionID, false)
+		s.finishTurnSummary(sessionID, evt.Type)
 	}
 }
 

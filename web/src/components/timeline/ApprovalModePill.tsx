@@ -24,18 +24,21 @@ interface ApprovalModeOption {
     | "approval.modeAutoLabel"
     | "approval.modeSmartLabel"
     | "approval.modeManualLabel"
-    | "approval.modeTrustedLabel";
+    | "approval.modeTrustedLabel"
+    | "approval.modeUnattendedLabel";
   shortKey:
     | "approval.modeAutoShort"
     | "approval.modeSmartShort"
     | "approval.modeManualShort"
-    | "approval.modeTrustedShort";
+    | "approval.modeTrustedShort"
+    | "approval.modeUnattendedShort";
   descKey:
     | "approval.modeAutoDesc"
     | "approval.modeSmartDesc"
     | "approval.modeManualDesc"
-    | "approval.modeTrustedDesc";
-  badgeKey?: "approval.modeAutoBadge" | "approval.modeTrustedBadge";
+    | "approval.modeTrustedDesc"
+    | "approval.modeUnattendedDesc";
+  badgeKey?: "approval.modeAutoBadge" | "approval.modeTrustedBadge" | "approval.modeUnattendedBadge";
 }
 
 const MODE_OPTIONS: ApprovalModeOption[] = [
@@ -65,10 +68,17 @@ const MODE_OPTIONS: ApprovalModeOption[] = [
     descKey: "approval.modeTrustedDesc",
     badgeKey: "approval.modeTrustedBadge",
   },
+  {
+    id: "unattended",
+    labelKey: "approval.modeUnattendedLabel",
+    shortKey: "approval.modeUnattendedShort",
+    descKey: "approval.modeUnattendedDesc",
+    badgeKey: "approval.modeUnattendedBadge",
+  },
 ];
 
 function renderModeIcon(mode: ApprovalMode, size = 12.5) {
-  if (mode === "trusted") return <ShieldOff size={size} class="shrink-0" />;
+  if (mode === "trusted" || mode === "unattended") return <ShieldOff size={size} class="shrink-0" />;
   if (mode === "auto") return <ShieldCheck size={size} class="shrink-0" />;
   if (mode === "smart") return <Shield size={size} class="shrink-0" />;
   return <ShieldAlert size={size} class="shrink-0" />;
@@ -86,6 +96,7 @@ export default function ApprovalModePill() {
     if (mode === "auto") return t("approval.modeAutoShort");
     if (mode === "smart") return t("approval.modeSmartShort");
     if (mode === "trusted") return t("approval.modeTrustedShort");
+    if (mode === "unattended") return t("approval.modeUnattendedShort");
     return t("approval.modeManualShort");
   };
 
@@ -133,7 +144,7 @@ export default function ApprovalModePill() {
         } ${
           open()
             ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]"
-            : currentMode() === "trusted"
+            : currentMode() === "trusted" || currentMode() === "unattended"
               ? "bg-[var(--danger-surface)] text-[var(--danger-text)] border border-[var(--danger-border)] hover:brightness-105"
               : currentMode() === "manual"
               ? "bg-[var(--warn-surface)] text-[var(--warn-text)] border border-[var(--warn-border)] hover:brightness-105"
@@ -146,7 +157,7 @@ export default function ApprovalModePill() {
       >
         <span
           class={
-            currentMode() === "trusted"
+            currentMode() === "trusted" || currentMode() === "unattended"
               ? "text-[var(--danger-text)]"
               : currentMode() === "manual"
               ? "text-[var(--warn-text)]"

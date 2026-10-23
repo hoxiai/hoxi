@@ -155,6 +155,18 @@ func ProfileText(profile Profile) (string, error) {
 		}
 		allow = append(allow, filter)
 	}
+	var denyRead []string
+	for _, rule := range profile.Filesystem.DenyRead {
+		filter, err := pathFilter(rule)
+		if err != nil {
+			return "", err
+		}
+		denyRead = append(denyRead, filter)
+	}
+	read := "(allow file-read*)"
+	if len(denyRead) > 0 {
+		read = "(deny file-read*\n  (require-any " + strings.Join(denyRead, " ") + ")\n)\n(allow file-read*)"
+	}
 	var deny []string
 	for _, rule := range profile.Filesystem.DenyWrite {
 		filter, err := pathFilter(rule)
@@ -204,7 +216,7 @@ func ProfileText(profile Profile) (string, error) {
 	return strings.Join([]string{
 		seatbeltBase,
 		network,
-		"; reads are not confined by the file-level sandbox\n(allow file-read*)",
+		"; credential directories and secret files are unreadable\n" + read,
 		write,
 	}, "\n"), nil
 }

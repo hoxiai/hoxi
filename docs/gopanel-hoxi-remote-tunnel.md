@@ -225,7 +225,7 @@ Hoxi statusbar.Tracker（OpenCode permission/question.asked 与 Runner PreToolUs
   → 点开：按 panel + nodeId 找到中继连接 → 切换节点 → 打开语音通话 → 自动询问“有哪些操作在等我审批”
 ```
 
-- **内容最小化**：Notify 载荷只有 `kind`（approval / question）、`requestId`、`sessionId`、`permission`、`pending`；推送正文只说“有 N 项操作等待审批”，**不含命令、代码或会话内容**（这些会经过 Apple 并显示在锁屏上）。细节由手机点开后经隧道读取
+- **内容最小化**：Notify 载荷只有 `kind`（approval / question / summary）、`requestId`、`sessionId`、`permission`、`pending`；`summary` 另有 `status`、`allowed`、`denied`、`timedOut`、`deferred` 五个数字。推送正文只说“有 N 项操作等待审批”，任务结束时只说“任务已结束：自动放行 X，拒绝 Y，待处理 Z”，**不含命令、代码、路径或会话内容**（这些会经过 Apple 并显示在锁屏上）。细节由手机点开后经隧道读取。GoPanel 需识别 `kind: "summary"` 并发上述通用正文；未识别时按旧逻辑忽略即可
 - **设备注册**：手机在存在中继节点时申请通知权限，并向对应 GoPanel `POST /api/push/devices` 注册 `{platform: ios, token, environment, name, panelUrl}`（管理员 JWT）；`environment` 由构建配置决定（Debug / Profile 为 sandbox，Release 为 production，与 `aps-environment` 授权一致）；同一 token 重复注册即更新
 - **APNs 配置**：GoPanel 后台 → 节点 → 手机推送，填写 Team ID、Key ID、Bundle ID（默认 `ai.hoxi.app`）与 `.p8` 内容，可发送测试推送。接口：`GET/POST /api/push/apns`、`POST /api/push/test`。`.p8` 加密存储且不经接口返回
 - **失效设备**：APNs 返回 410 / BadDeviceToken / DeviceTokenNotForTopic 时自动停用该设备

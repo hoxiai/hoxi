@@ -302,6 +302,16 @@ func (s *Service) gateToolCallIn(r *http.Request, cred hookCredential, tool stri
 			"callID":    callID,
 		},
 	}
+	if s.ApprovalPolicy().Mode == ApprovalModeUnattended {
+		if allow, category := unattendedDecision(req, worktree); !allow && category != "" {
+			s.recordUnattendedDeny(cred, req, category)
+			return false, unattendedDenyReason(category)
+		}
+		if rec, ok := s.store.Get(cred.sessionID); ok && unattendedIsolated(rec) && s.policyApprovesIsolated(req, worktree, true) {
+			s.recordPolicyApproval(cred, req)
+			return true, ""
+		}
+	}
 	if s.policyApproves(req, worktree) {
 		s.recordPolicyApproval(cred, req)
 		return true, ""

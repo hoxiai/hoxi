@@ -84,12 +84,24 @@ var (
 // (written by "always allow" on an approval card) apply to every runtime.
 // worktree scopes a leading `cd` in smart-mode command checks.
 func approvalAutoApproves(item map[string]interface{}, pol ApprovalPolicy, rules map[string]interface{}, worktree string) bool {
+	return approvalAutoApprovesIsolated(item, pol, rules, worktree, false)
+}
+
+// approvalAutoApprovesIsolated is approvalAutoApproves for a session whose
+// confinement is already known. isolated is true only when the session is a
+// Hoxi worktree and its runtime commands are OS-sandboxed; unattended mode
+// then allows everything the hard-refuse list does not name.
+func approvalAutoApprovesIsolated(item map[string]interface{}, pol ApprovalPolicy, rules map[string]interface{}, worktree string, isolated bool) bool {
+	if pol.Mode == ApprovalModeUnattended && isolated {
+		allow, _ := unattendedDecision(item, worktree)
+		return allow
+	}
 	// Full trust also lets interpreter scripts through (see isOpaqueShellCommandWith).
-	if isOpaquePermissionRequestWith(item, worktree, pol.Mode == ApprovalModeTrusted) {
+	if isOpaquePermissionRequestWith(item, worktree, pol.Mode == ApprovalModeTrusted || pol.Mode == ApprovalModeUnattended) {
 		return false
 	}
 	if isDestructivePermissionRequest(item) &&
-		!(pol.Mode == ApprovalModeTrusted && trustedRecoverableRequest(item, worktree)) {
+		!((pol.Mode == ApprovalModeTrusted || pol.Mode == ApprovalModeUnattended) && trustedRecoverableRequest(item, worktree)) {
 		return false
 	}
 	perm := permissionName(item)

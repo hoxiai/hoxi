@@ -24,6 +24,9 @@
 - **完全信任模式（`trusted`）只放行可恢复的破坏性操作**（实现见 `internal/runner/approval_trusted.go`）：隔离 worktree 内的路径删除与 `git reset --hard`/`checkout --`/`restore`/`clean`，以及临时目录下的具体条目。新增放行形式前必须同时写允许用例和“越界/伪装”拒绝用例（`approval_trusted_test.go`），硬底线清单见 AGENTS.md 第 6 条，不得因“用户已选择完全信任”而放宽。
 - **不透明命令一律询问，放宽只有以下几类且都要有拒绝用例**：变量只在三种情况下可信——`for x in` 的字面量非密钥项；`while read x` 的输入来自不会列出隐藏/密钥文件的列举命令（`rg -l` 不带 `--hidden`/`-u`/`--no-ignore`/`-L`，`rg --files`/`find`/`git ls-files` 必须带 `*.ext` 过滤）；无害环境变量（`$HOME`/`$PATH`/`$PWD`/`$TMPDIR`/`$GOPATH`/`$?` 等，且未在命令内重新赋值）。可信变量只能出现在只读工具参数或 `PATH=` 赋值里；`$(…)` 的结果只能给只取值的工具（`echo`/`printf`/`test`）或 `git commit -m` 的说明。继承的其他环境变量（`$OPENAI_API_KEY`、`$KUBECONFIG`）、普通赋值、`${x:-…}`、`$1`、变量当命令名、参数敏感命令（`git`/`find`/`rm`/`curl` 等）里的变量、`printf -v`/`export`/再次 `read` 重新绑定一律不透明。`<(…)`/`$(…)` 拆出内部命令独立判定，危险判定同时扫描拆开后的文本（防 `cat <(cat .env)`、`echo "$(cat .env)"`）。引号定界 heredoc 视为数据；未加引号且正文含 `$`/反引号的 heredoc、here-string（`<<<`）仍不透明。`nohup`/`time`/`exec`/`command`/`env X=y` 剥掉前缀判定，裸 `env` 不透明。只有完全信任放行内联解释器脚本。用例写进 `.opencode/lib/opaque-command.cases.json`（`trustedOpaque` 字段表示完全信任下的结果），Go 与 JS 共用。
 - 每发现一个绕过，必须作为回归用例写进对应 `*.cases.json`。
+- **审批超时只拒绝，永不放行**。到点的请求回复 reject，不得改写成放行。
+- **硬拒绝类不得放宽**：无人值守模式的密钥读取、任何 `git push` 与发布、提权、凭据外发，不能被模式、会话授权或「始终允许」绕过。用例在 `.opencode/lib/unattended.cases.json`，Go 与 `.opencode/lib/unattended-policy.js` 共用。
+- **待处理清单不经隧道**。`/api/hoxi/permission/deferred` 保持在白名单之外，并保留隧道 403 用例。
 
 自检：对你新增的每条"allow"路径，尝试用引号、反斜杠、`;`/`&&`/`|` 链接、`$()` 构造绕过，并写成用例。
 

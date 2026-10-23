@@ -53,6 +53,25 @@ func TestApprovalNoticesFireOnceWithoutCommandText(t *testing.T) {
 	}
 }
 
+func TestSummaryNoticeCarriesCountsOnly(t *testing.T) {
+	tracker := NewTracker()
+	notices := collectNotices(t, tracker)
+	tracker.Announce(ApprovalNotice{
+		Kind: "summary", SessionID: "ses_1", Status: "idle",
+		Allowed: 3, Denied: 1, TimedOut: 0, Deferred: 1,
+	})
+	n := nextNotice(t, notices)
+	raw, _ := json.Marshal(n)
+	for _, leaked := range []string{"git push", "rm -rf", "/Users", "command"} {
+		if strings.Contains(string(raw), leaked) {
+			t.Fatalf("summary leaked %q: %s", leaked, raw)
+		}
+	}
+	if n.Kind != "summary" || n.Allowed != 3 || n.Denied != 1 || n.Deferred != 1 {
+		t.Fatalf("summary = %+v", n)
+	}
+}
+
 func TestRunnerApprovalsAnnounceAndReannounceAfterReply(t *testing.T) {
 	tracker := NewTracker()
 	notices := collectNotices(t, tracker)

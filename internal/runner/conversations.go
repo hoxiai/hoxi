@@ -14,7 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hoxiai/hoxi/internal/sandbox"
 )
 
 // The /api/hoxi/sessions collection: Hoxi conversations plus the OpenCode
@@ -282,12 +281,9 @@ func (s *Service) CreateConversation(ctx context.Context, body CreateSessionRequ
 	if err != nil {
 		return SessionInfo{}, http.StatusBadRequest, err
 	}
-	sandboxMode, err := normalizeSandboxMode(body.SandboxMode)
+	sandboxMode, commandSandbox, err := s.unattendedSessionShape(body.SandboxMode, body.CommandSandbox)
 	if err != nil {
 		return SessionInfo{}, http.StatusBadRequest, err
-	}
-	if body.CommandSandbox && !sandbox.Available() {
-		return SessionInfo{}, http.StatusBadRequest, errors.New(sandbox.UnavailableReason())
 	}
 	projectID, err := s.ensureProjectID(projDir)
 	if err != nil {
@@ -302,7 +298,7 @@ func (s *Service) CreateConversation(ctx context.Context, body CreateSessionRequ
 		Runtime:        "opencode",
 		ProjectDir:     projDir,
 		SandboxMode:    sandboxMode,
-		CommandSandbox: body.CommandSandbox,
+		CommandSandbox: commandSandbox,
 		ModelID:        strings.TrimSpace(body.ModelID),
 		ProviderID:     strings.TrimSpace(body.ProviderID),
 		Mode:           firstNonEmptyStr(body.Mode, "build"),

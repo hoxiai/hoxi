@@ -304,6 +304,16 @@ func (s *Service) gateCommand(r *http.Request, cred hookCredential, rec SessionR
 		"patterns":   []string{ask.command},
 		"metadata":   map[string]interface{}{"command": ask.command, "source": ask.source},
 	}
+	if s.ApprovalPolicy().Mode == ApprovalModeUnattended {
+		if allow, category := unattendedDecision(item, rec.WorktreePath); !allow && category != "" {
+			s.recordUnattendedDeny(cred, item, category)
+			return false, unattendedDenyReason(category)
+		}
+		if unattendedIsolated(rec) && s.policyApprovesIsolated(item, rec.WorktreePath, true) {
+			s.noteTurn(cred.sessionID, "allow")
+			return true, ""
+		}
+	}
 	if s.policyApproves(item, rec.WorktreePath) {
 		// Read-only commands are routine; only audit what the policy let
 		// through beyond them.
@@ -385,7 +395,7 @@ func (s *Service) awaitReply(r *http.Request, cred hookCredential, id string, re
 			}
 		}
 	}
-	limit := s.gate.waitLimit
+	limit := s.approvalWaitLimit()
 	nowMs := time.Now().UnixMilli()
 	req["createdAt"] = nowMs
 	if limit > 0 {
@@ -408,7 +418,12 @@ func (s *Service) awaitReply(r *http.Request, cred hookCredential, id string, re
 	}
 	s.broadcast(cred.sessionID, SSEEvent{Type: "permission.asked", Properties: req})
 
-	answer := approvalReply{Reply: "reject", Message: "approval timed out", Source: "system"}
+	policy := s.ApprovalPolicy()
+	timeoutText := approvalTimeoutReason(policy)
+	if policy.Mode == ApprovalModeUnattended && isQuestionRequest(req) {
+		timeoutText = unattendedQuestionTimeoutReason()
+	}
+	answer := approvalReply{Reply: "reject", Message: timeoutText, Source: approvalSourceTimeout}
 	decision := "timeout"
 	timer := time.NewTimer(limit)
 	defer timer.Stop()
@@ -422,6 +437,8 @@ func (s *Service) awaitReply(r *http.Request, cred hookCredential, id string, re
 		answer = approvalReply{Reply: "reject", Message: "approval hook was interrupted", Source: "system"}
 		decision = "interrupted"
 	case <-timer.C:
+		s.rememberDeferred(cred.sessionID, id, "timeout", permissionSummaryText(req))
+		s.noteTurn(cred.sessionID, "timeout")
 	}
 
 	s.gate.mu.Lock()

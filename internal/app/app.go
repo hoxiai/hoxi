@@ -245,6 +245,9 @@ func Run(distFS fs.FS) {
 	}
 	gw.SetGatewayToken(gatewayToken)
 	gw.StartRemoteTunnel(hoxipaths.TunnelConfigPath(identity.Variant), listener.Addr().(*net.TCPAddr).Port)
+	gw.SetSummaryNotifier(func(sessionID, body string) {
+		_ = app.notifier.Show(notify.Request{Title: "Hoxi", Body: body, SessionID: sessionID})
+	})
 	defer gw.StopRemoteTunnel()
 	gw.StartCloudflared(hoxipaths.CloudflaredConfigPath(), logger)
 	defer gw.StopCloudflared()

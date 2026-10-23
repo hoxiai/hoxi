@@ -12,7 +12,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hoxiai/hoxi/internal/agyhook"
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
+	"github.com/hoxiai/hoxi/internal/sandbox"
 )
 
 // ApprovalPolicy is the user's approval mode plus per-tool overrides. It lives
@@ -24,13 +26,65 @@ type ApprovalPolicy struct {
 	Edit      string `json:"edit,omitempty"`     // "" | "allow" | "ask"
 	Webfetch  string `json:"webfetch,omitempty"` // "" | "allow" | "ask"
 	Bash      string `json:"bash,omitempty"`     // "" | "allow" | "smart" | "ask"
-	UpdatedAt int64  `json:"updatedAt,omitempty"`
+	// ApprovalTimeoutSeconds is how long a pending request waits before it is
+	// rejected. Zero means the default. A timeout only ever rejects.
+	ApprovalTimeoutSeconds int `json:"approvalTimeoutSeconds,omitempty"`
+	UpdatedAt              int64 `json:"updatedAt,omitempty"`
 }
+
+const (
+	defaultApprovalTimeoutSeconds = 600
+	minApprovalTimeoutSeconds     = 60
+	maxApprovalTimeoutSeconds     = 3600
+)
 
 const approvalPolicyFile = "approval-policy.json"
 
 func defaultApprovalPolicy() ApprovalPolicy {
 	return ApprovalPolicy{Mode: ApprovalModeAuto}
+}
+
+// approvalWaitLimit is how long a pending request waits. Zero in the file
+// means the default.
+func (p ApprovalPolicy) approvalWaitLimit() time.Duration {
+	seconds := p.ApprovalTimeoutSeconds
+	if seconds <= 0 {
+		seconds = defaultApprovalTimeoutSeconds
+	}
+	return time.Duration(seconds) * time.Second
+}
+
+// approvalWaitLimit is the wait for a hook request: the configured timeout,
+// but never longer than the CLI's own kill minus a few seconds.
+func (s *Service) approvalWaitLimit() time.Duration {
+	if s.gate != nil && s.gate.waitLimit > 0 && s.gate.waitLimit < time.Minute {
+		// Tests inject a short limit directly; a saved policy never does.
+		return s.gate.waitLimit
+	}
+	limit := s.ApprovalPolicy().approvalWaitLimit()
+	if cap := agyhook.ClientTimeout - 5*time.Second; limit > cap {
+		return cap
+	}
+	return limit
+}
+
+func approvalTimeoutReason(p ApprovalPolicy) string {
+	minutes := int(p.approvalWaitLimit() / time.Minute)
+	if minutes < 1 {
+		minutes = 1
+	}
+	return fmt.Sprintf("Approval timed out after %d minute(s) with no response and was rejected. Try an approach that does not need this permission, or say so in the summary.", minutes)
+}
+
+// unattendedQuestionTimeoutReason is the only wording a question gets back
+// while unattended. Other modes keep approvalTimeoutReason unchanged.
+func unattendedQuestionTimeoutReason() string {
+	return "The user is away. Choose the safest plan that needs no approval, and say what you assumed."
+}
+
+func isQuestionRequest(req map[string]interface{}) bool {
+	name := strings.ToLower(strings.TrimSpace(permissionName(req)))
+	return name == "question" || name == "ask_question" || strings.HasSuffix(name, ".question")
 }
 
 // effectiveRule resolves a category's rule from its override or the mode preset.
@@ -70,9 +124,12 @@ func isReadOnlyAgentMode(mode string) bool {
 // validate rejects unknown values instead of silently dropping them.
 func (p ApprovalPolicy) validate() error {
 	switch p.Mode {
-	case ApprovalModeAuto, ApprovalModeSmart, ApprovalModeManual, ApprovalModeTrusted:
+	case ApprovalModeAuto, ApprovalModeSmart, ApprovalModeManual, ApprovalModeTrusted, ApprovalModeUnattended:
 	default:
-		return fmt.Errorf("mode must be auto, smart, manual or trusted")
+		return fmt.Errorf("mode must be auto, smart, manual, trusted or unattended")
+	}
+	if p.ApprovalTimeoutSeconds != 0 && (p.ApprovalTimeoutSeconds < minApprovalTimeoutSeconds || p.ApprovalTimeoutSeconds > maxApprovalTimeoutSeconds) {
+		return fmt.Errorf("approvalTimeoutSeconds must be between %d and %d", minApprovalTimeoutSeconds, maxApprovalTimeoutSeconds)
 	}
 	for name, value := range map[string]string{"edit": p.Edit, "webfetch": p.Webfetch} {
 		if value != "" && value != "allow" && value != "ask" {
@@ -219,6 +276,10 @@ func (s *Service) handleApprovalPolicy(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := body.validate(); err != nil {
 			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if body.Mode == ApprovalModeUnattended && !sandbox.Available() {
+			writeJSONError(w, http.StatusBadRequest, sandbox.UnavailableReason())
 			return
 		}
 		saved, err := s.policy.set(body)

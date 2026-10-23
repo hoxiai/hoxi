@@ -98,6 +98,13 @@ export async function loadApprovalPolicy(): Promise<void> {
   applyApprovalPolicy(state.policy);
 }
 
+export async function setApprovalTimeout(seconds: number): Promise<void> {
+  const gen = ++approvalPolicyGen;
+  const state = await hoxiAPI.updateApprovalPolicy({ ...approvalPolicy(), approvalTimeoutSeconds: seconds });
+  if (gen !== approvalPolicyGen) return;
+  applyApprovalPolicy(state.policy);
+}
+
 export async function setApprovalMode(mode: ApprovalMode): Promise<void> {
   const gen = ++approvalPolicyGen;
   // Switching approval modes clears per-tool overrides.
@@ -412,6 +419,32 @@ export async function loadApprovalAudit(limit = 200): Promise<ApprovalAuditEntry
   } finally {
     setApprovalRecordsLoading(false);
   }
+}
+
+export interface DeferredEntry {
+  id: string;
+  sessionID: string;
+  category?: string;
+  command: string;
+  reason?: string;
+  createdAt: number;
+  resolved?: boolean;
+}
+
+const [deferredEntries, setDeferredEntries] = createSignal<DeferredEntry[]>([]);
+export { deferredEntries };
+
+export async function loadDeferred(): Promise<void> {
+  try {
+    setDeferredEntries(await hoxiAPI.listDeferred());
+  } catch {
+    /* desktop-only */
+  }
+}
+
+export async function resolveDeferred(id: string): Promise<void> {
+  await hoxiAPI.resolveDeferred(id);
+  await loadDeferred();
 }
 
 export async function clearApprovalAudit(): Promise<void> {

@@ -16,10 +16,12 @@ import {
   fetchGlobalConfig,
   resolveEffectivePermissionSummary,
   setApprovalMode,
+  setApprovalTimeout,
   updateToolPermissionRule,
   workspace,
   type ApprovalMode,
 } from "../../store/workspace";
+import DeferredList from "../approval/DeferredList";
 import { AgyApprovalHookControls } from "../settings/AgyApprovalHookControls";
 import { ApprovalAuditGrantsSection } from "../settings/ApprovalAuditGrantsSection";
 import {
@@ -34,13 +36,15 @@ interface PresetCardOption {
     | "approval.modeAutoLabel"
     | "approval.modeSmartLabel"
     | "approval.modeManualLabel"
-    | "approval.modeTrustedLabel";
+    | "approval.modeTrustedLabel"
+    | "approval.modeUnattendedLabel";
   descKey:
     | "approval.modeAutoDesc"
     | "approval.modeSmartDesc"
     | "approval.modeManualDesc"
-    | "approval.modeTrustedDesc";
-  badgeKey?: "approval.modeAutoBadge" | "approval.modeTrustedBadge";
+    | "approval.modeTrustedDesc"
+    | "approval.modeUnattendedDesc";
+  badgeKey?: "approval.modeAutoBadge" | "approval.modeTrustedBadge" | "approval.modeUnattendedBadge";
 }
 
 const PRESET_OPTIONS: PresetCardOption[] = [
@@ -66,10 +70,16 @@ const PRESET_OPTIONS: PresetCardOption[] = [
     descKey: "approval.modeTrustedDesc",
     badgeKey: "approval.modeTrustedBadge",
   },
+  {
+    id: "unattended",
+    labelKey: "approval.modeUnattendedLabel",
+    descKey: "approval.modeUnattendedDesc",
+    badgeKey: "approval.modeUnattendedBadge",
+  },
 ];
 
 function renderPresetIcon(mode: ApprovalMode, size = 15) {
-  if (mode === "trusted") return <ShieldOff size={size} class="shrink-0" />;
+  if (mode === "trusted" || mode === "unattended") return <ShieldOff size={size} class="shrink-0" />;
   if (mode === "auto") return <ShieldCheck size={size} class="shrink-0" />;
   if (mode === "smart") return <Shield size={size} class="shrink-0" />;
   return <ShieldAlert size={size} class="shrink-0" />;
@@ -178,7 +188,7 @@ export default function AgentPolicyMcpTab() {
                           <span
                             class={`flex h-7 w-7 items-center justify-center rounded-lg ${
                               isSelected()
-                                ? opt.id === "trusted"
+                                ? opt.id === "trusted" || opt.id === "unattended"
                                   ? "bg-[var(--danger-text)] text-white"
                                   : opt.id === "manual"
                                   ? "bg-[var(--warn-text)] text-white"
@@ -208,7 +218,7 @@ export default function AgentPolicyMcpTab() {
                       <div class="mt-3 pt-2 border-t border-[var(--border-subtle)]/60 flex items-center">
                         <span
                           class={`rounded px-1.5 py-0.5 text-[11px] font-medium ${
-                            opt.id === "trusted" ? "bg-[var(--danger-surface)] text-[var(--danger-text)] border border-[var(--danger-border)]" : "bg-[var(--ok-surface)] text-[var(--ok-text)] border border-[var(--ok-border)]"
+                            opt.id === "trusted" || opt.id === "unattended" ? "bg-[var(--danger-surface)] text-[var(--danger-text)] border border-[var(--danger-border)]" : "bg-[var(--ok-surface)] text-[var(--ok-text)] border border-[var(--ok-border)]"
                           }`}
                         >
                           {t(opt.badgeKey!)}
@@ -270,6 +280,24 @@ export default function AgentPolicyMcpTab() {
             />
           </SettingRow>
         </SettingGroup>
+
+        <SettingGroup title={t("approval.timeoutLabel")} tip={t("approval.timeoutHint")}>
+          <SettingRow label={t("approval.timeoutLabel")} tip={t("approval.timeoutHint")}>
+            <input
+              type="number"
+              min="60"
+              max="3600"
+              value={approvalPolicy().approvalTimeoutSeconds || 600}
+              onChange={(e) => {
+                const n = Number(e.currentTarget.value);
+                if (n >= 60 && n <= 3600) void setApprovalTimeout(n).catch((err) => showSavedFeedback(false, String(err)));
+              }}
+              class="w-24 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2 py-1 text-[12px]"
+            />
+          </SettingRow>
+        </SettingGroup>
+
+        <DeferredList />
 
         <Show when={feedback()}>
           <div

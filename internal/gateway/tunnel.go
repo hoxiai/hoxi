@@ -492,3 +492,11 @@ func (g *Gateway) StartRemoteTunnel(configPath string, targetPort int) {
 }
 
 func (g *Gateway) StopRemoteTunnel() { g.tunnel.Stop() }
+
+// SetSummaryNotifier delivers the end-of-turn count line. The body holds
+// counts only, never a command, path or session title.
+func (g *Gateway) SetSummaryNotifier(fn func(sessionID, body string)) {
+	if g != nil && g.runner != nil {
+		g.runner.SetSummaryNotifier(fn)
+	}
+}

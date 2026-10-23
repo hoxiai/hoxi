@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/hoxiai/hoxi/internal/agentcli"
-	"github.com/hoxiai/hoxi/internal/sandbox"
 )
 
 // CreateSessionRequest describes a new Hoxi conversation: the JSON body of
@@ -65,12 +64,9 @@ func (s *Service) CreateSession(body CreateSessionRequest, directory string) (Se
 	if err != nil {
 		return SessionInfo{}, http.StatusBadRequest, err
 	}
-	sandboxMode, err := normalizeSandboxMode(body.SandboxMode)
+	sandboxMode, commandSandbox, err := s.unattendedSessionShape(body.SandboxMode, body.CommandSandbox)
 	if err != nil {
 		return SessionInfo{}, http.StatusBadRequest, err
-	}
-	if body.CommandSandbox && !sandbox.Available() {
-		return SessionInfo{}, http.StatusBadRequest, errors.New(sandbox.UnavailableReason())
 	}
 	projectID, err := s.ensureProjectID(projDir)
 	if err != nil {
@@ -123,7 +119,7 @@ func (s *Service) CreateSession(body CreateSessionRequest, directory string) (Se
 		Runtime:        rt,
 		ProjectDir:     projDir,
 		SandboxMode:    sandboxMode,
-		CommandSandbox: body.CommandSandbox,
+		CommandSandbox: commandSandbox,
 		ModelID:        modelID,
 		ProviderID:     provID,
 		Mode:           firstNonEmptyStr(body.Mode, "build"),

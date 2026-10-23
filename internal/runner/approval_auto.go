@@ -12,7 +12,11 @@ import (
 
 // approvalSourcePolicy marks decisions the approval policy made without the
 // user, in audit entries and permission.replied events.
-const approvalSourcePolicy = "policy"
+const (
+	approvalSourcePolicy     = "policy"
+	approvalSourceUnattended = "unattended"
+	approvalSourceTimeout    = "timeout"
+)
 
 const (
 	openCodeAutoReplyInflight = 1
@@ -31,7 +35,21 @@ func (s *Service) currentPermissionRules() map[string]interface{} {
 
 // policyApproves reports whether item may run without asking the user.
 func (s *Service) policyApproves(item map[string]interface{}, worktree string) bool {
-	return approvalAutoApproves(item, s.ApprovalPolicy(), s.currentPermissionRules(), worktree)
+	return s.policyApprovesIsolated(item, worktree, false)
+}
+
+// policyApprovesIsolated is policyApproves once the caller knows whether the
+// session is an isolated, command-sandboxed worktree.
+func (s *Service) policyApprovesIsolated(item map[string]interface{}, worktree string, isolated bool) bool {
+	return approvalAutoApprovesIsolated(item, s.ApprovalPolicy(), s.currentPermissionRules(), worktree, isolated)
+}
+
+func (s *Service) sessionIsolated(sessionID string) (worktree string, isolated bool) {
+	rec, ok := s.store.Get(sessionID)
+	if !ok {
+		return "", false
+	}
+	return rec.WorktreePath, unattendedIsolated(rec)
 }
 
 // policyApprovesWorktreeEdit reports whether an in-worktree, non-protected
@@ -64,16 +82,27 @@ func (s *Service) recordPolicyApproval(cred hookCredential, req map[string]inter
 // behalf. Each request is answered once; a failed reply is never retried
 // and stays visible as a normal pending request.
 func (s *Service) autoReplyOpenCode(id, sessionID, directory, source string, onFail func()) {
+	s.autoReplyOpenCodeMessage(id, sessionID, directory, "once", "", source, onFail)
+}
+
+// autoReplyOpenCodeMessage answers an OpenCode permission once. reply is
+// "once" or "reject"; message is the reason OpenCode shows the model
+// (PermissionCorrectedError) and must not contain the command.
+func (s *Service) autoReplyOpenCodeMessage(id, sessionID, directory, reply, message, source string, onFail func()) {
 	if id == "" {
 		return
 	}
 	if _, loaded := s.openCodeAutoReplies.LoadOrStore(id, openCodeAutoReplyInflight); loaded {
 		return
 	}
+	body, err := json.Marshal(map[string]string{"reply": reply, "message": message})
+	if err != nil {
+		return
+	}
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		status, _, err := s.replyOpenCodePermission(ctx, id, directory, []byte(`{"reply":"once"}`))
+		status, _, err := s.replyOpenCodePermission(ctx, id, directory, body)
 		switch {
 		case err == nil && status >= 200 && status < 300:
 			s.recordOpenCodeAudit(id, sessionID, directory, "once", "", source)
@@ -112,6 +141,21 @@ func (s *Service) claimOpenCodePermission(item map[string]interface{}, sessionID
 	case openCodeAutoReplyFailed:
 		return false
 	}
+	if s.ApprovalPolicy().Mode == ApprovalModeUnattended {
+		if allow, category := unattendedDecision(item, directory); !allow && category != "" {
+			s.autoReplyOpenCodeMessage(id, sessionID, directory, "reject", unattendedDenyReason(category), approvalSourceUnattended, onFail)
+			s.recordOpenCodeAudit(id, sessionID, directory, "reject", unattendedDenyReason(category), approvalSourceUnattended)
+			s.rememberDeferred(sessionID, id, category, firstString(itemMetadata(item)["command"]))
+			s.noteTurn(sessionID, "deny")
+			return true
+		}
+		_, isolated := s.sessionIsolated(sessionID)
+		if isolated && s.policyApprovesIsolated(item, directory, true) {
+			s.noteTurn(sessionID, "allow")
+			s.autoReplyOpenCode(id, sessionID, directory, approvalSourcePolicy, onFail)
+			return true
+		}
+	}
 	if s.policyApproves(item, directory) {
 		s.autoReplyOpenCode(id, sessionID, directory, approvalSourcePolicy, onFail)
 		return true
@@ -124,7 +168,45 @@ func (s *Service) claimOpenCodePermission(item map[string]interface{}, sessionID
 	// keep the request so a grant reply is judged against it.
 	annotateGrantClasses(item, directory)
 	s.gate.rememberOpenCodeAsk(id, openCodeAsk{item: item, sessionID: sessionID, dir: directory})
+	s.armOpenCodeTimeout(id, sessionID, directory, item)
 	return false
+}
+
+// armOpenCodeTimeout rejects an OpenCode request that nobody answers before
+// the policy timeout. The timer and a user reply share one claim, so only one
+// of them answers the request.
+func (s *Service) armOpenCodeTimeout(id, sessionID, directory string, item map[string]interface{}) {
+	created := time.Now()
+	if ms, ok := item["createdAt"].(float64); ok && ms > 0 {
+		created = time.UnixMilli(int64(ms))
+	}
+	wait := s.ApprovalPolicy().approvalWaitLimit()
+	deadline := created.Add(wait)
+	delay := time.Until(deadline)
+	if delay < 0 {
+		delay = 0
+	}
+	go func() {
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
+		<-timer.C
+		if _, loaded := s.openCodeAutoReplies.LoadOrStore(id, openCodeAutoReplyInflight); loaded {
+			return
+		}
+		reason := approvalTimeoutReason(s.ApprovalPolicy())
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		body, _ := json.Marshal(map[string]string{"reply": "reject", "message": reason})
+		status, _, err := s.replyOpenCodePermission(ctx, id, directory, body)
+		if err != nil || status >= 300 && status != http.StatusNotFound {
+			s.openCodeAutoReplies.Delete(id)
+			return
+		}
+		s.recordOpenCodeAudit(id, sessionID, directory, "reject", reason, approvalSourceTimeout)
+		s.rememberDeferred(sessionID, id, "timeout", firstString(itemMetadata(item)["command"]))
+		s.noteTurn(sessionID, "timeout")
+		s.openCodeAutoReplies.Delete(id)
+	}()
 }
 
 // claimOpenCodeSSELine handles permission.asked frames on the raw OpenCode

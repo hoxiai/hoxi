@@ -11,7 +11,7 @@ import {
 import { openExternalBrowserURL } from "../services/desktop-events";
 import { setWorkspace, THEME_KEY, workspace, type ProviderModalTab } from "./workspace-state";
 
-export type ApprovalMode = "auto" | "smart" | "manual" | "trusted";
+export type ApprovalMode = "auto" | "smart" | "manual" | "trusted" | "unattended";
 export type BashApprovalRule = "" | "allow" | "smart" | "ask";
 
 export type SettingsTab =
@@ -189,7 +189,8 @@ export function loadInitialSettings(): PersistedSettings {
         parsed.approvalMode === "auto" ||
         parsed.approvalMode === "smart" ||
         parsed.approvalMode === "manual" ||
-        parsed.approvalMode === "trusted"
+        parsed.approvalMode === "trusted" ||
+        parsed.approvalMode === "unattended"
           ? parsed.approvalMode
           : DEFAULT_SETTINGS.approvalMode,
       bashApprovalRule:

@@ -86,6 +86,7 @@ func TestTunnelRouteAllowlist(t *testing.T) {
 		{get, "/api/hoxi/permission/per_1"}, {get, "/api/hoxi/permission/audit"}, {http.MethodDelete, "/api/hoxi/permission/audit"},
 		{get, "/api/hoxi/permission/grants"}, {http.MethodDelete, "/api/hoxi/permission/grants"},
 		{get, "/api/hoxi/permission/policy"}, {http.MethodPut, "/api/hoxi/permission/policy"},
+		{get, "/api/hoxi/permission/deferred"}, {post, "/api/hoxi/permission/deferred"},
 		// Commit attribution is a desktop preference, never remotely toggled.
 		{get, "/api/hoxi/git/attribution"}, {http.MethodPut, "/api/hoxi/git/attribution"},
 		{get, "/api/hoxi/sessions//message"}, {get, "/api/hoxi/sessions/"},
