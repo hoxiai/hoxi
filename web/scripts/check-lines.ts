@@ -54,10 +54,6 @@ const COMPONENT_SERVICE_READONLY_ALLOWLIST: Record<
     allowed: ["hoxiAPI.searchFiles"],
     reason: "Read-only fuzzy file search for the command palette",
   },
-  "web/src/components/layout/LeftNav.tsx": {
-    allowed: ["hoxiAPI.listSessions"],
-    reason: "Read-only session count probe when confirming project removal",
-  },
   "web/src/components/layout/SessionNavItem.tsx": {
     allowed: ["fetchPullRequests"],
     reason: "Read-only branch pull request badge lookup for sidebar session items",

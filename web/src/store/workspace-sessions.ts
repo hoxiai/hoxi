@@ -47,7 +47,7 @@ import {
   extractChildSubagentSessionId,
 } from "./subagent-sessions";
 import { forgetPromptQueueState } from "./prompt-queue";
-import { indexSession, indexSessions } from "./session-index";
+import { indexSession, indexSessions, sessionBelongsToProject } from "./session-index";
 import { normalizeFolderPath } from "./workspace-folders";
 
 const sessionMessageLoads = new Map<string, Promise<void>>();
@@ -148,6 +148,10 @@ export function replaceSession(info: SessionInfo) {
       branch: info.branch, createdAt: new Date(info.time.created).toISOString(),
     });
   }
+  // Responses to background renames, sandbox changes and child loads can arrive
+  // after a workspace switch. Keep global metadata without adding a foreign row.
+  if (!workspace.sessions.some((s) => s.id === info.id) &&
+    !sessionBelongsToProject(info, workspace.rootDir, workspace.activeProjectID)) return;
   const effectiveInfo = preserveSessionTitle(info);
   setWorkspace(
     produce((state) => {

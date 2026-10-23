@@ -31,6 +31,11 @@ import {
   workspacePrimaryFolder,
 } from "./workspace-folders";
 import { refreshWorktreeStatus } from "./session-diffs";
+import { filterProjectSessions } from "./session-index";
+
+let projectSessionLoadRevision = 0;
+let appliedProjectSessionRevision = 0;
+let projectResolutionRevision = 0;
 
 export async function loadSavedWorkspaces(): Promise<void> {
   try {
@@ -131,6 +136,7 @@ export async function selectInitialProjectSession(
 // hidden project on first use, so sessions keep their attribution even when
 // the folder was never saved as a workspace.
 export async function syncActiveProjectID(directory: string): Promise<string | null> {
+  const revision = ++projectResolutionRevision;
   const cleaned = normalizeFolderPath(directory);
   if (!cleaned || isInvalidProjectPath(cleaned)) {
     setWorkspace("activeProjectID", null);
@@ -147,7 +153,7 @@ export async function syncActiveProjectID(directory: string): Promise<string | n
   } catch (err) {
     console.warn("resolve project failed:", err);
   }
-  if (normalizeFolderPath(workspace.rootDir) !== cleaned) return null;
+  if (revision !== projectResolutionRevision || normalizeFolderPath(workspace.rootDir) !== cleaned) return null;
   setWorkspace("activeProjectID", projectID);
   return projectID;
 }
@@ -157,6 +163,7 @@ export async function bootstrapProjectSessions(
   selectInitial = true,
   projectID?: string | null
 ): Promise<void> {
+  const revision = ++projectSessionLoadRevision;
   const cleaned = normalizeFolderPath(directory);
   if (!cleaned || isInvalidProjectPath(cleaned)) {
     setWorkspace("bootstrappingSessions", false);
@@ -177,27 +184,32 @@ export async function bootstrapProjectSessions(
     rawSessions = await hoxiAPI.listSessions(cleaned, effectiveProjectID || undefined);
   }
   if (normalizeFolderPath(workspace.rootDir) !== cleaned) return;
-  const sessions = (Array.isArray(rawSessions) ? rawSessions : []).filter(
-    (s) => !isSessionDeleted(s.id) &&
-      (!effectiveProjectID || !s.projectID || s.projectID === effectiveProjectID)
-  );
+  const sessions = filterProjectSessions(Array.isArray(rawSessions) ? rawSessions : [], cleaned, effectiveProjectID)
+    .filter((s) => !isSessionDeleted(s.id));
   const titledSessions = sessions.map(preserveSessionTitle);
-  reconcileSessionsInPlace(titledSessions);
-  setWorkspace(
-    produce((state) => {
-      for (const s of titledSessions) {
-        if (s.directory && !state.worktreeBySession[s.id]) {
-          state.worktreeBySession[s.id] = {
-            sessionID: s.id,
-            isolated: s.sandboxMode ? s.sandboxMode === "worktree" : normalizeFolderPath(s.directory) !== cleaned,
-            directory: s.directory,
-            branch: s.branch,
-            createdAt: new Date(s.time?.created || Date.now()).toISOString(),
-          };
+  // An older read that lands after a newer one must not roll the list back,
+  // but it still owns its own selection and loading-flag duties below: a
+  // reconnect refresh racing the startup load must not skip initial selection.
+  const isLatest = revision > appliedProjectSessionRevision;
+  if (isLatest) {
+    appliedProjectSessionRevision = revision;
+    reconcileSessionsInPlace(titledSessions);
+    setWorkspace(
+      produce((state) => {
+        for (const s of titledSessions) {
+          if (s.directory && !state.worktreeBySession[s.id]) {
+            state.worktreeBySession[s.id] = {
+              sessionID: s.id,
+              isolated: s.sandboxMode ? s.sandboxMode === "worktree" : normalizeFolderPath(s.directory) !== cleaned,
+              directory: s.directory,
+              branch: s.branch,
+              createdAt: new Date(s.time?.created || Date.now()).toISOString(),
+            };
+          }
         }
-      }
-    })
-  );
+      })
+    );
+  }
   void refreshWorktreeStatus("__root__");
   void syncSessionStatuses(cleaned);
   void syncPendingPermissions(cleaned);
@@ -207,7 +219,8 @@ export async function bootstrapProjectSessions(
     !workspace.activeSessionID
   ) {
     await selectInitialProjectSession(titledSessions, cleaned, initialNewThreadReq);
-  } else {
+  } else if (isLatest) {
+    // A newer read already landed and cleared it, or is still loading.
     setWorkspace("bootstrappingSessions", false);
   }
 }
@@ -232,7 +245,7 @@ export async function switchWorkspace(
   const selectInitial = opts.selectInitial ?? !opts.targetSessionID;
   const targetSessionID = opts.targetSessionID ?? null;
   const hydratedSessions = Array.isArray(opts.cachedSessions)
-    ? opts.cachedSessions.filter((s) => !isSessionDeleted(s.id)).map(preserveSessionTitle)
+    ? filterProjectSessions(opts.cachedSessions, cleaned).filter((s) => !isSessionDeleted(s.id)).map(preserveSessionTitle)
     : [];
 
   recordRecentProject(cleaned);
@@ -273,6 +286,7 @@ export async function switchWorkspace(
   // Project resolution and the session list run in parallel: the backend
   // resolves the project from the directory when no ID is passed yet.
   const knownProjectID = findWorkspaceProfileByDir(cleaned)?.id || null;
+  const isCurrent = () => normalizeFolderPath(workspace.rootDir) === cleaned;
   try {
     await Promise.all([
       syncActiveProjectID(cleaned),
@@ -280,10 +294,10 @@ export async function switchWorkspace(
       ...(selectPromise ? [selectPromise] : []),
     ]);
   } catch (err) {
-    setWorkspace("bootstrappingSessions", false);
+    if (isCurrent()) setWorkspace("bootstrappingSessions", false);
     console.error("switch workspace error:", err);
   }
-  if (normalizeFolderPath(workspace.rootDir) !== cleaned) return;
+  if (!isCurrent()) return;
 
   if (workspace.providers.length === 0) void loadProviders();
   if (workspace.projects.length === 0) void loadProjects();

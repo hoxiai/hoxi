@@ -4,12 +4,9 @@ import { Presence } from "../motion/Presence";
 import { Activity, ArrowRightLeft, Bell, Check, Clock, Folder, FolderPlus, Layers, Plus, RefreshCw, Search } from "lucide-solid";
 import {
   archiveSession,
-  bootstrapProjectSessions,
+  createProjectSessionLists,
   discardSession,
-  indexSessions,
   isInvalidProjectPath,
-  isSessionDeleted,
-  loadProjects,
   startNewThreadDraft,
   normalizeFolderPath,
   openCreateWorkspaceModal,
@@ -23,12 +20,9 @@ import {
   unarchiveSession,
   workspace,
 } from "../../store/workspace";
-import { hoxiAPI } from "../../services/api";
-import type { SessionInfo } from "../../services/sse-types";
 import { Icon, Spinner } from "../icons";
 import { buildAllProjects, collectPendingSessionIDs, findProjectDropTarget, sameStringSet } from "./left-nav-helpers";
 import MultiProjectTreeItem from "./MultiProjectItem";
-import { sameSessionArray } from "./SessionHistory";
 import SingleProjectNavView, { RecentTasksNavView } from "./SingleProjectNavView";
 import { AttentionNavView, RunningNavView } from "./CrossProjectNavView";
 import UserAccountMenu from "./UserAccountMenu";
@@ -85,21 +79,16 @@ export default function LeftNav() {
     new Set(workspace.rootDir && !isInvalidProjectPath(workspace.rootDir) ? [normalizeFolderPath(workspace.rootDir)] : [])
   );
   const [expandedArchivedByProject, setExpandedArchivedByProject] = createSignal<Record<string, boolean>>({});
-  const [projectSessions, setProjectSessions] = createSignal<Record<string, SessionInfo[]>>({});
-  const [loadingProjects, setLoadingProjects] = createSignal<Record<string, boolean>>({});
+  const sessionLists = createProjectSessionLists();
+  const projectSessions = sessionLists.sessions;
+  const loadingProjects = sessionLists.loading;
+  onCleanup(sessionLists.dispose);
 
   createEffect(() => {
     const root = normalizeFolderPath(workspace.rootDir);
     if (root && !isInvalidProjectPath(root)) {
       setExpandedProjects((prev) => (prev.has(root) ? prev : new Set([...prev, root])));
-      if (!workspace.bootstrappingSessions) {
-        const current = workspace.sessions.slice();
-        setProjectSessions((prev) =>
-          prev[root] && sameSessionArray(prev[root], current)
-            ? prev
-            : { ...prev, [root]: current }
-        );
-      }
+      sessionLists.syncActive(root);
     }
   });
 
@@ -138,33 +127,7 @@ export default function LeftNav() {
   });
   const isExpanded = (path: string) => expandedProjects().has(normalizeFolderPath(path));
 
-  const loadSessionsForProject = async (path: string) => {
-    const clean = normalizeFolderPath(path);
-    if (!clean || isInvalidProjectPath(clean)) return;
-    if (loadingProjects()[clean]) return;
-    setLoadingProjects((prev) => (prev[clean] ? prev : { ...prev, [clean]: true }));
-    try {
-      if (clean === normalizeFolderPath(workspace.rootDir)) {
-        await bootstrapProjectSessions(clean, false);
-        setProjectSessions((prev) => ({ ...prev, [clean]: workspace.sessions.slice() }));
-      } else {
-        const proj = allProjects().find((p) => normalizeFolderPath(p.path) === clean);
-        const list = await hoxiAPI.listSessions(clean, proj?.workspaceId);
-        const sessions = (Array.isArray(list) ? list : []).filter(
-          (s) => !isSessionDeleted(s.id) && (!proj?.workspaceId || !s.projectID || s.projectID === proj.workspaceId)
-        );
-        // Other projects' sessions must be indexed too, so their busy badges and
-        // approvals stay addressable after the user switches away.
-        indexSessions(sessions.map((s) => (s.directory ? s : { ...s, directory: clean })));
-        setProjectSessions((prev) => ({ ...prev, [clean]: sessions }));
-      }
-    } catch (err) {
-      console.error(`Failed to load sessions for ${clean}:`, err);
-      setProjectSessions((prev) => (prev[clean] !== undefined ? prev : { ...prev, [clean]: [] }));
-    } finally {
-      setLoadingProjects((prev) => (prev[clean] ? { ...prev, [clean]: false } : prev));
-    }
-  };
+  const loadSessionsForProject = sessionLists.load;
 
   createEffect(() => {
     const activeRoot = normalizeFolderPath(workspace.rootDir);
@@ -182,12 +145,7 @@ export default function LeftNav() {
     const startedAt = Date.now();
     try {
       const activeRoot = normalizeFolderPath(workspace.rootDir);
-      await loadProjects();
-      const tasks: Array<Promise<unknown>> = [];
-      if (activeRoot && !isInvalidProjectPath(activeRoot)) {
-        tasks.push(bootstrapProjectSessions(activeRoot, false));
-      }
-      const otherPaths = new Map<string, string | undefined>();
+      const paths = [activeRoot];
       const crossProjectMode =
         workspace.sidebarProjectMode === "recent" ||
         workspace.sidebarProjectMode === "attention" ||
@@ -196,23 +154,10 @@ export default function LeftNav() {
         const clean = normalizeFolderPath(proj.path);
         if (!clean || clean === activeRoot || isInvalidProjectPath(clean)) continue;
         if (projectSessions()[clean] !== undefined || expandedProjects().has(clean) || crossProjectMode) {
-          otherPaths.set(clean, proj.workspaceId);
+          paths.push(clean);
         }
       }
-      for (const [clean, projID] of otherPaths.entries()) {
-        tasks.push(
-          hoxiAPI.listSessions(clean, projID).then((list) => {
-            const sessions = (Array.isArray(list) ? list : []).filter(
-              (s) => !isSessionDeleted(s.id) && (!projID || !s.projectID || s.projectID === projID)
-            );
-            indexSessions(sessions.map((s) => (s.directory ? s : { ...s, directory: clean })));
-            setProjectSessions((prev) => ({ ...prev, [clean]: sessions }));
-          }).catch((err) => {
-            console.error(`Failed to refresh sessions for ${clean}:`, err);
-          })
-        );
-      }
-      await Promise.all(tasks);
+      await sessionLists.refresh(paths);
     } catch (err) {
       console.error("Failed to refresh session lists:", err);
     } finally {
@@ -240,7 +185,6 @@ export default function LeftNav() {
       const cached = projectSessions()[clean] || projectSessions()[path];
       startNewThreadDraft();
       await switchWorkspace(clean, { selectInitial: false, cachedSessions: cached });
-      setProjectSessions((prev) => ({ ...prev, [clean]: workspace.sessions.slice() }));
       return;
     }
     if (next.has(clean)) {
@@ -323,7 +267,6 @@ export default function LeftNav() {
       if (normPath && normPath !== normalizeFolderPath(workspace.rootDir)) {
         const cached = projectSessions()[normPath] || projectSessions()[path];
         await switchWorkspace(normPath, { selectInitial: false, cachedSessions: cached });
-        setProjectSessions((prev) => ({ ...prev, [normPath]: workspace.sessions.slice() }));
       }
     } catch (err) {
       console.error("Failed to create thread in project:", err);
@@ -350,34 +293,17 @@ export default function LeftNav() {
     ev.stopPropagation();
     const normPath = normalizeFolderPath(projPath);
     const now = Date.now();
-    setProjectSessions((prev) => {
-      const list = prev[normPath];
-      if (!list) return prev;
-      return {
-        ...prev,
-        [normPath]: list.map((s) =>
-          s.id === sessionID ? { ...s, time: { ...s.time, archived: now } } : s
-        ),
-      };
-    });
+    sessionLists.updateSession(normPath, sessionID, (s) => ({ ...s, time: { ...s.time, archived: now } }));
     await archiveSession(sessionID, normPath);
   };
 
   const onUnarchiveInProject = async (projPath: string, ev: MouseEvent, sessionID: string) => {
     ev.stopPropagation();
     const normPath = normalizeFolderPath(projPath);
-    setProjectSessions((prev) => {
-      const list = prev[normPath];
-      if (!list) return prev;
-      return {
-        ...prev,
-        [normPath]: list.map((s) => {
-          if (s.id !== sessionID) return s;
-          const nextTime = { ...s.time };
-          delete nextTime.archived;
-          return { ...s, time: nextTime };
-        }),
-      };
+    sessionLists.updateSession(normPath, sessionID, (s) => {
+      const nextTime = { ...s.time };
+      delete nextTime.archived;
+      return { ...s, time: nextTime };
     });
     await unarchiveSession(sessionID, normPath);
   };
@@ -385,14 +311,7 @@ export default function LeftNav() {
   const onDiscardInProject = async (projPath: string, ev: MouseEvent, sessionID: string) => {
     ev.stopPropagation();
     const normPath = normalizeFolderPath(projPath);
-    setProjectSessions((prev) => {
-      const list = prev[normPath];
-      if (!list) return prev;
-      return {
-        ...prev,
-        [normPath]: list.filter((s) => s.id !== sessionID),
-      };
-    });
+    sessionLists.updateSession(normPath, sessionID, () => null);
     await discardSession(sessionID, true, normPath);
   };
 

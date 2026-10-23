@@ -14,6 +14,7 @@ export * from "./provider-catalog";
 export * from "./model-limits";
 export * from "./session-ai";
 export * from "./workspace-projects";
+export * from "./workspace-session-lists";
 export * from "./workspace-sessions";
 export * from "./session-diffs";
 export * from "./workspace-session-messages";
