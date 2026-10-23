@@ -51,9 +51,11 @@ export const approval: ApprovalI18n = {
   modeUnattendedShort: "无人值守",
   modeUnattendedBadge: "高风险",
   modeUnattendedDesc:
-    "隔离工作树加命令沙箱内，Shell 命令不再询问。读取密钥、任何 git push、发布、sudo 和外发凭据会被立即拒绝，并列入待处理清单。没有隔离的会话仍会询问",
+    "隔离工作树加命令沙箱内，Shell 命令不再询问。读取密钥、任何 git push、发布、sudo 和外发凭据会被立即拒绝，并列入待处理清单。没有隔离的会话仍会询问；OpenCode 会话不适用",
   modeUnattendedUnavailable: "无人值守需要 macOS 命令沙箱，当前系统不可用",
   unattendedNotIsolated: "此会话未隔离，无人值守不生效",
+  unattendedRuntimeUnsupported: "OpenCode 会话不适用无人值守：它的文件工具跑在沙箱外，命令仍按完全信任规则询问",
+  unattendedInactive: "未生效",
   timeoutLabel: "审批超时",
   timeoutHint: "无人应答的请求在此秒数后自动拒绝，超时永远不会变成放行",
   deferredTitle: "待处理",

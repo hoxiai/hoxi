@@ -105,7 +105,9 @@ func (s *Service) autoReplyOpenCodeMessage(id, sessionID, directory, reply, mess
 		status, _, err := s.replyOpenCodePermission(ctx, id, directory, body)
 		switch {
 		case err == nil && status >= 200 && status < 300:
-			s.recordOpenCodeAudit(id, sessionID, directory, "once", "", source)
+			// Audit the reply OpenCode actually accepted, so a hard deny is
+			// never logged as "once".
+			s.recordOpenCodeAudit(id, sessionID, directory, reply, message, source)
 			s.openCodeAutoReplies.Delete(id)
 		case err == nil && status == http.StatusNotFound:
 			// Already answered elsewhere.
@@ -144,7 +146,6 @@ func (s *Service) claimOpenCodePermission(item map[string]interface{}, sessionID
 	if s.ApprovalPolicy().Mode == ApprovalModeUnattended {
 		if allow, category := unattendedDecision(item, directory); !allow && category != "" {
 			s.autoReplyOpenCodeMessage(id, sessionID, directory, "reject", unattendedDenyReason(category), approvalSourceUnattended, onFail)
-			s.recordOpenCodeAudit(id, sessionID, directory, "reject", unattendedDenyReason(category), approvalSourceUnattended)
 			s.rememberDeferred(sessionID, id, category, firstString(itemMetadata(item)["command"]))
 			s.noteTurn(sessionID, "deny")
 			return true

@@ -51,9 +51,11 @@ export const approval = {
   modeUnattendedShort: "Unattended",
   modeUnattendedBadge: "High risk",
   modeUnattendedDesc:
-    "Inside an isolated worktree with the command sandbox, shell commands run without asking. Secret reads, any git push, publishing, sudo and sending credentials are refused at once and listed for you to run. Sessions without that isolation keep asking",
+    "Inside an isolated worktree with the command sandbox, shell commands run without asking. Secret reads, any git push, publishing, sudo and sending credentials are refused at once and listed for you to run. Sessions without that isolation keep asking; OpenCode sessions are not covered",
   modeUnattendedUnavailable: "Unattended mode needs the macOS command sandbox, which is not available here",
   unattendedNotIsolated: "This session is not isolated, so unattended mode does not apply",
+  unattendedRuntimeUnsupported: "Unattended mode does not apply to OpenCode sessions: its file tools run outside the sandbox, so commands still ask under the full-trust rules",
+  unattendedInactive: "Inactive",
   timeoutLabel: "Approval timeout",
   timeoutHint: "A request nobody answers is rejected after this many seconds. A timeout never becomes an approval",
   deferredTitle: "Waiting for you",

@@ -16,6 +16,7 @@ import {
   replyPermissionRequest,
   resolveEffectivePermissionSummary,
   setApprovalMode,
+  unattendedGapFor,
   updateToolPermissionRule,
 } from "../store/approval-mode";
 import { appSettings, setAppSettings } from "../store/settings";
@@ -415,5 +416,23 @@ describe("opaque command shared fixture", () => {
     const split = ["trap : EXIT", 'rg -l "createSignal" web/src/components/timeline', "read f", 'echo "MISSING: $f"', "echo loop-done"];
     assertEqual(isOpaquePermissionRequest({ permission: "bash", metadata: { command }, patterns: split }), false);
     assertEqual(isOpaquePermissionRequest({ permission: "bash", metadata: { command: 'cat "$KUBECONFIG"' }, patterns: ["echo hi"] }), true);
+  });
+
+  it("unattendedGapFor flags OpenCode and non-isolated sessions only while unattended is on", () => {
+    const prevMode = appSettings.approvalMode;
+    try {
+      setAppSettings({ approvalMode: "trusted" });
+      assertEqual(unattendedGapFor("opencode", "local"), null);
+      setAppSettings({ approvalMode: "unattended" });
+      assertEqual(unattendedGapFor("opencode", "worktree"), "runtime");
+      assertEqual(unattendedGapFor("opencode", "local"), "runtime");
+      assertEqual(unattendedGapFor(undefined, "worktree"), "runtime");
+      assertEqual(unattendedGapFor("claude-code", "local"), "isolation");
+      for (const runtime of ["claude-code", "antigravity", "qoder", "codebuddy"]) {
+        assertEqual(unattendedGapFor(runtime, "worktree"), null);
+      }
+    } finally {
+      setAppSettings({ approvalMode: prevMode });
+    }
   });
 });

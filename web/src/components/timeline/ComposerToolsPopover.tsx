@@ -11,12 +11,13 @@ import {
   Workflow,
 } from "lucide-solid";
 import { t } from "../../i18n";
-import { appSettings } from "../../store/workspace";
+import { unattendedGapFor } from "../../store/workspace";
 
 export default function ComposerToolsPopover(props: {
   workspaceReady: boolean;
   skillActive?: boolean;
   sandboxMode: "local" | "worktree";
+  runtime: string;
   canEnhance: boolean;
   enhancing: boolean;
   onAttach: () => void;
@@ -146,8 +147,12 @@ export default function ComposerToolsPopover(props: {
               </span>
             </button>
 
-            <Show when={props.sandboxMode === "local" && appSettings.approvalMode === "unattended"}>
-              <p class="px-2.5 py-1.5 text-[11px] text-[var(--danger-text)]">{t("approval.unattendedNotIsolated")}</p>
+            <Show when={unattendedGapFor(props.runtime, props.sandboxMode)}>
+              {(gap) => (
+                <p class="px-2.5 py-1.5 text-[11px] text-[var(--danger-text)]">
+                  {gap() === "runtime" ? t("approval.unattendedRuntimeUnsupported") : t("approval.unattendedNotIsolated")}
+                </p>
+              )}
             </Show>
             <Show when={props.sandboxMode === "local"}>
               <button

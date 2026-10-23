@@ -40,6 +40,24 @@ const [approvalRecordsLoading, setApprovalRecordsLoading] = createSignal(false);
 
 export { approvalAuditEntries, approvalGrants, approvalPolicy, approvalRecordsLoading };
 
+// Runtimes whose whole process is OS-sandboxed, mirroring runtimeSandboxConfirmed
+// in internal/runner/approval_unattended.go. OpenCode only sandboxes its bash
+// tool, so it keeps the full-trust rules even in unattended mode.
+const UNATTENDED_RUNTIMES = new Set(["claude-code", "antigravity", "qoder", "codebuddy"]);
+
+export type UnattendedGap = "runtime" | "isolation";
+
+/** Why unattended mode would not take effect for a session, or null when it does or is off. */
+export function unattendedGapFor(
+  runtime: string | null | undefined,
+  sandboxMode: "local" | "worktree"
+): UnattendedGap | null {
+  if (appSettings.approvalMode !== "unattended") return null;
+  if (!UNATTENDED_RUNTIMES.has(String(runtime || ""))) return "runtime";
+  if (sandboxMode !== "worktree") return "isolation";
+  return null;
+}
+
 function isRuleObject(val: unknown): val is Record<string, any> {
   return Boolean(
     val &&

@@ -14,6 +14,7 @@ import {
   appSettings,
   openProviderModal,
   setApprovalMode,
+  unattendedGapFor,
   type ApprovalMode,
 } from "../../store/workspace";
 import { t } from "../../i18n";
@@ -84,7 +85,10 @@ function renderModeIcon(mode: ApprovalMode, size = 12.5) {
   return <ShieldAlert size={size} class="shrink-0" />;
 }
 
-export default function ApprovalModePill() {
+export default function ApprovalModePill(props: {
+  runtime: string;
+  sandboxMode: "local" | "worktree";
+}) {
   const [open, setOpen] = createSignal(false);
   let buttonRef: HTMLButtonElement | undefined;
   let menuRef: HTMLDivElement | undefined;
@@ -101,6 +105,17 @@ export default function ApprovalModePill() {
   };
 
   const isDefaultAuto = () => currentMode() === "auto";
+
+  // Unattended is a global mode, but it only takes effect for sandboxed runtimes
+  // in an isolated worktree; say so on the pill instead of silently asking.
+  const unattendedGap = () => unattendedGapFor(props.runtime, props.sandboxMode);
+  const unattendedGapText = () => {
+    const gap = unattendedGap();
+    if (gap === "runtime") return t("approval.unattendedRuntimeUnsupported");
+    if (gap === "isolation") return t("approval.unattendedNotIsolated");
+    return "";
+  };
+  const pillTitle = () => unattendedGapText() || t("approval.modeTooltip", { mode: currentShortLabel() });
 
   createEffect(() => {
     if (!open()) return;
@@ -152,8 +167,8 @@ export default function ApprovalModePill() {
                 ? "text-[var(--ok-text)] hover:bg-[var(--bg-hover)]"
                 : "text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
         }`}
-        title={t("approval.modeTooltip", { mode: currentShortLabel() })}
-        aria-label={t("approval.modeTooltip", { mode: currentShortLabel() })}
+        title={pillTitle()}
+        aria-label={pillTitle()}
       >
         <span
           class={
@@ -170,6 +185,11 @@ export default function ApprovalModePill() {
         </span>
         <Show when={!isDefaultAuto()}>
           <span>{currentShortLabel()}</span>
+          <Show when={unattendedGap()}>
+            <span class="rounded bg-[var(--warn-surface)] border border-[var(--warn-border)] px-1 text-[10.5px] font-medium leading-4 text-[var(--warn-text)]">
+              {t("approval.unattendedInactive")}
+            </span>
+          </Show>
           <ChevronDown
             size={10.5}
             class={`opacity-75 transition-transform duration-200 ${
@@ -195,6 +215,12 @@ export default function ApprovalModePill() {
               {t("approval.modeMenuBadge")}
             </span>
           </div>
+
+          <Show when={unattendedGap()}>
+            <p class="mx-1 mb-1 rounded-lg border border-[var(--warn-border)] bg-[var(--warn-surface)] px-2 py-1.5 text-[11px] leading-snug text-[var(--warn-text)]">
+              {unattendedGapText()}
+            </p>
+          </Show>
 
           <div class="space-y-1">
             <For each={MODE_OPTIONS}>

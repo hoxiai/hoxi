@@ -399,3 +399,42 @@ func TestOpenCodeRequestsAreAnsweredByThePolicy(t *testing.T) {
 		return true
 	})
 }
+
+// A hard deny in unattended mode is audited once, as the reject OpenCode
+// actually received, and never as an approval.
+func TestOpenCodeUnattendedHardDenyAuditsOnlyTheReject(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	svc := NewService(dir, nil, statusbar.NewTracker(), filepath.Join(t.TempDir(), "sessions.json"))
+	setTestApprovalPolicy(t, svc, ApprovalPolicy{Mode: ApprovalModeUnattended})
+	fake := &fakeOpenCodePermissions{replies: map[string]string{}}
+	server := httptest.NewServer(http.HandlerFunc(fake.handler))
+	defer server.Close()
+	svc.ConfigureOpenCode(server.URL, "secret")
+	if err := svc.store.Put(SessionRecord{ID: "ses_oc_hard", Runtime: "opencode", ProjectDir: dir, WorktreePath: dir, ExternalID: "oc-hard"}); err != nil {
+		t.Fatal(err)
+	}
+	rec, _ := svc.store.Get("ses_oc_hard")
+
+	svc.relayOpenCodeEvent(rec, []byte(`{"type":"permission.asked","properties":{"id":"per_oc_push","sessionID":"oc-hard","permission":"bash","patterns":["git push origin main"]}}`))
+	waitFor(t, "hard deny reply", func() bool { return fake.reply("per_oc_push") == "reject" })
+	// The reply goroutine clears its claim only after the audit write lands,
+	// so waiting on it also keeps the write away from t.TempDir cleanup.
+	waitFor(t, "hard deny audit", func() bool {
+		_, inflight := svc.openCodeAutoReplies.Load("per_oc_push")
+		return !inflight
+	})
+	var decisions []string
+	for _, e := range svc.audit.list("ses_oc_hard", 10) {
+		if e.RequestID != "per_oc_push" {
+			continue
+		}
+		decisions = append(decisions, e.Decision)
+		if e.Source != approvalSourceUnattended {
+			t.Fatalf("hard deny source = %q, want %q", e.Source, approvalSourceUnattended)
+		}
+	}
+	if len(decisions) != 1 || decisions[0] != "reject" {
+		t.Fatalf("hard deny audit decisions = %v, want exactly [reject]", decisions)
+	}
+}

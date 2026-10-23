@@ -642,6 +642,7 @@ export default function Composer() {
                 workspaceReady={Boolean(workspace.rootDir)}
                 skillActive={Boolean(selectedSkill())}
                 sandboxMode={effectiveSandboxMode()}
+                runtime={sessionRuntimeForID(sessionID())}
                 canEnhance={Boolean(text().trim())}
                 enhancing={enhancing()}
                 onAttach={() => fileInputRef?.click()}
@@ -680,7 +681,7 @@ export default function Composer() {
             {/* Right Context Progress + Approval Mode + Send / Queue / Stop Buttons */}
             <div class="flex items-center gap-1.5">
               <ContextProgressPill />
-              <ApprovalModePill />
+              <ApprovalModePill runtime={sessionRuntimeForID(sessionID())} sandboxMode={effectiveSandboxMode()} />
 
               <Show when={busy()}>
                 <Show when={canSend()}>
