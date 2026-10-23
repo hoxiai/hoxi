@@ -1,6 +1,11 @@
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 import solidPlugin from "vite-plugin-solid";
 import tailwindcss from "@tailwindcss/vite";
+
+const lucideSolidEsm = fileURLToPath(
+  new URL("./node_modules/lucide-solid/dist/esm/lucide-solid.js", import.meta.url),
+);
 
 const isRelease = (process.env.HOXI_VARIANT || "").trim().toLowerCase() === "release";
 const target =
@@ -9,6 +14,12 @@ const port = Number(process.env.HOXI_WEB_PORT) || (isRelease ? 5411 : 5421);
 
 export default defineConfig({
   plugins: [tailwindcss(), solidPlugin()],
+  resolve: {
+    alias: [{ find: /^lucide-solid$/, replacement: lucideSolidEsm }],
+  },
+  optimizeDeps: {
+    include: ["lucide-solid"],
+  },
   server: {
     port,
     strictPort: false,
