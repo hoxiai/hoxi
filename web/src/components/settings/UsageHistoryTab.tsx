@@ -159,7 +159,9 @@ export default function UsageHistoryTab() {
   );
   const todayDay = createMemo(() => usageHistory().find((day) => day.date === todayDate) ?? null);
   const todayTotals = createMemo(() => usageHistoryTotals(todayDay() ? [todayDay()!] : []));
-  const overviewModels = createMemo(() => usageHistoryModels(usageHistory()));
+  const todayModelUsage = createMemo(() =>
+    usageHistoryModels(todayDay() ? [todayDay()!] : [])
+  );
 
   const [detailDay, setDetailDay] = createSignal<UsageHistoryDay | null>(null);
   const detailModels = createMemo(() => {
@@ -337,15 +339,15 @@ export default function UsageHistoryTab() {
               {t("settings.usageByModelTitle")}
             </h4>
             <Show
-              when={overviewModels().length > 0}
+              when={todayModelUsage().length > 0}
               fallback={
                 <p class="rounded-xl border border-dashed border-[var(--border-subtle)] px-3 py-6 text-center text-[12px] text-[var(--text-muted)]">
                   {t("settings.usageByModelEmpty")}
                 </p>
               }
             >
-              <ul class="max-h-72 divide-y divide-[var(--border-subtle)]/60 overflow-y-auto rounded-xl border border-[var(--border-subtle)]">
-                <For each={overviewModels()}>
+              <ul class="divide-y divide-[var(--border-subtle)]/60 rounded-xl border border-[var(--border-subtle)]">
+                <For each={todayModelUsage()}>
                   {(model) => (
                     <li class="flex items-center justify-between gap-3 px-3 py-2">
                       <div class="min-w-0">
