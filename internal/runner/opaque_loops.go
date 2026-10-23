@@ -28,7 +28,12 @@ import (
 // its own segment. Mirrors .opencode/lib/opaque-command.js; the shared
 // .opencode/lib/opaque-command.cases.json keeps both ports aligned.
 
-const processSubstitutionPlaceholder = "/dev/fd/63"
+const (
+	processSubstitutionPlaceholder = "/dev/fd/63"
+	// cmdSubstVar stands in for a `$(…)` result: its value is whatever the
+	// inner command prints, so only value-only tools may take it.
+	cmdSubstVar = "__hoxi_cmdsub__"
+)
 
 var (
 	shellKeywords = setOf("while", "until", "do", "done", "if", "then", "else", "elif", "fi", "!")
@@ -46,11 +51,23 @@ var (
 	rgListFlagRe     = regexp.MustCompile(`^-[a-zA-Z]*l[a-zA-Z]*$`)
 	rgUnsafeShortRe  = regexp.MustCompile(`^-[a-zA-Z.]*[u.L][a-zA-Z.]*$`)
 	dotGlobRe        = regexp.MustCompile(`(^|/)\.[^/]*[*?]`)
+
+	// harmlessEnvVars hold system locations and settings, never secrets, so
+	// they may feed read-only tools and PATH assignments. Anything else that
+	// is inherited ($OPENAI_API_KEY, $KUBECONFIG, ...) stays opaque.
+	harmlessEnvVars = setOf("HOME", "PATH", "PWD", "OLDPWD", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG",
+		"TERM", "GOPATH", "GOROOT", "GOBIN", "GOCACHE", "GOMODCACHE", "CARGO_HOME", "PNPM_HOME",
+		"JAVA_HOME", "ANDROID_HOME",
+		"?", "pipestatus") // exit statuses
+
+	// valueOnlyTools print or test their arguments without opening them as
+	// files, so they may take a `$(…)` result.
+	valueOnlyTools = setOf("echo", "printf", "test", "[", "basename", "dirname", "true", "false", ":")
 )
 
 // extractProcessSubstitutions rewrites each `<(cmd)` into a placeholder
-// argument and appends cmd as its own line, so it is judged like any other
-// command. Nested parentheses or an unterminated form leave the command
+// argument and each `$(cmd)` into the $__hoxi_cmdsub__ variable, and appends
+// cmd as its own line, so it is judged like any other command. Nested parentheses or an unterminated form leave the command
 // unchanged (and therefore opaque).
 func extractProcessSubstitutions(s string) string {
 	var out strings.Builder
@@ -63,6 +80,15 @@ func extractProcessSubstitutions(s string) string {
 			if c == '\'' {
 				quote = 0
 			}
+		case c == '$' && quote != '\'' && i+1 < len(s) && s[i+1] == '(':
+			end := processSubstitutionEnd(s, i+2)
+			if end < 0 {
+				return s // `$((…))` arithmetic or nesting stays opaque
+			}
+			inner = append(inner, s[i+2:end])
+			out.WriteString("$" + cmdSubstVar)
+			i = end
+			continue
 		case quote == '"':
 			if c == '\\' && i+1 < len(s) {
 				out.WriteByte(c)
@@ -170,7 +196,9 @@ func loopBindings(segments []string, pipedIn []bool) map[string]bool {
 		words := stripShellKeywords(shellWords(seg))
 		j := 0
 		for j < len(words) && envVarAssignmentWordRe.MatchString(words[j]) {
-			bind(words[j][:strings.IndexByte(words[j], '=')], false)
+			if !isBenignPathAssignment(words[j]) {
+				bind(words[j][:strings.IndexByte(words[j], '=')], false)
+			}
 			j++
 		}
 		if j >= len(words) {
@@ -197,6 +225,9 @@ func loopBindings(segments []string, pipedIn []bool) map[string]bool {
 			}
 		case loopVarRebinders[base]:
 			for _, a := range cmd[1:] {
+				if isBenignPathAssignment(a) {
+					continue
+				}
 				name := a
 				if eq := strings.IndexByte(a, '='); eq > 0 {
 					name = a[:eq]
@@ -345,39 +376,181 @@ func isSafeListingProducer(seg string) bool {
 	return false
 }
 
-// boundArgExpansionsOnly reports whether every expansion in seg is a
-// trustworthy loop variable used as an argument of a read-only tool.
-func boundArgExpansionsOnly(seg string, words []string, vars map[string]bool) bool {
+// expansionsAreBounded reports whether every expansion in seg is safe:
+//   - a benign PATH assignment (`PATH=$HOME/bin:$PATH`, `export PATH=…`);
+//   - otherwise only in arguments of a read-only tool, never in the command
+//     name, and each name is a trustworthy loop variable, a harmless
+//     environment variable not rebound by the command, or a `$(…)` result
+//     taken by a value-only tool.
+func expansionsAreBounded(seg string, words []string, vars map[string]bool) bool {
+	if _, ok := shellExpansionNames(seg); !ok {
+		return false
+	}
 	j := 0
 	for j < len(words) && envVarAssignmentWordRe.MatchString(words[j]) {
-		if strings.Contains(words[j], "$") {
+		if strings.Contains(words[j], "$") && !isBenignPathAssignment(words[j]) {
 			return false
 		}
 		j++
 	}
-	if j >= len(words) || strings.Contains(words[j], "$") {
+	if j >= len(words) {
+		return true
+	}
+	if strings.Contains(words[j], "$") {
 		return false
 	}
 	base := filepath.Base(normalizeAbsoluteTool(words[j]))
+	args := words[j+1:]
+	if base == "export" {
+		for _, a := range args {
+			if strings.Contains(a, "$") && !isBenignPathAssignment(a) {
+				return false
+			}
+		}
+		return true
+	}
+	expanding := make([]string, 0, len(args))
+	for _, a := range args {
+		if strings.Contains(a, "$") {
+			expanding = append(expanding, a)
+		}
+	}
+	if len(expanding) == 0 {
+		return true
+	}
+	if base == "git" {
+		return gitMessageExpansionsOnly(args, vars)
+	}
 	if !readOnlyDataTools[base] {
 		return false
 	}
-	for _, a := range words[j+1:] {
+	for _, a := range args {
 		if strings.HasPrefix(a, "--pre") || strings.HasPrefix(a, "--hostname-bin") ||
 			strings.HasPrefix(a, "--compress-program") || (base == "printf" && a == "-v") {
 			return false
 		}
 	}
-	names, ok := shellExpansionNames(seg)
-	if !ok || len(names) == 0 {
+	for _, a := range expanding {
+		names, ok := wordExpansionNames(a)
+		if !ok {
+			return false
+		}
+		for _, name := range names {
+			trusted, bound := vars[name]
+			switch {
+			case name == cmdSubstVar:
+				if bound || !valueOnlyTools[base] {
+					return false
+				}
+			case bound:
+				if !trusted {
+					return false
+				}
+			case !harmlessEnvVars[name]:
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// gitMessageExpansionsOnly accepts expansions only in the message of `git
+// commit|tag|merge|stash -m …` (`git commit -m "$(cat <<'EOF' … EOF)"`):
+// a message is data, never a path, flag or ref.
+func gitMessageExpansionsOnly(args []string, vars map[string]bool) bool {
+	i := 0
+	for i < len(args) && strings.HasPrefix(args[i], "-") {
+		if gitGlobalValueFlags[args[i]] {
+			i++
+		}
+		i++
+	}
+	if i >= len(args) {
+		return false
+	}
+	sub := args[i]
+	if sub != "commit" && sub != "tag" && sub != "merge" && sub != "stash" {
+		return false
+	}
+	for k := i + 1; k < len(args); k++ {
+		a := args[k]
+		if !strings.Contains(a, "$") {
+			continue
+		}
+		prev := args[k-1]
+		isMessage := prev == "-m" || prev == "--message" ||
+			(sub == "commit" && len(prev) > 2 && prev[0] == '-' && prev[1] != '-' && strings.HasSuffix(prev, "m"))
+		if !isMessage {
+			return false
+		}
+		names, ok := wordExpansionNames(a)
+		if !ok {
+			return false
+		}
+		for _, name := range names {
+			trusted, bound := vars[name]
+			if bound && !trusted || !bound && name != cmdSubstVar && !harmlessEnvVars[name] {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// isBenignPathAssignment accepts `PATH=…` whose expansions are all harmless
+// environment variables (`PATH=$HOME/fvm/bin:$PATH`).
+func isBenignPathAssignment(word string) bool {
+	if !strings.HasPrefix(word, "PATH=") {
+		return false
+	}
+	value := word[len("PATH="):]
+	if strings.ContainsAny(value, "`;&|<>()") {
+		return false
+	}
+	names, ok := wordExpansionNames(value)
+	if !ok {
 		return false
 	}
 	for _, name := range names {
-		if !vars[name] {
+		if !harmlessEnvVars[name] {
 			return false
 		}
 	}
 	return true
+}
+
+// wordExpansionNames lists `$name` / `${name}` in one unquoted word; any
+// other `$` form fails.
+func wordExpansionNames(word string) ([]string, bool) {
+	var names []string
+	for i := 0; i < len(word); i++ {
+		if word[i] != '$' || i+1 >= len(word) {
+			continue
+		}
+		next := word[i+1]
+		switch {
+		case next == '{':
+			end := strings.IndexByte(word[i+2:], '}')
+			if end < 0 || !shellVarNameRe.MatchString(word[i+2:i+2+end]) {
+				return nil, false
+			}
+			names = append(names, word[i+2:i+2+end])
+			i += end + 2
+		case next == '_' || (next >= 'a' && next <= 'z') || (next >= 'A' && next <= 'Z'):
+			k := i + 1
+			for k < len(word) && (word[k] == '_' || (word[k] >= 'a' && word[k] <= 'z') || (word[k] >= 'A' && word[k] <= 'Z') || (word[k] >= '0' && word[k] <= '9')) {
+				k++
+			}
+			names = append(names, word[i+1:k])
+			i = k - 1
+		case next == '?':
+			names = append(names, "?")
+			i++
+		default:
+			return nil, false
+		}
+	}
+	return names, true
 }
 
 // shellExpansionNames lists `$name` / `${name}` expansions outside single
@@ -425,6 +598,9 @@ func shellExpansionNames(s string) ([]string, bool) {
 			}
 			names = append(names, s[i+1:k])
 			i = k - 1
+		case next == '?':
+			names = append(names, "?")
+			i++
 		case dollarExpandRe.MatchString(string(next)) && !(quote == '"' && next == '"'):
 			return nil, false
 		}

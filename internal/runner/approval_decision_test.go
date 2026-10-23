@@ -202,12 +202,21 @@ func TestOpaqueShellCommandsRequireApprovalInAutoAndTrusted(t *testing.T) {
 			`printf 'echo harmless' | sh`,
 			`bash -c 'echo harmless'`,
 			`python3 -c 'import pathlib; print(pathlib.Path(".env").read_text())'`,
-			`node -e 'console.log(1)'`,
 		} {
 			item := req("bash", command)
 			if approvalAutoApproves(item, ApprovalPolicy{Mode: mode}, nil, worktree) {
 				t.Errorf("opaque shell %q was auto-approved in %s mode", command, mode)
 			}
+		}
+	}
+	// Inline interpreter scripts ask in auto mode; full trust lets them run,
+	// as it already did `python3 script.py`.
+	for _, command := range []string{`node -e 'console.log(1)'`, "python3 - <<'EOF'\nprint(1)\nEOF"} {
+		if approvalAutoApproves(req("bash", command), ApprovalPolicy{Mode: ApprovalModeAuto}, nil, worktree) {
+			t.Errorf("inline script %q was auto-approved in auto mode", command)
+		}
+		if !approvalAutoApproves(req("bash", command), ApprovalPolicy{Mode: ApprovalModeTrusted}, nil, worktree) {
+			t.Errorf("inline script %q asked in trusted mode", command)
 		}
 	}
 }
@@ -282,8 +291,15 @@ func TestUngatedRuntimesRefusedInAutoAndTrusted(t *testing.T) {
 // Interpreter checks must cover version-suffixed binaries and awk programs that
 // call system() or pipe to a command.
 func TestOpaqueInterpreterVariantsAsk(t *testing.T) {
+	if !approvalAutoApproves(req("bash", `python3.12 -c 'print(1)'`), ApprovalPolicy{Mode: ApprovalModeTrusted}, nil, "") {
+		t.Error("full trust lets version-suffixed inline interpreters run")
+	}
 	for _, mode := range []string{ApprovalModeAuto, ApprovalModeTrusted} {
-		for _, command := range []string{`python3.12 -c 'print(1)'`, `awk 'BEGIN {system("id")}'`, `awk 'BEGIN{print "id" | "sh"}'`} {
+		commands := []string{`awk 'BEGIN {system("id")}'`, `awk 'BEGIN{print "id" | "sh"}'`}
+		if mode == ApprovalModeAuto {
+			commands = append(commands, `python3.12 -c 'print(1)'`)
+		}
+		for _, command := range commands {
 			t.Run(mode+"/"+command, func(t *testing.T) {
 				item := map[string]interface{}{"permission": "bash", "patterns": []string{command}}
 				if approvalAutoApproves(item, ApprovalPolicy{Mode: mode}, nil, "") {

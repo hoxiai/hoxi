@@ -22,7 +22,12 @@ import {
   unwrapSandboxCommand,
 } from "./permission-policy.js";
 import { awkProgramExecutes, inlineScriptTool } from "./script-interpreter.js";
-import { extractProcessSubstitutions } from "./shell-substitution.js";
+import {
+  CMD_SUBST_VAR,
+  extractProcessSubstitutions,
+  joinLineContinuations,
+  stripLiteralHeredocs,
+} from "./shell-substitution.js";
 
 const BENIGN_PATH_EXPORT_RE = /^export[ \t]+PATH=[A-Za-z0-9_./:$~{}-]+$/;
 const ENV_VAR_ASSIGNMENT_WORD_RE = /^[A-Za-z_][A-Za-z0-9_]*=/;
@@ -41,6 +46,14 @@ const GIT_EXT_PATHSPEC_RE = /^[A-Za-z0-9_./-]*\*\.[A-Za-z0-9]+$/;
 const RG_LIST_FLAG_RE = /^-[a-zA-Z]*l[a-zA-Z]*$/;
 const RG_UNSAFE_SHORT_RE = /^-[a-zA-Z.]*[u.L][a-zA-Z.]*$/;
 const DOT_GLOB_RE = /(^|\/)\.[^/]*[*?]/;
+// Hold system locations and settings, never secrets.
+const HARMLESS_ENV_VARS = new Set(["HOME", "PATH", "PWD", "OLDPWD", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG",
+  "TERM", "GOPATH", "GOROOT", "GOBIN", "GOCACHE", "GOMODCACHE", "CARGO_HOME", "PNPM_HOME",
+  "JAVA_HOME", "ANDROID_HOME",
+  "?", "pipestatus"]); // exit statuses
+const GIT_GLOBAL_VALUE_FLAGS = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path"]);
+// Print or test their arguments without opening them as files.
+const VALUE_ONLY_TOOLS = new Set(["echo", "printf", "test", "[", "basename", "dirname", "true", "false", ":"]);
 
 const baseName = (w) => (w.includes("/") ? w.slice(w.lastIndexOf("/") + 1) : w);
 
@@ -151,10 +164,17 @@ function hasInlineScriptFlag(base, args) {
   return false;
 }
 
-export function isOpaqueShellCommand(command, worktree = "") {
+export function isOpaqueShellCommand(command, worktree = "", options = {}) {
+  const allowInlineScripts = Boolean(options.allowInlineScripts);
   const trimmed = unwrapSandboxCommand(command).trim();
   if (!trimmed) return true;
-  const unwrapped = extractProcessSubstitutions(trimmed);
+  let joined = joinLineContinuations(trimmed);
+  // A literal heredoc is data; whatever reads it is judged below.
+  if (joined.includes("<<")) {
+    joined = stripLiteralHeredocs(joined);
+    if (joined === null) return true;
+  }
+  const unwrapped = extractProcessSubstitutions(joined);
   if (hasOpaqueShellSyntax(unwrapped)) return true;
   let { segments, pipedIn } = splitCommandChainWithPipes(unwrapped);
   if (segments.length > 1 && !pipedIn[0] && isWorktreeCD(segments[0], worktree)) {
@@ -170,13 +190,16 @@ export function isOpaqueShellCommand(command, worktree = "") {
     if (!seg || seg.startsWith("#")) continue;
     const words = stripShellKeywords(shellWords(seg));
     if (words.length === 0) continue;
-    if (hasDollarExpansion(seg) && !isBenignPathExport(seg) && !boundArgExpansionsOnly(seg, words, vars)) return true;
+    if (hasDollarExpansion(seg) && !isBenignPathExport(seg) && !expansionsAreBounded(seg, words, vars)) return true;
     if (words[0] === "for") continue;
     hasExec = true;
     let cmdIdx = 0;
     while (cmdIdx < words.length && ENV_VAR_ASSIGNMENT_WORD_RE.test(words[cmdIdx])) cmdIdx++;
     if (cmdIdx >= words.length) continue;
-    const cmdWords = words.slice(cmdIdx);
+    const unwrapped = unwrapCommandPrefixes(words.slice(cmdIdx));
+    if (!unwrapped) return true;
+    if (unwrapped.lookupOnly) continue;
+    const cmdWords = unwrapped.words;
     const norm = normalizeAbsoluteTool(cmdWords[0]);
     const base = norm.includes("/") ? norm.slice(norm.lastIndexOf("/") + 1) : norm;
     const args = cmdWords.slice(1);
@@ -188,7 +211,7 @@ export function isOpaqueShellCommand(command, worktree = "") {
     if (DATA_ARG_INTERPRETERS.has(base)) return true;
     if (awkProgramExecutes(base, args)) return true;
     const family = inlineScriptTool(base);
-    if (family && (pipedIn[i] || hasInlineScriptFlag(family, args))) {
+    if (family && !allowInlineScripts && (pipedIn[i] || hasInlineScriptFlag(family, args))) {
       return true;
     }
   }
@@ -212,7 +235,8 @@ export function isOpaquePermissionRequest(input, options) {
     Array.isArray(meta.commands);
   if (!isBash) return false;
   if (candidates.length === 0) return true;
-  return candidates.some((cmd) => isOpaqueShellCommand(cmd, worktree));
+  const allowInlineScripts = Boolean(options?.allowInlineScripts);
+  return candidates.some((cmd) => isOpaqueShellCommand(cmd, worktree, { allowInlineScripts }));
 }
 
 function stripShellKeywords(words) {
@@ -314,7 +338,7 @@ function loopBindings(segments, pipedIn) {
     const words = stripShellKeywords(shellWords(seg));
     let j = 0;
     while (j < words.length && ENV_VAR_ASSIGNMENT_WORD_RE.test(words[j])) {
-      bind(words[j].slice(0, words[j].indexOf("=")), false);
+      if (!isBenignPathAssignment(words[j])) bind(words[j].slice(0, words[j].indexOf("=")), false);
       j++;
     }
     if (j >= words.length) return;
@@ -332,6 +356,7 @@ function loopBindings(segments, pipedIn) {
       for (let k = 1; k + 1 < cmd.length; k++) if (cmd[k] === "-v") bind(cmd[k + 1], false);
     } else if (LOOP_VAR_REBINDERS.has(base)) {
       for (const a of cmd.slice(1)) {
+        if (isBenignPathAssignment(a)) continue;
         const name = a.includes("=") && a.indexOf("=") > 0 ? a.slice(0, a.indexOf("=")) : a;
         if (SHELL_VAR_NAME_RE.test(name)) bind(name, false);
       }
@@ -374,6 +399,9 @@ function shellExpansionNames(s) {
       while (k < s.length && /[A-Za-z0-9_]/.test(s[k])) k++;
       names.push(s.slice(i + 1, k));
       i = k - 1;
+    } else if (next === "?") {
+      names.push("?");
+      i++;
     } else if (DOLLAR_EXPAND_RE.test(next) && !(quote === '"' && next === '"')) {
       return null;
     }
@@ -381,21 +409,128 @@ function shellExpansionNames(s) {
   return names;
 }
 
-function boundArgExpansionsOnly(seg, words, vars) {
+// Strips wrappers that only run the next command (nohup, time, exec, command,
+// env NAME=value); `command -v x` is a lookup. A bare `env` prints every
+// environment variable, secrets included, so it returns null (opaque).
+function unwrapCommandPrefixes(words) {
+  while (words.length > 0) {
+    const base = baseName(normalizeAbsoluteTool(words[0]));
+    if (base === "nohup" || base === "time" || base === "exec") {
+      if (words.length === 1) return { words, lookupOnly: false };
+      words = words.slice(1);
+    } else if (base === "command") {
+      if (words.length >= 2 && (words[1] === "-v" || words[1] === "-V")) return { words, lookupOnly: true };
+      if (words.length === 1) return { words, lookupOnly: false };
+      words = words.slice(1);
+    } else if (base === "env") {
+      let k = 1;
+      while (k < words.length && ENV_VAR_ASSIGNMENT_WORD_RE.test(words[k])) k++;
+      if (k === 1 || k >= words.length) return null;
+      words = words.slice(k);
+    } else {
+      return { words, lookupOnly: false };
+    }
+  }
+  return { words, lookupOnly: false };
+}
+
+// Expansions only in the message of `git commit|tag|merge|stash -m …`.
+function gitMessageExpansionsOnly(args, vars) {
+  let i = 0;
+  while (i < args.length && args[i].startsWith("-")) {
+    if (GIT_GLOBAL_VALUE_FLAGS.has(args[i])) i++;
+    i++;
+  }
+  if (i >= args.length) return false;
+  const sub = args[i];
+  if (!["commit", "tag", "merge", "stash"].includes(sub)) return false;
+  for (let k = i + 1; k < args.length; k++) {
+    const a = args[k];
+    if (!a.includes("$")) continue;
+    const prev = args[k - 1];
+    const isMessage = prev === "-m" || prev === "--message" ||
+      (sub === "commit" && prev.length > 2 && prev[0] === "-" && prev[1] !== "-" && prev.endsWith("m"));
+    if (!isMessage) return false;
+    const names = wordExpansionNames(a);
+    if (names === null) return false;
+    for (const name of names) {
+      const bound = vars.has(name);
+      if ((bound && vars.get(name) !== true) || (!bound && name !== CMD_SUBST_VAR && !HARMLESS_ENV_VARS.has(name))) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+function wordExpansionNames(word) {
+  const names = [];
+  for (let i = 0; i < word.length; i++) {
+    if (word[i] !== "$" || i + 1 >= word.length) continue;
+    const next = word[i + 1];
+    if (next === "{") {
+      const end = word.indexOf("}", i + 2);
+      const name = end < 0 ? "" : word.slice(i + 2, end);
+      if (!SHELL_VAR_NAME_RE.test(name)) return null;
+      names.push(name);
+      i = end;
+    } else if (/[A-Za-z_]/.test(next)) {
+      let k = i + 1;
+      while (k < word.length && /[A-Za-z0-9_]/.test(word[k])) k++;
+      names.push(word.slice(i + 1, k));
+      i = k - 1;
+    } else if (next === "?") {
+      names.push("?");
+      i++;
+    } else {
+      return null;
+    }
+  }
+  return names;
+}
+
+function isBenignPathAssignment(word) {
+  if (!word.startsWith("PATH=")) return false;
+  const value = word.slice("PATH=".length);
+  if (/[`;&|<>()]/.test(value)) return false;
+  const names = wordExpansionNames(value);
+  return names !== null && names.every((n) => HARMLESS_ENV_VARS.has(n));
+}
+
+function expansionsAreBounded(seg, words, vars) {
+  if (shellExpansionNames(seg) === null) return false;
   let j = 0;
   while (j < words.length && ENV_VAR_ASSIGNMENT_WORD_RE.test(words[j])) {
-    if (words[j].includes("$")) return false;
+    if (words[j].includes("$") && !isBenignPathAssignment(words[j])) return false;
     j++;
   }
-  if (j >= words.length || words[j].includes("$")) return false;
+  if (j >= words.length) return true;
+  if (words[j].includes("$")) return false;
   const base = baseName(normalizeAbsoluteTool(words[j]));
+  const args = words.slice(j + 1);
+  if (base === "export") return args.every((a) => !a.includes("$") || isBenignPathAssignment(a));
+  const expanding = args.filter((a) => a.includes("$"));
+  if (expanding.length === 0) return true;
+  if (base === "git") return gitMessageExpansionsOnly(args, vars);
   if (!READ_ONLY_DATA_TOOLS.has(base)) return false;
-  for (const a of words.slice(j + 1)) {
+  for (const a of args) {
     if (a.startsWith("--pre") || a.startsWith("--hostname-bin") || a.startsWith("--compress-program") || (base === "printf" && a === "-v")) {
       return false;
     }
   }
-  const names = shellExpansionNames(seg);
-  if (!names || names.length === 0) return false;
-  return names.every((n) => vars.get(n) === true);
+  for (const a of expanding) {
+    const names = wordExpansionNames(a);
+    if (names === null) return false;
+    for (const name of names) {
+      const bound = vars.has(name);
+      if (name === CMD_SUBST_VAR) {
+        if (bound || !VALUE_ONLY_TOOLS.has(base)) return false;
+      } else if (bound) {
+        if (vars.get(name) !== true) return false;
+      } else if (!HARMLESS_ENV_VARS.has(name)) {
+        return false;
+      }
+    }
+  }
+  return true;
 }

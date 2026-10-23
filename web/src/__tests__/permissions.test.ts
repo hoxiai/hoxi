@@ -388,8 +388,13 @@ describe("session kind grant", () => {
 
 describe("opaque command shared fixture", () => {
   it("matches every Go/JS opaque-command case, including the rejection paths", () => {
-    for (const c of opaqueCases as Array<{ command: string; opaque: boolean }>) {
+    for (const c of opaqueCases as Array<{ command: string; opaque: boolean; trustedOpaque?: boolean }>) {
       assertEqual(isOpaqueShellCommand(c.command, ""), c.opaque, c.command);
+      assertEqual(
+        isOpaqueShellCommand(c.command, "", { allowInlineScripts: true }),
+        c.trustedOpaque ?? c.opaque,
+        `trusted: ${c.command}`
+      );
     }
   });
 

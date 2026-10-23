@@ -81,7 +81,8 @@ var (
 // (written by "always allow" on an approval card) apply to every runtime.
 // worktree scopes a leading `cd` in smart-mode command checks.
 func approvalAutoApproves(item map[string]interface{}, pol ApprovalPolicy, rules map[string]interface{}, worktree string) bool {
-	if isOpaquePermissionRequest(item, worktree) {
+	// Full trust also lets interpreter scripts through (see isOpaqueShellCommandWith).
+	if isOpaquePermissionRequestWith(item, worktree, pol.Mode == ApprovalModeTrusted) {
 		return false
 	}
 	if isDestructivePermissionRequest(item) &&
@@ -435,6 +436,10 @@ func readTargets(item map[string]interface{}) []string {
 }
 
 func isOpaquePermissionRequest(item map[string]interface{}, worktree string) bool {
+	return isOpaquePermissionRequestWith(item, worktree, false)
+}
+
+func isOpaquePermissionRequestWith(item map[string]interface{}, worktree string, allowInlineScripts bool) bool {
 	if worktree == "" {
 		worktree = firstString(itemMetadata(item)["worktree"])
 	}
@@ -453,7 +458,7 @@ func isOpaquePermissionRequest(item map[string]interface{}, worktree string) boo
 		return true
 	}
 	for _, cmd := range candidates {
-		if isOpaqueShellCommand(cmd, worktree) {
+		if isOpaqueShellCommandWith(cmd, worktree, allowInlineScripts) {
 			return true
 		}
 	}
