@@ -4,7 +4,7 @@ import { locale, t } from "../i18n";
 import { hoxiAPI, type CommitAndPushResponse } from "../services/api";
 import type { MessagePart, SnapshotFileDiff } from "../services/sse-types";
 import { AUTO_PROVIDER_ID, isModelFree, resolveAutoModelTarget } from "./auto-models";
-import { gitAttribution } from "./git-attribution";
+import { gitAttributionEnabledFor } from "./git-attribution";
 import { resolveInternalLLMModel } from "./provider-catalog";
 import { canSteerSession } from "./session-capabilities";
 import { workspace, type SelectedModel } from "./workspace-state";
@@ -354,7 +354,7 @@ export async function executeTaskCommitAndPush(
     t("timeline.gitAgentCommitPrompt", { directory: JSON.stringify(directory) }),
     t(options?.push === false ? "timeline.gitAgentCommitOnlyPrompt" : "timeline.gitAgentCommitPushPrompt"),
     customMessage ? t("timeline.gitAgentCommitMessagePrompt", { message: JSON.stringify(customMessage) }) : "",
-    gitAttribution.enabled ? t("timeline.gitAgentCommitAttributionPrompt") : "",
+    gitAttributionEnabledFor(directory) ? t("timeline.gitAgentCommitAttributionPrompt") : "",
   ].filter(Boolean).join("\n\n");
   // Dispatch is not completion; the agent reports actual Git results in the timeline.
   // Override only this prompt; the session's saved model remains unchanged.

@@ -566,7 +566,9 @@ func (m *worktreeManager) apply(sessionID, mode string) error {
 	}()
 
 	if mode == "merge" {
-		_, err := runGit(m.rootDir, "merge", "--no-ff", "-m", appendHoxiCoAuthor("Merge hoxi session "+sessionID), meta.Branch)
+		// Resolve attribution against the session worktree that produced the
+		// change, not the project repo the merge commit lands in.
+		_, err := runGit(m.rootDir, "merge", "--no-ff", "-m", appendHoxiCoAuthorFor(meta.Directory, "Merge hoxi session "+sessionID), meta.Branch)
 		return err
 	}
 

@@ -68,8 +68,10 @@ func TestSessionCommitContentIsolationAndCumulative(t *testing.T) {
 	if got, _ := os.ReadFile(filepath.Join(dir, "file.txt")); string(got) != current {
 		t.Fatal("workspace changed")
 	}
-	if msg := sessionTestGit(t, dir, "log", "-1", "--format=%B"); !strings.Contains(msg, HoxiCoAuthorTrailer) {
-		t.Fatal("missing attribution")
+	// Default auto attribution only covers isolated session worktrees; this
+	// fixture commits straight into the project repository.
+	if msg := sessionTestGit(t, dir, "log", "-1", "--format=%B"); strings.Contains(msg, HoxiCoAuthorTrailer) {
+		t.Fatal("auto must not attribute the project repository")
 	}
 	head := sessionTestGit(t, dir, "rev-parse", "HEAD")
 	if _, err := manager.CommitSessionChanges("session", "repeat", false, []SessionDiff{diff}); err == nil || !strings.Contains(err.Error(), "nothing to commit") {

@@ -3,7 +3,7 @@ import { t } from "../i18n";
 import { hoxiAPI, type CommitAndPushResponse } from "../services/api";
 import type { SnapshotFileDiff } from "../services/sse-types";
 import { canQuickCommitSession, commitModelSpec, executeTaskCommitAndPush, generateSmartCommitMessage, setCommitModelSpec, uncommittedSessionFiles } from "../store/git-commit";
-import { sessionDirectory, setGitAttribution, setWorkspace, workspace } from "../store/workspace";
+import { sessionDirectory, setGitAttribution, setWorkspace, workspace, gitAttribution } from "../store/workspace";
 import { assertDeepEqual, assertEqual, assertTrue, describe, it } from "./test-harness";
 
 let nextID = 0;
@@ -223,19 +223,44 @@ describe("task commit and push", () => {
     });
   });
 
-  it("drops the attribution instruction when commit attribution is off", async () => {
+  it("drops the attribution instruction when commit attribution is never", async () => {
     await withCommitFixture(async ({ id, directory, calls }) => {
-      setGitAttribution("enabled", false);
+      setGitAttribution("mode", "never");
       try {
         assertEqual(await executeTaskCommitAndPush(id, { push: false }), id);
       } finally {
-        setGitAttribution("enabled", true);
+        setGitAttribution("mode", "auto");
       }
       assertEqual(calls.send[0][1], [
         t("timeline.gitAgentCommitPrompt", { directory: JSON.stringify(directory) }),
         t("timeline.gitAgentCommitOnlyPrompt"),
       ].join("\n\n"));
       assertEqual(String(calls.send[0][1]).includes("code@hoxi.ai"), false);
+    });
+  });
+
+  it("adds the attribution instruction to every directory in always mode", async () => {
+    await withCommitFixture(async ({ id, calls }) => {
+      setWorkspace("sessions", (session) => session.id === id, "directory", "/plain-repo/project");
+      setGitAttribution("mode", "always");
+      try {
+        assertEqual(await executeTaskCommitAndPush(id, { push: false }), id);
+      } finally {
+        setGitAttribution("mode", "auto");
+      }
+      assertEqual(String(calls.send[0][1]).includes(t("timeline.gitAgentCommitAttributionPrompt")), true);
+    });
+  });
+
+  it("skips attribution for a plain repo in auto mode", async () => {
+    await withCommitFixture(async ({ id, calls }) => {
+      // The default fixture directory is a session worktree, so the auto path
+      // is covered above; here the session lives in a plain project repo.
+      setWorkspace("sessions", (session) => session.id === id, "directory", "/plain-repo/project");
+      assertEqual(await executeTaskCommitAndPush(id, { push: false }), id);
+      assertEqual(calls.send.length, 1);
+      assertEqual(String(calls.send[0][1]).includes("code@hoxi.ai"), false);
+      assertEqual(gitAttribution.mode, "auto");
     });
   });
 

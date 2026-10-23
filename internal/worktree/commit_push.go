@@ -217,7 +217,6 @@ func (m *worktreeManager) CommitAndPushWorktree(sessionID, message string, push 
 		if msg == "" {
 			return CommitAndPushResult{}, errors.New("commit message is required")
 		}
-		commitMsg := appendHoxiCoAuthor(msg)
 		var hashes []string
 		var firstBranch, firstRemote, firstRepoDir string
 
@@ -230,6 +229,7 @@ func (m *worktreeManager) CommitAndPushWorktree(sessionID, message string, push 
 					_, _ = runGit(r.Dir, "reset", "-q", "--", prefix)
 				}
 			}
+			commitMsg := appendHoxiCoAuthorFor(r.Dir, msg)
 			if _, err := runGit(r.Dir, "commit", "-m", commitMsg); err != nil {
 				return CommitAndPushResult{}, err
 			}
@@ -282,7 +282,7 @@ func (m *worktreeManager) CommitAndPushWorktree(sessionID, message string, push 
 		if msg == "" {
 			return CommitAndPushResult{}, errors.New("commit message is required")
 		}
-		commitMsg := appendHoxiCoAuthor(msg)
+		commitMsg := appendHoxiCoAuthorFor(workDir, msg)
 		if _, err := runGit(workDir, "add", "-A"); err != nil {
 			return CommitAndPushResult{}, err
 		}

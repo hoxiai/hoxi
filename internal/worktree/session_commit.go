@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -446,7 +447,7 @@ func (m *worktreeManager) CommitSessionChanges(sessionID, message string, push b
 		}
 		// Read the preference once so the appended trailer and the hook check agree
 		// even if the setting changes mid-commit.
-		attribution := AttributionEnabled()
+		attribution := AttributionEnabledFor(dir)
 		if _, err := sessionGit(dir, candidateIndex, temp, nil, "-c", "core.bare=false", "commit", "-m", withCoAuthor(message, attribution)); err != nil {
 			return fail(err)
 		}
@@ -459,8 +460,13 @@ func (m *worktreeManager) CommitSessionChanges(sessionID, message string, push b
 			return fail(errors.New("commit hook changed the candidate tree or parent; commit not published"))
 		}
 		body, err := sessionGit(dir, candidateIndex, temp, nil, "log", "-1", "--format=%B")
-		if err != nil || (attribution && !strings.Contains(string(body), HoxiCoAuthorTrailer)) {
-			return fail(errors.New("commit hook removed Hoxi attribution; commit not published"))
+		if err != nil {
+			return fail(err)
+		}
+		// A user hook that rewrites the message must not block publishing: the
+		// commit itself is verified above, and attribution is a preference.
+		if attribution && !strings.Contains(string(body), HoxiCoAuthorTrailer) {
+			slog.Warn("commit hook removed hoxi attribution", "sessionID", sessionID)
 		}
 		newHead = parts[0]
 		updated, err := os.ReadFile(realIndex)

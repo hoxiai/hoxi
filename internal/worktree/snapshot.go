@@ -42,7 +42,7 @@ func snapshotWorktree(dir, sessionID string) error {
 	if _, err = runGit(dir, "add", "-A"); err != nil {
 		return fmt.Errorf("stage worktree snapshot: %w", err)
 	}
-	if _, err = runGit(dir, "commit", "-m", appendHoxiCoAuthor("chore(hoxi): snapshot before apply ("+sessionID+")")); err != nil {
+	if _, err = runGit(dir, "commit", "-m", appendHoxiCoAuthorFor(dir, "chore(hoxi): snapshot before apply ("+sessionID+")")); err != nil {
 		return fmt.Errorf("commit worktree snapshot: %w", err)
 	}
 	return nil

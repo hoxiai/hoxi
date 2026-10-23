@@ -41,13 +41,17 @@ When creating any git commit in a project developed with Hoxi, always append the
 Co-authored-by: Hoxi <code@hoxi.ai>
 </hoxi_git_attribution>`;
 
-// gitAttributionEnabled mirrors internal/worktree.LoadAttribution: the rule is
-// injected unless ~/.hoxi/git-attribution.json (or $HOXI_HOME) explicitly opts
-// out. Missing or malformed state keeps attribution on.
+// gitAttributionMode mirrors internal/worktree.LoadAttribution: `auto` (the
+// default), `always`, or `never`, with the legacy boolean `enabled` still read
+// as always/never. This plugin only loads inside a Hoxi-configured project, so
+// `auto` keeps injecting the rule there; `never` opts out.
 async function gitAttributionEnabled() {
   const home = process.env.HOXI_HOME?.trim() || path.join(os.homedir(), ".hoxi");
   try {
     const stored = JSON.parse(await fs.readFile(path.join(home, "git-attribution.json"), "utf8"));
+    const mode = typeof stored?.mode === "string" ? stored.mode.trim().toLowerCase() : "";
+    if (mode === "never") return false;
+    if (mode === "always" || mode === "auto") return true;
     return stored?.enabled !== false;
   } catch {
     return true;

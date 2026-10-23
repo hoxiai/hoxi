@@ -23,6 +23,7 @@ import {
   type SidebarProjectMode,
   type WorktreeApplyStrategy,
 } from "../../store/workspace";
+import type { GitAttributionMode } from "../../services/git-attribution";
 import { t } from "../../i18n";
 import {
   SegmentedPills,
@@ -151,8 +152,25 @@ export function WorkspaceGitSettingsTab() {
           label={t("settings.gitAttributionTitle")}
           tip={t("settings.gitAttributionDesc")}
         >
-          <ToggleSwitch
-            checked={gitAttribution.enabled}
+          <SegmentedPills<GitAttributionMode>
+            value={gitAttribution.mode}
+            options={[
+              {
+                id: "auto",
+                label: () => t("settings.gitAttributionAutoTitle"),
+                tip: () => t("settings.gitAttributionAutoDesc"),
+              },
+              {
+                id: "always",
+                label: () => t("settings.gitAttributionAlwaysTitle"),
+                tip: () => t("settings.gitAttributionAlwaysDesc"),
+              },
+              {
+                id: "never",
+                label: () => t("settings.gitAttributionNeverTitle"),
+                tip: () => t("settings.gitAttributionNeverDesc"),
+              },
+            ]}
             onChange={(val) => void saveGitAttribution(val)}
           />
         </SettingRow>

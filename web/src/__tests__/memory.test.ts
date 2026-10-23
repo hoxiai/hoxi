@@ -166,8 +166,12 @@ describe("8-dim session memory", () => {
       assertTrue((await systemFor("ses_default")).includes("Co-authored-by: Hoxi"), "missing setting keeps attribution on");
       await fs.writeFile(path.join(hoxiHome, "git-attribution.json"), '{"enabled":false}\n', "utf8");
       assertEqual((await systemFor("ses_off")).includes("hoxi_git_attribution"), false);
-      await fs.writeFile(path.join(hoxiHome, "git-attribution.json"), '{"enabled":true}\n', "utf8");
-      assertTrue((await systemFor("ses_on")).includes("Co-authored-by: Hoxi"));
+      await fs.writeFile(path.join(hoxiHome, "git-attribution.json"), '{"mode":"never"}\n', "utf8");
+      assertEqual((await systemFor("ses_never")).includes("hoxi_git_attribution"), false);
+      await fs.writeFile(path.join(hoxiHome, "git-attribution.json"), '{"mode":"auto"}\n', "utf8");
+      assertTrue((await systemFor("ses_auto")).includes("Co-authored-by: Hoxi"));
+      await fs.writeFile(path.join(hoxiHome, "git-attribution.json"), '{"mode":"always"}\n', "utf8");
+      assertTrue((await systemFor("ses_always")).includes("Co-authored-by: Hoxi"));
     } finally {
       if (previousHome === undefined) delete env.HOXI_HOME;
       else env.HOXI_HOME = previousHome;

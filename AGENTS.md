@@ -209,7 +209,7 @@ Flutter + Riverpod + GoRouter + Dio，四栏：沟通 · 工程 · 专栏 · 我
    - 每次代码变更完成后，必须通过类型检查、行数与架构边界门禁、语言包校验、单元测试与构建验证（前端执行 `npm --prefix web run lint && npm --prefix web test && npm --prefix web run build`，后端执行 `go vet ./... && go test ./... && go build ./...`，移动端执行 `python3 client/scripts/check_source_lines.py && flutter analyze client && (cd client && flutter test)`），确保零编译错误、零越界引用、零词条缺失与测试全绿。
 
 10. **Git 提交共同作者署名规范 (Git Commit Co-Author Attribution)**
-    - 凡由 Hoxi 参与开发的项目（包括当前仓库本身及通过 Hoxi 开发的任意工作区），在执行 Git 提交时（含 Worktree UI 提交、会话合并提交、移动端语音提交及 Agent 执行 `git commit`），默认在 Commit Message 尾部追加共同作者尾注：`Co-authored-by: Hoxi <code@hoxi.ai>`；桌面端与 Runner 提交遵循桌面 Git 署名开关配置（`~/.hoxi/git-attribution.json`，默认开启，可通过 `GET/PUT /api/hoxi/git/attribution` 控制）。
+    - 凡由 Hoxi 参与开发的项目（包括当前仓库本身及通过 Hoxi 开发的任意工作区），在执行 Git 提交时（含 Worktree UI 提交、会话合并提交、移动端语音提交及 Agent 执行 `git commit`），默认在 Commit Message 尾部追加共同作者尾注：`Co-authored-by: Hoxi <code@hoxi.ai>`。桌面端与 Runner 提交遵循桌面 Git 署名配置（`~/.hoxi/git-attribution.json`，`GET/PUT /api/hoxi/git/attribution`）：默认 `auto` 只给 Hoxi 隔离会话工作树（`<project>/.hoxi/worktrees/*`）的提交署名，用户自己仓库里的提交保持原样，避免给上游/客户仓库留下意外尾注；`always` 全部署，`never` 全部关闭。旧版布尔 `{"enabled":bool}` 仍可读（true→always、false→never）。
 
 11. **移动端控制链路与语音约束 (Mobile Control & Voice Constraints)**
     - **聊天内直达，但修改必须确认**：移动端新增查询能力接入 [`ChatInformationEngine`](client/lib/features/chat_hub/data/chat_information_engine.dart)；新增控制动作放入 `ChatSessionActions` / `ChatInfrastructureActions`，同时接入工具清单（`chat_intent_tools.dart` + `chat_intent_dispatcher.dart`）与关键词路径（[`ChatActionExecutor`](client/lib/features/chat_hub/data/chat_action_executor.dart)），修改类动作必须生成确认计划，不得按列表首项默认执行。
