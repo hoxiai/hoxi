@@ -1,6 +1,7 @@
 // web/src/components/settings/UsageHistoryTab.tsx
-// Daily token/cost/code history plus a per-model rollup. Reads raw counters
-// from the gateway and prices them with the same resolver as the header pulse.
+// Usage & cost panel. Defaults to a year overview (heatmap + today's tally);
+// picking a window switches to a plain daily list, since the bar charts no
+// longer add anything over the table.
 import { createMemo, createSignal, For, onMount, Show } from "solid-js";
 import { ChevronRight, RefreshCw, X } from "lucide-solid";
 import { t } from "../../i18n";
@@ -8,6 +9,7 @@ import {
   loadUsageHistory,
   selectUsageCustomRange,
   selectUsageDays,
+  selectUsageOverview,
   usageHistory,
   usageHistoryError,
   usageHistoryLoading,
@@ -17,14 +19,21 @@ import {
   USAGE_HISTORY_RANGES,
   type UsageHistoryDay,
   type UsageHistoryRange,
+  type UsageHistoryTotals,
 } from "../../store/workspace";
 import { formatCompactTokens, formatUsd } from "./usage-format";
-import { UsageTrendChart } from "./UsageTrendChart";
+import { UsageHeatmap } from "./UsageHeatmap";
 
 const button =
   "inline-flex items-center justify-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2 py-1.5 text-[12px] text-[var(--text-primary)] hover:bg-[var(--bg-hover)] disabled:opacity-50 cursor-pointer";
 
 const card = "rounded-xl bg-[var(--bg-inset)]/60 px-3 py-2";
+const pill = (active: boolean) =>
+  `rounded-md px-2 py-1 text-[11px] font-medium transition-colors cursor-pointer ${
+    active
+      ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]"
+      : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]"
+  }`;
 
 function toDateInput(date: Date): string {
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -32,17 +41,46 @@ function toDateInput(date: Date): string {
   return `${date.getFullYear()}-${month}-${day}`;
 }
 
-function Metric(props: { label: string; value: string; title?: string; tone?: "cost" }) {
+function Metric(props: { label: string; value: string; title?: string }) {
   return (
     <div class={card} title={props.title}>
       <div class="text-[11px] text-[var(--text-muted)]">{props.label}</div>
-      <div
-        class={`mt-1 font-mono text-[15px] font-semibold leading-tight ${
-          props.tone === "cost" ? "text-[var(--text-primary)]" : "text-[var(--text-primary)]"
-        }`}
-      >
+      <div class="mt-1 font-mono text-[15px] font-semibold leading-tight text-[var(--text-primary)]">
         {props.value}
       </div>
+    </div>
+  );
+}
+
+function MetricGrid(props: { totals: UsageHistoryTotals }) {
+  return (
+    <div class="space-y-2">
+      <div class="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <Metric
+          label={t("settings.usageTotalTokens")}
+          value={formatCompactTokens(props.totals.totalTokens)}
+          title={`${props.totals.totalTokens.toLocaleString()} tokens`}
+        />
+        <Metric
+          label={t("settings.usageTotalCost")}
+          value={formatUsd(props.totals.cost)}
+          title={
+            props.totals.unpricedModels.length > 0
+              ? t("header.pulseCostUnpriced", { models: props.totals.unpricedModels.join(", ") })
+              : t("header.pulseCostTooltip")
+          }
+        />
+        <Metric label={t("settings.usageTotalTurns")} value={props.totals.turns.toLocaleString()} />
+        <Metric
+          label={t("settings.usageTotalCommits")}
+          value={`${props.totals.commits} · +${props.totals.additions}/-${props.totals.deletions}`}
+        />
+      </div>
+      <Show when={props.totals.unpricedModels.length > 0}>
+        <p class="text-[11px] leading-relaxed text-[var(--warn-text)]">
+          {t("header.pulseCostUnpriced", { models: props.totals.unpricedModels.join(", ") })}
+        </p>
+      </Show>
     </div>
   );
 }
@@ -101,36 +139,39 @@ function DayRow(props: { day: UsageHistoryDay; onViewModels: () => void }) {
 
 export default function UsageHistoryTab() {
   const initial = usageSelection();
-  const today = toDateInput(new Date());
-  const defaultStart = toDateInput(new Date(Date.now() - 13 * 86_400_000));
+  const todayDate = toDateInput(new Date());
   const [customOpen, setCustomOpen] = createSignal(initial.kind === "custom");
   const [customStart, setCustomStart] = createSignal(
-    initial.kind === "custom" ? initial.range.start : defaultStart
+    initial.kind === "custom" ? initial.range.start : toDateInput(new Date(Date.now() - 13 * 86_400_000))
   );
   const [customEnd, setCustomEnd] = createSignal(
-    initial.kind === "custom" ? initial.range.end : today
+    initial.kind === "custom" ? initial.range.end : todayDate
   );
 
   onMount(() => {
     void loadUsageHistory(usageSelection());
   });
 
+  const isOverview = () => usageSelection().kind === "overview";
   const totals = createMemo(() => usageHistoryTotals(usageHistory()));
+  const heatPoints = createMemo(() =>
+    usageHistory().map((day) => ({ date: day.date, tokens: day.totalTokens }))
+  );
+  const todayDay = createMemo(() => usageHistory().find((day) => day.date === todayDate) ?? null);
+  const todayTotals = createMemo(() => usageHistoryTotals(todayDay() ? [todayDay()!] : []));
+
   const [detailDay, setDetailDay] = createSignal<UsageHistoryDay | null>(null);
   const detailModels = createMemo(() => {
     const day = detailDay();
     return day ? usageHistoryModels([day]) : [];
   });
-  const points = createMemo(() =>
-    usageHistory().map((d) => ({ date: d.date, tokens: d.totalTokens, cost: d.cost }))
-  );
-  const hasData = createMemo(() => usageHistory().some((d) => d.totalTokens > 0 || d.turns > 0));
+
+  const hasData = createMemo(() => usageHistory().some((day) => day.totalTokens > 0 || day.turns > 0));
 
   const isPresetActive = (range: UsageHistoryRange) => {
     const sel = usageSelection();
     return sel.kind === "days" && sel.days === range;
   };
-  const isCustomActive = () => usageSelection().kind === "custom";
 
   const applyCustom = () => {
     const start = customStart();
@@ -152,15 +193,21 @@ export default function UsageHistoryTab() {
         </div>
         <div class="flex flex-wrap items-center gap-1.5">
           <div class="flex items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-0.5">
+            <button
+              type="button"
+              class={pill(isOverview())}
+              onClick={() => {
+                setCustomOpen(false);
+                selectUsageOverview();
+              }}
+            >
+              {t("settings.usageRangeOverview")}
+            </button>
             <For each={USAGE_HISTORY_RANGES}>
               {(range: UsageHistoryRange) => (
                 <button
                   type="button"
-                  class={`rounded-md px-2 py-1 text-[11px] font-medium transition-colors cursor-pointer ${
-                    isPresetActive(range)
-                      ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]"
-                      : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]"
-                  }`}
+                  class={pill(isPresetActive(range))}
                   onClick={() => {
                     setCustomOpen(false);
                     selectUsageDays(range);
@@ -172,11 +219,7 @@ export default function UsageHistoryTab() {
             </For>
             <button
               type="button"
-              class={`rounded-md px-2 py-1 text-[11px] font-medium transition-colors cursor-pointer ${
-                isCustomActive()
-                  ? "bg-[var(--accent-surface)] text-[var(--accent-primary)]"
-                  : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]"
-              }`}
+              class={pill(usageSelection().kind === "custom")}
               onClick={() => {
                 setCustomOpen(true);
                 applyCustom();
@@ -191,7 +234,7 @@ export default function UsageHistoryTab() {
                 type="date"
                 class="bg-transparent text-[11px] text-[var(--text-primary)] outline-none"
                 aria-label={t("settings.usageCustomFrom")}
-                max={today}
+                max={todayDate}
                 value={customStart()}
                 onInput={(e) => {
                   setCustomStart(e.currentTarget.value);
@@ -203,7 +246,7 @@ export default function UsageHistoryTab() {
                 type="date"
                 class="bg-transparent text-[11px] text-[var(--text-primary)] outline-none"
                 aria-label={t("settings.usageCustomTo")}
-                max={today}
+                max={todayDate}
                 value={customEnd()}
                 onInput={(e) => {
                   setCustomEnd(e.currentTarget.value);
@@ -231,92 +274,76 @@ export default function UsageHistoryTab() {
         </p>
       </Show>
 
-      <div class="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        <Metric
-          label={t("settings.usageTotalTokens")}
-          value={formatCompactTokens(totals().totalTokens)}
-          title={`${totals().totalTokens.toLocaleString()} tokens`}
-        />
-        <Metric
-          label={t("settings.usageTotalCost")}
-          value={formatUsd(totals().cost)}
-          tone="cost"
-          title={
-            totals().unpricedModels.length > 0
-              ? t("header.pulseCostUnpriced", { models: totals().unpricedModels.join(", ") })
-              : t("header.pulseCostTooltip")
-          }
-        />
-        <Metric
-          label={t("settings.usageTotalTurns")}
-          value={totals().turns.toLocaleString()}
-        />
-        <Metric
-          label={t("settings.usageTotalCommits")}
-          value={`${totals().commits} · +${totals().additions}/-${totals().deletions}`}
-        />
-      </div>
-
-      <Show when={totals().unpricedModels.length > 0}>
-        <p class="text-[11px] leading-relaxed text-[var(--warn-text)]">
-          {t("header.pulseCostUnpriced", { models: totals().unpricedModels.join(", ") })}
-        </p>
-      </Show>
-
-      <section class="space-y-2">
-        <h4 class="text-[12px] font-semibold text-[var(--text-secondary)]">
-          {t("settings.usageTrendTokens")}
-        </h4>
-        <UsageTrendChart points={points()} metric="tokens" />
-      </section>
-
-      <section class="space-y-2">
-        <h4 class="text-[12px] font-semibold text-[var(--text-secondary)]">
-          {t("settings.usageTrendCost")}
-        </h4>
-        <UsageTrendChart points={points()} metric="cost" height={90} />
-      </section>
-
       <Show
-        when={hasData()}
+        when={isOverview()}
         fallback={
-          <p class="rounded-xl border border-dashed border-[var(--border-subtle)] px-3 py-6 text-center text-[12px] text-[var(--text-muted)]">
-            {t("settings.usageEmpty")}
-          </p>
+          <div class="space-y-5">
+            <MetricGrid totals={totals()} />
+            <Show
+              when={hasData()}
+              fallback={
+                <p class="rounded-xl border border-dashed border-[var(--border-subtle)] px-3 py-6 text-center text-[12px] text-[var(--text-muted)]">
+                  {t("settings.usageEmpty")}
+                </p>
+              }
+            >
+              <section class="space-y-2">
+                <h4 class="text-[12px] font-semibold text-[var(--text-secondary)]">
+                  {t("settings.usageDailyTable")}
+                </h4>
+                <div class="overflow-x-auto rounded-xl border border-[var(--border-subtle)]">
+                  <table class="w-full min-w-[640px] border-collapse text-[11px]">
+                    <thead>
+                      <tr class="bg-[var(--bg-inset)]/60 text-[var(--text-muted)]">
+                        <th class="px-2 py-1.5 text-left font-medium">{t("settings.usageColDate")}</th>
+                        <th class="px-2 py-1.5 text-right font-medium">{t("settings.usageColModels")}</th>
+                        <th class="px-2 py-1.5 text-right font-medium">{t("settings.usageColTurns")}</th>
+                        <th class="px-2 py-1.5 text-right font-medium">
+                          {t("settings.usageColSessions")}
+                        </th>
+                        <th class="px-2 py-1.5 text-right font-medium">{t("settings.usageColTokens")}</th>
+                        <th class="px-2 py-1.5 text-right font-medium">{t("settings.usageColInput")}</th>
+                        <th class="px-2 py-1.5 text-right font-medium">{t("settings.usageColOutput")}</th>
+                        <th class="px-2 py-1.5 text-right font-medium">{t("settings.usageColCost")}</th>
+                        <th class="px-2 py-1.5 text-right font-medium">{t("settings.usageColCode")}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <For each={usageHistory().slice().reverse()}>
+                        {(day) => <DayRow day={day} onViewModels={() => setDetailDay(day)} />}
+                      </For>
+                    </tbody>
+                  </table>
+                </div>
+                <p class="text-[10px] leading-relaxed text-[var(--text-faint)]">
+                  {t("settings.usageNote")}
+                </p>
+              </section>
+            </Show>
+          </div>
         }
       >
-        <section class="space-y-2">
-          <h4 class="text-[12px] font-semibold text-[var(--text-secondary)]">
-            {t("settings.usageDailyTable")}
-          </h4>
-          <div class="overflow-x-auto rounded-xl border border-[var(--border-subtle)]">
-            <table class="w-full min-w-[640px] border-collapse text-[11px]">
-              <thead>
-                <tr class="bg-[var(--bg-inset)]/60 text-[var(--text-muted)]">
-                  <th class="px-2 py-1.5 text-left font-medium">{t("settings.usageColDate")}</th>
-                  <th class="px-2 py-1.5 text-right font-medium">{t("settings.usageColModels")}</th>
-                  <th class="px-2 py-1.5 text-right font-medium">{t("settings.usageColTurns")}</th>
-                  <th class="px-2 py-1.5 text-right font-medium">
-                    {t("settings.usageColSessions")}
-                  </th>
-                  <th class="px-2 py-1.5 text-right font-medium">{t("settings.usageColTokens")}</th>
-                  <th class="px-2 py-1.5 text-right font-medium">{t("settings.usageColInput")}</th>
-                  <th class="px-2 py-1.5 text-right font-medium">{t("settings.usageColOutput")}</th>
-                  <th class="px-2 py-1.5 text-right font-medium">{t("settings.usageColCost")}</th>
-                  <th class="px-2 py-1.5 text-right font-medium">{t("settings.usageColCode")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <For each={usageHistory().slice().reverse()}>
-                  {(day) => <DayRow day={day} onViewModels={() => setDetailDay(day)} />}
-                </For>
-              </tbody>
-            </table>
-          </div>
-          <p class="text-[10px] leading-relaxed text-[var(--text-faint)]">
-            {t("settings.usageNote")}
-          </p>
-        </section>
+        <div class="space-y-5">
+          <UsageHeatmap points={heatPoints()} />
+          <section class="space-y-2">
+            <div class="flex items-center justify-between gap-3">
+              <h4 class="text-[12px] font-semibold text-[var(--text-secondary)]">
+                {t("settings.usageTodayTitle")} · {todayDate}
+              </h4>
+              <Show when={(todayDay()?.models.length ?? 0) > 0}>
+                <button
+                  type="button"
+                  class="inline-flex items-center gap-0.5 rounded-md px-1.5 py-0.5 text-[11px] text-[var(--accent-primary)] hover:bg-[var(--bg-hover)] cursor-pointer"
+                  onClick={() => setDetailDay(todayDay())}
+                >
+                  {t("settings.usageModelDetailView")}
+                  <ChevronRight size={12} />
+                </button>
+              </Show>
+            </div>
+            <MetricGrid totals={todayTotals()} />
+          </section>
+        </div>
       </Show>
 
       <Show when={detailDay()}>

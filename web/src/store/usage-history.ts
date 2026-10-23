@@ -28,13 +28,17 @@ export interface UsageCustomRange {
   end: string;
 }
 
-/** Either a fixed rolling window in days, or an explicit `YYYY-MM-DD` range. */
+/** Either the year overview heatmap, a fixed rolling window, or an explicit range. */
 export type UsageSelection =
+  | { kind: "overview" }
   | { kind: "days"; days: UsageHistoryRange }
   | { kind: "custom"; range: UsageCustomRange };
 
+/** Days fetched for the overview heatmap (the backend's maximum window). */
+export const USAGE_OVERVIEW_DAYS = 365;
+
 const [usageHistory, setUsageHistory] = createSignal<UsageHistoryDay[]>([]);
-const [usageSelection, setUsageSelection] = createSignal<UsageSelection>({ kind: "days", days: 30 });
+const [usageSelection, setUsageSelection] = createSignal<UsageSelection>({ kind: "overview" });
 const [usageHistoryLoading, setUsageHistoryLoading] = createSignal(false);
 const [usageHistoryError, setUsageHistoryError] = createSignal("");
 
@@ -45,6 +49,7 @@ export { usageHistory, usageSelection, usageHistoryLoading, usageHistoryError };
 
 function sameSelection(a: UsageSelection, b: UsageSelection): boolean {
   if (a.kind !== b.kind) return false;
+  if (a.kind === "overview" && b.kind === "overview") return true;
   if (a.kind === "days" && b.kind === "days") return a.days === b.days;
   if (a.kind === "custom" && b.kind === "custom") {
     return a.range.start === b.range.start && a.range.end === b.range.end;
@@ -99,7 +104,10 @@ export async function loadUsageHistory(
             startDate: selection.range.start,
             endDate: selection.range.end,
           })
-        : await hoxiAPI.getDevPulseHistory(selection.days, workspace.rootDir || undefined);
+        : await hoxiAPI.getDevPulseHistory(
+            selection.kind === "overview" ? USAGE_OVERVIEW_DAYS : selection.days,
+            workspace.rootDir || undefined
+          );
     if (gen !== historyGeneration) return;
     if (!res || !Array.isArray(res.days)) {
       setUsageHistory([]);
@@ -120,6 +128,10 @@ export async function loadUsageHistory(
 
 export function selectUsageDays(days: UsageHistoryRange): void {
   void loadUsageHistory({ kind: "days", days });
+}
+
+export function selectUsageOverview(): void {
+  void loadUsageHistory({ kind: "overview" });
 }
 
 export function selectUsageCustomRange(start: string, end: string): void {

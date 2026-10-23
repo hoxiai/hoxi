@@ -9,6 +9,7 @@ import {
   usageHistoryModels,
   usageSelection,
   usageHistoryTotals,
+  USAGE_OVERVIEW_DAYS,
   type UsageHistoryDay,
 } from "../store/usage-history";
 import { assertEqual, assertTrue, describe, it } from "./test-harness";
@@ -204,6 +205,21 @@ describe("usage history pricing", () => {
       assertEqual(unknown.cost, null, "unpriced model keeps a null cost");
       assertEqual(rows[0].modelID, "claude-opus-5", "sorted by tokens desc");
     });
+  });
+
+  it("loads the full year for the overview selection", async () => {
+    const origHistory = hoxiAPI.getDevPulseHistory;
+    let seenDays = -1;
+    try {
+      hoxiAPI.getDevPulseHistory = async (days) => {
+        seenDays = days ?? -1;
+        return { days: [], startDate: "2025-10-23", endDate: "2026-10-23", timezone: "UTC" };
+      };
+      await loadUsageHistory({ kind: "overview" }, true);
+      assertEqual(seenDays, USAGE_OVERVIEW_DAYS, "overview fetches the full year");
+    } finally {
+      hoxiAPI.getDevPulseHistory = origHistory;
+    }
   });
 
   it("ignores stale loadUsageHistory responses when range changes", async () => {
