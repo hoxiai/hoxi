@@ -590,3 +590,153 @@ func TestRuntimeCapabilitiesMatrix(t *testing.T) {
 		t.Fatalf("expected qoder capabilities mismatch, got %+v", qdCaps)
 	}
 }
+
+func TestPromptReceiptAndClientRequestIdDeduplication(t *testing.T) {
+	repoDir := initTestGitRepo(t)
+	storePath := filepath.Join(t.TempDir(), "runner-sessions.json")
+	svc := NewService(repoDir, worktree.NewManager(repoDir), statusbar.NewTracker(), storePath)
+	defer svc.CloseAll()
+
+	mux := http.NewServeMux()
+	svc.RegisterRoutes(mux)
+
+	binRoot := t.TempDir()
+	agyDir := filepath.Join(binRoot, "bin")
+	if err := os.MkdirAll(agyDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	countFile := filepath.Join(t.TempDir(), "invocations.log")
+	t.Setenv("GEMINI_HOME", binRoot)
+	t.Setenv("PATH", agyDir)
+	t.Setenv("TEST_COUNT_FILE", countFile)
+	script := `#!/bin/sh
+printf '1\n' >> "$TEST_COUNT_FILE"
+cat >/dev/null
+printf '%s\n' '{"conversation_id":"conv-idemp-1","event":"init","init":{"model":"claude-sonnet-4-6","permission_mode":"accept-edits"}}'
+printf '%s\n' '{"conversation_id":"conv-idemp-1","event":"result","result":{"conversation_id":"conv-idemp-1","response":"OK","status":"DONE"}}'
+`
+	execstub.Write(t, agyDir, "agy", script)
+
+	createBody, _ := json.Marshal(map[string]string{
+		"runtime":     "antigravity",
+		"title":       "Idempotency Test",
+		"modelID":     "claude-sonnet-4-6",
+		"directory":   repoDir,
+		"sandboxMode": "local",
+	})
+	recCreate := httptest.NewRecorder()
+	mux.ServeHTTP(recCreate, httptest.NewRequest(http.MethodPost, "/api/hoxi/runner/sessions", bytes.NewReader(createBody)))
+	if recCreate.Code != http.StatusOK {
+		t.Fatalf("create session failed (%d): %s", recCreate.Code, recCreate.Body.String())
+	}
+	var created SessionInfo
+	if err := json.Unmarshal(recCreate.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+
+	ch, unsub := svc.Subscribe(created.ID)
+	defer unsub()
+
+	sendPrompt := func(body string, headerKey string) (int, PromptReceipt) {
+		req := httptest.NewRequest(http.MethodPost, "/api/hoxi/runner/sessions/"+created.ID+"/prompt_async", strings.NewReader(body))
+		if headerKey != "" {
+			req.Header.Set("X-Idempotency-Key", headerKey)
+		}
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		var receipt PromptReceipt
+		_ = json.Unmarshal(rec.Body.Bytes(), &receipt)
+		return rec.Code, receipt
+	}
+
+	code1, r1 := sendPrompt(`{"text":"first command","clientRequestId":"req-101"}`, "")
+	if code1 != http.StatusOK || !r1.OK || r1.InstructionID != 1 || !strings.HasPrefix(r1.MessageID, "msg_u_") || r1.ClientRequestID != "req-101" || r1.Deduplicated {
+		t.Fatalf("unexpected first receipt (%d): %+v", code1, r1)
+	}
+
+	// Retry with same clientRequestId in body (simulating client timeout/retry) -> deduplicated receipt, no 409 or second process
+	codeDup1, rDup1 := sendPrompt(`{"text":"first command","clientRequestId":"req-101"}`, "")
+	if codeDup1 != http.StatusOK || !rDup1.OK || !rDup1.Deduplicated || rDup1.InstructionID != r1.InstructionID || rDup1.MessageID != r1.MessageID {
+		t.Fatalf("expected deduplicated receipt matching first turn, got (%d): %+v", codeDup1, rDup1)
+	}
+
+	// Retry via X-Idempotency-Key header -> also deduplicated
+	codeDup2, rDup2 := sendPrompt(`{"text":"first command"}`, "req-101")
+	if codeDup2 != http.StatusOK || !rDup2.Deduplicated || rDup2.InstructionID != r1.InstructionID {
+		t.Fatalf("expected header-based deduplication, got (%d): %+v", codeDup2, rDup2)
+	}
+
+	waitForEvent(t, ch, "session.idle")
+	for deadline := time.Now().Add(2 * time.Second); len(svc.busySessionIDs()) > 0 && time.Now().Before(deadline); {
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// New clientRequestId -> executes second turn with instructionId = 2
+	code2, r2 := sendPrompt(`{"text":"second command","clientRequestId":"req-102"}`, "")
+	if code2 != http.StatusOK || !r2.OK || r2.InstructionID != 2 || r2.MessageID == r1.MessageID || r2.Deduplicated {
+		t.Fatalf("unexpected second receipt (%d): %+v", code2, r2)
+	}
+	waitForEvent(t, ch, "session.idle")
+
+	invocations, err := os.ReadFile(countFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lines := strings.Split(strings.TrimSpace(string(invocations)), "\n"); len(lines) != 2 {
+		t.Fatalf("expected exactly 2 CLI invocations after 3 requests (1 deduplicated), got %d", len(lines))
+	}
+}
+
+func TestPermissionReplyClientRequestIdIdempotency(t *testing.T) {
+	t.Parallel()
+	f := newGateFixture(t)
+	events, unsub := f.svc.Subscribe("ses_agy_gate")
+	defer unsub()
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"conversationId": "conv-1",
+		"stepIdx":        9,
+		"toolCall": map[string]interface{}{
+			"name": "mystery_tool_idemp",
+			"args": map[string]interface{}{"Target": "workspace"},
+		},
+	})
+	result := f.asyncHook(t, body)
+	asked := waitForEvent(t, events, "permission.asked")
+	id, _ := asked.Properties["id"].(string)
+	if id == "" {
+		t.Fatal("missing permission id")
+	}
+
+	postReply := func(payload map[string]string) int {
+		raw, _ := json.Marshal(payload)
+		resp, err := http.Post(f.srv.URL+"/api/hoxi/permission/"+id+"/reply", "application/json", bytes.NewReader(raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+
+	if code := postReply(map[string]string{"reply": "once", "clientRequestId": "perm-req-1"}); code != http.StatusOK {
+		t.Fatalf("first permission reply failed: %d", code)
+	}
+	if d := <-result; d.Decision != "auto_approve" {
+		t.Fatalf("expected auto_approve after once reply, got %q", d.Decision)
+	}
+
+	// Same clientRequestId + same decision retried after network blip -> 200 OK
+	if code := postReply(map[string]string{"reply": "once", "clientRequestId": "perm-req-1"}); code != http.StatusOK {
+		t.Fatalf("idempotent retry with same clientRequestId should return 200, got %d", code)
+	}
+
+	// Same clientRequestId with different decision -> 404 (not treated as idempotent match)
+	if code := postReply(map[string]string{"reply": "reject", "clientRequestId": "perm-req-1"}); code != http.StatusNotFound {
+		t.Fatalf("conflicting decision with same clientRequestId should return 404, got %d", code)
+	}
+
+	// Duplicate reply without clientRequestId -> 404
+	if code := postReply(map[string]string{"reply": "once"}); code != http.StatusNotFound {
+		t.Fatalf("duplicate reply without clientRequestId should return 404, got %d", code)
+	}
+}

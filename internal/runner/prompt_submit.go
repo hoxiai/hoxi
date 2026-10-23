@@ -14,13 +14,69 @@ import (
 // PromptRequest is one user turn: the JSON body of POST .../prompt, also
 // submitted in process by RunPromptAndWait.
 type PromptRequest struct {
-	Text           string          `json:"text"`
-	Agent          string          `json:"agent"`
-	Variant        string          `json:"variant"`
-	System         string          `json:"system"`
-	Model          *PromptModel    `json:"model"`
-	Parts          []MessagePart   `json:"parts"`
-	SkillSelection *SkillSelection `json:"skillSelection,omitempty"`
+	Text            string          `json:"text"`
+	Agent           string          `json:"agent"`
+	Variant         string          `json:"variant"`
+	System          string          `json:"system"`
+	Model           *PromptModel    `json:"model"`
+	Parts           []MessagePart   `json:"parts"`
+	SkillSelection  *SkillSelection `json:"skillSelection,omitempty"`
+	ClientRequestID string          `json:"clientRequestId,omitempty"`
+}
+
+// PromptReceipt is returned by POST .../prompt and .../prompt_async so callers
+// can correlate node-assigned instruction/message IDs and detect deduplicated retries.
+type PromptReceipt struct {
+	OK              bool   `json:"ok"`
+	InstructionID   int64  `json:"instructionId,omitempty"`
+	MessageID       string `json:"messageId,omitempty"`
+	ClientRequestID string `json:"clientRequestId,omitempty"`
+	Deduplicated    bool   `json:"deduplicated,omitempty"`
+}
+
+type cachedPromptReceipt struct {
+	receipt   PromptReceipt
+	expiresAt time.Time
+}
+
+const idempotencyReceiptTTL = 15 * time.Minute
+
+func (s *Service) lookupPromptReceipt(sessionID, clientRequestID string) (PromptReceipt, bool) {
+	clientRequestID = strings.TrimSpace(clientRequestID)
+	if clientRequestID == "" {
+		return PromptReceipt{}, false
+	}
+	key := sessionID + "\x00" + clientRequestID
+	raw, ok := s.promptReceipts.Load(key)
+	if !ok {
+		return PromptReceipt{}, false
+	}
+	entry, ok := raw.(cachedPromptReceipt)
+	if !ok || time.Now().After(entry.expiresAt) {
+		s.promptReceipts.Delete(key)
+		return PromptReceipt{}, false
+	}
+	out := entry.receipt
+	out.Deduplicated = true
+	return out, true
+}
+
+func (s *Service) storePromptReceipt(sessionID, clientRequestID string, receipt PromptReceipt) {
+	clientRequestID = strings.TrimSpace(clientRequestID)
+	if clientRequestID == "" {
+		return
+	}
+	now := time.Now()
+	s.promptReceipts.Range(func(k, v interface{}) bool {
+		if entry, ok := v.(cachedPromptReceipt); !ok || now.After(entry.expiresAt) {
+			s.promptReceipts.Delete(k)
+		}
+		return true
+	})
+	s.promptReceipts.Store(sessionID+"\x00"+clientRequestID, cachedPromptReceipt{
+		receipt:   receipt,
+		expiresAt: now.Add(idempotencyReceiptTTL),
+	})
 }
 
 // PromptModel selects the provider/model for one turn.
@@ -33,8 +89,18 @@ type PromptModel struct {
 // returns the HTTP status that describes the outcome. directory is the
 // caller's optional directory selector, checked against the session sandbox.
 func (s *Service) startPrompt(ctx context.Context, sessionID, directory string, body PromptRequest) (int, error) {
+	status, _, err := s.startPromptWithReceipt(ctx, sessionID, directory, body)
+	return status, err
+}
+
+func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directory string, body PromptRequest) (int, PromptReceipt, error) {
 	unlock := s.turnMu.lock(sessionID)
 	defer unlock()
+
+	clientReqID := strings.TrimSpace(body.ClientRequestID)
+	if cached, ok := s.lookupPromptReceipt(sessionID, clientReqID); ok {
+		return http.StatusOK, cached, nil
+	}
 
 	rec, ok := s.store.Get(sessionID)
 	unmanagedBusySteer := false
@@ -56,11 +122,11 @@ func (s *Service) startPrompt(ctx context.Context, sessionID, directory string, 
 				ok = true
 				unmanagedBusySteer = true
 			} else {
-				return http.StatusConflict, adoptErr
+				return http.StatusConflict, PromptReceipt{}, adoptErr
 			}
 		} else {
 			if putErr := s.store.Put(adopted); putErr != nil {
-				return http.StatusInternalServerError, putErr
+				return http.StatusInternalServerError, PromptReceipt{}, putErr
 			}
 			for _, id := range adopted.OpenCodeIDs {
 				s.managedOpenCode.Store(id, true)
@@ -70,12 +136,12 @@ func (s *Service) startPrompt(ctx context.Context, sessionID, directory string, 
 		}
 	}
 	if !ok {
-		return http.StatusNotFound, errors.New("runner session not found")
+		return http.StatusNotFound, PromptReceipt{}, errors.New("runner session not found")
 	}
 	if reqDir := strings.TrimSpace(directory); reqDir != "" &&
 		normalizeComparePath(reqDir) != normalizeComparePath(rec.WorktreePath) &&
 		normalizeComparePath(reqDir) != normalizeComparePath(rec.ProjectDir) {
-		return http.StatusForbidden, errors.New("session directory does not match its sandbox")
+		return http.StatusForbidden, PromptReceipt{}, errors.New("session directory does not match its sandbox")
 	}
 
 	promptText := strings.TrimSpace(body.Text)
@@ -95,20 +161,20 @@ func (s *Service) startPrompt(ctx context.Context, sessionID, directory string, 
 		promptText = strings.Join(texts, "\n")
 	}
 	if promptText == "" && len(fileParts) == 0 && body.SkillSelection == nil {
-		return http.StatusBadRequest, errors.New("prompt text is required")
+		return http.StatusBadRequest, PromptReceipt{}, errors.New("prompt text is required")
 	}
 
 	if rec.Subagent {
-		return http.StatusConflict, errSubagentSessionReadOnly
+		return http.StatusConflict, PromptReceipt{}, errSubagentSessionReadOnly
 	}
 	if err := validateSessionDirectory(rec); err != nil {
-		return http.StatusBadRequest, err
+		return http.StatusBadRequest, PromptReceipt{}, err
 	}
 	var resolvedSkill ResolvedSkill
 	if body.SkillSelection != nil {
 		resolved, err := s.resolveSkillSelection(ctx, rec.WorktreePath, rec.ID, rec.Runtime, *body.SkillSelection)
 		if err != nil {
-			return http.StatusConflict, err
+			return http.StatusConflict, PromptReceipt{}, err
 		}
 		resolvedSkill = resolved
 	}
@@ -122,19 +188,26 @@ func (s *Service) startPrompt(ctx context.Context, sessionID, directory string, 
 				modelID, providerID = body.Model.ModelID, body.Model.ProviderID
 			}
 			if checkErr := s.ensureOpenCodeModelAvailable(ctx, rec.WorktreePath, firstNonEmptyStr(providerID, rec.ProviderID), firstNonEmptyStr(modelID, rec.ModelID)); checkErr != nil {
-				return http.StatusConflict, checkErr
+				return http.StatusConflict, PromptReceipt{}, checkErr
 			}
-			err := s.steerOpenCodeTurn(ctx, rec, firstNonEmptyStr(body.Agent, rec.Mode, "build"), modelID, providerID, body.Variant, body.System, promptText, body.Parts, body.SkillSelection)
+			steerSeq, steerMsgID, err := s.steerOpenCodeTurn(ctx, rec, firstNonEmptyStr(body.Agent, rec.Mode, "build"), modelID, providerID, body.Variant, body.System, promptText, body.Parts, body.SkillSelection)
 			if err != nil {
-				return http.StatusBadGateway, err
+				return http.StatusBadGateway, PromptReceipt{}, err
 			}
-			return http.StatusOK, nil
+			receipt := PromptReceipt{
+				OK:              true,
+				InstructionID:   steerSeq,
+				MessageID:       steerMsgID,
+				ClientRequestID: clientReqID,
+			}
+			s.storePromptReceipt(sessionID, clientReqID, receipt)
+			return http.StatusOK, receipt, nil
 		}
 	}
 
 	mode := firstNonEmptyStr(body.Agent, rec.Mode, "build")
 	if !RuntimeCapabilities(rec.Runtime, false).Approval && !isReadOnlyAgentMode(mode) {
-		return http.StatusConflict, fmt.Errorf("runtime %s does not support the unified approval gate; switch to Plan mode or a runtime with approval gate support", rec.Runtime)
+		return http.StatusConflict, PromptReceipt{}, fmt.Errorf("runtime %s does not support the unified approval gate; switch to Plan mode or a runtime with approval gate support", rec.Runtime)
 	}
 	modelID := rec.ModelID
 	if body.Model != nil && strings.TrimSpace(body.Model.ModelID) != "" {
@@ -162,13 +235,13 @@ func (s *Service) startPrompt(ctx context.Context, sessionID, directory string, 
 		missingMsg = "Qoder CLI (qodercli / qoderclicn) binary not found in PATH"
 	}
 	if binPath == "" && rec.Runtime != "opencode" {
-		return http.StatusBadRequest, errors.New(missingMsg)
+		return http.StatusBadRequest, PromptReceipt{}, errors.New(missingMsg)
 	}
 
 	s.mu.Lock()
 	if s.procs[sessionID] != nil {
 		s.mu.Unlock()
-		return http.StatusConflict, errors.New("session already has an active CLI process running")
+		return http.StatusConflict, PromptReceipt{}, errors.New("session already has an active CLI process running")
 	}
 	s.seqSeed++
 	seq := s.seqSeed
@@ -216,7 +289,7 @@ func (s *Service) startPrompt(ctx context.Context, sessionID, directory string, 
 	var err error
 	if rec.Runtime == "opencode" {
 		if checkErr := s.ensureOpenCodeModelAvailable(ctx, rec.WorktreePath, rec.ProviderID, modelID); checkErr != nil {
-			return http.StatusConflict, checkErr
+			return http.StatusConflict, PromptReceipt{}, checkErr
 		}
 		err = s.startOpenCodeTurn(rec, mode, modelID, effort, body.System, userInfo, storedParts, deliveryParts)
 	} else {
@@ -230,7 +303,14 @@ func (s *Service) startPrompt(ctx context.Context, sessionID, directory string, 
 		err = s.startTurnProcess(rec, binPath, mode, modelID, effort, input+cliPrompt, userInfo, storedParts, deliveryParts, asstMsgID)
 	}
 	if err != nil {
-		return http.StatusInternalServerError, err
+		return http.StatusInternalServerError, PromptReceipt{}, err
 	}
-	return http.StatusOK, nil
+	receipt := PromptReceipt{
+		OK:              true,
+		InstructionID:   seq,
+		MessageID:       userMsgID,
+		ClientRequestID: clientReqID,
+	}
+	s.storePromptReceipt(sessionID, clientReqID, receipt)
+	return http.StatusOK, receipt, nil
 }

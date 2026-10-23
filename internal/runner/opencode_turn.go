@@ -663,7 +663,7 @@ func (s *Service) resolveUnmanagedSessionDir(sessionID, requestedDir string) str
 
 // Keep OpenCode's live steering on the backing session; its existing event
 // subscription continues to relay all subsequent tool steps to the same chat.
-func (s *Service) steerOpenCodeTurn(ctx context.Context, rec SessionRecord, mode, modelID, providerID, effort, system, text string, parts []MessagePart, skillSelection *SkillSelection) error {
+func (s *Service) steerOpenCodeTurn(ctx context.Context, rec SessionRecord, mode, modelID, providerID, effort, system, text string, parts []MessagePart, skillSelection *SkillSelection) (int64, string, error) {
 	providerID, modelID = s.resolveOpenCodeModel(ctx, rec.WorktreePath, providerID, modelID)
 	effort = s.resolveOpenCodeVariant(ctx, rec.WorktreePath, providerID, modelID, effort)
 	s.mu.Lock()
@@ -724,7 +724,7 @@ func (s *Service) steerOpenCodeTurn(ctx context.Context, rec SessionRecord, mode
 		ap.stall.touch(time.Now())
 	}
 	if err := s.openCodeJSON(ctx, "POST", "/session/"+rec.ExternalID+"/prompt_async", rec.WorktreePath, payload, nil); err != nil {
-		return err
+		return 0, "", err
 	}
 	// Documents reach OpenCode inlined into the text, which the relay strips
 	// from the echoed message; show their file chips like a normal turn does.
@@ -752,5 +752,5 @@ func (s *Service) steerOpenCodeTurn(ctx context.Context, rec SessionRecord, mode
 			s.broadcast(rec.ID, SSEEvent{Type: "message.part.updated", Properties: map[string]interface{}{"part": fp}})
 		}
 	}
-	return nil
+	return seq, steerMsgID, nil
 }

@@ -54,6 +54,8 @@ type Service struct {
 	// openCodeAutoReplies tracks OpenCode requests the policy is answering.
 	openCodeAutoReplies sync.Map // request ID -> openCodeAutoReply* state
 	turnStats           sync.Map // session ID -> *turnCounts
+	promptReceipts      sync.Map // sessionID\x00clientRequestID -> cachedPromptReceipt
+	permissionReplies   sync.Map // permissionID\x00clientRequestID -> cachedPermissionReply
 }
 
 // SetSummaryNotifier receives the end-of-turn count line. The body contains
@@ -451,9 +453,13 @@ func (s *Service) handleSessionPrompt(w http.ResponseWriter, r *http.Request, se
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if status, err := s.startPrompt(r.Context(), sessionID, r.URL.Query().Get("directory"), body); err != nil {
-		writeJSONError(w, status, err.Error())
+	if strings.TrimSpace(body.ClientRequestID) == "" {
+		body.ClientRequestID = strings.TrimSpace(r.Header.Get("X-Idempotency-Key"))
+	}
+	receiptStatus, receipt, err := s.startPromptWithReceipt(r.Context(), sessionID, r.URL.Query().Get("directory"), body)
+	if err != nil {
+		writeJSONError(w, receiptStatus, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
+	writeJSON(w, http.StatusOK, receipt)
 }

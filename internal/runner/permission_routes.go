@@ -6,7 +6,54 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
+
+type cachedPermissionReply struct {
+	reply     string
+	rawBody   []byte
+	expiresAt time.Time
+}
+
+func (s *Service) lookupPermissionReply(permissionID, clientRequestID, reply string) ([]byte, bool) {
+	clientRequestID = strings.TrimSpace(clientRequestID)
+	if clientRequestID == "" {
+		return nil, false
+	}
+	key := permissionID + "\x00" + clientRequestID
+	raw, ok := s.permissionReplies.Load(key)
+	if !ok {
+		return nil, false
+	}
+	entry, ok := raw.(cachedPermissionReply)
+	if !ok || time.Now().After(entry.expiresAt) {
+		s.permissionReplies.Delete(key)
+		return nil, false
+	}
+	if entry.reply != reply {
+		return nil, false
+	}
+	return entry.rawBody, true
+}
+
+func (s *Service) storePermissionReply(permissionID, clientRequestID, reply string, rawBody []byte) {
+	clientRequestID = strings.TrimSpace(clientRequestID)
+	if clientRequestID == "" {
+		return
+	}
+	now := time.Now()
+	s.permissionReplies.Range(func(k, v interface{}) bool {
+		if entry, ok := v.(cachedPermissionReply); !ok || now.After(entry.expiresAt) {
+			s.permissionReplies.Delete(k)
+		}
+		return true
+	})
+	s.permissionReplies.Store(permissionID+"\x00"+clientRequestID, cachedPermissionReply{
+		reply:     reply,
+		rawBody:   append([]byte(nil), rawBody...),
+		expiresAt: now.Add(idempotencyReceiptTTL),
+	})
+}
 
 func (s *Service) handlePermissionRoutes(w http.ResponseWriter, r *http.Request) {
 	sub := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/hoxi/runner/permission"), "/")
@@ -71,18 +118,29 @@ func (s *Service) handleUnifiedPermissionRoutes(w http.ResponseWriter, r *http.R
 		return
 	}
 	var parsedReply struct {
-		Reply      string `json:"reply"`
-		Message    string `json:"message"`
-		GrantClass bool   `json:"grantClass"`
+		Reply           string `json:"reply"`
+		Message         string `json:"message"`
+		GrantClass      bool   `json:"grantClass"`
+		ClientRequestID string `json:"clientRequestId"`
 	}
 	if err := json.Unmarshal(raw, &parsedReply); err != nil ||
 		(parsedReply.Reply != "once" && parsedReply.Reply != "always" && parsedReply.Reply != "reject") {
 		writeJSONError(w, http.StatusBadRequest, "reply must be once, always or reject")
 		return
 	}
+	clientReqID := strings.TrimSpace(parsedReply.ClientRequestID)
+	if clientReqID == "" {
+		clientReqID = strings.TrimSpace(r.Header.Get("X-Idempotency-Key"))
+	}
 	source := requestApprovalSource(r)
 	if isRemoteApprovalSource(source) && parsedReply.Reply == "always" {
 		writeJSONError(w, http.StatusForbidden, "always approval is not allowed over the remote tunnel")
+		return
+	}
+	if cachedRaw, ok := s.lookupPermissionReply(id, clientReqID, parsedReply.Reply); ok {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(cachedRaw)
 		return
 	}
 	if _, loaded := s.openCodeAutoReplies.LoadOrStore(id, openCodeAutoReplyInflight); loaded {
@@ -97,11 +155,13 @@ func (s *Service) handleUnifiedPermissionRoutes(w http.ResponseWriter, r *http.R
 		var known bool
 		ask, known = s.gate.openCodeAskFor(id)
 		if !known {
+			s.openCodeAutoReplies.Delete(id)
 			writeJSONError(w, http.StatusBadRequest, "this request cannot be allowed for the whole session")
 			return
 		}
 		classes, problem := grantClassesForReply(source, parsedReply.Reply, ask.item, ask.dir)
 		if problem != "" {
+			s.openCodeAutoReplies.Delete(id)
 			status := http.StatusBadRequest
 			if isRemoteApprovalSource(source) {
 				status = http.StatusForbidden
@@ -114,6 +174,14 @@ func (s *Service) handleUnifiedPermissionRoutes(w http.ResponseWriter, r *http.R
 		// OpenCode only ever gets a one-time approval: its own "always" would
 		// store a pattern such as `rm *` and stop asking Hoxi.
 		raw = []byte(`{"reply":"once"}`)
+	} else if parsedReply.ClientRequestID != "" {
+		upstreamPayload := map[string]string{"reply": parsedReply.Reply}
+		if parsedReply.Message != "" {
+			upstreamPayload["message"] = parsedReply.Message
+		}
+		if cleaned, marshalErr := json.Marshal(upstreamPayload); marshalErr == nil {
+			raw = cleaned
+		}
 	}
 	status, respRaw, err := s.replyOpenCodePermission(r.Context(), id, dir, raw)
 	if err != nil {
@@ -131,6 +199,7 @@ func (s *Service) handleUnifiedPermissionRoutes(w http.ResponseWriter, r *http.R
 			go s.reconcilePendingApprovals()
 		}
 		s.recordOpenCodeApprovalAudit(id, dir, auditReply, parsedReply.Message, source)
+		s.storePermissionReply(id, clientReqID, parsedReply.Reply, respRaw)
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
@@ -139,9 +208,10 @@ func (s *Service) handleUnifiedPermissionRoutes(w http.ResponseWriter, r *http.R
 
 func (s *Service) replyRunnerPermission(w http.ResponseWriter, r *http.Request, id string) {
 	var body struct {
-		Reply      string `json:"reply"`
-		Message    string `json:"message"`
-		GrantClass bool   `json:"grantClass"`
+		Reply           string `json:"reply"`
+		Message         string `json:"message"`
+		GrantClass      bool   `json:"grantClass"`
+		ClientRequestID string `json:"clientRequestId"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&body); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid reply")
@@ -151,9 +221,19 @@ func (s *Service) replyRunnerPermission(w http.ResponseWriter, r *http.Request, 
 		writeJSONError(w, http.StatusBadRequest, "reply must be once, always or reject")
 		return
 	}
+	clientReqID := strings.TrimSpace(body.ClientRequestID)
+	if clientReqID == "" {
+		clientReqID = strings.TrimSpace(r.Header.Get("X-Idempotency-Key"))
+	}
 	source := requestApprovalSource(r)
 	if isRemoteApprovalSource(source) && body.Reply == "always" {
 		writeJSONError(w, http.StatusForbidden, "always approval is not allowed over the remote tunnel")
+		return
+	}
+	if cachedRaw, ok := s.lookupPermissionReply(id, clientReqID, body.Reply); ok {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(cachedRaw)
 		return
 	}
 	s.gate.mu.Lock()
@@ -186,6 +266,7 @@ func (s *Service) replyRunnerPermission(w http.ResponseWriter, r *http.Request, 
 			s.gate.addClassGrants(pa.sid, granted, source)
 			go s.reconcilePendingApprovals()
 		}
+		s.storePermissionReply(id, clientReqID, body.Reply, []byte("true\n"))
 		writeJSON(w, http.StatusOK, true)
 	default:
 		writeJSONError(w, http.StatusConflict, "permission request already answered")
