@@ -2,7 +2,7 @@
 // Usage & cost panel. Defaults to a year overview (heatmap + today's tally);
 // picking a window switches to a plain daily list, since the bar charts no
 // longer add anything over the table.
-import { createMemo, createSignal, For, onMount, Show } from "solid-js";
+import { createMemo, createSignal, For, onMount, Show, type JSX } from "solid-js";
 import { ChevronRight, RefreshCw, X } from "lucide-solid";
 import { t } from "../../i18n";
 import {
@@ -21,7 +21,7 @@ import {
   type UsageHistoryRange,
   type UsageHistoryTotals,
 } from "../../store/workspace";
-import { formatCompactTokens, formatUsd } from "./usage-format";
+import { formatCompactTokens, formatDurationMs, formatUsd } from "./usage-format";
 import { UsageHeatmap } from "./UsageHeatmap";
 
 const button =
@@ -41,11 +41,24 @@ function toDateInput(date: Date): string {
   return `${date.getFullYear()}-${month}-${day}`;
 }
 
-function Metric(props: { label: string; value: string; title?: string }) {
+type UsageDetailRange = "today" | "yesterday" | "week" | "month";
+const USAGE_DETAIL_RANGES: UsageDetailRange[] = ["today", "yesterday", "week", "month"];
+
+/** Monday-based start of the week containing `date`. */
+function startOfWeek(date: Date): Date {
+  const offset = (date.getDay() + 6) % 7;
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate() - offset);
+}
+
+function Metric(props: { label: string; value: JSX.Element; title?: string; large?: boolean }) {
   return (
     <div class={card} title={props.title}>
       <div class="text-[11px] text-[var(--text-muted)]">{props.label}</div>
-      <div class="mt-1 font-mono text-[15px] font-semibold leading-tight text-[var(--text-primary)]">
+      <div
+        class={`mt-1 font-mono font-semibold leading-tight text-[var(--text-primary)] ${
+          props.large ? "text-[20px]" : "text-[15px]"
+        }`}
+      >
         {props.value}
       </div>
     </div>
@@ -60,6 +73,7 @@ function MetricGrid(props: { totals: UsageHistoryTotals }) {
           label={t("settings.usageTotalTokens")}
           value={formatCompactTokens(props.totals.totalTokens)}
           title={`${props.totals.totalTokens.toLocaleString()} tokens`}
+          large
         />
         <Metric
           label={t("settings.usageTotalCost")}
@@ -73,7 +87,14 @@ function MetricGrid(props: { totals: UsageHistoryTotals }) {
         <Metric label={t("settings.usageTotalTurns")} value={props.totals.turns.toLocaleString()} />
         <Metric
           label={t("settings.usageTotalCommits")}
-          value={`${props.totals.commits} · +${props.totals.additions}/-${props.totals.deletions}`}
+          value={
+            <>
+              {props.totals.commits} ·{" "}
+              <span class="text-emerald-500">+{props.totals.additions}</span>
+              <span class="text-[var(--text-muted)]">/</span>
+              <span class="text-rose-500">-{props.totals.deletions}</span>
+            </>
+          }
         />
       </div>
       <Show when={props.totals.unpricedModels.length > 0}>
@@ -148,7 +169,7 @@ function HeatmapSkeleton() {
     <div class="flex flex-col items-center gap-2">
       <div class="w-full overflow-hidden pb-1">
         <div
-          class="mx-auto grid grid-flow-col grid-rows-7 gap-[3px]"
+          class="mx-auto grid w-max grid-flow-col grid-rows-7 gap-[3px]"
           style={{ "grid-auto-columns": "11px" }}
         >
           <For each={HEATMAP_SKELETON_CELLS}>
@@ -206,11 +227,30 @@ export default function UsageHistoryTab() {
   const heatPoints = createMemo(() =>
     usageHistory().map((day) => ({ date: day.date, tokens: day.totalTokens }))
   );
-  const todayDay = createMemo(() => usageHistory().find((day) => day.date === todayDate) ?? null);
-  const todayTotals = createMemo(() => usageHistoryTotals(todayDay() ? [todayDay()!] : []));
-  const todayModelUsage = createMemo(() =>
-    usageHistoryModels(todayDay() ? [todayDay()!] : [])
-  );
+  const [detailRange, setDetailRange] = createSignal<UsageDetailRange>("today");
+  const detailDays = createMemo(() => {
+    const all = usageHistory();
+    const range = detailRange();
+    if (range === "today") return all.filter((day) => day.date === todayDate);
+    if (range === "yesterday") {
+      const yesterday = toDateInput(new Date(Date.now() - 86_400_000));
+      return all.filter((day) => day.date === yesterday);
+    }
+    const start = toDateInput(
+      range === "week" ? startOfWeek(new Date()) : new Date(new Date().getFullYear(), new Date().getMonth(), 1)
+    );
+    return all.filter((day) => day.date >= start && day.date <= todayDate);
+  });
+  const detailTotals = createMemo(() => usageHistoryTotals(detailDays()));
+  const periodModels = createMemo(() => usageHistoryModels(detailDays()));
+  const detailLabel = (range: UsageDetailRange) =>
+    range === "today"
+      ? t("settings.usageTodayTitle")
+      : range === "yesterday"
+        ? t("settings.usagePeriodYesterday")
+        : range === "week"
+          ? t("settings.usagePeriodWeek")
+          : t("settings.usagePeriodMonth");
 
   const [detailDay, setDetailDay] = createSignal<UsageHistoryDay | null>(null);
   const detailModels = createMemo(() => {
@@ -397,18 +437,33 @@ export default function UsageHistoryTab() {
       >
         <div class="space-y-5">
           <UsageHeatmap points={heatPoints()} />
-          <section class="space-y-2">
-            <h4 class="text-[12px] font-semibold text-[var(--text-secondary)]">
-              {t("settings.usageTodayTitle")} · {todayDate}
-            </h4>
-            <MetricGrid totals={todayTotals()} />
+          <section class="space-y-4">
+            <div class="flex flex-wrap items-center justify-between gap-3">
+              <h4 class="text-[12px] font-semibold text-[var(--text-secondary)]">
+                {t("settings.usageDetailTitle")}
+              </h4>
+              <div class="flex items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-0.5">
+                <For each={USAGE_DETAIL_RANGES}>
+                  {(range: UsageDetailRange) => (
+                    <button
+                      type="button"
+                      class={pill(detailRange() === range)}
+                      onClick={() => setDetailRange(range)}
+                    >
+                      {detailLabel(range)}
+                    </button>
+                  )}
+                </For>
+              </div>
+            </div>
+            <MetricGrid totals={detailTotals()} />
           </section>
           <section class="space-y-2">
             <h4 class="text-[12px] font-semibold text-[var(--text-secondary)]">
               {t("settings.usageByModelTitle")}
             </h4>
             <Show
-              when={todayModelUsage().length > 0}
+              when={periodModels().length > 0}
               fallback={
                 <p class="rounded-xl border border-dashed border-[var(--border-subtle)] px-3 py-6 text-center text-[12px] text-[var(--text-muted)]">
                   {t("settings.usageByModelEmpty")}
@@ -416,7 +471,7 @@ export default function UsageHistoryTab() {
               }
             >
               <ul class="divide-y divide-[var(--border-subtle)]/60 rounded-xl border border-[var(--border-subtle)]">
-                <For each={todayModelUsage()}>
+                <For each={periodModels()}>
                   {(model) => (
                     <li class="flex items-center justify-between gap-3 px-3 py-2">
                       <div class="min-w-0">
@@ -425,6 +480,12 @@ export default function UsageHistoryTab() {
                         </div>
                         <div class="truncate text-[11px] text-[var(--text-muted)]">
                           {model.providerID} · {t("settings.usageColTurns")} {model.turns.toLocaleString()}
+                          <Show when={model.avgDurationMs !== null}>
+                            <span>
+                              {" · "}
+                              {t("settings.usageColDuration")} {formatDurationMs(model.avgDurationMs!)}
+                            </span>
+                          </Show>
                         </div>
                       </div>
                       <div class="shrink-0 text-right">
@@ -491,6 +552,7 @@ export default function UsageHistoryTab() {
                         <th class="px-2 py-1.5 text-left font-medium">{t("diagnostics.colModel")}</th>
                         <th class="px-2 py-1.5 text-right font-medium">{t("settings.usageColTurns")}</th>
                         <th class="px-2 py-1.5 text-right font-medium">{t("settings.usageColTokens")}</th>
+                        <th class="px-2 py-1.5 text-right font-medium">{t("settings.usageColDuration")}</th>
                         <th class="px-2 py-1.5 text-right font-medium">{t("settings.usageColCost")}</th>
                       </tr>
                     </thead>
@@ -507,6 +569,11 @@ export default function UsageHistoryTab() {
                             </td>
                             <td class="px-2 py-1.5 text-right font-mono text-[var(--text-primary)]">
                               {formatCompactTokens(model.totalTokens)}
+                            </td>
+                            <td class="px-2 py-1.5 text-right font-mono text-[var(--text-secondary)]">
+                              <Show when={model.avgDurationMs !== null} fallback="—">
+                                {formatDurationMs(model.avgDurationMs!)}
+                              </Show>
                             </td>
                             <td class="px-2 py-1.5 text-right font-mono text-[var(--text-primary)]">
                               <Show when={model.cost !== null} fallback="—">

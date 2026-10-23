@@ -33,6 +33,10 @@ type historyModelStat struct {
 	ReasoningTokens  int64  `json:"reasoningTokens"`
 	CacheReadTokens  int64  `json:"cacheReadTokens"`
 	CacheWriteTokens int64  `json:"cacheWriteTokens"`
+	// DurationSumMs/DurationSamples aggregate created→completed time so the
+	// client can show an average per model without a separate endpoint.
+	DurationSumMs   int64 `json:"durationSumMs"`
+	DurationSamples int   `json:"durationSamples"`
 }
 
 type historyDay struct {
@@ -196,7 +200,11 @@ SELECT
   SUM(CAST(COALESCE(json_extract(m.data, '$.tokens.output'), 0) AS INTEGER)) AS output,
   SUM(CAST(COALESCE(json_extract(m.data, '$.tokens.reasoning'), 0) AS INTEGER)) AS reasoning,
   SUM(CAST(COALESCE(json_extract(m.data, '$.tokens.cache.read'), 0) AS INTEGER)) AS cache_read,
-  SUM(CAST(COALESCE(json_extract(m.data, '$.tokens.cache.write'), 0) AS INTEGER)) AS cache_write
+  SUM(CAST(COALESCE(json_extract(m.data, '$.tokens.cache.write'), 0) AS INTEGER)) AS cache_write,
+  SUM(CASE WHEN CAST(COALESCE(json_extract(m.data, '$.time.completed'), 0) AS INTEGER) > m.time_created
+        THEN CAST(COALESCE(json_extract(m.data, '$.time.completed'), 0) AS INTEGER) - m.time_created ELSE 0 END) AS dur_sum,
+  SUM(CASE WHEN CAST(COALESCE(json_extract(m.data, '$.time.completed'), 0) AS INTEGER) > m.time_created
+        THEN 1 ELSE 0 END) AS dur_n
 FROM message m
 JOIN session s ON s.id = m.session_id
 WHERE m.time_created >= %d
@@ -230,6 +238,8 @@ ORDER BY day;`, startMs, endMs, handoff.SQLNotImportedTitleClause("s.title"))
 		Reasoning  int64  `json:"reasoning"`
 		CacheRead  int64  `json:"cache_read"`
 		CacheWrite int64  `json:"cache_write"`
+		DurSum     int64  `json:"dur_sum"`
+		DurN       int    `json:"dur_n"`
 	}
 	if err := json.Unmarshal(bytes.TrimSpace(out), &rows); err != nil {
 		return
@@ -256,6 +266,8 @@ ORDER BY day;`, startMs, endMs, handoff.SQLNotImportedTitleClause("s.title"))
 			ReasoningTokens:  row.Reasoning,
 			CacheReadTokens:  row.CacheRead,
 			CacheWriteTokens: row.CacheWrite,
+			DurationSumMs:    row.DurSum,
+			DurationSamples:  row.DurN,
 		})
 		if sessionsByDay[row.Day] == nil {
 			sessionsByDay[row.Day] = make(map[string]struct{})
@@ -318,9 +330,11 @@ func mergeHistoryModel(target *historyDay, incoming historyModelStat) {
 		m.InputTokens += incoming.InputTokens
 		m.OutputTokens += incoming.OutputTokens
 		m.ReasoningTokens += incoming.ReasoningTokens
-		m.CacheReadTokens += incoming.CacheReadTokens
-		m.CacheWriteTokens += incoming.CacheWriteTokens
-		return
+	m.CacheReadTokens += incoming.CacheReadTokens
+	m.CacheWriteTokens += incoming.CacheWriteTokens
+	m.DurationSumMs += incoming.DurationSumMs
+	m.DurationSamples += incoming.DurationSamples
+	return
 	}
 	target.Models = append(target.Models, incoming)
 }
@@ -381,6 +395,12 @@ func (g *Gateway) collectRunnerHistory(startMs, endMs int64, day func(string) *h
 				target.ReasoningTokens += int64(tokens.Reasoning)
 				target.CacheReadTokens += int64(tokens.Cache.Read)
 				target.CacheWriteTokens += int64(tokens.Cache.Write)
+				var durationSum int64
+				var durationSamples int
+				if turn.Info.Time.Completed > turn.Info.Time.Created && turn.Info.Time.Created > 0 {
+					durationSum = turn.Info.Time.Completed - turn.Info.Time.Created
+					durationSamples = 1
+				}
 				mergeHistoryModel(target, historyModelStat{
 					ProviderID:       runtime,
 					ModelID:          firstNonEmptyString(turn.Info.ModelID, rec.ModelID, "unknown"),
@@ -390,6 +410,8 @@ func (g *Gateway) collectRunnerHistory(startMs, endMs int64, day func(string) *h
 					ReasoningTokens:  int64(tokens.Reasoning),
 					CacheReadTokens:  int64(tokens.Cache.Read),
 					CacheWriteTokens: int64(tokens.Cache.Write),
+					DurationSumMs:    durationSum,
+					DurationSamples:  durationSamples,
 				})
 				if seen[key] == nil {
 					seen[key] = make(map[modelKey]int)

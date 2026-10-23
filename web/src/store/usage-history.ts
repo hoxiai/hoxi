@@ -207,6 +207,8 @@ export interface UsageModelTotals {
   totalTokens: number;
   /** Estimated USD cost across the window; `null` when the catalog cannot price it. */
   cost: number | null;
+  /** Mean created→completed time in ms across the window; `null` with no samples. */
+  avgDurationMs: number | null;
 }
 
 interface ModelAggregate {
@@ -218,6 +220,8 @@ interface ModelAggregate {
   reasoningTokens: number;
   cacheReadTokens: number;
   cacheWriteTokens: number;
+  durationSumMs: number;
+  durationSamples: number;
 }
 
 /** Rolls the per-day `models` lists up into one row per provider/model pair. */
@@ -237,6 +241,8 @@ export function usageHistoryModels(days: UsageHistoryDay[]): UsageModelTotals[] 
           reasoningTokens: 0,
           cacheReadTokens: 0,
           cacheWriteTokens: 0,
+          durationSumMs: 0,
+          durationSamples: 0,
         };
         byKey.set(key, row);
       }
@@ -246,6 +252,8 @@ export function usageHistoryModels(days: UsageHistoryDay[]): UsageModelTotals[] 
       row.reasoningTokens += model.reasoningTokens || 0;
       row.cacheReadTokens += model.cacheReadTokens || 0;
       row.cacheWriteTokens += model.cacheWriteTokens || 0;
+      row.durationSumMs += model.durationSumMs || 0;
+      row.durationSamples += model.durationSamples || 0;
     }
   }
 
@@ -267,6 +275,7 @@ export function usageHistoryModels(days: UsageHistoryDay[]): UsageModelTotals[] 
         cacheRead: agg.cacheReadTokens,
         cacheWrite: agg.cacheWriteTokens,
       }),
+      avgDurationMs: agg.durationSamples > 0 ? agg.durationSumMs / agg.durationSamples : null,
     });
   }
   rows.sort((a, b) => b.totalTokens - a.totalTokens || (b.cost ?? 0) - (a.cost ?? 0));

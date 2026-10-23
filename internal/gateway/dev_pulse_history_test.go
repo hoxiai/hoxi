@@ -133,6 +133,17 @@ func TestDevPulseHistoryAggregatesGitAndRunner(t *testing.T) {
 		t.Fatalf("tool calls = %d total / %d failed, want 2 / 1", todayRow.ToolCallsTotal, todayRow.ToolCallsFailed)
 	}
 
+	// Each native turn is created→completed in 1000ms; today has two.
+	var gemini *historyModelStat
+	for i := range todayRow.Models {
+		if todayRow.Models[i].ModelID == "gemini-4-argon-high" {
+			gemini = &todayRow.Models[i]
+		}
+	}
+	if gemini == nil || gemini.DurationSamples != 2 || gemini.DurationSumMs != 2000 {
+		t.Fatalf("model duration not aggregated: %+v", gemini)
+	}
+
 	yRow := historyDayByDate(res.Days, yesterday)
 	if yRow == nil || yRow.InputTokens != 4000 {
 		t.Fatalf("yesterday native tokens misplaced: %+v", yRow)

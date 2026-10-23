@@ -557,6 +557,9 @@ export interface DevPulseHistoryModelStat {
   reasoningTokens: number;
   cacheReadTokens: number;
   cacheWriteTokens: number;
+  /** Present from the history endpoint; omitted by older fixtures. */
+  durationSumMs?: number;
+  durationSamples?: number;
 }
 
 export interface DevPulseHistoryDay {

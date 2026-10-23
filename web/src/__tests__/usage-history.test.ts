@@ -167,6 +167,8 @@ describe("usage history pricing", () => {
               reasoningTokens: 0,
               cacheReadTokens: 0,
               cacheWriteTokens: 0,
+              durationSumMs: 1000,
+              durationSamples: 1,
             },
           ],
         }),
@@ -182,6 +184,8 @@ describe("usage history pricing", () => {
               reasoningTokens: 0,
               cacheReadTokens: 0,
               cacheWriteTokens: 0,
+              durationSumMs: 3000,
+              durationSamples: 1,
             },
             {
               providerID: "custom",
@@ -201,8 +205,10 @@ describe("usage history pricing", () => {
       assertEqual(opus.turns, 2, "same model merges across days");
       assertEqual(opus.totalTokens, 1_100_000, "merged tokens");
       assertEqual(opus.cost, 7.5, "merged cost must not be re-priced per day");
+      assertEqual(opus.avgDurationMs, 2000, "averages duration across days");
       const unknown = rows.find((row) => row.modelID === "unknown-x")!;
       assertEqual(unknown.cost, null, "unpriced model keeps a null cost");
+      assertEqual(unknown.avgDurationMs, null, "no samples means no average");
       assertEqual(rows[0].modelID, "claude-opus-5", "sorted by tokens desc");
     });
   });
