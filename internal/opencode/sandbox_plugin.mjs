@@ -106,18 +106,87 @@ function command(snapshot, input) {
 // stopMarker tags every bash command with its engine session and tool call so
 // Hoxi can stop exactly one command inside the shared `opencode serve` daemon.
 // macOS hides other processes' environments, so the tag has to live in the
-// command line itself; `trap : EXIT` keeps the shell from tail-execing a
-// single command and replacing the tagged argv in `ps`.
+// command line itself; it is a shell comment and never affects execution.
+const STOP_MARKER_PREFIX = "# hoxi-stop:";
+const LEADING_STOP_MARKER_RE = /^[ \t]*# hoxi-stop:[^\n]*(?:\n|$)/;
+const LEADING_LINE_RE = /^[ \t]*([^\n]*)(?:\n|$)/;
+
+// STOP_TRAP follows the tag. OpenCode's bash tool only returns early when the
+// shell exits with a code; a shell killed by a signal leaves the tool waiting
+// for its full timeout. A stop therefore sends the shell SIGUSR1 and only
+// terminates what it runs, and this trap prints the stop notice and exits 130
+// once that command is gone, so the tool returns at once and the model reads
+// that the user stopped it. The EXIT trap keeps sh and bash from exec-ing the
+// last command in place of the shell, which would drop the tag and the trap.
+// It must match openCodeStopTrap in internal/runner exactly.
+const STOP_TRAP = String.raw`trap 'printf "\n[Command stopped by user]\n"; exit 130' USR1; trap : EXIT`;
+
+// The trap is POSIX shell syntax; Windows shells and PowerShell cannot run it.
+function trapSupported() {
+  if (process.platform === "win32") return false;
+  const shell = path.basename(process.env.SHELL || "").toLowerCase();
+  return !shell.startsWith("pwsh") && !shell.startsWith("powershell");
+}
+
 function stopMarker(input) {
   if (typeof input?.sessionID !== "string" || typeof input?.callID !== "string") return undefined;
   if (!input.sessionID || !input.callID) return undefined;
-  return `# hoxi-stop:${input.sessionID}:${input.callID}\ntrap : EXIT`;
+  return `${STOP_MARKER_PREFIX}${input.sessionID}:${input.callID}`;
+}
+
+// stripStopMarkers drops every leading `# hoxi-stop:` line and the stop trap.
+// Tag lines are shell comments and the trap only matters for a stop, so this
+// never changes what the command does; later lines are left alone because they
+// may sit inside a heredoc or a quoted string. Not exported: OpenCode loads
+// every export of a plugin module as a plugin.
+function stripStopMarkers(command) {
+  if (typeof command !== "string") return command;
+  let rest = command;
+  for (;;) {
+    const match = LEADING_STOP_MARKER_RE.exec(rest);
+    if (match) {
+      rest = rest.slice(match[0].length);
+      continue;
+    }
+    const line = LEADING_LINE_RE.exec(rest);
+    if (!line || line[1].trimEnd() !== STOP_TRAP) return rest;
+    rest = rest.slice(line[0].length);
+  }
+}
+
+// OpenCode persists the tagged command as the tool input while the tool runs
+// (`ctx.metadata` writes `args`), and completing the call re-reads that stored
+// part, so the tag cannot be undone from `tool.execute.after`. Left alone, the
+// model reads it back on later turns and starts writing its own tags with
+// invented call IDs. cleanHistory strips it from bash inputs right before
+// OpenCode serializes the history for the model, which also covers failed or
+// rejected calls and history written before this fix. Parts are replaced, not
+// mutated, so nothing leaks back into OpenCode's own state.
+function cleanHistory(messages) {
+  if (!Array.isArray(messages)) return;
+  for (const message of messages) {
+    const parts = message?.parts;
+    if (!Array.isArray(parts)) continue;
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i];
+      if (part?.type !== "tool" || part.tool !== "bash") continue;
+      const command = part.state?.input?.command;
+      if (typeof command !== "string") continue;
+      const clean = stripStopMarkers(command);
+      if (clean === command) continue;
+      parts[i] = { ...part, state: { ...part.state, input: { ...part.state.input, command: clean } } };
+    }
+  }
 }
 
 export const HoxiSandboxPlugin = async () => ({
   "tool.execute.before": async (input, output) => {
     const args = output?.args;
     const isBash = input?.tool === "bash" && args && typeof args === "object" && typeof args.command === "string";
+    // The model may echo tags it saw in old history; only the tag added below
+    // may reach the shell, so a stop never targets an invented call.
+    const clean = isBash ? stripStopMarkers(args.command) : undefined;
+    let final = clean;
     // Wrap in the sandbox first, then tag the final command: the tag must stay
     // the first line of what actually runs, so a stop can find this exact
     // process and the UI can strip it back to the user's command.
@@ -125,11 +194,10 @@ export const HoxiSandboxPlugin = async () => ({
     if (value) {
       if (!command(value, input)) return;
       if (isBash) {
-        const original = args.command;
-        if (typeof original !== "string" || original.trim() === "") {
+        if (clean.trim() === "") {
           throw new Error("Hoxi sandbox requires a non-empty shell command");
         }
-        args.command = `${quote(executable)} -f ${quote(value.profilePath)} -- /bin/sh -c ${quote(original)}`;
+        final = `${quote(executable)} -f ${quote(value.profilePath)} -- /bin/sh -c ${quote(clean)}`;
       } else if (input.tool === "apply_patch") {
         const targets = patchTargets(args);
         if (targets.length === 0) throw new Error("Hoxi sandbox could not read the patch file paths");
@@ -139,10 +207,18 @@ export const HoxiSandboxPlugin = async () => ({
         assertWritable(target, value.workspace);
       }
     }
-    const tag = isBash ? stopMarker(input) : undefined;
-    if (tag) {
-      args.command = `${tag}\n${args.command}`;
+    if (!isBash) return;
+    const tag = stopMarker(input);
+    if (!tag) {
+      args.command = final;
+    } else if (trapSupported()) {
+      args.command = `${tag}\n${STOP_TRAP}\n${final}`;
+    } else {
+      args.command = `${tag}\n${final}`;
     }
+  },
+  "experimental.chat.messages.transform": async (_input, output) => {
+    cleanHistory(output?.messages);
   },
 });
 

@@ -73,7 +73,10 @@ var (
 	// wrapper; the wrapped command is what the policy judges.
 	sandboxWrapRe = regexp.MustCompile(`^'?/usr/bin/sandbox-exec'?\s+-f\s+(?:'[^']*'|\S+)\s+--\s+/bin/sh\s+-c\s+'((?:[^']|'\\'')*)'$`)
 
-	openCodeStopMarkerRe = regexp.MustCompile(`^(?:[ \t]*(?:# hoxi-stop:[^\r\n]*(?:\r?\n(?:[ \t]*trap : (?:EXIT|\S+)(?:[ \t]*\r?\n|$))?|$)|trap : EXIT[ \t]+# hoxi-stop:[^\r\n]*(?:\r?\n|$)))+`)
+	// A `# hoxi-stop:` tag line, optionally followed by the plugin's stop trap
+	// line (openCodeStopTrap) or the older bare `trap : EXIT`.
+	openCodeStopMarkerRe = regexp.MustCompile(`^(?:[ \t]*(?:# hoxi-stop:[^\r\n]*(?:\r?\n(?:[ \t]*(?:trap : (?:EXIT|\S+)|` +
+		regexp.QuoteMeta(openCodeStopTrap) + `)(?:[ \t]*\r?\n|$))?|$)|trap : EXIT[ \t]+# hoxi-stop:[^\r\n]*(?:\r?\n|$)))+`)
 )
 
 // approvalAutoApproves reports whether item may run without asking the user

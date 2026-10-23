@@ -32,6 +32,20 @@ func openCodeStopMarker(engineSessionID, callID string) string {
 	return stopMarkerPrefix + engineSessionID + ":" + callID
 }
 
+// openCodeStopTrap is the line the sandbox plugin puts right after the stop
+// marker. OpenCode's bash tool only returns early when the shell exits with a
+// code: a shell killed by a signal fails the tool's exit-code wait, which then
+// lasts until the tool's own timeout. So a stop sends the shell SIGUSR1 and
+// terminates only its descendants, and this trap prints the stop notice and
+// exits 130 once the running command is gone. The EXIT trap keeps sh and bash
+// from exec-ing the last command in place of the shell, which would drop both
+// the marker and the trap. It must match the plugin's STOP_TRAP exactly.
+const openCodeStopTrap = `trap 'printf "\n` + toolStoppedNotice + `\n"; exit 130' USR1; trap : EXIT`
+
+// toolStoppedNotice tells the user and the model that the command was stopped
+// on purpose rather than failing or timing out.
+const toolStoppedNotice = "[Command stopped by user]"
+
 // StopToolRequest identifies a running tool invocation inside a session turn
 // that the user wants to terminate without aborting the parent session turn.
 type StopToolRequest struct {
@@ -126,15 +140,17 @@ func (s *Service) StopToolCommand(sessionID, callID, partID, command string) (in
 	switch {
 	case ap != nil && ap.cmd != nil && ap.cmd.Process != nil:
 		stopped = stopChildToolProcesses(ap.cmd.Process.Pid, command)
-	case openCodeSession && s.openCode != nil:
+	case openCodeSession && s.openCode != nil && isRunningBashPart(matchedPart):
 		// OpenCode tool commands are children of the shared `opencode serve`
 		// daemon. The sandbox plugin tags each bash command with its engine
 		// session and call ID, so the exact subtree is located by that marker
-		// instead of guessing from the command text.
+		// instead of guessing from the command text. The marker is built only
+		// from a bash call this session knows is running, never read back from
+		// command text, so tags a model forges cannot redirect the stop.
 		if daemonPID := openCodeDaemonPID(s.openCode.BaseURL()); daemonPID > 1 {
-			marker := openCodeStopMarker(rec.ExternalID, callID)
-			if marker == "" && callID != "" {
-				marker = stopMarkerPrefix + ":" + callID
+			marker := openCodeStopMarker(rec.ExternalID, matchedPart.CallID)
+			if marker == "" && matchedPart.CallID != "" {
+				marker = stopMarkerPrefix + ":" + matchedPart.CallID
 			}
 			if marker != "" {
 				stopped = stopOpenCodeToolProcessByMarker(daemonPID, marker)
@@ -157,7 +173,15 @@ func (s *Service) StopToolCommand(sessionID, callID, partID, command string) (in
 		}()
 	}
 
-	if matchedPart != nil && matchedPart.State != nil {
+	// The stopped command may already have reported its result: OpenCode's
+	// shell exits through the stop trap within milliseconds. Re-read the part
+	// so a stale running copy never overwrites that result; a finished part
+	// was already flagged by decorateStoppedToolEvent when it was relayed.
+	if current, ok := s.store.Get(sessionID); ok && matchedPart != nil {
+		matchedPart = findTargetRunningToolPart(current.Turns, partID, callID)
+	}
+	if matchedPart != nil && matchedPart.State != nil &&
+		(matchedPart.State.Status == "running" || matchedPart.State.Status == "pending") {
 		updated := clonePart(*matchedPart)
 		if updated.State.Metadata == nil {
 			updated.State.Metadata = make(map[string]interface{})
@@ -170,6 +194,13 @@ func (s *Service) StopToolCommand(sessionID, callID, partID, command string) (in
 	}
 
 	return stopped, nil
+}
+
+func isRunningBashPart(p *MessagePart) bool {
+	if p == nil || p.Type != "tool" || p.Tool != "bash" || p.State == nil {
+		return false
+	}
+	return p.State.Status == "running" || p.State.Status == "pending"
 }
 
 func findTargetRunningToolPart(turns []MessageTurn, partID, callID string) *MessagePart {
@@ -273,13 +304,12 @@ func appendStoppedNotice(part *MessagePart) {
 	if part == nil || part.State == nil {
 		return
 	}
-	const notice = "[Command stopped by user]"
-	if strings.Contains(part.State.Output, notice) || strings.Contains(part.State.Error, notice) {
+	if strings.Contains(part.State.Output, toolStoppedNotice) || strings.Contains(part.State.Error, toolStoppedNotice) {
 		return
 	}
 	if strings.TrimSpace(part.State.Output) != "" {
-		part.State.Output = strings.TrimRight(part.State.Output, "\n") + "\n" + notice
+		part.State.Output = strings.TrimRight(part.State.Output, "\n") + "\n" + toolStoppedNotice
 	} else if strings.TrimSpace(part.State.Error) == "" {
-		part.State.Output = notice
+		part.State.Output = toolStoppedNotice
 	}
 }

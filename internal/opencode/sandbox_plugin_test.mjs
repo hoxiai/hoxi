@@ -10,6 +10,14 @@ function hash(value) {
   return createHash("sha256").update(value).digest("hex");
 }
 
+// The stop trap follows every tag; it must match openCodeStopTrap in
+// internal/runner.
+const TRAP = String.raw`trap 'printf "\n[Command stopped by user]\n"; exit 130' USR1; trap : EXIT`;
+
+function tagged(sessionID, callID, command) {
+  return `# hoxi-stop:${sessionID}:${callID}\n${TRAP}\n${command}`;
+}
+
 function fixture(network) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "hoxi-sandbox-test-"));
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "hoxi-workspace-test-"));
@@ -25,9 +33,13 @@ function fixture(network) {
 
 test("sandbox plugin", async (t) => {
   const previous = process.env.HOXI_SANDBOX_ROOT;
+  const previousShell = process.env.SHELL;
+  process.env.SHELL = "/bin/zsh";
   t.after(() => {
     if (previous === undefined) delete process.env.HOXI_SANDBOX_ROOT;
     else process.env.HOXI_SANDBOX_ROOT = previous;
+    if (previousShell === undefined) delete process.env.SHELL;
+    else process.env.SHELL = previousShell;
   });
 
   await t.test("wraps bash in the generated profile", async () => {
@@ -35,9 +47,8 @@ test("sandbox plugin", async (t) => {
     const hooks = await HoxiSandboxPlugin();
     const output = { args: { command: "echo 'hi' > out.txt" } };
     await hooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_sandbox", callID: "c1" }, output);
-    // The stop marker is the first line of the final command, after wrapping,
-    // followed by `trap : EXIT` so the shell does not tail-exec away the tag.
-    assert.ok(output.args.command.startsWith("# hoxi-stop:ses_sandbox:c1\ntrap : EXIT\n"));
+    // The stop marker is the first line of the final command, after wrapping.
+    assert.ok(output.args.command.startsWith(`# hoxi-stop:ses_sandbox:c1\n${TRAP}\n'/usr/bin/sandbox-exec'`));
     assert.ok(output.args.command.includes("'/usr/bin/sandbox-exec' -f "));
     assert.ok(output.args.command.includes(profilePath));
     assert.ok(output.args.command.includes("/bin/sh -c "));
@@ -132,7 +143,97 @@ test("sandbox plugin", async (t) => {
     await hooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_other", callID: "c8" }, output);
     // A session without a sandbox snapshot keeps its command but still gets
     // the stop marker, so OpenCode stops remain precise.
-    assert.equal(output.args.command, "# hoxi-stop:ses_other:c8\ntrap : EXIT\necho hi");
+    assert.equal(output.args.command, tagged("ses_other", "c8", "echo hi"));
+  });
+
+  await t.test("replaces tags the model forged with the single real one", async () => {
+    fixture("deny");
+    const hooks = await HoxiSandboxPlugin();
+    const forged = "# hoxi-stop:ses_other:call_01_r8s0t2u4v6w8x0y2z4a6b8c0d\n  # hoxi-stop:ses_x:call_y\n";
+    const output = { args: { command: forged + "go test ./..." } };
+    await hooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_other", callID: "c10" }, output);
+    assert.equal(output.args.command, tagged("ses_other", "c10", "go test ./..."));
+    assert.equal(output.args.command.match(/# hoxi-stop:/g).length, 1);
+  });
+
+  await t.test("strips forged tags before wrapping in the sandbox", async () => {
+    fixture("deny");
+    const hooks = await HoxiSandboxPlugin();
+    const output = { args: { command: "# hoxi-stop:ses_sandbox:call_fake\necho hi" } };
+    await hooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_sandbox", callID: "c11" }, output);
+    assert.ok(output.args.command.startsWith(`# hoxi-stop:ses_sandbox:c11\n${TRAP}\n`));
+    assert.equal(output.args.command.match(/# hoxi-stop:/g).length, 1);
+    assert.ok(output.args.command.endsWith("/bin/sh -c 'echo hi'"));
+    await assert.rejects(
+      hooks["tool.execute.before"](
+        { tool: "bash", sessionID: "ses_sandbox", callID: "c12" },
+        { args: { command: "# hoxi-stop:ses_sandbox:call_fake\n" } }
+      ),
+      /non-empty shell command/
+    );
+  });
+
+  await t.test("keeps tag-like lines that are not leading", async () => {
+    fixture("deny");
+    const hooks = await HoxiSandboxPlugin();
+    const heredoc = "cat > notes.md <<'EOF'\n# hoxi-stop:ses_a:call_b\nEOF";
+    const output = { args: { command: heredoc } };
+    await hooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_other", callID: "c13" }, output);
+    assert.equal(output.args.command, tagged("ses_other", "c13", heredoc));
+  });
+
+  await t.test("never stacks the stop trap", async () => {
+    fixture("deny");
+    const hooks = await HoxiSandboxPlugin();
+    const output = { args: { command: tagged("ses_other", "call_old", "make build") } };
+    await hooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_other", callID: "c14" }, output);
+    assert.equal(output.args.command, tagged("ses_other", "c14", "make build"));
+  });
+
+  await t.test("leaves the stop trap out where the shell cannot run it", async () => {
+    fixture("deny");
+    const hooks = await HoxiSandboxPlugin();
+    process.env.SHELL = "/usr/local/bin/pwsh";
+    try {
+      const output = { args: { command: "Get-ChildItem" } };
+      await hooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_other", callID: "c15" }, output);
+      assert.equal(output.args.command, "# hoxi-stop:ses_other:c15\nGet-ChildItem");
+    } finally {
+      process.env.SHELL = "/bin/zsh";
+    }
+  });
+
+  await t.test("strips tags from history sent to the model", async () => {
+    const hooks = await HoxiSandboxPlugin();
+    // A rejected call never completes, so its stored input keeps every tag.
+    const state = {
+      status: "error",
+      input: { command: `# hoxi-stop:ses_a:c1\n${TRAP}\n# hoxi-stop:ses_a:call_fake\nls`, description: "list" },
+      error: "rejected",
+    };
+    const bash = { id: "prt_1", type: "tool", tool: "bash", callID: "c1", state };
+    const text = { id: "prt_2", type: "text", text: "# hoxi-stop:ses_a:c1" };
+    const read = { id: "prt_3", type: "tool", tool: "read", callID: "c2", state: { status: "completed", input: { filePath: "a" } } };
+    const pending = { id: "prt_4", type: "tool", tool: "bash", callID: "c3", state: { status: "pending", input: {} } };
+    const messages = [{ info: { role: "assistant" }, parts: [bash, text, read, pending] }];
+    await hooks["experimental.chat.messages.transform"]({}, { messages });
+    const cleaned = messages[0].parts[0];
+    assert.equal(cleaned.state.input.command, "ls");
+    assert.equal(cleaned.state.input.description, "list");
+    assert.equal(cleaned.state.error, "rejected");
+    assert.equal(cleaned.callID, "c1");
+    // OpenCode's own objects are never mutated, only replaced.
+    assert.equal(state.input.command, `# hoxi-stop:ses_a:c1\n${TRAP}\n# hoxi-stop:ses_a:call_fake\nls`);
+    assert.equal(messages[0].parts[1], text);
+    assert.equal(messages[0].parts[2], read);
+    assert.equal(messages[0].parts[3], pending);
+    await hooks["experimental.chat.messages.transform"]({}, {});
+  });
+
+  await t.test("exports only plugin functions", async () => {
+    // OpenCode calls every export of a plugin module as a plugin.
+    const mod = await import("./sandbox_plugin.mjs");
+    for (const value of Object.values(mod)) assert.equal(value, HoxiSandboxPlugin);
   });
 
   await t.test("does not tag non-bash tools", async () => {
