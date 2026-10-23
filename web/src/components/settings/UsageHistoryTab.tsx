@@ -2,7 +2,7 @@
 // Daily token/cost/code history plus a per-model rollup. Reads raw counters
 // from the gateway and prices them with the same resolver as the header pulse.
 import { createMemo, createSignal, For, onMount, Show } from "solid-js";
-import { RefreshCw } from "lucide-solid";
+import { ChevronRight, RefreshCw, X } from "lucide-solid";
 import { t } from "../../i18n";
 import {
   loadUsageHistory,
@@ -25,7 +25,6 @@ const button =
   "inline-flex items-center justify-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2 py-1.5 text-[12px] text-[var(--text-primary)] hover:bg-[var(--bg-hover)] disabled:opacity-50 cursor-pointer";
 
 const card = "rounded-xl bg-[var(--bg-inset)]/60 px-3 py-2";
-const headCell = "px-2 py-1.5 text-left font-medium";
 
 function toDateInput(date: Date): string {
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -48,11 +47,28 @@ function Metric(props: { label: string; value: string; title?: string; tone?: "c
   );
 }
 
-function DayRow(props: { day: UsageHistoryDay }) {
+function DayRow(props: { day: UsageHistoryDay; onViewModels: () => void }) {
   return (
     <tr class="border-t border-[var(--border-subtle)]/60 hover:bg-[var(--bg-hover)]/40">
       <td class="px-2 py-1.5 font-mono text-[11px] text-[var(--text-secondary)] whitespace-nowrap">
         {props.day.date}
+      </td>
+      <td class="px-2 py-1.5 text-right">
+        <Show
+          when={props.day.models.length > 0}
+          fallback={<span class="text-[11px] text-[var(--text-faint)]">—</span>}
+        >
+          <button
+            type="button"
+            class="inline-flex items-center gap-0.5 rounded-md px-1.5 py-0.5 font-mono text-[11px] text-[var(--accent-primary)] hover:bg-[var(--bg-hover)] cursor-pointer"
+            title={t("settings.usageModelDetailView")}
+            aria-label={`${t("settings.usageModelDetailView")} ${props.day.date}`}
+            onClick={props.onViewModels}
+          >
+            {props.day.models.length}
+            <ChevronRight size={12} />
+          </button>
+        </Show>
       </td>
       <td class="px-2 py-1.5 text-right font-mono text-[11px] text-[var(--text-secondary)]">
         {props.day.turns.toLocaleString()}
@@ -100,7 +116,11 @@ export default function UsageHistoryTab() {
   });
 
   const totals = createMemo(() => usageHistoryTotals(usageHistory()));
-  const models = createMemo(() => usageHistoryModels(usageHistory()));
+  const [detailDay, setDetailDay] = createSignal<UsageHistoryDay | null>(null);
+  const detailModels = createMemo(() => {
+    const day = detailDay();
+    return day ? usageHistoryModels([day]) : [];
+  });
   const points = createMemo(() =>
     usageHistory().map((d) => ({ date: d.date, tokens: d.totalTokens, cost: d.cost }))
   );
@@ -245,63 +265,6 @@ export default function UsageHistoryTab() {
 
       <section class="space-y-2">
         <h4 class="text-[12px] font-semibold text-[var(--text-secondary)]">
-          {t("settings.usageByModelTitle")}
-        </h4>
-        <Show
-          when={models().length > 0}
-          fallback={
-            <p class="rounded-xl border border-dashed border-[var(--border-subtle)] px-3 py-6 text-center text-[12px] text-[var(--text-muted)]">
-              {t("settings.usageByModelEmpty")}
-            </p>
-          }
-        >
-          <div class="overflow-x-auto rounded-xl border border-[var(--border-subtle)]">
-            <table class="w-full min-w-[640px] border-collapse text-[11px]">
-              <thead>
-                <tr class="bg-[var(--bg-inset)]/60 text-[var(--text-muted)]">
-                  <th class={headCell}>{t("diagnostics.provider")}</th>
-                  <th class={headCell}>{t("diagnostics.colModel")}</th>
-                  <th class={`${headCell} text-right`}>{t("settings.usageColTurns")}</th>
-                  <th class={`${headCell} text-right`}>{t("settings.usageColInput")}</th>
-                  <th class={`${headCell} text-right`}>{t("settings.usageColOutput")}</th>
-                  <th class={`${headCell} text-right`}>{t("settings.usageColTokens")}</th>
-                  <th class={`${headCell} text-right`}>{t("settings.usageColCost")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <For each={models()}>
-                  {(model) => (
-                    <tr class="border-t border-[var(--border-subtle)]/60 hover:bg-[var(--bg-hover)]/40">
-                      <td class="px-2 py-1.5 text-[var(--text-secondary)]">{model.providerID}</td>
-                      <td class="px-2 py-1.5 font-mono text-[var(--text-primary)]">{model.modelID}</td>
-                      <td class="px-2 py-1.5 text-right font-mono text-[var(--text-secondary)]">
-                        {model.turns.toLocaleString()}
-                      </td>
-                      <td class="px-2 py-1.5 text-right font-mono text-[var(--text-muted)]">
-                        {formatCompactTokens(model.inputTokens)}
-                      </td>
-                      <td class="px-2 py-1.5 text-right font-mono text-[var(--text-muted)]">
-                        {formatCompactTokens(model.outputTokens)}
-                      </td>
-                      <td class="px-2 py-1.5 text-right font-mono text-[var(--text-primary)]">
-                        {formatCompactTokens(model.totalTokens)}
-                      </td>
-                      <td class="px-2 py-1.5 text-right font-mono text-[var(--text-primary)]">
-                        <Show when={model.cost !== null} fallback="—">
-                          {formatUsd(model.cost!)}
-                        </Show>
-                      </td>
-                    </tr>
-                  )}
-                </For>
-              </tbody>
-            </table>
-          </div>
-        </Show>
-      </section>
-
-      <section class="space-y-2">
-        <h4 class="text-[12px] font-semibold text-[var(--text-secondary)]">
           {t("settings.usageTrendTokens")}
         </h4>
         <UsageTrendChart points={points()} metric="tokens" />
@@ -331,6 +294,7 @@ export default function UsageHistoryTab() {
               <thead>
                 <tr class="bg-[var(--bg-inset)]/60 text-[var(--text-muted)]">
                   <th class="px-2 py-1.5 text-left font-medium">{t("settings.usageColDate")}</th>
+                  <th class="px-2 py-1.5 text-right font-medium">{t("settings.usageColModels")}</th>
                   <th class="px-2 py-1.5 text-right font-medium">{t("settings.usageColTurns")}</th>
                   <th class="px-2 py-1.5 text-right font-medium">
                     {t("settings.usageColSessions")}
@@ -344,7 +308,7 @@ export default function UsageHistoryTab() {
               </thead>
               <tbody>
                 <For each={usageHistory().slice().reverse()}>
-                  {(day) => <DayRow day={day} />}
+                  {(day) => <DayRow day={day} onViewModels={() => setDetailDay(day)} />}
                 </For>
               </tbody>
             </table>
@@ -353,6 +317,84 @@ export default function UsageHistoryTab() {
             {t("settings.usageNote")}
           </p>
         </section>
+      </Show>
+
+      <Show when={detailDay()}>
+        {(day) => (
+          <div
+            class="fixed inset-0 z-[80] flex items-center justify-center bg-black/30 p-4"
+            onClick={() => setDetailDay(null)}
+          >
+            <section
+              role="dialog"
+              aria-modal="true"
+              class="flex max-h-[80vh] w-full max-w-2xl flex-col gap-3 rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-4 shadow-2xl"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div class="flex items-center justify-between gap-3">
+                <div class="flex items-baseline gap-2">
+                  <h4 class="text-[13px] font-semibold text-[var(--text-primary)]">
+                    {t("settings.usageByModelTitle")}
+                  </h4>
+                  <span class="font-mono text-[11px] text-[var(--text-muted)]">{day().date}</span>
+                </div>
+                <button
+                  type="button"
+                  class={button}
+                  aria-label={t("settings.usageModelDetailClose")}
+                  onClick={() => setDetailDay(null)}
+                >
+                  <X size={13} />
+                </button>
+              </div>
+              <div class="min-h-0 overflow-y-auto">
+                <Show
+                  when={detailModels().length > 0}
+                  fallback={
+                    <p class="rounded-xl border border-dashed border-[var(--border-subtle)] px-3 py-6 text-center text-[12px] text-[var(--text-muted)]">
+                      {t("settings.usageByModelEmpty")}
+                    </p>
+                  }
+                >
+                  <table class="w-full border-collapse text-[11px]">
+                    <thead>
+                      <tr class="bg-[var(--bg-inset)]/60 text-[var(--text-muted)]">
+                        <th class="px-2 py-1.5 text-left font-medium">{t("diagnostics.provider")}</th>
+                        <th class="px-2 py-1.5 text-left font-medium">{t("diagnostics.colModel")}</th>
+                        <th class="px-2 py-1.5 text-right font-medium">{t("settings.usageColTurns")}</th>
+                        <th class="px-2 py-1.5 text-right font-medium">{t("settings.usageColTokens")}</th>
+                        <th class="px-2 py-1.5 text-right font-medium">{t("settings.usageColCost")}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <For each={detailModels()}>
+                        {(model) => (
+                          <tr class="border-t border-[var(--border-subtle)]/60">
+                            <td class="px-2 py-1.5 text-[var(--text-secondary)]">{model.providerID}</td>
+                            <td class="px-2 py-1.5 font-mono text-[var(--text-primary)]">
+                              {model.modelID}
+                            </td>
+                            <td class="px-2 py-1.5 text-right font-mono text-[var(--text-secondary)]">
+                              {model.turns.toLocaleString()}
+                            </td>
+                            <td class="px-2 py-1.5 text-right font-mono text-[var(--text-primary)]">
+                              {formatCompactTokens(model.totalTokens)}
+                            </td>
+                            <td class="px-2 py-1.5 text-right font-mono text-[var(--text-primary)]">
+                              <Show when={model.cost !== null} fallback="—">
+                                {formatUsd(model.cost!)}
+                              </Show>
+                            </td>
+                          </tr>
+                        )}
+                      </For>
+                    </tbody>
+                  </table>
+                </Show>
+              </div>
+            </section>
+          </div>
+        )}
       </Show>
     </div>
   );
