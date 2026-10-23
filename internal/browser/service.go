@@ -55,14 +55,23 @@ type scope struct {
 }
 
 type Service struct {
-	mu        sync.Mutex
-	ctx       context.Context
-	cancel    context.CancelFunc
-	scopes    map[scopeKey]*scope
-	token     string
-	uiOrigins map[string]bool
-	closed    bool
-	closeDone chan struct{}
+	mu             sync.Mutex
+	ctx            context.Context
+	cancel         context.CancelFunc
+	scopes         map[scopeKey]*scope
+	token          string
+	uiOrigins      map[string]bool
+	closed         bool
+	closeDone      chan struct{}
+	resolveSession func(sessionID, directory string) (string, error)
+}
+
+// SetSessionResolver lets the host map an engine handle to its owning Hoxi
+// session. It runs only after authentication and strict scope validation.
+func (s *Service) SetSessionResolver(resolve func(sessionID, directory string) (string, error)) {
+	s.mu.Lock()
+	s.resolveSession = resolve
+	s.mu.Unlock()
 }
 
 // New creates a service without starting Chrome. The initial agent token is
@@ -174,6 +183,26 @@ func requestScope(r *http.Request) (scopeKey, error) {
 		return scopeKey{}, errors.New("directory must be an existing directory")
 	}
 	return scopeKey{dir, q.Get("sessionID")}, nil
+}
+
+func (s *Service) requestScope(r *http.Request) (scopeKey, error) {
+	key, err := requestScope(r)
+	if err != nil {
+		return scopeKey{}, err
+	}
+	s.mu.Lock()
+	resolve := s.resolveSession
+	s.mu.Unlock()
+	if resolve != nil {
+		key.session, err = resolve(key.session, key.directory)
+		if err != nil {
+			return scopeKey{}, err
+		}
+		if !sessionPattern.MatchString(key.session) {
+			return scopeKey{}, errors.New("invalid resolved browser session")
+		}
+	}
+	return key, nil
 }
 
 func (s *Service) acquire(ctx context.Context, key scopeKey, create bool) (*scope, error) {

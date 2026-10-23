@@ -25,7 +25,9 @@ maximized using its existing expand button.
 `hoxi_browser` supports navigation, click, text insertion, keyboard shortcuts,
 scroll, DOM snapshots, JPEG screenshots, JavaScript evaluation, and tab lifecycle.
 The plugin derives scope from OpenCode's execution context, never model-supplied
-session IDs. Each session/directory pair receives a separate Chrome process and
+session IDs. The gateway resolves managed OpenCode handles to their owning Hoxi
+session ID, so agent tools and the inspector share the same browser and manual
+ownership. Requests with a mismatched worktree are rejected. Each session/directory pair receives a separate Chrome process and
 temporary profile. Up to eight browser scopes can coexist. Closing a browser
 frees its slot and deletes its profile; app shutdown closes all browsers.
 
@@ -48,7 +50,9 @@ disclose secrets.
   acknowledging receipt. Only one frame awaits display, with the latest pending
   frame retained server-side. Input does not wait for display acknowledgments.
   JPEG quality is 92; density follows the display up to 2x within the pixel budget.
-  Hidden inspectors disconnect. State metadata is polled once per second rather
+  Hidden documents disconnect streams and pause polling, but the visible inspector's
+  command channel remains available even if WKWebView visibility reporting lags.
+  A user action resumes observation. State metadata is polled once per second rather
   than requesting a screenshot on every poll. This is not a guaranteed 60 FPS stream.
 - Viewports default to 1280x800 at density 1. UI-only `resize` accepts integer
   `width`/`height` (1..4096), optional `deviceScaleFactor` (1..2, default 1), and

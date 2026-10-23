@@ -162,7 +162,7 @@ func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		fail(w, 405, errors.New("method not allowed"))
 		return
 	}
-	key, err := requestScope(r)
+	key, err := s.requestScope(r)
 	if err != nil {
 		fail(w, 400, err)
 		return

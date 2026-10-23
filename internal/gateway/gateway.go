@@ -182,6 +182,7 @@ func New(openCodePort int, password, rootDir string, distFS fs.FS, status *statu
 		codeIndex:    codeindex.NewService(""),
 		forge:        forgeSvc,
 	}
+	g.browser.SetSessionResolver(runnerSvc.ResolveBrowserSession)
 	g.recallSvc = recall.NewService(&gatewayRecallSource{g: g})
 	if g.runner != nil {
 		options := []orchestration.Option{orchestration.WithLLM(providers)}

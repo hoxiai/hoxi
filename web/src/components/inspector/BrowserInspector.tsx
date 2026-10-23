@@ -57,7 +57,7 @@ export default function BrowserInspector() {
     const sessionID = workspace.activeSessionID;
     const directory = sessionID ? sessionDirectory(sessionID) : undefined;
     return sessionID && directory ? { sessionID, directory } : null;
-  });
+  }, null, { equals: (left, right) => left?.sessionID === right?.sessionID && left?.directory === right?.directory });
   let current: Connection | null = null;
   let input: HTMLTextAreaElement | undefined;
   let composing = false;
@@ -176,6 +176,9 @@ export default function BrowserInspector() {
   }
 
   function send(action: BrowserAction) {
+    // A user gesture proves the panel is interactive even when WKWebView's
+    // visibility state lags behind showing/restoring the native window.
+    setVisible(true);
     const connection = current;
     if (!connection || !valid(connection)) return;
     if (!running() && (action.action === "navigate" || action.action === "tab_new")) {
@@ -221,7 +224,8 @@ export default function BrowserInspector() {
 
   createEffect(() => {
     const active = scope();
-    const enabled = visible() && workspace.inspectorOpen && workspace.inspectorTab === "browser";
+    // Visibility only pauses background observation, never the command channel.
+    const enabled = workspace.inspectorOpen && workspace.inspectorTab === "browser";
     setState(null);
     setURL("");
     setError("");
@@ -248,7 +252,7 @@ export default function BrowserInspector() {
       streamGeneration();
       const tabID = selectedTab();
       const base = workspace.wsBaseURL || `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}`;
-      if (!tabID) return;
+      if (!visible() || !tabID) return;
       if (connection.pending > 0) { connection.streamDirty = true; return; }
       const epoch = connection.tabEpoch;
       let disposed = false;
@@ -286,7 +290,7 @@ export default function BrowserInspector() {
     let timer: ReturnType<typeof setTimeout> | undefined;
     async function poll() {
       try {
-        if (connection.pending === 0) {
+        if (visible() && connection.pending === 0) {
           const next = await fetchBrowserState(connection.scope, connection.controller.signal);
           if (!valid(connection)) return;
           if (connection.pending === 0) applyState(next);
