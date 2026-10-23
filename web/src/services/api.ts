@@ -183,9 +183,15 @@ export const hoxiAPI = {
     return requestJSON(`/api/hoxi/request-log/content?${params.toString()}`);
   },
 
-  getDevPulseHistory(days = 30, directory?: string): Promise<import("./api-types").DevPulseHistoryResponse> {
+  getDevPulseHistory(
+    days = 30,
+    directory?: string,
+    window?: { startDate?: string; endDate?: string }
+  ): Promise<import("./api-types").DevPulseHistoryResponse> {
     const params = new URLSearchParams();
     params.set("days", String(days));
+    if (window?.startDate) params.set("start", window.startDate);
+    if (window?.endDate) params.set("end", window.endDate);
     if (directory) params.set("directory", directory);
     return requestJSON(`/api/hoxi/dev-pulse/history?${params.toString()}`);
   },

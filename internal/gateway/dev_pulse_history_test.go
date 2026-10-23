@@ -159,6 +159,78 @@ func TestDevPulseHistoryRejectsBadWindow(t *testing.T) {
 	}
 }
 
+func TestDevPulseHistoryCustomWindow(t *testing.T) {
+	t.Setenv("OPENCODE_DB", "")
+	t.Setenv("HOXI_DB_PATH", filepath.Join(t.TempDir(), "hoxi.db"))
+
+	repo := t.TempDir()
+	now := time.Now()
+	at := func(daysAgo int) string {
+		d := now.AddDate(0, 0, -daysAgo)
+		return time.Date(d.Year(), d.Month(), d.Day(), 12, 0, 0, 0, d.Location()).Format(time.RFC3339)
+	}
+	gitAt(t, repo, at(0), "init", "-q", "-b", "main")
+	if err := os.WriteFile(filepath.Join(repo, "seed.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitAt(t, repo, at(5), "add", ".")
+	gitAt(t, repo, at(5), "commit", "-q", "-m", "old")
+
+	// One commit inside the window (yesterday) and one outside it (today).
+	if err := os.WriteFile(filepath.Join(repo, "in.go"), []byte("package main\nvar inWindow = 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitAt(t, repo, at(1), "add", "in.go")
+	gitAt(t, repo, at(1), "commit", "-q", "-m", "yesterday")
+	if err := os.WriteFile(filepath.Join(repo, "out.go"), []byte("package main\nvar outOfWindow = 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitAt(t, repo, at(0), "add", "out.go")
+	gitAt(t, repo, at(0), "commit", "-q", "-m", "today")
+
+	gw := New(0, "pass", repo, nil, nil)
+	start := now.AddDate(0, 0, -5).Format("2006-01-02")
+	end := now.AddDate(0, 0, -1).Format("2006-01-02")
+	rec := httptest.NewRecorder()
+	gw.ServeHTTP(rec, localRequest(http.MethodGet, "/api/hoxi/dev-pulse/history?directory="+repo+"&start="+start+"&end="+end, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var res devPulseHistoryResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil {
+		t.Fatalf("unmarshal history: %v", err)
+	}
+	if len(res.Days) != 5 {
+		t.Fatalf("days = %d, want 5", len(res.Days))
+	}
+	if res.Days[0].Date != start || res.Days[4].Date != end {
+		t.Fatalf("window %s..%s, want %s..%s", res.Days[0].Date, res.Days[4].Date, start, end)
+	}
+	if res.EndDate != end {
+		t.Fatalf("endDate = %s, want %s", res.EndDate, end)
+	}
+	if historyDayByDate(res.Days, now.Format("2006-01-02")) != nil {
+		t.Fatal("today must not appear in a window ending yesterday")
+	}
+	yRow := historyDayByDate(res.Days, now.AddDate(0, 0, -1).Format("2006-01-02"))
+	if yRow == nil || yRow.Commits != 1 {
+		t.Fatalf("yesterday commit not counted: %+v", yRow)
+	}
+}
+
+func TestDevPulseHistoryRejectsBadDates(t *testing.T) {
+	t.Setenv("OPENCODE_DB", "")
+	t.Setenv("HOXI_DB_PATH", filepath.Join(t.TempDir(), "hoxi.db"))
+	gw := New(0, "pass", t.TempDir(), nil, nil)
+	for _, q := range []string{"start=2026-13-40", "start=notadate", "start=2026-01-01&end=nope"} {
+		rec := httptest.NewRecorder()
+		gw.ServeHTTP(rec, localRequest(http.MethodGet, "/api/hoxi/dev-pulse/history?"+q, nil))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("%s: expected 400, got %d", q, rec.Code)
+		}
+	}
+}
+
 func TestDevPulseHistoryClampsWindow(t *testing.T) {
 	t.Setenv("OPENCODE_DB", "")
 	t.Setenv("HOXI_DB_PATH", filepath.Join(t.TempDir(), "hoxi.db"))

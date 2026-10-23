@@ -86,10 +86,47 @@ func (g *Gateway) handleDevPulseHistory(w http.ResponseWriter, r *http.Request) 
 	now := time.Now()
 	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	start := todayStart.AddDate(0, 0, -(days - 1))
+	end := todayStart
+
+	// An explicit start (YYYY-MM-DD) selects a custom window, optionally bounded
+	// by an end date. The window is right-open in the queries via endExclusive so
+	// the whole end day is included.
+	if raw := strings.TrimSpace(r.URL.Query().Get("start")); raw != "" {
+		parsed, err := time.ParseInLocation("2006-01-02", raw, now.Location())
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, "start must be YYYY-MM-DD")
+			return
+		}
+		start = parsed
+		if rawEnd := strings.TrimSpace(r.URL.Query().Get("end")); rawEnd != "" {
+			parsedEnd, err := time.ParseInLocation("2006-01-02", rawEnd, now.Location())
+			if err != nil {
+				writeJSONError(w, http.StatusBadRequest, "end must be YYYY-MM-DD")
+				return
+			}
+			end = parsedEnd
+		}
+		if end.Before(start) {
+			start, end = end, start
+		}
+		// The window never reaches past today.
+		if end.After(todayStart) {
+			end = todayStart
+		}
+		// Clamp an over-long custom window to the most recent max days.
+		if end.Sub(start) > time.Duration(historyMaxDays)*24*time.Hour {
+			start = end.AddDate(0, 0, -(historyMaxDays - 1))
+		}
+		days = 0
+		for d := start; !d.After(end); d = d.AddDate(0, 0, 1) {
+			days++
+		}
+	}
+	endExclusive := end.AddDate(0, 0, 1)
 
 	res := devPulseHistoryResponse{
 		StartDate: start.Format("2006-01-02"),
-		EndDate:   todayStart.Format("2006-01-02"),
+		EndDate:   end.Format("2006-01-02"),
 		Timezone:  now.Location().String(),
 	}
 
@@ -103,8 +140,8 @@ func (g *Gateway) handleDevPulseHistory(w http.ResponseWriter, r *http.Request) 
 		return d
 	}
 
-	queryHistoryFromDB(start.UnixMilli(), day)
-	g.collectRunnerHistory(start.UnixMilli(), day)
+	queryHistoryFromDB(start.UnixMilli(), endExclusive.UnixMilli(), day)
+	g.collectRunnerHistory(start.UnixMilli(), endExclusive.UnixMilli(), day)
 
 	workDir := g.rootDir
 	if g.worktrees != nil {
@@ -116,7 +153,7 @@ func (g *Gateway) handleDevPulseHistory(w http.ResponseWriter, r *http.Request) 
 		workDir = dir
 	}
 	if workDir != "" {
-		collectGitHistory(workDir, start, day)
+		collectGitHistory(workDir, start, endExclusive, day)
 	}
 
 	sortHistoryModels(byDate)
@@ -136,7 +173,7 @@ func historyDayKey(ms int64, loc *time.Location) string {
 	return time.UnixMilli(ms).In(loc).Format("2006-01-02")
 }
 
-func queryHistoryFromDB(startMs int64, day func(string) *historyDay) {
+func queryHistoryFromDB(startMs, endMs int64, day func(string) *historyDay) {
 	dbPath := hoxipaths.DBPath()
 	if dbPath == "" {
 		return
@@ -163,6 +200,7 @@ SELECT
 FROM message m
 JOIN session s ON s.id = m.session_id
 WHERE m.time_created >= %d
+  AND m.time_created < %d
   AND json_extract(m.data, '$.role') = 'assistant'
   AND %s
   AND (
@@ -171,7 +209,7 @@ WHERE m.time_created >= %d
     OR CAST(COALESCE(json_extract(m.data, '$.tokens.cache.read'), 0) AS INTEGER) > 0
   )
 GROUP BY day, m.session_id, provider_id, model_id
-ORDER BY day;`, startMs, handoff.SQLNotImportedTitleClause("s.title"))
+ORDER BY day;`, startMs, endMs, handoff.SQLNotImportedTitleClause("s.title"))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
@@ -240,12 +278,13 @@ FROM (
   FROM part p
   JOIN session s ON s.id = p.session_id
   WHERE p.time_created >= %d
+    AND p.time_created < %d
     AND json_extract(p.data, '$.type') = 'tool'
     AND %s
   GROUP BY date(p.time_created / 1000, 'unixepoch', 'localtime'), COALESCE(json_extract(p.data, '$.callID'), p.id)
 )
 GROUP BY day
-ORDER BY day;`, startMs, handoff.SQLNotImportedTitleClause("s.title"))
+ORDER BY day;`, startMs, endMs, handoff.SQLNotImportedTitleClause("s.title"))
 
 	tCtx, tCancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer tCancel()
@@ -289,7 +328,7 @@ func mergeHistoryModel(target *historyDay, incoming historyModelStat) {
 // collectRunnerHistory folds native-runtime usage (Claude Code, Antigravity,
 // Qoder, CodeBuddy) into the per-day series. OpenCode turns mirror hoxi.db and
 // are already counted, so they are skipped here.
-func (g *Gateway) collectRunnerHistory(startMs int64, day func(string) *historyDay) {
+func (g *Gateway) collectRunnerHistory(startMs, endMs int64, day func(string) *historyDay) {
 	if g.runner == nil {
 		return
 	}
@@ -314,7 +353,7 @@ func (g *Gateway) collectRunnerHistory(startMs int64, day func(string) *historyD
 		store.VisitTurns(rec.ID, func(full runner.SessionRecord) {
 			for i := range full.Turns {
 				turn := full.Turns[i]
-				if turn.Info.Role != "assistant" || turn.Info.Time.Created < startMs {
+				if turn.Info.Role != "assistant" || turn.Info.Time.Created < startMs || turn.Info.Time.Created >= endMs {
 					continue
 				}
 				key := historyDayKey(turn.Info.Time.Created, loc)
@@ -367,10 +406,11 @@ func (g *Gateway) collectRunnerHistory(startMs int64, day func(string) *historyD
 
 // collectGitHistory buckets today's commit numstat into per-day totals with a
 // single git invocation instead of one call per day.
-func collectGitHistory(workDir string, start time.Time, day func(string) *historyDay) {
+func collectGitHistory(workDir string, start, end time.Time, day func(string) *historyDay) {
 	sinceArg := "--since=" + start.Format(time.RFC3339)
+	untilArg := "--until=" + end.Format(time.RFC3339)
 	logOut, err := worktree.RunGitRaw(workDir,
-		"log", sinceArg, "--no-merges", "--numstat",
+		"log", sinceArg, untilArg, "--no-merges", "--numstat",
 		"--pretty=format:COMMIT:%at")
 	if err != nil {
 		return

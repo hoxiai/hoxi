@@ -6,7 +6,8 @@ import {
   priceHistoryDay,
   usageHistory,
   usageHistoryLoading,
-  usageHistoryRange,
+  usageHistoryModels,
+  usageSelection,
   usageHistoryTotals,
   type UsageHistoryDay,
 } from "../store/usage-history";
@@ -150,6 +151,61 @@ describe("usage history pricing", () => {
     assertEqual(totals.unpricedModels.join(","), "x", "unpriced union");
   });
 
+  it("rolls per-day model stats into one priced row per provider/model", () => {
+    withPricingCatalog([pricingItem("claude-opus-5", 5, 25)], () => {
+      const days: UsageHistoryDay[] = [
+        usageDay({
+          date: "2026-10-21",
+          models: [
+            {
+              providerID: "anthropic",
+              modelID: "claude-opus-5",
+              turns: 1,
+              inputTokens: 1_000_000,
+              outputTokens: 0,
+              reasoningTokens: 0,
+              cacheReadTokens: 0,
+              cacheWriteTokens: 0,
+            },
+          ],
+        }),
+        usageDay({
+          date: "2026-10-22",
+          models: [
+            {
+              providerID: "anthropic",
+              modelID: "claude-opus-5",
+              turns: 1,
+              inputTokens: 0,
+              outputTokens: 100_000,
+              reasoningTokens: 0,
+              cacheReadTokens: 0,
+              cacheWriteTokens: 0,
+            },
+            {
+              providerID: "custom",
+              modelID: "unknown-x",
+              turns: 1,
+              inputTokens: 500,
+              outputTokens: 0,
+              reasoningTokens: 0,
+              cacheReadTokens: 0,
+              cacheWriteTokens: 0,
+            },
+          ],
+        }),
+      ];
+      const rows = usageHistoryModels(days);
+      const opus = rows.find((row) => row.modelID === "claude-opus-5")!;
+      assertEqual(opus.turns, 2, "same model merges across days");
+      assertEqual(opus.totalTokens, 1_100_000, "merged tokens");
+      assertEqual(opus.cost, 7.5, "merged cost must not be re-priced per day");
+      const unknown = rows.find((row) => row.modelID === "unknown-x")!;
+      assertEqual(unknown.cost, null, "unpriced model keeps a null cost");
+      assertEqual(rows[0].modelID, "claude-opus-5", "sorted by tokens desc");
+    });
+  });
+
   it("ignores stale loadUsageHistory responses when range changes", async () => {
     const origHistory = hoxiAPI.getDevPulseHistory;
     let resolve7!: (res: DevPulseHistoryResponse) => void;
@@ -160,11 +216,12 @@ describe("usage history pricing", () => {
         return new Promise<DevPulseHistoryResponse>((r) => { resolve30 = r; });
       };
 
-      const p7 = loadUsageHistory(7, true);
+      const p7 = loadUsageHistory({ kind: "days", days: 7 }, true);
       await new Promise((r) => setTimeout(r, 10));
-      const p30 = loadUsageHistory(30, true);
+      const p30 = loadUsageHistory({ kind: "days", days: 30 }, true);
       await new Promise((r) => setTimeout(r, 10));
-      assertEqual(usageHistoryRange(), 30);
+      const sel = usageSelection();
+      assertTrue(sel.kind === "days" && sel.days === 30, "selection tracks the 30d window");
       assertEqual(usageHistoryLoading(), true);
 
       resolve30({
