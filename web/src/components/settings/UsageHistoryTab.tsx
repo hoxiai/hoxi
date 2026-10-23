@@ -137,6 +137,55 @@ function DayRow(props: { day: UsageHistoryDay; onViewModels: () => void }) {
   );
 }
 
+function Skeleton(props: { class?: string }) {
+  return <div class={`animate-pulse bg-[var(--bg-inset)] ${props.class ?? ""}`} />;
+}
+
+const HEATMAP_SKELETON_CELLS = Array.from({ length: 7 * 53 }, (_, index) => index);
+
+function HeatmapSkeleton() {
+  return (
+    <div class="flex flex-col items-center gap-2">
+      <div class="w-full overflow-hidden pb-1">
+        <div
+          class="mx-auto grid grid-flow-col grid-rows-7 gap-[3px]"
+          style={{ "grid-auto-columns": "11px" }}
+        >
+          <For each={HEATMAP_SKELETON_CELLS}>
+            {() => <Skeleton class="h-[11px] w-[11px] rounded-[2px]" />}
+          </For>
+        </div>
+      </div>
+      <Skeleton class="h-3 w-28 rounded" />
+    </div>
+  );
+}
+
+function MetricSkeleton() {
+  return (
+    <div class="grid grid-cols-2 gap-2 sm:grid-cols-4">
+      <For each={[0, 1, 2, 3]}>
+        {() => (
+          <div class="rounded-xl bg-[var(--bg-inset)]/60 px-3 py-2">
+            <Skeleton class="h-3 w-16 rounded" />
+            <Skeleton class="mt-2 h-4 w-20 rounded" />
+          </div>
+        )}
+      </For>
+    </div>
+  );
+}
+
+function ListSkeleton(props: { rows?: number }) {
+  return (
+    <div class="space-y-2 rounded-xl border border-[var(--border-subtle)] p-2">
+      <For each={Array.from({ length: props.rows ?? 6 }, (_, index) => index)}>
+        {() => <Skeleton class="h-7 w-full rounded-md" />}
+      </For>
+    </div>
+  );
+}
+
 export default function UsageHistoryTab() {
   const initial = usageSelection();
   const todayDate = toDateInput(new Date());
@@ -278,6 +327,26 @@ export default function UsageHistoryTab() {
       </Show>
 
       <Show
+        when={!usageHistoryLoading()}
+        fallback={
+          <Show
+            when={isOverview()}
+            fallback={
+              <div class="space-y-5">
+                <MetricSkeleton />
+                <ListSkeleton rows={8} />
+              </div>
+            }
+          >
+            <div class="space-y-5">
+              <HeatmapSkeleton />
+              <MetricSkeleton />
+              <ListSkeleton rows={4} />
+            </div>
+          </Show>
+        }
+      >
+      <Show
         when={isOverview()}
         fallback={
           <div class="space-y-5">
@@ -375,6 +444,7 @@ export default function UsageHistoryTab() {
             </Show>
           </section>
         </div>
+      </Show>
       </Show>
 
       <Show when={detailDay()}>
