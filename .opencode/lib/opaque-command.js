@@ -28,6 +28,19 @@ import {
   joinLineContinuations,
   stripLiteralHeredocs,
 } from "./shell-substitution.js";
+import {
+  HARMLESS_ENV_VARS,
+  MAX_SUBSHELL_DEPTH,
+  READ_ONLY_DATA_TOOLS,
+  VALUE_ONLY_TOOLS,
+  acceptsValueClassArg,
+  commandSubsAreValueClass,
+  concretizeLiterals,
+  eraseSubshells,
+  findSubshellSpans,
+  isHarmlessSet,
+  setLiteralJudge,
+} from "./shell-constants.js";
 
 const BENIGN_PATH_EXPORT_RE = /^export[ \t]+PATH=[A-Za-z0-9_./:$~{}-]+$/;
 const ENV_VAR_ASSIGNMENT_WORD_RE = /^[A-Za-z_][A-Za-z0-9_]*=/;
@@ -36,9 +49,6 @@ const INLINE_SCRIPT_FLAGS = new Set(["-c", "-e", "--eval", "-p", "--print", "-"]
 const INTERP_VALUE_FLAGS = new Set(["-m", "-W", "-X", "-r", "--require", "--import", "-I", "-C"]);
 
 const SHELL_KEYWORDS = new Set(["while", "until", "do", "done", "if", "then", "else", "elif", "fi", "!"]);
-const READ_ONLY_DATA_TOOLS = new Set(["rg", "grep", "egrep", "fgrep", "cat", "head", "tail", "wc", "ls", "stat",
-  "file", "echo", "printf", "diff", "cmp", "sort", "uniq", "jq", "test", "[", "basename",
-  "dirname", "realpath", "true", "false", ":"]);
 const LOOP_VAR_REBINDERS = new Set(["declare", "local", "typeset", "readonly", "mapfile", "readarray", "let", "unset", "export"]);
 const SHELL_VAR_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const EXT_GLOB_RE = /^\*\.[A-Za-z0-9]+$/;
@@ -47,13 +57,7 @@ const RG_LIST_FLAG_RE = /^-[a-zA-Z]*l[a-zA-Z]*$/;
 const RG_UNSAFE_SHORT_RE = /^-[a-zA-Z.]*[u.L][a-zA-Z.]*$/;
 const DOT_GLOB_RE = /(^|\/)\.[^/]*[*?]/;
 // Hold system locations and settings, never secrets.
-const HARMLESS_ENV_VARS = new Set(["HOME", "PATH", "PWD", "OLDPWD", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG",
-  "TERM", "GOPATH", "GOROOT", "GOBIN", "GOCACHE", "GOMODCACHE", "CARGO_HOME", "PNPM_HOME",
-  "JAVA_HOME", "ANDROID_HOME",
-  "?", "pipestatus"]); // exit statuses
 const GIT_GLOBAL_VALUE_FLAGS = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path"]);
-// Print or test their arguments without opening them as files.
-const VALUE_ONLY_TOOLS = new Set(["echo", "printf", "test", "[", "basename", "dirname", "true", "false", ":"]);
 
 const baseName = (w) => (w.includes("/") ? w.slice(w.lastIndexOf("/") + 1) : w);
 
@@ -165,16 +169,38 @@ function hasInlineScriptFlag(base, args) {
 }
 
 export function isOpaqueShellCommand(command, worktree = "", options = {}) {
+  return isOpaqueShellCommandDepth(command, worktree, options, 0);
+}
+
+function isOpaqueShellCommandDepth(command, worktree, options, depth) {
+  if (depth > MAX_SUBSHELL_DEPTH) return true;
   const allowInlineScripts = Boolean(options.allowInlineScripts);
   const trimmed = unwrapSandboxCommand(command).trim();
   if (!trimmed) return true;
   let joined = joinLineContinuations(trimmed);
-  // A literal heredoc is data; whatever reads it is judged below.
   if (joined.includes("<<")) {
     joined = stripLiteralHeredocs(joined);
     if (joined === null) return true;
   }
-  const unwrapped = extractProcessSubstitutions(joined);
+  const spans = findSubshellSpans(joined);
+  if (!spans) return true;
+  for (const [start, end] of spans) {
+    if (isOpaqueShellCommandDepth(joined.slice(start + 1, end), worktree, options, depth + 1)) return true;
+  }
+  joined = eraseSubshells(joined);
+  if (!opaqueShellCore(joined, worktree, allowInlineScripts, commandSubsAreValueClass(joined))) return false;
+  const expanded = concretizeLiterals(joined);
+  if (expanded.status === "secret" || expanded.status === "reject") return true;
+  if (expanded.status === "applied") {
+    return opaqueShellCore(expanded.text, worktree, allowInlineScripts, commandSubsAreValueClass(expanded.text));
+  }
+  return true;
+}
+
+function opaqueShellCore(command, worktree, allowInlineScripts, valueClass) {
+  command = String(command ?? "").trim();
+  if (!command) return true;
+  const unwrapped = extractProcessSubstitutions(command);
   if (hasOpaqueShellSyntax(unwrapped)) return true;
   let { segments, pipedIn } = splitCommandChainWithPipes(unwrapped);
   if (segments.length > 1 && !pipedIn[0] && isWorktreeCD(segments[0], worktree)) {
@@ -190,7 +216,7 @@ export function isOpaqueShellCommand(command, worktree = "", options = {}) {
     if (!seg || seg.startsWith("#")) continue;
     const words = stripShellKeywords(shellWords(seg));
     if (words.length === 0) continue;
-    if (hasDollarExpansion(seg) && !isBenignPathExport(seg) && !expansionsAreBounded(seg, words, vars)) return true;
+    if (hasDollarExpansion(seg) && !isBenignPathExport(seg) && !expansionsAreBounded(seg, words, vars, valueClass)) return true;
     if (words[0] === "for") continue;
     hasExec = true;
     let cmdIdx = 0;
@@ -203,6 +229,10 @@ export function isOpaqueShellCommand(command, worktree = "", options = {}) {
     const norm = normalizeAbsoluteTool(cmdWords[0]);
     const base = norm.includes("/") ? norm.slice(norm.lastIndexOf("/") + 1) : norm;
     const args = cmdWords.slice(1);
+    if (base === "set") {
+      if (!isHarmlessSet(cmdWords)) return true;
+      continue;
+    }
     if (base === "cd" || base === "pushd" || base === "popd") {
       if (base !== "cd" || !isScopedCDSegment(seg, worktree)) outsideCWD = true;
       continue;
@@ -399,8 +429,8 @@ function shellExpansionNames(s) {
       while (k < s.length && /[A-Za-z0-9_]/.test(s[k])) k++;
       names.push(s.slice(i + 1, k));
       i = k - 1;
-    } else if (next === "?") {
-      names.push("?");
+    } else if (next === "?" || next === "!") {
+      names.push(next);
       i++;
     } else if (DOLLAR_EXPAND_RE.test(next) && !(quote === '"' && next === '"')) {
       return null;
@@ -479,8 +509,8 @@ function wordExpansionNames(word) {
       while (k < word.length && /[A-Za-z0-9_]/.test(word[k])) k++;
       names.push(word.slice(i + 1, k));
       i = k - 1;
-    } else if (next === "?") {
-      names.push("?");
+    } else if (next === "?" || next === "!") {
+      names.push(next);
       i++;
     } else {
       return null;
@@ -497,7 +527,7 @@ function isBenignPathAssignment(word) {
   return names !== null && names.every((n) => HARMLESS_ENV_VARS.has(n));
 }
 
-function expansionsAreBounded(seg, words, vars) {
+function expansionsAreBounded(seg, words, vars, valueClass = false) {
   if (shellExpansionNames(seg) === null) return false;
   let j = 0;
   while (j < words.length && ENV_VAR_ASSIGNMENT_WORD_RE.test(words[j])) {
@@ -512,7 +542,7 @@ function expansionsAreBounded(seg, words, vars) {
   const expanding = args.filter((a) => a.includes("$"));
   if (expanding.length === 0) return true;
   if (base === "git") return gitMessageExpansionsOnly(args, vars);
-  if (!READ_ONLY_DATA_TOOLS.has(base)) return false;
+  if (!READ_ONLY_DATA_TOOLS.has(base) && !(valueClass && base === "mkdir")) return false;
   for (const a of args) {
     if (a.startsWith("--pre") || a.startsWith("--hostname-bin") || a.startsWith("--compress-program") || (base === "printf" && a === "-v")) {
       return false;
@@ -524,13 +554,20 @@ function expansionsAreBounded(seg, words, vars) {
     for (const name of names) {
       const bound = vars.has(name);
       if (name === CMD_SUBST_VAR) {
-        if (bound || !VALUE_ONLY_TOOLS.has(base)) return false;
+        if (bound || (!VALUE_ONLY_TOOLS.has(base) && !(valueClass && acceptsValueClassArg(base)))) return false;
       } else if (bound) {
-        if (vars.get(name) !== true) return false;
-      } else if (!HARMLESS_ENV_VARS.has(name)) {
+        if (vars.get(name) !== true || !READ_ONLY_DATA_TOOLS.has(base)) return false;
+      } else if (!HARMLESS_ENV_VARS.has(name) || !READ_ONLY_DATA_TOOLS.has(base)) {
         return false;
       }
     }
   }
   return true;
 }
+
+setLiteralJudge({
+  opaqueCore: (inner) => opaqueShellCore(inner, "", false, false),
+  isSecret: (p) => isSecretPath(p) || isSensitiveExternalPath(p),
+  isProtected: isProtectedPath,
+  shellWords,
+});

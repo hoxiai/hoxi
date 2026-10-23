@@ -549,14 +549,20 @@ func (s *Service) relayOpenCodeEventWithFiles(rec SessionRecord, raw []byte, fil
 	s.noteOpenCodeActivity(rec.ID, evt)
 	if evt.Type == "permission.asked" {
 		sanitizeOpenCodePermissionItem(evt.Properties)
-		if rec.WorktreePath != "" && evt.Properties != nil {
+		if evt.Properties != nil && (rec.WorktreePath != "" || rec.ExternalID != "") {
 			meta, _ := evt.Properties["metadata"].(map[string]interface{})
 			if meta == nil {
 				meta = make(map[string]interface{})
 				evt.Properties["metadata"] = meta
 			}
-			if firstString(meta["directory"], meta["cwd"]) == "" {
+			if rec.WorktreePath != "" && firstString(meta["directory"], meta["cwd"]) == "" {
 				meta["directory"] = rec.WorktreePath
+			}
+			// The permission's sessionID is rewritten to the Hoxi id above.
+			// Keep the runtime id too, so a read of this session's own
+			// ~/.hoxi/sessions/<id>/ record can match either one.
+			if rec.ExternalID != "" && firstString(meta["externalID"]) == "" {
+				meta["externalID"] = rec.ExternalID
 			}
 		}
 		if s.audit != nil {

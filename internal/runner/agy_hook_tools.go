@@ -198,6 +198,25 @@ func resolveHookToolPath(base string, args map[string]interface{}) string {
 	return cleaned
 }
 
+// hookOwnSessionRead is a read of this session's own runner record. Edits of
+// that directory stay destructive.
+func hookOwnSessionRead(s *Service, sessionID, tool, filepathOut, rawPath string) bool {
+	if hookEditTools[tool] || editToolNames[tool] {
+		return false
+	}
+	if !hookReadTools[tool] && !readToolNames[tool] {
+		return false
+	}
+	var ids []string
+	if validSessionID(sessionID) {
+		ids = append(ids, sessionID)
+	}
+	if rec, ok := s.store.Get(sessionID); ok && validSessionID(rec.ExternalID) {
+		ids = append(ids, rec.ExternalID)
+	}
+	return pathUnderOwnSession(filepathOut, ids) || pathUnderOwnSession(rawPath, ids)
+}
+
 func (s *Service) inspectHookToolRisk(sessionID, tool string, args map[string]interface{}) (filepathOut, worktree string, destructive, externalDir bool) {
 	return s.inspectHookToolRiskIn(sessionID, tool, "", args)
 }
@@ -226,15 +245,18 @@ func (s *Service) inspectHookToolRiskIn(sessionID, tool, cwd string, args map[st
 		externalDir = true
 		destructive = true
 	}
+	ownRead := hookOwnSessionRead(s, sessionID, lowerTool, filepathOut, rawPath)
 	if filepathOut != "" {
-		if isProtectedRelPath(filepathOut) || (rawPath != "" && isProtectedRelPath(rawPath)) {
-			destructive = true
-		}
-		if isSensitiveExternalPath(filepathOut) || (rawPath != "" && isSensitiveExternalPath(rawPath)) {
-			destructive = true
-		}
-		if isSecretFilePath(filepathOut) || (rawPath != "" && isSecretFilePath(rawPath)) {
-			destructive = true
+		if !ownRead {
+			if isProtectedRelPath(filepathOut) || (rawPath != "" && isProtectedRelPath(rawPath)) {
+				destructive = true
+			}
+			if isSensitiveExternalPath(filepathOut) || (rawPath != "" && isSensitiveExternalPath(rawPath)) {
+				destructive = true
+			}
+			if isSecretFilePath(filepathOut) || (rawPath != "" && isSecretFilePath(rawPath)) {
+				destructive = true
+			}
 		}
 		if worktree != "" && resolved != "" {
 			if !pathWithin(worktree, resolved) {
@@ -242,7 +264,7 @@ func (s *Service) inspectHookToolRiskIn(sessionID, tool, cwd string, args map[st
 				// routine; only credential and execution-controlling paths
 				// must keep asking (same rule as the shared policy port).
 				externalDir = true
-				if isSensitiveExternalPath(resolved) || isSecretFilePath(resolved) {
+				if !ownRead && (isSensitiveExternalPath(resolved) || isSecretFilePath(resolved)) {
 					destructive = true
 				}
 			} else if (hookEditTools[lowerTool] || lowerTool == "edit" || lowerTool == "multiedit" || lowerTool == "write" || lowerTool == "notebookedit") &&
@@ -289,6 +311,9 @@ func (s *Service) gateToolCallIn(r *http.Request, cred hookCredential, tool stri
 	}
 	if desc := firstString(args["toolSummary"], args["description"], args["Action"]); desc != "" {
 		meta["description"] = desc
+	}
+	if rec, ok := s.store.Get(cred.sessionID); ok && strings.TrimSpace(rec.ExternalID) != "" {
+		meta["externalID"] = rec.ExternalID
 	}
 	req := map[string]interface{}{
 		"id":         id,

@@ -4,6 +4,7 @@
 // destructive warning on the approval card). Keep it identical to the Go
 // port: .opencode/lib/permission-policy.cases.json covers commands and
 // .opencode/lib/permission-request.cases.json covers whole requests.
+import { setLiteralJudge } from "./shell-constants.js";
 import { destructiveScanForms } from "./shell-substitution.js";
 
 const DESTRUCTIVE_RE =
@@ -548,20 +549,97 @@ export function externalDirectoryTargets(input) {
   return out;
 }
 
+// Reads of the requesting session's own ~/.hoxi/sessions/<id>/ record.
+// Edits stay sensitive. No session id, another session, or ~/.hoxi itself
+// stays sensitive. Both the Hoxi id and the runtime ExternalID match.
+const OWN_SESSION_READ_TOOLS = new Set([
+  "read", "glob", "grep", "list", "lsp", "todoread", "ls", "notebookread", "notebook_read",
+  "read_file", "view_file", "list_dir", "find_by_name", "grep_search", "read_resource",
+  "list_resources", "read_browser_page", "browser_get_dom", "browser_get_network_request",
+  "browser_list_network_requests", "list_browser_pages", "capture_browser_console_logs",
+  "capture_browser_screenshot", "list_permissions", "list_plugin_accounts", "search_marketplace",
+  "command_status",
+]);
+const OWN_SESSION_EDIT_TOOLS = new Set([
+  ...EDIT_PERMISSIONS,
+  "insert_edit_into_file", "str_replace_editor", "str_replace_based_edit_tool",
+]);
+
+export function isOwnSessionRecordRead(input, rawPath) {
+  if (!pathUnderOwnSession(rawPath, requestSessionIDs(input))) return false;
+  const perm = String(input?.permission || input?.type || "").toLowerCase();
+  const tool = String(input?.metadata?.tool || (Array.isArray(input?.patterns) ? input.patterns[0] : "") || "").trim().toLowerCase();
+  if (OWN_SESSION_EDIT_TOOLS.has(perm) || OWN_SESSION_EDIT_TOOLS.has(tool)) return false;
+  if (perm === "external_directory") return true;
+  return perm === "read" || READ_PERMISSIONS.has(perm) || OWN_SESSION_READ_TOOLS.has(perm) || OWN_SESSION_READ_TOOLS.has(tool);
+}
+
+function requestSessionIDs(input) {
+  const meta = input?.metadata || {};
+  const ids = [];
+  const add = (v) => {
+    if (typeof v !== "string") return;
+    const id = v.trim();
+    if (!validSessionID(id) || ids.includes(id)) return;
+    ids.push(id);
+  };
+  add(input?.sessionID);
+  add(input?.externalID);
+  add(meta.sessionID);
+  add(meta.externalID);
+  add(meta.externalId);
+  return ids;
+}
+
+function validSessionID(id) {
+  return id !== "" && id !== "." && id !== ".." && id.length <= 200 && !/[\\/:*?]/.test(id);
+}
+
+function pathUnderOwnSession(raw, ids) {
+  if (ids.length === 0) return false;
+  return sessionPathCandidates(raw).some((cand) => sessionPathMatches(cand, ids));
+}
+
+function sessionPathCandidates(raw) {
+  if (typeof raw !== "string") return [];
+  const trimmed = raw.trim();
+  if (!trimmed) return [];
+  const out = [trimmed];
+  const stripped = trimmed.replace(/\*+$/, "").replace(/\/+$/, "");
+  if (stripped && stripped !== trimmed) out.push(stripped);
+  return out;
+}
+
+function sessionPathMatches(raw, ids) {
+  let slash = raw.trim().replaceAll("\\", "/");
+  if (slash.startsWith("~/")) slash = `HOME/${slash.slice(2)}`;
+  if (slash.includes("..")) return false;
+  const parts = slash.split("/").filter((p) => p !== "" && p !== ".");
+  for (let i = 0; i + 2 < parts.length; i++) {
+    if (parts[i] === ".hoxi" && parts[i + 1] === "sessions" && ids.includes(parts[i + 2])) return true;
+  }
+  return false;
+}
+
+function sensitiveOutsideOwnSession(input, paths) {
+  return paths.some((p) => (isProtectedPath(p) || isSensitiveExternalPath(p)) && !isOwnSessionRecordRead(input, p));
+}
+
 export function isDestructivePermissionRequest(input) {
   const permission = String(input?.permission || input?.type || "").toLowerCase();
   if (permission === "doom_loop") return true;
   if (permission === "external_directory") {
     // OpenCode raises this for every read/write outside the session directory,
     // including sibling folders the user already registered as a workspace.
-    // Only credential/execution-controlling targets keep asking.
+    // Only credential/execution-controlling targets keep asking. A read of this
+    // session's own runner record is not one of them.
     const targets = externalDirectoryTargets(input);
-    return targets.length === 0 || targets.some(isSensitiveExternalPath);
+    return targets.length === 0 || targets.some((t) => isSensitiveExternalPath(t) && !isOwnSessionRecordRead(input, t));
   }
   if (input?.metadata?.destructive === true) return true;
   if (input?.metadata?.externalDirectory === true) {
     const targets = externalDirectoryTargets(input);
-    if (targets.length === 0 || targets.some(isSensitiveExternalPath)) return true;
+    if (targets.length === 0 || targets.some((t) => isSensitiveExternalPath(t) && !isOwnSessionRecordRead(input, t))) return true;
   }
   if (READ_PERMISSIONS.has(permission)) {
     // Search patterns are not paths; only a file read can expose a secret.
@@ -573,7 +651,7 @@ export function isDestructivePermissionRequest(input) {
       meta.filepath,
       meta.filePath,
       meta.path,
-    ].some(isSecretPath);
+    ].some((p) => isSecretPath(p) && !isOwnSessionRecordRead(input, p));
   }
   if (EDIT_PERMISSIONS.has(permission) || permission === "tool") {
     const toolName = String(input?.metadata?.tool || input?.patterns?.[0] || "").trim().toLowerCase();
@@ -590,7 +668,7 @@ export function isDestructivePermissionRequest(input) {
         : []),
       ...extractToolArgPaths(input?.metadata?.args),
     ];
-    if (candidates.some(isProtectedPath) || candidates.some(isSensitiveExternalPath)) return true;
+    if (sensitiveOutsideOwnSession(input, candidates)) return true;
     if (EDIT_PERMISSIONS.has(permission)) return false;
     const hasCommandMeta =
       typeof input?.metadata?.command === "string" ||
@@ -616,3 +694,13 @@ export function decidePermission(input, options) {
   if (READ_PERMISSIONS.has(permission) || permission === "external_directory") return "allow";
   return isSafeCommandPermissionRequest(input, options) ? "allow" : "ask";
 }
+
+// Literal substitutions scanned from this module fail closed on value-class
+// $(...) until opaque-command.js installs the real core. Shell words and the
+// secret check are enough for `D=.env; cat "$D"`.
+setLiteralJudge({
+  opaqueCore: () => true,
+  isSecret: (p) => isSecretPath(p) || isSensitiveExternalPath(p),
+  isProtected: isProtectedPath,
+  shellWords,
+});

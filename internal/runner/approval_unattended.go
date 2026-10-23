@@ -101,6 +101,11 @@ func unattendedHardDeny(item map[string]interface{}, worktree string) string {
 	if perm == "read" || readPermissions[perm] || readToolNames[strings.ToLower(firstString(meta["tool"], firstPattern(item)))] {
 		for _, p := range readTargets(item) {
 			if isSecretFilePath(p) || unattendedSecretDir(p) {
+				// The session's own record is not a credential. Other
+				// ~/.hoxi files, and every secret directory, still refuse.
+				if isOwnSessionRecordRead(item, p) && !unattendedSecretDir(p) {
+					continue
+				}
 				return unattendedCategorySecret
 			}
 		}

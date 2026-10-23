@@ -51,20 +51,47 @@ func trustedRecoverableRequest(item map[string]interface{}, worktree string) boo
 	if external, _ := meta["externalDirectory"].(bool); external {
 		return false
 	}
+	// OpenCode also lists its own split of the command, plus the sandbox
+	// stop-marker traps, in patterns. A fragment judged alone loses the
+	// assignment that makes a temp-path delete recoverable, so the whole
+	// command is the one judged. The same choice as opacityCandidates.
 	candidates := commandCandidates(item)
+	if cmd := strings.TrimSpace(firstString(meta["command"])); cmd != "" {
+		whole := unwrapSandboxCommand(cmd)
+		// A pattern that is not part of the command was never judged with
+		// it. When that piece is destructive on its own (`cat .env`), it
+		// must be recoverable on its own too.
+		for _, piece := range candidates {
+			piece = strings.TrimSpace(piece)
+			if piece == "" || strings.Contains(whole, piece) {
+				continue
+			}
+			if isDestructivePermissionRequest(map[string]interface{}{"permission": "bash", "patterns": []interface{}{piece}}) &&
+				!isRecoverableWorktreeCommand(piece, recoverableWorktree(worktree)) {
+				return false
+			}
+		}
+		candidates = []string{whole}
+	}
 	if len(candidates) == 0 {
 		return false
 	}
-	isolated := isIsolatedWorktree(worktree)
-	if !isolated {
-		worktree = "" // only temp-directory deletions are relaxed outside a worktree
-	}
+	worktree = recoverableWorktree(worktree)
 	for _, cmd := range candidates {
 		if !isRecoverableWorktreeCommand(cmd, worktree) {
 			return false
 		}
 	}
 	return true
+}
+
+// recoverableWorktree returns worktree when it is an isolated session
+// worktree, else "": only temp-directory deletions are relaxed outside one.
+func recoverableWorktree(worktree string) string {
+	if !isIsolatedWorktree(worktree) {
+		return ""
+	}
+	return worktree
 }
 
 // Recoverable work comes in classes. Full trust mode accepts every class;
@@ -94,6 +121,36 @@ func isRecoverableWorktreeCommand(command, worktree string) bool {
 // recoverableCommandClasses is isRecoverableWorktreeCommand that also records
 // the class of every destructive segment in classes.
 func recoverableCommandClasses(command, worktree string, classes map[string]bool) bool {
+	return recoverableCommandClassesAt(command, worktree, classes, 0)
+}
+
+// recoverableCommandClassesAt judges (...) bodies on their own, up to
+// maxSubshellDepth, then substitutes literal assignments so a temp-path
+// delete written as `D=/tmp/x; rm -rf "$D"` is visible. A secret substitution
+// or an opaque body fails closed.
+func recoverableCommandClassesAt(command, worktree string, classes map[string]bool, depth int) bool {
+	if depth > maxSubshellDepth {
+		return false
+	}
+	spans, ok := findSubshellSpans(command)
+	if !ok {
+		return false
+	}
+	for _, sp := range spans {
+		if !recoverableCommandClassesAt(command[sp[0]+1:sp[1]], worktree, classes, depth+1) {
+			return false
+		}
+	}
+	command = eraseSubshells(command)
+	// Only a fully applied substitution is judged in place of the original.
+	// A rejection (a PATH export, a reassignment) keeps the original text,
+	// which still fails closed on `$` inside a destructive segment. A secret
+	// value never becomes recoverable.
+	if expanded, status := concretizeLiterals(command); status == constApplied {
+		command = expanded
+	} else if status == constSecret {
+		return false
+	}
 	// A `# hoxi-stop:` marker line is a comment segment and passes as non-destructive.
 	if hasShellGrouping(command) || isOpaqueShellCommand(command, worktree) {
 		return false
@@ -277,7 +334,9 @@ func isTempPathArg(arg string) bool {
 			return true
 		}
 	}
-	return false
+	// macOS also uses /var/folders/<id>/T/<entry>. The per-user T directory
+	// itself stays manual; only a concrete entry under it is throwaway.
+	return isMacOSTempPath(filepath.ToSlash(target)) && !isSecretFilePath(target)
 }
 
 func samePath(a, b string) bool {

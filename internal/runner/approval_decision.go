@@ -397,7 +397,7 @@ func isDestructivePermissionRequest(item map[string]interface{}) bool {
 			return false
 		}
 		for _, p := range readTargets(item) {
-			if isSecretFilePath(p) {
+			if isSecretFilePath(p) && !isOwnSessionRecordRead(item, p) {
 				return true
 			}
 		}
@@ -419,7 +419,7 @@ func isDestructivePermissionRequest(item map[string]interface{}) bool {
 		candidates = append(candidates, metadataFilePaths(meta)...)
 		candidates = append(candidates, toolArgPaths(meta["args"])...)
 		for _, p := range candidates {
-			if isProtectedRelPath(p) || isSensitiveExternalPath(p) {
+			if (isProtectedRelPath(p) || isSensitiveExternalPath(p)) && !isOwnSessionRecordRead(item, p) {
 				return true
 			}
 		}

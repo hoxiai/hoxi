@@ -22,10 +22,12 @@ import (
 //     parameter-sensitive command (git, find, rm, kill, curl, ...);
 //   - nothing else in the command rebinds it.
 //
-// Inherited environment variables (`cat "$KUBECONFIG"`), plain assignments
-// (`P=.env; cat $P`), `$(…)`, backticks, eval, `sh -c` and parameter forms
-// such as `${f:-.env}` stay opaque. `<(cmd)` is unpacked so cmd is judged as
-// its own segment. Mirrors .opencode/lib/opaque-command.js; the shared
+// Inherited environment variables (`cat "$KUBECONFIG"`), secret assignments
+// (`P=.env; cat $P`), backticks, eval, `sh -c` and parameter forms such as
+// `${f:-.env}` stay opaque. A literal assignment in the same command is
+// substituted before this judge runs (opaque_constants.go). `<(cmd)` is
+// unpacked so cmd is judged as its own segment. Mirrors
+// .opencode/lib/opaque-command.js; the shared
 // .opencode/lib/opaque-command.cases.json keeps both ports aligned.
 
 const (
@@ -40,7 +42,8 @@ var (
 
 	readOnlyDataTools = setOf("rg", "grep", "egrep", "fgrep", "cat", "head", "tail", "wc", "ls", "stat",
 		"file", "echo", "printf", "diff", "cmp", "sort", "uniq", "jq", "test", "[", "basename",
-		"dirname", "realpath", "true", "false", ":")
+		"dirname", "realpath", "true", "false", ":",
+		"lsof", "ps", "du", "df", "cut", "tr", "nl", "column", "shasum", "sha256sum", "md5", "xxd", "od", "sleep")
 
 	// Builtins that can rebind a variable behind the policy's back.
 	loopVarRebinders = setOf("declare", "local", "typeset", "readonly", "mapfile", "readarray", "let", "unset", "export")
@@ -58,7 +61,7 @@ var (
 	harmlessEnvVars = setOf("HOME", "PATH", "PWD", "OLDPWD", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG",
 		"TERM", "GOPATH", "GOROOT", "GOBIN", "GOCACHE", "GOMODCACHE", "CARGO_HOME", "PNPM_HOME",
 		"JAVA_HOME", "ANDROID_HOME",
-		"?", "pipestatus") // exit statuses
+		"?", "!", "pipestatus") // exit status, and $! the last background pid
 
 	// valueOnlyTools print or test their arguments without opening them as
 	// files, so they may take a `$(…)` result.
@@ -135,11 +138,28 @@ func opacityCandidates(item map[string]interface{}) []string {
 
 // destructiveScanForms returns the texts the destructive patterns scan: the
 // command with data arguments masked, plus its unpacked form when it uses
-// `<(…)`, so `cat <(cat .env)` is judged by its inner `cat .env`.
+// `<(…)`, so `cat <(cat .env)` is judged by its inner `cat .env`. A literal
+// substitution (`D=~/.ssh; cat "$D/id_ed25519"`) is scanned too. The original
+// masked text is always kept.
 func destructiveScanForms(cmd string) []string {
 	forms := []string{maskCommandDataArguments(cmd)}
 	if unpacked := extractProcessSubstitutions(cmd); unpacked != cmd {
 		forms = append(forms, maskCommandDataArguments(unpacked))
+	}
+	prepared := joinLineContinuations(strings.TrimSpace(unwrapSandboxCommand(cmd)))
+	if strings.Contains(prepared, "<<") {
+		if stripped, ok := stripLiteralHeredocs(prepared); ok {
+			prepared = stripped
+		}
+	}
+	if spans, ok := findSubshellSpans(prepared); ok && len(spans) > 0 {
+		prepared = eraseSubshells(prepared)
+	}
+	if expanded, status := concretizeLiterals(prepared); status == constApplied || status == constSecret {
+		forms = append(forms, maskCommandDataArguments(expanded))
+		if unpacked := extractProcessSubstitutions(expanded); unpacked != expanded {
+			forms = append(forms, maskCommandDataArguments(unpacked))
+		}
 	}
 	return forms
 }
@@ -382,7 +402,7 @@ func isSafeListingProducer(seg string) bool {
 //     name, and each name is a trustworthy loop variable, a harmless
 //     environment variable not rebound by the command, or a `$(…)` result
 //     taken by a value-only tool.
-func expansionsAreBounded(seg string, words []string, vars map[string]bool) bool {
+func expansionsAreBounded(seg string, words []string, vars map[string]bool, valueClass bool) bool {
 	if _, ok := shellExpansionNames(seg); !ok {
 		return false
 	}
@@ -421,7 +441,9 @@ func expansionsAreBounded(seg string, words []string, vars map[string]bool) bool
 	if base == "git" {
 		return gitMessageExpansionsOnly(args, vars)
 	}
-	if !readOnlyDataTools[base] {
+	// mkdir may take a value-class $(...) (it only creates directories) but
+	// not an ordinary variable. Every other non-read-only command stays opaque.
+	if !readOnlyDataTools[base] && !(valueClass && base == "mkdir") {
 		return false
 	}
 	for _, a := range args {
@@ -439,14 +461,14 @@ func expansionsAreBounded(seg string, words []string, vars map[string]bool) bool
 			trusted, bound := vars[name]
 			switch {
 			case name == cmdSubstVar:
-				if bound || !valueOnlyTools[base] {
+				if bound || (!valueOnlyTools[base] && !(valueClass && acceptsValueClassArg(base))) {
 					return false
 				}
 			case bound:
-				if !trusted {
+				if !trusted || !readOnlyDataTools[base] {
 					return false
 				}
-			case !harmlessEnvVars[name]:
+			case !harmlessEnvVars[name] || !readOnlyDataTools[base]:
 				return false
 			}
 		}
@@ -543,8 +565,8 @@ func wordExpansionNames(word string) ([]string, bool) {
 			}
 			names = append(names, word[i+1:k])
 			i = k - 1
-		case next == '?':
-			names = append(names, "?")
+		case next == '?' || next == '!':
+			names = append(names, string(next))
 			i++
 		default:
 			return nil, false
@@ -598,8 +620,8 @@ func shellExpansionNames(s string) ([]string, bool) {
 			}
 			names = append(names, s[i+1:k])
 			i = k - 1
-		case next == '?':
-			names = append(names, "?")
+		case next == '?' || next == '!':
+			names = append(names, string(next))
 			i++
 		case dollarExpandRe.MatchString(string(next)) && !(quote == '"' && next == '"'):
 			return nil, false

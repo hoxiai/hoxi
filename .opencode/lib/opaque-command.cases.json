@@ -289,7 +289,7 @@
   },
   {
     "command": "X=$(git rev-parse HEAD); echo $X",
-    "opaque": true
+    "opaque": false
   },
   {
     "command": "rm \\\n -rf \"$HOME\"",
@@ -460,5 +460,133 @@
     "command": "python3 <<'EOF'\nprint(1)\nEOF",
     "opaque": true,
     "trustedOpaque": false
+  },
+  {
+    "command": "D=\"/var/folders/ab/T/opencode\"\nrm -rf \"$D/stage\"\npython3 \"$D/stage.py\"",
+    "opaque": false
+  },
+  {
+    "command": "B=/tmp/backup\nfor f in a.go b.go; do mkdir -p \"$B/$(dirname \"$f\")\"; cp \"$f\" \"$B/$f\"; done",
+    "opaque": false
+  },
+  {
+    "command": "TREE=$(git write-tree) || exit 1\necho \"staged tree: $TREE\"",
+    "opaque": false
+  },
+  {
+    "command": "ps -p 90591 -o pid,ppid,command && ps -p $(ps -p 90591 -o ppid=) -o pid,ppid,command",
+    "opaque": false
+  },
+  {
+    "command": "ls \"$(git rev-parse --git-dir)/hooks\" | grep -v sample",
+    "opaque": false
+  },
+  {
+    "command": "(cd web && npx tsc --noEmit 2>&1 | tail -5); npm --prefix web run check:i18n",
+    "opaque": false
+  },
+  {
+    "command": "for p in 5410 5420; do lsof -nP -iTCP:$p -sTCP:LISTEN; done",
+    "opaque": false
+  },
+  {
+    "command": "nohup node node_modules/.bin/vite --port 3777 > /tmp/vite.log 2>&1 & echo \"started pid $!\"; sleep 8; tail -30 /tmp/vite.log",
+    "opaque": false
+  },
+  {
+    "command": "( ( ls ) )",
+    "opaque": false
+  },
+  {
+    "command": "set -e; ls",
+    "opaque": false
+  },
+  {
+    "command": "sleep 1 & kill %1",
+    "opaque": false
+  },
+  {
+    "command": "D=/repo; git push --force \"$D\"",
+    "opaque": false
+  },
+  {
+    "command": "for f in fa0 fb0 fc0 fd0 fe0 ff0 fg0 fh0 fi0 fj0 fk0 fl0 fm0 fn0 fo0 fp0 fq0 fr0 fs0 ft0 fu0 fv0 fw0 fx0 fy0 fz0 fa1 fb1 fc1 fd1 fe1 ff1 fg1 fh1 fi1 fj1 fk1 fl1 fm1 fn1 fo1 fp1 fq1 fr1 fs1 ft1 fu1 fv1 fw1 fx1 fy1 fz1 fa2 fb2 fc2 fd2 fe2 ff2 fg2 fh2 fi2 fj2 fk2 fl2 fm2; do cat \"$f\"; done",
+    "opaque": false
+  },
+  {
+    "command": "D=~/.ssh; cat \"$D/id_ed25519\"",
+    "opaque": true
+  },
+  {
+    "command": "F=.env; cat \"$F\"",
+    "opaque": true
+  },
+  {
+    "command": "for f in .env a.go; do cat \"$f\"; done",
+    "opaque": true
+  },
+  {
+    "command": "D=/tmp/x; D=$HOME; rm -rf \"$D\"",
+    "opaque": true
+  },
+  {
+    "command": "X=rm; $X -rf build",
+    "opaque": true
+  },
+  {
+    "command": "D=${HOME:-/}; ls \"$D\"",
+    "opaque": true
+  },
+  {
+    "command": "D=/tmp/x; read D; rm -rf \"$D\"",
+    "opaque": true
+  },
+  {
+    "command": "for f in *.go; do rm \"$f\"; done",
+    "opaque": true
+  },
+  {
+    "command": "cat $(cat paths.txt)",
+    "opaque": true
+  },
+  {
+    "command": "cp $(git rev-parse --show-toplevel)/a /tmp",
+    "opaque": true
+  },
+  {
+    "command": "$(git rev-parse HEAD) --help",
+    "opaque": true
+  },
+  {
+    "command": "(cd / && rm -rf tmp)",
+    "opaque": true
+  },
+  {
+    "command": "(cd .. && cat .env)",
+    "opaque": true
+  },
+  {
+    "command": "( ( ( ls ) ) )",
+    "opaque": true
+  },
+  {
+    "command": "kill $!",
+    "opaque": true
+  },
+  {
+    "command": "set -f",
+    "opaque": true
+  },
+  {
+    "command": "set -euo pipefail",
+    "opaque": true
+  },
+  {
+    "command": "true && D=/tmp; echo $D",
+    "opaque": true
+  },
+  {
+    "command": "for f in fa0 fb0 fc0 fd0 fe0 ff0 fg0 fh0 fi0 fj0 fk0 fl0 fm0 fn0 fo0 fp0 fq0 fr0 fs0 ft0 fu0 fv0 fw0 fx0 fy0 fz0 fa1 fb1 fc1 fd1 fe1 ff1 fg1 fh1 fi1 fj1 fk1 fl1 fm1 fn1 fo1 fp1 fq1 fr1 fs1 ft1 fu1 fv1 fw1 fx1 fy1 fz1 fa2 fb2 fc2 fd2 fe2 ff2 fg2 fh2 fi2 fj2 fk2 fl2 fm2; do rm \"$f\"; done",
+    "opaque": true
   }
 ]

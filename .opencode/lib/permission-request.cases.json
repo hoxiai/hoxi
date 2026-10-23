@@ -33,5 +33,17 @@
   { "name": "hoxi models.json read", "destructive": true, "request": { "permission": "read", "patterns": ["/Users/u/.hoxi/models.json"] } },
   { "name": "claude credentials read", "destructive": true, "request": { "permission": "read", "patterns": ["/Users/u/.claude/.credentials.json"] } },
   { "name": "cat dotenv", "destructive": true, "request": { "permission": "bash", "patterns": ["cat .env"] } },
-  { "name": "webfetch", "destructive": false, "request": { "permission": "webfetch", "patterns": ["https://example.com/docs"] } }
+  { "name": "webfetch", "destructive": false, "request": { "permission": "webfetch", "patterns": ["https://example.com/docs"] } },
+  { "name": "own session external directory", "destructive": false, "request": { "permission": "external_directory", "sessionID": "ses_mine", "patterns": ["~/.hoxi/sessions/ses_mine/*"] } },
+  { "name": "own session external directory via external id", "destructive": false, "request": { "permission": "external_directory", "metadata": { "externalID": "oc_abc" }, "patterns": ["/Users/u/.hoxi/sessions/oc_abc/session.json"] } },
+  { "name": "read own session turns", "destructive": false, "request": { "permission": "read", "sessionID": "ses_mine", "patterns": ["~/.hoxi/sessions/ses_mine/turns.jsonl"] } },
+  { "name": "other session external directory", "destructive": true, "request": { "permission": "external_directory", "sessionID": "ses_mine", "patterns": ["~/.hoxi/sessions/ses_other/*"] } },
+  { "name": "hoxi directory with a session id", "destructive": true, "request": { "permission": "external_directory", "sessionID": "ses_mine", "patterns": ["~/.hoxi/*"] } },
+  { "name": "session record without session id", "destructive": true, "request": { "permission": "external_directory", "patterns": ["~/.hoxi/sessions/ses_mine/*"] } },
+  { "name": "edit own session record", "destructive": true, "request": { "permission": "edit", "sessionID": "ses_mine", "patterns": ["~/.hoxi/sessions/ses_mine/turns.jsonl"] } },
+  { "name": "session id prefix is not the session", "destructive": true, "request": { "permission": "external_directory", "sessionID": "ses_mine", "patterns": ["~/.hoxi/sessions/ses_mine_extra/session.json"] } },
+  { "name": "substituted dotenv read", "destructive": true, "request": { "permission": "bash", "patterns": ["F=.env; cat \"$F\""] } },
+  { "name": "substituted ssh key read", "destructive": true, "request": { "permission": "bash", "patterns": ["D=~/.ssh; cat \"$D/id_ed25519\""] } },
+  { "name": "substituted force push", "destructive": true, "request": { "permission": "bash", "patterns": ["D=/repo; git push --force \"$D\""] } },
+  { "name": "background job kill", "destructive": true, "request": { "permission": "bash", "patterns": ["sleep 1 & kill %1"] } }
 ]

@@ -4,6 +4,7 @@
 // a placeholder argument and `$(cmd)` the $__hoxi_cmdsub__ variable, and cmd
 // is appended as its own line, so it is judged like any other command.
 import { maskCommandDataArguments } from "./command-data-args.js";
+import { concretizeLiterals, eraseSubshells, findSubshellSpans } from "./shell-constants.js";
 
 const PROCESS_SUBSTITUTION_PLACEHOLDER = "/dev/fd/63";
 export const CMD_SUBST_VAR = "__hoxi_cmdsub__";
@@ -80,6 +81,18 @@ export function destructiveScanForms(cmd) {
   const forms = [maskCommandDataArguments(cmd)];
   const unpacked = extractProcessSubstitutions(cmd);
   if (unpacked !== cmd) forms.push(maskCommandDataArguments(unpacked));
+  let prepared = joinLineContinuations(String(cmd ?? "").trim());
+  if (prepared.includes("<<")) {
+    const stripped = stripLiteralHeredocs(prepared);
+    if (stripped !== null) prepared = stripped;
+  }
+  if (findSubshellSpans(prepared)) prepared = eraseSubshells(prepared);
+  const expanded = concretizeLiterals(prepared);
+  if (expanded.status === "applied" || expanded.status === "secret") {
+    forms.push(maskCommandDataArguments(expanded.text));
+    const again = extractProcessSubstitutions(expanded.text);
+    if (again !== expanded.text) forms.push(maskCommandDataArguments(again));
+  }
   return forms;
 }
 

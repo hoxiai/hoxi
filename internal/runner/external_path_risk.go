@@ -2,6 +2,7 @@ package runner
 
 import (
 	"encoding/json"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -19,11 +20,113 @@ func externalDirectoryTargetsAreRoutine(item map[string]interface{}) bool {
 		return false
 	}
 	for _, target := range targets {
-		if isSensitiveExternalPath(target) {
+		if isSensitiveExternalPath(target) && !isOwnSessionRecordRead(item, target) {
 			return false
 		}
 	}
 	return true
+}
+
+// isOwnSessionRecordRead reports a read (or OpenCode external_directory) whose
+// target is exactly the requesting session's own record directory
+// (~/.hoxi/sessions/<id>/). Edits stay sensitive. With no session id, or for
+// any other session, it returns false. Both the Hoxi id and the runtime
+// ExternalID match.
+func isOwnSessionRecordRead(item map[string]interface{}, rawPath string) bool {
+	if !pathUnderOwnSession(rawPath, requestSessionIDs(item)) {
+		return false
+	}
+	perm := permissionName(item)
+	meta := itemMetadata(item)
+	tool := strings.ToLower(strings.TrimSpace(firstString(meta["tool"], firstPattern(item))))
+	if editPermissions[perm] || editPermissions[tool] || editToolNames[perm] || editToolNames[tool] || hookEditTools[tool] {
+		return false
+	}
+	if perm == "external_directory" {
+		return true
+	}
+	return perm == "read" || readPermissions[perm] || readToolNames[perm] || readToolNames[tool] || hookReadTools[tool]
+}
+
+func requestSessionIDs(item map[string]interface{}) []string {
+	meta := itemMetadata(item)
+	var ids []string
+	add := func(v string) {
+		v = strings.TrimSpace(v)
+		if !validSessionID(v) {
+			return
+		}
+		for _, have := range ids {
+			if have == v {
+				return
+			}
+		}
+		ids = append(ids, v)
+	}
+	add(firstString(item["sessionID"]))
+	add(firstString(item["externalID"]))
+	add(firstString(meta["sessionID"]))
+	add(firstString(meta["externalID"]))
+	add(firstString(meta["externalId"]))
+	return ids
+}
+
+func validSessionID(id string) bool {
+	if id == "" || id == "." || id == ".." || len(id) > 200 {
+		return false
+	}
+	return !strings.ContainsAny(id, "/\\:*?")
+}
+
+// pathUnderOwnSession reports whether raw is the session directory itself or
+// a file inside it. `..` is rejected rather than cleaned away.
+func pathUnderOwnSession(raw string, ids []string) bool {
+	if len(ids) == 0 {
+		return false
+	}
+	for _, cand := range sessionPathCandidates(raw) {
+		if sessionPathMatches(cand, ids) {
+			return true
+		}
+	}
+	return false
+}
+
+func sessionPathCandidates(raw string) []string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return nil
+	}
+	out := []string{trimmed}
+	stripped := strings.TrimRight(strings.TrimRight(trimmed, "*"), "/")
+	if stripped != "" && stripped != trimmed {
+		out = append(out, stripped)
+	}
+	return out
+}
+
+func sessionPathMatches(raw string, ids []string) bool {
+	slash := filepath.ToSlash(strings.TrimSpace(raw))
+	if strings.HasPrefix(slash, "~/") {
+		slash = "HOME/" + strings.TrimPrefix(slash, "~/")
+	}
+	if strings.Contains(slash, "..") {
+		return false
+	}
+	cleaned := path.Clean(slash)
+	parts := strings.Split(cleaned, "/")
+	for i := 0; i+2 < len(parts); i++ {
+		if parts[i] != ".hoxi" || parts[i+1] != "sessions" {
+			continue
+		}
+		id := parts[i+2]
+		for _, want := range ids {
+			if id == want {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func externalDirectoryTargets(item map[string]interface{}) []string {

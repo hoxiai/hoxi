@@ -20,6 +20,18 @@ func isOpaqueShellCommand(command, worktree string) bool {
 // never opaque. Shells (`sh`, `bash`, `eval`, `xargs`, ...), awk programs and
 // heredocs whose body still expands stay opaque.
 func isOpaqueShellCommandWith(command, worktree string, allowInlineScripts bool) bool {
+	return isOpaqueShellCommandDepth(command, worktree, allowInlineScripts, 0)
+}
+
+// isOpaqueShellCommandDepth judges command, treating each (...) subshell as
+// its own command up to maxSubshellDepth. Deeper nesting stays opaque.
+// When the command is still opaque, literal assignments and literal for-loops
+// are substituted and the expanded text is judged again. A secret substitution
+// stays opaque; the destructive scanner still sees that expanded text.
+func isOpaqueShellCommandDepth(command, worktree string, allowInlineScripts bool, depth int) bool {
+	if depth > maxSubshellDepth {
+		return true
+	}
 	command = strings.TrimSpace(unwrapSandboxCommand(command))
 	if command == "" {
 		return true
@@ -33,6 +45,47 @@ func isOpaqueShellCommandWith(command, worktree string, allowInlineScripts bool)
 			return true
 		}
 		command = stripped
+	}
+	if !subshellsClear(command, worktree, allowInlineScripts, depth) {
+		return true
+	}
+	command = eraseSubshells(command)
+	if !opaqueShellCore(command, worktree, allowInlineScripts, commandSubsAreValueClass(command)) {
+		return false
+	}
+	expanded, status := concretizeLiterals(command)
+	switch status {
+	case constSecret, constReject:
+		return true
+	case constApplied:
+		return opaqueShellCore(expanded, worktree, allowInlineScripts, commandSubsAreValueClass(expanded))
+	default:
+		return true
+	}
+}
+
+// subshellsClear reports whether every outer (...) body is itself clear.
+// An unterminated group fails closed.
+func subshellsClear(command, worktree string, allowInlineScripts bool, depth int) bool {
+	spans, ok := findSubshellSpans(command)
+	if !ok {
+		return false
+	}
+	for _, sp := range spans {
+		if isOpaqueShellCommandDepth(command[sp[0]+1:sp[1]], worktree, allowInlineScripts, depth+1) {
+			return false
+		}
+	}
+	return true
+}
+
+// opaqueShellCore is the segment judge. valueClass lets a value-class $(...)
+// result sit in a read-only tool argument (and in mkdir). It does not expand
+// assignments or subshells; the caller does that once.
+func opaqueShellCore(command, worktree string, allowInlineScripts, valueClass bool) bool {
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return true
 	}
 	command = extractProcessSubstitutions(command)
 	if hasShellGrouping(command) || hasOpaqueShellSyntax(command) {
@@ -58,7 +111,7 @@ func isOpaqueShellCommandWith(command, worktree string, allowInlineScripts bool)
 		if len(words) == 0 {
 			continue
 		}
-		if hasDollarExpansion(seg) && !isBenignPathExport(seg) && !expansionsAreBounded(seg, words, vars) {
+		if hasDollarExpansion(seg) && !isBenignPathExport(seg) && !expansionsAreBounded(seg, words, vars, valueClass) {
 			return true
 		}
 		if words[0] == "for" {
@@ -81,6 +134,12 @@ func isOpaqueShellCommandWith(command, worktree string, allowInlineScripts bool)
 		}
 		base := filepath.Base(normalizeAbsoluteTool(cmdWords[0]))
 		args := cmdWords[1:]
+		if base == "set" {
+			if !isHarmlessSet(cmdWords) {
+				return true
+			}
+			continue
+		}
 		if base == "cd" || base == "pushd" || base == "popd" {
 			if base != "cd" || !isScopedCDSegment(seg, worktree) {
 				outsideCWD = true

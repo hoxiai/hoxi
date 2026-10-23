@@ -24,12 +24,12 @@
 
 | 能力 | 状态 | 位置 |
 | --- | --- | --- |
-| 桌面生成局域网配对二维码（含局域网 IPv4、端口 `5417`、配对令牌；配置 Cloudflare Tunnel 时另带 `relay`），并支持重新生成令牌（`POST /api/hoxi/pairing/rotate`，旧码立即失效） | 已实现 | [`internal/pairing`](../internal/pairing/pairing.go)、`GET /api/hoxi/pairing/qr` |
-| 桌面监听局域网 `:5417`，用配对令牌鉴权，复用远程路由白名单；仅接受局域网来源（loopback / RFC1918 / ULA / 链路本地 / CGNAT），公网来源一律 403 | 已实现 | [`internal/gateway/lan.go`](../internal/gateway/lan.go)、[`internal/app/app.go`](../internal/app/app.go) |
+| 桌面生成局域网配对二维码（含局域网 IPv4、端口 `5417`、局域网令牌；配置 Cloudflare Tunnel 时另带 `relay` 与独立的 `relayToken`），并支持重新生成令牌（`POST /api/hoxi/pairing/rotate`，局域网与中继令牌一起换，旧码立即失效） | 已实现 | [`internal/pairing`](../internal/pairing/pairing.go)、`GET /api/hoxi/pairing/qr` |
+| 桌面监听局域网 `:5417`，用局域网令牌鉴权（中继令牌在此无效），复用远程路由白名单；仅接受局域网来源（loopback / RFC1918 / ULA / 链路本地 / CGNAT），公网来源一律 403 | 已实现 | [`internal/gateway/lan.go`](../internal/gateway/lan.go)、[`internal/app/app.go`](../internal/app/app.go) |
 | 手机扫码直连（Hoxi 节点二维码，`type=hoxi`） | 已实现（手机端既有扫码流程） | `client/lib/features/auth/...` |
-| 反向代理入口（loopback `127.0.0.1:5418`，供 cloudflared 等本地转发器指向；配对令牌鉴权 + 远程路由白名单；**不做来源地址过滤**，由转发器自身的前置鉴权把关） | 已实现 | [`internal/gateway/ingress.go`](../internal/gateway/ingress.go)、[`internal/app/app.go`](../internal/app/app.go) |
+| 反向代理入口（loopback `127.0.0.1:5418`，供 cloudflared 等本地转发器指向；只认中继令牌 `relayToken`（局域网令牌一律 401）+ 远程路由白名单；**不做来源地址过滤**，由转发器自身的前置鉴权把关） | 已实现 | [`internal/gateway/ingress.go`](../internal/gateway/ingress.go)、[`internal/app/app.go`](../internal/app/app.go) |
 | 受监管的 Cloudflare Tunnel 连接器（设置 → 远程：粘贴 connector token、启停、运行状态；token 存 `~/.hoxi/cloudflared.json`，0600；二进制仅在 PATH / `~/.hoxi/bin` 解析，不自动下载） | 已实现 | [`internal/cloudflared`](../internal/cloudflared/manager.go) |
-| 手机端传输选路（身份 ⟂ 传输：节点保存局域网 + 中继多个传输，选路 LAN 优先、失败回落中继，带缓存与重探；`relay` 由二维码携带） | 已实现 | `client/lib/core/network/hoxi_transport_resolver.dart`、`client/lib/shared/models/node_transport.dart` |
+| 手机端传输选路（身份 ⟂ 传输：节点保存局域网 + 中继多个传输，选路 LAN 优先、失败回落中继，带缓存与重探；`relay` 与 `relayToken` 由二维码携带，按目标地址选令牌：中继发 `relayToken`、局域网发 `token`） | 已实现 | `client/lib/core/network/hoxi_transport_resolver.dart`、`client/lib/core/network/hoxi_transport_failover.dart`、`client/lib/shared/models/node_transport.dart`、`client/lib/shared/models/server_connection.dart`（`tokenForUrl`） |
 | GoPanel 反向隧道（**明文**，GoPanel 可见内容） | 已实现 | [`docs/gopanel-hoxi-remote-tunnel.md`](gopanel-hoxi-remote-tunnel.md) |
 | 端到端加密传输、配对票据服务、盲目中继回落 | **未实现** | 本文 |
 
@@ -67,11 +67,13 @@
 
 iroh 是 **Rust**；Hoxi 桌面是 **Go**、手机是 **Flutter**。没有官方 Go iroh，Go 端只能 cgo 包 FFI。为避免重写传输栈，Hoxi 采用 **`quic-go` + DERP/TURN** 复刻同一套思想；若未来生态成熟可再评估 iroh。
 
-## 5. QR 载荷（已实现：v1 + `relay`）
+## 5. QR 载荷（已实现：v1 + `relay` + `relayToken`）
 
-现载荷：`{"url":"http://<lan-ip>:5417","token":"<hex>","type":"hoxi","entrance":"","relay":"https://<host>"}`。
+现载荷：`{"url":"http://<lan-ip>:5417","token":"<hex>","type":"hoxi","entrance":"","relay":"https://<host>","relayToken":"<hex>"}`。
 
 - `url` 是局域网直连地址；配置了 Cloudflare Tunnel 时附带 `relay`（公开主机名），手机据两候选做 **LAN 优先、失败回落中继** 的选路（`client/lib/core/network/hoxi_transport_resolver.dart`，带缓存与重探）。
+- **令牌按传输隔离**：`token` 只对 `5417` 有效，`relayToken` 只对 `5418` 反向代理入口有效（`internal/gateway/ingress.go` 的 `servePairedRequest` 按来源选择校验函数）。两者都存 `~/.hoxi/pairing.json`；`relayToken` 只在带 `relay` 时出现在二维码里。这样经中继泄露的令牌不能拿到局域网直连上用，局域网里嗅探到的令牌也不能从公网用。旧版 `pairing.json` 没有中继令牌，或中继令牌与局域网令牌相同时，桌面会自动补发一个新的中继令牌。
+- **升级影响**：拆分前扫码保存的手机节点没有 `relayToken`，走中继时会回落为发送局域网令牌，桌面会返回 401；需要在桌面「设置 → 远程」重新扫码。局域网直连不受影响。
 - 目标 v2 在此基础上再加**端点公钥**（`endpointId`）与直连地址列表，配合 TOFU 与 E2E 传输（见第 6 节）。
 - 与旧版兼容：手机先看 `relay`，缺失时按单地址（局域网）处理。
 
@@ -98,7 +100,7 @@ iroh 是 **Rust**；Hoxi 桌面是 **Go**、手机是 **Flutter**。没有官方
 ## 8. 中继 provider 配置面
 
 - **自建 GoPanel**（现有）：作为可达性通道，配合应用层 E2E 后即变成盲中继。
-- **Cloudflare Tunnel**：仅做可达性（`cloudflared` 主动外连、不开公网端口）；边缘终结 TLS，故**必须叠加应用层 E2E** 才盲。桌面侧的落点是反向代理入口 `http://127.0.0.1:5418`（`internal/gateway/ingress.go`，配对令牌鉴权 + 远程白名单），`cloudflared` 的 `service` 指到这里；连接器由 Hoxi 监管（`internal/cloudflared`，设置 → 远程 粘贴 connector token 并启停），域名用 `<opaque-id>.node.hoxi.work`（CNAME → `<tunnel-id>.cfargotunnel.com`，Proxied），由后端用 Cloudflare API 自动开通，或用户自带。
+- **Cloudflare Tunnel**：仅做可达性（`cloudflared` 主动外连、不开公网端口）；边缘终结 TLS，故**必须叠加应用层 E2E** 才盲。桌面侧的落点是反向代理入口 `http://127.0.0.1:5418`（`internal/gateway/ingress.go`，中继令牌 `relayToken` 鉴权 + 远程白名单），`cloudflared` 的 `service` 指到这里；连接器由 Hoxi 监管（`internal/cloudflared`，设置 → 远程 粘贴 connector token 并启停），域名用 `<opaque-id>.node.hoxi.work`（CNAME → `<tunnel-id>.cfargotunnel.com`，Proxied），由后端用 Cloudflare API 自动开通，或用户自带。
 - **Cloudflare TURN / Realtime**：语音等实时通道打不通时回落，DTLS 本身即盲。
 - **EdgeOne**：与 Cloudflare 同构，作配对票据服务的备选 provider。
 
@@ -107,7 +109,7 @@ iroh 是 **Rust**；Hoxi 桌面是 **Go**、手机是 **Flutter**。没有官方
 ## 9. 分期与验收
 
 1. **LAN 直连**（已完成）：出码 + `5417` 令牌监听 + 手机既有扫码流程。
-2. **反向代理入口 + Cloudflare 连接器**（已完成）：loopback `:5418` 入口 + 受监管的 `cloudflared`（设置 → 远程 粘贴 connector token 并启停）。
+2. **反向代理入口 + Cloudflare 连接器**（已完成）：loopback `:5418` 入口 + 受监管的 `cloudflared`（设置 → 远程 粘贴 connector token 并启停）；入口使用与局域网分离的中继令牌。
 3. **手机端传输选路**（已完成）：节点保存多传输，LAN 优先、失败回落中继，带缓存与重探。
 4. **E2E 契约评审**：本文 + 向量化测试设计评审通过后再动连接层。
 5. **E2E 传输**：QUIC 直连 + 打洞 + DERP/TURN 回落；HTTP/SSE over QUIC；QR v2 + TOFU。
