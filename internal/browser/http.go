@@ -49,6 +49,7 @@ type State struct {
 func emptyState() State { return State{Tabs: []Tab{}} }
 
 func (s *Service) RegisterRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("/api/hoxi/browser/extension", s.ServeExtension)
 	mux.HandleFunc("/api/hoxi/browser/stream", s.serveStream)
 	for _, path := range []string{"state", "frame", "action"} {
 		mux.HandleFunc("/api/hoxi/browser/"+path, s.serveHTTP)
@@ -214,6 +215,21 @@ func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, emptyState())
 		return
 	}
+	if path == "action" && action.Action == "pair" {
+		s.servePair(w, sc)
+		return
+	}
+	if sc.pairToken != "" && path == "action" && action.Action != "resize" && action.Action != "control" {
+		fail(w, 409, errors.New("Chrome pairing pending; connect the extension or cancel pairing first"))
+		return
+	}
+	if sc.extension != nil {
+		if path == "action" && action.Action == "control" {
+			sc.manual = *action.Manual
+		}
+		s.serveExtensionAction(w, ctx, sc, path, action)
+		return
+	}
 	if path == "action" && action.Action == "control" {
 		sc.manual = *action.Manual
 	} else if path == "action" && action.Action == "resize" {
@@ -240,6 +256,10 @@ func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		state := emptyState()
 		state.Manual = sc.manual
+		if sc.pairToken != "" {
+			writeJSON(w, 200, map[string]any{"tabs": []Tab{}, "tabID": "", "url": "", "title": "", "manual": sc.manual, "pairing": true})
+			return
+		}
 		writeJSON(w, 200, state)
 		return
 	}

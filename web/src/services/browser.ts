@@ -6,6 +6,9 @@ export interface BrowserScope {
 }
 
 export interface BrowserState {
+  mode?: "chrome";
+  connected?: boolean;
+  pairing?: boolean;
   url: string;
   title: string;
   tabs: Array<{ id: string; title: string; url: string }>;
@@ -64,8 +67,9 @@ export function connectBrowserStream(scope: BrowserScope, base: string,
         if (displaying || typeof event.data !== "string" || event.data.length > (16 << 20) + 1024) throw new Error("Invalid browser frame");
         const frame = JSON.parse(event.data) as BrowserFrame;
         if (typeof frame.image !== "string" || !/^[A-Za-z0-9+/=]+$/.test(frame.image) ||
-          !Number.isInteger(frame.width) || frame.width < 1 || frame.width > 4096 ||
-          !Number.isInteger(frame.height) || frame.height < 1 || frame.height > 4096 || typeof frame.tabID !== "string") throw new Error("Invalid browser frame");
+          !Number.isInteger(frame.width) || frame.width < 1 || frame.width > 16384 ||
+          !Number.isInteger(frame.height) || frame.height < 1 || frame.height > 16384 ||
+          frame.width * frame.height > 8388608 || typeof frame.tabID !== "string") throw new Error("Invalid browser frame");
         displaying = true;
         await display(frame);
         if (!disposed && socket === current && current.readyState === WebSocket.OPEN) current.send("ack");
@@ -101,7 +105,7 @@ export function browserPoint(bounds: { left: number; top: number; width: number;
 }
 
 async function request(scope: BrowserScope, endpoint: "state" | "action" | "frame",
-  signal: AbortSignal, action?: BrowserAction): Promise<Response> {
+  signal: AbortSignal, action?: BrowserAction | { action: "pair" }): Promise<Response> {
   const token = getGatewayToken();
   const response = await fetch(browserURL(endpoint, scope), {
     method: action ? "POST" : "GET",
@@ -121,6 +125,9 @@ async function request(scope: BrowserScope, endpoint: "state" | "action" | "fram
 }
 
 export const browserAPI = {
+  async pair(scope: BrowserScope, signal: AbortSignal): Promise<{ code: string; expiresIn: number }> {
+    return (await request(scope, "action", signal, { action: "pair" })).json();
+  },
   async state(scope: BrowserScope, signal: AbortSignal): Promise<BrowserState> {
     return (await request(scope, "state", signal)).json();
   },

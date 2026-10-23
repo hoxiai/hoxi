@@ -20,6 +20,30 @@ page preview to focus an element, then type, paste, use IME, or send keyboard
 shortcuts. Scroll over the preview to scroll the page. The inspector can be
 maximized using its existing expand button.
 
+## Connect An Existing Chrome Tab
+
+Chrome Link reuses a tab in your already-open Chrome, including its existing
+cookies and login state. No Chrome restart or remote-debugging port is needed.
+
+1. Open Chrome's extensions manager, enable Developer mode, choose **Load
+   unpacked**, and select the repository's `extensions/chrome` directory
+2. In Hoxi, select your session and open the Browser inspector. Disconnect any
+   running isolated browser, then choose **Connect existing Chrome tab**
+3. Copy the generated connection code (valid for two minutes)
+4. Switch to the target HTTP(S) page in Chrome, click **Hoxi Browser Link**, paste
+   the code, and choose **Connect this tab**. Chrome shows its debugger indicator
+5. Use the same `hoxi_browser` tool and Hoxi inspector to view and operate the tab
+6. Disconnect from either Hoxi or the extension. This detaches automation without
+   closing the Chrome tab or deleting its profile/login state
+
+Only the selected tab is exposed. Other tabs, including popups, are not listed or
+controlled; to use another tab, disconnect and pair again on that tab. The
+extension currently allows one connection at a time and is manually loaded, not
+published to the Chrome Web Store. Opening Chrome DevTools may detach automation.
+After detachment, Hoxi shows disconnected state and requires explicit reconnection
+rather than silently starting an isolated browser. Chrome Link uses periodic
+JPEG captures (not a high-frame-rate screencast) and preserves the real viewport.
+
 ## Tools And Isolation
 
 `hoxi_browser` supports navigation, click, text insertion, keyboard shortcuts,
@@ -27,7 +51,7 @@ scroll, DOM snapshots, JPEG screenshots, JavaScript evaluation, and tab lifecycl
 The plugin derives scope from OpenCode's execution context, never model-supplied
 session IDs. The gateway resolves managed OpenCode handles to their owning Hoxi
 session ID, so agent tools and the inspector share the same browser and manual
-ownership. Requests with a mismatched worktree are rejected. Each session/directory pair receives a separate Chrome process and
+ownership. Requests with a mismatched worktree are rejected. In the default isolated mode, each session/directory pair receives a separate Chrome process and
 temporary profile. Up to eight browser scopes can coexist. Closing a browser
 frees its slot and deletes its profile; app shutdown closes all browsers.
 
@@ -63,11 +87,12 @@ disclose secrets.
   return 404 until started. Each reconnect replaces the previous stream.
 - Manual interaction supports clicks, scrolling, text, and keys, not drag/drop,
   native browser menus, file-picker dialogs, or OS clipboard synchronization.
-- Profiles are temporary; login state is not retained after browser close.
+- Isolated-browser profiles are temporary; login state is not retained after
+  browser close. Chrome Link preserves the existing user's profile
 - DOM snapshots cover the main document, not iframe or shadow DOM contents.
   Screenshots and coordinate interactions remain available for visible content.
 - JavaScript evaluation is synchronous; it does not await promises.
-- Downloads, uploads, browser extensions, and native dialogs have no dedicated
+- Downloads, uploads, installing extensions into the isolated browser, and native dialogs have no dedicated
   product workflow. This is not a network sandbox or protection from every
   malicious page. Chrome can access local development servers.
 

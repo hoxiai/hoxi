@@ -1,0 +1,12 @@
+{
+  "extensionName": { "message": "Hoxi Browser Link" },
+  "extensionDescription": { "message": "Connect a selected Chrome tab to your local Hoxi session" },
+  "hint": { "message": "Generate a connection code in Hoxi's Browser panel and paste it here. Only this tab is connected, using its existing sign-in" },
+  "code": { "message": "Hoxi connection code" },
+  "connect": { "message": "Connect this tab" },
+  "disconnect": { "message": "Disconnect" },
+  "connected": { "message": "This tab is connected" },
+  "disconnected": { "message": "Disconnected; your Chrome tab remains open" },
+  "failed": { "message": "Connection failed" },
+  "working": { "message": "Connecting…" }
+}

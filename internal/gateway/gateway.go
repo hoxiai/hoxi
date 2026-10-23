@@ -258,6 +258,7 @@ func (g *Gateway) CloseBrowser() {
 
 func (g *Gateway) SetWSBaseURL(wsURL string) {
 	g.wsBaseURL = wsURL
+	g.browser.SetBridgeURL(wsURL)
 	if g.providers != nil {
 		httpBase := strings.Replace(strings.Replace(wsURL, "wss://", "https://", 1), "ws://", "http://", 1)
 		g.providers.SetRelayBaseURL(httpBase)
@@ -320,6 +321,11 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		g.providers.ServeRelay(w, r)
+		return
+	}
+	// This dedicated route authenticates one-use scope-bound extension handshakes.
+	if r.URL.Path == "/api/hoxi/browser/extension" && !isRemoteRequest(r) {
+		g.browser.ServeExtension(w, r)
 		return
 	}
 	if !g.allowRequest(w, r) {

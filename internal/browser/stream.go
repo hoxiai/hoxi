@@ -39,6 +39,9 @@ func (sc *scope) stopStream() {
 	}
 	sc.stream = nil
 	st.cancel()
+	if st.tab == nil {
+		return
+	}
 	ctx, cancel := context.WithTimeout(st.tab, 3*time.Second)
 	defer cancel()
 	_ = chromedp.Run(ctx, page.StopScreencast())
@@ -120,6 +123,11 @@ func (s *Service) serveStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if sc.browser == nil {
+		if sc.extension != nil {
+			<-sc.gate
+			s.serveExtensionStream(w, r, sc)
+			return
+		}
 		<-sc.gate
 		fail(w, 404, errors.New("browser not started"))
 		return

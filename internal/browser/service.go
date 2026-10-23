@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sync"
+	"time"
 
 	"github.com/chromedp/cdproto/emulation"
 	"github.com/chromedp/chromedp"
@@ -52,6 +53,9 @@ type scope struct {
 	viewports       map[string]viewport
 	stream          *screencast
 	closed          bool
+	extension       *extensionBridge
+	pairToken       string
+	pairExpires     time.Time
 }
 
 type Service struct {
@@ -64,6 +68,7 @@ type Service struct {
 	closed         bool
 	closeDone      chan struct{}
 	resolveSession func(sessionID, directory string) (string, error)
+	bridgeURL      string
 }
 
 // SetSessionResolver lets the host map an engine handle to its owning Hoxi
@@ -142,6 +147,9 @@ func (s *Service) Close() {
 
 func (sc *scope) dispose() {
 	sc.closed = true
+	if sc.extension != nil {
+		sc.extension.close()
+	}
 	if sc.stream != nil {
 		sc.stream.cancel()
 		sc.stream = nil
@@ -247,7 +255,7 @@ func (s *Service) evictIdleScopeLocked() bool {
 		default:
 			continue
 		}
-		if sc.browser != nil || sc.manual || sc.closed {
+		if sc.browser != nil || sc.extension != nil || (sc.pairToken != "" && time.Now().Before(sc.pairExpires)) || sc.manual || sc.closed {
 			<-sc.gate
 			continue
 		}

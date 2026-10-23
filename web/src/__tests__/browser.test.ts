@@ -2,6 +2,22 @@ import { browserAPI, browserPoint, browserStreamURL, browserURL, connectBrowserS
 import { assertDeepEqual, assertEqual, describe, it } from "./test-harness";
 
 describe("Browser inspector", () => {
+  it("creates a Chrome connection code only through the scoped UI action", async () => {
+    const original = globalThis.fetch;
+    const scope = { sessionID: "ses_chrome", directory: "/work trees/chrome" };
+    const signal = new AbortController().signal;
+    try {
+      globalThis.fetch = async (url, init) => {
+        assertEqual(String(url), browserURL("action", scope));
+        assertEqual(init?.method, "POST");
+        assertEqual(init?.signal, signal);
+        assertEqual(init?.body, JSON.stringify({ action: "pair" }));
+        assertEqual((init?.headers as Record<string, string>)["X-Hoxi-Browser"], "true");
+        return new Response(JSON.stringify({ code: "one-use-code", expiresIn: 120 }));
+      };
+      assertDeepEqual(await browserAPI.pair(scope, signal), { code: "one-use-code", expiresIn: 120 });
+    } finally { globalThis.fetch = original; }
+  });
   it("encodes session and worktree scope on every endpoint", () => {
     const scope = { sessionID: "session &?", directory: "/work trees/\u4e2d\u6587?&" };
     for (const endpoint of ["state", "frame", "action", "stream"] as const) {

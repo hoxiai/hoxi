@@ -32,3 +32,7 @@ export function executeBrowserAction(
 ): Promise<BrowserState> {
   return browserAPI.action(scope, action, signal);
 }
+
+export function createChromePairing(scope: BrowserScope, signal: AbortSignal) {
+  return browserAPI.pair(scope, signal);
+}

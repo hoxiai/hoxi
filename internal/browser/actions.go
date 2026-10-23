@@ -32,6 +32,10 @@ func validateAction(a Action, agent bool) error {
 		return errors.New("manual is only valid for control")
 	}
 	switch a.Action {
+	case "pair":
+		if agent {
+			return errors.New("only UI may pair Chrome")
+		}
 	case "resize":
 		if agent || a.Width == nil || a.Height == nil {
 			return errors.New("only UI may resize; integer width and height are required")

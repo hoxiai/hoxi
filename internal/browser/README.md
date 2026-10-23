@@ -24,7 +24,8 @@ access fails closed until the caller supplies this configuration.
 
 ## HTTP API
 
-All paths start with `/api/hoxi/browser/` and require query parameters:
+UI/agent paths start with `/api/hoxi/browser/` and require query parameters
+(the extension's authenticated WebSocket is described separately below):
 
 - `directory`: absolute existing directory, canonicalized through symlinks.
 - `sessionID`: 1-128 ASCII letters, digits, underscores, dots, or hyphens; first
@@ -61,6 +62,7 @@ with the following action-specific fields:
 | `tab_new` | Optional `url`, defaults to `about:blank`; selects new tab |
 | `tab_select`, `tab_close` | Required `tabID`, checked against browser's page targets |
 | `control` | UI only; required boolean `manual`; does not launch Chrome |
+| `pair` | UI only; returns `{code,expiresIn:120}` for a one-use Chrome Link connection, rejects replacing an existing browser |
 | `resize` | UI only; required integer `width` and `height`, each 1..4096; optional float `deviceScaleFactor` in [1,2], default 1; effective pixel area at most 8,388,608; saves scope size without launching Chrome and resizes the selected existing tab |
 | `close` | Stops Chrome, removes profile and scope; idempotent |
 
@@ -113,6 +115,27 @@ failure/cancellation removes the failed scope. Responses are non-cacheable.
 Closing the last tab first creates and selects an `about:blank` replacement, so
 the browser process and scope remain usable. Use `close` to release the scope.
 
+## Chrome Link Extension
+
+`GET /api/hoxi/browser/extension` upgrades only a Chrome extension Origin on a
+trusted local Host. Unlike UI/agent routes it takes no query parameters and never
+accepts an agent credential. The first WebSocket message must be `{token}` within
+five seconds; the 256-bit token comes from the UI-only `pair` action and is consumed
+once under the scope lock. Expired, replayed and unknown tokens are rejected.
+Only this exact gateway route accepts extension Origins; other gateway routes
+retain their existing origin checks. The route is excluded from every remote
+transport's allow-list.
+
+The extension receives scoped `Action` messages, returns `{result}` or `{error}`,
+and sends `{heartbeat:true}` every 20 seconds. Its service worker attaches only
+the tab selected by the user, never enumerates tabs, and exposes no content-script
+or external-message interface. The normal OpenCode tool approval flow and manual
+ownership checks still precede agent actions. State adds `mode:"chrome"` and
+`connected`; detached bridges remain bound until explicitly closed, preventing a
+silent fallback to a new Chrome. UI stream captures use the existing bounded ACK
+protocol at approximately one capture per 750 ms and never resize the real tab.
+`close` detaches the extension and frees the scope without closing the tab.
+
 ## Trust Boundaries
 
 UI requests with an Origin require an exact configured HTTP(S) origin (including
@@ -149,7 +172,7 @@ which can forge HTTP headers. Do not disclose the token to frontend JavaScript.
 
 - Chrome is headless, not an embedded interactive native window. `manual` means
   ownership through the frontend Browser inspector's screenshot/input UI.
-- Chrome uses a fresh temporary profile, never the user's daily profile. The
+- Isolated Chrome uses a fresh temporary profile, never the user's daily profile. The
   known macOS Chrome path is preferred; otherwise chromedp discovers Chrome.
 - This is not a network or OS sandbox: HTTP(S) includes local/private networks.
   Explicit navigation URLs are restricted, but page scripts, links, redirects,
@@ -161,7 +184,9 @@ which can forge HTTP headers. Do not disclose the token to frontend JavaScript.
 - Evaluate is synchronous, does not await promises, and truncates serialized
   output to 65,536 characters. Circular/nonserializable values can fail; truncated
   output is not necessarily valid JSON. CDP cancellation is not JS termination.
-- Profiles are ephemeral and scopes have no idle eviction or persistence.
+- Isolated profiles are ephemeral. Chrome Link preserves the user's existing
+  profile but controls only one selected HTTP(S) tab; other tabs and popups require
+  a new explicit pairing. Both modes keep no persisted Hoxi connection state
 
 ## Verification
 

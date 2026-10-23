@@ -3,6 +3,7 @@ import { ArrowLeft, ArrowRight, ExternalLink, Globe, Plus, Power, RefreshCw, X }
 import {
   browserPoint,
   connectBrowserStream,
+  createChromePairing,
   executeBrowserAction,
   fetchBrowserState,
   openExternalURL,
@@ -49,6 +50,7 @@ export default function BrowserInspector() {
   const [error, setError] = createSignal("");
   const [pollError, setPollError] = createSignal("");
   const [busy, setBusy] = createSignal(false);
+  const [pairCode, setPairCode] = createSignal("");
   const [visible, setVisible] = createSignal(!document.hidden);
   const [viewport, setViewport] = createSignal<{ width: number; height: number; deviceScaleFactor: number } | null>(null);
   const [streamGeneration, setStreamGeneration] = createSignal(0);
@@ -65,6 +67,8 @@ export default function BrowserInspector() {
   let frameEpoch = -1;
   const iconBtn = "shrink-0 rounded p-1 hover:bg-[var(--bg-hover)] disabled:opacity-40 cursor-pointer transition-colors";
   const running = () => Boolean(state()?.tabs.length);
+  const chromeLinked = () => state()?.mode === "chrome";
+  const pairing = () => Boolean(pairCode() || state()?.pairing);
   const selectedTab = createMemo(() => state()?.tabID);
   const visibility = () => setVisible(!document.hidden);
   document.addEventListener("visibilitychange", visibility);
@@ -103,6 +107,7 @@ export default function BrowserInspector() {
   }
 
   function applyState(next: BrowserState) {
+    if (next.mode === "chrome") setPairCode("");
     if (state()?.tabID !== next.tabID) replaceFrame(null);
     setState(next);
     if (!editingURL) setURL(next.url || "");
@@ -129,7 +134,7 @@ export default function BrowserInspector() {
         const next = await executeBrowserAction(connection.scope, action, connection.controller.signal);
         if (valid(connection)) {
           applyState(next);
-          if (action.action === "close") replaceFrame(null);
+          if (action.action === "close") { replaceFrame(null); setPairCode(""); }
         }
       } catch (err) {
         if (valid(connection)) setError(String(err));
@@ -222,6 +227,23 @@ export default function BrowserInspector() {
     send({ action: "navigate", url: pendingURL });
   }
 
+  async function pairChrome() {
+    const connection = current;
+    if (!connection || !valid(connection) || connection.pending > 0) return;
+    connection.pending++;
+    setBusy(true);
+    setError("");
+    try {
+      const result = await createChromePairing(connection.scope, connection.controller.signal);
+      if (valid(connection)) setPairCode(result.code);
+    } catch (err) {
+      if (valid(connection)) setError(String(err));
+    } finally {
+      connection.pending--;
+      if (valid(connection)) setBusy(false);
+    }
+  }
+
   createEffect(() => {
     const active = scope();
     // Visibility only pauses background observation, never the command channel.
@@ -231,6 +253,7 @@ export default function BrowserInspector() {
     setError("");
     setPollError("");
     setBusy(false);
+    setPairCode("");
     editingURL = false;
     composing = false;
     if (input) input.value = "";
@@ -284,7 +307,7 @@ export default function BrowserInspector() {
     createEffect(() => {
       const size = viewport();
       // An idle panel only remembers its size; navigate/tab_new sends it on startup.
-      if (size) untrack(() => { if (running()) enqueueAction(connection, { action: "resize", ...size }); });
+      if (size) untrack(() => { if (running() && !chromeLinked()) enqueueAction(connection, { action: "resize", ...size }); });
     });
     untrack(consumePendingBrowserURL);
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -344,10 +367,10 @@ export default function BrowserInspector() {
           <button class={iconBtn} disabled={!running() || busy()} title={t("inspector.browser.reload")} aria-label={t("inspector.browser.reload")} onClick={() => send({ action: "reload" })}><RefreshCw size={13} class={busy() ? "animate-spin" : ""} /></button>
           <form class="flex flex-1 min-w-0 items-center gap-1" onSubmit={(event) => {
             event.preventDefault();
-            send({ action: "navigate", url: url().trim() || "about:blank" });
+            if (!pairing()) send({ action: "navigate", url: url().trim() || "about:blank" });
           }} onKeyDown={(event) => event.stopPropagation()}>
             <input class="min-w-0 flex-1 rounded border border-[var(--border-subtle)] bg-transparent px-2 py-1 text-xs focus:outline-none focus:border-[var(--accent-primary)]" aria-label={t("inspector.browser.url")} placeholder={t("inspector.browser.url")} value={url()} onFocus={() => { editingURL = true; }} onBlur={() => { editingURL = false; }} onInput={(event) => setURL(event.currentTarget.value)} />
-            <button class="shrink-0 rounded px-1.5 py-1 text-[11px] hover:bg-[var(--bg-hover)] disabled:opacity-40 cursor-pointer" disabled={busy()} type="submit">{t("inspector.browser.go")}</button>
+            <button class="shrink-0 rounded px-1.5 py-1 text-[11px] hover:bg-[var(--bg-hover)] disabled:opacity-40 cursor-pointer" disabled={busy() || pairing() || state()?.connected === false} type="submit">{t("inspector.browser.go")}</button>
           </form>
           <button
             type="button"
@@ -378,36 +401,47 @@ export default function BrowserInspector() {
             </label>
           </Show>
           <Show
-            when={running()}
+            when={running() || chromeLinked() || pairing()}
             fallback={
               <button class="shrink-0 rounded border border-[var(--border-subtle)] px-2 py-1 text-[11px] hover:bg-[var(--bg-hover)] disabled:opacity-40 cursor-pointer" disabled={busy()} onClick={() => send({ action: "navigate", url: url().trim() || "about:blank" })}>
                 {t("inspector.browser.start")}
               </button>
             }
           >
-            <button class={`${iconBtn} text-[var(--text-muted)] hover:text-red-400`} disabled={busy()} title={t("inspector.browser.close")} aria-label={t("inspector.browser.close")} onClick={() => send({ action: "close" })}>
+            <button class={`${iconBtn} text-[var(--text-muted)] hover:text-red-400`} disabled={busy()} title={t(chromeLinked() || pairing() ? "inspector.browser.disconnectChrome" : "inspector.browser.close")} aria-label={t(chromeLinked() || pairing() ? "inspector.browser.disconnectChrome" : "inspector.browser.close")} onClick={() => send({ action: "close" })}>
               <Power size={13} />
             </button>
           </Show>
         </div>
+        <Show when={!running() && !chromeLinked()}>
+          <button class="m-2 rounded border border-[var(--border-subtle)] px-3 py-2 hover:bg-[var(--bg-hover)] disabled:opacity-40 cursor-pointer" disabled={busy()} onClick={() => void pairChrome()}>{t(pairing() ? "inspector.browser.regenerateChromeCode" : "inspector.browser.connectChrome")}</button>
+        </Show>
+        <Show when={pairCode()}>
+          <div class="m-2 flex flex-col gap-2 rounded border border-[var(--border-subtle)] p-3">
+            <p>{t("inspector.browser.chromePairHint")}</p>
+            <p class="text-[var(--text-muted)]">{t("inspector.browser.chromeInstallHint")}</p>
+            <input class="w-full rounded border border-[var(--border-subtle)] bg-transparent p-2 font-mono selectable-text" readOnly value={pairCode()} aria-label={t("inspector.browser.chromeCode")} onFocus={event => event.currentTarget.select()} />
+          </div>
+        </Show>
+        <Show when={chromeLinked()}><p class="px-2 py-1 text-[var(--text-muted)]">{t(state()?.connected === false ? "inspector.browser.chromeDisconnected" : "inspector.browser.chromeConnected")}</p></Show>
         <Show when={running()}>
           <div class="flex items-center gap-1 px-2 py-0.5 border-b border-[var(--border-subtle)]">
             <div class="flex flex-1 min-w-0 overflow-x-auto no-scrollbar gap-1" role="tablist" aria-label={t("inspector.browser.tabs")}>
               <For each={state()?.tabs}>{(tab) => (
                 <div class="flex shrink-0 items-center rounded border border-[var(--border-subtle)] text-[11px]" classList={{ "bg-[var(--accent-surface)] text-[var(--accent-primary)]": state()?.tabID === tab.id }}>
                   <button role="tab" aria-selected={state()?.tabID === tab.id} class="max-w-32 truncate px-1.5 py-0.5 cursor-pointer" disabled={busy()} title={tab.url} onClick={() => send({ action: "tab_select", tabID: tab.id })}>{tab.title || tab.url || t("inspector.browser.untitled")}</button>
-                  <button class="shrink-0 rounded p-0.5 hover:bg-[var(--bg-hover)] disabled:opacity-40 cursor-pointer" disabled={busy()} aria-label={t("inspector.browser.closeTab")} onClick={() => send({ action: "tab_close", tabID: tab.id })}><X size={11} /></button>
+                  <Show when={!chromeLinked()}><button class="shrink-0 rounded p-0.5 hover:bg-[var(--bg-hover)] disabled:opacity-40 cursor-pointer" disabled={busy()} aria-label={t("inspector.browser.closeTab")} onClick={() => send({ action: "tab_close", tabID: tab.id })}><X size={11} /></button></Show>
                 </div>
               )}</For>
             </div>
-            <button class={iconBtn} disabled={busy()} title={t("inspector.browser.newTab")} aria-label={t("inspector.browser.newTab")} onClick={() => send({ action: "tab_new", url: "about:blank" })}><Plus size={13} /></button>
+            <Show when={!chromeLinked()}><button class={iconBtn} disabled={busy()} title={t("inspector.browser.newTab")} aria-label={t("inspector.browser.newTab")} onClick={() => send({ action: "tab_new", url: "about:blank" })}><Plus size={13} /></button></Show>
           </div>
         </Show>
         <Show when={error() || pollError()}><p role="alert" class="px-2 py-1 text-[11px] text-red-500 break-words border-b border-[var(--border-subtle)]">{t("inspector.browser.error", { error: error() || pollError() })}</p></Show>
         <div ref={observeViewport} class="flex-1 min-h-0 overflow-hidden">
           <Show when={frame()} fallback={
             <div class="flex min-h-full flex-col items-center justify-center gap-4 px-6 py-10 text-center text-[var(--text-muted)]">
-              <Show when={!busy() && !running()} fallback={
+              <Show when={!busy() && !running() && !pairing() && !chromeLinked()} fallback={
                 <p role="status">{t(busy() ? "inspector.browser.working" : "inspector.browser.waiting")}</p>
               }>
                 <div class="flex h-16 w-16 items-center justify-center rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-hover)]">
