@@ -56,8 +56,10 @@ export function sessionBelongsToProject(
   const expectedID = projectID || findWorkspaceProfileByDir(root)?.id;
   const indexed = indexedSession(info.id);
   const ownerID = info.projectID || indexed?.projectID;
-  if (ownerID) {
-    if (expectedID && ownerID === expectedID) return true;
+  // Before boot resolves the project there is no expected ID to compare
+  // against; ownership then falls back to the directory checks below.
+  if (ownerID && expectedID) {
+    if (ownerID === expectedID) return true;
     const ownerIsLive = workspace.savedWorkspaces.some((saved) => saved.id === ownerID);
     // A backend-scoped session list can contain an old owner ID only after
     // ListProject has confirmed that ID is no longer live. Global/background
