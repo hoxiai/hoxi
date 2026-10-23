@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -72,5 +73,39 @@ func TestUnattendedModeRequiresIsolation(t *testing.T) {
 	worktree := filepath.Join(t.TempDir(), ".hoxi", "worktrees", "ses")
 	if !approvalAutoApprovesIsolated(item, pol, nil, worktree, true) {
 		t.Fatal("unattended denied an ordinary command inside an isolated sandbox")
+	}
+}
+
+func TestUnattendedDynamicJudgesWholeOpenCodeCommand(t *testing.T) {
+	worktree := filepath.Join(t.TempDir(), ".hoxi", "worktrees", "ses")
+	whole := "git commit -m \"$(cat <<'EOF'\nIt's done\nEOF\n)\""
+	// OpenCode splits the command into pieces that do not parse alone.
+	item := map[string]interface{}{
+		"permission": "bash",
+		"patterns":   []string{"git commit -m \"$(cat <<'EOF'", "It's done", "EOF", ")\""},
+		"metadata":   map[string]interface{}{"command": whole},
+	}
+	if allow, category := unattendedDecision(item, worktree); !allow {
+		t.Fatalf("a heredoc commit message was refused: %s", category)
+	}
+	item["metadata"] = map[string]interface{}{"command": "G=git; $G push"}
+	item["patterns"] = []string{"G=git", "$G push"}
+	if allow, category := unattendedDecision(item, worktree); allow || category != unattendedCategoryDynamic {
+		t.Fatalf("variable command name: allow=%v category=%s", allow, category)
+	}
+}
+
+func TestUnattendedUnparsableCommandIsDynamic(t *testing.T) {
+	for _, cmd := range []string{"echo 'unterminated", "cat <<EOF\nno end", "echo $(git push"} {
+		if got := unattendedDynamicCategory(cmd); got != unattendedCategoryDynamic {
+			t.Errorf("%q: got %q, want dynamic", cmd, got)
+		}
+	}
+}
+
+func TestUnattendedDynamicReasonDoesNotEchoCommand(t *testing.T) {
+	reason := unattendedDenyReason(unattendedCategoryDynamic)
+	if strings.Contains(reason, "GITHUB_TOKEN") || !strings.Contains(reason, "dynamic code execution") {
+		t.Fatalf("reason: %s", reason)
 	}
 }

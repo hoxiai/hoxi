@@ -11,9 +11,14 @@ import (
 // and recoverable destructive commands inside the worktree go through. Four
 // classes are refused immediately and never become an approval prompt, in
 // every mode that reaches this check: secret reads, push and publish, privilege
-// escalation, and sending credentials off the machine. A session that is not
-// both an isolated worktree and command-sandboxed does not get this path; it
-// stays on the full-trust rules. See AGENTS.md rule 6.
+// escalation, and sending credentials off the machine. Shell code built at
+// run time (eval, a pipe into a shell, `$CMD args`, inline interpreter code
+// that can run processes) is refused too, because the four static classes
+// cannot see through it (approval_unattended_dynamic.go). These static rules
+// are best effort: a script file the session wrote runs as written. What the
+// sandbox guarantees instead is in sandbox_env.go and AGENTS.md rule 6. A
+// session that is not both an isolated worktree and command-sandboxed does
+// not get this path; it stays on the full-trust rules.
 const ApprovalModeUnattended = "unattended"
 
 const (
@@ -29,6 +34,9 @@ const (
 // echoes the command, so a secret inside the command cannot leak back.
 func unattendedDenyReason(category string) string {
 	label := unattendedCategoryLabel(category)
+	if category == unattendedCategoryDynamic {
+		return "Unattended mode blocked this (" + label + "): eval, piping text into a shell or interpreter, a command name taken from a variable or substitution, a git alias, and inline interpreter code that runs processes, opens the network or reads the environment are refused. Write the command out literally; if it is a push, publish, privilege or credential step, list it for a person in the final summary instead."
+	}
 	return "Unattended mode blocked this (" + label + "). Do not rewrite the command to bypass the block; finish the rest of the work and list the steps a person must run in the final summary."
 }
 
@@ -44,6 +52,8 @@ func unattendedCategoryLabel(category string) string {
 		return "credential egress"
 	case unattendedCategoryEdit:
 		return "write outside the worktree"
+	case unattendedCategoryDynamic:
+		return "dynamic code execution"
 	default:
 		return "unsupported tool"
 	}
@@ -109,6 +119,13 @@ func unattendedHardDeny(item map[string]interface{}, worktree string) string {
 		(perm == "tool" && bashToolNames[strings.ToLower(firstString(meta["tool"]))]) {
 		for _, cmd := range commandCandidates(item) {
 			if cat := unattendedCommandCategory(cmd); cat != "" {
+				return cat
+			}
+		}
+		// Dynamic execution is judged on the whole command: OpenCode's split
+		// patterns lose the quoting and heredocs that tie pieces together.
+		for _, cmd := range opacityCandidates(item) {
+			if cat := unattendedDynamicCategory(cmd); cat != "" {
 				return cat
 			}
 		}

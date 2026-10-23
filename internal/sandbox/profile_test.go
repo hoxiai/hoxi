@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -348,4 +349,88 @@ func TestGitMetadataDirResolvesLinkedWorktree(t *testing.T) {
 	if got := GitMetadataDir(filepath.Join(root, "repo")); got != common {
 		t.Fatalf("GitMetadataDir(repo) = %q, want %q", got, common)
 	}
+}
+
+func TestProfileTextDeniesCredentialAgentSockets(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("SSH_AUTH_SOCK", "/private/tmp/custom-agent.sock")
+	profile, err := DefaultProfile(t.TempDir(), NetworkAllow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text, err := ProfileText(profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"com\\.apple\\.launchd", filepath.Join(home, ".ssh"), filepath.Join(home, ".gnupg"), "custom-agent.sock"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("socket deny is missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Index(text, "(allow network-outbound)") > strings.Index(text, "credential agent socket") {
+		t.Fatal("the socket deny must follow the network allow so it wins")
+	}
+}
+
+// TestSandboxRefusesLaunchdAgentSocket connects to a socket at the path
+// launchd gives the default SSH agent; a socket elsewhere stays reachable.
+func TestSandboxRefusesLaunchdAgentSocket(t *testing.T) {
+	if !Available() {
+		t.Skip("seatbelt backend unavailable")
+	}
+	if _, err := exec.LookPath("nc"); err != nil {
+		t.Skip("nc unavailable")
+	}
+	agentDir, err := os.MkdirTemp("/private/tmp", "com.apple.launchd.hoxitest")
+	if err != nil {
+		t.Skip("cannot create a launchd-shaped directory:", err)
+	}
+	defer os.RemoveAll(agentDir)
+	agent := listenUnix(t, filepath.Join(agentDir, "Listeners"))
+	defer agent.Close()
+	otherDir, err := os.MkdirTemp("/private/tmp", "hoxi-sock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(otherDir)
+	other := listenUnix(t, filepath.Join(otherDir, "plain.sock"))
+	defer other.Close()
+
+	t.Setenv("SSH_AUTH_SOCK", "")
+	profile, err := DefaultProfile(t.TempDir(), NetworkAllow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	connect := func(path string) error {
+		bin, args, err := WrapShell(profile, "nc -U "+shellQuote(path)+" </dev/null")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return runCommand(bin, args...)
+	}
+	if err := connect(filepath.Join(agentDir, "Listeners")); err == nil {
+		t.Fatal("sandboxed command reached the launchd SSH agent socket")
+	}
+	if err := connect(filepath.Join(otherDir, "plain.sock")); err != nil {
+		t.Fatalf("an ordinary Unix socket must stay reachable: %v", err)
+	}
+}
+
+func listenUnix(t *testing.T, path string) net.Listener {
+	t.Helper()
+	l, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			_ = c.Close()
+		}
+	}()
+	return l
 }
