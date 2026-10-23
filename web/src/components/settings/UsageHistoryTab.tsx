@@ -159,6 +159,7 @@ export default function UsageHistoryTab() {
   );
   const todayDay = createMemo(() => usageHistory().find((day) => day.date === todayDate) ?? null);
   const todayTotals = createMemo(() => usageHistoryTotals(todayDay() ? [todayDay()!] : []));
+  const overviewModels = createMemo(() => usageHistoryModels(usageHistory()));
 
   const [detailDay, setDetailDay] = createSignal<UsageHistoryDay | null>(null);
   const detailModels = createMemo(() => {
@@ -326,21 +327,49 @@ export default function UsageHistoryTab() {
         <div class="space-y-5">
           <UsageHeatmap points={heatPoints()} />
           <section class="space-y-2">
-            <div class="flex items-center justify-between gap-3">
-              <h4 class="text-[12px] font-semibold text-[var(--text-secondary)]">
-                {t("settings.usageTodayTitle")} · {todayDate}
-              </h4>
-              <Show when={(todayDay()?.models.length ?? 0) > 0}>
-                <button
-                  type="button"
-                  class="inline-flex items-center gap-0.5 rounded-md px-1.5 py-0.5 text-[11px] text-[var(--accent-primary)] hover:bg-[var(--bg-hover)] cursor-pointer"
-                  onClick={() => setDetailDay(todayDay())}
-                >
-                  {t("settings.usageModelDetailView")}
-                  <ChevronRight size={12} />
-                </button>
-              </Show>
-            </div>
+            <h4 class="text-[12px] font-semibold text-[var(--text-secondary)]">
+              {t("settings.usageByModelTitle")}
+            </h4>
+            <Show
+              when={overviewModels().length > 0}
+              fallback={
+                <p class="rounded-xl border border-dashed border-[var(--border-subtle)] px-3 py-6 text-center text-[12px] text-[var(--text-muted)]">
+                  {t("settings.usageByModelEmpty")}
+                </p>
+              }
+            >
+              <ul class="max-h-72 divide-y divide-[var(--border-subtle)]/60 overflow-y-auto rounded-xl border border-[var(--border-subtle)]">
+                <For each={overviewModels()}>
+                  {(model) => (
+                    <li class="flex items-center justify-between gap-3 px-3 py-2">
+                      <div class="min-w-0">
+                        <div class="truncate font-mono text-[12px] text-[var(--text-primary)]">
+                          {model.modelID}
+                        </div>
+                        <div class="truncate text-[11px] text-[var(--text-muted)]">
+                          {model.providerID} · {t("settings.usageColTurns")} {model.turns.toLocaleString()}
+                        </div>
+                      </div>
+                      <div class="shrink-0 text-right">
+                        <div class="font-mono text-[12px] text-[var(--text-primary)]">
+                          {formatCompactTokens(model.totalTokens)}
+                        </div>
+                        <div class="font-mono text-[11px] text-[var(--text-muted)]">
+                          <Show when={model.cost !== null} fallback="—">
+                            {formatUsd(model.cost!)}
+                          </Show>
+                        </div>
+                      </div>
+                    </li>
+                  )}
+                </For>
+              </ul>
+            </Show>
+          </section>
+          <section class="space-y-2">
+            <h4 class="text-[12px] font-semibold text-[var(--text-secondary)]">
+              {t("settings.usageTodayTitle")} · {todayDate}
+            </h4>
             <MetricGrid totals={todayTotals()} />
           </section>
         </div>
