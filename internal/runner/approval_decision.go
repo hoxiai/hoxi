@@ -417,11 +417,11 @@ func isDestructivePermissionRequest(item map[string]interface{}) bool {
 			return false
 		}
 	}
-	candidates := commandCandidates(item)
-	for i, cmd := range candidates {
-		candidates[i] = maskCommandDataArguments(cmd)
+	var scanned []string
+	for _, cmd := range commandCandidates(item) {
+		scanned = append(scanned, destructiveScanForms(cmd)...)
 	}
-	blob := perm + "\n" + strings.Join(candidates, "\n")
+	blob := perm + "\n" + strings.Join(scanned, "\n")
 	return matchesDestructive(blob) || matchesDestructive(deobfuscator.Replace(blob))
 }
 
@@ -439,7 +439,7 @@ func isOpaquePermissionRequest(item map[string]interface{}, worktree string) boo
 		worktree = firstString(itemMetadata(item)["worktree"])
 	}
 	category := permissionCategory(item)
-	candidates := commandCandidates(item)
+	candidates := opacityCandidates(item)
 	if category != permissionCategoryBash {
 		meta := itemMetadata(item)
 		_, hasCommand := meta["command"].(string)

@@ -1,5 +1,7 @@
 import { decidePermission } from "../../../.opencode/lib/permission-policy.js";
 import requestCases from "../../../.opencode/lib/permission-request.cases.json";
+import opaqueCases from "../../../.opencode/lib/opaque-command.cases.json";
+import { isOpaquePermissionRequest, isOpaqueShellCommand } from "../../../.opencode/lib/opaque-command.js";
 import { hoxiAPI, type ApprovalPolicy } from "../services/api";
 import type { PermissionRequest } from "../services/sse-types";
 import {
@@ -381,5 +383,20 @@ describe("session kind grant", () => {
       hoxiAPI.replyPermission = origReply;
       hoxiAPI.listApprovalGrants = origGrants;
     }
+  });
+});
+
+describe("opaque command shared fixture", () => {
+  it("matches every Go/JS opaque-command case, including the rejection paths", () => {
+    for (const c of opaqueCases as Array<{ command: string; opaque: boolean }>) {
+      assertEqual(isOpaqueShellCommand(c.command, ""), c.opaque, c.command);
+    }
+  });
+
+  it("judges OpenCode's split patterns as the one command in metadata.command", () => {
+    const command = `rg -l "createSignal" web/src/components/timeline | while read f; do if ! rg -q "createSignal" <(rg "^import .* from .solid-js." "$f"); then echo "MISSING: $f"; fi; done; echo loop-done`;
+    const split = ["trap : EXIT", 'rg -l "createSignal" web/src/components/timeline', "read f", 'echo "MISSING: $f"', "echo loop-done"];
+    assertEqual(isOpaquePermissionRequest({ permission: "bash", metadata: { command }, patterns: split }), false);
+    assertEqual(isOpaquePermissionRequest({ permission: "bash", metadata: { command: 'cat "$KUBECONFIG"' }, patterns: ["echo hi"] }), true);
   });
 });
