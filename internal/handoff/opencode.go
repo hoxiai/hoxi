@@ -320,6 +320,7 @@ SELECT json_object(
 			Reasoning: reasoning,
 			Tools:     tools,
 			ModelID:   turnModel,
+			Usage:     openCodeTurnUsage(mDoc),
 		})
 	}
 
@@ -358,6 +359,22 @@ SELECT json_object(
 		LastTurnSummary: lastSummary,
 		LastRecap:       lastSummary,
 	}, nil
+}
+
+func openCodeTurnUsage(mDoc map[string]interface{}) TurnUsage {
+	tokens, _ := mDoc["tokens"].(map[string]interface{})
+	if tokens == nil {
+		return parseTurnUsage(mDoc["usage"])
+	}
+	cache, _ := tokens["cache"].(map[string]interface{})
+	return TurnUsage{
+		Input:      asInt64(tokens["input"]),
+		Output:     asInt64(tokens["output"]),
+		Reasoning:  asInt64(tokens["reasoning"]),
+		CacheRead:  asInt64(cache["read"]),
+		CacheWrite: asInt64(cache["write"]),
+		Cost:       asFloat64(mDoc["cost"]),
+	}
 }
 
 func extractOpenCodeMsgModel(mDoc map[string]interface{}) string {

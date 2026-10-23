@@ -344,14 +344,21 @@ func insertNormalizedTurnsToOpenCodeDB(
 		if turn.ModelID != "" {
 			effModel = turn.ModelID
 		}
+		usage := turn.Usage
 		msgData := map[string]interface{}{
-			"parentID":   lastUserMsgID,
-			"role":       "assistant",
-			"mode":       "build",
-			"agent":      "build",
-			"path":       map[string]interface{}{"cwd": targetDir, "root": targetDir},
-			"cost":       0,
-			"tokens":     map[string]interface{}{"total": 0, "input": 0, "output": 0, "reasoning": 0, "cache": map[string]interface{}{"write": 0, "read": 0}},
+			"parentID": lastUserMsgID,
+			"role":     "assistant",
+			"mode":     "build",
+			"agent":    "build",
+			"path":     map[string]interface{}{"cwd": targetDir, "root": targetDir},
+			"cost":     usage.Cost,
+			"tokens": map[string]interface{}{
+				"total":     usage.Input + usage.Output + usage.Reasoning + usage.CacheRead + usage.CacheWrite,
+				"input":     usage.Input,
+				"output":    usage.Output,
+				"reasoning": usage.Reasoning,
+				"cache":     map[string]interface{}{"write": usage.CacheWrite, "read": usage.CacheRead},
+			},
 			"modelID":    effModel,
 			"providerID": providerID,
 			"time":       map[string]interface{}{"created": ts, "completed": ts + 500},

@@ -262,15 +262,17 @@ func parseCodexRolloutFile(rolloutPath string, baseTs int64, defaultModel string
 		if json.Unmarshal([]byte(line), &item) != nil {
 			continue
 		}
-		if asString(item["type"]) != "response_item" {
-			continue
-		}
-		payload, ok := item["payload"].(map[string]interface{})
-		if !ok {
-			continue
-		}
 		step++
 		ts := baseTs + step*1000
+		payload, _ := item["payload"].(map[string]interface{})
+		// Codex records per-turn usage on event_msg/token_count, and sometimes
+		// on the response item itself. Attach it to the assistant turn in flight.
+		if usage := codexItemUsage(item, payload); !usage.empty() {
+			attachCodexUsage(&turns, usage, ts, defaultModel)
+		}
+		if asString(item["type"]) != "response_item" || payload == nil {
+			continue
+		}
 		pType := asString(payload["type"])
 
 		switch pType {
@@ -384,6 +386,46 @@ func parseCodexRolloutFile(rolloutPath string, baseTs int64, defaultModel string
 		}
 	}
 	return turns
+}
+
+func codexItemUsage(item, payload map[string]interface{}) TurnUsage {
+	if payload == nil {
+		payload = map[string]interface{}{}
+	}
+	if usage := parseTurnUsage(payload["usage"]); !usage.empty() {
+		return usage
+	}
+	if usage := parseTurnUsage(item["usage"]); !usage.empty() {
+		return usage
+	}
+	info, _ := payload["info"].(map[string]interface{})
+	if usage := parseTurnUsage(info["total_token_usage"]); !usage.empty() {
+		return usage
+	}
+	if usage := parseTurnUsage(info["last_token_usage"]); !usage.empty() {
+		return usage
+	}
+	if usage := parseTurnUsage(info); !usage.empty() {
+		return usage
+	}
+	if asString(payload["type"]) != "token_count" {
+		return TurnUsage{}
+	}
+	return parseTurnUsage(payload)
+}
+
+func attachCodexUsage(turns *[]NormalizedTurn, usage TurnUsage, ts int64, model string) {
+	if len(*turns) == 0 || (*turns)[len(*turns)-1].Role != "assistant" {
+		*turns = append(*turns, NormalizedTurn{
+			Role:      "assistant",
+			Timestamp: ts,
+			ModelID:   model,
+			Usage:     usage,
+		})
+		return
+	}
+	last := &(*turns)[len(*turns)-1]
+	last.Usage = last.Usage.add(usage)
 }
 
 func extractCodexMessageText(content interface{}) string {

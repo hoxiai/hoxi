@@ -1,8 +1,10 @@
 package handoff
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -44,6 +46,31 @@ type NormalizedToolCall struct {
 	Status string                 `json:"status"`
 }
 
+// TurnUsage is token usage reported by the source CLI for one assistant turn.
+// Fields stay zero when the source recorded none.
+type TurnUsage struct {
+	Input      int64   `json:"input,omitempty"`
+	Output     int64   `json:"output,omitempty"`
+	Reasoning  int64   `json:"reasoning,omitempty"`
+	CacheRead  int64   `json:"cacheRead,omitempty"`
+	CacheWrite int64   `json:"cacheWrite,omitempty"`
+	Cost       float64 `json:"cost,omitempty"`
+}
+
+func (u TurnUsage) empty() bool {
+	return u.Input == 0 && u.Output == 0 && u.Reasoning == 0 && u.CacheRead == 0 && u.CacheWrite == 0 && u.Cost == 0
+}
+
+func (u TurnUsage) add(other TurnUsage) TurnUsage {
+	u.Input += other.Input
+	u.Output += other.Output
+	u.Reasoning += other.Reasoning
+	u.CacheRead += other.CacheRead
+	u.CacheWrite += other.CacheWrite
+	u.Cost += other.Cost
+	return u
+}
+
 type NormalizedTurn struct {
 	Role      string               `json:"role"`
 	Timestamp int64                `json:"timestamp"`
@@ -51,6 +78,7 @@ type NormalizedTurn struct {
 	Reasoning string               `json:"reasoning,omitempty"`
 	Tools     []NormalizedToolCall `json:"tools,omitempty"`
 	ModelID   string               `json:"modelID,omitempty"`
+	Usage     TurnUsage            `json:"usage,omitempty"`
 }
 
 type ExternalPlanStep struct {
@@ -264,6 +292,88 @@ func asString(v interface{}) string {
 		return s
 	}
 	return ""
+}
+
+func asInt64(v interface{}) int64 {
+	switch n := v.(type) {
+	case float64:
+		return int64(n)
+	case int64:
+		return n
+	case int:
+		return int64(n)
+	case json.Number:
+		i, _ := n.Int64()
+		return i
+	case string:
+		i, _ := strconv.ParseInt(strings.TrimSpace(n), 10, 64)
+		return i
+	default:
+		return 0
+	}
+}
+
+func asFloat64(v interface{}) float64 {
+	switch n := v.(type) {
+	case float64:
+		return n
+	case int64:
+		return float64(n)
+	case int:
+		return float64(n)
+	case json.Number:
+		f, _ := n.Float64()
+		return f
+	case string:
+		f, _ := strconv.ParseFloat(strings.TrimSpace(n), 64)
+		return f
+	default:
+		return 0
+	}
+}
+
+// parseTurnUsage reads a CLI usage object. Claude reports input_tokens plus
+// cache_creation_input_tokens; Codex and Antigravity report input_tokens,
+// output_tokens, cache_read_tokens and thinking_tokens.
+func parseTurnUsage(raw interface{}) TurnUsage {
+	m, ok := raw.(map[string]interface{})
+	if !ok || m == nil {
+		return TurnUsage{}
+	}
+	input := asInt64(m["input_tokens"])
+	if input == 0 {
+		input = asInt64(m["input"])
+	}
+	output := asInt64(m["output_tokens"])
+	if output == 0 {
+		output = asInt64(m["output"])
+	}
+	reasoning := asInt64(m["thinking_tokens"])
+	if reasoning == 0 {
+		reasoning = asInt64(m["reasoning_tokens"])
+	}
+	cacheRead := asInt64(m["cache_read_input_tokens"])
+	if cacheRead == 0 {
+		cacheRead = asInt64(m["cache_read_tokens"])
+	}
+	cacheWrite := asInt64(m["cache_creation_input_tokens"])
+	if cacheWrite == 0 {
+		cacheWrite = asInt64(m["cache_write_tokens"])
+	}
+	cost := asFloat64(m["cost"])
+	if cost == 0 {
+		if costMap, ok := m["cost"].(map[string]interface{}); ok {
+			cost = asFloat64(costMap["total"])
+		}
+	}
+	return TurnUsage{
+		Input:      input,
+		Output:     output,
+		Reasoning:  reasoning,
+		CacheRead:  cacheRead,
+		CacheWrite: cacheWrite,
+		Cost:       cost,
+	}
 }
 
 // ImportedSessionTitlePrefixes returns the SQL LIKE prefix patterns used to tag

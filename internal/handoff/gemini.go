@@ -212,6 +212,19 @@ func findAntigravityBrainDir(sessionID string) string {
 	return ""
 }
 
+func geminiStepUsage(step map[string]interface{}) TurnUsage {
+	if usage := parseTurnUsage(step["usage"]); !usage.empty() {
+		return usage
+	}
+	return TurnUsage{
+		Input:      asInt64(step["input_tokens"]),
+		Output:     asInt64(step["output_tokens"]),
+		Reasoning:  asInt64(step["thinking_tokens"]),
+		CacheRead:  asInt64(step["cache_read_tokens"]),
+		CacheWrite: asInt64(step["cache_write_tokens"]),
+	}
+}
+
 func extractAntigravityUserPrompt(raw string) (promptText, modelChange string) {
 	if idx := strings.Index(raw, "changed setting `Model Selection`"); idx >= 0 {
 		rest := raw[idx:]
@@ -368,6 +381,7 @@ func loadGeminiAntigravitySessionDetail(sessionID, hintCWD, activeRoot string) (
 
 		case "PLANNER_RESPONSE":
 			pendingOutputs = nil
+			usage := geminiStepUsage(step)
 			content := strings.TrimSpace(asString(step["content"]))
 			thinking := strings.TrimSpace(asString(step["thinking"]))
 			var calls []NormalizedToolCall
@@ -401,6 +415,7 @@ func loadGeminiAntigravitySessionDetail(sessionID, hintCWD, activeRoot string) (
 			}
 			if len(turns) > 0 && turns[len(turns)-1].Role == "assistant" {
 				prev := &turns[len(turns)-1]
+				prev.Usage = prev.Usage.add(usage)
 				if content != "" {
 					if prev.Text != "" {
 						prev.Text += "\n\n" + content
@@ -428,6 +443,7 @@ func loadGeminiAntigravitySessionDetail(sessionID, hintCWD, activeRoot string) (
 					Reasoning: thinking,
 					Tools:     calls,
 					ModelID:   detectedModel,
+					Usage:     usage,
 				})
 				for i := range turns[len(turns)-1].Tools {
 					pendingOutputs = append(pendingOutputs, toolLocation{turnIdx: len(turns) - 1, toolIdx: i})

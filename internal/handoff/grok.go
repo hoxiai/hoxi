@@ -322,10 +322,12 @@ func parseGrokChatHistory(historyPath string, baseTs int64, defaultModel string)
 
 			reasoningJoined := strings.Join(pendingReasoning, "\n\n")
 			pendingReasoning = nil
+			usage := parseTurnUsage(item["usage"])
 
 			// Merge consecutive assistant tool steps under the same logical assistant turn if preceding turn is assistant
 			if len(turns) > 0 && turns[len(turns)-1].Role == "assistant" {
 				last := &turns[len(turns)-1]
+				last.Usage = last.Usage.add(usage)
 				if reasoningJoined != "" {
 					if last.Reasoning != "" {
 						last.Reasoning += "\n\n" + reasoningJoined
@@ -355,6 +357,7 @@ func parseGrokChatHistory(historyPath string, baseTs int64, defaultModel string)
 					Reasoning: reasoningJoined,
 					Tools:     tCalls,
 					ModelID:   modelID,
+					Usage:     usage,
 				}
 				turns = append(turns, turn)
 				for i := range turns[len(turns)-1].Tools {

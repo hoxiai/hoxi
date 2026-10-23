@@ -14,7 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hoxiai/hoxi/internal/handoff"
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
 	"github.com/hoxiai/hoxi/internal/runner"
 )
@@ -280,7 +279,6 @@ SELECT
 FROM message m
 JOIN session s ON s.id = m.session_id
 WHERE json_extract(m.data, '$.role') = 'assistant'
-  AND %s
   AND (
     CAST(COALESCE(json_extract(m.data, '$.tokens.input'), 0) AS INTEGER) > 0
     OR CAST(COALESCE(json_extract(m.data, '$.tokens.output'), 0) AS INTEGER) > 0
@@ -289,7 +287,7 @@ WHERE json_extract(m.data, '$.role') = 'assistant'
     OR (json_extract(m.data, '$.time.completed') IS NULL AND m.time_created >= %d)
   )
 ORDER BY m.time_created DESC
-LIMIT %d;`, handoff.SQLNotImportedTitleClause("s.title"), cutoffMs, requestLogMaxLimit)
+LIMIT %d;`, cutoffMs, requestLogMaxLimit)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
@@ -299,16 +297,16 @@ LIMIT %d;`, handoff.SQLNotImportedTitleClause("s.title"), cutoffMs, requestLogMa
 		return nil
 	}
 	var rows []struct {
-		ID         string `json:"id"`
-		SessionID  string `json:"session_id"`
-		Time       int64  `json:"time_created"`
-		Completed  int64  `json:"completed"`
-		ProviderID string `json:"provider_id"`
-		ModelID    string `json:"model_id"`
-		Input      int64  `json:"input"`
-		Output     int64  `json:"output"`
-		Reasoning  int64  `json:"reasoning"`
-		CacheRead  int64  `json:"cache_read"`
+		ID         string  `json:"id"`
+		SessionID  string  `json:"session_id"`
+		Time       int64   `json:"time_created"`
+		Completed  int64   `json:"completed"`
+		ProviderID string  `json:"provider_id"`
+		ModelID    string  `json:"model_id"`
+		Input      int64   `json:"input"`
+		Output     int64   `json:"output"`
+		Reasoning  int64   `json:"reasoning"`
+		CacheRead  int64   `json:"cache_read"`
 		CacheWrite int64   `json:"cache_write"`
 		Cost       float64 `json:"cost"`
 		Status     int     `json:"status"`

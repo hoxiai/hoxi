@@ -70,7 +70,7 @@ func setupSyntheticCLIHome(t *testing.T, workspaceDir string) string {
 		`{"type":"custom-title","customTitle":"Claude Refactor Task","cwd":"` + workspaceDir + `/.claude/worktrees/wt1","gitBranch":"feat/claude","timestamp":"2026-10-17T10:00:00Z"}`,
 		`{"type":"user","timestamp":"2026-10-17T10:00:01Z","message":{"content":"<system-reminder>ignore</system-reminder>"}}`,
 		`{"type":"user","timestamp":"2026-10-17T10:00:02Z","message":{"content":[{"type":"text","text":"Please update app.go and write a todo plan"}]}}`,
-		`{"type":"assistant","timestamp":"2026-10-17T10:00:05Z","message":{"model":"claude-sonnet-4-5","content":[{"type":"thinking","thinking":"I need to edit app.go and record a plan."},{"type":"text","text":"I will update app.go now."},{"type":"tool_use","id":"toolu_edit_1","name":"Edit","input":{"file_path":"app.go","old_string":"a","new_string":"b"}},{"type":"tool_use","id":"toolu_todo_1","name":"TodoWrite","input":{"items":[{"content":"Edit app.go","status":"completed"},{"content":"Run tests","status":"in_progress"}]}}]}}`,
+		`{"type":"assistant","timestamp":"2026-10-17T10:00:05Z","message":{"model":"claude-sonnet-4-5","usage":{"input_tokens":1200,"output_tokens":80,"cache_read_input_tokens":400,"cache_creation_input_tokens":50},"content":[{"type":"thinking","thinking":"I need to edit app.go and record a plan."},{"type":"text","text":"I will update app.go now."},{"type":"tool_use","id":"toolu_edit_1","name":"Edit","input":{"file_path":"app.go","old_string":"a","new_string":"b"}},{"type":"tool_use","id":"toolu_todo_1","name":"TodoWrite","input":{"items":[{"content":"Edit app.go","status":"completed"},{"content":"Run tests","status":"in_progress"}]}}]}}`,
 		`{"type":"user","timestamp":"2026-10-17T10:00:06Z","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_edit_1","content":[{"type":"text","text":"Updated app.go successfully"}]},{"type":"tool_result","tool_use_id":"toolu_todo_1","content":"Todo list updated"}]}}`,
 		`{"type":"assistant","timestamp":"2026-10-17T10:00:08Z","message":{"model":"claude-sonnet-4-5","content":[{"type":"thinking","thinking":"Now writing test file."},{"type":"tool_use","id":"toolu_write_1","name":"Write","input":{"filePath":"app_test.go","content":"package main"}},{"type":"text","text":"Created app_test.go."}]}}`,
 	}
@@ -98,6 +98,7 @@ func setupSyntheticCLIHome(t *testing.T, workspaceDir string) string {
 		`{"type":"response_item","payload":{"type":"custom_tool_call","call_id":"call_cx_2","name":"exec_command","input":"go test ./..."}}`,
 		`{"type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"call_cx_2","output":[{"text":"ok"}]}}`,
 		`{"type":"response_item","payload":{"type":"message","role":"assistant","content":"Codex feature complete."}}`,
+		`{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":900,"output_tokens":40,"reasoning_tokens":10}}}}`,
 	}
 	_ = os.WriteFile(rolloutPath, []byte(strings.Join(codexLines, "\n")+"\n"), 0o644)
 
@@ -447,6 +448,9 @@ func TestSyntheticDiscoveryAndDetailAllSources(t *testing.T) {
 	if claudeDetail.Turns[1].Tools[0].Output != "Updated app.go successfully" {
 		t.Fatalf("expected tool_result output attached, got %q", claudeDetail.Turns[1].Tools[0].Output)
 	}
+	if claudeDetail.Turns[1].Usage.Input != 1200 || claudeDetail.Turns[1].Usage.Output != 80 || claudeDetail.Turns[1].Usage.CacheRead != 400 || claudeDetail.Turns[1].Usage.CacheWrite != 50 {
+		t.Fatalf("expected claude usage preserved, got %+v", claudeDetail.Turns[1].Usage)
+	}
 
 	// 2. OpenAI Codex
 	codexList, codexStats := scanCodexSessions(workspaceDir, "feat/codex")
@@ -468,6 +472,9 @@ func TestSyntheticDiscoveryAndDetailAllSources(t *testing.T) {
 	}
 	if len(codexDetail.Turns[1].Tools) != 2 || codexDetail.Turns[1].Tools[0].Output != "wrote codex_feat.go" {
 		t.Fatalf("unexpected codex tools: %+v", codexDetail.Turns[1].Tools)
+	}
+	if codexDetail.Turns[1].Usage.Input != 900 || codexDetail.Turns[1].Usage.Output != 40 || codexDetail.Turns[1].Usage.Reasoning != 10 {
+		t.Fatalf("expected codex token_count attached, got %+v", codexDetail.Turns[1].Usage)
 	}
 
 	// 3. Gemini / Antigravity

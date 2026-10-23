@@ -349,8 +349,10 @@ func parseClaudeJSONL(filePath, sessionID, activeRoot string) (*ExternalSessionD
 			if len(extractedPlans) > 0 {
 				planSteps = extractedPlans
 			}
+			usage := parseTurnUsage(msg["usage"])
 			if len(turns) > 0 && turns[len(turns)-1].Role == "assistant" {
 				last := &turns[len(turns)-1]
+				last.Usage = last.Usage.add(usage)
 				if reasoningPart != "" {
 					if last.Reasoning != "" {
 						last.Reasoning += "\n\n" + reasoningPart
@@ -380,6 +382,7 @@ func parseClaudeJSONL(filePath, sessionID, activeRoot string) (*ExternalSessionD
 					Reasoning: reasoningPart,
 					Tools:     tCalls,
 					ModelID:   modelID,
+					Usage:     usage,
 				}
 				turns = append(turns, turn)
 				for i := range turns[len(turns)-1].Tools {
