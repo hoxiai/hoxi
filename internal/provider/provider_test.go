@@ -311,3 +311,43 @@ func TestStaleConfigWriterCannotLoseSavedProvider(t *testing.T) {
 		t.Fatalf("saved key changed: %v", key)
 	}
 }
+
+// models.json is shared by every Hoxi process; a bridge URL stored by (or for)
+// another process must still reach this process's own gateway.
+func TestLocalBridgeURLResolvesToOwnGateway(t *testing.T) {
+	_, workspaceDir := setupIsolatedEnv(t)
+	svc := NewService(0, "pass", workspaceDir, nil)
+	svc.SetRelayBaseURL("http://127.0.0.1:5420")
+	if err := svc.PersistHoxiConfigDoc(map[string]any{
+		"provider": map[string]any{
+			"grok-cli": map[string]any{
+				"npm": "@ai-sdk/openai-compatible",
+				"options": map[string]any{
+					"baseURL": "http://127.0.0.1:5410/api/hoxi/bridge/grok-cli/v1",
+					"apiKey":  "hoxi-local-grok-cli-bridge",
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("persist config: %v", err)
+	}
+	const own = "http://127.0.0.1:5420/api/hoxi/bridge/grok-cli/v1"
+	for _, hint := range []string{"", "http://127.0.0.1:61234/api/hoxi/bridge/grok-cli/v1"} {
+		baseURL, key, _, _ := svc.resolveProviderConnection("grok-cli", hint, "")
+		if baseURL != own || key != "hoxi-local-grok-cli-bridge" {
+			t.Fatalf("hint %q resolved to %q (key %q), want own gateway %q", hint, baseURL, key, own)
+		}
+	}
+	for _, raw := range []string{
+		"http://127.0.0.1:11434/v1",
+		"https://api.example.com/api/hoxi/bridge/grok-cli/v1",
+		"http://192.168.1.2:5410/api/hoxi/bridge/grok-cli/v1",
+	} {
+		if got := svc.localizeBridgeURL(raw); got != raw {
+			t.Fatalf("localizeBridgeURL rewrote non-local bridge %q to %q", raw, got)
+		}
+	}
+	if got := NewService(0, "pass", workspaceDir, nil).localizeBridgeURL(own); got != own {
+		t.Fatalf("without a gateway address the stored URL must be kept, got %q", got)
+	}
+}

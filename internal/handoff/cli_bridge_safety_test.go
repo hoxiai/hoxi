@@ -82,8 +82,59 @@ func TestSyncLocalCLIBridgeURLsRemovesDeprecatedBridgesAndSpacedModels(t *testin
 		t.Fatalf("expected deprecated claude-code bridge provider to be removed, got %+v", provMap["claude-code"])
 	}
 	grokOpts := provMap["grok-cli"].(map[string]interface{})["options"].(map[string]interface{})
-	if got := grokOpts["baseURL"]; got != "http://127.0.0.1:2/api/hoxi/bridge/grok-cli/v1" {
-		t.Fatalf("expected grok-cli baseURL updated, got %v", got)
+	if got := grokOpts["baseURL"]; got != grokCLIStoredBridgeURL {
+		t.Fatalf("expected grok-cli baseURL migrated to the neutral value, got %v", got)
+	}
+}
+
+// Release and dev Hoxi share ~/.hoxi/models.json. Whichever starts last must not
+// rewrite the grok-cli bridge to its own port, or the other process's OpenCode
+// reads a gateway that may already have exited.
+func TestSyncLocalCLIBridgeURLsDoesNotStoreProcessPort(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	providers := provider.NewService(0, "", root, nil)
+	seed := NewService(0, "", root, providers)
+	if err := seed.persistHoxiConfigDoc(map[string]interface{}{"provider": map[string]interface{}{
+		"grok-cli": map[string]interface{}{
+			"options": map[string]interface{}{"baseURL": "http://127.0.0.1:5420/api/hoxi/bridge/grok-cli/v1"},
+			"models":  map[string]interface{}{"grok-4": map[string]interface{}{"tool_call": true}},
+		},
+		"custom": map[string]interface{}{
+			"options": map[string]interface{}{"baseURL": "https://grok.example/api/hoxi/bridge/grok-cli/v1"},
+		},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, ws := range []string{"ws://127.0.0.1:5410", "ws://127.0.0.1:5420", "ws://127.0.0.1:61234"} {
+		peer := NewService(0, "", root, providers)
+		peer.SetWSBaseURL(ws)
+		peer.StopCredentialSync()
+		provMap := seed.loadHoxiConfigDoc()["provider"].(map[string]interface{})
+		grokOpts := provMap["grok-cli"].(map[string]interface{})["options"].(map[string]interface{})
+		if got := grokOpts["baseURL"]; got != grokCLIStoredBridgeURL {
+			t.Fatalf("after %s started, models.json grok-cli baseURL = %v, want %s", ws, got, grokCLIStoredBridgeURL)
+		}
+		customOpts := provMap["custom"].(map[string]interface{})["options"].(map[string]interface{})
+		if got := customOpts["baseURL"]; got != "https://grok.example/api/hoxi/bridge/grok-cli/v1" {
+			t.Fatalf("non-loopback baseURL must never be rewritten, got %v", got)
+		}
+	}
+	grokHome := t.TempDir()
+	t.Setenv("GROK_HOME", grokHome)
+	if err := os.WriteFile(filepath.Join(grokHome, "auth.json"), []byte(`{"default":{"key":"xai-test"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	importer := NewService(0, "", root, providers)
+	importer.SetWSBaseURL("ws://127.0.0.1:5420")
+	importer.StopCredentialSync()
+	if resp := importer.importGrokCLIProvider(); !resp.OK {
+		t.Fatalf("grok import failed: %+v", resp)
+	}
+	grokOpts := seed.loadHoxiConfigDoc()["provider"].(map[string]interface{})["grok-cli"].(map[string]interface{})["options"].(map[string]interface{})
+	if got := grokOpts["baseURL"]; got != grokCLIStoredBridgeURL {
+		t.Fatalf("import stored a process-specific bridge URL: %v", got)
 	}
 }
 

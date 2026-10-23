@@ -2,22 +2,36 @@ package handoff
 
 import (
 	"encoding/json"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
 )
 
-func (g *Service) httpBridgeBaseURL() string {
-	ws := strings.TrimSpace(g.wsBaseURL)
-	if strings.HasPrefix(ws, "ws://") {
-		return "http://" + strings.TrimPrefix(ws, "ws://")
+// grokCLIStoredBridgeURL is the process-neutral value kept in the shared
+// ~/.hoxi/models.json. Release, dev and headless Hoxi processes all read that
+// file, so storing a process's own port made the last one started win and left
+// the others pointing at a gateway that may exit. Each process instead points
+// its own OpenCode (opencode.PrepareBrowserPlugin) and internal LLM calls
+// (provider.Service) at its own gateway at runtime.
+const grokCLIStoredBridgeURL = "http://" + hoxipaths.DefaultReleaseBridgeAddr + hoxipaths.GrokCLIBridgePath
+
+// isLoopbackBridgeURL reports whether raw is a Hoxi bridge route on a loopback
+// host, i.e. a value Hoxi wrote itself rather than a user-configured endpoint.
+func isLoopbackBridgeURL(raw, bridgePath string) bool {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+		return false
 	}
-	if strings.HasPrefix(ws, "wss://") {
-		return "https://" + strings.TrimPrefix(ws, "wss://")
+	host := strings.ToLower(u.Hostname())
+	ip := net.ParseIP(host)
+	if host != "localhost" && (ip == nil || !ip.IsLoopback()) {
+		return false
 	}
-	return "http://" + hoxipaths.DefaultReleaseBridgeAddr
+	return strings.TrimRight(u.Path, "/") == bridgePath
 }
 
 func (g *Service) syncLocalCLIBridgeURLs() {
@@ -57,14 +71,11 @@ func (g *Service) syncLocalCLIBridgeURLs() {
 			}
 		}
 
+		// Migrate the per-process port earlier versions stored to the neutral value.
 		if pObj, ok := provMap["grok-cli"].(map[string]interface{}); ok {
 			if opts, ok := pObj["options"].(map[string]interface{}); ok {
-				suffix := "/api/hoxi/bridge/grok-cli/v1"
-				expected := g.httpBridgeBaseURL() + suffix
-				if cur, _ := opts["baseURL"].(string); strings.Contains(cur, suffix) && cur != expected {
-					opts["baseURL"] = expected
-					pObj["options"] = opts
-					provMap["grok-cli"] = pObj
+				if cur, _ := opts["baseURL"].(string); cur != grokCLIStoredBridgeURL && isLoopbackBridgeURL(cur, hoxipaths.GrokCLIBridgePath) {
+					opts["baseURL"] = grokCLIStoredBridgeURL
 				}
 			}
 		}

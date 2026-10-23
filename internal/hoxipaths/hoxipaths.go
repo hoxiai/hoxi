@@ -27,6 +27,11 @@ const (
 	DefaultReleaseBridgeAddr = "127.0.0.1:5410"
 	// DefaultDevBridgeAddr is the default loopback gateway address for dev builds.
 	DefaultDevBridgeAddr = "127.0.0.1:5420"
+	// GrokCLIBridgePath is the OpenAI-compatible Grok CLI bridge every Hoxi
+	// gateway serves. ~/.hoxi/models.json is shared by all Hoxi processes, so it
+	// stores this path on the release address only; each process points its own
+	// OpenCode and internal LLM calls at its own gateway at runtime.
+	GrokCLIBridgePath = "/api/hoxi/bridge/grok-cli/v1"
 	// DefaultLANPairingPort is the LAN port the mobile app pairs over when it
 	// scans the desktop's local-network QR code. The desktop listens on it,
 	// gated by the pairing token and restricted to local-network sources.

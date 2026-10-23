@@ -158,7 +158,7 @@ func (g *Service) handleFetchProviderModels(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	baseURL := strings.TrimSpace(req.BaseURL)
+	baseURL := strings.TrimSpace(g.localizeBridgeURL(req.BaseURL))
 	if !strings.HasPrefix(baseURL, "http://") && !strings.HasPrefix(baseURL, "https://") {
 		writeJSON(w, http.StatusOK, fetchProviderModelsResponse{Error: "Base URL must start with http:// or https://"})
 		return
@@ -293,7 +293,7 @@ func sameProviderBaseURL(a, b string) bool {
 }
 
 func (g *Service) isAuthorizedProviderBaseURL(providerID, requestedBaseURL string, extraAllowed ...string) bool {
-	reqURL := strings.TrimSpace(requestedBaseURL)
+	reqURL := strings.TrimSpace(g.localizeBridgeURL(requestedBaseURL))
 	if reqURL == "" {
 		return true
 	}
@@ -307,7 +307,7 @@ func (g *Service) isAuthorizedProviderBaseURL(providerID, requestedBaseURL strin
 	for _, extra := range extraAllowed {
 		if strings.TrimSpace(extra) != "" {
 			hasConfiguredURL = true
-			if sameProviderBaseURL(reqURL, extra) {
+			if sameProviderBaseURL(reqURL, g.localizeBridgeURL(extra)) {
 				return true
 			}
 		}
@@ -317,7 +317,7 @@ func (g *Service) isAuthorizedProviderBaseURL(providerID, requestedBaseURL strin
 			if opts, ok := rawCfg["options"].(map[string]any); ok {
 				if u, ok := opts["baseURL"].(string); ok && strings.TrimSpace(u) != "" {
 					hasConfiguredURL = true
-					if sameProviderBaseURL(reqURL, u) {
+					if sameProviderBaseURL(reqURL, g.localizeBridgeURL(u)) {
 						return true
 					}
 				}
@@ -328,7 +328,7 @@ func (g *Service) isAuthorizedProviderBaseURL(providerID, requestedBaseURL strin
 }
 
 func (g *Service) resolveProviderConnection(providerID, hintBaseURL, hintNPM string) (baseURL, apiKey, npm string, headers map[string]string) {
-	baseURL = strings.TrimSpace(hintBaseURL)
+	baseURL = strings.TrimSpace(g.localizeBridgeURL(hintBaseURL))
 	npm = strings.TrimSpace(hintNPM)
 	headers = map[string]string{}
 
@@ -345,7 +345,7 @@ func (g *Service) resolveProviderConnection(providerID, hintBaseURL, hintNPM str
 		}
 		if opts, ok := rawCfg["options"].(map[string]any); ok {
 			if u, ok := opts["baseURL"].(string); ok {
-				configuredBaseURL = strings.TrimSpace(u)
+				configuredBaseURL = strings.TrimSpace(g.localizeBridgeURL(u))
 			}
 			if baseURL == "" {
 				baseURL = configuredBaseURL

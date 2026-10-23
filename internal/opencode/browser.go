@@ -19,7 +19,8 @@ var browserPlugin []byte
 var sandboxPlugin []byte
 
 // PrepareBrowserPlugin creates a private, process-lifetime config overlay that
-// carries the browser plugin and Hoxi's built-in agent modes.
+// carries the browser plugin, Hoxi's built-in agent modes and this process's
+// local bridge provider URLs.
 // Append env to the child environment and call cleanup only after the child exits.
 // Existing persistent OpenCode configuration is never written or replaced.
 func PrepareBrowserPlugin(baseURL, token string) (env []string, cleanup func(), err error) {
@@ -68,6 +69,9 @@ func PrepareBrowserPlugin(baseURL, token string) (env []string, cleanup func(), 
 	plugins = append(plugins, sandboxEntry)
 	config["plugin"], _ = json.Marshal(plugins)
 	if err = mergeBuiltinModes(config); err != nil {
+		return nil, cleanup, err
+	}
+	if err = mergeLocalBridgeProviders(config, baseURL); err != nil {
 		return nil, cleanup, err
 	}
 	config["$schema"] = json.RawMessage(`"https://opencode.ai/config.json"`)

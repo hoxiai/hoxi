@@ -44,6 +44,33 @@ func isLoopbackURL(rawURL string) bool {
 	return false
 }
 
+// localBridgePathPrefix is where every Hoxi gateway serves its CLI bridges.
+const localBridgePathPrefix = "/api/hoxi/bridge/"
+
+// localizeBridgeURL rewrites a Hoxi bridge route on any loopback port to this
+// process's own gateway. models.json is shared by release, dev and headless
+// processes and keeps only a neutral address; another process's port may
+// belong to a gateway that has already exited.
+func (s *Service) localizeBridgeURL(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if !isLoopbackURL(trimmed) {
+		return raw
+	}
+	u, err := url.Parse(trimmed)
+	if err != nil || !strings.HasPrefix(u.Path, localBridgePathPrefix) {
+		return raw
+	}
+	s.relayMu.Lock()
+	base := s.relayBaseURL
+	s.relayMu.Unlock()
+	own, err := url.Parse(base)
+	if base == "" || err != nil || own.Host == "" {
+		return raw
+	}
+	u.Scheme, u.Host = own.Scheme, own.Host
+	return u.String()
+}
+
 type llmCompletionRequest struct {
 	ProviderID      string
 	ModelID         string

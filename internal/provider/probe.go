@@ -59,7 +59,7 @@ func (g *Service) handleTestProviderModel(w http.ResponseWriter, r *http.Request
 	}
 
 	pid := strings.TrimSpace(req.ProviderID)
-	baseURL := strings.TrimSpace(req.BaseURL)
+	baseURL := strings.TrimSpace(g.localizeBridgeURL(req.BaseURL))
 	npm := strings.TrimSpace(req.NPM)
 	headers := map[string]string{}
 	for k, v := range req.Headers {

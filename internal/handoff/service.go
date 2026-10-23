@@ -36,7 +36,6 @@ type handoffScanCall struct {
 type Service struct {
 	openCode     *ocapi.Client
 	rootDir      string
-	wsBaseURL    string
 	providers    ProviderConfig
 	cacheMu      sync.RWMutex
 	inFlightScan map[string]*handoffScanCall
@@ -71,8 +70,9 @@ func NewService(openCodePort int, password, rootDir string, providers ProviderCo
 	}
 }
 
-func (g *Service) SetWSBaseURL(wsURL string) {
-	g.wsBaseURL = wsURL
+// SetWSBaseURL runs once the gateway has its loopback address. The address is
+// deliberately not persisted: see grokCLIStoredBridgeURL.
+func (g *Service) SetWSBaseURL(string) {
 	g.syncLocalCLIBridgeURLs()
 	g.startCredentialSync()
 }
