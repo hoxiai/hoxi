@@ -11,16 +11,13 @@ import {
   Globe,
   KeyRound,
   MessageSquareText,
-  RadioTower,
   Moon,
-  ScrollText,
   Search,
   Settings,
   ShieldCheck,
   SlidersHorizontal,
   Smartphone,
   Sun,
-  Users,
   X,
   Zap,
 } from "lucide-solid";
@@ -35,22 +32,19 @@ import {
 } from "../../store/workspace";
 import { t } from "../../i18n";
 import AgentPolicyMcpTab from "../models/AgentPolicyMcpTab";
-import AgentRolesTab from "../models/AgentRolesTab";
-import SubagentSettingsTab from "../models/SubagentSettingsTab";
 import AutoModelPoolTab from "../models/AutoModelPoolTab";
 import CustomEndpointTab from "../models/CustomEndpointTab";
 import ModelsRoleTab from "../models/ModelsRoleTab";
 import ProviderCatalogTab from "../models/ProviderCatalogTab";
 import { ChatComposerTab, GeneralAppearanceTab } from "./SettingsGeneralChatTabs";
-import { SystemRuntimeSettingsTab } from "./SettingsSystemRuntimeTab";
 import { PrivacySettingsTab } from "./PrivacyControls";
-import { LocalRelaySettingsTab } from "./LocalRelayControls";
-import { PairingQrPanel } from "./PairingQrPanel";
-import { RemoteAccessTabs } from "./RemoteAccessTabs";
 import { SettingsExtensionsTab } from "./SettingsExtensionsTab";
-import DiagnosticsTab from "./DiagnosticsTab";
-import ErrorLogTab from "./ErrorLogTab";
-import UsageHistoryTab from "./UsageHistoryTab";
+import {
+  AgentsSettingsTab,
+  RemoteSettingsTab,
+  SystemSettingsTab,
+  UsageSettingsTab,
+} from "./SettingsMergedTabs";
 import { WorkspaceGitSettingsTab } from "./SettingsWorkspaceTerminalTabs";
 
 export default function SettingsModal() {
@@ -100,7 +94,7 @@ export default function SettingsModal() {
     }>;
   }> = [
     {
-      groupLabel: () => t("settings.groupPreferences"),
+      groupLabel: () => t("settings.groupPreferencesWorkspace"),
       items: [
         {
           id: "general",
@@ -119,6 +113,18 @@ export default function SettingsModal() {
           keywords: () => [
             t("settings.sectionSendShortcutTitle"),
             t("settings.sectionNotificationsTitle"),
+          ],
+        },
+        {
+          id: "workspace",
+          label: () => t("settings.tabWorkspace"),
+          icon: FolderGit2,
+          keywords: () => [
+            t("settings.sectionSandboxTitle"),
+            t("settings.sectionDiffStyleTitle"),
+            t("settings.sectionCodeAuditTitle"),
+            "Worktree",
+            "Diff",
           ],
         },
       ],
@@ -145,12 +151,6 @@ export default function SettingsModal() {
           icon: Zap,
           keywords: () => ["hoxi-auto", t("models.tabAutoPools")],
         },
-        {
-          id: "diagnostics",
-          label: () => t("diagnostics.title"),
-          icon: ScrollText,
-          keywords: () => [t("diagnostics.localHint")],
-        },
       ],
     },
     {
@@ -164,13 +164,9 @@ export default function SettingsModal() {
           keywords: () => [
             t("settings.sectionCustomInstructionsTitle"),
             t("models.customAgentsTitle"),
+            t("models.tabSubagents"),
+            t("models.subagentsTitle"),
           ],
-        },
-        {
-          id: "subagents",
-          label: () => t("models.tabSubagents"),
-          icon: Users,
-          keywords: () => [t("models.subagentsTitle")],
         },
         {
           id: "extensions",
@@ -181,23 +177,6 @@ export default function SettingsModal() {
             "MCP",
             t("models.mcpTitle"),
             t("settings.extensionsTitle"),
-          ],
-        },
-      ],
-    },
-    {
-      groupLabel: () => t("settings.groupWorkspaceGit"),
-      items: [
-        {
-          id: "workspace",
-          label: () => t("settings.tabWorkspace"),
-          icon: FolderGit2,
-          keywords: () => [
-            t("settings.sectionSandboxTitle"),
-            t("settings.sectionDiffStyleTitle"),
-            t("settings.sectionCodeAuditTitle"),
-            "Worktree",
-            "Diff",
           ],
         },
       ],
@@ -225,24 +204,7 @@ export default function SettingsModal() {
       ],
     },
     {
-      groupLabel: () => t("settings.groupDevicesIntegrations"),
-      items: [
-        {
-          id: "remote",
-          label: () => t("settings.tabRemote"),
-          icon: Smartphone,
-          keywords: () => [t("remoteTunnel.title"), "GoPanel"],
-        },
-        {
-          id: "relay",
-          label: () => t("relay.title"),
-          icon: RadioTower,
-          keywords: () => ["OpenAI", "127.0.0.1"],
-        },
-      ],
-    },
-    {
-      groupLabel: () => t("settings.groupSystem"),
+      groupLabel: () => t("settings.groupSystemDevices"),
       items: [
         {
           id: "system",
@@ -252,6 +214,7 @@ export default function SettingsModal() {
             t("settings.sectionUpdaterTitle"),
             t("settings.sectionRuntimeTitle"),
             t("settings.sectionMaintenanceTitle"),
+            t("diagnostics.errorLogTitle"),
             "OpenCode",
           ],
         },
@@ -263,16 +226,39 @@ export default function SettingsModal() {
             t("settings.usageTitle"),
             t("settings.usageTotalTokens"),
             t("settings.usageTotalCost"),
+            t("diagnostics.title"),
+            t("diagnostics.localHint"),
           ],
         },
         {
-          id: "errorLog",
-          label: () => t("diagnostics.errorLogTitle"),
-          icon: ShieldCheck,
+          id: "remote",
+          label: () => t("settings.tabRemote"),
+          icon: Smartphone,
+          keywords: () => [
+            t("remoteTunnel.title"),
+            "GoPanel",
+            t("relay.title"),
+            "OpenAI",
+            "127.0.0.1",
+          ],
         },
       ],
     },
   ];
+
+  const CHILD_PARENT_TAB: Partial<Record<SettingsTab, SettingsTab>> = {
+    subagents: "agents",
+    diagnostics: "usage",
+    errorLog: "system",
+    relay: "remote",
+  };
+
+  const CHILD_LABEL: Partial<Record<SettingsTab, () => string>> = {
+    subagents: () => t("models.tabSubagents"),
+    diagnostics: () => t("diagnostics.title"),
+    errorLog: () => t("diagnostics.errorLogTitle"),
+    relay: () => t("relay.title"),
+  };
 
   const filteredNavGroups = createMemo(() => {
     const q = searchQuery().trim().toLowerCase();
@@ -305,6 +291,13 @@ export default function SettingsModal() {
       for (const item of grp.items) {
         if (item.id === cur) {
           return { group: grp.groupLabel(), item: item.label(), icon: item.icon };
+        }
+        if (CHILD_PARENT_TAB[cur] === item.id) {
+          return {
+            group: grp.groupLabel(),
+            item: CHILD_LABEL[cur] ? CHILD_LABEL[cur]!() : item.label(),
+            icon: item.icon,
+          };
         }
       }
     }
@@ -418,7 +411,7 @@ export default function SettingsModal() {
                         {(item) => {
                           const IconComp = item.icon;
                           const isActive = () =>
-                            activeTab() === item.id ||
+                            (CHILD_PARENT_TAB[activeTab()] ?? activeTab()) === item.id ||
                             (item.id === "providers" && activeTab() === "custom");
                           const badgeVal = () => (item.badge ? item.badge() : 0);
                           return (
@@ -479,14 +472,9 @@ export default function SettingsModal() {
                   <ModelsRoleTab />
                 </div>
               </Show>
-              <Show when={activeTab() === "agents"}>
+              <Show when={activeTab() === "agents" || activeTab() === "subagents"}>
                 <div class="flex-1 min-h-0 flex flex-col hoxi-view-enter">
-                  <AgentRolesTab />
-                </div>
-              </Show>
-              <Show when={activeTab() === "subagents"}>
-                <div class="flex-1 min-h-0 flex flex-col hoxi-view-enter">
-                  <SubagentSettingsTab />
+                  <AgentsSettingsTab />
                 </div>
               </Show>
               <Show when={activeTab() === "policy"}>
@@ -519,9 +507,9 @@ export default function SettingsModal() {
                       <WorkspaceGitSettingsTab />
                     </div>
                   </Show>
-                  <Show when={activeTab() === "system"}>
+                  <Show when={activeTab() === "system" || activeTab() === "errorLog"}>
                     <div class="hoxi-view-enter">
-                      <SystemRuntimeSettingsTab />
+                      <SystemSettingsTab />
                     </div>
                   </Show>
                   <Show when={activeTab() === "privacy"}>
@@ -529,30 +517,14 @@ export default function SettingsModal() {
                       <PrivacySettingsTab />
                     </div>
                   </Show>
-                  <Show when={activeTab() === "usage"}>
+                  <Show when={activeTab() === "usage" || activeTab() === "diagnostics"}>
                     <div class="hoxi-view-enter">
-                      <UsageHistoryTab />
+                      <UsageSettingsTab />
                     </div>
                   </Show>
-                  <Show when={activeTab() === "diagnostics"}>
+                  <Show when={activeTab() === "remote" || activeTab() === "relay"}>
                     <div class="hoxi-view-enter">
-                      <DiagnosticsTab />
-                    </div>
-                  </Show>
-                  <Show when={activeTab() === "errorLog"}>
-                    <div class="hoxi-view-enter">
-                      <ErrorLogTab />
-                    </div>
-                  </Show>
-                  <Show when={activeTab() === "remote"}>
-                    <div class="hoxi-view-enter space-y-6">
-                      <PairingQrPanel />
-                      <RemoteAccessTabs />
-                    </div>
-                  </Show>
-                  <Show when={activeTab() === "relay"}>
-                    <div class="hoxi-view-enter">
-                      <LocalRelaySettingsTab />
+                      <RemoteSettingsTab />
                     </div>
                   </Show>
                 </div>
