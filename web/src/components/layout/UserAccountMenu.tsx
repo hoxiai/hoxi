@@ -112,6 +112,11 @@ export default function UserAccountMenu() {
   const currentLangLabel = () =>
     locale() === "zh-CN" ? t("settings.langZhLabel") : t("settings.langEnLabel");
 
+  const formatPointsNum = (n: number): string => {
+    const safe = Math.max(0, Math.trunc(Number(n || 0)));
+    return safe.toLocaleString("en-US");
+  };
+
   const formatRangeLabel = (
     range: { min: number; max: number } | undefined,
     fallback: number,
@@ -119,9 +124,9 @@ export default function UserAccountMenu() {
     const min = Number(range?.min || 0);
     const max = Number(range?.max || 0);
     if (min > 0 && max > min) {
-      return `${min}~${max}`;
+      return `${formatPointsNum(min)}~${formatPointsNum(max)}`;
     }
-    return String(max > 0 ? max : fallback);
+    return formatPointsNum(max > 0 ? max : fallback);
   };
 
   const checkinSubtitle = () => {
@@ -218,7 +223,7 @@ export default function UserAccountMenu() {
                     <div class="text-[13px] font-bold text-[var(--text-primary)] leading-tight truncate">
                       {desktopAuth.member.checkedInToday
                         ? t("settings.accountCheckedInTitle", {
-                            points: desktopAuth.member.todayPoints,
+                            points: formatPointsNum(desktopAuth.member.todayPoints),
                           })
                         : t("settings.accountCheckinTitle", {
                             points: formatRangeLabel(
