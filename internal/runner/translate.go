@@ -21,6 +21,10 @@ type TurnTranslator struct {
 	claudeReasonPartID string
 	claudeTextPartID   string
 	claudeRetrying     bool
+	geminiStepIdx      int
+	geminiReasonPartID string
+	geminiTextPartID   string
+	geminiLastErrMsg   string
 	startedAtMs        int64
 
 	msgInfo      MessageInfo
@@ -139,6 +143,9 @@ func (t *TurnTranslator) FeedLine(rawLine string) []SSEEvent {
 	defer t.mu.Unlock()
 	if IsClaudeProtocolRuntime(t.runtime) {
 		return t.feedClaudeLine(line)
+	}
+	if t.runtime == string(RuntimeGeminiCLI) {
+		return t.feedGeminiLine(line)
 	}
 	return t.feedAgyLine(line)
 }

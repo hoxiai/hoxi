@@ -27,10 +27,13 @@ const (
 var (
 	hookReadTools = map[string]bool{
 		"read_file":                     true,
+		"read_many_files":               true,
 		"view_file":                     true,
 		"list_dir":                      true,
+		"list_directory":                true,
 		"find_by_name":                  true,
 		"grep_search":                   true,
+		"search_file_content":           true,
 		"read_resource":                 true,
 		"list_resources":                true,
 		"read_browser_page":             true,
@@ -46,15 +49,19 @@ var (
 		"command_status":                true,
 	}
 	hookPathScopedReadTools = map[string]bool{
-		"read_file":    true,
-		"view_file":    true,
-		"list_dir":     true,
-		"find_by_name": true,
-		"grep_search":  true,
+		"read_file":           true,
+		"read_many_files":     true,
+		"view_file":           true,
+		"list_dir":            true,
+		"list_directory":      true,
+		"find_by_name":        true,
+		"grep_search":         true,
+		"search_file_content": true,
 	}
 	hookEditTools = map[string]bool{
 		"write_to_file":              true,
 		"write_file":                 true,
+		"replace":                    true,
 		"replace_file_content":       true,
 		"multi_replace_file_content": true,
 		"sed_file":                   true,
@@ -68,7 +75,10 @@ var (
 		"unsandboxed":                true,
 		"run_workflow":               true,
 		"read_url_content":           true,
+		"web_fetch":                  true,
 		"search_web":                 true,
+		"google_web_search":          true,
+		"save_memory":                true,
 	}
 	// Control tools never act on the workspace, so gating them would only
 	// block the end of a turn on a question the user does not need to answer.
@@ -110,6 +120,15 @@ func isReadToolAllowedInWorktree(worktree, tool string, args map[string]interfac
 	if hasEscapingSearchPattern(args) {
 		return false
 	}
+	if multi := stringList(args["paths"]); len(multi) > 0 {
+		for _, p := range multi {
+			resolved := resolveHookToolPath(worktree, map[string]interface{}{"path": p})
+			if resolved == "" || !pathWithin(worktree, resolved) {
+				return false
+			}
+		}
+		return true
+	}
 	lower := strings.ToLower(strings.TrimSpace(tool))
 	path := resolveHookToolPath(worktree, args)
 	if hookPathScopedReadTools[lower] {
@@ -138,12 +157,17 @@ func hasEscapingSearchPattern(args map[string]interface{}) bool {
 }
 
 func rawHookToolPath(args map[string]interface{}) string {
-	raw := firstString(args["Path"], args["AbsolutePath"], args["TargetFile"],
+	raw := firstString(args["Path"], args["AbsolutePath"], args["absolute_path"], args["TargetFile"],
 		args["target_file"], args["file_path"], args["filePath"], args["filepath"], args["File"],
 		args["file"], args["path"], args[" target"], args["target"], args["DirectoryPath"], args["directory_path"],
-		args["SearchPath"], args["search_path"], args["SearchDirectory"],
+		args["dir_path"], args["dirPath"], args["SearchPath"], args["search_path"], args["SearchDirectory"],
 		args["search_directory"], args["Directory"], args["directory"],
 		args["NotebookPath"], args["notebook_path"])
+	if raw == "" {
+		if multi := stringList(args["paths"]); len(multi) > 0 {
+			raw = multi[0]
+		}
+	}
 	raw = strings.TrimSpace(raw)
 	if len(raw) >= 2 && raw[0] == '"' && raw[len(raw)-1] == '"' {
 		if unquoted, err := strconv.Unquote(raw); err == nil {
@@ -270,6 +294,29 @@ func (s *Service) inspectHookToolRiskIn(sessionID, tool, cwd string, args map[st
 			} else if (hookEditTools[lowerTool] || lowerTool == "edit" || lowerTool == "multiedit" || lowerTool == "write" || lowerTool == "notebookedit") &&
 				isProtectedWorktreePath(worktree, resolved) {
 				destructive = true
+			}
+		}
+	}
+	if multi := stringList(args["paths"]); len(multi) > 1 {
+		for _, p := range multi[1:] {
+			subResolved := resolveHookToolPath(baseDir, map[string]interface{}{"path": p})
+			subOut := subResolved
+			if subOut == "" {
+				subOut = p
+			}
+			if !hookOwnSessionRead(s, sessionID, lowerTool, subOut, p) {
+				if isProtectedRelPath(subOut) || isProtectedRelPath(p) ||
+					isSensitiveExternalPath(subOut) || isSensitiveExternalPath(p) ||
+					isSecretFilePath(subOut) || isSecretFilePath(p) {
+					destructive = true
+					filepathOut = subOut
+				}
+			}
+			if worktree != "" && subResolved != "" && !pathWithin(worktree, subResolved) {
+				externalDir = true
+				if filepathOut == resolved {
+					filepathOut = subResolved
+				}
 			}
 		}
 	}
@@ -417,7 +464,9 @@ func isProtectedRelPath(rel string) bool {
 		strings.HasPrefix(slash, ".hoxi/attachments/") {
 		return false
 	}
-	if slash == ".vscode/settings.json" || strings.HasSuffix(slash, "/.vscode/settings.json") {
+	if slash == ".vscode/settings.json" || strings.HasSuffix(slash, "/.vscode/settings.json") ||
+		slash == ".gemini/settings.json" || strings.HasSuffix(slash, "/.gemini/settings.json") ||
+		slash == ".gemini/config/hooks.json" || strings.HasSuffix(slash, "/.gemini/config/hooks.json") {
 		return true
 	}
 	for _, part := range strings.Split(slash, "/") {

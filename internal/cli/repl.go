@@ -204,7 +204,7 @@ func handleSlashCommand(
 
 	case "/help", "/?":
 		fmt.Fprintln(stdout, `Slash Commands:
-  /runtime <opencode|claude|agy|qoder|codebuddy>  Switch active agent runtime
+  /runtime <opencode|claude|agy|gemini-cli|qoder|codebuddy>  Switch active agent runtime
   /model [provider/model | model-id]              List or switch active model
   /mode <build|plan>                              Switch agent mode
   /worktree [on|off|status|diff|apply]            Manage Git worktree isolation
@@ -224,12 +224,12 @@ func handleSlashCommand(
 
 	case "/runtime", "/r":
 		if arg == "" {
-			fmt.Fprintf(stdout, "Current runtime: %s (available: opencode, claude, agy, qoder, codebuddy)\n", opts.Runtime)
+			fmt.Fprintf(stdout, "Current runtime: %s (available: opencode, claude, agy, gemini-cli, qoder, codebuddy)\n", opts.Runtime)
 			return false
 		}
 		rt := NormalizeRuntime(arg)
 		if rt != "opencode" && !runner.IsValidRuntime(rt) {
-			fmt.Fprintf(stderr, "Unsupported runtime %q (use: opencode, claude, agy, qoder, codebuddy)\n", arg)
+			fmt.Fprintf(stderr, "Unsupported runtime %q (use: opencode, claude, agy, gemini-cli, qoder, codebuddy)\n", arg)
 			return false
 		}
 		newProv, newMod := client.ResolveModel(ctx, opts.Directory, rt, "", "")

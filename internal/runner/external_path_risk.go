@@ -175,7 +175,7 @@ var sensitiveExternalBasenames = map[string]bool{
 	".gitconfig": true, ".git-credentials": true, ".netrc": true, ".npmrc": true,
 	".pypirc": true, ".curlrc": true, ".wgetrc": true, ".envrc": true, "authorized_keys": true,
 	"id_rsa": true, "id_ed25519": true, "id_ecdsa": true, "id_dsa": true,
-	".credentials.json": true,
+	".credentials.json": true, "oauth_creds.json": true, "jetski-standalone-oauth-token": true,
 }
 
 var sensitiveEnvBasenameRe = regexp.MustCompile(`(?i)^\.en(?:v(?:\.(?:local|prod(?:uction)?|dev(?:elopment)?|stag(?:e|ing)|test(?:ing)?|ci|preview|secret\w*|key\w*|private\w*|bak|backup)(?:\.local)?)?|\?|\*)$`)

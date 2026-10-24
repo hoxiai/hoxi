@@ -1,7 +1,7 @@
 // web/src/services/sse-types.ts
 // Verified against OpenCode v1.18.25 OpenAPI 3.x specification
 
-export type SessionRuntime = "opencode" | "antigravity" | "claude-code" | "codebuddy" | "qoder";
+export type SessionRuntime = "opencode" | "antigravity" | "gemini-cli" | "claude-code" | "codebuddy" | "qoder";
 
 export interface SessionCapabilities {
   approval?: boolean;

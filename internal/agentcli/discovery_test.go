@@ -1,6 +1,7 @@
 package agentcli
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -82,6 +83,37 @@ func TestCodeBuddyAndQoderModelDiscovery(t *testing.T) {
 	}
 	if got := FormatClaudeModelName("claude-fable-6-1"); got != "Claude Fable 6.1" {
 		t.Fatalf("FormatClaudeModelName(claude-fable-6-1) = %q, want Claude Fable 6.1", got)
+	}
+}
+
+func TestGeminiCLIModelDiscovery(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("GEMINI_HOME", tmpDir)
+	t.Setenv("GEMINI_BIN", "")
+	if got := ResolveGeminiBinary(); got != "" {
+		t.Fatalf("expected empty gemini binary when GEMINI_HOME has no bin/gemini, got %q", got)
+	}
+
+	binDir := filepath.Join(tmpDir, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	gemBin := execstub.Write(t, binDir, "gemini", "exit 0\n")
+	if err := os.WriteFile(filepath.Join(tmpDir, "settings.json"), []byte(`{"model":{"name":"gemini-2.5-pro-exp"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if got := ResolveGeminiBinary(); got != gemBin {
+		t.Fatalf("expected ResolveGeminiBinary=%q, got %q", gemBin, got)
+	}
+	models := DiscoverGeminiModelsWithRefresh(true)
+	if len(models) < 6 {
+		t.Fatalf("expected at least 6 Gemini CLI models, got %d", len(models))
+	}
+	if models[0].ID != "auto" || models[0].Runtime != RuntimeGeminiCLI {
+		t.Fatalf("expected first model auto for gemini-cli, got %+v", models[0])
+	}
+	if models[1].ID != "gemini-2.5-pro-exp" || models[1].Name != "Gemini 2.5 Pro Exp" {
+		t.Fatalf("expected custom model from settings.json, got %+v", models[1])
 	}
 }
 

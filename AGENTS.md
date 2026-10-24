@@ -13,11 +13,11 @@
 - **宿主**（`internal/app`）：Wails v2 + `WKWebView`，窗口半透明、单实例锁、macOS 下关窗隐藏驻留；WebView 请求经 Wails AssetServer 进程内交给网关，另在回环地址监听桥接端口（release `127.0.0.1:5410`、dev `127.0.0.1:5420`，被占用时回落随机端口）供 WebSocket 与 CLI 使用
 - **状态栏**（`internal/statusbar`）：`NSStatusBar` 显示 `Running` / `Attention` 计数；新增待审批项时只回调一次，不含命令文本（经隧道转为手机推送）
 - **OpenCode 运行时**（`internal/opencode`）：官方 `opencode` 进程监管，每次启动生成随机 `OPENCODE_SERVER_PASSWORD` 并以 HTTP Basic Auth 访问
-- **多运行时引擎**（`internal/runner`）：统一驱动 Claude Code、Antigravity（`agy`）、Qoder、CodeBuddy 子进程，翻译为统一事件流；Claude Code 与 Antigravity 经 PreToolUse Hook 接入同一审批平面，审批决策统一由 `internal/runner/approval_decision.go` 判定，策略存于 `~/.hoxi/approval-policy.json`。审批模式含 `unattended`（无人值守，仅桌面端可开，且要求本机沙箱可用）：新建会话必须是隔离 worktree 加命令沙箱，否则拒绝创建。Claude Code、Antigravity、Qoder、CodeBuddy 的整个运行时进程由 `confineRuntimeCommand` 包进 Seatbelt；OpenCode 只有 bash 工具经沙箱插件包裹，文件工具跑在守护进程里，因此不享受无人值守的全部放行，仍按完全信任规则询问。Qoder / CodeBuddy 没有 PreToolUse 门控能力，无法执行任何模式都保留的硬底线审批，因此只允许在只读模式（Plan）运行，非只读模式一律拒绝启动
+- **多运行时引擎**（`internal/runner`）：统一驱动 Claude Code、Antigravity（`agy`）、Gemini CLI（`gemini`）、Qoder、CodeBuddy 子进程，翻译为统一事件流；Claude Code、Antigravity 与 Gemini CLI 经 PreToolUse / BeforeTool Hook 接入同一审批平面，审批决策统一由 `internal/runner/approval_decision.go` 判定，策略存于 `~/.hoxi/approval-policy.json`。审批模式含 `unattended`（无人值守，仅桌面端可开，且要求本机沙箱可用）：新建会话必须是隔离 worktree 加命令沙箱，否则拒绝创建。Claude Code、Antigravity、Gemini CLI、Qoder、CodeBuddy 的整个运行时进程由 `confineRuntimeCommand` 包进 Seatbelt；OpenCode 只有 bash 工具经沙箱插件包裹，文件工具跑在守护进程里，因此不享受无人值守的全部放行，仍按完全信任规则询问。Qoder / CodeBuddy 没有 PreToolUse 门控能力，无法执行任何模式都保留的硬底线审批，因此只允许在只读模式（Plan）运行，非只读模式一律拒绝启动
 - **前端工作区**（`web/`）：Vite + SolidJS + Tailwind 三栏布局；SSE 增量经 `requestAnimationFrame` 批处理；Subagent 嵌套时间线、`ThoughtBox`、`ToolCard`（含内联 LSP 诊断）；`@pierre/diffs` 代码审查、`@xterm/xterm` + WebGL 终端、无头 Chrome 浏览器（`internal/browser`），以及经 Chrome Link 扩展（`extensions/chrome`，手动加载的未打包扩展）接管用户已打开的 Chrome 标签页：桌面签发 2 分钟有效的一次性连接码，扩展经 `/api/hoxi/browser/extension` WebSocket 连入，仅接受 `chrome-extension://` 来源与回环地址，同一时间只允许一个连接，断开后不会静默回落到隔离浏览器（详见 [`BROWSER.md`](BROWSER.md)）
 - **会话能力**：Git Worktree 会话隔离（`internal/worktree`，`?directory=` 作用域）、运行中纠偏（Steer）与停止、按消息回滚（Revert）与分叉（Fork）、会话目标 `/goal`（按整轮判定进展，智能体以回复末行 `[[goal:complete]]` / `[[goal:blocked]]` 或 `goal_report` 工具上报，所有运行时可用）；runner 在原生 CLI 运行时首轮与切换运行时时注入 `<project>/.hoxi/memory/` 记忆。8 维度压缩提示词与 system 前缀冻结位于 `.opencode/plugins/hoxi-memory.js`（`goal_report` 位于 `hoxi-goal.js`），**仅在 OpenCode 打开本仓库时加载，桌面端未内置**——桌面端只注入 `internal/opencode` 的浏览器与沙箱插件
 - **外部 CLI 会话接管**（`internal/handoff`）：从 Claude / Codex / Gemini / Grok / OpenCode / Trae / Qoder / CodeBuddy 导入会话
-- **Agent Skills**（`internal/skills`）：本地 Skill 发现（OpenCode `/skill`）、内置默认 Skill `shoply-ops`、`skill-authoring`（`internal/skills/defaults/`），以及 hoxi.ai 线上技能目录（`GET /api/hoxi/skills/marketplace`）与显式安装（`POST /api/hoxi/skills/marketplace/install`，校验 `sha256` 后原子写入 `~/.hoxi/skills/<slug>/`，不自动安装、不执行远程脚本、不经隧道开放）
+- **Agent Skills**（`internal/skills`）：本地 Skill 发现（OpenCode `/skill`）、内置默认 Skill `skill-authoring`（`internal/skills/defaults/`），以及 hoxi.ai 线上技能目录（`GET /api/hoxi/skills/marketplace`）与显式安装（`POST /api/hoxi/skills/marketplace/install`，校验 `sha256` 后原子写入 `~/.hoxi/skills/<slug>/`，不自动安装、不执行远程脚本、不经隧道开放）
 - **GoPanel 反向隧道**（`internal/tunnel` + `internal/gateway/tunnel.go`）：Mac 主动外连 GoPanel，路由白名单内的 HTTP / SSE 在进程内交给网关；Mac 不开放公网端口。待处理审批经 Notify 帧交给 GoPanel 发 APNs；无人值守或出现审批超时的任务结束时，另发一条 `kind: "summary"` 计数摘要（放行 / 拒绝 / 超时 / 待处理数量，同时弹桌面通知）
 - **局域网配对二维码**（`internal/pairing` + 设置 → 远程）：桌面端生成含本机局域网 IPv4、端口 `5417` 与配对令牌的二维码（`GET /api/hoxi/pairing/qr`，返回 data:PNG），手机 App 扫码后经局域网直连；桌面监听 `:5417`（`internal/gateway/lan.go`）用配对令牌鉴权并复用远程路由白名单，仅服务局域网来源地址（loopback / RFC1918 / ULA / 链路本地 / CGNAT），令牌存 `~/.hoxi/pairing.json`（0600，属受保护状态文件）。配置了 Cloudflare Tunnel 时二维码另带 `relay`（公开主机名）与独立的 `relayToken`（中继令牌，与局域网令牌不同，同存 `~/.hoxi/pairing.json`），手机据此做「局域网优先、失败回落中继」的传输选路，走中继时只发 `relayToken`。面板打开即显示二维码，并支持**重新生成令牌**（`POST /api/hoxi/pairing/rotate`，局域网与中继两个令牌一起换，旧码立即失效）。该路由与 `5417` 监听均**不对隧道开放**；`5417` 为明文 + 令牌（跨网端到端加密仍为规划，见 [`docs/remote-access-e2e-contract.md`](docs/remote-access-e2e-contract.md)）
 - **反向代理入口**（`internal/gateway/ingress.go`）：本机 loopback `127.0.0.1:5418` 上另开一个入口，供 `cloudflared` 等本地转发器把公网请求代理进来，`cloudflared` 的 `service` 指到这里；复用同一份远程路由白名单，但只认中继令牌（`relayToken`，局域网令牌在此一律 401，`servePairedRequest` 按来源区分），**不做来源地址过滤**（公网可达性由转发器前置鉴权把关，如 Cloudflare Access）。该入口同样不对 GoPanel 隧道开放
@@ -37,7 +37,7 @@ Flutter + Riverpod + GoRouter + Dio，四栏：沟通 · 工程 · 专栏 · 我
 ├── cmd/hoxi/main.go                  # CLI / headless entrypoint calling internal/app
 ├── internal/
 │   ├── app/                          # DesktopApp lifecycle, Wails bindings, origin allow-list & signal handling
-│   ├── agentcli/                     # [底座层] Local agent CLI (Qoder/CodeBuddy) binary & model discovery + effort helpers
+│   ├── agentcli/                     # [底座层] Local agent CLI (Gemini/Qoder/CodeBuddy) binary & model discovery + effort helpers
 │   ├── agyhook/                      # [底座层] `hoxi agy-hook` Antigravity PreToolUse hook → runner approval gate
 │   ├── attachment/                   # [业务层] Multimodal file/image attachment staging, validation & store
 │   ├── auth/                         # [业务层] Hoxi account one-click authorization, token poll/exchange & store
@@ -63,7 +63,7 @@ Flutter + Riverpod + GoRouter + Dio，四栏：沟通 · 工程 · 专栏 · 我
 │   ├── promptassist/                 # [业务层] Composer prompt enhancement & session title summarization via llm.Client
 │   ├── provider/                     # [业务层] Provider config, models.json, llm.Client implementation, probing, candidate breaker & model stats
 │   ├── recall/                       # [业务层] Cross-session semantic / BM25 memory recall & indexing
-│   ├── runner/                       # [业务层] Multi-runtime execution engine (OpenCode/Claude/Antigravity/Qoder/CodeBuddy): process adapters, translators, hook gates, session store & revert
+│   ├── runner/                       # [业务层] Multi-runtime execution engine (OpenCode/Claude/Antigravity/GeminiCLI/Qoder/CodeBuddy): process adapters, translators, hook gates, session store & revert
 │   ├── sandbox/                      # [业务层] OS-level Seatbelt / Bubblewrap execution sandbox policy & profiles
 │   ├── skills/                       # [业务层] Local Agent Skills discovery + hoxi.ai catalog client & verified installer + embedded defaults
 │   ├── statusbar/                    # [底座层] Running/Attention tracker, attention notices & macOS NSStatusBar (CGo)
@@ -279,6 +279,6 @@ Flutter + Riverpod + GoRouter + Dio，四栏：沟通 · 工程 · 专栏 · 我
 | 系统语音入口 | Siri / App Intents、操作按钮、小组件、语音深链；iOS 不做后台自定义唤醒词 |
 | 语音验收 | iOS 识别主动轮转（当前为结束或出错后重启）、Realtime 长通话、Android 原始 PCM 上送、30 分钟连续通话与时延指标 |
 | Android 推送 | 需厂商推送或第三方通道 |
-| 手机委托执行业务 Skill | 通用 Skill 描述、发现、输入与结构化结果契约；手机一句话 → 节点执行指定 Skill → 可核验回执。当前 `shoply-ops` 只能在桌面 Agent 会话内使用，`qingpu-ops` 尚不存在 |
+| 手机委托执行业务 Skill | 通用 Skill 描述、发现、输入与结构化结果契约；手机一句话 → 节点执行指定 Skill → 可核验回执。当前本地 Skill 只能在桌面 Agent 会话内使用 |
 | 服务端任务语义 | 任务 ID、幂等键、取消与最终状态查询 |
 | 真机端到端验收 | 公网 GoPanel + 真实 Mac + 手机 4G 的隧道、SSE 与推送 |

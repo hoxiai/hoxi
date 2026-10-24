@@ -9,6 +9,7 @@ export type ProviderIconProps = JSX.SVGElementTags["svg"] & {
 
 const ICON_ALIASES: Record<string, IconName> = {
   antigravity: "google",
+  "gemini-cli": "google",
   "claude-code": "anthropic",
   "grok-cli": "xai",
   qoder: "alibaba",

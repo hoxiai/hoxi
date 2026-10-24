@@ -81,6 +81,10 @@ func (s *Service) CreateSession(body CreateSessionRequest, directory string) (Se
 			if ms := DiscoverClaudeModels(); len(ms) > 0 {
 				modelID = ms[0].ID
 			}
+		case string(RuntimeGeminiCLI):
+			if ms := DiscoverGeminiModels(); len(ms) > 0 {
+				modelID = ms[0].ID
+			}
 		case string(RuntimeCodeBuddy):
 			if ms := agentcli.DiscoverCodeBuddyModels(); len(ms) > 0 {
 				modelID = ms[0].ID
@@ -104,6 +108,8 @@ func (s *Service) CreateSession(body CreateSessionRequest, directory string) (Se
 		switch rt {
 		case string(RuntimeClaudeCode):
 			title = "Claude Code Session"
+		case string(RuntimeGeminiCLI):
+			title = "Gemini CLI Session"
 		case string(RuntimeCodeBuddy):
 			title = "CodeBuddy Session"
 		case string(RuntimeQoder):

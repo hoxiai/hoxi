@@ -200,7 +200,7 @@ export function toggleFavoriteModel(providerID: string, modelID: string) {
 export async function loadProviders(forceRefresh = false): Promise<void> {
   try {
     const dir = workspace.rootDir || undefined;
-    const [res, cfg, authMethods, hoxiCfg, agyRunner, claudeRunner, codeBuddyRunner, qoderRunner] = await Promise.all([
+    const [res, cfg, authMethods, hoxiCfg, agyRunner, geminiRunner, claudeRunner, codeBuddyRunner, qoderRunner] = await Promise.all([
       hoxiAPI
         .listProviders(dir)
         .catch(() => ({ all: [], connected: [] as string[], default: {} as Record<string, string> })),
@@ -212,6 +212,7 @@ export async function loadProviders(forceRefresh = false): Promise<void> {
         configPath: ".hoxi/models.json",
       })),
       runnerAPI.listModels("antigravity", forceRefresh).catch(() => null),
+      runnerAPI.listModels("gemini-cli", forceRefresh).catch(() => null),
       runnerAPI.listModels("claude-code", forceRefresh).catch(() => null),
       runnerAPI.listModels("codebuddy", forceRefresh).catch(() => null),
       runnerAPI.listModels("qoder", forceRefresh).catch(() => null),
@@ -334,6 +335,9 @@ export async function loadProviders(forceRefresh = false): Promise<void> {
     };
 
     registerRunnerProvider("antigravity", t("timeline.runtimeAntigravityLocal"), agyRunner);
+    if (!hoxiMap["gemini-cli"]) {
+      registerRunnerProvider("gemini-cli", t("timeline.runtimeGeminiCLILocal"), geminiRunner);
+    }
     if (!hoxiMap["claude-code"]) {
       registerRunnerProvider("claude-code", t("timeline.runtimeClaudeCodeLocal"), claudeRunner);
     }

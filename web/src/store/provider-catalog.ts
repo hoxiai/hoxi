@@ -211,6 +211,7 @@ export interface ConnectedProviderGroup {
 export function getProviderSourceLabel(p: ProviderInfo): string {
   if (p.source === "runner") {
     if (p.id === "antigravity") return t("timeline.runtimeAntigravityLocal");
+    if (p.id === "gemini-cli") return t("timeline.runtimeGeminiCLILocal");
     if (p.id === "codebuddy") return t("timeline.runtimeCodeBuddyLocal");
     if (p.id === "qoder") return t("timeline.runtimeQoderLocal");
     return t("timeline.runtimeClaudeCodeLocal");
@@ -229,6 +230,13 @@ export function getModelSourceInfo(model: FlattenedModel): ModelSourceInfo {
     return {
       label: t("timeline.runtimeAntigravityLocal"),
       configHint: "agy --sandbox",
+      isImported: false,
+    };
+  }
+  if (pid === "gemini-cli" && !isHoxiCustomProvider(pid)) {
+    return {
+      label: t("timeline.runtimeGeminiCLILocal"),
+      configHint: "gemini",
       isImported: false,
     };
   }
@@ -612,7 +620,13 @@ export function getConnectedProviderModelGroups(): ConnectedProviderGroup[] {
   return sorted;
 }
 
-export const LOCAL_CLI_RUNTIME_PROVIDERS: ReadonlySet<string> = new Set(["antigravity", "claude-code", "codebuddy", "qoder"]);
+export const LOCAL_CLI_RUNTIME_PROVIDERS: ReadonlySet<string> = new Set([
+  "antigravity",
+  "gemini-cli",
+  "claude-code",
+  "codebuddy",
+  "qoder",
+]);
 
 /**
  * Internal LLM calls (session titles, commit messages, observer audits) go

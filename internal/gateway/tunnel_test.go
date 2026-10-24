@@ -18,7 +18,8 @@ func TestTunnelRouteAllowlist(t *testing.T) {
 	allowed := []route{
 		{get, "/healthz"}, {get, "/api/hoxi/bootstrap"}, {get, "/api/hoxi/system-info"},
 		{get, "/api/hoxi/provider/models"}, {get, "/api/hoxi/runner/claude-code/models"},
-		{get, "/api/hoxi/runner/antigravity/models"}, {get, "/api/hoxi/runner/qoder/models"},
+		{get, "/api/hoxi/runner/antigravity/models"}, {get, "/api/hoxi/runner/gemini-cli/models"},
+		{get, "/api/hoxi/runner/qoder/models"},
 		{get, "/api/hoxi/runner/codebuddy/models"},
 		{get, "/api/hoxi/sessions"}, {post, "/api/hoxi/sessions"}, {get, "/api/hoxi/sessions/status"},
 		{get, "/api/hoxi/sessions/ses_1"}, {get, "/api/hoxi/sessions/ses_1/message"},
@@ -72,6 +73,7 @@ func TestTunnelRouteAllowlist(t *testing.T) {
 		// Runner hooks and legacy runner planes.
 		{post, "/api/hoxi/runner/antigravity/hook"}, {get, "/api/hoxi/runner/antigravity/hook"},
 		{post, "/api/hoxi/runner/hook/pretool"}, {post, "/api/hoxi/runner/hook/claude-pretool"},
+		{post, "/api/hoxi/runner/hook/gemini-pretool"},
 		{get, "/api/hoxi/runner/sessions"}, {post, "/api/hoxi/runner/sessions/ses_1/prompt"},
 		{get, "/api/hoxi/runner/permission"}, {post, "/api/hoxi/runner/permission/per_1/reply"}, {get, "/api/hoxi/runner/event"},
 		{get, "/api/hoxi/runner/unknown/models"},

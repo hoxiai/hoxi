@@ -12,6 +12,7 @@ type RuntimeType string
 const (
 	RuntimeAntigravity RuntimeType = agentcli.RuntimeAntigravity
 	RuntimeClaudeCode  RuntimeType = agentcli.RuntimeClaudeCode
+	RuntimeGeminiCLI   RuntimeType = agentcli.RuntimeGeminiCLI
 	RuntimeCodeBuddy   RuntimeType = agentcli.RuntimeCodeBuddy
 	RuntimeQoder       RuntimeType = agentcli.RuntimeQoder
 )
@@ -19,6 +20,7 @@ const (
 func IsValidRuntime(rt string) bool {
 	return rt == string(RuntimeAntigravity) ||
 		rt == string(RuntimeClaudeCode) ||
+		rt == string(RuntimeGeminiCLI) ||
 		rt == string(RuntimeCodeBuddy) ||
 		rt == string(RuntimeQoder)
 }
@@ -78,7 +80,7 @@ func RuntimeCapabilities(rt string, subagent bool) SessionCapabilities {
 			Attachments: true,
 			CostStats:   true,
 		}
-	case string(RuntimeAntigravity):
+	case string(RuntimeAntigravity), string(RuntimeGeminiCLI):
 		return SessionCapabilities{
 			Approval:    true,
 			Steer:       false,

@@ -24,6 +24,7 @@ const (
 	RuntimeOpenCode    = "opencode"
 	RuntimeAntigravity = "antigravity"
 	RuntimeClaudeCode  = "claude-code"
+	RuntimeGeminiCLI   = "gemini-cli"
 	RuntimeCodeBuddy   = "codebuddy"
 	RuntimeQoder       = "qoder"
 )

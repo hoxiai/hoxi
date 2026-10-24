@@ -71,7 +71,7 @@ func unattendedIsolated(rec SessionRecord) bool {
 // does not qualify for the blanket allow.
 func runtimeSandboxConfirmed(runtime string) bool {
 	switch runtime {
-	case string(RuntimeClaudeCode), string(RuntimeAntigravity), string(RuntimeQoder), string(RuntimeCodeBuddy):
+	case string(RuntimeClaudeCode), string(RuntimeAntigravity), string(RuntimeGeminiCLI), string(RuntimeQoder), string(RuntimeCodeBuddy):
 		return true
 	default:
 		return false

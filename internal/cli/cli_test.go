@@ -79,6 +79,8 @@ func TestNormalizeRuntime(t *testing.T) {
 		"claudecode": "claude-code",
 		"agy":        "antigravity",
 		"gemini":     "antigravity",
+		"gemini-cli": "gemini-cli",
+		"geminicli":  "gemini-cli",
 		"qoder":      "qoder",
 		"codebuddy":  "codebuddy",
 		"cb":         "codebuddy",

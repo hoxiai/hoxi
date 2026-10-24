@@ -32,40 +32,41 @@ var (
 	readPermissions = setOf("read", "glob", "grep", "list", "lsp", "todoread")
 
 	readToolNames = setOf("read", "glob", "grep", "list", "lsp", "todoread", "hoxi_code_index",
-		"ls", "notebookread", "notebook_read", "read_file", "view_file",
-		"list_dir", "find_by_name", "grep_search", "read_resource", "list_resources",
+		"ls", "notebookread", "notebook_read", "read_file", "read_many_files", "view_file",
+		"list_dir", "list_directory", "find_by_name", "grep_search", "search_file_content",
+		"read_resource", "list_resources",
 		"read_browser_page", "browser_get_dom", "browser_get_network_request",
 		"browser_list_network_requests", "list_browser_pages", "capture_browser_console_logs",
 		"capture_browser_screenshot", "list_permissions", "list_plugin_accounts",
 		"search_marketplace", "command_status")
 
 	editToolNames = setOf("edit", "write", "patch", "multiedit", "apply_patch", "notebookedit",
-		"notebook_edit", "write_to_file", "write_file", "create_file", "edit_file",
+		"notebook_edit", "write_to_file", "write_file", "create_file", "edit_file", "replace",
 		"replace_file_content", "multi_replace_file_content", "sed_file",
 		"insert_edit_into_file", "str_replace_editor", "str_replace_based_edit_tool")
 
 	// editPermissions are the permission names whose targets are file paths.
 	editPermissions = setOf("edit", "write", "patch", "multiedit", "apply_patch", "notebookedit",
-		"notebook_edit", "write_to_file", "write_file", "create_file", "edit_file",
+		"notebook_edit", "write_to_file", "write_file", "create_file", "edit_file", "replace",
 		"replace_file_content", "multi_replace_file_content", "sed_file")
 
 	webfetchToolNames = setOf("webfetch", "websearch", "codesearch", "web_fetch", "web_search",
-		"fetch_url", "read_url_content", "search_web", "execute_url")
+		"google_web_search", "fetch_url", "read_url_content", "search_web", "execute_url")
 
-	bashToolNames = setOf("bash", "shell", "run_command", "execute_command", "run_terminal_cmd",
-		"sh", "zsh", "cmd")
+	bashToolNames = setOf("bash", "shell", "run_command", "run_shell_command", "execute_command",
+		"run_terminal_cmd", "sh", "zsh", "cmd")
 
 	// smartControlPermissions run without asking in smart mode: they only
 	// steer the agent and never touch the workspace on their own.
 	smartControlPermissions = setOf("todowrite", "task", "skill", "external_directory")
 
-	toolArgPathKeys = []string{"Path", "AbsolutePath", "TargetFile", "target_file", "file_path", "filePath",
-		"filepath", "File", "file", "path", "target", "DirectoryPath", "directory_path",
-		"SearchPath", "search_path", "SearchDirectory", "search_directory",
+	toolArgPathKeys = []string{"Path", "AbsolutePath", "absolute_path", "TargetFile", "target_file", "file_path", "filePath",
+		"filepath", "File", "file", "path", "paths", "target", "DirectoryPath", "directory_path",
+		"dir_path", "dirPath", "SearchPath", "search_path", "SearchDirectory", "search_directory",
 		"Directory", "directory", "NotebookPath", "notebook_path"}
 
-	editTargetKeys = []string{"filepath", "filePath", "path", "target", "Path", "AbsolutePath",
-		"TargetFile", "target_file", "file_path", "File", "file", "NotebookPath", "notebook_path"}
+	editTargetKeys = []string{"filepath", "filePath", "path", "target", "Path", "AbsolutePath", "absolute_path",
+		"TargetFile", "target_file", "file_path", "File", "file", "dir_path", "dirPath", "NotebookPath", "notebook_path"}
 
 	webfetchTargetKeys = []string{"url", "Url", "URL", "uri", "URI", "domain", "Domain", "query", "Query"}
 

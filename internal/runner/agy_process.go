@@ -310,6 +310,9 @@ func EncodeStreamInputTurn(runtime, promptText string) ([]byte, error) {
 }
 
 func EncodeStreamInputTurnWithParts(runtime, promptText string, parts []MessagePart) ([]byte, error) {
+	if runtime == string(RuntimeGeminiCLI) {
+		return []byte(promptText + "\n"), nil
+	}
 	if runtime == string(RuntimeClaudeCode) && len(parts) > 0 {
 		var contentBlocks []map[string]interface{}
 		for _, p := range parts {

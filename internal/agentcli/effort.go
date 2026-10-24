@@ -131,7 +131,7 @@ func InferVendorEffortSpec(runtimeOrVendor, modelID string, reasoning bool) (eff
 		}
 		return []string{"low", "medium", "high", "xhigh"}, "high"
 
-	case strings.Contains(m, "gemini") || strings.Contains(rv, "google"):
+	case rv == RuntimeGeminiCLI || strings.Contains(m, "gemini") || strings.Contains(rv, "google"):
 		return []string{"low", "medium", "high", "max"}, "high"
 
 	default:

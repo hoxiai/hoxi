@@ -134,11 +134,13 @@ func (s *Service) RegisterRoutes(mux *http.ServeMux) {
 	}
 	mux.HandleFunc("/api/hoxi/runner/antigravity/models", s.handleAntigravityModels)
 	mux.HandleFunc("/api/hoxi/runner/claude-code/models", s.handleClaudeModels)
+	mux.HandleFunc("/api/hoxi/runner/gemini-cli/models", s.handleGeminiModels)
 	mux.HandleFunc("/api/hoxi/runner/codebuddy/models", s.handleCodeBuddyModels)
 	mux.HandleFunc("/api/hoxi/runner/qoder/models", s.handleQoderModels)
 	mux.HandleFunc("/api/hoxi/runner/antigravity/hook", s.handleAgyHookInstall)
 	mux.HandleFunc(hookPreToolPath, s.handleHookPreTool)
 	mux.HandleFunc(claudeHookPreToolPath, s.handleClaudeHookPreTool)
+	mux.HandleFunc(geminiHookPreToolPath, s.handleGeminiHookPreTool)
 	mux.HandleFunc("/api/hoxi/permission", s.handleUnifiedPermissionRoutes)
 	mux.HandleFunc("/api/hoxi/permission/", s.handleUnifiedPermissionRoutes)
 	mux.HandleFunc("/api/hoxi/runner/permission", s.handlePermissionRoutes)
@@ -242,6 +244,27 @@ func (s *Service) handleClaudeModels(w http.ResponseWriter, r *http.Request) {
 	}
 	bin := ResolveClaudeBinary()
 	models := DiscoverClaudeModels()
+	defaultModel := ""
+	if len(models) > 0 {
+		defaultModel = models[0].ID
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"installed":  bin != "",
+		"available":  bin != "",
+		"binaryPath": bin,
+		"default":    defaultModel,
+		"models":     models,
+	})
+}
+
+func (s *Service) handleGeminiModels(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONError(w, http.StatusMethodNotAllowed, "GET required")
+		return
+	}
+	forceRefresh := r.URL.Query().Get("refresh") == "1" || r.URL.Query().Get("refresh") == "true"
+	bin := ResolveGeminiBinary()
+	models := DiscoverGeminiModelsWithRefresh(forceRefresh)
 	defaultModel := ""
 	if len(models) > 0 {
 		defaultModel = models[0].ID

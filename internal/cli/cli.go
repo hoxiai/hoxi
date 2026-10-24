@@ -124,6 +124,8 @@ func NormalizeRuntime(raw string) string {
 		return string(runner.RuntimeClaudeCode)
 	case "agy", "antigravity", "gemini":
 		return string(runner.RuntimeAntigravity)
+	case "gemini-cli", "geminicli":
+		return string(runner.RuntimeGeminiCLI)
 	case "qoder", "qodercli":
 		return string(runner.RuntimeQoder)
 	case "codebuddy", "cb":
@@ -188,7 +190,7 @@ func Run(
 		promptFlag string
 		showHelp   bool
 	)
-	fs.StringVar(&opts.Runtime, "runtime", "opencode", "agent runtime: opencode | claude | agy | qoder | codebuddy")
+	fs.StringVar(&opts.Runtime, "runtime", "opencode", "agent runtime: opencode | claude | agy | gemini-cli | qoder | codebuddy")
 	fs.StringVar(&opts.Runtime, "r", "opencode", "shorthand for --runtime")
 	fs.StringVar(&opts.ModelID, "model", "", "model ID override")
 	fs.StringVar(&opts.ModelID, "m", "", "shorthand for --model")
@@ -216,7 +218,7 @@ func Run(
 
 	opts.Runtime = NormalizeRuntime(opts.Runtime)
 	if opts.Runtime != "opencode" && !runner.IsValidRuntime(opts.Runtime) {
-		fmt.Fprintf(stderr, "Error: unsupported runtime %q (supported: opencode, claude, agy, qoder, codebuddy)\n", opts.Runtime)
+		fmt.Fprintf(stderr, "Error: unsupported runtime %q (supported: opencode, claude, agy, gemini-cli, qoder, codebuddy)\n", opts.Runtime)
 		return 2
 	}
 	opts.SandboxMode = "local"
@@ -276,7 +278,7 @@ Usage:
   hoxi install-cli                    Install 'hoxi' command into /usr/local/bin or ~/.local/bin
 
 Flags:
-  -r, --runtime <name>   Agent runtime: opencode (default) | claude | agy | qoder | codebuddy
+  -r, --runtime <name>   Agent runtime: opencode (default) | claude | agy | gemini-cli | qoder | codebuddy
   -m, --model <id>       Model ID override (e.g. provider/model or model-id)
   -w, --worktree         Isolate session in a Git worktree (.hoxi/worktrees/<session-id>)
   -s, --session <id>     Resume an existing Hoxi session ID
@@ -285,7 +287,7 @@ Flags:
       --tui              Attach full-screen OpenCode TUI
 
 Interactive Slash Commands:
-  /runtime <name>        Switch runtime mid-session (opencode, claude, agy, qoder, codebuddy)
+  /runtime <name>        Switch runtime mid-session (opencode, claude, agy, gemini-cli, qoder, codebuddy)
   /model [id]            List available models or switch active model
   /worktree [on|off]     Toggle Git worktree sandbox isolation
   /diff                  Show current session's Git diff summary

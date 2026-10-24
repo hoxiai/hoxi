@@ -545,24 +545,38 @@ func detectGeminiCLIStatus(g *Service, hoxiMap map[string]interface{}) LocalCLIS
 	_, stats := scanGeminiAntigravitySessions("", "")
 	apiKey, defaultModel, models := readGeminiLocalKeyAndModels()
 	agyBin := resolveAgyBinary()
+	geminiBin := agentcli.ResolveGeminiBinary()
 	_, inHoxi := hoxiMap["google"]
 	storedKey := g.resolveStoredProviderKey("google", "")
 	hasRealKey := isRealGoogleAPIKey(apiKey) || isRealGoogleAPIKey(storedKey)
 	authMode := "antigravity-runner"
+	providerID := "antigravity"
+	if agyBin == "" && geminiBin != "" {
+		authMode = "gemini-runner"
+		providerID = "gemini-cli"
+		if len(models) == 0 {
+			for _, m := range agentcli.DiscoverGeminiModels() {
+				models = appendUniqueString(models, m.ID)
+			}
+		}
+		if defaultModel == "" && len(models) > 0 {
+			defaultModel = models[0]
+		}
+	}
 	if hasRealKey {
 		authMode = "api-key"
 	}
 	return LocalCLIStatusItem{
 		ID:            ExternalToolGemini,
 		Name:          "Antigravity / Gemini",
-		Installed:     stats.Installed || agyBin != "",
-		Authenticated: hasRealKey || agyBin != "" || stats.SessionCount > 0,
-		Connected:     (hasRealKey && inHoxi) || agyBin != "",
+		Installed:     stats.Installed || agyBin != "" || geminiBin != "",
+		Authenticated: hasRealKey || agyBin != "" || geminiBin != "" || stats.SessionCount > 0,
+		Connected:     (hasRealKey && inHoxi) || agyBin != "" || geminiBin != "",
 		DefaultModel:  defaultModel,
 		Models:        models,
 		SessionCount:  stats.SessionCount,
 		AuthMode:      authMode,
-		ProviderID:    "antigravity",
+		ProviderID:    providerID,
 	}
 }
 
@@ -601,7 +615,7 @@ func (g *Service) importGeminiCLIProvider() LocalCLIImportResponse {
 		return LocalCLIImportResponse{
 			OK:     false,
 			ToolID: string(ExternalToolGemini),
-			Error:  "请使用 Antigravity 运行时新建会话 (Please use the Antigravity local runtime when creating a session; OAuth tokens are never imported into OpenCode)",
+			Error:  "请使用 Antigravity 或 Gemini CLI 运行时新建会话 (Please use the Antigravity or Gemini CLI local runtime when creating a session; OAuth tokens are never imported into OpenCode)",
 		}
 	}
 	g.sendEngineAuth("google", map[string]interface{}{"type": "api", "key": apiKey}, 5*time.Second)

@@ -435,7 +435,7 @@ function isSafeCommand(command, worktree) {
 
 const EDIT_PERMISSIONS = new Set([
   "edit", "write", "patch", "multiedit", "apply_patch", "notebookedit", "notebook_edit",
-  "write_to_file", "write_file", "create_file", "edit_file", "replace_file_content",
+  "write_to_file", "write_file", "create_file", "edit_file", "replace", "replace_file_content",
   "multi_replace_file_content", "sed_file",
 ]);
 
@@ -450,6 +450,7 @@ const SENSITIVE_BASENAMES = new Set([
   ".gitconfig", ".git-credentials", ".netrc", ".npmrc",
   ".pypirc", ".curlrc", ".wgetrc", ".envrc", "authorized_keys",
   "id_rsa", "id_ed25519", "id_ecdsa", "id_dsa", ".credentials.json",
+  "oauth_creds.json", "jetski-standalone-oauth-token",
 ]);
 
 const SENSITIVE_PATH_PREFIXES = ["/etc/", "/private/etc/", "/root/", "/var/root/", "/private/var/root/"];
@@ -537,7 +538,14 @@ export function isProtectedPath(rawPath) {
   ) {
     return false;
   }
-  if (slash === ".vscode/settings.json" || slash.endsWith("/.vscode/settings.json")) {
+  if (
+    slash === ".vscode/settings.json" ||
+    slash.endsWith("/.vscode/settings.json") ||
+    slash === ".gemini/settings.json" ||
+    slash.endsWith("/.gemini/settings.json") ||
+    slash === ".gemini/config/hooks.json" ||
+    slash.endsWith("/.gemini/config/hooks.json")
+  ) {
     return true;
   }
   const parts = slash.split("/").filter(Boolean);
@@ -549,9 +557,9 @@ function matchesDestructive(blob) {
 }
 
 const TOOL_ARG_PATH_KEYS = [
-  "Path", "AbsolutePath", "TargetFile", "target_file", "file_path", "filePath",
-  "filepath", "File", "file", "path", "target", "DirectoryPath", "directory_path",
-  "SearchPath", "search_path", "SearchDirectory", "search_directory",
+  "Path", "AbsolutePath", "absolute_path", "TargetFile", "target_file", "file_path", "filePath",
+  "filepath", "File", "file", "path", "paths", "target", "DirectoryPath", "directory_path",
+  "dir_path", "dirPath", "SearchPath", "search_path", "SearchDirectory", "search_directory",
   "Directory", "directory", "NotebookPath", "notebook_path",
 ];
 
@@ -567,8 +575,15 @@ function extractToolArgPaths(rawArgs) {
   if (!obj || typeof obj !== "object") return [];
   const out = [];
   for (const key of TOOL_ARG_PATH_KEYS) {
-    if (typeof obj[key] === "string" && obj[key].trim()) {
-      out.push(obj[key].trim());
+    const val = obj[key];
+    if (typeof val === "string" && val.trim()) {
+      out.push(val.trim());
+    } else if (Array.isArray(val)) {
+      for (const item of val) {
+        if (typeof item === "string" && item.trim()) {
+          out.push(item.trim());
+        }
+      }
     }
   }
   return out;
@@ -603,7 +618,8 @@ export function externalDirectoryTargets(input) {
 // stays sensitive. Both the Hoxi id and the runtime ExternalID match.
 const OWN_SESSION_READ_TOOLS = new Set([
   "read", "glob", "grep", "list", "lsp", "todoread", "hoxi_code_index", "ls", "notebookread", "notebook_read",
-  "read_file", "view_file", "list_dir", "find_by_name", "grep_search", "read_resource",
+  "read_file", "read_many_files", "view_file", "list_dir", "list_directory", "find_by_name", "grep_search",
+  "search_file_content", "read_resource",
   "list_resources", "read_browser_page", "browser_get_dom", "browser_get_network_request",
   "browser_list_network_requests", "list_browser_pages", "capture_browser_console_logs",
   "capture_browser_screenshot", "list_permissions", "list_plugin_accounts", "search_marketplace",

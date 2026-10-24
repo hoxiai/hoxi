@@ -237,6 +237,9 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 	case string(RuntimeClaudeCode):
 		binPath = ResolveClaudeBinary()
 		missingMsg = "Claude Code CLI (claude) binary not found in ~/.local/bin/claude or PATH"
+	case string(RuntimeGeminiCLI):
+		binPath = ResolveGeminiBinary()
+		missingMsg = "Gemini CLI (gemini) binary not found in ~/.gemini/bin/gemini or PATH"
 	case string(RuntimeCodeBuddy):
 		binPath = agentcli.ResolveCodeBuddyBinary()
 		missingMsg = "CodeBuddy CLI (codebuddy) binary not found in PATH"

@@ -218,6 +218,7 @@ func protectedStateRules() []PathRule {
 		filepath.Join(home, ".claude", "settings.json"),
 		filepath.Join(home, ".claude", "settings.local.json"),
 		filepath.Join(home, ".gemini", "config", "hooks.json"),
+		filepath.Join(home, ".gemini", "settings.json"),
 	} {
 		rules = append(rules, PathRule{Path: file, Kind: PathLiteral})
 	}

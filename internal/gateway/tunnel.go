@@ -52,6 +52,7 @@ var tunnelRoutes = []tunnelRoute{
 	{http.MethodGet, "/api/hoxi/provider/models"},
 	{http.MethodGet, "/api/hoxi/runner/antigravity/models"},
 	{http.MethodGet, "/api/hoxi/runner/claude-code/models"},
+	{http.MethodGet, "/api/hoxi/runner/gemini-cli/models"},
 	{http.MethodGet, "/api/hoxi/runner/codebuddy/models"},
 	{http.MethodGet, "/api/hoxi/runner/qoder/models"},
 

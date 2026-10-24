@@ -520,29 +520,31 @@ func normalizeRunnerTool(rawName string, rawParams map[string]interface{}) (norm
 	for k, v := range rawParams {
 		clean[k] = v
 	}
-	if fp := firstString(clean["AbsolutePath"], clean["TargetFile"], clean["Path"], clean["SearchPath"], clean["DirectoryPath"], clean["file_path"], clean["path"]); fp != "" {
+	if fp := firstString(clean["AbsolutePath"], clean["absolute_path"], clean["TargetFile"], clean["Path"], clean["SearchPath"], clean["DirectoryPath"], clean["dir_path"], clean["dirPath"], clean["file_path"], clean["path"]); fp != "" {
 		clean["filePath"] = fp
+	} else if multi := stringList(clean["paths"]); len(multi) > 0 {
+		clean["filePath"] = multi[0]
 	}
-	if cmd := firstString(clean["CommandLine"], clean["command"]); cmd != "" {
+	if cmd := firstString(clean["CommandLine"], clean["command"], clean["cmd"]); cmd != "" {
 		clean["command"] = cmd
 	}
 	lower := strings.ToLower(strings.TrimSpace(rawName))
 	switch lower {
-	case "view_file", "read", "read_file":
+	case "view_file", "read", "read_file", "read_many_files":
 		normTool = "read"
 	case "write_to_file", "write_file", "write", "create_file":
 		normTool = "write"
-	case "replace_file_content", "multi_replace_file_content", "sed_file", "edit", "edit_file":
+	case "replace_file_content", "multi_replace_file_content", "sed_file", "edit", "edit_file", "replace":
 		normTool = "edit"
-	case "run_command", "bash", "shell":
+	case "run_command", "run_shell_command", "bash", "shell":
 		normTool = "bash"
-	case "grep_search", "grep":
+	case "grep_search", "search_file_content", "grep":
 		normTool = "grep"
-	case "find_by_name", "list_dir", "glob":
+	case "find_by_name", "list_dir", "list_directory", "glob":
 		normTool = "glob"
-	case "search_web", "websearch":
+	case "search_web", "google_web_search", "websearch":
 		normTool = "websearch"
-	case "read_url_content", "webfetch":
+	case "read_url_content", "web_fetch", "webfetch":
 		normTool = "webfetch"
 	case "invoke_subagent", "task", "agent":
 		normTool = "task"

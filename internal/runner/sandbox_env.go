@@ -104,10 +104,10 @@ func runtimeModelEnv(runtime string, lookup func(string) string) map[string]bool
 		if envTruthy(lookup("CLAUDE_CODE_USE_VERTEX")) {
 			add("GOOGLE_APPLICATION_CREDENTIALS")
 		}
-	case string(RuntimeAntigravity):
+	case string(RuntimeAntigravity), string(RuntimeGeminiCLI):
 		add("GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY")
 		if envTruthy(lookup("GOOGLE_GENAI_USE_VERTEXAI")) {
-			add("GOOGLE_APPLICATION_CREDENTIALS")
+			add("GOOGLE_APPLICATION_CREDENTIALS", "GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_LOCATION")
 		}
 	case string(RuntimeQoder):
 		add("QODER_PERSONAL_ACCESS_TOKEN")

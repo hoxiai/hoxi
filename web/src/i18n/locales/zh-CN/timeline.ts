@@ -423,6 +423,7 @@ export const timeline: TimelineI18n = {
   runnerSafetyNotice:
     "本地 CLI 会话沿用默认目录模式，工具权限由各 CLI 控制",
   runtimeAntigravityLocal: "Antigravity（本地）",
+  runtimeGeminiCLILocal: "Gemini CLI（本地）",
   runtimeClaudeCodeLocal: "Claude Code（本地）",
   runtimeCodeBuddyLocal: "CodeBuddy（本地）",
   runtimeQoderLocal: "Qoder（本地）",

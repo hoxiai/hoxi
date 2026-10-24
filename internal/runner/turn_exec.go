@@ -268,6 +268,8 @@ func (s *Service) startTurnProcess(
 	switch rec.Runtime {
 	case string(RuntimeClaudeCode):
 		args = BuildClaudeArgs(mode, modelID, effort, rec.ExternalID)
+	case string(RuntimeGeminiCLI):
+		args = BuildGeminiArgs(mode, modelID, effort, rec.ExternalID)
 	case string(RuntimeCodeBuddy):
 		args = BuildCodeBuddyArgs(mode, modelID, effort, rec.ExternalID)
 	case string(RuntimeQoder):
@@ -282,6 +284,8 @@ func (s *Service) startTurnProcess(
 		var hookArgs []string
 		hookArgs, hookEnv, revokeHook = s.issueClaudeHook(mode, rec.ID, asstMsgID)
 		args = append(args, hookArgs...)
+	} else if rec.Runtime == string(RuntimeGeminiCLI) {
+		hookEnv, revokeHook = s.issueGeminiHook(mode, rec.ID, asstMsgID)
 	} else if rec.Runtime == string(RuntimeAntigravity) {
 		s.ensureAgyHookInstalled()
 		hookEnv, revokeHook = s.issueHookEnv(rec.ID, asstMsgID)

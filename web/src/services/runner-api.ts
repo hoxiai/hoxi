@@ -6,6 +6,7 @@ export { getGatewayToken, requestJSON, setGatewayToken };
 
 export const RUNNER_RUNTIMES = [
   "antigravity",
+  "gemini-cli",
   "claude-code",
   "codebuddy",
   "qoder",
@@ -15,6 +16,7 @@ export type RunnerRuntimeID = (typeof RUNNER_RUNTIMES)[number];
 
 const RUNNER_SESSION_PREFIX_MAP: ReadonlyArray<[string, RunnerRuntimeID]> = [
   ["ses_agy_", "antigravity"],
+  ["ses_gem_", "gemini-cli"],
   ["ses_cld_", "claude-code"],
   ["ses_cbd_", "codebuddy"],
   ["ses_qdr_", "qoder"],
@@ -22,6 +24,7 @@ const RUNNER_SESSION_PREFIX_MAP: ReadonlyArray<[string, RunnerRuntimeID]> = [
 
 const RUNNER_AUTH_MODE_SET = new Set<string>([
   "antigravity-runner",
+  "gemini-runner",
   "claude-runner",
   "codebuddy-runner",
   "qoder-runner",
@@ -73,6 +76,7 @@ export function resolveRunnerRuntimeForProvider(
   hasConfiguredProvider = false
 ): SessionRuntime {
   if (providerID === "antigravity") return "antigravity";
+  if (providerID === "gemini-cli" && !hasConfiguredProvider) return "gemini-cli";
   if (providerID === "claude-code" && !hasConfiguredProvider) return "claude-code";
   if (providerID === "codebuddy" && !hasConfiguredProvider) return "codebuddy";
   if (providerID === "qoder" && !hasConfiguredProvider) return "qoder";
@@ -114,7 +118,7 @@ export interface RunnerModelsResponse {
 
 export const runnerAPI = {
   listModels(
-    runtime: "antigravity" | "claude-code" | "codebuddy" | "qoder",
+    runtime: "antigravity" | "gemini-cli" | "claude-code" | "codebuddy" | "qoder",
     forceRefresh = false
   ): Promise<RunnerModelsResponse> {
     const qs = forceRefresh ? "?refresh=1" : "";

@@ -164,7 +164,7 @@ func runModelsCommand(
 	fs := flag.NewFlagSet("hoxi models", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	var rt string
-	fs.StringVar(&rt, "runtime", "opencode", "runtime: opencode | claude | agy | qoder | codebuddy")
+	fs.StringVar(&rt, "runtime", "opencode", "runtime: opencode | claude | agy | gemini-cli | qoder | codebuddy")
 	fs.StringVar(&rt, "r", "opencode", "shorthand for --runtime")
 	if err := fs.Parse(args); err != nil {
 		return 2

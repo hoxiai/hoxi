@@ -427,6 +427,7 @@ export const timeline = {
   runnerSafetyNotice:
     "Local CLI sessions use the default directory mode; each CLI controls tool permissions",
   runtimeAntigravityLocal: "Antigravity (Local)",
+  runtimeGeminiCLILocal: "Gemini CLI (Local)",
   runtimeClaudeCodeLocal: "Claude Code (Local)",
   runtimeCodeBuddyLocal: "CodeBuddy (Local)",
   runtimeQoderLocal: "Qoder (Local)",

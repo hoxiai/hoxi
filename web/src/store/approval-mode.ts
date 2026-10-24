@@ -43,7 +43,7 @@ export { approvalAuditEntries, approvalGrants, approvalPolicy, approvalRecordsLo
 // Runtimes whose whole process is OS-sandboxed, mirroring runtimeSandboxConfirmed
 // in internal/runner/approval_unattended.go. OpenCode only sandboxes its bash
 // tool, so it keeps the full-trust rules even in unattended mode.
-const UNATTENDED_RUNTIMES = new Set(["claude-code", "antigravity", "qoder", "codebuddy"]);
+const UNATTENDED_RUNTIMES = new Set(["claude-code", "antigravity", "gemini-cli", "qoder", "codebuddy"]);
 
 export type UnattendedGap = "runtime" | "isolation";
 

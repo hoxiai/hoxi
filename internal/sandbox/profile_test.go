@@ -227,6 +227,7 @@ func TestEnforcedWriteProtectsHoxiStateAndHooks(t *testing.T) {
 		filepath.Join(home, ".hoxi", "models.json"),
 		filepath.Join(home, ".hoxi", "sessions", "ses_x.json"),
 		filepath.Join(home, ".gemini", "config", "hooks.json"),
+		filepath.Join(home, ".gemini", "settings.json"),
 		filepath.Join(home, ".claude", "settings.json"),
 	} {
 		bin, args, err := WrapShell(profile, "mkdir -p "+shellQuote(filepath.Dir(target))+" 2>/dev/null; echo bad > "+shellQuote(target))

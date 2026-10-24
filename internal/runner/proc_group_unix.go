@@ -165,7 +165,7 @@ func isAgentRuntimeProcessArgs(args string) bool {
 			base = base[idx+1:]
 		}
 		switch base {
-		case "claude", "agy", "codebuddy", "cbc", "qodercli", "qoderclicn", "qodercn", "opencode":
+		case "claude", "agy", "gemini", "codebuddy", "cbc", "qodercli", "qoderclicn", "qodercn", "opencode":
 			return true
 		}
 	}
