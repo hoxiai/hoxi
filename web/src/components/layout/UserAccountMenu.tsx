@@ -112,6 +112,18 @@ export default function UserAccountMenu() {
   const currentLangLabel = () =>
     locale() === "zh-CN" ? t("settings.langZhLabel") : t("settings.langEnLabel");
 
+  const formatRangeLabel = (
+    range: { min: number; max: number } | undefined,
+    fallback: number,
+  ): string => {
+    const min = Number(range?.min || 0);
+    const max = Number(range?.max || 0);
+    if (min > 0 && max > min) {
+      return `${min}~${max}`;
+    }
+    return String(max > 0 ? max : fallback);
+  };
+
   const checkinSubtitle = () => {
     const m = desktopAuth.member;
     if (m.nextMilestone && m.nextMilestone.day > 0) {
@@ -123,7 +135,7 @@ export default function UserAccountMenu() {
     }
     return t("settings.accountCheckinStreakDesc", {
       streak: m.streak,
-      next: m.nextPoints,
+      next: formatRangeLabel(m.nextPointsRange, m.nextPoints),
     });
   };
 
@@ -209,7 +221,10 @@ export default function UserAccountMenu() {
                             points: desktopAuth.member.todayPoints,
                           })
                         : t("settings.accountCheckinTitle", {
-                            points: desktopAuth.member.todayPoints,
+                            points: formatRangeLabel(
+                              desktopAuth.member.todayPointsRange,
+                              desktopAuth.member.todayPoints,
+                            ),
                           })}
                     </div>
                     <div class="text-[11px] text-[var(--text-muted)] leading-tight mt-1 truncate">

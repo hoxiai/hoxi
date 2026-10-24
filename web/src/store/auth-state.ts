@@ -14,6 +14,8 @@ export interface DesktopMemberState {
   maxStreak: number;
   todayPoints: number;
   nextPoints: number;
+  todayPointsRange: { min: number; max: number };
+  nextPointsRange: { min: number; max: number };
   points: number;
   pendingPoints: number;
   rewardStatus: string;
@@ -41,6 +43,8 @@ const DEFAULT_MEMBER_STATE: DesktopMemberState = {
   maxStreak: 0,
   todayPoints: 5,
   nextPoints: 6,
+  todayPointsRange: { min: 5, max: 20 },
+  nextPointsRange: { min: 5, max: 20 },
   points: 0,
   pendingPoints: 0,
   rewardStatus: "none",
@@ -101,6 +105,12 @@ function applyMemberStatus(status: MemberCheckinStatus) {
     typeof status.walletPoints === "number" && Number.isFinite(status.walletPoints)
       ? status.walletPoints
       : toFiniteNumber(status.balance, 0);
+  const todayPts = toFiniteNumber(status.todayPoints, 5);
+  const nextPts = toFiniteNumber(status.nextPoints, 6);
+  const todayMin = toFiniteNumber(status.todayPointsRange?.min, todayPts);
+  const todayMax = Math.max(todayMin, toFiniteNumber(status.todayPointsRange?.max, todayPts));
+  const nextMin = toFiniteNumber(status.nextPointsRange?.min, nextPts);
+  const nextMax = Math.max(nextMin, toFiniteNumber(status.nextPointsRange?.max, nextPts));
   setDesktopAuth("member", {
     loaded: true,
     loading: false,
@@ -108,8 +118,10 @@ function applyMemberStatus(status: MemberCheckinStatus) {
     checkedInToday: Boolean(status.checkedInToday),
     streak: toFiniteNumber(status.streak, 0),
     maxStreak: toFiniteNumber(status.maxStreak, 0),
-    todayPoints: toFiniteNumber(status.todayPoints, 5),
-    nextPoints: toFiniteNumber(status.nextPoints, 6),
+    todayPoints: todayPts,
+    nextPoints: nextPts,
+    todayPointsRange: { min: todayMin, max: todayMax },
+    nextPointsRange: { min: nextMin, max: nextMax },
     points: Number.isFinite(walletPts) ? walletPts : 0,
     pendingPoints: toFiniteNumber(status.pendingPoints, 0),
     rewardStatus: String(status.rewardStatus || "none"),

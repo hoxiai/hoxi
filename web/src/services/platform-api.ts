@@ -192,6 +192,8 @@ export interface MemberCheckinStatus {
   maxStreak?: number;
   todayPoints: number;
   nextPoints: number;
+  todayPointsRange?: { min: number; max: number };
+  nextPointsRange?: { min: number; max: number };
   balance: number;
   walletPoints?: number;
   pendingPoints?: number;
@@ -201,6 +203,9 @@ export interface MemberCheckinStatus {
   rewardError?: string | null;
   rule?: {
     version?: string;
+    randomEnabled?: boolean;
+    randomMinPoints?: number;
+    randomMaxPoints?: number;
     basePoints: number;
     streakStep: number;
     maxPoints: number;
