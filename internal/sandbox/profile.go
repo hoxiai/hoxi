@@ -19,6 +19,8 @@ type PathKind string
 const (
 	PathLiteral PathKind = "literal"
 	PathSubtree PathKind = "subtree"
+	// PathRegex is a Seatbelt regular expression over the resolved path.
+	PathRegex PathKind = "regex"
 )
 
 type PathRule struct {
@@ -46,6 +48,9 @@ const (
 
 type NetworkProfile struct {
 	Mode NetworkMode
+	// DenySockets are Unix sockets a confined command may not connect to,
+	// even when outbound network access is allowed.
+	DenySockets []PathRule
 }
 
 type Profile struct {
@@ -155,8 +160,39 @@ func DefaultProfile(workspace string, network NetworkMode, extraWritable ...stri
 			NameDenyExemptions: nameDenyExemptions,
 			TemporaryDirectory: "/private/tmp",
 		},
-		Network: NetworkProfile{Mode: network},
+		Network: NetworkProfile{Mode: network, DenySockets: credentialSocketRules()},
 	}, nil
+}
+
+// credentialSocketRules are the Unix sockets that hand out credentials
+// without reading a file: SSH agents (launchd's default agent, 1Password,
+// Secretive, gpg-agent's ssh socket, the current SSH_AUTH_SOCK) and ssh
+// ControlMaster connections under ~/.ssh. The runtime environment drops
+// SSH_AUTH_SOCK, but the default socket path is discoverable, so the profile
+// refuses the connection itself. Docker and other daemon sockets are not
+// listed here.
+func credentialSocketRules() []PathRule {
+	rules := []PathRule{{Path: `^/private/tmp/com\.apple\.launchd\.[^/]+/Listeners$`, Kind: PathRegex}}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		if resolved, err := filepath.EvalSymlinks(home); err == nil {
+			home = resolved
+		}
+		for _, dir := range []string{
+			".ssh",
+			".gnupg",
+			filepath.Join("Library", "Group Containers", "2BUA8C4S2C.com.1password"),
+			filepath.Join("Library", "Containers", "com.maxgoedjen.Secretive.SecretAgent"),
+		} {
+			rules = append(rules, PathRule{Path: filepath.Join(home, dir), Kind: PathSubtree})
+		}
+	}
+	if sock := strings.TrimSpace(os.Getenv("SSH_AUTH_SOCK")); filepath.IsAbs(sock) {
+		if resolved, err := filepath.EvalSymlinks(sock); err == nil {
+			sock = resolved
+		}
+		rules = append(rules, PathRule{Path: sock, Kind: PathLiteral})
+	}
+	return rules
 }
 
 // protectedStateRules keeps confined commands from rewriting Hoxi's session

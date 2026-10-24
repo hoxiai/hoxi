@@ -33,6 +33,7 @@
 - 每发现一个绕过，必须作为回归用例写进对应 `*.cases.json`。
 - **审批超时只拒绝，永不放行**。到点的请求回复 reject，不得改写成放行。
 - **硬拒绝类不得放宽**：无人值守模式的密钥读取、任何 `git push` 与发布、提权、凭据外发，不能被模式、会话授权或「始终允许」绕过。用例在 `.opencode/lib/unattended.cases.json`，Go 与 `.opencode/lib/unattended-policy.js` 共用。
+- **无人值守不能直接放行动态代码**：静态分类器看不穿 `eval`、管道进 Shell、`$CMD args`、解释器内联代码，这些一律按 `dynamic` 拒绝；每发现一种绕过写法，就把它作为拒绝用例加进 `unattended.cases.json`（Go 与 JS 同时通过）。静态判定只是尽力而为，凭据隔离靠沙箱：命令沙箱会话的运行时环境由 `sandboxedRuntimeEnv` 剥除凭据，新增运行时要在 `runtimeModelEnv` 里只列它调模型必需的 Key。
 - **待处理清单不经隧道**。`/api/hoxi/permission/deferred` 保持在白名单之外，并保留隧道 403 用例。
 
 自检：对你新增的每条"allow"路径，尝试用引号、反斜杠、`;`/`&&`/`|` 链接、`$()` 构造绕过，并写成用例。

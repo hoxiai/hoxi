@@ -213,6 +213,20 @@ func ProfileText(profile Profile) (string, error) {
 	default:
 		return "", fmt.Errorf("unsupported sandbox network mode: %s", mode)
 	}
+	if len(profile.Network.DenySockets) > 0 {
+		var sockets []string
+		for _, rule := range profile.Network.DenySockets {
+			filter, err := pathFilter(rule)
+			if err != nil {
+				return "", err
+			}
+			sockets = append(sockets, filter)
+		}
+		// Later Seatbelt rules win, so this narrows the allow above.
+		network += "\n; credential agent sockets stay unreachable\n" +
+			`(deny network-outbound (with message "Hoxi sandbox denied a credential agent socket") (require-any ` +
+			strings.Join(sockets, " ") + "))"
+	}
 	return strings.Join([]string{
 		seatbeltBase,
 		network,
@@ -222,6 +236,12 @@ func ProfileText(profile Profile) (string, error) {
 }
 
 func pathFilter(rule PathRule) (string, error) {
+	if rule.Kind == PathRegex {
+		if strings.TrimSpace(rule.Path) == "" || strings.ContainsAny(rule.Path, "\"\n\r\x00") {
+			return "", errors.New("sandbox path regex is empty or unquotable")
+		}
+		return `(regex #"` + rule.Path + `")`, nil
+	}
 	quoted, err := quoteProfilePath(rule.Path)
 	if err != nil {
 		return "", err
