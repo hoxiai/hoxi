@@ -205,22 +205,22 @@ func TestSeedDefaultsIncludesExtraSkillsDir(t *testing.T) {
 	t.Setenv("HOXI_HOME", home)
 	t.Setenv("HOXI_EXTRA_SKILLS_DIR", extra)
 
-	customSkill := filepath.Join(extra, "qingpu-ops", "SKILL.md")
+	customSkill := filepath.Join(extra, "shopify-ops", "SKILL.md")
 	if err := os.MkdirAll(filepath.Dir(customSkill), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(customSkill, []byte("---\nname: qingpu-ops\n---\n# Qingpu"), 0o644); err != nil {
+	if err := os.WriteFile(customSkill, []byte("---\nname: shopify-ops\n---\n# Shopify"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	SeedDefaults()
 
-	seeded := filepath.Join(home, "skills", "qingpu-ops", "SKILL.md")
+	seeded := filepath.Join(home, "skills", "shopify-ops", "SKILL.md")
 	data, err := os.ReadFile(seeded)
 	if err != nil {
 		t.Fatalf("expected extra skill to be seeded at %s: %v", seeded, err)
 	}
-	if !strings.Contains(string(data), "# Qingpu") {
+	if !strings.Contains(string(data), "# Shopify") {
 		t.Fatalf("unexpected seeded content: %s", string(data))
 	}
 }
