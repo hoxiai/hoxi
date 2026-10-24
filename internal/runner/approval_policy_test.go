@@ -419,10 +419,10 @@ func TestOpenCodeUnattendedHardDenyAuditsOnlyTheReject(t *testing.T) {
 
 	svc.relayOpenCodeEvent(rec, []byte(`{"type":"permission.asked","properties":{"id":"per_oc_push","sessionID":"oc-hard","permission":"bash","patterns":["git push origin main"]}}`))
 	waitFor(t, "hard deny reply", func() bool { return fake.reply("per_oc_push") == "reject" })
-	// The reply goroutine marks its claim done only after the audit write
-	// lands, so waiting on it also keeps the write away from t.TempDir cleanup.
+	// The reply goroutine settles its claim only after the audit write lands,
+	// so waiting on it also keeps the write away from t.TempDir cleanup.
 	waitFor(t, "hard deny audit", func() bool {
-		return svc.openCodeAutoReplyState("per_oc_push") == openCodeAutoReplyDone
+		return svc.openCodeAutoReplyState("per_oc_push") == openCodeAutoReplySettled
 	})
 	var decisions []string
 	for _, e := range svc.audit.list("ses_oc_hard", 10) {
@@ -448,7 +448,7 @@ func TestOpenCodeUnattendedHardDenyAuditsOnlyTheReject(t *testing.T) {
 	svc.relayOpenCodeEvent(rec, []byte(`{"type":"permission.asked","properties":{"id":"per_oc_edit","sessionID":"oc-hard","permission":"edit","patterns":["src/main.ts"]}}`))
 	waitFor(t, "in-dir edit reply", func() bool { return fake.reply("per_oc_edit") == "once" })
 	waitFor(t, "in-dir edit audit", func() bool {
-		return svc.openCodeAutoReplyState("per_oc_edit") == openCodeAutoReplyDone
+		return svc.openCodeAutoReplyState("per_oc_edit") == openCodeAutoReplySettled
 	})
 }
 
@@ -565,8 +565,8 @@ func TestOpenCodeTimeoutAndWorktreeDirectoryResolution(t *testing.T) {
 	// Poll using the parent projectDir (and empty dir) as the UI/reconciler does.
 	_ = svc.listUnifiedPermissions(context.Background(), projectDir)
 	waitFor(t, "timeout replies", func() bool {
-		return svc.openCodeAutoReplyState("per_oc_timeout") == openCodeAutoReplyDone &&
-			svc.openCodeAutoReplyState("per_oc_lingering") == openCodeAutoReplyDone
+		return svc.openCodeAutoReplyState("per_oc_timeout") == openCodeAutoReplySettled &&
+			svc.openCodeAutoReplyState("per_oc_lingering") == openCodeAutoReplySettled
 	})
 
 	// Poll again multiple times; neither request may be re-armed, re-audited,

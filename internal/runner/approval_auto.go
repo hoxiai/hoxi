@@ -21,8 +21,18 @@ const (
 const (
 	openCodeAutoReplyInflight = 1
 	openCodeAutoReplyFailed   = 2
-	openCodeAutoReplyDone     = 3
+	// openCodeAutoReplySettled: OpenCode accepted an answer to the request or
+	// no longer knows it.
+	openCodeAutoReplySettled = 3
 )
+
+// openCodeSettledFor is how long a settled request stays hidden. A listing
+// that still returns it (one that lags behind the reply, or a reply that
+// reached an instance without the request) is ignored for that long instead
+// of being shown, timed out and audited again on every poll.
+const openCodeSettledFor = 15 * time.Minute
+
+type openCodeSettledMark struct{ until time.Time }
 
 func (s *Service) currentPermissionRules() map[string]interface{} {
 	s.mu.Lock()
@@ -93,7 +103,7 @@ func (s *Service) autoReplyOpenCodeMessage(id, sessionID, directory, reply, mess
 	if id == "" {
 		return
 	}
-	if _, loaded := s.openCodeAutoReplies.LoadOrStore(id, openCodeAutoReplyInflight); loaded {
+	if !s.claimOpenCodeReply(id) {
 		return
 	}
 	body, err := json.Marshal(map[string]string{"reply": reply, "message": message})
@@ -109,16 +119,14 @@ func (s *Service) autoReplyOpenCodeMessage(id, sessionID, directory, reply, mess
 			// Audit and count only the reply OpenCode actually accepted, so a
 			// hard deny is never logged as "once" and a failed reply never
 			// inflates the turn summary or deferred list.
-			s.gate.forgetOpenCodeAsk(id)
 			s.recordOpenCodeAudit(id, sessionID, directory, reply, message, source)
 			if onAccept != nil {
 				onAccept()
 			}
-			s.openCodeAutoReplies.Store(id, openCodeAutoReplyDone)
+			s.settleOpenCodePermission(id)
 		case err == nil && status == http.StatusNotFound:
 			// Already answered elsewhere.
-			s.gate.forgetOpenCodeAsk(id)
-			s.openCodeAutoReplies.Store(id, openCodeAutoReplyDone)
+			s.settleOpenCodePermission(id)
 		default:
 			s.openCodeAutoReplies.Store(id, openCodeAutoReplyFailed)
 			if onFail != nil {
@@ -129,11 +137,60 @@ func (s *Service) autoReplyOpenCodeMessage(id, sessionID, directory, reply, mess
 }
 
 func (s *Service) openCodeAutoReplyState(id string) int {
-	if v, ok := s.openCodeAutoReplies.Load(id); ok {
-		state, _ := v.(int)
-		return state
+	v, ok := s.openCodeAutoReplies.Load(id)
+	if !ok {
+		return 0
 	}
-	return 0
+	if mark, settled := v.(openCodeSettledMark); settled {
+		if time.Now().Before(mark.until) {
+			return openCodeAutoReplySettled
+		}
+		s.openCodeAutoReplies.CompareAndDelete(id, v)
+		return 0
+	}
+	state, _ := v.(int)
+	return state
+}
+
+// claimOpenCodeReply takes the policy's single right to answer id. It fails
+// while another answer is in flight, after a failed one (the policy never
+// retries), and while id is settled.
+func (s *Service) claimOpenCodeReply(id string) bool {
+	s.openCodeAutoReplyState(id) // drops an expired settle mark
+	_, loaded := s.openCodeAutoReplies.LoadOrStore(id, openCodeAutoReplyInflight)
+	return !loaded
+}
+
+// claimOpenCodeAnswer takes the right to answer id for the user or the
+// timeout. Unlike the policy they may take over a request whose policy reply
+// failed, since that request is shown as pending. release undoes a claim
+// whose reply OpenCode did not accept and restores a failed request as
+// failed, so the policy still never retries it.
+func (s *Service) claimOpenCodeAnswer(id string) (release func(), ok bool) {
+	if s.claimOpenCodeReply(id) {
+		return func() { s.openCodeAutoReplies.CompareAndDelete(id, openCodeAutoReplyInflight) }, true
+	}
+	if s.openCodeAutoReplies.CompareAndSwap(id, openCodeAutoReplyFailed, openCodeAutoReplyInflight) {
+		return func() {
+			s.openCodeAutoReplies.CompareAndSwap(id, openCodeAutoReplyInflight, openCodeAutoReplyFailed)
+		}, true
+	}
+	return nil, false
+}
+
+// settleOpenCodePermission ends a request once OpenCode accepted an answer
+// or reported it unknown: it is no longer claimed, shown, timed out or
+// audited, even if a stale listing still returns it.
+func (s *Service) settleOpenCodePermission(id string) {
+	s.gate.forgetOpenCodeAsk(id)
+	now := time.Now()
+	s.openCodeAutoReplies.Range(func(key, v interface{}) bool {
+		if mark, ok := v.(openCodeSettledMark); ok && !now.Before(mark.until) {
+			s.openCodeAutoReplies.CompareAndDelete(key, v)
+		}
+		return true
+	})
+	s.openCodeAutoReplies.Store(id, openCodeSettledMark{until: now.Add(openCodeSettledFor)})
 }
 
 // claimOpenCodePermission decides a pending OpenCode request. It returns true
@@ -145,10 +202,21 @@ func (s *Service) claimOpenCodePermission(item map[string]interface{}, sessionID
 		return false
 	}
 	switch s.openCodeAutoReplyState(id) {
-	case openCodeAutoReplyInflight, openCodeAutoReplyDone:
+	case openCodeAutoReplyInflight, openCodeAutoReplySettled:
 		return true
 	case openCodeAutoReplyFailed:
+		// The policy already tried once; the user or the timeout answers.
+		annotateGrantClasses(item, directory)
+		s.askOpenCodeUser(item, sessionID, directory)
 		return false
+	}
+	// A failed policy reply leaves the request to the user, and to the
+	// timeout even if no listing shows it again.
+	userFallback := func() {
+		s.askOpenCodeUser(item, sessionID, directory)
+		if onFail != nil {
+			onFail()
+		}
 	}
 	if s.ApprovalPolicy().Mode == ApprovalModeUnattended {
 		if allow, category := unattendedDecision(item, directory); !allow && category != "" {
@@ -156,32 +224,38 @@ func (s *Service) claimOpenCodePermission(item map[string]interface{}, sessionID
 			s.autoReplyOpenCodeMessage(id, sessionID, directory, "reject", unattendedDenyReason(category), approvalSourceUnattended, func() {
 				s.rememberDeferred(sessionID, id, category, summary)
 				s.noteTurn(sessionID, "deny")
-			}, onFail)
+			}, userFallback)
 			return true
 		}
 		_, isolated := s.sessionIsolated(sessionID)
 		if isolated && s.policyApprovesIsolated(item, directory, true) {
 			s.autoReplyOpenCodeMessage(id, sessionID, directory, "once", "", approvalSourcePolicy, func() {
 				s.noteTurn(sessionID, "allow")
-			}, onFail)
+			}, userFallback)
 			return true
 		}
 	}
 	if s.policyApproves(item, directory) {
-		s.autoReplyOpenCode(id, sessionID, directory, approvalSourcePolicy, onFail)
+		s.autoReplyOpenCode(id, sessionID, directory, approvalSourcePolicy, userFallback)
 		return true
 	}
 	if s.classGrantApproves(item, sessionID, directory) {
-		s.autoReplyOpenCode(id, sessionID, directory, grantSourceSession, onFail)
+		s.autoReplyOpenCode(id, sessionID, directory, grantSourceSession, userFallback)
 		return true
 	}
-	// Shown to the user: offer a session grant when Go would honour one, and
-	// keep the request so a grant reply is judged against it.
+	// Shown to the user: offer a session grant when Go would honour one.
 	annotateGrantClasses(item, directory)
+	s.askOpenCodeUser(item, sessionID, directory)
+	return false
+}
+
+// askOpenCodeUser keeps a request shown to the user, so a grant reply is
+// judged against it, and arms its timeout the first time it is shown.
+func (s *Service) askOpenCodeUser(item map[string]interface{}, sessionID, directory string) {
+	id, _ := item["id"].(string)
 	if s.gate.rememberOpenCodeAsk(id, openCodeAsk{item: item, sessionID: sessionID, dir: directory}) {
 		s.armOpenCodeTimeout(id, sessionID, directory, item)
 	}
-	return false
 }
 
 func openCodePermissionCreatedAt(item map[string]interface{}) time.Time {
@@ -222,7 +296,8 @@ func openCodePermissionCreatedAt(item map[string]interface{}) time.Time {
 
 // armOpenCodeTimeout rejects an OpenCode request that nobody answers before
 // the policy timeout. The timer and a user reply share one claim, so only one
-// of them answers the request.
+// of them answers the request. A reject OpenCode refuses is sent again after
+// each of openCodeTimeoutRetryDelays until the request is settled.
 func (s *Service) armOpenCodeTimeout(id, sessionID, directory string, item map[string]interface{}) {
 	created := openCodePermissionCreatedAt(item)
 	wait := s.ApprovalPolicy().approvalWaitLimit()
@@ -232,36 +307,58 @@ func (s *Service) armOpenCodeTimeout(id, sessionID, directory string, item map[s
 		delay = 0
 	}
 	summary := permissionSummaryText(item)
+	retries := s.openCodeTimeoutRetries
+	if retries == nil {
+		retries = openCodeTimeoutRetryDelays
+	}
 	go func() {
 		timer := time.NewTimer(delay)
 		defer timer.Stop()
-		<-timer.C
-		if _, pending := s.gate.openCodeAskFor(id); !pending {
-			return
-		}
-		if _, loaded := s.openCodeAutoReplies.LoadOrStore(id, openCodeAutoReplyInflight); loaded {
-			return
-		}
-		reason := approvalTimeoutReason(s.ApprovalPolicy())
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		body, _ := json.Marshal(map[string]string{"reply": "reject", "message": reason})
-		status, _, err := s.replyOpenCodePermission(ctx, id, directory, body)
-		if err != nil || status < 200 || status >= 300 {
-			if err == nil && status == http.StatusNotFound {
-				s.gate.forgetOpenCodeAsk(id)
-				s.openCodeAutoReplies.Store(id, openCodeAutoReplyDone)
-			} else {
-				s.openCodeAutoReplies.Delete(id)
+		for attempt := 0; ; attempt++ {
+			<-timer.C
+			if s.timeoutRejectOpenCode(id, sessionID, directory, summary) || attempt >= len(retries) {
+				return
 			}
-			return
+			timer.Reset(retries[attempt])
 		}
-		s.gate.forgetOpenCodeAsk(id)
-		s.recordOpenCodeAudit(id, sessionID, directory, "reject", reason, approvalSourceTimeout)
-		s.rememberDeferred(sessionID, id, "timeout", summary)
-		s.noteTurn(sessionID, "timeout")
-		s.openCodeAutoReplies.Store(id, openCodeAutoReplyDone)
 	}()
+}
+
+// openCodeTimeoutRetryDelays spaces the timeout's further rejects after
+// OpenCode refused one or another answer was in flight. Once they run out
+// the request stays shown to the user.
+var openCodeTimeoutRetryDelays = []time.Duration{5 * time.Second, 15 * time.Second, 30 * time.Second, time.Minute, 2 * time.Minute}
+
+// timeoutRejectOpenCode sends the timeout's reject. It reports true when the
+// request needs no further attempt: it was answered, settled or forgotten.
+// The timeout only ever rejects; it never approves.
+func (s *Service) timeoutRejectOpenCode(id, sessionID, directory, summary string) bool {
+	if _, pending := s.gate.openCodeAskFor(id); !pending {
+		return true
+	}
+	release, ok := s.claimOpenCodeAnswer(id)
+	if !ok {
+		// Another answer is in flight; check again after the next delay.
+		return false
+	}
+	reason := approvalTimeoutReason(s.ApprovalPolicy())
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	body, _ := json.Marshal(map[string]string{"reply": "reject", "message": reason})
+	status, _, err := s.replyOpenCodePermission(ctx, id, directory, body)
+	if err == nil && status == http.StatusNotFound {
+		s.settleOpenCodePermission(id)
+		return true
+	}
+	if err != nil || status < 200 || status >= 300 {
+		release()
+		return false
+	}
+	s.recordOpenCodeAudit(id, sessionID, directory, "reject", reason, approvalSourceTimeout)
+	s.rememberDeferred(sessionID, id, "timeout", summary)
+	s.noteTurn(sessionID, "timeout")
+	s.settleOpenCodePermission(id)
+	return true
 }
 
 // claimOpenCodeSSELine handles permission.asked frames on the raw OpenCode
