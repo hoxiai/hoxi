@@ -52,7 +52,7 @@ type Service struct {
 	// onSummary delivers the end-of-turn count line. Counts only, no command text.
 	onSummary func(sessionID, body string)
 	// openCodeAutoReplies tracks OpenCode requests the policy is answering.
-	openCodeAutoReplies sync.Map // request ID -> openCodeAutoReply* state
+	openCodeAutoReplies sync.Map // request ID -> openCodeAutoReply* state or openCodeSettledMark
 	turnStats           sync.Map // session ID -> *turnCounts
 	promptReceipts      sync.Map // sessionID\x00clientRequestID -> cachedPromptReceipt
 	permissionReplies   sync.Map // permissionID\x00clientRequestID -> cachedPermissionReply

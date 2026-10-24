@@ -143,7 +143,7 @@ func (s *Service) handleUnifiedPermissionRoutes(w http.ResponseWriter, r *http.R
 		_, _ = w.Write(cachedRaw)
 		return
 	}
-	if _, loaded := s.openCodeAutoReplies.LoadOrStore(id, openCodeAutoReplyInflight); loaded {
+	if !s.claimOpenCodeReply(id) {
 		writeJSONError(w, http.StatusConflict, "permission request already answered")
 		return
 	}
@@ -189,11 +189,13 @@ func (s *Service) handleUnifiedPermissionRoutes(w http.ResponseWriter, r *http.R
 		writeJSONError(w, http.StatusBadGateway, "opencode service unavailable: "+err.Error())
 		return
 	}
-	if status == http.StatusNotFound || status >= 300 {
+	switch {
+	case status == http.StatusNotFound:
+		s.settleOpenCodePermission(id)
+	case status < 200 || status >= 300:
 		s.openCodeAutoReplies.Delete(id)
 	}
 	if status >= 200 && status < 300 {
-		s.gate.forgetOpenCodeAsk(id)
 		if s.status != nil {
 			s.status.SetPendingApproval(id, "", false)
 		}
@@ -203,6 +205,7 @@ func (s *Service) handleUnifiedPermissionRoutes(w http.ResponseWriter, r *http.R
 		}
 		s.recordOpenCodeApprovalAudit(id, dir, auditReply, parsedReply.Message, source)
 		s.storePermissionReply(id, clientReqID, parsedReply.Reply, respRaw)
+		s.settleOpenCodePermission(id)
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)

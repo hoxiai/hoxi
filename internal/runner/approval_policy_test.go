@@ -418,11 +418,10 @@ func TestOpenCodeUnattendedHardDenyAuditsOnlyTheReject(t *testing.T) {
 
 	svc.relayOpenCodeEvent(rec, []byte(`{"type":"permission.asked","properties":{"id":"per_oc_push","sessionID":"oc-hard","permission":"bash","patterns":["git push origin main"]}}`))
 	waitFor(t, "hard deny reply", func() bool { return fake.reply("per_oc_push") == "reject" })
-	// The reply goroutine clears its claim only after the audit write lands,
+	// The reply goroutine settles its claim only after the audit write lands,
 	// so waiting on it also keeps the write away from t.TempDir cleanup.
 	waitFor(t, "hard deny audit", func() bool {
-		_, inflight := svc.openCodeAutoReplies.Load("per_oc_push")
-		return !inflight
+		return svc.openCodeAutoReplyState("per_oc_push") == openCodeAutoReplySettled
 	})
 	var decisions []string
 	for _, e := range svc.audit.list("ses_oc_hard", 10) {
@@ -448,8 +447,7 @@ func TestOpenCodeUnattendedHardDenyAuditsOnlyTheReject(t *testing.T) {
 	svc.relayOpenCodeEvent(rec, []byte(`{"type":"permission.asked","properties":{"id":"per_oc_edit","sessionID":"oc-hard","permission":"edit","patterns":["src/main.ts"]}}`))
 	waitFor(t, "in-dir edit reply", func() bool { return fake.reply("per_oc_edit") == "once" })
 	waitFor(t, "in-dir edit audit", func() bool {
-		_, inflight := svc.openCodeAutoReplies.Load("per_oc_edit")
-		return !inflight
+		return svc.openCodeAutoReplyState("per_oc_edit") == openCodeAutoReplySettled
 	})
 }
 
