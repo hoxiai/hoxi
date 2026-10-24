@@ -181,4 +181,39 @@ test("standalone browser plugin", async (t) => {
     assert.ok(compOut.prompt.includes("## Changed files and reasons"));
     assert.ok(compOut.prompt.includes("## Next steps"));
   });
+
+  await t.test("experimental.chat.messages.transform compacts verbose passing test logs while preserving failures and original part objects", async () => {
+    const passingLines = Array.from({ length: 100 }, (_, i) => `ok  \tgithub.com/hoxiai/hoxi/pkg_${i}\t0.02s`).join("\n");
+    const passingPart = {
+      type: "tool",
+      tool: "bash",
+      state: {
+        status: "completed",
+        input: { command: "go test ./..." },
+        output: passingLines,
+      },
+    };
+    const failingLines = Array.from({ length: 80 }, (_, i) =>
+      i === 45 ? "--- FAIL: TestAuthToken (0.01s)\n    auth_test.go:88: token mismatch" : `=== RUN   TestCase_${i}`
+    ).join("\n");
+    const failingPart = {
+      type: "tool",
+      tool: "bash",
+      state: {
+        status: "completed",
+        input: { command: "go test ./..." },
+        output: failingLines,
+      },
+    };
+    const messages = [{ parts: [passingPart, failingPart] }];
+    await hooks["experimental.chat.messages.transform"]({}, { messages });
+
+    // Original object is not mutated in place
+    assert.equal(passingPart.state.output, passingLines);
+    // Transformed passing part is deterministically compacted
+    assert.ok(messages[0].parts[0].state.output.includes("lines of passing check output omitted"));
+    assert.ok(messages[0].parts[0].state.output.length < passingLines.length / 2);
+    // Failing test log under 16 KB is preserved verbatim so the model sees all failure details
+    assert.equal(messages[0].parts[1].state.output, failingLines);
+  });
 });

@@ -16,34 +16,44 @@ import (
 // (permission "doom_loop") instead of burning tokens. Rejecting it tells the
 // model why, which is often enough to break the loop.
 
-const doomLoopThreshold = 3
+const (
+	doomLoopThreshold       = 3
+	doomLoopNoEditThreshold = 3
+)
 
 // Status tools are polled with the same input on purpose.
 var doomLoopPollingTools = map[string]bool{
-	"BashOutput": true,
-	"TaskOutput": true,
-	"TaskGet":    true,
-	"TaskList":   true,
+	"BashOutput":     true,
+	"TaskOutput":     true,
+	"TaskGet":        true,
+	"TaskList":       true,
+	"command_status": true,
+	"agent_status":   true,
+	"agent_wait":     true,
 }
 
 type doomLoopGuard struct {
-	mu     sync.Mutex
-	recent map[string][]string         // session → fingerprints of its latest calls
-	turn   map[string]string           // session → turn the recent calls belong to
-	exempt map[string]map[string]int64 // session → tools the user always allows (createdAt ms)
+	mu        sync.Mutex
+	recent    map[string][]string         // session → fingerprints of its latest consecutive calls
+	sinceEdit map[string]map[string]int   // session → fingerprint counts since last file mutation in this turn
+	turn      map[string]string           // session → turn the recent calls belong to
+	exempt    map[string]map[string]int64 // session → tools the user always allows (createdAt ms)
 }
 
 func newDoomLoopGuard() *doomLoopGuard {
 	return &doomLoopGuard{
-		recent: make(map[string][]string),
-		turn:   make(map[string]string),
-		exempt: make(map[string]map[string]int64),
+		recent:    make(map[string][]string),
+		sinceEdit: make(map[string]map[string]int),
+		turn:      make(map[string]string),
+		exempt:    make(map[string]map[string]int64),
 	}
 }
 
 // observe records a call and reports whether it completes a run of
-// doomLoopThreshold identical calls within one turn: the user asking for the
-// same check (`go test ./...`) in consecutive turns is not a loop.
+// doomLoopThreshold identical calls within one turn (or repeats the same
+// non-mutating call doomLoopNoEditThreshold times in one turn without any file
+// modification in between): the user asking for the same check (`go test ./...`)
+// in consecutive turns, or re-running a check after editing a file, is not a loop.
 func (g *doomLoopGuard) observe(sessionID, turnID, tool string, input json.RawMessage) bool {
 	if doomLoopPollingTools[tool] {
 		return false
@@ -57,21 +67,37 @@ func (g *doomLoopGuard) observe(sessionID, turnID, tool string, input json.RawMe
 	if g.turn[sessionID] != turnID {
 		g.turn[sessionID] = turnID
 		delete(g.recent, sessionID)
+		delete(g.sinceEdit, sessionID)
 	}
 	calls := append(g.recent[sessionID], fp)
 	if len(calls) > doomLoopThreshold {
 		calls = calls[len(calls)-doomLoopThreshold:]
 	}
 	g.recent[sessionID] = calls
-	if len(calls) < doomLoopThreshold {
-		return false
-	}
-	for _, c := range calls {
-		if c != fp {
-			return false
+	consecutiveMatch := len(calls) >= doomLoopThreshold
+	if consecutiveMatch {
+		for _, c := range calls {
+			if c != fp {
+				consecutiveMatch = false
+				break
+			}
 		}
 	}
-	return true
+	if consecutiveMatch {
+		return true
+	}
+
+	if isMutatingToolName(tool) {
+		// A file mutation changes workspace state, so reset non-consecutive
+		// repeat counts while recording this mutation's own fingerprint.
+		g.sinceEdit[sessionID] = map[string]int{fp: 1}
+		return false
+	}
+	if g.sinceEdit[sessionID] == nil {
+		g.sinceEdit[sessionID] = make(map[string]int)
+	}
+	g.sinceEdit[sessionID][fp]++
+	return g.sinceEdit[sessionID][fp] >= doomLoopNoEditThreshold
 }
 
 // settle clears the run after the user answered, so allowing a call once
@@ -80,6 +106,7 @@ func (g *doomLoopGuard) settle(sessionID, tool string, always bool) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	delete(g.recent, sessionID)
+	delete(g.sinceEdit, sessionID)
 	if !always {
 		return
 	}
@@ -94,6 +121,7 @@ func (g *doomLoopGuard) forget(sessionID string) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	delete(g.recent, sessionID)
+	delete(g.sinceEdit, sessionID)
 	delete(g.turn, sessionID)
 	delete(g.exempt, sessionID)
 }

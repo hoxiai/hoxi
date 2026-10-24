@@ -185,4 +185,9 @@ func TestRuntimeContextPreservesLateLongMessageConstraintAfterManyTurns(t *testi
 	if !strings.Contains(md, "绝对不能修改数据库 migration 文件") {
 		t.Fatalf("expected late constraint in long user message to survive in 8-dim session memory, got:\n%s", md)
 	}
+	rec.ProjectDir = t.TempDir()
+	combined := runtimeMemoryContext(rec) + runtimeContext(rec)
+	if !strings.Contains(combined, "Carried in quoted conversation history below.") {
+		t.Fatalf("expected runtimeMemoryContext to deduplicate Section 6 when runtimeContext is active, got:\n%s", combined)
+	}
 }

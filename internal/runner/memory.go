@@ -162,6 +162,24 @@ func stripVolatileMemoryHeader(md string) string {
 	return strings.TrimSpace(volatileUpdatedLine.ReplaceAllString(md, ""))
 }
 
+// dedupHandoffMemorySection6 collapses Section 6 (All User Messages) when
+// runtimeContext(rec) is also being appended in the same handoff prompt, so the
+// last 10 user messages are not serialized twice back-to-back.
+func dedupHandoffMemorySection6(md string) string {
+	const sec6 = "## 6. All User Messages\n"
+	const sec7 = "\n## 7. Pending Tasks"
+	i := strings.Index(md, sec6)
+	if i < 0 {
+		return md
+	}
+	rest := md[i+len(sec6):]
+	j := strings.Index(rest, sec7)
+	if j < 0 {
+		return md
+	}
+	return md[:i+len(sec6)] + "- Carried in quoted conversation history below.\n" + rest[j:]
+}
+
 // projectMemoryDir returns the project root whose .hoxi/memory holds the
 // session memory. Isolated sessions run inside <root>/.hoxi/worktrees/<id>, so
 // memory must be addressed at the root to survive worktree removal.
@@ -225,6 +243,9 @@ func runtimeMemoryContext(rec SessionRecord) string {
 
 	projClean := stripVolatileMemoryHeader(projMem)
 	sessClean := stripVolatileMemoryHeader(sessMem)
+	if rec.ContextPending && len(rec.Turns) > 0 && sessClean != "" {
+		sessClean = dedupHandoffMemorySection6(sessClean)
+	}
 	if projClean == "" && sessClean == "" {
 		return ""
 	}

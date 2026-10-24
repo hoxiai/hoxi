@@ -87,3 +87,40 @@ func TestDoomLoopGuardResetsBetweenTurns(t *testing.T) {
 		t.Fatal("repeats within one turn must still trip the guard")
 	}
 }
+
+func TestDoomLoopGuardCatchesInterleavedNoEditLoopAndAllowsPostEditReverification(t *testing.T) {
+	t.Parallel()
+	g := newDoomLoopGuard()
+	testCmd := json.RawMessage(`{"command":"go test ./internal/auth/..."}`)
+	readA := json.RawMessage(`{"file_path":"internal/auth/handler.go"}`)
+	readB := json.RawMessage(`{"file_path":"internal/auth/token.go"}`)
+
+	// Interleaving reads with the exact same test command without editing any file
+	// must trip on the 3rd execution in the same turn.
+	if g.observe("s", "turn_1", "Bash", testCmd) {
+		t.Fatal("1st test run should not trip")
+	}
+	if g.observe("s", "turn_1", "Read", readA) {
+		t.Fatal("1st read should not trip")
+	}
+	if g.observe("s", "turn_1", "Bash", testCmd) {
+		t.Fatal("2nd test run should not trip")
+	}
+	if g.observe("s", "turn_1", "Read", readB) {
+		t.Fatal("2nd read should not trip")
+	}
+	if !g.observe("s", "turn_1", "Bash", testCmd) {
+		t.Fatal("3rd identical test run without any intervening file edit must trip the guard")
+	}
+
+	// Conversely, running the same test command after each file edit in a turn is productive.
+	for i := 1; i <= 4; i++ {
+		editInput := json.RawMessage(`{"file_path":"internal/auth/handler.go","old_string":"a","new_string":"b"}`)
+		if g.observe("s2", "turn_2", "Edit", editInput) {
+			t.Fatalf("productive edit %d should not trip", i)
+		}
+		if g.observe("s2", "turn_2", "Bash", testCmd) {
+			t.Fatalf("re-running test after edit %d must not trip the guard", i)
+		}
+	}
+}
