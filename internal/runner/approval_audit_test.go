@@ -240,11 +240,11 @@ func TestOpenCodePermissionEventFeedsTheAuditSnapshot(t *testing.T) {
 func TestExternalDirectoryRiskClassifiesRoutineAndSensitiveTargets(t *testing.T) {
 	t.Parallel()
 	routine := []map[string]interface{}{
-		{"permission": "external_directory", "patterns": []interface{}{"/Users/hugh/code/hoxi/apay/app/themes/ainode/*"}},
-		{"permission": "external_directory", "patterns": []interface{}{"/Users/hugh/fvm/versions/3.44.9/*"}},
-		{"permission": "external_directory", "patterns": []interface{}{"/Users/hugh/code/kuaiqin/shoply/admin/src/**"}},
-		{"permission": "external_directory", "patterns": []interface{}{"/Users/hugh/code/hoxi/apay/src/truncate.ts"}},
-		{"permission": "external_directory", "patterns": []interface{}{"/Users/hugh/.hoxi/skills/shoply-ops/*"}},
+		{"permission": "external_directory", "patterns": []interface{}{"/Users/dev/code/acme/web/app/themes/main/*"}},
+		{"permission": "external_directory", "patterns": []interface{}{"/Users/dev/fvm/versions/3.44.9/*"}},
+		{"permission": "external_directory", "patterns": []interface{}{"/Users/dev/code/acme/storefront/admin/src/**"}},
+		{"permission": "external_directory", "patterns": []interface{}{"/Users/dev/code/acme/web/src/truncate.ts"}},
+		{"permission": "external_directory", "patterns": []interface{}{"/Users/dev/.hoxi/skills/skill-authoring/*"}},
 		{"permission": "edit", "patterns": []interface{}{"/repo/.hoxi/worktrees/ses_123/src/App.tsx"}},
 	}
 	for _, item := range routine {
@@ -254,20 +254,20 @@ func TestExternalDirectoryRiskClassifiesRoutineAndSensitiveTargets(t *testing.T)
 	}
 
 	sensitive := []map[string]interface{}{
-		{"permission": "external_directory", "patterns": []interface{}{"/Users/hugh/.ssh/config"}},
-		{"permission": "external_directory", "patterns": []interface{}{"/Users/hugh/.ssh/*"}},
-		{"permission": "external_directory", "patterns": []interface{}{"/Users/hugh/.ssh"}},
+		{"permission": "external_directory", "patterns": []interface{}{"/Users/dev/.ssh/config"}},
+		{"permission": "external_directory", "patterns": []interface{}{"/Users/dev/.ssh/*"}},
+		{"permission": "external_directory", "patterns": []interface{}{"/Users/dev/.ssh"}},
 		{"permission": "external_directory", "patterns": []interface{}{"/etc/passwd"}},
 		{"permission": "external_directory", "patterns": []interface{}{"/etc"}},
-		{"permission": "external_directory", "patterns": []interface{}{"/Users/hugh/.zshrc"}},
-		{"permission": "external_directory", "patterns": []interface{}{"/Users/hugh/Library/LaunchAgents/*"}},
-		{"permission": "external_directory", "patterns": []interface{}{"/Users/hugh/.config/gh/hosts.yml"}},
-		{"permission": "external_directory", "patterns": []interface{}{"/Users/hugh/code/hoxi/apay/.env.production"}},
-		{"permission": "external_directory", "patterns": []interface{}{"/Users/hugh/.hoxi/hoxi.db"}},
-		{"permission": "external_directory", "patterns": []interface{}{"/Users/hugh/.config/opencode/opencode.json"}},
+		{"permission": "external_directory", "patterns": []interface{}{"/Users/dev/.zshrc"}},
+		{"permission": "external_directory", "patterns": []interface{}{"/Users/dev/Library/LaunchAgents/*"}},
+		{"permission": "external_directory", "patterns": []interface{}{"/Users/dev/.config/gh/hosts.yml"}},
+		{"permission": "external_directory", "patterns": []interface{}{"/Users/dev/code/acme/web/.env.production"}},
+		{"permission": "external_directory", "patterns": []interface{}{"/Users/dev/.hoxi/hoxi.db"}},
+		{"permission": "external_directory", "patterns": []interface{}{"/Users/dev/.config/opencode/opencode.json"}},
 		{"permission": "external_directory", "patterns": []interface{}{}},
 		{"permission": "tool", "patterns": []interface{}{"Read"}, "metadata": map[string]interface{}{"externalDirectory": true, "args": `{"file_path":"/etc/passwd"}`}},
-		{"permission": "edit", "patterns": []interface{}{"/Users/hugh/.ssh/authorized_keys"}},
+		{"permission": "edit", "patterns": []interface{}{"/Users/dev/.ssh/authorized_keys"}},
 		{"permission": "edit", "patterns": []interface{}{"/repo/.hoxi/worktrees/ses_123/.git/config"}},
 	}
 	for _, item := range sensitive {

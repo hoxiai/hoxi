@@ -244,7 +244,7 @@ func walkHyphenTokens(curDir string, tokens []string) string {
 	if err != nil {
 		return ""
 	}
-	// Prefer longer multi-token directory matches first (e.g., "gopanel_v2" or "qingpu-ai")
+	// Prefer longer multi-token directory matches first (e.g., "gopanel_v2" or "my-service-api")
 	for span := len(tokens); span >= 1; span-- {
 		wantHint := strings.ToLower(strings.Join(tokens[:span], "-"))
 		for _, e := range entries {
