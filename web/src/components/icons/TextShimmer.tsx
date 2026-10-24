@@ -112,6 +112,16 @@ export function isSameTextRevealStream(prev: string | undefined, next: string | 
   ) {
     return true
   }
+  const minLen = Math.min(prevStem.length, nextStem.length)
+  if (minLen >= 6) {
+    const compareLen = Math.max(4, minLen - 2)
+    if (
+      nextStem.slice(0, compareLen) === prevStem.slice(0, compareLen) &&
+      nextStem.length >= prevStem.length - 2
+    ) {
+      return true
+    }
+  }
   return false
 }
 

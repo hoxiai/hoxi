@@ -2,7 +2,10 @@
 import type { InlineSpan } from "./types";
 
 const EXTENSIONS_SOURCE =
-  "ts|tsx|js|jsx|mjs|cjs|mts|cts|go|py|pyi|rs|md|mdx|markdown|json|jsonc|json5|yaml|yml|toml|xml|plist|svg|png|jpg|jpeg|gif|webp|ico|bmp|avif|pdf|css|scss|sass|less|html|htm|sh|zsh|bash|fish|sql|vue|svelte|astro|c|cpp|cc|cxx|h|hpp|m|mm|java|kt|kts|swift|rb|php|proto|graphql|gql|ini|cfg|conf|env|lock|mod|sum|work|gradle|properties|cmake|mk|dockerfile|tf|tfvars|hcl|prisma|sol|zig|lua|ex|exs|erl|hrl|hs|ml|mli|fs|fsx|cs|vb|dart|groovy|scala|clj|cljs|edn|nim|cr|v|sv|vhd|vhdl|glsl|wgsl|hlsl|metal|wasm|wat|csv|tsv|txt|log";
+  "ts|tsx|js|jsx|mjs|cjs|mts|cts|go|py|pyi|rs|md|mdx|markdown|json|jsonc|json5|yaml|yml|toml|xml|plist|svg|png|jpg|jpeg|gif|webp|ico|bmp|avif|pdf|css|scss|sass|less|html|htm|sh|zsh|bash|fish|sql|vue|svelte|astro|c|cpp|cc|cxx|h|hpp|m|mm|java|kt|kts|swift|rb|php|proto|graphql|gql|ini|cfg|conf|env|lock|mod|sum|work|gradle|properties|cmake|mk|dockerfile|tf|tfvars|hcl|prisma|sol|zig|lua|ex|exs|erl|hrl|hs|ml|mli|fs|fsx|cs|vb|dart|groovy|scala|clj|cljs|edn|nim|cr|v|sv|vhd|vhdl|glsl|wgsl|hlsl|metal|wasm|wat|csv|tsv|txt|log"
+    .split("|")
+    .sort((a, b) => b.length - a.length)
+    .join("|");
 
 const KNOWN_FILENAMES_SOURCE =
   "(?:Dockerfile|Containerfile|Makefile|GNUmakefile|Justfile|Caddyfile|Procfile|Gemfile|Rakefile|Guardfile|Brewfile|Vagrantfile|Tiltfile|Earthfile|BUILD|WORKSPACE|CMakeLists\\.txt|CODEOWNERS|LICENSE|README|CHANGELOG|CONTRIBUTING|AUTHORS|NOTICE)(?:\\.[\\w.-]+)?";
@@ -14,7 +17,7 @@ const FILE_LEAF_SOURCE = `(?:[\\w.+\\-\\u4e00-\\u9fa5]+\\.(?:${EXTENSIONS_SOURCE
 
 const LINE_SUFFIX_SOURCE = "(?::\\d+(?:[:\\-–—]\\d+)?|#L\\d+(?:[-–—]L?\\d+)?)?";
 
-const BARE_FILE_PATH_SOURCE = `(?:~\\/|\\.\\.?\\/|\\/)?(?:[\\w@.+\\-\\u4e00-\\u9fa5]+\\/)+${FILE_LEAF_SOURCE}${LINE_SUFFIX_SOURCE}`;
+const BARE_FILE_PATH_SOURCE = `(?:~\\/|\\.\\.?\\/|\\/)?(?:[\\w@.+\\-\\u4e00-\\u9fa5]+\\/)+${FILE_LEAF_SOURCE}${LINE_SUFFIX_SOURCE}(?![\\w])`;
 
 const PAREN_URL_BODY_SOURCE = "(?:[^()\\s]|\\([^()\\s]*\\))+";
 
@@ -32,6 +35,7 @@ const LINK_LABEL_SOURCE = `(?:${INLINE_CODE_SPAN_SOURCE}|[^\\]\`]|${LONE_BACKTIC
 const UNCLOSED_LINK_LABEL_SOURCE = `(?:${INLINE_CODE_SPAN_SOURCE}|[^\\]\`\\n]|${LONE_BACKTICK_SOURCE})+`;
 const CLOSED_LINK_SOURCE = `\\[${LINK_LABEL_SOURCE}\\]\\(${PAREN_URL_BODY_SOURCE}\\)`;
 const UNCLOSED_LINK_SOURCE = `\\[${UNCLOSED_LINK_LABEL_SOURCE}\\]\\([^()\\s]*$`;
+const UNCLOSED_BRACKET_LINK_SOURCE = `\\[(?:${INLINE_CODE_SPAN_SOURCE}\\]?|${UNCLOSED_CODE_SPAN_SOURCE}|(?:[\\w@.+\\-\\u4e00-\\u9fa5]+\\/)*${FILE_LEAF_SOURCE}${LINE_SUFFIX_SOURCE}\\]?|[\\u4e00-\\u9fa5][^\\[\\]\\n]*|[A-Za-z][^\\[\\]\\n]+)$`;
 
 const CLOSED_LINK_MATCH_REGEX = new RegExp(
   `^\\[(${LINK_LABEL_SOURCE})\\]\\((${PAREN_URL_BODY_SOURCE})\\)$`
@@ -39,9 +43,12 @@ const CLOSED_LINK_MATCH_REGEX = new RegExp(
 const UNCLOSED_LINK_MATCH_REGEX = new RegExp(
   `^\\[(${UNCLOSED_LINK_LABEL_SOURCE})\\]\\(([^()\\s]*)$`
 );
+const UNCLOSED_BRACKET_LINK_MATCH_REGEX = new RegExp(
+  `^\\[((?:${INLINE_CODE_SPAN_SOURCE}|${UNCLOSED_CODE_SPAN_SOURCE}|(?:[\\w@.+\\-\\u4e00-\\u9fa5]+\\/)*${FILE_LEAF_SOURCE}${LINE_SUFFIX_SOURCE}|[\\u4e00-\\u9fa5][^\\[\\]\\n]*|[A-Za-z][^\\[\\]\\n]+))\\]?$`
+);
 
 const INLINE_TOKEN_REGEX = new RegExp(
-  `(${IMAGE_SOURCE}|${INLINE_CODE_SPAN_SOURCE}|${UNCLOSED_CODE_SPAN_SOURCE}|<br\\s*\\/?>|${CLOSED_BOLD_ASTERISK_SOURCE}|${UNCLOSED_BOLD_ASTERISK_SOURCE}|${CLOSED_BOLD_UNDERSCORE_SOURCE}|~~[^~\\n]+~~|${CLOSED_LINK_SOURCE}|${UNCLOSED_LINK_SOURCE}|\\*[^*\\n]+\\*|https?:\\/\\/[^\\s<>\\])"]+|${BARE_FILE_PATH_SOURCE})`,
+  `(${IMAGE_SOURCE}|${INLINE_CODE_SPAN_SOURCE}|${UNCLOSED_CODE_SPAN_SOURCE}|<br\\s*\\/?>|${CLOSED_BOLD_ASTERISK_SOURCE}|${UNCLOSED_BOLD_ASTERISK_SOURCE}|${CLOSED_BOLD_UNDERSCORE_SOURCE}|~~[^~\\n]+~~|${CLOSED_LINK_SOURCE}|${UNCLOSED_LINK_SOURCE}|${UNCLOSED_BRACKET_LINK_SOURCE}|\\*[^*\\n]+\\*|https?:\\/\\/[^\\s<>\\])"]+|${BARE_FILE_PATH_SOURCE})`,
   "gi"
 );
 
@@ -56,9 +63,9 @@ function appendPlainTextSpan(spans: InlineSpan[], text: string) {
 }
 
 function stripPendingTrailingDelimiter(tail: string): string {
-  // Hold back a lone trailing `*` after start-of-line, whitespace, or open punctuation
-  // so the first `*` of an upcoming `**bold**` doesn't flash for one frame.
-  if (tail === "*" || /[\s:：,，(（]\*$/.test(tail)) {
+  // Hold back a lone trailing `*` or `[` after start-of-line, whitespace, CJK, or open punctuation
+  // so the opening delimiter of an upcoming `**bold**` or `[link](...)` doesn't flash for one frame.
+  if (tail === "*" || tail === "[" || /[\s:：,，(（\u4e00-\u9fa5][*[]$/.test(tail)) {
     return tail.slice(0, -1);
   }
   return tail;
@@ -182,7 +189,23 @@ export function parseInline(text: string): InlineSpan[] {
             href: unclosedMatch[2] || "#",
           });
         } else {
-          appendPlainTextSpan(spans, token);
+          const prevChar = match.index > 0 ? text[match.index - 1] : "";
+          const bracketMatch =
+            !prevChar || !/[A-Za-z0-9_)\]`]/.test(prevChar)
+              ? token.match(UNCLOSED_BRACKET_LINK_MATCH_REGEX)
+              : null;
+          if (bracketMatch) {
+            const rawLabel = bracketMatch[1];
+            if (rawLabel !== "`") {
+              spans.push({
+                type: "link",
+                text: rawLabel,
+                href: "#",
+              });
+            }
+          } else {
+            appendPlainTextSpan(spans, token);
+          }
         }
       }
     } else if (token.startsWith("*") && token.endsWith("*")) {

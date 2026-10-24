@@ -64,12 +64,9 @@ export default function MarkdownBlocks(props: {
             }
           >
             <h1 class="first:mt-0 mt-3.5 -mb-1 text-[1.28em] font-semibold tracking-tight text-[var(--text-primary)]">
-              <Show
-                when={(block() as Extract<BlockToken, { type: "heading" }>).text}
-                fallback={"\u00A0"}
-              >
-                <MarkdownInline text={(block() as Extract<BlockToken, { type: "heading" }>).text} />
-              </Show>
+              <MarkdownInline
+                text={(block() as Extract<BlockToken, { type: "heading" }>).text || "\u00A0"}
+              />
             </h1>
           </Match>
           <Match
@@ -79,12 +76,9 @@ export default function MarkdownBlocks(props: {
             }
           >
             <h2 class="first:mt-0 mt-3 -mb-1 text-[1.15em] font-semibold tracking-tight text-[var(--text-primary)]">
-              <Show
-                when={(block() as Extract<BlockToken, { type: "heading" }>).text}
-                fallback={"\u00A0"}
-              >
-                <MarkdownInline text={(block() as Extract<BlockToken, { type: "heading" }>).text} />
-              </Show>
+              <MarkdownInline
+                text={(block() as Extract<BlockToken, { type: "heading" }>).text || "\u00A0"}
+              />
             </h2>
           </Match>
           <Match
@@ -94,22 +88,16 @@ export default function MarkdownBlocks(props: {
             }
           >
             <h3 class="first:mt-0 mt-2.5 -mb-1 text-[1.05em] font-semibold text-[var(--text-primary)]">
-              <Show
-                when={(block() as Extract<BlockToken, { type: "heading" }>).text}
-                fallback={"\u00A0"}
-              >
-                <MarkdownInline text={(block() as Extract<BlockToken, { type: "heading" }>).text} />
-              </Show>
+              <MarkdownInline
+                text={(block() as Extract<BlockToken, { type: "heading" }>).text || "\u00A0"}
+              />
             </h3>
           </Match>
           <Match when={block().type === "heading"}>
             <h4 class="first:mt-0 mt-2 -mb-1 text-[0.98em] font-semibold text-[var(--text-secondary)]">
-              <Show
-                when={(block() as Extract<BlockToken, { type: "heading" }>).text}
-                fallback={"\u00A0"}
-              >
-                <MarkdownInline text={(block() as Extract<BlockToken, { type: "heading" }>).text} />
-              </Show>
+              <MarkdownInline
+                text={(block() as Extract<BlockToken, { type: "heading" }>).text || "\u00A0"}
+              />
             </h4>
           </Match>
           <Match when={block().type === "list"}>
@@ -137,9 +125,7 @@ export default function MarkdownBlocks(props: {
                                     : "•"}
                               </span>
                               <div class="min-w-0 flex-1 whitespace-pre-wrap break-words">
-                                <Show when={item().text} fallback={"\u00A0"}>
-                                  <MarkdownInline text={item().text} />
-                                </Show>
+                                <MarkdownInline text={item().text || "\u00A0"} />
                               </div>
                             </div>
                           }

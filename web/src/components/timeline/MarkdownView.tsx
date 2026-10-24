@@ -1,8 +1,9 @@
 import { createEffect, createMemo, createSignal, onCleanup } from "solid-js";
-import { createIncrementalMarkdownParser } from "./markdown-parser";
+import { advanceStreamingSlice, createIncrementalMarkdownParser } from "./markdown-parser";
 import MarkdownBlocks from "./MarkdownBlocks";
 
 export {
+  advanceStreamingSlice,
   type AlertKind,
   type BlockToken,
   isLikelyFilePath,
@@ -37,17 +38,11 @@ export default function MarkdownView(props: { content: string; density?: "chat" 
       return;
     }
     const remaining = target.length - current.length;
-    if (remaining <= 10) {
-      current = target;
-      setDisplayed(current);
-      return;
-    }
-    const step = Math.max(10, Math.ceil(remaining * 0.38));
-    let nextLen = Math.min(target.length, current.length + step);
-    const code = target.charCodeAt(nextLen - 1);
-    if (code >= 0xd800 && code <= 0xdbff && nextLen < target.length) {
-      nextLen++;
-    }
+    const rawNext =
+      remaining <= 10
+        ? target.length
+        : current.length + Math.max(10, Math.ceil(remaining * 0.38));
+    const nextLen = advanceStreamingSlice(target, current.length, rawNext);
     current = target.slice(0, nextLen);
     setDisplayed(current);
     if (current.length < target.length && typeof requestAnimationFrame === "function") {
@@ -64,12 +59,21 @@ export default function MarkdownView(props: { content: string; density?: "chat" 
       !current ||
       !next.startsWith(current) ||
       !next.startsWith(prevTarget) ||
-      typeof requestAnimationFrame !== "function" ||
-      next.length - current.length <= 12
+      typeof requestAnimationFrame !== "function"
     ) {
       cancelTick();
       current = next;
       setDisplayed(next);
+      return;
+    }
+    if (next.length - current.length <= 12) {
+      cancelTick();
+      const nextLen = advanceStreamingSlice(next, current.length, next.length);
+      current = next.slice(0, nextLen);
+      setDisplayed(current);
+      if (current.length < next.length) {
+        rafId = requestAnimationFrame(tick);
+      }
       return;
     }
     if (rafId === undefined) {

@@ -194,3 +194,86 @@ export function createIncrementalMarkdownParser(): (src: string) => BlockToken[]
     return next;
   };
 }
+
+const STREAM_ATOMIC_INLINE_REGEX =
+  /!?\[(?:`[^`\n]+`|[^\]`\n])+\]\((?:[^()\s]|\([^()\s]*\))+(?:\s+(?:"[^"\n]*"|'[^'\n]*'))?\)|!?\[(?:`[^`\n]+`|[^\]`\n])+\]\([^()\s]*$|`[^`\n]+`|\*\*(?:`[^`\n]+`|[^*`\n]|\*(?!\*)){1,48}\*\*|__(?:`[^`\n]+`|[^_`\n]|_(?!_)){1,48}__|~~[^~\n]{1,48}~~|\*[^*\n]{1,48}\*|https?:\/\/[^\s<>)\]]+|(?:~\/|\.\.?\/|\/)?(?:[\w@.+\-\u4e00-\u9fa5]+\/)+[\w.+\-\u4e00-\u9fa5]+(?::\d+(?:[:\-–—]\d+)?|#L\d+(?:[-–—]L?\d+)?)?/g;
+
+const STREAM_LINE_PREFIX_REGEX =
+  /^(\s*(?:#{1,6}[ \t]+\S?|(?:`{3,}|~{3,})[^\n]*|(?:[-*+]|\d+[.)])[ \t]+(?:\[[ xX]\][ \t]+)?\S?|>\s*(?:\[![A-Za-z]+\]\s*)?|(?:[-*_]\s*){3,}$))/;
+
+/**
+ * Aligns streaming Pacer slice boundaries so complete inline tokens (`[label](url)`,
+ * `` `code` ``, `**bold**`, file paths) and line-start markers (`### `, `- `, ```` ``` ````)
+ * already present in `target` are never cut into half-closed intermediate states.
+ */
+export function advanceStreamingSlice(
+  target: string,
+  currentLen: number,
+  rawNextLen: number
+): number {
+  if (!target || currentLen >= target.length) return target.length;
+  let nextLen = Math.min(target.length, Math.max(currentLen + 1, rawNextLen));
+
+  // Never split a UTF-16 surrogate pair
+  const code = target.charCodeAt(nextLen - 1);
+  if (code >= 0xd800 && code <= 0xdbff && nextLen < target.length) {
+    nextLen++;
+  }
+
+  const lineStart = target.lastIndexOf("\n", nextLen - 1) + 1;
+  const lineEndIdx = target.indexOf("\n", lineStart);
+  const lineEnd = lineEndIdx === -1 ? target.length : lineEndIdx;
+  const line = target.slice(lineStart, lineEnd);
+  let relPos = nextLen - lineStart;
+
+  // Snap past line-start block markers (`### `, `- `, `1. `, code fence opener)
+  const prefixMatch = line.match(STREAM_LINE_PREFIX_REGEX);
+  if (prefixMatch && relPos <= prefixMatch[1].length) {
+    if (/^\s*(?:`{3,}|~{3,})/.test(prefixMatch[1])) {
+      return lineEndIdx === -1 ? lineEnd : lineEnd + 1;
+    }
+    relPos = Math.max(relPos, prefixMatch[1].length);
+  }
+
+  // Snap past complete inline tokens (links, images, code spans, file paths, short emphasis)
+  const inlineRe = new RegExp(STREAM_ATOMIC_INLINE_REGEX.source, "g");
+  let m: RegExpExecArray | null;
+  while ((m = inlineRe.exec(line)) !== null) {
+    const start = m.index;
+    const end = start + m[0].length;
+    if (start < relPos && relPos < end) {
+      relPos = end;
+      break;
+    }
+    if (start >= relPos) break;
+  }
+
+  nextLen = Math.min(target.length, lineStart + relPos);
+
+  // Do not stop mid-delimiter run (`**`, `__`, `~~`, `![`, `](`) when the next char is already in target
+  while (
+    nextLen < lineEnd &&
+    /[*_~`#\-![\]]/.test(target[nextLen - 1]) &&
+    /[*_~`#\-![(]/.test(target[nextLen])
+  ) {
+    nextLen++;
+  }
+
+  // Re-verify surrogate pair after adjustments
+  if (nextLen < target.length) {
+    const c = target.charCodeAt(nextLen - 1);
+    if (c >= 0xd800 && c <= 0xdbff) nextLen++;
+  }
+
+  // If the stream chunk ends right on a closing `]` of `[label]`, hold before `]` for at most
+  // one frame so if `(` arrives in the next chunk, `[label]` never flashes as literal brackets.
+  if (
+    nextLen === target.length &&
+    nextLen - 1 > currentLen &&
+    /\[(?:[\u4e00-\u9fa5][^\[\]\n]*|[A-Za-z][^\[\]\n]+)\]$/.test(line)
+  ) {
+    return nextLen - 1;
+  }
+
+  return nextLen;
+}

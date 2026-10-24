@@ -147,6 +147,10 @@ function isPendingCodeFenceLine(line: string, expectedMarker?: "`" | "~"): boole
   return true;
 }
 
+function isPendingHeadingLine(line: string): boolean {
+  return /^#{1,6}$/.test(line);
+}
+
 function matchHeadingLine(
   line: string,
   isTailLine: boolean
@@ -159,7 +163,7 @@ function matchHeadingLine(
     };
   }
   if (isTailLine) {
-    const tailMatch = line.match(/^(#{1,6})\s*$/);
+    const tailMatch = line.match(/^(#{1,6})\s+$/);
     if (tailMatch) {
       return {
         level: Math.min(4, tailMatch[1].length) as 1 | 2 | 3 | 4,
@@ -228,8 +232,13 @@ export function parseMarkdownBlocks(src: string): BlockToken[] {
     const line = lines[i];
     const isTailLine = i === lines.length - 1;
 
-    // Hold trailing 1-2 backticks/tildes or 1-2 rule chars on a new line so it doesn't flash as <p>
-    if (isTailLine && (isPendingCodeFenceLine(line) || isPendingHorizontalRuleLine(line))) {
+    // Hold trailing 1-2 backticks/tildes, 1-2 rule chars, or bare `#` heading prefix on a new line so it doesn't flash as <p> or wrong <hN>
+    if (
+      isTailLine &&
+      (isPendingCodeFenceLine(line) ||
+        isPendingHorizontalRuleLine(line) ||
+        isPendingHeadingLine(line))
+    ) {
       i++;
       continue;
     }
@@ -361,7 +370,7 @@ export function parseMarkdownBlocks(src: string): BlockToken[] {
         }
         if (
           matchCodeFenceOpen(curLine) ||
-          (curIsTail && isPendingCodeFenceLine(curLine)) ||
+          (curIsTail && (isPendingCodeFenceLine(curLine) || isPendingHeadingLine(curLine))) ||
           isTableStart(lines, i) ||
           isHorizontalRule(curLine) ||
           Boolean(matchHeadingLine(curLine, curIsTail)) ||
@@ -414,7 +423,12 @@ export function parseMarkdownBlocks(src: string): BlockToken[] {
       i < lines.length &&
       lines[i].trim() !== "" &&
       !matchCodeFenceOpen(lines[i]) &&
-      !(i === lines.length - 1 && (isPendingCodeFenceLine(lines[i]) || isPendingHorizontalRuleLine(lines[i]))) &&
+      !(
+        i === lines.length - 1 &&
+        (isPendingCodeFenceLine(lines[i]) ||
+          isPendingHorizontalRuleLine(lines[i]) ||
+          isPendingHeadingLine(lines[i]))
+      ) &&
       !matchHeadingLine(lines[i], i === lines.length - 1) &&
       !isHorizontalRule(lines[i]) &&
       !isTableStart(lines, i) &&

@@ -15,11 +15,13 @@ export interface ReasoningHeading {
 
 function clean(value: string): string {
   return value
-    .replace(/`([^`]+)`/g, "$1")
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/!?\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/!?\[([^\]]+)\]\([^)]*$/g, "$1")
+    .replace(/!?\[([^\]\n]*)\]?$/g, "$1")
     .replace(/<[^>]+>/g, " ")
+    .replace(/<[^>\n]*$/g, " ")
     .replace(/\*\*[ \t]*\*\*/g, " · ")
-    .replace(/[*_~]+/g, "")
+    .replace(/[`*_~]+/g, "")
     .replace(/\s+/g, " ")
     .trim();
 }

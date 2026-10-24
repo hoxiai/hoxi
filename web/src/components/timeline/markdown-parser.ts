@@ -22,6 +22,7 @@ export {
 export { isSameInlineSpan, parseInline } from "./markdown/inline";
 
 export {
+  advanceStreamingSlice,
   createIncrementalMarkdownParser,
   isSameBlockToken,
   stabilizeBlockToken,

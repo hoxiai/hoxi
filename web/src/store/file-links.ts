@@ -368,6 +368,15 @@ export function getResolvedFilePath(rawCandidate: string, directory = ""): strin
   return lruGet(resolvedPathCache, makeCacheKey(directory, clean));
 }
 
+export function getCachedFileCheck(rawCandidate: string, directory = ""): boolean | undefined {
+  const clean = normalizeCandidatePath(rawCandidate);
+  if (!clean) return false;
+  const cacheKey = makeCacheKey(directory, clean);
+  if (lruGet(positiveCache, cacheKey) === true) return true;
+  if (lruGet(negativeCache, cacheKey) === false) return false;
+  return undefined;
+}
+
 function scheduleBatchFlush(): void {
   if (flushScheduled) return;
   flushScheduled = true;

@@ -560,8 +560,8 @@ describe("task progress todo staleness", () => {
     assertTrue(stabilized3.items[0] === list1.items[0], "first item reference stays stable as second streams");
     assertEqual(stabilized3.items[1].text, "Second item");
 
-    // 2. Heading streaming: `###` and `### ` mount as heading immediately rather than paragraph
-    assertDeepEqual(parseMarkdownBlocks("###"), [{ type: "heading", level: 3, text: "" }]);
+    // 2. Heading streaming: bare `###` is held until space arrives so level never jumps h1->h2->h3
+    assertDeepEqual(parseMarkdownBlocks("###"), []);
     assertDeepEqual(parseMarkdownBlocks("### "), [{ type: "heading", level: 3, text: "" }]);
     assertDeepEqual(parseMarkdownBlocks("### Title"), [{ type: "heading", level: 3, text: "Title" }]);
 

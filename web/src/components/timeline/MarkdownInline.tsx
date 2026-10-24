@@ -5,6 +5,7 @@ import {
   appSettings,
   checkFile,
   extractFilePathFromHref,
+  getCachedFileCheck,
   looksLikeFilePath,
   openExternalURL,
   openFileInInspector,
@@ -26,21 +27,48 @@ function hasNestedInlineSyntax(text: string): boolean {
   return text.includes("`") || /<br\s*\/?>/i.test(text) || text.includes("~~");
 }
 
-function isLocalFileHref(href: string): boolean {
-  return extractFilePathFromHref(href) !== null;
-}
-
 function isHttpUrl(raw: string): boolean {
   return /^https?:\/\/[^\s<>"]+$/i.test(raw.trim());
 }
 
-function FileCodeSpan(props: { text: string }) {
-  const [verified, setVerified] = createSignal(looksLikeFilePath(props.text));
+function isCodeOrFileLinkLabel(rawLabel: string): boolean {
+  const trimmed = rawLabel.trim();
+  if (!trimmed) return false;
+  if (trimmed.startsWith("`")) return true;
+  return isLikelyFilePath(trimmed.replace(/^`|`$/g, ""));
+}
+
+function isExternalOrAnchorHref(href: string): boolean {
+  const trimmed = href.trim();
+  if (!trimmed || trimmed === "#") return false;
+  if (trimmed.startsWith("#")) return true;
+  if (/^(?:https?|mailto|tel|javascript|vbscript|data|ws|wss):/i.test(trimmed)) return true;
+  if (/^(?:h|ht|htt|http|https|mailto)$/i.test(trimmed)) return true;
+  return false;
+}
+
+function FileCodeSpan(props: { text: string; unclosed?: boolean }) {
+  const resolveSyncVerified = (raw: string) => {
+    const dir = activeDirectory() || workspace.rootDir || "";
+    const cached = getCachedFileCheck(raw, dir);
+    if (cached !== undefined) return cached;
+    return looksLikeFilePath(raw);
+  };
+  const [verified, setVerified] = createSignal(resolveSyncVerified(props.text));
   const cleanPath = () => stripFileLineSuffix(props.text);
 
   createEffect(() => {
     const raw = props.text;
     const dir = activeDirectory() || workspace.rootDir || "";
+    const cached = getCachedFileCheck(raw, dir);
+    if (cached !== undefined) {
+      setVerified(cached);
+      return;
+    }
+    if (props.unclosed) {
+      setVerified(looksLikeFilePath(raw));
+      return;
+    }
     const sid = workspace.activeSessionID || undefined;
     let cancelled = false;
     onCleanup(() => {
@@ -104,11 +132,19 @@ export default function MarkdownInline(props: { text: string }) {
           <Match
             when={
               span().type === "code" &&
-              !(span() as Extract<InlineSpan, { type: "code" }>).unclosed &&
-              isLikelyFilePath((span() as Extract<InlineSpan, { type: "code" }>).text)
+              isLikelyFilePath((span() as Extract<InlineSpan, { type: "code" }>).text) &&
+              (!(span() as Extract<InlineSpan, { type: "code" }>).unclosed ||
+                looksLikeFilePath((span() as Extract<InlineSpan, { type: "code" }>).text) ||
+                getCachedFileCheck(
+                  (span() as Extract<InlineSpan, { type: "code" }>).text,
+                  activeDirectory() || workspace.rootDir || ""
+                ) === true)
             }
           >
-            <FileCodeSpan text={(span() as Extract<InlineSpan, { type: "code" }>).text} />
+            <FileCodeSpan
+              text={(span() as Extract<InlineSpan, { type: "code" }>).text}
+              unclosed={(span() as Extract<InlineSpan, { type: "code" }>).unclosed}
+            />
           </Match>
           <Match
             when={
@@ -201,8 +237,37 @@ export default function MarkdownInline(props: { text: string }) {
           <Match when={span().type === "link"}>
             {(_) => {
               const linkSpan = () => span() as Extract<InlineSpan, { type: "link" }>;
+              const labelText = createMemo(() => linkSpan().text.replace(/^`|`$/g, ""));
+              const isClosedLink = createMemo(() => {
+                const h = linkSpan().href;
+                if (h === "#") return false;
+                return linkSpan().text === h || text().includes(`](${h})`);
+              });
+              const isPendingProseLabel = createMemo(
+                () => linkSpan().href === "#" && !isCodeOrFileLinkLabel(linkSpan().text)
+              );
+              const isLocalFile = createMemo(() => {
+                const s = linkSpan();
+                if (s.href === "#") return isCodeOrFileLinkLabel(s.text);
+                if (extractFilePathFromHref(s.href) !== null) return true;
+                if (!isClosedLink() && !isExternalOrAnchorHref(s.href)) return true;
+                return false;
+              });
               const localTarget = () => extractFilePathFromHref(linkSpan().href);
-              const isHttp = () => isHttpUrl(linkSpan().href);
+              const iconPath = createMemo(() => {
+                const cleanLabel = stripFileLineSuffix(labelText());
+                if (isLikelyFilePath(cleanLabel)) return cleanLabel;
+                if (!isClosedLink()) return cleanLabel;
+                const target = extractFilePathFromHref(linkSpan().href);
+                return stripFileLineSuffix(target || linkSpan().href || cleanLabel);
+              });
+              const isHttp = createMemo(() => {
+                const h = linkSpan().href.trim();
+                return (
+                  isHttpUrl(h) ||
+                  (!isClosedLink() && /^(?:https?:\/?\/?|h|ht|htt|http|https)$/i.test(h))
+                );
+              });
               const handleHttpOpen = (e: MouseEvent) => {
                 e.preventDefault();
                 const target =
@@ -218,69 +283,71 @@ export default function MarkdownInline(props: { text: string }) {
                 }
               };
               return (
-                <Show
-                  when={!isLocalFileHref(linkSpan().href)}
-                  fallback={
-                    <button
-                      type="button"
-                      onClick={() => openFileInInspector(localTarget() || linkSpan().href)}
-                      title={t("timeline.openInInspectorTooltip")}
-                      class="inline-flex items-center gap-1.5 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-elevated)] hover:border-[var(--accent-border)] hover:bg-[var(--accent-surface)] px-1.5 py-0.5 font-mono text-[0.88em] text-[var(--text-primary)] hover:text-[var(--accent-text)] transition-colors cursor-pointer align-baseline"
-                    >
-                      <FileIcon
-                        node={{ path: stripFileLineSuffix(localTarget() || linkSpan().href), type: "file" }}
-                        class="w-3.5 h-3.5 shrink-0"
-                      />
-                      <span>{linkSpan().text.replace(/^`|`$/g, "")}</span>
-                    </button>
-                  }
-                >
+                <Show when={!isPendingProseLabel()} fallback={<span>{labelText()}</span>}>
                   <Show
-                    when={isHttp()}
+                    when={!isLocalFile()}
                     fallback={
-                      <a
-                        href={linkSpan().href}
-                        target="_blank"
-                        rel="noreferrer"
-                        class="text-[var(--accent-primary)] underline decoration-[var(--accent-border)] underline-offset-2 hover:opacity-85 break-all cursor-pointer"
-                      >
-                        <Show when={hasNestedInlineSyntax(linkSpan().text)} fallback={linkSpan().text}>
-                          <MarkdownInline text={linkSpan().text} />
-                        </Show>
-                      </a>
-                    }
-                  >
-                    <span class="inline-flex items-center gap-0.5 align-baseline">
-                      <a
-                        href={linkSpan().href}
-                        target="_blank"
-                        rel="noreferrer"
-                        title={
-                          appSettings.linkOpenTarget === "external"
-                            ? t("timeline.openInExternalBrowserTooltip")
-                            : t("timeline.openInBrowserTooltip")
-                        }
-                        onClick={handleHttpOpen}
-                        class="text-[var(--accent-primary)] underline decoration-[var(--accent-border)] underline-offset-2 hover:opacity-85 break-all cursor-pointer"
-                      >
-                        <Show when={hasNestedInlineSyntax(linkSpan().text)} fallback={linkSpan().text}>
-                          <MarkdownInline text={linkSpan().text} />
-                        </Show>
-                      </a>
                       <button
                         type="button"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          openExternalURL(linkSpan().href);
-                        }}
-                        title={t("timeline.openInExternalBrowserDirectTooltip")}
-                        aria-label={t("timeline.openInExternalBrowserDirectTooltip")}
-                        class="inline-flex items-center justify-center p-0.5 rounded text-[var(--text-muted)] hover:text-[var(--accent-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+                        onClick={() => openFileInInspector(localTarget() || labelText() || linkSpan().href)}
+                        title={t("timeline.openInInspectorTooltip")}
+                        class="inline-flex items-center gap-1.5 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-elevated)] hover:border-[var(--accent-border)] hover:bg-[var(--accent-surface)] px-1.5 py-0.5 font-mono text-[0.88em] text-[var(--text-primary)] hover:text-[var(--accent-text)] transition-colors cursor-pointer align-baseline"
                       >
-                        <ExternalLink size={11} />
+                        <FileIcon
+                          node={{ path: iconPath(), type: "file" }}
+                          class="w-3.5 h-3.5 shrink-0"
+                        />
+                        <span>{labelText()}</span>
                       </button>
-                    </span>
+                    }
+                  >
+                    <Show
+                      when={isHttp()}
+                      fallback={
+                        <a
+                          href={linkSpan().href}
+                          target="_blank"
+                          rel="noreferrer"
+                          class="text-[var(--accent-primary)] underline decoration-[var(--accent-border)] underline-offset-2 hover:opacity-85 break-all cursor-pointer"
+                        >
+                          <Show when={hasNestedInlineSyntax(linkSpan().text)} fallback={linkSpan().text}>
+                            <MarkdownInline text={linkSpan().text} />
+                          </Show>
+                        </a>
+                      }
+                    >
+                      <span class="inline-flex items-center gap-0.5 align-baseline">
+                        <a
+                          href={linkSpan().href}
+                          target="_blank"
+                          rel="noreferrer"
+                          title={
+                            appSettings.linkOpenTarget === "external"
+                              ? t("timeline.openInExternalBrowserTooltip")
+                              : t("timeline.openInBrowserTooltip")
+                          }
+                          onClick={handleHttpOpen}
+                          class="text-[var(--accent-primary)] underline decoration-[var(--accent-border)] underline-offset-2 hover:opacity-85 break-all cursor-pointer"
+                        >
+                          <Show when={hasNestedInlineSyntax(linkSpan().text)} fallback={linkSpan().text}>
+                            <MarkdownInline text={linkSpan().text} />
+                          </Show>
+                        </a>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            openExternalURL(linkSpan().href);
+                          }}
+                          title={t("timeline.openInExternalBrowserDirectTooltip")}
+                          aria-label={t("timeline.openInExternalBrowserDirectTooltip")}
+                          class="inline-flex items-center justify-center p-0.5 rounded text-[var(--text-muted)] hover:text-[var(--accent-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+                        >
+                          <ExternalLink size={11} />
+                        </button>
+                      </span>
+                    </Show>
                   </Show>
                 </Show>
               );
