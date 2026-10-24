@@ -132,6 +132,18 @@ export const settings: SettingsI18n = {
   accountOfficialAccountTitle: "Hoxi 账号",
   accountOfficialAccountDesc: "与 AI 连接独立；使用 AI 需配置服务商或 CLI",
   accountLoginWithBrowserHint: "点击后将打开浏览器完成官网授权",
+  accountPointsTooltip: "积分余额（点击查看流水明细）",
+  accountCheckinTitle: "每日领 {points} 积分",
+  accountCheckedInTitle: "今日已领 +{points} 积分",
+  accountCheckinMilestoneDesc: "已连签 {streak} 天 · 满 {day} 天额外 +{bonus} 积分",
+  accountCheckinStreakDesc: "已连续签到 {streak} 天 · 明日可领 +{next} 积分",
+  accountCheckinBtn: "签到",
+  accountCheckedInBtn: "已签到",
+  accountCheckingInBtn: "签到中…",
+  accountRewardsEntry: "每日签到得积分",
+  accountManageAccount: "管理账户",
+  accountApiKeysEntry: "积分与 API 密钥",
+  accountReportIssue: "报告问题",
 
   // Software Update
   sectionUpdaterTitle: "软件更新",

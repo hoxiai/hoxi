@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -219,7 +220,7 @@ func (s *Service) ExchangeToken(ctx context.Context, handoffToken, state string)
 		DeviceToken string      `json:"deviceToken"`
 		ExpiresAt   string      `json:"expiresAt"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&res); err != nil {
 		return nil, err
 	}
 
@@ -349,7 +350,7 @@ func (s *Service) runPollWorker(attempt *authorization) {
 				ExpiresAt   string       `json:"expiresAt,omitempty"`
 			}
 
-			decodeErr := json.NewDecoder(resp.Body).Decode(&result)
+			decodeErr := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&result)
 			_ = resp.Body.Close()
 			if resp.StatusCode != http.StatusOK || decodeErr != nil {
 				continue
@@ -394,7 +395,7 @@ func (s *Service) verifyBackground(auth *StoredAuth, baseURL string, generation 
 		User  UserProfile `json:"user"`
 	}
 	if resp.StatusCode == http.StatusOK {
-		if err := json.NewDecoder(resp.Body).Decode(&verifyRes); err != nil {
+		if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&verifyRes); err != nil {
 			return
 		}
 	}
@@ -429,6 +430,132 @@ func (s *Service) verifyBackground(auth *StoredAuth, baseURL string, generation 
 	}
 }
 
+var ErrNotLoggedIn = errors.New("not logged in")
+
+type UpstreamAPIError struct {
+	StatusCode int
+	Message    string
+}
+
+func (e *UpstreamAPIError) Error() string {
+	if e.Message != "" {
+		return e.Message
+	}
+	return fmt.Sprintf("upstream returned HTTP %d", e.StatusCode)
+}
+
+func (s *Service) FetchMemberStatus(ctx context.Context) (map[string]any, error) {
+	return s.callMemberEndpoint(ctx, http.MethodGet, "/api/hoxi/member/checkin", nil)
+}
+
+func (s *Service) PerformCheckin(ctx context.Context) (map[string]any, error) {
+	return s.callMemberEndpoint(ctx, http.MethodPost, "/api/hoxi/member/checkin", []byte(`{}`))
+}
+
+func (s *Service) callMemberEndpoint(ctx context.Context, method, endpoint string, body []byte) (map[string]any, error) {
+	s.mu.RLock()
+	var auth *StoredAuth
+	if s.current != nil && s.current.DeviceToken != "" {
+		copied := *s.current
+		auth = &copied
+	}
+	baseURL := s.serverBaseURL
+	generation := s.generation
+	s.mu.RUnlock()
+
+	if auth == nil {
+		return nil, ErrNotLoggedIn
+	}
+
+	targetURL := fmt.Sprintf("%s%s", baseURL, endpoint)
+	var req *http.Request
+	var err error
+	if body != nil {
+		req, err = http.NewRequestWithContext(ctx, method, targetURL, bytes.NewReader(body))
+	} else {
+		req, err = http.NewRequestWithContext(ctx, method, targetURL, nil)
+	}
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+auth.DeviceToken)
+	req.Header.Set("Accept", "application/json")
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var payload map[string]any
+	_ = json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&payload)
+
+	if resp.StatusCode == http.StatusUnauthorized {
+		s.mu.Lock()
+		if s.current != nil && s.current.DeviceToken == auth.DeviceToken && s.generation == generation && s.serverBaseURL == baseURL {
+			if err := s.store.Clear(); err == nil {
+				s.current = nil
+				s.generation++
+			}
+		}
+		s.mu.Unlock()
+		return nil, ErrNotLoggedIn
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		msg := ""
+		if payload != nil {
+			if m, ok := payload["message"].(string); ok && m != "" {
+				msg = m
+			} else if m, ok := payload["statusMessage"].(string); ok && m != "" {
+				msg = m
+			} else if m, ok := payload["error"].(string); ok && m != "" {
+				msg = m
+			}
+		}
+		return nil, &UpstreamAPIError{
+			StatusCode: resp.StatusCode,
+			Message:    msg,
+		}
+	}
+
+	if payload == nil {
+		payload = map[string]any{}
+	}
+	return payload, nil
+}
+
+func (s *Service) OpenPortalPage(target string) (string, error) {
+	baseURL := s.ServerBaseURL()
+	var fullURL string
+	switch strings.TrimSpace(target) {
+	case "dashboard", "":
+		fullURL = baseURL + "/user/dashboard"
+	case "rewards":
+		fullURL = baseURL + "/user/rewards"
+	case "models":
+		fullURL = baseURL + "/user/models"
+	case "keys":
+		fullURL = baseURL + "/user/keys"
+	case "billing":
+		fullURL = baseURL + "/user/billing"
+	case "account":
+		fullURL = baseURL + "/user/account"
+	case "feedback":
+		fullURL = "https://github.com/hoxiai/hoxi/issues"
+	default:
+		return "", errors.New("unsupported portal target")
+	}
+
+	if s.launchBrowser != nil {
+		go s.launchBrowser(fullURL)
+	}
+	return fullURL, nil
+}
+
 func openBrowser(targetURL string) {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
@@ -439,5 +566,7 @@ func openBrowser(targetURL string) {
 	default:
 		cmd = exec.Command("xdg-open", targetURL)
 	}
-	_ = cmd.Start()
+	if err := cmd.Start(); err == nil {
+		go func() { _ = cmd.Wait() }()
+	}
 }

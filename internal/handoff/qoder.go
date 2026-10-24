@@ -108,7 +108,7 @@ func readQoderDefaultModel() string {
 		if _, err := os.Stat(vscdb); err != nil {
 			continue
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		cmd := exec.CommandContext(ctx, "sqlite3", "-readonly", "-cmd", ".timeout 3000", vscdb, "SELECT value FROM ItemTable WHERE key = 'chat.modelConfig.assistant' LIMIT 1;")
 		cmd.WaitDelay = time.Second
 		out, err := cmd.Output()
@@ -487,7 +487,7 @@ func loadQoderProjectMemories(cwd, sessionID, localDBPath string) string {
 	if localDBPath != "" && sessionID != "" {
 		safeID := strings.ReplaceAll(strings.ReplaceAll(sessionID, "\x00", ""), "'", "''")
 		sqlQuery := fmt.Sprintf("SELECT COALESCE(title,'') AS title, COALESCE(content,'') AS content FROM agent_memory WHERE session_id = '%s' ORDER BY gmt_modified DESC LIMIT 8;", safeID)
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		cmd := exec.CommandContext(ctx, "sqlite3", "-readonly", "-cmd", ".timeout 3000", "-json", localDBPath, sqlQuery)
 		cmd.WaitDelay = time.Second
 		rawOut, err := cmd.Output()

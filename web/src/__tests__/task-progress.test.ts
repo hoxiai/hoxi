@@ -227,6 +227,32 @@ describe("task progress todo staleness", () => {
     assertTrue(!hasLiveTailWorkGroup(completedWithText), "cycle ending with text has no live tail work group");
     assertTrue(hasLiveTailRenderedOutput(completedWithText), "cycle with streaming/completed text already renders output");
 
+    let tailTextReads = 0;
+    const streamingTailPart = {
+      id: "txt_live",
+      sessionID: sid,
+      messageID: "msg_a2",
+      type: "text" as const,
+      get text() {
+        tailTextReads++;
+        return "Streaming markdown body...";
+      },
+    };
+    assertTrue(
+      hasLiveTailRenderedOutput([
+        {
+          info: { id: "msg_a1", sessionID: sid, role: "assistant", time: { created: 1 } },
+          parts: [done("t_early", "read")],
+        },
+        {
+          info: { id: "msg_a2", sessionID: sid, role: "assistant", time: { created: 2 } },
+          parts: [streamingTailPart],
+        },
+      ]),
+      "short-circuits on leading work part"
+    );
+    assertEqual(tailTextReads, 0, "does not subscribe to trailing streaming text part when leading work exists");
+
     const emptyWaitingCycle: MessageTurn[] = [
       {
         info: { id: "msg_a1", sessionID: sid, role: "assistant", time: { created: 2 } },

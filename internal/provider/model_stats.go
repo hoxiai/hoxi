@@ -166,12 +166,12 @@ func newModelStatsStore(rootDir string) *modelStatsStore {
 
 func resolveModelStatsFilePath(rootDir string) string {
 	if dir := hoxipaths.Home(); dir != "" {
-		if err := os.MkdirAll(dir, 0o755); err == nil {
+		if err := os.MkdirAll(dir, 0o700); err == nil {
 			return filepath.Join(dir, "provider-telemetry.json")
 		}
 	}
 	fallbackDir := filepath.Join(rootDir, ".hoxi")
-	_ = os.MkdirAll(fallbackDir, 0o755)
+	_ = os.MkdirAll(fallbackDir, 0o700)
 	return filepath.Join(fallbackDir, "provider-telemetry.json")
 }
 

@@ -375,7 +375,7 @@ func (t *Tracker) InspectSSELine(line string) {
 			t.markBusyLocked(p.SessionID, false)
 			changed = true
 		}
-	case "permission.asked", "question.asked":
+	case "permission.asked", "question.asked", "question.v2.asked":
 		var p struct {
 			ID         string `json:"id"`
 			SessionID  string `json:"sessionID"`
@@ -383,13 +383,13 @@ func (t *Tracker) InspectSSELine(line string) {
 		}
 		if json.Unmarshal(evtProps, &p) == nil && p.ID != "" {
 			kind := "approval"
-			if evtType == "question.asked" {
+			if evtType == "question.asked" || evtType == "question.v2.asked" {
 				kind = "question"
 			}
 			announce = t.addPendingLocked(kind, p.ID, p.SessionID, p.Permission)
 			changed = true
 		}
-	case "permission.replied", "question.replied", "question.rejected":
+	case "permission.replied", "question.replied", "question.rejected", "question.v2.replied", "question.v2.rejected":
 		var p struct {
 			RequestID string `json:"requestID"`
 		}

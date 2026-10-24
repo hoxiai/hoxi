@@ -153,6 +153,24 @@ func BinDir() string {
 	return join(Home(), "bin")
 }
 
+// DefaultWorkspaceDir returns ~/.hoxi/workspaces/default, the fallback local
+// workspace directory used when a session does not target a specific repository.
+func DefaultWorkspaceDir() string {
+	return join(Home(), "workspaces", "default")
+}
+
+// EnsureDefaultWorkspaceDir creates DefaultWorkspaceDir if needed and returns it.
+func EnsureDefaultWorkspaceDir() string {
+	dir := DefaultWorkspaceDir()
+	if dir == "" {
+		return ""
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return ""
+	}
+	return dir
+}
+
 // DBPath returns the SQLite database the managed OpenCode engine writes to.
 func DBPath() string {
 	if custom := env("OPENCODE_DB"); custom != "" {

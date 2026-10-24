@@ -40,6 +40,25 @@ var defaultProviderBaseURLs = map[string]string{
 	"ollama":      "http://127.0.0.1:11434/v1",
 }
 
+// DefaultBaseURL returns the canonical base URL for a known provider, honoring
+// OLLAMA_HOST when resolving local Ollama endpoints.
+func DefaultBaseURL(providerID string) string {
+	pid := strings.ToLower(strings.TrimSpace(providerID))
+	if pid == "ollama" {
+		if host := strings.TrimSpace(os.Getenv("OLLAMA_HOST")); host != "" {
+			if !strings.HasPrefix(host, "http://") && !strings.HasPrefix(host, "https://") {
+				host = "http://" + host
+			}
+			host = strings.TrimRight(host, "/")
+			if !strings.HasSuffix(host, "/v1") {
+				host += "/v1"
+			}
+			return host
+		}
+	}
+	return defaultProviderBaseURLs[pid]
+}
+
 func (g *Service) handleTestProviderModel(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSONError(w, http.StatusMethodNotAllowed, "POST required")
@@ -84,7 +103,7 @@ func (g *Service) handleTestProviderModel(w http.ResponseWriter, r *http.Request
 		}
 	}
 	if baseURL == "" && pid != "" {
-		baseURL = defaultProviderBaseURLs[pid]
+		baseURL = DefaultBaseURL(pid)
 	}
 	if !strings.HasPrefix(baseURL, "http://") && !strings.HasPrefix(baseURL, "https://") {
 		writeJSON(w, http.StatusOK, testProviderModelResponse{OK: false, Error: "Base URL must start with http:// or https://"})

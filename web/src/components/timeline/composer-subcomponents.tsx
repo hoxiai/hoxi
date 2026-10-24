@@ -1,6 +1,6 @@
 // web/src/components/timeline/composer-subcomponents.tsx
 import { createEffect, For, Show } from "solid-js";
-import { AlertCircle, AtSign, ClipboardPaste, FileText, LoaderCircle, Slash, Sparkles, X } from "lucide-solid";
+import { AlertCircle, AtSign, Check, ClipboardPaste, FileText, LoaderCircle, RefreshCw, Slash, Sparkles, X } from "lucide-solid";
 import { FileIcon } from "../icons";
 import { t } from "../../i18n";
 import type { SkillSelection } from "../../services/api";
@@ -313,6 +313,65 @@ export function ComposerAttachmentChips(props: {
             )}
           </For>
         </div>
+      </Show>
+    </>
+  );
+}
+
+export function ComposerEnhancePreview(props: {
+  state: { original: string; enhanced: string } | null;
+  error: string | null;
+  enhancing: boolean;
+  onRegenerate: () => void;
+  onAccept: () => void;
+  onDiscard: () => void;
+}) {
+  return (
+    <>
+      <Show when={props.state}>
+        {(state) => (
+          <div class="mt-2 rounded-xl border border-[var(--accent-border)] bg-[var(--accent-surface)]/35 px-2.5 py-2">
+            <div class="flex items-center gap-1.5">
+              <Sparkles size={12} class="text-[var(--accent-primary)]" />
+              <span class="text-[11px] font-semibold text-[var(--text-primary)]">
+                {t("timeline.enhancedPromptTitle")}
+              </span>
+              <div class="ml-auto flex items-center gap-1">
+                <button
+                  type="button"
+                  class="inline-flex items-center gap-1 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-1.5 py-0.5 text-[11px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer disabled:opacity-40"
+                  disabled={props.enhancing}
+                  onClick={props.onRegenerate}
+                >
+                  <RefreshCw size={10} class={props.enhancing ? "animate-spin" : ""} />
+                  {t("timeline.enhanceRegenerate")}
+                </button>
+                <button
+                  type="button"
+                  class="inline-flex items-center gap-1 rounded-md bg-[var(--accent-primary)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--accent-foreground)] hover:opacity-90 cursor-pointer"
+                  onClick={props.onAccept}
+                >
+                  <Check size={10} />
+                  {t("timeline.enhanceAccept")}
+                </button>
+                <button
+                  type="button"
+                  class="inline-flex h-5 w-5 items-center justify-center rounded-md text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer"
+                  title={t("timeline.enhanceDiscard")}
+                  onClick={props.onDiscard}
+                >
+                  <X size={11} />
+                </button>
+              </div>
+            </div>
+            <div class="mt-1.5 max-h-40 overflow-y-auto whitespace-pre-wrap text-[12px] leading-relaxed text-[var(--text-secondary)] selectable-text">
+              {state().enhanced}
+            </div>
+          </div>
+        )}
+      </Show>
+      <Show when={props.error}>
+        <p class="mt-1.5 text-[11px] text-[var(--danger-text)]">{props.error}</p>
       </Show>
     </>
   );

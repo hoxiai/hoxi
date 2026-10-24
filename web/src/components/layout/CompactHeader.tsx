@@ -6,6 +6,8 @@ import {
 } from "lucide-solid";
 import {
   activeSession,
+  defaultWorkspaceDir,
+  normalizeFolderPath,
   openEditWorkspaceModal,
   resolveRootSessionID,
   workspace,
@@ -17,6 +19,7 @@ import BranchManagerPopover from "./BranchManagerPopover";
 import HeaderOverflowMenu from "./HeaderOverflowMenu";
 import UpdateIndicator from "./UpdateIndicator";
 import NetworkStatusBanner from "./NetworkStatusBanner";
+import { isWorkSurface, surfaceExtension } from "./surface-extension";
 
 interface CompactHeaderProps {
   leftNavOpen: boolean;
@@ -78,15 +81,31 @@ export default function CompactHeader(props: CompactHeaderProps) {
           <PanelLeft size={15} />
         </button>
 
-        <button
-          type="button"
-          style={{ "--wails-draggable": "no-drag" } as any}
-          onClick={() => openEditWorkspaceModal(workspace.rootDir)}
-          class="min-w-0 text-[var(--text-secondary)] hover:text-[var(--text-primary)] font-mono text-[12px] truncate max-w-[180px] transition-colors cursor-pointer"
-          title={`${workspace.rootDir} (${t("leftNav.editWorkspace")})`}
+        <Show when={surfaceExtension.enabled && surfaceExtension.renderHeaderSwitch}>
+          {surfaceExtension.renderHeaderSwitch!()}
+        </Show>
+
+        <Show
+          when={
+            !(
+              isWorkSurface() &&
+              surfaceExtension.hideGitControls &&
+              (!workspace.rootDir ||
+                normalizeFolderPath(workspace.rootDir) ===
+                  normalizeFolderPath(defaultWorkspaceDir()))
+            )
+          }
         >
-          {projectName()}
-        </button>
+          <button
+            type="button"
+            style={{ "--wails-draggable": "no-drag" } as any}
+            onClick={() => openEditWorkspaceModal(workspace.rootDir)}
+            class="min-w-0 text-[var(--text-secondary)] hover:text-[var(--text-primary)] font-mono text-[12px] truncate max-w-[180px] transition-colors cursor-pointer"
+            title={`${workspace.rootDir} (${t("leftNav.editWorkspace")})`}
+          >
+            {projectName()}
+          </button>
+        </Show>
       </div>
 
       <div class="flex flex-1 min-w-0 items-center justify-center gap-2">
@@ -96,7 +115,9 @@ export default function CompactHeader(props: CompactHeaderProps) {
         >
           {sessionTitle()}
         </span>
-        <BranchManagerPopover />
+        <Show when={!(isWorkSurface() && surfaceExtension.hideGitControls)}>
+          <BranchManagerPopover />
+        </Show>
       </div>
 
       <div class="flex shrink-0 items-center gap-1.5 text-[12px]">

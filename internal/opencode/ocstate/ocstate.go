@@ -21,8 +21,8 @@ import (
 )
 
 const (
-	sqliteReadTimeout  = 3 * time.Second
-	sqliteWriteTimeout = 4 * time.Second
+	sqliteReadTimeout  = 5 * time.Second
+	sqliteWriteTimeout = 6 * time.Second
 )
 
 // ExternalDBPaths lists the existing opencode.db files of the user's own

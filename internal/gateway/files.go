@@ -160,16 +160,7 @@ func shouldSkipFallbackDir(name string) bool {
 	if name == "" {
 		return true
 	}
-	switch name {
-	case ".git", ".hg", ".svn", ".hoxi", ".claude",
-		"node_modules", ".pnpm-store", "vendor", "dist", "build", "target", "out",
-		".next", ".nuxt", ".turbo", ".cache", "__pycache__", ".pytest_cache",
-		".venv", "venv", "Pods", "DerivedData", ".dart_tool", ".pub-cache",
-		"go-build", "go-build-cache", ".gocache", ".gomodcache":
-		return true
-	default:
-		return false
-	}
+	return skipFileSearchDir(name)
 }
 
 func findFallbackInDirs(dirs []string, relQuery string) (string, os.FileInfo) {

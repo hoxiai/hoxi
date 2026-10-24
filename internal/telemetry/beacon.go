@@ -108,7 +108,7 @@ func ReportLaunch(logger *slog.Logger) {
 			return
 		}
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("User-Agent", "HoxiDesktop/"+buildinfo.Version)
+		req.Header.Set("User-Agent", buildinfo.UserAgent())
 		if stored, loadErr := auth.NewTokenStore().Load(); loadErr == nil && stored != nil && stored.DeviceToken != "" {
 			req.Header.Set("Authorization", "Bearer "+stored.DeviceToken)
 		}

@@ -30,6 +30,7 @@ import { AttentionNavView, RunningNavView } from "./CrossProjectNavView";
 import UserAccountMenu from "./UserAccountMenu";
 import { t } from "../../i18n";
 import { matchesProjectSessionSearch } from "./session-search";
+import { isWorkSurface, surfaceExtension } from "./surface-extension";
 
 const SYNC_MIN_SPIN_MS = 600;
 
@@ -366,6 +367,10 @@ export default function LeftNav() {
 
   return (
     <aside class="relative h-full w-full flex flex-col bg-transparent pl-2 select-none">
+      <Show
+        when={!(isWorkSurface() && surfaceExtension.renderLeftNav)}
+        fallback={surfaceExtension.renderLeftNav!()}
+      >
       {/* Unified Minimal Header: New Thread + Mode Switcher + Search + New Workspace */}
       <div class="pl-1.5 pr-2.5 pt-1 pb-1.5 flex items-center justify-between gap-1 shrink-0">
         <div class="group/newthread relative flex min-w-0 items-center">
@@ -645,6 +650,7 @@ export default function LeftNav() {
           onArchiveSession={(p, ev, id) => void onArchiveInProject(p, ev, id)}
           onDiscardSession={(p, ev, id) => onDiscardInProject(p, ev, id)}
         />
+      </Show>
       </Show>
 
       {/* Bottom Bar: Account Popover + Settings Gear */}

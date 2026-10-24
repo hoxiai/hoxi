@@ -630,6 +630,21 @@
     "destructive": true
   },
   {
+    "command": "cat ~/.hoxi/tunnel.json",
+    "decision": "ask",
+    "destructive": true
+  },
+  {
+    "command": "cat ~/.hoxi/tunnel-dev.json",
+    "decision": "ask",
+    "destructive": true
+  },
+  {
+    "command": "sandbox-exec -f '/tmp/p.sb' -- sh -c 'git status'",
+    "decision": "allow",
+    "destructive": false
+  },
+  {
     "command": "cat ~/.claude/.credentials.json",
     "decision": "ask",
     "destructive": true

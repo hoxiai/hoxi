@@ -196,7 +196,28 @@ bundle_and_sign_macos_app() {
 }
 
 STAGE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/hoxi-build.XXXXXX")"
-trap 'rm -rf "${STAGE_DIR}"' EXIT
+STAGED_SKILLS=()
+cleanup_build_stage() {
+  for skill_dir in "${STAGED_SKILLS[@]+"${STAGED_SKILLS[@]}"}"; do
+    rm -rf "${skill_dir}"
+  done
+  rm -rf "${STAGE_DIR}"
+}
+trap cleanup_build_stage EXIT
+
+WORK_REPO_DIR="${HOXI_WORK_DIR:-${PROJECT_ROOT}/../hoxi-work}"
+if [[ -d "${WORK_REPO_DIR}/skills" ]]; then
+  for skill_src in "${WORK_REPO_DIR}/skills"/*; do
+    [[ -d "${skill_src}" && -f "${skill_src}/SKILL.md" ]] || continue
+    skill_name="$(basename "${skill_src}")"
+    target_dir="${PROJECT_ROOT}/internal/skills/defaults/${skill_name}"
+    if [[ ! -d "${target_dir}" ]]; then
+      cp -R "${skill_src}" "${target_dir}"
+      STAGED_SKILLS+=("${target_dir}")
+      echo "📦 Staged private skill '${skill_name}' from ${WORK_REPO_DIR}"
+    fi
+  done
+fi
 
 if [[ "${BUILD_DEV}" -eq 0 && -d "build/bin/Hoxi Dev.app" ]]; then
   mv "build/bin/Hoxi Dev.app" "${STAGE_DIR}/Hoxi Dev.app"

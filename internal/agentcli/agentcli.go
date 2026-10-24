@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -50,7 +51,10 @@ func CommonUserBinDirs() []string {
 	var dirs []string
 	if home, _ := os.UserHomeDir(); home != "" {
 		dirs = append(dirs,
+			filepath.Join(home, ".opencode", "bin"),
+			filepath.Join(home, ".bun", "bin"),
 			filepath.Join(home, ".local", "bin"),
+			filepath.Join(home, ".cargo", "bin"),
 			filepath.Join(home, "sdk", "node", "bin"),
 			filepath.Join(home, ".volta", "bin"),
 			filepath.Join(home, ".fnm", "current", "bin"),
@@ -63,7 +67,9 @@ func CommonUserBinDirs() []string {
 			}
 		}
 	}
-	dirs = append(dirs, "/opt/homebrew/bin", "/usr/local/bin")
+	if runtime.GOOS != "windows" {
+		dirs = append(dirs, "/opt/homebrew/bin", "/usr/local/bin")
+	}
 	return dirs
 }
 

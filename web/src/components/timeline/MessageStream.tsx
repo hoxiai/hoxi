@@ -129,6 +129,8 @@ export default function MessageStream(props: { hidden?: boolean }) {
     );
   });
 
+  const activeCycle = createMemo(() => resolveActiveExecutionCycle(turns()));
+
   // Keep the bottom live execution status bar continuously visible ("不断档") while busy
   const showThinkingPlaceholder = createMemo(() => {
     if (activeStatus().type !== "busy") return false;
@@ -138,14 +140,12 @@ export default function MessageStream(props: { hidden?: boolean }) {
     const last = list[list.length - 1];
     if (last.info.role === "assistant" && last.info.error) return false;
 
-    const cycle = resolveActiveExecutionCycle(list);
+    const cycle = activeCycle();
     if (!cycle) return false;
     if (hasLiveTailRenderedOutput(cycle.cycleTurns)) return false;
 
     return true;
   });
-
-  const activeCycle = createMemo(() => resolveActiveExecutionCycle(turns()));
 
   const cycleStartedAt = createMemo(() => {
     const cycle = activeCycle();

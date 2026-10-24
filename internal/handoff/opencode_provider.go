@@ -16,15 +16,27 @@ import (
 )
 
 func externalOpenCodeConfigDir() string {
+	if custom := strings.TrimSpace(os.Getenv("OPENCODE_CONFIG_DIR")); custom != "" {
+		return filepath.Clean(custom)
+	}
 	if xdg := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME")); xdg != "" {
 		return filepath.Join(xdg, "opencode")
 	}
 	home, _ := os.UserHomeDir()
 	if home != "" {
-		return filepath.Join(home, ".config", "opencode")
+		p := filepath.Join(home, ".config", "opencode")
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
 	}
 	if appData := strings.TrimSpace(os.Getenv("APPDATA")); appData != "" {
-		return filepath.Join(appData, "opencode")
+		p := filepath.Join(appData, "opencode")
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	if home != "" {
+		return filepath.Join(home, ".config", "opencode")
 	}
 	return ""
 }
@@ -42,6 +54,9 @@ func externalOpenCodeAuthPaths() []string {
 	}
 	if dir := strings.TrimSpace(os.Getenv("OPENCODE_DATA_DIR")); dir != "" {
 		add(filepath.Join(dir, "auth.json"))
+	}
+	if xdgData := strings.TrimSpace(os.Getenv("XDG_DATA_HOME")); xdgData != "" {
+		add(filepath.Join(xdgData, "opencode", "auth.json"))
 	}
 	if home, _ := os.UserHomeDir(); home != "" {
 		add(filepath.Join(home, ".local", "share", "opencode", "auth.json"))

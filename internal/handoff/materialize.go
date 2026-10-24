@@ -461,7 +461,7 @@ func insertNormalizedTurnsToOpenCodeDB(
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "sqlite3", dbPath)
+	cmd := exec.CommandContext(ctx, "sqlite3", "-cmd", ".timeout 5000", dbPath)
 	cmd.WaitDelay = time.Second
 	cmd.Stdin = strings.NewReader(sqlBuf.String())
 	if out, err := cmd.CombinedOutput(); err != nil {

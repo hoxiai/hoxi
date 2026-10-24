@@ -232,3 +232,127 @@ func TestOpenCodeSettledMarkExpires(t *testing.T) {
 		t.Fatal("an expired settle mark must not block a new answer")
 	}
 }
+
+func TestRejectOpenCodeSessionPermissionsSkipsSettledAndSettlesPending(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	svc := NewService(dir, nil, statusbar.NewTracker(), filepath.Join(t.TempDir(), "sessions.json"))
+	setTestApprovalPolicy(t, svc, ApprovalPolicy{Mode: ApprovalModeManual})
+
+	fake := &staleOpenCodePermissions{
+		pending: []map[string]interface{}{
+			{"id": "per_oc_already_settled", "sessionID": "oc-stop", "permission": "bash", "patterns": []interface{}{"echo done"}},
+			{"id": "per_oc_pending_stop", "sessionID": "oc-stop", "permission": "bash", "patterns": []interface{}{"rm -rf dist"}},
+		},
+		replyStatus: http.StatusOK,
+		replies:     map[string]int{},
+	}
+	server := httptest.NewServer(http.HandlerFunc(fake.handler))
+	defer server.Close()
+	svc.ConfigureOpenCode(server.URL, "secret")
+
+	rec := SessionRecord{ID: "ses_oc_stop", Runtime: "opencode", ProjectDir: dir, WorktreePath: dir, ExternalID: "oc-stop"}
+	if err := svc.store.Put(rec); err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate per_oc_already_settled having been approved previously, while
+	// per_oc_pending_stop is waiting on the user.
+	svc.recordOpenCodeAudit("per_oc_already_settled", rec.ID, dir, "once", "", "desktop")
+	svc.settleOpenCodePermission("per_oc_already_settled")
+	svc.gate.rememberOpenCodeAsk("per_oc_pending_stop", openCodeAsk{
+		item:      fake.pending[1],
+		sessionID: rec.ID,
+		dir:       dir,
+	})
+
+	svc.rejectOpenCodeSessionPermissions(context.Background(), rec)
+
+	if got := fake.replyCount("per_oc_already_settled"); got != 0 {
+		t.Fatalf("already-settled permission got %d stop replies, want 0", got)
+	}
+	if got := fake.replyCount("per_oc_pending_stop"); got != 1 {
+		t.Fatalf("pending permission got %d stop replies, want 1", got)
+	}
+	if got := svc.openCodeAutoReplyState("per_oc_pending_stop"); got != openCodeAutoReplySettled {
+		t.Fatalf("pending permission state after stop = %d, want settled", got)
+	}
+	if _, stillAsked := svc.gate.openCodeAskFor("per_oc_pending_stop"); stillAsked {
+		t.Fatal("stopped permission must be removed from openCodeAsks so timeout does not re-fire")
+	}
+	for _, e := range svc.audit.list(rec.ID, 20) {
+		if e.RequestID == "per_oc_already_settled" && e.Decision == "reject" {
+			t.Fatalf("already-settled permission must not get a conflicting system reject audit: %+v", e)
+		}
+	}
+}
+
+func TestReconcilePendingApprovalsHonorsUnattendedIsolationAndHardDeny(t *testing.T) {
+	t.Parallel()
+	projectDir := t.TempDir()
+	worktreeDir := filepath.Join(projectDir, ".hoxi", "worktrees", "ses_agy_iso")
+	svc := NewService(projectDir, nil, statusbar.NewTracker(), filepath.Join(t.TempDir(), "sessions.json"))
+	setTestApprovalPolicy(t, svc, ApprovalPolicy{Mode: ApprovalModeManual})
+
+	rec := SessionRecord{
+		ID:             "ses_agy_iso",
+		Runtime:        string(RuntimeAntigravity),
+		ProjectDir:     projectDir,
+		WorktreePath:   worktreeDir,
+		SandboxMode:    "worktree",
+		CommandSandbox: true,
+	}
+	if err := svc.store.Put(rec); err != nil {
+		t.Fatal(err)
+	}
+
+	allowPa := &pendingApproval{
+		sid:   rec.ID,
+		reply: make(chan approvalReply, 1),
+		done:  make(chan struct{}),
+		req: map[string]interface{}{
+			"id":         "per_rnr_allow",
+			"sessionID":  rec.ID,
+			"permission": "bash",
+			"patterns":   []string{"bash -c 'echo ok'"},
+			"metadata":   map[string]interface{}{"command": "bash -c 'echo ok'"},
+		},
+	}
+	denyPa := &pendingApproval{
+		sid:   rec.ID,
+		reply: make(chan approvalReply, 1),
+		done:  make(chan struct{}),
+		req: map[string]interface{}{
+			"id":         "per_rnr_push",
+			"sessionID":  rec.ID,
+			"permission": "bash",
+			"patterns":   []string{"git push origin main"},
+			"metadata":   map[string]interface{}{"command": "git push origin main"},
+		},
+	}
+	svc.gate.mu.Lock()
+	svc.gate.pending["per_rnr_allow"] = allowPa
+	svc.gate.pending["per_rnr_push"] = denyPa
+	svc.gate.mu.Unlock()
+
+	setTestApprovalPolicy(t, svc, ApprovalPolicy{Mode: ApprovalModeUnattended})
+	svc.reconcilePendingApprovals()
+
+	select {
+	case ans := <-allowPa.reply:
+		if ans.Reply != "once" || ans.Source != approvalSourcePolicy {
+			t.Fatalf("isolated allow reply = %+v, want once/policy", ans)
+		}
+	default:
+		t.Fatal("expected isolated command to be approved on switch to unattended")
+	}
+
+	select {
+	case ans := <-denyPa.reply:
+		if ans.Reply != "reject" || ans.Source != approvalSourceUnattended {
+			t.Fatalf("hard-deny reply = %+v, want reject/unattended", ans)
+		}
+	default:
+		t.Fatal("expected hard-deny command to be rejected on switch to unattended")
+	}
+}

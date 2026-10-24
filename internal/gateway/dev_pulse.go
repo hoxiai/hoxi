@@ -588,7 +588,7 @@ SELECT json_object(
 		startOfTodayMs, handoff.SQLNotImportedTurnClause("s.title", "p.data", "p.time_created", "s.time_created"),
 		startOfTodayMs, handoff.SQLNotImportedTurnClause("s.title", "p.data", "p.time_created", "s.time_created"))
 
-	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "sqlite3", "-readonly", "-cmd", ".timeout 5000", dbPath, sqlQuery)
 	out, err := cmd.Output()

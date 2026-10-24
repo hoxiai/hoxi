@@ -54,6 +54,45 @@ func SeedDefaults() (int, error) {
 		}
 		seeded++
 	}
+	if extra, err := seedExternalSkillDir(root); err == nil {
+		seeded += extra
+	}
+	return seeded, nil
+}
+
+func seedExternalSkillDir(root string) (int, error) {
+	candidates := []string{os.Getenv("HOXI_EXTRA_SKILLS_DIR")}
+	if wd, err := os.Getwd(); err == nil && wd != "" {
+		candidates = append(candidates, filepath.Clean(filepath.Join(wd, "..", "hoxi-work", "skills")))
+	}
+	seeded := 0
+	for _, dir := range candidates {
+		if dir == "" {
+			continue
+		}
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			name := entry.Name()
+			src := filepath.Join(dir, name, "SKILL.md")
+			data, err := os.ReadFile(src)
+			if err != nil {
+				continue
+			}
+			target := filepath.Join(root, name, "SKILL.md")
+			if _, err := os.Stat(target); err == nil {
+				continue
+			}
+			if err := writeNewSkillFile(target, data); err == nil {
+				seeded++
+			}
+		}
+	}
 	return seeded, nil
 }
 

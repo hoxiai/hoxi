@@ -131,6 +131,18 @@ export const settings = {
   accountOfficialAccountTitle: "Official Hoxi Developer Account",
   accountOfficialAccountDesc: "Separate from AI connections; configure a provider or CLI to use AI",
   accountLoginWithBrowserHint: "Click to launch your system browser for authorization",
+  accountPointsTooltip: "Points balance (click for billing details)",
+  accountCheckinTitle: "Claim {points} pts daily",
+  accountCheckedInTitle: "Claimed +{points} pts today",
+  accountCheckinMilestoneDesc: "{streak}d streak · +{bonus} pts at {day}d",
+  accountCheckinStreakDesc: "{streak}d streak · +{next} pts tomorrow",
+  accountCheckinBtn: "Check in",
+  accountCheckedInBtn: "Checked in",
+  accountCheckingInBtn: "Claiming…",
+  accountRewardsEntry: "Check-in & Points Rewards",
+  accountManageAccount: "Manage Account",
+  accountApiKeysEntry: "Points & API Keys",
+  accountReportIssue: "Report Issue",
 
   // Software Update
   sectionUpdaterTitle: "Software Updates",

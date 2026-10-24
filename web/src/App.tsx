@@ -12,6 +12,7 @@ import {
   bootstrapProjectSessions,
   drainNextQueuedPrompt,
   handleIncomingPermissionRequest,
+  hasStoredSurfaceMode,
   markPermissionResolved,
   handleSessionErrorEvent,
   isDismissedProjectPath,
@@ -43,6 +44,8 @@ import {
   runSessionCodeAudit,
   scheduleRefreshWorktreeStatus,
   selectSession,
+  setDefaultWorkspaceDir,
+  setSurfaceMode,
   setWorkspace,
   syncActiveProjectID,
   syncPendingPermissions,
@@ -53,6 +56,7 @@ import {
   upsertMessagePart,
   workspace,
 } from "./store/workspace";
+import { isWorkSurface, surfaceExtension } from "./components/layout/surface-extension";
 import { t } from "./i18n";
 
 export default function App() {
@@ -96,6 +100,13 @@ export default function App() {
     void (async () => {
       try {
         const boot = await hoxiAPI.getBootstrap();
+        if (surfaceExtension.enabled && !hasStoredSurfaceMode() && surfaceExtension.defaultMode) {
+          setSurfaceMode(surfaceExtension.defaultMode);
+        }
+        const fallbackWorkDir = boot.defaultWorkspaceDir
+          ? normalizeFolderPath(boot.defaultWorkspaceDir)
+          : "";
+        setDefaultWorkspaceDir(fallbackWorkDir);
         const bootRoot = isInvalidProjectPath(boot.rootDir)
           ? ""
           : normalizeFolderPath(boot.rootDir);
@@ -134,7 +145,9 @@ export default function App() {
 
         await Promise.all([loadSavedWorkspaces(), loadProjects()]);
 
-        const activeRoot = resolveDefaultProjectDir(bootRoot);
+        const resolvedRoot = resolveDefaultProjectDir(bootRoot);
+        const activeRoot =
+          resolvedRoot || (isWorkSurface() && fallbackWorkDir ? fallbackWorkDir : "");
         if (activeRoot && activeRoot !== workspace.rootDir) {
           setWorkspace("rootDir", activeRoot);
         }
@@ -296,7 +309,9 @@ export default function App() {
                 void loadSessionMessages(sid).then(() => {
                   void drainNextQueuedPrompt(sid);
                   void advanceSessionGoal(sid);
-                  void runSessionCodeAudit(sid, false);
+                  if (!(isWorkSurface() && surfaceExtension.skipCodeAudit)) {
+                    void runSessionCodeAudit(sid, false);
+                  }
                 });
               }
               break;

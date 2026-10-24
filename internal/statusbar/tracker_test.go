@@ -50,6 +50,21 @@ func TestStatusTrackerInspectSSELine(t *testing.T) {
 		t.Fatalf("expected Attention=0 after question.rejected, got %+v", snap)
 	}
 
+	// Verify question.v2.asked / question.v2.replied / question.v2.rejected
+	tracker.InspectSSELine(`data: {"type":"question.v2.asked","properties":{"id":"qv2_1","sessionID":"ses_1"}}`)
+	if snap := tracker.Snapshot(); snap.Attention != 1 || snap.PendingApprovals != 1 {
+		t.Fatalf("expected Attention=1 PendingApprovals=1 after question.v2.asked, got %+v", snap)
+	}
+	tracker.InspectSSELine(`data: {"type":"question.v2.replied","properties":{"requestID":"qv2_1"}}`)
+	if snap := tracker.Snapshot(); snap.Attention != 0 || snap.PendingApprovals != 0 {
+		t.Fatalf("expected Attention=0 after question.v2.replied, got %+v", snap)
+	}
+	tracker.InspectSSELine(`data: {"type":"question.v2.asked","properties":{"id":"qv2_2","sessionID":"ses_2"}}`)
+	tracker.InspectSSELine(`data: {"type":"question.v2.rejected","properties":{"requestID":"qv2_2"}}`)
+	if snap := tracker.Snapshot(); snap.Attention != 0 || snap.PendingApprovals != 0 {
+		t.Fatalf("expected Attention=0 after question.v2.rejected, got %+v", snap)
+	}
+
 	// 6. Sessions become idle / error -> Running = 0
 	tracker.InspectSSELine(`data: {"type":"session.idle","properties":{"sessionID":"ses_1"}}`)
 	tracker.InspectSSELine(`data: {"type":"session.error","properties":{"sessionID":"ses_2"}}`)

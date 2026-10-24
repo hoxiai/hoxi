@@ -179,6 +179,45 @@ export interface FreeTiersResponse {
   };
 }
 
+export interface MemberCheckinStatus {
+  accountLinked?: boolean;
+  userId?: number;
+  email?: string;
+  emailVerified?: boolean;
+  gatewayAvailable?: boolean;
+  date?: string;
+  checkedInToday: boolean;
+  alreadyCheckedIn?: boolean;
+  streak: number;
+  maxStreak?: number;
+  todayPoints: number;
+  nextPoints: number;
+  balance: number;
+  walletPoints?: number;
+  pendingPoints?: number;
+  totalDays?: number;
+  rewardStatus?: string;
+  rewardOperationId?: string | null;
+  rewardError?: string | null;
+  rule?: {
+    version?: string;
+    basePoints: number;
+    streakStep: number;
+    maxPoints: number;
+  };
+  milestones?: Array<{ day: number; points: number }>;
+  nextMilestone?: { day: number; points: number; daysLeft: number } | null;
+}
+
+export type PortalTarget =
+  | "dashboard"
+  | "rewards"
+  | "models"
+  | "keys"
+  | "billing"
+  | "account"
+  | "feedback";
+
 export const authAPI = {
   getStatus(): Promise<AuthStatusSnapshot> {
     return requestJSON("/api/hoxi/auth/status");
@@ -197,6 +236,23 @@ export const authAPI = {
   },
   logout(): Promise<{ success: boolean }> {
     return requestJSON("/api/hoxi/auth/logout", { method: "POST" });
+  },
+  getMemberStatus(): Promise<MemberCheckinStatus> {
+    return requestJSON("/api/hoxi/auth/member");
+  },
+  checkin(): Promise<MemberCheckinStatus> {
+    return requestJSON("/api/hoxi/auth/checkin", {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+  },
+  openPortalPage(
+    target: PortalTarget
+  ): Promise<{ success: boolean; url: string }> {
+    return requestJSON("/api/hoxi/auth/open-url", {
+      method: "POST",
+      body: JSON.stringify({ target }),
+    });
   },
 };
 

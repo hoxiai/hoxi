@@ -1,6 +1,9 @@
 import { createSignal } from "solid-js";
 
 export const LAYOUT_PREFS_KEY = "hoxi.layout:v1";
+export const SURFACE_MODE_KEY = "hoxi.surface-mode:v1";
+
+export type SurfaceMode = "code" | "work";
 
 export const LEFT_PANE_MIN = 220;
 export const LEFT_PANE_MAX = 360;
@@ -48,11 +51,38 @@ function initialLayout(): LayoutPrefs {
   }
 }
 
+function readStoredSurfaceMode(): SurfaceMode | null {
+  try {
+    const saved = localStorage.getItem(SURFACE_MODE_KEY);
+    if (saved === "work" || saved === "code") return saved;
+  } catch {
+    /* storage unavailable */
+  }
+  return null;
+}
+
+export function hasStoredSurfaceMode(): boolean {
+  return readStoredSurfaceMode() !== null;
+}
+
 const initial = initialLayout();
 
 export const [leftNavOpen, setLeftNavOpen] = createSignal(initial.leftNavOpen);
 export const [leftWidth, setLeftWidth] = createSignal(initial.leftWidth);
 export const [rightWidth, setRightWidth] = createSignal(initial.rightWidth);
+export const [surfaceMode, setSurfaceModeSignal] = createSignal<SurfaceMode>(
+  readStoredSurfaceMode() || "code"
+);
+export const [defaultWorkspaceDir, setDefaultWorkspaceDir] = createSignal("");
+
+export function setSurfaceMode(mode: SurfaceMode): void {
+  setSurfaceModeSignal(mode);
+  try {
+    localStorage.setItem(SURFACE_MODE_KEY, mode);
+  } catch {
+    /* storage unavailable */
+  }
+}
 
 export function saveLayoutPrefs(): void {
   try {

@@ -552,13 +552,7 @@ func classifyCandidateFailure(status int, err error, body []byte) breakerClass {
 	}
 	if msg := failureText(err, body); msg != "" {
 		switch {
-		case strings.Contains(msg, "insufficient_quota"),
-			strings.Contains(msg, "insufficient balance"),
-			strings.Contains(msg, "insufficient_balance"),
-			strings.Contains(msg, "credit balance is too low"),
-			strings.Contains(msg, "billing_hard_limit"),
-			strings.Contains(msg, "freeusagelimiterror"),
-			strings.Contains(msg, "exceeded your current quota"):
+		case isQuotaExhausted([]byte(msg)):
 			return breakerClassQuota
 		case strings.Contains(msg, "model not found"),
 			strings.Contains(msg, "model_not_found"),

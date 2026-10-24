@@ -41,6 +41,9 @@ func userHoxiModelsPath() string {
 }
 
 func openCodeConfigDir() string {
+	if custom := strings.TrimSpace(os.Getenv("OPENCODE_CONFIG_DIR")); custom != "" {
+		return filepath.Clean(custom)
+	}
 	if xdg := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME")); xdg != "" {
 		return filepath.Join(xdg, "opencode")
 	}
@@ -150,7 +153,7 @@ func loadOpenCodeImportedProvidersFromDisk() map[string]interface{} {
 		return map[string]interface{}{}
 	}
 	result := map[string]interface{}{}
-	for _, name := range []string{"config.json", "opencode.json"} {
+	for _, name := range []string{"config.json", "opencode.json", "opencode.jsonc"} {
 		parsed := readJSONMapFile(filepath.Join(dir, name))
 		if provMap, ok := parsed["provider"].(map[string]interface{}); ok {
 			for k, v := range provMap {

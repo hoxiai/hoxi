@@ -17,6 +17,25 @@ import (
 
 const grokUpstreamBaseURL = "https://cli-chat-proxy.grok.com"
 
+func resolveGrokUpstreamBaseURL() string {
+	for _, key := range []string{"HOXI_GROK_UPSTREAM_URL", "GROK_BASE_URL"} {
+		if v := strings.TrimRight(strings.TrimSpace(os.Getenv(key)), "/"); strings.HasPrefix(v, "http://") || strings.HasPrefix(v, "https://") {
+			return v
+		}
+	}
+	if gDir := grokHomeDir(); gDir != "" {
+		if setBytes, err := os.ReadFile(filepath.Join(gDir, "settings.json")); err == nil {
+			var setDoc map[string]interface{}
+			if json.Unmarshal(setBytes, &setDoc) == nil {
+				if u := strings.TrimRight(firstNonEmpty(asString(setDoc["baseURL"]), asString(setDoc["base_url"]), asString(setDoc["apiBase"])), "/"); strings.HasPrefix(u, "http://") || strings.HasPrefix(u, "https://") {
+					return u
+				}
+			}
+		}
+	}
+	return grokUpstreamBaseURL
+}
+
 var grokBridgeTransport http.RoundTripper = &http.Transport{
 	Proxy: http.ProxyFromEnvironment,
 	DialContext: (&net.Dialer{
@@ -358,7 +377,7 @@ func (g *Service) handleGrokCLIBridge(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	upstreamURL := grokUpstreamBaseURL + subPath
+	upstreamURL := resolveGrokUpstreamBaseURL() + subPath
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
 	defer cancel()
 

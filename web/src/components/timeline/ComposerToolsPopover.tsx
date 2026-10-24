@@ -12,6 +12,7 @@ import {
 } from "lucide-solid";
 import { t } from "../../i18n";
 import { unattendedGapFor } from "../../store/workspace";
+import { isWorkSurface, surfaceExtension } from "../layout/surface-extension";
 
 export default function ComposerToolsPopover(props: {
   workspaceReady: boolean;
@@ -108,15 +109,17 @@ export default function ComposerToolsPopover(props: {
               <span class="flex-1 min-w-0 truncate">{t("skills.browseSkills")}</span>
             </button>
 
-            <button
-              type="button"
-              disabled={!props.workspaceReady}
-              onClick={() => run(props.onOpenCodeSearch)}
-              class="w-full flex items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
-            >
-              <Search size={14} class="shrink-0" />
-              <span class="flex-1 min-w-0 truncate">{t("timeline.searchCodebase")}</span>
-            </button>
+            <Show when={!(isWorkSurface() && surfaceExtension.hideCodeComposerControls)}>
+              <button
+                type="button"
+                disabled={!props.workspaceReady}
+                onClick={() => run(props.onOpenCodeSearch)}
+                class="w-full flex items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+              >
+                <Search size={14} class="shrink-0" />
+                <span class="flex-1 min-w-0 truncate">{t("timeline.searchCodebase")}</span>
+              </button>
+            </Show>
 
             <button
               type="button"
@@ -147,23 +150,25 @@ export default function ComposerToolsPopover(props: {
               </span>
             </button>
 
-            <Show when={unattendedGapFor(props.runtime, props.sandboxMode)}>
-              {(gap) => (
-                <p class="px-2.5 py-1.5 text-[11px] text-[var(--danger-text)]">
-                  {gap() === "runtime" ? t("approval.unattendedRuntimeUnsupported") : t("approval.unattendedNotIsolated")}
-                </p>
-              )}
-            </Show>
-            <Show when={props.sandboxMode === "local"}>
-              <button
-                type="button"
-                disabled={!props.workspaceReady}
-                onClick={() => run(props.onSwitchSandbox)}
-                class="w-full flex items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
-              >
-                <GitBranch size={14} class="shrink-0" />
-                <span class="flex-1 min-w-0 truncate">{t("timeline.sandboxEnableWorktree")}</span>
-              </button>
+            <Show when={!(isWorkSurface() && surfaceExtension.hideCodeComposerControls)}>
+              <Show when={unattendedGapFor(props.runtime, props.sandboxMode)}>
+                {(gap) => (
+                  <p class="px-2.5 py-1.5 text-[11px] text-[var(--danger-text)]">
+                    {gap() === "runtime" ? t("approval.unattendedRuntimeUnsupported") : t("approval.unattendedNotIsolated")}
+                  </p>
+                )}
+              </Show>
+              <Show when={props.sandboxMode === "local"}>
+                <button
+                  type="button"
+                  disabled={!props.workspaceReady}
+                  onClick={() => run(props.onSwitchSandbox)}
+                  class="w-full flex items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                >
+                  <GitBranch size={14} class="shrink-0" />
+                  <span class="flex-1 min-w-0 truncate">{t("timeline.sandboxEnableWorktree")}</span>
+                </button>
+              </Show>
             </Show>
           </div>
         </div>

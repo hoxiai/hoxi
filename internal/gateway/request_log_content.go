@@ -227,5 +227,5 @@ func clipText(v string) (string, bool) {
 // sqlLiteral quotes a value for the sqlite3 CLI. SQLite string literals have no
 // backslash escapes, so doubling single quotes is sufficient.
 func sqlLiteral(v string) string {
-	return "'" + strings.ReplaceAll(v, "'", "''") + "'"
+	return "'" + strings.ReplaceAll(strings.ReplaceAll(v, "\x00", ""), "'", "''") + "'"
 }

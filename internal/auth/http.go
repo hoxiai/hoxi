@@ -2,6 +2,8 @@ package auth
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"mime"
 	"net/http"
 	"strings"
@@ -35,6 +37,12 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleExchange(w, r)
 	case path == "/logout" && r.Method == http.MethodPost:
 		h.handleLogout(w, r)
+	case path == "/member" && r.Method == http.MethodGet:
+		h.handleMember(w, r)
+	case path == "/checkin" && r.Method == http.MethodPost:
+		h.handleCheckin(w, r)
+	case path == "/open-url" && r.Method == http.MethodPost:
+		h.handleOpenURL(w, r)
 	default:
 		http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
 	}
@@ -57,7 +65,7 @@ func (h *HTTPHandler) handleStart(w http.ResponseWriter, r *http.Request) {
 
 func (h *HTTPHandler) handleExchange(w http.ResponseWriter, r *http.Request) {
 	var req ExchangeTokenRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&req); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid json body"})
 		return
@@ -83,4 +91,63 @@ func (h *HTTPHandler) handleLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
+
+func (h *HTTPHandler) handleMember(w http.ResponseWriter, r *http.Request) {
+	data, err := h.service.FetchMemberStatus(r.Context())
+	if err != nil {
+		h.writeMemberError(w, err)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(data)
+}
+
+func (h *HTTPHandler) handleCheckin(w http.ResponseWriter, r *http.Request) {
+	data, err := h.service.PerformCheckin(r.Context())
+	if err != nil {
+		h.writeMemberError(w, err)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(data)
+}
+
+func (h *HTTPHandler) handleOpenURL(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Target string `json:"target"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid json body"})
+		return
+	}
+	targetURL, err := h.service.OpenPortalPage(req.Target)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"success": true,
+		"url":     targetURL,
+	})
+}
+
+func (h *HTTPHandler) writeMemberError(w http.ResponseWriter, err error) {
+	if errors.Is(err, ErrNotLoggedIn) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	var upErr *UpstreamAPIError
+	if errors.As(err, &upErr) {
+		status := upErr.StatusCode
+		if status < 400 || status >= 600 {
+			status = http.StatusBadGateway
+		}
+		w.WriteHeader(status)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": upErr.Error()})
+		return
+	}
+	w.WriteHeader(http.StatusBadGateway)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 }

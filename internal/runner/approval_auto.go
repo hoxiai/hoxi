@@ -466,11 +466,25 @@ func (s *Service) reconcilePendingApprovals() {
 		pending = append(pending, pa)
 	}
 	s.gate.mu.Unlock()
+	unattended := s.ApprovalPolicy().Mode == ApprovalModeUnattended
 	for _, pa := range pending {
-		dir := s.sessionWorktree(pa.sid)
+		dir, isolated := s.sessionIsolated(pa.sid)
+		if unattended && !isQuestionRequest(pa.req) {
+			if allow, category := unattendedDecision(pa.req, dir); !allow && category != "" {
+				pa.req["hoxiCategory"] = category
+				reason := unattendedDenyReason(category)
+				select {
+				case pa.reply <- approvalReply{Reply: "reject", Message: reason, Source: approvalSourceUnattended}:
+					s.rememberDeferred(pa.sid, firstString(pa.req["id"]), category, permissionSummaryText(pa.req))
+					s.noteTurn(pa.sid, "deny")
+				default:
+				}
+				continue
+			}
+		}
 		source := ""
 		switch {
-		case s.policyApproves(pa.req, dir):
+		case s.policyApprovesIsolated(pa.req, dir, isolated):
 			source = approvalSourcePolicy
 		case s.classGrantApproves(pa.req, pa.sid, dir):
 			source = grantSourceSession
@@ -479,6 +493,9 @@ func (s *Service) reconcilePendingApprovals() {
 		}
 		select {
 		case pa.reply <- approvalReply{Reply: "once", Source: source}:
+			if unattended && isolated && source == approvalSourcePolicy {
+				s.noteTurn(pa.sid, "allow")
+			}
 		default:
 		}
 	}

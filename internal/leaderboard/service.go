@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hoxiai/hoxi/internal/buildinfo"
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
 )
 
@@ -83,7 +84,7 @@ func (s *Service) GetLeaderboard(dimension string, limit int, lang ...string) (*
 		return s.fallbackLeaderboard(dimension, limit, normLang), nil
 	}
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", "HoxiDesktop/1.0")
+	req.Header.Set("User-Agent", buildinfo.UserAgent())
 
 	resp, err := s.client.Do(req)
 	if err != nil || resp.StatusCode != http.StatusOK {
@@ -123,7 +124,7 @@ func (s *Service) GetConnectableGateways(lang ...string) (*GatewaysResponse, err
 		return s.fallbackGateways(normLang), nil
 	}
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", "HoxiDesktop/1.0")
+	req.Header.Set("User-Agent", buildinfo.UserAgent())
 
 	resp, err := s.client.Do(req)
 	if err != nil {
@@ -291,7 +292,7 @@ func (s *Service) GetModelPricing(forceRefresh bool) (*ModelPricingResponse, err
 	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
 	if err == nil {
 		req.Header.Set("Accept", "application/json")
-		req.Header.Set("User-Agent", "HoxiDesktop/1.0")
+		req.Header.Set("User-Agent", buildinfo.UserAgent())
 		if resp, err := s.client.Do(req); err == nil {
 			defer resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
@@ -320,9 +321,9 @@ func (s *Service) GetModelPricing(forceRefresh bool) (*ModelPricingResponse, err
 					}
 					s.mu.Unlock()
 					if p := pricingDiskCachePath(); p != "" {
-						_ = os.MkdirAll(filepath.Dir(p), 0o755)
+						_ = os.MkdirAll(filepath.Dir(p), 0o700)
 						if raw, err := json.Marshal(result); err == nil {
-							_ = os.WriteFile(p, raw, 0o644)
+							_ = os.WriteFile(p, raw, 0o600)
 						}
 					}
 					return result, nil
@@ -403,7 +404,7 @@ func (s *Service) GetFreeTiers(lang ...string) (*FreeTiersResponse, error) {
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Accept-Language", resolvedLang)
-	req.Header.Set("User-Agent", "HoxiDesktop/1.0")
+	req.Header.Set("User-Agent", buildinfo.UserAgent())
 
 	resp, err := s.client.Do(req)
 	if err != nil {

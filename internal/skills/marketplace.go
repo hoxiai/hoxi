@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hoxiai/hoxi/internal/buildinfo"
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
 )
 
@@ -245,7 +246,7 @@ func (s *MarketplaceService) catalog(ctx context.Context, forceRefresh bool) ([]
 		return nil, fmt.Errorf("%w: %s", ErrMarketplaceUnavailable, err)
 	}
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", "HoxiDesktop/1.0")
+	req.Header.Set("User-Agent", buildinfo.UserAgent())
 
 	resp, err := s.client.Do(req)
 	if err != nil {
@@ -372,7 +373,7 @@ func (s *MarketplaceService) download(ctx context.Context, rawURL string) ([]byt
 		return nil, fmt.Errorf("%w: %s", ErrMarketplaceUnavailable, err)
 	}
 	req.Header.Set("Accept", "text/markdown, text/plain")
-	req.Header.Set("User-Agent", "HoxiDesktop/1.0")
+	req.Header.Set("User-Agent", buildinfo.UserAgent())
 
 	resp, err := s.client.Do(req)
 	if err != nil {

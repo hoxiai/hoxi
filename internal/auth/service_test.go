@@ -345,3 +345,80 @@ func TestStaleVerificationCannotChangeAuth(t *testing.T) {
 		})
 	}
 }
+
+func TestMemberCheckinAndPortalRoutes(t *testing.T) {
+	checkedIn := false
+	s := testService(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer hox_dt_test" {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"message":"Unauthorized"}`))
+			return
+		}
+		if r.URL.Path == "/api/hoxi/member/checkin" && r.Method == http.MethodGet {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"checkedInToday": checkedIn,
+				"streak":         3,
+				"todayPoints":    7,
+				"nextPoints":     8,
+				"balance":        125,
+				"walletPoints":   125,
+			})
+			return
+		}
+		if r.URL.Path == "/api/hoxi/member/checkin" && r.Method == http.MethodPost {
+			checkedIn = true
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"checkedInToday": true,
+				"streak":         4,
+				"todayPoints":    8,
+				"nextPoints":     9,
+				"balance":        133,
+				"walletPoints":   133,
+				"rewardStatus":   "succeeded",
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	})
+
+	var openedURLs []string
+	var openMu sync.Mutex
+	s.launchBrowser = func(u string) {
+		openMu.Lock()
+		openedURLs = append(openedURLs, u)
+		openMu.Unlock()
+	}
+
+	if _, err := s.FetchMemberStatus(context.Background()); err == nil {
+		t.Fatal("expected error when not logged in")
+	}
+
+	s.current = &StoredAuth{
+		DeviceToken: "hox_dt_test",
+		User:        UserProfile{ID: 7, Email: "dev@hoxi.ai", Nickname: "Coller"},
+	}
+
+	status, err := s.FetchMemberStatus(context.Background())
+	if err != nil {
+		t.Fatalf("FetchMemberStatus failed: %v", err)
+	}
+	if status["checkedInToday"] != false || status["balance"] != float64(125) {
+		t.Fatalf("unexpected initial status: %#v", status)
+	}
+
+	res, err := s.PerformCheckin(context.Background())
+	if err != nil {
+		t.Fatalf("PerformCheckin failed: %v", err)
+	}
+	if res["checkedInToday"] != true || res["balance"] != float64(133) {
+		t.Fatalf("unexpected checkin result: %#v", res)
+	}
+
+	if _, err := s.OpenPortalPage("invalid-target"); err == nil {
+		t.Fatal("accepted non-whitelisted portal target")
+	}
+	u, err := s.OpenPortalPage("rewards")
+	if err != nil || u != s.ServerBaseURL()+"/user/rewards" {
+		t.Fatalf("OpenPortalPage(rewards) = %q, %v", u, err)
+	}
+}

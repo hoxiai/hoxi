@@ -394,10 +394,11 @@ func (g *Gateway) registerRoutes(distFS fs.FS) {
 			})
 		}
 		resp := map[string]any{
-			"appVersion": buildinfo.Version,
-			"rootDir":    g.rootDir,
-			"wsBaseURL":  g.wsBaseURL,
-			"status":     st,
+			"appVersion":          buildinfo.Version,
+			"rootDir":             g.rootDir,
+			"defaultWorkspaceDir": hoxipaths.EnsureDefaultWorkspaceDir(),
+			"wsBaseURL":           g.wsBaseURL,
+			"status":              st,
 		}
 		if tok != "" {
 			resp["gatewayToken"] = tok

@@ -202,6 +202,7 @@ export interface BranchListResponse {
 export interface BootstrapInfo {
   appVersion: string;
   rootDir: string;
+  defaultWorkspaceDir?: string;
   wsBaseURL: string;
   gatewayToken?: string;
   status: {

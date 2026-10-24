@@ -30,10 +30,12 @@ import {
   setLeftNavOpen,
   setLeftWidth,
   setRightWidth,
+  setSurfaceMode,
   setWorkspace,
   startDeepLinkNavigation,
   workspace,
 } from "../../store/workspace";
+import { isWorkSurface, surfaceExtension } from "./surface-extension";
 
 const WorkspaceModal = lazy(() => import("./WorkspaceModal"));
 const ExternalHandoffModal = lazy(() => import("../handoff/ExternalHandoffModal"));
@@ -115,6 +117,18 @@ export default function ThreePaneShell(props: ThreePaneShellProps = {}) {
         ev.preventDefault();
         setPaletteMode((current) => (current === "files" ? null : "files"));
         return;
+      }
+      if (surfaceExtension.enabled && (ev.metaKey || ev.ctrlKey) && !ev.shiftKey && !ev.altKey) {
+        if (ev.key === "1") {
+          ev.preventDefault();
+          setSurfaceMode("work");
+          return;
+        }
+        if (ev.key === "2") {
+          ev.preventDefault();
+          setSurfaceMode("code");
+          return;
+        }
       }
       if ((ev.metaKey || ev.ctrlKey) && ev.key === ",") {
         ev.preventDefault();
@@ -272,7 +286,9 @@ export default function ThreePaneShell(props: ThreePaneShellProps = {}) {
             aria-hidden={isNewConversation()}
             class={`flex min-h-0 flex-col overflow-hidden transition-[flex-grow,opacity,transform] duration-[var(--motion-move)] ease-[var(--ease-move)] ${
               isNewConversation()
-                ? "flex-[0.36_1_0%] opacity-0 -translate-y-1 pointer-events-none"
+                ? isWorkSurface() && surfaceExtension.renderLaunchpad
+                  ? "flex-[0.06_1_0%] opacity-0 -translate-y-1 pointer-events-none"
+                  : "flex-[0.36_1_0%] opacity-0 -translate-y-1 pointer-events-none"
                 : "flex-[1_1_0%] opacity-100 translate-y-0"
             }`}
           >
@@ -286,7 +302,12 @@ export default function ThreePaneShell(props: ThreePaneShellProps = {}) {
                 aria-hidden={!isNewConversation()}
               >
                 <div class="min-h-0 overflow-hidden">
-                  <ParticleLogo play={isNewConversation()} />
+                  <Show
+                    when={!(isWorkSurface() && surfaceExtension.renderLaunchpad)}
+                    fallback={surfaceExtension.renderLaunchpad!()}
+                  >
+                    <ParticleLogo play={isNewConversation()} />
+                  </Show>
                 </div>
               </div>
               <Composer />
@@ -295,7 +316,13 @@ export default function ThreePaneShell(props: ThreePaneShellProps = {}) {
           <div
             aria-hidden="true"
             class="shrink-0 min-h-0 transition-[flex-grow] duration-[var(--motion-move)] ease-[var(--ease-move)] pointer-events-none"
-            style={{ "flex-grow": isNewConversation() ? 0.64 : 0 }}
+            style={{
+              "flex-grow": isNewConversation()
+                ? isWorkSurface() && surfaceExtension.renderLaunchpad
+                  ? 0.14
+                  : 0.64
+                : 0,
+            }}
           />
         </section>
 

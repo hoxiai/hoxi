@@ -256,12 +256,17 @@ export function hasLiveTailWorkGroup(
 export function hasLiveTailRenderedOutput(
   cycleTurns: Array<{ info: MessageInfo; parts: MessagePart[] }>
 ): boolean {
-  for (let i = cycleTurns.length - 1; i >= 0; i--) {
-    const turn = cycleTurns[i];
-    if (turn.info.role !== "assistant" || turn.info.error) return false;
-    for (let p = turn.parts.length - 1; p >= 0; p--) {
-      const part = turn.parts[p];
-      if (isVisibleTextPart(part) || isWorkPart(part)) return true;
+  let runStart = cycleTurns.length;
+  while (runStart > 0) {
+    const turn = cycleTurns[runStart - 1];
+    if (turn.info.role !== "assistant" || turn.info.error) break;
+    runStart--;
+  }
+  for (let i = runStart; i < cycleTurns.length; i++) {
+    const parts = cycleTurns[i].parts;
+    for (let p = 0; p < parts.length; p++) {
+      const part = parts[p];
+      if (isWorkPart(part) || isVisibleTextPart(part)) return true;
     }
   }
   return false;

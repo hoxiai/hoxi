@@ -161,7 +161,7 @@ func (m *Manager) HandleAudit(w http.ResponseWriter, r *http.Request) {
 	pass := finalScore >= 75 && req.LspErrorCount == 0
 	if llmSummary == "" {
 		if pass {
-			if strings.HasPrefix(req.Locale, "zh") {
+			if isZhLocale(req.Locale) {
 				llmSummary = "代码变更符合需求与工程规范，静态门禁全部通过。"
 			} else {
 				llmSummary = "Code changes satisfy requirements and pass all static engineering checks."
@@ -188,8 +188,12 @@ func (m *Manager) HandleAudit(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func isZhLocale(locale string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(locale)), "zh")
+}
+
 func evaluateStaticCodeRules(diffs []auditDiffFile, lspErrorCount int, lspSummary string, locale string) (int, []string) {
-	isZh := strings.HasPrefix(locale, "zh")
+	isZh := isZhLocale(locale)
 	deduction := 0
 	var issues []string
 
@@ -282,7 +286,7 @@ func invokeObserverLLM(
 }
 
 func noChangesReviewSummary(locale string) string {
-	if strings.HasPrefix(locale, "zh") {
+	if isZhLocale(locale) {
 		return "没有需要审查的改动。"
 	}
 	return "No changes to review."
@@ -309,7 +313,7 @@ const observerAuditMaxFiles = 8
 // fenced as data and explicitly subordinate to the required JSON schema.
 func buildObserverAuditPrompt(req auditCodeRequest) string {
 	langHint := "Respond with concise English text in `summary` and `issues`."
-	if strings.HasPrefix(req.Locale, "zh") {
+	if isZhLocale(req.Locale) {
 		langHint = "请使用简明扼要的中文填写 `summary` 和 `issues`。"
 	}
 

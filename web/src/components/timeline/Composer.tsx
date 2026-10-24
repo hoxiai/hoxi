@@ -1,20 +1,17 @@
 // web/src/components/timeline/Composer.tsx
-import { createEffect, createMemo, createSignal, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, onCleanup, Show } from "solid-js";
 import {
   ArrowUp,
-  Check,
   Clock,
   FolderOpen,
   LoaderCircle,
-  RefreshCw,
-  Sparkles,
   Square,
-  X,
 } from "lucide-solid";
 import {
   appSettings,
   clearReviewComments,
   consumeComposerDraftEdit,
+  defaultWorkspaceDir,
   forkFromMessage,
   getComposerSkill,
   getComposerSkillNotice,
@@ -38,6 +35,7 @@ import SessionGoalBar from "./SessionGoalBar";
 import {
   ComposerAttachmentChips,
   ComposerAutocompletePopover,
+  ComposerEnhancePreview,
 } from "./composer-subcomponents";
 import { ComposerSandboxPill } from "./ComposerSandboxPill";
 import CodeSearchModal from "../codeindex/CodeSearchModal";
@@ -46,6 +44,7 @@ import ContextProgressPill from "./ContextProgressPill";
 import ApprovalModePill from "./ApprovalModePill";
 import ModeSwitcher from "./ModeSwitcher";
 import ComposerToolsPopover from "./ComposerToolsPopover";
+import { isWorkSurface, surfaceExtension } from "../layout/surface-extension";
 import {
   createComposerAutocomplete,
   createImageAttachments,
@@ -226,6 +225,35 @@ export default function Composer() {
     });
   });
 
+  createEffect(() => {
+    const onComposerFill = (ev: Event) => {
+      const detail = (
+        ev as CustomEvent<{
+          text?: string;
+          skill?: { key: string; name: string } | null;
+          send?: boolean;
+        }>
+      ).detail;
+      if (!detail) return;
+      if (detail.skill !== undefined) {
+        selectComposerSkill(sessionID(), detail.skill);
+      }
+      if (typeof detail.text === "string") {
+        setText(detail.text);
+        setCursorOffset(detail.text.length);
+        requestAnimationFrame(() => {
+          adjustHeight();
+          textareaRef?.focus();
+        });
+      }
+      if (detail.send) {
+        queueMicrotask(() => void onSend());
+      }
+    };
+    window.addEventListener("hoxi:composer-fill", onComposerFill);
+    onCleanup(() => window.removeEventListener("hoxi:composer-fill", onComposerFill));
+  });
+
   const reviewComments = createMemo(() => {
     const id = sessionID();
     return id ? (workspace.reviewCommentsBySession[id] ?? []) : [];
@@ -282,8 +310,12 @@ export default function Composer() {
   const onSend = async () => {
     if (choosingFolder()) return;
     if (!sessionID() && !workspace.rootDir) {
-      await chooseFolder();
-      return;
+      if (isWorkSurface() && defaultWorkspaceDir()) {
+        await switchWorkspace(defaultWorkspaceDir(), false);
+      } else {
+        await chooseFolder();
+        return;
+      }
     }
     const withPastes = pasteCollapse.expandIntoPrompt(text());
     const hasReviews = reviewComments().length > 0;
@@ -593,60 +625,23 @@ export default function Composer() {
             onBlur={() => { composing = false; }}
           />
 
-          <Show when={enhanceState()}>
-            {(state) => (
-              <div class="mt-2 rounded-xl border border-[var(--accent-border)] bg-[var(--accent-surface)]/35 px-2.5 py-2">
-                <div class="flex items-center gap-1.5">
-                  <Sparkles size={12} class="text-[var(--accent-primary)]" />
-                  <span class="text-[11px] font-semibold text-[var(--text-primary)]">
-                    {t("timeline.enhancedPromptTitle")}
-                  </span>
-                  <div class="ml-auto flex items-center gap-1">
-                    <button
-                      type="button"
-                      class="inline-flex items-center gap-1 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-1.5 py-0.5 text-[11px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer disabled:opacity-40"
-                      disabled={enhancing()}
-                      onClick={() => void onEnhance()}
-                    >
-                      <RefreshCw size={10} class={enhancing() ? "animate-spin" : ""} />
-                      {t("timeline.enhanceRegenerate")}
-                    </button>
-                    <button
-                      type="button"
-                      class="inline-flex items-center gap-1 rounded-md bg-[var(--accent-primary)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--accent-foreground)] hover:opacity-90 cursor-pointer"
-                      onClick={acceptEnhance}
-                    >
-                      <Check size={10} />
-                      {t("timeline.enhanceAccept")}
-                    </button>
-                    <button
-                      type="button"
-                      class="inline-flex h-5 w-5 items-center justify-center rounded-md text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer"
-                      title={t("timeline.enhanceDiscard")}
-                      onClick={() => {
-                        setEnhanceState(null);
-                        setEnhanceError(null);
-                      }}
-                    >
-                      <X size={11} />
-                    </button>
-                  </div>
-                </div>
-                <div class="mt-1.5 max-h-40 overflow-y-auto whitespace-pre-wrap text-[12px] leading-relaxed text-[var(--text-secondary)] selectable-text">
-                  {state().enhanced}
-                </div>
-              </div>
-            )}
-          </Show>
-          <Show when={enhanceError()}>
-            <p class="mt-1.5 text-[11px] text-[var(--danger-text)]">{enhanceError()}</p>
-          </Show>
+          <ComposerEnhancePreview
+            state={enhanceState()}
+            error={enhanceError()}
+            enhancing={enhancing()}
+            onRegenerate={() => void onEnhance()}
+            onAccept={acceptEnhance}
+            onDiscard={() => {
+              setEnhanceState(null);
+              setEnhanceError(null);
+            }}
+          />
 
           <div class="mt-2 flex items-center justify-between gap-2 flex-wrap">
             {/* Left Action Pills: Attach (+), Agent Mode, Model Selector, Git Dropdown */}
             <div class="flex items-center gap-1 flex-wrap">
               <ComposerToolsPopover
-                workspaceReady={Boolean(workspace.rootDir)}
+                workspaceReady={Boolean(workspace.rootDir || (isWorkSurface() && defaultWorkspaceDir()))}
                 skillActive={Boolean(selectedSkill())}
                 sandboxMode={effectiveSandboxMode()}
                 runtime={sessionRuntimeForID(sessionID())}
@@ -663,23 +658,25 @@ export default function Composer() {
               <ModeSwitcher />
               <ModelSelector />
 
-              <Show when={workspace.rootDir} fallback={
-                <button type="button" onClick={() => void chooseFolder()} disabled={choosingFolder()}
-                  title={t("timeline.selectFolderHint")}
-                  class="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[12px] text-[var(--text-muted)] hover:bg-[var(--bg-hover)] disabled:opacity-50 cursor-pointer">
-                  <FolderOpen size={14} />{t("timeline.selectFolder")}
-                </button>
-              }>
-                <ComposerSandboxPill
-                  mode={effectiveSandboxMode()}
-                  switching={switchingSandbox()}
-                  busy={busy()}
-                  sessionID={sessionID()}
-                  directory={sessionDirectory(sessionID()) || workspace.rootDir}
-                  forking={forking()}
-                  onToggle={(m) => void onToggleSandbox(m)}
-                  onFork={onFork}
-                />
+              <Show when={!(isWorkSurface() && surfaceExtension.hideCodeComposerControls)}>
+                <Show when={workspace.rootDir} fallback={
+                  <button type="button" onClick={() => void chooseFolder()} disabled={choosingFolder()}
+                    title={t("timeline.selectFolderHint")}
+                    class="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[12px] text-[var(--text-muted)] hover:bg-[var(--bg-hover)] disabled:opacity-50 cursor-pointer">
+                    <FolderOpen size={14} />{t("timeline.selectFolder")}
+                  </button>
+                }>
+                  <ComposerSandboxPill
+                    mode={effectiveSandboxMode()}
+                    switching={switchingSandbox()}
+                    busy={busy()}
+                    sessionID={sessionID()}
+                    directory={sessionDirectory(sessionID()) || workspace.rootDir}
+                    forking={forking()}
+                    onToggle={(m) => void onToggleSandbox(m)}
+                    onFork={onFork}
+                  />
+                </Show>
               </Show>
             </div>
 
@@ -743,7 +740,7 @@ export default function Composer() {
             </div>
           </div>
         </div>
-        <Show when={!workspace.rootDir}>
+        <Show when={!workspace.rootDir && !(isWorkSurface() && defaultWorkspaceDir())}>
           <p class="mt-2 px-1 text-xs text-[var(--text-faint)]">{t("timeline.selectFolderHint")}</p>
         </Show>
       </div>

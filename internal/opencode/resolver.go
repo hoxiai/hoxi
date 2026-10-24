@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hoxiai/hoxi/internal/agentcli"
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
 )
 
@@ -47,14 +48,9 @@ func EnrichSystemPath() {
 	if binDir := hoxipaths.BinDir(); binDir != "" {
 		extra = append(extra, binDir)
 	}
+	extra = append(extra, agentcli.CommonUserBinDirs()...)
 	if home, err := os.UserHomeDir(); err == nil && home != "" {
-		extra = append(extra,
-			filepath.Join(home, ".opencode", "bin"),
-			filepath.Join(home, ".bun", "bin"),
-			filepath.Join(home, ".local", "bin"),
-			filepath.Join(home, ".cargo", "bin"),
-			filepath.Join(home, "scoop", "shims"),
-		)
+		extra = append(extra, filepath.Join(home, "scoop", "shims"))
 	}
 	if localApp := strings.TrimSpace(os.Getenv("LOCALAPPDATA")); localApp != "" {
 		extra = append(extra,

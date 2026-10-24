@@ -440,10 +440,23 @@ func (s *Service) rejectOpenCodeSessionPermissions(ctx context.Context, rec Sess
 		if pid == "" || (sid != rec.ExternalID && sid != rec.ID && !isChild) {
 			continue
 		}
-		_, _, _ = s.openCodeRaw(ctx, http.MethodPost, "/permission/"+url.PathEscape(pid)+"/reply", directoryQuery(rec.WorktreePath, nil), replyBody)
+		release, claimed := s.claimOpenCodeAnswer(pid)
+		if !claimed {
+			continue
+		}
+		rStatus, _, replyErr := s.replyOpenCodePermission(ctx, pid, rec.WorktreePath, replyBody)
+		if replyErr == nil && rStatus == http.StatusNotFound {
+			s.settleOpenCodePermission(pid)
+			continue
+		}
+		if replyErr != nil || rStatus < 200 || rStatus >= 300 {
+			release()
+			continue
+		}
 		// Hoxi rejected this itself because the session stopped, so record it
 		// like any other decision (source "system", not a user choice).
 		s.recordOpenCodeAudit(pid, rec.ID, rec.WorktreePath, "reject", "the session was stopped", "system")
+		s.settleOpenCodePermission(pid)
 		repliedEvt := SSEEvent{
 			Type:       "permission.replied",
 			Properties: map[string]interface{}{"sessionID": rec.ID, "requestID": pid, "reply": "reject"},

@@ -63,6 +63,7 @@ import "../src/__tests__/internal-llm-model.test";
 import "../src/__tests__/subagent-config.test";
 import "../src/__tests__/model-limits.test";
 import "../src/__tests__/updater-state.test";
+import "../src/__tests__/auth-state.test";
 
 console.log("[test] Running Hoxi frontend unit tests...");
 runAllTests().then((failed) => {

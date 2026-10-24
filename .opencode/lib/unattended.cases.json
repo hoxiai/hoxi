@@ -13,6 +13,7 @@
   {"command": "gh release create v1", "expect": "deny", "category": "publish"},
   {"command": "sudo -n true", "expect": "deny", "category": "privilege"},
   {"command": "cat ~/.ssh/id_ed25519", "expect": "deny", "category": "secret"},
+  {"command": "sqlite3 ~/.hoxi/hoxi.db .dump", "expect": "deny", "category": "secret"},
   {"command": "cat <(cat .env)", "expect": "deny", "category": "secret"},
   {"command": "head .env.local", "expect": "deny", "category": "secret"},
   {"command": "echo \"$(cat .env)\"", "expect": "deny", "category": "secret"},

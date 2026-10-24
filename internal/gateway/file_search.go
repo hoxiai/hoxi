@@ -24,7 +24,7 @@ const (
 func skipFileSearchDir(name string) bool {
 	switch strings.ToLower(strings.TrimSpace(name)) {
 	case ".git", ".hg", ".svn", ".hoxi", ".claude",
-		"node_modules", ".pnpm-store", "dist", "build", "target", "vendor",
+		"node_modules", ".pnpm-store", "dist", "build", "target", "out", "vendor",
 		".next", ".nuxt", ".turbo", ".cache", "coverage", "pods", "deriveddata",
 		".dart_tool", ".pub-cache", "go-build", "go-build-cache", ".gocache", ".gomodcache",
 		"__pycache__", ".pytest_cache", ".venv", "venv", ".idea", ".gradle", ".m2":

@@ -6,6 +6,7 @@ import SkillsInspectorView from "../skills/SkillsInspectorView";
 import TaskOverviewView from "../tasks/TaskOverviewView";
 import { isSessionBusy, setWorkspace, workspace } from "../../store/workspace";
 import { collectCycleChangedFiles } from "../timeline/tool-card-state";
+import { isWorkSurface, surfaceExtension } from "../layout/surface-extension";
 import { t } from "../../i18n";
 
 const PierreDiffViewer = lazy(() => import("./PierreDiffViewer"));
@@ -33,14 +34,34 @@ export default function InspectorPane() {
     setVisitedTabs((prev) => (prev[active] ? prev : { ...prev, [active]: true }));
   });
 
+  createEffect(() => {
+    if (!isWorkSurface() || !surfaceExtension.inspectorTabs) return;
+    const allowed = new Set([
+      ...surfaceExtension.inspectorTabs.primary,
+      ...surfaceExtension.inspectorTabs.secondary,
+    ]);
+    if (!allowed.has(workspace.inspectorTab)) {
+      const next = surfaceExtension.inspectorTabs.primary[0] || "files";
+      setWorkspace("inspectorTab", next);
+    }
+  });
+
   // Secondary panes (memory / skills / browser) stay reachable through the
   // command palette; they join the tab strip once opened, so switching to a
   // primary tab never strands them.
   const tabs = createMemo<Array<{ id: TabID }>>(() => {
     const active = workspace.inspectorTab;
     const visited = visitedTabs();
-    const secondary = SECONDARY_TABS.filter((id) => id === active || visited[id]);
-    return [...PRIMARY_TABS, ...secondary].map((id) => ({ id }));
+    const primaryList =
+      isWorkSurface() && surfaceExtension.inspectorTabs
+        ? surfaceExtension.inspectorTabs.primary
+        : PRIMARY_TABS;
+    const secondaryList =
+      isWorkSurface() && surfaceExtension.inspectorTabs
+        ? surfaceExtension.inspectorTabs.secondary
+        : SECONDARY_TABS;
+    const secondary = secondaryList.filter((id) => id === active || visited[id]);
+    return [...primaryList, ...secondary].map((id) => ({ id }));
   });
 
   const diffCount = createMemo(() => {

@@ -13,8 +13,9 @@ import (
 // whole subtree; files deny one path. Applies to desktop and tunnel reads.
 var (
 	sensitiveHomeDirs = []string{
-		".ssh", ".aws", ".gnupg", ".kube", ".codex", ".gemini",
+		".ssh", ".aws", ".gnupg", ".kube", ".azure", ".codex", ".gemini",
 		filepath.Join(".config", "gh"),
+		filepath.Join(".config", "gcloud"),
 	}
 	// Antigravity artifacts are previewed from agy transcripts; the
 	// credentials in ~/.gemini stay denied.
@@ -24,7 +25,9 @@ var (
 	sensitiveHomeFiles = []string{
 		filepath.Join(".claude", ".credentials.json"),
 		filepath.Join(".docker", "config.json"),
-		".netrc", ".npmrc", ".git-credentials",
+		filepath.Join(".cargo", "credentials"),
+		filepath.Join(".cargo", "credentials.toml"),
+		".netrc", ".npmrc", ".pypirc", ".git-credentials",
 	}
 )
 

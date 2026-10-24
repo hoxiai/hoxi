@@ -15,11 +15,16 @@ import {
 } from "lucide-solid";
 import { setActiveAgent, workspace } from "../../store/workspace";
 import type { AgentInfo } from "../../services/api";
-import { t } from "../../i18n";
+import { isWorkSurface, surfaceExtension } from "../layout/surface-extension";
+import { locale, t } from "../../i18n";
 
 function formatAgentLabel(agentOrName: AgentInfo | string): string {
   const name = typeof agentOrName === "string" ? agentOrName : agentOrName.name;
   if (!name) return "Agent";
+  if (isWorkSurface() && surfaceExtension.formatModeLabel) {
+    const custom = surfaceExtension.formatModeLabel(name, locale());
+    if (custom) return custom;
+  }
   const lower = name.toLowerCase();
   if (lower === "build") return t("timeline.buildMode");
   if (lower === "plan") return t("timeline.planMode");
@@ -54,7 +59,13 @@ export default function ModeSwitcher() {
   let buttonRef: HTMLButtonElement | undefined;
   let menuRef: HTMLDivElement | undefined;
 
-  const agents = createMemo(() => workspace.agents || []);
+  const agents = createMemo(() => {
+    const all = workspace.agents || [];
+    if (isWorkSurface() && surfaceExtension.hideCodeComposerControls) {
+      return all.filter((a) => a.name.toLowerCase() !== "debug");
+    }
+    return all;
+  });
   const currentMode = () => workspace.activeMode || "build";
   const currentAgent = createMemo(() =>
     agents().find((a) => a.name.toLowerCase() === currentMode().toLowerCase())
@@ -205,7 +216,9 @@ export default function ModeSwitcher() {
 
                       <Show when={agent.description}>
                         <p class="mt-0.5 text-[11px] leading-snug text-[var(--text-muted)] line-clamp-2">
-                          {agent.description}
+                          {(isWorkSurface() &&
+                            surfaceExtension.formatModeDescription?.(agent.name, locale())) ||
+                            agent.description}
                         </p>
                       </Show>
                     </div>

@@ -1,11 +1,21 @@
+import fs from "node:fs";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 import solidPlugin from "vite-plugin-solid";
 import tailwindcss from "@tailwindcss/vite";
 
+const webRoot = fileURLToPath(new URL(".", import.meta.url));
+const srcRoot = fileURLToPath(new URL("./src", import.meta.url));
 const lucideSolidEsm = fileURLToPath(
   new URL("./node_modules/lucide-solid/dist/esm/lucide-solid.js", import.meta.url),
 );
+const workRepoDir = process.env.HOXI_WORK_DIR
+  ? path.resolve(webRoot, process.env.HOXI_WORK_DIR)
+  : path.resolve(webRoot, "../../hoxi-work");
+const workExtEntry = path.join(workRepoDir, "web/index.tsx");
+const hasWorkExt =
+  process.env.HOXI_DISABLE_WORK_EXT !== "1" && fs.existsSync(workExtEntry);
 
 const isRelease = (process.env.HOXI_VARIANT || "").trim().toLowerCase() === "release";
 const target =
@@ -15,12 +25,39 @@ const port = Number(process.env.HOXI_WEB_PORT) || (isRelease ? 5411 : 5421);
 export default defineConfig({
   plugins: [tailwindcss(), solidPlugin()],
   resolve: {
-    alias: [{ find: /^lucide-solid$/, replacement: lucideSolidEsm }],
-  },
-  optimizeDeps: {
-    include: ["lucide-solid"],
+    dedupe: ["solid-js", "solid-js/web", "solid-js/store", "lucide-solid"],
+    alias: [
+      { find: /^lucide-solid$/, replacement: lucideSolidEsm },
+      {
+        find: /^solid-js$/,
+        replacement: fileURLToPath(
+          new URL("./node_modules/solid-js/dist/solid.js", import.meta.url),
+        ),
+      },
+      {
+        find: /^solid-js\/web$/,
+        replacement: fileURLToPath(
+          new URL("./node_modules/solid-js/web/dist/web.js", import.meta.url),
+        ),
+      },
+      {
+        find: /^solid-js\/store$/,
+        replacement: fileURLToPath(
+          new URL("./node_modules/solid-js/store/dist/store.js", import.meta.url),
+        ),
+      },
+      { find: /^@hoxi-core\/(.*)$/, replacement: `${srcRoot}/$1` },
+      ...(hasWorkExt
+        ? [
+            { find: /\/surface-extension(?:\.ts)?$/, replacement: workExtEntry },
+          ]
+        : []),
+    ],
   },
   server: {
+    fs: {
+      allow: [webRoot, ...(hasWorkExt ? [workRepoDir] : [])],
+    },
     port,
     strictPort: false,
     proxy: {
