@@ -21,6 +21,7 @@ const (
 const (
 	openCodeAutoReplyInflight = 1
 	openCodeAutoReplyFailed   = 2
+	openCodeAutoReplyDone     = 3
 )
 
 func (s *Service) currentPermissionRules() map[string]interface{} {
@@ -113,11 +114,11 @@ func (s *Service) autoReplyOpenCodeMessage(id, sessionID, directory, reply, mess
 			if onAccept != nil {
 				onAccept()
 			}
-			s.openCodeAutoReplies.Delete(id)
+			s.openCodeAutoReplies.Store(id, openCodeAutoReplyDone)
 		case err == nil && status == http.StatusNotFound:
 			// Already answered elsewhere.
 			s.gate.forgetOpenCodeAsk(id)
-			s.openCodeAutoReplies.Delete(id)
+			s.openCodeAutoReplies.Store(id, openCodeAutoReplyDone)
 		default:
 			s.openCodeAutoReplies.Store(id, openCodeAutoReplyFailed)
 			if onFail != nil {
@@ -144,7 +145,7 @@ func (s *Service) claimOpenCodePermission(item map[string]interface{}, sessionID
 		return false
 	}
 	switch s.openCodeAutoReplyState(id) {
-	case openCodeAutoReplyInflight:
+	case openCodeAutoReplyInflight, openCodeAutoReplyDone:
 		return true
 	case openCodeAutoReplyFailed:
 		return false
@@ -183,14 +184,47 @@ func (s *Service) claimOpenCodePermission(item map[string]interface{}, sessionID
 	return false
 }
 
+func openCodePermissionCreatedAt(item map[string]interface{}) time.Time {
+	parseMillis := func(v interface{}) (time.Time, bool) {
+		switch n := v.(type) {
+		case float64:
+			if n > 0 {
+				return time.UnixMilli(int64(n)), true
+			}
+		case int64:
+			if n > 0 {
+				return time.UnixMilli(n), true
+			}
+		case int:
+			if n > 0 {
+				return time.UnixMilli(int64(n)), true
+			}
+		case json.Number:
+			if i, err := n.Int64(); err == nil && i > 0 {
+				return time.UnixMilli(i), true
+			}
+			if f, err := n.Float64(); err == nil && f > 0 {
+				return time.UnixMilli(int64(f)), true
+			}
+		}
+		return time.Time{}, false
+	}
+	if t, ok := parseMillis(item["createdAt"]); ok {
+		return t
+	}
+	if tm, ok := item["time"].(map[string]interface{}); ok {
+		if t, ok := parseMillis(tm["created"]); ok {
+			return t
+		}
+	}
+	return time.Now()
+}
+
 // armOpenCodeTimeout rejects an OpenCode request that nobody answers before
 // the policy timeout. The timer and a user reply share one claim, so only one
 // of them answers the request.
 func (s *Service) armOpenCodeTimeout(id, sessionID, directory string, item map[string]interface{}) {
-	created := time.Now()
-	if ms, ok := item["createdAt"].(float64); ok && ms > 0 {
-		created = time.UnixMilli(int64(ms))
-	}
+	created := openCodePermissionCreatedAt(item)
 	wait := s.ApprovalPolicy().approvalWaitLimit()
 	deadline := created.Add(wait)
 	delay := time.Until(deadline)
@@ -216,15 +250,17 @@ func (s *Service) armOpenCodeTimeout(id, sessionID, directory string, item map[s
 		if err != nil || status < 200 || status >= 300 {
 			if err == nil && status == http.StatusNotFound {
 				s.gate.forgetOpenCodeAsk(id)
+				s.openCodeAutoReplies.Store(id, openCodeAutoReplyDone)
+			} else {
+				s.openCodeAutoReplies.Delete(id)
 			}
-			s.openCodeAutoReplies.Delete(id)
 			return
 		}
 		s.gate.forgetOpenCodeAsk(id)
 		s.recordOpenCodeAudit(id, sessionID, directory, "reject", reason, approvalSourceTimeout)
 		s.rememberDeferred(sessionID, id, "timeout", summary)
 		s.noteTurn(sessionID, "timeout")
-		s.openCodeAutoReplies.Delete(id)
+		s.openCodeAutoReplies.Store(id, openCodeAutoReplyDone)
 	}()
 }
 
@@ -298,21 +334,30 @@ func (s *Service) reconcilePendingApprovals() {
 
 func (s *Service) replyOpenCodePermission(ctx context.Context, id, directory string, raw []byte) (int, []byte, error) {
 	path := "/permission/" + url.PathEscape(id) + "/reply"
-	primary := strings.TrimSpace(directory)
+	requestedDir := strings.TrimSpace(directory)
 	rememberedDir := ""
+	if ask, ok := s.gate.openCodeAskFor(id); ok {
+		rememberedDir = strings.TrimSpace(ask.dir)
+	}
 	if s.audit != nil {
 		if snap, ok := s.audit.lookupOpenCodePerm(id); ok {
-			rememberedDir = strings.TrimSpace(snap.Directory)
+			if rememberedDir == "" {
+				rememberedDir = strings.TrimSpace(snap.Directory)
+			}
+			if wt := strings.TrimSpace(s.sessionWorktree(snap.SessionID)); wt != "" {
+				rememberedDir = wt
+			}
 		}
 	}
-	if primary == "" {
-		primary = rememberedDir
-	}
+	primary := firstNonEmptyStr(rememberedDir, requestedDir)
 	status, respRaw, err := s.openCodeRaw(ctx, http.MethodPost, path, directoryQuery(primary, nil), raw)
 	if err != nil || status != http.StatusNotFound {
 		return status, respRaw, err
 	}
 	candidates := s.openCodeCandidateDirs("")
+	if requestedDir != "" {
+		candidates = append([]string{requestedDir}, candidates...)
+	}
 	if rememberedDir != "" {
 		candidates = append([]string{rememberedDir}, candidates...)
 	}
@@ -335,6 +380,9 @@ func (s *Service) openCodeCandidateDirs(directory string) []string {
 	out := make([]string, 0, 4)
 	add := func(d string) {
 		trimmed := strings.TrimSpace(d)
+		if trimmed == "" {
+			return
+		}
 		key := normalizeComparePath(trimmed)
 		if !seen[key] {
 			seen[key] = true
@@ -342,7 +390,6 @@ func (s *Service) openCodeCandidateDirs(directory string) []string {
 		}
 	}
 	normFilter := normalizeComparePath(directory)
-	add(directory)
 	addRec := func(rec SessionRecord, ok bool) {
 		if !ok || rec.Runtime != "opencode" {
 			return
@@ -360,10 +407,12 @@ func (s *Service) openCodeCandidateDirs(directory string) []string {
 	for _, sid := range s.busySessionIDs() {
 		addRec(s.store.Meta(sid))
 	}
-	if normFilter == "" {
-		for _, info := range s.store.List("") {
-			addRec(s.store.Meta(info.ID))
-		}
+	for _, info := range s.store.List("") {
+		addRec(s.store.Meta(info.ID))
+	}
+	add(directory)
+	if len(out) == 0 {
+		out = append(out, "")
 	}
 	return out
 }

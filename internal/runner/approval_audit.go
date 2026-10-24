@@ -147,10 +147,25 @@ func (s *approvalAuditStore) loadFromDisk() (uint64, []ApprovalAuditEntry, bool)
 		doc.Entries = doc.Entries[:maxApprovalAuditEntries]
 	}
 	changed := false
-	for i := range doc.Entries {
-		changed = reRedactApprovalAuditEntry(&doc.Entries[i]) || changed
+	deduped := make([]ApprovalAuditEntry, 0, len(doc.Entries))
+	seenReq := make(map[string]bool, len(doc.Entries))
+	for i := len(doc.Entries) - 1; i >= 0; i-- {
+		e := doc.Entries[i]
+		if e.RequestID != "" {
+			key := e.RequestID + "\x00" + e.Decision + "\x00" + e.Source
+			if seenReq[key] {
+				changed = true
+				continue
+			}
+			seenReq[key] = true
+		}
+		changed = reRedactApprovalAuditEntry(&e) || changed
+		deduped = append(deduped, e)
 	}
-	s.entries = doc.Entries
+	for i, j := 0, len(deduped)-1; i < j; i, j = i+1, j-1 {
+		deduped[i], deduped[j] = deduped[j], deduped[i]
+	}
+	s.entries = deduped
 	if !changed {
 		return 0, nil, false
 	}
@@ -165,6 +180,10 @@ func (s *approvalAuditStore) loadFromDisk() (uint64, []ApprovalAuditEntry, bool)
 // second "…" would change entries that hold no secret.
 func reRedactApprovalAuditEntry(e *ApprovalAuditEntry) bool {
 	changed := false
+	if unwrapped := unwrapSandboxCommand(e.Summary); unwrapped != e.Summary {
+		e.Summary = unwrapped
+		changed = true
+	}
 	for _, field := range []*string{&e.Summary, &e.Message, &e.SessionTitle} {
 		if clean := diagnostics.RedactSecrets(*field); clean != *field {
 			*field = clean
@@ -181,7 +200,7 @@ func (s *approvalAuditStore) record(e ApprovalAuditEntry) {
 	if strings.TrimSpace(e.ID) == "" {
 		e.ID = "aud_" + randomHex(8)
 	}
-	e.Summary = redactApprovalText(e.Summary, 400)
+	e.Summary = redactApprovalText(unwrapSandboxCommand(e.Summary), 400)
 	e.Message = redactApprovalText(e.Message, 240)
 	e.SessionTitle = redactApprovalText(e.SessionTitle, 120)
 	if e.Source == "" {
@@ -189,6 +208,14 @@ func (s *approvalAuditStore) record(e ApprovalAuditEntry) {
 	}
 
 	s.mu.Lock()
+	if e.RequestID != "" {
+		for _, existing := range s.entries {
+			if existing.RequestID == e.RequestID && existing.Decision == e.Decision && existing.Source == e.Source {
+				s.mu.Unlock()
+				return
+			}
+		}
+	}
 	s.entries = append([]ApprovalAuditEntry{e}, s.entries...)
 	if len(s.entries) > maxApprovalAuditEntries {
 		s.entries = s.entries[:maxApprovalAuditEntries]
@@ -317,7 +344,8 @@ func (s *approvalAuditStore) rememberOpenCodePerm(item map[string]interface{}, d
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, exists := s.ocSnapshots[id]; !exists {
+	existing, exists := s.ocSnapshots[id]
+	if !exists {
 		s.ocOrder = append(s.ocOrder, id)
 		if len(s.ocOrder) > maxOpenCodePermSnapshots {
 			oldest := s.ocOrder[0]
@@ -325,12 +353,18 @@ func (s *approvalAuditStore) rememberOpenCodePerm(item map[string]interface{}, d
 			delete(s.ocSnapshots, oldest)
 		}
 	}
+	meta, _ := item["metadata"].(map[string]interface{})
+	resolvedDir := firstNonEmptyStr(
+		strings.TrimSpace(directory),
+		strings.TrimSpace(firstString(meta["directory"], meta["cwd"])),
+		existing.Directory,
+	)
 	s.ocSnapshots[id] = openCodePermSnapshot{
-		SessionID:   strings.TrimSpace(sid),
-		Permission:  firstNonEmptyStr(strings.TrimSpace(perm), "tool"),
-		Tool:        tool,
-		Summary:     summary,
-		Directory:   strings.TrimSpace(directory),
+		SessionID:   firstNonEmptyStr(strings.TrimSpace(sid), existing.SessionID),
+		Permission:  firstNonEmptyStr(strings.TrimSpace(perm), existing.Permission, "tool"),
+		Tool:        firstNonEmptyStr(tool, existing.Tool),
+		Summary:     firstNonEmptyStr(summary, existing.Summary),
+		Directory:   resolvedDir,
 		Destructive: destructive,
 		SeenAt:      time.Now().UnixMilli(),
 	}

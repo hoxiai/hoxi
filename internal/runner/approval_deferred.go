@@ -72,15 +72,40 @@ func (s *deferredStore) load() {
 		_ = os.Rename(s.path, backup)
 		return
 	}
-	s.rows = doc.Entries
+	changed := false
+	cleaned := make([]DeferredEntry, 0, len(doc.Entries))
+	seen := make(map[string]bool, len(doc.Entries))
+	for i := len(doc.Entries) - 1; i >= 0; i-- {
+		e := doc.Entries[i]
+		if e.RequestID != "" {
+			key := e.SessionID + "\x00" + e.RequestID + "\x00" + e.Category
+			if seen[key] {
+				changed = true
+				continue
+			}
+			seen[key] = true
+		}
+		if unwrapped := unwrapSandboxCommand(e.Command); unwrapped != e.Command {
+			e.Command = unwrapped
+			changed = true
+		}
+		cleaned = append(cleaned, e)
+	}
+	for i, j := 0, len(cleaned)-1; i < j; i, j = i+1, j-1 {
+		cleaned[i], cleaned[j] = cleaned[j], cleaned[i]
+	}
+	s.rows = cleaned
+	if changed {
+		s.write(s.path, cleaned)
+	}
 }
 
 func (s *deferredStore) add(e DeferredEntry) {
+	e.Command = diagnostics.RedactSecrets(unwrapSandboxCommand(e.Command))
+	e.Reason = diagnostics.RedactSecrets(e.Reason)
 	if strings.TrimSpace(e.Command) == "" && strings.TrimSpace(e.Reason) == "" {
 		return
 	}
-	e.Command = diagnostics.RedactSecrets(e.Command)
-	e.Reason = diagnostics.RedactSecrets(e.Reason)
 	if e.CreatedAt <= 0 {
 		e.CreatedAt = time.Now().UnixMilli()
 	}
@@ -88,6 +113,14 @@ func (s *deferredStore) add(e DeferredEntry) {
 		e.ID = "def_" + randomHex(8)
 	}
 	s.mu.Lock()
+	if e.RequestID != "" {
+		for _, existing := range s.rows {
+			if existing.SessionID == e.SessionID && existing.RequestID == e.RequestID && existing.Category == e.Category {
+				s.mu.Unlock()
+				return
+			}
+		}
+	}
 	s.rows = append([]DeferredEntry{e}, s.rows...)
 	if len(s.rows) > maxApprovalAuditEntries {
 		s.rows = s.rows[:maxApprovalAuditEntries]
@@ -206,12 +239,16 @@ func (s *Service) rememberDeferred(sessionID, requestID, category, command strin
 	if s.deferred == nil {
 		return
 	}
+	reason := unattendedDenyReason(category)
+	if category == "timeout" {
+		reason = approvalTimeoutReason(s.ApprovalPolicy())
+	}
 	s.deferred.add(DeferredEntry{
 		SessionID: sessionID,
 		RequestID: requestID,
 		Category:  category,
 		Command:   command,
-		Reason:    unattendedDenyReason(category),
+		Reason:    reason,
 	})
 }
 

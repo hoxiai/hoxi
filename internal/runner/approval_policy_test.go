@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -418,11 +419,10 @@ func TestOpenCodeUnattendedHardDenyAuditsOnlyTheReject(t *testing.T) {
 
 	svc.relayOpenCodeEvent(rec, []byte(`{"type":"permission.asked","properties":{"id":"per_oc_push","sessionID":"oc-hard","permission":"bash","patterns":["git push origin main"]}}`))
 	waitFor(t, "hard deny reply", func() bool { return fake.reply("per_oc_push") == "reject" })
-	// The reply goroutine clears its claim only after the audit write lands,
-	// so waiting on it also keeps the write away from t.TempDir cleanup.
+	// The reply goroutine marks its claim done only after the audit write
+	// lands, so waiting on it also keeps the write away from t.TempDir cleanup.
 	waitFor(t, "hard deny audit", func() bool {
-		_, inflight := svc.openCodeAutoReplies.Load("per_oc_push")
-		return !inflight
+		return svc.openCodeAutoReplyState("per_oc_push") == openCodeAutoReplyDone
 	})
 	var decisions []string
 	for _, e := range svc.audit.list("ses_oc_hard", 10) {
@@ -448,8 +448,7 @@ func TestOpenCodeUnattendedHardDenyAuditsOnlyTheReject(t *testing.T) {
 	svc.relayOpenCodeEvent(rec, []byte(`{"type":"permission.asked","properties":{"id":"per_oc_edit","sessionID":"oc-hard","permission":"edit","patterns":["src/main.ts"]}}`))
 	waitFor(t, "in-dir edit reply", func() bool { return fake.reply("per_oc_edit") == "once" })
 	waitFor(t, "in-dir edit audit", func() bool {
-		_, inflight := svc.openCodeAutoReplies.Load("per_oc_edit")
-		return !inflight
+		return svc.openCodeAutoReplyState("per_oc_edit") == openCodeAutoReplyDone
 	})
 }
 
@@ -489,5 +488,112 @@ func TestOpenCodeUnattendedFailedReplyDoesNotRecordAuditOrDeferred(t *testing.T)
 	}
 	if _, loaded := svc.turnStats.Load("ses_oc_fail"); loaded {
 		t.Fatal("failed reply must not increment turn counts")
+	}
+}
+
+func TestOpenCodeTimeoutAndWorktreeDirectoryResolution(t *testing.T) {
+	t.Parallel()
+	projectDir := t.TempDir()
+	worktreeDir := filepath.Join(projectDir, ".hoxi", "worktrees", "ses_wt_1")
+	svc := NewService(projectDir, nil, statusbar.NewTracker(), filepath.Join(t.TempDir(), "sessions.json"))
+	setTestApprovalPolicy(t, svc, ApprovalPolicy{Mode: ApprovalModeSmart, ApprovalTimeoutSeconds: 60})
+
+	var mu sync.Mutex
+	replyDirs := map[string][]string{}
+	// Simulate OpenCode's per-directory Instance state: /permission/:id/reply
+	// returns 200 OK even when called against the wrong directory, and only
+	// removes the pending item when called with worktreeDir. Furthermore, keep
+	// per_oc_lingering in the list even after reply to verify Hoxi never audits
+	// or defers a timed-out request more than once across repeated 4s polls.
+	pendingInWorktree := map[string]bool{
+		"per_oc_timeout":   true,
+		"per_oc_lingering": true,
+	}
+	expiredMs := float64(time.Now().Add(-2 * time.Minute).UnixMilli())
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		qDir := r.URL.Query().Get("directory")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/permission":
+			var out []map[string]interface{}
+			if pendingInWorktree["per_oc_timeout"] {
+				out = append(out, map[string]interface{}{
+					"id":         "per_oc_timeout",
+					"sessionID":  "oc_ext_wt_1",
+					"permission": "bash",
+					"patterns":   []string{"dart format ."},
+					"time":       map[string]interface{}{"created": expiredMs},
+				})
+			}
+			if pendingInWorktree["per_oc_lingering"] {
+				out = append(out, map[string]interface{}{
+					"id":         "per_oc_lingering",
+					"sessionID":  "oc_ext_wt_1",
+					"permission": "bash",
+					"patterns":   []string{"flutter analyze"},
+					"time":       map[string]interface{}{"created": expiredMs},
+				})
+			}
+			writeJSON(w, http.StatusOK, out)
+		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/permission/") && strings.HasSuffix(r.URL.Path, "/reply"):
+			id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/permission/"), "/reply")
+			replyDirs[id] = append(replyDirs[id], qDir)
+			if qDir == worktreeDir && id == "per_oc_timeout" {
+				delete(pendingInWorktree, id)
+			}
+			writeJSON(w, http.StatusOK, true)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	svc.ConfigureOpenCode(server.URL, "secret")
+
+	if err := svc.store.Put(SessionRecord{
+		ID:                  "ses_wt_1",
+		Runtime:             "opencode",
+		ProjectDir:          projectDir,
+		WorktreePath:        worktreeDir,
+		ExternalID:          "oc_ext_wt_1",
+		OpenCodeIDs:         []string{"oc_ext_wt_1"},
+		OpenCodeDirectories: map[string]string{"oc_ext_wt_1": worktreeDir},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Poll using the parent projectDir (and empty dir) as the UI/reconciler does.
+	_ = svc.listUnifiedPermissions(context.Background(), projectDir)
+	waitFor(t, "timeout replies", func() bool {
+		return svc.openCodeAutoReplyState("per_oc_timeout") == openCodeAutoReplyDone &&
+			svc.openCodeAutoReplyState("per_oc_lingering") == openCodeAutoReplyDone
+	})
+
+	// Poll again multiple times; neither request may be re-armed, re-audited,
+	// or returned to the caller even though per_oc_lingering is still returned
+	// by upstream GET /permission.
+	for i := 0; i < 3; i++ {
+		if list := svc.listUnifiedPermissions(context.Background(), ""); len(list) != 0 {
+			t.Fatalf("poll %d returned already-timed-out permissions: %+v", i, list)
+		}
+	}
+
+	mu.Lock()
+	gotTimeoutDirs := append([]string(nil), replyDirs["per_oc_timeout"]...)
+	gotLingeringDirs := append([]string(nil), replyDirs["per_oc_lingering"]...)
+	mu.Unlock()
+	if !reflect.DeepEqual(gotTimeoutDirs, []string{worktreeDir}) {
+		t.Fatalf("per_oc_timeout reply dirs = %v, want [%s]", gotTimeoutDirs, worktreeDir)
+	}
+	if !reflect.DeepEqual(gotLingeringDirs, []string{worktreeDir}) {
+		t.Fatalf("per_oc_lingering reply dirs = %v, want [%s]", gotLingeringDirs, worktreeDir)
+	}
+
+	audits := svc.audit.list("ses_wt_1", 20)
+	if len(audits) != 2 {
+		t.Fatalf("audit entries = %d (%+v), want exactly 2 (one per request)", len(audits), audits)
+	}
+	if deferred := svc.deferred.list(); len(deferred) != 2 {
+		t.Fatalf("deferred entries = %d (%+v), want exactly 2", len(deferred), deferred)
 	}
 }

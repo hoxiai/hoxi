@@ -193,6 +193,7 @@ func (s *Service) handleUnifiedPermissionRoutes(w http.ResponseWriter, r *http.R
 		s.openCodeAutoReplies.Delete(id)
 	}
 	if status >= 200 && status < 300 {
+		s.openCodeAutoReplies.Store(id, openCodeAutoReplyDone)
 		s.gate.forgetOpenCodeAsk(id)
 		if s.status != nil {
 			s.status.SetPendingApproval(id, "", false)
@@ -278,17 +279,30 @@ func (s *Service) replyRunnerPermission(w http.ResponseWriter, r *http.Request, 
 
 func (s *Service) listUnifiedPermissions(ctx context.Context, directory string) []map[string]interface{} {
 	engineToHoxi := make(map[string]string)
+	sessionDirByID := make(map[string]string)
 	for _, info := range s.store.List("") {
 		rec, ok := s.store.Meta(info.ID)
 		if !ok {
 			continue
 		}
+		recDir := firstNonEmptyStr(strings.TrimSpace(rec.WorktreePath), strings.TrimSpace(rec.ProjectDir))
+		if recDir != "" {
+			sessionDirByID[rec.ID] = recDir
+		}
 		if rec.ExternalID != "" {
 			engineToHoxi[rec.ExternalID] = rec.ID
+			if recDir != "" {
+				sessionDirByID[rec.ExternalID] = recDir
+			}
 		}
 		for _, ocID := range rec.OpenCodeIDs {
 			if ocID != "" {
 				engineToHoxi[ocID] = rec.ID
+				if ocDir := strings.TrimSpace(rec.OpenCodeDirectories[ocID]); ocDir != "" {
+					sessionDirByID[ocID] = ocDir
+				} else if recDir != "" {
+					sessionDirByID[ocID] = recDir
+				}
 			}
 		}
 	}
@@ -300,6 +314,9 @@ func (s *Service) listUnifiedPermissions(ctx context.Context, directory string) 
 		ap.openCodeChildren.Range(func(key, _ interface{}) bool {
 			if childID, ok := key.(string); ok && childID != "" {
 				engineToHoxi[childID] = hoxiID
+				if hoxiDir := sessionDirByID[hoxiID]; hoxiDir != "" {
+					sessionDirByID[childID] = hoxiDir
+				}
 			}
 			return true
 		})
@@ -319,27 +336,34 @@ func (s *Service) listUnifiedPermissions(ctx context.Context, directory string) 
 					}
 					seenIDs[pid] = true
 				}
-				if sid, ok := item["sessionID"].(string); ok {
-					if hoxiID := engineToHoxi[sid]; hoxiID != "" {
+				rawSid, _ := item["sessionID"].(string)
+				if rawSid != "" {
+					if hoxiID := engineToHoxi[rawSid]; hoxiID != "" {
 						item["sessionID"] = hoxiID
 					}
 				}
-				if dir != "" {
-					meta, _ := item["metadata"].(map[string]interface{})
+				sessionID, _ := item["sessionID"].(string)
+				meta, _ := item["metadata"].(map[string]interface{})
+				itemDir := firstNonEmptyStr(
+					sessionDirByID[rawSid],
+					sessionDirByID[sessionID],
+					firstString(meta["directory"], meta["cwd"]),
+					dir,
+				)
+				if itemDir != "" {
 					if meta == nil {
 						meta = make(map[string]interface{})
 						item["metadata"] = meta
 					}
 					if firstString(meta["directory"], meta["cwd"]) == "" {
-						meta["directory"] = dir
+						meta["directory"] = itemDir
 					}
 				}
 				sanitizeOpenCodePermissionItem(item)
 				if s.audit != nil {
-					s.audit.rememberOpenCodePerm(item, dir)
+					s.audit.rememberOpenCodePerm(item, itemDir)
 				}
-				sessionID, _ := item["sessionID"].(string)
-				if s.claimOpenCodePermission(item, sessionID, dir, nil) {
+				if s.claimOpenCodePermission(item, sessionID, itemDir, nil) {
 					continue
 				}
 				out = append(out, item)
