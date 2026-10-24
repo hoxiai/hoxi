@@ -25,6 +25,7 @@ type childSink struct {
 	parts    map[string]*MessagePart
 	pending  []string          // tool part IDs still waiting for a result, oldest first
 	byCallID map[string]string // runtime tool call ID -> part ID
+	msgUsage map[string]claudeUsage
 	closed   bool
 }
 
@@ -61,6 +62,7 @@ func (t *TurnTranslator) openChild(key string, spec ChildSessionSpec, now int64)
 		},
 		parts:    make(map[string]*MessagePart),
 		byCallID: make(map[string]string),
+		msgUsage: make(map[string]claudeUsage),
 	}
 	t.children[key] = c
 	t.childOrder = append(t.childOrder, key)
@@ -89,6 +91,20 @@ func (t *TurnTranslator) childSessionID(key string) string {
 
 func (c *childSink) partID(suffix string) string {
 	return "prt_" + c.asst.ID + "_" + suffix
+}
+
+func (c *childSink) noteClaudeUsage(msgID string, u *claudeUsage) {
+	if c == nil || u == nil {
+		return
+	}
+	key := strings.TrimSpace(msgID)
+	if key == "" {
+		key = "_default"
+	}
+	c.msgUsage[key] = mergeClaudeUsage(c.msgUsage[key], u)
+	if tokens := sumClaudeUsageMap(c.msgUsage); tokens != nil {
+		c.asst.Tokens = tokens
+	}
 }
 
 // upsertText writes a whole text or reasoning part; subagent text arrives as

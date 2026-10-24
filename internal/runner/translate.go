@@ -46,6 +46,9 @@ type TurnTranslator struct {
 	createChild func(ChildSessionSpec) (SessionInfo, bool)
 	children    map[string]*childSink
 	childOrder  []string
+
+	claudeMsgUsage map[string]claudeUsage
+	agyStepUsage   map[int]agyUsage
 }
 
 func NewTurnTranslator(sessionID, runtime, messageID, parentUserMsgID, providerID, modelID, mode, externalID string) *TurnTranslator {
@@ -83,6 +86,8 @@ func NewTurnTranslator(sessionID, runtime, messageID, parentUserMsgID, providerI
 		subagentByConv:  make(map[string]*agySubagentTrack),
 		claudeTasks:     make(map[string]*claudeSubagentTask),
 		children:        make(map[string]*childSink),
+		claudeMsgUsage:  make(map[string]claudeUsage),
+		agyStepUsage:    make(map[int]agyUsage),
 	}
 }
 
@@ -347,12 +352,41 @@ func (t *TurnTranslator) handleAgyAgentResponse(su *agyStepUpdate, now int64) []
 		})
 	}
 	if su.State == "DONE" {
+		if su.Usage != nil {
+			t.noteAgyStepUsage(su.StepIndex, *su.Usage)
+		}
 		if part, exists := t.partsByID[txtID]; exists {
 			part.Time = &PartTime{Start: startMs, End: endMs}
 			evts = append(evts, SSEEvent{Type: "message.part.updated", Properties: map[string]interface{}{"part": clonePart(*part)}})
 		}
 	}
 	return evts
+}
+
+func (t *TurnTranslator) noteAgyStepUsage(stepIndex int, u agyUsage) {
+	if u.InputTokens == 0 && u.OutputTokens == 0 && u.ThinkingTokens == 0 && u.CacheReadTokens == 0 && u.TotalTokens == 0 {
+		return
+	}
+	t.agyStepUsage[stepIndex] = u
+	var in, out, reasoning, cacheRead, total int
+	for _, s := range t.agyStepUsage {
+		in += s.InputTokens
+		out += s.OutputTokens
+		reasoning += s.ThinkingTokens
+		cacheRead += s.CacheReadTokens
+		total += s.TotalTokens
+	}
+	if total == 0 {
+		total = in + out + reasoning + cacheRead
+	}
+	tokens := &MessageTokens{
+		Total:     total,
+		Input:     in,
+		Output:    out,
+		Reasoning: reasoning,
+	}
+	tokens.Cache.Read = cacheRead
+	t.msgInfo.Tokens = tokens
 }
 
 func (t *TurnTranslator) handleAgyToolStep(su *agyStepUpdate, now int64) []SSEEvent {
@@ -455,8 +489,12 @@ func (t *TurnTranslator) handleAgyResult(res *agyResult) []SSEEvent {
 	var evts []SSEEvent
 
 	if res.Usage != nil {
+		total := res.Usage.TotalTokens
+		if total == 0 {
+			total = res.Usage.InputTokens + res.Usage.OutputTokens + res.Usage.ThinkingTokens + res.Usage.CacheReadTokens
+		}
 		tokens := &MessageTokens{
-			Total:     res.Usage.TotalTokens,
+			Total:     total,
 			Input:     res.Usage.InputTokens,
 			Output:    res.Usage.OutputTokens,
 			Reasoning: res.Usage.ThinkingTokens,

@@ -121,8 +121,42 @@ test("standalone browser plugin", async (t) => {
     const output = { system: ["existing"] };
     await hooks["experimental.chat.system.transform"]({}, output);
     assert.equal(output.system[0], "existing");
-    for (const word of ["hoxi_browser", "untrusted", "prompt injection", "approval", "evaluate", "Manual mode"]) {
+    for (const word of ["hoxi_code_index", "hoxi_browser", "untrusted", "prompt injection", "approval", "evaluate", "Manual mode"]) {
       assert.ok(output.system[1].includes(word));
     }
+  });
+
+  await t.test("hoxi_code_index executes search, inspect, callers and refresh bound to context.directory", async () => {
+    const execIndex = hooks.tool.hoxi_code_index.execute;
+    requests = [];
+    asks = [];
+    globalThis.fetch = async (url, options) => {
+      requests.push({ url, options });
+      return Response.json({ ok: true, results: [] });
+    };
+    const searchRes = await execIndex({ action: "search", query: "HandleRequest", limit: 8, refresh: true, directory: "/spoof" }, context);
+    assert.equal(asks.length, 0);
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].url.pathname, "/api/hoxi/code-index/search");
+    assert.equal(requests[0].url.searchParams.get("directory"), context.directory);
+    assert.equal(requests[0].url.searchParams.get("q"), "HandleRequest");
+    assert.equal(requests[0].url.searchParams.get("limit"), "8");
+    assert.equal(requests[0].url.searchParams.get("refresh"), "1");
+    assert.equal(searchRes.title, "CodeIndex: search");
+
+    await execIndex({ action: "inspect", path: "main.go", symbol: "HandleRequest", startLine: 3, endLine: 10 }, context);
+    assert.equal(requests[1].url.pathname, "/api/hoxi/code-index/inspect");
+    assert.equal(requests[1].url.searchParams.get("directory"), context.directory);
+    assert.equal(requests[1].url.searchParams.get("path"), "main.go");
+    assert.equal(requests[1].url.searchParams.get("symbol"), "HandleRequest");
+
+    await execIndex({ action: "callers", symbol: "HandleRequest", path: "main.go" }, context);
+    assert.equal(requests[2].url.pathname, "/api/hoxi/code-index/callers");
+    assert.equal(requests[2].url.searchParams.get("directory"), context.directory);
+    assert.equal(requests[2].url.searchParams.get("symbol"), "HandleRequest");
+
+    await execIndex({ action: "refresh" }, context);
+    assert.equal(requests[3].url.pathname, "/api/hoxi/code-index/refresh");
+    assert.equal(requests[3].options.method, "POST");
   });
 });

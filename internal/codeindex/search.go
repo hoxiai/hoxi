@@ -72,6 +72,10 @@ func buildDocs(index *Index) *cachedIndex {
 }
 
 func (s *Service) rank(directory, query string, limit int) (*cachedIndex, []Result) {
+	return s.rankWithPath(directory, query, "", limit)
+}
+
+func (s *Service) rankWithPath(directory, query, pathPrefix string, limit int) (*cachedIndex, []Result) {
 	c, err := s.ensure(directory)
 	if err != nil {
 		return nil, nil
@@ -84,19 +88,30 @@ func (s *Service) rank(directory, query string, limit int) (*cachedIndex, []Resu
 		limit = 12
 	}
 	lowerQuery := strings.ToLower(strings.TrimSpace(query))
+	normPrefix := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(strings.ReplaceAll(pathPrefix, "\\", "/")), "./"))
 	type scored struct {
 		result Result
 		score  float64
 	}
 	var matches []scored
 	for _, doc := range c.docs {
+		lowerPath := strings.ToLower(doc.chunk.Path)
+		if normPrefix != "" && !strings.HasPrefix(lowerPath, normPrefix) {
+			continue
+		}
 		score := textindex.Score(queryTokens, doc.tokens, c.df, len(c.docs), doc.length, c.avgLen)
 		if score <= 0 {
 			continue
 		}
 		lowerSymbol := strings.ToLower(doc.chunk.Symbol)
-		lowerPath := strings.ToLower(doc.chunk.Path)
 		lowerText := strings.ToLower(doc.chunk.Text)
+		if lowerSymbol != "" {
+			if lowerSymbol == lowerQuery {
+				score += 6.0
+			} else if strings.HasPrefix(lowerSymbol, lowerQuery) {
+				score += 3.0
+			}
+		}
 		for _, token := range queryTokens {
 			if strings.Contains(lowerSymbol, token) {
 				score += 1.5

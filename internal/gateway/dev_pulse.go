@@ -266,7 +266,7 @@ func (g *Gateway) collectRunnerDailyUsage(startOfTodayMs int64, res *gitDailyPul
 				if tokens == nil {
 					continue
 				}
-				if tokens.Input == 0 && tokens.Output == 0 && tokens.Cache.Read == 0 {
+				if tokens.Input == 0 && tokens.Output == 0 && tokens.Cache.Read == 0 && tokens.Cache.Write == 0 {
 					continue
 				}
 				turns++

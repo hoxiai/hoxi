@@ -146,6 +146,46 @@ func (s *Service) adoptOpenCodeSession(ctx context.Context, id, directory string
 	return rec, nil
 }
 
+const maxRecentHandoffTurns = 8
+
+func summarizeHandoffToolPart(p MessagePart) string {
+	if p.State == nil {
+		return ""
+	}
+	tool := firstNonEmptyStr(p.Tool, "tool")
+	status := firstNonEmptyStr(p.State.Status, "completed")
+	target := firstString(
+		p.State.Input["filePath"],
+		p.State.Input["path"],
+		p.State.Input["file"],
+		p.State.Input["TargetFile"],
+		p.State.Input["AbsolutePath"],
+		p.State.Input["command"],
+		p.State.Input["CommandLine"],
+		p.State.Input["pattern"],
+		p.State.Input["query"],
+		p.State.Title,
+	)
+	summary := fmt.Sprintf("Tool %s [%s]", tool, status)
+	if target != "" {
+		summary += ": " + singleLineExcerpt(target, 160)
+	}
+	if status == "error" || strings.TrimSpace(p.State.Error) != "" {
+		errTxt := firstNonEmptyStr(p.State.Error, p.State.Output)
+		if strings.TrimSpace(errTxt) != "" {
+			summary += " — error: " + redactMemorySecrets(singleLineExcerpt(errTxt, 240))
+		}
+		return summary
+	}
+	lowerTool := strings.ToLower(strings.TrimSpace(tool))
+	if lowerTool != "read" && lowerTool != "view_file" && lowerTool != "read_file" {
+		if out := strings.TrimSpace(p.State.Output); out != "" {
+			summary += " — " + redactMemorySecrets(singleLineExcerpt(out, 160))
+		}
+	}
+	return summary
+}
+
 // Each new engine receives a transcript once. Native resume handles later turns.
 // Treat prior output as quoted conversation, never as a new instruction.
 func runtimeContext(rec SessionRecord) string {
@@ -170,16 +210,39 @@ func runtimeContext(rec SessionRecord) string {
 	if rec.Runtime == "opencode" && rec.ContextTurnCount > 0 && rec.ContextTurnCount < len(turns) {
 		turns = turns[:rec.ContextTurnCount]
 	}
-	for _, turn := range turns {
+	recentStart := 0
+	if len(turns) > maxRecentHandoffTurns {
+		recentStart = len(turns) - maxRecentHandoffTurns
+	}
+	for idx, turn := range turns {
+		isRecent := idx >= recentStart
+		role := strings.ToLower(strings.TrimSpace(turn.Info.Role))
+		if !isRecent && role != "user" {
+			// Older assistant turns and raw tool states are already distilled into
+			// <session_handoff_memory>; only carry older user turns concisely.
+			continue
+		}
 		var content []string
 		for _, p := range turn.Parts {
 			switch p.Type {
 			case "text":
-				content = append(content, p.Text)
+				txt := strings.TrimSpace(p.Text)
+				if txt == "" {
+					continue
+				}
+				if !isRecent {
+					content = append(content, redactMemorySecrets(singleLineExcerpt(txt, 320)))
+				} else if role == "assistant" {
+					content = append(content, redactMemorySecrets(singleLineExcerpt(txt, 1600)))
+				} else {
+					content = append(content, redactMemorySecrets(singleLineExcerpt(txt, 1200)))
+				}
 			case "tool":
-				if p.State != nil {
-					raw, _ := json.Marshal(p.State)
-					content = append(content, fmt.Sprintf("Tool %s: %s", p.Tool, raw))
+				if !isRecent {
+					continue
+				}
+				if summary := summarizeHandoffToolPart(p); summary != "" {
+					content = append(content, summary)
 				}
 			case "file":
 				desc := strings.TrimSpace(p.Mime)
@@ -195,6 +258,9 @@ func runtimeContext(rec SessionRecord) string {
 				}
 				content = append(content, fmt.Sprintf("Attachment %s (%s)", p.Filename, desc))
 			}
+		}
+		if len(content) == 0 {
+			continue
 		}
 		raw, _ := json.Marshal(map[string]interface{}{"role": turn.Info.Role, "content": content})
 		out.Write(raw)

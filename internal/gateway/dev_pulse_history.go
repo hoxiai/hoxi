@@ -386,7 +386,7 @@ func (g *Gateway) collectRunnerHistory(startMs, endMs int64, day func(string) *h
 				if tokens == nil {
 					continue
 				}
-				if tokens.Input == 0 && tokens.Output == 0 && tokens.Cache.Read == 0 {
+				if tokens.Input == 0 && tokens.Output == 0 && tokens.Cache.Read == 0 && tokens.Cache.Write == 0 {
 					continue
 				}
 				target := day(key)

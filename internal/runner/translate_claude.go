@@ -7,14 +7,43 @@ import (
 	"time"
 )
 
+type claudeUsage struct {
+	InputTokens              int `json:"input_tokens"`
+	OutputTokens             int `json:"output_tokens"`
+	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+	OutputTokensDetails      *struct {
+		ThinkingTokens int `json:"thinking_tokens"`
+	} `json:"output_tokens_details"`
+}
+
+func (u claudeUsage) thinkingTokens() int {
+	if u.OutputTokensDetails != nil {
+		return u.OutputTokensDetails.ThinkingTokens
+	}
+	return 0
+}
+
+type claudeModelUsage struct {
+	InputTokens              int     `json:"inputTokens"`
+	OutputTokens             int     `json:"outputTokens"`
+	CacheReadInputTokens     int     `json:"cacheReadInputTokens"`
+	CacheCreationInputTokens int     `json:"cacheCreationInputTokens"`
+	ThinkingTokens           int     `json:"thinkingTokens"`
+	CostUSD                  float64 `json:"costUSD"`
+}
+
 type claudeRawEvent struct {
-	Type      string `json:"type"`
-	Subtype   string `json:"subtype"`
-	SessionID string `json:"session_id"`
-	Model     string `json:"model"`
-	IsError   bool   `json:"is_error"`
-	Result    string `json:"result"`
-	Error     string `json:"error"`
+	Type         string                      `json:"type"`
+	Subtype      string                      `json:"subtype"`
+	SessionID    string                      `json:"session_id"`
+	Model        string                      `json:"model"`
+	IsError      bool                        `json:"is_error"`
+	Result       string                      `json:"result"`
+	Error        string                      `json:"error"`
+	TotalCostUSD float64                     `json:"total_cost_usd"`
+	Usage        *claudeUsage                `json:"usage"`
+	ModelUsage   map[string]claudeModelUsage `json:"modelUsage"`
 	// Subagent plumbing: inner messages carry parent_tool_use_id, and
 	// system/task_notification reports a background subagent's outcome.
 	ParentToolUseID string `json:"parent_tool_use_id"`
@@ -27,10 +56,13 @@ type claudeRawEvent struct {
 	RetryDelayMs float64 `json:"retry_delay_ms"`
 	ErrorStatus  *int    `json:"error_status"`
 	Event        *struct {
-		Type    string `json:"type"`
-		Index   int    `json:"index"`
+		Type    string       `json:"type"`
+		Index   int          `json:"index"`
+		Usage   *claudeUsage `json:"usage"`
 		Message *struct {
-			ID string `json:"id"`
+			ID    string       `json:"id"`
+			Model string       `json:"model"`
+			Usage *claudeUsage `json:"usage"`
 		} `json:"message"`
 		Delta *struct {
 			Type     string `json:"type"`
@@ -44,9 +76,10 @@ type claudeRawEvent struct {
 		} `json:"content_block"`
 	} `json:"event"`
 	Message *struct {
-		ID      string `json:"id"`
-		Model   string `json:"model"`
-		Role    string `json:"role"`
+		ID      string       `json:"id"`
+		Model   string       `json:"model"`
+		Role    string       `json:"role"`
+		Usage   *claudeUsage `json:"usage"`
 		Content []struct {
 			Type      string                 `json:"type"`
 			Text      string                 `json:"text"`
@@ -59,6 +92,144 @@ type claudeRawEvent struct {
 			IsError   bool                   `json:"is_error"`
 		} `json:"content"`
 	} `json:"message"`
+}
+
+func mergeClaudeUsage(prev claudeUsage, incoming *claudeUsage) claudeUsage {
+	if incoming == nil {
+		return prev
+	}
+	if incoming.InputTokens > prev.InputTokens {
+		prev.InputTokens = incoming.InputTokens
+	}
+	if incoming.OutputTokens > prev.OutputTokens {
+		prev.OutputTokens = incoming.OutputTokens
+	}
+	if incoming.CacheReadInputTokens > prev.CacheReadInputTokens {
+		prev.CacheReadInputTokens = incoming.CacheReadInputTokens
+	}
+	if incoming.CacheCreationInputTokens > prev.CacheCreationInputTokens {
+		prev.CacheCreationInputTokens = incoming.CacheCreationInputTokens
+	}
+	if th := incoming.thinkingTokens(); th > prev.thinkingTokens() {
+		prev.OutputTokensDetails = &struct {
+			ThinkingTokens int `json:"thinking_tokens"`
+		}{ThinkingTokens: th}
+	}
+	return prev
+}
+
+func sumClaudeUsageMap(m map[string]claudeUsage) *MessageTokens {
+	var in, out, reasoning, cacheRead, cacheWrite int
+	for _, u := range m {
+		in += u.InputTokens
+		out += u.OutputTokens
+		reasoning += u.thinkingTokens()
+		cacheRead += u.CacheReadInputTokens
+		cacheWrite += u.CacheCreationInputTokens
+	}
+	total := in + out + reasoning + cacheRead + cacheWrite
+	if total == 0 {
+		return nil
+	}
+	tokens := &MessageTokens{
+		Total:     total,
+		Input:     in,
+		Output:    out,
+		Reasoning: reasoning,
+	}
+	tokens.Cache.Read = cacheRead
+	tokens.Cache.Write = cacheWrite
+	return tokens
+}
+
+func (t *TurnTranslator) noteClaudeMsgUsage(msgID string, u *claudeUsage) {
+	if u == nil {
+		return
+	}
+	key := strings.TrimSpace(msgID)
+	if key == "" {
+		key = "_default"
+	}
+	t.claudeMsgUsage[key] = mergeClaudeUsage(t.claudeMsgUsage[key], u)
+	if tokens := sumClaudeUsageMap(t.claudeMsgUsage); tokens != nil {
+		t.msgInfo.Tokens = tokens
+	}
+}
+
+func (t *TurnTranslator) applyClaudeResultUsage(env *claudeRawEvent) {
+	if env == nil {
+		return
+	}
+	if env.TotalCostUSD > 0 {
+		t.msgInfo.Cost = env.TotalCostUSD
+	}
+	if len(env.ModelUsage) > 0 {
+		var in, out, reasoning, cacheRead, cacheWrite int
+		var modelCost float64
+		for _, mu := range env.ModelUsage {
+			in += mu.InputTokens
+			out += mu.OutputTokens
+			reasoning += mu.ThinkingTokens
+			cacheRead += mu.CacheReadInputTokens
+			cacheWrite += mu.CacheCreationInputTokens
+			modelCost += mu.CostUSD
+		}
+		if env.Usage != nil && env.Usage.thinkingTokens() > reasoning {
+			reasoning = env.Usage.thinkingTokens()
+		}
+		if t.msgInfo.Cost == 0 && modelCost > 0 {
+			t.msgInfo.Cost = modelCost
+		}
+		total := in + out + reasoning + cacheRead + cacheWrite
+		if total > 0 {
+			tokens := &MessageTokens{
+				Total:     total,
+				Input:     in,
+				Output:    out,
+				Reasoning: reasoning,
+			}
+			tokens.Cache.Read = cacheRead
+			tokens.Cache.Write = cacheWrite
+			t.msgInfo.Tokens = tokens
+			return
+		}
+	}
+	if env.Usage != nil {
+		in := env.Usage.InputTokens
+		out := env.Usage.OutputTokens
+		reasoning := env.Usage.thinkingTokens()
+		cacheRead := env.Usage.CacheReadInputTokens
+		cacheWrite := env.Usage.CacheCreationInputTokens
+		// Fold in any child subagent messages when modelUsage was not emitted.
+		for k, cu := range t.claudeMsgUsage {
+			if strings.HasPrefix(k, "child:") {
+				in += cu.InputTokens
+				out += cu.OutputTokens
+				reasoning += cu.thinkingTokens()
+				cacheRead += cu.CacheReadInputTokens
+				cacheWrite += cu.CacheCreationInputTokens
+			}
+		}
+		if streamed := sumClaudeUsageMap(t.claudeMsgUsage); streamed != nil {
+			in = max(in, streamed.Input)
+			out = max(out, streamed.Output)
+			reasoning = max(reasoning, streamed.Reasoning)
+			cacheRead = max(cacheRead, streamed.Cache.Read)
+			cacheWrite = max(cacheWrite, streamed.Cache.Write)
+		}
+		total := in + out + reasoning + cacheRead + cacheWrite
+		if total > 0 {
+			tokens := &MessageTokens{
+				Total:     total,
+				Input:     in,
+				Output:    out,
+				Reasoning: reasoning,
+			}
+			tokens.Cache.Read = cacheRead
+			tokens.Cache.Write = cacheWrite
+			t.msgInfo.Tokens = tokens
+		}
+	}
 }
 
 func (t *TurnTranslator) advanceClaudeMessage(id string, forceNewStep bool) {
@@ -185,12 +356,21 @@ func (t *TurnTranslator) feedClaudeEvent(env *claudeRawEvent, now int64) []SSEEv
 		}
 		if env.Event.Type == "message_start" {
 			msgID := env.APIMessageID
-			if env.Event.Message != nil && env.Event.Message.ID != "" {
-				msgID = env.Event.Message.ID
+			if env.Event.Message != nil {
+				if env.Event.Message.ID != "" {
+					msgID = env.Event.Message.ID
+				}
+				if env.Event.Message.Model != "" && t.msgInfo.ModelID == "" {
+					t.msgInfo.ModelID = env.Event.Message.Model
+				}
+				t.noteClaudeMsgUsage(msgID, env.Event.Message.Usage)
 			}
 			t.advanceClaudeMessage(msgID, true)
 		} else if env.APIMessageID != "" {
 			t.advanceClaudeMessage(env.APIMessageID, false)
+		}
+		if env.Event.Usage != nil {
+			t.noteClaudeMsgUsage(firstNonEmptyStr(t.claudeMessageID, env.APIMessageID), env.Event.Usage)
 		}
 		if env.Event.Type == "content_block_start" && env.Event.ContentBlock != nil &&
 			env.Event.ContentBlock.Type != "" && env.Event.ContentBlock.Type != "thinking" {
@@ -283,7 +463,12 @@ func (t *TurnTranslator) feedClaudeEvent(env *claudeRawEvent, now int64) []SSEEv
 		// Claude Code and CodeBuddy emit a separate "assistant" snapshot per
 		// content block (each with len(content) == 1 at slice index 0), while
 		// stream_event uses the API block index across thinking/text/tool_use.
-		t.advanceClaudeMessage(firstNonEmptyStr(env.Message.ID, env.APIMessageID), false)
+		msgID := firstNonEmptyStr(env.Message.ID, env.APIMessageID)
+		t.advanceClaudeMessage(msgID, false)
+		if env.Message.Model != "" && t.msgInfo.ModelID == "" {
+			t.msgInfo.ModelID = env.Message.Model
+		}
+		t.noteClaudeMsgUsage(msgID, env.Message.Usage)
 		var evts []SSEEvent
 		for idx, blk := range env.Message.Content {
 			switch blk.Type {
@@ -428,6 +613,7 @@ func (t *TurnTranslator) feedClaudeEvent(env *claudeRawEvent, now int64) []SSEEv
 	case "result":
 		t.turnFinished = true
 		t.msgInfo.Time.Completed = now
+		t.applyClaudeResultUsage(env)
 		evts := t.finishClaudeSubagents(env.IsError, now)
 		evts = append(evts, t.closeAllChildren(env.IsError, now)...)
 		if env.IsError {

@@ -79,6 +79,13 @@ func (t *TurnTranslator) finishClaudeSubagents(failed bool, now int64) []SSEEven
 // feedClaudeChildLine records a subagent's own message in its child session.
 func (t *TurnTranslator) feedClaudeChildLine(env *claudeRawEvent, now int64) []SSEEvent {
 	c := t.children[env.ParentToolUseID]
+	if env.Message != nil && env.Message.Usage != nil {
+		msgID := firstNonEmptyStr(env.Message.ID, env.APIMessageID)
+		t.noteClaudeMsgUsage("child:"+env.ParentToolUseID+":"+msgID, env.Message.Usage)
+		if c != nil {
+			c.noteClaudeUsage(msgID, env.Message.Usage)
+		}
+	}
 	if c == nil || env.Message == nil {
 		return nil
 	}

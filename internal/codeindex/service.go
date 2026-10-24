@@ -55,16 +55,22 @@ func DefaultRoot() string {
 
 func (s *Service) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/hoxi/code-index/search", s.handleSearch)
+	mux.HandleFunc("/api/hoxi/code-index/inspect", s.handleInspect)
+	mux.HandleFunc("/api/hoxi/code-index/callers", s.handleCallers)
 	mux.HandleFunc("/api/hoxi/code-index/status", s.handleStatus)
 	mux.HandleFunc("/api/hoxi/code-index/refresh", s.handleRefresh)
 }
 
 func (s *Service) Search(directory, query string, limit int) (SearchResponse, error) {
+	return s.SearchWithPath(directory, query, "", limit)
+}
+
+func (s *Service) SearchWithPath(directory, query, pathPrefix string, limit int) (SearchResponse, error) {
 	directory, err := canonicalDir(directory)
 	if err != nil {
 		return SearchResponse{}, err
 	}
-	c, results := s.rank(directory, query, limit)
+	c, results := s.rankWithPath(directory, query, pathPrefix, limit)
 	if c == nil {
 		return SearchResponse{}, errors.New("code index unavailable")
 	}
@@ -233,8 +239,16 @@ func (s *Service) handleSearch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	result, err := s.Search(directory, r.URL.Query().Get("q"), limit)
+	q := r.URL.Query()
+	if q.Get("refresh") == "1" || q.Get("refresh") == "true" {
+		_, _ = s.Refresh(directory)
+	}
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	pathPrefix := q.Get("path")
+	if pathPrefix == "" {
+		pathPrefix = q.Get("pathPrefix")
+	}
+	result, err := s.SearchWithPath(directory, q.Get("q"), pathPrefix, limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

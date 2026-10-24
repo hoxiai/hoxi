@@ -15,7 +15,55 @@ import (
 var (
 	memoryWriteMu       sync.Mutex
 	volatileUpdatedLine = regexp.MustCompile(`(?m)^Updated:\s*[^\r\n]+\r?\n?`)
+	userConstraintRe    = regexp.MustCompile(`(?i)\b(must|never|do not|don't|forbidden|constraint|cannot|should not)\b|严禁|不要|必须|禁止|不能|不得|仅限|切勿`)
+	clauseSplitRe       = regexp.MustCompile(`[.!?。！？；;\r\n]+`)
+	verificationCmdRe   = regexp.MustCompile(`(?i)\b(go\s+(?:test|vet|build)|npm\s+(?:--prefix\s+\S+\s+)?(?:test|run\s+(?:test|lint|build|check\S*))|pnpm\s+(?:test|lint|build|check\S*)|yarn\s+(?:test|lint|build)|flutter\s+(?:test|analyze)|pytest|cargo\s+(?:test|check|clippy)|tsc\b|node\s+--test)\b`)
+	memorySecretRes     = []*regexp.Regexp{
+		regexp.MustCompile(`\b(sk-[a-zA-Z0-9_-]{20,})\b`),
+		regexp.MustCompile(`\b(sk-ant-[a-zA-Z0-9_-]{20,})\b`),
+		regexp.MustCompile(`\b(gh[pousr]_[A-Za-z0-9_]{20,})\b`),
+		regexp.MustCompile(`\b(AIza[0-9A-Za-z_-]{30,})\b`),
+		regexp.MustCompile(`(?i)Bearer\s+[A-Za-z0-9._~+/-]{20,}`),
+		regexp.MustCompile(`(?s)-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----`),
+	}
 )
+
+func redactMemorySecrets(text string) string {
+	if text == "" {
+		return ""
+	}
+	out := text
+	for _, re := range memorySecretRes {
+		out = re.ReplaceAllString(out, "[REDACTED_SECRET]")
+	}
+	return out
+}
+
+func extractConstraintClauses(text string) []string {
+	whole := singleLineExcerpt(text, 240)
+	var out []string
+	for _, raw := range clauseSplitRe.Split(text, -1) {
+		clause := singleLineExcerpt(raw, 220)
+		if clause == "" || clause == whole {
+			continue
+		}
+		if userConstraintRe.MatchString(clause) {
+			out = append(out, redactMemorySecrets(clause))
+		}
+	}
+	return out
+}
+
+func isMutatingToolName(tool string) bool {
+	switch strings.ToLower(strings.TrimSpace(tool)) {
+	case "edit", "write", "multiedit", "apply_patch", "patch",
+		"replace_file_content", "multi_replace_file_content",
+		"write_to_file", "write_file", "edit_file", "create_file", "sed_file":
+		return true
+	default:
+		return false
+	}
+}
 
 // stripVolatileMemoryHeader removes dynamic "Updated: <timestamp>" headers so
 // injected system/context prefixes remain 100% byte-identical for LLM KV caches.
@@ -79,6 +127,9 @@ func runtimeMemoryContext(rec SessionRecord) string {
 	sessMem := readFirstNonEmptyFile(memoryCandidates(rec, filepath.Join("sessions", rec.ID+".md"))...)
 	if rec.ExternalID != "" && sessMem == "" {
 		sessMem = readFirstNonEmptyFile(memoryCandidates(rec, filepath.Join("sessions", rec.ExternalID+".md"))...)
+	}
+	if sessMem == "" && len(rec.Turns) > 0 {
+		sessMem = buildEightDimSessionMarkdown(rec)
 	}
 
 	projClean := stripVolatileMemoryHeader(projMem)
@@ -149,22 +200,45 @@ func (s *Service) syncSessionMemoryFile(sessionID string) {
 
 func buildEightDimSessionMarkdown(rec SessionRecord) string {
 	var (
-		userMessages   []string
-		filesTouched   []string
-		seenFiles      = make(map[string]bool)
-		errorsObserved []string
-		pendingTodos   []string
-		lastAssistant  string
-		toolCount      int
+		userMessages    []string
+		userConstraints []string
+		seenConstraints = make(map[string]bool)
+		filesChanged    []string
+		seenChanged     = make(map[string]bool)
+		filesInspected  []string
+		seenInspected   = make(map[string]bool)
+		errorsObserved  []string
+		verifications   []string
+		pendingTodos    []string
+		lastAssistant   string
+		toolCount       int
 	)
 
-	addFile := func(raw string) {
-		p := strings.TrimSpace(raw)
-		if p == "" || seenFiles[p] || len(filesTouched) >= 24 {
+	addConstraint := func(clause string) {
+		c := strings.TrimSpace(clause)
+		if c == "" || seenConstraints[c] || len(userConstraints) >= 8 {
 			return
 		}
-		seenFiles[p] = true
-		filesTouched = append(filesTouched, p)
+		seenConstraints[c] = true
+		userConstraints = append(userConstraints, c)
+	}
+
+	addFile := func(raw string, mutated bool) {
+		p := strings.TrimSpace(raw)
+		if p == "" {
+			return
+		}
+		if mutated {
+			if !seenChanged[p] && len(filesChanged) < 24 {
+				seenChanged[p] = true
+				filesChanged = append(filesChanged, p)
+			}
+			return
+		}
+		if !seenChanged[p] && !seenInspected[p] && len(filesInspected) < 24 {
+			seenInspected[p] = true
+			filesInspected = append(filesInspected, p)
+		}
 	}
 
 	for _, turn := range rec.Turns {
@@ -177,19 +251,35 @@ func buildEightDimSessionMarkdown(rec SessionRecord) string {
 					continue
 				}
 				if role == "user" {
-					userMessages = append(userMessages, singleLineExcerpt(txt, 220))
+					excerpt := redactMemorySecrets(singleLineExcerpt(txt, 220))
+					userMessages = append(userMessages, excerpt)
+					for _, clause := range extractConstraintClauses(txt) {
+						addConstraint(clause)
+					}
+					if userConstraintRe.MatchString(txt) && len(userMessages) > 1 {
+						addConstraint(excerpt)
+					}
 				} else if role == "assistant" {
-					lastAssistant = singleLineExcerpt(txt, 320)
+					lastAssistant = redactMemorySecrets(singleLineExcerpt(txt, 320))
 				}
 			case "tool":
 				if part.State == nil {
 					continue
 				}
 				toolCount++
+				mutated := isMutatingToolName(part.Tool)
 				for _, key := range []string{"filePath", "path", "file", "TargetFile", "AbsolutePath"} {
 					if v, ok := part.State.Input[key].(string); ok {
-						addFile(v)
+						addFile(v, mutated)
 					}
+				}
+				if cmd, ok := part.State.Input["command"].(string); ok && verificationCmdRe.MatchString(cmd) {
+					status := firstNonEmptyStr(part.State.Status, "completed")
+					entry := fmt.Sprintf("`%s` (%s)", singleLineExcerpt(cmd, 120), status)
+					if len(verifications) >= 6 {
+						verifications = verifications[1:]
+					}
+					verifications = append(verifications, entry)
 				}
 				if strings.EqualFold(part.Tool, "todowrite") {
 					if rawTodos, ok := part.State.Input["todos"].([]interface{}); ok {
@@ -202,13 +292,13 @@ func buildEightDimSessionMarkdown(rec SessionRecord) string {
 							content, _ := m["content"].(string)
 							status, _ := m["status"].(string)
 							if strings.TrimSpace(content) != "" {
-								pendingTodos = append(pendingTodos, fmt.Sprintf("[%s] %s", firstNonEmptyStr(status, "pending"), strings.TrimSpace(content)))
+								pendingTodos = append(pendingTodos, fmt.Sprintf("[%s] %s", firstNonEmptyStr(status, "pending"), redactMemorySecrets(strings.TrimSpace(content))))
 							}
 						}
 					}
 				}
 				if part.State.Status == "error" && strings.TrimSpace(part.State.Error) != "" && len(errorsObserved) < 8 {
-					errorsObserved = append(errorsObserved, fmt.Sprintf("%s: %s", part.Tool, singleLineExcerpt(part.State.Error, 180)))
+					errorsObserved = append(errorsObserved, fmt.Sprintf("%s: %s", part.Tool, redactMemorySecrets(singleLineExcerpt(part.State.Error, 180))))
 				}
 			}
 		}
@@ -232,6 +322,12 @@ func buildEightDimSessionMarkdown(rec SessionRecord) string {
 	} else {
 		b.WriteString("- Active engineering session in " + firstNonEmptyStr(rec.Title, rec.ID) + "\n")
 	}
+	for _, c := range userConstraints {
+		if len(userMessages) > 0 && (c == userMessages[0] || c == userMessages[len(userMessages)-1]) {
+			continue
+		}
+		b.WriteString("- User Constraint: " + c + "\n")
+	}
 	b.WriteByte('\n')
 
 	b.WriteString("## 2. Key Technical Concepts\n")
@@ -245,11 +341,19 @@ func buildEightDimSessionMarkdown(rec SessionRecord) string {
 	b.WriteByte('\n')
 
 	b.WriteString("## 3. Files and Code Sections\n")
-	if len(filesTouched) > 0 {
-		for _, f := range filesTouched {
-			b.WriteString("- `" + f + "`\n")
+	totalFiles := 0
+	for _, f := range filesChanged {
+		b.WriteString("- `" + f + "` (modified)\n")
+		totalFiles++
+	}
+	for _, f := range filesInspected {
+		if seenChanged[f] || totalFiles >= 24 {
+			continue
 		}
-	} else {
+		b.WriteString("- `" + f + "`\n")
+		totalFiles++
+	}
+	if totalFiles == 0 {
 		b.WriteString("- No explicit file paths recorded yet.\n")
 	}
 	b.WriteByte('\n')
@@ -266,6 +370,9 @@ func buildEightDimSessionMarkdown(rec SessionRecord) string {
 
 	b.WriteString("## 5. Problem Solving\n")
 	b.WriteString(fmt.Sprintf("- Executed %d tool invocation(s) across %d conversation turn(s).\n", toolCount, len(rec.Turns)))
+	for _, v := range verifications {
+		b.WriteString("- Verification: " + v + "\n")
+	}
 	if lastAssistant != "" {
 		b.WriteString("- Latest Summary: " + lastAssistant + "\n")
 	}

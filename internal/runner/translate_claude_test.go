@@ -138,3 +138,42 @@ func TestClaudeRetryMessageFallsBackForUnknownCategories(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestClaudeResultUsageAndSubagentRollup(t *testing.T) {
+	t.Parallel()
+	tr := NewTurnTranslator("ses_cld_usage", string(RuntimeClaudeCode), "msg_turn", "msg_user", "claude-code", "", "build", "")
+	tr.FeedLine(`{"type":"stream_event","event":{"type":"message_start","message":{"id":"msg_1","model":"claude-sonnet-4-5","usage":{"input_tokens":12,"cache_creation_input_tokens":500,"cache_read_input_tokens":1200,"output_tokens":4}}}}`)
+	tr.FeedLine(`{"type":"stream_event","event":{"type":"message_delta","usage":{"input_tokens":12,"cache_creation_input_tokens":500,"cache_read_input_tokens":1200,"output_tokens":85,"output_tokens_details":{"thinking_tokens":30}}}}`)
+
+	// Before result arrives, streamed usage is already reflected on msgInfo.Tokens.
+	if tr.msgInfo.Tokens == nil || tr.msgInfo.Tokens.Input != 12 || tr.msgInfo.Tokens.Output != 85 || tr.msgInfo.Tokens.Reasoning != 30 || tr.msgInfo.Tokens.Cache.Read != 1200 || tr.msgInfo.Tokens.Cache.Write != 500 {
+		t.Fatalf("unexpected streamed tokens: %+v", tr.msgInfo.Tokens)
+	}
+	if tr.msgInfo.ModelID != "claude-sonnet-4-5" {
+		t.Fatalf("expected modelID populated from message_start, got %q", tr.msgInfo.ModelID)
+	}
+
+	// Final result with modelUsage (including subagent rollup) and total_cost_usd.
+	evts := tr.FeedLine(`{"type":"result","subtype":"success","is_error":false,"result":"Done","total_cost_usd":0.00817,"usage":{"input_tokens":12,"cache_creation_input_tokens":500,"cache_read_input_tokens":1200,"output_tokens":85,"output_tokens_details":{"thinking_tokens":30}},"modelUsage":{"claude-sonnet-4-5":{"inputTokens":20,"outputTokens":210,"cacheReadInputTokens":3400,"cacheCreationInputTokens":900,"thinkingTokens":45,"costUSD":0.00817}}}`)
+	var updated *MessageInfo
+	for _, evt := range evts {
+		if evt.Type == "message.updated" {
+			if info, ok := evt.Properties["info"].(MessageInfo); ok {
+				updated = &info
+			}
+		}
+	}
+	if updated == nil || updated.Tokens == nil {
+		t.Fatalf("expected message.updated with tokens, got %+v", evts)
+	}
+	if updated.Tokens.Input != 20 || updated.Tokens.Output != 210 || updated.Tokens.Reasoning != 45 || updated.Tokens.Cache.Read != 3400 || updated.Tokens.Cache.Write != 900 {
+		t.Fatalf("unexpected final tokens: %+v", updated.Tokens)
+	}
+	wantTotal := 20 + 210 + 45 + 3400 + 900
+	if updated.Tokens.Total != wantTotal {
+		t.Fatalf("total tokens = %d, want %d", updated.Tokens.Total, wantTotal)
+	}
+	if updated.Cost != 0.00817 {
+		t.Fatalf("cost = %v, want 0.00817", updated.Cost)
+	}
+}
