@@ -24,6 +24,58 @@ interface Particle {
   delay: number;
 }
 
+interface CachedWordmarkGrid {
+  points: { x: number; y: number }[];
+  gridStep: number;
+  minX: number;
+  maxX: number;
+}
+
+let cachedWordmarkGrid: CachedWordmarkGrid | null = null;
+
+function resolveWordmarkGrid(): CachedWordmarkGrid | null {
+  if (cachedWordmarkGrid) return cachedWordmarkGrid;
+  const mask = document.createElement("canvas");
+  mask.width = WIDTH;
+  mask.height = HEIGHT;
+  const ink = mask.getContext("2d", { willReadFrequently: true });
+  if (!ink) return null;
+  // Use local fonts so the empty state also works offline in the desktop app.
+  ink.font = '900 180px "Inter", -apple-system, BlinkMacSystemFont, sans-serif';
+  ink.textAlign = "center";
+  const metrics = ink.measureText("Hoxi");
+  ink.fillText("Hoxi", WIDTH / 2, (HEIGHT + metrics.actualBoundingBoxAscent - metrics.actualBoundingBoxDescent) / 2);
+  const pixels = ink.getImageData(0, 0, WIDTH, HEIGHT).data;
+  let points: { x: number; y: number }[] = [];
+  let gridStep = 5;
+  // Keep whole grid cells; thinning individual points leaves uneven holes.
+  for (let step = 3; step <= 9; step += 0.125) {
+    const candidate: { x: number; y: number }[] = [];
+    const columns = Math.floor(WIDTH / step);
+    const rows = Math.floor(HEIGHT / step);
+    const offsetX = (WIDTH - columns * step) / 2;
+    const offsetY = (HEIGHT - rows * step) / 2;
+    for (let row = 0; row < rows; row++) {
+      const y = offsetY + row * step;
+      for (let column = 0; column < columns; column++) {
+        const x = offsetX + column * step;
+        if (pixels[(Math.round(y) * WIDTH + Math.round(x)) * 4 + 3] > 100) {
+          candidate.push({ x, y });
+        }
+      }
+    }
+    if (candidate.length && Math.abs(candidate.length - COUNT) < Math.abs(points.length - COUNT)) {
+      points = candidate;
+      gridStep = step;
+    }
+  }
+  if (!points.length) return null;
+  const minX = Math.min(...points.map((point) => point.x));
+  const maxX = Math.max(...points.map((point) => point.x));
+  cachedWordmarkGrid = { points, gridStep, minX, maxX };
+  return cachedWordmarkGrid;
+}
+
 export default function ParticleLogo(props: { play?: boolean }) {
   let canvas!: HTMLCanvasElement;
   let restartLogo: (() => void) | null = null;
@@ -32,44 +84,9 @@ export default function ParticleLogo(props: { play?: boolean }) {
     const context = canvas.getContext("2d");
     if (!context) return;
 
-    const mask = document.createElement("canvas");
-    mask.width = WIDTH;
-    mask.height = HEIGHT;
-    const ink = mask.getContext("2d", { willReadFrequently: true });
-    if (!ink) return;
-    // Use local fonts so the empty state also works offline in the desktop app.
-    ink.font = '900 180px "Inter", -apple-system, BlinkMacSystemFont, sans-serif';
-    ink.textAlign = "center";
-    const metrics = ink.measureText("Hoxi");
-    ink.fillText("Hoxi", WIDTH / 2, (HEIGHT + metrics.actualBoundingBoxAscent - metrics.actualBoundingBoxDescent) / 2);
-    const pixels = ink.getImageData(0, 0, WIDTH, HEIGHT).data;
-    let points: { x: number; y: number }[] = [];
-    let gridStep = 5;
-    // Keep whole grid cells; thinning individual points leaves uneven holes.
-    for (let step = 3; step <= 9; step += 0.125) {
-      const candidate: { x: number; y: number }[] = [];
-      const columns = Math.floor(WIDTH / step);
-      const rows = Math.floor(HEIGHT / step);
-      const offsetX = (WIDTH - columns * step) / 2;
-      const offsetY = (HEIGHT - rows * step) / 2;
-      for (let row = 0; row < rows; row++) {
-        const y = offsetY + row * step;
-        for (let column = 0; column < columns; column++) {
-          const x = offsetX + column * step;
-          if (pixels[(Math.round(y) * WIDTH + Math.round(x)) * 4 + 3] > 100) {
-            candidate.push({ x, y });
-          }
-        }
-      }
-      if (candidate.length && Math.abs(candidate.length - COUNT) < Math.abs(points.length - COUNT)) {
-        points = candidate;
-        gridStep = step;
-      }
-    }
-    if (!points.length) return;
-
-    const minX = Math.min(...points.map((point) => point.x));
-    const maxX = Math.max(...points.map((point) => point.x));
+    const grid = resolveWordmarkGrid();
+    if (!grid) return;
+    const { points, gridStep, minX, maxX } = grid;
     const radius = gridStep * 0.3;
     const particles: Particle[] = points.map((point) => {
       const sx = WIDTH + 50 + Math.random() * 160;

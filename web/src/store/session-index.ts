@@ -113,3 +113,16 @@ export function filterProjectSessions(list: SessionInfo[], directory: string, pr
     return true;
   });
 }
+
+const cachedProjectSessionsByDir = new Map<string, SessionInfo[]>();
+
+export function getCachedProjectSessions(directory: string): SessionInfo[] | undefined {
+  const key = normalizeFolderPath(directory);
+  return key ? cachedProjectSessionsByDir.get(key) : undefined;
+}
+
+export function setCachedProjectSessions(directory: string, list: SessionInfo[]): void {
+  const key = normalizeFolderPath(directory);
+  if (!key) return;
+  cachedProjectSessionsByDir.set(key, list);
+}

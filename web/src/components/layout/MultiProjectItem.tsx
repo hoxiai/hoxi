@@ -201,7 +201,7 @@ export default function MultiProjectTreeItem(props: {
     if (!everExpanded()) return [];
     const q = props.filterQuery.trim().toLowerCase();
     const rawList =
-      isActive() && !workspace.bootstrappingSessions
+      isActive() && !workspace.bootstrappingSessions && workspace.sessions.length > 0
         ? workspace.sessions
         : props.cachedSessions;
     const list = rawList.filter((s) => !s.parentID && resolveSessionSurface(s) === "code");

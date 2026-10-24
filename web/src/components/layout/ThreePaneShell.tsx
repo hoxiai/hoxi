@@ -294,41 +294,46 @@ export default function ThreePaneShell(props: ThreePaneShellProps = {}) {
         >
           <div
             aria-hidden={isNewConversation()}
-            class={`flex min-h-0 flex-col overflow-hidden transition-[flex-grow,opacity,transform] duration-[var(--motion-move)] ease-[var(--ease-move)] ${
+            class={`flex min-h-0 flex-col overflow-hidden ${
               isNewConversation()
-                ? "flex-[0.36_1_0%] opacity-0 -translate-y-1 pointer-events-none"
-                : "flex-[1_1_0%] opacity-100 translate-y-0"
+                ? "flex-[0.36_1_0%] pointer-events-none"
+                : "flex-[1_1_0%]"
             }`}
           >
-            <MessageStream hidden={false} />
+            <div class={isNewConversation() ? "hidden" : "flex flex-1 min-h-0 flex-col overflow-hidden"}>
+              <MessageStream hidden={false} />
+            </div>
           </div>
           <div class="flex flex-col shrink-0 pt-2">
             <div class="w-full shrink-0 flex flex-col [&>div:last-child]:my-0">
               <div
-                class="hoxi-drawer-grid"
-                data-open={isNewConversation() ? "true" : "false"}
                 aria-hidden={!isNewConversation()}
+                class={isNewConversation() ? "block" : "hidden"}
               >
                 <div class="min-h-0 overflow-hidden">
-                  <Show
-                    when={!(isWorkSurface() && surfaceExtension.renderLaunchpad)}
-                    fallback={surfaceExtension.renderLaunchpad!()}
-                  >
-                    <ParticleLogo play={isNewConversation()} />
+                  <Show when={surfaceExtension.enabled && surfaceExtension.renderLaunchpad}>
+                    <div class={isWorkSurface() ? "block" : "hidden"}>
+                      {surfaceExtension.renderLaunchpad!()}
+                    </div>
                   </Show>
+                  <div class={isWorkSurface() && surfaceExtension.renderLaunchpad ? "hidden" : "block"}>
+                    <ParticleLogo play={isNewConversation() && !isWorkSurface()} />
+                  </div>
                 </div>
               </div>
-              <Show
-                when={!(isWorkSurface() && surfaceExtension.renderComposer)}
-                fallback={surfaceExtension.renderComposer!()}
-              >
-                <Composer />
+              <Show when={surfaceExtension.enabled && surfaceExtension.renderComposer}>
+                <div class={isWorkSurface() ? "block" : "hidden"}>
+                  {surfaceExtension.renderComposer!()}
+                </div>
               </Show>
+              <div class={isWorkSurface() && surfaceExtension.renderComposer ? "hidden" : "block"}>
+                <Composer />
+              </div>
             </div>
           </div>
           <div
             aria-hidden="true"
-            class="shrink-0 min-h-0 transition-[flex-grow] duration-[var(--motion-move)] ease-[var(--ease-move)] pointer-events-none"
+            class="shrink-0 min-h-0 pointer-events-none"
             style={{
               "flex-grow": isNewConversation() ? 0.64 : 0,
             }}

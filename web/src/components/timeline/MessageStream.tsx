@@ -70,18 +70,28 @@ export default function MessageStream(props: { hidden?: boolean }) {
   const [activeMatchTurnID, setActiveMatchTurnID] = createSignal<string | null>(null);
   const [navigationRevision, setNavigationRevision] = createSignal(0);
 
+  const [retainedSessionID, setRetainedSessionID] = createSignal<string | null>(
+    workspace.activeSessionID
+  );
+  createEffect(() => {
+    if (workspace.activeSessionID) {
+      setRetainedSessionID(workspace.activeSessionID);
+    }
+  });
+  const renderedSessionID = () => workspace.activeSessionID ?? retainedSessionID();
+
   const activeSession = createMemo(() => {
-    const id = workspace.activeSessionID;
+    const id = renderedSessionID();
     return id ? workspace.sessions.find((s) => s.id === id) : undefined;
   });
 
   const turns = createMemo(() => {
-    const id = workspace.activeSessionID;
+    const id = renderedSessionID();
     const raw = id ? workspace.messagesBySession[id] ?? [] : [];
     return filterVisibleTurnsByRevert(raw, activeSession()?.revert);
   });
 
-  const turnWindow = createTurnWindow(() => workspace.activeSessionID, turns);
+  const turnWindow = createTurnWindow(renderedSessionID, turns);
   const readingPosition = createReadingPositionTracker({
     scroller: () => scroller,
     content: () => content,

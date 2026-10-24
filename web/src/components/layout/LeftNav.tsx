@@ -7,6 +7,7 @@ import {
   createProjectSessionLists,
   discardSession,
   focusFirstAttentionSession,
+  getInitialCodeProjectDir,
   healTransientSidebarProjectMode,
   isDefaultWorkspacePath,
   isInvalidProjectPath,
@@ -115,6 +116,11 @@ export default function LeftNav() {
     if (root && !isInvalidProjectPath(root) && !isDefaultWorkspacePath(root)) {
       setExpandedProjects((prev) => (prev.has(root) ? prev : new Set([...prev, root])));
       sessionLists.syncActive(root);
+    } else {
+      const codeDir = getInitialCodeProjectDir();
+      if (codeDir && !isInvalidProjectPath(codeDir) && !isDefaultWorkspacePath(codeDir)) {
+        setExpandedProjects((prev) => (prev.has(codeDir) ? prev : new Set([...prev, codeDir])));
+      }
     }
   });
 

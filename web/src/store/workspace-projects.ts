@@ -41,11 +41,12 @@ import {
   type SurfaceMode,
 } from "./layout";
 import { refreshWorktreeStatus } from "./session-diffs";
-import { filterProjectSessions } from "./session-index";
+import { filterProjectSessions, getCachedProjectSessions, setCachedProjectSessions } from "./session-index";
 
 let projectSessionLoadRevision = 0;
 let appliedProjectSessionRevision = 0;
 let projectResolutionRevision = 0;
+const lastBootstrappedAtByDir = new Map<string, number>();
 
 const REMEMBERED_CODE_SURFACE_KEY = "hoxi:remembered-code-surface";
 
@@ -81,6 +82,10 @@ let rememberedWorkSurface: { rootDir: string; sessionID: string | null; cachedSe
   rootDir: "",
   sessionID: null,
 };
+
+export function getInitialCodeProjectDir(): string {
+  return normalizeFolderPath(rememberedCodeSurface.rootDir || resolveDefaultProjectDir(""));
+}
 
 export function setRememberedCodeSurface(rootDir: string, sessionID: string | null = null): void {
   const clean = normalizeFolderPath(rootDir);
@@ -148,10 +153,11 @@ export async function activateSurfaceMode(nextMode: SurfaceMode): Promise<void> 
         switchPromise = switchWorkspace(workDir, {
           targetSessionID: rememberedWorkSurface.sessionID ?? undefined,
           selectInitial: false,
+          fastSurfaceSwitch: true,
           cachedSessions:
             rememberedWorkSurface.rootDir === workDir
               ? rememberedWorkSurface.cachedSessions
-              : undefined,
+              : getCachedProjectSessions(workDir),
         });
       });
       await switchPromise;
@@ -163,7 +169,7 @@ export async function activateSurfaceMode(nextMode: SurfaceMode): Promise<void> 
     }
   } else {
     if (workspace.savedWorkspaces.length === 0 && workspace.projects.length === 0) {
-      await Promise.all([loadSavedWorkspaces(), loadProjects()]);
+      void Promise.all([loadSavedWorkspaces(), loadProjects()]);
     }
     const codeDir = normalizeFolderPath(
       rememberedCodeSurface.rootDir || resolveDefaultProjectDir("")
@@ -178,10 +184,11 @@ export async function activateSurfaceMode(nextMode: SurfaceMode): Promise<void> 
         switchPromise = switchWorkspace(codeDir, {
           targetSessionID: rememberedCodeSurface.sessionID ?? undefined,
           selectInitial: !rememberedCodeSurface.sessionID,
+          fastSurfaceSwitch: true,
           cachedSessions:
-            rememberedCodeSurface.rootDir === codeDir
+            rememberedCodeSurface.rootDir === codeDir && rememberedCodeSurface.cachedSessions
               ? rememberedCodeSurface.cachedSessions
-              : undefined,
+              : getCachedProjectSessions(codeDir),
         });
       });
       await switchPromise;
@@ -354,6 +361,8 @@ export async function bootstrapProjectSessions(
   if (isLatest) {
     appliedProjectSessionRevision = revision;
     reconcileSessionsInPlace(titledSessions);
+    setCachedProjectSessions(cleaned, workspace.sessions.slice());
+    lastBootstrappedAtByDir.set(cleaned, Date.now());
     setWorkspace(
       produce((state) => {
         for (const s of titledSessions) {
@@ -389,6 +398,7 @@ export interface SwitchWorkspaceOptions {
   selectInitial?: boolean;
   targetSessionID?: string;
   cachedSessions?: SessionInfo[];
+  fastSurfaceSwitch?: boolean;
 }
 
 export async function switchWorkspace(
@@ -403,31 +413,29 @@ export async function switchWorkspace(
       ? { selectInitial: optionsOrSelectInitial }
       : optionsOrSelectInitial;
   const selectInitial = opts.selectInitial ?? !opts.targetSessionID;
-  const targetSessionID = opts.targetSessionID ?? null;
-  const hydratedSessions = Array.isArray(opts.cachedSessions)
-    ? filterProjectSessions(opts.cachedSessions, cleaned).filter((s) => !isSessionDeleted(s.id)).map(preserveSessionTitle)
+  const rawCached = opts.cachedSessions ?? getCachedProjectSessions(cleaned);
+  const hydratedSessions = Array.isArray(rawCached)
+    ? filterProjectSessions(rawCached, cleaned).filter((s) => !isSessionDeleted(s.id)).map(preserveSessionTitle)
     : [];
+
+  let targetSessionID = opts.targetSessionID ?? null;
+  if (!targetSessionID && selectInitial && hydratedSessions.length > 0) {
+    const unarchived = hydratedSessions.filter((s) => !s.parentID && !isSessionArchived(s));
+    if (unarchived.length > 0) {
+      const sorted = sortSessionsByActivity(unarchived);
+      const first = sorted.find((s) => !isPlaceholderSessionTitle(s.title)) || sorted[0];
+      targetSessionID = first?.id ?? null;
+    }
+  }
 
   recordRecentProject(cleaned);
 
-  setWorkspace(
-    produce((state) => {
-      const prevRoot = normalizeFolderPath(state.rootDir);
-      for (const s of state.sessions) {
-        if (s.directory && !state.worktreeBySession[s.id]) {
-          state.worktreeBySession[s.id] = {
-            sessionID: s.id,
-            isolated: s.sandboxMode
-              ? s.sandboxMode === "worktree"
-              : Boolean(prevRoot && normalizeFolderPath(s.directory) !== prevRoot),
-            directory: s.directory,
-            branch: s.branch,
-            createdAt: new Date(s.time?.created || Date.now()).toISOString(),
-          };
-        }
-      }
-    })
-  );
+  const knownProjectID = findWorkspaceProfileByDir(cleaned)?.id || null;
+  const warmSurfaceSwitch =
+    Boolean(opts.fastSurfaceSwitch) && hydratedSessions.length > 0;
+  const recentlyBootstrapped =
+    warmSurfaceSwitch &&
+    Date.now() - (lastBootstrappedAtByDir.get(cleaned) || 0) < 30_000;
 
   setWorkspace({
     rootDir: cleaned,
@@ -438,14 +446,31 @@ export async function switchWorkspace(
     inspectedFileDiff: null,
     inspectedDiffFile: null,
     activeSessionID: targetSessionID,
-    activeProjectID: null,
-    bootstrappingSessions: hydratedSessions.length === 0 && !targetSessionID,
+    activeProjectID: knownProjectID,
+    bootstrappingSessions: hydratedSessions.length === 0,
   });
+
+  if (warmSurfaceSwitch) {
+    if (targetSessionID) {
+      if (workspace.messagesBySession[targetSessionID] !== undefined) {
+        setWorkspace("unreadCompletedBySession", targetSessionID, false);
+      } else {
+        void selectSession(targetSessionID);
+      }
+    }
+    if (!recentlyBootstrapped) {
+      setTimeout(() => {
+        if (normalizeFolderPath(workspace.rootDir) !== cleaned) return;
+        void syncActiveProjectID(cleaned);
+        void bootstrapProjectSessions(cleaned, selectInitial, knownProjectID);
+      }, 120);
+    }
+    return;
+  }
 
   const selectPromise = targetSessionID ? selectSession(targetSessionID) : null;
   // Project resolution and the session list run in parallel: the backend
   // resolves the project from the directory when no ID is passed yet.
-  const knownProjectID = findWorkspaceProfileByDir(cleaned)?.id || null;
   const isCurrent = () => normalizeFolderPath(workspace.rootDir) === cleaned;
   try {
     await Promise.all([
