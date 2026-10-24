@@ -17,6 +17,7 @@ const maxSessionConstraints = 48
 var (
 	memoryWriteMu       sync.Mutex
 	volatileUpdatedLine = regexp.MustCompile(`(?m)^Updated:\s*[^\r\n]+\r?\n?`)
+	ansiEscapeRe        = regexp.MustCompile(`\x1b(?:\[[0-9;?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\))`)
 	userConstraintRe    = regexp.MustCompile(`(?i)\b(must|must not|mustn't|never|do not|don't|forbidden|forbid|prohibit|constraint|requirement|cannot|can't|should not|shouldn't|only allow|keep .* unchanged|preserve|avoid)\b|严禁|不要|必须|务必|禁止|不能|不可|不得|仅限|只允许|切勿|别改|不准|保持|保留|避免`)
 	clauseBreakRe       = regexp.MustCompile(`(?:[.!?](?:\s+|$)|[。！？；;\r\n]+)`)
 	verificationCmdRe   = regexp.MustCompile(`(?i)\b(go\s+(?:test|vet|build)|npm\s+(?:--prefix\s+\S+\s+)?(?:test|run\s+(?:test|lint|build|check\S*))|pnpm\s+(?:test|lint|build|check\S*)|yarn\s+(?:test|lint|build)|flutter\s+(?:test|analyze)|pytest|cargo\s+(?:test|check|clippy)|tsc\b|node\s+--test)\b`)
@@ -530,7 +531,7 @@ func buildEightDimSessionMarkdown(rec SessionRecord) string {
 }
 
 func singleLineExcerpt(s string, maxRunes int) string {
-	clean := strings.Join(strings.Fields(s), " ")
+	clean := strings.Join(strings.Fields(ansiEscapeRe.ReplaceAllString(s, "")), " ")
 	runes := []rune(clean)
 	if len(runes) <= maxRunes {
 		return clean

@@ -51,20 +51,53 @@ const VERIFICATION_CMD_RE =
   /\b(go\s+(?:test|vet|build)|npm\s+(?:--prefix\s+\S+\s+)?(?:test|run\s+(?:test|lint|build|check\S*))|pnpm\s+(?:test|lint|build|check\S*)|yarn\s+(?:test|lint|build)|flutter\s+(?:test|analyze)|pytest|cargo\s+(?:test|check|clippy)|tsc\b|node\s+--test)\b/i;
 const FAILURE_OUTPUT_RE =
   /(?:^|\s)(?:FAIL|--- FAIL:|FAIL\t|AssertionError|panic:|Error:|error TS\d+|ERR!|✖|✗|fatal:)/m;
+const ANSI_ESCAPE_RE = /\x1b(?:\[[0-9;?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\))/g;
+const BARE_CR_RE = /\r(?!\n)/;
+const MEMORY_SECRET_PATTERNS = [
+  /\b(sk-[a-zA-Z0-9_-]{20,})\b/g,
+  /\b(sk-ant-[a-zA-Z0-9_-]{20,})\b/g,
+  /\b(gh[pousr]_[A-Za-z0-9_]{20,})\b/g,
+  /\b(AIza[0-9A-Za-z_-]{30,})\b/g,
+  /Bearer\s+[A-Za-z0-9._~+/-]{20,}/gi,
+  /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
+];
+
+function redactMemorySecrets(text) {
+  if (typeof text !== "string" || !text) return "";
+  let out = text;
+  for (const re of MEMORY_SECRET_PATTERNS) out = out.replace(re, "[REDACTED_SECRET]");
+  return out;
+}
+
+function stripTerminalControlNoise(text) {
+  let out = text.replace(ANSI_ESCAPE_RE, "");
+  if (BARE_CR_RE.test(out)) {
+    out = out
+      .split(/\r?\n/)
+      .map((line) => {
+        if (!line.includes("\r")) return line;
+        const segments = line.split("\r").filter((s) => s.length > 0);
+        return segments.length > 0 ? segments[segments.length - 1] : "";
+      })
+      .join("\n");
+  }
+  return out;
+}
 
 function compactToolOutputForModel(part) {
   if (part?.type !== "tool" || part.tool !== "bash") return null;
   const state = part.state;
   if (!state || state.status !== "completed" || typeof state.output !== "string") return null;
-  const out = state.output;
-  if (out.length <= 2400) return null;
+  const rawOut = state.output;
+  const out = stripTerminalControlNoise(rawOut);
+  if (out.length <= 2400) return out !== rawOut ? out : null;
   const cmd = String(state.input?.command || "");
   const hasFailure = FAILURE_OUTPUT_RE.test(out);
 
   // 1. Passing test/build/lint output > 2400 chars: keep head + tail summary.
   if (VERIFICATION_CMD_RE.test(cmd) && !hasFailure) {
     const lines = out.split("\n");
-    if (lines.length <= 32) return null;
+    if (lines.length <= 32) return out !== rawOut ? out : null;
     const head = lines.slice(0, 12).join("\n");
     const tail = lines.slice(-15).join("\n");
     const omitted = lines.length - 27;
@@ -74,7 +107,7 @@ function compactToolOutputForModel(part) {
   // 2. Oversized command output > 16000 chars: keep head, failure windows, and tail.
   if (out.length > 16000) {
     const lines = out.split("\n");
-    if (lines.length <= 120) return null;
+    if (lines.length <= 120) return out !== rawOut ? out : null;
     const headCount = 30;
     const tailCount = 40;
     const midEnd = lines.length - tailCount;
@@ -89,7 +122,7 @@ function compactToolOutputForModel(part) {
     }
     const midLines = [...keepMid].sort((a, b) => a - b).map((idx) => lines[idx]);
     const omitted = lines.length - headCount - tailCount - midLines.length;
-    if (omitted <= 20) return null;
+    if (omitted <= 20) return out !== rawOut ? out : null;
     const sections = [lines.slice(0, headCount).join("\n")];
     if (midLines.length > 0) {
       sections.push(`... [failure excerpt from middle of log] ...\n${midLines.join("\n")}`);
@@ -99,7 +132,7 @@ function compactToolOutputForModel(part) {
     return sections.join("\n");
   }
 
-  return null;
+  return out !== rawOut ? out : null;
 }
 
 function compactMessageHistory(messages) {
@@ -124,12 +157,20 @@ export default async function BrowserPlugin({ directory: factoryDir } = {}) {
     const root = projectMemoryRoot(dir || factoryDir || "");
     let block = "";
     if (root) {
-      try {
-        const raw = await fs.readFile(path.join(root, ".hoxi", "memory", "project.md"), "utf8");
-        const clean = raw.replace(/^Updated:\s*[^\r\n]+\r?\n?/m, "").trim();
-        if (clean) block = `<project_memory>\n${clean}\n</project_memory>`;
-      } catch {
-        // No project.md in this workspace
+      for (const candidate of [
+        path.join(root, ".hoxi", "memory", "project.md"),
+        path.join(root, ".opencode", "memory", "project.md"),
+      ]) {
+        try {
+          const raw = await fs.readFile(candidate, "utf8");
+          const clean = redactMemorySecrets(raw.replace(/^Updated:\s*[^\r\n]+\r?\n?/m, "").trim());
+          if (clean) {
+            block = `<project_memory>\n${clean}\n</project_memory>`;
+            break;
+          }
+        } catch {
+          // Try next candidate
+        }
       }
     }
     if (key) {

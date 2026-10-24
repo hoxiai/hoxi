@@ -57,6 +57,7 @@ type Service struct {
 	turnStats           sync.Map // session ID -> *turnCounts
 	promptReceipts      sync.Map // sessionID\x00clientRequestID -> cachedPromptReceipt
 	permissionReplies   sync.Map // permissionID\x00clientRequestID -> cachedPermissionReply
+	cliSystemDelivered  sync.Map // sessionID\x00runtime -> last delivered caller system prompt
 
 	// openCodeTimeoutRetries overrides openCodeTimeoutRetryDelays in tests.
 	openCodeTimeoutRetries []time.Duration

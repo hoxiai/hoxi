@@ -377,6 +377,18 @@ export const HoxiMemoryPlugin = async ({ client, directory } = {}) => {
     "experimental.chat.system.transform": async (input, output) => {
       const blocks = await resolveFrozenBlocks(input?.sessionID);
       for (const block of blocks) {
+        if (
+          block.includes("<project_memory>") &&
+          output.system.some((s) => typeof s === "string" && s.includes("<project_memory>"))
+        ) {
+          continue;
+        }
+        if (
+          block.includes("<hoxi_git_attribution>") &&
+          output.system.some((s) => typeof s === "string" && s.includes("<hoxi_git_attribution>"))
+        ) {
+          continue;
+        }
         output.system.push(block);
       }
     },

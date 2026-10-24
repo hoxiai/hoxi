@@ -2,6 +2,7 @@ package runner
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -191,3 +192,69 @@ func TestRuntimeContextPreservesLateLongMessageConstraintAfterManyTurns(t *testi
 		t.Fatalf("expected runtimeMemoryContext to deduplicate Section 6 when runtimeContext is active, got:\n%s", combined)
 	}
 }
+
+func TestNativeCLISystemDeduplicatedOnResumedTurnsAndToolSummaryDedup(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	svc := NewService(root, nil, nil, filepath.Join(t.TempDir(), "sessions.json"))
+	rec := SessionRecord{
+		ID:           "ses_cli_dedup",
+		Runtime:      "claude-code",
+		ProjectDir:   root,
+		WorktreePath: root,
+		SandboxMode:  "local",
+	}
+	callerSys := "Workspace context for this session:\n- Primary folder: " + root
+	fullSys := strings.TrimSpace(commandExecutionGuidance + "\n\n" + callerSys)
+
+	// Turn 1 (ExternalID == ""): receives full commandExecutionGuidance + callerSys.
+	if got := svc.nativeCLISystemForTurn(rec, callerSys, fullSys); got != fullSys {
+		t.Fatalf("expected full system on initial turn, got %q", got)
+	}
+	svc.recordCLISystemDelivered(rec.ID, rec.Runtime, callerSys)
+
+	// Turn 2 (resumed with ExternalID != "" and !ContextPending, unchanged callerSys):
+	// omits redundant commandExecutionGuidance and unchanged callerSys.
+	rec.ExternalID = "claude_conv_1"
+	if got := svc.nativeCLISystemForTurn(rec, callerSys, fullSys); got != "" {
+		t.Fatalf("expected empty system on resumed turn with unchanged callerSys, got %q", got)
+	}
+
+	// Turn 3 (resumed, callerSys changed): injects only the updated callerSys without repeating commandExecutionGuidance.
+	updatedCallerSys := callerSys + "\nUser global custom instructions:\nUse strict types"
+	updatedFullSys := strings.TrimSpace(commandExecutionGuidance + "\n\n" + updatedCallerSys)
+	if got := svc.nativeCLISystemForTurn(rec, updatedCallerSys, updatedFullSys); got != updatedCallerSys {
+		t.Fatalf("expected only updated callerSys on resumed turn, got %q", got)
+	}
+
+	// Runtime switch (ContextPending == true): injects full system again.
+	rec.Runtime = "antigravity"
+	rec.ContextPending = true
+	if got := svc.nativeCLISystemForTurn(rec, updatedCallerSys, updatedFullSys); got != updatedFullSys {
+		t.Fatalf("expected full system after runtime switch, got %q", got)
+	}
+
+	// Verify runtimeContext deduplicates identical tool summaries within the same turn and strips ANSI from excerpts.
+	rec.Turns = []MessageTurn{
+		{
+			Info: MessageInfo{ID: "u1", Role: "user"},
+			Parts: []MessagePart{{Type: "text", Text: "Inspect foo.go"}},
+		},
+		{
+			Info: MessageInfo{ID: "a1", Role: "assistant"},
+			Parts: []MessagePart{
+				{Type: "tool", Tool: "read", State: &ToolState{Status: "completed", Input: map[string]interface{}{"filePath": "foo.go"}}},
+				{Type: "tool", Tool: "read", State: &ToolState{Status: "completed", Input: map[string]interface{}{"filePath": "foo.go"}}},
+				{Type: "text", Text: "\x1b[32mInspected\x1b[0m foo.go"},
+			},
+		},
+	}
+	ctx := runtimeContext(rec)
+	if strings.Count(ctx, "Tool read [completed]: foo.go") != 1 {
+		t.Fatalf("expected duplicate tool summary in same turn to be deduplicated, got:\n%s", ctx)
+	}
+	if strings.Contains(ctx, "\x1b[32m") || !strings.Contains(ctx, "Inspected foo.go") {
+		t.Fatalf("expected ANSI codes to be stripped in singleLineExcerpt, got:\n%s", ctx)
+	}
+}
+

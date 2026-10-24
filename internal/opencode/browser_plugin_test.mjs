@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { test } from "node:test";
 import BrowserPlugin from "./browser_plugin.mjs";
 
@@ -215,5 +218,44 @@ test("standalone browser plugin", async (t) => {
     assert.ok(messages[0].parts[0].state.output.length < passingLines.length / 2);
     // Failing test log under 16 KB is preserved verbatim so the model sees all failure details
     assert.equal(messages[0].parts[1].state.output, failingLines);
+
+    // ANSI escape sequences and carriage-return progress frames are stripped losslessly even on short outputs
+    const noisyShortPart = {
+      type: "tool",
+      tool: "bash",
+      state: {
+        status: "completed",
+        input: { command: "npm test" },
+        output: "Downloading 10%\rDownloading 60%\rDownloading 100%\n\x1b[32mPASS\x1b[0m src/app.test.ts",
+      },
+    };
+    const shortMessages = [{ parts: [noisyShortPart] }];
+    await hooks["experimental.chat.messages.transform"]({}, { messages: shortMessages });
+    assert.equal(shortMessages[0].parts[0].state.output, "Downloading 100%\nPASS src/app.test.ts");
+  });
+
+  await t.test("system.transform deduplicates <project_memory> across plugins and redacts secrets", async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "hoxi-mem-dedup-"));
+    try {
+      await fs.mkdir(path.join(tmpDir, ".hoxi", "memory"), { recursive: true });
+      await fs.writeFile(
+        path.join(tmpDir, ".hoxi", "memory", "project.md"),
+        "Updated: 2026-10-24T00:00:00Z\n# Project Rules\nNever leak sk-1234567890abcdefghijklmno.",
+        "utf8",
+      );
+      const { HoxiMemoryPlugin } = await import("../../.opencode/plugins/hoxi-memory.js");
+      const memHooks = await HoxiMemoryPlugin({ directory: tmpDir });
+      const out = { system: [] };
+      await hooks["experimental.chat.system.transform"]({ sessionID: "ses_dedup", directory: tmpDir }, out);
+      await memHooks["experimental.chat.system.transform"]({ sessionID: "ses_dedup", directory: tmpDir }, out);
+
+      const memBlocks = out.system.filter((s) => s.includes("<project_memory>"));
+      assert.equal(memBlocks.length, 1, "expected exactly 1 <project_memory> block when both plugins run");
+      assert.ok(!memBlocks[0].includes("Updated:"));
+      assert.ok(!memBlocks[0].includes("sk-1234567890abcdefghijklmno"));
+      assert.ok(memBlocks[0].includes("[REDACTED_SECRET]"));
+    } finally {
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
   });
 });

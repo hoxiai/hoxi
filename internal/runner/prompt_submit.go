@@ -178,7 +178,8 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 	if err := validateSessionDirectory(rec); err != nil {
 		return http.StatusBadRequest, PromptReceipt{}, err
 	}
-	body.System = strings.TrimSpace(commandExecutionGuidance + "\n\n" + body.System)
+	callerSystem := strings.TrimSpace(body.System)
+	body.System = strings.TrimSpace(commandExecutionGuidance + "\n\n" + callerSystem)
 	var resolvedSkill ResolvedSkill
 	if body.SkillSelection != nil {
 		resolved, err := s.resolveSkillSelection(ctx, rec.WorktreePath, rec.ID, rec.Runtime, *body.SkillSelection)
@@ -306,10 +307,13 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 		if body.SkillSelection != nil {
 			input += formatInlineSkillPrompt(body.SkillSelection.Name, resolvedSkill.Content, "") + "\n\n"
 		}
-		if body.System != "" {
-			input += body.System + "\n\n"
+		if cliSys := s.nativeCLISystemForTurn(rec, callerSystem, body.System); cliSys != "" {
+			input += cliSys + "\n\n"
 		}
 		err = s.startTurnProcess(rec, binPath, mode, modelID, effort, input+cliPrompt, userInfo, storedParts, deliveryParts, asstMsgID)
+		if err == nil {
+			s.recordCLISystemDelivered(rec.ID, rec.Runtime, callerSystem)
+		}
 	}
 	if err != nil {
 		return http.StatusInternalServerError, PromptReceipt{}, err
@@ -323,3 +327,30 @@ func (s *Service) startPromptWithReceipt(ctx context.Context, sessionID, directo
 	s.storePromptReceipt(sessionID, clientReqID, receipt)
 	return http.StatusOK, receipt, nil
 }
+
+// nativeCLISystemForTurn avoids repeating commandExecutionGuidance and unchanged
+// caller system instructions inside every user message of a resumed native CLI
+// conversation (--resume / --conversation), where Turn 1 already placed them in
+// the CLI's persistent conversation history.
+func (s *Service) nativeCLISystemForTurn(rec SessionRecord, callerSystem, fullSystem string) string {
+	if strings.TrimSpace(rec.ExternalID) == "" || rec.ContextPending {
+		return fullSystem
+	}
+	prev, ok := s.cliSystemDelivered.Load(rec.ID + "\x00" + rec.Runtime)
+	if !ok {
+		return fullSystem
+	}
+	prevCaller, _ := prev.(string)
+	if callerSystem == "" || callerSystem == prevCaller {
+		return ""
+	}
+	return callerSystem
+}
+
+func (s *Service) recordCLISystemDelivered(sessionID, runtime, callerSystem string) {
+	if strings.TrimSpace(sessionID) == "" || strings.TrimSpace(runtime) == "" {
+		return
+	}
+	s.cliSystemDelivered.Store(sessionID+"\x00"+runtime, callerSystem)
+}
+
