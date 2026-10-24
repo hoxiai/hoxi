@@ -438,3 +438,35 @@ func TestPythonIndentationAndStringBraceBoundaries(t *testing.T) {
 		t.Fatalf("unexpected Go function boundary content:\n%s", goInspect.Content)
 	}
 }
+
+func TestLongFunctionChunkSymbolPropagationAndPolyglotCallerRanking(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "billing", "pay.go"), "package billing\n\nfunc ProcessPayment(v int) error {\n\treturn nil\n}\n")
+	// Unrelated TypeScript file mentioning ProcessPayment as a constant (non-call, different language family)
+	writeFile(t, filepath.Join(dir, "aaa_widget.ts"), "export const label = 1;\nconst ProcessPayment = \"label\";\n")
+
+	// A 95-line Go function that calls ProcessPayment near line 92 (in the second 80-line chunk)
+	var longLines []string
+	longLines = append(longLines, "package main", "", "import \"example.com/app/billing\"", "", "func LongOrderWorkflow() error {")
+	for len(longLines) < 91 {
+		longLines = append(longLines, "\t_ = 1")
+	}
+	longLines = append(longLines, "\treturn billing.ProcessPayment(42)", "}")
+	writeFile(t, filepath.Join(dir, "zzz_workflow.go"), strings.Join(longLines, "\n")+"\n")
+
+	svc := NewService(t.TempDir())
+	callers, err := svc.Callers(dir, "ProcessPayment", "billing/pay.go", 5)
+	if err != nil {
+		t.Fatalf("Callers failed: %v", err)
+	}
+	if len(callers.Callers) == 0 {
+		t.Fatal("expected callers for ProcessPayment")
+	}
+	// zzz_workflow.go must rank first (despite 'zzz' > 'aaa') because it is same language family (.go),
+	// imports billing, and performs an actual call invocation ProcessPayment(42); and its second chunk
+	// must inherit the enclosing symbol LongOrderWorkflow.
+	top := callers.Callers[0]
+	if top.Path != "zzz_workflow.go" || top.Symbol != "LongOrderWorkflow" {
+		t.Fatalf("expected top caller to be zzz_workflow.go [LongOrderWorkflow], got: %+v (all: %+v)", top, callers.Callers)
+	}
+}

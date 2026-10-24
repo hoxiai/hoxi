@@ -86,10 +86,80 @@ func init() {
 }
 
 var (
-	declarationRe = regexp.MustCompile(`(?m)^\s*(?:export\s+)?(?:default\s+)?(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(?:static\s+)?(?:function|class|interface|type|struct|enum|trait|impl|def|func|fn|const|let|var|module|namespace|object|record)\s+([A-Za-z_$][\w$]*)`)
+	declarationRe = regexp.MustCompile(`(?m)^\s*(?:export\s+)?(?:default\s+)?(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(?:static\s+)?(?:abstract\s+)?(?:readonly\s+)?(?:function|class|interface|type|struct|enum|trait|impl|def|func|fn|const|let|var|module|namespace|object|record)\s+([A-Za-z_$][\w$]*)`)
 	goMethodRe    = regexp.MustCompile(`(?m)^\s*func\s*\([^)]+\)\s*([A-Za-z_]\w*)`)
 	assignRe      = regexp.MustCompile(`(?m)^\s*(?:export\s+)?(?:(?:const|let|var)\s+)?([A-Za-z_$][\w$]*)\s*(?::[^=\n]+)?[:=]\s*(?:async\s*)?(?:function|\(|=>)`)
+	quotedImportRe = regexp.MustCompile(`["']([^"'\s]+)["']`)
+	pyFromImportRe = regexp.MustCompile(`^\s*from\s+([A-Za-z0-9_.]+)\s+import\b`)
+	pyImportRe     = regexp.MustCompile(`^\s*import\s+([A-Za-z0-9_.]+)`)
+	rustUseRe      = regexp.MustCompile(`^\s*(?:pub\s+)?use\s+([A-Za-z0-9_:]+)`)
 )
+
+func extractFileImports(content string) []string {
+	lines := strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n")
+	maxLines := len(lines)
+	if maxLines > 160 {
+		maxLines = 160
+	}
+	var imports []string
+	seen := make(map[string]struct{})
+	addImport := func(imp string) {
+		imp = strings.TrimSpace(imp)
+		if imp == "" || len(imports) >= 32 {
+			return
+		}
+		if _, ok := seen[imp]; ok {
+			return
+		}
+		seen[imp] = struct{}{}
+		imports = append(imports, imp)
+	}
+
+	inGoImportBlock := false
+	for i := 0; i < maxLines; i++ {
+		trimmed := strings.TrimSpace(lines[i])
+		if trimmed == "" || strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "/*") || strings.HasPrefix(trimmed, "*") {
+			continue
+		}
+		if inGoImportBlock {
+			if strings.HasPrefix(trimmed, ")") {
+				inGoImportBlock = false
+				continue
+			}
+			if m := quotedImportRe.FindStringSubmatch(trimmed); len(m) == 2 {
+				addImport(m[1])
+			}
+			continue
+		}
+		if strings.HasPrefix(trimmed, "import (") || trimmed == "import(" {
+			inGoImportBlock = true
+			continue
+		}
+		if strings.HasPrefix(trimmed, "import ") || strings.HasPrefix(trimmed, "export ") || strings.Contains(trimmed, "require(") {
+			if matches := quotedImportRe.FindAllStringSubmatch(trimmed, -1); len(matches) > 0 {
+				for _, m := range matches {
+					if len(m) == 2 {
+						addImport(m[1])
+					}
+				}
+				continue
+			}
+		}
+		if m := pyFromImportRe.FindStringSubmatch(trimmed); len(m) == 2 {
+			addImport(m[1])
+			continue
+		}
+		if m := pyImportRe.FindStringSubmatch(trimmed); len(m) == 2 {
+			addImport(m[1])
+			continue
+		}
+		if m := rustUseRe.FindStringSubmatch(trimmed); len(m) == 2 {
+			addImport(m[1])
+			continue
+		}
+	}
+	return imports
+}
 
 func declaredSymbolOnLine(line string) string {
 	if m := goMethodRe.FindStringSubmatch(line); len(m) == 2 {
@@ -106,8 +176,16 @@ func declaredSymbolOnLine(line string) string {
 
 func symbolAt(lines []string, start, end int) string {
 	for i := start; i < end && i < len(lines); i++ {
-		if sym := declaredSymbolOnLine(lines[i]); sym != "" {
+		if sym := extractLineSymbolCandidate(lines[i]); sym != "" {
 			return sym
+		}
+	}
+	for i := start - 1; i >= 0 && i < len(lines); i-- {
+		if sym := extractLineSymbolCandidate(lines[i]); sym != "" {
+			if estimateSymbolEndLine(lines, i) > start {
+				return sym
+			}
+			return ""
 		}
 	}
 	return ""

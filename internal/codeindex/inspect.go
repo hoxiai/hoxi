@@ -17,6 +17,7 @@ const (
 	defaultInspectContextLines = 5
 	maxInspectContextLines     = 30
 	maxInspectWindowLines      = 120
+	maxSymbolScanLines         = 600
 )
 
 type InspectResponse struct {
@@ -198,8 +199,25 @@ func (s *Service) Callers(directory, symbol, excludePath string, limit int) (Cal
 		return CallersResponse{}, err
 	}
 	normExclude := filepath.ToSlash(strings.TrimPrefix(strings.TrimSpace(excludePath), "./"))
-	callers := []CallerHit{}
-	tests := []CallerHit{}
+	targetPath := normExclude
+	if targetPath == "" && len(c.symbols) > 0 {
+		if cands := c.symbols[strings.ToLower(callIdent)]; len(cands) > 0 {
+			targetPath = cands[0].Path
+			for _, cand := range cands {
+				if cand.Symbol == callIdent {
+					targetPath = cand.Path
+					break
+				}
+			}
+		}
+	}
+
+	type scoredCaller struct {
+		hit   CallerHit
+		score int
+	}
+	var prodMatches []scoredCaller
+	var testMatches []scoredCaller
 	seen := make(map[string]struct{})
 
 	paths := make([]string, 0, len(c.index.Files))
@@ -214,6 +232,20 @@ func (s *Service) Callers(directory, symbol, excludePath string, limit int) (Cal
 		}
 		rec := c.index.Files[relPath]
 		isTest := isTestFilePath(relPath)
+		fileScore := 0
+		if targetPath != "" {
+			if sameLanguageFamily(targetPath, relPath) {
+				fileScore += 8
+			}
+			if relPath == targetPath {
+				fileScore += 5
+			} else if filepath.Dir(relPath) == filepath.Dir(targetPath) {
+				fileScore += 4
+			}
+			if matchesImportHint(targetPath, rec.Imports, "") {
+				fileScore += 4
+			}
+		}
 		for _, ch := range rec.Chunks {
 			if !strings.Contains(ch.Text, callIdent) {
 				continue
@@ -240,21 +272,43 @@ func (s *Service) Callers(directory, symbol, excludePath string, limit int) (Cal
 				if len(snippet) > 200 {
 					snippet = snippet[:200] + "..."
 				}
+				encSym := enclosingSymbolAt(lines, i, ch.Symbol)
+				score := fileScore
+				if isCallInvocation(cleaned, callIdent) {
+					score += 6
+				}
+				if encSym != "" {
+					score += 1
+				}
 				hit := CallerHit{
 					Path:    relPath,
-					Symbol:  enclosingSymbolAt(lines, i, ch.Symbol),
+					Symbol:  encSym,
 					Line:    lineNo,
 					Snippet: snippet,
 				}
 				if isTest {
-					if len(tests) < limit {
-						tests = append(tests, hit)
-					}
-				} else if len(callers) < limit {
-					callers = append(callers, hit)
+					testMatches = append(testMatches, scoredCaller{hit: hit, score: score})
+				} else {
+					prodMatches = append(prodMatches, scoredCaller{hit: hit, score: score})
 				}
 			}
 		}
+	}
+	sort.SliceStable(prodMatches, func(i, j int) bool { return prodMatches[i].score > prodMatches[j].score })
+	sort.SliceStable(testMatches, func(i, j int) bool { return testMatches[i].score > testMatches[j].score })
+	if len(prodMatches) > limit {
+		prodMatches = prodMatches[:limit]
+	}
+	if len(testMatches) > limit {
+		testMatches = testMatches[:limit]
+	}
+	callers := make([]CallerHit, len(prodMatches))
+	for i, m := range prodMatches {
+		callers[i] = m.hit
+	}
+	tests := make([]CallerHit, len(testMatches))
+	for i, m := range testMatches {
+		tests[i] = m.hit
 	}
 	return CallersResponse{
 		Directory: directory,
@@ -464,7 +518,7 @@ func estimatePythonBlockEndLine(lines []string, declIdx, maxIdx int) int {
 }
 
 func estimateSymbolEndLine(lines []string, declIdx int) int {
-	maxIdx := declIdx + maxInspectWindowLines - 1
+	maxIdx := declIdx + maxSymbolScanLines - 1
 	if maxIdx >= len(lines) {
 		maxIdx = len(lines) - 1
 	}

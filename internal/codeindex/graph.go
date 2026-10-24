@@ -60,13 +60,7 @@ type ContextResponse struct {
 	AffectedFiles     []string        `json:"affectedFiles,omitempty"`
 }
 
-var (
-	quotedImportRe = regexp.MustCompile(`["']([^"'\s]+)["']`)
-	pyFromImportRe = regexp.MustCompile(`^\s*from\s+([A-Za-z0-9_.]+)\s+import\b`)
-	pyImportRe     = regexp.MustCompile(`^\s*import\s+([A-Za-z0-9_.]+)`)
-	rustUseRe      = regexp.MustCompile(`^\s*(?:pub\s+)?use\s+([A-Za-z0-9_:]+)`)
-	callExprRe     = regexp.MustCompile(`(?:([A-Za-z_$][\w$]*)\s*\.\s*)?([A-Za-z_$][\w$]*)\s*\(`)
-)
+var callExprRe = regexp.MustCompile(`(?:([A-Za-z_$][\w$]*)\s*\.\s*)?([A-Za-z_$][\w$]*)\s*\(`)
 
 var ignoredCallKeywords = map[string]bool{
 	"if": true, "for": true, "while": true, "switch": true, "catch": true,
@@ -87,72 +81,6 @@ var ignoredCallKeywords = map[string]bool{
 	"int": true, "int64": true, "int32": true, "uint": true, "uint64": true,
 	"uint32": true, "float64": true, "float32": true, "byte": true, "rune": true,
 	"string": true, "bool": true, "error": true, "any": true,
-}
-
-func extractFileImports(content string) []string {
-	lines := strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n")
-	maxLines := len(lines)
-	if maxLines > 160 {
-		maxLines = 160
-	}
-	var imports []string
-	seen := make(map[string]struct{})
-	addImport := func(imp string) {
-		imp = strings.TrimSpace(imp)
-		if imp == "" || len(imports) >= 32 {
-			return
-		}
-		if _, ok := seen[imp]; ok {
-			return
-		}
-		seen[imp] = struct{}{}
-		imports = append(imports, imp)
-	}
-
-	inGoImportBlock := false
-	for i := 0; i < maxLines; i++ {
-		trimmed := strings.TrimSpace(lines[i])
-		if trimmed == "" || strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "/*") || strings.HasPrefix(trimmed, "*") {
-			continue
-		}
-		if inGoImportBlock {
-			if strings.HasPrefix(trimmed, ")") {
-				inGoImportBlock = false
-				continue
-			}
-			if m := quotedImportRe.FindStringSubmatch(trimmed); len(m) == 2 {
-				addImport(m[1])
-			}
-			continue
-		}
-		if strings.HasPrefix(trimmed, "import (") || trimmed == "import(" {
-			inGoImportBlock = true
-			continue
-		}
-		if strings.HasPrefix(trimmed, "import ") || strings.HasPrefix(trimmed, "export ") || strings.Contains(trimmed, "require(") {
-			if matches := quotedImportRe.FindAllStringSubmatch(trimmed, -1); len(matches) > 0 {
-				for _, m := range matches {
-					if len(m) == 2 {
-						addImport(m[1])
-					}
-				}
-				continue
-			}
-		}
-		if m := pyFromImportRe.FindStringSubmatch(trimmed); len(m) == 2 {
-			addImport(m[1])
-			continue
-		}
-		if m := pyImportRe.FindStringSubmatch(trimmed); len(m) == 2 {
-			addImport(m[1])
-			continue
-		}
-		if m := rustUseRe.FindStringSubmatch(trimmed); len(m) == 2 {
-			addImport(m[1])
-			continue
-		}
-	}
-	return imports
 }
 
 type symbolDecl struct {
@@ -276,6 +204,56 @@ func matchesImportHint(candPath string, imports []string, receiver string) bool 
 	return false
 }
 
+func languageFamily(relPath string) string {
+	switch strings.ToLower(filepath.Ext(relPath)) {
+	case ".go":
+		return "go"
+	case ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".vue", ".svelte":
+		return "js"
+	case ".py", ".pyi":
+		return "py"
+	case ".rs":
+		return "rs"
+	case ".dart":
+		return "dart"
+	case ".java", ".kt", ".kts", ".scala":
+		return "jvm"
+	case ".c", ".h", ".cc", ".cpp", ".cxx", ".hpp", ".m", ".mm", ".swift":
+		return "native"
+	default:
+		return strings.ToLower(filepath.Ext(relPath))
+	}
+}
+
+func sameLanguageFamily(pathA, pathB string) bool {
+	famA, famB := languageFamily(pathA), languageFamily(pathB)
+	return famA != "" && famA == famB
+}
+
+func isCallInvocation(cleanedLine, ident string) bool {
+	if ident == "" || len(cleanedLine) <= len(ident) {
+		return false
+	}
+	offset := 0
+	for {
+		idx := strings.Index(cleanedLine[offset:], ident)
+		if idx < 0 {
+			return false
+		}
+		pos := offset + idx
+		end := pos + len(ident)
+		prevOK := pos == 0 || !isIdentChar(cleanedLine[pos-1])
+		nextOK := end == len(cleanedLine) || !isIdentChar(cleanedLine[end])
+		if prevOK && nextOK {
+			rest := strings.TrimLeft(cleanedLine[end:], " \t")
+			if strings.HasPrefix(rest, "(") {
+				return true
+			}
+		}
+		offset = pos + 1
+	}
+}
+
 func pickBestSymbolDecl(cands []symbolDecl, callerPath, calledIdent, receiver string, imports []string) (symbolDecl, bool) {
 	if len(cands) == 0 {
 		return symbolDecl{}, false
@@ -285,6 +263,9 @@ func pickBestSymbolDecl(cands []symbolDecl, callerPath, calledIdent, receiver st
 	bestScore := -1
 	for i, cand := range cands {
 		score := 0
+		if sameLanguageFamily(callerPath, cand.Path) {
+			score += 8
+		}
 		if cand.Symbol == calledIdent {
 			score += 4
 		}
