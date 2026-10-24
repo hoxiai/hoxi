@@ -57,6 +57,7 @@ var protectedStateFiles = []string{
 	"approval-policy.json",
 	"relay-keys.json",
 	"git-attribution.json",
+	"work-apps.json",
 }
 
 // Home returns ~/.hoxi (or $HOXI_HOME when set), or "" when the user home directory is unknown.
@@ -159,7 +160,8 @@ func DefaultWorkspaceDir() string {
 	return join(Home(), "workspaces", "default")
 }
 
-// EnsureDefaultWorkspaceDir creates DefaultWorkspaceDir if needed and returns it.
+// EnsureDefaultWorkspaceDir creates DefaultWorkspaceDir (plus starter operations
+// subdirectories and README.md when absent) if needed and returns it.
 func EnsureDefaultWorkspaceDir() string {
 	dir := DefaultWorkspaceDir()
 	if dir == "" {
@@ -168,8 +170,29 @@ func EnsureDefaultWorkspaceDir() string {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return ""
 	}
+	for _, sub := range []string{"docs", "exports", "campaigns", "reports"} {
+		_ = os.MkdirAll(filepath.Join(dir, sub), 0o755)
+	}
+	readmePath := filepath.Join(dir, "README.md")
+	if _, err := os.Stat(readmePath); os.IsNotExist(err) {
+		_ = os.WriteFile(readmePath, []byte(defaultWorkspaceReadme), 0o644)
+	}
 	return dir
 }
+
+const defaultWorkspaceReadme = `# Hoxi Default Operations Workspace
+
+This directory (~/.hoxi/workspaces/default) is Hoxi's built-in workspace for
+daily e-commerce operations, content creation, and data analysis when no git
+repository is selected.
+
+## Recommended Folders
+
+- docs/      - Brand guidelines, SOPs, product copy, and campaign briefs
+- exports/   - Exported CSV/XLSX reports (Shopify, TikTok Shop, Amazon, Ads)
+- campaigns/ - Ad creatives, influencer seeding trackers, and launch assets
+- reports/   - Weekly/monthly operations diagnostics and audit summaries
+`
 
 // DBPath returns the SQLite database the managed OpenCode engine writes to.
 func DBPath() string {

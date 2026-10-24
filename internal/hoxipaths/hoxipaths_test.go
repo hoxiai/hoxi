@@ -1,6 +1,7 @@
 package hoxipaths
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -64,7 +65,7 @@ func TestHomeOverrideServerURLAndProtectedStateFiles(t *testing.T) {
 		t.Fatalf("ServerBaseURL() = %s, want https://mirror.hoxi.ai", got)
 	}
 
-	for _, name := range []string{"models.json", "auth.json", "auto-pools.json", "workspaces.json", "device-id", "telemetry.json", "relay-keys.json"} {
+	for _, name := range []string{"models.json", "auth.json", "auto-pools.json", "workspaces.json", "device-id", "telemetry.json", "relay-keys.json", "work-apps.json"} {
 		if !IsProtectedStateFile(name) {
 			t.Fatalf("expected %s to be protected state file", name)
 		}
@@ -128,5 +129,10 @@ func TestDefaultWorkspaceDir(t *testing.T) {
 	}
 	if got := EnsureDefaultWorkspaceDir(); got != want {
 		t.Fatalf("EnsureDefaultWorkspaceDir() = %q, want %q", got, want)
+	}
+	for _, entry := range []string{"docs", "exports", "campaigns", "reports", "README.md"} {
+		if _, err := os.Stat(filepath.Join(want, entry)); err != nil {
+			t.Fatalf("expected default workspace entry %s to exist: %v", entry, err)
+		}
 	}
 }
