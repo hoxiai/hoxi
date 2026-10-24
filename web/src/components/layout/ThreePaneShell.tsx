@@ -292,9 +292,7 @@ export default function ThreePaneShell(props: ThreePaneShellProps = {}) {
             aria-hidden={isNewConversation()}
             class={`flex min-h-0 flex-col overflow-hidden transition-[flex-grow,opacity,transform] duration-[var(--motion-move)] ease-[var(--ease-move)] ${
               isNewConversation()
-                ? isWorkSurface() && surfaceExtension.renderLaunchpad
-                  ? "flex-[0.06_1_0%] opacity-0 -translate-y-1 pointer-events-none"
-                  : "flex-[0.36_1_0%] opacity-0 -translate-y-1 pointer-events-none"
+                ? "flex-[0.36_1_0%] opacity-0 -translate-y-1 pointer-events-none"
                 : "flex-[1_1_0%] opacity-100 translate-y-0"
             }`}
           >
@@ -328,11 +326,7 @@ export default function ThreePaneShell(props: ThreePaneShellProps = {}) {
             aria-hidden="true"
             class="shrink-0 min-h-0 transition-[flex-grow] duration-[var(--motion-move)] ease-[var(--ease-move)] pointer-events-none"
             style={{
-              "flex-grow": isNewConversation()
-                ? isWorkSurface() && surfaceExtension.renderLaunchpad
-                  ? 0.14
-                  : 0.64
-                : 0,
+              "flex-grow": isNewConversation() ? 0.64 : 0,
             }}
           />
         </section>
