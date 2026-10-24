@@ -83,3 +83,49 @@ func (s *TokenStore) Clear() error {
 	}
 	return nil
 }
+
+func (s *TokenStore) workAppsPath() string {
+	dir := filepath.Dir(s.filePath)
+	return filepath.Join(dir, "work-apps.json")
+}
+
+// LoadWorkState 读取本地持久化的工作模式应用安装、自定义应用、MCP 连接及技能绑定状态 (~/.hoxi/work-apps.json)
+func (s *TokenStore) LoadWorkState() (map[string]any, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	data, err := os.ReadFile(s.workAppsPath())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return map[string]any{}, nil
+		}
+		return nil, err
+	}
+	var state map[string]any
+	if err := json.Unmarshal(data, &state); err != nil {
+		return map[string]any{}, nil
+	}
+	if state == nil {
+		state = map[string]any{}
+	}
+	return state, nil
+}
+
+// SaveWorkState 保存工作模式应用安装、自定义应用、MCP 连接及技能绑定状态 (~/.hoxi/work-apps.json)
+func (s *TokenStore) SaveWorkState(state map[string]any) error {
+	if state == nil {
+		state = map[string]any{}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	p := s.workAppsPath()
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(p, data, 0o600)
+}

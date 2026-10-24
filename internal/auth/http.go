@@ -45,6 +45,8 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleMCPToken(w, r)
 	case (path == "/work-apps" || r.URL.Path == "/api/hoxi/work/apps") && r.Method == http.MethodGet:
 		h.handleWorkApps(w, r)
+	case (path == "/work-apps" || r.URL.Path == "/api/hoxi/work/apps") && (r.Method == http.MethodPut || r.Method == http.MethodPost):
+		h.handleSaveWorkApps(w, r)
 	case path == "/open-url" && r.Method == http.MethodPost:
 		h.handleOpenURL(w, r)
 	default:
@@ -139,6 +141,21 @@ func (h *HTTPHandler) handleWorkApps(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = json.NewEncoder(w).Encode(data)
+}
+
+func (h *HTTPHandler) handleSaveWorkApps(w http.ResponseWriter, r *http.Request) {
+	var state map[string]any
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&state); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid json body"})
+		return
+	}
+	if err := h.service.SaveWorkAppsState(state); err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 }
 
 func (h *HTTPHandler) handleOpenURL(w http.ResponseWriter, r *http.Request) {

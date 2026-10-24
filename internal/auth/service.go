@@ -461,7 +461,7 @@ func (s *Service) MintMCPToken(ctx context.Context, req MCPTokenRequest) (map[st
 	return s.callMemberEndpoint(ctx, http.MethodPost, "/api/hoxi/mcp/token", body)
 }
 
-// FetchWorkApps 从 hoxi.ai 拉取官方工作模式应用目录与 MCP 连接配置
+// FetchWorkApps 从 hoxi.ai 拉取官方工作模式应用目录，并合并本地持久化的应用安装/技能绑定配置
 func (s *Service) FetchWorkApps(ctx context.Context) (map[string]any, error) {
 	s.mu.RLock()
 	baseURL := s.serverBaseURL
@@ -471,10 +471,12 @@ func (s *Service) FetchWorkApps(ctx context.Context) (map[string]any, error) {
 	}
 	s.mu.RUnlock()
 
+	localState, _ := s.store.LoadWorkState()
+
 	targetURL := fmt.Sprintf("%s/api/hoxi/work/apps", baseURL)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
 	if err != nil {
-		return nil, err
+		return map[string]any{"localState": localState}, nil
 	}
 	req.Header.Set("Accept", "application/json")
 	if token != "" {
@@ -483,30 +485,49 @@ func (s *Service) FetchWorkApps(ctx context.Context) (map[string]any, error) {
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
-		return nil, err
+		return map[string]any{"localState": localState}, nil
 	}
 	defer resp.Body.Close()
 
 	var payload map[string]any
 	_ = json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&payload)
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		msg := ""
-		if payload != nil {
-			if m, ok := payload["message"].(string); ok && m != "" {
-				msg = m
-			} else if m, ok := payload["statusMessage"].(string); ok && m != "" {
-				msg = m
-			}
-		}
-		return nil, &UpstreamAPIError{
-			StatusCode: resp.StatusCode,
-			Message:    msg,
-		}
-	}
 	if payload == nil {
 		payload = map[string]any{}
 	}
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		var items any
+		if dataMap, ok := payload["data"].(map[string]any); ok && dataMap["items"] != nil {
+			items = dataMap["items"]
+		} else if payload["items"] != nil {
+			items = payload["items"]
+		} else if payload["apps"] != nil {
+			items = payload["apps"]
+		}
+		if items != nil {
+			if localState == nil {
+				localState = map[string]any{}
+			}
+			localState["cachedItems"] = items
+			_ = s.store.SaveWorkState(localState)
+		}
+	}
+	payload["localState"] = localState
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return payload, nil
+	}
 	return payload, nil
+}
+
+// SaveWorkAppsState 保存用户本地安装的应用、自定义应用、MCP 链接配置及绑定技能到 ~/.hoxi/work-apps.json
+func (s *Service) SaveWorkAppsState(state map[string]any) error {
+	existing, _ := s.store.LoadWorkState()
+	if existing == nil {
+		existing = map[string]any{}
+	}
+	for k, v := range state {
+		existing[k] = v
+	}
+	return s.store.SaveWorkState(existing)
 }
 
 func (s *Service) callMemberEndpoint(ctx context.Context, method, endpoint string, body []byte) (map[string]any, error) {

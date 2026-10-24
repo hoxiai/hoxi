@@ -429,7 +429,7 @@ func TestMintMCPTokenAndWorkApps(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"version": 1,
 				"apps": []map[string]any{
-					{"id": "qingpu", "name": "轻铺开店助手", "skillName": "qingpu-ops"},
+					{"id": "shopify", "name": "Shopify 独立站运营", "skillName": "shopify-ops"},
 				},
 			})
 			return
@@ -458,7 +458,17 @@ func TestMintMCPTokenAndWorkApps(t *testing.T) {
 		t.Fatalf("FetchWorkApps failed: %v, %#v", err, appsRes)
 	}
 
-	if _, err := s.MintMCPToken(context.Background(), MCPTokenRequest{AppID: "qingpu"}); err == nil {
+	if err := s.SaveWorkAppsState(map[string]any{
+		"installedIds": []string{"shopify", "custom-1"},
+	}); err != nil {
+		t.Fatalf("SaveWorkAppsState failed: %v", err)
+	}
+	appsRes2, err := s.FetchWorkApps(context.Background())
+	if err != nil || appsRes2["localState"] == nil {
+		t.Fatalf("FetchWorkApps localState missing: %v, %#v", err, appsRes2)
+	}
+
+	if _, err := s.MintMCPToken(context.Background(), MCPTokenRequest{AppID: "shopify"}); err == nil {
 		t.Fatal("expected MintMCPToken error when not logged in")
 	}
 
@@ -468,8 +478,8 @@ func TestMintMCPTokenAndWorkApps(t *testing.T) {
 	}
 
 	tokRes, err := s.MintMCPToken(context.Background(), MCPTokenRequest{
-		AppID:   "qingpu",
-		AppName: "轻铺开店助手",
+		AppID:   "shopify",
+		AppName: "Shopify 独立站运营",
 		Scopes:  []string{"mcp:tools", "mcp:profile:read"},
 	})
 	if err != nil {
