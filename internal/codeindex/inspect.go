@@ -198,7 +198,7 @@ func (s *Service) Callers(directory, symbol, excludePath string, limit int) (Cal
 	sort.Strings(paths)
 
 	for _, relPath := range paths {
-		if isProtectedOrSecretRelPath(relPath) {
+		if isProtectedOrSecretRelPath(relPath) || isNonCodeCallersFile(relPath) {
 			continue
 		}
 		rec := c.index.Files[relPath]
@@ -207,7 +207,8 @@ func (s *Service) Callers(directory, symbol, excludePath string, limit int) (Cal
 			lines := strings.Split(ch.Text, "\n")
 			for i, line := range lines {
 				lineNo := ch.StartLine + i
-				if !containsIdentifier(line, symbol) {
+				cleaned := stripLineStringsAndComments(line)
+				if !containsIdentifier(cleaned, symbol) {
 					continue
 				}
 				if isDeclarationOf(line, symbol) && (normExclude == "" || relPath == normExclude) {
@@ -224,7 +225,7 @@ func (s *Service) Callers(directory, symbol, excludePath string, limit int) (Cal
 				}
 				hit := CallerHit{
 					Path:    relPath,
-					Symbol:  ch.Symbol,
+					Symbol:  enclosingSymbolAt(lines, i, ch.Symbol),
 					Line:    lineNo,
 					Snippet: snippet,
 				}
@@ -247,12 +248,35 @@ func (s *Service) Callers(directory, symbol, excludePath string, limit int) (Cal
 }
 
 func (s *Service) locateSymbolInIndex(directory string, c *cachedIndex, symbol string) (path string, startLine, endLine int, resolvedSymbol string, ok bool) {
+	target := strings.TrimSpace(symbol)
+	if dot := strings.LastIndexByte(target, '.'); dot >= 0 && dot+1 < len(target) {
+		target = target[dot+1:]
+	}
+	if target != "" && len(c.symbols) > 0 {
+		if cands := c.symbols[strings.ToLower(target)]; len(cands) > 0 {
+			best := cands[0]
+			for _, cand := range cands {
+				if cand.Symbol == target {
+					best = cand
+					break
+				}
+			}
+			raw, err := os.ReadFile(filepath.Join(directory, filepath.FromSlash(best.Path)))
+			if err == nil {
+				lines := strings.Split(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\n")
+				if st, en, matched, found := findSymbolInLines(lines, symbol); found {
+					return best.Path, st, en, matched, true
+				}
+			}
+			return best.Path, best.StartLine, best.EndLine, best.Symbol, true
+		}
+	}
 	paths := make([]string, 0, len(c.index.Files))
 	for p := range c.index.Files {
 		paths = append(paths, p)
 	}
 	sort.Strings(paths)
-	// First pass: check indexed files for exact/case-insensitive symbol declaration.
+	// Fallback pass: check indexed files for exact/case-insensitive symbol declaration.
 	for _, relPath := range paths {
 		if isProtectedOrSecretRelPath(relPath) {
 			continue
@@ -278,6 +302,23 @@ func (s *Service) locateSymbolInIndex(directory string, c *cachedIndex, symbol s
 		}
 	}
 	return "", 0, 0, "", false
+}
+
+func enclosingSymbolAt(lines []string, idx int, fallback string) string {
+	for i := idx; i >= 0 && i < len(lines); i-- {
+		if sym := extractLineSymbolCandidate(lines[i]); sym != "" {
+			return sym
+		}
+	}
+	return fallback
+}
+
+func isNonCodeCallersFile(relPath string) bool {
+	switch strings.ToLower(filepath.Ext(relPath)) {
+	case ".md", ".mdx", ".json", ".jsonc", ".yaml", ".yml", ".toml", ".lock", ".ini", ".cfg", ".conf", ".txt":
+		return true
+	}
+	return false
 }
 
 func extractLineSymbolCandidate(line string) string {
@@ -337,23 +378,123 @@ func findSymbolInLines(lines []string, symbol string) (startLine, endLine int, r
 	return startLine, endLine, matchedSym, true
 }
 
+var pythonBlockDeclRe = regexp.MustCompile(`^\s*(?:async\s+)?(?:def|class)\s+[A-Za-z_]\w*`)
+
+func leadingIndentWidth(line string) int {
+	width := 0
+	for i := 0; i < len(line); i++ {
+		switch line[i] {
+		case ' ':
+			width++
+		case '\t':
+			width += 4
+		default:
+			return width
+		}
+	}
+	return width
+}
+
+func estimatePythonBlockEndLine(lines []string, declIdx, maxIdx int) int {
+	baseIndent := leadingIndentWidth(lines[declIdx])
+	headerEnd := declIdx
+	parenDepth := 0
+	for i := declIdx; i <= maxIdx && i < declIdx+12; i++ {
+		line := lines[i]
+		for j := 0; j < len(line); j++ {
+			if line[j] == '#' {
+				break
+			}
+			switch line[j] {
+			case '(':
+				parenDepth++
+			case ')':
+				if parenDepth > 0 {
+					parenDepth--
+				}
+			}
+		}
+		headerEnd = i
+		trimmed := strings.TrimSpace(line)
+		if idx := strings.IndexByte(trimmed, '#'); idx >= 0 {
+			trimmed = strings.TrimSpace(trimmed[:idx])
+		}
+		if parenDepth == 0 && strings.HasSuffix(trimmed, ":") {
+			break
+		}
+	}
+	lastBodyLine := headerEnd + 1
+	sawBody := false
+	for i := headerEnd + 1; i <= maxIdx; i++ {
+		trimmed := strings.TrimSpace(lines[i])
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		indent := leadingIndentWidth(lines[i])
+		if indent <= baseIndent {
+			if sawBody {
+				return lastBodyLine
+			}
+			return headerEnd + 1
+		}
+		sawBody = true
+		lastBodyLine = i + 1
+	}
+	if sawBody {
+		return lastBodyLine
+	}
+	return headerEnd + 1
+}
+
 func estimateSymbolEndLine(lines []string, declIdx int) int {
-	braceDepth := 0
-	sawBrace := false
 	maxIdx := declIdx + maxInspectWindowLines - 1
 	if maxIdx >= len(lines) {
 		maxIdx = len(lines) - 1
 	}
+	if pythonBlockDeclRe.MatchString(lines[declIdx]) && !strings.Contains(lines[declIdx], "{") {
+		return estimatePythonBlockEndLine(lines, declIdx, maxIdx)
+	}
+	braceDepth := 0
+	sawBrace := false
+	inBlockComment := false
+	var stringQuote byte
 	for i := declIdx; i <= maxIdx; i++ {
 		line := lines[i]
-		if i > declIdx && !sawBrace && extractLineSymbolCandidate(line) != "" {
+		if i > declIdx+8 && !sawBrace && !inBlockComment && stringQuote == 0 && extractLineSymbolCandidate(line) != "" {
 			return i
 		}
 		for j := 0; j < len(line); j++ {
-			if j+1 < len(line) && line[j] == '/' && line[j+1] == '/' {
-				break
+			ch := line[j]
+			if inBlockComment {
+				if ch == '*' && j+1 < len(line) && line[j+1] == '/' {
+					inBlockComment = false
+					j++
+				}
+				continue
 			}
-			switch line[j] {
+			if stringQuote != 0 {
+				if ch == '\\' && stringQuote != '`' {
+					j++
+					continue
+				}
+				if ch == stringQuote {
+					stringQuote = 0
+				}
+				continue
+			}
+			if ch == '/' && j+1 < len(line) {
+				if line[j+1] == '/' {
+					break
+				}
+				if line[j+1] == '*' {
+					inBlockComment = true
+					j++
+					continue
+				}
+			}
+			switch ch {
+			case '"', '\'', '`':
+				stringQuote = ch
 			case '{':
 				braceDepth++
 				sawBrace = true

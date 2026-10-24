@@ -44,7 +44,7 @@ const GO_UNSAFE_FLAGS = new Set([
   "coverprofile", "cpuprofile", "memprofile", "blockprofile", "mutexprofile", "trace", "outputdir",
 ]);
 const GO_ENV_WRITE_FLAGS = new Set(["w", "u"]);
-const HOXI_CODE_INDEX_SUBCOMMANDS = new Set(["search", "inspect", "callers", "refresh", "status"]);
+const HOXI_CODE_INDEX_SUBCOMMANDS = new Set(["search", "inspect", "callers", "callees", "impact", "context", "explore", "refresh", "status"]);
 const TOOLCHAIN_BASES = new Set(["go", "npm", "pnpm", "yarn", "cargo", "pytest", "tsc", "npx", "node", "git", "hoxi"]);
 const SYSTEM_TOOL_DIRS = new Set([
   "/usr/local/go/bin", "/usr/local/bin", "/opt/homebrew/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin",

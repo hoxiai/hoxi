@@ -424,6 +424,13 @@ func TestCLICodeIndexSubcommand(t *testing.T) {
 
 	outBuf.Reset()
 	errBuf.Reset()
+	code = runCodeIndexCommand([]string{"context", "--dir", dir, "--symbol", "RunServer"}, dir, &outBuf, &errBuf)
+	if code != 0 || !strings.Contains(outBuf.String(), "func RunServer()") {
+		t.Fatalf("code-index context failed (code=%d): out=%s err=%s", code, outBuf.String(), errBuf.String())
+	}
+
+	outBuf.Reset()
+	errBuf.Reset()
 	code = runCodeIndexCommand([]string{"inspect", "--dir", dir, "--path", ".hoxi/cloudflared.json"}, dir, &outBuf, &errBuf)
 	if code == 0 {
 		t.Fatalf("expected code-index inspect on .hoxi/cloudflared.json to fail, got out=%s", outBuf.String())

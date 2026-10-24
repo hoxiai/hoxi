@@ -270,7 +270,7 @@ Usage:
   hoxi sessions                       List sessions in the current directory
   hoxi handoff [list|import]          Inspect or import sessions across Claude/Codex/AGY/OpenCode
   hoxi worktree [list|diff|apply]     Manage isolated Git worktree sandboxes
-  hoxi code-index <action> [flags]    Navigate code via worktree index (search|inspect|callers|refresh)
+  hoxi code-index <action> [flags]    Navigate code via worktree index (context|search|inspect|callers|callees|impact|refresh)
   hoxi tui                            Launch native OpenCode TUI with Hoxi plugins
   hoxi serve                          Run headless Hoxi daemon for mobile/remote control
   hoxi install-cli                    Install 'hoxi' command into /usr/local/bin or ~/.local/bin

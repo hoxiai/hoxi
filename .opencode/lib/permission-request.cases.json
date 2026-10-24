@@ -45,5 +45,7 @@
   { "name": "substituted dotenv read", "destructive": true, "request": { "permission": "bash", "patterns": ["F=.env; cat \"$F\""] } },
   { "name": "substituted ssh key read", "destructive": true, "request": { "permission": "bash", "patterns": ["D=~/.ssh; cat \"$D/id_ed25519\""] } },
   { "name": "substituted force push", "destructive": true, "request": { "permission": "bash", "patterns": ["D=/repo; git push --force \"$D\""] } },
-  { "name": "background job kill", "destructive": true, "request": { "permission": "bash", "patterns": ["sleep 1 & kill %1"] } }
+  { "name": "background job kill", "destructive": true, "request": { "permission": "bash", "patterns": ["sleep 1 & kill %1"] } },
+  { "name": "hoxi code-index context command", "destructive": false, "request": { "permission": "bash", "patterns": ["hoxi code-index context --symbol HandleCheckout"] } },
+  { "name": "hoxi code-index context on dotenv", "destructive": true, "request": { "permission": "bash", "patterns": ["hoxi code-index context --path .env"] } }
 ]

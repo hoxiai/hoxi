@@ -120,7 +120,7 @@ var (
 	goUnsafeFlags = setOf("exec", "toolexec", "vettool", "o", "ldflags", "gccgoflags",
 		"coverprofile", "cpuprofile", "memprofile", "blockprofile", "mutexprofile", "trace", "outputdir")
 	goEnvWriteFlags            = setOf("w", "u")
-	hoxiCodeIndexSubcommands  = setOf("search", "inspect", "callers", "refresh", "status")
+	hoxiCodeIndexSubcommands  = setOf("search", "inspect", "callers", "callees", "impact", "context", "explore", "refresh", "status")
 )
 
 func setOf(items ...string) map[string]bool {

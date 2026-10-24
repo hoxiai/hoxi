@@ -57,6 +57,9 @@ func (s *Service) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/hoxi/code-index/search", s.handleSearch)
 	mux.HandleFunc("/api/hoxi/code-index/inspect", s.handleInspect)
 	mux.HandleFunc("/api/hoxi/code-index/callers", s.handleCallers)
+	mux.HandleFunc("/api/hoxi/code-index/callees", s.handleCallees)
+	mux.HandleFunc("/api/hoxi/code-index/impact", s.handleImpact)
+	mux.HandleFunc("/api/hoxi/code-index/context", s.handleContext)
 	mux.HandleFunc("/api/hoxi/code-index/status", s.handleStatus)
 	mux.HandleFunc("/api/hoxi/code-index/refresh", s.handleRefresh)
 }

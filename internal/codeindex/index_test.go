@@ -164,6 +164,9 @@ func TestInspectSymbolAndCallersSeparation(t *testing.T) {
 		if c.Path == "main.go" && c.Line == 3 {
 			t.Fatalf("expected declaration line to be excluded from callers: %+v", c)
 		}
+		if c.Path == "README.md" {
+			t.Fatalf("expected prose README.md to be excluded from callers: %+v", c)
+		}
 	}
 	if !foundProdCaller {
 		t.Fatalf("expected server.go caller in Callers, got: %+v", callers.Callers)
@@ -287,5 +290,151 @@ func TestInspectLocatesLateSymbolAndRejectsMissingSymbol(t *testing.T) {
 		if bad, err := svc.Inspect(dir, "long_test.go", "NonExistentSymbol", startLine, 0, 2); err == nil {
 			t.Fatalf("expected missing symbol (startLine=%d) in explicit path to return error, got: %+v", startLine, bad)
 		}
+	}
+}
+
+func TestCalleesImpactAndContextGraph(t *testing.T) {
+	dir := fixtureWorkspace(t)
+	writeFile(t, filepath.Join(dir, "billing", "pay.go"), "package billing\n\nfunc ChargeCard(amount int) error {\n\treturn nil\n}\n")
+	writeFile(t, filepath.Join(dir, "checkout.go"), "package main\n\nimport (\n\t\"example.com/app/billing\"\n\t\"example.com/app/lib\"\n)\n\nfunc HandleCheckout(items []int) error {\n\ttotal := computeTotal(items)\n\treturn billing.ChargeCard(total)\n}\n")
+	writeFile(t, filepath.Join(dir, "router.go"), "package main\n\nfunc DispatchRoute() error {\n\treturn HandleCheckout([]int{1, 2})\n}\n")
+	writeFile(t, filepath.Join(dir, "checkout_test.go"), "package main\n\nimport \"testing\"\n\nfunc TestHandleCheckout(t *testing.T) {\n\t_ = HandleCheckout(nil)\n}\n")
+	writeFile(t, filepath.Join(dir, "router_test.go"), "package main\n\nimport \"testing\"\n\nfunc TestDispatchRoute(t *testing.T) {\n\t_ = DispatchRoute()\n}\n")
+	writeFile(t, filepath.Join(dir, ".env"), "STRIPE_SECRET=sk_live_secret\n")
+
+	svc := NewService(t.TempDir())
+
+	// 1. Callees + Imports
+	callees, err := svc.Callees(dir, "HandleCheckout", "", 10)
+	if err != nil {
+		t.Fatalf("Callees failed: %v", err)
+	}
+	if callees.Path != "checkout.go" || callees.Symbol != "HandleCheckout" {
+		t.Fatalf("unexpected callees metadata: %+v", callees)
+	}
+	if len(callees.Imports) != 2 {
+		t.Fatalf("expected 2 imports on checkout.go, got: %+v", callees.Imports)
+	}
+	calleeSymbols := map[string]string{}
+	for _, c := range callees.Callees {
+		calleeSymbols[c.Symbol] = c.Path
+	}
+	if calleeSymbols["computeTotal"] != "lib/util.ts" || calleeSymbols["ChargeCard"] != "billing/pay.go" {
+		t.Fatalf("expected computeTotal and ChargeCard in callees, got: %+v", callees.Callees)
+	}
+
+	// 2. Multi-hop Impact (ChargeCard -> HandleCheckout -> DispatchRoute + transitive tests)
+	impact, err := svc.Impact(dir, "ChargeCard", "", 2, 10)
+	if err != nil {
+		t.Fatalf("Impact failed: %v", err)
+	}
+	if len(impact.DirectCallers) != 1 || impact.DirectCallers[0].Symbol != "HandleCheckout" {
+		t.Fatalf("expected HandleCheckout as direct caller, got: %+v", impact.DirectCallers)
+	}
+	if len(impact.TransitiveCallers) != 1 || impact.TransitiveCallers[0].Symbol != "DispatchRoute" || impact.TransitiveCallers[0].Via != "HandleCheckout -> ChargeCard" {
+		t.Fatalf("expected DispatchRoute as depth-2 transitive caller, got: %+v", impact.TransitiveCallers)
+	}
+	testPaths := map[string]bool{}
+	for _, th := range impact.Tests {
+		testPaths[th.Path] = true
+	}
+	if !testPaths["checkout_test.go"] || !testPaths["router_test.go"] {
+		t.Fatalf("expected both checkout_test.go and router_test.go in impact Tests, got: %+v", impact.Tests)
+	}
+
+	// 3. Single-shot Context bundle
+	ctxRes, err := svc.Context(dir, "", "HandleCheckout", "", 1, 10)
+	if err != nil {
+		t.Fatalf("Context failed: %v", err)
+	}
+	if ctxRes.Inspect.Path != "checkout.go" || !strings.Contains(ctxRes.Inspect.Content, "billing.ChargeCard(total)") {
+		t.Fatalf("unexpected Context.Inspect: %+v", ctxRes.Inspect)
+	}
+	if len(ctxRes.Callees) != 2 || len(ctxRes.Callers) != 1 || len(ctxRes.Tests) < 1 {
+		t.Fatalf("incomplete Context bundle: %+v", ctxRes)
+	}
+
+	// 4. Reject protected/secret paths in Callees, Impact, and Context
+	for _, blocked := range []string{".env", "../outside.go"} {
+		if _, err := svc.Callees(dir, "HandleCheckout", blocked, 5); err == nil {
+			t.Fatalf("expected Callees with path=%q to fail", blocked)
+		}
+		if _, err := svc.Impact(dir, "HandleCheckout", blocked, 2, 5); err == nil {
+			t.Fatalf("expected Impact with path=%q to fail", blocked)
+		}
+		if _, err := svc.Context(dir, blocked, "HandleCheckout", "", 1, 5); err == nil {
+			t.Fatalf("expected Context with path=%q to fail", blocked)
+		}
+	}
+
+	// 5. HTTP endpoints
+	mux := http.NewServeMux()
+	svc.RegisterRoutes(mux)
+	for _, endpoint := range []string{
+		"/api/hoxi/code-index/callees?directory=" + url.QueryEscape(dir) + "&symbol=HandleCheckout",
+		"/api/hoxi/code-index/impact?directory=" + url.QueryEscape(dir) + "&symbol=ChargeCard",
+		"/api/hoxi/code-index/context?directory=" + url.QueryEscape(dir) + "&symbol=HandleCheckout",
+	} {
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, endpoint, nil))
+		if w.Code != http.StatusOK {
+			t.Fatalf("GET %s failed: %d %s", endpoint, w.Code, w.Body.String())
+		}
+	}
+}
+
+func TestPythonIndentationAndStringBraceBoundaries(t *testing.T) {
+	dir := t.TempDir()
+	pyCode := strings.Join([]string{
+		"from billing.service import charge_user",
+		"",
+		"async def process_order(items:",
+		"                        list[int]) -> int:",
+		"    total = sum(items)",
+		"    # comment inside block",
+		"    if total > 0:",
+		"        charge_user(total)",
+		"    return total",
+		"",
+		"def unrelated_helper():",
+		"    return 42",
+	}, "\n") + "\n"
+	writeFile(t, filepath.Join(dir, "order.py"), pyCode)
+
+	goCode := strings.Join([]string{
+		"package main",
+		"",
+		"func ParseBraces() string {",
+		"\tlit := \"}}}{{{\"",
+		"\t/* block comment with }}} */",
+		"\t// line comment with }}}",
+		"\treturn lit",
+		"}",
+		"",
+		"func NextFunc() {}",
+	}, "\n") + "\n"
+	writeFile(t, filepath.Join(dir, "braces.go"), goCode)
+
+	svc := NewService(t.TempDir())
+	pyInspect, err := svc.Inspect(dir, "order.py", "process_order", 0, 0, -1)
+	if err != nil {
+		t.Fatalf("Inspect(process_order) failed: %v", err)
+	}
+	if pyInspect.StartLine != 3 || pyInspect.EndLine != 9 {
+		t.Fatalf("expected Python block lines 3..9, got %d..%d:\n%s", pyInspect.StartLine, pyInspect.EndLine, pyInspect.Content)
+	}
+	if strings.Contains(pyInspect.Content, "unrelated_helper") {
+		t.Fatalf("Python inspect spilled into next function:\n%s", pyInspect.Content)
+	}
+
+	goInspect, err := svc.Inspect(dir, "braces.go", "ParseBraces", 0, 0, -1)
+	if err != nil {
+		t.Fatalf("Inspect(ParseBraces) failed: %v", err)
+	}
+	if goInspect.StartLine != 3 || goInspect.EndLine != 8 {
+		t.Fatalf("expected Go function lines 3..8, got %d..%d:\n%s", goInspect.StartLine, goInspect.EndLine, goInspect.Content)
+	}
+	if !strings.Contains(goInspect.Content, "return lit") || strings.Contains(goInspect.Content, "NextFunc") {
+		t.Fatalf("unexpected Go function boundary content:\n%s", goInspect.Content)
 	}
 }

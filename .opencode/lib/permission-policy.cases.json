@@ -688,5 +688,10 @@
   { "command": "diff <(rg -l watch src/a) <(rg -l watch src/b)", "decision": "ask", "destructive": false },
   { "command": "echo \"$(cat .env)\"", "decision": "ask", "destructive": true },
   { "command": "python3 - <<'EOF'\nprint(open('.env').read())\nEOF", "decision": "ask", "destructive": true },
-  { "command": "printf 'core.hooksPath=%s\\n' \"$(git config core.hooksPath)\"", "decision": "ask", "destructive": false }
+  { "command": "printf 'core.hooksPath=%s\\n' \"$(git config core.hooksPath)\"", "decision": "ask", "destructive": false },
+  { "command": "hoxi code-index context --symbol HandleCheckout", "decision": "allow", "destructive": false },
+  { "command": "hoxi code-index callees --symbol HandleCheckout --path checkout.go", "decision": "allow", "destructive": false },
+  { "command": "hoxi code-index impact --symbol ChargeCard --depth 2", "decision": "allow", "destructive": false },
+  { "command": "hoxi code-index context --path .env", "decision": "ask", "destructive": true },
+  { "command": "hoxi code-index impact --dir /etc --symbol ChargeCard", "decision": "ask", "destructive": false }
 ]

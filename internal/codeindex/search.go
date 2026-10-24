@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	indexVersion = 3
+	indexVersion = 4
 	cacheTTL     = 60 * 1000
 )
 
@@ -38,10 +38,11 @@ type document struct {
 }
 
 type cachedIndex struct {
-	index  *Index
-	docs   []document
-	df     map[string]int
-	avgLen float64
+	index   *Index
+	docs    []document
+	df      map[string]int
+	avgLen  float64
+	symbols map[string][]symbolDecl
 }
 
 func (c *cachedIndex) chunkCount() int { return len(c.docs) }
@@ -74,6 +75,7 @@ func buildDocs(index *Index) *cachedIndex {
 	if len(c.docs) > 0 {
 		c.avgLen = float64(total) / float64(len(c.docs))
 	}
+	c.symbols = buildWorkspaceSymbolMap(index)
 	return c
 }
 

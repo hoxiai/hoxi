@@ -41,11 +41,12 @@ type Chunk struct {
 }
 
 type FileRecord struct {
-	Path    string  `json:"path"`
-	ModTime int64   `json:"modTime"`
-	Size    int64   `json:"size"`
-	Hash    string  `json:"hash"`
-	Chunks  []Chunk `json:"chunks"`
+	Path    string   `json:"path"`
+	ModTime int64    `json:"modTime"`
+	Size    int64    `json:"size"`
+	Hash    string   `json:"hash"`
+	Imports []string `json:"imports,omitempty"`
+	Chunks  []Chunk  `json:"chunks"`
 }
 
 type Index struct {
@@ -337,9 +338,11 @@ func (s *Service) build(directory string, previous *Index) (*Index, error) {
 			index.Files[rel] = prev
 			return nil
 		}
-		chunks := chunkFile(rel, string(raw), cfg)
+		contentStr := string(raw)
+		chunks := chunkFile(rel, contentStr, cfg)
+		imports := extractFileImports(contentStr)
 		index.Files[rel] = &FileRecord{
-			Path: rel, ModTime: info.ModTime().UnixMilli(), Size: info.Size(), Hash: hash, Chunks: chunks,
+			Path: rel, ModTime: info.ModTime().UnixMilli(), Size: info.Size(), Hash: hash, Imports: imports, Chunks: chunks,
 		}
 		return nil
 	})

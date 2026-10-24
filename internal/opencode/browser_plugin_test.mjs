@@ -162,6 +162,20 @@ test("standalone browser plugin", async (t) => {
     assert.equal(requests[3].url.pathname, "/api/hoxi/code-index/refresh");
     assert.equal(requests[3].options.method, "POST");
 
+    await execIndex({ action: "callees", symbol: "HandleRequest", path: "main.go" }, context);
+    assert.equal(requests[4].url.pathname, "/api/hoxi/code-index/callees");
+    assert.equal(requests[4].url.searchParams.get("directory"), context.directory);
+    assert.equal(requests[4].url.searchParams.get("symbol"), "HandleRequest");
+
+    await execIndex({ action: "impact", symbol: "HandleRequest", depth: 2 }, context);
+    assert.equal(requests[5].url.pathname, "/api/hoxi/code-index/impact");
+    assert.equal(requests[5].url.searchParams.get("depth"), "2");
+
+    await execIndex({ action: "context", symbol: "HandleRequest", contextLines: 2 }, context);
+    assert.equal(requests[6].url.pathname, "/api/hoxi/code-index/context");
+    assert.equal(requests[6].url.searchParams.get("symbol"), "HandleRequest");
+    assert.equal(requests[6].url.searchParams.get("contextLines"), "2");
+
     // Verify compact plain-text rendering of inspect response (no JSON string escaping or directory metadata bloat)
     globalThis.fetch = async () =>
       Response.json({

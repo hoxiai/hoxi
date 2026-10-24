@@ -512,19 +512,21 @@ func runCodeIndexCommand(args []string, cwd string, stdout, stderr io.Writer) in
 		startLine    int
 		endLine      int
 		contextLines int
+		depth        int
 		limit        int
 		refresh      bool
 	)
 	fs.StringVar(&dir, "dir", cwd, "workspace directory")
 	fs.StringVar(&query, "q", "", "search query")
 	fs.StringVar(&query, "query", "", "search query")
-	fs.StringVar(&symbol, "symbol", "", "symbol name for inspect or callers")
+	fs.StringVar(&symbol, "symbol", "", "symbol name for context, inspect, callers, callees, or impact")
 	fs.StringVar(&relPath, "path", "", "relative file path or prefix")
 	fs.IntVar(&startLine, "start", 0, "1-based start line for inspect")
 	fs.IntVar(&startLine, "start-line", 0, "1-based start line for inspect")
 	fs.IntVar(&endLine, "end", 0, "1-based end line for inspect")
 	fs.IntVar(&endLine, "end-line", 0, "1-based end line for inspect")
-	fs.IntVar(&contextLines, "context", 5, "context lines for inspect")
+	fs.IntVar(&contextLines, "context", 5, "context lines for inspect or context")
+	fs.IntVar(&depth, "depth", 2, "call graph depth for impact (1-3)")
 	fs.IntVar(&limit, "limit", 12, "maximum results")
 	fs.BoolVar(&refresh, "refresh", false, "refresh index before searching")
 	if err := fs.Parse(args); err != nil {
@@ -579,6 +581,36 @@ func runCodeIndexCommand(args []string, cwd string, stdout, stderr io.Writer) in
 			return 1
 		}
 		return writeOut(res)
+	case "callees":
+		if symbol == "" {
+			symbol = firstNonEmpty(pos, query)
+		}
+		res, err := svc.Callees(dir, symbol, relPath, limit)
+		if err != nil {
+			fmt.Fprintf(stderr, "Error: %v\n", err)
+			return 1
+		}
+		return writeOut(res)
+	case "impact":
+		if symbol == "" {
+			symbol = firstNonEmpty(pos, query)
+		}
+		res, err := svc.Impact(dir, symbol, relPath, depth, limit)
+		if err != nil {
+			fmt.Fprintf(stderr, "Error: %v\n", err)
+			return 1
+		}
+		return writeOut(res)
+	case "context", "explore":
+		if symbol == "" && query == "" && pos != "" {
+			symbol = pos
+		}
+		res, err := svc.Context(dir, relPath, symbol, query, contextLines, limit)
+		if err != nil {
+			fmt.Fprintf(stderr, "Error: %v\n", err)
+			return 1
+		}
+		return writeOut(res)
 	case "refresh":
 		res, err := svc.Refresh(dir)
 		if err != nil {
@@ -594,7 +626,7 @@ func runCodeIndexCommand(args []string, cwd string, stdout, stderr io.Writer) in
 		}
 		return writeOut(res)
 	default:
-		fmt.Fprintf(stderr, "Unknown code-index action %q (supported: search, inspect, callers, refresh, status)\n", action)
+		fmt.Fprintf(stderr, "Unknown code-index action %q (supported: context, search, inspect, callers, callees, impact, refresh, status)\n", action)
 		return 2
 	}
 }
