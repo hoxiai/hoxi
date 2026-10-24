@@ -266,32 +266,28 @@ dialog[open]::backdrop {
 @keyframes hoxi-item-in {
   from {
     opacity: 0;
-    transform: translate3d(0, 10px, 0) scale(0.994);
+    transform: translate3d(0, 3px, 0);
   }
 }
 
 .hoxi-item-enter {
-  animation: hoxi-item-in var(--motion-enter) var(--ease-spring) both;
-  animation-delay: calc(var(--hoxi-order, 0) * 24ms);
+  animation: hoxi-item-in 160ms var(--ease-enter) both;
+  animation-delay: calc(var(--hoxi-order, 0) * 18ms);
 }
 
 @keyframes hoxi-item-pop {
-  0% {
+  from {
     opacity: 0;
-    transform: translate3d(0, 8px, 0) scale(0.975);
+    transform: translate3d(0, 2px, 0);
   }
-  60% {
+  to {
     opacity: 1;
-    transform: translate3d(0, -1px, 0) scale(1.004);
-  }
-  100% {
-    opacity: 1;
-    transform: translate3d(0, 0, 0) scale(1);
+    transform: translate3d(0, 0, 0);
   }
 }
 
 .hoxi-item-pop {
-  animation: hoxi-item-pop var(--motion-enter) var(--ease-enter) both;
+  animation: hoxi-item-pop 150ms var(--ease-enter) both;
 }
 
 /* ============================================================================

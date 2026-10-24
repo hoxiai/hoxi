@@ -240,6 +240,7 @@ func runtimeContext(rec SessionRecord) string {
 				continue
 			}
 			var content []string
+			seenTools := make(map[string]bool)
 			for _, p := range turn.Parts {
 				switch p.Type {
 				case "text":
@@ -262,7 +263,8 @@ func runtimeContext(rec SessionRecord) string {
 					if !isRecent || (!includeTools && idx < len(turns)-2) {
 						continue
 					}
-					if summary := summarizeHandoffToolPart(p); summary != "" {
+					if summary := summarizeHandoffToolPart(p); summary != "" && !seenTools[summary] {
+						seenTools[summary] = true
 						content = append(content, summary)
 					}
 				case "file":
@@ -378,7 +380,16 @@ func (s *Service) AllowOpenCodeSSELine(line string) bool {
 			}
 		}
 	}
-	return !s.IsManagedOpenCodeSession(id)
+	if s.IsManagedOpenCodeSession(id) {
+		return false
+	}
+	switch envelope.Type {
+	case "permission.asked", "permission.replied", "question.asked", "question.replied", "question.rejected", "question.v2.asked", "question.v2.replied", "question.v2.rejected":
+		if s.isManagedOpenCodeChild(id) {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Service) markContextDelivered(id string) {

@@ -182,6 +182,20 @@ func (ap *activeProcess) isOpenCodeChild(sessionID string) bool {
 	return ok
 }
 
+func (s *Service) isManagedOpenCodeChild(sessionID string) bool {
+	if sessionID == "" {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, ap := range s.procs {
+		if ap != nil && ap.isOpenCodeChild(sessionID) {
+			return true
+		}
+	}
+	return false
+}
+
 func openCodeEventSessionID(evt SSEEvent) string {
 	if sid, ok := evt.Properties["sessionID"].(string); ok {
 		return sid

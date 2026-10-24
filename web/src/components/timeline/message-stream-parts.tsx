@@ -131,9 +131,31 @@ export function ContextActivityGroupView(props: {
 }
 
 export function PartView(props: { part: MessagePart; revealKey?: string }) {
-  const expanded = createMemo(() =>
-    props.part ? expandInlineThinkingParts([props.part]) : []
-  );
+  const mayHaveInlineThinking = createMemo(() => {
+    const raw = props.part;
+    if (!raw || raw.type !== "text") return false;
+    const text = raw.text ?? "";
+    const firstNonWs = text.search(/\S/);
+    return firstNonWs < 0 || text.charCodeAt(firstNonWs) === 60;
+  });
+
+  const expanded = createMemo<MessagePart[]>((prev) => {
+    const raw = props.part;
+    if (!raw) return prev && prev.length === 0 ? prev : [];
+    if (!mayHaveInlineThinking()) {
+      return prev && prev.length === 1 && prev[0] === raw ? prev : [raw];
+    }
+    const next = expandInlineThinkingParts([raw]);
+    if (
+      prev &&
+      prev.length === next.length &&
+      prev.every((item, idx) => item === next[idx])
+    ) {
+      return prev;
+    }
+    return next;
+  });
+
   return (
     <div data-part-id={props.part?.id}>
       <For each={expanded()}>
@@ -150,7 +172,13 @@ export function PartView(props: { part: MessagePart; revealKey?: string }) {
             </Match>
             <Match when={part.type === "text"}>
               <div>
-                <MarkdownView content={extractVisibleAssistantText((part as Extract<MessagePart, { type: "text" }>).text)} />
+                <MarkdownView
+                  content={
+                    mayHaveInlineThinking()
+                      ? extractVisibleAssistantText((part as Extract<MessagePart, { type: "text" }>).text)
+                      : (part as Extract<MessagePart, { type: "text" }>).text
+                  }
+                />
               </div>
             </Match>
           </Switch>
@@ -510,7 +538,7 @@ export function AssistantTurnFooter(props: {
     <Show when={cycleSummary()}>
       {(summary) => (
         <Show when={!isTurnExecuting()}>
-          <div class="mt-4 space-y-2 select-none">
+          <div class="hoxi-fade-enter mt-4 space-y-2 select-none">
             <ChangedFilesSummary
               files={summary().changedFiles}
               commitSessionID={isLatestExchange() ? props.info.sessionID : undefined}

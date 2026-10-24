@@ -2,6 +2,56 @@ import type { ThemedToken } from "shiki";
 
 export type HighlightedCode = { code: string; tokens: ThemedToken[][] };
 
+function isSameThemedToken(a: ThemedToken, b: ThemedToken): boolean {
+  return (
+    a === b ||
+    (a.content === b.content &&
+      a.color === b.color &&
+      (a.fontStyle ?? 0) === (b.fontStyle ?? 0))
+  );
+}
+
+function isSameTokenLine(a: ThemedToken[] | undefined, b: ThemedToken[]): boolean {
+  if (!a) return false;
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (!isSameThemedToken(a[i], b[i])) return false;
+  }
+  return true;
+}
+
+/**
+ * Reuses unchanged line and token object references across streaming highlight
+ * passes so Solid's `<Index>` skips completed lines and prefix tokens.
+ */
+export function stabilizeHighlightedLines(
+  prev: ThemedToken[][] | undefined,
+  next: ThemedToken[][],
+): ThemedToken[][] {
+  if (!prev || prev.length === 0) return next;
+  let reusedAll = prev.length === next.length;
+  const out = next.map((line, idx) => {
+    const prior = prev[idx];
+    if (isSameTokenLine(prior, line)) {
+      return prior!;
+    }
+    reusedAll = false;
+    if (!prior) return line;
+    let reusedLineTokens = prior.length === line.length;
+    const stabilizedLine = line.map((tok, tIdx) => {
+      const priorTok = prior[tIdx];
+      if (priorTok && isSameThemedToken(priorTok, tok)) {
+        return priorTok;
+      }
+      reusedLineTokens = false;
+      return tok;
+    });
+    return reusedLineTokens ? prior : stabilizedLine;
+  });
+  return reusedAll ? prev : out;
+}
+
 const MAX_HIGHLIGHT_CACHE = 240;
 const highlightCache = new Map<string, HighlightedCode>();
 

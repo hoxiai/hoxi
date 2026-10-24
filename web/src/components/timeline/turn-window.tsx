@@ -483,7 +483,11 @@ export function AssistantTurnItem(props: {
 
   return (
     <Show
-      when={!merged().isVisuallyEmpty || merged().isCycleEnd || Boolean(props.turn.info.error)}
+      when={
+        !merged().isVisuallyEmpty ||
+        (merged().isCycleEnd && !props.isSessionBusy) ||
+        Boolean(props.turn.info.error)
+      }
       fallback={
         <div
           data-merged-turn-id={props.turn.info.id}
@@ -494,7 +498,9 @@ export function AssistantTurnItem(props: {
       <div
         data-turn-id={props.turn.info.id}
         style={{
-          "--hoxi-order": String(Math.min(Math.max(props.allTurns.length - 1 - props.globalIndex, 0), 5)),
+          "--hoxi-order": props.isSessionBusy
+            ? "0"
+            : String(Math.min(Math.max(props.allTurns.length - 1 - props.globalIndex, 0), 5)),
           ...(props.globalIndex < props.allTurns.length - 4 && !isHighlighted()
             ? { "content-visibility": "auto", "contain-intrinsic-size": "auto 140px" }
             : {}),

@@ -52,6 +52,9 @@ func TestOpenCodeDisplayNormalizesManagedToolParts(t *testing.T) {
 		displayTestMarker + "\ntrap : EXIT\n",
 		displayTestMarker + "\r\ntrap : EXIT\r\n",
 		"trap : EXIT " + displayTestMarker + "\n",
+		"trap : EXIT\n",
+		openCodeStopTrap + "\n",
+		openCodeStopTrapUSR1 + "\n",
 	} {
 		part := displayTestPart()
 		part.State.Title = prefix + "Inspect working tree"

@@ -386,12 +386,75 @@ func (s *Service) claimOpenCodeSSELine(line, directory string) bool {
 	if envelope.Type != "permission.asked" || envelope.Properties == nil {
 		return false
 	}
+	sanitizeOpenCodePermissionItem(envelope.Properties)
 	dir := firstNonEmptyStr(envelope.Directory, directory)
-	sessionID, _ := envelope.Properties["sessionID"].(string)
+	rawSid, _ := envelope.Properties["sessionID"].(string)
+	sessionID, dir := s.resolveOpenCodePermissionTarget(rawSid, dir, envelope.Properties)
 	if s.audit != nil {
 		s.audit.rememberOpenCodePerm(envelope.Properties, dir)
 	}
 	return s.claimOpenCodePermission(envelope.Properties, sessionID, dir, nil)
+}
+
+func (s *Service) resolveOpenCodePermissionTarget(rawSessionID, fallbackDir string, item map[string]interface{}) (string, string) {
+	sid := strings.TrimSpace(rawSessionID)
+	sessionDir := ""
+	if sid != "" {
+		s.mu.Lock()
+		for hoxiID, ap := range s.procs {
+			if ap != nil && ap.isOpenCodeChild(sid) {
+				sid = hoxiID
+				break
+			}
+		}
+		s.mu.Unlock()
+		if rec, ok := s.store.Meta(sid); ok {
+			sid = rec.ID
+			sessionDir = firstNonEmptyStr(strings.TrimSpace(rec.WorktreePath), strings.TrimSpace(rec.ProjectDir))
+		} else {
+			for _, info := range s.store.List("") {
+				rec, ok := s.store.Meta(info.ID)
+				if !ok {
+					continue
+				}
+				recDir := firstNonEmptyStr(strings.TrimSpace(rec.WorktreePath), strings.TrimSpace(rec.ProjectDir))
+				if rec.ExternalID == sid {
+					sid = rec.ID
+					sessionDir = recDir
+					break
+				}
+				matched := false
+				for _, ocID := range rec.OpenCodeIDs {
+					if ocID == sid {
+						sid = rec.ID
+						sessionDir = firstNonEmptyStr(strings.TrimSpace(rec.OpenCodeDirectories[ocID]), recDir)
+						matched = true
+						break
+					}
+				}
+				if matched {
+					break
+				}
+			}
+		}
+	}
+	meta, _ := item["metadata"].(map[string]interface{})
+	resolvedDir := firstNonEmptyStr(sessionDir, firstString(meta["directory"], meta["cwd"]), fallbackDir)
+	if item != nil {
+		if sid != "" {
+			item["sessionID"] = sid
+		}
+		if resolvedDir != "" {
+			if meta == nil {
+				meta = make(map[string]interface{})
+				item["metadata"] = meta
+			}
+			if firstString(meta["directory"], meta["cwd"]) == "" {
+				meta["directory"] = resolvedDir
+			}
+		}
+	}
+	return sid, resolvedDir
 }
 
 // reconcilePendingApprovals lets requests that are already waiting through

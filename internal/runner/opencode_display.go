@@ -56,7 +56,7 @@ func stripOpenCodeStopMarker(part *MessagePart) {
 // preserves user/assistant text, shell output and unrelated metadata, and keeps
 // unmodified payloads byte-identical.
 func SanitizeOpenCodeToolJSON(raw []byte) []byte {
-	if !bytes.Contains(raw, []byte("hoxi-stop:")) && !bytes.Contains(raw, []byte("sandbox-exec")) {
+	if !bytes.Contains(raw, []byte("hoxi-stop:")) && !bytes.Contains(raw, []byte("sandbox-exec")) && !bytes.Contains(raw, []byte("trap : EXIT")) && !bytes.Contains(raw, []byte(toolStoppedNotice)) {
 		return raw
 	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
@@ -108,7 +108,7 @@ func sanitizeOpenCodeToolNode(node interface{}) bool {
 // SanitizeOpenCodeDisplaySSELine covers both global and directory streams. It
 // preserves frame boundaries so it can also run on the raw proxy stream.
 func SanitizeOpenCodeDisplaySSELine(line string) string {
-	if !strings.HasPrefix(line, "data:") || (!strings.Contains(line, "hoxi-stop:") && !strings.Contains(line, "sandbox-exec")) {
+	if !strings.HasPrefix(line, "data:") || (!strings.Contains(line, "hoxi-stop:") && !strings.Contains(line, "sandbox-exec") && !strings.Contains(line, "trap : EXIT") && !strings.Contains(line, toolStoppedNotice)) {
 		return line
 	}
 	line = sanitizeOpenCodePermissionSSELine(line)

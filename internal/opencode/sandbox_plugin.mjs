@@ -153,7 +153,8 @@ function stripStopMarkers(command) {
       continue;
     }
     const line = LEADING_LINE_RE.exec(rest);
-    if (line && line[1].trimEnd() === STOP_TRAP) {
+    const trimmedLine = line ? line[1].trimEnd() : "";
+    if (line && (trimmedLine === STOP_TRAP || trimmedLine === "trap : EXIT")) {
       rest = rest.slice(line[0].length);
       continue;
     }

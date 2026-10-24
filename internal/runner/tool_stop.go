@@ -41,6 +41,7 @@ func openCodeStopMarker(engineSessionID, callID string) string {
 // from exec-ing the last command in place of the shell, which would drop both
 // the marker and the trap. It must match the plugin's STOP_TRAP exactly.
 const openCodeStopTrap = `trap 'printf "\n` + toolStoppedNotice + `\n"; exit 130' USR1; trap : EXIT`
+const openCodeStopTrapUSR1 = `trap 'printf "\n` + toolStoppedNotice + `\n"; exit 130' USR1`
 
 // toolStoppedNotice tells the user and the model that the command was stopped
 // on purpose rather than failing or timing out.

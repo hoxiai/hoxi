@@ -1,4 +1,10 @@
-import { fileLanguage, getCachedHighlight, highlightCode } from "../components/timeline/syntax-highlight";
+import {
+  fileLanguage,
+  getCachedHighlight,
+  highlightCode,
+  stabilizeHighlightedLines,
+} from "../components/timeline/syntax-highlight";
+import { isSameTextRevealStream } from "../components/icons/TextShimmer";
 import {
   createIncrementalMarkdownParser,
   isLikelyFilePath,
@@ -169,5 +175,28 @@ describe("Chat code syntax highlighting", () => {
     assertDeepEqual(latestBlocks, parseMarkdownBlocks(streamingDoc));
     assertTrue(latestBlocks[0] === blocks1[0]);
     assertTrue(latestBlocks[1] === blocks1[1]);
+  });
+
+  it("stabilizes highlighted token line and token references across streaming passes", async () => {
+    const pass1 = await highlightCode("const a = 1;\nconst b = 2;\nconst c = ", "ts", "dark");
+    const pass2 = await highlightCode("const a = 1;\nconst b = 2;\nconst c = 3;", "ts", "dark");
+    assertTrue(!!pass1 && !!pass2);
+    const stabilized = stabilizeHighlightedLines(pass1!.tokens, pass2!.tokens);
+    assertTrue(stabilized[0] === pass1!.tokens[0]);
+    assertTrue(stabilized[1] === pass1!.tokens[1]);
+    assertTrue(stabilized[2] !== pass1!.tokens[2]);
+    assertTrue(stabilized[2][0] === pass1!.tokens[2][0]);
+  });
+
+  it("recognizes streaming TextReveal updates across 85-char ellipsis truncation boundaries", () => {
+    const beforeTruncation =
+      "Checking the inline markdown parser implementation in web/src/components/timeline";
+    const afterWordTruncation =
+      "Checking the inline markdown parser implementation in\u2026";
+    const continuedEllipsis =
+      "Checking the inline markdown parser implementation in web/src\u2026";
+    assertTrue(isSameTextRevealStream(beforeTruncation, afterWordTruncation));
+    assertTrue(isSameTextRevealStream(afterWordTruncation, continuedEllipsis));
+    assertTrue(!isSameTextRevealStream("Analyzing regex backtracking", "Running regression tests"));
   });
 });

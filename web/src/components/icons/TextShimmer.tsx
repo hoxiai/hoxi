@@ -100,6 +100,21 @@ const pct = (value: number | undefined, fallback: number) => {
   return `${v}%`
 }
 
+export function isSameTextRevealStream(prev: string | undefined, next: string | undefined): boolean {
+  if (typeof prev !== "string" || typeof next !== "string") return false
+  if (next.startsWith(prev)) return true
+  const prevStem = prev.endsWith("\u2026") ? prev.slice(0, -1).trimEnd() : prev
+  const nextStem = next.endsWith("\u2026") ? next.slice(0, -1).trimEnd() : next
+  if (
+    prevStem.length >= 12 &&
+    nextStem.length >= 12 &&
+    (nextStem.startsWith(prevStem) || prevStem.startsWith(nextStem))
+  ) {
+    return true
+  }
+  return false
+}
+
 /**
  * Kilo's TextReveal — top-to-bottom CSS gradient mask wipe animation for live
  * step details and reasoning summaries without vertical height changes.
@@ -144,7 +159,7 @@ export function TextReveal(props: {
       () => props.text,
       (next, prev) => {
         if (next === prev) return
-        if (typeof next === "string" && typeof prev === "string" && next.startsWith(prev)) {
+        if (isSameTextRevealStream(prev, next)) {
           setState("cur", next)
           if (!props.truncate) widen(win())
           return
