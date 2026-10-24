@@ -9,13 +9,15 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/hoxiai/hoxi/internal/agentcli"
 	"github.com/hoxiai/hoxi/internal/agyhook"
 	"github.com/hoxiai/hoxi/internal/hoxipaths"
 )
 
 const (
 	geminiHookPreToolPath   = "/api/hoxi/runner/hook/gemini-pretool"
-	geminiSystemSettingsEnv = "GEMINI_CLI_SYSTEM_SETTINGS_PATH"
+	geminiCLIHomeEnv        = "GEMINI_CLI_HOME"
+	geminiTrustWorkspaceEnv = "GEMINI_CLI_TRUST_WORKSPACE"
 )
 
 type geminiHookPayload struct {
@@ -29,46 +31,96 @@ type geminiHookPayload struct {
 }
 
 func geminiHookSettings(exe string) []byte {
-	return marshalJSON(map[string]interface{}{
-		"hooksConfig": map[string]interface{}{
-			"enabled": true,
-		},
-		"tools": map[string]interface{}{
-			"enableHooks": true,
-		},
-		"hooks": map[string]interface{}{
-			"BeforeTool": []interface{}{map[string]interface{}{
-				"matcher": ".*",
-				"hooks": []interface{}{map[string]interface{}{
-					"name":    agyHookName,
-					"type":    "command",
-					"command": agyHookCommand(exe),
-					"timeout": agyhook.TimeoutSeconds * 1000,
-				}},
+	doc := map[string]interface{}{}
+	if gRoot := agentcli.GeminiHomeDir(); gRoot != "" {
+		if raw, err := os.ReadFile(filepath.Join(gRoot, "settings.json")); err == nil {
+			var userDoc map[string]interface{}
+			if json.Unmarshal(raw, &userDoc) == nil {
+				for _, k := range []string{"security", "env", "model", "general", "mcpServers", "context", "ide", "selectedAuthType"} {
+					if v, ok := userDoc[k]; ok {
+						doc[k] = v
+					}
+				}
+			}
+		}
+	}
+	secMap, _ := doc["security"].(map[string]interface{})
+	if secMap == nil {
+		secMap = map[string]interface{}{}
+	}
+	secMap["folderTrust"] = map[string]interface{}{
+		"enabled": false,
+	}
+	doc["security"] = secMap
+	doc["hooksConfig"] = map[string]interface{}{
+		"enabled":       true,
+		"notifications": false,
+	}
+	toolsMap, _ := doc["tools"].(map[string]interface{})
+	if toolsMap == nil {
+		toolsMap = map[string]interface{}{}
+	}
+	toolsMap["enableHooks"] = true
+	doc["tools"] = toolsMap
+	doc["hooks"] = map[string]interface{}{
+		"BeforeTool": []interface{}{map[string]interface{}{
+			"matcher": ".*",
+			"hooks": []interface{}{map[string]interface{}{
+				"name":    agyHookName,
+				"type":    "command",
+				"command": agyHookCommand(exe),
+				"timeout": agyhook.TimeoutSeconds * 1000,
 			}},
-		},
-	}, true)
+		}},
+	}
+	return marshalJSON(doc, true)
 }
 
-func writeGeminiHookSettingsFile(sessionID, messageID, exe string) (string, error) {
-	dir := filepath.Join(hoxipaths.Home(), "sandbox")
+func writeGeminiHookHome(sessionID, messageID, exe string) (string, string, error) {
+	baseDir := filepath.Join(hoxipaths.Home(), "sandbox")
 	if strings.TrimSpace(hoxipaths.Home()) == "" {
-		dir = os.TempDir()
+		baseDir = os.TempDir()
 	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", err
+	homeDir := filepath.Join(baseDir, fmt.Sprintf("gemini-home-%s-%s", sessionID, messageID))
+	dotGemini := filepath.Join(homeDir, ".gemini")
+	if err := os.MkdirAll(dotGemini, 0o700); err != nil {
+		return "", "", err
 	}
-	path := filepath.Join(dir, fmt.Sprintf("gemini-settings-%s-%s.json", sessionID, messageID))
+	if gRoot := agentcli.GeminiHomeDir(); gRoot != "" {
+		if st, err := os.Stat(gRoot); err == nil && st.IsDir() {
+			for _, subDir := range []string{"tmp", "history"} {
+				_ = os.MkdirAll(filepath.Join(gRoot, subDir), 0o700)
+			}
+			for _, entry := range []string{
+				"oauth_creds.json",
+				"google_accounts.json",
+				"state.json",
+				"installation_id",
+				"tmp",
+				"history",
+			} {
+				src := filepath.Join(gRoot, entry)
+				if _, err := os.Stat(src); err == nil {
+					_ = os.Symlink(src, filepath.Join(dotGemini, entry))
+				}
+			}
+		}
+	}
 	data := append(geminiHookSettings(exe), '\n')
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		return "", err
+	settingsPath := filepath.Join(dotGemini, "settings.json")
+	if err := os.WriteFile(settingsPath, data, 0o600); err != nil {
+		_ = os.RemoveAll(homeDir)
+		return "", "", err
 	}
-	return path, nil
+	_ = os.WriteFile(filepath.Join(homeDir, "settings.json"), data, 0o600)
+	return homeDir, settingsPath, nil
 }
 
-// issueGeminiHook writes a per-turn system settings file wiring Gemini CLI's
-// BeforeTool hook to `hoxi agy-hook` and returns the environment variables and
-// cleanup function. Read-only modes rely on `--approval-mode plan` and get no hook.
+// issueGeminiHook prepares a per-turn GEMINI_CLI_HOME directory wiring Gemini
+// CLI's BeforeTool hook to `hoxi agy-hook` (without triggering the root-uid
+// check on GEMINI_CLI_SYSTEM_SETTINGS_PATH or executing broken third-party
+// hooks from ~/.gemini/settings.json) and returns the environment variables
+// and cleanup function. Read-only modes rely on `--approval-mode plan` and get no hook.
 func (s *Service) issueGeminiHook(mode, sessionID, messageID string) ([]string, func()) {
 	if isReadOnlyMode(mode) {
 		return nil, func() {}
@@ -82,20 +134,21 @@ func (s *Service) issueGeminiHook(mode, sessionID, messageID string) ([]string, 
 		revoke()
 		return nil, func() {}
 	}
-	settingsPath, err := writeGeminiHookSettingsFile(sessionID, messageID, exe)
+	homeDir, _, err := writeGeminiHookHome(sessionID, messageID, exe)
 	if err != nil {
 		revoke()
 		return nil, func() {}
 	}
 	env := withLoopbackNoProxy([]string{
-		geminiSystemSettingsEnv + "=" + settingsPath,
+		geminiCLIHomeEnv + "=" + homeDir,
+		geminiTrustWorkspaceEnv + "=true",
 		agyhook.EnvSessionID + "=" + sessionID,
 		agyhook.EnvHookURL + "=" + base + geminiHookPreToolPath,
 		agyhook.EnvHookToken + "=" + token,
 	})
 	cleanup := func() {
 		revoke()
-		_ = os.Remove(settingsPath)
+		_ = os.RemoveAll(homeDir)
 	}
 	return env, cleanup
 }

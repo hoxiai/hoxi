@@ -223,7 +223,7 @@ func (t *TurnTranslator) feedAgyLine(line string) []SSEEvent {
 
 	switch env.Event {
 	case "init":
-		if env.Init != nil && env.Init.Model != "" && t.msgInfo.ModelID == "" {
+		if env.Init != nil && env.Init.Model != "" && (t.msgInfo.ModelID == "" || strings.EqualFold(t.msgInfo.ModelID, "auto")) {
 			t.msgInfo.ModelID = env.Init.Model
 			return []SSEEvent{{Type: "message.updated", Properties: map[string]interface{}{"info": t.msgInfo}}}
 		}

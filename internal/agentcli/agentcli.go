@@ -177,9 +177,21 @@ func ResolveAgyBinary() string {
 			filepath.Join(home, ".local", "bin", "agy"),
 			filepath.Join(home, ".gemini", "bin", "agy"),
 		)
+		if runtime.GOOS == "darwin" {
+			candidates = append(candidates,
+				filepath.Join(home, "Applications", "Gemini.app", "Contents", "Helpers", "agy"),
+				filepath.Join(home, "Applications", "Antigravity.app", "Contents", "Helpers", "agy"),
+			)
+		}
 	}
 	for _, dir := range CommonUserBinDirs() {
 		candidates = append(candidates, filepath.Join(dir, "agy"))
+	}
+	if runtime.GOOS == "darwin" {
+		candidates = append(candidates,
+			"/Applications/Gemini.app/Contents/Helpers/agy",
+			"/Applications/Antigravity.app/Contents/Helpers/agy",
+		)
 	}
 	return FirstExecutableFile(candidates...)
 }

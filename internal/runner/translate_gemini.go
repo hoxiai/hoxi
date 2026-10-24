@@ -32,6 +32,7 @@ type geminiStreamStats struct {
 
 type geminiRawEvent struct {
 	Type       string                 `json:"type"`
+	Event      string                 `json:"event"`
 	SessionID  string                 `json:"session_id"`
 	Model      string                 `json:"model"`
 	Role       string                 `json:"role"`
@@ -147,6 +148,9 @@ func (t *TurnTranslator) feedGeminiLine(line string) []SSEEvent {
 	var env geminiRawEvent
 	if err := json.Unmarshal([]byte(line), &env); err != nil {
 		return nil
+	}
+	if strings.TrimSpace(env.Type) == "" && strings.TrimSpace(env.Event) != "" {
+		return t.feedAgyLine(line)
 	}
 	now := time.Now().UnixMilli()
 	t.lastActivityMs = now

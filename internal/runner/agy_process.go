@@ -260,7 +260,7 @@ func BuildAgyArgs(mode, modelID, effort, externalConversationID string) []string
 		"--mode", agyMode,
 	}
 	resolvedModel, resolvedEffort := ResolveAgyModelAndEffort(modelID, effort)
-	if resolvedModel != "" {
+	if resolvedModel != "" && !strings.EqualFold(resolvedModel, "auto") {
 		args = append(args, "--model", resolvedModel)
 	}
 	if resolvedEffort != "" {

@@ -8,8 +8,8 @@ import (
 	"strings"
 )
 
-// ResolveGeminiBinary locates the official Google Gemini CLI (`gemini`) binary.
-func ResolveGeminiBinary() string {
+// ResolveStandaloneGeminiBinary locates the standalone `@google/gemini-cli` (`gemini`) binary.
+func ResolveStandaloneGeminiBinary() string {
 	if env := strings.TrimSpace(os.Getenv("GEMINI_BIN")); env != "" {
 		return FirstExecutableFile(env)
 	}
@@ -36,6 +36,124 @@ func ResolveGeminiBinary() string {
 		candidates = append(candidates, filepath.Join(dir, "gemini"))
 	}
 	return FirstExecutableFile(candidates...)
+}
+
+// ResolveGeminiBinary locates the Gemini CLI (`gemini`) binary, falling back to
+// the Antigravity (`agy`) binary when standalone `gemini` is not installed.
+func ResolveGeminiBinary() string {
+	if p := ResolveStandaloneGeminiBinary(); p != "" {
+		return p
+	}
+	if strings.TrimSpace(os.Getenv("GEMINI_BIN")) != "" {
+		return ""
+	}
+	if gRoot := GeminiHomeDir(); gRoot != "" && os.Getenv("GEMINI_HOME") != "" {
+		return FirstExecutableFile(filepath.Join(gRoot, "bin", "agy"))
+	}
+	return ResolveAgyBinary()
+}
+
+func isRealGeminiAPIKey(v string) bool {
+	v = strings.TrimSpace(v)
+	if v == "" || strings.HasPrefix(v, "ya29.") || v == "antigravity-local-oauth" || v == "hoxi-local-antigravity-bridge" {
+		return false
+	}
+	return true
+}
+
+func isTruthyEnvVal(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
+}
+
+// HasGeminiCLIDirectAuth reports whether `@google/gemini-cli` has direct
+// non-personal-OAuth authentication configured (API key, Vertex AI, Cloud
+// Shell, Compute ADC, or custom gateway). Personal Google OAuth (`free-tier` /
+// `oauth-personal`) was retired in `@google/gemini-cli` in favor of Antigravity (`agy`).
+func HasGeminiCLIDirectAuth() bool {
+	for _, k := range []string{"GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY"} {
+		if isRealGeminiAPIKey(os.Getenv(k)) {
+			return true
+		}
+	}
+	for _, k := range []string{"GOOGLE_GENAI_USE_VERTEXAI", "CLOUD_SHELL", "GEMINI_CLI_USE_COMPUTE_ADC"} {
+		if isTruthyEnvVal(os.Getenv(k)) {
+			return true
+		}
+	}
+	for _, k := range []string{"GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_PROJECT_ID", "GOOGLE_GEMINI_BASE_URL"} {
+		if strings.TrimSpace(os.Getenv(k)) != "" {
+			return true
+		}
+	}
+
+	gRoot := GeminiHomeDir()
+	if gRoot == "" {
+		return false
+	}
+	raw, err := os.ReadFile(filepath.Join(gRoot, "settings.json"))
+	if err != nil {
+		return false
+	}
+	var doc map[string]interface{}
+	if json.Unmarshal(raw, &doc) != nil {
+		return false
+	}
+	if envMap, ok := doc["env"].(map[string]interface{}); ok {
+		for _, k := range []string{"GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY"} {
+			if s, _ := envMap[k].(string); isRealGeminiAPIKey(s) {
+				return true
+			}
+		}
+		for _, k := range []string{"GOOGLE_GENAI_USE_VERTEXAI", "CLOUD_SHELL", "GEMINI_CLI_USE_COMPUTE_ADC"} {
+			if s, _ := envMap[k].(string); isTruthyEnvVal(s) {
+				return true
+			}
+		}
+		for _, k := range []string{"GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_PROJECT_ID", "GOOGLE_GEMINI_BASE_URL"} {
+			if s, _ := envMap[k].(string); strings.TrimSpace(s) != "" {
+				return true
+			}
+		}
+	}
+	selectedType, _ := doc["selectedAuthType"].(string)
+	if secMap, ok := doc["security"].(map[string]interface{}); ok {
+		if authMap, ok := secMap["auth"].(map[string]interface{}); ok {
+			if st, _ := authMap["selectedType"].(string); strings.TrimSpace(st) != "" {
+				selectedType = st
+			}
+		}
+	}
+	switch strings.ToLower(strings.TrimSpace(selectedType)) {
+	case "gemini-api-key", "vertex-ai", "compute-default-credentials", "cloud-shell", "gateway":
+		return true
+	}
+	return false
+}
+
+// IsAgyOnlyGeminiModel reports whether modelID is an Antigravity (`agy`) model
+// slug that standalone `@google/gemini-cli` does not recognize.
+func IsAgyOnlyGeminiModel(modelID string) bool {
+	lower := strings.ToLower(strings.TrimSpace(modelID))
+	if lower == "" || lower == "auto" {
+		return false
+	}
+	if strings.Contains(lower, "argon") ||
+		strings.HasPrefix(lower, "gemini-4-") ||
+		strings.HasPrefix(lower, "gemini-3.8-") ||
+		strings.HasPrefix(lower, "claude-") ||
+		strings.HasPrefix(lower, "gpt-oss-") {
+		return true
+	}
+	for _, suf := range []string{"-low", "-medium", "-high", "-xhigh", "-max"} {
+		if strings.HasSuffix(lower, suf) {
+			return true
+		}
+	}
+	return false
 }
 
 func defaultGeminiModelSlugs() []string {

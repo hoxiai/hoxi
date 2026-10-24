@@ -125,16 +125,23 @@ func TestGeminiHookBeforeToolGate(t *testing.T) {
 		k, v, _ := strings.Cut(kv, "=")
 		env[k] = v
 	}
-	settingsPath := env[geminiSystemSettingsEnv]
-	if settingsPath == "" {
-		t.Fatal("expected non-empty Gemini system settings path")
+	homeDir := env[geminiCLIHomeEnv]
+	if homeDir == "" {
+		t.Fatal("expected non-empty GEMINI_CLI_HOME path")
 	}
+	if env[geminiTrustWorkspaceEnv] != "true" {
+		t.Fatalf("expected %s=true, got %q", geminiTrustWorkspaceEnv, env[geminiTrustWorkspaceEnv])
+	}
+	settingsPath := filepath.Join(homeDir, ".gemini", "settings.json")
 	rawSettings, err := os.ReadFile(settingsPath)
 	if err != nil {
 		t.Fatalf("ReadFile(%s): %v", settingsPath, err)
 	}
 	if !strings.Contains(string(rawSettings), "BeforeTool") {
 		t.Fatalf("expected BeforeTool hook in %s, got: %s", settingsPath, string(rawSettings))
+	}
+	if strings.Contains(string(rawSettings), "SessionStart") || strings.Contains(string(rawSettings), "SessionEnd") {
+		t.Fatalf("expected third-party SessionStart/SessionEnd hooks to be excluded from %s, got: %s", settingsPath, string(rawSettings))
 	}
 
 	callGeminiHook := func(toolName string, toolInput map[string]interface{}) agyhook.Decision {
@@ -174,5 +181,40 @@ func TestGeminiHookBeforeToolGate(t *testing.T) {
 	resDeny := callGeminiHook("read_file", map[string]interface{}{"file_path": filepath.Join(dir, ".env")})
 	if resDeny.Decision != "deny" || !strings.Contains(resDeny.Reason, "blocked secret read") {
 		t.Fatalf("expected decision=deny for .env read, got %+v", resDeny)
+	}
+}
+
+func TestGeminiCLIAgyFallbackAndTranslation(t *testing.T) {
+	if gotModel, gotEff := ResolveGeminiAgyModelAndEffort("auto", ""); gotModel != "" || gotEff != "" {
+		t.Fatalf("ResolveGeminiAgyModelAndEffort(auto) = (%q, %q), want empty", gotModel, gotEff)
+	}
+	if gotModel, _ := ResolveGeminiAgyModelAndEffort("gemini-2.5-pro", ""); gotModel != "gemini-4-argon" {
+		t.Fatalf("ResolveGeminiAgyModelAndEffort(gemini-2.5-pro) = %q, want gemini-4-argon", gotModel)
+	}
+	if gotModel, _ := ResolveGeminiAgyModelAndEffort("gemini-2.5-flash", ""); gotModel != "gemini-3.8-flash" {
+		t.Fatalf("ResolveGeminiAgyModelAndEffort(gemini-2.5-flash) = %q, want gemini-3.8-flash", gotModel)
+	}
+	if gotModel, gotEff := ResolveGeminiAgyModelAndEffort("gemini-4-argon", "high"); gotModel != "gemini-4-argon" || gotEff != "high" {
+		t.Fatalf("ResolveGeminiAgyModelAndEffort(gemini-4-argon, high) = (%q, %q), want (gemini-4-argon, high)", gotModel, gotEff)
+	}
+
+	tr := NewTurnTranslator("ses_gem_agy", string(RuntimeGeminiCLI), "msg_a_2", "msg_u_2", "gemini-cli", "auto", "build", "")
+	lines := []string{
+		`{"event":"init","conversation_id":"conv-agy-123","init":{"model":"gemini-4-argon","cwd":"/repo","permission_mode":"accept-edits"}}`,
+		`{"event":"step_update","step_update":{"conversation_id":"conv-agy-123","step_index":1,"state":"ACTIVE","step_type":"agent_response","thinking_delta":"Analyzing...","text_delta":"All set."}}`,
+		`{"event":"step_update","step_update":{"conversation_id":"conv-agy-123","step_index":1,"state":"DONE","step_type":"agent_response","duration_seconds":0.5,"usage":{"input_tokens":500,"output_tokens":40,"thinking_tokens":20,"cache_read_tokens":100,"total_tokens":560}}}`,
+		`{"event":"result","result":{"conversation_id":"conv-agy-123","status":"completed","response":"All set.","duration_seconds":0.6,"num_turns":1,"usage":{"input_tokens":500,"output_tokens":40,"thinking_tokens":20,"cache_read_tokens":100,"total_tokens":560}}}`,
+	}
+	for _, line := range lines {
+		_ = tr.FeedLine(line)
+	}
+	if !tr.IsTurnFinished() {
+		t.Fatal("expected IsTurnFinished() == true for agy stream inside gemini-cli translator")
+	}
+	if tr.ExternalID() != "conv-agy-123" {
+		t.Fatalf("ExternalID() = %q, want conv-agy-123", tr.ExternalID())
+	}
+	if tr.msgInfo.ModelID != "gemini-4-argon" {
+		t.Fatalf("msgInfo.ModelID = %q, want gemini-4-argon", tr.msgInfo.ModelID)
 	}
 }

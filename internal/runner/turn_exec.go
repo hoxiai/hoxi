@@ -264,12 +264,20 @@ func (s *Service) startTurnProcess(
 	deliveryParts []MessagePart,
 	asstMsgID string,
 ) error {
+	geminiUsesAgy := rec.Runtime == string(RuntimeGeminiCLI) &&
+		(ShouldGeminiCLIUseAgy(modelID) || strings.EqualFold(filepath.Base(binPath), "agy"))
+
 	var args []string
 	switch rec.Runtime {
 	case string(RuntimeClaudeCode):
 		args = BuildClaudeArgs(mode, modelID, effort, rec.ExternalID)
 	case string(RuntimeGeminiCLI):
-		args = BuildGeminiArgs(mode, modelID, effort, rec.ExternalID)
+		if geminiUsesAgy {
+			agyModel, agyEffort := ResolveGeminiAgyModelAndEffort(modelID, effort)
+			args = BuildAgyArgs(mode, agyModel, agyEffort, rec.ExternalID)
+		} else {
+			args = BuildGeminiArgs(mode, modelID, effort, rec.ExternalID)
+		}
 	case string(RuntimeCodeBuddy):
 		args = BuildCodeBuddyArgs(mode, modelID, effort, rec.ExternalID)
 	case string(RuntimeQoder):
@@ -285,7 +293,12 @@ func (s *Service) startTurnProcess(
 		hookArgs, hookEnv, revokeHook = s.issueClaudeHook(mode, rec.ID, asstMsgID)
 		args = append(args, hookArgs...)
 	} else if rec.Runtime == string(RuntimeGeminiCLI) {
-		hookEnv, revokeHook = s.issueGeminiHook(mode, rec.ID, asstMsgID)
+		if geminiUsesAgy {
+			s.ensureAgyHookInstalled()
+			hookEnv, revokeHook = s.issueHookEnv(rec.ID, asstMsgID)
+		} else {
+			hookEnv, revokeHook = s.issueGeminiHook(mode, rec.ID, asstMsgID)
+		}
 	} else if rec.Runtime == string(RuntimeAntigravity) {
 		s.ensureAgyHookInstalled()
 		hookEnv, revokeHook = s.issueHookEnv(rec.ID, asstMsgID)
@@ -355,7 +368,11 @@ func (s *Service) startTurnProcess(
 	tr.createChild = s.childSessionFactory(rec, modelID, mode)
 	s.broadcast(rec.ID, tr.InitialEvents(userInfo, storedParts)...)
 
-	inputBytes, _ := EncodeStreamInputTurnWithParts(rec.Runtime, promptText, deliveryParts)
+	inputRuntime := rec.Runtime
+	if geminiUsesAgy {
+		inputRuntime = string(RuntimeAntigravity)
+	}
+	inputBytes, _ := EncodeStreamInputTurnWithParts(inputRuntime, promptText, deliveryParts)
 	_, _ = stdinPipe.Write(inputBytes)
 	_ = stdinPipe.Close()
 
@@ -483,9 +500,10 @@ func isStreamResultLine(line string) bool {
 		return false
 	}
 	var env struct {
-		Type string `json:"type"`
+		Type  string `json:"type"`
+		Event string `json:"event"`
 	}
-	return json.Unmarshal([]byte(line), &env) == nil && env.Type == "result"
+	return json.Unmarshal([]byte(line), &env) == nil && (env.Type == "result" || env.Event == "result")
 }
 
 // reapOrphanedOutput runs once the CLI has exited. A reader still blocked

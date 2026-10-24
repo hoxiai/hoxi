@@ -115,6 +115,23 @@ func TestGeminiCLIModelDiscovery(t *testing.T) {
 	if models[1].ID != "gemini-2.5-pro-exp" || models[1].Name != "Gemini 2.5 Pro Exp" {
 		t.Fatalf("expected custom model from settings.json, got %+v", models[1])
 	}
+
+	t.Setenv("GEMINI_API_KEY", "")
+	t.Setenv("GOOGLE_API_KEY", "")
+	t.Setenv("GOOGLE_GENERATIVE_AI_API_KEY", "")
+	if err := os.WriteFile(filepath.Join(tmpDir, "settings.json"), []byte(`{"security":{"auth":{"selectedType":"oauth-personal"}}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if HasGeminiCLIDirectAuth() {
+		t.Fatal("expected HasGeminiCLIDirectAuth() == false for oauth-personal without API key")
+	}
+	if !IsAgyOnlyGeminiModel("gemini-4-argon") || !IsAgyOnlyGeminiModel("gemini-3.8-flash") || IsAgyOnlyGeminiModel("gemini-2.5-pro") {
+		t.Fatal("unexpected IsAgyOnlyGeminiModel classification")
+	}
+	t.Setenv("GEMINI_API_KEY", "AIzaSyTestKey123456")
+	if !HasGeminiCLIDirectAuth() {
+		t.Fatal("expected HasGeminiCLIDirectAuth() == true when GEMINI_API_KEY is set")
+	}
 }
 
 func TestWithUserBinPathPrependsMissingDirs(t *testing.T) {
