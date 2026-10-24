@@ -45,10 +45,36 @@ let projectSessionLoadRevision = 0;
 let appliedProjectSessionRevision = 0;
 let projectResolutionRevision = 0;
 
-let rememberedCodeSurface: { rootDir: string; sessionID: string | null } = {
-  rootDir: "",
-  sessionID: null,
-};
+const REMEMBERED_CODE_SURFACE_KEY = "hoxi:remembered-code-surface";
+
+function readRememberedCodeSurface(): { rootDir: string; sessionID: string | null } {
+  try {
+    const raw = localStorage.getItem(REMEMBERED_CODE_SURFACE_KEY);
+    if (!raw) return { rootDir: "", sessionID: null };
+    const parsed = JSON.parse(raw);
+    const rootDir = normalizeFolderPath(parsed?.rootDir);
+    if (rootDir && !isInvalidProjectPath(rootDir) && !isDefaultWorkspacePath(rootDir)) {
+      return {
+        rootDir,
+        sessionID: typeof parsed?.sessionID === "string" ? parsed.sessionID : null,
+      };
+    }
+  } catch {
+    /* ignore */
+  }
+  return { rootDir: "", sessionID: null };
+}
+
+function writeRememberedCodeSurface(state: { rootDir: string; sessionID: string | null }): void {
+  try {
+    localStorage.setItem(REMEMBERED_CODE_SURFACE_KEY, JSON.stringify(state));
+  } catch {
+    /* ignore */
+  }
+}
+
+let rememberedCodeSurface: { rootDir: string; sessionID: string | null } =
+  readRememberedCodeSurface();
 let rememberedWorkSurface: { rootDir: string; sessionID: string | null } = {
   rootDir: "",
   sessionID: null,
@@ -57,7 +83,10 @@ let rememberedWorkSurface: { rootDir: string; sessionID: string | null } = {
 export function setRememberedCodeSurface(rootDir: string, sessionID: string | null = null): void {
   const clean = normalizeFolderPath(rootDir);
   if (clean && !isInvalidProjectPath(clean) && !isDefaultWorkspacePath(clean)) {
-    rememberedCodeSurface = { rootDir: clean, sessionID };
+    const preservedSessionID =
+      sessionID ?? (rememberedCodeSurface.rootDir === clean ? rememberedCodeSurface.sessionID : null);
+    rememberedCodeSurface = { rootDir: clean, sessionID: preservedSessionID };
+    writeRememberedCodeSurface(rememberedCodeSurface);
   }
 }
 
@@ -71,6 +100,7 @@ export async function activateSurfaceMode(nextMode: SurfaceMode): Promise<void> 
 
   if (prevMode === "code" && currentRoot && !isDefaultWorkspacePath(currentRoot)) {
     rememberedCodeSurface = { rootDir: currentRoot, sessionID: currentSessionID };
+    writeRememberedCodeSurface(rememberedCodeSurface);
   } else if (prevMode === "work" && currentRoot) {
     rememberedWorkSurface = { rootDir: currentRoot, sessionID: currentSessionID };
   }
@@ -86,6 +116,9 @@ export async function activateSurfaceMode(nextMode: SurfaceMode): Promise<void> 
       setWorkspace({ rootDir: "", sessions: [], activeSessionID: null, activeProjectID: null });
     }
   } else {
+    if (workspace.savedWorkspaces.length === 0 && workspace.projects.length === 0) {
+      await Promise.all([loadSavedWorkspaces(), loadProjects()]);
+    }
     const codeDir = normalizeFolderPath(
       rememberedCodeSurface.rootDir || resolveDefaultProjectDir("")
     );
