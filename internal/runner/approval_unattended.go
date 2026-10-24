@@ -91,6 +91,12 @@ func unattendedDecision(item map[string]interface{}, worktree string) (allow boo
 		return true, ""
 	case kind == permissionCategoryRead || readPermissions[perm] || readToolNames[perm]:
 		return true, ""
+	case perm == "external_directory" && externalDirectoryTargetsAreRoutine(item):
+		return true, ""
+	case perm != "external_directory" && smartControlPermissions[perm]:
+		return true, ""
+	case perm == "tool" && smartControlPermissions[strings.ToLower(strings.TrimSpace(firstString(itemMetadata(item)["tool"], firstPattern(item))))]:
+		return true, ""
 	case kind == permissionCategoryEdit || editPermissions[perm] || editToolNames[perm]:
 		if unattendedEditInside(item, worktree) {
 			return true, ""
@@ -135,7 +141,18 @@ func unattendedHardDeny(item map[string]interface{}, worktree string) string {
 			}
 		}
 	}
-	if perm == "external_directory" || perm == "doom_loop" {
+	if perm == "external_directory" {
+		for _, p := range externalDirectoryTargets(item) {
+			if (isSecretFilePath(p) || unattendedSecretDir(p)) && !(isOwnSessionRecordRead(item, p) && !unattendedSecretDir(p)) {
+				return unattendedCategorySecret
+			}
+		}
+		if !externalDirectoryTargetsAreRoutine(item) {
+			return unattendedCategoryTool
+		}
+		return ""
+	}
+	if perm == "doom_loop" {
 		return unattendedCategoryTool
 	}
 	return ""
@@ -172,7 +189,7 @@ var (
 	unattendedPublishRe = regexp.MustCompile(`(?i)(?:^|[;&|(\n]|&&|\|\|)\s*(?:nohup\s+|time\s+|exec\s+|command\s+|env(?:\s+[A-Za-z_][A-Za-z0-9_]*=\S*)*\s+)*(?:git(?:\s+-C\s+\S+|\s+-c\s+\S+|\s+--git-dir=\S+|\s+--work-tree=\S+)*\s+push|gh\s+(?:release\s+create|pr\s+merge)|(?:npm|pnpm|yarn|bun)\s+(?:-r\s+|--recursive\s+)?publish|cargo\s+publish|twine\s+upload|gem\s+push|docker\s+push|terraform\s+(?:apply|destroy)|kubectl\s+(?:apply|delete)|helm\s+(?:install|upgrade)|(?:\./)?scripts/ai-release\.sh)\b`)
 	unattendedSudoRe    = regexp.MustCompile(`(?i)(?:^|[;&|(\n]|&&|\|\|)\s*(?:nohup\s+|time\s+|exec\s+|command\s+|env(?:\s+[A-Za-z_][A-Za-z0-9_]*=\S*)*\s+)*(?:sudo|su|doas)\b`)
 	unattendedEgressRe  = regexp.MustCompile(`(?i)\b(?:curl|wget|http)\b[^\n]*?(?:authorization|bearer|x-api-key|\$\{?[A-Za-z_][A-Za-z0-9_]*(?:_KEY|_TOKEN|_SECRET)\b)`)
-	unattendedSecretRe  = regexp.MustCompile(`(?i)(?:^|[\s'"=(<>:,])(?:~|\$HOME|\$\{HOME\})/(?:\.ssh|\.aws|\.gnupg|\.kube|\.azure)(?:/|$)|(?:^|[\s'"=(<>:,])(?:~|\$HOME|\$\{HOME\})/\.docker/config\.json|(?:^|[\s'"=(<>:,])(?:~|\$HOME|\$\{HOME\})/\.config/(?:gh|gcloud)(?:/|$)|(?:^|[\s'"=(<>:,])(?:~|\$HOME|\$\{HOME\})/\.(?:netrc|npmrc|pypirc|git-credentials)\b|(?:^|[\s'"=(<>:,])(?:~|\$HOME|\$\{HOME\})/\.cargo/credentials|(?:^|[\s'"=(<>:,])(?:~|\$HOME|\$\{HOME\})/Library/Keychains(?:/|$)|(?:^|[\s'"=(<>:,])(?:~|\$HOME|\$\{HOME\})/\.hoxi/(?:relay-keys|tunnel(?:-dev)?|auth|cloudflared|pairing|approval-policy|models)\.(?:json|db)\b|(?:^|[\s'"=(<>:,])\.env(?:\.(?:local|prod(?:uction)?|dev(?:elopment)?))?(?:$|[\s;&|'"*?])`)
+	unattendedSecretRe  = regexp.MustCompile(`(?i)(?:^|[\s'"=(<>:,])(?:~|\$HOME|\$\{HOME\})/(?:\.ssh|\.aws|\.gnupg|\.kube|\.azure)(?:/|$)|(?:^|[\s'"=(<>:,])(?:~|\$HOME|\$\{HOME\})/\.docker/config\.json|(?:^|[\s'"=(<>:,])(?:~|\$HOME|\$\{HOME\})/\.config/(?:gh|gcloud)(?:/|$)|(?:^|[\s'"=(<>:,])(?:~|\$HOME|\$\{HOME\})/\.(?:netrc|npmrc|pypirc|git-credentials)\b|(?:^|[\s'"=(<>:,])(?:~|\$HOME|\$\{HOME\})/\.cargo/credentials|(?:^|[\s'"=(<>:,])(?:~|\$HOME|\$\{HOME\})/Library/Keychains(?:/|$)|(?:^|[\s'"=(<>:,])(?:~|\$HOME|\$\{HOME\})/\.hoxi/(?:relay-keys|tunnel(?:-dev)?|auth|cloudflared|pairing|approval-policy|models|hoxi)\.(?:json|db)\b|(?:^|[\s'"=(<>:,])\.env(?:\.(?:local|prod(?:uction)?|dev(?:elopment)?))?(?:$|[\s;&|'"*?])`)
 	unattendedWrappedRe = regexp.MustCompile(`(?i)(?:bash|sh|zsh|eval|xargs)\b[^|&;\n]*\b(?:git\s+push|sudo|publish)\b`)
 )
 

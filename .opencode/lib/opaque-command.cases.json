@@ -602,6 +602,18 @@
     "opaque": false
   },
   {
+    "command": "sed -n \"40,80p\" server/api/admin/orders/\\[id\\].put.ts",
+    "opaque": false
+  },
+  {
+    "command": "grep 'error TS' /tmp/admin-tsc.log | awk -F'error ' '{print $2}' | cut -d: -f1 | sort | uniq -c",
+    "opaque": false
+  },
+  {
+    "command": "N=$(grep -c 'error TS' /tmp/admin-tsc.log); echo \"errors=$N\"",
+    "opaque": false
+  },
+  {
     "command": "(D=/tmp/x); rm -rf \"$D\"",
     "opaque": true
   },

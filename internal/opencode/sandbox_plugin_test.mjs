@@ -268,9 +268,10 @@ test("sandbox plugin", async (t) => {
   });
 
   await t.test("exports only plugin functions", async () => {
-    // OpenCode calls every export of a plugin module as a plugin.
+    // OpenCode calls every export of a plugin module as a plugin; exporting
+    // both a named and a default binding would run the hooks twice.
     const mod = await import("./sandbox_plugin.mjs");
-    for (const value of Object.values(mod)) assert.equal(value, HoxiSandboxPlugin);
+    assert.deepEqual(Object.values(mod), [HoxiSandboxPlugin]);
   });
 
   await t.test("does not tag non-bash tools", async () => {

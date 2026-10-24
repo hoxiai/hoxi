@@ -271,6 +271,18 @@ func isValueClassSegment(seg string) bool {
 			}
 		}
 		return lines
+	case "grep", "rg":
+		count := false
+		for _, a := range args {
+			switch {
+			case a == "-c" || a == "--count":
+				count = true
+			case a == "-f" || a == "--file" || strings.HasPrefix(a, "-f") || strings.HasPrefix(a, "--file=") ||
+				strings.HasPrefix(a, "--pre") || strings.HasPrefix(a, "--hostname-bin"):
+				return false
+			}
+		}
+		return count
 	case "ps":
 		for i := 0; i < len(args); i++ {
 			a := args[i]

@@ -62,6 +62,22 @@ func TestUnattendedDeniesOutsideEditAndUnknownTool(t *testing.T) {
 	if allow, category := unattendedDecision(aws, worktree); allow || category != unattendedCategorySecret {
 		t.Fatalf("aws read: allow=%v category=%s", allow, category)
 	}
+	extRoutine := map[string]interface{}{"permission": "external_directory", "patterns": []string{"/tmp/hoxi_go_test.log"}}
+	if allow, category := unattendedDecision(extRoutine, worktree); !allow || category != "" {
+		t.Fatalf("routine external_directory: allow=%v category=%s", allow, category)
+	}
+	extSecret := map[string]interface{}{"permission": "external_directory", "patterns": []string{"/Users/u/.ssh/*"}}
+	if allow, category := unattendedDecision(extSecret, worktree); allow || category != unattendedCategorySecret {
+		t.Fatalf("secret external_directory: allow=%v category=%s", allow, category)
+	}
+	extSensitive := map[string]interface{}{"permission": "external_directory", "patterns": []string{"/etc/hosts"}}
+	if allow, category := unattendedDecision(extSensitive, worktree); allow || category != unattendedCategoryTool {
+		t.Fatalf("sensitive external_directory: allow=%v category=%s", allow, category)
+	}
+	todo := map[string]interface{}{"permission": "todowrite", "patterns": []string{"*"}}
+	if allow, category := unattendedDecision(todo, worktree); !allow || category != "" {
+		t.Fatalf("todowrite: allow=%v category=%s", allow, category)
+	}
 }
 
 func TestUnattendedModeRequiresIsolation(t *testing.T) {

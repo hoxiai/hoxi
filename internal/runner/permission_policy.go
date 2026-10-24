@@ -24,7 +24,7 @@ import (
 //     token resolves inside the session worktree.
 
 var (
-	destructiveRe = regexp.MustCompile(`(?i)\b(rm|rmdir|unlink|shred|truncate|srm|sudo|chmod|chown|mkfs|dd|diskutil|killall|reboot|shutdown)\b|\bkill\s+(?:-[A-Za-z0-9]+\s+)*(?:[A-Za-z0-9]+\s+)?[-?\d%]|\bpkill\b|[>|]\s*(?:/etc/|(?:\~|\$HOME|\$\{HOME\})/\.(?:zshrc|zshenv|zprofile|bashrc|bash_profile|profile|ssh\b|gnupg\b|netrc\b|npmrc\b))|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*/)?\.(?:ssh|aws|gnupg|kube)/|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*/)?\.(?:netrc|npmrc|git-credentials|credentials\.json)(?:$|[\s;&|'"*?])|\.claude/\.credentials\.json|\.hoxi/(?:models|auth|cloudflared|pairing|relay-keys|approval-policy|hoxi)\.(?:json|db)|\.docker/config\.json|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*/)?\.en(?:v(?:\.(?:local|prod(?:uction)?|dev(?:elopment)?|stag(?:e|ing)|test(?:ing)?|ci|preview|secret\w*|key\w*|private\w*|bak|backup)(?:\.local)?)?|\?|\*)(?:$|[\s;&|'"*?])|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*/)?\.envrc(?:$|[\s;&|'"*?])|\bfind\b[^\n;&|]*\s-(delete|exec\w*|ok\w*|fprint\w*|fls)\b|\b(curl|wget)\b[^\n|]*\|\s*(sh|bash|zsh)\b|\b(?:npm|pnpm|yarn|cargo)\s+publish\b|\bterraform\s+(?:destroy|apply)\b|\bkubectl\s+delete\b|\bdocker\s+(?:system\s+prune|rm|rmi)\b`)
+	destructiveRe = regexp.MustCompile(`(?i)\b(rm|rmdir|unlink|shred|truncate|srm|sudo|chmod|chown|mkfs|dd|diskutil|killall|reboot|shutdown)\b|\bkill\s+(?:-[A-Za-z0-9]+\s+)*(?:[A-Za-z0-9]+\s+)?[-?\d%]|\bpkill\b|[>|]\s*(?:/etc/|(?:\~|\$HOME|\$\{HOME\})/\.(?:zshrc|zshenv|zprofile|bashrc|bash_profile|profile|ssh\b|gnupg\b|netrc\b|npmrc\b))|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*/)?\.(?:ssh|aws|gnupg|kube)/|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*/)?\.(?:netrc|npmrc|git-credentials|credentials\.json)(?:$|[\s;&|'"*?])|\.claude/\.credentials\.json|\.hoxi/(?:models|auth|tunnel(?:-dev)?|cloudflared|pairing|relay-keys|approval-policy|hoxi)\.(?:json|db)|\.docker/config\.json|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*/)?\.en(?:v(?:\.(?:local|prod(?:uction)?|dev(?:elopment)?|stag(?:e|ing)|test(?:ing)?|ci|preview|secret\w*|key\w*|private\w*|bak|backup)(?:\.local)?)?|\?|\*)(?:$|[\s;&|'"*?])|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*/)?\.envrc(?:$|[\s;&|'"*?])|\bfind\b[^\n;&|]*\s-(delete|exec\w*|ok\w*|fprint\w*|fls)\b|\b(curl|wget)\b[^\n|]*\|\s*(sh|bash|zsh)\b|\b(?:npm|pnpm|yarn|cargo)\s+publish\b|\bterraform\s+(?:destroy|apply)\b|\bkubectl\s+delete\b|\bdocker\s+(?:system\s+prune|rm|rmi)\b`)
 
 	// Git option abbreviations (`--forc`, `--har`), combined short flags
 	// (`-uf`), `+refspec` force pushes and `:refspec` deletions count too.
@@ -551,6 +551,10 @@ func hasOpaqueShellSyntax(s string) bool {
 			}
 			continue
 		}
+		if c == '\\' && (next == '[' || next == ']') {
+			i++
+			continue
+		}
 		if c == '\\' || c == '(' || c == ')' || c == '{' || c == '}' {
 			return true
 		}
@@ -558,7 +562,9 @@ func hasOpaqueShellSyntax(s string) bool {
 			return true
 		}
 		if c == '\'' || c == '"' {
-			if prev != 0 && !isWordBoundary(prev) && prev != '=' {
+			shortFlag := i >= 2 && s[i-2] == '-' && (i == 2 || isWordBoundary(s[i-3])) &&
+				((prev >= 'a' && prev <= 'z') || (prev >= 'A' && prev <= 'Z'))
+			if prev != 0 && !isWordBoundary(prev) && prev != '=' && !shortFlag {
 				return true
 			}
 			quote = c

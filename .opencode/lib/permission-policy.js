@@ -8,7 +8,7 @@ import { setLiteralJudge } from "./shell-constants.js";
 import { destructiveScanForms } from "./shell-substitution.js";
 
 const DESTRUCTIVE_RE =
-  /\b(rm|rmdir|unlink|shred|truncate|srm|sudo|chmod|chown|mkfs|dd|diskutil|killall|reboot|shutdown)\b|\bkill\s+(?:-[A-Za-z0-9]+\s+)*(?:[A-Za-z0-9]+\s+)?[-?\d%]|\bpkill\b|[>|]\s*(?:\/etc\/|(?:\~|\$HOME|\$\{HOME\})\/\.(?:zshrc|zshenv|zprofile|bashrc|bash_profile|profile|ssh\b|gnupg\b|netrc\b|npmrc\b))|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.(?:ssh|aws|gnupg|kube)\/|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.(?:netrc|npmrc|git-credentials|credentials\.json)(?:$|[\s;&|'"*?])|\.claude\/\.credentials\.json|\.hoxi\/(?:models|auth|cloudflared|pairing|relay-keys|approval-policy|hoxi)\.(?:json|db)|\.docker\/config\.json|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.en(?:v(?:\.(?:local|prod(?:uction)?|dev(?:elopment)?|stag(?:e|ing)|test(?:ing)?|ci|preview|secret\w*|key\w*|private\w*|bak|backup)(?:\.local)?)?|\?|\*)(?:$|[\s;&|'"*?])|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.envrc(?:$|[\s;&|'"*?])|\bfind\b[^\n;&|]*\s-(delete|exec\w*|ok\w*|fprint\w*|fls)\b|\b(curl|wget)\b[^\n|]*\|\s*(sh|bash|zsh)\b|\b(?:npm|pnpm|yarn|cargo)\s+publish\b|\bterraform\s+(?:destroy|apply)\b|\bkubectl\s+delete\b|\bdocker\s+(?:system\s+prune|rm|rmi)\b/i;
+  /\b(rm|rmdir|unlink|shred|truncate|srm|sudo|chmod|chown|mkfs|dd|diskutil|killall|reboot|shutdown)\b|\bkill\s+(?:-[A-Za-z0-9]+\s+)*(?:[A-Za-z0-9]+\s+)?[-?\d%]|\bpkill\b|[>|]\s*(?:\/etc\/|(?:\~|\$HOME|\$\{HOME\})\/\.(?:zshrc|zshenv|zprofile|bashrc|bash_profile|profile|ssh\b|gnupg\b|netrc\b|npmrc\b))|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.(?:ssh|aws|gnupg|kube)\/|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.(?:netrc|npmrc|git-credentials|credentials\.json)(?:$|[\s;&|'"*?])|\.claude\/\.credentials\.json|\.hoxi\/(?:models|auth|tunnel(?:-dev)?|cloudflared|pairing|relay-keys|approval-policy|hoxi)\.(?:json|db)|\.docker\/config\.json|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.en(?:v(?:\.(?:local|prod(?:uction)?|dev(?:elopment)?|stag(?:e|ing)|test(?:ing)?|ci|preview|secret\w*|key\w*|private\w*|bak|backup)(?:\.local)?)?|\?|\*)(?:$|[\s;&|'"*?])|(?:^|[\s'"=(@<>:,])(?:[^\s;&|]*\/)?\.envrc(?:$|[\s;&|'"*?])|\bfind\b[^\n;&|]*\s-(delete|exec\w*|ok\w*|fprint\w*|fls)\b|\b(curl|wget)\b[^\n|]*\|\s*(sh|bash|zsh)\b|\b(?:npm|pnpm|yarn|cargo)\s+publish\b|\bterraform\s+(?:destroy|apply)\b|\bkubectl\s+delete\b|\bdocker\s+(?:system\s+prune|rm|rmi)\b/i;
 
 // Match Git global options, option abbreviations (`--forc`, `--har`), combined
 // short flags (`-uf`), `+refspec` force pushes and `:refspec` deletions.
@@ -64,8 +64,8 @@ function pushText(out, value) {
 // The Hoxi sandbox plugin rewrites bash commands into
 // `'/usr/bin/sandbox-exec' -f '<profile>' -- /bin/sh -c '<command>'`; judge the
 // wrapped command, not the wrapper.
-const SANDBOX_WRAP_RE = /^'?\/usr\/bin\/sandbox-exec'?\s+-f\s+(?:'[^']*'|\S+)\s+--\s+\/bin\/sh\s+-c\s+'((?:[^']|'\\'')*)'$/;
-const SANDBOX_WRAP_PREFIX_RE = /^'?\/usr\/bin\/sandbox-exec'?\s+-f\s+(?:'[^']*'|\S+)\s+--\s+(?:\/bin\/sh|sh)\s+-c\s+'/;
+const SANDBOX_WRAP_RE = /^(?:'[^']*\/sandbox-exec'|\/usr\/bin\/sandbox-exec|sandbox-exec)\s+-f\s+(?:'[^']*'|\S+)\s+--\s+(?:\/bin\/sh|sh)\s+-c\s+'((?:[^']|'\\'')*)'$/;
+const SANDBOX_WRAP_PREFIX_RE = /^(?:'[^']*\/sandbox-exec'|\/usr\/bin\/sandbox-exec|sandbox-exec)\s+-f\s+(?:'[^']*'|\S+)\s+--\s+(?:\/bin\/sh|sh)\s+-c\s+'/;
 const OPEN_CODE_STOP_TRAP_USR1_TEXT = `trap 'printf "\\n[Command stopped by user]\\n"; exit 130' USR1`;
 const OPEN_CODE_STOP_TRAP_TEXT = `${OPEN_CODE_STOP_TRAP_USR1_TEXT}; trap : EXIT`;
 const OPEN_CODE_STOP_TRAP_USR1_RE = String.raw`trap 'printf "\\n\[Command stopped by user\]\\n"; exit 130' USR1`;
@@ -90,7 +90,7 @@ export function stripOpenCodeStopMarkerText(raw) {
 
 export function unwrapSandboxCommand(command) {
   let cur = String(command ?? "");
-  for (let i = 0; i < 8; i++) {
+  for (let i = 0; i < 16; i++) {
     let next = stripOpenCodeStopMarkerText(cur);
     const trimmed = next.trim();
     const match = SANDBOX_WRAP_RE.exec(trimmed);

@@ -71,8 +71,8 @@ var (
 
 	// The OpenCode sandbox plugin rewrites bash commands into a sandbox-exec
 	// wrapper; the wrapped command is what the policy judges.
-	sandboxWrapRe       = regexp.MustCompile(`^'?/usr/bin/sandbox-exec'?\s+-f\s+(?:'[^']*'|\S+)\s+--\s+/bin/sh\s+-c\s+'((?:[^']|'\\'')*)'$`)
-	sandboxWrapPrefixRe = regexp.MustCompile(`^'?/usr/bin/sandbox-exec'?\s+-f\s+(?:'[^']*'|\S+)\s+--\s+(?:/bin/sh|sh)\s+-c\s+'`)
+	sandboxWrapRe       = regexp.MustCompile(`^(?:'[^']*/sandbox-exec'|/usr/bin/sandbox-exec|sandbox-exec)\s+-f\s+(?:'[^']*'|\S+)\s+--\s+(?:/bin/sh|sh)\s+-c\s+'((?:[^']|'\\'')*)'$`)
+	sandboxWrapPrefixRe = regexp.MustCompile(`^(?:'[^']*/sandbox-exec'|/usr/bin/sandbox-exec|sandbox-exec)\s+-f\s+(?:'[^']*'|\S+)\s+--\s+(?:/bin/sh|sh)\s+-c\s+'`)
 
 	// A `# hoxi-stop:` tag line, the plugin's stop trap line (openCodeStopTrap),
 	// its USR1 half when OpenCode splits `trap ... USR1; trap : EXIT` at `;`
@@ -312,7 +312,7 @@ func sanitizeOpenCodePermissionItem(item map[string]interface{}) bool {
 
 func unwrapSandboxCommand(command string) string {
 	cur := command
-	for i := 0; i < 8; i++ {
+	for i := 0; i < 16; i++ {
 		next := stripOpenCodeStopMarkerText(cur)
 		trimmed := strings.TrimSpace(next)
 		if m := sandboxWrapRe.FindStringSubmatch(trimmed); m != nil {

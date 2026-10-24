@@ -86,10 +86,15 @@ function hasOpaqueShellSyntax(s) {
       }
       continue;
     }
+    if (c === "\\" && (next === "[" || next === "]")) {
+      i++;
+      continue;
+    }
     if (c === "\\" || c === "(" || c === ")" || c === "{" || c === "}") return true;
     if (c === "<" && next === "<") return true;
     if (c === "'" || c === '"') {
-      if (prev && !isWordBoundary(prev) && prev !== "=") return true;
+      const shortFlag = i >= 2 && s[i - 2] === "-" && (i === 2 || isWordBoundary(s[i - 3])) && /[A-Za-z]/.test(prev);
+      if (prev && !isWordBoundary(prev) && prev !== "=" && !shortFlag) return true;
       quote = c;
     }
   }

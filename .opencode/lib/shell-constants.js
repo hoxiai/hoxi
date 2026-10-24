@@ -628,6 +628,16 @@ export function isValueClassSegment(seg) {
     }
     return lines;
   }
+  if (base === "grep" || base === "rg") {
+    let count = false;
+    for (const a of args) {
+      if (a === "-c" || a === "--count") count = true;
+      else if (a === "-f" || a === "--file" || a.startsWith("-f") || a.startsWith("--file=") || a.startsWith("--pre") || a.startsWith("--hostname-bin")) {
+        return false;
+      }
+    }
+    return count;
+  }
   if (base === "ps") {
     for (let i = 0; i < args.length; i++) {
       const a = args[i];

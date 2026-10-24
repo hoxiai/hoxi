@@ -4,7 +4,7 @@
 // updates the goal (see web/src/store/session-goal.ts).
 import { tool } from "@opencode-ai/plugin";
 
-export const HoxiGoalPlugin = async () => {
+const HoxiGoalPlugin = async () => {
   return {
     tool: {
       goal_report: tool({

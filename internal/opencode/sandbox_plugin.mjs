@@ -193,7 +193,7 @@ function cleanHistory(messages) {
   }
 }
 
-export const HoxiSandboxPlugin = async () => ({
+const HoxiSandboxPlugin = async () => ({
   "tool.execute.before": async (input, output) => {
     const args = output?.args;
     const isBash = input?.tool === "bash" && args && typeof args === "object" && typeof args.command === "string";
