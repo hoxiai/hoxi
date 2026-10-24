@@ -49,7 +49,7 @@ export default defineConfig({
       { find: /^@hoxi-core\/(.*)$/, replacement: `${srcRoot}/$1` },
       ...(hasWorkExt
         ? [
-            { find: /\/surface-extension(?:\.ts)?$/, replacement: workExtEntry },
+            { find: /^.*\/surface-extension(?:\.ts)?$/, replacement: workExtEntry },
           ]
         : []),
     ],

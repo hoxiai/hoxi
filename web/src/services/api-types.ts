@@ -246,6 +246,7 @@ export interface ProviderModelInfo {
   id: string;
   name?: string;
   family?: string;
+  free?: boolean;
   reasoning?: boolean;
   attachment?: boolean;
   temperature?: boolean;

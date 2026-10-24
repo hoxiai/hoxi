@@ -4,6 +4,7 @@ import {
   clearLocalPromptHistory,
   loadTelemetrySettings,
   openExternalURL,
+  resolveOfficialWebURL,
   saveTelemetryEnabled,
   telemetry,
 } from "../../store/workspace";
@@ -12,7 +13,7 @@ const buttonClass = "rounded-lg border border-[var(--border-strong)] px-4 py-2 t
 const linkClass = "text-[var(--accent-primary)] underline underline-offset-2";
 
 function legalURL(document: "privacy" | "terms") {
-  return `https://hoxi.ai/legal/${document}-${locale() === "zh-CN" ? "zh" : "en"}.html`;
+  return resolveOfficialWebURL(`/legal/${document}-${locale() === "zh-CN" ? "zh" : "en"}.html`);
 }
 
 export function PrivacySettingsTab() {

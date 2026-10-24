@@ -397,7 +397,7 @@ export function SystemRuntimeSettingsTab() {
                 class="max-w-[320px] truncate font-mono text-[13px] text-[var(--text-secondary)] selectable-text"
                 title={sysInfo()?.userConfigPath}
               >
-                {sysInfo()?.userConfigPath || "~/.hoxi/models.json"}
+                {sysInfo()?.userConfigPath || "—"}
               </span>
             </SettingRow>
 

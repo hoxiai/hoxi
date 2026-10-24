@@ -1,6 +1,7 @@
 // web/src/store/auth-state.ts
 import { createStore } from "solid-js/store";
 import { authAPI, type AuthStatusSnapshot, type AuthUserProfile } from "../services/api";
+import { openExternalBrowserURL } from "../services/desktop-events";
 import type { MemberCheckinStatus, PortalTarget } from "../services/platform-api";
 import { setAppSettings, signOutUserAccount, updateAppSetting } from "./settings";
 
@@ -170,18 +171,21 @@ export async function performDesktopCheckin(): Promise<MemberCheckinStatus | nul
   }
 }
 
+export function resolveOfficialWebURL(path: string): string {
+  const base = (desktopAuth.serverBaseUrl || "https://hoxi.ai").replace(/\/+$/, "");
+  const cleanPath = path.startsWith("/") ? path : `/${path}`;
+  return `${base}${cleanPath}`;
+}
+
 export async function openDesktopPortalPage(target: PortalTarget): Promise<void> {
   try {
     await authAPI.openPortalPage(target);
   } catch {
-    const base = (desktopAuth.serverBaseUrl || "https://hoxi.ai").replace(/\/+$/, "");
     const fallbackUrl =
       target === "feedback"
         ? "https://github.com/hoxiai/hoxi/issues"
-        : `${base}/user/${target}`;
-    if (typeof window !== "undefined") {
-      window.open(fallbackUrl, "_blank", "noopener,noreferrer");
-    }
+        : resolveOfficialWebURL(`/user/${target}`);
+    openExternalBrowserURL(fallbackUrl);
   }
 }
 

@@ -118,3 +118,15 @@ func TestProjectRootForWorktree(t *testing.T) {
 		}
 	}
 }
+
+func TestDefaultWorkspaceDir(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOXI_HOME", home)
+	want := filepath.Join(home, "workspaces", "default")
+	if got := DefaultWorkspaceDir(); got != want {
+		t.Fatalf("DefaultWorkspaceDir() = %q, want %q", got, want)
+	}
+	if got := EnsureDefaultWorkspaceDir(); got != want {
+		t.Fatalf("EnsureDefaultWorkspaceDir() = %q, want %q", got, want)
+	}
+}

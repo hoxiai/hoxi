@@ -18,6 +18,7 @@ import {
   closeLeaderboardModal,
   leaderboardState,
   openExternalURL,
+  resolveOfficialWebURL,
   selectModel,
   switchLeaderboardTab,
   workspace,
@@ -54,7 +55,7 @@ export default function ModelLeaderboardModal() {
       workspace.providers.find((p) => p.id === vendor)?.models?.[modelID]);
 
   const handleOpenOfficialWeb = () => {
-    openExternalURL("https://hoxi.ai/models");
+    openExternalURL(resolveOfficialWebURL("/models"));
   };
 
   return (

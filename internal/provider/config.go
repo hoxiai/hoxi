@@ -153,7 +153,7 @@ func loadOpenCodeImportedProvidersFromDisk() map[string]interface{} {
 		return map[string]interface{}{}
 	}
 	result := map[string]interface{}{}
-	for _, name := range []string{"config.json", "opencode.json", "opencode.jsonc"} {
+	for _, name := range []string{"config.json", "opencode.json"} {
 		parsed := readJSONMapFile(filepath.Join(dir, name))
 		if provMap, ok := parsed["provider"].(map[string]interface{}); ok {
 			for k, v := range provMap {

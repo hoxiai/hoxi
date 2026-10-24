@@ -259,6 +259,8 @@ export async function loadProviders(forceRefresh = false): Promise<void> {
           id: mid,
           name: mCfg.name || rtModel?.name || mid,
           limit: mCfg.limit || rtModel?.limit,
+          cost: mCfg.cost || rtModel?.cost,
+          free: typeof mCfg.free === "boolean" ? mCfg.free : rtModel?.free,
           attachment: hasImgModality,
           reasoning: Boolean(mCfg.reasoning ?? rtModel?.reasoning),
           variants: mCfg.variants || rtModel?.variants,

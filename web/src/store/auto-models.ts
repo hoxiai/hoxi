@@ -780,7 +780,14 @@ export function isModelFree(
   mInfo?: Record<string, any> | null
 ): boolean {
   if (mInfo?.free === true || mInfo?.multiplier === "0x") return true;
+  if (modelID.endsWith("-free") || modelID.endsWith(":free")) return true;
+  if (
+    mInfo?.cost &&
+    mInfo.cost.input === 0 &&
+    (mInfo.cost.output === 0 || mInfo.cost.output === undefined)
+  ) {
+    return true;
+  }
   if (providerID !== "opencode" && providerID !== "opencode-go") return false;
-  const inCost = mInfo?.cost?.input;
-  return !mInfo?.cost || inCost === 0 || modelID.endsWith("-free");
+  return !mInfo?.cost;
 }
