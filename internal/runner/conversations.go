@@ -46,12 +46,13 @@ func (s *Service) handleConversationsRoot(w http.ResponseWriter, r *http.Request
 	case http.MethodGet:
 		directory := r.URL.Query().Get("directory")
 		projectID := strings.TrimSpace(r.URL.Query().Get("projectID"))
+		surface := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("surface")))
 		if projectID == "" && directory != "" {
 			if resolved, ok := s.projectIDForDirectory(directory); ok {
 				projectID = resolved
 			}
 		}
-		writeJSON(w, http.StatusOK, s.listConversations(r.Context(), projectID, directory))
+		writeJSON(w, http.StatusOK, s.listConversationsWithSurface(r.Context(), projectID, directory, surface))
 	case http.MethodPost:
 		s.handleConversationCreate(w, r)
 	default:
@@ -61,6 +62,10 @@ func (s *Service) handleConversationsRoot(w http.ResponseWriter, r *http.Request
 
 // listConversations degrades to Hoxi's own sessions when OpenCode is down.
 func (s *Service) listConversations(ctx context.Context, projectID, directory string) []json.RawMessage {
+	return s.listConversationsWithSurface(ctx, projectID, directory, "")
+}
+
+func (s *Service) listConversationsWithSurface(ctx context.Context, projectID, directory, surfaceFilter string) []json.RawMessage {
 	type entry struct {
 		updated int64
 		raw     json.RawMessage
@@ -68,11 +73,14 @@ func (s *Service) listConversations(ctx context.Context, projectID, directory st
 	var entries []entry
 	owned := make(map[string]bool)
 	for _, info := range s.store.ListProject(projectID, s.projectScopeDirectory(projectID, directory)) {
+		owned[info.ID] = true
+		if (surfaceFilter == "work" || surfaceFilter == "code") && info.Surface != surfaceFilter {
+			continue
+		}
 		raw, err := json.Marshal(info)
 		if err != nil {
 			continue
 		}
-		owned[info.ID] = true
 		entries = append(entries, entry{info.Time.Updated, raw})
 	}
 	seenEngine := make(map[string]bool)
@@ -86,6 +94,7 @@ func (s *Service) listConversations(ctx context.Context, projectID, directory st
 			var info struct {
 				ID        string `json:"id"`
 				Directory string `json:"directory"`
+				Surface   string `json:"surface"`
 				Time      struct {
 					Updated int64 `json:"updated"`
 				} `json:"time"`
@@ -100,7 +109,8 @@ func (s *Service) listConversations(ctx context.Context, projectID, directory st
 				entryProjectID, _ = s.projectIDForDirectory(engineDir)
 			}
 			itemProjectID := ""
-			if itemDir := strings.TrimSpace(info.Directory); itemDir != "" {
+			itemDir := strings.TrimSpace(info.Directory)
+			if itemDir != "" {
 				itemProjectID, _ = s.projectIDForDirectory(itemDir)
 				// OpenCode may return sessions from nested directories that share
 				// its git workspace. Filter by the session's own directory instead
@@ -116,8 +126,12 @@ func (s *Service) listConversations(ctx context.Context, projectID, directory st
 			if entryProjectID == "" {
 				entryProjectID = itemProjectID
 			}
+			inferredSurface := NormalizeSessionSurface(info.Surface, firstNonEmptyStr(itemDir, engineDir))
+			if (surfaceFilter == "work" || surfaceFilter == "code") && inferredSurface != surfaceFilter {
+				continue
+			}
 			seenEngine[info.ID] = true
-			entries = append(entries, entry{info.Time.Updated, withProjectID(item, entryProjectID)})
+			entries = append(entries, entry{info.Time.Updated, withProjectIDAndSurface(item, entryProjectID, inferredSurface)})
 		}
 	}
 	sort.SliceStable(entries, func(i, j int) bool { return entries[i].updated > entries[j].updated })
@@ -168,22 +182,31 @@ func (s *Service) conversationDirectories(projectID, directory string) []string 
 
 // withProjectID gives unadopted OpenCode sessions the same stable attribution
 // as Hoxi-owned conversations before they are adopted.
-func withProjectID(item json.RawMessage, projectID string) json.RawMessage {
-	if strings.TrimSpace(projectID) == "" {
-		return item
-	}
+func withProjectIDAndSurface(item json.RawMessage, projectID, surface string) json.RawMessage {
 	var object map[string]json.RawMessage
 	if json.Unmarshal(item, &object) != nil {
 		return item
 	}
-	if _, exists := object["projectID"]; exists {
+	changed := false
+	if strings.TrimSpace(projectID) != "" {
+		if _, exists := object["projectID"]; !exists {
+			if raw, err := json.Marshal(projectID); err == nil {
+				object["projectID"] = raw
+				changed = true
+			}
+		}
+	}
+	if strings.TrimSpace(surface) != "" {
+		if _, exists := object["surface"]; !exists {
+			if raw, err := json.Marshal(surface); err == nil {
+				object["surface"] = raw
+				changed = true
+			}
+		}
+	}
+	if !changed {
 		return item
 	}
-	raw, err := json.Marshal(projectID)
-	if err != nil {
-		return item
-	}
-	object["projectID"] = raw
 	merged, err := json.Marshal(object)
 	if err != nil {
 		return item
@@ -295,6 +318,7 @@ func (s *Service) CreateConversation(ctx context.Context, body CreateSessionRequ
 	rec := SessionRecord{
 		ID:             sessionID,
 		ProjectID:      projectID,
+		Surface:        NormalizeSessionSurface(body.Surface, projDir),
 		Runtime:        "opencode",
 		ProjectDir:     projDir,
 		SandboxMode:    sandboxMode,

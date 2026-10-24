@@ -4,17 +4,18 @@
 // session lives; this index survives project switches and transcript eviction.
 import type { SessionInfo } from "../services/sse-types";
 import { setWorkspace, workspace, type SessionIndexEntry } from "./workspace-state";
-import { findWorkspaceProfileByDir, normalizeFolderPath, stripWorktreePath } from "./workspace-folders";
+import { findWorkspaceProfileByDir, isDefaultWorkspacePath, normalizeFolderPath, stripWorktreePath } from "./workspace-folders";
 
 function entryFrom(info: SessionInfo, previous?: SessionIndexEntry): SessionIndexEntry | null {
   const directory = (info.directory || "").trim() || previous?.directory;
   const projectID = (info.projectID || "").trim() || previous?.projectID;
   const parentID = info.parentID ?? previous?.parentID;
+  const surface = info.surface ?? previous?.surface;
   const managed = info.managed ?? previous?.managed;
   const runtime = info.runtime ?? previous?.runtime;
   const updated = info.time?.updated || info.time?.created || previous?.updated || 0;
-  if (!directory && !projectID && !parentID && managed === undefined && !runtime) return null;
-  return { directory: directory || undefined, projectID: projectID || undefined, parentID, managed, runtime, updated };
+  if (!directory && !projectID && !parentID && !surface && managed === undefined && !runtime) return null;
+  return { directory: directory || undefined, projectID: projectID || undefined, parentID, surface, managed, runtime, updated };
 }
 
 /** Records metadata from a session list or stream event; never drops known fields. */
@@ -27,6 +28,7 @@ export function indexSession(info: SessionInfo | undefined | null): void {
     prev.directory === entry.directory &&
     prev.projectID === entry.projectID &&
     prev.parentID === entry.parentID &&
+    prev.surface === entry.surface &&
     prev.managed === entry.managed &&
     prev.runtime === entry.runtime &&
     prev.updated === entry.updated) {
@@ -44,6 +46,19 @@ export function indexedSession(sessionID: string | null | undefined): SessionInd
   return sessionID ? workspace.sessionIndex[sessionID] : undefined;
 }
 
+export function resolveSessionSurface(
+  info: { id?: string; surface?: SessionInfo["surface"]; directory?: string } | null | undefined
+): "code" | "work" {
+  if (info?.surface === "work" || info?.surface === "code") return info.surface;
+  const indexed = info?.id ? indexedSession(info.id) : undefined;
+  if (indexed?.surface === "work" || indexed?.surface === "code") return indexed.surface;
+  const dir =
+    info?.directory ||
+    indexed?.directory ||
+    (info?.id ? workspace.worktreeBySession[info.id]?.directory : "");
+  return isDefaultWorkspacePath(dir) ? "work" : "code";
+}
+
 /** Stable attribution wins; legacy sessions fall back to exact roots or Hoxi worktrees. */
 export function sessionBelongsToProject(
   info: SessionInfo,
@@ -53,8 +68,18 @@ export function sessionBelongsToProject(
 ): boolean {
   const root = normalizeFolderPath(directory);
   if (!root) return false;
+  const rootIsWork = isDefaultWorkspacePath(root);
+  const expectedSurface: "code" | "work" = rootIsWork ? "work" : "code";
+  if (resolveSessionSurface(info) !== expectedSurface) {
+    return false;
+  }
   const expectedID = projectID || findWorkspaceProfileByDir(root)?.id;
   const indexed = indexedSession(info.id);
+  const sessionDir = normalizeFolderPath(info.directory || indexed?.directory ||
+    workspace.worktreeBySession[info.id]?.directory);
+  if (sessionDir && isDefaultWorkspacePath(sessionDir) !== rootIsWork) {
+    return false;
+  }
   const ownerID = info.projectID || indexed?.projectID;
   // Before boot resolves the project there is no expected ID to compare
   // against; ownership then falls back to the directory checks below.
@@ -66,8 +91,6 @@ export function sessionBelongsToProject(
     // events do not carry that guarantee and must stay strictly attributed.
     if (!allowRemovedProjectDirectoryFallback || ownerIsLive) return false;
   }
-  const sessionDir = normalizeFolderPath(info.directory || indexed?.directory ||
-    workspace.worktreeBySession[info.id]?.directory);
   const profile = findWorkspaceProfileByDir(root);
   const roots = profile?.folders.map((f) => normalizeFolderPath(f.path)) || [root];
   if (sessionDir) return roots.includes(stripWorktreePath(sessionDir));

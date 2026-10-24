@@ -85,11 +85,14 @@ export function isInvalidProjectPath(p?: string | null): boolean {
   return false;
 }
 
+const DEFAULT_WORKSPACE_PATH_RE = /(?:^|[\\/])\.hoxi[\\/]workspaces[\\/]default(?:$|[\\/])/i;
+
 export function isDefaultWorkspacePath(p?: string | null): boolean {
-  const def = normalizeFolderPath(defaultWorkspaceDir());
-  if (!def) return false;
   const norm = stripWorktreePath(p);
-  return Boolean(norm && norm === def);
+  if (!norm) return false;
+  if (DEFAULT_WORKSPACE_PATH_RE.test(norm)) return true;
+  const def = normalizeFolderPath(defaultWorkspaceDir());
+  return Boolean(def && norm === def);
 }
 
 /** Saved workspaces the user can see: excludes auto-registered hidden projects and dismissed ones. */

@@ -363,6 +363,7 @@ func (s *Service) handleSessionFork(w http.ResponseWriter, r *http.Request, sess
 		ProjectDir:       rec.ProjectDir,
 		SandboxMode:      rec.SandboxMode,
 		CommandSandbox:   rec.CommandSandbox,
+		Surface:          NormalizeSessionSurface(rec.Surface, rec.ProjectDir),
 		ModelID:          rec.ModelID,
 		ProviderID:       rec.ProviderID,
 		Mode:             rec.Mode,

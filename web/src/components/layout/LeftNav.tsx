@@ -7,12 +7,15 @@ import {
   createProjectSessionLists,
   discardSession,
   focusFirstAttentionSession,
+  healTransientSidebarProjectMode,
+  isDefaultWorkspacePath,
   isInvalidProjectPath,
   startNewThreadDraft,
   normalizeFolderPath,
   openCreateWorkspaceModal,
   openHandoffModal,
   reorderProjects,
+  resolveDefaultProjectDir,
   resolveRootSessionID,
   selectSession,
   setProjectOrder,
@@ -79,7 +82,11 @@ export default function LeftNav() {
 
   // Expanded projects set (by path) for Multi-Project mode
   const [expandedProjects, setExpandedProjects] = createSignal<Set<string>>(
-    new Set(workspace.rootDir && !isInvalidProjectPath(workspace.rootDir) ? [normalizeFolderPath(workspace.rootDir)] : [])
+    new Set(
+      workspace.rootDir && !isInvalidProjectPath(workspace.rootDir) && !isDefaultWorkspacePath(workspace.rootDir)
+        ? [normalizeFolderPath(workspace.rootDir)]
+        : []
+    )
   );
   const [expandedArchivedByProject, setExpandedArchivedByProject] = createSignal<Record<string, boolean>>({});
   const sessionLists = createProjectSessionLists();
@@ -87,9 +94,25 @@ export default function LeftNav() {
   const loadingProjects = sessionLists.loading;
   onCleanup(sessionLists.dispose);
 
+  healTransientSidebarProjectMode();
+
+  createEffect(() => {
+    if (isWorkSurface()) return;
+    const root = normalizeFolderPath(workspace.rootDir);
+    if (!root || isDefaultWorkspacePath(root)) {
+      const fallbackCodeDir = normalizeFolderPath(resolveDefaultProjectDir(""));
+      if (fallbackCodeDir && !isDefaultWorkspacePath(fallbackCodeDir)) {
+        void switchWorkspace(fallbackCodeDir, { selectInitial: true });
+      }
+    }
+  });
+
   createEffect(() => {
     const root = normalizeFolderPath(workspace.rootDir);
-    if (root && !isInvalidProjectPath(root)) {
+    void workspace.sessions.length;
+    void workspace.bootstrappingSessions;
+    void workspace.activeProjectID;
+    if (root && !isInvalidProjectPath(root) && !isDefaultWorkspacePath(root)) {
       setExpandedProjects((prev) => (prev.has(root) ? prev : new Set([...prev, root])));
       sessionLists.syncActive(root);
     }
@@ -367,10 +390,12 @@ export default function LeftNav() {
 
   return (
     <aside class="relative h-full w-full flex flex-col bg-transparent pl-2 select-none">
-      <Show
-        when={!(isWorkSurface() && surfaceExtension.renderLeftNav)}
-        fallback={surfaceExtension.renderLeftNav!()}
-      >
+      <Show when={surfaceExtension.enabled && surfaceExtension.renderLeftNav}>
+        <div class={isWorkSurface() ? "flex-1 min-h-0 flex flex-col" : "hidden"}>
+          {surfaceExtension.renderLeftNav!()}
+        </div>
+      </Show>
+      <div class={isWorkSurface() && surfaceExtension.renderLeftNav ? "hidden" : "flex-1 min-h-0 flex flex-col"}>
       {/* Unified Minimal Header: New Thread + Mode Switcher + Search + New Workspace */}
       <div class="pl-1.5 pr-2.5 pt-1 pb-1.5 flex items-center justify-between gap-1 shrink-0">
         <div class="group/newthread relative flex min-w-0 items-center">
@@ -651,7 +676,7 @@ export default function LeftNav() {
           onDiscardSession={(p, ev, id) => onDiscardInProject(p, ev, id)}
         />
       </Show>
-      </Show>
+      </div>
 
       {/* Bottom Bar: Account Popover + Settings Gear */}
       <UserAccountMenu />

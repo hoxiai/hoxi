@@ -10,6 +10,7 @@ import {
   openEditWorkspaceModal,
   openManageWorkspacesModal,
   quickAddFolderToWorkspace,
+  resolveSessionSurface,
   sortSessionsByActivity,
   workspace,
 } from "../../store/workspace";
@@ -203,7 +204,7 @@ export default function MultiProjectTreeItem(props: {
       isActive() && !workspace.bootstrappingSessions
         ? workspace.sessions
         : props.cachedSessions;
-    const list = rawList.filter((s) => !s.parentID);
+    const list = rawList.filter((s) => !s.parentID && resolveSessionSurface(s) === "code");
     const sorted = sortSessionsByActivity(list);
     if (matchesProjectSearch(props.proj, q)) return sorted;
     return sorted.filter((s) => matchesSessionSearch(s, q));

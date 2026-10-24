@@ -14,6 +14,7 @@ import {
   activateSurfaceMode,
   appSettings,
   closeSettingsModal,
+  isDefaultWorkspacePath,
   isUpdateModalOpen,
   leaderboardState,
   LEFT_PANE_MAX,
@@ -91,6 +92,9 @@ export default function ThreePaneShell(props: ThreePaneShellProps = {}) {
   });
 
   const isNewConversation = createMemo(() => {
+    const rootIsWork = isDefaultWorkspacePath(workspace.rootDir);
+    if (isWorkSurface() && !rootIsWork) return true;
+    if (!isWorkSurface() && rootIsWork) return true;
     if (workspace.bootstrappingSessions) return false;
     const id = workspace.activeSessionID;
     if (!id) return true;
@@ -229,9 +233,9 @@ export default function ThreePaneShell(props: ThreePaneShellProps = {}) {
   return (
     <div
       data-surface={isWorkSurface() ? "work" : "code"}
-      class="h-screen w-screen flex flex-col bg-[var(--bg-canvas)] text-[var(--text-primary)] overflow-hidden transition-colors duration-200"
+      class="h-screen w-screen flex flex-col bg-[var(--bg-canvas)] text-[var(--text-primary)] overflow-hidden"
     >
-      <Show when={isWorkSurface() && surfaceExtension.renderTheme}>
+      <Show when={surfaceExtension.enabled && surfaceExtension.renderTheme}>
         {surfaceExtension.renderTheme!()}
       </Show>
       <CompactHeader

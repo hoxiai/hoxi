@@ -12,6 +12,7 @@ import {
   openEditWorkspaceModal,
   openHandoffModal,
   openManageWorkspacesModal,
+  resolveSessionSurface,
   selectSession,
   setWorkspace,
   sortSessionsByActivity,
@@ -88,7 +89,7 @@ export default function SingleProjectNavView(props: {
   const filteredSessions = createMemo(() => {
     const q = props.filterQuery.trim().toLowerCase();
     const raw = sortSessionsByActivity(
-      workspace.sessions.filter((s) => !s.parentID)
+      workspace.sessions.filter((s) => !s.parentID && resolveSessionSurface(s) === "code")
     );
     if (!q) return raw;
     return raw.filter(
@@ -408,7 +409,7 @@ export function RecentTasksNavView(props: {
           ? workspace.sessions
           : props.projectSessions[normProjPath] || props.projectSessions[proj.path] || [];
       for (const s of list) {
-        if (s.parentID || isSessionArchived(s)) continue;
+        if (s.parentID || isSessionArchived(s) || resolveSessionSurface(s) !== "code") continue;
         if (
           q &&
           !(s.title || "").toLowerCase().includes(q) &&

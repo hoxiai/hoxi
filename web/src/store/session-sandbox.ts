@@ -21,7 +21,8 @@ import { exitSessionWorktree, removeSessionFromStore, replaceSession } from "./w
 import { isManagedSession, isSessionBusy, sessionDirectory, sessionRuntimeForID } from "./session-query";
 import { refreshWorktreeStatus } from "./session-diffs";
 import { indexSession } from "./session-index";
-import { normalizeFolderPath } from "./workspace-folders";
+import { surfaceMode } from "./layout";
+import { isDefaultWorkspacePath, normalizeFolderPath } from "./workspace-folders";
 
 const pendingSandboxChanges = new Map<string, Promise<void>>();
 
@@ -107,12 +108,16 @@ export async function newIsolatedSession(
   );
   const isRunner = runtime !== "opencode";
   const unattended = appSettings.approvalMode === "unattended";
-  const shouldIsolate = unattended || (options?.isolated ?? (appSettings.defaultSandboxMode === "worktree"));
+  const currentSurface = isDefaultWorkspacePath(directory) ? "work" : surfaceMode();
+  const shouldIsolate =
+    unattended ||
+    (options?.isolated ?? (currentSurface === "work" ? false : appSettings.defaultSandboxMode === "worktree"));
   let session: SessionInfo | undefined;
   setWorkspace("sessionSetupError", null);
   try {
     if (!directory) throw new Error(t("timeline.selectFolderHint"));
     session = await hoxiAPI.createSession(title, directory || undefined, {
+      surface: currentSurface,
       runtime,
       modelID: initialAI.model?.modelID,
       providerID: initialAI.model?.providerID,

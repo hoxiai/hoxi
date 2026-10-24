@@ -72,6 +72,7 @@ export function syncSessionFieldsInPlace(target: SessionInfo, source: SessionInf
   if (target.title !== source.title) target.title = source.title;
   if (target.slug !== source.slug) target.slug = source.slug;
   if (target.projectID !== source.projectID) target.projectID = source.projectID;
+  if (target.surface !== source.surface && source.surface) target.surface = source.surface;
   if (target.directory !== source.directory) target.directory = source.directory;
   if (target.parentID !== source.parentID) target.parentID = source.parentID;
   if (target.runtime !== source.runtime) target.runtime = source.runtime;

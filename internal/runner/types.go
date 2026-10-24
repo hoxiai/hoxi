@@ -129,6 +129,7 @@ type SessionInfo struct {
 	ProjectID      string               `json:"projectID,omitempty"`
 	Directory      string               `json:"directory"`
 	ParentID       string               `json:"parentID,omitempty"`
+	Surface        string               `json:"surface,omitempty"`
 	Title          string               `json:"title"`
 	Version        string               `json:"version,omitempty"`
 	Time           SessionTime          `json:"time"`
@@ -142,6 +143,20 @@ type SessionInfo struct {
 	Managed        bool                 `json:"managed,omitempty"`
 	Revert         *SessionRevert       `json:"revert,omitempty"`
 	Capabilities   *SessionCapabilities `json:"capabilities,omitempty"`
+}
+
+func NormalizeSessionSurface(surface, directory string) string {
+	switch strings.ToLower(strings.TrimSpace(surface)) {
+	case "work":
+		return "work"
+	case "code":
+		return "code"
+	}
+	norm := strings.ReplaceAll(strings.ToLower(strings.TrimSpace(directory)), "\\", "/")
+	if strings.Contains(norm, "/.hoxi/workspaces/default") {
+		return "work"
+	}
+	return "code"
 }
 
 type SessionStatus struct {
@@ -253,6 +268,7 @@ type SessionRecord struct {
 	ID                  string            `json:"id"`
 	ProjectID           string            `json:"projectID,omitempty"`
 	ParentID            string            `json:"parentID,omitempty"`
+	Surface             string            `json:"surface,omitempty"`
 	Subagent            bool              `json:"subagent,omitempty"`
 	Runtime             string            `json:"runtime"`
 	ExternalID          string            `json:"externalID,omitempty"`
@@ -294,6 +310,7 @@ func (r SessionRecord) ToSessionInfo() SessionInfo {
 	return SessionInfo{
 		ID:             r.ID,
 		ParentID:       r.ParentID,
+		Surface:        NormalizeSessionSurface(r.Surface, dir),
 		Managed:        true,
 		Slug:           r.ID,
 		ProjectID:      strings.TrimSpace(r.ProjectID),

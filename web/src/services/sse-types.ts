@@ -2,6 +2,7 @@
 // Verified against OpenCode v1.18.25 OpenAPI 3.x specification
 
 export type SessionRuntime = "opencode" | "antigravity" | "gemini-cli" | "claude-code" | "codebuddy" | "qoder";
+export type SessionSurface = "code" | "work";
 
 export interface SessionCapabilities {
   approval?: boolean;
@@ -19,6 +20,7 @@ export interface SessionInfo {
   slug?: string;
   projectID?: string;
   parentID?: string;
+  surface?: SessionSurface;
   directory?: string;
   runtime?: SessionRuntime;
   managed?: boolean;

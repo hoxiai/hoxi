@@ -198,10 +198,11 @@ export const hoxiAPI = {
 
   // Sessions: one Hoxi endpoint. The gateway routes each session to its owner
   // (Hoxi conversation store or a not-yet-adopted OpenCode session).
-  async listSessions(directory?: string, projectID?: string): Promise<SessionInfo[]> {
+  async listSessions(directory?: string, projectID?: string, surface?: "code" | "work"): Promise<SessionInfo[]> {
     const params = new URLSearchParams();
     if (directory) params.set("directory", directory);
     if (projectID) params.set("projectID", projectID);
+    if (surface) params.set("surface", surface);
     const qs = params.toString();
     const list = await requestJSON<SessionInfo[]>(`${SESSIONS}${qs ? `?${qs}` : ""}`);
     if (!Array.isArray(list)) return [];
@@ -254,6 +255,7 @@ export const hoxiAPI = {
     title?: string,
     directory?: string,
     options?: {
+      surface?: "code" | "work";
       runtime?: SessionRuntime;
       modelID?: string;
       providerID?: string;

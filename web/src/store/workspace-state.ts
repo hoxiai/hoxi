@@ -180,6 +180,7 @@ export interface SessionIndexEntry {
   directory?: string;
   projectID?: string;
   parentID?: string;
+  surface?: SessionInfo["surface"];
   managed?: boolean;
   runtime?: SessionInfo["runtime"];
   updated: number;
@@ -399,13 +400,16 @@ function initialProjectOrder(): string[] {
   return [];
 }
 
-const SIDEBAR_PROJECT_MODES: SidebarProjectMode[] = ["multi", "single", "recent", "attention", "running"];
+const PERSISTED_SIDEBAR_PROJECT_MODES: SidebarProjectMode[] = ["multi", "single", "recent"];
 
 function initialSidebarProjectMode(): SidebarProjectMode {
   try {
     const saved = localStorage.getItem(SIDEBAR_PROJECT_MODE_KEY);
-    if (SIDEBAR_PROJECT_MODES.includes(saved as SidebarProjectMode)) {
+    if (PERSISTED_SIDEBAR_PROJECT_MODES.includes(saved as SidebarProjectMode)) {
       return saved as SidebarProjectMode;
+    }
+    if (saved === "attention" || saved === "running") {
+      localStorage.setItem(SIDEBAR_PROJECT_MODE_KEY, "multi");
     }
   } catch {
     /* ignore */

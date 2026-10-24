@@ -6,6 +6,7 @@ import type { SessionInfo } from "../../services/sse-types";
 import {
   isSessionArchived,
   normalizeFolderPath,
+  resolveSessionSurface,
   sessionActivityTime,
   workspace,
 } from "../../store/workspace";
@@ -60,7 +61,7 @@ export function collectCrossProjectSessions(source: CrossProjectSource): CrossPr
   const out: CrossProjectSession[] = [];
   for (const proj of source.allProjects) {
     for (const session of sessionsForProject(source, proj, activeRoot)) {
-      if (!session?.id || seen.has(session.id) || session.parentID || isSessionArchived(session)) continue;
+      if (!session?.id || seen.has(session.id) || session.parentID || isSessionArchived(session) || resolveSessionSurface(session) !== "code") continue;
       seen.add(session.id);
       const item = { session, proj };
       if (!matchesQuery(item, query)) continue;

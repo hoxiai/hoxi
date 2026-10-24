@@ -2,10 +2,11 @@
 // Cross-project session views (Attention / Running) for the left sidebar.
 // Grouping lives in ./cross-project-nav so it stays testable without a DOM.
 import { createMemo, createSelector, For, Show } from "solid-js";
-import { Plus } from "lucide-solid";
+import { Layers, Plus } from "lucide-solid";
 import {
   normalizeFolderPath,
   openHandoffModal,
+  setSidebarProjectMode,
   workspace,
 } from "../../store/workspace";
 import type { SessionInfo } from "../../services/sse-types";
@@ -105,11 +106,30 @@ export function RunningNavView(props: CrossProjectNavProps) {
 
   return (
     <div class="sidebar-scroll hoxi-view-enter flex-1 min-h-0 overflow-y-auto pl-1 pr-2 py-1 space-y-2">
+      <div class="flex items-center justify-between gap-2 rounded-lg bg-[var(--bg-inset)]/70 px-2.5 py-1.5 text-[11.5px]">
+        <span class="font-medium text-[var(--text-secondary)] truncate">{t("leftNav.runningTasks")}</span>
+        <button
+          type="button"
+          onClick={() => setSidebarProjectMode("multi")}
+          class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium text-[var(--accent-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer shrink-0"
+        >
+          <Layers size={11.5} />
+          <span>{t("leftNav.multiProject")}</span>
+        </button>
+      </div>
       <Show
         when={groups().length > 0}
         fallback={
-          <div class="px-3 py-6 text-center text-[12px] text-[var(--text-faint)]">
-            {t("leftNav.noRunningTasks")}
+          <div class="px-3 py-6 text-center text-[12px] text-[var(--text-faint)] space-y-2">
+            <div>{t("leftNav.noRunningTasks")}</div>
+            <button
+              type="button"
+              onClick={() => setSidebarProjectMode("multi")}
+              class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-2.5 py-1 text-[11.5px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+            >
+              <Layers size={12} />
+              <span>{t("leftNav.multiProject")}</span>
+            </button>
           </div>
         }
       >
@@ -164,11 +184,30 @@ export function AttentionNavView(props: CrossProjectNavProps) {
 
   return (
     <div class="sidebar-scroll hoxi-view-enter flex-1 min-h-0 overflow-y-auto pl-1 pr-2 py-1 space-y-2">
+      <div class="flex items-center justify-between gap-2 rounded-lg bg-[var(--bg-inset)]/70 px-2.5 py-1.5 text-[11.5px]">
+        <span class="font-medium text-[var(--text-secondary)] truncate">{t("leftNav.attentionTasks")}</span>
+        <button
+          type="button"
+          onClick={() => setSidebarProjectMode("multi")}
+          class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium text-[var(--accent-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer shrink-0"
+        >
+          <Layers size={11.5} />
+          <span>{t("leftNav.multiProject")}</span>
+        </button>
+      </div>
       <Show
         when={sections().length > 0}
         fallback={
-          <div class="px-3 py-6 text-center text-[12px] text-[var(--text-faint)]">
-            {t("leftNav.noAttentionTasks")}
+          <div class="px-3 py-6 text-center text-[12px] text-[var(--text-faint)] space-y-2">
+            <div>{t("leftNav.noAttentionTasks")}</div>
+            <button
+              type="button"
+              onClick={() => setSidebarProjectMode("multi")}
+              class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-2.5 py-1 text-[11.5px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+            >
+              <Layers size={12} />
+              <span>{t("leftNav.multiProject")}</span>
+            </button>
           </div>
         }
       >
