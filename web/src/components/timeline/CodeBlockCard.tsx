@@ -1,6 +1,11 @@
 import { createEffect, createMemo, createSignal, Index, onCleanup, Show } from "solid-js";
 import { t } from "../../i18n";
-import { getCachedHighlight, highlightCode, type HighlightedCode } from "./syntax-highlight";
+import {
+  getCachedHighlight,
+  highlightCode,
+  type HighlightedCode,
+  stabilizeHighlightedLines,
+} from "./syntax-highlight";
 import { codeWrapEnabled, toggleCodeWrap, workspace } from "../../store/workspace";
 import { Icon } from "../icons";
 import { ActionIconButton } from "./tool-card-helpers";
@@ -32,6 +37,26 @@ export default function CodeBlockCard(props: { lang: string; code: string }) {
   let disposed = false;
   let latest = { code: "", lang: "", theme: "dark" as "dark" | "light" };
 
+  const applyHighlight = (
+    result: HighlightedCode | undefined,
+    lang: string,
+    theme: string
+  ) => {
+    if (!result) {
+      setHighlighted(undefined);
+      return;
+    }
+    setHighlighted((prev) => ({
+      code: result.code,
+      tokens:
+        prev && prev.lang === lang && prev.theme === theme
+          ? stabilizeHighlightedLines(prev.tokens, result.tokens)
+          : result.tokens,
+      lang,
+      theme,
+    }));
+  };
+
   createEffect(() => {
     const theme = workspace.theme === "dark" ? "dark" : "light";
     latest = {
@@ -46,7 +71,7 @@ export default function CodeBlockCard(props: { lang: string; code: string }) {
         clearTimeout(highlightTimer);
         highlightTimer = undefined;
       }
-      setHighlighted({ ...cached, lang: latest.lang, theme: latest.theme });
+      applyHighlight(cached, latest.lang, latest.theme);
       return;
     }
     // Throttle rather than debounce so continuous streaming still gets highlighted.
@@ -57,7 +82,7 @@ export default function CodeBlockCard(props: { lang: string; code: string }) {
       const request = revision;
       const result = await highlightCode(snapshot.code, snapshot.lang, snapshot.theme);
       if (!disposed && request === revision) {
-        setHighlighted(result ? { ...result, lang: snapshot.lang, theme: snapshot.theme } : undefined);
+        applyHighlight(result, snapshot.lang, snapshot.theme);
       }
     }, 80);
   });
@@ -142,7 +167,7 @@ export default function CodeBlockCard(props: { lang: string; code: string }) {
         }`}
         style={{ "font-size": "var(--app-code-text-size)" }}
       >
-        <code><Show when={visibleHighlight()} fallback={props.code}>{(result) => <>
+        <code><Show when={visibleHighlight()} fallback={props.code || "\u00A0"}>{(result) => <>
           <Index each={result().tokens}>{(line, index) => <>
             {index > 0 ? "\n" : ""}
             <Index each={line()}>{(token) => <span style={{

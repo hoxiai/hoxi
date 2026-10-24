@@ -574,6 +574,17 @@ describe("task progress todo staleness", () => {
       { type: "code", lang: "bash", code: "npm run build" },
     ]);
 
+    // 3b. Horizontal rule & GFM table streaming: no intermediate list/paragraph flash
+    assertDeepEqual(parseMarkdownBlocks("Intro\n\n-"), [{ type: "paragraph", text: "Intro" }]);
+    assertDeepEqual(parseMarkdownBlocks("Intro\n\n--"), [{ type: "paragraph", text: "Intro" }]);
+    assertDeepEqual(parseMarkdownBlocks("Intro\n\n---"), [
+      { type: "paragraph", text: "Intro" },
+      { type: "hr" },
+    ]);
+    assertDeepEqual(parseMarkdownBlocks("| Col A | Col B |\n|---"), [
+      { type: "table", headers: ["Col A", "Col B"], aligns: ["left", "left"], rows: [] },
+    ]);
+
     // 4. Inline bold streaming: no raw `*` / `**` flash and stable bold span identity
     assertDeepEqual(parseInline("Prefix *"), [{ type: "text", text: "Prefix " }]);
     assertDeepEqual(parseInline("Prefix **"), [{ type: "text", text: "Prefix " }]);

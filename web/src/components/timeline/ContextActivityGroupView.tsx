@@ -343,6 +343,8 @@ export default function ContextActivityGroupView(props: {
       action: tI18n("timeline.executing"),
       detail: "",
     };
+  }, undefined, {
+    equals: (a, b) => a.action === b.action && a.detail === b.detail,
   });
 
   const thoughtOnlyPreview = createMemo(() => {

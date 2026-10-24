@@ -68,15 +68,30 @@ function normalizeTableRow(cells: string[], colCount: number): string[] {
   return padded;
 }
 
+function isPartialTableSeparatorLine(line: string): boolean {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith("|")) return false;
+  return /^\|[\s:|-]*$/.test(trimmed);
+}
+
 function isTableStart(lines: string[], idx: number): boolean {
   if (idx + 1 >= lines.length) return false;
-  return lines[idx].includes("|") && isTableSeparatorLine(lines[idx + 1]);
+  if (!lines[idx].includes("|")) return false;
+  if (isTableSeparatorLine(lines[idx + 1])) return true;
+  if (idx + 1 === lines.length - 1 && /^\s*\|.+\|\s*$/.test(lines[idx])) {
+    return isPartialTableSeparatorLine(lines[idx + 1]);
+  }
+  return false;
 }
 
 function isHorizontalRule(line: string): boolean {
   const trimmed = line.trim();
   if (trimmed.length < 3) return false;
   return /^(?:-\s*){3,}$|^(?:\*\s*){3,}$|^(?:_\s*){3,}$/.test(trimmed);
+}
+
+function isPendingHorizontalRuleLine(line: string): boolean {
+  return /^\s*(?:-{1,2}|\*{1,2}|_{1,2})\s*$/.test(line) && !/^\s*[-*+]\s+$/.test(line);
 }
 
 function matchCodeFenceOpen(
@@ -158,7 +173,8 @@ function matchHeadingLine(
 function matchListMarker(
   line: string,
   isTailLine = false,
-  inOrderedList = false
+  inOrderedList = false,
+  inUnorderedList = false
 ): { indentSpaces: number; kind: "bullet" | "ordered"; orderNumber?: number; text: string } | null {
   const ul = line.match(/^(\s*)[-*+]\s+(.*)$/);
   if (ul) {
@@ -178,7 +194,9 @@ function matchListMarker(
     };
   }
   if (isTailLine && !isHorizontalRule(line)) {
-    const pendingUl = line.match(/^(\s*)[-*+]\s*$/);
+    const pendingUl = inUnorderedList
+      ? line.match(/^(\s*)[-*+]\s*$/)
+      : line.match(/^(\s*)[-*+]\s+$/);
     if (pendingUl) {
       return {
         indentSpaces: pendingUl[1].replace(/\t/g, "  ").length,
@@ -210,8 +228,8 @@ export function parseMarkdownBlocks(src: string): BlockToken[] {
     const line = lines[i];
     const isTailLine = i === lines.length - 1;
 
-    // Hold trailing 1-2 backticks/tildes on a new line so it doesn't flash as <p> before ```
-    if (isTailLine && isPendingCodeFenceLine(line)) {
+    // Hold trailing 1-2 backticks/tildes or 1-2 rule chars on a new line so it doesn't flash as <p>
+    if (isTailLine && (isPendingCodeFenceLine(line) || isPendingHorizontalRuleLine(line))) {
       i++;
       continue;
     }
@@ -334,7 +352,7 @@ export function parseMarkdownBlocks(src: string): BlockToken[] {
           }
           if (
             i + 1 < lines.length &&
-            matchListMarker(lines[i + 1], i + 1 === lines.length - 1, isOrderedRoot)
+            matchListMarker(lines[i + 1], i + 1 === lines.length - 1, isOrderedRoot, !isOrderedRoot)
           ) {
             i++;
             continue;
@@ -352,7 +370,7 @@ export function parseMarkdownBlocks(src: string): BlockToken[] {
           break;
         }
 
-        const marker = matchListMarker(curLine, curIsTail, isOrderedRoot);
+        const marker = matchListMarker(curLine, curIsTail, isOrderedRoot, !isOrderedRoot);
         if (marker) {
           const relIndent = Math.min(
             3,
@@ -396,7 +414,7 @@ export function parseMarkdownBlocks(src: string): BlockToken[] {
       i < lines.length &&
       lines[i].trim() !== "" &&
       !matchCodeFenceOpen(lines[i]) &&
-      !(i === lines.length - 1 && isPendingCodeFenceLine(lines[i])) &&
+      !(i === lines.length - 1 && (isPendingCodeFenceLine(lines[i]) || isPendingHorizontalRuleLine(lines[i]))) &&
       !matchHeadingLine(lines[i], i === lines.length - 1) &&
       !isHorizontalRule(lines[i]) &&
       !isTableStart(lines, i) &&
