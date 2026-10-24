@@ -94,9 +94,13 @@ export function resolveActiveCycleStepLabel(
   }
   const lastTurn = cycleTurns[cycleTurns.length - 1];
   if (lastTurn && !lastTurn.info.time?.completed) {
-    const hasOpenReasoning = expandInlineThinkingParts(lastTurn.parts).some(
-      (p) => p.type === "reasoning" && !p.time?.end
-    );
+    const hasOpenReasoning = lastTurn.parts.some((p) => {
+      if (p.type === "reasoning") return !p.time?.end;
+      if (p.type === "text" && p.text && /^\s*</.test(p.text)) {
+        return expandInlineThinkingParts([p]).some((ep) => ep.type === "reasoning" && !ep.time?.end);
+      }
+      return false;
+    });
     if (hasOpenReasoning) return t("timeline.thinking");
   }
   return undefined;

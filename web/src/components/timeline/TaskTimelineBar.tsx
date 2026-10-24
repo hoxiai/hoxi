@@ -146,9 +146,12 @@ export function buildTurnSegments(turns: MessageTurn[]): ActivityBarSegment[] {
     const preview = userTurn ? summarizeUserTurn(userTurn) : "";
     const primaryKind = KIND_PRIORITY.find((kind) => firstPartByKind.has(kind)) ?? "text";
     const primaryPart = firstPartByKind.get(primaryKind);
+    const isGroupCompleted =
+      !running &&
+      turnsInGroup.every((turn) => turn.info.role === "user" || Boolean(turn.info.time.completed));
     const primaryLabel =
       !preview && primaryPart
-        ? classifyPart(primaryPart, !running)?.label
+        ? classifyPart(primaryPart, isGroupCompleted)?.label
         : undefined;
     segments.push({
       id: anchorTurn.info.id,
@@ -175,6 +178,53 @@ export function buildTurnSegments(turns: MessageTurn[]): ActivityBarSegment[] {
   }
   flush();
   return segments;
+}
+
+function isSameStringList(a: string[] | undefined, b: string[] | undefined): boolean {
+  if (a === b) return true;
+  if (!a || !b || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
+export function isSameActivitySegment(
+  a: ActivityBarSegment | undefined,
+  b: ActivityBarSegment
+): boolean {
+  if (a === b) return true;
+  if (!a) return false;
+  return (
+    a.id === b.id &&
+    a.messageID === b.messageID &&
+    a.kind === b.kind &&
+    a.color === b.color &&
+    a.label === b.label &&
+    a.heightPct === b.heightPct &&
+    a.duration === b.duration &&
+    a.stepCount === b.stepCount &&
+    a.running === b.running &&
+    a.time?.start === b.time?.start &&
+    a.time?.end === b.time?.end &&
+    isSameStringList(a.messageIDs, b.messageIDs)
+  );
+}
+
+export function stabilizeTurnSegments(
+  prev: ActivityBarSegment[] | undefined,
+  next: ActivityBarSegment[]
+): ActivityBarSegment[] {
+  if (!prev || prev.length === 0) return next;
+  let allSame = prev.length === next.length;
+  for (let i = 0; i < next.length; i++) {
+    if (isSameActivitySegment(prev[i], next[i])) {
+      next[i] = prev[i];
+    } else {
+      allSame = false;
+    }
+  }
+  return allSame ? prev : next;
 }
 
 function classifyPartKind(
@@ -339,7 +389,10 @@ export default function TaskTimelineBar(props: {
     }
   };
   const [now, setNow] = createSignal(Date.now());
-  const segments = createMemo<ActivityBarSegment[]>(() => buildTurnSegments(props.turns));
+  const segments = createMemo<ActivityBarSegment[]>(
+    (prev) => stabilizeTurnSegments(prev, buildTurnSegments(props.turns)),
+    []
+  );
   const hasRunningSegment = createMemo(() => segments().some((seg) => seg.running));
   createEffect(() => {
     if (!hasRunningSegment()) return;

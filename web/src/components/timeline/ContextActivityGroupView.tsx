@@ -27,7 +27,7 @@ import {
 import { resolveSubagentCurrentStepLabel } from "./SubagentInlineTimeline";
 import { liveReasoningTicker, reasoningHeading, reasoningSummary } from "./ThoughtBox";
 import HoxiActivityLogo from "./HoxiActivityLogo";
-import { formatElapsedSeconds } from "./duration-label";
+import { formatElapsedSeconds, startAdaptiveElapsedTimer } from "./duration-label";
 
 import {
   extractCommand,
@@ -418,10 +418,12 @@ export default function ContextActivityGroupView(props: {
 
   const [now, setNow] = createSignal(Date.now());
   createEffect(() => {
-    if (!isRunning()) return;
-    setNow(Date.now());
-    const timer = setInterval(() => setNow(Date.now()), 100);
-    onCleanup(() => clearInterval(timer));
+    if (!isRunning() || stats().toolCount === 0) return;
+    const stop = startAdaptiveElapsedTimer(
+      () => timeRange().start,
+      (currentNow) => setNow(currentNow)
+    );
+    onCleanup(stop);
   });
 
   const durationLabel = createMemo(() => {

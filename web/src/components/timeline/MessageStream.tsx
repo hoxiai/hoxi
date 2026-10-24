@@ -145,31 +145,38 @@ export default function MessageStream(props: { hidden?: boolean }) {
     return true;
   });
 
+  const activeCycle = createMemo(() => resolveActiveExecutionCycle(turns()));
+
+  const cycleStartedAt = createMemo(() => {
+    const cycle = activeCycle();
+    if (!cycle) return undefined;
+    return cycle.userTurn.info.time?.created || cycle.cycleTurns[0]?.info.time?.created;
+  });
+
+  const EMPTY_CYCLE_META = {
+    count: 0,
+    steps: [] as ToolPart[],
+    activeStepLabel: undefined as string | undefined,
+  };
+
   const executionCycleMeta = createMemo(() => {
-    const cycle = resolveActiveExecutionCycle(turns());
-    if (!cycle) {
-      return {
-        count: 0,
-        steps: [] as ToolPart[],
-        startedAt: undefined as number | undefined,
-        activeStepLabel: undefined as string | undefined,
-      };
-    }
-    const { userTurn, cycleTurns } = cycle;
-    const startedAt =
-      userTurn.info.time?.created || cycleTurns[0]?.info.time?.created;
+    if (!showThinkingPlaceholder()) return EMPTY_CYCLE_META;
+    const cycle = activeCycle();
+    if (!cycle) return EMPTY_CYCLE_META;
+    const { cycleTurns } = cycle;
     const steps: ToolPart[] = [];
+    let completedCount = 0;
     for (const turn of cycleTurns) {
       for (const part of turn.parts) {
         if (part.type === "tool" && !isTodoTool(part)) {
           steps.push(part);
+          if (part.state.status === "completed") completedCount++;
         }
       }
     }
     return {
-      count: steps.filter((part) => part.state.status === "completed").length,
+      count: completedCount,
       steps,
-      startedAt,
       activeStepLabel: resolveActiveCycleStepLabel(cycleTurns),
     };
   });
@@ -470,7 +477,7 @@ export default function MessageStream(props: { hidden?: boolean }) {
                         activeMatchTurnID={activeMatchTurnID()}
                         navigationRevision={navigationRevision()}
                         isHighlighted={activeMatchTurnID() === turn.info.id}
-                        cycleStartedAt={executionCycleMeta().startedAt}
+                        cycleStartedAt={cycleStartedAt()}
                       />
                     }
                   >
@@ -684,7 +691,7 @@ export default function MessageStream(props: { hidden?: boolean }) {
                 awaitingApproval={pendingForSession().length > 0}
                 completedSteps={executionCycleMeta().count}
                 steps={executionCycleMeta().steps}
-                startedAt={executionCycleMeta().startedAt}
+                startedAt={cycleStartedAt()}
                 activeStepLabel={executionCycleMeta().activeStepLabel}
                 lastTurnRole={turns()[turns().length - 1]?.info.role}
               />

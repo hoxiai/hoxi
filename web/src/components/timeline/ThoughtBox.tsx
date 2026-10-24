@@ -167,14 +167,14 @@ export default function ThoughtBox(props: { part: ReasoningPart; revealKey?: str
   const streaming = () =>
     props.part.time?.end == null &&
     (!props.part.sessionID || isSessionBusy(props.part.sessionID));
-  const hasContent = () => {
+  const hasContent = createMemo(() => {
     const raw = props.part.text ?? "";
     if (!raw) return false;
     return (
       normalizeReasoningText(raw.slice(0, 512)).length > 0 ||
       normalizeReasoningText(raw).length > 0
     );
-  };
+  });
 
   const resolveDefaultOpen = () => {
     const id = props.part.id;
@@ -292,12 +292,12 @@ export default function ThoughtBox(props: { part: ReasoningPart; revealKey?: str
     return liveReasoningTicker(props.part.text ?? "", streaming());
   });
 
-  const bodyContent = createMemo(() => {
-    if (!open() && !everOpened()) return "";
+  const bodyContent = createMemo<string>((prev) => {
+    if (!open()) return prev ?? "";
     const full = normalizeReasoningText(props.part.text ?? "");
     const parsed = reasoningHeading(full, streaming());
     return parsed.body || full;
-  });
+  }, "");
 
   const durationSec = () => {
     const t = props.part.time;

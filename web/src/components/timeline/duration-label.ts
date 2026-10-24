@@ -10,3 +10,30 @@ export function formatElapsedSeconds(sec: number): string {
   const hours = Math.floor(minutes / 60);
   return `${hours}h ${minutes % 60}m`;
 }
+
+/**
+ * Starts a timer that ticks every 100ms while elapsed time is under 60s
+ * (where tenths of a second are shown) and automatically drops to 1000ms
+ * once elapsed time reaches 60s (where only whole seconds/minutes are shown).
+ */
+export function startAdaptiveElapsedTimer(
+  getStartMs: () => number | undefined,
+  onTick: (nowMs: number) => void
+): () => void {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let cancelled = false;
+  const step = () => {
+    if (cancelled) return;
+    const now = Date.now();
+    onTick(now);
+    const start = getStartMs();
+    const elapsedMs = start && start > 0 ? now - start : 0;
+    const delay = elapsedMs >= 60_000 ? 1000 : 100;
+    timer = setTimeout(step, delay);
+  };
+  step();
+  return () => {
+    cancelled = true;
+    if (timer !== undefined) clearTimeout(timer);
+  };
+}

@@ -34,21 +34,22 @@ export function createReadingPositionTracker(options: ReadingPositionOptions) {
     }
 
     const point = scroller.getBoundingClientRect().top + scroller.clientHeight * 0.35;
-    let selected = nodes.find((node) => {
+    let selected: HTMLElement | undefined;
+    let nearestNode = nodes[0];
+    let nearestDist = Infinity;
+    for (const node of nodes) {
       const rect = node.getBoundingClientRect();
-      return rect.top <= point && point <= rect.bottom;
-    });
-    if (!selected) {
-      selected = nodes.reduce((nearest, node) => {
-        const rect = node.getBoundingClientRect();
-        const nearestRect = nearest.getBoundingClientRect();
-        return Math.abs(rect.top + rect.height / 2 - point) <
-            Math.abs(nearestRect.top + nearestRect.height / 2 - point)
-          ? node
-          : nearest;
-      });
+      if (rect.top <= point && point <= rect.bottom) {
+        selected = node;
+        break;
+      }
+      const dist = Math.abs(rect.top + rect.height / 2 - point);
+      if (dist < nearestDist) {
+        nearestDist = dist;
+        nearestNode = node;
+      }
     }
-    setReadingTurnID(selected.dataset.turnId || null);
+    setReadingTurnID((selected ?? nearestNode).dataset.turnId || null);
   };
 
   const schedule = () => {
@@ -72,10 +73,14 @@ export function createReadingPositionTracker(options: ReadingPositionOptions) {
     };
   };
 
+  let lastSessionID: string | null | undefined;
   createEffect(() => {
-    options.sessionID();
+    const sid = options.sessionID();
     options.assistantTurnIDs();
-    setReadingTurnID(null);
+    if (sid !== lastSessionID) {
+      lastSessionID = sid;
+      setReadingTurnID(null);
+    }
     schedule();
   });
 

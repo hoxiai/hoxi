@@ -35,7 +35,7 @@ import {
   resolveToolFileDiagnostics, resolveToolFileDiff, resolveToolFileDiffs,
   resolveToolTodoItems,
 } from "./tool-card-state";
-import { formatElapsedSeconds } from "./duration-label";
+import { formatElapsedSeconds, startAdaptiveElapsedTimer } from "./duration-label";
 
 // Silence shorter than this is normal model latency, not worth flagging.
 const RUNNER_IDLE_HINT_SECONDS = 15;
@@ -169,14 +169,16 @@ export default function ToolCard(props: { part: ToolPart; defaultExpanded?: bool
     });
   });
 
-  // 0.1s live duration ticker while actively running
+  // Live duration ticker while actively running (100ms under 60s, 1s thereafter)
   createEffect(() => {
     const s = props.part.state;
     if (s.status === "running" && isRunning()) {
       const start = s.time.start;
-      setElapsed(Math.max(0, (Date.now() - start) / 1000));
-      const timer = setInterval(() => setElapsed(Math.max(0, (Date.now() - start) / 1000)), 100);
-      onCleanup(() => clearInterval(timer));
+      const stop = startAdaptiveElapsedTimer(
+        () => start,
+        (nowMs) => setElapsed(Math.max(0, (nowMs - start) / 1000))
+      );
+      onCleanup(stop);
     } else if (s.status === "completed" || s.status === "error") {
       setElapsed(Math.max(0, (s.time.end - s.time.start) / 1000));
     } else {

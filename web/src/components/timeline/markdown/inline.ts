@@ -16,11 +16,32 @@ const LINE_SUFFIX_SOURCE = "(?::\\d+(?:[:\\-–—]\\d+)?|#L\\d+(?:[-–—]L?\\
 
 const BARE_FILE_PATH_SOURCE = `(?:~\\/|\\.\\.?\\/|\\/)?(?:[\\w@.+\\-\\u4e00-\\u9fa5]+\\/)+${FILE_LEAF_SOURCE}${LINE_SUFFIX_SOURCE}`;
 
-const IMAGE_SOURCE =
-  "!\\[[^\\]\\n]*\\]\\((?:[^()\\s]+|\\([^()\\s]*\\))+(?:\\s+(?:\"[^\"\\n]*\"|'[^'\\n]*'))?\\)";
+const PAREN_URL_BODY_SOURCE = "(?:[^()\\s]|\\([^()\\s]*\\))+";
+
+const IMAGE_SOURCE = `!\\[[^\\]\\n]*\\]\\(${PAREN_URL_BODY_SOURCE}(?:\\s+(?:"[^"\\n]*"|'[^'\\n]*'))?\\)`;
+
+const INLINE_CODE_SPAN_SOURCE = "`[^`\\n]+`";
+const UNCLOSED_CODE_SPAN_SOURCE = "`[^`\\n]*$";
+const LONE_BACKTICK_SOURCE = "`(?![^`\\n]+`)";
+
+const CLOSED_BOLD_ASTERISK_SOURCE = `\\*\\*(?:${INLINE_CODE_SPAN_SOURCE}|[^*\`]|${LONE_BACKTICK_SOURCE}|\\*(?!\\*))+\\*\\*`;
+const UNCLOSED_BOLD_ASTERISK_SOURCE = `\\*\\*(?:${INLINE_CODE_SPAN_SOURCE}|[^*\`\\n]|${LONE_BACKTICK_SOURCE}|\\*(?!\\*))*$`;
+const CLOSED_BOLD_UNDERSCORE_SOURCE = `__(?:${INLINE_CODE_SPAN_SOURCE}|[^_\`]|${LONE_BACKTICK_SOURCE}|_(?!_))+__`;
+
+const LINK_LABEL_SOURCE = `(?:${INLINE_CODE_SPAN_SOURCE}|[^\\]\`]|${LONE_BACKTICK_SOURCE})+`;
+const UNCLOSED_LINK_LABEL_SOURCE = `(?:${INLINE_CODE_SPAN_SOURCE}|[^\\]\`\\n]|${LONE_BACKTICK_SOURCE})+`;
+const CLOSED_LINK_SOURCE = `\\[${LINK_LABEL_SOURCE}\\]\\(${PAREN_URL_BODY_SOURCE}\\)`;
+const UNCLOSED_LINK_SOURCE = `\\[${UNCLOSED_LINK_LABEL_SOURCE}\\]\\([^()\\s]*$`;
+
+const CLOSED_LINK_MATCH_REGEX = new RegExp(
+  `^\\[(${LINK_LABEL_SOURCE})\\]\\((${PAREN_URL_BODY_SOURCE})\\)$`
+);
+const UNCLOSED_LINK_MATCH_REGEX = new RegExp(
+  `^\\[(${UNCLOSED_LINK_LABEL_SOURCE})\\]\\(([^()\\s]*)$`
+);
 
 const INLINE_TOKEN_REGEX = new RegExp(
-  `(${IMAGE_SOURCE}|\`[^\`\\n]+\`|\`[^\`\\n]*$|<br\\s*\\/?>|\\*\\*(?:\`[^\`]+\`|[^*]+|\\*(?!\\*))+\\*\\*|\\*\\*(?:\`[^\`\\n]+\`|\`[^\`\\n]*$|[^*\\n]+|\\*(?!\\*))*$|__(?:\`[^\`]+\`|[^_]+|_(?!_))+__|~~[^~\\n]+~~|\\[(?:\`[^\`]+\`|[^\\]]+)\\]\\((?:[^()\\s]+|\\([^()\\s]*\\))+\\)|\\[(?:\`[^\`\\n]+\`|[^\\]\\n]+)\\]\\([^()\\s]*$|\\*[^*\\n]+\\*|https?:\\/\\/[^\\s<>\\])"]+|${BARE_FILE_PATH_SOURCE})`,
+  `(${IMAGE_SOURCE}|${INLINE_CODE_SPAN_SOURCE}|${UNCLOSED_CODE_SPAN_SOURCE}|<br\\s*\\/?>|${CLOSED_BOLD_ASTERISK_SOURCE}|${UNCLOSED_BOLD_ASTERISK_SOURCE}|${CLOSED_BOLD_UNDERSCORE_SOURCE}|~~[^~\\n]+~~|${CLOSED_LINK_SOURCE}|${UNCLOSED_LINK_SOURCE}|\\*[^*\\n]+\\*|https?:\\/\\/[^\\s<>\\])"]+|${BARE_FILE_PATH_SOURCE})`,
   "gi"
 );
 
@@ -149,13 +170,11 @@ export function parseInline(text: string): InlineSpan[] {
         lastIdx = regex.lastIndex;
         continue;
       }
-      const closedMatch = token.match(
-        /^\[((?:`[^`]+`|[^\]]+))\]\(((?:[^()\s]+|\([^()\s]*\))+)\)$/
-      );
+      const closedMatch = token.match(CLOSED_LINK_MATCH_REGEX);
       if (closedMatch) {
         spans.push({ type: "link", text: closedMatch[1], href: closedMatch[2] });
       } else {
-        const unclosedMatch = token.match(/^\[((?:`[^`\n]+`|[^\]\n]+))\]\(([^()\s]*)$/);
+        const unclosedMatch = token.match(UNCLOSED_LINK_MATCH_REGEX);
         if (unclosedMatch) {
           spans.push({
             type: "link",

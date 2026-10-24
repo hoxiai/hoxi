@@ -61,3 +61,64 @@ describe("blockquote nested blocks", () => {
     assertTrue(parseNestedBlockquote("   ") === null);
   });
 });
+
+describe("markdown inline streaming & backtracking guard", () => {
+  it("parses unclosed bold, links, and images in linear time without backtracking stalls", () => {
+    const unclosedAsciiBold = `**${"a".repeat(120)}`;
+    const cjkBody = "\u8fd9\u662f\u4e00\u53e5\u5c1a\u672a\u95ed\u5408\u7684\u4e2d\u6587\u52a0\u7c97\u6587\u672c".repeat(3);
+    const unclosedChineseBold = `**${cjkBody}`;
+    const unclosedMultiLineBold = `**${"b".repeat(120)}\nsecond line after unclosed bold`;
+    const unclosedCodeInBold = `**${"`code` ".repeat(30)}tail without close\nnext line`;
+    const unclosedUnderscore = `__${"u".repeat(120)}`;
+    const unclosedLink = `[Docs](https://hoxi.ai/${"p".repeat(120)}`;
+    const unclosedImage = `![diagram](https://hoxi.ai/${"i".repeat(120)}`;
+
+    const start = performance.now();
+    assertDeepEqual(parseInline(unclosedAsciiBold), [
+      { type: "bold", text: "a".repeat(120) },
+    ]);
+    assertDeepEqual(parseInline(unclosedChineseBold), [
+      {
+        type: "bold",
+        text: cjkBody,
+      },
+    ]);
+    assertDeepEqual(parseInline(unclosedMultiLineBold), [
+      { type: "text", text: unclosedMultiLineBold },
+    ]);
+    assertEqual(parseInline(unclosedCodeInBold).length > 0, true);
+    assertDeepEqual(parseInline(unclosedUnderscore), [
+      { type: "text", text: unclosedUnderscore },
+    ]);
+    assertDeepEqual(parseInline(unclosedLink), [
+      { type: "link", text: "Docs", href: `https://hoxi.ai/${"p".repeat(120)}` },
+    ]);
+    assertDeepEqual(parseInline(unclosedImage), [
+      { type: "text", text: unclosedImage },
+    ]);
+    const elapsedMs = performance.now() - start;
+    assertTrue(
+      elapsedMs < 50,
+      `Expected unclosed streaming inline markdown to parse in <50ms, took ${elapsedMs.toFixed(2)}ms`
+    );
+  });
+
+  it("preserves code spans, single asterisks, and balanced parens inside closed tokens", () => {
+    assertDeepEqual(parseInline("**bold with `a**b` and * star**"), [
+      { type: "bold", text: "bold with `a**b` and * star" },
+    ]);
+    assertDeepEqual(parseInline("__under with `x__y` and _ single__"), [
+      { type: "bold", text: "under with `x__y` and _ single" },
+    ]);
+    assertDeepEqual(
+      parseInline("[`api]v2` docs](https://en.wikipedia.org/wiki/Markdown_(markup_language))"),
+      [
+        {
+          type: "link",
+          text: "`api]v2` docs",
+          href: "https://en.wikipedia.org/wiki/Markdown_(markup_language)",
+        },
+      ]
+    );
+  });
+});

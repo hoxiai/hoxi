@@ -17,6 +17,7 @@ import {
   computeVisibleSegments,
   MAX_RAIL_SEGMENTS,
   resolveSegmentDuration,
+  stabilizeTurnSegments,
 } from "../components/timeline/TaskTimelineBar";
 import type { MessageTurn } from "../store/workspace";
 import {
@@ -390,5 +391,27 @@ describe("TaskTimelineBar per-turn trajectory grouping", () => {
     assertEqual(segments[0].time?.end, undefined);
     assertEqual(segments[0].duration, undefined);
     assertEqual(resolveSegmentDuration(segments[0], 2000), 1000);
+
+    // Streaming text token deltas must preserve exact segment & array references via stabilizeTurnSegments
+    const streamingTurns: MessageTurn[] = [
+      ...turns,
+      {
+        info: { id: "u2", sessionID: "test-ses", role: "user", time: { created: 3000 } },
+        parts: [{ id: "p3", sessionID: "test-ses", messageID: "u2", type: "text", text: "Explain the fix" }],
+      },
+      {
+        info: { id: "a2", sessionID: "test-ses", role: "assistant", time: { created: 3100 } },
+        parts: [{ id: "p4", sessionID: "test-ses", messageID: "a2", type: "text", text: "First chunk" }],
+      },
+    ];
+    const segs1 = stabilizeTurnSegments(undefined, buildTurnSegments(streamingTurns));
+    streamingTurns[3] = {
+      ...streamingTurns[3],
+      parts: [{ id: "p4", sessionID: "test-ses", messageID: "a2", type: "text", text: "First chunk and more tokens" }],
+    };
+    const segs2 = stabilizeTurnSegments(segs1, buildTurnSegments(streamingTurns));
+    assertTrue(segs2 === segs1, "stabilizeTurnSegments reuses outer array when segment metadata is unchanged");
+    assertTrue(segs2[0] === segs1[0]);
+    assertTrue(segs2[1] === segs1[1]);
   });
 });

@@ -29,6 +29,7 @@ function isSameListItems(a: ListItemEntry[], b: ListItemEntry[]): boolean {
 }
 
 export function isSameBlockToken(a: BlockToken | undefined, b: BlockToken): boolean {
+  if (a === b) return true;
   if (!a || a.type !== b.type) return false;
   switch (b.type) {
     case "hr":
@@ -109,63 +110,83 @@ export function createIncrementalMarkdownParser(): (src: string) => BlockToken[]
   let prevBlocks: BlockToken[] = [];
   let checkpointOffset = 0;
   let checkpointBlocks: BlockToken[] = [];
+  let lastAttemptLength = 0;
 
-  const findSecondLastBlockOffset = (norm: string): { offset: number; prefixBlocks: BlockToken[] } => {
-    // Locate a safe double-newline boundary outside any code fence so we can checkpoint closed blocks.
-    const allBlocks = parseMarkdownBlocks(norm);
-    if (allBlocks.length < 4 || norm.length < 1024) {
-      return { offset: 0, prefixBlocks: [] };
+  const findTailCheckpoint = (
+    tail: string,
+    tailBlocks: BlockToken[]
+  ): { relOffset: number; prefixCount: number } => {
+    // Locate a safe double-newline boundary outside any code fence within the active tail.
+    if (tailBlocks.length < 2 || tail.length < 1024) {
+      return { relOffset: 0, prefixCount: 0 };
     }
-    // Verify by finding the last blank-line boundary before the final ~512 chars where prefix parses cleanly.
-    const searchFrom = Math.max(0, norm.length - 600);
-    const blankIdx = norm.lastIndexOf("\n\n", searchFrom);
-    if (blankIdx <= 0) return { offset: 0, prefixBlocks: [] };
-    const candidateOffset = blankIdx + 2;
-    const prefix = parseMarkdownBlocks(norm.slice(0, blankIdx));
-    const suffix = parseMarkdownBlocks(norm.slice(candidateOffset));
-    if (prefix.length + suffix.length !== allBlocks.length) {
-      return { offset: 0, prefixBlocks: [] };
+    const searchFrom = Math.max(0, tail.length - 600);
+    const blankIdx = tail.lastIndexOf("\n\n", searchFrom);
+    if (blankIdx <= 0) return { relOffset: 0, prefixCount: 0 };
+    const candidateRelOffset = blankIdx + 2;
+    const prefix = parseMarkdownBlocks(tail.slice(0, blankIdx));
+    if (prefix.length === 0 || prefix.length >= tailBlocks.length) {
+      return { relOffset: 0, prefixCount: 0 };
     }
     for (let i = 0; i < prefix.length; i++) {
-      if (!isSameBlockToken(prefix[i], allBlocks[i])) {
-        return { offset: 0, prefixBlocks: [] };
+      if (!isSameBlockToken(prefix[i], tailBlocks[i])) {
+        return { relOffset: 0, prefixCount: 0 };
       }
+    }
+    const suffix = parseMarkdownBlocks(tail.slice(candidateRelOffset));
+    if (prefix.length + suffix.length !== tailBlocks.length) {
+      return { relOffset: 0, prefixCount: 0 };
     }
     for (let j = 0; j < suffix.length; j++) {
-      if (!isSameBlockToken(suffix[j], allBlocks[prefix.length + j])) {
-        return { offset: 0, prefixBlocks: [] };
+      if (!isSameBlockToken(suffix[j], tailBlocks[prefix.length + j])) {
+        return { relOffset: 0, prefixCount: 0 };
       }
     }
-    return { offset: candidateOffset, prefixBlocks: allBlocks.slice(0, prefix.length) };
+    return { relOffset: candidateRelOffset, prefixCount: prefix.length };
   };
 
   return (rawSrc: string): BlockToken[] => {
     const norm = (rawSrc || "").replace(/\r\n/g, "\n");
     if (norm === prevNorm) return prevBlocks;
 
+    let tail: string;
+    let tailBlocks: BlockToken[];
     let next: BlockToken[];
     if (checkpointOffset > 0 && norm.startsWith(prevNorm) && norm.length >= checkpointOffset) {
-      const tailBlocks = parseMarkdownBlocks(norm.slice(checkpointOffset));
+      tail = norm.slice(checkpointOffset);
+      tailBlocks = parseMarkdownBlocks(tail);
       next = [...checkpointBlocks, ...tailBlocks];
     } else {
       checkpointOffset = 0;
       checkpointBlocks = [];
-      next = parseMarkdownBlocks(norm);
+      lastAttemptLength = 0;
+      tail = norm;
+      tailBlocks = parseMarkdownBlocks(norm);
+      next = [...tailBlocks];
     }
 
-    for (let i = 0; i < next.length; i++) {
+    const stabilizeStart = checkpointBlocks.length;
+    for (let i = stabilizeStart; i < next.length; i++) {
       next[i] = stabilizeBlockToken(prevBlocks[i], next[i]);
     }
 
-    if (norm.startsWith(prevNorm) && norm.length - checkpointOffset > 1600 && next.length >= 4) {
-      const cp = findSecondLastBlockOffset(norm);
-      if (cp.offset > checkpointOffset) {
-        checkpointOffset = cp.offset;
-        checkpointBlocks = next.slice(0, cp.prefixBlocks.length);
+    if (
+      norm.startsWith(prevNorm) &&
+      tail.length > 1600 &&
+      tailBlocks.length >= 2 &&
+      next.length >= 4 &&
+      norm.length - lastAttemptLength >= 512
+    ) {
+      lastAttemptLength = norm.length;
+      const cp = findTailCheckpoint(tail, tailBlocks);
+      if (cp.relOffset > 0 && cp.prefixCount > 0) {
+        checkpointOffset += cp.relOffset;
+        checkpointBlocks = next.slice(0, checkpointBlocks.length + cp.prefixCount);
       }
     } else if (!norm.startsWith(prevNorm)) {
       checkpointOffset = 0;
       checkpointBlocks = [];
+      lastAttemptLength = 0;
     }
 
     prevNorm = norm;

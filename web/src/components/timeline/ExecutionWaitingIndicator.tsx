@@ -3,7 +3,7 @@ import { t } from "../../i18n";
 import { TextShimmer } from "../icons";
 import type { ToolPart } from "../../services/sse-types";
 import HoxiActivityLogo from "./HoxiActivityLogo";
-import { formatElapsedSeconds } from "./duration-label";
+import { formatElapsedSeconds, startAdaptiveElapsedTimer } from "./duration-label";
 
 export default function ExecutionWaitingIndicator(props: {
   completedSteps: number;
@@ -15,16 +15,17 @@ export default function ExecutionWaitingIndicator(props: {
   const mountedAt = Date.now();
   const resolveStart = () =>
     props.startedAt && props.startedAt > 0 ? props.startedAt : mountedAt;
-  const calcElapsed = () => Math.max(0, (Date.now() - resolveStart()) / 1000);
+  const calcElapsed = (nowMs = Date.now()) => Math.max(0, (nowMs - resolveStart()) / 1000);
 
   const [elapsed, setElapsed] = createSignal(calcElapsed());
 
   createEffect(() => {
-    setElapsed(calcElapsed());
-    const timer = setInterval(() => {
-      setElapsed(calcElapsed());
-    }, 100);
-    onCleanup(() => clearInterval(timer));
+    const start = resolveStart();
+    const stop = startAdaptiveElapsedTimer(
+      () => start,
+      (nowMs) => setElapsed(calcElapsed(nowMs))
+    );
+    onCleanup(stop);
   });
 
   const headerText = () => props.awaitingApproval

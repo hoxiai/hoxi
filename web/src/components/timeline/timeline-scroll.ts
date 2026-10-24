@@ -114,7 +114,7 @@ export function createTimelineScroll(
     syncOverflowAnchor(scroller);
     scroller.scrollTop = scroller.scrollHeight;
     previousScrollTop = scroller.scrollTop;
-    updatePosition();
+    setAwayFromBottom(false);
   };
 
   const smoothToBottom = () => {
@@ -217,11 +217,10 @@ export function createTimelineScroll(
       }
       let mutationObserver: MutationObserver | undefined;
       if (typeof MutationObserver === "function" && typeof Node !== "undefined" && content instanceof Node) {
-        mutationObserver = new MutationObserver(pinOrUpdate);
+        mutationObserver = new MutationObserver(schedule);
         mutationObserver.observe(content, {
           childList: true,
           subtree: true,
-          characterData: true,
         });
       }
       schedule();

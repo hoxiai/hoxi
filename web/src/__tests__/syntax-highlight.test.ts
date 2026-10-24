@@ -151,5 +151,23 @@ describe("Chat code syntax highlighting", () => {
     const blocks3 = parse(doc3);
     assertDeepEqual(blocks3, parseMarkdownBlocks(doc3));
     assertTrue(blocks3[0] === blocks1[0]);
+
+    // Streaming a long unclosed code fence (> 2000 chars) containing blank lines
+    // must keep checkpointed prefix blocks stable and avoid full-document re-parses.
+    let streamingDoc = `${doc3}\n\n\`\`\`ts\nconst start = 1;\n\n`;
+    const t0 = performance.now();
+    let latestBlocks = blocks3;
+    for (let step = 0; step < 60; step++) {
+      streamingDoc += `export function fn${step}() {\n  return ${step};\n}\n\n`;
+      latestBlocks = parse(streamingDoc);
+    }
+    const elapsedMs = performance.now() - t0;
+    assertTrue(
+      elapsedMs < 80,
+      `Expected 60 incremental code-fence frames under 80ms, took ${elapsedMs.toFixed(1)}ms`
+    );
+    assertDeepEqual(latestBlocks, parseMarkdownBlocks(streamingDoc));
+    assertTrue(latestBlocks[0] === blocks1[0]);
+    assertTrue(latestBlocks[1] === blocks1[1]);
   });
 });

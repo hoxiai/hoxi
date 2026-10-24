@@ -205,6 +205,16 @@
   will-change: background-position;
 }
 
+[data-component="text-shimmer"][data-paused] [data-slot="text-shimmer-char-shimmer"] {
+  animation-play-state: paused;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-component="text-shimmer"][data-active="true"] [data-slot="text-shimmer-char-shimmer"] {
+    animation: none !important;
+  }
+}
+
 @keyframes text-shimmer-sweep {
   0% {
     background-position: 100% 0, 0 0;

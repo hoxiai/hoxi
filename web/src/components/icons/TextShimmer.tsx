@@ -1,6 +1,7 @@
 import { createEffect, createMemo, on, onCleanup, onMount, type ValidComponent } from "solid-js"
 import { createStore } from "solid-js/store"
 import { Dynamic } from "solid-js/web"
+import { observeSpinner } from "./Spinner"
 
 export const TextShimmer = <T extends ValidComponent = "span">(props: {
   text: string
@@ -15,6 +16,9 @@ export const TextShimmer = <T extends ValidComponent = "span">(props: {
   return (
     <Dynamic
       component={props.as || "span"}
+      ref={(el: Element) => {
+        if (el instanceof Element) observeSpinner(el)
+      }}
       data-component="text-shimmer"
       data-active={active() ? "true" : "false"}
       class={props.class}
@@ -127,7 +131,7 @@ export function TextReveal(props: {
   const wout = () => outRef?.scrollWidth ?? 0
 
   const widen = (next: number) => {
-    if (next <= 0) return
+    if (props.truncate || next <= 0) return
     if (props.growOnly ?? true) {
       const prev = Number.parseFloat(state.width)
       if (Number.isFinite(prev) && next <= prev) return
@@ -142,7 +146,7 @@ export function TextReveal(props: {
         if (next === prev) return
         if (typeof next === "string" && typeof prev === "string" && next.startsWith(prev)) {
           setState("cur", next)
-          widen(win())
+          if (!props.truncate) widen(win())
           return
         }
         setState("swapping", true)
@@ -150,14 +154,14 @@ export function TextReveal(props: {
         setState("cur", next)
 
         if (typeof requestAnimationFrame !== "function") {
-          widen(Math.max(win(), wout()))
+          if (!props.truncate) widen(Math.max(win(), wout()))
           void rootRef?.offsetHeight
           setState("swapping", false)
           return
         }
         if (frame !== undefined && typeof cancelAnimationFrame === "function") cancelAnimationFrame(frame)
         frame = requestAnimationFrame(() => {
-          widen(Math.max(win(), wout()))
+          if (!props.truncate) widen(Math.max(win(), wout()))
           void rootRef?.offsetHeight
           setState("swapping", false)
           frame = undefined
@@ -167,7 +171,7 @@ export function TextReveal(props: {
   )
 
   onMount(() => {
-    widen(win())
+    if (!props.truncate) widen(win())
     const fonts = typeof document !== "undefined" ? document.fonts : undefined
     if (typeof requestAnimationFrame !== "function") {
       setState("ready", true)
@@ -178,7 +182,7 @@ export function TextReveal(props: {
       return
     }
     void fonts.ready.finally(() => {
-      widen(win())
+      if (!props.truncate) widen(win())
       requestAnimationFrame(() => setState("ready", true))
     })
   })

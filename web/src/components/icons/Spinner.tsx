@@ -29,8 +29,9 @@ function refresh() {
   for (const [root, visible] of roots) update(root, visible)
 }
 
-export function observeSpinner(root: SVGSVGElement) {
+export function observeSpinner(root: Element) {
   onMount(() => {
+    if (typeof IntersectionObserver !== "function" || typeof document === "undefined") return
     if (!observer) {
       observer = new IntersectionObserver((entries) => {
         for (const entry of entries) {
