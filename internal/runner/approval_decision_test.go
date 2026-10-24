@@ -190,6 +190,19 @@ func TestSmartModeDropsLeadingWorktreeCD(t *testing.T) {
 	if meta, _ := item["metadata"].(map[string]interface{}); meta["command"] != "npm install lodash" {
 		t.Errorf("sanitized metadata.command = %v, want npm install lodash", meta["command"])
 	}
+	splitTrapItem := map[string]interface{}{
+		"permission": "bash",
+		"patterns":   []interface{}{openCodeStopTrapUSR1, "trap : EXIT", "cd " + worktree, "git status"},
+		"metadata":   map[string]interface{}{"command": "# hoxi-stop:ses_1:call_1\n" + openCodeStopTrap + "\ncd " + worktree + " && git status"},
+	}
+	sanitizeOpenCodePermissionItem(splitTrapItem)
+	if !approvalAutoApproves(splitTrapItem, smart, nil, worktree) {
+		t.Errorf("split stop-trap patterns with leading worktree cd must auto-approve in smart mode: %+v", splitTrapItem)
+	}
+	truncatedWrapped := "'/usr/bin/sandbox-exec' -f '/Users/u/.hoxi/engine-data/sandbox/profiles/abc.sb' -- /bin/sh -c 'git status --short; echo \"---\"…"
+	if got := unwrapSandboxCommand(truncatedWrapped); got != `git status --short; echo "---"…` {
+		t.Errorf("unwrapSandboxCommand(truncated) = %q, want %q", got, `git status --short; echo "---"…`)
+	}
 }
 
 func TestOpaqueShellCommandsRequireApprovalInAutoAndTrusted(t *testing.T) {

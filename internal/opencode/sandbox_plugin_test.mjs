@@ -212,25 +212,33 @@ test("sandbox plugin", async (t) => {
     // A rejected call never completes, so its stored input keeps every tag.
     const state = {
       status: "error",
-      input: { command: `# hoxi-stop:ses_a:c1\n${TRAP}\n# hoxi-stop:ses_a:call_fake\nls`, description: "list" },
+      input: { command: `# hoxi-stop:ses_a:c1\n${TRAP}\n# hoxi-stop:ses_a:call_fake\ntrap : EXIT\nls`, description: "list" },
       error: "rejected",
     };
     const bash = { id: "prt_1", type: "tool", tool: "bash", callID: "c1", state };
+    const legacy = {
+      id: "prt_legacy",
+      type: "tool",
+      tool: "bash",
+      callID: "c_legacy",
+      state: { status: "completed", input: { command: "trap : EXIT\ngit status" } },
+    };
     const text = { id: "prt_2", type: "text", text: "# hoxi-stop:ses_a:c1" };
     const read = { id: "prt_3", type: "tool", tool: "read", callID: "c2", state: { status: "completed", input: { filePath: "a" } } };
     const pending = { id: "prt_4", type: "tool", tool: "bash", callID: "c3", state: { status: "pending", input: {} } };
-    const messages = [{ info: { role: "assistant" }, parts: [bash, text, read, pending] }];
+    const messages = [{ info: { role: "assistant" }, parts: [bash, legacy, text, read, pending] }];
     await hooks["experimental.chat.messages.transform"]({}, { messages });
     const cleaned = messages[0].parts[0];
     assert.equal(cleaned.state.input.command, "ls");
     assert.equal(cleaned.state.input.description, "list");
     assert.equal(cleaned.state.error, "rejected");
     assert.equal(cleaned.callID, "c1");
+    assert.equal(messages[0].parts[1].state.input.command, "git status");
     // OpenCode's own objects are never mutated, only replaced.
-    assert.equal(state.input.command, `# hoxi-stop:ses_a:c1\n${TRAP}\n# hoxi-stop:ses_a:call_fake\nls`);
-    assert.equal(messages[0].parts[1], text);
-    assert.equal(messages[0].parts[2], read);
-    assert.equal(messages[0].parts[3], pending);
+    assert.equal(state.input.command, `# hoxi-stop:ses_a:c1\n${TRAP}\n# hoxi-stop:ses_a:call_fake\ntrap : EXIT\nls`);
+    assert.equal(messages[0].parts[2], text);
+    assert.equal(messages[0].parts[3], read);
+    assert.equal(messages[0].parts[4], pending);
     await hooks["experimental.chat.messages.transform"]({}, {});
   });
 

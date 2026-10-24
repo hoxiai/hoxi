@@ -573,7 +573,7 @@ func (s *Service) recordOpenCodeAudit(id, fallbackSessionID, directory, reply, m
 	if rt == "" {
 		rt = "opencode"
 	}
-	dir := firstNonEmptyStr(directory, snap.Directory, sessionDir)
+	dir := firstNonEmptyStr(sessionDir, snap.Directory, directory)
 	s.audit.record(ApprovalAuditEntry{
 		Timestamp:    time.Now().UnixMilli(),
 		RequestID:    id,

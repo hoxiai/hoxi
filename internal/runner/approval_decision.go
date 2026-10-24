@@ -71,12 +71,15 @@ var (
 
 	// The OpenCode sandbox plugin rewrites bash commands into a sandbox-exec
 	// wrapper; the wrapped command is what the policy judges.
-	sandboxWrapRe = regexp.MustCompile(`^'?/usr/bin/sandbox-exec'?\s+-f\s+(?:'[^']*'|\S+)\s+--\s+/bin/sh\s+-c\s+'((?:[^']|'\\'')*)'$`)
+	sandboxWrapRe       = regexp.MustCompile(`^'?/usr/bin/sandbox-exec'?\s+-f\s+(?:'[^']*'|\S+)\s+--\s+/bin/sh\s+-c\s+'((?:[^']|'\\'')*)'$`)
+	sandboxWrapPrefixRe = regexp.MustCompile(`^'?/usr/bin/sandbox-exec'?\s+-f\s+(?:'[^']*'|\S+)\s+--\s+(?:/bin/sh|sh)\s+-c\s+'`)
 
-	// A `# hoxi-stop:` tag line, optionally followed by the plugin's stop trap
-	// line (openCodeStopTrap) or the older bare `trap : EXIT`.
-	openCodeStopMarkerRe = regexp.MustCompile(`^(?:[ \t]*(?:# hoxi-stop:[^\r\n]*(?:\r?\n(?:[ \t]*(?:trap : (?:EXIT|\S+)|` +
-		regexp.QuoteMeta(openCodeStopTrap) + `)(?:[ \t]*\r?\n|$))?|$)|trap : EXIT[ \t]+# hoxi-stop:[^\r\n]*(?:\r?\n|$)))+`)
+	// A `# hoxi-stop:` tag line, the plugin's stop trap line (openCodeStopTrap),
+	// its USR1 half when OpenCode splits `trap ... USR1; trap : EXIT` at `;`
+	// into `patterns`, or the older bare `trap : EXIT`.
+	openCodeStopMarkerRe = regexp.MustCompile(`^(?:[ \t]*(?:# hoxi-stop:[^\r\n]*(?:\r?\n(?:[ \t]*(?:` +
+		regexp.QuoteMeta(openCodeStopTrap) + `|` + regexp.QuoteMeta(openCodeStopTrapUSR1) + `|trap : (?:EXIT|\S+))(?:[ \t]*\r?\n|$))?|$)|(?:` +
+		regexp.QuoteMeta(openCodeStopTrap) + `|` + regexp.QuoteMeta(openCodeStopTrapUSR1) + `|trap : EXIT)(?:[ \t]*\r?\n|[ \t]+|$)))+`)
 )
 
 // approvalAutoApproves reports whether item may run without asking the user
@@ -230,7 +233,7 @@ func permissionCategory(item map[string]interface{}) string {
 }
 
 func stripOpenCodeStopMarkerText(raw string) string {
-	if !strings.Contains(raw, stopMarkerPrefix) {
+	if !strings.Contains(raw, stopMarkerPrefix) && !strings.Contains(raw, "trap : EXIT") && !strings.Contains(raw, openCodeStopTrapUSR1) {
 		return raw
 	}
 	return openCodeStopMarkerRe.ReplaceAllString(raw, "")
@@ -311,8 +314,13 @@ func unwrapSandboxCommand(command string) string {
 	cur := command
 	for i := 0; i < 8; i++ {
 		next := stripOpenCodeStopMarkerText(cur)
-		if m := sandboxWrapRe.FindStringSubmatch(strings.TrimSpace(next)); m != nil {
+		trimmed := strings.TrimSpace(next)
+		if m := sandboxWrapRe.FindStringSubmatch(trimmed); m != nil {
 			next = stripOpenCodeStopMarkerText(strings.ReplaceAll(m[1], `'\''`, "'"))
+		} else if strings.HasSuffix(trimmed, "…") {
+			if loc := sandboxWrapPrefixRe.FindStringIndex(trimmed); loc != nil {
+				next = stripOpenCodeStopMarkerText(strings.ReplaceAll(trimmed[loc[1]:], `'\''`, "'"))
+			}
 		}
 		if next == cur {
 			break
@@ -325,15 +333,18 @@ func unwrapSandboxCommand(command string) string {
 // commandCandidates mirrors commandCandidates in permission-policy.js.
 func commandCandidates(item map[string]interface{}) []string {
 	meta := itemMetadata(item)
-	var out []string
+	var raw []string
 	for _, v := range []interface{}{item["patterns"], item["pattern"], meta["command"], meta["cmd"], meta["commands"]} {
-		out = append(out, stringList(v)...)
+		raw = append(raw, stringList(v)...)
 	}
-	if len(out) == 0 {
-		out = stringList(item["title"])
+	if len(raw) == 0 {
+		raw = stringList(item["title"])
 	}
-	for i, cmd := range out {
-		out[i] = unwrapSandboxCommand(cmd)
+	out := make([]string, 0, len(raw))
+	for _, cmd := range raw {
+		if cleaned := strings.TrimSpace(unwrapSandboxCommand(cmd)); cleaned != "" {
+			out = append(out, cleaned)
+		}
 	}
 	return out
 }
@@ -484,10 +495,20 @@ func isSafeCommandPermissionRequest(item map[string]interface{}, worktree string
 	if isDestructivePermissionRequest(item) {
 		return false
 	}
+	meta := itemMetadata(item)
 	if worktree == "" {
-		worktree = firstString(itemMetadata(item)["worktree"])
+		worktree = firstString(meta["worktree"])
 	}
 	candidates := commandCandidates(item)
+	if cmd := strings.TrimSpace(unwrapSandboxCommand(firstString(meta["command"]))); cmd != "" {
+		filtered := []string{cmd}
+		for _, piece := range candidates {
+			if piece != "" && !strings.Contains(cmd, piece) {
+				filtered = append(filtered, piece)
+			}
+		}
+		candidates = filtered
+	}
 	if len(candidates) == 0 {
 		return false
 	}

@@ -127,13 +127,44 @@ function isBenignPathExport(seg) {
   return !rest.includes("$");
 }
 
-function isScopedCDSegment(seg, worktree) {
-  if (String(worktree || "").trim()) return isWorktreeCD(seg, worktree);
-  const m = CD_SEGMENT_RE.exec(String(seg || "").trim());
-  if (!m) return false;
+function cleanRelPosixPath(p) {
+  const parts = [];
+  for (const seg of p.split("/")) {
+    if (!seg || seg === ".") continue;
+    if (seg === "..") {
+      if (parts.length > 0 && parts[parts.length - 1] !== "..") parts.pop();
+      else parts.push("..");
+    } else {
+      parts.push(seg);
+    }
+  }
+  return parts.join("/") || ".";
+}
+
+function advanceScopedCD(seg, cwd, worktree) {
+  if (!cwd) return ["", false];
+  let trimmed = String(seg || "").trim();
+  if (trimmed.startsWith("cd ") || trimmed.startsWith("cd\t")) {
+    const arg = trimmed.slice(2).trim();
+    if (arg.length >= 2 && ((arg.startsWith('"') && arg.endsWith('"')) || (arg.startsWith("'") && arg.endsWith("'")))) {
+      trimmed = "cd " + arg.slice(1, -1);
+    }
+  }
+  const m = CD_SEGMENT_RE.exec(trimmed);
+  if (!m) return ["", false];
   const target = m[1];
-  if (target.startsWith("/") || target.startsWith("~") || target.startsWith("-")) return false;
-  return !target.split("/").includes("..");
+  if (target.startsWith("~") || target.startsWith("-")) return ["", false];
+  const wt = String(worktree || "").trim();
+  if (wt) {
+    if (!wt.startsWith("/")) return ["", false];
+    const resolved = target.startsWith("/") ? target : `${cwd}/${target}`;
+    if (!isWorktreeCD(`cd ${resolved}`, wt)) return ["", false];
+    return ["/" + cleanRelPosixPath(resolved), true];
+  }
+  if (target.startsWith("/")) return ["", false];
+  const cleaned = cleanRelPosixPath(`${cwd}/${target}`);
+  if (cleaned === ".." || cleaned.startsWith("../")) return ["", false];
+  return [cleaned, true];
 }
 
 function isTempOnlyCleanupSegment(words) {
@@ -184,15 +215,19 @@ function isOpaqueShellCommandDepth(command, worktree, options, depth) {
   }
   const spans = findSubshellSpans(joined);
   if (!spans) return true;
-  for (const [start, end] of spans) {
-    if (isOpaqueShellCommandDepth(joined.slice(start + 1, end), worktree, options, depth + 1)) return true;
+  if (spans.every(([start, end]) => !isOpaqueShellCommandDepth(joined.slice(start + 1, end), worktree, options, depth + 1))) {
+    const erased = eraseSubshells(joined);
+    if (!opaqueShellCore(erased, worktree, allowInlineScripts, commandSubsAreValueClass(erased))) return false;
   }
-  joined = eraseSubshells(joined);
-  if (!opaqueShellCore(joined, worktree, allowInlineScripts, commandSubsAreValueClass(joined))) return false;
   const expanded = concretizeLiterals(joined);
   if (expanded.status === "secret" || expanded.status === "reject") return true;
   if (expanded.status === "applied") {
-    return opaqueShellCore(expanded.text, worktree, allowInlineScripts, commandSubsAreValueClass(expanded.text));
+    const expSpans = findSubshellSpans(expanded.text);
+    if (!expSpans || expSpans.some(([start, end]) => isOpaqueShellCommandDepth(expanded.text.slice(start + 1, end), worktree, options, depth + 1))) {
+      return true;
+    }
+    const erased = eraseSubshells(expanded.text);
+    return opaqueShellCore(erased, worktree, allowInlineScripts, commandSubsAreValueClass(erased));
   }
   return true;
 }
@@ -203,7 +238,10 @@ function opaqueShellCore(command, worktree, allowInlineScripts, valueClass) {
   const unwrapped = extractProcessSubstitutions(command);
   if (hasOpaqueShellSyntax(unwrapped)) return true;
   let { segments, pipedIn } = splitCommandChainWithPipes(unwrapped);
+  let cwd = String(worktree || "").trim() || ".";
   if (segments.length > 1 && !pipedIn[0] && isWorktreeCD(segments[0], worktree)) {
+    const [nextCWD, ok] = advanceScopedCD(segments[0], cwd, worktree);
+    if (ok) cwd = nextCWD;
     segments = segments.slice(1);
     pipedIn = pipedIn.slice(1);
   }
@@ -234,7 +272,17 @@ function opaqueShellCore(command, worktree, allowInlineScripts, valueClass) {
       continue;
     }
     if (base === "cd" || base === "pushd" || base === "popd") {
-      if (base !== "cd" || !isScopedCDSegment(seg, worktree)) outsideCWD = true;
+      if (base !== "cd" || outsideCWD) {
+        outsideCWD = true;
+        cwd = "";
+      } else {
+        const [nextCWD, ok] = advanceScopedCD(seg, cwd, worktree);
+        if (ok) cwd = nextCWD;
+        else {
+          outsideCWD = true;
+          cwd = "";
+        }
+      }
       continue;
     }
     if (outsideCWD && !isTempOnlyCleanupSegment(cmdWords)) return true;

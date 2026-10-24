@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"path"
 	"path/filepath"
 	"strings"
 )
@@ -46,19 +47,25 @@ func isOpaqueShellCommandDepth(command, worktree string, allowInlineScripts bool
 		}
 		command = stripped
 	}
-	if !subshellsClear(command, worktree, allowInlineScripts, depth) {
+	if _, ok := findSubshellSpans(command); !ok {
 		return true
 	}
-	command = eraseSubshells(command)
-	if !opaqueShellCore(command, worktree, allowInlineScripts, commandSubsAreValueClass(command)) {
-		return false
+	if subshellsClear(command, worktree, allowInlineScripts, depth) {
+		erased := eraseSubshells(command)
+		if !opaqueShellCore(erased, worktree, allowInlineScripts, commandSubsAreValueClass(erased)) {
+			return false
+		}
 	}
 	expanded, status := concretizeLiterals(command)
 	switch status {
 	case constSecret, constReject:
 		return true
 	case constApplied:
-		return opaqueShellCore(expanded, worktree, allowInlineScripts, commandSubsAreValueClass(expanded))
+		if !subshellsClear(expanded, worktree, allowInlineScripts, depth) {
+			return true
+		}
+		erased := eraseSubshells(expanded)
+		return opaqueShellCore(erased, worktree, allowInlineScripts, commandSubsAreValueClass(erased))
 	default:
 		return true
 	}
@@ -92,7 +99,14 @@ func opaqueShellCore(command, worktree string, allowInlineScripts, valueClass bo
 		return true
 	}
 	segments, pipedIn := splitCommandChainWithPipes(command)
+	cwd := strings.TrimSpace(worktree)
+	if cwd == "" {
+		cwd = "."
+	}
 	if len(segments) > 1 && !pipedIn[0] && isWorktreeCD(segments[0], worktree) {
+		if nextCWD, ok := advanceScopedCD(segments[0], cwd, worktree); ok {
+			cwd = nextCWD
+		}
 		segments = segments[1:]
 		pipedIn = pipedIn[1:]
 	}
@@ -141,8 +155,14 @@ func opaqueShellCore(command, worktree string, allowInlineScripts, valueClass bo
 			continue
 		}
 		if base == "cd" || base == "pushd" || base == "popd" {
-			if base != "cd" || !isScopedCDSegment(seg, worktree) {
+			if base != "cd" || outsideCWD {
 				outsideCWD = true
+				cwd = ""
+			} else if nextCWD, ok := advanceScopedCD(seg, cwd, worktree); ok {
+				cwd = nextCWD
+			} else {
+				outsideCWD = true
+				cwd = ""
 			}
 			continue
 		}
@@ -160,6 +180,54 @@ func opaqueShellCore(command, worktree string, allowInlineScripts, valueClass bo
 		}
 	}
 	return !hasExec
+}
+
+func advanceScopedCD(seg, cwd, worktree string) (string, bool) {
+	if cwd == "" {
+		return "", false
+	}
+	trimmed := strings.TrimSpace(seg)
+	if strings.HasPrefix(trimmed, "cd ") || strings.HasPrefix(trimmed, "cd\t") {
+		arg := strings.TrimSpace(trimmed[2:])
+		if len(arg) >= 2 && ((arg[0] == '"' && arg[len(arg)-1] == '"') || (arg[0] == '\'' && arg[len(arg)-1] == '\'')) {
+			trimmed = "cd " + arg[1:len(arg)-1]
+		}
+	}
+	m := cdSegmentRe.FindStringSubmatch(trimmed)
+	if m == nil {
+		return "", false
+	}
+	target := m[1]
+	if strings.HasPrefix(target, "~") || strings.HasPrefix(target, "-") {
+		return "", false
+	}
+	wt := strings.TrimSpace(worktree)
+	if wt != "" {
+		if !filepath.IsAbs(wt) {
+			return "", false
+		}
+		resolved := target
+		if !filepath.IsAbs(resolved) {
+			resolved = filepath.Join(cwd, resolved)
+		}
+		resolved = filepath.Clean(resolved)
+		base := filepath.Clean(wt)
+		if resolved != base && !strings.HasPrefix(resolved, strings.TrimSuffix(base, "/")+"/") {
+			return "", false
+		}
+		if !pathWithin(base, resolved) {
+			return "", false
+		}
+		return resolved, true
+	}
+	if strings.HasPrefix(target, "/") {
+		return "", false
+	}
+	cleaned := path.Clean(cwd + "/" + filepath.ToSlash(target))
+	if cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+		return "", false
+	}
+	return cleaned, true
 }
 
 // unwrapCommandPrefixes strips wrappers that only run the next command

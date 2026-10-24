@@ -17,10 +17,10 @@ export const HARMLESS_ENV_VARS = new Set(["HOME", "PATH", "PWD", "OLDPWD", "USER
 
 export const READ_ONLY_DATA_TOOLS = new Set(["rg", "grep", "egrep", "fgrep", "cat", "head", "tail", "wc", "ls", "stat",
   "file", "echo", "printf", "diff", "cmp", "sort", "uniq", "jq", "test", "[", "basename",
-  "dirname", "realpath", "true", "false", ":",
+  "dirname", "realpath", "true", "false", ":", "exit", "return",
   "lsof", "ps", "du", "df", "cut", "tr", "nl", "column", "shasum", "sha256sum", "md5", "xxd", "od", "sleep"]);
 
-export const VALUE_ONLY_TOOLS = new Set(["echo", "printf", "test", "[", "basename", "dirname", "true", "false", ":"]);
+export const VALUE_ONLY_TOOLS = new Set(["echo", "printf", "test", "[", "basename", "dirname", "true", "false", ":", "exit", "return"]);
 
 const isBoundary = (c) => " \t\r\n;&|()<>".includes(c);
 const baseName = (w) => (w.includes("/") ? w.slice(w.lastIndexOf("/") + 1) : w);
@@ -304,12 +304,8 @@ function unquoteConst(raw) {
 }
 
 function constLiteralBad(v) {
-  if (/[\n*?[`$]/.test(v) && (v.includes("\n") || /[*?[`$]/.test(v))) {
-    if (v.includes("\n") || v.includes("*") || v.includes("?") || v.includes("[") || v.includes("`") || v.includes("$(") || v.includes("${")) {
-      return true;
-    }
-  }
-  if (v.includes("\n") || v.includes("*") || v.includes("?") || v.includes("[") || v.includes("`") || v.includes("$(") || v.includes("${")) {
+  const plain = v.replaceAll("$?", "");
+  if (plain.includes("\n") || plain.includes("*") || plain.includes("?") || plain.includes("[") || v.includes("`") || v.includes("$(") || v.includes("${")) {
     return true;
   }
   const names = wordExpansionNames(v);
@@ -393,6 +389,7 @@ function constBindings(command, segs) {
   const bound = new Map();
   const poisoned = new Set();
   const loops = forLoopRanges(command);
+  const subshells = findSubshellSpans(command) || [];
   const poison = (name) => {
     if (!name) return;
     poisoned.add(name);
@@ -401,7 +398,7 @@ function constBindings(command, segs) {
   const usedBefore = new Set();
   for (const seg of segs) {
     const text = command.slice(seg.start, seg.end).trim();
-    const insideLoop = indexInside(seg.start, loops);
+    const insideLoop = indexInside(seg.start, loops) || indexInside(seg.start, subshells);
     const names = shellExpansionNames(text) || [];
     for (const name of names) if (!bound.has(name)) usedBefore.add(name);
     const loopName = forLoopVar(text);
@@ -505,7 +502,7 @@ export function substituteVars(s, vars) {
       out += c;
       continue;
     }
-    if (!quote && (c === ";" || c === "\n" || c === "|")) {
+    if (!quote && (c === ";" || c === "\n" || c === "|" || c === "(")) {
       commandWord = true;
       atWordStart = true;
       out += c;
@@ -556,8 +553,12 @@ function replaceValueSubAssignments(command, segs, bound) {
   for (const seg of segs) {
     const assign = pureAssignment(command.slice(seg.start, seg.end).trim());
     const v = assign ? bound.get(assign.name) : null;
-    if (!assign || !v || !v.valueSub) continue;
-    out += command.slice(prev, seg.start) + v.inner;
+    if (!assign || !v) continue;
+    let repl = "";
+    if (v.valueSub) repl = v.inner;
+    else if (v.text.includes("$")) repl = ":";
+    else continue;
+    out += command.slice(prev, seg.start) + repl;
     prev = seg.end;
   }
   return out + command.slice(prev);

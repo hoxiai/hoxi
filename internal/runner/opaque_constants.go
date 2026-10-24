@@ -289,6 +289,7 @@ func constBindings(command string, segs []constSeg) (map[string]constVal, map[st
 	bound := map[string]constVal{}
 	poisoned := map[string]bool{}
 	loops := forLoopRanges(command)
+	subshells, _ := findSubshellSpans(command)
 	poison := func(name string) {
 		if name == "" {
 			return
@@ -299,7 +300,7 @@ func constBindings(command string, segs []constSeg) (map[string]constVal, map[st
 	usedBefore := map[string]bool{}
 	for _, seg := range segs {
 		text := strings.TrimSpace(seg.text(command))
-		insideLoop := indexInside(seg.start, loops)
+		insideLoop := indexInside(seg.start, loops) || indexInside(seg.start, subshells)
 		names := expansionNamesOf(text)
 		for _, name := range names {
 			if _, ok := bound[name]; !ok {
@@ -473,7 +474,7 @@ func unquoteConst(raw string) (string, bool) {
 }
 
 func constLiteralBad(v string) bool {
-	if strings.ContainsAny(v, "\n*?[") || strings.Contains(v, "`") || strings.Contains(v, "$(") || strings.Contains(v, "${") {
+	if strings.ContainsAny(strings.ReplaceAll(v, "$?", ""), "\n*?[") || strings.Contains(v, "`") || strings.Contains(v, "$(") || strings.Contains(v, "${") {
 		return true
 	}
 	names, ok := wordExpansionNames(v)
@@ -608,7 +609,7 @@ func substituteVars(s string, vars map[string]constVal) (string, bool) {
 			b.WriteByte(c)
 			continue
 		}
-		if quote == 0 && (c == ';' || c == '\n' || c == '|') {
+		if quote == 0 && (c == ';' || c == '\n' || c == '|' || c == '(') {
 			commandWord = true
 			atWordStart = true
 			b.WriteByte(c)
@@ -700,11 +701,19 @@ func replaceValueSubAssignments(command string, segs []constSeg, bindings map[st
 	for _, seg := range segs {
 		name, _, pure := pureAssignment(strings.TrimSpace(seg.text(command)))
 		v, ok := bindings[name]
-		if !pure || !ok || !v.valueSub {
+		if !pure || !ok {
+			continue
+		}
+		repl := ""
+		if v.valueSub {
+			repl = v.inner
+		} else if strings.Contains(v.text, "$") {
+			repl = ":"
+		} else {
 			continue
 		}
 		b.WriteString(command[prev:seg.start])
-		b.WriteString(v.inner)
+		b.WriteString(repl)
 		prev = seg.end
 	}
 	b.WriteString(command[prev:])

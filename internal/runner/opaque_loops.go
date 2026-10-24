@@ -42,7 +42,7 @@ var (
 
 	readOnlyDataTools = setOf("rg", "grep", "egrep", "fgrep", "cat", "head", "tail", "wc", "ls", "stat",
 		"file", "echo", "printf", "diff", "cmp", "sort", "uniq", "jq", "test", "[", "basename",
-		"dirname", "realpath", "true", "false", ":",
+		"dirname", "realpath", "true", "false", ":", "exit", "return",
 		"lsof", "ps", "du", "df", "cut", "tr", "nl", "column", "shasum", "sha256sum", "md5", "xxd", "od", "sleep")
 
 	// Builtins that can rebind a variable behind the policy's back.
@@ -65,7 +65,7 @@ var (
 
 	// valueOnlyTools print or test their arguments without opening them as
 	// files, so they may take a `$(…)` result.
-	valueOnlyTools = setOf("echo", "printf", "test", "[", "basename", "dirname", "true", "false", ":")
+	valueOnlyTools = setOf("echo", "printf", "test", "[", "basename", "dirname", "true", "false", ":", "exit", "return")
 )
 
 // extractProcessSubstitutions rewrites each `<(cmd)` into a placeholder
